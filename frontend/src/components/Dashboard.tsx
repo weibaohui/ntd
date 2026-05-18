@@ -887,11 +887,17 @@ export function Dashboard({ onBack }: DashboardProps) {
           className="dashboard-card" style={{ borderRadius: 12 }}
           bodyStyle={{ padding: '16px 20px' }}
         >
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
             <div style={{ padding: '12px 14px', borderRadius: 10, background: '#3b82f610', textAlign: 'center' }}>
               <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 4 }}>推理输入</div>
               <div style={{ fontSize: 20, fontWeight: 700, color: '#3b82f6' }}>
                 <AnimatedNumber value={loading ? 0 : totalInput / 10000} duration={1.2} decimals={2} suffix="万" />
+              </div>
+            </div>
+            <div style={{ padding: '12px 14px', borderRadius: 10, background: '#22c55e10', textAlign: 'center' }}>
+              <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 4 }}>推理输出</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: '#22c55e' }}>
+                <AnimatedNumber value={loading ? 0 : totalOutput / 10000} duration={1.2} decimals={2} suffix="万" />
               </div>
             </div>
             <div style={{ padding: '12px 14px', borderRadius: 10, background: '#f59e0b10', textAlign: 'center' }}>
@@ -900,9 +906,9 @@ export function Dashboard({ onBack }: DashboardProps) {
                 <AnimatedNumber value={loading ? 0 : totalCost} duration={1.2} prefix="$" decimals={2} />
               </div>
             </div>
-            <div style={{ padding: '12px 14px', borderRadius: 10, background: '#22c55e10', textAlign: 'center' }}>
+            <div style={{ padding: '12px 14px', borderRadius: 10, background: '#8b5cf610', textAlign: 'center' }}>
               <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 4 }}>输出率</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: '#22c55e' }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: '#8b5cf6' }}>
                 <AnimatedNumber value={loading ? 0 : outputRate} duration={1.2} decimals={1} suffix="%" />
               </div>
             </div>
