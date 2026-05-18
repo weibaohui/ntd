@@ -1183,6 +1183,13 @@ body {
   font-size: 11px;
   color: var(--color-text-quaternary, #bbb);
   white-space: nowrap;
+  opacity: 0.5;
+  transition: opacity var(--transition-fast);
+}
+
+.smart-create-shortcut.active {
+  opacity: 1;
+  color: var(--color-primary);
 }
 
 .smart-create-empty {

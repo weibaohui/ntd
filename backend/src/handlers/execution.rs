@@ -168,7 +168,8 @@ pub async fn execute_handler(
     })
     .await;
     let result = result?;
-    let record_id = result.record_id.expect("record_id checked above");
+    let record_id = result.record_id
+        .ok_or_else(|| AppError::Internal("执行启动失败：未获取到执行记录 ID".to_string()))?;
 
     Ok(ApiResponse::ok(
         serde_json::json!({ "task_id": result.task_id, "record_id": record_id }),
@@ -395,7 +396,8 @@ pub async fn resume_execution_handler(
         resume_message,
     })
     .await?;
-    let record_id = result.record_id.expect("record_id checked above");
+    let record_id = result.record_id
+        .ok_or_else(|| AppError::Internal("执行启动失败：未获取到执行记录 ID".to_string()))?;
 
     Ok(ApiResponse::ok(
         serde_json::json!({ "task_id": result.task_id, "record_id": record_id }),
@@ -512,7 +514,8 @@ pub async fn smart_create_handler(
     })
     .await?;
 
-    let record_id = result.record_id.expect("record_id checked above");
+    let record_id = result.record_id
+        .ok_or_else(|| AppError::Internal("执行启动失败：未获取到执行记录 ID".to_string()))?;
 
     Ok(ApiResponse::ok(serde_json::json!({
         "task_id": result.task_id,

@@ -1,4 +1,4 @@
-.PHONY: setup install build clean dev stop kill-port cross-build cross-list
+.PHONY: setup install build clean dev watch stop kill-port cross-build cross-list
 
 # Source cargo env for all Rust commands
 export PATH := $(HOME)/.cargo/bin:$(PATH)
@@ -76,6 +76,21 @@ dev: stop
 	@echo "Backend logs: tail -f backend.dev.log"
 	@echo ""
 	@echo "Press Ctrl+C to stop"
+
+# Development mode with hot reload (requires cargo-watch)
+watch: stop
+	@echo "[1/2] Building frontend..."
+	cd frontend && npm run build
+	@echo "[2/2] Starting backend with cargo-watch..."
+	cd backend && $(CARGO_ENV) NTD_MODE=dev RUST_BACKTRACE=1 RUST_LOG=info cargo watch -x run 2>&1 | tee ../backend.dev.log &
+	@echo $$! > $$HOME/.ntd/dev.pid
+	@echo "==========================================="
+	@echo "  Dev mode (watch): http://localhost:18088"
+	@echo "==========================================="
+	@echo "Backend logs: tail -f backend.dev.log"
+	@echo "Note: cargo-watch auto-rebuilds on code changes"
+	@echo "      but will NOT pick up frontend dist changes"
+	@echo "      Run 'make dev' for full rebuilds"
 
 # Cross-build for Windows (x86_64 + i686), macOS (x86_64 + aarch64), Linux (x86_64 + aarch64)
 cross-build:

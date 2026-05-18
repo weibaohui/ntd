@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Modal, Drawer, Input, Button, message } from 'antd';
+import type { InputRef } from 'antd';
 import { ThunderboltOutlined, BulbOutlined, SettingOutlined, WarningOutlined } from '@ant-design/icons';
 import { smartCreate } from '../utils/database';
 import type { Config } from '../types';
@@ -16,7 +17,7 @@ interface SmartCreateModalProps {
 export function SmartCreateModal({ open, onClose, isMobile, config, onGoToSettings, onSubmitted }: SmartCreateModalProps) {
   const [content, setContent] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const textAreaRef = useRef<any>(null);
+  const textAreaRef = useRef<InputRef>(null);
   const defaultTodoId = config?.default_response_todo_id ?? null;
 
   // 打开时自动聚焦
@@ -40,7 +41,10 @@ export function SmartCreateModal({ open, onClose, isMobile, config, onGoToSettin
     setSubmitting(true);
     try {
       const result = await smartCreate(trimmed);
-      message.success(`已提交智能执行，任务 #${result.todo_id} ${result.todo_title} 正在处理中`);
+      const title = result.todo_title.length > 20
+        ? result.todo_title.slice(0, 20) + '...'
+        : result.todo_title;
+      message.success(`已提交智能执行，任务 #${result.todo_id} ${title} 正在处理中`);
       onSubmitted?.();
       handleClose();
     } catch (err: any) {
@@ -116,8 +120,10 @@ export function SmartCreateModal({ open, onClose, isMobile, config, onGoToSettin
         >
           {submitting ? '执行中...' : '智能执行'}
         </Button>
-        {!isMobile && !submitting && content.trim() && (
-          <span className="smart-create-shortcut">Ctrl+Enter</span>
+        {!isMobile && (
+          <span className={`smart-create-shortcut ${content.trim() && !submitting ? 'active' : ''}`}>
+            Ctrl+Enter
+          </span>
         )}
       </div>
     </div>
