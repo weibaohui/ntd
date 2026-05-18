@@ -268,6 +268,14 @@ mod hermes_executor_extended_tests {
     }
 
     #[test]
+    fn test_extract_session_id_resume_chat_format_with_resume_in_message() {
+        let executor = HermesExecutor::new("hermes".to_string());
+        // When user message contains "--resume", we must match the last --resume (command argument)
+        let sid = executor.extract_session_id("hermes chat -q please --resume this task --resume session_abc_123 --yolo");
+        assert_eq!(sid, Some("session_abc_123".to_string()));
+    }
+
+    #[test]
     fn test_extract_session_id_session_prefix() {
         let executor = HermesExecutor::new("hermes".to_string());
         let sid = executor.extract_session_id("Session: mysession");
