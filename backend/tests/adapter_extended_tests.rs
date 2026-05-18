@@ -260,6 +260,14 @@ mod hermes_executor_extended_tests {
     }
 
     #[test]
+    fn test_extract_session_id_resume_chat_format() {
+        let executor = HermesExecutor::new("hermes".to_string());
+        // New format from command_args_with_session: "hermes chat -q <message> --resume <session_id> --yolo"
+        let sid = executor.extract_session_id("hermes chat -q continue --resume 20260517_051220_95e4d6 --yolo");
+        assert_eq!(sid, Some("20260517_051220_95e4d6".to_string()));
+    }
+
+    #[test]
     fn test_extract_session_id_session_prefix() {
         let executor = HermesExecutor::new("hermes".to_string());
         let sid = executor.extract_session_id("Session: mysession");
