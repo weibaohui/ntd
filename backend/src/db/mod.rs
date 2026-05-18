@@ -1211,6 +1211,14 @@ mod tests {
         let (all, total_all) = db.get_execution_records(todo_id, 10, 0, None).await.unwrap();
         assert_eq!(total_all, 3);
         assert_eq!(all.len(), 3);
+
+        // 测试 Some("all") 应该等同于 None，返回所有记录
+        let (all_some, total_all_some) =
+            db.get_execution_records(todo_id, 10, 0, Some("all"))
+                .await
+                .unwrap();
+        assert_eq!(total_all_some, 3);
+        assert_eq!(all_some.len(), 3);
     }
 
     #[tokio::test]

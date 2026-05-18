@@ -367,6 +367,24 @@ async fn test_get_execution_records_pagination() {
 }
 
 #[tokio::test]
+async fn test_get_execution_records_invalid_status() {
+    let app = create_test_app().await;
+
+    let create_req = json_request("POST", "/xyz/todos", json!({"title": "Test", "prompt": "Prompt", "tag_ids": []}));
+    let create_resp = app.clone().oneshot(create_req).await.unwrap();
+    let create_body: serde_json::Value = read_json_body(create_resp).await;
+    let todo_id = create_body["data"]["id"].as_i64().unwrap();
+
+    // Test invalid status value returns BadRequest
+    let req = Request::builder()
+        .uri(format!("/xyz/execution-records?todo_id={}&status=invalid", todo_id))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn test_get_execution_summary() {
     let app = create_test_app().await;
 

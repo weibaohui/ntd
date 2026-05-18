@@ -442,7 +442,7 @@ mod joinai_executor_extended_tests {
     #[test]
     fn test_extract_session_id_from_event() {
         let executor = JoinaiExecutor::new("joinai".to_string());
-        let line = r#"{"type":"step_start","session_id":"ses_abc123"}"#;
+        let line = r#"{"type":"step_start","sessionID":"ses_abc123"}"#;
         let session = executor.extract_session_id(line);
         assert_eq!(session, Some("ses_abc123".to_string()));
     }
@@ -450,7 +450,7 @@ mod joinai_executor_extended_tests {
     #[test]
     fn test_extract_session_id_from_part() {
         let executor = JoinaiExecutor::new("joinai".to_string());
-        let line = r#"{"type":"text","part":{"session_id":"ses_xyz789"},"text":"hello"}"#;
+        let line = r#"{"type":"text","part":{"sessionID":"ses_xyz789"},"text":"hello"}"#;
         let session = executor.extract_session_id(line);
         assert_eq!(session, Some("ses_xyz789".to_string()));
     }

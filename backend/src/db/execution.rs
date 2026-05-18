@@ -73,7 +73,11 @@ impl Database {
     ) -> Result<(Vec<ExecutionRecord>, i64), sea_orm::DbErr> {
         let base_filter = execution_records::Column::TodoId.eq(todo_id);
         let filter = if let Some(s) = status {
-            base_filter.and(execution_records::Column::Status.eq(s))
+            if s == "all" {
+                base_filter
+            } else {
+                base_filter.and(execution_records::Column::Status.eq(s))
+            }
         } else {
             base_filter
         };
