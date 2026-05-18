@@ -50,7 +50,7 @@ pub struct JoinaiAgentEvent {
     pub event_type: String,
     #[serde(default)]
     pub timestamp: Option<JoinAITimestamp>,
-    #[serde(default)]
+    #[serde(default, rename = "sessionID")]
     pub session_id: Option<String>,
     #[serde(default)]
     pub part: Option<JoinaiAgentPart>,
@@ -72,7 +72,7 @@ pub struct JoinaiAgentPart {
     pub state: Option<JoinaiAgentToolState>,
     #[serde(default)]
     pub message_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, rename = "sessionID")]
     pub session_id: Option<String>,
     #[serde(default)]
     pub tokens: Option<JoinaiAgentTokens>,
