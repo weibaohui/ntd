@@ -84,9 +84,10 @@ impl CodeExecutor for HermesExecutor {
             }
         }
         // Format: "hermes chat ... --resume <session_id> ..."
+        // Use rfind to match the last --resume (which is the command argument, not user message content)
         if trimmed.starts_with("hermes chat ") {
             if let Some(after_hermes_chat) = trimmed.strip_prefix("hermes chat ") {
-                if let Some(resume_pos) = after_hermes_chat.find("--resume ") {
+                if let Some(resume_pos) = after_hermes_chat.rfind("--resume ") {
                     let after_resume = &after_hermes_chat[resume_pos + 9..]; // 9 = len("--resume ")
                     let sid = after_resume.split_whitespace().next()?;
                     if !sid.is_empty() {
