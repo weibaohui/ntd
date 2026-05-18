@@ -1,13 +1,13 @@
-import { useState, useEffect } from 'react';
-import { Drawer, Input, Button, App, AutoComplete, Divider, Switch } from 'antd';
-import { CheckOutlined, FolderOutlined, ClockCircleOutlined, FileTextOutlined } from '@ant-design/icons';
+import { useState, useEffect, useMemo } from 'react';
+import { Drawer, Input, Button, App, AutoComplete, Divider, Switch, Tooltip, Tag, Empty, Spin } from 'antd';
+import { CheckOutlined, FolderOutlined, ClockCircleOutlined, FileTextOutlined, ThunderboltOutlined, RightOutlined } from '@ant-design/icons';
 import { Cron } from 'react-js-cron';
 import 'react-js-cron/dist/styles.css';
 import * as db from '../utils/database';
 import type { ProjectDirectory } from '../utils/database';
-import type { Todo, ExecutorConfig, ExecutorOption } from '../types';
+import type { Todo, ExecutorConfig, ExecutorOption, SkillMeta, ExecutorSkills } from '../types';
 import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '../utils/cron';
-import { EXECUTORS, executorConfigToOption } from '../types';
+import { EXECUTORS, executorConfigToOption, getExecutorColor } from '../types';
 import { TagCheckCardGroup } from './TagCheckCard';
 import { CronPresetSelect } from './CronPresetSelect';
 import { MdEditor } from './MdEditor';
@@ -21,6 +21,13 @@ interface TodoDrawerProps {
 }
 
 const DEFAULT_CRON = '0 */10 * * * *';
+
+const PROMPT_PARAMS = [
+  { key: '{{content}}', label: 'content', desc: '消息内容（已清理格式）' },
+  { key: '{{message}}', label: 'message', desc: '原始消息文本' },
+  { key: '{{raw_message}}', label: 'raw_message', desc: '未处理的原始消息' },
+  { key: '{{slash_command}}', label: 'slash_command', desc: '斜杠命令内容' },
+];
 
 export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerProps) {
   const { message } = App.useApp();
@@ -38,12 +45,23 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
   const [executorOptions, setExecutorOptions] = useState<ExecutorOption[]>(EXECUTORS);
   const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
 
+  // Skills
+  const [allExecutorSkills, setAllExecutorSkills] = useState<ExecutorSkills[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillsExpanded, setSkillsExpanded] = useState(false);
+
   // Scheduler
   const [schedulerEnabled, setSchedulerEnabled] = useState(false);
   const [schedulerConfig, setSchedulerConfig] = useState<string>('');
 
   // Loading states
   const [loading, setLoading] = useState(false);
+
+  // Filter skills for current executor
+  const currentSkills = useMemo(() => {
+    const found = allExecutorSkills.find(e => e.executor === executor);
+    return found?.skills || [];
+  }, [executor, allExecutorSkills]);
 
   // Initialize data when drawer opens
   useEffect(() => {
@@ -58,6 +76,13 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
         }
         setProjectDirectories(directories);
       }).catch(() => {});
+
+      // Load skills list
+      setSkillsLoading(true);
+      db.getSkillsList()
+        .then((data) => setAllExecutorSkills(data))
+        .catch(() => {})
+        .finally(() => setSkillsLoading(false));
     }
   }, [open]);
 
@@ -86,6 +111,16 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
       }
     }
   }, [open, todo]);
+
+  const handleSkillClick = (skill: SkillMeta) => {
+    const skillRef = `/${skill.name}`;
+    setPrompt(prev => {
+      if (!prev.trim()) return skillRef;
+      // If prompt already ends with newline, just append
+      if (prev.endsWith('\n')) return prev + skillRef;
+      return prev + '\n' + skillRef;
+    });
+  };
 
   const handleSave = async () => {
     if (!title.trim()) {
@@ -166,6 +201,8 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
     }
   };
 
+  const executorColor = getExecutorColor(executor);
+
   return (
     <Drawer
       title={isEditMode ? '编辑任务' : '创建任务'}
@@ -205,36 +242,6 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
 
         {/* Scrollable content */}
         <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px' }}>
-          {/* Tags */}
-          {tags.length > 0 && (
-            <>
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14 }}>标签</div>
-                <TagCheckCardGroup
-                  tags={tags}
-                  value={selectedTags[0] || null}
-                  onChange={(val) => setSelectedTags(val ? [val as number] : [])}
-                />
-              </div>
-              <Divider style={{ margin: '8px 0 16px' }} />
-            </>
-          )}
-
-          {/* Prompt Editor */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14 }}>
-              <FileTextOutlined style={{ color: 'var(--color-primary)', marginRight: 6 }} />
-              Prompt
-            </div>
-            <MdEditor
-              value={prompt}
-              onChange={setPrompt}
-              height={200}
-            />
-          </div>
-
-          <Divider style={{ margin: '8px 0 16px' }} />
-
           {/* Executor Selection */}
           <div style={{ marginBottom: 16 }}>
             <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14 }}>执行器</div>
@@ -307,6 +314,213 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
               })}
             </div>
           </div>
+
+          <Divider style={{ margin: '8px 0 16px' }} />
+
+          {/* Tags */}
+          {tags.length > 0 && (
+            <>
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14 }}>标签</div>
+                <TagCheckCardGroup
+                  tags={tags}
+                  value={selectedTags[0] || null}
+                  onChange={(val) => setSelectedTags(val ? [val as number] : [])}
+                />
+              </div>
+              <Divider style={{ margin: '8px 0 16px' }} />
+            </>
+          )}
+
+          {/* Prompt Editor */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14 }}>
+              <FileTextOutlined style={{ color: 'var(--color-primary)', marginRight: 6 }} />
+              Prompt
+            </div>
+            <MdEditor
+              value={prompt}
+              onChange={setPrompt}
+              height={200}
+            />
+            {/* Prompt parameter hints */}
+            <div style={{
+              marginTop: 8,
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 6,
+              alignItems: 'center',
+            }}>
+              <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginRight: 2 }}>可用参数:</span>
+              {PROMPT_PARAMS.map(p => (
+                <Tooltip key={p.key} title={p.desc}>
+                  <code
+                    onClick={() => {
+                      setPrompt(prev => prev + p.key);
+                    }}
+                    style={{
+                      fontSize: 11,
+                      padding: '1px 6px',
+                      borderRadius: 4,
+                      background: 'var(--color-fill-quaternary)',
+                      border: '1px solid var(--color-border-secondary)',
+                      cursor: 'pointer',
+                      color: 'var(--color-text-secondary)',
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-primary)';
+                      (e.currentTarget as HTMLElement).style.color = 'var(--color-primary)';
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-border-secondary)';
+                      (e.currentTarget as HTMLElement).style.color = 'var(--color-text-secondary)';
+                    }}
+                  >
+                    {p.key}
+                  </code>
+                </Tooltip>
+              ))}
+            </div>
+          </div>
+
+          {/* Skills Card List */}
+          {currentSkills.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div
+                onClick={() => setSkillsExpanded(prev => !prev)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setSkillsExpanded(prev => !prev);
+                  }
+                }}
+                style={{
+                  marginBottom: skillsExpanded ? 10 : 0,
+                  fontWeight: 600,
+                  fontSize: 14,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  userSelect: 'none',
+                }}
+              >
+                <RightOutlined style={{
+                  color: executorColor,
+                  fontSize: 10,
+                  marginRight: 6,
+                  transition: 'transform 0.2s',
+                  transform: skillsExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                }} />
+                <ThunderboltOutlined style={{ color: executorColor, marginRight: 6 }} />
+                Skills
+                <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--color-text-tertiary)', marginLeft: 8 }}>
+                  {currentSkills.length} 个可用
+                </span>
+              </div>
+              {skillsExpanded && (
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(2, 1fr)',
+                  gap: 10,
+                }}>
+                  {currentSkills.map(skill => (
+                  <div
+                    key={skill.name}
+                    onClick={() => handleSkillClick(skill)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleSkillClick(skill);
+                      }
+                    }}
+                    style={{
+                      padding: '10px 12px',
+                      borderRadius: 8,
+                      border: '1px solid var(--color-border-secondary)',
+                      background: 'var(--color-bg-elevated)',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      overflow: 'hidden',
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLDivElement).style.borderColor = executorColor;
+                      (e.currentTarget as HTMLDivElement).style.background = `${executorColor}08`;
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--color-border-secondary)';
+                      (e.currentTarget as HTMLDivElement).style.background = 'var(--color-bg-elevated)';
+                    }}
+                  >
+                    <div style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: 'var(--color-text)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {skill.name}
+                    </div>
+                    {skill.description && (
+                      <div style={{
+                        fontSize: 11,
+                        color: 'var(--color-text-tertiary)',
+                        marginTop: 4,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {skill.description}
+                      </div>
+                    )}
+                    <div style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: 4,
+                      marginTop: 6,
+                      alignItems: 'center',
+                    }}>
+                      {skill.version && (
+                        <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0 }} color="blue">v{skill.version}</Tag>
+                      )}
+                      {skill.author && (
+                        <span style={{ fontSize: 10, color: 'var(--color-text-quaternary)' }}>{skill.author}</span>
+                      )}
+                      {skill.file_count > 0 && (
+                        <span style={{ fontSize: 10, color: 'var(--color-text-quaternary)', marginLeft: 'auto' }}>
+                          {skill.file_count} 文件
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              )}
+            </div>
+          )}
+
+          {skillsLoading && currentSkills.length === 0 && (
+            <div style={{ textAlign: 'center', padding: 16 }}>
+              <Spin size="small" />
+            </div>
+          )}
+
+          {!skillsLoading && currentSkills.length === 0 && allExecutorSkills.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="当前执行器暂无 Skills"
+                style={{ margin: 0 }}
+              />
+            </div>
+          )}
+
+          <Divider style={{ margin: '8px 0 16px' }} />
 
           {/* Workspace */}
           <div style={{ marginBottom: 16 }}>
