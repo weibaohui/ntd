@@ -1211,6 +1211,14 @@ mod tests {
         let (all, total_all) = db.get_execution_records(todo_id, 10, 0, None).await.unwrap();
         assert_eq!(total_all, 3);
         assert_eq!(all.len(), 3);
+
+        // Test that Some("all") also returns all records (issue #321)
+        let (all_filter, total_all_filter) =
+            db.get_execution_records(todo_id, 10, 0, Some("all"))
+                .await
+                .unwrap();
+        assert_eq!(total_all_filter, 3);
+        assert_eq!(all_filter.len(), 3);
     }
 
     #[tokio::test]
