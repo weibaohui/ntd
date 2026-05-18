@@ -490,9 +490,25 @@ mod joinai_executor_extended_tests {
         let args = executor.command_args_with_session("continue", Some("ses_abc123"), true);
         assert!(args.contains(&"-s".to_string()));
         assert!(args.contains(&"ses_abc123".to_string()));
+        assert!(args.contains(&"--agent".to_string()));
+        assert!(args.contains(&"yolo".to_string()));
         assert_eq!(args[0], "run");
-        assert_eq!(args[1], "--format");
-        assert_eq!(args[2], "json");
+        assert_eq!(args[1], "--agent");
+        assert_eq!(args[2], "yolo");
+        assert_eq!(args[3], "--format");
+        assert_eq!(args[4], "json");
+    }
+
+    #[test]
+    fn test_command_args() {
+        let executor = JoinaiExecutor::new("joinai".to_string());
+        let args = executor.command_args("讲个笑话");
+        assert_eq!(args[0], "run");
+        assert_eq!(args[1], "--agent");
+        assert_eq!(args[2], "yolo");
+        assert_eq!(args[3], "--format");
+        assert_eq!(args[4], "json");
+        assert_eq!(args[5], "讲个笑话");
     }
 }
 
