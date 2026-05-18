@@ -325,6 +325,11 @@ pub struct ExecuteRequest {
 }
 
 #[derive(Deserialize)]
+pub struct SmartCreateRequest {
+    pub content: String,
+}
+
+#[derive(Deserialize)]
 pub struct TodoIdQuery {
     pub todo_id: i64,
     #[serde(default)]

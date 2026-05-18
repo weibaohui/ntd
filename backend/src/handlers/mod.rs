@@ -402,6 +402,7 @@ pub fn create_app(
         .route("/xyz/execution-records/{id}/resume", post(execution::resume_execution_handler))
         .route("/xyz/dashboard-stats", get(execution::get_dashboard_stats))
         .route("/xyz/execute", post(execution::execute_handler))
+        .route("/xyz/smart-create", post(execution::smart_create_handler))
         .route("/xyz/execute/stop", post(execution::stop_execution_handler))
         .route("/xyz/execute/force-fail", post(execution::force_fail_execution_handler))
         .route("/xyz/running-todos", get(execution::get_running_todos))

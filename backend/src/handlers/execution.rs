@@ -8,7 +8,7 @@ use crate::executor_service::{
 use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::{
     ApiResponse, DashboardStats, ExecuteRequest, ExecutionLogsPage, ExecutionRecordsPage,
-    ExecutionStatus, ExecutionSummary, TodoIdQuery,
+    ExecutionStatus, ExecutionSummary, SmartCreateRequest, TodoIdQuery,
 };
 
 /// 统一启动一条 Todo 执行，供手动执行、消息路由等入口复用。
@@ -427,4 +427,97 @@ pub async fn get_running_todos(
 ) -> Result<ApiResponse<Vec<crate::models::Todo>>, AppError> {
     let running_todos = state.db.get_running_todos().await?;
     Ok(ApiResponse::ok(running_todos))
+}
+
+/// 智能新建：用户提交自然语言描述，通过默认响应 Todo 自动执行
+pub async fn smart_create_handler(
+    State(state): State<AppState>,
+    ApiJson(req): ApiJson<SmartCreateRequest>,
+) -> Result<ApiResponse<serde_json::Value>, AppError> {
+    let content = req.content.trim();
+    if content.is_empty() {
+        return Err(AppError::BadRequest("内容不能为空".to_string()));
+    }
+
+    // 读取默认响应 Todo ID
+    let default_todo_id = {
+        let cfg = state.config.read().await;
+        cfg.default_response_todo_id
+    };
+
+    let todo_id = default_todo_id
+        .ok_or_else(|| AppError::BadRequest("尚未配置默认响应 Todo，请先在设置中配置".to_string()))?;
+
+    // 验证 Todo 存在
+    let todo = state
+        .db
+        .get_todo(todo_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest(format!("默认响应 Todo #{} 不存在", todo_id)))?;
+
+    // 检查并发限制
+    let max_concurrent = state.config.read().await.max_concurrent_todos;
+    let running_tasks = state.task_manager.get_all_task_infos().await;
+    let running_records = state.db.get_running_execution_records().await?;
+    let running_count_for_todo = running_records
+        .iter()
+        .filter(|r| {
+            if let Some(task_id) = &r.task_id {
+                running_tasks.iter().any(|t| t.task_id == *task_id)
+            } else {
+                false
+            }
+        })
+        .filter(|r| r.todo_id == todo_id)
+        .count();
+    if running_count_for_todo >= max_concurrent as usize {
+        return Err(AppError::BadRequest(format!(
+            "默认响应 Todo #{} 已有 {} 个执行在运行中（上限 {}），请稍后再试",
+            todo_id, running_count_for_todo, max_concurrent
+        )));
+    }
+
+    // 构建模板参数
+    let mut params = std::collections::HashMap::new();
+    params.insert("content".to_string(), content.to_string());
+    params.insert("message".to_string(), content.to_string());
+    params.insert("raw_message".to_string(), content.to_string());
+
+    let mut message = todo.prompt.clone();
+
+    // 如果 prompt 模板中没有任何占位符，将用户内容追加到 message 末尾，
+    // 确保用户提交的内容一定能传递到执行器
+    let has_placeholder = params.keys().any(|key| message.contains(&format!("{{{{{}}}}}", key)));
+    if !has_placeholder {
+        if message.is_empty() {
+            message = content.to_string();
+        } else {
+            message = format!("{}\n\n{}", message, content);
+        }
+    }
+
+    let result = start_todo_execution(RunTodoExecutionRequest {
+        db: state.db.clone(),
+        executor_registry: state.executor_registry.clone(),
+        tx: state.tx.clone(),
+        task_manager: state.task_manager.clone(),
+        config: state.config.clone(),
+        todo_id,
+        message,
+        req_executor: None,
+        trigger_type: "smart_create".to_string(),
+        params: Some(params),
+        resume_session_id: None,
+        resume_message: None,
+    })
+    .await?;
+
+    let record_id = result.record_id.expect("record_id checked above");
+
+    Ok(ApiResponse::ok(serde_json::json!({
+        "task_id": result.task_id,
+        "record_id": record_id,
+        "todo_id": todo_id,
+        "todo_title": todo.title,
+    })))
 }

@@ -224,18 +224,33 @@ body {
 }
 
 .todo-list-header {
-  padding: var(--space-lg) var(--space-xl);
+  padding: 12px 20px;
   border-bottom: 1px solid var(--color-border-light);
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
+  gap: 8px;
+  height: 56px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.todo-list-header h3 {
+  line-height: 24px !important;
+  height: 24px !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .header-actions {
   display: flex;
-  gap: 8px;
+  gap: 4px;
   align-items: center;
+  flex-shrink: 0;
 }
 
 /* Tag Filter Bar */
@@ -983,6 +998,285 @@ body {
 
 .mobile-fab:active {
   transform: scale(0.95);
+}
+
+/* ---------- Mobile FAB Group (Speed Dial) ---------- */
+.mobile-fab-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-fab) - 1);
+  background: transparent;
+}
+
+.mobile-fab-group {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: var(--z-fab);
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.mobile-fab-main {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #ffffff;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-md);
+  z-index: 1;
+  transition: all 0.2s ease;
+}
+
+.mobile-fab-main:hover {
+  background: var(--color-primary-hover);
+}
+
+.mobile-fab-main:active {
+  transform: scale(0.95);
+}
+
+.mobile-fab-main.expanded {
+  transform: rotate(45deg);
+}
+
+.mobile-fab-main.expanded:active {
+  transform: rotate(45deg) scale(0.95);
+}
+
+.mobile-fab-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: fabItemIn 0.2s ease forwards;
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+@keyframes fabItemIn {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.mobile-fab-item-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-md);
+  transition: all 0.15s ease;
+}
+
+.mobile-fab-item-btn:active {
+  transform: scale(0.92);
+}
+
+.mobile-fab-item-label {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-text);
+}
+
+.mobile-fab-create {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.mobile-fab-smart {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  color: #ffffff;
+}
+
+/* ---------- Smart Create Styles ---------- */
+.header-actions-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--color-border-light, #e5e7eb);
+  flex-shrink: 0;
+}
+
+.smart-create-btn {
+  color: #3b82f6 !important;
+  transition: all var(--transition-base, 0.2s ease);
+}
+
+.smart-create-btn:hover {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1)) !important;
+  color: #2563eb !important;
+}
+
+.create-btn {
+  color: var(--color-primary) !important;
+  transition: all var(--transition-base, 0.2s ease);
+}
+
+.create-btn:hover {
+  background: var(--color-primary-light) !important;
+  color: var(--color-primary-hover) !important;
+}
+
+.smart-create-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 0;
+}
+
+.smart-create-content .ant-input-textarea textarea {
+  background: var(--color-bg);
+  border-radius: var(--radius-sm, 8px);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.smart-create-hint {
+  font-size: 12px;
+  color: var(--color-text-tertiary, #999);
+  line-height: 1.6;
+}
+
+.smart-create-config-info {
+  font-size: 13px;
+  color: #3b82f6;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.smart-create-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.smart-create-footer .ant-btn-primary {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  border: none;
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.25);
+}
+
+.smart-create-footer .ant-btn-primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #2563eb, #7c3aed) !important;
+}
+
+.smart-create-shortcut {
+  font-size: 11px;
+  color: var(--color-text-quaternary, #bbb);
+  white-space: nowrap;
+}
+
+.smart-create-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  text-align: center;
+}
+
+.smart-create-empty-icon {
+  font-size: 48px;
+  color: var(--color-warning, #faad14);
+  margin-bottom: 16px;
+}
+
+.smart-create-empty-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 8px;
+}
+
+.smart-create-empty-desc {
+  font-size: 13px;
+  color: var(--color-text-secondary, #666);
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
+/* Dark theme smart create adjustments */
+[data-theme="dark"] .smart-create-btn {
+  color: #60a5fa !important;
+}
+
+[data-theme="dark"] .smart-create-btn:hover {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(139, 92, 246, 0.15)) !important;
+  color: #93bbfd !important;
+}
+
+[data-theme="dark"] .create-btn {
+  color: #22d3ee !important;
+}
+
+[data-theme="dark"] .create-btn:hover {
+  background: rgba(8, 145, 178, 0.15) !important;
+  color: #67e8f9 !important;
+}
+
+[data-theme="dark"] .smart-create-config-info {
+  color: #60a5fa;
+}
+
+[data-theme="dark"] .mobile-fab-smart {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+}
+
+[data-theme="dark"] .smart-create-footer .ant-btn-primary {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35);
+}
+
+/* Mobile smart create drawer adjustments */
+@media (max-width: 767px) {
+  .smart-create-content {
+    padding-bottom: env(safe-area-inset-bottom, 16px);
+  }
+
+  .smart-create-footer {
+    flex-direction: column;
+  }
+
+  .smart-create-footer .ant-btn {
+    width: 100%;
+    height: 44px;
+    font-size: 15px;
+  }
+
+  .smart-create-shortcut {
+    display: none;
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .mobile-fab-item {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  .mobile-fab-main.expanded {
+    transform: none;
+  }
 }
 
 /* ---------- Ant Design Custom Styles ---------- */

@@ -239,6 +239,19 @@ export async function resumeExecutionRecord(recordId: number, message?: string):
   return unwrap(await api.post<ApiResp<{ task_id: string; record_id: number }>>(`/xyz/execution-records/${recordId}/resume`, { message }));
 }
 
+// Smart Create API
+
+export interface SmartCreateResult {
+  task_id: string;
+  record_id: number;
+  todo_id: number;
+  todo_title: string;
+}
+
+export async function smartCreate(content: string): Promise<SmartCreateResult> {
+  return unwrap(await api.post<ApiResp<SmartCreateResult>>('/xyz/smart-create', { content }));
+}
+
 // Scheduler APIs
 
 export async function updateScheduler(

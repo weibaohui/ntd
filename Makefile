@@ -1,4 +1,4 @@
-.PHONY: setup install build clean dev stop watch kill-port cross-build cross-list
+.PHONY: setup install build clean dev stop kill-port cross-build cross-list
 
 # Source cargo env for all Rust commands
 export PATH := $(HOME)/.cargo/bin:$(PATH)
@@ -8,22 +8,19 @@ CARGO_ENV := source $(HOME)/.cargo/env &&
 setup:
 	@echo "=== Setting up ntd ==="
 	@echo ""
-	@echo "[1/5] Checking Rust toolchain..."
+	@echo "[1/4] Checking Rust toolchain..."
 	@which rustc > /dev/null 2>&1 || (echo "Installing Rust..." && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y)
 	@$(CARGO_ENV) echo "  Rust: $$(rustc --version 2>/dev/null || echo 'NOT FOUND')"
 	@echo ""
-	@echo "[2/5] Checking Node.js..."
+	@echo "[2/4] Checking Node.js..."
 	@echo "  Node: $$(node --version 2>/dev/null || echo 'NOT FOUND')"
 	@echo "  npm:  $$(npm --version 2>/dev/null || echo 'NOT FOUND')"
 	@echo ""
-	@echo "[3/5] Installing frontend dependencies..."
+	@echo "[3/4] Installing frontend dependencies..."
 	cd frontend && npm install --legacy-peer-deps
 	@echo ""
-	@echo "[4/5] Pre-compiling Rust backend (downloads deps)..."
+	@echo "[4/4] Pre-compiling Rust backend (downloads deps)..."
 	cd backend && $(CARGO_ENV) cargo fetch
-	@echo ""
-	@echo "[5/5] Installing dev tools (cargo-watch)..."
-	@$(CARGO_ENV) which cargo-watch > /dev/null 2>&1 || $(CARGO_ENV) cargo install cargo-watch
 	@echo ""
 	@echo "[OPT] Installing cross-build tool (cross)..."
 	@$(CARGO_ENV) which cross > /dev/null 2>&1 || $(CARGO_ENV) cargo install cross --locked
@@ -66,10 +63,12 @@ stop:
 	-@fuser -k 18088/tcp 2>/dev/null || true
 	@sleep 1
 
-# Development mode - build frontend + run backend with embedded frontend on port 18088
+# Development mode - build frontend + build backend + run on port 18088
 dev: stop
+	@echo "[1/2] Building frontend..."
 	cd frontend && npm run build
-	(cd backend && $(CARGO_ENV) NTD_MODE=dev RUST_BACKTRACE=1 RUST_LOG=info cargo watch -x run 2>&1 | tee ../backend.dev.log) &
+	@echo "[2/2] Building & running backend..."
+	cd backend && $(CARGO_ENV) NTD_MODE=dev RUST_BACKTRACE=1 RUST_LOG=info cargo run 2>&1 | tee ../backend.dev.log &
 	@echo $$! > $$HOME/.ntd/dev.pid
 	@echo "==========================================="
 	@echo "  Dev mode: http://localhost:18088"

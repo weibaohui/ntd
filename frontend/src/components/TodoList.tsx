@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../hooks/useApp';
 import { Button, Empty, Tooltip } from 'antd';
-import { PlusOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined } from '@ant-design/icons';
 import { useTheme } from '../hooks/useTheme';
 import { StatusPicker } from './StatusPicker';
 import * as db from '../utils/database';
@@ -10,6 +10,7 @@ import { formatRelativeTime, formatLocalDateTime } from '../utils/datetime';
 
 interface TodoListProps {
   onOpenCreateModal: () => void;
+  onOpenSmartCreate: () => void;
   onSelectTodo?: (todoId: string | number) => void;
   onShowDashboard?: () => void;
   onShowMemorial?: () => void;
@@ -30,7 +31,7 @@ function SkeletonList() {
   );
 }
 
-export function TodoList({ onOpenCreateModal, onSelectTodo, onShowDashboard, onShowMemorial, onShowSettings }: TodoListProps) {
+export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowSettings }: TodoListProps) {
   const { state, dispatch } = useApp();
   const { themeMode, toggleTheme } = useTheme();
   const { todos, selectedTodoId, selectedTagId, tags } = state;
@@ -115,15 +116,29 @@ export function TodoList({ onOpenCreateModal, onSelectTodo, onShowDashboard, onS
             aria-label="配置管理"
           />
           {!isMobile && (
-            <Button
-              type="primary"
-              size="small"
-              icon={<PlusOutlined />}
-              className="action-btn action-btn-primary"
-              onClick={onOpenCreateModal}
-            >
-              新建
-            </Button>
+            <>
+              <span className="header-actions-divider" />
+              <Tooltip title="智能新建">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<ThunderboltOutlined />}
+                  className="smart-create-btn"
+                  onClick={onOpenSmartCreate}
+                  aria-label="智能新建"
+                />
+              </Tooltip>
+              <Tooltip title="新建任务">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<PlusOutlined />}
+                  className="create-btn"
+                  onClick={onOpenCreateModal}
+                  aria-label="新建任务"
+                />
+              </Tooltip>
+            </>
           )}
         </div>
       </div>
