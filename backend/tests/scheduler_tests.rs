@@ -69,9 +69,10 @@ mod cron_validation_tests {
 
         assert!(next.is_some());
         let next_time = next.unwrap();
-        // Next should be at most 10 seconds in the future (strictly less to avoid boundary issues)
+        // Next should be at most 10 seconds in the future
+        // Allow 0 seconds for boundary conditions (when current time is exactly on a schedule boundary)
         let duration = next_time.signed_duration_since(now);
-        assert!(duration.num_seconds() > 0 && duration.num_seconds() < 10,
+        assert!(duration.num_seconds() >= 0 && duration.num_seconds() < 10,
             "next run should be within 10 seconds, got {} seconds", duration.num_seconds());
     }
 }
