@@ -22,6 +22,7 @@ import * as db from '../utils/database';
 import { getExecutorOption } from '../types';
 import type { DashboardStats, FeishuMessageStats } from '../types';
 import { formatRelativeTime } from '../utils/datetime';
+import { ShareCard } from './ShareCard';
 
 const TIME_RANGE_OPTIONS: { label: string; value: number | 'custom' }[] = [
   { label: '5小时', value: 5 },
@@ -865,6 +866,11 @@ export function Dashboard({ onBack }: DashboardProps) {
         </Card>
       );
     },
+  });
+
+  panels.push({
+    key: 'share-card',
+    render: () => <ShareCard />,
   });
 
   panels.push({

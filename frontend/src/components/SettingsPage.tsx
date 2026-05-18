@@ -65,6 +65,7 @@ import yaml from 'js-yaml';
 import { CronPresetSelect } from './CronPresetSelect';
 import { SkillsPanel } from './SkillsPanel';
 import { SessionManager } from './SessionManager';
+import { ShareCard } from './ShareCard';
 
 const { Paragraph } = Typography;
 const { Dragger } = Upload;
@@ -2944,6 +2945,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
               <Empty description="无法获取版本信息" />
             )}
           </Card>
+          <ShareCard />
         </Spin>
       ),
     },
