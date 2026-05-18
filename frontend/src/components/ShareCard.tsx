@@ -3,11 +3,14 @@ import { Card, Button, App } from 'antd';
 import { ShareAltOutlined, CopyOutlined, CheckOutlined } from '@ant-design/icons';
 
 const getSharePrompt = () => {
-  const port = typeof window !== 'undefined' ? window.location.port : '8088';
-  const origin = typeof window !== 'undefined' ? window.location.origin : `http://localhost:${port}`;
+  if (typeof window === 'undefined') {
+    return `请在我的电脑上全局安装 ntd (Nothing Todo) 这个工具，执行命令：
+npm install -g @weibaohui/nothing-todo
+安装完成后运行 ntd 启动服务，然后打开浏览器访问 http://localhost:8088`;
+  }
   return `请在我的电脑上全局安装 ntd (Nothing Todo) 这个工具，执行命令：
 npm install -g @weibaohui/nothing-todo
-安装完成后运行 ntd 启动服务，然后打开浏览器访问 ${origin}`;
+安装完成后运行 ntd 启动服务，然后打开浏览器访问 ${window.location.origin}`;
 };
 
 export function ShareCard() {
