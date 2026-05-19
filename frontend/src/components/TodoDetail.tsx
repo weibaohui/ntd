@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useApp } from '../hooks/useApp';
 import { Button, Empty, App, Popconfirm, Tag, Badge, Pagination, Segmented, Modal, Input, Tooltip, Select } from 'antd';
-import { PlayCircleOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined, ReloadOutlined, CopyOutlined, ArrowLeftOutlined, StopOutlined, DownOutlined, UpOutlined, UnorderedListOutlined, MessageOutlined, FileTextOutlined, LinkOutlined, LoadingOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined, ReloadOutlined, CopyOutlined, ArrowLeftOutlined, StopOutlined, DownOutlined, UpOutlined, UnorderedListOutlined, MessageOutlined, FileTextOutlined, LinkOutlined, LoadingOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { StatusPicker } from './StatusPicker';
 import { PieChart } from './PieChart';
 import { TodoDrawer } from './TodoDrawer';
@@ -587,6 +587,38 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
     }
   };
 
+  // 带参执行相关状态
+  const [executeWithArgsModalOpen, setExecuteWithArgsModalOpen] = useState(false);
+  const [executeArgs, setExecuteArgs] = useState('');
+  const [executeWithArgsLoading, setExecuteWithArgsLoading] = useState(false);
+
+  const handleOpenExecuteWithArgs = () => {
+    setExecuteArgs('');
+    setExecuteWithArgsModalOpen(true);
+  };
+
+  const handleExecuteWithArgs = async () => {
+    if (!selectedTodo) return;
+    setExecuteWithArgsLoading(true);
+    try {
+      const combinedMessage = executeArgs.trim()
+        ? `${selectedTodo.prompt || selectedTodo.title}\n\n用户补充信息：${executeArgs.trim()}`
+        : selectedTodo.prompt || selectedTodo.title;
+      await db.executeTodo(
+        selectedTodo.id,
+        combinedMessage,
+        selectedTodo.executor || undefined
+      );
+      message.success('任务已开始执行');
+      setExecuteWithArgsModalOpen(false);
+      setExecuteArgs('');
+    } catch (error) {
+      message.error('执行失败: ' + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setExecuteWithArgsLoading(false);
+    }
+  };
+
   const handleStopExecution = async (recordId: number) => {
     try {
       await db.stopExecution(recordId);
@@ -813,15 +845,26 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
         </div>
         {selectedTodo.prompt && <PromptDisplay content={selectedTodo.prompt} />}
         {/* Execute Button Row */}
-        <Button
-          type="primary"
-          icon={<PlayCircleOutlined />}
-          onClick={handleExecute}
-          block
-          className="btn-execute btn-execute-compact"
-        >
-          执行任务
-        </Button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button
+            type="primary"
+            icon={<PlayCircleOutlined />}
+            onClick={handleExecute}
+            block
+            className="btn-execute btn-execute-compact"
+          >
+            直接执行
+          </Button>
+          <Button
+            icon={<ThunderboltOutlined style={{ color: 'var(--color-primary)' }} />}
+            onClick={handleOpenExecuteWithArgs}
+            block
+            className="btn-execute btn-execute-compact"
+            style={{ borderColor: 'var(--color-primary)', color: 'var(--color-primary)' }}
+          >
+            带参执行
+          </Button>
+        </div>
       </div>
 
       {/* Execution History */}
@@ -1328,6 +1371,29 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
           onChange={(e) => setResumeMessage(e.target.value)}
           rows={4}
           placeholder="输入要继续发送的消息..."
+        />
+      </Modal>
+
+      <Modal
+        title={<><ThunderboltOutlined style={{ marginRight: 8 }} />带参执行</>}
+        open={executeWithArgsModalOpen}
+        onOk={handleExecuteWithArgs}
+        onCancel={() => {
+          setExecuteWithArgsModalOpen(false);
+          setExecuteArgs('');
+        }}
+        confirmLoading={executeWithArgsLoading}
+        okText="开始执行"
+        cancelText="取消"
+      >
+        <p style={{ marginBottom: 12, color: 'var(--color-text-secondary)' }}>
+          输入补充信息，将与任务原有内容一起执行：
+        </p>
+        <Input.TextArea
+          value={executeArgs}
+          onChange={(e) => setExecuteArgs(e.target.value)}
+          rows={4}
+          placeholder="输入补充信息..."
         />
       </Modal>
     </div>
