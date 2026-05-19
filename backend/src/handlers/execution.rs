@@ -487,6 +487,36 @@ pub async fn smart_create_handler(
     params.insert("raw_message".to_string(), content.to_string());
 
     let mut message = todo.prompt.clone();
+    // 检查是否有标准占位符 ({{content}}, {{message}}, {{raw_message}})
+    let has_standard_placeholder = params.keys().any(|key| message.contains(&format!("{{{{{}}}}}", key)));
+
+    // 检查是否有任何 {{...}} 格式的占位符
+    let placeholder_re = Regex::new(r"\{\{[^}]+\}\}").unwrap();
+    let has_any_placeholder = placeholder_re.is_match(&message);
+
+    if has_any_placeholder {
+        // 模板包含任意占位符（包括非标准占位符如 {{input}}），
+        // 将所有 {{...}} 替换为用户内容
+        message = placeholder_re.replace_all(&message, content.as_str()).to_string();
+    } else if message.is_empty() {
+        // 模板没有任何占位符且为空，直接用用户内容作为消息
+        message = content.to_string();
+    } else {
+        // 模板没有任何占位符但不为空，将用户内容追加到模板末尾
+        message = format!("{}\n\n{}", message, content);
+    }
+
+    let result = start_todo_execution(RunTodoExecutionRequest {
+        db: state.db.clone(),
+        executor_registry: state.executor_registry.clone(),
+        tx: state.tx.clone(),
+        task_manager: state.task_manager.clone(),
+        config: state.config.clone(),
+        todo_id,
+        message,
+        req_executor: None,
+        trigger_type: "smart_create".to_string(),
+        params: Some(params),
         resume_session_id: None,
         resume_message: None,
     })
