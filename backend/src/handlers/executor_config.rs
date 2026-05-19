@@ -169,6 +169,8 @@ pub async fn detect_all_executors(
         }
 
         let (found, resolved) = detect_binary(&ec.path);
+        // Clone resolved for path_resolved field before moving
+        let path_resolved = resolved.clone();
 
         // Update executor enabled state based on detection result
         let new_enabled = found;
@@ -195,7 +197,7 @@ pub async fn detect_all_executors(
             name: ec.name,
             display_name: ec.display_name,
             binary_found: found,
-            path_resolved: resolved,
+            path_resolved,
             enabled: new_enabled,
         });
     }
