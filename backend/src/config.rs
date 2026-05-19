@@ -158,6 +158,7 @@ impl Config {
             } else {
                 Config::default()
             };
+            cfg.normalize_paths();
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).ok();
             }
@@ -180,7 +181,9 @@ impl Config {
             }
             Err(e) => {
                 eprintln!("Warning: failed to read config file ({}), using defaults", e);
-                Config::default()
+                let mut cfg = Config::default();
+                cfg.normalize_paths();
+                cfg
             }
         }
     }
