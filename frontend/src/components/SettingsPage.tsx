@@ -1086,28 +1086,44 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
                 loading={batchDetecting}
                 onClick={async () => {
                   setBatchDetecting(true);
+                  let foundCount = 0;
                   try {
-                    const result = await db.detectAllExecutors();
-                    // Update executors state with new enabled states
-                    setExecutors((prev) =>
-                      prev.map((ec) => {
-                        const detected = result.results.find((r) => r.name === ec.name);
-                        if (detected) {
-                          return { ...ec, enabled: detected.enabled };
+                    for (const ec of executors) {
+                      setDetectingExecutor(ec.name);
+                      try {
+                        const result = await db.detectExecutor(ec.name);
+                        // Update detect results immediately
+                        setDetectResults((prev) => ({
+                          ...prev,
+                          [ec.name]: { found: result.binary_found, resolved: result.path_resolved },
+                        }));
+
+                        // Update executor enabled state if detection result differs
+                        if (result.binary_found && !ec.enabled) {
+                          const updated = await db.updateExecutor(ec.name, { enabled: true });
+                          setExecutors((prev) =>
+                            prev.map((e) => (e.name === ec.name ? updated : e))
+                          );
+                          foundCount++;
+                        } else if (!result.binary_found && ec.enabled) {
+                          const updated = await db.updateExecutor(ec.name, { enabled: false });
+                          setExecutors((prev) =>
+                            prev.map((e) => (e.name === ec.name ? updated : e))
+                          );
+                        } else if (result.binary_found) {
+                          foundCount++;
                         }
-                        return ec;
-                      })
-                    );
-                    // Update detect results
-                    const newDetectResults: Record<string, { found: boolean; resolved: string | null }> = {};
-                    for (const r of result.results) {
-                      newDetectResults[r.name] = { found: r.binary_found, resolved: r.path_resolved };
+                      } catch (err) {
+                        // Continue with next executor on individual detection failure
+                      }
+                      // Small delay between detections to avoid overwhelming the system
+                      await new Promise((resolve) => setTimeout(resolve, 100));
                     }
-                    setDetectResults(newDetectResults);
-                    message.success(`批量检测完成：${result.found_count}/${result.total} 个执行器可用`);
+                    message.success(`批量检测完成：${foundCount}/${executors.length} 个执行器可用`);
                   } catch (err: any) {
                     message.error('批量检测失败: ' + (err?.message || String(err)));
                   } finally {
+                    setDetectingExecutor(null);
                     setBatchDetecting(false);
                   }
                 }}

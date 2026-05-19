@@ -145,8 +145,30 @@ pub async fn detect_all_executors(
     let mut found_count = 0;
 
     for ec in executors {
-        let path = if ec.path.is_empty() { ec.name.clone() } else { ec.path.clone() };
-        let (found, resolved) = detect_binary(&path);
+        // If path is empty, detection fails (no valid path to detect)
+        if ec.path.is_empty() {
+            if ec.enabled {
+                // Was enabled but path is empty - disable it
+                state.db.update_executor(&ec.name, None, Some(false), None, None)
+                    .await
+                    .map_err(|e| AppError::Internal(e.to_string()))?;
+
+                if let Some(et) = crate::adapters::parse_executor_type(&ec.name) {
+                    state.executor_registry.unregister(et).await;
+                }
+            }
+
+            results.push(ExecutorDetectInfo {
+                name: ec.name,
+                display_name: ec.display_name,
+                binary_found: false,
+                path_resolved: None,
+                enabled: false,
+            });
+            continue;
+        }
+
+        let (found, resolved) = detect_binary(&ec.path);
 
         // Update executor enabled state based on detection result
         let new_enabled = found;
@@ -157,7 +179,9 @@ pub async fn detect_all_executors(
 
             // Update registry based on new enabled state
             if new_enabled {
-                state.executor_registry.register_by_name(&ec.name, &ec.path).await;
+                // Use resolved path if available, otherwise use original path
+                let path_to_register = resolved.unwrap_or(&ec.path);
+                state.executor_registry.register_by_name(&ec.name, path_to_register).await;
             } else if let Some(et) = crate::adapters::parse_executor_type(&ec.name) {
                 state.executor_registry.unregister(et).await;
             }
