@@ -740,17 +740,10 @@ pub async fn update_todo_auto_backup(
 }
 
 /// Start Todo auto backup scheduler
-///
-/// `cron_expr` 参数仅用于启动时验证，实际调度周期从 config 中读取
-#[allow(unused)]
 pub fn start_todo_auto_backup(
-    cron_expr: &str,
     db: std::sync::Arc<crate::db::Database>,
     config: std::sync::Arc<tokio::sync::RwLock<crate::config::Config>>,
 ) -> Result<(), String> {
-    // Validate initial cron expression but will re-read from config in the loop
-    let _ = cron::Schedule::from_str(cron_expr)
-        .map_err(|e| format!("Invalid cron: {}", e))?;
 
     let db_clone = db.clone();
     tokio::spawn(async move {
