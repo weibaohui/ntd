@@ -1116,8 +1116,6 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
                       } catch (err) {
                         // Continue with next executor on individual detection failure
                       }
-                      // Small delay between detections to avoid overwhelming the system
-                      await new Promise((resolve) => setTimeout(resolve, 100));
                     }
                     message.success(`批量检测完成：${foundCount}/${executors.length} 个执行器可用`);
                   } catch (err: any) {
