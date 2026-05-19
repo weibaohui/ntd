@@ -487,15 +487,11 @@ pub async fn smart_create_handler(
 
     let mut message = todo.prompt.clone();
 
-    // 如果 prompt 模板中没有任何占位符，将用户内容追加到 message 末尾，
-    // 确保用户提交的内容一定能传递到执行器
+    // 如果 prompt 模板中没有任何占位符，说明模板不期望用户输入作为参数，
+    // 此时直接用用户内容作为消息，而不是追加到模板末尾（避免模板中的其他占位符被保留）
     let has_placeholder = params.keys().any(|key| message.contains(&format!("{{{{{}}}}}", key)));
     if !has_placeholder {
-        if message.is_empty() {
-            message = content.to_string();
-        } else {
-            message = format!("{}\n\n{}", message, content);
-        }
+        message = content.to_string();
     }
 
     let result = start_todo_execution(RunTodoExecutionRequest {
