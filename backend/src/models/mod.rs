@@ -544,6 +544,22 @@ pub struct ExecutorTestResult {
     pub error: Option<String>,
 }
 
+#[derive(Serialize)]
+pub struct ExecutorBatchDetectResult {
+    pub results: Vec<ExecutorDetectInfo>,
+    pub total: usize,
+    pub found_count: usize,
+}
+
+#[derive(Serialize)]
+pub struct ExecutorDetectInfo {
+    pub name: String,
+    pub display_name: String,
+    pub binary_found: bool,
+    pub path_resolved: Option<String>,
+    pub enabled: bool,
+}
+
 // Executor types
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]

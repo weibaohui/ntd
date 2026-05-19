@@ -371,6 +371,22 @@ export async function testExecutor(name: string): Promise<{ test_passed: boolean
   return result;
 }
 
+export interface ExecutorBatchDetectResult {
+  results: {
+    name: string;
+    display_name: string;
+    binary_found: boolean;
+    path_resolved: string | null;
+    enabled: boolean;
+  }[];
+  total: number;
+  found_count: number;
+}
+
+export async function detectAllExecutors(): Promise<ExecutorBatchDetectResult> {
+  return unwrap(await api.post<ApiResp<ExecutorBatchDetectResult>>('/xyz/executors/detect-all'));
+}
+
 // Skills APIs
 
 export async function getSkillsList(): Promise<ExecutorSkills[]> {

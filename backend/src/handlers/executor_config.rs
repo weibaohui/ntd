@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::handlers::{ApiJson, AppError, AppState};
-use crate::models::{ApiResponse, ExecutorConfig, ExecutorDetectResult, ExecutorTestResult, UpdateExecutorRequest};
+use crate::models::{ApiResponse, ExecutorConfig, ExecutorDetectResult, ExecutorTestResult, UpdateExecutorRequest, ExecutorBatchDetectResult, ExecutorDetectInfo};
 
 pub async fn list_executors(State(state): State<AppState>) -> Result<ApiResponse<Vec<ExecutorConfig>>, AppError> {
     let executors = state.db.get_executors().await.map_err(|e| AppError::Internal(e.to_string()))?;
@@ -134,4 +134,52 @@ fn detect_binary(path: &str) -> (bool, Option<String>) {
         Ok(resolved) => (true, Some(resolved.to_string_lossy().to_string())),
         Err(_) => (false, None),
     }
+}
+
+pub async fn detect_all_executors(
+    State(state): State<AppState>,
+) -> Result<ApiResponse<ExecutorBatchDetectResult>, AppError> {
+    let executors = state.db.get_executors().await.map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let mut results: Vec<ExecutorDetectInfo> = Vec::new();
+    let mut found_count = 0;
+
+    for ec in executors {
+        let path = if ec.path.is_empty() { ec.name.clone() } else { ec.path.clone() };
+        let (found, resolved) = detect_binary(&path);
+
+        // Update executor enabled state based on detection result
+        let new_enabled = found;
+        if ec.enabled != new_enabled {
+            state.db.update_executor(&ec.name, None, Some(new_enabled), None, None)
+                .await
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+
+            // Update registry based on new enabled state
+            if new_enabled {
+                state.executor_registry.register_by_name(&ec.name, &ec.path).await;
+            } else if let Some(et) = crate::adapters::parse_executor_type(&ec.name) {
+                state.executor_registry.unregister(et).await;
+            }
+        }
+
+        if found {
+            found_count += 1;
+        }
+
+        results.push(ExecutorDetectInfo {
+            name: ec.name,
+            display_name: ec.display_name,
+            binary_found: found,
+            path_resolved: resolved,
+            enabled: new_enabled,
+        });
+    }
+
+    let total = results.len();
+    Ok(ApiResponse::ok(ExecutorBatchDetectResult {
+        results,
+        total,
+        found_count,
+    }))
 }

@@ -163,6 +163,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
   }, [executors]);
   const [detectingExecutor, setDetectingExecutor] = useState<string | null>(null);
   const [testingExecutor, setTestingExecutor] = useState<string | null>(null);
+  const [batchDetecting, setBatchDetecting] = useState(false);
   const [detectResults, setDetectResults] = useState<Record<string, { found: boolean; resolved: string | null }>>({});
   const [testModalVisible, setTestModalVisible] = useState(false);
   const [testModalData, setTestModalData] = useState<{ name: string; result: { test_passed: boolean; output: string | null; error: string | null } } | null>(null);
@@ -1078,6 +1079,42 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
             <Paragraph type="secondary" style={{ marginBottom: 16 }}>
               管理执行器的路径、开关状态，并检测二进制是否可用。关闭开关的执行器不会出现在 Todo 的执行器选择列表中。
             </Paragraph>
+            <div style={{ marginBottom: 12 }}>
+              <Button
+                type="primary"
+                icon={<SearchOutlined />}
+                loading={batchDetecting}
+                onClick={async () => {
+                  setBatchDetecting(true);
+                  try {
+                    const result = await db.detectAllExecutors();
+                    // Update executors state with new enabled states
+                    setExecutors((prev) =>
+                      prev.map((ec) => {
+                        const detected = result.results.find((r) => r.name === ec.name);
+                        if (detected) {
+                          return { ...ec, enabled: detected.enabled };
+                        }
+                        return ec;
+                      })
+                    );
+                    // Update detect results
+                    const newDetectResults: Record<string, { found: boolean; resolved: string | null }> = {};
+                    for (const r of result.results) {
+                      newDetectResults[r.name] = { found: r.binary_found, resolved: r.path_resolved };
+                    }
+                    setDetectResults(newDetectResults);
+                    message.success(`批量检测完成：${result.found_count}/${result.total} 个执行器可用`);
+                  } catch (err: any) {
+                    message.error('批量检测失败: ' + (err?.message || String(err)));
+                  } finally {
+                    setBatchDetecting(false);
+                  }
+                }}
+              >
+                批量检测
+              </Button>
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {executors.map((ec) => {
                 const detectResult = detectResults[ec.name];
