@@ -179,9 +179,9 @@ pub async fn detect_all_executors(
 
             // Update registry based on new enabled state
             if new_enabled {
-                // Use resolved path if available, otherwise use original path
-                let path_to_register = resolved.unwrap_or(&ec.path);
-                state.executor_registry.register_by_name(&ec.name, path_to_register).await;
+                // Use resolved path if available, otherwise clone original path
+                let path_to_register = resolved.unwrap_or_else(|| ec.path.clone());
+                state.executor_registry.register_by_name(&ec.name, &path_to_register).await;
             } else if let Some(et) = crate::adapters::parse_executor_type(&ec.name) {
                 state.executor_registry.unregister(et).await;
             }

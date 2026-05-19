@@ -1086,10 +1086,9 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
                 loading={batchDetecting}
                 onClick={async () => {
                   setBatchDetecting(true);
-                  let foundCount = 0;
+                  let availableCount = 0;
                   try {
                     for (const ec of executors) {
-                      setDetectingExecutor(ec.name);
                       try {
                         const result = await db.detectExecutor(ec.name);
                         // Update detect results immediately
@@ -1098,30 +1097,29 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
                           [ec.name]: { found: result.binary_found, resolved: result.path_resolved },
                         }));
 
-                        // Update executor enabled state if detection result differs
-                        if (result.binary_found && !ec.enabled) {
-                          const updated = await db.updateExecutor(ec.name, { enabled: true });
-                          setExecutors((prev) =>
-                            prev.map((e) => (e.name === ec.name ? updated : e))
-                          );
-                          foundCount++;
-                        } else if (!result.binary_found && ec.enabled) {
+                        // Update executor enabled state based on detection result
+                        if (result.binary_found) {
+                          availableCount++;
+                          if (!ec.enabled) {
+                            const updated = await db.updateExecutor(ec.name, { enabled: true });
+                            setExecutors((prev) =>
+                              prev.map((e) => (e.name === ec.name ? updated : e))
+                            );
+                          }
+                        } else if (ec.enabled) {
                           const updated = await db.updateExecutor(ec.name, { enabled: false });
                           setExecutors((prev) =>
                             prev.map((e) => (e.name === ec.name ? updated : e))
                           );
-                        } else if (result.binary_found) {
-                          foundCount++;
                         }
                       } catch (err) {
                         // Continue with next executor on individual detection failure
                       }
                     }
-                    message.success(`批量检测完成：${foundCount}/${executors.length} 个执行器可用`);
+                    message.success(`批量检测完成：${availableCount}/${executors.length} 个执行器可用`);
                   } catch (err: any) {
                     message.error('批量检测失败: ' + (err?.message || String(err)));
                   } finally {
-                    setDetectingExecutor(null);
                     setBatchDetecting(false);
                   }
                 }}
