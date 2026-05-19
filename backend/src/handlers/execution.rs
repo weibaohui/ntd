@@ -1,4 +1,5 @@
 use axum::extract::{Path, Query, State};
+use regex::Regex;
 use serde::Deserialize;
 
 use crate::adapters::parse_executor_type;
@@ -486,29 +487,6 @@ pub async fn smart_create_handler(
     params.insert("raw_message".to_string(), content.to_string());
 
     let mut message = todo.prompt.clone();
-
-    // 如果 prompt 模板中没有任何占位符，将用户内容追加到 message 末尾，
-    // 确保用户提交的内容一定能传递到执行器
-    let has_placeholder = params.keys().any(|key| message.contains(&format!("{{{{{}}}}}", key)));
-    if !has_placeholder {
-        if message.is_empty() {
-            message = content.to_string();
-        } else {
-            message = format!("{}\n\n{}", message, content);
-        }
-    }
-
-    let result = start_todo_execution(RunTodoExecutionRequest {
-        db: state.db.clone(),
-        executor_registry: state.executor_registry.clone(),
-        tx: state.tx.clone(),
-        task_manager: state.task_manager.clone(),
-        config: state.config.clone(),
-        todo_id,
-        message,
-        req_executor: None,
-        trigger_type: "smart_create".to_string(),
-        params: Some(params),
         resume_session_id: None,
         resume_message: None,
     })
