@@ -369,7 +369,7 @@ pub async fn delete_backup_file(
     let path = if req.backup_type == "todo" {
         todo_backup_dir().join(&req.filename)
     } else {
-        // DB backup - need to get the db filename from config
+        // backup_type 为空或 "db" 时按数据库备份处理
         let cfg = state.config.read().await;
         let db_path = PathBuf::from(&cfg.db_path);
         let db_filename = db_path.file_name()
@@ -408,7 +408,7 @@ pub async fn download_backup_file(
     let path = if query.backup_type == "todo" {
         todo_backup_dir().join(&query.filename)
     } else {
-        // DB backup - need to get the db filename from config
+        // backup_type 为空或 "db" 时按数据库备份处理
         let cfg = state.config.read().await;
         let db_path = PathBuf::from(&cfg.db_path);
         let db_filename = db_path.file_name()
@@ -418,6 +418,65 @@ pub async fn download_backup_file(
         db_backup_dir(&db_filename).join(&query.filename)
     };
 
+    if !path.exists() {
+        return Err(AppError::NotFound);
+    }
+
+    let filename = query.filename.clone();
+    let bytes = tokio::task::spawn_blocking(move || std::fs::read(&path))
+        .await
+        .map_err(|e| AppError::Internal(format!("Task join error: {}", e)))?
+        .map_err(|e| AppError::Internal(format!("Failed to read backup file: {}", e)))?;
+
+    let disposition = format!("attachment; filename=\"{}\"", filename);
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        bytes,
+    ))
+}
+
+// ============ Todo 备份文件操作（独立端点） ============
+
+/// 删除 Todo 备份文件
+#[derive(Deserialize)]
+pub struct DeleteTodoBackupRequest {
+    pub filename: String,
+}
+
+pub async fn delete_todo_backup_file(
+    axum::Json(req): axum::Json<DeleteTodoBackupRequest>,
+) -> Result<ApiResponse<String>, AppError> {
+    // 安全检查：文件名不能包含路径分隔符
+    if req.filename.contains('/') || req.filename.contains('\\') || req.filename.contains("..") {
+        return Err(AppError::BadRequest("Invalid filename".to_string()));
+    }
+    let path = todo_backup_dir().join(&req.filename);
+    if !path.exists() {
+        return Err(AppError::NotFound);
+    }
+    tokio::task::spawn_blocking(move || std::fs::remove_file(&path))
+        .await
+        .map_err(|e| AppError::Internal(format!("Task join error: {}", e)))?
+        .map_err(|e| AppError::Internal(format!("Failed to delete: {}", e)))?;
+    Ok(ApiResponse::ok("已删除".to_string()))
+}
+
+/// 下载 Todo 备份文件
+#[derive(Deserialize)]
+pub struct DownloadTodoBackupQuery {
+    pub filename: String,
+}
+
+pub async fn download_todo_backup_file(
+    Query(query): Query<DownloadTodoBackupQuery>,
+) -> Result<impl IntoResponse, AppError> {
+    if query.filename.contains('/') || query.filename.contains('\\') || query.filename.contains("..") {
+        return Err(AppError::BadRequest("Invalid filename".to_string()));
+    }
+    let path = todo_backup_dir().join(&query.filename);
     if !path.exists() {
         return Err(AppError::NotFound);
     }
@@ -692,23 +751,6 @@ pub async fn update_todo_auto_backup(
         .map_err(|e| AppError::Internal(format!("Failed to save config: {}", e)))?;
 
     Ok(ApiResponse::ok("Todo 自动备份配置已更新".to_string()))
-}
-
-/// 执行 Todo 备份（供定时任务调用）
-pub fn perform_todo_backup_sync(_db_path: &str, _max_files: usize) -> Result<String, String> {
-    // This is a synchronous wrapper that creates the zip file
-    // The actual data fetching is done in the async context
-    let dir = todo_backup_dir();
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create backup dir: {}", e))?;
-
-    let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
-    let backup_filename = format!("todo-backup-{}.zip", timestamp);
-    let backup_path = dir.join(&backup_filename);
-
-    // Note: The actual data (YAML content) should be passed in
-    // This function just creates the zip file structure
-    Ok(format!("Todo backup created: {}", backup_path.display()))
 }
 
 /// Start Todo auto backup scheduler

@@ -373,11 +373,11 @@ export async function updateTodoAutoBackup(enabled: boolean, cron: string, maxFi
 }
 
 export async function deleteTodoBackupFile(filename: string): Promise<string> {
-  return unwrap(await api.delete<ApiResp<string>>('/xyz/backup/database/file', { data: { filename, backup_type: 'todo' } }));
+  return unwrap(await api.delete<ApiResp<string>>('/xyz/backup/todo/file', { data: { filename } }));
 }
 
 export function downloadTodoBackupFileUrl(filename: string): string {
-  return `/xyz/backup/database/file?filename=${encodeURIComponent(filename)}&backup_type=todo`;
+  return `/xyz/backup/todo/file?filename=${encodeURIComponent(filename)}`;
 }
 
 // Config APIs

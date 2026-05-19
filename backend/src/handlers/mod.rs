@@ -421,6 +421,7 @@ pub fn create_app(
         .route("/xyz/backup/todo/status", get(backup::get_todo_backup_status))
         .route("/xyz/backup/todo/trigger", post(backup::trigger_todo_backup))
         .route("/xyz/backup/todo/auto", put(backup::update_todo_auto_backup))
+        .route("/xyz/backup/todo/file", get(backup::download_todo_backup_file).delete(backup::delete_todo_backup_file))
         .route("/xyz/config", get(config::get_config).put(config::update_config))
         .route("/xyz/executors", get(executor_config::list_executors))
         .route("/xyz/executors/{name}", put(executor_config::update_executor))
