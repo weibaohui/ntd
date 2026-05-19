@@ -433,6 +433,7 @@ pub struct DeleteTodoBackupRequest {
 }
 
 pub async fn delete_todo_backup_file(
+    State(_state): State<AppState>,
     axum::Json(req): axum::Json<DeleteTodoBackupRequest>,
 ) -> Result<ApiResponse<String>, AppError> {
     // 安全检查：文件名不能包含路径分隔符
