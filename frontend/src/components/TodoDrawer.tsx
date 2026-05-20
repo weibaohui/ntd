@@ -544,7 +544,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
           </div>
 
           {/* Worktree Switch */}
-          {(executor === 'claudecode' || executor === 'hermes') && (
+          {(executor === 'claudecode' || executor === 'claude_code' || executor === 'hermes') && (
             <div style={{ marginBottom: 16 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>
@@ -553,14 +553,8 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
                 <Switch
                   checked={worktreeEnabled}
                   onChange={(checked) => setWorktreeEnabled(checked)}
-                  disabled={!workspace}
                 />
               </div>
-              {!workspace && (
-                <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
-                  请先设置工作目录
-                </div>
-              )}
             </div>
           )}
 

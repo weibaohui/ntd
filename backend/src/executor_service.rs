@@ -201,19 +201,18 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         executor.command_args_with_session(&message, Some(session_id_for_executor), is_resume);
 
     // Add worktree flag for claude_code and hermes executors
-    // claude_code: --worktree <path>
+    // claude_code: --worktree (no path argument, Claude Code auto-manages worktree cleanup)
     // hermes: --worktree (no path argument, uses current directory)
+    // Must be placed before --session-id or --resume flag
     let exec_type = executor.executor_type();
     if todo_worktree_enabled {
         match exec_type {
-            ExecutorType::Claudecode => {
-                if let Some(wt) = todo_workspace.as_deref() {
-                    command_args.push("--worktree".to_string());
-                    command_args.push(wt.to_string());
-                }
-            }
-            ExecutorType::Hermes => {
-                command_args.push("--worktree".to_string());
+            ExecutorType::Claudecode | ExecutorType::Hermes => {
+                // Find position of --session-id or --resume and insert before it
+                let insert_pos = command_args.iter()
+                    .position(|s| s == "--session-id" || s == "--resume")
+                    .unwrap_or(command_args.len());
+                command_args.insert(insert_pos, "--worktree".to_string());
             }
             _ => {}
         }
