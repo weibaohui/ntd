@@ -103,10 +103,13 @@ pub async fn feishu_begin() -> Result<impl IntoResponse, AppError> {
         .and_then(|v| v.as_u64())
         .unwrap_or(5);
 
-    let expire_in = body
+    let _feishu_expire_in = body
         .get("expire_in")
         .and_then(|v| v.as_u64())
         .unwrap_or(600);
+
+    // 覆盖为 30 分钟，避免二维码太快过期
+    let expire_in: u64 = 1800;
 
     let response = FeishuBeginResponse {
         device_code,
@@ -143,7 +146,7 @@ pub async fn feishu_poll(
     Json(req): Json<FeishuPollRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let client = Client::new();
-    let expire_in = req.expire_in.unwrap_or(600).clamp(1, 600);
+    let expire_in = req.expire_in.unwrap_or(600).clamp(60, 1800);
     let interval = Duration::from_secs(req.interval.unwrap_or(5).clamp(1, 30));
     let deadline = std::time::Instant::now() + Duration::from_secs(expire_in);
 
@@ -197,6 +200,18 @@ pub async fn feishu_poll(
                 .create_agent_bot("feishu", bot_name.as_deref().unwrap_or("Feishu Bot"), app_id, app_secret, open_id.map(String::from), domain.clone())
                 .await
                 .map_err(|e| AppError::Internal(e.to_string()))?;
+
+            // 启动新创建的 bot listener
+            if let Ok(Some(bot)) = state.db.get_agent_bot(bot_id).await {
+                if bot.enabled {
+                    let listener = state.feishu_listener.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = listener.start_bot(&bot).await {
+                            tracing::error!("failed to start feishu bot {}: {e}", bot.id);
+                        }
+                    });
+                }
+            }
 
             return Ok(ApiResponse::ok(FeishuPollResponse {
                 success: true,
