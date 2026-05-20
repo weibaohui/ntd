@@ -2,7 +2,7 @@
 
 # Source cargo env for all Rust commands
 export PATH := $(HOME)/.cargo/bin:$(PATH)
-CARGO_ENV := source $(HOME)/.cargo/env &&
+CARGO_ENV := . $(HOME)/.cargo/env &&
 
 # Setup: install all dependencies for frontend and backend
 setup:
@@ -77,7 +77,7 @@ dev: stop
 	cd frontend && npm run build
 	@echo "[2/2] Building & running backend..."
 	cd backend && $(CARGO_ENV) NTD_MODE=dev RUST_BACKTRACE=1 RUST_LOG=info cargo run 2>&1 | tee ../backend.dev.log &
-	@echo $$! > $$HOME/.ntd/dev.pid
+	@mkdir -p $$HOME/.ntd && echo $$! > $$HOME/.ntd/dev.pid
 	@echo "==========================================="
 	@echo "  Dev mode: http://localhost:18088"
 	@echo "==========================================="

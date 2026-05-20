@@ -311,6 +311,11 @@ async fn run_server(cli_port: Option<u16>) {
 
     let cfg = ntd::config::Config::load();
 
+    // Ensure ~/.ntd/ directory exists on first startup
+    if let Some(home) = dirs::home_dir() {
+        std::fs::create_dir_all(home.join(".ntd")).ok();
+    }
+
     // Expand tilde in db_path to home directory (normalize_paths is called in Config::load,
     // but may not have expanded if config file didn't exist or was corrupted)
     let db_path = if cfg.db_path.starts_with('~') {
