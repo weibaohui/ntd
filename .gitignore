@@ -54,3 +54,5 @@ frontend/test-results/.last-run.json
 .sisyphus/
 .worktrees
 frontend/node_modules
+.antigravitycli/
+.codebuddy/
