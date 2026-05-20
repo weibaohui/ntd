@@ -104,7 +104,7 @@ interface LeaderboardProps {
 const RANK_COLORS = ['#f59e0b', '#94a3b8', '#cd7f32'];
 
 export function Leaderboard({ data, maxTokens, loading: _loading = false }: LeaderboardProps) {
-  const max = maxTokens ?? Math.max(...data.map(d => d.tokens), 1);
+  const max = maxTokens ?? Math.max(1, ...data.map(d => d.tokens ?? 0));
 
   if (data.length === 0) {
     return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无排行数据" />;
@@ -155,11 +155,11 @@ export function Leaderboard({ data, maxTokens, loading: _loading = false }: Lead
             </div>
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-text)' }}>
-                {item.tokens >= 10000 ? `${(item.tokens / 10000).toFixed(1)}w` : item.tokens}
+                {item.tokens >= 10000 ? `${(item.tokens / 10000).toFixed(1)}w` : (item.tokens ?? 0)}
               </div>
-              {item.change !== undefined && (
-                <div style={{ fontSize: 10, color: item.change > 0 ? '#22c55e' : '#ef4444' }}>
-                  {item.change > 0 ? '+' : ''}{item.change.toFixed(1)}%
+              {item.change != null && (
+                <div style={{ fontSize: 10, color: (item.change ?? 0) > 0 ? '#22c55e' : '#ef4444' }}>
+                  {(item.change ?? 0) > 0 ? '+' : ''}{(item.change ?? 0).toFixed(1)}%
                 </div>
               )}
             </div>
@@ -319,6 +319,7 @@ interface HighlightStatProps {
 }
 
 export function HighlightStat({ label, value, subLabel, subValue, color, icon }: HighlightStatProps) {
+  const displayValue = value ?? '-';
   return (
     <div
       style={{
@@ -333,9 +334,9 @@ export function HighlightStat({ label, value, subLabel, subValue, color, icon }:
         <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>{label}</span>
       </div>
       <div style={{ fontSize: 22, fontWeight: 700, color, marginBottom: 4 }}>
-        {typeof value === 'number' ? (
-          <AnimatedNumber value={value} duration={1} />
-        ) : value}
+        {typeof displayValue === 'number' ? (
+          <AnimatedNumber value={displayValue} duration={1} />
+        ) : displayValue}
       </div>
       {subLabel && (
         <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>

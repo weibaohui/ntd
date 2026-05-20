@@ -14,7 +14,6 @@ import {
   MessageOutlined,
   TrophyOutlined,
   FireOutlined,
-  RiseOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -372,7 +371,7 @@ export function Dashboard({ onBack }: DashboardProps) {
     ),
   });
 
-  // Key Metrics - 类似 Token Farm Dashboard 的指标卡片
+  // TODO: 新增面板暂时注释掉，排查崩溃问题
   panels.push({
     key: 'key-metrics',
     render: () => (
@@ -419,14 +418,14 @@ export function Dashboard({ onBack }: DashboardProps) {
         <MetricCard
           title="活跃天数"
           value={stats?.active_days ?? 0}
-          prefix={<FireOutlined />}
+          prefix={<ClockCircleOutlined />}
           color="#ef4444"
           loading={loading && !stats}
         />
         <MetricCard
           title="连续天数"
           value={stats?.streak_days ?? 0}
-          prefix={<RiseOutlined />}
+          prefix={<TagOutlined />}
           color="#f97316"
           loading={loading && !stats}
         />
@@ -434,7 +433,7 @@ export function Dashboard({ onBack }: DashboardProps) {
           title="平均耗时"
           value={stats?.avg_duration_ms ? stats.avg_duration_ms / 1000 : 0}
           suffix="s"
-          prefix={<ClockCircleOutlined />}
+          prefix={<BarChartOutlined />}
           color="#0891b2"
           loading={loading && !stats}
           decimals={1}
@@ -455,22 +454,22 @@ export function Dashboard({ onBack }: DashboardProps) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
           <HighlightStat
             label="单日峰值"
-            value={stats?.peak_daily_executions ?? 284}
-            subLabel="2026年3月14日"
+            value={stats?.peak_daily_executions ?? 0}
+            subLabel="历史最高"
             color="#f59e0b"
             icon={<FireOutlined />}
           />
           <HighlightStat
             label="最高产模型"
-            value={stats?.top_model ?? 'Claude 4.6'}
+            value={stats?.top_model ?? '-'}
             subLabel={stats?.top_model_tokens ? `${(stats.top_model_tokens / 10000).toFixed(1)}万 tokens` : ''}
             color="#8b5cf6"
             icon={<ThunderboltOutlined />}
           />
           <HighlightStat
-            label="全球排名"
-            value="Top 3%"
-            subLabel="142,000+ 开发者中"
+            label="活跃天数"
+            value={stats?.active_days ?? 0}
+            subLabel="累计活跃"
             color="#22c55e"
             icon={<TrophyOutlined />}
           />
@@ -483,16 +482,10 @@ export function Dashboard({ onBack }: DashboardProps) {
   panels.push({
     key: 'leaderboard',
     render: () => {
-      const leaderboardData = stats?.leaderboard ?? [
-        { rank: 1, name: 'Claude', tokens: 7200000, sessions: 312, change: 12.5 },
-        { rank: 2, name: 'Codex', tokens: 2800000, sessions: 245, change: 8.2 },
-        { rank: 3, name: 'GPT', tokens: 1500000, sessions: 189, change: -3.1 },
-        { rank: 4, name: 'Gemini', tokens: 420000, sessions: 67, change: 5.4 },
-        { rank: 5, name: 'PaLM', tokens: 280000, sessions: 34, change: -1.2 },
-      ];
+      const leaderboardData = stats?.leaderboard ?? [];
       return (
         <Card
-          title={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TrophyOutlined /><span>执行排行榜</span></div>}
+          title={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TrophyOutlined /><span>模型排行榜</span></div>}
           className="dashboard-card" style={{ borderRadius: 12 }}
           bodyStyle={{ padding: '16px 20px' }}
         >
@@ -506,11 +499,24 @@ export function Dashboard({ onBack }: DashboardProps) {
   panels.push({
     key: 'team-members',
     render: () => {
-      const teamData = [
-        { name: 'Claude', role: 'Senior Architect', nickname: 'Thinking Machine', stats: { tokens: 7200000, sessions: 312, satisfaction: 98 }, color: '#8b5cf6' },
-        { name: 'Codex', role: 'Speed Runner', nickname: 'Code Ninja', stats: { tokens: 2800000, sessions: 245, satisfaction: 95 }, color: '#3b82f6' },
-        { name: 'GPT', role: 'Generalist', nickname: 'Wordsmith', stats: { tokens: 1500000, sessions: 189, satisfaction: 92 }, color: '#22c55e' },
-      ];
+      const teamData = stats?.leaderboard?.slice(0, 3).map((item, i) => ({
+        name: item.name,
+        role: 'Member',
+        nickname: `Rank #${i + 1}`,
+        stats: { tokens: item.tokens, sessions: item.sessions, satisfaction: 95 },
+        color: ['#8b5cf6', '#3b82f6', '#22c55e'][i] ?? '#8b5cf6',
+      })) ?? [];
+      if (teamData.length === 0) {
+        return (
+          <Card
+            title={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><UserOutlined /><span>团队成员</span></div>}
+            className="dashboard-card" style={{ borderRadius: 12 }}
+            bodyStyle={{ padding: '16px 20px' }}
+          >
+            <div style={{ textAlign: 'center', color: 'var(--color-text-tertiary)', padding: '20px 0' }}>暂无数据</div>
+          </Card>
+        );
+      }
       return (
         <Card
           title={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><UserOutlined /><span>团队成员</span></div>}
