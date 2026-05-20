@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Drawer, Input, Button, App, AutoComplete, Divider, Switch, Tooltip, Tag, Empty, Spin } from 'antd';
-import { CheckOutlined, FolderOutlined, ClockCircleOutlined, FileTextOutlined, ThunderboltOutlined, RightOutlined } from '@ant-design/icons';
+import { Drawer, Input, Button, App, AutoComplete, Divider, Switch, Tooltip, Tag, Empty, Spin, Modal, Card } from 'antd';
+import { CheckOutlined, FolderOutlined, ClockCircleOutlined, FileTextOutlined, ThunderboltOutlined, RightOutlined, SearchOutlined } from '@ant-design/icons';
 import { Cron } from 'react-js-cron';
 import 'react-js-cron/dist/styles.css';
 import * as db from '../utils/database';
 import type { ProjectDirectory } from '../utils/database';
-import type { Todo, ExecutorConfig, ExecutorOption, SkillMeta, ExecutorSkills } from '../types';
+import type { Todo, ExecutorConfig, ExecutorOption, SkillMeta, ExecutorSkills, TodoTemplate } from '../types';
 import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '../utils/cron';
 import { EXECUTORS, executorConfigToOption, getExecutorColor } from '../types';
 import { TagCheckCardGroup } from './TagCheckCard';
@@ -56,6 +56,13 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
 
   // Loading states
   const [loading, setLoading] = useState(false);
+
+  // Template selection state
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [templates, setTemplates] = useState<TodoTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   // Filter skills for current executor
   const currentSkills = useMemo(() => {
@@ -121,6 +128,51 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
       return prev + '\n' + skillRef;
     });
   };
+
+  // Template functions
+  const loadTemplates = () => {
+    setTemplatesLoading(true);
+    db.getTodoTemplates()
+      .then(setTemplates)
+      .catch(() => message.error('加载模板失败'))
+      .finally(() => setTemplatesLoading(false));
+  };
+
+  const openTemplateModal = () => {
+    loadTemplates();
+    setTemplateModalOpen(true);
+  };
+
+  const selectTemplate = (template: TodoTemplate) => {
+    setTitle(template.title);
+    setPrompt(template.prompt || '');
+    setTemplateModalOpen(false);
+    setSearchText('');
+    setSelectedCategory(null);
+    message.success('已应用模板');
+  };
+
+  // Get unique categories from templates
+  const categories = useMemo(() => {
+    const cats = Array.from(new Set(templates.map(t => t.category))).filter(c => c);
+    return cats.sort();
+  }, [templates]);
+
+  // Filter templates by search and category
+  const filteredTemplates = useMemo(() => {
+    let result = templates;
+    if (selectedCategory) {
+      result = result.filter(t => t.category === selectedCategory);
+    }
+    if (searchText.trim()) {
+      const search = searchText.toLowerCase();
+      result = result.filter(t =>
+        t.title.toLowerCase().includes(search) ||
+        (t.prompt?.toLowerCase().includes(search))
+      );
+    }
+    return result;
+  }, [templates, selectedCategory, searchText]);
 
   const handleSave = async () => {
     if (!title.trim()) {
@@ -319,9 +371,17 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
 
           {/* Prompt Editor */}
           <div style={{ marginBottom: 16 }}>
-            <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14 }}>
-              <FileTextOutlined style={{ color: 'var(--color-primary)', marginRight: 6 }} />
-              Prompt
+            <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <FileTextOutlined style={{ color: 'var(--color-primary)' }} />
+              <span>Prompt</span>
+              <Button
+                size="small"
+                icon={<FileTextOutlined />}
+                onClick={openTemplateModal}
+                style={{ marginLeft: 'auto' }}
+              >
+                从模板创建
+              </Button>
             </div>
             <MdEditor
               value={prompt}
@@ -605,6 +665,135 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
           </div>
         </div>
       </div>
+
+      {/* Template Selection Modal */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <FileTextOutlined style={{ color: 'var(--color-primary)' }} />
+            <span>选择模板</span>
+          </div>
+        }
+        open={templateModalOpen}
+        onCancel={() => {
+          setTemplateModalOpen(false);
+          setSearchText('');
+          setSelectedCategory(null);
+        }}
+        footer={null}
+        width={900}
+      >
+        <div className="template-selector">
+          {/* Search bar */}
+          <div className="template-search">
+            <Input
+              placeholder="搜索模板标题或内容..."
+              allowClear
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              style={{ width: '100%' }}
+              size="large"
+              prefix={<SearchOutlined style={{ color: 'var(--color-text-tertiary)' }} />}
+            />
+          </div>
+
+          {/* Content area */}
+          <div className="template-content" style={{ display: 'flex', gap: 16, flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            {/* Categories sidebar */}
+            <div className="template-categories" style={{ width: 180, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4, borderRight: '1px solid var(--color-border-light)', paddingRight: 16, overflowY: 'auto' }}>
+              <div
+                className={`template-category-item ${!selectedCategory ? 'active' : ''}`}
+                onClick={() => setSelectedCategory(null)}
+                style={{ display: 'flex', alignItems: 'center', padding: '10px 12px', borderRadius: 8, cursor: 'pointer', transition: 'all 0.2s ease', color: !selectedCategory ? 'var(--color-primary)' : 'var(--color-text-secondary)', fontWeight: !selectedCategory ? 600 : 400, fontSize: 14 }}
+              >
+                <span>全部模板</span>
+                <Tag style={{ marginLeft: 'auto' }}>{templates.length}</Tag>
+              </div>
+              {categories.map(category => {
+                const count = templates.filter(t => t.category === category).length;
+                return (
+                  <div
+                    key={category}
+                    className={`template-category-item ${selectedCategory === category ? 'active' : ''}`}
+                    onClick={() => setSelectedCategory(category)}
+                    style={{ display: 'flex', alignItems: 'center', padding: '10px 12px', borderRadius: 8, cursor: 'pointer', transition: 'all 0.2s ease', color: selectedCategory === category ? 'var(--color-primary)' : 'var(--color-text-secondary)', fontWeight: selectedCategory === category ? 600 : 400, fontSize: 14 }}
+                  >
+                    <span>{category}</span>
+                    <Tag style={{ marginLeft: 'auto' }}>{count}</Tag>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Templates list */}
+            <div className="template-list" style={{ flex: 1, overflowY: 'auto', paddingLeft: 16 }}>
+              <Spin spinning={templatesLoading}>
+                {filteredTemplates.length === 0 ? (
+                  <Empty
+                    description={searchText ? "未找到匹配的模板" : "暂无模板，请在设置中添加"}
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  />
+                ) : (
+                  <div className="template-cards" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+                    {filteredTemplates.map(template => (
+                      <Card
+                        key={template.id}
+                        size="small"
+                        className="template-card"
+                        onClick={() => selectTemplate(template)}
+                        hoverable
+                        style={{ cursor: 'pointer', transition: 'all 0.2s ease', border: '1px solid var(--color-border-light)' }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+                          <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--color-text)' }}>{template.title}</span>
+                          {template.is_system && <Tag color="blue" style={{ marginLeft: 8 }}>系统</Tag>}
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5, maxHeight: 60, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', wordBreak: 'break-word' }}>
+                          {template.prompt || '(无内容)'}
+                        </div>
+                        <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Tag>{template.category}</Tag>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </Spin>
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      <style>{`
+        .template-card:hover {
+          border-color: var(--color-primary) !important;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.09);
+          transform: translateY(-2px);
+        }
+        @media (max-width: 768px) {
+          .template-content {
+            flex-direction: column !important;
+          }
+          .template-categories {
+            width: 100% !important;
+            flex-direction: row !important;
+            flex-wrap: wrap;
+            gap: 8px;
+            border-right: none !important;
+            border-bottom: 1px solid var(--color-border-light);
+            padding-right: 0 !important;
+            padding-bottom: 16px;
+            overflow-x: auto !important;
+          }
+          .template-list {
+            padding-left: 0 !important;
+            padding-top: 16px;
+          }
+          .template-cards {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
     </Drawer>
   );
 }
