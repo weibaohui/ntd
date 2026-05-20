@@ -440,6 +440,26 @@ pub struct DashboardStats {
     pub trigger_type_distribution: Vec<TriggerTypeCount>,
     pub executor_duration_stats: Vec<ExecutorDuration>,
     pub model_cache_stats: Vec<ModelCacheStat>,
+    // Enhanced metrics
+    pub today_executions: i64,
+    pub executions_change: Option<f64>,
+    pub success_rate_change: Option<f64>,
+    pub cost_change: Option<f64>,
+    pub active_days: i64,
+    pub streak_days: i64,
+    pub peak_daily_executions: i64,
+    pub top_model: Option<String>,
+    pub top_model_tokens: Option<u64>,
+    pub leaderboard: Vec<LeaderboardItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LeaderboardItem {
+    pub rank: i32,
+    pub name: String,
+    pub tokens: u64,
+    pub sessions: i64,
+    pub change: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

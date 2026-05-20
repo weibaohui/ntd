@@ -895,6 +895,151 @@ impl Database {
         let recent_executions: Vec<crate::models::ExecutionRecord> =
             recent_records.into_iter().map(Into::into).collect();
 
+        // Calculate enhanced metrics
+        // Today and yesterday executions for change calculation
+        let today_sql = "SELECT COUNT(*) as count FROM execution_records WHERE date(started_at) = date('now')";
+        let yesterday_sql = "SELECT COUNT(*) as count FROM execution_records WHERE date(started_at) = date('now', '-1 day')";
+
+        let today_executions: i64 = self.conn
+            .query_one(Statement::from_string(backend, today_sql.to_string()))
+            .await?
+            .and_then(|row| row.try_get_by("count").ok())
+            .unwrap_or(0);
+
+        let yesterday_executions: i64 = self.conn
+            .query_one(Statement::from_string(backend, yesterday_sql.to_string()))
+            .await?
+            .and_then(|row| row.try_get_by("count").ok())
+            .unwrap_or(0);
+
+        let executions_change = if yesterday_executions > 0 {
+            Some((today_executions as f64 - yesterday_executions as f64) / yesterday_executions as f64 * 100.0)
+        } else {
+            None
+        };
+
+        // Success rate change (today vs yesterday)
+        let yesterday_success_sql = "SELECT COUNT(*) as count FROM execution_records WHERE date(started_at) = date('now', '-1 day') AND status = 'success'";
+        let yesterday_failed_sql = "SELECT COUNT(*) as count FROM execution_records WHERE date(started_at) = date('now', '-1 day') AND status = 'failed'";
+        let today_success_sql = "SELECT COUNT(*) as count FROM execution_records WHERE date(started_at) = date('now') AND status = 'success'";
+        let today_failed_sql = "SELECT COUNT(*) as count FROM execution_records WHERE date(started_at) = date('now') AND status = 'failed'";
+
+        let yesterday_success: i64 = self.conn
+            .query_one(Statement::from_string(backend, yesterday_success_sql.to_string()))
+            .await?
+            .and_then(|row| row.try_get_by("count").ok())
+            .unwrap_or(0);
+        let yesterday_failed: i64 = self.conn
+            .query_one(Statement::from_string(backend, yesterday_failed_sql.to_string()))
+            .await?
+            .and_then(|row| row.try_get_by("count").ok())
+            .unwrap_or(0);
+        let today_success: i64 = self.conn
+            .query_one(Statement::from_string(backend, today_success_sql.to_string()))
+            .await?
+            .and_then(|row| row.try_get_by("count").ok())
+            .unwrap_or(0);
+        let today_failed: i64 = self.conn
+            .query_one(Statement::from_string(backend, today_failed_sql.to_string()))
+            .await?
+            .and_then(|row| row.try_get_by("count").ok())
+            .unwrap_or(0);
+
+        let yesterday_total = yesterday_success + yesterday_failed;
+        let today_total = today_success + today_failed;
+        let yesterday_rate = if yesterday_total > 0 { yesterday_success as f64 / yesterday_total as f64 * 100.0 } else { 0.0 };
+        let today_rate = if today_total > 0 { today_success as f64 / today_total as f64 * 100.0 } else { 0.0 };
+        let success_rate_change = if yesterday_total > 0 { Some(today_rate - yesterday_rate) } else { None };
+
+        // Cost change (today vs yesterday)
+        let today_cost_sql = "SELECT COALESCE(SUM(COALESCE(json_extract(usage, '$.total_cost_usd'), 0.0)), 0.0) as cost FROM execution_records WHERE date(started_at) = date('now')";
+        let yesterday_cost_sql = "SELECT COALESCE(SUM(COALESCE(json_extract(usage, '$.total_cost_usd'), 0.0)), 0.0) as cost FROM execution_records WHERE date(started_at) = date('now', '-1 day')";
+        let today_cost: f64 = self.conn
+            .query_one(Statement::from_string(backend, today_cost_sql.to_string()))
+            .await?
+            .and_then(|row| row.try_get_by("cost").ok())
+            .unwrap_or(0.0);
+        let yesterday_cost: f64 = self.conn
+            .query_one(Statement::from_string(backend, yesterday_cost_sql.to_string()))
+            .await?
+            .and_then(|row| row.try_get_by("cost").ok())
+            .unwrap_or(0.0);
+        let cost_change = if yesterday_cost > 0.0 {
+            Some((today_cost - yesterday_cost) / yesterday_cost * 100.0)
+        } else {
+            None
+        };
+
+        // Active days and streak days from daily_executions
+        let active_days = daily_executions.len() as i64;
+
+        let mut streak_days = 0i64;
+        if !daily_executions.is_empty() {
+            let today_str = chrono::Utc::now().format("%Y-%m-%d").to_string();
+            let yesterday_str = (chrono::Utc::now() - chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+
+            // Check if today or yesterday has executions (streak must include recent days)
+            let has_recent = daily_executions.iter().any(|d| {
+                let has_exec = d.success + d.failed > 0;
+                let is_today_or_yesterday = d.date == today_str || d.date == yesterday_str;
+                has_exec && is_today_or_yesterday
+            });
+
+            if has_recent {
+                // Count consecutive days with executions (must be recent to count)
+                for day in daily_executions.iter().rev() {
+                    if day.success + day.failed > 0 {
+                        streak_days += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Peak daily executions
+        let peak_daily_executions = daily_executions.iter()
+            .map(|d| d.success + d.failed)
+            .max()
+            .unwrap_or(0);
+
+        // Top model by tokens
+        let (top_model, top_model_tokens) = if !model_distribution.is_empty() {
+            let top = model_distribution.iter()
+                .max_by_key(|m| m.total_input_tokens + m.total_output_tokens)
+                .unwrap();
+            (Some(top.model.clone()), Some(top.total_input_tokens + top.total_output_tokens))
+        } else {
+            (None, None)
+        };
+
+        // Build leaderboard from model distribution
+        let leaderboard: Vec<crate::models::LeaderboardItem> = model_distribution.iter()
+            .enumerate()
+            .map(|(i, m)| {
+                // Calculate change (simplified: compare first half vs second half of the period)
+                let half = model_distribution.len() / 2;
+                let change = if i < half && i + half < model_distribution.len() {
+                    let first_half_tokens = model_distribution[..i+1].iter().map(|x| x.total_input_tokens + x.total_output_tokens).sum::<u64>() as f64;
+                    let second_half_tokens = model_distribution[i..i+half].iter().map(|x| x.total_input_tokens + x.total_output_tokens).sum::<u64>() as f64;
+                    if first_half_tokens > 0.0 {
+                        Some((second_half_tokens - first_half_tokens) / first_half_tokens * 100.0)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                crate::models::LeaderboardItem {
+                    rank: (i + 1) as i32,
+                    name: m.model.clone(),
+                    tokens: m.total_input_tokens + m.total_output_tokens,
+                    sessions: m.execution_count,
+                    change,
+                }
+            })
+            .collect();
+
         Ok(crate::models::DashboardStats {
             total_todos,
             pending_todos,
@@ -921,6 +1066,17 @@ impl Database {
             trigger_type_distribution,
             executor_duration_stats,
             model_cache_stats,
+            // Enhanced metrics
+            today_executions,
+            executions_change,
+            success_rate_change,
+            cost_change,
+            active_days,
+            streak_days,
+            peak_daily_executions,
+            top_model,
+            top_model_tokens,
+            leaderboard,
         })
     }
 
