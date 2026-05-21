@@ -143,14 +143,17 @@ pub async fn execute_handler(
         )));
     }
 
-    // Fall back to todo.prompt if message is None or whitespace-only
-    let message = req
-        .message
-        .as_ref()
-        .map(|m| m.trim())
-        .filter(|m| !m.is_empty())
-        .map(|m| m.to_string())
-        .unwrap_or_else(|| todo.prompt.clone());
+    // Build params: --message injects into {{message}} placeholder
+    let mut params = req.params.clone().unwrap_or_default();
+    if let Some(ref msg) = req.message {
+        let trimmed = msg.trim();
+        if !trimmed.is_empty() {
+            params.insert("message".to_string(), trimmed.to_string());
+        }
+    }
+
+    // Replace placeholders in todo.prompt using params
+    let message = crate::models::replace_placeholders(&todo.prompt, &params);
 
     let result = start_todo_execution(RunTodoExecutionRequest {
         db: state.db.clone(),
