@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Drawer, Input, Button, App, AutoComplete, Divider, Switch, Tooltip, Tag, Empty, Spin, Modal, Card } from 'antd';
 import { CheckOutlined, FolderOutlined, ClockCircleOutlined, FileTextOutlined, ThunderboltOutlined, RightOutlined, SearchOutlined } from '@ant-design/icons';
 import { Cron } from 'react-js-cron';
@@ -56,6 +56,36 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
 
   // Loading states
   const [loading, setLoading] = useState(false);
+
+  // Editor ref for cursor position tracking
+  const editorRef = useRef<any>(null);
+
+  // Insert text at cursor position in the editor
+  const insertTextAtCursor = (text: string) => {
+    const editor = editorRef.current;
+    if (!editor || !editor.textarea) {
+      // Fallback: append to end
+      setPrompt(prev => {
+        if (!prev) return text;
+        return prev + (prev.endsWith('\n') ? '' : '\n') + text;
+      });
+      return;
+    }
+    const textarea = editor.textarea as HTMLTextAreaElement;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    // Use functional update to ensure we get the latest value
+    setPrompt(prev => {
+      const currentValue = prev;
+      const newValue = currentValue.substring(0, start) + text + currentValue.substring(end);
+      return newValue;
+    });
+    // Restore cursor position after insertion
+    setTimeout(() => {
+      textarea.selectionStart = textarea.selectionEnd = start + text.length;
+      textarea.focus();
+    }, 0);
+  };
 
   // Template selection state
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
@@ -121,12 +151,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
 
   const handleSkillClick = (skill: SkillMeta) => {
     const skillRef = `/${skill.name}`;
-    setPrompt(prev => {
-      if (!prev.trim()) return skillRef;
-      // If prompt already ends with newline, just append
-      if (prev.endsWith('\n')) return prev + skillRef;
-      return prev + '\n' + skillRef;
-    });
+    insertTextAtCursor(skillRef);
   };
 
   // Template functions
@@ -144,12 +169,23 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
   };
 
   const selectTemplate = (template: TodoTemplate) => {
-    setTitle(template.title);
-    setPrompt(template.prompt || '');
+    if (!prompt.trim()) {
+      // If prompt is empty, use template content (create mode)
+      setTitle(template.title);
+      setPrompt(template.prompt || '');
+      message.success('已应用模板');
+    } else {
+      // If prompt has content, insert template content at cursor position
+      if (template.prompt) {
+        insertTextAtCursor(template.prompt);
+        message.success('已插入模板内容');
+      } else {
+        message.warning('模板内容为空，未插入');
+      }
+    }
     setTemplateModalOpen(false);
     setSearchText('');
     setSelectedCategory(null);
-    message.success('已应用模板');
   };
 
   // Get unique categories from templates
@@ -387,6 +423,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
               value={prompt}
               onChange={setPrompt}
               height={200}
+              editorRef={editorRef}
             />
             {/* Prompt parameter hints */}
             <div style={{
@@ -401,7 +438,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
                 <Tooltip key={p.key} title={p.desc}>
                   <code
                     onClick={() => {
-                      setPrompt(prev => prev + p.key);
+                      insertTextAtCursor(p.key);
                     }}
                     style={{
                       fontSize: 11,
