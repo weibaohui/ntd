@@ -218,7 +218,7 @@ impl Database {
             ("ntd文件夹备份", Some("使用技能skill：/devops/r2-backup 备份~/.ntd文件夹，但是要排除 .zip。"), "DevOps/监控", Some(2)),
 
             // 自动化
-            ("智能调度", Some("收到{{message}}\n请你根据收到消息内容决定下一步工作。\n1如果收到的是PR 创建事件或者PR 更新事件，启动Github代码评审TODO。\n执行ntd todo execute 〈Github代码评审的todo id〉 --message {{message}}\n\n2如果收的是Issue 创建，那么要执行Issue处理任务。\n执行ntd todo execute 〈Issue处理的todo id〉 --message {{message}}"), "自动化", Some(1)),
+            ("智能调度", Some("收到{{message}}\n请你根据收到消息内容决定下一步工作。\n1如果收到的是PR 创建事件或者PR 更新事件，启动Github代码评审TODO。\n执行ntd todo execute <Github代码评审的todo id> --message {{message}}\n\n2如果收的是Issue 创建，那么要执行Issue处理任务。\n执行ntd todo execute <Issue处理的todo id> --message {{message}}"), "自动化", Some(1)),
 
             // Git/CI
             ("Github代码评审", Some("请根据{{message}}提取当前代码分支，对这个代码分支进行评审。\n请用gh 工具读取 PR信息，对修改的代码进行评审。\n\ngit fetch origin main:main\ngit worktree add  /tmp/<评审名称-hhmmsss时间戳> <待评审分支>\ncd  /tmp/<评审名称-hhmmsss时间戳>\n\n使用评审skill：/github/github-code-review\n\n评审完毕，删除该worktree。必须进行清理。"), "Git/CI", Some(5)),
