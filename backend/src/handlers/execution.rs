@@ -143,11 +143,11 @@ pub async fn execute_handler(
         )));
     }
 
-    // Build params: --message injects into {{message}} placeholder
+    // Build params: --message injects into {{message}} placeholder (only if not already set)
     let mut params = req.params.clone().unwrap_or_default();
     if let Some(ref msg) = req.message {
         let trimmed = msg.trim();
-        if !trimmed.is_empty() {
+        if !trimmed.is_empty() && !params.contains_key("message") {
             params.insert("message".to_string(), trimmed.to_string());
         }
     }

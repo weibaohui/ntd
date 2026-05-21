@@ -601,10 +601,11 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
     if (!selectedTodo) return;
     setExecuteWithArgsLoading(true);
     try {
+      const params = executeArgs.trim() ? { message: executeArgs.trim() } : undefined;
       await db.executeTodo(
         selectedTodo.id,
         selectedTodo.executor || undefined,
-        { message: executeArgs.trim() }
+        params
       );
       message.success('任务已开始执行');
       setExecuteWithArgsModalOpen(false);
