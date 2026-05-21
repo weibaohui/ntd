@@ -32,8 +32,10 @@ export function AnimatedNumber({
   decimals = 0,
   chineseFormat = false,
 }: AnimatedNumberProps) {
+  // Handle null/undefined/NaN values
+  const safeValue = value ?? 0;
   if (chineseFormat) {
-    const { displayValue, unit, decimals: d } = getChineseUnit(value);
+    const { displayValue, unit, decimals: d } = getChineseUnit(safeValue);
     return (
       <span className={className} style={style}>
         {prefix}
@@ -47,7 +49,7 @@ export function AnimatedNumber({
   return (
     <span className={className} style={style}>
       {prefix}
-      <CountUp end={value} duration={duration} decimals={decimals} separator="," />
+      <CountUp end={safeValue} duration={duration} decimals={decimals} separator="," />
       {suffix}
     </span>
   );

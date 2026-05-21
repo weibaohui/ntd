@@ -12,11 +12,14 @@ import {
   DollarOutlined,
   BarChartOutlined,
   MessageOutlined,
+  TrophyOutlined,
+  FireOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useApp } from '../hooks/useApp';
 import { PieChart, PieChartLegend } from './PieChart';
 import { TrendChart, ContributionHeatmap } from './dashboard/DashboardCharts';
+import { MetricCard, Leaderboard, HighlightStat } from './dashboard/EnhancedCards';
 import { AnimatedNumber } from './AnimatedNumber';
 import * as db from '../utils/database';
 import { getExecutorOption } from '../types';
@@ -365,6 +368,136 @@ export function Dashboard({ onBack }: DashboardProps) {
         </div>
       </Card>
     ),
+  });
+
+  // Key Metrics - 关键指标卡片
+  panels.push({
+    key: 'key-metrics',
+    render: () => (
+      <Card
+        title={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><BarChartOutlined /><span>关键指标</span></div>}
+        className="dashboard-card" style={{ borderRadius: 12 }}
+        bodyStyle={{ padding: '16px 20px' }}
+      >
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
+          <MetricCard
+            title="今日执行"
+            value={stats?.today_executions ?? 0}
+            change={stats?.executions_change}
+            changeLabel="vs昨日"
+            prefix={<ThunderboltOutlined />}
+            color="#8b5cf6"
+            loading={loading && !stats}
+            chineseFormat
+          />
+          <MetricCard
+            title="总执行"
+            value={stats?.total_executions ?? 0}
+            change={stats?.executions_change}
+            changeLabel="本周"
+            prefix={<ThunderboltOutlined />}
+            color="#3b82f6"
+            loading={loading && !stats}
+            chineseFormat
+          />
+          <MetricCard
+            title="成功率"
+            value={successRate}
+            suffix="%"
+            change={stats?.success_rate_change}
+            prefix={<CheckCircleOutlined />}
+            color="#22c55e"
+            loading={loading && !stats}
+            decimals={1}
+          />
+          <MetricCard
+            title="总花费"
+            value={stats ? Math.round(stats.total_cost_usd) : 0}
+            suffix="$"
+            change={stats?.cost_change}
+            prefix={<DollarOutlined />}
+            color="#f59e0b"
+            loading={loading && !stats}
+          />
+          <MetricCard
+            title="活跃天数"
+            value={stats?.active_days ?? 0}
+            prefix={<ClockCircleOutlined />}
+            color="#ef4444"
+            loading={loading && !stats}
+          />
+          <MetricCard
+            title="连续天数"
+            value={stats?.streak_days ?? 0}
+            prefix={<TagOutlined />}
+            color="#f97316"
+            loading={loading && !stats}
+          />
+          <MetricCard
+            title="平均耗时"
+            value={stats?.avg_duration_ms ? stats.avg_duration_ms / 1000 : 0}
+            suffix="s"
+            prefix={<BarChartOutlined />}
+            color="#0891b2"
+            loading={loading && !stats}
+            decimals={1}
+          />
+        </div>
+      </Card>
+    ),
+  });
+
+  // Highlight Stats - 重点数据展示
+  panels.push({
+    key: 'highlight-stats',
+    render: () => (
+      <Card
+        title={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TrophyOutlined /><span>亮点数据</span></div>}
+        className="dashboard-card" style={{ borderRadius: 12 }}
+        bodyStyle={{ padding: '16px 20px' }}
+      >
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
+          <HighlightStat
+            label="单日峰值"
+            value={stats?.peak_daily_executions ?? 0}
+            subLabel="历史最高"
+            color="#f59e0b"
+            icon={<FireOutlined />}
+          />
+          <HighlightStat
+            label="最高产模型"
+            value={stats?.top_model ?? '-'}
+            subLabel={stats?.top_model_tokens ? `${(stats.top_model_tokens / 10000).toFixed(1)}万 tokens` : ''}
+            color="#8b5cf6"
+            icon={<ThunderboltOutlined />}
+          />
+          <HighlightStat
+            label="活跃天数"
+            value={stats?.active_days ?? 0}
+            subLabel="累计活跃"
+            color="#22c55e"
+            icon={<TrophyOutlined />}
+          />
+        </div>
+      </Card>
+    ),
+  });
+
+  // Leaderboard - 排行榜
+  panels.push({
+    key: 'leaderboard',
+    render: () => {
+      const leaderboardData = stats?.leaderboard ?? [];
+      return (
+        <Card
+          title={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TrophyOutlined /><span>模型排行榜</span></div>}
+          className="dashboard-card" style={{ borderRadius: 12 }}
+          bodyStyle={{ padding: '16px 20px' }}
+        >
+          <Leaderboard data={leaderboardData} />
+        </Card>
+      );
+    },
   });
 
   panels.push({
