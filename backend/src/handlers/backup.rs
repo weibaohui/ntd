@@ -10,6 +10,7 @@ use std::str::FromStr;
 use zip::write::FileOptions;
 use zip::ZipWriter;
 use std::io::Write;
+use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 use crate::handlers::{AppError, AppState};
 use crate::models::{ApiResponse, BackupData, TagBackup, TodoBackup, utc_timestamp};
@@ -517,6 +518,9 @@ pub fn perform_database_backup(db_path: &str, max_files: usize) -> Result<String
 
 /// 清理早于指定天数的 execution_logs 记录
 pub async fn cleanup_old_logs(db: &Database, days: usize) -> Result<u64, String> {
+    // 边界校验：days 必须在 1-3650 范围内
+    let days = days.clamp(1, 3650);
+
     let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
     let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%S").to_string();
 
@@ -528,7 +532,16 @@ pub async fn cleanup_old_logs(db: &Database, days: usize) -> Result<u64, String>
     );
 
     db.exec(&sql).await.map_err(|e| format!("Failed to cleanup logs: {}", e))?;
-    Ok(0) // SQLite 不返回删除的行数，这里简单返回 0
+
+    // 获取实际删除的行数
+    let changes: u64 = db.conn
+        .query_one(Statement::from_string(DbBackend::Sqlite, "SELECT changes()".to_string()))
+        .await
+        .map_err(|e| format!("Failed to get changes count: {}", e))?
+        .and_then(|row| row.try_get_by_index::<i64>(0).ok())
+        .unwrap_or(0) as u64;
+
+    Ok(changes)
 }
 
 fn cleanup_old_db_backups(dir: &PathBuf, keep: usize) {

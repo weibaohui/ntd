@@ -1878,8 +1878,8 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
                         <InputNumber
                           min={1}
                           max={365}
-                          value={logCleanupDays ?? 30}
-                          onChange={(v) => setLogCleanupDays(v)}
+                          value={logCleanupDays ?? undefined}
+                          onChange={(v) => setLogCleanupDays(v ?? null)}
                           style={{ width: 80 }}
                           size="small"
                         />
