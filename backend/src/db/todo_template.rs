@@ -212,6 +212,20 @@ impl Database {
             // 探索
             ("经典小游戏实现", Some("创建一个范围尽可能小的经典小游戏。\n\n约束：\n- 除非必要，否则不要添加额外功能、样式系统、内容或新的依赖\n- 复用现有仓库的工具和模式"), "探索", Some(1)),
             ("自动创建 Skills", Some("扫描过去一天的 ~/.codex/sessions 文件，如果发现某些 skills 有使用问题，更新这些 skills 使其更有用。\n\n规则：\n- 仅处理个人 skills，不处理仓库 skills\n- 如果有什么我们经常做但需要努力才能完成的事情，且应该保存为 skill 来加速未来工作，那就去做\n- 不觉得必须更新任何内容——只有在有充分理由时才更新！\n- 如果做了任何更改请告诉我"), "探索", Some(2)),
+
+            // DevOps/监控
+            ("负载查询", Some("查询当前主机的内存、CPU负载以及磁盘用量情况。\n\n可以使用 Linux 命令来完成：\n- 内存：free -h\n- CPU 负载：uptime 或 top\n- 磁盘：df -h\n\n回复模式：\n先说结论，一句话 3个百分比反映占比情况。\n后面再说需要关注的细节。"), "DevOps/监控", Some(1)),
+            ("ntd文件夹备份", Some("使用技能skill：/devops/r2-backup 备份~/.ntd文件夹，但是要排除 .zip。"), "DevOps/监控", Some(2)),
+
+            // 自动化
+            ("智能调度", Some("收到{{message}}\n请你根据收到消息内容决定下一步工作。\n1如果收到的是PR 创建事件或者PR 更新事件，启动6号TODO（名称Github代码评审）。\n执行ntd todo execute 6 --message {{message}}\n\n2如果收的是Issue 创建，那么要执行11号issue 处理任务。\n执行ntd todo execute 11 --message {{message}}"), "自动化", Some(1)),
+
+            // Git/CI
+            ("Github代码评审", Some("请根据{{message}}提取当前代码分支，对这个代码分支进行评审。\n请用gh 工具读取 PR信息，对修改的代码进行评审。\n\ngit fetch origin main:main\ngit worktree add  /tmp/<评审名称-hhmmsss时间戳> <待评审分支>\ncd  /tmp/<评审名称-hhmmsss时间戳>\n\n使用评审skill：/github/github-code-review\n\n评审完毕，删除该worktree。必须进行清理。"), "Git/CI", Some(5)),
+            ("git worktree 清理", Some("请你对本目录下的git worktree 进行清理。\n删除所有的worktree\n到项目backend下执行cargo clean\n然后依次执行下面的命令\ncargo cache --remove-all  \nrm -rf ~/.cache/*      \nrm -rf /tmp/git-* /tmp/node-*"), "Git/CI", Some(6)),
+
+            // 团队协作
+            ("Issue处理", Some("请根据{{message}}提取Issue 内容。\n可使用gh 工具读取 Issue 信息。\n选取一个没有 处理中 tag的issue 进行处理。\n\n执行过程：\n选定一个issue后，先把该issue 标记为处理中，防止其他AI重复处理。\ngit fetch origin main:main\ngit worktree add  /tmp/<issue名称-hhmmsss时间戳> main\ncd  /tmp/<issue名称-hhmmsss时间戳>\n\n进行代码编写、完成基本的测试\n\n提交代码，推送形成PR，删除该worktree。必须进行清理。"), "团队协作", Some(5)),
         ];
 
         for (title, prompt, category, sort_order) in default_templates {
