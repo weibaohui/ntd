@@ -65,7 +65,10 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
     const editor = editorRef.current;
     if (!editor || !editor.textarea) {
       // Fallback: append to end
-      setPrompt(prev => prev + (prev.endsWith('\n') ? '' : '\n') + text);
+      setPrompt(prev => {
+        if (!prev) return text;
+        return prev + (prev.endsWith('\n') ? '' : '\n') + text;
+      });
       return;
     }
     const textarea = editor.textarea as HTMLTextAreaElement;
@@ -170,16 +173,19 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
       // If prompt is empty, use template content (create mode)
       setTitle(template.title);
       setPrompt(template.prompt || '');
+      message.success('已应用模板');
     } else {
       // If prompt has content, insert template content at cursor position
       if (template.prompt) {
         insertTextAtCursor(template.prompt);
+        message.success('已插入模板内容');
+      } else {
+        message.warning('模板内容为空，未插入');
       }
     }
     setTemplateModalOpen(false);
     setSearchText('');
     setSelectedCategory(null);
-    message.success('已插入模板内容');
   };
 
   // Get unique categories from templates
