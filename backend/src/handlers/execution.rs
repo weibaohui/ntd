@@ -162,7 +162,7 @@ pub async fn execute_handler(
         message,
         req_executor: req.executor,
         trigger_type: "manual".to_string(),
-        params: None,
+        params: req.params,
         resume_session_id: None,
         resume_message: None,
     })

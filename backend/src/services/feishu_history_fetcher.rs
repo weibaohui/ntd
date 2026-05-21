@@ -15,6 +15,7 @@ use crate::db::{Database, NewFeishuHistoryMessage};
 use crate::feishu::sdk::config::{Config as FeishuSdkConfig, CONTENT_TYPE_JSON};
 use crate::feishu::sdk::token_manager::TokenManager;
 use crate::handlers::ExecEvent;
+use crate::models::build_trigger_params;
 use crate::services::message_debounce::{MessageDebounce, PendingMessage};
 use crate::task_manager::TaskManager;
 
@@ -439,7 +440,7 @@ impl FeishuHistoryFetcher {
                             if let Some(todo_id) = Self::resolve_todo_id(config, msg_content).await
                             {
                                 let (trigger_type, params) =
-                                    Self::build_trigger_params(msg_content);
+                                    build_trigger_params(msg_content);
                                 let todo_prompt = match db.get_todo(todo_id).await {
                                     Ok(Some(t)) => Some(t.prompt.clone()),
                                     Ok(None) => None,
@@ -463,7 +464,7 @@ impl FeishuHistoryFetcher {
                                     todo_prompt,
                                     executor: None,
                                     trigger_type,
-                                    params,
+                                    params: Some(params),
                                     message_id: Some(item.message_id.clone()),
                                 });
                                 // Debounce timer will mark message as processed with execution_record_id
@@ -502,35 +503,6 @@ impl FeishuHistoryFetcher {
         // Fall through to default response
         let cfg = config.read().await;
         cfg.default_response_todo_id
-    }
-
-    /// Build trigger_type and params for a message.
-    fn build_trigger_params(content: &str) -> (String, Option<HashMap<String, String>>) {
-        let trimmed = content.trim();
-
-        if trimmed.starts_with('/') {
-            let mut parts = trimmed.splitn(2, char::is_whitespace);
-            let command = parts.next().unwrap_or("").trim();
-            let body = parts.next().unwrap_or("").trim();
-
-            if !body.is_empty() {
-                let mut params = HashMap::new();
-                params.insert("content".to_string(), body.to_string());
-                params.insert("message".to_string(), body.to_string());
-                params.insert(
-                    "raw_message".to_string(),
-                    format!("{} {}", command, body).trim().to_string(),
-                );
-                params.insert("slash_command".to_string(), command.to_string());
-                return ("slash_command".to_string(), Some(params));
-            }
-        }
-
-        let mut params = HashMap::new();
-        params.insert("content".to_string(), trimmed.to_string());
-        params.insert("message".to_string(), trimmed.to_string());
-        params.insert("raw_message".to_string(), trimmed.to_string());
-        ("default_response".to_string(), Some(params))
     }
 
     #[allow(dead_code)]

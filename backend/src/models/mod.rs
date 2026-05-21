@@ -322,6 +322,8 @@ pub struct ExecuteRequest {
     pub todo_id: i64,
     pub message: Option<String>,
     pub executor: Option<String>,
+    #[serde(default)]
+    pub params: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Deserialize)]
@@ -903,6 +905,46 @@ pub fn replace_placeholders(text: &str, params: &std::collections::HashMap<Strin
     result
 }
 
+/// Build standard trigger params from message content.
+/// This unifies how params are constructed across slash commands, default responses,
+/// and other trigger types.
+///
+/// Returns (trigger_type, params):
+/// - For slash commands (content starts with '/'): trigger_type = "slash_command"
+/// - For other messages: trigger_type = "default_response"
+///
+/// Standard params always include:
+/// - `content`: the message body
+/// - `message`: the message body
+/// - `raw_message`: full raw message (for slash commands, includes the command prefix)
+pub fn build_trigger_params(content: &str) -> (String, std::collections::HashMap<String, String>) {
+    let trimmed = content.trim();
+
+    if trimmed.starts_with('/') {
+        let mut parts = trimmed.splitn(2, char::is_whitespace);
+        let command = parts.next().unwrap_or("").trim();
+        let body = parts.next().unwrap_or("").trim();
+
+        if !body.is_empty() {
+            let mut params = std::collections::HashMap::new();
+            params.insert("content".to_string(), body.to_string());
+            params.insert("message".to_string(), body.to_string());
+            params.insert(
+                "raw_message".to_string(),
+                format!("{} {}", command, body).trim().to_string(),
+            );
+            params.insert("slash_command".to_string(), command.to_string());
+            return ("slash_command".to_string(), params);
+        }
+    }
+
+    let mut params = std::collections::HashMap::new();
+    params.insert("content".to_string(), trimmed.to_string());
+    params.insert("message".to_string(), trimmed.to_string());
+    params.insert("raw_message".to_string(), trimmed.to_string());
+    ("default_response".to_string(), params)
+}
+
 #[cfg(test)]
 mod placeholder_tests {
     use super::*;
@@ -934,5 +976,34 @@ mod placeholder_tests {
         let text = "Hello {{name}}!";
         let result = replace_placeholders(text, &params);
         assert_eq!(result, "Hello {{name}}!");
+    }
+
+    #[test]
+    fn test_build_trigger_params_slash_command() {
+        let (trigger_type, params) = build_trigger_params("/help some query");
+        assert_eq!(trigger_type, "slash_command");
+        assert_eq!(params.get("content"), Some(&"some query".to_string()));
+        assert_eq!(params.get("message"), Some(&"some query".to_string()));
+        assert_eq!(params.get("raw_message"), Some(&"/help some query".to_string()));
+        assert_eq!(params.get("slash_command"), Some(&"/help".to_string()));
+    }
+
+    #[test]
+    fn test_build_trigger_params_default_response() {
+        let (trigger_type, params) = build_trigger_params("hello world");
+        assert_eq!(trigger_type, "default_response");
+        assert_eq!(params.get("content"), Some(&"hello world".to_string()));
+        assert_eq!(params.get("message"), Some(&"hello world".to_string()));
+        assert_eq!(params.get("raw_message"), Some(&"hello world".to_string()));
+        assert!(params.get("slash_command").is_none());
+    }
+
+    #[test]
+    fn test_build_trigger_params_slash_only_no_body() {
+        let (trigger_type, params) = build_trigger_params("/help");
+        assert_eq!(trigger_type, "default_response");
+        assert_eq!(params.get("content"), Some(&"/help".to_string()));
+        assert_eq!(params.get("message"), Some(&"/help".to_string()));
+        assert!(params.get("slash_command").is_none());
     }
 }

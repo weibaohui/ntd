@@ -117,6 +117,7 @@ mod todo_execute_command_tests {
             todo_id: 123,
             message: Some("hello".to_string()),
             executor: Some("kimi".to_string()),
+            params: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"todo_id\":123"));
@@ -138,6 +139,7 @@ mod todo_execute_command_tests {
             todo_id: 1,
             message: None,
             executor: None,
+            params: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"todo_id\":1"));

@@ -1,5 +1,4 @@
 use dashmap::DashMap;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::{broadcast, RwLock};
@@ -15,7 +14,7 @@ use crate::adapters::ExecutorRegistry;
 use crate::config::Config as AppConfig;
 use crate::db::{Database, NewFeishuMessage};
 use crate::handlers::ExecEvent;
-use crate::models::{AgentBot, BotConfig};
+use crate::models::{AgentBot, BotConfig, build_trigger_params};
 use crate::services::message_debounce::{MessageDebounce, PendingMessage};
 use crate::task_manager::TaskManager;
 
@@ -345,16 +344,7 @@ impl FeishuListener {
                         }
                     };
                     if let Some(todo) = todo {
-                        let mut params = HashMap::new();
-                        params.insert("content".to_string(), command_ctx.body.to_string());
-                        params.insert("message".to_string(), command_ctx.body.to_string());
-                        params.insert(
-                            "raw_message".to_string(),
-                            format!("{} {}", command_ctx.command, command_ctx.body)
-                                .trim()
-                                .to_string(),
-                        );
-                        params.insert("slash_command".to_string(), command_ctx.command.to_string());
+                        let (_, params) = build_trigger_params(&format!("{} {}", command_ctx.command, command_ctx.body));
 
                         debounce.push(PendingMessage {
                             bot_id,
@@ -392,6 +382,7 @@ impl FeishuListener {
                             }
                         }
                         .unwrap_or_default();
+                        let (_, params) = build_trigger_params(content);
                         debounce.push(PendingMessage {
                             bot_id,
                             chat_id: msg.channel.clone(),
@@ -402,7 +393,7 @@ impl FeishuListener {
                             todo_prompt,
                             executor: None,
                             trigger_type: "default_response".to_string(),
-                            params: None,
+                            params: Some(params),
                             message_id: Some(msg.id.clone()),
                         });
                     }
@@ -430,6 +421,7 @@ impl FeishuListener {
                         }
                     }
                     .unwrap_or_default();
+                    let (_, params) = build_trigger_params(content);
                     debounce.push(PendingMessage {
                         bot_id,
                         chat_id: msg.channel.clone(),
@@ -440,7 +432,7 @@ impl FeishuListener {
                         todo_prompt,
                         executor: None,
                         trigger_type: "default_response".to_string(),
-                        params: None,
+                        params: Some(params),
                         message_id: Some(msg.id.clone()),
                     });
                 }
