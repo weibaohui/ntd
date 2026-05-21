@@ -170,7 +170,7 @@ pub async fn download_database(
     ))
 }
 
-/// 将数据库复制到备份目录
+/// 将数据库压缩备份到目录
 pub async fn trigger_local_backup(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<String>, AppError> {
@@ -191,20 +191,37 @@ pub async fn trigger_local_backup(
 
     let dir = db_backup_dir(&db_filename);
     let db_path_clone = db_path.clone();
+    let db_filename_clone = db_filename.clone();
     let dir_clone = dir.clone();
     let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
-    // 备份文件名包含原始数据库文件名
-    let backup_filename = format!("{}-{}.db", db_filename, timestamp);
+    // 备份文件名包含原始数据库文件名，使用 zip 格式
+    let backup_filename = format!("{}-{}.zip", db_filename_clone, timestamp);
     let backup_path = dir.join(&backup_filename);
 
     let backup_path_clone = backup_path.clone();
     tokio::task::spawn_blocking(move || {
         std::fs::create_dir_all(&dir_clone)?;
-        std::fs::copy(&db_path_clone, &backup_path_clone)
+
+        // 读取数据库文件
+        let db_data = std::fs::read(&db_path_clone)?;
+
+        // 创建 zip 文件，使用最强压缩级别 (level 9)
+        let file = std::fs::File::create(&backup_path_clone)?;
+        let mut zip = ZipWriter::new(file);
+        let options = FileOptions::<()>::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .compression_level(Some(9))
+            .unix_permissions(0o644);
+
+        zip.start_file("database.db", options)?;
+        zip.write_all(&db_data)?;
+        zip.finish()?;
+
+        Ok::<(), std::io::Error>(())
     })
     .await
     .map_err(|e| AppError::Internal(format!("Task join error: {}", e)))?
-    .map_err(|e| AppError::Internal(format!("Failed to copy database: {}", e)))?;
+    .map_err(|e| AppError::Internal(format!("Failed to create zip backup: {}", e)))?;
 
     // 清理旧备份（按数据库分目录清理）
     cleanup_old_db_backups(&dir, max_files);
@@ -275,7 +292,7 @@ pub async fn get_database_backup_status(
             if let Ok(entries) = std::fs::read_dir(&dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.extension().is_some_and(|ext| ext == "db") {
+                    if path.extension().is_some_and(|ext| ext == "zip") {
                         let meta = entry.metadata().ok();
                         let created = meta.as_ref()
                             .and_then(|m| m.created().ok())
@@ -504,12 +521,29 @@ pub fn perform_database_backup(db_path: &str, max_files: usize) -> Result<String
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("Failed to create backup dir: {}", e))?;
 
+    // 读取数据库文件
+    let db_data = std::fs::read(&db_path)
+        .map_err(|e| format!("Failed to read database: {}", e))?;
+
     let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
-    let backup_filename = format!("{}-{}.db", db_filename, timestamp);
+    let backup_filename = format!("{}-{}.zip", db_filename, timestamp);
     let backup_path = dir.join(&backup_filename);
 
-    std::fs::copy(&db_path, &backup_path)
-        .map_err(|e| format!("Failed to copy database: {}", e))?;
+    // 创建 zip 文件，使用最强压缩级别 (level 9)
+    let file = std::fs::File::create(&backup_path)
+        .map_err(|e| format!("Failed to create backup file: {}", e))?;
+    let mut zip = ZipWriter::new(file);
+    let options = FileOptions::<()>::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .compression_level(Some(9))
+        .unix_permissions(0o644);
+
+    zip.start_file("database.db", options)
+        .map_err(|e| format!("Failed to start zip entry: {}", e))?;
+    zip.write_all(&db_data)
+        .map_err(|e| format!("Failed to write to zip: {}", e))?;
+    zip.finish()
+        .map_err(|e| format!("Failed to finish zip: {}", e))?;
 
     cleanup_old_db_backups(&dir, max_files);
 
@@ -554,7 +588,7 @@ fn cleanup_old_db_backups(dir: &PathBuf, keep: usize) {
             entries
                 .flatten()
                 .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|ext| ext == "db"))
+                .filter(|p| p.extension().is_some_and(|ext| ext == "zip"))
                 .collect()
         })
         .unwrap_or_default();
