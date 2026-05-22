@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useReducer, useEffect, useMemo, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, useMemo, ReactNode } from 'react';
 import { Todo, Tag, ExecutionRecord, RunningTask, LogEntry, TodoItem, ExecutionStats } from '../types';
 import * as db from '../utils/database';
 
@@ -317,43 +317,45 @@ export function useApp() {
     ...uiCtx.state,
   }), [todoCtx.state, execCtx.state, uiCtx.state]);
 
-  const dispatch = useCallback((action: Action) => {
-    switch (action.type) {
-      case 'SET_TODOS':
-      case 'SET_TAGS':
-      case 'ADD_TODO':
-      case 'UPDATE_TODO':
-      case 'DELETE_TODO':
-      case 'SELECT_TODO':
-      case 'SELECT_TAG':
-      case 'ADD_TAG':
-      case 'DELETE_TAG':
-      case 'UPDATE_TODO_STATUS':
-        todoCtx.dispatch(action);
-        break;
-      case 'SET_EXECUTION_RECORDS':
-      case 'ADD_EXECUTION_RECORD':
-      case 'UPDATE_EXECUTION_RECORD':
-      case 'ADD_RUNNING_TASK':
-      case 'APPEND_TASK_LOG':
-      case 'FINISH_TASK':
-      case 'REMOVE_RUNNING_TASK':
-      case 'CLEAR_RUNNING_TASKS':
-      case 'SET_ACTIVE_TASK':
-      case 'UPDATE_TASK_TODO_PROGRESS':
-      case 'UPDATE_TASK_EXECUTION_STATS':
-        execCtx.dispatch(action);
-        break;
-      case 'SET_LOADING':
-        uiCtx.dispatch(action);
-        break;
-    }
-  }, [todoCtx.dispatch, execCtx.dispatch, uiCtx.dispatch]);
-
-  const clearSelection = useCallback(() => {
-    todoCtx.dispatch({ type: 'SELECT_TODO', payload: null });
-    todoCtx.dispatch({ type: 'SELECT_TAG', payload: null });
-  }, [todoCtx.dispatch]);
-
-  return useMemo(() => ({ state, dispatch, clearSelection }), [state, dispatch, clearSelection]);
+  // dispatch and clearSelection are stable (useReducer dispatch + useCallback with stable deps)
+  // Return a new object only when `state` actually changes
+  return useMemo(() => ({
+    state,
+    dispatch: (action: Action) => {
+      switch (action.type) {
+        case 'SET_TODOS':
+        case 'SET_TAGS':
+        case 'ADD_TODO':
+        case 'UPDATE_TODO':
+        case 'DELETE_TODO':
+        case 'SELECT_TODO':
+        case 'SELECT_TAG':
+        case 'ADD_TAG':
+        case 'DELETE_TAG':
+        case 'UPDATE_TODO_STATUS':
+          todoCtx.dispatch(action);
+          break;
+        case 'SET_EXECUTION_RECORDS':
+        case 'ADD_EXECUTION_RECORD':
+        case 'UPDATE_EXECUTION_RECORD':
+        case 'ADD_RUNNING_TASK':
+        case 'APPEND_TASK_LOG':
+        case 'FINISH_TASK':
+        case 'REMOVE_RUNNING_TASK':
+        case 'CLEAR_RUNNING_TASKS':
+        case 'SET_ACTIVE_TASK':
+        case 'UPDATE_TASK_TODO_PROGRESS':
+        case 'UPDATE_TASK_EXECUTION_STATS':
+          execCtx.dispatch(action);
+          break;
+        case 'SET_LOADING':
+          uiCtx.dispatch(action);
+          break;
+      }
+    },
+    clearSelection: () => {
+      todoCtx.dispatch({ type: 'SELECT_TODO', payload: null });
+      todoCtx.dispatch({ type: 'SELECT_TAG', payload: null });
+    },
+  }), [state, todoCtx.dispatch, execCtx.dispatch, uiCtx.dispatch]);
 }
