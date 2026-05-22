@@ -10,7 +10,6 @@ import { Dashboard } from './components/Dashboard';
 import { MemorialBoard } from './components/MemorialBoard';
 import { SettingsPage } from './components/SettingsPage';
 import { ExecutionPanel } from './components/ExecutionPanel';
-import { SnakeGame } from './components/SnakeGame';
 import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
 import * as db from './utils/database';
@@ -30,7 +29,7 @@ function AppContent() {
   const [appConfig, setAppConfig] = useState<Config | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [selectedPanel, setSelectedPanel] = useState<'list' | 'detail'>('list');
-  const [activeView, setActiveView] = useState<'dashboard' | 'settings' | 'memorial' | 'game'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'settings' | 'memorial'>('dashboard');
   const [panelCollapsed, setPanelCollapsed] = useState(() => {
     try {
       return localStorage.getItem('execution_panel_collapsed') === 'true';
@@ -216,8 +215,6 @@ function AppContent() {
               <SettingsPage onBack={isMobile ? handleBackToList : undefined} />
             ) : activeView === 'memorial' ? (
               <MemorialBoard onBack={isMobile ? handleBackToList : undefined} />
-            ) : activeView === 'game' ? (
-              <SnakeGame />
             ) : (
               <Dashboard onBack={isMobile ? handleBackToList : undefined} />
             )}
