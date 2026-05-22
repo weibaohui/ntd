@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../hooks/useApp';
 import { Button, Empty, Tooltip } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, BugOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined } from '@ant-design/icons';
 import { useTheme } from '../hooks/useTheme';
 import { StatusPicker } from './StatusPicker';
 import * as db from '../utils/database';
@@ -15,7 +15,6 @@ interface TodoListProps {
   onShowDashboard?: () => void;
   onShowMemorial?: () => void;
   onShowSettings?: () => void;
-  onShowGame?: () => void;
 }
 
 function SkeletonRow() {
@@ -32,7 +31,7 @@ function SkeletonList() {
   );
 }
 
-export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowSettings, onShowGame }: TodoListProps) {
+export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowSettings }: TodoListProps) {
   const { state, dispatch } = useApp();
   const { themeMode, toggleTheme } = useTheme();
   const { todos, selectedTodoId, selectedTagId, tags } = state;
@@ -101,14 +100,6 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
               aria-label="切换主题"
             />
           </Tooltip>
-          <Button
-            type="text"
-            size="small"
-            icon={<BugOutlined />}
-            onClick={onShowGame}
-            className="tag-btn"
-            aria-label="小游戏"
-          />
           <Button
             type="text"
             size="small"
