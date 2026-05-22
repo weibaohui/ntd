@@ -345,6 +345,9 @@ impl Database {
             "CREATE INDEX IF NOT EXISTS idx_execution_records_model ON execution_records(model)",
         )
         .await?;
+        self.exec("CREATE INDEX IF NOT EXISTS idx_execution_records_todo_finished ON execution_records(todo_id, finished_at DESC)").await?;
+        self.exec("CREATE INDEX IF NOT EXISTS idx_feishu_messages_chat_id ON feishu_messages(chat_id)").await?;
+        self.exec("CREATE INDEX IF NOT EXISTS idx_feishu_messages_created_at ON feishu_messages(created_at)").await?;
 
         // Trigger: fill created_at with UTC time on INSERT if not set
         self.exec(

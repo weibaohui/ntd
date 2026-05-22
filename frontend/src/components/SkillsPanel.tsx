@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react';
+import { useIsMobile } from '../hooks/useIsMobile';
 import {
   Card,
   Table,
@@ -1256,7 +1257,7 @@ function SkillTracking() {
       .sort((a, b) => b.count - a.count);
   }, [invocations]);
 
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
+  const isMobile = useIsMobile(640);
 
   return (
     <div>

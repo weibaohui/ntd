@@ -94,6 +94,9 @@ const EMPTY_STATE_QUOTES = [
   '不守过往，过往皆如烟。',
 ];
 
+// 静态随机语录，仅初始化时计算一次
+const RANDOM_QUOTE = EMPTY_STATE_QUOTES[Math.floor(Math.random() * EMPTY_STATE_QUOTES.length)];
+
 const STATUS_LABELS: Record<string, string> = {
   pending: '待处理',
   running: '运行中',
@@ -361,7 +364,7 @@ export function Dashboard({ onBack }: DashboardProps) {
                 but everything is todo
               </div>
               <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>
-                {EMPTY_STATE_QUOTES[Math.floor(Math.random() * EMPTY_STATE_QUOTES.length)]}
+                {RANDOM_QUOTE}
               </div>
             </div>
           )}

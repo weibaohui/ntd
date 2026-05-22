@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Tag, Badge, message } from 'antd';
 import {
   CheckCircleOutlined,
@@ -78,7 +79,7 @@ export interface TodoCardProps {
 
 /* ─── Component ─── */
 
-export function TodoCard({
+export const TodoCard = memo(function TodoCard({
   id,
   title,
   prompt,
@@ -264,4 +265,4 @@ export function TodoCard({
       )}
     </>
   );
-}
+});

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ConfigProvider, Layout, Spin, App as AntApp } from 'antd';
 import { PlusOutlined, ThunderboltOutlined, CloseOutlined } from '@ant-design/icons';
 import { AppProvider, useApp } from './hooks/useApp';
+import { useIsMobile } from './hooks/useIsMobile';
 import { useExecutionEvents } from './hooks/useExecutionEvents';
 import { ThemeProvider, useTheme } from './hooks/useTheme';
 import { TodoList } from './components/TodoList';
@@ -19,17 +20,23 @@ import './App.css';
 
 const { Content } = Layout;
 
-const MOBILE_BREAKPOINT = 768;
-
 function AppContent() {
   const { state, dispatch, clearSelection } = useApp();
   const [todoModalOpen, setTodoModalOpen] = useState(false);
   const [smartCreateOpen, setSmartCreateOpen] = useState(false);
   const [fabExpanded, setFabExpanded] = useState(false);
   const [appConfig, setAppConfig] = useState<Config | null>(null);
-  const [isMobile, setIsMobile] = useState(false);
+  const isMobile = useIsMobile();
   const [selectedPanel, setSelectedPanel] = useState<'list' | 'detail'>('list');
-  const [activeView, setActiveView] = useState<'dashboard' | 'settings' | 'memorial'>('dashboard');
+
+  // Read initial state from URL
+  const [activeView, setActiveView] = useState<'dashboard' | 'settings' | 'memorial'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const view = params.get('view');
+    if (view === 'settings' || view === 'memorial') return view;
+    return 'dashboard';
+  });
+
   const [panelCollapsed, setPanelCollapsed] = useState(() => {
     try {
       return localStorage.getItem('execution_panel_collapsed') === 'true';
@@ -43,19 +50,59 @@ function AppContent() {
   const hasRunningTasks = Object.keys(state.runningTasks).length > 0;
   const panelHeight = hasRunningTasks ? (panelCollapsed ? 40 : 280) : 0;
 
-  useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
-    };
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
-
   // 加载配置
   useEffect(() => {
     db.getConfig().then(setAppConfig).catch(() => {});
   }, []);
+
+  // Push URL state helper
+  const pushUrl = (view: string, todoId?: string | number | null) => {
+    const params = new URLSearchParams();
+    if (todoId) {
+      params.set('todo', String(todoId));
+    } else if (view !== 'dashboard') {
+      params.set('view', view);
+    }
+    const qs = params.toString();
+    const url = qs ? `/?${qs}` : '/';
+    window.history.pushState(null, '', url);
+  };
+
+  // Handle browser back/forward
+  useEffect(() => {
+    const onPopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const todoId = params.get('todo');
+      const view = params.get('view');
+
+      if (todoId) {
+        dispatch({ type: 'SELECT_TODO', payload: Number(todoId) });
+        setSelectedPanel('detail');
+      } else {
+        dispatch({ type: 'SELECT_TODO', payload: null });
+        if (view === 'settings' || view === 'memorial') {
+          setActiveView(view);
+          setSelectedPanel('detail');
+        } else {
+          setActiveView('dashboard');
+          setSelectedPanel('list');
+        }
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [dispatch]);
+
+  // On initial load, restore todo selection from URL
+  useEffect(() => {
+    if (state.loading) return;
+    const params = new URLSearchParams(window.location.search);
+    const todoId = params.get('todo');
+    if (todoId && state.todos.some(t => String(t.id) === todoId)) {
+      dispatch({ type: 'SELECT_TODO', payload: Number(todoId) });
+      setSelectedPanel('detail');
+    }
+  }, [state.loading, state.todos, dispatch]);
 
   if (state.loading) {
     return (
@@ -68,6 +115,7 @@ function AppContent() {
   const handleSelectTodo = (todoId: string | number | null) => {
     if (todoId != null) {
       setSelectedPanel('detail');
+      pushUrl(activeView, todoId);
     }
   };
 
@@ -75,18 +123,21 @@ function AppContent() {
     clearSelection();
     setActiveView('memorial');
     setSelectedPanel('detail');
+    pushUrl('memorial');
   };
 
   const handleShowDashboard = () => {
     clearSelection();
     setActiveView('dashboard');
     setSelectedPanel('detail');
+    pushUrl('dashboard');
   };
 
   const handleShowSettings = () => {
     clearSelection();
     setActiveView('settings');
     setSelectedPanel('detail');
+    pushUrl('settings');
   };
 
 
@@ -94,6 +145,7 @@ function AppContent() {
     clearSelection();
     setActiveView('dashboard');
     setSelectedPanel('list');
+    pushUrl('dashboard');
   };
 
   const handleSmartCreateSubmitted = () => {
@@ -210,14 +262,14 @@ function AppContent() {
             }}
           >
             {state.selectedTodoId ? (
-              <TodoDetail onBack={isMobile ? handleBackToList : undefined} />
-            ) : activeView === 'settings' ? (
-              <SettingsPage onBack={isMobile ? handleBackToList : undefined} />
-            ) : activeView === 'memorial' ? (
-              <MemorialBoard onBack={isMobile ? handleBackToList : undefined} />
-            ) : (
-              <Dashboard onBack={isMobile ? handleBackToList : undefined} />
-            )}
+                <TodoDetail onBack={isMobile ? handleBackToList : undefined} />
+              ) : activeView === 'settings' ? (
+                <SettingsPage onBack={isMobile ? handleBackToList : undefined} />
+              ) : activeView === 'memorial' ? (
+                <MemorialBoard onBack={isMobile ? handleBackToList : undefined} />
+              ) : (
+                <Dashboard onBack={isMobile ? handleBackToList : undefined} />
+              )}
           </div>
         </Content>
       </Layout>

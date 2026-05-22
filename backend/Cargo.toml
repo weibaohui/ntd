@@ -14,7 +14,7 @@ sea-orm = { version = "0.12", features = ["sqlx-sqlite", "runtime-tokio-rustls",
 libsqlite3-sys = { version = "0.27", features = ["bundled"] }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
-reqwest = { version = "=0.12.7", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 uuid = { version = "1", features = ["v4"] }
@@ -44,9 +44,14 @@ libc = "0.2"
 
 [dev-dependencies]
 cargo-watch = "8"
-reqwest = { version = "=0.12.7", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 
 [build-dependencies]
 vergen-gitcl = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

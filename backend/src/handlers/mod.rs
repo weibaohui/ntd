@@ -170,9 +170,11 @@ pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade)
             .into_iter()
             .filter_map(|r| r.task_id.clone().map(|tid| (tid, r)))
             .collect();
+        let record_ids: Vec<i64> = record_map.values().map(|r| r.id).collect();
+        let logs_map = state.db.get_all_execution_logs_for_records(&record_ids).await.unwrap_or_default();
         for task in &mut running_tasks {
             if let Some(record) = record_map.get(&task.task_id) {
-                let logs = state.db.get_all_execution_logs(record.id).await.unwrap_or_default();
+                let logs = logs_map.get(&record.id).cloned().unwrap_or_default();
                 task.logs = serde_json::to_string(&logs).unwrap_or_default();
             }
         }

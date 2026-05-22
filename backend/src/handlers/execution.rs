@@ -416,15 +416,15 @@ pub async fn get_execution_summary(
 use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant as StdInstant};
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 struct DashboardCacheEntry {
     stats: DashboardStats,
     expires_at: StdInstant,
 }
 
-static DASHBOARD_CACHE: LazyLock<Mutex<HashMap<u32, DashboardCacheEntry>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static DASHBOARD_CACHE: LazyLock<RwLock<HashMap<u32, DashboardCacheEntry>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 pub async fn get_dashboard_stats(
     State(state): State<AppState>,
@@ -433,7 +433,7 @@ pub async fn get_dashboard_stats(
     let hours_key = params.hours.unwrap_or(24 * 7); // default: 7 days
 
     {
-        let cache = DASHBOARD_CACHE.lock().await;
+        let cache = DASHBOARD_CACHE.read().await;
         if let Some(entry) = cache.get(&hours_key) {
             if entry.expires_at > StdInstant::now() {
                 return Ok(ApiResponse::ok(entry.stats.clone()));
@@ -444,7 +444,7 @@ pub async fn get_dashboard_stats(
     let stats = state.db.get_dashboard_stats(params.hours).await?;
 
     {
-        let mut cache = DASHBOARD_CACHE.lock().await;
+        let mut cache = DASHBOARD_CACHE.write().await;
         cache.insert(hours_key, DashboardCacheEntry {
             stats: stats.clone(),
             expires_at: StdInstant::now() + Duration::from_secs(30),

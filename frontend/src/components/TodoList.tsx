@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../hooks/useApp';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { Button, Empty, Tooltip } from 'antd';
 import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined } from '@ant-design/icons';
 import { useTheme } from '../hooks/useTheme';
@@ -35,15 +36,8 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
   const { state, dispatch } = useApp();
   const { themeMode, toggleTheme } = useTheme();
   const { todos, selectedTodoId, selectedTagId, tags } = state;
-  const [isMobile, setIsMobile] = useState(false);
+  const isMobile = useIsMobile();
   const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 768);
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
 
   useEffect(() => {
     setIsLoading(false);

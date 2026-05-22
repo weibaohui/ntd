@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { CheckOutlined } from '@ant-design/icons';
 
 interface Tag {
@@ -12,7 +13,7 @@ interface TagCheckCardProps {
   onClick: () => void;
 }
 
-function TagCheckCard({ tag, selected, onClick }: TagCheckCardProps) {
+const TagCheckCard = memo(function TagCheckCard({ tag, selected, onClick }: TagCheckCardProps) {
   return (
     <div
       onClick={onClick}
@@ -88,7 +89,7 @@ function TagCheckCard({ tag, selected, onClick }: TagCheckCardProps) {
       )}
     </div>
   );
-}
+});
 
 interface TagCheckCardGroupProps {
   tags: Tag[];

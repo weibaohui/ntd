@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useApp } from '../hooks/useApp';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { Button, Empty, App, Popconfirm, Tag, Badge, Pagination, Segmented, Modal, Input, Tooltip, Select } from 'antd';
 import { PlayCircleOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined, ReloadOutlined, CopyOutlined, ArrowLeftOutlined, StopOutlined, DownOutlined, UpOutlined, UnorderedListOutlined, MessageOutlined, FileTextOutlined, LinkOutlined, LoadingOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { StatusPicker } from './StatusPicker';
@@ -362,25 +363,11 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
   const { state, dispatch } = useApp();
   const { message } = App.useApp();
   const { todos, selectedTodoId, executionRecords, runningTasks } = state;
-  const [isMobile, setIsMobile] = useState(false);
-  const [isWide, setIsWide] = useState(false);
+  const isMobile = useIsMobile();
+  const isWide = !useIsMobile(1440);
   const [selectedHistoryRecordId, setSelectedHistoryRecordId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<'log' | 'chat'>('log');
   const selectedTodo = todos.find(t => t.id === selectedTodoId);
-
-  useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 768);
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
-
-  useEffect(() => {
-    const checkWide = () => setIsWide(window.innerWidth >= 1440);
-    checkWide();
-    window.addEventListener('resize', checkWide);
-    return () => window.removeEventListener('resize', checkWide);
-  }, []);
 
   const [todoDrawerOpen, setTodoDrawerOpen] = useState(false);
   const [summary, setSummary] = useState<ExecutionSummary | null>(null);
@@ -537,29 +524,28 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
 
   useEffect(() => {
     let cancelled = false;
-    if (selectedTodo) {
+    if (selectedTodoId) {
       setHistoryPage(1);
 
       const statusFilter = historyStatusFilter === 'all' ? undefined : historyStatusFilter;
-      db.getExecutionRecords(selectedTodo.id, 1, historyLimit, statusFilter).then(pageData => {
+      db.getExecutionRecords(selectedTodoId, 1, historyLimit, statusFilter).then(pageData => {
         if (cancelled) return;
         dispatch({
           type: 'SET_EXECUTION_RECORDS',
-          payload: { todoId: selectedTodo.id, records: pageData.records }
+          payload: { todoId: selectedTodoId, records: pageData.records }
         });
         setHistoryPage(pageData.page);
-        setHistoryLimit(pageData.limit);
         setHistoryTotal(pageData.total);
       }).catch(() => {});
 
-      db.getExecutionSummary(selectedTodo.id).then(sum => {
+      db.getExecutionSummary(selectedTodoId).then(sum => {
         if (!cancelled) setSummary(sum);
       }).catch(() => {});
     } else {
-      setTodoDrawerOpen(false);
+      setSummary(null);
     }
     return () => { cancelled = true; };
-  }, [selectedTodoId, selectedTodo, dispatch, historyLimit, historyStatusFilter]);
+  }, [selectedTodoId, historyLimit, historyStatusFilter]);
 
   useEffect(() => {
     setSelectedHistoryRecordId(null);

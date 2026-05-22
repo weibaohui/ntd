@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Popover } from 'antd';
 import { CheckOutlined } from '@ant-design/icons';
 import { useTheme } from '../hooks/useTheme';
@@ -24,7 +25,7 @@ interface StatusPickerProps {
   disabled?: boolean;
 }
 
-export function StatusPicker({ value, onChange, disabled }: StatusPickerProps) {
+export const StatusPicker = memo(function StatusPicker({ value, onChange, disabled }: StatusPickerProps) {
   const { themeMode } = useTheme();
   const statusConfig = themeMode === 'dark' ? darkStatusConfig : lightStatusConfig;
   const current = statusConfig[value] || statusConfig.pending;
@@ -114,4 +115,4 @@ export function StatusPicker({ value, onChange, disabled }: StatusPickerProps) {
       {triggerNode}
     </Popover>
   );
-}
+});

@@ -401,6 +401,51 @@ impl Database {
         Ok(logs)
     }
 
+    /// 批量获取多个 record_id 的所有执行日志（避免 WebSocket 同步时的 N+1 查询）
+    pub async fn get_all_execution_logs_for_records(
+        &self,
+        record_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, Vec<ParsedLogEntry>>, sea_orm::DbErr> {
+        if record_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let entries = execution_logs::Entity::find()
+            .filter(execution_logs::Column::RecordId.is_in(record_ids.iter().copied()))
+            .order_by_asc(execution_logs::Column::Id)
+            .all(&self.conn)
+            .await?;
+
+        let mut map: std::collections::HashMap<i64, Vec<ParsedLogEntry>> =
+            std::collections::HashMap::with_capacity(record_ids.len());
+        for m in entries {
+            let (usage, tool_name, tool_input_json) = m
+                .metadata
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                .map(|v| {
+                    (
+                        v.get("usage")
+                            .and_then(|u| serde_json::from_value(u.clone()).ok()),
+                        v.get("tool_name")
+                            .and_then(|n| n.as_str().map(String::from)),
+                        v.get("tool_input_json")
+                            .and_then(|t| t.as_str().map(String::from)),
+                    )
+                })
+                .unwrap_or((None, None, None));
+
+            map.entry(m.record_id).or_default().push(ParsedLogEntry {
+                timestamp: m.timestamp,
+                log_type: m.log_type,
+                content: m.content,
+                usage,
+                tool_name,
+                tool_input_json,
+            });
+        }
+        Ok(map)
+    }
+
     /// 根据 session_id 获取所有执行记录（按 started_at 排序）
     pub async fn get_execution_records_by_session(
         &self,
