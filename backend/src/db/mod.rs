@@ -951,6 +951,7 @@ mod tests {
             executor: Some("opencode"),
             scheduler_enabled: Some(true),
             scheduler_config: Some("0 0 * * *"),
+            scheduler_timezone: None,
             workspace: Some("/tmp/workspace"),
             worktree_enabled: None,
         })
@@ -991,7 +992,7 @@ mod tests {
     async fn test_update_todo_scheduler() {
         let db = setup_db().await;
         let id = db.create_todo("Test", "Prompt").await.unwrap();
-        db.update_todo_scheduler(id, true, Some("0 0 * * *"))
+        db.update_todo_scheduler(id, true, Some("0 0 * * *"), None)
             .await
             .unwrap();
         let todo = db.get_todo(id).await.unwrap().unwrap();
@@ -1055,7 +1056,7 @@ mod tests {
     async fn test_get_scheduler_todos() {
         let db = setup_db().await;
         let id1 = db.create_todo("Scheduled", "Prompt").await.unwrap();
-        db.update_todo_scheduler(id1, true, Some("0 0 * * *"))
+        db.update_todo_scheduler(id1, true, Some("0 0 * * *"), None)
             .await
             .unwrap();
         let id2 = db.create_todo("Normal", "Prompt").await.unwrap();

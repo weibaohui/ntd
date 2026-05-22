@@ -13,6 +13,7 @@ export interface Todo {
   executor?: string;
   scheduler_enabled?: boolean;
   scheduler_config?: string | null;
+  scheduler_timezone?: string | null;
   scheduler_next_run_at?: string | null;
   task_id?: string | null;
   workspace?: string | null;

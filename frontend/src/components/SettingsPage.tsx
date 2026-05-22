@@ -90,7 +90,6 @@ const TIMEZONES = [
   { value: 'America/Chicago', label: 'America/Chicago (芝加哥时间, UTC-6)' },
   { value: 'America/Sao_Paulo', label: 'America/Sao_Paulo (圣保罗时间, UTC-3)' },
   { value: 'Australia/Sydney', label: 'Australia/Sydney (悉尼时间, UTC+10)' },
-  { value: 'Pacific/Tokyo', label: 'Pacific/Tokyo (东京时间, UTC+9)' },
 ];
 
 interface SettingsPageProps {
