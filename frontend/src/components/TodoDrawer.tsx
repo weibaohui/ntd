@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
 import { Drawer, Input, Button, App, AutoComplete, Divider, Switch, Tooltip, Tag, Empty, Spin, Modal, Card } from 'antd';
 import { CheckOutlined, FolderOutlined, ClockCircleOutlined, FileTextOutlined, ThunderboltOutlined, RightOutlined, SearchOutlined } from '@ant-design/icons';
 import { Cron } from 'react-js-cron';
@@ -49,6 +49,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
   const [allExecutorSkills, setAllExecutorSkills] = useState<ExecutorSkills[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [skillsExpanded, setSkillsExpanded] = useState(false);
+  const [skillSearchText, setSkillSearchText] = useState('');
 
   // Scheduler
   const [schedulerEnabled, setSchedulerEnabled] = useState(false);
@@ -99,6 +100,18 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
     const found = allExecutorSkills.find(e => e.executor === executor);
     return found?.skills || [];
   }, [executor, allExecutorSkills]);
+
+  // Filter skills by search text (deferred for better performance)
+  const deferredSkillSearchText = useDeferredValue(skillSearchText);
+  const filteredSkills = useMemo(() => {
+    if (!deferredSkillSearchText.trim()) return currentSkills;
+    const search = deferredSkillSearchText.toLowerCase();
+    return currentSkills.filter(skill =>
+      skill.name.toLowerCase().includes(search) ||
+      skill.description?.toLowerCase().includes(search) ||
+      skill.keywords?.some(k => k.toLowerCase().includes(search))
+    );
+  }, [currentSkills, deferredSkillSearchText]);
 
   // Initialize data when drawer opens
   useEffect(() => {
@@ -499,16 +512,28 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
                 <ThunderboltOutlined style={{ color: executorColor, marginRight: 6 }} />
                 Skills
                 <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--color-text-tertiary)', marginLeft: 8 }}>
-                  {currentSkills.length} 个可用
+                  {filteredSkills.length}{deferredSkillSearchText ? `/${currentSkills.length}` : ''} 个可用
                 </span>
               </div>
               {skillsExpanded && (
+                <div style={{ marginBottom: 10 }}>
+                  <Input
+                    prefix={<SearchOutlined style={{ color: 'var(--color-text-quaternary)' }} />}
+                    placeholder="搜索 Skills..."
+                    value={skillSearchText}
+                    onChange={(e) => setSkillSearchText(e.target.value)}
+                    allowClear
+                    style={{ width: '100%' }}
+                  />
+                </div>
+              )}
+              {skillsExpanded && filteredSkills.length > 0 && (
                 <div style={{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(2, 1fr)',
                   gap: 10,
                 }}>
-                  {currentSkills.map(skill => (
+                  {filteredSkills.map(skill => (
                   <div
                     key={skill.name}
                     onClick={() => handleSkillClick(skill)}
@@ -582,6 +607,11 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
                   </div>
                 ))}
               </div>
+              )}
+              {skillsExpanded && filteredSkills.length === 0 && deferredSkillSearchText && (
+                <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--color-text-tertiary)' }}>
+                  未找到匹配 "{deferredSkillSearchText}" 的 Skill
+                </div>
               )}
             </div>
           )}
