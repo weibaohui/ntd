@@ -63,6 +63,12 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
   const [execRecordCache, setExecRecordCache] = useState<Record<number, ExecutionRecord>>({});
   const fetchAttempted = useRef<Set<number>>(new Set());
 
+  /* ─── Run history switching ─── */
+  const [selectedRunIndex, setSelectedRunIndex] = useState<Record<number, number>>({});
+  const [totalRunsCache, setTotalRunsCache] = useState<Record<number, number>>({});
+  const [runDataCache, setRunDataCache] = useState<Record<number, (ExecutionRecord | null)[]>>({});
+  const [loadingRunIndex, setLoadingRunIndex] = useState<Record<number, number | null>>({});
+
   useEffect(() => {
     const finished = todos.filter(t => t.status === 'completed' || t.status === 'failed');
     for (const todo of finished) {
@@ -75,12 +81,19 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
         if (!execRecordCache[todo.id]) {
           setExecRecordCache(prev => ({ ...prev, [todo.id]: global[0] }));
         }
+        // Estimate total from global state (may not be exact, will be corrected on first API call)
+        if (!totalRunsCache[todo.id]) {
+          setTotalRunsCache(prev => ({ ...prev, [todo.id]: global.length }));
+        }
         continue;
       }
       // Lazy-fetch from API
       db.getExecutionRecords(todo.id, 1, 1).then(page => {
         if (page.records.length > 0) {
           setExecRecordCache(prev => ({ ...prev, [todo.id]: page.records[0] }));
+        }
+        if (page.total > 0) {
+          setTotalRunsCache(prev => ({ ...prev, [todo.id]: page.total }));
         }
       }).catch(() => {});
     }
@@ -228,6 +241,54 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
     });
   }, [expandedResultIds, todoResults, loadingResults, state.executionRecords]);
 
+  /* ─── Select run index (on-demand fetch) ─── */
+  const handleSelectRun = useCallback(async (todoId: number, runIndex: number) => {
+    // If already selected, do nothing
+    if (selectedRunIndex[todoId] === runIndex) return;
+
+    setSelectedRunIndex(prev => ({ ...prev, [todoId]: runIndex }));
+
+    // If already cached, no need to fetch
+    if (runDataCache[todoId]?.[runIndex]) return;
+
+    // For index 0, we already have data in execRecordCache
+    if (runIndex === 0) {
+      const record = execRecordCache[todoId] || state.executionRecords[todoId]?.[0];
+      if (record) {
+        setRunDataCache(prev => {
+          const arr = prev[todoId] || [];
+          const next = [...arr];
+          next[0] = record;
+          return { ...prev, [todoId]: next };
+        });
+      }
+      return;
+    }
+
+    // Fetch from API
+    setLoadingRunIndex(prev => ({ ...prev, [todoId]: runIndex }));
+    try {
+      const page = await db.getExecutionRecords(todoId, runIndex + 1, 1);
+      if (page.records.length > 0) {
+        const record = page.records[0];
+        setRunDataCache(prev => {
+          const arr = prev[todoId] || [];
+          const next = [...arr];
+          next[runIndex] = record;
+          return { ...prev, [todoId]: next };
+        });
+        // Also update total if not yet known
+        if (!totalRunsCache[todoId] && page.total > 0) {
+          setTotalRunsCache(prev => ({ ...prev, [todoId]: page.total }));
+        }
+      }
+    } catch {
+      // silently ignore
+    } finally {
+      setLoadingRunIndex(prev => ({ ...prev, [todoId]: null }));
+    }
+  }, [selectedRunIndex, runDataCache, execRecordCache, state.executionRecords, totalRunsCache]);
+
   /* ─── Render Card ─── */
   const renderCard = (todo: Todo) => {
     const column = getColumnForStatus(todo.status);
@@ -237,12 +298,39 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
     const isFinished = todo.status === 'completed' || todo.status === 'failed';
     const promptExpanded = expandedPromptIds.has(todo.id);
     const resultExpanded = expandedResultIds.has(todo.id);
-    const recordResult = execRecordCache[todo.id]?.result || state.executionRecords[todo.id]?.[0]?.result;
-    const resultText = todoResults[todo.id] || recordResult || '';
-    const isLoadingResult = loadingResults.has(todo.id);
     const records = state.executionRecords[todo.id] || [];
     const todoExecutionRecord: ExecutionRecord | undefined =
       records.length > 0 ? records[0] : execRecordCache[todo.id];
+
+    // Run history: determine which run to display
+    const runIdx = selectedRunIndex[todo.id] ?? 0;
+    const cachedRun = runDataCache[todo.id]?.[runIdx];
+    let resultText: string;
+    let displayModel: string | null | undefined;
+    let displayUsage: ExecutionRecord['usage'] | null | undefined;
+    let displayTriggerType: string | undefined;
+
+    if (runIdx === 0) {
+      // Default: latest run (existing logic)
+      const recordResult = execRecordCache[todo.id]?.result || state.executionRecords[todo.id]?.[0]?.result;
+      resultText = todoResults[todo.id] || recordResult || '';
+      displayModel = todoExecutionRecord?.model;
+      displayUsage = todoExecutionRecord?.usage;
+      displayTriggerType = todoExecutionRecord?.trigger_type;
+    } else if (cachedRun) {
+      resultText = cachedRun.result || '';
+      displayModel = cachedRun.model;
+      displayUsage = cachedRun.usage;
+      displayTriggerType = cachedRun.trigger_type;
+    } else {
+      resultText = '';
+      displayModel = null;
+      displayUsage = null;
+    }
+
+    const isLoadingResult = loadingResults.has(todo.id);
+    const isLoadingRun = loadingRunIndex[todo.id] != null && loadingRunIndex[todo.id] === runIdx && runIdx > 0;
+    const runCount = totalRunsCache[todo.id] ?? (isFinished ? 1 : 0);
 
     return (
       <div
@@ -262,15 +350,19 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
           showResultSection={isFinished}
           executor={todo.executor}
           time={formatRelativeTime(todo.updated_at)}
-          model={todoExecutionRecord?.model}
+          model={displayModel}
           tags={todoTags}
-          usage={todoExecutionRecord?.usage}
-          triggerType={todoExecutionRecord?.trigger_type}
+          usage={displayUsage}
+          triggerType={displayTriggerType}
           promptExpanded={promptExpanded}
           resultExpanded={resultExpanded}
           onTogglePrompt={() => togglePrompt(todo.id)}
           onToggleResult={() => toggleResult(todo)}
           isLoadingResult={isLoadingResult}
+          runCount={runCount}
+          selectedRun={runIdx}
+          onSelectRun={(index) => handleSelectRun(todo.id, index)}
+          isLoadingRun={isLoadingRun}
         />
       </div>
     );
