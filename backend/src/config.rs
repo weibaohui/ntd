@@ -67,6 +67,8 @@ pub struct Config {
     pub auto_skill_backup_cron: String,
     /// Skill 自动备份最大保留文件数
     pub auto_skill_backup_max_files: usize,
+    /// 定时任务默认时区（用于 cron 表达式转换）
+    pub scheduler_default_timezone: Option<String>,
 }
 
 /// Paths for each supported executor binary.
@@ -149,6 +151,7 @@ impl Default for Config {
             auto_skill_backup_enabled: false,
             auto_skill_backup_cron: "0 0 5 * * *".to_string(),
             auto_skill_backup_max_files: 30,
+            scheduler_default_timezone: None,
         }
     }
 }

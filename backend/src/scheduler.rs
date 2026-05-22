@@ -5,12 +5,128 @@ use tokio::sync::{broadcast, Mutex};
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::{error, info, warn};
 
+use chrono::TimeZone;
+use chrono::Offset;
+
 use crate::adapters::ExecutorRegistry;
 use crate::config::Config;
 use crate::db::Database;
 use crate::executor_service::{run_todo_execution, RunTodoExecutionRequest};
 use crate::handlers::ExecEvent;
 use crate::task_manager::TaskManager;
+
+/// Convert a cron expression from user timezone to UTC timezone.
+/// This is necessary because tokio-cron-scheduler always executes in UTC.
+/// For example, if user is in Asia/Shanghai (UTC+8) and wants 9:00 local time,
+/// we need to schedule UTC 1:00 (9:00 - 8 hours = 1:00).
+///
+/// Returns (utc_cron_expr, original_timezone) on success.
+fn convert_cron_to_utc(cron_expr: &str, timezone: &str) -> Result<String, String> {
+    // Parse timezone
+    let tz: chrono_tz::Tz = timezone
+        .parse()
+        .map_err(|_| format!("Invalid timezone: {}", timezone))?;
+
+    // Parse cron expression
+    let schedule = cron::Schedule::from_str(cron_expr)
+        .map_err(|_| format!("Invalid cron expression: {}", cron_expr))?;
+
+    // Get the cron fields (seconds, minute, hour, day, month, weekday)
+    // cron crate uses: seconds minute hour day-of-month month day-of-week
+    let fields = cron_expr.trim().split_whitespace().collect::<Vec<_>>();
+    if fields.len() != 6 {
+        return Err(format!(
+            "Cron expression must have 6 fields, got {}",
+            fields.len()
+        ));
+    }
+
+    let seconds = fields[0];
+    let minutes = fields[1];
+    let hours = fields[2];
+    let day_of_month = fields[3];
+    let month = fields[4];
+    let day_of_week = fields[5];
+
+    // Check if hours field contains a wildcard or specific values
+    // If hours is a wildcard (*), we don't need to convert
+    if hours == "*" {
+        return Ok(cron_expr.to_string());
+    }
+
+    // For specific hour values, we need to convert to UTC
+    // Parse the hour value(s) and calculate UTC offset
+    let now = chrono::Utc::now();
+    let offset_secs = tz.offset_from_utc_datetime(&now.naive_utc()).fix().local_minus_utc();
+    let offset_hours = offset_secs / 3600;
+
+    // Convert hour values from user timezone to UTC
+    let convert_hour = |h: i32| -> i32 {
+        let mut utc_hour = h - offset_hours;
+        if utc_hour < 0 {
+            utc_hour += 24;
+        } else if utc_hour >= 24 {
+            utc_hour -= 24;
+        }
+        utc_hour
+    };
+
+    // Handle specific hour values
+    if let Ok(hour_val) = hours.parse::<i32>() {
+        let utc_hour = convert_hour(hour_val);
+        return Ok(format!(
+            "{} {} {} {} {} {}",
+            seconds, minutes, utc_hour, day_of_month, month, day_of_week
+        ));
+    }
+
+    // Handle ranges like "9-17"
+    if hours.contains('-') {
+        let parts: Vec<&str> = hours.split('-').collect();
+        if parts.len() == 2 {
+            if let (Ok(start), Ok(end)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>()) {
+                let utc_start = convert_hour(start);
+                let utc_end = convert_hour(end);
+                return Ok(format!(
+                    "{} {} {}-{} {} {} {}",
+                    seconds, minutes, utc_start, utc_end, day_of_month, month, day_of_week
+                ));
+            }
+        }
+    }
+
+    // Handle step values like "*/2" or "0-23/2"
+    if hours.contains('/') {
+        // For step values, we can't easily convert, so just return as-is with a warning
+        warn!(
+            "Hour step expression '{}' may not correctly account for timezone. Consider using specific hours.",
+            hours
+        );
+        return Ok(cron_expr.to_string());
+    }
+
+    // Handle lists like "9,12,18"
+    if hours.contains(',') {
+        let hour_list: Result<Vec<i32>, _> = hours
+            .split(',')
+            .map(|h| h.parse::<i32>())
+            .collect();
+        if let Ok(list) = hour_list {
+            let utc_list: Vec<i32> = list.iter().map(|&h| convert_hour(h)).collect();
+            return Ok(format!(
+                "{} {} {} {} {} {}",
+                seconds,
+                minutes,
+                utc_list.iter().map(|h| h.to_string()).collect::<Vec<_>>().join(","),
+                day_of_month,
+                month,
+                day_of_week
+            ));
+        }
+    }
+
+    Ok(cron_expr.to_string())
+}
 
 pub struct TodoScheduler {
     sched: Mutex<JobScheduler>,
@@ -40,8 +156,8 @@ impl TodoScheduler {
             if let Some(ref config) = todo.scheduler_config {
                 if todo.scheduler_enabled {
                     info!(
-                        "Loading scheduled task for todo {} with cron: {}",
-                        todo.id, config
+                        "Loading scheduled task for todo {} with cron: {} and timezone: {:?}",
+                        todo.id, config, todo.scheduler_timezone
                     );
                     if let Err(e) = self
                         .upsert_task(
@@ -50,6 +166,7 @@ impl TodoScheduler {
                             tx.clone(),
                             todo.id,
                             config.clone(),
+                            todo.scheduler_timezone.clone(),
                             task_manager.clone(),
                             app_config.clone(),
                         )
@@ -74,6 +191,7 @@ impl TodoScheduler {
         tx: broadcast::Sender<ExecEvent>,
         todo_id: i64,
         cron_expr: String,
+        timezone: Option<String>,
         task_manager: Arc<TaskManager>,
         config: Arc<tokio::sync::RwLock<Config>>,
     ) -> Result<uuid::Uuid, Box<dyn std::error::Error + Send + Sync>> {
@@ -91,6 +209,30 @@ impl TodoScheduler {
             ).into());
         }
 
+        // Convert cron expression to UTC if timezone is specified
+        let cron_expr_utc = if let Some(ref tz) = timezone {
+            match convert_cron_to_utc(&cron_expr, tz) {
+                Ok(utc_expr) => {
+                    if utc_expr != cron_expr {
+                        info!(
+                            "Converted cron expression from '{}' ({})) to '{}' (UTC) for todo {}",
+                            cron_expr, tz, utc_expr, todo_id
+                        );
+                    }
+                    utc_expr
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to convert cron expression '{}' to timezone {}: {}. Using original.",
+                        cron_expr, tz, e
+                    );
+                    cron_expr.clone()
+                }
+            }
+        } else {
+            cron_expr.clone()
+        };
+
         self.remove_task_for_todo(todo_id).await;
 
         let db_clone = db.clone();
@@ -99,8 +241,8 @@ impl TodoScheduler {
         let tm_clone = task_manager.clone();
         let config_clone = config.clone();
 
-        info!("Creating job for todo {} with cron: {}", todo_id, cron_expr);
-        let job = Job::new_async(&cron_expr, move |_uuid, _l| {
+        info!("Creating job for todo {} with cron: {} (original: {:?})", todo_id, cron_expr_utc, timezone);
+        let job = Job::new_async(&cron_expr_utc, move |_uuid, _l| {
             let db = db_clone.clone();
             let registry = registry_clone.clone();
             let tx = tx_clone.clone();

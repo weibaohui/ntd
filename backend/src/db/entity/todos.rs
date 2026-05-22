@@ -15,6 +15,7 @@ pub struct Model {
     pub executor: Option<String>,
     pub scheduler_enabled: Option<bool>,
     pub scheduler_config: Option<String>,
+    pub scheduler_timezone: Option<String>,
     pub task_id: Option<String>,
     pub workspace: Option<String>,
     pub worktree_enabled: Option<bool>,

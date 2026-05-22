@@ -98,6 +98,8 @@ pub struct Todo {
     #[serde(default)]
     pub scheduler_config: Option<String>,
     #[serde(default)]
+    pub scheduler_timezone: Option<String>,
+    #[serde(default)]
     pub scheduler_next_run_at: Option<String>,
     #[serde(default)]
     pub task_id: Option<String>,
@@ -284,6 +286,8 @@ pub struct CreateTodoRequest {
     pub scheduler_enabled: Option<bool>,
     #[serde(default)]
     pub scheduler_config: Option<String>,
+    #[serde(default)]
+    pub scheduler_timezone: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -300,6 +304,8 @@ pub struct UpdateTodoRequest {
     pub scheduler_enabled: Option<bool>,
     #[serde(default)]
     pub scheduler_config: Option<String>,
+    #[serde(default)]
+    pub scheduler_timezone: Option<String>,
     #[serde(default)]
     pub workspace: Option<String>,
     #[serde(default)]
@@ -507,6 +513,7 @@ pub struct ModelCacheStat {
 pub struct UpdateSchedulerRequest {
     pub scheduler_enabled: bool,
     pub scheduler_config: Option<String>,
+    pub scheduler_timezone: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -520,6 +527,7 @@ pub struct UpdateConfigRequest {
     pub history_message_max_age_secs: Option<u64>,
     pub max_concurrent_todos: Option<u32>,
     pub execution_timeout_secs: Option<u64>,
+    pub scheduler_default_timezone: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -357,6 +357,7 @@ export interface Config {
   history_message_max_age_secs?: number;
   max_concurrent_todos?: number;
   execution_timeout_secs?: number;
+  scheduler_default_timezone?: string;
 }
 
 export const RESUMABLE_EXECUTORS = new Set(['claudecode', 'kimi', 'opencode', 'joinai', 'hermes']);

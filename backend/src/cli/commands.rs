@@ -351,6 +351,7 @@ async fn handle_todo(
                         executor: value.get("executor").and_then(|v| v.as_str()).map(|s| s.to_string()),
                         scheduler_enabled: None,
                         scheduler_config: None,
+                        scheduler_timezone: None,
                     });
                 if workspace.is_some() {
                     // workspace is sent separately in the full JSON body
@@ -371,6 +372,7 @@ async fn handle_todo(
                     executor: executor.clone(),
                     scheduler_enabled: None,
                     scheduler_config: None,
+                    scheduler_timezone: None,
                 }
             };
 

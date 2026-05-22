@@ -16,6 +16,7 @@ pub struct TodoUpdate<'a> {
     pub executor: Option<&'a str>,
     pub scheduler_enabled: Option<bool>,
     pub scheduler_config: Option<&'a str>,
+    pub scheduler_timezone: Option<&'a str>,
     pub workspace: Option<&'a str>,
     pub worktree_enabled: Option<bool>,
 }
@@ -24,10 +25,13 @@ impl Database {
     fn model_to_todo(m: todos::Model, tag_ids: Vec<i64>) -> Todo {
         let scheduler_enabled = m.scheduler_enabled.unwrap_or(false);
         let scheduler_config = m.scheduler_config.clone();
+        let scheduler_timezone = m.scheduler_timezone.clone();
         let scheduler_next_run_at = if scheduler_enabled {
             scheduler_config
                 .as_deref()
-                .and_then(super::compute_next_run)
+                .and_then(|config| {
+                    super::compute_next_run(config, scheduler_timezone.as_deref())
+                })
         } else {
             None
         };
@@ -46,6 +50,7 @@ impl Database {
             executor: m.executor,
             scheduler_enabled,
             scheduler_config,
+            scheduler_timezone,
             scheduler_next_run_at,
             task_id: m.task_id,
             workspace: m.workspace,
@@ -125,6 +130,13 @@ impl Database {
         if let Some(cfg) = update.scheduler_config {
             am.scheduler_config = ActiveValue::Set(Some(cfg.to_string()));
         }
+        if let Some(tz) = update.scheduler_timezone {
+            if tz.is_empty() {
+                am.scheduler_timezone = ActiveValue::Set(None);
+            } else {
+                am.scheduler_timezone = ActiveValue::Set(Some(tz.to_string()));
+            }
+        }
         if let Some(ws) = update.workspace {
             let ws = ws.trim();
             if ws.is_empty() {
@@ -174,12 +186,14 @@ impl Database {
         id: i64,
         enabled: bool,
         config: Option<&str>,
+        timezone: Option<&str>,
     ) -> Result<(), sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let am = todos::ActiveModel {
             id: ActiveValue::Unchanged(id),
             scheduler_enabled: ActiveValue::Set(Some(enabled)),
             scheduler_config: ActiveValue::Set(config.map(|s| s.to_string())),
+            scheduler_timezone: ActiveValue::Set(timezone.map(|s| s.to_string())),
             updated_at: ActiveValue::Set(Some(now)),
             ..Default::default()
         };

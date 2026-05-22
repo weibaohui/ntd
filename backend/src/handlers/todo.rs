@@ -75,6 +75,15 @@ pub async fn create_todo(
         .filter(|s| !s.is_empty())
         .cloned();
 
+    // Get timezone from request, or fall back to system default
+    let system_default_tz = state.config.read().await.scheduler_default_timezone.clone();
+    let scheduler_timezone = req
+        .scheduler_timezone
+        .as_ref()
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .or(system_default_tz.filter(|s| !s.is_empty()));
+
     // Validate cron expression if scheduler config is provided
     if let Some(ref config) = scheduler_config {
         validate_cron_expression(config)?;
@@ -82,7 +91,7 @@ pub async fn create_todo(
 
     // Update scheduler - always call to ensure consistent state
     // When scheduler_enabled is false or config is empty, scheduler will be disabled
-    if let Err(e) = state.db.update_todo_scheduler(id, scheduler_enabled, scheduler_config.as_deref()).await {
+    if let Err(e) = state.db.update_todo_scheduler(id, scheduler_enabled, scheduler_config.as_deref(), scheduler_timezone.as_deref()).await {
         tracing::warn!("Failed to update scheduler for todo {}: {}", id, e);
     }
 
@@ -97,6 +106,7 @@ pub async fn create_todo(
         executor: Some(executor),
         scheduler_enabled,
         scheduler_config: scheduler_config.clone(),
+        scheduler_timezone: scheduler_timezone.clone(),
         scheduler_next_run_at: None,
         task_id: None,
         workspace: None,
@@ -136,6 +146,15 @@ pub async fn update_todo(
         .filter(|s| !s.is_empty())
         .cloned();
 
+    // Get timezone from request, or fall back to system default
+    let system_default_tz = state.config.read().await.scheduler_default_timezone.clone();
+    let scheduler_timezone = req
+        .scheduler_timezone
+        .as_ref()
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .or(system_default_tz.filter(|s| !s.is_empty()));
+
     // Validate cron expression if scheduler config is provided
     if let Some(ref config) = scheduler_config {
         validate_cron_expression(config)?;
@@ -150,6 +169,7 @@ pub async fn update_todo(
             executor: executor.as_deref(),
             scheduler_enabled: req.scheduler_enabled,
             scheduler_config: scheduler_config.as_deref(),
+            scheduler_timezone: scheduler_timezone.as_deref(),
             workspace: workspace.as_deref(),
             worktree_enabled: Some(worktree_enabled),
         })

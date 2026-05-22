@@ -11,6 +11,15 @@ pub async fn update_scheduler(
     Path(id): Path<i64>,
     ApiJson(req): ApiJson<UpdateSchedulerRequest>,
 ) -> Result<ApiResponse<Todo>, AppError> {
+    // Get timezone from request, or fall back to system default
+    let system_default_tz = state.config.read().await.scheduler_default_timezone.clone();
+    let scheduler_timezone = req
+        .scheduler_timezone
+        .as_ref()
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .or(system_default_tz.filter(|s| !s.is_empty()));
+
     if req.scheduler_enabled {
         if let Some(ref config) = req.scheduler_config {
             match state
@@ -21,6 +30,7 @@ pub async fn update_scheduler(
                     state.tx.clone(),
                     id,
                     config.clone(),
+                    scheduler_timezone.clone(),
                     state.task_manager.clone(),
                     state.config.clone(),
                 )
@@ -29,7 +39,7 @@ pub async fn update_scheduler(
                 Ok(_) => {
                     state
                         .db
-                        .update_todo_scheduler(id, req.scheduler_enabled, req.scheduler_config.as_deref())
+                        .update_todo_scheduler(id, req.scheduler_enabled, req.scheduler_config.as_deref(), scheduler_timezone.as_deref())
                         .await
                         .map_err(AppError::from)?;
                 }
@@ -42,7 +52,7 @@ pub async fn update_scheduler(
             state.scheduler.remove_task_for_todo(id).await;
             state
                 .db
-                .update_todo_scheduler(id, req.scheduler_enabled, req.scheduler_config.as_deref())
+                .update_todo_scheduler(id, req.scheduler_enabled, req.scheduler_config.as_deref(), scheduler_timezone.as_deref())
                 .await
                 .map_err(AppError::from)?;
         }
@@ -50,7 +60,7 @@ pub async fn update_scheduler(
         state.scheduler.remove_task_for_todo(id).await;
         state
             .db
-            .update_todo_scheduler(id, req.scheduler_enabled, req.scheduler_config.as_deref())
+            .update_todo_scheduler(id, req.scheduler_enabled, req.scheduler_config.as_deref(), scheduler_timezone.as_deref())
             .await
             .map_err(AppError::from)?;
     }
