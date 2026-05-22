@@ -180,17 +180,24 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
   });
 
   useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout>;
     const onResize = () => {
-      const w = window.innerWidth;
-      setColumnCount(
-        w >= 1600 ? 4 :
-        w >= 1100 ? 3 :
-        w >= 769  ? 2 :
-                    1
-      );
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        const w = window.innerWidth;
+        setColumnCount(
+          w >= 1600 ? 4 :
+          w >= 1100 ? 3 :
+          w >= 769  ? 2 :
+                      1
+        );
+      }, 150);
     };
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    return () => {
+      clearTimeout(timeoutId);
+      window.removeEventListener('resize', onResize);
+    };
   }, []);
 
   /* ─── Split items into columns ─── */
@@ -362,15 +369,27 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
         <KanbanBoard searchText={searchText} hours={hours} onSearchChange={setSearchText} onHoursChange={setHours} />
       ) : loading ? (
         <div className="memorial-grid">
-          {columns.map((col, colIdx) => (
-            <div key={colIdx} className="memorial-column">
-              {col.map((item) => (
-                <Card key={item.todo_id} className="memorial-card" size="small" bodyStyle={{ padding: 12 }}>
-                  <Skeleton active paragraph={{ rows: 4 }} />
-                </Card>
-              ))}
-            </div>
-          ))}
+          {columns.some(col => col.length > 0) ? (
+            columns.map((col, colIdx) => (
+              <div key={colIdx} className="memorial-column">
+                {col.map((item) => (
+                  <Card key={item.todo_id} className="memorial-card" size="small" bodyStyle={{ padding: 12 }}>
+                    <Skeleton active paragraph={{ rows: 4 }} />
+                  </Card>
+                ))}
+              </div>
+            ))
+          ) : (
+            Array.from({ length: columnCount }).map((_, colIdx) => (
+              <div key={colIdx} className="memorial-column">
+                {Array.from({ length: 6 }).map((__, idx) => (
+                  <Card key={`skeleton-${colIdx}-${idx}`} className="memorial-card" size="small" bodyStyle={{ padding: 12 }}>
+                    <Skeleton active paragraph={{ rows: 4 }} />
+                  </Card>
+                ))}
+              </div>
+            ))
+          )}
         </div>
       ) : items.length === 0 ? (
         <div className="memorial-empty">
