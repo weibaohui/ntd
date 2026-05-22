@@ -13,7 +13,7 @@ import { KanbanBoard } from './KanbanBoard';
 import { TodoCard } from './TodoCard';
 import * as db from '../utils/database';
 import { formatRelativeTime } from '../utils/datetime';
-import type { RecentCompletedTodo, Tag } from '../types';
+import type { RecentCompletedTodo, Tag, ExecutionRecord } from '../types';
 
 const TIME_OPTIONS: { label: string; value: number }[] = [
   { label: '6h', value: 6 },
@@ -39,13 +39,31 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [promptExpandedIds, setPromptExpandedIds] = useState<Set<number>>(new Set());
 
+  /* ─── Run history switching ─── */
+  const [selectedRunIndex, setSelectedRunIndex] = useState<Record<number, number>>({});
+  const [totalRunsCache, setTotalRunsCache] = useState<Record<number, number>>({});
+  const [runDataCache, setRunDataCache] = useState<Record<number, (ExecutionRecord | null)[]>>({});
+  const [loadingRunIndex, setLoadingRunIndex] = useState<Record<number, number | null>>({});
+
   useEffect(() => {
     if (boardMode !== 'memorial') return;
     let cancelled = false;
     setLoading(true);
     db.getRecentCompletedTodos(hours)
       .then(data => {
-        if (!cancelled) setItems(data);
+        if (!cancelled) {
+          setItems(data);
+          // Fetch total run count for each todo
+          for (const item of data) {
+            if (!totalRunsCache[item.todo_id]) {
+              db.getExecutionRecords(item.todo_id, 1, 1).then(page => {
+                if (page.total > 0) {
+                  setTotalRunsCache(prev => ({ ...prev, [item.todo_id]: page.total }));
+                }
+              }).catch(() => {});
+            }
+          }
+        }
       })
       .catch(() => {
         if (!cancelled) setItems([]);
@@ -78,6 +96,64 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
       }
       return next;
     });
+  };
+
+  /* ─── Select run index (on-demand fetch) ─── */
+  const handleSelectRun = async (todoId: number, runIndex: number) => {
+    if (selectedRunIndex[todoId] === runIndex) return;
+    setSelectedRunIndex(prev => ({ ...prev, [todoId]: runIndex }));
+
+    if (runDataCache[todoId]?.[runIndex]) return;
+
+    if (runIndex === 0) {
+      const item = items.find(i => i.todo_id === todoId);
+      if (item) {
+        const record: ExecutionRecord = {
+          id: item.record_id,
+          todo_id: item.todo_id,
+          status: item.execution_status === 'success' ? 'success' : 'failed',
+          command: '',
+          stdout: '',
+          stderr: '',
+          result: item.result,
+          started_at: '',
+          finished_at: item.completed_at,
+          usage: item.usage,
+          executor: item.executor,
+          model: item.model,
+          trigger_type: item.trigger_type,
+          pid: null,
+        };
+        setRunDataCache(prev => {
+          const arr = prev[todoId] || [];
+          const next = [...arr];
+          next[0] = record;
+          return { ...prev, [todoId]: next };
+        });
+      }
+      return;
+    }
+
+    setLoadingRunIndex(prev => ({ ...prev, [todoId]: runIndex }));
+    try {
+      const page = await db.getExecutionRecords(todoId, runIndex + 1, 1);
+      if (page.records.length > 0) {
+        const record = page.records[0];
+        setRunDataCache(prev => {
+          const arr = prev[todoId] || [];
+          const next = [...arr];
+          next[runIndex] = record;
+          return { ...prev, [todoId]: next };
+        });
+        if (!totalRunsCache[todoId] && page.total > 0) {
+          setTotalRunsCache(prev => ({ ...prev, [todoId]: page.total }));
+        }
+      }
+    } catch {
+      // silently ignore
+    } finally {
+      setLoadingRunIndex(prev => ({ ...prev, [todoId]: null }));
+    }
   };
 
   const handleSelectTodo = (todoId: number, e: React.MouseEvent) => {
@@ -117,8 +193,34 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
   const renderCard = (item: RecentCompletedTodo) => {
     const isSuccess = item.execution_status === 'success';
     const expanded = expandedIds.has(item.todo_id);
-    const result = item.result || '';
     const resolvedTags = item.tag_ids.map(tid => state.tags.find(t => t.id === tid)).filter(Boolean) as Tag[];
+
+    // Run history: determine which run to display
+    const runIdx = selectedRunIndex[item.todo_id] ?? 0;
+    const cachedRun = runDataCache[item.todo_id]?.[runIdx];
+    let resultText: string;
+    let displayModel: string | null | undefined;
+    let displayUsage: ExecutionRecord['usage'] | null | undefined;
+    let displayTriggerType: string | undefined;
+
+    if (runIdx === 0) {
+      resultText = item.result || '';
+      displayModel = item.model;
+      displayUsage = item.usage;
+      displayTriggerType = item.trigger_type;
+    } else if (cachedRun) {
+      resultText = cachedRun.result || '';
+      displayModel = cachedRun.model;
+      displayUsage = cachedRun.usage;
+      displayTriggerType = cachedRun.trigger_type;
+    } else {
+      resultText = '';
+      displayModel = null;
+      displayUsage = null;
+    }
+
+    const isLoadingRun = loadingRunIndex[item.todo_id] != null && loadingRunIndex[item.todo_id] === runIdx && runIdx > 0;
+    const runCount = totalRunsCache[item.todo_id] ?? 1;
 
     return (
       <Card
@@ -135,20 +237,24 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
           id={item.todo_id}
           title={item.title}
           prompt={item.prompt}
-          resultText={result}
+          resultText={resultText}
           isSuccess={isSuccess}
           showResultSection={true}
           executor={item.executor}
           time={formatRelativeTime(item.completed_at)}
-          model={item.model}
+          model={displayModel}
           tags={resolvedTags}
-          usage={item.usage}
-          triggerType={item.trigger_type}
+          usage={displayUsage}
+          triggerType={displayTriggerType}
           promptExpanded={promptExpandedIds.has(item.todo_id)}
           resultExpanded={expanded}
           onTogglePrompt={() => togglePromptExpand(item.todo_id)}
           onToggleResult={() => toggleExpand(item.todo_id)}
           onSelectTodo={(e) => handleSelectTodo(item.todo_id, e)}
+          runCount={runCount}
+          selectedRun={runIdx}
+          onSelectRun={(index) => handleSelectRun(item.todo_id, index)}
+          isLoadingRun={isLoadingRun}
         />
       </Card>
     );
