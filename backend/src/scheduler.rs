@@ -27,8 +27,8 @@ fn convert_cron_to_utc(cron_expr: &str, timezone: &str) -> Result<String, String
         .parse()
         .map_err(|_| format!("Invalid timezone: {}", timezone))?;
 
-    // Parse cron expression
-    let schedule = cron::Schedule::from_str(cron_expr)
+    // Validate cron expression format
+    let _ = cron::Schedule::from_str(cron_expr)
         .map_err(|_| format!("Invalid cron expression: {}", cron_expr))?;
 
     // Get the cron fields (seconds, minute, hour, day, month, weekday)
@@ -87,6 +87,7 @@ fn convert_cron_to_utc(cron_expr: &str, timezone: &str) -> Result<String, String
             if let (Ok(start), Ok(end)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>()) {
                 let utc_start = convert_hour(start);
                 let utc_end = convert_hour(end);
+                // Hour field can contain range like "9-17", so pass as single string "{}"
                 return Ok(format!(
                     "{} {} {}-{} {} {} {}",
                     seconds, minutes, utc_start, utc_end, day_of_month, month, day_of_week

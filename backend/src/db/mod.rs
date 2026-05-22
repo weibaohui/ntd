@@ -19,7 +19,8 @@ pub use entity::prelude::*;
 fn compute_next_run(cron_expr: &str, timezone: Option<&str>) -> Option<String> {
     let schedule = cron::Schedule::from_str(cron_expr).ok()?;
 
-    // Parse timezone, default to UTC if not specified or invalid
+    // Parse timezone, default to UTC if not specified, invalid, or empty string.
+    // An empty timezone string is treated as UTC (use UTC time).
     let tz: chrono_tz::Tz = timezone
         .and_then(|tz| tz.parse::<chrono_tz::Tz>().ok())
         .unwrap_or(chrono_tz::UTC);
