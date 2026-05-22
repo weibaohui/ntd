@@ -89,6 +89,7 @@ function AppContent() {
     setSelectedPanel('detail');
   };
 
+
   const handleBackToList = () => {
     clearSelection();
     setActiveView('dashboard');
