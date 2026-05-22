@@ -1458,7 +1458,7 @@ pub fn start_skill_auto_backup(
 ) -> Result<(), String> {
     tokio::spawn(async move {
         loop {
-            let (enabled, next_delay) = {
+            let (_enabled, next_delay) = {
                 let cfg = config.read().await;
                 if !cfg.auto_skill_backup_enabled {
                     tokio::time::sleep(std::time::Duration::from_secs(60)).await;

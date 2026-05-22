@@ -6,6 +6,7 @@ use clap::Subcommand;
 
 #[allow(unused)] const SERVICE_NAME: &str = "ntd";
 #[allow(unused)] const SERVICE_DESCRIPTION: &str = "Nothing Todo (ntd) - AI Todo Service";
+#[allow(unused)]
 const LAUNCHD_LABEL: &str = "com.nothing-todo.ntd";
 #[allow(unused)] const TASK_NAME: &str = "ntd";
 
@@ -88,6 +89,7 @@ fn get_ntd_binary_path() -> PathBuf {
         .unwrap_or_else(|| std::env::current_exe().expect("Failed to get current executable path"))
 }
 
+#[allow(unused)]
 fn get_ntd_dir() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
     home.join(".ntd")
@@ -629,7 +631,7 @@ fn systemd_install(force: bool, system: bool, run_as_user: Option<&str>) {
                 .or_else(|_| std::env::var("USER"))
                 .unwrap_or_else(|_| "nobody".to_string())
         });
-        let user_home = get_user_home_dir(&username)
+        let _user_home = get_user_home_dir(&username)
             .unwrap_or_else(|| PathBuf::from(format!("/home/{username}")));
         get_ntd_binary_path()
     } else {
