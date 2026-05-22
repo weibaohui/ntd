@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
 import { Drawer, Input, Button, App, AutoComplete, Divider, Switch, Tooltip, Tag, Empty, Spin, Modal, Card } from 'antd';
 import { CheckOutlined, FolderOutlined, ClockCircleOutlined, FileTextOutlined, ThunderboltOutlined, RightOutlined, SearchOutlined } from '@ant-design/icons';
 import { Cron } from 'react-js-cron';
@@ -101,16 +101,17 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
     return found?.skills || [];
   }, [executor, allExecutorSkills]);
 
-  // Filter skills by search text
+  // Filter skills by search text (deferred for better performance)
+  const deferredSkillSearchText = useDeferredValue(skillSearchText);
   const filteredSkills = useMemo(() => {
-    if (!skillSearchText.trim()) return currentSkills;
-    const search = skillSearchText.toLowerCase();
+    if (!deferredSkillSearchText.trim()) return currentSkills;
+    const search = deferredSkillSearchText.toLowerCase();
     return currentSkills.filter(skill =>
       skill.name.toLowerCase().includes(search) ||
       skill.description?.toLowerCase().includes(search) ||
       skill.keywords?.some(k => k.toLowerCase().includes(search))
     );
-  }, [currentSkills, skillSearchText]);
+  }, [currentSkills, deferredSkillSearchText]);
 
   // Initialize data when drawer opens
   useEffect(() => {
@@ -511,7 +512,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
                 <ThunderboltOutlined style={{ color: executorColor, marginRight: 6 }} />
                 Skills
                 <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--color-text-tertiary)', marginLeft: 8 }}>
-                  {filteredSkills.length}{skillSearchText ? `/${currentSkills.length}` : ''} 个可用
+                  {filteredSkills.length}{deferredSkillSearchText ? `/${currentSkills.length}` : ''} 个可用
                 </span>
               </div>
               {skillsExpanded && (
@@ -607,9 +608,9 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
                 ))}
               </div>
               )}
-              {skillsExpanded && filteredSkills.length === 0 && skillSearchText && (
+              {skillsExpanded && filteredSkills.length === 0 && deferredSkillSearchText && (
                 <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--color-text-tertiary)' }}>
-                  未找到匹配 "{skillSearchText}" 的 Skill
+                  未找到匹配 "{deferredSkillSearchText}" 的 Skill
                 </div>
               )}
             </div>
