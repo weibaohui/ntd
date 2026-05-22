@@ -68,6 +68,12 @@ export interface TodoCardProps {
 
   /** Optional: loading state for async result (KanbanBoard) */
   isLoadingResult?: boolean;
+
+  /** Run history switching */
+  runCount?: number;
+  selectedRun?: number; // 0-based, default 0 (most recent)
+  onSelectRun?: (index: number) => void;
+  isLoadingRun?: boolean;
 }
 
 /* ─── Component ─── */
@@ -91,6 +97,10 @@ export function TodoCard({
   onToggleResult,
   onSelectTodo,
   isLoadingResult,
+  runCount,
+  selectedRun = 0,
+  onSelectRun,
+  isLoadingRun,
 }: TodoCardProps) {
   return (
     <>
@@ -186,6 +196,19 @@ export function TodoCard({
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onToggleResult(); } }}
             >
               <span className="kanban-card-section-label"><FileProtectOutlined /> 结论</span>
+              {runCount != null && runCount > 1 && (
+                <span className="kanban-run-tags" onClick={e => e.stopPropagation()}>
+                  {Array.from({ length: Math.min(runCount, 5) }, (_, i) => (
+                    <Tag
+                      key={i}
+                      className={`kanban-run-tag ${i === selectedRun ? 'kanban-run-tag-active' : ''}`}
+                      onClick={() => onSelectRun?.(i)}
+                    >
+                      {i + 1}
+                    </Tag>
+                  ))}
+                </span>
+              )}
               {resultText && (
                 <button
                   className="kanban-copy-btn"
@@ -199,12 +222,12 @@ export function TodoCard({
                 </button>
               )}
               <span className="kanban-card-section-toggle">
-                {isLoadingResult ? '加载中…' : (resultExpanded ? '收起' : '展开')}
+                {(isLoadingResult || isLoadingRun) ? '加载中…' : (resultExpanded ? '收起' : '展开')}
               </span>
             </div>
             {resultExpanded && (
               <div className="kanban-card-section-content">
-                {isLoadingResult ? (
+                {(isLoadingResult || isLoadingRun) ? (
                   <span className="kanban-loading-text">加载中…</span>
                 ) : resultText ? (
                   <XMarkdown content={resultText} />
