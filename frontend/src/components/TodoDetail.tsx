@@ -549,7 +549,7 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
       setSummary(null);
     }
     return () => { cancelledRef.current = true; };
-  }, [selectedTodoId, dispatch, historyLimit, historyStatusFilter]);
+  }, [selectedTodoId, historyLimit, historyStatusFilter]); // dispatch intentionally excluded - React guarantees useReducer dispatch is stable
 
   useEffect(() => {
     setSelectedHistoryRecordId(null);
