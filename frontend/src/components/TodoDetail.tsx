@@ -525,14 +525,15 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
   // Note: historyLimit is intentionally kept in deps — when user changes page size via pagination,
   // we want to refetch with the new limit. The setter (setHistoryLimit) is NOT called here to avoid
   // triggering extra renders; the page size comes from the pagination component's local state.
+  const cancelledRef = useRef(false);
   useEffect(() => {
-    let cancelled = false;
+    cancelledRef.current = false;
     if (selectedTodoId) {
       setHistoryPage(1);
 
       const statusFilter = historyStatusFilter === 'all' ? undefined : historyStatusFilter;
       db.getExecutionRecords(selectedTodoId, 1, historyLimit, statusFilter).then(pageData => {
-        if (cancelled) return;
+        if (cancelledRef.current) return;
         dispatch({
           type: 'SET_EXECUTION_RECORDS',
           payload: { todoId: selectedTodoId, records: pageData.records }
@@ -542,13 +543,13 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
       }).catch(() => {});
 
       db.getExecutionSummary(selectedTodoId).then(sum => {
-        if (!cancelled) setSummary(sum);
+        if (!cancelledRef.current) setSummary(sum);
       }).catch(() => {});
     } else {
       setSummary(null);
     }
-    return () => { cancelled = true; };
-  }, [selectedTodoId, historyLimit, historyStatusFilter]);
+    return () => { cancelledRef.current = true; };
+  }, [selectedTodoId, dispatch, historyLimit, historyStatusFilter]);
 
   useEffect(() => {
     setSelectedHistoryRecordId(null);
