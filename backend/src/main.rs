@@ -344,6 +344,13 @@ async fn run_server(cli_port: Option<u16>) {
         tracing::error!("Failed to cleanup orphan execution records: {}", e);
     }
 
+    // Cleanup old webhook records (keep last 30 days)
+    if let Err(e) = db.cleanup_old_webhook_records(30).await {
+        tracing::warn!("Failed to cleanup old webhook records: {}", e);
+    } else {
+        info!("Webhook records cleanup completed");
+    }
+
     // Migrate executor paths from config.yaml to database (one-time), then seed defaults if empty
     if let Err(e) = db.migrate_from_config(&cfg.executors).await {
         tracing::warn!("Executor config migration check failed: {}", e);

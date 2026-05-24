@@ -354,7 +354,11 @@ async fn trigger_webhook_internal(
 
     let (status_code, response_json) = match exec_result {
         Ok(result) => (StatusCode::OK, serde_json::json!({ "success": true, "record_id": result.record_id })),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({ "success": false, "error": format!("{:?}", e) })),
+        Err(e) => {
+            let err_msg = format!("{:?}", e);
+            let short_err = err_msg.lines().next().unwrap_or("Unknown error").to_string();
+            (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({ "success": false, "error": short_err }))
+        }
     };
 
     let response_body = response_json.to_string();

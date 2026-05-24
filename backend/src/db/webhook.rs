@@ -170,4 +170,21 @@ impl Database {
             .await
             .map(|c| c as i64)
     }
+
+    /// Delete webhook records older than the specified number of days.
+    /// Returns the number of records deleted.
+    pub async fn cleanup_old_webhook_records(&self, days: i64) -> Result<u64, sea_orm::DbErr> {
+        let cutoff = format!(
+            "'{}'",
+            chrono::Utc::now()
+                .checked_sub_signed(chrono::Duration::days(days))
+                .unwrap()
+                .format("%Y-%m-%dT%H:%M:%SZ")
+        );
+        let deleted = webhook_records::Entity::delete_many()
+            .filter(webhook_records::Column::CreatedAt.lt(cutoff))
+            .exec(&self.conn)
+            .await?;
+        Ok(deleted.rows_affected)
+    }
 }
