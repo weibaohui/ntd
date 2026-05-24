@@ -103,7 +103,7 @@ export function WebhooksPanel({ todos }: WebhooksPanelProps) {
         await db.updateWebhook(editingWebhook.id, values.name, values.enabled, values.default_todo_id);
         message.success('Webhook 已更新');
       } else {
-        await db.createWebhook(values.name, values.default_todo_id);
+        await db.createWebhook(values.name, values.enabled, values.default_todo_id);
         message.success('Webhook 已创建');
       }
 

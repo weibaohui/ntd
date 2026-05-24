@@ -76,12 +76,13 @@ impl Database {
     pub async fn create_webhook(
         &self,
         name: &str,
+        enabled: bool,
         default_todo_id: Option<i64>,
     ) -> Result<webhooks::Model, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let am = webhooks::ActiveModel {
             name: ActiveValue::Set(name.to_string()),
-            enabled: ActiveValue::Set(true),
+            enabled: ActiveValue::Set(enabled),
             default_todo_id: ActiveValue::Set(default_todo_id),
             created_at: ActiveValue::Set(Some(now.clone())),
             updated_at: ActiveValue::Set(Some(now)),

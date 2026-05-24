@@ -15,6 +15,7 @@ use crate::executor_service::RunTodoExecutionRequest;
 #[derive(Debug, serde::Deserialize)]
 pub struct CreateWebhookRequest {
     pub name: String,
+    pub enabled: bool,
     pub default_todo_id: Option<i64>,
 }
 
@@ -81,7 +82,7 @@ pub async fn create_webhook(
     State(state): State<AppState>,
     Json(req): Json<CreateWebhookRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let webhook = state.db.create_webhook(&req.name, req.default_todo_id).await?;
+    let webhook = state.db.create_webhook(&req.name, req.enabled, req.default_todo_id).await?;
     Ok(ApiResponse::ok(webhook))
 }
 
@@ -355,9 +356,8 @@ async fn trigger_webhook_internal(
     let (status_code, response_json) = match exec_result {
         Ok(result) => (StatusCode::OK, serde_json::json!({ "success": true, "record_id": result.record_id })),
         Err(e) => {
-            let err_msg = format!("{:?}", e);
-            let short_err = err_msg.lines().next().unwrap_or("Unknown error").to_string();
-            (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({ "success": false, "error": short_err }))
+            tracing::error!("webhook trigger execution failed: {:?}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({ "success": false, "error": "Internal server error" }))
         }
     };
 

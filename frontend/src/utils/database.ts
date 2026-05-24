@@ -908,9 +908,10 @@ export async function getWebhook(id: number): Promise<Webhook> {
   return unwrap(await api.get<ApiResp<Webhook>>(`/xyz/webhooks/${id}`));
 }
 
-export async function createWebhook(name: string, defaultTodoId?: number): Promise<Webhook> {
+export async function createWebhook(name: string, enabled: boolean, defaultTodoId?: number): Promise<Webhook> {
   return unwrap(await api.post<ApiResp<Webhook>>('/xyz/webhooks', {
     name,
+    enabled,
     default_todo_id: defaultTodoId ?? null,
   }));
 }
