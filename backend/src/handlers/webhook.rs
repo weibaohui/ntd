@@ -186,17 +186,33 @@ pub async fn get_webhook_record(
     let record = state.db.get_webhook_record(id).await?;
     match record {
         Some(record) => {
-            let webhook_name = if let Some(wid) = record.webhook_id {
-                state.db.get_webhook(wid).await.ok().flatten().map(|w| w.name)
-            } else {
-                None
+            let webhook_id = record.webhook_id;
+            let triggered_todo_id = record.triggered_todo_id;
+
+            // Fetch webhook name and todo title in parallel
+            let webhook_handle = {
+                let db = state.db.clone();
+                tokio::spawn(async move {
+                    if let Some(wid) = webhook_id {
+                        db.get_webhook(wid).await.ok().flatten().map(|w| w.name)
+                    } else {
+                        None
+                    }
+                })
+            };
+            let todo_handle = {
+                let db = state.db.clone();
+                tokio::spawn(async move {
+                    if let Some(tid) = triggered_todo_id {
+                        db.get_todo(tid).await.ok().flatten().map(|t| t.title)
+                    } else {
+                        None
+                    }
+                })
             };
 
-            let triggered_todo_title = if let Some(tid) = record.triggered_todo_id {
-                state.db.get_todo(tid).await.ok().flatten().map(|t| t.title)
-            } else {
-                None
-            };
+            let webhook_name = webhook_handle.await.ok().flatten();
+            let triggered_todo_title = todo_handle.await.ok().flatten();
 
             let response = WebhookRecordResponse {
                 id: record.id,
@@ -348,10 +364,12 @@ async fn trigger_webhook_internal(
         },
     ).await;
 
-    let (status_code, response_body) = match exec_result {
-        Ok(result) => (StatusCode::OK, serde_json::json!({ "success": true, "record_id": result.record_id }).to_string()),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({ "success": false, "error": format!("{:?}", e) }).to_string()),
+    let (status_code, response_json) = match exec_result {
+        Ok(result) => (StatusCode::OK, serde_json::json!({ "success": true, "record_id": result.record_id })),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({ "success": false, "error": format!("{:?}", e) })),
     };
+
+    let response_body = response_json.to_string();
 
     // Record the webhook call
     if let Err(e) = state.db.create_webhook_record(NewWebhookRecord {
@@ -368,17 +386,11 @@ async fn trigger_webhook_internal(
         tracing::warn!("Failed to create webhook record: {:?}", e);
     }
 
-    let status_code_for_response = status_code.as_u16();
-    Ok((
-        status_code,
-        axum::Json(serde_json::from_str::<serde_json::Value>(&response_body).unwrap_or_else(|_| {
-            serde_json::json!({ "status": status_code_for_response, "body": response_body })
-        }))
-    ).into_response())
+    Ok((status_code, axum::Json(response_json)).into_response())
 }
 
 fn build_message_content(
-    _method: &str,
+    method: &str,
     query_params: &HashMap<String, String>,
     body: &Option<String>,
     content_type: &Option<String>,
@@ -392,8 +404,6 @@ fn build_message_content(
     } else {
         String::new()
     };
-    // Avoid unused variable warning
-    let _ = _method;
 
     let processed = if let Some(ct) = content_type {
         if ct.contains("application/json") {
@@ -413,15 +423,15 @@ fn build_message_content(
         raw.clone()
     };
 
-    // Include query params in message
+    // Build message with method and query params
     let message = if !query_params.is_empty() {
         let params_str = query_params.iter()
             .map(|(k, v)| format!("{}={}", k, v))
             .collect::<Vec<_>>()
             .join("&");
-        format!("{}\n\nQuery: {}", processed, params_str)
+        format!("Method: {}\n{}\n\nQuery: {}", method, processed, params_str)
     } else {
-        processed
+        format!("Method: {}\n{}", method, processed)
     };
 
     (message, raw)
