@@ -52,6 +52,7 @@ import {
   EditOutlined,
   FileTextOutlined,
   LeftOutlined,
+  ApiOutlined,
 } from '@ant-design/icons';
 import { Cron } from 'react-js-cron';
 import QRCode from 'qrcode';
@@ -66,6 +67,7 @@ import { CronPresetSelect } from './CronPresetSelect';
 import { SkillsPanel } from './SkillsPanel';
 import { SessionManager } from './SessionManager';
 import { ShareCard } from './ShareCard';
+import { WebhooksPanel } from './WebhooksPanel';
 
 const { Paragraph } = Typography;
 const { Dragger } = Upload;
@@ -3424,6 +3426,16 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
           </Modal>
         </div>
       ),
+    },
+    {
+      key: 'webhooks',
+      label: (
+        <span>
+          <ApiOutlined style={{ marginRight: 6 }} />
+          Webhook
+        </span>
+      ),
+      children: <WebhooksPanel todos={todos} />,
     },
     {
       key: 'about',

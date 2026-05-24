@@ -155,6 +155,7 @@ mod session;
 pub mod project_directory;
 pub(crate) mod todo_template;
 pub mod custom_template;
+pub mod webhook;
 
 // WebSocket handler
 pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
@@ -460,6 +461,14 @@ pub fn create_app(
         .route("/xyz/agent-bots/{id}", delete(agent_bot::delete_agent_bot))
         .route("/xyz/agent-bots/{id}/config", put(agent_bot::update_agent_bot_config))
         .route("/health", get(health_handler))
+        // Webhook trigger endpoints (no /xyz/ prefix, accessible externally)
+        .route("/webhook/trigger", get(webhook::trigger_webhook_default).post(webhook::trigger_webhook_default_post_json))
+        .route("/webhook/trigger/{todo_id}", get(webhook::trigger_webhook_with_todo).post(webhook::trigger_webhook_with_todo_post_json))
+        // Webhook management APIs
+        .route("/xyz/webhooks", get(webhook::list_webhooks).post(webhook::create_webhook))
+        .route("/xyz/webhooks/{id}", get(webhook::get_webhook).put(webhook::update_webhook).delete(webhook::delete_webhook))
+        .route("/xyz/webhook-records", get(webhook::get_webhook_records))
+        .route("/xyz/webhook-records/{id}", get(webhook::get_webhook_record))
         .route("/assets/{*path}", get(static_handler))
         .route("/xyz/version", get(version_handler))
         .route("/xyz/sessions", get(session::list_sessions))

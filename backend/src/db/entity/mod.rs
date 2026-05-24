@@ -13,6 +13,8 @@ pub mod tags;
 pub mod todo_tags;
 pub mod todo_templates;
 pub mod todos;
+pub mod webhooks;
+pub mod webhook_records;
 
 pub mod prelude {
     pub use super::agent_bots::Entity as AgentBots;
@@ -30,4 +32,6 @@ pub mod prelude {
     pub use super::todo_tags::Entity as TodoTags;
     pub use super::todo_templates::Entity as TodoTemplates;
     pub use super::todos::Entity as Todos;
+    pub use super::webhooks::Entity as Webhooks;
+    pub use super::webhook_records::Entity as WebhookRecords;
 }

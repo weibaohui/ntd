@@ -721,6 +721,66 @@ impl Database {
         )
         .await?;
 
+        // Webhooks table
+        self.exec(
+            "CREATE TABLE IF NOT EXISTS webhooks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                default_todo_id INTEGER,
+                created_at TEXT,
+                updated_at TEXT
+            )",
+        )
+        .await?;
+
+        // Webhooks timestamps triggers
+        self.exec(
+            "CREATE TRIGGER IF NOT EXISTS set_webhooks_created_at_utc AFTER INSERT ON webhooks
+             WHEN new.created_at IS NULL OR new.created_at = ''
+             BEGIN
+                 UPDATE webhooks SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
+             END",
+        )
+        .await?;
+
+        self.exec(
+            "CREATE TRIGGER IF NOT EXISTS set_webhooks_updated_at_utc BEFORE UPDATE ON webhooks
+             WHEN new.updated_at IS NULL OR new.updated_at = ''
+             BEGIN
+                 SELECT raise(IGNORE);
+             END",
+        )
+        .await?;
+
+        // Webhook records table
+        self.exec(
+            "CREATE TABLE IF NOT EXISTS webhook_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                webhook_id INTEGER,
+                method TEXT NOT NULL,
+                path TEXT NOT NULL,
+                query_params TEXT,
+                body TEXT,
+                content_type TEXT,
+                triggered_todo_id INTEGER,
+                status_code INTEGER,
+                response_body TEXT,
+                created_at TEXT
+            )",
+        )
+        .await?;
+
+        // Webhook records timestamps triggers
+        self.exec(
+            "CREATE TRIGGER IF NOT EXISTS set_webhook_records_created_at_utc AFTER INSERT ON webhook_records
+             WHEN new.created_at IS NULL OR new.created_at = ''
+             BEGIN
+                 UPDATE webhook_records SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
+             END",
+        )
+        .await?;
+
         Ok(())
     }
 }
@@ -742,6 +802,7 @@ mod feishu_push_target;
 mod feishu_response_config;
 pub mod project_directory;
 mod todo_template;
+pub mod webhook;
 
 #[cfg(test)]
 mod tests {
