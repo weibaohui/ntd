@@ -1,71 +1,49 @@
-import { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
-import { Drawer, Input, Button, App, AutoComplete, Divider, Switch, Tooltip, Tag, Empty, Spin, Modal, Card } from 'antd';
-import { CheckOutlined, FolderOutlined, ClockCircleOutlined, FileTextOutlined, ThunderboltOutlined, RightOutlined, SearchOutlined } from '@ant-design/icons';
-import { Cron } from 'react-js-cron';
-import 'react-js-cron/dist/styles.css';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { Drawer, Input, Button, App, AutoComplete, Divider, Switch } from 'antd';
+import { FolderOutlined } from '@ant-design/icons';
 import * as db from '../utils/database';
 import type { ProjectDirectory } from '../utils/database';
 import type { Todo, ExecutorConfig, ExecutorOption, SkillMeta, ExecutorSkills, TodoTemplate } from '../types';
-import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '../utils/cron';
 import { EXECUTORS, executorConfigToOption, getExecutorColor } from '../types';
 import { TagCheckCardGroup } from './TagCheckCard';
-import { CronPresetSelect } from './CronPresetSelect';
-import { MdEditor } from './MdEditor';
+import { ExecutorPicker } from './todo-drawer/ExecutorPicker';
+import { PromptEditor } from './todo-drawer/PromptEditor';
+import { SkillSelector } from './todo-drawer/SkillSelector';
+import { SchedulerSection } from './todo-drawer/SchedulerSection';
+import { TemplateModal } from './todo-drawer/TemplateModal';
 
 interface TodoDrawerProps {
   open: boolean;
-  todo: Todo | null; // null = create mode, Todo = edit mode
+  todo: Todo | null;
   tags: Array<{ id: number; name: string; color: string }>;
   onClose: () => void;
-  onSaved: (todo?: Todo) => void; // callback after save
+  onSaved: (todo?: Todo) => void;
 }
-
-const DEFAULT_CRON = '0 */10 * * * *';
-
-const PROMPT_PARAMS = [
-  { key: '{{content}}', label: 'content', desc: '消息内容（已清理格式）' },
-  { key: '{{message}}', label: 'message', desc: '原始消息文本' },
-  { key: '{{raw_message}}', label: 'raw_message', desc: '未处理的原始消息' },
-  { key: '{{slash_command}}', label: 'slash_command', desc: '斜杠命令内容' },
-];
 
 export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerProps) {
   const { message } = App.useApp();
   const isEditMode = todo !== null;
 
-  // Basic info
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState('');
   const [selectedTags, setSelectedTags] = useState<number[]>([]);
-
-  // Executor & workspace
   const [executor, setExecutor] = useState<string>('claudecode');
   const [workspace, setWorkspace] = useState<string>('');
   const [worktreeEnabled, setWorktreeEnabled] = useState(false);
   const [executorOptions, setExecutorOptions] = useState<ExecutorOption[]>(EXECUTORS);
   const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
-
-  // Skills
   const [allExecutorSkills, setAllExecutorSkills] = useState<ExecutorSkills[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [skillsExpanded, setSkillsExpanded] = useState(false);
   const [skillSearchText, setSkillSearchText] = useState('');
-
-  // Scheduler
   const [schedulerEnabled, setSchedulerEnabled] = useState(false);
   const [schedulerConfig, setSchedulerConfig] = useState<string>('');
-
-  // Loading states
   const [loading, setLoading] = useState(false);
-
-  // Editor ref for cursor position tracking
   const editorRef = useRef<any>(null);
 
-  // Insert text at cursor position in the editor
-  const insertTextAtCursor = (text: string) => {
+  const insertTextAtCursor = useCallback((text: string) => {
     const editor = editorRef.current;
     if (!editor || !editor.textarea) {
-      // Fallback: append to end
       setPrompt(prev => {
         if (!prev) return text;
         return prev + (prev.endsWith('\n') ? '' : '\n') + text;
@@ -75,45 +53,24 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
     const textarea = editor.textarea as HTMLTextAreaElement;
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
-    // Use functional update to ensure we get the latest value
     setPrompt(prev => {
-      const currentValue = prev;
-      const newValue = currentValue.substring(0, start) + text + currentValue.substring(end);
-      return newValue;
+      return prev.substring(0, start) + text + prev.substring(end);
     });
-    // Restore cursor position after insertion
     setTimeout(() => {
       textarea.selectionStart = textarea.selectionEnd = start + text.length;
       textarea.focus();
     }, 0);
-  };
+  }, []);
 
-  // Template selection state
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [templates, setTemplates] = useState<TodoTemplate[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
-  const [searchText, setSearchText] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
-  // Filter skills for current executor
   const currentSkills = useMemo(() => {
     const found = allExecutorSkills.find(e => e.executor === executor);
     return found?.skills || [];
   }, [executor, allExecutorSkills]);
 
-  // Filter skills by search text (deferred for better performance)
-  const deferredSkillSearchText = useDeferredValue(skillSearchText);
-  const filteredSkills = useMemo(() => {
-    if (!deferredSkillSearchText.trim()) return currentSkills;
-    const search = deferredSkillSearchText.toLowerCase();
-    return currentSkills.filter(skill =>
-      skill.name.toLowerCase().includes(search) ||
-      skill.description?.toLowerCase().includes(search) ||
-      skill.keywords?.some(k => k.toLowerCase().includes(search))
-    );
-  }, [currentSkills, deferredSkillSearchText]);
-
-  // Initialize data when drawer opens
   useEffect(() => {
     if (open) {
       Promise.all([
@@ -127,7 +84,6 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
         setProjectDirectories(directories);
       }).catch(() => {});
 
-      // Load skills list
       setSkillsLoading(true);
       db.getSkillsList()
         .then((data) => setAllExecutorSkills(data))
@@ -136,7 +92,6 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
     }
   }, [open]);
 
-  // Reset or populate form when todo changes
   useEffect(() => {
     if (open) {
       if (todo) {
@@ -149,7 +104,6 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
         setSchedulerEnabled(todo.scheduler_enabled || false);
         setSchedulerConfig(todo.scheduler_config || '');
       } else {
-        // Create mode - reset
         setTitle('');
         setPrompt('');
         setSelectedTags([]);
@@ -162,33 +116,29 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
     }
   }, [open, todo]);
 
-  const handleSkillClick = (skill: SkillMeta) => {
-    const skillRef = `/${skill.name}`;
-    insertTextAtCursor(skillRef);
-  };
+  const handleSkillClick = useCallback((skill: SkillMeta) => {
+    insertTextAtCursor(`/${skill.name}`);
+  }, [insertTextAtCursor]);
 
-  // Template functions
-  const loadTemplates = () => {
+  const loadTemplates = useCallback(() => {
     setTemplatesLoading(true);
     db.getTodoTemplates()
       .then(setTemplates)
       .catch(() => message.error('加载模板失败'))
       .finally(() => setTemplatesLoading(false));
-  };
+  }, [message]);
 
-  const openTemplateModal = () => {
+  const handleOpenTemplate = useCallback(() => {
     loadTemplates();
     setTemplateModalOpen(true);
-  };
+  }, [loadTemplates]);
 
-  const selectTemplate = (template: TodoTemplate) => {
+  const handleSelectTemplate = useCallback((template: TodoTemplate) => {
     if (!prompt.trim()) {
-      // If prompt is empty, use template content (create mode)
       setTitle(template.title);
       setPrompt(template.prompt || '');
       message.success('已应用模板');
     } else {
-      // If prompt has content, insert template content at cursor position
       if (template.prompt) {
         insertTextAtCursor(template.prompt);
         message.success('已插入模板内容');
@@ -197,31 +147,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
       }
     }
     setTemplateModalOpen(false);
-    setSearchText('');
-    setSelectedCategory(null);
-  };
-
-  // Get unique categories from templates
-  const categories = useMemo(() => {
-    const cats = Array.from(new Set(templates.map(t => t.category))).filter(c => c);
-    return cats.sort();
-  }, [templates]);
-
-  // Filter templates by search and category
-  const filteredTemplates = useMemo(() => {
-    let result = templates;
-    if (selectedCategory) {
-      result = result.filter(t => t.category === selectedCategory);
-    }
-    if (searchText.trim()) {
-      const search = searchText.toLowerCase();
-      result = result.filter(t =>
-        t.title.toLowerCase().includes(search) ||
-        (t.prompt?.toLowerCase().includes(search))
-      );
-    }
-    return result;
-  }, [templates, selectedCategory, searchText]);
+  }, [prompt, insertTextAtCursor, message]);
 
   const handleSave = async () => {
     if (!title.trim()) {
@@ -234,58 +160,35 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
       const trimmedWorkspace = workspace.trim() || null;
 
       if (isEditMode && todo) {
-        // Update existing todo
         if (trimmedWorkspace) {
           const exists = projectDirectories.some(d => d.path === trimmedWorkspace);
           if (!exists) {
-            try {
-              await db.createProjectDirectory(trimmedWorkspace);
-            } catch {
-              // Ignore
-            }
+            try { await db.createProjectDirectory(trimmedWorkspace); } catch { }
           }
         }
 
         await db.updateTodo(
-          todo.id,
-          title.trim(),
-          prompt.trim(),
-          todo.status,
-          executor,
-          schedulerEnabled,
-          schedulerConfig || null,
-          trimmedWorkspace,
-          worktreeEnabled,
+          todo.id, title.trim(), prompt.trim(), todo.status,
+          executor, schedulerEnabled, schedulerConfig || null,
+          trimmedWorkspace, worktreeEnabled,
         );
         await db.updateScheduler(todo.id, schedulerEnabled, schedulerConfig || null);
         await db.updateTodoTags(todo.id, selectedTags);
         message.success('任务已更新');
       } else {
-        // Create new todo
         const newTodo = await db.createTodo(title.trim(), prompt.trim(), selectedTags);
 
-        // If settings are configured, update them
         if (trimmedWorkspace || schedulerEnabled || executor !== 'claudecode' || worktreeEnabled) {
           if (trimmedWorkspace) {
             const exists = projectDirectories.some(d => d.path === trimmedWorkspace);
             if (!exists) {
-              try {
-                await db.createProjectDirectory(trimmedWorkspace);
-              } catch {
-                // Ignore
-              }
+              try { await db.createProjectDirectory(trimmedWorkspace); } catch { }
             }
           }
           await db.updateTodo(
-            newTodo.id,
-            newTodo.title,
-            newTodo.prompt,
-            newTodo.status,
-            executor,
-            schedulerEnabled,
-            schedulerConfig || null,
-            trimmedWorkspace,
-            worktreeEnabled,
+            newTodo.id, newTodo.title, newTodo.prompt, newTodo.status,
+            executor, schedulerEnabled, schedulerConfig || null,
+            trimmedWorkspace, worktreeEnabled,
           );
           await db.updateScheduler(newTodo.id, schedulerEnabled, schedulerConfig || null);
         }
@@ -312,327 +215,47 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
       width={600}
       placement="right"
       destroyOnClose
-      styles={{
-        body: { padding: 0 },
-      }}
+      styles={{ body: { padding: 0 } }}
       extra={
         <Button type="primary" loading={loading} onClick={handleSave}>
           {isEditMode ? '保存' : '创建'}
         </Button>
       }
     >
-      <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        background: 'var(--color-bg-elevated)',
-      }}>
-        {/* Header with title input */}
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-bg-elevated)' }}>
         <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--color-border-light)' }}>
           <Input
             value={title}
             onChange={e => setTitle(e.target.value)}
             placeholder="任务标题"
-            style={{
-              fontSize: 16,
-              fontWeight: 600,
-              padding: '8px 12px',
-            }}
+            style={{ fontSize: 16, fontWeight: 600, padding: '8px 12px' }}
           />
         </div>
 
-        {/* Scrollable content */}
         <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px' }}>
-          {/* Executor Selection */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14 }}>执行器</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-              {executorOptions.map((opt) => {
-                const selected = executor === opt.value;
-                return (
-                  <div
-                    key={opt.value}
-                    onClick={() => setExecutor(opt.value)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        setExecutor(opt.value);
-                      }
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      padding: '10px 14px',
-                      borderRadius: 10,
-                      border: `2px solid ${selected ? opt.color : 'var(--color-border-secondary)'}`,
-                      background: selected ? `${opt.color}10` : 'var(--color-bg-elevated)',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      flex: '1 1 calc(50% - 10px)',
-                      minWidth: 120,
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!selected) {
-                        (e.currentTarget as HTMLDivElement).style.borderColor = `${opt.color}60`;
-                        (e.currentTarget as HTMLDivElement).style.background = `${opt.color}08`;
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!selected) {
-                        (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--color-border-secondary)';
-                        (e.currentTarget as HTMLDivElement).style.background = 'var(--color-bg-elevated)';
-                      }
-                    }}
-                  >
-                    <span style={{ fontSize: 16, lineHeight: 1 }}>{opt.icon}</span>
-                    <span style={{
-                      fontSize: 14,
-                      fontWeight: 600,
-                      color: selected ? opt.color : 'var(--color-text)',
-                      flex: 1,
-                    }}>
-                      {opt.label}
-                    </span>
-                    {selected && (
-                      <span style={{
-                        width: 18,
-                        height: 18,
-                        borderRadius: '50%',
-                        backgroundColor: opt.color,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                      }}>
-                        <CheckOutlined style={{ fontSize: 10, color: '#fff' }} />
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <ExecutorPicker executor={executor} executorOptions={executorOptions} onChange={setExecutor} />
 
           <Divider style={{ margin: '8px 0 16px' }} />
 
-          {/* Prompt Editor */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <FileTextOutlined style={{ color: 'var(--color-primary)' }} />
-              <span>Prompt</span>
-              <Button
-                size="small"
-                icon={<FileTextOutlined />}
-                onClick={openTemplateModal}
-                style={{ marginLeft: 'auto' }}
-              >
-                从模板创建
-              </Button>
-            </div>
-            <MdEditor
-              value={prompt}
-              onChange={setPrompt}
-              height={200}
-              editorRef={editorRef}
-            />
-            {/* Prompt parameter hints */}
-            <div style={{
-              marginTop: 8,
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: 6,
-              alignItems: 'center',
-            }}>
-              <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginRight: 2 }}>可用参数:</span>
-              {PROMPT_PARAMS.map(p => (
-                <Tooltip key={p.key} title={p.desc}>
-                  <code
-                    onClick={() => {
-                      insertTextAtCursor(p.key);
-                    }}
-                    style={{
-                      fontSize: 11,
-                      padding: '1px 6px',
-                      borderRadius: 4,
-                      background: 'var(--color-fill-quaternary)',
-                      border: '1px solid var(--color-border-secondary)',
-                      cursor: 'pointer',
-                      color: 'var(--color-text-secondary)',
-                      transition: 'all 0.2s',
-                    }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-primary)';
-                      (e.currentTarget as HTMLElement).style.color = 'var(--color-primary)';
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-border-secondary)';
-                      (e.currentTarget as HTMLElement).style.color = 'var(--color-text-secondary)';
-                    }}
-                  >
-                    {p.key}
-                  </code>
-                </Tooltip>
-              ))}
-            </div>
-          </div>
+          <PromptEditor
+            value={prompt}
+            onChange={setPrompt}
+            editorRef={editorRef}
+            onOpenTemplate={handleOpenTemplate}
+            onInsertText={insertTextAtCursor}
+          />
 
-          {/* Skills Card List */}
-          {currentSkills.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <div
-                onClick={() => setSkillsExpanded(prev => !prev)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    setSkillsExpanded(prev => !prev);
-                  }
-                }}
-                style={{
-                  marginBottom: skillsExpanded ? 10 : 0,
-                  fontWeight: 600,
-                  fontSize: 14,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  userSelect: 'none',
-                }}
-              >
-                <RightOutlined style={{
-                  color: executorColor,
-                  fontSize: 10,
-                  marginRight: 6,
-                  transition: 'transform 0.2s',
-                  transform: skillsExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
-                }} />
-                <ThunderboltOutlined style={{ color: executorColor, marginRight: 6 }} />
-                Skills
-                <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--color-text-tertiary)', marginLeft: 8 }}>
-                  {filteredSkills.length}{deferredSkillSearchText ? `/${currentSkills.length}` : ''} 个可用
-                </span>
-              </div>
-              {skillsExpanded && (
-                <div style={{ marginBottom: 10 }}>
-                  <Input
-                    prefix={<SearchOutlined style={{ color: 'var(--color-text-quaternary)' }} />}
-                    placeholder="搜索 Skills..."
-                    value={skillSearchText}
-                    onChange={(e) => setSkillSearchText(e.target.value)}
-                    allowClear
-                    style={{ width: '100%' }}
-                  />
-                </div>
-              )}
-              {skillsExpanded && filteredSkills.length > 0 && (
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(2, 1fr)',
-                  gap: 10,
-                }}>
-                  {filteredSkills.map(skill => (
-                  <div
-                    key={skill.name}
-                    onClick={() => handleSkillClick(skill)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        handleSkillClick(skill);
-                      }
-                    }}
-                    style={{
-                      padding: '10px 12px',
-                      borderRadius: 8,
-                      border: '1px solid var(--color-border-secondary)',
-                      background: 'var(--color-bg-elevated)',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      overflow: 'hidden',
-                    }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLDivElement).style.borderColor = executorColor;
-                      (e.currentTarget as HTMLDivElement).style.background = `${executorColor}08`;
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--color-border-secondary)';
-                      (e.currentTarget as HTMLDivElement).style.background = 'var(--color-bg-elevated)';
-                    }}
-                  >
-                    <div style={{
-                      fontSize: 13,
-                      fontWeight: 600,
-                      color: 'var(--color-text)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}>
-                      {skill.name}
-                    </div>
-                    {skill.description && (
-                      <div style={{
-                        fontSize: 11,
-                        color: 'var(--color-text-tertiary)',
-                        marginTop: 4,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}>
-                        {skill.description}
-                      </div>
-                    )}
-                    <div style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      gap: 4,
-                      marginTop: 6,
-                      alignItems: 'center',
-                    }}>
-                      {skill.version && (
-                        <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0 }} color="blue">v{skill.version}</Tag>
-                      )}
-                      {skill.author && (
-                        <span style={{ fontSize: 10, color: 'var(--color-text-quaternary)' }}>{skill.author}</span>
-                      )}
-                      {skill.file_count > 0 && (
-                        <span style={{ fontSize: 10, color: 'var(--color-text-quaternary)', marginLeft: 'auto' }}>
-                          {skill.file_count} 文件
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              )}
-              {skillsExpanded && filteredSkills.length === 0 && deferredSkillSearchText && (
-                <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--color-text-tertiary)' }}>
-                  未找到匹配 "{deferredSkillSearchText}" 的 Skill
-                </div>
-              )}
-            </div>
-          )}
+          <SkillSelector
+            skills={currentSkills}
+            loading={skillsLoading}
+            executorColor={executorColor}
+            searchText={skillSearchText}
+            onSearchChange={setSkillSearchText}
+            expanded={skillsExpanded}
+            onToggle={() => setSkillsExpanded(prev => !prev)}
+            onSkillClick={handleSkillClick}
+          />
 
-          {skillsLoading && currentSkills.length === 0 && (
-            <div style={{ textAlign: 'center', padding: 16 }}>
-              <Spin size="small" />
-            </div>
-          )}
-
-          {!skillsLoading && currentSkills.length === 0 && allExecutorSkills.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="当前执行器暂无 Skills"
-                style={{ margin: 0 }}
-              />
-            </div>
-          )}
-
-          {/* Tags */}
           {tags.length > 0 && (
             <>
               <Divider style={{ margin: '8px 0 16px' }} />
@@ -649,7 +272,6 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
 
           <Divider style={{ margin: '8px 0 16px' }} />
 
-          {/* Workspace */}
           <div style={{ marginBottom: 16 }}>
             <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14 }}>
               <FolderOutlined style={{ color: 'var(--color-primary)', marginRight: 6 }} />
@@ -670,197 +292,34 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
             />
           </div>
 
-          {/* Worktree Switch */}
           {(executor === 'claudecode' || executor === 'claude_code' || executor === 'hermes') && (
             <div style={{ marginBottom: 16 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>
-                  Git Worktree
-                </div>
-                <Switch
-                  checked={worktreeEnabled}
-                  onChange={(checked) => setWorktreeEnabled(checked)}
-                />
+                <div style={{ fontWeight: 600, fontSize: 14 }}>Git Worktree</div>
+                <Switch checked={worktreeEnabled} onChange={(checked) => setWorktreeEnabled(checked)} />
               </div>
             </div>
           )}
 
           <Divider style={{ margin: '8px 0 16px' }} />
 
-          {/* Scheduler */}
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>
-                <ClockCircleOutlined style={{ color: 'var(--color-primary)', marginRight: 6 }} />
-                定时调度
-              </div>
-              <Switch
-                checked={schedulerEnabled}
-                onChange={(checked) => {
-                  setSchedulerEnabled(checked);
-                  if (checked && !schedulerConfig) {
-                    setSchedulerConfig(DEFAULT_CRON);
-                  }
-                }}
-              />
-            </div>
-
-            {schedulerEnabled && (
-              <div style={{ marginTop: 12 }}>
-                <CronPresetSelect
-                  value={schedulerConfig || DEFAULT_CRON}
-                  onChange={(val) => setSchedulerConfig(val)}
-                />
-                <div style={{ marginTop: 12 }}>
-                  <Cron
-                    value={cronTo5(schedulerConfig || DEFAULT_CRON)}
-                    setValue={(val: string) => setSchedulerConfig(cronTo6(val))}
-                    locale={CRON_ZH_LOCALE}
-                    defaultPeriod="hour"
-                    humanizeLabels
-                    allowClear={false}
-                  />
-                </div>
-              </div>
-            )}
-
-            {todo?.scheduler_config && (
-              <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-tertiary)' }}>
-                当前配置: <code>{todo.scheduler_config}</code>
-              </div>
-            )}
-          </div>
+          <SchedulerSection
+            enabled={schedulerEnabled}
+            config={schedulerConfig}
+            onEnabledChange={setSchedulerEnabled}
+            onConfigChange={setSchedulerConfig}
+            existingConfig={todo?.scheduler_config}
+          />
         </div>
       </div>
 
-      {/* Template Selection Modal */}
-      <Modal
-        title={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <FileTextOutlined style={{ color: 'var(--color-primary)' }} />
-            <span>选择模板</span>
-          </div>
-        }
+      <TemplateModal
         open={templateModalOpen}
-        onCancel={() => {
-          setTemplateModalOpen(false);
-          setSearchText('');
-          setSelectedCategory(null);
-        }}
-        footer={null}
-        width={900}
-      >
-        <div className="template-selector">
-          {/* Search bar */}
-          <div className="template-search">
-            <Input
-              placeholder="搜索模板标题或内容..."
-              allowClear
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              style={{ width: '100%' }}
-              size="large"
-              prefix={<SearchOutlined style={{ color: 'var(--color-text-tertiary)' }} />}
-            />
-          </div>
-
-          {/* Content area */}
-          <div className="template-content" style={{ display: 'flex', gap: 16, flex: 1, minHeight: 0, overflow: 'hidden' }}>
-            {/* Categories sidebar */}
-            <div className="template-categories" style={{ width: 180, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4, borderRight: '1px solid var(--color-border-light)', paddingRight: 16, overflowY: 'auto' }}>
-              <div
-                className={`template-category-item ${!selectedCategory ? 'active' : ''}`}
-                onClick={() => setSelectedCategory(null)}
-                style={{ display: 'flex', alignItems: 'center', padding: '10px 12px', borderRadius: 8, cursor: 'pointer', transition: 'all 0.2s ease', color: !selectedCategory ? 'var(--color-primary)' : 'var(--color-text-secondary)', fontWeight: !selectedCategory ? 600 : 400, fontSize: 14 }}
-              >
-                <span>全部模板</span>
-                <Tag style={{ marginLeft: 'auto' }}>{templates.length}</Tag>
-              </div>
-              {categories.map(category => {
-                const count = templates.filter(t => t.category === category).length;
-                return (
-                  <div
-                    key={category}
-                    className={`template-category-item ${selectedCategory === category ? 'active' : ''}`}
-                    onClick={() => setSelectedCategory(category)}
-                    style={{ display: 'flex', alignItems: 'center', padding: '10px 12px', borderRadius: 8, cursor: 'pointer', transition: 'all 0.2s ease', color: selectedCategory === category ? 'var(--color-primary)' : 'var(--color-text-secondary)', fontWeight: selectedCategory === category ? 600 : 400, fontSize: 14 }}
-                  >
-                    <span>{category}</span>
-                    <Tag style={{ marginLeft: 'auto' }}>{count}</Tag>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Templates list */}
-            <div className="template-list" style={{ flex: 1, overflowY: 'auto', paddingLeft: 16 }}>
-              <Spin spinning={templatesLoading}>
-                {filteredTemplates.length === 0 ? (
-                  <Empty
-                    description={searchText ? "未找到匹配的模板" : "暂无模板，请在设置中添加"}
-                    image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  />
-                ) : (
-                  <div className="template-cards" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
-                    {filteredTemplates.map(template => (
-                      <Card
-                        key={template.id}
-                        size="small"
-                        className="template-card"
-                        onClick={() => selectTemplate(template)}
-                        hoverable
-                        style={{ cursor: 'pointer', transition: 'all 0.2s ease', border: '1px solid var(--color-border-light)' }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-                          <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--color-text)' }}>{template.title}</span>
-                          {template.is_system && <Tag color="blue" style={{ marginLeft: 8 }}>系统</Tag>}
-                        </div>
-                        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5, maxHeight: 60, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', wordBreak: 'break-word' }}>
-                          {template.prompt || '(无内容)'}
-                        </div>
-                        <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <Tag>{template.category}</Tag>
-                        </div>
-                      </Card>
-                    ))}
-                  </div>
-                )}
-              </Spin>
-            </div>
-          </div>
-        </div>
-      </Modal>
-
-      <style>{`
-        .template-card:hover {
-          border-color: var(--color-primary) !important;
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.09);
-          transform: translateY(-2px);
-        }
-        @media (max-width: 768px) {
-          .template-content {
-            flex-direction: column !important;
-          }
-          .template-categories {
-            width: 100% !important;
-            flex-direction: row !important;
-            flex-wrap: wrap;
-            gap: 8px;
-            border-right: none !important;
-            border-bottom: 1px solid var(--color-border-light);
-            padding-right: 0 !important;
-            padding-bottom: 16px;
-            overflow-x: auto !important;
-          }
-          .template-list {
-            padding-left: 0 !important;
-            padding-top: 16px;
-          }
-          .template-cards {
-            grid-template-columns: 1fr !important;
-          }
-        }
-      `}</style>
+        templates={templates}
+        loading={templatesLoading}
+        onClose={() => setTemplateModalOpen(false)}
+        onSelect={handleSelectTemplate}
+      />
     </Drawer>
   );
 }
