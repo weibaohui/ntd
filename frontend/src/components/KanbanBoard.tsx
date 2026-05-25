@@ -7,35 +7,9 @@ import { TodoCard } from './TodoCard';
 import * as db from '../utils/database';
 import { formatRelativeTime } from '../utils/datetime';
 import type { Todo, ExecutionRecord } from '../types';
-
-const TIME_OPTIONS: { label: string; value: number }[] = [
-  { label: '6h',  value: 6 },
-  { label: '12h', value: 12 },
-  { label: '24h', value: 24 },
-  { label: '3d',  value: 72 },
-  { label: '7d',  value: 168 },
-];
-
-/* ─── Column Definitions ─── */
-
-interface ColumnDef {
-  status: Todo['status'];
-  label: string;
-  color: string;
-}
-
-const COLUMNS: ColumnDef[] = [
-  { status: 'pending',   label: '待办',     color: '#3b82f6' },
-  { status: 'running',   label: '进行中',   color: '#f59e0b' },
-  { status: 'completed', label: '已完成',   color: '#22c55e' },
-  { status: 'failed',    label: '失败',     color: '#ef4444' },
-];
-
-/* ─── Helpers ─── */
-
-function getColumnForStatus(status: Todo['status']): ColumnDef {
-  return COLUMNS.find(c => c.status === status) || COLUMNS[0];
-}
+import { TIME_OPTIONS, COLUMNS } from './kanban/constants';
+import { getColumnForStatus } from './kanban/helpers';
+import type { ColumnDef } from './kanban/constants';
 
 /* ─── Component ─── */
 
