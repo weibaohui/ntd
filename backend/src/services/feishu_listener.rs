@@ -138,9 +138,6 @@ impl FeishuListener {
         let bot_open_id = real_bot_open_id;
         let bot_config_clone = bot_config;
         let credentials = self.bot_credentials.clone();
-        let executor_registry = self.ctx.executor_registry.clone();
-        let tx = self.ctx.tx.clone();
-        let task_manager = self.ctx.task_manager.clone();
         let config = self.ctx.config.clone();
         let token_manager = self.token_manager.clone();
         let debounce = self.debounce.clone();
@@ -157,7 +154,6 @@ impl FeishuListener {
                     bot_open_id: &bot_open_id,
                     bot_config: &bot_config_clone,
                 };
-                let _ = (&executor_registry, &tx, &task_manager);
                 Self::handle_message(context, &msg).await;
             }
             tracing::warn!("[feishu:{}] message receiver loop ended", bot_id);
