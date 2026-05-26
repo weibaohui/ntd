@@ -273,14 +273,14 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         );
         let _ = db.finish_todo_execution(todo_id, false).await;
         let _ = db
-            .update_execution_record(
-                record_id,
-                crate::models::ExecutionStatus::Failed.as_str(),
-                "[]",
-                &format!("Failed to start todo execution: {}", e),
-                None,
-                None,
-            )
+            .update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+                id: record_id,
+                status: crate::models::ExecutionStatus::Failed.as_str(),
+                remaining_logs: "[]",
+                result: &format!("Failed to start todo execution: {}", e),
+                usage: None,
+                model: None,
+            })
             .await;
         task_manager.remove(&task_id).await;
         return ExecutionResult {
@@ -716,14 +716,14 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                 // 更新 execution_records 状态为 failed
                 let logs_json = serde_json::to_string(&*logs.lock().await)
                     .unwrap_or_else(|e| { tracing::error!("Failed to serialize logs: {}", e); "[]".to_string() });
-                let _ = db_clone.update_execution_record(
-                    record_id,
-                    crate::models::ExecutionStatus::Failed.as_str(),
-                    &logs_json,
-                    "任务已被手动停止",
-                    None,
-                    None,
-                ).await;
+                let _ = db_clone.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+                    id: record_id,
+                    status: crate::models::ExecutionStatus::Failed.as_str(),
+                    remaining_logs: &logs_json,
+                    result: "任务已被手动停止",
+                    usage: None,
+                    model: None,
+                }).await;
 
                 let entry = ParsedLogEntry::error("Execution cancelled by user");
                 send_event(&tx_clone, ExecEvent::Output { task_id: task_id.clone(), entry });
@@ -761,14 +761,14 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
 
                 let logs_json = serde_json::to_string(&*logs.lock().await)
                     .unwrap_or_else(|e| { tracing::error!("Failed to serialize logs: {}", e); "[]".to_string() });
-                let _ = db_clone.update_execution_record(
-                    record_id,
-                    crate::models::ExecutionStatus::Failed.as_str(),
-                    &logs_json,
-                    "执行超时",
-                    None,
-                    None,
-                ).await;
+                let _ = db_clone.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+                    id: record_id,
+                    status: crate::models::ExecutionStatus::Failed.as_str(),
+                    remaining_logs: &logs_json,
+                    result: "执行超时",
+                    usage: None,
+                    model: None,
+                }).await;
 
                 let entry = ParsedLogEntry::error("Execution timeout - process was automatically terminated");
                 send_event(&tx_clone, ExecEvent::Output { task_id: task_id.clone(), entry });
@@ -895,14 +895,14 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         }
 
         let _ = db_clone
-            .update_execution_record(
-                record_id,
-                final_status,
-                &all_logs_json,
-                &result_str,
-                usage.as_ref(),
-                model.as_deref(),
-            )
+            .update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+                id: record_id,
+                status: final_status,
+                remaining_logs: &all_logs_json,
+                result: &result_str,
+                usage: usage.as_ref(),
+                model: model.as_deref(),
+            })
             .await;
 
         let _ = db_clone.finish_todo_execution(todo_id, success).await;

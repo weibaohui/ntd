@@ -185,10 +185,12 @@ async fn fetch_and_validate_templates(url: &str) -> Result<Vec<RemoteTemplate>, 
 async fn insert_templates(db: &Database, templates: &[RemoteTemplate], source_url: &str) -> Result<(), String> {
     for (idx, remote) in templates.iter().enumerate() {
         db.create_template_from_remote(
-            &remote.title,
-            remote.prompt.as_deref(),
-            &remote.category_or_default(),
-            Some(idx as i32),
+            crate::db::TemplateInput {
+                title: &remote.title,
+                prompt: remote.prompt.as_deref(),
+                category: &remote.category_or_default(),
+                sort_order: Some(idx as i32),
+            },
             source_url,
         ).await
         .map_err(|e| format!("Failed to create template '{}': {}", remote.title, e))?;

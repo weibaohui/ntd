@@ -4,6 +4,7 @@ use axum::{
 
 use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::{ApiResponse, Todo, UpdateSchedulerRequest};
+use crate::service_context::ServiceContext;
 
 #[axum::debug_handler]
 pub async fn update_scheduler(
@@ -29,24 +30,27 @@ pub async fn update_scheduler(
 
     if req.scheduler_enabled {
         if let Some(ref config) = req.scheduler_config {
+            let ctx = ServiceContext {
+                db: state.db.clone(),
+                executor_registry: state.executor_registry.clone(),
+                tx: state.tx.clone(),
+                task_manager: state.task_manager.clone(),
+                config: state.config.clone(),
+            };
             match state
                 .scheduler
                 .upsert_task(
-                    state.db.clone(),
-                    state.executor_registry.clone(),
-                    state.tx.clone(),
+                    &ctx,
                     id,
                     config.clone(),
                     scheduler_timezone.clone(),
-                    state.task_manager.clone(),
-                    state.config.clone(),
                 )
                 .await
             {
                 Ok(_) => {
                     state
                         .db
-                        .update_todo_scheduler(id, req.scheduler_enabled, req.scheduler_config.as_deref(), scheduler_timezone.as_deref())
+                        .update_todo_scheduler(crate::db::SchedulerUpdate { id, enabled: req.scheduler_enabled, config: req.scheduler_config.as_deref(), timezone: scheduler_timezone.as_deref() })
                         .await
                         .map_err(AppError::from)?;
                 }
@@ -59,7 +63,7 @@ pub async fn update_scheduler(
             state.scheduler.remove_task_for_todo(id).await;
             state
                 .db
-                .update_todo_scheduler(id, req.scheduler_enabled, req.scheduler_config.as_deref(), scheduler_timezone.as_deref())
+                .update_todo_scheduler(crate::db::SchedulerUpdate { id, enabled: req.scheduler_enabled, config: req.scheduler_config.as_deref(), timezone: scheduler_timezone.as_deref() })
                 .await
                 .map_err(AppError::from)?;
         }
@@ -67,7 +71,7 @@ pub async fn update_scheduler(
         state.scheduler.remove_task_for_todo(id).await;
         state
             .db
-            .update_todo_scheduler(id, req.scheduler_enabled, req.scheduler_config.as_deref(), scheduler_timezone.as_deref())
+            .update_todo_scheduler(crate::db::SchedulerUpdate { id, enabled: req.scheduler_enabled, config: req.scheduler_config.as_deref(), timezone: scheduler_timezone.as_deref() })
             .await
             .map_err(AppError::from)?;
     }

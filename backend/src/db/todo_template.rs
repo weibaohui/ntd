@@ -6,6 +6,13 @@ use crate::db::Database;
 use crate::db::entity::todo_templates;
 use crate::models::TodoTemplate;
 
+pub struct TemplateInput<'a> {
+    pub title: &'a str,
+    pub prompt: Option<&'a str>,
+    pub category: &'a str,
+    pub sort_order: Option<i32>,
+}
+
 impl Database {
     pub async fn get_template_by_id(&self, id: i64) -> Result<Option<TodoTemplate>, sea_orm::DbErr> {
         let model = todo_templates::Entity::find_by_id(id)
@@ -74,18 +81,15 @@ impl Database {
 
     pub async fn create_template(
         &self,
-        title: &str,
-        prompt: Option<&str>,
-        category: &str,
-        sort_order: Option<i32>,
+        input: TemplateInput<'_>,
         is_system: bool,
     ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let am = todo_templates::ActiveModel {
-            title: ActiveValue::Set(title.to_string()),
-            prompt: ActiveValue::Set(prompt.map(String::from)),
-            category: ActiveValue::Set(category.to_string()),
-            sort_order: ActiveValue::Set(sort_order),
+            title: ActiveValue::Set(input.title.to_string()),
+            prompt: ActiveValue::Set(input.prompt.map(String::from)),
+            category: ActiveValue::Set(input.category.to_string()),
+            sort_order: ActiveValue::Set(input.sort_order),
             is_system: ActiveValue::Set(is_system),
             source_url: ActiveValue::Set(None),
             last_sync_at: ActiveValue::Set(None),
@@ -100,18 +104,15 @@ impl Database {
     /// Create a custom template from remote URL sync
     pub async fn create_template_from_remote(
         &self,
-        title: &str,
-        prompt: Option<&str>,
-        category: &str,
-        sort_order: Option<i32>,
+        input: TemplateInput<'_>,
         source_url: &str,
     ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let am = todo_templates::ActiveModel {
-            title: ActiveValue::Set(title.to_string()),
-            prompt: ActiveValue::Set(prompt.map(String::from)),
-            category: ActiveValue::Set(category.to_string()),
-            sort_order: ActiveValue::Set(sort_order),
+            title: ActiveValue::Set(input.title.to_string()),
+            prompt: ActiveValue::Set(input.prompt.map(String::from)),
+            category: ActiveValue::Set(input.category.to_string()),
+            sort_order: ActiveValue::Set(input.sort_order),
             is_system: ActiveValue::Set(false),
             source_url: ActiveValue::Set(Some(source_url.to_string())),
             last_sync_at: ActiveValue::Set(Some(now.clone())),
@@ -154,10 +155,7 @@ impl Database {
     pub async fn update_template(
         &self,
         id: i64,
-        title: &str,
-        prompt: Option<&str>,
-        category: &str,
-        sort_order: Option<i32>,
+        input: TemplateInput<'_>,
     ) -> Result<(), sea_orm::DbErr> {
         let model = todo_templates::Entity::find_by_id(id)
             .one(&self.conn)
@@ -165,10 +163,10 @@ impl Database {
             .ok_or_else(|| sea_orm::DbErr::RecordNotFound("Template not found".to_string()))?;
 
         let mut am: todo_templates::ActiveModel = model.into();
-        am.title = ActiveValue::Set(title.to_string());
-        am.prompt = ActiveValue::Set(prompt.map(String::from));
-        am.category = ActiveValue::Set(category.to_string());
-        am.sort_order = ActiveValue::Set(sort_order);
+        am.title = ActiveValue::Set(input.title.to_string());
+        am.prompt = ActiveValue::Set(input.prompt.map(String::from));
+        am.category = ActiveValue::Set(input.category.to_string());
+        am.sort_order = ActiveValue::Set(input.sort_order);
         am.updated_at = ActiveValue::Set(Some(crate::models::utc_timestamp()));
         am.update(&self.conn).await?;
         Ok(())
@@ -246,7 +244,7 @@ impl Database {
                 am.update(&self.conn).await?;
             } else {
                 // Insert new system template
-                self.create_template(title, prompt, category, sort_order, true).await?;
+                self.create_template(TemplateInput { title, prompt, category, sort_order }, true).await?;
             }
         }
 

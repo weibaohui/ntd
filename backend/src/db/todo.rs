@@ -21,6 +21,13 @@ pub struct TodoUpdate<'a> {
     pub worktree_enabled: Option<bool>,
 }
 
+pub struct SchedulerUpdate<'a> {
+    pub id: i64,
+    pub enabled: bool,
+    pub config: Option<&'a str>,
+    pub timezone: Option<&'a str>,
+}
+
 impl Database {
     fn model_to_todo(m: todos::Model, tag_ids: Vec<i64>) -> Todo {
         let scheduler_enabled = m.scheduler_enabled.unwrap_or(false);
@@ -183,18 +190,15 @@ impl Database {
 
     pub async fn update_todo_scheduler(
         &self,
-        id: i64,
-        enabled: bool,
-        config: Option<&str>,
-        timezone: Option<&str>,
+        req: SchedulerUpdate<'_>,
     ) -> Result<(), sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         // Normalize empty strings to None
-        let timezone = timezone.filter(|s| !s.is_empty());
-        let config = config.filter(|s| !s.is_empty());
+        let timezone = req.timezone.filter(|s| !s.is_empty());
+        let config = req.config.filter(|s| !s.is_empty());
         let am = todos::ActiveModel {
-            id: ActiveValue::Unchanged(id),
-            scheduler_enabled: ActiveValue::Set(Some(enabled)),
+            id: ActiveValue::Unchanged(req.id),
+            scheduler_enabled: ActiveValue::Set(Some(req.enabled)),
             scheduler_config: ActiveValue::Set(config.map(|s| s.to_string())),
             scheduler_timezone: ActiveValue::Set(timezone.map(|s| s.to_string())),
             updated_at: ActiveValue::Set(Some(now)),

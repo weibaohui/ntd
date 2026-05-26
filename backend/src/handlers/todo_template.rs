@@ -26,7 +26,7 @@ pub async fn create_template(
     }
 
     let id = state.db
-        .create_template(title, req.prompt.as_deref(), category, req.sort_order, false)
+        .create_template(crate::db::TemplateInput { title, prompt: req.prompt.as_deref(), category, sort_order: req.sort_order }, false)
         .await?;
 
     let template = state.db
@@ -58,7 +58,7 @@ pub async fn update_template(
     let sort_order = req.sort_order.or(Some(existing.sort_order));
 
     state.db
-        .update_template(id, &title, prompt.as_deref(), &category, sort_order)
+        .update_template(id, crate::db::TemplateInput { title: &title, prompt: prompt.as_deref(), category: &category, sort_order })
         .await?;
 
     let template = state.db
@@ -99,7 +99,7 @@ pub async fn copy_template(
     // Create a copy as user template
     let new_title = format!("{} (副本)", existing.title);
     let id = state.db
-        .create_template(&new_title, existing.prompt.as_deref(), &existing.category, Some(existing.sort_order), false)
+        .create_template(crate::db::TemplateInput { title: &new_title, prompt: existing.prompt.as_deref(), category: &existing.category, sort_order: Some(existing.sort_order) }, false)
         .await?;
 
     let template = state.db

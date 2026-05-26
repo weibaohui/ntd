@@ -2,16 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
-use crate::adapters::ExecutorRegistry;
-use crate::config::Config;
-use crate::db::Database;
 use crate::executor_service::RunTodoExecutionRequest;
 use crate::handlers::execution::start_todo_execution;
-use crate::handlers::ExecEvent;
-use crate::task_manager::TaskManager;
+use crate::service_context::ServiceContext;
 
 #[derive(Debug, Clone)]
 pub struct PendingMessage {
@@ -35,28 +30,14 @@ struct DebounceEntry {
 
 pub struct MessageDebounce {
     entries: Arc<DashMap<(i64, String), DebounceEntry>>,
-    db: Arc<Database>,
-    executor_registry: Arc<ExecutorRegistry>,
-    tx: broadcast::Sender<ExecEvent>,
-    task_manager: Arc<TaskManager>,
-    config: Arc<tokio::sync::RwLock<Config>>,
+    ctx: ServiceContext,
 }
 
 impl MessageDebounce {
-    pub fn new(
-        db: Arc<Database>,
-        executor_registry: Arc<ExecutorRegistry>,
-        tx: broadcast::Sender<ExecEvent>,
-        task_manager: Arc<TaskManager>,
-        config: Arc<tokio::sync::RwLock<Config>>,
-    ) -> Self {
+    pub fn new(ctx: ServiceContext) -> Self {
         Self {
             entries: Arc::new(DashMap::new()),
-            db,
-            executor_registry,
-            tx,
-            task_manager,
-            config,
+            ctx,
         }
     }
 
@@ -78,11 +59,11 @@ impl MessageDebounce {
         // Create new timer
         let new_timer = {
             let entries = self.entries.clone();
-            let db = self.db.clone();
-            let executor_registry = self.executor_registry.clone();
-            let tx = self.tx.clone();
-            let task_manager = self.task_manager.clone();
-            let config = self.config.clone();
+            let db = self.ctx.db.clone();
+            let executor_registry = self.ctx.executor_registry.clone();
+            let tx = self.ctx.tx.clone();
+            let task_manager = self.ctx.task_manager.clone();
+            let config = self.ctx.config.clone();
             let bot_id = key.0;
             let chat_id = key.1.clone();
             let target_type = all_msgs

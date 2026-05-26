@@ -49,6 +49,17 @@ pub struct WebhookRecordResponse {
     pub created_at: Option<String>,
 }
 
+/// Parameters for triggering a webhook execution.
+pub struct WebhookTriggerRequest {
+    pub todo_id: i64,
+    pub webhook_id: Option<i64>,
+    pub method: String,
+    pub path: String,
+    pub query_params: HashMap<String, String>,
+    pub content_type: Option<String>,
+    pub body: Option<String>,
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct WebhookRecordsPage {
     pub records: Vec<WebhookRecordResponse>,
@@ -228,13 +239,15 @@ pub async fn trigger_webhook_default(
 
     trigger_webhook_internal(
         Arc::new(state),
-        default_todo_id,
-        Some(webhook.id),
-        "GET".to_string(),
-        "/webhook/trigger".to_string(),
-        params,
-        None,
-        None,
+        WebhookTriggerRequest {
+            todo_id: default_todo_id,
+            webhook_id: Some(webhook.id),
+            method: "GET".to_string(),
+            path: "/webhook/trigger".to_string(),
+            query_params: params,
+            content_type: None,
+            body: None,
+        },
     ).await
 }
 
@@ -258,13 +271,15 @@ pub async fn trigger_webhook_default_post_json(
         })?;
     trigger_webhook_internal(
         Arc::new(state),
-        default_todo_id,
-        Some(webhook.id),
-        "POST".to_string(),
-        "/webhook/trigger".to_string(),
-        params,
-        Some("application/json".to_string()),
-        Some(body_str),
+        WebhookTriggerRequest {
+            todo_id: default_todo_id,
+            webhook_id: Some(webhook.id),
+            method: "POST".to_string(),
+            path: "/webhook/trigger".to_string(),
+            query_params: params,
+            content_type: Some("application/json".to_string()),
+            body: Some(body_str),
+        },
     ).await
 }
 
@@ -280,13 +295,15 @@ pub async fn trigger_webhook_with_todo(
 
     trigger_webhook_internal(
         Arc::new(state),
-        todo_id,
-        Some(webhook.id),
-        "GET".to_string(),
-        format!("/webhook/trigger/{}", todo_id),
-        params,
-        None,
-        None,
+        WebhookTriggerRequest {
+            todo_id,
+            webhook_id: Some(webhook.id),
+            method: "GET".to_string(),
+            path: format!("/webhook/trigger/{}", todo_id),
+            query_params: params,
+            content_type: None,
+            body: None,
+        },
     ).await
 }
 
@@ -308,33 +325,29 @@ pub async fn trigger_webhook_with_todo_post_json(
         })?;
     trigger_webhook_internal(
         Arc::new(state),
-        todo_id,
-        Some(webhook.id),
-        "POST".to_string(),
-        format!("/webhook/trigger/{}", todo_id),
-        params,
-        Some("application/json".to_string()),
-        Some(body_str),
+        WebhookTriggerRequest {
+            todo_id,
+            webhook_id: Some(webhook.id),
+            method: "POST".to_string(),
+            path: format!("/webhook/trigger/{}", todo_id),
+            query_params: params,
+            content_type: Some("application/json".to_string()),
+            body: Some(body_str),
+        },
     ).await
 }
 
 /// Internal trigger implementation
 async fn trigger_webhook_internal(
     state: Arc<AppState>,
-    todo_id: i64,
-    webhook_id: Option<i64>,
-    method: String,
-    path: String,
-    query_params: HashMap<String, String>,
-    content_type: Option<String>,
-    body: Option<String>,
+    req: WebhookTriggerRequest,
 ) -> Result<impl IntoResponse, AppError> {
     // Get the todo
-    let todo = state.db.get_todo(todo_id).await?
+    let todo = state.db.get_todo(req.todo_id).await?
         .ok_or_else(|| AppError::NotFound)?;
 
     // Build message content
-    let (message, raw_message) = build_message_content(&method, &query_params, &body, &content_type);
+    let (message, raw_message) = build_message_content(&req.method, &req.query_params, &req.body, &req.content_type);
 
     // Execute the todo
     let exec_result = crate::handlers::execution::start_todo_execution(
@@ -344,12 +357,12 @@ async fn trigger_webhook_internal(
             tx: state.tx.clone(),
             task_manager: state.task_manager.clone(),
             config: state.config.clone(),
-            todo_id,
+            todo_id: req.todo_id,
             message: todo.prompt.clone(),
             req_executor: todo.executor.clone(),
             trigger_type: "webhook".to_string(),
             params: Some({
-                let mut p = query_params.clone();
+                let mut p = req.query_params.clone();
                 p.insert("message".to_string(), message.clone());
                 p.insert("raw_message".to_string(), raw_message.clone());
                 p
@@ -370,10 +383,10 @@ async fn trigger_webhook_internal(
     let response_body = response_json.to_string();
 
     // Record the webhook call
-    let query_params_json = if query_params.is_empty() {
+    let query_params_json = if req.query_params.is_empty() {
         None
     } else {
-        match serde_json::to_string(&query_params) {
+        match serde_json::to_string(&req.query_params) {
             Ok(json) => Some(json),
             Err(e) => {
                 tracing::warn!("Failed to serialize query_params: {}", e);
@@ -383,13 +396,13 @@ async fn trigger_webhook_internal(
     };
 
     if let Err(e) = state.db.create_webhook_record(NewWebhookRecord {
-        webhook_id,
-        method,
-        path,
+        webhook_id: req.webhook_id,
+        method: req.method,
+        path: req.path,
         query_params: query_params_json,
-        body,
-        content_type,
-        triggered_todo_id: Some(todo_id),
+        body: req.body,
+        content_type: req.content_type,
+        triggered_todo_id: Some(req.todo_id),
         status_code: Some(status_code.as_u16() as i32),
         response_body: Some(response_body.clone()),
     }).await {

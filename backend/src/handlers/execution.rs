@@ -45,7 +45,12 @@ pub async fn get_execution_records(
     };
     let (records, total) = state
         .db
-        .get_execution_records(query.todo_id, limit, offset, status)
+        .get_execution_records(crate::db::execution::ExecutionRecordQuery {
+            todo_id: query.todo_id,
+            limit,
+            offset,
+            status,
+        })
         .await?;
     Ok(ApiResponse::ok(ExecutionRecordsPage {
         records,

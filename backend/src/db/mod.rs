@@ -791,8 +791,8 @@ impl Database {
 }
 
 mod todo;
-pub use todo::TodoUpdate;
-mod execution;
+pub use todo::{SchedulerUpdate, TodoUpdate};
+pub mod execution;
 mod tag;
 pub use execution::NewExecutionRecord;
 mod agent_bot;
@@ -807,12 +807,13 @@ mod feishu_push_target;
 mod feishu_response_config;
 pub mod project_directory;
 mod todo_template;
+pub use todo_template::TemplateInput;
 pub mod webhook;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{DateTime, Timelike};
+    use chrono::{DateTime, Timelike, Utc};
 
     async fn setup_db() -> Database {
         Database::new(":memory:").await.unwrap()
@@ -939,7 +940,14 @@ mod tests {
         let record_id = create_test_execution_record(&db, todo_id, "echo hi").await;
         let after = truncate_seconds(Utc::now());
 
-        let (records, _) = db.get_execution_records(todo_id, 100, 0, None).await.unwrap();
+        let (records, _) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
+            todo_id,
+            limit: 100,
+            offset: 0,
+            status: None,
+        })
+        .await
+        .unwrap();
         let record = records.into_iter().find(|r| r.id == record_id).unwrap();
         let started = truncate_seconds(parse_utc(&record.started_at));
 
@@ -955,19 +963,26 @@ mod tests {
         let record_id = create_test_execution_record(&db, todo_id, "echo hi").await;
 
         let before = truncate_seconds(Utc::now());
-        db.update_execution_record(
-            record_id,
-            crate::models::ExecutionStatus::Success.as_str(),
-            "[]",
-            "done",
-            None,
-            None,
-        )
+        db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+            id: record_id,
+            status: crate::models::ExecutionStatus::Success.as_str(),
+            remaining_logs: "[]",
+            result: "done",
+            usage: None,
+            model: None,
+        })
         .await
         .unwrap();
         let after = truncate_seconds(Utc::now());
 
-        let (records, _) = db.get_execution_records(todo_id, 100, 0, None).await.unwrap();
+        let (records, _) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
+            todo_id,
+            limit: 100,
+            offset: 0,
+            status: None,
+        })
+        .await
+        .unwrap();
         let record = records.into_iter().find(|r| r.id == record_id).unwrap();
         let finished_at = record.finished_at.unwrap();
         let finished = truncate_seconds(parse_utc(&finished_at));
@@ -1063,7 +1078,7 @@ mod tests {
     async fn test_update_todo_scheduler() {
         let db = setup_db().await;
         let id = db.create_todo("Test", "Prompt").await.unwrap();
-        db.update_todo_scheduler(id, true, Some("0 0 * * *"), None)
+        db.update_todo_scheduler(crate::db::SchedulerUpdate { id, enabled: true, config: Some("0 0 * * *"), timezone: None })
             .await
             .unwrap();
         let todo = db.get_todo(id).await.unwrap().unwrap();
@@ -1127,7 +1142,7 @@ mod tests {
     async fn test_get_scheduler_todos() {
         let db = setup_db().await;
         let id1 = db.create_todo("Scheduled", "Prompt").await.unwrap();
-        db.update_todo_scheduler(id1, true, Some("0 0 * * *"), None)
+        db.update_todo_scheduler(crate::db::SchedulerUpdate { id: id1, enabled: true, config: Some("0 0 * * *"), timezone: None })
             .await
             .unwrap();
         let id2 = db.create_todo("Normal", "Prompt").await.unwrap();
@@ -1247,7 +1262,14 @@ mod tests {
         let db = setup_db().await;
         let todo_id = db.create_todo("Test", "Prompt").await.unwrap();
         let record_id = create_test_execution_record(&db, todo_id, "echo hi").await;
-        let (records, total) = db.get_execution_records(todo_id, 100, 0, None).await.unwrap();
+        let (records, total) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
+            todo_id,
+            limit: 100,
+            offset: 0,
+            status: None,
+        })
+        .await
+        .unwrap();
         assert_eq!(total, 1);
         let record = records.iter().find(|r| r.id == record_id).unwrap();
         assert_eq!(record.status, crate::models::ExecutionStatus::Running);
@@ -1264,7 +1286,14 @@ mod tests {
         for i in 0..5 {
             create_test_execution_record(&db, todo_id, &format!("cmd{}", i)).await;
         }
-        let (records, total) = db.get_execution_records(todo_id, 2, 0, None).await.unwrap();
+        let (records, total) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
+            todo_id,
+            limit: 2,
+            offset: 0,
+            status: None,
+        })
+        .await
+        .unwrap();
         assert_eq!(total, 5);
         assert_eq!(records.len(), 2);
     }
@@ -1276,7 +1305,14 @@ mod tests {
         for i in 0..3 {
             create_test_execution_record(&db, todo_id, &format!("cmd{}", i)).await;
         }
-        let (records, total) = db.get_execution_records(todo_id, 10, 2, None).await.unwrap();
+        let (records, total) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
+            todo_id,
+            limit: 10,
+            offset: 2,
+            status: None,
+        })
+        .await
+        .unwrap();
         assert_eq!(total, 3);
         assert_eq!(records.len(), 1);
     }
@@ -1288,46 +1324,87 @@ mod tests {
 
         let running_id = create_test_execution_record(&db, todo_id, "cmd-running").await;
         let success_id = create_test_execution_record(&db, todo_id, "cmd-success").await;
-        db.update_execution_record(success_id, "success", "[]", "", None, None)
-            .await
-            .unwrap();
+        db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+            id: success_id,
+            status: "success",
+            remaining_logs: "[]",
+            result: "",
+            usage: None,
+            model: None,
+        })
+        .await
+        .unwrap();
         let failed_id = create_test_execution_record(&db, todo_id, "cmd-failed").await;
-        db.update_execution_record(failed_id, "failed", "[]", "", None, None)
-            .await
-            .unwrap();
+        db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+            id: failed_id,
+            status: "failed",
+            remaining_logs: "[]",
+            result: "",
+            usage: None,
+            model: None,
+        })
+        .await
+        .unwrap();
 
         let (running, total_running) =
-            db.get_execution_records(todo_id, 10, 0, Some("running"))
-                .await
-                .unwrap();
+            db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
+                todo_id,
+                limit: 10,
+                offset: 0,
+                status: Some("running"),
+            })
+            .await
+            .unwrap();
         assert_eq!(total_running, 1);
         assert_eq!(running.len(), 1);
         assert_eq!(running[0].id, running_id);
 
         let (success, total_success) =
-            db.get_execution_records(todo_id, 10, 0, Some("success"))
-                .await
-                .unwrap();
+            db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
+                todo_id,
+                limit: 10,
+                offset: 0,
+                status: Some("success"),
+            })
+            .await
+            .unwrap();
         assert_eq!(total_success, 1);
         assert_eq!(success.len(), 1);
         assert_eq!(success[0].id, success_id);
 
         let (failed, total_failed) =
-            db.get_execution_records(todo_id, 10, 0, Some("failed"))
-                .await
-                .unwrap();
+            db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
+                todo_id,
+                limit: 10,
+                offset: 0,
+                status: Some("failed"),
+            })
+            .await
+            .unwrap();
         assert_eq!(total_failed, 1);
         assert_eq!(failed.len(), 1);
         assert_eq!(failed[0].id, failed_id);
 
-        let (all, total_all) = db.get_execution_records(todo_id, 10, 0, None).await.unwrap();
+        let (all, total_all) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
+            todo_id,
+            limit: 10,
+            offset: 0,
+            status: None,
+        })
+        .await
+        .unwrap();
         assert_eq!(total_all, 3);
         assert_eq!(all.len(), 3);
 
         // Test Some("all") returns all records (db layer should treat "all" as no filter)
         let (all_filter, total_all_filter) =
-            db.get_execution_records(todo_id, 10, 0, Some("all"))
-                .await
+            db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
+                todo_id,
+                limit: 10,
+                offset: 0,
+                status: Some("all"),
+            })
+            .await
                 .unwrap();
         assert_eq!(total_all_filter, 3);
         assert_eq!(all_filter.len(), 3);
@@ -1346,17 +1423,24 @@ mod tests {
             total_cost_usd: Some(0.005),
             duration_ms: Some(1000),
         };
-        db.update_execution_record(
-            record_id,
-            "success",
-            "[{\"timestamp\":\"2026-01-01T00:00:00.000Z\",\"type\":\"info\",\"content\":\"test log\"}]",
-            "done",
-            Some(&usage),
-            Some("claude-3"),
-        )
+        db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+            id: record_id,
+            status: "success",
+            remaining_logs: "[{\"timestamp\":\"2026-01-01T00:00:00.000Z\",\"type\":\"info\",\"content\":\"test log\"}]",
+            result: "done",
+            usage: Some(&usage),
+            model: Some("claude-3"),
+        })
         .await
         .unwrap();
-        let (records, _) = db.get_execution_records(todo_id, 100, 0, None).await.unwrap();
+        let (records, _) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
+            todo_id,
+            limit: 100,
+            offset: 0,
+            status: None,
+        })
+        .await
+        .unwrap();
         let record = records.iter().find(|r| r.id == record_id).unwrap();
         assert_eq!(record.status, crate::models::ExecutionStatus::Success);
         assert_eq!(record.result, Some("done".to_string()));
@@ -1391,13 +1475,27 @@ mod tests {
         let db = setup_db().await;
         let todo_id = db.create_todo("Test", "Prompt").await.unwrap();
         let r1 = create_test_execution_record(&db, todo_id, "cmd1").await;
-        db.update_execution_record(r1, "success", "[]", "", None, None)
-            .await
-            .unwrap();
+        db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+            id: r1,
+            status: "success",
+            remaining_logs: "[]",
+            result: "",
+            usage: None,
+            model: None,
+        })
+        .await
+        .unwrap();
         let r2 = create_test_execution_record(&db, todo_id, "cmd2").await;
-        db.update_execution_record(r2, "failed", "[]", "", None, None)
-            .await
-            .unwrap();
+        db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+            id: r2,
+            status: "failed",
+            remaining_logs: "[]",
+            result: "",
+            usage: None,
+            model: None,
+        })
+        .await
+        .unwrap();
         let _r3 = create_test_execution_record(&db, todo_id, "cmd3").await;
         // r3 stays "running"
         let summary = db.get_execution_summary(todo_id).await.unwrap();
@@ -1420,9 +1518,16 @@ mod tests {
             total_cost_usd: Some(0.005),
             duration_ms: Some(1000),
         };
-        db.update_execution_record(r1, "success", "[]", "", Some(&usage1), None)
-            .await
-            .unwrap();
+        db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+            id: r1,
+            status: "success",
+            remaining_logs: "[]",
+            result: "",
+            usage: Some(&usage1),
+            model: None,
+        })
+        .await
+        .unwrap();
         let r2 = create_test_execution_record(&db, todo_id, "cmd2").await;
         let usage2 = crate::models::ExecutionUsage {
             input_tokens: 200,
@@ -1432,9 +1537,16 @@ mod tests {
             total_cost_usd: Some(0.010),
             duration_ms: Some(2000),
         };
-        db.update_execution_record(r2, "success", "[]", "", Some(&usage2), None)
-            .await
-            .unwrap();
+        db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+            id: r2,
+            status: "success",
+            remaining_logs: "[]",
+            result: "",
+            usage: Some(&usage2),
+            model: None,
+        })
+        .await
+        .unwrap();
         let summary = db.get_execution_summary(todo_id).await.unwrap();
         assert_eq!(summary.total_input_tokens, 300);
         assert_eq!(summary.total_output_tokens, 150);

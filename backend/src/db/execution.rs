@@ -18,6 +18,22 @@ pub struct NewExecutionRecord<'a> {
     pub resume_message: Option<&'a str>,
 }
 
+pub struct UpdateExecutionRecordRequest<'a> {
+    pub id: i64,
+    pub status: &'a str,
+    pub remaining_logs: &'a str,
+    pub result: &'a str,
+    pub usage: Option<&'a ExecutionUsage>,
+    pub model: Option<&'a str>,
+}
+
+pub struct ExecutionRecordQuery<'a> {
+    pub todo_id: i64,
+    pub limit: i64,
+    pub offset: i64,
+    pub status: Option<&'a str>,
+}
+
 impl From<execution_records::Model> for ExecutionRecord {
     fn from(m: execution_records::Model) -> Self {
         let usage = m
@@ -66,13 +82,10 @@ impl From<execution_records::Model> for ExecutionRecord {
 impl Database {
     pub async fn get_execution_records(
         &self,
-        todo_id: i64,
-        limit: i64,
-        offset: i64,
-        status: Option<&str>,
+        query: ExecutionRecordQuery<'_>,
     ) -> Result<(Vec<ExecutionRecord>, i64), sea_orm::DbErr> {
-        let base_filter = execution_records::Column::TodoId.eq(todo_id);
-        let filter = if let Some(s) = status {
+        let base_filter = execution_records::Column::TodoId.eq(query.todo_id);
+        let filter = if let Some(s) = query.status {
             if s == "all" {
                 base_filter // "all" 等同于不传过滤条件
             } else {
@@ -87,8 +100,8 @@ impl Database {
             .count(&self.conn)
             .await? as i64;
 
-        let limit_u = if limit < 0 { 0 } else { limit as u64 };
-        let offset_u = if offset < 0 { 0 } else { offset as u64 };
+        let limit_u = if query.limit < 0 { 0 } else { query.limit as u64 };
+        let offset_u = if query.offset < 0 { 0 } else { query.offset as u64 };
 
         let records = execution_records::Entity::find()
             .filter(filter)
@@ -170,21 +183,16 @@ impl Database {
     /// Returns Ok(true) if the row was updated, Ok(false) if status was not "running".
     pub async fn update_execution_record(
         &self,
-        id: i64,
-        status: &str,
-        remaining_logs: &str,
-        result: &str,
-        usage: Option<&ExecutionUsage>,
-        model: Option<&str>,
+        req: UpdateExecutionRecordRequest<'_>,
     ) -> Result<bool, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
-        let usage_json = usage.map(|u| {
+        let usage_json = req.usage.map(|u| {
             serde_json::to_string(u).unwrap_or_else(|e| {
                 tracing::error!("Failed to serialize usage: {}", e);
                 String::new()
             })
         });
-        let model_val = model.map(|s| s.to_string());
+        let model_val = req.model.map(|s| s.to_string());
 
         // Use raw SQL with WHERE status='running' to prevent race condition:
         // both the stop handler and spawned task's cancellation branch may try to
@@ -204,20 +212,20 @@ impl Database {
                 backend,
                 sql,
                 [
-                    status.into(),
-                    result.into(),
+                    req.status.into(),
+                    req.result.into(),
                     usage_json.into(),
                     model_val.into(),
                     now.into(),
-                    id.into(),
+                    req.id.into(),
                 ],
             ))
             .await?;
         let updated = res.rows_affected() > 0;
 
         // Only insert logs if the status update succeeded (prevent duplicate logs on concurrent writes)
-        if updated && !remaining_logs.is_empty() && remaining_logs != "[]" {
-            self.insert_execution_logs(id, remaining_logs).await?;
+        if updated && !req.remaining_logs.is_empty() && req.remaining_logs != "[]" {
+            self.insert_execution_logs(req.id, req.remaining_logs).await?;
         }
 
         Ok(updated)

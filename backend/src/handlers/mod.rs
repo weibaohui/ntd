@@ -13,6 +13,7 @@ use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
+use crate::service_context::ServiceContext;
 use crate::adapters::ExecutorRegistry;
 use crate::Assets;
 use crate::config::Config;
@@ -296,29 +297,21 @@ async fn version_handler() -> impl IntoResponse {
 
 // Build router
 pub fn create_app(
-    db: Arc<Database>,
-    executor_registry: Arc<ExecutorRegistry>,
-    tx: broadcast::Sender<ExecEvent>,
+    ctx: ServiceContext,
     scheduler: Arc<TodoScheduler>,
-    task_manager: Arc<TaskManager>,
-    config: Arc<tokio::sync::RwLock<Config>>,
 ) -> Router {
+    let db = ctx.db.clone();
+    let executor_registry = ctx.executor_registry.clone();
+    let tx = ctx.tx.clone();
+    let task_manager = ctx.task_manager.clone();
+    let config = ctx.config.clone();
+
     // Create message debounce service (shared between listener and history fetcher)
     use crate::services::message_debounce::MessageDebounce;
-    let debounce = Arc::new(MessageDebounce::new(
-        db.clone(),
-        executor_registry.clone(),
-        tx.clone(),
-        task_manager.clone(),
-        config.clone(),
-    ));
+    let debounce = Arc::new(MessageDebounce::new(ctx.clone()));
 
     let feishu_listener = Arc::new(FeishuListener::new(
-        db.clone(),
-        executor_registry.clone(),
-        tx.clone(),
-        task_manager.clone(),
-        config.clone(),
+        ctx.clone(),
         debounce.clone(),
     ));
 
@@ -345,16 +338,12 @@ pub fn create_app(
 
     // Start Feishu history fetcher with all required dependencies (before AppState to use moved values)
     use crate::services::feishu_history_fetcher::FeishuHistoryFetcher;
-    let fetcher = FeishuHistoryFetcher::new(
-        db.clone(),
-        executor_registry.clone(),
-        tx.clone(),
-        task_manager.clone(),
-        config.clone(),
+    let fetcher = Arc::new(FeishuHistoryFetcher::new(
+        ctx,
         feishu_listener.token_manager.clone(),
         feishu_listener.bot_credentials.clone(),
         debounce.clone(),
-    );
+    ));
     let db_for_fetcher = db.clone();
     tokio::spawn(async move {
         tracing::info!("[feishu-history-fetcher] starting initialization");

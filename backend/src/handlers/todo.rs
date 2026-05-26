@@ -91,7 +91,13 @@ pub async fn create_todo(
 
     // Update scheduler - always call to ensure consistent state
     // When scheduler_enabled is false or config is empty, scheduler will be disabled
-    if let Err(e) = state.db.update_todo_scheduler(id, scheduler_enabled, scheduler_config.as_deref(), scheduler_timezone.as_deref()).await {
+    if let Err(e) = state.db.update_todo_scheduler(crate::db::SchedulerUpdate {
+        id,
+        enabled: scheduler_enabled,
+        config: scheduler_config.as_deref(),
+        timezone: scheduler_timezone.as_deref(),
+    })
+    .await {
         tracing::warn!("Failed to update scheduler for todo {}: {}", id, e);
     }
 
