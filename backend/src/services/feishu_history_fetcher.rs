@@ -5,28 +5,22 @@ use std::time::Duration;
 use dashmap::DashMap;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::RwLock;
 use tokio::time::interval;
 use tracing::{debug, info, warn};
 
-use crate::adapters::ExecutorRegistry;
+use crate::service_context::ServiceContext;
 use crate::config::Config as AppConfig;
-use crate::db::{Database, NewFeishuHistoryMessage};
+use crate::db::NewFeishuHistoryMessage;
 use crate::feishu::sdk::config::{Config as FeishuSdkConfig, CONTENT_TYPE_JSON};
 use crate::feishu::sdk::token_manager::TokenManager;
-use crate::handlers::ExecEvent;
 use crate::models::build_trigger_params;
 use crate::services::message_debounce::{MessageDebounce, PendingMessage};
-use crate::task_manager::TaskManager;
 
 const IM_V1_LIST_MESSAGES: &str = "/open-apis/im/v1/messages";
 
 pub struct FeishuHistoryFetcher {
-    db: Arc<Database>,
-    executor_registry: Arc<ExecutorRegistry>,
-    tx: broadcast::Sender<ExecEvent>,
-    task_manager: Arc<TaskManager>,
-    config: Arc<RwLock<AppConfig>>,
+    ctx: ServiceContext,
     token_manager: Arc<TokenManager>,
     bot_credentials: Arc<DashMap<i64, (String, String, String)>>,
     debounce: Arc<MessageDebounce>,
@@ -81,43 +75,25 @@ struct ChatToFetch {
 }
 
 impl FeishuHistoryFetcher {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        db: Arc<Database>,
-        executor_registry: Arc<ExecutorRegistry>,
-        tx: broadcast::Sender<ExecEvent>,
-        task_manager: Arc<TaskManager>,
-        config: Arc<RwLock<AppConfig>>,
+        ctx: ServiceContext,
         token_manager: Arc<TokenManager>,
         bot_credentials: Arc<DashMap<i64, (String, String, String)>>,
         debounce: Arc<MessageDebounce>,
     ) -> Self {
         Self {
-            db,
-            executor_registry,
-            tx,
-            task_manager,
-            config,
+            ctx,
             token_manager,
             bot_credentials,
             debounce,
         }
     }
 
-    pub fn start(&self, bots: Vec<(i64, String, String)>) {
+    pub fn start(self: Arc<Self>, bots: Vec<(i64, String, String)>) {
         if bots.is_empty() {
             info!("[feishu-history-fetcher] no bots configured, skipping");
             return;
         }
-
-        let db = self.db.clone();
-        let executor_registry = self.executor_registry.clone();
-        let tx = self.tx.clone();
-        let task_manager = self.task_manager.clone();
-        let config = self.config.clone();
-        let token_manager = self.token_manager.clone();
-        let bot_credentials = self.bot_credentials.clone();
-        let debounce = self.debounce.clone();
 
         tokio::spawn(async move {
             info!("[feishu-history-fetcher] started");
@@ -131,7 +107,7 @@ impl FeishuHistoryFetcher {
 
                 // 1. Get chats from feishu_history_chats table
                 for (bot_id, _, _) in &bots {
-                    if let Ok(history_chats) = db.get_enabled_feishu_history_chats(*bot_id).await {
+                    if let Ok(history_chats) = self.ctx.db.get_enabled_feishu_history_chats(*bot_id).await {
                         for chat in history_chats {
                             chats_to_fetch.push(ChatToFetch {
                                 bot_id: *bot_id,
@@ -142,7 +118,7 @@ impl FeishuHistoryFetcher {
                 }
 
                 // 2. Get chats from feishu_push_targets table (group chat only)
-                if let Ok(push_targets) = db.get_group_chat_ids().await {
+                if let Ok(push_targets) = self.ctx.db.get_group_chat_ids().await {
                     for (bot_id, chat_id) in push_targets {
                         // Avoid duplicates
                         if !chats_to_fetch
@@ -171,21 +147,9 @@ impl FeishuHistoryFetcher {
                         continue;
                     }
 
-                    if let Err(e) = Self::fetch_for_bot(
-                        &db,
-                        &executor_registry,
-                        &tx,
-                        &task_manager,
-                        &config,
-                        &token_manager,
-                        &bot_credentials,
-                        &debounce,
-                        *bot_id,
-                        app_id,
-                        app_secret,
-                        &bot_chats,
-                    )
-                    .await
+                    if let Err(e) = self
+                        .fetch_for_bot(*bot_id, app_id, app_secret, &bot_chats)
+                        .await
                     {
                         warn!(
                             "[feishu-history-fetcher] error fetching for bot {}: {}",
@@ -197,16 +161,8 @@ impl FeishuHistoryFetcher {
         });
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn fetch_for_bot(
-        db: &Arc<Database>,
-        executor_registry: &Arc<ExecutorRegistry>,
-        tx: &broadcast::Sender<ExecEvent>,
-        task_manager: &Arc<TaskManager>,
-        config: &Arc<RwLock<AppConfig>>,
-        token_manager: &Arc<TokenManager>,
-        bot_credentials: &Arc<DashMap<i64, (String, String, String)>>,
-        debounce: &Arc<MessageDebounce>,
+        &self,
         bot_id: i64,
         app_id: &str,
         app_secret: &str,
@@ -222,27 +178,14 @@ impl FeishuHistoryFetcher {
             .app_secret(app_secret)
             .build();
 
-        let token = token_manager
+        let token = self
+            .token_manager
             .get_tenant_access_token(&feishu_config)
             .await
             .map_err(|e| format!("failed to get token: {}", e))?;
 
         for chat in chats {
-            match Self::fetch_chat_history(
-                db,
-                executor_registry,
-                tx,
-                task_manager,
-                config,
-                token_manager,
-                bot_credentials,
-                debounce,
-                bot_id,
-                &chat.chat_id,
-                &token,
-            )
-            .await
-            {
+            match self.fetch_chat_history(bot_id, &chat.chat_id, &token).await {
                 Ok(count) => {
                     if count > 0 {
                         info!(
@@ -263,22 +206,14 @@ impl FeishuHistoryFetcher {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn fetch_chat_history(
-        db: &Arc<Database>,
-        _executor_registry: &Arc<ExecutorRegistry>,
-        _tx: &broadcast::Sender<ExecEvent>,
-        _task_manager: &Arc<TaskManager>,
-        config: &Arc<RwLock<AppConfig>>,
-        token_manager: &Arc<TokenManager>,
-        bot_credentials: &Arc<DashMap<i64, (String, String, String)>>,
-        debounce: &Arc<MessageDebounce>,
+        &self,
         bot_id: i64,
         chat_id: &str,
         token: &str,
     ) -> Result<usize, String> {
         // Get the latest message time from DB for incremental fetching
-        let start_time = match db.get_latest_history_message_time(bot_id, chat_id).await {
+        let start_time = match self.ctx.db.get_latest_history_message_time(bot_id, chat_id).await {
             Ok(Some(time)) => {
                 // Parse the time and convert to Unix timestamp in seconds (Feishu API expects seconds)
                 if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&time) {
@@ -322,7 +257,7 @@ impl FeishuHistoryFetcher {
 
             if let Some(items) = data.items {
                 for item in items {
-                    if db
+                    if self.ctx.db
                         .feishu_message_exists(&item.message_id)
                         .await
                         .map_err(|e| format!("db error: {}", e))?
@@ -348,8 +283,8 @@ impl FeishuHistoryFetcher {
                     let is_our_bot = Self::is_our_bot_message(
                         &sender_id,
                         sender_type.as_deref(),
-                        bot_credentials,
-                        token_manager,
+                        &self.bot_credentials,
+                        &self.token_manager,
                         bot_id,
                     )
                     .await;
@@ -374,7 +309,7 @@ impl FeishuHistoryFetcher {
                         .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
                         .unwrap_or_else(crate::models::utc_timestamp);
 
-                    if let Err(e) = db
+                    if let Err(e) = self.ctx.db
                         .save_feishu_history_message(NewFeishuHistoryMessage {
                             bot_id,
                             message_id: &item.message_id,
@@ -398,7 +333,7 @@ impl FeishuHistoryFetcher {
 
                         // Check message age: skip processing if too old
                         let max_age_secs = {
-                            let cfg = config.read().await;
+                            let cfg = self.ctx.config.read().await;
                             cfg.history_message_max_age_secs
                         };
                         let msg_time = chrono::DateTime::parse_from_rfc3339(&created_at)
@@ -418,7 +353,7 @@ impl FeishuHistoryFetcher {
                         // Process the message through debounce pipeline
                         if let Some(ref msg_content) = content {
                             // Check group whitelist
-                            let in_whitelist = match db
+                            let in_whitelist = match self.ctx.db
                                 .is_sender_in_whitelist(bot_id, sender_open_id)
                                 .await
                             {
@@ -437,11 +372,11 @@ impl FeishuHistoryFetcher {
                             }
 
                             // Push to debounce buffer instead of executing directly
-                            if let Some(todo_id) = Self::resolve_todo_id(config, msg_content).await
+                            if let Some(todo_id) = Self::resolve_todo_id(&self.ctx.config, msg_content).await
                             {
                                 let (trigger_type, params) =
                                     build_trigger_params(msg_content);
-                                let todo_prompt = match db.get_todo(todo_id).await {
+                                let todo_prompt = match self.ctx.db.get_todo(todo_id).await {
                                     Ok(Some(t)) => Some(t.prompt.clone()),
                                     Ok(None) => None,
                                     Err(e) => {
@@ -454,7 +389,7 @@ impl FeishuHistoryFetcher {
                                     }
                                 }
                                 .unwrap_or_default();
-                                debounce.push(PendingMessage {
+                                self.debounce.push(PendingMessage {
                                     bot_id,
                                     chat_id: chat_id.to_string(),
                                     chat_type: "group".to_string(),

@@ -4,6 +4,7 @@ use tokio::sync::broadcast;
 use tracing::info;
 
 use std::path::PathBuf;
+use ntd::service_context::ServiceContext;
 use ntd::{adapters, cli, daemon, db, handlers, scheduler::TodoScheduler, task_manager::TaskManager};
 use ntd::NtdSkills;
 
@@ -384,7 +385,14 @@ async fn run_server(cli_port: Option<u16>) {
             tracing::error!("Failed to create scheduler: {}. Exiting.", e);
             std::process::exit(1);
         });
-        if let Err(e) = sched.load_from_db(db.clone(), executor_registry.clone(), tx.clone(), task_manager.clone(), config.clone()).await {
+        let ctx = ServiceContext {
+            db: db.clone(),
+            executor_registry: executor_registry.clone(),
+            tx: tx.clone(),
+            task_manager: task_manager.clone(),
+            config: config.clone(),
+        };
+        if let Err(e) = sched.load_from_db(&ctx).await {
             tracing::warn!("Failed to load scheduled tasks: {}", e);
         }
         if let Err(e) = sched.start().await {

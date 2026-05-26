@@ -13,6 +13,7 @@ use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
+use crate::service_context::ServiceContext;
 use crate::adapters::ExecutorRegistry;
 use crate::Assets;
 use crate::config::Config;
@@ -303,22 +304,20 @@ pub fn create_app(
     task_manager: Arc<TaskManager>,
     config: Arc<tokio::sync::RwLock<Config>>,
 ) -> Router {
+    let ctx = ServiceContext {
+        db: db.clone(),
+        executor_registry: executor_registry.clone(),
+        tx: tx.clone(),
+        task_manager: task_manager.clone(),
+        config: config.clone(),
+    };
+
     // Create message debounce service (shared between listener and history fetcher)
     use crate::services::message_debounce::MessageDebounce;
-    let debounce = Arc::new(MessageDebounce::new(
-        db.clone(),
-        executor_registry.clone(),
-        tx.clone(),
-        task_manager.clone(),
-        config.clone(),
-    ));
+    let debounce = Arc::new(MessageDebounce::new(ctx.clone()));
 
     let feishu_listener = Arc::new(FeishuListener::new(
-        db.clone(),
-        executor_registry.clone(),
-        tx.clone(),
-        task_manager.clone(),
-        config.clone(),
+        ctx.clone(),
         debounce.clone(),
     ));
 
@@ -345,16 +344,12 @@ pub fn create_app(
 
     // Start Feishu history fetcher with all required dependencies (before AppState to use moved values)
     use crate::services::feishu_history_fetcher::FeishuHistoryFetcher;
-    let fetcher = FeishuHistoryFetcher::new(
-        db.clone(),
-        executor_registry.clone(),
-        tx.clone(),
-        task_manager.clone(),
-        config.clone(),
+    let fetcher = Arc::new(FeishuHistoryFetcher::new(
+        ctx,
         feishu_listener.token_manager.clone(),
         feishu_listener.bot_credentials.clone(),
         debounce.clone(),
-    );
+    ));
     let db_for_fetcher = db.clone();
     tokio::spawn(async move {
         tracing::info!("[feishu-history-fetcher] starting initialization");

@@ -1,19 +1,14 @@
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::Mutex;
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::{error, info, warn};
 
 use chrono::TimeZone;
 use chrono::Offset;
 
-use crate::adapters::ExecutorRegistry;
-use crate::config::Config;
-use crate::db::Database;
 use crate::executor_service::{run_todo_execution, RunTodoExecutionRequest};
-use crate::handlers::ExecEvent;
-use crate::task_manager::TaskManager;
+use crate::service_context::ServiceContext;
 
 /// Convert a cron expression from user timezone to UTC timezone.
 /// This is necessary because tokio-cron-scheduler always executes in UTC.
@@ -145,13 +140,9 @@ impl TodoScheduler {
 
     pub async fn load_from_db(
         &self,
-        db: Arc<Database>,
-        executor_registry: Arc<ExecutorRegistry>,
-        tx: broadcast::Sender<ExecEvent>,
-        task_manager: Arc<TaskManager>,
-        app_config: Arc<tokio::sync::RwLock<Config>>,
+        ctx: &ServiceContext,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let todos = db.get_scheduler_todos().await?;
+        let todos = ctx.db.get_scheduler_todos().await?;
 
         for todo in todos {
             if let Some(ref config) = todo.scheduler_config {
@@ -162,14 +153,10 @@ impl TodoScheduler {
                     );
                     if let Err(e) = self
                         .upsert_task(
-                            db.clone(),
-                            executor_registry.clone(),
-                            tx.clone(),
+                            ctx,
                             todo.id,
                             config.clone(),
                             todo.scheduler_timezone.clone(),
-                            task_manager.clone(),
-                            app_config.clone(),
                         )
                         .await
                     {
@@ -187,14 +174,10 @@ impl TodoScheduler {
 
     pub async fn upsert_task(
         &self,
-        db: Arc<Database>,
-        executor_registry: Arc<ExecutorRegistry>,
-        tx: broadcast::Sender<ExecEvent>,
+        ctx: &ServiceContext,
         todo_id: i64,
         cron_expr: String,
         timezone: Option<String>,
-        task_manager: Arc<TaskManager>,
-        config: Arc<tokio::sync::RwLock<Config>>,
     ) -> Result<uuid::Uuid, Box<dyn std::error::Error + Send + Sync>> {
         // Validate cron expression
         if cron::Schedule::from_str(&cron_expr).is_err() {
@@ -236,11 +219,11 @@ impl TodoScheduler {
 
         self.remove_task_for_todo(todo_id).await;
 
-        let db_clone = db.clone();
-        let registry_clone = executor_registry.clone();
-        let tx_clone = tx.clone();
-        let tm_clone = task_manager.clone();
-        let config_clone = config.clone();
+        let db_clone = ctx.db.clone();
+        let registry_clone = ctx.executor_registry.clone();
+        let tx_clone = ctx.tx.clone();
+        let tm_clone = ctx.task_manager.clone();
+        let config_clone = ctx.config.clone();
 
         info!("Creating job for todo {} with cron: {} (original: {:?})", todo_id, cron_expr_utc, timezone);
         let job = Job::new_async(&cron_expr_utc, move |_uuid, _l| {

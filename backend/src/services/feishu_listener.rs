@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::RwLock;
 
 use crate::feishu::sdk::config::Config as FeishuSdkConfig;
 use crate::feishu::sdk::token_manager::TokenManager;
@@ -10,22 +10,16 @@ use crate::feishu::{
     FeishuDomain,
 };
 
-use crate::adapters::ExecutorRegistry;
+use crate::service_context::ServiceContext;
 use crate::config::Config as AppConfig;
 use crate::db::{Database, NewFeishuMessage};
-use crate::handlers::ExecEvent;
 use crate::models::{AgentBot, BotConfig, build_trigger_params};
 use crate::services::message_debounce::{MessageDebounce, PendingMessage};
-use crate::task_manager::TaskManager;
 
 /// Manages WebSocket connections to Feishu for all bound bots.
 #[derive(Clone)]
 pub struct FeishuListener {
-    db: Arc<Database>,
-    executor_registry: Arc<ExecutorRegistry>,
-    tx: broadcast::Sender<ExecEvent>,
-    task_manager: Arc<TaskManager>,
-    config: Arc<RwLock<AppConfig>>,
+    ctx: ServiceContext,
     pub token_manager: Arc<TokenManager>,
     channels: Arc<DashMap<i64, Arc<FeishuChannelService>>>,
     /// bot_id → (app_id, app_secret, domain)
@@ -59,19 +53,11 @@ struct FeishuCommandContext<'a> {
 impl FeishuListener {
     /// 创建飞书监听器。
     pub fn new(
-        db: Arc<Database>,
-        executor_registry: Arc<ExecutorRegistry>,
-        tx: broadcast::Sender<ExecEvent>,
-        task_manager: Arc<TaskManager>,
-        config: Arc<RwLock<AppConfig>>,
+        ctx: ServiceContext,
         debounce: Arc<MessageDebounce>,
     ) -> Self {
         Self {
-            db,
-            executor_registry,
-            tx,
-            task_manager,
-            config,
+            ctx,
             debounce,
             token_manager: Arc::new(TokenManager::new()),
             channels: Arc::new(DashMap::new()),
@@ -148,14 +134,14 @@ impl FeishuListener {
             );
         }
 
-        let db = self.db.clone();
+        let db = self.ctx.db.clone();
         let bot_open_id = real_bot_open_id;
         let bot_config_clone = bot_config;
         let credentials = self.bot_credentials.clone();
-        let executor_registry = self.executor_registry.clone();
-        let tx = self.tx.clone();
-        let task_manager = self.task_manager.clone();
-        let config = self.config.clone();
+        let executor_registry = self.ctx.executor_registry.clone();
+        let tx = self.ctx.tx.clone();
+        let task_manager = self.ctx.task_manager.clone();
+        let config = self.ctx.config.clone();
         let token_manager = self.token_manager.clone();
         let debounce = self.debounce.clone();
         tokio::spawn(async move {

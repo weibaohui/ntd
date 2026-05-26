@@ -8,6 +8,7 @@ pub mod feishu;
 pub mod handlers;
 pub mod models;
 pub mod scheduler;
+pub mod service_context;
 pub mod services;
 pub mod task_manager;
 pub mod todo_progress;
