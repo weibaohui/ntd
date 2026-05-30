@@ -14,6 +14,7 @@ import {
   KeyMetricsCard, HighlightStatsCard, TaskStatsCard, ExecStatsCard,
   InferenceStatsCard, OverviewCard, MessageStatsCard, BackupStatsCard,
 } from './dashboard/StatsGridCards';
+import { UsageStatsCard } from './dashboard/UsageStatsCard';
 import {
   ExecutorChartCard, ExecutorDurationCard, TagChartCard,
   ModelTaskChartCard, ModelTokenChartCard, ModelCacheCard, SkillsStatsCard,
@@ -35,6 +36,7 @@ export function Dashboard({ onBack }: { onBack?: () => void }) {
   const [msgStatsError, setMsgStatsError] = useState(false);
   const [timeRange, setTimeRange] = useState<number | 'custom'>(720);
   const [customRange, setCustomRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
+  const [usageStatsRange, setUsageStatsRange] = useState<{ since?: string; until?: string }>({});
 
   const totalTodos = stats?.total_todos ?? todos.length;
   const successRate = stats && stats.total_executions > 0
@@ -69,6 +71,10 @@ export function Dashboard({ onBack }: { onBack?: () => void }) {
       // Don't load yet, wait for date selection
     } else {
       setCustomRange(null);
+      setUsageStatsRange({
+        until: new Date().toISOString(),
+        since: new Date(Date.now() - value * 60 * 60 * 1000).toISOString(),
+      });
       loadStats(value);
       loadMsgStats(value);
     }
@@ -77,6 +83,10 @@ export function Dashboard({ onBack }: { onBack?: () => void }) {
   const handleCustomRangeChange = (dates: [dayjs.Dayjs, dayjs.Dayjs] | null) => {
     setCustomRange(dates);
     if (dates) {
+      setUsageStatsRange({
+        since: dates[0].toISOString(),
+        until: dates[1].toISOString(),
+      });
       const hours = Math.round(dates[1].diff(dates[0], 'hour', true));
       loadStats(hours);
       loadMsgStats(hours);
@@ -86,6 +96,10 @@ export function Dashboard({ onBack }: { onBack?: () => void }) {
   useEffect(() => {
     loadStats(720);
     loadMsgStats(720);
+    setUsageStatsRange({
+      until: new Date().toISOString(),
+      since: new Date(Date.now() - 720 * 60 * 60 * 1000).toISOString(),
+    });
   }, []);
 
   const processingRate = msgStats && msgStats.total_messages > 0
@@ -169,6 +183,10 @@ export function Dashboard({ onBack }: { onBack?: () => void }) {
     { key: 'message-stats', render: () => <MessageStatsCard msgStats={msgStats} msgStatsError={msgStatsError} processingRate={processingRate} /> },
     { key: 'skills-stats', render: () => <SkillsStatsCard stats={stats} loading={loading} /> },
     { key: 'backup-stats', render: () => <BackupStatsCard stats={stats} loading={loading} /> },
+    {
+      key: 'usage-stats',
+      render: () => <UsageStatsCard since={usageStatsRange.since} until={usageStatsRange.until} />,
+    },
     { key: 'share-card', render: () => <ShareCardPanel /> },
   ];
 

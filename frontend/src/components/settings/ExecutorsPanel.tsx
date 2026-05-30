@@ -1,6 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button, Card, Input, Switch, Spin, Tooltip, Modal, message, Typography } from 'antd';
-import { SearchOutlined, PlayCircleOutlined } from '@ant-design/icons';
+import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { Cron } from 'react-js-cron';
+import 'react-js-cron/dist/styles.css';
+import { CronPresetSelect } from '../CronPresetSelect';
+import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '../../utils/cron';
 import * as db from '../../utils/database';
 import type { ExecutorConfig } from '../../types';
 
@@ -18,6 +22,41 @@ export function ExecutorsPanel({ executors, setExecutors, executorsLoading }: {
   const [testModalVisible, setTestModalVisible] = useState(false);
   const [testModalData, setTestModalData] = useState<{ name: string; result: { test_passed: boolean; output: string | null; error: string | null } } | null>(null);
   const [savingExecutor, setSavingExecutor] = useState<string | null>(null);
+
+  // Usage stats settings
+  const [usageStatsEnabled, setUsageStatsEnabled] = useState(false);
+  const [usageStatsCron, setUsageStatsCron] = useState('0 0 1 * * *');
+  const [usageStatsLoading, setUsageStatsLoading] = useState(false);
+  const [usageStatsSaving, setUsageStatsSaving] = useState(false);
+
+  useEffect(() => {
+    loadUsageStatsSettings();
+  }, []);
+
+  const loadUsageStatsSettings = async () => {
+    try {
+      setUsageStatsLoading(true);
+      const settings = await db.getUsageStatsSettings();
+      setUsageStatsEnabled(settings.auto_usage_stats_enabled);
+      setUsageStatsCron(settings.auto_usage_stats_cron);
+    } catch {
+      // Ignore errors, use defaults
+    } finally {
+      setUsageStatsLoading(false);
+    }
+  };
+
+  const handleSaveUsageStats = async () => {
+    try {
+      setUsageStatsSaving(true);
+      await db.updateUsageStatsSettings(usageStatsEnabled, usageStatsCron);
+      message.success('AI 使用统计配置已更新');
+    } catch (err: any) {
+      message.error('保存失败: ' + (err?.message || String(err)));
+    } finally {
+      setUsageStatsSaving(false);
+    }
+  };
 
   return (
     <Spin spinning={executorsLoading}>
@@ -205,6 +244,52 @@ export function ExecutorsPanel({ executors, setExecutors, executorsLoading }: {
             );
           })}
         </div>
+
+        <Card
+          size="small"
+          title={<><ClockCircleOutlined style={{ marginRight: 6 }} />AI 使用统计</>}
+          style={{ marginTop: 16 }}
+          extra={
+            <Switch
+              checked={usageStatsEnabled}
+              onChange={async (checked) => {
+                setUsageStatsEnabled(checked);
+                try {
+                  setUsageStatsSaving(true);
+                  await db.updateUsageStatsSettings(checked, usageStatsCron);
+                  message.success('AI 使用统计配置已更新');
+                } catch (err: any) {
+                  message.error('保存失败: ' + (err?.message || String(err)));
+                } finally {
+                  setUsageStatsSaving(false);
+                }
+              }}
+              loading={usageStatsLoading}
+            />
+          }
+        >
+          {usageStatsEnabled && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
+                自动收集本机执行器的 Token 使用量，每日归档到数据库
+              </Typography.Paragraph>
+              <CronPresetSelect value={usageStatsCron} onChange={(val: string) => setUsageStatsCron(val)} />
+              <Cron
+                value={cronTo5(usageStatsCron)}
+                setValue={(val: string) => { setUsageStatsCron(cronTo6(val)); }}
+                locale={CRON_ZH_LOCALE}
+                defaultPeriod="day"
+                humanizeLabels
+                allowClear={false}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Button size="small" type="primary" onClick={handleSaveUsageStats} loading={usageStatsSaving}>
+                  保存
+                </Button>
+              </div>
+            </div>
+          )}
+        </Card>
       </div>
       <Modal
         title={testModalData ? `测试结果 - ${executors.find(e => e.name === testModalData.name)?.display_name || testModalData.name}` : '测试结果'}

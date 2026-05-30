@@ -13,6 +13,9 @@ pub mod tags;
 pub mod todo_tags;
 pub mod todo_templates;
 pub mod todos;
+pub mod usage_model_breakdown;
+pub mod usage_stats;
+pub mod usage_executor_daily;
 pub mod webhooks;
 pub mod webhook_records;
 
@@ -32,6 +35,9 @@ pub mod prelude {
     pub use super::todo_tags::Entity as TodoTags;
     pub use super::todo_templates::Entity as TodoTemplates;
     pub use super::todos::Entity as Todos;
+    pub use super::usage_model_breakdown::Entity as UsageModelBreakdowns;
+    pub use super::usage_stats::Entity as UsageStats;
+    pub use super::usage_executor_daily::Entity as UsageExecutorDaily;
     pub use super::webhooks::Entity as Webhooks;
     pub use super::webhook_records::Entity as WebhookRecords;
 }

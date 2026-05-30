@@ -547,3 +547,38 @@ export interface RecentBackup {
   size: number;
   created_at: string;
 }
+
+// Usage Statistics types (from ccusage integration)
+export interface UsageStat {
+  date: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  extra_total_tokens: number;
+  total_cost: number;
+  credits: number | null;
+  message_count: number | null;
+  models_used: string[];
+  project: string | null;
+  last_activity: string | null;
+  stats_type: string;
+}
+
+export interface ModelBreakdown {
+  date: string;
+  model_name: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  extra_total_tokens: number;
+  cost: number;
+}
+
+export interface UsageStatsResponse {
+  daily: UsageStat[];
+  weekly: UsageStat[];
+  monthly: UsageStat[];
+  breakdowns: ModelBreakdown[];
+}

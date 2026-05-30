@@ -15,6 +15,7 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use crate::handlers::{AppError, AppState};
 use crate::models::{ApiResponse, BackupData, TagBackup, TodoBackup, utc_timestamp};
 use crate::db::Database;
+use crate::services::usage_stats::UsageStatsService;
 
 /// 数据库备份压缩级别 (0-9, 9 为最强压缩)
 const BACKUP_COMPRESSION_LEVEL: Option<i64> = Some(9);
@@ -1501,6 +1502,88 @@ pub fn start_skill_auto_backup(
     });
 
     Ok(())
+}
+
+/// 启动 AI 使用统计自动归档定时任务
+pub fn start_usage_stats_archival(
+    db: std::sync::Arc<Database>,
+    config: std::sync::Arc<tokio::sync::RwLock<crate::config::Config>>,
+) -> Result<(), String> {
+    let db_clone = db.clone();
+    tokio::spawn(async move {
+        loop {
+            let (_enabled, next_delay) = {
+                let cfg = config.read().await;
+                if !cfg.auto_usage_stats_enabled {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    continue;
+                }
+                let schedule = cron::Schedule::from_str(&cfg.auto_usage_stats_cron)
+                    .unwrap_or_else(|_| cron::Schedule::from_str("0 0 1 * * *").unwrap());
+                let next = schedule.upcoming(chrono::Utc).next();
+                let delay = match next {
+                    Some(dt) => {
+                        let now = chrono::Utc::now();
+                        (dt - now).to_std().unwrap_or(std::time::Duration::from_secs(60))
+                    }
+                    None => std::time::Duration::from_secs(3600),
+                };
+                (cfg.auto_usage_stats_enabled, delay)
+            };
+
+            tokio::time::sleep(next_delay).await;
+
+            let enabled_now = {
+                let cfg = config.read().await;
+                cfg.auto_usage_stats_enabled
+            };
+            if !enabled_now {
+                continue;
+            }
+
+            let db = db_clone.clone();
+            let service = UsageStatsService::new(db.clone());
+
+            match archive_yesterday_stats(&service).await {
+                Ok(msg) => tracing::info!("{}", msg),
+                Err(e) => tracing::error!("Auto usage stats archival failed: {}", e),
+            }
+        }
+    });
+
+    Ok(())
+}
+
+/// 归档昨天的统计数据
+async fn archive_yesterday_stats(service: &UsageStatsService) -> Result<String, String> {
+    // Get yesterday's date
+    let yesterday = (chrono::Utc::now() - chrono::Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
+
+    let entries = service.collect_all_entries().await;
+
+    if entries.is_empty() {
+        return Ok(format!("Usage stats archival: no data found for {}", yesterday));
+    }
+
+    // Filter entries for yesterday
+    let yesterday_entries: Vec<_> = entries.iter()
+        .filter(|e| e.date == yesterday)
+        .cloned()
+        .collect();
+
+    if yesterday_entries.is_empty() {
+        return Ok(format!("Usage stats archival: no usage data for {}", yesterday));
+    }
+
+    // Aggregate by day
+    let (daily_stats, breakdowns) = UsageStatsService::aggregate_by_day(&yesterday_entries);
+
+    // Save to database
+    service.save_daily_stats(&daily_stats, &breakdowns).await?;
+
+    Ok(format!("Usage stats archival: saved {} stats for {}", daily_stats.len(), yesterday))
 }
 
 /// 执行 Skill 备份

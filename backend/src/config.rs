@@ -69,6 +69,10 @@ pub struct Config {
     pub auto_skill_backup_max_files: usize,
     /// 定时任务默认时区（用于 cron 表达式转换）
     pub scheduler_default_timezone: Option<String>,
+    /// 是否开启 AI 使用统计自动归档
+    pub auto_usage_stats_enabled: bool,
+    /// AI 使用统计自动归档 cron 表达式（6 字段，含秒），默认每天凌晨 1 点执行
+    pub auto_usage_stats_cron: String,
 }
 
 /// Paths for each supported executor binary.
@@ -152,6 +156,8 @@ impl Default for Config {
             auto_skill_backup_cron: "0 0 5 * * *".to_string(),
             auto_skill_backup_max_files: 30,
             scheduler_default_timezone: None,
+            auto_usage_stats_enabled: false,
+            auto_usage_stats_cron: "0 0 1 * * *".to_string(),
         }
     }
 }

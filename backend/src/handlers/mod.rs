@@ -157,6 +157,7 @@ pub mod project_directory;
 pub(crate) mod todo_template;
 pub mod custom_template;
 pub mod webhook;
+pub mod usage_stats;
 
 // WebSocket handler
 pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
@@ -463,6 +464,9 @@ pub fn create_app(
         .route("/xyz/sessions", get(session::list_sessions))
         .route("/xyz/sessions/stats", get(session::get_session_stats))
         .route("/xyz/sessions/{id}", get(session::get_session_detail).delete(session::delete_session))
+        .route("/xyz/usage-stats", get(usage_stats::get_usage_stats))
+        .route("/xyz/usage-stats/refresh", post(usage_stats::refresh_usage_stats))
+        .route("/xyz/usage-stats/settings", get(usage_stats::get_usage_stats_settings).put(usage_stats::update_usage_stats_settings))
         .merge(project_directory::routes())
         .route("/xyz/todo-templates", get(todo_template::get_templates).post(todo_template::create_template))
         .route("/xyz/todo-templates/{id}", put(todo_template::update_template).delete(todo_template::delete_template))
