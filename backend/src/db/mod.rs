@@ -1083,6 +1083,8 @@ impl Database {
         date: &str,
         stats_type: &str,
     ) -> Result<(), sea_orm::DbErr> {
+        use sea_orm::Delete;
+
         // First delete breakdowns for the daily stats
         let daily_stats: Vec<entity::usage_stats::Model> = entity::usage_stats::Entity::find()
             .filter(entity::usage_stats::Column::Date.eq(date))
@@ -1091,19 +1093,15 @@ impl Database {
             .await?;
 
         for stat in daily_stats {
-            let sql = format!(
-                "DELETE FROM usage_model_breakdowns WHERE daily_stat_id = {}",
-                stat.id
-            );
-            self.exec(&sql).await?;
+            Delete::one(stat).exec(&self.conn).await?;
         }
 
-        // Then delete the daily stats
-        let sql = format!(
-            "DELETE FROM usage_daily_stats WHERE date = '{}' AND stats_type = '{}'",
-            date, stats_type
-        );
-        self.exec(&sql).await?;
+        // Delete the daily stats using filter-based deletion
+        Delete::many(entity::usage_stats::Entity)
+            .filter(entity::usage_stats::Column::Date.eq(date))
+            .filter(entity::usage_stats::Column::StatsType.eq(stats_type))
+            .exec(&self.conn)
+            .await?;
 
         Ok(())
     }
@@ -1208,11 +1206,14 @@ impl Database {
 
     /// Delete usage executor stats for a specific date
     pub async fn delete_usage_executor_stats_by_date(&self, date: &str) -> Result<(), sea_orm::DbErr> {
-        let sql = format!(
-            "DELETE FROM usage_executor_daily_stats WHERE date = '{}'",
-            date
-        );
-        self.exec(&sql).await?;
+        use sea_orm::Delete;
+
+        // Use filter-based deletion to avoid SQL injection
+        Delete::many(entity::usage_executor_daily::Entity)
+            .filter(entity::usage_executor_daily::Column::Date.eq(date))
+            .exec(&self.conn)
+            .await?;
+
         Ok(())
     }
 

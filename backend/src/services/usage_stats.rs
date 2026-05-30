@@ -633,7 +633,13 @@ impl UsageStatsService {
         let mut monthly_map: HashMap<String, TokenAccumulator> = HashMap::new();
 
         for stat in daily {
-            let month = stat.date[..7].to_string();
+            // Safely extract YYYY-MM from date string
+            let month = if stat.date.len() >= 7 {
+                stat.date[..7].to_string()
+            } else {
+                // Fallback to using the full date or a placeholder
+                stat.date.clone()
+            };
             let acc = monthly_map.entry(month).or_default();
             acc.input_tokens += stat.input_tokens as u64;
             acc.output_tokens += stat.output_tokens as u64;

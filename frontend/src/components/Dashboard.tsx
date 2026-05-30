@@ -170,7 +170,21 @@ export function Dashboard({ onBack }: { onBack?: () => void }) {
     { key: 'message-stats', render: () => <MessageStatsCard msgStats={msgStats} msgStatsError={msgStatsError} processingRate={processingRate} /> },
     { key: 'skills-stats', render: () => <SkillsStatsCard stats={stats} loading={loading} /> },
     { key: 'backup-stats', render: () => <BackupStatsCard stats={stats} loading={loading} /> },
-    { key: 'usage-stats', render: () => <UsageStatsCard /> },
+    {
+      key: 'usage-stats',
+      render: () => {
+        let since: string | undefined;
+        let until: string | undefined;
+        if (customRange) {
+          since = customRange[0].toISOString();
+          until = customRange[1].toISOString();
+        } else if (typeof timeRange === 'number') {
+          until = new Date().toISOString();
+          since = new Date(Date.now() - timeRange * 60 * 60 * 1000).toISOString();
+        }
+        return <UsageStatsCard since={since} until={until} />;
+      },
+    },
     { key: 'share-card', render: () => <ShareCardPanel /> },
   ];
 
