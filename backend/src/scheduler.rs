@@ -249,6 +249,7 @@ impl TodoScheduler {
                             tx,
                             task_manager: tm,
                             config: cfg,
+                            hook_service: None, // TODO: add hook_service to scheduler context
                             todo_id,
                             message,
                             req_executor: executor,

@@ -21,7 +21,7 @@ async fn create_test_app() -> axum::Router {
     let db = Arc::new(Database::new(":memory:").await.unwrap());
 
     let executor_registry = Arc::new(ExecutorRegistry::new());
-    executor_registry.register(ClaudeCodeExecutor::new("claude".to_string()));
+    executor_registry.register(ClaudeCodeExecutor::new("claude".to_string())).await;
 
     let (tx, _rx) = broadcast::channel(100);
     let task_manager = Arc::new(TaskManager::new());
@@ -41,7 +41,7 @@ async fn create_test_app() -> axum::Router {
         .unwrap();
     scheduler.start().await.unwrap();
 
-    create_app(db, executor_registry, tx, scheduler, task_manager, config)
+    create_app(ctx, scheduler)
 }
 
 async fn read_json_body<T: serde::de::DeserializeOwned>(

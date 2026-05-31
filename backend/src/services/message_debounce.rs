@@ -104,6 +104,7 @@ impl MessageDebounce {
                         tx,
                         task_manager,
                         config,
+                        hook_service: None,
                         todo_id: last.todo_id,
                         message: last.todo_prompt.clone(),
                         req_executor: last.executor.clone(),

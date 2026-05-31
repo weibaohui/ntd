@@ -357,6 +357,7 @@ async fn trigger_webhook_internal(
             tx: state.tx.clone(),
             task_manager: state.task_manager.clone(),
             config: state.config.clone(),
+            hook_service: Some(state.hook_service.clone()),
             todo_id: req.todo_id,
             message: todo.prompt.clone(),
             req_executor: todo.executor.clone(),

@@ -786,6 +786,161 @@ impl Database {
         )
         .await?;
 
+        // ===== Hook System Tables =====
+
+        // Hooks table (rule library)
+        self.exec(
+            "CREATE TABLE IF NOT EXISTS hooks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                enabled INTEGER DEFAULT 1,
+                trigger TEXT NOT NULL,
+                filter TEXT,
+                action TEXT NOT NULL,
+                is_async INTEGER DEFAULT 1,
+                created_at TEXT,
+                updated_at TEXT
+            )",
+        )
+        .await?;
+
+        self.exec(
+            "CREATE TRIGGER IF NOT EXISTS set_hooks_created_at_utc AFTER INSERT ON hooks
+             WHEN new.created_at IS NULL OR new.created_at = ''
+             BEGIN
+                 UPDATE hooks SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
+             END",
+        )
+        .await?;
+
+        self.exec(
+            "CREATE TRIGGER IF NOT EXISTS set_hooks_updated_at_utc BEFORE UPDATE ON hooks
+             WHEN new.updated_at IS NULL OR new.updated_at = ''
+             BEGIN
+                 SELECT raise(IGNORE);
+             END",
+        )
+        .await?;
+
+        // Global hook config table
+        self.exec(
+            "CREATE TABLE IF NOT EXISTS global_hook_config (
+                id INTEGER PRIMARY KEY,
+                enabled INTEGER DEFAULT 1,
+                default_timeout_secs INTEGER DEFAULT 30,
+                max_concurrency INTEGER DEFAULT 5,
+                updated_at TEXT
+            )",
+        )
+        .await?;
+
+        // Insert default global hook config if not exists
+        self.exec(
+            "INSERT OR IGNORE INTO global_hook_config (id, enabled, default_timeout_secs, max_concurrency, updated_at)
+             VALUES (1, 1, 30, 5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc'))",
+        )
+        .await?;
+
+        // Global default hooks (references to hooks table)
+        self.exec(
+            "CREATE TABLE IF NOT EXISTS global_default_hooks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hook_id INTEGER,
+                priority INTEGER DEFAULT 0,
+                FOREIGN KEY (hook_id) REFERENCES hooks(id) ON DELETE CASCADE
+            )",
+        )
+        .await?;
+
+        self.exec("CREATE INDEX IF NOT EXISTS idx_global_default_hooks_hook_id ON global_default_hooks(hook_id)")
+            .await?;
+
+        // Per-Todo hook config table
+        self.exec(
+            "CREATE TABLE IF NOT EXISTS todo_hooks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                todo_id INTEGER NOT NULL UNIQUE,
+                hook_mode TEXT DEFAULT 'inherit',
+                override_enabled INTEGER DEFAULT 1,
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
+            )",
+        )
+        .await?;
+
+        self.exec("CREATE INDEX IF NOT EXISTS idx_todo_hooks_todo_id ON todo_hooks(todo_id)")
+            .await?;
+
+        self.exec(
+            "CREATE TRIGGER IF NOT EXISTS set_todo_hooks_created_at_utc AFTER INSERT ON todo_hooks
+             WHEN new.created_at IS NULL OR new.created_at = ''
+             BEGIN
+                 UPDATE todo_hooks SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
+             END",
+        )
+        .await?;
+
+        // Per-Todo hook rules table
+        self.exec(
+            "CREATE TABLE IF NOT EXISTS todo_hook_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                todo_hook_id INTEGER NOT NULL,
+                hook_id INTEGER,
+                inline_hook TEXT,
+                priority INTEGER DEFAULT 0,
+                FOREIGN KEY (todo_hook_id) REFERENCES todo_hooks(id) ON DELETE CASCADE,
+                FOREIGN KEY (hook_id) REFERENCES hooks(id) ON DELETE CASCADE
+            )",
+        )
+        .await?;
+
+        self.exec("CREATE INDEX IF NOT EXISTS idx_todo_hook_rules_todo_hook_id ON todo_hook_rules(todo_hook_id)")
+            .await?;
+
+        self.exec("CREATE INDEX IF NOT EXISTS idx_todo_hook_rules_hook_id ON todo_hook_rules(hook_id)")
+            .await?;
+
+        // Hook execution logs table
+        self.exec(
+            "CREATE TABLE IF NOT EXISTS hook_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hook_id INTEGER,
+                hook_name TEXT,
+                trigger TEXT NOT NULL,
+                todo_id INTEGER,
+                args_sent TEXT,
+                env_sent TEXT,
+                exit_code INTEGER,
+                stdout TEXT,
+                stderr TEXT,
+                duration_ms INTEGER,
+                success INTEGER,
+                error_msg TEXT,
+                created_at TEXT
+            )",
+        )
+        .await?;
+
+        self.exec("CREATE INDEX IF NOT EXISTS idx_hook_logs_hook_id ON hook_logs(hook_id)")
+            .await?;
+
+        self.exec("CREATE INDEX IF NOT EXISTS idx_hook_logs_todo_id ON hook_logs(todo_id)")
+            .await?;
+
+        self.exec("CREATE INDEX IF NOT EXISTS idx_hook_logs_created_at ON hook_logs(created_at)")
+            .await?;
+
+        self.exec(
+            "CREATE TRIGGER IF NOT EXISTS set_hook_logs_created_at_utc AFTER INSERT ON hook_logs
+             WHEN new.created_at IS NULL OR new.created_at = ''
+             BEGIN
+                 UPDATE hook_logs SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
+             END",
+        )
+        .await?;
+
         Ok(())
     }
 }

@@ -8,6 +8,7 @@ use command_group::AsyncCommandGroup;
 use crate::adapters::{parse_executor_type, ExecutorRegistry};
 use crate::db::{Database, NewExecutionRecord};
 use crate::handlers::ExecEvent;
+use crate::hooks::HookService;
 use crate::models::{ExecutorType, ParsedLogEntry};
 use crate::task_manager::TaskManager;
 
@@ -35,6 +36,7 @@ pub struct RunTodoExecutionRequest {
     pub tx: broadcast::Sender<ExecEvent>,
     pub task_manager: Arc<TaskManager>,
     pub config: Arc<tokio::sync::RwLock<crate::config::Config>>,
+    pub hook_service: Option<Arc<HookService>>,
     pub todo_id: i64,
     pub message: String,
     pub req_executor: Option<String>,
@@ -52,6 +54,7 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         tx,
         task_manager,
         config,
+        hook_service,
         todo_id,
         message,
         req_executor,
@@ -248,6 +251,30 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             };
         }
     };
+
+    // Fire before_execute hooks (synchronously - can block execution)
+    if let Some(ref svc) = hook_service {
+        if let Some(ref t) = todo {
+            let ctx = crate::hooks::models::HookContext::for_execute(
+                todo_id,
+                t.title.clone(),
+                t.status,
+                t.executor.clone(),
+                t.workspace.clone(),
+                Some(task_id.clone()),
+            );
+            if let Err(e) = svc.fire_before_hooks(&ctx, &t.tag_ids).await {
+                tracing::warn!("before_execute hook rejected: {}", e);
+                // Hook rejected - abort execution
+                let _ = db.finish_todo_execution(todo_id, false).await;
+                task_manager.remove(&task_id).await;
+                return ExecutionResult {
+                    task_id,
+                    record_id: Some(record_id),
+                };
+            }
+        }
+    }
 
     // Update todo status to running and associate with task
     if let Err(e) = db.start_todo_execution(todo_id, &task_id).await {
