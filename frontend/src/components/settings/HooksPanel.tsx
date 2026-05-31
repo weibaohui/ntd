@@ -27,30 +27,30 @@ function HookFilterEditor({ value, onChange }: { value?: HookFilter; onChange?: 
     <Form form={form} layout="vertical" onValuesChange={(_, all) => onChange?.(all as HookFilter)}>
       <Row gutter={16}>
         <Col span={12}>
-          <Form.Item name="status" label="Status Filter (匹配状态)">
-            <Select mode="multiple" placeholder="Any status" allowClear>
-              <Select.Option value="pending">Pending</Select.Option>
-              <Select.Option value="in_progress">In Progress</Select.Option>
-              <Select.Option value="completed">Completed</Select.Option>
+          <Form.Item name="status" label="状态过滤">
+            <Select mode="multiple" placeholder="任意状态" allowClear>
+              <Select.Option value="pending">待处理</Select.Option>
+              <Select.Option value="in_progress">进行中</Select.Option>
+              <Select.Option value="completed">已完成</Select.Option>
               <Select.Option value="failed">失败</Select.Option>
             </Select>
           </Form.Item>
         </Col>
         <Col span={12}>
-          <Form.Item name="title_contains" label="Title Contains (标题包含)">
-            <Input placeholder="Case insensitive" />
+          <Form.Item name="title_contains" label="标题包含">
+            <Input placeholder="不区分大小写" />
           </Form.Item>
         </Col>
       </Row>
       <Row gutter={16}>
         <Col span={12}>
-          <Form.Item name="executor" label="Executor Filter (执行人)">
-            <Input placeholder="e.g. claude" />
+          <Form.Item name="executor" label="执行人">
+            <Input placeholder="例如 claude" />
           </Form.Item>
         </Col>
         <Col span={12}>
-          <Form.Item name="tags" label="Tags (标签 ID)">
-            <Select mode="tags" placeholder="Tag IDs" allowClear>
+          <Form.Item name="tags" label="标签 ID">
+            <Select mode="tags" placeholder="标签 ID" allowClear>
             </Select>
           </Form.Item>
         </Col>
@@ -67,17 +67,17 @@ function HookActionEditor({ value, onChange }: { value?: HookAction; onChange?: 
 
   return (
     <Form form={form} layout="vertical" onValuesChange={(_, all) => onChange?.(all as HookAction)}>
-      <Form.Item name="command" label="Command (命令)" rules={[{ required: true }]}>
-        <Input placeholder="e.g. /bin/echo" />
+      <Form.Item name="command" label="命令" rules={[{ required: true }]}>
+        <Input placeholder="例如 /bin/echo" />
       </Form.Item>
-      <Form.Item name="args" label="Arguments (参数)">
-        <Select mode="tags" placeholder="Arguments (press enter to add)">
+      <Form.Item name="args" label="参数">
+        <Select mode="tags" placeholder="参数（回车添加）">
         </Select>
       </Form.Item>
-      <Form.Item name="env" label="Environment Variables (环境变量)">
-        <Input.TextArea placeholder='{"KEY": "VALUE"} (JSON format)' rows={2} />
+      <Form.Item name="env" label="环境变量">
+        <Input.TextArea placeholder='{"KEY": "VALUE"} JSON 格式' rows={2} />
       </Form.Item>
-      <Form.Item name="timeout_secs" label="Timeout (超时秒数)">
+      <Form.Item name="timeout_secs" label="超时秒数">
         <InputNumber min={1} max={3600} defaultValue={30} />
       </Form.Item>
     </Form>
@@ -145,44 +145,46 @@ function HookModal({
 
   return (
     <Modal
-      title={hook ? 'Edit Hook' : 'Create Hook'}
+      title={hook ? '编辑 Hook' : '创建 Hook'}
       open={open}
       onCancel={onClose}
       onOk={handleOk}
       width={700}
       confirmLoading={saving}
+      okText="保存"
+      cancelText="取消"
     >
       <Form form={form} layout="vertical">
         <Row gutter={16}>
           <Col span={16}>
-            <Form.Item name="name" label="Name (名称)" rules={[{ required: true }]}>
-              <Input placeholder="e.g. Notify on Create" />
+            <Form.Item name="name" label="名称" rules={[{ required: true }]}>
+              <Input placeholder="例如：创建时通知" />
             </Form.Item>
           </Col>
           <Col span={4}>
-            <Form.Item name="enabled" label="Enabled" valuePropName="checked">
+            <Form.Item name="enabled" label="启用" valuePropName="checked">
               <Switch />
             </Form.Item>
           </Col>
           <Col span={4}>
-            <Form.Item name="is_async" label="Async" valuePropName="checked">
+            <Form.Item name="is_async" label="异步" valuePropName="checked">
               <Switch />
             </Form.Item>
           </Col>
         </Row>
-        <Form.Item name="description" label="Description (描述)">
-          <Input placeholder="Optional description" />
+        <Form.Item name="description" label="描述">
+          <Input placeholder="可选描述" />
         </Form.Item>
-        <Form.Item name="trigger" label="Trigger (触发器)" rules={[{ required: true }]}>
+        <Form.Item name="trigger" label="触发器" rules={[{ required: true }]}>
           <Select>
             {HOOK_TRIGGERS.map(t => (
               <Select.Option key={t.value} value={t.value}>{t.label}</Select.Option>
             ))}
           </Select>
         </Form.Item>
-        <Divider>Filter Conditions (过滤条件)</Divider>
+        <Divider>过滤条件</Divider>
         <HookFilterEditor />
-        <Divider>Action (执行动作)</Divider>
+        <Divider>执行动作</Divider>
         <HookActionEditor />
       </Form>
     </Modal>
