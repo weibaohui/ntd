@@ -59,6 +59,9 @@ api.interceptors.response.use(
 );
 
 export function unwrap<T>(res: { data: ApiResp<T> }): T {
+  if (res.data.code !== 0) {
+    throw new Error(res.data.message || `Error ${res.data.code}`);
+  }
   if (res.data.data === null || res.data.data === undefined) {
     throw new Error(res.data.message || 'API 返回数据为空');
   }

@@ -190,7 +190,8 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
       setSummary(null);
     }
     return () => { cancelledRef.current = true; };
-  }, [selectedTodoId, historyLimit, historyStatusFilter, dispatch]);
+    // eslint-disable-next-line react-hooks/exhaustive-props
+  }, [selectedTodoId, historyLimit, historyStatusFilter]);
 
   useEffect(() => {
     setSelectedHistoryRecordId(null);

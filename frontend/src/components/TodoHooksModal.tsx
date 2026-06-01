@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Modal, Form, Select, Switch, message,
   Card, Row, Col, Table, Typography,
@@ -30,20 +30,13 @@ export function TodoHooksModal({ open, todoId, onClose }: TodoHooksModalProps) {
   const [saving, setSaving] = useState(false);
   const [selectedRuleIds, setSelectedRuleIds] = useState<number[]>([]);
 
-  useEffect(() => {
-    if (open && todoId) {
-      loadData();
-    }
-  }, [open, todoId]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const [configData, hooksData] = await Promise.all([
         getTodoHookConfig(todoId).catch(() => null),
         getHooks(),
       ]);
-      // Use existing config or create a default one for new todo hook config
       const effectiveConfig = configData || {
         todo_id: todoId,
         hook_mode: 'inherit',
@@ -58,7 +51,12 @@ export function TodoHooksModal({ open, todoId, onClose }: TodoHooksModalProps) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [todoId]);
+
+  useEffect(() => {
+    if (!open || !todoId) return;
+    loadData();
+  }, [open, todoId, loadData]);
 
   const handleSave = async () => {
     if (!config) return;
@@ -78,9 +76,13 @@ export function TodoHooksModal({ open, todoId, onClose }: TodoHooksModalProps) {
     }
   };
 
-  if (!config) return null;
+  const handleRuleToggle = useCallback((ruleId: number, checked: boolean) => {
+    setSelectedRuleIds(prev =>
+      checked ? [...prev, ruleId] : prev.filter(id => id !== ruleId)
+    );
+  }, []);
 
-  const hookTableColumns: ColumnsType<HookRule> = [
+  const hookTableColumns = useMemo<ColumnsType<HookRule>>(() => [
     { title: '名称', dataIndex: 'name', key: 'name' },
     {
       title: '触发器',
@@ -97,17 +99,13 @@ export function TodoHooksModal({ open, todoId, onClose }: TodoHooksModalProps) {
       render: (_, record) => (
         <Switch
           checked={selectedRuleIds.includes(record.id)}
-          onChange={(checked) => {
-            if (checked) {
-              setSelectedRuleIds([...selectedRuleIds, record.id]);
-            } else {
-              setSelectedRuleIds(selectedRuleIds.filter(id => id !== record.id));
-            }
-          }}
+          onChange={(checked) => handleRuleToggle(record.id, checked)}
         />
       ),
     },
-  ];
+  ], [allHooks, selectedRuleIds, handleRuleToggle]);
+
+  if (!config) return null;
 
   return (
     <Modal
