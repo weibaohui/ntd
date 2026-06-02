@@ -98,6 +98,9 @@ export interface ExecutionRecord {
   todo_progress?: string | null;
   execution_stats?: ExecutionStats | null;
   resume_message?: string | null;
+  source_todo_id?: number | null;
+  source_todo_title?: string | null;
+  source_hook_id?: number | null;
 }
 
 export interface ExecutionUsage {

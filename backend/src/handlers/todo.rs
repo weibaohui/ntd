@@ -56,18 +56,6 @@ pub async fn create_todo(
         .clone()
         .unwrap_or_else(|| "claudecode".to_string());
 
-    // Fire before_create hooks (synchronously - can block creation)
-    // BeforeCreate has no source todo yet (the row hasn't been inserted), so we
-    // can't read a hook list. The hook semantics for BeforeCreate are
-    // intentionally a no-op in the new design; the matching `after_create` will
-    // carry the per-todo hooks once the row exists.
-    let _ctx = HookContext::for_create(
-        title.to_string(),
-        Some(executor.clone()),
-        None,
-        vec![],
-    );
-
     let id = state.db.create_todo(title, &prompt).await?;
 
     // Update executor if specified
@@ -123,17 +111,6 @@ pub async fn create_todo(
             tracing::warn!("Failed to set initial hooks for todo {}: {}", id, e);
         }
     }
-
-    // Fire after_create hooks (asynchronously). The source todo id is the
-    // newly-created row.
-    let ctx = HookContext::for_create_after(
-        id,
-        title.to_string(),
-        Some(executor.clone()),
-        None,
-        vec![id],
-    );
-    state.hook_service.clone().fire_for_todo(id, ctx);
 
     Ok(ApiResponse::ok(Todo {
         id,
@@ -277,21 +254,6 @@ pub async fn delete_todo(
     }
 
     state.db.delete_todo(id).await.map_err(AppError::from)?;
-
-    // Fire after_delete hooks (asynchronously) — note: the todo is already
-    // deleted at this point so the source todo's own hook list is gone, but
-    // the user deleted it intentionally so we just no-op.
-    if let Some(ref t) = todo_opt {
-        let ctx = HookContext::for_delete_after(
-            id,
-            t.title.clone(),
-            t.status,
-            t.executor.clone(),
-            t.workspace.clone(),
-            vec![id],
-        );
-        state.hook_service.clone().fire_for_todo(id, ctx);
-    }
 
     Ok(ApiResponse::ok(()))
 }

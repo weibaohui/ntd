@@ -24,6 +24,17 @@ pub struct Model {
     pub todo_progress: Option<String>,
     pub execution_stats: Option<String>,
     pub resume_message: Option<String>,
+    /// When `trigger_type` is `hook:*`, the id of the source todo whose hook
+    /// fired this execution. NULL for manual / cron / webhook / feishu
+    /// triggers.
+    pub source_todo_id: Option<i64>,
+    /// Snapshot of the source todo's title at trigger time, so the UI can
+    /// render "triggered by todo #X 'Title'" without joining `todos` (the
+    /// source may be deleted or renamed later).
+    pub source_todo_title: Option<String>,
+    /// The `TodoHookItem.id` that fired. Combined with `source_todo_id` this
+    /// points at the exact hook entry that triggered this execution.
+    pub source_hook_id: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -178,7 +178,7 @@ function HookEditModal({
     } else {
       form.setFieldsValue({
         id: seedId,
-        trigger: 'after_create',
+        trigger: 'state_changed_to_completed',
         target_todo_id: undefined,
         skip_if_missing: true,
         enabled: true,

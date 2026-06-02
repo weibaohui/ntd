@@ -9,6 +9,7 @@ import { getElapsedSeconds, formatLogTime, logTypeColors, logTypeLabels } from '
 import type { SessionGroup } from './helpers';
 import { supportsResume } from '../../types';
 import type { ExecutionRecord, LogEntry } from '../../types';
+import { getHookTriggerLabel } from '../../utils/database/hooks';
 
 export function RecordDetailView({
   isLoadingDetail, record, sessionGroups,
@@ -111,6 +112,15 @@ export function RecordDetailView({
           }}>
             {record.status === 'success' ? '成功' : record.status === 'failed' ? '失败' : '进行中'}
           </span>
+          {(() => {
+            const label = getHookTriggerLabel(record.trigger_type);
+            if (!label || record.source_todo_id == null) return null;
+            return (
+              <Tag color="purple" icon={<LinkOutlined />} style={{ margin: 0 }}>
+                被 #{record.source_todo_id} {record.source_todo_title ?? '?'} 的「{label}」hook 触发
+              </Tag>
+            );
+          })()}
           {record.status !== 'running' && record.usage?.duration_ms && (
             <span style={{ fontSize: 12, color: 'var(--color-success)', fontWeight: 600 }}>
               {formatDuration(record.usage.duration_ms / 1000)}

@@ -294,6 +294,19 @@ impl Database {
             .await
             .ok();
 
+        // 添加 hook 触发起源字段（向后兼容）—— 用于在目标 todo 的执行记录里
+        // 回显"被 #X 标题 的 '触发时机' hook 触发"，避免列表里 hook 触发记录
+        // 与手动/cron 触发无法区分。
+        self.exec("ALTER TABLE execution_records ADD COLUMN source_todo_id INTEGER")
+            .await
+            .ok();
+        self.exec("ALTER TABLE execution_records ADD COLUMN source_todo_title TEXT")
+            .await
+            .ok();
+        self.exec("ALTER TABLE execution_records ADD COLUMN source_hook_id INTEGER")
+            .await
+            .ok();
+
         // 添加 scheduler_timezone 字段的迁移（向后兼容）
         self.exec("ALTER TABLE todos ADD COLUMN scheduler_timezone TEXT")
             .await
@@ -835,6 +848,9 @@ mod tests {
             task_id: "test-task-id",
             session_id: None,
             resume_message: None,
+            source_todo_id: None,
+            source_todo_title: None,
+            source_hook_id: None,
         })
         .await
         .unwrap()

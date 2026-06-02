@@ -16,6 +16,11 @@ pub struct NewExecutionRecord<'a> {
     pub task_id: &'a str,
     pub session_id: Option<&'a str>,
     pub resume_message: Option<&'a str>,
+    /// Hook trigger provenance. `None` for manual/cron/webhook/feishu
+    /// triggers; set by `execute_target_todo` for hook firings.
+    pub source_todo_id: Option<i64>,
+    pub source_todo_title: Option<&'a str>,
+    pub source_hook_id: Option<i64>,
 }
 
 pub struct UpdateExecutionRecordRequest<'a> {
@@ -75,6 +80,9 @@ impl From<execution_records::Model> for ExecutionRecord {
             todo_progress: m.todo_progress,
             execution_stats,
             resume_message: m.resume_message,
+            source_todo_id: m.source_todo_id,
+            source_todo_title: m.source_todo_title,
+            source_hook_id: m.source_hook_id,
         }
     }
 }
@@ -170,6 +178,9 @@ impl Database {
             task_id: ActiveValue::Set(Some(record.task_id.to_string())),
             session_id: ActiveValue::Set(record.session_id.map(|s| s.to_string())),
             resume_message: ActiveValue::Set(record.resume_message.map(|s| s.to_string())),
+            source_todo_id: ActiveValue::Set(record.source_todo_id),
+            source_todo_title: ActiveValue::Set(record.source_todo_title.map(|s| s.to_string())),
+            source_hook_id: ActiveValue::Set(record.source_hook_id),
             ..Default::default()
         };
         let inserted = am.insert(&self.conn).await?;
@@ -956,6 +967,9 @@ impl Database {
                     pid: None,
                     todo_progress: None,
                     execution_stats: None,
+                    source_todo_id: None,
+                    source_todo_title: None,
+                    source_hook_id: None,
                 }
             })
             .collect();

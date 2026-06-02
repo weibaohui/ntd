@@ -192,6 +192,16 @@ pub struct ExecutionRecord {
     pub execution_stats: Option<ExecutionStats>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_message: Option<String>,
+    /// Hook trigger provenance: the source todo that fired this execution.
+    /// `Some` only when `trigger_type` starts with `hook:`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_todo_id: Option<i64>,
+    /// Snapshot of the source todo's title at trigger time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_todo_title: Option<String>,
+    /// The `TodoHookItem.id` that triggered this execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_hook_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

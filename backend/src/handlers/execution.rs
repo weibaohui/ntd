@@ -173,6 +173,9 @@ pub async fn execute_handler(
         resume_session_id: None,
         resume_message: None,
         chain: vec![],
+        source_todo_id: None,
+        source_todo_title: None,
+        source_hook_id: None,
     })
     .await;
     let result = result?;
@@ -402,6 +405,9 @@ pub async fn resume_execution_handler(
         resume_session_id: Some(resume_session_id),
         resume_message,
         chain: vec![],
+        source_todo_id: None,
+        source_todo_title: None,
+        source_hook_id: None,
     })
     .await?;
     let record_id = result.record_id
@@ -554,6 +560,9 @@ pub async fn smart_create_handler(
         resume_session_id: None,
         resume_message: None,
         chain: vec![],
+        source_todo_id: None,
+        source_todo_title: None,
+        source_hook_id: None,
     })
     .await?;
 

@@ -10,27 +10,19 @@ mod hook_trigger_tests {
 
     #[test]
     fn as_str_covers_all_variants() {
-        assert_eq!(HookTrigger::BeforeCreate.as_str(), "before_create");
-        assert_eq!(HookTrigger::AfterCreate.as_str(), "after_create");
         assert_eq!(HookTrigger::StateChangedToPending.as_str(), "state_changed_to_pending");
         assert_eq!(HookTrigger::StateChangedToInProgress.as_str(), "state_changed_to_in_progress");
         assert_eq!(HookTrigger::StateChangedToCompleted.as_str(), "state_changed_to_completed");
         assert_eq!(HookTrigger::StateChangedToFailed.as_str(), "state_changed_to_failed");
-        assert_eq!(HookTrigger::BeforeDelete.as_str(), "before_delete");
-        assert_eq!(HookTrigger::AfterDelete.as_str(), "after_delete");
     }
 
     #[test]
     fn from_str_round_trips_and_is_case_sensitive() {
         for t in [
-            HookTrigger::BeforeCreate,
-            HookTrigger::AfterCreate,
             HookTrigger::StateChangedToPending,
             HookTrigger::StateChangedToInProgress,
             HookTrigger::StateChangedToCompleted,
             HookTrigger::StateChangedToFailed,
-            HookTrigger::BeforeDelete,
-            HookTrigger::AfterDelete,
         ] {
             assert_eq!(HookTrigger::from_str(t.as_str()), Some(t));
         }
@@ -40,16 +32,37 @@ mod hook_trigger_tests {
     }
 
     #[test]
-    fn is_sync_only_for_before_lifecycle() {
-        assert!(HookTrigger::BeforeCreate.is_sync());
-        assert!(HookTrigger::BeforeDelete.is_sync());
+    fn removed_lifecycle_triggers_are_rejected() {
+        // The 4 lifecycle triggers (before_create / after_create /
+        // before_delete / after_delete) were dropped — only the 4
+        // state-change triggers remain. Anything that looks like the old
+        // format must parse to None so old DB rows degrade cleanly.
+        for removed in [
+            "before_create",
+            "after_create",
+            "before_delete",
+            "after_delete",
+        ] {
+            assert_eq!(
+                HookTrigger::from_str(removed),
+                None,
+                "{removed} should no longer be a valid trigger",
+            );
+        }
+    }
 
-        assert!(!HookTrigger::AfterCreate.is_sync());
-        assert!(!HookTrigger::AfterDelete.is_sync());
-        assert!(!HookTrigger::StateChangedToPending.is_sync());
-        assert!(!HookTrigger::StateChangedToInProgress.is_sync());
-        assert!(!HookTrigger::StateChangedToCompleted.is_sync());
-        assert!(!HookTrigger::StateChangedToFailed.is_sync());
+    #[test]
+    fn is_sync_only_for_before_lifecycle() {
+        // Lifecycle gates were removed — all remaining triggers observe state
+        // changes asynchronously. This test is a placeholder reminding future
+        // maintainers that the sync/async distinction no longer applies to
+        // HookTrigger itself.
+        let _all: [HookTrigger; 4] = [
+            HookTrigger::StateChangedToPending,
+            HookTrigger::StateChangedToInProgress,
+            HookTrigger::StateChangedToCompleted,
+            HookTrigger::StateChangedToFailed,
+        ];
     }
 
     #[test]
@@ -80,7 +93,7 @@ mod hook_trigger_tests {
 
     #[test]
     fn display_matches_as_str() {
-        assert_eq!(format!("{}", HookTrigger::AfterCreate), "after_create");
+        assert_eq!(format!("{}", HookTrigger::StateChangedToCompleted), "state_changed_to_completed");
     }
 }
 
@@ -92,12 +105,12 @@ mod todo_hook_item_tests {
     fn deserialize_minimal_defaults_enabled_true() {
         let json = r#"{
             "id": 1,
-            "trigger": "after_create",
+            "trigger": "state_changed_to_completed",
             "target_todo_id": 42
         }"#;
         let item: TodoHookItem = serde_json::from_str(json).unwrap();
         assert_eq!(item.id, 1);
-        assert_eq!(item.trigger, HookTrigger::AfterCreate);
+        assert_eq!(item.trigger, HookTrigger::StateChangedToCompleted);
         assert_eq!(item.target_todo_id, 42);
         assert!(!item.skip_if_missing);
         assert!(item.enabled); // serde default
@@ -128,7 +141,7 @@ mod todo_hook_item_tests {
         // of failing — the field was removed.
         let json = r#"{
             "id": 1,
-            "trigger": "after_create",
+            "trigger": "state_changed_to_completed",
             "target_todo_id": 42,
             "prompt_template": "legacy value to be ignored"
         }"#;
@@ -171,9 +184,30 @@ mod todo_hooks_tests {
     }
 
     #[test]
+    fn parse_drops_items_with_removed_triggers() {
+        // DB compat: a todo row written before the lifecycle triggers were
+        // removed may still carry a `before_create` / `after_create` /
+        // `before_delete` / `after_delete` item in its `hooks` JSON. We
+        // can't deserialize those into a HookTrigger variant anymore, so
+        // the parser must drop them silently — otherwise loading the todo
+        // would fail and the whole app would break.
+        let json = r#"{
+            "items": [
+                { "id": 1, "trigger": "after_create", "target_todo_id": 5, "enabled": true },
+                { "id": 2, "trigger": "state_changed_to_completed", "target_todo_id": 6, "enabled": true },
+                { "id": 3, "trigger": "before_delete", "target_todo_id": 7, "enabled": true }
+            ]
+        }"#;
+        let parsed = TodoHooks::parse(Some(json));
+        assert_eq!(parsed.items.len(), 1, "only the state-change item should survive");
+        assert_eq!(parsed.items[0].id, 2);
+        assert_eq!(parsed.items[0].trigger, HookTrigger::StateChangedToCompleted);
+    }
+
+    #[test]
     fn parse_valid_json_round_trips() {
         let source = TodoHooks {
-            items: vec![item(1, HookTrigger::AfterCreate, 5, true)],
+            items: vec![item(1, HookTrigger::StateChangedToCompleted, 5, true)],
         };
         let json = serde_json::to_string(&source).unwrap();
         let parsed = TodoHooks::parse(Some(&json));
@@ -186,14 +220,14 @@ mod todo_hooks_tests {
     fn matching_filters_by_trigger_and_enabled() {
         let hooks = TodoHooks {
             items: vec![
-                item(1, HookTrigger::AfterCreate, 5, true),
-                item(2, HookTrigger::AfterCreate, 6, false), // disabled
-                item(3, HookTrigger::StateChangedToCompleted, 7, true), // wrong trigger
-                item(4, HookTrigger::AfterCreate, 8, true),
+                item(1, HookTrigger::StateChangedToCompleted, 5, true),
+                item(2, HookTrigger::StateChangedToCompleted, 6, false), // disabled
+                item(3, HookTrigger::StateChangedToFailed, 7, true), // wrong trigger
+                item(4, HookTrigger::StateChangedToCompleted, 8, true),
             ],
         };
         let matched: Vec<i64> = hooks
-            .matching(HookTrigger::AfterCreate)
+            .matching(HookTrigger::StateChangedToCompleted)
             .map(|i| i.id)
             .collect();
         assert_eq!(matched, vec![1, 4]);
@@ -202,7 +236,7 @@ mod todo_hooks_tests {
     #[test]
     fn matching_empty_when_no_trigger_match() {
         let hooks = TodoHooks {
-            items: vec![item(1, HookTrigger::AfterCreate, 5, true)],
+            items: vec![item(1, HookTrigger::StateChangedToCompleted, 5, true)],
         };
         assert_eq!(
             hooks.matching(HookTrigger::StateChangedToFailed).count(),
@@ -217,36 +251,26 @@ mod hook_context_tests {
     use ntd::models::TodoStatus;
 
     #[test]
-    fn for_create_carries_chain_and_default_trigger() {
-        let ctx = HookContext::for_create(
-            "New Todo".to_string(),
-            Some("claude".to_string()),
-            Some("/workspace".to_string()),
-            vec![10, 11],
-        );
-        assert_eq!(ctx.todo_id, None);
-        assert_eq!(ctx.todo_title, "New Todo");
-        assert_eq!(ctx.old_status, None);
-        assert_eq!(ctx.new_status.as_deref(), Some("pending"));
-        assert_eq!(ctx.executor.as_deref(), Some("claude"));
-        assert_eq!(ctx.workspace.as_deref(), Some("/workspace"));
-        assert_eq!(ctx.trigger, HookTrigger::BeforeCreate);
-        assert_eq!(ctx.chain, vec![10, 11]);
-        assert!(!ctx.trigger_time.is_empty());
-    }
-
-    #[test]
-    fn for_create_after_attaches_todo_id_and_trigger() {
-        let ctx = HookContext::for_create_after(
+    fn for_state_change_attaches_todo_id_and_trigger() {
+        let ctx = HookContext::for_state_change(
             55,
             "Title".to_string(),
-            None,
-            None,
+            TodoStatus::Pending,
+            TodoStatus::Completed,
+            Some("claude".to_string()),
+            Some("/workspace".to_string()),
             vec![55],
-        );
+        )
+        .expect("Completed should map to a state-change trigger");
         assert_eq!(ctx.todo_id, Some(55));
-        assert_eq!(ctx.trigger, HookTrigger::AfterCreate);
+        assert_eq!(ctx.todo_title, "Title");
+        assert_eq!(ctx.old_status.as_deref(), Some("pending"));
+        assert_eq!(ctx.new_status.as_deref(), Some("completed"));
+        assert_eq!(ctx.executor.as_deref(), Some("claude"));
+        assert_eq!(ctx.workspace.as_deref(), Some("/workspace"));
+        assert_eq!(ctx.trigger, HookTrigger::StateChangedToCompleted);
         assert_eq!(ctx.chain, vec![55]);
+        assert!(!ctx.trigger_time.is_empty());
     }
 
     #[test]
@@ -289,62 +313,39 @@ mod hook_context_tests {
     }
 
     #[test]
-    fn for_delete_carries_old_status_and_trigger() {
-        let ctx = HookContext::for_delete(
-            99,
-            "Deleted".to_string(),
-            TodoStatus::Running,
-            Some("claude".to_string()),
-            None,
-            vec![99],
-        );
-        assert_eq!(ctx.todo_id, Some(99));
-        assert_eq!(ctx.old_status.as_deref(), Some("running"));
-        assert_eq!(ctx.new_status, None);
-        assert_eq!(ctx.trigger, HookTrigger::BeforeDelete);
-        assert_eq!(ctx.chain, vec![99]);
-    }
-
-    #[test]
-    fn for_delete_after_has_after_delete_trigger() {
-        let ctx = HookContext::for_delete_after(
-            100,
-            "Gone".to_string(),
+    fn to_params_includes_chain_as_comma_string() {
+        let ctx = HookContext::for_state_change(
+            10,
+            "Title".to_string(),
+            TodoStatus::Pending,
             TodoStatus::Completed,
             None,
             None,
-            vec![100],
-        );
-        assert_eq!(ctx.trigger, HookTrigger::AfterDelete);
-    }
-
-    #[test]
-    fn to_params_includes_chain_as_comma_string() {
-        let ctx = HookContext::for_create_after(
-            10,
-            "Title".to_string(),
-            None,
-            None,
             vec![1, 2, 3],
-        );
+        )
+        .unwrap();
         let params = ctx.to_params();
         assert_eq!(params.get("chain").map(|s| s.as_str()), Some("1,2,3"));
         assert_eq!(params.get("todo_id").map(|s| s.as_str()), Some("10"));
         assert_eq!(params.get("todo_title").map(|s| s.as_str()), Some("Title"));
         assert_eq!(
             params.get("trigger").map(|s| s.as_str()),
-            Some("after_create")
+            Some("state_changed_to_completed")
         );
     }
 
     #[test]
     fn to_params_chain_empty_when_no_visits() {
-        let ctx = HookContext::for_create(
+        let ctx = HookContext::for_state_change(
+            1,
             "T".to_string(),
+            TodoStatus::Pending,
+            TodoStatus::Completed,
             None,
             None,
             vec![],
-        );
+        )
+        .unwrap();
         let params = ctx.to_params();
         assert_eq!(params.get("chain").map(|s| s.as_str()), Some(""));
     }
@@ -437,5 +438,81 @@ mod hook_dispatch_tests {
         };
         let json = serde_json::to_string(&item).unwrap();
         assert!(!json.contains("prompt_template"), "prompt_template must not be in the wire format: {}", json);
+    }
+}
+
+#[cfg(test)]
+mod hook_source_provenance_tests {
+    //! When a hook triggers a target todo, the target's `execution_records`
+    //! row must carry the provenance — which source todo fired it via which
+    //! hook — so the UI can show "triggered by todo #X hook Y" instead of a
+    //! bare `hook:state_changed_to_completed` string.
+    use ntd::db::execution::NewExecutionRecord;
+    use ntd::db::Database;
+
+    async fn fresh_db() -> Database {
+        Database::new(":memory:").await.unwrap()
+    }
+
+    /// Create a minimal todo so execution_records can satisfy its FK.
+    /// Returns the id of the new todo.
+    async fn create_todo(db: &Database, title: &str) -> i64 {
+        db.create_todo(title, "test prompt").await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn execution_record_persists_source_provenance() {
+        let db = fresh_db().await;
+        let target_id = create_todo(&db, "target todo").await;
+
+        let record_id = db
+            .create_execution_record(NewExecutionRecord {
+                todo_id: target_id,
+                command: "echo test",
+                executor: "claudecode",
+                trigger_type: "hook:state_changed_to_completed",
+                task_id: "task-1",
+                session_id: None,
+                resume_message: None,
+                source_todo_id: Some(42),
+                source_todo_title: Some("joke source"),
+                source_hook_id: Some(999001),
+            })
+            .await
+            .unwrap();
+
+        let record = db.get_execution_record(record_id).await.unwrap().unwrap();
+        assert_eq!(record.source_todo_id, Some(42));
+        assert_eq!(record.source_todo_title.as_deref(), Some("joke source"));
+        assert_eq!(record.source_hook_id, Some(999001));
+    }
+
+    #[tokio::test]
+    async fn execution_record_without_source_fields_is_none() {
+        // Manual / cron / webhook triggers must NOT carry source provenance
+        // — the columns stay NULL.
+        let db = fresh_db().await;
+        let target_id = create_todo(&db, "another target").await;
+
+        let record_id = db
+            .create_execution_record(NewExecutionRecord {
+                todo_id: target_id,
+                command: "echo manual",
+                executor: "claudecode",
+                trigger_type: "manual",
+                task_id: "task-2",
+                session_id: None,
+                resume_message: None,
+                source_todo_id: None,
+                source_todo_title: None,
+                source_hook_id: None,
+            })
+            .await
+            .unwrap();
+
+        let record = db.get_execution_record(record_id).await.unwrap().unwrap();
+        assert!(record.source_todo_id.is_none());
+        assert!(record.source_todo_title.is_none());
+        assert!(record.source_hook_id.is_none());
     }
 }

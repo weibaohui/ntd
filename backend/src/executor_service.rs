@@ -45,6 +45,11 @@ pub struct RunTodoExecutionRequest {
     /// Todo ids already visited on the dispatch path, used to break cycles
     /// when a hook triggers a todo that would re-fire the source.
     pub chain: Vec<i64>,
+    /// Hook trigger provenance. `None` for manual/cron/webhook/feishu
+    /// triggers; populated by `execute_target_todo` for hook firings.
+    pub source_todo_id: Option<i64>,
+    pub source_todo_title: Option<String>,
+    pub source_hook_id: Option<i64>,
 }
 
 /// Run a todo execution. Priority: explicit executor > todo stored executor > default.
@@ -63,6 +68,9 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         resume_session_id,
         resume_message,
         chain,
+        source_todo_id,
+        source_todo_title,
+        source_hook_id,
     } = request;
     let message = params
         .as_ref()
@@ -238,6 +246,9 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             task_id: &task_id,
             session_id: Some(session_id_for_executor),
             resume_message: resume_message.as_deref(),
+            source_todo_id,
+            source_todo_title: source_todo_title.as_deref(),
+            source_hook_id,
         })
         .await
     {

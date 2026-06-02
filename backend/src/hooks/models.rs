@@ -3,55 +3,37 @@ use crate::models::TodoStatus;
 
 /// Hook trigger types.
 ///
-/// Triggers are tied to todo lifecycle events. State-change triggers are
-/// per-target-state: each fires when a todo transitions INTO that status.
-/// There is intentionally no "before status change" trigger — hooks observe
-/// state changes, they don't gate them.
+/// The only triggers that exist are per-target-state: each fires when a todo
+/// transitions INTO that status. There are intentionally no lifecycle gates
+/// (`before_create` / `after_create` / `before_delete` / `after_delete`) —
+/// hooks observe state changes, they don't gate lifecycle events.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HookTrigger {
-    BeforeCreate,
-    AfterCreate,
     StateChangedToPending,
     StateChangedToInProgress,
     StateChangedToCompleted,
     StateChangedToFailed,
-    BeforeDelete,
-    AfterDelete,
 }
 
 impl HookTrigger {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::BeforeCreate => "before_create",
-            Self::AfterCreate => "after_create",
             Self::StateChangedToPending => "state_changed_to_pending",
             Self::StateChangedToInProgress => "state_changed_to_in_progress",
             Self::StateChangedToCompleted => "state_changed_to_completed",
             Self::StateChangedToFailed => "state_changed_to_failed",
-            Self::BeforeDelete => "before_delete",
-            Self::AfterDelete => "after_delete",
         }
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
-            "before_create" => Some(Self::BeforeCreate),
-            "after_create" => Some(Self::AfterCreate),
             "state_changed_to_pending" => Some(Self::StateChangedToPending),
             "state_changed_to_in_progress" => Some(Self::StateChangedToInProgress),
             "state_changed_to_completed" => Some(Self::StateChangedToCompleted),
             "state_changed_to_failed" => Some(Self::StateChangedToFailed),
-            "before_delete" => Some(Self::BeforeDelete),
-            "after_delete" => Some(Self::AfterDelete),
             _ => None,
         }
-    }
-
-    /// Whether this trigger runs synchronously and can block the operation.
-    /// Only `before_*` lifecycle gates are sync; state-change triggers observe.
-    pub fn is_sync(&self) -> bool {
-        matches!(self, Self::BeforeCreate | Self::BeforeDelete)
     }
 
     /// Map a target `TodoStatus` to its corresponding state-change trigger.
@@ -111,12 +93,33 @@ impl TodoHooks {
     /// Returns `TodoHooks::default()` when the column is `None` or empty or
     /// contains malformed JSON — we never want a bad value to break todo
     /// loading.
+    ///
+    /// Items whose `trigger` doesn't deserialize to a current `HookTrigger`
+    /// variant are silently dropped. This keeps todo loading working after
+    /// trigger types are removed: any rows written by an older build that
+    /// still carry e.g. `before_create` simply contribute zero items.
     pub fn parse(raw: Option<&str>) -> Self {
         let Some(s) = raw else { return Self::default() };
         if s.is_empty() {
             return Self::default();
         }
-        serde_json::from_str(s).unwrap_or_default()
+        let parsed: RawTodoHooks = serde_json::from_str(s).unwrap_or_default();
+        Self {
+            items: parsed
+                .items
+                .into_iter()
+                .filter_map(|raw| {
+                    let trigger = HookTrigger::from_str(&raw.trigger)?;
+                    Some(TodoHookItem {
+                        id: raw.id,
+                        trigger,
+                        target_todo_id: raw.target_todo_id,
+                        skip_if_missing: raw.skip_if_missing,
+                        enabled: raw.enabled,
+                    })
+                })
+                .collect(),
+        }
     }
 
     /// Filter to enabled items whose trigger matches.
@@ -125,6 +128,26 @@ impl TodoHooks {
             .iter()
             .filter(move |item| item.enabled && item.trigger == trigger)
     }
+}
+
+/// Intermediate parse shape: the `trigger` is a free-form string so the
+/// deserializer can capture values that no longer map to a `HookTrigger`
+/// variant, letting `parse` drop them rather than failing the whole row.
+#[derive(Default, Deserialize)]
+struct RawTodoHooks {
+    #[serde(default)]
+    items: Vec<RawTodoHookItem>,
+}
+
+#[derive(Deserialize)]
+struct RawTodoHookItem {
+    id: i64,
+    trigger: String,
+    target_todo_id: i64,
+    #[serde(default)]
+    skip_if_missing: bool,
+    #[serde(default = "default_enabled")]
+    enabled: bool,
 }
 
 /// Build the `message` payload that a hook delivers to the target todo's
@@ -136,13 +159,12 @@ impl TodoHooks {
 /// <target todo's prompt, with {{message}} replaced>
 /// ```
 ///
-/// The `{{message}}` value is:
-/// - The source todo's latest successful execution `result` when one exists
-///   — i.e., what the previous executor actually produced. This is the
-///   primary use case: "A ran, take A's output and feed it to B."
-/// - Otherwise the source's `prompt` — what the user originally asked the
-///   source todo. Used when the hook fires before the source has run (e.g.,
-///   `after_create`) or when the source has never been executed.
+/// The `{{message}}` value is the source todo's latest successful execution
+/// `result` — what the previous executor actually produced. This is the
+/// primary use case: "A ran, take A's output and feed it to B." When the
+/// source has no successful run yet (e.g., a state-change trigger fires
+/// immediately on creation), the source's `prompt` is used as the fallback
+/// so the target still gets useful context.
 ///
 /// This mirrors the manual "execute with args" flow: the user edits the
 /// target todo's prompt with `{{message}}` where the source context should
@@ -203,47 +225,6 @@ impl HookContext {
         params
     }
 
-    pub fn for_create(
-        todo_title: String,
-        executor: Option<String>,
-        workspace: Option<String>,
-        chain: Vec<i64>,
-    ) -> Self {
-        Self {
-            todo_id: None,
-            todo_title,
-            old_status: None,
-            new_status: Some("pending".to_string()),
-            executor,
-            workspace,
-            task_id: None,
-            trigger_time: crate::models::utc_timestamp(),
-            trigger: HookTrigger::BeforeCreate,
-            chain,
-        }
-    }
-
-    pub fn for_create_after(
-        todo_id: i64,
-        todo_title: String,
-        executor: Option<String>,
-        workspace: Option<String>,
-        chain: Vec<i64>,
-    ) -> Self {
-        Self {
-            todo_id: Some(todo_id),
-            todo_title,
-            old_status: None,
-            new_status: Some("pending".to_string()),
-            executor,
-            workspace,
-            task_id: None,
-            trigger_time: crate::models::utc_timestamp(),
-            trigger: HookTrigger::AfterCreate,
-            chain,
-        }
-    }
-
     /// Build a state-change context for a todo transitioning to `new_status`.
     /// The trigger is selected from `HookTrigger::for_target_status(new_status)`.
     /// Returns `None` when the target status has no dedicated trigger
@@ -270,49 +251,5 @@ impl HookContext {
             trigger,
             chain,
         })
-    }
-
-    pub fn for_delete(
-        todo_id: i64,
-        todo_title: String,
-        status: TodoStatus,
-        executor: Option<String>,
-        workspace: Option<String>,
-        chain: Vec<i64>,
-    ) -> Self {
-        Self {
-            todo_id: Some(todo_id),
-            todo_title,
-            old_status: Some(status.to_string()),
-            new_status: None,
-            executor,
-            workspace,
-            task_id: None,
-            trigger_time: crate::models::utc_timestamp(),
-            trigger: HookTrigger::BeforeDelete,
-            chain,
-        }
-    }
-
-    pub fn for_delete_after(
-        todo_id: i64,
-        todo_title: String,
-        status: TodoStatus,
-        executor: Option<String>,
-        workspace: Option<String>,
-        chain: Vec<i64>,
-    ) -> Self {
-        Self {
-            todo_id: Some(todo_id),
-            todo_title,
-            old_status: Some(status.to_string()),
-            new_status: None,
-            executor,
-            workspace,
-            task_id: None,
-            trigger_time: crate::models::utc_timestamp(),
-            trigger: HookTrigger::AfterDelete,
-            chain,
-        }
     }
 }

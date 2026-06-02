@@ -1,6 +1,5 @@
 use std::sync::{Arc, OnceLock};
-use std::time::Instant;
-use tracing::{info, warn};
+use tracing::{warn};
 
 use crate::executor_service::RunTodoExecutionRequest;
 use crate::handlers::execution::start_todo_execution;
@@ -27,9 +26,7 @@ impl HookService {
     }
 
     /// Fire the hooks attached to `todo_id` whose trigger matches `ctx.trigger`.
-    ///
-    /// Used for `after_create` / `after_delete` / state-change triggers —
-    /// fire-and-forget. Failures are logged but never bubble up to the caller,
+    /// Fire-and-forget — failures are logged but never bubble up to the caller,
     /// because the lifecycle event has already happened by the time we run.
     pub fn fire_for_todo(self: Arc<Self>, todo_id: i64, ctx: HookContext) {
         let this = self.clone();
@@ -115,50 +112,6 @@ impl HookService {
             )
             .await;
         }
-    }
-
-    /// Synchronous variant used by `before_create` / `before_delete` so the
-    /// caller can fail the lifecycle event on a hook error. Walks the source
-    /// todo's hooks and awaits each target execution; the chain prevents
-    /// recursion.
-    pub async fn fire_before(
-        self: Arc<Self>,
-        source_todo_id: i64,
-        ctx: &HookContext,
-    ) -> Result<(), String> {
-        let todo = self
-            .ctx
-            .db
-            .get_todo(source_todo_id)
-            .await
-            .map_err(|e| format!("failed to load todo #{}: {}", source_todo_id, e))?
-            .ok_or_else(|| format!("todo #{} not found", source_todo_id))?;
-
-        let hooks = matching_items(&todo, ctx.trigger);
-        let start = Instant::now();
-        for item in hooks {
-            let next_chain = append_to_chain(&ctx.chain, source_todo_id);
-            if next_chain.contains(&item.target_todo_id) {
-                warn!(
-                    "before-hook #{} skipped: target todo #{} already in chain {:?}",
-                    item.id, item.target_todo_id, next_chain
-                );
-                continue;
-            }
-
-            match execute_target_todo(&self.ctx, item, &todo, next_chain).await {
-                Ok(()) => {}
-                Err(e) => {
-                    return Err(format!("before-hook #{} failed: {}", item.id, e));
-                }
-            }
-        }
-        info!(
-            "before-hook pass for todo #{} took {:?}",
-            source_todo_id,
-            start.elapsed()
-        );
-        Ok(())
     }
 }
 
@@ -247,8 +200,8 @@ async fn execute_target_todo(
     // `{{message}}` placeholder). We pass two things in `params`:
     // - `{{message}}` ← the source todo's most recent successful execution
     //   `result` (what its executor actually produced). Falls back to the
-    //   source's `prompt` when the source has no execution record yet (e.g.,
-    //   `after_create` fires before anything has run).
+    //   source's `prompt` when the source has no execution record yet
+    //   (e.g., a state-change trigger fires immediately on creation).
     //
     // `run_todo_execution_with_params` does the substitution and the
     // executor sees the final composed message.
@@ -273,6 +226,9 @@ async fn execute_target_todo(
         resume_session_id: None,
         resume_message: None,
         chain,
+        source_todo_id: Some(source.id),
+        source_todo_title: Some(source.title.clone()),
+        source_hook_id: Some(item.id),
     };
 
     // Dispatch on a dedicated hook runtime. A `std::thread::spawn` is needed
