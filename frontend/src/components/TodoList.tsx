@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useApp } from '../hooks/useApp';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { Button, Empty, Tooltip } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined } from '@ant-design/icons';
 import { useTheme } from '../hooks/useTheme';
 import { StatusPicker } from './StatusPicker';
 import * as db from '../utils/database';
@@ -15,6 +15,7 @@ interface TodoListProps {
   onSelectTodo?: (todoId: string | number) => void;
   onShowDashboard?: () => void;
   onShowMemorial?: () => void;
+  onShowRelationMap?: () => void;
   onShowSettings?: () => void;
 }
 
@@ -32,7 +33,7 @@ function SkeletonList() {
   );
 }
 
-export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowSettings }: TodoListProps) {
+export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSettings }: TodoListProps) {
   const { state, dispatch } = useApp();
   const { themeMode, toggleTheme } = useTheme();
   const { todos, selectedTodoId, selectedTagId, tags } = state;
@@ -96,6 +97,16 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
               onClick={() => onShowMemorial?.()}
               className="tag-btn"
               aria-label="看板"
+            />
+          </Tooltip>
+          <Tooltip title="关联图">
+            <Button
+              type="text"
+              size="small"
+              icon={<ApartmentOutlined />}
+              onClick={() => onShowRelationMap?.()}
+              className="tag-btn"
+              aria-label="关联图"
             />
           </Tooltip>
           <Tooltip title={themeMode === 'light' ? '切换暗色主题' : '切换亮色主题'}>
