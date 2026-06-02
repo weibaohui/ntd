@@ -211,6 +211,8 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
         undefined
       );
       message.success('任务已开始执行');
+      // 立即刷新执行记录列表，确保新建的记录立刻显示；回到第 1 页让用户看到新记录
+      await loadExecutionRecords(1, historyLimit);
     } catch (error) {
       message.error('执行失败: ' + (error instanceof Error ? error.message : String(error)));
     }
@@ -238,6 +240,8 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
       message.success('任务已开始执行');
       setExecuteWithArgsModalOpen(false);
       setExecuteArgs('');
+      // 立即刷新执行记录列表，确保新建的记录立刻显示；回到第 1 页让用户看到新记录
+      await loadExecutionRecords(1, historyLimit);
     } catch (error) {
       message.error('执行失败: ' + (error instanceof Error ? error.message : String(error)));
     } finally {
