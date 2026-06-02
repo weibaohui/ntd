@@ -465,8 +465,8 @@ pub fn create_app(
         .route("/api/agent-bots/{id}", delete(agent_bot::delete_agent_bot))
         .route("/api/agent-bots/{id}/config", put(agent_bot::update_agent_bot_config))
         .route("/health", get(health_handler))
-        // Webhook trigger endpoints (no /api/ prefix, accessible externally)
-        .route("/webhook/trigger", get(webhook::trigger_webhook_default).post(webhook::trigger_webhook_default_post_json))
+        // Webhook trigger endpoint (no /api/ prefix, accessible externally).
+        // todo_id is required — explicit, deterministic, no "most recent enabled" race.
         .route("/webhook/trigger/{todo_id}", get(webhook::trigger_webhook_with_todo).post(webhook::trigger_webhook_with_todo_post_json))
         // Webhook management APIs
         .route("/api/webhooks", get(webhook::list_webhooks).post(webhook::create_webhook))

@@ -54,18 +54,6 @@ impl Database {
             .await
     }
 
-    /// Get the most recently created enabled webhook.
-    /// Note: This returns the most recently created (highest ID) enabled webhook,
-    /// not a webhook explicitly marked as "default". If multiple webhooks exist,
-    /// the one created last will be selected.
-    pub async fn get_most_recent_enabled_webhook(&self) -> Result<Option<webhooks::Model>, sea_orm::DbErr> {
-        webhooks::Entity::find()
-            .filter(webhooks::Column::Enabled.eq(true))
-            .order_by_desc(webhooks::Column::Id)
-            .one(&self.conn)
-            .await
-    }
-
     /// Get an enabled webhook that has the given todo_id as its default_todo_id.
     pub async fn get_webhook_by_default_todo(&self, todo_id: i64) -> Result<Option<webhooks::Model>, sea_orm::DbErr> {
         webhooks::Entity::find()

@@ -225,64 +225,6 @@ pub async fn get_webhook_record(
     }
 }
 
-/// Trigger endpoint for webhook (without todo_id - uses default webhook todo)
-pub async fn trigger_webhook_default(
-    State(state): State<AppState>,
-    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
-) -> Result<impl IntoResponse, AppError> {
-    // Get the most recently created enabled webhook
-    let webhook = state.db.get_most_recent_enabled_webhook().await?;
-    let webhook = webhook.ok_or_else(|| AppError::BadRequest("No enabled webhook configured".to_string()))?;
-
-    let default_todo_id = webhook.default_todo_id
-        .ok_or_else(|| AppError::BadRequest("Webhook has no default todo configured".to_string()))?;
-
-    trigger_webhook_internal(
-        Arc::new(state),
-        WebhookTriggerRequest {
-            todo_id: default_todo_id,
-            webhook_id: Some(webhook.id),
-            method: "GET".to_string(),
-            path: "/webhook/trigger".to_string(),
-            query_params: params,
-            content_type: None,
-            body: None,
-        },
-    ).await
-}
-
-/// Trigger endpoint for webhook (without todo_id - uses default webhook todo) - POST with JSON body
-pub async fn trigger_webhook_default_post_json(
-    State(state): State<AppState>,
-    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, AppError> {
-    // Get the most recently created enabled webhook
-    let webhook = state.db.get_most_recent_enabled_webhook().await?;
-    let webhook = webhook.ok_or_else(|| AppError::BadRequest("No enabled webhook configured".to_string()))?;
-
-    let default_todo_id = webhook.default_todo_id
-        .ok_or_else(|| AppError::BadRequest("Webhook has no default todo configured".to_string()))?;
-
-    let body_str = serde_json::to_string(&body)
-        .map_err(|e| {
-            tracing::warn!("Failed to serialize webhook body: {}", e);
-            AppError::BadRequest(format!("Invalid body: {}", e))
-        })?;
-    trigger_webhook_internal(
-        Arc::new(state),
-        WebhookTriggerRequest {
-            todo_id: default_todo_id,
-            webhook_id: Some(webhook.id),
-            method: "POST".to_string(),
-            path: "/webhook/trigger".to_string(),
-            query_params: params,
-            content_type: Some("application/json".to_string()),
-            body: Some(body_str),
-        },
-    ).await
-}
-
 /// Trigger endpoint for webhook (with todo_id) - GET
 pub async fn trigger_webhook_with_todo(
     State(state): State<AppState>,

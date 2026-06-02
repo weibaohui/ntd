@@ -192,16 +192,26 @@ function WebhookCard({
         </span>
       </div>
 
-      {/* URL 区域 */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
-        <CopyableUrl url={`${baseUrl}/webhook/trigger`} compact />
-        {webhook.default_todo_id && (
+      {/* URL 区域 —— 仅在配置了默认 Todo 时显示触发 URL */}
+      {webhook.default_todo_id ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
           <CopyableUrl
             url={`${baseUrl}/webhook/trigger/${webhook.default_todo_id}`}
             compact
           />
-        )}
-      </div>
+        </div>
+      ) : (
+        <div
+          style={{
+            fontSize: 11,
+            color: 'var(--color-text-tertiary)',
+            marginBottom: 6,
+            padding: '4px 0',
+          }}
+        >
+          未配置默认 Todo，无法生成触发 URL
+        </div>
+      )}
 
       {/* 创建时间 */}
       <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
@@ -349,17 +359,21 @@ export function WebhooksPanel({ todos }: WebhooksPanelProps) {
       title: '触发 URL',
       key: 'urls',
       width: 320,
-      render: (_: any, record: Webhook) => (
-        <Space direction="vertical" size={4} style={{ width: '100%' }}>
-          <CopyableUrl url={`${baseUrl}/webhook/trigger`} compact={false} />
-          {record.default_todo_id && (
-            <CopyableUrl
-              url={`${baseUrl}/webhook/trigger/${record.default_todo_id}`}
-              compact={false}
-            />
-          )}
-        </Space>
-      ),
+      render: (_: any, record: Webhook) => {
+        if (!record.default_todo_id) {
+          return (
+            <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>
+              请先配置默认 Todo
+            </span>
+          );
+        }
+        return (
+          <CopyableUrl
+            url={`${baseUrl}/webhook/trigger/${record.default_todo_id}`}
+            compact={false}
+          />
+        );
+      },
     },
     {
       title: '创建时间',
@@ -588,7 +602,7 @@ export function WebhooksPanel({ todos }: WebhooksPanelProps) {
           <Form.Item
             name="default_todo_id"
             label="默认触发 Todo"
-            tooltip="当使用 /webhook/trigger 路径时触发的 Todo"
+            tooltip="配置后可通过 /webhook/trigger/{todo_id} 显式触发；必须设置才能生成触发 URL"
           >
             <Select
               allowClear
