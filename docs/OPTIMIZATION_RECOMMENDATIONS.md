@@ -310,7 +310,7 @@ validator = "0.16"
 ### 3. API 设计不规范 🔄
 
 **问题描述**：
-- 使用非标准的 `/xyz` 前缀
+- 使用非标准的 `/api` 前缀
 - 缺少版本控制
 - 错误响应不统一
 - 没有分页机制
@@ -323,15 +323,15 @@ validator = "0.16"
 ```rust
 // 重构 API 端点
 // 当前端点：
-/xyz/todos                    # GET/POST 获取/创建 Todo
-/xyz/todos/{id}               # GET/PUT/DELETE 获取/更新/删除
-/xyz/todos/{id}/tags          # PUT 更新标签
-/xyz/todos/{id}/force-status  # PUT 强制更新状态
-/xyz/todos/{id}/summary       # GET 获取执行摘要
-/xyz/todos/{id}/scheduler     # PUT 更新调度配置
-/xyz/tags                     # GET/POST 获取/创建标签
-/xyz/execute                  # POST 执行任务
-/xyz/events                   # WebSocket 实时事件
+/api/todos                    # GET/POST 获取/创建 Todo
+/api/todos/{id}               # GET/PUT/DELETE 获取/更新/删除
+/api/todos/{id}/tags          # PUT 更新标签
+/api/todos/{id}/force-status  # PUT 强制更新状态
+/api/todos/{id}/summary       # GET 获取执行摘要
+/api/todos/{id}/scheduler     # PUT 更新调度配置
+/api/tags                     # GET/POST 获取/创建标签
+/api/execute                  # POST 执行任务
+/api/events                   # WebSocket 实时事件
 
 // 规范化后的端点：
 /api/v1/todos                        # GET/POST 列表/创建

@@ -212,7 +212,7 @@ Handlers 直接调用 db 的方法，跨 handler 复用逻辑（如"创建一个
 **建议**：引入 Service 层封装业务逻辑，handler 只做 HTTP 协议适配。
 
 #### 问题 2：配置变更需要重启
-通过 `PUT /xyz/config` 修改配置后，需要重启服务才能生效（虽然配置是 `RwLock`，但目前没有实现运行时热重载的监听逻辑）。
+通过 `PUT /api/config` 修改配置后，需要重启服务才能生效（虽然配置是 `RwLock`，但目前没有实现运行时热重载的监听逻辑）。
 
 **建议**：实现配置热重载（watch config file + 运行时 `RwLock::write` 更新）。
 

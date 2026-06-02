@@ -424,7 +424,7 @@ dashmap = "6"  # 并发 HashMap，用于管理多个 bot 的 channel
 | 群聊仅处理@ | `group_require_mention` | ON | 关闭后群内所有消息都响应 |
 | Echo 回复 | `echo_reply` | ON | 关闭后只存库不回复 |
 
-**交互**：切换开关后立即调用 `PUT /xyz/agent-bots/{id}/config` 保存到数据库，后端更新 config JSON。若 `group_require_mention` 变更，需重启该 bot 的 WebSocket 监听（因为该参数在 SDK `FeishuConfig` 初始化时决定）。
+**交互**：切换开关后立即调用 `PUT /api/agent-bots/{id}/config` 保存到数据库，后端更新 config JSON。若 `group_require_mention` 变更，需重启该 bot 的 WebSocket 监听（因为该参数在 SDK `FeishuConfig` 初始化时决定）。
 
 ## 十、安全考虑
 

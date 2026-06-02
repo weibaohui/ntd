@@ -1,6 +1,6 @@
 # ntd API 接口文档
 
-AI Todo 应用后端 API 参考手册。所有接口前缀为 `/xyz/`（WebSocket 为 `/xyz/events`）。
+AI Todo 应用后端 API 参考手册。所有接口前缀为 `/api/`（WebSocket 为 `/api/events`）。
 
 ---
 
@@ -29,7 +29,7 @@ AI Todo 应用后端 API 参考手册。所有接口前缀为 `/xyz/`（WebSocke
 
 ### 获取 Todo 列表
 ```
-GET /xyz/todos
+GET /api/todos
 ```
 
 查询参数：
@@ -64,7 +64,7 @@ GET /xyz/todos
 
 ### 创建 Todo
 ```
-POST /xyz/todos
+POST /api/todos
 ```
 
 **请求体：**
@@ -92,14 +92,14 @@ POST /xyz/todos
 
 ### 获取 Todo 详情
 ```
-GET /xyz/todos/{id}
+GET /api/todos/{id}
 ```
 
 ---
 
 ### 更新 Todo
 ```
-PUT /xyz/todos/{id}
+PUT /api/todos/{id}
 ```
 
 **请求体：**
@@ -118,14 +118,14 @@ PUT /xyz/todos/{id}
 
 ### 删除 Todo
 ```
-DELETE /xyz/todos/{id}
+DELETE /api/todos/{id}
 ```
 
 ---
 
 ### 强制更新 Todo 状态
 ```
-PUT /xyz/todos/{id}/force-status
+PUT /api/todos/{id}/force-status
 ```
 
 **请求体：**
@@ -139,7 +139,7 @@ PUT /xyz/todos/{id}/force-status
 
 ### 更新 Todo 标签
 ```
-PUT /xyz/todos/{id}/tags
+PUT /api/todos/{id}/tags
 ```
 
 **请求体：**
@@ -153,14 +153,14 @@ PUT /xyz/todos/{id}/tags
 
 ### 获取 Todo 执行摘要
 ```
-GET /xyz/todos/{id}/summary
+GET /api/todos/{id}/summary
 ```
 
 ---
 
 ### 获取最近完成的 Todo
 ```
-GET /xyz/todos/recent-completed
+GET /api/todos/recent-completed
 ```
 
 ---
@@ -169,7 +169,7 @@ GET /xyz/todos/recent-completed
 
 ### 获取标签列表
 ```
-GET /xyz/tags
+GET /api/tags
 ```
 
 **响应示例：**
@@ -189,7 +189,7 @@ GET /xyz/tags
 
 ### 创建标签
 ```
-POST /xyz/tags
+POST /api/tags
 ```
 
 **请求体：**
@@ -204,7 +204,7 @@ POST /xyz/tags
 
 ### 删除标签
 ```
-DELETE /xyz/tags/{id}
+DELETE /api/tags/{id}
 ```
 
 ---
@@ -213,7 +213,7 @@ DELETE /xyz/tags/{id}
 
 ### 获取执行记录列表
 ```
-GET /xyz/execution-records
+GET /api/execution-records
 ```
 
 查询参数：
@@ -229,28 +229,28 @@ GET /xyz/execution-records
 
 ### 获取运行中的执行记录
 ```
-GET /xyz/execution-records/running
+GET /api/execution-records/running
 ```
 
 ---
 
 ### 按会话 ID 获取执行记录
 ```
-GET /xyz/execution-records/session/{session_id}
+GET /api/execution-records/session/{session_id}
 ```
 
 ---
 
 ### 获取执行记录详情
 ```
-GET /xyz/execution-records/{id}
+GET /api/execution-records/{id}
 ```
 
 ---
 
 ### 恢复执行
 ```
-POST /xyz/execution-records/{id}/resume
+POST /api/execution-records/{id}/resume
 ```
 
 **请求体：**
@@ -266,7 +266,7 @@ POST /xyz/execution-records/{id}/resume
 
 ### 执行 Todo
 ```
-POST /xyz/execute
+POST /api/execute
 ```
 
 **请求体：**
@@ -282,7 +282,7 @@ POST /xyz/execute
 
 ### 停止执行
 ```
-POST /xyz/execute/stop
+POST /api/execute/stop
 ```
 
 **请求体：**
@@ -296,7 +296,7 @@ POST /xyz/execute/stop
 
 ### 强制失败
 ```
-POST /xyz/execute/force-fail
+POST /api/execute/force-fail
 ```
 
 **请求体：**
@@ -311,14 +311,14 @@ POST /xyz/execute/force-fail
 
 ### 获取运行中的 Todo
 ```
-GET /xyz/running-todos
+GET /api/running-todos
 ```
 
 ---
 
 ### 获取仪表盘统计
 ```
-GET /xyz/dashboard-stats
+GET /api/dashboard-stats
 ```
 
 ---
@@ -327,14 +327,14 @@ GET /xyz/dashboard-stats
 
 ### 获取定时 Todo 列表
 ```
-GET /xyz/scheduler/todos
+GET /api/scheduler/todos
 ```
 
 ---
 
 ### 更新 Todo 调度配置
 ```
-PUT /xyz/todos/{id}/scheduler
+PUT /api/todos/{id}/scheduler
 ```
 
 **请求体：**
@@ -351,7 +351,7 @@ PUT /xyz/todos/{id}/scheduler
 
 ### 导出全部数据
 ```
-GET /xyz/backup/export
+GET /api/backup/export
 ```
 
 返回 YAML 格式的完整备份。
@@ -360,7 +360,7 @@ GET /xyz/backup/export
 
 ### 导出选定的 Todo
 ```
-POST /xyz/backup/export-selected
+POST /api/backup/export-selected
 ```
 
 **请求体：**
@@ -374,7 +374,7 @@ POST /xyz/backup/export-selected
 
 ### 导入备份（完整替换）
 ```
-POST /xyz/backup/import
+POST /api/backup/import
 ```
 
 Content-Type: `multipart/form-data`
@@ -387,7 +387,7 @@ Content-Type: `multipart/form-data`
 
 ### 合并导入
 ```
-POST /xyz/backup/merge
+POST /api/backup/merge
 ```
 
 Content-Type: `multipart/form-data`
@@ -400,28 +400,28 @@ Content-Type: `multipart/form-data`
 
 ### 下载数据库
 ```
-GET /xyz/backup/database/download
+GET /api/backup/database/download
 ```
 
 ---
 
 ### 获取数据库备份状态
 ```
-GET /xyz/backup/database/status
+GET /api/backup/database/status
 ```
 
 ---
 
 ### 触发立即备份
 ```
-POST /xyz/backup/database/trigger
+POST /api/backup/database/trigger
 ```
 
 ---
 
 ### 更新自动备份配置
 ```
-PUT /xyz/backup/database/auto
+PUT /api/backup/database/auto
 ```
 
 **请求体：**
@@ -436,7 +436,7 @@ PUT /xyz/backup/database/auto
 
 ### 下载备份文件
 ```
-GET /xyz/backup/database/file
+GET /api/backup/database/file
 ```
 
 查询参数：
@@ -449,7 +449,7 @@ GET /xyz/backup/database/file
 
 ### 删除备份文件
 ```
-DELETE /xyz/backup/database/file
+DELETE /api/backup/database/file
 ```
 
 查询参数：
@@ -464,7 +464,7 @@ DELETE /xyz/backup/database/file
 
 ### 获取配置
 ```
-GET /xyz/config
+GET /api/config
 ```
 
 **响应示例：**
@@ -491,7 +491,7 @@ GET /xyz/config
 
 ### 更新配置
 ```
-PUT /xyz/config
+PUT /api/config
 ```
 
 **请求体：**
@@ -508,14 +508,14 @@ PUT /xyz/config
 
 ### 列出执行器
 ```
-GET /xyz/executors
+GET /api/executors
 ```
 
 ---
 
 ### 更新执行器配置
 ```
-PUT /xyz/executors/{name}
+PUT /api/executors/{name}
 ```
 
 **请求体：**
@@ -533,7 +533,7 @@ PUT /xyz/executors/{name}
 
 ### 检测执行器
 ```
-POST /xyz/executors/{name}/detect
+POST /api/executors/{name}/detect
 ```
 
 检测执行器二进制文件是否存在。
@@ -542,7 +542,7 @@ POST /xyz/executors/{name}/detect
 
 ### 测试执行器
 ```
-POST /xyz/executors/{name}/test
+POST /api/executors/{name}/test
 ```
 
 运行 `executor --version` 测试配置是否正确。
@@ -553,7 +553,7 @@ POST /xyz/executors/{name}/test
 
 ### 列出技能
 ```
-GET /xyz/skills
+GET /api/skills
 ```
 
 按执行器分组列出所有技能。
@@ -562,7 +562,7 @@ GET /xyz/skills
 
 ### 比较技能
 ```
-GET /xyz/skills/compare
+GET /api/skills/compare
 ```
 
 跨执行器的技能对比矩阵。
@@ -571,7 +571,7 @@ GET /xyz/skills/compare
 
 ### 同步技能
 ```
-POST /xyz/skills/sync
+POST /api/skills/sync
 ```
 
 **请求体：**
@@ -587,14 +587,14 @@ POST /xyz/skills/sync
 
 ### 获取技能调用记录
 ```
-GET /xyz/skills/invocations
+GET /api/skills/invocations
 ```
 
 ---
 
 ### 记录技能调用
 ```
-POST /xyz/skills/invocations
+POST /api/skills/invocations
 ```
 
 **请求体：**
@@ -611,7 +611,7 @@ POST /xyz/skills/invocations
 
 ### 获取技能内容
 ```
-GET /xyz/skills/content
+GET /api/skills/content
 ```
 
 查询参数：
@@ -625,7 +625,7 @@ GET /xyz/skills/content
 
 ### 导出技能
 ```
-GET /xyz/skills/export
+GET /api/skills/export
 ```
 
 查询参数：
@@ -641,7 +641,7 @@ GET /xyz/skills/export
 
 ### 导入技能
 ```
-POST /xyz/skills/import
+POST /api/skills/import
 ```
 
 Content-Type: `multipart/form-data`
@@ -656,21 +656,21 @@ Content-Type: `multipart/form-data`
 
 ### 列出 Agent Bot
 ```
-GET /xyz/agent-bots
+GET /api/agent-bots
 ```
 
 ---
 
 ### 删除 Agent Bot
 ```
-DELETE /xyz/agent-bots/{id}
+DELETE /api/agent-bots/{id}
 ```
 
 ---
 
 ### 更新 Agent Bot 配置
 ```
-PUT /xyz/agent-bots/{id}/config
+PUT /api/agent-bots/{id}/config
 ```
 
 **请求体：**
@@ -688,35 +688,35 @@ PUT /xyz/agent-bots/{id}/config
 
 ### 初始化飞书 OAuth
 ```
-POST /xyz/agent-bots/feishu/init
+POST /api/agent-bots/feishu/init
 ```
 
 ---
 
 ### 开始飞书 OAuth
 ```
-POST /xyz/agent-bots/feishu/begin
+POST /api/agent-bots/feishu/begin
 ```
 
 ---
 
 ### 轮询飞书 OAuth 状态
 ```
-POST /xyz/agent-bots/feishu/poll
+POST /api/agent-bots/feishu/poll
 ```
 
 ---
 
 ### 获取飞书推送配置
 ```
-GET /xyz/agent-bots/feishu/push
+GET /api/agent-bots/feishu/push
 ```
 
 ---
 
 ### 更新飞书推送配置
 ```
-PUT /xyz/agent-bots/feishu/push
+PUT /api/agent-bots/feishu/push
 ```
 
 **请求体：**
@@ -732,14 +732,14 @@ PUT /xyz/agent-bots/feishu/push
 
 ### 获取群组白名单
 ```
-GET /xyz/agent-bots/feishu/group-whitelist
+GET /api/agent-bots/feishu/group-whitelist
 ```
 
 ---
 
 ### 添加群组到白名单
 ```
-POST /xyz/agent-bots/feishu/group-whitelist
+POST /api/agent-bots/feishu/group-whitelist
 ```
 
 **请求体：**
@@ -754,7 +754,7 @@ POST /xyz/agent-bots/feishu/group-whitelist
 
 ### 从白名单移除
 ```
-DELETE /xyz/agent-bots/feishu/group-whitelist/{id}
+DELETE /api/agent-bots/feishu/group-whitelist/{id}
 ```
 
 ---
@@ -763,7 +763,7 @@ DELETE /xyz/agent-bots/feishu/group-whitelist/{id}
 
 ### 获取历史消息
 ```
-GET /xyz/feishu/history-messages
+GET /api/feishu/history-messages
 ```
 
 查询参数：
@@ -780,28 +780,28 @@ GET /xyz/feishu/history-messages
 
 ### 获取消息统计
 ```
-GET /xyz/feishu/message-stats
+GET /api/feishu/message-stats
 ```
 
 ---
 
 ### 获取消息发送者列表
 ```
-GET /xyz/feishu/senders
+GET /api/feishu/senders
 ```
 
 ---
 
 ### 获取历史聊天室列表
 ```
-GET /xyz/feishu/history-chats
+GET /api/feishu/history-chats
 ```
 
 ---
 
 ### 创建历史聊天室
 ```
-POST /xyz/feishu/history-chats
+POST /api/feishu/history-chats
 ```
 
 **请求体：**
@@ -816,14 +816,14 @@ POST /xyz/feishu/history-chats
 
 ### 删除历史聊天室
 ```
-DELETE /xyz/feishu/history-chats/{id}
+DELETE /api/feishu/history-chats/{id}
 ```
 
 ---
 
 ### 更新历史聊天室
 ```
-PUT /xyz/feishu/history-chats/{id}
+PUT /api/feishu/history-chats/{id}
 ```
 
 **请求体：**
@@ -840,7 +840,7 @@ PUT /xyz/feishu/history-chats/{id}
 
 ### 列出会话
 ```
-GET /xyz/sessions
+GET /api/sessions
 ```
 
 查询参数：
@@ -854,14 +854,14 @@ GET /xyz/sessions
 
 ### 获取会话统计
 ```
-GET /xyz/sessions/stats
+GET /api/sessions/stats
 ```
 
 ---
 
 ### 获取会话详情
 ```
-GET /xyz/sessions/{id}
+GET /api/sessions/{id}
 ```
 
 包含会话消息和子代理信息。
@@ -870,7 +870,7 @@ GET /xyz/sessions/{id}
 
 ### 删除会话
 ```
-DELETE /xyz/sessions/{id}
+DELETE /api/sessions/{id}
 ```
 
 ---
@@ -879,14 +879,14 @@ DELETE /xyz/sessions/{id}
 
 ### 列出项目目录
 ```
-GET /xyz/project-directories
+GET /api/project-directories
 ```
 
 ---
 
 ### 创建项目目录
 ```
-POST /xyz/project-directories
+POST /api/project-directories
 ```
 
 **请求体：**
@@ -901,7 +901,7 @@ POST /xyz/project-directories
 
 ### 更新项目目录
 ```
-PUT /xyz/project-directories/{id}
+PUT /api/project-directories/{id}
 ```
 
 **请求体：**
@@ -915,7 +915,7 @@ PUT /xyz/project-directories/{id}
 
 ### 删除项目目录
 ```
-DELETE /xyz/project-directories/{id}
+DELETE /api/project-directories/{id}
 ```
 
 ---
@@ -924,14 +924,14 @@ DELETE /xyz/project-directories/{id}
 
 ### 获取模板列表
 ```
-GET /xyz/todo-templates
+GET /api/todo-templates
 ```
 
 ---
 
 ### 创建模板
 ```
-POST /xyz/todo-templates
+POST /api/todo-templates
 ```
 
 **请求体：**
@@ -949,21 +949,21 @@ POST /xyz/todo-templates
 
 ### 更新模板
 ```
-PUT /xyz/todo-templates/{id}
+PUT /api/todo-templates/{id}
 ```
 
 ---
 
 ### 删除模板
 ```
-DELETE /xyz/todo-templates/{id}
+DELETE /api/todo-templates/{id}
 ```
 
 ---
 
 ### 复制模板
 ```
-POST /xyz/todo-templates/{id}/copy
+POST /api/todo-templates/{id}/copy
 ```
 
 ---
@@ -972,14 +972,14 @@ POST /xyz/todo-templates/{id}/copy
 
 ### 获取订阅状态
 ```
-GET /xyz/custom-templates/status
+GET /api/custom-templates/status
 ```
 
 ---
 
 ### 订阅远程模板
 ```
-POST /xyz/custom-templates/subscribe
+POST /api/custom-templates/subscribe
 ```
 
 **请求体：**
@@ -993,7 +993,7 @@ POST /xyz/custom-templates/subscribe
 
 ### 取消订阅
 ```
-POST /xyz/custom-templates/unsubscribe
+POST /api/custom-templates/unsubscribe
 ```
 
 **请求体：**
@@ -1007,14 +1007,14 @@ POST /xyz/custom-templates/unsubscribe
 
 ### 手动同步
 ```
-POST /xyz/custom-templates/sync
+POST /api/custom-templates/sync
 ```
 
 ---
 
 ### 更新自动同步配置
 ```
-PUT /xyz/custom-templates/auto-sync
+PUT /api/custom-templates/auto-sync
 ```
 
 **请求体：**
@@ -1031,7 +1031,7 @@ PUT /xyz/custom-templates/auto-sync
 
 ### 获取版本信息
 ```
-GET /xyz/version
+GET /api/version
 ```
 
 **响应示例：**
@@ -1052,7 +1052,7 @@ GET /xyz/version
 
 ### 事件订阅
 ```
-GET /xyz/events
+GET /api/events
 ```
 
 通过 WebSocket 连接接收实时事件。

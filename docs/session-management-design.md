@@ -44,7 +44,7 @@ Claude Code 的会话存储在 `~/.claude/` 目录下：
 ### P0 - 核心功能（必须完成）
 
 #### F1. Session 列表 API
-- **后端** 新增 `/xyz/sessions` GET 接口
+- **后端** 新增 `/api/sessions` GET 接口
 - 扫描 `~/.claude/sessions/` 获取活跃会话
 - 扫描 `~/.claude/projects/` 下所有项目的 JSONL 文件
 - 解析 JSONL 提取会话元信息：sessionId、项目路径、创建时间、最后活跃时间、消息数、token 用量、模型名称、git 分支、entrypoint
@@ -61,7 +61,7 @@ Claude Code 的会话存储在 `~/.claude/` 目录下：
 - 支持搜索
 
 #### F3. Session 详情 API
-- **后端** 新增 `/xyz/sessions/:id` GET 接口
+- **后端** 新增 `/api/sessions/:id` GET 接口
 - 读取指定 session 的 JSONL 文件
 - 返回完整的消息列表（用户消息 + 助手回复，按时间排序）
 - 包含每条消息的 role、content 摘要、model、token 用量、时间戳
@@ -100,10 +100,10 @@ Claude Code 的会话存储在 `~/.claude/` 目录下：
 
 路由：
 ```
-GET  /xyz/sessions           - 列表（支持分页和过滤）
-GET  /xyz/sessions/:id       - 详情
-GET  /xyz/sessions/stats     - 统计数据
-DELETE /xyz/sessions/:id     - 删除（仅 JSONL 文件）
+GET  /api/sessions           - 列表（支持分页和过滤）
+GET  /api/sessions/:id       - 详情
+GET  /api/sessions/stats     - 统计数据
+DELETE /api/sessions/:id     - 删除（仅 JSONL 文件）
 ```
 
 数据结构：
