@@ -67,12 +67,12 @@ async fn test_get_todos() {
     let app = create_test_app().await;
 
     // Create a todo first
-    let req = json_request("POST", "/xyz/todos", json!({"title": "Test", "prompt": "Do this", "tag_ids": []}));
+    let req = json_request("POST", "/api/todos", json!({"title": "Test", "prompt": "Do this", "tag_ids": []}));
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
     let req = Request::builder()
-        .uri("/xyz/todos")
+        .uri("/api/todos")
         .body(Body::empty())
         .unwrap();
     let response = app.oneshot(req).await.unwrap();
@@ -89,7 +89,7 @@ async fn test_get_todos() {
 async fn test_create_todo_success() {
     let app = create_test_app().await;
 
-    let req = json_request("POST", "/xyz/todos", json!({"title": "New Todo", "prompt": "Prompt text", "tag_ids": []}));
+    let req = json_request("POST", "/api/todos", json!({"title": "New Todo", "prompt": "Prompt text", "tag_ids": []}));
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -104,7 +104,7 @@ async fn test_create_todo_success() {
 async fn test_create_todo_empty_title() {
     let app = create_test_app().await;
 
-    let req = json_request("POST", "/xyz/todos", json!({"title": "", "prompt": "Prompt", "tag_ids": []}));
+    let req = json_request("POST", "/api/todos", json!({"title": "", "prompt": "Prompt", "tag_ids": []}));
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
@@ -116,7 +116,7 @@ async fn test_create_todo_empty_title() {
 async fn test_create_todo_prompt_fallback() {
     let app = create_test_app().await;
 
-    let req = json_request("POST", "/xyz/todos", json!({"title": "Fallback Title", "prompt": "", "tag_ids": []}));
+    let req = json_request("POST", "/api/todos", json!({"title": "Fallback Title", "prompt": "", "tag_ids": []}));
     let response = app.oneshot(req).await.unwrap();
 
     let body: serde_json::Value = read_json_body(response).await;
@@ -128,12 +128,12 @@ async fn test_create_todo_with_tags() {
     let app = create_test_app().await;
 
     // Create a tag first
-    let tag_req = json_request("POST", "/xyz/tags", json!({"name": "urgent", "color": "#ff0000"}));
+    let tag_req = json_request("POST", "/api/tags", json!({"name": "urgent", "color": "#ff0000"}));
     let tag_resp = app.clone().oneshot(tag_req).await.unwrap();
     let tag_body: serde_json::Value = read_json_body(tag_resp).await;
     let tag_id = tag_body["data"]["id"].as_i64().unwrap();
 
-    let req = json_request("POST", "/xyz/todos", json!({"title": "Tagged", "prompt": "Do this", "tag_ids": [tag_id]}));
+    let req = json_request("POST", "/api/todos", json!({"title": "Tagged", "prompt": "Do this", "tag_ids": [tag_id]}));
     let response = app.oneshot(req).await.unwrap();
 
     let body: serde_json::Value = read_json_body(response).await;
@@ -146,12 +146,12 @@ async fn test_create_todo_with_tags() {
 async fn test_update_todo_success() {
     let app = create_test_app().await;
 
-    let create_req = json_request("POST", "/xyz/todos", json!({"title": "Old", "prompt": "Old prompt", "tag_ids": []}));
+    let create_req = json_request("POST", "/api/todos", json!({"title": "Old", "prompt": "Old prompt", "tag_ids": []}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
 
-    let req = json_request("PUT", &format!("/xyz/todos/{}", id), json!({"title": "Updated", "prompt": "Updated prompt", "status": "in_progress"}));
+    let req = json_request("PUT", &format!("/api/todos/{}", id), json!({"title": "Updated", "prompt": "Updated prompt", "status": "in_progress"}));
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -164,12 +164,12 @@ async fn test_update_todo_success() {
 async fn test_update_todo_prompt_fallback() {
     let app = create_test_app().await;
 
-    let create_req = json_request("POST", "/xyz/todos", json!({"title": "Title", "prompt": "Prompt", "tag_ids": []}));
+    let create_req = json_request("POST", "/api/todos", json!({"title": "Title", "prompt": "Prompt", "tag_ids": []}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
 
-    let req = json_request("PUT", &format!("/xyz/todos/{}", id), json!({"title": "New Title", "prompt": "", "status": "pending"}));
+    let req = json_request("PUT", &format!("/api/todos/{}", id), json!({"title": "New Title", "prompt": "", "status": "pending"}));
     let response = app.oneshot(req).await.unwrap();
 
     let body: serde_json::Value = read_json_body(response).await;
@@ -180,17 +180,17 @@ async fn test_update_todo_prompt_fallback() {
 async fn test_update_todo_tags() {
     let app = create_test_app().await;
 
-    let create_req = json_request("POST", "/xyz/todos", json!({"title": "Test", "prompt": "Prompt", "tag_ids": []}));
+    let create_req = json_request("POST", "/api/todos", json!({"title": "Test", "prompt": "Prompt", "tag_ids": []}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let todo_id = create_body["data"]["id"].as_i64().unwrap();
 
-    let tag_req = json_request("POST", "/xyz/tags", json!({"name": "urgent", "color": "#ff0000"}));
+    let tag_req = json_request("POST", "/api/tags", json!({"name": "urgent", "color": "#ff0000"}));
     let tag_resp = app.clone().oneshot(tag_req).await.unwrap();
     let tag_body: serde_json::Value = read_json_body(tag_resp).await;
     let tag_id = tag_body["data"]["id"].as_i64().unwrap();
 
-    let req = json_request("PUT", &format!("/xyz/todos/{}/tags", todo_id), json!({"tag_ids": [tag_id]}));
+    let req = json_request("PUT", &format!("/api/todos/{}/tags", todo_id), json!({"tag_ids": [tag_id]}));
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -202,14 +202,14 @@ async fn test_update_todo_tags() {
 async fn test_delete_todo() {
     let app = create_test_app().await;
 
-    let create_req = json_request("POST", "/xyz/todos", json!({"title": "To Delete", "prompt": "Prompt", "tag_ids": []}));
+    let create_req = json_request("POST", "/api/todos", json!({"title": "To Delete", "prompt": "Prompt", "tag_ids": []}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
 
     let req = Request::builder()
         .method("DELETE")
-        .uri(format!("/xyz/todos/{}", id))
+        .uri(format!("/api/todos/{}", id))
         .body(Body::empty())
         .unwrap();
     let response = app.oneshot(req).await.unwrap();
@@ -217,7 +217,7 @@ async fn test_delete_todo() {
 
     // Verify it's gone
     let get_req = Request::builder()
-        .uri("/xyz/todos")
+        .uri("/api/todos")
         .body(Body::empty())
         .unwrap();
     let get_resp = create_test_app().await.oneshot(get_req).await.unwrap();
@@ -232,7 +232,7 @@ async fn test_delete_todo_not_found() {
 
     let req = Request::builder()
         .method("DELETE")
-        .uri("/xyz/todos/9999")
+        .uri("/api/todos/9999")
         .body(Body::empty())
         .unwrap();
     let response = app.oneshot(req).await.unwrap();
@@ -245,12 +245,12 @@ async fn test_delete_todo_not_found() {
 async fn test_force_update_status() {
     let app = create_test_app().await;
 
-    let create_req = json_request("POST", "/xyz/todos", json!({"title": "Test", "prompt": "Prompt", "tag_ids": []}));
+    let create_req = json_request("POST", "/api/todos", json!({"title": "Test", "prompt": "Prompt", "tag_ids": []}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
 
-    let req = json_request("PUT", &format!("/xyz/todos/{}/force-status", id), json!({"title": "Test", "prompt": "Prompt", "status": "completed"}));
+    let req = json_request("PUT", &format!("/api/todos/{}/force-status", id), json!({"title": "Test", "prompt": "Prompt", "status": "completed"}));
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -262,7 +262,7 @@ async fn test_force_update_status() {
 async fn test_get_todo_not_found() {
     let app = create_test_app().await;
 
-    let req = json_request("PUT", "/xyz/todos/9999", json!({"title": "Test", "prompt": "Prompt", "status": "pending"}));
+    let req = json_request("PUT", "/api/todos/9999", json!({"title": "Test", "prompt": "Prompt", "status": "pending"}));
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
@@ -274,7 +274,7 @@ async fn test_get_tags() {
     let app = create_test_app().await;
 
     let req = Request::builder()
-        .uri("/xyz/tags")
+        .uri("/api/tags")
         .body(Body::empty())
         .unwrap();
     let response = app.oneshot(req).await.unwrap();
@@ -289,7 +289,7 @@ async fn test_get_tags() {
 async fn test_create_tag_success() {
     let app = create_test_app().await;
 
-    let req = json_request("POST", "/xyz/tags", json!({"name": "urgent", "color": "#ff0000"}));
+    let req = json_request("POST", "/api/tags", json!({"name": "urgent", "color": "#ff0000"}));
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -303,7 +303,7 @@ async fn test_create_tag_success() {
 async fn test_create_tag_empty_name() {
     let app = create_test_app().await;
 
-    let req = json_request("POST", "/xyz/tags", json!({"name": "", "color": "#ff0000"}));
+    let req = json_request("POST", "/api/tags", json!({"name": "", "color": "#ff0000"}));
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
@@ -315,14 +315,14 @@ async fn test_create_tag_empty_name() {
 async fn test_delete_tag() {
     let app = create_test_app().await;
 
-    let create_req = json_request("POST", "/xyz/tags", json!({"name": "to-delete", "color": "#ff0000"}));
+    let create_req = json_request("POST", "/api/tags", json!({"name": "to-delete", "color": "#ff0000"}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
 
     let req = Request::builder()
         .method("DELETE")
-        .uri(format!("/xyz/tags/{}", id))
+        .uri(format!("/api/tags/{}", id))
         .body(Body::empty())
         .unwrap();
     let response = app.oneshot(req).await.unwrap();
@@ -335,13 +335,13 @@ async fn test_delete_tag() {
 async fn test_get_execution_records() {
     let app = create_test_app().await;
 
-    let create_req = json_request("POST", "/xyz/todos", json!({"title": "Test", "prompt": "Prompt", "tag_ids": []}));
+    let create_req = json_request("POST", "/api/todos", json!({"title": "Test", "prompt": "Prompt", "tag_ids": []}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let todo_id = create_body["data"]["id"].as_i64().unwrap();
 
     let req = Request::builder()
-        .uri(format!("/xyz/execution-records?todo_id={}", todo_id))
+        .uri(format!("/api/execution-records?todo_id={}", todo_id))
         .body(Body::empty())
         .unwrap();
     let response = app.oneshot(req).await.unwrap();
@@ -357,13 +357,13 @@ async fn test_get_execution_records() {
 async fn test_get_execution_records_pagination() {
     let app = create_test_app().await;
 
-    let create_req = json_request("POST", "/xyz/todos", json!({"title": "Test", "prompt": "Prompt", "tag_ids": []}));
+    let create_req = json_request("POST", "/api/todos", json!({"title": "Test", "prompt": "Prompt", "tag_ids": []}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let todo_id = create_body["data"]["id"].as_i64().unwrap();
 
     let req = Request::builder()
-        .uri(format!("/xyz/execution-records?todo_id={}&page=1&limit=5", todo_id))
+        .uri(format!("/api/execution-records?todo_id={}&page=1&limit=5", todo_id))
         .body(Body::empty())
         .unwrap();
     let response = app.oneshot(req).await.unwrap();
@@ -377,13 +377,13 @@ async fn test_get_execution_records_pagination() {
 async fn test_get_execution_summary() {
     let app = create_test_app().await;
 
-    let create_req = json_request("POST", "/xyz/todos", json!({"title": "Test", "prompt": "Prompt", "tag_ids": []}));
+    let create_req = json_request("POST", "/api/todos", json!({"title": "Test", "prompt": "Prompt", "tag_ids": []}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let todo_id = create_body["data"]["id"].as_i64().unwrap();
 
     let req = Request::builder()
-        .uri(format!("/xyz/todos/{}/summary", todo_id))
+        .uri(format!("/api/todos/{}/summary", todo_id))
         .body(Body::empty())
         .unwrap();
     let response = app.oneshot(req).await.unwrap();
@@ -398,7 +398,7 @@ async fn test_get_execution_summary() {
 async fn test_stop_execution_not_found() {
     let app = create_test_app().await;
 
-    let req = json_request("POST", "/xyz/execute/stop", json!({"task_id": "nonexistent-task"}));
+    let req = json_request("POST", "/api/execute/stop", json!({"task_id": "nonexistent-task"}));
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
@@ -412,12 +412,12 @@ async fn test_stop_execution_not_found() {
 async fn test_update_scheduler_enable() {
     let app = create_test_app().await;
 
-    let create_req = json_request("POST", "/xyz/todos", json!({"title": "Scheduled", "prompt": "Prompt", "tag_ids": []}));
+    let create_req = json_request("POST", "/api/todos", json!({"title": "Scheduled", "prompt": "Prompt", "tag_ids": []}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
 
-    let req = json_request("PUT", &format!("/xyz/todos/{}/scheduler", id), json!({"scheduler_enabled": true, "scheduler_config": "0 0 0 * * *"}));
+    let req = json_request("PUT", &format!("/api/todos/{}/scheduler", id), json!({"scheduler_enabled": true, "scheduler_config": "0 0 0 * * *"}));
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -430,17 +430,17 @@ async fn test_update_scheduler_enable() {
 async fn test_update_scheduler_disable() {
     let app = create_test_app().await;
 
-    let create_req = json_request("POST", "/xyz/todos", json!({"title": "Scheduled", "prompt": "Prompt", "tag_ids": []}));
+    let create_req = json_request("POST", "/api/todos", json!({"title": "Scheduled", "prompt": "Prompt", "tag_ids": []}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
 
     // Enable first
-    let enable_req = json_request("PUT", &format!("/xyz/todos/{}/scheduler", id), json!({"scheduler_enabled": true, "scheduler_config": "0 0 0 * * *"}));
+    let enable_req = json_request("PUT", &format!("/api/todos/{}/scheduler", id), json!({"scheduler_enabled": true, "scheduler_config": "0 0 0 * * *"}));
     let _ = app.clone().oneshot(enable_req).await.unwrap();
 
     // Then disable
-    let req = json_request("PUT", &format!("/xyz/todos/{}/scheduler", id), json!({"scheduler_enabled": false, "scheduler_config": null}));
+    let req = json_request("PUT", &format!("/api/todos/{}/scheduler", id), json!({"scheduler_enabled": false, "scheduler_config": null}));
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -452,13 +452,13 @@ async fn test_update_scheduler_disable() {
 async fn test_update_scheduler_missing_config() {
     let app = create_test_app().await;
 
-    let create_req = json_request("POST", "/xyz/todos", json!({"title": "Scheduled", "prompt": "Prompt", "tag_ids": []}));
+    let create_req = json_request("POST", "/api/todos", json!({"title": "Scheduled", "prompt": "Prompt", "tag_ids": []}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
 
     // Enable but without config -> should remove task
-    let req = json_request("PUT", &format!("/xyz/todos/{}/scheduler", id), json!({"scheduler_enabled": true, "scheduler_config": null}));
+    let req = json_request("PUT", &format!("/api/todos/{}/scheduler", id), json!({"scheduler_enabled": true, "scheduler_config": null}));
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -470,16 +470,16 @@ async fn test_update_scheduler_missing_config() {
 async fn test_get_scheduler_todos() {
     let app = create_test_app().await;
 
-    let create_req = json_request("POST", "/xyz/todos", json!({"title": "Scheduled", "prompt": "Prompt", "tag_ids": []}));
+    let create_req = json_request("POST", "/api/todos", json!({"title": "Scheduled", "prompt": "Prompt", "tag_ids": []}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
 
-    let enable_req = json_request("PUT", &format!("/xyz/todos/{}/scheduler", id), json!({"scheduler_enabled": true, "scheduler_config": "0 0 0 * * *"}));
+    let enable_req = json_request("PUT", &format!("/api/todos/{}/scheduler", id), json!({"scheduler_enabled": true, "scheduler_config": "0 0 0 * * *"}));
     let _ = app.clone().oneshot(enable_req).await.unwrap();
 
     let req = Request::builder()
-        .uri("/xyz/scheduler/todos")
+        .uri("/api/scheduler/todos")
         .body(Body::empty())
         .unwrap();
     let response = app.oneshot(req).await.unwrap();
@@ -499,14 +499,14 @@ async fn test_todo_lifecycle() {
     let app = create_test_app().await;
 
     // Create
-    let req = json_request("POST", "/xyz/todos", json!({"title": "Lifecycle", "prompt": "Test", "tag_ids": []}));
+    let req = json_request("POST", "/api/todos", json!({"title": "Lifecycle", "prompt": "Test", "tag_ids": []}));
     let response = app.clone().oneshot(req).await.unwrap();
     let body: serde_json::Value = read_json_body(response).await;
     let id = body["data"]["id"].as_i64().unwrap();
     assert_eq!(body["data"]["title"], "Lifecycle");
 
     // Update
-    let req = json_request("PUT", &format!("/xyz/todos/{}", id), json!({"title": "Updated", "prompt": "Updated", "status": "in_progress"}));
+    let req = json_request("PUT", &format!("/api/todos/{}", id), json!({"title": "Updated", "prompt": "Updated", "status": "in_progress"}));
     let response = app.clone().oneshot(req).await.unwrap();
     let body: serde_json::Value = read_json_body(response).await;
     assert_eq!(body["data"]["title"], "Updated");
@@ -514,7 +514,7 @@ async fn test_todo_lifecycle() {
     // Delete
     let req = Request::builder()
         .method("DELETE")
-        .uri(format!("/xyz/todos/{}", id))
+        .uri(format!("/api/todos/{}", id))
         .body(Body::empty())
         .unwrap();
     let response = app.oneshot(req).await.unwrap();
@@ -526,7 +526,7 @@ async fn test_tag_lifecycle() {
     let app = create_test_app().await;
 
     // Create
-    let req = json_request("POST", "/xyz/tags", json!({"name": "lifecycle", "color": "#00ff00"}));
+    let req = json_request("POST", "/api/tags", json!({"name": "lifecycle", "color": "#00ff00"}));
     let response = app.clone().oneshot(req).await.unwrap();
     let body: serde_json::Value = read_json_body(response).await;
     let id = body["data"]["id"].as_i64().unwrap();
@@ -534,7 +534,7 @@ async fn test_tag_lifecycle() {
 
     // Get list
     let req = Request::builder()
-        .uri("/xyz/tags")
+        .uri("/api/tags")
         .body(Body::empty())
         .unwrap();
     let response = app.clone().oneshot(req).await.unwrap();
@@ -544,7 +544,7 @@ async fn test_tag_lifecycle() {
     // Delete
     let req = Request::builder()
         .method("DELETE")
-        .uri(format!("/xyz/tags/{}", id))
+        .uri(format!("/api/tags/{}", id))
         .body(Body::empty())
         .unwrap();
     let response = app.oneshot(req).await.unwrap();
@@ -556,30 +556,30 @@ async fn test_todo_with_tags() {
     let app = create_test_app().await;
 
     // Create tags
-    let tag1_req = json_request("POST", "/xyz/tags", json!({"name": "urgent", "color": "#ff0000"}));
+    let tag1_req = json_request("POST", "/api/tags", json!({"name": "urgent", "color": "#ff0000"}));
     let tag1_resp = app.clone().oneshot(tag1_req).await.unwrap();
     let tag1_body: serde_json::Value = read_json_body(tag1_resp).await;
     let tag1_id = tag1_body["data"]["id"].as_i64().unwrap();
 
-    let tag2_req = json_request("POST", "/xyz/tags", json!({"name": "later", "color": "#00ff00"}));
+    let tag2_req = json_request("POST", "/api/tags", json!({"name": "later", "color": "#00ff00"}));
     let tag2_resp = app.clone().oneshot(tag2_req).await.unwrap();
     let tag2_body: serde_json::Value = read_json_body(tag2_resp).await;
     let tag2_id = tag2_body["data"]["id"].as_i64().unwrap();
 
     // Create todo with tags
-    let todo_req = json_request("POST", "/xyz/todos", json!({"title": "Tagged", "prompt": "Do it", "tag_ids": [tag1_id]}));
+    let todo_req = json_request("POST", "/api/todos", json!({"title": "Tagged", "prompt": "Do it", "tag_ids": [tag1_id]}));
     let todo_resp = app.clone().oneshot(todo_req).await.unwrap();
     let todo_body: serde_json::Value = read_json_body(todo_resp).await;
     let todo_id = todo_body["data"]["id"].as_i64().unwrap();
     assert_eq!(todo_body["data"]["tag_ids"], json!([tag1_id]));
 
     // Update tags
-    let update_req = json_request("PUT", &format!("/xyz/todos/{}/tags", todo_id), json!({"tag_ids": [tag2_id]}));
+    let update_req = json_request("PUT", &format!("/api/todos/{}/tags", todo_id), json!({"tag_ids": [tag2_id]}));
     let _ = app.clone().oneshot(update_req).await.unwrap();
 
     // Verify
     let get_req = Request::builder()
-        .uri("/xyz/todos")
+        .uri("/api/todos")
         .body(Body::empty())
         .unwrap();
     let get_resp = app.oneshot(get_req).await.unwrap();

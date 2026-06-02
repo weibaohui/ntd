@@ -3,7 +3,7 @@ import { api, unwrap } from './client';
 // Backup APIs
 
 export async function exportBackup(): Promise<string> {
-  const res = await api.get('/xyz/backup/export', {
+  const res = await api.get('/api/backup/export', {
     headers: { 'Accept': 'application/x-yaml' },
     responseType: 'text',
     transformResponse: [(data) => data],
@@ -13,17 +13,17 @@ export async function exportBackup(): Promise<string> {
 }
 
 export async function importBackup(yamlContent: string): Promise<string> {
-  return unwrap(await api.post('/xyz/backup/import', yamlContent, {
+  return unwrap(await api.post('/api/backup/import', yamlContent, {
     headers: { 'Content-Type': 'application/x-yaml' },
   }));
 }
 
 export async function mergeBackup(tags: { name: string; color: string }[], todos: { title: string; prompt: string; status: string; executor?: string; scheduler_enabled: boolean; scheduler_config?: string; tag_names: string[]; workspace?: string }[]): Promise<string> {
-  return unwrap(await api.post('/xyz/backup/merge', { tags, todos }));
+  return unwrap(await api.post('/api/backup/merge', { tags, todos }));
 }
 
 export async function exportSelectedBackup(todoIds: number[]): Promise<string> {
-  const res = await api.post('/xyz/backup/export-selected', { todo_ids: todoIds }, {
+  const res = await api.post('/api/backup/export-selected', { todo_ids: todoIds }, {
     headers: { 'Accept': 'application/x-yaml' },
     responseType: 'text',
     transformResponse: [(data: unknown) => data],
@@ -35,11 +35,11 @@ export async function exportSelectedBackup(todoIds: number[]): Promise<string> {
 // Database Backup APIs
 
 export async function triggerLocalBackup(): Promise<string> {
-  return unwrap(await api.post('/xyz/backup/database/trigger'));
+  return unwrap(await api.post('/api/backup/database/trigger'));
 }
 
 export async function optimizeDatabase(): Promise<string> {
-  return unwrap(await api.post('/xyz/backup/database/optimize'));
+  return unwrap(await api.post('/api/backup/database/optimize'));
 }
 
 export async function getDatabaseBackupStatus(): Promise<{
@@ -49,7 +49,7 @@ export async function getDatabaseBackupStatus(): Promise<{
   last_backup: string | null;
   files: { name: string; size: number; created_at: string }[];
 }> {
-  return unwrap(await api.get('/xyz/backup/database/status'));
+  return unwrap(await api.get('/api/backup/database/status'));
 }
 
 export async function updateAutoBackup(enabled: boolean, cron: string, maxFiles?: number): Promise<string> {
@@ -57,15 +57,15 @@ export async function updateAutoBackup(enabled: boolean, cron: string, maxFiles?
   if (maxFiles !== undefined) {
     body.max_files = maxFiles;
   }
-  return unwrap(await api.put('/xyz/backup/database/auto', body));
+  return unwrap(await api.put('/api/backup/database/auto', body));
 }
 
 export async function deleteBackupFile(filename: string): Promise<string> {
-  return unwrap(await api.delete('/xyz/backup/database/file', { data: { filename } }));
+  return unwrap(await api.delete('/api/backup/database/file', { data: { filename } }));
 }
 
 export function downloadBackupFileUrl(filename: string): string {
-  return `/xyz/backup/database/file?filename=${encodeURIComponent(filename)}`;
+  return `/api/backup/database/file?filename=${encodeURIComponent(filename)}`;
 }
 
 // Log Cleanup APIs
@@ -73,15 +73,15 @@ export function downloadBackupFileUrl(filename: string): string {
 export async function getLogCleanupStatus(): Promise<{
   cleanup_days: number | null;
 }> {
-  return unwrap(await api.get('/xyz/backup/log-cleanup/status'));
+  return unwrap(await api.get('/api/backup/log-cleanup/status'));
 }
 
 export async function updateLogCleanup(days: number | null): Promise<string> {
-  return unwrap(await api.put('/xyz/backup/log-cleanup', { days }));
+  return unwrap(await api.put('/api/backup/log-cleanup', { days }));
 }
 
 export async function triggerLogCleanup(): Promise<string> {
-  return unwrap(await api.post('/xyz/backup/log-cleanup/trigger'));
+  return unwrap(await api.post('/api/backup/log-cleanup/trigger'));
 }
 
 // Todo Backup APIs
@@ -93,11 +93,11 @@ export async function getTodoBackupStatus(): Promise<{
   last_backup: string | null;
   files: { name: string; size: number; created_at: string }[];
 }> {
-  return unwrap(await api.get('/xyz/backup/todo/status'));
+  return unwrap(await api.get('/api/backup/todo/status'));
 }
 
 export async function triggerTodoBackup(): Promise<string> {
-  return unwrap(await api.post('/xyz/backup/todo/trigger'));
+  return unwrap(await api.post('/api/backup/todo/trigger'));
 }
 
 export async function updateTodoAutoBackup(enabled: boolean, cron: string, maxFiles?: number): Promise<string> {
@@ -105,15 +105,15 @@ export async function updateTodoAutoBackup(enabled: boolean, cron: string, maxFi
   if (maxFiles !== undefined) {
     body.max_files = maxFiles;
   }
-  return unwrap(await api.put('/xyz/backup/todo/auto', body));
+  return unwrap(await api.put('/api/backup/todo/auto', body));
 }
 
 export async function deleteTodoBackupFile(filename: string): Promise<string> {
-  return unwrap(await api.delete('/xyz/backup/todo/file', { data: { filename } }));
+  return unwrap(await api.delete('/api/backup/todo/file', { data: { filename } }));
 }
 
 export function downloadTodoBackupFileUrl(filename: string): string {
-  return `/xyz/backup/todo/file?filename=${encodeURIComponent(filename)}`;
+  return `/api/backup/todo/file?filename=${encodeURIComponent(filename)}`;
 }
 
 // Skill Backup APIs
@@ -132,11 +132,11 @@ export async function getSkillBackupStatus(): Promise<{
   files: { name: string; size: number; created_at: string }[];
   executor_skills: ExecutorSkillInfo[];
 }> {
-  return unwrap(await api.get('/xyz/backup/skills/status'));
+  return unwrap(await api.get('/api/backup/skills/status'));
 }
 
 export async function triggerSkillBackup(): Promise<string> {
-  return unwrap(await api.post('/xyz/backup/skills/trigger'));
+  return unwrap(await api.post('/api/backup/skills/trigger'));
 }
 
 export async function updateSkillAutoBackup(enabled: boolean, cron: string, maxFiles?: number): Promise<string> {
@@ -144,13 +144,13 @@ export async function updateSkillAutoBackup(enabled: boolean, cron: string, maxF
   if (maxFiles !== undefined) {
     body.max_files = maxFiles;
   }
-  return unwrap(await api.put('/xyz/backup/skills/auto', body));
+  return unwrap(await api.put('/api/backup/skills/auto', body));
 }
 
 export async function deleteSkillBackupFile(filename: string): Promise<string> {
-  return unwrap(await api.delete('/xyz/backup/skills/file', { data: { filename } }));
+  return unwrap(await api.delete('/api/backup/skills/file', { data: { filename } }));
 }
 
 export function downloadSkillBackupFileUrl(filename: string): string {
-  return `/xyz/backup/skills/file?filename=${encodeURIComponent(filename)}`;
+  return `/api/backup/skills/file?filename=${encodeURIComponent(filename)}`;
 }

@@ -217,34 +217,34 @@ CREATE TABLE hook_logs (
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/xyz/hooks` | 列出所有 hook 规则 |
-| POST | `/xyz/hooks` | 创建 hook 规则 |
-| GET | `/xyz/hooks/{id}` | 获取单个 hook 规则 |
-| PUT | `/xyz/hooks/{id}` | 更新 hook 规则 |
-| DELETE | `/xyz/hooks/{id}` | 删除 hook 规则 |
-| POST | `/xyz/hooks/{id}/test` | 测试 hook (dry run) |
+| GET | `/api/hooks` | 列出所有 hook 规则 |
+| POST | `/api/hooks` | 创建 hook 规则 |
+| GET | `/api/hooks/{id}` | 获取单个 hook 规则 |
+| PUT | `/api/hooks/{id}` | 更新 hook 规则 |
+| DELETE | `/api/hooks/{id}` | 删除 hook 规则 |
+| POST | `/api/hooks/{id}/test` | 测试 hook (dry run) |
 
 ### 5.2 全局默认配置
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/xyz/hooks/config` | 获取全局默认配置 |
-| PUT | `/xyz/hooks/config` | 更新全局默认配置 |
+| GET | `/api/hooks/config` | 获取全局默认配置 |
+| PUT | `/api/hooks/config` | 更新全局默认配置 |
 
 ### 5.3 Per-Todo Hook
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/xyz/todos/{id}/hooks` | 获取 todo 的 hook 配置 |
-| PUT | `/xyz/todos/{id}/hooks` | 更新 todo 的 hook 配置 |
+| GET | `/api/todos/{id}/hooks` | 获取 todo 的 hook 配置 |
+| PUT | `/api/todos/{id}/hooks` | 更新 todo 的 hook 配置 |
 
 ### 5.4 执行日志
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/xyz/hook-logs` | 查看 hook 执行日志 |
-| DELETE | `/xyz/hook-logs` | 清除执行日志 |
-| GET | `/xyz/hook-logs/{id}` | 查看单条日志详情 |
+| GET | `/api/hook-logs` | 查看 hook 执行日志 |
+| DELETE | `/api/hook-logs` | 清除执行日志 |
+| GET | `/api/hook-logs/{id}` | 查看单条日志详情 |
 
 ---
 

@@ -68,17 +68,17 @@ export async function listSessions(params: {
   project?: string;
   search?: string;
 }): Promise<SessionListResponse> {
-  return unwrap(await api.get('/xyz/sessions', { params }));
+  return unwrap(await api.get('/api/sessions', { params }));
 }
 
 export async function getSessionStats(): Promise<SessionStats> {
-  return unwrap(await api.get('/xyz/sessions/stats'));
+  return unwrap(await api.get('/api/sessions/stats'));
 }
 
 export async function getSessionDetail(sessionId: string): Promise<SessionDetail> {
-  return unwrap(await api.get(`/xyz/sessions/${sessionId}`));
+  return unwrap(await api.get(`/api/sessions/${sessionId}`));
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
-  await api.delete(`/xyz/sessions/${sessionId}`);
+  await api.delete(`/api/sessions/${sessionId}`);
 }

@@ -73,7 +73,7 @@ export function useExecutionEvents() {
       if (!shouldReconnect) return;
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${protocol}//${window.location.host}/xyz/events`);
+      const ws = new WebSocket(`${protocol}//${window.location.host}/api/events`);
       wsRef.current = ws;
 
       ws.onopen = () => {

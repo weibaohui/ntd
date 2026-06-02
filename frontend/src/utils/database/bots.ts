@@ -86,27 +86,27 @@ export interface WhitelistEntry {
 }
 
 export async function getAgentBots(): Promise<AgentBot[]> {
-  return unwrap(await api.get('/xyz/agent-bots'));
+  return unwrap(await api.get('/api/agent-bots'));
 }
 
 export async function deleteAgentBot(id: number): Promise<void> {
-  await api.delete(`/xyz/agent-bots/${id}`);
+  await api.delete(`/api/agent-bots/${id}`);
 }
 
 export async function updateAgentBotConfig(id: number, config: string): Promise<void> {
-  await api.put(`/xyz/agent-bots/${id}/config`, { config });
+  await api.put(`/api/agent-bots/${id}/config`, { config });
 }
 
 export async function feishuInit(): Promise<{ supported: boolean; auth_methods: string[] }> {
-  return unwrap(await api.post('/xyz/agent-bots/feishu/init'));
+  return unwrap(await api.post('/api/agent-bots/feishu/init'));
 }
 
 export async function feishuBegin(): Promise<FeishuBeginResponse> {
-  return unwrap(await api.post('/xyz/agent-bots/feishu/begin'));
+  return unwrap(await api.post('/api/agent-bots/feishu/begin'));
 }
 
 export async function feishuPoll(device_code: string, interval?: number, expire_in?: number): Promise<FeishuPollResponse> {
-  return unwrap(await api.post('/xyz/agent-bots/feishu/poll', {
+  return unwrap(await api.post('/api/agent-bots/feishu/poll', {
     device_code,
     interval,
     expire_in,
@@ -114,11 +114,11 @@ export async function feishuPoll(device_code: string, interval?: number, expire_
 }
 
 export async function getFeishuPush(): Promise<FeishuPushStatus[]> {
-  return unwrap(await api.get('/xyz/agent-bots/feishu/push'));
+  return unwrap(await api.get('/api/agent-bots/feishu/push'));
 }
 
 export async function updateFeishuPush(params: UpdateFeishuPushParams): Promise<FeishuPushStatus> {
-  return unwrap(await api.put('/xyz/agent-bots/feishu/push', {
+  return unwrap(await api.put('/api/agent-bots/feishu/push', {
     bot_id: params.botId,
     push_level: params.pushLevel,
     p2p_receive_id: params.p2pReceiveId,
@@ -140,42 +140,42 @@ export async function getFeishuHistoryMessages(params?: {
   page?: number;
   page_size?: number;
 }): Promise<import('../../types').FeishuHistoryMessagesPage> {
-  return unwrap(await api.get('/xyz/feishu/history-messages', { params }));
+  return unwrap(await api.get('/api/feishu/history-messages', { params }));
 }
 
 export async function getFeishuMessageStats(hours?: number): Promise<import('../../types').FeishuMessageStats> {
   const params = hours !== undefined ? { hours } : undefined;
-  return unwrap(await api.get('/xyz/feishu/message-stats', { params }));
+  return unwrap(await api.get('/api/feishu/message-stats', { params }));
 }
 
 export async function getFeishuSenders(): Promise<FeishuSenderItem[]> {
-  return unwrap(await api.get('/xyz/feishu/senders'));
+  return unwrap(await api.get('/api/feishu/senders'));
 }
 
 export async function getFeishuHistoryChats(): Promise<import('../../types').FeishuHistoryChat[]> {
-  return unwrap(await api.get('/xyz/feishu/history-chats'));
+  return unwrap(await api.get('/api/feishu/history-chats'));
 }
 
 export async function createFeishuHistoryChat(params: CreateFeishuHistoryChatParams): Promise<import('../../types').FeishuHistoryChat> {
-  return unwrap(await api.post('/xyz/feishu/history-chats', params));
+  return unwrap(await api.post('/api/feishu/history-chats', params));
 }
 
 export async function updateFeishuHistoryChat(id: number, params: UpdateFeishuHistoryChatParams): Promise<void> {
-  await api.put(`/xyz/feishu/history-chats/${id}`, params);
+  await api.put(`/api/feishu/history-chats/${id}`, params);
 }
 
 export async function deleteFeishuHistoryChat(id: number): Promise<void> {
-  await api.delete(`/xyz/feishu/history-chats/${id}`);
+  await api.delete(`/api/feishu/history-chats/${id}`);
 }
 
 // Group Whitelist APIs
 
 export async function getGroupWhitelist(botId: number): Promise<WhitelistEntry[]> {
-  return unwrap(await api.get('/xyz/agent-bots/feishu/group-whitelist', { params: { bot_id: botId } }));
+  return unwrap(await api.get('/api/agent-bots/feishu/group-whitelist', { params: { bot_id: botId } }));
 }
 
 export async function addGroupWhitelist(botId: number, senderOpenId: string, senderName?: string): Promise<WhitelistEntry> {
-  return unwrap(await api.post('/xyz/agent-bots/feishu/group-whitelist', {
+  return unwrap(await api.post('/api/agent-bots/feishu/group-whitelist', {
     bot_id: botId,
     sender_open_id: senderOpenId,
     sender_name: senderName || null,
@@ -183,5 +183,5 @@ export async function addGroupWhitelist(botId: number, senderOpenId: string, sen
 }
 
 export async function deleteGroupWhitelist(id: number): Promise<void> {
-  await api.delete(`/xyz/agent-bots/feishu/group-whitelist/${id}`);
+  await api.delete(`/api/agent-bots/feishu/group-whitelist/${id}`);
 }
