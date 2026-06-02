@@ -374,7 +374,7 @@ fn discover_skills_for_executor(et: ExecutorType) -> ExecutorSkills {
 
 // ── API handlers ────────────────────────────────────────────────────────
 
-/// GET /xyz/skills - List skills grouped by executor
+/// GET /api/skills - List skills grouped by executor
 pub async fn list_skills(
     State(_state): State<AppState>,
 ) -> Result<ApiResponse<Vec<ExecutorSkills>>, AppError> {
@@ -389,7 +389,7 @@ pub async fn list_skills(
     Ok(ApiResponse::ok(result))
 }
 
-/// GET /xyz/skills/content - Get skill content (SKILL.md and metadata)
+/// GET /api/skills/content - Get skill content (SKILL.md and metadata)
 pub async fn get_skill_content(
     Query(query): Query<SkillContentQuery>,
 ) -> Result<ApiResponse<SkillContentResponse>, AppError> {
@@ -430,7 +430,7 @@ pub async fn get_skill_content(
     Ok(ApiResponse::ok(result))
 }
 
-/// DELETE /xyz/skills - Delete a skill from an executor
+/// DELETE /api/skills - Delete a skill from an executor
 pub async fn delete_skill(
     Query(query): Query<DeleteSkillQuery>,
 ) -> Result<ApiResponse<String>, AppError> {
@@ -476,7 +476,7 @@ pub async fn delete_skill(
     Ok(ApiResponse::ok(format!("Skill '{}' deleted", skill_name)))
 }
 
-/// GET /xyz/skills/export - Export skill as .zip
+/// GET /api/skills/export - Export skill as .zip
 pub async fn export_skill(
     Query(query): Query<SkillExportQuery>,
 ) -> Result<Vec<u8>, AppError> {
@@ -536,7 +536,7 @@ fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
     Ok(())
 }
 
-/// POST /xyz/skills/import - Import skill from .zip
+/// POST /api/skills/import - Import skill from .zip
 pub async fn import_skill(
     State(_state): State<AppState>,
     params: Query<ImportRequest>,
@@ -712,7 +712,7 @@ pub struct SkillFileInfo {
     pub modified_at: String,
 }
 
-/// GET /xyz/skills/compare - Cross-executor skill comparison matrix
+/// GET /api/skills/compare - Cross-executor skill comparison matrix
 pub async fn compare_skills(
     State(_state): State<AppState>,
 ) -> Result<ApiResponse<Vec<SkillComparison>>, AppError> {
@@ -773,7 +773,7 @@ pub async fn compare_skills(
     Ok(ApiResponse::ok(comparisons))
 }
 
-/// POST /xyz/skills/sync - Sync skill from one executor to others
+/// POST /api/skills/sync - Sync skill from one executor to others
 pub async fn sync_skill(
     State(_state): State<AppState>,
     ApiJson(req): ApiJson<SyncRequest>,
@@ -895,7 +895,7 @@ fn copy_dir_recursive_flat(src: &std::path::Path, dst: &std::path::Path, flatten
 }
 
 
-/// GET /xyz/skills/invocations - List skill invocation records
+/// GET /api/skills/invocations - List skill invocation records
 pub async fn list_invocations(
     State(state): State<AppState>,
     Query(query): Query<InvocationQuery>,
@@ -924,7 +924,7 @@ pub async fn list_invocations(
     }))
 }
 
-/// POST /xyz/skills/invocations - Record a skill invocation
+/// POST /api/skills/invocations - Record a skill invocation
 pub async fn record_invocation(
     State(state): State<AppState>,
     ApiJson(req): ApiJson<RecordInvocationRequest>,

@@ -2,15 +2,15 @@ import { api, unwrap } from './client';
 import type { ExecutorSkills, SkillComparison, PaginatedInvocations } from '../../types';
 
 export async function getSkillsList(): Promise<ExecutorSkills[]> {
-  return unwrap(await api.get('/xyz/skills'));
+  return unwrap(await api.get('/api/skills'));
 }
 
 export async function getSkillsComparison(): Promise<SkillComparison[]> {
-  return unwrap(await api.get('/xyz/skills/compare'));
+  return unwrap(await api.get('/api/skills/compare'));
 }
 
 export async function syncSkill(sourceExecutor: string, skillName: string, targetExecutors: string[]): Promise<string> {
-  return unwrap(await api.post('/xyz/skills/sync', {
+  return unwrap(await api.post('/api/skills/sync', {
     source_executor: sourceExecutor,
     skill_name: skillName,
     target_executors: targetExecutors,
@@ -18,17 +18,17 @@ export async function syncSkill(sourceExecutor: string, skillName: string, targe
 }
 
 export async function deleteSkill(executor: string, skillName: string): Promise<string> {
-  return unwrap(await api.delete('/xyz/skills', {
+  return unwrap(await api.delete('/api/skills', {
     params: { executor, skill_name: skillName },
   }));
 }
 
 export async function getSkillInvocations(params?: { page?: number; limit?: number; skill_name?: string; executor?: string }): Promise<PaginatedInvocations> {
-  return unwrap(await api.get('/xyz/skills/invocations', { params }));
+  return unwrap(await api.get('/api/skills/invocations', { params }));
 }
 
 export async function recordSkillInvocation(data: { skill_name: string; executor: string; todo_id: number; status: string; duration_ms?: number }): Promise<number> {
-  return unwrap(await api.post('/xyz/skills/invocations', data));
+  return unwrap(await api.post('/api/skills/invocations', data));
 }
 
 // Skill content & files
@@ -46,13 +46,13 @@ export interface SkillContent {
 }
 
 export async function getSkillContent(executor: string, skillName: string): Promise<SkillContent> {
-  return unwrap(await api.get('/xyz/skills/content', {
+  return unwrap(await api.get('/api/skills/content', {
     params: { executor, skill_name: skillName },
   }));
 }
 
 export async function exportSkill(executor: string, skillName: string): Promise<Blob> {
-  const response = await api.get('/xyz/skills/export', {
+  const response = await api.get('/api/skills/export', {
     params: { executor, skill_name: skillName },
     responseType: 'blob',
   });
@@ -70,7 +70,7 @@ export async function importSkill(executor: string, file: File, skillName?: stri
   if (skillName) params.skill_name = skillName;
   if (flatten !== undefined) params.flatten = String(flatten);
 
-  const response = await api.post('/xyz/skills/import', await file.arrayBuffer(), {
+  const response = await api.post('/api/skills/import', await file.arrayBuffer(), {
     params,
     headers: { 'Content-Type': 'application/zip' },
   });
@@ -80,29 +80,29 @@ export async function importSkill(executor: string, file: File, skillName?: stri
 // Config APIs
 
 export async function getConfig(): Promise<import('../../types').Config> {
-  return unwrap(await api.get('/xyz/config'));
+  return unwrap(await api.get('/api/config'));
 }
 
 export async function updateConfig(config: import('../../types').Config): Promise<import('../../types').Config> {
-  return unwrap(await api.put('/xyz/config', config));
+  return unwrap(await api.put('/api/config', config));
 }
 
 // Executor Config APIs
 
 export async function getExecutors(): Promise<import('../../types').ExecutorConfig[]> {
-  return unwrap(await api.get('/xyz/executors'));
+  return unwrap(await api.get('/api/executors'));
 }
 
 export async function updateExecutor(name: string, data: { path?: string; enabled?: boolean; display_name?: string; session_dir?: string }): Promise<import('../../types').ExecutorConfig> {
-  return unwrap(await api.put(`/xyz/executors/${encodeURIComponent(name)}`, data));
+  return unwrap(await api.put(`/api/executors/${encodeURIComponent(name)}`, data));
 }
 
 export async function detectExecutor(name: string): Promise<{ binary_found: boolean; path_resolved: string | null }> {
-  return unwrap(await api.post(`/xyz/executors/${encodeURIComponent(name)}/detect`));
+  return unwrap(await api.post(`/api/executors/${encodeURIComponent(name)}/detect`));
 }
 
 export async function testExecutor(name: string): Promise<{ test_passed: boolean; output: string | null; error: string | null }> {
-  return unwrap(await api.post(`/xyz/executors/${encodeURIComponent(name)}/test`));
+  return unwrap(await api.post(`/api/executors/${encodeURIComponent(name)}/test`));
 }
 
 export interface ExecutorBatchDetectResult {
@@ -118,7 +118,7 @@ export interface ExecutorBatchDetectResult {
 }
 
 export async function detectAllExecutors(): Promise<ExecutorBatchDetectResult> {
-  return unwrap(await api.post('/xyz/executors/detect-all'));
+  return unwrap(await api.post('/api/executors/detect-all'));
 }
 
 // Version API
@@ -129,5 +129,5 @@ export interface VersionInfo {
 }
 
 export async function getVersion(): Promise<VersionInfo> {
-  return unwrap(await api.get('/xyz/version'));
+  return unwrap(await api.get('/api/version'));
 }

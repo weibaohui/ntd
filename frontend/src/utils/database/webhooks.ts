@@ -33,15 +33,15 @@ export interface WebhookRecordsPage {
 }
 
 export async function getWebhooks(): Promise<Webhook[]> {
-  return unwrap(await api.get('/xyz/webhooks'));
+  return unwrap(await api.get('/api/webhooks'));
 }
 
 export async function getWebhook(id: number): Promise<Webhook> {
-  return unwrap(await api.get(`/xyz/webhooks/${id}`));
+  return unwrap(await api.get(`/api/webhooks/${id}`));
 }
 
 export async function createWebhook(name: string, enabled: boolean, defaultTodoId?: number): Promise<Webhook> {
-  return unwrap(await api.post('/xyz/webhooks', {
+  return unwrap(await api.post('/api/webhooks', {
     name,
     enabled,
     default_todo_id: defaultTodoId ?? null,
@@ -49,7 +49,7 @@ export async function createWebhook(name: string, enabled: boolean, defaultTodoI
 }
 
 export async function updateWebhook(id: number, name: string, enabled: boolean, defaultTodoId?: number): Promise<Webhook> {
-  return unwrap(await api.put(`/xyz/webhooks/${id}`, {
+  return unwrap(await api.put(`/api/webhooks/${id}`, {
     name,
     enabled,
     default_todo_id: defaultTodoId ?? null,
@@ -57,13 +57,13 @@ export async function updateWebhook(id: number, name: string, enabled: boolean, 
 }
 
 export async function deleteWebhook(id: number): Promise<void> {
-  await api.delete(`/xyz/webhooks/${id}`);
+  await api.delete(`/api/webhooks/${id}`);
 }
 
 export async function getWebhookRecords(params?: { limit?: number; offset?: number }): Promise<WebhookRecordsPage> {
-  return unwrap(await api.get('/xyz/webhook-records', { params }));
+  return unwrap(await api.get('/api/webhook-records', { params }));
 }
 
 export async function getWebhookRecord(id: number): Promise<WebhookRecord> {
-  return unwrap(await api.get(`/xyz/webhook-records/${id}`));
+  return unwrap(await api.get(`/api/webhook-records/${id}`));
 }

@@ -60,8 +60,8 @@ pub async fn delete_project_directory(
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/xyz/project-directories", get(list_project_directories))
-        .route("/xyz/project-directories", post(create_project_directory))
-        .route("/xyz/project-directories/{id}", put(update_project_directory))
-        .route("/xyz/project-directories/{id}", delete(delete_project_directory))
+        .route("/api/project-directories", get(list_project_directories))
+        .route("/api/project-directories", post(create_project_directory))
+        .route("/api/project-directories/{id}", put(update_project_directory))
+        .route("/api/project-directories/{id}", delete(delete_project_directory))
 }

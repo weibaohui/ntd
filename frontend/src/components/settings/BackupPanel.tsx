@@ -131,7 +131,7 @@ export function BackupPanel() {
 
   const handleDownloadDatabase = async () => {
     try {
-      const response = await fetch('/xyz/backup/database/download');
+      const response = await fetch('/api/backup/database/download');
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
@@ -306,7 +306,7 @@ export function BackupPanel() {
   // Export handlers
   const handleExportBackup = async () => {
     try {
-      const response = await fetch('/xyz/backup/export', {
+      const response = await fetch('/api/backup/export', {
         headers: { Accept: 'application/x-yaml' },
       });
       if (!response.ok) {
@@ -398,7 +398,7 @@ export function BackupPanel() {
     }
     setExportingSelected(true);
     try {
-      const response = await fetch('/xyz/backup/export-selected', {
+      const response = await fetch('/api/backup/export-selected', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/x-yaml' },
         body: JSON.stringify({ todo_ids: exportTodoKeys }),

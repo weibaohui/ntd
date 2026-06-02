@@ -5,7 +5,7 @@ import type { TodoHookItem } from './hooks';
 // Todo APIs
 
 export async function getAllTodos(): Promise<Todo[]> {
-  return unwrap(await api.get('/xyz/todos'));
+  return unwrap(await api.get('/api/todos'));
 }
 
 export async function createTodo(
@@ -14,7 +14,7 @@ export async function createTodo(
   tagIds: number[] = [],
   hooks: TodoHookItem[] = [],
 ): Promise<Todo> {
-  return unwrap(await api.post('/xyz/todos', { title, prompt, tag_ids: tagIds, hooks }));
+  return unwrap(await api.post('/api/todos', { title, prompt, tag_ids: tagIds, hooks }));
 }
 
 export async function updateTodo(
@@ -37,47 +37,47 @@ export async function updateTodo(
   if (worktree_enabled !== undefined) body.worktree_enabled = worktree_enabled;
   if (hooks !== undefined) body.hooks = hooks;
 
-  return unwrap(await api.put(`/xyz/todos/${id}`, body));
+  return unwrap(await api.put(`/api/todos/${id}`, body));
 }
 
 export async function updateTodoHooks(id: number, hooks: TodoHookItem[]): Promise<Todo> {
-  return unwrap(await api.put(`/xyz/todos/${id}`, { hooks }));
+  return unwrap(await api.put(`/api/todos/${id}`, { hooks }));
 }
 
 export async function deleteTodo(id: number): Promise<void> {
-  await api.delete(`/xyz/todos/${id}`);
+  await api.delete(`/api/todos/${id}`);
 }
 
 export async function forceUpdateTodoStatus(id: number, status: string): Promise<Todo> {
-  return unwrap(await api.put(`/xyz/todos/${id}/force-status`, { status }));
+  return unwrap(await api.put(`/api/todos/${id}/force-status`, { status }));
 }
 
 export async function updateTodoTags(todoId: number, tagIds: number[]): Promise<void> {
-  await api.put(`/xyz/todos/${todoId}/tags`, { tag_ids: tagIds });
+  await api.put(`/api/todos/${todoId}/tags`, { tag_ids: tagIds });
 }
 
 // Tag APIs
 
 export async function getAllTags(): Promise<Tag[]> {
-  return unwrap(await api.get('/xyz/tags'));
+  return unwrap(await api.get('/api/tags'));
 }
 
 export async function createTag(name: string, color: string): Promise<Tag> {
-  return unwrap(await api.post('/xyz/tags', { name, color }));
+  return unwrap(await api.post('/api/tags', { name, color }));
 }
 
 export async function deleteTag(id: number): Promise<void> {
-  await api.delete(`/xyz/tags/${id}`);
+  await api.delete(`/api/tags/${id}`);
 }
 
 // Todo Template APIs
 
 export async function getTodoTemplates(): Promise<TodoTemplate[]> {
-  return unwrap(await api.get('/xyz/todo-templates'));
+  return unwrap(await api.get('/api/todo-templates'));
 }
 
 export async function createTodoTemplate(title: string, prompt: string | null, category: string, sort_order?: number): Promise<TodoTemplate> {
-  return unwrap(await api.post('/xyz/todo-templates', { title, prompt, category, sort_order }));
+  return unwrap(await api.post('/api/todo-templates', { title, prompt, category, sort_order }));
 }
 
 export async function updateTodoTemplate(id: number, title?: string, prompt?: string | null, category?: string, sort_order?: number): Promise<TodoTemplate> {
@@ -86,37 +86,37 @@ export async function updateTodoTemplate(id: number, title?: string, prompt?: st
   if (prompt !== undefined) body.prompt = prompt;
   if (category !== undefined) body.category = category;
   if (sort_order !== undefined) body.sort_order = sort_order;
-  return unwrap(await api.put(`/xyz/todo-templates/${id}`, body));
+  return unwrap(await api.put(`/api/todo-templates/${id}`, body));
 }
 
 export async function deleteTodoTemplate(id: number): Promise<void> {
-  await api.delete(`/xyz/todo-templates/${id}`);
+  await api.delete(`/api/todo-templates/${id}`);
 }
 
 export async function copyTodoTemplate(id: number): Promise<TodoTemplate> {
-  return unwrap(await api.post(`/xyz/todo-templates/${id}/copy`, {}));
+  return unwrap(await api.post(`/api/todo-templates/${id}/copy`, {}));
 }
 
 // Custom Template APIs (remote URL subscription)
 
 export async function getCustomTemplateStatus(): Promise<CustomTemplateStatus> {
-  return unwrap(await api.get('/xyz/custom-templates/status'));
+  return unwrap(await api.get('/api/custom-templates/status'));
 }
 
 export async function subscribeCustomTemplate(url: string): Promise<CustomTemplateStatus> {
-  return unwrap(await api.post('/xyz/custom-templates/subscribe', { url }));
+  return unwrap(await api.post('/api/custom-templates/subscribe', { url }));
 }
 
 export async function unsubscribeCustomTemplate(): Promise<void> {
-  await api.post('/xyz/custom-templates/unsubscribe', {});
+  await api.post('/api/custom-templates/unsubscribe', {});
 }
 
 export async function syncCustomTemplate(): Promise<CustomTemplateStatus> {
-  return unwrap(await api.post('/xyz/custom-templates/sync', {}));
+  return unwrap(await api.post('/api/custom-templates/sync', {}));
 }
 
 export async function updateCustomTemplateAutoSync(enabled: boolean, cron: string): Promise<void> {
-  await api.put('/xyz/custom-templates/auto-sync', { enabled, cron });
+  await api.put('/api/custom-templates/auto-sync', { enabled, cron });
 }
 
 // Project Directory APIs
@@ -130,19 +130,19 @@ export interface ProjectDirectory {
 }
 
 export async function getProjectDirectories(): Promise<ProjectDirectory[]> {
-  return unwrap(await api.get('/xyz/project-directories'));
+  return unwrap(await api.get('/api/project-directories'));
 }
 
 export async function createProjectDirectory(path: string, name?: string): Promise<ProjectDirectory> {
-  return unwrap(await api.post('/xyz/project-directories', { path, name }));
+  return unwrap(await api.post('/api/project-directories', { path, name }));
 }
 
 export async function updateProjectDirectory(id: number, name?: string): Promise<void> {
-  await api.put(`/xyz/project-directories/${id}`, { name });
+  await api.put(`/api/project-directories/${id}`, { name });
 }
 
 export async function deleteProjectDirectory(id: number): Promise<void> {
-  await api.delete(`/xyz/project-directories/${id}`);
+  await api.delete(`/api/project-directories/${id}`);
 }
 
 // Scheduler APIs
@@ -152,13 +152,13 @@ export async function updateScheduler(
   scheduler_enabled: boolean,
   scheduler_config: string | null,
 ): Promise<Todo> {
-  return unwrap(await api.put(`/xyz/todos/${id}/scheduler`, { scheduler_enabled, scheduler_config }));
+  return unwrap(await api.put(`/api/todos/${id}/scheduler`, { scheduler_enabled, scheduler_config }));
 }
 
 export async function getSchedulerTodos(): Promise<Todo[]> {
-  return unwrap(await api.get('/xyz/scheduler/todos'));
+  return unwrap(await api.get('/api/scheduler/todos'));
 }
 
 export async function getRunningTodos(): Promise<Todo[]> {
-  return unwrap(await api.get('/xyz/running-todos'));
+  return unwrap(await api.get('/api/running-todos'));
 }
