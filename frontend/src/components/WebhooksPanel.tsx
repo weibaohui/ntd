@@ -15,7 +15,7 @@ import {
   Descriptions,
   Tabs,
   Empty,
-  Typography,
+  Tooltip,
 } from 'antd';
 import {
   PlusOutlined,
@@ -23,16 +23,207 @@ import {
   EditOutlined,
   ApiOutlined,
   HistoryOutlined,
+  LinkOutlined,
+  CopyOutlined,
 } from '@ant-design/icons';
 import * as db from '../utils/database';
 import type { Webhook, WebhookRecord } from '../utils/database';
 import type { Todo } from '../types';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 interface WebhooksPanelProps {
   todos: Todo[];
 }
 
+/** 单个 URL 的复制块：移动端省略中间，桌面端显示全文（仍可复制） */
+function CopyableUrl({ url, compact }: { url: string; compact: boolean }) {
+  const display = useMemo(() => {
+    if (!compact) return url;
+    // 移动端：保留协议+域名+末尾路径关键部分，中间省略
+    try {
+      const u = new URL(url);
+      const path = u.pathname;
+      if (path.length <= 14) return `${u.host}${path}`;
+      const head = path.slice(0, 8);
+      const tail = path.slice(-6);
+      return `${u.host}${head}…${tail}`;
+    } catch {
+      // 退化为简单截断
+      if (url.length <= 28) return url;
+      return `${url.slice(0, 14)}…${url.slice(-8)}`;
+    }
+  }, [url, compact]);
+
+  return (
+    <Tooltip title={url} mouseEnterDelay={0.4}>
+      <Button
+        type="text"
+        size="small"
+        icon={<LinkOutlined />}
+        onClick={async () => {
+          if (!navigator.clipboard?.writeText) {
+            message.error('当前环境不支持复制');
+            return;
+          }
+          try {
+            await navigator.clipboard.writeText(url);
+            message.success('已复制 URL');
+          } catch {
+            message.error('复制失败，请手动复制');
+          }
+        }}
+        style={{
+          padding: compact ? '0 6px' : '0 8px',
+          height: compact ? 24 : 28,
+          fontSize: compact ? 11 : 12,
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+          maxWidth: '100%',
+        }}
+      >
+        <span
+          style={compact ? {
+            display: 'inline-block',
+            maxWidth: 180,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            verticalAlign: 'bottom',
+          } : {
+            display: 'inline-block',
+            verticalAlign: 'bottom',
+          }}
+        >
+          {display}
+        </span>
+        <CopyOutlined style={{ fontSize: 11, marginLeft: 4, opacity: 0.6 }} />
+      </Button>
+    </Tooltip>
+  );
+}
+
+/** 移动端单条 webhook 卡片 */
+function WebhookCard({
+  webhook,
+  todo,
+  baseUrl,
+  onEdit,
+  onDelete,
+  onToggle,
+}: {
+  webhook: Webhook;
+  todo: Todo | undefined;
+  baseUrl: string;
+  onEdit: () => void;
+  onDelete: () => void;
+  onToggle: () => void;
+}) {
+  return (
+    <Card
+      size="small"
+      style={{ marginBottom: 12 }}
+      styles={{ body: { padding: 12 } }}
+    >
+      {/* 顶部：名称 + 启用开关 + 操作 */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+          marginBottom: 8,
+        }}
+      >
+        <div
+          style={{
+            fontWeight: 500,
+            fontSize: 14,
+            flex: 1,
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+          title={webhook.name}
+        >
+          {webhook.name}
+        </div>
+        <Space size={4} style={{ flexShrink: 0 }}>
+          <Switch
+            checked={webhook.enabled}
+            onChange={onToggle}
+            size="small"
+          />
+          <Button
+            type="text"
+            size="small"
+            icon={<EditOutlined />}
+            onClick={onEdit}
+            aria-label="编辑"
+          />
+          <Popconfirm
+            title="确定删除此 Webhook？"
+            onConfirm={onDelete}
+            okType="danger"
+          >
+            <Button
+              type="text"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              aria-label="删除"
+            />
+          </Popconfirm>
+        </Space>
+      </div>
+
+      {/* 默认触发 Todo */}
+      <div
+        style={{
+          fontSize: 12,
+          color: 'var(--color-text-secondary)',
+          marginBottom: 6,
+          display: 'flex',
+          gap: 4,
+        }}
+      >
+        <span style={{ flexShrink: 0 }}>默认 Todo：</span>
+        <span
+          style={{
+            flex: 1,
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+          title={todo?.title || (webhook.default_todo_id ? `Todo #${webhook.default_todo_id}` : '')}
+        >
+          {webhook.default_todo_id
+            ? (todo?.title || `Todo #${webhook.default_todo_id}`)
+            : <span style={{ opacity: 0.5 }}>未设置</span>}
+        </span>
+      </div>
+
+      {/* URL 区域 */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
+        <CopyableUrl url={`${baseUrl}/webhook/trigger`} compact />
+        {webhook.default_todo_id && (
+          <CopyableUrl
+            url={`${baseUrl}/webhook/trigger/${webhook.default_todo_id}`}
+            compact
+          />
+        )}
+      </div>
+
+      {/* 创建时间 */}
+      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+        创建：{webhook.created_at ? new Date(webhook.created_at).toLocaleString() : '-'}
+      </div>
+    </Card>
+  );
+}
+
 export function WebhooksPanel({ todos }: WebhooksPanelProps) {
+  const isMobile = useIsMobile();
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
   const [webhooksLoading, setWebhooksLoading] = useState(false);
   const [webhookFormOpen, setWebhookFormOpen] = useState(false);
@@ -168,22 +359,15 @@ export function WebhooksPanel({ todos }: WebhooksPanelProps) {
     {
       title: '触发 URL',
       key: 'urls',
-      width: 300,
+      width: 320,
       render: (_: any, record: Webhook) => (
-        <Space direction="vertical" size={4}>
-          <Typography.Text
-            copyable={{ text: `${baseUrl}/webhook/trigger` }}
-            style={{ fontSize: 11 }}
-          >
-            <code>{baseUrl}/webhook/trigger</code>
-          </Typography.Text>
+        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+          <CopyableUrl url={`${baseUrl}/webhook/trigger`} compact={false} />
           {record.default_todo_id && (
-            <Typography.Text
-              copyable={{ text: `${baseUrl}/webhook/trigger/${record.default_todo_id}` }}
-              style={{ fontSize: 11 }}
-            >
-              <code>{baseUrl}/webhook/trigger/{record.default_todo_id}</code>
-            </Typography.Text>
+            <CopyableUrl
+              url={`${baseUrl}/webhook/trigger/${record.default_todo_id}`}
+              compact={false}
+            />
           )}
         </Space>
       ),
@@ -297,22 +481,57 @@ export function WebhooksPanel({ todos }: WebhooksPanelProps) {
               <Card
                 title="Webhook 列表"
                 extra={
-                  <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateWebhook}>
-                    添加 Webhook
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    onClick={handleCreateWebhook}
+                    size={isMobile ? 'small' : 'middle'}
+                  >
+                    {isMobile ? '添加' : '添加 Webhook'}
                   </Button>
                 }
                 style={{ marginBottom: 16 }}
+                styles={{ body: { padding: isMobile ? 12 : 24 } }}
               >
-                <Table
-                  dataSource={webhooks}
-                  columns={webhookColumns}
-                  rowKey="id"
-                  loading={webhooksLoading}
-                  pagination={false}
-                  size="small"
-                />
-                {webhooks.length === 0 && !webhooksLoading && (
-                  <Empty description="暂无 Webhook，点击添加按钮创建" style={{ marginTop: 24 }} />
+                {isMobile ? (
+                  <>
+                    {webhooks.map(wh => (
+                      <WebhookCard
+                        key={wh.id}
+                        webhook={wh}
+                        todo={todos.find(t => t.id === wh.default_todo_id)}
+                        baseUrl={baseUrl}
+                        onEdit={() => handleEditWebhook(wh)}
+                        onDelete={() => handleDeleteWebhook(wh.id)}
+                        onToggle={() => handleToggleEnabled(wh)}
+                      />
+                    ))}
+                    {webhooks.length === 0 && !webhooksLoading && (
+                      <Empty description="暂无 Webhook，点击添加按钮创建" style={{ marginTop: 24 }} />
+                    )}
+                    {webhooksLoading && webhooks.length === 0 && (
+                      <div style={{ textAlign: 'center', padding: 24, color: 'var(--color-text-tertiary)' }}>
+                        加载中...
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <Table
+                    dataSource={webhooks}
+                    columns={webhookColumns}
+                    rowKey="id"
+                    loading={webhooksLoading}
+                    pagination={false}
+                    size="small"
+                    locale={{
+                      emptyText: (
+                        <Empty
+                          description="暂无 Webhook，点击添加按钮创建"
+                          style={{ marginTop: 24 }}
+                        />
+                      ),
+                    }}
+                  />
                 )}
               </Card>
             ),
@@ -326,12 +545,13 @@ export function WebhooksPanel({ todos }: WebhooksPanelProps) {
               </span>
             ),
             children: (
-              <Card title="Webhook 调用记录">
+              <Card title="Webhook 调用记录" styles={{ body: { padding: isMobile ? 12 : 24 } }}>
                 <Table
                   dataSource={records}
                   columns={recordColumns}
                   rowKey="id"
                   loading={recordsLoading}
+                  scroll={isMobile ? { x: 720 } : undefined}
                   size="small"
                   pagination={{
                     current: recordsPage,
