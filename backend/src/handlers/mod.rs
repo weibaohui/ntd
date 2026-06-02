@@ -18,6 +18,7 @@ use crate::adapters::ExecutorRegistry;
 use crate::Assets;
 use crate::config::Config;
 use crate::db::Database;
+use crate::hooks::HookService;
 use crate::models::{ApiResponse, ParsedLogEntry};
 use crate::scheduler::TodoScheduler;
 use crate::services::feishu_listener::FeishuListener;
@@ -33,6 +34,7 @@ pub struct AppState {
     pub config: Arc<tokio::sync::RwLock<Config>>,
     pub feishu_listener: Arc<FeishuListener>,
     pub feishu_push_mutator: broadcast::Sender<crate::services::feishu_push::PushConfigUpdate>,
+    pub hook_service: Arc<HookService>,
 }
 
 impl AppState {
@@ -365,6 +367,17 @@ pub fn create_app(
         fetcher.start(bots_for_fetcher);
     });
 
+    // Create HookService with a ServiceContext so it can trigger target todos.
+    // Reuse the live ServiceContext values rather than re-cloning its fields.
+    let hook_ctx = ServiceContext {
+        db: db.clone(),
+        executor_registry: executor_registry.clone(),
+        tx: tx.clone(),
+        task_manager: task_manager.clone(),
+        config: config.clone(),
+    };
+    let hook_service = Arc::new(HookService::new(hook_ctx));
+
     let state = AppState {
         db,
         executor_registry,
@@ -374,6 +387,7 @@ pub fn create_app(
         config,
         feishu_listener: feishu_listener.clone(),
         feishu_push_mutator: push_mutator,
+        hook_service,
     };
 
     Router::new()

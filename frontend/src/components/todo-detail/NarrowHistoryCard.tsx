@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Button, Popconfirm, Tag, Tooltip } from 'antd';
-import { MessageOutlined, FileTextOutlined, StopOutlined, CopyOutlined } from '@ant-design/icons';
+import { MessageOutlined, FileTextOutlined, StopOutlined, CopyOutlined, LinkOutlined } from '@ant-design/icons';
 import { ExecutorBadge } from '../ExecutorBadge';
 import { XMarkdown } from '@ant-design/x-markdown';
 import { supportsResume } from '../../types';
@@ -8,6 +8,7 @@ import { formatLocalDateTime, formatDuration } from '../../utils/datetime';
 import * as db from '../../utils/database';
 import { getElapsedSeconds, hasLogsStatic } from './helpers';
 import { NarrowLogView } from './NarrowLogView';
+import { getHookTriggerLabel } from '../../utils/database/hooks';
 import type { ExecutionRecord, ExecutionStats, LogEntry } from '../../types';
 
 /** Narrow mode: single history card */
@@ -51,9 +52,18 @@ export function NarrowHistoryCard({ record, viewMode, onOpenResume, onExport, on
           </span>
           {record.executor && <ExecutorBadge executor={record.executor} />}
           {record.model && <Tag color="#3b82f6">{record.model}</Tag>}
-          <Tag color={record.trigger_type === 'cron' ? '#8b5cf6' : '#6b7280'} style={{ fontSize: 10 }}>
-            {record.trigger_type === 'cron' ? 'Cron' : '手动'}
+          <Tag color={record.trigger_type === 'cron' ? '#8b5cf6' : record.trigger_type.startsWith('hook:') ? '#a855f7' : '#6b7280'} style={record.trigger_type.startsWith('hook:') ? { fontSize: 10, border: '1px solid #a855f7' } : { fontSize: 10 }}>
+            {record.trigger_type === 'cron' ? 'Cron' : record.trigger_type.startsWith('hook:') ? 'Hook' : '手动'}
           </Tag>
+          {(() => {
+            const label = getHookTriggerLabel(record.trigger_type);
+            if (!label || record.source_todo_id == null) return null;
+            return (
+              <Tag color="purple" icon={<LinkOutlined />} style={{ fontSize: 10 }}>
+                被 #{record.source_todo_id} {record.source_todo_title ?? '?'} 的「{label}」hook 触发
+              </Tag>
+            );
+          })()}
           {record.status !== 'running' && record.usage?.duration_ms && (
             <span style={{ fontSize: 11, color: 'var(--color-success)', fontWeight: 600 }}>
               {formatDuration(record.usage.duration_ms / 1000)}

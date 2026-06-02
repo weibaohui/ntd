@@ -256,6 +256,10 @@ impl TodoScheduler {
                             params: None,
                             resume_session_id: None,
                             resume_message: None,
+                            chain: vec![],
+                            source_todo_id: None,
+                            source_todo_title: None,
+                            source_hook_id: None,
                         })
                         .await;
                     }

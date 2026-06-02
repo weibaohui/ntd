@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod scheduler_cron_validation_tests {
-    use chrono::Timelike;
+    use chrono::{Datelike, Timelike};
     use std::str::FromStr;
 
     #[test]
@@ -135,14 +135,13 @@ mod scheduler_cron_validation_tests {
 
     #[test]
     fn test_cron_weekday_schedule() {
-        // Every weekday at 9am
-        let schedule = cron::Schedule::from_str("0 0 9 * * 1-5").unwrap();
+        // Every weekday at 9am - use MON-FRI alias which is explicitly Monday-Friday
+        let schedule = cron::Schedule::from_str("0 0 9 * * MON-FRI").unwrap();
         let next = schedule.upcoming(chrono::Utc).next().unwrap();
 
-        // Should be Monday (1) through Friday (5)
-        let weekday = next.format("%w").to_string();
-        let weekday: u32 = weekday.parse().unwrap();
-        assert!(weekday >= 1 && weekday <= 5, "Weekday should be 1-5 (Mon-Fri)");
+        // Verify it's not a weekend day (Saturday=6 or Sunday=0 in num_days_from_sunday)
+        let weekday = next.weekday().num_days_from_sunday();
+        assert!(weekday != 0 && weekday != 6, "Weekday should not be weekend, got {}", weekday);
     }
 }
 

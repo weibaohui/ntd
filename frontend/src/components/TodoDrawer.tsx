@@ -3,6 +3,7 @@ import { Drawer, Input, Button, App, AutoComplete, Divider, Switch } from 'antd'
 import { FolderOutlined } from '@ant-design/icons';
 import * as db from '../utils/database';
 import type { ProjectDirectory } from '../utils/database';
+import type { TodoHookItem } from '../utils/database/hooks';
 import type { Todo, ExecutorConfig, ExecutorOption, SkillMeta, ExecutorSkills, TodoTemplate } from '../types';
 import { EXECUTORS, executorConfigToOption, getExecutorColor } from '../types';
 import { TagCheckCardGroup } from './TagCheckCard';
@@ -11,6 +12,8 @@ import { PromptEditor } from './todo-drawer/PromptEditor';
 import { SkillSelector } from './todo-drawer/SkillSelector';
 import { SchedulerSection } from './todo-drawer/SchedulerSection';
 import { TemplateModal } from './todo-drawer/TemplateModal';
+import { TodoHooksEditor } from './todo-detail/TodoHooksEditor';
+import { useApp } from '../hooks/useApp';
 
 interface TodoDrawerProps {
   open: boolean;
@@ -38,8 +41,10 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
   const [skillSearchText, setSkillSearchText] = useState('');
   const [schedulerEnabled, setSchedulerEnabled] = useState(false);
   const [schedulerConfig, setSchedulerConfig] = useState<string>('');
+  const [hooks, setHooks] = useState<TodoHookItem[]>([]);
   const [loading, setLoading] = useState(false);
   const editorRef = useRef<any>(null);
+  const { state: appState } = useApp();
 
   const insertTextAtCursor = useCallback((text: string) => {
     const editor = editorRef.current;
@@ -103,6 +108,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
         setWorktreeEnabled(todo.worktree_enabled || false);
         setSchedulerEnabled(todo.scheduler_enabled || false);
         setSchedulerConfig(todo.scheduler_config || '');
+        setHooks(todo.hooks ?? []);
       } else {
         setTitle('');
         setPrompt('');
@@ -112,6 +118,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
         setWorktreeEnabled(false);
         setSchedulerEnabled(false);
         setSchedulerConfig('');
+        setHooks([]);
       }
     }
   }, [open, todo]);
@@ -171,12 +178,13 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
           todo.id, title.trim(), prompt.trim(), todo.status,
           executor, schedulerEnabled, schedulerConfig || null,
           trimmedWorkspace, worktreeEnabled,
+          hooks,
         );
         await db.updateScheduler(todo.id, schedulerEnabled, schedulerConfig || null);
         await db.updateTodoTags(todo.id, selectedTags);
         message.success('任务已更新');
       } else {
-        const newTodo = await db.createTodo(title.trim(), prompt.trim(), selectedTags);
+        const newTodo = await db.createTodo(title.trim(), prompt.trim(), selectedTags, hooks);
 
         if (trimmedWorkspace || schedulerEnabled || executor !== 'claudecode' || worktreeEnabled) {
           if (trimmedWorkspace) {
@@ -189,6 +197,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
             newTodo.id, newTodo.title, newTodo.prompt, newTodo.status,
             executor, schedulerEnabled, schedulerConfig || null,
             trimmedWorkspace, worktreeEnabled,
+            hooks,
           );
           await db.updateScheduler(newTodo.id, schedulerEnabled, schedulerConfig || null);
         }
@@ -309,6 +318,16 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
             onEnabledChange={setSchedulerEnabled}
             onConfigChange={setSchedulerConfig}
             existingConfig={todo?.scheduler_config}
+          />
+
+          <Divider style={{ margin: '8px 0 16px' }} />
+
+          <TodoHooksEditor
+            todos={appState.todos}
+            ownerId={todo?.id ?? null}
+            hooks={hooks}
+            onChange={setHooks}
+            disabled={loading}
           />
         </div>
       </div>

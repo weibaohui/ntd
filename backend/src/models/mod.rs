@@ -107,6 +107,9 @@ pub struct Todo {
     pub workspace: Option<String>,
     #[serde(default)]
     pub worktree_enabled: bool,
+    /// Inline hooks owned by this todo. Parsed from the `todos.hooks` column.
+    #[serde(default)]
+    pub hooks: Vec<crate::hooks::TodoHookItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,6 +192,16 @@ pub struct ExecutionRecord {
     pub execution_stats: Option<ExecutionStats>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_message: Option<String>,
+    /// Hook trigger provenance: the source todo that fired this execution.
+    /// `Some` only when `trigger_type` starts with `hook:`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_todo_id: Option<i64>,
+    /// Snapshot of the source todo's title at trigger time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_todo_title: Option<String>,
+    /// The `TodoHookItem.id` that triggered this execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_hook_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -288,6 +301,8 @@ pub struct CreateTodoRequest {
     pub scheduler_config: Option<String>,
     #[serde(default)]
     pub scheduler_timezone: Option<String>,
+    #[serde(default)]
+    pub hooks: Option<Vec<crate::hooks::TodoHookItem>>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -310,6 +325,9 @@ pub struct UpdateTodoRequest {
     pub workspace: Option<String>,
     #[serde(default)]
     pub worktree_enabled: Option<bool>,
+    /// Replace the todo's inline hooks. `None` keeps the existing list.
+    #[serde(default)]
+    pub hooks: Option<Vec<crate::hooks::TodoHookItem>>,
 }
 
 #[derive(Deserialize, Serialize)]

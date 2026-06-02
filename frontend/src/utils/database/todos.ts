@@ -1,5 +1,6 @@
 import { api, unwrap } from './client';
 import type { Todo, Tag, TodoTemplate, CustomTemplateStatus } from '../../types';
+import type { TodoHookItem } from './hooks';
 
 // Todo APIs
 
@@ -7,8 +8,13 @@ export async function getAllTodos(): Promise<Todo[]> {
   return unwrap(await api.get('/xyz/todos'));
 }
 
-export async function createTodo(title: string, prompt: string = '', tagIds: number[] = []): Promise<Todo> {
-  return unwrap(await api.post('/xyz/todos', { title, prompt, tag_ids: tagIds }));
+export async function createTodo(
+  title: string,
+  prompt: string = '',
+  tagIds: number[] = [],
+  hooks: TodoHookItem[] = [],
+): Promise<Todo> {
+  return unwrap(await api.post('/xyz/todos', { title, prompt, tag_ids: tagIds, hooks }));
 }
 
 export async function updateTodo(
@@ -21,6 +27,7 @@ export async function updateTodo(
   scheduler_config?: string | null,
   workspace?: string | null,
   worktree_enabled?: boolean,
+  hooks?: TodoHookItem[],
 ): Promise<Todo> {
   const body: Record<string, unknown> = { title, prompt, status };
   if (executor !== undefined) body.executor = executor;
@@ -28,8 +35,13 @@ export async function updateTodo(
   if (scheduler_config !== undefined) body.scheduler_config = scheduler_config;
   if (workspace !== undefined) body.workspace = workspace;
   if (worktree_enabled !== undefined) body.worktree_enabled = worktree_enabled;
+  if (hooks !== undefined) body.hooks = hooks;
 
   return unwrap(await api.put(`/xyz/todos/${id}`, body));
+}
+
+export async function updateTodoHooks(id: number, hooks: TodoHookItem[]): Promise<Todo> {
+  return unwrap(await api.put(`/xyz/todos/${id}`, { hooks }));
 }
 
 export async function deleteTodo(id: number): Promise<void> {

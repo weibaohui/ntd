@@ -352,6 +352,7 @@ async fn handle_todo(
                         scheduler_enabled: None,
                         scheduler_config: None,
                         scheduler_timezone: None,
+                        hooks: None,
                     });
                 if workspace.is_some() {
                     // workspace is sent separately in the full JSON body
@@ -373,6 +374,7 @@ async fn handle_todo(
                     scheduler_enabled: None,
                     scheduler_config: None,
                     scheduler_timezone: None,
+                    hooks: None,
                 }
             };
 

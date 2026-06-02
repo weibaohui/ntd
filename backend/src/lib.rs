@@ -6,6 +6,7 @@ pub mod db;
 pub mod executor_service;
 pub mod feishu;
 pub mod handlers;
+pub mod hooks;
 pub mod models;
 pub mod scheduler;
 pub mod service_context;

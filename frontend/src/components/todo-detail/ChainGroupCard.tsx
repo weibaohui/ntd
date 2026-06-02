@@ -10,6 +10,7 @@ import { getElapsedSeconds, hasLogsStatic } from './helpers';
 import { NarrowLogView } from './NarrowLogView';
 import { ContinuationLogView } from './ContinuationLogView';
 import { ContinuationLogsLoader } from './ContinuationLogsLoader';
+import { getHookTriggerLabel } from '../../utils/database/hooks';
 import type { SessionGroup } from './helpers';
 import type { ExecutionRecord, ExecutionStats, LogEntry } from '../../types';
 
@@ -51,9 +52,18 @@ function ChainGroupCard({ group, onOpenResume, onExport, onStop, messageApi, vie
             </span>
             {mainRecord.executor && <ExecutorBadge executor={mainRecord.executor} />}
             {mainRecord.model && <Tag color="#3b82f6">{mainRecord.model}</Tag>}
-            <Tag color={mainRecord.trigger_type === 'cron' ? '#8b5cf6' : '#6b7280'} style={{ fontSize: 10 }}>
-              {mainRecord.trigger_type === 'cron' ? 'Cron' : '手动'}
+            <Tag color={mainRecord.trigger_type === 'cron' ? '#8b5cf6' : mainRecord.trigger_type.startsWith('hook:') ? '#a855f7' : '#6b7280'} style={mainRecord.trigger_type.startsWith('hook:') ? { fontSize: 10, border: '1px solid #a855f7' } : { fontSize: 10 }}>
+              {mainRecord.trigger_type === 'cron' ? 'Cron' : mainRecord.trigger_type.startsWith('hook:') ? 'Hook' : '手动'}
             </Tag>
+            {(() => {
+              const label = getHookTriggerLabel(mainRecord.trigger_type);
+              if (!label || mainRecord.source_todo_id == null) return null;
+              return (
+                <Tag color="purple" icon={<LinkOutlined />} style={{ fontSize: 10 }}>
+                  被 #{mainRecord.source_todo_id} {mainRecord.source_todo_title ?? '?'} 的「{label}」hook 触发
+                </Tag>
+              );
+            })()}
             {mainRecord.status !== 'running' && mainRecord.usage?.duration_ms && (
               <span style={{ fontSize: 11, color: 'var(--color-success)', fontWeight: 600 }}>
                 {formatDuration(mainRecord.usage.duration_ms / 1000)}

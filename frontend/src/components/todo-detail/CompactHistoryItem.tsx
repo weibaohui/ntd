@@ -60,8 +60,8 @@ export function CompactHistoryItem({ record, onOpenResume, onExport }: {
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
         {record.executor && <ExecutorBadge executor={record.executor} />}
         {record.model && <Tag color="#3b82f6" style={{ fontSize: 10, padding: '0 6px', lineHeight: '18px' }}>{record.model}</Tag>}
-        <Tag color={record.trigger_type === 'cron' ? '#8b5cf6' : '#6b7280'} style={{ fontSize: 10, padding: '0 6px', lineHeight: '18px' }}>
-          {record.trigger_type === 'cron' ? 'Cron' : '手动'}
+        <Tag color={record.trigger_type === 'cron' ? '#8b5cf6' : record.trigger_type.startsWith('hook:') ? '#a855f7' : '#6b7280'} style={record.trigger_type.startsWith('hook:') ? { fontSize: 10, padding: '0 6px', lineHeight: '18px', border: '1px solid #a855f7' } : { fontSize: 10, padding: '0 6px', lineHeight: '18px' }}>
+          {record.trigger_type === 'cron' ? 'Cron' : record.trigger_type.startsWith('hook:') ? 'Hook' : '手动'}
         </Tag>
         {record.usage?.duration_ms && (
           <span style={{ fontSize: 10, color: 'var(--color-success)', fontWeight: 600 }}>

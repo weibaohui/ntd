@@ -42,6 +42,14 @@ pub struct RunTodoExecutionRequest {
     pub params: Option<std::collections::HashMap<String, String>>,
     pub resume_session_id: Option<String>,
     pub resume_message: Option<String>,
+    /// Todo ids already visited on the dispatch path, used to break cycles
+    /// when a hook triggers a todo that would re-fire the source.
+    pub chain: Vec<i64>,
+    /// Hook trigger provenance. `None` for manual/cron/webhook/feishu
+    /// triggers; populated by `execute_target_todo` for hook firings.
+    pub source_todo_id: Option<i64>,
+    pub source_todo_title: Option<String>,
+    pub source_hook_id: Option<i64>,
 }
 
 /// Run a todo execution. Priority: explicit executor > todo stored executor > default.
@@ -59,6 +67,10 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         params,
         resume_session_id,
         resume_message,
+        chain,
+        source_todo_id,
+        source_todo_title,
+        source_hook_id,
     } = request;
     let message = params
         .as_ref()
@@ -234,6 +246,9 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             task_id: &task_id,
             session_id: Some(session_id_for_executor),
             resume_message: resume_message.as_deref(),
+            source_todo_id,
+            source_todo_title: source_todo_title.as_deref(),
+            source_hook_id,
         })
         .await
     {
@@ -248,6 +263,10 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             };
         }
     };
+
+    // State-change hooks for "进入执行中" fire from the update_todo handler when
+    // the user transitions the todo into in_progress. The executor no longer
+    // gates execution on a hook — it just runs.
 
     // Update todo status to running and associate with task
     if let Err(e) = db.start_todo_execution(todo_id, &task_id).await {
@@ -294,6 +313,8 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
     let tx_clone = tx.clone();
     let executor_spawn = executor.clone();
     let task_manager_spawn = task_manager.clone();
+    let executor_registry_spawn = executor_registry.clone();
+    let config_spawn = config.clone();
 
     let todo_title = todo.as_ref().map(|t| t.title.clone()).unwrap_or_default();
     let execution_timeout_secs = timeout_secs;
@@ -906,6 +927,36 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             .await;
 
         let _ = db_clone.finish_todo_execution(todo_id, success).await;
+
+        // Fire the state-change hook for "进入已完成/失败". The executor
+        // bypasses the update_todo handler, so this is the only place the
+        // transition to a terminal state is observed.
+        if let Some(t) = todo.as_ref() {
+            let new_status = if success {
+                crate::models::TodoStatus::Completed
+            } else {
+                crate::models::TodoStatus::Failed
+            };
+            if let Some(ctx) = crate::hooks::models::HookContext::for_state_change(
+                todo_id,
+                t.title.clone(),
+                crate::models::TodoStatus::Running,
+                new_status,
+                t.executor.clone(),
+                t.workspace.clone(),
+                chain.clone(),
+            ) {
+                let svc_ctx = crate::service_context::ServiceContext {
+                    db: db_clone.clone(),
+                    executor_registry: executor_registry_spawn.clone(),
+                    tx: tx_clone.clone(),
+                    task_manager: task_manager_spawn.clone(),
+                    config: config_spawn.clone(),
+                };
+                let svc = std::sync::Arc::new(crate::hooks::HookService::new(svc_ctx));
+                svc.fire_for_todo(todo_id, ctx);
+            }
+        }
 
         let entry = ParsedLogEntry::new(
             if success { "info" } else { "error" },
