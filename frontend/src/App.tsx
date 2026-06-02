@@ -9,6 +9,7 @@ import { TodoList } from './components/TodoList';
 import { TodoDetail } from './components/TodoDetail';
 import { Dashboard } from './components/Dashboard';
 import { MemorialBoard } from './components/MemorialBoard';
+import { RelationMap } from './components/relation-map';
 import { SettingsPage } from './components/SettingsPage';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
@@ -31,13 +32,13 @@ function AppContent() {
   const getInitialView = () => {
     const params = new URLSearchParams(window.location.search);
     const view = params.get('view');
-    if (view === 'settings' || view === 'memorial') return view;
+    if (view === 'settings' || view === 'memorial' || view === 'relation') return view;
     return 'dashboard';
   };
-  const getInitialPanel = (view: 'dashboard' | 'settings' | 'memorial') => {
+  const getInitialPanel = (view: 'dashboard' | 'settings' | 'memorial' | 'relation') => {
     return view === 'dashboard' ? 'list' : 'detail';
   };
-  const [activeView, setActiveView] = useState<'dashboard' | 'settings' | 'memorial'>(getInitialView);
+  const [activeView, setActiveView] = useState<'dashboard' | 'settings' | 'memorial' | 'relation'>(getInitialView);
   const [selectedPanel, setSelectedPanel] = useState<'list' | 'detail'>(() => getInitialPanel(getInitialView()));
 
   const [panelCollapsed, setPanelCollapsed] = useState(() => {
@@ -83,7 +84,7 @@ function AppContent() {
         setSelectedPanel('detail');
       } else {
         dispatch({ type: 'SELECT_TODO', payload: null });
-        if (view === 'settings' || view === 'memorial') {
+        if (view === 'settings' || view === 'memorial' || view === 'relation') {
           setActiveView(view);
           setSelectedPanel('detail');
         } else {
@@ -141,6 +142,13 @@ function AppContent() {
     setActiveView('settings');
     setSelectedPanel('detail');
     pushUrl('settings');
+  };
+
+  const handleShowRelationMap = () => {
+    clearSelection();
+    setActiveView('relation');
+    setSelectedPanel('detail');
+    pushUrl('relation');
   };
 
 
@@ -250,6 +258,7 @@ function AppContent() {
               onSelectTodo={handleSelectTodo}
               onShowDashboard={handleShowDashboard}
               onShowMemorial={handleShowMemorial}
+              onShowRelationMap={handleShowRelationMap}
               onShowSettings={handleShowSettings}
             />
           </div>
@@ -270,6 +279,8 @@ function AppContent() {
                 <SettingsPage onBack={isMobile ? handleBackToList : undefined} />
               ) : activeView === 'memorial' ? (
                 <MemorialBoard onBack={isMobile ? handleBackToList : undefined} />
+              ) : activeView === 'relation' ? (
+                <RelationMap onBack={isMobile ? handleBackToList : undefined} />
               ) : (
                 <Dashboard onBack={isMobile ? handleBackToList : undefined} />
               )}
