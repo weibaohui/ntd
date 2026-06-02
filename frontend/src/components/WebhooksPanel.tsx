@@ -60,9 +60,17 @@ function CopyableUrl({ url, compact }: { url: string; compact: boolean }) {
         type="text"
         size="small"
         icon={<LinkOutlined />}
-        onClick={() => {
-          navigator.clipboard?.writeText(url);
-          message.success('已复制 URL');
+        onClick={async () => {
+          if (!navigator.clipboard?.writeText) {
+            message.error('当前环境不支持复制');
+            return;
+          }
+          try {
+            await navigator.clipboard.writeText(url);
+            message.success('已复制 URL');
+          } catch {
+            message.error('复制失败，请手动复制');
+          }
         }}
         style={{
           padding: compact ? '0 6px' : '0 8px',
@@ -73,12 +81,15 @@ function CopyableUrl({ url, compact }: { url: string; compact: boolean }) {
         }}
       >
         <span
-          style={{
+          style={compact ? {
             display: 'inline-block',
-            maxWidth: compact ? 180 : 240,
+            maxWidth: 180,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
+            verticalAlign: 'bottom',
+          } : {
+            display: 'inline-block',
             verticalAlign: 'bottom',
           }}
         >
@@ -505,19 +516,22 @@ export function WebhooksPanel({ todos }: WebhooksPanelProps) {
                     )}
                   </>
                 ) : (
-                  <>
-                    <Table
-                      dataSource={webhooks}
-                      columns={webhookColumns}
-                      rowKey="id"
-                      loading={webhooksLoading}
-                      pagination={false}
-                      size="small"
-                    />
-                    {webhooks.length === 0 && !webhooksLoading && (
-                      <Empty description="暂无 Webhook，点击添加按钮创建" style={{ marginTop: 24 }} />
-                    )}
-                  </>
+                  <Table
+                    dataSource={webhooks}
+                    columns={webhookColumns}
+                    rowKey="id"
+                    loading={webhooksLoading}
+                    pagination={false}
+                    size="small"
+                    locale={{
+                      emptyText: (
+                        <Empty
+                          description="暂无 Webhook，点击添加按钮创建"
+                          style={{ marginTop: 24 }}
+                        />
+                      ),
+                    }}
+                  />
                 )}
               </Card>
             ),
