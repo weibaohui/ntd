@@ -164,6 +164,7 @@ export function useExecutionEvents() {
                 type: 'FINISH_TASK',
                 payload: {
                   taskId: data.task_id,
+                  todoId: data.todo_id,
                   success: data.success,
                   result: data.result,
                 },

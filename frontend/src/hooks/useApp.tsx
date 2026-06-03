@@ -83,7 +83,7 @@ type ExecutionAction =
   | { type: 'UPDATE_EXECUTION_RECORD'; payload: { todoId: number; record: ExecutionRecord } }
   | { type: 'ADD_RUNNING_TASK'; payload: RunningTask }
   | { type: 'APPEND_TASK_LOG'; payload: { taskId: string; log: LogEntry } }
-  | { type: 'FINISH_TASK'; payload: { taskId: string; success: boolean; result: string | null } }
+  | { type: 'FINISH_TASK'; payload: { taskId: string; todoId: number; success: boolean; result: string | null } }
   | { type: 'REMOVE_RUNNING_TASK'; payload: string }
   | { type: 'CLEAR_RUNNING_TASKS' }
   | { type: 'SET_ACTIVE_TASK'; payload: string | null }

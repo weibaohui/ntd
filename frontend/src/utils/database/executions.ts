@@ -24,7 +24,7 @@ export async function getExecutionRecordsBySession(sessionId: string): Promise<E
   return unwrap(await api.get(`/api/execution-records/session/${encodeURIComponent(sessionId)}`));
 }
 
-export async function executeTodo(todoId: number, executor?: string, params?: Record<string, string>): Promise<{ task_id: string }> {
+export async function executeTodo(todoId: number, executor?: string, params?: Record<string, string>): Promise<{ task_id: string; record_id: number }> {
   return unwrap(await api.post('/api/execute', { todo_id: todoId, executor, params }));
 }
 
