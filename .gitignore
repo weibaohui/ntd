@@ -56,3 +56,8 @@ frontend/test-results/.last-run.json
 frontend/node_modules
 .antigravitycli/
 .codebuddy/
+
+# npm local config
+# 仅包含代理等个人环境配置（127.0.0.1:7890 之类），提交会污染仓库
+# 且对其他协作者不通用，故忽略本机文件，避免误提交
+.npmrc
