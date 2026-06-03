@@ -51,16 +51,19 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
   // 当执行结束时，刷新执行记录和日志
   const prevIsExecutingRef = useRef(isExecuting);
   useEffect(() => {
-    if (prevIsExecutingRef.current && !isExecuting && selectedTodoId) {
-      // 执行刚结束，刷新执行记录
+    const prev = prevIsExecutingRef.current;
+    // 当 isExecuting 从 true 变为 false 时，表示执行刚结束
+    if (prev && !isExecuting && selectedTodoId) {
+      // 刷新执行记录列表（包含结论）
       loadExecutionRecords(historyPage, historyLimit);
-      // 如果有选中的记录，刷新其日志
+      // 如果有选中的记录，刷新单条记录详情（包含 result）和日志
       if (selectedHistoryRecordId) {
+        refreshSingleRecord(selectedHistoryRecordId);
         loadLogs(selectedHistoryRecordId, 1);
       }
     }
     prevIsExecutingRef.current = isExecuting;
-  }, [isExecuting, selectedTodoId, selectedHistoryRecordId]);
+  }, [isExecuting, selectedTodoId, selectedHistoryRecordId, historyPage, historyLimit]);
 
   const records = selectedTodoId ? executionRecords[selectedTodoId] || [] : [];
 
