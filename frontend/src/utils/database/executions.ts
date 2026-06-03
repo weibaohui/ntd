@@ -24,6 +24,10 @@ export async function getExecutionRecordsBySession(sessionId: string): Promise<E
   return unwrap(await api.get(`/api/execution-records/session/${encodeURIComponent(sessionId)}`));
 }
 
+/**
+ * 执行指定 todo 任务。
+ * 返回 task_id 用于 WebSocket 事件追踪，record_id 用于 UI 层立即获取并选中新创建的执行记录。
+ */
 export async function executeTodo(todoId: number, executor?: string, params?: Record<string, string>): Promise<{ task_id: string; record_id: number }> {
   return unwrap(await api.post('/api/execute', { todo_id: todoId, executor, params }));
 }

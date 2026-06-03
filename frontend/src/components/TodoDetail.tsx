@@ -236,13 +236,18 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
       );
       message.success('任务已开始执行');
       // 获取新创建的执行记录并立即添加到状态中
-      const newRecord = await db.getExecutionRecord(result.record_id);
-      dispatch({
-        type: 'ADD_EXECUTION_RECORD',
-        payload: { todoId: selectedTodo.id, record: newRecord }
-      });
-      // 选中新记录
-      setSelectedHistoryRecordId(result.record_id);
+      try {
+        const newRecord = await db.getExecutionRecord(result.record_id);
+        dispatch({
+          type: 'ADD_EXECUTION_RECORD',
+          payload: { todoId: selectedTodo.id, record: newRecord }
+        });
+        // 选中新记录
+        setSelectedHistoryRecordId(result.record_id);
+      } catch {
+        // 获取新记录失败时回退到刷新列表
+        await loadExecutionRecords(1, historyLimit);
+      }
     } catch (error) {
       message.error('执行失败: ' + (error instanceof Error ? error.message : String(error)));
     }
@@ -271,13 +276,18 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
       setExecuteWithArgsModalOpen(false);
       setExecuteArgs('');
       // 获取新创建的执行记录并立即添加到状态中
-      const newRecord = await db.getExecutionRecord(result.record_id);
-      dispatch({
-        type: 'ADD_EXECUTION_RECORD',
-        payload: { todoId: selectedTodo.id, record: newRecord }
-      });
-      // 选中新记录
-      setSelectedHistoryRecordId(result.record_id);
+      try {
+        const newRecord = await db.getExecutionRecord(result.record_id);
+        dispatch({
+          type: 'ADD_EXECUTION_RECORD',
+          payload: { todoId: selectedTodo.id, record: newRecord }
+        });
+        // 选中新记录
+        setSelectedHistoryRecordId(result.record_id);
+      } catch {
+        // 获取新记录失败时回退到刷新列表
+        await loadExecutionRecords(1, historyLimit);
+      }
     } catch (error) {
       message.error('执行失败: ' + (error instanceof Error ? error.message : String(error)));
     } finally {
