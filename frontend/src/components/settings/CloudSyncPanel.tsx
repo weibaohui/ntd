@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Card, Form, Input, Button, Select, Space, Table, Tag, message, Divider, Alert, Typography } from 'antd';
+import { Card, Form, Input, Button, Select, Space, Table, Tag, message, Divider, Alert, Typography, Modal } from 'antd';
 import { CloudOutlined, SyncOutlined, SaveOutlined, CheckCircleFilled, ExclamationCircleFilled } from '@ant-design/icons';
 import * as syncApi from '../../utils/database/sync';
 import './CloudSyncPanel.css';
@@ -14,6 +14,7 @@ export function CloudSyncPanel() {
   const [configForm] = Form.useForm();
   const [hasToken, setHasToken] = useState(false);
   const tokenRef = useRef('');
+  const [conflictMode, setConflictMode] = useState('overwrite');
 
   // 加载配置和状态
   const loadData = useCallback(async () => {
@@ -24,6 +25,7 @@ export function CloudSyncPanel() {
       ]);
       setStatusInfo(status);
       setHasToken(config.has_token ?? false);
+      setConflictMode(config.default_conflict_mode);
       // 保持当前输入的 token 不变
       configForm.setFieldsValue({
         server_url: config.server_url,
@@ -55,16 +57,15 @@ export function CloudSyncPanel() {
     try {
       const values = await configForm.validateFields();
       setLoading(true);
-      // 保存时使用当前输入的 token
       const tokenToSave = values.sync_token || values.sync_token === '' ? values.sync_token : tokenRef.current;
       await syncApi.saveCloudConfig({
         server_url: values.server_url,
         sync_token: tokenToSave,
         default_conflict_mode: values.default_conflict_mode,
       });
-      // 保存成功后更新本地状态
       tokenRef.current = values.sync_token || '';
       setHasToken(!!values.sync_token);
+      setConflictMode(values.default_conflict_mode);
       message.success('配置已保存');
     } catch (err: any) {
       message.error('保存失败: ' + (err?.message || String(err)));
@@ -80,15 +81,61 @@ export function CloudSyncPanel() {
       return;
     }
 
-    try {
-      setSyncing(true);
-      message.info(direction === 'push' ? '向上同步功能开发中...' : '向下同步功能开发中...');
-      await loadSyncHistory();
-    } catch (err: any) {
-      message.error('同步失败: ' + (err?.message || String(err)));
-    } finally {
-      setSyncing(false);
-    }
+    // 弹出确认框选择冲突模式
+    let selectedMode = conflictMode;
+    let dryRun = false;
+
+    Modal.confirm({
+      title: direction === 'push' ? '确认向上同步' : '确认向下同步',
+      content: (
+        <div>
+          <p>选择同步模式：</p>
+          <Select
+            value={selectedMode}
+            onChange={(v) => { selectedMode = v; }}
+            style={{ width: '100%', marginBottom: 16 }}
+          >
+            <Select.Option value="overwrite">覆盖（以云端数据为准）</Select.Option>
+            <Select.Option value="skip">跳过（保留本地数据）</Select.Option>
+            <Select.Option value="rename">重命名（避免冲突）</Select.Option>
+          </Select>
+          <p>
+            <Button size="small" onClick={() => { dryRun = true; }}>
+              预览 (Dry Run)
+            </Button>
+          </p>
+        </div>
+      ),
+      okText: '执行同步',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          setSyncing(true);
+          let result: syncApi.SyncResult;
+          if (direction === 'push') {
+            result = await syncApi.syncPush({ conflict_mode: selectedMode, dry_run: dryRun });
+          } else {
+            result = await syncApi.syncPull({ conflict_mode: selectedMode, dry_run: dryRun });
+          }
+
+          if (result.success) {
+            const msg = dryRun ? '预览成功' : '同步成功';
+            if (direction === 'push') {
+              message.success(`${msg}：推送 ${result.pushed_count} 条`);
+            } else {
+              message.success(`${msg}：拉取 ${result.pulled_count} 条`);
+            }
+          } else {
+            message.error('同步失败：' + (result.errors[0] || '未知错误'));
+          }
+          await loadSyncHistory();
+        } catch (err: any) {
+          message.error('同步失败：' + (err?.message || String(err)));
+        } finally {
+          setSyncing(false);
+        }
+      },
+    });
   };
 
   const isAuthenticated = statusInfo?.authenticated ?? hasToken;

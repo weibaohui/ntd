@@ -49,3 +49,24 @@ export async function saveCloudConfig(config: Partial<CloudConfig>): Promise<voi
 export async function getSyncRecords(params?: { limit?: number; offset?: number }): Promise<SyncRecord[]> {
   return unwrap(await api.get('/api/cloud/sync/records', { params }));
 }
+
+// ============ Sync APIs ============
+
+export interface SyncResult {
+  success: boolean;
+  direction: string;
+  conflict_mode: string;
+  dry_run: boolean;
+  pushed_count: number;
+  pulled_count: number;
+  conflicts_count: number;
+  errors: string[];
+}
+
+export async function syncPush(params?: { conflict_mode?: string; dry_run?: boolean }): Promise<SyncResult> {
+  return unwrap(await api.get('/api/cloud/sync/push', { params }));
+}
+
+export async function syncPull(params?: { conflict_mode?: string; dry_run?: boolean }): Promise<SyncResult> {
+  return unwrap(await api.get('/api/cloud/sync/pull', { params }));
+}
