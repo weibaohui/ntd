@@ -73,6 +73,8 @@ pub struct Config {
     pub auto_usage_stats_enabled: bool,
     /// AI 使用统计自动归档 cron 表达式（6 字段，含秒），默认每天凌晨 1 点执行
     pub auto_usage_stats_cron: String,
+    /// 云端同步配置
+    pub cloud_sync: CloudSyncConfig,
 }
 
 /// Paths for each supported executor binary.
@@ -130,6 +132,34 @@ impl Default for SlashCommandRule {
     }
 }
 
+/// 云端同步配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CloudSyncConfig {
+    /// 云端服务器地址
+    pub server_url: String,
+    /// 认证 token
+    pub token: Option<String>,
+    /// 设备 ID
+    pub device_id: Option<i64>,
+    /// 最后同步时间
+    pub last_sync_at: Option<String>,
+    /// 默认冲突解决模式
+    pub default_conflict_mode: String,
+}
+
+impl Default for CloudSyncConfig {
+    fn default() -> Self {
+        Self {
+            server_url: String::new(),
+            token: None,
+            device_id: None,
+            last_sync_at: None,
+            default_conflict_mode: "overwrite".to_string(),
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -158,6 +188,7 @@ impl Default for Config {
             scheduler_default_timezone: None,
             auto_usage_stats_enabled: false,
             auto_usage_stats_cron: "0 0 1 * * *".to_string(),
+            cloud_sync: CloudSyncConfig::default(),
         }
     }
 }
