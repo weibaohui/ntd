@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Card, Form, Input, Button, Select, Space, Table, Tag, message, Divider, Alert, Modal, Checkbox } from 'antd';
+import { Card, Form, Input, Button, Space, Table, Tag, message, Divider, Alert, Modal, Checkbox, Radio } from 'antd';
 import { CloudOutlined, SyncOutlined, SaveOutlined, CheckCircleFilled, ExclamationCircleFilled } from '@ant-design/icons';
 import * as syncApi from '../../utils/database/sync';
 import './CloudSyncPanel.css';
@@ -95,18 +95,18 @@ export function CloudSyncPanel() {
       title: isPush ? '确认向上同步（推送至云端）' : '确认向下同步（拉取至本地）',
       content: (
         <div>
-          <p>选择冲突解决策略：</p>
-          <Select
+          <p>冲突解决策略：</p>
+          <Radio.Group
             value={selectedMode}
-            onChange={(v) => { selectedMode = v; }}
-            style={{ width: '100%', marginBottom: 16 }}
+            onChange={e => { selectedMode = e.target.value; }}
+            style={{ marginBottom: 16 }}
           >
             {modeOptions.map(opt => (
-              <Select.Option key={opt.value} value={opt.value}>{opt.label}</Select.Option>
+              <Radio key={opt.value} value={opt.value} style={{ display: 'block', marginBottom: 8 }}>{opt.label}</Radio>
             ))}
-          </Select>
+          </Radio.Group>
           <Checkbox
-            onChange={(e) => { dryRun = e.target.checked; }}
+            onChange={e => { dryRun = e.target.checked; }}
           >
             预览模式 (Dry Run)
           </Checkbox>
