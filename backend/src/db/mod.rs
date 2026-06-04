@@ -10,10 +10,11 @@ use std::time::Duration;
 use sea_orm::{
     ActiveModelBehavior, ActiveModelTrait, ColumnTrait, ConnectOptions, ConnectionTrait,
     Database as SeaDatabase, DatabaseConnection, DbBackend, EntityTrait, IntoActiveModel,
-    Order, QueryFilter, QueryOrder, Statement,
+    Order, QueryFilter, QueryOrder, QuerySelect, Statement,
 };
 
 pub mod entity;
+pub mod sync_record;
 pub use entity::prelude::*;
 
 /// Model breakdown with date (for API responses)
@@ -911,6 +912,23 @@ impl Database {
              END",
         )
         .await?;
+
+        // 同步记录表
+        self.exec(
+            "CREATE TABLE IF NOT EXISTS sync_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                direction TEXT NOT NULL,
+                conflict_mode TEXT NOT NULL,
+                status TEXT NOT NULL,
+                data_type TEXT NOT NULL,
+                details TEXT,
+                error_message TEXT,
+                created_at TEXT
+            )",
+        )
+        .await?;
+        self.exec("CREATE INDEX IF NOT EXISTS idx_sync_records_created_at ON sync_records(created_at DESC)")
+            .await?;
 
         Ok(())
     }

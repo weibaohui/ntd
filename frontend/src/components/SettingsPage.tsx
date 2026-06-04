@@ -14,6 +14,7 @@ import {
   FileTextOutlined,
   LeftOutlined,
   ApiOutlined,
+  CloudOutlined,
 } from '@ant-design/icons';
 import { useApp } from '../hooks/useApp';
 import * as db from '../utils/database';
@@ -30,6 +31,7 @@ import { RuntimePanel } from './settings/RuntimePanel';
 import { MessagesPanel } from './settings/MessagesPanel';
 import { TemplatesPanel } from './settings/TemplatesPanel';
 import { AboutPanel } from './settings/AboutPanel';
+import { CloudSyncPanel } from './settings/CloudSyncPanel';
 
 interface SettingsPageProps {
   onBack?: () => void;
@@ -220,6 +222,11 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
       key: 'webhooks',
       label: <span><ApiOutlined style={{ marginRight: 6 }} />Webhook</span>,
       children: <WebhooksPanel todos={state.todos} />,
+    },
+    {
+      key: 'cloudSync',
+      label: <span><CloudOutlined style={{ marginRight: 6 }} />云端同步</span>,
+      children: <CloudSyncPanel />,
     },
     {
       key: 'about',

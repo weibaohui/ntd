@@ -1,0 +1,376 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Card, Form, Input, Button, Space, Table, Tag, message, Divider, Alert, Modal, Checkbox, Radio } from 'antd';
+import { CloudOutlined, SyncOutlined, SaveOutlined, CheckCircleFilled, ExclamationCircleFilled, DeleteOutlined } from '@ant-design/icons';
+import * as syncApi from '../../utils/database/sync';
+import './CloudSyncPanel.css';
+
+export function CloudSyncPanel() {
+  const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncHistory, setSyncHistory] = useState<syncApi.SyncRecord[]>([]);
+  const [statusInfo, setStatusInfo] = useState<syncApi.SyncStatusResponse | null>(null);
+  const [configForm] = Form.useForm();
+  const [hasToken, setHasToken] = useState(false);
+  const tokenRef = useRef('');
+
+  // 受控 Modal 状态：解决 Modal.confirm content 只渲染一次的问题
+  const [syncModalVisible, setSyncModalVisible] = useState(false);
+  const [syncModalDirection, setSyncModalDirection] = useState<'push' | 'pull'>('push');
+  const [selectedMode, setSelectedMode] = useState('overwrite');
+  const [dryRun, setDryRun] = useState(false);
+
+  // 加载配置和状态
+  const loadData = useCallback(async () => {
+    try {
+      const [status, config] = await Promise.all([
+        syncApi.getCloudSyncStatus(),
+        syncApi.getCloudConfig(),
+      ]);
+      setStatusInfo(status);
+      setHasToken(config.has_token ?? false);
+      // 保持当前输入的 token 不变
+      configForm.setFieldsValue({
+        server_url: config.server_url,
+        sync_token: tokenRef.current || '',
+        default_conflict_mode: config.default_conflict_mode,
+      });
+    } catch (err) {
+      console.error('加载云端配置失败:', err);
+    }
+  }, [configForm]);
+
+  // 同步历史分页状态
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyPageSize] = useState(10);
+  const [historyTotal, setHistoryTotal] = useState(0);
+
+  // 加载同步历史（按分页）
+  const loadSyncHistory = useCallback(async (page: number, pageSize: number) => {
+    try {
+      // limit 是单页大小，offset = (page - 1) * pageSize
+      const offset = (page - 1) * pageSize;
+      const resp = await syncApi.getSyncRecords({ limit: pageSize, offset });
+      setSyncHistory(resp.records);
+      setHistoryTotal(resp.total);
+    } catch (err) {
+      console.error('加载同步历史失败:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+    // 初次加载第 1 页
+    loadSyncHistory(historyPage, historyPageSize);
+    // 故意省略依赖，避免初次之外重复触发；
+    // 切换页码由 Table.onChange 显式调用 loadSyncHistory
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadData, loadSyncHistory]);
+
+  // 保存配置
+  const handleSaveConfig = async () => {
+    try {
+      const values = await configForm.validateFields();
+      setLoading(true);
+      const tokenToSave = values.sync_token || values.sync_token === '' ? values.sync_token : tokenRef.current;
+      await syncApi.saveCloudConfig({
+        server_url: values.server_url,
+        sync_token: tokenToSave,
+      });
+      tokenRef.current = values.sync_token || '';
+      setHasToken(!!values.sync_token);
+      message.success('配置已保存');
+    } catch (err: any) {
+      message.error('保存失败: ' + (err?.message || String(err)));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 打开同步确认弹窗
+  const openSyncModal = (direction: 'push' | 'pull') => {
+    if (!statusInfo?.authenticated && !hasToken) {
+      message.warning('请先配置同步 Token');
+      return;
+    }
+    // 重置为默认值
+    setSelectedMode('overwrite');
+    setDryRun(false);
+    setSyncModalDirection(direction);
+    setSyncModalVisible(true);
+  };
+
+  // 执行同步（从 Modal 确认后调用）
+  const handleSyncConfirm = async () => {
+    setSyncModalVisible(false);
+    try {
+      setSyncing(true);
+      let result: syncApi.SyncResult;
+      if (syncModalDirection === 'push') {
+        result = await syncApi.syncPush({ conflict_mode: selectedMode, dry_run: dryRun });
+      } else {
+        result = await syncApi.syncPull({ conflict_mode: selectedMode, dry_run: dryRun });
+      }
+
+      if (result.success) {
+        const msg = dryRun ? '预览成功' : '同步成功';
+        if (syncModalDirection === 'push') {
+          message.success(`${msg}：推送 ${result.pushed_count} 条`);
+        } else {
+          message.success(`${msg}：拉取 ${result.pulled_count} 条`);
+        }
+      } else {
+        message.error('同步失败：' + (result.errors[0] || '未知错误'));
+      }
+      // 刷新当前页数据，让新记录立即可见
+      await loadSyncHistory(historyPage, historyPageSize);
+    } catch (err: any) {
+      message.error('同步失败：' + (err?.message || String(err)));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // 清空同步历史
+  const handleClearHistory = () => {
+    Modal.confirm({
+      title: '确认清空同步历史',
+      content: `此操作将删除全部 ${historyTotal} 条同步历史记录，且不可恢复。是否继续？`,
+      okText: '清空',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await syncApi.clearSyncRecords();
+          message.success('同步历史已清空');
+          // 清空后回到第 1 页重新加载
+          setHistoryPage(1);
+          await loadSyncHistory(1, historyPageSize);
+        } catch (err: any) {
+          message.error('清空失败：' + (err?.message || String(err)));
+        }
+      },
+    });
+  };
+
+  // 根据方向获取策略文案
+  const isPush = syncModalDirection === 'push';
+  const modeOptions = isPush ? [
+    { value: 'overwrite', label: '覆盖（以本地数据为准，覆盖云端）' },
+    { value: 'skip', label: '跳过（保留云端，忽略本地冲突项）' },
+    { value: 'rename', label: '重命名（避免冲突，本地项重命名保留）' },
+  ] : [
+    { value: 'overwrite', label: '覆盖（以云端数据为准，覆盖本地）' },
+    { value: 'skip', label: '跳过（保留本地，忽略云端冲突项）' },
+    { value: 'rename', label: '重命名（避免冲突，云端项重命名保留）' },
+  ];
+
+  const isAuthenticated = statusInfo?.authenticated ?? hasToken;
+  const isConnected = statusInfo?.connected ?? false;
+
+  const columns = [
+    {
+      title: '时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      width: 140,
+      render: (text: string) => text ? new Date(text).toLocaleString('zh-CN') : '-',
+    },
+    {
+      title: '方向',
+      dataIndex: 'direction',
+      key: 'direction',
+      width: 60,
+      render: (dir: string) => dir === 'push'
+        ? <Tag color="blue">推送</Tag>
+        : <Tag color="green">拉取</Tag>,
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      width: 60,
+      render: (status: string) => {
+        const color = status === 'success' ? 'green' : status === 'failed' ? 'red' : 'orange';
+        const text = status === 'success' ? '成功' : status === 'failed' ? '失败' : '预览';
+        return <Tag color={color}>{text}</Tag>;
+      },
+    },
+    {
+      title: '详情',
+      dataIndex: 'details',
+      key: 'details',
+      ellipsis: true,
+    },
+  ];
+
+  return (
+    <div style={{ padding: 16 }} className="cloud-sync-panel">
+      <Card
+        title={
+          <Space>
+            <CloudOutlined />
+            <span>云端同步</span>
+          </Space>
+        }
+        extra={
+          <Space size="small">
+            {isAuthenticated && (
+              <>
+                <Button
+                  size="small"
+                  icon={<SyncOutlined />}
+                  onClick={() => openSyncModal('push')}
+                  loading={syncing}
+                >
+                  推送
+                </Button>
+                <Button
+                  size="small"
+                  icon={<SyncOutlined style={{ transform: 'rotate(180deg)' }} />}
+                  onClick={() => openSyncModal('pull')}
+                  loading={syncing}
+                >
+                  拉取
+                </Button>
+              </>
+            )}
+          </Space>
+        }
+      >
+        {/* 连接状态 */}
+        <div style={{ marginBottom: 16 }}>
+          {isConnected ? (
+            isAuthenticated ? (
+              <Alert
+                message={
+                  <Space size="small">
+                    <CheckCircleFilled style={{ color: '#52c41a' }} />
+                    <span className="status-text">已连接 ({statusInfo?.server_url})</span>
+                    {statusInfo?.last_sync_at && (
+                      <span className="status-text">最后同步: {new Date(statusInfo.last_sync_at).toLocaleString('zh-CN')}</span>
+                    )}
+                  </Space>
+                }
+                type="success"
+                showIcon
+              />
+            ) : (
+              <Alert
+                message={
+                  <Space size="small">
+                    <ExclamationCircleFilled style={{ color: '#faad14' }} />
+                    <span className="status-text">已连接但未配置 Token</span>
+                  </Space>
+                }
+                type="warning"
+                showIcon
+              />
+            )
+          ) : (
+            <Alert
+              message="未配置云端服务器地址"
+              description="请在下方配置服务器地址和同步 Token。"
+              type="info"
+              showIcon
+            />
+          )}
+        </div>
+
+        {/* 配置表单 */}
+        <Form form={configForm} layout="vertical" size="small">
+          <Form.Item
+            label="服务器地址"
+            name="server_url"
+            rules={[{ required: true, message: '请输入服务器地址' }]}
+          >
+            <Input placeholder="http://localhost:8089" />
+          </Form.Item>
+
+          <Form.Item
+            label="同步 Token"
+            name="sync_token"
+            rules={[{ required: true, message: '请输入同步 Token' }]}
+          >
+            <Input.Password placeholder="ntd_xxx 格式的同步 Token" />
+          </Form.Item>
+
+          <Form.Item style={{ marginBottom: 0 }}>
+            <Button
+              type="primary"
+              icon={<SaveOutlined />}
+              onClick={handleSaveConfig}
+              loading={loading}
+              size="small"
+            >
+              保存配置
+            </Button>
+          </Form.Item>
+        </Form>
+
+        <Divider style={{ margin: '16px 0' }}>
+          <Space>
+            <span>同步历史</span>
+            <Button
+              type="link"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              disabled={historyTotal === 0}
+              onClick={handleClearHistory}
+            >
+              清空
+            </Button>
+          </Space>
+        </Divider>
+
+        <Table
+          columns={columns}
+          dataSource={syncHistory}
+          rowKey="id"
+          size="small"
+          pagination={{
+            current: historyPage,
+            pageSize: historyPageSize,
+            total: historyTotal,
+            showSizeChanger: false,
+            // 切换页码时按需加载对应分页的数据
+            onChange: (page) => {
+              setHistoryPage(page);
+              loadSyncHistory(page, historyPageSize);
+            },
+          }}
+          locale={{ emptyText: '暂无同步记录' }}
+          scroll={{ x: 400 }}
+        />
+      </Card>
+
+      {/* 同步策略选择弹窗（受控组件，解决 Modal.confirm 闭包问题） */}
+      <Modal
+        title={isPush ? '确认向上同步（推送至云端）' : '确认向下同步（拉取至本地）'}
+        open={syncModalVisible}
+        onOk={handleSyncConfirm}
+        onCancel={() => setSyncModalVisible(false)}
+        okText="执行同步"
+        cancelText="取消"
+        confirmLoading={syncing}
+      >
+        <p>冲突解决策略：</p>
+        <Radio.Group
+          value={selectedMode}
+          onChange={e => setSelectedMode(e.target.value)}
+          style={{ marginBottom: 16 }}
+        >
+          {modeOptions.map(opt => (
+            <Radio key={opt.value} value={opt.value} style={{ display: 'block', marginBottom: 8 }}>{opt.label}</Radio>
+          ))}
+        </Radio.Group>
+        <Checkbox
+          checked={dryRun}
+          onChange={e => setDryRun(e.target.checked)}
+        >
+          预览模式 (Dry Run)
+        </Checkbox>
+      </Modal>
+    </div>
+  );
+}

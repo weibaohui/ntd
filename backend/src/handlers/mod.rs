@@ -160,6 +160,7 @@ pub(crate) mod todo_template;
 pub mod custom_template;
 pub mod webhook;
 pub mod usage_stats;
+pub mod sync;
 
 // WebSocket handler
 pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
@@ -589,6 +590,12 @@ pub fn create_app(
         .route("/api/custom-templates/unsubscribe", post(custom_template::unsubscribe_custom_template))
         .route("/api/custom-templates/sync", post(custom_template::sync_custom_template))
         .route("/api/custom-templates/auto-sync", put(custom_template::update_auto_sync_config))
+        // 云端同步路由
+        .route("/api/cloud/config", get(sync::cloud_get_config).post(sync::cloud_save_config))
+        .route("/api/cloud/sync/status", get(sync::cloud_sync_status))
+        .route("/api/cloud/sync/records", get(sync::cloud_sync_records).delete(sync::cloud_clear_sync_records))
+        .route("/api/cloud/sync/push", post(sync::cloud_sync_push))
+        .route("/api/cloud/sync/pull", post(sync::cloud_sync_pull))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB
         .layer(CompressionLayer::new())
         .layer(
