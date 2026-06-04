@@ -1,10 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Card, Form, Input, Button, Select, Space, Table, Tag, message, Divider, Alert, Typography, Modal, Checkbox } from 'antd';
+import { Card, Form, Input, Button, Select, Space, Table, Tag, message, Divider, Alert, Modal, Checkbox } from 'antd';
 import { CloudOutlined, SyncOutlined, SaveOutlined, CheckCircleFilled, ExclamationCircleFilled } from '@ant-design/icons';
 import * as syncApi from '../../utils/database/sync';
 import './CloudSyncPanel.css';
-
-const { Text } = Typography;
 
 export function CloudSyncPanel() {
   const [loading, setLoading] = useState(false);
@@ -14,7 +12,6 @@ export function CloudSyncPanel() {
   const [configForm] = Form.useForm();
   const [hasToken, setHasToken] = useState(false);
   const tokenRef = useRef('');
-  const [conflictMode, setConflictMode] = useState('overwrite');
 
   // 加载配置和状态
   const loadData = useCallback(async () => {
@@ -25,7 +22,6 @@ export function CloudSyncPanel() {
       ]);
       setStatusInfo(status);
       setHasToken(config.has_token ?? false);
-      setConflictMode(config.default_conflict_mode);
       // 保持当前输入的 token 不变
       configForm.setFieldsValue({
         server_url: config.server_url,
@@ -61,11 +57,9 @@ export function CloudSyncPanel() {
       await syncApi.saveCloudConfig({
         server_url: values.server_url,
         sync_token: tokenToSave,
-        default_conflict_mode: values.default_conflict_mode,
       });
       tokenRef.current = values.sync_token || '';
       setHasToken(!!values.sync_token);
-      setConflictMode(values.default_conflict_mode);
       message.success('配置已保存');
     } catch (err: any) {
       message.error('保存失败: ' + (err?.message || String(err)));
@@ -82,22 +76,34 @@ export function CloudSyncPanel() {
     }
 
     // 弹出确认框选择冲突模式
-    let selectedMode = conflictMode;
+    let selectedMode = 'overwrite';
     let dryRun = false;
 
+    // 根据方向显示不同的策略文案
+    const isPush = direction === 'push';
+    const modeOptions = isPush ? [
+      { value: 'overwrite', label: '覆盖（以本地数据为准，覆盖云端）' },
+      { value: 'skip', label: '跳过（保留云端，忽略本地冲突项）' },
+      { value: 'rename', label: '重命名（避免冲突，本地项重命名保留）' },
+    ] : [
+      { value: 'overwrite', label: '覆盖（以云端数据为准，覆盖本地）' },
+      { value: 'skip', label: '跳过（保留本地，忽略云端冲突项）' },
+      { value: 'rename', label: '重命名（避免冲突，云端项重命名保留）' },
+    ];
+
     Modal.confirm({
-      title: direction === 'push' ? '确认向上同步' : '确认向下同步',
+      title: isPush ? '确认向上同步（推送至云端）' : '确认向下同步（拉取至本地）',
       content: (
         <div>
-          <p>选择同步模式：</p>
+          <p>选择冲突解决策略：</p>
           <Select
             value={selectedMode}
             onChange={(v) => { selectedMode = v; }}
             style={{ width: '100%', marginBottom: 16 }}
           >
-            <Select.Option value="overwrite">覆盖（以云端数据为准）</Select.Option>
-            <Select.Option value="skip">跳过（保留本地数据）</Select.Option>
-            <Select.Option value="rename">重命名（避免冲突）</Select.Option>
+            {modeOptions.map(opt => (
+              <Select.Option key={opt.value} value={opt.value}>{opt.label}</Select.Option>
+            ))}
           </Select>
           <Checkbox
             onChange={(e) => { dryRun = e.target.checked; }}
@@ -266,23 +272,6 @@ export function CloudSyncPanel() {
             rules={[{ required: true, message: '请输入同步 Token' }]}
           >
             <Input.Password placeholder="ntd_xxx 格式的同步 Token" />
-          </Form.Item>
-
-          <Form.Item label="冲突模式" name="default_conflict_mode">
-            <Select size="small">
-              <Select.Option value="overwrite">
-                <span>覆盖</span>
-                <Text type="secondary" style={{ fontSize: 12 }}>（以云端为准）</Text>
-              </Select.Option>
-              <Select.Option value="skip">
-                <span>跳过</span>
-                <Text type="secondary" style={{ fontSize: 12 }}>（保留本地）</Text>
-              </Select.Option>
-              <Select.Option value="rename">
-                <span>重命名</span>
-                <Text type="secondary" style={{ fontSize: 12 }}>（避免冲突）</Text>
-              </Select.Option>
-            </Select>
           </Form.Item>
 
           <Form.Item style={{ marginBottom: 0 }}>
