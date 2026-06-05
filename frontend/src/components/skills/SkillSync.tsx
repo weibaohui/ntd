@@ -125,7 +125,9 @@ export function SkillSync() {
               >
                 <Row gutter={[8, 8]}>
                   {EXECUTORS.filter(e => e.value !== selectedExecutor).map(exec => {
-                    // agents 是只读来源：不能作为同步目标
+                    // agents 是只读来源：不能作为同步目标（避免覆盖外部工具数据）。
+                    // 后端 sync_skill 的 target 循环里会二次校验并返回错误，
+                    // 这里 disabled 是给用户的即时视觉反馈。
                     const isReadonly = exec.value === 'agents';
                     const exists = executors.find(ex => ex.executor === exec.value);
                     const alreadyHas = exists?.skills.find(s => s.name === selectedSkill);

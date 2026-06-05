@@ -40,13 +40,22 @@ pub fn executor_skills_dir_str(et: &str) -> Option<PathBuf> {
 }
 
 /// Executor type → skills directory mapping
+///
+/// 只是 ExecutorType 版本的薄包装；新代码应直接用 `executor_skills_dir_str`
+/// 接收字符串参数（这样非 ExecutorType 来源如 `agents` 也能复用）。
 fn executor_skills_dir(et: ExecutorType) -> Option<PathBuf> {
+    // ExecutorType 必然有映射；这里直接 unwrap_or_default 也行，但
+    // 保留 Option 让调用方决定空值时的行为
     executor_skills_dir_str(et.as_str())
 }
 
-/// 只读 skill 来源：当前只有 `agents`（扫描 `~/.agents/skills`，无 CLI）。
+/// 只读 skill 来源守卫：当前只有 `agents`（扫描 `~/.agents/skills`，无 CLI）。
+///
 /// 这些来源的 skill 可以看、可以导出、可以**作为同步源**复制到其他执行器，
-/// 但**不能直接被删除或被导入覆盖**（避免误删用户本机目录）。
+/// 但**不能直接被删除或被导入覆盖**（避免误删外部工具维护的内容）。
+///
+/// 用 `matches!` 而不是等值比较：编译期保证名字写错时编译器提醒
+/// （如果以后加新只读来源，往这里加一个 arm 即可）。
 fn is_readonly_skill_source(name: &str) -> bool {
     matches!(name, "agents")
 }
@@ -354,12 +363,23 @@ fn collect_skills_recursive(base_dir: &std::path::Path, current_dir: &std::path:
 }
 
 /// 通用扫描：接受任意 executor 名字字符串（含 `agents` 这种只读来源）。
+///
 /// 把核心路径/扫描逻辑抽出来，原 `discover_skills_for_executor` 变为薄包装，
 /// 这样只读 skill 来源（如 `agents`）也能复用同一份发现逻辑。
+///
+/// 行为：
+/// - 输入：executor 名字（如 `"claudecode"` / `"agents"`）+ UI 显示标签
+/// - 输出：该来源的 ExecutorSkills（路径、是否存在、扫描到的 skills）
+///
+/// 边界：name 不在 `executor_skills_dir_str` 映射里时，返回「目录不存在」占位
+/// （不报错，因为前端可能传入未安装的执行器名）。
 fn discover_skills_for(name: &str, label: &str) -> ExecutorSkills {
+    // 拿 skills 目录；映射不到就当成「这个来源没配置」返回空结果
     let skills_dir = match executor_skills_dir_str(name) {
         Some(p) => p,
         None => {
+            // 边界：未知的 executor 名字在生产里可能是脏数据，
+            // 这里降级返回而不是 5xx，让前端 UI 友好展示
             return ExecutorSkills {
                 executor: name.to_string(),
                 executor_label: label.to_string(),
@@ -370,15 +390,20 @@ fn discover_skills_for(name: &str, label: &str) -> ExecutorSkills {
         }
     };
 
+    // 提前 to_string 一次避免后续多次系统调用
     let dir_str = skills_dir.to_string_lossy().to_string();
+    // exists 检查是必要的：collect_skills_recursive 不会自己返回 0，
+    // 它对不存在的目录静默返回空 vec，前端就看不出"目录被删了" vs "目录没 skill"
     let exists = skills_dir.exists();
 
+    // 只在目录存在时才递归扫描，避免对不存在的目录做无意义的 read_dir
     let mut skills = Vec::new();
     if exists {
         collect_skills_recursive(&skills_dir, &skills_dir, &mut skills);
     }
 
-    // Sort skills by name
+    // 大小写不敏感排序：UI Tab 内显示顺序稳定，
+    // 否则 "Foo" 和 "bar" 会按 ASCII 顺序穿插，跨执行器对比时不一致
     skills.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
     ExecutorSkills {
@@ -390,28 +415,39 @@ fn discover_skills_for(name: &str, label: &str) -> ExecutorSkills {
     }
 }
 
+/// 旧 API 的薄包装：保留供可能的内部调用，新代码请用 `discover_skills_for`
 #[allow(dead_code)]
 fn discover_skills_for_executor(et: ExecutorType) -> ExecutorSkills {
+    // 直接走通用版本，ExecutorType 必然有 label
     discover_skills_for(et.as_str(), executor_label(et))
 }
 
 // ── API handlers ────────────────────────────────────────────────────────
 
 /// 参与 skill 扫描/对比的所有来源：8 个执行器 + 只读来源 `agents`。
+///
 /// 用字符串数组而非 `ExecutorType` 数组，方便容纳非 ExecutorType 来源。
+/// **新增来源时**：
+/// 1. 在 `executor_skills_dir_str` 加分支
+/// 2. 在本数组加字符串
+/// 3. 如果不是 ExecutorType，在 `executor_label_for_source` 加显示名
 const ALL_SKILL_SOURCES: &[&str] = &[
     "claudecode", "codebuddy", "opencode", "atomcode",
     "hermes", "kimi", "joinai", "codex",
     "agents",
 ];
 
-/// 把 source 名字转成 UI 显示名。ExecutorType 来源复用 `executor_label`，
-/// agents 这种非枚举来源单独处理。
+/// 把 source 名字转成 UI 显示名。
+///
+/// 设计选择：先 `match` agents 这种特殊来源（避免 parse_executor_type 的成本），
+/// 剩下的 fallthrough 到 `parse_executor_type` 走 ExecutorType 路径，
+/// 找不到时返回空串（让 UI 退化显示原始 name）。
 fn executor_label_for_source(name: &str) -> &'static str {
     match name {
+        // 特殊来源走专门分支，避开 parse_executor_type 的解析开销
         "agents" => "Agents",
         other => {
-            // 尝试按 ExecutorType 找 label
+            // 解析失败的回退：返回空串，调用方会兜底用 name 当 label
             if let Some(et) = crate::adapters::parse_executor_type(other) {
                 executor_label(et)
             } else {
@@ -423,12 +459,20 @@ fn executor_label_for_source(name: &str) -> &'static str {
 
 /// GET /api/skills - List skills grouped by executor
 ///
+/// GET /api/skills - List skills grouped by executor
+///
 /// 扫描 8 个 ExecutorType 之外，还扫 `~/.agents/skills`（只读 skill 来源）。
 /// agents 不参与 Todo 执行，但能在 Skills 总览/对比/同步里看到并使用。
+///
+/// 实现选择：每个来源的目录 IO 放在 `spawn_blocking` 里跑，
+/// 因为 read_dir 在大目录（hermes 146 个 skill）下可能阻塞 tokio worker。
 pub async fn list_skills(
     State(_state): State<AppState>,
 ) -> Result<ApiResponse<Vec<ExecutorSkills>>, AppError> {
+    // spawn_blocking：磁盘 IO 不能跑在 tokio reactor 上，否则会卡住其他请求
     let result = tokio::task::spawn_blocking(move || {
+        // 顺序遍历 9 个来源：单次调用只 IO 一次，顺序 vs 并行收益不大，
+        // 而且顺序能保证响应里 source 顺序稳定，方便前端按位置渲染 Tab
         ALL_SKILL_SOURCES
             .iter()
             .map(|name| discover_skills_for(name, executor_label_for_source(name)))
@@ -776,13 +820,18 @@ pub struct SkillFileInfo {
 ///
 /// 比 8 个 ExecutorType 多扫了 `agents`（`~/.agents/skills`），让用户
 /// 能看到 "lark-doc" 这类 skill 在哪些来源里有、版本是不是落后。
+///
+/// 输出结构：每个 skill 一行，每个来源一列，单元格标记 present/version。
+/// 这样前端可以画 N 行的对比表格，**任意两个来源**之间都能对比。
 pub async fn compare_skills(
     State(_state): State<AppState>,
 ) -> Result<ApiResponse<Vec<SkillComparison>>, AppError> {
-    // Collect all skills per source
+    // 第一遍：把所有来源的 skills 扫成双层 map（source → name → meta）
+    // 嵌套 map 让后面 lookup 是 O(1)，避免对每个 skill 名都做线性扫描
     let mut all_skills: HashMap<String, HashMap<String, SkillMeta>> = HashMap::new();
     for name in ALL_SKILL_SOURCES {
         let es = discover_skills_for(name, executor_label_for_source(name));
+        // 单独内层 map：覆盖同源同名 skill（实际不会发生，但防御性编码）
         let mut map = HashMap::new();
         for skill in es.skills {
             map.insert(skill.name.clone(), skill);
@@ -790,26 +839,32 @@ pub async fn compare_skills(
         all_skills.insert((*name).to_string(), map);
     }
 
-    // Build union of all skill names
+    // 取所有来源的 skill 名字的并集，作为对比的"行"集合
+    // 走 HashSet 是为了去重（同名 skill 在多个来源里只算一行）
     let mut skill_names: Vec<String> = all_skills.values()
         .flat_map(|m| m.keys().cloned())
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
+    // 排序让响应顺序稳定，前端表格渲染不会因调用时机不同而抖动
     skill_names.sort();
 
-    // Build comparison
+    // 第二遍：每个 skill 名生成一行对比，标记每个来源有没有
     let comparisons: Vec<SkillComparison> = skill_names.into_iter().map(|name| {
+        // 内层循环：每个来源都查一遍这个 skill 在不在
+        // 用 if-let-some 而不是 .map().unwrap_or() 写更直白
         let mut executors_map = HashMap::new();
         for src in ALL_SKILL_SOURCES {
             let key = (*src).to_string();
             if let Some(skill) = all_skills.get(&key).and_then(|m| m.get(&name)) {
+                // 命中：填 present + 版本信息
                 executors_map.insert(key, SkillPresence {
                     present: true,
                     version: skill.version.clone(),
                     modified_at: skill.modified_at.clone(),
                 });
             } else {
+                // 未命中：填 present=false，前端用灰色格子展示
                 executors_map.insert(key, SkillPresence {
                     present: false,
                     version: None,
@@ -818,10 +873,12 @@ pub async fn compare_skills(
             }
         }
 
-        // Get description from any source that has it
+        // description 从任意一个有该 skill 的来源取（先到先得）
+        // 选 first() 是因为 description 跨来源通常一致；不一致时以第一个来源为准
         let description = all_skills.values()
             .filter_map(|m| m.get(&name))
             .find_map(|s| {
+                // 跳过空 description：可能某个来源的 SKILL.md 没写 description
                 if s.description.is_empty() { None } else { Some(s.description.clone()) }
             })
             .unwrap_or_default();

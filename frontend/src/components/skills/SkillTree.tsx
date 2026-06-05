@@ -165,7 +165,9 @@ export function SkillTree({ data, onSkillClick, onImport, onExport, searchText, 
       {data.map(executorData => {
         const nodes = buildTree(executorData, searchText, showCategory);
         const executorLabel = EXECUTORS.find(e => e.value === executorData.executor)?.label || executorData.executor;
-        // agents 是只读 skill 来源：禁止导入覆盖；其他执行器正常
+        // agents 是只读 skill 来源：禁止导入覆盖（避免误删外部工具维护的内容），
+        // 其他执行器正常。后端 import_skill 也会二次校验，这里先在 UI 上把按钮禁掉
+        // 提供即时反馈，避免用户点完才发现 400。
         const isReadonly = executorData.executor === 'agents';
 
         return (

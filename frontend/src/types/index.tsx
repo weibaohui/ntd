@@ -308,6 +308,8 @@ export const EXECUTORS: ExecutorOption[] = [
   { value: 'codex',      label: 'Codex',     color: '#488597', icon: <FaSquare color="#488597" size={14} /> },
   // `agents` 是只读 skill 来源（`~/.agents/skills`），不在「执行器管理」显示，
   // 但会出现在 Skills 总览/对比/同步里。这里加进 EXECUTORS 是为了 Tab 渲染。
+  // 颜色选深灰 `#2d3436` 故意区别于其他 8 个暖色调（橙/绿/黄/紫/红/蓝/粉），
+  // 视觉上传递「这个是只读的、跟其他可写执行器不同」的信号。
   { value: 'agents',     label: 'Agents',    color: '#2d3436', icon: <FaSquare color="#2d3436" size={14} /> },
 ];
 
