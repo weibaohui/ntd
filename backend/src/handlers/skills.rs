@@ -7,7 +7,8 @@ use axum::extract::{Query, State};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use zip::write::FileOptions;
 use zip::ZipArchive;
 
@@ -58,6 +59,55 @@ fn executor_skills_dir(et: ExecutorType) -> Option<PathBuf> {
 /// （如果以后加新只读来源，往这里加一个 arm 即可）。
 fn is_readonly_skill_source(name: &str) -> bool {
     matches!(name, "agents")
+}
+
+/// 进程内单调递增的临时目录 id 源：用于 import 临时目录等需要唯一名的场景。
+///
+/// 单靠 PID 不够（同一进程的并发请求 PID 相同），加 counter 才能保证并发不撞。
+/// 64 位足够撑到天荒地老（每秒 1 亿次调用要 58 年才溢出）。
+static NEXT_STAGING_ID: AtomicU64 = AtomicU64::new(0);
+
+/// 取出下一个唯一的 staging 目录后缀
+fn next_staging_id() -> u64 {
+    NEXT_STAGING_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+/// 把外部 `skill_name` 解析为「确实在 `base` 之下」的目录路径。
+///
+/// 防御：
+/// - 绝对路径（如 `/etc`）直接拒
+/// - 含 `..` 父级引用直接拒
+/// - 含前缀（Windows `C:\\`）直接拒
+/// - 解析后路径必须以 `base.canonicalize()` 为前缀
+///
+/// 与「直接 join + exists」的旧写法相比，这层校验避免：
+/// - `/etc/passwd` 这种 escape 读取
+/// - 符号链接绕过（canonicalize 后再 starts_with）
+/// - 末尾 `/` 让 `split('/').next_back()` 得空串导致误删 skills 根
+fn resolve_skill_path_under(base: &Path, skill_name: &str) -> Result<PathBuf, AppError> {
+    // 第一道：纯字符串级校验，挡住最常见的恶意输入（不必走 IO 就能拒）
+    let rel = Path::new(skill_name);
+    if rel.as_os_str().is_empty() {
+        return Err(AppError::BadRequest("Invalid skill name: empty".to_string()));
+    }
+    if rel.is_absolute() {
+        return Err(AppError::BadRequest("Invalid skill name: absolute paths are not allowed".to_string()));
+    }
+    if rel.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::Prefix(_))) {
+        return Err(AppError::BadRequest("Invalid skill name: parent directory traversal is not allowed".to_string()));
+    }
+
+    // 第二道：IO 后兜底校验，挡住符号链接绕过等花招
+    let base_canonical = base.canonicalize()
+        .map_err(|e| AppError::Internal(format!("Failed to resolve base dir: {}", e)))?;
+    let candidate = base.join(rel);
+    let candidate_canonical = candidate.canonicalize()
+        .map_err(|_| AppError::NotFound)?;  // 不存在就当 404
+
+    if !candidate_canonical.starts_with(&base_canonical) {
+        return Err(AppError::BadRequest("Invalid skill name: path escapes base directory".to_string()));
+    }
+    Ok(candidate_canonical)
 }
 
 fn executor_label(et: ExecutorType) -> &'static str {
@@ -491,10 +541,9 @@ pub async fn get_skill_content(
     let skills_dir = executor_skills_dir_str(&query.executor)
         .ok_or_else(|| AppError::BadRequest(format!("Unknown executor: {}", query.executor)))?;
 
-    let skill_dir = skills_dir.join(&query.skill_name);
-    if !skill_dir.exists() {
-        return Err(AppError::NotFound);
-    }
+    // 用统一 helper 校验 skill_name 并解析出实际路径
+    // 比直接 join 多一层 canonicalize + starts_with 防御（防 ../ 逃逸和符号链接绕过）
+    let skill_dir = resolve_skill_path_under(&skills_dir, &query.skill_name)?;
 
     let skill_name = query.skill_name.clone();
     let executor = query.executor.clone();
@@ -583,10 +632,8 @@ pub async fn export_skill(
     let skills_dir = executor_skills_dir_str(&query.executor)
         .ok_or_else(|| AppError::BadRequest(format!("Unknown executor: {}", query.executor)))?;
 
-    let skill_dir = skills_dir.join(&query.skill_name);
-    if !skill_dir.exists() {
-        return Err(AppError::NotFound);
-    }
+    // 统一 containment 校验
+    let skill_dir = resolve_skill_path_under(&skills_dir, &query.skill_name)?;
 
     // Create zip in memory
     let mut zip_data = Vec::new();
@@ -678,8 +725,10 @@ pub async fn import_skill(
     // 1) 校验全过才动原 skill
     // 2) 任何中途失败都只留下临时垃圾，target_dir 完整无缺
     //
-    // 临时目录名加 PID 避免并发导入同名 skill 时冲突
-    let staging_dir = skills_dir.join(format!(".{}.import.tmp.{}", skill_name, std::process::id()));
+    // 临时目录名加 PID + 单调计数器：单 PID 区分**进程**级并发，
+    // counter 区分**同进程内**并发（不同 async handler 并行 import 同一 skill 时）
+    let staging_id = next_staging_id();
+    let staging_dir = skills_dir.join(format!(".{}.import.tmp.{}.{}", skill_name, std::process::id(), staging_id));
     // 清理可能的残留临时目录（上次失败留下的）
     if staging_dir.exists() {
         let _ = std::fs::remove_dir_all(&staging_dir);
@@ -876,44 +925,50 @@ pub struct SkillFileInfo {
 ///
 /// 输出结构：每个 skill 一行，每个来源一列，单元格标记 present/version。
 /// 这样前端可以画 N 行的对比表格，**任意两个来源**之间都能对比。
+///
+/// 实现选择：所有磁盘 IO（`discover_skills_for` 内部的 read_dir 递归）
+/// 放到 `spawn_blocking` 里跑，避免大目录（如 hermes 146 个 skill）
+/// 阻塞 tokio reactor worker。
 pub async fn compare_skills(
     State(_state): State<AppState>,
 ) -> Result<ApiResponse<Vec<SkillComparison>>, AppError> {
-    // 第一遍：把所有来源的 skills 扫成双层 map（source → name → meta）
-    // 嵌套 map 让后面 lookup 是 O(1)，避免对每个 skill 名都做线性扫描
-    let mut all_skills: HashMap<String, HashMap<String, SkillMeta>> = HashMap::new();
-    for name in ALL_SKILL_SOURCES {
-        let es = discover_skills_for(name, executor_label_for_source(name));
-        // 单独内层 map：覆盖同源同名 skill（实际不会发生，但防御性编码）
-        let mut map = HashMap::new();
-        for skill in es.skills {
-            map.insert(skill.name.clone(), skill);
+    // spawn_blocking：read_dir 不能跑在 tokio worker 上
+    let comparisons = tokio::task::spawn_blocking(move || {
+        // 第一遍：把所有来源的 skills 扫成双层 map（source → name → meta）
+        // 嵌套 map 让后面 lookup 是 O(1)，避免对每个 skill 名都做线性扫描
+        let mut all_skills: HashMap<String, HashMap<String, SkillMeta>> = HashMap::new();
+        for name in ALL_SKILL_SOURCES {
+            let es = discover_skills_for(name, executor_label_for_source(name));
+            // 单独内层 map：覆盖同源同名 skill（实际不会发生，但防御性编码）
+            let mut map = HashMap::new();
+            for skill in es.skills {
+                map.insert(skill.name.clone(), skill);
+            }
+            all_skills.insert((*name).to_string(), map);
         }
-        all_skills.insert((*name).to_string(), map);
-    }
 
-    // 取所有来源的 skill 名字的并集，作为对比的"行"集合
-    // 走 HashSet 是为了去重（同名 skill 在多个来源里只算一行）
-    let mut skill_names: Vec<String> = all_skills.values()
-        .flat_map(|m| m.keys().cloned())
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect();
-    // 排序让响应顺序稳定，前端表格渲染不会因调用时机不同而抖动
-    skill_names.sort();
+        // 取所有来源的 skill 名字的并集，作为对比的"行"集合
+        // 走 HashSet 是为了去重（同名 skill 在多个来源里只算一行）
+        let mut skill_names: Vec<String> = all_skills.values()
+            .flat_map(|m| m.keys().cloned())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        // 排序让响应顺序稳定，前端表格渲染不会因调用时机不同而抖动
+        skill_names.sort();
 
-    // 第二遍：每个 skill 名生成一行对比，标记每个来源有没有
-    let comparisons: Vec<SkillComparison> = skill_names.into_iter().map(|name| {
-        // 内层循环：每个来源都查一遍这个 skill 在不在
-        // 用 if-let-some 而不是 .map().unwrap_or() 写更直白
-        let mut executors_map = HashMap::new();
-        for src in ALL_SKILL_SOURCES {
-            let key = (*src).to_string();
-            if let Some(skill) = all_skills.get(&key).and_then(|m| m.get(&name)) {
-                // 命中：填 present + 版本信息
-                executors_map.insert(key, SkillPresence {
-                    present: true,
-                    version: skill.version.clone(),
+        // 第二遍：每个 skill 名生成一行对比，标记每个来源有没有
+        let comparisons: Vec<SkillComparison> = skill_names.into_iter().map(|name| {
+            // 内层循环：每个来源都查一遍这个 skill 在不在
+            // 用 if-let-some 而不是 .map().unwrap_or() 写更直白
+            let mut executors_map = HashMap::new();
+            for src in ALL_SKILL_SOURCES {
+                let key = (*src).to_string();
+                if let Some(skill) = all_skills.get(&key).and_then(|m| m.get(&name)) {
+                    // 命中：填 present + 版本信息
+                    executors_map.insert(key, SkillPresence {
+                        present: true,
+                        version: skill.version.clone(),
                     modified_at: skill.modified_at.clone(),
                 });
             } else {
@@ -926,10 +981,11 @@ pub async fn compare_skills(
             }
         }
 
-        // description 从任意一个有该 skill 的来源取（先到先得）
-        // 选 first() 是因为 description 跨来源通常一致；不一致时以第一个来源为准
-        let description = all_skills.values()
-            .filter_map(|m| m.get(&name))
+        // description 按 ALL_SKILL_SOURCES 固定顺序查，第一个非空的胜出
+        // （用 HashMap 迭代顺序不确定，跨调用 description 可能漂移）
+        let description = ALL_SKILL_SOURCES
+            .iter()
+            .filter_map(|src| all_skills.get(*src).and_then(|m| m.get(&name)))
             .find_map(|s| {
                 // 跳过空 description：可能某个来源的 SKILL.md 没写 description
                 if s.description.is_empty() { None } else { Some(s.description.clone()) }
@@ -942,6 +998,11 @@ pub async fn compare_skills(
             executors: executors_map,
         }
     }).collect();
+
+        comparisons
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))?;
 
     Ok(ApiResponse::ok(comparisons))
 }
@@ -958,10 +1019,8 @@ pub async fn sync_skill(
     let source_dir = executor_skills_dir_str(&req.source_executor)
         .ok_or_else(|| AppError::BadRequest(format!("Unknown source executor: {}", req.source_executor)))?;
 
-    let skill_dir = source_dir.join(&req.skill_name);
-    if !skill_dir.exists() {
-        return Err(AppError::NotFound);
-    }
+    // 统一 containment 校验
+    let skill_dir = resolve_skill_path_under(&source_dir, &req.skill_name)?;
 
     let mut synced = Vec::new();
     let mut errors = Vec::new();
@@ -997,7 +1056,14 @@ pub async fn sync_skill(
 
         // Flatten directory: take only the last part of the skill name
         // e.g., "creative/joke-teller" -> "joke-teller"
-        let target_skill_name = req.skill_name.split('/').next_back().unwrap_or(&req.skill_name);
+        // 防御：先 trim 末尾 '/'，再 fallback 整体，保证 target_skill_name 永不为空
+        // （否则 dest = target_dir.join("") 会指向 skills 根目录，触发误删）
+        let trimmed = req.skill_name.trim_end_matches('/');
+        let target_skill_name = trimmed.rsplit('/').next().unwrap_or(trimmed);
+        if target_skill_name.is_empty() || target_skill_name.contains('/') {
+            errors.push(format!("Invalid skill name '{}' for sync target", req.skill_name));
+            continue;
+        }
         let dest = target_dir.join(target_skill_name);
 
         // Use temporary directory for atomic replace
