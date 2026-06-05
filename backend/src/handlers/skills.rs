@@ -918,6 +918,14 @@ pub struct SkillFileInfo {
     pub modified_at: String,
 }
 
+/// 参与 skill 扫描/对比的所有来源：8 个执行器 + 只读来源 `agents`。
+/// 用字符串数组而非 `ExecutorType` 数组，方便容纳非 ExecutorType 来源。
+const ALL_SKILL_SOURCES: &[&str] = &[
+    "claudecode", "codebuddy", "opencode", "atomcode",
+    "hermes", "kimi", "joinai", "codex",
+    "agents",
+];
+
 /// GET /api/skills/compare - Cross-executor skill comparison matrix
 ///
 /// 比 8 个 ExecutorType 多扫了 `agents`（`~/.agents/skills`），让用户
@@ -1005,6 +1013,22 @@ pub async fn compare_skills(
     .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))?;
 
     Ok(ApiResponse::ok(comparisons))
+}
+
+/// 把 source 名字转成 UI 显示名。ExecutorType 来源复用 `executor_label`，
+/// agents 这种非枚举来源单独处理。
+fn executor_label_for_source(name: &str) -> &'static str {
+    match name {
+        "agents" => "Agents",
+        other => {
+            // 尝试按 ExecutorType 找 label
+            if let Some(et) = crate::adapters::parse_executor_type(other) {
+                executor_label(et)
+            } else {
+                ""
+            }
+        }
+    }
 }
 
 /// POST /api/skills/sync - Sync skill from one executor to others
