@@ -6,6 +6,26 @@
 
 Skills 是 ntd 帮各执行器管理的**预制 prompt 模板**，类似 Claude Code 的 `.claude/skills/`。每个执行器有自己的 skill 目录，ntd 统一扫描和同步。
 
+## 0. Skill 来源
+
+| 来源 | 目录 | 可写 | 说明 |
+|------|------|------|------|
+| `claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `joinai` / `codex` | `~/.{executor}/skills/` | ✅ | 8 个真实执行器 |
+| `agents` | `~/.agents/skills/` | ❌ | **只读来源**，扫描但不参与 Todo 执行 |
+
+### 0.1 `agents` 只读来源
+
+`agents` 是**只读** skill 来源（通常由 cc-connect 等其他工具维护），ntd：
+- ✅ **扫描并展示** skills
+- ✅ 支持**导出**单个 skill 为 zip
+- ✅ 支持**作为同步源**（把 `agents` 的 skill 复制到其他执行器）
+- ❌ 禁止**导入**到 `agents`（避免覆盖其他工具的内容）
+- ❌ 禁止**删除** `agents` 里的 skill
+- ❌ 禁止把 `agents` 当作**同步目标**
+- ❌ 不出现在「执行器管理」和 TodoDrawer 下拉框
+
+**使用场景**：本地有 cc-connect 等工具放在 `~/.agents/skills/` 的 skill，你想让 ntd 的某个执行器也能用 → 在「Skills 同步」选 source=agents、target=claudecode，复制一份过去。
+
 ## 1. 什么是 Skill
 
 一个 Skill = 一个 `SKILL.md` 文件 + 可选子目录（脚本、模板等）。结构：

@@ -306,6 +306,9 @@ export const EXECUTORS: ExecutorOption[] = [
   { value: 'hermes',     label: 'Hermes',    color: '#0984e3', icon: <FaSquare color="#0984e3" size={14} /> },
   { value: 'kimi',       label: 'Kimi',      color: '#d63031', icon: <FaSquare color="#d63031" size={14} /> },
   { value: 'codex',      label: 'Codex',     color: '#488597', icon: <FaSquare color="#488597" size={14} /> },
+  // `agents` 是只读 skill 来源（`~/.agents/skills`），不在「执行器管理」显示，
+  // 但会出现在 Skills 总览/对比/同步里。这里加进 EXECUTORS 是为了 Tab 渲染。
+  { value: 'agents',     label: 'Agents',    color: '#2d3436', icon: <FaSquare color="#2d3436" size={14} /> },
 ];
 
 export const EXECUTOR_COLORS: Record<string, string> = {
@@ -317,6 +320,7 @@ export const EXECUTOR_COLORS: Record<string, string> = {
   hermes: '#0984e3',
   kimi: '#d63031',
   codex: '#488597',
+  agents: '#2d3436',
   // Aliases for backward compatibility with database names
   'claude_code': '#e17055', // alias for claudecode
   'claude': '#e17055',       // alias for claudecode

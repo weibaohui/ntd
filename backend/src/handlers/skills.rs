@@ -18,6 +18,10 @@ use crate::models::ApiResponse;
 // ── Data types ──────────────────────────────────────────────────────────
 
 /// Executor type name → skills directory mapping (string-based, shared with CLI).
+///
+/// 注意：`agents` 是**只读** skill 来源，没有 CLI，所以不出现在
+/// `ExecutorType` 枚举里，但这里允许通过 `executor_skills_dir_str("agents")`
+/// 拿到 `~/.agents/skills` 的路径用于扫描。
 pub fn executor_skills_dir_str(et: &str) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     match et {
@@ -29,6 +33,8 @@ pub fn executor_skills_dir_str(et: &str) -> Option<PathBuf> {
         "atomcode" => Some(home.join(".atomcode").join("skills")),
         "kimi" => Some(home.join(".kimi").join("skills")),
         "joinai" => Some(home.join(".joinai").join("skills")),
+        // agents 是只读 skill 来源：扫描但不参与执行器管理/Todo 执行
+        "agents" => Some(home.join(".agents").join("skills")),
         _ => None,
     }
 }
@@ -36,6 +42,13 @@ pub fn executor_skills_dir_str(et: &str) -> Option<PathBuf> {
 /// Executor type → skills directory mapping
 fn executor_skills_dir(et: ExecutorType) -> Option<PathBuf> {
     executor_skills_dir_str(et.as_str())
+}
+
+/// 只读 skill 来源：当前只有 `agents`（扫描 `~/.agents/skills`，无 CLI）。
+/// 这些来源的 skill 可以看、可以导出、可以**作为同步源**复制到其他执行器，
+/// 但**不能直接被删除或被导入覆盖**（避免误删用户本机目录）。
+fn is_readonly_skill_source(name: &str) -> bool {
+    matches!(name, "agents")
 }
 
 fn executor_label(et: ExecutorType) -> &'static str {
@@ -51,6 +64,8 @@ fn executor_label(et: ExecutorType) -> &'static str {
     }
 }
 
+// 保留 ALL_EXECUTORS 供其他可能用到的代码；新代码请用 ALL_SKILL_SOURCES
+#[allow(dead_code)]
 const ALL_EXECUTORS: [ExecutorType; 8] = [
     ExecutorType::Claudecode,
     ExecutorType::Hermes,
@@ -338,13 +353,21 @@ fn collect_skills_recursive(base_dir: &std::path::Path, current_dir: &std::path:
     }
 }
 
+#[allow(dead_code)]
 fn discover_skills_for_executor(et: ExecutorType) -> ExecutorSkills {
-    let skills_dir = match executor_skills_dir(et) {
+    discover_skills_for(et.as_str(), executor_label(et))
+}
+
+/// 通用扫描：接受任意 executor 名字字符串（含 `agents` 这种只读来源）。
+/// 把核心路径/扫描逻辑抽出来，原 `discover_skills_for_executor` 变为薄包装，
+/// 这样只读 skill 来源（如 `agents`）也能复用同一份发现逻辑。
+fn discover_skills_for(name: &str, label: &str) -> ExecutorSkills {
+    let skills_dir = match executor_skills_dir_str(name) {
         Some(p) => p,
         None => {
             return ExecutorSkills {
-                executor: et.as_str().to_string(),
-                executor_label: executor_label(et).to_string(),
+                executor: name.to_string(),
+                executor_label: label.to_string(),
                 skills_dir: String::new(),
                 skills_dir_exists: false,
                 skills: vec![],
@@ -364,8 +387,8 @@ fn discover_skills_for_executor(et: ExecutorType) -> ExecutorSkills {
     skills.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
     ExecutorSkills {
-        executor: et.as_str().to_string(),
-        executor_label: executor_label(et).to_string(),
+        executor: name.to_string(),
+        executor_label: label.to_string(),
         skills_dir: dir_str,
         skills_dir_exists: exists,
         skills,
@@ -375,13 +398,16 @@ fn discover_skills_for_executor(et: ExecutorType) -> ExecutorSkills {
 // ── API handlers ────────────────────────────────────────────────────────
 
 /// GET /api/skills - List skills grouped by executor
+///
+/// 扫描 8 个 ExecutorType 之外，还扫 `~/.agents/skills`（只读 skill 来源）。
+/// agents 不参与 Todo 执行，但能在 Skills 总览/对比/同步里看到并使用。
 pub async fn list_skills(
     State(_state): State<AppState>,
 ) -> Result<ApiResponse<Vec<ExecutorSkills>>, AppError> {
     let result = tokio::task::spawn_blocking(move || {
-        ALL_EXECUTORS
+        ALL_SKILL_SOURCES
             .iter()
-            .map(|et| discover_skills_for_executor(*et))
+            .map(|name| discover_skills_for(name, executor_label_for_source(name)))
             .collect::<Vec<ExecutorSkills>>()
     })
     .await
@@ -393,11 +419,9 @@ pub async fn list_skills(
 pub async fn get_skill_content(
     Query(query): Query<SkillContentQuery>,
 ) -> Result<ApiResponse<SkillContentResponse>, AppError> {
-    let et = crate::adapters::parse_executor_type(&query.executor)
+    // 既接受 ExecutorType，也接受只读来源（`agents`）
+    let skills_dir = executor_skills_dir_str(&query.executor)
         .ok_or_else(|| AppError::BadRequest(format!("Unknown executor: {}", query.executor)))?;
-
-    let skills_dir = executor_skills_dir(et)
-        .ok_or_else(|| AppError::BadRequest("No skills directory for this executor".to_string()))?;
 
     let skill_dir = skills_dir.join(&query.skill_name);
     if !skill_dir.exists() {
@@ -434,6 +458,13 @@ pub async fn get_skill_content(
 pub async fn delete_skill(
     Query(query): Query<DeleteSkillQuery>,
 ) -> Result<ApiResponse<String>, AppError> {
+    // 只读 skill 来源（如 `agents`）禁止删除
+    if is_readonly_skill_source(&query.executor) {
+        return Err(AppError::BadRequest(format!(
+            "Executor '{}' is a read-only skill source; cannot delete skills here",
+            query.executor
+        )));
+    }
     let et = crate::adapters::parse_executor_type(&query.executor)
         .ok_or_else(|| AppError::BadRequest(format!("Unknown executor: {}", query.executor)))?;
 
@@ -480,11 +511,9 @@ pub async fn delete_skill(
 pub async fn export_skill(
     Query(query): Query<SkillExportQuery>,
 ) -> Result<Vec<u8>, AppError> {
-    let et = crate::adapters::parse_executor_type(&query.executor)
+    // 支持只读来源（`agents`）的导出
+    let skills_dir = executor_skills_dir_str(&query.executor)
         .ok_or_else(|| AppError::BadRequest(format!("Unknown executor: {}", query.executor)))?;
-
-    let skills_dir = executor_skills_dir(et)
-        .ok_or_else(|| AppError::BadRequest("No skills directory for this executor".to_string()))?;
 
     let skill_dir = skills_dir.join(&query.skill_name);
     if !skill_dir.exists() {
@@ -542,6 +571,13 @@ pub async fn import_skill(
     params: Query<ImportRequest>,
     body: axum::body::Bytes,
 ) -> Result<ApiResponse<ImportResult>, AppError> {
+    // 只读 skill 来源（如 `agents`）禁止导入覆盖
+    if is_readonly_skill_source(&params.executor) {
+        return Err(AppError::BadRequest(format!(
+            "Executor '{}' is a read-only skill source; cannot import here",
+            params.executor
+        )));
+    }
     let et = crate::adapters::parse_executor_type(&params.executor)
         .ok_or_else(|| AppError::BadRequest(format!("Unknown executor: {}", params.executor)))?;
 
@@ -712,19 +748,30 @@ pub struct SkillFileInfo {
     pub modified_at: String,
 }
 
+/// 参与 skill 扫描/对比的所有来源：8 个执行器 + 只读来源 `agents`。
+/// 用字符串数组而非 `ExecutorType` 数组，方便容纳非 ExecutorType 来源。
+const ALL_SKILL_SOURCES: &[&str] = &[
+    "claudecode", "codebuddy", "opencode", "atomcode",
+    "hermes", "kimi", "joinai", "codex",
+    "agents",
+];
+
 /// GET /api/skills/compare - Cross-executor skill comparison matrix
+///
+/// 比 8 个 ExecutorType 多扫了 `agents`（`~/.agents/skills`），让用户
+/// 能看到 "lark-doc" 这类 skill 在哪些来源里有、版本是不是落后。
 pub async fn compare_skills(
     State(_state): State<AppState>,
 ) -> Result<ApiResponse<Vec<SkillComparison>>, AppError> {
-    // Collect all skills per executor
+    // Collect all skills per source
     let mut all_skills: HashMap<String, HashMap<String, SkillMeta>> = HashMap::new();
-    for et in &ALL_EXECUTORS {
-        let es = discover_skills_for_executor(*et);
+    for name in ALL_SKILL_SOURCES {
+        let es = discover_skills_for(name, executor_label_for_source(name));
         let mut map = HashMap::new();
         for skill in es.skills {
             map.insert(skill.name.clone(), skill);
         }
-        all_skills.insert(et.as_str().to_string(), map);
+        all_skills.insert((*name).to_string(), map);
     }
 
     // Build union of all skill names
@@ -738,8 +785,8 @@ pub async fn compare_skills(
     // Build comparison
     let comparisons: Vec<SkillComparison> = skill_names.into_iter().map(|name| {
         let mut executors_map = HashMap::new();
-        for et in &ALL_EXECUTORS {
-            let key = et.as_str().to_string();
+        for src in ALL_SKILL_SOURCES {
+            let key = (*src).to_string();
             if let Some(skill) = all_skills.get(&key).and_then(|m| m.get(&name)) {
                 executors_map.insert(key, SkillPresence {
                     present: true,
@@ -755,7 +802,7 @@ pub async fn compare_skills(
             }
         }
 
-        // Get description from any executor that has it
+        // Get description from any source that has it
         let description = all_skills.values()
             .filter_map(|m| m.get(&name))
             .find_map(|s| {
@@ -773,16 +820,33 @@ pub async fn compare_skills(
     Ok(ApiResponse::ok(comparisons))
 }
 
+/// 把 source 名字转成 UI 显示名。ExecutorType 来源复用 `executor_label`，
+/// agents 这种非枚举来源单独处理。
+fn executor_label_for_source(name: &str) -> &'static str {
+    match name {
+        "agents" => "Agents",
+        other => {
+            // 尝试按 ExecutorType 找 label
+            if let Some(et) = crate::adapters::parse_executor_type(other) {
+                executor_label(et)
+            } else {
+                ""
+            }
+        }
+    }
+}
+
 /// POST /api/skills/sync - Sync skill from one executor to others
+///
+/// 允许 `agents` 作为 source（只读 → 复制到其他执行器），但**禁止**作为 target
+/// （避免误覆盖 `~/.agents/skills/` 里的内容）。
 pub async fn sync_skill(
     State(_state): State<AppState>,
     ApiJson(req): ApiJson<SyncRequest>,
 ) -> Result<ApiResponse<String>, AppError> {
-    let source_et = crate::adapters::parse_executor_type(&req.source_executor)
-        .ok_or_else(|| AppError::BadRequest(format!("Unknown executor: {}", req.source_executor)))?;
-
-    let source_dir = executor_skills_dir(source_et)
-        .ok_or_else(|| AppError::BadRequest("No skills directory for source executor".to_string()))?;
+    // source 接受 ExecutorType 或 `agents`（只读）
+    let source_dir = executor_skills_dir_str(&req.source_executor)
+        .ok_or_else(|| AppError::BadRequest(format!("Unknown source executor: {}", req.source_executor)))?;
 
     let skill_dir = source_dir.join(&req.skill_name);
     if !skill_dir.exists() {
@@ -793,6 +857,14 @@ pub async fn sync_skill(
     let mut errors = Vec::new();
 
     for target in &req.target_executors {
+        // target 拒绝只读来源
+        if is_readonly_skill_source(target) {
+            errors.push(format!(
+                "Target executor '{}' is read-only; cannot sync into it",
+                target
+            ));
+            continue;
+        }
         let target_et = match crate::adapters::parse_executor_type(target) {
             Some(et) => et,
             None => {

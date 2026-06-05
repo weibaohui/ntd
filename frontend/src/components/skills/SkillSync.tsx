@@ -60,6 +60,12 @@ export function SkillSync() {
         <Paragraph type="secondary" style={{ marginBottom: 16 }}>
           将一个执行器下的 Skill 复制到其他执行器。支持批量同步到多个目标。
         </Paragraph>
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="`agents` 是只读 skill 来源（扫描 `~/.agents/skills`），只能作为源，不能作为目标"
+        />
 
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <div>
@@ -119,17 +125,20 @@ export function SkillSync() {
               >
                 <Row gutter={[8, 8]}>
                   {EXECUTORS.filter(e => e.value !== selectedExecutor).map(exec => {
+                    // agents 是只读来源：不能作为同步目标
+                    const isReadonly = exec.value === 'agents';
                     const exists = executors.find(ex => ex.executor === exec.value);
                     const alreadyHas = exists?.skills.find(s => s.name === selectedSkill);
                     return (
                       <Col span={12} key={exec.value}>
-                        <Checkbox value={exec.value}>
+                        <Checkbox value={exec.value} disabled={isReadonly}>
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                             <span style={{
                               width: 6, height: 6, borderRadius: '50%',
                               backgroundColor: exec.color,
                             }} />
                             {exec.label}
+                            {isReadonly && <Tag color="default" style={{ fontSize: 10 }}>只读</Tag>}
                             {alreadyHas && <Tag color="orange" style={{ fontSize: 10 }}>已存在</Tag>}
                           </span>
                         </Checkbox>
