@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Card, Badge, Tag, Space, Empty, Button } from 'antd';
+import { Card, Badge, Tag, Space, Empty, Button, Tooltip } from 'antd';
 import Typography from 'antd/es/typography';
 import {
   FolderOutlined, FileTextOutlined,
@@ -165,6 +165,8 @@ export function SkillTree({ data, onSkillClick, onImport, onExport, searchText, 
       {data.map(executorData => {
         const nodes = buildTree(executorData, searchText, showCategory);
         const executorLabel = EXECUTORS.find(e => e.value === executorData.executor)?.label || executorData.executor;
+        // agents 是只读 skill 来源：禁止导入覆盖；其他执行器正常
+        const isReadonly = executorData.executor === 'agents';
 
         return (
           <Card
@@ -179,6 +181,7 @@ export function SkillTree({ data, onSkillClick, onImport, onExport, searchText, 
                     : '#d9d9d9',
                 }} />
                 <Text strong>{executorLabel}</Text>
+                {isReadonly && <Tag color="default" style={{ fontSize: 10 }}>只读</Tag>}
                 <Badge
                   count={executorData.skills.length}
                   style={{ backgroundColor: executorData.skills.length > 0 ? EXECUTOR_COLORS[executorData.executor] : '#d9d9d9' }}
@@ -187,13 +190,16 @@ export function SkillTree({ data, onSkillClick, onImport, onExport, searchText, 
             }
             extra={
               <Space size="small">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<UploadOutlined />}
-                  aria-label="导入 Skills"
-                  onClick={() => onImport(executorData.executor)}
-                />
+                <Tooltip title={isReadonly ? 'agents 是只读来源，不能导入' : '导入 Skills'}>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<UploadOutlined />}
+                    aria-label="导入 Skills"
+                    disabled={isReadonly}
+                    onClick={() => onImport(executorData.executor)}
+                  />
+                </Tooltip>
                 <Button
                   type="text"
                   size="small"
