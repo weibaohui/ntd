@@ -144,14 +144,42 @@ open http://localhost:8088
 
 ntd 支持多种 AI CLI 工具，选择你已有的或最喜欢的即可：
 
+### 功能对比表
+
+| 执行器 | 会话恢复 | 工具调用展示 | 思考过程展示 | Token 用量统计 | 模型名称 | Worktree | 安装命令 |
+|--------|:--------:|:------------:|:------------:|:-------------:|:--------:|:--------:|----------|
+| **Claude Code** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `npm install -g @anthropic-ai/claude-code` |
+| **Codebuddy** | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | 官方渠道 |
+| **OpenCode** | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ | 官方渠道 |
+| **AtomCode** | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | 官方渠道 |
+| **Hermes** | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | 官方渠道 |
+| **Kimi** | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | 官方渠道 |
+| **Codex** | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | 官方渠道 |
+| **CodeWhale** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | 官方渠道 |
+| **JoinAI** | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | 联系获取 |
+
+### 功能说明
+
+- **会话恢复（Session Resume）**：支持通过 `--session-id` 或 `--resume` 恢复之前中断的对话，无需从头开始
+- **工具调用展示**：实时显示 AI 执行过程中调用的工具（如 bash、write_file、read_file 等）
+- **思考过程展示**：显示 AI 的推理思考过程（thinking block）
+- **Token 用量统计**：记录 input/output tokens、缓存命中量及执行成本
+- **Worktree**：执行时自动创建 Git worktree，隔离分支操作，适合仓库内多任务并行
+- **后置 Todo 进度提取**：Hermes 特有功能，执行完成后从会话文件中提取内部 Todo 进度
+
+### 各执行器特点
+
 | 执行器 | 特点 | 安装方式 |
 |--------|------|----------|
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) | 官方 CLI，支持 Worktree | `npm install -g @anthropic-ai/claude-code` |
-| [JoinAI](https://www.joinai.com) | AI 工作流工具 | 联系获取 |
-| [Codex](https://openai.com/codex) | OpenAI 代码助手 | 官方渠道 |
-| [Codebuddy](https://codebuddy.com) | 代码助手 | 官方渠道 |
-| [OpenCode](https://opencode.ai) | 开源代码助手 | 官方渠道 |
-| [AtomCode](https://atomcode.dev) | AI 代码编辑器 | 官方渠道 |
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) | 官方 CLI，最完善的功能支持，NDJSON 流式输出 | `npm install -g @anthropic-ai/claude-code` |
+| [JoinAI](https://www.joinai.com) | AI 工作流工具，支持会话恢复 | 联系获取 |
+| [Codex](https://openai.com/codex) | OpenAI 代码助手，支持复杂推理 | 官方渠道 |
+| [Codebuddy](https://codebuddy.com) | 与 Claude Code 协议兼容的工具调用展示 | 官方渠道 |
+| [OpenCode](https://opencode.ai) | 开源代码助手，自定义事件流格式 | 官方渠道 |
+| [AtomCode](https://atomcode.dev) | 轻量级 AI 代码编辑器，stderr 解析 | 官方渠道 |
+| [Hermes](https://github.com/bhousai/hermes) | 支持 Todo 进度提取，适合任务分解场景 | 官方渠道 |
+| [Kimi](https://kimi.moonshot.cn) | 国产大模型 CLI，支持思考过程展示 | 官方渠道 |
+| [CodeWhale](https://codewhale.cn) | AI 代码助手，适合中文场景 | 官方渠道 |
 
 ---
 
