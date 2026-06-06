@@ -113,7 +113,15 @@ export async function feishuPoll(device_code: string, interval?: number, expire_
   }));
 }
 
-// SSE 方式轮询飞书授权，支持页面关闭后继续执行
+/**
+ * 通过 SSE 方式轮询飞书设备授权，支持页面关闭后继续执行
+ * @param device_code 飞书设备码，从 feishuBegin 获取
+ * @param interval 轮询间隔（秒），默认 5
+ * @param expire_in 过期时间（秒），默认 1800
+ * @param onMessage 授权结果回调，接收 FeishuPollResponse
+ * @param onError 错误回调，接收错误信息字符串
+ * @returns EventSource 实例，调用方负责管理其生命周期（关闭连接）
+ */
 export function feishuPollSSE(
   device_code: string,
   interval: number = 5,

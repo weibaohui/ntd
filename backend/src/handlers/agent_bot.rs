@@ -247,6 +247,8 @@ pub async fn feishu_poll(
 }
 
 // SSE 轮询飞书授权结果，支持页面关闭后继续执行
+// 整体流程：通过 mpsc channel 将后台轮询任务的结果传递给 SSE 流，
+// 前端建立 SSE 连接后，后台任务循环轮询飞书 API直至授权成功/超时/出错。
 pub async fn feishu_poll_sse(
     State(state): State<AppState>,
     Query(params): Query<FeishuPollRequest>,
@@ -263,12 +265,16 @@ pub async fn feishu_poll_sse(
     let db = state.db.clone();
     let listener = state.feishu_listener.clone();
 
-    // 启动后台轮询任务
+    // 启动后台轮询任务：独立于请求处理线程，持续轮询飞书 API
     tokio::spawn(async move {
-        let client = Client::new();
+        // 为 HTTP 请求设置 30 秒超时，防止网络问题导致轮询挂起
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| Client::new());
 
         loop {
-            // 检查是否超时
+            // 每次循环检查是否超过总期限(expire_in)，超过则返回 timeout
             if std::time::Instant::now() > deadline {
                 let response = FeishuPollResponse {
                     success: false,
@@ -282,7 +288,7 @@ pub async fn feishu_poll_sse(
                 break;
             }
 
-            // 轮询飞书 API
+            // 向飞书授权服务器发送 poll 请求，检查设备授权状态
             let res = match client
                 .post("https://accounts.feishu.cn/oauth/v1/app/registration")
                 .header("Content-Type", "application/x-www-form-urlencoded")
@@ -295,6 +301,7 @@ pub async fn feishu_poll_sse(
             {
                 Ok(r) => r,
                 Err(e) => {
+                    // HTTP 请求失败，发送 error 事件并退出
                     let event = Event::default()
                         .event("error")
                         .data(e.to_string());
@@ -306,6 +313,7 @@ pub async fn feishu_poll_sse(
             let body: serde_json::Value = match res.json().await {
                 Ok(b) => b,
                 Err(e) => {
+                    // 响应解析失败，发送 error 事件并退出
                     let event = Event::default()
                         .event("error")
                         .data(e.to_string());
@@ -314,11 +322,12 @@ pub async fn feishu_poll_sse(
                 }
             };
 
-            // 授权成功
+            // 授权成功：提取 client_id/client_secret，创建 bot 并启动 listener
             if let (Some(app_id), Some(app_secret)) = (
                 body.get("client_id").and_then(|v| v.as_str()),
                 body.get("client_secret").and_then(|v| v.as_str()),
             ) {
+                // 获取用户信息确定是飞书还是 Lark
                 let user_info = body.get("user_info");
                 let tenant_brand = user_info.and_then(|v| v.get("tenant_brand")).and_then(|v| v.as_str());
                 let open_id = user_info.and_then(|v| v.get("open_id")).and_then(|v| v.as_str());
@@ -329,6 +338,7 @@ pub async fn feishu_poll_sse(
                     Some("feishu".to_string())
                 };
 
+                // 查询 bot 信息验证凭证有效性
                 let bot_name = match probe_bot(app_id, app_secret).await {
                     Ok(name) => Some(name),
                     Err(e) => {
@@ -337,6 +347,7 @@ pub async fn feishu_poll_sse(
                     }
                 };
 
+                // 在数据库中创建飞书 bot 记录
                 let bot_id = match db
                     .create_agent_bot("feishu", bot_name.as_deref().unwrap_or("Feishu Bot"), app_id, app_secret, open_id.map(String::from), domain.clone())
                     .await
@@ -348,7 +359,7 @@ pub async fn feishu_poll_sse(
                     }
                 };
 
-                // 启动新创建的 bot listener（仅当 bot 创建成功时）
+                // 仅当 bot 创建成功时启动 listener（监听飞书消息）
                 if let Some(id) = bot_id {
                     if let Ok(Some(bot)) = db.get_agent_bot(id).await {
                         if bot.enabled {
@@ -362,6 +373,7 @@ pub async fn feishu_poll_sse(
                     }
                 }
 
+                // 发送成功结果事件
                 let response = FeishuPollResponse {
                     success: true,
                     app_id: Some(app_id.to_string()),
@@ -379,7 +391,7 @@ pub async fn feishu_poll_sse(
                 break;
             }
 
-            // 终端错误
+            // 终端错误：access_denied（用户拒绝）或 expired_token（二维码过期），不可重试
             if let Some(err) = body.get("error").and_then(|v| v.as_str()) {
                 if err == "access_denied" || err == "expired_token" {
                     let response = FeishuPollResponse {
@@ -393,12 +405,13 @@ pub async fn feishu_poll_sse(
                     let _ = tx.send(Ok(event)).await;
                     break;
                 }
+                // slow_down：服务端要求降低请求频率，等待额外 5 秒后重试
                 if err == "slow_down" {
                     sleep(interval + Duration::from_secs(5)).await;
                 }
             }
 
-            // authorization_pending，发送心跳并等待
+            // authorization_pending：用户还未扫码，发送 ping 心跳并等待 interval 后重试
             let event = Event::default()
                 .event("ping")
                 .data(r#"{"status":"waiting"}"#);
@@ -407,7 +420,7 @@ pub async fn feishu_poll_sse(
         }
     });
 
-    // 将 channel 转转为 Stream
+    // 将 channel 转为 Stream 返回给前端
     let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
 
     Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::new())

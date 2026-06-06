@@ -42,6 +42,7 @@ impl CodeExecutor for AtomcodeExecutor {
     fn command_args(&self, message: &str) -> Vec<String> {
         vec![
             "-v".to_string(),
+            // headless/自动化模式下跳过交互式权限确认，与 ClaudeCodeExecutor 保持一致
             "--dangerously-skip-permissions".to_string(),
             "-p".to_string(),
             message.to_string(),
