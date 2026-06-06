@@ -120,12 +120,13 @@ fn executor_label(et: ExecutorType) -> &'static str {
         ExecutorType::Atomcode => "AtomCode",
         ExecutorType::Kimi => "Kimi",
         ExecutorType::Joinai => "JoinAI",
+        ExecutorType::Codewhale => "CodeWhale",
     }
 }
 
 // 保留 ALL_EXECUTORS 供其他可能用到的代码；新代码请用 ALL_SKILL_SOURCES
 #[allow(dead_code)]
-const ALL_EXECUTORS: [ExecutorType; 8] = [
+const ALL_EXECUTORS: [ExecutorType; 9] = [
     ExecutorType::Claudecode,
     ExecutorType::Hermes,
     ExecutorType::Codex,
@@ -134,6 +135,7 @@ const ALL_EXECUTORS: [ExecutorType; 8] = [
     ExecutorType::Atomcode,
     ExecutorType::Kimi,
     ExecutorType::Joinai,
+    ExecutorType::Codewhale,
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -191,7 +191,7 @@ fn executor_skills_dir(et: &str) -> Option<PathBuf> {
 
 const ALL_EXECUTORS: &[&str] = &[
     "claudecode", "hermes", "codex", "codebuddy",
-    "opencode", "atomcode", "kimi", "joinai",
+    "opencode", "atomcode", "kimi", "joinai", "codewhale",
 ];
 
 /// Install embedded ntd-usage skill to executor skill directories.
@@ -358,6 +358,10 @@ async fn run_server(cli_port: Option<u16>) {
     }
     if let Err(e) = db.seed_default_executors().await {
         tracing::warn!("Failed to seed default executors: {}", e);
+    }
+    // Sync any new executors added since last version
+    if let Err(e) = db.sync_new_executors().await {
+        tracing::warn!("Failed to sync new executors: {}", e);
     }
     if let Err(e) = db.backfill_session_dir().await {
         tracing::warn!("Failed to backfill session_dir: {}", e);

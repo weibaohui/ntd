@@ -80,7 +80,7 @@ pub enum TodoAction {
         #[arg(long)]
         stdin: bool,
 
-        /// Executor type (claudecode, joinai, codebuddy, opencode, atomcode, hermes, kimi, codex)
+        /// Executor type (claudecode, joinai, codebuddy, opencode, atomcode, hermes, kimi, codex, codewhale)
         #[arg(short, long)]
         executor: Option<String>,
 

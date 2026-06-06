@@ -690,6 +690,7 @@ pub enum ExecutorType {
     Hermes,
     Kimi,
     Codex,
+    Codewhale,
 }
 
 
@@ -704,6 +705,7 @@ impl ExecutorType {
             ExecutorType::Hermes => "hermes",
             ExecutorType::Kimi => "kimi",
             ExecutorType::Codex => "codex",
+            ExecutorType::Codewhale => "codewhale",
         }
     }
 }

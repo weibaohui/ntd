@@ -105,6 +105,15 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         session_dir: "~/.codex",
         aliases: &[],
     },
+    ExecutorDef {
+        name: "codewhale",
+        executor_type: ExecutorType::Codewhale,
+        binary_name: "codewhale",
+        display_name: "CodeWhale",
+        default_path: "codewhale",
+        session_dir: "~/.codewhale",
+        aliases: &[],
+    },
 ];
 
 /// Find executor definition by name or alias
@@ -164,6 +173,7 @@ pub mod atomcode;
 pub mod hermes;
 pub mod kimi;
 pub mod codex;
+pub mod codewhale;
 
 #[async_trait]
 pub trait CodeExecutor: Send + Sync {
@@ -273,6 +283,7 @@ impl ExecutorRegistry {
             "hermes" => Arc::new(hermes::HermesExecutor::new(path.to_string())),
             "kimi" => Arc::new(kimi::KimiExecutor::new(path.to_string())),
             "codex" => Arc::new(codex::CodexExecutor::new(path.to_string())),
+            "codewhale" => Arc::new(codewhale::CodewhaleExecutor::new(path.to_string())),
             _ => return None,
         };
         Some(executor)
@@ -334,6 +345,12 @@ mod tests {
     fn test_parse_executor_type_codex() {
         assert_eq!(parse_executor_type("codex"), Some(ExecutorType::Codex));
         assert_eq!(parse_executor_type("CODEX"), Some(ExecutorType::Codex));
+    }
+
+    #[test]
+    fn test_parse_executor_type_codewhale() {
+        assert_eq!(parse_executor_type("codewhale"), Some(ExecutorType::Codewhale));
+        assert_eq!(parse_executor_type("CODEWHALE"), Some(ExecutorType::Codewhale));
     }
 
     #[test]

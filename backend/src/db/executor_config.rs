@@ -158,4 +158,30 @@ impl Database {
         }
         Ok(())
     }
+
+    /// Sync new executors from EXECUTORS static array into database.
+    /// Adds any executors that exist in EXECUTORS but not in the database.
+    pub async fn sync_new_executors(&self) -> Result<(), sea_orm::DbErr> {
+        let existing = executors::Entity::find().all(&self.conn).await?;
+        let existing_names: Vec<&str> = existing.iter().map(|m| m.name.as_str()).collect();
+        let now = crate::models::utc_timestamp();
+
+        for exec in EXECUTORS {
+            if !existing_names.contains(&exec.name) {
+                let am = executors::ActiveModel {
+                    name: ActiveValue::Set(exec.name.to_string()),
+                    path: ActiveValue::Set(exec.default_path.to_string()),
+                    enabled: ActiveValue::Set(true),
+                    display_name: ActiveValue::Set(exec.display_name.to_string()),
+                    session_dir: ActiveValue::Set(exec.session_dir.to_string()),
+                    created_at: ActiveValue::Set(Some(now.clone())),
+                    updated_at: ActiveValue::Set(Some(now.clone())),
+                    ..Default::default()
+                };
+                am.insert(&self.conn).await?;
+                tracing::info!("Added new executor '{}' to database", exec.name);
+            }
+        }
+        Ok(())
+    }
 }
