@@ -77,7 +77,10 @@ export function useViewState() {
   }, [pushUrl]);
 
   // Select a todo (opens detail panel, preserves current view)
+  // Guard: callers pass Number(todoId) which returns NaN for invalid strings like "";
+  // we silently ignore NaN to avoid dispatching a SELECT_TODO with NaN.
   const selectTodo = useCallback((todoId: number) => {
+    if (!Number.isFinite(todoId)) return;
     setSelectedPanel('detail');
     pushUrl(activeView, todoId);
   }, [activeView, pushUrl]);

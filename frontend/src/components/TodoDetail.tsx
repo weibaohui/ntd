@@ -85,7 +85,7 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
       }
     }
     prevIsExecutingRef.current = isExecuting;
-  }, [isExecuting, selectedTodoId, selectedHistoryRecordId, historyPage, historyLimit]);
+  }, [isExecuting, selectedTodoId, selectedHistoryRecordId, historyPage, historyLimit, loadExecutionRecords, refreshSingleRecord, loadLogs]);
 
   const getRunningTaskForRecord = (record: ExecutionRecord) => {
     if (record.task_id) {

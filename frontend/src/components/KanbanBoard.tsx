@@ -140,15 +140,20 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
     });
   }, []);
 
-  /* ─── Toggle expand result & lazy-fetch (hook handles fetch; local manages Set) ─── */
+  /* ─── Toggle result card expansion ─────────────────────────────
+   * Responsibilities are intentionally split:
+   *   - KanbanBoard manages expandedResultIds (local UI Set state)
+   *   - cache.toggleResult handles lazy-fetch of result text
+   * Splitting avoids duplicating UI state into the hook and keeps
+   * the hook purely about data fetching. ─── */
   const handleToggleResult = useCallback(async (todo: Todo) => {
-    // Toggle expanded state
+    // Update local UI expansion state
     setExpandedResultIds(prev => {
       const next = new Set(prev);
       if (next.has(todo.id)) next.delete(todo.id); else next.add(todo.id);
       return next;
     });
-    // Hook handles lazy-fetch
+    // Trigger lazy-fetch of result text (hook manages cache + loading state)
     await cache.toggleResult(todo);
   }, [cache]);
 

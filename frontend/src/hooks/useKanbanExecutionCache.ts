@@ -97,7 +97,11 @@ export function useKanbanExecutionCache({
         }
       }).catch(() => {});
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Intentionally omitted from deps: this effect populates the local cache by
+    // checking storeRecords inside the loop (via storeRecords[todo.id]).  Adding
+    // storeRecords to deps would cause re-fetch of every finished todo whenever
+    // ANY execution record changes globally, which defeats the purpose of the cache.
   }, [todos]);
 
   // ─── Toggle result expansion & lazy-fetch ───────────────
@@ -145,6 +149,8 @@ export function useKanbanExecutionCache({
 
     setLoadingRunIndex(prev => ({ ...prev, [todoId]: runIndex }));
     try {
+      // Pagination is 1-indexed and sorted newest-first: runIndex=0 is the latest
+      // record (page 1), runIndex=1 is the second-latest (page 2), etc.
       const page = await db.getExecutionRecords(todoId, runIndex + 1, 1);
       if (page.records.length > 0) {
         const record = page.records[0];
