@@ -140,6 +140,14 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
     }
   };
 
+  // Tab 顺序说明：
+  // 1. 系统设置、执行器管理、标签管理 → 基础配置优先
+  // 2. 消息、Session 管理 → 用户个性化配置紧随其后
+  // 3. 项目目录、模板管理 → 项目相关
+  // 4. 备份与恢复 → 数据安全（用户配置完毕后最后考虑）
+  // 5. Skills 管理、运行管理 → 高级功能放中间层
+  // 6. Webhook、云端同步 → 外部集成邻近放置
+  // 7. 关于 → 信息页末位
   const tabItems = [
     {
       key: 'system',
@@ -170,9 +178,31 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
       children: <TagsPanel tags={tags} dispatch={dispatch} />,
     },
     {
+      key: 'messages',
+      label: <span><MessageOutlined style={{ marginRight: 6 }} />消息</span>,
+      children: (
+        <MessagesPanel
+          configForm={configForm}
+          configSaving={configSaving}
+          handleSaveConfig={handleSaveConfig}
+          onBack={onBack}
+        />
+      ),
+    },
+    {
+      key: 'sessions',
+      label: <span><LaptopOutlined style={{ marginRight: 6 }} />Session 管理</span>,
+      children: <SessionManager />,
+    },
+    {
       key: 'projectDirectories',
       label: <span><FolderOutlined style={{ marginRight: 6 }} />项目目录</span>,
       children: <ProjectDirectoriesPanel />,
+    },
+    {
+      key: 'templates',
+      label: <span><FileTextOutlined style={{ marginRight: 6 }} />模板管理</span>,
+      children: <TemplatesPanel />,
     },
     {
       key: 'backup',
@@ -195,28 +225,6 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
           executorDisplayNames={executorDisplayNames}
         />
       ),
-    },
-    {
-      key: 'messages',
-      label: <span><MessageOutlined style={{ marginRight: 6 }} />消息</span>,
-      children: (
-        <MessagesPanel
-          configForm={configForm}
-          configSaving={configSaving}
-          handleSaveConfig={handleSaveConfig}
-          onBack={onBack}
-        />
-      ),
-    },
-    {
-      key: 'sessions',
-      label: <span><LaptopOutlined style={{ marginRight: 6 }} />Session 管理</span>,
-      children: <SessionManager />,
-    },
-    {
-      key: 'templates',
-      label: <span><FileTextOutlined style={{ marginRight: 6 }} />模板管理</span>,
-      children: <TemplatesPanel />,
     },
     {
       key: 'webhooks',
