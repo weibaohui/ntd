@@ -7,7 +7,7 @@ import { useTheme } from '../hooks/useTheme';
 import { StatusPicker } from './StatusPicker';
 import * as db from '../utils/database';
 import { ExecutorBadge } from './ExecutorBadge';
-import { formatRelativeTime, formatLocalDateTime } from '../utils/datetime';
+import { formatRelativeTime } from '../utils/datetime';
 
 interface TodoListProps {
   onOpenCreateModal: () => void;
@@ -276,7 +276,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
                           flexShrink: 0,
                           marginLeft: 8,
                         }}
-                        title={formatLocalDateTime(todo.updated_at)}
+                        title={formatRelativeTime(todo.updated_at)}
                       >
                         {formatRelativeTime(todo.updated_at)}
                       </span>

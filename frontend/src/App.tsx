@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { ConfigProvider, Layout, Spin, App as AntApp } from 'antd';
+import { ConfigProvider, Layout, App as AntApp } from 'antd';
 import { PlusOutlined, ThunderboltOutlined, CloseOutlined } from '@ant-design/icons';
 import { AppProvider, useApp } from './hooks/useApp';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useExecutionEvents } from './hooks/useExecutionEvents';
+import { useViewState } from './hooks/useViewState';
 import { ThemeProvider, useTheme } from './hooks/useTheme';
 import { TodoList } from './components/TodoList';
 import { TodoDetail } from './components/TodoDetail';
@@ -23,23 +24,13 @@ const { Content } = Layout;
 
 function AppContent() {
   const { state, dispatch, clearSelection } = useApp();
+  const { activeView, selectedPanel, setSelectedPanel, showView, selectTodo, backToList } = useViewState();
+
   const [todoModalOpen, setTodoModalOpen] = useState(false);
   const [smartCreateOpen, setSmartCreateOpen] = useState(false);
   const [fabExpanded, setFabExpanded] = useState(false);
   const [appConfig, setAppConfig] = useState<Config | null>(null);
   const isMobile = useIsMobile();
-  // Read initial state from URL - derive both activeView and selectedPanel from URL
-  const getInitialView = () => {
-    const params = new URLSearchParams(window.location.search);
-    const view = params.get('view');
-    if (view === 'settings' || view === 'memorial' || view === 'relation') return view;
-    return 'dashboard';
-  };
-  const getInitialPanel = (view: 'dashboard' | 'settings' | 'memorial' | 'relation') => {
-    return view === 'dashboard' ? 'list' : 'detail';
-  };
-  const [activeView, setActiveView] = useState<'dashboard' | 'settings' | 'memorial' | 'relation'>(getInitialView);
-  const [selectedPanel, setSelectedPanel] = useState<'list' | 'detail'>(() => getInitialPanel(getInitialView()));
 
   const [panelCollapsed, setPanelCollapsed] = useState(() => {
     try {
@@ -54,50 +45,12 @@ function AppContent() {
   const hasRunningTasks = Object.keys(state.runningTasks).length > 0;
   const panelHeight = hasRunningTasks ? (panelCollapsed ? 40 : 280) : 0;
 
-  // 加载配置
+  // Load app config on mount
   useEffect(() => {
     db.getConfig().then(setAppConfig).catch(() => {});
   }, []);
 
-  // Push URL state helper
-  const pushUrl = (view: string, todoId?: string | number | null) => {
-    const params = new URLSearchParams();
-    if (todoId) {
-      params.set('todo', String(todoId));
-    } else if (view !== 'dashboard') {
-      params.set('view', view);
-    }
-    const qs = params.toString();
-    const url = qs ? `/?${qs}` : '/';
-    window.history.pushState(null, '', url);
-  };
-
-  // Handle browser back/forward
-  useEffect(() => {
-    const onPopState = () => {
-      const params = new URLSearchParams(window.location.search);
-      const todoId = params.get('todo');
-      const view = params.get('view');
-
-      if (todoId) {
-        dispatch({ type: 'SELECT_TODO', payload: Number(todoId) });
-        setSelectedPanel('detail');
-      } else {
-        dispatch({ type: 'SELECT_TODO', payload: null });
-        if (view === 'settings' || view === 'memorial' || view === 'relation') {
-          setActiveView(view);
-          setSelectedPanel('detail');
-        } else {
-          setActiveView('dashboard');
-          setSelectedPanel('list');
-        }
-      }
-    };
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
-  }, [dispatch]);
-
-  // On initial load, restore todo selection from URL
+  // On initial load, restore todo selection from URL (only when loading finishes)
   useEffect(() => {
     if (state.loading) return;
     const params = new URLSearchParams(window.location.search);
@@ -106,74 +59,25 @@ function AppContent() {
       dispatch({ type: 'SELECT_TODO', payload: Number(todoId) });
       setSelectedPanel('detail');
     }
-  }, [state.loading, state.todos, dispatch]);
-
-  if (state.loading) {
-    return (
-      <div className="flex-center" style={{ height: '100vh' }}>
-        <Spin size="large" description="加载中..." />
-      </div>
-    );
-  }
+  }, [state.loading, state.todos, dispatch, setSelectedPanel]);
 
   const handleSelectTodo = (todoId: string | number | null) => {
     if (todoId != null) {
-      setSelectedPanel('detail');
-      pushUrl(activeView, todoId);
+      dispatch({ type: 'SELECT_TODO', payload: Number(todoId) });
+      selectTodo(Number(todoId));
     }
   };
 
-  const handleShowMemorial = () => {
-    clearSelection();
-    setActiveView('memorial');
-    setSelectedPanel('detail');
-    pushUrl('memorial');
-  };
-
-  const handleShowDashboard = () => {
-    clearSelection();
-    setActiveView('dashboard');
-    setSelectedPanel('detail');
-    pushUrl('dashboard');
-  };
-
-  const handleShowSettings = () => {
-    clearSelection();
-    setActiveView('settings');
-    setSelectedPanel('detail');
-    pushUrl('settings');
-  };
-
-  const handleShowRelationMap = () => {
-    clearSelection();
-    setActiveView('relation');
-    setSelectedPanel('detail');
-    pushUrl('relation');
-  };
-
-
-  const handleBackToList = () => {
-    clearSelection();
-    setActiveView('dashboard');
-    setSelectedPanel('list');
-    pushUrl('dashboard');
-  };
-
   const handleSmartCreateSubmitted = () => {
-    // 刷新 todo 列表
     db.getAllTodos().then(todos => {
       dispatch({ type: 'SET_TODOS', payload: todos });
     });
   };
 
-  const handleGoToSettings = () => {
-    handleShowSettings();
-  };
+  const handleGoToSettings = () => showView('settings');
 
-  // 点击 FAB 外部收起
-  const handleFabBackdropClick = () => {
-    setFabExpanded(false);
-  };
+  // FAB backdrop click to collapse
+  const handleFabBackdropClick = () => setFabExpanded(false);
 
   return (
     <Layout style={{ height: '100vh' }}>
@@ -190,10 +94,7 @@ function AppContent() {
                   <span className="mobile-fab-item-label">智能新建</span>
                   <button
                     className="mobile-fab-item-btn mobile-fab-smart"
-                    onClick={() => {
-                      setFabExpanded(false);
-                      setSmartCreateOpen(true);
-                    }}
+                    onClick={() => { setFabExpanded(false); setSmartCreateOpen(true); }}
                     aria-label="智能新建"
                   >
                     <ThunderboltOutlined style={{ fontSize: 20, color: '#fff' }} />
@@ -203,10 +104,7 @@ function AppContent() {
                   <span className="mobile-fab-item-label">新建</span>
                   <button
                     className="mobile-fab-item-btn mobile-fab-create"
-                    onClick={() => {
-                      setFabExpanded(false);
-                      setTodoModalOpen(true);
-                    }}
+                    onClick={() => { setFabExpanded(false); setTodoModalOpen(true); }}
                     aria-label="新建任务"
                   >
                     <PlusOutlined style={{ fontSize: 20, color: '#fff' }} />
@@ -219,11 +117,9 @@ function AppContent() {
               onClick={() => setFabExpanded(!fabExpanded)}
               aria-label={fabExpanded ? '关闭' : '创建任务'}
             >
-              {fabExpanded ? (
-                <CloseOutlined style={{ fontSize: 22, color: '#fff' }} />
-              ) : (
-                <PlusOutlined style={{ fontSize: 24, color: '#fff' }} />
-              )}
+              {fabExpanded
+                ? <CloseOutlined style={{ fontSize: 22, color: '#fff' }} />
+                : <PlusOutlined style={{ fontSize: 24, color: '#fff' }} />}
             </button>
           </div>
         </>
@@ -256,10 +152,10 @@ function AppContent() {
               onOpenCreateModal={() => setTodoModalOpen(true)}
               onOpenSmartCreate={() => setSmartCreateOpen(true)}
               onSelectTodo={handleSelectTodo}
-              onShowDashboard={handleShowDashboard}
-              onShowMemorial={handleShowMemorial}
-              onShowRelationMap={handleShowRelationMap}
-              onShowSettings={handleShowSettings}
+              onShowDashboard={() => { clearSelection(); showView('dashboard'); }}
+              onShowMemorial={() => { clearSelection(); showView('memorial'); }}
+              onShowRelationMap={() => { clearSelection(); showView('relation'); }}
+              onShowSettings={() => { clearSelection(); showView('settings'); }}
             />
           </div>
 
@@ -274,16 +170,18 @@ function AppContent() {
             }}
           >
             {state.selectedTodoId ? (
-                <TodoDetail onBack={isMobile ? handleBackToList : undefined} />
-              ) : activeView === 'settings' ? (
-                <SettingsPage onBack={isMobile ? handleBackToList : undefined} />
-              ) : activeView === 'memorial' ? (
-                <MemorialBoard onBack={isMobile ? handleBackToList : undefined} />
-              ) : activeView === 'relation' ? (
-                <RelationMap onBack={isMobile ? handleBackToList : undefined} />
-              ) : (
-                <Dashboard onBack={isMobile ? handleBackToList : undefined} />
-              )}
+              <TodoDetail
+                onBack={isMobile ? backToList : undefined}
+              />
+            ) : activeView === 'settings' ? (
+              <SettingsPage onBack={isMobile ? backToList : undefined} />
+            ) : activeView === 'memorial' ? (
+              <MemorialBoard onBack={isMobile ? backToList : undefined} />
+            ) : activeView === 'relation' ? (
+              <RelationMap onBack={isMobile ? backToList : undefined} />
+            ) : (
+              <Dashboard onBack={isMobile ? backToList : undefined} />
+            )}
           </div>
         </Content>
       </Layout>
@@ -325,12 +223,8 @@ function AppContent() {
 
 function ThemedApp() {
   const { themeConfig } = useTheme();
-
   return (
-    <ConfigProvider
-      locale={zhCN}
-      theme={themeConfig}
-    >
+    <ConfigProvider locale={zhCN} theme={themeConfig}>
       <AntApp>
         <AppProvider>
           <AppContent />

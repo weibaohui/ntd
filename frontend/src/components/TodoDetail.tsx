@@ -1,6 +1,7 @@
-import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useApp } from '../hooks/useApp';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useExecutionHistory } from '../hooks/useExecutionHistory';
 import { Button, Empty, App, Pagination, Modal, Input, Select } from 'antd';
 import { CheckCircleOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { TodoDrawer } from './TodoDrawer';
@@ -8,7 +9,7 @@ import { parseLogsToMessages } from './ChatView';
 import * as db from '../utils/database';
 import { conversationToYaml } from '../utils/markdown';
 import { getExecutorOption } from '../types';
-import type { ExecutionSummary, ExecutionRecord, LogEntry } from '../types';
+import type { ExecutionRecord, LogEntry } from '../types';
 import { groupBySession } from './todo-detail/helpers';
 import { NarrowHistoryCard } from './todo-detail/NarrowHistoryCard';
 import { ChainGroupCard } from './todo-detail/ChainGroupCard';
@@ -22,17 +23,38 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
   const { todos, selectedTodoId, executionRecords, runningTasks } = state;
   const isMobile = useIsMobile();
   const isWide = !useIsMobile(1440);
-  const [selectedHistoryRecordId, setSelectedHistoryRecordId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<'log' | 'chat'>('log');
   const selectedTodo = todos.find(t => t.id === selectedTodoId);
 
   const [todoDrawerOpen, setTodoDrawerOpen] = useState(false);
-  const [summary, setSummary] = useState<ExecutionSummary | null>(null);
 
-  // Execution history pagination state
-  const [historyPage, setHistoryPage] = useState(1);
-  const [historyLimit, setHistoryLimit] = useState(5);
-  const [historyTotal, setHistoryTotal] = useState(0);
+  // 使用 useExecutionHistory hook 获取执行历史相关的状态和操作
+  const {
+    selectedHistoryRecordId,
+    setSelectedHistoryRecordId,
+    records,
+    historyPage,
+    historyLimit,
+    historyTotal,
+    historyStatusFilter,
+    setHistoryStatusFilter,
+    summary,
+    selectedHistoryRecord,
+    isLoadingDetail,
+    paginatedLogs,
+    logsTotal,
+    logsPage,
+    logsPerPage,
+    isLoadingLogs,
+    loadExecutionRecords,
+    loadLogs,
+    refreshSingleRecord,
+    handleHistoryPageChange,
+  } = useExecutionHistory({
+    selectedTodoId,
+    storeRecords: selectedTodoId ? executionRecords[selectedTodoId] : [],
+    dispatch,
+  });
 
   // Timer for live duration display of running records
   const isExecuting = Object.values(runningTasks).some(
@@ -58,90 +80,12 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
       loadExecutionRecords(historyPage, historyLimit);
       // 如果有选中的记录，刷新单条记录详情（包含 result）和日志
       if (selectedHistoryRecordId) {
-        // 直接更新 selectedHistoryRecordDetail 和 dispatch 更新 store
-        db.getExecutionRecord(selectedHistoryRecordId).then(detail => {
-          setSelectedHistoryRecordDetail(detail);
-          dispatch({
-            type: 'UPDATE_EXECUTION_RECORD',
-            payload: { todoId: selectedTodoId, record: detail }
-          });
-        });
+        refreshSingleRecord(selectedHistoryRecordId);
         loadLogs(selectedHistoryRecordId, 1);
       }
     }
     prevIsExecutingRef.current = isExecuting;
-  }, [isExecuting, selectedTodoId, selectedHistoryRecordId, historyPage, historyLimit]);
-
-  const records = selectedTodoId ? executionRecords[selectedTodoId] || [] : [];
-
-  const [historyStatusFilter, setHistoryStatusFilter] = useState<'all' | 'running' | 'success' | 'failed'>('all');
-
-  const [selectedHistoryRecordDetail, setSelectedHistoryRecordDetail] = useState<ExecutionRecord | null>(null);
-  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
-
-  const [paginatedLogs, setPaginatedLogs] = useState<LogEntry[]>([]);
-  const [logsTotal, setLogsTotal] = useState(0);
-  const [logsPage, setLogsPage] = useState(1);
-  const [logsPerPage] = useState(200);
-  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
-  const activeRecordIdRef = useRef<number | null>(null);
-
-  const loadLogs = async (recordId: number, page: number) => {
-    setIsLoadingLogs(true);
-    try {
-      const result = await db.getExecutionLogs(recordId, page, logsPerPage);
-      if (activeRecordIdRef.current !== recordId) return;
-      setPaginatedLogs(result.logs);
-      setLogsTotal(result.total);
-      setLogsPage(result.page);
-    } catch {
-      if (activeRecordIdRef.current === recordId) setPaginatedLogs([]);
-    } finally {
-      if (activeRecordIdRef.current === recordId) setIsLoadingLogs(false);
-    }
-  };
-
-  useEffect(() => {
-    activeRecordIdRef.current = selectedHistoryRecordId;
-    if (!selectedHistoryRecordId) {
-      setSelectedHistoryRecordDetail(null);
-      setPaginatedLogs([]);
-      setLogsTotal(0);
-      setLogsPage(1);
-      return;
-    }
-    const requestId = selectedHistoryRecordId;
-    const basicRecord = records.find(r => r.id === requestId);
-
-    setIsLoadingDetail(true);
-    db.getExecutionRecord(requestId)
-      .then(detail => {
-        if (activeRecordIdRef.current !== requestId) return;
-        setSelectedHistoryRecordDetail(detail);
-        if (selectedTodoId) {
-          dispatch({
-            type: 'UPDATE_EXECUTION_RECORD',
-            payload: { todoId: selectedTodoId, record: detail }
-          });
-        }
-      })
-      .catch(() => {
-        if (activeRecordIdRef.current !== requestId) return;
-        if (basicRecord) {
-          setSelectedHistoryRecordDetail(basicRecord);
-        }
-      })
-      .finally(() => {
-        if (activeRecordIdRef.current === requestId) setIsLoadingDetail(false);
-      });
-
-    loadLogs(requestId, 1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedHistoryRecordId]);
-
-  const selectedHistoryRecord = selectedHistoryRecordDetail || (selectedHistoryRecordId
-    ? records.find(r => r.id === selectedHistoryRecordId) || null
-    : null);
+  }, [isExecuting, selectedTodoId, selectedHistoryRecordId, historyPage, historyLimit, loadExecutionRecords, refreshSingleRecord, loadLogs]);
 
   const getRunningTaskForRecord = (record: ExecutionRecord) => {
     if (record.task_id) {
@@ -157,68 +101,6 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
     }
     return record.execution_stats;
   };
-
-  const loadExecutionRecords = async (page = 1, limit = historyLimit) => {
-    if (!selectedTodo) return;
-    try {
-      const statusFilter = historyStatusFilter === 'all' ? undefined : historyStatusFilter;
-      const pageData = await db.getExecutionRecords(selectedTodo.id, page, limit, statusFilter);
-
-      dispatch({
-        type: 'SET_EXECUTION_RECORDS',
-        payload: { todoId: selectedTodo.id, records: pageData.records }
-      });
-      setHistoryPage(pageData.page);
-      setHistoryLimit(pageData.limit);
-      setHistoryTotal(pageData.total);
-    } catch {
-      // ignore: interceptor already shows error
-    }
-  };
-
-  const refreshSingleRecord = async (recordId: number) => {
-    if (!selectedTodo) return;
-    try {
-      const record = await db.getExecutionRecord(recordId);
-      dispatch({
-        type: 'UPDATE_EXECUTION_RECORD',
-        payload: { todoId: selectedTodo.id, record }
-      });
-    } catch {
-      // ignore
-    }
-  };
-
-  const cancelledRef = useRef(false);
-  useEffect(() => {
-    cancelledRef.current = false;
-    if (selectedTodoId) {
-      setHistoryPage(1);
-
-      const statusFilter = historyStatusFilter === 'all' ? undefined : historyStatusFilter;
-      db.getExecutionRecords(selectedTodoId, 1, historyLimit, statusFilter).then(pageData => {
-        if (cancelledRef.current) return;
-        dispatch({
-          type: 'SET_EXECUTION_RECORDS',
-          payload: { todoId: selectedTodoId, records: pageData.records }
-        });
-        setHistoryPage(pageData.page);
-        setHistoryTotal(pageData.total);
-      }).catch(() => {});
-
-      db.getExecutionSummary(selectedTodoId).then(sum => {
-        if (!cancelledRef.current) setSummary(sum);
-      }).catch(() => {});
-    } else {
-      setSummary(null);
-    }
-    return () => { cancelledRef.current = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-props
-  }, [selectedTodoId, historyLimit, historyStatusFilter]);
-
-  useEffect(() => {
-    setSelectedHistoryRecordId(null);
-  }, [selectedTodoId]);
 
   useEffect(() => {
     if (!isWide || records.length === 0) return;
@@ -399,15 +281,6 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
     }
   };
 
-  const handleHistoryPageChange = (page: number, pageSize: number) => {
-    if (pageSize !== historyLimit) {
-      setHistoryLimit(pageSize);
-      loadExecutionRecords(1, pageSize);
-    } else {
-      loadExecutionRecords(page, historyLimit);
-    }
-  };
-
   if (!selectedTodo) {
     return (
       <div className="detail-panel" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -582,14 +455,7 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
                   current={historyPage}
                   pageSize={historyLimit}
                   total={historyTotal}
-                  onChange={(page, pageSize) => {
-                    if (pageSize !== historyLimit) {
-                      setHistoryLimit(pageSize);
-                      loadExecutionRecords(1, pageSize);
-                    } else {
-                      loadExecutionRecords(page, historyLimit);
-                    }
-                  }}
+                  onChange={handleHistoryPageChange}
                   size="small"
                   showSizeChanger
                   pageSizeOptions={['5', '10', '20']}
@@ -610,9 +476,7 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
             dispatch({ type: 'SET_TODOS', payload: todos });
           });
           if (selectedTodoId) {
-            db.getExecutionSummary(selectedTodoId).then(sum => {
-              setSummary(sum);
-            });
+            loadExecutionRecords(1, historyLimit);
           }
         }}
       />

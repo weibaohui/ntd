@@ -1,8 +1,9 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
 import { Input, Segmented, App, Tabs } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import { useApp } from '../hooks/useApp';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useKanbanExecutionCache } from '../hooks/useKanbanExecutionCache';
 import { TodoCard } from './TodoCard';
 import * as db from '../utils/database';
 import { formatRelativeTime } from '../utils/datetime';
@@ -28,49 +29,11 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
   const [dragOverStatus, setDragOverStatus] = useState<Todo['status'] | null>(null);
   const [expandedPromptIds, setExpandedPromptIds] = useState<Set<number>>(new Set());
   const [expandedResultIds, setExpandedResultIds] = useState<Set<number>>(new Set());
-  const [todoResults, setTodoResults] = useState<Record<number, string>>({});
-  const [loadingResults, setLoadingResults] = useState<Set<number>>(new Set());
   const isMobile = useIsMobile();
   const [activeKey, setActiveKey] = useState<Todo['status']>('pending');
 
-  /* ─── Eagerly fetch execution records for completed/failed todos ─── */
-  const [execRecordCache, setExecRecordCache] = useState<Record<number, ExecutionRecord>>({});
-  const fetchAttempted = useRef<Set<number>>(new Set());
-
-  /* ─── Run history switching ─── */
-  const [selectedRunIndex, setSelectedRunIndex] = useState<Record<number, number>>({});
-  const [totalRunsCache, setTotalRunsCache] = useState<Record<number, number>>({});
-  const [runDataCache, setRunDataCache] = useState<Record<number, (ExecutionRecord | null)[]>>({});
-  const [loadingRunIndex, setLoadingRunIndex] = useState<Record<number, number | null>>({});
-
-  useEffect(() => {
-    const finished = todos.filter(t => t.status === 'completed' || t.status === 'failed');
-    for (const todo of finished) {
-      if (fetchAttempted.current.has(todo.id)) continue;
-      fetchAttempted.current.add(todo.id);
-
-      // Already in global state? copy to local cache
-      const global = state.executionRecords[todo.id];
-      if (global?.length) {
-        if (!execRecordCache[todo.id]) {
-          setExecRecordCache(prev => ({ ...prev, [todo.id]: global[0] }));
-        }
-        if (!totalRunsCache[todo.id]) {
-          setTotalRunsCache(prev => ({ ...prev, [todo.id]: global.length }));
-        }
-        continue;
-      }
-      // Lazy-fetch from API
-      db.getExecutionRecords(todo.id, 1, 1).then(page => {
-        if (page.records.length > 0) {
-          setExecRecordCache(prev => ({ ...prev, [todo.id]: page.records[0] }));
-        }
-        if (page.total > 0) {
-          setTotalRunsCache(prev => ({ ...prev, [todo.id]: page.total }));
-        }
-      }).catch(() => {});
-    }
-  }, [todos, state.executionRecords, execRecordCache]);
+  /* ─── Execution record cache (delegated to hook) ─── */
+  const cache = useKanbanExecutionCache({ todos, storeRecords: state.executionRecords });
 
   /* ─── Filter by search + time ─── */
   const filteredTodos = useMemo(() => {
@@ -177,84 +140,22 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
     });
   }, []);
 
-  /* ─── Toggle expand result & lazy-fetch ─── */
-  const toggleResult = useCallback(async (todo: Todo) => {
-    const todoId = todo.id;
-
-    // If not expanded yet and no cached result, try to fetch
-    if (!expandedResultIds.has(todoId) && !todoResults[todoId]) {
-      // Check state cache first
-      const records = state.executionRecords[todoId];
-      if (records && records.length > 0) {
-        const latest = records[0];
-        if (latest.result) {
-          setTodoResults(prev => ({ ...prev, [todoId]: latest.result! }));
-        }
-      } else {
-        // Lazy-fetch from API
-        if (loadingResults.has(todoId)) return;
-        setLoadingResults(prev => new Set(prev).add(todoId));
-        try {
-          const page = await db.getExecutionRecords(todoId, 1, 1);
-          if (page.records.length > 0 && page.records[0].result) {
-            setTodoResults(prev => ({ ...prev, [todoId]: page.records[0].result! }));
-          }
-        } catch {
-          // silently ignore
-        } finally {
-          setLoadingResults(prev => { const n = new Set(prev); n.delete(todoId); return n; });
-        }
-      }
-    }
-
+  /* ─── Toggle result card expansion ─────────────────────────────
+   * Responsibilities are intentionally split:
+   *   - KanbanBoard manages expandedResultIds (local UI Set state)
+   *   - cache.toggleResult handles lazy-fetch of result text
+   * Splitting avoids duplicating UI state into the hook and keeps
+   * the hook purely about data fetching. ─── */
+  const handleToggleResult = useCallback(async (todo: Todo) => {
+    // Update local UI expansion state
     setExpandedResultIds(prev => {
       const next = new Set(prev);
-      if (next.has(todoId)) next.delete(todoId); else next.add(todoId);
+      if (next.has(todo.id)) next.delete(todo.id); else next.add(todo.id);
       return next;
     });
-  }, [expandedResultIds, todoResults, loadingResults, state.executionRecords]);
-
-  /* ─── Select run index (on-demand fetch) ─── */
-  const handleSelectRun = useCallback(async (todoId: number, runIndex: number) => {
-    if (selectedRunIndex[todoId] === runIndex) return;
-    setSelectedRunIndex(prev => ({ ...prev, [todoId]: runIndex }));
-
-    if (runDataCache[todoId]?.[runIndex]) return;
-
-    if (runIndex === 0) {
-      const record = execRecordCache[todoId] || state.executionRecords[todoId]?.[0];
-      if (record) {
-        setRunDataCache(prev => {
-          const arr = prev[todoId] || [];
-          const next = [...arr];
-          next[0] = record;
-          return { ...prev, [todoId]: next };
-        });
-      }
-      return;
-    }
-
-    setLoadingRunIndex(prev => ({ ...prev, [todoId]: runIndex }));
-    try {
-      const page = await db.getExecutionRecords(todoId, runIndex + 1, 1);
-      if (page.records.length > 0) {
-        const record = page.records[0];
-        setRunDataCache(prev => {
-          const arr = prev[todoId] || [];
-          const next = [...arr];
-          next[runIndex] = record;
-          return { ...prev, [todoId]: next };
-        });
-        if (!totalRunsCache[todoId] && page.total > 0) {
-          setTotalRunsCache(prev => ({ ...prev, [todoId]: page.total }));
-        }
-      }
-    } catch {
-      // silently ignore
-    } finally {
-      setLoadingRunIndex(prev => ({ ...prev, [todoId]: null }));
-    }
-  }, [selectedRunIndex, runDataCache, execRecordCache, state.executionRecords, totalRunsCache]);
+    // Trigger lazy-fetch of result text (hook manages cache + loading state)
+    await cache.toggleResult(todo);
+  }, [cache]);
 
   /* ─── Render Card ─── */
   const renderCard = (todo: Todo) => {
@@ -265,21 +166,19 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
     const isFinished = todo.status === 'completed' || todo.status === 'failed';
     const promptExpanded = expandedPromptIds.has(todo.id);
     const resultExpanded = expandedResultIds.has(todo.id);
-    const records = state.executionRecords[todo.id] || [];
-    const todoExecutionRecord: ExecutionRecord | undefined =
-      records.length > 0 ? records[0] : execRecordCache[todo.id];
+    const todoExecutionRecord = cache.getRecordForTodo(todo.id);
 
     // Run history: determine which run to display
-    const runIdx = selectedRunIndex[todo.id] ?? 0;
-    const cachedRun = runDataCache[todo.id]?.[runIdx];
+    const runIdx = cache.selectedRunIndex[todo.id] ?? 0;
+    const cachedRun = cache.runDataCache[todo.id]?.[runIdx];
     let resultText: string;
     let displayModel: string | null | undefined;
     let displayUsage: ExecutionRecord['usage'] | null | undefined;
     let displayTriggerType: string | undefined;
 
     if (runIdx === 0) {
-      const recordResult = execRecordCache[todo.id]?.result || state.executionRecords[todo.id]?.[0]?.result;
-      resultText = todoResults[todo.id] || recordResult || '';
+      const recordResult = cache.todoResults[todo.id] || state.executionRecords[todo.id]?.[0]?.result;
+      resultText = recordResult || '';
       displayModel = todoExecutionRecord?.model;
       displayUsage = todoExecutionRecord?.usage;
       displayTriggerType = todoExecutionRecord?.trigger_type;
@@ -294,9 +193,9 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
       displayUsage = null;
     }
 
-    const isLoadingResult = loadingResults.has(todo.id);
-    const isLoadingRun = loadingRunIndex[todo.id] != null && loadingRunIndex[todo.id] === runIdx && runIdx > 0;
-    const runCount = totalRunsCache[todo.id] ?? (isFinished ? 1 : 0);
+    const isLoadingResult = cache.loadingResults.has(todo.id);
+    const isLoadingRun = cache.loadingRunIndex[todo.id] != null && cache.loadingRunIndex[todo.id] === runIdx && runIdx > 0;
+    const runCount = cache.totalRunsCache[todo.id] ?? (isFinished ? 1 : 0);
 
     return (
       <div
@@ -323,11 +222,11 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
           promptExpanded={promptExpanded}
           resultExpanded={resultExpanded}
           onTogglePrompt={() => togglePrompt(todo.id)}
-          onToggleResult={() => toggleResult(todo)}
+          onToggleResult={() => handleToggleResult(todo)}
           isLoadingResult={isLoadingResult}
           runCount={runCount}
           selectedRun={runIdx}
-          onSelectRun={(index) => handleSelectRun(todo.id, index)}
+          onSelectRun={(index) => cache.handleSelectRun(todo.id, index)}
           isLoadingRun={isLoadingRun}
         />
       </div>

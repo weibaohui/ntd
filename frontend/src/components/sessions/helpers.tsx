@@ -1,4 +1,5 @@
 import { Tag } from 'antd';
+import { parseUtcDate } from '../../utils/datetime';
 
 export const sourceConfig: Record<string, { label: string; color: string }> = {
   'claudecode': { label: 'Claude Code', color: '#d97706' },
@@ -35,7 +36,8 @@ export function formatTokens(n: number): string {
 export function formatTime(iso?: string | null): string {
   if (!iso) return '-';
   try {
-    const d = new Date(iso);
+    const d = parseUtcDate(iso);
+    if (!d) return '-';
     const now = new Date();
     const diffMs = now.getTime() - d.getTime();
     const diffMin = Math.floor(diffMs / 60000);

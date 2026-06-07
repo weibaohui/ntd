@@ -564,8 +564,12 @@ impl Database {
         )
         .await?;
 
+        // Use BEFORE UPDATE trigger so that if the application already sets updated_at,
+        // the trigger doesn't overwrite it with the wrong timezone. Only auto-fill when
+        // the value is NULL or empty.
         self.exec(
-            "CREATE TRIGGER IF NOT EXISTS set_todos_updated_at_utc AFTER UPDATE ON todos
+            "CREATE TRIGGER IF NOT EXISTS set_todos_updated_at_utc BEFORE UPDATE OF updated_at ON todos
+             WHEN new.updated_at IS NULL OR new.updated_at = ''
              BEGIN
                  UPDATE todos SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
              END",

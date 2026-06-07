@@ -1,0 +1,185 @@
+import type { ReactNode } from 'react';
+import { FaSquare } from 'react-icons/fa';
+import type { TodoItem } from './todo';
+
+// ─── Execution types ────────────────────────────────────────
+
+export interface LogEntry {
+  timestamp: string;
+  type: 'info' | 'stdout' | 'stderr' | 'error' | 'text' | 'tool' | 'tool_use' | 'tool_call' | 'tool_result' | 'step_start' | 'step_finish' | 'result' | 'assistant' | 'user' | 'system' | 'thinking' | 'tokens';
+  content: string;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system' | 'tool' | 'thinking' | 'result';
+  content: string;
+  timestamp?: string;
+  toolName?: string;
+  toolInput?: string;
+  toolResult?: string;
+  isCollapsed?: boolean;
+}
+
+export interface ExecutionUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number | null;
+  cache_creation_input_tokens: number | null;
+  total_cost_usd: number | null;
+  duration_ms: number | null;
+}
+
+export interface ExecutionStats {
+  tool_calls: number;
+  conversation_turns: number;
+  thinking_count: number;
+}
+
+export interface ExecutionRecord {
+  id: number;
+  todo_id: number;
+  status: 'running' | 'success' | 'failed';
+  command: string;
+  stdout: string;
+  stderr: string;
+  result: string | null;
+  started_at: string;
+  finished_at: string | null;
+  usage: ExecutionUsage | null;
+  executor: string | null;
+  model: string | null;
+  trigger_type: string;
+  pid: number | null;
+  task_id?: string | null;
+  session_id?: string | null;
+  todo_progress?: string | null;
+  execution_stats?: ExecutionStats | null;
+  resume_message?: string | null;
+  source_todo_id?: number | null;
+  source_todo_title?: string | null;
+  source_hook_id?: number | null;
+}
+
+export interface ExecutionSummary {
+  todo_id: number;
+  total_executions: number;
+  success_count: number;
+  failed_count: number;
+  running_count: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cache_read_tokens: number;
+  total_cache_creation_tokens: number;
+  total_cost_usd: number | null;
+}
+
+export interface ExecutionRecordsPage {
+  records: ExecutionRecord[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface ExecutionLogsPage {
+  logs: LogEntry[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export interface ExecuteResult {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  logs: LogEntry[];
+}
+
+export interface RunningTask {
+  taskId: string;
+  todoId: number;
+  todoTitle: string;
+  executor: string;
+  logs: LogEntry[];
+  status: 'running' | 'finished';
+  success?: boolean;
+  result?: string | null;
+  startedAt: string;
+  finishedAt?: string;
+  todoProgress?: TodoItem[];
+  executionStats?: ExecutionStats;
+}
+
+// ─── Executor types ──────────────────────────────────────────
+
+export interface ExecutorOption {
+  value: string;
+  label: string;
+  color: string;
+  icon: ReactNode;
+}
+
+export const EXECUTORS: ExecutorOption[] = [
+  { value: 'claudecode', label: 'Claude',    color: '#e17055', icon: <FaSquare color="#e17055" size={14} /> },
+  { value: 'codebuddy',  label: 'CodeBuddy', color: '#00b894', icon: <FaSquare color="#00b894" size={14} /> },
+  { value: 'opencode',   label: 'Opencode',  color: '#fdcb6e', icon: <FaSquare color="#fdcb6e" size={14} /> },
+  { value: 'joinai',     label: 'JoinAI',    color: '#6c5ce7', icon: <FaSquare color="#6c5ce7" size={14} /> },
+  { value: 'atomcode',   label: 'AtomCode',  color: '#e84393', icon: <FaSquare color="#e84393" size={14} /> },
+  { value: 'hermes',     label: 'Hermes',    color: '#0984e3', icon: <FaSquare color="#0984e3" size={14} /> },
+  { value: 'kimi',       label: 'Kimi',      color: '#d63031', icon: <FaSquare color="#d63031" size={14} /> },
+  { value: 'codex',      label: 'Codex',     color: '#488597', icon: <FaSquare color="#488597" size={14} /> },
+  { value: 'codewhale',  label: 'CodeWhale', color: '#00cec9', icon: <FaSquare color="#00cec9" size={14} /> },
+  // `agents` is read-only skill source (`~/.agents/skills`), not shown in executor management.
+  // Included here so it appears in Skills overview/sync tabs.
+  { value: 'agents',     label: 'Agents',    color: '#2d3436', icon: <FaSquare color="#2d3436" size={14} /> },
+];
+
+export const EXECUTOR_COLORS: Record<string, string> = {
+  claudecode: '#e17055',
+  codebuddy: '#00b894',
+  opencode: '#fdcb6e',
+  joinai: '#6c5ce7',
+  atomcode: '#e84393',
+  hermes: '#0984e3',
+  kimi: '#d63031',
+  codex: '#488597',
+  codewhale: '#00cec9',
+  agents: '#2d3436',
+  // Aliases for backward compatibility with database names
+  'claude_code': '#e17055',
+  'claude': '#e17055',
+  'cbc': '#00b894',
+  'atom': '#e84393',
+};
+
+// Get executor color with alias support
+export function getExecutorColor(name: string | undefined | null): string {
+  if (!name) return '#999';
+  return EXECUTOR_COLORS[name] || '#999';
+}
+
+export function getExecutorOption(value: string): ExecutorOption {
+  return EXECUTORS.find(e => e.value === value.toLowerCase()) || EXECUTORS[0];
+}
+
+export const RESUMABLE_EXECUTORS = new Set(['claudecode', 'kimi', 'opencode', 'joinai', 'hermes', 'codewhale']);
+
+export function supportsResume(record: ExecutionRecord): boolean {
+  return (
+    record.status !== 'running' &&
+    !!record.session_id &&
+    !!record.executor &&
+    RESUMABLE_EXECUTORS.has(record.executor.toLowerCase())
+  );
+}
+
+// Defined here to avoid circular dependency (execution -> todo -> execution)
+// executorConfigToOption needs ExecutorOption (execution) + ExecutorConfig (config)
+export function executorConfigToOption(ec: { name: string; display_name: string }): ExecutorOption {
+  const color = getExecutorColor(ec.name);
+  return {
+    value: ec.name,
+    label: ec.display_name || ec.name,
+    color,
+    icon: <FaSquare color={color} size={14} />,
+  };
+}
