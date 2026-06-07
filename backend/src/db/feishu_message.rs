@@ -282,6 +282,28 @@ impl Database {
         Ok(())
     }
 
+    /// Mark a message as failed (processed=false) when execution fails.
+    /// The message stays in "unprocessed" state so it can be retried or investigated.
+    pub async fn mark_feishu_message_failed(
+        &self,
+        message_id: &str,
+        todo_id: i64,
+    ) -> Result<(), sea_orm::DbErr> {
+        let result = feishu_messages::Entity::find()
+            .filter(feishu_messages::Column::MessageId.eq(message_id))
+            .one(&self.conn)
+            .await?;
+
+        if let Some(model) = result {
+            let mut am: feishu_messages::ActiveModel = model.into();
+            am.processed = ActiveValue::Set(Some(false));
+            am.processed_todo_id = ActiveValue::Set(Some(todo_id));
+            // execution_record_id intentionally not set for failures
+            am.update(&self.conn).await?;
+        }
+        Ok(())
+    }
+
     pub async fn get_feishu_message_stats(&self, hours: Option<u32>) -> Result<crate::models::FeishuMessageStats, sea_orm::DbErr> {
         let backend = self.conn.get_database_backend();
         let hours = hours.unwrap_or(720); // default 30 days = 720 hours (matches frontend)
