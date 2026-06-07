@@ -194,7 +194,7 @@ async fn test_template_list_by_category_filters() {
         TemplateInput {
             title: "t1",
             prompt: None,
-            category: "Git/CI",
+            category: "测试专用分类",
             sort_order: Some(2),
         },
         false,
@@ -205,7 +205,7 @@ async fn test_template_list_by_category_filters() {
         TemplateInput {
             title: "t2",
             prompt: None,
-            category: "测试",
+            category: "其他分类",
             sort_order: Some(1),
         },
         false,
@@ -216,18 +216,18 @@ async fn test_template_list_by_category_filters() {
         TemplateInput {
             title: "t3",
             prompt: None,
-            category: "Git/CI",
+            category: "测试专用分类",
             sort_order: Some(1),
         },
         false,
     )
     .await
     .unwrap();
-    let git_ci = db.get_templates_by_category("Git/CI").await.unwrap();
-    assert_eq!(git_ci.len(), 2);
-    assert!(git_ci.iter().all(|t| t.category == "Git/CI"));
+    let filtered = db.get_templates_by_category("测试专用分类").await.unwrap();
+    assert_eq!(filtered.len(), 2);
+    assert!(filtered.iter().all(|t| t.category == "测试专用分类"));
     // sort_order=1 的应在 sort_order=2 的之前
-    assert!(git_ci[0].sort_order < git_ci[1].sort_order);
+    assert!(filtered[0].sort_order < filtered[1].sort_order);
 
     let empty = db.get_templates_by_category("不存在的分类").await.unwrap();
     assert!(empty.is_empty());
@@ -668,7 +668,7 @@ async fn test_executor_get_enabled_filters_disabled() {
     db.seed_default_executors().await.unwrap();
     let all = db.get_executors().await.unwrap();
     let target = all.first().expect("至少一条种子执行器");
-    db.update_executor(target.name, None, Some(false), None, None)
+    db.update_executor(&target.name, None, Some(false), None, None)
         .await
         .unwrap();
     let enabled = db.get_enabled_executors().await.unwrap();
