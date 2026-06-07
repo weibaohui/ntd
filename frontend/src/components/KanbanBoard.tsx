@@ -6,7 +6,7 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { useKanbanExecutionCache } from '../hooks/useKanbanExecutionCache';
 import { TodoCard } from './TodoCard';
 import * as db from '../utils/database';
-import { formatLocalDateTime } from '../utils/datetime';
+import { formatRelativeTime } from '../utils/datetime';
 import type { Todo, ExecutionRecord } from '../types';
 import { TIME_OPTIONS, COLUMNS } from './kanban/constants';
 import { getColumnForStatus } from './kanban/helpers';
@@ -214,7 +214,7 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
           isSuccess={isSuccess}
           showResultSection={isFinished}
           executor={todo.executor}
-          time={formatLocalDateTime(todo.updated_at)}
+          time={formatRelativeTime(todo.updated_at)}
           model={displayModel}
           tags={todoTags}
           usage={displayUsage}
