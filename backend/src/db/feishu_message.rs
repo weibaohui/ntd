@@ -96,7 +96,7 @@ impl Database {
             content: ActiveValue::Set(message.content.map(String::from)),
             msg_type: ActiveValue::Set(message.msg_type.to_string()),
             is_mention: ActiveValue::Set(Some(false)),
-            processed: ActiveValue::Set(Some(true)),
+            processed: ActiveValue::Set(Some(false)),
             is_history: ActiveValue::Set(Some(true)),
             fetch_time: ActiveValue::Set(Some(now)),
             created_at: ActiveValue::Set(Some(message.created_at.to_string())),

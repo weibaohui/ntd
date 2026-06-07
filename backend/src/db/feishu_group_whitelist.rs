@@ -15,8 +15,8 @@ impl Database {
             .all(&self.conn)
             .await?;
 
-        // Empty whitelist means no restriction
-        if list.is_empty() {
+        // Empty whitelist or empty sender_open_id in any entry means no restriction (allow all)
+        if list.is_empty() || list.iter().any(|w| w.sender_open_id.is_empty()) {
             return Ok(true);
         }
 
