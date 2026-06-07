@@ -1,12 +1,14 @@
 /**
- * 将后端返回的 UTC ISO 8601 时间字符串解析为 Date 对象（强制按 UTC 解释）。
- * 后端存储的时间是 UTC，解析时必须附加 Z，否则 new Date() 会将其视为本地时区。
+ * 解析后端返回的时间字符串为 Date 对象。
+ * 后端存储的是本地时间（已按当前时区格式化），不加 Z 直接解析为本地时间。
+ * 如果后端返回的是 UTC 时间（带 Z），则按 UTC 解析。
  */
 export function parseUtcDate(timeStr: string | null | undefined): Date | null {
   if (!timeStr) return null;
-  // 已有 Z 后缀的直接解析；否则追加 Z 确保按 UTC 解释
-  const utc = timeStr.endsWith('Z') ? timeStr : timeStr + 'Z';
-  return new Date(utc);
+  // 有 Z 后缀说明后端认为这是 UTC 时间，按 UTC 解析
+  if (timeStr.endsWith('Z')) return new Date(timeStr);
+  // 没有 Z 后缀说明后端存的是本地时间，直接解析
+  return new Date(timeStr);
 }
 
 /**
