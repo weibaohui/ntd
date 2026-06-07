@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useApp } from '../hooks/useApp';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { Button, Empty, Tooltip } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined, UnorderedListOutlined, FolderOpenOutlined, FolderOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined, UnorderedListOutlined, FolderOpenOutlined, RightOutlined } from '@ant-design/icons';
 import { useTheme } from '../hooks/useTheme';
 import { StatusPicker } from './StatusPicker';
 import * as db from '../utils/database';
@@ -48,6 +48,8 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
   // 项目目录：分组视图需要按项目维度折叠，必须先有这份映射；
   // 即使切回平铺视图也保留数据，避免切换时闪烁
   const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
+  // 记录每个分组的折叠状态，key 为 workspace 路径
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     setIsLoading(false);
@@ -368,18 +370,62 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
           // 分组视图：每个项目一个"文件夹"块，块内平铺 todo；
           // 文件夹头部用项目名 + 数量徽标，方便一眼看清每个项目下堆积了多少 todo
           <div className="todo-grouped-list">
-            {groupedByProject.map(([key, group]) => (
-              <div key={key} className="todo-group">
-                <div className="todo-group-header">
-                  <FolderOutlined style={{ color: 'var(--color-primary)', marginRight: 6 }} />
-                  <span className="todo-group-title">{group.name}</span>
-                  <span className="todo-group-count">{group.items.length}</span>
+            {groupedByProject.map(([key, group]) => {
+              const isCollapsed = collapsedGroups.has(key);
+              return (
+                <div key={key} className="todo-group">
+                  <div
+                    className="todo-group-header"
+                    onClick={() => {
+                      setCollapsedGroups(prev => {
+                        const next = new Set(prev);
+                        if (isCollapsed) {
+                          next.delete(key);
+                        } else {
+                          next.add(key);
+                        }
+                        return next;
+                      });
+                    }}
+                    style={{ cursor: 'pointer' }}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setCollapsedGroups(prev => {
+                          const next = new Set(prev);
+                          if (isCollapsed) {
+                            next.delete(key);
+                          } else {
+                            next.add(key);
+                          }
+                          return next;
+                        });
+                      }
+                    }}
+                    aria-expanded={!isCollapsed}
+                  >
+                    <RightOutlined
+                      style={{
+                        color: 'var(--color-primary)',
+                        marginRight: 6,
+                        fontSize: 10,
+                        transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)',
+                        transition: 'transform 0.2s',
+                      }}
+                    />
+                    <span className="todo-group-title">{group.name}</span>
+                    <span className="todo-group-count">{group.items.length}</span>
+                  </div>
+                  {!isCollapsed && (
+                    <div className="todo-group-items">
+                      {group.items.map(renderTodoItem)}
+                    </div>
+                  )}
                 </div>
-                <div className="todo-group-items">
-                  {group.items.map(renderTodoItem)}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           filteredTodos.map(renderTodoItem)
