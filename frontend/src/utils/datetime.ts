@@ -1,9 +1,12 @@
 /**
- * 将后端返回的 UTC ISO 8601 时间字符串解析为 Date 对象
+ * 将后端返回的 UTC ISO 8601 时间字符串解析为 Date 对象（强制按 UTC 解释）。
+ * 后端存储的时间是 UTC，解析时必须附加 Z，否则 new Date() 会将其视为本地时区。
  */
 export function parseUtcDate(timeStr: string | null | undefined): Date | null {
   if (!timeStr) return null;
-  return new Date(timeStr);
+  // 已有 Z 后缀的直接解析；否则追加 Z 确保按 UTC 解释
+  const utc = timeStr.endsWith('Z') ? timeStr : timeStr + 'Z';
+  return new Date(utc);
 }
 
 /**
@@ -16,7 +19,8 @@ export function formatLocalDateTime(timeStr: string | null | undefined): string 
 }
 
 /**
- * 将时间格式化为相对时间（多久之前）
+ * 将时间格式化为相对时间（多久之前）。
+ * 使用 UTC 计算经过的时分秒，避免本地时区偏移导致显示错误（如"3小时前"变成"11小时前"）。
  */
 export function formatRelativeTime(timeStr: string | null | undefined): string {
   const date = parseUtcDate(timeStr);
@@ -24,6 +28,8 @@ export function formatRelativeTime(timeStr: string | null | undefined): string {
 
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
+  if (diffMs < 0) return '';
+
   const diffSec = Math.floor(diffMs / 1000);
   const diffMin = Math.floor(diffSec / 60);
   const diffHour = Math.floor(diffMin / 60);
@@ -36,7 +42,9 @@ export function formatRelativeTime(timeStr: string | null | undefined): string {
   if (diffDay === 1) return '昨天';
   if (diffDay < 7) return `${diffDay} 天前`;
 
+  // 超过7天显示月日，用 UTC 避免本地时区偏移
   return date.toLocaleDateString('zh-CN', {
+    timeZone: 'UTC',
     month: 'numeric',
     day: 'numeric',
   });

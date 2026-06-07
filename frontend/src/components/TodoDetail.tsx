@@ -17,7 +17,7 @@ import { DetailHeader } from './todo-detail/DetailHeader';
 import { HistoryList } from './todo-detail/HistoryList';
 import { RecordDetailView } from './todo-detail/RecordDetailView';
 
-export function TodoDetail({ onBack }: { onBack?: () => void }) {
+export function TodoDetail({ onBack, onShowDashboard }: { onBack?: () => void; onShowDashboard?: () => void }) {
   const { state, dispatch } = useApp();
   const { message } = App.useApp();
   const { todos, selectedTodoId, executionRecords, runningTasks } = state;
@@ -337,6 +337,7 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
         onOpenExecuteWithArgs={handleOpenExecuteWithArgs}
         onExecute={handleExecute}
         onStatusChange={handleStatusChange}
+        onShowDashboard={onShowDashboard}
       />
 
       {/* Execution History */}

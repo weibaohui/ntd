@@ -1,5 +1,5 @@
 import { Button, Tag, Badge, Popconfirm } from 'antd';
-import { PlayCircleOutlined, ThunderboltOutlined, EditOutlined, DeleteOutlined, ArrowLeftOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, ThunderboltOutlined, EditOutlined, DeleteOutlined, ArrowLeftOutlined, DashboardOutlined } from '@ant-design/icons';
 import { StatusPicker } from '../StatusPicker';
 import { ExecutorBadge } from '../ExecutorBadge';
 import { PromptDisplay } from './PromptDisplay';
@@ -12,6 +12,7 @@ import type { Todo } from '../../types';
 export function DetailHeader({
   selectedTodo, executor, isExecuting, isMobile, summary, currentTodoProgress,
   records, onMobileBack, onDelete, onTodoDrawerOpen, onOpenExecuteWithArgs, onExecute, onStatusChange,
+  onShowDashboard,
 }: {
   selectedTodo: Todo;
   executor: string;
@@ -26,18 +27,28 @@ export function DetailHeader({
   onOpenExecuteWithArgs: () => void;
   onExecute: () => Promise<void>;
   onStatusChange: (status: string) => Promise<void>;
+  onShowDashboard?: () => void;
 }) {
   return (
     <>
       {isMobile && (
-        <Button
-          type="text"
-          icon={<ArrowLeftOutlined />}
-          onClick={onMobileBack}
-          style={{ marginBottom: 8, marginLeft: -4 }}
-        >
-          返回
-        </Button>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <Button
+            type="text"
+            icon={<ArrowLeftOutlined />}
+            onClick={onMobileBack}
+          >
+            返回
+          </Button>
+          {onShowDashboard && (
+            <Button
+              type="text"
+              icon={<DashboardOutlined />}
+              onClick={onShowDashboard}
+              aria-label="查看仪表盘"
+            />
+          )}
+        </div>
       )}
       <div className="detail-card header-card">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
