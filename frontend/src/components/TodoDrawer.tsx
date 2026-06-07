@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Drawer, Input, Button, App, AutoComplete, Divider, Switch } from 'antd';
-import { FolderOutlined } from '@ant-design/icons';
+import { Drawer, Input, Button, App, AutoComplete, Divider, Switch, Modal, Form, Empty, Space } from 'antd';
+import { FolderOutlined, PlusOutlined } from '@ant-design/icons';
 import * as db from '../utils/database';
 import type { ProjectDirectory } from '../utils/database';
 import type { TodoHookItem } from '../utils/database/hooks';
@@ -31,6 +31,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
   const [prompt, setPrompt] = useState('');
   const [selectedTags, setSelectedTags] = useState<number[]>([]);
   const [executor, setExecutor] = useState<string>('claudecode');
+  // workspace 存的是路径；与 ProjectDirectory.path 对应，确保值可以直接命中已配置的目录
   const [workspace, setWorkspace] = useState<string>('');
   const [worktreeEnabled, setWorktreeEnabled] = useState(false);
   const [executorOptions, setExecutorOptions] = useState<ExecutorOption[]>(EXECUTORS);
@@ -43,6 +44,10 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
   const [schedulerConfig, setSchedulerConfig] = useState<string>('');
   const [hooks, setHooks] = useState<TodoHookItem[]>([]);
   const [loading, setLoading] = useState(false);
+  // 快速新增项目目录的弹窗：与抽屉同级，关闭抽屉时一起清理
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [quickAddForm] = Form.useForm<{ name: string; path: string }>();
+  const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
   const editorRef = useRef<any>(null);
   const { state: appState } = useApp();
 
@@ -156,6 +161,40 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
     setTemplateModalOpen(false);
   }, [prompt, insertTextAtCursor, message]);
 
+  // 快速新增项目目录：用户在工作目录区域点"+"即可补一个项目，无需跳到设置页
+  const handleQuickAddProjectDirectory = async () => {
+    let values: { name: string; path: string };
+    try {
+      values = await quickAddForm.validateFields();
+    } catch {
+      // antd 校验失败时会自行提示，这里直接返回
+      return;
+    }
+    const name = values.name.trim();
+    const path = values.path.trim();
+    if (!name || !path) {
+      message.error('项目名称与目录路径均为必填');
+      return;
+    }
+    setQuickAddSubmitting(true);
+    try {
+      const dir = await db.createProjectDirectory(path, name);
+      setProjectDirectories(prev =>
+        [...prev.filter(d => d.id !== dir.id), dir].sort((a, b) => a.path.localeCompare(b.path))
+      );
+      // 保存后立即把新目录选中并写入工作目录，减少二次操作
+      setWorkspace(dir.path);
+      setQuickAddOpen(false);
+      message.success(`已添加项目"${dir.name}"`);
+      // 通知其他组件（如 TodoList 分组视图）项目目录已更新
+      window.dispatchEvent(new CustomEvent('projectDirectoryAdded', { detail: dir }));
+    } catch (err: any) {
+      message.error('添加项目目录失败: ' + (err?.message || String(err)));
+    } finally {
+      setQuickAddSubmitting(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!title.trim()) {
       message.error('请输入任务标题');
@@ -170,7 +209,8 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
         if (trimmedWorkspace) {
           const exists = projectDirectories.some(d => d.path === trimmedWorkspace);
           if (!exists) {
-            try { await db.createProjectDirectory(trimmedWorkspace); } catch { }
+            // 容错：用户选了 AutoComplete 模糊匹配之外的路径，依然按"项目名称 = 路径同名"思路兜底创建
+            try { await db.createProjectDirectory(trimmedWorkspace, trimmedWorkspace); } catch { }
           }
         }
 
@@ -190,7 +230,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
           if (trimmedWorkspace) {
             const exists = projectDirectories.some(d => d.path === trimmedWorkspace);
             if (!exists) {
-              try { await db.createProjectDirectory(trimmedWorkspace); } catch { }
+              try { await db.createProjectDirectory(trimmedWorkspace, trimmedWorkspace); } catch { }
             }
           }
           await db.updateTodo(
@@ -215,6 +255,17 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
   };
 
   const executorColor = getExecutorColor(executor);
+
+  // 把项目目录拍平成 AutoComplete 的可选项：value 仍存路径（与后端 workspace 字段兼容），
+  // label 同时展示"项目名称（路径）"，保证用户能看到项目维度的名字
+  const workspaceOptions = useMemo(
+    () =>
+      projectDirectories.map(d => ({
+        value: d.path,
+        label: d.name ? `${d.name}（${d.path}）` : d.path,
+      })),
+    [projectDirectories]
+  );
 
   return (
     <Drawer
@@ -284,21 +335,57 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
           <div style={{ marginBottom: 16 }}>
             <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14 }}>
               <FolderOutlined style={{ color: 'var(--color-primary)', marginRight: 6 }} />
-              工作目录
+              项目目录
             </div>
-            <AutoComplete
-              value={workspace}
-              onChange={(value) => setWorkspace(value)}
-              options={projectDirectories.map(d => ({
-                value: d.path,
-                label: d.name ? `${d.name} (${d.path})` : d.path,
-              }))}
-              placeholder="从项目目录选择或手动输入路径"
-              style={{ width: '100%' }}
-              filterOption={(input, option) =>
-                (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
-              }
-            />
+            {projectDirectories.length === 0 ? (
+              // 没有可用项目目录时给出空态提示，避免用户面对一个无选项的下拉茫然
+              <div
+                style={{
+                  padding: 16,
+                  border: '1px dashed var(--color-border)',
+                  borderRadius: 6,
+                  background: 'var(--color-bg)',
+                }}
+              >
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description={
+                    <div style={{ color: 'var(--color-text-secondary)' }}>
+                      尚未配置任何项目目录，请先创建后再选择
+                    </div>
+                  }
+                  style={{ margin: 0 }}
+                >
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    onClick={() => setQuickAddOpen(true)}
+                  >
+                    快速新增项目目录
+                  </Button>
+                </Empty>
+              </div>
+            ) : (
+              // 有项目目录时，下拉里展示的是项目名称（value 仍是路径，与后端模型兼容）
+              <Space.Compact style={{ width: '100%' }}>
+                <AutoComplete
+                  value={workspace}
+                  onChange={(value) => setWorkspace(value)}
+                  options={workspaceOptions}
+                  placeholder="选择项目目录或手动输入路径"
+                  style={{ flex: 1 }}
+                  filterOption={(input, option) =>
+                    (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
+                  }
+                />
+                <Button
+                  icon={<PlusOutlined />}
+                  onClick={() => setQuickAddOpen(true)}
+                  title="快速新增项目目录"
+                  aria-label="快速新增项目目录"
+                />
+              </Space.Compact>
+            )}
           </div>
 
           {(executor === 'claudecode' || executor === 'claude_code' || executor === 'hermes') && (
@@ -339,6 +426,41 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
         onClose={() => setTemplateModalOpen(false)}
         onSelect={handleSelectTemplate}
       />
+
+      {/* 快速新增项目目录：与抽屉同期挂载，避免切走 drawer 后弹窗无法关闭 */}
+      <Modal
+        title="快速新增项目目录"
+        open={quickAddOpen}
+        onCancel={() => {
+          if (quickAddSubmitting) return;
+          setQuickAddOpen(false);
+          quickAddForm.resetFields();
+        }}
+        onOk={handleQuickAddProjectDirectory}
+        confirmLoading={quickAddSubmitting}
+        okText="保存并使用"
+        cancelText="取消"
+        destroyOnClose
+        maskClosable={!quickAddSubmitting}
+      >
+        <Form form={quickAddForm} layout="vertical" preserve={false}>
+          <Form.Item
+            label="项目名称"
+            name="name"
+            // 名称必填：在 Todo 列表分组展示时是主标识
+            rules={[{ required: true, message: '请输入项目名称' }]}
+          >
+            <Input placeholder="例如：ntd 官网重构" autoFocus />
+          </Form.Item>
+          <Form.Item
+            label="目录路径"
+            name="path"
+            rules={[{ required: true, message: '请输入目录路径' }]}
+          >
+            <Input placeholder="例如：/Users/me/projects/ntd-site" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </Drawer>
   );
 }

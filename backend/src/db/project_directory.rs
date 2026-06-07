@@ -108,15 +108,31 @@ impl Database {
 
     /// 如果目录不存在则创建，返回目录信息
     /// 处理并发竞态：捕获唯一约束冲突并重试查询
+    /// 当 `name` 不为 None 时，若目标记录已存在且名称不同，会同步把名称更新为新值，
+    /// 避免前端补全名称时留下"无名"历史记录
     pub async fn get_or_create_project_directory(
         &self,
         path: &str,
+        name: Option<&str>,
     ) -> Result<ProjectDirectory, sea_orm::DbErr> {
         if let Some(existing) = self.get_project_directory_by_path(path).await? {
+            // name=None 时是 no-op：不应被解读为"清空名称"，仅保持现有值不变。
+            // name=Some 且与现有名称不同时才触发更新，兼容"先有路径、后补名称"的使用路径。
+            if let Some(new_name) = name {
+                if existing.name.as_deref() != Some(new_name) {
+                    self.update_project_directory(existing.id, Some(new_name)).await?;
+                    return self
+                        .get_project_directory_by_id(existing.id)
+                        .await?
+                        .ok_or_else(|| {
+                            sea_orm::DbErr::Custom("Directory disappeared after rename".into())
+                        });
+                }
+            }
             return Ok(existing);
         }
 
-        match self.create_project_directory(path, None).await {
+        match self.create_project_directory(path, name).await {
             Ok(id) => {
                 // 创建成功后从数据库查询以获取准确的时间戳
                 self.get_project_directory_by_id(id)
@@ -126,9 +142,22 @@ impl Database {
             Err(e) => {
                 // 如果是唯一约束冲突，说明另一个请求已经创建了该目录，重试查询
                 if is_unique_constraint_error(&e) {
-                    self.get_project_directory_by_path(path)
+                    let existing = self
+                        .get_project_directory_by_path(path)
                         .await?
-                        .ok_or_else(|| sea_orm::DbErr::Custom("Directory disappeared after conflict".into()))
+                        .ok_or_else(|| sea_orm::DbErr::Custom("Directory disappeared after conflict".into()))?;
+                    if let Some(new_name) = name {
+                        if existing.name.as_deref() != Some(new_name) {
+                            self.update_project_directory(existing.id, Some(new_name)).await?;
+                            return self
+                                .get_project_directory_by_id(existing.id)
+                                .await?
+                                .ok_or_else(|| {
+                                    sea_orm::DbErr::Custom("Directory disappeared after rename".into())
+                                });
+                        }
+                    }
+                    Ok(existing)
                 } else {
                     Err(e)
                 }

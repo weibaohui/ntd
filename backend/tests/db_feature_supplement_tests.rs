@@ -392,16 +392,21 @@ async fn test_project_directory_get_or_create_idempotent() {
     // 第一次调用：新建；第二次：复用，name 字段保持首次插入的值。
     let db = setup_db().await;
     let d1 = db
-        .get_or_create_project_directory("/tmp/goc-1")
+        .get_or_create_project_directory("/tmp/goc-1", Some("goc-name"))
         .await
         .unwrap();
     let d2 = db
-        .get_or_create_project_directory("/tmp/goc-1")
+        .get_or_create_project_directory("/tmp/goc-1", None)
         .await
         .unwrap();
     assert_eq!(d1.id, d2.id, "幂等：同一 path 必须返回同一 id");
     assert_eq!(d2.path, "/tmp/goc-1");
-    assert!(d2.name.is_none(), "通过 get_or_create 不会写入 name");
+    // 已有记录不传 name 时，名称应保持首次写入值，不被覆盖为 None
+    assert_eq!(
+        d2.name.as_deref(),
+        Some("goc-name"),
+        "name 应保持首次插入值"
+    );
 }
 
 #[tokio::test]

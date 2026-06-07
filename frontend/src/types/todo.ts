@@ -61,3 +61,6 @@ export interface CustomTemplateStatus {
   auto_sync_cron: string;
   templates: TodoTemplate[];
 }
+
+// 复用 database/todos.ts 中的定义，避免多处定义造成漂移
+export type { ProjectDirectory } from '../utils/database/todos';

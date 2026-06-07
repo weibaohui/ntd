@@ -9,12 +9,13 @@ use crate::models::ApiResponse;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateProjectDirectoryRequest {
     pub path: String,
-    pub name: Option<String>,
+    // 项目名称必填，Todo 选择目录时按名称展示
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateProjectDirectoryRequest {
-    pub name: Option<String>,
+    pub name: String,
 }
 
 pub async fn list_project_directories(
@@ -28,12 +29,18 @@ pub async fn create_project_directory(
     State(state): State<AppState>,
     ApiJson(req): ApiJson<CreateProjectDirectoryRequest>,
 ) -> Result<ApiResponse<crate::db::project_directory::ProjectDirectory>, super::AppError> {
+    // 路径和名称都必填：项目目录是用户按"项目"维度组织 Todo 的核心维度，
+    // 缺一项就无法在 Todo 侧按名称识别目录。
     if req.path.trim().is_empty() {
         return Ok(ApiResponse::err(crate::models::codes::BAD_REQUEST, "Path is required"));
     }
+    let name = req.name.trim();
+    if name.is_empty() {
+        return Ok(ApiResponse::err(crate::models::codes::BAD_REQUEST, "Name is required"));
+    }
     let directory = state
         .db
-        .get_or_create_project_directory(&req.path)
+        .get_or_create_project_directory(&req.path, Some(name))
         .await?;
     Ok(ApiResponse::ok(directory))
 }
@@ -43,9 +50,14 @@ pub async fn update_project_directory(
     axum::extract::Path(id): axum::extract::Path<i64>,
     ApiJson(req): ApiJson<UpdateProjectDirectoryRequest>,
 ) -> Result<ApiResponse<()>, super::AppError> {
+    // 更新也要求名称非空，与新增保持一致约束，避免出现"无名项目"的历史脏数据
+    let name = req.name.trim();
+    if name.is_empty() {
+        return Ok(ApiResponse::err(crate::models::codes::BAD_REQUEST, "Name is required"));
+    }
     state
         .db
-        .update_project_directory(id, req.name.as_deref())
+        .update_project_directory(id, Some(name))
         .await?;
     Ok(ApiResponse::ok(()))
 }

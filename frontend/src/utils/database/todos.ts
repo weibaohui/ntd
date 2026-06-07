@@ -133,11 +133,13 @@ export async function getProjectDirectories(): Promise<ProjectDirectory[]> {
   return unwrap(await api.get('/api/project-directories'));
 }
 
-export async function createProjectDirectory(path: string, name?: string): Promise<ProjectDirectory> {
+export async function createProjectDirectory(path: string, name: string): Promise<ProjectDirectory> {
+  // 后端要求 name 必填；调用方需要保证传入非空字符串
   return unwrap(await api.post('/api/project-directories', { path, name }));
 }
 
-export async function updateProjectDirectory(id: number, name?: string): Promise<void> {
+export async function updateProjectDirectory(id: number, name: string): Promise<void> {
+  // 与新增保持一致：名称必填
   await api.put(`/api/project-directories/${id}`, { name });
 }
 
