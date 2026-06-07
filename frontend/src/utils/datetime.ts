@@ -1,17 +1,15 @@
 /**
- * 解析后端返回的时间字符串为 Date 对象。
- * 数据库存的是本地时间（Asia/Shanghai），格式为 "YYYY-MM-DDTHH:MM:SSZ"（Z 是格式的一部分，非时区标识）。
- * 解析时需去掉末尾的 Z 当作本地时间字符串处理，避免 JS 将其误认为 UTC 时间。
+ * 将后端返回的 UTC ISO 8601 时间字符串（带 Z 后缀）解析为 Date 对象。
+ * JS 的 Date 构造器会自动将 Z 视为 UTC 时间，
+ * 在 toLocaleString() / getTime() 等操作时转换为本地时区。
  */
 export function parseUtcDate(timeStr: string | null | undefined): Date | null {
   if (!timeStr) return null;
-  // 去掉末尾的 Z，当作普通本地时间字符串解析
-  const localStr = timeStr.endsWith('Z') ? timeStr.slice(0, -1) : timeStr;
-  return new Date(localStr);
+  return new Date(timeStr);
 }
 
 /**
- * 将时间格式化为本地可读字符串
+ * 格式化为本地可读字符串
  */
 export function formatLocalDateTime(timeStr: string | null | undefined): string {
   const date = parseUtcDate(timeStr);
@@ -20,7 +18,7 @@ export function formatLocalDateTime(timeStr: string | null | undefined): string 
 }
 
 /**
- * 将时间格式化为相对时间（多久之前）
+ * 格式化为相对时间（多久之前）
  */
 export function formatRelativeTime(timeStr: string | null | undefined): string {
   const date = parseUtcDate(timeStr);
@@ -49,7 +47,7 @@ export function formatRelativeTime(timeStr: string | null | undefined): string {
 }
 
 /**
- * 格式化时长（秒）为简写形式，如 1h30m, 3m10s, 45s
+ * 格式化时长（秒）
  */
 export function formatDuration(seconds: number): string {
   const h = Math.floor(seconds / 3600);
