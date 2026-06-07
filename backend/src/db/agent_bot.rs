@@ -72,6 +72,7 @@ impl Database {
     }
 
     pub async fn delete_agent_bot(&self, id: i64) -> Result<(), sea_orm::DbErr> {
+        // Child rows in feishu_* tables are cleaned up by ON DELETE CASCADE.
         agent_bots::Entity::delete_by_id(id).exec(&self.conn).await?;
         Ok(())
     }

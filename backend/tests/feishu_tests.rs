@@ -244,3 +244,71 @@ mod pending_message_tests {
         assert_eq!(msg.params.as_ref().unwrap().get("key"), Some(&"value".to_string()));
     }
 }
+
+#[cfg(test)]
+mod cascade_delete_tests {
+    use ntd::db::Database;
+
+    /// Regression test: deleting an agent_bot should cascade-delete all
+    /// related rows in feishu child tables (ON DELETE CASCADE).
+    /// Previously this raised FOREIGN KEY constraint failed.
+    #[tokio::test]
+    async fn test_delete_agent_bot_cascades_feishu_children() {
+        let db = Database::new(":memory:").await.unwrap();
+
+        // 1. Create a feishu bot (also creates feishu_response_config rows)
+        let bot_id = db
+            .create_agent_bot("feishu", "test-bot", "app_id", "app_secret", None, None)
+            .await
+            .unwrap();
+
+        // 2. Insert a row into each feishu child table
+        db.set_feishu_home(bot_id, "ou_user1", Some("oc_chat1"), "rid1", "open_id")
+            .await
+            .unwrap();
+
+        db.save_feishu_message(ntd::db::NewFeishuMessage {
+            bot_id,
+            message_id: "msg_001",
+            chat_id: "oc_chat1",
+            chat_type: "p2p",
+            sender_open_id: "ou_user1",
+            sender_type: None,
+            content: Some("hello"),
+            msg_type: "text",
+            is_mention: false,
+        })
+        .await
+        .unwrap();
+
+        db.create_feishu_history_chat(bot_id, "oc_chat2", Some("Test Group"))
+            .await
+            .unwrap();
+
+        db.add_group_whitelist(bot_id, "ou_sender1", Some("Alice"))
+            .await
+            .unwrap();
+
+        // 3. Verify child data exists before delete
+        assert!(db.get_feishu_home(bot_id, "ou_user1").await.unwrap().is_some());
+        assert!(db.get_feishu_history_chats(bot_id).await.unwrap().len() > 0);
+        assert!(db.get_group_whitelist(bot_id).await.unwrap().len() > 0);
+        assert!(db.get_feishu_response_configs(bot_id).await.unwrap().len() > 0);
+
+        // 4. Delete the bot — should NOT error due to FK constraint
+        db.delete_agent_bot(bot_id).await.unwrap();
+
+        // 5. Verify the bot is gone
+        assert!(db.get_agent_bot(bot_id).await.unwrap().is_none());
+
+        // 6. Verify child data is gone (cascade worked)
+        assert!(db.get_feishu_home(bot_id, "ou_user1").await.unwrap().is_none(),
+            "feishu_homes should be empty after cascade");
+        assert!(db.get_feishu_history_chats(bot_id).await.unwrap().is_empty(),
+            "feishu_history_chats should be empty after cascade");
+        assert!(db.get_group_whitelist(bot_id).await.unwrap().is_empty(),
+            "feishu_group_whitelist should be empty after cascade");
+        assert!(db.get_feishu_response_configs(bot_id).await.unwrap().is_empty(),
+            "feishu_response_config should be empty after cascade");
+    }
+}
