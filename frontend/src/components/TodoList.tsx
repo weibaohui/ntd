@@ -52,7 +52,7 @@ function buildDesktopNavActions(
       title: '仪表盘',
       icon: <DashboardOutlined />,
       onClick: onShowDashboard ? () => onShowDashboard() : undefined,
-      ariaLabel: '查看仪表盘',
+      ariaLabel: '仪表盘',
     },
     {
       key: 'memorial',
@@ -400,7 +400,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
 
           {isMobile && (
             <div className="header-nav-cluster" aria-label="移动端操作">
-              <Tooltip title={themeMode === 'light' ? '切换暗色主题' : '切换亮色主题'}>
+              <Tooltip title={themeMode === 'light' ? '暗色' : '亮色'}>
                 <Button
                   type="text"
                   size="small"
