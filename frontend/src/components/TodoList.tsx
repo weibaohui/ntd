@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useApp } from '../hooks/useApp';
 import { useIsMobile } from '../hooks/useIsMobile';
-import { Button, Empty, Tooltip } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined, UnorderedListOutlined, FolderOpenOutlined, RightOutlined } from '@ant-design/icons';
+import { Button, Dropdown, Empty, Tooltip } from 'antd';
+import type { MenuProps } from 'antd';
+import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined, UnorderedListOutlined, FolderOpenOutlined, RightOutlined, MoreOutlined } from '@ant-design/icons';
 import { useTheme } from '../hooks/useTheme';
 import { StatusPicker } from './StatusPicker';
 import * as db from '../utils/database';
@@ -36,6 +37,39 @@ function SkeletonList() {
 
 // 列表显示模式：flat 是当前的平铺模式；grouped 按项目目录把 todo 折叠成"文件夹"分组
 type ListDisplayMode = 'flat' | 'grouped';
+
+/**
+ * 构建桌面端头部高频导航按钮。
+ */
+function buildDesktopNavActions(
+  onShowDashboard: TodoListProps['onShowDashboard'],
+  onShowMemorial: TodoListProps['onShowMemorial'],
+  onShowRelationMap: TodoListProps['onShowRelationMap'],
+) {
+  return [
+    {
+      key: 'dashboard',
+      title: '仪表盘',
+      icon: <DashboardOutlined />,
+      onClick: onShowDashboard,
+      ariaLabel: '查看仪表盘',
+    },
+    {
+      key: 'memorial',
+      title: '看板',
+      icon: <ReadOutlined />,
+      onClick: () => onShowMemorial?.(),
+      ariaLabel: '看板',
+    },
+    {
+      key: 'relation-map',
+      title: '关联图',
+      icon: <ApartmentOutlined />,
+      onClick: () => onShowRelationMap?.(),
+      ariaLabel: '关联图',
+    },
+  ].filter(action => typeof action.onClick === 'function');
+}
 
 export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSettings }: TodoListProps) {
   const { state, dispatch } = useApp();
@@ -117,6 +151,49 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
       // ignore: interceptor already shows error
     }
   }, [dispatch]);
+
+  const desktopNavActions = useMemo(
+    () => buildDesktopNavActions(onShowDashboard, onShowMemorial, onShowRelationMap),
+    [onShowDashboard, onShowMemorial, onShowRelationMap],
+  );
+
+  /**
+   * 处理桌面端头部“更多”菜单点击。
+   */
+  const handleHeaderMenuClick = useCallback<NonNullable<MenuProps['onClick']>>(({ key }) => {
+    if (key === 'display-mode') {
+      setDisplayMode(prev => (prev === 'flat' ? 'grouped' : 'flat'));
+      return;
+    }
+    if (key === 'theme') {
+      toggleTheme();
+      return;
+    }
+    if (key === 'settings') {
+      onShowSettings?.();
+    }
+  }, [onShowSettings, toggleTheme]);
+
+  const headerMenuItems = useMemo<MenuProps['items']>(() => ([
+    {
+      key: 'display-mode',
+      icon: displayMode === 'flat' ? <FolderOpenOutlined /> : <UnorderedListOutlined />,
+      label: displayMode === 'flat' ? '切换为按项目分组' : '切换为平铺列表',
+    },
+    {
+      key: 'theme',
+      icon: themeMode === 'light' ? <MoonOutlined /> : <SunOutlined />,
+      label: themeMode === 'light' ? '切换暗色主题' : '切换亮色主题',
+    },
+    {
+      type: 'divider',
+    },
+    {
+      key: 'settings',
+      icon: <SettingOutlined />,
+      label: '配置管理',
+    },
+  ]), [displayMode, themeMode]);
 
   const tagMap = useMemo(() => {
     const map = new Map<number, typeof tags[0]>();
@@ -237,73 +314,48 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
         {/* NTD Logo */}
         <div className="ntd-logo" aria-label="NTD Logo">NTD</div>
         <div className="header-actions">
-          <Button
-            type="text"
-            size="small"
-            icon={<DashboardOutlined />}
-            onClick={onShowDashboard}
-            className="tag-btn"
-            aria-label="查看仪表盘"
-          />
-          <Tooltip title="看板">
-            <Button
-              type="text"
-              size="small"
-              icon={<ReadOutlined />}
-              onClick={() => onShowMemorial?.()}
-              className="tag-btn"
-              aria-label="看板"
-            />
-          </Tooltip>
-          <Tooltip title="关联图">
-            <Button
-              type="text"
-              size="small"
-              icon={<ApartmentOutlined />}
-              onClick={() => onShowRelationMap?.()}
-              className="tag-btn"
-              aria-label="关联图"
-            />
-          </Tooltip>
-          {/* 列表显示模式切换：图标上区分平铺 vs 项目分组；选中态给个浅色高亮 */}
-          <Tooltip title={displayMode === 'flat' ? '切换为按项目分组' : '切换为平铺列表'}>
-            <Button
-              type="text"
-              size="small"
-              icon={displayMode === 'flat' ? <UnorderedListOutlined /> : <FolderOpenOutlined />}
-              onClick={() => setDisplayMode(prev => (prev === 'flat' ? 'grouped' : 'flat'))}
-              className={`tag-btn ${displayMode === 'grouped' ? 'active' : ''}`}
-              aria-label="切换列表显示模式"
-              aria-pressed={displayMode === 'grouped'}
-            />
-          </Tooltip>
-          <Tooltip title={themeMode === 'light' ? '切换暗色主题' : '切换亮色主题'}>
-            <Button
-              type="text"
-              size="small"
-              icon={themeMode === 'light' ? <MoonOutlined /> : <SunOutlined />}
-              onClick={toggleTheme}
-              className="tag-btn"
-              aria-label="切换主题"
-            />
-          </Tooltip>
-          <Button
-            type="text"
-            size="small"
-            icon={<SettingOutlined />}
-            onClick={onShowSettings}
-            className="tag-btn"
-            aria-label="配置管理"
-          />
+          <div className="header-toolbar">
+            {!isMobile && desktopNavActions.length > 0 && (
+              <div className="header-nav-cluster" aria-label="主导航">
+                {desktopNavActions.map(action => (
+                  <Tooltip key={action.key} title={action.title}>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={action.icon}
+                      onClick={action.onClick}
+                      className="header-nav-btn"
+                      aria-label={action.ariaLabel}
+                    />
+                  </Tooltip>
+                ))}
+              </div>
+            )}
+
+            {!isMobile && (
+              <Dropdown
+                menu={{ items: headerMenuItems, onClick: handleHeaderMenuClick }}
+                trigger={['click']}
+                placement="bottomRight"
+              >
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<MoreOutlined />}
+                  className="header-overflow-btn"
+                  aria-label="更多操作"
+                />
+              </Dropdown>
+            )}
+
           {!isMobile && (
-            <>
-              <span className="header-actions-divider" />
+            <div className="header-quick-actions">
               <Tooltip title="智能新建">
                 <Button
                   type="text"
                   size="small"
                   icon={<ThunderboltOutlined />}
-                  className="smart-create-btn"
+                  className="header-primary-action header-primary-action-smart"
                   onClick={onOpenSmartCreate}
                   aria-label="智能新建"
                 />
@@ -313,13 +365,48 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
                   type="text"
                   size="small"
                   icon={<PlusOutlined />}
-                  className="create-btn"
+                  className="header-primary-action header-primary-action-create"
                   onClick={onOpenCreateModal}
                   aria-label="新建任务"
                 />
               </Tooltip>
+            </div>
+          )}
+
+          {isMobile && (
+            <>
+              <Tooltip title={displayMode === 'flat' ? '切换为按项目分组' : '切换为平铺列表'}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={displayMode === 'flat' ? <UnorderedListOutlined /> : <FolderOpenOutlined />}
+                  onClick={() => setDisplayMode(prev => (prev === 'flat' ? 'grouped' : 'flat'))}
+                  className="header-nav-btn"
+                  aria-label="切换列表显示模式"
+                  aria-pressed={displayMode === 'grouped'}
+                />
+              </Tooltip>
+              <Tooltip title={themeMode === 'light' ? '切换暗色主题' : '切换亮色主题'}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={themeMode === 'light' ? <MoonOutlined /> : <SunOutlined />}
+                  onClick={toggleTheme}
+                  className="header-nav-btn"
+                  aria-label="切换主题"
+                />
+              </Tooltip>
+              <Button
+                type="text"
+                size="small"
+                icon={<SettingOutlined />}
+                onClick={onShowSettings}
+                className="header-nav-btn"
+                aria-label="配置管理"
+              />
             </>
           )}
+          </div>
         </div>
       </div>
 

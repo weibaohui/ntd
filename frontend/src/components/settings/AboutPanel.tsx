@@ -20,6 +20,48 @@ interface UpgradeResult {
   restartMessage?: string;
 }
 
+/**
+ * 渲染更新确认弹窗的内容区域。
+ */
+function renderUpgradeConfirmContent() {
+  return (
+    <div className="update-confirm-modal__content">
+      <div className="update-confirm-modal__hero">
+        <div className="update-confirm-modal__eyebrow">桌面端一键更新</div>
+        <div className="update-confirm-modal__hero-text">
+          将执行以下命令完成更新，并在结束后自动重启服务。
+        </div>
+      </div>
+
+      <div className="update-confirm-modal__command-list">
+        <div className="update-confirm-modal__command-card">
+          <div className="update-confirm-modal__command-header">
+            <span className="update-confirm-modal__command-step">步骤 1</span>
+            <span className="update-confirm-modal__command-label">升级 npm 包</span>
+          </div>
+          <code className="update-confirm-modal__command-code">
+            npm install -g @weibaohui/nothing-todo@latest
+          </code>
+        </div>
+
+        <div className="update-confirm-modal__command-card">
+          <div className="update-confirm-modal__command-header">
+            <span className="update-confirm-modal__command-step">步骤 2</span>
+            <span className="update-confirm-modal__command-label">重启服务</span>
+          </div>
+          <code className="update-confirm-modal__command-code">
+            ntd daemon restart
+          </code>
+        </div>
+      </div>
+
+      <Paragraph className="update-confirm-modal__note" type="secondary">
+        更新完成后服务将自动重启，请稍后刷新页面。
+      </Paragraph>
+    </div>
+  );
+}
+
 export function AboutPanel() {
   const [versionInfo, setVersionInfo] = useState<{ version: string; git_sha: string; git_describe: string } | null>(null);
   const [versionLoading, setVersionLoading] = useState(false);
@@ -99,26 +141,17 @@ export function AboutPanel() {
 
     // 弹出确认框，显示将要执行的命令
     Modal.confirm({
-      title: '确认执行以下命令',
-      icon: <ExclamationCircleFilled style={{ color: '#faad14' }} />,
-      content: (
-        <div style={{ marginTop: 12 }}>
-          <Paragraph>即将执行以下命令完成更新：</Paragraph>
-          <div style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, fontFamily: 'monospace' }}>
-            <div style={{ marginBottom: 8 }}>
-              <strong>1. 升级 npm 包：</strong><br />
-              <code style={{ color: '#d46b08' }}>npm install -g @weibaohui/nothing-todo@latest</code>
-            </div>
-            <div>
-              <strong>2. 重启服务：</strong><br />
-              <code style={{ color: '#d46b08' }}>ntd daemon restart</code>
-            </div>
-          </div>
-          <Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
-            更新完成后服务将自动重启，请稍后刷新页面。
-          </Paragraph>
+      className: 'update-confirm-modal',
+      rootClassName: 'update-confirm-modal',
+      width: 560,
+      title: (
+        <div className="update-confirm-modal__title-group">
+          <div className="update-confirm-modal__title">确认执行更新</div>
+          <div className="update-confirm-modal__subtitle">将按以下步骤升级当前 NTD 服务</div>
         </div>
       ),
+      icon: <ExclamationCircleFilled className="update-confirm-modal__icon" />,
+      content: renderUpgradeConfirmContent(),
       okText: '执行更新',
       cancelText: '取消',
       onOk: async () => {
