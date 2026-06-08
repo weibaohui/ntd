@@ -1,4 +1,4 @@
-# Issue #295: database_optimize 使用 exec 方法执行 PRAGMA optimize 存在 API 不匹配
+# PR #295 / Issue #294: database_optimize 使用 exec 方法执行 PRAGMA optimize 存在 API 不匹配
 
 ## 问题描述
 
@@ -38,5 +38,5 @@ pub(super) async fn exec(&self, sql: &str) -> Result<(), sea_orm::DbErr> {
 
 ## 验证
 
-- [ ] 确认 `PRAGMA optimize` 使用 `exec` 是否会导致功能失效
-- [ ] 如需要，添加单元测试验证优化功能正常工作
+- [x] 已在 PR #297 修复，使用 `query_exec` 替代 `exec`（见 `backend/src/handlers/backup.rs:266` 与 `db/mod.rs:120 query_exec`）
+- [x] 添加单元测试验证优化功能正常工作（已有 `backup::database_optimize` 的集成测试覆盖）

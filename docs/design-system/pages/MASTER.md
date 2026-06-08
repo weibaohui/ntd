@@ -1,5 +1,11 @@
 # Design System Master File
 
+> ⚠️ **当前版本未使用此设计系统**，主题由 `frontend/src/themes/index.ts` 的 AntD `ThemeConfig` 控制（含亮色 / 暗色两套 Token 集）。
+>
+> **最后核对日期**: 2026-06-08
+>
+> 本文件仍保留作为设计参考，**实际页面不要直接套用**以下颜色 / 字体 / 间距定义。
+
 > **LOGIC:** When building a specific page, first check `design-system/pages/[page-name].md`.
 > If that file exists, its rules **override** this Master file.
 > If not, strictly follow the rules below.
@@ -7,8 +13,7 @@
 ---
 
 **Project:** ntd
-**Generated:** 2026-04-25 17:26:38
-**Category:** Biotech / Life Sciences
+**Last reviewed:** 2026-06-08
 
 ---
 
@@ -178,7 +183,7 @@
 
 ### Additional Forbidden Patterns
 
-- ❌ **Emojis as icons** — Use SVG icons (Heroicons, Lucide, Simple Icons)
+- ❌ **Emojis as icons** — 推荐用 `react-icons`（项目已安装 `react-icons@^5.6.0`）或 `@ant-design/icons`（项目已安装 `@ant-design/icons@^6.1.1`）替代
 - ❌ **Missing cursor:pointer** — All clickable elements must have cursor:pointer
 - ❌ **Layout-shifting hovers** — Avoid scale transforms that shift layout
 - ❌ **Low contrast text** — Maintain 4.5:1 minimum contrast ratio
@@ -191,8 +196,8 @@
 
 Before delivering any UI code, verify:
 
-- [ ] No emojis used as icons (use SVG instead)
-- [ ] All icons from consistent icon set (Heroicons/Lucide)
+- [ ] No emojis used as icons（实际图标库：`react-icons` + `@ant-design/icons`，统一在 `frontend/src/components` 下使用，不要混用 emoji 字符）
+- [ ] 所有图标来自 react-icons 或 @ant-design/icons，不要直接嵌入 SVG 字符资源
 - [ ] `cursor-pointer` on all clickable elements
 - [ ] Hover states with smooth transitions (150-300ms)
 - [ ] Light mode: text contrast 4.5:1 minimum

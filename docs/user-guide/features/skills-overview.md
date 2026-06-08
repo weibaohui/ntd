@@ -10,10 +10,18 @@ Skills 是 ntd 帮各执行器管理的**预制 prompt 模板**，类似 Claude 
 
 | 来源 | 目录 | 可写 | 说明 |
 |------|------|------|------|
-| `claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `joinai` / `codex` | `~/.{executor}/skills/` | ✅ | 8 个真实执行器 |
+| `claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `joinai` / `codex` | `~/.{executor}/skills/` | ✅ | 8 个真实执行器，有 skills 目录映射 |
+| `codewhale` | — | — | 是执行器，但**没有** skills 目录映射（不在扫描列表中） |
 | `agents` | `~/.agents/skills/` | ❌ | **只读来源**，扫描但不参与 Todo 执行 |
 
-### 0.1 `agents` 只读来源
+### 0.1 写权限与「出现在哪」
+
+- 可写：仅**非只读来源**（`agents` 标记为只读，其他 8 个执行器可写）
+- `agents`：
+  - ❌ **不**出现在「执行器管理」标签（`types/execution.tsx:131-133`）
+  - ✓ 出现在 Skills 总览 / 同步标签中
+
+### 0.2 `agents` 只读来源
 
 `agents` 是**只读** skill 来源（通常由 cc-connect 等其他工具维护），ntd：
 - ✅ **扫描并展示** skills
@@ -56,7 +64,7 @@ description: 审查 PR 代码，提供建议
 
 ## 2. 4 个子视图
 
-### 2.1 总览（Overview）
+### 2.1 Skills 总览（Overview）
 
 - 9 个来源 tab 切换（8 个执行器 + agents）
 - 每个来源下列出它的所有 skills
@@ -64,22 +72,24 @@ description: 审查 PR 代码，提供建议
 - 「**导入**」按钮：上传 .zip 包（agents 不可导入）
 - 「**导出**」按钮：把当前来源的所有 skills 打成 zip
 
-### 2.2 对比（Comparison）
+### 2.2 对比分析（Comparison）
 
-- 横向看 9 个来源**同名** skill 的差异
+- 横向看 8 个执行器 + agents 中**同名** skill 的差异
 - 「共享」（多个来源都有）/ 「独占」（仅一个来源有）
 - 适合发现「哪个执行器落后了」
 
-### 2.3 同步（Sync）
+### 2.3 同步管理（Sync）
 
-- 选一个**源来源** + 多个**目标来源**
-- 把源来源的所有 skills 复制到目标
+> 实现见 `frontend/src/components/skills/SkillSync.tsx`。
+
+- 选一个**源执行器**（步骤 1）→ 选**单个 skill**（步骤 2）→ 选**多个目标执行器**（步骤 3）
+- 把选中的单个 skill 复制到所有目标
 - 覆盖目标已有的同名 skill
-- 用于：把 `agents`（cc-connect）的 skill 同步到 Claude Code
+- 用于：把 `agents`（cc-connect）的某个 skill 同步到 Claude Code
 
 agents 只能作为 source，不能作为 target（界面 disabled）。
 
-### 2.4 追踪（Tracking）
+### 2.4 调用追踪（Tracking）
 
 - 所有 skill 调用记录分页
 - 字段：哪个执行器、哪个 skill、什么时间、token 消耗
@@ -96,7 +106,8 @@ agents 只能作为 source，不能作为 target（界面 disabled）。
 | 导出 | 总览 | `GET /api/skills/export` |
 | 删 | 总览 | `DELETE /api/skills` |
 | 看 SKILL.md 全文 | 总览 | `GET /api/skills/content` |
-| 调用记录 | 追踪 | `GET /api/skills/invocations` |
+| 调用记录：GET 列表 | 追踪 | `GET /api/skills/invocations` |
+| 调用记录：POST 记录 | 追踪 | `POST /api/skills/invocations` |
 
 ## 4. 与 Todo 的关系
 
@@ -133,6 +144,11 @@ agents 只能作为 source，不能作为 target（界面 disabled）。
 - 这是设计：agents 是只读来源，不允许本地修改
 - 误删风险：可能破坏 cc-connect 等工具的数据
 - 解决：用「Skills 同步」把 agents 的内容复制到其他执行器
+
+### 5.6 同步弹窗里看不到 codewhale
+
+- `codewhale` 是执行器但**没有** skills 目录映射，因此「Skills 同步」的下拉列表中不会出现
+- 需要的话手动在 `~/.codewhale/skills/` 建目录，ntd 也不会扫描
 
 ## 6. 备份
 

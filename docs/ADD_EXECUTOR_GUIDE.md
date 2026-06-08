@@ -56,20 +56,22 @@
 2. `backend/src/adapters/mod.rs`
    - 增加 `pub mod my_executor;`。
    - 在 `parse_executor_type` 中加入主名称和别名。
+   - 在 `EXECUTORS` 数组中加一条 `ExecutorDef`（name / executor_type / binary_name / display_name / default_path / session_dir / aliases）。
 
 3. `backend/src/config.rs`
-   - 在 `ExecutorPaths` 增加可执行文件路径字段。
-   - 在 `Default` 中给默认 binary name。
+   - `ExecutorPaths` 是 `HashMap<String, String>` 结构，在 `Default` 中不需要为新执行器加字段；
+     在 `Config.executors.paths` 写一个键值对即可，例如 `codex -> "codex"`（运行时由 `db.sync_new_executors` 自动 seed）。
 
 4. `backend/src/main.rs`
-   - 在 `run_server` 里注册到 `ExecutorRegistry`。
+   - **新执行器会被 DB 自动注册**：`main.rs` 启动流程中调用 `db.seed_default_executors()` 与 `db.sync_new_executors()`，把 `EXECUTORS` 数组里新增的执行器同步到 `executors` 表，再通过 `executor_registry.register_by_name(...)` 自动注册。
+   - 若执行器在注册表中找不到，会打 `warn!` 日志跳过。
 
 5. `backend/src/cli/commands.rs`
-   - 更新 CLI help 中的执行器列表。
+   - 更新 `executor` 参数 help 文本中的执行器列表。
 
 ## 4. 更新前端选择项
 
-修改 `frontend/src/types/index.ts` 的 `EXECUTORS`：
+修改 `frontend/src/types/execution.tsx:121` 的 `EXECUTORS` 数组：
 
 - `value` 必须等于 `ExecutorType::as_str()` 返回值。
 - `label` 是 UI 展示名称。
@@ -96,7 +98,7 @@ cargo test --manifest-path backend/Cargo.toml
 
 ```bash
 cd frontend
-npm test
+pnpm test
 ```
 
 ## 6. 本次 Codex 集成示例

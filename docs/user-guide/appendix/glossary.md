@@ -34,9 +34,10 @@
 | 生产数据库 | `~/.ntd/data.db` |
 | 开发数据库 | `~/.ntd/data.dev.db` |
 | 备份目录 | `~/.ntd/backups/` |
-| PID | `~/.ntd/daemon.pid` / `~/.ntd/dev.pid` |
+| PID | 无（macOS launchd 由 launchctl 管理；Linux systemd 由 systemd 管理；仅 dev 模式有 `~/.ntd/dev.pid`） |
 | Claude Code skill 目录 | `~/.claude/skills/` |
 | Codex skill 目录 | `~/.codex/skills/` |
+| 各执行器 skill 目录约定 | `~/.{executor}/skills/` |
 
 ## 端口速查
 
@@ -44,7 +45,7 @@
 |------|------|
 | 8088 | ntd 生产 |
 | 18088 | ntd 开发 |
-| 8089 | ntd-cloud（云端同步服务） |
+| 8089 | ntd-cloud（云端同步服务；ntd-cloud 默认端口，可在 ntd-cloud 自身配置覆盖） |
 
 ## API 速查前缀
 

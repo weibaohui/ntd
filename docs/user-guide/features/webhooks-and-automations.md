@@ -6,9 +6,11 @@ ntd 提供了**三层**触发机制让 Todo 跑起来。本文档梳理清楚它
 
 | 层 | 触发方式 | 鉴权 | 适用 |
 |----|----------|------|------|
-| **Webhook** | `GET/POST /webhook/trigger/{todo_id}` | 路径 todo_id（可选 header） | CI/CD、外部系统 |
-| **Slash 命令** | 飞书群里 `/command args` | 飞书 OAuth | 群协作 |
+| **Webhook** | `GET/POST /webhook/trigger/{todo_id}` | 无（通过路径 `todo_id` 查找已启用的 Webhook） | CI/CD、外部系统 |
+| **Slash 命令** | 飞书群里 `/command args` | 飞书 App 凭据（`app_id` / `app_secret`） | 群协作 |
 | **Cron 定时** | 配在 Todo 的 `scheduler` 字段 | 本机 | 周期任务 |
+
+> Webhook 鉴权：后端直接通过 URL 路径中的 `todo_id` 找到**已启用**的 Webhook 记录后执行（`backend/src/handlers/webhook.rs:229-280`），**不读 header 鉴权**。生产环境建议在反代层做 IP 白名单 + 路径混淆。
 
 ## 2. Webhook 详解
 
@@ -16,22 +18,29 @@ ntd 提供了**三层**触发机制让 Todo 跑起来。本文档梳理清楚它
 
 要点：
 - 触发 URL 必须带 `todo_id` 路径参数
-- 无内置鉴权（生产环境用 header 校验 + 反代 IP 白名单）
-- 异步执行，立即返回 202
+- 无 header 鉴权（生产环境用反代 IP 白名单 + 路径混淆）
+- **同步执行**：成功立即返回 `200 OK`，执行失败立即返回 `500`（`webhook.rs:321-358`）
 
 ## 3. Slash 命令详解
 
 ### 3.1 配置
 
-设置 → 系统设置 → SLASH 命令规则：
+设置 → 系统设置 → SLASH 命令规则（`types/config.tsx:3-7`）：
 
 ```yaml
 slash_command_rules:
-  - command: "/review"
+  - slash_command: "/review"
     todo_id: 5
-  - command: "/deploy"
+    enabled: true
+  - slash_command: "/deploy"
     todo_id: 12
+    enabled: true
 ```
+
+字段说明：
+- `slash_command`：命令本体（含 `/`）
+- `todo_id`：命中后执行的 Todo
+- `enabled`：规则开关（缺省 `true`）
 
 ### 3.2 触发
 
@@ -64,7 +73,7 @@ TodoDrawer → 「定时」开关 → 填 Cron 表达式：
 
 ### 4.2 时区
 
-按「系统设置 → timezone」解析。默认 `Asia/Shanghai`。
+按 `config.scheduler_default_timezone` 解析。TodoDrawer 也可单独指定 `scheduler_timezone`，覆盖全局默认。默认 `Asia/Shanghai`。
 
 ### 4.3 跳过策略
 
@@ -93,11 +102,10 @@ TodoDrawer → 「定时」开关 → 填 Cron 表达式：
 
 ## 6. 安全清单
 
-- [ ] Webhook 触发 URL 用 header secret 校验
-- [ ] 反代层做 IP 白名单
+- [ ] 反代层做 IP 白名单 + 路径混淆
 - [ ] TLS（https）
 - [ ] 飞书 Bot 配群白名单
-- [ ] Cron 任务设 `execution_timeout_secs`
+- [ ] 全局 `execution_timeout_secs` 设置合理（防 Cron 跑死）
 - [ ] 监控 `webhook_records` 表异常
 
 ## 7. 故障排查
@@ -108,4 +116,4 @@ TodoDrawer → 「定时」开关 → 填 Cron 表达式：
 | Webhook 200 但没跑 | 后端日志，execution 启动失败 |
 | Slash 命令无反应 | 飞书 Bot 白名单 / 命令拼错 |
 | Cron 不触发 | Cron 表达式 / 时区 / 服务停了吗 |
-| 频繁触发被打挂 | rate_limit_per_min 限流 |
+| 频繁触发被打挂 | 反代层限流；ntd 自身无 `rate_limit_per_min` 字段 |

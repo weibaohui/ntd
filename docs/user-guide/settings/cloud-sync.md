@@ -75,7 +75,7 @@
 本地 SQLite
    │ get_todos() + get_tags() 序列化
    ▼
-CloudSyncData { version: 1.0, todos, tags, skills }
+CloudSyncData { version:1.0, todos, tags: [], skills: [] }
    │ serde_yaml 序列化为 YAML literal block
    ▼
 POST {server_url}/api/v1/sync/push
@@ -91,6 +91,9 @@ POST {server_url}/api/v1/sync/push
    ▼
 云端返回 YAML { success, summary: { new, overwritten, ... } }
 ```
+
+> 当前**推送流只包含 todos**（参见 `backend/src/handlers/sync.rs::local_todos_to_cloud`：`tags: vec![]` / `skills: vec![]`硬编码为空）。tag / skill同步**尚未实现**，不要把 tag / skill改动推送到云端。
+
 
 ---
 
@@ -152,14 +155,20 @@ POST {server_url}/api/v1/sync/push
 
 ## 7. 同步历史
 
-### 7.1 表格列
+###7.1表格列
 
-| 列 | 含义 |
+`backend/src/db/entity/sync_records.rs::Model`字段：
+
+|列 |含义 |
 |----|------|
-| 时间 | 同步发生时间（毫秒精度） |
-| 方向 | 🔵 推送 / 🟢 拉取 |
-| 状态 | 🟢 成功 / 🔴 失败 / 🟠 预览 |
-| 详情 | 省略展示的 JSON，含 `pushed_count` / `pulled_count` / `dry_run` |
+| `id` |自增主键 |
+| `direction` | `push` / `pull` |
+| `conflict_mode` |本次同步用的冲突策略 |
+| `data_type` |同步数据类型（当前固定为 `todos`） |
+| `status` | `success` / `failed` / `dry_run` |
+| `details` |JSON字符串，含 `pushed_count` / `pulled_count` / `dry_run`等 |
+| `error_message` |失败时的错误描述（成功时为空） |
+| `created_at` |同步发生时间（毫秒精度） |
 
 ### 7.2 分页
 

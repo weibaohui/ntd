@@ -1,15 +1,19 @@
-# Todo 执行助手 - 需求规格说明书
+# ntd (Nothing Todo) - 需求规格说明书
+
+> **最后核对日期**: 2026-06-08
+> **状态**: 文档为早期版本，实际功能已远超本规格所述（详见 docs/FEATURES.md 和 docs/ARCHITECTURE_HEALTH_CHECK_REPORT.md）。
+> 本文档保留作为历史需求基线。
 
 ## 1. 项目概述
 
 ### 项目名称
-**Todo 执行助手** (Tarui Todo Executor)
+**ntd** (Nothing Todo)
 
 ### 项目类型
-桌面端任务管理工具
+全栈应用 (Rust 后端 + React 前端 + 桌面端 + 飞书 Bot)
 
 ### 核心功能
-通过 React + AntDesign 构建的本地 todo 管理应用，支持调用本地 joinai CLI 执行任务，并将执行过程完整记录到执行历史中。
+通过 React + AntDesign 构建的本地 todo 管理应用，支持调用本地 AI CLI 执行任务，并将执行过程完整记录到执行历史中。当前内置 9 个执行器：`claudecode` / `joinai` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `codex` / `codewhale`。
 
 ### 目标用户
 需要任务管理并借助 AI 执行任务的技术用户
@@ -35,9 +39,13 @@
 
 #### Todo 状态
 - `pending`: 待执行
+- `in_progress`: 已就绪/准备执行（由后台调度器设置）
 - `running`: 执行中
 - `completed`: 已完成
 - `failed`: 执行失败
+- `cancelled`: 已取消
+
+> 实际共有 6 个状态（参见 `backend/src/models/mod.rs:3-12 TodoStatus`）。
 
 ### 2.2 分类/标签管理
 
@@ -77,6 +85,17 @@
 ---
 
 ## 3. 数据模型
+
+> ⚠️ **本节为早期版本摘录**。当前数据库已扩展为 **20+ 张表**（详见 `backend/src/db/mod.rs::init_tables`），包括：
+>
+> - `todos` / `tags` / `todo_tags` / `todo_templates` / `todo_backups` / `project_directories`
+> - `execution_records` / `execution_logs` / `usage_daily_stats` / `skill_invocations`
+> - `executors`（执行器元数据持久化表）
+> - `agent_bots` / `feishu_homes` / `feishu_messages` / `feishu_history_chats` / `feishu_push_targets` / `feishu_response_config` / `feishu_group_whitelist`
+> - `webhooks` / `webhook_records`
+> - 以及 `hooks`（作为 `todos` 表的 JSON 列存储，见 `db/todo.rs:178-198 update_todo_hooks`）
+>
+> 以下仅保留原 4 张核心表的早期字段定义。
 
 ### Todo
 ```
@@ -121,12 +140,12 @@ finished_at: DATETIME NULL
 
 ## 4. 技术栈
 
-- **后端框架**: Rust + Axum
-- **前端**: React 18 + TypeScript + Vite
-- **UI 组件**: AntDesign 5.x
+- **后端框架**: Rust + Axum 0.8
+- **前端**: React 19.1.0 + TypeScript 5.8.3 + Vite 7.0.4
+- **UI 组件**: Ant Design 6.3.6
 - **状态管理**: React Context + useReducer
-- **数据存储**: SQLite (via SeaORM)
-- **命令执行**: std::process::Command
+- **数据存储**: SQLite (via SeaORM 0.12 + libsqlite3-sys 0.27 bundled)
+- **命令执行**: tokio Command + command-group 5（进程组管理）
 
 ---
 
@@ -166,14 +185,18 @@ finished_at: DATETIME NULL
 - [x] 不需要执行超时设置
 - [x] 不需要导出功能
 
-## 8. joinai 集成
+## 8. 执行器集成
 
-- 命令路径: `joinai` (通过 PATH 或环境变量 JOINAI_PATH)
-- 执行命令: `joinai run --format json "<todo 描述>"`
+> 本节以 `joinai` 为示例描述事件流格式。系统内置 9 个执行器（`claudecode` / `joinai` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `codex` / `codewhale`），其注册与调度由 `backend/src/adapters/mod.rs::EXECUTORS` 数组统一管理。
+
+- 命令路径: 由 `Config.executors.paths` 解析（HashMap，键为 executor 名，如 `claudecode -> "claude"`）
+- 执行命令: 各 executor 通过实现 `CodeExecutor` trait 暴露 `executable_path` / `command_args` / `parse_output_line` 等
 - 实时捕获 stdout 输出
 - 记录完整的交互日志
 
 ### 8.1 命令格式
+
+以 `joinai` 为例：
 
 ```bash
 joinai run --format json "<任务描述>"

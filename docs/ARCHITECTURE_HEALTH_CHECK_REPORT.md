@@ -13,9 +13,9 @@
 | 项目名称 | ntd (Nothing Todo) |
 | 技术栈 | Rust 后端 (Axum 0.8) + React 前端 (Vite 7 / React 19 / Antd 6) |
 | 数据库 | SQLite (via SeaORM 0.12 + libsqlite3-sys bundled) |
-| 后端代码 | **~100+ 个 Rust 源文件**，分布在 adapters / cli / db / handlers / services / feishu 等模块 |
-| 前端代码 | **~29 个 TSX 组件**，含 Dashboard / Kanban / ChatView 等 |
-| 测试文件 | **12 个集成测试文件**，约 580+ 行 |
+| 后端代码 | **~110 个 Rust 源文件**，分布在 adapters / cli / db / handlers / services / feishu 等模块 |
+| 前端代码 | **~92 个 TSX 组件**，含 Dashboard / Kanban / ChatView 等 |
+| 测试文件 | **17 个集成测试文件** + 多文件内联单元测试 |
 | 跨平台 | macOS / Linux / Windows (launchd / systemd / Task Scheduler) |
 | 进程管理 | command-group 进程组管理 |
 | 构建产物 | 单一静态二进制 (含前端静态资源) |
@@ -60,6 +60,7 @@
 │  │     Adapters (执行器适配器)            │  │
 │  │  claude_code / joinai / codebuddy /  │  │
 │  │  opencode / atomcode / hermes / kimi  │  │
+│  │  / codex / codewhale                  │  │
 │  └────────────────────┬──────────────────┘  │
 │                       │                      │
 │  ┌────────────────────▼──────────────────┐  │
@@ -81,7 +82,7 @@
 | axum | 0.8 | ✅ 最新稳定 |
 | sea-orm | 0.12 | ✅ 稳定 |
 | tokio 1.x | full | ✅ 成熟 |
-| reqwest | **=0.12.7** (锁定) | ⚠️ 版本锁定，建议检查是否有安全更新 |
+| reqwest | **0.12 (未锁定)** | ✅ 跟随上游 patch 更新 |
 | libsqlite3-sys | 0.27 bundled | ✅ 零系统依赖 |
 | tokio-cron-scheduler | 0.13 | ✅ 社区活跃 |
 | parking_lot | 0.12 | ✅ |
@@ -116,7 +117,7 @@
    - Mutex 保护 + 失败回滚机制
    - flush 互斥锁防止并发写库竞态
 3. **优雅取消**：任务取消使用 `tokio::select!` + biased 优先处理，支持进程树级 SIGTERM → SIGKILL
-4. **执行器适配器模式**：统一的 `CodeExecutor` trait，8 个执行器的具体实现各自独立
+4. **执行器适配器模式**：统一的 `CodeExecutor` trait，9 个执行器的具体实现各自独立
 5. **WebSocket 实时推送**：Started / Output / Finished / Sync / TodoProgress / ExecutionStats 六种事件
 6. **数据库表设计**：完整的索引、触发器（UTC 时间自动填充）、迁移兼容（ADD COLUMN IF NOT EXISTS）
 7. **JSON 提取器**：自定义 `ApiJson` 提取器，统一 JSON 解析错误格式
@@ -218,12 +219,13 @@ Handlers 直接调用 db 的方法，跨 handler 复用逻辑（如"创建一个
 
 #### 问题 3：新执行器添加需要改代码
 添加一个新的 AI 执行器需要：
-1. 在 `adapters/mod.rs` 的 `EXECUTORS` 表中加一条
+1. 在 `backend/src/adapters/mod.rs` 的 `EXECUTORS` 数组中加一条 `ExecutorDef`
 2. 实现 `CodeExecutor` trait
-3. 在 `create_executor` match 中加一条
-4. 在 `main.rs` 的 `ALL_EXECUTORS` 中加一条
+3. 在 `ExecutorType` 枚举中加一个 variant
+4. `Config.executors.paths`（HashMap）新增一个键（如 `codex -> "codex"`）即可
 
-虽然已经比硬编码好很多，但可以通过注册机制进一步解耦。
+注册逻辑：`main.rs` 启动时调用 `db.seed_default_executors()` + `db.sync_new_executors()` 自动把 `EXECUTORS` 数组里新增的执行器同步进数据库的 `executors` 表，无需在 main 中逐个 `register`。
+若要支持完全无代码改动的配置式执行器，需要进一步抽象为插件机制（短期可通过 `Config.executors.paths` 增量声明，长期需 WASM 动态库）。
 
 **建议**：将执行器定义为可插拔插件，通过约定目录加载 WASM 或动态库（长期目标），短期可改由 `config.yaml` 声明新执行器的 binary name + 参数模板。
 

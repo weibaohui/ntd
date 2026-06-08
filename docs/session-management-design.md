@@ -173,4 +173,10 @@ UI 组件：
 - [x] F5. Session 统计概览
 - [x] F6. Session 子代理信息
 - [x] F7. Session 批量清理
-- [x] F8. 多工具 Session 扫描（Claude Code / Codex / Hermes / Kimi / AtomCode / CC-Connect）
+- [x] F8. 多工具 Session 扫描（Claude Code / Codex / Hermes / Kimi / AtomCode / JoinAI / Opencode / CodeWhale）
+
+> 注：F8 描述原本包含 "CC-Connect"，实际未实现（`backend/src/handlers/session.rs` 注释里 `source` 字段枚举提到了 "cc-connect"，但 `scan_*` 函数族没有 `scan_cc_connect`，启动时也不会扫描 `~/.cc-connect/sessions`）。实际支持 8 个来源：claude-code、codex、hermes、kimi、atomcode、joinai、opencode、codewhale。
+
+---
+
+**最后更新**: 2026-06-08
