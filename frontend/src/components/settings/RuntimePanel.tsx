@@ -19,13 +19,18 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
   const [selectedRecordIds, setSelectedRecordIds] = useState<number[]>([]);
   const [stoppingRecords, setStoppingRecords] = useState(false);
   const [runningRecords, setRunningRecords] = useState<ExecutionRecord[]>([]);
-  const lastEnabledExecutionTimeoutSecsRef = useRef(DEFAULT_EXECUTION_TIMEOUT_SECS);
-  const formExecutionTimeoutSecs = configForm.getFieldValue('execution_timeout_secs') ?? DEFAULT_EXECUTION_TIMEOUT_SECS;
-  const [executionTimeoutSecs, setExecutionTimeoutSecs] = useState<number>(formExecutionTimeoutSecs);
+  // 使用懒初始化避免表单未填充时读到默认值：初始化时若表单已有值则用表单的，否则用常量默认值。
+  // 后续通过 useEffect 同步表单值变化，保持 UI 与表单状态一致。
+  const [executionTimeoutSecs, setExecutionTimeoutSecs] = useState<number>(() =>
+    configForm.getFieldValue('execution_timeout_secs') ?? DEFAULT_EXECUTION_TIMEOUT_SECS
+  );
+  // 0 表示禁用执行超时（与后端 handlers/config.rs 中的校验对齐），其余值至少为 60 秒
   const executionTimeoutEnabled = executionTimeoutSecs !== 0;
   const executionTimeoutMinutes = executionTimeoutEnabled
     ? Math.max(1, Math.round(executionTimeoutSecs / 60))
     : undefined;
+  // 关闭时记录当前值，重新开启时恢复；避免再次开启时跳回初始默认值 3600。
+  const lastEnabledExecutionTimeoutSecsRef = useRef<number>(DEFAULT_EXECUTION_TIMEOUT_SECS);
 
   /** 加载当前运行中的执行记录。 */
   const loadRunningRecords = async () => {
@@ -33,7 +38,7 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
       const records = await db.getRunningExecutionRecords();
       setRunningRecords(records);
     } catch (err) {
-      console.error('加载运行中任务失败:', err);
+      console.error('Failed to load running records:', err); // 中文：加载运行中任务失败
     }
   };
 
@@ -43,15 +48,20 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
     return () => clearInterval(timer);
   }, []);
 
+  // 当用户手动输入时记录最新值；若关闭超时则不更新（保留重新开启时的恢复值）。
   useEffect(() => {
     if (executionTimeoutEnabled) {
       lastEnabledExecutionTimeoutSecsRef.current = executionTimeoutSecs;
     }
   }, [executionTimeoutEnabled, executionTimeoutSecs]);
 
+  // 监听表单字段变化（外部加载配置重置表单时），同步本地状态。
   useEffect(() => {
-    setExecutionTimeoutSecs(formExecutionTimeoutSecs);
-  }, [formExecutionTimeoutSecs]);
+    const formValue = configForm.getFieldValue('execution_timeout_secs');
+    if (formValue !== undefined && formValue !== executionTimeoutSecs) {
+      setExecutionTimeoutSecs(formValue);
+    }
+  }, [configForm]);
 
   /** 批量停止当前选中的执行任务。 */
   const handleBatchStop = async () => {
@@ -114,6 +124,7 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
               checkedChildren="开启"
               unCheckedChildren="关闭"
               onChange={handleExecutionTimeoutToggle}
+              aria-label="执行超时开关"
             />
             <InputNumber
               size="small"

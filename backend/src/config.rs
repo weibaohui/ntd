@@ -325,9 +325,12 @@ mod tests {
     }
 
     #[test]
-    fn test_default_execution_timeout() {
+    fn test_default_execution_timeout_round_trip() {
         let cfg = Config::default();
-        assert_eq!(cfg.execution_timeout_secs, DEFAULT_EXECUTION_TIMEOUT_SECS);
+        // 验证序列化/反序列化后默认值仍为 3600，而非恒真断言
+        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        let restored: Config = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(restored.execution_timeout_secs, DEFAULT_EXECUTION_TIMEOUT_SECS);
     }
 
     #[test]
