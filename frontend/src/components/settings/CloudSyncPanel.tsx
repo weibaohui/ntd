@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, Form, Input, Button, Space, Table, Tag, message, Divider, Alert, Modal, Checkbox, Radio } from 'antd';
-import { CloudOutlined, SyncOutlined, SaveOutlined, CheckCircleFilled, ExclamationCircleFilled, DeleteOutlined } from '@ant-design/icons';
+import { CloudOutlined, SyncOutlined, SaveOutlined, DeleteOutlined } from '@ant-design/icons';
 import * as syncApi from '../../utils/database/sync';
 import './CloudSyncPanel.css';
 
@@ -244,7 +244,6 @@ export function CloudSyncPanel() {
               <Alert
                 message={
                   <Space size="small">
-                    <CheckCircleFilled style={{ color: '#52c41a' }} />
                     <span className="status-text">已连接 ({statusInfo?.server_url})</span>
                     {statusInfo?.last_sync_at && (
                       <span className="status-text">最后同步: {new Date(statusInfo.last_sync_at).toLocaleString('zh-CN')}</span>
@@ -258,7 +257,6 @@ export function CloudSyncPanel() {
               <Alert
                 message={
                   <Space size="small">
-                    <ExclamationCircleFilled style={{ color: '#faad14' }} />
                     <span className="status-text">已连接但未配置 Token</span>
                   </Space>
                 }
