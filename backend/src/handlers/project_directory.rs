@@ -31,7 +31,8 @@ pub async fn create_project_directory(
 ) -> Result<ApiResponse<crate::db::project_directory::ProjectDirectory>, super::AppError> {
     // 路径和名称都必填：项目目录是用户按"项目"维度组织 Todo 的核心维度，
     // 缺一项就无法在 Todo 侧按名称识别目录。
-    if req.path.trim().is_empty() {
+    let path = req.path.trim();
+    if path.is_empty() {
         return Ok(ApiResponse::err(crate::models::codes::BAD_REQUEST, "Path is required"));
     }
     let name = req.name.trim();
@@ -40,7 +41,7 @@ pub async fn create_project_directory(
     }
     let directory = state
         .db
-        .get_or_create_project_directory(&req.path, Some(name))
+        .get_or_create_project_directory(path, Some(name))
         .await?;
     Ok(ApiResponse::ok(directory))
 }

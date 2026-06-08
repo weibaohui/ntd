@@ -133,14 +133,16 @@ export async function getProjectDirectories(): Promise<ProjectDirectory[]> {
   return unwrap(await api.get('/api/project-directories'));
 }
 
+// 创建项目目录：后端要求 name 必填，调用方需保证传入非空字符串。
+// 返回完整 ProjectDirectory 对象（含 id），供调用方更新本地状态。
 export async function createProjectDirectory(path: string, name: string): Promise<ProjectDirectory> {
-  // 后端要求 name 必填；调用方需要保证传入非空字符串
-  return unwrap(await api.post('/api/project-directories', { path, name }));
+  return unwrap(await api.post('/api/project-directories', { path, name })); // POST 创建，后端会做 trim+唯一约束校验
 }
 
+// 更新项目目录名称：与新增保持一致约束（名称必填），避免出现"无名项目"。
+// path 不可变，仅允许修改 name。
 export async function updateProjectDirectory(id: number, name: string): Promise<void> {
-  // 与新增保持一致：名称必填
-  await api.put(`/api/project-directories/${id}`, { name });
+  await api.put(`/api/project-directories/${id}`, { name }); // PUT 全量替换 name 字段
 }
 
 export async function deleteProjectDirectory(id: number): Promise<void> {
