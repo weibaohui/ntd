@@ -46,6 +46,16 @@ make build  # 构建生产版本
 - 前端: React + Vite + Ant Design
 - 数据库: SQLite + SeaORM
 
+## 前端导入规范
+
+**强制要求：在 `frontend/src` 目录内编写或修改前端代码时，跨目录导入统一使用 `@/` 绝对路径别名，不要使用 `../`、`../../` 这类相对路径回退。**
+
+- 推荐写法：`import { useTheme } from '@/hooks/useTheme';`
+- 禁止写法：`import { useTheme } from '../hooks/useTheme';`
+- 适用范围：`frontend/src` 下的组件、hooks、utils、types、themes 等源码文件。
+- 例外情况：同目录内的短相对导入可以保留，例如 `./constants`、`./helpers`。
+- 修改旧代码时：如果顺手触达已有相对路径导入，优先一并改成 `@/`，保持项目风格一致。
+
 ## 目录结构
 - `backend/` - Rust 后端代码
 - `frontend/` - React 前端代码
