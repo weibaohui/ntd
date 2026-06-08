@@ -18,6 +18,13 @@ pub struct UpdateProjectDirectoryRequest {
     pub name: String,
 }
 
+// 仅路径必填，名称可选；存在时不覆盖已有名称，用于 TodoDrawer 手动输入路径的兜底
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpsertProjectDirectoryRequest {
+    pub path: String,
+    pub name: Option<String>,
+}
+
 pub async fn list_project_directories(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<Vec<crate::db::project_directory::ProjectDirectory>>, super::AppError> {
@@ -41,6 +48,22 @@ pub async fn create_project_directory(
     let directory = state
         .db
         .get_or_create_project_directory(&req.path, Some(name))
+        .await?;
+    Ok(ApiResponse::ok(directory))
+}
+
+// 兜底用 endpoint：路径存在时直接返回已有记录不更新名称，不存在时创建
+pub async fn upsert_project_directory_if_not_exists(
+    State(state): State<AppState>,
+    ApiJson(req): ApiJson<UpsertProjectDirectoryRequest>,
+) -> Result<ApiResponse<crate::db::project_directory::ProjectDirectory>, super::AppError> {
+    if req.path.trim().is_empty() {
+        return Ok(ApiResponse::err(crate::models::codes::BAD_REQUEST, "Path is required"));
+    }
+    let name = req.name.as_ref().map(|s| s.trim());
+    let directory = state
+        .db
+        .get_or_create_project_directory_strict(&req.path, name)
         .await?;
     Ok(ApiResponse::ok(directory))
 }
@@ -74,6 +97,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/project-directories", get(list_project_directories))
         .route("/api/project-directories", post(create_project_directory))
+        .route("/api/project-directories/upsert-if-not-exists", post(upsert_project_directory_if_not_exists))
         .route("/api/project-directories/{id}", put(update_project_directory))
         .route("/api/project-directories/{id}", delete(delete_project_directory))
 }

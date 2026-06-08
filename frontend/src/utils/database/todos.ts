@@ -138,6 +138,11 @@ export async function createProjectDirectory(path: string, name: string): Promis
   return unwrap(await api.post('/api/project-directories', { path, name }));
 }
 
+// 兜底用：路径存在时直接返回已有记录不更新名称，不存在时创建（name 可选）
+export async function upsertProjectDirectoryIfNotExists(path: string, name?: string): Promise<ProjectDirectory> {
+  return unwrap(await api.post('/api/project-directories/upsert-if-not-exists', { path, name: name || null }));
+}
+
 export async function updateProjectDirectory(id: number, name: string): Promise<void> {
   // 与新增保持一致：名称必填
   await api.put(`/api/project-directories/${id}`, { name });

@@ -210,7 +210,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
           const exists = projectDirectories.some(d => d.path === trimmedWorkspace);
           if (!exists) {
             // 容错：用户选了 AutoComplete 模糊匹配之外的路径，依然按"项目名称 = 路径同名"思路兜底创建
-            try { await db.createProjectDirectory(trimmedWorkspace, trimmedWorkspace); } catch { }
+            try { await db.upsertProjectDirectoryIfNotExists(trimmedWorkspace); } catch { }
           }
         }
 
@@ -230,7 +230,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
           if (trimmedWorkspace) {
             const exists = projectDirectories.some(d => d.path === trimmedWorkspace);
             if (!exists) {
-              try { await db.createProjectDirectory(trimmedWorkspace, trimmedWorkspace); } catch { }
+              try { await db.upsertProjectDirectoryIfNotExists(trimmedWorkspace); } catch { }
             }
           }
           await db.updateTodo(

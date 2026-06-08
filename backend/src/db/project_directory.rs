@@ -164,6 +164,36 @@ impl Database {
             }
         }
     }
+
+    /// 如果目录不存在则创建（仅创建时写入 name），存在时直接返回原记录不做任何更新。
+    /// 用于 TodoDrawer 的兜底场景：用户手动输入路径时，不应覆盖管理员预设的名称。
+    pub async fn get_or_create_project_directory_strict(
+        &self,
+        path: &str,
+        name: Option<&str>,
+    ) -> Result<ProjectDirectory, sea_orm::DbErr> {
+        if let Some(existing) = self.get_project_directory_by_path(path).await? {
+            // 存在则直接返回，不更新任何字段
+            return Ok(existing);
+        }
+
+        match self.create_project_directory(path, name).await {
+            Ok(id) => {
+                self.get_project_directory_by_id(id)
+                    .await?
+                    .ok_or_else(|| sea_orm::DbErr::Custom("Failed to retrieve created directory".into()))
+            }
+            Err(e) => {
+                if is_unique_constraint_error(&e) {
+                    self.get_project_directory_by_path(path)
+                        .await?
+                        .ok_or_else(|| sea_orm::DbErr::Custom("Directory disappeared after conflict".into()))
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
 }
 
 fn is_unique_constraint_error(err: &sea_orm::DbErr) -> bool {
