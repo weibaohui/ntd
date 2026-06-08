@@ -5,7 +5,7 @@ import { useApp } from '@/hooks/useApp';
 import * as db from '@/utils/database';
 import type { ExecutionRecord } from '@/types';
 
-import { DEFAULT_EXECUTION_TIMEOUT_SECS } from '@/constants';
+import { DEFAULT_EXECUTION_TIMEOUT_SECS, MAX_EXECUTION_TIMEOUT_MINUTES } from '@/constants';
 
 /** 运行管理面板，负责展示执行并发、超时配置以及运行中任务操作。 */
 export function RuntimePanel({ configForm, configSaving, handleSaveConfig, executorDisplayNames }: {
@@ -59,14 +59,15 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
   }, []);
 
   // 监听表单字段变化（外部加载配置重置表单时），同步本地状态。
-  // 注意：此处仅同步 display state，不更新 lastEnabledExecutionTimeoutSecsRef，
-  // 避免外部加载 0 时覆盖用户上次的非零设置。
+  // 依赖 [configForm, executionTimeoutSecs]：当 async setFieldsValue 触发 re-render 后，
+  // effect 会重新执行，此时 formValue 已更新而 executionTimeoutSecs 仍是旧值，触发同步。
+  // formValue !== undefined 保护：忽略表单未填充时的 undefined，避免将 0 同步进去。
   useEffect(() => {
     const formValue = configForm.getFieldValue('execution_timeout_secs');
     if (formValue !== undefined && formValue !== executionTimeoutSecs) {
       setExecutionTimeoutSecs(formValue);
     }
-  }, [configForm]);
+  }, [configForm, executionTimeoutSecs]);
 
   /** 批量停止当前选中的执行任务。 */
   const handleBatchStop = async () => {
@@ -138,7 +139,7 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
             <InputNumber
               size="small"
               min={1}
-              max={10080}
+              max={MAX_EXECUTION_TIMEOUT_MINUTES}
               style={{ width: 80 }}
               disabled={!executionTimeoutEnabled}
               value={executionTimeoutMinutes}

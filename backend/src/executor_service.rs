@@ -706,23 +706,23 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             }
         });
 
-        // execution_timeout_secs is captured by value here — changes to the config after this
-        // task starts will NOT affect it (running tasks hold their own snapshot).  Users must
-        // cancel and re-trigger a todo execution to pick up a new timeout value.
+        // execution_timeout_secs is captured by value here — config changes after this
+        // task starts have no effect. To pick up a new timeout, wait for the current
+        // execution to finish (or force-fail it via the UI).
         let timeout_enabled = execution_timeout_secs > 0;
         // Duration is only used when timeout_enabled; max(1) guards against constructing
         // Duration::ZERO in case the guard is accidentally removed in future refactors.
         // Note: Duration::from_secs(0) does NOT panic — it returns Duration::ZERO — but
         // tokio::time::sleep(Duration::ZERO) is a no-op, so we enforce a 1s minimum instead.
         let timeout_duration = std::time::Duration::from_secs(execution_timeout_secs.max(1));
-        // 精确格式化超时提示：整数分钟直接显示"X 分钟"，非整数显示"X 分 Y 秒"
+        // Human-readable timeout string for display messages (always English to keep event output consistent).
         let timeout_str = {
             let mins = execution_timeout_secs / 60;
             let secs = execution_timeout_secs % 60;
             if secs == 0 {
-                format!("{} 分钟", mins)
+                format!("{} min", mins)
             } else {
-                format!("{} 分 {} 秒", mins, secs)
+                format!("{} min {} sec", mins, secs)
             }
         };
         let timeout_sleep = tokio::time::sleep(timeout_duration);

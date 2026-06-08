@@ -254,8 +254,10 @@ impl Config {
             .map(|(k, v)| (k.clone(), Self::normalize_single_path(v)))
             .collect();
         self.executors.paths = normalized;
-        // Clamp execution_timeout_secs: 0 (disabled) is always valid; positive values capped at MAX.
-        if self.execution_timeout_secs != 0 && self.execution_timeout_secs > MAX_EXECUTION_TIMEOUT_SECS {
+        // Clamp execution_timeout_secs: 0 (disabled) always valid; 1-59s -> 60s (min); >MAX -> MAX.
+        if self.execution_timeout_secs != 0 && self.execution_timeout_secs < 60 {
+            self.execution_timeout_secs = 60;
+        } else if self.execution_timeout_secs > MAX_EXECUTION_TIMEOUT_SECS {
             self.execution_timeout_secs = MAX_EXECUTION_TIMEOUT_SECS;
         }
     }

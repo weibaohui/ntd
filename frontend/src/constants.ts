@@ -6,3 +6,6 @@
 
 /** Default execution timeout in seconds (1 hour). Used as fallback when no config is set. */
 export const DEFAULT_EXECUTION_TIMEOUT_SECS = 3600;
+
+/** Maximum execution timeout in minutes (7 days = 10080 min). Mirrors backend config::MAX_EXECUTION_TIMEOUT_SECS. */
+export const MAX_EXECUTION_TIMEOUT_MINUTES = 10080;
