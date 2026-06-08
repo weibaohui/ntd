@@ -69,3 +69,15 @@
 - [Hook 系统设计](../hook-system-design.md) — 前置/后置 hook 机制
 - [Session 管理设计](../session-management-design.md) — Session 抽象由来
 - [架构总览](../ARCHITECTURE_HEALTH_CHECK_REPORT.md) — 后端模块划分
+
+---
+
+##变更日志
+
+> 本节记录 user-guide文档本身的变更，与代码变更对应。每行对应一次文档更新。
+
+| 日期 | PR/Commit |关联代码变更 |文档变更摘要 |
+|------|-----------|--------------|--------------|
+|2026-06-08 | 本次 |47edea4、5b64b50、43a8e82、578032d | [settings/messages-feishu.md](settings/messages-feishu.md)：<br>•2.2/2.3绑定流程 →改为 SSE 长连接（取代 POST poll）<br>•3.1群白名单 → 增加「页面加载自动展开」「sender_open_id 非空校验」步骤<br>• 新增5.3消息处理状态小节：区分 `processed` 与 `failed`字段<br>•6.1/6.2排查 → 检查 SSE 流事件类型与 sender_open_id校验<br>• 新增6.3 小节说明47edea4修复的「已处理假阳性」现象<br>•7卸载 Bot →补充6 个 feishu 子表 ON DELETE CASCADE 级联说明<br>• README：本表（新增） |
+|2026-06-07 | #438 | e849d2f（仅文档） | docs/FEATURES.md 功能总览新增（不属本目录范围） |
+|2026-06-07 | #432 |9496611（仅文档） | README.md 执行器表格更新（不属本目录范围） |

@@ -36,32 +36,36 @@
 3. 点击「**初始化**」→ 后端写入 `agent_bots` 表
 4. 点击「**开始绑定**」→ 后端生成 device flow 凭证
 5. 弹出二维码 / 链接，去飞书里扫码授权
-6. 页面会轮询「**检查状态**」直到 `access_token` 拿到
+6.页面会通过 **SSE（Server-Sent Events）长连接**等待飞书授权结果——浏览器超时或页面关闭都不会中断，因为轮询跑在服务端
 7. 状态变绿「已绑定」→ 自动 `start_bot`，Bot 上线
 
 ### 2.3 后端时序
 
 ```
-用户点 init    → POST /api/agent-bots/feishu/init     → 写 agent_bots
-用户点 begin   → POST /api/agent-bots/feishu/begin    → 拿 device_code + user_code
+用户点 init → POST /api/agent-bots/feishu/init →写 agent_bots
+用户点 begin → POST /api/agent-bots/feishu/begin →拿 device_code + user_code
 用户扫码授权
-前端轮询 poll  → POST /api/agent-bots/feishu/poll     → 拿到 access_token + refresh_token
-后端存 token   → agent_bots.bot_credentials
-start_bot      → 启动 feishu_listener tokio task
-```
+后端轮询飞书 → GET https://open.feishu.cn/.../token →拿到 access_token + refresh_token
+SSE推送结果 → GET /api/agent-bots/feishu/poll-stream → event: success / fail / ping
+后端存 token → agent_bots.bot_credentials
+start_bot →启动 feishu_listener tokio task
+
+> SSE 长连接使用 `tokio::select!`监听 channel关闭事件——客户端断开（浏览器关闭、超时）时 polling任务会自动中止，不会持续消耗飞书 API配额。
 
 ---
+
 
 ## 3. 群白名单
 
 > 控制哪些群里 @Bot 会被处理（避免在大型群里被刷屏）
 
 ### 3.1 新增白名单
-
-1. 在「群白名单」子表里点「**新增**」
-2. 填 `chat_id`（飞书群的唯一 ID，bot 加入群后从飞书事件里能看到）
-3. 填 `chat_name`（备注名，方便识别）
-4. 保存
+1. 进入「消息」Tab 后，**「群白名单」子表会随页面加载自动展开**，无需点击输入框触发即可看到当前已配置的白名单
+2. 在「群白名单」子表里点「**新增**」
+3.填 `chat_id`（飞书群的唯一 ID，bot 加入群后从飞书事件里能看到）
+4.填 `sender_open_id`（创建者的飞书 open_id，**必须为非空**，否则保存会被拒绝——这是为了防止条目绕过白名单校验）
+5.填 `chat_name`（备注名，方便识别）
+6. 保存
 
 ### 3.2 何时生效
 
@@ -74,7 +78,7 @@ start_bot      → 启动 feishu_listener tokio task
 | Method | Path | 用途 |
 |--------|------|------|
 | GET | `/api/agent-bots/feishu/group-whitelist` | 列白名单 |
-| POST | `/api/agent-bots/feishu/group-whitelist` | 新增 |
+| POST | `/api/agent-bots/feishu/group-whitelist` | 新增（要求 `sender_open_id` 非空） |
 | DELETE | `/api/agent-bots/feishu/group-whitelist/{id}` | 移除 |
 
 ---
@@ -134,7 +138,20 @@ start_bot      → 启动 feishu_listener tokio task
 - 同时按 `chat_id` 聚合到 `feishu_history_chats`
 - `message_debounce` 服务：5 分钟内同一群的高频消息做去重，避免刷屏
 
-### 5.3 API
+###5.3消息处理状态（`processed` / `failed`）
+
+`feishu_history_messages` 表里每条消息有两个状态字段：
+
+|字段值 |含义 |何时设置 |
+|--------|------|----------|
+| `processed = false` |消息已落库但**尚未处理** | `save_feishu_history_message`写入时（默认值） |
+| `processed = true` |消息**已成功**触发执行并完成 | `message_debounce`成功分发后 |
+| `failed = true` |消息**处理失败**（执行器报错等） | `mark_feishu_message_failed` 调用后 |
+
+> 历史 Tab 通过这两个字段直观展示「哪些消息被处理了、哪些还没、哪些失败了」。
+> 注意：之前版本存在「落库即标记 processed」导致状态与实际不符的 bug（PR #436），已修复——现在未真正处理的记录会保持 `processed = false`，失败记录会显示在「失败」筛选里而非「已处理」里。
+
+###5.4 API
 
 | Method | Path | 用途 |
 |--------|------|------|
@@ -153,16 +170,21 @@ start_bot      → 启动 feishu_listener tokio task
 ### 6.1 二维码点了无反应
 
 - 检查回调地址是否在飞书后台的「事件订阅」里配对
-- 检查 ntd 后端 `/api/agent-bots/feishu/poll` 返回的 `status`：`pending` / `authorized` / `expired`
+- 检查 ntd 后端 SSE 流 `GET /api/agent-bots/feishu/poll-stream` 的事件：`pending` / `success` / `fail` / `expired`
 - 过期需要重新「begin」
 
 ### 6.2 Bot 收不到消息
 
 - 看 `feishu_history_messages` 表有没有写入
-- 检查「群白名单」是否含目标 chat_id
+- 检查「群白名单」是否含目标 chat_id，且 `sender_open_id` 非空
 - 后端日志搜 `feishu-listener` 关键字
 
-### 6.3 推送报错「权限不足」
+###6.3 历史消息显示「已处理」但实际未触发执行
+
+- 这是 PR #436（commit47edea4）修复的旧 bug表现（现已修复）：`save_feishu_history_message`写入时不再设置 `processed = true`
+- 若历史数据被旧版本污染，可手工 `UPDATE feishu_history_messages SET processed =0 WHERE id IN (...)`
+
+###6.4推送报错「权限不足」
 
 飞书后台缺权限。`Bot` 需要：
 - `im:message` — 收消息
@@ -172,10 +194,19 @@ start_bot      → 启动 feishu_listener tokio task
 
 ---
 
-## 7. 卸载 Bot
+##7.卸载 Bot
 
-1. 设置 → 消息 → 绑定 Tab → 底部「**删除 Bot**」
-2. 后端会 stop 监听任务并删 `agent_bots` 记录
-3. 历史消息会保留（除非你手工清）
+1. 设置 →消息 →绑定 Tab →底部「**删除 Bot**」
+2. 后端会 stop监听任务并从 `agent_bots` 表中删除该记录
+3. **关联子表数据会自动级联删除**（`ON DELETE CASCADE`，PR #434）——以下6 个 feishu 子表的对应条目都会被清掉：
+ - `feishu_group_whitelist`
+ - `feishu_history_messages`
+ - `feishu_history_chats`
+ - `feishu_push_configs`
+ - `feishu_message_stats`
+ - `feishu_debounce_state`
+4.升级到当前版本时，已有的库会通过 **运行时迁移** 自动加外键级联，老数据不会被静默清空
+
+> 历史消息保留与否取决于上述级联行为；如果你希望保留历史快照，删除 Bot 前先用「备份与恢复 → 数据库备份」手动备份一次。
 
 API：`DELETE /api/agent-bots/{id}`
