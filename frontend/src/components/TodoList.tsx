@@ -194,14 +194,14 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
         icon: displayMode === 'flat' ? <FolderOpenOutlined /> : <UnorderedListOutlined />,
         label: (
           <span aria-pressed={displayMode === 'grouped'}>
-            {displayMode === 'flat' ? '切换为按项目分组' : '切换为平铺列表'}
+            {displayMode === 'flat' ? '分组' : '平铺'}
           </span>
         ),
       },
       {
         key: 'theme',
         icon: themeMode === 'light' ? <MoonOutlined /> : <SunOutlined />,
-        label: themeMode === 'light' ? '切换暗色主题' : '切换亮色主题',
+        label: themeMode === 'light' ? '暗色' : '亮色',
       },
     ];
 
@@ -211,7 +211,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
         {
           key: 'settings',
           icon: <SettingOutlined />,
-          label: '配置管理',
+          label: '设置',
         },
       );
     }
