@@ -319,6 +319,25 @@ filter: blur()
 
 ---
 
+## 附：本次修复的精确限定
+
+修复后 `.update-confirm-modal .ant-modal-content` 仍保留 `overflow: hidden`（见 `frontend/src/App.css:2090-2096`），限定选择器不影响其他下拉：
+
+```css
+/* ---------- Update Confirm Modal ---------- */
+.update-confirm-modal .ant-modal-content {
+  overflow: hidden;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-lg);
+}
+```
+
+`.update-confirm-modal` 限定符确保该 `overflow: hidden` 只作用在升级确认弹窗内部，**不会**影响其他 Modal / Drawer / Popover 的下拉组件，避免回归。
+
+---
+
 **文档创建时间**: 2024-04-25  
 **问题解决时间**: 约 2 小时排查和修复  
 **影响范围**: 所有使用 Ant Design 下拉组件的功能  

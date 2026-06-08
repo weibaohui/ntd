@@ -17,8 +17,8 @@ ntd 区分**生产**和**开发**两套环境，用端口隔开避免冲突。
 
 ## 开发模式额外行为
 
-- 监听前端源文件变化（Vite HMR）
-- 后端 `cargo run`，改 Rust 代码自动重启
+- 构建前端（`npm run build` 一次性构建，**不**监听文件变化 — 改前端后需重新 `make dev`）
+- 后端 `cargo run`（**不**自动重启 — 改 Rust 代码需 `Ctrl+C` 后再 `make dev`）
 - 日志输出到 `backend.dev.log`
 - CORS 允许任意 Origin（生产只允许同源）
 - HTTP 请求体上限 10MB（默认）
@@ -59,7 +59,7 @@ lsof -i :8088
 
 ### 配置写错
 
-启动会读 YAML 校验。YAML 错误会直接 panic 启动失败，看 `daemon.log` 或 `backend.dev.log`。
+启动会读 YAML 校验。YAML 错误会直接 panic 启动失败，看 `~/.ntd/run.log`（macOS）/`journalctl --user -u ntd`（Linux）或 `backend.dev.log`。
 
 ### 数据库锁
 

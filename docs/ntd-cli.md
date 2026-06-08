@@ -70,21 +70,28 @@ ntd server start --port 8088
 创建新的 Todo。
 
 ```bash
-ntd todo create [OPTIONS]
+ntd todo create [TITLE] [OPTIONS]
 ```
+
+> 注意：`<TITLE>` 是位置参数，**没有** `-t` 短别名。
+
+**位置参数：**
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `TITLE` | 否（与 `--stdin` 二选一必填） | Todo 标题 |
 
 **选项：**
 
 | 选项 | 简写 | 说明 |
 |------|------|------|
-| `--title <TITLE>` | `-t` | Todo 标题 |
 | `--prompt <TEXT>` | `-p` | Prompt 内容 |
-| `--file <PATH>` | `-f` | 从文件读取 prompt |
-| `--stdin` | - | 从 stdin 读取 JSON 数据 |
+| `--file <PATH>`   | `-f` | 从文件读取 prompt |
+| `--stdin`         | -   | 从 stdin 读取 JSON 数据（用于复杂字段如 `hooks`） |
 | `--executor <TYPE>` | `-e` | 执行器类型 |
 | `--workspace <PATH>` | `-w` | 工作目录 |
-| `--tags <IDs>` | - | 标签 ID（逗号分隔） |
-| `--schedule <CRON>` | - | 定时计划（Cron 表达式） |
+| `--tags <IDs>`    | -   | 标签 ID（逗号分隔） |
+| `--schedule <CRON>` | - | 定时计划（Cron 表达式，传空字符串可清空） |
 
 **执行器类型：**
 - `claudecode` - Claude Code
@@ -95,20 +102,33 @@ ntd todo create [OPTIONS]
 - `hermes` - Hermes
 - `kimi` - Kimi
 - `codex` - Codex
+- `codewhale` - CodeWhale
 
 **示例：**
 ```bash
-# 创建简单 Todo
-ntd todo create --title "完成报告" --prompt "写一份季度报告"
+# 创建简单 Todo（标题是位置参数）
+ntd todo create "完成报告" --prompt "写一份季度报告"
 
 # 从文件创建
-ntd todo create --title "代码审查" --file ./prompt.txt
+ntd todo create "代码审查" --file ./prompt.txt
 
 # 指定执行器和标签
-ntd todo create -t "AI 任务" -p "使用 Claude 执行" -e claudecode --tags "1,2"
+ntd todo create "AI 任务" -p "使用 Claude 执行" -e claudecode --tags "1,2"
 
 # 定时任务
-ntd todo create -t "每日提醒" -p "检查日志" --schedule "0 9 * * *"
+ntd todo create "每日提醒" -p "检查日志" --schedule "0 9 * * *"
+
+# 复杂字段用 --stdin
+ntd todo create --stdin <<EOF
+{
+  "title": "复杂任务",
+  "prompt": "...",
+  "tag_ids": [1, 2],
+  "scheduler_enabled": true,
+  "scheduler_config": "0 0 9 * * *",
+  "hooks": []
+}
+EOF
 ```
 
 ---
@@ -171,19 +191,32 @@ ntd todo update <ID> [OPTIONS]
 
 | 选项 | 简写 | 说明 |
 |------|------|------|
-| `--title <TITLE>` | `-t` | 新标题 |
-| `--prompt <TEXT>` | `-p` | 新 prompt 内容 |
-| `--file <PATH>` | `-f` | 从文件读取 prompt |
-| `--stdin` | - | 从 stdin 读取 JSON 数据 |
+| `--title <TITLE>` | - | 新标题 |
+| `--prompt <TEXT>` | - | 新 prompt 内容 |
+| `--file <PATH>`   | `-f` | 从文件读取 prompt |
+| `--stdin`         | - | 从 stdin 读取 JSON 数据 |
 | `--status <STATUS>` | - | 新状态 |
-| `--executor <TYPE>` | `-e` | 执行器类型 |
-| `--workspace <PATH>` | `-w` | 工作目录 |
-| `--tags <IDs>` | - | 标签 ID（逗号分隔） |
+| `--executor <TYPE>` | - | 执行器类型 |
+| `--workspace <PATH>` | - | 工作目录 |
+| `--tags <IDs>`    | - | 标签 ID（逗号分隔） |
 | `--schedule <CRON>` | - | 定时计划 |
 
 **示例：**
 ```bash
+# 更新标题和状态
 ntd todo update 123 --title "新标题" --status completed
+
+# 更新标签
+ntd todo update 123 --tags "1,3"
+
+# 复杂字段用 --stdin
+ntd todo update 123 --stdin <<EOF
+{
+  "scheduler_enabled": true,
+  "scheduler_config": "0 0 9 * * *",
+  "hooks": []
+}
+EOF
 ```
 
 ---
@@ -214,11 +247,21 @@ ntd todo execute <ID> [OPTIONS]
 | 选项 | 简写 | 说明 |
 |------|------|------|
 | `--message <MSG>` | `-m` | 附加消息 |
-| `--executor <TYPE>` | `-e` | 指定执行器 |
+| `--executor <TYPE>` | - | 指定执行器 |
+| `--param KEY=VALUE` | - | 模板占位符替换键值对，可重复传多次 |
+
+> `--param` 接受 `key=value` 形式，可重复传递；最终会作为 `params` 字段一起发到 `POST /api/execute`，后端用 `{{key}}` 替换 prompt 中的占位符。
 
 **示例：**
 ```bash
+# 简单执行
 ntd todo execute 123 -m "开始执行"
+
+# 传占位符参数
+ntd todo execute 123 \
+  --param project_name=myproject \
+  --param env=production \
+  -m "部署到 {{env}}"
 ```
 
 ---
@@ -243,6 +286,15 @@ ntd todo stop 123
 ```bash
 ntd todo stats <ID>
 ```
+
+调用 `GET /api/todos/{id}/summary`，返回 `ExecutionSummary`：
+
+| 字段 | 说明 |
+|------|------|
+| `total_executions` | 累计执行次数 |
+| `success_count` / `failed_count` / `running_count` | 各状态计数 |
+| `total_input_tokens` / `total_output_tokens` / `total_cache_read_tokens` / `total_cache_creation_tokens` | Token 用量 |
+| `total_cost_usd` | 累计费用（USD） |
 
 **示例：**
 ```bash
@@ -490,13 +542,54 @@ ntd daemon status -v
 
 ---
 
+## 7. 技能管理命令
+
+> 用于将内嵌的 `ntd-usage` skill 安装到各执行器的技能目录，让 AI 助手在执行时能自动发现并加载 ntd 使用说明。
+>
+> 当前内嵌的 skill 是 `ntd-usage`，所有支持的执行器共享同一份内容，安装到各自的 skill 目录下。
+
+#### `ntd skill install`
+安装内嵌的 `ntd-usage` skill 到执行器技能目录。
+
+```bash
+ntd skill install [OPTIONS]
+```
+
+**选项：**
+
+| 选项 | 简写 | 说明 |
+|------|------|------|
+| `--force` | `-f` | 强制重新安装（即使目录已存在） |
+| `--executor <LIST>` | `-e` | 仅安装到指定执行器（逗号分隔，例如 `claudecode,atomcode`）；不传则安装到全部已知执行器 |
+
+支持的执行器：`claudecode`、`hermes`、`codex`、`codebuddy`、`opencode`、`atomcode`、`kimi`、`joinai`、`codewhale`。
+
+**示例：**
+```bash
+# 安装到所有执行器（首次安装或大版本更新后推荐执行一次）
+ntd skill install
+
+# 仅安装到 Claude Code
+ntd skill install --executor claudecode
+
+# 强制重新安装（升级 skill 内容后使用）
+ntd skill install --force
+
+# 强制重装到指定执行器
+ntd skill install --force --executor claudecode,atomcode
+```
+
+> `--executor` 显式传值时遇到未知执行器会报错退出；不传时未知执行器会被跳过并打印警告。
+
+---
+
 ## 使用示例
 
 ### 完整工作流
 
 ```bash
-# 1. 创建 Todo
-ntd todo create -t "开发新功能" -p "实现用户认证模块" -e claudecode
+# 1. 创建 Todo（标题是位置参数）
+ntd todo create "开发新功能" -p "实现用户认证模块" -e claudecode
 
 # 2. 查看列表
 ntd todo list
@@ -510,8 +603,8 @@ ntd todo execution list 1
 # 5. 停止执行
 ntd todo stop 1
 
-# 6. 更新 Todo
-ntd todo update 1 --status paused
+# 6. 更新 Todo 状态
+ntd todo update 1 --status in_progress
 
 # 7. 删除 Todo
 ntd todo delete 1
@@ -525,7 +618,7 @@ ntd tag create "重要" -c "#ff4d4f"
 ntd tag create "紧急" -c "#faad14"
 
 # 创建带标签的 Todo
-ntd todo create -t "处理投诉" -p "回复用户投诉" --tags "1,2"
+ntd todo create "处理投诉" -p "回复用户投诉" --tags "1,2"
 
 # 按标签筛选
 ntd todo list --tag 1
@@ -535,10 +628,10 @@ ntd todo list --tag 1
 
 ```bash
 # 创建每小时执行的任务
-ntd todo create -t "健康检查" -p "检查系统状态" --schedule "0 * * * *"
+ntd todo create "健康检查" -p "检查系统状态" --schedule "0 * * * *"
 
 # 创建每天早上 9 点执行的任务
-ntd todo create -t "日报" -p "发送每日报告" --schedule "0 9 * * *"
+ntd todo create "日报" -p "发送每日报告" --schedule "0 9 * * *"
 ```
 
 ---

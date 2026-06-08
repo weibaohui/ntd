@@ -111,13 +111,13 @@ proxy_read_timeout 3600s;
 
 - 看 release notes
 - 配置文件可能新增必填字段
-- 用 `ntd --version` 确认升级成功
+- 用 `ntd version` 确认升级成功
 
 ## 8. 日志在哪
 
 | 模式 | 位置 |
 |------|------|
-| 生产 daemon | `~/.ntd/daemon.log` |
+| 生产 daemon | `~/.ntd/run.log` / `~/.ntd/run.error.log`（macOS）/ journalctl（Linux） |
 | 开发模式 | `backend.dev.log`（仓库根） |
 
 ## 9. 抓取日志给开发者
@@ -126,11 +126,11 @@ proxy_read_timeout 3600s;
 
 ```bash
 # 收集最近 1000 行
-tail -n 1000 ~/.ntd/daemon.log > /tmp/ntd-bug.log
+tail -n 1000 ~/.ntd/run.log > /tmp/ntd-bug.log
 
 # 加 system info
 echo "---" >> /tmp/ntd-bug.log
-echo "ntd version: $(ntd --version)" >> /tmp/ntd-bug.log
+echo "ntd version: $(ntd version)" >> /tmp/ntd-bug.log
 echo "OS: $(uname -a)" >> /tmp/ntd-bug.log
 echo "Mode: $(echo $NTD_MODE)" >> /tmp/ntd-bug.log
 ```

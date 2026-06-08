@@ -1,132 +1,165 @@
 # 日志清理
 
-ntd 跑久了会留下大量日志。`backend.dev.log` 和 `daemon.log` 几天就能上 GB。
+>本文档说明 ntd **「日志清理」**功能清理的是什么、不会清理什么，并提供手工清理指引。
 
-## 1. 日志位置
+ntd跑久了会在数据库里堆积大量执行日志。**自动清理的是 `execution_logs` 表中的行**（数据库表），**不是**磁盘上的 `.log`文件（`~/.ntd/run.log` 等由系统 logrotate / daemon自身管理）。
 
-| 日志 | 位置 |
+---
+
+## 1.清理目标
+
+|清理对象 |说明 |接口 |
+|----------|------|------|
+| 数据库表 `execution_logs` | 每条执行记录对应若干日志行（stdout / stderr / result 等） | `POST /api/backup/log-cleanup/trigger` |
+| 文件 `~/.ntd/run.log` |macOS launchd接管，文件由 daemon写、由系统 logrotate 处理 | **不在** ntd清理范围内 |
+
+> 「**日志清理**」的清理目标是数据库 `execution_logs` 表（参见 `backend/src/handlers/backup.rs::cleanup_old_logs`）。它跑的是 `DELETE FROM execution_logs WHERE timestamp < ...`，不是磁盘文件 mtime 删除。
+
+---
+
+## 2.日志位置（磁盘文件，**不**自动清理）
+
+|日志 |位置 |
 |------|------|
 | 开发模式后端日志 | `backend.dev.log`（在仓库根） |
-| 生产 daemon 日志 | `~/.ntd/daemon.log` |
-| ntd-cloud 日志 | `/path/to/ntd-cloud/backend/ntd_cloud.log` |
+| 生产 daemon 日志（macOS） | `~/.ntd/run.log`（launchd `StandardOutPath`/`StandardErrorPath`，参见 `backend/src/daemon.rs::generate_launchd_plist`） |
+| 生产 daemon 日志（Linux） | `journalctl --user -u ntd`（systemd `StandardOutput=journal`，参见 `backend/src/daemon.rs`） |
+|错误日志（macOS） | `~/.ntd/run.error.log` |
 
-## 2. 自动清理
+> daemon **不**写 `daemon.log`。文档中所有 `~/.ntd/daemon.log`引用都是历史遗留，**实际路径是 `~/.ntd/run.log`**。
 
-设置 → 备份与恢复 → 日志清理 Tab：
+---
 
-| 字段 | 默认 | 含义 |
-|------|------|------|
-| `enabled` | false | 是否开启 |
-| `retention_days` | 30 | 保留天数 |
-| `cron` | - | 清理周期 |
+## 3.自动清理配置
 
-### 2.1 行为
+唯一字段（`backend/src/config.rs::auto_cleanup_logs_days`）：
+- 类型 `Option<usize>`，`None` = 不清理（默认在 `Config::default()` 是 `Some(30)`，但用户设为 `null` 后自动清理就停了）
+- 设成数字 `N` 后，每次数据库自动备份后会跑 `DELETE FROM execution_logs WHERE timestamp < datetime('now', '-N days')`
 
-- 按修改时间删：**mtime 超过 retention_days** 的日志文件**被删**
-- 活跃文件（正在写的）**不会被删**
-- 只删日志文件（`.log` / `.log.gz`），其他文件不动
+UI入口：备份与恢复 → 日志清理 Tab
 
-### 2.2 手动触发
-
-点「**立即清理**」按钮。
-
-## 3. 手动清理
-
-### 3.1 找大文件
-
-```bash
-du -sh ~/.ntd/*.log
+PUT body：
+```json
+{ "days":30 }
 ```
 
-### 3.2 截断活跃文件
+> 历史字段 `enabled` / `retention_days` / `cron` 已废弃，**当前只有一个 `auto_cleanup_logs_days: Option<usize>`字段**。
+
+---
+
+## 4.手动清理
+
+### 4.1通过 ntd 接口
 
 ```bash
-# 把当前日志清空，但保留文件句柄
-: > ~/.ntd/daemon.log
+#  设成30 天并立即触发
+curl -X PUT http://localhost:8088/api/backup/log-cleanup \
+ -H "Content-Type: application/json" \
+ -d '{"days":30}'
+
+curl -X POST http://localhost:8088/api/backup/log-cleanup/trigger
 ```
 
-比直接 `rm` 安全 —— 进程不会因为找不到文件而停止写日志。
+返回：被删除的行数。
 
-### 3.3 找过期文件
+### 4.2直接跑 SQL
 
 ```bash
-find ~/.ntd -name "*.log" -mtime +30 -ls
-find ~/.ntd -name "*.log.gz" -mtime +30 -ls
+sqlite3 ~/.ntd/data.db "DELETE FROM execution_logs WHERE timestamp < datetime('now', '-30 days');"
 ```
 
-### 3.4 删
+> 注意：删完**不会**自动回收磁盘空间（SQLite默认行为），要回收空间需额外跑 `VACUUM`（参考 `database-optimize.md`）。
 
-```bash
-find ~/.ntd -name "*.log" -mtime +30 -delete
-find ~/.ntd -name "*.log.gz" -mtime +30 -delete
-```
+---
 
-## 4. 日志轮转（高级）
+## 5.日志轮转（高级，针对磁盘 `.log` 文件）
 
-如果不想用 ntd 内置清理，可以配系统级 logrotate：
+>这里**不**涉及 ntd 「日志清理」功能，仅作为系统级 logrotate 参考。
+
+如果想限制 `~/.ntd/run.log`体积，可以配系统级 logrotate：
 
 `/etc/logrotate.d/ntd`：
 
 ```
-/Users/me/.ntd/daemon.log {
-    daily
-    rotate 7
-    compress
-    missingok
-    notifempty
-    copytruncate
+/Users/me/.ntd/run.log {
+ daily
+ rotate7
+ compress
+ missingok
+ notifempty
+ copytruncate
 }
 ```
 
 - `daily`：每天轮转
-- `rotate 7`：保留 7 个
-- `copytruncate`：保留文件句柄，ntd 继续写
+- `rotate7`：保留7 个
+- `copytruncate`：保留文件句柄，ntd继续写
 
-## 5. ntd 日志格式
+---
+
+## 6.ntd 日志格式
 
 ```
 [2026-06-04T20:00:00.123Z] INFO ntd::handlers: Webhook records cleanup completed
 [2026-06-04T20:00:00.234Z] ERROR ntd::db: connection lost
 ```
 
-- 级别：TRACE / DEBUG / INFO / WARN / ERROR
+-级别：TRACE / DEBUG / INFO / WARN / ERROR
 - 模块路径：方便定位
 
-## 6. 调试技巧
+---
 
-### 6.1 实时跟踪
+## 7.调试技巧
 
-```bash
-tail -f ~/.ntd/daemon.log | grep -i "sync\|webhook"
-```
-
-### 6.2 找错误
+### 7.1实时跟踪
 
 ```bash
-grep -i "ERROR\|panic" ~/.ntd/daemon.log
+#  macOS
+tail -f ~/.ntd/run.log | grep -i "sync|webhook"
+
+#  Linux（systemd）
+journalctl --user -u ntd -f | grep -i "sync|webhook"
 ```
 
-### 6.3 找特定请求
+### 7.2找错误
 
 ```bash
-grep "todo_id=5" ~/.ntd/daemon.log
+#  macOS
+grep -i "ERROR|panic" ~/.ntd/run.log
+
+#  Linux（systemd）
+journalctl --user -u ntd | grep -i "ERROR|panic"
 ```
 
-## 7. 故障排查
+### 7.3找特定请求
 
-### 7.1 自动清理不工作
+```bash
+#  macOS
+grep "todo_id=5" ~/.ntd/run.log
 
-- 看后端日志 `log_cleanup` 关键字
-- 验证 Cron 表达式
-- 手动触发试试
+#  Linux（systemd）
+journalctl --user -u ntd | grep "todo_id=5"
+```
 
-### 7.2 删了日志后服务异常
+---
 
-- 一般不会：ntd 日志是只写的
-- 但如果进程持有的句柄被强制 close，可能出错
-- 重启服务恢复
+## 8.故障排查
 
-## 8. 相关文档
+### 8.1「日志清理」不工作
 
-- [备份与恢复](../settings/backup-and-restore.md#4-日志清理)
+- 看后端日志 `backup_scheduler`关键字
+- 检查 `auto_cleanup_logs_days` 是否被设为 `None`（即关闭）
+- 看 `execution_logs` 表是否真的有老数据
+
+### 8.2磁盘 `.log` 文件没自动清理
+
+- ntd **不**自动清理磁盘日志文件（设计如此）
+- 用系统 logrotate（macOS / Linux都有）
+
+---
+
+## 9.相关文档
+
+- [备份与恢复](../settings/backup-and-restore.md)
+- [数据库优化](database-optimize.md)
 - [备份策略](backup-strategy.md)

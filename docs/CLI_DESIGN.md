@@ -17,16 +17,25 @@ ntd CLI 是为 AI 交互设计的命令行工具，用于管理 AI 驱动的 Tod
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `--server` | API 服务器地址 | `http://localhost:8080` |
-| `--output`, `-o` | 输出格式 (`json` 或 `pretty`) | `json` |
+| `--server` | API 服务器地址 | `http://localhost:8088`（由 `config.rs:13 DEFAULT_PORT=8088` 决定） |
+| `--output`, `-o` | 输出格式 (`json` / `pretty` / `raw`) | `json` |
+| `--fields`, `-f` | 字段选择（仅 `--output raw` 生效，逗号分隔） | - |
 | `--help`, `-h` | 显示帮助信息 | - |
 | `--version`, `-v` | 显示版本信息 | - |
 
-> **注意**: `--output pretty` 会格式化 JSON 输出，便于人类阅读；`--output json` 输出紧凑 JSON，适合 AI 解析。
+> **注意**: `--output pretty` 会格式化 JSON 输出，便于人类阅读；`--output json` 输出紧凑 JSON，适合 AI 解析；`--output raw` 仅输出 `ApiResponse.data` 内容（不包裹 `code` / `message` 包装），最适合作脚本管道。
 
 ---
 
 ## 子命令列表
+
+> 完整子命令清单来自 `backend/src/main.rs` 的 `Commands` 枚举与 `backend/src/cli/commands.rs`：
+>
+> - 顶层：`version` / `upgrade` / `server`（含 `start`）/ `todo` / `tag` / `stats` / `daemon`（含 `install` / `uninstall` / `start` / `stop` / `restart` / `status`）/ `skill`（含 `install`）
+> - `todo` 下：`create` / `list` / `get` / `update` / `delete` / `execute` / `stop` / `stats` / `execution`（含 `list` / `get` / `resume`）
+> - `tag` 下：`list` / `create` / `delete`
+>
+> 下方罗列常用子命令的详细参数表。
 
 ### 1. `ntd todo create` - 创建 Todo
 
@@ -36,10 +45,11 @@ ntd CLI 是为 AI 交互设计的命令行工具，用于管理 AI 驱动的 Tod
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `title` | string | 是 | Todo 标题 |
-| `prompt` | string | 否 | 执行提示词（与 `--file` 二选一） |
+| `title` | string | 是（与 `--stdin` 互斥时必填） | Todo 标题 |
+| `prompt` / `-p` | string | 否 | 执行提示词（与 `--file` 二选一） |
 | `--file`, `-f` | string | 否 | 从文件读取 prompt 内容 |
-| `--executor` | string | 否 | 执行器类型 (`claudecode`, `joinai`, `codebuddy`, `opencode`, `atomcode`, `hermes`) |
+| `--stdin` | bool | 否 | 从 stdin 读取整个 Todo JSON（`title` 可省略） |
+| `--executor` / `-e` | string | 否 | 执行器类型 (`claudecode`, `joinai`, `codebuddy`, `opencode`, `atomcode`, `hermes`, `kimi`, `codex`, `codewhale`) |
 | `--workspace`, `-w` | string | 否 | 工作目录路径 |
 | `--tags` | string | 否 | 标签 ID 列表，逗号分隔（如 `1,2,3`） |
 | `--schedule` | string | 否 | Cron 表达式，启用定时执行（如 `0 9 * * 1` 表示每周一 9:00） |
@@ -94,6 +104,7 @@ ntd todo create "每日报告" --file ./daily_report.txt --schedule "0 9 * * *"
 | `--status` | string | 否 | 按状态筛选 (`pending`, `in_progress`, `running`, `completed`, `failed`, `cancelled`) |
 | `--tag` | integer | 否 | 按标签 ID 筛选 |
 | `--running` | flag | 否 | 仅显示运行中的 Todo |
+| `--search` / `-s` | string | 否 | 按关键字搜索 title 或 prompt |
 
 **示例**:
 
@@ -200,10 +211,11 @@ ntd todo get 1
 |------|------|------|------|
 | `id` | integer | 是 | Todo ID |
 | `--title` | string | 否 | 新标题 |
-| `--prompt` | string | 否 | 新 prompt（与 `--file` 二选一） |
+| `--prompt` / `-p` | string | 否 | 新 prompt（与 `--file` 二选一） |
 | `--file`, `-f` | string | 否 | 从文件读取 prompt |
+| `--stdin` | bool | 否 | 从 stdin 读取更新 JSON |
 | `--status` | string | 否 | 新状态 |
-| `--executor` | string | 否 | 新执行器类型 |
+| `--executor` / `-e` | string | 否 | 新执行器类型 |
 | `--workspace`, `-w` | string | 否 | 新工作目录 |
 | `--tags` | string | 否 | 新标签 ID 列表 |
 | `--schedule` | string | 否 | 新 Cron 表达式（设为空取消调度） |
@@ -282,7 +294,8 @@ ntd todo delete 1
 |------|------|------|------|
 | `id` | integer | 是 | Todo ID |
 | `--message`, `-m` | string | 否 | 执行时的额外消息 |
-| `--executor` | string | 否 | 覆盖 Todo 的执行器 |
+| `--executor` / `-e` | string | 否 | 覆盖 Todo 的执行器 |
+| `--param key=value` | string，可重复 | 否 | 占位符参数（替换 prompt 中的占位变量） |
 
 **示例**:
 
@@ -630,25 +643,32 @@ ntd stats
 
 ## 错误响应格式
 
-当命令执行失败时，返回统一的错误格式：
+当命令执行失败时，实际的 stderr 输出格式为（参见 `backend/src/main.rs:250-256 print_structured_error`）：
 
 ```json
-{
-  "code": 40001,
-  "message": "Not found",
-  "data": null
-}
+{"error": true, "message": "Not found"}
 ```
 
-**常见错误码**:
+> 旧文档把错误响应写成 `{"code":40001, "message":"...", "data":null}` 的形式，**该格式未在代码中实现**。当前 ntd 的错误响应只有 `error: bool` + `message: string` 两个字段。
+> 注意：HTTP API（`/api/...`）会返回 `ApiResponse<T>` 包装（包含 `code` / `message` / `data`），但 CLI 自身失败（如网络错误、参数错误）走 `print_structured_error`，格式是上方的简化版。
 
-| 错误码 | 说明 |
+---
+
+## 补充：缺失子命令速查
+
+| 子命令 | 用途 |
 |--------|------|
-| `40001` | 资源不存在 |
-| `40002` | 参数错误 |
-| `40003` | 执行器不可用 |
-| `50001` | 服务器内部错误 |
-| `50002` | 任务执行失败 |
+| `ntd version` | 输出版本号、git SHA、tag |
+| `ntd upgrade` | 通过 npm 升级到最新版；执行后自动重装 daemon |
+| `ntd server start [--port N]` | 显式启动 API server（不传子命令时也是默认行为） |
+| `ntd daemon install [-f] [--system] [--run-as-user U]` | 安装为系统服务（launchd/systemd/Task Scheduler） |
+| `ntd daemon uninstall [--system]` | 卸载服务 |
+| `ntd daemon start [--system]` | 启动服务 |
+| `ntd daemon stop [--system]` | 停止服务 |
+| `ntd daemon restart [--system]` | 重启服务 |
+| `ntd daemon status [--system] [-v]` | 查看状态（`-v` 追加近期日志） |
+| `ntd skill install [-f] [-e EX1,EX2,...]` | 安装 ntd-usage skill 到执行器 skills 目录 |
+| `ntd todo execution resume <id> [-m MSG]` | 沿用原 `session_id` 继续对话（仅 `claudecode` / `codex` / `hermes` / `kimi` / `atomcode` / `opencode` / `joinai` / `codewhale` 支持） |
 
 ---
 
