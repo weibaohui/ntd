@@ -100,10 +100,14 @@ async fn main() {
             return;
         }
         Some(Commands::Upgrade) => {
+            // CLI 升级：npm 安装新版本 → 重新部署 daemon 服务
+            // 与 Web API 一键更新保持一致的升级路径
             println!("Upgrading ntd...");
 
-            let prefix = get_npm_global_prefix();
+            // 检测 npm 全局目录写权限，不可写时回退到 ~/.npm-global
+            let prefix = ntd::npm_utils::get_npm_global_prefix();
 
+            // 使用 --prefix 安装到有写权限的目录，避免 EACCES
             let status = std::process::Command::new("npm")
                 .args([
                     "install",
@@ -113,12 +117,71 @@ async fn main() {
                 ])
                 .status()
                 .expect("Failed to run npm. Is npm installed?");
-            if status.success() {
-                println!("Upgrade completed successfully!");
-            } else {
+            if !status.success() {
                 eprintln!("Upgrade failed.");
                 std::process::exit(1);
             }
+
+            // npm 升级成功，查找新安装的 ntd 路径
+            let ntd_cmd = ntd::npm_utils::find_ntd_binary(&prefix);
+
+            // 重新部署 daemon：stop → uninstall → install --force → start
+            // 保持与 Web API 升级路径一致
+            println!("Redeploying daemon service...");
+
+            // stop：失败不阻断（服务可能已停止）
+            let _ = std::process::Command::new(&ntd_cmd)
+                .args(["daemon", "stop"])
+                .status();
+
+            // uninstall：失败则终止，因为旧配置未清除可能导致冲突
+            let uninstall_result = std::process::Command::new(&ntd_cmd)
+                .args(["daemon", "uninstall"])
+                .status();
+            match &uninstall_result {
+                Ok(s) if s.success() => {}
+                Ok(s) => {
+                    eprintln!("Daemon uninstall failed with exit code {}", s);
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("Daemon uninstall exec error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+
+            // install --force：必须传 --force 以覆盖已有配置，更新 binary 路径
+            let install_result = std::process::Command::new(&ntd_cmd)
+                .args(["daemon", "install", "--force"])
+                .status();
+            match &install_result {
+                Ok(s) if s.success() => {}
+                Ok(s) => {
+                    eprintln!("Daemon install failed with exit code {}", s);
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("Daemon install exec error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+
+            // start：启动新版本服务
+            let start_result = std::process::Command::new(&ntd_cmd)
+                .args(["daemon", "start"])
+                .status();
+            match &start_result {
+                Ok(s) if s.success() => println!("Upgrade completed successfully!"),
+                Ok(s) => {
+                    eprintln!("Daemon start failed with exit code {}. Please run 'ntd daemon start' manually.", s);
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("Daemon start exec error: {}. Please run 'ntd daemon start' manually.", e);
+                    std::process::exit(1);
+                }
+            }
+
             return;
         }
         Some(Commands::Server { action: ServerAction::Start { port } }) => {
@@ -181,45 +244,6 @@ async fn main() {
             println!("Starting ntd server...");
             run_server(None).await;
         }
-    }
-}
-
-/// 获取 npm 全局安装的 prefix。
-/// 如果当前 npm 全局目录不可写，使用 ~/.npm-global 作为 prefix。
-fn get_npm_global_prefix() -> String {
-    let default_prefix = std::process::Command::new("npm")
-        .args(["prefix", "-g"])
-        .output();
-
-    match default_prefix {
-        Ok(out) if out.status.success() => {
-            let prefix = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            let path = std::path::Path::new(&prefix);
-            if path.exists() && is_writable_dir(path) {
-                return prefix;
-            }
-        }
-        _ => {}
-    }
-
-    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
-    let user_prefix = home.join(".npm-global");
-    let _ = std::fs::create_dir_all(&user_prefix);
-    println!("npm global directory not writable, using {} as prefix", user_prefix.display());
-    user_prefix.to_string_lossy().to_string()
-}
-
-fn is_writable_dir(path: &std::path::Path) -> bool {
-    if !path.exists() {
-        return false;
-    }
-    let test_file = path.join(format!(".ntd_write_test_{}", std::process::id()));
-    match std::fs::File::create(&test_file) {
-        Ok(_) => {
-            let _ = std::fs::remove_file(&test_file);
-            true
-        }
-        Err(_) => false,
     }
 }
 
