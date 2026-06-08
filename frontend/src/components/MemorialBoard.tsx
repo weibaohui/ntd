@@ -77,16 +77,18 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
     return () => { cancelled = true; };
   }, [hours, boardMode]);
 
-  // 加载项目目录用于过滤，监听 TodoDrawer 快速新增事件及时刷新
+  // 加载项目目录列表，供项目维度过滤使用。
+  // 与 KanbanBoard 逻辑一致：首次加载 + 监听 TodoDrawer 快速新增事件刷新。
+  // 失败时回退为空数组，不影响纪念板主体展示。
   useEffect(() => {
     const reload = () => {
-      db.getProjectDirectories()
-        .then(setProjectDirectories)
-        .catch(() => setProjectDirectories([]));
+      db.getProjectDirectories() // 从后端拉全量目录
+        .then(setProjectDirectories) // 更新下拉数据源
+        .catch(() => setProjectDirectories([])); // 静默失败：项目过滤退化，不阻塞主流程
     };
-    reload();
-    window.addEventListener('projectDirectoryAdded', reload);
-    return () => window.removeEventListener('projectDirectoryAdded', reload);
+    reload(); // 首次挂载加载
+    window.addEventListener('projectDirectoryAdded', reload); // 跨组件刷新
+    return () => window.removeEventListener('projectDirectoryAdded', reload); // 清理监听
   }, []);
 
   const toggleExpand = (todoId: number) => {
@@ -178,14 +180,15 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
 
   const filteredItems = useMemo(() => {
     let result = items;
-    // 按项目过滤
+    // 按项目目录过滤：选中某项目后，只展示 workspace 匹配该目录的已完成 todo；
+    // 因为 items 是轻量快照（不含 workspace 字段），需要回查 state.todos 取 workspace
     if (selectedProject) {
       result = result.filter(i => {
-        const todo = state.todos.find(t => t.id === i.todo_id);
-        return todo?.workspace === selectedProject;
+        const todo = state.todos.find(t => t.id === i.todo_id); // 回查全量 todo 取 workspace
+        return todo?.workspace === selectedProject; // 匹配选中项目的路径
       });
     }
-    // 按搜索文本过滤
+    // 按搜索文本过滤：匹配标题或 prompt
     if (searchText.trim()) {
       const q = searchText.toLowerCase();
       result = result.filter(i =>
@@ -374,6 +377,7 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
               if (opt) setHours(opt.value);
             }}
           />
+          {/* 项目过滤下拉：value 为目录路径（与 workspace 字段匹配），label 优先显示项目名 */}
           <Select
             size="small"
             placeholder="项目过滤"
@@ -383,8 +387,8 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
             style={{ width: 150 }}
             suffixIcon={<FolderOutlined />}
             options={projectDirectories.map(d => ({
-              value: d.path,
-              label: d.name || d.path,
+              value: d.path, // value 存路径，与 todo.workspace 对比
+              label: d.name || d.path, // 优先展示项目名，无名则回退显示路径
             }))}
           />
           {boardMode === 'memorial' ? (

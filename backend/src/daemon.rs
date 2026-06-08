@@ -145,9 +145,11 @@ fn generate_launchd_plist() -> String {
     let label = LAUNCHD_LABEL;
 
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+    // 用户级 PATH 优先于系统级，确保新安装的 ntd 优先被找到
     let mut path_entries = vec![
-        format!("{}", home.join(".local/bin").display()),
-        format!("{}", home.join(".cargo/bin").display()),
+        format!("{}", home.join(".npm-global/bin").display()), // npm install -g --prefix 写入的可执行文件目录
+        format!("{}", home.join(".local/bin").display()),      // make install 的默认安装目录
+        format!("{}", home.join(".cargo/bin").display()),      // Rust 工具链（开发环境）
     ];
 
     if let Ok(current_path) = std::env::var("PATH") {
@@ -561,11 +563,12 @@ WantedBy=multi-user.target
     }
 
     let binary = get_ntd_binary_path();
+    // 当前 binary 目录优先，然后用户级 PATH，最后系统级 PATH
     let mut path_entries = vec![
-        get_ntd_bin_dir().display().to_string(),
-        format!("{}", home.join(".local/bin").display()),
-        format!("{}", home.join(".npm-global/bin").display()),
-        format!("{}", home.join(".cargo/bin").display()),
+        get_ntd_bin_dir().display().to_string(),              // 当前 ntd binary 所在目录
+        format!("{}", home.join(".local/bin").display()),      // make install 的默认安装目录
+        format!("{}", home.join(".npm-global/bin").display()), // npm install -g --prefix 写入的可执行文件目录
+        format!("{}", home.join(".cargo/bin").display()),      // Rust 工具链（开发环境）
         "/usr/local/sbin".to_string(),
         "/usr/local/bin".to_string(),
         "/usr/sbin".to_string(),

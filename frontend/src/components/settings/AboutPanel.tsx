@@ -22,7 +22,10 @@ interface UpgradeResult {
 
 const UPGRADE_STEPS = [
   { step: '步骤 1', label: '升级 npm 包', code: 'npm install -g @weibaohui/nothing-todo@latest' },
-  { step: '步骤 2', label: '重启服务', code: 'ntd daemon restart' },
+  { step: '步骤 2', label: '停止服务', code: 'ntd daemon stop' },
+  { step: '步骤 3', label: '卸载旧服务配置', code: 'ntd daemon uninstall' },
+  { step: '步骤 4', label: '安装新服务配置', code: 'ntd daemon install' },
+  { step: '步骤 5', label: '启动新版本服务', code: 'ntd daemon start' },
 ];
 
 /**

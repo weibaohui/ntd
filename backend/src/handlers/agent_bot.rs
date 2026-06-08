@@ -634,7 +634,10 @@ pub async fn add_group_whitelist(
     Json(req): Json<AddWhitelistRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let entry = state.db.add_group_whitelist(req.bot_id, &req.sender_open_id, req.sender_name.as_deref()).await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(|e| match &e {
+            sea_orm::DbErr::Custom(msg) if msg.contains("cannot be empty") => AppError::BadRequest(msg.clone()),
+            _ => AppError::Internal(e.to_string()),
+        })?;
 
     Ok(ApiResponse::ok(WhitelistEntry {
         id: entry.id,

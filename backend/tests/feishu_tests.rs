@@ -289,9 +289,16 @@ mod cascade_delete_tests {
             .await
             .unwrap();
 
+        // Create push target row
+        db.set_p2p_receive_id(bot_id, "ou_p2p_rid")
+            .await
+            .unwrap();
+
         // 3. Verify child data exists before delete
         assert!(db.get_feishu_home(bot_id, "ou_user1").await.unwrap().is_some());
+        assert!(db.get_feishu_messages(bot_id, 100).await.unwrap().len() > 0);
         assert!(db.get_feishu_history_chats(bot_id).await.unwrap().len() > 0);
+        assert!(db.get_feishu_push_target(bot_id).await.unwrap().is_some());
         assert!(db.get_group_whitelist(bot_id).await.unwrap().len() > 0);
         assert!(db.get_feishu_response_configs(bot_id).await.unwrap().len() > 0);
 
@@ -304,11 +311,152 @@ mod cascade_delete_tests {
         // 6. Verify child data is gone (cascade worked)
         assert!(db.get_feishu_home(bot_id, "ou_user1").await.unwrap().is_none(),
             "feishu_homes should be empty after cascade");
+        assert!(db.get_feishu_messages(bot_id, 100).await.unwrap().is_empty(),
+            "feishu_messages should be empty after cascade");
         assert!(db.get_feishu_history_chats(bot_id).await.unwrap().is_empty(),
             "feishu_history_chats should be empty after cascade");
+        assert!(db.get_feishu_push_target(bot_id).await.unwrap().is_none(),
+            "feishu_push_targets should be empty after cascade");
         assert!(db.get_group_whitelist(bot_id).await.unwrap().is_empty(),
             "feishu_group_whitelist should be empty after cascade");
         assert!(db.get_feishu_response_configs(bot_id).await.unwrap().is_empty(),
             "feishu_response_config should be empty after cascade");
+    }
+}
+
+#[cfg(test)]
+mod whitelist_and_message_tests {
+    use ntd::db::{Database, NewFeishuHistoryMessage, NewFeishuMessage};
+
+    /// add_group_whitelist with empty sender_open_id should return Err
+    #[tokio::test]
+    async fn test_add_group_whitelist_empty_sender_rejected() {
+        let db = Database::new(":memory:").await.unwrap();
+        let bot_id = db
+            .create_agent_bot("feishu", "test-bot", "app_id", "app_secret", None, None)
+            .await
+            .unwrap();
+
+        let result = db.add_group_whitelist(bot_id, "", Some("Empty Sender")).await;
+        assert!(result.is_err(), "Empty sender_open_id should be rejected");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("cannot be empty"),
+            "Error should mention 'cannot be empty', got: {}",
+            err_msg
+        );
+    }
+
+    /// is_sender_in_whitelist should check sender properly
+    #[tokio::test]
+    async fn test_sender_in_whitelist_with_entries() {
+        let db = Database::new(":memory:").await.unwrap();
+        let bot_id = db
+            .create_agent_bot("feishu", "test-bot", "app_id", "app_secret", None, None)
+            .await
+            .unwrap();
+
+        // Add a whitelisted sender
+        db.add_group_whitelist(bot_id, "ou_alice", Some("Alice"))
+            .await
+            .unwrap();
+
+        // Whitelisted sender should be allowed
+        let result = db.is_sender_in_whitelist(bot_id, "ou_alice").await.unwrap();
+        assert!(result, "Whitelisted sender should be allowed");
+
+        // Non-whitelisted sender should be denied
+        let result = db.is_sender_in_whitelist(bot_id, "ou_bob").await.unwrap();
+        assert!(!result, "Non-whitelisted sender should be denied");
+    }
+
+    /// is_sender_in_whitelist with empty whitelist should allow all
+    #[tokio::test]
+    async fn test_sender_in_whitelist_empty_allows_all() {
+        let db = Database::new(":memory:").await.unwrap();
+        let bot_id = db
+            .create_agent_bot("feishu", "test-bot", "app_id", "app_secret", None, None)
+            .await
+            .unwrap();
+
+        // No whitelist entries — should allow any sender
+        let result = db.is_sender_in_whitelist(bot_id, "ou_anyone").await.unwrap();
+        assert!(result, "Empty whitelist should allow all senders");
+    }
+
+    /// mark_feishu_message_failed should set processed=false and processed_todo_id=None
+    #[tokio::test]
+    async fn test_mark_feishu_message_failed() {
+        let db = Database::new(":memory:").await.unwrap();
+        let bot_id = db
+            .create_agent_bot("feishu", "test-bot", "app_id", "app_secret", None, None)
+            .await
+            .unwrap();
+
+        // Save a message
+        let msg_id = db
+            .save_feishu_message(NewFeishuMessage {
+                bot_id,
+                message_id: "msg_fail_001",
+                chat_id: "oc_chat1",
+                chat_type: "p2p",
+                sender_open_id: "ou_user1",
+                sender_type: None,
+                content: Some("hello"),
+                msg_type: "text",
+                is_mention: false,
+            })
+            .await
+            .unwrap();
+
+        // First mark it as processed
+        db.mark_feishu_message_processed("msg_fail_001", 42, Some(100))
+            .await
+            .unwrap();
+
+        // Then mark as failed
+        db.mark_feishu_message_failed("msg_fail_001")
+            .await
+            .unwrap();
+
+        // Verify processed=false and processed_todo_id=None
+        let messages = db.get_feishu_messages(bot_id, 10).await.unwrap();
+        let msg = messages.iter().find(|m| m.message_id == "msg_fail_001").unwrap();
+        assert!(!msg.processed, "processed should be false after failure");
+        assert!(
+            msg.processed_todo_id.is_none(),
+            "processed_todo_id should be None after failure"
+        );
+    }
+
+    /// save_feishu_history_message should set processed=false (regression test)
+    #[tokio::test]
+    async fn test_save_feishu_history_message_processed_false() {
+        let db = Database::new(":memory:").await.unwrap();
+        let bot_id = db
+            .create_agent_bot("feishu", "test-bot", "app_id", "app_secret", None, None)
+            .await
+            .unwrap();
+
+        let msg_id = db
+            .save_feishu_history_message(NewFeishuHistoryMessage {
+                bot_id,
+                message_id: "msg_hist_001",
+                chat_id: "oc_chat1",
+                chat_type: "group",
+                sender_open_id: "ou_user1",
+                sender_nickname: Some("Alice"),
+                sender_type: None,
+                content: Some("historical message"),
+                msg_type: "text",
+                created_at: "2025-01-01T00:00:00Z",
+            })
+            .await
+            .unwrap();
+
+        let messages = db.get_feishu_messages(bot_id, 10).await.unwrap();
+        let msg = messages.iter().find(|m| m.message_id == "msg_hist_001").unwrap();
+        assert!(!msg.processed, "History messages should have processed=false");
+        assert!(msg.is_history, "Should be marked as history");
     }
 }

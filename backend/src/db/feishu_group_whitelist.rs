@@ -15,9 +15,16 @@ impl Database {
             .all(&self.conn)
             .await?;
 
-        // Empty whitelist or empty sender_open_id in any entry means no restriction (allow all)
-        if list.is_empty() || list.iter().any(|w| w.sender_open_id.is_empty()) {
+        // Empty whitelist means no restriction (allow all)
+        if list.is_empty() {
             return Ok(true);
+        }
+
+        // Fail Closed: if any entry has empty sender_open_id, treat as misconfiguration
+        // and deny access (rather than allowing all). Log a warning for investigation.
+        if list.iter().any(|w| w.sender_open_id.is_empty()) {
+            tracing::warn!("[whitelist] bot_id={} has entries with empty sender_open_id, treating as misconfiguration (deny all)", bot_id);
+            return Ok(false);
         }
 
         Ok(list.iter().any(|w| w.sender_open_id == sender_open_id))

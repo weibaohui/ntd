@@ -80,7 +80,7 @@ impl MessageDebounce {
                 tokio::time::sleep(std::time::Duration::from_secs(secs as u64)).await;
 
                 // Timer fired: drain all pending messages for this key
-                let key = (bot_id, chat_id.clone());
+                let key = (bot_id, chat_id);
                 let pending = entries.remove(&key);
                 if let Some((_, entry)) = pending {
                     if entry.messages.is_empty() {
@@ -119,7 +119,11 @@ impl MessageDebounce {
                     })
                     .await;
 
-                    tracing::info!("[debounce] timer fired for bot_id={}, chat_id={}, msg_count={}, result={:?}", bot_id, key.1, entry.messages.len(), result);
+                    let record_id = match &result {
+                        Ok(r) => Some(r.record_id),
+                        Err(_) => None,
+                    };
+                    tracing::debug!("[debounce] timer fired for bot_id={}, chat_id={}, msg_count={}, record_id={:?}", bot_id, key.1, entry.messages.len(), record_id);
                     match result {
                         Ok(exec_result) => {
                             // Update all pending messages with todo_id and execution_record_id
@@ -149,7 +153,7 @@ impl MessageDebounce {
                             for msg in &entry.messages {
                                 if let Some(ref msg_id) = msg.message_id {
                                     if let Err(mark_err) = db
-                                        .mark_feishu_message_failed(msg_id, msg.todo_id)
+                                        .mark_feishu_message_failed(msg_id)
                                         .await
                                     {
                                         tracing::warn!("[debounce] failed to mark message {} as failed: {:?}", msg_id, mark_err);

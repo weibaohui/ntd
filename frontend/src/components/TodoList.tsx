@@ -89,21 +89,22 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
     setIsLoading(false);
   }, []);
 
-  // 进入页面时拉取项目目录；后续 Todo 抽屉新增/删除目录时也会主动重拉，确保分组始终准确
+  // 进入页面时拉取项目目录；后续 Todo 抽屉新增/删除目录时也会主动重拉，确保分组始终准确。
+  // 失败时静默处理：分组视图退化为只显示路径即可，不阻塞主流程。
   const reloadProjectDirectories = useCallback(() => {
-    db.getProjectDirectories()
-      .then(setProjectDirectories)
+    db.getProjectDirectories() // 从后端拉取全量目录列表
+      .then(setProjectDirectories) // 更新本地状态，触发分组重新计算
       .catch(() => {
         // 静默失败：分组视图退化为只显示路径即可，不阻塞主流程
       });
   }, []);
 
   useEffect(() => {
-    reloadProjectDirectories();
-    // 监听 TodoDrawer 快速新增项目目录的事件，及时刷新
+    reloadProjectDirectories(); // 首次加载目录
+    // 监听 TodoDrawer 快速新增项目目录的事件，及时刷新分组数据
     const handleDirAdded = () => reloadProjectDirectories();
-    window.addEventListener('projectDirectoryAdded', handleDirAdded);
-    return () => window.removeEventListener('projectDirectoryAdded', handleDirAdded);
+    window.addEventListener('projectDirectoryAdded', handleDirAdded); // 跨组件通知
+    return () => window.removeEventListener('projectDirectoryAdded', handleDirAdded); // 清理：卸载时移除监听
   }, [reloadProjectDirectories]);
 
   const filteredTodos = useMemo(() =>
@@ -121,15 +122,15 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
     const dirByPath = new Map(projectDirectories.map(d => [d.path, d]));
     const groups = new Map<string, { name: string; items: Todo[] }>();
     for (const todo of filteredTodos) {
-      const ws = (todo.workspace || '').trim();
+      const ws = (todo.workspace || '').trim(); // 取 workspace 路径，空字符串视为未分组
       if (!ws) {
-        const bucket = groups.get('__ungrouped__') ?? { name: '未分组', items: [] };
+        const bucket = groups.get('__ungrouped__') ?? { name: '未分组', items: [] }; // 虚拟分组 key，不会与真实路径冲突
         bucket.items.push(todo);
         groups.set('__ungrouped__', bucket);
         continue;
       }
-      const dir = dirByPath.get(ws);
-      const bucket = groups.get(ws) ?? { name: dir?.name || ws, items: [] };
+      const dir = dirByPath.get(ws); // O(1) 查找目录实体，取项目名称
+      const bucket = groups.get(ws) ?? { name: dir?.name || ws, items: [] }; // 有名称用名称，无则回退显示路径
       bucket.items.push(todo);
       groups.set(ws, bucket);
     }

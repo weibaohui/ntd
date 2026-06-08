@@ -76,6 +76,8 @@ impl Database {
 
         // Optimize SQLite for concurrent read / write performance
         db.exec("PRAGMA busy_timeout = 5000").await?;
+        // Enable foreign key enforcement (SQLite default is OFF; CASCADE depends on this)
+        db.exec("PRAGMA foreign_keys = ON").await?;
         // Enable WAL mode and verify it took effect
         match db.conn
             .query_one(Statement::from_string(DbBackend::Sqlite, "PRAGMA journal_mode = WAL".to_string()))
@@ -132,119 +134,52 @@ impl Database {
 
     /// 迁移：为飞书子表添加 ON DELETE CASCADE 外键约束
     /// SQLite 不支持 ALTER TABLE 修改外键约束，需要重建表（创建新表→复制数据→删除旧表→重命名）
+    /// 每张表独立检查，只有自身缺少 CASCADE 才重建；整个迁移包在事务中
     async fn migrate_feishu_fk_cascade(&self) -> Result<(), sea_orm::DbErr> {
-        // 检查 feishu_homes 是否已有 ON DELETE CASCADE
-        let needs_migration = self.table_fk_has_cascade("feishu_homes").await?;
-        if !needs_migration {
+        // 收集需要迁移的表
+        let tables_to_migrate = [
+            ("feishu_homes", "id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL, user_open_id TEXT NOT NULL, chat_id TEXT, receive_id TEXT NOT NULL, receive_id_type TEXT NOT NULL, created_at TEXT, updated_at TEXT, FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE, UNIQUE(bot_id, user_open_id)"),
+            ("feishu_messages", "id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL, message_id TEXT NOT NULL UNIQUE, chat_id TEXT NOT NULL, chat_type TEXT NOT NULL, sender_open_id TEXT NOT NULL, sender_nickname TEXT, sender_type TEXT, content TEXT, msg_type TEXT NOT NULL DEFAULT 'text', is_mention INTEGER DEFAULT 0, processed INTEGER DEFAULT 0, is_history INTEGER DEFAULT 0, fetch_time TEXT, created_at TEXT, processed_todo_id INTEGER, execution_record_id INTEGER, FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE"),
+            ("feishu_history_chats", "id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL, chat_id TEXT NOT NULL, chat_name TEXT, enabled INTEGER DEFAULT 1, last_fetch_time TEXT, polling_interval_secs INTEGER DEFAULT 60, created_at TEXT, FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE, UNIQUE(bot_id, chat_id)"),
+            ("feishu_push_targets", "id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL, p2p_receive_id TEXT NOT NULL DEFAULT '', group_chat_id TEXT NOT NULL DEFAULT '', receive_id_type TEXT NOT NULL DEFAULT 'open_id', push_level TEXT DEFAULT 'result_only', p2p_response_enabled INTEGER DEFAULT 1, group_response_enabled INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT, FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE"),
+            ("feishu_response_config", "id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL, target_type TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, debounce_secs INTEGER DEFAULT 20, created_at TEXT, updated_at TEXT, FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE, UNIQUE(bot_id, target_type)"),
+            ("feishu_group_whitelist", "id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL, sender_open_id TEXT NOT NULL, sender_name TEXT, created_at TEXT, FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE, UNIQUE(bot_id, sender_open_id)"),
+        ];
+
+        let mut needs_any = false;
+        for (table, _ddl) in &tables_to_migrate {
+            if self.needs_fk_migration(table).await? {
+                needs_any = true;
+                break;
+            }
+        }
+        if !needs_any {
             return Ok(());
         }
 
         tracing::info!("Migrating feishu tables to add ON DELETE CASCADE...");
+        self.exec("BEGIN").await?;
 
-        // feishu_homes
-        self.rebuild_table_with_cascade(
-            "feishu_homes",
-            "id INTEGER PRIMARY KEY AUTOINCREMENT,
-             bot_id INTEGER NOT NULL,
-             user_open_id TEXT NOT NULL,
-             chat_id TEXT,
-             receive_id TEXT NOT NULL,
-             receive_id_type TEXT NOT NULL,
-             created_at TEXT,
-             updated_at TEXT,
-             FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE,
-             UNIQUE(bot_id, user_open_id)",
-        ).await?;
+        for (table, ddl) in &tables_to_migrate {
+            if self.needs_fk_migration(table).await? {
+                self.rebuild_table_with_cascade(table, ddl).await?;
+            }
+        }
 
-        // feishu_messages
-        self.rebuild_table_with_cascade(
-            "feishu_messages",
-            "id INTEGER PRIMARY KEY AUTOINCREMENT,
-             bot_id INTEGER NOT NULL,
-             message_id TEXT NOT NULL UNIQUE,
-             chat_id TEXT NOT NULL,
-             chat_type TEXT NOT NULL,
-             sender_open_id TEXT NOT NULL,
-             sender_nickname TEXT,
-             sender_type TEXT,
-             content TEXT,
-             msg_type TEXT NOT NULL DEFAULT 'text',
-             is_mention INTEGER DEFAULT 0,
-             processed INTEGER DEFAULT 0,
-             is_history INTEGER DEFAULT 0,
-             fetch_time TEXT,
-             created_at TEXT,
-             processed_todo_id INTEGER,
-             execution_record_id INTEGER,
-             FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE",
-        ).await?;
+
         // 重建索引
         self.exec("CREATE INDEX IF NOT EXISTS idx_feishu_messages_chat_id ON feishu_messages(chat_id)").await?;
         self.exec("CREATE INDEX IF NOT EXISTS idx_feishu_messages_created_at ON feishu_messages(created_at)").await?;
 
-        // feishu_history_chats
-        self.rebuild_table_with_cascade(
-            "feishu_history_chats",
-            "id INTEGER PRIMARY KEY AUTOINCREMENT,
-             bot_id INTEGER NOT NULL,
-             chat_id TEXT NOT NULL,
-             chat_name TEXT,
-             enabled INTEGER DEFAULT 1,
-             last_fetch_time TEXT,
-             polling_interval_secs INTEGER DEFAULT 60,
-             created_at TEXT,
-             FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE,
-             UNIQUE(bot_id, chat_id)",
-        ).await?;
+        self.exec("COMMIT").await?;
 
-        // feishu_push_targets
-        self.rebuild_table_with_cascade(
-            "feishu_push_targets",
-            "id INTEGER PRIMARY KEY AUTOINCREMENT,
-             bot_id INTEGER NOT NULL,
-             p2p_receive_id TEXT NOT NULL DEFAULT '',
-             group_chat_id TEXT NOT NULL DEFAULT '',
-             receive_id_type TEXT NOT NULL DEFAULT 'open_id',
-             push_level TEXT DEFAULT 'result_only',
-             p2p_response_enabled INTEGER DEFAULT 1,
-             group_response_enabled INTEGER DEFAULT 1,
-             created_at TEXT,
-             updated_at TEXT,
-             FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE",
-        ).await?;
-
-        // feishu_response_config
-        self.rebuild_table_with_cascade(
-            "feishu_response_config",
-            "id INTEGER PRIMARY KEY AUTOINCREMENT,
-             bot_id INTEGER NOT NULL,
-             target_type TEXT NOT NULL,
-             enabled INTEGER NOT NULL DEFAULT 1,
-             debounce_secs INTEGER DEFAULT 20,
-             created_at TEXT,
-             updated_at TEXT,
-             FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE,
-             UNIQUE(bot_id, target_type)",
-        ).await?;
-
-        // feishu_group_whitelist
-        self.rebuild_table_with_cascade(
-            "feishu_group_whitelist",
-            "id INTEGER PRIMARY KEY AUTOINCREMENT,
-             bot_id INTEGER NOT NULL,
-             sender_open_id TEXT NOT NULL,
-             sender_name TEXT,
-             created_at TEXT,
-             FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE,
-             UNIQUE(bot_id, sender_open_id)",
-        ).await?;
 
         tracing::info!("Feishu FK cascade migration completed.");
         Ok(())
     }
 
     /// 检查表的外键是否缺少 ON DELETE CASCADE（返回 true 表示需要迁移）
-    async fn table_fk_has_cascade(&self, table: &str) -> Result<bool, sea_orm::DbErr> {
+    async fn needs_fk_migration(&self, table: &str) -> Result<bool, sea_orm::DbErr> {
         let sql = format!("SELECT sql FROM sqlite_master WHERE type='table' AND name='{}'", table);
         let result = self.conn
             .query_one(Statement::from_string(DbBackend::Sqlite, sql))
@@ -266,6 +201,9 @@ impl Database {
 
         // 暂时关闭外键检查以避免重建过程中的约束冲突
         self.exec("PRAGMA foreign_keys = OFF").await?;
+
+        // 清理上次中断可能残留的临时表
+        self.exec(&format!("DROP TABLE IF EXISTS {}", tmp)).await?;
 
         // 创建新表
         self.exec(&format!(
@@ -1112,8 +1050,7 @@ impl Database {
             .await?;
 
         // 迁移：为飞书子表添加 ON DELETE CASCADE 外键约束
-        self.migrate_feishu_fk_cascade().await
-            .unwrap_or_else(|e| tracing::warn!("Failed to migrate feishu FK cascade: {}", e));
+        self.migrate_feishu_fk_cascade().await?;
 
         Ok(())
     }

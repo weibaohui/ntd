@@ -287,7 +287,6 @@ impl Database {
     pub async fn mark_feishu_message_failed(
         &self,
         message_id: &str,
-        todo_id: i64,
     ) -> Result<(), sea_orm::DbErr> {
         let result = feishu_messages::Entity::find()
             .filter(feishu_messages::Column::MessageId.eq(message_id))
@@ -297,8 +296,7 @@ impl Database {
         if let Some(model) = result {
             let mut am: feishu_messages::ActiveModel = model.into();
             am.processed = ActiveValue::Set(Some(false));
-            am.processed_todo_id = ActiveValue::Set(Some(todo_id));
-            // execution_record_id intentionally not set for failures
+            am.processed_todo_id = ActiveValue::Set(None);
             am.update(&self.conn).await?;
         }
         Ok(())

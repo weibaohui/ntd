@@ -94,7 +94,7 @@ async fn test_template_update() {
         .await
         .unwrap();
     let before = db.get_template_by_id(id).await.unwrap().unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
     db.update_template(
         id,
@@ -445,7 +445,7 @@ async fn test_project_directory_update_name() {
         .await
         .unwrap();
     let before = db.get_project_directory_by_id(id).await.unwrap().unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     db.update_project_directory(id, Some("new"))
         .await
         .unwrap();
@@ -515,7 +515,7 @@ async fn test_webhook_update_partial_fields() {
     let w = db.create_webhook("orig", true, None).await.unwrap();
     let before_updated_at = w.updated_at.clone();
 
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     db.update_webhook(w.id, "renamed", false, Some(todo_id))
         .await
         .unwrap();
