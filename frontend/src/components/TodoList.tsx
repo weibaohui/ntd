@@ -399,7 +399,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
           )}
 
           {isMobile && (
-            <>
+            <div className="header-nav-cluster" aria-label="移动端导航">
               <Tooltip title={displayMode === 'flat' ? '切换为按项目分组' : '切换为平铺列表'}>
                 <Button
                   type="text"
@@ -429,7 +429,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
                 className="header-nav-btn"
                 aria-label="配置管理"
               />
-            </>
+            </div>
           )}
           </div>
         </div>
