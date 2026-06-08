@@ -410,6 +410,33 @@ async fn test_project_directory_get_or_create_idempotent() {
 }
 
 #[tokio::test]
+async fn test_project_directory_get_or_create_renames_on_mismatch() {
+    // 当 path 已存在但 name 不同时，get_or_create 应自动把 name 同步为新值
+    let db = setup_db().await;
+    let d1 = db
+        .get_or_create_project_directory("/tmp/rename-test", Some("Original Name"))
+        .await
+        .unwrap();
+    assert_eq!(d1.name.as_deref(), Some("Original Name"));
+
+    // 再次传入不同 name，应触发 rename
+    let d2 = db
+        .get_or_create_project_directory("/tmp/rename-test", Some("New Name"))
+        .await
+        .unwrap();
+    assert_eq!(d1.id, d2.id, "id 不应变化");
+    assert_eq!(d2.name.as_deref(), Some("New Name"), "name 应被同步为新值");
+
+    // 传入相同 name，不应触发 UPDATE（保持原值）
+    let d3 = db
+        .get_or_create_project_directory("/tmp/rename-test", Some("New Name"))
+        .await
+        .unwrap();
+    assert_eq!(d3.id, d2.id);
+    assert_eq!(d3.name.as_deref(), Some("New Name"));
+}
+
+#[tokio::test]
 async fn test_project_directory_update_name() {
     // 仅更新 name，并刷新 updated_at；path 保持不变。
     let db = setup_db().await;

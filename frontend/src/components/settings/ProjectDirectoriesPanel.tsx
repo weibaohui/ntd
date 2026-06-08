@@ -26,6 +26,10 @@ export function ProjectDirectoriesPanel() {
 
   useEffect(() => {
     loadProjectDirectories();
+    // 监听其他组件新增目录的事件，及时刷新列表
+    const reload = () => loadProjectDirectories();
+    window.addEventListener('projectDirectoryAdded', reload);
+    return () => window.removeEventListener('projectDirectoryAdded', reload);
   }, []);
 
   const handleAddProjectDirectory = async () => {

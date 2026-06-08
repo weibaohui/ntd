@@ -37,11 +37,16 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
   /* ─── Execution record cache (delegated to hook) ─── */
   const cache = useKanbanExecutionCache({ todos, storeRecords: state.executionRecords });
 
-  // 加载项目目录
+  // 加载项目目录，监听 TodoDrawer 快速新增事件及时刷新
   useEffect(() => {
-    db.getProjectDirectories()
-      .then(setProjectDirectories)
-      .catch(() => setProjectDirectories([]));
+    const reload = () => {
+      db.getProjectDirectories()
+        .then(setProjectDirectories)
+        .catch(() => setProjectDirectories([]));
+    };
+    reload();
+    window.addEventListener('projectDirectoryAdded', reload);
+    return () => window.removeEventListener('projectDirectoryAdded', reload);
   }, []);
 
   /* ─── Filter by search + time ─── */

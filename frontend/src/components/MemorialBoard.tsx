@@ -77,11 +77,16 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
     return () => { cancelled = true; };
   }, [hours, boardMode]);
 
-  // 加载项目目录用于过滤
+  // 加载项目目录用于过滤，监听 TodoDrawer 快速新增事件及时刷新
   useEffect(() => {
-    db.getProjectDirectories()
-      .then(setProjectDirectories)
-      .catch(() => setProjectDirectories([]));
+    const reload = () => {
+      db.getProjectDirectories()
+        .then(setProjectDirectories)
+        .catch(() => setProjectDirectories([]));
+    };
+    reload();
+    window.addEventListener('projectDirectoryAdded', reload);
+    return () => window.removeEventListener('projectDirectoryAdded', reload);
   }, []);
 
   const toggleExpand = (todoId: number) => {
