@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Spin, Card, Empty, Space, Typography, Button, Alert, Modal, message } from 'antd';
-import { CheckCircleFilled, CloseCircleFilled, ReloadOutlined, CloudDownloadOutlined, ExclamationCircleFilled } from '@ant-design/icons';
+import { ExclamationCircleFilled, ReloadOutlined, CloudDownloadOutlined } from '@ant-design/icons';
 import * as db from '../../utils/database';
 import { ShareCard } from '../ShareCard';
 
@@ -200,12 +200,7 @@ export function AboutPanel() {
                   ) : versionStatus.isUpToDate === true ? (
                     <Alert
                       type="success"
-                      message={
-                        <Space>
-                          <CheckCircleFilled style={{ color: '#52c41a' }} />
-                          当前已是最新版本 {versionStatus.current}
-                        </Space>
-                      }
+                      message={`当前已是最新版本 ${versionStatus.current}`}
                       showIcon
                     />
                   ) : versionStatus.isUpToDate === false ? (
@@ -213,10 +208,7 @@ export function AboutPanel() {
                       type="info"
                       message={
                         <Space direction="vertical" size={4}>
-                          <span>
-                            <CloseCircleFilled style={{ color: '#1677ff', marginRight: 6 }} />
-                            发现新版本：<strong>{versionStatus.latest}</strong>
-                          </span>
+                          <span>发现新版本：<strong>{versionStatus.latest}</strong></span>
                           <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
                             当前版本：{versionStatus.current}
                           </span>
@@ -236,10 +228,7 @@ export function AboutPanel() {
                       type="success"
                       message={
                         <Space direction="vertical" size={4}>
-                          <span>
-                            <CheckCircleFilled style={{ color: '#52c41a', marginRight: 6 }} />
-                            更新命令执行成功，服务正在重启
-                          </span>
+                          <span>更新命令执行成功，服务正在重启</span>
                           {upgradeResult.npmOutput && (
                             <code style={{ fontSize: 11, color: 'var(--color-text-secondary)', display: 'block', marginTop: 4 }}>
                               {upgradeResult.npmOutput}
@@ -254,10 +243,7 @@ export function AboutPanel() {
                       type="warning"
                       message={
                         <Space direction="vertical" size={4}>
-                          <span>
-                            <ExclamationCircleFilled style={{ color: '#faad14', marginRight: 6 }} />
-                            更新完成，但服务重启失败
-                          </span>
+                          <span>更新完成，但服务重启失败</span>
                           {upgradeResult.npmOutput && (
                             <code style={{ fontSize: 11, color: 'var(--color-text-secondary)', display: 'block', marginTop: 4 }}>
                               {upgradeResult.npmOutput}
