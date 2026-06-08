@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, InputNumber, Tooltip, Button, Popconfirm, Table, Empty, Switch, message } from 'antd';
 import { InfoCircleOutlined, SaveOutlined, StopOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
@@ -30,17 +30,10 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
     ? Math.max(1, Math.round(executionTimeoutSecs / 60))
     : undefined;
   // 关闭时记录当前值，重新开启时恢复；避免再次开启时跳回初始默认值 3600。
-  // 注意：仅在用户主动输入时更新，不在表单加载时覆盖（避免 0 值覆盖用户上次的非零设置）。
+  // 仅在同步到表单非零值时更新，不响应外部加载（避免 0 覆盖用户上次的非零设置）。
   const lastEnabledExecutionTimeoutSecsRef = useRef<number>(DEFAULT_EXECUTION_TIMEOUT_SECS);
-
-  // 初始化 ref：若表单已有非零值则以该值填充，确保开关恢复时用正确的用户设置而非 3600。
-  useLayoutEffect(() => {
-    const formValue = configForm.getFieldValue('execution_timeout_secs');
-    if (formValue !== undefined && formValue !== 0) {
-      lastEnabledExecutionTimeoutSecsRef.current = formValue;
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // 仅首次渲染执行，不响应后续变更
+  // 记录上次从表单同步的值，消除对 executionTimeoutSecs deps 的依赖，避免多余 re-render。
+  const lastSyncedFormValueRef = useRef<number | undefined>(undefined);
 
   /** 加载当前运行中的执行记录。 */
   const loadRunningRecords = async () => {
@@ -58,16 +51,20 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
     return () => clearInterval(timer);
   }, []);
 
-  // 监听表单字段变化（外部加载配置重置表单时），同步本地状态。
-  // 依赖 [configForm, executionTimeoutSecs]：当 async setFieldsValue 触发 re-render 后，
-  // effect 会重新执行，此时 formValue 已更新而 executionTimeoutSecs 仍是旧值，触发同步。
-  // formValue !== undefined 保护：忽略表单未填充时的 undefined，避免将 0 同步进去。
+  // 监听表单字段变化，同步本地状态并维护 lastEnabledRef。
+  // 仅依赖 configForm（稳定引用），通过 lastSyncedFormValueRef 检测表单值是否真正变化，
+  // 避免加入 executionTimeoutSecs 导致每次 setState 后都触发额外 render。
   useEffect(() => {
     const formValue = configForm.getFieldValue('execution_timeout_secs');
-    if (formValue !== undefined && formValue !== executionTimeoutSecs) {
+    if (formValue !== undefined && formValue !== lastSyncedFormValueRef.current) {
+      lastSyncedFormValueRef.current = formValue;
       setExecutionTimeoutSecs(formValue);
+      // 仅记录非零值，确保 toggle 重新开启时用正确的用户设置
+      if (formValue !== 0) {
+        lastEnabledExecutionTimeoutSecsRef.current = formValue;
+      }
     }
-  }, [configForm, executionTimeoutSecs]);
+  }, [configForm]);
 
   /** 批量停止当前选中的执行任务。 */
   const handleBatchStop = async () => {
@@ -90,7 +87,8 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
   /** 切换是否启用执行超时控制。 */
   const handleExecutionTimeoutToggle = (checked: boolean) => {
     if (!checked) {
-      // 关闭前先记录当前非零值，供后续重新开启时恢复
+      // 关闭时记录当前值，供后续重新开启时恢复。
+      // useEffect 仅在外部 setFieldsValue 时更新 ref，用户未保存的输入变化需要此处捕获。
       lastEnabledExecutionTimeoutSecsRef.current = executionTimeoutSecs;
     }
     const nextExecutionTimeoutSecs = checked ? lastEnabledExecutionTimeoutSecsRef.current : 0;
@@ -148,8 +146,7 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
                   const secs = v * 60;
                   setExecutionTimeoutSecs(secs);
                   configForm.setFieldsValue({ execution_timeout_secs: secs });
-                  // 用户主动输入新值时同步更新 lastEnabledRef，供开关恢复
-                  lastEnabledExecutionTimeoutSecsRef.current = secs;
+                  // lastEnabledRef 由 useEffect 集中更新（formValue !== undefined && formValue !== lastSyncedFormValueRef）
                 }
               }}
             />
