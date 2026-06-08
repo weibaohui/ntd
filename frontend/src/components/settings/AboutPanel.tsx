@@ -20,6 +20,11 @@ interface UpgradeResult {
   restartMessage?: string;
 }
 
+const UPGRADE_STEPS = [
+  { step: '步骤 1', label: '升级 npm 包', code: 'npm install -g @weibaohui/nothing-todo@latest' },
+  { step: '步骤 2', label: '重启服务', code: 'ntd daemon restart' },
+];
+
 /**
  * 渲染更新确认弹窗的内容区域。
  */
@@ -34,25 +39,17 @@ function renderUpgradeConfirmContent() {
       </div>
 
       <div className="update-confirm-modal__command-list">
-        <div className="update-confirm-modal__command-card">
-          <div className="update-confirm-modal__command-header">
-            <span className="update-confirm-modal__command-step">步骤 1</span>
-            <span className="update-confirm-modal__command-label">升级 npm 包</span>
+        {UPGRADE_STEPS.map(({ step, label, code }) => (
+          <div key={step} className="update-confirm-modal__command-card">
+            <div className="update-confirm-modal__command-header">
+              <span className="update-confirm-modal__command-step">{step}</span>
+              <span className="update-confirm-modal__command-label">{label}</span>
+            </div>
+            <code className="update-confirm-modal__command-code">
+              {code}
+            </code>
           </div>
-          <code className="update-confirm-modal__command-code">
-            npm install -g @weibaohui/nothing-todo@latest
-          </code>
-        </div>
-
-        <div className="update-confirm-modal__command-card">
-          <div className="update-confirm-modal__command-header">
-            <span className="update-confirm-modal__command-step">步骤 2</span>
-            <span className="update-confirm-modal__command-label">重启服务</span>
-          </div>
-          <code className="update-confirm-modal__command-code">
-            ntd daemon restart
-          </code>
-        </div>
+        ))}
       </div>
 
       <Paragraph className="update-confirm-modal__note" type="secondary">

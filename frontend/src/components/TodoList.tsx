@@ -51,21 +51,21 @@ function buildDesktopNavActions(
       key: 'dashboard',
       title: '仪表盘',
       icon: <DashboardOutlined />,
-      onClick: onShowDashboard,
+      onClick: onShowDashboard ? () => onShowDashboard() : undefined,
       ariaLabel: '查看仪表盘',
     },
     {
       key: 'memorial',
       title: '看板',
       icon: <ReadOutlined />,
-      onClick: () => onShowMemorial?.(),
+      onClick: onShowMemorial ? () => onShowMemorial() : undefined,
       ariaLabel: '看板',
     },
     {
       key: 'relation-map',
       title: '关联图',
       icon: <ApartmentOutlined />,
-      onClick: () => onShowRelationMap?.(),
+      onClick: onShowRelationMap ? () => onShowRelationMap() : undefined,
       ariaLabel: '关联图',
     },
   ].filter(action => typeof action.onClick === 'function');
@@ -157,6 +157,18 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
     [onShowDashboard, onShowMemorial, onShowRelationMap],
   );
 
+  const toggleGroupCollapse = useCallback((key: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
+
   /**
    * 处理桌面端头部“更多”菜单点击。
    */
@@ -174,26 +186,34 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
     }
   }, [onShowSettings, toggleTheme]);
 
-  const headerMenuItems = useMemo<MenuProps['items']>(() => ([
-    {
-      key: 'display-mode',
-      icon: displayMode === 'flat' ? <FolderOpenOutlined /> : <UnorderedListOutlined />,
-      label: displayMode === 'flat' ? '切换为按项目分组' : '切换为平铺列表',
-    },
-    {
-      key: 'theme',
-      icon: themeMode === 'light' ? <MoonOutlined /> : <SunOutlined />,
-      label: themeMode === 'light' ? '切换暗色主题' : '切换亮色主题',
-    },
-    {
-      type: 'divider',
-    },
-    {
-      key: 'settings',
-      icon: <SettingOutlined />,
-      label: '配置管理',
-    },
-  ]), [displayMode, themeMode]);
+  const headerMenuItems = useMemo<MenuProps['items']>(() => {
+    const items: NonNullable<MenuProps['items']> = [
+      {
+        key: 'display-mode',
+        icon: displayMode === 'flat' ? <FolderOpenOutlined /> : <UnorderedListOutlined />,
+        label: displayMode === 'flat' ? '切换为按项目分组' : '切换为平铺列表',
+        'aria-pressed': displayMode === 'grouped',
+      },
+      {
+        key: 'theme',
+        icon: themeMode === 'light' ? <MoonOutlined /> : <SunOutlined />,
+        label: themeMode === 'light' ? '切换暗色主题' : '切换亮色主题',
+      },
+    ];
+
+    if (onShowSettings) {
+      items.push(
+        { type: 'divider' },
+        {
+          key: 'settings',
+          icon: <SettingOutlined />,
+          label: '配置管理',
+        },
+      );
+    }
+
+    return items;
+  }, [displayMode, themeMode, onShowSettings]);
 
   const tagMap = useMemo(() => {
     const map = new Map<number, typeof tags[0]>();
@@ -206,6 +226,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
     const todoTags = ((todo as any).tag_ids as number[] | undefined)?.map(id => tagMap.get(id)).filter((t): t is typeof tags[0] => !!t) ?? [];
     const primaryTag = todoTags[0];
     const isCompleted = todo.status === 'completed';
+    const relativeTime = formatRelativeTime(todo.updated_at);
 
     return (
       <div
@@ -279,9 +300,9 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
                   flexShrink: 0,
                   marginLeft: 8,
                 }}
-                title={formatRelativeTime(todo.updated_at)}
+                title={relativeTime}
               >
-                {formatRelativeTime(todo.updated_at)}
+                {relativeTime}
               </span>
             </div>
           </div>
@@ -400,7 +421,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
                 type="text"
                 size="small"
                 icon={<SettingOutlined />}
-                onClick={onShowSettings}
+                onClick={() => onShowSettings?.()}
                 className="header-nav-btn"
                 aria-label="配置管理"
               />
@@ -463,32 +484,14 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
                 <div key={key} className="todo-group">
                   <div
                     className="todo-group-header"
-                    onClick={() => {
-                      setCollapsedGroups(prev => {
-                        const next = new Set(prev);
-                        if (isCollapsed) {
-                          next.delete(key);
-                        } else {
-                          next.add(key);
-                        }
-                        return next;
-                      });
-                    }}
+                    onClick={() => toggleGroupCollapse(key)}
                     style={{ cursor: 'pointer' }}
                     role="button"
                     tabIndex={0}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        setCollapsedGroups(prev => {
-                          const next = new Set(prev);
-                          if (isCollapsed) {
-                            next.delete(key);
-                          } else {
-                            next.add(key);
-                          }
-                          return next;
-                        });
+                        toggleGroupCollapse(key);
                       }
                     }}
                     aria-expanded={!isCollapsed}
