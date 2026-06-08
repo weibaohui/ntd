@@ -5,7 +5,9 @@
 使用 npm scoped package `@weibaohui/nothing-todo` 分发 Rust 编译的跨平台二进制。
 
 - **主包** `@weibaohui/nothing-todo`：跨平台 wrapper，安装时自动选择对应平台包
-- **平台包** `@weibaohui/nothing-todo-{linux-x64,linux-arm64,darwin-x64,darwin-arm64,windows-x64}`：各平台独立包
+- **平台包** `@weibaohui/nothing-todo-{linux-x64,linux-arm64,darwin-arm64,windows-x64}`：各平台独立包
+
+> 注：实际 `script/npm_publish.sh:58-63` 的 `PLATFORMS` 数组只有 4 个元素，**未打包 `darwin-x64`**（Intel macOS 由 `darwin-arm64` Rosetta 兼容）。
 
 ## 目录结构
 
@@ -20,9 +22,6 @@ packages/
 ├── nothing-todo-linux-arm64/       # Linux ARM64 平台包
 │   ├── bin/ntd
 │   └── package.json
-├── nothing-todo-darwin-x64/        # macOS x86_64 平台包
-│   ├── bin/ntd
-│   └── package.json
 ├── nothing-todo-darwin-arm64/      # macOS ARM64 平台包
 │   ├── bin/ntd
 │   └── package.json
@@ -30,6 +29,8 @@ packages/
     ├── bin/ntd.exe
     └── package.json
 ```
+
+> 注：当前 `PLATFORMS` 数组不包含 `darwin-x64`（Intel macOS）包；如需新增请同步修改 `script/npm_publish.sh:58-63` 和此目录树。
 
 ---
 
@@ -70,15 +71,14 @@ cp backend/target/cross/ntd-x86_64-unknown-linux-gnu packages/nothing-todo-linux
 # Linux arm64
 cp backend/target/cross/ntd-aarch64-unknown-linux-gnu packages/nothing-todo-linux-arm64/bin/ntd
 
-# macOS x64
-cp backend/target/cross/ntd-x86_64-apple-darwin packages/nothing-todo-darwin-x64/bin/ntd
-
 # macOS arm64
 cp backend/target/cross/ntd-aarch64-apple-darwin packages/nothing-todo-darwin-arm64/bin/ntd
 
 # Windows x64
 cp backend/target/cross/ntd-x86_64-pc-windows-gnu.exe packages/nothing-todo-windows-x64/bin/ntd.exe
 ```
+
+> **另**：i686（32 位 Windows）二进制当前未打包。`PLATFORMS` 数组仅含 4 个目标（linux x64/arm64、darwin arm64、windows x64）。
 
 ### 步骤 3: 检查工作区是否干净
 
@@ -127,10 +127,9 @@ for pkg in packages/*/package.json; do
   node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('$pkg','utf8')); p.version='$VERSION'; fs.writeFileSync('$pkg', JSON.stringify(p, null, 2)+'\n');"
 done
 
-# 2. 发布平台包
+# 2. 发布平台包（注意：实际只发布 4 个，无 darwin-x64）
 cd packages/nothing-todo-linux-x64 && npm publish --access public && cd -
 cd packages/nothing-todo-linux-arm64 && npm publish --access public && cd -
-cd packages/nothing-todo-darwin-x64 && npm publish --access public && cd -
 cd packages/nothing-todo-darwin-arm64 && npm publish --access public && cd -
 cd packages/nothing-todo-windows-x64 && npm publish --access public && cd -
 

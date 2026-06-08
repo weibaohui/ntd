@@ -14,17 +14,20 @@
 
 ## 设置页面（13 个 Tab）
 
+> Tab 顺序与组件实现保持一致（`frontend/src/components/SettingsPage.tsx:151-244`）。
+
 | Tab | 文档 | 关键概念 |
 |-----|------|----------|
 | 系统设置 | [settings/system-settings.md](settings/system-settings.md) | 端口、数据库、日志、时区、并发、SLASH 命令 |
 | 执行器管理 | [settings/executors.md](settings/executors.md) | 8 个执行器、自动检测、AI 使用统计 |
 | 标签管理 | [settings/tags.md](settings/tags.md) | 标签 CRUD |
-| 项目目录 | [settings/project-directories.md](settings/project-directories.md) | workspace 白名单 |
-| 备份与恢复 | [settings/backup-and-restore.md](settings/backup-and-restore.md) | 数据库 / Todo / Skills 三类备份 |
-| 运行管理 | [settings/runtime-management.md](settings/runtime-management.md) | 实时运行任务、批量停止 |
-| 消息（飞书） | [settings/messages-feishu.md](settings/messages-feishu.md) | Bot 绑定、群白名单、推送、历史消息 |
+| 消息 | [settings/messages-feishu.md](settings/messages-feishu.md) | Bot 绑定、群白名单、推送、历史消息 |
 | Session 管理 | [settings/sessions.md](settings/sessions.md) | 跨执行器会话 |
+| 项目目录 | [settings/project-directories.md](settings/project-directories.md) | workspace 白名单 |
 | 模板管理 | [settings/templates.md](settings/templates.md) | 本地模板 + 远程订阅 |
+| 备份与恢复 | [settings/backup-and-restore.md](settings/backup-and-restore.md) | 数据库 / Todo / Skills 三类备份 |
+| Skills 管理 | [settings/skills.md](settings/skills.md) | 总览 / 对比分析 / 同步管理 / 调用追踪 4 个子视图 |
+| 运行管理 | [settings/runtime-management.md](settings/runtime-management.md) | 实时运行任务、批量停止 |
 | Webhook | [settings/webhooks.md](settings/webhooks.md) | 外网触发、定向 todo |
 | **云端同步** | **[settings/cloud-sync.md](settings/cloud-sync.md)** | **冲突策略、推送/拉取、Dry Run** |
 | 关于 | [settings/about-and-upgrade.md](settings/about-and-upgrade.md) | 版本检查、一键升级 |
@@ -33,10 +36,10 @@
 
 - [Todo 生命周期](features/todo-lifecycle.md) — 创建、状态机、Chat 视图
 - [看板](features/kanban-board.md) — 按状态分列拖拽
+- [纪念板 / 看板](features/memorial-board.md) — 已完成 Todo 结论视图 + 看板视图（合并页面，默认进入结论视图）
 - [仪表盘](features/dashboard.md) — 关键指标、Token 趋势
 - [关系图](features/relation-map.md) — Todo 关联图谱
-- [纪念板](features/memorial-board.md) — 已完成 Todo 展示
-- [Skills 管理](features/skills-overview.md) — 总览/对比/同步/追踪
+- [Skills 管理](features/skills-overview.md) — 总览 / 对比 / 同步 / 追踪
 - [AI 使用统计](features/ai-usage-stats.md)
 - [Webhook & 自动化](features/webhooks-and-automations.md)
 

@@ -4,16 +4,18 @@ ntd 的核心实体就是 Todo。本文档覆盖 Todo 的**创建、状态机、
 
 ## 1. 状态机
 
+> 状态枚举实现见 `backend/src/models/mod.rs`（`TodoStatus`），共 6 个值。
+
 ```
                     ┌──────────┐
        create       │          │  start
-   ─────────────────► Pending  ├──────────► Running
-                    │          │             │
-                    └──────────┘             │
-                                              │
-                            ┌─────────────────┼─────────────────┐
-                            ▼                 ▼                 ▼
-                         Completed          Failed          Stopped
+   ─────────────────► Pending  ├──────────► InProgress ──► Running
+                    │          │                          │
+                    └──────────┘                          │
+                                                           │
+                            ┌──────────────┬──────────────┼──────────────┐
+                            ▼              ▼              ▼              ▼
+                         Completed       Failed      Cancelled
                                               ▲
                                               │
                                        force-fail
@@ -22,10 +24,11 @@ ntd 的核心实体就是 Todo。本文档覆盖 Todo 的**创建、状态机、
 | 状态 | 含义 |
 |------|------|
 | `pending` | 已创建但未跑 |
+| `in_progress` | 执行器已接活、尚未进入 `Running`（如解析阶段） |
 | `running` | 正在跑 |
 | `completed` | 跑成功 |
 | `failed` | 跑失败（执行器报错 / 超时 / 强制失败） |
-| `stopped` | 用户主动停止 |
+| `cancelled` | 用户主动停止（运行管理 → 停止 / force-cancel） |
 
 ## 2. 创建
 
@@ -46,7 +49,9 @@ ntd 的核心实体就是 Todo。本文档覆盖 Todo 的**创建、状态机、
 | `tags` |  | 多个 |
 | `workspace` |  | 工作目录（项目目录白名单） |
 | `worktree_enabled` |  | 是否开 git worktree |
-| `scheduler` |  | 定时（Cron 表达式） |
+| `scheduler_enabled` |  | 是否启用定时 |
+| `scheduler_config` |  | Cron 表达式（如 `0 0 9 * * 1`） |
+| `scheduler_timezone` |  | 时区（如 `Asia/Shanghai`），缺省继承 `config.scheduler_default_timezone`（`frontend/src/types/todo.ts:5-23`、`backend/src/handlers/todo.rs:96-104`） |
 | `hooks` |  | 前置/后置 hook（[设计文档](../../../hook-system-design.md)） |
 | `template_id` |  | 从哪个模板创建的（追溯用） |
 
@@ -71,15 +76,15 @@ ntd 的核心实体就是 Todo。本文档覆盖 Todo 的**创建、状态机、
 1. 校验 Todo 存在 + 未在跑
 2. 校验执行器可用
 3. 调执行器 CLI 进程（`tokio::process::Command`）
-4. 解析 stdout 流（ChatMessage: user/assistant/thinking/tool）
+4. 解析执行器 JSON 输出（`ChatMessage`: user/assistant/thinking/tool）
 5. 实时通过 WebSocket 推送给前端
 6. 完成后写 execution_records
 
 ### 3.3 进度追踪
 
-- 后端定期解析输出，提取「进度」字段（如 GitHub Action 风格）
+- 后端监听执行器的 todo 工具调用（`TodoWrite`、`write_todo` 等），从中提取 `TodoItem` 数组（`backend/src/todo_progress.rs`）
 - 通过 `TodoProgress` 事件推送
-- 前端在 Todo 详情显示进度条
+- 前端在 Todo 详情显示进度条 / 步骤列表
 
 ## 4. 查看详情
 
@@ -119,25 +124,23 @@ ntd 的核心实体就是 Todo。本文档覆盖 Todo 的**创建、状态机、
 
 ## 6. 关系图
 
-- Todo 之间可以建关联（`hook-system-design.md`）
+- Todo 之间可以建关联（[`hook-system-design.md`](../../../hook-system-design.md)）
 - 关系图（`relation-map`）展示整个图谱
 - 适用：把一个大任务拆成几个 Todo + 关联
 
 ## 7. 看板（Kanban）
 
-入口：Todo 列表 → 顶部切换「**看板**」视图
+入口：Todo 列表 → 顶部「**看板**」按钮 → 切换到「看板视图」标签
 
 - 按状态分列：Pending / Running / Completed / Failed
 - **拖拽**改状态
-- 时间筛选（今天 / 本周 / 本月 / 全部）
-- 列内可折叠 Chat 视图
+- 时间筛选（6h / 12h / 24h / 3d / 7d）
+- 项目维度过滤、标题/prompt 搜索框、移动端 Tab 滑动切换
+- 详细见 [kanban-board.md](kanban-board.md)
 
 ## 8. 纪念板
 
-入口：Todo 列表 → 顶部切换「**纪念板**」
-
-- 展示所有 completed 的 Todo
-- 适合回顾成就、年度复盘
+> 「纪念板」与「看板」实际是同一个合并页面（默认进入结论视图）。详细见 [memorial-board.md](memorial-board.md)。
 
 ## 9. 删除
 

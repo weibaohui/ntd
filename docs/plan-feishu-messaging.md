@@ -1,5 +1,19 @@
 # 飞书消息集成方案
 
+> ⚠️ **本文为 Phase 1 设计初稿**。最后核对日期：2026-06-08。
+>
+> **实际实现远超原计划**，新增了以下模块（在初稿中未涵盖）：
+> - `services/debounce.rs` — 消息去抖动，避免飞书重试造成的重复处理
+> - `services/slash_command_rules.rs` — 斜杠命令规则引擎（全局 + bot 级）
+> - `services/feishu_history_fetcher.rs` — 主动拉取历史消息
+> - `services/feishu_push_targets.rs` — 主动推送目标（区别于 reply 行为）
+> - `services/feishu_response_config.rs` — 响应策略配置（反应式 vs 主动）
+> - `services/feishu_group_whitelist.rs` — 群聊白名单
+> - `services/feishu_listener.rs` — 启动监听（实际存在）
+> - `handlers/feishu.rs` — Feishu HTTP API handler
+>
+> 原文中"使用 `clawrs-feishu` SDK"等章节已在落地时被替换为"使用 ntd 自研的 `backend/src/feishu/` 模块"。下文中与代码冲突的部分已加 ⚠️ 标注。
+
 ## 一、目标
 
 实现飞书机器人与 ntd 系统的双向消息通信。**Phase 1 必须交付以下三个功能**：
@@ -26,9 +40,13 @@
 
 ## 二、技术选型
 
-### 使用 `clawrs-feishu` SDK
+### ⚠️ 实际未使用 `clawrs-feishu` SDK
 
-基于 [ZClaw-Channel-Feishu](https://github.com/AgenticWeb4/ZClaw-Channel-Feishu) Rust SDK，采用 **WebSocket 长连接**（非 Webhook）接收消息。
+`Cargo.toml` 中**没有** `clawrs-feishu` 依赖（`backend/Cargo.toml` 不包含此 crate）。`backend/src/feishu/channel.rs:27` 注释明确说明：
+
+> "Replaces the 4-crate clawrs-feishu workspace with direct open-lark usage."
+
+实际采用 **ntd 自研的 `backend/src/feishu/` 模块**，基于 `open-lark` crate 实现 WebSocket 长连接（非 Webhook）接收消息。
 
 核心优势：
 - **无需公网回调 URL**：WebSocket 主动连接飞书，不需要 webhook 端点
@@ -68,7 +86,8 @@ pub struct ChannelMessage {
   │ WebSocket 长连接 (SDK 自动管理)
   ▼
 ┌─────────────────────────────────────────────┐
-│              clawrs-feishu SDK              │
+│  ⚠️ clawrs-feishu SDK 未引入               │
+│  实际使用 ntd 自研 backend/src/feishu/ 模块   │
 │  ┌────────────────────────────────────┐     │
 │  │ FeishuChannelService               │     │
 │  │  - listen() → mpsc::Sender         │     │
@@ -109,9 +128,11 @@ pub struct ChannelMessage {
 ### 4.1 agent_bots 表 — 新增配置字段
 
 ```sql
+-- ⚠️ 下列两条 ALTER 在实际代码中未实施（无对应 .ok() 迁移），代码里读 encrypt_key / verification_token
+-- 时直接 hardcode 为 None：
 ALTER TABLE agent_bots ADD COLUMN encrypt_key TEXT;
 ALTER TABLE agent_bots ADD COLUMN verification_token TEXT;
--- 运行时配置（前端 Settings 页面可操作）
+-- 运行时配置（前端 Settings 页面可操作）— 实际已落地
 ALTER TABLE agent_bots ADD COLUMN config TEXT DEFAULT '{}';
 ```
 
@@ -185,6 +206,10 @@ backend/src/
 ### 5.2 `services/feishu_listener.rs` — 核心服务
 
 ```rust
+// ⚠️ 实际未引入 clawrs_feishu 依赖。下方为原始设计草稿，与实际实现不同。
+// 实际 import 形如：
+//   use crate::feishu::channel::{FeishuChannel, FeishuConfig, FeishuConnectionMode};
+//   use crate::feishu::message::ChannelMessage;
 use clawrs_feishu::{create_channel, Channel, ChannelMessage, FeishuConfig, FeishuDomain, FeishuConnectionMode};
 use tokio::sync::mpsc;
 
@@ -325,7 +350,8 @@ for bot in bots.iter().filter(|b| b.bot_type == "feishu" && b.enabled) {
 ## 六、消息处理流程
 
 ```
-clawrs-feishu SDK (WebSocket)
+⚠️ 实际为 ntd 自研的 backend/src/feishu/ 模块（基于 open-lark），
+原 clawrs-feishu SDK 替换为：
   │
   │ ChannelMessage 通过 mpsc::channel 推送
   ▼
@@ -356,9 +382,11 @@ SDK 内置的过滤链（在 `listen()` 内部自动执行）：
 
 ```toml
 # Cargo.toml
-[dependencies]
-clawrs-feishu = { git = "https://github.com/AgenticWeb4/ZClaw-Channel-Feishu.git" }
+# ⚠️ clawrs-feishu 未实际引入，下行已废弃
+# clawrs-feishu = { git = "https://github.com/AgenticWeb4/ZClaw-Channel-Feishu.git" }
 dashmap = "6"  # 并发 HashMap，用于管理多个 bot 的 channel
+# 实际依赖：open-lark（飞书官方 OpenAPI Rust SDK）
+open-lark = "<version>"
 ```
 
 或者如果不想引入 dashmap，用 `tokio::sync::RwLock<HashMap>` 替代。
@@ -369,8 +397,8 @@ dashmap = "6"  # 并发 HashMap，用于管理多个 bot 的 channel
 
 | # | 任务 | 验证方式 |
 |---|------|----------|
-| 1 | 添加 `clawrs-feishu` 依赖，确保编译通过 | `cargo build` 成功 |
-| 2 | 数据库 schema 变更（config 字段 + 2 张新表） | 启动无报错，表存在 |
+| 1 | ⚠️ 实际未添加 `clawrs-feishu` 依赖，改用 ntd 自研的 `backend/src/feishu/` 模块 | `cargo build` 成功 |
+| 2 | 数据库 schema 变更（config 字段 + 多张新表） | 启动无报错，表存在 |
 | 3 | DB 层：feishu_home / feishu_message CRUD + config 读写 | 编译通过 |
 | 4 | **功能1** 单聊：接收私聊消息并回复 | 私聊机器人 → 收到 echo 回复 |
 | 5 | **功能2** 群聊：仅 @机器人 时接收并回复 | 群内 @机器人 → 收到回复；不 @ → 无回复 |

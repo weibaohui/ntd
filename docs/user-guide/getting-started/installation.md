@@ -28,8 +28,8 @@ ntd daemon status     # 查看状态
 |------|------|
 | 配置 | `~/.ntd/config.yaml` |
 | 数据库 | `~/.ntd/data.db` |
-| 日志 | `~/.ntd/daemon.log` |
-| PID | `~/.ntd/daemon.pid` |
+| 日志 | `~/.ntd/run.log` / `~/.ntd/run.error.log`（macOS launchd）；`journalctl --user -u ntd`（Linux systemd） |
+| PID | `~/.ntd/dev.pid`（仅开发模式；生产模式无 PID 文件，状态用 `ntd daemon status` 查） |
 | 备份目录 | `~/.ntd/backups/` |
 
 ## 卸载

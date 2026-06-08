@@ -1,453 +1,150 @@
 # Hook 系统设计文档
 
-## 概述
-
-Hook 系统允许在 Todo 状态变化的各个关键节点自动触发预设的脚本/命令执行。支持全局默认配置和 Per-Todo 独立配置。
-
----
-
-## 一、配置层级架构
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                  Global Hook Settings                    │
-│                    (全局默认配置)                         │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │ enabled: bool                                   │    │
-│  │ default_timeout_secs: u64                       │    │
-│  │ max_concurrency: u32                            │    │
-│  │ default_rules: Vec<HookRuleRef>  ← 默认规则列表  │    │
-│  └─────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────┘
-                           │
-          ┌────────────────┼────────────────┐
-          ▼                ▼                ▼
-   ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-   │  Rule 1     │  │  Rule 2     │  │  Rule 3     │
-   │  (规则库)    │  │             │  │             │
-   └─────────────┘  └─────────────┘  └─────────────┘
-                           │
-                           ▼
-   ┌─────────────────────────────────────────────────┐
-   │            Per-Todo Hook Override                │
-   │  ┌───────────────────────────────────────────┐  │
-   │  │ hooks_enabled: bool                       │  │
-   │  │ hook_mode: inherit | custom | disabled    │  │
-   │  │ rules: Vec<HookRuleRef | InlineHook>      │  │
-   │  └───────────────────────────────────────────┘  │
-   └─────────────────────────────────────────────────┘
-```
-
-### 层级说明
-
-| 层级 | 说明 | 优先级 |
-|------|------|--------|
-| Global Hook Config | 系统级默认配置 | 最低 |
-| Hook Rules (规则库) | 可复用的 hook 规则定义 | 中 |
-| Per-Todo Hook | 单个 Todo 的独立配置 | 最高 |
-
-### hook_mode 三种模式
-
-- `inherit`: 继承全局默认 Hook 规则
-- `custom`: 使用 Per-Todo 自定义的 Hook 规则
-- `disabled`: 禁用此 Todo 的所有 Hook
+> ⚠️ **此为初始设计，实际实现已大幅简化**
+>
+> 最后核对日期：2026-06-08
+>
+> 本文档最初设想了一套 4 张表、3 层配置（Global / Rule / Per-Todo）、6 种触发点 + 模板变量 + 异步执行队列的复杂系统。
+> 落地后做了**大幅简化**：hooks 不再是独立的 4 张表，而是 `todos` 表的一个 JSON 列；触发点从 6 种（before/after × 3）缩减为 4 种状态变化触发；文件结构从 11 个缩减为 3 个；无 inherit/custom/disabled 模式、无模板变量系统。
+>
+> 下方为与代码对齐的当前实现描述。
 
 ---
 
-## 二、触发点 (Trigger Points)
+## 一、概述
 
-| 触发点 | 同步/异步 | 可取消操作 | 说明 |
-|--------|-----------|------------|------|
-| `before_create` | 同步 | 可取消创建 | 创建 Todo 前触发 |
-| `after_create` | 异步 | 不可 | 创建 Todo 后触发 |
-| `before_status_change` | 同步 | 可取消状态变更 | 状态变更前触发 |
-| `after_status_change` | 异步 | 不可 | 状态变更后触发 |
-| `before_delete` | 同步 | 可取消删除 | 删除 Todo 前触发 |
-| `after_delete` | 异步 | 不可 | 删除 Todo 后触发 |
-| `before_execute` | 同步 | 可取消执行 | Executor 执行前触发 |
+Hook 系统让 Todo 状态变化时能够自动触发预设的命令（HTTP 通知、清理脚本等）。
+每个 Todo 独立挂载自己的 hooks 配置，存为 `todos.hooks` 的 JSON 文本列。
 
-### 执行上下文数据流
-
-| 字段 | before_create | before_status_change | after_status_change | before_execute |
-|------|---------------|---------------------|---------------------|----------------|
-| todo_id | - | ✓ | ✓ | ✓ |
-| todo_title | ✓ | ✓ | ✓ | ✓ |
-| old_status | - | ✓ | ✓ | - |
-| new_status | ✓ | ✓ | ✓ | ✓ |
-| executor | ✓ | ✓ | ✓ | ✓ |
-| workspace | ✓ | ✓ | ✓ | ✓ |
-| task_id | - | - | - | - |
-| trigger_time | ✓ | ✓ | ✓ | ✓ |
+| 项 | 实现 |
+|----|------|
+| 存储位置 | `todos` 表的 `hooks` 列（TEXT，JSON 数组） |
+| 文件结构 | 3 个：`backend/src/hooks/mod.rs` / `models.rs` / `service.rs` |
+| 配置模式 | Per-Todo 独立配置（**无** Global 共享、**无** inherit/custom/disabled 三种模式） |
+| 触发点数量 | 4 种（全部为状态变化触发） |
+| 模板变量 | **无**（当前只传递原始 `todo_id` / `old_status` / `new_status`） |
+| 异步执行 | 同步执行（不阻塞主流程则 fire-and-forget） |
 
 ---
 
-## 三、Hook 规则结构
+## 二、触发点（4 种）
 
-### 3.1 Filter (过滤条件)
+> 实际由 `backend/src/hooks/models.rs` 的 `TodoHookTrigger` 枚举定义。
+
+| 触发点 | 含义 |
+|--------|------|
+| `state_changed_to_pending` | 状态变为 `pending`（待执行）时 |
+| `state_changed_to_in_progress` | 状态变为 `in_progress`（执行中）时 |
+| `state_changed_to_completed` | 状态变为 `completed`（已完成）时 |
+| `state_changed_to_failed` | 状态变为 `failed`（执行失败）时 |
+
+> 旧设计中的 `before_create` / `after_create` / `before_status_change` / `after_status_change` / `before_delete` / `before_execute` / `after_delete` 全部**未实现**。
+
+---
+
+## 三、数据模型
+
+### 3.1 Hook 项（JSON 结构，存储在 `todos.hooks` 列）
 
 ```json
-{
-  "status": ["pending", "in_progress"],
-  "title_contains": "报告",
-  "tags": [1, 2, 3],
-  "executor": "claude"
+[
+  {
+    "trigger": "state_changed_to_completed",
+    "command": "curl",
+    "args": ["-X", "POST", "https://example.com/notify"],
+    "env": {
+      "TODO_ID": "123",
+      "NEW_STATUS": "completed"
+    },
+    "timeout_secs": 30,
+    "enabled": true
+  }
+]
+```
+
+### 3.2 存储
+
+hooks 是 `todos` 表的一个 JSON 列，**没有独立的 4 张表**（`hooks` / `global_hook_config` / `todo_hooks` / `hook_logs` 全部未创建）。
+
+修改入口：`db/todo.rs:178-198 update_todo_hooks`：
+
+```rust
+pub async fn update_todo_hooks(
+    id: i64,
+    items: &[crate::hooks::TodoHookItem],
+) -> Result<(), sea_orm::DbErr> {
+    let wrapped = crate::hooks::TodoHooks { items };
+    let json = serde_json::to_string(&wrapped).map_err(|e|
+        sea_orm::DbErr::Custom(format!("failed to encode hooks for todo #{}: {}", id, e))
+    )?;
+    todoes::ActiveModel { id: ..., hooks: ActiveValue::Set(Some(json)), ... }
 }
 ```
 
-所有条件为 AND 关系。
-
-### 3.2 Action (执行动作)
-
-```json
-{
-  "command": "curl",
-  "args": ["-X", "POST", "https://example.com/notify"],
-  "env": {
-    "FROM_HOOK": "true",
-    "TODO_TITLE": "{{todo_title}}"
-  },
-  "timeout_secs": 30
-}
-```
-
-### 3.3 模板变量
-
-| 变量 | 说明 | 示例 |
-|------|------|------|
-| `{{todo_id}}` | Todo ID | `123` |
-| `{{todo_title}}` | Todo 标题 | "完成报告" |
-| `{{todo_status}}` | 当前状态 | `pending` |
-| `{{old_status}}` | 旧状态 | `pending` |
-| `{{new_status}}` | 新状态 | `completed` |
-| `{{executor}}` | 执行器名称 | `claude` |
-| `{{workspace}}` | 工作目录 | `/home/user/project` |
-| `{{task_id}}` | 任务 ID | `task_abc123` |
-| `{{trigger_time}}` | 触发时间 ISO8601 | `2026-05-31T10:00:00Z` |
-| `{{env.VAR_NAME}}` | 引用环境变量 | - |
-
 ---
 
-## 四、数据库设计
-
-### 4.1 Hooks 表 (规则库)
-
-```sql
-CREATE TABLE hooks (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    description TEXT,
-    enabled INTEGER DEFAULT 1,
-    trigger TEXT NOT NULL,
-    filter TEXT,
-    action TEXT NOT NULL,
-    async INTEGER DEFAULT 1,
-    created_at TEXT,
-    updated_at TEXT
-);
-```
-
-### 4.2 Global Hook Config 表
-
-```sql
-CREATE TABLE global_hook_config (
-    id INTEGER PRIMARY KEY,
-    enabled INTEGER DEFAULT 1,
-    default_timeout_secs INTEGER DEFAULT 30,
-    max_concurrency INTEGER DEFAULT 5,
-    updated_at TEXT
-);
-
-CREATE TABLE global_default_hooks (
-    id INTEGER PRIMARY KEY,
-    hook_id TEXT NOT NULL,
-    priority INTEGER DEFAULT 0,
-    FOREIGN KEY (hook_id) REFERENCES hooks(id)
-);
-```
-
-### 4.3 Per-Todo Hook 配置
-
-```sql
-CREATE TABLE todo_hooks (
-    id INTEGER PRIMARY KEY,
-    todo_id INTEGER NOT NULL UNIQUE,
-    hook_mode TEXT DEFAULT 'inherit',
-    override_enabled INTEGER DEFAULT 1,
-    created_at TEXT,
-    updated_at TEXT,
-    FOREIGN KEY (todo_id) REFERENCES todos(id)
-);
-
-CREATE TABLE todo_hook_rules (
-    id INTEGER PRIMARY KEY,
-    todo_hook_id INTEGER NOT NULL,
-    hook_id TEXT,
-    inline_hook TEXT,
-    priority INTEGER DEFAULT 0,
-    FOREIGN KEY (todo_hook_id) REFERENCES todo_hooks(id)
-);
-```
-
-### 4.4 Hook 执行日志表
-
-```sql
-CREATE TABLE hook_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    hook_id TEXT NOT NULL,
-    trigger TEXT NOT NULL,
-    todo_id INTEGER,
-    args_sent TEXT,
-    env_sent TEXT,
-    exit_code INTEGER,
-    stdout TEXT,
-    stderr TEXT,
-    duration_ms INTEGER,
-    success INTEGER,
-    error_msg TEXT,
-    created_at TEXT,
-    FOREIGN KEY (hook_id) REFERENCES hooks(id)
-);
-```
-
----
-
-## 五、API 设计
-
-### 5.1 Hook 规则 CRUD
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/hooks` | 列出所有 hook 规则 |
-| POST | `/api/hooks` | 创建 hook 规则 |
-| GET | `/api/hooks/{id}` | 获取单个 hook 规则 |
-| PUT | `/api/hooks/{id}` | 更新 hook 规则 |
-| DELETE | `/api/hooks/{id}` | 删除 hook 规则 |
-| POST | `/api/hooks/{id}/test` | 测试 hook (dry run) |
-
-### 5.2 全局默认配置
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/hooks/config` | 获取全局默认配置 |
-| PUT | `/api/hooks/config` | 更新全局默认配置 |
-
-### 5.3 Per-Todo Hook
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/todos/{id}/hooks` | 获取 todo 的 hook 配置 |
-| PUT | `/api/todos/{id}/hooks` | 更新 todo 的 hook 配置 |
-
-### 5.4 执行日志
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/hook-logs` | 查看 hook 执行日志 |
-| DELETE | `/api/hook-logs` | 清除执行日志 |
-| GET | `/api/hook-logs/{id}` | 查看单条日志详情 |
-
----
-
-## 六、管理界面设计
-
-### 6.1 导航结构
+## 四、执行流程
 
 ```
-📁 设置
-   ├── 系统设置 (包含 [Hooks 设置] Tab)
-   └── Hook 管理
-           ├── Hook 列表
-           ├── [新建/编辑 Hook] → 弹窗
-           └── Hook 日志
-```
-
-### 6.2 Hook 管理页面 (`/hooks`)
-
-采用卡片布局，展示所有 hook 规则。
-
-### 6.3 Hook 规则编辑弹窗
-
-- 名称
-- 触发时机 (下拉选择)
-- 过滤条件 (状态、标题、标签)
-- 执行动作 (命令、参数、超时)
-- 异步执行开关
-
-### 6.4 全局默认 Hook 设置 (系统设置 Tab)
-
-- 启用/禁用 Hook 系统
-- 默认超时
-- 最大并发数
-- 默认应用的 Hook 规则列表
-
-### 6.5 Per-Todo Hook 配置 (Todo 编辑面板 Tab)
-
-- hook_mode 选择 (inherit/custom/disabled)
-- 自定义规则列表
-- 禁用所有 Hook 开关
-
-### 6.6 Hook 日志页面
-
-- 过滤器 (hook、状态)
-- 日志列表 (时间、hook、todo、状态、耗时)
-- 详情展开
-
----
-
-## 七、执行流程
-
-```
-Todo 状态变更请求
+Todo 状态变更（任何途径：用户点击 / 调度器 / 执行器回调）
        │
        ▼
-┌─────────────────┐
-│  获取变更上下文  │
-│  (old_status,   │
-│   new_status)   │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  获取 Todo 的   │
-│  Hook 配置      │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  解析 hook_mode │
-│  inherit/custom │
-│  /disabled      │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  查询匹配的     │
-│  before_* hooks │
-└────────┬────────┘
-         │
-         ▼
-   ┌─────────────┐
-   │  同步执行    │──────── 失败 ──────▶ 返回 error，不变更状态
-   │  before_*   │
-   └──────┬──────┘
-          │ 成功
-          ▼
-   ┌─────────────┐
-   │  变更 Todo  │
-   │  状态       │
-   └──────┬──────┘
-          │
-          ▼
-   ┌──────────────────┐
-   │ 查询匹配的       │
-   │ after_* hooks    │
-   └────────┬────────┘
-            │
-            ▼
-     ┌─────────────┐
-     │  异步入队    │─────────▶ 异步执行器 (不阻塞)
-     │  after_*    │
-     └─────────────┘
+读取 todos.hooks JSON 列
+       │
+       ▼
+按 trigger 字段过滤（精确匹配 state_changed_to_*）
+       │
+       ▼
+遍历匹配的 hook items
+       │
+       ├─ enabled == false → 跳过
+       │
+       └─ spawn 子进程执行 command + args + env
+              │
+              └─ 超时（timeout_secs）→ kill
 ```
 
----
-
-## 八、错误处理策略
-
-| 场景 | 行为 |
-|------|------|
-| before_* hook 执行失败 | 拒绝操作，返回 error 给调用方 |
-| after_* hook 执行失败 | 仅记录日志，不影响主流程 |
-| hook 执行超时 | 杀死进程，记录超时日志 |
-| hook 命令不存在 | 记录 error 日志，跳过执行 |
+- 失败 / 超时：当前仅记录日志（通过 `tracing::warn!`），**不**影响主状态变更。
+- `old_status` / `new_status` 通过 env 注入到子进程。
 
 ---
 
-## 九、安全性考虑
-
-1. **命令白名单** - 可配置允许执行的命令列表
-2. **参数校验** - 防止命令注入
-3. **环境隔离** - hook 执行环境与主进程隔离
-4. **资源限制** - 超时 + 并发数限制
-5. **敏感信息** - env 中的敏感值可标记为 secret（不记录日志）
-
----
-
-## 十、与现有 Webhook 的关系
-
-| 特性 | Webhook | Hook |
-|------|---------|------|
-| 目标 | 外部 HTTP 回调 | 本地命令执行 |
-| 触发方式 | 外部系统订阅 | 本地事件触发 |
-| 典型用途 | 通知外部系统 | 执行清理脚本、通知等 |
-
-两者互为补充，可独立使用。
-
----
-
-## 十一、文件结构
+## 五、文件结构
 
 ```
-backend/src/
-├── hooks/                      # 新增 Hook 模块
-│   ├── mod.rs                 # 模块入口
-│   ├── models.rs               # Hook 相关数据模型
-│   ├── service.rs              # Hook 执行服务
-│   ├── executor.rs             # 命令执行器
-│   ├── template.rs             # 模板变量渲染
-│   ├── filter.rs               # 过滤条件匹配
-│   └── db/                      # 数据库操作
-│       ├── mod.rs
-│       ├── hooks.rs            # hooks 表操作
-│       ├── global_config.rs    # 全局配置操作
-│       ├── todo_hooks.rs       # per-todo 配置操作
-│       └── hook_logs.rs        # 执行日志操作
-│
-├── handlers/
-│   └── hook.rs                 # Hook API handlers  新增
-│
-frontend/src/
-├── pages/
-│   └── Hooks/                  # 新增 Hook 管理页面
-│       ├── index.tsx           # Hook 列表页
-│       ├── HookForm.tsx        # 新建/编辑弹窗
-│       └── HookLogs.tsx       # 执行日志页
-│
-├── components/
-│   └── HookConfigTab.tsx       # Per-Todo Hook 配置 Tab
-│
-└── api/
-    └── hooks.ts                # Hook API 调用
+backend/src/hooks/
+├── mod.rs         # 模块入口 + 公共 API
+├── models.rs      # TodoHookTrigger 枚举、TodoHookItem、TodoHooks 结构
+└── service.rs     # 触发匹配、子进程派发
 ```
+
+> 旧设计中的 `executor.rs` / `template.rs` / `filter.rs` / `db/hooks.rs` / `db/global_config.rs` / `db/todo_hooks.rs` / `db/hook_logs.rs` 全部**未创建**。
 
 ---
 
-## 十二、开发任务拆分
+## 六、与初始设计的差异
 
-### Phase 1: 基础设施
-1. 创建数据库表
-2. 实现 Hook 数据模型
-3. 实现 Hook 数据库操作层
-4. 实现模板变量渲染引擎
+| 维度 | 初始设计 | 实际实现 |
+|------|----------|----------|
+| 存储 | 4 张独立表 | `todos.hooks` JSON 列 |
+| 文件 | 11 个（含 db 子目录） | 3 个 |
+| 触发点 | 7 种（before/after × 3 + before_execute） | 4 种（state_changed_to_*） |
+| 配置层级 | Global + Rule + Per-Todo | 仅 Per-Todo |
+| 模式 | inherit / custom / disabled | 无 |
+| 模板变量 | `{{todo_id}}` 等 10+ 变量 | 无（env 注入原始值） |
+| 异步队列 | mpsc 队列 + worker | 直接 spawn |
+| 取消操作 | before_* 可拒绝 | 不可拒绝（仅 fire-and-forget） |
+| 日志表 | `hook_logs` 表 | 走 `tracing` 日志 |
+| 访问控制 | 名单 / token | 无 |
 
-### Phase 2: 核心执行
-5. 实现 Hook 执行器
-6. 实现过滤条件匹配
-7. 在 Todo 状态变更处集成 Hook 触发点
+---
 
-### Phase 3: API 层
-8. 实现 Hook 规则 CRUD API
-9. 实现全局配置 API
-10. 实现 Per-Todo Hook API
-11. 实现执行日志 API
+## 七、扩展方向（待办）
 
-### Phase 4: 前端
-12. Hook 管理页面
-13. Per-Todo Hook 配置 Tab
-14. Hook 日志页面
-15. 系统设置中集成 Hook 配置
+若未来需要把 hooks 做强，可考虑：
 
-### Phase 5: 测试
-16. 单元测试
-17. 集成测试
-18. E2E 测试
+1. **增加触发点**：`state_changed_to_cancelled` / `execution_started` / `execution_finished`
+2. **引入模板变量**：`{{todo.title}}` / `{{executor}}` 等
+3. **拆出 `hook_logs` 表**：审计与回放
+4. **共享 hooks**：增加 `shared_hooks` 表允许复用同一组规则到多个 Todo
+5. **HTTP webhook 类型**：用现成的 `webhooks` 表作为远程通知通道
