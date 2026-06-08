@@ -191,8 +191,11 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
       {
         key: 'display-mode',
         icon: displayMode === 'flat' ? <FolderOpenOutlined /> : <UnorderedListOutlined />,
-        label: displayMode === 'flat' ? '切换为按项目分组' : '切换为平铺列表',
-        'aria-pressed': displayMode === 'grouped',
+        label: (
+          <span aria-pressed={displayMode === 'grouped'}>
+            {displayMode === 'flat' ? '切换为按项目分组' : '切换为平铺列表'}
+          </span>
+        ),
       },
       {
         key: 'theme',
