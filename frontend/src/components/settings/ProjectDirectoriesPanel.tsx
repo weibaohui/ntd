@@ -5,14 +5,17 @@ import * as db from '../../utils/database';
 import type { ProjectDirectory } from '../../utils/database';
 
 export function ProjectDirectoriesPanel() {
+  // 项目目录列表；按 path 升序，保持稳定可读
   const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
   const [projectDirsLoading, setProjectDirsLoading] = useState(false);
+  // 新增表单的路径与名称：均为必填项，名称是 Todo 侧按"项目"识别目录的唯一 key
   const [newDirPath, setNewDirPath] = useState('');
   const [newDirName, setNewDirName] = useState('');
   const [addingDir, setAddingDir] = useState(false);
   const [editingDirId, setEditingDirId] = useState<number | null>(null);
   const [editingDirName, setEditingDirName] = useState('');
 
+  // 每次进入页面都重新拉取一次，确保用户在其他地方新增/删除后能立刻看到
   const loadProjectDirectories = () => {
     setProjectDirsLoading(true);
     db.getProjectDirectories()
@@ -23,17 +26,28 @@ export function ProjectDirectoriesPanel() {
 
   useEffect(() => {
     loadProjectDirectories();
+    // 监听其他组件新增目录的事件，及时刷新列表
+    const reload = () => loadProjectDirectories();
+    window.addEventListener('projectDirectoryAdded', reload);
+    return () => window.removeEventListener('projectDirectoryAdded', reload);
   }, []);
 
   const handleAddProjectDirectory = async () => {
     const path = newDirPath.trim();
+    const name = newDirName.trim();
+    // 名称与路径都为必填：项目目录是 Todo 按"项目"维度分组的依据，
+    // 任意一项缺失都会让 Todo 侧无法定位到具体项目分组
     if (!path) {
       message.error('请输入目录路径');
       return;
     }
+    if (!name) {
+      message.error('请输入项目名称');
+      return;
+    }
     setAddingDir(true);
     try {
-      const dir = await db.createProjectDirectory(path, newDirName.trim() || undefined);
+      const dir = await db.createProjectDirectory(path, name);
       setProjectDirectories(prev => [...prev.filter(d => d.id !== dir.id), dir].sort((a, b) => a.path.localeCompare(b.path)));
       setNewDirPath('');
       setNewDirName('');
@@ -46,9 +60,14 @@ export function ProjectDirectoriesPanel() {
   };
 
   const handleUpdateProjectDirectoryName = async (id: number) => {
+    const name = editingDirName.trim();
+    if (!name) {
+      message.error('请输入项目名称');
+      return;
+    }
     try {
-      await db.updateProjectDirectory(id, editingDirName.trim() || undefined);
-      setProjectDirectories(prev => prev.map(d => d.id === id ? { ...d, name: editingDirName.trim() || null } : d));
+      await db.updateProjectDirectory(id, name);
+      setProjectDirectories(prev => prev.map(d => d.id === id ? { ...d, name } : d));
       setEditingDirId(null);
       setEditingDirName('');
       message.success('更新成功');
@@ -73,7 +92,7 @@ export function ProjectDirectoriesPanel() {
         <div style={{ marginBottom: 12, fontWeight: 600 }}>添加项目目录</div>
         <div style={{ marginBottom: 24 }}>
           <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 12 }}>
-            添加常用项目目录，方便在为 Todo 选择执行目录时快速点选。目录路径必填，名称选填。
+            添加常用项目目录。目录路径与项目名称均为必填，Todo 侧会按项目名称来选择与展示。
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
             <Input
@@ -86,7 +105,7 @@ export function ProjectDirectoriesPanel() {
             <Input
               value={newDirName}
               onChange={(e) => setNewDirName(e.target.value)}
-              placeholder="名称（选填）"
+              placeholder="项目名称（必填）"
               style={{ flex: 1 }}
               onPressEnter={handleAddProjectDirectory}
             />
@@ -125,9 +144,9 @@ export function ProjectDirectoriesPanel() {
                         <Input
                           value={editingDirName}
                           onChange={(e) => setEditingDirName(e.target.value)}
-                          placeholder="输入名称"
+                          placeholder="输入项目名称"
                           size="small"
-                          style={{ width: 120 }}
+                          style={{ width: 160 }}
                           onPressEnter={() => handleUpdateProjectDirectoryName(dir.id)}
                           autoFocus
                         />
@@ -136,14 +155,13 @@ export function ProjectDirectoriesPanel() {
                       </div>
                     ) : (
                       <>
+                        {/* 名称是项目维度的"主键"，固定作为第一行显示；缺失时退化到路径但给出视觉提示 */}
                         <div style={{ fontSize: 14, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {dir.name || dir.path}
+                          {dir.name || <span style={{ color: 'var(--color-warning)' }}>{dir.path}（未命名）</span>}
                         </div>
-                        {dir.name && (
-                          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {dir.path}
-                          </div>
-                        )}
+                        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {dir.path}
+                        </div>
                       </>
                     )}
                   </div>

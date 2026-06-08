@@ -44,6 +44,9 @@ export interface TodoCardProps {
   time: string; // already formatted relative time
   model?: string | null;
 
+  /** Project (workspace) name to display as tag */
+  projectName?: string | null;
+
   /** Tags (already resolved) */
   tags: Array<{ id: number; name: string; color: string }>;
 
@@ -89,6 +92,7 @@ export const TodoCard = memo(function TodoCard({
   executor,
   time,
   model,
+  projectName,
   tags,
   usage,
   triggerType,
@@ -127,6 +131,11 @@ export const TodoCard = memo(function TodoCard({
         {/* Meta Row */}
         <div className="kanban-card-meta-row">
           {executor && <ExecutorBadge executor={executor} />}
+          {projectName && (
+            <Tag className="kanban-tag-badge" style={{ backgroundColor: '#e6f4ff', borderColor: '#91caff', color: '#1677ff' }}>
+              {projectName}
+            </Tag>
+          )}
           <span className="kanban-card-meta-time">
             <ClockCircleOutlined /> {time}
           </span>

@@ -2,10 +2,11 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useApp } from '../hooks/useApp';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { Button, Empty, Tooltip } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined, UnorderedListOutlined, FolderOpenOutlined, RightOutlined } from '@ant-design/icons';
 import { useTheme } from '../hooks/useTheme';
 import { StatusPicker } from './StatusPicker';
 import * as db from '../utils/database';
+import type { ProjectDirectory, Todo } from '../types';
 import { ExecutorBadge } from './ExecutorBadge';
 import { formatRelativeTime } from '../utils/datetime';
 
@@ -33,16 +34,43 @@ function SkeletonList() {
   );
 }
 
+// 列表显示模式：flat 是当前的平铺模式；grouped 按项目目录把 todo 折叠成"文件夹"分组
+type ListDisplayMode = 'flat' | 'grouped';
+
 export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSettings }: TodoListProps) {
   const { state, dispatch } = useApp();
   const { themeMode, toggleTheme } = useTheme();
   const { todos, selectedTodoId, selectedTagId, tags } = state;
   const isMobile = useIsMobile();
   const [isLoading, setIsLoading] = useState(true);
+  // 显示模式：默认平铺；用户切换时只影响本地视图，刷新后会回到默认
+  const [displayMode, setDisplayMode] = useState<ListDisplayMode>('flat');
+  // 项目目录：分组视图需要按项目维度折叠，必须先有这份映射；
+  // 即使切回平铺视图也保留数据，避免切换时闪烁
+  const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
+  // 记录每个分组的折叠状态，key 为 workspace 路径
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     setIsLoading(false);
   }, []);
+
+  // 进入页面时拉取项目目录；后续 Todo 抽屉新增/删除目录时也会主动重拉，确保分组始终准确
+  const reloadProjectDirectories = useCallback(() => {
+    db.getProjectDirectories()
+      .then(setProjectDirectories)
+      .catch(() => {
+        // 静默失败：分组视图退化为只显示路径即可，不阻塞主流程
+      });
+  }, []);
+
+  useEffect(() => {
+    reloadProjectDirectories();
+    // 监听 TodoDrawer 快速新增项目目录的事件，及时刷新
+    const handleDirAdded = () => reloadProjectDirectories();
+    window.addEventListener('projectDirectoryAdded', handleDirAdded);
+    return () => window.removeEventListener('projectDirectoryAdded', handleDirAdded);
+  }, [reloadProjectDirectories]);
 
   const filteredTodos = useMemo(() =>
     selectedTagId
@@ -50,6 +78,36 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
       : todos,
     [todos, selectedTagId]
   );
+
+  // 按 workspace 路径分组；workspace 为空或 null 的归入"未分组"虚拟分组，
+  // 保证游离 todo 不会消失，只是放到列表底部
+  const groupedByProject = useMemo(() => {
+    // path -> { name, items }：用 path 作为 key，避免同路径多份目录实体造成的重复分组
+    // 用 Map 存储目录查找表，把内层 O(n·m) 查找降为 O(1)
+    const dirByPath = new Map(projectDirectories.map(d => [d.path, d]));
+    const groups = new Map<string, { name: string; items: Todo[] }>();
+    for (const todo of filteredTodos) {
+      const ws = (todo.workspace || '').trim();
+      if (!ws) {
+        const bucket = groups.get('__ungrouped__') ?? { name: '未分组', items: [] };
+        bucket.items.push(todo);
+        groups.set('__ungrouped__', bucket);
+        continue;
+      }
+      const dir = dirByPath.get(ws);
+      const bucket = groups.get(ws) ?? { name: dir?.name || ws, items: [] };
+      bucket.items.push(todo);
+      groups.set(ws, bucket);
+    }
+    // 稳定顺序：项目目录按 name 排序，未分组始终在最末
+    const entries = Array.from(groups.entries());
+    entries.sort((a, b) => {
+      if (a[0] === '__ungrouped__') return 1;
+      if (b[0] === '__ungrouped__') return -1;
+      return a[1].name.localeCompare(b[1].name);
+    });
+    return entries;
+  }, [filteredTodos, projectDirectories]);
 
   const handleStatusChange = useCallback(async (todoId: number, title: string, prompt: string, newStatus: string) => {
     try {
@@ -65,6 +123,104 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
     for (const tag of tags) map.set(tag.id, tag);
     return map;
   }, [tags]);
+
+  // 抽离 Todo 行渲染，平铺与分组两个模式共用，避免重复代码
+  const renderTodoItem = (todo: Todo) => {
+    const todoTags = ((todo as any).tag_ids as number[] | undefined)?.map(id => tagMap.get(id)).filter((t): t is typeof tags[0] => !!t) ?? [];
+    const primaryTag = todoTags[0];
+    const isCompleted = todo.status === 'completed';
+
+    return (
+      <div
+        key={todo.id}
+        onClick={() => {
+          dispatch({ type: 'SELECT_TODO', payload: todo.id });
+          onSelectTodo?.(todo.id);
+        }}
+        className={`todo-item ${selectedTodoId === todo.id ? 'selected' : ''}`}
+        style={{
+          cursor: 'pointer',
+          borderLeftColor: primaryTag?.color || '#cbd5e1',
+          borderLeftWidth: 4,
+          borderLeftStyle: 'solid',
+        }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            dispatch({ type: 'SELECT_TODO', payload: todo.id });
+            onSelectTodo?.(todo.id);
+          }
+        }}
+      >
+        <div className="todo-item-content">
+          <div className="todo-item-main">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div
+                className="todo-item-title"
+                style={{ opacity: isCompleted ? 0.6 : 1 }}
+              >
+                <span style={{ color: '#999', marginRight: 4, fontSize: 13 }}>#{todo.id}</span>{todo.title}
+              </div>
+              <ExecutorBadge executor={todo.executor || 'claudecode'} />
+            </div>
+            {todo.prompt && (
+              <div className="todo-item-desc">
+                {todo.prompt.length > 60 ? todo.prompt.substring(0, 60) + '...' : todo.prompt}
+              </div>
+            )}
+            <div className="todo-item-tags" style={{ justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                {todoTags.map(t => (
+                  <span
+                    key={t.id}
+                    className="todo-tag-badge"
+                    style={{
+                      backgroundColor: t.color + '18',
+                      color: t.color,
+                      border: `1px solid ${t.color}30`,
+                    }}
+                  >
+                    {t.name}
+                  </span>
+                ))}
+                {todo.scheduler_config && (
+                  <ClockCircleOutlined
+                    style={{
+                      fontSize: 12,
+                      color: todo.scheduler_enabled ? 'var(--color-warning)' : 'var(--color-text-tertiary)',
+                      marginLeft: todoTags.length > 0 ? 4 : 0,
+                    }}
+                  />
+                )}
+              </div>
+              <span
+                style={{
+                  fontSize: 11,
+                  color: 'var(--color-text-quaternary)',
+                  flexShrink: 0,
+                  marginLeft: 8,
+                }}
+                title={formatRelativeTime(todo.updated_at)}
+              >
+                {formatRelativeTime(todo.updated_at)}
+              </span>
+            </div>
+          </div>
+          <div
+            className="todo-item-status"
+            aria-label="更改任务状态"
+          >
+            <StatusPicker
+              value={todo.status}
+              onChange={(newStatus) => handleStatusChange(todo.id, todo.title, todo.prompt || '', newStatus)}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   if (isLoading) {
     return (
@@ -107,6 +263,18 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
               onClick={() => onShowRelationMap?.()}
               className="tag-btn"
               aria-label="关联图"
+            />
+          </Tooltip>
+          {/* 列表显示模式切换：图标上区分平铺 vs 项目分组；选中态给个浅色高亮 */}
+          <Tooltip title={displayMode === 'flat' ? '切换为按项目分组' : '切换为平铺列表'}>
+            <Button
+              type="text"
+              size="small"
+              icon={displayMode === 'flat' ? <UnorderedListOutlined /> : <FolderOpenOutlined />}
+              onClick={() => setDisplayMode(prev => (prev === 'flat' ? 'grouped' : 'flat'))}
+              className={`tag-btn ${displayMode === 'grouped' ? 'active' : ''}`}
+              aria-label="切换列表显示模式"
+              aria-pressed={displayMode === 'grouped'}
             />
           </Tooltip>
           <Tooltip title={themeMode === 'light' ? '切换暗色主题' : '切换亮色主题'}>
@@ -198,103 +366,69 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
               image={Empty.PRESENTED_IMAGE_SIMPLE}
             />
           </div>
-        ) : (
-          filteredTodos.map(todo => {
-            const todoTags = ((todo as any).tag_ids as number[] | undefined)?.map(id => tagMap.get(id)).filter((t): t is typeof tags[0] => !!t) ?? [];
-            const primaryTag = todoTags[0];
-            const isCompleted = todo.status === 'completed';
-
-            return (
-              <div
-                key={todo.id}
-                onClick={() => {
-                  dispatch({ type: 'SELECT_TODO', payload: todo.id });
-                  onSelectTodo?.(todo.id);
-                }}
-                className={`todo-item ${selectedTodoId === todo.id ? 'selected' : ''}`}
-                style={{
-                  cursor: 'pointer',
-                  borderLeftColor: primaryTag?.color || '#cbd5e1',
-                  borderLeftWidth: 4,
-                  borderLeftStyle: 'solid',
-                }}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    dispatch({ type: 'SELECT_TODO', payload: todo.id });
-                    onSelectTodo?.(todo.id);
-                  }
-                }}
-              >
-                <div className="todo-item-content">
-                  <div className="todo-item-main">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <div
-                        className="todo-item-title"
-                        style={{ opacity: isCompleted ? 0.6 : 1 }}
-                      >
-                        <span style={{ color: '#999', marginRight: 4, fontSize: 13 }}>#{todo.id}</span>{todo.title}
-                      </div>
-                      <ExecutorBadge executor={todo.executor || 'claudecode'} />
-                    </div>
-                    {todo.prompt && (
-                      <div className="todo-item-desc">
-                        {todo.prompt.length > 60 ? todo.prompt.substring(0, 60) + '...' : todo.prompt}
-                      </div>
-                    )}
-                    <div className="todo-item-tags" style={{ justifyContent: 'space-between' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-                        {todoTags.map(t => (
-                          <span
-                            key={t.id}
-                            className="todo-tag-badge"
-                            style={{
-                              backgroundColor: t.color + '18',
-                              color: t.color,
-                              border: `1px solid ${t.color}30`,
-                            }}
-                          >
-                            {t.name}
-                          </span>
-                        ))}
-                        {todo.scheduler_config && (
-                          <ClockCircleOutlined
-                            style={{
-                              fontSize: 12,
-                              color: todo.scheduler_enabled ? 'var(--color-warning)' : 'var(--color-text-tertiary)',
-                              marginLeft: todoTags.length > 0 ? 4 : 0,
-                            }}
-                          />
-                        )}
-                      </div>
-                      <span
-                        style={{
-                          fontSize: 11,
-                          color: 'var(--color-text-quaternary)',
-                          flexShrink: 0,
-                          marginLeft: 8,
-                        }}
-                        title={formatRelativeTime(todo.updated_at)}
-                      >
-                        {formatRelativeTime(todo.updated_at)}
-                      </span>
-                    </div>
-                  </div>
+        ) : displayMode === 'grouped' ? (
+          // 分组视图：每个项目一个"文件夹"块，块内平铺 todo；
+          // 文件夹头部用项目名 + 数量徽标，方便一眼看清每个项目下堆积了多少 todo
+          <div className="todo-grouped-list">
+            {groupedByProject.map(([key, group]) => {
+              const isCollapsed = collapsedGroups.has(key);
+              return (
+                <div key={key} className="todo-group">
                   <div
-                    className="todo-item-status"
-                    aria-label="更改任务状态"
+                    className="todo-group-header"
+                    onClick={() => {
+                      setCollapsedGroups(prev => {
+                        const next = new Set(prev);
+                        if (isCollapsed) {
+                          next.delete(key);
+                        } else {
+                          next.add(key);
+                        }
+                        return next;
+                      });
+                    }}
+                    style={{ cursor: 'pointer' }}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setCollapsedGroups(prev => {
+                          const next = new Set(prev);
+                          if (isCollapsed) {
+                            next.delete(key);
+                          } else {
+                            next.add(key);
+                          }
+                          return next;
+                        });
+                      }
+                    }}
+                    aria-expanded={!isCollapsed}
                   >
-                    <StatusPicker
-                      value={todo.status}
-                      onChange={(newStatus) => handleStatusChange(todo.id, todo.title, todo.prompt || '', newStatus)}
+                    <RightOutlined
+                      style={{
+                        color: 'var(--color-primary)',
+                        marginRight: 6,
+                        fontSize: 10,
+                        transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)',
+                        transition: 'transform 0.2s',
+                      }}
                     />
+                    <span className="todo-group-title">{group.name}</span>
+                    <span className="todo-group-count">{group.items.length}</span>
                   </div>
+                  {!isCollapsed && (
+                    <div className="todo-group-items">
+                      {group.items.map(renderTodoItem)}
+                    </div>
+                  )}
                 </div>
-              </div>
-            );
-          })
+              );
+            })}
+          </div>
+        ) : (
+          filteredTodos.map(renderTodoItem)
         )}
       </div>
     </div>

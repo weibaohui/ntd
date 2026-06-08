@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Card, Segmented, Skeleton, Empty, Button, Input } from 'antd';
+import { Card, Segmented, Skeleton, Empty, Button, Input, Select } from 'antd';
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -7,13 +7,14 @@ import {
   AppstoreOutlined,
   ProfileOutlined,
   SearchOutlined,
+  FolderOutlined,
 } from '@ant-design/icons';
 import { useApp } from '../hooks/useApp';
 import { KanbanBoard } from './KanbanBoard';
 import { TodoCard } from './TodoCard';
 import * as db from '../utils/database';
 import { formatRelativeTime } from '../utils/datetime';
-import type { RecentCompletedTodo, Tag, ExecutionRecord } from '../types';
+import type { RecentCompletedTodo, Tag, ExecutionRecord, ProjectDirectory } from '../types';
 
 const TIME_OPTIONS: { label: string; value: number }[] = [
   { label: '6h', value: 6 },
@@ -38,6 +39,8 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
   const [searchText, setSearchText] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [promptExpandedIds, setPromptExpandedIds] = useState<Set<number>>(new Set());
+  const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
+  const [selectedProject, setSelectedProject] = useState<string | null>(null);
 
   /* ─── Run history switching ─── */
   const [selectedRunIndex, setSelectedRunIndex] = useState<Record<number, number>>({});
@@ -73,6 +76,18 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
       });
     return () => { cancelled = true; };
   }, [hours, boardMode]);
+
+  // 加载项目目录用于过滤，监听 TodoDrawer 快速新增事件及时刷新
+  useEffect(() => {
+    const reload = () => {
+      db.getProjectDirectories()
+        .then(setProjectDirectories)
+        .catch(() => setProjectDirectories([]));
+    };
+    reload();
+    window.addEventListener('projectDirectoryAdded', reload);
+    return () => window.removeEventListener('projectDirectoryAdded', reload);
+  }, []);
 
   const toggleExpand = (todoId: number) => {
     setExpandedIds(prev => {
@@ -162,13 +177,24 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
   };
 
   const filteredItems = useMemo(() => {
-    if (!searchText.trim()) return items;
-    const q = searchText.toLowerCase();
-    return items.filter(i =>
-      i.title.toLowerCase().includes(q) ||
-      (i.prompt && i.prompt.toLowerCase().includes(q))
-    );
-  }, [items, searchText]);
+    let result = items;
+    // 按项目过滤
+    if (selectedProject) {
+      result = result.filter(i => {
+        const todo = state.todos.find(t => t.id === i.todo_id);
+        return todo?.workspace === selectedProject;
+      });
+    }
+    // 按搜索文本过滤
+    if (searchText.trim()) {
+      const q = searchText.toLowerCase();
+      result = result.filter(i =>
+        i.title.toLowerCase().includes(q) ||
+        (i.prompt && i.prompt.toLowerCase().includes(q))
+      );
+    }
+    return result;
+  }, [items, searchText, selectedProject, state.todos]);
 
   /* ─── Responsive column count ─── */
   const [columnCount, setColumnCount] = useState(() => {
@@ -233,6 +259,10 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
     const isSuccess = item.execution_status === 'success';
     const expanded = expandedIds.has(item.todo_id);
     const resolvedTags = item.tag_ids.map(tid => state.tags.find(t => t.id === tid)).filter(Boolean) as Tag[];
+    // 获取项目名称
+    const todo = state.todos.find(t => t.id === item.todo_id);
+    const projectDir = projectDirectories.find(d => d.path === todo?.workspace);
+    const projectName = projectDir?.name || null;
 
     // Run history: determine which run to display
     const runIdx = selectedRunIndex[item.todo_id] ?? 0;
@@ -282,6 +312,7 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
           executor={item.executor}
           time={formatRelativeTime(item.completed_at)}
           model={displayModel}
+          projectName={projectName}
           tags={resolvedTags}
           usage={displayUsage}
           triggerType={displayTriggerType}
@@ -342,6 +373,19 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
               const opt = TIME_OPTIONS.find(o => o.label === label);
               if (opt) setHours(opt.value);
             }}
+          />
+          <Select
+            size="small"
+            placeholder="项目过滤"
+            allowClear
+            value={selectedProject}
+            onChange={setSelectedProject}
+            style={{ width: 150 }}
+            suffixIcon={<FolderOutlined />}
+            options={projectDirectories.map(d => ({
+              value: d.path,
+              label: d.name || d.path,
+            }))}
           />
           {boardMode === 'memorial' ? (
             <div className="memorial-summary">
