@@ -706,6 +706,21 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             }
         });
 
+        let timeout_duration = std::time::Duration::from_secs(execution_timeout_secs.max(1));
+        let timeout_enabled = execution_timeout_secs > 0;
+        // 精确格式化超时提示：整数分钟直接显示"X 分钟"，非整数显示"X 分 Y 秒"
+        let timeout_str = {
+            let mins = execution_timeout_secs / 60;
+            let secs = execution_timeout_secs % 60;
+            if secs == 0 {
+                format!("{} 分钟", mins)
+            } else {
+                format!("{} 分 {} 秒", mins, secs)
+            }
+        };
+        let timeout_sleep = tokio::time::sleep(timeout_duration);
+        tokio::pin!(timeout_sleep);
+
         let status = tokio::select! {
             biased;
             _ = cancel_rx.recv() => {
@@ -752,10 +767,10 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                 task_manager_spawn.remove(&task_id).await;
                 return;
             }
-            _ = tokio::time::sleep(std::time::Duration::from_secs(execution_timeout_secs)) => {
+            _ = &mut timeout_sleep, if timeout_enabled => {
                 // Timeout: 自动终止执行时间过长的进程，释放资源
                 tracing::warn!(
-                    "Execution timeout reached ({}s) for todo {} (task {}), killing process",
+                    "执行超时，开始终止进程：超时时间={}秒，todo_id={}，task_id={}",
                     execution_timeout_secs, todo_id, task_id
                 );
                 kill_process_tree(&mut child).await;
@@ -791,10 +806,9 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                     model: None,
                 }).await;
 
-                let entry = ParsedLogEntry::error("Execution timeout - process was automatically terminated");
+                let entry = ParsedLogEntry::error("执行超时，进程已被系统自动终止");
                 send_event(&tx_clone, ExecEvent::Output { task_id: task_id.clone(), entry });
-                let timeout_mins = execution_timeout_secs / 60;
-                send_event(&tx_clone, ExecEvent::Finished { task_id: task_id.clone(), todo_id, todo_title: todo_title.clone(), executor: executor_spawn.executor_type().to_string(), success: false, result: Some(format!("Execution timed out after {} minutes", timeout_mins)) });
+                send_event(&tx_clone, ExecEvent::Finished { task_id: task_id.clone(), todo_id, todo_title: todo_title.clone(), executor: executor_spawn.executor_type().to_string(), success: false, result: Some(format!("执行超时，已超过 {}", timeout_str)) });
                 task_manager_spawn.remove(&task_id).await;
                 return;
             }

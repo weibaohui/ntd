@@ -17,6 +17,8 @@ pub const DEFAULT_DEV_PORT: u16 = 18088;
 pub const DEFAULT_HOST: &str = "0.0.0.0";
 /// Default executor paths (binary names).
 pub const DEFAULT_EXECUTOR_PATH: &str = ""; // use binary name directly
+/// 默认执行超时时间（秒）。
+pub const DEFAULT_EXECUTION_TIMEOUT_SECS: u64 = 3600;
 
 /// Top-level configuration, persisted to `~/.ntd/config.yaml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,7 +59,7 @@ pub struct Config {
     pub history_message_max_age_secs: u64,
     /// 最大并发执行数（默认 3）
     pub max_concurrent_todos: u32,
-    /// 执行超时时间（秒，默认 3600 = 60 分钟），超过此时间将自动终止进程
+    /// 执行超时时间（秒，默认 3600 = 60 分钟）；设置为 0 表示不限制执行时长
     pub execution_timeout_secs: u64,
     /// 日志清理保留天数（None 表示不清理）
     pub auto_cleanup_logs_days: Option<usize>,
@@ -177,7 +179,7 @@ impl Default for Config {
             default_response_todo_id: None,
             history_message_max_age_secs: 600,
             max_concurrent_todos: 3,
-            execution_timeout_secs: 3600,
+            execution_timeout_secs: DEFAULT_EXECUTION_TIMEOUT_SECS,
             auto_cleanup_logs_days: Some(30),
             auto_skill_backup_enabled: false,
             auto_skill_backup_cron: "0 0 5 * * *".to_string(),
@@ -320,6 +322,15 @@ mod tests {
     fn test_server_url() {
         let cfg = Config { port: 9090, ..Default::default() };
         assert_eq!(cfg.server_url(), "http://localhost:9090");
+    }
+
+    #[test]
+    fn test_default_execution_timeout_round_trip() {
+        let cfg = Config::default();
+        // 验证序列化/反序列化后默认值仍为 3600，而非恒真断言
+        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        let restored: Config = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(restored.execution_timeout_secs, DEFAULT_EXECUTION_TIMEOUT_SECS);
     }
 
     #[test]

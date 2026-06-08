@@ -33,10 +33,13 @@ import { TemplatesPanel } from './settings/TemplatesPanel';
 import { AboutPanel } from './settings/AboutPanel';
 import { CloudSyncPanel } from './settings/CloudSyncPanel';
 
+const DEFAULT_EXECUTION_TIMEOUT_SECS = 3600;
+
 interface SettingsPageProps {
   onBack?: () => void;
 }
 
+/** 设置页，负责加载并保存系统配置以及各类管理面板。 */
 export function SettingsPage({ onBack }: SettingsPageProps) {
   const { state, dispatch } = useApp();
   const { tags } = state;
@@ -86,6 +89,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
       .finally(() => setExecutorsLoading(false));
   }, []);
 
+  /** 汇总表单值并保存当前系统配置。 */
   const handleSaveConfig = async () => {
     try {
       const values = await configForm.validateFields();
@@ -122,7 +126,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
         ...currentConfig,
         ...(values as Partial<Config>),
         max_concurrent_todos: configForm.getFieldValue('max_concurrent_todos') ?? currentConfig.max_concurrent_todos ?? 3,
-        execution_timeout_secs: configForm.getFieldValue('execution_timeout_secs') ?? currentConfig.execution_timeout_secs ?? 1800,
+        execution_timeout_secs: configForm.getFieldValue('execution_timeout_secs') ?? currentConfig.execution_timeout_secs ?? DEFAULT_EXECUTION_TIMEOUT_SECS,
         slash_command_rules: hasSlashRulesField
           ? normalizedRules
           : (currentConfig.slash_command_rules ?? []),

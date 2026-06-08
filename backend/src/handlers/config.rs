@@ -4,6 +4,16 @@ use crate::config::Config;
 use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::{ApiResponse, UpdateConfigRequest};
 
+/// 校验执行超时配置，允许 0 表示不限制执行时长，其余值至少为 60 秒。
+fn validate_execution_timeout_secs(execution_timeout_secs: u64) -> Result<(), AppError> {
+    if execution_timeout_secs != 0 && execution_timeout_secs < 60 {
+        return Err(AppError::BadRequest(
+            "execution_timeout_secs must be 0 or at least 60".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn get_config(State(state): State<AppState>) -> Result<ApiResponse<Config>, AppError> {
     let cfg = state.config.read().await.clone();
     Ok(ApiResponse::ok(cfg))
@@ -43,9 +53,7 @@ pub async fn update_config(
         cfg.max_concurrent_todos = max_concurrent_todos;
     }
     if let Some(execution_timeout_secs) = req.execution_timeout_secs {
-        if execution_timeout_secs < 60 {
-            return Err(AppError::BadRequest("execution_timeout_secs must be at least 60".to_string()));
-        }
+        validate_execution_timeout_secs(execution_timeout_secs)?;
         cfg.execution_timeout_secs = execution_timeout_secs;
     }
     if let Some(scheduler_default_timezone) = req.scheduler_default_timezone {
@@ -66,4 +74,24 @@ pub async fn update_config(
         .map_err(|e| AppError::Internal(format!("Failed to save config: {}", e)))?;
 
     Ok(ApiResponse::ok(cfg.clone()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_execution_timeout_secs;
+
+    #[test]
+    fn test_validate_execution_timeout_accepts_zero() {
+        assert!(validate_execution_timeout_secs(0).is_ok());
+    }
+
+    #[test]
+    fn test_validate_execution_timeout_rejects_small_positive_value() {
+        assert!(validate_execution_timeout_secs(59).is_err());
+    }
+
+    #[test]
+    fn test_validate_execution_timeout_accepts_minimum_positive_value() {
+        assert!(validate_execution_timeout_secs(60).is_ok());
+    }
 }
