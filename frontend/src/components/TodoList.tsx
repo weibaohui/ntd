@@ -340,7 +340,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
         <div className="ntd-logo" aria-label="NTD Logo">NTD</div>
         <div className="header-actions">
           <div className="header-toolbar">
-            {!isMobile && desktopNavActions.length > 0 && (
+            {desktopNavActions.length > 0 && (
               <div className="header-nav-cluster" aria-label="主导航">
                 {desktopNavActions.map(action => (
                   <Tooltip key={action.key} title={action.title}>
@@ -399,18 +399,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
           )}
 
           {isMobile && (
-            <div className="header-nav-cluster" aria-label="移动端导航">
-              <Tooltip title={displayMode === 'flat' ? '切换为按项目分组' : '切换为平铺列表'}>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={displayMode === 'flat' ? <UnorderedListOutlined /> : <FolderOpenOutlined />}
-                  onClick={() => setDisplayMode(prev => (prev === 'flat' ? 'grouped' : 'flat'))}
-                  className="header-nav-btn"
-                  aria-label="切换列表显示模式"
-                  aria-pressed={displayMode === 'grouped'}
-                />
-              </Tooltip>
+            <div className="header-nav-cluster" aria-label="移动端操作">
               <Tooltip title={themeMode === 'light' ? '切换暗色主题' : '切换亮色主题'}>
                 <Button
                   type="text"
