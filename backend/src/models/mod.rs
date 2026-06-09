@@ -627,6 +627,15 @@ pub struct FeishuMessageStats {
     pub unique_chats: i64,
 }
 
+/// Placeholder chat_id for bindings created via Web UI before Feishu /bind.
+pub const PENDING_CHAT_ID: &str = "__pending__";
+
+/// Binding status constants — ensure consistency across DB writes and reads.
+pub mod binding_status {
+    pub const IDLE: &str = "idle";
+    pub const RUNNING: &str = "running";
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutorConfig {
     pub id: i64,

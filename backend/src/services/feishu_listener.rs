@@ -47,6 +47,7 @@ struct FeishuCommandContext<'a> {
     sender: &'a str,
     channel: &'a str,
     message_id: &'a str,
+    content: &'a str,
     reaction_id: Option<&'a str>,
 }
 
@@ -178,6 +179,7 @@ impl FeishuListener {
             bot_open_id,
             bot_config,
         } = context;
+
         tracing::info!(
             "[feishu:{}] handle_message: sender={}, bot_open_id={}, content={:?}, chat_type={:?}",
             bot_id,
@@ -226,6 +228,7 @@ impl FeishuListener {
                 sender: &msg.sender,
                 channel: &msg.channel,
                 message_id: &msg.id,
+                content,
                 reaction_id: reaction_id.as_deref(),
             })
             .await;
@@ -243,6 +246,61 @@ impl FeishuListener {
                 sender: &msg.sender,
                 channel: &msg.channel,
                 message_id: &msg.id,
+                content,
+                reaction_id: reaction_id.as_deref(),
+            })
+            .await;
+            return;
+        }
+
+        // /list command — list all registered project directories
+        if content == "/list" {
+            Self::handle_list(FeishuCommandContext {
+                db,
+                credentials,
+                token_manager,
+                bot_id,
+                chat_type,
+                sender: &msg.sender,
+                channel: &msg.channel,
+                message_id: &msg.id,
+                content,
+                reaction_id: reaction_id.as_deref(),
+            })
+            .await;
+            return;
+        }
+
+        // /bind or /bind <project_name>
+        if content == "/bind" || content.starts_with("/bind ") {
+            Self::handle_bind(FeishuCommandContext {
+                db,
+                credentials,
+                token_manager,
+                bot_id,
+                chat_type,
+                sender: &msg.sender,
+                channel: &msg.channel,
+                message_id: &msg.id,
+                content,
+                reaction_id: reaction_id.as_deref(),
+            })
+            .await;
+            return;
+        }
+
+        // /unbind command
+        if content == "/unbind" {
+            Self::handle_unbind(FeishuCommandContext {
+                db,
+                credentials,
+                token_manager,
+                bot_id,
+                chat_type,
+                sender: &msg.sender,
+                channel: &msg.channel,
+                message_id: &msg.id,
+                content,
                 reaction_id: reaction_id.as_deref(),
             })
             .await;
@@ -301,6 +359,116 @@ impl FeishuListener {
             }
         }
 
+        // 如果当前 chat 没有绑定，检查是否有 __pending__ binding 需要关联过来
+        // 页面创建绑定时 chat_id 先写成 __pending__，等首次消息进来再关联到真实 chat
+        if let Ok(bindings) = db.get_feishu_project_bindings(bot_id).await {
+            for pending in bindings.iter().filter(|b| b.chat_id == "__pending__") {
+                if let Ok(Some(pending_todo)) = db.get_todo(pending.todo_id).await {
+                    // 获取这个 todo 对应的 project_dir，检查消息是否来自该目录对应的聊天
+                    // 通过 project_dir 的 path 或 name 匹配（这里简化处理：直接关联）
+                    match db.attach_feishu_project_binding(pending.id, &msg.channel, chat_type).await {
+                        Ok(_) => {
+                            tracing::info!(
+                                "[feishu:{}] promoted pending binding {} to chat {}",
+                                bot_id, pending.id, msg.channel
+                            );
+                            // 关联成功后刷新 bindings 供后续使用
+                            break;
+                        }
+                        Err(e) => {
+                            tracing::warn!("[feishu:{}] failed to promote pending binding: {}", bot_id, e);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 检查当前聊天是否有项目目录绑定 → 走项目执行路径
+        // 绑定路径优先级高于斜杠命令和默认回复：
+        //   有绑定 → 最近一条 execution 还在运行 → resume 同一 session
+        //   有绑定 → 最近一条已结束（或从未执行）→ 开新 session
+        //   无绑定 → 降级到斜杠命令/默认回复
+        // 为什么用 latest_record_id 判断而非 get_execution_record_by_task_id？
+        //   resume 执行时新 record 的 task_id ≠ session_id，用 task_id 查会找到旧的
+        //   已结束的 record 导致 should_resume=false，会话链断裂。
+        match db.get_feishu_project_binding(bot_id, &msg.channel).await {
+            Ok(Some(binding)) => {
+                // 检查绑定的 todo 是否存在
+                if let Ok(Some(todo)) = db.get_todo(binding.todo_id).await {
+                    // Determine if we should resume an existing session or start fresh
+                    // resume if: latest record exists AND has a session_id
+                    // 即使执行已结束（success/failed），只要有 session_id 就应该继续多轮对话
+                    // NOTE: we check latest_record_id (not get_execution_record_by_task_id)
+                    // because resume executions have different task_ids — the session_id
+                    // stays the same across turns, but the latest execution_record changes.
+                    let should_resume = if let Some(rid) = binding.latest_record_id {
+                        if let Ok(Some(record)) = db.get_execution_record(rid).await {
+                            record.session_id.is_some()
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    tracing::info!(
+                        "[feishu:{}] binding check: todo_id={}, latest_record_id={:?}, should_resume={}, binding.session_id={:?}",
+                        bot_id, binding.todo_id, binding.latest_record_id, should_resume, binding.session_id
+                    );
+
+                    let (resume_session_id, resume_message) = if should_resume {
+                        // ⚠️ 不能使用 binding.session_id：debounce 首次执行时把它设为了 task_id（随机 UUID）
+                        // Claude Code 真正的 session_id 来自 stdout JSONL 输出，
+                        // 保存在 execution_records.session_id 中。必须从 latest_record 读取。
+                        let real_sid = if let Some(rid) = binding.latest_record_id {
+                            match db.get_execution_record(rid).await {
+                                Ok(Some(r)) => r.session_id.or(binding.session_id.clone()),
+                                _ => binding.session_id.clone(),
+                            }
+                        } else {
+                            binding.session_id.clone()
+                        };
+                        (real_sid, Some(content.to_string()))
+                    } else {
+                        (None, None)
+                    };
+
+                    // Use the todo's configured executor, fallback to claudecode
+                    let executor = todo.executor.as_deref().unwrap_or("claudecode");
+
+                    debounce.push(PendingMessage {
+                        bot_id,
+                        chat_id: msg.channel.clone(),
+                        chat_type: chat_type.to_string(),
+                        sender: msg.sender.clone(),
+                        content: content.to_string(),
+                        todo_id: binding.todo_id,
+                        todo_prompt: todo.prompt.clone(),
+                        executor: Some(executor.to_string()),
+                        trigger_type: "feishu_project_bind".to_string(),
+                        params: None,
+                        message_id: Some(msg.id.clone()),
+                        resume_session_id,
+                        resume_message,
+                        binding_id: Some(binding.id),
+                    });
+                    // 清理 reaction 后返回，避免 THUMBSUP 一直残留在消息上
+                    if let Some(rid) = &reaction_id {
+                        Self::delete_reaction(credentials, token_manager, bot_id, &msg.id, rid).await;
+                    }
+                    return;
+                } else {
+                    tracing::warn!(
+                        "[feishu:{}] bound todo #{} not found for chat {}",
+                        bot_id, binding.todo_id, msg.channel
+                    );
+                }
+            }
+            Ok(None) => {} // No binding — fall through
+            Err(e) => {
+                tracing::error!("[feishu:{}] query binding failed: {e}", bot_id);
+            }
+        }
+
         if let Some(command_ctx) = Self::parse_slash_command(content) {
             // Try slash command match
             let matched_rule = {
@@ -340,6 +508,9 @@ impl FeishuListener {
                             trigger_type: "slash_command".to_string(),
                             params: Some(params),
                             message_id: Some(msg.id.clone()),
+                            resume_session_id: None,
+                            resume_message: None,
+                            binding_id: None,
                         });
                     }
                 }
@@ -377,6 +548,9 @@ impl FeishuListener {
                             trigger_type: "default_response".to_string(),
                             params: Some(params),
                             message_id: Some(msg.id.clone()),
+                            resume_session_id: None,
+                            resume_message: None,
+                            binding_id: None,
                         });
                     }
                 }
@@ -416,6 +590,9 @@ impl FeishuListener {
                         trigger_type: "default_response".to_string(),
                         params: Some(params),
                         message_id: Some(msg.id.clone()),
+                        resume_session_id: None,
+                        resume_message: None,
+                        binding_id: None,
                     });
                 }
             }
@@ -484,6 +661,7 @@ impl FeishuListener {
             channel,
             message_id,
             reaction_id,
+            ..
         } = context;
         let target_type = if chat_type == "p2p" { "p2p" } else { "group" };
         let (receive_id, receive_id_type, chat_id) = match chat_type {
@@ -572,6 +750,7 @@ impl FeishuListener {
             channel,
             message_id,
             reaction_id,
+            ..
         } = context;
         let (receive_id, receive_id_type) = match chat_type {
             "p2p" => (sender.to_string(), "open_id"),
@@ -625,6 +804,299 @@ impl FeishuListener {
                 new_level,
                 bot_id
             );
+        }
+
+        if let Some(rid) = reaction_id {
+            Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+        }
+    }
+
+    /// Handle /list — list all registered project directories.
+    async fn handle_list(context: FeishuCommandContext<'_>) {
+        let FeishuCommandContext {
+            db,
+            credentials,
+            token_manager,
+            bot_id,
+            chat_type,
+            sender,
+            channel,
+            message_id,
+            reaction_id,
+            ..
+        } = context;
+        let (receive_id, receive_id_type) = match chat_type {
+            "p2p" => (sender.to_string(), "open_id"),
+            _ => (channel.to_string(), "chat_id"),
+        };
+
+        let directories = db.get_project_directories().await.unwrap_or_default();
+        if directories.is_empty() {
+            Self::send_text(
+                credentials,
+                token_manager,
+                bot_id,
+                &receive_id,
+                receive_id_type,
+                "📂 暂无已注册的项目目录。\n\n请在 Web 设置页「项目目录」中添加，或使用 /bind <名称> 绑定一个项目（首次使用会自动创建）。",
+            )
+            .await;
+        } else {
+            let mut lines: Vec<String> = directories
+                .iter()
+                .map(|d| {
+                    let name = d.name.as_deref().unwrap_or("(未命名)");
+                    format!("• {}  →  {}", name, d.path)
+                })
+                .collect();
+            lines.insert(0, format!("📂 已注册的项目目录（共 {} 个）：", directories.len()));
+            lines.push(String::new());
+            lines.push("💡 使用 /bind <名称> 绑定到本项目聊天".to_string());
+            Self::send_text(
+                credentials,
+                token_manager,
+                bot_id,
+                &receive_id,
+                receive_id_type,
+                &lines.join("\n"),
+            )
+            .await;
+        }
+
+        if let Some(rid) = reaction_id {
+            Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+        }
+    }
+
+    /// Handle /bind — show current binding, or /bind <name> to bind to a project.
+    async fn handle_bind(context: FeishuCommandContext<'_>) {
+        let FeishuCommandContext {
+            db,
+            credentials,
+            token_manager,
+            bot_id,
+            chat_type,
+            sender,
+            channel,
+            message_id,
+            content,
+            reaction_id,
+        } = context;
+        let (receive_id, receive_id_type) = match chat_type {
+            "p2p" => (sender.to_string(), "open_id"),
+            _ => (channel.to_string(), "chat_id"),
+        };
+
+        // /bind with no args → show current binding status
+        if content == "/bind" {
+            match db.get_feishu_project_binding(bot_id, channel).await {
+                Ok(Some(binding)) => {
+                    let dir = db.get_project_directory_by_id(binding.project_dir_id).await.ok().flatten();
+                    let dir_name = dir.as_ref().and_then(|d| d.name.as_deref()).unwrap_or("(unknown)");
+                    let dir_path = dir.as_ref().map(|d| d.path.as_str()).unwrap_or("(unknown)");
+                    let status_icon = if binding.status == crate::models::binding_status::RUNNING { "🟢" } else { "⏸️" };
+                    let msg = format!(
+                        "📎 当前绑定详情：\n项目：{dir_name}\n目录：{dir_path}\nTodo：#{binding_id}\n状态：{status_icon} {binding_status}\nSession：{session}\n\n💡 使用 /unbind 解绑",
+                        binding_id = binding.todo_id,
+                        binding_status = binding.status,
+                        session = binding.session_id.as_deref().unwrap_or("(无)"),
+                    );
+                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, &msg).await;
+                }
+                Ok(None) => {
+                    Self::send_text(
+                        credentials, token_manager, bot_id, &receive_id, receive_id_type,
+                        "📭 当前聊天未绑定任何项目。\n\n使用 /bind <项目名称> 绑定一个项目。\n使用 /list 查看可用项目。",
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    tracing::error!("[feishu:{}] /bind query failed: {e}", bot_id);
+                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 查询绑定失败，请稍后重试").await;
+                }
+            }
+            if let Some(rid) = reaction_id {
+                Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+            }
+            return;
+        }
+
+        // /bind <name> — bind to a project by name
+        let project_name = content.strip_prefix("/bind ").unwrap_or("").trim();
+        if project_name.is_empty() {
+            Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 请输入项目名称，例如：/bind my-app").await;
+            if let Some(rid) = reaction_id {
+                Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+            }
+            return;
+        }
+
+        // 按项目名称查找：先精确匹配，再前缀匹配
+        // ⚠️ 前缀匹配时若有多个候选（如 my-app / my-application 都匹配 "my"），
+        //    返回歧义提示让用户精确输入。
+        let directories = db.get_project_directories().await.unwrap_or_default();
+        // 精确匹配 — 唯一正确
+        let dir = directories.iter().find(|d| d.name.as_deref() == Some(project_name)).cloned();
+        let dir = match dir {
+            Some(d) => Some(d),
+            None => {
+                // 前缀匹配 — 检查是否有多选歧义
+                let candidates: Vec<_> = directories.iter()
+                    .filter(|d| d.name.as_deref().map(|n| n.starts_with(project_name)).unwrap_or(false))
+                    .collect();
+                if candidates.is_empty() {
+                    None
+                } else if candidates.len() == 1 {
+                    Some(candidates[0].clone())
+                } else {
+                    // 多个候选，返回歧义提示
+                    let names: Vec<String> = candidates.iter()
+                        .filter_map(|d| d.name.as_deref())
+                        .map(|n| format!("• {}", n))
+                        .collect();
+                    let msg = format!(
+                        "⚠️ 「{}」匹配到多个项目：\n{}\n\n请使用完整名称，例如：/bind {}",
+                        project_name,
+                        names.join("\n"),
+                        candidates[0].name.as_deref().unwrap_or(""),
+                    );
+                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, &msg).await;
+                    if let Some(rid) = reaction_id {
+                        Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+                    }
+                    return;
+                }
+            }
+        };
+
+        match dir {
+            Some(dir) => {
+                // Check if already bound
+                if let Ok(Some(existing)) = db.get_feishu_project_binding(bot_id, channel).await {
+                    if let Err(e) = db.delete_feishu_project_binding(existing.id).await {
+                        tracing::warn!("[feishu:{}] failed to delete existing binding {} before rebind: {}", bot_id, existing.id, e);
+                    }
+                }
+
+                // Try to find a pending binding created via Web UI (chat_id='__pending__')
+                let pending_bindings = db.get_feishu_project_bindings(bot_id).await.unwrap_or_default();
+                let pending = pending_bindings.iter()
+                    .find(|b| b.project_dir_id == dir.id && b.chat_id == "__pending__")
+                    .cloned();
+
+                if let Some(pending_binding) = pending {
+                    // Reuse the pending binding and its todo — just update chat_id/chat_type
+                    match db.attach_feishu_project_binding(pending_binding.id, channel, chat_type).await {
+                        Ok(_) => {
+                            let dir_name = dir.name.as_deref().unwrap_or("unknown");
+                            let msg = format!(
+                                "✅ 已绑定到项目「{dir_name}」\n项目目录：{path}\nTodo：#{todo_id}\n\n现在可以直接向我发送任务了。",
+                                path = dir.path,
+                                todo_id = pending_binding.todo_id,
+                            );
+                            Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, &msg).await;
+                        }
+                        Err(e) => {
+                            tracing::error!("[feishu:{}] update pending binding failed: {e}", bot_id);
+                            Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 绑定更新失败，请稍后重试").await;
+                        }
+                    }
+                } else {
+                    // No pending binding — create a new Todo + binding
+                    let todo_title = format!("飞书-{}", dir.name.as_deref().unwrap_or(&dir.path));
+                    let todo_prompt = format!(
+                        "你是飞书Bot的AI助手，正在项目「{name}」({path})中工作。\n\
+                         用户通过飞书与你交流，请根据用户的需求在项目目录中完成开发任务。\n\
+                         你可以读取、修改项目文件，运行命令等。\n\n\
+                         用户诉求：{{message}}\n\
+                         项目目录：{path}",
+                        name = dir.name.as_deref().unwrap_or("unknown"),
+                        path = dir.path,
+                    );
+
+                    match db.create_todo(&todo_title, &todo_prompt).await {
+                        Ok(todo_id) => {
+                            let _ = db.update_todo_workspace(todo_id, Some(&dir.path)).await;
+                            let _ = db.update_todo_worktree_enabled(todo_id, false).await;
+                            match db.create_feishu_project_binding(bot_id, channel, chat_type, dir.id, todo_id).await {
+                                Ok(binding_id) => {
+                                    let dir_name = dir.name.as_deref().unwrap_or("unknown");
+                                    let msg = format!(
+                                        "✅ 已绑定到项目「{dir_name}」\n项目目录：{path}\nTodo：#{todo_id}\n\n现在可以直接向我发送任务了。",
+                                        path = dir.path,
+                                    );
+                                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, &msg).await;
+                                    tracing::info!("[feishu:{}] bound chat {} to project {} (binding={}, todo={})", bot_id, channel, dir.path, binding_id, todo_id);
+                                }
+                                Err(e) => {
+                                    tracing::error!("[feishu:{}] create binding failed: {e}", bot_id);
+                                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 创建绑定失败，请稍后重试").await;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("[feishu:{}] create todo failed: {e}", bot_id);
+                            Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 创建 Todo 失败，请稍后重试").await;
+                        }
+                    }
+                }
+            }
+            None => {
+                let msg = format!(
+                    "⚠️ 未找到名为「{name}」的项目。\n\n使用 /list 查看所有可用项目。",
+                    name = project_name
+                );
+                Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, &msg).await;
+            }
+        }
+
+        if let Some(rid) = reaction_id {
+            Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+        }
+    }
+
+    /// Handle /unbind — unbind current chat from its project.
+    async fn handle_unbind(context: FeishuCommandContext<'_>) {
+        let FeishuCommandContext {
+            db,
+            credentials,
+            token_manager,
+            bot_id,
+            chat_type,
+            sender,
+            channel,
+            message_id,
+            reaction_id,
+            ..
+        } = context;
+        let (receive_id, receive_id_type) = match chat_type {
+            "p2p" => (sender.to_string(), "open_id"),
+            _ => (channel.to_string(), "chat_id"),
+        };
+
+        match db.get_feishu_project_binding(bot_id, channel).await {
+            Ok(Some(binding)) => {
+                // If a task is running, warn user before unbinding
+                if binding.status == crate::models::binding_status::RUNNING {
+                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type,
+                        "⚠️ 当前有任务正在执行，解绑后任务仍会在后台运行。\n如需强制终止，请使用 Web 界面「运行管理」停止。")
+                        .await;
+                }
+
+                if let Err(e) = db.delete_feishu_project_binding(binding.id).await {
+                    tracing::error!("[feishu:{}] /unbind failed: {e}", bot_id);
+                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 解绑失败，请稍后重试").await;
+                } else {
+                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "✅ 已解绑。使用 /bind <名称> 重新绑定到其他项目。").await;
+                }
+            }
+            Ok(None) => {
+                Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "📭 当前聊天未绑定任何项目，无需解绑。").await;
+            }
+            Err(e) => {
+                tracing::error!("[feishu:{}] /unbind query failed: {e}", bot_id);
+                Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 查询绑定失败，请稍后重试").await;
+            }
         }
 
         if let Some(rid) = reaction_id {

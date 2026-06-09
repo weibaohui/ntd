@@ -401,6 +401,9 @@ impl FeishuHistoryFetcher {
                                     trigger_type,
                                     params: Some(params),
                                     message_id: Some(item.message_id.clone()),
+                                    resume_session_id: None,
+                                    resume_message: None,
+                                    binding_id: None,
                                 });
                                 // Debounce timer will mark message as processed with execution_record_id
                             }

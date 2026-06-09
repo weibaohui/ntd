@@ -50,6 +50,10 @@ pub struct RunTodoExecutionRequest {
     pub source_todo_id: Option<i64>,
     pub source_todo_title: Option<String>,
     pub source_hook_id: Option<i64>,
+    /// Feishu bot to send result directly to binding chat.
+    pub feishu_bot_id: Option<i64>,
+    /// Feishu receive_id (open_id for p2p, chat_id for group).
+    pub feishu_receive_id: Option<String>,
 }
 
 /// Run a todo execution. Priority: explicit executor > todo stored executor > default.
@@ -71,6 +75,8 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         source_todo_id,
         source_todo_title,
         source_hook_id,
+        feishu_bot_id,
+        feishu_receive_id,
     } = request;
     let message = params
         .as_ref()
@@ -130,6 +136,8 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                             "Todo {} has {} execution(s) still running (limit: {}). Please stop them first.",
                             todo_id, running_count_for_todo, max_concurrent
                         )),
+                        feishu_bot_id: None,
+                        feishu_receive_id: None,
                     },
                 );
                 return ExecutionResult {
@@ -194,6 +202,8 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                         executor: executor_type.to_string(),
                         success: false,
                         result: Some("No executor available".to_string()),
+                        feishu_bot_id: None,
+                        feishu_receive_id: None,
                     },
                 );
                 task_manager.remove(&task_id).await;
@@ -288,6 +298,8 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                 executor: executor_str.clone(),
                 success: false,
                 result: Some("Failed to start execution".to_string()),
+                feishu_bot_id: None,
+                feishu_receive_id: None,
             },
         );
         let _ = db.finish_todo_execution(todo_id, false).await;
@@ -393,6 +405,8 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                         executor: executor_spawn.executor_type().to_string(),
                         success: false,
                         result: Some(error_msg),
+                        feishu_bot_id,
+                        feishu_receive_id,
                     },
                 );
                 let _ = db_clone.finish_todo_execution(todo_id, false).await;
@@ -774,7 +788,16 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
 
                 let entry = ParsedLogEntry::error("Execution cancelled by user");
                 send_event(&tx_clone, ExecEvent::Output { task_id: task_id.clone(), entry });
-                send_event(&tx_clone, ExecEvent::Finished { task_id: task_id.clone(), todo_id, todo_title: todo_title.clone(), executor: executor_spawn.executor_type().to_string(), success: false, result: Some("Task was cancelled by user".to_string()) });
+                send_event(&tx_clone, ExecEvent::Finished {
+                    task_id: task_id.clone(),
+                    todo_id,
+                    todo_title: todo_title.clone(),
+                    executor: executor_spawn.executor_type().to_string(),
+                    success: false,
+                    result: Some("Task was cancelled by user".to_string()),
+                    feishu_bot_id,
+                    feishu_receive_id,
+                });
                 task_manager_spawn.remove(&task_id).await;
                 return;
             }
@@ -819,7 +842,16 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
 
                 let entry = ParsedLogEntry::error("Execution timeout, process terminated by system");
                 send_event(&tx_clone, ExecEvent::Output { task_id: task_id.clone(), entry });
-                send_event(&tx_clone, ExecEvent::Finished { task_id: task_id.clone(), todo_id, todo_title: todo_title.clone(), executor: executor_spawn.executor_type().to_string(), success: false, result: Some(format!("Execution timeout, exceeded {}", timeout_str)) });
+                send_event(&tx_clone, ExecEvent::Finished {
+                    task_id: task_id.clone(),
+                    todo_id,
+                    todo_title: todo_title.clone(),
+                    executor: executor_spawn.executor_type().to_string(),
+                    success: false,
+                    result: Some(format!("Execution timeout, exceeded {}", timeout_str)),
+                    feishu_bot_id,
+                    feishu_receive_id,
+                });
                 task_manager_spawn.remove(&task_id).await;
                 return;
             }
@@ -1007,6 +1039,8 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                 executor: executor_spawn.executor_type().to_string(),
                 success,
                 result: Some(result_str),
+                feishu_bot_id,
+                feishu_receive_id,
             },
         );
         task_manager_spawn.remove(&task_id).await;

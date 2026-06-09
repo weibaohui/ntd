@@ -176,6 +176,8 @@ pub async fn execute_handler(
         source_todo_id: None,
         source_todo_title: None,
         source_hook_id: None,
+        feishu_bot_id: None,
+        feishu_receive_id: None,
     })
     .await;
     let result = result?;
@@ -408,6 +410,8 @@ pub async fn resume_execution_handler(
         source_todo_id: None,
         source_todo_title: None,
         source_hook_id: None,
+        feishu_bot_id: None,
+        feishu_receive_id: None,
     })
     .await?;
     let record_id = result.record_id
@@ -563,6 +567,8 @@ pub async fn smart_create_handler(
         source_todo_id: None,
         source_todo_title: None,
         source_hook_id: None,
+        feishu_bot_id: None,
+        feishu_receive_id: None,
     })
     .await?;
 

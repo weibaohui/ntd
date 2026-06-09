@@ -440,6 +440,12 @@ pub async fn delete_agent_bot(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, AppError> {
+    // 先清理关联的项目绑定（feishu_project_bindings 无 FK CASCADE）
+    if let Ok(bindings) = state.db.get_feishu_project_bindings(id).await {
+        for b in bindings {
+            let _ = state.db.delete_feishu_project_binding(b.id).await;
+        }
+    }
     state.db.delete_agent_bot(id).await.map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(ApiResponse::ok(serde_json::json!({"success": true})))
 }

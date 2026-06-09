@@ -64,6 +64,10 @@ pub enum ExecEvent {
         executor: String,
         success: bool,
         result: Option<String>,
+        /// Feishu bot_id to use for sending result directly to binding chat
+        feishu_bot_id: Option<i64>,
+        /// Feishu receive_id (user open_id for p2p, chat_id for group)
+        feishu_receive_id: Option<String>,
     },
     /// 同步事件：连接时发送当前实际运行的任务列表
     /// 前端收到此事件后应清空 runningTasks 并用此列表初始化
@@ -153,6 +157,7 @@ mod config;
 pub mod skills;
 pub mod agent_bot;
 pub mod executor_config;
+mod feishu_binding;
 mod feishu_history;
 mod session;
 pub mod project_directory;
@@ -486,6 +491,24 @@ pub fn create_app(
         }
     });
 
+    // Background periodic cleanup: reset stale running bindings every 30 seconds
+    // This handles edge cases where the executor crashes or daemon restarts,
+    // leaving binding.status permanently stuck at "running".
+    {
+        let db = db.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            // Skip the first tick immediately (give startup time to settle)
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                if let Err(e) = db.cleanup_stale_running_bindings().await {
+                    tracing::warn!("background cleanup_stale_running_bindings failed: {e}");
+                }
+            }
+        });
+    }
+
     // Create and start Feishu push service before AppState
     use crate::services::feishu_push::FeishuPushService;
     let (push_service, push_mutator) = FeishuPushService::new(db.clone(), feishu_listener.clone());
@@ -614,6 +637,9 @@ pub fn create_app(
         .route("/api/feishu/senders", get(feishu_history::get_distinct_senders))
         .route("/api/feishu/history-chats", get(feishu_history::get_history_chats).post(feishu_history::create_history_chat))
         .route("/api/feishu/history-chats/{id}", delete(feishu_history::delete_history_chat).put(feishu_history::update_history_chat))
+        .route("/api/feishu/bindings", get(feishu_binding::list_bindings).post(feishu_binding::create_binding))
+        .route("/api/feishu/bindings/by-chat", delete(feishu_binding::delete_binding_by_chat))
+        .route("/api/feishu/bindings/{id}", delete(feishu_binding::delete_binding))
         .route("/api/agent-bots/{id}", delete(agent_bot::delete_agent_bot))
         .route("/api/agent-bots/{id}/config", put(agent_bot::update_agent_bot_config))
         .route("/health", get(health_handler))

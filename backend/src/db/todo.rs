@@ -254,6 +254,21 @@ impl Database {
         self.exec_update(am).await
     }
 
+    pub async fn update_todo_worktree_enabled(
+        &self,
+        id: i64,
+        enabled: bool,
+    ) -> Result<(), sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let am = todos::ActiveModel {
+            id: ActiveValue::Unchanged(id),
+            worktree_enabled: ActiveValue::Set(Some(enabled)),
+            updated_at: ActiveValue::Set(Some(now)),
+            ..Default::default()
+        };
+        self.exec_update(am).await
+    }
+
     pub async fn force_update_todo_status(
         &self,
         id: i64,

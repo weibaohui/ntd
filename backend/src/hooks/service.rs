@@ -229,6 +229,8 @@ async fn execute_target_todo(
         source_todo_id: Some(source.id),
         source_todo_title: Some(source.title.clone()),
         source_hook_id: Some(item.id),
+        feishu_bot_id: None,
+        feishu_receive_id: None,
     };
 
     // Dispatch on a dedicated hook runtime. A `std::thread::spawn` is needed
