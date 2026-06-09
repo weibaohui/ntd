@@ -33,7 +33,7 @@ import { TemplatesPanel } from './settings/TemplatesPanel';
 import { AboutPanel } from './settings/AboutPanel';
 import { CloudSyncPanel } from './settings/CloudSyncPanel';
 
-const DEFAULT_EXECUTION_TIMEOUT_SECS = 3600;
+import { DEFAULT_EXECUTION_TIMEOUT_SECS } from '@/constants';
 
 interface SettingsPageProps {
   onBack?: () => void;

@@ -4,11 +4,16 @@ use crate::config::Config;
 use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::{ApiResponse, UpdateConfigRequest};
 
-/// 校验执行超时配置，允许 0 表示不限制执行时长，其余值至少为 60 秒。
+/// 校验执行超时配置，允许 0 表示不限制执行时长，其余值至少为 60 秒，最多 7 天。
 fn validate_execution_timeout_secs(execution_timeout_secs: u64) -> Result<(), AppError> {
     if execution_timeout_secs != 0 && execution_timeout_secs < 60 {
         return Err(AppError::BadRequest(
             "execution_timeout_secs must be 0 or at least 60".to_string(),
+        ));
+    }
+    if execution_timeout_secs > crate::config::MAX_EXECUTION_TIMEOUT_SECS {
+        return Err(AppError::BadRequest(
+            format!("execution_timeout_secs must be at most {}", crate::config::MAX_EXECUTION_TIMEOUT_SECS),
         ));
     }
     Ok(())
@@ -66,6 +71,7 @@ pub async fn update_config(
     }
 
     cfg.normalize_paths();
+    cfg.clamp_execution_timeout_secs();
 
     let cfg_clone = cfg.clone();
     tokio::task::spawn_blocking(move || cfg_clone.save())
@@ -93,5 +99,15 @@ mod tests {
     #[test]
     fn test_validate_execution_timeout_accepts_minimum_positive_value() {
         assert!(validate_execution_timeout_secs(60).is_ok());
+    }
+
+    #[test]
+    fn test_validate_execution_timeout_accepts_maximum_value() {
+        assert!(validate_execution_timeout_secs(crate::config::MAX_EXECUTION_TIMEOUT_SECS).is_ok());
+    }
+
+    #[test]
+    fn test_validate_execution_timeout_rejects_exceeds_maximum() {
+        assert!(validate_execution_timeout_secs(crate::config::MAX_EXECUTION_TIMEOUT_SECS + 1).is_err());
     }
 }
