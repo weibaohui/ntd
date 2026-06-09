@@ -56,6 +56,19 @@ impl FeishuPushService {
                                     last_refresh = Instant::now();
                                 }
 
+                                // For Finished events with feishu_chat_id (binding chat), send directly
+                                if let ExecEvent::Finished { feishu_bot_id, feishu_receive_id, .. } = &ev {
+                                    if let (Some(bot_id), Some(receive_id)) = (feishu_bot_id, feishu_receive_id) {
+                                        let text = Self::format_event(&ev).unwrap_or_default();
+                                        let receive_id_type = "open_id"; // binding chats are p2p
+                                        if let Err(e) = feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, &text).await {
+                                            warn!("[feishu-push] binding direct send failed for bot {}: {}", bot_id, e);
+                                        } else {
+                                            debug!("[feishu-push] binding direct sent to bot {}: {}", bot_id, &text[..text.len().min(60)]);
+                                        }
+                                    }
+                                }
+
                                 if targets_cache.is_empty() {
                                     continue;
                                 }

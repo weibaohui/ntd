@@ -168,6 +168,8 @@ impl MessageDebounce {
                         source_todo_id: None,
                         source_todo_title: None,
                         source_hook_id: None,
+                        feishu_bot_id: if last.binding_id.is_some() { Some(last.bot_id) } else { None },
+                        feishu_receive_id: if last.binding_id.is_some() { Some(last.sender.clone()) } else { None },
                     })
                     .await;
 

@@ -111,7 +111,7 @@ pub async fn create_binding(
     if let Err(e) = state.db.update_todo_workspace(todo_id, Some(&dir.path)).await {
         tracing::warn!("[binding] failed to set todo workspace: {e}");
     }
-    if let Err(e) = state.db.update_todo_worktree_enabled(todo_id, true).await {
+    if let Err(e) = state.db.update_todo_worktree_enabled(todo_id, false).await {
         tracing::warn!("[binding] failed to set worktree_enabled: {e}");
     }
 

@@ -363,6 +363,30 @@ impl FeishuListener {
         // 确保 should_resume 决策基于最新的 execution_record 状态
         let _ = db.cleanup_stale_running_bindings().await;
 
+        // 如果当前 chat 没有绑定，检查是否有 __pending__ binding 需要关联过来
+        // 页面创建绑定时 chat_id 先写成 __pending__，等首次消息进来再关联到真实 chat
+        if let Ok(bindings) = db.get_feishu_project_bindings(bot_id).await {
+            for pending in bindings.iter().filter(|b| b.chat_id == "__pending__") {
+                if let Ok(Some(pending_todo)) = db.get_todo(pending.todo_id).await {
+                    // 获取这个 todo 对应的 project_dir，检查消息是否来自该目录对应的聊天
+                    // 通过 project_dir 的 path 或 name 匹配（这里简化处理：直接关联）
+                    match db.attach_feishu_project_binding(pending.id, &msg.channel, chat_type).await {
+                        Ok(_) => {
+                            tracing::info!(
+                                "[feishu:{}] promoted pending binding {} to chat {}",
+                                bot_id, pending.id, msg.channel
+                            );
+                            // 关联成功后刷新 bindings 供后续使用
+                            break;
+                        }
+                        Err(e) => {
+                            tracing::warn!("[feishu:{}] failed to promote pending binding: {}", bot_id, e);
+                        }
+                    }
+                }
+            }
+        }
+
         // 检查当前聊天是否有项目目录绑定 → 走项目执行路径
         // 绑定路径优先级高于斜杠命令和默认回复：
         //   有绑定 → 最近一条 execution 还在运行 → resume 同一 session
@@ -985,7 +1009,7 @@ impl FeishuListener {
                     match db.create_todo(&todo_title, &todo_prompt).await {
                         Ok(todo_id) => {
                             let _ = db.update_todo_workspace(todo_id, Some(&dir.path)).await;
-                            let _ = db.update_todo_worktree_enabled(todo_id, true).await;
+                            let _ = db.update_todo_worktree_enabled(todo_id, false).await;
                             match db.create_feishu_project_binding(bot_id, channel, chat_type, dir.id, todo_id).await {
                                 Ok(binding_id) => {
                                     let dir_name = dir.name.as_deref().unwrap_or("unknown");

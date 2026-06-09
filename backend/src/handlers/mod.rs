@@ -64,6 +64,10 @@ pub enum ExecEvent {
         executor: String,
         success: bool,
         result: Option<String>,
+        /// Feishu bot_id to use for sending result directly to binding chat
+        feishu_bot_id: Option<i64>,
+        /// Feishu receive_id (user open_id for p2p, chat_id for group)
+        feishu_receive_id: Option<String>,
     },
     /// 同步事件：连接时发送当前实际运行的任务列表
     /// 前端收到此事件后应清空 runningTasks 并用此列表初始化
