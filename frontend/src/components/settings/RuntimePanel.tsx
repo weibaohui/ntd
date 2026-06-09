@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { Card, InputNumber, Tooltip, Button, Popconfirm, Table, Empty, Switch, message } from 'antd';
+import { Card, InputNumber, Tooltip, Button, Popconfirm, Table, Empty, Switch, message, Form } from 'antd';
 import { InfoCircleOutlined, SaveOutlined, StopOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
 import * as db from '@/utils/database';
 import type { ExecutionRecord } from '@/types';
 
-const DEFAULT_EXECUTION_TIMEOUT_SECS = 3600;
+import { DEFAULT_EXECUTION_TIMEOUT_SECS, MAX_EXECUTION_TIMEOUT_MINUTES } from '@/constants';
 
 /** 运行管理面板，负责展示执行并发、超时配置以及运行中任务操作。 */
 export function RuntimePanel({ configForm, configSaving, handleSaveConfig, executorDisplayNames }: {
@@ -19,18 +19,34 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
   const [selectedRecordIds, setSelectedRecordIds] = useState<number[]>([]);
   const [stoppingRecords, setStoppingRecords] = useState(false);
   const [runningRecords, setRunningRecords] = useState<ExecutionRecord[]>([]);
-  // 使用懒初始化避免表单未填充时读到默认值：初始化时若表单已有值则用表单的，否则用常量默认值。
-  // 后续通过 useEffect 同步表单值变化，保持 UI 与表单状态一致。
+
+  // 使用 Form.useWatch 订阅表单字段，直接响应 setFieldsValue 变化，
+  // 解决 async db.getConfig() 完成后的 setFieldsValue 不会触发 useEffect deps 的问题。
+  const watchedTimeoutSecs = Form.useWatch('execution_timeout_secs', configForm);
+
+  // executionTimeoutSecs 由 useWatch 驱动，undefined 时使用懒初始化默认值。
   const [executionTimeoutSecs, setExecutionTimeoutSecs] = useState<number>(() =>
-    configForm.getFieldValue('execution_timeout_secs') ?? DEFAULT_EXECUTION_TIMEOUT_SECS
+    watchedTimeoutSecs ?? DEFAULT_EXECUTION_TIMEOUT_SECS
   );
+
+  // 同步 useWatch 值到本地 state（仅在值真正变化时更新）。
+  // lastEnabledRef 同步记录非零值，供 toggle 恢复。
+  const lastEnabledExecutionTimeoutSecsRef = useRef<number>(DEFAULT_EXECUTION_TIMEOUT_SECS);
+  useEffect(() => {
+    if (watchedTimeoutSecs !== undefined && watchedTimeoutSecs !== executionTimeoutSecs) {
+      setExecutionTimeoutSecs(watchedTimeoutSecs);
+      if (watchedTimeoutSecs !== 0) {
+        lastEnabledExecutionTimeoutSecsRef.current = watchedTimeoutSecs;
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchedTimeoutSecs]);
+
   // 0 表示禁用执行超时（与后端 handlers/config.rs 中的校验对齐），其余值至少为 60 秒
   const executionTimeoutEnabled = executionTimeoutSecs !== 0;
   const executionTimeoutMinutes = executionTimeoutEnabled
     ? Math.max(1, Math.round(executionTimeoutSecs / 60))
     : undefined;
-  // 关闭时记录当前值，重新开启时恢复；避免再次开启时跳回初始默认值 3600。
-  const lastEnabledExecutionTimeoutSecsRef = useRef<number>(DEFAULT_EXECUTION_TIMEOUT_SECS);
 
   /** 加载当前运行中的执行记录。 */
   const loadRunningRecords = async () => {
@@ -48,22 +64,7 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
     return () => clearInterval(timer);
   }, []);
 
-  // 当用户手动输入时记录最新值；若关闭超时则不更新（保留重新开启时的恢复值）。
-  useEffect(() => {
-    if (executionTimeoutEnabled) {
-      lastEnabledExecutionTimeoutSecsRef.current = executionTimeoutSecs;
-    }
-  }, [executionTimeoutEnabled, executionTimeoutSecs]);
-
-  // 监听表单字段变化（外部加载配置重置表单时），同步本地状态。
-  useEffect(() => {
-    const formValue = configForm.getFieldValue('execution_timeout_secs');
-    if (formValue !== undefined && formValue !== executionTimeoutSecs) {
-      setExecutionTimeoutSecs(formValue);
-    }
-  }, [configForm]);
-
-  /** 批量停止当前选中的执行任务。 */
+  /** 批量停止当前选中的执行记录。 */
   const handleBatchStop = async () => {
     if (selectedRecordIds.length === 0) return;
     setStoppingRecords(true);
@@ -83,11 +84,14 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
 
   /** 切换是否启用执行超时控制。 */
   const handleExecutionTimeoutToggle = (checked: boolean) => {
-    const nextExecutionTimeoutSecs = checked ? lastEnabledExecutionTimeoutSecsRef.current : 0;
-    setExecutionTimeoutSecs(nextExecutionTimeoutSecs);
-    configForm.setFieldsValue({
-      execution_timeout_secs: nextExecutionTimeoutSecs,
-    });
+    if (!checked) {
+      // 关闭时记录当前非零值，供后续重新开启时恢复。
+      lastEnabledExecutionTimeoutSecsRef.current = executionTimeoutSecs;
+    }
+    const next = checked ? lastEnabledExecutionTimeoutSecsRef.current : 0;
+    configForm.setFieldsValue({ execution_timeout_secs: next });
+    // setExecutionTimeoutSecs 不需要：useWatch 会通过 setFieldsValue 触发，
+    // useEffect [watchedTimeoutSecs] 会同步到本地 state。
   };
 
   return (
@@ -129,19 +133,19 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
             <InputNumber
               size="small"
               min={1}
-              max={1440}
+              max={MAX_EXECUTION_TIMEOUT_MINUTES}
               style={{ width: 80 }}
               disabled={!executionTimeoutEnabled}
               value={executionTimeoutMinutes}
               onChange={(v) => {
                 if (v) {
-                  setExecutionTimeoutSecs(v * 60);
                   configForm.setFieldsValue({ execution_timeout_secs: v * 60 });
+                  // lastEnabledRef 由 useEffect [watchedTimeoutSecs] 集中更新
                 }
               }}
             />
             <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>分钟</span>
-            <Tooltip title="单个执行任务的最大时长；关闭后不再因超时自动终止">
+            <Tooltip title={`单个执行任务的最大时长（1 ~ ${MAX_EXECUTION_TIMEOUT_MINUTES} 分钟，上限 7 天）；关闭后不再因超时自动终止`}>
               <InfoCircleOutlined style={{ color: 'var(--color-text-quaternary)', fontSize: 12 }} />
             </Tooltip>
           </div>

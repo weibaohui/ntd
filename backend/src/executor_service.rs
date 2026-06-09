@@ -19,7 +19,7 @@ fn send_event(tx: &broadcast::Sender<ExecEvent>, event: ExecEvent) {
 /// command-group 会自动创建进程组，kill() 时会杀死整个进程组
 async fn kill_process_tree(child: &mut command_group::AsyncGroupChild) {
     if let Err(e) = child.kill().await {
-        tracing::warn!("杀死进程组失败: {}", e);
+        tracing::warn!("Failed to kill process group: {}", e);
     }
 }
 
@@ -720,16 +720,27 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             }
         });
 
-        let timeout_duration = std::time::Duration::from_secs(execution_timeout_secs.max(1));
+        // execution_timeout_secs is captured by value here — config changes after this
+        // task starts have no effect. To pick up a new timeout, wait for the current
+        // execution to finish (or force-fail it via the UI).
         let timeout_enabled = execution_timeout_secs > 0;
-        // 精确格式化超时提示：整数分钟直接显示"X 分钟"，非整数显示"X 分 Y 秒"
+        // Non-zero values are guaranteed >= 60 by normalize_paths clamp, so from_secs is safe.
+        let timeout_duration = std::time::Duration::from_secs(execution_timeout_secs);
+        // Human-readable timeout string for display messages (always English).
+        // Uses hours for >=60 min, days for >=24 h to keep the output readable.
         let timeout_str = {
-            let mins = execution_timeout_secs / 60;
+            let total_min = execution_timeout_secs / 60;
             let secs = execution_timeout_secs % 60;
             if secs == 0 {
-                format!("{} 分钟", mins)
+                if total_min >= 1440 {
+                    format!("{} day(s)", total_min / 1440)
+                } else if total_min >= 60 {
+                    format!("{} hour(s)", total_min / 60)
+                } else {
+                    format!("{} min", total_min)
+                }
             } else {
-                format!("{} 分 {} 秒", mins, secs)
+                format!("{} min {} sec", total_min, secs)
             }
         };
         let timeout_sleep = tokio::time::sleep(timeout_duration);
@@ -793,7 +804,7 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             _ = &mut timeout_sleep, if timeout_enabled => {
                 // Timeout: 自动终止执行时间过长的进程，释放资源
                 tracing::warn!(
-                    "执行超时，开始终止进程：超时时间={}秒，todo_id={}，task_id={}",
+                    "Execution timeout, terminating process: timeout={}s, todo_id={}, task_id={}",
                     execution_timeout_secs, todo_id, task_id
                 );
                 kill_process_tree(&mut child).await;
@@ -824,12 +835,12 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                     id: record_id,
                     status: crate::models::ExecutionStatus::Failed.as_str(),
                     remaining_logs: &logs_json,
-                    result: "执行超时",
+                    result: "Execution timeout",
                     usage: None,
                     model: None,
                 }).await;
 
-                let entry = ParsedLogEntry::error("执行超时，进程已被系统自动终止");
+                let entry = ParsedLogEntry::error("Execution timeout, process terminated by system");
                 send_event(&tx_clone, ExecEvent::Output { task_id: task_id.clone(), entry });
                 send_event(&tx_clone, ExecEvent::Finished {
                     task_id: task_id.clone(),
@@ -837,7 +848,7 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                     todo_title: todo_title.clone(),
                     executor: executor_spawn.executor_type().to_string(),
                     success: false,
-                    result: Some(format!("执行超时，已超过 {}", timeout_str)),
+                    result: Some(format!("Execution timeout, exceeded {}", timeout_str)),
                     feishu_bot_id,
                     feishu_receive_id,
                 });
