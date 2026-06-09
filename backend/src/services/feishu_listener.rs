@@ -894,7 +894,7 @@ impl FeishuListener {
                     let dir = db.get_project_directory_by_id(binding.project_dir_id).await.ok().flatten();
                     let dir_name = dir.as_ref().and_then(|d| d.name.as_deref()).unwrap_or("(unknown)");
                     let dir_path = dir.as_ref().map(|d| d.path.as_str()).unwrap_or("(unknown)");
-                    let status_icon = if binding.status == "running" { "🟢" } else { "⏸️" };
+                    let status_icon = if binding.status == crate::models::binding_status::RUNNING { "🟢" } else { "⏸️" };
                     let msg = format!(
                         "📎 当前绑定详情：\n项目：{dir_name}\n目录：{dir_path}\nTodo：#{binding_id}\n状态：{status_icon} {binding_status}\nSession：{session}\n\n💡 使用 /unbind 解绑",
                         binding_id = binding.todo_id,
@@ -1074,7 +1074,7 @@ impl FeishuListener {
         match db.get_feishu_project_binding(bot_id, channel).await {
             Ok(Some(binding)) => {
                 // If a task is running, warn user before unbinding
-                if binding.status == "running" {
+                if binding.status == crate::models::binding_status::RUNNING {
                     Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type,
                         "⚠️ 当前有任务正在执行，解绑后任务仍会在后台运行。\n如需强制终止，请使用 Web 界面「运行管理」停止。")
                         .await;

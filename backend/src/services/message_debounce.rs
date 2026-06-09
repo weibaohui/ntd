@@ -128,10 +128,10 @@ impl MessageDebounce {
                     }
 
                     let exec_message = if resume_sid.is_some() {
-                        // resume: send user content as the single message
-                        merged_content
+                        // resume: include system prompt with user content so Claude retains project context
+                        last.todo_prompt.replace("{{message}}", &merged_content)
                     } else {
-                        // new execution: send todo_prompt with params
+                        // new execution: send todo_prompt with params (replace_placeholders will substitute {{message}})
                         last.todo_prompt.clone()
                     };
 

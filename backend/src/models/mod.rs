@@ -637,21 +637,6 @@ pub mod binding_status {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FeishuProjectBinding {
-    pub id: i64,
-    pub bot_id: i64,
-    pub chat_id: String,
-    pub chat_type: String,
-    pub project_dir_id: i64,
-    pub todo_id: i64,
-    pub session_id: Option<String>,
-    pub latest_record_id: Option<i64>,
-    pub status: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutorConfig {
     pub id: i64,
     pub name: String,
