@@ -732,7 +732,13 @@ impl Database {
         )
         .await?;
 
-        // Feishu project bindings — maps a feishu chat to a project directory + todo
+        // 飞书项目绑定表 — 将飞书聊天会话绑定到项目目录
+        // - UNIQUE(bot_id, chat_id)：同一 Bot 下的同一聊天只能绑定一个项目
+        // - status 默认 'idle'，执行任务时更新为 'running'（执行完成后清理脚本重置为 idle）
+        // - session_id：Claude Code 的会话 ID，首次执行时填充，resume 时保持不变
+        // - latest_record_id：最近一次 execution_record.id，用于判断是否可 resume
+        // - chat_id 特殊值 "__pending__"：Web UI 创建的待绑定记录，等待飞书侧 /bind 补齐
+        // - created_at/updated_at 为 NOT NULL，业务层写入（非触发器）
         self.exec(
             "CREATE TABLE IF NOT EXISTS feishu_project_bindings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

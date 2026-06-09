@@ -141,6 +141,12 @@ impl MessageDebounce {
                         Err(_) => None,
                     };
                     tracing::debug!("[debounce] timer fired for bot_id={}, chat_id={}, msg_count={}, record_id={:?}", bot_id, key.1, entry.messages.len(), record_id);
+                    // 执行结果处理：
+                    // - 成功：更新 binding 状态为 running，记录 session_id + latest_record_id
+                    // - 失败：重置 binding 状态为 idle（让下次消息尝试开新 session）
+                    // session_id 策略：
+                    //   - 首次执行（resume_session_id=None）：使用 exec_result.task_id（即 Claude Code 的 --session-id）
+                    //   - resume 执行（resume_session_id=Some）：保持原 session_id 不变（同一个 Claude Code 会话）
                     match result {
                         Ok(exec_result) => {
                             // If this message came from a project-bound chat, update binding state

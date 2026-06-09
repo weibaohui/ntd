@@ -19,7 +19,15 @@ pub struct FeishuProjectBinding {
 }
 
 impl Database {
-    /// Create a new binding.
+    /// 创建飞书聊天与项目目录的绑定记录
+    ///
+    /// # 业务场景
+    /// 1. Web UI 创建待绑定记录（chat_id="__pending__"），等待飞书侧 /bind 补齐
+    /// 2. 飞书 /bind 命令直接创建完整绑定
+    ///
+    /// # 初始状态
+    /// - status = "idle"（等待首次执行）
+    /// - session_id/latest_record_id = None（首次执行时由 update_feishu_project_binding_session 填充）
     pub async fn create_feishu_project_binding(
         &self,
         bot_id: i64,
@@ -104,8 +112,13 @@ impl Database {
         self.exec_update(am).await
     }
 
-    /// Attach a pending binding (chat_id='__pending__') to a real chat.
-    /// Used when /bind <name> on Feishu connects a Web-UI-created binding to a chat.
+    /// 将 pending 绑定（chat_id="__pending__"）连接到真实聊天
+    ///
+    /// 流程：Web UI 预先创建了 binding（含 Todo + project_dir），用户在飞书发送
+    /// /bind <名称> 时，此方法将 pending binding 的 chat_id 从 "__pending__" 更新为
+    /// 真实 chat_id，从而激活绑定。
+    ///
+    /// 前提：调用前需确保该 chat 尚未绑定（或已由调用方清理旧绑定）。
     pub async fn attach_feishu_project_binding(
         &self,
         id: i64,

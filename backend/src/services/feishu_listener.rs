@@ -358,8 +358,14 @@ impl FeishuListener {
             }
         }
 
-        // Check if this chat has a project binding → route to project execution path
-        // Priority: bound project > slash command > default response
+        // 检查当前聊天是否有项目目录绑定 → 走项目执行路径
+        // 绑定路径优先级高于斜杠命令和默认回复：
+        //   有绑定 → 最近一条 execution 还在运行 → resume 同一 session
+        //   有绑定 → 最近一条已结束（或从未执行）→ 开新 session
+        //   无绑定 → 降级到斜杠命令/默认回复
+        // 为什么用 latest_record_id 判断而非 get_execution_record_by_task_id？
+        //   resume 执行时新 record 的 task_id ≠ session_id，用 task_id 查会找到旧的
+        //   已结束的 record 导致 should_resume=false，会话链断裂。
         match db.get_feishu_project_binding(bot_id, &msg.channel).await {
             Ok(Some(binding)) => {
                 // 检查绑定的 todo 是否存在
@@ -880,7 +886,10 @@ impl FeishuListener {
             return;
         }
 
-        // Find project directory by name (exact match first, then prefix)
+        // 按项目名称查找：先精确匹配，再前缀匹配
+        // ⚠️ 前缀匹配时若多个目录共享相同前缀（如 my-app / my-application），
+        //    优先匹配数据库中先插入的那条，不会弹出歧义提示。
+        //    用户可通过输入完整名称避免歧义。
         let directories = db.get_project_directories().await.unwrap_or_default();
         let dir = directories.iter().find(|d| d.name.as_deref() == Some(project_name))
             .or_else(|| directories.iter().find(|d| d.name.as_deref().map(|n| n.starts_with(project_name)).unwrap_or(false)))
