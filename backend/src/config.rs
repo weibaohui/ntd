@@ -216,16 +216,13 @@ impl Config {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).ok();
             }
-            // Reuse the already-normalized cfg for saving to disk (no need to re-clone and re-normalize)
-            let mut cfg_for_save = cfg.clone();
-            cfg_for_save.normalize_paths();
-            cfg_for_save.clamp_execution_timeout_secs();
+            // Clone the already-normalized and clamped cfg for serialization to disk
+            let cfg_for_save = cfg.clone();
             if let Ok(yaml) = serde_yaml::to_string(&cfg_for_save) {
                 if let Err(e) = std::fs::write(&path, yaml) {
                     eprintln!("Warning: failed to write config file ({}), using in-memory defaults", e);
                 }
             }
-            // cfg_for_save was already normalized/clamped above; cfg is already in good state
             return cfg;
         }
 
