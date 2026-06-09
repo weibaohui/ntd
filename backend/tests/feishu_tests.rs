@@ -212,6 +212,9 @@ mod pending_message_tests {
             trigger_type: "feishu".to_string(),
             params: None,
             message_id: Some("msg_789".to_string()),
+            resume_session_id: None,
+            resume_message: None,
+            binding_id: None,
         };
 
         assert_eq!(msg.bot_id, 1);
@@ -238,6 +241,9 @@ mod pending_message_tests {
             trigger_type: "feishu".to_string(),
             params: Some(params),
             message_id: None,
+            resume_session_id: None,
+            resume_message: None,
+            binding_id: None,
         };
 
         assert!(msg.params.is_some());

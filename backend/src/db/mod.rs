@@ -732,6 +732,26 @@ impl Database {
         )
         .await?;
 
+        // Feishu project bindings — maps a feishu chat to a project directory + todo
+        self.exec(
+            "CREATE TABLE IF NOT EXISTS feishu_project_bindings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_id INTEGER NOT NULL,
+                chat_id TEXT NOT NULL,
+                chat_type TEXT NOT NULL,
+                project_dir_id INTEGER NOT NULL,
+                todo_id INTEGER NOT NULL,
+                session_id TEXT,
+                latest_record_id INTEGER,
+                status TEXT NOT NULL DEFAULT 'idle',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE,
+                UNIQUE(bot_id, chat_id)
+            )",
+        )
+        .await?;
+
         // Executors table (executor config moved from config.yaml to database)
         self.exec(
             "CREATE TABLE IF NOT EXISTS executors (
@@ -1392,6 +1412,7 @@ mod skills;
 pub use feishu_message::{NewFeishuHistoryMessage, NewFeishuMessage};
 mod feishu_group_whitelist;
 mod feishu_history_chat;
+mod feishu_project_binding;
 mod feishu_push_target;
 mod feishu_response_config;
 pub mod project_directory;

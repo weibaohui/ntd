@@ -6,6 +6,7 @@ import * as db from '@/utils/database';
 import type { FeishuPushStatus, WhitelistEntry } from '@/utils/database';
 import type { FeishuHistoryMessage, FeishuHistoryChat, ExecutionRecord } from '@/types';
 import { BindTab } from './messages/BindTab';
+import { ProjectBindsTab } from './messages/ProjectBindsTab';
 import { RecordTab } from './messages/RecordTab';
 import { ExecutionDetailModal } from './messages/ExecutionDetailModal';
 
@@ -356,6 +357,11 @@ export function MessagesPanel({ configForm, configSaving, handleSaveConfig, onBa
                 onRefresh={() => { loadAgentBots(); loadFeishuPush(); }}
               />
             ),
+          },
+          {
+            key: 'project-binds',
+            label: '项目绑定',
+            children: <ProjectBindsTab />,
           },
           {
             key: 'record',

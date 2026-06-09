@@ -153,6 +153,7 @@ mod config;
 pub mod skills;
 pub mod agent_bot;
 pub mod executor_config;
+mod feishu_binding;
 mod feishu_history;
 mod session;
 pub mod project_directory;
@@ -614,6 +615,9 @@ pub fn create_app(
         .route("/api/feishu/senders", get(feishu_history::get_distinct_senders))
         .route("/api/feishu/history-chats", get(feishu_history::get_history_chats).post(feishu_history::create_history_chat))
         .route("/api/feishu/history-chats/{id}", delete(feishu_history::delete_history_chat).put(feishu_history::update_history_chat))
+        .route("/api/feishu/bindings", get(feishu_binding::list_bindings).post(feishu_binding::create_binding))
+        .route("/api/feishu/bindings/{id}", delete(feishu_binding::delete_binding))
+        .route("/api/feishu/bindings/by-chat", delete(feishu_binding::delete_binding_by_chat))
         .route("/api/agent-bots/{id}", delete(agent_bot::delete_agent_bot))
         .route("/api/agent-bots/{id}/config", put(agent_bot::update_agent_bot_config))
         .route("/health", get(health_handler))

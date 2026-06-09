@@ -1,0 +1,205 @@
+use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter};
+use crate::db::Database;
+use crate::db::entity::feishu_project_bindings;
+
+/// A binding between a Feishu chat and a project directory.
+#[derive(Debug, Clone)]
+pub struct FeishuProjectBinding {
+    pub id: i64,
+    pub bot_id: i64,
+    pub chat_id: String,
+    pub chat_type: String,
+    pub project_dir_id: i64,
+    pub todo_id: i64,
+    pub session_id: Option<String>,
+    pub latest_record_id: Option<i64>,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl Database {
+    /// Create a new binding.
+    pub async fn create_feishu_project_binding(
+        &self,
+        bot_id: i64,
+        chat_id: &str,
+        chat_type: &str,
+        project_dir_id: i64,
+        todo_id: i64,
+    ) -> Result<i64, sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let am = feishu_project_bindings::ActiveModel {
+            bot_id: ActiveValue::Set(bot_id),
+            chat_id: ActiveValue::Set(chat_id.to_string()),
+            chat_type: ActiveValue::Set(chat_type.to_string()),
+            project_dir_id: ActiveValue::Set(project_dir_id),
+            todo_id: ActiveValue::Set(todo_id),
+            session_id: ActiveValue::Set(None),
+            latest_record_id: ActiveValue::Set(None),
+            status: ActiveValue::Set("idle".to_string()),
+            created_at: ActiveValue::Set(now.clone()),
+            updated_at: ActiveValue::Set(now),
+            ..Default::default()
+        };
+        let inserted = am.insert(&self.conn).await?;
+        Ok(inserted.id)
+    }
+
+    /// Get binding by bot_id + chat_id.
+    /// Auto-corrects status to "idle" if the latest execution record is no longer running.
+    pub async fn get_feishu_project_binding(
+        &self,
+        bot_id: i64,
+        chat_id: &str,
+    ) -> Result<Option<FeishuProjectBinding>, sea_orm::DbErr> {
+        let model = feishu_project_bindings::Entity::find()
+            .filter(feishu_project_bindings::Column::BotId.eq(bot_id))
+            .filter(feishu_project_bindings::Column::ChatId.eq(chat_id))
+            .one(&self.conn)
+            .await?;
+        if let Some(m) = model {
+            let mut binding = Self::binding_from_model(m);
+            // Auto-correct: if binding says "running" but the latest record has finished
+            if binding.status == "running" {
+                if let Some(record_id) = binding.latest_record_id {
+                    use crate::db::entity::execution_records;
+                    let record = execution_records::Entity::find_by_id(record_id)
+                        .one(&self.conn)
+                        .await?;
+                    if let Some(r) = record {
+                        let is_running = r.status.as_deref() == Some("running");
+                        if !is_running {
+                            // Update binding status to idle
+                            self.update_feishu_project_binding_status(binding.id, "idle").await?;
+                            binding.status = "idle".to_string();
+                        }
+                    }
+                }
+            }
+            Ok(Some(binding))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get all bindings for a given bot.
+    pub async fn get_feishu_project_bindings(
+        &self,
+        bot_id: i64,
+    ) -> Result<Vec<FeishuProjectBinding>, sea_orm::DbErr> {
+        let models = feishu_project_bindings::Entity::find()
+            .filter(feishu_project_bindings::Column::BotId.eq(bot_id))
+            .all(&self.conn)
+            .await?;
+        Ok(models.into_iter().map(Self::binding_from_model).collect())
+    }
+
+    /// Get all bindings across all bots.
+    pub async fn get_all_feishu_project_bindings(
+        &self,
+    ) -> Result<Vec<FeishuProjectBinding>, sea_orm::DbErr> {
+        let models = feishu_project_bindings::Entity::find()
+            .all(&self.conn)
+            .await?;
+        Ok(models.into_iter().map(Self::binding_from_model).collect())
+    }
+
+    /// Update session_id and status after starting an execution.
+    pub async fn update_feishu_project_binding_session(
+        &self,
+        id: i64,
+        session_id: &str,
+        latest_record_id: i64,
+        status: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let am = feishu_project_bindings::ActiveModel {
+            id: ActiveValue::Unchanged(id),
+            session_id: ActiveValue::Set(Some(session_id.to_string())),
+            latest_record_id: ActiveValue::Set(Some(latest_record_id)),
+            status: ActiveValue::Set(status.to_string()),
+            updated_at: ActiveValue::Set(now),
+            ..Default::default()
+        };
+        self.exec_update(am).await
+    }
+
+    /// Attach a pending binding (chat_id='__pending__') to a real chat.
+    /// Used when /bind <name> on Feishu connects a Web-UI-created binding to a chat.
+    pub async fn attach_feishu_project_binding(
+        &self,
+        id: i64,
+        chat_id: &str,
+        chat_type: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let am = feishu_project_bindings::ActiveModel {
+            id: ActiveValue::Unchanged(id),
+            chat_id: ActiveValue::Set(chat_id.to_string()),
+            chat_type: ActiveValue::Set(chat_type.to_string()),
+            updated_at: ActiveValue::Set(now),
+            ..Default::default()
+        };
+        use sea_orm::ActiveModelTrait;
+        am.update(&self.conn).await?;
+        Ok(())
+    }
+
+    /// Update binding status (e.g. back to idle after execution ends).
+    pub async fn update_feishu_project_binding_status(
+        &self,
+        id: i64,
+        status: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let am = feishu_project_bindings::ActiveModel {
+            id: ActiveValue::Unchanged(id),
+            status: ActiveValue::Set(status.to_string()),
+            updated_at: ActiveValue::Set(now),
+            ..Default::default()
+        };
+        self.exec_update(am).await
+    }
+
+    /// Delete a binding.
+    pub async fn delete_feishu_project_binding(
+        &self,
+        id: i64,
+    ) -> Result<(), sea_orm::DbErr> {
+        feishu_project_bindings::Entity::delete_by_id(id)
+            .exec(&self.conn)
+            .await
+            .map(|_| ())
+    }
+
+    /// Delete binding by bot_id + chat_id.
+    pub async fn delete_feishu_project_binding_by_chat(
+        &self,
+        bot_id: i64,
+        chat_id: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        if let Some(binding) = self.get_feishu_project_binding(bot_id, chat_id).await? {
+            self.delete_feishu_project_binding(binding.id).await?;
+        }
+        Ok(())
+    }
+
+    // --- helpers ---
+
+    fn binding_from_model(m: feishu_project_bindings::Model) -> FeishuProjectBinding {
+        FeishuProjectBinding {
+            id: m.id,
+            bot_id: m.bot_id,
+            chat_id: m.chat_id,
+            chat_type: m.chat_type,
+            project_dir_id: m.project_dir_id,
+            todo_id: m.todo_id,
+            session_id: m.session_id,
+            latest_record_id: m.latest_record_id,
+            status: m.status,
+            created_at: m.created_at,
+            updated_at: m.updated_at,
+        }
+    }
+}

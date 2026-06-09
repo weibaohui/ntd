@@ -21,6 +21,12 @@ pub struct PendingMessage {
     pub trigger_type: String,
     pub params: Option<HashMap<String, String>>,
     pub message_id: Option<String>,
+    /// For project-bound resume: the session_id to resume
+    pub resume_session_id: Option<String>,
+    /// For project-bound resume: the message content as resume_message
+    pub resume_message: Option<String>,
+    /// feishu_project_bindings.id — set when this message comes from a bound chat
+    pub binding_id: Option<i64>,
 }
 
 struct DebounceEntry {
@@ -97,7 +103,18 @@ impl MessageDebounce {
                     let last = entry.messages.last().unwrap();
                     let mut merged_params = last.params.clone().unwrap_or_default();
                     merged_params.insert("content".to_string(), merged_content.clone());
-                    merged_params.insert("message".to_string(), merged_content);
+                    merged_params.insert("message".to_string(), merged_content.clone());
+
+                    // For resume sessions: use the user's content as the message to resume with
+                    let resume_msg = last.resume_message.clone();
+                    let resume_sid = last.resume_session_id.clone();
+                    let exec_message = if resume_sid.is_some() {
+                        // resume: send user content as the single message
+                        merged_content
+                    } else {
+                        // new execution: send todo_prompt with params
+                        last.todo_prompt.clone()
+                    };
 
                     let result = start_todo_execution(RunTodoExecutionRequest {
                         db: db.clone(),
@@ -106,12 +123,12 @@ impl MessageDebounce {
                         task_manager,
                         config,
                         todo_id: last.todo_id,
-                        message: last.todo_prompt.clone(),
+                        message: exec_message,
                         req_executor: last.executor.clone(),
                         trigger_type: last.trigger_type.clone(),
-                        params: Some(merged_params),
-                        resume_session_id: None,
-                        resume_message: None,
+                        params: if resume_sid.is_some() { None } else { Some(merged_params) },
+                        resume_session_id: resume_sid,
+                        resume_message: resume_msg,
                         chain: vec![],
                         source_todo_id: None,
                         source_todo_title: None,
@@ -126,6 +143,28 @@ impl MessageDebounce {
                     tracing::debug!("[debounce] timer fired for bot_id={}, chat_id={}, msg_count={}, record_id={:?}", bot_id, key.1, entry.messages.len(), record_id);
                     match result {
                         Ok(exec_result) => {
+                            // If this message came from a project-bound chat, update binding state
+                            if let Some(binding_id) = last.binding_id {
+                                let sid = if last.resume_session_id.is_some() {
+                                    // Resume: session_id stays the same, just update record
+                                    last.resume_session_id.clone()
+                                } else {
+                                    // New execution: use task_id as session_id
+                                    Some(exec_result.task_id.clone())
+                                };
+                                if let Some(session_id) = sid {
+                                    let record_id = exec_result.record_id.unwrap_or(0);
+                                    let _ = db
+                                        .update_feishu_project_binding_session(
+                                            binding_id,
+                                            &session_id,
+                                            record_id,
+                                            "running",
+                                        )
+                                        .await;
+                                }
+                            }
+
                             // Update all pending messages with todo_id and execution_record_id
                             let record_id = exec_result.record_id;
                             for msg in &entry.messages {
@@ -149,6 +188,12 @@ impl MessageDebounce {
                                 last.todo_id,
                                 e
                             );
+                            // Reset binding status to idle on failure
+                            if let Some(binding_id) = last.binding_id {
+                                let _ = db
+                                    .update_feishu_project_binding_status(binding_id, "idle")
+                                    .await;
+                            }
                             // Mark messages as failed (processed=false) so they can be retried
                             for msg in &entry.messages {
                                 if let Some(ref msg_id) = msg.message_id {

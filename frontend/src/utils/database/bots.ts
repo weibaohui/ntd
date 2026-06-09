@@ -226,3 +226,40 @@ export async function addGroupWhitelist(botId: number, senderOpenId: string, sen
 export async function deleteGroupWhitelist(id: number): Promise<void> {
   await api.delete(`/api/agent-bots/feishu/group-whitelist/${id}`);
 }
+
+// Project Binding APIs
+
+export interface FeishuProjectBindingItem {
+  id: number;
+  bot_id: number;
+  chat_id: string;
+  chat_type: string;
+  project_dir_id: number;
+  todo_id: number;
+  session_id: string | null;
+  latest_record_id: number | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  project_name: string | null;
+  project_path: string | null;
+}
+
+export async function getFeishuBindings(botId?: number): Promise<FeishuProjectBindingItem[]> {
+  const params: Record<string, number> = {};
+  if (botId !== undefined) params.bot_id = botId;
+  return unwrap(await api.get('/api/feishu/bindings', { params }));
+}
+
+export async function createFeishuBinding(params: {
+  bot_id: number;
+  chat_id: string;
+  chat_type: string;
+  project_dir_id: number;
+}): Promise<FeishuProjectBindingItem> {
+  return unwrap(await api.post('/api/feishu/bindings', params));
+}
+
+export async function deleteFeishuBinding(id: number): Promise<void> {
+  await api.delete(`/api/feishu/bindings/${id}`);
+}

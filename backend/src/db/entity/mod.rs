@@ -8,6 +8,7 @@ pub mod feishu_messages;
 pub mod feishu_push_targets;
 pub mod feishu_response_config;
 pub mod feishu_group_whitelist;
+pub mod feishu_project_bindings;
 pub mod project_directories;
 pub mod sync_records;
 pub mod tags;
@@ -31,6 +32,7 @@ pub mod prelude {
     pub use super::feishu_push_targets::Entity as FeishuPushTargets;
     pub use super::feishu_response_config::Entity as FeishuResponseConfig;
     pub use super::feishu_group_whitelist::Entity as FeishuGroupWhitelist;
+    pub use super::feishu_project_bindings::Entity as FeishuProjectBindings;
     pub use super::project_directories::Entity as ProjectDirectories;
     pub use super::sync_records::Entity as SyncRecords;
     pub use super::tags::Entity as Tags;
