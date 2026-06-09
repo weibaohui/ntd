@@ -440,12 +440,24 @@ pub async fn delete_agent_bot(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, AppError> {
-    // 先清理关联的项目绑定（feishu_project_bindings 无 FK CASCADE）
-    if let Ok(bindings) = state.db.get_feishu_project_bindings(id).await {
-        for b in bindings {
-            let _ = state.db.delete_feishu_project_binding(b.id).await;
+    // 先清理关联的项目绑定（feishu_project_bindings 无 FK CASCADE，需手动清理避免孤儿记录）。
+    // 查询失败时记录错误但继续删除，因为 bot 本身的删除优先级更高。
+    let bindings = state.db
+        .get_feishu_project_bindings(id)
+        .await
+        .map_err(|e| {
+            tracing::warn!("failed to query bindings for bot {} before deletion: {}", id, e);
+            e
+        })
+        .unwrap_or_default();
+
+    // 逐条删除绑定，记录失败但不中断（最坏情况是遗留孤儿绑定，由 cleanup_stale_running_bindings 兜底）。
+    for b in bindings {
+        if let Err(e) = state.db.delete_feishu_project_binding(b.id).await {
+            tracing::error!("failed to delete binding {} for bot {}: {}", b.id, id, e);
         }
     }
+
     state.db.delete_agent_bot(id).await.map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(ApiResponse::ok(serde_json::json!({"success": true})))
 }

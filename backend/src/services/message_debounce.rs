@@ -127,18 +127,18 @@ impl MessageDebounce {
                         }
                     }
 
+                    // resume 时把用户内容注入 prompt（Claude 需要在同一消息中看到项目和用户内容）。
+                    // 首次执行不注入：params 中有 {{message}} 占位符，由 replace_placeholders 处理，
+                    // 这样 system prompt 能正确传递给 Claude。
                     let exec_message = if resume_sid.is_some() {
-                        // resume: include system prompt with user content so Claude retains project context
                         last.todo_prompt.replace("{{message}}", &merged_content)
                     } else {
-                        // new execution: send todo_prompt with params (replace_placeholders will substitute {{message}})
                         last.todo_prompt.clone()
                     };
 
                     // Clone before move: resume_sid is consumed by the request below,
                     // but we still need it for the TOCTOU-correct binding update after.
                     let is_resume = resume_sid.is_some();
-                    let sid_for_binding = resume_sid.clone();
 
                     let result = start_todo_execution(RunTodoExecutionRequest {
                         db: db.clone(),
@@ -181,12 +181,14 @@ impl MessageDebounce {
                             if let Some(binding_id) = last.binding_id {
                                 if let Some(rid) = exec_result.record_id {
                                     if is_resume {
-                                        // Resume: preserve session_id (from sid_for_binding), update latest_record_id + status
+                                        // Resume: update session_id to the new task so subsequent
+                                        // resumes can find the correct execution record chain.
                                         // is_resume is post-TOCTOU, so if todo_id changed it will be false
+                                        let new_sid = exec_result.task_id.clone();
                                         if let Err(e) = db
                                             .update_feishu_project_binding_session(
                                                 binding_id,
-                                                sid_for_binding.as_deref(),
+                                                Some(&new_sid),
                                                 rid,
                                                 crate::models::binding_status::RUNNING,
                                             )

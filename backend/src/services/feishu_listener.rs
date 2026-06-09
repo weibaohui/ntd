@@ -15,6 +15,7 @@ use crate::config::Config as AppConfig;
 use crate::db::{Database, NewFeishuMessage};
 use crate::models::{AgentBot, BotConfig, build_trigger_params};
 use crate::services::message_debounce::{MessageDebounce, PendingMessage};
+use crate::task_manager::TaskManager;
 
 /// Manages WebSocket connections to Feishu for all bound bots.
 #[derive(Clone)]
@@ -33,6 +34,7 @@ struct ListenerMessageContext<'a> {
     token_manager: &'a Arc<TokenManager>,
     credentials: &'a DashMap<i64, (String, String, String)>,
     debounce: &'a Arc<MessageDebounce>,
+    task_manager: &'a Arc<TaskManager>,
     bot_id: i64,
     bot_open_id: &'a str,
     bot_config: &'a BotConfig,
@@ -142,6 +144,7 @@ impl FeishuListener {
         let config = self.ctx.config.clone();
         let token_manager = self.token_manager.clone();
         let debounce = self.debounce.clone();
+        let task_manager = self.ctx.task_manager.clone();
         tokio::spawn(async move {
             tracing::info!("[feishu:{}] message receiver loop started", bot_id);
             while let Some(msg) = rx.recv().await {
@@ -151,6 +154,7 @@ impl FeishuListener {
                     token_manager: &token_manager,
                     credentials: &credentials,
                     debounce: &debounce,
+                    task_manager: &task_manager,
                     bot_id,
                     bot_open_id: &bot_open_id,
                     bot_config: &bot_config_clone,
@@ -175,6 +179,7 @@ impl FeishuListener {
             token_manager,
             credentials,
             debounce,
+            task_manager,
             bot_id,
             bot_open_id,
             bot_config,
@@ -412,7 +417,9 @@ impl FeishuListener {
                     //
                     // Resume criteria:
                     //   1. session_id is present in the latest execution record
-                    //   2. the execution is NOT still in flight (status != "running").
+                    //   2. the execution record's task is still alive in task_manager
+                    //      (defensive: avoids resuming against a crashed executor's session file)
+                    //   3. the execution is NOT still in flight (status != "running").
                     //      If status == "running", the Claude Code process is still writing
                     //      the JSONL file; resuming now races with that write.
                     // NOTE: we check latest_record_id (not get_execution_record_by_task_id)
@@ -423,10 +430,25 @@ impl FeishuListener {
                         None => None,
                     };
 
+                    // 防御：验证 task 仍在 task_manager 内存中（进程未 crash 则 alive）
+                    let task_still_alive = if let Some(ref record) = latest_record {
+                        if let Some(ref tid) = record.task_id {
+                            task_manager.get_all_task_infos().await
+                                .iter()
+                                .any(|t| &t.task_id == tid)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+
                     let should_resume = latest_record
                         .as_ref()
                         .map(|r| {
+                            // 进程已退出（crash/重启）时 task_still_alive=false，防止 resume 失效的 session
                             r.session_id.is_some()
+                                && task_still_alive
                                 && r.status != crate::models::ExecutionStatus::Running
                         })
                         .unwrap_or(false);
