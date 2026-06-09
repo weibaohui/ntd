@@ -153,15 +153,21 @@ impl MessageDebounce {
                                     Some(exec_result.task_id.clone())
                                 };
                                 if let Some(session_id) = sid {
-                                    let record_id = exec_result.record_id.unwrap_or(0);
-                                    let _ = db
-                                        .update_feishu_project_binding_session(
-                                            binding_id,
-                                            &session_id,
-                                            record_id,
-                                            "running",
-                                        )
-                                        .await;
+                                    if let Some(rid) = exec_result.record_id {
+                                        let _ = db
+                                            .update_feishu_project_binding_session(
+                                                binding_id,
+                                                &session_id,
+                                                rid,
+                                                "running",
+                                            )
+                                            .await;
+                                    } else {
+                                        // Record ID missing: still update session + status
+                                        let _ = db
+                                            .update_feishu_project_binding_status(binding_id, "running")
+                                            .await;
+                                    }
                                 }
                             }
 

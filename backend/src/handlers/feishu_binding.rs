@@ -88,12 +88,7 @@ pub async fn create_binding(
         .await?
         .ok_or_else(|| AppError::BadRequest("Project directory not found".to_string()))?;
 
-    // Delete existing binding for this chat if any
-    let _ = state.db
-        .delete_feishu_project_binding_by_chat(req.bot_id, &req.chat_id)
-        .await;
-
-    // Create a Todo for this binding
+    // Step 1: Create Todo first — if this fails, nothing is lost.
     let todo_title = format!("飞书-{}", dir.name.as_deref().unwrap_or(&dir.path));
     let todo_prompt = format!(
         "你是飞书Bot的AI助手，正在项目「{name}」({path})中工作。\n\
@@ -105,8 +100,19 @@ pub async fn create_binding(
     );
 
     let todo_id = state.db.create_todo(&todo_title, &todo_prompt).await?;
-    let _ = state.db.update_todo_workspace(todo_id, Some(&dir.path)).await;
-    let _ = state.db.update_todo_worktree_enabled(todo_id, true).await;
+
+    // Step 2: Update workspace/worktree — warn on failure but don't abort
+    if let Err(e) = state.db.update_todo_workspace(todo_id, Some(&dir.path)).await {
+        tracing::warn!("[binding] failed to set todo workspace: {e}");
+    }
+    if let Err(e) = state.db.update_todo_worktree_enabled(todo_id, true).await {
+        tracing::warn!("[binding] failed to set worktree_enabled: {e}");
+    }
+
+    // Step 3: Delete old binding + create new binding (close together to minimize window)
+    let _ = state.db
+        .delete_feishu_project_binding_by_chat(req.bot_id, &req.chat_id)
+        .await;
 
     let binding_id = state.db
         .create_feishu_project_binding(

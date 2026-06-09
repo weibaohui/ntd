@@ -363,7 +363,7 @@ impl FeishuListener {
         match db.get_feishu_project_binding(bot_id, &msg.channel).await {
             Ok(Some(binding)) => {
                 // 检查绑定的 todo 是否存在
-                if let Ok(Some(_todo)) = db.get_todo(binding.todo_id).await {
+                if let Ok(Some(todo)) = db.get_todo(binding.todo_id).await {
                     // Determine if we should resume an existing session or start fresh
                     // resume if: session_id exists AND the latest record is still running
                     let should_resume = if let Some(sid) = &binding.session_id {
@@ -382,6 +382,9 @@ impl FeishuListener {
                         (None, None)
                     };
 
+                    // Use the todo's configured executor, fallback to claudecode
+                    let executor = todo.executor.as_deref().unwrap_or("claudecode");
+
                     debounce.push(PendingMessage {
                         bot_id,
                         chat_id: msg.channel.clone(),
@@ -390,7 +393,7 @@ impl FeishuListener {
                         content: content.to_string(),
                         todo_id: binding.todo_id,
                         todo_prompt: content.to_string(),
-                        executor: Some("claudecode".to_string()),
+                        executor: Some(executor.to_string()),
                         trigger_type: "feishu_project_bind".to_string(),
                         params: None,
                         message_id: Some(msg.id.clone()),
@@ -984,6 +987,12 @@ impl FeishuListener {
 
         match db.get_feishu_project_binding(bot_id, channel).await {
             Ok(Some(binding)) => {
+                // If a task is running, warn user before deleting
+                if binding.status == "running" {
+                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type,
+                        "⚠️ 当前有任务正在执行，解绑后任务仍会在后台运行。\n如需强制终止，请使用 Web 界面「运行管理」停止。")
+                        .await;
+                }
                 if let Err(e) = db.delete_feishu_project_binding(binding.id).await {
                     tracing::error!("[feishu:{}] /unbind failed: {e}", bot_id);
                     Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 解绑失败，请稍后重试").await;

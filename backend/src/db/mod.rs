@@ -746,11 +746,16 @@ impl Database {
                 status TEXT NOT NULL DEFAULT 'idle',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE,
                 UNIQUE(bot_id, chat_id)
             )",
         )
         .await?;
+        // Index for latest_record_id lookups (hot path in resume routing & cleanup)
+        self.exec("CREATE INDEX IF NOT EXISTS idx_feishu_bindings_record_id ON feishu_project_bindings(latest_record_id)")
+            .await?;
+        // Index for bot_id lookups in /list and cleanup
+        self.exec("CREATE INDEX IF NOT EXISTS idx_feishu_bindings_bot_id ON feishu_project_bindings(bot_id)")
+            .await?;
 
         // Executors table (executor config moved from config.yaml to database)
         self.exec(

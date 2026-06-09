@@ -1,4 +1,4 @@
-use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Statement};
 use crate::db::Database;
 use crate::db::entity::feishu_project_bindings;
 
@@ -47,7 +47,8 @@ impl Database {
     }
 
     /// Get binding by bot_id + chat_id.
-    /// Auto-corrects status to "idle" if the latest execution record is no longer running.
+    /// Read-only — does NOT correct stale status. Callers should use
+    /// `cleanup_stale_running_bindings` periodically or inline when routing.
     pub async fn get_feishu_project_binding(
         &self,
         bot_id: i64,
@@ -58,29 +59,7 @@ impl Database {
             .filter(feishu_project_bindings::Column::ChatId.eq(chat_id))
             .one(&self.conn)
             .await?;
-        if let Some(m) = model {
-            let mut binding = Self::binding_from_model(m);
-            // Auto-correct: if binding says "running" but the latest record has finished
-            if binding.status == "running" {
-                if let Some(record_id) = binding.latest_record_id {
-                    use crate::db::entity::execution_records;
-                    let record = execution_records::Entity::find_by_id(record_id)
-                        .one(&self.conn)
-                        .await?;
-                    if let Some(r) = record {
-                        let is_running = r.status.as_deref() == Some("running");
-                        if !is_running {
-                            // Update binding status to idle
-                            self.update_feishu_project_binding_status(binding.id, "idle").await?;
-                            binding.status = "idle".to_string();
-                        }
-                    }
-                }
-            }
-            Ok(Some(binding))
-        } else {
-            Ok(None)
-        }
+        Ok(model.map(Self::binding_from_model))
     }
 
     /// Get all bindings for a given bot.
@@ -183,6 +162,23 @@ impl Database {
             self.delete_feishu_project_binding(binding.id).await?;
         }
         Ok(())
+    }
+
+    /// Atomically reset bindings whose latest_record is no longer running.
+    /// Uses a single UPDATE … WHERE … IN (SELECT …) to avoid race between read+write.
+    /// Call from a periodic task or inline when routing.
+    pub async fn cleanup_stale_running_bindings(&self) -> Result<u64, sea_orm::DbErr> {
+        let backend = self.conn.get_database_backend();
+        let sql = "UPDATE feishu_project_bindings \
+            SET status = 'idle', updated_at = ? \
+            WHERE status = 'running' \
+            AND latest_record_id IN (SELECT id FROM execution_records WHERE status != 'running')";
+        let now = crate::models::utc_timestamp();
+        let res = self
+            .conn
+            .execute(Statement::from_sql_and_values(backend, sql, [now.into()]))
+            .await?;
+        Ok(res.rows_affected())
     }
 
     // --- helpers ---
