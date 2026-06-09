@@ -366,8 +366,11 @@ impl FeishuListener {
                 if let Ok(Some(todo)) = db.get_todo(binding.todo_id).await {
                     // Determine if we should resume an existing session or start fresh
                     // resume if: session_id exists AND the latest record is still running
-                    let should_resume = if let Some(sid) = &binding.session_id {
-                        if let Ok(Some(record)) = db.get_execution_record_by_task_id(sid).await {
+                    // NOTE: we check latest_record_id (not get_execution_record_by_task_id)
+                    // because resume executions have different task_ids — the session_id
+                    // stays the same across turns, but the latest execution_record changes.
+                    let should_resume = if let Some(rid) = binding.latest_record_id {
+                        if let Ok(Some(record)) = db.get_execution_record(rid).await {
                             record.status == crate::models::ExecutionStatus::Running
                         } else {
                             false
