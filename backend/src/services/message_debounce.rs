@@ -183,14 +183,20 @@ impl MessageDebounce {
                                     if is_resume {
                                         // Resume: preserve session_id (from sid_for_binding), update latest_record_id + status
                                         // is_resume is post-TOCTOU, so if todo_id changed it will be false
-                                        let _ = db
+                                        if let Err(e) = db
                                             .update_feishu_project_binding_session(
                                                 binding_id,
                                                 sid_for_binding.as_deref(),
                                                 rid,
                                                 crate::models::binding_status::RUNNING,
                                             )
-                                            .await;
+                                            .await
+                                        {
+                                            tracing::warn!(
+                                                "[debounce] failed to update binding {} session on resume: {:?}",
+                                                binding_id, e
+                                            );
+                                        }
                                     } else {
                                         // First execution: save real session_id from execution record
                                         // so subsequent messages can resume this session.
@@ -198,20 +204,32 @@ impl MessageDebounce {
                                             .ok()
                                             .flatten()
                                             .and_then(|r| r.session_id);
-                                        let _ = db
+                                        if let Err(e) = db
                                             .update_feishu_project_binding_session(
                                                 binding_id,
                                                 real_sid.as_deref(),
                                                 rid,
                                                 crate::models::binding_status::IDLE,
                                             )
-                                            .await;
+                                            .await
+                                        {
+                                            tracing::warn!(
+                                                "[debounce] failed to update binding {} session on first exec: {:?}",
+                                                binding_id, e
+                                            );
+                                        }
                                     }
                                 } else {
                                     // Record ID missing: still update status
-                                    let _ = db
+                                    if let Err(e) = db
                                         .update_feishu_project_binding_status(binding_id, crate::models::binding_status::RUNNING)
-                                        .await;
+                                        .await
+                                    {
+                                        tracing::warn!(
+                                            "[debounce] failed to update binding {} status: {:?}",
+                                            binding_id, e
+                                        );
+                                    }
                                 }
                             }
 

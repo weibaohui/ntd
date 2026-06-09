@@ -973,7 +973,9 @@ impl FeishuListener {
             Some(dir) => {
                 // Check if already bound
                 if let Ok(Some(existing)) = db.get_feishu_project_binding(bot_id, channel).await {
-                    let _ = db.delete_feishu_project_binding(existing.id).await;
+                    if let Err(e) = db.delete_feishu_project_binding(existing.id).await {
+                        tracing::warn!("[feishu:{}] failed to delete existing binding {} before rebind: {}", bot_id, existing.id, e);
+                    }
                 }
 
                 // Try to find a pending binding created via Web UI (chat_id='__pending__')
