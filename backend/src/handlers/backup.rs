@@ -377,6 +377,7 @@ pub async fn update_auto_backup(
         cfg.auto_backup_max_files = max_files;
     }
     cfg.normalize_paths();
+    cfg.clamp_execution_timeout_secs();
 
     let cfg_clone = cfg.clone();
     tokio::task::spawn_blocking(move || cfg_clone.save())
@@ -824,6 +825,7 @@ pub async fn update_todo_auto_backup(
         cfg.auto_todo_backup_max_files = max_files;
     }
     cfg.normalize_paths();
+    cfg.clamp_execution_timeout_secs();
 
     let cfg_clone = cfg.clone();
     tokio::task::spawn_blocking(move || cfg_clone.save())
@@ -1354,6 +1356,7 @@ pub async fn update_skill_auto_backup(
         cfg.auto_skill_backup_max_files = max_files;
     }
     cfg.normalize_paths();
+    cfg.clamp_execution_timeout_secs();
 
     let cfg_clone = cfg.clone();
     tokio::task::spawn_blocking(move || cfg_clone.save())

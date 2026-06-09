@@ -71,6 +71,7 @@ pub async fn update_config(
     }
 
     cfg.normalize_paths();
+    cfg.clamp_execution_timeout_secs();
 
     let cfg_clone = cfg.clone();
     tokio::task::spawn_blocking(move || cfg_clone.save())

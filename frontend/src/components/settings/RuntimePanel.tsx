@@ -145,7 +145,7 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
               }}
             />
             <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>分钟</span>
-            <Tooltip title="单个执行任务的最大时长；关闭后不再因超时自动终止">
+            <Tooltip title={`单个执行任务的最大时长（1 ~ ${MAX_EXECUTION_TIMEOUT_MINUTES} 分钟，上限 7 天）；关闭后不再因超时自动终止`}>
               <InfoCircleOutlined style={{ color: 'var(--color-text-quaternary)', fontSize: 12 }} />
             </Tooltip>
           </div>

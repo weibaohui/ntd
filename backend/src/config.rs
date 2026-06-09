@@ -212,17 +212,20 @@ impl Config {
                 Config::default()
             };
             cfg.normalize_paths();
+            cfg.clamp_execution_timeout_secs();
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).ok();
             }
+            // Reuse the already-normalized cfg for saving to disk (no need to re-clone and re-normalize)
             let mut cfg_for_save = cfg.clone();
             cfg_for_save.normalize_paths();
+            cfg_for_save.clamp_execution_timeout_secs();
             if let Ok(yaml) = serde_yaml::to_string(&cfg_for_save) {
                 if let Err(e) = std::fs::write(&path, yaml) {
                     eprintln!("Warning: failed to write config file ({}), using in-memory defaults", e);
                 }
             }
-            cfg.normalize_paths();
+            // cfg_for_save was already normalized/clamped above; cfg is already in good state
             return cfg;
         }
 
@@ -233,20 +236,20 @@ impl Config {
                     Config::default()
                 });
                 cfg.normalize_paths();
+                cfg.clamp_execution_timeout_secs();
                 cfg
             }
             Err(e) => {
                 eprintln!("Warning: failed to read config file ({}), using defaults", e);
                 let mut cfg = Config::default();
                 cfg.normalize_paths();
+                cfg.clamp_execution_timeout_secs();
                 cfg
             }
         }
     }
 
-    /// Normalize paths and clamp execution_timeout_secs to valid range.
-    /// This is called both on fresh load (Config::load) and after HTTP updates (update_config).
-    /// YAML edits bypass HTTP validation, so we enforce here to prevent out-of-range values in config.yaml.
+    /// Normalize paths: expand ~ and relative paths to absolute paths.
     pub fn normalize_paths(&mut self) {
         self.db_path = Self::normalize_single_path(&self.db_path);
         // Normalize executor paths
@@ -254,7 +257,23 @@ impl Config {
             .map(|(k, v)| (k.clone(), Self::normalize_single_path(v)))
             .collect();
         self.executors.paths = normalized;
-        // Clamp execution_timeout_secs: 0 (disabled) always valid; 1-59s -> 60s (min); >MAX -> MAX.
+    }
+
+    /// Clamp execution_timeout_secs to the valid range [60, MAX_EXECUTION_TIMEOUT_SECS].
+    ///
+    /// **Why this is needed**: HTTP `update_config` validates the timeout via
+    /// `validate_execution_timeout_secs`, but users can bypass that by editing
+    /// `~/.ntd/config.yaml` directly.  `normalize_paths` / `normalize` is called after
+    /// both fresh YAML load and HTTP updates, so this is the single enforcement point
+    /// for YAML-level edits.
+    ///
+    /// **Boundary rationale**:
+    /// - `0`: allowed — means "no timeout" (matches `timeout_enabled = v > 0` in executor_service)
+    /// - `1-59`: raised to 60 — sub-minute timeouts are impractical (process startup
+    ///   overhead alone can exceed 30s) and risk killing normal long-running tasks
+    /// - `>MAX`: truncated — values in the hundreds of days indicate config errors;
+    ///   capping prevents long-running tasks from indefinitely occupying task slots
+    pub fn clamp_execution_timeout_secs(&mut self) {
         if self.execution_timeout_secs != 0 && self.execution_timeout_secs < 60 {
             self.execution_timeout_secs = 60;
         } else if self.execution_timeout_secs > MAX_EXECUTION_TIMEOUT_SECS {
@@ -406,5 +425,57 @@ mod tests {
         let yaml = serde_yaml::to_string(&cfg).unwrap();
         let restored: Config = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(restored.slash_command_rules, cfg.slash_command_rules);
+    }
+
+    // ---------------------------------------------------------------------------
+    // clamp_execution_timeout_secs tests (YAML bypass safety net)
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn test_clamp_preserves_zero() {
+        // 0 = "disabled", must pass through unchanged
+        let mut cfg = Config { execution_timeout_secs: 0, ..Default::default() };
+        cfg.clamp_execution_timeout_secs();
+        assert_eq!(cfg.execution_timeout_secs, 0);
+    }
+
+    #[test]
+    fn test_clamp_raises_sub_minute_to_60() {
+        // 1-59s is invalid; normalize should raise to 60
+        let mut cfg = Config { execution_timeout_secs: 30, ..Default::default() };
+        cfg.clamp_execution_timeout_secs();
+        assert_eq!(cfg.execution_timeout_secs, 60);
+    }
+
+    #[test]
+    fn test_clamp_truncates_above_max() {
+        // >MAX should be truncated to MAX
+        let mut cfg = Config { execution_timeout_secs: MAX_EXECUTION_TIMEOUT_SECS + 1, ..Default::default() };
+        cfg.clamp_execution_timeout_secs();
+        assert_eq!(cfg.execution_timeout_secs, MAX_EXECUTION_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn test_clamp_preserves_in_range_value() {
+        // A valid in-range value must not be modified
+        let mut cfg = Config { execution_timeout_secs: 3600, ..Default::default() };
+        cfg.clamp_execution_timeout_secs();
+        assert_eq!(cfg.execution_timeout_secs, 3600);
+    }
+
+    #[test]
+    fn test_clamp_at_minimum_boundary() {
+        // Exactly 60s (1 min) is valid
+        let mut cfg = Config { execution_timeout_secs: 60, ..Default::default() };
+        cfg.clamp_execution_timeout_secs();
+        assert_eq!(cfg.execution_timeout_secs, 60);
+    }
+
+    #[test]
+    fn test_clamp_at_maximum_boundary() {
+        // Exactly MAX is valid
+        let mut cfg = Config { execution_timeout_secs: MAX_EXECUTION_TIMEOUT_SECS, ..Default::default() };
+        cfg.clamp_execution_timeout_secs();
+        assert_eq!(cfg.execution_timeout_secs, MAX_EXECUTION_TIMEOUT_SECS);
     }
 }

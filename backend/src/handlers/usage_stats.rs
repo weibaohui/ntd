@@ -131,6 +131,7 @@ pub async fn update_usage_stats_settings(
     cfg.auto_usage_stats_enabled = req.enabled;
     cfg.auto_usage_stats_cron = req.cron;
     cfg.normalize_paths();
+    cfg.clamp_execution_timeout_secs();
 
     let cfg_clone = cfg.clone();
     tokio::task::spawn_blocking(move || cfg_clone.save())

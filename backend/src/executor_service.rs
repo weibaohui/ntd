@@ -710,19 +710,23 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         // task starts have no effect. To pick up a new timeout, wait for the current
         // execution to finish (or force-fail it via the UI).
         let timeout_enabled = execution_timeout_secs > 0;
-        // Duration is only used when timeout_enabled; max(1) guards against constructing
-        // Duration::ZERO in case the guard is accidentally removed in future refactors.
-        // Note: Duration::from_secs(0) does NOT panic — it returns Duration::ZERO — but
-        // tokio::time::sleep(Duration::ZERO) is a no-op, so we enforce a 1s minimum instead.
-        let timeout_duration = std::time::Duration::from_secs(execution_timeout_secs.max(1));
-        // Human-readable timeout string for display messages (always English to keep event output consistent).
+        // Non-zero values are guaranteed >= 60 by normalize_paths clamp, so from_secs is safe.
+        let timeout_duration = std::time::Duration::from_secs(execution_timeout_secs);
+        // Human-readable timeout string for display messages (always English).
+        // Uses hours for >=60 min, days for >=24 h to keep the output readable.
         let timeout_str = {
-            let mins = execution_timeout_secs / 60;
+            let total_min = execution_timeout_secs / 60;
             let secs = execution_timeout_secs % 60;
             if secs == 0 {
-                format!("{} min", mins)
+                if total_min >= 1440 {
+                    format!("{} day(s)", total_min / 1440)
+                } else if total_min >= 60 {
+                    format!("{} hour(s)", total_min / 60)
+                } else {
+                    format!("{} min", total_min)
+                }
             } else {
-                format!("{} min {} sec", mins, secs)
+                format!("{} min {} sec", total_min, secs)
             }
         };
         let timeout_sleep = tokio::time::sleep(timeout_duration);
