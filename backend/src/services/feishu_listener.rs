@@ -400,19 +400,24 @@ impl FeishuListener {
                 // 检查绑定的 todo 是否存在
                 if let Ok(Some(todo)) = db.get_todo(binding.todo_id).await {
                     // Determine if we should resume an existing session or start fresh
-                    // resume if: session_id exists AND the latest record is still running
+                    // resume if: latest record exists AND has a session_id
+                    // 即使执行已结束（success/failed），只要有 session_id 就应该继续多轮对话
                     // NOTE: we check latest_record_id (not get_execution_record_by_task_id)
                     // because resume executions have different task_ids — the session_id
                     // stays the same across turns, but the latest execution_record changes.
                     let should_resume = if let Some(rid) = binding.latest_record_id {
                         if let Ok(Some(record)) = db.get_execution_record(rid).await {
-                            record.status == crate::models::ExecutionStatus::Running
+                            record.session_id.is_some()
                         } else {
                             false
                         }
                     } else {
                         false
                     };
+                    tracing::info!(
+                        "[feishu:{}] binding check: todo_id={}, latest_record_id={:?}, should_resume={}, binding.session_id={:?}",
+                        bot_id, binding.todo_id, binding.latest_record_id, should_resume, binding.session_id
+                    );
 
                     let (resume_session_id, resume_message) = if should_resume {
                         // ⚠️ 不能使用 binding.session_id：debounce 首次执行时把它设为了 task_id（随机 UUID）
