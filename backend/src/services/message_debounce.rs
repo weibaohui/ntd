@@ -165,36 +165,44 @@ impl MessageDebounce {
                     // 执行结果处理：
                     // - 成功：更新 binding 状态为 running，记录 session_id + latest_record_id
                     // - 失败：重置 binding 状态为 idle（让下次消息尝试开新 session）
-                    // session_id 策略：
-                    //   - 首次执行（resume_session_id=None）：使用 exec_result.task_id（即 Claude Code 的 --session-id）
+                    // session_id 策略（重要）：
+                    //   - 首次执行（resume_session_id=None）：不设 session_id！task_id 是随机 UUID，
+                    //     Claude Code 的真实 session_id 来自 stdout JSONL 的 system 消息，
+                    //     保存在 execution_records.session_id 中。listener 的 resume 决策从那里读取。
                     //   - resume 执行（resume_session_id=Some）：保持原 session_id 不变（同一个 Claude Code 会话）
                     match result {
                         Ok(exec_result) => {
                             // If this message came from a project-bound chat, update binding state
                             if let Some(binding_id) = last.binding_id {
-                                let sid = if last.resume_session_id.is_some() {
-                                    // Resume: session_id stays the same, just update record
-                                    last.resume_session_id.clone()
-                                } else {
-                                    // New execution: use task_id as session_id
-                                    Some(exec_result.task_id.clone())
-                                };
-                                if let Some(session_id) = sid {
-                                    if let Some(rid) = exec_result.record_id {
+                                if let Some(rid) = exec_result.record_id {
+                                    if let Some(ref session_id) = last.resume_session_id {
+                                        // Resume: preserve session_id, update latest_record_id + status
                                         let _ = db
                                             .update_feishu_project_binding_session(
                                                 binding_id,
-                                                &session_id,
+                                                Some(session_id.as_str()),
                                                 rid,
                                                 "running",
                                             )
                                             .await;
                                     } else {
-                                        // Record ID missing: still update session + status
+                                        // First execution: only set latest_record_id + status
+                                        // session_id stays None — read from execution_records.session_id
+                                        // by listener when deciding to resume.
                                         let _ = db
-                                            .update_feishu_project_binding_status(binding_id, "running")
+                                            .update_feishu_project_binding_session(
+                                                binding_id,
+                                                None,
+                                                rid,
+                                                "running",
+                                            )
                                             .await;
                                     }
+                                } else {
+                                    // Record ID missing: still update status
+                                    let _ = db
+                                        .update_feishu_project_binding_status(binding_id, "running")
+                                        .await;
                                 }
                             }
 

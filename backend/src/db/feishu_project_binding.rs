@@ -103,23 +103,27 @@ impl Database {
         Ok(models.into_iter().map(Self::binding_from_model).collect())
     }
 
-    /// Update session_id and status after starting an execution.
+    /// Update session_id (when Some), latest_record_id and status after starting an execution.
+    /// Pass session_id=None to leave existing session_id unchanged (for first executions
+    /// where the real Claude Code session_id is discovered later from stdout, not bound yet).
     pub async fn update_feishu_project_binding_session(
         &self,
         id: i64,
-        session_id: &str,
+        session_id: Option<&str>,
         latest_record_id: i64,
         status: &str,
     ) -> Result<(), sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
-        let am = feishu_project_bindings::ActiveModel {
+        let mut am = feishu_project_bindings::ActiveModel {
             id: ActiveValue::Unchanged(id),
-            session_id: ActiveValue::Set(Some(session_id.to_string())),
             latest_record_id: ActiveValue::Set(Some(latest_record_id)),
             status: ActiveValue::Set(status.to_string()),
             updated_at: ActiveValue::Set(now),
             ..Default::default()
         };
+        if let Some(sid) = session_id {
+            am.session_id = ActiveValue::Set(Some(sid.to_string()));
+        }
         self.exec_update(am).await
     }
 
@@ -144,7 +148,7 @@ impl Database {
             updated_at: ActiveValue::Set(now),
             ..Default::default()
         };
-        use sea_orm::ActiveModelTrait;
+        // ActiveModelTrait is imported at file level
         am.update(&self.conn).await?;
         Ok(())
     }

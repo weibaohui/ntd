@@ -393,7 +393,18 @@ impl FeishuListener {
                     };
 
                     let (resume_session_id, resume_message) = if should_resume {
-                        (binding.session_id.clone(), Some(content.to_string()))
+                        // ⚠️ 不能使用 binding.session_id：debounce 首次执行时把它设为了 task_id（随机 UUID）
+                        // Claude Code 真正的 session_id 来自 stdout JSONL 输出，
+                        // 保存在 execution_records.session_id 中。必须从 latest_record 读取。
+                        let real_sid = if let Some(rid) = binding.latest_record_id {
+                            match db.get_execution_record(rid).await {
+                                Ok(Some(r)) => r.session_id.or(binding.session_id.clone()),
+                                _ => binding.session_id.clone(),
+                            }
+                        } else {
+                            binding.session_id.clone()
+                        };
+                        (real_sid, Some(content.to_string()))
                     } else {
                         (None, None)
                     };
