@@ -45,7 +45,7 @@ impl Database {
             todo_id: ActiveValue::Set(todo_id),
             session_id: ActiveValue::Set(None),
             latest_record_id: ActiveValue::Set(None),
-            status: ActiveValue::Set("idle".to_string()),
+            status: ActiveValue::Set(crate::models::binding_status::IDLE.to_string()),
             created_at: ActiveValue::Set(now.clone()),
             updated_at: ActiveValue::Set(now),
             ..Default::default()

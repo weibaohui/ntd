@@ -196,7 +196,7 @@ impl MessageDebounce {
                                                 binding_id,
                                                 sid_for_binding.as_deref(),
                                                 rid,
-                                                "running",
+                                                crate::models::binding_status::RUNNING,
                                             )
                                             .await;
                                     } else {
@@ -208,14 +208,14 @@ impl MessageDebounce {
                                                 binding_id,
                                                 None,
                                                 rid,
-                                                "running",
+                                                crate::models::binding_status::RUNNING,
                                             )
                                             .await;
                                     }
                                 } else {
                                     // Record ID missing: still update status
                                     let _ = db
-                                        .update_feishu_project_binding_status(binding_id, "running")
+                                        .update_feishu_project_binding_status(binding_id, crate::models::binding_status::RUNNING)
                                         .await;
                                 }
                             }
@@ -246,7 +246,7 @@ impl MessageDebounce {
                             // Reset binding status to idle on failure
                             if let Some(binding_id) = last.binding_id {
                                 let _ = db
-                                    .update_feishu_project_binding_status(binding_id, "idle")
+                                    .update_feishu_project_binding_status(binding_id, crate::models::binding_status::IDLE)
                                     .await;
                             }
                             // Mark messages as failed (processed=false) so they can be retried
