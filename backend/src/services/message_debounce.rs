@@ -182,6 +182,7 @@ impl MessageDebounce {
                                 if let Some(rid) = exec_result.record_id {
                                     if is_resume {
                                         // Resume: preserve session_id (from sid_for_binding), update latest_record_id + status
+                                        // is_resume is post-TOCTOU, so if todo_id changed it will be false
                                         let _ = db
                                             .update_feishu_project_binding_session(
                                                 binding_id,
