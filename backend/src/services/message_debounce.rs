@@ -107,7 +107,28 @@ impl MessageDebounce {
 
                     // For resume sessions: use the user's content as the message to resume with
                     let resume_msg = last.resume_message.clone();
-                    let resume_sid = last.resume_session_id.clone();
+                    let mut resume_sid = last.resume_session_id.clone();
+
+                    // 防御 TOCTOU：debounce 等待期间 binding 的 latest_record 可能已结束
+                    // 若 resume_sid 来自 binding_id，重新检查 latest_record 是否仍 running
+                    if resume_sid.is_some() {
+                        if let Some(binding_id) = last.binding_id {
+                            if let Ok(Some(binding)) = db.get_feishu_project_binding_by_id(binding_id).await {
+                                let still_running = match binding.latest_record_id {
+                                    Some(rid) => match db.get_execution_record(rid).await {
+                                        Ok(Some(r)) => r.status == crate::models::ExecutionStatus::Running,
+                                        _ => false,
+                                    },
+                                    None => false,
+                                };
+                                if !still_running {
+                                    // Session 已结束，降级为新执行
+                                    resume_sid = None;
+                                }
+                            }
+                        }
+                    }
+
                     let exec_message = if resume_sid.is_some() {
                         // resume: send user content as the single message
                         merged_content

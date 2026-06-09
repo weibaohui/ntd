@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Select, Button, List, Empty, Spin, Tag, Popconfirm, message, Modal } from 'antd';
 import { LinkOutlined, DisconnectOutlined, FolderOutlined, RobotOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
+import { PENDING_CHAT_ID } from '@/utils/database/bots';
 import type { AgentBot, FeishuProjectBindingItem } from '@/utils/database/bots';
 import type { ProjectDirectory } from '@/utils/database';
 
@@ -68,7 +69,7 @@ export function ProjectBindsTab() {
       // Create binding via API (auto-creates Todo inside)
       await db.createFeishuBinding({
         bot_id: selectedBotId,
-        chat_id: '__pending__', // placeholder — actual chat_id set via /bind on Feishu
+        chat_id: PENDING_CHAT_ID, // placeholder — set via /bind on Feishu
         chat_type: 'p2p',
         project_dir_id: selectedDirId,
       });
@@ -93,7 +94,7 @@ export function ProjectBindsTab() {
   };
 
   const chatTypeLabel = (t: string) => t === 'p2p' ? '私聊' : '群聊';
-  const isPending = (item: FeishuProjectBindingItem) => item.chat_id === '__pending__';
+  const isPending = (item: FeishuProjectBindingItem) => item.chat_id === PENDING_CHAT_ID;
   const statusTag = (s: string, pending: boolean) => {
     if (pending) return <Tag color="orange">待绑定</Tag>;
     if (s === 'running') return <Tag color="green">运行中</Tag>;

@@ -227,6 +227,9 @@ export async function deleteGroupWhitelist(id: number): Promise<void> {
   await api.delete(`/api/agent-bots/feishu/group-whitelist/${id}`);
 }
 
+/** Placeholder chat_id for Web-UI-created bindings before Feishu /bind completes */
+export const PENDING_CHAT_ID = '__pending__';
+
 // Project Binding APIs
 
 export interface FeishuProjectBindingItem {

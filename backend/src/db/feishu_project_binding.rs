@@ -70,6 +70,17 @@ impl Database {
         Ok(model.map(Self::binding_from_model))
     }
 
+    /// Get binding by primary key id.
+    pub async fn get_feishu_project_binding_by_id(
+        &self,
+        id: i64,
+    ) -> Result<Option<FeishuProjectBinding>, sea_orm::DbErr> {
+        let model = feishu_project_bindings::Entity::find_by_id(id)
+            .one(&self.conn)
+            .await?;
+        Ok(model.map(Self::binding_from_model))
+    }
+
     /// Get all bindings for a given bot.
     pub async fn get_feishu_project_bindings(
         &self,
