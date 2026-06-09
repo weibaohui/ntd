@@ -179,6 +179,13 @@ impl FeishuListener {
             bot_open_id,
             bot_config,
         } = context;
+
+        // 消息入口统一清理过期 binding：执行器崩溃或重启后 binding.status 可能卡在 running
+        // 必须放在每条消息处理前，确保路由决策基于正确的状态
+        if let Err(e) = db.cleanup_stale_running_bindings().await {
+            tracing::warn!("[feishu:{}] cleanup_stale_running_bindings failed: {e}", bot_id);
+        }
+
         tracing::info!(
             "[feishu:{}] handle_message: sender={}, bot_open_id={}, content={:?}, chat_type={:?}",
             bot_id,
