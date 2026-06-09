@@ -733,7 +733,7 @@ impl Database {
         .await?;
 
         // 飞书项目绑定表 — 将飞书聊天会话绑定到项目目录
-        // - UNIQUE(bot_id, chat_id)：同一 Bot 下的同一聊天只能绑定一个项目
+        // - 活跃绑定（chat_id != '__pending__'）通过 partial unique index 保证 (bot_id, chat_id) 唯一
         // - status 默认 'idle'，执行任务时更新为 'running'（执行完成后清理脚本重置为 idle）
         // - session_id：Claude Code 的会话 ID，首次执行时填充，resume 时保持不变
         // - latest_record_id：最近一次 execution_record.id，用于判断是否可 resume
@@ -751,11 +751,14 @@ impl Database {
                 latest_record_id INTEGER,
                 status TEXT NOT NULL DEFAULT 'idle',
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(bot_id, chat_id)
+                updated_at TEXT NOT NULL
             )",
         )
         .await?;
+        // Partial unique index: active bindings (non-pending) must be unique per (bot_id, chat_id)
+        // Pending bindings (chat_id='__pending__') excluded so one bot can have multiple pending
+        self.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_feishu_bindings_active ON feishu_project_bindings(bot_id, chat_id) WHERE chat_id != '__pending__'")
+            .await?;
         // Index for latest_record_id lookups (hot path in resume routing & cleanup)
         self.exec("CREATE INDEX IF NOT EXISTS idx_feishu_bindings_record_id ON feishu_project_bindings(latest_record_id)")
             .await?;

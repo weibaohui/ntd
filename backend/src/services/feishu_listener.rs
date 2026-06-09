@@ -905,13 +905,42 @@ impl FeishuListener {
         }
 
         // 按项目名称查找：先精确匹配，再前缀匹配
-        // ⚠️ 前缀匹配时若多个目录共享相同前缀（如 my-app / my-application），
-        //    优先匹配数据库中先插入的那条，不会弹出歧义提示。
-        //    用户可通过输入完整名称避免歧义。
+        // ⚠️ 前缀匹配时若有多个候选（如 my-app / my-application 都匹配 "my"），
+        //    返回歧义提示让用户精确输入。
         let directories = db.get_project_directories().await.unwrap_or_default();
-        let dir = directories.iter().find(|d| d.name.as_deref() == Some(project_name))
-            .or_else(|| directories.iter().find(|d| d.name.as_deref().map(|n| n.starts_with(project_name)).unwrap_or(false)))
-            .cloned();
+        // 精确匹配 — 唯一正确
+        let dir = directories.iter().find(|d| d.name.as_deref() == Some(project_name)).cloned();
+        let dir = match dir {
+            Some(d) => Some(d),
+            None => {
+                // 前缀匹配 — 检查是否有多选歧义
+                let candidates: Vec<_> = directories.iter()
+                    .filter(|d| d.name.as_deref().map(|n| n.starts_with(project_name)).unwrap_or(false))
+                    .collect();
+                if candidates.is_empty() {
+                    None
+                } else if candidates.len() == 1 {
+                    Some(candidates[0].clone())
+                } else {
+                    // 多个候选，返回歧义提示
+                    let names: Vec<String> = candidates.iter()
+                        .filter_map(|d| d.name.as_deref())
+                        .map(|n| format!("• {}", n))
+                        .collect();
+                    let msg = format!(
+                        "⚠️ 「{}」匹配到多个项目：\n{}\n\n请使用完整名称，例如：/bind {}",
+                        project_name,
+                        names.join("\n"),
+                        candidates[0].name.as_deref().unwrap_or(""),
+                    );
+                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, &msg).await;
+                    if let Some(rid) = reaction_id {
+                        Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+                    }
+                    return;
+                }
+            }
+        };
 
         match dir {
             Some(dir) => {
@@ -1023,6 +1052,9 @@ impl FeishuListener {
                         "⚠️ 当前有任务正在执行，解绑后任务仍会在后台运行。\n如需强制终止，请使用 Web 界面「运行管理」停止。")
                         .await;
                 }
+                // 软删除关联的 Todo（标记 deleted_at，保留执行历史可追溯）
+                let _ = db.delete_todo(binding.todo_id).await;
+
                 if let Err(e) = db.delete_feishu_project_binding(binding.id).await {
                     tracing::error!("[feishu:{}] /unbind failed: {e}", bot_id);
                     Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 解绑失败，请稍后重试").await;

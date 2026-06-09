@@ -109,11 +109,14 @@ impl MessageDebounce {
                     let resume_msg = last.resume_message.clone();
                     let mut resume_sid = last.resume_session_id.clone();
 
-                    // 防御 TOCTOU：debounce 等待期间 binding 的 latest_record 可能已结束
-                    // 若 resume_sid 来自 binding_id，重新检查 latest_record 是否仍 running
+                    // 防御 TOCTOU：debounce 等待期间 binding 的 latest_record 可能已结束，
+                    // 或 binding 被重新绑定到不同项目（todo_id 变了）
+                    // 两种情况都应降级为新 session
                     if resume_sid.is_some() {
                         if let Some(binding_id) = last.binding_id {
                             if let Ok(Some(binding)) = db.get_feishu_project_binding_by_id(binding_id).await {
+                                // 检查 binding 是否仍指向同一个 todo（解绑后重绑会导致 todo_id 不同）
+                                let todo_changed = binding.todo_id != last.todo_id;
                                 let still_running = match binding.latest_record_id {
                                     Some(rid) => match db.get_execution_record(rid).await {
                                         Ok(Some(r)) => r.status == crate::models::ExecutionStatus::Running,
@@ -121,8 +124,14 @@ impl MessageDebounce {
                                     },
                                     None => false,
                                 };
-                                if !still_running {
-                                    // Session 已结束，降级为新执行
+                                if !still_running || todo_changed {
+                                    if todo_changed {
+                                        tracing::warn!(
+                                            "[debounce] binding {} todo_id changed ({} → {}), dropping resume",
+                                            binding_id, last.todo_id, binding.todo_id
+                                        );
+                                    }
+                                    // Session 已结束或 todo 变了，降级为新执行
                                     resume_sid = None;
                                 }
                             }
