@@ -146,6 +146,11 @@ impl MessageDebounce {
                         last.todo_prompt.clone()
                     };
 
+                    // Clone before move: resume_sid is consumed by the request below,
+                    // but we still need it for the TOCTOU-correct binding update after.
+                    let is_resume = resume_sid.is_some();
+                    let sid_for_binding = resume_sid.clone();
+
                     let result = start_todo_execution(RunTodoExecutionRequest {
                         db: db.clone(),
                         executor_registry,
@@ -156,7 +161,7 @@ impl MessageDebounce {
                         message: exec_message,
                         req_executor: last.executor.clone(),
                         trigger_type: last.trigger_type.clone(),
-                        params: if resume_sid.is_some() { None } else { Some(merged_params) },
+                        params: if is_resume { None } else { Some(merged_params) },
                         resume_session_id: resume_sid,
                         resume_message: resume_msg,
                         chain: vec![],
@@ -184,12 +189,12 @@ impl MessageDebounce {
                             // If this message came from a project-bound chat, update binding state
                             if let Some(binding_id) = last.binding_id {
                                 if let Some(rid) = exec_result.record_id {
-                                    if let Some(ref session_id) = last.resume_session_id {
-                                        // Resume: preserve session_id, update latest_record_id + status
+                                    if is_resume {
+                                        // Resume: preserve session_id (from sid_for_binding), update latest_record_id + status
                                         let _ = db
                                             .update_feishu_project_binding_session(
                                                 binding_id,
-                                                Some(session_id.as_str()),
+                                                sid_for_binding.as_deref(),
                                                 rid,
                                                 "running",
                                             )

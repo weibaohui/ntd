@@ -148,8 +148,7 @@ impl Database {
             updated_at: ActiveValue::Set(now),
             ..Default::default()
         };
-        // ActiveModelTrait is imported at file level
-        am.update(&self.conn).await?;
+        self.exec_update(am).await?;
         Ok(())
     }
 

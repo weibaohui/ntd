@@ -182,9 +182,21 @@ impl FeishuListener {
 
         // 消息入口统一清理过期 binding：执行器崩溃或重启后 binding.status 可能卡在 running
         // 必须放在每条消息处理前，确保路由决策基于正确的状态
+        // 消息入口清理过期 binding，但加 throttle：两次清理间隔至少 30 秒
+    // 避免高频群聊每条消息都触发全表 UPDATE
+    // 使用原子时间戳而非 Mutex，避免 async fn 的 Send 约束问题
+    static LAST_CLEANUP_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let last_ns = LAST_CLEANUP_NS.load(std::sync::atomic::Ordering::Relaxed);
+    if now_ns.saturating_sub(last_ns) >= 30 {
+        LAST_CLEANUP_NS.store(now_ns, std::sync::atomic::Ordering::Relaxed);
         if let Err(e) = db.cleanup_stale_running_bindings().await {
             tracing::warn!("[feishu:{}] cleanup_stale_running_bindings failed: {e}", bot_id);
         }
+    }
 
         tracing::info!(
             "[feishu:{}] handle_message: sender={}, bot_open_id={}, content={:?}, chat_type={:?}",
