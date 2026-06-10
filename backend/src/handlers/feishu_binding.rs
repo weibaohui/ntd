@@ -8,7 +8,7 @@ use crate::models::ApiResponse;
 /// 创建飞书项目绑定的请求体。
 ///
 /// executor 和 todo_id 为互斥字段，不能同时提供：
-/// - executor（执行器名）：创建新 Todo 时使用，仅支持继续对话的执行器（claudecode/kimi/opencode/joinai/hermes/codewhale）。
+/// - executor（执行器名）：创建新 Todo 时使用，仅支持继续对话的执行器（claudecode/kimi/opencode/mobilecoder/hermes/codewhale）。
 ///   为 None 时默认为 claudecode。
 /// - todo_id（已有 Todo ID）：绑定到已有 Todo 时使用，复用该 Todo 的历史会话记录。
 ///   两者都传或都不传时行为由业务层决定（当前为互斥校验）。
@@ -19,7 +19,7 @@ pub struct CreateBindingRequest {
     pub chat_type: String,
     pub project_dir_id: i64,
     /// 指定执行器（可选），仅在新建 Todo 时有效。
-    /// 仅支持继续对话的执行器（claudecode/kimi/opencode/joinai/hermes/codewhale）。
+    /// 仅支持继续对话的执行器（claudecode/kimi/opencode/mobilecoder/hermes/codewhale）。
     /// 为 None 或空串时默认为 claudecode。
     pub executor: Option<String>,
     /// 绑定到已有 Todo（可选），与 executor 互斥。

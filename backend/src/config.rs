@@ -372,8 +372,8 @@ mod tests {
     #[test]
     fn test_normalize_single_path_tilde_expansion() {
         let home = dirs::home_dir().expect("need home dir for test");
-        let result = Config::normalize_single_path("~/bin/joinai");
-        let expected = home.join("bin").join("joinai").to_string_lossy().to_string();
+        let result = Config::normalize_single_path("~/bin/mobile");
+        let expected = home.join("bin").join("mobile").to_string_lossy().to_string();
         assert_eq!(result, expected, "~ should expand to home directory");
     }
 
@@ -393,8 +393,8 @@ mod tests {
         let result = Config::normalize_single_path("opencode");
         assert_eq!(result, "opencode", "bare command name should be left untouched for PATH lookup");
 
-        let result = Config::normalize_single_path("joinai");
-        assert_eq!(result, "joinai", "bare command name should be left untouched for PATH lookup");
+        let result = Config::normalize_single_path("mobilecoder");
+        assert_eq!(result, "mobilecoder", "bare command name should be left untouched for PATH lookup");
     }
 
     #[test]

@@ -122,7 +122,7 @@ export const EXECUTORS: ExecutorOption[] = [
   { value: 'claudecode', label: 'Claude',    color: '#e17055', icon: <FaSquare color="#e17055" size={14} /> },
   { value: 'codebuddy',  label: 'CodeBuddy', color: '#00b894', icon: <FaSquare color="#00b894" size={14} /> },
   { value: 'opencode',   label: 'Opencode',  color: '#fdcb6e', icon: <FaSquare color="#fdcb6e" size={14} /> },
-  { value: 'joinai',     label: 'JoinAI',    color: '#6c5ce7', icon: <FaSquare color="#6c5ce7" size={14} /> },
+  { value: 'mobilecoder', label: 'MobileCoder', color: '#6c5ce7', icon: <FaSquare color="#6c5ce7" size={14} /> },
   { value: 'atomcode',   label: 'AtomCode',  color: '#e84393', icon: <FaSquare color="#e84393" size={14} /> },
   { value: 'hermes',     label: 'Hermes',    color: '#0984e3', icon: <FaSquare color="#0984e3" size={14} /> },
   { value: 'kimi',       label: 'Kimi',      color: '#d63031', icon: <FaSquare color="#d63031" size={14} /> },
@@ -137,7 +137,7 @@ export const EXECUTOR_COLORS: Record<string, string> = {
   claudecode: '#e17055',
   codebuddy: '#00b894',
   opencode: '#fdcb6e',
-  joinai: '#6c5ce7',
+  mobilecoder: '#6c5ce7',
   atomcode: '#e84393',
   hermes: '#0984e3',
   kimi: '#d63031',
@@ -161,7 +161,7 @@ export function getExecutorOption(value: string): ExecutorOption {
   return EXECUTORS.find(e => e.value === value.toLowerCase()) || EXECUTORS[0];
 }
 
-export const RESUMABLE_EXECUTORS = new Set(['claudecode', 'kimi', 'opencode', 'joinai', 'hermes', 'codewhale']);
+export const RESUMABLE_EXECUTORS = new Set(['claudecode', 'kimi', 'opencode', 'mobilecoder', 'hermes', 'codewhale']);
 
 /// 默认执行器
 export const DEFAULT_EXECUTOR = 'claudecode';

@@ -298,7 +298,7 @@ export function AboutPanel() {
             </div>
             <div style={{ borderTop: '1px solid var(--color-border-light)', paddingTop: 16 }}>
               <Paragraph type="secondary" style={{ margin: 0 }}>
-                NTD (Nothing Todo) 是一个 AI Todo 应用，支持 Claude Code 和 JoinAI 等多种执行器。
+                NTD (Nothing Todo) 是一个 AI Todo 应用，支持 Claude Code 和 MobileCoder 等多种执行器。
               </Paragraph>
             </div>
           </div>

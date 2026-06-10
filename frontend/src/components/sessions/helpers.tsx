@@ -9,7 +9,7 @@ export const sourceConfig: Record<string, { label: string; color: string }> = {
   'atomcode': { label: 'AtomCode', color: '#ef4444' },
   'codebuddy': { label: 'CodeBuddy', color: '#f59e0b' },
   'opencode': { label: 'OpenCode', color: '#22c55e' },
-  'joinai': { label: 'JoinAI', color: '#6366f1' },
+  'mobilecoder': { label: 'MobileCoder', color: '#6366f1' },
 };
 
 export function sourceTag(source: string) {

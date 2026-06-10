@@ -33,7 +33,7 @@ pub fn executor_skills_dir_str(et: &str) -> Option<PathBuf> {
         "opencode" => Some(home.join(".opencode").join("skills")),
         "atomcode" => Some(home.join(".atomcode").join("skills")),
         "kimi" => Some(home.join(".kimi").join("skills")),
-        "joinai" => Some(home.join(".joinai").join("skills")),
+        "mobilecoder" => Some(home.join(".mobile-coder").join("skills")),
         // agents 是只读 skill 来源：扫描但不参与执行器管理/Todo 执行
         "agents" => Some(home.join(".agents").join("skills")),
         _ => None,
@@ -119,7 +119,7 @@ fn executor_label(et: ExecutorType) -> &'static str {
         ExecutorType::Opencode => "Opencode",
         ExecutorType::Atomcode => "AtomCode",
         ExecutorType::Kimi => "Kimi",
-        ExecutorType::Joinai => "JoinAI",
+        ExecutorType::Mobilecoder => "MobileCoder",
         ExecutorType::Codewhale => "CodeWhale",
     }
 }
@@ -134,7 +134,7 @@ const ALL_EXECUTORS: [ExecutorType; 9] = [
     ExecutorType::Opencode,
     ExecutorType::Atomcode,
     ExecutorType::Kimi,
-    ExecutorType::Joinai,
+    ExecutorType::Mobilecoder,
     ExecutorType::Codewhale,
 ];
 
@@ -485,7 +485,7 @@ fn discover_skills_for_executor(et: ExecutorType) -> ExecutorSkills {
 /// 3. 如果不是 ExecutorType，在 `executor_label_for_source` 加显示名
 const ALL_SKILL_SOURCES: &[&str] = &[
     "claudecode", "codebuddy", "opencode", "atomcode",
-    "hermes", "kimi", "joinai", "codex",
+    "hermes", "kimi", "mobilecoder", "codex",
     "agents",
 ];
 

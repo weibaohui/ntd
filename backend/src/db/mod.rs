@@ -1688,9 +1688,9 @@ mod tests {
     async fn test_update_todo_executor() {
         let db = setup_db().await;
         let id = db.create_todo("Test", "Prompt").await.unwrap();
-        db.update_todo_executor(id, "joinai").await.unwrap();
+        db.update_todo_executor(id, "mobilecoder").await.unwrap();
         let todo = db.get_todo(id).await.unwrap().unwrap();
-        assert_eq!(todo.executor, Some("joinai".to_string()));
+        assert_eq!(todo.executor, Some("mobilecoder".to_string()));
     }
 
     #[tokio::test]

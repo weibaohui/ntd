@@ -1,6 +1,6 @@
-//! JoinAI-specific event parsing.
+//! MobileCoder-specific event parsing.
 //!
-//! JoinAI uses underscore-separated event types (e.g., step_start, tool_use) and
+//! MobileCoder uses underscore-separated event types (e.g., step_start, tool_use) and
 //! follows a different naming convention.
 
 use std::collections::HashMap;
@@ -8,56 +8,56 @@ use serde::Deserialize;
 
 /// Flexible timestamp that can be deserialized from both numbers and strings.
 #[derive(Debug, Clone)]
-pub struct JoinAITimestamp(pub String);
+pub struct MobilecoderTimestamp(pub String);
 
-impl<'de> Deserialize<'de> for JoinAITimestamp {
+impl<'de> Deserialize<'de> for MobilecoderTimestamp {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        struct JoinAITimestampVisitor;
-        impl<'de> serde::de::Visitor<'de> for JoinAITimestampVisitor {
-            type Value = JoinAITimestamp;
+        struct MobilecoderTimestampVisitor;
+        impl<'de> serde::de::Visitor<'de> for MobilecoderTimestampVisitor {
+            type Value = MobilecoderTimestamp;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                 formatter.write_str("a number (u64) or a string")
             }
 
-            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<JoinAITimestamp, E> {
-                Ok(JoinAITimestamp(v.to_string()))
+            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<MobilecoderTimestamp, E> {
+                Ok(MobilecoderTimestamp(v.to_string()))
             }
 
-            fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<JoinAITimestamp, E> {
-                Ok(JoinAITimestamp(v.to_string()))
+            fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<MobilecoderTimestamp, E> {
+                Ok(MobilecoderTimestamp(v.to_string()))
             }
 
-            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<JoinAITimestamp, E> {
-                Ok(JoinAITimestamp(v.to_string()))
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<MobilecoderTimestamp, E> {
+                Ok(MobilecoderTimestamp(v.to_string()))
             }
 
-            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<JoinAITimestamp, E> {
-                Ok(JoinAITimestamp(v))
+            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<MobilecoderTimestamp, E> {
+                Ok(MobilecoderTimestamp(v))
             }
         }
-        deserializer.deserialize_any(JoinAITimestampVisitor)
+        deserializer.deserialize_any(MobilecoderTimestampVisitor)
     }
 }
 
-/// JoinAI agent event with underscore-separated type names
+/// MobileCoder agent event with underscore-separated type names
 #[derive(Debug, Clone, Deserialize)]
-pub struct JoinaiAgentEvent {
+pub struct MobilecoderAgentEvent {
     #[serde(rename = "type")]
     pub event_type: String,
     #[serde(default)]
-    pub timestamp: Option<JoinAITimestamp>,
+    pub timestamp: Option<MobilecoderTimestamp>,
     #[serde(default, rename = "sessionID")]
     pub session_id: Option<String>,
     #[serde(default)]
-    pub part: Option<JoinaiAgentPart>,
+    pub part: Option<MobilecoderAgentPart>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct JoinaiAgentPart {
+pub struct MobilecoderAgentPart {
     #[serde(rename = "type")]
     pub part_type: Option<String>,
     #[serde(default)]
@@ -69,13 +69,13 @@ pub struct JoinaiAgentPart {
     #[serde(default)]
     pub call_id: Option<String>,
     #[serde(default)]
-    pub state: Option<JoinaiAgentToolState>,
+    pub state: Option<MobilecoderAgentToolState>,
     #[serde(default)]
     pub message_id: Option<String>,
     #[serde(default, rename = "sessionID")]
     pub session_id: Option<String>,
     #[serde(default)]
-    pub tokens: Option<JoinaiAgentTokens>,
+    pub tokens: Option<MobilecoderAgentTokens>,
     #[serde(default)]
     pub cost: Option<f64>,
     #[serde(default)]
@@ -83,17 +83,17 @@ pub struct JoinaiAgentPart {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct JoinaiAgentToolState {
+pub struct MobilecoderAgentToolState {
     #[serde(default)]
     pub status: Option<String>,
     #[serde(default)]
-    pub input: Option<JoinaiAgentToolInput>,
+    pub input: Option<MobilecoderAgentToolInput>,
     #[serde(default)]
     pub output: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct JoinaiAgentToolInput {
+pub struct MobilecoderAgentToolInput {
     #[serde(default)]
     pub command: Option<String>,
     #[serde(default)]
@@ -102,7 +102,7 @@ pub struct JoinaiAgentToolInput {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
-impl JoinaiAgentToolInput {
+impl MobilecoderAgentToolInput {
     pub fn to_full_json(&self) -> String {
         let mut map = serde_json::Map::new();
         if let Some(ref cmd) = self.command {
@@ -119,18 +119,18 @@ impl JoinaiAgentToolInput {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct JoinaiAgentTokens {
+pub struct MobilecoderAgentTokens {
     pub total: u64,
     pub input: u64,
     pub output: u64,
     #[serde(default)]
     pub reasoning: u64,
     #[serde(default)]
-    pub cache: JoinaiAgentCacheTokens,
+    pub cache: MobilecoderAgentCacheTokens,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
-pub struct JoinaiAgentCacheTokens {
+pub struct MobilecoderAgentCacheTokens {
     #[serde(default)]
     pub read: u64,
     #[serde(default)]

@@ -120,7 +120,7 @@ mod executor_type_tests {
         assert_eq!(ExecutorType::Hermes.to_string(), "hermes");
         assert_eq!(ExecutorType::Opencode.to_string(), "opencode");
         assert_eq!(ExecutorType::Atomcode.to_string(), "atomcode");
-        assert_eq!(ExecutorType::Joinai.to_string(), "joinai");
+        assert_eq!(ExecutorType::Mobilecoder.to_string(), "mobilecoder");
         assert_eq!(ExecutorType::Codebuddy.to_string(), "codebuddy");
         assert_eq!(ExecutorType::Codex.to_string(), "codex");
     }
@@ -134,7 +134,7 @@ mod executor_type_tests {
         assert_eq!(parse_executor_type("hermes"), Some(ExecutorType::Hermes));
         assert_eq!(parse_executor_type("opencode"), Some(ExecutorType::Opencode));
         assert_eq!(parse_executor_type("atomcode"), Some(ExecutorType::Atomcode));
-        assert_eq!(parse_executor_type("joinai"), Some(ExecutorType::Joinai));
+        assert_eq!(parse_executor_type("mobilecoder"), Some(ExecutorType::Mobilecoder));
         assert_eq!(parse_executor_type("codebuddy"), Some(ExecutorType::Codebuddy));
         assert_eq!(parse_executor_type("codex"), Some(ExecutorType::Codex));
     }

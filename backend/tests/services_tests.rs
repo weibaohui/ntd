@@ -397,6 +397,8 @@ mod feishu_push_service_tests {
             executor: "kimi".to_string(),
             success,
             result,
+            feishu_bot_id: None,
+            feishu_receive_id: None,
         }
     }
 }
