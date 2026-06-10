@@ -180,9 +180,13 @@ pub async fn create_binding(
     // 避免 create 失败时留下不一致状态（旧 binding 已删但新 binding 未建）。
     use sea_orm::TransactionTrait;
     let binding = state.db.conn.begin().await?;
-    let _ = state.db
+    // 删除旧 binding 失败时记录警告但继续（可能本来就没有旧 binding）
+    if let Err(e) = state.db
         .delete_feishu_project_binding_by_chat(req.bot_id, &req.chat_id)
-        .await;
+        .await
+    {
+        tracing::warn!("[binding] failed to delete old binding for bot {} chat {}: {e}", req.bot_id, req.chat_id);
+    }
     let _binding_id = state.db
         .create_feishu_project_binding(
             req.bot_id,

@@ -404,13 +404,13 @@ impl FeishuListener {
         //   已结束的 record 导致 should_resume=false，会话链断裂。
         match db.get_feishu_project_binding(bot_id, &msg.channel).await {
             Ok(Some(binding)) => {
-                // enabled=false 不参与路由，降级到斜杠命令/默认回复
+                // enabled=false 的绑定不参与路由，但也不 return——让控制流落到斜杠命令/默认回复处理
+                // （与 Ok(None) 的处理逻辑一致：fall through 到后续 parse_slash_command）
                 if !binding.enabled {
-                    tracing::info!("[feishu:{}] binding {} is disabled, skipping", bot_id, binding.id);
+                    tracing::info!("[feishu:{}] binding {} is disabled, falling through to slash commands", bot_id, binding.id);
                     if let Some(rid) = &reaction_id {
                         Self::delete_reaction(credentials, token_manager, bot_id, &msg.id, rid).await;
                     }
-                    return;
                 }
                 // 检查绑定的 todo 是否存在
                 if let Ok(Some(todo)) = db.get_todo(binding.todo_id).await {
