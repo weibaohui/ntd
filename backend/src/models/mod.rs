@@ -690,7 +690,7 @@ pub struct ExecutorDetectInfo {
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum ExecutorType {
-    Joinai,
+    Mobilecoder,
     #[default]
     Claudecode,
     Codebuddy,
@@ -706,7 +706,7 @@ pub enum ExecutorType {
 impl ExecutorType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            ExecutorType::Joinai => "joinai",
+            ExecutorType::Mobilecoder => "mobilecoder",
             ExecutorType::Claudecode => "claudecode",
             ExecutorType::Codebuddy => "codebuddy",
             ExecutorType::Opencode => "opencode",
@@ -881,7 +881,7 @@ mod tests {
 
     #[test]
     fn test_executor_type_as_str() {
-        assert_eq!(ExecutorType::Joinai.as_str(), "joinai");
+        assert_eq!(ExecutorType::Mobilecoder.as_str(), "mobilecoder");
         assert_eq!(ExecutorType::Claudecode.as_str(), "claudecode");
         assert_eq!(ExecutorType::Codebuddy.as_str(), "codebuddy");
         assert_eq!(ExecutorType::Opencode.as_str(), "opencode");

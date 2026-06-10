@@ -269,7 +269,7 @@ export async function createFeishuBinding(params: {
   chat_id: string;
   chat_type: string;
   project_dir_id: number;
-  /** 指定执行器（可选，仅在新建 Todo 时使用）。仅支持 claudecode/kimi/opencode/joinai/hermes/codewhale */
+  /** 指定执行器（可选，仅在新建 Todo 时使用）。仅支持 claudecode/kimi/opencode/mobilecoder/hermes/codewhale */
   executor?: string;
   /** 绑定到已有 Todo（可选）。提供后表示复用该 Todo 的历史会话，与 executor 互斥 */
   todo_id?: number;

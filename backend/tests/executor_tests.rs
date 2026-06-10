@@ -4,7 +4,7 @@ use ntd::adapters::claude_code::ClaudeCodeExecutor;
 use ntd::adapters::hermes::HermesExecutor;
 use ntd::adapters::opencode::OpencodeExecutor;
 use ntd::adapters::atomcode::AtomcodeExecutor;
-use ntd::adapters::joinai::JoinaiExecutor;
+use ntd::adapters::mobilecoder::MobilecoderExecutor;
 use ntd::adapters::codex::CodexExecutor;
 use ntd::models::{ParsedLogEntry, ExecutorType};
 
@@ -418,20 +418,20 @@ mod atomcode_executor_tests {
 }
 
 #[cfg(test)]
-mod joinai_executor_tests {
+mod mobilecoder_executor_tests {
     use super::*;
 
     #[test]
-    fn test_joinai_executor_type() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
-        assert_eq!(executor.executor_type(), ExecutorType::Joinai);
+    fn test_mobilecoder_executor_type() {
+        let executor = MobilecoderExecutor::new("mobile".to_string());
+        assert_eq!(executor.executor_type(), ExecutorType::Mobilecoder);
     }
 
     #[test]
-    fn test_joinai_command_args() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+    fn test_mobilecoder_command_args() {
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let args = executor.command_args("say hello");
-        // joinai uses: run --format json <message>
+        // mobilecoder uses: run --format json <message>
         assert!(args.contains(&"run".to_string()));
         assert!(args.contains(&"--format".to_string()));
         assert!(args.contains(&"json".to_string()));
@@ -439,8 +439,8 @@ mod joinai_executor_tests {
     }
 
     #[test]
-    fn test_joinai_check_success() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+    fn test_mobilecoder_check_success() {
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         assert!(executor.check_success(0));
         assert!(!executor.check_success(1));
     }

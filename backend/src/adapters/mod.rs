@@ -88,12 +88,12 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         aliases: &[],
     },
     ExecutorDef {
-        name: "joinai",
-        executor_type: ExecutorType::Joinai,
-        binary_name: "joinai",
-        display_name: "JoinAI",
-        default_path: "joinai",
-        session_dir: "",
+        name: "mobilecoder",
+        executor_type: ExecutorType::Mobilecoder,
+        binary_name: "mobile",
+        display_name: "MobileCoder",
+        default_path: "mobile",
+        session_dir: "~/.mobile-coder",
         aliases: &[],
     },
     ExecutorDef {
@@ -117,7 +117,7 @@ pub static EXECUTORS: &[ExecutorDef] = &[
 ];
 
 /// 支持继续对话的执行器集合（与前端 RESUMABLE_EXECUTORS 保持一致）
-pub const RESUMABLE_EXECUTORS: &[&str] = &["claudecode", "kimi", "opencode", "joinai", "hermes", "codewhale"];
+pub const RESUMABLE_EXECUTORS: &[&str] = &["claudecode", "kimi", "opencode", "mobilecoder", "hermes", "codewhale"];
 
 /// 默认执行器
 pub const DEFAULT_EXECUTOR: &str = "claudecode";
@@ -167,8 +167,8 @@ pub fn get_usage_from_logs(logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> {
     logs.iter().rev().find(|l| l.log_type == "result")?.usage.clone()
 }
 
-pub mod joinai;
-pub mod joinai_event;
+pub mod mobilecoder;
+pub mod mobilecoder_event;
 pub mod claude_protocol;
 pub mod agent_event;
 pub mod claude_code;
@@ -282,7 +282,7 @@ impl ExecutorRegistry {
         let exec = find_executor(name)?;
         let executor: Arc<dyn CodeExecutor> = match exec.name {
             "claudecode" => Arc::new(claude_code::ClaudeCodeExecutor::new(path.to_string())),
-            "joinai" => Arc::new(joinai::JoinaiExecutor::new(path.to_string())),
+            "mobilecoder" => Arc::new(mobilecoder::MobilecoderExecutor::new(path.to_string())),
             "codebuddy" => Arc::new(codebuddy::CodebuddyExecutor::new(path.to_string())),
             "opencode" => Arc::new(opencode::OpencodeExecutor::new(path.to_string())),
             "atomcode" => Arc::new(atomcode::AtomcodeExecutor::new(path.to_string())),
@@ -343,8 +343,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_executor_type_joinai() {
-        assert_eq!(parse_executor_type("joinai"), Some(ExecutorType::Joinai));
+    fn test_parse_executor_type_mobilecoder() {
+        assert_eq!(parse_executor_type("mobilecoder"), Some(ExecutorType::Mobilecoder));
     }
 
     #[test]
@@ -410,8 +410,8 @@ mod tests {
     #[tokio::test]
     async fn test_executor_registry_register_and_get() {
         let reg = ExecutorRegistry::new();
-        reg.register(joinai::JoinaiExecutor::new("joinai".to_string())).await;
-        assert!(reg.get(ExecutorType::Joinai).await.is_some());
+        reg.register(mobilecoder::MobilecoderExecutor::new("mobile".to_string())).await;
+        assert!(reg.get(ExecutorType::Mobilecoder).await.is_some());
     }
 
     #[tokio::test]
@@ -430,11 +430,11 @@ mod tests {
     #[tokio::test]
     async fn test_executor_registry_list_executors() {
         let reg = ExecutorRegistry::new();
-        reg.register(joinai::JoinaiExecutor::new("joinai".to_string())).await;
+        reg.register(mobilecoder::MobilecoderExecutor::new("mobile".to_string())).await;
         reg.register(claude_code::ClaudeCodeExecutor::new("claude".to_string())).await;
         let list = reg.list_executors().await;
         assert_eq!(list.len(), 2);
-        assert!(list.contains(&ExecutorType::Joinai));
+        assert!(list.contains(&ExecutorType::Mobilecoder));
         assert!(list.contains(&ExecutorType::Claudecode));
     }
 
@@ -443,7 +443,7 @@ mod tests {
 
     #[async_trait]
     impl CodeExecutor for MockExecutor {
-        fn executor_type(&self) -> ExecutorType { ExecutorType::Joinai }
+        fn executor_type(&self) -> ExecutorType { ExecutorType::Mobilecoder }
         fn executable_path(&self) -> &str { "mock" }
         fn command_args(&self, _message: &str) -> Vec<String> { vec![] }
         fn parse_output_line(&self, _line: &str) -> Option<ParsedLogEntry> { None }

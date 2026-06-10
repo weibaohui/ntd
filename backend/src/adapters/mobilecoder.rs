@@ -2,29 +2,29 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use super::{CodeExecutor, ExecutorType, ParsedLogEntry, ExecutionUsage};
-use super::joinai_event::JoinaiAgentEvent;
+use super::mobilecoder_event::MobilecoderAgentEvent;
 use crate::models::utc_timestamp;
 
-pub struct JoinaiExecutor {
+pub struct MobilecoderExecutor {
     path: String,
     usage: Arc<Mutex<Option<ExecutionUsage>>>,
 }
 
-impl JoinaiExecutor {
+impl MobilecoderExecutor {
     pub fn new(path: String) -> Self {
         Self { path, usage: Arc::new(Mutex::new(None)) }
     }
 }
 
-impl Clone for JoinaiExecutor {
+impl Clone for MobilecoderExecutor {
     fn clone(&self) -> Self {
         Self { path: self.path.clone(), usage: self.usage.clone() }
     }
 }
 
-impl CodeExecutor for JoinaiExecutor {
+impl CodeExecutor for MobilecoderExecutor {
     fn executor_type(&self) -> ExecutorType {
-        ExecutorType::Joinai
+        ExecutorType::Mobilecoder
     }
 
     fn executable_path(&self) -> &str {
@@ -65,12 +65,12 @@ impl CodeExecutor for JoinaiExecutor {
     }
 
     fn extract_session_id(&self, line: &str) -> Option<String> {
-        let event: JoinaiAgentEvent = serde_json::from_str(line).ok()?;
+        let event: MobilecoderAgentEvent = serde_json::from_str(line).ok()?;
         event.session_id.or_else(|| event.part.as_ref()?.session_id.clone())
     }
 
     fn parse_output_line(&self, line: &str) -> Option<ParsedLogEntry> {
-        let event: JoinaiAgentEvent = serde_json::from_str(line).ok()?;
+        let event: MobilecoderAgentEvent = serde_json::from_str(line).ok()?;
 
         let timestamp = event.timestamp
             .map(|ts| {
@@ -189,7 +189,7 @@ impl CodeExecutor for JoinaiExecutor {
     }
 
     fn get_model(&self) -> Option<String> {
-        // Joinai doesn't provide model info
+        // MobileCoder doesn't provide model info
         None
     }
 }
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_parse_output_line_step_start() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let line = r#"{"type":"step_start","timestamp":1700000000000}"#;
         let entry = executor.parse_output_line(line).unwrap();
         assert_eq!(entry.log_type, "step_start");
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn test_parse_output_line_tool_use_bash() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let line = r#"{"type":"tool_use","timestamp":1700000000000,"part":{"type":"tool_use","tool":"bash","state":{"status":"success","input":{"description":"list files"},"output":"file.txt"}}}"#;
         let entry = executor.parse_output_line(line).unwrap();
         assert_eq!(entry.log_type, "tool");
@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn test_parse_output_line_text() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let line = r#"{"type":"text","timestamp":1700000000000,"part":{"type":"text","text":"hello world"}}"#;
         let entry = executor.parse_output_line(line).unwrap();
         assert_eq!(entry.log_type, "text");
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn test_parse_output_line_step_finish_stores_usage() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let line = r#"{"type":"step_finish","timestamp":1700000000000,"part":{"type":"step_finish","tokens":{"total":100,"input":50,"output":50,"cache":{"read":10,"write":5}},"cost":0.001}}"#;
         let entry = executor.parse_output_line(line).unwrap();
         assert_eq!(entry.log_type, "step_finish");
@@ -246,28 +246,28 @@ mod tests {
 
     #[test]
     fn test_parse_output_line_unknown_type() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let line = r#"{"type":"unknown","timestamp":1700000000000}"#;
         assert!(executor.parse_output_line(line).is_none());
     }
 
     #[test]
     fn test_parse_output_line_invalid_json() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let line = "not json";
         assert!(executor.parse_output_line(line).is_none());
     }
 
     #[test]
     fn test_parse_output_line_empty_text() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let line = r#"{"type":"text","timestamp":1700000000000,"part":{"type":"text","text":""}}"#;
         assert!(executor.parse_output_line(line).is_none());
     }
 
     #[test]
     fn test_get_final_result_with_text() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let logs = vec![
             ParsedLogEntry::new("text", "  hello world  "),
         ];
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn test_get_final_result_fallback_to_stderr() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let logs = vec![
             ParsedLogEntry::new("stderr", "error output"),
         ];
@@ -285,27 +285,27 @@ mod tests {
 
     #[test]
     fn test_get_final_result_empty_logs() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let logs: Vec<ParsedLogEntry> = vec![];
         assert!(executor.get_final_result(&logs).is_none());
     }
 
     #[test]
     fn test_get_usage_before_step_finish() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         assert!(executor.get_usage(&[]).is_none());
     }
 
     #[test]
     fn test_get_model_always_none() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         assert!(executor.get_model().is_none());
     }
 
     #[test]
     fn test_parse_output_line_with_iso_timestamp() {
         // New version: ISO 8601 string timestamp
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let line = r#"{"type":"step_start","timestamp":"2026-05-12T06:08:58.721Z","content":"Step started"}"#;
         let entry = executor.parse_output_line(line).unwrap();
         assert_eq!(entry.log_type, "step_start");
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn test_parse_output_line_with_number_timestamp_milliseconds() {
         // Milliseconds format (13+ digits) should still work
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let line = r#"{"type":"step_start","timestamp":1700000000000,"content":"Step started"}"#;
         let entry = executor.parse_output_line(line).unwrap();
         assert_eq!(entry.log_type, "step_start");

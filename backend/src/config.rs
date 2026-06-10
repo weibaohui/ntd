@@ -371,9 +371,12 @@ mod tests {
 
     #[test]
     fn test_normalize_single_path_tilde_expansion() {
+        // 测试路径归一化能正确展开 ~ 为用户 home 目录，
+        // 验证 path_concat 在处理带 ~ 前缀路径时的正确性。
         let home = dirs::home_dir().expect("need home dir for test");
-        let result = Config::normalize_single_path("~/bin/joinai");
-        let expected = home.join("bin").join("joinai").to_string_lossy().to_string();
+        let result = Config::normalize_single_path("~/bin/mobile");
+        // 归一化后的路径应将 ~ 展开为 home_join("bin").join("mobile")
+        let expected = home.join("bin").join("mobile").to_string_lossy().to_string();
         assert_eq!(result, expected, "~ should expand to home directory");
     }
 
@@ -390,11 +393,13 @@ mod tests {
 
     #[test]
     fn test_normalize_single_path_bare_command() {
+        // 裸命令名（无路径斜杠）应原样保留，让系统在 $PATH 中查找
         let result = Config::normalize_single_path("opencode");
         assert_eq!(result, "opencode", "bare command name should be left untouched for PATH lookup");
 
-        let result = Config::normalize_single_path("joinai");
-        assert_eq!(result, "joinai", "bare command name should be left untouched for PATH lookup");
+        // 同上，验证 mobilecoder 作为裸命令名时也能正确透传
+        let result = Config::normalize_single_path("mobilecoder");
+        assert_eq!(result, "mobilecoder", "bare command name should be left untouched for PATH lookup");
     }
 
     #[test]

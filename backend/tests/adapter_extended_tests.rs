@@ -451,13 +451,13 @@ mod kimi_executor_extended_tests {
 }
 
 #[cfg(test)]
-mod joinai_executor_extended_tests {
-    use ntd::adapters::joinai::JoinaiExecutor;
+mod mobilecoder_executor_extended_tests {
+    use ntd::adapters::mobilecoder::MobilecoderExecutor;
     use ntd::adapters::CodeExecutor;
 
     #[test]
     fn test_extract_session_id_from_event() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let line = r#"{"type":"step_start","sessionID":"ses_abc123"}"#;
         let session = executor.extract_session_id(line);
         assert_eq!(session, Some("ses_abc123".to_string()));
@@ -465,7 +465,7 @@ mod joinai_executor_extended_tests {
 
     #[test]
     fn test_extract_session_id_from_part() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let line = r#"{"type":"text","part":{"sessionID":"ses_xyz789"},"text":"hello"}"#;
         let session = executor.extract_session_id(line);
         assert_eq!(session, Some("ses_xyz789".to_string()));
@@ -473,7 +473,7 @@ mod joinai_executor_extended_tests {
 
     #[test]
     fn test_extract_session_id_not_found() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let line = r#"{"type":"text","text":"hello"}"#;
         let session = executor.extract_session_id(line);
         assert!(session.is_none());
@@ -481,20 +481,20 @@ mod joinai_executor_extended_tests {
 
     #[test]
     fn test_extract_session_id_invalid_json() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let session = executor.extract_session_id("not json");
         assert!(session.is_none());
     }
 
     #[test]
     fn test_supports_resume() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         assert!(executor.supports_resume());
     }
 
     #[test]
     fn test_extract_session_id_from_real_api_response() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let line = r#"{"type":"step_start","timestamp":1779069382034,"sessionID":"ses_1c73b5ee0ffef5UHX2DuxZj9uF","part":{"id":"prt_e38cc6d8f001nXvt3aI6D6IfT7","sessionID":"ses_1c73b5ee0ffef5UHX2DuxZj9uF","messageID":"msg_e38cb2991001z0vtz9Wng3siRh","type":"step-start","snapshot":"1779069382030"}}"#;
         let session = executor.extract_session_id(line);
         assert_eq!(session, Some("ses_1c73b5ee0ffef5UHX2DuxZj9uF".to_string()));
@@ -502,7 +502,7 @@ mod joinai_executor_extended_tests {
 
     #[test]
     fn test_command_args_with_session() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let args = executor.command_args_with_session("continue", Some("ses_abc123"), true);
         assert!(args.contains(&"-s".to_string()));
         assert!(args.contains(&"ses_abc123".to_string()));
@@ -517,7 +517,7 @@ mod joinai_executor_extended_tests {
 
     #[test]
     fn test_command_args() {
-        let executor = JoinaiExecutor::new("joinai".to_string());
+        let executor = MobilecoderExecutor::new("mobile".to_string());
         let args = executor.command_args("讲个笑话");
         assert_eq!(args[0], "run");
         assert_eq!(args[1], "--agent");

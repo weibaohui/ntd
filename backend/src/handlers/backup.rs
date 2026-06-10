@@ -1063,7 +1063,7 @@ fn all_executor_skills_dirs() -> Vec<(&'static str, PathBuf)> {
         ("opencode", home.join(".opencode").join("skills")),
         ("atomcode", home.join(".atomcode").join("skills")),
         ("kimi", home.join(".kimi").join("skills")),
-        ("joinai", home.join(".joinai").join("skills")),
+        ("mobilecoder", home.join(".mobile-coder").join("skills")),
     ]
 }
 
