@@ -12,6 +12,7 @@ use crate::feishu::{
 
 use crate::service_context::ServiceContext;
 use crate::config::Config as AppConfig;
+use crate::task_manager::TaskManager;
 use crate::db::{Database, NewFeishuMessage};
 use crate::models::{AgentBot, BotConfig, build_trigger_params};
 use crate::services::message_debounce::{MessageDebounce, PendingMessage};
@@ -33,6 +34,7 @@ struct ListenerMessageContext<'a> {
     token_manager: &'a Arc<TokenManager>,
     credentials: &'a DashMap<i64, (String, String, String)>,
     debounce: &'a Arc<MessageDebounce>,
+    task_manager: &'a Arc<TaskManager>,
     bot_id: i64,
     bot_open_id: &'a str,
     bot_config: &'a BotConfig,
@@ -142,6 +144,7 @@ impl FeishuListener {
         let config = self.ctx.config.clone();
         let token_manager = self.token_manager.clone();
         let debounce = self.debounce.clone();
+        let task_manager = self.ctx.task_manager.clone();
         tokio::spawn(async move {
             tracing::info!("[feishu:{}] message receiver loop started", bot_id);
             while let Some(msg) = rx.recv().await {
@@ -151,6 +154,7 @@ impl FeishuListener {
                     token_manager: &token_manager,
                     credentials: &credentials,
                     debounce: &debounce,
+                    task_manager: &task_manager,
                     bot_id,
                     bot_open_id: &bot_open_id,
                     bot_config: &bot_config_clone,
@@ -175,6 +179,7 @@ impl FeishuListener {
             token_manager,
             credentials,
             debounce,
+            task_manager,
             bot_id,
             bot_open_id,
             bot_config,
@@ -303,6 +308,45 @@ impl FeishuListener {
                 content,
                 reaction_id: reaction_id.as_deref(),
             })
+            .await;
+            return;
+        }
+
+        // /new command — start a fresh session without resuming previous one
+        if content == "/new" {
+            Self::handle_new(FeishuCommandContext {
+                db,
+                credentials,
+                token_manager,
+                bot_id,
+                chat_type,
+                sender: &msg.sender,
+                channel: &msg.channel,
+                message_id: &msg.id,
+                content,
+                reaction_id: reaction_id.as_deref(),
+            })
+            .await;
+            return;
+        }
+
+        // /stop command — stop the currently running execution for this binding
+        if content == "/stop" {
+            Self::handle_stop(
+                task_manager,
+                FeishuCommandContext {
+                    db,
+                    credentials,
+                    token_manager,
+                    bot_id,
+                    chat_type,
+                    sender: &msg.sender,
+                    channel: &msg.channel,
+                    message_id: &msg.id,
+                    content,
+                    reaction_id: reaction_id.as_deref(),
+                },
+            )
             .await;
             return;
         }
@@ -1128,6 +1172,249 @@ impl FeishuListener {
             Err(e) => {
                 tracing::error!("[feishu:{}] /unbind query failed: {e}", bot_id);
                 Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 查询绑定失败，请稍后重试").await;
+            }
+        }
+
+        if let Some(rid) = reaction_id {
+            Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+        }
+    }
+
+    /// Handle /new — start a fresh session without resuming the previous one.
+    /// Unlike normal messages which resume existing sessions, this forces a new session.
+    async fn handle_new(context: FeishuCommandContext<'_>) {
+        let FeishuCommandContext {
+            db,
+            credentials,
+            token_manager,
+            bot_id,
+            chat_type,
+            sender,
+            channel,
+            message_id,
+            reaction_id,
+            ..
+        } = context;
+        let (receive_id, receive_id_type) = match chat_type {
+            "p2p" => (sender.to_string(), "open_id"),
+            _ => (channel.to_string(), "chat_id"),
+        };
+
+        match db.get_feishu_project_binding(bot_id, channel).await {
+            Ok(Some(binding)) => {
+                // 清除 session_id 和 latest_record_id，使下一条消息无法 resume
+                // should_resume 的判断依赖 latest_record.session_id.is_some()，
+                // 清除后 latest_record_id=None → latest_record=None → should_resume=false
+                if let Err(e) = db.clear_feishu_binding_session(binding.id).await {
+                    tracing::error!("[feishu:{}] /new clear session failed: {e}", bot_id);
+                    Self::send_text(
+                        credentials,
+                        token_manager,
+                        bot_id,
+                        &receive_id,
+                        receive_id_type,
+                        "⚠️ 清除会话失败，请稍后重试。",
+                    )
+                    .await;
+                    if let Some(rid) = reaction_id {
+                        Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+                    }
+                    return;
+                }
+
+                tracing::info!(
+                    "[feishu:{}] /new command: cleared session for binding {}, next message will start fresh",
+                    bot_id,
+                    binding.id
+                );
+                Self::send_text(
+                    credentials,
+                    token_manager,
+                    bot_id,
+                    &receive_id,
+                    receive_id_type,
+                    "🆕 已开启新会话。\n\n发送你的任务，我将使用全新 session 执行，不再resume之前的对话。",
+                )
+                .await;
+            }
+            Ok(None) => {
+                Self::send_text(
+                    credentials,
+                    token_manager,
+                    bot_id,
+                    &receive_id,
+                    receive_id_type,
+                    "📭 当前聊天未绑定任何项目，无法使用 /new。\n\n请先使用 /bind <项目名称> 绑定一个项目。",
+                )
+                .await;
+            }
+            Err(e) => {
+                tracing::error!("[feishu:{}] /new query binding failed: {e}", bot_id);
+                Self::send_text(
+                    credentials,
+                    token_manager,
+                    bot_id,
+                    &receive_id,
+                    receive_id_type,
+                    "⚠️ 查询绑定失败，请稍后重试。",
+                )
+                .await;
+            }
+        }
+
+        if let Some(rid) = reaction_id {
+            Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+        }
+    }
+
+    /// Handle /stop — stop the currently running execution for this binding.
+    /// 与前端「停止」按钮逻辑相同：通过 task_manager 取消任务。
+    async fn handle_stop(
+        task_manager: &Arc<TaskManager>,
+        context: FeishuCommandContext<'_>,
+    ) {
+        let FeishuCommandContext {
+            db,
+            credentials,
+            token_manager,
+            bot_id,
+            chat_type,
+            sender,
+            channel,
+            message_id,
+            reaction_id,
+            ..
+        } = context;
+        let (receive_id, receive_id_type) = match chat_type {
+            "p2p" => (sender.to_string(), "open_id"),
+            _ => (channel.to_string(), "chat_id"),
+        };
+
+        match db.get_feishu_project_binding(bot_id, channel).await {
+            Ok(Some(binding)) => {
+                // 获取当前 binding 的最新执行记录
+                if let Some(record_id) = binding.latest_record_id {
+                    match db.get_execution_record(record_id).await {
+                        Ok(Some(record)) => {
+                            if record.status == crate::models::ExecutionStatus::Running {
+                                // 任务正在运行，尝试停止
+                                if let Some(ref task_id) = record.task_id {
+                                    let cancelled = task_manager.cancel(task_id).await;
+                                    if cancelled {
+                                        tracing::info!(
+                                            "[feishu:{}] /stop: cancelled task {} for record {}",
+                                            bot_id,
+                                            task_id,
+                                            record_id
+                                        );
+                                        Self::send_text(
+                                            credentials,
+                                            token_manager,
+                                            bot_id,
+                                            &receive_id,
+                                            receive_id_type,
+                                            "⏹️ 已发送停止信号，任务即将终止。",
+                                        )
+                                        .await;
+                                    } else {
+                                        // 任务不在 task_manager 中（可能已崩溃），强制更新 DB
+                                        tracing::warn!(
+                                            "[feishu:{}] /stop: task {} not in task_manager, forcing DB update",
+                                            bot_id,
+                                            task_id
+                                        );
+                                        let _ = db.force_fail_execution_record(record_id).await;
+                                        Self::send_text(
+                                            credentials,
+                                            token_manager,
+                                            bot_id,
+                                            &receive_id,
+                                            receive_id_type,
+                                            "⚠️ 任务已不在运行中（可能已异常退出），已更新状态。",
+                                        )
+                                        .await;
+                                    }
+                                } else {
+                                    Self::send_text(
+                                        credentials,
+                                        token_manager,
+                                        bot_id,
+                                        &receive_id,
+                                        receive_id_type,
+                                        "⚠️ 该执行记录没有 task_id，无法停止。",
+                                    )
+                                    .await;
+                                }
+                            } else {
+                                Self::send_text(
+                                    credentials,
+                                    token_manager,
+                                    bot_id,
+                                    &receive_id,
+                                    receive_id_type,
+                                    "ℹ️ 当前没有正在执行的任务。",
+                                )
+                                .await;
+                            }
+                        }
+                        Ok(None) => {
+                            Self::send_text(
+                                credentials,
+                                token_manager,
+                                bot_id,
+                                &receive_id,
+                                receive_id_type,
+                                "⚠️ 执行记录不存在。",
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            tracing::error!("[feishu:{}] /stop query record failed: {e}", bot_id);
+                            Self::send_text(
+                                credentials,
+                                token_manager,
+                                bot_id,
+                                &receive_id,
+                                receive_id_type,
+                                "⚠️ 查询执行记录失败，请稍后重试。",
+                            )
+                            .await;
+                        }
+                    }
+                } else {
+                    Self::send_text(
+                        credentials,
+                        token_manager,
+                        bot_id,
+                        &receive_id,
+                        receive_id_type,
+                        "ℹ️ 当前没有执行记录可停止。",
+                    )
+                    .await;
+                }
+            }
+            Ok(None) => {
+                Self::send_text(
+                    credentials,
+                    token_manager,
+                    bot_id,
+                    &receive_id,
+                    receive_id_type,
+                    "📭 当前聊天未绑定任何项目，无可停止的任务。",
+                )
+                .await;
+            }
+            Err(e) => {
+                tracing::error!("[feishu:{}] /stop query binding failed: {e}", bot_id);
+                Self::send_text(
+                    credentials,
+                    token_manager,
+                    bot_id,
+                    &receive_id,
+                    receive_id_type,
+                    "⚠️ 查询绑定失败，请稍后重试。",
+                )
+                .await;
             }
         }
 

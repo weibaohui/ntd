@@ -130,6 +130,24 @@ impl Database {
         self.exec_update(am).await
     }
 
+    /// 清除 binding 的 session_id 和 latest_record_id。
+    /// 用于 /new 命令：强制开启新 session，不再 resume 之前的会话。
+    pub async fn clear_feishu_binding_session(
+        &self,
+        id: i64,
+    ) -> Result<(), sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let am = feishu_project_bindings::ActiveModel {
+            id: ActiveValue::Unchanged(id),
+            session_id: ActiveValue::Set(None),
+            latest_record_id: ActiveValue::Set(None),
+            status: ActiveValue::Set("idle".to_string()),
+            updated_at: ActiveValue::Set(now),
+            ..Default::default()
+        };
+        self.exec_update(am).await
+    }
+
     /// 将 pending 绑定（chat_id="__pending__"）连接到真实聊天
     ///
     /// 流程：Web UI 预先创建了 binding（含 Todo + project_dir），用户在飞书发送
