@@ -114,10 +114,19 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         session_dir: "~/.codewhale",
         aliases: &[],
     },
+    ExecutorDef {
+        name: "pi",
+        executor_type: ExecutorType::Pi,
+        binary_name: "pi",
+        display_name: "Pi",
+        default_path: "pi",
+        session_dir: "~/.pi",
+        aliases: &[],
+    },
 ];
 
 /// 支持继续对话的执行器集合（与前端 RESUMABLE_EXECUTORS 保持一致）
-pub const RESUMABLE_EXECUTORS: &[&str] = &["claudecode", "kimi", "opencode", "mobilecoder", "hermes", "codewhale"];
+pub const RESUMABLE_EXECUTORS: &[&str] = &["claudecode", "kimi", "opencode", "mobilecoder", "hermes", "codewhale", "pi"];
 
 /// 默认执行器
 pub const DEFAULT_EXECUTOR: &str = "claudecode";
@@ -180,6 +189,8 @@ pub mod hermes;
 pub mod kimi;
 pub mod codex;
 pub mod codewhale;
+pub mod pi;
+pub mod pi_event;
 
 #[async_trait]
 pub trait CodeExecutor: Send + Sync {
@@ -290,6 +301,7 @@ impl ExecutorRegistry {
             "kimi" => Arc::new(kimi::KimiExecutor::new(path.to_string())),
             "codex" => Arc::new(codex::CodexExecutor::new(path.to_string())),
             "codewhale" => Arc::new(codewhale::CodewhaleExecutor::new(path.to_string())),
+            "pi" => Arc::new(pi::PiExecutor::new(path.to_string())),
             _ => return None,
         };
         Some(executor)

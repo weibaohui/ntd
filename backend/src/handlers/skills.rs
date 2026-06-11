@@ -121,12 +121,13 @@ fn executor_label(et: ExecutorType) -> &'static str {
         ExecutorType::Kimi => "Kimi",
         ExecutorType::Mobilecoder => "MobileCoder",
         ExecutorType::Codewhale => "CodeWhale",
+        ExecutorType::Pi => "Pi",
     }
 }
 
 // 保留 ALL_EXECUTORS 供其他可能用到的代码；新代码请用 ALL_SKILL_SOURCES
 #[allow(dead_code)]
-const ALL_EXECUTORS: [ExecutorType; 9] = [
+const ALL_EXECUTORS: [ExecutorType; 10] = [
     ExecutorType::Claudecode,
     ExecutorType::Hermes,
     ExecutorType::Codex,
@@ -136,6 +137,7 @@ const ALL_EXECUTORS: [ExecutorType; 9] = [
     ExecutorType::Kimi,
     ExecutorType::Mobilecoder,
     ExecutorType::Codewhale,
+    ExecutorType::Pi,
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
