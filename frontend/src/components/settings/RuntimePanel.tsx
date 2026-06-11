@@ -20,8 +20,7 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
   const [stoppingRecords, setStoppingRecords] = useState(false);
   const [runningRecords, setRunningRecords] = useState<ExecutionRecord[]>([]);
 
-  // 使用 Form.useWatch 订阅表单字段，直接响应 setFieldsValue 变化，
-  // 解决 async db.getConfig() 完成后的 setFieldsValue 不会触发 useEffect deps 的问题。
+  // 使用 Form.useWatch 订阅表单字段，直接响应 setFieldsValue 变化。
   const watchedTimeoutSecs = Form.useWatch('execution_timeout_secs', configForm);
 
   // executionTimeoutSecs 由 useWatch 驱动，undefined 时使用懒初始化默认值。
@@ -29,17 +28,19 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
     watchedTimeoutSecs ?? DEFAULT_EXECUTION_TIMEOUT_SECS
   );
 
-  // 同步 useWatch 值到本地 state（仅在值真正变化时更新）。
-  // lastEnabledRef 同步记录非零值，供 toggle 恢复。
+  // lastEnabledRef 记录最近一次非零值，供 toggle 恢复。
   const lastEnabledExecutionTimeoutSecsRef = useRef<number>(DEFAULT_EXECUTION_TIMEOUT_SECS);
+
+  // 同步 watch 值到本地 state（仅处理外部 setFieldsValue 调用，如后端配置加载）。
+  // 用户操作（toggle、InputNumber）已直接更新 local state，这里只做兜底同步。
   useEffect(() => {
-    if (watchedTimeoutSecs !== undefined && watchedTimeoutSecs !== executionTimeoutSecs) {
+    if (watchedTimeoutSecs === undefined) return;
+    if (watchedTimeoutSecs !== executionTimeoutSecs) {
       setExecutionTimeoutSecs(watchedTimeoutSecs);
-      if (watchedTimeoutSecs !== 0) {
-        lastEnabledExecutionTimeoutSecsRef.current = watchedTimeoutSecs;
-      }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (watchedTimeoutSecs !== 0) {
+      lastEnabledExecutionTimeoutSecsRef.current = watchedTimeoutSecs;
+    }
   }, [watchedTimeoutSecs]);
 
   // 0 表示禁用执行超时（与后端 handlers/config.rs 中的校验对齐），其余值至少为 60 秒
@@ -89,9 +90,10 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
       lastEnabledExecutionTimeoutSecsRef.current = executionTimeoutSecs;
     }
     const next = checked ? lastEnabledExecutionTimeoutSecsRef.current : 0;
+    // 直接更新本地 state，确保 Switch 立即响应；
+    // 同时调用 setFieldsValue 同步到表单供保存时读取。
+    setExecutionTimeoutSecs(next);
     configForm.setFieldsValue({ execution_timeout_secs: next });
-    // setExecutionTimeoutSecs 不需要：useWatch 会通过 setFieldsValue 触发，
-    // useEffect [watchedTimeoutSecs] 会同步到本地 state。
   };
 
   return (
@@ -139,8 +141,12 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
               value={executionTimeoutMinutes}
               onChange={(v) => {
                 if (v) {
-                  configForm.setFieldsValue({ execution_timeout_secs: v * 60 });
-                  // lastEnabledRef 由 useEffect [watchedTimeoutSecs] 集中更新
+                  const nextSecs = v * 60;
+                  // 直接更新本地 state，确保 Switch 立即响应；
+                  // 同时调用 setFieldsValue 同步到表单供保存时读取。
+                  setExecutionTimeoutSecs(nextSecs);
+                  configForm.setFieldsValue({ execution_timeout_secs: nextSecs });
+                  lastEnabledExecutionTimeoutSecsRef.current = nextSecs;
                 }
               }}
             />
