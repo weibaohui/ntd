@@ -391,58 +391,24 @@ async fn version_upgrade_handler() -> impl IntoResponse {
         // 等待 HTTP 响应发送完成
         std::thread::sleep(std::time::Duration::from_secs(1));
 
-        // Step 1: stop 当前服务
-        // stop 失败不阻断流程，服务可能已经处于停止状态
-        let stop_result = std::process::Command::new(&ntd_cmd_clone)
-            .args(["daemon", "stop"])
-            .status();
-        match &stop_result {
-            Ok(s) if s.success() => tracing::info!("Daemon stopped"),
-            Ok(s) => tracing::warn!("Daemon stop exited with code {} (may already be stopped)", s),
-            Err(e) => tracing::warn!("Daemon stop failed: {} (may already be stopped)", e),
-        }
+        // 将 daemon 重部署的四步操作合并成一条 shell 命令，用 && 连接。
+        // stop 成功后 daemon 进程会退出，但同一 shell 会话中后续命令仍会被
+        // 操作系统继续调度执行，避免了分进程调用时 stop 后后续命令丢失的问题。
+        // stop 失败不阻断（服务可能已停止），但 uninstall/install/start 任一步
+        // 失败都会导致整体失败，符合预期。
+        let redeploy_script = format!(
+            "{} daemon stop && {} daemon uninstall && {} daemon install --force && {} daemon start",
+            ntd_cmd_clone, ntd_cmd_clone, ntd_cmd_clone, ntd_cmd_clone
+        );
 
-        // Step 2: uninstall 旧的服务配置，清除旧的 plist/systemd unit
-        let uninstall_result = std::process::Command::new(&ntd_cmd_clone)
-            .args(["daemon", "uninstall"])
+        let result = std::process::Command::new("sh")
+            .args(["-c", &redeploy_script])
             .status();
-        match &uninstall_result {
-            Ok(s) if s.success() => tracing::info!("Daemon uninstalled"),
-            Ok(s) => {
-                tracing::error!("Daemon uninstall failed with exit code {}", s);
-                return;
-            }
-            Err(e) => {
-                tracing::error!("Daemon uninstall exec error: {}", e);
-                return;
-            }
-        }
 
-        // Step 3: install 重新安装服务配置，写入新的 plist/systemd unit
-        // 必须传 --force，否则已存在配置时会静默跳过，binary 路径不会更新
-        let install_result = std::process::Command::new(&ntd_cmd_clone)
-            .args(["daemon", "install", "--force"])
-            .status();
-        match &install_result {
-            Ok(s) if s.success() => tracing::info!("Daemon installed with new binary path"),
-            Ok(s) => {
-                tracing::error!("Daemon install failed with exit code {}", s);
-                return;
-            }
-            Err(e) => {
-                tracing::error!("Daemon install exec error: {}", e);
-                return;
-            }
-        }
-
-        // Step 4: start 启动新版本服务
-        let start_result = std::process::Command::new(&ntd_cmd_clone)
-            .args(["daemon", "start"])
-            .status();
-        match &start_result {
-            Ok(s) if s.success() => tracing::info!("Daemon started with new version"),
-            Ok(s) => tracing::error!("Daemon start failed with exit code {}", s),
-            Err(e) => tracing::error!("Daemon start exec error: {}", e),
+        match &result {
+            Ok(s) if s.success() => tracing::info!("Daemon redeployed successfully"),
+            Ok(s) => tracing::error!("Daemon redeploy failed with exit code {}", s),
+            Err(e) => tracing::error!("Daemon redeploy exec error: {}", e),
         }
     });
 
