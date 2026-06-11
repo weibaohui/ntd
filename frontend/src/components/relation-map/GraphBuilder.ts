@@ -36,6 +36,10 @@ export interface HookEdgeData extends Record<string, unknown> {
   trigger: string;
   hookId: number;
   enabled: boolean;
+  /** 评分闸门阈值（0-100），undefined/null 表示无闸门 */
+  minRating?: number | null;
+  /** 未评分时的策略：'skip' | 'pass' */
+  unratedPolicy?: string;
 }
 
 export interface WebhookEdgeData extends Record<string, unknown> {
@@ -104,6 +108,8 @@ function buildHookRelations(
           trigger: h.trigger,
           hookId: h.id,
           enabled: h.enabled,
+          minRating: h.min_rating,
+          unratedPolicy: h.unrated_policy,
         },
         animated: false,
       });

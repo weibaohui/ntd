@@ -163,7 +163,6 @@ export function RelationMap({ onBack }: RelationMapProps) {
             }
           }}
           maskColor={isDark ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.6)'}
-          style={{ borderRadius: 8 }}
         />
 
         {/* 右侧过滤面板 */}

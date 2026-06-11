@@ -6,7 +6,7 @@ import {
   EdgeLabelRenderer,
 } from '@xyflow/react';
 
-/** Hook 边：带触发条件标签 */
+/** Hook 边：带触发条件标签和评分闸门 */
 export function HookEdge({
   id,
   sourceX,
@@ -17,7 +17,7 @@ export function HookEdge({
   targetPosition,
   data,
   selected,
-}: EdgeProps & { data?: { trigger?: string; hookId?: number; enabled?: boolean } }) {
+}: EdgeProps & { data?: { trigger?: string; hookId?: number; enabled?: boolean; minRating?: number | null; unratedPolicy?: string } }) {
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -28,6 +28,10 @@ export function HookEdge({
   });
 
   const trigger = data?.trigger || '';
+  const minRating = data?.minRating;
+  const unratedPolicy = data?.unratedPolicy;
+  const hasRatingGate = minRating != null && minRating > 0;
+
   const getTriggerColor = useCallback((t: string) => {
     switch (t) {
       case 'state_changed_to_completed': return '#52c41a';
@@ -49,6 +53,11 @@ export function HookEdge({
   }, []);
 
   const color = getTriggerColor(trigger);
+
+  // 构建闸门标签
+  const gateLabel = hasRatingGate
+    ? `≥${minRating}${unratedPolicy === 'pass' ? '·未评过' : '·未评跳'}`
+    : null;
 
   return (
     <>
@@ -78,7 +87,7 @@ export function HookEdge({
             }}
             className="nodrag nopan"
           >
-            {getTriggerLabel(trigger)} →
+            {getTriggerLabel(trigger)} → {gateLabel || ''}
           </div>
         </EdgeLabelRenderer>
       )}
