@@ -53,6 +53,8 @@ pub struct PiMessage {
     pub content: Vec<PiContentBlock>,
     #[serde(default)]
     pub id: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// 内容块（text / tool_call / tool_result / thinking）
@@ -82,6 +84,8 @@ pub struct PiAssistantMessageEvent {
     pub delta: Option<String>,
     #[serde(default)]
     pub partial: Option<PiAssistantMessagePartial>,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// partial 内容（包含完整的 thinking 或 text）
@@ -91,17 +95,26 @@ pub struct PiAssistantMessagePartial {
     pub role: Option<String>,
     #[serde(default)]
     pub content: Vec<PiContentBlock>,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// 工具执行事件（tool_execution_start / tool_execution_update / tool_execution_end）
 #[derive(Debug, Clone, Deserialize)]
 pub struct PiToolExecution {
+    #[serde(default)]
     pub id: Option<String>,
     #[serde(rename = "type")]
     pub tool_type: Option<String>,
-    pub name: Option<String>,
-    pub input: Option<serde_json::Value>,
+    #[serde(default, rename = "toolCallId")]
+    pub tool_call_id: Option<String>,
+    #[serde(default, rename = "toolName")]
+    pub tool_name: Option<String>,
+    #[serde(default, rename = "args")]
+    pub args: Option<serde_json::Value>,
+    #[serde(default)]
     pub output: Option<String>,
+    #[serde(default)]
     pub status: Option<String>,
 }
 
