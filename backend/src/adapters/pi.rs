@@ -55,24 +55,17 @@ impl CodeExecutor for PiExecutor {
     }
 
     /// 支持 session 的命令参数
-    /// pi 使用 --continue 恢复，--session <id> 指定已有 session
-    fn command_args_with_session(&self, message: &str, session_id: Option<&str>, is_resume: bool) -> Vec<String> {
+    /// pi 使用 --continue 恢复（不需要指定 session id，pi 会自动找当前目录最近的 session）
+    fn command_args_with_session(&self, message: &str, _session_id: Option<&str>, is_resume: bool) -> Vec<String> {
         let mut args = vec![
             "-p".to_string(),
             "--mode".to_string(),
             "json".to_string(),
         ];
-        if let Some(sid) = session_id {
-            if is_resume {
-                // 恢复模式：继续之前的 session
-                args.push("--continue".to_string());
-                args.push(format!("--session {}", sid));
-            } else {
-                // 新 session 但指定 id（目前 pi 不支持创建指定 id 的 session，
-                // 只能用 --continue 恢复，这里 fallback 到 --continue）
-                args.push("--continue".to_string());
-                args.push(format!("--session {}", sid));
-            }
+        if is_resume {
+            // 恢复模式：只用 --continue，让 pi 自动找最近 session
+            // 注意：pi 的 session 按项目目录存储，必须确保 cwd 与原 session 创建时一致
+            args.push("--continue".to_string());
         }
         args.push(message.to_string());
         args
@@ -87,9 +80,12 @@ impl CodeExecutor for PiExecutor {
         if line.is_empty() {
             return None;
         }
+        tracing::debug!("[pi] extract_session_id: trying line={}", line.chars().take(100).collect::<String>());
         if let Ok(event) = serde_json::from_str::<PiEvent>(line) {
+            tracing::debug!("[pi] parsed event type={}", event.event_type);
             if event.event_type == "session" {
                 if let Some(id) = event.id {
+                    tracing::info!("[pi] extracted session_id={}", id);
                     *self.session_id.lock() = Some(id.clone());
                     return Some(id);
                 }
@@ -105,6 +101,7 @@ impl CodeExecutor for PiExecutor {
 
         // 尝试解析为 pi JSONL 事件
         if let Ok(event) = serde_json::from_str::<PiEvent>(line) {
+            tracing::debug!("[pi] parse_output_line: event_type={}", event.event_type);
             return match event.event_type.as_str() {
                 "session" => {
                     // Session 初始化事件
@@ -301,5 +298,26 @@ impl CodeExecutor for PiExecutor {
 
     fn get_model(&self) -> Option<String> {
         self.model.lock().clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_session_id() {
+        let executor = PiExecutor::new("pi".to_string());
+        let line = r#"{"type":"session","version":3,"id":"019eb655-b65a-750d-b774-9bfad4b0c51b","timestamp":"2026-06-11T10:58:51.098Z","cwd":"/Users/mac/projects/rust/nothing-todo"}"#;
+        let sid = executor.extract_session_id(line);
+        assert_eq!(sid, Some("019eb655-b65a-750d-b774-9bfad4b0c51b".to_string()));
+    }
+
+    #[test]
+    fn test_extract_session_id_not_session() {
+        let executor = PiExecutor::new("pi".to_string());
+        let line = r#"{"type":"message_start","message":{"role":"user"}}"#;
+        let sid = executor.extract_session_id(line);
+        assert_eq!(sid, None);
     }
 }
