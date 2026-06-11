@@ -1,4 +1,6 @@
-import { Button, Tag, Empty, Segmented, Popconfirm, Tooltip, Pagination, message } from 'antd';
+import { useState, useEffect } from 'react';
+import { Button, Tag, Empty, Segmented, Popconfirm, Tooltip, Pagination, message, Popover, InputNumber, Space } from 'antd';
+import { StarOutlined, StarFilled } from '@ant-design/icons';
 import { MessageOutlined, FileTextOutlined, StopOutlined, CopyOutlined, UnorderedListOutlined, LinkOutlined, LoadingOutlined } from '@ant-design/icons';
 import XMarkdown from '@ant-design/x-markdown';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
@@ -14,7 +16,7 @@ import { getHookTriggerLabel } from '@/utils/database/hooks';
 export function RecordDetailView({
   isLoadingDetail, record, sessionGroups,
   onSelectRecord, viewMode, onViewModeChange,
-  onOpenResume, onExportMarkdown, onStop, onRefreshSingle,
+  onOpenResume, onExportMarkdown, onStop, onRefreshSingle, onRate,
   paginatedLogs, logsTotal, logsPage, logsPerPage, onLoadLogs, isLoadingLogs,
   getRunningTaskForRecord, resolveExecutionStats,
 }: {
@@ -28,6 +30,11 @@ export function RecordDetailView({
   onExportMarkdown: (record: ExecutionRecord) => Promise<void>;
   onStop: (recordId: number) => Promise<void>;
   onRefreshSingle: (recordId: number) => Promise<void>;
+  /**
+   * 评分回调。record 表示被评分的新值，recordId 是被清分的记录。
+   * 传 null 表示清除评分。
+   */
+  onRate: (recordId: number, rating: number | null) => Promise<void>;
   paginatedLogs: LogEntry[];
   logsTotal: number;
   logsPage: number;
@@ -135,6 +142,12 @@ export function RecordDetailView({
         <div style={{ display: 'flex', gap: 8 }}>
           {record.status !== 'running' && supportsResume(record) && (
             <Button type="primary" size="small" icon={<MessageOutlined />} onClick={() => onOpenResume(record)}>继续对话</Button>
+          )}
+          {record.status !== 'running' && (
+            <RecordRatingControl
+              record={record}
+              onRate={onRate}
+            />
           )}
           {record.status !== 'running' && !!record.finished_at && (
             <Button size="small" icon={<FileTextOutlined />} onClick={() => onExportMarkdown(record)}>导出YAML</Button>
@@ -290,5 +303,112 @@ export function RecordDetailView({
         );
       })()}
     </>
+  );
+}
+
+/**
+ * 评分控件（仅针对已结束的执行记录）。
+ * - 未评分时：点击“评分”按钮弹出 Popover，输入 0-100 提交。
+ * - 已评分时：直接显示 `★ 85` 可点击重新编辑；提供“清除”按钮。
+ * 设计：评分仅属于“执行结果”，不能给 running 记录评分（RecordDetailView
+ * 会在 status === 'running' 时不渲染本控件）。
+ */
+function RecordRatingControl({
+  record,
+  onRate,
+}: {
+  record: ExecutionRecord;
+  onRate: (recordId: number, rating: number | null) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState<number | null>(record.rating ?? null);
+  const [submitting, setSubmitting] = useState(false);
+
+  // 跟随 record.rating 变化同步本地值（避免外部刷新后表单与实际评分不一致）
+  useEffect(() => {
+    setValue(record.rating ?? null);
+  }, [record.rating, record.id]);
+
+  const handleSubmit = async (next: number | null) => {
+    setSubmitting(true);
+    try {
+      await onRate(record.id, next);
+      setOpen(false);
+    } catch {
+      // 错误由上层拦截器统一提示，本处仅保持弹窗开启以便用户重试
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const content = (
+    <div style={{ width: 220 }}>
+      <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+        为本次执行结果评分（0-100）
+      </div>
+      <Space.Compact style={{ width: '100%' }}>
+        <InputNumber
+          min={0}
+          max={100}
+          value={value}
+          onChange={v => setValue(typeof v === 'number' ? v : null)}
+          placeholder="0-100"
+          style={{ width: '100%' }}
+          autoFocus
+          onPressEnter={() => {
+            if (value != null) handleSubmit(value);
+          }}
+        />
+        <Button
+          type="primary"
+          loading={submitting}
+          disabled={value == null}
+          onClick={() => handleSubmit(value)}
+        >
+          保存
+        </Button>
+      </Space.Compact>
+      {record.rating != null && (
+        <Button
+          type="link"
+          size="small"
+          danger
+          style={{ padding: '4px 0 0', marginTop: 4 }}
+          disabled={submitting}
+          onClick={() => handleSubmit(null)}
+        >
+          清除评分
+        </Button>
+      )}
+    </div>
+  );
+
+  if (record.rating != null) {
+    // 已评分：以徽章形式呈现，点击重新编辑
+    return (
+      <Popover content={content} open={open} onOpenChange={setOpen} placement="bottomRight">
+        <Button
+          size="small"
+          icon={<StarFilled style={{ color: '#fadb14' }} />}
+          onClick={() => setOpen(o => !o)}
+          aria-label="已评分，点击修改"
+        >
+          {record.rating}
+        </Button>
+      </Popover>
+    );
+  }
+
+  return (
+    <Popover content={content} open={open} onOpenChange={setOpen} placement="bottomRight">
+      <Button
+        size="small"
+        icon={<StarOutlined />}
+        onClick={() => setOpen(o => !o)}
+        aria-label="评分"
+      >
+        评分
+      </Button>
+    </Popover>
   );
 }

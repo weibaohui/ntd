@@ -19,6 +19,7 @@ pub struct TodoUpdate<'a> {
     pub scheduler_timezone: Option<&'a str>,
     pub workspace: Option<&'a str>,
     pub worktree_enabled: Option<bool>,
+    pub acceptance_criteria: Option<&'a str>,
 }
 
 pub struct SchedulerUpdate<'a> {
@@ -63,6 +64,7 @@ impl Database {
             workspace: m.workspace,
             worktree_enabled: m.worktree_enabled.unwrap_or(false),
             hooks: crate::hooks::TodoHooks::parse(m.hooks.as_deref()).items,
+            acceptance_criteria: m.acceptance_criteria,
         }
     }
 
@@ -111,9 +113,20 @@ impl Database {
     /// 创建 Todo，可指定执行器。
     /// executor 为 None、空串或仅空白时默认为 claudecode（防止空/空白字符串污染 DB）。
     pub async fn create_todo_with_executor(&self, title: &str, prompt: &str, executor: Option<&str>) -> Result<i64, sea_orm::DbErr> {
+        self.create_todo_with_extras(title, prompt, executor, None).await
+    }
+
+    /// 创建 Todo，带所有可选字段。
+    pub async fn create_todo_with_extras(
+        &self,
+        title: &str,
+        prompt: &str,
+        executor: Option<&str>,
+        acceptance_criteria: Option<&str>,
+    ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let executor_str = executor
-            .map(str::trim)  // 先 trim，避免 "  " 类空白字符串落入空串分支
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(crate::adapters::DEFAULT_EXECUTOR);
         let am = todos::ActiveModel {
@@ -123,6 +136,7 @@ impl Database {
             created_at: ActiveValue::Set(Some(now.clone())),
             updated_at: ActiveValue::Set(Some(now)),
             executor: ActiveValue::Set(Some(executor_str.to_string())),
+            acceptance_criteria: ActiveValue::Set(acceptance_criteria.map(|s| s.to_string())),
             ..Default::default()
         };
         let inserted = am.insert(&self.conn).await?;
@@ -165,6 +179,9 @@ impl Database {
         }
         if let Some(wt) = update.worktree_enabled {
             am.worktree_enabled = ActiveValue::Set(Some(wt));
+        }
+        if let Some(criteria) = update.acceptance_criteria {
+            am.acceptance_criteria = ActiveValue::Set(Some(criteria.to_string()));
         }
         self.exec_update(am).await
     }

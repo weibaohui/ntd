@@ -97,6 +97,16 @@ export function DetailHeader({
           )}
         </div>
         {selectedTodo.prompt && <PromptDisplay content={selectedTodo.prompt} />}
+        {(selectedTodo.acceptance_criteria) && (
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 2, marginBottom: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+            {selectedTodo.acceptance_criteria && (
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <span style={{ fontWeight: 600 }}>验收标准：</span>
+                <span>{selectedTodo.acceptance_criteria}</span>
+              </div>
+            )}
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 8 }}>
           <Button
             type="primary"

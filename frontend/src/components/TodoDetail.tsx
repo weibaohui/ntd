@@ -187,6 +187,16 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
     }
   };
 
+  /**
+   * 给一条执行结果评分或清除评分。
+   * 后端会返回更新后的 record；刷新单条后 dispatcher 会同步本地缓存。
+   */
+  const handleRateExecution = async (recordId: number, rating: number | null) => {
+    await db.rateExecutionRecord(recordId, rating);
+    await refreshSingleRecord(recordId);
+    message.success(rating == null ? '已清除评分' : `已评分 ${rating}`);
+  };
+
   const [resumeModalOpen, setResumeModalOpen] = useState(false);
   const [resumeRecordId, setResumeRecordId] = useState<number | null>(null);
   const [resumeMessage, setResumeMessage] = useState('');
@@ -400,6 +410,7 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
                 onExportMarkdown={handleExportMarkdown}
                 onStop={handleStopExecution}
                 onRefreshSingle={refreshSingleRecord}
+                onRate={handleRateExecution}
                 paginatedLogs={paginatedLogs}
                 logsTotal={logsTotal}
                 logsPage={logsPage}

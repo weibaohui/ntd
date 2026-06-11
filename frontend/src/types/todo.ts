@@ -20,6 +20,7 @@ export interface Todo {
   workspace?: string | null;
   worktree_enabled?: boolean;
   hooks?: TodoHookItem[];
+  acceptance_criteria?: string | null;
 }
 
 export interface Tag {

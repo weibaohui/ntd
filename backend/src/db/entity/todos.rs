@@ -23,6 +23,7 @@ pub struct Model {
     /// Each item binds a trigger to a target todo that should run when the
     /// parent todo's lifecycle event matches.
     pub hooks: Option<String>,
+    pub acceptance_criteria: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

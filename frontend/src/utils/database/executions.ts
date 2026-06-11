@@ -62,6 +62,17 @@ export async function resumeExecutionRecord(recordId: number, message?: string):
   return unwrap(await api.post(`/api/execution-records/${recordId}/resume`, { message }));
 }
 
+/**
+ * 给一条执行结果评分（0-100）。仅针对已结束的记录（success/failed）；
+ * running 记录后端会拒绝。传 null 表示清除评分。
+ */
+export async function rateExecutionRecord(
+  recordId: number,
+  rating: number | null,
+): Promise<ExecutionRecord> {
+  return unwrap(await api.put(`/api/execution-records/${recordId}/rating`, { rating }));
+}
+
 // Smart Create API
 
 export interface SmartCreateResult {

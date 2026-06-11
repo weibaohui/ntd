@@ -56,7 +56,12 @@ pub async fn create_todo(
         .clone()
         .unwrap_or_else(|| "claudecode".to_string());
 
-    let id = state.db.create_todo(title, &prompt).await?;
+    let id = state.db.create_todo_with_extras(
+        title,
+        &prompt,
+        Some(&executor),
+        req.acceptance_criteria.as_deref(),
+    ).await?;
 
     // Update executor if specified
     if let Some(ref exec) = req.executor {
@@ -129,6 +134,7 @@ pub async fn create_todo(
         workspace: None,
         worktree_enabled: false,
         hooks: req.hooks.clone().unwrap_or_default(),
+        acceptance_criteria: req.acceptance_criteria.clone(),
     }))
 }
 
@@ -195,6 +201,7 @@ pub async fn update_todo(
             scheduler_timezone: scheduler_timezone.as_deref(),
             workspace: workspace.as_deref(),
             worktree_enabled: Some(worktree_enabled),
+            acceptance_criteria: req.acceptance_criteria.as_deref(),
         })
         .await
         .map_err(AppError::from)?;

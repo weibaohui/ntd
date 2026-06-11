@@ -353,6 +353,7 @@ async fn handle_todo(
                         scheduler_config: None,
                         scheduler_timezone: None,
                         hooks: None,
+                        acceptance_criteria: value.get("acceptance_criteria").and_then(|v| v.as_str()).map(|s| s.to_string()),
                     });
                 if workspace.is_some() {
                     // workspace is sent separately in the full JSON body
@@ -375,6 +376,7 @@ async fn handle_todo(
                     scheduler_config: None,
                     scheduler_timezone: None,
                     hooks: None,
+                    acceptance_criteria: None,
                 }
             };
 

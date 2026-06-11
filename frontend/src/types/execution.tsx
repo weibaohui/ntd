@@ -58,6 +58,8 @@ export interface ExecutionRecord {
   source_todo_id?: number | null;
   source_todo_title?: string | null;
   source_hook_id?: number | null;
+  /** User-provided score for this execution's result (0-100). */
+  rating?: number | null;
 }
 
 export interface ExecutionSummary {

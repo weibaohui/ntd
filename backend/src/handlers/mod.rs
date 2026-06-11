@@ -583,6 +583,7 @@ pub fn create_app(
         .route("/api/execution-records/{id}/logs", get(execution::get_execution_logs_handler))
         .route("/api/execution-records/{id}", get(execution::get_execution_record))
         .route("/api/execution-records/{id}/resume", post(execution::resume_execution_handler))
+        .route("/api/execution-records/{id}/rating", put(execution::rate_execution_handler))
         .route("/api/dashboard-stats", get(execution::get_dashboard_stats))
         .route("/api/execute", post(execution::execute_handler))
         .route("/api/smart-create", post(execution::smart_create_handler))

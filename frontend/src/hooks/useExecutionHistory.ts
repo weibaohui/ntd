@@ -107,6 +107,12 @@ export function useExecutionHistory({
     try {
       const record = await db.getExecutionRecord(recordId);
       dispatch({ type: 'UPDATE_EXECUTION_RECORD', payload: { todoId: selectedTodoId, record } });
+      // 同步更新详情面板使用的本地 detail state，避免评分等同步更新后
+      // 详情面板仍展示旧值（详情面板优先使用 selectedHistoryRecordDetail，
+      // 这里只在被刷新的 record 正好是当前选中的那一条时才覆盖）。
+      if (activeRecordIdRef.current === recordId) {
+        setSelectedHistoryRecordDetail(record);
+      }
     } catch { /* ignore */ }
   }, [selectedTodoId, dispatch]);
 

@@ -110,6 +110,8 @@ pub struct Todo {
     /// Inline hooks owned by this todo. Parsed from the `todos.hooks` column.
     #[serde(default)]
     pub hooks: Vec<crate::hooks::TodoHookItem>,
+    #[serde(default)]
+    pub acceptance_criteria: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -202,6 +204,10 @@ pub struct ExecutionRecord {
     /// The `TodoHookItem.id` that triggered this execution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_hook_id: Option<i64>,
+    /// User-provided score for this execution's result (0-100, optional).
+    /// Only meaningful on terminal records (success/failed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -303,6 +309,8 @@ pub struct CreateTodoRequest {
     pub scheduler_timezone: Option<String>,
     #[serde(default)]
     pub hooks: Option<Vec<crate::hooks::TodoHookItem>>,
+    #[serde(default)]
+    pub acceptance_criteria: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -328,6 +336,8 @@ pub struct UpdateTodoRequest {
     /// Replace the todo's inline hooks. `None` keeps the existing list.
     #[serde(default)]
     pub hooks: Option<Vec<crate::hooks::TodoHookItem>>,
+    #[serde(default)]
+    pub acceptance_criteria: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]

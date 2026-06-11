@@ -72,6 +72,53 @@ pub async fn get_execution_record(
     Ok(ApiResponse::ok(record))
 }
 
+/// 更新执行记录评分。评分仅针对已结束的记录（success/failed）；
+/// running 记录不允许评分。`rating: null` 表示清除评分。
+#[derive(Debug, Deserialize)]
+pub struct RateExecutionRequest {
+    /// 评分值（0-100）。传 null 表示清除当前评分。
+    pub rating: Option<i32>,
+}
+
+pub async fn rate_execution_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    ApiJson(req): ApiJson<RateExecutionRequest>,
+) -> Result<ApiResponse<crate::models::ExecutionRecord>, AppError> {
+    if let Some(r) = req.rating {
+        if !(0..=100).contains(&r) {
+            return Err(AppError::BadRequest(format!(
+                "rating must be in 0..=100, got {}",
+                r
+            )));
+        }
+    }
+
+    let record = state
+        .db
+        .get_execution_record(id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    if record.status == ExecutionStatus::Running {
+        return Err(AppError::BadRequest(
+            "Cannot rate a running execution".to_string(),
+        ));
+    }
+
+    state
+        .db
+        .update_execution_record_rating(id, req.rating)
+        .await?;
+
+    let updated = state
+        .db
+        .get_execution_record(id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(ApiResponse::ok(updated))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ExecutionLogsQuery {
     #[serde(default = "default_page")]

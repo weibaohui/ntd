@@ -13,8 +13,11 @@ export async function createTodo(
   prompt: string = '',
   tagIds: number[] = [],
   hooks: TodoHookItem[] = [],
+  acceptanceCriteria?: string,
 ): Promise<Todo> {
-  return unwrap(await api.post('/api/todos', { title, prompt, tag_ids: tagIds, hooks }));
+  const body: Record<string, unknown> = { title, prompt, tag_ids: tagIds, hooks };
+  if (acceptanceCriteria !== undefined) body.acceptance_criteria = acceptanceCriteria;
+  return unwrap(await api.post('/api/todos', body));
 }
 
 export async function updateTodo(
@@ -28,6 +31,7 @@ export async function updateTodo(
   workspace?: string | null,
   worktree_enabled?: boolean,
   hooks?: TodoHookItem[],
+  acceptance_criteria?: string | null,
 ): Promise<Todo> {
   const body: Record<string, unknown> = { title, prompt, status };
   if (executor !== undefined) body.executor = executor;
@@ -36,6 +40,7 @@ export async function updateTodo(
   if (workspace !== undefined) body.workspace = workspace;
   if (worktree_enabled !== undefined) body.worktree_enabled = worktree_enabled;
   if (hooks !== undefined) body.hooks = hooks;
+  if (acceptance_criteria !== undefined) body.acceptance_criteria = acceptance_criteria;
 
   return unwrap(await api.put(`/api/todos/${id}`, body));
 }

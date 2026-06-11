@@ -43,6 +43,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
   const [schedulerEnabled, setSchedulerEnabled] = useState(false);
   const [schedulerConfig, setSchedulerConfig] = useState<string>('');
   const [hooks, setHooks] = useState<TodoHookItem[]>([]);
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
   const [loading, setLoading] = useState(false);
   // 快速新增项目目录的弹窗：与抽屉同级，关闭抽屉时一起清理
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -114,6 +115,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
         setSchedulerEnabled(todo.scheduler_enabled || false);
         setSchedulerConfig(todo.scheduler_config || '');
         setHooks(todo.hooks ?? []);
+        setAcceptanceCriteria(todo.acceptance_criteria ?? '');
       } else {
         setTitle('');
         setPrompt('');
@@ -124,6 +126,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
         setSchedulerEnabled(false);
         setSchedulerConfig('');
         setHooks([]);
+        setAcceptanceCriteria('');
       }
     }
   }, [open, todo]);
@@ -227,13 +230,13 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
           todo.id, title.trim(), prompt.trim(), todo.status,
           executor, schedulerEnabled, schedulerConfig || null,
           workspaceToSave, worktreeEnabled,
-          hooks,
+          hooks, acceptanceCriteria || null,
         );
         await db.updateScheduler(todo.id, schedulerEnabled, schedulerConfig || null);
         await db.updateTodoTags(todo.id, selectedTags);
         message.success('任务已更新');
       } else {
-        const newTodo = await db.createTodo(title.trim(), prompt.trim(), selectedTags, hooks);
+        const newTodo = await db.createTodo(title.trim(), prompt.trim(), selectedTags, hooks, acceptanceCriteria || undefined);
 
         // 创建模式：只在路径存在于目录列表时才设置 workspace，否则为 null（避免创建无名项目）
         const workspaceToSave = trimmedWorkspace && projectDirectories.some(d => d.path === trimmedWorkspace) ? trimmedWorkspace : null;
@@ -243,7 +246,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
             newTodo.id, newTodo.title, newTodo.prompt, newTodo.status,
             executor, schedulerEnabled, schedulerConfig || null,
             workspaceToSave, worktreeEnabled,
-            hooks,
+            hooks, acceptanceCriteria || null,
           );
           await db.updateScheduler(newTodo.id, schedulerEnabled, schedulerConfig || null);
         }
@@ -412,6 +415,20 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
             onConfigChange={setSchedulerConfig}
             existingConfig={todo?.scheduler_config}
           />
+
+          <Divider style={{ margin: '8px 0 16px' }} />
+
+          {/* 验收标准 */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8, fontWeight: 600, fontSize: 14 }}>验收标准</div>
+            <Input.TextArea
+              value={acceptanceCriteria}
+              onChange={e => setAcceptanceCriteria(e.target.value)}
+              placeholder="描述完成该任务需要满足的条件..."
+              rows={3}
+              style={{ resize: 'vertical' }}
+            />
+          </div>
 
           <Divider style={{ margin: '8px 0 16px' }} />
 

@@ -83,6 +83,7 @@ impl From<execution_records::Model> for ExecutionRecord {
             source_todo_id: m.source_todo_id,
             source_todo_title: m.source_todo_title,
             source_hook_id: m.source_hook_id,
+            rating: m.rating,
         }
     }
 }
@@ -293,6 +294,23 @@ impl Database {
         let am = execution_records::ActiveModel {
             id: ActiveValue::Unchanged(id),
             execution_stats: ActiveValue::Set(Some(stats_json.to_string())),
+            ..Default::default()
+        };
+        self.exec_update(am).await
+    }
+
+    /// 更新执行记录的评分。
+    /// 评分属于“执行结果”，因此要求记录已结束（success/failed）；running 记录
+    /// 不接受评分，handler 层会先拦抁返回错误。
+    /// `Some(value)` 写入评分，`None` 清除评分（设为 NULL）。
+    pub async fn update_execution_record_rating(
+        &self,
+        id: i64,
+        rating: Option<i32>,
+    ) -> Result<(), sea_orm::DbErr> {
+        let am = execution_records::ActiveModel {
+            id: ActiveValue::Unchanged(id),
+            rating: ActiveValue::Set(rating),
             ..Default::default()
         };
         self.exec_update(am).await
@@ -970,6 +988,7 @@ impl Database {
                     source_todo_id: None,
                     source_todo_title: None,
                     source_hook_id: None,
+                    rating: None,
                 }
             })
             .collect();

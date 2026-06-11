@@ -35,6 +35,10 @@ pub struct Model {
     /// The `TodoHookItem.id` that fired. Combined with `source_todo_id` this
     /// points at the exact hook entry that triggered this execution.
     pub source_hook_id: Option<i64>,
+    /// User-provided score for this execution's result (0-100, optional).
+    /// Only meaningful on terminal records (success/failed); running records
+    /// never carry a score.
+    pub rating: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
