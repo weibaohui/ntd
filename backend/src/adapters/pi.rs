@@ -117,49 +117,40 @@ impl CodeExecutor for PiExecutor {
                         tool_input_json: None,
                     })
                 }
-                "message_start" | "message_update" | "message_end" => {
-                    // 解析消息内容
+                "message_end" => {
+                    // message_end 包含完整的消息内容
+                    // 提取最终的 text 回复（忽略 thinking），用于 get_final_result
                     if let Some(msg) = event.message {
-                        for block in msg.content {
-                            match block {
-                                super::pi_event::PiContentBlock::Text { text } => {
-                                    if let Some(t) = text {
-                                        let trimmed = t.trim();
-                                        if !trimmed.is_empty() {
-                                            return Some(ParsedLogEntry {
-                                                timestamp: utc_timestamp(),
-                                                log_type: "assistant".to_string(),
-                                                content: trimmed.to_string(),
-                                                usage: None,
-                                                tool_name: None,
-                                                tool_input_json: None,
-                                            });
-                                        }
+                        let mut text_parts = Vec::new();
+                        for block in &msg.content {
+                            if let super::pi_event::PiContentBlock::Text { text } = block {
+                                if let Some(t) = text {
+                                    let trimmed = t.trim();
+                                    if !trimmed.is_empty() {
+                                        text_parts.push(trimmed.to_string());
                                     }
                                 }
-                                super::pi_event::PiContentBlock::ToolCall { id: _, name, input } => {
-                                    let name_str = name.unwrap_or_else(|| "unknown".to_string());
-                                    let input_str = serde_json::to_string(&input).unwrap_or_default();
-                                    return Some(ParsedLogEntry {
-                                        timestamp: utc_timestamp(),
-                                        log_type: "tool_use".to_string(),
-                                        content: format!("调用工具: {} - {}", name_str, input_str.chars().take(300).collect::<String>()),
-                                        usage: None,
-                                        tool_name: Some(name_str),
-                                        tool_input_json: Some(input_str),
-                                    });
-                                }
-                                super::pi_event::PiContentBlock::ToolResult { tool_call_id: _, content, is_error } => {
-                                    let err_str = if is_error.unwrap_or(false) { "[错误] " } else { "" };
-                                    return Some(ParsedLogEntry {
-                                        timestamp: utc_timestamp(),
-                                        log_type: "tool_result".to_string(),
-                                        content: format!("{}{}", err_str, content.unwrap_or_default().chars().take(300).collect::<String>()),
-                                        usage: None,
-                                        tool_name: None,
-                                        tool_input_json: None,
-                                    });
-                                }
+                            }
+                        }
+                        if !text_parts.is_empty() {
+                            let content = text_parts.join("\n");
+                            return Some(ParsedLogEntry {
+                                timestamp: utc_timestamp(),
+                                log_type: "assistant".to_string(),
+                                content: content.clone(),
+                                usage: None,
+                                tool_name: None,
+                                tool_input_json: None,
+                            });
+                        }
+                    }
+                    None
+                }
+                "message_update" => {
+                    // message_update 包含增量内容，处理 thinking 和 text delta
+                    if let Some(msg) = event.message {
+                        for block in &msg.content {
+                            match block {
                                 super::pi_event::PiContentBlock::Thinking { thinking } => {
                                     if let Some(t) = thinking {
                                         let trimmed = t.trim();
@@ -175,19 +166,14 @@ impl CodeExecutor for PiExecutor {
                                         }
                                     }
                                 }
-                                super::pi_event::PiContentBlock::Redacted { redacted } => {
-                                    return Some(ParsedLogEntry {
-                                        timestamp: utc_timestamp(),
-                                        log_type: "assistant".to_string(),
-                                        content: format!("[redacted] {}", redacted.unwrap_or_default()),
-                                        usage: None,
-                                        tool_name: None,
-                                        tool_input_json: None,
-                                    });
-                                }
+                                _ => {}
                             }
                         }
                     }
+                    None
+                }
+                "message_start" => {
+                    // message_start 事件（通常只有 role 信息，不返回具体内容）
                     None
                 }
                 "tool_execution_start" => {
