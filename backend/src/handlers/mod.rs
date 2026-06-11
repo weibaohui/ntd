@@ -554,6 +554,24 @@ pub fn create_app(
     };
     let hook_service = Arc::new(HookService::new(hook_ctx));
 
+    // Create AutoReviewService and ensure the reviewer template todo exists.
+    // create_app 是 sync 函数, 不能直接 .await; 同步跑一个 init 即可.
+    use crate::services::auto_review::{ensure_reviewer_template, DEFAULT_REVIEWER_PROMPT, REVIEWER_TEMPLATE_TITLE};
+    {
+        let db_for_init = db.clone();
+        let init_rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build init runtime");
+        if let Err(e) = init_rt.block_on(ensure_reviewer_template(
+            &db_for_init,
+            REVIEWER_TEMPLATE_TITLE,
+            DEFAULT_REVIEWER_PROMPT,
+        )) {
+            tracing::warn!("Failed to ensure auto-review reviewer template: {}", e);
+        }
+    }
+
     let state = AppState {
         db,
         executor_registry,

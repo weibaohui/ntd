@@ -20,6 +20,7 @@ pub struct TodoUpdate<'a> {
     pub workspace: Option<&'a str>,
     pub worktree_enabled: Option<bool>,
     pub acceptance_criteria: Option<&'a str>,
+    pub auto_review_enabled: Option<bool>,
 }
 
 pub struct SchedulerUpdate<'a> {
@@ -65,6 +66,9 @@ impl Database {
             worktree_enabled: m.worktree_enabled.unwrap_or(false),
             hooks: crate::hooks::TodoHooks::parse(m.hooks.as_deref()).items,
             acceptance_criteria: m.acceptance_criteria,
+            todo_type: m.todo_type.unwrap_or(0),
+            parent_todo_id: m.parent_todo_id,
+            auto_review_enabled: m.auto_review_enabled.unwrap_or(true),
         }
     }
 
@@ -137,6 +141,8 @@ impl Database {
             updated_at: ActiveValue::Set(Some(now)),
             executor: ActiveValue::Set(Some(executor_str.to_string())),
             acceptance_criteria: ActiveValue::Set(acceptance_criteria.map(|s| s.to_string())),
+            auto_review_enabled: ActiveValue::Set(Some(true)),
+            todo_type: ActiveValue::Set(Some(0)),
             ..Default::default()
         };
         let inserted = am.insert(&self.conn).await?;
@@ -182,6 +188,9 @@ impl Database {
         }
         if let Some(criteria) = update.acceptance_criteria {
             am.acceptance_criteria = ActiveValue::Set(Some(criteria.to_string()));
+        }
+        if let Some(enabled) = update.auto_review_enabled {
+            am.auto_review_enabled = ActiveValue::Set(Some(enabled));
         }
         self.exec_update(am).await
     }
@@ -294,6 +303,85 @@ impl Database {
             ..Default::default()
         };
         self.exec_update(am).await
+    }
+
+    /// 单独更新 auto_review_enabled. 在 create_todo 之后被 handler 调用, 以接受
+    /// 来自请求的覆盖. review_instance / reviewer_template 类型不允许改这个开关.
+    pub async fn update_todo_auto_review_enabled(
+        &self,
+        id: i64,
+        enabled: bool,
+    ) -> Result<(), sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let am = todos::ActiveModel {
+            id: ActiveValue::Unchanged(id),
+            auto_review_enabled: ActiveValue::Set(Some(enabled)),
+            updated_at: ActiveValue::Set(Some(now)),
+            ..Default::default()
+        };
+        self.exec_update(am).await
+    }
+
+    /// 按 title 精确查找 todo (仅未软删的). 用于评审师模板的探测.
+    pub async fn get_todo_by_title(&self, title: &str) -> Result<Option<Todo>, sea_orm::DbErr> {
+        let model = todos::Entity::find()
+            .filter(todos::Column::Title.eq(title))
+            .filter(todos::Column::DeletedAt.is_null())
+            .one(&self.conn)
+            .await?;
+        let Some(m) = model else { return Ok(None) };
+        let tag_ids = todo_tags::Entity::find()
+            .filter(todo_tags::Column::TodoId.eq(m.id))
+            .all(&self.conn)
+            .await?
+            .into_iter()
+            .map(|t| t.tag_id)
+            .collect();
+        Ok(Some(Self::model_to_todo(m, tag_ids)))
+    }
+
+    /// 设置 todo_type. 主要用于将刚 create_todo_with_extras 出来的 todo 标记为
+    /// 评审师模板 (1) 或 评审实例 (2). 不在公共 API 暴露.
+    pub async fn set_todo_type(&self, id: i64, todo_type: i32) -> Result<(), sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let am = todos::ActiveModel {
+            id: ActiveValue::Unchanged(id),
+            todo_type: ActiveValue::Set(Some(todo_type)),
+            updated_at: ActiveValue::Set(Some(now)),
+            ..Default::default()
+        };
+        self.exec_update(am).await
+    }
+
+    /// 克隆一份 todo 作为"评审实例"。原 todo (template) 的所有字段都复制过来,
+    /// 但 todo_type=2, parent_todo_id=Some(parent_id), title 加前缀,
+    /// auto_review_enabled=false (评审实例自身不再评审).
+    /// 跳过 hooks / scheduler (评审实例是 transient 的).
+    pub async fn clone_todo_for_review(
+        &self,
+        template_id: i64,
+        parent_id: i64,
+    ) -> Result<i64, sea_orm::DbErr> {
+        let template = self
+            .get_todo(template_id)
+            .await?
+            .ok_or_else(|| sea_orm::DbErr::Custom(format!("template todo #{} not found", template_id)))?;
+        let now = crate::models::utc_timestamp();
+        let title = format!("[评审] {}", template.title);
+        let am = todos::ActiveModel {
+            title: ActiveValue::Set(title),
+            prompt: ActiveValue::Set(template.prompt.clone().into()),
+            status: ActiveValue::Set(Some(TodoStatus::Pending.to_string())),
+            created_at: ActiveValue::Set(Some(now.clone())),
+            updated_at: ActiveValue::Set(Some(now)),
+            executor: ActiveValue::Set(template.executor.clone()),
+            todo_type: ActiveValue::Set(Some(2)),
+            parent_todo_id: ActiveValue::Set(Some(parent_id)),
+            auto_review_enabled: ActiveValue::Set(Some(false)),
+            ..Default::default()
+        };
+        let inserted = am.insert(&self.conn).await?;
+        Ok(inserted.id)
     }
 
     pub async fn force_update_todo_status(

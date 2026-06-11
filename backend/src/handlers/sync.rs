@@ -316,6 +316,7 @@ async fn merge_cloud_todos_to_local(
                         workspace: item.workspace.as_deref(),
                         worktree_enabled: None,
                         acceptance_criteria: None,
+                        auto_review_enabled: None,
                     })
                     .await
                     .map_err(|e| e.to_string())?;

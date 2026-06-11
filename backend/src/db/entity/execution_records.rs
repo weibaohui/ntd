@@ -36,9 +36,22 @@ pub struct Model {
     /// points at the exact hook entry that triggered this execution.
     pub source_hook_id: Option<i64>,
     /// User-provided score for this execution's result (0-100, optional).
-    /// Only meaningful on terminal records (success/failed); running records
-    /// never carry a score.
+    /// Only meaningful on terminal records (success/failed).
     pub rating: Option<i32>,
+    /// 精确指向"由哪条执行记录发起的自动评审"——自动评审只回填到这条记录上,
+    /// 不会污染同一 todo 后续 re-run 的执行记录.
+    /// NULL = 这条记录不是被自动评审的产物.
+    pub source_execution_record_id: Option<i64>,
+    /// 自动评审的状态:
+    ///   - NULL        : 还未评审过 (初始)
+    ///   - 'pending'   : 已 spawn 评审 todo, 但还没跑完
+    ///   - 'success'   : 评审完成, 已写入 rating
+    ///   - 'failed'    : 评审 todo 失败
+    ///   - 'interrupted' : 评审 todo 中断
+    ///   - 'skipped'   : 评审被显式跳过 (例如 todo_type=review 自身不触发)
+    pub last_review_status: Option<String>,
+    /// 最近一次评审 spawn 的 UTC 时间戳.
+    pub last_reviewed_at: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

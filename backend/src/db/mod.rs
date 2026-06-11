@@ -539,6 +539,43 @@ impl Database {
             .await
             .ok();
 
+        // ===== 自动评审（auto-review）字段 =====
+        // todos.todo_type: 0=normal, 1=reviewer_template(系统专用), 2=review_instance(评审实例)
+        self.exec("ALTER TABLE todos ADD COLUMN todo_type INTEGER DEFAULT 0")
+            .await
+            .ok();
+        // todos.parent_todo_id: review_instance 关联到被评审的原 todo
+        self.exec("ALTER TABLE todos ADD COLUMN parent_todo_id INTEGER")
+            .await
+            .ok();
+        // todos.auto_review_enabled: 原 todo 是否在完成后自动 spawn 评审 (默认开)
+        self.exec("ALTER TABLE todos ADD COLUMN auto_review_enabled INTEGER DEFAULT 1")
+            .await
+            .ok();
+        // execution_records.source_execution_record_id: 评审记录精确回填到"原那条"执行记录
+        self.exec("ALTER TABLE execution_records ADD COLUMN source_execution_record_id INTEGER")
+            .await
+            .ok();
+        // execution_records.last_review_status: pending/success/failed/interrupted/skipped
+        self.exec("ALTER TABLE execution_records ADD COLUMN last_review_status TEXT")
+            .await
+            .ok();
+        // execution_records.last_reviewed_at: 最近一次评审 spawn 时间
+        self.exec("ALTER TABLE execution_records ADD COLUMN last_reviewed_at TEXT")
+            .await
+            .ok();
+
+        // 索引: 加速"按 parent_todo_id 查评审实例"
+        self.exec("CREATE INDEX IF NOT EXISTS idx_todos_parent_todo_id ON todos(parent_todo_id)")
+            .await
+            .ok();
+        self.exec("CREATE INDEX IF NOT EXISTS idx_todos_todo_type ON todos(todo_type)")
+            .await
+            .ok();
+        self.exec("CREATE INDEX IF NOT EXISTS idx_execution_records_source_record_id ON execution_records(source_execution_record_id)")
+            .await
+            .ok();
+
         // 一次性迁移：旧 todos.rating 数据合并到对应 todo 的最新一条 execution_records.rating
         // 然后 DROP COLUMN todos.rating（评分只属于执行结果）
         // 失败仅 warn，不阻塞启动（与同位置的其他迁移策略一致）。
@@ -1616,6 +1653,7 @@ mod tests {
             workspace: None,
             worktree_enabled: None,
             acceptance_criteria: None,
+            auto_review_enabled: None,
         })
         .await
         .unwrap();
@@ -1704,6 +1742,7 @@ mod tests {
             result: "done",
             usage: None,
             model: None,
+            review_meta: None,
         })
         .await
         .unwrap();
@@ -1775,6 +1814,7 @@ mod tests {
             workspace: Some("/tmp/workspace"),
             worktree_enabled: None,
             acceptance_criteria: None,
+            auto_review_enabled: None,
         })
         .await
         .unwrap();
@@ -2066,6 +2106,7 @@ mod tests {
             result: "",
             usage: None,
             model: None,
+            review_meta: None,
         })
         .await
         .unwrap();
@@ -2077,6 +2118,7 @@ mod tests {
             result: "",
             usage: None,
             model: None,
+            review_meta: None,
         })
         .await
         .unwrap();
@@ -2165,6 +2207,7 @@ mod tests {
             result: "done",
             usage: Some(&usage),
             model: Some("claude-3"),
+            review_meta: None,
         })
         .await
         .unwrap();
@@ -2217,6 +2260,7 @@ mod tests {
             result: "",
             usage: None,
             model: None,
+            review_meta: None,
         })
         .await
         .unwrap();
@@ -2228,6 +2272,7 @@ mod tests {
             result: "",
             usage: None,
             model: None,
+            review_meta: None,
         })
         .await
         .unwrap();
@@ -2260,6 +2305,7 @@ mod tests {
             result: "",
             usage: Some(&usage1),
             model: None,
+            review_meta: None,
         })
         .await
         .unwrap();
@@ -2279,6 +2325,7 @@ mod tests {
             result: "",
             usage: Some(&usage2),
             model: None,
+            review_meta: None,
         })
         .await
         .unwrap();

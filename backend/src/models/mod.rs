@@ -112,6 +112,15 @@ pub struct Todo {
     pub hooks: Vec<crate::hooks::TodoHookItem>,
     #[serde(default)]
     pub acceptance_criteria: Option<String>,
+    /// 0=normal, 1=reviewer_template(评审师模板), 2=review_instance(评审实例).
+    #[serde(default)]
+    pub todo_type: i32,
+    /// review_instance 关联到被评审的原 todo; 其它类型为 None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_todo_id: Option<i64>,
+    /// 是否在执行完成后自动派生一个评审 todo. 只对 normal 类型有意义.
+    #[serde(default = "default_true")]
+    pub auto_review_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,6 +217,18 @@ pub struct ExecutionRecord {
     /// Only meaningful on terminal records (success/failed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rating: Option<i32>,
+    /// 自动评审时, 评审记录精确指向被评审的"原执行记录"。
+    /// 这条记录的 rating 应被视为对 source_execution_record_id 的评分.
+    /// NULL = 这条记录不是被自动评审的产物.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_execution_record_id: Option<i64>,
+    /// 这条原执行记录最近一次自动评审的状态.
+    /// 仅在原执行记录上有意义; 评审实例自己的 execution_record 该字段为 NULL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_review_status: Option<String>,
+    /// 这条原执行记录最近一次自动评审 spawn 的 UTC 时间.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_reviewed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -311,6 +332,8 @@ pub struct CreateTodoRequest {
     pub hooks: Option<Vec<crate::hooks::TodoHookItem>>,
     #[serde(default)]
     pub acceptance_criteria: Option<String>,
+    #[serde(default)]
+    pub auto_review_enabled: Option<bool>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -338,6 +361,9 @@ pub struct UpdateTodoRequest {
     pub hooks: Option<Vec<crate::hooks::TodoHookItem>>,
     #[serde(default)]
     pub acceptance_criteria: Option<String>,
+    /// None=不变, Some(true)/Some(false)=更新. 不允许改 reviewer template 的开关.
+    #[serde(default)]
+    pub auto_review_enabled: Option<bool>,
 }
 
 #[derive(Deserialize, Serialize)]

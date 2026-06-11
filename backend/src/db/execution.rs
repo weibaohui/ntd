@@ -30,6 +30,11 @@ pub struct UpdateExecutionRecordRequest<'a> {
     pub result: &'a str,
     pub usage: Option<&'a ExecutionUsage>,
     pub model: Option<&'a str>,
+    /// 自动评审专用. Some((source_record_id, status)) 表示这条记录是评审实例,
+    /// 其结果用于回填到 source_record_id 对应的原记录.
+    /// 存到表里: source_execution_record_id = source_record_id,
+    ///           last_review_status = status.
+    pub review_meta: Option<(i64, &'a str)>,
 }
 
 pub struct ExecutionRecordQuery<'a> {
@@ -84,6 +89,9 @@ impl From<execution_records::Model> for ExecutionRecord {
             source_todo_title: m.source_todo_title,
             source_hook_id: m.source_hook_id,
             rating: m.rating,
+            source_execution_record_id: m.source_execution_record_id,
+            last_review_status: m.last_review_status,
+            last_reviewed_at: m.last_reviewed_at,
         }
     }
 }
@@ -210,20 +218,40 @@ impl Database {
         // both the stop handler and spawned task's cancellation branch may try to
         // update the same record concurrently -- only the first write succeeds.
         let backend = self.conn.get_database_backend();
-        let sql = "UPDATE execution_records SET \
-            status = $1, \
-            result = $2, \
-            usage = $3, \
-            model = $4, \
-            finished_at = $5 \
-            WHERE id = $6 AND status = 'running'";
-
-        let res = self
-            .conn
-            .execute(Statement::from_sql_and_values(
-                backend,
-                sql,
-                [
+        let (sql, values): (&str, Vec<sea_orm::Value>) = if let Some((source_record_id, review_status)) = req.review_meta {
+            (
+                "UPDATE execution_records SET \
+                    status = $1, \
+                    result = $2, \
+                    usage = $3, \
+                    model = $4, \
+                    finished_at = $5, \
+                    source_execution_record_id = $7, \
+                    last_review_status = $8, \
+                    last_reviewed_at = $9 \
+                    WHERE id = $6 AND status = 'running'",
+                vec![
+                    req.status.into(),
+                    req.result.into(),
+                    usage_json.into(),
+                    model_val.into(),
+                    now.clone().into(),
+                    req.id.into(),
+                    source_record_id.into(),
+                    review_status.to_string().into(),
+                    now.into(),
+                ],
+            )
+        } else {
+            (
+                "UPDATE execution_records SET \
+                    status = $1, \
+                    result = $2, \
+                    usage = $3, \
+                    model = $4, \
+                    finished_at = $5 \
+                    WHERE id = $6 AND status = 'running'",
+                vec![
                     req.status.into(),
                     req.result.into(),
                     usage_json.into(),
@@ -231,6 +259,15 @@ impl Database {
                     now.into(),
                     req.id.into(),
                 ],
+            )
+        };
+
+        let res = self
+            .conn
+            .execute(Statement::from_sql_and_values(
+                backend,
+                sql,
+                values,
             ))
             .await?;
         let updated = res.rows_affected() > 0;
@@ -989,6 +1026,9 @@ impl Database {
                     source_todo_title: None,
                     source_hook_id: None,
                     rating: None,
+                    source_execution_record_id: None,
+                    last_review_status: None,
+                    last_reviewed_at: None,
                 }
             })
             .collect();
@@ -1640,5 +1680,52 @@ impl Database {
         } else {
             format!("{} B", bytes)
         }
+    }
+
+    // ===== 自动评审辅助方法 =====
+
+    /// 写入/更新原执行记录的 last_review_status 字段（pending/success/failed/interrupted/skipped）.
+    pub async fn set_record_last_review_status(
+        &self,
+        record_id: i64,
+        status: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        let am = execution_records::ActiveModel {
+            id: ActiveValue::Unchanged(record_id),
+            last_review_status: ActiveValue::Set(Some(status.to_string())),
+            ..Default::default()
+        };
+        self.exec_update(am).await
+    }
+
+    /// 写入/更新原执行记录的 last_reviewed_at 字段（UTC ISO8601）.
+    pub async fn set_record_last_reviewed_at(
+        &self,
+        record_id: i64,
+    ) -> Result<(), sea_orm::DbErr> {
+        let am = execution_records::ActiveModel {
+            id: ActiveValue::Unchanged(record_id),
+            last_reviewed_at: ActiveValue::Set(Some(crate::models::utc_timestamp())),
+            ..Default::default()
+        };
+        self.exec_update(am).await
+    }
+
+    /// 评审实例完成时调用: 把评审实例的 source_execution_record_id 指向"原那条",
+    /// 并把 last_review_status 设为终态 (success/failed/interrupted).
+    /// 同步更新原记录的 last_review_status.
+    pub async fn link_review_to_source(
+        &self,
+        review_record_id: i64,
+        source_record_id: i64,
+        final_status: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        let am = execution_records::ActiveModel {
+            id: ActiveValue::Unchanged(review_record_id),
+            source_execution_record_id: ActiveValue::Set(Some(source_record_id)),
+            last_review_status: ActiveValue::Set(Some(final_status.to_string())),
+            ..Default::default()
+        };
+        self.exec_update(am).await
     }
 }

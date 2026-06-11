@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::OnceLock;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
@@ -311,6 +312,7 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                 result: &format!("Failed to start todo execution: {}", e),
                 usage: None,
                 model: None,
+                review_meta: None,
             })
             .await;
         task_manager.remove(&task_id).await;
@@ -784,6 +786,7 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                     result: "任务已被手动停止",
                     usage: None,
                     model: None,
+                    review_meta: None,
                 }).await;
 
                 let entry = ParsedLogEntry::error("Execution cancelled by user");
@@ -838,6 +841,7 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                     result: "Execution timeout",
                     usage: None,
                     model: None,
+                    review_meta: None,
                 }).await;
 
                 let entry = ParsedLogEntry::error("Execution timeout, process terminated by system");
@@ -980,8 +984,30 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                 result: &result_str,
                 usage: usage.as_ref(),
                 model: model.as_deref(),
+                review_meta: None,
             })
             .await;
+
+        // ===== 自动评审 (auto-review) =====
+        // 仅在以下条件同时满足时启动:
+        //   - trigger_type != "auto_review" 避免评审实例本身反向触发评审
+        //   - 正常执行 (success/failed), 不是被中断
+        //
+        // 同步语义: Hook fire 在这之后才进行, rating gate 要求评审完成后再触发,
+        // 所以评审要同步跑完. run_auto_review 内部 std::thread::spawn + block_on,
+        // 与本 spawned task 完全隔离, 不存在 Send 问题.
+        if trigger_type != "auto_review" {
+            run_auto_review(
+                db_clone.clone(),
+                executor_registry_spawn.clone(),
+                tx_clone.clone(),
+                task_manager_spawn.clone(),
+                config_spawn.clone(),
+                todo_id,
+                record_id,
+            )
+            .await;
+        }
 
         let _ = db_clone.finish_todo_execution(todo_id, success).await;
 
@@ -1052,6 +1078,20 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
     }
 }
 
+/// 独立 runtime. 用于 run_auto_review 在原 todo 的 spawned task 内部同步运行
+/// 自动评审逻辑, 避免与外层 spawned task 产生 Send / 嵌套 spawn 问题.
+fn review_runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .worker_threads(2)
+            .thread_name("auto-review-runtime")
+            .build()
+            .expect("failed to build auto-review runtime")
+    })
+}
+
 /// Run a todo execution with parameter substitution.
 /// Replaces placeholders `{{key}}` in the message with corresponding values from params before execution.
 pub async fn run_todo_execution_with_params(
@@ -1062,3 +1102,209 @@ pub async fn run_todo_execution_with_params(
     }
     run_todo_execution(request).await
 }
+
+// ============================================================================
+//  自动评审 (auto-review) —— 同步派生一个评审 todo，给刚完成的那条执行记录打分
+// ============================================================================
+//
+// 调用点: run_todo_execution 在 update_execution_record (写终态) 之后.
+// 仅当:
+//   - 源 todo 是 normal 类型 (todo_type=0)
+//   - auto_review_enabled=true
+//   - 源 record 进入了 success 或 failed 终态
+//   - source_execution_record_id 尚未被设置 (避免重复评审同一条记录)
+// 才启动评审。
+//
+// 为避免与 run_todo_execution 的内部逻辑产生循环引用，这里用一个简化的
+// 同步路径：等 run_todo_execution 启动后创建的 record 进入终态，再解析 rating 回填。
+// 不需要 tokio::spawn —— 我们让原执行路径在 auto_review 上同步等待。
+
+/// 同步运行自动评审。在原 todo 执行完成、update_execution_record 写入 success/failed 后调用。
+///
+/// 参数: (db, todo, record_id, executor_registry, tx, task_manager, config).
+/// 任何错误都只记 warn 日志，不影响原 todo 的完成响应。
+///
+/// 实现: 由于 run_auto_review_inner 内部需要 await run_todo_execution (后者会
+/// 进一步 spawn) —— 整个 future 不是 Send —— 必须在独立 runtime 上 block_on.
+pub async fn run_auto_review(
+    db: Arc<crate::db::Database>,
+    executor_registry: Arc<crate::adapters::ExecutorRegistry>,
+    tx: tokio::sync::broadcast::Sender<crate::handlers::ExecEvent>,
+    task_manager: Arc<crate::task_manager::TaskManager>,
+    config: Arc<tokio::sync::RwLock<crate::config::Config>>,
+    todo_id: i64,
+    record_id: i64,
+) {
+    let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+    let db_c = db.clone();
+    let er_c = executor_registry.clone();
+    let tx_c = tx.clone();
+    let tm_c = task_manager.clone();
+    let cfg_c = config.clone();
+    let runtime = review_runtime();
+    std::thread::spawn(move || {
+        let result = runtime.block_on(run_auto_review_inner(
+            db_c, er_c, tx_c, tm_c, cfg_c, todo_id, record_id,
+        ));
+        let _ = reply_tx.send(result);
+    });
+    match reply_rx.await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            tracing::warn!(
+                "auto-review for todo #{} record #{} failed: {}",
+                todo_id, record_id, e
+            );
+            let _ = db
+                .set_record_last_review_status(record_id, "failed")
+                .await;
+        }
+        Err(_) => {
+            tracing::warn!("auto-review thread dropped reply for todo #{} record #{}", todo_id, record_id);
+            let _ = db
+                .set_record_last_review_status(record_id, "failed")
+                .await;
+        }
+    }
+}
+
+async fn run_auto_review_inner(
+    db: Arc<crate::db::Database>,
+    executor_registry: Arc<crate::adapters::ExecutorRegistry>,
+    tx: tokio::sync::broadcast::Sender<crate::handlers::ExecEvent>,
+    task_manager: Arc<crate::task_manager::TaskManager>,
+    config: Arc<tokio::sync::RwLock<crate::config::Config>>,
+    todo_id: i64,
+    record_id: i64,
+) -> Result<(), String> {
+    use crate::services::auto_review::{ensure_reviewer_template, parse_rating_from_result, DEFAULT_REVIEWER_PROMPT, MAX_OUTPUT_CHARS, REVIEWER_TEMPLATE_TITLE};
+
+    // 1) 加载原 todo & 检查前置条件
+    let original = db.get_todo(todo_id).await
+        .map_err(|e| format!("load original todo: {}", e))?
+        .ok_or_else(|| format!("original todo #{} not found", todo_id))?;
+    if original.todo_type != 0 || !original.auto_review_enabled {
+        let _ = db.set_record_last_review_status(record_id, "skipped").await;
+        return Ok(());
+    }
+    let record = db.get_execution_record(record_id).await
+        .map_err(|e| format!("load record: {}", e))?
+        .ok_or_else(|| format!("record #{} not found", record_id))?;
+    use crate::models::ExecutionStatus;
+    if !matches!(record.status, ExecutionStatus::Success | ExecutionStatus::Failed) {
+        let _ = db.set_record_last_review_status(record_id, "skipped").await;
+        return Ok(());
+    }
+    // 避免重复评审
+    if record.last_review_status.as_deref() == Some("success") {
+        return Ok(());
+    }
+
+    // 2) 评审师模板
+    let template_id = ensure_reviewer_template(&db, REVIEWER_TEMPLATE_TITLE, DEFAULT_REVIEWER_PROMPT).await?;
+    let template = db.get_todo(template_id).await
+        .map_err(|e| format!("reload template: {}", e))?
+        .ok_or_else(|| "reviewer template vanished".to_string())?;
+
+    // 3) 截断输出 + 合并 prompt
+    let original_output = record.result.clone().unwrap_or_default();
+    let truncated: String = if original_output.chars().count() > MAX_OUTPUT_CHARS {
+        let mut s: String = original_output.chars().take(MAX_OUTPUT_CHARS).collect();
+        s.push_str("\n\n[...以下被截断...]");
+        s
+    } else {
+        original_output
+    };
+    let acceptance_criteria = original
+        .acceptance_criteria
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("(无验收标准 —— 由评审师自行判断输出质量)");
+    let composed_prompt = template
+        .prompt
+        .replace("{original_prompt}", &original.prompt)
+        .replace("{max_output_chars}", &MAX_OUTPUT_CHARS.to_string())
+        .replace("{original_output}", &truncated)
+        .replace("{acceptance_criteria}", acceptance_criteria);
+
+    // 4) clone 评审实例 todo
+    let review_todo_id = db.clone_todo_for_review(template_id, original.id).await
+        .map_err(|e| format!("clone review instance: {}", e))?;
+
+    // 5) 标记 pending
+    let _ = db.set_record_last_review_status(record_id, "pending").await;
+    let _ = db.set_record_last_reviewed_at(record_id).await;
+
+    // 6) 同步执行评审实例
+    let request = RunTodoExecutionRequest {
+        db: db.clone(),
+        executor_registry: executor_registry.clone(),
+        tx: tx.clone(),
+        task_manager: task_manager.clone(),
+        config: config.clone(),
+        todo_id: review_todo_id,
+        message: composed_prompt,
+        req_executor: template.executor.clone(),
+        trigger_type: "auto_review".to_string(),
+        params: None,
+        resume_session_id: None,
+        resume_message: None,
+        chain: vec![],
+        source_todo_id: Some(original.id),
+        source_todo_title: Some(original.title.clone()),
+        source_hook_id: None,
+        feishu_bot_id: None,
+        feishu_receive_id: None,
+    };
+    let exec_result = run_todo_execution(request).await;
+    let review_record_id = match exec_result.record_id {
+        Some(id) => id,
+        None => {
+            let _ = db.set_record_last_review_status(record_id, "failed").await;
+            return Err("review execution produced no record (rejected?)".to_string());
+        }
+    };
+
+    // 7) 轮询评审实例 record 的终态
+    let max_wait = std::time::Duration::from_secs(300);
+    let poll = std::time::Duration::from_millis(500);
+    let start = std::time::Instant::now();
+    let final_review = loop {
+        if start.elapsed() > max_wait {
+            return Err("review record timeout".to_string());
+        }
+        if let Some(rec) = db.get_execution_record(review_record_id).await
+            .map_err(|e| format!("poll: {}", e))?
+        {
+            if !matches!(rec.status, ExecutionStatus::Running) {
+                break rec;
+            }
+        }
+        tokio::time::sleep(poll).await;
+    };
+
+    // 8) 解析 + 回填
+    let review_status_str = match final_review.status {
+        ExecutionStatus::Success => "success",
+        ExecutionStatus::Failed => "failed",
+        _ => "interrupted",
+    };
+    let rating = parse_rating_from_result(final_review.result.as_deref());
+    if let Some(r) = rating {
+        let _ = db.update_execution_record_rating(record_id, Some(r)).await;
+    }
+    let _ = db.link_review_to_source(review_record_id, record_id, review_status_str).await;
+    let _ = db.set_record_last_review_status(record_id, review_status_str).await;
+    // 评审实例自身 todo 也转完成
+    let _ = db.finish_todo_execution(
+        review_todo_id,
+        matches!(review_status_str, "success"),
+    ).await;
+
+    tracing::info!(
+        "auto-review done: original_todo=#{} record=#{} review_todo=#{} review_record=#{} status={} rating={:?}",
+        todo_id, record_id, review_todo_id, review_record_id, review_status_str, rating
+    );
+    Ok(())
+}
+
