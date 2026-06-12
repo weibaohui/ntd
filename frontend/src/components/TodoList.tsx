@@ -38,6 +38,17 @@ function SkeletonList() {
 // 列表显示模式：flat 是当前的平铺模式；grouped 按项目目录把 todo 折叠成"文件夹"分组
 type ListDisplayMode = 'flat' | 'grouped';
 
+const DISPLAY_MODE_KEY = 'app_display_mode';
+
+// 从 localStorage 读取上次的显示模式，读取失败时默认平铺
+function getInitialDisplayMode(): ListDisplayMode {
+  try {
+    const saved = localStorage.getItem(DISPLAY_MODE_KEY);
+    if (saved === 'flat' || saved === 'grouped') return saved;
+  } catch {}
+  return 'flat';
+}
+
 /**
  * 构建桌面端头部高频导航按钮。
  */
@@ -77,8 +88,8 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
   const { todos, selectedTodoId, selectedTagId, tags } = state;
   const isMobile = useIsMobile();
   const [isLoading, setIsLoading] = useState(true);
-  // 显示模式：默认平铺；用户切换时只影响本地视图，刷新后会回到默认
-  const [displayMode, setDisplayMode] = useState<ListDisplayMode>('flat');
+  // 显示模式：从 localStorage 读取上次用户选择，刷新后保留
+  const [displayMode, setDisplayMode] = useState<ListDisplayMode>(getInitialDisplayMode);
   // 项目目录：分组视图需要按项目维度折叠，必须先有这份映射；
   // 即使切回平铺视图也保留数据，避免切换时闪烁
   const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
@@ -175,7 +186,10 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
    */
   const handleHeaderMenuClick = useCallback<NonNullable<MenuProps['onClick']>>(({ key }) => {
     if (key === 'display-mode') {
-      setDisplayMode(prev => (prev === 'flat' ? 'grouped' : 'flat'));
+      // 切换后立即持久化到 localStorage，确保刷新后不丢失
+      const next = displayMode === 'flat' ? 'grouped' : 'flat';
+      setDisplayMode(next);
+      try { localStorage.setItem(DISPLAY_MODE_KEY, next); } catch {}
       return;
     }
     if (key === 'theme') {
@@ -431,7 +445,11 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
                   type="text"
                   size="small"
                   icon={displayMode === 'flat' ? <FolderOpenOutlined /> : <UnorderedListOutlined />}
-                  onClick={() => setDisplayMode(prev => (prev === 'flat' ? 'grouped' : 'flat'))}
+                  onClick={() => {
+                  const next = displayMode === 'flat' ? 'grouped' : 'flat';
+                  setDisplayMode(next);
+                  try { localStorage.setItem(DISPLAY_MODE_KEY, next); } catch {}
+                }}
                   className="header-nav-btn"
                   aria-label={displayMode === 'flat' ? '分组' : '平铺'}
                   aria-pressed={displayMode === 'grouped'}
