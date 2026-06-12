@@ -1,7 +1,8 @@
 use axum::{
     Router,
-    extract::{FromRequest, Path, Request, State, WebSocketUpgrade},
-    http::{StatusCode, header},
+    extract::{FromRequest, FromRequestParts, Path, Request, State, WebSocketUpgrade},
+    http::{self, StatusCode, header},
+    middleware::Next,
     response::{Html, IntoResponse, Response},
     routing::{delete, get, patch, post, put},
 };
@@ -11,7 +12,7 @@ use tower_http::trace::TraceLayer;
 use axum::extract::DefaultBodyLimit;
 use serde::Serialize;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, oneshot};
 
 use crate::service_context::ServiceContext;
 use crate::adapters::ExecutorRegistry;
@@ -329,6 +330,82 @@ async fn version_latest_handler() -> impl IntoResponse {
     }
 }
 
+/// 给 handler 一个"响应 body 即将被写出"的信号点。
+///
+/// **用法**:
+/// - 在 handler 里加 extractor `ResponseDone`,在 std::thread 里
+///   `rx.blocking_recv()` 等信号
+/// - 适用场景: handler 同步返回了响应,但仍要起后台线程做"会杀当前进程"的事
+///   (典型如 `ntd daemon stop`)。如果不等响应真正落到 wire 就 stop,
+///   客户端会看到连接重置,而不是预期的 JSON
+///
+/// **精度说明**:
+/// `drop(tx)` 发生在 `next.run(req).await` 返回时 —— 此时 `Response` 对象
+/// 已构造完,但 body 还在内存里,接下来由 axum runtime 异步 flush 到 socket。
+/// 从 drop(tx) 到数据真正送达对端,延迟是 µs 级别,远小于
+/// `ntd daemon stop` 进程退出 + OS 清理 socket fd 的时间窗口,实际不会丢响应。
+///
+/// **为什么不进一步精确到"body 字节落到 wire"**:
+/// 那样需要包装 response body 实现 `axum::body::MessageBody`,
+/// 在 `poll_frame` 返回 `Ready` 时发信号,代码量 +50 行。
+/// 当前精度对 `daemon stop` 这种秒级操作已经足够,真要"绝对精确"再加。
+///
+/// **对其它路由的开销**:
+/// 每次请求多一对 oneshot channel (零分配原语 + 一个 wait queue),
+/// 没有 receiver 端订阅就直接 drop,基本可忽略。
+pub async fn track_response_done(mut req: Request, next: Next) -> Response {
+    let (tx, rx) = oneshot::channel();
+    // 包装成 `Arc<Mutex<Option<Receiver<()>>>>` 才能塞进 extensions:
+    // - axum 和 http 两边的 Extensions::insert 都要求 T: Clone
+    // - oneshot::Receiver 是单消费者,本身不可能 Clone
+    // - Arc<Mutex<Option<_>>> 是 Clone + Send + Sync,Option 让 handler
+    //   端能 .take() 把 receiver 拿走
+    let signal: ResponseSignal = Arc::new(std::sync::Mutex::new(Some(rx)));
+    req.extensions_mut().insert(signal);
+    let resp = next.run(req).await;
+    // response 拿出来了,axum 接下来会异步把 body 写到 socket。
+    // 在这个点 drop tx,后台线程的 blocking_recv 立刻返回,
+    // 继续往下做会杀掉当前进程的工作。
+    drop(tx);
+    resp
+}
+
+/// `track_response_done` 中间件塞进 extensions 的信号句柄。
+/// 内部用 Mutex 保护 oneshot::Receiver(后者不是 Sync,
+/// 必须在 Mutex 里才能跨线程共享)。
+pub type ResponseSignal = Arc<std::sync::Mutex<Option<oneshot::Receiver<()>>>>;
+
+/// 自定义 extractor: 从 request extensions 拿走中间件塞进来的 oneshot receiver。
+///
+/// 之所以不走 `Extension<oneshot::Receiver<()>>`,是因为 `Extension<T>`
+/// 要求 `T: Clone + Send + Sync`,而 `oneshot::Receiver` 是单消费者的,
+/// 不可能 Clone。我们包一层 `Arc<Mutex<Option<_>>>` 满足 Clone bound,
+/// 在 extractor 里 `.take()` 把 receiver 拿走。
+pub struct ResponseDone(pub oneshot::Receiver<()>);
+
+impl<S> FromRequestParts<S> for ResponseDone
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let signal = parts
+            .extensions
+            .remove::<ResponseSignal>()
+            .expect("track_response_done middleware must be installed before any handler that uses ResponseDone");
+        let rx = signal
+            .lock()
+            .expect("ResponseSignal mutex poisoned")
+            .take()
+            .expect("ResponseDone extractor can only be used once per request");
+        Ok(ResponseDone(rx))
+    }
+}
+
 /// 执行 npm 升级并重新部署 daemon 服务。
 ///
 /// 流程：
@@ -336,7 +413,9 @@ async fn version_latest_handler() -> impl IntoResponse {
 /// 2. 调用 `npm install -g @weibaohui/nothing-todo@latest` 升级
 /// 3. 升级成功后，将 daemon 重部署步骤（stop → uninstall → install --force → start）
 ///    fork 到独立子进程执行，避免 stop 导致当前 handler 进程被终止
-async fn version_upgrade_handler() -> impl IntoResponse {
+async fn version_upgrade_handler(
+    ResponseDone(redeploy_signal): ResponseDone,
+) -> impl IntoResponse {
     // 检测 npm 全局目录写权限，获取安全的安装 prefix
     let prefix = crate::npm_utils::get_npm_global_prefix();
 
@@ -386,14 +465,21 @@ async fn version_upgrade_handler() -> impl IntoResponse {
     // 因为 stop 会终止当前 daemon 进程（即本 handler 所在进程），
     // 如果在当前进程中顺序执行 stop→uninstall→install→start，
     // stop 后后续步骤可能无法执行完成。
+    //
+    // 真正的 cgroup 脱离逻辑在 `daemon::spawn_detached_redeploy` 里实现：
+    // 用 `systemd-run --scope` 把 redeploy 脚本放到独立 transient scope，
+    // 避免 ntd.service stop 时 cgroup 清理把脚本一起杀掉。
+    // macOS (launchd) 不走 systemd，直接 sh -c 即可。
     let ntd_cmd_clone = ntd_cmd.clone();
     std::thread::spawn(move || {
-        // 等待 HTTP 响应发送完成
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        // 等到响应 body 真正被 axum 准备送出(stop daemon 会杀掉
+        // 当前进程,如果不等人可能响应就丢了)。
+        // 信号由 `track_response_done` 中间件在 `next.run` 返回时触发,
+        // 比"固定 sleep 1 秒"更精确,也消除了 magic number。
+        // blocking_recv 因为我们在 std::thread 里,不是 tokio runtime。
+        let _ = redeploy_signal.blocking_recv();
 
         // 将 daemon 重部署的四步操作合并成一条 shell 命令，用 && 连接。
-        // stop 成功后 daemon 进程会退出，但同一 shell 会话中后续命令仍会被
-        // 操作系统继续调度执行，避免了分进程调用时 stop 后后续命令丢失的问题。
         // stop 失败不阻断（服务可能已停止），但 uninstall/install/start 任一步
         // 失败都会导致整体失败，符合预期。
         let redeploy_script = format!(
@@ -403,39 +489,24 @@ async fn version_upgrade_handler() -> impl IntoResponse {
 
         #[cfg(target_os = "linux")]
         {
-            // 在 Linux 上使用 systemd-run 将 redeploy 脚本运行在独立的 transient scope 中。
-            // 直接使用 sh -c 启动的子进程与 daemon 处于同一 cgroup，
-            // 当 ntd daemon stop 触发 systemd 停止服务时，cgroup 清理会杀掉 sh 进程，
-            // 导致后续 uninstall/install/start 从未执行。
-            // systemd-run --scope 创建独立 cgroup 的作用域，不受 ntd.service 停止影响。
-            let result = std::process::Command::new("systemd-run")
-                .args([
-                    "--user",
-                    "--scope",
-                    "--collect",
-                    "--property=Description=ntd upgrade redeploy",
-                    "/bin/sh",
-                    "-c",
-                    &redeploy_script,
-                ])
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-
-            match &result {
-                Ok(s) if s.success() => tracing::info!("Daemon redeployed successfully via systemd-run"),
-                Ok(s) => tracing::error!("Daemon redeploy failed with exit code {}", s),
-                Err(e) => tracing::error!("Daemon redeploy exec error: {}", e),
+            // 委托给 daemon 模块,它会:
+            // 1) 探测当前 install mode (system / user)
+            // 2) 用 systemd-run --scope 把 sh 拉到独立 cgroup
+            // 3) stdio 重定向到 /dev/null + 日志文件,失败可查
+            match crate::daemon::spawn_detached_redeploy(&redeploy_script) {
+                Ok(()) => tracing::info!("Daemon redeploy dispatched via systemd-run"),
+                Err(e) => tracing::error!("Daemon redeploy dispatch failed: {e}"),
             }
         }
 
         #[cfg(not(target_os = "linux"))]
         {
-            // macOS (launchd) 不使用 cgroup，sh -c 子进程会被 reparent 到 launchd，
-            // 不被 daemon 停止所影响，可以直接使用 sh -c。
+            // macOS/Windows: launchd/Task Scheduler 不使用 cgroup,
+            // sh -c 子进程会被 reparent 到 PID 1,daemon stop 不会牵连。
+            // 保留原行为,不做 cgroup 隔离。
             let result = std::process::Command::new("sh")
                 .args(["-c", &redeploy_script])
+                .stdin(std::process::Stdio::null())
                 .status();
 
             match &result {
@@ -697,6 +768,10 @@ pub fn create_app(
         .route("/api/cloud/sync/push", post(sync::cloud_sync_push))
         .route("/api/cloud/sync/pull", post(sync::cloud_sync_pull))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB
+        // 给 handler 一个"响应 body 即将送出"的信号点,用于
+        // "返回响应后还要做会杀当前进程的事"的场景(典型如版本升级)。
+        // 注释见 `track_response_done` 定义。
+        .layer(axum::middleware::from_fn(track_response_done))
         .layer(CompressionLayer::new())
         .layer(
             if crate::config::Config::is_dev_mode() {

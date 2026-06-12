@@ -2461,6 +2461,7 @@ dependencies = [
  "dashmap",
  "dirs 5.0.1",
  "futures-util",
+ "http-body-util",
  "libc",
  "libsqlite3-sys",
  "log",
