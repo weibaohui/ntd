@@ -23,6 +23,7 @@
 | `mobilecoder` | MobileCoder CLI | `mobile` | `~/.mobile-coder` |
 | `codex` | Codex CLI | `codex` | `~/.codex` |
 | `codewhale` | CodeWhale CLI | `codewhale` | `~/.codewhale` |
+| `pi` | Pi CLI | `pi` | `~/.pi` |
 
 > 默认路径这一列在 `EXECUTORS` 里其实就是裸命令名（`claude` / `codebuddy` / ...），后端默认走 `$PATH`解析（不是绝对路径）。若要使用绝对路径，在「修改配置」里覆盖即可。Session目录只在切换/续接对话时用到。
 

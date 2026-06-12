@@ -34,6 +34,7 @@ pub fn executor_skills_dir_str(et: &str) -> Option<PathBuf> {
         "atomcode" => Some(home.join(".atomcode").join("skills")),
         "kimi" => Some(home.join(".kimi").join("skills")),
         "mobilecoder" => Some(home.join(".mobile-coder").join("skills")),
+        "pi" => Some(home.join(".pi").join("skills")),
         // agents 是只读 skill 来源：扫描但不参与执行器管理/Todo 执行
         "agents" => Some(home.join(".agents").join("skills")),
         _ => None,
@@ -478,7 +479,7 @@ fn discover_skills_for_executor(et: ExecutorType) -> ExecutorSkills {
 
 // ── API handlers ────────────────────────────────────────────────────────
 
-/// 参与 skill 扫描/对比的所有来源：8 个执行器 + 只读来源 `agents`。
+/// 参与 skill 扫描/对比的所有来源：9 个执行器 + 只读来源 `agents`。
 ///
 /// 用字符串数组而非 `ExecutorType` 数组，方便容纳非 ExecutorType 来源。
 /// **新增来源时**：
@@ -488,6 +489,7 @@ fn discover_skills_for_executor(et: ExecutorType) -> ExecutorSkills {
 const ALL_SKILL_SOURCES: &[&str] = &[
     "claudecode", "codebuddy", "opencode", "atomcode",
     "hermes", "kimi", "mobilecoder", "codex",
+    "pi",
     "agents",
 ];
 
@@ -525,7 +527,7 @@ pub async fn list_skills(
 ) -> Result<ApiResponse<Vec<ExecutorSkills>>, AppError> {
     // spawn_blocking：磁盘 IO 不能跑在 tokio reactor 上，否则会卡住其他请求
     let result = tokio::task::spawn_blocking(move || {
-        // 顺序遍历 9 个来源：单次调用只 IO 一次，顺序 vs 并行收益不大，
+        // 顺序遍历 10 个来源：单次调用只 IO 一次，顺序 vs 并行收益不大，
         // 而且顺序能保证响应里 source 顺序稳定，方便前端按位置渲染 Tab
         ALL_SKILL_SOURCES
             .iter()

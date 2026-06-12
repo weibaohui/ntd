@@ -10,7 +10,7 @@ ntd 提供三类备份，**每类独立配置自动备份策略**：
 |------|----------|--------------|----------|
 | **数据库备份** |整库 `data.db`（zip压缩 level9） |每天3 点 `003 * * *` | `~/.ntd/backups/db/` |
 | **Todo备份** | todos序列化为 YAML |每天4 点 `004 * * *` | `~/.ntd/backups/todo/` |
-| **Skill备份** |8 个执行器下的 skills打 zip |每天5 点 `005 * * *` | `~/.ntd/backups/skills/` |
+| **Skill备份** |9 个执行器下的 skills打 zip |每天5 点 `005 * * *` | `~/.ntd/backups/skills/` |
 
 >上述 cron表达式**没有指定星期几**，所以是「每天X 点」而不是「每周X」。例如 `003 * * *`表示「每天3:00触发」。
 
@@ -110,7 +110,7 @@ ntd 提供三类备份，**每类独立配置自动备份策略**：
 
 入口：备份与恢复 → Skills备份 Tab
 
--立即备份：把8 个执行器（Claude Code / Codex / Hermes / Kimi / ...）的 `~/.{executor}/skills/` 全打成一个 zip
+-立即备份：把9 个执行器（Claude Code / Codex / Hermes / Kimi / MobileCoder / Pi / ...）的 `~/.{executor}/skills/` 全打成一个 zip
 -一个 zip包含所有执行器的 skills
 
 ### 3.2何时用

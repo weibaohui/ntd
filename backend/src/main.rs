@@ -262,7 +262,7 @@ fn executor_skills_dir(et: &str) -> Option<PathBuf> {
 
 const ALL_EXECUTORS: &[&str] = &[
     "claudecode", "hermes", "codex", "codebuddy",
-    "opencode", "atomcode", "kimi", "mobilecoder", "codewhale",
+    "opencode", "atomcode", "kimi", "mobilecoder", "codewhale", "pi",
 ];
 
 /// Install embedded ntd-usage skill to executor skill directories.

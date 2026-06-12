@@ -19,7 +19,7 @@
 | Tab | 文档 | 关键概念 |
 |-----|------|----------|
 | 系统设置 | [settings/system-settings.md](settings/system-settings.md) | 端口、数据库、日志、时区、并发、SLASH 命令 |
-| 执行器管理 | [settings/executors.md](settings/executors.md) | 8 个执行器、自动检测、AI 使用统计 |
+| 执行器管理 | [settings/executors.md](settings/executors.md) | 10 个执行器、自动检测、AI 使用统计 |
 | 标签管理 | [settings/tags.md](settings/tags.md) | 标签 CRUD |
 | 消息 | [settings/messages-feishu.md](settings/messages-feishu.md) | Bot 绑定、群白名单、推送、历史消息 |
 | Session 管理 | [settings/sessions.md](settings/sessions.md) | 跨执行器会话 |

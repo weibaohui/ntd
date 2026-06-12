@@ -9,14 +9,14 @@
 
 | 子视图 | 主要用途 | 详细章节 |
 |--------|----------|----------|
-| Skills 总览 | 列出 9 个来源的 skills，支持导入 / 导出 / 查看 SKILL.md | [§2.1](../features/skills-overview.md#21-skills-总览overview) |
-| 对比分析 | 横向对比 9 个来源同名 skill 的差异 | [§2.2](../features/skills-overview.md#22-对比分析comparison) |
+| Skills 总览 | 列出 10 个来源的 skills，支持导入 / 导出 / 查看 SKILL.md | [§2.1](../features/skills-overview.md#21-skills-总览overview) |
+| 对比分析 | 横向对比 10 个来源同名 skill 的差异 | [§2.2](../features/skills-overview.md#22-对比分析comparison) |
 | 同步管理 | 单个 skill 跨执行器复制 | [§2.3](../features/skills-overview.md#23-同步管理sync) |
 | 调用追踪 | skill 调用记录分页 | [§2.4](../features/skills-overview.md#24-调用追踪tracking) |
 
 ## 与执行器的关系
 
-- **8 个真实执行器**（`claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `mobilecoder` / `codex`）有 skills 目录映射，可写
+- **9 个真实执行器**（`claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `mobilecoder` / `codex` / `pi`）有 skills 目录映射，可写
 - `codewhale` 是执行器但**没有** skills 目录映射
 - `agents` 是只读来源，扫描但不参与 Todo 执行；不出现于「执行器管理」标签
 
