@@ -877,7 +877,7 @@ impl Database {
         let sql = format!(
             "SELECT t.id as todo_id, t.title, t.prompt, t.executor, \
              er.status as execution_status, er.finished_at, er.result, er.model, er.usage, \
-             er.trigger_type, er.id as record_id \
+             er.trigger_type, er.id as record_id, er.rating \
              FROM todos t \
              JOIN execution_records er ON er.id = ( \
                  SELECT er2.id FROM execution_records er2 \
@@ -936,6 +936,7 @@ impl Database {
                     execution_status,
                     trigger_type,
                     record_id,
+                    rating: row.try_get_by("rating").ok().flatten(),
                 })
             })
             .collect())

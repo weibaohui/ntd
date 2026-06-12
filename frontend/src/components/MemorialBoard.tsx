@@ -291,6 +291,18 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
       displayUsage = null;
     }
 
+    // Rating belongs to the ExecutionRecord, so each historical run lives in
+    // runDataCache with its own score. For the latest run we fall back to the
+    // `item.rating` field that the recent-completed endpoint now returns.
+    let displayRating: number | null | undefined;
+    if (runIdx === 0) {
+      displayRating = item.rating;
+    } else if (cachedRun) {
+      displayRating = cachedRun.rating;
+    } else {
+      displayRating = null;
+    }
+
     const isLoadingRun = loadingRunIndex[item.todo_id] != null && loadingRunIndex[item.todo_id] === runIdx && runIdx > 0;
     const runCount = totalRunsCache[item.todo_id] ?? 1;
 
@@ -328,6 +340,7 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
           selectedRun={runIdx}
           onSelectRun={(index) => handleSelectRun(item.todo_id, index)}
           isLoadingRun={isLoadingRun}
+          rating={displayRating}
         />
       </Card>
     );

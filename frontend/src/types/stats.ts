@@ -329,4 +329,6 @@ export interface RecentCompletedTodo {
   execution_status: string;
   trigger_type: string;
   record_id: number;
+  /** User-provided score for the most recent execution record (0-100). */
+  rating?: number | null;
 }

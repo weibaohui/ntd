@@ -542,6 +542,10 @@ pub struct RecentCompletedTodo {
     pub execution_status: String,
     pub trigger_type: String,
     pub record_id: i64,
+    /// User-provided score for the most recent execution record (0-100).
+    /// Mirrors `ExecutionRecord::rating` so that the conclusion/memorial view
+    /// can render the score badge without an extra round-trip per card.
+    pub rating: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
