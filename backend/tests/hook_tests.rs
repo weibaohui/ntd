@@ -129,11 +129,16 @@ mod todo_hook_item_tests {
         };
         let json = serde_json::to_string(&item).unwrap();
         let decoded: TodoHookItem = serde_json::from_str(&json).unwrap();
+        // Verify all basic fields round-trip correctly
         assert_eq!(decoded.id, item.id);
         assert_eq!(decoded.trigger, item.trigger);
         assert_eq!(decoded.target_todo_id, item.target_todo_id);
         assert_eq!(decoded.skip_if_missing, item.skip_if_missing);
         assert_eq!(decoded.enabled, item.enabled);
+        // Verify newly added quality-gate fields: min_rating and unrated_policy
+        // (must serialize/deserialize correctly to support hook-blocking on low ratings)
+        assert_eq!(decoded.min_rating, item.min_rating);
+        assert_eq!(decoded.unrated_policy, item.unrated_policy);
     }
 
     #[test]

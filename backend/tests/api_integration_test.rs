@@ -62,6 +62,16 @@ fn json_request(method: &str, uri: &str, body: serde_json::Value) -> Request<Bod
 
 // ===== Todo handlers =====
 
+// All integration tests use multi_thread runtime with 2 workers to avoid panics
+// and deadlocks. Why:
+// - Single-thread runtime panics when code calls `block_in_place` (which SeaORM,
+//   tower::ServiceExt::oneshot, and other async infrastructure may do internally).
+// - Multi-thread runtime provides consistent task scheduling and reduces risk of
+//   deadlock when tests spawn concurrent tasks or hold locks across await points.
+// - 2 workers is sufficient for test workload and keeps resource usage low.
+// Scope: all `#[tokio::test]` in this file use this configuration for consistency
+// and to prevent intermittent test failures caused by runtime mismatches.
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_get_todos() {
     let app = create_test_app().await;
