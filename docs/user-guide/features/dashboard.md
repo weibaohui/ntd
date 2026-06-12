@@ -72,7 +72,7 @@ ntd 的**全局运营视图**。一个屏幕看明白：
 | codex | `#488597`（蓝灰） | Codex |
 | codebuddy | `#00b894`（绿） | CodeBuddy |
 | opencode | `#fdcb6e`（黄） | Opencode |
-| joinai | `#6c5ce7`（紫） | JoinAI |
+| mobilecoder | `#6c5ce7`（紫） | MobileCoder |
 | atomcode | `#e84393`（粉） | AtomCode |
 | kimi | `#d63031`（红） | Kimi |
 | codewhale | `#00cec9`（青） | CodeWhale |

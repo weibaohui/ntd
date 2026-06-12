@@ -16,7 +16,7 @@
 
 ## 与执行器的关系
 
-- **8 个真实执行器**（`claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `joinai` / `codex`）有 skills 目录映射，可写
+- **8 个真实执行器**（`claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `mobilecoder` / `codex`）有 skills 目录映射，可写
 - `codewhale` 是执行器但**没有** skills 目录映射
 - `agents` 是只读来源，扫描但不参与 Todo 执行；不出现于「执行器管理」标签
 

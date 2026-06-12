@@ -20,11 +20,11 @@
 | `atomcode` | AtomCode CLI | `atomcode` | `~/.atomcode` |
 | `hermes` | Hermes CLI | `hermes` | `~/.hermes` |
 | `kimi` | Kimi CLI | `kimi` | `~/.kimi` |
-| `joinai` | JoinAI CLI | `joinai` | _(无)_ |
+| `mobilecoder` | MobileCoder CLI | `mobile` | `~/.mobile-coder` |
 | `codex` | Codex CLI | `codex` | `~/.codex` |
 | `codewhale` | CodeWhale CLI | `codewhale` | `~/.codewhale` |
 
-> 默认路径这一列在 `EXECUTORS` 里其实就是裸命令名（`claude` / `codebuddy` / ...），后端默认走 `$PATH`解析（不是绝对路径）。若要使用绝对路径，在「修改配置」里覆盖即可。Session目录只在切换/续接对话时用到，`joinai` 没有对应的 session概念，故留空。
+> 默认路径这一列在 `EXECUTORS` 里其实就是裸命令名（`claude` / `codebuddy` / ...），后端默认走 `$PATH`解析（不是绝对路径）。若要使用绝对路径，在「修改配置」里覆盖即可。Session目录只在切换/续接对话时用到。
 
 ---
 

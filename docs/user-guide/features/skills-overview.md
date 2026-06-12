@@ -10,7 +10,7 @@ Skills 是 ntd 帮各执行器管理的**预制 prompt 模板**，类似 Claude 
 
 | 来源 | 目录 | 可写 | 说明 |
 |------|------|------|------|
-| `claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `joinai` / `codex` | `~/.{executor}/skills/` | ✅ | 8 个真实执行器，有 skills 目录映射 |
+| `claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `mobilecoder` / `codex` | `~/.{executor}/skills/` | ✅ | 8 个真实执行器，有 skills 目录映射 |
 | `codewhale` | — | — | 是执行器，但**没有** skills 目录映射（不在扫描列表中） |
 | `agents` | `~/.agents/skills/` | ❌ | **只读来源**，扫描但不参与 Todo 执行 |
 

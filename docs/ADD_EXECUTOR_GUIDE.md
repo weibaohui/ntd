@@ -31,7 +31,7 @@
 建议优先参考这些现有实现：
 
 - `claude_code.rs`：Claude 风格 stream-json。
-- `opencode.rs` / `joinai.rs`：事件流中包含 step、tool、text、tokens。
+- `opencode.rs`：事件流中包含 step、tool、text、tokens。
 - `kimi.rs`：OpenAI chat message 风格 JSONL。
 - `codex.rs`：宽松解析不同 JSONL 事件字段。
 

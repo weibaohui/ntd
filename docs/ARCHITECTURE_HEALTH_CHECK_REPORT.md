@@ -58,9 +58,9 @@
 │                       │                      │
 │  ┌────────────────────▼──────────────────┐  │
 │  │     Adapters (执行器适配器)            │  │
-│  │  claude_code / joinai / codebuddy /  │  │
+│  │  claude_code / mobilecoder / codebuddy /  │  │
 │  │  opencode / atomcode / hermes / kimi  │  │
-│  │  / codex / codewhale                  │  │
+│  │  / codex / codewhale / pi             │  │
 │  └────────────────────┬──────────────────┘  │
 │                       │                      │
 │  ┌────────────────────▼──────────────────┐  │

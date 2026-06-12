@@ -39,7 +39,7 @@ Session 是 ntd 把**跨执行器的会话**统一抽象出来的视图。原先
 
 后端 `session.rs`启动时 +定期扫描这些目录，解析 jsonl文件提取元信息。
 
-> `codebuddy` / `opencode` / `joinai` / `codewhale` **不**在扫描范围内（参见 `session.rs::scan_for_executors` 的 `match executor`）。原文档提到的 `cc-connect` 来源也已移除。
+> `codebuddy` / `opencode` / `mobilecoder` / `codewhale` **不**在扫描范围内（参见 `session.rs::scan_for_executors` 的 `match executor`）。原文档提到的 `cc-connect` 来源也已移除。
 
 ---
 

@@ -13,7 +13,7 @@
 全栈应用 (Rust 后端 + React 前端 + 桌面端 + 飞书 Bot)
 
 ### 核心功能
-通过 React + AntDesign 构建的本地 todo 管理应用，支持调用本地 AI CLI 执行任务，并将执行过程完整记录到执行历史中。当前内置 9 个执行器：`claudecode` / `joinai` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `codex` / `codewhale`。
+通过 React + AntDesign 构建的本地 todo 管理应用，支持调用本地 AI CLI 执行任务，并将执行过程完整记录到执行历史中。当前内置 10 个执行器：`claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `mobilecoder` / `codex` / `codewhale` / `pi`。
 
 ### 目标用户
 需要任务管理并借助 AI 执行任务的技术用户
@@ -59,8 +59,8 @@
 - 用户点击"执行"按钮后，任务在后台运行
 - 不阻塞 UI，执行完成后通过系统通知告知用户
 
-#### 调用 joinai
-- 命令格式：`joinai run --format json "<任务描述>"`
+#### 调用 claudecode（示例）
+- 命令格式：`claude --print --output-format stream-json --verbose "<任务描述>"`
 - 通过 Rust 的 `std::process::Command` 执行系统命令
 - 实时捕获 stdout 和 stderr
 
@@ -164,7 +164,7 @@ finished_at: DATETIME NULL
 ### 5.3 交互流程
 1. 用户创建 Todo
 2. 点击"执行"按钮
-3. 后台调用 joinai CLI
+3. 后台调用 claudecode CLI
 4. 实时记录输出到当前执行记录
 5. 执行完成后发送系统通知
 6. 更新 Todo 状态
@@ -181,13 +181,13 @@ finished_at: DATETIME NULL
 
 ## 7. 确认事项
 
-- [x] joinai CLI 命令格式: `joinai run "<任务描述>"`
+- [x] claudecode CLI 命令格式: `claude --print --output-format stream-json --verbose "<任务描述>"`
 - [x] 不需要执行超时设置
 - [x] 不需要导出功能
 
 ## 8. 执行器集成
 
-> 本节以 `joinai` 为示例描述事件流格式。系统内置 9 个执行器（`claudecode` / `joinai` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `codex` / `codewhale`），其注册与调度由 `backend/src/adapters/mod.rs::EXECUTORS` 数组统一管理。
+> 本节以 `claudecode` 为示例描述事件流格式。系统内置 10 个执行器（`claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `mobilecoder` / `codex` / `codewhale` / `pi`），其注册与调度由 `backend/src/adapters/mod.rs::EXECUTORS` 数组统一管理。
 
 - 命令路径: 由 `Config.executors.paths` 解析（HashMap，键为 executor 名，如 `claudecode -> "claude"`）
 - 执行命令: 各 executor 通过实现 `CodeExecutor` trait 暴露 `executable_path` / `command_args` / `parse_output_line` 等
@@ -196,10 +196,10 @@ finished_at: DATETIME NULL
 
 ### 8.1 命令格式
 
-以 `joinai` 为例：
+以 `claudecode` 为例：
 
 ```bash
-joinai run --format json "<任务描述>"
+claude --print --output-format stream-json --verbose "<任务描述>"
 ```
 
 ### 8.2 输出格式 (JSON)

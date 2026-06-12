@@ -13,7 +13,7 @@ A cross-platform CLI tool for managing your daily tasks, built with Rust.
 ## Features
 
 - **智能任务管理** — 创建、编辑、跟踪 Todo，支持多种状态（待办、进行中、已完成、已取消、已归档）
-- **多 AI 执行器支持** — 集成 Claude Code、JoinAI、CodeBuddy、OpenCode、AtomCode 等多种 AI CLI 工具
+- **多 AI 执行器支持** — 集成 Claude Code、CodeBuddy、OpenCode、AtomCode 等多种 AI CLI 工具
 - **可视化仪表盘** — 实时统计任务完成情况，支持趋势图表和数据洞察
 - **标签系统** — 灵活的标签分类，快速筛选和定位任务
 - **定时调度** — 内置 Cron 调度器，支持定时触发任务执行
@@ -42,7 +42,6 @@ ntd --help       # 查看帮助
 | Executor | Description |
 |----------|-------------|
 | Claude Code | Anthropic 官方 CLI |
-| JoinAI | AI 工作流工具 |
 | CodeBuddy | 代码助手 |
 | OpenCode | 开源代码助手 |
 | AtomCode | AI 代码编辑器 |

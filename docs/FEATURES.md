@@ -64,7 +64,7 @@
 | Codebuddy | `adapters/codebuddy.rs` | 腾讯云代码助手 |
 | OpenCode | `adapters/opencode.rs` + `opencode_event.rs` | 开源代码助手 |
 | AtomCode | `adapters/atomcode.rs` | AI 代码编辑器 |
-| JoinAI | `adapters/joinai.rs` + `joinai_event.rs` | AI 工作流平台 |
+| MobileCoder | `adapters/mobilecoder.rs` | 移动端代码助手 |
 | Hermes | `adapters/hermes.rs` | 通用 AI 适配 |
 | Kimi | `adapters/kimi.rs` | 月之暗面 Kimi |
 

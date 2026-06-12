@@ -2,7 +2,7 @@
 name: ntd-usage
 description: ntd (Nothing Todo) AI Todo 应用 — CLI & API 使用指南
 version: 1.0.1
-executors: [claudecode, atomcode, joinai, hermes, codex, codebuddy, opencode, kimi]
+executors: [claudecode, atomcode, mobilecoder, hermes, codex, codebuddy, opencode, kimi]
 ---
 
 # ntd (Nothing Todo) 使用指南
@@ -167,7 +167,7 @@ ntd todo execute 1 --message "请 review 当前分支的代码变更"
 ### 2. 使用特定 executor 执行
 
 ```bash
-ntd todo create "写一篇周报" --executor joinai
+ntd todo create "写一篇周报" --executor mobilecoder
 ntd todo execute 2 --message "请根据我的工作内容写一篇周报"
 ```
 

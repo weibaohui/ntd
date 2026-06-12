@@ -36,7 +36,7 @@ A: 每次都是独立 execution_record，不覆盖。
 ## 执行器
 
 **Q: 加新的执行器要改代码吗？**
-A: 不用。9 个内置执行器（Claude Code / CodeBuddy / OpenCode / AtomCode / Hermes / Kimi / JoinAI / Codex / CodeWhale）开箱即用。新增执行器需要改后端（继承 Executor trait）。
+A: 不用。9 个内置执行器（Claude Code / CodeBuddy / OpenCode / AtomCode / Hermes / Kimi / MobileCoder / Codex / CodeWhale）开箱即用。新增执行器需要改后端（继承 Executor trait）。
 
 **Q: 怎么知道执行器是否真在跑？**
 A: 看「运行管理」面板。状态为 running 就是真在跑。

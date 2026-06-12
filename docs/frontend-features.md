@@ -50,7 +50,7 @@
 |--------|------|------|
 | 创建任务 | 创建新任务 | TodoDrawer.tsx |
 | 编辑任务 | 编辑现有任务 | TodoDrawer.tsx |
-| 执行器选择 | 选择执行器（Claude Code/Gemini/JoinAI 等） | TodoDrawer.tsx |
+| 执行器选择 | 选择执行器（Claude Code/Gemini 等） | TodoDrawer.tsx |
 | Prompt 编辑 | Markdown 编辑器编辑 Prompt | TodoDrawer.tsx |
 | 模板选择 | 从预设模板选择 | TodoDrawer.tsx |
 | Skills 插入 | 插入 Skill 引用到 Prompt | TodoDrawer.tsx |

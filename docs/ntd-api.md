@@ -117,7 +117,7 @@ PUT /api/todos/{id}
   "title": "新标题",
   "prompt": "新 prompt",
   "status": "completed",
-  "executor": "joinai",
+  "executor": "mobilecoder",
   "scheduler_enabled": false,
   "scheduler_config": "0 9 * * *",
   "scheduler_timezone": "Asia/Shanghai",
@@ -611,7 +611,7 @@ GET /api/config
     },
     "executors": {
       "claudecode": { "enabled": true },
-      "joinai": { "enabled": true }
+      "mobilecoder": { "enabled": true }
     },
     "backup": {
       "auto_backup": true,
@@ -742,7 +742,7 @@ POST /api/skills/sync
 {
   "skill_name": "code_review",
   "from_executor": "claudecode",
-  "to_executors": ["joinai", "kimi"]
+  "to_executors": ["mobilecoder", "kimi"]
 }
 ```
 
@@ -1524,7 +1524,7 @@ POST /webhook/trigger/{todo_id}
 | 类型 | 说明 |
 |------|------|
 | `claudecode` | Claude Code |
-| `joinai` | JoinAI |
+| `mobilecoder` | MobileCoder |
 | `codebuddy` | CodeBuddy |
 | `opencode` | OpenCode |
 | `atomcode` | AtomCode |

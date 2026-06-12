@@ -656,7 +656,7 @@ pub struct LoggingConfig {
 #[derive(Debug, Deserialize, Default)]
 pub struct ExecutorConfig {
     pub claudecode_path: Option<String>,
-    pub joinai_path: Option<String>,
+    pub mobilecoder_path: Option<String>,
     pub opencode_path: Option<String>,
 }
 
@@ -771,7 +771,7 @@ format = "json"
 
 [executors]
 claudecode_path = "/path/to/claudecode"
-joinai_path = "/path/to/joinai"
+mobilecoder_path = "/path/to/mobilecoder"
 opencode_path = "/path/to/opencode"
 ```
 
@@ -846,7 +846,7 @@ infrastructure/   # 基础设施层
 │   └── database.rs
 ├── adapters/
 │   ├── claude_code_adapter.rs
-│   ├── joinai_adapter.rs
+│   ├── mobilecoder_adapter.rs
 │   └── opencode_adapter.rs
 └── config/
     └── settings.rs

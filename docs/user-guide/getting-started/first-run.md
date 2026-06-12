@@ -4,7 +4,7 @@
 
 ## Step 1: 配置至少一个执行器
 
-ntd 本身不执行代码，**必须**先配好至少一个执行器（Claude Code / CodeBuddy / OpenCode / AtomCode / Hermes / Kimi / JoinAI / Codex / CodeWhale 等 9 个内置执行器之一）才能跑 Todo。
+ntd 本身不执行代码，**必须**先配好至少一个执行器（Claude Code / CodeBuddy / OpenCode / AtomCode / Hermes / Kimi / MobileCoder / Codex / CodeWhale 等 9 个内置执行器之一）才能跑 Todo。
 
 设置 → 执行器管理 → 「**自动检测全部**」→ 让 ntd 自动找已安装的 CLI
 
