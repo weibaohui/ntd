@@ -78,6 +78,26 @@ export interface TodoCardProps {
   selectedRun?: number; // 0-based, default 0 (most recent)
   onSelectRun?: (index: number) => void;
   isLoadingRun?: boolean;
+
+  /** Score (0-100) for the currently displayed run. Null/undefined = no rating yet. */
+  rating?: number | null;
+}
+
+/* ─── Rating helpers ─── */
+
+/**
+ * Map a 0-100 score to a semantic color used for the rating badge.
+ * Bands:
+ *   >= 80 → green (good)
+ *   >= 60 → blue (ok)
+ *   >= 40 → orange (warn)
+ *   <  40 → red (bad)
+ */
+function ratingColor(score: number): string {
+  if (score >= 80) return '#22c55e';
+  if (score >= 60) return '#3b82f6';
+  if (score >= 40) return '#f59e0b';
+  return '#ef4444';
 }
 
 /* ─── Component ─── */
@@ -106,6 +126,7 @@ export const TodoCard = memo(function TodoCard({
   selectedRun = 0,
   onSelectRun,
   isLoadingRun,
+  rating,
 }: TodoCardProps) {
   return (
     <>
@@ -206,6 +227,16 @@ export const TodoCard = memo(function TodoCard({
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onToggleResult(); } }}
             >
               <span className="kanban-card-section-label"><FileProtectOutlined /> 结论</span>
+              {rating != null && (
+                <span
+                  className="kanban-rating-badge"
+                  style={{ backgroundColor: ratingColor(rating), color: '#fff' }}
+                  title={`评分 ${rating}/100`}
+                  onClick={e => e.stopPropagation()}
+                >
+                  ★ {rating}
+                </span>
+              )}
               {runCount != null && runCount > 1 && (
                 <span className="kanban-run-tags" onClick={e => e.stopPropagation()}>
                   {Array.from({ length: Math.min(runCount, 5) }, (_, i) => (

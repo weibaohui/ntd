@@ -3397,6 +3397,26 @@ code {
   color: #fff !important;
 }
 
+/* Rating badge shown in the conclusion header of each run.
+   The inline style sets the background color based on score band;
+   here we only handle sizing, spacing, and shape so the badge looks
+   consistent with the other meta chips on the card. */
+.kanban-rating-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  padding: 0 6px;
+  height: 18px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
 .kanban-card-section-toggle {
   font-size: 11px;
   color: var(--color-text-tertiary);

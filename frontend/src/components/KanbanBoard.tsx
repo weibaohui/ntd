@@ -218,6 +218,17 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
       displayUsage = null;
     }
 
+    // Rating belongs to the ExecutionRecord, so we must surface the rating
+    // for the currently selected run — not just run 0. Each historical run
+    // lives in runDataCache; the latest run may also be cached under
+    // todoExecutionRecord when available from the store.
+    let displayRating: number | null | undefined;
+    if (runIdx === 0) {
+      displayRating = todoExecutionRecord?.rating;
+    } else if (cachedRun) {
+      displayRating = cachedRun.rating;
+    }
+
     const isLoadingResult = cache.loadingResults.has(todo.id);
     const isLoadingRun = cache.loadingRunIndex[todo.id] != null && cache.loadingRunIndex[todo.id] === runIdx && runIdx > 0;
     const runCount = cache.totalRunsCache[todo.id] ?? (isFinished ? 1 : 0);
@@ -254,6 +265,7 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
           selectedRun={runIdx}
           onSelectRun={(index) => cache.handleSelectRun(todo.id, index)}
           isLoadingRun={isLoadingRun}
+          rating={displayRating}
         />
       </div>
     );
