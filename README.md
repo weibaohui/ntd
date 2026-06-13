@@ -175,7 +175,7 @@ ntd 支持多种 AI CLI 工具，选择你已有的或最喜欢的即可：
 |--------|------|----------|
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) | 官方 CLI，最完善的功能支持，NDJSON 流式输出 | `npm install -g @anthropic-ai/claude-code` |
 | [Codex](https://openai.com/codex) | OpenAI 代码助手，支持复杂推理 | 官方渠道 |
-| [Codebuddy](https://codebuddy.com) | 与 Claude Code 协议兼容的工具调用展示 | 官方渠道 |
+| [CodeBuddy](https://codebuddy.com) | 与 Claude Code 协议兼容的工具调用展示 | 官方渠道 |
 | [Opencode](https://opencode.ai) | 开源代码助手，自定义事件流格式 | 官方渠道 |
 | [MobileCoder](https://github.com/nicheai/mobilecoder) | 移动端 AI 代码助手，支持事件流解析 | 官方渠道 |
 | [AtomCode](https://atomcode.dev) | 轻量级 AI 代码编辑器，stderr 解析 | 官方渠道 |
