@@ -573,16 +573,13 @@ async fn run_server(cli_port: Option<u16>) {
 
     #[cfg(unix)]
     {
+        // 把 unsafe libc::setsockopt 调用集中到 sys 模块；
+        // 此处只关心业务意图（"在已 bind 的 socket 上开 SO_REUSEADDR"），
+        // FFI 细节（指针、optlen、错误码）由 sys 内部处理。
         use std::os::fd::AsRawFd;
-        let optval: libc::c_int = 1;
-        unsafe {
-            libc::setsockopt(
-                std_listener.as_raw_fd(),
-                libc::SOL_SOCKET,
-                libc::SO_REUSEADDR,
-                &optval as *const libc::c_int as *const libc::c_void,
-                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-            );
+        if let Err(e) = ntd::sys::set_socket_reuseaddr(std_listener.as_raw_fd()) {
+            // setsockopt 失败不会让进程无法启动；只记 warning，保留原行为（启动仍继续）。
+            tracing::warn!("Failed to set SO_REUSEADDR: {}", e);
         }
     }
 

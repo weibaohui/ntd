@@ -2,6 +2,9 @@
 name = "ntd"
 version = "0.1.0"
 edition = "2021"
+# 最低支持 Rust 版本。CI 矩阵与 CONTRIBUTING.md 均以此为准；
+# 升级时务必确认依赖未引入更高 MSRV。
+rust-version = "1.75"
 license = "MIT"
 
 [dependencies]
@@ -63,3 +66,37 @@ vergen-gitcl = "1"
 lto = true
 codegen-units = 1
 strip = true
+
+# =============================================================================
+# Lint 策略
+# 目的：
+# 1. 把"宽松"lint 在编译期变成 warning，引导新代码主动规避；
+# 2. 把"绝对禁止"lint（unwrap_used / expect_used / panic / unsafe_code）升级到 deny，
+#    但允许在 sys 模块局部放行（见 src/sys.rs 中的 #![allow(unsafe_code)]）。
+# 3. CI 跑 `cargo clippy --all-targets -- -D warnings`，确保 warning 也被拒绝。
+# 新加 lint 时请在 CONTRIBUTING.md 的「Lint 策略」一节同步登记。
+# =============================================================================
+[lints.clippy]
+# 谨慎类：列出常见但不一定 bug 的模式，warning 提醒即可
+too_many_arguments = "warn"
+result_large_err = "warn"
+needless_pass_by_value = "warn"
+# 性能类
+needless_collect = "warn"
+redundant_clone = "warn"
+# 正确性类
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+
+[lints.rust]
+# unsafe_code 在 lib.rs 顶部 #![deny(unsafe_code)]，sys.rs 中 #![allow(unsafe_code)] 例外。
+# 这里再额外加一行 package 级，确保 build script 与 integration test 也不会冒出裸 unsafe。
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "warn"
+missing_debug_implementations = "warn"
+missing_docs = "warn"

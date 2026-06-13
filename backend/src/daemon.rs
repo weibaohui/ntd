@@ -135,7 +135,8 @@ fn get_launchd_plist_path() -> PathBuf {
 
 #[cfg(target_os = "macos")]
 fn get_current_uid() -> u32 {
-    unsafe { libc::getuid() }
+    // 委托给 sys 模块：项目内 unsafe 边界已集中到这里。
+    crate::sys::current_uid()
 }
 
 #[cfg(target_os = "macos")]
@@ -633,9 +634,10 @@ WantedBy=default.target
 
 #[cfg(target_os = "linux")]
 fn systemd_install(force: bool, system: bool, run_as_user: Option<&str>) {
-    if system && unsafe { libc::geteuid() } != 0 {
-        eprintln!("System service install requires root. Re-run with sudo.");
-        std::process::exit(1);
+    // 复用 sys 模块的 root 守卫；语义与原本的 `if system && ... != 0` 等价。
+    // 仅在 `--system` 模式要求 root；user 模式靠 systemd --user，无需 sudo。
+    if system {
+        crate::sys::require_root_or_exit("install");
     }
 
     let unit_path = get_systemd_unit_path(system);
@@ -694,9 +696,8 @@ fn systemd_install(force: bool, system: bool, run_as_user: Option<&str>) {
 
 #[cfg(target_os = "linux")]
 fn systemd_uninstall(system: bool) {
-    if system && unsafe { libc::geteuid() } != 0 {
-        eprintln!("System service uninstall requires root. Re-run with sudo.");
-        std::process::exit(1);
+    if system {
+        crate::sys::require_root_or_exit("uninstall");
     }
 
     let _ = run_systemctl(system, &["stop", SERVICE_NAME]);
@@ -714,9 +715,8 @@ fn systemd_uninstall(system: bool) {
 
 #[cfg(target_os = "linux")]
 fn systemd_start(system: bool) {
-    if system && unsafe { libc::geteuid() } != 0 {
-        eprintln!("System service start requires root. Re-run with sudo.");
-        std::process::exit(1);
+    if system {
+        crate::sys::require_root_or_exit("start");
     }
 
     let status = run_systemctl(system, &["start", SERVICE_NAME]);
@@ -730,9 +730,8 @@ fn systemd_start(system: bool) {
 
 #[cfg(target_os = "linux")]
 fn systemd_stop(system: bool) {
-    if system && unsafe { libc::geteuid() } != 0 {
-        eprintln!("System service stop requires root. Re-run with sudo.");
-        std::process::exit(1);
+    if system {
+        crate::sys::require_root_or_exit("stop");
     }
 
     let status = run_systemctl(system, &["stop", SERVICE_NAME]);
@@ -746,9 +745,8 @@ fn systemd_stop(system: bool) {
 
 #[cfg(target_os = "linux")]
 fn systemd_restart(system: bool) {
-    if system && unsafe { libc::geteuid() } != 0 {
-        eprintln!("System service restart requires root. Re-run with sudo.");
-        std::process::exit(1);
+    if system {
+        crate::sys::require_root_or_exit("restart");
     }
 
     let status = run_systemctl(system, &["restart", SERVICE_NAME]);
