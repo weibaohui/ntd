@@ -108,7 +108,7 @@ ntd skill install --force       # 强制重新安装（覆盖已有）
 ntd skill install -e claudecode # 仅安装到指定执行器
 ```
 
-支持的执行器：Claude Code、AtomCode 等（根据你配置的 AI 执行器自动适配）。
+支持的执行器：Claude Code、CodeBuddy、OpenCode、AtomCode、Hermes、Kimi、Codex、CodeWhale、MobileCoder、Pi、MiMo（根据你配置的 AI 执行器自动适配）。
 
 ### 升级
 
@@ -149,13 +149,16 @@ ntd 支持多种 AI CLI 工具，选择你已有的或最喜欢的即可：
 | 执行器 | 会话恢复 | 工具调用展示 | 思考过程展示 | Token 用量统计 | 模型名称 | Worktree | 安装命令 |
 |--------|:--------:|:------------:|:------------:|:-------------:|:--------:|:--------:|----------|
 | **Claude Code** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `npm install -g @anthropic-ai/claude-code` |
-| **Codebuddy** | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | 官方渠道 |
+| **CodeBuddy** | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | 官方渠道 |
 | **OpenCode** | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ | 官方渠道 |
 | **AtomCode** | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | 官方渠道 |
 | **Hermes** | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | 官方渠道 |
 | **Kimi** | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | 官方渠道 |
 | **Codex** | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | 官方渠道 |
 | **CodeWhale** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | 官方渠道 |
+| **MobileCoder** | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | 官方渠道 |
+| **Pi** | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | 官方渠道 |
+| **MiMo** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | 官方渠道 |
 
 ### 功能说明
 
@@ -178,6 +181,9 @@ ntd 支持多种 AI CLI 工具，选择你已有的或最喜欢的即可：
 | [Hermes](https://github.com/bhousai/hermes) | 支持 Todo 进度提取，适合任务分解场景 | 官方渠道 |
 | [Kimi](https://kimi.moonshot.cn) | 国产大模型 CLI，支持思考过程展示 | 官方渠道 |
 | [CodeWhale](https://codewhale.cn) | AI 代码助手，适合中文场景 | 官方渠道 |
+| [MobileCoder](https://mobilecoder.ai) | 移动端 AI 编程助手，JSON 事件流格式，支持 Token 用量统计 | 官方渠道 |
+| [Pi](https://pi.ai) | 多模型执行器，支持思考过程展示和会话恢复 | 官方渠道 |
+| [MiMo](https://mimo.ai) | 小米生态 AI 编程助手，支持 reasoning 思考和 Token 用量统计 | 官方渠道 |
 
 ---
 
