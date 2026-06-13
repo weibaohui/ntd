@@ -168,6 +168,11 @@ pub struct CloudSyncConfig {
 }
 
 /// 更新配置：控制 ntd 自升级的行为和来源。
+///
+/// 字段保持最小集——只覆盖当前真正实现的参数。
+/// 早期版本曾包含 `auto_check` / `check_interval_hours` 但未实现自动检查任务，
+/// 属于沉默失效的死配置字段，已在本版本移除（用户 YAML 中残留的字段会被
+/// serde 忽略，不会破坏加载）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UpdateConfig {
@@ -175,10 +180,6 @@ pub struct UpdateConfig {
     pub source: String,
     /// npm 包名（仅 source=npm 时生效）
     pub npm_package: String,
-    /// 启动时是否自动检查更新
-    pub auto_check: bool,
-    /// 检查更新间隔（小时）
-    pub check_interval_hours: u64,
 }
 
 impl Default for UpdateConfig {
@@ -186,8 +187,6 @@ impl Default for UpdateConfig {
         Self {
             source: "npm".to_string(),
             npm_package: "@weibaohui/nothing-todo".to_string(),
-            auto_check: true,
-            check_interval_hours: 24,
         }
     }
 }

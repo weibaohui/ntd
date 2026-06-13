@@ -101,11 +101,23 @@ async fn main() {
         }
         Some(Commands::Upgrade) => {
             println!("Upgrading ntd...");
-            
+
             // 从配置加载更新设置
             let cfg = ntd::config::Config::load();
             let source = ntd::updater::UpdateSource::from_config_ref(&cfg);
-            
+
+            // 非 npm 安装方式（manual/cargo/apt）daemon 端无法自动执行，
+            // 也无需重部署——只把指引打印给用户并退出 0。
+            // 否则会出现 "先打印指引 + 紧跟着 'Upgrade failed'" 自相矛盾。
+            if !matches!(source.method, ntd::updater::InstallMethod::Npm) {
+                println!(
+                    "Upgrade source is '{}', daemon cannot auto-upgrade.",
+                    source.method.as_str()
+                );
+                println!("{}", source.method.guidance());
+                return;
+            }
+
             // 执行升级
             match source.upgrade().await {
                 Ok(_) => {
@@ -113,7 +125,7 @@ async fn main() {
                     let ntd_cmd = ntd::updater::find_ntd_binary(
                         &ntd::updater::get_npm_global_prefix()
                     );
-                    
+
                     println!("Redeploying daemon service...");
                     
                     // stop：失败不阻断

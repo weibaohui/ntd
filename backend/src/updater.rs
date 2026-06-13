@@ -19,7 +19,7 @@ pub struct UpdateSource {
 }
 
 /// 支持的安装方式。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstallMethod {
     /// 通过 npm 全局安装
     Npm,
@@ -29,6 +29,37 @@ pub enum InstallMethod {
     Manual,
     /// 通过 cargo install 安装
     Cargo,
+}
+
+impl InstallMethod {
+    /// 序列化为配置里使用的 snake-case 字符串（与 YAML 配置一致）。
+    ///
+    /// 用于 API 响应、日志、配置文件回写等场景，
+    /// 避免 `{:?}` Debug 格式产生 "Npm" / "Manual" 这种 PascalCase。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Npm => "npm",
+            Self::Apt => "apt",
+            Self::Manual => "manual",
+            Self::Cargo => "cargo",
+        }
+    }
+
+    /// 返回给用户的升级指引文案。
+    ///
+    /// 适用于 manual/cargo/apt 这类无法由 daemon 端自动执行的安装方式，
+    /// 通过 HTTP API / CLI 返回给前端或用户终端显示。
+    pub fn guidance(&self) -> &'static str {
+        match self {
+            Self::Npm => "将通过 npm 全局安装最新版本",
+            Self::Apt => {
+                // ntd 当前未发布到 apt 仓库，引导用户去 GitHub Releases 自行下载。
+                "ntd 未发布到 apt 仓库，请前往 https://github.com/weibaohui/nothing-todo/releases 下载最新二进制"
+            }
+            Self::Manual => "请前往 https://github.com/weibaohui/nothing-todo/releases 下载最新二进制并替换当前版本",
+            Self::Cargo => "请运行 `cargo install --path .` 或从 GitHub Releases 下载预编译二进制",
+        }
+    }
 }
 
 impl UpdateSource {
@@ -93,17 +124,15 @@ impl UpdateSource {
                 Ok(())
             }
             InstallMethod::Manual => {
-                eprintln!(
-                    "请手动下载最新版本: https://github.com/weibaohui/nothing-todo/releases"
-                );
+                eprintln!("{}", self.method.guidance());
                 Err("manual upgrade requires user intervention".into())
             }
             InstallMethod::Cargo => {
-                eprintln!("请运行 `cargo install --path .` 或从 GitHub Releases 下载二进制");
+                eprintln!("{}", self.method.guidance());
                 Err("cargo upgrade requires user intervention".into())
             }
             InstallMethod::Apt => {
-                eprintln!("请运行 `sudo apt update && sudo apt upgrade ntd`");
+                eprintln!("{}", self.method.guidance());
                 Err("apt upgrade requires user intervention".into())
             }
         }
@@ -259,6 +288,57 @@ mod tests {
         cfg.update.npm_package = "@myorg/my-ntd".to_string();
         let source = UpdateSource::from_config_ref(&cfg);
         assert_eq!(source.package_name(), "@myorg/my-ntd");
+    }
+
+    #[test]
+    fn test_update_source_unknown_falls_back_to_npm_without_panic() {
+        // 用户配错 source 值（拼写错误等），应回退到 npm 而不 panic。
+        // 这里不直接断言 warn 日志（tracing subscriber 未初始化），
+        // 只验证不崩溃 + method = Npm。
+        let mut cfg = Config::default();
+        cfg.update.source = "npmm".to_string(); // 故意拼错
+        let source = UpdateSource::from_config_ref(&cfg);
+        assert!(matches!(source.method, InstallMethod::Npm));
+    }
+
+    #[test]
+    fn test_install_method_as_str_is_snake_case() {
+        // 防止有人改回 PascalCase，API 响应 / YAML 配置都用 snake-case。
+        assert_eq!(InstallMethod::Npm.as_str(), "npm");
+        assert_eq!(InstallMethod::Apt.as_str(), "apt");
+        assert_eq!(InstallMethod::Manual.as_str(), "manual");
+        assert_eq!(InstallMethod::Cargo.as_str(), "cargo");
+    }
+
+    #[test]
+    fn test_install_method_guidance_nonempty_for_all_variants() {
+        // 所有变体都需要给用户一个明确的指引，避免 guidance() 返回空串。
+        for method in [
+            InstallMethod::Npm,
+            InstallMethod::Apt,
+            InstallMethod::Manual,
+            InstallMethod::Cargo,
+        ] {
+            assert!(
+                !method.guidance().is_empty(),
+                "{:?} guidance must be non-empty",
+                method
+            );
+        }
+    }
+
+    #[test]
+    fn test_install_method_apt_guidance_mentions_releases_not_apt_repo() {
+        // 防回归：ntd 当前未发布到 apt 仓库，不能给用户错误的 `apt upgrade ntd` 提示。
+        let g = InstallMethod::Apt.guidance();
+        assert!(
+            !g.contains("sudo apt upgrade ntd"),
+            "apt guidance must not suggest apt upgrade ntd (ntd is not in apt repos)"
+        );
+        assert!(
+            g.contains("github.com") || g.contains("releases"),
+            "apt guidance should point users to GitHub Releases"
+        );
     }
 
     #[test]

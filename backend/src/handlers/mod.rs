@@ -402,7 +402,10 @@ async fn version_handler() -> impl IntoResponse {
 }
 
 /// 查询最新版本号，用于前端版本检查提示。
-/// 委托给 `updater::check_latest_version()`，由其根据配置决定查询方式。
+///
+/// 直接调用 `updater::check_latest_version()` 模块函数。
+/// 该函数内部根据配置的 `update.source` 决定查询方式
+/// （目前仅 `npm` 支持自动检查，其他方式返回 Err）。
 async fn version_latest_handler() -> impl IntoResponse {
     match crate::updater::check_latest_version().await {
         Ok(latest) => ApiResponse::ok(serde_json::json!({ "latest": latest })),
@@ -516,42 +519,24 @@ async fn version_upgrade_handler(
         crate::updater::InstallMethod::Manual => "manual",
     };
 
-    // 非 npm 安装方式（manual/cargo/apt）由用户手动升级，
-    // 直接委托给 UpdateSource::upgrade() 处理，不再走 npm 硬编码路径。
-    // 这些方式的升级不会替换当前可执行文件，因此不触发 daemon 自动重部署。
+    // 非 npm 安装方式（manual/cargo/apt）daemon 端无法自动执行，
+    // 也不替换可执行文件，因此直接返回升级指引 + 退出成功，
+    // 避免让用户看到 "upgrade failed: xxx requires user intervention" 这种
+    // 自相矛盾的错误（用户已配置 manual，意图就是要手动升级）。
     if !matches!(source.method, crate::updater::InstallMethod::Npm) {
-        // 为非 npm 方式生成对应的提示消息，引导用户完成手动操作步骤。
-        let message = match source.method {
-            crate::updater::InstallMethod::Cargo => {
-                format!("请手动执行: cargo install {}@latest", source.package_name())
-            }
-            crate::updater::InstallMethod::Apt => {
-                "请手动执行: sudo apt update && sudo apt upgrade ntd".to_string()
-            }
-            crate::updater::InstallMethod::Manual => {
-                "请前往 https://github.com/weibaohui/nothing-todo/releases 下载最新版本".to_string()
-            }
-            _ => "升级完成（非 npm 安装方式，无需自动重部署 daemon）".to_string(),
-        };
-
-        match source.upgrade().await {
-            Ok(_) => {
-                // 统一响应格式：所有分支返回相同的字段名和类型，方便前端解析。
-                // upgraded: 是否已完成升级操作（对非 npm 方式，此处为 true 表示提示已输出）
-                // restarted: 是否触发了 daemon 自动重部署（非 npm 方式始终为 false）
-                // method: 安装方式的稳定字符串标识
-                // message: 用户可读的操作提示或结果说明
-                return ApiResponse::ok(serde_json::json!({
-                    "upgraded": true,
-                    "restarted": false,
-                    "method": method_str,
-                    "message": message
-                }));
-            }
-            Err(e) => {
-                return ApiResponse::err(1, &format!("upgrade failed: {}", e));
-            }
-        }
+        let method = source.method.as_str();
+        let guidance = source.method.guidance();
+        tracing::info!(
+            "non-npm upgrade request (method={}), returning guidance instead of executing",
+            method
+        );
+        return ApiResponse::ok(serde_json::json!({
+            "upgraded": false,
+            "restarted": false,
+            "method": method,
+            "guidance": guidance,
+            "message": format!("请按指引手动升级（{}）", method),
+        }));
     }
 
     // 检测 npm 全局目录写权限，获取安全的安装 prefix
