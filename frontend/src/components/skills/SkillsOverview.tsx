@@ -1,15 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Spin, Row, Col, Card, Statistic, Input, Space, Button, Tooltip, Dropdown, message } from 'antd';
+import { Spin, Input, Space, Button, Tag, Dropdown, Card, message } from 'antd';
 import type { MenuProps } from 'antd';
 import {
-  ThunderboltOutlined, AppstoreOutlined, BarChartOutlined,
-  SearchOutlined, FolderOpenOutlined, FileOutlined,
+  ThunderboltOutlined, SearchOutlined,
   DownloadOutlined, ExportOutlined, ImportOutlined,
+  AppstoreOutlined, FileTextOutlined,
 } from '@ant-design/icons';
 import { EXECUTORS } from '@/types';
 import type { SkillMeta, ExecutorSkills } from '@/types';
 import * as db from '@/utils/database';
-import { SkillTree } from './SkillTree';
+import { EXECUTOR_COLORS, formatSize, splitSkillName } from './helpers';
 import { SkillDetailDrawer } from './SkillDetailDrawer';
 import { ImportExportModal } from './ImportExportModal';
 
@@ -17,7 +17,7 @@ export function SkillsOverview() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<ExecutorSkills[]>([]);
   const [searchText, setSearchText] = useState('');
-  const [showCategory, setShowCategory] = useState(true);
+  const [filterExecutor, setFilterExecutor] = useState<string>('all');
   const [selectedSkill, setSelectedSkill] = useState<SkillMeta | null>(null);
   const [selectedExecutor, setSelectedExecutor] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -50,8 +50,61 @@ export function SkillsOverview() {
     setDrawerOpen(true);
   };
 
-  const totalSkills = useMemo(() => data.reduce((sum, e) => sum + e.skills.length, 0), [data]);
-  const executorsWithSkills = useMemo(() => data.filter(e => e.skills.length > 0).length, [data]);
+  // Stats computed from unfiltered data (total counts, not affected by filter)
+  const stats = useMemo(() => {
+    const totalSkills = data.reduce((sum, e) => sum + e.skills.length, 0);
+    const totalFiles = data.reduce((sum, e) => sum + e.skills.reduce((s, sk) => s + sk.file_count, 0), 0);
+    const executorsWithSkills = data.filter(e => e.skills.length > 0).length;
+    return { totalSkills, totalFiles, executorsWithSkills };
+  }, [data]);
+
+  // All skills flattened (filtered by executor, but not by search)
+  const allSkills = useMemo(() => {
+    const skills: { skill: SkillMeta; executor: string }[] = [];
+    data.forEach(e => {
+      e.skills.forEach(s => {
+        if (filterExecutor === 'all' || filterExecutor === e.executor) {
+          skills.push({ skill: s, executor: e.executor });
+        }
+      });
+    });
+    return skills;
+  }, [data, filterExecutor]);
+
+  // Skills filtered by both executor and search text
+  const filteredSkills = useMemo(() => {
+    if (!searchText) return allSkills;
+    const lower = searchText.toLowerCase();
+    return allSkills.filter(
+      ({ skill }) =>
+        skill.name.toLowerCase().includes(lower) ||
+        skill.description?.toLowerCase().includes(lower) ||
+        skill.keywords?.some(k => k.toLowerCase().includes(lower))
+    );
+  }, [allSkills, searchText]);
+
+  // Executor filter tabs with counts synced to search
+  const executorTabs = useMemo(() => {
+    const filterMatch = (skills: SkillMeta[]) => {
+      if (!searchText) return skills.length;
+      const lower = searchText.toLowerCase();
+      return skills.filter(s =>
+        s.name.toLowerCase().includes(lower) ||
+        s.description?.toLowerCase().includes(lower) ||
+        s.keywords?.some(k => k.toLowerCase().includes(lower))
+      ).length;
+    };
+
+    const tabs = [{ key: 'all', label: '全部', count: filterMatch(allSkills.map(s => s.skill)) }];
+    data.forEach(e => {
+      const label = EXECUTORS.find(x => x.value === e.executor)?.label || e.executor;
+      const count = filterExecutor === 'all' || filterExecutor === e.executor
+        ? filterMatch(e.skills)
+        : 0;
+      tabs.push({ key: e.executor, label, count });
+    });
+    return tabs;
+  }, [data, filterExecutor, searchText, allSkills]);
 
   const exportMenuItems: MenuProps['items'] = [
     { key: 'export', icon: <ExportOutlined />, label: '导出选中' },
@@ -67,7 +120,9 @@ export function SkillsOverview() {
     } else {
       setExportMode('export');
       if (key === 'export-all') {
-        const executorData = data.find(e => e.executor === selectedExecutor);
+        // Export from current filter scope, not stale selectedExecutor
+        const scopeExecutor = filterExecutor !== 'all' ? filterExecutor : selectedExecutor;
+        const executorData = data.find(e => e.executor === scopeExecutor);
         if (executorData) {
           setInitialSelectedSkills(executorData.skills.map(s => s.name));
         }
@@ -78,103 +133,204 @@ export function SkillsOverview() {
     setExportModalOpen(true);
   };
 
-  const handleImport = (executor: string) => {
-    setSelectedExecutor(executor);
-    setExportMode('import');
-    setInitialSelectedSkills(undefined);
-    setExportModalOpen(true);
-  };
-
-  const handleExport = (executor: string, selectAll?: boolean) => {
-    setSelectedExecutor(executor);
-    setExportMode('export');
-    if (selectAll) {
-      const executorData = data.find(e => e.executor === executor);
-      if (executorData) {
-        setInitialSelectedSkills(executorData.skills.map(s => s.name));
-      }
-    } else {
-      setInitialSelectedSkills(undefined);
-    }
-    setExportModalOpen(true);
-  };
-
   if (loading) {
     return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" /></div>;
   }
 
   return (
     <div>
-      <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col xs={24} sm={8}>
-          <Card size="small">
-            <Statistic
-              title="Skill 总数"
-              value={totalSkills}
-              prefix={<ThunderboltOutlined style={{ color: '#7C3AED' }} />}
-              valueStyle={{ color: '#7C3AED' }}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={8}>
-          <Card size="small">
-            <Statistic
-              title="有 Skills 的执行器"
-              value={executorsWithSkills}
-              suffix={`/ ${data.length}`}
-              prefix={<AppstoreOutlined style={{ color: '#10B981' }} />}
-              valueStyle={{ color: '#10B981' }}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={8}>
-          <Card size="small">
-            <Statistic
-              title="执行器总数"
-              value={data.length}
-              prefix={<BarChartOutlined style={{ color: '#F97316' }} />}
-              valueStyle={{ color: '#F97316' }}
-            />
-          </Card>
-        </Col>
-      </Row>
+      {/* Stats row */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(3, 1fr)',
+        gap: 12,
+        marginBottom: 20,
+      }}>
+        <Card size="small" style={{ borderRadius: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 36,
+              height: 36,
+              borderRadius: 10,
+              background: 'rgba(8, 145, 178, 0.12)',
+              color: '#0891b2',
+              fontSize: 16,
+            }}>
+              <ThunderboltOutlined />
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary, #475569)' }}>Skill 总数</div>
+              <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2, color: 'var(--color-text, #0f172a)' }}>
+                {stats.totalSkills}
+              </div>
+            </div>
+          </div>
+        </Card>
+        <Card size="small" style={{ borderRadius: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 36,
+              height: 36,
+              borderRadius: 10,
+              background: 'rgba(16, 185, 129, 0.12)',
+              color: '#10b981',
+              fontSize: 16,
+            }}>
+              <AppstoreOutlined />
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary, #475569)' }}>执行器</div>
+              <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2, color: 'var(--color-text, #0f172a)' }}>
+                {stats.executorsWithSkills}
+                <span style={{ fontSize: 13, fontWeight: 400, marginLeft: 2 }}>/ {data.length}</span>
+              </div>
+            </div>
+          </div>
+        </Card>
+        <Card size="small" style={{ borderRadius: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 36,
+              height: 36,
+              borderRadius: 10,
+              background: 'rgba(245, 158, 11, 0.12)',
+              color: '#f59e0b',
+              fontSize: 16,
+            }}>
+              <FileTextOutlined />
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary, #475569)' }}>文件总数</div>
+              <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2, color: 'var(--color-text, #0f172a)' }}>
+                {stats.totalFiles}
+              </div>
+            </div>
+          </div>
+        </Card>
+      </div>
 
-      <Card size="small" style={{ marginBottom: 16 }}>
-        <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
-          <Space wrap>
-            <Input
-              placeholder="搜索 Skills..."
-              prefix={<SearchOutlined />}
-              value={searchText}
-              onChange={e => setSearchText(e.target.value)}
-              style={{ width: 200 }}
-              allowClear
-            />
-            <Tooltip title={showCategory ? '显示扁平结构' : '显示目录结构'}>
-              <Button
-                icon={showCategory ? <FolderOpenOutlined /> : <FileOutlined />}
-                onClick={() => setShowCategory(!showCategory)}
+      {/* Filter & Search bar */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 16,
+        gap: 12,
+        flexWrap: 'wrap',
+      }}>
+        {/* Executor filter pills */}
+        <div
+          role="tablist"
+          aria-label="按执行器筛选"
+          style={{
+            display: 'flex',
+            gap: 6,
+            flexWrap: 'wrap',
+            flex: 1,
+          }}
+        >
+          {executorTabs.map(tab => {
+            const isActive = filterExecutor === tab.key;
+            const color = tab.key === 'all' ? '#0891b2' : (EXECUTOR_COLORS[tab.key] || '#64748b');
+            return (
+              <button
+                key={tab.key}
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => setFilterExecutor(tab.key)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '4px 12px',
+                  borderRadius: 20,
+                  border: `1px solid ${isActive ? color : 'var(--color-border, #e2e8f0)'}`,
+                  background: isActive ? `${color}15` : 'transparent',
+                  color: isActive ? color : 'var(--color-text-secondary, #475569)',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  fontWeight: isActive ? 500 : 400,
+                  transition: 'all 0.2s',
+                  whiteSpace: 'nowrap',
+                }}
               >
-                {showCategory ? '目录视图' : '扁平视图'}
-              </Button>
-            </Tooltip>
-          </Space>
+                {tab.label}
+                <span style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minWidth: 18,
+                  height: 18,
+                  borderRadius: 9,
+                  background: isActive ? color : 'var(--color-fill, #e2e8f0)',
+                  color: isActive ? '#fff' : 'var(--color-text-secondary, #475569)',
+                  fontSize: 11,
+                  lineHeight: 1,
+                  padding: '0 4px',
+                }}>
+                  {tab.count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <Space size={8}>
+          <Input
+            placeholder="搜索 Skills..."
+            prefix={<SearchOutlined style={{ color: 'var(--color-text-quaternary, #94a3b8)' }} />}
+            value={searchText}
+            onChange={e => setSearchText(e.target.value)}
+            style={{ width: 200, borderRadius: 20 }}
+            allowClear
+          />
           <Dropdown menu={{ items: exportMenuItems, onClick: handleExportMenuClick }} trigger={['click']}>
-            <Button type="primary" icon={<DownloadOutlined />}>
+            <Button
+              type="primary"
+              icon={<DownloadOutlined />}
+              style={{ borderRadius: 20 }}
+            >
               导入/导出
             </Button>
           </Dropdown>
         </Space>
-      </Card>
+      </div>
 
-      <SkillTree
-        data={data}
-        onSkillClick={handleSkillClick}
-        onImport={handleImport}
-        onExport={handleExport}
-        searchText={searchText}
-        showCategory={showCategory}
-      />
+      {/* Skill card grid */}
+      {filteredSkills.length === 0 ? (
+        <div style={{
+          textAlign: 'center',
+          padding: '60px 20px',
+          color: 'var(--color-text-secondary, #475569)',
+        }}>
+          <AppstoreOutlined style={{ fontSize: 48, marginBottom: 16, opacity: 0.3 }} />
+          <div style={{ fontSize: 16 }}>{searchText ? '无匹配结果' : '暂无 Skills'}</div>
+        </div>
+      ) : (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+          gap: 12,
+        }}>
+          {filteredSkills.map(({ skill, executor }) => (
+            <SkillCard
+              key={`${executor}-${skill.name}`}
+              skill={skill}
+              executor={executor}
+              onClick={() => handleSkillClick(skill, executor)}
+            />
+          ))}
+        </div>
+      )}
 
       <SkillDetailDrawer
         skill={selectedSkill}
@@ -189,7 +345,7 @@ export function SkillsOverview() {
       <ImportExportModal
         open={exportModalOpen}
         mode={exportMode}
-        executor={selectedExecutor}
+        executor={filterExecutor !== 'all' ? filterExecutor : selectedExecutor}
         data={data}
         initialSelectedSkills={initialSelectedSkills}
         onClose={() => {
@@ -198,5 +354,158 @@ export function SkillsOverview() {
         }}
       />
     </div>
+  );
+}
+
+function SkillCard({ skill, executor, onClick }: {
+  skill: SkillMeta;
+  executor: string;
+  onClick: () => void;
+}) {
+  const color = EXECUTOR_COLORS[executor] || '#0891b2';
+  const { category, shortName } = splitSkillName(skill.name);
+  const executorLabel = EXECUTORS.find(e => e.value === executor)?.label || executor;
+
+  return (
+    <Card
+      size="small"
+      hoverable
+      onClick={onClick}
+      tabIndex={0}
+      role="button"
+      aria-label={`${shortName} - ${executorLabel}`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      className="skill-card"
+      style={{
+        borderRadius: 12,
+        cursor: 'pointer',
+        transition: 'all 0.2s',
+        position: 'relative',
+        overflow: 'hidden',
+        borderColor: 'var(--color-border, #e2e8f0)',
+      }}
+      styles={{
+        body: { padding: 16 },
+      }}
+    >
+      {/* Top accent line */}
+      <div style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: 2,
+        background: `linear-gradient(90deg, ${color}, ${color}60)`,
+        opacity: 0.6,
+      }} />
+
+      {/* Header: icon + name + executor tag */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+        <div style={{
+          width: 36,
+          height: 36,
+          borderRadius: 10,
+          background: `${color}15`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color,
+          fontSize: 15,
+          fontWeight: 600,
+          flexShrink: 0,
+        }}>
+          {shortName.charAt(0).toUpperCase()}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 14,
+            fontWeight: 500,
+            color: 'var(--color-text, #0f172a)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}>
+            {shortName}
+          </div>
+          <div style={{
+            fontSize: 11,
+            color: 'var(--color-text-tertiary, #94a3b8)',
+            marginTop: 2,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}>
+            {executorLabel}
+          </div>
+        </div>
+      </div>
+
+      {/* Description */}
+      {skill.description && (
+        <div style={{
+          fontSize: 12,
+          color: 'var(--color-text-secondary, #475569)',
+          lineHeight: 1.5,
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+          minHeight: 36,
+          marginTop: 12,
+        }}>
+          {skill.description}
+        </div>
+      )}
+
+      {/* Footer: tags */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        marginTop: 12,
+        flexWrap: 'wrap',
+      }}>
+        {category && (
+          <Tag style={{
+            margin: 0,
+            fontSize: 11,
+            lineHeight: '18px',
+            padding: '0 6px',
+            borderRadius: 4,
+            background: 'var(--color-fill, #e2e8f0)',
+            border: 'none',
+            color: 'var(--color-text-secondary, #475569)',
+          }}>
+            {category}
+          </Tag>
+        )}
+        {skill.version && (
+          <Tag style={{
+            margin: 0,
+            fontSize: 11,
+            lineHeight: '18px',
+            padding: '0 6px',
+            borderRadius: 4,
+            background: `${color}15`,
+            border: 'none',
+            color,
+          }}>
+            v{skill.version}
+          </Tag>
+        )}
+        <span style={{
+          marginLeft: 'auto',
+          fontSize: 11,
+          color: 'var(--color-text-quaternary, #94a3b8)',
+        }}>
+          {formatSize(skill.total_size)}
+        </span>
+      </div>
+    </Card>
   );
 }
