@@ -316,6 +316,43 @@ pub async fn get_running_execution_records_handler(
 }
 
 #[derive(Debug, Deserialize)]
+pub struct RunningBoardQuery {
+    #[serde(default)]
+    pub page: Option<i64>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+pub async fn get_running_board(
+    State(state): State<AppState>,
+    Query(query): Query<RunningBoardQuery>,
+) -> Result<ApiResponse<crate::models::RunningBoardResponse>, AppError> {
+    let page = query.page.unwrap_or(1).max(1);
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
+    let offset = (page - 1) * limit;
+
+    let (records, total) = state
+        .db
+        .get_execution_records(crate::db::execution::ExecutionRecordQuery {
+            todo_id: None,
+            limit,
+            offset,
+            status: None,
+        })
+        .await?;
+
+    let scheduled_todos = state.db.get_scheduler_todos().await?;
+
+    Ok(ApiResponse::ok(crate::models::RunningBoardResponse {
+        records,
+        scheduled_todos,
+        total,
+        page,
+        limit,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ForceFailRequest {
     pub record_id: i64,
 }

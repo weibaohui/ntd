@@ -1588,7 +1588,7 @@ mod tests {
 
     async fn create_test_execution_record(db: &Database, todo_id: i64, command: &str) -> i64 {
         db.create_execution_record(NewExecutionRecord {
-            todo_id,
+            todo_id: Some(todo_id),
             command,
             executor: "claudecode",
             trigger_type: "manual",
@@ -1713,7 +1713,7 @@ mod tests {
         let after = truncate_seconds(Utc::now());
 
         let (records, _) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
-            todo_id,
+            todo_id: Some(todo_id),
             limit: 100,
             offset: 0,
             status: None,
@@ -1749,7 +1749,7 @@ mod tests {
         let after = truncate_seconds(Utc::now());
 
         let (records, _) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
-            todo_id,
+            todo_id: Some(todo_id),
             limit: 100,
             offset: 0,
             status: None,
@@ -2038,7 +2038,7 @@ mod tests {
         let todo_id = db.create_todo("Test", "Prompt").await.unwrap();
         let record_id = create_test_execution_record(&db, todo_id, "echo hi").await;
         let (records, total) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
-            todo_id,
+            todo_id: Some(todo_id),
             limit: 100,
             offset: 0,
             status: None,
@@ -2062,7 +2062,7 @@ mod tests {
             create_test_execution_record(&db, todo_id, &format!("cmd{}", i)).await;
         }
         let (records, total) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
-            todo_id,
+            todo_id: Some(todo_id),
             limit: 2,
             offset: 0,
             status: None,
@@ -2081,7 +2081,7 @@ mod tests {
             create_test_execution_record(&db, todo_id, &format!("cmd{}", i)).await;
         }
         let (records, total) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
-            todo_id,
+            todo_id: Some(todo_id),
             limit: 10,
             offset: 2,
             status: None,
@@ -2125,7 +2125,7 @@ mod tests {
 
         let (running, total_running) =
             db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
-                todo_id,
+                todo_id: Some(todo_id),
                 limit: 10,
                 offset: 0,
                 status: Some("running"),
@@ -2138,7 +2138,7 @@ mod tests {
 
         let (success, total_success) =
             db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
-                todo_id,
+                todo_id: Some(todo_id),
                 limit: 10,
                 offset: 0,
                 status: Some("success"),
@@ -2151,7 +2151,7 @@ mod tests {
 
         let (failed, total_failed) =
             db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
-                todo_id,
+                todo_id: Some(todo_id),
                 limit: 10,
                 offset: 0,
                 status: Some("failed"),
@@ -2163,7 +2163,7 @@ mod tests {
         assert_eq!(failed[0].id, failed_id);
 
         let (all, total_all) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
-            todo_id,
+            todo_id: Some(todo_id),
             limit: 10,
             offset: 0,
             status: None,
@@ -2176,7 +2176,7 @@ mod tests {
         // Test Some("all") returns all records (db layer should treat "all" as no filter)
         let (all_filter, total_all_filter) =
             db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
-                todo_id,
+                todo_id: Some(todo_id),
                 limit: 10,
                 offset: 0,
                 status: Some("all"),
@@ -2212,7 +2212,7 @@ mod tests {
         .await
         .unwrap();
         let (records, _) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
-            todo_id,
+            todo_id: Some(todo_id),
             limit: 100,
             offset: 0,
             status: None,

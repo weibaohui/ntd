@@ -155,7 +155,7 @@ fn matching_items(todo: &Todo, trigger: HookTrigger) -> Vec<&TodoHookItem> {
 /// enough; we don't need the full history.
 async fn lookup_source_result(ctx: &ServiceContext, source_id: i64) -> Option<String> {
     let query = crate::db::execution::ExecutionRecordQuery {
-        todo_id: source_id,
+        todo_id: Some(source_id),
         limit: 1,
         offset: 0,
         status: Some("success"),
@@ -189,7 +189,7 @@ async fn lookup_latest_finished_record(
     // status="all" means no status filter (see `get_execution_records`), and
     // ORDER BY started_at DESC LIMIT 1 gives us the most recent record.
     let query = crate::db::execution::ExecutionRecordQuery {
-        todo_id: source_id,
+        todo_id: Some(source_id),
         limit: 1,
         offset: 0,
         status: Some("all"),

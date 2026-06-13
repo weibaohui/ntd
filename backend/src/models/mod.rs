@@ -393,13 +393,23 @@ pub struct SmartCreateRequest {
 
 #[derive(Deserialize)]
 pub struct TodoIdQuery {
-    pub todo_id: i64,
+    #[serde(default)]
+    pub todo_id: Option<i64>,
     #[serde(default)]
     pub page: Option<i64>,
     #[serde(default)]
     pub limit: Option<i64>,
     #[serde(default)]
     pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunningBoardResponse {
+    pub records: Vec<ExecutionRecord>,
+    pub scheduled_todos: Vec<Todo>,
+    pub total: i64,
+    pub page: i64,
+    pub limit: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

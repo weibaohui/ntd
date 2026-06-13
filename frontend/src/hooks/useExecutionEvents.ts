@@ -47,7 +47,14 @@ interface ExecEventExecutionStats {
   stats: ExecutionStats;
 }
 
-type ExecEvent = ExecEventStarted | ExecEventOutput | ExecEventFinished | ExecEventSync | ExecEventTodoProgress | ExecEventExecutionStats;
+interface ExecEventReviewStatusChanged {
+  type: 'ReviewStatusChanged';
+  record_id: number;
+  todo_id: number;
+  review_status: string;
+}
+
+type ExecEvent = ExecEventStarted | ExecEventOutput | ExecEventFinished | ExecEventSync | ExecEventTodoProgress | ExecEventExecutionStats | ExecEventReviewStatusChanged;
 
 export function useExecutionEvents() {
   const { dispatch } = useApp();
@@ -136,6 +143,7 @@ export function useExecutionEvents() {
                 type: 'UPDATE_TODO_STATUS',
                 payload: { id: data.todo_id, status: 'running' },
               });
+              window.dispatchEvent(new CustomEvent('executionStarted', { detail: { todoId: data.todo_id } }));
               break;
             }
             case 'Output': {
@@ -179,6 +187,13 @@ export function useExecutionEvents() {
                 dispatch({ type: 'REMOVE_RUNNING_TASK', payload: data.task_id });
               }, 3000);
               removeTaskTimersRef.current.add(timer);
+              window.dispatchEvent(new CustomEvent('executionFinished', { detail: { todoId: data.todo_id, success: data.success } }));
+              break;
+            }
+            case 'ReviewStatusChanged': {
+              window.dispatchEvent(new CustomEvent('reviewStatusChanged', {
+                detail: { recordId: data.record_id, todoId: data.todo_id, reviewStatus: data.review_status },
+              }));
               break;
             }
           }

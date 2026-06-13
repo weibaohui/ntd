@@ -8,9 +8,11 @@ import {
   ProfileOutlined,
   SearchOutlined,
   FolderOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
 import { KanbanBoard } from './KanbanBoard';
+import { RunningBoard } from './RunningBoard';
 import { TodoCard } from './TodoCard';
 import * as db from '@/utils/database';
 import { formatRelativeTime } from '@/utils/datetime';
@@ -28,7 +30,7 @@ interface MemorialBoardProps {
   onBack?: () => void;
 }
 
-type BoardMode = 'memorial' | 'kanban';
+type BoardMode = 'memorial' | 'kanban' | 'running';
 
 export function MemorialBoard({ onBack }: MemorialBoardProps) {
   const { state, dispatch } = useApp();
@@ -368,6 +370,7 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
             options={[
               { label: <span><ProfileOutlined /> 结论视图</span>, value: 'memorial' },
               { label: <span><AppstoreOutlined /> 看板视图</span>, value: 'kanban' },
+              { label: <span><ThunderboltOutlined /> 运行视图</span>, value: 'running' },
             ]}
           />
         </div>
@@ -414,7 +417,7 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
                 <CloseCircleOutlined /> <strong>{failedCount}</strong> 失败
               </span>
             </div>
-          ) : (
+          ) : boardMode === 'kanban' ? (
             <div className="memorial-summary">
               <span className="memorial-stat-dot memorial-stat-all">共 <strong>{kanbanStats.length}</strong> 条</span>
               <span className="memorial-stat-dot" style={{ color: '#3b82f6' }}>待办 <strong>{kanbanStatsCount.pending}</strong></span>
@@ -422,11 +425,13 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
               <span className="memorial-stat-dot" style={{ color: '#22c55e' }}>已完成 <strong>{kanbanStatsCount.completed}</strong></span>
               <span className="memorial-stat-dot" style={{ color: '#ef4444' }}>失败 <strong>{kanbanStatsCount.failed}</strong></span>
             </div>
-          )}
+          ) : null}
         </div>
       </div>
 
-      {boardMode === 'kanban' ? (
+      {boardMode === 'running' ? (
+        <RunningBoard searchText={searchText} hours={hours} selectedProject={selectedProject} />
+      ) : boardMode === 'kanban' ? (
         <KanbanBoard searchText={searchText} hours={hours} onSearchChange={setSearchText} onHoursChange={setHours} />
       ) : loading ? (
         <div className="memorial-grid">

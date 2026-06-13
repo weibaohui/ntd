@@ -83,6 +83,11 @@ pub enum ExecEvent {
         task_id: String,
         stats: crate::models::ExecutionStats,
     },
+    ReviewStatusChanged {
+        record_id: i64,
+        todo_id: i64,
+        review_status: String,
+    },
 }
 
 #[derive(Debug)]
@@ -668,6 +673,7 @@ pub fn create_app(
         .route("/api/tags/{id}", delete(tag::delete_tag))
         .route("/api/execution-records", get(execution::get_execution_records))
         .route("/api/execution-records/running", get(execution::get_running_execution_records_handler))
+        .route("/api/running-board", get(execution::get_running_board))
         .route("/api/execution-records/session/{session_id}", get(execution::get_execution_records_by_session))
         .route("/api/execution-records/{id}/logs", get(execution::get_execution_logs_handler))
         .route("/api/execution-records/{id}", get(execution::get_execution_record))

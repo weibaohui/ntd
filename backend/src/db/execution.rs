@@ -38,7 +38,7 @@ pub struct UpdateExecutionRecordRequest<'a> {
 }
 
 pub struct ExecutionRecordQuery<'a> {
-    pub todo_id: i64,
+    pub todo_id: Option<i64>,
     pub limit: i64,
     pub offset: i64,
     pub status: Option<&'a str>,
@@ -101,15 +101,14 @@ impl Database {
         &self,
         query: ExecutionRecordQuery<'_>,
     ) -> Result<(Vec<ExecutionRecord>, i64), sea_orm::DbErr> {
-        let base_filter = execution_records::Column::TodoId.eq(query.todo_id);
-        let filter = if let Some(s) = query.status {
-            if s == "all" {
-                base_filter // "all" 等同于不传过滤条件
-            } else {
-                base_filter.and(execution_records::Column::Status.eq(s))
-            }
+        let base_filter = if let Some(todo_id) = query.todo_id {
+            execution_records::Column::TodoId.eq(todo_id)
         } else {
-            base_filter
+            execution_records::Column::TodoId.is_not_null()
+        };
+        let filter = match query.status {
+            Some("all") | None => base_filter,
+            Some(s) => base_filter.and(execution_records::Column::Status.eq(s)),
         };
 
         let total: i64 = execution_records::Entity::find()

@@ -181,6 +181,33 @@ export const DEFAULT_EXECUTOR = 'claudecode';
 /** 仅支持继续对话的执行器（用于选择 UI 的下拉数据源） */
 export const RESUMABLE_EXECUTOR_OPTIONS = EXECUTORS.filter(e => RESUMABLE_EXECUTORS.has(e.value));
 
+// ─── Running Board types ────────────────────────────────────
+
+export interface ScheduledTodo {
+  id: number;
+  title: string;
+  prompt: string;
+  status: string;
+  executor: string | null;
+  scheduler_enabled: boolean;
+  scheduler_config: string | null;
+  scheduler_timezone: string | null;
+  scheduler_next_run_at: string | null;
+  tag_ids: number[];
+  workspace: string | null;
+  updated_at: string;
+}
+
+export interface RunningBoardData {
+  records: ExecutionRecord[];
+  scheduled_todos: ScheduledTodo[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export type RunningBoardColumn = 'scheduled' | 'running' | 'completed' | 'reviewing' | 'review_passed' | 'failed';
+
 export function supportsResume(record: ExecutionRecord): boolean {
   return (
     record.status !== 'running' &&

@@ -1,5 +1,5 @@
 import { api, unwrap } from './client';
-import type { ExecutionRecord, ExecutionSummary, ExecutionRecordsPage, ExecutionLogsPage } from '@/types';
+import type { ExecutionRecord, ExecutionSummary, ExecutionRecordsPage, ExecutionLogsPage, RunningBoardData } from '@/types';
 
 export async function getExecutionRecords(todoId: number, page?: number, limit?: number, status?: string): Promise<ExecutionRecordsPage> {
   const params: Record<string, unknown> = { todo_id: todoId };
@@ -84,4 +84,11 @@ export interface SmartCreateResult {
 
 export async function smartCreate(content: string): Promise<SmartCreateResult> {
   return unwrap(await api.post('/api/smart-create', { content }));
+}
+
+export async function getRunningBoardData(page?: number, limit?: number): Promise<RunningBoardData> {
+  const params: Record<string, unknown> = {};
+  if (page !== undefined) params.page = page;
+  if (limit !== undefined) params.limit = limit;
+  return unwrap(await api.get('/api/running-board', { params }));
 }

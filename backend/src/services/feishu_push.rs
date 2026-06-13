@@ -200,6 +200,7 @@ impl FeishuPushService {
                 ))
             }
             ExecEvent::Sync { .. } => None,
+            ExecEvent::ReviewStatusChanged { .. } => None,
         }
     }
 }
