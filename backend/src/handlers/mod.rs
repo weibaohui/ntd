@@ -13,6 +13,7 @@ use axum::extract::DefaultBodyLimit;
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::{broadcast, oneshot};
+use uuid::Uuid;
 
 use crate::service_context::ServiceContext;
 use crate::adapters::ExecutorRegistry;
@@ -459,6 +460,72 @@ async fn version_latest_handler() -> impl IntoResponse {
         }
     }
 }
+
+/// 给每个 HTTP 请求注入 `X-Request-Id` 并开启一个携带 request_id / method / uri 的 tracing span。
+///
+/// 目的：issue #513 要求的「trace_id 关联」。
+/// - 入站请求如果已经带了 `X-Request-Id` 头，沿用（让上游网关/前端可以打通链路）；
+/// - 否则生成一个 UUIDv4 写到 extensions，再回写到响应头，方便客户端日志和服务端对账。
+/// - 这里用 `tracing::debug!` 直接附带结构化字段写入当前活跃 span（TraceLayer 默认 span
+///   没有声明可记录字段，所以 `Span::current().record(...)` 在默认 span 上会静默失败，
+///   这里直接用 debug! 输出，确保 request_id 一定进日志）。
+///
+/// 注意：本中间件必须**先于** TraceLayer 注册（axum layer 栈是「后注册先生效」，
+/// 所以要在 .layer(TraceLayer) 之前 .layer(from_fn(propagate_request_id))）。
+pub async fn propagate_request_id(mut req: Request, next: Next) -> Response {
+    // 读取或生成 request_id：保留外部传入以便和上游打通；否则给一个 UUIDv4。
+    let request_id = resolve_request_id(req.headers());
+
+    // 写入 request extensions，方便 handler 通过 Extension<RequestId> 显式取出，
+    // 也方便后面的中间件/TraceLayer 进一步关联。
+    req.extensions_mut().insert(RequestId(request_id.clone()));
+
+    // 用 debug 级别：production 默认 RUST_LOG=info 时这条日志不会刷屏；
+    // 排查链路时设 RUST_LOG=ntd::handlers=debug 即可激活，且本中间件作用于全部
+    // HTTP 路由（含静态资源），用 info 会让每个静态资源请求都写一条日志。
+    tracing::debug!(
+        request_id = %request_id,
+        method = %req.method(),
+        uri = %req.uri(),
+        "http request received"
+    );
+
+    let mut response = next.run(req).await;
+
+    // 把同一个 request_id 写回响应头，客户端可以贴到工单/日志里。
+    if let Ok(value) = header::HeaderValue::from_str(&request_id) {
+        response.headers_mut().insert("x-request-id", value);
+    }
+
+    response
+}
+
+/// 纯函数：解析或生成 request_id。
+///
+/// 抽出独立的纯函数是为 `request_id_tests` 单元测试：HTTP 头里若已携带 `X-Request-Id`
+/// 则沿用上游值（保留跨服务 trace 关联），否则生成 UUIDv4。
+/// 之所以不在测试里直接构造 `Next`：axum 0.8 的 `Next` 没有公开构造函数，
+/// 抽离成纯函数是更轻量的验证路径。
+pub fn resolve_request_id(headers: &http::HeaderMap) -> String {
+    headers
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| Uuid::new_v4().to_string())
+}
+
+/// CORS expose_headers 列表 —— 让浏览器侧 JS 能读到这些响应头。
+///
+/// `x-request-id` 由 `propagate_request_id` 中间件写回，前端日志需要贴到工单/对账上游网关。
+/// dev 与 prod 共享同一份列表（避免单边漂移），dev 模式下允许 `Any` origin，
+/// 所以同时 expose 也不会扩大攻击面（攻击者已经从 origin 通配中拿到了能力）。
+fn cors_expose_headers() -> [http::HeaderName; 1] {
+    [http::HeaderName::from_static("x-request-id")]
+}
+
+/// Extractor：handler 内部如需在响应体里附带 request_id，可用 `Extension<RequestId>` 取出。
+#[derive(Debug, Clone)]
+pub struct RequestId(pub String);
 
 /// 给 handler 一个"响应 body 即将被写出"的信号点。
 ///
@@ -929,10 +996,15 @@ pub fn create_app(
         .layer(CompressionLayer::new())
         .layer(
             if crate::config::Config::is_dev_mode() {
+                // dev 模式 origin 用 `Any`,`expose_headers` 跟 prod 保持一致 (见 `cors_expose_headers`):
+                // 前端在 Vite 5173 → 反代 /api/* 时是同源 (不走 CORS),但若有同学启用了直连跨端口
+                // (CORS 触发),他们会观察到「服务端日志有 request_id,前端读不到」— 同一痛点只在 prod
+                // 能修会让 dev 体验与 prod 不一致。把 expose 列表共享一份常量可避免后续漂移。
                 CorsLayer::new()
                     .allow_origin(Any)
                     .allow_methods(Any)
                     .allow_headers(Any)
+                    .expose_headers(cors_expose_headers())
             } else {
                 // Production: restrict to methods and headers actually used by the API,
                 // with configurable origin whitelist (empty = same-origin only).
@@ -951,9 +1023,13 @@ pub fn create_app(
                     .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
                     .collect();
 
+                // `expose_headers`: 让浏览器能读到 `x-request-id` 响应头,配合
+                // `propagate_request_id` 中间件写回的 request_id,前端日志可以贴到
+                // 工单/与上游网关对账。生产环境若不走浏览器可忽略。
                 let cors = CorsLayer::new()
                     .allow_methods(methods)
-                    .allow_headers(headers);
+                    .allow_headers(headers)
+                    .expose_headers(cors_expose_headers());
 
                 if origins.is_empty() {
                     // No explicit origins = same-origin only (no allow_origin sent)
@@ -963,7 +1039,30 @@ pub fn create_app(
                 }
             },
         )
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http()
+                // 自定义 span：把 request_id / method / uri 三个字段直接挂在 span 上，
+                // 这样 TraceLayer 默认的 on_request / on_response 日志、以及 handler 内部
+                // 所有 tracing::info! / tracing::warn! 输出，都会自动带 request_id 字段。
+                // request_id 来自 propagate_request_id 中间件写入的 extensions。
+                .make_span_with(|req: &Request| {
+                    let request_id = req
+                        .extensions()
+                        .get::<RequestId>()
+                        .map(|r| r.0.clone())
+                        .unwrap_or_else(|| "-".to_string());
+                    tracing::info_span!(
+                        "http_request",
+                        request_id = %request_id,
+                        method = %req.method(),
+                        uri = %req.uri(),
+                    )
+                }),
+        )
+        // request_id 中间件放在 TraceLayer 之外（axum 的 layer 栈是后注册先生效），
+        // 这样 TraceLayer 创建的 span 上下文里就能拿到 request_id 字段；同时响应头
+        // 也由这一层写入 X-Request-Id，前端日志 / 上游网关可以和服务端对账。
+        .layer(axum::middleware::from_fn(propagate_request_id))
         .with_state(state)
 }
 
@@ -1159,5 +1258,34 @@ mod static_handler_tests {
         // 即使 Vite 也可能 hash 图片，policy 上 image 不下发 immutable
         assert_eq!(cache_control_for("logo-AbCd1234.png", "image/png"), "no-cache");
         assert_eq!(cache_control_for("hero-AbCd1234.svg", "image/svg+xml"), "no-cache");
+    }
+}
+
+#[cfg(test)]
+mod request_id_tests {
+    //! 覆盖 `propagate_request_id` 中间件在 issue #513 中的核心行为：
+    //! 1. 入站请求无 X-Request-Id 头时生成 UUID；
+    //! 2. 入站请求带 X-Request-Id 头时沿用上游 id（避免上游网关/前端的链路被打断）。
+    //!
+    //! 之所以只测 `resolve_request_id` 这一个纯函数：axum 0.8 的 `Next` 没有公开
+    //! 构造函数，无法在单元测试里手工拼出中间件调用栈。把核心逻辑抽成纯函数后既能
+    //! 完整覆盖行为，又省去了构造 Router/ServiceExt 的样板代码。
+    use super::resolve_request_id;
+    use axum::http;
+
+    #[test]
+    fn generates_request_id_when_header_missing() {
+        let headers = http::HeaderMap::new();
+        let id = resolve_request_id(&headers);
+        // UUIDv4 长度固定为 36（含 4 个连字符）。
+        assert_eq!(id.len(), 36, "expected UUID v4 length, got {id}");
+    }
+
+    #[test]
+    fn preserves_inbound_request_id() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("x-request-id", "trace-abc-123".parse().unwrap());
+        let id = resolve_request_id(&headers);
+        assert_eq!(id, "trace-abc-123");
     }
 }
