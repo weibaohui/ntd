@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::OnceLock;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use command_group::AsyncCommandGroup;
@@ -450,18 +450,14 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         let stdout_handle = child.inner().stdout.take();
         let stderr_handle = child.inner().stderr.take();
 
-        let logs = Arc::new(Mutex::new(Vec::<ParsedLogEntry>::new()));
-        let logs_for_db = logs.clone();
-        let logs_for_result = logs.clone();
-        let flush_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let unflushed_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let flush_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>> =
-            Arc::new(Mutex::new(Vec::new()));
-        const FLUSH_COUNT_THRESHOLD: u64 = 5;
-        // 全局 flush 互斥锁，防止并发 flush 任务在 append_execution_record_logs 中产生读-改-写竞态
-        let flush_mutex: Arc<tokio::sync::Mutex<()>> = Arc::new(tokio::sync::Mutex::new(()));
-        // Graceful shutdown flag for flush timer - avoids aborting in-flight flush tasks
-        let flush_shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // 统一管理 stdout/stderr 推入的日志 buffer 与后台 flush。
+        // 详见 `crate::log_flusher` 文档（issue #496）：用 CAS + pending 标志替代旧的
+        // fetch_add+swap+store(0) 三步非原子组合；用 oneshot-style 标记驱动 shutdown，
+        // 不再有"4s sleep 在 select! 里永远胜出不了 interval.tick"的死代码。
+        let log_flusher = Arc::new(crate::log_flusher::LogFlusher::new(
+            Box::new(crate::log_flusher::DatabaseLogSink::new(db_clone.clone())),
+            crate::log_flusher::LogFlusherConfig::for_record(record_id),
+        ));
 
         let executor_for_parse = executor_spawn.clone();
 
@@ -470,13 +466,9 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             let tx_clone = tx.clone();
             let tid = task_id.clone();
             let executor_clone = executor_for_parse.clone();
-            let logs_for_db = logs_for_db.clone();
             let db_for_todo = db_clone.clone();
             let rid = record_id;
-            let flush_pending_for_stdout = flush_pending.clone();
-            let unflushed_for_stdout = unflushed_count.clone();
-            let flush_handles_stdout = flush_handles.clone();
-            let flush_mutex_stdout = flush_mutex.clone();
+            let log_flusher_for_stdout = log_flusher.clone();
 
             Some(tokio::spawn(async move {
                 let mut reader = BufReader::new(stdout_reader).lines();
@@ -512,38 +504,43 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                         }
 
                         // Send stats update after tool calls or every 10 log entries
+                        // 走 LogFlusher::with_logs 在持锁状态下扫描 buffer，比旧实现里
+                        // 直接 lock logs_for_db 更明确——锁只覆盖只读扫描，不会跨越 push。
                         let is_tool_call = parsed.log_type == "tool_use"
                             || parsed.log_type == "tool_call"
                             || parsed.log_type == "tool";
                         log_count += 1;
                         if is_tool_call || log_count.is_multiple_of(10) {
-                            let current_logs = logs_for_db.lock().await;
-                            let tool_calls = current_logs
-                                .iter()
-                                .filter(|l| {
-                                    l.log_type == "tool_use"
-                                        || l.log_type == "tool_call"
-                                        || l.log_type == "tool"
+                            let stats = log_flusher_for_stdout
+                                .with_logs(|current_logs| {
+                                    let tool_calls = current_logs
+                                        .iter()
+                                        .filter(|l| {
+                                            l.log_type == "tool_use"
+                                                || l.log_type == "tool_call"
+                                                || l.log_type == "tool"
+                                        })
+                                        .count() as u64;
+                                    let conversation_turns = current_logs
+                                        .iter()
+                                        .filter(|l| {
+                                            l.log_type == "assistant"
+                                                || l.log_type == "result"
+                                                || l.log_type == "text"
+                                        })
+                                        .count()
+                                        as u64;
+                                    let thinking_count = current_logs
+                                        .iter()
+                                        .filter(|l| l.log_type == "thinking")
+                                        .count() as u64;
+                                    crate::models::ExecutionStats {
+                                        tool_calls,
+                                        conversation_turns,
+                                        thinking_count,
+                                    }
                                 })
-                                .count() as u64;
-                            let conversation_turns = current_logs
-                                .iter()
-                                .filter(|l| {
-                                    l.log_type == "assistant"
-                                        || l.log_type == "result"
-                                        || l.log_type == "text"
-                                })
-                                .count()
-                                as u64;
-                            let thinking_count = current_logs
-                                .iter()
-                                .filter(|l| l.log_type == "thinking")
-                                .count() as u64;
-                            let stats = crate::models::ExecutionStats {
-                                tool_calls,
-                                conversation_turns,
-                                thinking_count,
-                            };
+                                .await;
                             send_event(
                                 &tx_clone,
                                 ExecEvent::ExecutionStats {
@@ -553,41 +550,9 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                             );
                         }
 
-                        logs_for_db.lock().await.push(parsed.clone());
-                        let prev =
-                            unflushed_for_stdout.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        if prev + 1 >= FLUSH_COUNT_THRESHOLD
-                            && !flush_pending_for_stdout
-                                .swap(true, std::sync::atomic::Ordering::Relaxed)
-                        {
-                            unflushed_for_stdout.store(0, std::sync::atomic::Ordering::Relaxed);
-                            let snapshot = std::mem::take(&mut *logs_for_db.lock().await);
-                            let snapshot_len = snapshot.len() as u64;
-                            let db_flush = db_for_todo.clone();
-                            let rid_flush = rid;
-                            let fp = flush_pending_for_stdout.clone();
-                            let fm = flush_mutex_stdout.clone();
-                            let uc_restore = unflushed_for_stdout.clone();
-                            let logs_restore = logs_for_db.clone();
-                            let h = tokio::spawn(async move {
-                                let _guard = fm.lock().await;
-                                let success = match serde_json::to_string(&snapshot) {
-                                    Ok(json) => {
-                                        db_flush.append_execution_record_logs(rid_flush, &json).await.is_ok()
-                                    }
-                                    Err(_) => false,
-                                };
-                                drop(_guard); // Release mutex before potential restore
-                                if !success {
-                                    // On failure, merge snapshot back and restore count
-                                    let mut logs = logs_restore.lock().await;
-                                    logs.extend(snapshot);
-                                    uc_restore.fetch_add(snapshot_len, std::sync::atomic::Ordering::Relaxed);
-                                }
-                                fp.store(false, std::sync::atomic::Ordering::Relaxed);
-                            });
-                            flush_handles_stdout.lock().await.push(h);
-                        }
+                        // 把日志推入 flusher：内部 CAS 触发后台 flush，
+                        // 替代了原 fetch_add+swap+store(0) 的非原子组合。
+                        log_flusher_for_stdout.push(parsed.clone()).await;
                         send_event(
                             &tx_clone,
                             ExecEvent::Output {
@@ -605,14 +570,8 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         // Capture stderr
         let stderr_tx = tx.clone();
         let stderr_tid = task_id.clone();
-        let logs_for_stderr = logs.clone();
         let executor_for_stderr = executor_spawn.clone();
-        let db_for_stderr = db_clone.clone();
-        let rid_for_stderr = record_id;
-        let flush_for_stderr = flush_pending.clone();
-        let unflushed_for_stderr = unflushed_count.clone();
-        let flush_handles_stderr = flush_handles.clone();
-        let flush_mutex_stderr = flush_mutex.clone();
+        let log_flusher_for_stderr = log_flusher.clone();
         let stderr_task = stderr_handle.map(|stderr_reader| {
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stderr_reader).lines();
@@ -622,40 +581,9 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                     } else {
                         ParsedLogEntry::stderr(line.clone())
                     };
-                    logs_for_stderr.lock().await.push(entry.clone());
-                    let prev =
-                        unflushed_for_stderr.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if prev + 1 >= FLUSH_COUNT_THRESHOLD
-                        && !flush_for_stderr.swap(true, std::sync::atomic::Ordering::Relaxed)
-                    {
-                        unflushed_for_stderr.store(0, std::sync::atomic::Ordering::Relaxed);
-                        let snapshot = std::mem::take(&mut *logs_for_stderr.lock().await);
-                        let snapshot_len = snapshot.len() as u64;
-                        let db_flush = db_for_stderr.clone();
-                        let rid_flush = rid_for_stderr;
-                        let fp = flush_for_stderr.clone();
-                        let fm = flush_mutex_stderr.clone();
-                        let uc_restore = unflushed_for_stderr.clone();
-                        let logs_restore = logs_for_stderr.clone();
-                        let h = tokio::spawn(async move {
-                            let _guard = fm.lock().await;
-                            let success = match serde_json::to_string(&snapshot) {
-                                Ok(json) => {
-                                    db_flush.append_execution_record_logs(rid_flush, &json).await.is_ok()
-                                }
-                                Err(_) => false,
-                            };
-                            drop(_guard); // Release mutex before potential restore
-                            if !success {
-                                // On failure, merge snapshot back and restore count
-                                let mut logs = logs_restore.lock().await;
-                                logs.extend(snapshot);
-                                uc_restore.fetch_add(snapshot_len, std::sync::atomic::Ordering::Relaxed);
-                            }
-                            fp.store(false, std::sync::atomic::Ordering::Relaxed);
-                        });
-                        flush_handles_stderr.lock().await.push(h);
-                    }
+                    // 推入 LogFlusher 走与 stdout 完全相同的 CAS 路径；
+                    // 不再有各自一份的 fetch_add/swap/store(0) 复制代码。
+                    log_flusher_for_stderr.push(entry.clone()).await;
                     send_event(
                         &stderr_tx,
                         ExecEvent::Output {
@@ -667,77 +595,13 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             })
         });
 
-        // 定时兜底 flush：每 3 秒检查未刷新条目，有则写库
-        let timer_db = db_clone.clone();
-        let timer_logs = logs.clone();
-        let timer_fp = flush_pending.clone();
-        let timer_uc = unflushed_count.clone();
-        let timer_handles = flush_handles.clone();
-        let timer_shutdown = flush_shutdown.clone();
-        let flush_timer = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3));
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        if timer_shutdown.load(std::sync::atomic::Ordering::Relaxed) {
-                            // Graceful shutdown: do one final flush if needed, then exit
-                            let n = timer_uc.swap(0, std::sync::atomic::Ordering::Relaxed);
-                            if n > 0 {
-                                let snapshot = std::mem::take(&mut *timer_logs.lock().await);
-                                let db_f = timer_db.clone();
-                                let rid_f = record_id;
-                                let fp = timer_fp.clone();
-                                let h = tokio::spawn(async move {
-                                    if let Ok(json) = serde_json::to_string(&snapshot) {
-                                        let _ = db_f.append_execution_record_logs(rid_f, &json).await;
-                                    }
-                                    fp.store(false, std::sync::atomic::Ordering::Relaxed);
-                                });
-                                timer_handles.lock().await.push(h);
-                            }
-                            break;
-                        }
-                        if timer_fp.load(std::sync::atomic::Ordering::Relaxed) {
-                            continue;
-                        }
-                        let n = timer_uc.swap(0, std::sync::atomic::Ordering::Relaxed);
-                        if n > 0 && !timer_fp.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                            let snapshot = std::mem::take(&mut *timer_logs.lock().await);
-                            let snapshot_len = snapshot.len() as u64;
-                            let db_f = timer_db.clone();
-                            let rid_f = record_id;
-                            let fp = timer_fp.clone();
-                            let uc_restore = timer_uc.clone();
-                            let logs_restore = timer_logs.clone();
-                            let h = tokio::spawn(async move {
-                                let success = match serde_json::to_string(&snapshot) {
-                                    Ok(json) => {
-                                        db_f.append_execution_record_logs(rid_f, &json).await.is_ok()
-                                    }
-                                    Err(_) => false,
-                                };
-                                if !success {
-                                    // On failure, merge snapshot back and restore count
-                                    let mut logs = logs_restore.lock().await;
-                                    logs.extend(snapshot);
-                                    uc_restore.fetch_add(snapshot_len, std::sync::atomic::Ordering::Relaxed);
-                                }
-                                fp.store(false, std::sync::atomic::Ordering::Relaxed);
-                            });
-                            timer_handles.lock().await.push(h);
-                        } else if n > 0 {
-                            timer_uc.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
-                        }
-                    }
-                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(4)) => {
-                        // Fallback timeout to prevent hanging (timer should exit via shutdown flag)
-                        if timer_shutdown.load(std::sync::atomic::Ordering::Relaxed) {
-                            break;
-                        }
-                    }
-                }
-            }
-        });
+        // 定时兜底 flush：每 3 秒检查未刷新条目，有则写库。
+        // 直接走 LogFlusher::run_timer：内部已包含"pending 标志、shutdown 退出"逻辑，
+        // 这里不再重复 select! 的 4s sleep 死代码（issue #496 第三点）。
+        let flush_timer = {
+            let log_flusher_for_timer = log_flusher.clone();
+            tokio::spawn(async move { log_flusher_for_timer.run_timer().await })
+        };
 
         // execution_timeout_secs is captured by value here — config changes after this
         // task starts have no effect. To pick up a new timeout, wait for the current
@@ -770,8 +634,6 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             _ = cancel_rx.recv() => {
                 // Cancelled (or channel closed): 使用 command-group 安全杀死整个进程组
                 kill_process_tree(&mut child).await;
-                // Graceful shutdown: signal timer to finish its pending flush
-                flush_shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
 
                 // 收割僵尸进程
                 let _status = child.wait().await;
@@ -783,23 +645,28 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                     let _ = handle.await;
                 }
 
-                // Graceful shutdown: wait for timer to finish its final flush cycle
+                // LogFlusher::finalize 一并处理:
+                //   1) 标记 shutdown 让 timer 退出
+                //   2) 等所有 in-flight flush task 完成
+                //   3) drain buffer 残余一次性 append
+                //   4) 等 timer + 所有 spawned flush task 退出
+                // ——替代旧的"set flag → 等 timer → drain flush_handles → serialize buffer"四步分散逻辑。
+                log_flusher.finalize().await;
                 let _ = flush_timer.await;
-                // 等待所有进行中的 flush 任务完成，防止旧快照覆盖
-                for h in flush_handles.lock().await.drain(..) {
-                    let _ = h.await;
-                }
 
                 let _ = db_clone.update_todo_status(todo_id, crate::models::TodoStatus::Cancelled).await;
                 let _ = db_clone.update_todo_task_id(todo_id, None).await;
 
-                // 更新 execution_records 状态为 failed
-                let logs_json = serde_json::to_string(&*logs.lock().await)
-                    .unwrap_or_else(|e| { tracing::error!("Failed to serialize logs: {}", e); "[]".to_string() });
+                // 此时 buffer 已被 finalize drain 到 DB；从 DB 读全量日志做 remaining_logs 字段
+                let remaining_logs = db_clone
+                    .get_all_execution_logs(record_id)
+                    .await
+                    .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".to_string()))
+                    .unwrap_or_else(|_| "[]".to_string());
                 let _ = db_clone.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
                     id: record_id,
                     status: crate::models::ExecutionStatus::Failed.as_str(),
-                    remaining_logs: &logs_json,
+                    remaining_logs: &remaining_logs,
                     result: "任务已被手动停止",
                     usage: None,
                     model: None,
@@ -828,8 +695,6 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                     execution_timeout_secs, todo_id, task_id
                 );
                 kill_process_tree(&mut child).await;
-                // Graceful shutdown: signal timer to finish its pending flush before abort
-                flush_shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
 
                 let _status = child.wait().await;
 
@@ -840,21 +705,20 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                     let _ = handle.await;
                 }
 
-                // Wait for timer to finish its final flush cycle
+                log_flusher.finalize().await;
                 if let Err(e) = flush_timer.await {
                     tracing::error!("flush_timer panicked: {}", e);
                 }
 
-                for h in flush_handles.lock().await.drain(..) {
-                    let _ = h.await;
-                }
-
-                let logs_json = serde_json::to_string(&*logs.lock().await)
-                    .unwrap_or_else(|e| { tracing::error!("Failed to serialize logs: {}", e); "[]".to_string() });
+                let remaining_logs = db_clone
+                    .get_all_execution_logs(record_id)
+                    .await
+                    .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".to_string()))
+                    .unwrap_or_else(|_| "[]".to_string());
                 let _ = db_clone.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
                     id: record_id,
                     status: crate::models::ExecutionStatus::Failed.as_str(),
-                    remaining_logs: &logs_json,
+                    remaining_logs: &remaining_logs,
                     result: "Execution timeout",
                     usage: None,
                     model: None,
@@ -878,9 +742,6 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             }
             status = child.wait() => {
                 // 子进程已自然退出，command-group 的进程组已自动清理
-                // Graceful shutdown: signal timer to finish its pending flush
-                flush_shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
-
                 if let Some(handle) = stdout_task {
                     let _ = handle.await;
                 }
@@ -914,21 +775,16 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             }
         }
 
-        // Graceful shutdown: wait for timer to finish its final flush cycle
+        // 正常退出：与 cancel/timeout 一样走 finalize 把残余刷到 DB
+        log_flusher.finalize().await;
         let _ = flush_timer.await;
-        // 等待所有进行中的 flush 任务完成，防止旧快照覆盖最终写入
-        for h in flush_handles.lock().await.drain(..) {
-            let _ = h.await;
-        }
 
-        // 从 execution_logs 表读取已刷入的日志，与内存中剩余的日志合并形成完整快照
-        let remaining = std::mem::take(&mut *logs_for_result.lock().await);
+        // 从 execution_logs 表读取已刷入的日志（finalize 已把 buffer 全量写入）
         let flushed_logs = db_clone
             .get_all_execution_logs(record_id)
             .await
             .unwrap_or_default();
-        let mut all_logs_snapshot = flushed_logs;
-        all_logs_snapshot.extend(remaining);
+        let all_logs_snapshot = flushed_logs;
         let all_logs_json = serde_json::to_string(&all_logs_snapshot).unwrap_or_else(|e| {
             tracing::error!("Failed to serialize all logs: {}", e);
             "[]".to_string()

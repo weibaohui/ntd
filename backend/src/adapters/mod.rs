@@ -320,11 +320,12 @@ pub trait CodeExecutor: Send + Sync {
 
     /// 解析 stderr 行，返回解析后的日志条目。返回 None 表示作为普通 stderr 处理。
     ///
-    /// 默认实现委托给 `BaseExecutor::default_parse_stderr_line`，
-    /// 任何持有 `BaseExecutor` 的具体 executor 都可以直接复用此默认行为，
-    /// 不再需要逐个文件重写。
-    fn parse_stderr_line(&self, line: &str) -> Option<ParsedLogEntry> {
-        BaseExecutor::default_parse_stderr_line(line)
+    /// 默认返回 `None`，与 main 一致；具体 executor 若希望复用关键字分类（"error"
+    /// 子串 → log_type="error"）可显式 override 并调用 `BaseExecutor::default_parse_stderr_line`。
+    /// 这保留了"6 个原本继承 `None` 默认的 executor（claude_code / codebuddy / mimo /
+    /// mobilecoder / opencode / pi）不被静默改变分类行为"的不变量。
+    fn parse_stderr_line(&self, _line: &str) -> Option<ParsedLogEntry> {
+        None
     }
 
     /// 是否解析成功（检查退出码）
@@ -749,11 +750,11 @@ mod tests {
 
     #[test]
     fn test_base_wrap_executor_default_parse_stderr_via_trait() {
-        // trait 默认的 parse_stderr_line 应该走 BaseExecutor::default_parse_stderr_line
+        // trait 默认的 parse_stderr_line 返回 None（与 main 一致，保留 6 个 executor
+        // 不被静默改变分类行为的不变量）。keyword 分类需 executor 显式 override 并
+        // 调用 BaseExecutor::default_parse_stderr_line。
         let exec = BaseWrapExecutor::new("claude".to_string());
-        let entry = exec.parse_stderr_line("ERROR: bad").unwrap();
-        assert_eq!(entry.log_type, "error");
-        assert_eq!(entry.content, "ERROR: bad");
+        assert!(exec.parse_stderr_line("ERROR: bad").is_none());
     }
 
     #[test]

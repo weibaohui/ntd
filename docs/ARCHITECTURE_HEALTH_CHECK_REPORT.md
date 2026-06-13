@@ -126,17 +126,28 @@
 
 ### 3.2 ⚠️ 需要关注的稳定性问题
 
-#### 问题 1：日志 flush 机制的复杂度风险
-`executor_service.rs` 中的日志 flush 逻辑非常复杂：
-- stdout / stderr 双通道各自独立积累
-- flush_pending AtomicBool + unflushed_count AtomicU64
-- 失败时合并回 logs 并恢复计数
-- 定时器兜底 flush 带 shutdown flag
-- 全局 flush_mutex 防止竞态
+#### 问题 1：日志 flush 机制的复杂度风险 ✅ 已由 LogFlusher 抽象解决（PR #532, issue #496）
 
-**风险**：多层原子操作 + 条件竞争 edge case 难以验证。目前 `logs` 同时被 stdout/stderr/timer 三个协程竞争访问（通过同一个 `Arc<Mutex<Vec>>`），存在单条日志被三方同时看到但只有一方取走的问题。
+> 历史描述（已过时）：`executor_service.rs` 中的日志 flush 逻辑非常复杂——stdout / stderr
+> 双通道各自独立积累、`flush_pending` AtomicBool + `unflushed_count` AtomicU64、失败时合并
+> 回 logs 并恢复计数、定时器兜底 flush 带 shutdown flag、全局 `flush_mutex` 防止竞态。
+> 多层原子操作 + 条件竞争 edge case 难以验证；`logs` 同时被三个协程通过 `Arc<Mutex<Vec>>`
+> 竞争访问，存在单条日志被三方同时看到但只有一方取走的隐患。
 
-**建议**：重构为一个统一的日志管道（`mpsc` channel），一个 writer 协程专门负责 serialize + 批量 flush，消除竞争条件。
+`backend/src/log_flusher.rs` 抽象后，stdout / stderr / 定时器三段近似复制代码合并到
+`LogFlusher::spawn_flush` 一条路径：
+
+- **CAS 取代非原子组合**：旧 `fetch_add → swap(true) → store(0)` 三步在并发 writer 窗口
+  内会丢增量；新版用 `fetch_add + swap(true)` 抢锁，`swap(0)` 在 spawned task 内执行，
+  期间 writer 增量会随 `mem::take` 一并入 snapshot，不会出现 counter 漂移。
+- **pending 守门**：`pending: AtomicBool` 保证同一时刻最多一个 flush task 在跑。
+- **`finalize()` 一并 4 步**：取消 / 超时 / 正常三个分支都先 await stdout/stderr task
+  再 `log_flusher.finalize().await`；旧版要手写「set flag → 等 timer → drain handles →
+  serialize buffer」四段分散代码。
+- **测试友好**：`LogSink` trait + `MockSink` 抽象后，`cargo test --lib log_flusher`
+  全绿（7 个用例覆盖阈值触发、失败回滚、finalize drain、pending 守门、timer 退出等）。
+
+历史档案保留供溯源；新代码应统一走 `LogFlusher`。
 
 #### 问题 2：main.rs 启动过程中存在 panic 风险
 ```rust
