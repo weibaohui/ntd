@@ -97,17 +97,18 @@ impl FeishuChannelService {
             let tx_clone = tx.clone();
             let config_clone = config.clone();
 
-            let handle = std::thread::spawn(move || {
+            let handle = std::thread::spawn(move || -> anyhow::Result<()> {
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
-                    .expect("Failed to create tokio runtime for WS listener");
+                    .map_err(|e| anyhow::anyhow!("Failed to create tokio runtime for WS listener: {e}"))?;
 
                 rt.block_on(async move {
                     use crate::feishu::sdk::{EventDispatcherHandler, LarkWsClient};
 
                     let tx = tx_clone;
-                    let event_handler = EventDispatcherHandler::builder()
+
+                    let builder = EventDispatcherHandler::builder()
                         .register_p2_im_message_receive_v1(move |event| {
                             let msg = &event.event;
                             let sender_open_id = msg.sender.sender_id.open_id.clone().unwrap_or_default();
@@ -148,39 +149,64 @@ impl FeishuChannelService {
                             if let Err(e) = tx.try_send(channel_msg) {
                                 error!("Failed to forward message to channel bus: {e}");
                             }
-                        })
-                        .and_then(|builder| {
-                            builder.register_p2_im_message_reaction_deleted_v1(|event| {
-                                tracing::debug!(
-                                    "WebSocket: reaction deleted on message {} in chat {:?}",
-                                    event.event.message_id,
-                                    event.event.chat_id
-                                );
-                            })
-                        })
-                        .and_then(|builder| {
-                            builder.register_p2_im_message_reaction_created_v1(|event| {
-                                tracing::debug!(
-                                    "WebSocket: reaction created on message {} in chat {:?}",
-                                    event.event.message_id,
-                                    event.event.chat_id
-                                );
-                            })
-                        })
-                        .expect("Failed to register event handler")
-                        .build();
+                        });
+
+                    let builder = match builder {
+                        Ok(b) => b,
+                        Err(e) => return Err(anyhow::anyhow!("Failed to register event handler: {e}")),
+                    };
+
+                    let builder = match builder
+                        .register_p2_im_message_reaction_deleted_v1(|event| {
+                            tracing::debug!(
+                                "WebSocket: reaction deleted on message {} in chat {:?}",
+                                event.event.message_id,
+                                event.event.chat_id
+                            );
+                        }) {
+                        Ok(b) => b,
+                        Err(e) => return Err(anyhow::anyhow!("Failed to register event handler: {e}")),
+                    };
+
+                    let builder = match builder
+                        .register_p2_im_message_reaction_created_v1(|event| {
+                            tracing::debug!(
+                                "WebSocket: reaction created on message {} in chat {:?}",
+                                event.event.message_id,
+                                event.event.chat_id
+                            );
+                        }) {
+                        Ok(b) => b,
+                        Err(e) => return Err(anyhow::anyhow!("Failed to register event handler: {e}")),
+                    };
+
+                    let event_handler = builder.build();
 
                     info!("WebSocket: connecting to Feishu event stream");
                     let cfg = Arc::new(config_clone);
-                    LarkWsClient::open(cfg, event_handler).await
+                    LarkWsClient::open(cfg, event_handler)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{e}"))
                 })
             });
 
             let result = tokio::task::spawn_blocking(move || {
-                handle.join().map_err(|_| anyhow::anyhow!("WS listener thread panicked"))
+                match handle.join() {
+                    Ok(result) => result,
+                    Err(panic_payload) => {
+                        let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            "unknown".to_string()
+                        };
+                        Err(anyhow::anyhow!("WS listener thread panicked: {msg}"))
+                    }
+                }
             })
             .await
-            .map_err(|e| anyhow::anyhow!("Join error: {e}"))??;
+            .map_err(|e| anyhow::anyhow!("Join error: {e}"))?;
 
             match result {
                 Ok(()) => {
