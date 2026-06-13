@@ -212,6 +212,9 @@ pub async fn execute_handler(
         tx: state.tx.clone(),
         task_manager: state.task_manager.clone(),
         config: state.config.clone(),
+        // 复用 AppState 单例：执行末段 fire state-change 钩子时直接用这份
+        // hook_service，避免再 Arc::new 一份 (见 #509)。
+        hook_service: state.hook_service.clone(),
         todo_id: req.todo_id,
         message,
         req_executor: req.executor,
@@ -483,6 +486,7 @@ pub async fn resume_execution_handler(
         tx: state.tx.clone(),
         task_manager: state.task_manager.clone(),
         config: state.config.clone(),
+        hook_service: state.hook_service.clone(),
         todo_id,
         message,
         req_executor: record.executor.clone(),
@@ -640,6 +644,7 @@ pub async fn smart_create_handler(
         tx: state.tx.clone(),
         task_manager: state.task_manager.clone(),
         config: state.config.clone(),
+        hook_service: state.hook_service.clone(),
         todo_id,
         message,
         req_executor: None,

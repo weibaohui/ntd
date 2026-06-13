@@ -299,6 +299,9 @@ async fn trigger_webhook_internal(
             tx: state.tx.clone(),
             task_manager: state.task_manager.clone(),
             config: state.config.clone(),
+            // Webhook 触发的执行同样复用 AppState 里的 hook_service 单例，
+            // 与手动/智能创建/恢复对话等入口走同一份实例 (见 #509)。
+            hook_service: state.hook_service.clone(),
             todo_id: req.todo_id,
             message: todo.prompt.clone(),
             req_executor: todo.executor.clone(),

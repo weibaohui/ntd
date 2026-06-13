@@ -626,6 +626,9 @@ async fn version_upgrade_handler(
 pub fn create_app(
     ctx: ServiceContext,
     scheduler: Arc<TodoScheduler>,
+    // 由 main.rs 构造好透传进来的 hook_service 单例。create_app 不再自行 Arc::new，
+    // 避免出现两份 HookService 各自管自己内部状态、彼此观察不到对方 (见 issue #509)。
+    hook_service: Arc<HookService>,
 ) -> Router {
     let db = ctx.db.clone();
     let executor_registry = ctx.executor_registry.clone();
@@ -635,7 +638,7 @@ pub fn create_app(
 
     // Create message debounce service (shared between listener and history fetcher)
     use crate::services::message_debounce::MessageDebounce;
-    let debounce = Arc::new(MessageDebounce::new(ctx.clone()));
+    let debounce = Arc::new(MessageDebounce::new(ctx.clone(), hook_service.clone()));
 
     let feishu_listener = Arc::new(FeishuListener::new(
         ctx.clone(),
@@ -710,16 +713,9 @@ pub fn create_app(
         fetcher.start(bots_for_fetcher);
     });
 
-    // Create HookService with a ServiceContext so it can trigger target todos.
-    // Reuse the live ServiceContext values rather than re-cloning its fields.
-    let hook_ctx = ServiceContext {
-        db: db.clone(),
-        executor_registry: executor_registry.clone(),
-        tx: tx.clone(),
-        task_manager: task_manager.clone(),
-        config: config.clone(),
-    };
-    let hook_service = Arc::new(HookService::new(hook_ctx));
+    // hook_service 由调用方（main.rs）构造后透传进来，这里不再重复创建。
+    // 这样 cron 触发的执行、手动 handler 触发的执行、自动评审触发的执行
+    // 全部复用同一份 HookService 单例 (见 issue #509)。
 
     // Create AutoReviewService and ensure the reviewer template todo exists.
     // create_app 是 sync 函数, 不能直接 .await; 复用当前 tokio runtime 的 Handle

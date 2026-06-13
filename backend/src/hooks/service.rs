@@ -60,6 +60,7 @@ impl HookService {
 
                 let _ = execute_target_todo(
                     &this.ctx,
+                    &this,
                     item,
                     &todo,
                     next_chain,
@@ -106,6 +107,7 @@ impl HookService {
 
             let _ = execute_target_todo(
                 &this.ctx,
+                &this,
                 item,
                 &todo,
                 next_chain,
@@ -259,6 +261,9 @@ fn evaluate_rating_gate(
 
 async fn execute_target_todo(
     ctx: &ServiceContext,
+    // 复用调用方传进来的 hook_service 单例：target todo 执行末段还要 fire 它的钩子，
+    // 必须继续走同一份实例，否则又会出现多份 HookService (issue #509)。
+    hook_service: &Arc<HookService>,
     item: &TodoHookItem,
     source: &Todo,
     chain: Vec<i64>,
@@ -329,6 +334,8 @@ async fn execute_target_todo(
         tx: ctx.tx.clone(),
         task_manager: ctx.task_manager.clone(),
         config: ctx.config.clone(),
+        // target 执行末段 fire 钩子要继续走同一份 hook_service 单例 (issue #509)。
+        hook_service: hook_service.clone(),
         todo_id: target.id,
         message,
         req_executor: target.executor.clone(),

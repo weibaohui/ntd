@@ -9,6 +9,7 @@ use command_group::AsyncCommandGroup;
 use crate::adapters::{parse_executor_type, ExecutorRegistry};
 use crate::db::{Database, NewExecutionRecord};
 use crate::handlers::ExecEvent;
+use crate::hooks::HookService;
 use crate::models::{ExecutorType, ParsedLogEntry};
 use crate::task_manager::TaskManager;
 
@@ -36,6 +37,18 @@ pub struct RunTodoExecutionRequest {
     pub tx: broadcast::Sender<ExecEvent>,
     pub task_manager: Arc<TaskManager>,
     pub config: Arc<tokio::sync::RwLock<crate::config::Config>>,
+    /// 共享的 hook 触发器（来自 AppState 单例）。
+    ///
+    /// 之所以放在 request 里而不是在 `run_todo_execution` 内重新 `Arc::new(HookService::new(...))`，
+    /// 是因为：
+    /// 1. `HookService` 本身持有 `ServiceContext`（5 个 Arc + tokio::RwLock），每次执行末
+    ///    段 fire 钩子时重新 clone 5 个 Arc 是无意义的开销。
+    /// 2. AppState 里已经维护了一个长生命周期的 `Arc<HookService>`（handlers/mod.rs 中创建），
+    ///    handler 路径（handlers/todo.rs::update_todo 状态变更）已经在复用它，executor
+    ///    路径保持一致能避免出现两套 `HookService` 实例可能造成的不一致。
+    /// 3. `HookService::fire_for_todo` 内部会 `tokio::spawn` 子任务发新执行记录，
+    ///    复用同一个 service 能让所有 hook 触发的执行共享同一份内存状态。
+    pub hook_service: Arc<HookService>,
     pub todo_id: i64,
     pub message: String,
     pub req_executor: Option<String>,
@@ -65,6 +78,7 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         tx,
         task_manager,
         config,
+        hook_service,
         todo_id,
         message,
         req_executor,
@@ -329,6 +343,9 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
     let task_manager_spawn = task_manager.clone();
     let executor_registry_spawn = executor_registry.clone();
     let config_spawn = config.clone();
+    // 共享 AppState 的 hook_service：避免在执行末段 fire 钩子时再 Arc::new 一份 HookService
+    // （参见 RunTodoExecutionRequest::hook_service 字段注释）。
+    let hook_service_spawn = hook_service.clone();
 
     let todo_title = todo.as_ref().map(|t| t.title.clone()).unwrap_or_default();
     let execution_timeout_secs = timeout_secs;
@@ -1003,6 +1020,7 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                 tx_clone.clone(),
                 task_manager_spawn.clone(),
                 config_spawn.clone(),
+                hook_service_spawn.clone(),
                 todo_id,
                 record_id,
             )
@@ -1029,15 +1047,22 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                 t.workspace.clone(),
                 chain.clone(),
             ) {
-                let svc_ctx = crate::service_context::ServiceContext {
-                    db: db_clone.clone(),
-                    executor_registry: executor_registry_spawn.clone(),
-                    tx: tx_clone.clone(),
-                    task_manager: task_manager_spawn.clone(),
-                    config: config_spawn.clone(),
-                };
-                let svc = std::sync::Arc::new(crate::hooks::HookService::new(svc_ctx));
-                svc.fire_for_todo(todo_id, ctx);
+                // 复用 AppState 里共享的 HookService，而不是再 Arc::new 一份。
+                //
+                // 之前这里每次执行末段都重新构造 HookService + 重新 clone 5 个
+                // ServiceContext 字段 (db/executor_registry/tx/task_manager/config)，
+                // 造成 (1) 重复的 Arc 引用计数抖动，(2) 出现两份 HookService 实例
+                // 各自管自己内部状态的不一致 (例如后续想加共享缓存会立刻踩坑)。
+                // 现在与 handlers/todo.rs 走的是同一个 Arc<HookService> 单例。
+                //
+                // fire_for_todo 内部是 tokio::spawn 子任务 + fire-and-forget，
+                // 这里只追加一行 debug 日志方便排查"是否走到了 fire 路径"。
+                tracing::debug!(
+                    "firing state-change hook for todo #{} -> {:?}",
+                    todo_id,
+                    new_status
+                );
+                hook_service_spawn.clone().fire_for_todo(todo_id, ctx);
             }
         }
 
@@ -1121,7 +1146,7 @@ pub async fn run_todo_execution_with_params(
 
 /// 同步运行自动评审。在原 todo 执行完成、update_execution_record 写入 success/failed 后调用。
 ///
-/// 参数: (db, todo, record_id, executor_registry, tx, task_manager, config).
+/// 参数: (db, todo, record_id, executor_registry, tx, task_manager, config, hook_service).
 /// 任何错误都只记 warn 日志，不影响原 todo 的完成响应。
 ///
 /// 实现: 由于 run_auto_review_inner 内部需要 await run_todo_execution (后者会
@@ -1132,6 +1157,7 @@ pub async fn run_auto_review(
     tx: tokio::sync::broadcast::Sender<crate::handlers::ExecEvent>,
     task_manager: Arc<crate::task_manager::TaskManager>,
     config: Arc<tokio::sync::RwLock<crate::config::Config>>,
+    hook_service: Arc<HookService>,
     todo_id: i64,
     record_id: i64,
 ) {
@@ -1142,10 +1168,11 @@ pub async fn run_auto_review(
     let tx_outer = tx.clone();
     let tm_c = task_manager.clone();
     let cfg_c = config.clone();
+    let hs_c = hook_service.clone();
     let runtime = review_runtime();
     std::thread::spawn(move || {
         let result = runtime.block_on(run_auto_review_inner(
-            db_c, er_c, tx_c, tm_c, cfg_c, todo_id, record_id,
+            db_c, er_c, tx_c, tm_c, cfg_c, hs_c, todo_id, record_id,
         ));
         let _ = reply_tx.send(result);
     });
@@ -1185,6 +1212,7 @@ async fn run_auto_review_inner(
     tx: tokio::sync::broadcast::Sender<crate::handlers::ExecEvent>,
     task_manager: Arc<crate::task_manager::TaskManager>,
     config: Arc<tokio::sync::RwLock<crate::config::Config>>,
+    hook_service: Arc<HookService>,
     todo_id: i64,
     record_id: i64,
 ) -> Result<(), String> {
@@ -1263,6 +1291,9 @@ async fn run_auto_review_inner(
         tx: tx.clone(),
         task_manager: task_manager.clone(),
         config: config.clone(),
+        // 评审实例同样要复用同一个 HookService，确保评审触发的钩子与其他执行路径
+        // 共享状态；如果评审触发链上又产生新的执行，hook_service 不会再被重复构造。
+        hook_service: hook_service.clone(),
         todo_id: review_todo_id,
         message: composed_prompt,
         req_executor: template.executor.clone(),
@@ -1332,3 +1363,32 @@ async fn run_auto_review_inner(
     Ok(())
 }
 
+
+#[cfg(test)]
+mod run_todo_execution_request_tests {
+    //! 验证 `RunTodoExecutionRequest::hook_service` 字段被正确暴露，
+    //! 防止后续重构无意中把它移除/改名、导致 executor_service 末段又
+    //! 回退到 `Arc::new(HookService::new(...))` 重复构造 (issue #509)。
+    use super::*;
+
+    /// 编译期断言：把 `RunTodoExecutionRequest` 的 `hook_service` 字段
+    /// 投影成 `&Arc<HookService>`，相当于把字段的类型和名字"钉死"。
+    /// 如果字段被删除/改名/换类型，下面这一行会直接编译失败，提示
+    /// 重构者违反了 #509 的设计意图（所有 fire 钩子入口必须共享一个
+    /// HookService 单例）。
+    fn _hook_service_field_is_arc_hook_service(r: &RunTodoExecutionRequest) -> &Arc<HookService> {
+        &r.hook_service
+    }
+
+    /// 真正的单元测试：调用上面的投影函数并断言返回值类型。
+    /// 即便实际未运行过实际 fire，类型系统也保证 hook_service 字段
+    /// 的形状没有被破坏。
+    #[test]
+    fn hook_service_field_shape_is_preserved() {
+        let f: fn(&RunTodoExecutionRequest) -> &Arc<HookService> =
+            _hook_service_field_is_arc_hook_service;
+        // 触达 `_hook_service_field_is_arc_hook_service` 避免 dead_code
+        // 警告把它当未使用函数优化掉。
+        let _: fn(&RunTodoExecutionRequest) -> &Arc<HookService> = f;
+    }
+}

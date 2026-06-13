@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 use std::str::FromStr;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::{error, info, warn};
@@ -7,6 +8,7 @@ use tracing::{error, info, warn};
 use chrono::{TimeZone, Timelike};
 
 use crate::executor_service::{run_todo_execution, RunTodoExecutionRequest};
+use crate::hooks::HookService;
 use crate::service_context::ServiceContext;
 
 /// 把一个去重整数集合格式化成 cron 字段值。
@@ -232,14 +234,22 @@ fn convert_cron_to_utc(cron_expr: &str, timezone: &str) -> Result<String, String
 pub struct TodoScheduler {
     sched: Mutex<JobScheduler>,
     job_map: Mutex<HashMap<i64, uuid::Uuid>>,
+    /// 共享的 HookService 单例（来自 AppState）。
+    ///
+    /// cron 触发的执行在到达 run_todo_execution 末段时也要 fire 状态变更钩子，
+    /// 通过在 TodoScheduler 里直接持有 Arc<HookService> 避免再在 cron 回调里
+    /// Arc::new 一份（见 issue #509）。调用方（main.rs / handlers/mod.rs）
+    /// 在 TodoScheduler::new 时把 AppState.hook_service 传进来。
+    hook_service: Arc<HookService>,
 }
 
 impl TodoScheduler {
-    pub async fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn new(hook_service: Arc<HookService>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let sched = JobScheduler::new().await?;
         Ok(Self {
             sched: Mutex::new(sched),
             job_map: Mutex::new(HashMap::new()),
+            hook_service,
         })
     }
 
@@ -329,6 +339,9 @@ impl TodoScheduler {
         let tx_clone = ctx.tx.clone();
         let tm_clone = ctx.task_manager.clone();
         let config_clone = ctx.config.clone();
+        // 闭包要 'static: 把 self.hook_service clone 一份进闭包，cron 触发时直接
+        // 复用这份 Arc，避免再在回调里 Arc::new 新的 HookService。
+        let hs_clone = self.hook_service.clone();
 
         info!("Creating job for todo {} with cron: {} (original: {:?})", todo_id, cron_expr_utc, timezone);
         let job = Job::new_async(&cron_expr_utc, move |_uuid, _l| {
@@ -337,6 +350,7 @@ impl TodoScheduler {
             let tx = tx_clone.clone();
             let tm = tm_clone.clone();
             let cfg = config_clone.clone();
+            let hs = hs_clone.clone();
 
             Box::pin(async move {
                 match db.get_todo(todo_id).await {
@@ -354,6 +368,9 @@ impl TodoScheduler {
                             tx,
                             task_manager: tm,
                             config: cfg,
+                            // cron 触发的执行末段也要 fire state-change 钩子，
+                            // 复用 TodoScheduler 里持有的单例 (issue #509)。
+                            hook_service: hs,
                             todo_id,
                             message,
                             req_executor: executor,

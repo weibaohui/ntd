@@ -6,6 +6,7 @@ use tokio::task::JoinHandle;
 
 use crate::executor_service::RunTodoExecutionRequest;
 use crate::handlers::execution::start_todo_execution;
+use crate::hooks::HookService;
 use crate::service_context::ServiceContext;
 
 #[derive(Debug, Clone)]
@@ -37,13 +38,21 @@ struct DebounceEntry {
 pub struct MessageDebounce {
     entries: Arc<DashMap<(i64, String), DebounceEntry>>,
     ctx: ServiceContext,
+    /// 共享的 HookService 单例（来自 AppState）。
+    ///
+    /// debounce 触发的执行末段也要 fire 状态变更钩子。如果 debounce 在每次
+    /// `new()` 时都重新 `Arc::new(HookService::new(...))` 会出现多份实例，
+    /// 造成 hook 链路彼此看不见的问题（见 issue #509）。直接透传 AppState
+    /// 里的单例即可。
+    hook_service: Arc<HookService>,
 }
 
 impl MessageDebounce {
-    pub fn new(ctx: ServiceContext) -> Self {
+    pub fn new(ctx: ServiceContext, hook_service: Arc<HookService>) -> Self {
         Self {
             entries: Arc::new(DashMap::new()),
             ctx,
+            hook_service,
         }
     }
 
@@ -70,6 +79,9 @@ impl MessageDebounce {
             let tx = self.ctx.tx.clone();
             let task_manager = self.ctx.task_manager.clone();
             let config = self.ctx.config.clone();
+            // 把 self.hook_service clone 一份进闭包，timer 触发时直接复用
+            // AppState 里的单例 (见 issue #509)。
+            let hook_service = self.hook_service.clone();
             let bot_id = key.0;
             let chat_id = key.1.clone();
             let target_type = all_msgs
@@ -141,6 +153,8 @@ impl MessageDebounce {
                         tx,
                         task_manager,
                         config,
+                        // debounce 触发的执行末段也要复用同一份 hook_service 单例 (issue #509)。
+                        hook_service,
                         todo_id: last.todo_id,
                         message: exec_message,
                         req_executor: last.executor.clone(),
