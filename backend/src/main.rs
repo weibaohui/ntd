@@ -190,42 +190,15 @@ async fn main() {
             return;
         }
         Some(Commands::Todo { action }) => {
-            let cli = cli::Cli {
-                server: cli.server.clone(),
-                output: cli.output,
-                fields: cli.fields.clone(),
-                command: cli::Commands::Todo { action: action.clone() },
-            };
-            if let Err(e) = cli::run_command(&cli).await {
-                print_structured_error(&e);
-                std::process::exit(1);
-            }
+            dispatch_subcommand(&cli, cli::Commands::Todo { action: action.clone() }).await;
             return;
         }
         Some(Commands::Tag { action }) => {
-            let cli = cli::Cli {
-                server: cli.server.clone(),
-                output: cli.output,
-                fields: cli.fields.clone(),
-                command: cli::Commands::Tag { action: action.clone() },
-            };
-            if let Err(e) = cli::run_command(&cli).await {
-                print_structured_error(&e);
-                std::process::exit(1);
-            }
+            dispatch_subcommand(&cli, cli::Commands::Tag { action: action.clone() }).await;
             return;
         }
         Some(Commands::Stats) => {
-            let cli = cli::Cli {
-                server: cli.server.clone(),
-                output: cli.output,
-                fields: cli.fields.clone(),
-                command: cli::Commands::Stats,
-            };
-            if let Err(e) = cli::run_command(&cli).await {
-                print_structured_error(&e);
-                std::process::exit(1);
-            }
+            dispatch_subcommand(&cli, cli::Commands::Stats).await;
             return;
         }
         Some(Commands::Daemon { action }) => {
@@ -256,6 +229,28 @@ fn print_structured_error(e: &anyhow::Error) {
         "message": e.to_string(),
     });
     eprintln!("{}", serde_json::to_string(&err).unwrap_or_else(|_| r#"{"error":true,"message":"unknown"}"#.to_string()));
+}
+
+/// Print a structured error and exit the process.
+fn fail_on<T>(result: anyhow::Result<T>) -> T {
+    match result {
+        Ok(v) => v,
+        Err(e) => {
+            print_structured_error(&e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Dispatch a CLI subcommand (Todo/Tag/Stats) with unified error handling.
+async fn dispatch_subcommand(cli: &Cli, command: cli::Commands) {
+    let sub_cli = cli::Cli {
+        server: cli.server.clone(),
+        output: cli.output,
+        fields: cli.fields.clone(),
+        command,
+    };
+    fail_on(cli::run_command(&sub_cli).await);
 }
 
 /// Executor type → skill directory mapping (delegated to shared module).
