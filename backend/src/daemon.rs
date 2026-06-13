@@ -326,7 +326,13 @@ fn launchd_install(force: bool) -> Result<(), DaemonError> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         // "already loaded" 表示已经载入,按成功对待
         if !stderr.contains("already loaded") {
-            eprintln!("Failed to bootstrap service: {}", stderr.trim());
+            // 真正失败（如 plist 语法错、launchd 拒绝载入）：不再静默返回 Ok(())
+            // 而是把 stderr 透传给调用方,让 main.rs 走 "daemon error: ..." + exit(1)。
+            return Err(DaemonError::NonZeroExit {
+                command: "launchctl bootstrap".to_string(),
+                code: output.status.code(),
+                stderr: stderr.trim().to_string(),
+            });
         }
     }
 
@@ -401,7 +407,12 @@ fn launchd_start() -> Result<(), DaemonError> {
                 .output();
             println!("Service started");
         } else {
-            eprintln!("Failed to start service: {}", stderr.trim());
+            // 真正失败（如 launchd 拉不起、plist 没装）：透传给调用方,走 exit(1)。
+            return Err(DaemonError::NonZeroExit {
+                command: "launchctl kickstart".to_string(),
+                code: output.status.code(),
+                stderr: stderr.trim().to_string(),
+            });
         }
     }
     Ok(())
@@ -422,11 +433,16 @@ fn launchd_stop() -> Result<(), DaemonError> {
         println!("Service stopped");
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        // 3 / 113 / "No such process" 都表示 service 本来就没在跑
+        // "No such process" 表示 service 本来就没在跑,按幂等成功对待
         if stderr.contains("No such process") {
             println!("Service is not running");
         } else {
-            eprintln!("Failed to stop service: {}", stderr.trim());
+            // 真正失败（如权限不足、launchctl 拒绝）：透传给调用方,走 exit(1)。
+            return Err(DaemonError::NonZeroExit {
+                command: "launchctl bootout".to_string(),
+                code: output.status.code(),
+                stderr: stderr.trim().to_string(),
+            });
         }
     }
     Ok(())
@@ -1216,8 +1232,12 @@ fn task_scheduler_install(force: bool) -> Result<(), DaemonError> {
     }
 
     // Check if task already exists
-    // query 失败（schtasks 不在 PATH 上、权限不足等）只 warn，
-    // 不阻断重装流程——用户明确 --force 时本就是想覆盖。
+    // 区分两种 "query 失败"：
+    // - Spawn 失败（schtasks 不在 PATH / 权限不足 / Task Scheduler 服务挂）：
+    //   整体环境不可用,直接 ? 让上层走 exit(1),不要硬装下去(可能写出半截 task)。
+    // - status 非 0（task 不存在）：视为"未安装",继续走 install 流程——
+    //   用户没传 --force 时这条 install 仍要靠 query 判定已有 task,但 task
+    //   不存在的话 `query.status.success()` 自然为 false,落到下面的 install 分支。
     let query = Command::new("schtasks")
         .args(["/query", "/tn", TASK_NAME])
         .output()
@@ -1313,7 +1333,12 @@ fn task_scheduler_uninstall() -> Result<(), DaemonError> {
         if stderr.contains("does not exist") || stderr.contains("The system cannot find") {
             println!("Task does not exist");
         } else {
-            eprintln!("Failed to delete task: {}", stderr.trim());
+            // 真正失败（如权限不足、Task Scheduler 服务挂）：透传给调用方,走 exit(1)。
+            return Err(DaemonError::NonZeroExit {
+                command: "schtasks /delete".to_string(),
+                code: output.status.code(),
+                stderr: stderr.trim().to_string(),
+            });
         }
     }
 
@@ -1359,7 +1384,12 @@ fn task_scheduler_stop() -> Result<(), DaemonError> {
         if stderr.contains("not running") || stderr.contains("does not exist") {
             println!("Service is not running");
         } else {
-            eprintln!("Failed to stop task: {}", stderr.trim());
+            // 真正失败（如权限不足、task 状态机拒绝 /end）：透传给调用方,走 exit(1)。
+            return Err(DaemonError::NonZeroExit {
+                command: "schtasks /end".to_string(),
+                code: output.status.code(),
+                stderr: stderr.trim().to_string(),
+            });
         }
     }
     Ok(())
