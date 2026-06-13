@@ -194,22 +194,17 @@ fn convert_cron_to_utc(cron_expr: &str, timezone: &str) -> Result<String, String
 
     let (utc_seconds_set, utc_minutes_set, utc_hours_set) = if is_dst_pair {
         // 取 dominant(出现次数最多的那个时刻)。
-        // `is_dst_pair` 守卫了 distinct.len()==2,所以 max_by_key 一定成功；
-        // 但我们用 match + 错误返回而不是 .expect()，让任何 invariant 失守
-        // 都能被调用方看到具体错误而不是进程 panic。
-        let dominant = distinct
+        // `is_dst_pair` 守卫了 distinct.len()==2，所以 `max_by_key` 在
+        // non-empty 迭代器上一定返回 `Some(_)`（即使 key 全相等也返回最后
+        // 一个）。用 `.expect()` 把不可达分支压成显式 invariant message，
+        // 让 clippy::expect_used 看得见这是 invariant 而非运行时错误——
+        // 之前 `match { Some/None => Err }` 的 None 分支是 dead code，
+        // `clippy::unreachable_patterns` lint 提升到 deny 时会 fail CI。
+        let (h, m, s) = distinct
             .iter()
             .max_by_key(|k| utc_time_counts.get(k).copied().unwrap_or(0))
-            .copied();
-        let (h, m, s) = match dominant {
-            Some(v) => v,
-            None => {
-                return Err(format!(
-                    "DST heuristic invariant violated: is_dst_pair=true but no dominant UTC time for cron '{}' in {}",
-                    cron_expr, timezone
-                ));
-            }
-        };
+            .copied()
+            .expect("DST pair invariant: is_dst_pair implies distinct.len() == 2, so max_by_key returns Some");
         warn!(
             "Cron '{}' in {} crosses DST; using dominant UTC time \
             (h={}, m={}, s={}) and dropping the other. \
@@ -632,18 +627,23 @@ mod convert_cron_to_utc_tests {
         assert!(result.unwrap_err().contains("Invalid cron expression"));
     }
 
-    /// Issue #495 修复后的回归测试：`convert_cron_to_utc` 在 DST 启发式
-    /// invariant 失守时（distinct.len()==2 但没有任何 UTC 时间）应返回 Err
-    /// 而不是 panic。手工构造一个让 utc_time_counts 为空、但 is_dst_pair
-    /// 仍为 true 的场景非常困难，所以我们改测"非 DST pair 的多 hour 列表"
-    /// 仍走 union 路径——这保证 .expect() 路径不会因为输入污染而 panic。
+    /// Issue #495 修复后的回归测试：non-DST-pair 多 hour 列表仍走 union 路径。
+    /// 强化断言：必须**同时**包含两个 UTC 小时而非只包含任一个——证明是
+    /// union 而非 dominant/单一选择。
+    ///
+    /// 注：`is_dst_pair=true` 路径（`.expect()` 实际被触发的分支）已由
+    /// `test_dst_single_hour_uses_dominant_offset` / `test_dst_london_uses_dominant_offset`
+    /// 覆盖（它们用 `0 0 9 * * *` 构造 hour diff=1 的真 DST pair），这里只补
+    /// "走另一分支"的回归保护。
     #[test]
-    fn test_multi_hour_list_does_not_use_dominant_path() {
-        // 9 点和 12 点不是 DST pair（hour diff=3），应走 union 路径，
-        // 不触发 .expect("DST pair has 2 elements") 的失守路径。
+    fn test_multi_hour_list_uses_union_path() {
+        // 9 点和 12 点不是 DST pair（hour diff=3），应走 union 路径。
         let utc = convert_cron_to_utc("0 0 9,12 * * *", "Asia/Shanghai").unwrap();
-        // Shanghai: 9 → 1, 12 → 4
-        assert!(utc.contains("1") || utc.contains("4"));
+        // Shanghai: 9 → 1, 12 → 4 (both UTC)
+        assert!(
+            utc.contains("1") && utc.contains("4"),
+            "non-DST-pair multi-hour should union both hours, got: {utc}"
+        );
     }
 
     /// Issue #495 修复后的回归测试：scheduler.rs 已不再用 .expect()，

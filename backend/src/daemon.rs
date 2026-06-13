@@ -4,6 +4,20 @@ use std::process::Command;
 
 use clap::Subcommand;
 
+/// Print an error message to stderr and exit the process with code 1.
+///
+/// Issue #495 重构副产物：daemon 子命令里 `eprintln!(...); std::process::exit(1);`
+/// 这个 2-行模式重复 8+ 次（platform 不支持、binary 缺失、plist 写入失败、
+/// launchctl/systemctl 失败等）。抽成 `die()` helper 后：
+/// - 调用方从 2 行变 1 行，未来改 error format 只动一处；
+/// - `!` 返回类型让调用方在不可能 fallthrough 的 match arm 里也能编译；
+/// - 单测里 `die()` 可被 `std::process::exit` mock 替代，但 daemon 子命令
+///   的 exit-code 走的是端到端集成测试，这里只保证 happy path 不 panic。
+fn die(msg: impl AsRef<str>) -> ! {
+    eprintln!("{}", msg.as_ref());
+    std::process::exit(1);
+}
+
 #[allow(unused)] const SERVICE_NAME: &str = "ntd";
 #[allow(unused)] const SERVICE_DESCRIPTION: &str = "Nothing Todo (ntd) - AI Todo Service";
 #[allow(unused)]
@@ -72,8 +86,7 @@ pub async fn handle_daemon_command(action: &DaemonAction) {
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         let _ = action;
-        eprintln!("Daemon service is not supported on this platform.");
-        std::process::exit(1);
+        die("Daemon service is not supported on this platform.");
     }
 }
 
@@ -239,8 +252,10 @@ fn launchd_install(force: bool) {
     let binary = get_ntd_binary_path();
 
     if !binary.exists() {
-        eprintln!("ntd binary not found at {}. Run `make install` first.", binary.display());
-        std::process::exit(1);
+        die(format!(
+            "ntd binary not found at {}. Run `make install` first.",
+            binary.display()
+        ));
     }
 
     if plist_path.exists() && !force {
@@ -257,8 +272,11 @@ fn launchd_install(force: bool) {
     // 写入 plist 是安装的前置步骤：失败则直接终止，避免后续 launchctl bootstrap
     // 加载一个不存在/损坏的 plist；改用 eprintln + exit(1) 让用户看到具体错误。
     if let Err(e) = fs::write(&plist_path, generate_launchd_plist()) {
-        eprintln!("Failed to write plist to {}: {}", plist_path.display(), e);
-        std::process::exit(1);
+        die(format!(
+            "Failed to write plist to {}: {}",
+            plist_path.display(),
+            e
+        ));
     }
 
     let domain = get_launchd_domain();
@@ -1399,29 +1417,46 @@ mod error_handling_tests {
     use super::*;
 
     /// Issue #495 回归：`get_ntd_binary_path()` 在 `current_exe()` 失败的极端场景下
-    /// 不应 panic，而是回退到 `/usr/local/bin/ntd`。这里通过传入相对路径的 args[0]
-    /// 强制走 fallback 分支（args[0] 不是 absolute → 走 current_exe → 成功 →
-    /// 拿到真实路径），证明函数在常规环境下仍能正确解析。
+    /// 不应 panic，而是回退到 `/usr/local/bin/ntd`。
+    ///
+    /// 之前的版本只断言 `!is_empty()`（结构性必然成立），给了「重新引入
+    /// `.expect()` 的回归会通过 CI」的假信心。这里强化断言：必须返回**绝对路径**
+    /// 且要么是 `current_exe()` 成功的结果、要么是 `/usr/local/bin/ntd` fallback，
+    /// 二者必居其一——这样任何 `Option::unwrap()` / `Result::expect()` 重新引入
+    /// 会在 missing fallback path 上 panic 暴露。
     #[test]
     fn test_get_ntd_binary_path_returns_valid_path() {
-        // 测试自身是用 cargo run 运行的，args[0] 是 target/debug/deps/...-<hash>，
-        // 不是 absolute path——这正是我们要覆盖的 fallback 分支。
         let path = get_ntd_binary_path();
-        // 返回的路径必须非空且以一个合理目录开头（target 或 fallback）。
-        assert!(!path.as_os_str().is_empty(), "path should not be empty");
-        // 路径要么是绝对路径（current_exe 成功）要么是 fallback。
-        // 注意：在某些 CI 环境下，args[0] 可能是绝对路径，所以这里只断言"非空"。
+        assert!(path.is_absolute(), "binary path must be absolute, got: {path:?}");
+        let s = path.to_string_lossy();
+        let current_exe = std::env::current_exe().ok();
+        let is_current_exe = current_exe.as_deref() == Some(path.as_path());
+        let is_fallback = s == "/usr/local/bin/ntd";
+        assert!(
+            is_current_exe || is_fallback,
+            "path must be either current_exe() ({current_exe:?}) or /usr/local/bin/ntd fallback, got: {path:?}"
+        );
     }
 
     /// Issue #495 回归：`get_ntd_dir()` 在 `dirs::home_dir()` 失败时回退到 /tmp，
-    /// 不 panic。这是 daemon 子命令的常见路径：用户没 HOME 时仍能生成 systemd
-    /// unit 文件（虽然路径奇怪，但不会 crash）。
+    /// 不 panic。
+    ///
+    /// 之前的版本只断言 `file_name() == Some(".ntd")`，这在 `~/.ntd` 和
+    /// `/tmp/.ntd` 下都成立，根本区分不了 fallback 路径是否真的被走到。
+    /// 这里强化断言：
+    /// 1. 返回值是绝对路径（不是 cwd-relative `/.ntd`）；
+    /// 2. 路径以 `.ntd` 结尾（这是约定）；
+    /// 3. 即便 HOME 清空 + 各种 fallback 信号都用尽时也不 panic —— 这一点
+    ///    实际上不容易在常规 CI 里复现（`dirs` crate 还有 getpwuid_r 兜底），
+    ///    但 helper 的 `unwrap_or_else(|| /tmp)` 让 `Option::None` 分支走
+    ///    fallback 而不是 panic，从静态分析角度已经覆盖。集成层面通过
+    ///    systemd unit 文件写入测试间接验证（HOME=/nonexistent 时 systemd
+    ///    unit 仍能生成在 /tmp/.ntd 下）。
     #[test]
     fn test_get_ntd_dir_does_not_panic() {
+        // 常规路径：HOME 存在时返回 $HOME/.ntd（或 getpwuid_r 兜底）。
         let dir = get_ntd_dir();
-        // 返回的目录必须非空。
-        assert!(!dir.as_os_str().is_empty(), "dir should not be empty");
-        // 必须以 ".ntd" 结尾（这是 ntd 数据目录约定）。
+        assert!(dir.is_absolute(), "dir must be absolute, got: {dir:?}");
         assert_eq!(
             dir.file_name().and_then(|s| s.to_str()),
             Some(".ntd"),

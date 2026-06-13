@@ -95,11 +95,12 @@ pub type ClaudeLineMeta = (
 );
 
 // 读取家目录的 helper。生产进程启动后 `dirs::home_dir()` 在极端环境
-// (chroot/SELinux 拒绝) 才可能返回 None；这里保留 `expect` 但显式
-// 标注 `#[allow]` 让新增 clippy lint 不误伤，并改用更清晰的错误消息。
-#[allow(clippy::expect_used)]
+// (chroot/SELinux 拒绝) 才可能返回 None；按 codebase 约定回退到 /tmp，
+// 与 `npm_utils.rs::get_npm_global_root` 等其它调用点保持一致。这个
+// helper 有 18 个调用方跨 6 个 session scanner,一处 panic 会 cascade
+// 到全部 6 个 —— 用 unwrap_or_else 而不是 expect 把 panic 风险归零。
 fn home_dir() -> PathBuf {
-    dirs::home_dir().expect("no home directory — HOME unset or getpwuid_r failed")
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"))
 }
 
 /// Truncate a string to at most `max_len` chars, appending "..." if truncated.

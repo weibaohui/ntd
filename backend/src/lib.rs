@@ -6,16 +6,16 @@
 //! 仅当失败代表"开发期 invariant 失守"或"进程级致命错误（如 hook runtime 初始化）"
 //! 时才允许 `expect`，并需要 `#[allow(clippy::expect_used)]` 标注。
 //!
-//! CI 启用以下 clippy lint 配合人工 review：
+//! CI 启用以下 clippy lint 配合人工 review（定义在 `Cargo.toml` 的
+//! `[lints.clippy]`，同时作用于 lib 和 bin crate，避免之前在 `lib.rs`
+//! 写 `#![warn(...)]` 只覆盖 lib 的盲点）：
 //! - `clippy::unwrap_used`：`Result::unwrap()` / `Option::unwrap()`
 //! - `clippy::expect_used`：`Result::expect()` / `Option::expect()`
 //!
 //! 测试模块（`#[cfg(test)]`）默认允许 unwrap/expect，不影响主二进制。
 
-// 启用 unwrap_used/expect_used lint，但放在 warn 级别而非 deny，便于迁移期
-// 渐进修复。后续 review 阶段可考虑提升到 deny。Issue #495 关注的是「让 panic
-// 可被代码扫描器发现」，warn 同样能让 CI 报警。
-#![warn(clippy::unwrap_used, clippy::expect_used)]
+// 注意：clippy unwrap_used / expect_used lint 已迁移到 `Cargo.toml` 的
+// `[lints.clippy]`（见该文件尾部），同时作用于 lib 和 bin crate。
 
 pub mod adapters;
 pub mod cli;
