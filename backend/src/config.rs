@@ -94,6 +94,11 @@ pub struct Config {
     pub broadcast_channel_capacity: usize,
     /// 云端同步配置
     pub cloud_sync: CloudSyncConfig,
+    /// CORS 允许的来源域名白名单（仅生产模式生效）。
+    /// 空列表 = 仅同源请求（不发送 Access-Control-Allow-Origin header）。
+    /// 可配置多个域名，如 ["https://app.example.com", "https://admin.example.com"]。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cors_allowed_origins: Vec<String>,
 }
 
 /// Paths for each supported executor binary.
@@ -206,6 +211,7 @@ impl Default for Config {
             auto_usage_stats_cron: "0 0 1 * * *".to_string(),
             broadcast_channel_capacity: DEFAULT_BROADCAST_CHANNEL_CAPACITY,
             cloud_sync: CloudSyncConfig::default(),
+            cors_allowed_origins: Vec::new(),
         }
     }
 }

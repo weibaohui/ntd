@@ -1,7 +1,7 @@
 use axum::{
     Router,
     extract::{FromRequest, FromRequestParts, Path, Request, State, WebSocketUpgrade},
-    http::{self, StatusCode, header},
+    http::{self, Method, StatusCode, header},
     middleware::Next,
     response::{Html, IntoResponse, Response},
     routing::{delete, get, patch, post, put},
@@ -878,10 +878,33 @@ pub fn create_app(
                     .allow_methods(Any)
                     .allow_headers(Any)
             } else {
-                CorsLayer::new()
-                    .allow_methods(Any)
-                    .allow_headers(Any)
-                    // Production: same-origin only (no explicit allow_origin)
+                // Production: restrict to methods and headers actually used by the API,
+                // with configurable origin whitelist (empty = same-origin only).
+                let methods = [
+                    Method::GET,
+                    Method::POST,
+                    Method::PUT,
+                    Method::DELETE,
+                    Method::PATCH,
+                ];
+                let headers = [header::CONTENT_TYPE, header::AUTHORIZATION];
+
+                let origins: Vec<_> = Config::load()
+                    .cors_allowed_origins
+                    .iter()
+                    .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
+                    .collect();
+
+                let cors = CorsLayer::new()
+                    .allow_methods(methods)
+                    .allow_headers(headers);
+
+                if origins.is_empty() {
+                    // No explicit origins = same-origin only (no allow_origin sent)
+                    cors
+                } else {
+                    cors.allow_origin(origins)
+                }
             },
         )
         .layer(TraceLayer::new_for_http())
