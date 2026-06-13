@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::broadcast;
+use tracing::Instrument;
 use uuid::Uuid;
 
 use command_group::AsyncCommandGroup;
@@ -71,6 +72,26 @@ pub struct RunTodoExecutionRequest {
 }
 
 /// Run a todo execution. Priority: explicit executor > todo stored executor > default.
+///
+/// 整条执行路径放进一个 `todo_execution` span，附 todo_id / trigger_type / req_executor
+/// 三个字段：issue #513 的诉求是「执行器调用追踪」，而 spawn 子任务、stdout/stderr
+/// 读取、log flush、database update、hook fire 这一长串环节（参见原 issue 333-1013）
+/// 现在会被一个统一的 span 包住，配合 request_id 中间件，上游 HTTP 入口的 trace_id
+/// 可以贯穿到执行末段，便于定位「某个 todo 整体耗时多少、哪一段最慢」。
+///
+/// 注意：放在 `RunTodoExecutionRequest` 上面的 `request_id` 字段未声明在 span 中，
+/// 因为 request 来源不一定都来自 HTTP（如 cron / webhook / 飞书）——具体来源由
+/// 各自的 span（如 http_request）单独记录，避免在 todo_execution span 里误导排查。
+#[tracing::instrument(
+    name = "todo_execution",
+    level = "info",
+    skip_all,
+    fields(
+        todo_id = request.todo_id,
+        trigger_type = %request.trigger_type,
+        req_executor = ?request.req_executor,
+    )
+)]
 pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionResult {
     let RunTodoExecutionRequest {
         db,
@@ -361,7 +382,21 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         })
         .await;
 
-    tokio::spawn(async move {
+    // 为整个 spawn 闭包建立 executor_run 子 span：
+    // tokio::spawn 不会自动继承外层 span（参见 issue #513），所以需要把异步块整体包到
+    // Instrument 中。这样 child process spawn / stdout/stderr / log flush / db update /
+    // hook fire 这一长串环节的日志都会被 executor_run span 包住，并作为 todo_execution
+    // span 的子 span 形成两级 hierarchy。
+    let executor_span = tracing::info_span!(
+        "executor_run",
+        task_id = %task_id,
+        todo_id = todo_id,
+        record_id = record_id,
+        executor = %executor_spawn.executor_type(),
+    );
+
+    tokio::spawn(
+        async move {
         let execution_start = std::time::Instant::now();
 
         send_event(
@@ -951,7 +986,8 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             },
         );
         task_manager_spawn.remove(&task_id).await;
-    });
+    }
+    .instrument(executor_span));
 
     ExecutionResult {
         task_id: task_id_return,
