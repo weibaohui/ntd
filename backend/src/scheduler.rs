@@ -1,8 +1,9 @@
 use std::collections::{BTreeSet, HashMap};
 use std::str::FromStr;
 use std::sync::Arc;
+use thiserror::Error;
 use tokio::sync::Mutex;
-use tokio_cron_scheduler::{Job, JobScheduler};
+use tokio_cron_scheduler::{Job, JobScheduler, JobSchedulerError};
 use tracing::{error, info, warn};
 
 use chrono::{TimeZone, Timelike};
@@ -10,6 +11,49 @@ use chrono::{TimeZone, Timelike};
 use crate::executor_service::{run_todo_execution, RunTodoExecutionRequest};
 use crate::hooks::HookService;
 use crate::service_context::ServiceContext;
+
+/// 调度器模块的统一错误类型（issue #499）。
+///
+/// 之所以替换原来的 `Box<dyn Error + Send + Sync>`：
+/// - 调用方（handlers/scheduler.rs, main.rs）能针对具体错误做差异化处理，
+///   例如把 `InvalidCron` 映射为 HTTP 400，而不是笼统的 500。
+/// - 测试可以针对错误变体做断言（`assert!(matches!(e, SchedulerError::InvalidCron { .. }))`）。
+/// - 错误链不被 `Box<dyn>` 切断，tracing/log 仍能展示完整 source。
+/// - 与项目其他模块（feishu/sdk/error.rs、handlers/mod.rs 的 AppError）的 thiserror
+///   风格保持一致。
+#[derive(Debug, Error)]
+pub enum SchedulerError {
+    /// 用户传入的 cron 表达式无法被 `cron` crate 解析，或字段数不为 6。
+    /// handler 层应映射为 HTTP 400（用户输入错误），而不是 500。
+    #[error("Invalid cron expression '{expr}' for todo {todo_id}")]
+    InvalidCron { expr: String, todo_id: i64 },
+
+    /// 用户传入的时区字符串无法被 `chrono_tz::Tz` 解析。
+    /// 与 `InvalidCron` 同属用户输入错误，应映射为 HTTP 400。
+    #[error("Invalid timezone: {0}")]
+    InvalidTimezone(String),
+
+    /// 底层数据库错误（来自 `sea_orm::DbErr`）。
+    /// 通过 `#[from]` 自动实现 `From<sea_orm::DbErr>`，让 `?` 直接工作。
+    #[error("Database error: {0}")]
+    Database(#[from] sea_orm::DbErr),
+
+    /// `tokio_cron_scheduler` 后端错误（创建 scheduler、添加 job、启动调度等）。
+    /// `JobSchedulerError` 已实现 `std::error::Error`，可走 `#[from]`。
+    #[error("Scheduler backend error: {0}")]
+    SchedulerBackend(#[from] JobSchedulerError),
+
+    /// 兜底变体：上述类别之外的内部错误，保留 String 描述。
+    #[error("Internal scheduler error: {0}")]
+    Internal(String),
+}
+
+impl SchedulerError {
+    /// 构造一个"内部错误"，统一从 String 字面量构造。
+    pub fn internal<S: Into<String>>(msg: S) -> Self {
+        Self::Internal(msg.into())
+    }
+}
 
 /// 把一个去重整数集合格式化成 cron 字段值。
 ///
@@ -244,7 +288,9 @@ pub struct TodoScheduler {
 }
 
 impl TodoScheduler {
-    pub async fn new(hook_service: Arc<HookService>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    /// 创建 `TodoScheduler` 单例，初始化底层 `JobScheduler`。
+    /// 失败的原因（`JobSchedulerError`）通过 `#[from]` 自动转为 `SchedulerError::SchedulerBackend`。
+    pub async fn new(hook_service: Arc<HookService>) -> Result<Self, SchedulerError> {
         let sched = JobScheduler::new().await?;
         Ok(Self {
             sched: Mutex::new(sched),
@@ -253,10 +299,13 @@ impl TodoScheduler {
         })
     }
 
+    /// 从 DB 读取所有启用调度的 todo，并注册到 `JobScheduler`。
+    /// 单条 todo 的注册失败（cron 不合法等）只 warn 不中断，**外层返回 Ok**；
+    /// 只有 DB 本身不可达才算失败。
     pub async fn load_from_db(
         &self,
         ctx: &ServiceContext,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(), SchedulerError> {
         let todos = ctx.db.get_scheduler_todos().await?;
 
         for todo in todos {
@@ -293,7 +342,7 @@ impl TodoScheduler {
         todo_id: i64,
         cron_expr: String,
         timezone: Option<String>,
-    ) -> Result<uuid::Uuid, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<uuid::Uuid, SchedulerError> {
         // Validate cron expression
         if cron::Schedule::from_str(&cron_expr).is_err() {
             warn!(
@@ -302,10 +351,14 @@ impl TodoScheduler {
                 Example: '0 */12 * * * *' (every 12 min), '0 0 9 * * *' (daily at 9am).",
                 cron_expr, todo_id
             );
-            return Err(format!(
-                "Invalid cron expression '{}' for todo {}. AI must convert natural language to valid cron format.",
-                cron_expr, todo_id
-            ).into());
+            // 用结构化的 `SchedulerError::InvalidCron { expr, todo_id }` 替代原来的
+            // `format!(...).into()`（后者会丢类型，handler 没法区分"用户输入错"
+            // 和"内部错误"）。这样 `From<SchedulerError> for AppError` 才能把
+            // 它映射为 400 BadRequest。
+            return Err(SchedulerError::InvalidCron {
+                expr: cron_expr,
+                todo_id,
+            });
         }
 
         // Convert cron expression to UTC if timezone is specified
@@ -411,8 +464,12 @@ impl TodoScheduler {
                 Ok(id)
             }
             Err(e) => {
+                // 用结构化 `SchedulerError::SchedulerBackend(e)` 替代原来的
+                // `Box::new(std::io::Error::other(...))`。`e: JobSchedulerError` 已
+                // 实现 `std::error::Error`，可走 `#[from]` 直接 `?`，但这里我们要
+                // 显式带上上下文（todo_id, cron_expr）便于排查，所以手写变体。
                 error!("Failed to add job to scheduler: {:?}", e);
-                Err(Box::new(std::io::Error::other(format!("{:?}", e))))
+                Err(SchedulerError::SchedulerBackend(e))
             }
         }
     }
@@ -430,7 +487,8 @@ impl TodoScheduler {
         }
     }
 
-    pub async fn start(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// 启动调度循环。`JobSchedulerError` 通过 `#[from]` 自动转为 `SchedulerError::SchedulerBackend`。
+    pub async fn start(&self) -> Result<(), SchedulerError> {
         self.sched.lock().await.start().await?;
         info!("Scheduler started");
         Ok(())
@@ -619,5 +677,137 @@ mod convert_cron_to_utc_tests {
         let result = convert_cron_to_utc("not a cron string", "Asia/Shanghai");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid cron expression"));
+    }
+}
+
+#[cfg(test)]
+mod scheduler_error_tests {
+    //! 覆盖 `SchedulerError` 枚举本身（issue #499）：
+    //! - `Display` 输出带原始信息
+    //! - `From<sea_orm::DbErr>` 自动转 `Database` 变体
+    //! - `From<JobSchedulerError>` 自动转 `SchedulerBackend` 变体
+    //! - `From<SchedulerError> for AppError` 把用户输入错映射为 `BadRequest`、其它映射为 `Internal`
+    //!
+    //! 这些测试之前无法在 `Box<dyn Error>` 抽象下做 —— 抽象层把变体抹平了，
+    //! 现在能针对具体变体断言。
+    use super::SchedulerError;
+    use crate::handlers::AppError;
+    use sea_orm::DbErr;
+
+    /// `InvalidCron` 的 Display 必须包含原始 cron 字符串和 todo id，
+    /// 否则日志/HTTP 响应里看不出"哪条 todo 的哪条 cron 错了"。
+    #[test]
+    fn test_invalid_cron_display_contains_expr_and_todo_id() {
+        let err = SchedulerError::InvalidCron {
+            expr: "bad cron".to_string(),
+            todo_id: 42,
+        };
+        let s = err.to_string();
+        assert!(s.contains("bad cron"), "display should include expr, got: {s}");
+        assert!(s.contains("42"), "display should include todo_id, got: {s}");
+    }
+
+    /// `InvalidTimezone` 保留原始字符串，handler 需要把时区名回显给用户。
+    #[test]
+    fn test_invalid_timezone_display_contains_input() {
+        let err = SchedulerError::InvalidTimezone("Atlantis/Azores".to_string());
+        let s = err.to_string();
+        assert!(s.contains("Atlantis/Azores"), "got: {s}");
+    }
+
+    /// `From<DbErr>` 自动 `?`：这是把 `get_scheduler_todos` 等 DB 调用
+    /// 链入新错误类型的关键。
+    #[test]
+    fn test_from_db_err_yields_database_variant() {
+        let db_err = DbErr::Custom("test connection refused".to_string());
+        let err: SchedulerError = db_err.into();
+        assert!(
+            matches!(err, SchedulerError::Database(_)),
+            "expected Database variant, got {err:?}"
+        );
+    }
+
+    /// `From<JobSchedulerError>` 自动 `?`：覆盖 `JobScheduler::new()`、
+    /// `sched.add()`、`sched.start()` 三处 `await?`。
+    #[test]
+    fn test_from_job_scheduler_error_yields_backend_variant() {
+        let inner = tokio_cron_scheduler::JobSchedulerError::CantInit;
+        let err: SchedulerError = inner.into();
+        assert!(
+            matches!(err, SchedulerError::SchedulerBackend(_)),
+            "expected SchedulerBackend variant, got {err:?}"
+        );
+    }
+
+    /// `internal()` 工厂是给 caller（main.rs）留的"带说明的内部错误"快捷方式。
+    #[test]
+    fn test_internal_constructor_wraps_string() {
+        let err = SchedulerError::internal("sched down for maintenance");
+        match &err {
+            SchedulerError::Internal(s) => assert_eq!(s, "sched down for maintenance"),
+            _ => panic!("expected Internal, got {err:?}"),
+        }
+    }
+
+    /// 用户输入错 → 400 BadRequest。issue #499 的关键修复点。
+    #[test]
+    fn test_app_error_from_scheduler_error_invalid_cron_maps_to_bad_request() {
+        let err = SchedulerError::InvalidCron {
+            expr: "* * *".to_string(),
+            todo_id: 7,
+        };
+        let app_err: AppError = err.into();
+        match app_err {
+            AppError::BadRequest(msg) => {
+                assert!(msg.contains("* * *"), "msg should echo input, got: {msg}");
+                assert!(msg.contains("7"), "msg should include todo_id, got: {msg}");
+            }
+            other => panic!("expected BadRequest, got {other:?}"),
+        }
+    }
+
+    /// 用户输入错（时区）→ 400 BadRequest。
+    #[test]
+    fn test_app_error_from_scheduler_error_invalid_timezone_maps_to_bad_request() {
+        let err = SchedulerError::InvalidTimezone("Mars/Olympus".to_string());
+        let app_err: AppError = err.into();
+        assert!(
+            matches!(app_err, AppError::BadRequest(_)),
+            "expected BadRequest, got {app_err:?}"
+        );
+    }
+
+    /// DB 错误 → 500 Internal。caller 没法直接修复，必须看 server 日志。
+    #[test]
+    fn test_app_error_from_scheduler_error_database_maps_to_internal() {
+        let err: SchedulerError = DbErr::Custom("conn refused".to_string()).into();
+        let app_err: AppError = err.into();
+        assert!(
+            matches!(app_err, AppError::Internal(_)),
+            "expected Internal, got {app_err:?}"
+        );
+    }
+
+    /// scheduler 后端错误 → 500 Internal。
+    #[test]
+    fn test_app_error_from_scheduler_error_backend_maps_to_internal() {
+        let err: SchedulerError =
+            tokio_cron_scheduler::JobSchedulerError::Shutdown.into();
+        let app_err: AppError = err.into();
+        assert!(
+            matches!(app_err, AppError::Internal(_)),
+            "expected Internal, got {app_err:?}"
+        );
+    }
+
+    /// 内部错误 → 500 Internal。
+    #[test]
+    fn test_app_error_from_scheduler_error_internal_maps_to_internal() {
+        let err = SchedulerError::internal("unexpected state");
+        let app_err: AppError = err.into();
+        assert!(
+            matches!(app_err, AppError::Internal(_)),
+            "expected Internal, got {app_err:?}"
+        );
     }
 }

@@ -136,6 +136,32 @@ impl From<std::io::Error> for AppError {
     }
 }
 
+/// 把 `SchedulerError` 映射到 HTTP 响应（issue #499）。
+///
+/// 分类规则：
+/// - 用户输入错误（`InvalidCron` / `InvalidTimezone`）→ 400 BadRequest，
+///   因为这些是 caller 可以修复的（换个合法 cron、换个合法时区）。
+/// - 其它（数据库失败、scheduler 后端失败、内部错误）→ 500 Internal，
+///   这些是服务器侧问题，caller 没法直接修。
+///
+/// 把这个 impl 放在 `handlers/mod.rs` 而不是 `scheduler.rs`，是为了避免
+/// `scheduler -> handlers` 的反向依赖：`scheduler` 不需要知道 `AppError` 的存在。
+impl From<crate::scheduler::SchedulerError> for AppError {
+    fn from(err: crate::scheduler::SchedulerError) -> Self {
+        match &err {
+            crate::scheduler::SchedulerError::InvalidCron { .. }
+            | crate::scheduler::SchedulerError::InvalidTimezone(_) => {
+                AppError::BadRequest(err.to_string())
+            }
+            crate::scheduler::SchedulerError::Database(_)
+            | crate::scheduler::SchedulerError::SchedulerBackend(_)
+            | crate::scheduler::SchedulerError::Internal(_) => {
+                AppError::Internal(err.to_string())
+            }
+        }
+    }
+}
+
 impl<T: Serialize> IntoResponse for crate::models::ApiResponse<T> {
     fn into_response(self) -> Response {
         axum::Json(self).into_response()
