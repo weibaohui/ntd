@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::broadcast;
+use tracing::Instrument;
 use uuid::Uuid;
 
 use command_group::AsyncCommandGroup;
@@ -71,6 +72,29 @@ pub struct RunTodoExecutionRequest {
 }
 
 /// Run a todo execution. Priority: explicit executor > todo stored executor > default.
+///
+/// 整条执行路径放进一个 `todo_execution` span，附 todo_id / trigger_type / req_executor
+/// 三个字段：issue #513 的诉求是「执行器调用追踪」，而 spawn 子任务、stdout/stderr
+/// 读取、log flush、database update、hook fire 这一长串环节（参见原 issue 333-1013）
+/// 现在会被一个统一的 span 包住，配合 request_id 中间件，上游 HTTP 入口的 trace_id
+/// 可以贯穿到执行末段，便于定位「某个 todo 整体耗时多少、哪一段最慢」。
+///
+/// 注意：request_id **没有**显式作为 `todo_execution` span 的字段，
+/// 因为 request 来源不一定都来自 HTTP（如 cron / webhook / 飞书）——具体来源由
+/// 各自的调用方在自己的 span（如 `http_request`）里记录，避免在 `todo_execution` span
+/// 里误导排查。如果未来需要跨源关联（HTTP 请求触发的 todo 与 daemon 重启后的 cron 触发的
+/// todo 关联），需要扩展 `RunTodoExecutionRequest` 增加 `request_id: Option<String>`
+/// 字段并在此 span 上声明。
+#[tracing::instrument(
+    name = "todo_execution",
+    level = "info",
+    skip_all,
+    fields(
+        todo_id = request.todo_id,
+        trigger_type = %request.trigger_type,
+        req_executor = %request.req_executor.as_deref().unwrap_or(""),
+    )
+)]
 pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionResult {
     let RunTodoExecutionRequest {
         db,
@@ -364,7 +388,28 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         })
         .await;
 
-    tokio::spawn(async move {
+    // 为整个 spawn 闭包建立 executor_run span：
+    // tokio::spawn 不会自动继承外层 span（参见 issue #513），所以需要把异步块整体包到
+    // Instrument 中。这样 child process spawn / stdout/stderr / log flush / db update /
+    // hook fire 这一长串环节的日志都会被 executor_run span 包住。
+    //
+    // 关于 span hierarchy 的注意：`todo_execution` span 由 `#[tracing::instrument]` 在
+    // `run_todo_execution` 进入时建立、函数返回时退出；而下面的 `tokio::spawn` 是
+    // fire-and-forget，闭包实际开始执行时 `run_todo_execution` 已经返回，
+    // `todo_execution` span 也已经关闭。所以在运行时 `executor_run` 不会作为
+    // `todo_execution` 的活动子 span 出现——这里 `Span::current()` 拿到的仅是
+    // 退出态的 parent 引用。span 树查看工具会显示孤儿 `executor_run` 事件，
+    // 这是预期的；真正的两层实时嵌套需要把 spawn 改成 join 模式（详见 issue #513）。
+    let executor_span = tracing::info_span!(
+        "executor_run",
+        task_id = %task_id,
+        todo_id = todo_id,
+        record_id = record_id,
+        executor = %executor_spawn.executor_type(),
+    );
+
+    tokio::spawn(
+        async move {
         let execution_start = std::time::Instant::now();
 
         send_event(
@@ -954,7 +999,8 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             },
         );
         task_manager_spawn.remove(&task_id).await;
-    });
+    }
+    .instrument(executor_span));
 
     ExecutionResult {
         task_id: task_id_return,

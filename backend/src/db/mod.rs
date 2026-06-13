@@ -85,6 +85,21 @@ impl Database {
             .parse()
             .expect("invalid sqlite connection url");
 
+        // 启用 sqlx 自身的 SQL trace，但只记录 WARN 及以上等级的慢查询。
+        // 目的：把慢查询（实际运行时间超过阈值的语句）纳入日志体系，便于
+        // 在 issue #513 的诉求中定位「数据库慢查询无法发现」的问题；INFO/DEBUG 级
+        // 的每条 SQL 仍然关闭，避免高频请求场景下日志量爆炸。
+        //
+        // sqlx 0.7 的 ConnectOptions trait 暴露 log_statements / log_slow_statements：
+        //   - log_statements(Off) 关掉所有普通语句日志；
+        //   - log_slow_statements(Warn, 1s) 仅对执行时间 ≥1s 的语句在 WARN 级记录。
+        // 阈值 1s 与 sqlx 默认值一致，对 SQLite 而言已经足够把「跨表 join /
+        // migration / 冷启动大批写入」等真正慢的操作筛出来。
+        use sqlx::ConnectOptions;
+        let sqlite_opts = sqlite_opts
+            .log_statements(log::LevelFilter::Off)
+            .log_slow_statements(log::LevelFilter::Warn, std::time::Duration::from_secs(1));
+
         let mut pool_opts = sqlx::sqlite::SqlitePoolOptions::new();
         pool_opts = pool_opts.max_connections(10);
         pool_opts = pool_opts.min_connections(2);
