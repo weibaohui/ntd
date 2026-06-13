@@ -1001,7 +1001,7 @@ fn get_scanner(name: &str) -> Option<fn(&mut Vec<SessionInfo>)> {
         "kimi" => Some(scan_kimi),
         "atomcode" => Some(scan_atomcode),
         "pi" => Some(scan_pi),
-        "codebuddy" | "opencode" | "mobilecoder" => None, // no session storage found
+        "codebuddy" | "opencode" | "mobilecoder" | "mimo" => None, // no session storage found
         _ => None,
     }
 }

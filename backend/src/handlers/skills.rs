@@ -35,6 +35,7 @@ pub fn executor_skills_dir_str(et: &str) -> Option<PathBuf> {
         "kimi" => Some(home.join(".kimi").join("skills")),
         "mobilecoder" => Some(home.join(".mobile-coder").join("skills")),
         "pi" => Some(home.join(".pi").join("skills")),
+        "mimo" => Some(home.join(".local/share/mimocode").join("skills")),
         // agents 是只读 skill 来源：扫描但不参与执行器管理/Todo 执行
         "agents" => Some(home.join(".agents").join("skills")),
         _ => None,
@@ -490,7 +491,7 @@ fn discover_skills_for_executor(et: ExecutorType) -> ExecutorSkills {
 const ALL_SKILL_SOURCES: &[&str] = &[
     "claudecode", "codebuddy", "opencode", "atomcode",
     "hermes", "kimi", "mobilecoder", "codex",
-    "pi",
+    "pi", "mimo",
     "agents",
 ];
 
