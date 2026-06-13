@@ -98,7 +98,10 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         .map(|params| crate::models::replace_placeholders(&message, params))
         .unwrap_or(message);
     let task_id = Uuid::new_v4().to_string();
-    let mut cancel_rx = task_manager.register(task_id.clone()).await;
+    // Issue #506：用 RAII guard 注册 task，确保即便后续路径 panic/早返回忘了 remove，
+    // sender 也会被 guard drop 时清理。guard 在此函数尾部才 drop，等价于覆盖整段 task 生命周期。
+    let mut task_guard = task_manager.register_with_guard(task_id.clone()).await;
+    let mut cancel_rx = task_guard.take_receiver();
 
     // Read runtime settings from config
     let (max_concurrent, timeout_secs) = {
