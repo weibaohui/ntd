@@ -188,10 +188,7 @@ export function Dashboard({ onBack }: { onBack?: () => void }) {
     { key: 'message-stats', render: () => <MessageStatsCard msgStats={msgStats} msgStatsError={msgStatsError} processingRate={processingRate} /> },
     { key: 'skills-stats', render: () => <SkillsStatsCard stats={stats} loading={loading} /> },
     { key: 'backup-stats', render: () => <BackupStatsCard stats={stats} loading={loading} /> },
-    {
-      key: 'usage-stats',
-      render: () => <UsageStatsCard since={usageStatsRange.since} until={usageStatsRange.until} />,
-    },
+    // usage-stats 卡片已移至 Masonry 下方固定显示，见下方独立渲染
     { key: 'share-card', render: () => <ShareCardPanel /> },
   ];
 
@@ -224,6 +221,10 @@ export function Dashboard({ onBack }: { onBack?: () => void }) {
         itemRender={(item) => item.data.render()}
         fresh
       />
+      {/* Token 用量统计 — 数据较多，固定置于最近执行记录上方 */}
+      <div style={{ marginTop: 16 }}>
+        <UsageStatsCard since={usageStatsRange.since} until={usageStatsRange.until} />
+      </div>
       <Card
         title={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><ThunderboltOutlined /><span>最近执行记录</span></div>}
         style={{ borderRadius: 12, marginTop: 16 }}
