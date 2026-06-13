@@ -1089,8 +1089,17 @@ async fn migrate_todo_rating_to_execution_records(db: &Database) -> Result<(), s
     // 会被 runner 记录为「已应用」，但其实数据已迁移、列未删，schema 处于不一致状态。
     // 用 `?` 让 daemon 启动失败，下次启动时 `run_migrations` 会跳过已迁移的数据行
     // （`SELECT ... WHERE rating IS NOT NULL` 找不到记录，但 `todos.rating` 列还在，
-    // 这时 v2 的 INSERT 会再次执行、空跑），最终 DROP COLUMN 也会再次尝试。
-    db.exec("ALTER TABLE todos DROP COLUMN rating").await?;
+    // 这时 v2 的 UPDATE 会再次执行、空跑），最终 DROP COLUMN 也会再次尝试。
+    //
+    // 用 `map_err` 在冒泡前先记一条 `tracing::error!`，把「在 V2 DROP COLUMN todos.rating
+    // 时失败」这个上下文带上 —— 否则 operator 只看到 sea_orm 序列化出来的 "Failed to
+    // execute statement: ..."，排查时不知道是哪条 DDL 失败。
+    db.exec("ALTER TABLE todos DROP COLUMN rating")
+        .await
+        .map_err(|e| {
+            tracing::error!("V2 DROP COLUMN todos.rating failed: {}", e);
+            e
+        })?;
 
     tracing::info!(
         "Migrated {} todo ratings to execution_records, dropped todos.rating",
@@ -1225,6 +1234,15 @@ async fn needs_fk_migration<C: ConnectionTrait>(
     conn: &C,
     table: &str,
 ) -> Result<bool, sea_orm::DbErr> {
+    // 表名白名单校验：函数签名是 `&str`，目前唯一调用方传的是 hardcoded 数组，但
+    // `format!` 直接拼接进 SQL/PRAGMA 字符串，存在注入风险面。用 `debug_assert!`
+    // 在 debug build 立刻拒绝任何非 `[A-Za-z0-9_]` 的字符 —— 与 PR #476 daemon-redeploy
+    // 的 whitelist 模式一致。release build 下保持零开销（assertion 被消除）。
+    debug_assert!(
+        !table.is_empty()
+            && table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+        "needs_fk_migration: invalid table name {table:?} (must match [A-Za-z0-9_]+)"
+    );
     let sql = format!("SELECT sql FROM sqlite_master WHERE type='table' AND name='{}'", table);
     let result = conn
         .query_one(Statement::from_string(DbBackend::Sqlite, sql))
@@ -1334,7 +1352,15 @@ async fn migrate_feishu_fk_cascade(db: &Database) -> Result<(), sea_orm::DbErr> 
         ("feishu_group_whitelist", "id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL, sender_open_id TEXT NOT NULL, sender_name TEXT, created_at TEXT, FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE, UNIQUE(bot_id, sender_open_id)"),
     ];
 
-    // 探测阶段：先在主连接上确定是否真要迁移（避免无谓地开事务）
+    // 探测阶段：先在主连接上确定是否真要迁移（避免无谓地开事务）。
+    //
+    // 设计取舍 (PR #539 push-3 review LOW-3): 理论上 probe 与后续 `db.conn.begin()`
+    // 会从连接池各拿一条连接，构成 TOCTOU 窗口（probe 后另一连接上对 schema 的修改
+    // 可能让 probe 结果过期）。但 V4 是「schema rebuild」类迁移，daemon 启动早期 + 几乎
+    // 无并发写入 + SQLite 单写者串行化，实际不可触发。把 probe-then-txn 拆成两步是
+    // 有意的 (probe 失败 → 不开事务 → 不污染 connection pool)，不是疏漏。如果未来
+    // 出现真并发修改 schema 的场景，应该把 probe 也搬到 txn 上做，而不是去掉「无谓不开
+    // 事务」的早退优化。
     let mut needs_any = false;
     for (table, _ddl) in &tables_to_migrate {
         if needs_fk_migration(&db.conn, table).await? {
@@ -1399,4 +1425,159 @@ pub(super) async fn read_applied_versions(
         }
     }
     Ok(set)
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests for `needs_fk_migration` (V4 feishu_fk_cascade)
+// ---------------------------------------------------------------------------
+//
+// `needs_fk_migration` 之前的 4 个分支（表不存在 / 无 FK / 全部 CASCADE / 任意非 CASCADE /
+// 混合）原本 0 个测试覆盖 —— 下次有人想换回 `sqlite_master.sql.contains(...)` 时没有回归网。
+// 这里的 5 个 fixture-driven test 把这 4 个分支全部钉死，且最后一个 test 用「混合 FK」复现
+// 旧实现 `contains()` 根本区分不了的场景，确保 PR #539 push 3 的 `PRAGMA foreign_key_list`
+// 改写不会被无声地回退。
+
+#[cfg(test)]
+mod needs_fk_migration_tests {
+    use super::*;
+
+    async fn fresh_db() -> Database {
+        // `Database::new(":memory:")` 会跑 v1 init + seed_default_templates，
+        // 但每张表用唯一名字避免冲突；`:memory:` 模式每个测试一个独立 ephemeral store。
+        Database::new(":memory:")
+            .await
+            .expect(":memory: db must open")
+    }
+
+    async fn exec(db: &Database, sql: &str) {
+        db.exec(sql).await.expect("test DDL must succeed");
+    }
+
+    /// 分支 1: 表不存在 → `false`
+    /// (CREATE TABLE IF NOT EXISTS 阶段会建出正确 schema,无需迁移)
+    #[tokio::test]
+    async fn needs_fk_migration_returns_false_when_table_missing() {
+        let db = fresh_db().await;
+        let needs = needs_fk_migration(&db.conn, "no_such_table_for_needs_fk")
+            .await
+            .expect("probe must succeed");
+        assert!(
+            !needs,
+            "non-existent table must not require FK migration (CREATE TABLE IF NOT EXISTS will set the correct schema)"
+        );
+    }
+
+    /// 分支 2: 表存在但无 FK → `false`
+    #[tokio::test]
+    async fn needs_fk_migration_returns_false_when_no_foreign_keys() {
+        let db = fresh_db().await;
+        exec(
+            &db,
+            "CREATE TABLE nfm_plain (id INTEGER PRIMARY KEY, name TEXT)",
+        )
+        .await;
+        let needs = needs_fk_migration(&db.conn, "nfm_plain")
+            .await
+            .expect("probe must succeed");
+        assert!(
+            !needs,
+            "table without any FK must not require FK migration"
+        );
+    }
+
+    /// 分支 3: 全部 FK 都是 CASCADE → `false` (已经是新 schema)
+    #[tokio::test]
+    async fn needs_fk_migration_returns_false_when_all_fks_cascade() {
+        let db = fresh_db().await;
+        exec(
+            &db,
+            "CREATE TABLE nfm_parent_all (id INTEGER PRIMARY KEY)",
+        )
+        .await;
+        exec(
+            &db,
+            "CREATE TABLE nfm_child_all (
+                id INTEGER PRIMARY KEY,
+                parent_id INTEGER NOT NULL,
+                FOREIGN KEY (parent_id) REFERENCES nfm_parent_all(id) ON DELETE CASCADE
+            )",
+        )
+        .await;
+        let needs = needs_fk_migration(&db.conn, "nfm_child_all")
+            .await
+            .expect("probe must succeed");
+        assert!(
+            !needs,
+            "all FKs already ON DELETE CASCADE → migration not required"
+        );
+    }
+
+    /// 分支 4: 至少一个 FK `on_delete != "CASCADE"` → `true`
+    /// 用 `NO ACTION` (SQLite 默认) 这个最常见的非 CASCADE 形式。
+    #[tokio::test]
+    async fn needs_fk_migration_returns_true_when_one_fk_not_cascade() {
+        let db = fresh_db().await;
+        exec(
+            &db,
+            "CREATE TABLE nfm_parent_one (id INTEGER PRIMARY KEY)",
+        )
+        .await;
+        exec(
+            &db,
+            "CREATE TABLE nfm_child_one (
+                id INTEGER PRIMARY KEY,
+                parent_id INTEGER NOT NULL,
+                FOREIGN KEY (parent_id) REFERENCES nfm_parent_one(id) ON DELETE NO ACTION
+            )",
+        )
+        .await;
+        let needs = needs_fk_migration(&db.conn, "nfm_child_one")
+            .await
+            .expect("probe must succeed");
+        assert!(
+            needs,
+            "single non-CASCADE FK (NO ACTION) must require migration"
+        );
+    }
+
+    /// 分支 5: 多个 FK 混合 (部分 CASCADE + 部分非 CASCADE) → `true`
+    /// 这是旧 `sqlite_master.sql.contains("ON DELETE CASCADE")` 子串匹配**根本区分不了**的场景：
+    /// `contains` 看到 "ON DELETE CASCADE" 字符串就直接判 false，但表里还有 RESTRICT FK 没改。
+    /// 现在的 `PRAGMA foreign_key_list` 逐行解析能正确返回 `true`。
+    #[tokio::test]
+    async fn needs_fk_migration_returns_true_when_fks_mixed() {
+        let db = fresh_db().await;
+        exec(&db, "CREATE TABLE nfm_parent_a (id INTEGER PRIMARY KEY)").await;
+        exec(&db, "CREATE TABLE nfm_parent_b (id INTEGER PRIMARY KEY)").await;
+        exec(
+            &db,
+            "CREATE TABLE nfm_child_mixed (
+                id INTEGER PRIMARY KEY,
+                a_id INTEGER NOT NULL,
+                b_id INTEGER NOT NULL,
+                FOREIGN KEY (a_id) REFERENCES nfm_parent_a(id) ON DELETE CASCADE,
+                FOREIGN KEY (b_id) REFERENCES nfm_parent_b(id) ON DELETE RESTRICT
+            )",
+        )
+        .await;
+        let needs = needs_fk_migration(&db.conn, "nfm_child_mixed")
+            .await
+            .expect("probe must succeed");
+        assert!(
+            needs,
+            "mixed FKs (CASCADE + RESTRICT) → at least one needs migration, must return true"
+        );
+    }
+
+    /// 安全网: `debug_assert!` 白名单拒绝非 `[A-Za-z0-9_]+` 的表名,
+    /// 防止 `format!` 拼接 SQL 时被注入 (虽然当前唯一调用方传的是 hardcoded 数组,
+    /// 但 `pub(super)` 函数签名不约束调用方)。
+    /// 注意 `debug_assert!` 只在 debug build 触发 — `cargo test` 默认 debug,所以这里有效。
+    #[tokio::test]
+    #[should_panic(expected = "invalid table name")]
+    async fn needs_fk_migration_rejects_non_whitelisted_table_name() {
+        let db = fresh_db().await;
+        // 单引号 + SQL 注释符的经典注入 payload
+        let _ = needs_fk_migration(&db.conn, "evil'; DROP TABLE x; --").await;
+    }
 }
