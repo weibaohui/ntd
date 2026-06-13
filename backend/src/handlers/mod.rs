@@ -401,26 +401,13 @@ async fn version_handler() -> impl IntoResponse {
     ApiResponse::ok(response)
 }
 
-/// 查询 npm 最新版本号，用于前端版本检查提示。
-/// 调用 `npm view @weibaohui/nothing-todo version` 获取远程最新版本。
+/// 查询最新版本号，用于前端版本检查提示。
+/// 委托给 `updater::check_latest_version()`，由其根据配置决定查询方式。
 async fn version_latest_handler() -> impl IntoResponse {
-    let output = std::process::Command::new("npm")
-        .args(["view", "@weibaohui/nothing-todo", "version"])
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => {
-            // npm view 输出格式为 "x.y.z\n"，需要 trim 掉换行符
-            let latest = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            ApiResponse::ok(serde_json::json!({ "latest": latest }))
-        }
-        Ok(out) => {
-            let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            tracing::warn!("npm view failed: {}", err_msg);
-            ApiResponse::ok(serde_json::json!({ "latest": null, "error": err_msg }))
-        }
+    match crate::updater::check_latest_version().await {
+        Ok(latest) => ApiResponse::ok(serde_json::json!({ "latest": latest })),
         Err(e) => {
-            tracing::warn!("Failed to run npm view: {}", e);
+            tracing::warn!("Failed to check latest version: {}", e);
             ApiResponse::ok(serde_json::json!({ "latest": null, "error": e.to_string() }))
         }
     }
@@ -506,14 +493,17 @@ where
 ///
 /// 流程：
 /// 1. 检测 npm 全局目录写权限，不可写时使用 `--prefix=~/.npm-global` 安装到用户目录
-/// 2. 调用 `npm install -g @weibaohui/nothing-todo@latest` 升级
+/// 2. 从配置中读取包名（`UpdateConfig.npm_package`），调用 `npm install -g <pkg>@latest` 升级
 /// 3. 升级成功后，将 daemon 重部署步骤（stop → uninstall → install --force → start）
 ///    fork 到独立子进程执行，避免 stop 导致当前 handler 进程被终止
 async fn version_upgrade_handler(
     ResponseDone(redeploy_signal): ResponseDone,
 ) -> impl IntoResponse {
+    // 从配置中获取更新源信息（包含包名、安装方式等）
+    let source = crate::updater::UpdateSource::from_config();
+
     // 检测 npm 全局目录写权限，获取安全的安装 prefix
-    let prefix = crate::npm_utils::get_npm_global_prefix();
+    let prefix = crate::updater::get_npm_global_prefix();
 
     // 执行 npm 升级，捕获输出以便返回给前端展示
     let npm_result = std::process::Command::new("npm")
@@ -522,7 +512,8 @@ async fn version_upgrade_handler(
             "-g",
             // 指定 prefix 确保安装到有写权限的目录
             &format!("--prefix={}", prefix),
-            "@weibaohui/nothing-todo@latest",
+            // 使用配置中的包名，确保与 UpdateConfig.npm_package 一致
+            &format!("{}@latest", source.package_name()),
         ])
         .output();
 
@@ -555,7 +546,7 @@ async fn version_upgrade_handler(
     }
 
     // npm 升级成功，查找新安装的 ntd 可执行文件路径
-    let ntd_cmd = crate::npm_utils::find_ntd_binary(&prefix);
+    let ntd_cmd = crate::updater::find_ntd_binary(&prefix);
 
     // 关键：先返回响应给前端，再 fork 子进程执行 daemon 重部署。
     // 因为 stop 会终止当前 daemon 进程（即本 handler 所在进程），

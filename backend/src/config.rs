@@ -92,6 +92,8 @@ pub struct Config {
     /// （如刚连上的客户端、暂停的标签页）落后超过此容量时，最旧事件将被覆盖丢弃。
     /// 仅在启动时生效，运行时调整需要重启服务。最小值见 `MIN_BROADCAST_CHANNEL_CAPACITY`。
     pub broadcast_channel_capacity: usize,
+    /// 自升级配置
+    pub update: UpdateConfig,
     /// 云端同步配置
     pub cloud_sync: CloudSyncConfig,
 }
@@ -165,6 +167,31 @@ pub struct CloudSyncConfig {
     pub default_conflict_mode: String,
 }
 
+/// 更新配置：控制 ntd 自升级的行为和来源。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateConfig {
+    /// 更新来源：npm | manual | cargo | apt
+    pub source: String,
+    /// npm 包名（仅 source=npm 时生效）
+    pub npm_package: String,
+    /// 启动时是否自动检查更新
+    pub auto_check: bool,
+    /// 检查更新间隔（小时）
+    pub check_interval_hours: u64,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            source: "npm".to_string(),
+            npm_package: "@weibaohui/nothing-todo".to_string(),
+            auto_check: true,
+            check_interval_hours: 24,
+        }
+    }
+}
+
 impl Default for CloudSyncConfig {
     fn default() -> Self {
         Self {
@@ -205,6 +232,7 @@ impl Default for Config {
             auto_usage_stats_enabled: false,
             auto_usage_stats_cron: "0 0 1 * * *".to_string(),
             broadcast_channel_capacity: DEFAULT_BROADCAST_CHANNEL_CAPACITY,
+            update: UpdateConfig::default(),
             cloud_sync: CloudSyncConfig::default(),
         }
     }

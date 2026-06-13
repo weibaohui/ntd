@@ -8,7 +8,7 @@ pub mod feishu;
 pub mod handlers;
 pub mod hooks;
 pub mod models;
-pub mod npm_utils;
+pub mod updater;
 pub mod scheduler;
 pub mod service_context;
 pub mod services;
