@@ -75,6 +75,11 @@ impl Database {
         // - max=10 既覆盖了默认 max_concurrent_todos=3 的写入争用，又给 reader（WebSocket 广播、
         //   hook 触发、健康检查等）留出充足槽位；继续调大对单文件 SQLite 收益有限。
         // - min=2 让 daemon 启动后立即有两条温连接就绪，避免首批并发请求都要冷启。
+        // SQLite 连接 URL 是我们自己的硬编码常量 `:memory:` 或经过路径扩展的本地路径，
+        // parse 失败属于开发期 bug 而非运行时环境错误——仍然 panic 但加注释说明这是
+        // invariant 而不是用户可触发的失败路径。Issue #495 关注的是 panic 的可触发面，
+        // 这里加 `#[allow]` 让新增 lint 不误伤。
+        #[allow(clippy::expect_used)]
         let sqlite_opts: sqlx::sqlite::SqliteConnectOptions = url
             .parse()
             .expect("invalid sqlite connection url");

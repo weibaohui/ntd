@@ -94,8 +94,12 @@ pub type ClaudeLineMeta = (
     Option<String>, Option<String>, Option<u64>, Option<u64>, String,
 );
 
+// 读取家目录的 helper。生产进程启动后 `dirs::home_dir()` 在极端环境
+// (chroot/SELinux 拒绝) 才可能返回 None；这里保留 `expect` 但显式
+// 标注 `#[allow]` 让新增 clippy lint 不误伤，并改用更清晰的错误消息。
+#[allow(clippy::expect_used)]
 fn home_dir() -> PathBuf {
-    dirs::home_dir().expect("no home directory")
+    dirs::home_dir().expect("no home directory — HOME unset or getpwuid_r failed")
 }
 
 /// Truncate a string to at most `max_len` chars, appending "..." if truncated.

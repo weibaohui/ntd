@@ -109,7 +109,8 @@ async fn main() {
             let prefix = ntd::npm_utils::get_npm_global_prefix();
 
             // 使用 --prefix 安装到有写权限的目录，避免 EACCES
-            let status = std::process::Command::new("npm")
+            // npm 不存在时给明确提示（Issue #495 关注点：避免 panic）。
+            let status = match std::process::Command::new("npm")
                 .args([
                     "install",
                     "-g",
@@ -117,7 +118,13 @@ async fn main() {
                     "@weibaohui/nothing-todo@latest",
                 ])
                 .status()
-                .expect("Failed to run npm. Is npm installed?");
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Failed to run npm ({}). Is npm installed and on PATH?", e);
+                    std::process::exit(1);
+                }
+            };
             if !status.success() {
                 eprintln!("Upgrade failed.");
                 std::process::exit(1);

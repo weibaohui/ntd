@@ -127,6 +127,13 @@ fn append_to_chain(chain: &[i64], source: i64) -> Vec<i64> {
 
 /// Long-lived, multi-threaded tokio runtime used to dispatch hook-triggered
 /// executions. See `execute_target_todo` for why a shared runtime is required.
+///
+/// 使用 `OnceLock::get_or_init` 的闭包版本返回的是值，不会出现初始化失败路径，
+/// 但 tokio runtime builder 本身可能因资源限制/OOM 而失败。改用
+/// `get_or_init` 配合 `expect` 仍会在底层 panic。这里记录触发路径并返回
+/// 占位运行时是个坏选择（破坏 hook 分发），所以保留 `expect` 但加注释
+/// 说明：构建失败是进程级致命错误，无法降级处理。
+#[allow(clippy::expect_used)]
 fn hook_runtime() -> &'static tokio::runtime::Runtime {
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {

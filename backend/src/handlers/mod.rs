@@ -497,10 +497,15 @@ where
         parts: &mut http::request::Parts,
         _state: &S,
     ) -> Result<Self, Self::Rejection> {
+        // 这三个 .expect() 都是 invariant 守卫：middleware 没装、mutex 中毒、
+        // extractor 被消费两次都属于开发期 bug，panic 反而是合理的反馈。
+        // 用 #[allow] 让未来新增的 unwrap_used/expect_used clippy lint 不误伤。
+        #[allow(clippy::expect_used)]
         let signal = parts
             .extensions
             .remove::<ResponseSignal>()
             .expect("track_response_done middleware must be installed before any handler that uses ResponseDone");
+        #[allow(clippy::expect_used)]
         let rx = signal
             .lock()
             .expect("ResponseSignal mutex poisoned")
