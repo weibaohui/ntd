@@ -21,6 +21,15 @@ pub const DEFAULT_EXECUTOR_PATH: &str = ""; // use binary name directly
 pub const DEFAULT_EXECUTION_TIMEOUT_SECS: u64 = 3600;
 /// 执行超时上限（秒）：7 天。YAML 加载和 HTTP update 均受此约束。
 pub const MAX_EXECUTION_TIMEOUT_SECS: u64 = 604800;
+/// WebSocket broadcast channel 默认容量。
+///
+/// 原先硬编码为 100，但 AI 执行器（如 claude_code）的 `Output` 事件频率可达每秒数十条，
+/// 100 的容量在 1~2 秒延迟下就会因 ring buffer 覆盖而丢消息，导致前端日志断断续续、
+/// `Finished` 等关键事件丢失。10000 大约能覆盖 200s@50msg/s 或 100s@100msg/s 的 burst，
+/// 对绝大多数使用场景足够；同时 broadcast 是 ring buffer，内存开销仅 O(capacity)。
+pub const DEFAULT_BROADCAST_CHANNEL_CAPACITY: usize = 10000;
+/// WebSocket broadcast channel 最小容量。低于此值视为配置错误，自动抬升以避免退化到丢消息。
+pub const MIN_BROADCAST_CHANNEL_CAPACITY: usize = 100;
 
 /// Top-level configuration, persisted to `~/.ntd/config.yaml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +86,12 @@ pub struct Config {
     pub auto_usage_stats_enabled: bool,
     /// AI 使用统计自动归档 cron 表达式（6 字段，含秒），默认每天凌晨 1 点执行
     pub auto_usage_stats_cron: String,
+    /// WebSocket broadcast channel 容量（ring buffer 大小）。
+    ///
+    /// 影响所有 `/events` WebSocket 订阅者能缓存的最大事件数。当慢消费者
+    /// （如刚连上的客户端、暂停的标签页）落后超过此容量时，最旧事件将被覆盖丢弃。
+    /// 仅在启动时生效，运行时调整需要重启服务。最小值见 `MIN_BROADCAST_CHANNEL_CAPACITY`。
+    pub broadcast_channel_capacity: usize,
     /// 云端同步配置
     pub cloud_sync: CloudSyncConfig,
 }
@@ -189,6 +204,7 @@ impl Default for Config {
             scheduler_default_timezone: None,
             auto_usage_stats_enabled: false,
             auto_usage_stats_cron: "0 0 1 * * *".to_string(),
+            broadcast_channel_capacity: DEFAULT_BROADCAST_CHANNEL_CAPACITY,
             cloud_sync: CloudSyncConfig::default(),
         }
     }
@@ -213,6 +229,7 @@ impl Config {
             };
             cfg.normalize_paths();
             cfg.clamp_execution_timeout_secs();
+            cfg.clamp_broadcast_channel_capacity();
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).ok();
             }
@@ -234,6 +251,7 @@ impl Config {
                 });
                 cfg.normalize_paths();
                 cfg.clamp_execution_timeout_secs();
+                cfg.clamp_broadcast_channel_capacity();
                 cfg
             }
             Err(e) => {
@@ -241,6 +259,7 @@ impl Config {
                 let mut cfg = Config::default();
                 cfg.normalize_paths();
                 cfg.clamp_execution_timeout_secs();
+                cfg.clamp_broadcast_channel_capacity();
                 cfg
             }
         }
@@ -275,6 +294,20 @@ impl Config {
             self.execution_timeout_secs = 60;
         } else if self.execution_timeout_secs > MAX_EXECUTION_TIMEOUT_SECS {
             self.execution_timeout_secs = MAX_EXECUTION_TIMEOUT_SECS;
+        }
+    }
+
+    /// 把 broadcast_channel_capacity 抬升到最小值 `MIN_BROADCAST_CHANNEL_CAPACITY`。
+    ///
+    /// **为什么需要**：YAML 直接编辑可绕过 HTTP 校验把 capacity 写成 0/1/50 等无意义值，
+    /// 这种配置等同于「关闭事件流」，会让慢消费者立刻丢失 Finished 等关键事件。
+    /// 这里强制把任意小于阈值的值抬升到 `MIN_BROADCAST_CHANNEL_CAPACITY`，保持行为可观察。
+    ///
+    /// **为什么不在这里设置上限**：broadcast 是 ring buffer，capacity 与每条事件大小相关，
+    /// 但每条 ExecEvent 序列化后通常 < 1KB，100000 条也只占约 100MB，运维需要时可自行调大。
+    pub fn clamp_broadcast_channel_capacity(&mut self) {
+        if self.broadcast_channel_capacity < MIN_BROADCAST_CHANNEL_CAPACITY {
+            self.broadcast_channel_capacity = MIN_BROADCAST_CHANNEL_CAPACITY;
         }
     }
 
@@ -479,5 +512,73 @@ mod tests {
         let mut cfg = Config { execution_timeout_secs: MAX_EXECUTION_TIMEOUT_SECS, ..Default::default() };
         cfg.clamp_execution_timeout_secs();
         assert_eq!(cfg.execution_timeout_secs, MAX_EXECUTION_TIMEOUT_SECS);
+    }
+
+    // ---------------------------------------------------------------------------
+    // broadcast_channel_capacity tests (YAML bypass safety net + round-trip)
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn test_default_broadcast_channel_capacity_is_10000() {
+        // 默认值是 10000，比硬编码 100 大两个数量级，避免高频输出场景下 ring buffer 覆盖
+        let cfg = Config::default();
+        assert_eq!(cfg.broadcast_channel_capacity, DEFAULT_BROADCAST_CHANNEL_CAPACITY);
+        assert_eq!(cfg.broadcast_channel_capacity, 10000);
+    }
+
+    #[test]
+    fn test_broadcast_channel_capacity_round_trip() {
+        // 自定义值能在 YAML 序列化/反序列化后保留
+        let cfg = Config {
+            broadcast_channel_capacity: 50000,
+            ..Default::default()
+        };
+        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        let restored: Config = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(restored.broadcast_channel_capacity, 50000);
+    }
+
+    #[test]
+    fn test_clamp_broadcast_channel_raises_zero_to_min() {
+        // 0 = 等同于关闭事件流，必须抬升到最小值
+        let mut cfg = Config {
+            broadcast_channel_capacity: 0,
+            ..Default::default()
+        };
+        cfg.clamp_broadcast_channel_capacity();
+        assert_eq!(cfg.broadcast_channel_capacity, MIN_BROADCAST_CHANNEL_CAPACITY);
+    }
+
+    #[test]
+    fn test_clamp_broadcast_channel_raises_small_value() {
+        // 任何小于 MIN 的值都被抬升
+        let mut cfg = Config {
+            broadcast_channel_capacity: 50,
+            ..Default::default()
+        };
+        cfg.clamp_broadcast_channel_capacity();
+        assert_eq!(cfg.broadcast_channel_capacity, MIN_BROADCAST_CHANNEL_CAPACITY);
+    }
+
+    #[test]
+    fn test_clamp_broadcast_channel_preserves_in_range_value() {
+        // 在 [MIN, ∞) 范围内的值不应被修改
+        let mut cfg = Config {
+            broadcast_channel_capacity: 5000,
+            ..Default::default()
+        };
+        cfg.clamp_broadcast_channel_capacity();
+        assert_eq!(cfg.broadcast_channel_capacity, 5000);
+    }
+
+    #[test]
+    fn test_clamp_broadcast_channel_preserves_minimum_boundary() {
+        // 恰好等于 MIN 的值不应被修改
+        let mut cfg = Config {
+            broadcast_channel_capacity: MIN_BROADCAST_CHANNEL_CAPACITY,
+            ..Default::default()
+        };
+        cfg.clamp_broadcast_channel_capacity();
+        assert_eq!(cfg.broadcast_channel_capacity, MIN_BROADCAST_CHANNEL_CAPACITY);
     }
 }

@@ -69,9 +69,21 @@ pub async fn update_config(
             Some(tz.to_string())
         };
     }
+    if let Some(capacity) = req.broadcast_channel_capacity {
+        // 与 YAML 加载路径保持一致的最小值校验，避免配成 0 让 ring buffer 立刻被覆盖丢消息。
+        // 注：运行时修改后只持久化配置，重启服务才会在新连接上生效（broadcast channel 启动时建）。
+        if capacity < crate::config::MIN_BROADCAST_CHANNEL_CAPACITY {
+            return Err(AppError::BadRequest(format!(
+                "broadcast_channel_capacity must be at least {}",
+                crate::config::MIN_BROADCAST_CHANNEL_CAPACITY
+            )));
+        }
+        cfg.broadcast_channel_capacity = capacity;
+    }
 
     cfg.normalize_paths();
     cfg.clamp_execution_timeout_secs();
+    cfg.clamp_broadcast_channel_capacity();
 
     let cfg_clone = cfg.clone();
     tokio::task::spawn_blocking(move || cfg_clone.save())

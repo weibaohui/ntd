@@ -664,6 +664,8 @@ pub struct UpdateConfigRequest {
     pub max_concurrent_todos: Option<u32>,
     pub execution_timeout_secs: Option<u64>,
     pub scheduler_default_timezone: Option<String>,
+    /// WebSocket broadcast channel 容量。修改后需要重启服务才会在新连接上生效。
+    pub broadcast_channel_capacity: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

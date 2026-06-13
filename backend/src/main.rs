@@ -451,7 +451,9 @@ async fn run_server(cli_port: Option<u16>) {
     let executors = executor_registry.list_executors().await;
     info!("Available executors: {:?}", executors);
 
-    let (tx, _rx) = broadcast::channel(100);
+    // WebSocket 事件 broadcast channel 容量从配置读取，避免硬编码 100 在高频输出场景下
+    // 因 ring buffer 覆盖而丢失 Finished 等关键事件。Config::load 已经做过最小值 clamp。
+    let (tx, _rx) = broadcast::channel(cfg.broadcast_channel_capacity);
     let task_manager = Arc::new(TaskManager::new());
     let config = Arc::new(tokio::sync::RwLock::new(cfg.clone()));
 
