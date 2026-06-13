@@ -108,7 +108,7 @@ ntd skill install --force       # 强制重新安装（覆盖已有）
 ntd skill install -e claudecode # 仅安装到指定执行器
 ```
 
-支持的执行器：Claude Code、AtomCode 等（根据你配置的 AI 执行器自动适配）。
+支持的执行器：Claude Code、CodeBuddy、Opencode、MobileCoder、AtomCode、Hermes、Kimi、Pi、Codex、CodeWhale、MiMo 等（根据你配置的 AI 执行器自动适配）。
 
 ### 升级
 
@@ -149,13 +149,16 @@ ntd 支持多种 AI CLI 工具，选择你已有的或最喜欢的即可：
 | 执行器 | 会话恢复 | 工具调用展示 | 思考过程展示 | Token 用量统计 | 模型名称 | Worktree | 安装命令 |
 |--------|:--------:|:------------:|:------------:|:-------------:|:--------:|:--------:|----------|
 | **Claude Code** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `npm install -g @anthropic-ai/claude-code` |
-| **Codebuddy** | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | 官方渠道 |
-| **OpenCode** | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ | 官方渠道 |
+| **CodeBuddy** | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | 官方渠道 |
+| **Opencode** | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ | 官方渠道 |
+| **MobileCoder** | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | 官方渠道 |
 | **AtomCode** | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | 官方渠道 |
 | **Hermes** | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | 官方渠道 |
 | **Kimi** | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | 官方渠道 |
+| **Pi** | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | 官方渠道 |
 | **Codex** | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | 官方渠道 |
-| **CodeWhale** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | 官方渠道 |
+| **CodeWhale** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | 官方渠道 |
+| **MiMo** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | 官方渠道 |
 
 ### 功能说明
 
@@ -173,11 +176,14 @@ ntd 支持多种 AI CLI 工具，选择你已有的或最喜欢的即可：
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) | 官方 CLI，最完善的功能支持，NDJSON 流式输出 | `npm install -g @anthropic-ai/claude-code` |
 | [Codex](https://openai.com/codex) | OpenAI 代码助手，支持复杂推理 | 官方渠道 |
 | [Codebuddy](https://codebuddy.com) | 与 Claude Code 协议兼容的工具调用展示 | 官方渠道 |
-| [OpenCode](https://opencode.ai) | 开源代码助手，自定义事件流格式 | 官方渠道 |
+| [Opencode](https://opencode.ai) | 开源代码助手，自定义事件流格式 | 官方渠道 |
+| [MobileCoder](https://github.com/nicheai/mobilecoder) | 移动端 AI 代码助手，支持事件流解析 | 官方渠道 |
 | [AtomCode](https://atomcode.dev) | 轻量级 AI 代码编辑器，stderr 解析 | 官方渠道 |
 | [Hermes](https://github.com/bhousai/hermes) | 支持 Todo 进度提取，适合任务分解场景 | 官方渠道 |
 | [Kimi](https://kimi.moonshot.cn) | 国产大模型 CLI，支持思考过程展示 | 官方渠道 |
+| [Pi](https://pi.ai) | 智能 AI 助手，支持 NDJSON 事件流，含思考过程展示 | 官方渠道 |
 | [CodeWhale](https://codewhale.cn) | AI 代码助手，适合中文场景 | 官方渠道 |
+| [MiMo](https://mimo.ai) | 多模态 AI 代码助手，支持思考过程与 Token 统计 | 官方渠道 |
 
 ---
 
