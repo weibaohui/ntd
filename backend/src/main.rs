@@ -103,15 +103,15 @@ async fn main() {
             println!("Upgrading ntd...");
             
             // 从配置加载更新设置
-            let cfg = crate::config::Config::load();
-            let source = crate::updater::UpdateSource::from_config_ref(&cfg);
+            let cfg = ntd::config::Config::load();
+            let source = ntd::updater::UpdateSource::from_config_ref(&cfg);
             
             // 执行升级
             match source.upgrade().await {
                 Ok(_) => {
                     // 升级成功，查找新安装的 ntd 路径并重部署 daemon
-                    let ntd_cmd = crate::updater::find_ntd_binary(
-                        &crate::updater::get_npm_global_prefix()
+                    let ntd_cmd = ntd::updater::find_ntd_binary(
+                        &ntd::updater::get_npm_global_prefix()
                     );
                     
                     println!("Redeploying daemon service...");
