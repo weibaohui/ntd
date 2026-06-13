@@ -482,6 +482,15 @@ pub fn resolve_request_id(headers: &http::HeaderMap) -> String {
         .unwrap_or_else(|| Uuid::new_v4().to_string())
 }
 
+/// CORS expose_headers 列表 —— 让浏览器侧 JS 能读到这些响应头。
+///
+/// `x-request-id` 由 `propagate_request_id` 中间件写回，前端日志需要贴到工单/对账上游网关。
+/// dev 与 prod 共享同一份列表（避免单边漂移），dev 模式下允许 `Any` origin，
+/// 所以同时 expose 也不会扩大攻击面（攻击者已经从 origin 通配中拿到了能力）。
+fn cors_expose_headers() -> [http::HeaderName; 1] {
+    [http::HeaderName::from_static("x-request-id")]
+}
+
 /// Extractor：handler 内部如需在响应体里附带 request_id，可用 `Extension<RequestId>` 取出。
 #[derive(Debug, Clone)]
 pub struct RequestId(pub String);
@@ -929,10 +938,15 @@ pub fn create_app(
         .layer(CompressionLayer::new())
         .layer(
             if crate::config::Config::is_dev_mode() {
+                // dev 模式 origin 用 `Any`,`expose_headers` 跟 prod 保持一致 (见 `cors_expose_headers`):
+                // 前端在 Vite 5173 → 反代 /api/* 时是同源 (不走 CORS),但若有同学启用了直连跨端口
+                // (CORS 触发),他们会观察到「服务端日志有 request_id,前端读不到」— 同一痛点只在 prod
+                // 能修会让 dev 体验与 prod 不一致。把 expose 列表共享一份常量可避免后续漂移。
                 CorsLayer::new()
                     .allow_origin(Any)
                     .allow_methods(Any)
                     .allow_headers(Any)
+                    .expose_headers(cors_expose_headers())
             } else {
                 // Production: restrict to methods and headers actually used by the API,
                 // with configurable origin whitelist (empty = same-origin only).
@@ -957,7 +971,7 @@ pub fn create_app(
                 let cors = CorsLayer::new()
                     .allow_methods(methods)
                     .allow_headers(headers)
-                    .expose_headers([http::HeaderName::from_static("x-request-id")]);
+                    .expose_headers(cors_expose_headers());
 
                 if origins.is_empty() {
                     // No explicit origins = same-origin only (no allow_origin sent)
