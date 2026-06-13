@@ -14,6 +14,7 @@ use sea_orm::{
 };
 
 pub mod entity;
+pub mod migrations;
 pub mod sync_record;
 pub use entity::prelude::*;
 
@@ -410,849 +411,28 @@ impl Database {
     }
 
     async fn init_tables(&self) -> Result<(), sea_orm::DbErr> {
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS todos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                prompt TEXT DEFAULT '',
-                status TEXT DEFAULT 'pending',
-                created_at TEXT,
-                updated_at TEXT,
-                deleted_at TEXT,
-                executor TEXT DEFAULT 'claudecode',
-                scheduler_enabled INTEGER DEFAULT 0,
-                scheduler_config TEXT,
-                task_id TEXT,
-                workspace TEXT
-            )",
-        )
-        .await?;
+        // 走 schema migration 框架:首次启动跑全部 DDL,之后启动只读一次 schema_version 就跳过
+        // (issue #498:旧实现每次启动跑上百条 DDL,即使 IF NOT EXISTS 也要解析+规划+扫描 schema)
+        migrations::run_migrations(self).await?;
 
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS tags (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                color TEXT DEFAULT '#1890ff',
-                created_at TEXT
-            )",
-        )
-        .await?;
-
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS todo_tags (
-                todo_id INTEGER,
-                tag_id INTEGER,
-                PRIMARY KEY (todo_id, tag_id),
-                FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE,
-                FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-            )",
-        )
-        .await?;
-
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS execution_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                todo_id INTEGER,
-                status TEXT DEFAULT 'running',
-                command TEXT,
-                stdout TEXT DEFAULT '',
-                stderr TEXT DEFAULT '',
-                result TEXT,
-                usage TEXT,
-                executor TEXT,
-                model TEXT,
-                started_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-                finished_at TEXT,
-                trigger_type TEXT DEFAULT 'manual',
-                pid INTEGER,
-                task_id TEXT,
-                session_id TEXT,
-                FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
-            )",
-        )
-        .await?;
-
-        // 执行日志表（每条日志一行，支持分页加载）
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS execution_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                record_id INTEGER NOT NULL,
-                timestamp TEXT NOT NULL,
-                log_type TEXT NOT NULL DEFAULT 'info',
-                content TEXT NOT NULL DEFAULT '',
-                metadata TEXT DEFAULT '{}',
-                FOREIGN KEY (record_id) REFERENCES execution_records(id) ON DELETE CASCADE
-            )",
-        )
-        .await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_execution_logs_record ON execution_logs(record_id)")
-            .await?;
-
-        // 添加 pid 字段的迁移（向后兼容）
-        self.exec("ALTER TABLE execution_records ADD COLUMN pid INTEGER")
-            .await
-            .ok(); // 忽略错误，因为字段可能已存在
-
-        // 添加 task_id 字段的迁移（向后兼容）
-        self.exec("ALTER TABLE execution_records ADD COLUMN task_id TEXT")
-            .await
-            .ok(); // 忽略错误，因为字段可能已存在
-
-        // 添加 session_id 字段的迁移（向后兼容）
-        self.exec("ALTER TABLE execution_records ADD COLUMN session_id TEXT")
-            .await
-            .ok(); // 忽略错误，因为字段可能已存在
-
-        // 添加 workspace 字段的迁移（向后兼容）
-        self.exec("ALTER TABLE todos ADD COLUMN workspace TEXT")
-            .await
-            .ok(); // 忽略错误，因为字段可能已存在
-
-        // 添加 worktree_enabled 字段的迁移（向后兼容）
-        self.exec("ALTER TABLE todos ADD COLUMN worktree_enabled INTEGER DEFAULT 0")
-            .await
-            .ok(); // 忽略错误，因为字段可能已存在
-
-        // 添加 todo_progress 字段的迁移（向后兼容）
-        self.exec("ALTER TABLE execution_records ADD COLUMN todo_progress TEXT")
-            .await
-            .ok(); // 忽略错误，因为字段可能已存在
-
-        // 添加 execution_stats 字段的迁移（向后兼容）
-        self.exec("ALTER TABLE execution_records ADD COLUMN execution_stats TEXT")
-            .await
-            .ok(); // 忽略错误，因为字段可能已存在
-
-        // 添加 resume_message 字段的迁移（向后兼容）
-        self.exec("ALTER TABLE execution_records ADD COLUMN resume_message TEXT")
-            .await
-            .ok();
-
-        // 添加 hook 触发起源字段（向后兼容）—— 用于在目标 todo 的执行记录里
-        // 回显"被 #X 标题 的 '触发时机' hook 触发"，避免列表里 hook 触发记录
-        // 与手动/cron 触发无法区分。
-        self.exec("ALTER TABLE execution_records ADD COLUMN source_todo_id INTEGER")
-            .await
-            .ok();
-        self.exec("ALTER TABLE execution_records ADD COLUMN source_todo_title TEXT")
-            .await
-            .ok();
-        self.exec("ALTER TABLE execution_records ADD COLUMN source_hook_id INTEGER")
-            .await
-            .ok();
-
-        // 添加 scheduler_timezone 字段的迁移（向后兼容）
-        self.exec("ALTER TABLE todos ADD COLUMN scheduler_timezone TEXT")
-            .await
-            .ok(); // 忽略错误，因为字段可能已存在
-
-        // 添加 hooks 字段的迁移（向后兼容）—— 内联 hook 列表存为 JSON 数组
-        self.exec("ALTER TABLE todos ADD COLUMN hooks TEXT")
-            .await
-            .ok(); // 忽略错误，因为字段可能已存在
-
-        // 添加 acceptance_criteria 字段的迁移（向后兼容）—— Todo 验收条件
-        self.exec("ALTER TABLE todos ADD COLUMN acceptance_criteria TEXT")
-            .await
-            .ok();
-
-        // 添加 rating 字段的迁移（向后兼容）—— 执行记录评分
-        self.exec("ALTER TABLE execution_records ADD COLUMN rating INTEGER")
-            .await
-            .ok();
-
-        // ===== 自动评审（auto-review）字段 =====
-        // todos.todo_type: 0=normal, 1=reviewer_template(系统专用), 2=review_instance(评审实例)
-        self.exec("ALTER TABLE todos ADD COLUMN todo_type INTEGER DEFAULT 0")
-            .await
-            .ok();
-        // todos.parent_todo_id: review_instance 关联到被评审的原 todo
-        self.exec("ALTER TABLE todos ADD COLUMN parent_todo_id INTEGER")
-            .await
-            .ok();
-        // todos.auto_review_enabled: 原 todo 是否在完成后自动 spawn 评审 (默认开)
-        self.exec("ALTER TABLE todos ADD COLUMN auto_review_enabled INTEGER DEFAULT 1")
-            .await
-            .ok();
-        // execution_records.source_execution_record_id: 评审记录精确回填到"原那条"执行记录
-        self.exec("ALTER TABLE execution_records ADD COLUMN source_execution_record_id INTEGER")
-            .await
-            .ok();
-        // execution_records.last_review_status: pending/success/failed/interrupted/skipped
-        self.exec("ALTER TABLE execution_records ADD COLUMN last_review_status TEXT")
-            .await
-            .ok();
-        // execution_records.last_reviewed_at: 最近一次评审 spawn 时间
-        self.exec("ALTER TABLE execution_records ADD COLUMN last_reviewed_at TEXT")
-            .await
-            .ok();
-
-        // 索引: 加速"按 parent_todo_id 查评审实例"
-        self.exec("CREATE INDEX IF NOT EXISTS idx_todos_parent_todo_id ON todos(parent_todo_id)")
-            .await
-            .ok();
-        self.exec("CREATE INDEX IF NOT EXISTS idx_todos_todo_type ON todos(todo_type)")
-            .await
-            .ok();
-        self.exec("CREATE INDEX IF NOT EXISTS idx_execution_records_source_record_id ON execution_records(source_execution_record_id)")
-            .await
-            .ok();
-
-        // 一次性迁移：旧 todos.rating 数据合并到对应 todo 的最新一条 execution_records.rating
-        // 然后 DROP COLUMN todos.rating（评分只属于执行结果）
-        // 失败仅 warn，不阻塞启动（与同位置的其他迁移策略一致）。
+        // 下面是需要在 DDL 之上做"数据迁移"的工作,各自有幂等性检查,
+        // 失败仅 warn,不阻塞启动(与原 init_tables 行为一致)。
         if let Err(e) = self.migrate_todo_rating_to_execution_records().await {
             tracing::warn!("Failed to migrate todos.rating -> execution_records.rating: {}", e);
         }
-
-        // 迁移：将 execution_records.logs 旧字段数据转移到 execution_logs 表，并删除旧字段
-        self.migrate_logs_to_execution_logs().await
+        self.migrate_logs_to_execution_logs()
+            .await
             .unwrap_or_else(|e| tracing::warn!("Failed to migrate logs column: {}", e));
-
-        // Skill invocations tracking table
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS skill_invocations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                skill_name TEXT NOT NULL,
-                executor TEXT NOT NULL,
-                todo_id INTEGER,
-                status TEXT DEFAULT 'invoked',
-                duration_ms INTEGER,
-                invoked_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc')),
-                FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
-            )",
-        )
-        .await?;
-
-        // --- Indexes for frequently-filtered columns ---
-        self.exec("CREATE INDEX IF NOT EXISTS idx_todos_deleted_at ON todos(deleted_at)")
-            .await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_todos_status ON todos(status)")
-            .await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_todos_task_id ON todos(task_id)")
-            .await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_execution_records_todo_id ON execution_records(todo_id)").await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_execution_records_task_id ON execution_records(task_id)").await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_execution_records_pid ON execution_records(pid)")
-            .await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_execution_records_session_id ON execution_records(session_id)").await?;
-        self.exec(
-            "CREATE INDEX IF NOT EXISTS idx_execution_records_status ON execution_records(status)",
-        )
-        .await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_todo_tags_todo_id ON todo_tags(todo_id)")
-            .await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_skill_invocations_skill_name ON skill_invocations(skill_name)").await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_skill_invocations_executor ON skill_invocations(executor)").await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_skill_invocations_todo_id ON skill_invocations(todo_id)").await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_execution_records_started_at ON execution_records(started_at)").await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_execution_records_executor ON execution_records(executor)").await?;
-        self.exec(
-            "CREATE INDEX IF NOT EXISTS idx_execution_records_model ON execution_records(model)",
-        )
-        .await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_execution_records_todo_finished ON execution_records(todo_id, finished_at DESC)").await?;
-
-        // Trigger: fill created_at with UTC time on INSERT if not set
-        self.exec(
-            "CREATE TRIGGER IF NOT EXISTS set_todos_created_at_utc AFTER INSERT ON todos
-             WHEN new.created_at IS NULL OR new.created_at = ''
-             BEGIN
-                 UPDATE todos SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-             END",
-        )
-        .await?;
-
-        // Use BEFORE UPDATE trigger so that if the application already sets updated_at,
-        // the trigger doesn't overwrite it with the wrong timezone. Only auto-fill when
-        // the value is NULL or empty.
-        self.exec(
-            "CREATE TRIGGER IF NOT EXISTS set_todos_updated_at_utc BEFORE UPDATE OF updated_at ON todos
-             WHEN new.updated_at IS NULL OR new.updated_at = ''
-             BEGIN
-                 UPDATE todos SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-             END",
-        )
-        .await?;
-
-        self.exec(
-            "CREATE TRIGGER IF NOT EXISTS set_tags_created_at_utc AFTER INSERT ON tags
-             WHEN new.created_at IS NULL OR new.created_at = ''
-             BEGIN
-                 UPDATE tags SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-             END",
-        )
-        .await?;
-
-        // Agent Bots table
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS agent_bots (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                bot_type TEXT NOT NULL,
-                bot_name TEXT NOT NULL,
-                app_id TEXT NOT NULL,
-                app_secret TEXT NOT NULL,
-                bot_open_id TEXT,
-                domain TEXT,
-                enabled INTEGER DEFAULT 1,
-                config TEXT DEFAULT '{}',
-                created_at TEXT,
-                updated_at TEXT
-            )",
-        )
-        .await?;
-
-        // Migrate: add config column if missing (existing databases)
-        let cols = self
-            .conn
-            .query_all(Statement::from_string(
-                DbBackend::Sqlite,
-                "PRAGMA table_info(agent_bots)".to_string(),
-            ))
-            .await
-            .unwrap_or_default();
-        let has_config = cols.iter().any(|row| {
-            row.try_get::<String>("", "name")
-                .map(|n| n == "config")
-                .unwrap_or(false)
-        });
-        if !has_config {
-            self.exec("ALTER TABLE agent_bots ADD COLUMN config TEXT DEFAULT '{}'")
-                .await?;
-        }
-
-        // Feishu Homes table
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS feishu_homes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                bot_id INTEGER NOT NULL,
-                user_open_id TEXT NOT NULL,
-                chat_id TEXT,
-                receive_id TEXT NOT NULL,
-                receive_id_type TEXT NOT NULL,
-                created_at TEXT,
-                updated_at TEXT,
-                FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE,
-                UNIQUE(bot_id, user_open_id)
-            )",
-        )
-        .await?;
-
-        // Feishu Messages table
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS feishu_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                bot_id INTEGER NOT NULL,
-                message_id TEXT NOT NULL UNIQUE,
-                chat_id TEXT NOT NULL,
-                chat_type TEXT NOT NULL,
-                sender_open_id TEXT NOT NULL,
-                sender_nickname TEXT,
-                sender_type TEXT,
-                content TEXT,
-                msg_type TEXT NOT NULL DEFAULT 'text',
-                is_mention INTEGER DEFAULT 0,
-                processed INTEGER DEFAULT 0,
-                is_history INTEGER DEFAULT 0,
-                fetch_time TEXT,
-                created_at TEXT,
-                FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE
-            )",
-        )
-        .await?;
-
-        // 添加 sender_nickname 字段的迁移（向后兼容）
-        self.exec("ALTER TABLE feishu_messages ADD COLUMN IF NOT EXISTS sender_nickname TEXT")
-            .await
-            .ok();
-
-        // 添加 sender_type 字段的迁移（向后兼容）
-        self.exec("ALTER TABLE feishu_messages ADD COLUMN IF NOT EXISTS sender_type TEXT")
-            .await
-            .ok();
-
-        // 添加 is_history 字段的迁移（向后兼容）
-        self.exec(
-            "ALTER TABLE feishu_messages ADD COLUMN IF NOT EXISTS is_history INTEGER DEFAULT 0",
-        )
-        .await
-        .ok();
-
-        // 添加 fetch_time 字段的迁移（向后兼容）
-        self.exec("ALTER TABLE feishu_messages ADD COLUMN IF NOT EXISTS fetch_time TEXT")
-            .await
-            .ok();
-
-        // 添加 processed_todo_id 字段的迁移（向后兼容）
-        // 注意：SQLite 3.39.0+ 支持 IF NOT EXISTS，但旧版本不支持此语法
-        // 先尝试带 IF NOT EXISTS 的版本，失败后再尝试不带 IF NOT EXISTS 的版本
-        let add_result = self
-            .exec("ALTER TABLE feishu_messages ADD COLUMN IF NOT EXISTS processed_todo_id INTEGER")
-            .await;
-        if add_result.is_err() {
-            // 尝试不带 IF NOT EXISTS 的版本（如果列已存在会报错，被 .ok() 忽略）
-            self.exec("ALTER TABLE feishu_messages ADD COLUMN processed_todo_id INTEGER")
-                .await
-                .ok();
-        }
-
-        // 添加 execution_record_id 字段的迁移
-        let add_exec_result = self
-            .exec(
-                "ALTER TABLE feishu_messages ADD COLUMN IF NOT EXISTS execution_record_id INTEGER",
-            )
-            .await;
-        if add_exec_result.is_err() {
-            self.exec("ALTER TABLE feishu_messages ADD COLUMN execution_record_id INTEGER")
-                .await
-                .ok();
-        }
-
-        // Feishu History Chats table
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS feishu_history_chats (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                bot_id INTEGER NOT NULL,
-                chat_id TEXT NOT NULL,
-                chat_name TEXT,
-                enabled INTEGER DEFAULT 1,
-                last_fetch_time TEXT,
-                polling_interval_secs INTEGER DEFAULT 60,
-                created_at TEXT,
-                FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE,
-                UNIQUE(bot_id, chat_id)
-            )",
-        )
-        .await?;
-
-        // Feishu Messages table indexes (created after table to ensure table exists)
-        self.exec("CREATE INDEX IF NOT EXISTS idx_feishu_messages_chat_id ON feishu_messages(chat_id)").await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_feishu_messages_created_at ON feishu_messages(created_at)").await?;
-
-        // Feishu Push Targets — one row per bot, p2p and group IDs as separate fields
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS feishu_push_targets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                bot_id INTEGER NOT NULL,
-                p2p_receive_id TEXT NOT NULL DEFAULT '',
-                group_chat_id TEXT NOT NULL DEFAULT '',
-                receive_id_type TEXT NOT NULL DEFAULT 'open_id',
-                push_level TEXT DEFAULT 'result_only',
-                p2p_response_enabled INTEGER DEFAULT 1,
-                group_response_enabled INTEGER DEFAULT 1,
-                created_at TEXT,
-                updated_at TEXT,
-                FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE
-            )",
-        )
-        .await?;
-
-        // feishu_response_config 表（响应开关独立配置）
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS feishu_response_config (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                bot_id INTEGER NOT NULL,
-                target_type TEXT NOT NULL,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                debounce_secs INTEGER DEFAULT 20,
-                created_at TEXT,
-                updated_at TEXT,
-                FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE,
-                UNIQUE(bot_id, target_type)
-            )",
-        )
-        .await?;
-
-        // Migrate: add debounce_secs column if missing (for existing tables created before this column)
-        let has_debounce: i64 = self.conn
-            .query_one(Statement::from_string(
-                sea_orm::DatabaseBackend::Sqlite,
-                "SELECT COUNT(*) FROM pragma_table_info('feishu_response_config') WHERE name='debounce_secs'",
-            ))
-            .await?
-            .map(|r| r.try_get::<i64>("", "COUNT(*)").unwrap_or(0))
-            .unwrap_or(0);
-        if has_debounce == 0 {
-            self.exec(
-                "ALTER TABLE feishu_response_config ADD COLUMN debounce_secs INTEGER DEFAULT 20",
-            )
-            .await?;
-        }
-
-        // feishu_group_whitelist 表（群聊响应白名单）
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS feishu_group_whitelist (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                bot_id INTEGER NOT NULL,
-                sender_open_id TEXT NOT NULL,
-                sender_name TEXT,
-                created_at TEXT,
-                FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE,
-                UNIQUE(bot_id, sender_open_id)
-            )",
-        )
-        .await?;
-
-        // 飞书项目绑定表 — 将飞书聊天会话绑定到项目目录
-        // - 活跃绑定（chat_id != '__pending__'）通过 partial unique index 保证 (bot_id, chat_id) 唯一
-        // - status 默认 'idle'，执行任务时更新为 'running'（执行完成后清理脚本重置为 idle）
-        // - session_id：Claude Code 的会话 ID，首次执行时填充，resume 时保持不变
-        // - latest_record_id：最近一次 execution_record.id，用于判断是否可 resume
-        // - chat_id 特殊值 "__pending__"：Web UI 创建的待绑定记录，等待飞书侧 /bind 补齐
-        // - created_at/updated_at 为 NOT NULL，业务层写入（非触发器）
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS feishu_project_bindings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                bot_id INTEGER NOT NULL,
-                chat_id TEXT NOT NULL,
-                chat_type TEXT NOT NULL,
-                project_dir_id INTEGER NOT NULL,
-                todo_id INTEGER NOT NULL,
-                session_id TEXT,
-                latest_record_id INTEGER,
-                status TEXT NOT NULL DEFAULT 'idle',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )",
-        )
-        .await?;
-        // 添加 enabled 字段（支持禁用而非删除绑定）
-        self.exec("ALTER TABLE feishu_project_bindings ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
-            .await
-            .ok();
-        // Partial unique index: active bindings (non-pending) must be unique per (bot_id, chat_id)
-        // Pending bindings (chat_id='__pending__') excluded so one bot can have multiple pending
-        self.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_feishu_bindings_active ON feishu_project_bindings(bot_id, chat_id) WHERE chat_id != '__pending__' AND enabled = 1")
-            .await?;
-        // Index for latest_record_id lookups (hot path in resume routing & cleanup)
-        self.exec("CREATE INDEX IF NOT EXISTS idx_feishu_bindings_record_id ON feishu_project_bindings(latest_record_id)")
-            .await?;
-        // Index for bot_id lookups in /list and cleanup
-        self.exec("CREATE INDEX IF NOT EXISTS idx_feishu_bindings_bot_id ON feishu_project_bindings(bot_id)")
-            .await?;
-
-        // Executors table (executor config moved from config.yaml to database)
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS executors (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                path TEXT NOT NULL DEFAULT '',
-                enabled INTEGER NOT NULL DEFAULT 1,
-                display_name TEXT NOT NULL DEFAULT '',
-                session_dir TEXT NOT NULL DEFAULT '',
-                created_at TEXT,
-                updated_at TEXT
-            )",
-        )
-        .await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_executors_name ON executors(name)")
-            .await?;
-
-        // Migration: add session_dir column if missing (existing databases)
-        let _ = self
-            .exec("ALTER TABLE executors ADD COLUMN session_dir TEXT NOT NULL DEFAULT ''")
-            .await;
-
-        // Project directories table
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS project_directories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                path TEXT NOT NULL UNIQUE,
-                name TEXT,
-                created_at TEXT,
-                updated_at TEXT
-            )",
-        )
-        .await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_project_directories_path ON project_directories(path)")
-            .await?;
-
-        // Project directories timestamps triggers
-        self.exec(
-            "CREATE TRIGGER IF NOT EXISTS set_project_directories_created_at_utc AFTER INSERT ON project_directories
-             WHEN new.created_at IS NULL OR new.created_at = ''
-             BEGIN
-                 UPDATE project_directories SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-             END",
-        )
-        .await?;
-
-        // Todo templates table
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS todo_templates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                prompt TEXT,
-                category TEXT NOT NULL DEFAULT '',
-                sort_order INTEGER,
-                is_system INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT,
-                updated_at TEXT
-            )",
-        )
-        .await?;
-
-        // Migration: add is_system column if missing (existing databases)
-        let has_is_system: i64 = self.conn
-            .query_one(Statement::from_string(
-                sea_orm::DatabaseBackend::Sqlite,
-                "SELECT COUNT(*) FROM pragma_table_info('todo_templates') WHERE name='is_system'".to_string(),
-            ))
-            .await?
-            .map(|r| r.try_get::<i64>("", "COUNT(*)").unwrap_or(0))
-            .unwrap_or(0);
-        if has_is_system == 0 {
-            self.exec("ALTER TABLE todo_templates ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0")
-                .await?;
-        }
-
-        // Migration: add source_url and last_sync_at columns if missing (custom template subscription)
-        let has_source_url: i64 = self.conn
-            .query_one(Statement::from_string(
-                sea_orm::DatabaseBackend::Sqlite,
-                "SELECT COUNT(*) FROM pragma_table_info('todo_templates') WHERE name='source_url'".to_string(),
-            ))
-            .await?
-            .map(|r| r.try_get::<i64>("", "COUNT(*)").unwrap_or(0))
-            .unwrap_or(0);
-        if has_source_url == 0 {
-            self.exec("ALTER TABLE todo_templates ADD COLUMN source_url TEXT")
-                .await?;
-        }
-
-        let has_last_sync_at: i64 = self.conn
-            .query_one(Statement::from_string(
-                sea_orm::DatabaseBackend::Sqlite,
-                "SELECT COUNT(*) FROM pragma_table_info('todo_templates') WHERE name='last_sync_at'".to_string(),
-            ))
-            .await?
-            .map(|r| r.try_get::<i64>("", "COUNT(*)").unwrap_or(0))
-            .unwrap_or(0);
-        if has_last_sync_at == 0 {
-            self.exec("ALTER TABLE todo_templates ADD COLUMN last_sync_at TEXT")
-                .await?;
-        }
-
-        // Todo templates timestamps triggers
-        self.exec(
-            "CREATE TRIGGER IF NOT EXISTS set_todo_templates_created_at_utc AFTER INSERT ON todo_templates
-             WHEN new.created_at IS NULL OR new.created_at = ''
-             BEGIN
-                 UPDATE todo_templates SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-             END",
-        )
-        .await?;
-
-        self.exec(
-            "CREATE TRIGGER IF NOT EXISTS set_project_directories_updated_at_utc BEFORE UPDATE ON project_directories
-             WHEN new.updated_at IS NULL OR new.updated_at = ''
-             BEGIN
-                 SELECT raise(IGNORE);
-             END",
-        )
-        .await?;
-
-        // Executors timestamps triggers
-        self.exec(
-            "CREATE TRIGGER IF NOT EXISTS set_executors_created_at_utc AFTER INSERT ON executors
-             WHEN new.created_at IS NULL OR new.created_at = ''
-             BEGIN
-                 UPDATE executors SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-             END",
-        )
-        .await?;
-
-        self.exec(
-            "CREATE TRIGGER IF NOT EXISTS set_executors_updated_at_utc BEFORE UPDATE ON executors
-             WHEN new.updated_at IS NULL OR new.updated_at = ''
-             BEGIN
-                 SELECT raise(IGNORE);
-             END",
-        )
-        .await?;
-
-        // Webhooks table
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS webhooks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                default_todo_id INTEGER,
-                created_at TEXT,
-                updated_at TEXT
-            )",
-        )
-        .await?;
-
-        // Webhooks timestamps triggers
-        self.exec(
-            "CREATE TRIGGER IF NOT EXISTS set_webhooks_created_at_utc AFTER INSERT ON webhooks
-             WHEN new.created_at IS NULL OR new.created_at = ''
-             BEGIN
-                 UPDATE webhooks SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-             END",
-        )
-        .await?;
-
-        self.exec(
-            "CREATE TRIGGER IF NOT EXISTS set_webhooks_updated_at_utc BEFORE UPDATE ON webhooks
-             WHEN new.updated_at IS NULL OR new.updated_at = ''
-             BEGIN
-                 SELECT raise(IGNORE);
-             END",
-        )
-        .await?;
-
-        // Webhook records table
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS webhook_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                webhook_id INTEGER,
-                method TEXT NOT NULL,
-                path TEXT NOT NULL,
-                query_params TEXT,
-                body TEXT,
-                content_type TEXT,
-                triggered_todo_id INTEGER,
-                status_code INTEGER,
-                response_body TEXT,
-                created_at TEXT
-            )",
-        )
-        .await?;
-
-        // Indexes for webhook_records (improve N+1 query performance)
-        self.exec("CREATE INDEX IF NOT EXISTS idx_webhook_records_webhook_id ON webhook_records(webhook_id)").await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_webhook_records_triggered_todo_id ON webhook_records(triggered_todo_id)").await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_webhook_records_created_at ON webhook_records(created_at)").await?;
-
-        // Webhook records timestamps triggers
-        self.exec(
-            "CREATE TRIGGER IF NOT EXISTS set_webhook_records_created_at_utc AFTER INSERT ON webhook_records
-             WHEN new.created_at IS NULL OR new.created_at = ''
-             BEGIN
-                 UPDATE webhook_records SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-             END",
-        )
-        .await?;
-
-        // ===== Hook System (inline on todos.hooks, no separate tables) =====
-        // Usage daily stats table (stores aggregated usage statistics)
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS usage_daily_stats (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                project_path TEXT,
-                session_id TEXT,
-                input_tokens INTEGER NOT NULL DEFAULT 0,
-                output_tokens INTEGER NOT NULL DEFAULT 0,
-                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-                extra_total_tokens INTEGER NOT NULL DEFAULT 0,
-                total_cost REAL NOT NULL DEFAULT 0.0,
-                credits REAL,
-                message_count INTEGER,
-                models_used TEXT NOT NULL DEFAULT '[]',
-                project TEXT,
-                versions TEXT,
-                last_activity TEXT,
-                stats_type TEXT NOT NULL DEFAULT 'daily',
-                created_at TEXT
-            )",
-        )
-        .await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_usage_daily_stats_date ON usage_daily_stats(date)")
-            .await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_usage_daily_stats_stats_type ON usage_daily_stats(stats_type)")
-            .await?;
-
-        // Usage model breakdowns table (stores per-model breakdown for each daily stat)
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS usage_model_breakdowns (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                daily_stat_id INTEGER NOT NULL,
-                model_name TEXT NOT NULL,
-                input_tokens INTEGER NOT NULL DEFAULT 0,
-                output_tokens INTEGER NOT NULL DEFAULT 0,
-                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-                extra_total_tokens INTEGER NOT NULL DEFAULT 0,
-                cost REAL NOT NULL DEFAULT 0.0,
-                FOREIGN KEY (daily_stat_id) REFERENCES usage_daily_stats(id) ON DELETE CASCADE
-            )",
-        )
-        .await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_usage_model_breakdowns_daily_stat_id ON usage_model_breakdowns(daily_stat_id)")
-            .await?;
-
-        // Usage stats timestamps triggers
-        self.exec(
-            "CREATE TRIGGER IF NOT EXISTS set_usage_daily_stats_created_at_utc AFTER INSERT ON usage_daily_stats
-             WHEN new.created_at IS NULL OR new.created_at = ''
-             BEGIN
-                 UPDATE usage_daily_stats SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-             END",
-        )
-        .await?;
-
-        // Usage executor daily stats table (stores per-executor daily token usage)
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS usage_executor_daily_stats (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                executor TEXT NOT NULL,
-                input_tokens INTEGER NOT NULL DEFAULT 0,
-                output_tokens INTEGER NOT NULL DEFAULT 0,
-                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-                extra_total_tokens INTEGER NOT NULL DEFAULT 0,
-                total_cost REAL NOT NULL DEFAULT 0.0,
-                credits REAL,
-                message_count INTEGER,
-                model TEXT,
-                execution_count INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT,
-                UNIQUE(date, executor)
-            )",
-        )
-        .await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_usage_executor_daily_stats_date ON usage_executor_daily_stats(date)")
-            .await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_usage_executor_daily_stats_executor ON usage_executor_daily_stats(executor)")
-            .await?;
-
-        // Usage executor daily stats timestamps triggers
-        self.exec(
-            "CREATE TRIGGER IF NOT EXISTS set_usage_executor_daily_stats_created_at_utc AFTER INSERT ON usage_executor_daily_stats
-             WHEN new.created_at IS NULL OR new.created_at = ''
-             BEGIN
-                 UPDATE usage_executor_daily_stats SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-             END",
-        )
-        .await?;
-
-        // 同步记录表
-        self.exec(
-            "CREATE TABLE IF NOT EXISTS sync_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                direction TEXT NOT NULL,
-                conflict_mode TEXT NOT NULL,
-                status TEXT NOT NULL,
-                data_type TEXT NOT NULL,
-                details TEXT,
-                error_message TEXT,
-                created_at TEXT
-            )",
-        )
-        .await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_sync_records_created_at ON sync_records(created_at DESC)")
-            .await?;
-
-        // 迁移：为飞书子表添加 ON DELETE CASCADE 外键约束
         self.migrate_feishu_fk_cascade().await?;
 
         Ok(())
     }
+
+    /// 返回当前已应用的 schema 版本号(用于 /api/schema/version 等观测端点)
+    pub async fn current_schema_version(&self) -> i64 {
+        migrations::current_schema_version(&self.conn).await
+    }
+
 
     // ===== Usage Stats methods =====
 
@@ -2545,5 +1725,111 @@ mod tests {
         let remaining = db.get_webhook_records(10, 0).await.unwrap();
         assert_eq!(remaining.len(), 1, "only recent record should remain");
         assert_eq!(remaining[0].path, "/recent");
+    }
+
+    // ===== Schema migration tests (issue #498) =====
+
+    /// 新建库后,`current_schema_version()` 应为 1 且所有 user 表都已创建
+    #[tokio::test]
+    async fn test_migrations_fresh_db_lands_on_v1() {
+        let db = setup_db().await;
+        let v = db.current_schema_version().await;
+        assert_eq!(v, 1, "fresh :memory: DB should report schema version 1");
+
+        // 抽样验证关键表已建好(完整覆盖见其它既有测试)
+        let count: i64 = db
+            .conn
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) FROM todos".to_string(),
+            ))
+            .await
+            .unwrap()
+            .and_then(|r| r.try_get_by_index::<i64>(0).ok())
+            .unwrap_or(0);
+        assert_eq!(count, 0, "todos table should exist and be empty");
+    }
+
+    /// schema_version 已是最新时,run_migrations 应当是空操作
+    /// (issue #498 的核心收益:避免每次启动执行上百条 DDL)
+    #[tokio::test]
+    async fn test_migrations_idempotent_noop_when_up_to_date() {
+        let db = setup_db().await;
+        // 第一次启动后 schema_version 已经被打点成 1
+        let first = db.current_schema_version().await;
+        assert_eq!(first, 1);
+
+        // 模拟「再次启动」:再跑一次 run_migrations,应当直接跳过
+        // (函数本身是 private,通过 init_tables 间接覆盖;这里直接调它验证)
+        let second = migrations::run_migrations(&db).await.unwrap();
+        assert_eq!(second, 1, "version should stay at 1 on re-run");
+    }
+
+    /// 模拟「从老版本升级上来的库」:有 user 表但没有 schema_version 表
+    /// 此时 run_migrations 应当把 DDL 跑一遍(全是 IF NOT EXISTS 的 no-op),
+    /// 然后把 schema_version 标记为最新,不再重复跑
+    #[tokio::test]
+    async fn test_migrations_legacy_db_promoted_to_current() {
+        // 1. 创建一个正常库,让它跑完初始迁移,标记 v1
+        let db = setup_db().await;
+        let v0 = db.current_schema_version().await;
+        assert_eq!(v0, 1, "setup_db should have landed on v1");
+
+        // 2. 手动写入一张"老表" + DROP 掉 schema_version 表,
+        //    模拟"老版本的库,只有 user 表,没有 schema_version 元信息"
+        db.exec("CREATE TABLE legacy_marker (id INTEGER PRIMARY KEY, note TEXT)")
+            .await
+            .unwrap();
+        db.exec("DELETE FROM schema_version")
+            .await
+            .unwrap();
+        db.exec("DROP TABLE schema_version").await.unwrap();
+
+        // 3. 重新读 version 应当是 0
+        let v_before = migrations::current_schema_version(&db.conn).await;
+        assert_eq!(v_before, 0, "dropped schema_version should read as 0");
+
+        // 4. 跑迁移:应当把 DDL 跑一次(IF NOT EXISTS 全部 no-op),然后标记 v1
+        let v_after = migrations::run_migrations(&db).await.unwrap();
+        assert_eq!(v_after, 1, "legacy DB should be promoted to v1");
+
+        // 5. 验证老表仍然存在(说明迁移没把表重建/丢失)
+        let legacy_rows: i64 = db
+            .conn
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) FROM legacy_marker".to_string(),
+            ))
+            .await
+            .unwrap()
+            .and_then(|r| r.try_get_by_index::<i64>(0).ok())
+            .unwrap_or(-1);
+        assert_eq!(legacy_rows, 0, "legacy table should survive migration");
+
+        // 6. 关键 user 表也已就位(IF NOT EXISTS 不会破坏现有数据)
+        let todos_count: i64 = db
+            .conn
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) FROM todos".to_string(),
+            ))
+            .await
+            .unwrap()
+            .and_then(|r| r.try_get_by_index::<i64>(0).ok())
+            .unwrap_or(-1);
+        assert_eq!(todos_count, 0, "todos table should now exist");
+
+        // 7. schema_version 表中应正好一行,version=1
+        let recorded_count: i64 = db
+            .conn
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) FROM schema_version".to_string(),
+            ))
+            .await
+            .unwrap()
+            .and_then(|r| r.try_get_by_index::<i64>(0).ok())
+            .unwrap_or(-1);
+        assert_eq!(recorded_count, 1, "schema_version should have one row");
     }
 }
