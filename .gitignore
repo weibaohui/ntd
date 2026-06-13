@@ -63,7 +63,7 @@ frontend/node_modules
 .npmrc
 
 # Mimocode
-.mimocode/proptest-regressions/
+.mimocode/
 
 # proptest regression artifacts (issue #514 引入)
 # proptest 会在测试失败时保存最小反例到 `*/proptest-regressions/`，

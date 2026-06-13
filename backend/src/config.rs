@@ -338,6 +338,15 @@ impl Config {
         }
     }
 
+    /// 把 `path` 规范化为单条绝对路径字符串。
+    ///
+    /// 规则：
+    /// - 以 `~` 开头 → 展开为 `<home>/<rest>`。**任意数量的前导 `~` 等价于单个 `~`**（POSIX shell
+    ///   风格）：例如 `~~/foo`、`~~~/foo` 都会展开为 `<home>/foo`。这是由
+    ///   `trim_start_matches('~')` 一次性剥离全部前导 `~` 实现的，是已锁定的不变量
+    ///   （proptest `tilde_path_expands_to_home` 覆盖了 `0..3` 个额外 `~`）。
+    /// - 非空、非绝对路径、含分隔符 → 视为相对于 home 的路径，`./` 前缀会被剥离。
+    /// - 其它情况（绝对路径、空字符串）原样返回。
     fn normalize_single_path(path: &str) -> String {
         if path.starts_with('~') {
             if let Some(home) = dirs::home_dir() {

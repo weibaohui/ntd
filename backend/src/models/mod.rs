@@ -1349,5 +1349,34 @@ mod replace_placeholders_proptests {
             let twice = replace_placeholders(&once, &params);
             prop_assert_eq!(once, twice);
         }
+
+        /// 锁定"value 中含 `{{...}}` 也会被替换"的不变量。
+        ///
+        /// `replace_placeholders` 在循环中对每个 (k,v) 都执行一次
+        /// `result.replace(&placeholder, value)`,因此如果某个 value 本身包含
+        /// `{{otherkey}}`,那次替换**是否发生**取决于 HashMap 迭代顺序——这是一个
+        /// 隐性 footgun。本测试通过把两个 key 都放进 params 且 value 里嵌入对方的
+        /// 占位符,验证：最终结果里 `{{outer}}` 与 `{{inner}}` 都不再出现（无论
+        /// 迭代顺序如何,循环会扫两遍）。
+        ///
+        /// 如果未来重构把循环改成"先把所有 placeholder 收集起来再一次性替换",
+        /// 本测试会失败并提示 author 这是行为变更。
+        #[test]
+        fn value_containing_placeholder_is_fully_replaced(
+            outer in "[a-zA-Z_][a-zA-Z0-9_]{0,8}",
+            inner in "[a-zA-Z_][a-zA-Z0-9_]{0,8}",
+        ) {
+            prop_assume!(outer != inner);
+            let mut params = std::collections::HashMap::new();
+            // outer's value contains {{inner}}; inner's value is plain text.
+            params.insert(outer.clone(), format!("prefix-{{{{{}}}}}-suffix", inner));
+            params.insert(inner.clone(), "REPLACED".to_string());
+            let text = format!("begin {{{{{}}}}}-mid-{{{{{}}}}}-end", outer, inner);
+            let result = replace_placeholders(&text, &params);
+            // outer 占位符应被替换（其 value 里的 {{inner}} 也会被第二轮吃掉）
+            prop_assert!(!result.contains(&format!("{{{{{}}}}}", outer)));
+            // inner 占位符应被替换（无论 HashMap 迭代顺序如何,循环两轮都覆盖）
+            prop_assert!(!result.contains(&format!("{{{{{}}}}}", inner)));
+        }
     }
 }
