@@ -497,21 +497,55 @@ where
 /// - `manual` / `cargo` / `apt`: 委托给 `UpdateSource::upgrade()`，由用户自行完成安装，
 ///   daemon 重部署仅对 npm 方式适用（其他方式不涉及可执行文件替换）
 async fn version_upgrade_handler(
+    State(state): State<AppState>,
     ResponseDone(redeploy_signal): ResponseDone,
 ) -> impl IntoResponse {
-    // 从配置中获取更新源信息（包含包名、安装方式等）
-    let source = crate::updater::UpdateSource::from_config();
+    // 从注入的 AppState 读取内存中的配置，避免重复磁盘 I/O。
+    // 使用 RwLock 的 read() 获取共享只读锁，因为这里只需查询 update 配置段，不做写入。
+    let cfg = state.config.read().await;
+    let source = crate::updater::UpdateSource::from_config_ref(&cfg);
+    // 显式释放读锁，使后续操作（如 npm 命令执行）不会在持有锁时阻塞其他线程。
+    drop(cfg);
+
+    // 将 InstallMethod 枚举映射为稳定的小写字符串，用于 API 响应中的 method 字段。
+    // 避免泄漏 Debug 格式（如 "InstallMethod::Npm"），确保前端能根据固定字符串判断安装方式。
+    let method_str = match source.method {
+        crate::updater::InstallMethod::Npm => "npm",
+        crate::updater::InstallMethod::Cargo => "cargo",
+        crate::updater::InstallMethod::Apt => "apt",
+        crate::updater::InstallMethod::Manual => "manual",
+    };
 
     // 非 npm 安装方式（manual/cargo/apt）由用户手动升级，
     // 直接委托给 UpdateSource::upgrade() 处理，不再走 npm 硬编码路径。
+    // 这些方式的升级不会替换当前可执行文件，因此不触发 daemon 自动重部署。
     if !matches!(source.method, crate::updater::InstallMethod::Npm) {
+        // 为非 npm 方式生成对应的提示消息，引导用户完成手动操作步骤。
+        let message = match source.method {
+            crate::updater::InstallMethod::Cargo => {
+                format!("请手动执行: cargo install {}@latest", source.package_name())
+            }
+            crate::updater::InstallMethod::Apt => {
+                "请手动执行: sudo apt update && sudo apt upgrade ntd".to_string()
+            }
+            crate::updater::InstallMethod::Manual => {
+                "请前往 https://github.com/weibaohui/nothing-todo/releases 下载最新版本".to_string()
+            }
+            _ => "升级完成（非 npm 安装方式，无需自动重部署 daemon）".to_string(),
+        };
+
         match source.upgrade().await {
             Ok(_) => {
+                // 统一响应格式：所有分支返回相同的字段名和类型，方便前端解析。
+                // upgraded: 是否已完成升级操作（对非 npm 方式，此处为 true 表示提示已输出）
+                // restarted: 是否触发了 daemon 自动重部署（非 npm 方式始终为 false）
+                // method: 安装方式的稳定字符串标识
+                // message: 用户可读的操作提示或结果说明
                 return ApiResponse::ok(serde_json::json!({
                     "upgraded": true,
                     "restarted": false,
-                    "method": format!("{:?}", source.method),
-                    "message": "升级完成（手动安装方式，无需自动重部署 daemon）"
+                    "method": method_str,
+                    "message": message
                 }));
             }
             Err(e) => {
@@ -622,12 +656,21 @@ async fn version_upgrade_handler(
         }
     });
 
-    // 立即返回成功响应，daemon 重部署在后台子线程中执行
+    // 立即返回成功响应，daemon 重部署在后台子线程中执行。
+    // 统一响应格式：与非 npm 分支保持一致的字段名和语义，
+    // 确保前端能用统一逻辑解析所有安装方式的响应。
+    // - upgraded: 是否已完成 npm 升级
+    // - restarted: 是否已触发后台 daemon 重部署
+    // - method: 安装方式（固定为 "npm"）
+    // - message: 包含 npm 输出和重部署提示，供前端展示给用户
     ApiResponse::ok(serde_json::json!({
         "upgraded": true,
         "restarted": true,
-        "npmOutput": npm_stdout,
-        "restartMessage": "npm 升级成功，正在后台重新部署服务，请稍后刷新页面"
+        "method": method_str,
+        "message": format!(
+            "npm 升级成功，正在后台重新部署服务，请稍后刷新页面\n\nnpm 输出:\n{}",
+            npm_stdout
+        )
     }))
 }
 
