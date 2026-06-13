@@ -41,9 +41,10 @@ pub async fn update_scheduler(
             // `From<SchedulerError> for AppError` 自动映射:
             // InvalidCron / InvalidTimezone → 400,其它 → 500。
             //
-            // 之前实现是把任何 error 都强行塞成 500("Failed to upsert..."),
-            // 用户的 cron 写错了也变成服务器错误,前端无法做差异化提示。
-            // 这里保留 warn 日志方便排查,但 HTTP 状态码交给 From 决定。
+            // PR #544 review HIGH #1 修复: 旧实现无差别 `warn!`,导致 500
+            // 类错误(Database / Internal)被 `RUST_LOG=error` 过滤器漏掉。
+            // 现在按 variant 分级: 用户输入错 → warn(预期,运维不需告警),
+            // 内部错 → error(需进入 Sentry / Loki error 告警)。
             if let Err(e) = state
                 .scheduler
                 .upsert_task(
@@ -54,10 +55,30 @@ pub async fn update_scheduler(
                 )
                 .await
             {
-                tracing::warn!(
-                    "Failed to upsert scheduled task for todo {}: {}",
-                    id, e
-                );
+                use crate::scheduler::SchedulerError;
+                // PR #544 review HIGH #1 修复: 旧实现无差别 `warn!`,导致 500
+                // 类错误(Database / Internal)被 `RUST_LOG=error` 过滤器漏掉。
+                // 现在按 variant 分级: 用户输入错 → warn(预期,运维不需告警),
+                // 内部错 → error(需进入 Sentry / Loki error 告警)。
+                //
+                // 用 match 调对应 macro 而不是 `tracing::event!(level, ...)` —
+                // `event!` 要求 level 是 const token 而非 runtime value(E0435)。
+                match &e {
+                    SchedulerError::InvalidCron(_)
+                    | SchedulerError::InvalidTimezone(_) => {
+                        tracing::warn!(
+                            "Failed to upsert scheduled task for todo {} (cron='{}', tz={:?}): {}",
+                            id, config, scheduler_timezone, e
+                        );
+                    }
+                    SchedulerError::Database(_)
+                    | SchedulerError::Internal(_) => {
+                        tracing::error!(
+                            "Failed to upsert scheduled task for todo {} (cron='{}', tz={:?}): {}",
+                            id, config, scheduler_timezone, e
+                        );
+                    }
+                }
                 return Err(AppError::from(e));
             }
             state

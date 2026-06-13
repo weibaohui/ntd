@@ -26,7 +26,13 @@ use crate::service_context::ServiceContext;
 pub enum SchedulerError {
     /// cron 表达式不合法(解析失败、字段数量不对、语法错误等)。
     /// handler 层应该把这种错误映射成 HTTP 400,而不是 500。
-    #[error("Invalid cron expression: {0}")]
+    ///
+    /// Display 只透传 payload（PR #544 review M1 修复）：之前用
+    /// `#[error("Invalid cron expression: {0}")]` 配合构造点
+    /// `format!("Invalid cron expression '{}' ...", ...)`，导致
+    /// "Invalid cron expression" 在响应体里出现两次。现在 payload 自己
+    /// 负责全部文案，Display 只加 `{}`，避免重复。
+    #[error("{0}")]
     InvalidCron(String),
 
     /// 时区字符串不合法(chrono_tz 解析失败)。
@@ -389,28 +395,24 @@ impl TodoScheduler {
         }
 
         // Convert cron expression to UTC if timezone is specified。
-        // 时区转换失败时我们只 warn 并 fallback 到原表达式 —— 这是
-        // 保持原行为,不阻断 upsert。但错误类型已经升级成 SchedulerError,
-        // 日志里能区分 InvalidTimezone vs InvalidCron vs Internal。
+        //
+        // PR #544 review CRITICAL #1 修复: 旧实现用 `match` + warn + fallback
+        // 到原 `cron_expr`,导致 `SchedulerError::InvalidTimezone` 在生产代码
+        // 永远不被构造、handler 的 400 映射是死代码。新实现用 `?` 让 typed
+        // error 直接传播,handler 会返回 400。
+        //
+        // 注: 用户的"错误时区静默 fallback 到 UTC"语义现在变成"错误时区返回
+        // 400 BadRequest"。issue #499 的核心诉求是"用户输入错必须 400",这个
+        // 改动让它真正成立。
         let cron_expr_utc = if let Some(ref tz) = timezone {
-            match convert_cron_to_utc(&cron_expr, tz) {
-                Ok(utc_expr) => {
-                    if utc_expr != cron_expr {
-                        info!(
-                            "Converted cron expression from '{}' ({})) to '{}' (UTC) for todo {}",
-                            cron_expr, tz, utc_expr, todo_id
-                        );
-                    }
-                    utc_expr
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to convert cron expression '{}' to timezone {}: {}. Using original.",
-                        cron_expr, tz, e
-                    );
-                    cron_expr.clone()
-                }
+            let utc_expr = convert_cron_to_utc(&cron_expr, tz)?;
+            if utc_expr != cron_expr {
+                info!(
+                    "Converted cron expression from '{}' ({})) to '{}' (UTC) for todo {}",
+                    cron_expr, tz, utc_expr, todo_id
+                );
             }
+            utc_expr
         } else {
             cron_expr.clone()
         };
@@ -751,6 +753,24 @@ mod scheduler_error_tests {
         let msg = format!("{}", err);
         assert!(msg.contains("Invalid cron expression"));
         assert!(msg.contains("not a cron"));
+    }
+
+    /// PR #544 review M1 regression guard: 之前的 `#[error("Invalid cron
+    /// expression: {0}")]` 配合构造点 `format!("Invalid cron expression '...'...")`
+    /// 导致 "Invalid cron expression" 出现两次 ("Invalid cron expression:
+    /// Invalid cron expression '0 0 9' ...")。现在 Display 只透传 payload,
+    /// payload 自己负责全部文案,所以 "Invalid cron expression" 只出现一次。
+    #[test]
+    fn test_invalid_cron_display_no_double_prefix() {
+        let err = SchedulerError::InvalidCron(
+            "Invalid cron expression '0 0 9' for todo 42. AI must convert natural language to valid cron format.".to_string()
+        );
+        let msg = format!("{}", err);
+        let count = msg.matches("Invalid cron expression").count();
+        assert_eq!(count, 1, "should appear exactly once, got msg: {msg}");
+        assert!(msg.contains("'0 0 9'"), "should echo expr: {msg}");
+        assert!(msg.contains("42"), "should include todo_id: {msg}");
+        assert!(msg.contains("AI must convert"), "should keep AI hint: {msg}");
     }
 
     /// Display 文本:InvalidTimezone 包含时区字符串。
