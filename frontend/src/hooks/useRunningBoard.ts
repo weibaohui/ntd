@@ -35,9 +35,10 @@ function classifyRecord(record: ExecutionRecord): RunningBoardColumn {
   if (record.status === 'failed') return 'failed';
   if (record.last_review_status === 'pending') return 'reviewing';
   if (record.last_review_status === 'success') return 'review_passed';
-  if (record.last_review_status === 'failed') return 'failed';
+  if (record.last_review_status === 'failed' || record.last_review_status === 'interrupted') return 'failed';
   if (record.status === 'success') return 'completed';
-  return 'completed';
+  // interrupted / skipped review + non-success status
+  return 'failed';
 }
 
 export function useRunningBoard(): RunningBoardState {
@@ -105,11 +106,16 @@ export function useAutoRefreshRunningBoard(refresh: () => Promise<void>): void {
   refreshRef.current = refresh;
 
   useEffect(() => {
-    const handleReviewStatusChanged = () => {
-      refreshRef.current();
-    };
+    const handleRefresh = () => { refreshRef.current(); };
+    const handleFinished = () => { setTimeout(() => refreshRef.current(), 1000); };
 
-    window.addEventListener('reviewStatusChanged', handleReviewStatusChanged);
-    return () => window.removeEventListener('reviewStatusChanged', handleReviewStatusChanged);
+    window.addEventListener('reviewStatusChanged', handleRefresh);
+    window.addEventListener('executionStarted', handleRefresh);
+    window.addEventListener('executionFinished', handleFinished);
+    return () => {
+      window.removeEventListener('reviewStatusChanged', handleRefresh);
+      window.removeEventListener('executionStarted', handleRefresh);
+      window.removeEventListener('executionFinished', handleFinished);
+    };
   }, []);
 }

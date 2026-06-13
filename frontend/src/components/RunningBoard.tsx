@@ -1,5 +1,5 @@
-import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { Tabs, Tag, Skeleton, Card, Pagination } from 'antd';
+import { useState, useMemo, useCallback, useRef } from 'react';
+import { Tabs, Tag, Skeleton, Card } from 'antd';
 import {
   ClockCircleOutlined,
   CheckCircleOutlined,
@@ -54,8 +54,7 @@ const COLUMN_ICONS: Record<RunningBoardColumn, React.ReactNode> = {
 /* ─── Scheduled Todo Card ─── */
 
 function ScheduledTodoCard({ todo, onSelectTodo }: { todo: ScheduledTodo; onSelectTodo?: (id: number) => void }) {
-  const handleClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleClick = useCallback(() => {
     onSelectTodo?.(todo.id);
   }, [todo.id, onSelectTodo]);
 
@@ -161,6 +160,7 @@ function RunningBoardColumnView({
   scheduledTodos,
   onSelectTodo,
   onCardClick,
+  getTodoTitle,
 }: {
   columnKey: RunningBoardColumn;
   label: string;
@@ -169,6 +169,7 @@ function RunningBoardColumnView({
   scheduledTodos: ScheduledTodo[];
   onSelectTodo?: (id: number) => void;
   onCardClick?: (record: ExecutionRecord) => void;
+  getTodoTitle?: (id: number) => string | undefined;
 }) {
   const count = records.length + scheduledTodos.length;
 
@@ -194,6 +195,7 @@ function RunningBoardColumnView({
               <ExecutionRecordCard
                 key={`record-${record.id}`}
                 record={record}
+                todoTitle={getTodoTitle?.(record.todo_id)}
                 onSelectTodo={onSelectTodo}
                 onCardClick={onCardClick}
               />
@@ -220,7 +222,7 @@ export function RunningBoard({ searchText, hours, selectedProject }: RunningBoar
   const [activeKey, setActiveKey] = useState<RunningBoardColumn>('running');
   const [drawerRecord, setDrawerRecord] = useState<ExecutionRecord | null>(null);
 
-  const { records, scheduledTodos, loading, total, page, limit, refresh, setPage } = useRunningBoard();
+  const { records, scheduledTodos, loading, refresh } = useRunningBoard();
   useAutoRefreshRunningBoard(refresh);
 
   const handleCardClick = useCallback((record: ExecutionRecord) => {
@@ -231,17 +233,8 @@ export function RunningBoard({ searchText, hours, selectedProject }: RunningBoar
     setDrawerRecord(null);
   }, []);
 
-  // Also refresh when WebSocket events come in
-  useEffect(() => {
-    const handleStarted = () => refresh();
-    const handleFinished = () => setTimeout(refresh, 1000);
-    window.addEventListener('executionStarted', handleStarted);
-    window.addEventListener('executionFinished', handleFinished);
-    return () => {
-      window.removeEventListener('executionStarted', handleStarted);
-      window.removeEventListener('executionFinished', handleFinished);
-    };
-  }, [refresh]);
+  // O(1) todo lookup map
+  const todoById = useMemo(() => new Map(state.todos.map(t => [t.id, t])), [state.todos]);
 
   // Apply filters from toolbar
   const filteredRecords = useMemo(() => {
@@ -249,10 +242,7 @@ export function RunningBoard({ searchText, hours, selectedProject }: RunningBoar
 
     // Project filter
     if (selectedProject) {
-      result = result.filter(r => {
-        const todo = state.todos.find(t => t.id === r.todo_id);
-        return todo?.workspace === selectedProject;
-      });
+      result = result.filter(r => todoById.get(r.todo_id)?.workspace === selectedProject);
     }
 
     // Time filter: only for completed/failed records
@@ -270,7 +260,7 @@ export function RunningBoard({ searchText, hours, selectedProject }: RunningBoar
     if (searchText?.trim()) {
       const q = searchText.toLowerCase();
       result = result.filter(r => {
-        const todo = state.todos.find(t => t.id === r.todo_id);
+        const todo = todoById.get(r.todo_id);
         return (
           (todo?.title?.toLowerCase().includes(q)) ||
           (todo?.prompt?.toLowerCase().includes(q)) ||
@@ -281,7 +271,7 @@ export function RunningBoard({ searchText, hours, selectedProject }: RunningBoar
     }
 
     return result;
-  }, [records, searchText, hours, selectedProject, state.todos]);
+  }, [records, searchText, hours, selectedProject, todoById]);
 
   const filteredScheduledTodos = useMemo(() => {
     let result = scheduledTodos;
@@ -316,19 +306,9 @@ export function RunningBoard({ searchText, hours, selectedProject }: RunningBoar
     selectTodo(todoId);
   }, [selectTodo]);
 
-  // Build todo title map from records
-  const todoTitleMap = useMemo(() => {
-    const map = new Map<number, string>();
-    // From scheduled todos
-    for (const t of scheduledTodos) {
-      map.set(t.id, t.title);
-    }
-    return map;
-  }, [scheduledTodos]);
-
   const getTodoTitle = useCallback((todoId: number): string | undefined => {
-    return todoTitleMap.get(todoId) || state.todos.find(t => t.id === todoId)?.title;
-  }, [todoTitleMap, state.todos]);
+    return todoById.get(todoId)?.title;
+  }, [todoById]);
 
   // Mobile tab items
   const mobileTabItems = RUNNING_BOARD_COLUMNS.map(col => {
@@ -448,6 +428,7 @@ export function RunningBoard({ searchText, hours, selectedProject }: RunningBoar
               scheduledTodos={grouped[col.key].scheduledTodos}
               onSelectTodo={handleSelectTodo}
               onCardClick={handleCardClick}
+              getTodoTitle={getTodoTitle}
             />
           ))}
         </div>
@@ -461,20 +442,6 @@ export function RunningBoard({ searchText, hours, selectedProject }: RunningBoar
             activeKey={activeKey}
             onChange={(key) => setActiveKey(key as RunningBoardColumn)}
             items={mobileTabItems}
-          />
-        </div>
-      )}
-
-      {/* Pagination */}
-      {total > limit && (
-        <div className="running-board-pagination">
-          <Pagination
-            current={page}
-            total={total}
-            pageSize={limit}
-            onChange={setPage}
-            size="small"
-            showSizeChanger={false}
           />
         </div>
       )}

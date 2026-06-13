@@ -1139,6 +1139,7 @@ pub async fn run_auto_review(
     let db_c = db.clone();
     let er_c = executor_registry.clone();
     let tx_c = tx.clone();
+    let tx_outer = tx.clone();
     let tm_c = task_manager.clone();
     let cfg_c = config.clone();
     let runtime = review_runtime();
@@ -1158,12 +1159,22 @@ pub async fn run_auto_review(
             let _ = db
                 .set_record_last_review_status(record_id, "failed")
                 .await;
+            let _ = tx_outer.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+                record_id,
+                todo_id,
+                review_status: "failed".to_string(),
+            });
         }
         Err(_) => {
             tracing::warn!("auto-review thread dropped reply for todo #{} record #{}", todo_id, record_id);
             let _ = db
                 .set_record_last_review_status(record_id, "failed")
                 .await;
+            let _ = tx_outer.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+                record_id,
+                todo_id,
+                review_status: "failed".to_string(),
+            });
         }
     }
 }
@@ -1185,6 +1196,9 @@ async fn run_auto_review_inner(
         .ok_or_else(|| format!("original todo #{} not found", todo_id))?;
     if original.todo_type != 0 || !original.auto_review_enabled {
         let _ = db.set_record_last_review_status(record_id, "skipped").await;
+        let _ = tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+            record_id, todo_id, review_status: "skipped".to_string(),
+        });
         return Ok(());
     }
     let record = db.get_execution_record(record_id).await
@@ -1193,6 +1207,9 @@ async fn run_auto_review_inner(
     use crate::models::ExecutionStatus;
     if !matches!(record.status, ExecutionStatus::Success | ExecutionStatus::Failed) {
         let _ = db.set_record_last_review_status(record_id, "skipped").await;
+        let _ = tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+            record_id, todo_id, review_status: "skipped".to_string(),
+        });
         return Ok(());
     }
     // 避免重复评审
@@ -1265,6 +1282,9 @@ async fn run_auto_review_inner(
         Some(id) => id,
         None => {
             let _ = db.set_record_last_review_status(record_id, "failed").await;
+            let _ = tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+                record_id, todo_id, review_status: "failed".to_string(),
+            });
             return Err("review execution produced no record (rejected?)".to_string());
         }
     };
