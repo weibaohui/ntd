@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Spin, Input, Space, Button, Tag, Dropdown, message } from 'antd';
+import { Spin, Input, Space, Button, Tag, Dropdown, Card, message } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   ThunderboltOutlined, SearchOutlined,
@@ -122,25 +122,76 @@ export function SkillsOverview() {
         gap: 12,
         marginBottom: 20,
       }}>
-        <StatCard
-          icon={<ThunderboltOutlined />}
-          iconColor="#0891b2"
-          label="Skill 总数"
-          value={totalSkills}
-        />
-        <StatCard
-          icon={<AppstoreOutlined />}
-          iconColor="#10b981"
-          label="执行器"
-          value={data.filter(e => e.skills.length > 0).length}
-          suffix={`/ ${data.length}`}
-        />
-        <StatCard
-          icon={<SettingOutlined />}
-          iconColor="#f59e0b"
-          label="文件总数"
-          value={allSkills.reduce((sum, { skill }) => sum + skill.file_count, 0)}
-        />
+        <Card size="small" style={{ borderRadius: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 36,
+              height: 36,
+              borderRadius: 10,
+              background: 'rgba(8, 145, 178, 0.12)',
+              color: '#0891b2',
+              fontSize: 16,
+            }}>
+              <ThunderboltOutlined />
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary, #475569)' }}>Skill 总数</div>
+              <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2, color: 'var(--color-text, #0f172a)' }}>
+                {totalSkills}
+              </div>
+            </div>
+          </div>
+        </Card>
+        <Card size="small" style={{ borderRadius: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 36,
+              height: 36,
+              borderRadius: 10,
+              background: 'rgba(16, 185, 129, 0.12)',
+              color: '#10b981',
+              fontSize: 16,
+            }}>
+              <AppstoreOutlined />
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary, #475569)' }}>执行器</div>
+              <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2, color: 'var(--color-text, #0f172a)' }}>
+                {data.filter(e => e.skills.length > 0).length}
+                <span style={{ fontSize: 13, fontWeight: 400, marginLeft: 2 }}>/ {data.length}</span>
+              </div>
+            </div>
+          </div>
+        </Card>
+        <Card size="small" style={{ borderRadius: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 36,
+              height: 36,
+              borderRadius: 10,
+              background: 'rgba(245, 158, 11, 0.12)',
+              color: '#f59e0b',
+              fontSize: 16,
+            }}>
+              <SettingOutlined />
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary, #475569)' }}>文件总数</div>
+              <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2, color: 'var(--color-text, #0f172a)' }}>
+                {allSkills.reduce((sum, { skill }) => sum + skill.file_count, 0)}
+              </div>
+            </div>
+          </div>
+        </Card>
       </div>
 
       {/* Filter & Search bar */}
@@ -161,20 +212,21 @@ export function SkillsOverview() {
         }}>
           {executorTabs.map(tab => {
             const isActive = filterExecutor === tab.key;
-            const color = tab.key === 'all' ? '#0891b2' : (EXECUTOR_COLORS[tab.key] || '#6c7086');
+            const color = tab.key === 'all' ? '#0891b2' : (EXECUTOR_COLORS[tab.key] || '#64748b');
             return (
               <button
                 key={tab.key}
                 onClick={() => setFilterExecutor(tab.key)}
+                className="skill-filter-pill"
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: 4,
                   padding: '4px 12px',
                   borderRadius: 20,
-                  border: `1px solid ${isActive ? color : 'var(--color-border, #313244)'}`,
-                  background: isActive ? `${color}20` : 'transparent',
-                  color: isActive ? color : 'var(--color-text-secondary, #a6adc8)',
+                  border: `1px solid ${isActive ? color : 'var(--color-border, #e2e8f0)'}`,
+                  background: isActive ? `${color}15` : 'transparent',
+                  color: isActive ? color : 'var(--color-text-secondary, #475569)',
                   cursor: 'pointer',
                   fontSize: 13,
                   fontWeight: isActive ? 500 : 400,
@@ -190,8 +242,8 @@ export function SkillsOverview() {
                   minWidth: 18,
                   height: 18,
                   borderRadius: 9,
-                  background: isActive ? color : 'var(--color-fill, #45475a)',
-                  color: isActive ? '#fff' : 'var(--color-text-secondary, #a6adc8)',
+                  background: isActive ? color : 'var(--color-fill, #e2e8f0)',
+                  color: isActive ? '#fff' : 'var(--color-text-secondary, #475569)',
                   fontSize: 11,
                   lineHeight: 1,
                   padding: '0 4px',
@@ -206,7 +258,7 @@ export function SkillsOverview() {
         <Space size={8}>
           <Input
             placeholder="搜索 Skills..."
-            prefix={<SearchOutlined style={{ color: 'var(--color-text-quaternary, #6c7086)' }} />}
+            prefix={<SearchOutlined style={{ color: 'var(--color-text-quaternary, #94a3b8)' }} />}
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
             style={{ width: 200, borderRadius: 20 }}
@@ -229,7 +281,7 @@ export function SkillsOverview() {
         <div style={{
           textAlign: 'center',
           padding: '60px 20px',
-          color: 'var(--color-text-secondary, #a6adc8)',
+          color: 'var(--color-text-secondary, #475569)',
         }}>
           <AppstoreOutlined style={{ fontSize: 48, marginBottom: 16, opacity: 0.3 }} />
           <div style={{ fontSize: 16 }}>{searchText ? '无匹配结果' : '暂无 Skills'}</div>
@@ -276,54 +328,6 @@ export function SkillsOverview() {
   );
 }
 
-function StatCard({ icon, iconColor, label, value, suffix }: {
-  icon: React.ReactNode;
-  iconColor: string;
-  label: string;
-  value: number;
-  suffix?: string;
-}) {
-  return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: 12,
-      padding: '14px 16px',
-      borderRadius: 12,
-      background: 'var(--color-bg-container, #1e1e2e)',
-      border: '1px solid var(--color-border, #313244)',
-      transition: 'border-color 0.2s',
-    }}
-      onMouseEnter={e => {
-        e.currentTarget.style.borderColor = iconColor;
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.borderColor = 'var(--color-border, #313244)';
-      }}
-    >
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: 36,
-        height: 36,
-        borderRadius: 10,
-        background: `${iconColor}18`,
-        color: iconColor,
-        fontSize: 16,
-      }}>
-        {icon}
-      </div>
-      <div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-secondary, #a6adc8)' }}>{label}</div>
-        <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2, color: 'var(--color-text, #cdd6f4)' }}>
-          {value}{suffix && <span style={{ fontSize: 13, fontWeight: 400, marginLeft: 2 }}>{suffix}</span>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function SkillCard({ skill, executor, onClick }: {
   skill: SkillMeta;
   executor: string;
@@ -336,30 +340,21 @@ function SkillCard({ skill, executor, onClick }: {
   const category = skill.name.includes('/') ? skill.name.split('/')[0] : null;
 
   return (
-    <div
+    <Card
+      size="small"
+      hoverable
       onClick={onClick}
+      className="skill-card"
       style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 12,
-        padding: 16,
         borderRadius: 12,
-        background: 'var(--color-bg-container, #1e1e2e)',
-        border: '1px solid var(--color-border, #313244)',
         cursor: 'pointer',
         transition: 'all 0.2s',
         position: 'relative',
         overflow: 'hidden',
+        borderColor: 'var(--color-border, #e2e8f0)',
       }}
-      onMouseEnter={e => {
-        e.currentTarget.style.borderColor = color;
-        e.currentTarget.style.boxShadow = `0 4px 12px ${color}20`;
-        e.currentTarget.style.transform = 'translateY(-2px)';
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.borderColor = 'var(--color-border, #313244)';
-        e.currentTarget.style.boxShadow = 'none';
-        e.currentTarget.style.transform = 'translateY(0)';
+      styles={{
+        body: { padding: 16 },
       }}
     >
       {/* Top accent line */}
@@ -379,7 +374,7 @@ function SkillCard({ skill, executor, onClick }: {
           width: 36,
           height: 36,
           borderRadius: 10,
-          background: `${color}18`,
+          background: `${color}15`,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -394,7 +389,7 @@ function SkillCard({ skill, executor, onClick }: {
           <div style={{
             fontSize: 14,
             fontWeight: 500,
-            color: 'var(--color-text, #cdd6f4)',
+            color: 'var(--color-text, #0f172a)',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
@@ -403,7 +398,7 @@ function SkillCard({ skill, executor, onClick }: {
           </div>
           <div style={{
             fontSize: 11,
-            color: 'var(--color-text-tertiary, #6c7086)',
+            color: 'var(--color-text-tertiary, #94a3b8)',
             marginTop: 2,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -418,13 +413,14 @@ function SkillCard({ skill, executor, onClick }: {
       {skill.description && (
         <div style={{
           fontSize: 12,
-          color: 'var(--color-text-secondary, #a6adc8)',
+          color: 'var(--color-text-secondary, #475569)',
           lineHeight: 1.5,
           display: '-webkit-box',
           WebkitLineClamp: 2,
           WebkitBoxOrient: 'vertical',
           overflow: 'hidden',
           minHeight: 36,
+          marginTop: 12,
         }}>
           {skill.description}
         </div>
@@ -435,7 +431,7 @@ function SkillCard({ skill, executor, onClick }: {
         display: 'flex',
         alignItems: 'center',
         gap: 6,
-        marginTop: 'auto',
+        marginTop: 12,
         flexWrap: 'wrap',
       }}>
         {category && (
@@ -445,9 +441,9 @@ function SkillCard({ skill, executor, onClick }: {
             lineHeight: '18px',
             padding: '0 6px',
             borderRadius: 4,
-            background: 'var(--color-fill, #45475a)',
+            background: 'var(--color-fill, #e2e8f0)',
             border: 'none',
-            color: 'var(--color-text-secondary, #a6adc8)',
+            color: 'var(--color-text-secondary, #475569)',
           }}>
             {category}
           </Tag>
@@ -459,7 +455,7 @@ function SkillCard({ skill, executor, onClick }: {
             lineHeight: '18px',
             padding: '0 6px',
             borderRadius: 4,
-            background: `${color}18`,
+            background: `${color}15`,
             border: 'none',
             color,
           }}>
@@ -469,11 +465,11 @@ function SkillCard({ skill, executor, onClick }: {
         <span style={{
           marginLeft: 'auto',
           fontSize: 11,
-          color: 'var(--color-text-quaternary, #585b70)',
+          color: 'var(--color-text-quaternary, #94a3b8)',
         }}>
           {formatSize(skill.total_size)}
         </span>
       </div>
-    </div>
+    </Card>
   );
 }
