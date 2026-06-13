@@ -123,6 +123,7 @@ fn executor_label(et: ExecutorType) -> &'static str {
         ExecutorType::Mobilecoder => "MobileCoder",
         ExecutorType::Codewhale => "CodeWhale",
         ExecutorType::Pi => "Pi",
+        ExecutorType::Mimo => "MiMo",
     }
 }
 

@@ -123,10 +123,19 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         session_dir: "~/.pi",
         aliases: &[],
     },
+    ExecutorDef {
+        name: "mimo",
+        executor_type: ExecutorType::Mimo,
+        binary_name: "mimo",
+        display_name: "MiMo",
+        default_path: "mimo",
+        session_dir: "~/.local/share/mimocode",
+        aliases: &["mimocode"],
+    },
 ];
 
 /// 支持继续对话的执行器集合（与前端 RESUMABLE_EXECUTORS 保持一致）
-pub const RESUMABLE_EXECUTORS: &[&str] = &["claudecode", "kimi", "opencode", "mobilecoder", "hermes", "codewhale", "pi"];
+pub const RESUMABLE_EXECUTORS: &[&str] = &["claudecode", "kimi", "opencode", "mobilecoder", "hermes", "codewhale", "pi", "mimo"];
 
 /// 默认执行器
 pub const DEFAULT_EXECUTOR: &str = "claudecode";
@@ -191,6 +200,8 @@ pub mod codex;
 pub mod codewhale;
 pub mod pi;
 pub mod pi_event;
+pub mod mimo;
+pub mod mimo_event;
 
 #[async_trait]
 pub trait CodeExecutor: Send + Sync {
@@ -302,6 +313,7 @@ impl ExecutorRegistry {
             "codex" => Arc::new(codex::CodexExecutor::new(path.to_string())),
             "codewhale" => Arc::new(codewhale::CodewhaleExecutor::new(path.to_string())),
             "pi" => Arc::new(pi::PiExecutor::new(path.to_string())),
+            "mimo" => Arc::new(mimo::MimoExecutor::new(path.to_string())),
             _ => return None,
         };
         Some(executor)
@@ -369,6 +381,13 @@ mod tests {
     fn test_parse_executor_type_codewhale() {
         assert_eq!(parse_executor_type("codewhale"), Some(ExecutorType::Codewhale));
         assert_eq!(parse_executor_type("CODEWHALE"), Some(ExecutorType::Codewhale));
+    }
+
+    #[test]
+    fn test_parse_executor_type_mimo() {
+        assert_eq!(parse_executor_type("mimo"), Some(ExecutorType::Mimo));
+        assert_eq!(parse_executor_type("MIMO"), Some(ExecutorType::Mimo));
+        assert_eq!(parse_executor_type("mimocode"), Some(ExecutorType::Mimo));
     }
 
     #[test]
