@@ -68,6 +68,9 @@ pub struct MimoToolInput {
 }
 
 impl MimoToolInput {
+    /// 序列化为完整 JSON 字符串。
+    /// 结构化字段（command/description）优先级最高；extra 中与它们同名的键会被跳过，
+    /// 避免 extra 覆盖核心语义。
     pub fn to_full_json(&self) -> String {
         let mut map = serde_json::Map::new();
         if let Some(ref cmd) = self.command {
@@ -76,7 +79,11 @@ impl MimoToolInput {
         if let Some(ref desc) = self.description {
             map.insert("description".into(), serde_json::Value::String(desc.clone()));
         }
+        // extra 只补充结构化字段中不存在的键，防止同名键覆盖语义
         for (k, v) in &self.extra {
+            if k == "command" || k == "description" {
+                continue;
+            }
             map.insert(k.clone(), v.clone());
         }
         serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_default()
