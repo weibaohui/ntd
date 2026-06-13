@@ -614,12 +614,33 @@ async fn version_upgrade_handler(
         // blocking_recv 因为我们在 std::thread 里,不是 tokio runtime。
         let _ = redeploy_signal.blocking_recv();
 
-        // 将 daemon 重部署的四步操作合并成一条 shell 命令，用 && 连接。
-        // stop 失败不阻断（服务可能已停止），但 uninstall/install/start 任一步
-        // 失败都会导致整体失败，符合预期。
+        // 将 daemon 重部署的四步操作合并成一条 shell 命令。
+        //
+        // **安全说明 (issue #476 反复复发的 CRITICAL #1)**：
+        // `npm prefix -g` 返回的 prefix 来自用户 `~/.npmrc`,可被污染成
+        // `/foo;rm -rf /;` 之类的攻击载荷。直接把 ntd_cmd 嵌入 shell 脚本
+        // 会被 shell 解析成多 token,触发 RCE。
+        //
+        // 三道防线:
+        // 1. `is_safe_ntd_path` 白名单校验:仅允许 `[A-Za-z0-9/_.-]`,且必须
+        //    是绝对路径。失败直接 return,不构造脚本。
+        // 2. `shell_quote_single` 单引号包裹:即使校验漏过危险字符,单引号
+        //    也禁止所有 shell expansion。
+        // 3. stop 与后续步骤用 `;` 分隔(不是 `&&`):`ntd daemon stop` 失败
+        //    (服务已停等) 不阻断 uninstall/install/start,符合 "stop 失败不阻断"
+        //    的原始承诺。后续步骤之间仍然用 `&&`,任一失败立刻终止,符合预期。
+        if !crate::daemon::common::is_safe_ntd_path(&ntd_cmd_clone) {
+            tracing::error!(
+                "Refusing redeploy: ntd path {:?} contains characters outside [A-Za-z0-9/_.-] \
+                 or is not absolute. Likely a poisoned npm prefix.",
+                ntd_cmd_clone,
+            );
+            return;
+        }
+        let quoted = crate::daemon::common::shell_quote_single(&ntd_cmd_clone);
         let redeploy_script = format!(
-            "{} daemon stop && {} daemon uninstall && {} daemon install --force && {} daemon start",
-            ntd_cmd_clone, ntd_cmd_clone, ntd_cmd_clone, ntd_cmd_clone
+            "{quoted} daemon stop; {quoted} daemon uninstall && {quoted} daemon install --force && {quoted} daemon start",
+            quoted = quoted,
         );
 
         #[cfg(target_os = "linux")]
