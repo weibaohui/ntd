@@ -237,29 +237,39 @@ impl CodeExecutor for CodewhaleExecutor {
     }
 
     fn get_final_result(&self, logs: &[ParsedLogEntry]) -> Option<String> {
-        // Collect all text entries, stripping think tags if present.
-        // CodeWhale streams text as small chunks (individual characters or words),
-        // so we join with empty string to preserve natural flow without extra newlines.
-        let texts: Vec<String> = logs
+        // CodeWhale streams text as small chunks (individual characters or words).
+        // To preserve word boundaries and spacing between chunks, we must:
+        // 1) Concatenate all raw chunks first (without per-chunk trimming)
+        // 2) Then strip <think> tags from the full concatenated text once
+        // 3) Finally normalize whitespace on the result
+        // This prevents "  Hello  " + "  World  " from becoming "HelloWorld"
+        // (the old approach trimmed each chunk separately, losing inter-chunk spaces).
+        let raw_chunks: Vec<&str> = logs
             .iter()
             .filter(|l| l.log_type == "text")
-            .map(|l| super::strip_think_tags(&l.content))
-            .filter(|t| !t.trim().is_empty())
+            .map(|l| l.content.as_str())
             .collect();
 
-        if !texts.is_empty() {
-            // Join with empty string since chunks are already trimmed
-            let joined = texts.join("");
+        if !raw_chunks.is_empty() {
+            // Concatenate all chunks with their original spacing preserved
+            let concatenated = raw_chunks.join("");
+            // Strip think tags from the full text (this also trims outer whitespace)
+            let cleaned = super::strip_think_tags(&concatenated);
             // Normalize multiple newlines to single newline for readability
-            let normalized = joined
+            let normalized = cleaned
                 .split('\n')
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
                 .collect::<Vec<_>>()
                 .join("\n");
-            Some(normalized)
+            // Only return non-empty results after normalization
+            if !normalized.is_empty() {
+                Some(normalized)
+            } else {
+                None
+            }
         } else {
-            // Fallback: last stderr entry
+            // Fallback: last stderr entry when no text chunks exist
             logs.iter()
                 .rev()
                 .find(|l| l.log_type == "stderr")
@@ -413,7 +423,14 @@ mod tests {
             ParsedLogEntry::new("text", "  Hello  "),
             ParsedLogEntry::new("text", "  World  "),
         ];
-        assert_eq!(executor.get_final_result(&logs), Some("Hello\n\nWorld".to_string()));
+        // CodeWhale streams text as small chunks; get_final_result must preserve
+        // word boundaries across chunks:
+        // 1) Concatenate all raw chunks first: "  Hello  " + "  World  " → "  Hello    World  "
+        // 2) Strip think tags from the full concatenated text (which also trims outer whitespace)
+        // 3) Normalize internal whitespace/newlines
+        // This prevents inter-chunk spaces from being lost (the old approach trimmed
+        // each chunk separately, turning "  Hello  " + "  World  " into "HelloWorld").
+        assert_eq!(executor.get_final_result(&logs), Some("Hello World".to_string()));
     }
 
     #[test]

@@ -90,7 +90,7 @@ async fn read_json(response: axum::response::Response) -> serde_json::Value {
 /// 关键回归测试：把 mock 云端地址配进 config，调一次 push 必须在合理时间内返回。
 /// 修改前：会无限期挂起（读锁 + 同任务写锁 = tokio RwLock 自我死锁）。
 /// 修改后：正常返回，云端响应解析后 `success=true`。
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cloud_sync_push_does_not_deadlock_with_config_write() {
     let (app, config) = build_test_app().await;
     let cloud_url = spawn_mock_cloud().await;
@@ -133,7 +133,7 @@ async fn cloud_sync_push_does_not_deadlock_with_config_write() {
 }
 
 /// 同样覆盖 pull 路径，避免在 push 修好后 pull 又踩同一个坑。
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cloud_sync_pull_does_not_deadlock_with_config_write() {
     let (app, config) = build_test_app().await;
 
@@ -169,7 +169,7 @@ async fn cloud_sync_pull_does_not_deadlock_with_config_write() {
 
 /// token 没配时，handler 应直接返回 400 BadRequest，绝不会去申请写锁、也不会
 /// 卡在读锁里。顺便覆盖「缺 token」分支，避免有人误把读锁范围扩大。
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cloud_sync_push_missing_token_returns_bad_request() {
     let (app, config) = build_test_app().await;
     {

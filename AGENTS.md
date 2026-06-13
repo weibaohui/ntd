@@ -57,53 +57,85 @@ make build  # 构建生产版本
 - 修改旧代码时：如果顺手触达已有相对路径导入，优先一并改成 `@/`，保持项目风格一致。
 
 ## 目录结构
-- `backend/` - Rust 后端代码
-- `frontend/` - React 前端代码
+- `backend/` - Rust 后端代码（含 `backend/tests/` 集成测试）
+- `frontend/` - React 前端代码（含 `frontend/tests/` Playwright 功能测试，详见「前端测试验证」一节）
 - `tunnel.sh` - 内网穿透脚本
 
 ## 前端测试验证
 
 **重要：修改前端 UI 后，必须使用 Playwright 进行自动化验证，再通知用户。**
 
-### Playwright 测试脚本位置
-测试脚本位于 `/tmp/` 目录下，文件名格式为 `check_*.js`
+### 测试脚本位置（强制要求）
 
-**运行方式**：由于 playwright 依赖在 `frontend/node_modules/` 中，需要在 `frontend/` 目录下执行：
+**所有使用 Playwright 编写的前端功能测试（含正式 spec 和调试脚本）必须统一放在 `frontend/tests/` 目录下，禁止散落到 `frontend/` 根目录、`/tmp/` 或其他位置。**
+
+- 目录约定：与后端 `backend/tests/` 保持一致，前端对应 `frontend/tests/`。
+- 文件命名：
+  - 正式 spec：`frontend/tests/**/*.spec.ts`，由 `@playwright/test` 直接驱动。
+  - 临时调试脚本：`frontend/tests/check_*.cjs` 或 `frontend/tests/check_*.js`，按需保留/清理。
+- Playwright 配置：`frontend/playwright.config.ts` 必须将 `testDir` 指向 `frontend/tests`，并在 `testMatch` 中覆盖 spec 与调试脚本。
+- 禁止放在 `/tmp/` 等系统临时目录：CI、他人复跑、回归对比都依赖仓库内可追溯的脚本。
+
+### 当前实际情况
+
+- 历史上曾把 spec（如 `frontend/e2e-test.spec.ts`）和调试脚本（`test_*.cjs`、`debug_click.cjs`、`inspect.cjs` 等）直接放在 `frontend/` 根目录，违反上述约定，需要在改动 UI 时顺手迁回 `frontend/tests/` 并同步更新 `playwright.config.ts`。
+- `frontend/test-results/` 是 Playwright 产物目录，由运行自动生成，已在 `.gitignore` 中忽略（除错误上下文外的报告），不要手动提交。
+
+### 运行方式
+
+由于 Playwright 依赖位于 `frontend/node_modules/`，需要在 `frontend/` 目录下执行：
+
 ```bash
 cd frontend && npx playwright test --reporter=list
 ```
 
+针对单个调试脚本（仍位于 `frontend/tests/` 下）：
+
+```bash
+cd frontend && npx playwright test tests/check_xxx.spec.ts --reporter=list
+```
+
 ### 验证流程
-1. 修改前端代码后，执行 `make dev` 重启开发服务
-2. 使用 Playwright 编写测试脚本验证 UI 效果
-3. 验证通过后再通知用户
+
+1. 修改前端代码后，执行 `make dev` 重启开发服务（默认监听 `http://localhost:18088`）。
+2. 在 `frontend/tests/` 下编写或更新对应的 Playwright spec / 调试脚本。
+3. 若新增或移动了 spec 文件，同步更新 `frontend/playwright.config.ts` 的 `testDir` / `testMatch`。
+4. 运行 Playwright 验证 UI 效果；不通过则继续修复，直到用例稳定。
+5. 验证通过、确保无遗留 `/tmp/` 散落脚本后再通知用户。
 
 ### 常用验证脚本示例
 
 ```javascript
-// 验证深色模式组件
-const { chromium } = require('playwright');
-(async () => {
+// 文件位置：frontend/tests/check_theme.spec.ts
+// 用途：验证深色模式组件渲染
+import { test, expect } from '@playwright/test';
+
+test('深色模式渲染校验', async ({ page }) => {
+  // 启动无头浏览器，并预设 colorScheme 为 dark，
+  // 让 ThemeProvider 初始化阶段直接进入暗色主题分支。
   const browser = await chromium.launch();
   const context = await browser.newContext({ colorScheme: 'dark' });
   const page = await context.newPage();
 
-  // 设置 localStorage 以触发 ThemeProvider 的深色模式
+  // 通过 localStorage 写入主题键，刷新后由 ThemeProvider 接管，
+  // 避免仅依赖系统色导致用例在 CI 上不稳定。
   await page.goto('http://localhost:18088');
   await page.evaluate(() => localStorage.setItem('app_theme', 'dark'));
   await page.reload();
   await page.waitForTimeout(2000);
 
-  // 执行验证...
+  // 采集目标节点的实际样式，作为断言依据；
+  // 这里以背景色为例，验证主题色板生效。
   const result = await page.evaluate(() => {
     const el = document.querySelector('.target-class');
     return { bg: el ? getComputedStyle(el).backgroundColor : null };
   });
   console.log('验证结果:', result);
 
-  await page.screenshot({ path: '/tmp/verify.png' });
+  // 截图留档，便于在 PR 中附图说明。
+  await page.screenshot({ path: 'frontend/tests/__screenshots__/verify.png' });
   await browser.close();
-})();
+});
 ```
 
 ### 内网穿透

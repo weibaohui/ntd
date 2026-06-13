@@ -93,12 +93,7 @@ impl MessageDebounce {
                         return;
                     }
 
-                    let merged_content: String = entry
-                        .messages
-                        .iter()
-                        .map(|m| m.content.as_str())
-                        .collect::<Vec<&str>>()
-                        .join("\n---\n");
+                    let merged_content = merge_pending_messages(&entry.messages);
 
                     let last = entry.messages.last().unwrap();
                     let mut merged_params = last.params.clone().unwrap_or_default();
@@ -290,5 +285,98 @@ impl MessageDebounce {
 
     pub fn pending_count(&self) -> usize {
         self.entries.iter().map(|e| e.messages.len()).sum()
+    }
+}
+
+/// 把一个 chat 在 debounce 窗口里攒下来的所有消息合并成一段文本。
+///
+/// 规则: 消息之间用 `\n---\n` 分隔(飞书用户复制粘贴的多段对话可读性最好,
+///  Claude 也习惯用 `---` 识别章节边界)。原始消息里的换行不会做进一步处理,
+/// 因为 `{{message}}` 替换的目标 prompt 大多有自己的格式。
+///
+/// 这是纯函数,只读 `messages` 字段,不触发任何 I/O —— `push` 在 debounce
+/// 窗口到期时调用它,网络/DB 调用全部留在外面。
+pub fn merge_pending_messages(messages: &[PendingMessage]) -> String {
+    messages
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect::<Vec<&str>>()
+        .join("\n---\n")
+}
+
+#[cfg(test)]
+mod merge_pending_messages_tests {
+    //! 验证 debounce 窗口内多条消息的合并规则。`push` 把消息丢进 bucket,
+    //! 定时器到期时再调 `merge_pending_messages` 合并成一段 ——
+    //! 如果合并规则错了,Claude 收到的就是几段被错误拼接的脏文本。
+    use super::{merge_pending_messages, PendingMessage};
+
+    fn msg(content: &str) -> PendingMessage {
+        PendingMessage {
+            bot_id: 1,
+            chat_id: "chat-1".to_string(),
+            chat_type: "group".to_string(),
+            sender: "user-1".to_string(),
+            content: content.to_string(),
+            todo_id: 42,
+            todo_prompt: "stub".to_string(),
+            executor: Some("claudecode".to_string()),
+            trigger_type: "feishu".to_string(),
+            params: None,
+            message_id: None,
+            resume_session_id: None,
+            resume_message: None,
+            binding_id: None,
+        }
+    }
+
+    /// 单条消息: 合并后应该和原文一致,不应该被加上 `---` 之类装饰。
+    /// 边界用例 —— 如果 join 永远会加 separator,空 list 都得返回 `---`,
+    /// 显然不对。
+    #[test]
+    fn test_single_message_returns_content_unchanged() {
+        let merged = merge_pending_messages(&[msg("hello world")]);
+        assert_eq!(merged, "hello world");
+    }
+
+    /// 两条消息: 中间用 `\n---\n` 分隔。这是飞书用户连续发"前一行/后一行"
+    /// 时 AI 收到的样子。
+    #[test]
+    fn test_two_messages_joined_with_separator() {
+        let merged = merge_pending_messages(&[msg("line A"), msg("line B")]);
+        assert_eq!(merged, "line A\n---\nline B");
+    }
+
+    /// 任意 N 条都按顺序 join,顺序必须保持稳定 —— AI 会把它当成时间序列读。
+    #[test]
+    fn test_many_messages_preserve_order() {
+        let merged = merge_pending_messages(&[
+            msg("first"),
+            msg("second"),
+            msg("third"),
+            msg("fourth"),
+        ]);
+        assert_eq!(merged, "first\n---\nsecond\n---\nthird\n---\nfourth");
+    }
+
+    /// 空切片: 返回空串。这是 `pending_count` 防御 if-empty 的上游,
+    /// 如果空切片返回 `---`,filter 那行能放行但 Claude 会收到莫名其妙的
+    /// 标点符号。
+    #[test]
+    fn test_empty_slice_returns_empty_string() {
+        let merged = merge_pending_messages(&[]);
+        assert_eq!(merged, "");
+    }
+
+    /// 消息内的换行不参与合并规则 —— 内部换行应该原样保留,只在消息之间
+    /// 插入 `---`。这跟 `replace_placeholders` 的占位符替换是配套的:
+    /// 用户的多行消息在 `{{message}}` 位置原样展开。
+    #[test]
+    fn test_internal_newlines_preserved_verbatim() {
+        let merged = merge_pending_messages(&[
+            msg("line 1\nline 2"),
+            msg("single line"),
+        ]);
+        assert_eq!(merged, "line 1\nline 2\n---\nsingle line");
     }
 }

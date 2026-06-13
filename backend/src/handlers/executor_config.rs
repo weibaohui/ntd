@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::handlers::{ApiJson, AppError, AppState};
-use crate::models::{ApiResponse, ExecutorConfig, ExecutorDetectResult, ExecutorTestResult, UpdateExecutorRequest, ExecutorBatchDetectResult, ExecutorDetectInfo};
+use crate::models::{ApiResponse, ExecutorConfig, ExecutorDetectResult, ExecutorTestResult, UpdateExecutorRequest, ExecutorBatchDetectResult, ExecutorDetectInfo, ExecutorPathResolveResult};
 
 pub async fn list_executors(State(state): State<AppState>) -> Result<ApiResponse<Vec<ExecutorConfig>>, AppError> {
     let executors = state.db.get_executors().await.map_err(|e| AppError::Internal(e.to_string()))?;
@@ -207,5 +207,52 @@ pub async fn detect_all_executors(
         results,
         total,
         found_count,
+    }))
+}
+
+/// 用 `which` 查找执行器的真实路径，如果找到且与数据库中不同则更新数据库。
+/// 前端在执行器路径无效时调用此接口进行自动修复。
+pub async fn resolve_executor_path(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<ApiResponse<ExecutorPathResolveResult>, AppError> {
+    let ec = state.db.get_executor_by_name(&name).await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .ok_or(AppError::NotFound)?;
+
+    let old_path = if ec.path.is_empty() { name.clone() } else { ec.path.clone() };
+    let (found, resolved) = detect_binary(&old_path);
+
+    if !found {
+        return Ok(ApiResponse::ok(ExecutorPathResolveResult {
+            binary_found: false,
+            path_resolved: None,
+            path_updated: false,
+            old_path: Some(ec.path.clone()),
+            new_path: None,
+        }));
+    }
+
+    let resolved = resolved.unwrap();
+    let path_updated = ec.path != resolved;
+
+    // 如果路径有变化，更新数据库
+    if path_updated {
+        state.db.update_executor(&name, Some(&resolved), None, None, None)
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+
+        // 重新注册到 registry
+        if ec.enabled {
+            state.executor_registry.register_by_name(&name, &resolved).await;
+        }
+    }
+
+    Ok(ApiResponse::ok(ExecutorPathResolveResult {
+        binary_found: true,
+        path_resolved: Some(resolved.clone()),
+        path_updated,
+        old_path: Some(ec.path.clone()),
+        new_path: Some(resolved),
     }))
 }

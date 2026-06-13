@@ -101,6 +101,10 @@ export async function detectExecutor(name: string): Promise<{ binary_found: bool
   return unwrap(await api.post(`/api/executors/${encodeURIComponent(name)}/detect`));
 }
 
+export async function repairExecutor(name: string): Promise<{ binary_found: boolean; path_resolved: string | null; path_updated: boolean; old_path: string | null; new_path: string | null }> {
+  return unwrap(await api.post(`/api/executors/${encodeURIComponent(name)}/resolve`));
+}
+
 export async function testExecutor(name: string): Promise<{ test_passed: boolean; output: string | null; error: string | null }> {
   return unwrap(await api.post(`/api/executors/${encodeURIComponent(name)}/test`));
 }

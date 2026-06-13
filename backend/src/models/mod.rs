@@ -702,6 +702,28 @@ pub struct ExecutorDetectResult {
     pub path_resolved: Option<String>,
 }
 
+/// Result of a repair operation on a single executor.
+#[derive(Serialize)]
+pub struct ExecutorRepairResult {
+    /// Whether the binary was found and path was updated.
+    pub repaired: bool,
+    /// The new path written to DB (None if not found or unchanged).
+    pub new_path: Option<String>,
+    /// Human-readable message.
+    pub message: String,
+}
+
+/// resolve 操作用的结果：包含检测结果 + 是否触发了数据库更新
+#[derive(Serialize)]
+pub struct ExecutorPathResolveResult {
+    pub binary_found: bool,
+    pub path_resolved: Option<String>,
+    /// 数据库路径是否被更新（仅在 binary_found=true 且路径与原值不同时为 true）
+    pub path_updated: bool,
+    pub old_path: Option<String>,
+    pub new_path: Option<String>,
+}
+
 #[derive(Serialize)]
 pub struct ExecutorTestResult {
     pub test_passed: bool,

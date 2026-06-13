@@ -708,6 +708,7 @@ pub fn create_app(
         .route("/api/executors/{name}/detect", post(executor_config::detect_executor))
         .route("/api/executors/{name}/test", post(executor_config::test_executor))
         .route("/api/executors/detect-all", post(executor_config::detect_all_executors))
+        .route("/api/executors/{name}/resolve", post(executor_config::resolve_executor_path))
         .route("/api/skills", get(skills::list_skills).delete(skills::delete_skill))
         .route("/api/skills/compare", get(skills::compare_skills))
         .route("/api/skills/sync", post(skills::sync_skill))

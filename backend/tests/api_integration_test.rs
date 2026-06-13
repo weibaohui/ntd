@@ -62,7 +62,17 @@ fn json_request(method: &str, uri: &str, body: serde_json::Value) -> Request<Bod
 
 // ===== Todo handlers =====
 
-#[tokio::test]
+// All integration tests use multi_thread runtime with 2 workers to avoid panics
+// and deadlocks. Why:
+// - Single-thread runtime panics when code calls `block_in_place` (which SeaORM,
+//   tower::ServiceExt::oneshot, and other async infrastructure may do internally).
+// - Multi-thread runtime provides consistent task scheduling and reduces risk of
+//   deadlock when tests spawn concurrent tasks or hold locks across await points.
+// - 2 workers is sufficient for test workload and keeps resource usage low.
+// Scope: all `#[tokio::test]` in this file use this configuration for consistency
+// and to prevent intermittent test failures caused by runtime mismatches.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_get_todos() {
     let app = create_test_app().await;
 
@@ -81,11 +91,18 @@ async fn test_get_todos() {
     let body: serde_json::Value = read_json_body(response).await;
     assert_eq!(body["code"], 0);
     let todos = body["data"].as_array().unwrap();
-    assert_eq!(todos.len(), 1);
-    assert_eq!(todos[0]["title"], "Test");
+    // Database::new 在 :memory: db 上会自动 seed 评审师模板(todo_type=1)。
+    // 这里只验证我们刚创建的 "Test" todo 出现在列表里,
+    // 不去数总数(seed 数据是基础设施的一部分,不是用户数据)。
+    let our_todo = todos
+        .iter()
+        .find(|t| t["title"] == "Test")
+        .expect("newly created 'Test' todo should appear in GET /api/todos");
+    assert_eq!(our_todo["prompt"], "Do this");
+    assert_eq!(our_todo["status"], "pending");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_create_todo_success() {
     let app = create_test_app().await;
 
@@ -100,7 +117,7 @@ async fn test_create_todo_success() {
     assert_eq!(body["data"]["status"], "pending");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_create_todo_empty_title() {
     let app = create_test_app().await;
 
@@ -112,7 +129,7 @@ async fn test_create_todo_empty_title() {
     assert_eq!(body["code"], 40002);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_create_todo_prompt_fallback() {
     let app = create_test_app().await;
 
@@ -123,7 +140,7 @@ async fn test_create_todo_prompt_fallback() {
     assert_eq!(body["data"]["prompt"], "Fallback Title");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_create_todo_with_tags() {
     let app = create_test_app().await;
 
@@ -142,7 +159,7 @@ async fn test_create_todo_with_tags() {
     assert_eq!(tag_ids[0], tag_id);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_update_todo_success() {
     let app = create_test_app().await;
 
@@ -160,7 +177,7 @@ async fn test_update_todo_success() {
     assert_eq!(body["data"]["status"], "in_progress");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_update_todo_prompt_fallback() {
     let app = create_test_app().await;
 
@@ -176,7 +193,7 @@ async fn test_update_todo_prompt_fallback() {
     assert_eq!(body["data"]["prompt"], "New Title");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_update_todo_tags() {
     let app = create_test_app().await;
 
@@ -198,7 +215,7 @@ async fn test_update_todo_tags() {
     assert_eq!(body["code"], 0);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_delete_todo() {
     let app = create_test_app().await;
 
@@ -226,7 +243,7 @@ async fn test_delete_todo() {
     assert!(todos.iter().all(|t| t["id"].as_i64().unwrap() != id));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_delete_todo_not_found() {
     let app = create_test_app().await;
 
@@ -241,7 +258,7 @@ async fn test_delete_todo_not_found() {
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_force_update_status() {
     let app = create_test_app().await;
 
@@ -258,7 +275,7 @@ async fn test_force_update_status() {
     assert_eq!(body["data"]["status"], "completed");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_get_todo_not_found() {
     let app = create_test_app().await;
 
@@ -269,7 +286,7 @@ async fn test_get_todo_not_found() {
 
 // ===== Tag handlers =====
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_get_tags() {
     let app = create_test_app().await;
 
@@ -285,7 +302,7 @@ async fn test_get_tags() {
     assert!(body["data"].as_array().unwrap().is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_create_tag_success() {
     let app = create_test_app().await;
 
@@ -299,7 +316,7 @@ async fn test_create_tag_success() {
     assert_eq!(body["data"]["color"], "#ff0000");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_create_tag_empty_name() {
     let app = create_test_app().await;
 
@@ -311,7 +328,7 @@ async fn test_create_tag_empty_name() {
     assert_eq!(body["code"], 40002);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_delete_tag() {
     let app = create_test_app().await;
 
@@ -331,7 +348,7 @@ async fn test_delete_tag() {
 
 // ===== Execution handlers =====
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_get_execution_records() {
     let app = create_test_app().await;
 
@@ -353,7 +370,7 @@ async fn test_get_execution_records() {
     assert!(body["data"]["records"].as_array().unwrap().is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_get_execution_records_pagination() {
     let app = create_test_app().await;
 
@@ -373,7 +390,7 @@ async fn test_get_execution_records_pagination() {
     assert_eq!(body["data"]["limit"], 5);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_get_execution_summary() {
     let app = create_test_app().await;
 
@@ -394,7 +411,7 @@ async fn test_get_execution_summary() {
     assert_eq!(body["data"]["total_executions"], 0);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_stop_execution_not_found() {
     let app = create_test_app().await;
 
@@ -408,7 +425,7 @@ async fn test_stop_execution_not_found() {
 
 // ===== Scheduler handlers =====
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_update_scheduler_enable() {
     let app = create_test_app().await;
 
@@ -426,7 +443,7 @@ async fn test_update_scheduler_enable() {
     assert_eq!(body["data"]["scheduler_config"], "0 0 0 * * *");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_update_scheduler_disable() {
     let app = create_test_app().await;
 
@@ -448,7 +465,7 @@ async fn test_update_scheduler_disable() {
     assert_eq!(body["data"]["scheduler_enabled"], false);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_update_scheduler_missing_config() {
     let app = create_test_app().await;
 
@@ -466,7 +483,7 @@ async fn test_update_scheduler_missing_config() {
     assert_eq!(body["data"]["scheduler_enabled"], true);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_get_scheduler_todos() {
     let app = create_test_app().await;
 
@@ -494,7 +511,7 @@ async fn test_get_scheduler_todos() {
 
 // ===== Lifecycle integration tests =====
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_todo_lifecycle() {
     let app = create_test_app().await;
 
@@ -521,7 +538,7 @@ async fn test_todo_lifecycle() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_tag_lifecycle() {
     let app = create_test_app().await;
 
@@ -551,7 +568,7 @@ async fn test_tag_lifecycle() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_todo_with_tags() {
     let app = create_test_app().await;
 

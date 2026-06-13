@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Button, Card, Input, Switch, Spin, Tooltip, Modal, message, Typography } from 'antd';
-import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined, BugOutlined } from '@ant-design/icons';
 import { Cron } from 'react-js-cron';
 import 'react-js-cron/dist/styles.css';
 import { CronPresetSelect } from '@/components/CronPresetSelect';
@@ -210,6 +210,34 @@ export function ExecutorsPanel({ executors, setExecutors, executorsLoading }: {
                   >
                     检测
                   </Button>
+                  {/* 修复按钮：路径无效时尝试用 which 查找真实路径并自动更新 */}
+                  {!detectResult?.found && (
+                    <Button
+                      size="small"
+                      icon={<BugOutlined />}
+                      onClick={async () => {
+                        try {
+                          const result = await db.repairExecutor(ec.name);
+                          if (result.binary_found) {
+                            setDetectResults((prev) => ({ ...prev, [ec.name]: { found: true, resolved: result.path_resolved! } }));
+                            const updated = await db.updateExecutor(ec.name, { path: result.path_resolved!, enabled: true });
+                            setExecutors((prev) => prev.map((e) => e.name === ec.name ? updated : e));
+                            if (result.path_updated) {
+                              message.success(`已修复：${ec.display_name} 路径更新为 ${result.path_resolved}`);
+                            } else {
+                              message.info(`路径已是最新：${result.path_resolved}`);
+                            }
+                          } else {
+                            message.error(`未找到 ${ec.display_name}，请手动填写路径`);
+                          }
+                        } catch (err: any) {
+                          message.error('修复失败: ' + (err?.message || String(err)));
+                        }
+                      }}
+                    >
+                      修复
+                    </Button>
+                  )}
                   <Button
                     size="small"
                     type="primary"
