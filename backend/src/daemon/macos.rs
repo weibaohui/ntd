@@ -12,6 +12,8 @@
 //!   进程可能需要更久。这里不引入 polling（需要重新解析 launchctl list
 //!   输出判断 PID），保持与原行为等价 —— 只是把阻塞 sleep 换成协作式 sleep。
 
+#![allow(unsafe_code)] // daemon/macos.rs uses libc FFI which requires unsafe blocks
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;

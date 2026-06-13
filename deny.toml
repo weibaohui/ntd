@@ -1,0 +1,54 @@
+# cargo-deny 配置文件。
+# 用法：
+#   cargo install cargo-deny
+#   cargo deny check
+# CI 应当把 `cargo deny check` 作为阻断项；本地若新加依赖引发违规，请在此处显式 skip
+# 并在 PR 描述里给出理由。
+
+# 1. 漏洞数据库：使用 GitHub Advisory Database 默认镜像。
+#    离线环境可改为本地 JSON 文件路径。
+[advisories]
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "warn"
+# 误报（例如内部 fork 引起的重复）可以按 crate + id 显式忽略：
+# ignore = [
+#   "RUSTSEC-2024-0001",
+# ]
+
+# 2. License 限制：只允许明确列出的 license；其余必须显式 allow。
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "CC0-1.0",
+    "OpenSSL",
+    "NTP",
+]
+confidence-threshold = 0.8
+
+# 3. 来源限制：默认从 crates.io 取；可加 Git 源白名单（内部 fork）。
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+deny = []
+# 工作区内部清单：禁止误传某些常用包（容易引入"另一种实现"造成分裂）
+skip = []
+skip-tree = []
+
+# 4. 来源仓库
+[sources]
+unknown-registry = "deny"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
