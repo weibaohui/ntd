@@ -109,17 +109,27 @@ async fn main() {
             let prefix = ntd::npm_utils::get_npm_global_prefix();
 
             // 使用 --prefix 安装到有写权限的目录，避免 EACCES
-            let status = std::process::Command::new("npm")
+            //
+            // 错误处理：原来用 `.expect("Failed to run npm...")` 直接 panic。
+            // 在 npm 未安装 / 不在 PATH 上的环境里,会向用户抛一个无定位
+            // 信息的 panic 栈。改成显式 Result + 友好提示 + exit code 1。
+            let npm_result = std::process::Command::new("npm")
                 .args([
                     "install",
                     "-g",
                     &format!("--prefix={}", prefix),
                     "@weibaohui/nothing-todo@latest",
                 ])
-                .status()
-                .expect("Failed to run npm. Is npm installed?");
+                .status();
+            let status = match npm_result {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Failed to run npm ({}): is npm installed and on PATH?", e);
+                    std::process::exit(1);
+                }
+            };
             if !status.success() {
-                eprintln!("Upgrade failed.");
+                eprintln!("Upgrade failed (npm exited with code {:?}).", status.code());
                 std::process::exit(1);
             }
 
@@ -206,7 +216,15 @@ async fn main() {
             // daemon::handle_daemon_command 已声明为 async,以便内部 restart
             // 路径可以 await tokio::time::sleep,避免 std::thread::sleep 阻塞
             // tokio worker。
-            daemon::handle_daemon_command(action).await;
+            //
+            // 错误处理：daemon 子命令以前在内部直接 eprintln! + exit(1)，
+            // 测试或脚本里很难区分"成功"和"用户已安装但要 --force"。
+            // 改成返回 Result::<(), DaemonError> 后,这里统一打印 + 退出码,
+            // 任何分支（launchd / systemd / schtasks）的错误都用同一个出口。
+            if let Err(e) = daemon::handle_daemon_command(action).await {
+                eprintln!("daemon error: {e}");
+                std::process::exit(1);
+            }
             return;
         }
         Some(Commands::Skill { action: SkillAction::Install { force, executor } }) => {

@@ -1,3 +1,8 @@
+// build script 跑在 cargo 调用阶段,任何错误都应该立即终止编译,
+// `unwrap`/`expect` 在这里是合适的(CI 里 build 失败本就该 panic 出栈)。
+// 顶层 allow 让 [lints.clippy] 里的 deny 规则不作用到 build.rs。
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::env;
 use std::fs;
 use std::path::PathBuf;

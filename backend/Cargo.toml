@@ -59,6 +59,31 @@ tower = { version = "0.5", features = ["util"] }
 [build-dependencies]
 vergen-gitcl = "1"
 
+# ----------------------------------------------------------------------
+# Lint 策略
+# ----------------------------------------------------------------------
+# 对应 issue #495：把生产代码里的 `.unwrap()` / `.expect()` 收紧。
+#
+# 渐进式收紧计划（不要一次 deny，会让 PR 太大无法合入）：
+# - 阶段 1（本次 PR）：把所有 panic 类 lint 设为 warn，让 CI 把现有 263+
+#   处违规全部列出来作为后续 cleanup backlog
+# - 阶段 2（后续 PR）：按模块分批替换为 `?` 或 `match`，每合入一批把对应
+#   lint 升回 deny
+# - 单测代码 (`#[cfg(test)]`) 不在本 lint 范围内（panic 是合理失败模式）
+# - build.rs 不在本 lint 范围内（panic 是合理失败模式）
+# - 不开 `print_stdout` / `print_stderr` —— daemon CLI 子命令本来就需要
+#   打 stdout/stderr 让用户看状态
+# - 暂时不开 `unsafe_code = "deny"`，项目里有 libc FFI 调用是必须的，
+#   后续可以单独治理（集中到 `sys` 模块后再开 deny）。
+[lints.clippy]
+# 先 warn，等后续 PR 替换完再升级到 deny
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+# 其他常见误用
+todo = "warn"
+dbg_macro = "warn"
+
 [profile.release]
 lto = true
 codegen-units = 1
