@@ -6,14 +6,24 @@ use clap::Subcommand;
 
 /// Print an error message to stderr and exit the process with code 1.
 ///
+/// `die_now` 是一个**显式 fatal-error 标记**，仅在 daemon 子命令的
+/// 启动期"配置缺失/平台不支持"路径使用——这些路径信息稠密、对用户
+/// 必须立即停止（无法优雅 fallback 到 daemon 运行态）。
+///
 /// Issue #495 重构副产物：daemon 子命令里 `eprintln!(...); std::process::exit(1);`
-/// 这个 2-行模式重复 8+ 次（platform 不支持、binary 缺失、plist 写入失败、
-/// launchctl/systemctl 失败等）。抽成 `die()` helper 后：
-/// - 调用方从 2 行变 1 行，未来改 error format 只动一处；
-/// - `!` 返回类型让调用方在不可能 fallthrough 的 match arm 里也能编译；
-/// - 单测里 `die()` 可被 `std::process::exit` mock 替代，但 daemon 子命令
-///   的 exit-code 走的是端到端集成测试，这里只保证 happy path 不 panic。
-fn die(msg: impl AsRef<str>) -> ! {
+/// 这个 2-行模式在很多地方重复（~21 处），但**不是全部都适合**用 `die_now`：
+/// - ✅ 适合：启动期无法恢复的 fatal（platform 不支持、binary 缺失、plist 写入失败）
+/// - ❌ 不适合：子命令执行期间**预期可能失败**的错误（launchctl/systemctl/schtasks
+///   单步失败、root 校验失败等），这些应当把控制权交回 CLI parser 让用户能看
+///   help 或选择 `--force`，所以保留 `eprintln! + std::process::exit(1)` 的 2-行
+///   显式形态。
+///
+/// 故命名采用 `die_now`（语义：现在就死）而非泛 `die`，避免被 cargo-cult 复制到
+/// 不该用的位置（参考 PR #542 v2 review H1 feedback）。
+///
+/// 调用方从 2 行变 1 行，未来改 error format 只动一处；`!` 返回类型让调用方在
+/// 不可能 fallthrough 的 match arm 里也能编译。
+fn die_now(msg: impl AsRef<str>) -> ! {
     eprintln!("{}", msg.as_ref());
     std::process::exit(1);
 }
@@ -86,7 +96,7 @@ pub async fn handle_daemon_command(action: &DaemonAction) {
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         let _ = action;
-        die("Daemon service is not supported on this platform.");
+        die_now("Daemon service is not supported on this platform.");
     }
 }
 
@@ -252,7 +262,7 @@ fn launchd_install(force: bool) {
     let binary = get_ntd_binary_path();
 
     if !binary.exists() {
-        die(format!(
+        die_now(format!(
             "ntd binary not found at {}. Run `make install` first.",
             binary.display()
         ));
@@ -272,7 +282,7 @@ fn launchd_install(force: bool) {
     // 写入 plist 是安装的前置步骤：失败则直接终止，避免后续 launchctl bootstrap
     // 加载一个不存在/损坏的 plist；改用 eprintln + exit(1) 让用户看到具体错误。
     if let Err(e) = fs::write(&plist_path, generate_launchd_plist()) {
-        die(format!(
+        die_now(format!(
             "Failed to write plist to {}: {}",
             plist_path.display(),
             e
