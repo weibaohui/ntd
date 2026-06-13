@@ -21,7 +21,7 @@ use crate::config::Config;
 use crate::db::Database;
 use crate::hooks::HookService;
 use crate::models::{ApiResponse, ParsedLogEntry};
-use crate::scheduler::TodoScheduler;
+use crate::scheduler::{SchedulerError, TodoScheduler};
 use crate::services::feishu_listener::FeishuListener;
 use crate::task_manager::{TaskManager, TaskInfo};
 
@@ -133,6 +133,28 @@ impl From<String> for AppError {
 impl From<std::io::Error> for AppError {
     fn from(err: std::io::Error) -> Self {
         AppError::Internal(err.to_string())
+    }
+}
+
+/// 把 `SchedulerError` 映射到 HTTP 状态码:
+///
+/// - `InvalidCron` / `InvalidTimezone` → 400 BadRequest(用户输入错误,
+///   给出友好提示比 500 更合适,前端也方便做差异化提示)
+/// - 其它变体(`Database` / `Internal`) → 500 Internal
+///
+/// 实现放在 handlers 层而不是 scheduler 层,因为:
+/// - `SchedulerError` 本身不需要知道 HTTP 状态码
+/// - 单元测试 scheduler 时不需要拉 axum / http::StatusCode 进来
+impl From<SchedulerError> for AppError {
+    fn from(err: SchedulerError) -> Self {
+        match &err {
+            SchedulerError::InvalidCron(_) | SchedulerError::InvalidTimezone(_) => {
+                AppError::BadRequest(err.to_string())
+            }
+            SchedulerError::Database(_) | SchedulerError::Internal(_) => {
+                AppError::Internal(err.to_string())
+            }
+        }
     }
 }
 
@@ -1107,5 +1129,88 @@ mod static_handler_tests {
         // 即使 Vite 也可能 hash 图片，policy 上 image 不下发 immutable
         assert_eq!(cache_control_for("logo-AbCd1234.png", "image/png"), "no-cache");
         assert_eq!(cache_control_for("hero-AbCd1234.svg", "image/svg+xml"), "no-cache");
+    }
+}
+
+#[cfg(test)]
+mod scheduler_error_mapping_tests {
+    //! 验证 `From<SchedulerError> for AppError` 的语义契约。
+    //!
+    //! 这是 issue #499 的核心交付物之一 —— 把"用户输入错误"
+    //! (InvalidCron / InvalidTimezone) 映射成 400,把"基础设施错误"
+    //! (Database / Internal) 映射成 500。如果这个映射错位,
+    //! 前端会拿到错误的 status code,排查起来非常麻烦。
+    //!
+    //! 注意:不直接断言 HTTP 状态码(StatusCode::BAD_REQUEST 等),
+    //! 只断言 AppError 枚举变体。这样测试不需要拉 axum/http,
+    //! 也可以独立跑。
+
+    use super::AppError;
+    use crate::scheduler::SchedulerError;
+
+    /// InvalidCron → BadRequest。前端拿到 400 + 错误信息,可以让用户
+    /// 修改 cron 后重试,而不是看到一个误导性的"服务器错误"。
+    #[test]
+    fn scheduler_error_invalid_cron_maps_to_bad_request() {
+        let app_err: AppError = SchedulerError::InvalidCron("not a cron".to_string()).into();
+        match &app_err {
+            AppError::BadRequest(msg) => {
+                assert!(msg.contains("Invalid cron expression"));
+                assert!(msg.contains("not a cron"));
+            }
+            other => panic!("expected BadRequest, got {other:?}"),
+        }
+    }
+
+    /// InvalidTimezone → BadRequest。和 InvalidCron 走同一条路径,
+    /// 因为都是用户输入错误。
+    #[test]
+    fn scheduler_error_invalid_timezone_maps_to_bad_request() {
+        let app_err: AppError = SchedulerError::InvalidTimezone("Not/A/Real/Zone".to_string()).into();
+        assert!(
+            matches!(app_err, AppError::BadRequest(_)),
+            "expected BadRequest for InvalidTimezone, got {app_err:?}"
+        );
+    }
+
+    /// Database → Internal。数据库连接失败属于基础设施问题,
+    /// 客户端不应该重试,只能等运维介入。
+    #[test]
+    fn scheduler_error_database_maps_to_internal() {
+        let db_err = sea_orm::DbErr::Custom("connection refused".to_string());
+        let app_err: AppError = SchedulerError::Database(db_err).into();
+        match &app_err {
+            AppError::Internal(msg) => {
+                assert!(msg.contains("Database error"));
+                assert!(msg.contains("connection refused"));
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
+    }
+
+    /// Internal → Internal。底层 tokio-cron-scheduler 抛出的错误归
+    /// 类为"我们的服务有 bug / 资源不足",对客户端屏蔽细节。
+    #[test]
+    fn scheduler_error_internal_maps_to_internal() {
+        let app_err: AppError = SchedulerError::Internal("CantAdd".to_string()).into();
+        match &app_err {
+            AppError::Internal(msg) => {
+                assert!(msg.contains("Scheduler internal error"));
+                assert!(msg.contains("CantAdd"));
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
+    }
+
+    /// 反向断言:绝不能把 InvalidCron 漏到 500 —— 这是 issue #499
+    /// 最关键的契约。如果这个断言失败,前端所有"用户配错 cron"的情况
+    /// 都会拿到误导性的服务器错误。
+    #[test]
+    fn scheduler_error_invalid_cron_never_becomes_internal() {
+        let app_err: AppError = SchedulerError::InvalidCron("x".to_string()).into();
+        assert!(
+            !matches!(app_err, AppError::Internal(_)),
+            "InvalidCron must NOT become Internal; got {app_err:?}"
+        );
     }
 }

@@ -37,7 +37,14 @@ pub async fn update_scheduler(
                 task_manager: state.task_manager.clone(),
                 config: state.config.clone(),
             };
-            match state
+            // upsert_task 返回 `SchedulerError`,通过
+            // `From<SchedulerError> for AppError` 自动映射:
+            // InvalidCron / InvalidTimezone → 400,其它 → 500。
+            //
+            // 之前实现是把任何 error 都强行塞成 500("Failed to upsert..."),
+            // 用户的 cron 写错了也变成服务器错误,前端无法做差异化提示。
+            // 这里保留 warn 日志方便排查,但 HTTP 状态码交给 From 决定。
+            if let Err(e) = state
                 .scheduler
                 .upsert_task(
                     &ctx,
@@ -47,33 +54,29 @@ pub async fn update_scheduler(
                 )
                 .await
             {
-                Ok(_) => {
-                    state
-                        .db
-                        .update_todo_scheduler(crate::db::SchedulerUpdate { id, enabled: req.scheduler_enabled, config: req.scheduler_config.as_deref(), timezone: scheduler_timezone.as_deref() })
-                        .await
-                        .map_err(AppError::from)?;
-                }
-                Err(e) => {
-                    tracing::error!("Failed to upsert scheduled task for todo {}: {}", id, e);
-                    return Err(AppError::Internal(format!("Failed to upsert scheduled task: {}", e)));
-                }
+                tracing::warn!(
+                    "Failed to upsert scheduled task for todo {}: {}",
+                    id, e
+                );
+                return Err(AppError::from(e));
             }
+            state
+                .db
+                .update_todo_scheduler(crate::db::SchedulerUpdate { id, enabled: req.scheduler_enabled, config: req.scheduler_config.as_deref(), timezone: scheduler_timezone.as_deref() })
+                .await?;
         } else {
             state.scheduler.remove_task_for_todo(id).await;
             state
                 .db
                 .update_todo_scheduler(crate::db::SchedulerUpdate { id, enabled: req.scheduler_enabled, config: req.scheduler_config.as_deref(), timezone: scheduler_timezone.as_deref() })
-                .await
-                .map_err(AppError::from)?;
+                .await?;
         }
     } else {
         state.scheduler.remove_task_for_todo(id).await;
         state
             .db
             .update_todo_scheduler(crate::db::SchedulerUpdate { id, enabled: req.scheduler_enabled, config: req.scheduler_config.as_deref(), timezone: scheduler_timezone.as_deref() })
-            .await
-            .map_err(AppError::from)?;
+            .await?;
     }
 
     let todo = state.require_todo(id).await?;
