@@ -225,9 +225,8 @@ WantedBy=default.target
 }
 
 fn install(force: bool, system: bool, run_as_user: Option<&str>) {
-    if system && unsafe { libc::geteuid() } != 0 {
-        eprintln!("System service install requires root. Re-run with sudo.");
-        std::process::exit(1);
+    if system {
+        crate::sys::require_root_or_exit("install");
     }
 
     let unit_path = unit_path(system);
@@ -291,9 +290,8 @@ fn install(force: bool, system: bool, run_as_user: Option<&str>) {
 }
 
 fn uninstall(system: bool) {
-    if system && unsafe { libc::geteuid() } != 0 {
-        eprintln!("System service uninstall requires root. Re-run with sudo.");
-        std::process::exit(1);
+    if system {
+        crate::sys::require_root_or_exit("uninstall");
     }
 
     // stop / disable 都允许失败：service 没起来或没 enable 是正常状态
@@ -311,9 +309,8 @@ fn uninstall(system: bool) {
 }
 
 fn start(system: bool) {
-    if system && unsafe { libc::geteuid() } != 0 {
-        eprintln!("System service start requires root. Re-run with sudo.");
-        std::process::exit(1);
+    if system {
+        crate::sys::require_root_or_exit("start");
     }
 
     let status = run_systemctl(system, &["start", SERVICE_NAME]);
@@ -326,9 +323,8 @@ fn start(system: bool) {
 }
 
 fn stop(system: bool) {
-    if system && unsafe { libc::geteuid() } != 0 {
-        eprintln!("System service stop requires root. Re-run with sudo.");
-        std::process::exit(1);
+    if system {
+        crate::sys::require_root_or_exit("stop");
     }
 
     let status = run_systemctl(system, &["stop", SERVICE_NAME]);
@@ -341,9 +337,8 @@ fn stop(system: bool) {
 }
 
 fn restart(system: bool) {
-    if system && unsafe { libc::geteuid() } != 0 {
-        eprintln!("System service restart requires root. Re-run with sudo.");
-        std::process::exit(1);
+    if system {
+        crate::sys::require_root_or_exit("restart");
     }
 
     let status = run_systemctl(system, &["restart", SERVICE_NAME]);
