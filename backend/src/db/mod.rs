@@ -14,8 +14,8 @@ use sea_orm::{
 };
 
 pub mod entity;
-pub mod migrations;
 pub mod sync_record;
+pub(super) mod migration;
 pub use entity::prelude::*;
 
 /// Model breakdown with date (for API responses)
@@ -76,29 +76,9 @@ impl Database {
         // - max=10 既覆盖了默认 max_concurrent_todos=3 的写入争用，又给 reader（WebSocket 广播、
         //   hook 触发、健康检查等）留出充足槽位；继续调大对单文件 SQLite 收益有限。
         // - min=2 让 daemon 启动后立即有两条温连接就绪，避免首批并发请求都要冷启。
-        // SQLite 连接 URL 是我们自己的硬编码常量 `:memory:` 或经过路径扩展的本地路径，
-        // parse 失败属于开发期 bug 而非运行时环境错误——仍然 panic 但加注释说明这是
-        // invariant 而不是用户可触发的失败路径。Issue #495 关注的是 panic 的可触发面，
-        // 这里加 `#[allow]` 让新增 lint 不误伤。
-        #[allow(clippy::expect_used)]
         let sqlite_opts: sqlx::sqlite::SqliteConnectOptions = url
             .parse()
             .expect("invalid sqlite connection url");
-
-        // 启用 sqlx 自身的 SQL trace，但只记录 WARN 及以上等级的慢查询。
-        // 目的：把慢查询（实际运行时间超过阈值的语句）纳入日志体系，便于
-        // 在 issue #513 的诉求中定位「数据库慢查询无法发现」的问题；INFO/DEBUG 级
-        // 的每条 SQL 仍然关闭，避免高频请求场景下日志量爆炸。
-        //
-        // sqlx 0.7 的 ConnectOptions trait 暴露 log_statements / log_slow_statements：
-        //   - log_statements(Off) 关掉所有普通语句日志；
-        //   - log_slow_statements(Warn, 1s) 仅对执行时间 ≥1s 的语句在 WARN 级记录。
-        // 阈值 1s 与 sqlx 默认值一致，对 SQLite 而言已经足够把「跨表 join /
-        // migration / 冷启动大批写入」等真正慢的操作筛出来。
-        use sqlx::ConnectOptions;
-        let sqlite_opts = sqlite_opts
-            .log_statements(log::LevelFilter::Off)
-            .log_slow_statements(log::LevelFilter::Warn, std::time::Duration::from_secs(1));
 
         let mut pool_opts = sqlx::sqlite::SqlitePoolOptions::new();
         pool_opts = pool_opts.max_connections(10);
@@ -159,24 +139,6 @@ impl Database {
             .map(|_| ())
     }
 
-    /// 与 `exec` 行为一致,但支持绑定参数以避免 SQL 注入。
-    /// 任何需要传入外部数据(version、name、timestamp 等)的 SQL 都应使用本方法,
-    /// 而非在 `exec` 里做 `format!` + 手动引号转义。
-    pub(super) async fn exec_with_params(
-        &self,
-        sql: &str,
-        values: Vec<sea_orm::Value>,
-    ) -> Result<(), sea_orm::DbErr> {
-        self.conn
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                sql,
-                values,
-            ))
-            .await
-            .map(|_| ())
-    }
-
     /// 执行返回结果集的 SQL 语句（如 PRAGMA），忽略返回值
     pub(super) async fn query_exec(&self, sql: &str) -> Result<(), sea_orm::DbErr> {
         self.conn
@@ -193,304 +155,107 @@ impl Database {
         model.update(&self.conn).await.map(|_| ())
     }
 
-    /// 迁移：为飞书子表添加 ON DELETE CASCADE 外键约束
-    /// SQLite 不支持 ALTER TABLE 修改外键约束，需要重建表（创建新表→复制数据→删除旧表→重命名）
-    /// 每张表独立检查，只有自身缺少 CASCADE 才重建；整个迁移包在事务中
-    async fn migrate_feishu_fk_cascade(&self) -> Result<(), sea_orm::DbErr> {
-        // 收集需要迁移的表
-        let tables_to_migrate = [
-            ("feishu_homes", "id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL, user_open_id TEXT NOT NULL, chat_id TEXT, receive_id TEXT NOT NULL, receive_id_type TEXT NOT NULL, created_at TEXT, updated_at TEXT, FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE, UNIQUE(bot_id, user_open_id)"),
-            ("feishu_messages", "id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL, message_id TEXT NOT NULL UNIQUE, chat_id TEXT NOT NULL, chat_type TEXT NOT NULL, sender_open_id TEXT NOT NULL, sender_nickname TEXT, sender_type TEXT, content TEXT, msg_type TEXT NOT NULL DEFAULT 'text', is_mention INTEGER DEFAULT 0, processed INTEGER DEFAULT 0, is_history INTEGER DEFAULT 0, fetch_time TEXT, created_at TEXT, processed_todo_id INTEGER, execution_record_id INTEGER, FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE"),
-            ("feishu_history_chats", "id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL, chat_id TEXT NOT NULL, chat_name TEXT, enabled INTEGER DEFAULT 1, last_fetch_time TEXT, polling_interval_secs INTEGER DEFAULT 60, created_at TEXT, FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE, UNIQUE(bot_id, chat_id)"),
-            ("feishu_push_targets", "id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL, p2p_receive_id TEXT NOT NULL DEFAULT '', group_chat_id TEXT NOT NULL DEFAULT '', receive_id_type TEXT NOT NULL DEFAULT 'open_id', push_level TEXT DEFAULT 'result_only', p2p_response_enabled INTEGER DEFAULT 1, group_response_enabled INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT, FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE"),
-            ("feishu_response_config", "id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL, target_type TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, debounce_secs INTEGER DEFAULT 20, created_at TEXT, updated_at TEXT, FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE, UNIQUE(bot_id, target_type)"),
-            ("feishu_group_whitelist", "id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL, sender_open_id TEXT NOT NULL, sender_name TEXT, created_at TEXT, FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE, UNIQUE(bot_id, sender_open_id)"),
-        ];
-
-        let mut needs_any = false;
-        for (table, _ddl) in &tables_to_migrate {
-            if self.needs_fk_migration(table).await? {
-                needs_any = true;
-                break;
-            }
-        }
-        if !needs_any {
-            return Ok(());
-        }
-
-        tracing::info!("Migrating feishu tables to add ON DELETE CASCADE...");
-        self.exec("BEGIN").await?;
-
-        for (table, ddl) in &tables_to_migrate {
-            if self.needs_fk_migration(table).await? {
-                self.rebuild_table_with_cascade(table, ddl).await?;
-            }
-        }
-
-
-        // 重建索引
-        self.exec("CREATE INDEX IF NOT EXISTS idx_feishu_messages_chat_id ON feishu_messages(chat_id)").await?;
-        self.exec("CREATE INDEX IF NOT EXISTS idx_feishu_messages_created_at ON feishu_messages(created_at)").await?;
-
-        self.exec("COMMIT").await?;
-
-
-        tracing::info!("Feishu FK cascade migration completed.");
-        Ok(())
-    }
-
-    /// 检查表的外键是否缺少 ON DELETE CASCADE（返回 true 表示需要迁移）
-    async fn needs_fk_migration(&self, table: &str) -> Result<bool, sea_orm::DbErr> {
-        let sql = format!("SELECT sql FROM sqlite_master WHERE type='table' AND name='{}'", table);
-        let result = self.conn
-            .query_one(Statement::from_string(DbBackend::Sqlite, sql))
-            .await?;
-        if let Some(row) = result {
-            let ddl: String = row.try_get_by("sql")?;
-            // 如果 DDL 中包含 ON DELETE CASCADE，说明已经是新 schema
-            return Ok(!ddl.contains("ON DELETE CASCADE"));
-        }
-        // 表不存在，CREATE TABLE IF NOT EXISTS 会创建正确的 schema
-        Ok(false)
-    }
-
-    /// 重建表以添加 ON DELETE CASCADE 外键约束
-    /// SQLite 标准迁移流程：新建→复制→删除→重命名
-    async fn rebuild_table_with_cascade(&self, table: &str, columns: &str) -> Result<(), sea_orm::DbErr> {
-        let tmp = format!("{}_new", table);
-        tracing::info!("Rebuilding table {} to add ON DELETE CASCADE...", table);
-
-        // 暂时关闭外键检查以避免重建过程中的约束冲突
-        self.exec("PRAGMA foreign_keys = OFF").await?;
-
-        // 清理上次中断可能残留的临时表
-        self.exec(&format!("DROP TABLE IF EXISTS {}", tmp)).await?;
-
-        // 创建新表
-        self.exec(&format!(
-            "CREATE TABLE IF NOT EXISTS {} ({})",
-            tmp, columns
-        )).await?;
-
-        // 获取旧表列名列表，用于安全的数据复制
-        let col_rows = self.conn
-            .query_all(Statement::from_string(
-                DbBackend::Sqlite,
-                format!("PRAGMA table_info('{}')", table),
-            ))
-            .await?;
-        let col_names: Vec<String> = col_rows
-            .iter()
-            .filter_map(|r| r.try_get::<String>("", "name").ok())
-            .collect();
-        let cols_str = col_names.join(", ");
-
-        // 复制数据
-        self.exec(&format!(
-            "INSERT INTO {} ({}) SELECT {} FROM {}",
-            tmp, cols_str, cols_str, table
-        )).await?;
-
-        // 删除旧表
-        self.exec(&format!("DROP TABLE {}", table)).await?;
-
-        // 重命名新表
-        self.exec(&format!("ALTER TABLE {} RENAME TO {}", tmp, table)).await?;
-
-        // 重新启用外键检查
-        self.exec("PRAGMA foreign_keys = ON").await?;
-
-        tracing::info!("Table {} rebuilt successfully.", table);
-        Ok(())
-    }
-
-    /// 迁移：将 execution_records.logs 旧字段数据迁移到 execution_logs 表，并删除旧字段
-    async fn migrate_logs_to_execution_logs(&self) -> Result<(), sea_orm::DbErr> {
-        // 检查 logs 列是否存在
-        let check_sql = "SELECT COUNT(*) FROM pragma_table_info('execution_records') WHERE name='logs'";
-        let result = self
-            .conn
-            .query_one(Statement::from_string(DbBackend::Sqlite, check_sql.to_string()))
-            .await?;
-        let col_exists = result
-            .and_then(|r| r.try_get_by_index::<i64>(0).ok())
-            .unwrap_or(0) > 0;
-        if !col_exists {
-            return Ok(());
-        }
-
-        tracing::info!("Migrating old logs column to execution_logs table...");
-
-        // 迁移未迁移的记录（execution_logs 表中没有数据的记录）
-        let select_sql = "SELECT id, logs FROM execution_records \
-            WHERE logs IS NOT NULL AND logs != '' AND logs != '[]' \
-            AND id NOT IN (SELECT DISTINCT record_id FROM execution_logs)";
-        let rows = self
-            .conn
-            .query_all(Statement::from_string(DbBackend::Sqlite, select_sql.to_string()))
-            .await?;
-
-        let mut migrated = 0u64;
-        let mut failed = 0u64;
-        for row in rows {
-            let id: i64 = row.try_get_by("id")?;
-            let logs_json: String = row.try_get_by("logs")?;
-            if !logs_json.is_empty() && logs_json != "[]" {
-                if let Err(e) = self.insert_execution_logs(id, &logs_json).await {
-                    tracing::warn!("Failed to migrate logs for record {}: {}", id, e);
-                    failed += 1;
-                } else {
-                    migrated += 1;
-                }
-            }
-        }
-
-        // 有任意记录迁移失败则不删除旧列，保留数据等待下次重试
-        if failed > 0 {
-            tracing::warn!(
-                "Logs migration incomplete: {} succeeded, {} failed. Keeping old logs column for retry.",
-                migrated, failed
-            );
-            return Ok(());
-        }
-
-        // 删除旧列
-        self.exec("ALTER TABLE execution_records DROP COLUMN logs").await?;
-        tracing::info!(
-            "Migrated {} execution records, dropped logs column",
-            migrated
-        );
-        Ok(())
-    }
-
-    /// 一次性迁移：将旧 `todos.rating`（已不再使用）合并到对应 todo 最新一条
-    /// `execution_records.rating`，然后 DROP COLUMN。
-    /// 设计原因：评分属于执行结果而非 todo 本身。
-    /// - 每个 todo 取最新一条已结束的 execution_record（按 started_at desc）
-    /// - 同一 record 已被多次评分时跳过，避免覆盖更新的评价
-    /// - 失败仅 warn，不阻塞启动
-    async fn migrate_todo_rating_to_execution_records(&self) -> Result<(), sea_orm::DbErr> {
-        // 检查旧列是否存在，不存在则直接跳过（DROP COLUMN 之后再次启动也是幂等的）
-        let check_sql = "SELECT COUNT(*) FROM pragma_table_info('todos') WHERE name='rating'";
-        let result = self
-            .conn
-            .query_one(Statement::from_string(DbBackend::Sqlite, check_sql.to_string()))
-            .await?;
-        let col_exists = result
-            .and_then(|r| r.try_get_by_index::<i64>(0).ok())
-            .unwrap_or(0)
-            > 0;
-        if !col_exists {
-            return Ok(());
-        }
-
-        tracing::info!("Migrating todos.rating -> execution_records.rating...");
-
-        // 拉取所有有评分的 todo 及其最新一条 execution_record
-        let select_sql = "\
-            SELECT t.id AS todo_id, t.rating AS rating, \
-                   (SELECT er.id FROM execution_records er \
-                    WHERE er.todo_id = t.id \
-                    ORDER BY er.started_at DESC LIMIT 1) AS latest_record_id \
-            FROM todos t \
-            WHERE t.rating IS NOT NULL";
-        let rows = self
-            .conn
-            .query_all(Statement::from_string(DbBackend::Sqlite, select_sql.to_string()))
-            .await?;
-
-        let mut migrated = 0u64;
-        for row in rows {
-            let todo_id: i64 = row.try_get_by("todo_id")?;
-            let rating: i32 = match row.try_get_by::<i64, _>("rating") {
-                Ok(v) => v as i32,
-                Err(_) => continue,
-            };
-            let latest_record_id: Option<i64> = row.try_get_by("latest_record_id").ok().flatten();
-            let Some(record_id) = latest_record_id else {
-                tracing::debug!(
-                    "Skip todo {} rating {}: no execution_records",
-                    todo_id, rating
-                );
+    /// 迁移入口：按版本号顺序执行尚未应用到 `schema_version` 表中的迁移。
+    ///
+    /// 设计原因：把过去 `init_tables()` 内联的「30+ CREATE TABLE / 30+ CREATE INDEX /
+    /// 6 CREATE TRIGGER / 8+ ALTER TABLE」拆成可寻址、可跳过的迁移单元，让稳态启动
+    /// 成本从 O(全部 DDL) 降到 O(待执行迁移)。详见 `db/migration.rs` 顶部注释。
+    ///
+    /// 幂等性：每次启动都先读 `schema_version`，已记录的版本号会被跳过。
+    /// 失败行为：迁移返回 `Err` 会立即冒泡，使 daemon 启动失败——比原来的 `.ok()`
+    /// 默默吞掉错误更安全（issue #498 修复点之一）。
+    ///
+    /// **已知限制 (follow-up)**: `m.up` 与 `record_migration` 当前不在同一个事务里,
+    /// 二者各自走连接池分配的不同连接。如果 `m.up` 成功提交 DDL、`record_migration`
+    /// 失败(如 disk full / lock / acquire_timeout),schema 已迁移但 `schema_version`
+    /// 没有对应行,下次启动会重跑 `m.up`。对 V1-V4 现有迁移而言重跑是幂等的(都基于
+    /// `CREATE ... IF NOT EXISTS` 或预检查),但新加迁移时需要在 `Migration::up` 内部
+    /// 保证幂等性,否则需要重构 trait 接受 `DatabaseTransaction` 参数。
+    async fn run_migrations(&self) -> Result<(), sea_orm::DbErr> {
+        self.ensure_schema_version_table().await?;
+        let applied = migration::read_applied_versions(self).await?;
+        for m in migration::all_migrations() {
+            let v = m.version();
+            if applied.contains(&v) {
+                tracing::debug!("migration v{} ({}) already applied", v, m.name());
                 continue;
-            };
-
-            // 仅在该 record 尚未评分时才写入，避免覆盖更新评价
-            let update_sql = "UPDATE execution_records \
-                SET rating = $1 \
-                WHERE id = $2 AND rating IS NULL";
-            let res = self
-                .conn
-                .execute(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    update_sql,
-                    [rating.into(), record_id.into()],
-                ))
-                .await?;
-            if res.rows_affected() > 0 {
-                migrated += 1;
             }
+            tracing::info!("applying migration v{} ({})...", v, m.name());
+            m.up(self).await?;
+            self.record_migration(v, m.name()).await?;
+            tracing::info!("migration v{} ({}) applied", v, m.name());
         }
-
-        // 移除旧列
-        if let Err(e) = self
-            .exec("ALTER TABLE todos DROP COLUMN rating")
-            .await
-        {
-            tracing::warn!("Failed to DROP COLUMN todos.rating: {}", e);
-            return Ok(()); // 不阻塞启动，下次启动再重试
-        }
-
-        tracing::info!(
-            "Migrated {} todo ratings to execution_records, dropped todos.rating",
-            migrated
-        );
         Ok(())
+    }
+
+    /// 确保 `schema_version` 表存在。第一次部署后这个表是空表，之后每次迁移
+    /// 都会在其中插入一行 `(version, name, applied_at)`。幂等。
+    async fn ensure_schema_version_table(&self) -> Result<(), sea_orm::DbErr> {
+        self.exec(
+            "CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+            )",
+        )
+        .await
+    }
+
+    /// 记录一次成功应用的迁移。`applied_at` 使用 UTC ISO8601，与项目其他
+    /// 时间戳格式保持一致（参见 `set_todos_created_at_utc` 触发器）。
+    async fn record_migration(&self, version: i64, name: &str) -> Result<(), sea_orm::DbErr> {
+        let applied_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let stmt = sea_orm::Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO schema_version (version, name, applied_at) VALUES ($1, $2, $3)",
+            [version.into(), name.into(), applied_at.into()],
+        );
+        self.conn.execute(stmt).await?;
+        Ok(())
+    }
+
+    /// 已应用迁移的版本号集合，暴露为公开方法便于前端展示 / 健康检查。
+    pub async fn get_applied_migrations(
+        &self,
+    ) -> Result<Vec<(i64, String, String)>, sea_orm::DbErr> {
+        let stmt = sea_orm::Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT version, name, applied_at FROM schema_version ORDER BY version",
+        );
+        let rows = self.conn.query_all(stmt).await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let v: i64 = row.try_get_by("version").unwrap_or(0);
+            let n: String = row.try_get_by("name").unwrap_or_default();
+            let a: String = row.try_get_by("applied_at").unwrap_or_default();
+            out.push((v, n, a));
+        }
+        Ok(out)
+    }
+
+    /// 已应用的最大迁移版本号；启动日志会打印这一项。
+    pub async fn get_schema_version(&self) -> Result<Option<i64>, sea_orm::DbErr> {
+        let stmt = sea_orm::Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT MAX(version) FROM schema_version",
+        );
+        let row = self.conn.query_one(stmt).await?;
+        // MAX() 对空表返回 NULL：用 Option<i64> 列类型解码 NULL 自然得到 None。
+        Ok(row.and_then(|r| r.try_get_by_index::<Option<i64>>(0).ok().flatten()))
     }
 
     async fn init_tables(&self) -> Result<(), sea_orm::DbErr> {
-        // 走 schema migration 框架:首次启动跑全部 DDL,之后启动只读一次 schema_version 就跳过
-        // (issue #498:旧实现每次启动跑上百条 DDL,即使 IF NOT EXISTS 也要解析+规划+扫描 schema)
-        //
-        // 稳态短路。若 schema 已经是最新版本,说明 DDL 早已应用、
-        // 配套的 data migrations(todos.rating / logs / feishu_fk_cascade)也已在
-        // 上一次首次启动 / 升级时跑完,此时再无条件调一次会浪费 ~10+ SELECT
-        // (其中 6 个是 feishu_fk_cascade 的 needs_fk_migration) + Vec/closure 工作。
-        // 这次启动只需 1 次 SELECT MAX(version) 即可。
-        let max_version = migrations::ALL_MIGRATIONS
-            .last()
-            .map(|m| m.version)
-            .unwrap_or(0);
-        let current = self.current_schema_version().await;
-        if current >= max_version {
-            tracing::debug!(
-                "init_tables: schema at v{} (max {}), skipping migrations + data migrations",
-                current,
-                max_version
-            );
-            return Ok(());
-        }
-
-        migrations::run_migrations(self).await?;
-
-        // 下面是需要在 DDL 之上做"数据迁移"的工作,各自有幂等性检查,
-        // 失败仅 warn,不阻塞启动(与原 init_tables 行为一致)。
-        if let Err(e) = self.migrate_todo_rating_to_execution_records().await {
-            tracing::warn!("Failed to migrate todos.rating -> execution_records.rating: {}", e);
-        }
-        self.migrate_logs_to_execution_logs()
-            .await
-            .unwrap_or_else(|e| tracing::warn!("Failed to migrate logs column: {}", e));
-        self.migrate_feishu_fk_cascade().await?;
-
+        // 实际工作全部委托给迁移 runner：
+        // 1. 首次启动：按版本号顺序执行所有迁移；
+        // 2. 稳态启动：读 schema_version 表，跳过已应用迁移，仅当有新版本时才执行。
+        // 详见 db/migration.rs。
+        self.run_migrations().await?;
+        tracing::info!(
+            "schema migrations applied; current schema_version = {:?}",
+            self.get_schema_version().await?
+        );
         Ok(())
     }
-
-    /// 返回当前已应用的 schema 版本号(用于 /api/schema/version 等观测端点)
-    pub async fn current_schema_version(&self) -> i64 {
-        migrations::current_schema_version(&self.conn).await
-    }
-
 
     // ===== Usage Stats methods =====
 
@@ -844,6 +609,114 @@ mod tests {
 
     async fn setup_db() -> Database {
         Database::new(":memory:").await.unwrap()
+    }
+
+    /// Issue #498：迁移 runner 应在首次 `:memory:` 启动时把当前注册的全部迁移
+    /// 标记为已应用，并把 schema_version 推进到最新版本。
+    #[tokio::test]
+    async fn test_fresh_db_records_all_migrations() {
+        let db = setup_db().await;
+        let v = db
+            .get_schema_version()
+            .await
+            .unwrap()
+            .expect("schema_version should be Some after fresh init");
+        let latest = migration::all_migrations()
+            .into_iter()
+            .map(|m| m.version())
+            .max()
+            .expect("at least one migration registered");
+        assert_eq!(
+            v, latest,
+            "fresh DB schema_version must equal max registered migration version"
+        );
+
+        let applied = db.get_applied_migrations().await.unwrap();
+        assert_eq!(
+            applied.len() as i64,
+            latest,
+            "schema_version must contain a row per registered migration"
+        );
+        for (ver, _name, _at) in &applied {
+            assert!(*ver >= 1 && *ver <= latest);
+        }
+    }
+
+    /// Issue #498：稳态启动时迁移 runner 必须幂等——再次运行不应增加新行，
+    /// 也应不报错。
+    #[tokio::test]
+    async fn test_run_migrations_is_idempotent() {
+        let db = setup_db().await;
+        let v1 = db.get_schema_version().await.unwrap().unwrap();
+        let count1 = db.get_applied_migrations().await.unwrap().len();
+
+        // 第二次手动调用：应当跳过所有已应用版本，等价 no-op
+        db.run_migrations().await.expect("rerun must succeed");
+
+        let v2 = db.get_schema_version().await.unwrap().unwrap();
+        let count2 = db.get_applied_migrations().await.unwrap().len();
+        assert_eq!(v1, v2, "schema_version must not advance on rerun");
+        assert_eq!(
+            count1, count2,
+            "schema_version rows must not grow on rerun (no duplicate INSERTs)"
+        );
+    }
+
+    /// Issue #498：新增迁移应当以版本号顺序执行（关键不变量：低版本号必须先于高版本号）。
+    /// 通过 schema_version 行序验证。
+    #[tokio::test]
+    async fn test_migrations_applied_in_version_order() {
+        let db = setup_db().await;
+        let applied = db.get_applied_migrations().await.unwrap();
+        let versions: Vec<i64> = applied.iter().map(|(v, _, _)| *v).collect();
+        let mut sorted = versions.clone();
+        sorted.sort();
+        assert_eq!(
+            versions, sorted,
+            "applied migration versions must be in ascending order"
+        );
+    }
+
+    /// Issue #498：单步迁移幂等——直接对已应用版本调用 `up()` 也不应破坏状态。
+    /// 验证 v1 的所有 DDL 都是 IF NOT EXISTS / 幂等检查，重复执行不出错。
+    #[tokio::test]
+    async fn test_v1_initial_schema_is_idempotent() {
+        let db = setup_db().await;
+        // 重新跑一遍 v1。表都已存在，CREATE TABLE IF NOT EXISTS / INDEX IF NOT EXISTS
+        // 应当跳过；已存在的 ALTER TABLE 列会被兼容分支 warn-and-skip。
+        migration::all_migrations()
+            .into_iter()
+            .find(|m| m.version() == 1)
+            .expect("v1 migration must be registered")
+            .up(&db)
+            .await
+            .expect("v1 re-run on already-migrated DB must succeed");
+    }
+
+    /// Issue #498：迁移名与版本号一一对应——验证 schema_version 里存的 name 字段
+    /// 与 `migration::all_migrations()` 的注册一致。
+    #[tokio::test]
+    async fn test_applied_migration_names_match_registry() {
+        let db = setup_db().await;
+        let applied: std::collections::HashMap<i64, String> = db
+            .get_applied_migrations()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(v, n, _)| (v, n))
+            .collect();
+        for m in migration::all_migrations() {
+            let v = m.version();
+            let registered_name = m.name();
+            let stored = applied
+                .get(&v)
+                .unwrap_or_else(|| panic!("migration v{} missing from schema_version", v));
+            assert_eq!(
+                stored, registered_name,
+                "migration v{} name mismatch: stored={} registered={}",
+                v, stored, registered_name
+            );
+        }
     }
 
     async fn create_test_execution_record(db: &Database, todo_id: i64, command: &str) -> i64 {
@@ -1783,111 +1656,5 @@ mod tests {
         let remaining = db.get_webhook_records(10, 0).await.unwrap();
         assert_eq!(remaining.len(), 1, "only recent record should remain");
         assert_eq!(remaining[0].path, "/recent");
-    }
-
-    // ===== Schema migration tests (issue #498) =====
-
-    /// 新建库后,`current_schema_version()` 应为 1 且所有 user 表都已创建
-    #[tokio::test]
-    async fn test_migrations_fresh_db_lands_on_v1() {
-        let db = setup_db().await;
-        let v = db.current_schema_version().await;
-        assert_eq!(v, 1, "fresh :memory: DB should report schema version 1");
-
-        // 抽样验证关键表已建好(完整覆盖见其它既有测试)
-        let count: i64 = db
-            .conn
-            .query_one(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT COUNT(*) FROM todos".to_string(),
-            ))
-            .await
-            .unwrap()
-            .and_then(|r| r.try_get_by_index::<i64>(0).ok())
-            .unwrap_or(0);
-        assert_eq!(count, 0, "todos table should exist and be empty");
-    }
-
-    /// schema_version 已是最新时,run_migrations 应当是空操作
-    /// (issue #498 的核心收益:避免每次启动执行上百条 DDL)
-    #[tokio::test]
-    async fn test_migrations_idempotent_noop_when_up_to_date() {
-        let db = setup_db().await;
-        // 第一次启动后 schema_version 已经被打点成 1
-        let first = db.current_schema_version().await;
-        assert_eq!(first, 1);
-
-        // 模拟「再次启动」:再跑一次 run_migrations,应当直接跳过
-        // (函数本身是 private,通过 init_tables 间接覆盖;这里直接调它验证)
-        let second = migrations::run_migrations(&db).await.unwrap();
-        assert_eq!(second, 1, "version should stay at 1 on re-run");
-    }
-
-    /// 模拟「从老版本升级上来的库」:有 user 表但没有 schema_version 表
-    /// 此时 run_migrations 应当把 DDL 跑一遍(全是 IF NOT EXISTS 的 no-op),
-    /// 然后把 schema_version 标记为最新,不再重复跑
-    #[tokio::test]
-    async fn test_migrations_legacy_db_promoted_to_current() {
-        // 1. 创建一个正常库,让它跑完初始迁移,标记 v1
-        let db = setup_db().await;
-        let v0 = db.current_schema_version().await;
-        assert_eq!(v0, 1, "setup_db should have landed on v1");
-
-        // 2. 手动写入一张"老表" + DROP 掉 schema_version 表,
-        //    模拟"老版本的库,只有 user 表,没有 schema_version 元信息"
-        db.exec("CREATE TABLE legacy_marker (id INTEGER PRIMARY KEY, note TEXT)")
-            .await
-            .unwrap();
-        db.exec("DELETE FROM schema_version")
-            .await
-            .unwrap();
-        db.exec("DROP TABLE schema_version").await.unwrap();
-
-        // 3. 重新读 version 应当是 0
-        let v_before = migrations::current_schema_version(&db.conn).await;
-        assert_eq!(v_before, 0, "dropped schema_version should read as 0");
-
-        // 4. 跑迁移:应当把 DDL 跑一次(IF NOT EXISTS 全部 no-op),然后标记 v1
-        let v_after = migrations::run_migrations(&db).await.unwrap();
-        assert_eq!(v_after, 1, "legacy DB should be promoted to v1");
-
-        // 5. 验证老表仍然存在(说明迁移没把表重建/丢失)
-        let legacy_rows: i64 = db
-            .conn
-            .query_one(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT COUNT(*) FROM legacy_marker".to_string(),
-            ))
-            .await
-            .unwrap()
-            .and_then(|r| r.try_get_by_index::<i64>(0).ok())
-            .unwrap_or(-1);
-        assert_eq!(legacy_rows, 0, "legacy table should survive migration");
-
-        // 6. 关键 user 表也已就位(IF NOT EXISTS 不会破坏现有数据)
-        let todos_count: i64 = db
-            .conn
-            .query_one(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT COUNT(*) FROM todos".to_string(),
-            ))
-            .await
-            .unwrap()
-            .and_then(|r| r.try_get_by_index::<i64>(0).ok())
-            .unwrap_or(-1);
-        assert_eq!(todos_count, 0, "todos table should now exist");
-
-        // 7. schema_version 表中应正好一行,version=1
-        let recorded_count: i64 = db
-            .conn
-            .query_one(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT COUNT(*) FROM schema_version".to_string(),
-            ))
-            .await
-            .unwrap()
-            .and_then(|r| r.try_get_by_index::<i64>(0).ok())
-            .unwrap_or(-1);
-        assert_eq!(recorded_count, 1, "schema_version should have one row");
     }
 }
