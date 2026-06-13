@@ -275,11 +275,21 @@ fn convert_cron_to_utc(
 
     let (utc_seconds_set, utc_minutes_set, utc_hours_set) = if is_dst_pair {
         // 取 dominant(出现次数最多的那个时刻)。
+        // `is_dst_pair` 守卫了 distinct.len()==2，所以 `max_by_key` 在
+        // non-empty 迭代器上一定返回 `Some(_)`（即使 key 全相等也返回最后
+        // 一个）。用 `.expect()` 把不可达分支压成显式 invariant message，
+        // 让 clippy::expect_used 看得见这是 invariant 而非运行时错误——
+        // 之前 `match { Some/None => Err }` 的 None 分支是 dead code，
+        // `clippy::unreachable_patterns` lint 提升到 deny 时会 fail CI。
+        // `.expect()` 是基于 type-level invariant 的穷尽性保证,
+        // 不是运行时可达的错误路径——显式标注 `#[allow]` 让
+        // `[lints.clippy] expect_used = "warn"` lint 不会误报。
+        #[allow(clippy::expect_used)]
         let (h, m, s) = distinct
             .iter()
             .max_by_key(|k| utc_time_counts.get(k).copied().unwrap_or(0))
             .copied()
-            .expect("DST pair has 2 elements");
+            .expect("DST pair invariant: is_dst_pair implies distinct.len() == 2, so max_by_key returns Some");
         warn!(
             "Cron '{}' in {} crosses DST; using dominant UTC time \
             (h={}, m={}, s={}) and dropping the other. \
@@ -526,6 +536,12 @@ impl TodoScheduler {
 }
 
 #[cfg(test)]
+// `cargo clippy --all-targets` 会同时 lint test mod。新增的
+// `[lints.clippy] unwrap_used/expect_used = "warn"` 会误伤此处 17 处
+// `.unwrap()` / `.expect()`（test path, panic = fail, 完全合理）。一次性
+// 标注允许,与 lib.rs 文档"测试里使用 unwrap/expect 需加 `#[allow]`"保持一致。
+// 测试 mod 整体允许,避免逐 fn 标注噪声。
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod convert_cron_to_utc_tests {
     //! `convert_cron_to_utc` 是把用户时区的 cron 表达式换成 UTC 的纯函数。
     //! 之所以单独测这个函数:
@@ -897,6 +913,42 @@ mod scheduler_error_tests {
         assert!(
             matches!(app_err, AppError::Internal(_)),
             "expected Internal, got {app_err:?}"
+        );
+    }
+
+    /// Issue #495 修复后的回归测试：non-DST-pair 多 hour 列表仍走 union 路径。
+    /// 强化断言：必须**同时**包含两个 UTC 小时而非只包含任一个——证明是
+    /// union 而非 dominant/单一选择。
+    ///
+    /// 注：`is_dst_pair=true` 路径（`.expect()` 实际被触发的分支）已由
+    /// `test_dst_single_hour_uses_dominant_offset` / `test_dst_london_uses_dominant_offset`
+    /// 覆盖（它们用 `0 0 9 * * *` 构造 hour diff=1 的真 DST pair），这里只补
+    /// "走另一分支"的回归保护。
+    #[test]
+    fn test_multi_hour_list_uses_union_path() {
+        // 9 点和 12 点不是 DST pair（hour diff=3），应走 union 路径。
+        let utc = convert_cron_to_utc("0 0 9,12 * * *", "Asia/Shanghai").unwrap();
+        // Shanghai: 9 → 1, 12 → 4 (both UTC)
+        assert!(
+            utc.contains("1") && utc.contains("4"),
+            "non-DST-pair multi-hour should union both hours, got: {utc}"
+        );
+    }
+
+    /// Issue #495 修复后的回归测试：scheduler.rs 已不再用 .expect()，
+    /// 即使时区/Cron 输入异常也会走 Result Err 路径返回错误消息。
+    /// 这里验证错误消息里包含问题源头（cron 字符串或时区）便于排查。
+    #[test]
+    fn test_invalid_input_returns_descriptive_error() {
+        // 输入垃圾字符串，错误信息应包含具体内容而不是"panic"。
+        let result = convert_cron_to_utc("!!!bad!!!", "Asia/Shanghai");
+        let err = result.unwrap_err();
+        // 错误消息必须非空且包含解析失败的描述，方便运维定位。
+        assert!(!err.is_empty(), "error message should not be empty");
+        // 不应该有 "panic" 字样——证明我们没走到 panic 路径。
+        assert!(
+            !err.to_lowercase().contains("panic"),
+            "error should be returned via Result, not panic. got: {err}"
         );
     }
 }

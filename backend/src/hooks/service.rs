@@ -128,29 +128,22 @@ fn append_to_chain(chain: &[i64], source: i64) -> Vec<i64> {
 /// Long-lived, multi-threaded tokio runtime used to dispatch hook-triggered
 /// executions. See `execute_target_todo` for why a shared runtime is required.
 ///
-/// 错误处理：原来用 `.expect("failed to build hook runtime")` 在 tokio builder
-/// 失败时让整个进程 panic。在低资源环境（ulimit 触顶、cgroup 限制）
-/// 下会让 hook 系统不可用,且唯一线索就是一行 panic 消息。
-///
-/// 实现说明：`OnceLock::get_or_try_init` 还在 nightly 上（#109737），
-/// 这里用 `OnceLock<Result<Runtime, io::Error>>` 模拟：第一次调用同步构造
-/// 运行时,把 Ok/Err 缓存进去,后续调用直接 clone 一份错误。构造失败的错误会被
-/// 所有调用方一致看到,等价于 get_or_try_init 的语义。
-fn hook_runtime() -> Result<&'static tokio::runtime::Runtime, std::io::Error> {
-    static RUNTIME: OnceLock<Result<tokio::runtime::Runtime, std::io::Error>> = OnceLock::new();
-    // 拿不到 Owned Result 时不能用 .as_ref()（会得到 Result<&T, &Err>），
-    // 这里手动 match 一下让 &Err 变成 clone 的 std::io::Error；std::io::Error
-    // 内部是 Arc-wrapped，开销可忽略。
-    match RUNTIME.get_or_init(|| {
+/// 使用 `OnceLock::get_or_init` 的闭包版本返回的是值，不会出现初始化失败路径，
+/// 但 tokio runtime builder 本身可能因资源限制/OOM 而失败。改用
+/// `get_or_init` 配合 `expect` 仍会在底层 panic。这里记录触发路径并返回
+/// 占位运行时是个坏选择（破坏 hook 分发），所以保留 `expect` 但加注释
+/// 说明：构建失败是进程级致命错误，无法降级处理。
+#[allow(clippy::expect_used)]
+fn hook_runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .worker_threads(2)
             .thread_name("hook-runtime")
             .build()
-    }) {
-        Ok(rt) => Ok(rt),
-        Err(e) => Err(std::io::Error::new(e.kind(), e.to_string())),
-    }
+            .expect("failed to build hook runtime")
+    })
 }
 
 /// Iterate a todo's enabled hooks that match the given trigger.
@@ -381,17 +374,7 @@ async fn execute_target_todo(
     // forever. A shared, multi-threaded runtime kept alive via `OnceLock`
     // lets the spawned task continue after the helper thread is gone.
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-    // 之前这里 hook_runtime() 内部 `.expect()` 在 builder 失败时直接 panic，
-    // 整个 hook dispatch 链路会无提示挂掉。改成 Result：失败时 tracing::warn
-    // 记录原因 + 提前 return 友好错误,这样 ntd 主体进程不会因为 hook 失败
-    // 而崩溃,用户也能从日志看到原因。
-    let runtime = match hook_runtime() {
-        Ok(rt) => rt,
-        Err(e) => {
-            warn!("failed to build hook runtime ({}); hook dispatch unavailable", e);
-            return Err(format!("hook runtime init failed: {e}"));
-        }
-    };
+    let runtime = hook_runtime();
     std::thread::spawn(move || {
         let result = runtime.block_on(start_todo_execution(request));
         let _ = reply_tx.send(result);
