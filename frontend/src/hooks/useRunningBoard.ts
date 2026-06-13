@@ -37,7 +37,7 @@ function classifyRecord(record: ExecutionRecord): RunningBoardColumn {
   if (record.last_review_status === 'success') return 'review_passed';
   if (record.last_review_status === 'failed' || record.last_review_status === 'interrupted') return 'failed';
   if (record.status === 'success') return 'completed';
-  // interrupted / skipped review + non-success status
+  // 防御性兜底：理论上不可达（status 只有 running/success/failed 三种合法值）
   return 'failed';
 }
 
@@ -47,7 +47,7 @@ export function useRunningBoard(): RunningBoardState {
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const limit = 100;
+  const limit = 100; // 后端上限 200，取 100 平衡首屏加载性能与翻页频率
   const mountedRef = useRef(true);
 
   const refresh = useCallback(async () => {
