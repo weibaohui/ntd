@@ -78,8 +78,10 @@ impl Database {
         db.exec("PRAGMA busy_timeout = 5000").await?;
         // Enable foreign key enforcement (SQLite default is OFF; CASCADE depends on this)
         db.exec("PRAGMA foreign_keys = ON").await?;
-        // WAL mode already handles most crash-safety; NORMAL avoids redundant double-fsync
-        // (WAL default is FULL, which is overkill when WAL journal itself is crash-safe)
+        // 本项目使用 bundled libsqlite3（SQLite 3.44.0），支持 WAL + synchronous=NORMAL。
+        // 这是一个性能/持久性权衡：在断电或硬重启场景下，已提交的事务可能被回滚，
+        // 但数据库保持一致性和无损坏；可显著提高写入吞吐量，具体收益依赖负载与环境。
+        // （不等同于"完全持久化"；FULL 模式提供更强保证但会牺牲写入性能）
         db.exec("PRAGMA synchronous = NORMAL").await?;
         // Enable WAL mode and verify it took effect
         match db.conn
