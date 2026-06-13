@@ -1042,8 +1042,8 @@ async fn migrate_todo_rating_to_execution_records(db: &Database) -> Result<(), s
     let select_sql = "\
         SELECT t.id AS todo_id, t.rating AS rating, \
                (SELECT er.id FROM execution_records er \
-                WHERE er.todo_id = t.id \
-                ORDER BY er.started_at DESC LIMIT 1) AS latest_record_id \
+                WHERE er.todo_id = t.id AND er.finished_at IS NOT NULL \
+                ORDER BY er.started_at DESC, er.id DESC LIMIT 1) AS latest_record_id \
         FROM todos t \
         WHERE t.rating IS NOT NULL";
     let rows = db
@@ -1296,8 +1296,9 @@ async fn rebuild_table_with_cascade<C: ConnectionTrait>(
     let tmp = format!("{}_new", table);
     tracing::info!("Rebuilding table {} to add ON DELETE CASCADE...", table);
 
-    // 暂时关闭外键检查以避免重建过程中的约束冲突
-    exec_on_conn(conn, "PRAGMA foreign_keys = OFF").await?;
+    // 注意 (PR #539 push-4 review CRITICAL): PRAGMA foreign_keys 不能在事务
+    // 内设置（SQLite 直接禁止：no-op / SQLITE_ERROR）。该 PRAGMA 必须由调用方
+    // （migrate_feishu_fk_cascade）在事务**外**统一管理。本函数不再操作 FK 设置。
 
     // 清理上次中断可能残留的临时表
     exec_on_conn(conn, &format!("DROP TABLE IF EXISTS {}", tmp)).await?;
@@ -1305,18 +1306,32 @@ async fn rebuild_table_with_cascade<C: ConnectionTrait>(
     // 创建新表
     exec_on_conn(conn, &format!("CREATE TABLE IF NOT EXISTS {} ({})", tmp, columns)).await?;
 
-    // 获取旧表列名列表，用于安全的数据复制
-    let col_rows = conn
+    // 列名取交集：用新表（DDL 定义的 schema）为权威，避免旧表存在「已被 hotfix
+    // 加进、但当前 DDL 没包含」的列导致 INSERT ... SELECT 报 "no such column"。
+    // 旧表缺新表有 → 跳过该列（旧数据无值，新列 DEFAULT NULL）。
+    // 新表缺旧表有 → 跳过该列（旧数据不被复制）。
+    let old_col_rows = conn
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
             format!("PRAGMA table_info('{}')", table),
         ))
         .await?;
-    let col_names: Vec<String> = col_rows
+    let new_col_rows = conn
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            format!("PRAGMA table_info('{}')", tmp),
+        ))
+        .await?;
+    let old_col_names: std::collections::HashSet<String> = old_col_rows
         .iter()
         .filter_map(|r| r.try_get::<String>("", "name").ok())
         .collect();
-    let cols_str = col_names.join(", ");
+    let cols_str: String = new_col_rows
+        .iter()
+        .filter_map(|r| r.try_get::<String>("", "name").ok())
+        .filter(|name| old_col_names.contains(name))
+        .collect::<Vec<_>>()
+        .join(", ");
 
     // 复制数据
     exec_on_conn(
@@ -1379,6 +1394,16 @@ async fn migrate_feishu_fk_cascade(db: &Database) -> Result<(), sea_orm::DbErr> 
     // （max_connections=10，PR #497 调整后），每次 execute 都可能拿到不同的连接，
     // BEGIN/ALTER/COMMIT 落在 3 条不同连接上 → 事务完全失去原子性。
     // 用 `conn.begin()` 把整组 DDL 钉在同一条连接上，任一步失败都能回滚。
+    //
+    // 重要 (PR #539 push-4 review CRITICAL)：`PRAGMA foreign_keys = OFF` /
+    // `= ON` **必须在事务外**执行。SQLite 文档明确规定：
+    //   "This pragma is a no-op within a transaction; foreign key constraint
+    //    enforcement may only be enabled or disabled when there is no pending
+    //    BEGIN or SAVEPOINT."
+    // 在事务内执行会得到 SQLITE_ERROR "cannot change foreign key enforcement
+    // inside of a transaction"，整个 migration runner 失败、daemon 拒绝启动。
+    // 注意：必须在 begin() **之前** OFF、commit() **之后** ON 才有效果。
+    db.exec("PRAGMA foreign_keys = OFF").await?;
     let txn = db.conn.begin().await?;
 
     for (table, ddl) in &tables_to_migrate {
@@ -1400,6 +1425,9 @@ async fn migrate_feishu_fk_cascade(db: &Database) -> Result<(), sea_orm::DbErr> 
     .await?;
 
     txn.commit().await?;
+
+    // 事务提交后再开 FK 检查（必须在事务外才生效）。
+    db.exec("PRAGMA foreign_keys = ON").await?;
 
     tracing::info!("Feishu FK cascade migration completed.");
     Ok(())
