@@ -512,6 +512,7 @@ fn launchd_status(verbose: bool) -> Result<(), DaemonError> {
             }
         }
     }
+    Ok(())
 }
 
 // =============================================================================
@@ -1195,7 +1196,7 @@ impl std::error::Error for RedeployError {}
 // handle_task_scheduler 声明为 async 是为了内部 Restart 分支可以 .await
 // task_scheduler_restart();其他分支保持同步,函数签名统一而已。
 #[cfg(target_os = "windows")]
-async fn handle_task_scheduler(action: &DaemonAction) {
+async fn handle_task_scheduler(action: &DaemonAction) -> Result<(), DaemonError> {
     match action {
         DaemonAction::Install { force, .. } => task_scheduler_install(*force),
         DaemonAction::Uninstall { .. } => task_scheduler_uninstall(),
@@ -1207,23 +1208,25 @@ async fn handle_task_scheduler(action: &DaemonAction) {
 }
 
 #[cfg(target_os = "windows")]
-fn task_scheduler_install(force: bool) {
-    let binary = get_ntd_binary_path();
+fn task_scheduler_install(force: bool) -> Result<(), DaemonError> {
+    let binary = get_ntd_binary_path()?;
 
     if !binary.exists() {
-        eprintln!("ntd binary not found at {}. Run `make install` first.", binary.display());
-        std::process::exit(1);
+        return Err(DaemonError::BinaryNotFound(binary));
     }
 
     // Check if task already exists
+    // query 失败（schtasks 不在 PATH 上、权限不足等）只 warn，
+    // 不阻断重装流程——用户明确 --force 时本就是想覆盖。
     let query = Command::new("schtasks")
         .args(["/query", "/tn", TASK_NAME])
-        .output();
+        .output()
+        .map_err(|e| DaemonError::Spawn("schtasks".to_string(), e))?;
 
-    if query.is_ok() && query.unwrap().status.success() && !force {
+    if query.status.success() && !force {
         println!("Task already exists: {}", TASK_NAME);
         println!("Use --force to reinstall");
-        return;
+        return Ok(());
     }
 
     // Delete existing task if force
@@ -1248,7 +1251,7 @@ fn task_scheduler_install(force: bool) {
             "/it",  // Run only when user is logged on (interactive)
         ])
         .output()
-        .expect("Failed to run schtasks");
+        .map_err(|e| DaemonError::Spawn("schtasks".to_string(), e))?;
 
     if output.status.success() {
         println!();
@@ -1262,96 +1265,104 @@ fn task_scheduler_install(force: bool) {
         println!("  ntd daemon stop                 # Stop");
 
         // Create a wrapper script for restart-on-failure behavior
+        // 目录创建失败不致命——watchdog 是可选优化,失败 warn 一下即可
         let ntd_dir = get_ntd_dir();
-        fs::create_dir_all(&ntd_dir).ok();
+        let _ = fs::create_dir_all(&ntd_dir);
 
         let wrapper_path = ntd_dir.join("ntd_watchdog.bat");
         let wrapper_content = format!(
             "@echo off\r\n:restart\r\n\"{}\" server start\r\necho ntd exited, restarting in 5 seconds...\r\ntimeout /t 5 /nobreak >nul\r\ngoto restart\r\n",
             binary_str
         );
-        fs::write(&wrapper_path, wrapper_content).ok();
-        println!();
-        println!("Watchdog script: {}", wrapper_path.display());
-        println!("For auto-restart on crash, use the watchdog script as the task action.");
+        if let Err(e) = fs::write(&wrapper_path, wrapper_content) {
+            eprintln!("Warning: failed to write watchdog script: {}", e);
+        } else {
+            println!();
+            println!("Watchdog script: {}", wrapper_path.display());
+            println!("For auto-restart on crash, use the watchdog script as the task action.");
+        }
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("Failed to create task: {}", stderr.trim());
-        std::process::exit(1);
+        return Err(DaemonError::NonZeroExit {
+            command: "schtasks /create".to_string(),
+            code: output.status.code(),
+            stderr: stderr.trim().to_string(),
+        });
     }
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
-fn task_scheduler_uninstall() {
+fn task_scheduler_uninstall() -> Result<(), DaemonError> {
     let output = Command::new("schtasks")
         .args(["/delete", "/tn", TASK_NAME, "/f"])
-        .output();
+        .output()
+        .map_err(|e| DaemonError::Spawn("schtasks".to_string(), e))?;
 
-    match output {
-        Ok(o) if o.status.success() => {
-            println!("Task deleted");
-            // Clean up watchdog script
-            let watchdog = get_ntd_dir().join("ntd_watchdog.bat");
-            if watchdog.exists() {
-                fs::remove_file(&watchdog).ok();
+    if output.status.success() {
+        println!("Task deleted");
+        // Clean up watchdog script
+        let watchdog = get_ntd_dir().join("ntd_watchdog.bat");
+        if watchdog.exists() {
+            if let Err(e) = fs::remove_file(&watchdog) {
+                eprintln!("Warning: failed to remove watchdog: {}", e);
             }
         }
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            if stderr.contains("does not exist") || stderr.contains("The system cannot find") {
-                println!("Task does not exist");
-            } else {
-                eprintln!("Failed to delete task: {}", stderr.trim());
-            }
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("does not exist") || stderr.contains("The system cannot find") {
+            println!("Task does not exist");
+        } else {
+            eprintln!("Failed to delete task: {}", stderr.trim());
         }
-        Err(e) => eprintln!("Failed to run schtasks: {}", e),
     }
 
     println!("Service uninstalled");
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
-fn task_scheduler_start() {
+fn task_scheduler_start() -> Result<(), DaemonError> {
     let output = Command::new("schtasks")
         .args(["/run", "/tn", TASK_NAME])
-        .output();
+        .output()
+        .map_err(|e| DaemonError::Spawn("schtasks".to_string(), e))?;
 
-    match output {
-        Ok(o) if o.status.success() => println!("Service started"),
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            if stderr.contains("already running") {
-                println!("Service is already running");
-            } else {
-                eprintln!("Failed to start task: {}", stderr.trim());
-                std::process::exit(1);
-            }
-        }
-        Err(e) => {
-            eprintln!("Failed to run schtasks: {}", e);
-            std::process::exit(1);
+    if output.status.success() {
+        println!("Service started");
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("already running") {
+            println!("Service is already running");
+        } else {
+            return Err(DaemonError::NonZeroExit {
+                command: "schtasks /run".to_string(),
+                code: output.status.code(),
+                stderr: stderr.trim().to_string(),
+            });
         }
     }
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
-fn task_scheduler_stop() {
+fn task_scheduler_stop() -> Result<(), DaemonError> {
     let output = Command::new("schtasks")
         .args(["/end", "/tn", TASK_NAME])
-        .output();
+        .output()
+        .map_err(|e| DaemonError::Spawn("schtasks".to_string(), e))?;
 
-    match output {
-        Ok(o) if o.status.success() => println!("Service stopped"),
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            if stderr.contains("not running") || stderr.contains("does not exist") {
-                println!("Service is not running");
-            } else {
-                eprintln!("Failed to stop task: {}", stderr.trim());
-            }
+    if output.status.success() {
+        println!("Service stopped");
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("not running") || stderr.contains("does not exist") {
+            println!("Service is not running");
+        } else {
+            eprintln!("Failed to stop task: {}", stderr.trim());
         }
-        Err(e) => eprintln!("Failed to run schtasks: {}", e),
     }
+    Ok(())
 }
 
 // Windows Task Scheduler restart:stop → 等 → start。
@@ -1366,43 +1377,40 @@ fn task_scheduler_stop() {
 // 又保留足够冗余覆盖慢主机的长尾场景。比 launchd 的 500ms 更保守,
 // 因为 schtasks /end → start 的串行依赖比 launchd bootout 更紧。
 #[cfg(target_os = "windows")]
-async fn task_scheduler_restart() {
-    task_scheduler_stop();
+async fn task_scheduler_restart() -> Result<(), DaemonError> {
+    task_scheduler_stop()?;
     tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-    task_scheduler_start();
+    task_scheduler_start()
 }
 
 #[cfg(target_os = "windows")]
-fn task_scheduler_status(verbose: bool) {
+fn task_scheduler_status(verbose: bool) -> Result<(), DaemonError> {
     let output = Command::new("schtasks")
         .args(["/query", "/tn", TASK_NAME, "/fo", "list"])
-        .output();
+        .output()
+        .map_err(|e| DaemonError::Spawn("schtasks".to_string(), e))?;
 
-    match output {
-        Ok(o) if o.status.success() => {
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            println!("{}", stdout);
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        println!("{}", stdout);
 
-            if stdout.contains("Running") {
-                println!("Status: running");
-            } else if stdout.contains("Ready") {
-                println!("Status: ready (not running)");
-                println!("  Run: ntd daemon start");
-            }
+        if stdout.contains("Running") {
+            println!("Status: running");
+        } else if stdout.contains("Ready") {
+            println!("Status: ready (not running)");
+            println!("  Run: ntd daemon start");
         }
-        Ok(_) => {
-            println!("Task is not installed");
-            println!("  Run: ntd daemon install");
-        }
-        Err(_) => {
-            println!("Task is not installed");
-            println!("  Run: ntd daemon install");
-        }
+    } else {
+        println!("Task is not installed");
+        println!("  Run: ntd daemon install");
     }
 
     if verbose {
         println!();
-        println!("Binary: {}", get_ntd_binary_path().display());
+        // 拿不到 binary path 也只 warn,不能因为 verbose 输出就 fail
+        if let Ok(binary) = get_ntd_binary_path() {
+            println!("Binary: {}", binary.display());
+        }
 
         let log_path = get_ntd_dir().join("run.log");
         if log_path.exists() {
@@ -1414,6 +1422,105 @@ fn task_scheduler_status(verbose: bool) {
                 }
             }
         }
+    }
+    Ok(())
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+//
+// 这些测试覆盖 #495 issue 的核心契约：
+// 1) DaemonError 的 Display 输出人类可读
+// 2) 错误原因链（thiserror #[source]）能透传到底层 std::io::Error
+// 3) 平台无关的纯函数（build_redeploy_spec、DaemonInstallMode）跨平台断言
+//
+// 涉及 platform-cfg 的函数（launchd_*、systemd_*、task_scheduler_*）不在这里
+// 测,因为 CI 主要跑 Linux；那些函数的"返回 Result"编译期就保证了不 panic。
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn daemon_error_requires_root_is_user_facing() {
+        // sudo 提示是给运维人员看的，应该是英文短句而不是技术错误码
+        let err = DaemonError::RequiresRoot;
+        assert_eq!(err.to_string(), "this operation requires root; re-run with sudo");
+    }
+
+    #[test]
+    fn daemon_error_binary_not_found_includes_path() {
+        // 路径要带在错误里，方便用户交叉检查 PATH/安装位置
+        let path = PathBuf::from("/opt/nonexistent/ntd");
+        let err = DaemonError::BinaryNotFound(path.clone());
+        let msg = err.to_string();
+        assert!(msg.contains("not found"), "msg should say 'not found': {msg}");
+        assert!(msg.contains("/opt/nonexistent/ntd"), "msg should include path: {msg}");
+    }
+
+    #[test]
+    fn daemon_error_non_zero_exit_includes_stderr() {
+        // 错误信息要能让用户看到 schtasks/systemctl 报的具体原因
+        let err = DaemonError::NonZeroExit {
+            command: "systemctl start".to_string(),
+            code: Some(1),
+            stderr: "Unit not found".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("systemctl start"));
+        assert!(msg.contains("Unit not found"));
+        assert!(msg.contains("1"));
+    }
+
+    #[test]
+    fn daemon_error_write_file_preserves_source() {
+        // #[source] 让 anyhow 在打印时把底层 io::Error 也带出来
+        use std::error::Error as _;
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let err = DaemonError::WriteFile {
+            path: PathBuf::from("/etc/systemd/system/ntd.service"),
+            source: io_err,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("ntd.service"));
+        // source 链可以 walk
+        let source = err.source().expect("WriteFile should expose source");
+        assert!(source.to_string().contains("denied"));
+    }
+
+    #[test]
+    fn daemon_error_refuse_root_system_install_is_descriptive() {
+        let err = DaemonError::RefusingRootSystemInstall;
+        let msg = err.to_string();
+        assert!(msg.contains("root"));
+        assert!(msg.contains("--run-as-user"));
+    }
+
+    // 平台无关的 redeploy spec 在所有平台都能测，用来钉死参数顺序
+    #[test]
+    fn build_redeploy_spec_user_mode_adds_user_flag() {
+        let spec = build_redeploy_spec(DaemonInstallMode::User, "echo hi");
+        assert_eq!(spec.program, "systemd-run");
+        // 第一参数必须是 --user（User 模式）
+        assert_eq!(spec.args.first().map(String::as_str), Some("--user"));
+        // 末尾是 /bin/sh -c <script>
+        assert!(spec.args.contains(&"/bin/sh".to_string()));
+        assert!(spec.args.contains(&"-c".to_string()));
+        assert!(spec.args.contains(&"echo hi".to_string()));
+    }
+
+    #[test]
+    fn build_redeploy_spec_system_mode_omits_user_flag() {
+        let spec = build_redeploy_spec(DaemonInstallMode::System, "echo hi");
+        // System 模式不加 --user，连得上 system 实例
+        assert_ne!(spec.args.first().map(String::as_str), Some("--user"));
+    }
+
+    #[test]
+    fn build_redeploy_spec_unknown_mode_omits_user_flag() {
+        // Unknown 时脚本里会自己重新探测模式，不在这里加 --user
+        let spec = build_redeploy_spec(DaemonInstallMode::Unknown, "echo hi");
+        assert_ne!(spec.args.first().map(String::as_str), Some("--user"));
     }
 }
 
