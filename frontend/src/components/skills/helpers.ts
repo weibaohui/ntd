@@ -1,14 +1,10 @@
-import { EXECUTORS } from '@/types';
+import { EXECUTOR_COLORS, getExecutorColor } from '@/types';
 import type { SkillMeta } from '@/types';
 
-export const EXECUTOR_COLORS: Record<string, string> = {};
-EXECUTORS.forEach(e => { EXECUTOR_COLORS[e.value] = e.color; });
-EXECUTOR_COLORS['claude_code'] = EXECUTOR_COLORS['claudecode'];
-EXECUTOR_COLORS['claude'] = EXECUTOR_COLORS['claudecode'];
-EXECUTOR_COLORS['cbc'] = EXECUTOR_COLORS['codebuddy'];
-EXECUTOR_COLORS['atom'] = EXECUTOR_COLORS['atomcode'];
+export { EXECUTOR_COLORS, getExecutorColor };
 
 export function formatSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '-';
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -26,6 +22,12 @@ export function formatTime(iso: string | null): string {
 
 export function normalizeExecutor(name: string): string {
   return name.toLowerCase().replace(/[_\s-]/g, '');
+}
+
+export function splitSkillName(name: string): { category: string | null; shortName: string } {
+  if (!name.includes('/')) return { category: null, shortName: name };
+  const parts = name.split('/');
+  return { category: parts[0], shortName: parts.slice(1).join('/') };
 }
 
 export interface SkillTreeNode {

@@ -4,12 +4,12 @@ import type { MenuProps } from 'antd';
 import {
   ThunderboltOutlined, SearchOutlined,
   DownloadOutlined, ExportOutlined, ImportOutlined,
-  AppstoreOutlined, SettingOutlined,
+  AppstoreOutlined, FileTextOutlined,
 } from '@ant-design/icons';
 import { EXECUTORS } from '@/types';
 import type { SkillMeta, ExecutorSkills } from '@/types';
 import * as db from '@/utils/database';
-import { EXECUTOR_COLORS, formatSize } from './helpers';
+import { EXECUTOR_COLORS, formatSize, splitSkillName } from './helpers';
 import { SkillDetailDrawer } from './SkillDetailDrawer';
 import { ImportExportModal } from './ImportExportModal';
 
@@ -50,8 +50,15 @@ export function SkillsOverview() {
     setDrawerOpen(true);
   };
 
-  const totalSkills = useMemo(() => data.reduce((sum, e) => sum + e.skills.length, 0), [data]);
+  // Stats computed from unfiltered data (total counts, not affected by filter)
+  const stats = useMemo(() => {
+    const totalSkills = data.reduce((sum, e) => sum + e.skills.length, 0);
+    const totalFiles = data.reduce((sum, e) => sum + e.skills.reduce((s, sk) => s + sk.file_count, 0), 0);
+    const executorsWithSkills = data.filter(e => e.skills.length > 0).length;
+    return { totalSkills, totalFiles, executorsWithSkills };
+  }, [data]);
 
+  // All skills flattened (filtered by executor, but not by search)
   const allSkills = useMemo(() => {
     const skills: { skill: SkillMeta; executor: string }[] = [];
     data.forEach(e => {
@@ -64,6 +71,7 @@ export function SkillsOverview() {
     return skills;
   }, [data, filterExecutor]);
 
+  // Skills filtered by both executor and search text
   const filteredSkills = useMemo(() => {
     if (!searchText) return allSkills;
     const lower = searchText.toLowerCase();
@@ -75,14 +83,28 @@ export function SkillsOverview() {
     );
   }, [allSkills, searchText]);
 
+  // Executor filter tabs with counts synced to search
   const executorTabs = useMemo(() => {
-    const tabs = [{ key: 'all', label: '全部', count: totalSkills }];
+    const filterMatch = (skills: SkillMeta[]) => {
+      if (!searchText) return skills.length;
+      const lower = searchText.toLowerCase();
+      return skills.filter(s =>
+        s.name.toLowerCase().includes(lower) ||
+        s.description?.toLowerCase().includes(lower) ||
+        s.keywords?.some(k => k.toLowerCase().includes(lower))
+      ).length;
+    };
+
+    const tabs = [{ key: 'all', label: '全部', count: filterMatch(allSkills.map(s => s.skill)) }];
     data.forEach(e => {
       const label = EXECUTORS.find(x => x.value === e.executor)?.label || e.executor;
-      tabs.push({ key: e.executor, label, count: e.skills.length });
+      const count = filterExecutor === 'all' || filterExecutor === e.executor
+        ? filterMatch(e.skills)
+        : 0;
+      tabs.push({ key: e.executor, label, count });
     });
     return tabs;
-  }, [data, totalSkills]);
+  }, [data, filterExecutor, searchText, allSkills]);
 
   const exportMenuItems: MenuProps['items'] = [
     { key: 'export', icon: <ExportOutlined />, label: '导出选中' },
@@ -98,7 +120,9 @@ export function SkillsOverview() {
     } else {
       setExportMode('export');
       if (key === 'export-all') {
-        const executorData = data.find(e => e.executor === selectedExecutor);
+        // Export from current filter scope, not stale selectedExecutor
+        const scopeExecutor = filterExecutor !== 'all' ? filterExecutor : selectedExecutor;
+        const executorData = data.find(e => e.executor === scopeExecutor);
         if (executorData) {
           setInitialSelectedSkills(executorData.skills.map(s => s.name));
         }
@@ -140,7 +164,7 @@ export function SkillsOverview() {
             <div>
               <div style={{ fontSize: 12, color: 'var(--color-text-secondary, #475569)' }}>Skill 总数</div>
               <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2, color: 'var(--color-text, #0f172a)' }}>
-                {totalSkills}
+                {stats.totalSkills}
               </div>
             </div>
           </div>
@@ -163,7 +187,7 @@ export function SkillsOverview() {
             <div>
               <div style={{ fontSize: 12, color: 'var(--color-text-secondary, #475569)' }}>执行器</div>
               <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2, color: 'var(--color-text, #0f172a)' }}>
-                {data.filter(e => e.skills.length > 0).length}
+                {stats.executorsWithSkills}
                 <span style={{ fontSize: 13, fontWeight: 400, marginLeft: 2 }}>/ {data.length}</span>
               </div>
             </div>
@@ -182,12 +206,12 @@ export function SkillsOverview() {
               color: '#f59e0b',
               fontSize: 16,
             }}>
-              <SettingOutlined />
+              <FileTextOutlined />
             </div>
             <div>
               <div style={{ fontSize: 12, color: 'var(--color-text-secondary, #475569)' }}>文件总数</div>
               <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2, color: 'var(--color-text, #0f172a)' }}>
-                {allSkills.reduce((sum, { skill }) => sum + skill.file_count, 0)}
+                {stats.totalFiles}
               </div>
             </div>
           </div>
@@ -204,20 +228,25 @@ export function SkillsOverview() {
         flexWrap: 'wrap',
       }}>
         {/* Executor filter pills */}
-        <div style={{
-          display: 'flex',
-          gap: 6,
-          flexWrap: 'wrap',
-          flex: 1,
-        }}>
+        <div
+          role="tablist"
+          aria-label="按执行器筛选"
+          style={{
+            display: 'flex',
+            gap: 6,
+            flexWrap: 'wrap',
+            flex: 1,
+          }}
+        >
           {executorTabs.map(tab => {
             const isActive = filterExecutor === tab.key;
             const color = tab.key === 'all' ? '#0891b2' : (EXECUTOR_COLORS[tab.key] || '#64748b');
             return (
               <button
                 key={tab.key}
+                role="tab"
+                aria-selected={isActive}
                 onClick={() => setFilterExecutor(tab.key)}
-                className="skill-filter-pill"
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -316,7 +345,7 @@ export function SkillsOverview() {
       <ImportExportModal
         open={exportModalOpen}
         mode={exportMode}
-        executor={selectedExecutor}
+        executor={filterExecutor !== 'all' ? filterExecutor : selectedExecutor}
         data={data}
         initialSelectedSkills={initialSelectedSkills}
         onClose={() => {
@@ -334,16 +363,23 @@ function SkillCard({ skill, executor, onClick }: {
   onClick: () => void;
 }) {
   const color = EXECUTOR_COLORS[executor] || '#0891b2';
-  const initial = skill.name.replace(/.*\//, '').charAt(0).toUpperCase();
+  const { category, shortName } = splitSkillName(skill.name);
   const executorLabel = EXECUTORS.find(e => e.value === executor)?.label || executor;
-  const shortName = skill.name.includes('/') ? skill.name.split('/').pop()! : skill.name;
-  const category = skill.name.includes('/') ? skill.name.split('/')[0] : null;
 
   return (
     <Card
       size="small"
       hoverable
       onClick={onClick}
+      tabIndex={0}
+      role="button"
+      aria-label={`${shortName} - ${executorLabel}`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       className="skill-card"
       style={{
         borderRadius: 12,
@@ -383,7 +419,7 @@ function SkillCard({ skill, executor, onClick }: {
           fontWeight: 600,
           flexShrink: 0,
         }}>
-          {initial}
+          {shortName.charAt(0).toUpperCase()}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{

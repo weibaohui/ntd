@@ -24,18 +24,24 @@ export function SkillsPanel() {
   return (
     <div>
       {/* Tab bar */}
-      <div style={{
-        display: 'flex',
-        gap: 4,
-        marginBottom: 20,
-        borderBottom: '1px solid var(--color-border, #313244)',
-        paddingBottom: 0,
-      }}>
+      <div
+        role="tablist"
+        aria-label="Skills 管理"
+        style={{
+          display: 'flex',
+          gap: 4,
+          marginBottom: 20,
+          borderBottom: '1px solid var(--color-border, #e2e8f0)',
+          paddingBottom: 0,
+        }}
+      >
         {views.map(v => {
           const isActive = activeView === v.key;
           return (
             <button
               key={v.key}
+              role="tab"
+              aria-selected={isActive}
               onClick={() => setActiveView(v.key)}
               style={{
                 display: 'inline-flex',
