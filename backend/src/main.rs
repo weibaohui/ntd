@@ -89,6 +89,16 @@ enum ServerAction {
 
 #[tokio::main]
 async fn main() {
+    // Initialize tracing early so every code path (CLI subcommands, server startup,
+    // Upgrade/Skill helpers) can emit structured logs through `tracing` instead of
+    // raw `eprintln!`. We use `try_init` so test binaries that already set up a
+    // subscriber don't panic with "global default subscriber already set".
+    //
+    // 输出目标固定为 stderr：CLI 模式下 stdout 仍保留给 `println!` 的用户面消息
+    // （如 "Upgrading ntd..." / "Installed for N executor(s)"），日志通道与输出通道
+    // 解耦。RUST_LOG 可覆盖默认 info 级别。
+    init_tracing();
+
     let cli = Cli::parse();
 
     match &cli.command {
@@ -126,7 +136,9 @@ async fn main() {
                 }
             };
             if !status.success() {
-                eprintln!("Upgrade failed.");
+                // 升级 npm 失败属于「CLI 子命令不可恢复错误」，走 tracing::error 让结构化日志
+                // 携带 target/module 信息，便于通过 RUST_LOG 过滤定位；进程随即以非零状态退出。
+                tracing::error!("Upgrade failed.");
                 std::process::exit(1);
             }
 
@@ -149,11 +161,11 @@ async fn main() {
             match &uninstall_result {
                 Ok(s) if s.success() => {}
                 Ok(s) => {
-                    eprintln!("Daemon uninstall failed with exit code {}", s);
+                    tracing::error!("Daemon uninstall failed with exit code {}", s);
                     std::process::exit(1);
                 }
                 Err(e) => {
-                    eprintln!("Daemon uninstall exec error: {}", e);
+                    tracing::error!("Daemon uninstall exec error: {}", e);
                     std::process::exit(1);
                 }
             }
@@ -165,11 +177,11 @@ async fn main() {
             match &install_result {
                 Ok(s) if s.success() => {}
                 Ok(s) => {
-                    eprintln!("Daemon install failed with exit code {}", s);
+                    tracing::error!("Daemon install failed with exit code {}", s);
                     std::process::exit(1);
                 }
                 Err(e) => {
-                    eprintln!("Daemon install exec error: {}", e);
+                    tracing::error!("Daemon install exec error: {}", e);
                     std::process::exit(1);
                 }
             }
@@ -181,11 +193,11 @@ async fn main() {
             match &start_result {
                 Ok(s) if s.success() => println!("Upgrade completed successfully!"),
                 Ok(s) => {
-                    eprintln!("Daemon start failed with exit code {}. Please run 'ntd daemon start' manually.", s);
+                    tracing::error!("Daemon start failed with exit code {}. Please run 'ntd daemon start' manually.", s);
                     std::process::exit(1);
                 }
                 Err(e) => {
-                    eprintln!("Daemon start exec error: {}. Please run 'ntd daemon start' manually.", e);
+                    tracing::error!("Daemon start exec error: {}. Please run 'ntd daemon start' manually.", e);
                     std::process::exit(1);
                 }
             }
@@ -218,7 +230,13 @@ async fn main() {
         }
         Some(Commands::Skill { action: SkillAction::Install { force, executor } }) => {
             if let Err(e) = handle_skill_install(*force, executor.as_deref()) {
-                eprintln!("{}", serde_json::json!({"error": true, "message": e.to_string()}));
+                // Skill install 失败时仍用结构化 JSON 走 stderr（CLI 解析约定），
+                // 同时通过 tracing 记录带 target/level 的日志，便于日志聚合。
+                let payload = serde_json::json!({"error": true, "message": e.to_string()});
+                let payload_str = serde_json::to_string(&payload)
+                    .unwrap_or_else(|_| r#"{"error":true,"message":"unknown"}"#.to_string());
+                tracing::error!(error_payload = %payload_str, "Skill install failed");
+                eprintln!("{}", payload_str);
                 std::process::exit(1);
             }
             return;
@@ -231,12 +249,39 @@ async fn main() {
     }
 }
 
+/// 初始化 tracing-subscriber，作为进程日志的统一入口。
+///
+/// 设计要点：
+/// 1. **早期初始化**：在 `main()` 第一行调用，让 `Config::load()`、`Upgrade` 子命令、
+///    `Skill install` 等早期路径都能用 `tracing::warn!` / `tracing::error!` 输出结构化日志，
+///    不再被 raw `eprintln!` 污染 stderr。
+/// 2. **stderr 输出**：tracing 默认写 stderr，与 `println!` 的 stdout 用户面消息解耦，
+///    方便 2>&1 重定向 / journald 收集。
+/// 3. **`try_init` 而非 `init`**：测试或集成测试可能在更外层已经设置过 subscriber，
+///    用 `try_init` 避免 "global default subscriber already set" panic。
+/// 4. **EnvFilter 优先级**：RUST_LOG 环境变量优先；缺省走 "info"。
+fn init_tracing() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_target(true)
+        .with_timer(tracing_subscriber::fmt::time::time())
+        .try_init();
+}
+
 fn print_structured_error(e: &anyhow::Error) {
+    // 保留 stderr 上的 JSON 输出：CLI 工具契约（`ntd ... --output json` 解析此格式），
+    // 不能改成 tracing。同时记录一条结构化日志供聚合。
     let err = serde_json::json!({
         "error": true,
         "message": e.to_string(),
     });
-    eprintln!("{}", serde_json::to_string(&err).unwrap_or_else(|_| r#"{"error":true,"message":"unknown"}"#.to_string()));
+    let payload = serde_json::to_string(&err)
+        .unwrap_or_else(|_| r#"{"error":true,"message":"unknown"}"#.to_string());
+    tracing::error!(error_payload = %payload, "CLI subcommand failed");
+    eprintln!("{}", payload);
 }
 
 /// Print a structured error and exit the process.
@@ -376,17 +421,7 @@ fn handle_skill_install(force: bool, executor_filter: Option<&str>) -> anyhow::R
 }
 
 async fn run_server(cli_port: Option<u16>) {
-    // Initialize tracing early so any log is captured, even before config loads.
-    // Use RUST_LOG env var (e.g. RUST_LOG=debug) to override, default to "info".
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .with_target(true)
-        .with_timer(tracing_subscriber::fmt::time::time())
-        .init();
-
+    // tracing-subscriber has already been initialized in `main()`; no need to init again here.
     let cfg = ntd::config::Config::load();
 
     // Ensure ~/.ntd/ directory exists on first startup
@@ -413,6 +448,10 @@ async fn run_server(cli_port: Option<u16>) {
     let db = match db::Database::new(&db_path).await {
         Ok(db) => Arc::new(db),
         Err(e) => {
+            // 数据库不可用是「启动级不可恢复错误」：除了 tracing 结构化日志，
+            // 额外保留一行 stderr 直写作为「last-resort」兜底，确保即使 subscriber
+            // 没有安装成功（如 RUST_LOG 写错导致 EnvFilter panic）也能给运维留痕。
+            tracing::error!(db_path = %db_path, error = %e, "Failed to open database");
             eprintln!("Failed to open database at {}: {}", db_path, e);
             std::process::exit(1);
         }
@@ -573,6 +612,9 @@ async fn run_server(cli_port: Option<u16>) {
     let std_listener = match std::net::TcpListener::bind(format!("0.0.0.0:{}", port)) {
         Ok(l) => l,
         Err(e) => {
+            // 端口绑定失败（如被占用、权限不足）：典型启动级不可恢复错误。
+            // 同上保留 eprintln! 作为 last-resort 兜底。
+            tracing::error!(port, error = %e, "Failed to bind to port");
             eprintln!("Failed to bind to port {}: {}", port, e);
             std::process::exit(1);
         }
@@ -591,12 +633,15 @@ async fn run_server(cli_port: Option<u16>) {
     }
 
     if let Err(e) = std_listener.set_nonblocking(true) {
+        // set_nonblocking 是 fnctl 级别调用，理论上不会失败；失败时仍走 tracing + stderr 兜底
+        tracing::error!(error = %e, "Failed to set non-blocking");
         eprintln!("Failed to set non-blocking: {}", e);
         std::process::exit(1);
     }
     let listener = match tokio::net::TcpListener::from_std(std_listener) {
         Ok(l) => l,
         Err(e) => {
+            tracing::error!(error = %e, "Failed to create async listener");
             eprintln!("Failed to create async listener: {}", e);
             std::process::exit(1);
         }

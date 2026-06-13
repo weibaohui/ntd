@@ -246,7 +246,14 @@ impl Config {
             let cfg_for_save = cfg.clone();
             if let Ok(yaml) = serde_yaml::to_string(&cfg_for_save) {
                 if let Err(e) = std::fs::write(&path, yaml) {
-                    eprintln!("Warning: failed to write config file ({}), using in-memory defaults", e);
+                    // 配置写盘失败属于「可降级运行」的警告：进程仍可基于内存中已 clamp
+                    // 的 Config 启动，下次再尝试持久化即可。用 tracing::warn! 让运维通过
+                    // 日志聚合系统（如 journald / Loki）看到这条事件。
+                    tracing::warn!(
+                        error = %e,
+                        path = %path.display(),
+                        "failed to write config file, using in-memory defaults"
+                    );
                 }
             }
             return cfg;
@@ -255,7 +262,13 @@ impl Config {
         match std::fs::read_to_string(&path) {
             Ok(content) => {
                 let mut cfg = serde_yaml::from_str::<Config>(&content).unwrap_or_else(|e| {
-                    eprintln!("Warning: failed to parse config file ({}), using defaults", e);
+                    // 配置解析失败：fallback 到默认值而不是启动失败。
+                    // 选用 warn 而非 error 是因为该路径可以优雅降级。
+                    tracing::warn!(
+                        error = %e,
+                        path = %path.display(),
+                        "failed to parse config file, using defaults"
+                    );
                     Config::default()
                 });
                 cfg.normalize_paths();
@@ -264,7 +277,12 @@ impl Config {
                 cfg
             }
             Err(e) => {
-                eprintln!("Warning: failed to read config file ({}), using defaults", e);
+                // 配置读取失败（权限不足 / 文件被锁等）：同样降级到默认值。
+                tracing::warn!(
+                    error = %e,
+                    path = %path.display(),
+                    "failed to read config file, using defaults"
+                );
                 let mut cfg = Config::default();
                 cfg.normalize_paths();
                 cfg.clamp_execution_timeout_secs();
