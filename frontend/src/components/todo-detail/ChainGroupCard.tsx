@@ -99,7 +99,18 @@ function ChainGroupCard({ group, onOpenResume, onExport, onStop, messageApi, vie
         {mainRecord.command && (
           <Tooltip title="点击复制命令">
             <div
-              onClick={() => { navigator.clipboard.writeText(mainRecord.command || '').then(() => messageApi.success('已复制')); }}
+              onClick={async () => {
+                try {
+                  if (!navigator.clipboard?.writeText) {
+                    messageApi.error('当前环境不支持复制');
+                    return;
+                  }
+                  await navigator.clipboard.writeText(mainRecord.command || '');
+                  messageApi.success('已复制');
+                } catch {
+                  messageApi.error('复制失败');
+                }
+              }}
               style={{ fontSize: 11, color: 'var(--color-text-quaternary)', marginBottom: 8, fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
             >
               {mainRecord.command}
