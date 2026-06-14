@@ -247,8 +247,16 @@ pub async fn trigger_local_backup(
     .map_err(|e| AppError::Internal(format!("Task join error: {}", e)))?
     .map_err(|e| AppError::Internal(format!("Failed to create zip backup: {}", e)))?;
 
-    // 清理旧备份（按数据库分目录清理）
-    cleanup_old_zip_backups(&dir, max_files);
+    // 备份成功后清理旧的 zip 保留文件，避免积压堆积；
+    // 仅在写入成功后删除旧文件，防止备份失败时误删历史数据。
+    // 放入 spawn_blocking 执行文件 I/O，统一与 perform_*_async 的行为对齐，
+    // 避免同步 I/O 阻塞 tokio 运行时线程池。
+    let dir_for_cleanup = dir.clone();
+    tokio::task::spawn_blocking(move || {
+        cleanup_old_zip_backups(&dir_for_cleanup, max_files);
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Cleanup task join error: {}", e)))?;
 
     Ok(ApiResponse::ok(format!("备份成功: {}", backup_path.display())))
 }
@@ -590,6 +598,9 @@ pub fn perform_database_backup(db_path: &str, max_files: usize) -> Result<String
     zip.finish()
         .map_err(|e| format!("Failed to finish zip: {}", e))?;
 
+    // 定时备份执行后仅保留最近 max_files 份 .zip，避免磁盘被旧备份占满；
+    // 与 trigger_local_backup / trigger_todo_backup / trigger_skill_backup
+    // 共享同一份 zip 清理逻辑，确保行为一致。
     cleanup_old_zip_backups(&dir, max_files);
 
     Ok(format!("Auto backup: {}", backup_path.display()))
@@ -629,8 +640,9 @@ pub async fn cleanup_old_logs(db: &Database, days: usize) -> Result<u64, String>
 /// 三个场景（数据库目录、Todo 目录、Skill 目录）共享同一份清理语义，
 /// 原本的逐文件复制导致任何 bug 修复都得在三处同步，DRY 违反且容易遗漏。
 ///
-/// 使用文件元数据中的创建时间排序；若创建时间不可用（如部分文件系统），
-/// 比较两侧都会得到 None，stable 排序退化为原顺序，行为与原先一致。
+/// 排序策略：按创建时间倒序（新建在前），确保删除旧备份、保留新备份。
+/// 若文件系统不支持创建时间（如某些网络文件系统），回退到修改时间；
+/// 若仍不可用，以文件名字母序作为最终兜底，确保跨平台行为确定且可复现。
 fn cleanup_old_zip_backups(dir: &PathBuf, keep: usize) {
     if !dir.exists() {
         return;
@@ -650,10 +662,18 @@ fn cleanup_old_zip_backups(dir: &PathBuf, keep: usize) {
         return;
     }
 
+    // 优先使用创建时间倒序排列，最新的排最前；
+    // 若文件系统不支持 created（如部分网络文件系统）则回退到 modified；
+    // 时间仍不可用时以文件名字母序作为稳定兜底，避免跨平台非确定性删除。
     files.sort_by(|a, b| {
-        let a_time = std::fs::metadata(a).and_then(|m| m.created()).ok();
-        let b_time = std::fs::metadata(b).and_then(|m| m.created()).ok();
-        b_time.cmp(&a_time)
+        let a_meta = std::fs::metadata(a).ok();
+        let b_meta = std::fs::metadata(b).ok();
+        let a_time = a_meta.as_ref().and_then(|m| m.created().ok())
+            .or_else(|| a_meta.as_ref().and_then(|m| m.modified().ok()));
+        let b_time = b_meta.as_ref().and_then(|m| m.created().ok())
+            .or_else(|| b_meta.as_ref().and_then(|m| m.modified().ok()));
+        // 时间相同时以文件名作为稳定排序键，确保结果可复现
+        b_time.cmp(&a_time).then_with(|| b.file_name().cmp(&a.file_name()))
     });
 
     for old_file in files.iter().skip(keep) {
@@ -827,8 +847,16 @@ pub async fn trigger_todo_backup(
     .map_err(|e| AppError::Internal(format!("Task join error: {}", e)))?
     .map_err(|e| AppError::Internal(format!("Failed to create zip: {}", e)))?;
 
-    // 清理旧备份
-    cleanup_old_zip_backups(&dir, max_files);
+    // 备份成功写入后清理旧备份，仅在压缩文件落盘后才执行删除，
+    // 防止备份过程中出错导致旧备份被误清。
+    // 放入 spawn_blocking 执行文件 I/O，统一与 perform_todo_backup_async 行为对齐，
+    // 避免同步 I/O 阻塞 tokio 运行时线程池。
+    let dir_for_cleanup = dir.clone();
+    tokio::task::spawn_blocking(move || {
+        cleanup_old_zip_backups(&dir_for_cleanup, max_files);
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Cleanup task join error: {}", e)))?;
 
     Ok(ApiResponse::ok(format!("备份成功: {}", backup_path_display)))
 }
@@ -994,7 +1022,9 @@ async fn perform_todo_backup_async(db: &std::sync::Arc<crate::db::Database>, max
     .map_err(|e| format!("Task join error: {}", e))?
     .map_err(|e| format!("Failed to create zip: {}", e))?;
 
-    // Cleanup old backups
+    // 定时 Todo 备份成功后清理旧备份，限定 spawn_blocking 内执行
+    // 文件 I/O，避免阻塞 tokio 运行时线程池。
+    // 使用通用 zip 清理 helper 统一保留策略，与手动触发行为对齐。
     let dir_for_cleanup = dir.clone();
     tokio::task::spawn_blocking(move || {
         cleanup_old_zip_backups(&dir_for_cleanup, max_files);
@@ -1320,8 +1350,16 @@ pub async fn trigger_skill_backup(
     .map_err(|e| AppError::Internal(format!("Task join error: {}", e)))?
     .map_err(|e| AppError::Internal(format!("Failed to create zip: {}", e)))?;
 
-    // 清理旧备份
-    cleanup_old_zip_backups(&dir, max_files);
+    // 手动 Skill 备份成功后清理旧 zip 保留文件，防止积压堆积；
+    // 仅在压缩文件落盘后执行清理，避免备份失败时误删历史数据。
+    // 放入 spawn_blocking 执行文件 I/O，统一与 perform_skill_backup_async 行为对齐，
+    // 避免同步 I/O 阻塞 tokio 运行时线程池。
+    let dir_for_cleanup = dir.clone();
+    tokio::task::spawn_blocking(move || {
+        cleanup_old_zip_backups(&dir_for_cleanup, max_files);
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Cleanup task join error: {}", e)))?;
 
     Ok(ApiResponse::ok(format!("备份成功: {} ({} 个文件)", backup_path_display, copied_count)))
 }
@@ -1674,7 +1712,9 @@ async fn perform_skill_backup_async(max_files: usize) -> Result<String, String> 
     .map_err(|e| format!("Task join error: {}", e))?
     .map_err(|e| format!("Failed to create zip: {}", e))?;
 
-    // 清理旧备份
+    // 定时 Skill 备份成功后清理旧备份，限定 spawn_blocking 内执行
+    // 文件 I/O，避免阻塞 tokio 运行时线程池。
+    // 使用通用 zip 清理 helper 统一保留策略，与手动触发行为对齐。
     let dir_for_cleanup = dir.clone();
     tokio::task::spawn_blocking(move || {
         cleanup_old_zip_backups(&dir_for_cleanup, max_files);
@@ -1776,6 +1816,12 @@ mod tests {
         // zip 数量应被裁剪到 keep=1
         let zip_count = names.iter().filter(|n| n.ends_with(".zip")).count();
         assert_eq!(zip_count, 1, "zip 数量应等于 keep=1");
+        // 保留的 zip 应该是最新创建的 newest.zip，否则排序或清理逻辑有误
+        assert!(names.iter().any(|n| n == "newest.zip"),
+            "应保留最新创建的 newest.zip，实际保留: {:?}", names);
+        // 旧 zip 文件应被删除
+        assert!(!names.iter().any(|n| n == "old.zip"), "old.zip 应被删除");
+        assert!(!names.iter().any(|n| n == "newer.zip"), "newer.zip 应被删除");
 
         fs::remove_dir_all(&dir).ok();
     }
