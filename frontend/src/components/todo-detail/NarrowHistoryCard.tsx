@@ -101,6 +101,9 @@ export function NarrowHistoryCard({ record, viewMode, onOpenResume, onExport, on
           )}
         </div>
       </div>
+      {/* 点击命令文本即可复制，不需要额外的复制按钮 */}
+      {/* 复制逻辑三步走：①检查 clipboard API 可用性 → ②写入剪贴板 → ③反馈结果 */}
+      {/* 使用 navigator.clipboard?.writeText 可选链：HTTP 环境或旧浏览器中该 API 为 undefined，直接调用会报 TypeError */}
       {record.command && (
         <Tooltip title="点击复制命令">
           <div
@@ -125,9 +128,18 @@ export function NarrowHistoryCard({ record, viewMode, onOpenResume, onExport, on
       {record.result !== null && record.result !== '' && (
         <div className={`history-result ${record.status === 'success' ? 'history-result-success' : 'history-result-failed'}`}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+            {/* 复制结论文本：先检查 clipboard API 可用性，防止在不支持的浏览器中崩溃 */}
             <Button type="text" size="small" icon={<CopyOutlined />} onClick={async () => {
-              try { await navigator.clipboard.writeText(record.result || ''); messageApi.success('已复制到剪贴板'); }
-              catch { messageApi.error('复制失败'); }
+              try {
+                if (!navigator.clipboard?.writeText) {
+                  messageApi.error('当前环境不支持复制');
+                  return;
+                }
+                await navigator.clipboard.writeText(record.result || '');
+                messageApi.success('已复制到剪贴板');
+              } catch {
+                messageApi.error('复制失败');
+              }
             }} />
           </div>
           <XMarkdown content={record.result} />
