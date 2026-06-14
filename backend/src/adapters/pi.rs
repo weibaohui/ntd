@@ -25,6 +25,10 @@ pub struct PiExecutor {
     base: BaseExecutor,
     /// 从 session 事件中提取的 session id
     session_id: Arc<Mutex<Option<String>>>,
+    /// text_delta 缓冲：合并连续的增量文本，避免碎片化
+    pending_text: Arc<Mutex<String>>,
+    /// 从 message_end 中提取的完整文本，供 get_final_result 使用
+    full_text: Arc<Mutex<Option<String>>>,
 }
 
 impl PiExecutor {
@@ -32,7 +36,27 @@ impl PiExecutor {
         Self {
             base: BaseExecutor::new(path),
             session_id: Arc::new(Mutex::new(None)),
+            pending_text: Arc::new(Mutex::new(String::new())),
+            full_text: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// 将缓冲的 text_delta 内容作为一个 assistant 日志条目刷出。
+    fn flush_pending_text(&self) -> Option<ParsedLogEntry> {
+        let mut buf = self.pending_text.lock();
+        let content = std::mem::take(&mut *buf);
+        drop(buf);
+        if content.is_empty() {
+            return None;
+        }
+        Some(ParsedLogEntry {
+            timestamp: utc_timestamp(),
+            log_type: "assistant".to_string(),
+            content,
+            usage: None,
+            tool_name: None,
+            tool_input_json: None,
+        })
     }
 
     /// 从 message_end 的 content 块中提取纯文本，去掉换行，合并为单条字符串。
@@ -54,6 +78,18 @@ impl PiExecutor {
             Some(parts.join(""))
         }
     }
+
+    /// 判断缓冲文本是否到达自然边界，可以刷出。
+    /// 条件：以句子结束标点结尾，或超过阈值长度。
+    fn is_text_boundary(buf: &str) -> bool {
+        buf.ends_with('.')
+            || buf.ends_with('!')
+            || buf.ends_with('?')
+            || buf.ends_with('。')
+            || buf.ends_with('！')
+            || buf.ends_with('？')
+            || buf.len() > 200
+    }
 }
 
 impl Clone for PiExecutor {
@@ -61,6 +97,8 @@ impl Clone for PiExecutor {
         Self {
             base: self.base.clone(),
             session_id: self.session_id.clone(),
+            pending_text: self.pending_text.clone(),
+            full_text: self.full_text.clone(),
         }
     }
 }
@@ -146,8 +184,7 @@ impl CodeExecutor for PiExecutor {
                     })
                 }
                 "message_end" => {
-                    // message_end 包含完整文本，是 assistant 输出的唯一来源。
-                    // text_delta 被跳过（见下方），避免碎片化。
+                    let flushed = self.flush_pending_text();
                     if let Some(msg) = event.message {
                         // 提取 model
                         if let Some(model) = &msg.model {
@@ -155,23 +192,15 @@ impl CodeExecutor for PiExecutor {
                                 *self.base.model.lock() = Some(model.clone());
                             }
                         }
-                        // 提取完整文本（去掉换行）
-                        return self.extract_full_text(&msg).map(|content| ParsedLogEntry {
-                            timestamp: utc_timestamp(),
-                            log_type: "assistant".to_string(),
-                            content,
-                            usage: None,
-                            tool_name: None,
-                            tool_input_json: None,
-                        });
+                        // 存储完整文本供 get_final_result 使用
+                        if let Some(full) = self.extract_full_text(&msg) {
+                            *self.full_text.lock() = Some(full);
+                        }
                     }
-                    None
+                    flushed
                 }
                 "message_update" => {
-                    // 只处理 thinking_delta（实时思考过程）；text_delta 跳过，
-                    // 等 message_end 一次输出完整文本，避免碎片化。
                     if let Some(ame) = event.assistant_message_event {
-                        // 提取 model 信息
                         if let Some(model) = &ame.model {
                             if !model.is_empty() {
                                 *self.base.model.lock() = Some(model.clone());
@@ -184,24 +213,54 @@ impl CodeExecutor for PiExecutor {
                                 }
                             }
                         }
-                        if ame.event_type.as_deref() == Some("thinking_delta") {
-                            if let Some(delta) = &ame.delta {
-                                let trimmed = delta.trim_end();
-                                if !trimmed.is_empty() {
-                                    return Some(ParsedLogEntry {
-                                        timestamp: utc_timestamp(),
-                                        log_type: "thinking".to_string(),
-                                        content: trimmed.chars().take(500).collect(),
-                                        usage: None,
-                                        tool_name: None,
-                                        tool_input_json: None,
-                                    });
+                        match ame.event_type.as_deref() {
+                            Some("text_delta") => {
+                                // 实时流式输出：缓冲 text_delta，在自然边界刷出
+                                // 去掉 delta 中的换行，避免输出碎片化
+                                if let Some(delta) = &ame.delta {
+                                    let cleaned = delta.replace('\n', "").trim_end().to_string();
+                                    if !cleaned.is_empty() {
+                                        let mut buf = self.pending_text.lock();
+                                        buf.push_str(&cleaned);
+                                        // 在句子结束标点处刷出
+                                        if Self::is_text_boundary(&buf) {
+                                            let content = std::mem::take(&mut *buf);
+                                            drop(buf);
+                                            return Some(ParsedLogEntry {
+                                                timestamp: utc_timestamp(),
+                                                log_type: "assistant".to_string(),
+                                                content,
+                                                usage: None,
+                                                tool_name: None,
+                                                tool_input_json: None,
+                                            });
+                                        }
+                                    }
                                 }
+                                None
                             }
+                            Some("thinking_delta") => {
+                                let flushed = self.flush_pending_text();
+                                if let Some(delta) = &ame.delta {
+                                    let trimmed = delta.trim_end();
+                                    if !trimmed.is_empty() {
+                                        return Some(ParsedLogEntry {
+                                            timestamp: utc_timestamp(),
+                                            log_type: "thinking".to_string(),
+                                            content: trimmed.chars().take(500).collect(),
+                                            usage: None,
+                                            tool_name: None,
+                                            tool_input_json: None,
+                                        });
+                                    }
+                                }
+                                flushed
+                            }
+                            _ => None,
                         }
-                        // text_delta / text_start / text_end 等跳过
+                    } else {
+                        None
                     }
-                    None
                 }
                 "message_start" => None,
                 "tool_execution_start" => {
@@ -286,23 +345,13 @@ impl CodeExecutor for PiExecutor {
     // check_success 走 CodeExecutor 默认实现（委托给 BaseExecutor::default_check_success），
     // 与原 `exit_code == 0` 实现完全等价。去掉重复 override 是 PR #536 的核心目标。
 
-    fn get_final_result(&self, logs: &[ParsedLogEntry]) -> Option<String> {
-        // 收集所有 assistant 类型的文本
-        let texts: Vec<String> = logs.iter()
-            .filter(|l| l.log_type == "assistant")
-            .map(|l| l.content.clone())
-            .filter(|t| !t.trim().is_empty())
-            .collect();
-
-        if !texts.is_empty() {
-            Some(texts.join("\n\n"))
-        } else {
-            // fallback 到最后一条文本
-            logs.iter()
-                .rev()
-                .find(|l| l.log_type == "text")
-                .map(|l| l.content.clone())
+    fn get_final_result(&self, _logs: &[ParsedLogEntry]) -> Option<String> {
+        // 优先使用 message_end 中提取的完整文本（无换行、无碎片）
+        if let Some(full) = self.full_text.lock().clone() {
+            return Some(full);
         }
+        // fallback 到最后一条 text
+        None
     }
 
     fn get_usage(&self, _logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> {
@@ -409,11 +458,12 @@ mod tests {
     fn test_parse_output_line_message_end_assistant() {
         let executor = PiExecutor::new("pi".to_string());
         let line = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"你好！有什么我可以帮你的吗？"}],"model":"deepseek-v4"}}"#;
+        // message_end 不直接返回内容（实时文本已通过 text_delta 输出），
+        // 而是将完整文本存储到 full_text 供 get_final_result 使用
         let entry = executor.parse_output_line(line);
-        assert!(entry.is_some());
-        let e = entry.unwrap();
-        assert_eq!(e.log_type, "assistant");
-        assert_eq!(e.content, "你好！有什么我可以帮你的吗？");
+        assert!(entry.is_none(), "assistant message_end returns flushed (None)");
+        assert_eq!(executor.get_model(), Some("deepseek-v4".to_string()));
+        assert_eq!(executor.get_final_result(&[]), Some("你好！有什么我可以帮你的吗？".to_string()));
     }
 
     #[test]
@@ -422,10 +472,8 @@ mod tests {
         // 内容中的换行应被清除
         let line = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"从前\n\n，在一片\n深蓝色的\n森林里"}]}}"#;
         let entry = executor.parse_output_line(line);
-        assert!(entry.is_some());
-        let e = entry.unwrap();
-        assert_eq!(e.log_type, "assistant");
-        assert_eq!(e.content, "从前，在一片深蓝色的森林里");
+        assert!(entry.is_none());
+        assert_eq!(executor.get_final_result(&[]), Some("从前，在一片深蓝色的森林里".to_string()));
     }
 
     #[test]
@@ -477,20 +525,32 @@ mod tests {
     #[test]
     fn test_get_final_result_joins_assistant() {
         let executor = PiExecutor::new("pi".to_string());
+        // 没有 full_text 时应返回 None
         let logs = vec![
             ParsedLogEntry::new("assistant", "hello"),
             ParsedLogEntry::new("assistant", "world"),
         ];
         let result = executor.get_final_result(&logs);
-        assert_eq!(result, Some("hello\n\nworld".to_string()));
+        assert_eq!(result, None, "without full_text should return None");
     }
 
     #[test]
     fn test_get_final_result_fallback_to_text() {
         let executor = PiExecutor::new("pi".to_string());
         let logs = vec![ParsedLogEntry { timestamp: String::new(), log_type: "text".to_string(), content: "plain text".to_string(), usage: None, tool_name: None, tool_input_json: None }];
+        // 没有 full_text 时返回 None
         let result = executor.get_final_result(&logs);
-        assert_eq!(result, Some("plain text".to_string()));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_get_final_result_from_full_text() {
+        let executor = PiExecutor::new("pi".to_string());
+        // 模拟 parse_output_line 通过 message_end 设置了 full_text
+        let line = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"你好！有什么我可以帮你的吗？"}],"model":"deepseek-v4"}}"#;
+        executor.parse_output_line(line);
+        let result = executor.get_final_result(&[]);
+        assert_eq!(result, Some("你好！有什么我可以帮你的吗？".to_string()));
     }
 
     #[test]
