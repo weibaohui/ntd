@@ -446,7 +446,7 @@ mod tests {
     fn test_parse_output_line_tool_execution_start() {
         // 通过实际 pi 输出验证 tool_execution_start 解析
         // 注意：需要完整 JSON 格式才能被 PiEvent 解析
-        let executor = PiExecutor::new("pi".to_string());
+        let _executor = PiExecutor::new("pi".to_string());
         // 跳过这个复杂结构的解析测试，因为它需要完整的 PiEvent 结构
         // tool_execution_start 的解析逻辑已通过集成测试验证
         assert!(true);

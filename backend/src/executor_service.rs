@@ -377,6 +377,12 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
     let todo_title = todo.as_ref().map(|t| t.title.clone()).unwrap_or_default();
     let execution_timeout_secs = timeout_secs;
 
+    // 将 task_guard 移入 tokio::spawn 闭包，使其存活到执行结束。
+    // 若不这么做，外层 run_todo_execution 返回时 guard 即 drop，
+    // 导致 manager.remove 被调用、Sender 被丢弃、cancel_rx 的 channel 关闭，
+    // select! 中 cancel_rx.recv() 立即返回 None，误触发取消流程。
+    let _task_guard = task_guard;
+
     // 注册任务信息，用于 WebSocket 同步
     task_manager
         .register_info(crate::task_manager::TaskInfo {
@@ -410,6 +416,9 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
 
     tokio::spawn(
         async move {
+        // 将 _task_guard 移入异步闭包，使其存活到整个执行周期。
+        // 若不绑定，外层 drop 时会误删 Sender 导致 cancel_rx.recv() 返回 None。
+        let _task_guard = _task_guard;
         let execution_start = std::time::Instant::now();
 
         send_event(
