@@ -88,6 +88,31 @@ impl PiExecutor {
         }
     }
 
+    /// 从 PiMessage 中提取 usage 信息，转换为 ExecutionUsage，存入 base.usage。
+    /// pi 的 usage 结构是驼峰命名：input, output, cacheRead, cacheWrite。
+    /// 只有 message_end 和 turn_end 的 message 中包含真实的 usage 数据，
+    /// message_start 和 text_delta 阶段的 usage 字段值为 0。
+    fn extract_usage_from_message(&self, msg: &super::pi_event::PiMessage) {
+        if let Some(usage) = &msg.usage {
+            // input 和 output 为 0 时跳过（说明是 message_start 或中间状态的占位数据）
+            if usage.input == 0 && usage.output == 0 {
+                return;
+            }
+            // 将驼峰字段映射到 ExecutionUsage，记录实际的 token 用量
+            *self.base.usage.lock() = Some(ExecutionUsage {
+                input_tokens: usage.input,
+                output_tokens: usage.output,
+                // cacheRead 为 0 时视为 None，避免存储无意义的 0 值
+                cache_read_input_tokens: usage.cache_read.filter(|&v| v > 0),
+                cache_creation_input_tokens: usage.cache_write.filter(|&v| v > 0),
+                // 从 cost.total 提取费用（若存在），否则为 None
+                total_cost_usd: usage.cost.as_ref().map(|c| c.total).filter(|&v| v > 0.0),
+                // pi 不提供 duration_ms 信息，设为 None，由上层根据执行时长自行填充
+                duration_ms: None,
+            });
+        }
+    }
+
     /// 判断缓冲文本是否到达自然边界，可以刷出。
     /// 条件：以句子结束标点结尾，或超过阈值长度。
     fn is_text_boundary(buf: &str) -> bool {
@@ -206,6 +231,9 @@ impl CodeExecutor for PiExecutor {
                                 *self.base.model.lock() = Some(model.clone());
                             }
                         }
+                        // 提取 usage 信息：message_end 中的 usage 包含真实 token 用量
+                        //（包括 input_tokens, output_tokens, cache 等信息）
+                        self.extract_usage_from_message(&msg);
                         // 存储完整文本供 get_final_result 使用
                         if let Some(full) = self.extract_full_text(&msg) {
                             *self.full_text.lock() = Some(full);
@@ -392,8 +420,9 @@ impl CodeExecutor for PiExecutor {
     }
 
     fn get_usage(&self, _logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> {
-        // pi 目前不在 JSONL 中输出 usage 信息
-        None
+        // 从 message_end 事件中提取的 usage 信息（通过 extract_usage_from_message 写入 base.usage）
+        // pi 的 JSONL 中的 message_end / turn_end 事件包含完整的 token 用量数据
+        self.base.usage.lock().clone()
     }
 
     fn get_model(&self) -> Option<String> {
@@ -591,10 +620,48 @@ mod tests {
     }
 
     #[test]
-    fn test_get_usage_always_none() {
+    fn test_get_usage_returns_none_before_message_end() {
+        // 在收到 message_end 之前 usage 应该为 None
         let executor = PiExecutor::new("pi".to_string());
         let logs = vec![ParsedLogEntry { timestamp: String::new(), log_type: "text".to_string(), content: "hello".to_string(), usage: None, tool_name: None, tool_input_json: None }];
         assert!(executor.get_usage(&logs).is_none());
+    }
+
+    #[test]
+    fn test_get_usage_from_message_end() {
+        // 验证从 message_end 中正确提取 usage
+        let executor = PiExecutor::new("pi".to_string());
+        // 包含真实 usage 数据的 message_end（assistant 角色）
+        let line = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"test"}],"model":"deepseek/deepseek-v4-flash","usage":{"input":3705,"output":139,"cacheRead":50,"cacheWrite":20,"totalTokens":3844,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0.001}}}}"#;
+        executor.parse_output_line(line);
+        let usage = executor.get_usage(&[]);
+        assert!(usage.is_some(), "usage should be extracted from message_end");
+        let u = usage.unwrap();
+        assert_eq!(u.input_tokens, 3705);
+        assert_eq!(u.output_tokens, 139);
+        assert_eq!(u.cache_read_input_tokens, Some(50));
+        assert_eq!(u.cache_creation_input_tokens, Some(20));
+        assert_eq!(u.total_cost_usd, Some(0.001));
+    }
+
+    #[test]
+    fn test_get_usage_ignores_zero_usage() {
+        // 验证 input=0, output=0 的占位 usage 不会被提取
+        let executor = PiExecutor::new("pi".to_string());
+        // message_start 中的 usage 全部为 0，不应被提取
+        let line = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"hello"}],"usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0}}}"#;
+        executor.parse_output_line(line);
+        // usage 全为 0 时视为无数据，不应存入 base.usage
+        assert!(executor.get_usage(&[]).is_none());
+    }
+
+    #[test]
+    fn test_get_usage_ignores_user_message() {
+        // user 角色的 message_end 不应提取 usage
+        let executor = PiExecutor::new("pi".to_string());
+        let line = r#"{"type":"message_end","message":{"role":"user","content":[],"usage":{"input":100,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":100}}}"#;
+        executor.parse_output_line(line);
+        assert!(executor.get_usage(&[]).is_none());
     }
 
     #[test]

@@ -55,6 +55,10 @@ pub struct PiMessage {
     pub id: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+    // pi 输出的 token 用量信息，位于 message 对象中
+    // message_start 和 message_end 都会包含，但 message_end 才有真实值
+    #[serde(default)]
+    pub usage: Option<PiUsage>,
 }
 
 /// 内容块（text / tool_call / tool_result / thinking）
@@ -74,6 +78,9 @@ pub enum PiContentBlock {
 }
 
 /// assistantMessageEvent 中的内容（message_update 时包含 thinking_delta / text_delta）
+///
+/// 注意：text_end 时 assistantMessageEvent 也包含 usage 字段（此时是真实值），
+/// 而 text_delta / thinking_delta 阶段的 usage 为 0。
 #[derive(Debug, Clone, Deserialize)]
 pub struct PiAssistantMessageEvent {
     #[serde(rename = "type")]
@@ -86,6 +93,9 @@ pub struct PiAssistantMessageEvent {
     pub partial: Option<PiAssistantMessagePartial>,
     #[serde(default)]
     pub model: Option<String>,
+    // assistantMessageEvent 级别的 usage 字段（出现在 text_end 中）
+    #[serde(default)]
+    pub usage: Option<PiUsage>,
 }
 
 /// partial 内容（包含完整的 thinking 或 text）
@@ -140,4 +150,39 @@ pub struct PiQueueUpdate {
 #[derive(Debug, Clone, Deserialize)]
 pub struct PiCompaction {
     pub reason: Option<String>,
+}
+
+/// pi 输出的 token 用量信息
+///
+/// 来源于 pi JSONL 中 message 对象的 usage 字段。
+/// pi 使用驼峰命名（cacheRead, cacheWrite, totalTokens）。
+/// 格式示例：{"input":3705,"output":139,"cacheRead":0,"cacheWrite":0,"totalTokens":3844,"cost":{...}}
+#[derive(Debug, Clone, Deserialize)]
+pub struct PiUsage {
+    pub input: u64,
+    pub output: u64,
+    #[serde(default, rename = "cacheRead")]
+    pub cache_read: Option<u64>,
+    #[serde(default, rename = "cacheWrite")]
+    pub cache_write: Option<u64>,
+    #[serde(default, rename = "totalTokens")]
+    pub total_tokens: Option<u64>,
+    #[serde(default)]
+    pub cost: Option<PiCost>,
+}
+
+/// pi 输出的费用信息，位于 usage.cost 中
+/// pi 使用驼峰命名。
+#[derive(Debug, Clone, Deserialize)]
+pub struct PiCost {
+    #[serde(default)]
+    pub input: f64,
+    #[serde(default)]
+    pub output: f64,
+    #[serde(default, rename = "cacheRead")]
+    pub cache_read: Option<f64>,
+    #[serde(default, rename = "cacheWrite")]
+    pub cache_write: Option<f64>,
+    #[serde(default)]
+    pub total: f64,
 }
