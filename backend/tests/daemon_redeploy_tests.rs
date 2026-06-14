@@ -24,16 +24,15 @@ mod build_redeploy_spec_tests {
         assert!(
             spec.args
                 .iter()
-                .any(|a| a.starts_with("--property=Description=") && a.contains("ntd upgrade redeploy")),
+                .any(|a| a.starts_with("--property=Description=")
+                    && a.contains("ntd upgrade redeploy")),
             "missing Description property, args = {:?}",
             spec.args
         );
         // KillMode=process 是这次修复里多加的 belt-and-suspenders,
         // 即使 scope 被 kill 也只杀 systemd-run 自身,不杀 sh -c 链
         assert!(
-            spec.args
-                .iter()
-                .any(|a| a.contains("KillMode=process")),
+            spec.args.iter().any(|a| a.contains("KillMode=process")),
             "missing KillMode=process, args = {:?}",
             spec.args
         );
@@ -52,10 +51,7 @@ mod build_redeploy_spec_tests {
         let spec = build_redeploy_spec(DaemonInstallMode::System, "true");
 
         assert_eq!(spec.program, "systemd-run");
-        assert_ne!(
-            spec.args[0], "--user",
-            "system mode must not pass --user"
-        );
+        assert_ne!(spec.args[0], "--user", "system mode must not pass --user");
         assert_eq!(spec.args[0], "--scope");
     }
 
@@ -127,37 +123,25 @@ mod build_redeploy_spec_tests {
     }
 }
 
-/// 验证 spawn_detached_redeploy_nonblocking 的 --no-block 参数插入逻辑。
+/// 验证 build_redeploy_spec_nonblocking 能正确插入 --no-block。
 ///
-/// 由于 spawn_detached_redeploy_nonblocking 会实际尝试打开日志文件/启动进程，
-/// 不适合在单测中直接调用。这里通过检查 build_redeploy_spec 的参数布局来间接验证。
-/// 实际 nonblocking 的插入逻辑在 redeploy.rs 中：
-/// ```rust,ignore
-/// let collect_idx = spec.args.iter().position(|a| a == "--collect");
-/// if let Some(idx) = collect_idx {
-///     spec.args.insert(idx + 1, "--no-block");
-/// }
-/// ```
-/// 本测试确保 --collect 的位置是我们预期的那样，从而 indirect 验证插入点正确。
+/// build_redeploy_spec_nonblocking 现在是 redeploy.rs 的公有函数，
+/// 与 spawn_detached_redeploy_nonblocking 使用同一份实现，
+/// 维护者无需担心测试与实际行为不一致。
 #[cfg(test)]
 #[cfg(target_os = "linux")]
 mod nonblocking_spec_tests {
-    use ntd::daemon::build_redeploy_spec;
+    use ntd::daemon::build_redeploy_spec_nonblocking;
     use ntd::daemon::DaemonInstallMode;
 
-    /// 模拟 spawn_detached_redeploy_nonblocking 的 args 构造逻辑，
+    /// 通过公有函数 build_redeploy_spec_nonblocking 获取 args，
     /// 验证 --no-block 被插入到正确位置。
     fn build_nonblocking_spec(ntd_cmd: &str) -> Vec<String> {
         let script = format!(
             "sleep 3; {} daemon install --force; {} daemon start; rm -f /tmp/ntd.update",
             ntd_cmd, ntd_cmd
         );
-        let mut spec = build_redeploy_spec(DaemonInstallMode::User, &script);
-        let collect_idx = spec.args.iter().position(|a| a == "--collect");
-        if let Some(idx) = collect_idx {
-            spec.args.insert(idx + 1, "--no-block".to_string());
-        }
-        spec.args
+        build_redeploy_spec_nonblocking(DaemonInstallMode::User, &script).args
     }
 
     #[test]
@@ -166,14 +150,19 @@ mod nonblocking_spec_tests {
         // args 布局: [--user, --scope, --collect, --no-block, --property=..., /bin/sh, -c, <script>]
         let collect_idx = args.iter().position(|a| a == "--collect").unwrap();
         assert_eq!(
-            args[collect_idx + 1], "--no-block",
+            args[collect_idx + 1],
+            "--no-block",
             "--no-block must be inserted immediately after --collect, got {:?}",
             args
         );
 
         // Verify --no-block appears exactly once
         let count = args.iter().filter(|a| a.as_str() == "--no-block").count();
-        assert_eq!(count, 1, "--no-block must appear exactly once, args: {:?}", args);
+        assert_eq!(
+            count, 1,
+            "--no-block must appear exactly once, args: {:?}",
+            args
+        );
     }
 
     #[test]
@@ -182,7 +171,10 @@ mod nonblocking_spec_tests {
         // Must contain all the standard flags
         assert!(args.contains(&"--scope".to_string()), "Missing --scope");
         assert!(args.contains(&"--collect".to_string()), "Missing --collect");
-        assert!(args.contains(&"--no-block".to_string()), "Missing --no-block");
+        assert!(
+            args.contains(&"--no-block".to_string()),
+            "Missing --no-block"
+        );
         assert!(args.contains(&"/bin/sh".to_string()), "Missing /bin/sh");
         assert!(args.contains(&"-c".to_string()), "Missing -c");
 

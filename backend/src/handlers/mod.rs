@@ -555,23 +555,29 @@ fn ntd_update_marker_cleanup_path() -> String {
 ///
 /// 使用 `(...) &` 语法让子进程在后台运行并脱离当前 shell 的 wait 链，
 /// 主进程 exit(0) 后子进程不会收到 SIGHUP，会被 reparent 到 init 进程。
-/// 输出重定向到 /tmp/ntd-upgrade.log 方便排查。
+/// 输出重定向到日志文件方便排查。
+///
+/// # 参数
+/// * `ntd_cmd` - ntd 可执行文件路径
+/// * `marker_cleanup_path` - 标记文件清理路径
+/// * `log_path` - 子进程 stdout/stderr 重定向的目标日志路径
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn spawn_redeploy_sh_fallback(ntd_cmd: &str, marker_cleanup_path: &str) {
+fn spawn_redeploy_sh_fallback(ntd_cmd: &str, marker_cleanup_path: &str, log_path: &str) {
     // 用单引号包裹 ntd 路径。调用方已通过 is_safe_ntd_path 校验，
     // 没有单引号/反斜杠等危险字符。单引号在 bash 里禁用所有 expansion。
     let quoted = crate::daemon::common::shell_quote_single(ntd_cmd);
 
     // stdin 设为 null 防止子进程意外读取父进程 stdin。
-    // stdout/stderr 在 shell 命令内部已通过 `>> /tmp/ntd-upgrade.log 2>&1`
+    // stdout/stderr 在 shell 命令内部已通过 `>> {log_path} 2>&1`
     // 重定向到日志文件，此处 .stdout/.stderr 设置被 shell 内部重定向覆盖。
     //
     // 使用 `;` 而非 `&&`：即使某步失败也继续后续步骤，保证标记被清理。
     std::process::Command::new("sh")
         .args(["-c", &format!(
-            "(sleep 3; {quoted} daemon install --force; {quoted} daemon start; rm -f {marker}) >> /tmp/ntd-upgrade.log 2>&1 &",
+            "(sleep 3; {quoted} daemon install --force; {quoted} daemon start; rm -f {marker}) >> {log} 2>&1 &",
             quoted = quoted,
             marker = marker_cleanup_path,
+            log = log_path,
         )])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -730,14 +736,16 @@ async fn version_upgrade_handler() -> impl IntoResponse {
                     "Self-update: systemd-run failed ({}), falling back to sh -c",
                     e,
                 );
-                spawn_redeploy_sh_fallback(&ntd_cmd, &marker_cleanup_path);
+                // systemd-run 失败时 fallback 到 sh -c，日志使用 redeploy_log_path 统一路径
+                let fallback_log = crate::daemon::redeploy_log_path().to_string_lossy().to_string();
+                spawn_redeploy_sh_fallback(&ntd_cmd, &marker_cleanup_path, &fallback_log);
             }
         }
     }
     #[cfg(not(target_os = "linux"))]
     {
         // macOS 或其他 Unix 使用 sh -c 方案，因为 launchd 不会按 cgroup 杀进程。
-        spawn_redeploy_sh_fallback(&ntd_cmd, &marker_cleanup_path);
+        spawn_redeploy_sh_fallback(&ntd_cmd, &marker_cleanup_path, "/tmp/ntd-upgrade.log");
     }
 
     // Windows 用 cmd /C 加 CREATE_NO_WINDOW 隐藏黑窗

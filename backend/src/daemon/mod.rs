@@ -34,7 +34,8 @@ mod redeploy;
 // 旧路径，避免外部调用方和单测改动。
 #[cfg(target_os = "linux")]
 pub use redeploy::{
-    build_redeploy_spec, spawn_detached_redeploy, spawn_detached_redeploy_nonblocking,
+    build_redeploy_spec, build_redeploy_spec_nonblocking, redeploy_log_path,
+    spawn_detached_redeploy, spawn_detached_redeploy_nonblocking,
     DaemonInstallMode, RedeployCommandSpec, RedeployError,
 };
 
