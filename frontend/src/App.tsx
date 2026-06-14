@@ -15,6 +15,7 @@ import { SettingsPage } from './components/SettingsPage';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
+import { EXECUTION_PANEL, SIDEBAR_WIDTH } from './constants';
 import * as db from './utils/database';
 import type { Config } from './types';
 import zhCN from 'antd/locale/zh_CN';
@@ -43,7 +44,7 @@ function AppContent() {
   useExecutionEvents();
 
   const hasRunningTasks = Object.keys(state.runningTasks).length > 0;
-  const panelHeight = hasRunningTasks ? (panelCollapsed ? 40 : 280) : 0;
+  const panelHeight = hasRunningTasks ? (panelCollapsed ? EXECUTION_PANEL.collapsed : EXECUTION_PANEL.expanded) : 0;
 
   // Load app config on mount
   useEffect(() => {
@@ -142,7 +143,7 @@ function AppContent() {
           <div
             className={(!isMobile || selectedPanel === 'list') ? 'animate-fade-in' : ''}
             style={{
-              width: isMobile ? '100%' : 350,
+              width: isMobile ? SIDEBAR_WIDTH.mobile : SIDEBAR_WIDTH.desktop,
               flexShrink: 0,
               height: '100%',
               display: !isMobile || selectedPanel === 'list' ? 'block' : 'none',

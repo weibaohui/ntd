@@ -61,3 +61,70 @@ export const LOG_TYPE_COLORS: Record<string, string> = {
 
 /** 默认执行器名称 */
 export const DEFAULT_EXECUTOR = 'claudecode';
+
+// =============================================================================
+// Layout & UI constants — single source of truth for layout values.
+// =============================================================================
+
+/** 布局断点 */
+export const BREAKPOINTS = {
+  /** 宽屏断点：超过此宽度显示双栏布局 */
+  wide: 1440,
+  /** 移动端断点：低于此宽度启用移动端适配 */
+  mobile: 768,
+} as const;
+
+/** 侧边栏宽度 */
+export const SIDEBAR_WIDTH = {
+  /** 桌面端侧边栏宽度 */
+  desktop: 350,
+  /** 移动端侧边栏占满宽度 */
+  mobile: '100%',
+} as const;
+
+/** 执行面板高度 */
+export const EXECUTION_PANEL = {
+  /** 展开时高度 */
+  expanded: 280,
+  /** 折叠时高度 */
+  collapsed: 40,
+} as const;
+
+/** 触摸滑动阈值 */
+export const SWIPE = {
+  /** 滑动距离阈值（px） */
+  threshold: 50,
+  /** 滑动最大时间（ms） */
+  maxTime: 300,
+} as const;
+
+/** 定时器间隔 */
+export const TIMER = {
+  /** 执行状态刷新间隔（ms） */
+  tickInterval: 1000,
+  /** 完成任务自动移除延迟（ms） */
+  autoRemoveDelay: 5000,
+} as const;
+
+/** 文本截断长度 */
+export const TEXT_TRUNCATE = {
+  /** Todo 标题截断长度 */
+  todoTitle: 60,
+  /** Todo 摘要截断长度 */
+  todoSummary: 20,
+  /** 工具输入预览截断长度 */
+  toolInput: 50,
+  /** 工具输入字段值截断长度 */
+  toolInputField: 15,
+  /** 日志内容截断长度 */
+  logContent: 2000,
+} as const;
+
+/** 导出限制 */
+export const EXPORT = {
+  /** 导出时最大获取日志条数 */
+  maxLogs: 100000,
+} as const;
+
+/** 复制反馈延迟 */
+export const COPY_FEEDBACK_DELAY = 2000;

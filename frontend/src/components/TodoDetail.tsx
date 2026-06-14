@@ -6,6 +6,7 @@ import { Button, Empty, App, Pagination, Modal, Input, Select } from 'antd';
 import { CheckCircleOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { TodoDrawer } from './TodoDrawer';
 import { parseLogsToMessages } from './ChatView';
+import { BREAKPOINTS, EXPORT } from '@/constants';
 import * as db from '@/utils/database';
 import { conversationToYaml } from '@/utils/markdown';
 import { getExecutorOption } from '@/types';
@@ -22,7 +23,7 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
   const { message } = App.useApp();
   const { todos, selectedTodoId, executionRecords, runningTasks } = state;
   const isMobile = useIsMobile();
-  const isWide = !useIsMobile(1440);
+  const isWide = !useIsMobile(BREAKPOINTS.wide);
   const [viewMode, setViewMode] = useState<'log' | 'chat'>('log');
   const selectedTodo = todos.find(t => t.id === selectedTodoId);
 
@@ -233,7 +234,7 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
   const handleExportMarkdown = async (record: ExecutionRecord) => {
     let logs: LogEntry[] = [];
     try {
-      const result = await db.getExecutionLogs(record.id, 1, 100000);
+      const result = await db.getExecutionLogs(record.id, 1, EXPORT.maxLogs);
       logs = result.logs;
     } catch {
       // ignore
