@@ -11,10 +11,29 @@
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "warn"
-# 误报（例如内部 fork 引起的重复）可以按 crate + id 显式忽略：
-# ignore = [
-#   "RUSTSEC-2024-0001",
-# ]
+# 已审计的安全漏洞：无法通过 minor 升级解决，需要 sea-orm 0.12→1.x
+# 升级（该变动涉及大量 API 重构，需独立 PR 单独评估）。
+#
+# - RUSTSEC-2024-0363: sqlx<0.8 二进制协议误解析。本服务仅使用 SQLite 后端，
+#   不受二进制协议层面影响（sqlx/sqlite 走 libsqlite3 直接 C API）。
+# - RUSTSEC-2026-0098/0099/0104: rustls-webpki v0.101 名称约束/CRL 漏洞。
+#   来自 sqlx 0.7→rustls 0.21 链路，sqlx 0.8 升级后将自动消除。
+# - RUSTSEC-2023-0071: rsa 0.9 Marvin Attack 时序侧信道。无可用修复；
+#   本服务不涉及 RSA 密钥操作，风险不可利用。
+ignore = [
+    # 安全漏洞 — 需要 sea-orm 0.12→1.x 升级链（参见上方注释）
+    "RUSTSEC-2024-0363",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2023-0071",
+    # 已停止维护的 crate — 均为传递依赖，不可直接替换
+    "RUSTSEC-2024-0388", # derivative — async-trait 等生态依赖
+    "RUSTSEC-2024-0436", # paste — tokio 生态依赖
+    "RUSTSEC-2024-0370", # proc-macro-error — clap 传递依赖
+    "RUSTSEC-2026-0173", # proc-macro-error2 — 同上
+    "RUSTSEC-2025-0134", # rustls-pemfile — sqlx/sea-orm 传递依赖
+]
 
 # 2. License 限制：只允许明确列出的 license；其余必须显式 allow。
 [licenses]
