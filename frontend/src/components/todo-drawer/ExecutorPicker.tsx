@@ -1,7 +1,8 @@
+import { memo } from 'react';
 import { CheckOutlined } from '@ant-design/icons';
 import type { ExecutorOption } from '@/types';
 
-export function ExecutorPicker({ executor, executorOptions, onChange }: {
+export const ExecutorPicker = memo(function ExecutorPicker({ executor, executorOptions, onChange }: {
   executor: string;
   executorOptions: ExecutorOption[];
   onChange: (v: string) => void;
@@ -79,4 +80,4 @@ export function ExecutorPicker({ executor, executorOptions, onChange }: {
       </div>
     </div>
   );
-}
+});

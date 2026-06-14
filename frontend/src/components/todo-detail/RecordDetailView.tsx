@@ -6,8 +6,9 @@ import XMarkdown from '@ant-design/x-markdown';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { ChatView } from '@/components/ChatView';
 import { RefreshBtn } from './LogViewHeader';
-import { formatLocalDateTime, formatDuration } from '@/utils/datetime';
-import { getElapsedSeconds, formatLogTime, logTypeColors, logTypeLabels } from './helpers';
+import { formatLocalDateTime, formatDurationSec } from '@/utils/datetime';
+import { getElapsedSeconds, formatLogTime } from './helpers';
+import { LOG_TYPE_COLORS, LOG_TYPE_LABELS } from '@/constants';
 import type { SessionGroup } from './helpers';
 import { supportsResume } from '@/types';
 import type { ExecutionRecord, LogEntry } from '@/types';
@@ -130,12 +131,12 @@ export function RecordDetailView({
           })()}
           {record.status !== 'running' && record.usage?.duration_ms && (
             <span style={{ fontSize: 12, color: 'var(--color-success)', fontWeight: 600 }}>
-              {formatDuration(record.usage.duration_ms / 1000)}
+              {formatDurationSec(record.usage.duration_ms / 1000)}
             </span>
           )}
           {record.status === 'running' && (
             <span style={{ fontSize: 12, color: 'var(--color-info)', fontWeight: 600 }}>
-              {formatDuration(getElapsedSeconds(record.started_at))}
+              {formatDurationSec(getElapsedSeconds(record.started_at))}
             </span>
           )}
         </div>
@@ -280,8 +281,8 @@ export function RecordDetailView({
                 displayLogs.map((log: LogEntry, idx: number) => (
                   <div key={idx} style={{ marginBottom: 4, display: 'flex', gap: 8 }}>
                     <span style={{ color: 'var(--log-text-muted)', flexShrink: 0 }}>{formatLogTime(log.timestamp || '')}</span>
-                    <span style={{ color: logTypeColors[log.type || ''] || 'var(--log-text)' }}>
-                      [{logTypeLabels[log.type || ''] || log.type}]
+                    <span style={{ color: LOG_TYPE_COLORS[log.type || ''] || 'var(--log-text)' }}>
+                      [{LOG_TYPE_LABELS[log.type || ''] || log.type}]
                     </span>
                     <span>{log.content}</span>
                   </div>

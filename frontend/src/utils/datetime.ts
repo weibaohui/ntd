@@ -29,23 +29,5 @@ export function formatRelativeTime(timeStr: string | null | undefined): string {
   return formatDistanceToNow(date, { addSuffix: true, locale: zhCN });
 }
 
-/**
- * 格式化时长（秒）
- */
-export function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h${m}m`;
-  if (m > 0) return `${m}m`;
-  return `${seconds}s`;
-}
-
-/**
- * 计算从指定时间到现在经过的秒数
- */
-export function elapsedSeconds(startTimeStr: string | null | undefined): number {
-  const date = parseUtcDate(startTimeStr);
-  if (!date) return 0;
-  const now = new Date();
-  return Math.floor((now.getTime() - date.getTime()) / 1000);
-}
+/** 格式化时长（秒）为人类可读字符串 */
+export { formatDurationSec } from './format';

@@ -4,7 +4,7 @@ import { MessageOutlined, FileTextOutlined, StopOutlined, CopyOutlined, LinkOutl
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { XMarkdown } from '@ant-design/x-markdown';
 import { supportsResume } from '@/types';
-import { formatLocalDateTime, formatDuration } from '@/utils/datetime';
+import { formatLocalDateTime, formatDurationSec } from '@/utils/datetime';
 import * as db from '@/utils/database';
 import { getElapsedSeconds, hasLogsStatic } from './helpers';
 import { NarrowLogView } from './NarrowLogView';
@@ -68,12 +68,12 @@ export function NarrowHistoryCard({ record, viewMode, onOpenResume, onExport, on
           })()}
           {record.status !== 'running' && record.usage?.duration_ms && (
             <span style={{ fontSize: 11, color: 'var(--color-success)', fontWeight: 600 }}>
-              {formatDuration(record.usage.duration_ms / 1000)}
+              {formatDurationSec(record.usage.duration_ms / 1000)}
             </span>
           )}
           {record.status === 'running' && (
             <span style={{ fontSize: 11, color: 'var(--color-info)', fontWeight: 600 }}>
-              {formatDuration(getElapsedSeconds(record.started_at))}
+              {formatDurationSec(getElapsedSeconds(record.started_at))}
             </span>
           )}
         </div>

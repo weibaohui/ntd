@@ -12,29 +12,13 @@ import XMarkdown from '@ant-design/x-markdown';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { useApp } from '@/hooks/useApp';
 import { useViewState } from '@/hooks/useViewState';
-import { formatLocalDateTime, formatDuration } from '@/utils/datetime';
+import { formatLocalDateTime } from '@/utils/datetime';
+import { formatTokens, formatDuration, elapsedSeconds } from '@/utils/format';
+import { LOG_TYPE_COLORS, STATUS_COLORS, REVIEW_RESULT_COLORS } from '@/constants';
 import * as db from '@/utils/database';
 import type { ExecutionRecord, LogEntry } from '@/types';
 
 /* ─── Helpers ─── */
-
-function getElapsedSeconds(startedAt: string): number {
-  const start = new Date(startedAt).getTime();
-  return Math.max(0, Math.floor((Date.now() - start) / 1000));
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
-const LOG_TYPE_COLORS: Record<string, string> = {
-  info: '#6b7280', stdout: '#3b82f6', stderr: '#ef4444', error: '#ef4444',
-  tool_use: '#8b5cf6', tool_call: '#8b5cf6', tool_result: '#10b981',
-  assistant: '#0ea5e9', user: '#f59e0b', system: '#6b7280', thinking: '#a855f7',
-  result: '#22c55e', step_start: '#06b6d4', step_finish: '#06b6d4', tokens: '#6b7280',
-};
 
 const LOG_TYPE_LABELS: Record<string, string> = {
   info: 'INFO', stdout: 'OUT', stderr: 'ERR', error: 'ERROR',
@@ -93,10 +77,10 @@ function RatingControl({ record, onRate }: { record: ExecutionRecord; onRate: (i
 function ReviewStatusBadge({ status }: { status?: string | null }) {
   if (!status) return null;
   const map: Record<string, { color: string; text: string }> = {
-    pending: { color: '#06b6d4', text: '评审中' },
-    success: { color: '#10b981', text: '评审通过' },
-    failed: { color: '#ef4444', text: '评审失败' },
-    interrupted: { color: '#f59e0b', text: '评审中断' },
+    pending: { color: REVIEW_RESULT_COLORS.pending, text: '评审中' },
+    success: { color: REVIEW_RESULT_COLORS.success, text: '评审通过' },
+    failed: { color: REVIEW_RESULT_COLORS.failed, text: '评审失败' },
+    interrupted: { color: REVIEW_RESULT_COLORS.interrupted, text: '评审中断' },
     skipped: { color: '#6b7280', text: '评审跳过' },
   };
   const info = map[status];
@@ -186,7 +170,11 @@ export function RunningRecordDrawer({ record, open, onClose, onRefresh }: Runnin
 
   if (!record) return null;
 
-  const duration = record.usage?.duration_ms || (isRunning ? getElapsedSeconds(record.started_at) * 1000 : null);
+  // 统一使用毫秒作为 duration 单位，与 formatDuration(ms) 签名一致。
+  // 优先使用后端记录的 duration_ms，运行时中的记录则通过 started_at 实时计算。
+  // elapsedSeconds 返回秒，需 * 1000 转换为毫秒。
+  // 使用 ?? 而非 ||：duration_ms === 0 时是合法值（任务瞬间完成），不应回退到实时计算。
+  const duration = record.usage?.duration_ms ?? (isRunning ? elapsedSeconds(record.started_at) * 1000 : null);
 
   return (
     <Drawer
@@ -194,7 +182,7 @@ export function RunningRecordDrawer({ record, open, onClose, onRefresh }: Runnin
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{
             display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
-            backgroundColor: isRunning ? '#f59e0b' : record.status === 'success' ? '#22c55e' : '#ef4444',
+            backgroundColor: isRunning ? STATUS_COLORS.running : record.status === 'success' ? STATUS_COLORS.success : STATUS_COLORS.failed,
           }} />
           <span>执行记录 #{record.id}</span>
           <Tag color={isRunning ? 'orange' : record.status === 'success' ? 'green' : 'red'}>
@@ -244,7 +232,7 @@ export function RunningRecordDrawer({ record, open, onClose, onRefresh }: Runnin
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         {record.executor && <ExecutorBadge executor={record.executor} />}
         {record.model && <Tag color="#3b82f6">{record.model}</Tag>}
-        <Tag color={record.trigger_type === 'cron' ? '#8b5cf6' : record.trigger_type.startsWith('hook:') ? '#a855f7' : '#6b7280'}>
+        <Tag color={record.trigger_type === 'cron' ? STATUS_COLORS.scheduled : record.trigger_type.startsWith('hook:') ? STATUS_COLORS.hook : '#6b7280'}>
           {record.trigger_type === 'cron' ? 'Cron' : record.trigger_type.startsWith('hook:') ? 'Hook' : record.trigger_type === 'manual' ? '手动' : record.trigger_type}
         </Tag>
         {record.source_todo_id && (
@@ -269,7 +257,7 @@ export function RunningRecordDrawer({ record, open, onClose, onRefresh }: Runnin
         {duration != null && (
           <div>
             <span style={{ color: 'var(--color-text-tertiary)' }}>耗时：</span>
-            <span style={{ fontWeight: 600 }}>{formatDuration(duration / 1000)}</span>
+            <span style={{ fontWeight: 600 }}>{formatDuration(duration)}</span>
           </div>
         )}
       </div>

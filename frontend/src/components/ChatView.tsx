@@ -122,16 +122,7 @@ export function parseLogsToMessages(logs: LogEntry[]): ChatMessage[] {
   return messages;
 }
 
-function formatTime(iso?: string): string {
-  if (!iso) return '';
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-  } catch {
-    return '';
-  }
-}
+import { formatTimeFull } from '@/utils/format';
 
 // 卡片类型配置
 const CARD_CONFIG = {
@@ -208,7 +199,7 @@ function CollapsibleCard({
           )}
         </div>
         <div className="chat-card-header-right">
-          {timestamp && <span className="chat-card-time">{formatTime(timestamp)}</span>}
+          {timestamp && <span className="chat-card-time">{formatTimeFull(timestamp)}</span>}
           <span className="chat-card-toggle" style={{ color: config.color }}>
             {expanded ? <DownOutlined /> : <RightOutlined />}
           </span>
@@ -326,7 +317,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
         <div className="chat-bubble-content">
           <XMarkdown content={content} />
         </div>
-        {timestamp && <div className="chat-bubble-time">{formatTime(timestamp)}</div>}
+        {timestamp && <div className="chat-bubble-time">{formatTimeFull(timestamp)}</div>}
       </div>
     </div>
   );

@@ -3,7 +3,10 @@ import { BarChartOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { PieChart, PieChartLegend } from '@/components/PieChart';
 import { TrendChart, ContributionHeatmap } from './DashboardCharts';
 import { AnimatedNumber } from '@/components/AnimatedNumber';
-import { TRIGGER_LABELS, TRIGGER_COLORS, STATUS_COLORS, STATUS_LABELS } from './constants';
+// STATUS_COLORS 走全应用共享的 @/constants；dashboard 自己的 constants.ts
+// 只保留 dashboard 私有的标签/触发类型等常量，避免再次出现双源 STATUS_COLORS。
+import { TRIGGER_LABELS, TRIGGER_COLORS, STATUS_LABELS } from './constants';
+import { STATUS_COLORS } from '@/constants';
 import type { DashboardStats } from '@/types';
 
 interface ChartCardProps {

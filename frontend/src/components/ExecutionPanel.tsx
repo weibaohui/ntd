@@ -5,7 +5,7 @@ import { useApp } from '@/hooks/useApp';
 import { useTheme } from '@/hooks/useTheme';
 import { getExecutorOption } from '@/types';
 import { stopExecution } from '@/utils/database';
-import { formatLocalDateTime, formatDuration } from '@/utils/datetime';
+import { formatLocalDateTime, formatDurationSec } from '@/utils/datetime';
 
 // Light theme log colors
 const lightLogTypeColors: Record<string, string> = {
@@ -211,7 +211,7 @@ export function ExecutionPanel({ collapsed, onToggleCollapse }: ExecutionPanelPr
                             <span style={{ fontWeight: 600 }}>开始时间:</span> {formatLocalDateTime(task.startedAt)}
                           </div>
                           <div style={{ fontSize: 11, color: 'var(--color-info)', fontWeight: 600 }}>
-                            <span style={{ fontWeight: 600 }}>已运行:</span> {formatDuration(getElapsedSeconds(task.startedAt))}
+                            <span style={{ fontWeight: 600 }}>已运行:</span> {formatDurationSec(getElapsedSeconds(task.startedAt))}
                           </div>
                         </div>
                       }

@@ -3,7 +3,7 @@ import { Tag } from 'antd';
 import { MessageOutlined, FileTextOutlined } from '@ant-design/icons';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { supportsResume } from '@/types';
-import { formatLocalDateTime, formatDuration } from '@/utils/datetime';
+import { formatLocalDateTime, formatDurationSec } from '@/utils/datetime';
 import { getElapsedSeconds, hasLogsStatic } from './helpers';
 import type { ExecutionRecord } from '@/types';
 
@@ -65,12 +65,12 @@ export function CompactHistoryItem({ record, onOpenResume, onExport }: {
         </Tag>
         {record.usage?.duration_ms && (
           <span style={{ fontSize: 10, color: 'var(--color-success)', fontWeight: 600 }}>
-            {formatDuration(record.usage.duration_ms / 1000)}
+            {formatDurationSec(record.usage.duration_ms / 1000)}
           </span>
         )}
         {isRunning && elapsedSec > 0 && (
           <span style={{ fontSize: 10, color: 'var(--color-info)', fontWeight: 600 }}>
-            {formatDuration(elapsedSec)}
+            {formatDurationSec(elapsedSec)}
           </span>
         )}
         {record.execution_stats && (

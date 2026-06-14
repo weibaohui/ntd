@@ -269,7 +269,7 @@ pub struct TodoItem {
     pub status: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ParsedLogEntry {
     pub timestamp: String,
     #[serde(rename = "type")]

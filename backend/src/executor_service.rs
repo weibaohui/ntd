@@ -410,6 +410,9 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
 
     tokio::spawn(
         async move {
+        // 将 task_guard 移入异步闭包，使其存活到整个执行周期。
+        // 若不绑定，外层 drop 时会误删 Sender 导致 cancel_rx.recv() 返回 None。
+        let _task_guard = task_guard;
         let execution_start = std::time::Instant::now();
 
         send_event(
@@ -657,23 +660,7 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         let timeout_enabled = execution_timeout_secs > 0;
         // Non-zero values are guaranteed >= 60 by normalize_paths clamp, so from_secs is safe.
         let timeout_duration = std::time::Duration::from_secs(execution_timeout_secs);
-        // Human-readable timeout string for display messages (always English).
-        // Uses hours for >=60 min, days for >=24 h to keep the output readable.
-        let timeout_str = {
-            let total_min = execution_timeout_secs / 60;
-            let secs = execution_timeout_secs % 60;
-            if secs == 0 {
-                if total_min >= 1440 {
-                    format!("{} day(s)", total_min / 1440)
-                } else if total_min >= 60 {
-                    format!("{} hour(s)", total_min / 60)
-                } else {
-                    format!("{} min", total_min)
-                }
-            } else {
-                format!("{} min {} sec", total_min, secs)
-            }
-        };
+        let timeout_str = format_timeout_secs(execution_timeout_secs);
         let timeout_sleep = tokio::time::sleep(timeout_duration);
         tokio::pin!(timeout_sleep);
 
@@ -842,27 +829,7 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             .unwrap_or_default();
 
         // Extract execution stats from logs in single pass
-        let (tool_calls, conversation_turns, thinking_count) = {
-            let mut tc = 0u64;
-            let mut ct = 0u64;
-            let mut th = 0u64;
-            for l in &all_logs_snapshot {
-                match l.log_type.as_str() {
-                    "tool_use" | "tool_call" | "tool" => tc += 1,
-                    "assistant" | "result" | "text" => ct += 1,
-                    "thinking" => th += 1,
-                    _ => {}
-                }
-            }
-            (tc, ct, th)
-        };
-        // Override tool_calls if executor provides its own count
-        let tool_calls = executor_spawn.get_tool_calls_count().unwrap_or(tool_calls);
-        let execution_stats = crate::models::ExecutionStats {
-            tool_calls,
-            conversation_turns,
-            thinking_count,
-        };
+        let execution_stats = extract_execution_stats(&all_logs_snapshot, executor_spawn.get_tool_calls_count());
         if let Ok(stats_json) = serde_json::to_string(&execution_stats) {
             let _ = db_clone
                 .update_execution_record_stats(record_id, &stats_json)
@@ -1284,16 +1251,126 @@ mod run_todo_execution_request_tests {
     fn _hook_service_field_is_arc_hook_service(r: &RunTodoExecutionRequest) -> &Arc<HookService> {
         &r.hook_service
     }
+}
 
-    /// 真正的单元测试：调用上面的投影函数并断言返回值类型。
-    /// 即便实际未运行过实际 fire，类型系统也保证 hook_service 字段
-    /// 的形状没有被破坏。
+/// 格式化超时秒数为人类可读字符串。
+///
+/// 使用 hours for >=60 min, days for >=24 h to keep the output readable.
+/// 精度取舍：只精确到分钟级别（秒数只在 <60s 时显示），后端 timeout 精度
+/// 为秒级，分钟以上的秒数误差在 UI 上无感知差异。
+///
+/// 边界情况：
+/// - 0 秒 → "0 min"（表示无超时限制）
+/// - 60-3599 秒 → "X min Y sec" 格式
+/// - 3600+ 秒 → "X hour(s)" 或 "X day(s)"
+fn format_timeout_secs(secs: u64) -> String {
+    let total_min = secs / 60;
+    let remaining_secs = secs % 60;
+    if remaining_secs == 0 {
+        if total_min >= 1440 {
+            format!("{} day(s)", total_min / 1440)
+        } else if total_min >= 60 {
+            format!("{} hour(s)", total_min / 60)
+        } else {
+            format!("{} min", total_min)
+        }
+    } else {
+        format!("{} min {} sec", total_min, remaining_secs)
+    }
+}
+
+/// 从日志中提取执行统计信息。
+///
+/// 单次遍历日志，计算 tool_calls、conversation_turns、thinking_count。
+/// 如果 executor 提供了自己的 tool_calls_count，则使用 executor 的值。
+///
+/// 设计意图：
+/// - 不同 executor 的 tool_use 事件格式各异，部分 executor（如 hermes）
+///   有自己的工具调用计数器，比日志解析更准确。
+/// - conversation_turns 通过文本/结果/助手事件计数，估算 AI 交互轮次。
+/// - thinking_count 用于展示 AI 思考过程的复杂度。
+///
+/// 统计逻辑：
+/// - tool_use/tool_call/tool → 工具调用（使用 executor 提供的值覆盖，见后文）
+/// - assistant/result/text → 对话轮次（每个文本输出算一轮）
+/// - thinking → 思考次数
+/// - 其他 log_type 跳过
+fn extract_execution_stats(
+    logs: &[crate::models::ParsedLogEntry],
+    executor_tool_calls: Option<u64>,
+) -> crate::models::ExecutionStats {
+    let mut tool_calls = 0u64;
+    let mut conversation_turns = 0u64;
+    let mut thinking_count = 0u64;
+
+    for l in logs {
+        match l.log_type.as_str() {
+            "tool_use" | "tool_call" | "tool" => tool_calls += 1,
+            "assistant" | "result" | "text" => conversation_turns += 1,
+            "thinking" => thinking_count += 1,
+            _ => {}
+        }
+    }
+
+    // Override tool_calls if executor provides its own count
+    let tool_calls = executor_tool_calls.unwrap_or(tool_calls);
+
+    crate::models::ExecutionStats {
+        tool_calls,
+        conversation_turns,
+        thinking_count,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
     #[test]
-    fn hook_service_field_shape_is_preserved() {
-        let f: fn(&RunTodoExecutionRequest) -> &Arc<HookService> =
-            _hook_service_field_is_arc_hook_service;
-        // 触达 `_hook_service_field_is_arc_hook_service` 避免 dead_code
-        // 警告把它当未使用函数优化掉。
-        let _: fn(&RunTodoExecutionRequest) -> &Arc<HookService> = f;
+    fn test_format_timeout_secs() {
+        assert_eq!(format_timeout_secs(0), "0 min");
+        assert_eq!(format_timeout_secs(60), "1 min");
+        assert_eq!(format_timeout_secs(90), "1 min 30 sec");
+        assert_eq!(format_timeout_secs(3600), "1 hour(s)");
+        assert_eq!(format_timeout_secs(86400), "1 day(s)");
+        assert_eq!(format_timeout_secs(7200), "2 hour(s)");
+    }
+
+    #[test]
+    fn test_extract_execution_stats() {
+        let logs = vec![
+            crate::models::ParsedLogEntry {
+                log_type: "tool_use".to_string(),
+                ..Default::default()
+            },
+            crate::models::ParsedLogEntry {
+                log_type: "assistant".to_string(),
+                ..Default::default()
+            },
+            crate::models::ParsedLogEntry {
+                log_type: "thinking".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let stats = extract_execution_stats(&logs, None);
+        assert_eq!(stats.tool_calls, 1);
+        assert_eq!(stats.conversation_turns, 1);
+        assert_eq!(stats.thinking_count, 1);
+    }
+
+    #[test]
+    fn test_extract_execution_stats_with_executor_override() {
+        let logs = vec![
+            crate::models::ParsedLogEntry {
+                log_type: "tool_use".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let stats = extract_execution_stats(&logs, Some(5));
+        assert_eq!(stats.tool_calls, 5); // overridden
+        assert_eq!(stats.conversation_turns, 0);
+        assert_eq!(stats.thinking_count, 0);
     }
 }

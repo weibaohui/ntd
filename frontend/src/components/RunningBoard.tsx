@@ -20,16 +20,11 @@ import {
   useAutoRefreshRunningBoard,
 } from '@/hooks/useRunningBoard';
 import { formatRelativeTime } from '@/utils/datetime';
+import { formatDuration } from '@/utils/format';
+import { STATUS_COLORS } from '@/constants';
 import type { ExecutionRecord, ScheduledTodo, RunningBoardColumn } from '@/types';
 
 /* ─── Helpers ─── */
-
-function formatDuration(ms: number | null): string {
-  if (!ms) return '-';
-  if (ms < 1_000) return `${ms}ms`;
-  if (ms < 60_000) return `${(ms / 1_000).toFixed(0)}s`;
-  return `${(ms / 60_000).toFixed(1)}m`;
-}
 
 function formatNextRunAt(nextRunAt: string | null): string {
   if (!nextRunAt) return '-';
@@ -386,27 +381,27 @@ export function RunningBoard({ searchText, hours, selectedProject }: RunningBoar
     <div className="running-board">
       {/* Stats bar */}
       <div className="running-board-stats">
-        <span className="running-stat-item" style={{ color: '#8b5cf6' }}>
+        <span className="running-stat-item" style={{ color: STATUS_COLORS.scheduled }}>
           待触发 <strong>{stats.scheduled}</strong>
         </span>
         <span className="running-stat-divider" />
-        <span className="running-stat-item" style={{ color: '#f59e0b' }}>
+        <span className="running-stat-item" style={{ color: STATUS_COLORS.running }}>
           运行中 <strong>{stats.running}</strong>
         </span>
         <span className="running-stat-divider" />
-        <span className="running-stat-item" style={{ color: '#22c55e' }}>
+        <span className="running-stat-item" style={{ color: STATUS_COLORS.success }}>
           已完成 <strong>{stats.completed}</strong>
         </span>
         <span className="running-stat-divider" />
-        <span className="running-stat-item" style={{ color: '#06b6d4' }}>
+        <span className="running-stat-item" style={{ color: STATUS_COLORS.reviewing }}>
           评审中 <strong>{stats.reviewing}</strong>
         </span>
         <span className="running-stat-divider" />
-        <span className="running-stat-item" style={{ color: '#10b981' }}>
+        <span className="running-stat-item" style={{ color: STATUS_COLORS.reviewPassed }}>
           评审通过 <strong>{stats.review_passed}</strong>
         </span>
         <span className="running-stat-divider" />
-        <span className="running-stat-item" style={{ color: '#ef4444' }}>
+        <span className="running-stat-item" style={{ color: STATUS_COLORS.failed }}>
           失败 <strong>{stats.failed}</strong>
         </span>
         <span className="running-stat-divider" />

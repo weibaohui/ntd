@@ -1,5 +1,6 @@
 import { EXECUTOR_COLORS, getExecutorColor } from '@/types';
 import type { SkillMeta } from '@/types';
+import { formatDateTime } from '@/utils/format';
 
 export { EXECUTOR_COLORS, getExecutorColor };
 
@@ -10,15 +11,7 @@ export function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function formatTime(iso: string | null): string {
-  if (!iso) return '-';
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString('zh-CN') + ' ' + d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-  } catch {
-    return iso;
-  }
-}
+export { formatDateTime as formatTime };
 
 export function normalizeExecutor(name: string): string {
   return name.toLowerCase().replace(/[_\s-]/g, '');
