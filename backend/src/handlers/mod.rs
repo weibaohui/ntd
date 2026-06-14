@@ -742,7 +742,7 @@ async fn version_upgrade_handler() -> impl IntoResponse {
             }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         // macOS 或其他 Unix 使用 sh -c 方案，因为 launchd 不会按 cgroup 杀进程。
         spawn_redeploy_sh_fallback(&ntd_cmd, &marker_cleanup_path, "/tmp/ntd-upgrade.log");
