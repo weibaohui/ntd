@@ -220,15 +220,18 @@ export function SkillDetailDrawer({ skill, executor, executorLabel, open, onClos
               const exists = executorsData.find(ex => ex.executor === exec.value);
               const targetName = skill?.name?.split('/').pop() || skill?.name;
               const alreadyHas = exists?.skills.find(s => s.name === targetName);
+              // agents 是只读来源，不能作为同步目标
+              const isReadonly = exec.value === 'agents';
               return (
                 <Col span={12} key={exec.value}>
-                  <Checkbox value={exec.value}>
+                  <Checkbox value={exec.value} disabled={isReadonly}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                       <span style={{
                         width: 6, height: 6, borderRadius: '50%',
                         backgroundColor: exec.color,
                       }} />
                       {exec.label}
+                      {isReadonly && <Tag color="default" style={{ fontSize: 10 }}>只读</Tag>}
                       {alreadyHas && <Tag color="orange" style={{ fontSize: 10 }}>已存在</Tag>}
                     </span>
                   </Checkbox>

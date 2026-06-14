@@ -1029,17 +1029,55 @@ pub async fn sync_skill(
 
     // 统一 containment 校验
     // 404（NotFound）在这里对用户不友好，转化为带上下文的 BadRequest
+    //
+    // 注意：SKILL.md 中 YAML front matter 定义的 name 可能与磁盘目录名不一致。
+    // 例如 SKILL.md 中写 `name: r2-backup` 但目录名是 `imported-skill`。
+    // `resolve_skill_path_under` 是按磁盘路径查找的，如果按 name 找不到，
+    // 需要 fallback 到扫描所有子目录，匹配 YAML 中定义的 name。
     let skill_dir = resolve_skill_path_under(&source_dir, &req.skill_name)
-        .map_err(|e| {
+        .or_else(|e| {
+            // 按 name 直接 join 找不到时，尝试扫描所有子目录匹配 YAML front matter 中的 name
             if matches!(e, AppError::NotFound) {
-                AppError::BadRequest(format!(
-                    "Skill '{}' not found in executor '{}' (directory: {})",
-                    req.skill_name,
-                    req.source_executor,
-                    source_dir.display()
-                ))
+                // 扫描 source_dir 下所有 skill 子目录，匹配 SKILL.md 的 YAML name
+                let mut found: Option<PathBuf> = None;
+                if let Ok(entries) = std::fs::read_dir(&source_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if !path.is_dir() {
+                            continue;
+                        }
+                        let skill_md = path.join("SKILL.md");
+                        if skill_md.exists() {
+                            if let Ok(content) = std::fs::read_to_string(&skill_md) {
+                                if let Some(yaml) = extract_yaml_front_matter(&content) {
+                                    for line in yaml.lines() {
+                                        if let Some(val) = line.strip_prefix("name:") {
+                                            let yaml_name = val.trim().trim_matches('"').to_string();
+                                            if yaml_name == req.skill_name {
+                                                found = Some(path);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if found.is_some() {
+                            break;
+                        }
+                    }
+                }
+                match found {
+                    Some(path) => Ok(path),
+                    None => Err(AppError::BadRequest(format!(
+                        "Skill '{}' not found in executor '{}' (directory: {})",
+                        req.skill_name,
+                        req.source_executor,
+                        source_dir.display()
+                    ))),
+                }
             } else {
-                e
+                Err(e)
             }
         })?;
 
