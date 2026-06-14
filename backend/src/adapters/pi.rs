@@ -1,6 +1,12 @@
 //! pi 执行器 adapter
 //!
 //! 支持 --continue 恢复会话、--session 指定 session-id、--mode json JSONL 输出
+//!
+//! ## 输出策略
+//! pi 的 JSONL 流包含 text_delta（逐字增量）和 message_end（完整文本）。
+//! 为避免 text_delta 碎片化导致前端输出断裂，**跳过所有 text_delta**，
+//! 只在 message_end 事件中提取完整的 assistant 文本一次输出。
+//! 适用于 pi --mode json 输出。
 
 use std::sync::Arc;
 use parking_lot::Mutex;
@@ -19,8 +25,6 @@ pub struct PiExecutor {
     base: BaseExecutor,
     /// 从 session 事件中提取的 session id
     session_id: Arc<Mutex<Option<String>>>,
-    /// text_delta 缓冲：合并连续的增量文本，避免每字符单独成行
-    pending_text: Arc<Mutex<String>>,
 }
 
 impl PiExecutor {
@@ -28,41 +32,27 @@ impl PiExecutor {
         Self {
             base: BaseExecutor::new(path),
             session_id: Arc::new(Mutex::new(None)),
-            pending_text: Arc::new(Mutex::new(String::new())),
         }
     }
 
-    /// 将缓冲的 text_delta 内容作为一个 assistant 日志条目刷出。
-    /// 返回 `Some(entry)` 表示有缓冲内容被刷出，`None` 表示缓冲为空。
-    fn flush_pending_text(&self) -> Option<ParsedLogEntry> {
-        let mut buf = self.pending_text.lock();
-        let content = std::mem::take(&mut *buf);
-        drop(buf);
-        if content.is_empty() {
-            return None;
+    /// 从 message_end 的 content 块中提取纯文本，去掉换行，合并为单条字符串。
+    fn extract_full_text(&self, msg: &super::pi_event::PiMessage) -> Option<String> {
+        let mut parts = Vec::new();
+        for block in &msg.content {
+            if let super::pi_event::PiContentBlock::Text { text } = block {
+                if let Some(t) = text {
+                    let cleaned = t.replace('\n', "").trim().to_string();
+                    if !cleaned.is_empty() {
+                        parts.push(cleaned);
+                    }
+                }
+            }
         }
-        Some(ParsedLogEntry {
-            timestamp: utc_timestamp(),
-            log_type: "assistant".to_string(),
-            content,
-            usage: None,
-            tool_name: None,
-            tool_input_json: None,
-        })
-    }
-
-    /// 判断缓冲文本是否到达自然边界，可以刷出。
-    /// 条件：以句子结束标点结尾，或超过阈值长度。
-    fn is_text_boundary(buf: &str) -> bool {
-        // 以句子结束标点结尾
-        buf.ends_with('.')
-            || buf.ends_with('!')
-            || buf.ends_with('?')
-            || buf.ends_with('。')
-            || buf.ends_with('！')
-            || buf.ends_with('？')
-            // 超过 200 字符强制刷出
-            || buf.len() > 200
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(""))
+        }
     }
 }
 
@@ -71,7 +61,6 @@ impl Clone for PiExecutor {
         Self {
             base: self.base.clone(),
             session_id: self.session_id.clone(),
-            pending_text: self.pending_text.clone(),
         }
     }
 }
@@ -144,7 +133,6 @@ impl CodeExecutor for PiExecutor {
             tracing::debug!("[pi] parse_output_line: event_type={}", event.event_type);
             return match event.event_type.as_str() {
                 "session" => {
-                    // Session 初始化事件
                     if let Some(id) = &event.id {
                         *self.session_id.lock() = Some(id.clone());
                     }
@@ -158,50 +146,30 @@ impl CodeExecutor for PiExecutor {
                     })
                 }
                 "message_end" => {
-                    // message_end 前先刷出残留的 text_delta 缓冲
-                    let flushed = self.flush_pending_text();
-                    // message_end 包含完整消息内容
-                    // 对于 assistant 消息，内容已经在 message_update 时通过 text_delta 实时发送了
-                    // message_end 这里只处理工具结果等非 assistant 消息
+                    // message_end 包含完整文本，是 assistant 输出的唯一来源。
+                    // text_delta 被跳过（见下方），避免碎片化。
                     if let Some(msg) = event.message {
-                        if msg.role.as_deref() == Some("assistant") {
-                            // assistant 内容已在 message_update 时发送，这里跳过避免重复
-                            // 但仍需提取 model 信息
-                            if let Some(model) = &msg.model {
-                                if !model.is_empty() {
-                                    *self.base.model.lock() = Some(model.clone());
-                                }
-                            }
-                            return flushed;
-                        }
-                        // 其他角色（user 等）的消息内容
-                        let mut text_parts = Vec::new();
-                        for block in &msg.content {
-                            if let super::pi_event::PiContentBlock::Text { text } = block {
-                                if let Some(t) = text {
-                                    let trimmed = t.trim();
-                                    if !trimmed.is_empty() {
-                                        text_parts.push(trimmed.to_string());
-                                    }
-                                }
+                        // 提取 model
+                        if let Some(model) = &msg.model {
+                            if !model.is_empty() {
+                                *self.base.model.lock() = Some(model.clone());
                             }
                         }
-                        if !text_parts.is_empty() {
-                            let content = text_parts.join("\n");
-                            return Some(ParsedLogEntry {
-                                timestamp: utc_timestamp(),
-                                log_type: "assistant".to_string(),
-                                content: content.clone(),
-                                usage: None,
-                                tool_name: None,
-                                tool_input_json: None,
-                            });
-                        }
+                        // 提取完整文本（去掉换行）
+                        return self.extract_full_text(&msg).map(|content| ParsedLogEntry {
+                            timestamp: utc_timestamp(),
+                            log_type: "assistant".to_string(),
+                            content,
+                            usage: None,
+                            tool_name: None,
+                            tool_input_json: None,
+                        });
                     }
-                    flushed
+                    None
                 }
                 "message_update" => {
-                    // message_update 包含增量内容，只从 assistantMessageEvent 提取
+                    // 只处理 thinking_delta（实时思考过程）；text_delta 跳过，
+                    // 等 message_end 一次输出完整文本，避免碎片化。
                     if let Some(ame) = event.assistant_message_event {
                         // 提取 model 信息
                         if let Some(model) = &ame.model {
@@ -216,91 +184,57 @@ impl CodeExecutor for PiExecutor {
                                 }
                             }
                         }
-                        match ame.event_type.as_deref() {
-                            Some("text_delta") => {
-                                // text_delta 是实际回复的增量内容——缓冲合并，不立即发出
-                                // 去掉 delta 中的所有换行，避免 pi 输出中的换行导致碎片化
-                                if let Some(delta) = &ame.delta {
-                                    let cleaned = delta.replace('\n', "").trim_end().to_string();
-                                    if !cleaned.is_empty() {
-                                        let mut buf = self.pending_text.lock();
-                                        buf.push_str(&cleaned);
-                                        // 在自然边界处刷出：标点符号或足够长的文本
-                                        if Self::is_text_boundary(&buf) {
-                                            let content = std::mem::take(&mut *buf);
-                                            drop(buf);
-                                            return Some(ParsedLogEntry {
-                                                timestamp: utc_timestamp(),
-                                                log_type: "assistant".to_string(),
-                                                content,
-                                                usage: None,
-                                                tool_name: None,
-                                                tool_input_json: None,
-                                            });
-                                        }
-                                    }
+                        if ame.event_type.as_deref() == Some("thinking_delta") {
+                            if let Some(delta) = &ame.delta {
+                                let trimmed = delta.trim_end();
+                                if !trimmed.is_empty() {
+                                    return Some(ParsedLogEntry {
+                                        timestamp: utc_timestamp(),
+                                        log_type: "thinking".to_string(),
+                                        content: trimmed.chars().take(500).collect(),
+                                        usage: None,
+                                        tool_name: None,
+                                        tool_input_json: None,
+                                    });
                                 }
-                                None
                             }
-                            Some("thinking_delta") => {
-                                // thinking_delta 前先刷出残留的 text_delta 缓冲
-                                let flushed = self.flush_pending_text();
-                                // thinking_delta 是 thinking 的增量内容
-                                // 移除尾部换行符，避免多余换行
-                                if let Some(delta) = &ame.delta {
-                                    let trimmed = delta.trim_end();
-                                    if !trimmed.is_empty() {
-                                        return Some(ParsedLogEntry {
-                                            timestamp: utc_timestamp(),
-                                            log_type: "thinking".to_string(),
-                                            content: trimmed.chars().take(500).collect(),
-                                            usage: None,
-                                            tool_name: None,
-                                            tool_input_json: None,
-                                        });
-                                    }
-                                }
-                                flushed
-                            }
-                            _ => None,
                         }
-                    } else {
-                        None
+                        // text_delta / text_start / text_end 等跳过
                     }
-                }
-                "message_start" => {
-                    // message_start 事件（通常只有 role 信息，不返回具体内容）
                     None
                 }
+                "message_start" => None,
                 "tool_execution_start" => {
                     if let Some(te) = event.tool_execution {
                         let name = te.tool_name.unwrap_or_else(|| "unknown".to_string());
                         let input_str = te.args.as_ref().map(|i| serde_json::to_string(i).unwrap_or_default()).unwrap_or_default();
-                        return Some(ParsedLogEntry {
+                        Some(ParsedLogEntry {
                             timestamp: utc_timestamp(),
                             log_type: "tool_use".to_string(),
                             content: format!("开始工具: {}", name),
                             usage: None,
                             tool_name: Some(name),
                             tool_input_json: Some(input_str),
-                        });
+                        })
+                    } else {
+                        None
                     }
-                    None
                 }
                 "tool_execution_end" => {
                     if let Some(te) = event.tool_execution {
                         let name = te.tool_name.unwrap_or_else(|| "unknown".to_string());
                         let output = te.output.unwrap_or_default();
-                        return Some(ParsedLogEntry {
+                        Some(ParsedLogEntry {
                             timestamp: utc_timestamp(),
                             log_type: "tool_result".to_string(),
                             content: format!("{}: {}", name, output.chars().take(300).collect::<String>()),
                             usage: None,
                             tool_name: Some(name),
                             tool_input_json: None,
-                        });
+                        })
+                    } else {
+                        None
                     }
-                    None
                 }
                 "agent_start" => Some(ParsedLogEntry {
                     timestamp: utc_timestamp(),
@@ -334,7 +268,6 @@ impl CodeExecutor for PiExecutor {
                     tool_name: None,
                     tool_input_json: None,
                 }),
-                // 忽略其他事件类型
                 _ => None,
             };
         }
@@ -467,15 +400,32 @@ mod tests {
     fn test_parse_output_line_text_delta() {
         let executor = PiExecutor::new("pi".to_string());
         let line = r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"hello world"}}"#;
-        // text_delta 内容被缓冲，不立即发出
+        // text_delta 被跳过，等 message_end 输出完整文本
         let entry = executor.parse_output_line(line);
-        assert!(entry.is_none(), "text_delta without boundary should buffer, not emit");
-        // 显式刷出应得到缓冲的内容
-        let flushed = executor.flush_pending_text();
-        assert!(flushed.is_some());
-        let e = flushed.unwrap();
+        assert!(entry.is_none(), "text_delta should be skipped");
+    }
+
+    #[test]
+    fn test_parse_output_line_message_end_assistant() {
+        let executor = PiExecutor::new("pi".to_string());
+        let line = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"你好！有什么我可以帮你的吗？"}],"model":"deepseek-v4"}}"#;
+        let entry = executor.parse_output_line(line);
+        assert!(entry.is_some());
+        let e = entry.unwrap();
         assert_eq!(e.log_type, "assistant");
-        assert_eq!(e.content, "hello world");
+        assert_eq!(e.content, "你好！有什么我可以帮你的吗？");
+    }
+
+    #[test]
+    fn test_parse_output_line_message_end_assistant_with_newlines() {
+        let executor = PiExecutor::new("pi".to_string());
+        // 内容中的换行应被清除
+        let line = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"从前\n\n，在一片\n深蓝色的\n森林里"}]}}"#;
+        let entry = executor.parse_output_line(line);
+        assert!(entry.is_some());
+        let e = entry.unwrap();
+        assert_eq!(e.log_type, "assistant");
+        assert_eq!(e.content, "从前，在一片深蓝色的森林里");
     }
 
     #[test]
