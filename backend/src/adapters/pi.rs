@@ -3,9 +3,17 @@
 //! 支持 --continue 恢复会话、--session 指定 session-id、--mode json JSONL 输出
 //!
 //! ## 输出策略
-//! pi 的 JSONL 流包含 text_delta（逐字增量）和 message_end（完整文本）。
-//! 为避免 text_delta 碎片化导致前端输出断裂，**跳过所有 text_delta**，
-//! 只在 message_end 事件中提取完整的 assistant 文本一次输出。
+//! pi 的 JSONL 流包含 text_delta（逐字增量）、message_end（完整文本）和
+//! thinking_delta（思考过程增量）。为兼顾实时性与完整性：
+//!
+//! - **text_delta**：缓冲连续增量文本，在标点边界刷出为 assistant 条目，
+//!   保证前端实时显示流畅。`flush_pending_text()` 是唯一的刷出口，确保
+//!   在任何事件切换（thinking_delta / message_end / 流程结束）之前
+//!   缓冲区都被清空。
+//! - **message_end**：提取完整的 assistant 文本存入 `full_text`，
+//!   供 `get_final_result` 返回最终结果（去掉换行），避免拼接碎片。
+//! - **thinking_delta**：作为 thinking 日志条目直接输出，不进入 text_delta 缓冲。
+//!
 //! 适用于 pi --mode json 输出。
 
 use std::sync::Arc;
@@ -65,7 +73,7 @@ impl PiExecutor {
         for block in &msg.content {
             if let super::pi_event::PiContentBlock::Text { text } = block {
                 if let Some(t) = text {
-                    let cleaned = t.replace('\n', "").trim().to_string();
+                    let cleaned = t.replace('\n', "").trim_end().to_string();
                     if !cleaned.is_empty() {
                         parts.push(cleaned);
                     }
@@ -75,7 +83,8 @@ impl PiExecutor {
         if parts.is_empty() {
             None
         } else {
-            Some(parts.join(""))
+            // 用空格连接多个 text block，避免 "Hello" + "World" → "HelloWorld"
+            Some(parts.join(" "))
         }
     }
 
@@ -186,6 +195,11 @@ impl CodeExecutor for PiExecutor {
                 "message_end" => {
                     let flushed = self.flush_pending_text();
                     if let Some(msg) = event.message {
+                        // 仅处理 assistant 的 message_end；user 等其他角色的
+                        // message_end 不提取内容（避免用户输入被误判为输出）
+                        if msg.role.as_deref() != Some("assistant") {
+                            return flushed;
+                        }
                         // 提取 model
                         if let Some(model) = &msg.model {
                             if !model.is_empty() {
@@ -240,7 +254,11 @@ impl CodeExecutor for PiExecutor {
                                 None
                             }
                             Some("thinking_delta") => {
+                                // 先刷出缓冲的 text_delta，确保 thinking 之前文本已输出
                                 let flushed = self.flush_pending_text();
+                                if flushed.is_some() {
+                                    return flushed;
+                                }
                                 if let Some(delta) = &ame.delta {
                                     let trimmed = delta.trim_end();
                                     if !trimmed.is_empty() {
@@ -254,7 +272,7 @@ impl CodeExecutor for PiExecutor {
                                         });
                                     }
                                 }
-                                flushed
+                                None
                             }
                             _ => None,
                         }
@@ -262,7 +280,11 @@ impl CodeExecutor for PiExecutor {
                         None
                     }
                 }
-                "message_start" => None,
+                "message_start" => {
+                    // 新的消息开始，重置 full_text，避免上次执行的状态泄漏
+                    *self.full_text.lock() = None;
+                    None
+                },
                 "tool_execution_start" => {
                     if let Some(te) = event.tool_execution {
                         let name = te.tool_name.unwrap_or_else(|| "unknown".to_string());
@@ -535,10 +557,10 @@ mod tests {
     }
 
     #[test]
-    fn test_get_final_result_fallback_to_text() {
+    fn test_get_final_result_returns_none_without_full_text() {
         let executor = PiExecutor::new("pi".to_string());
         let logs = vec![ParsedLogEntry { timestamp: String::new(), log_type: "text".to_string(), content: "plain text".to_string(), usage: None, tool_name: None, tool_input_json: None }];
-        // 没有 full_text 时返回 None
+        // 没有 full_text 时返回 None（不再从日志 fallback）
         let result = executor.get_final_result(&logs);
         assert_eq!(result, None);
     }

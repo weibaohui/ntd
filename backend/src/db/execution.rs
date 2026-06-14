@@ -585,7 +585,7 @@ impl Database {
             0
         };
 
-        // 并行执行独立的分布查询
+        // 并行执行独立的分布查询（tag_todo_counts 一并纳入避免串行等待）
         let (
             executor_distribution,
             model_distribution,
@@ -597,6 +597,7 @@ impl Database {
             (today_executions, executions_change),
             success_rate_change,
             cost_change,
+            tag_todo_counts,
         ) = tokio::try_join!(
             crate::db::dashboard::fetch_executor_distribution(&ctx, &executor_todo_counts),
             crate::db::dashboard::fetch_model_distribution(&ctx),
@@ -608,25 +609,26 @@ impl Database {
             crate::db::dashboard::fetch_execution_change(&ctx),
             crate::db::dashboard::fetch_success_rate_change(&ctx),
             crate::db::dashboard::fetch_cost_change(&ctx),
+            // tag_todo_counts 是独立的 GROUP BY 查询，不依赖其他结果，
+            // 并入 try_join 能使 11 个查询并行执行，减少总体等待时间
+            async {
+                let sql = "SELECT tag_id, COUNT(*) as todo_count FROM todo_tags GROUP BY tag_id";
+                let rows = self.conn
+                    .query_all(Statement::from_string(backend, sql.to_string()))
+                    .await?;
+                let map: HashMap<i64, i64> = rows.into_iter()
+                    .filter_map(|row| {
+                        let tag_id: i64 = row.try_get_by("tag_id").ok()?;
+                        let count: i64 = row.try_get_by("todo_count").ok()?;
+                        Some((tag_id, count))
+                    })
+                    .collect();
+                Ok(map)
+            },
         )?;
 
-        // 计算标签分布（需要 tags 和 tag_todo_counts）
-        // 使用 raw SQL 而非 SeaORM：GROUP BY + COUNT 聚合查询需要同时返回
-        // 两个字段并映射为 HashMap，ORM 方式会引入额外的中间结构体，
-        // raw SQL 更直接且 SeaORM 不会为这种聚合查询生成类型安全的 API。
-        let tag_todo_sql = "SELECT tag_id, COUNT(*) as todo_count FROM todo_tags GROUP BY tag_id";
-        let tag_todo_counts: HashMap<i64, i64> = self
-            .conn
-            .query_all(Statement::from_string(backend, tag_todo_sql.to_string()))
-            .await?
-            .into_iter()
-            .filter_map(|row| {
-                let tag_id: i64 = row.try_get_by("tag_id").ok()?;
-                let count: i64 = row.try_get_by("todo_count").ok()?;
-                Some((tag_id, count))
-            })
-            .collect();
-
+        // 标签分布计算（tags_result 已从第一轮 try_join 获取，
+        // tag_todo_counts 已从第二轮 try_join 获取）
         let tag_distribution = crate::db::dashboard::fetch_tag_distribution(
             &ctx, &tags_result, &tag_todo_counts,
         ).await?;
