@@ -8,7 +8,7 @@
 
 import type { Todo } from '@/types';
 import type { TodoHookItem } from '@/utils/database/hooks';
-import { DEFAULT_EXECUTOR } from '@/constants';
+import { DEFAULT_EXECUTOR } from '@/types/execution';
 
 /** 表单数据状态 */
 export interface TodoFormState {
@@ -39,6 +39,7 @@ export interface TodoFormState {
 /** 表单 action 类型 */
 export type TodoFormAction =
   | { type: 'SET_FIELD'; field: keyof TodoFormState; value: any }
+  | { type: 'SET_FIELD_UPDATER'; field: keyof TodoFormState; updater: (prev: any) => any }
   | { type: 'SET_MULTIPLE'; fields: Partial<TodoFormState> }
   | { type: 'RESET_FORM'; todo?: Todo | null }
   | { type: 'RESET_CREATE_MODE' };
@@ -64,6 +65,10 @@ export function todoFormReducer(state: TodoFormState, action: TodoFormAction): T
     case 'SET_FIELD':
       return { ...state, [action.field]: action.value };
 
+    // 功能性更新：接收 prev => newValue 函数，避免 closure 捕获导致的并发回归
+    case 'SET_FIELD_UPDATER':
+      return { ...state, [action.field]: action.updater(state[action.field]) };
+
     case 'SET_MULTIPLE':
       return { ...state, ...action.fields };
 
@@ -72,7 +77,7 @@ export function todoFormReducer(state: TodoFormState, action: TodoFormAction): T
         return {
           title: action.todo.title || '',
           prompt: action.todo.prompt || '',
-          selectedTags: (action.todo as any).tag_ids || [],
+          selectedTags: action.todo.tag_ids || [],
           executor: action.todo.executor || DEFAULT_EXECUTOR,
           workspace: action.todo.workspace || '',
           worktreeEnabled: action.todo.worktree_enabled || false,

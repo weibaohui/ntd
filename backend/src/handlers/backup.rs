@@ -32,6 +32,7 @@ fn is_safe_filename(name: &str) -> bool {
 ///
 /// 通用函数，适用于数据库备份、Todo 备份、Skill 备份等所有 ZIP 备份目录。
 /// 按文件创建时间倒序排列，删除超过 `keep` 数量的旧文件。
+/// 文件创建时间不可用时（某些文件系统不支持），视为最旧文件优先删除。
 fn cleanup_old_zip_backups(dir: &PathBuf, keep: usize) {
     if !dir.exists() {
         return;
@@ -51,14 +52,24 @@ fn cleanup_old_zip_backups(dir: &PathBuf, keep: usize) {
         return;
     }
 
+    // 按创建时间倒序排列；
+    // 创建时间不可用的文件（某些文件系统不支持 created()）使用 UNIX_EPOCH，
+    // 确保它们排在最前面（最旧），优先被删除。
     files.sort_by(|a, b| {
-        let a_time = std::fs::metadata(a).and_then(|m| m.created()).ok();
-        let b_time = std::fs::metadata(b).and_then(|m| m.created()).ok();
+        let a_time = std::fs::metadata(a)
+            .and_then(|m| m.created())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        let b_time = std::fs::metadata(b)
+            .and_then(|m| m.created())
+            .unwrap_or(std::time::UNIX_EPOCH);
         b_time.cmp(&a_time)
     });
 
     for old_file in files.iter().skip(keep) {
-        std::fs::remove_file(old_file).ok();
+        if let Err(e) = std::fs::remove_file(old_file) {
+            // 记录删除失败（不中断流程），确保一个文件的失败不影响其他旧文件的清理
+            tracing::warn!("Failed to remove old backup {:?}: {}", old_file, e);
+        }
     }
 }
 

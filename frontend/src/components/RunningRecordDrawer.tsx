@@ -170,6 +170,9 @@ export function RunningRecordDrawer({ record, open, onClose, onRefresh }: Runnin
 
   if (!record) return null;
 
+  // 统一使用毫秒作为 duration 单位，与 formatDuration(ms) 签名一致。
+  // 优先使用后端记录的 duration_ms，运行时中的记录则通过 started_at 实时计算。
+  // elapsedSeconds 返回秒，需 * 1000 转换为毫秒。
   const duration = record.usage?.duration_ms || (isRunning ? elapsedSeconds(record.started_at) * 1000 : null);
 
   return (
@@ -253,7 +256,7 @@ export function RunningRecordDrawer({ record, open, onClose, onRefresh }: Runnin
         {duration != null && (
           <div>
             <span style={{ color: 'var(--color-text-tertiary)' }}>耗时：</span>
-            <span style={{ fontWeight: 600 }}>{formatDuration(duration / 1000)}</span>
+            <span style={{ fontWeight: 600 }}>{formatDuration(duration)}</span>
           </div>
         )}
       </div>

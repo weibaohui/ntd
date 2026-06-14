@@ -604,6 +604,9 @@ impl Database {
         )?;
 
         // 计算标签分布（需要 tags 和 tag_todo_counts）
+        // 使用 raw SQL 而非 SeaORM：GROUP BY + COUNT 聚合查询需要同时返回
+        // 两个字段并映射为 HashMap，ORM 方式会引入额外的中间结构体，
+        // raw SQL 更直接且 SeaORM 不会为这种聚合查询生成类型安全的 API。
         let tag_todo_sql = "SELECT tag_id, COUNT(*) as todo_count FROM todo_tags GROUP BY tag_id";
         let tag_todo_counts: HashMap<i64, i64> = self
             .conn

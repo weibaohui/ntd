@@ -5,7 +5,7 @@ import * as db from '@/utils/database';
 import type { ProjectDirectory } from '@/utils/database';
 
 import type { Todo, ExecutorConfig, ExecutorOption, SkillMeta, ExecutorSkills, TodoTemplate } from '@/types';
-import { EXECUTORS, executorConfigToOption, getExecutorColor } from '@/types';
+import { EXECUTORS, executorConfigToOption, getExecutorColor, DEFAULT_EXECUTOR } from '@/types';
 import { TagCheckCardGroup } from './TagCheckCard';
 import { ExecutorPicker } from './todo-drawer/ExecutorPicker';
 import { PromptEditor } from './todo-drawer/PromptEditor';
@@ -66,20 +66,31 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
   const insertTextAtCursor = useCallback((text: string) => {
     const editor = editorRef.current;
     if (!editor || !editor.textarea) {
-      setField('prompt', formState.prompt
-        ? formState.prompt + (formState.prompt.endsWith('\n') ? '' : '\n') + text
-        : text);
+      // 无编辑器时：通过 functional updater 追加文本，避免 closure 捕获旧状态
+      dispatch({
+        type: 'SET_FIELD_UPDATER',
+        field: 'prompt',
+        updater: (prev: string) => prev
+          ? prev + (prev.endsWith('\n') ? '' : '\n') + text
+          : text,
+      });
       return;
     }
     const textarea = editor.textarea as HTMLTextAreaElement;
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
-    setField('prompt', formState.prompt.substring(0, start) + text + formState.prompt.substring(end));
+    // 使用 functional updater 在光标处插入文本，确保同一渲染周期内多次调用
+    // 不会因 closure 捕获旧状态而丢失上一次的改动
+    dispatch({
+      type: 'SET_FIELD_UPDATER',
+      field: 'prompt',
+      updater: (prev: string) => prev.substring(0, start) + text + prev.substring(end),
+    });
     setTimeout(() => {
       textarea.selectionStart = textarea.selectionEnd = start + text.length;
       textarea.focus();
     }, 0);
-  }, [formState.prompt, setField]);
+  }, []);
 
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [templates, setTemplates] = useState<TodoTemplate[]>([]);
@@ -229,7 +240,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
         // 创建模式：只在路径存在于目录列表时才设置 workspace，否则为 null（避免创建无名项目）
         const workspaceToSave = trimmedWorkspace && projectDirectories.some(d => d.path === trimmedWorkspace) ? trimmedWorkspace : null;
 
-        if (workspaceToSave || schedulerEnabled || executor !== 'claudecode' || worktreeEnabled) {
+        if (workspaceToSave || schedulerEnabled || executor !== DEFAULT_EXECUTOR || worktreeEnabled) {
           await db.updateTodo(
             newTodo.id, newTodo.title, newTodo.prompt, newTodo.status,
             executor, schedulerEnabled, schedulerConfig || null,
@@ -386,7 +397,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
             )}
           </div>
 
-          {(executor === 'claudecode' || executor === 'claude_code' || executor === 'hermes') && (
+          {(executor === DEFAULT_EXECUTOR || executor === 'claude_code' || executor === 'hermes') && (
             <div style={{ marginBottom: 16 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>Git Worktree</div>

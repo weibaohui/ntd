@@ -1262,6 +1262,13 @@ mod run_todo_execution_request_tests {
 /// 格式化超时秒数为人类可读字符串。
 ///
 /// 使用 hours for >=60 min, days for >=24 h to keep the output readable.
+/// 精度取舍：只精确到分钟级别（秒数只在 <60s 时显示），后端 timeout 精度
+/// 为秒级，分钟以上的秒数误差在 UI 上无感知差异。
+///
+/// 边界情况：
+/// - 0 秒 → "0 min"（表示无超时限制）
+/// - 60-3599 秒 → "X min Y sec" 格式
+/// - 3600+ 秒 → "X hour(s)" 或 "X day(s)"
 fn format_timeout_secs(secs: u64) -> String {
     let total_min = secs / 60;
     let remaining_secs = secs % 60;
@@ -1282,6 +1289,18 @@ fn format_timeout_secs(secs: u64) -> String {
 ///
 /// 单次遍历日志，计算 tool_calls、conversation_turns、thinking_count。
 /// 如果 executor 提供了自己的 tool_calls_count，则使用 executor 的值。
+///
+/// 设计意图：
+/// - 不同 executor 的 tool_use 事件格式各异，部分 executor（如 hermes）
+///   有自己的工具调用计数器，比日志解析更准确。
+/// - conversation_turns 通过文本/结果/助手事件计数，估算 AI 交互轮次。
+/// - thinking_count 用于展示 AI 思考过程的复杂度。
+///
+/// 统计逻辑：
+/// - tool_use/tool_call/tool → 工具调用（使用 executor 提供的值覆盖，见后文）
+/// - assistant/result/text → 对话轮次（每个文本输出算一轮）
+/// - thinking → 思考次数
+/// - 其他 log_type 跳过
 fn extract_execution_stats(
     logs: &[crate::models::ParsedLogEntry],
     executor_tool_calls: Option<u64>,

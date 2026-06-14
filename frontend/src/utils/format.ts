@@ -2,6 +2,12 @@
  * 格式化工具函数
  *
  * 集中管理项目中重复出现的格式化逻辑，避免在多个组件中维护各自的实现。
+ *
+ * 设计权衡：
+ * - 统一使用 zh-CN locale：用户群体以中文为主，日期时间格式保持中文习惯。
+ * - formatDuration 使用简洁的 "1.5m" 格式：节省 RunningRecordDrawer 等抽屉的 UI
+ *   空间，详情页使用 formatDurationSec 提供完整 "1h30m" 格式。
+ * - M 值保留 1 位小数：在精度和可读性之间平衡，2 位小数对 token 量级意义不大。
  */
 
 /**
@@ -13,7 +19,7 @@
  * - >= 60s → 显示分钟（如 "1.5m"）
  */
 export function formatDuration(ms: number | null): string {
-  if (!ms) return '-';
+  if (ms === null) return '-';
   if (ms < 1_000) return `${ms}ms`;
   if (ms < 60_000) return `${(ms / 1_000).toFixed(0)}s`;
   return `${(ms / 60_000).toFixed(1)}m`;

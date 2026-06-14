@@ -6,7 +6,7 @@ import XMarkdown from '@ant-design/x-markdown';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { ChatView } from '@/components/ChatView';
 import { RefreshBtn } from './LogViewHeader';
-import { formatLocalDateTime, formatDuration } from '@/utils/datetime';
+import { formatLocalDateTime, formatDurationSec } from '@/utils/datetime';
 import { getElapsedSeconds, formatLogTime, logTypeColors, logTypeLabels } from './helpers';
 import type { SessionGroup } from './helpers';
 import { supportsResume } from '@/types';
@@ -130,12 +130,12 @@ export function RecordDetailView({
           })()}
           {record.status !== 'running' && record.usage?.duration_ms && (
             <span style={{ fontSize: 12, color: 'var(--color-success)', fontWeight: 600 }}>
-              {formatDuration(record.usage.duration_ms / 1000)}
+              {formatDurationSec(record.usage.duration_ms / 1000)}
             </span>
           )}
           {record.status === 'running' && (
             <span style={{ fontSize: 12, color: 'var(--color-info)', fontWeight: 600 }}>
-              {formatDuration(getElapsedSeconds(record.started_at))}
+              {formatDurationSec(getElapsedSeconds(record.started_at))}
             </span>
           )}
         </div>

@@ -4,7 +4,7 @@ import { MessageOutlined, FileTextOutlined, StopOutlined, CopyOutlined, LinkOutl
 import { XMarkdown } from '@ant-design/x-markdown';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { supportsResume } from '@/types';
-import { formatLocalDateTime, formatDuration } from '@/utils/datetime';
+import { formatLocalDateTime, formatDurationSec } from '@/utils/datetime';
 import * as db from '@/utils/database';
 import { getElapsedSeconds, hasLogsStatic } from './helpers';
 import { NarrowLogView } from './NarrowLogView';
@@ -66,12 +66,12 @@ function ChainGroupCard({ group, onOpenResume, onExport, onStop, messageApi, vie
             })()}
             {mainRecord.status !== 'running' && mainRecord.usage?.duration_ms && (
               <span style={{ fontSize: 11, color: 'var(--color-success)', fontWeight: 600 }}>
-                {formatDuration(mainRecord.usage.duration_ms / 1000)}
+                {formatDurationSec(mainRecord.usage.duration_ms / 1000)}
               </span>
             )}
             {mainRecord.status === 'running' && (
               <span style={{ fontSize: 11, color: 'var(--color-info)', fontWeight: 600 }}>
-                {formatDuration(getElapsedSeconds(mainRecord.started_at))}
+                {formatDurationSec(getElapsedSeconds(mainRecord.started_at))}
               </span>
             )}
           </div>
@@ -181,12 +181,12 @@ function ChainGroupCard({ group, onOpenResume, onExport, onStop, messageApi, vie
                 </span>
                 {record.status !== 'running' && record.usage?.duration_ms && (
                   <span style={{ fontSize: 9, color: 'var(--color-success)', fontWeight: 600 }}>
-                    {formatDuration(record.usage.duration_ms / 1000)}
+                    {formatDurationSec(record.usage.duration_ms / 1000)}
                   </span>
                 )}
                 {record.status === 'running' && (
                   <span style={{ fontSize: 9, color: 'var(--color-info)', fontWeight: 600 }}>
-                    {formatDuration(getElapsedSeconds(record.started_at))}
+                    {formatDurationSec(getElapsedSeconds(record.started_at))}
                   </span>
                 )}
                 <span style={{

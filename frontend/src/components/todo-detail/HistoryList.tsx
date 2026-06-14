@@ -1,7 +1,7 @@
 import { Pagination } from 'antd';
 import { LinkOutlined, MessageOutlined } from '@ant-design/icons';
 import { CompactHistoryItem } from './CompactHistoryItem';
-import { formatLocalDateTime, formatDuration } from '@/utils/datetime';
+import { formatLocalDateTime, formatDurationSec } from '@/utils/datetime';
 import { getElapsedSeconds } from './helpers';
 import type { SessionGroup } from './helpers';
 import { supportsResume } from '@/types';
@@ -93,12 +93,12 @@ export function HistoryList({
                       </span>
                       {record.status !== 'running' && record.usage?.duration_ms && (
                         <span style={{ fontSize: 9, color: 'var(--color-success)', fontWeight: 600 }}>
-                          {formatDuration(record.usage.duration_ms / 1000)}
+                          {formatDurationSec(record.usage.duration_ms / 1000)}
                         </span>
                       )}
                       {record.status === 'running' && (
                         <span style={{ fontSize: 9, color: 'var(--color-info)', fontWeight: 600 }}>
-                          {formatDuration(getElapsedSeconds(record.started_at))}
+                          {formatDurationSec(getElapsedSeconds(record.started_at))}
                         </span>
                       )}
                       {record.execution_stats && (

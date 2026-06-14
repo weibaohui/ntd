@@ -4,7 +4,8 @@
 //! 将各个独立的 SQL 查询和结果解析拆分为独立的异步函数。
 //!
 //! 每个函数职责单一：执行一条 SQL 查询、解析结果、返回领域结构体。
-//! `get_dashboard_stats` 作为协调者依次调用它们，组装最终的 `DashboardStats`。
+//! `get_dashboard_stats` 作为协调者，使用 `tokio::try_join!` 并行调用所有
+//! 独立查询函数，组装最终的 `DashboardStats`。
 
 use std::collections::HashMap;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
@@ -482,11 +483,9 @@ pub(super) async fn fetch_recent_executions(
                 session_id: row.try_get_by("session_id").ok(),
                 result: row.try_get_by("result").ok(),
                 resume_message: row.try_get_by("resume_message").ok(),
-                command: None, stdout: None, stderr: None, model: None,
-                pid: None, todo_progress: None, execution_stats: None,
-                source_todo_id: None, source_todo_title: None, source_hook_id: None,
-                rating: None, source_execution_record_id: None,
-                last_review_status: None, last_reviewed_at: None,
+                // 其余未 SELECT 的字段使用 Default（Option 字段为 None，id 为 0）
+                // 未来新增字段会自动得到 Default 值，无需手动维护 None 列表
+                ..execution_records::Model::default()
             }
         })
         .map(Into::into)
