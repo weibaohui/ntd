@@ -548,85 +548,63 @@ impl Database {
         let heatmap_filter = format!("datetime(strftime('%Y', 'now') || '-01-01 00:00:00')");
         let heatmap_limit = 366; // 闰年最多366天
 
-        let todo_sql = "SELECT \
-            COUNT(*) as total, \
-            COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) as pending, \
-            COALESCE(SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END), 0) as running, \
-            COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0) as completed, \
-            COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed, \
-            COALESCE(SUM(CASE WHEN scheduler_enabled = 1 AND scheduler_config IS NOT NULL THEN 1 ELSE 0 END), 0) as scheduled \
-            FROM todos WHERE deleted_at IS NULL";
-
-        // Build time-filtered SQL queries
-        let overall_sql = format!(
-            "SELECT \
-            COUNT(*) as total, \
-            COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success, \
-            COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.input_tokens'), 0)), 0) as input_tokens, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.output_tokens'), 0)), 0) as output_tokens, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_read_input_tokens'), 0)), 0) as cache_read, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_creation_input_tokens'), 0)), 0) as cache_creation, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.total_cost_usd'), 0.0)), 0.0) as total_cost, \
-            COALESCE(SUM(CASE WHEN json_extract(usage, '$.duration_ms') IS NOT NULL THEN json_extract(usage, '$.duration_ms') ELSE 0 END), 0) as total_duration, \
-            COALESCE(SUM(CASE WHEN json_extract(usage, '$.duration_ms') IS NOT NULL THEN 1 ELSE 0 END), 0) as duration_count \
-            FROM execution_records \
-            WHERE started_at >= {}",
-            time_filter
-        );
-
-        let (
-            total_todos,
-            pending_todos,
-            running_todos,
-            completed_todos,
-            failed_todos,
-            scheduled_todos,
-        ) = if let Some(row) = self
-            .conn
-            .query_one(Statement::from_string(backend, todo_sql.to_string()))
-            .await?
-        {
-            (
-                row.try_get_by("total").unwrap_or(0i64),
-                row.try_get_by("pending").unwrap_or(0i64),
-                row.try_get_by("running").unwrap_or(0i64),
-                row.try_get_by("completed").unwrap_or(0i64),
-                row.try_get_by("failed").unwrap_or(0i64),
-                row.try_get_by("scheduled").unwrap_or(0i64),
-            )
-        } else {
-            (0i64, 0i64, 0i64, 0i64, 0i64, 0i64)
+        // 创建查询上下文，避免在每个函数中重复传递连接和过滤条件
+        let ctx = crate::db::dashboard::DashboardQueryContext {
+            conn: &self.conn,
+            backend,
+            time_filter,
+            heatmap_filter,
         };
 
-        let tags = self.get_tags().await?;
-        let total_tags = tags.len() as i64;
+        // 并行执行独立的查询，提高性能
+        let (
+            (total_todos, pending_todos, running_todos, completed_todos, failed_todos, scheduled_todos),
+            (total_executions, success_executions, failed_executions, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_creation_tokens, total_cost, total_duration, duration_count),
+            executor_todo_counts,
+            tags_result,
+        ) = tokio::try_join!(
+            crate::db::dashboard::fetch_todo_stats(&ctx),
+            crate::db::dashboard::fetch_execution_overall(&ctx),
+            crate::db::dashboard::fetch_executor_todo_counts(&ctx),
+            self.get_tags(),
+        )?;
 
-        // Executor todo counts via SQL (replaces in-memory iteration over all todos)
-        let executor_todo_sql = "SELECT \
-            COALESCE(executor, 'claudecode') as executor, \
-            COUNT(*) as todo_count \
-            FROM todos WHERE deleted_at IS NULL \
-            GROUP BY COALESCE(executor, 'claudecode')";
+        let total_tags = tags_result.len() as i64;
 
-        let executor_todo_counts: HashMap<String, i64> = self
-            .conn
-            .query_all(Statement::from_string(
-                backend,
-                executor_todo_sql.to_string(),
-            ))
-            .await?
-            .into_iter()
-            .filter_map(|row| {
-                let exec: String = row.try_get_by("executor").ok()?;
-                let count: i64 = row.try_get_by("todo_count").ok()?;
-                Some((exec, count))
-            })
-            .collect();
+        // 计算平均时长
+        let avg_duration_ms = if duration_count > 0 {
+            total_duration / duration_count
+        } else {
+            0
+        };
 
-        // Tag todo counts via SQL (replaces fetch_tag_ids_for_many + in-memory counting)
+        // 并行执行独立的分布查询
+        let (
+            executor_distribution,
+            model_distribution,
+            trigger_type_distribution,
+            executor_duration_stats,
+            model_cache_stats,
+            (daily_executions, daily_token_stats),
+            recent_executions,
+            (today_executions, executions_change),
+            success_rate_change,
+            cost_change,
+        ) = tokio::try_join!(
+            crate::db::dashboard::fetch_executor_distribution(&ctx, &executor_todo_counts),
+            crate::db::dashboard::fetch_model_distribution(&ctx),
+            crate::db::dashboard::fetch_trigger_distribution(&ctx),
+            crate::db::dashboard::fetch_executor_durations(&ctx),
+            crate::db::dashboard::fetch_model_cache_stats(&ctx),
+            crate::db::dashboard::fetch_daily_stats(&ctx, heatmap_limit),
+            crate::db::dashboard::fetch_recent_executions(&ctx),
+            crate::db::dashboard::fetch_execution_change(&ctx),
+            crate::db::dashboard::fetch_success_rate_change(&ctx),
+            crate::db::dashboard::fetch_cost_change(&ctx),
+        )?;
+
+        // 计算标签分布（需要 tags 和 tag_todo_counts）
         let tag_todo_sql = "SELECT tag_id, COUNT(*) as todo_count FROM todo_tags GROUP BY tag_id";
-
         let tag_todo_counts: HashMap<i64, i64> = self
             .conn
             .query_all(Statement::from_string(backend, tag_todo_sql.to_string()))
@@ -639,511 +617,21 @@ impl Database {
             })
             .collect();
 
-        let (
-            total_executions,
-            success_executions,
-            failed_executions,
-            total_input_tokens,
-            total_output_tokens,
-            total_cache_read_tokens,
-            total_cache_creation_tokens,
-            total_cost,
-            total_duration,
-            duration_count,
-        ) = if let Some(row) = self
-            .conn
-            .query_one(Statement::from_string(backend, overall_sql.to_string()))
-            .await?
-        {
-            let t: i64 = row.try_get_by("total").unwrap_or(0);
-            let s: i64 = row.try_get_by("success").unwrap_or(0);
-            let f: i64 = row.try_get_by("failed").unwrap_or(0);
-            let it: i64 = row.try_get_by("input_tokens").unwrap_or(0);
-            let ot: i64 = row.try_get_by("output_tokens").unwrap_or(0);
-            let cr: i64 = row.try_get_by("cache_read").unwrap_or(0);
-            let cc: i64 = row.try_get_by("cache_creation").unwrap_or(0);
-            let tc: f64 = row.try_get_by("total_cost").unwrap_or(0.0);
-            let td: i64 = row.try_get_by("total_duration").unwrap_or(0);
-            let dc: i64 = row.try_get_by("duration_count").unwrap_or(0);
-            (
-                t, s, f, it as u64, ot as u64, cr as u64, cc as u64, tc, td as u64, dc as u64,
-            )
-        } else {
-            (0, 0, 0, 0u64, 0u64, 0u64, 0u64, 0.0f64, 0u64, 0u64)
-        };
+        let tag_distribution = crate::db::dashboard::fetch_tag_distribution(
+            &ctx, &tags_result, &tag_todo_counts,
+        ).await?;
 
-        let avg_duration_ms = if duration_count > 0 {
-            total_duration / duration_count
-        } else {
-            0
-        };
-
-        // 3. Executor distribution via SQL
-        let executor_sql = format!(
-            "SELECT \
-            COALESCE(executor, 'claudecode') as executor, \
-            COUNT(*) as execution_count, \
-            COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success_count, \
-            COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed_count, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.input_tokens'), 0)), 0) as input_tokens, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.output_tokens'), 0)), 0) as output_tokens, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.total_cost_usd'), 0.0)), 0.0) as cost \
-            FROM execution_records \
-            WHERE started_at >= {} \
-            GROUP BY COALESCE(executor, 'claudecode')",
-            time_filter
-        );
-
-        let mut executor_distribution: Vec<crate::models::ExecutorCount> = self
-            .conn
-            .query_all(Statement::from_string(backend, executor_sql.to_string()))
-            .await?
-            .into_iter()
-            .filter_map(|row| {
-                let exec: String = row.try_get_by("executor").ok()?;
-                let ec: i64 = row.try_get_by("execution_count").ok()?;
-                if ec == 0 {
-                    return None;
-                }
-                let sc: i64 = row.try_get_by("success_count").ok()?;
-                let fc: i64 = row.try_get_by("failed_count").ok()?;
-                let it: i64 = row.try_get_by("input_tokens").ok()?;
-                let ot: i64 = row.try_get_by("output_tokens").ok()?;
-                let cost: f64 = row.try_get_by("cost").ok()?;
-                Some(crate::models::ExecutorCount {
-                    count: *executor_todo_counts.get(&exec).unwrap_or(&0),
-                    executor: exec,
-                    execution_count: ec,
-                    success_count: sc,
-                    failed_count: fc,
-                    total_input_tokens: it as u64,
-                    total_output_tokens: ot as u64,
-                    total_cost_usd: cost,
-                })
-            })
-            .collect();
-        executor_distribution.sort_by(|a, b| b.execution_count.cmp(&a.execution_count));
-
-        // 4. Model distribution via SQL
-        let model_sql = format!(
-            "SELECT \
-            COALESCE(model, 'unknown') as model, \
-            COUNT(*) as execution_count, \
-            COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success_count, \
-            COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed_count, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.input_tokens'), 0)), 0) as input_tokens, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.output_tokens'), 0)), 0) as output_tokens, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_read_input_tokens'), 0)), 0) as cache_read, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_creation_input_tokens'), 0)), 0) as cache_creation, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.total_cost_usd'), 0.0)), 0.0) as cost \
-            FROM execution_records \
-            WHERE started_at >= {} \
-            GROUP BY COALESCE(model, 'unknown')",
-            time_filter
-        );
-
-        let mut model_distribution: Vec<crate::models::ModelCount> = self
-            .conn
-            .query_all(Statement::from_string(backend, model_sql.to_string()))
-            .await?
-            .into_iter()
-            .filter_map(|row| {
-                let model: String = row.try_get_by("model").ok()?;
-                let ec: i64 = row.try_get_by("execution_count").ok()?;
-                if ec == 0 {
-                    return None;
-                }
-                let sc: i64 = row.try_get_by("success_count").ok()?;
-                let fc: i64 = row.try_get_by("failed_count").ok()?;
-                let it: i64 = row.try_get_by("input_tokens").ok()?;
-                let ot: i64 = row.try_get_by("output_tokens").ok()?;
-                let cr: i64 = row.try_get_by("cache_read").ok()?;
-                let cc: i64 = row.try_get_by("cache_creation").ok()?;
-                let cost: f64 = row.try_get_by("cost").ok()?;
-                Some(crate::models::ModelCount {
-                    model,
-                    count: 0,
-                    execution_count: ec,
-                    success_count: sc,
-                    failed_count: fc,
-                    total_input_tokens: it as u64,
-                    total_output_tokens: ot as u64,
-                    total_cache_read_tokens: cr as u64,
-                    total_cache_creation_tokens: cc as u64,
-                    total_cost_usd: cost,
-                })
-            })
-            .collect();
-        model_distribution.sort_by(|a, b| b.execution_count.cmp(&a.execution_count));
-
-        // Trigger type distribution
-        let trigger_sql = format!(
-            "SELECT \
-            COALESCE(trigger_type, 'manual') as trigger_type, \
-            COUNT(*) as count, \
-            COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success_count, \
-            COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed_count \
-            FROM execution_records \
-            WHERE started_at >= {} \
-            GROUP BY COALESCE(trigger_type, 'manual')",
-            time_filter
-        );
-
-        let mut trigger_type_distribution: Vec<crate::models::TriggerTypeCount> = self.conn
-            .query_all(Statement::from_string(backend, trigger_sql.to_string()))
-            .await?
-            .into_iter()
-            .filter_map(|row| {
-                let tt: String = row.try_get_by("trigger_type").ok()?;
-                let c: i64 = row.try_get_by("count").ok()?;
-                let sc: i64 = row.try_get_by("success_count").ok()?;
-                let fc: i64 = row.try_get_by("failed_count").ok()?;
-                Some(crate::models::TriggerTypeCount {
-                    trigger_type: tt,
-                    count: c,
-                    success_count: sc,
-                    failed_count: fc,
-                })
-            })
-            .collect();
-        trigger_type_distribution.sort_by(|a, b| b.count.cmp(&a.count));
-
-        // Executor average duration
-        let duration_sql = format!(
-            "SELECT \
-            COALESCE(executor, 'claudecode') as executor, \
-            ROUND(AVG(json_extract(usage, '$.duration_ms')), 0) as avg_duration, \
-            COUNT(*) as execution_count \
-            FROM execution_records \
-            WHERE started_at >= {} AND json_extract(usage, '$.duration_ms') IS NOT NULL \
-            GROUP BY COALESCE(executor, 'claudecode')",
-            time_filter
-        );
-
-        let mut executor_duration_stats: Vec<crate::models::ExecutorDuration> = self.conn
-            .query_all(Statement::from_string(backend, duration_sql.to_string()))
-            .await?
-            .into_iter()
-            .filter_map(|row| {
-                let exec: String = row.try_get_by("executor").ok()?;
-                let ad: f64 = row.try_get_by("avg_duration").ok()?;
-                let ec: i64 = row.try_get_by("execution_count").ok()?;
-                Some(crate::models::ExecutorDuration {
-                    executor: exec,
-                    avg_duration_ms: ad,
-                    execution_count: ec,
-                })
-            })
-            .collect();
-        executor_duration_stats.sort_by(|a, b| b.avg_duration_ms.partial_cmp(&a.avg_duration_ms).unwrap_or(std::cmp::Ordering::Equal));
-
-        // Model cache stats
-        let cache_sql = format!(
-            "SELECT \
-            COALESCE(model, 'unknown') as model, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.input_tokens'), 0)), 0) as input_tokens, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_read_input_tokens'), 0)), 0) as cache_read \
-            FROM execution_records \
-            WHERE started_at >= {} AND model IS NOT NULL \
-            GROUP BY COALESCE(model, 'unknown')",
-            time_filter
-        );
-
-        let mut model_cache_stats: Vec<crate::models::ModelCacheStat> = self.conn
-            .query_all(Statement::from_string(backend, cache_sql.to_string()))
-            .await?
-            .into_iter()
-            .filter_map(|row| {
-                let model: String = row.try_get_by("model").ok()?;
-                let it: i64 = row.try_get_by("input_tokens").ok()?;
-                let cr: i64 = row.try_get_by("cache_read").ok()?;
-                let total = it as u64 + cr as u64;
-                let rate = if total > 0 { cr as f64 / total as f64 * 100.0 } else { 0.0 };
-                Some(crate::models::ModelCacheStat {
-                    model,
-                    total_input_tokens: it as u64,
-                    total_cache_read_tokens: cr as u64,
-                    cache_hit_rate: rate,
-                })
-            })
-            .collect();
-        model_cache_stats.sort_by(|a, b| b.cache_hit_rate.partial_cmp(&a.cache_hit_rate).unwrap_or(std::cmp::Ordering::Equal));
-        model_cache_stats.retain(|m| m.total_input_tokens > 0 || m.total_cache_read_tokens > 0);
-
-        // 5. Daily execution stats via SQL (热力图使用固定当年范围)
-        let daily_sql = format!(
-            "SELECT \
-            SUBSTR(COALESCE(started_at, ''), 1, 10) as day, \
-            COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success, \
-            COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.input_tokens'), 0)), 0) as input_tokens, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.output_tokens'), 0)), 0) as output_tokens, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_read_input_tokens'), 0)), 0) as cache_read, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_creation_input_tokens'), 0)), 0) as cache_creation, \
-            COALESCE(SUM(COALESCE(json_extract(usage, '$.total_cost_usd'), 0.0)), 0.0) as cost \
-            FROM execution_records \
-            WHERE started_at IS NOT NULL AND LENGTH(started_at) >= 10 AND started_at >= {} \
-            GROUP BY SUBSTR(started_at, 1, 10) \
-            ORDER BY day DESC \
-            LIMIT {}",
-            heatmap_filter, heatmap_limit
-        );
-
-        let daily_rows = self
-            .conn
-            .query_all(Statement::from_string(backend, daily_sql.to_string()))
-            .await?;
-
-        let mut daily_executions: Vec<crate::models::DailyExecution> =
-            Vec::with_capacity(daily_rows.len());
-        let mut daily_token_stats: Vec<crate::models::DailyTokenStats> =
-            Vec::with_capacity(daily_rows.len());
-        for row in &daily_rows {
-            let day: String = row.try_get_by("day").unwrap_or_default();
-            let success: i64 = row.try_get_by("success").unwrap_or(0);
-            let failed: i64 = row.try_get_by("failed").unwrap_or(0);
-            daily_executions.push(crate::models::DailyExecution {
-                date: day.clone(),
-                success,
-                failed,
-            });
-
-            let it: i64 = row.try_get_by("input_tokens").unwrap_or(0);
-            let ot: i64 = row.try_get_by("output_tokens").unwrap_or(0);
-            let cr: i64 = row.try_get_by("cache_read").unwrap_or(0);
-            let cc: i64 = row.try_get_by("cache_creation").unwrap_or(0);
-            let cost: f64 = row.try_get_by("cost").unwrap_or(0.0);
-            daily_token_stats.push(crate::models::DailyTokenStats {
-                date: day,
-                input_tokens: it as u64,
-                output_tokens: ot as u64,
-                cache_read_tokens: cr as u64,
-                cache_creation_tokens: cc as u64,
-                total_cost_usd: cost,
-            });
-        }
-        daily_executions.reverse();
-        daily_token_stats.reverse();
-
-        // 6. Tag distribution via SQL (join through todo_tags)
-        let tag_sql = format!(
-            "SELECT \
-            tt.tag_id, \
-            COUNT(*) as execution_count, \
-            COALESCE(SUM(CASE WHEN er.status = 'success' THEN 1 ELSE 0 END), 0) as success_count, \
-            COALESCE(SUM(CASE WHEN er.status = 'failed' THEN 1 ELSE 0 END), 0) as failed_count, \
-            COALESCE(SUM(COALESCE(json_extract(er.usage, '$.input_tokens'), 0)), 0) as input_tokens, \
-            COALESCE(SUM(COALESCE(json_extract(er.usage, '$.output_tokens'), 0)), 0) as output_tokens, \
-            COALESCE(SUM(COALESCE(json_extract(er.usage, '$.total_cost_usd'), 0.0)), 0.0) as cost \
-            FROM execution_records er \
-            INNER JOIN todo_tags tt ON tt.todo_id = er.todo_id \
-            WHERE er.todo_id IS NOT NULL AND er.started_at >= {} \
-            GROUP BY tt.tag_id",
-            time_filter
-        );
-
-        let tag_rows = self
-            .conn
-            .query_all(Statement::from_string(backend, tag_sql.to_string()))
-            .await?;
-
-        let mut tag_exec_stats: HashMap<i64, (i64, i64, i64, u64, u64, f64)> = HashMap::new();
-        for row in tag_rows {
-            let tag_id: i64 = row.try_get_by("tag_id").unwrap_or(0);
-            let ec: i64 = row.try_get_by("execution_count").unwrap_or(0);
-            let sc: i64 = row.try_get_by("success_count").unwrap_or(0);
-            let fc: i64 = row.try_get_by("failed_count").unwrap_or(0);
-            let it: i64 = row.try_get_by("input_tokens").unwrap_or(0);
-            let ot: i64 = row.try_get_by("output_tokens").unwrap_or(0);
-            let cost: f64 = row.try_get_by("cost").unwrap_or(0.0);
-            tag_exec_stats.insert(tag_id, (ec, sc, fc, it as u64, ot as u64, cost));
-        }
-
-        let mut tag_distribution: Vec<crate::models::TagCount> = tags
-            .iter()
-            .filter_map(|t| {
-                let todo_count = *tag_todo_counts.get(&t.id).unwrap_or(&0);
-                if todo_count == 0 {
-                    return None;
-                }
-                let (ec, sc, fc, it, ot, cost) = tag_exec_stats
-                    .get(&t.id)
-                    .copied()
-                    .unwrap_or((0, 0, 0, 0, 0, 0.0));
-                Some(crate::models::TagCount {
-                    tag_id: t.id,
-                    tag_name: t.name.clone(),
-                    tag_color: t.color.clone(),
-                    count: todo_count,
-                    execution_count: ec,
-                    success_count: sc,
-                    failed_count: fc,
-                    total_input_tokens: it,
-                    total_output_tokens: ot,
-                    total_cost_usd: cost,
-                })
-            })
-            .collect();
-        tag_distribution.sort_by(|a, b| b.execution_count.cmp(&a.execution_count));
-
-        // 7. Recent executions (only load 10 rows, not the entire table)
-        // Note: Only essential fields are loaded for performance; logs, stdout, stderr,
-        // command, model, pid, todo_progress, execution_stats are omitted as they're large
-        let recent_sql = format!(
-            "SELECT id, todo_id, executor, trigger_type, status, started_at, finished_at, usage, task_id, session_id, result, resume_message FROM execution_records \
-            WHERE started_at >= {} \
-            ORDER BY started_at DESC LIMIT 10",
-            time_filter
-        );
-        let recent_records: Vec<execution_records::Model> = self
-            .conn
-            .query_all(Statement::from_string(backend, recent_sql))
-            .await?
-            .into_iter()
-            .map(|row| {
-                execution_records::Model {
-                    id: row.try_get_by("id").unwrap_or(0),
-                    todo_id: row.try_get_by("todo_id").ok(),
-                    executor: row.try_get_by("executor").ok(),
-                    trigger_type: row.try_get_by("trigger_type").ok(),
-                    status: row.try_get_by("status").ok(),
-                    started_at: row.try_get_by("started_at").ok(),
-                    finished_at: row.try_get_by("finished_at").ok(),
-                    usage: row.try_get_by("usage").ok(),
-                    task_id: row.try_get_by("task_id").ok(),
-                    session_id: row.try_get_by("session_id").ok(),
-                    result: row.try_get_by("result").ok(),
-                    resume_message: row.try_get_by("resume_message").ok(),
-                    command: None,
-                    stdout: None,
-                    stderr: None,
-                    model: None,
-                    pid: None,
-                    todo_progress: None,
-                    execution_stats: None,
-                    source_todo_id: None,
-                    source_todo_title: None,
-                    source_hook_id: None,
-                    rating: None,
-                    source_execution_record_id: None,
-                    last_review_status: None,
-                    last_reviewed_at: None,
-                }
-            })
-            .collect();
-
-        let recent_executions: Vec<crate::models::ExecutionRecord> =
-            recent_records.into_iter().map(Into::into).collect();
-
-        // Calculate enhanced metrics
-        // Today and yesterday executions for change calculation
-        let today_sql = "SELECT COUNT(*) as count FROM execution_records WHERE date(started_at) = date('now')";
-        let yesterday_sql = "SELECT COUNT(*) as count FROM execution_records WHERE date(started_at) = date('now', '-1 day')";
-
-        let today_executions: i64 = self.conn
-            .query_one(Statement::from_string(backend, today_sql.to_string()))
-            .await?
-            .and_then(|row| row.try_get_by("count").ok())
-            .unwrap_or(0);
-
-        let yesterday_executions: i64 = self.conn
-            .query_one(Statement::from_string(backend, yesterday_sql.to_string()))
-            .await?
-            .and_then(|row| row.try_get_by("count").ok())
-            .unwrap_or(0);
-
-        let executions_change = if yesterday_executions > 0 {
-            Some((today_executions as f64 - yesterday_executions as f64) / yesterday_executions as f64 * 100.0)
-        } else {
-            None
-        };
-
-        // Success rate change (today vs yesterday)
-        let yesterday_success_sql = "SELECT COUNT(*) as count FROM execution_records WHERE date(started_at) = date('now', '-1 day') AND status = 'success'";
-        let yesterday_failed_sql = "SELECT COUNT(*) as count FROM execution_records WHERE date(started_at) = date('now', '-1 day') AND status = 'failed'";
-        let today_success_sql = "SELECT COUNT(*) as count FROM execution_records WHERE date(started_at) = date('now') AND status = 'success'";
-        let today_failed_sql = "SELECT COUNT(*) as count FROM execution_records WHERE date(started_at) = date('now') AND status = 'failed'";
-
-        let yesterday_success: i64 = self.conn
-            .query_one(Statement::from_string(backend, yesterday_success_sql.to_string()))
-            .await?
-            .and_then(|row| row.try_get_by("count").ok())
-            .unwrap_or(0);
-        let yesterday_failed: i64 = self.conn
-            .query_one(Statement::from_string(backend, yesterday_failed_sql.to_string()))
-            .await?
-            .and_then(|row| row.try_get_by("count").ok())
-            .unwrap_or(0);
-        let today_success: i64 = self.conn
-            .query_one(Statement::from_string(backend, today_success_sql.to_string()))
-            .await?
-            .and_then(|row| row.try_get_by("count").ok())
-            .unwrap_or(0);
-        let today_failed: i64 = self.conn
-            .query_one(Statement::from_string(backend, today_failed_sql.to_string()))
-            .await?
-            .and_then(|row| row.try_get_by("count").ok())
-            .unwrap_or(0);
-
-        let yesterday_total = yesterday_success + yesterday_failed;
-        let today_total = today_success + today_failed;
-        let yesterday_rate = if yesterday_total > 0 { yesterday_success as f64 / yesterday_total as f64 * 100.0 } else { 0.0 };
-        let today_rate = if today_total > 0 { today_success as f64 / today_total as f64 * 100.0 } else { 0.0 };
-        let success_rate_change = if yesterday_total > 0 { Some(today_rate - yesterday_rate) } else { None };
-
-        // Cost change (today vs yesterday)
-        let today_cost_sql = "SELECT COALESCE(SUM(COALESCE(json_extract(usage, '$.total_cost_usd'), 0.0)), 0.0) as cost FROM execution_records WHERE date(started_at) = date('now')";
-        let yesterday_cost_sql = "SELECT COALESCE(SUM(COALESCE(json_extract(usage, '$.total_cost_usd'), 0.0)), 0.0) as cost FROM execution_records WHERE date(started_at) = date('now', '-1 day')";
-        let today_cost: f64 = self.conn
-            .query_one(Statement::from_string(backend, today_cost_sql.to_string()))
-            .await?
-            .and_then(|row| row.try_get_by("cost").ok())
-            .unwrap_or(0.0);
-        let yesterday_cost: f64 = self.conn
-            .query_one(Statement::from_string(backend, yesterday_cost_sql.to_string()))
-            .await?
-            .and_then(|row| row.try_get_by("cost").ok())
-            .unwrap_or(0.0);
-        let cost_change = if yesterday_cost > 0.0 {
-            Some((today_cost - yesterday_cost) / yesterday_cost * 100.0)
-        } else {
-            None
-        };
-
-        // Active days and streak days from daily_executions
+        // 计算连续活跃天数
         let active_days = daily_executions.len() as i64;
+        let streak_days = crate::db::dashboard::calculate_streak_days(&daily_executions);
 
-        let mut streak_days = 0i64;
-        if !daily_executions.is_empty() {
-            let today_str = chrono::Utc::now().format("%Y-%m-%d").to_string();
-            let yesterday_str = (chrono::Utc::now() - chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
-
-            // Check if today or yesterday has executions (streak must include recent days)
-            let has_recent = daily_executions.iter().any(|d| {
-                let has_exec = d.success + d.failed > 0;
-                let is_today_or_yesterday = d.date == today_str || d.date == yesterday_str;
-                has_exec && is_today_or_yesterday
-            });
-
-            if has_recent {
-                // Count consecutive days with executions (must be recent to count)
-                for day in daily_executions.iter().rev() {
-                    if day.success + day.failed > 0 {
-                        streak_days += 1;
-                    } else {
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Peak daily executions
+        // 计算峰值每日执行数
         let peak_daily_executions = daily_executions.iter()
             .map(|d| d.success + d.failed)
             .max()
             .unwrap_or(0);
 
-        // Top model by tokens
+        // 找出最佳模型
         let (top_model, top_model_tokens) = if !model_distribution.is_empty() {
             let top = model_distribution.iter()
                 .max_by_key(|m| m.total_input_tokens + m.total_output_tokens)
@@ -1153,35 +641,11 @@ impl Database {
             (None, None)
         };
 
-        // Build leaderboard from model distribution
-        let leaderboard: Vec<crate::models::LeaderboardItem> = model_distribution.iter()
-            .enumerate()
-            .map(|(i, m)| {
-                // Calculate change (simplified: compare first half vs second half of the period)
-                let half = model_distribution.len() / 2;
-                let change = if i < half && i + half < model_distribution.len() {
-                    let first_half_tokens = model_distribution[..i+1].iter().map(|x| x.total_input_tokens + x.total_output_tokens).sum::<u64>() as f64;
-                    let second_half_tokens = model_distribution[i..i+half].iter().map(|x| x.total_input_tokens + x.total_output_tokens).sum::<u64>() as f64;
-                    if first_half_tokens > 0.0 {
-                        Some((second_half_tokens - first_half_tokens) / first_half_tokens * 100.0)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-                crate::models::LeaderboardItem {
-                    rank: (i + 1) as i32,
-                    name: m.model.clone(),
-                    tokens: m.total_input_tokens + m.total_output_tokens,
-                    sessions: m.execution_count,
-                    change,
-                }
-            })
-            .collect();
+        // 构建排行榜
+        let leaderboard = crate::db::dashboard::build_leaderboard(&model_distribution);
 
-        // Skills invocation statistics
-        let skills_stats = match self.get_skills_stats(&time_filter).await {
+        // Skills 统计
+        let skills_stats = match self.get_skills_stats(&ctx.time_filter).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!("Failed to load skills stats: {}", e);
@@ -1189,7 +653,7 @@ impl Database {
             }
         };
 
-        // Backup statistics (filesystem scan)
+        // Backup 统计
         let backup_stats = match self.get_backup_stats().await {
             Ok(v) => v,
             Err(e) => {
