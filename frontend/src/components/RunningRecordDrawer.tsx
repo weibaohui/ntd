@@ -12,29 +12,13 @@ import XMarkdown from '@ant-design/x-markdown';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { useApp } from '@/hooks/useApp';
 import { useViewState } from '@/hooks/useViewState';
-import { formatLocalDateTime, formatDuration } from '@/utils/datetime';
+import { formatLocalDateTime } from '@/utils/datetime';
+import { formatTokens, formatDuration, elapsedSeconds } from '@/utils/format';
+import { LOG_TYPE_COLORS, STATUS_COLORS } from '@/constants';
 import * as db from '@/utils/database';
 import type { ExecutionRecord, LogEntry } from '@/types';
 
 /* ─── Helpers ─── */
-
-function getElapsedSeconds(startedAt: string): number {
-  const start = new Date(startedAt).getTime();
-  return Math.max(0, Math.floor((Date.now() - start) / 1000));
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
-const LOG_TYPE_COLORS: Record<string, string> = {
-  info: '#6b7280', stdout: '#3b82f6', stderr: '#ef4444', error: '#ef4444',
-  tool_use: '#8b5cf6', tool_call: '#8b5cf6', tool_result: '#10b981',
-  assistant: '#0ea5e9', user: '#f59e0b', system: '#6b7280', thinking: '#a855f7',
-  result: '#22c55e', step_start: '#06b6d4', step_finish: '#06b6d4', tokens: '#6b7280',
-};
 
 const LOG_TYPE_LABELS: Record<string, string> = {
   info: 'INFO', stdout: 'OUT', stderr: 'ERR', error: 'ERROR',
@@ -93,10 +77,10 @@ function RatingControl({ record, onRate }: { record: ExecutionRecord; onRate: (i
 function ReviewStatusBadge({ status }: { status?: string | null }) {
   if (!status) return null;
   const map: Record<string, { color: string; text: string }> = {
-    pending: { color: '#06b6d4', text: '评审中' },
-    success: { color: '#10b981', text: '评审通过' },
-    failed: { color: '#ef4444', text: '评审失败' },
-    interrupted: { color: '#f59e0b', text: '评审中断' },
+    pending: { color: STATUS_COLORS.reviewing, text: '评审中' },
+    success: { color: STATUS_COLORS.reviewPassed, text: '评审通过' },
+    failed: { color: STATUS_COLORS.reviewFailed, text: '评审失败' },
+    interrupted: { color: STATUS_COLORS.reviewInterrupted, text: '评审中断' },
     skipped: { color: '#6b7280', text: '评审跳过' },
   };
   const info = map[status];
@@ -186,7 +170,7 @@ export function RunningRecordDrawer({ record, open, onClose, onRefresh }: Runnin
 
   if (!record) return null;
 
-  const duration = record.usage?.duration_ms || (isRunning ? getElapsedSeconds(record.started_at) * 1000 : null);
+  const duration = record.usage?.duration_ms || (isRunning ? elapsedSeconds(record.started_at) * 1000 : null);
 
   return (
     <Drawer
@@ -194,7 +178,7 @@ export function RunningRecordDrawer({ record, open, onClose, onRefresh }: Runnin
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{
             display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
-            backgroundColor: isRunning ? '#f59e0b' : record.status === 'success' ? '#22c55e' : '#ef4444',
+            backgroundColor: isRunning ? STATUS_COLORS.running : record.status === 'success' ? STATUS_COLORS.success : STATUS_COLORS.failed,
           }} />
           <span>执行记录 #{record.id}</span>
           <Tag color={isRunning ? 'orange' : record.status === 'success' ? 'green' : 'red'}>
@@ -244,7 +228,7 @@ export function RunningRecordDrawer({ record, open, onClose, onRefresh }: Runnin
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         {record.executor && <ExecutorBadge executor={record.executor} />}
         {record.model && <Tag color="#3b82f6">{record.model}</Tag>}
-        <Tag color={record.trigger_type === 'cron' ? '#8b5cf6' : record.trigger_type.startsWith('hook:') ? '#a855f7' : '#6b7280'}>
+        <Tag color={record.trigger_type === 'cron' ? STATUS_COLORS.scheduled : record.trigger_type.startsWith('hook:') ? STATUS_COLORS.hook : '#6b7280'}>
           {record.trigger_type === 'cron' ? 'Cron' : record.trigger_type.startsWith('hook:') ? 'Hook' : record.trigger_type === 'manual' ? '手动' : record.trigger_type}
         </Tag>
         {record.source_todo_id && (

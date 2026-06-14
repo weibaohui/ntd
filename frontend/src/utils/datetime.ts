@@ -5,6 +5,7 @@
  */
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
+import { formatDurationSec } from './format';
 
 export function parseUtcDate(timeStr: string | null | undefined): Date | null {
   if (!timeStr) return null;
@@ -30,15 +31,12 @@ export function formatRelativeTime(timeStr: string | null | undefined): string {
 }
 
 /**
- * 格式化时长（秒）
+ * 格式化时长（秒）为人类可读字符串。
+ *
+ * 委托给 format.ts 中的 formatDurationSec 实现。
+ * 保留此导出以维持向后兼容性。
  */
-export function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h${m}m`;
-  if (m > 0) return `${m}m`;
-  return `${seconds}s`;
-}
+export const formatDuration = formatDurationSec;
 
 /**
  * 计算从指定时间到现在经过的秒数

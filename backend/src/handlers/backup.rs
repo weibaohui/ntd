@@ -20,6 +20,48 @@ use crate::services::usage_stats::UsageStatsService;
 /// 数据库备份压缩级别 (0-9, 9 为最强压缩)
 const BACKUP_COMPRESSION_LEVEL: Option<i64> = Some(9);
 
+/// 检查文件名是否安全（不包含路径分隔符或目录遍历序列）。
+///
+/// 用于防止路径遍历攻击：用户传入的文件名如果包含 `/`、`\` 或 `..`，
+/// 可能导致操作目标目录之外的文件。
+fn is_safe_filename(name: &str) -> bool {
+    !name.contains('/') && !name.contains('\\') && !name.contains("..")
+}
+
+/// 清理旧的 ZIP 备份文件，只保留最近 `keep` 个。
+///
+/// 通用函数，适用于数据库备份、Todo 备份、Skill 备份等所有 ZIP 备份目录。
+/// 按文件创建时间倒序排列，删除超过 `keep` 数量的旧文件。
+fn cleanup_old_zip_backups(dir: &PathBuf, keep: usize) {
+    if !dir.exists() {
+        return;
+    }
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|ext| ext == "zip"))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if files.len() <= keep {
+        return;
+    }
+
+    files.sort_by(|a, b| {
+        let a_time = std::fs::metadata(a).and_then(|m| m.created()).ok();
+        let b_time = std::fs::metadata(b).and_then(|m| m.created()).ok();
+        b_time.cmp(&a_time)
+    });
+
+    for old_file in files.iter().skip(keep) {
+        std::fs::remove_file(old_file).ok();
+    }
+}
+
 /// 导出备份（返回 YAML 格式字符串）
 pub async fn export_backup(
     State(state): State<AppState>,
@@ -248,7 +290,7 @@ pub async fn trigger_local_backup(
     .map_err(|e| AppError::Internal(format!("Failed to create zip backup: {}", e)))?;
 
     // 清理旧备份（按数据库分目录清理）
-    cleanup_old_db_backups(&dir, max_files);
+    cleanup_old_zip_backups(&dir, max_files);
 
     Ok(ApiResponse::ok(format!("备份成功: {}", backup_path.display())))
 }
@@ -418,7 +460,7 @@ pub async fn delete_backup_file(
     axum::Json(req): axum::Json<DeleteBackupRequest>,
 ) -> Result<ApiResponse<String>, AppError> {
     // 安全检查：文件名不能包含路径分隔符
-    if req.filename.contains('/') || req.filename.contains('\\') || req.filename.contains("..") {
+    if !is_safe_filename(&req.filename) {
         return Err(AppError::BadRequest("Invalid filename".to_string()));
     }
 
@@ -453,7 +495,7 @@ pub async fn download_backup_file(
     State(state): State<AppState>,
     Query(query): Query<DownloadBackupQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    if query.filename.contains('/') || query.filename.contains('\\') || query.filename.contains("..") {
+    if !is_safe_filename(&query.filename) {
         return Err(AppError::BadRequest("Invalid filename".to_string()));
     }
 
@@ -501,7 +543,7 @@ pub async fn delete_todo_backup_file(
     axum::Json(req): axum::Json<DeleteTodoBackupRequest>,
 ) -> Result<ApiResponse<String>, AppError> {
     // 安全检查：文件名不能包含路径分隔符
-    if req.filename.contains('/') || req.filename.contains('\\') || req.filename.contains("..") {
+    if !is_safe_filename(&req.filename) {
         return Err(AppError::BadRequest("Invalid filename".to_string()));
     }
     let path = todo_backup_dir().join(&req.filename);
@@ -524,7 +566,7 @@ pub struct DownloadTodoBackupQuery {
 pub async fn download_todo_backup_file(
     Query(query): Query<DownloadTodoBackupQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    if query.filename.contains('/') || query.filename.contains('\\') || query.filename.contains("..") {
+    if !is_safe_filename(&query.filename) {
         return Err(AppError::BadRequest("Invalid filename".to_string()));
     }
     let path = todo_backup_dir().join(&query.filename);
@@ -590,7 +632,7 @@ pub fn perform_database_backup(db_path: &str, max_files: usize) -> Result<String
     zip.finish()
         .map_err(|e| format!("Failed to finish zip: {}", e))?;
 
-    cleanup_old_db_backups(&dir, max_files);
+    cleanup_old_zip_backups(&dir, max_files);
 
     Ok(format!("Auto backup: {}", backup_path.display()))
 }
@@ -621,36 +663,6 @@ pub async fn cleanup_old_logs(db: &Database, days: usize) -> Result<u64, String>
         .unwrap_or(0) as u64;
 
     Ok(changes)
-}
-
-fn cleanup_old_db_backups(dir: &PathBuf, keep: usize) {
-    if !dir.exists() {
-        return;
-    }
-    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-        .ok()
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|ext| ext == "zip"))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    if files.len() <= keep {
-        return;
-    }
-
-    files.sort_by(|a, b| {
-        let a_time = std::fs::metadata(a).and_then(|m| m.created()).ok();
-        let b_time = std::fs::metadata(b).and_then(|m| m.created()).ok();
-        b_time.cmp(&a_time)
-    });
-
-    for old_file in files.iter().skip(keep) {
-        std::fs::remove_file(old_file).ok();
-    }
 }
 
 /// 启动自动备份定时任务
@@ -820,7 +832,7 @@ pub async fn trigger_todo_backup(
     .map_err(|e| AppError::Internal(format!("Failed to create zip: {}", e)))?;
 
     // 清理旧备份
-    cleanup_old_todo_backups(&dir, max_files);
+    cleanup_old_zip_backups(&dir, max_files);
 
     Ok(ApiResponse::ok(format!("备份成功: {}", backup_path_display)))
 }
@@ -989,41 +1001,11 @@ async fn perform_todo_backup_async(db: &std::sync::Arc<crate::db::Database>, max
     // Cleanup old backups
     let dir_for_cleanup = dir.clone();
     tokio::task::spawn_blocking(move || {
-        cleanup_old_todo_backups(&dir_for_cleanup, max_files);
+        cleanup_old_zip_backups(&dir_for_cleanup, max_files);
     }).await
     .map_err(|e| format!("Task join error: {}", e))?;
 
     Ok(format!("Auto Todo backup: {}", backup_path_for_display))
-}
-
-fn cleanup_old_todo_backups(dir: &PathBuf, keep: usize) {
-    if !dir.exists() {
-        return;
-    }
-    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-        .ok()
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|ext| ext == "zip"))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    if files.len() <= keep {
-        return;
-    }
-
-    files.sort_by(|a, b| {
-        let a_time = std::fs::metadata(a).and_then(|m| m.created()).ok();
-        let b_time = std::fs::metadata(b).and_then(|m| m.created()).ok();
-        b_time.cmp(&a_time)
-    });
-
-    for old_file in files.iter().skip(keep) {
-        std::fs::remove_file(old_file).ok();
-    }
 }
 
 // ============ 日志清理 ============
@@ -1343,7 +1325,7 @@ pub async fn trigger_skill_backup(
     .map_err(|e| AppError::Internal(format!("Failed to create zip: {}", e)))?;
 
     // 清理旧备份
-    cleanup_old_skill_backups(&dir, max_files);
+    cleanup_old_zip_backups(&dir, max_files);
 
     Ok(ApiResponse::ok(format!("备份成功: {} ({} 个文件)", backup_path_display, copied_count)))
 }
@@ -1435,7 +1417,7 @@ pub async fn delete_skill_backup_file(
     axum::Json(req): axum::Json<DeleteSkillBackupRequest>,
 ) -> Result<ApiResponse<String>, AppError> {
     // 安全检查：文件名不能包含路径分隔符
-    if req.filename.contains('/') || req.filename.contains('\\') || req.filename.contains("..") {
+    if !is_safe_filename(&req.filename) {
         return Err(AppError::BadRequest("Invalid filename".to_string()));
     }
     let path = skill_backup_dir().join(&req.filename);
@@ -1458,7 +1440,7 @@ pub struct DownloadSkillBackupQuery {
 pub async fn download_skill_backup_file(
     Query(query): Query<DownloadSkillBackupQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    if query.filename.contains('/') || query.filename.contains('\\') || query.filename.contains("..") {
+    if !is_safe_filename(&query.filename) {
         return Err(AppError::BadRequest("Invalid filename".to_string()));
     }
     let path = skill_backup_dir().join(&query.filename);
@@ -1483,36 +1465,6 @@ pub async fn download_skill_backup_file(
 }
 
 /// 清理旧 Skill 备份
-fn cleanup_old_skill_backups(dir: &PathBuf, keep: usize) {
-    if !dir.exists() {
-        return;
-    }
-    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-        .ok()
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|ext| ext == "zip"))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    if files.len() <= keep {
-        return;
-    }
-
-    files.sort_by(|a, b| {
-        let a_time = std::fs::metadata(a).and_then(|m| m.created()).ok();
-        let b_time = std::fs::metadata(b).and_then(|m| m.created()).ok();
-        b_time.cmp(&a_time)
-    });
-
-    for old_file in files.iter().skip(keep) {
-        std::fs::remove_file(old_file).ok();
-    }
-}
-
 /// Start Skill auto backup scheduler
 pub fn start_skill_auto_backup(
     config: std::sync::Arc<std::sync::RwLock<crate::config::Config>>,
@@ -1729,7 +1681,7 @@ async fn perform_skill_backup_async(max_files: usize) -> Result<String, String> 
     // 清理旧备份
     let dir_for_cleanup = dir.clone();
     tokio::task::spawn_blocking(move || {
-        cleanup_old_skill_backups(&dir_for_cleanup, max_files);
+        cleanup_old_zip_backups(&dir_for_cleanup, max_files);
     }).await
     .map_err(|e| format!("Task join error: {}", e))?;
 
