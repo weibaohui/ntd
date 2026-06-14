@@ -1,9 +1,10 @@
+import { memo } from 'react';
 import { Button, Tooltip } from 'antd';
 import { FileTextOutlined } from '@ant-design/icons';
 import { PROMPT_PARAMS } from './constants';
 import { MdEditor } from '@/components/MdEditor';
 
-export function PromptEditor({ value, onChange, editorRef, onOpenTemplate, onInsertText }: {
+export const PromptEditor = memo(function PromptEditor({ value, onChange, editorRef, onOpenTemplate, onInsertText }: {
   value: string;
   onChange: (v: string) => void;
   editorRef: React.MutableRefObject<any>;
@@ -68,4 +69,4 @@ export function PromptEditor({ value, onChange, editorRef, onOpenTemplate, onIns
       </div>
     </div>
   );
-}
+});

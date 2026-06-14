@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { ChatView } from '@/components/ChatView';
 import { LogViewHeader } from './LogViewHeader';
-import { formatLogTime, logTypeColors, logTypeLabels } from './helpers';
+import { formatLogTime } from './helpers';
+import { LOG_TYPE_COLORS, LOG_TYPE_LABELS } from '@/constants';
 import type { LogEntry } from '@/types';
 
 /** 内联日志视图组件 (用于 ChainGroupCard 内部) */
@@ -42,8 +43,8 @@ export function ContinuationLogView({ logs, isRunning, viewMode, onRefresh, onVi
             logs.map((log, i) => (
               <div key={i} style={{ marginBottom: 3, display: 'flex', gap: 6 }}>
                 <span style={{ color: 'var(--log-text-muted)', flexShrink: 0 }}>{formatLogTime(log.timestamp || '')}</span>
-                <span style={{ color: logTypeColors[log.type || ''] || 'var(--log-text)' }}>
-                  [{logTypeLabels[log.type || ''] || log.type}]
+                <span style={{ color: LOG_TYPE_COLORS[log.type || ''] || 'var(--log-text)' }}>
+                  [{LOG_TYPE_LABELS[log.type || ''] || log.type}]
                 </span>
                 <span>{log.content ?? ''}</span>
               </div>

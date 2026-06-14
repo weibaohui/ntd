@@ -286,6 +286,11 @@ impl CodeExecutor for PiExecutor {
                     None
                 },
                 "tool_execution_start" => {
+                    // 先刷出缓冲的 text_delta，避免工具调用前的内容丢失
+                    let flushed = self.flush_pending_text();
+                    if flushed.is_some() {
+                        return flushed;
+                    }
                     if let Some(te) = event.tool_execution {
                         let name = te.tool_name.unwrap_or_else(|| "unknown".to_string());
                         let input_str = te.args.as_ref().map(|i| serde_json::to_string(i).unwrap_or_default()).unwrap_or_default();
@@ -302,6 +307,11 @@ impl CodeExecutor for PiExecutor {
                     }
                 }
                 "tool_execution_end" => {
+                    // 先刷出缓冲的 text_delta，避免工具结果前的内容丢失
+                    let flushed = self.flush_pending_text();
+                    if flushed.is_some() {
+                        return flushed;
+                    }
                     if let Some(te) = event.tool_execution {
                         let name = te.tool_name.unwrap_or_else(|| "unknown".to_string());
                         let output = te.output.unwrap_or_default();
@@ -367,13 +377,18 @@ impl CodeExecutor for PiExecutor {
     // check_success 走 CodeExecutor 默认实现（委托给 BaseExecutor::default_check_success），
     // 与原 `exit_code == 0` 实现完全等价。去掉重复 override 是 PR #536 的核心目标。
 
-    fn get_final_result(&self, _logs: &[ParsedLogEntry]) -> Option<String> {
+    fn get_final_result(&self, logs: &[ParsedLogEntry]) -> Option<String> {
         // 优先使用 message_end 中提取的完整文本（无换行、无碎片）
         if let Some(full) = self.full_text.lock().clone() {
             return Some(full);
         }
-        // fallback 到最后一条 text
-        None
+        // full_text 不可用时（message_end 未到达/进程被 kill/session 交接）
+        // fallback 到日志中的最后一条 assistant 条目，避免 RunningBoard
+        // "Last reply" 面板和 execution_records.result 为空
+        logs.iter()
+            .rev()
+            .find(|l| l.log_type == "assistant")
+            .map(|l| l.content.clone())
     }
 
     fn get_usage(&self, _logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> {
@@ -545,15 +560,15 @@ mod tests {
     }
 
     #[test]
-    fn test_get_final_result_joins_assistant() {
+    fn test_get_final_result_fallback_to_last_assistant() {
         let executor = PiExecutor::new("pi".to_string());
-        // 没有 full_text 时应返回 None
+        // 没有 full_text 时 fallback 到最后一条 assistant 日志
         let logs = vec![
             ParsedLogEntry::new("assistant", "hello"),
             ParsedLogEntry::new("assistant", "world"),
         ];
         let result = executor.get_final_result(&logs);
-        assert_eq!(result, None, "without full_text should return None");
+        assert_eq!(result, Some("world".to_string()));
     }
 
     #[test]

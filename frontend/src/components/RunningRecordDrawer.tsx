@@ -14,7 +14,7 @@ import { useApp } from '@/hooks/useApp';
 import { useViewState } from '@/hooks/useViewState';
 import { formatLocalDateTime } from '@/utils/datetime';
 import { formatTokens, formatDuration, elapsedSeconds } from '@/utils/format';
-import { LOG_TYPE_COLORS, STATUS_COLORS } from '@/constants';
+import { LOG_TYPE_COLORS, STATUS_COLORS, REVIEW_RESULT_COLORS } from '@/constants';
 import * as db from '@/utils/database';
 import type { ExecutionRecord, LogEntry } from '@/types';
 
@@ -77,10 +77,10 @@ function RatingControl({ record, onRate }: { record: ExecutionRecord; onRate: (i
 function ReviewStatusBadge({ status }: { status?: string | null }) {
   if (!status) return null;
   const map: Record<string, { color: string; text: string }> = {
-    pending: { color: STATUS_COLORS.reviewing, text: '评审中' },
-    success: { color: STATUS_COLORS.reviewPassed, text: '评审通过' },
-    failed: { color: STATUS_COLORS.reviewFailed, text: '评审失败' },
-    interrupted: { color: STATUS_COLORS.reviewInterrupted, text: '评审中断' },
+    pending: { color: REVIEW_RESULT_COLORS.pending, text: '评审中' },
+    success: { color: REVIEW_RESULT_COLORS.success, text: '评审通过' },
+    failed: { color: REVIEW_RESULT_COLORS.failed, text: '评审失败' },
+    interrupted: { color: REVIEW_RESULT_COLORS.interrupted, text: '评审中断' },
     skipped: { color: '#6b7280', text: '评审跳过' },
   };
   const info = map[status];

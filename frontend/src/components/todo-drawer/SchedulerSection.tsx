@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Switch } from 'antd';
 import { ClockCircleOutlined } from '@ant-design/icons';
 import { Cron } from 'react-js-cron';
@@ -6,7 +7,7 @@ import { DEFAULT_CRON } from './constants';
 import { CronPresetSelect } from '@/components/CronPresetSelect';
 import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '@/utils/cron';
 
-export function SchedulerSection({ enabled, config, onEnabledChange, onConfigChange, existingConfig }: {
+export const SchedulerSection = memo(function SchedulerSection({ enabled, config, onEnabledChange, onConfigChange, existingConfig }: {
   enabled: boolean;
   config: string;
   onEnabledChange: (v: boolean) => void;
@@ -57,4 +58,4 @@ export function SchedulerSection({ enabled, config, onEnabledChange, onConfigCha
       )}
     </div>
   );
-}
+});

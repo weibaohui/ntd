@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { ChatView } from '@/components/ChatView';
 import { LogViewHeader } from './LogViewHeader';
-import { formatLogTime, logTypeColors, logTypeLabels } from './helpers';
+import { formatLogTime } from './helpers';
+import { LOG_TYPE_COLORS, LOG_TYPE_LABELS } from '@/constants';
 import type { LogEntry, ExecutionRecord } from '@/types';
 
 /** Shared log rendering for narrow mode cards - as a proper component */
@@ -46,8 +47,8 @@ export function NarrowLogView({ record, isRunning, displayLogs, liveLogs, viewMo
             displayLogs.map((log, idx) => (
               <div key={idx} style={{ marginBottom: 4, display: 'flex', gap: 8 }}>
                 <span style={{ color: 'var(--log-text-muted)', flexShrink: 0 }}>{formatLogTime(log.timestamp || '')}</span>
-                <span style={{ color: logTypeColors[log.type || ''] || 'var(--log-text)' }}>
-                  [{logTypeLabels[log.type || ''] || log.type}]
+                <span style={{ color: LOG_TYPE_COLORS[log.type || ''] || 'var(--log-text)' }}>
+                  [{LOG_TYPE_LABELS[log.type || ''] || log.type}]
                 </span>
                 <span>{log.content}</span>
               </div>

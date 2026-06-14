@@ -18,6 +18,7 @@ import {
   todoFormReducer,
   initialFormState,
   type TodoFormState,
+  type TodoFormAction,
 } from './todo-drawer/reducer';
 
 interface TodoDrawerProps {
@@ -56,11 +57,13 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
   } = formState;
 
   // 设置单个字段的快捷函数
+  // 泛型 K 确保 field/value 类型一致，但 TS 无法对泛型 dispatch 做 discriminated union 窄化，
+  // 所以这里用 as TodoFormAction 做内部断言（外部调用方通过泛型约束保证类型安全）。
   const setField = useCallback(<K extends keyof TodoFormState>(
     field: K,
     value: TodoFormState[K],
   ) => {
-    dispatch({ type: 'SET_FIELD', field, value });
+    dispatch({ type: 'SET_FIELD', field, value } as TodoFormAction);
   }, []);
 
   const insertTextAtCursor = useCallback((text: string) => {
@@ -122,18 +125,23 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
     }
   }, [open]);
 
+  // 记录上一次传入的 todo，用于判断是否需要 RESET_FORM。
+  // deps 保持 [open, todo]（检测内容引用变化），但内部用 id 比较
+  // 避免仅在引用更新但内容未变时静默重置用户编辑。
+  const prevTodoRef = useRef(todo);
+
   useEffect(() => {
     if (open) {
-      // 通过单个 RESET_FORM action 原子性地重置所有表单状态。
-      // deps 用 todo?.id 而不是 todo 本身：
-      // 父组件保存 Todo 后会重拉 todos 列表，selectedTodo 会拿到新对象引用
-      // （即使 todo 数据本身没变），如果 deps 用 todo，这个 effect 会再次触发
-      // RESET_FORM，把用户在抽屉里编辑到一半的字段静默重置回 todo 当前保存的值。
-      // 用 id 当 key 之后，只有真正切换到不同的 todo 才会重置。
+      const prevTodo = prevTodoRef.current;
+      prevTodoRef.current = todo;
+      // 如果 todo 引用变了但 id 相同（父组件重拉 todos 导致的新引用），
+      // 不触发 RESET_FORM，保留用户在抽屉中的编辑
+      if (prevTodo !== todo && todo && prevTodo?.id === todo.id) {
+        return;
+      }
       dispatch({ type: 'RESET_FORM', todo });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, todo?.id]);
+  }, [open, todo]);
 
   const handleSkillClick = useCallback((skill: SkillMeta) => {
     insertTextAtCursor(`/${skill.name}`);

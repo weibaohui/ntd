@@ -64,26 +64,13 @@ const EMPTY_STATE_QUOTES = [
 
 export const RANDOM_QUOTE = EMPTY_STATE_QUOTES[Math.floor(Math.random() * EMPTY_STATE_QUOTES.length)];
 
-export const STATUS_LABELS: Record<string, string> = {
-  pending: '待处理',
-  running: '运行中',
-  completed: '已完成',
-  failed: '失败',
-};
-
-export const TRIGGER_LABELS: Record<string, string> = {
-  manual: '手动',
-  cron: '定时',
-  slash_command: '命令',
-  default_response: '默认回复',
-};
-
-export const TRIGGER_COLORS: Record<string, string> = {
-  manual: '#3b82f6',
-  cron: '#8b5cf6',
-  slash_command: '#f59e0b',
-  default_response: '#22c55e',
-};
+// STATUS_LABELS、TRIGGER_LABELS、TRIGGER_COLORS 已迁移到 @/constants
+// 统一从 @/constants 导入，保持单一数据源
+export {
+  STATUS_LABELS,
+  TRIGGER_LABELS,
+  TRIGGER_COLORS,
+} from '@/constants';
 
 export const MODEL_COLORS = ['#8b5cf6', '#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#0891b2', '#ec4899', '#6366f1'];
 

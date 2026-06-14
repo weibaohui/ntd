@@ -65,6 +65,49 @@ export const LOG_TYPE_COLORS: Record<string, string> = {
   step_start: '#06b6d4',
   step_finish: '#06b6d4',
   tokens: '#6b7280',
+  // 兼容 helpers.ts 迁移的旧键
+  text: '#4ade80',
+  tool: '#fbbf24',
+};
+
+/** Log 类型显示标签 */
+export const LOG_TYPE_LABELS: Record<string, string> = {
+  info: 'INFO', text: 'TEXT', tool: 'TOOL', tool_use: 'TOOL', tool_call: 'TOOL',
+  tool_result: 'RESULT', step_start: 'START', step_finish: 'END', stdout: 'OUT',
+  stderr: 'LOG', error: 'ERROR', system: 'SYS', assistant: 'ASST', user: 'USER',
+  result: 'RESULT', thinking: 'THINK', tokens: 'INFO',
+};
+
+/** 任务状态标签 */
+export const STATUS_LABELS: Record<string, string> = {
+  pending: '待处理',
+  running: '运行中',
+  completed: '已完成',
+  failed: '失败',
+};
+
+/** 触发类型标签 */
+export const TRIGGER_LABELS: Record<string, string> = {
+  manual: '手动',
+  cron: '定时',
+  slash_command: '命令',
+  default_response: '默认回复',
+};
+
+/** 触发类型颜色（独立于 STATUS_COLORS，值碰巧相同但语义不同） */
+export const TRIGGER_COLORS: Record<string, string> = {
+  manual: '#3b82f6',
+  cron: '#8b5cf6',
+  slash_command: '#f59e0b',
+  default_response: '#22c55e',
+};
+
+/** 评审结果颜色，与 STATUS_COLORS 解耦 */
+export const REVIEW_RESULT_COLORS: Record<string, string> = {
+  pending: '#06b6d4',
+  success: '#10b981',
+  failed: '#ef4444',
+  interrupted: '#f59e0b',
 };
 
 // =============================================================================

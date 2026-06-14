@@ -37,45 +37,8 @@ export function hasLogsStatic(record: ExecutionRecord): boolean {
   return record.status !== 'running' && !!record.finished_at;
 }
 
-export const logTypeColors: Record<string, string> = {
-  info: '#60a5fa',
-  text: '#4ade80',
-  tool: '#fbbf24',
-  tool_use: '#fbbf24',
-  tool_call: '#fbbf24',
-  tool_result: '#fbbf24',
-  step_start: '#c084fc',
-  step_finish: '#2dd4bf',
-  stdout: '#cbd5e1',
-  stderr: '#94a3b8',
-  error: '#ef4444',
-  system: '#94a3b8',
-  assistant: '#a78bfa',
-  user: '#22d3ee',
-  result: '#4ade80',
-  thinking: '#fb923c',
-  tokens: '#94a3b8',
-};
-
-export const logTypeLabels: Record<string, string> = {
-  info: 'INFO',
-  text: 'TEXT',
-  tool: 'TOOL',
-  tool_use: 'TOOL',
-  tool_call: 'TOOL',
-  tool_result: 'RESULT',
-  step_start: 'START',
-  step_finish: 'END',
-  stdout: 'OUT',
-  stderr: 'LOG',
-  error: 'ERROR',
-  system: 'SYS',
-  assistant: 'ASST',
-  user: 'USER',
-  result: 'RESULT',
-  thinking: 'THINK',
-  tokens: 'INFO',
-};
+// logTypeColors 和 logTypeLabels 已迁移到 @/constants
+// 保留 getElapsedSeconds / groupBySession / hasLogsStatic 等工具函数
 
 /**
  * 格式化时间戳为短时间格式 (HH:mm:ss)

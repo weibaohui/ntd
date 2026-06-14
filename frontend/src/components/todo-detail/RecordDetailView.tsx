@@ -7,7 +7,8 @@ import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { ChatView } from '@/components/ChatView';
 import { RefreshBtn } from './LogViewHeader';
 import { formatLocalDateTime, formatDurationSec } from '@/utils/datetime';
-import { getElapsedSeconds, formatLogTime, logTypeColors, logTypeLabels } from './helpers';
+import { getElapsedSeconds, formatLogTime } from './helpers';
+import { LOG_TYPE_COLORS, LOG_TYPE_LABELS } from '@/constants';
 import type { SessionGroup } from './helpers';
 import { supportsResume } from '@/types';
 import type { ExecutionRecord, LogEntry } from '@/types';
@@ -280,8 +281,8 @@ export function RecordDetailView({
                 displayLogs.map((log: LogEntry, idx: number) => (
                   <div key={idx} style={{ marginBottom: 4, display: 'flex', gap: 8 }}>
                     <span style={{ color: 'var(--log-text-muted)', flexShrink: 0 }}>{formatLogTime(log.timestamp || '')}</span>
-                    <span style={{ color: logTypeColors[log.type || ''] || 'var(--log-text)' }}>
-                      [{logTypeLabels[log.type || ''] || log.type}]
+                    <span style={{ color: LOG_TYPE_COLORS[log.type || ''] || 'var(--log-text)' }}>
+                      [{LOG_TYPE_LABELS[log.type || ''] || log.type}]
                     </span>
                     <span>{log.content}</span>
                   </div>

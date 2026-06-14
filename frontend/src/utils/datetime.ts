@@ -31,13 +31,3 @@ export function formatRelativeTime(timeStr: string | null | undefined): string {
 
 /** 格式化时长（秒）为人类可读字符串 */
 export { formatDurationSec } from './format';
-
-/**
- * 计算从指定时间到现在经过的秒数
- */
-export function elapsedSeconds(startTimeStr: string | null | undefined): number {
-  const date = parseUtcDate(startTimeStr);
-  if (!date) return 0;
-  const now = new Date();
-  return Math.floor((now.getTime() - date.getTime()) / 1000);
-}

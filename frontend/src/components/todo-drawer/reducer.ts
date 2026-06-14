@@ -36,10 +36,10 @@ export interface TodoFormState {
   autoReviewEnabled: boolean;
 }
 
-/** 表单 action 类型 */
+/** 表单 action 类型 — 泛型联合确保 field 与 value/updater 类型一致 */
 export type TodoFormAction =
-  | { type: 'SET_FIELD'; field: keyof TodoFormState; value: any }
-  | { type: 'SET_FIELD_UPDATER'; field: keyof TodoFormState; updater: (prev: any) => any }
+  | { [K in keyof TodoFormState]: { type: 'SET_FIELD'; field: K; value: TodoFormState[K] } }[keyof TodoFormState]
+  | { [K in keyof TodoFormState]: { type: 'SET_FIELD_UPDATER'; field: K; updater: (prev: TodoFormState[K]) => TodoFormState[K] } }[keyof TodoFormState]
   | { type: 'SET_MULTIPLE'; fields: Partial<TodoFormState> }
   | { type: 'RESET_FORM'; todo?: Todo | null }
   | { type: 'RESET_CREATE_MODE' };
@@ -66,8 +66,9 @@ export function todoFormReducer(state: TodoFormState, action: TodoFormAction): T
       return { ...state, [action.field]: action.value };
 
     // 功能性更新：接收 prev => newValue 函数，避免 closure 捕获导致的并发回归
+    // TS 无法对泛型 discriminated union 做窄化，updater 参数用 any 做内部桥接
     case 'SET_FIELD_UPDATER':
-      return { ...state, [action.field]: action.updater(state[action.field]) };
+      return { ...state, [action.field]: (action.updater as (prev: any) => any)(state[action.field]) };
 
     case 'SET_MULTIPLE':
       return { ...state, ...action.fields };
