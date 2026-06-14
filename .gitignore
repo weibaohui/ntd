@@ -27,6 +27,9 @@ backend/target
 dist/
 .playwright-cli
 .claude
+# Agent skills (installed by `npx skills add`)
+.agents/
+skills-lock.json
 1
 after-reload.png
 fix-test-1-first-click.png
