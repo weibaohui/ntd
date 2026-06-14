@@ -199,7 +199,13 @@ impl CodeExecutor for CodewhaleExecutor {
         }
     }
 
-    // parse_stderr_line / check_success 走 CodeExecutor 默认实现（委托给 BaseExecutor），
+    // parse_stderr_line 委托给 BaseExecutor 的默认关键字分类逻辑，
+    // 根据是否包含 "error" 决定 log_type（error / stderr）。
+    fn parse_stderr_line(&self, line: &str) -> Option<ParsedLogEntry> {
+        BaseExecutor::default_parse_stderr_line(line)
+    }
+
+    // check_success 走 CodeExecutor 默认实现（委托给 BaseExecutor），
     // 与本文件以前的 in-class 实现完全等价。去掉重复 override 是 PR #536 的核心目标。
 
     fn get_final_result(&self, logs: &[ParsedLogEntry]) -> Option<String> {
@@ -221,10 +227,13 @@ impl CodeExecutor for CodewhaleExecutor {
             let concatenated = raw_chunks.join("");
             // Strip think tags from the full text (this also trims outer whitespace)
             let cleaned = super::strip_think_tags(&concatenated);
-            // Normalize multiple newlines to single newline for readability
+            // Normalize whitespace:
+            // - Split by newlines to preserve multi-line structure
+            // - collapse all whitespace within each line to single spaces (split_whitespace + join)
+            // - filter empty lines after trimming
             let normalized = cleaned
                 .split('\n')
-                .map(|s| s.trim())
+                .map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "))
                 .filter(|s| !s.is_empty())
                 .collect::<Vec<_>>()
                 .join("\n");
