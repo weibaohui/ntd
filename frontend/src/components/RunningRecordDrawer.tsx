@@ -173,7 +173,8 @@ export function RunningRecordDrawer({ record, open, onClose, onRefresh }: Runnin
   // 统一使用毫秒作为 duration 单位，与 formatDuration(ms) 签名一致。
   // 优先使用后端记录的 duration_ms，运行时中的记录则通过 started_at 实时计算。
   // elapsedSeconds 返回秒，需 * 1000 转换为毫秒。
-  const duration = record.usage?.duration_ms || (isRunning ? elapsedSeconds(record.started_at) * 1000 : null);
+  // 使用 ?? 而非 ||：duration_ms === 0 时是合法值（任务瞬间完成），不应回退到实时计算。
+  const duration = record.usage?.duration_ms ?? (isRunning ? elapsedSeconds(record.started_at) * 1000 : null);
 
   return (
     <Drawer
