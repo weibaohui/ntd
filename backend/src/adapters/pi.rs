@@ -19,6 +19,8 @@ pub struct PiExecutor {
     base: BaseExecutor,
     /// 从 session 事件中提取的 session id
     session_id: Arc<Mutex<Option<String>>>,
+    /// text_delta 缓冲：合并连续的增量文本，避免每字符单独成行
+    pending_text: Arc<Mutex<String>>,
 }
 
 impl PiExecutor {
@@ -26,7 +28,44 @@ impl PiExecutor {
         Self {
             base: BaseExecutor::new(path),
             session_id: Arc::new(Mutex::new(None)),
+            pending_text: Arc::new(Mutex::new(String::new())),
         }
+    }
+
+    /// 将缓冲的 text_delta 内容作为一个 assistant 日志条目刷出。
+    /// 返回 `Some(entry)` 表示有缓冲内容被刷出，`None` 表示缓冲为空。
+    fn flush_pending_text(&self) -> Option<ParsedLogEntry> {
+        let mut buf = self.pending_text.lock();
+        let content = std::mem::take(&mut *buf);
+        drop(buf);
+        if content.is_empty() {
+            return None;
+        }
+        Some(ParsedLogEntry {
+            timestamp: utc_timestamp(),
+            log_type: "assistant".to_string(),
+            content,
+            usage: None,
+            tool_name: None,
+            tool_input_json: None,
+        })
+    }
+
+    /// 判断缓冲文本是否到达自然边界，可以刷出。
+    /// 条件：以句子结束标点结尾、包含换行符，或超过阈值长度。
+    fn is_text_boundary(buf: &str) -> bool {
+        // 以句子结束标点结尾
+        buf.ends_with('.')
+            || buf.ends_with('!')
+            || buf.ends_with('?')
+            || buf.ends_with('。')
+            || buf.ends_with('！')
+            || buf.ends_with('？')
+            || buf.ends_with('\n')
+            // 包含换行符
+            || buf.contains('\n')
+            // 超过 200 字符强制刷出
+            || buf.len() > 200
     }
 }
 
@@ -35,6 +74,7 @@ impl Clone for PiExecutor {
         Self {
             base: self.base.clone(),
             session_id: self.session_id.clone(),
+            pending_text: self.pending_text.clone(),
         }
     }
 }
@@ -121,6 +161,8 @@ impl CodeExecutor for PiExecutor {
                     })
                 }
                 "message_end" => {
+                    // message_end 前先刷出残留的 text_delta 缓冲
+                    let flushed = self.flush_pending_text();
                     // message_end 包含完整消息内容
                     // 对于 assistant 消息，内容已经在 message_update 时通过 text_delta 实时发送了
                     // message_end 这里只处理工具结果等非 assistant 消息
@@ -133,7 +175,7 @@ impl CodeExecutor for PiExecutor {
                                     *self.base.model.lock() = Some(model.clone());
                                 }
                             }
-                            return None;
+                            return flushed;
                         }
                         // 其他角色（user 等）的消息内容
                         let mut text_parts = Vec::new();
@@ -159,7 +201,7 @@ impl CodeExecutor for PiExecutor {
                             });
                         }
                     }
-                    None
+                    flushed
                 }
                 "message_update" => {
                     // message_update 包含增量内容，只从 assistantMessageEvent 提取
@@ -179,23 +221,32 @@ impl CodeExecutor for PiExecutor {
                         }
                         match ame.event_type.as_deref() {
                             Some("text_delta") => {
-                                // text_delta 是实际回复的增量内容
-                                // 移除尾部换行符，避免 PI 输出每字符一行时在最终结果中引入多余换行
+                                // text_delta 是实际回复的增量内容——缓冲合并，不立即发出
                                 if let Some(delta) = &ame.delta {
                                     let trimmed = delta.trim_end();
                                     if !trimmed.is_empty() {
-                                        return Some(ParsedLogEntry {
-                                            timestamp: utc_timestamp(),
-                                            log_type: "assistant".to_string(),
-                                            content: trimmed.to_string(),
-                                            usage: None,
-                                            tool_name: None,
-                                            tool_input_json: None,
-                                        });
+                                        let mut buf = self.pending_text.lock();
+                                        buf.push_str(trimmed);
+                                        // 在自然边界处刷出：标点符号或足够长的文本
+                                        if Self::is_text_boundary(&buf) {
+                                            let content = std::mem::take(&mut *buf);
+                                            drop(buf);
+                                            return Some(ParsedLogEntry {
+                                                timestamp: utc_timestamp(),
+                                                log_type: "assistant".to_string(),
+                                                content,
+                                                usage: None,
+                                                tool_name: None,
+                                                tool_input_json: None,
+                                            });
+                                        }
                                     }
                                 }
+                                None
                             }
                             Some("thinking_delta") => {
+                                // thinking_delta 前先刷出残留的 text_delta 缓冲
+                                let flushed = self.flush_pending_text();
                                 // thinking_delta 是 thinking 的增量内容
                                 // 移除尾部换行符，避免多余换行
                                 if let Some(delta) = &ame.delta {
@@ -211,11 +262,13 @@ impl CodeExecutor for PiExecutor {
                                         });
                                     }
                                 }
+                                flushed
                             }
-                            _ => {}
+                            _ => None,
                         }
+                    } else {
+                        None
                     }
-                    None
                 }
                 "message_start" => {
                     // message_start 事件（通常只有 role 信息，不返回具体内容）
@@ -416,9 +469,13 @@ mod tests {
     fn test_parse_output_line_text_delta() {
         let executor = PiExecutor::new("pi".to_string());
         let line = r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"hello world"}}"#;
+        // text_delta 内容被缓冲，不立即发出
         let entry = executor.parse_output_line(line);
-        assert!(entry.is_some());
-        let e = entry.unwrap();
+        assert!(entry.is_none(), "text_delta without boundary should buffer, not emit");
+        // 显式刷出应得到缓冲的内容
+        let flushed = executor.flush_pending_text();
+        assert!(flushed.is_some());
+        let e = flushed.unwrap();
         assert_eq!(e.log_type, "assistant");
         assert_eq!(e.content, "hello world");
     }
