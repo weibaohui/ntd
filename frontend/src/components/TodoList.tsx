@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useApp } from '@/hooks/useApp';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import { Button, Dropdown, Empty, Tooltip } from 'antd';
+import { Button, Dropdown, Empty, Tooltip, Input } from 'antd';
 import type { MenuProps } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined, UnorderedListOutlined, FolderOpenOutlined, RightOutlined, MoreOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined, UnorderedListOutlined, FolderOpenOutlined, RightOutlined, MoreOutlined, SearchOutlined } from '@ant-design/icons';
 import { useTheme } from '@/hooks/useTheme';
 import { StatusPicker } from './StatusPicker';
 import * as db from '@/utils/database';
@@ -88,6 +88,8 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
   const { todos, selectedTodoId, selectedTagId, tags } = state;
   const isMobile = useIsMobile();
   const [isLoading, setIsLoading] = useState(true);
+  // 搜索关键字状态，用于按标题或提示词过滤 todo 列表
+  const [searchKeyword, setSearchKeyword] = useState('');
   // 显示模式：从 localStorage 读取上次用户选择，刷新后保留
   const [displayMode, setDisplayMode] = useState<ListDisplayMode>(getInitialDisplayMode);
   // 项目目录：分组视图需要按项目维度折叠，必须先有这份映射；
@@ -118,12 +120,24 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
     return () => window.removeEventListener('projectDirectoryAdded', handleDirAdded); // 清理：卸载时移除监听
   }, [reloadProjectDirectories]);
 
-  const filteredTodos = useMemo(() =>
-    selectedTagId
+  const filteredTodos = useMemo(() => {
+    // 先按标签过滤
+    let result = selectedTagId
       ? todos.filter(t => (t as any).tag_ids?.includes(selectedTagId))
-      : todos,
-    [todos, selectedTagId]
-  );
+      : todos;
+    
+    // 再按关键字搜索（匹配标题或提示词）
+    if (searchKeyword.trim()) {
+      const keyword = searchKeyword.toLowerCase().trim();
+      result = result.filter(todo => {
+        const title = (todo.title || '').toLowerCase();
+        const prompt = (todo.prompt || '').toLowerCase();
+        return title.includes(keyword) || prompt.includes(keyword);
+      });
+    }
+    
+    return result;
+  }, [todos, selectedTagId, searchKeyword]);
 
   // 按 workspace 路径分组；workspace 为空或 null 的归入"未分组"虚拟分组，
   // 保证游离 todo 不会消失，只是放到列表底部
@@ -479,6 +493,18 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
           )}
           </div>
         </div>
+      </div>
+
+      {/* Search box - 在 todo 列表上方，按标题或提示词关键字搜索 */}
+      <div style={{ padding: '8px 16px', borderBottom: '1px solid #f0f0f0' }}>
+        <Input
+          placeholder="搜索标题或提示词..."
+          prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+          value={searchKeyword}
+          onChange={(e) => setSearchKeyword(e.target.value)}
+          allowClear
+          size="small"
+        />
       </div>
 
       {/* Tag filter chips */}
