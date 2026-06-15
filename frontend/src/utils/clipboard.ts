@@ -1,71 +1,74 @@
 /**
- * Clipboard utility with fallback for non-secure contexts (HTTP)
- * 
- * The modern Clipboard API (navigator.clipboard.writeText) only works in secure contexts:
- * - HTTPS
- * - localhost
- * 
- * When accessing via HTTP (e.g., http://192.168.1.100:18088), the API is undefined.
- * This utility provides a fallback using document.execCommand('copy') with a textarea.
+ * 剪贴板操作工具函数
+ *
+ * 升级到使用 clipboard.js 实现，统一处理 HTTPS/HTTP 环境下的复制问题：
+ * - HTTPS / localhost：clipboard.js 内部走 navigator.clipboard.writeText
+ * - HTTP（非安全上下文）：clipboard.js 自动 fallback 到 document.execCommand('copy')
+ * - 无需业务侧关心安全上下文，统一通过 Promise<boolean> 返回结果
+ *
+ * 对应 Issue #599：前端页面点击复制功能升级
  */
 
+import ClipboardJS from 'clipboard';
+
 /**
- * Copy text to clipboard with fallback for non-secure HTTP environments
- * @param text - The text to copy to clipboard
- * @returns Promise<boolean> - true if successful, false otherwise
+ * 复制文本到剪贴板
+ *
+ * 内部封装 clipboard.js：每次调用创建一个不可见的临时按钮进行绑定与触发，
+ * 在 success/error 事件或超时后销毁实例并移除临时按钮，避免内存泄漏与重复触发。
+ *
+ * @param text 要复制的文本
+ * @returns Promise<boolean> 复制是否成功
  */
 export async function copyToClipboard(text: string): Promise<boolean> {
-  // 优先使用现代 Clipboard API（HTTPS/localhost 环境）
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      // Clipboard API 失败，继续尝试 fallback
-    }
-  }
-
-  // Fallback: 使用 textarea + execCommand（HTTP 环境）
-  return fallbackCopyText(text);
-}
-
-/**
- * Fallback copy method using textarea and execCommand
- * 在 HTTP 环境中，Clipboard API 不可用，需要通过创建临时 textarea 元素并选中内容来复制
- * @param text - The text to copy
- * @returns boolean - true if successful, false otherwise
- */
-function fallbackCopyText(text: string): boolean {
-  // 创建临时 textarea 元素（不可见）
-  const textarea = document.createElement('textarea');
-  
-  // 设置样式使其不可见但可交互（display:none 会导致 select() 失效）
-  textarea.style.position = 'fixed';
-  textarea.style.top = '0';
-  textarea.style.left = '0';
-  textarea.style.width = '2em';
-  textarea.style.height = '2em';
-  textarea.style.padding = '0';
-  textarea.style.border = 'none';
-  textarea.style.outline = 'none';
-  textarea.style.boxShadow = 'none';
-  textarea.style.background = 'transparent';
-  textarea.style.opacity = '0';
-  
-  // 设置值并添加到 DOM
-  textarea.value = text;
-  document.body.appendChild(textarea);
-  
-  try {
-    // 选中内容并执行复制命令
-    textarea.select();
-    textarea.setSelectionRange(0, text.length); // iOS 需要
-    const successful = document.execCommand('copy');
-    return successful;
-  } catch (err) {
+  // clipboard.js 在不支持的环境下（例如极老浏览器）可直接判定失败，避免创建多余 DOM
+  if (!ClipboardJS.isSupported()) {
+    console.warn('当前环境不支持剪贴板写入');
     return false;
-  } finally {
-    // 清理：移除临时元素
-    document.body.removeChild(textarea);
   }
+
+  return new Promise<boolean>((resolve) => {
+    // 创建不可见的临时按钮：clipboard.js 必须绑定到真实 DOM 节点才能触发 click
+    // 使用 fixed + 负坐标定位到屏幕外，避免影响页面布局与滚动
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.setAttribute('aria-hidden', 'true');
+    button.style.position = 'fixed';
+    button.style.top = '-9999px';
+    button.style.left = '-9999px';
+    button.style.width = '1px';
+    button.style.height = '1px';
+    button.style.padding = '0';
+    button.style.margin = '0';
+    button.style.border = '0';
+    button.style.opacity = '0';
+    button.style.pointerEvents = 'none';
+
+    let settled = false;
+    // 用闭包统一处理成功 / 失败 / 超时，避免重复 resolve 与泄漏临时节点
+    const settle = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clipboard.destroy();
+      if (button.parentNode === document.body) {
+        document.body.removeChild(button);
+      }
+      resolve(ok);
+    };
+
+    // 绑定 clipboard.js 到临时按钮，text 回调动态返回本次要复制的文本
+    const clipboard = new ClipboardJS(button, {
+      text: () => text,
+    });
+
+    clipboard.on('success', () => settle(true));
+    clipboard.on('error', () => settle(false));
+
+    // 必须先挂载到 DOM 再点击，clipboard.js 内部依赖真实的 click 事件冒泡
+    document.body.appendChild(button);
+    button.click();
+
+    // 兜底超时：极端情况下 success/error 都不触发也要 resolve 并清理资源
+    setTimeout(() => settle(false), 1000);
+  });
 }
