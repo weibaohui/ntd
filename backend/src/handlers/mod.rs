@@ -208,6 +208,7 @@ pub mod custom_template;
 pub mod webhook;
 pub mod usage_stats;
 pub mod sync;
+pub mod sub_states;
 
 // WebSocket handler
 pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {

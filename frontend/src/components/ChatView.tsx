@@ -12,114 +12,15 @@ import {
 } from '@ant-design/icons';
 import XMarkdown from '@ant-design/x-markdown';
 import type { LogEntry, ChatMessage } from '@/types';
+// 策略模式实现：解析日志为聊天消息
+import { parseLogsToMessages } from '@/utils/logParserStrategy';
 
-export { type ChatMessage };
+export type { ChatMessage };
+export { parseLogsToMessages };
 
 interface ChatViewProps {
   logs: LogEntry[];
   isRunning?: boolean;
-}
-
-export function parseLogsToMessages(logs: LogEntry[]): ChatMessage[] {
-  const messages: ChatMessage[] = [];
-  let currentThinking = '';
-  let currentToolName = '';
-  let currentToolInput = '';
-  let isCollectingTool = false;
-
-  for (const log of logs) {
-    // Skip logs with null/undefined content to prevent crashes
-    if (log.content == null) continue;
-
-    switch (log.type) {
-      case 'user':
-        messages.push({ role: 'user', content: log.content, timestamp: log.timestamp });
-        break;
-      case 'assistant':
-        if (currentThinking) {
-          messages.push({ role: 'thinking', content: currentThinking, timestamp: log.timestamp, isCollapsed: true });
-          currentThinking = '';
-        }
-        if (isCollectingTool && currentToolName) {
-          messages.push({ role: 'tool', content: '', timestamp: log.timestamp, toolName: currentToolName, toolInput: currentToolInput, isCollapsed: true });
-          currentToolName = '';
-          currentToolInput = '';
-          isCollectingTool = false;
-        }
-        messages.push({ role: 'assistant', content: log.content, timestamp: log.timestamp });
-        break;
-      case 'thinking':
-        currentThinking += log.content + '\n';
-        break;
-      case 'tool':
-      case 'tool_use':
-      case 'tool_call':
-        if (isCollectingTool && (currentToolName || currentToolInput)) {
-          messages.push({ role: 'tool', content: '', timestamp: log.timestamp, toolName: currentToolName || '工具调用', toolInput: currentToolInput, isCollapsed: true });
-          currentToolName = '';
-          currentToolInput = '';
-          isCollectingTool = false;
-        }
-        if (currentThinking) {
-          messages.push({ role: 'thinking', content: currentThinking, timestamp: log.timestamp, isCollapsed: true });
-          currentThinking = '';
-        }
-        try {
-          const toolData = JSON.parse(log.content);
-          currentToolName = toolData.name || toolData.tool || '工具调用';
-          currentToolInput = toolData.input ? JSON.stringify(toolData.input, null, 2) : log.content;
-          isCollectingTool = true;
-        } catch {
-          currentToolName = '工具调用';
-          currentToolInput = log.content;
-          isCollectingTool = true;
-        }
-        break;
-      case 'tool_result':
-        if (isCollectingTool && (currentToolName || currentToolInput)) {
-          messages.push({ role: 'tool', content: '', timestamp: log.timestamp, toolName: currentToolName || '工具调用', toolInput: currentToolInput, toolResult: log.content, isCollapsed: true });
-          currentToolName = '';
-          currentToolInput = '';
-          isCollectingTool = false;
-        } else {
-          messages.push({ role: 'tool', content: '', timestamp: log.timestamp, toolName: '工具调用', toolResult: log.content, isCollapsed: true });
-        }
-        break;
-      case 'result':
-        if (currentThinking) {
-          messages.push({ role: 'thinking', content: currentThinking, timestamp: log.timestamp, isCollapsed: true });
-          currentThinking = '';
-        }
-        if (isCollectingTool && (currentToolName || currentToolInput)) {
-          messages.push({ role: 'tool', content: '', timestamp: log.timestamp, toolName: currentToolName || '工具调用', toolInput: currentToolInput, isCollapsed: true });
-          currentToolName = '';
-          currentToolInput = '';
-          isCollectingTool = false;
-        }
-        messages.push({ role: 'result', content: log.content, timestamp: log.timestamp });
-        break;
-      case 'info':
-      case 'system':
-      case 'stdout':
-      case 'stderr':
-      case 'error':
-      case 'text':
-      case 'step_start':
-      case 'step_finish':
-      case 'tokens':
-        messages.push({ role: 'system', content: log.content, timestamp: log.timestamp });
-        break;
-    }
-  }
-
-  if (currentThinking) {
-    messages.push({ role: 'thinking', content: currentThinking });
-  }
-  if (isCollectingTool && (currentToolName || currentToolInput)) {
-    messages.push({ role: 'tool', content: '', toolName: currentToolName || '工具调用', toolInput: currentToolInput });
-  }
-
-  return messages;
 }
 
 import { formatTimeFull } from '@/utils/format';
