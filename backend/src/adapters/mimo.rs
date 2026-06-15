@@ -29,6 +29,9 @@ use crate::models::utc_timestamp;
 ///
 /// `BaseExecutor` 持有 path + model + usage 三件套，
 /// MiMo 还有自己额外的 `has_successful_finish` 状态用于「非零退出码但有 step_finish 就算成功」的语义。
+// `BaseExecutor` 已经 derive Clone；`Arc<Mutex<...>>` 也派生 Clone（共享内部状态），
+// 因此组合结构体可直接 derive Clone，与原手写 impl 语义等价。
+#[derive(Clone)]
 pub struct MimoExecutor {
     /// 共享基础状态
     base: BaseExecutor,
@@ -42,15 +45,6 @@ impl MimoExecutor {
         Self {
             base: BaseExecutor::new(path),
             has_successful_finish: Arc::new(Mutex::new(false)),
-        }
-    }
-}
-
-impl Clone for MimoExecutor {
-    fn clone(&self) -> Self {
-        Self {
-            base: self.base.clone(),
-            has_successful_finish: self.has_successful_finish.clone(),
         }
     }
 }

@@ -6,6 +6,8 @@ use crate::models::utc_timestamp;
 /// MobileCoder executor。
 ///
 /// MobileCoder 不使用 model 字段，但保留在 `BaseExecutor` 中以保持接口一致。
+// `BaseExecutor` 已经 `#[derive(Clone)]`，组合字段无需手写 Clone impl。
+#[derive(Clone)]
 pub struct MobilecoderExecutor {
     base: BaseExecutor,
 }
@@ -13,12 +15,6 @@ pub struct MobilecoderExecutor {
 impl MobilecoderExecutor {
     pub fn new(path: String) -> Self {
         Self { base: BaseExecutor::new(path) }
-    }
-}
-
-impl Clone for MobilecoderExecutor {
-    fn clone(&self) -> Self {
-        Self { base: self.base.clone() }
     }
 }
 

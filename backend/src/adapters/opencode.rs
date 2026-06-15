@@ -10,6 +10,9 @@ use crate::models::utc_timestamp;
 ///
 /// `BaseExecutor` 持有 path + model + usage 三件套，
 /// Opencode 额外的 `has_successful_finish` 用于「非零退出码但有 finish 事件就算成功」语义。
+// `BaseExecutor` 已经 derive Clone；`Arc<Mutex<...>>` 也派生 Clone（共享内部状态），
+// 因此组合结构体可直接 derive Clone，与原手写 impl 语义等价。
+#[derive(Clone)]
 pub struct OpencodeExecutor {
     base: BaseExecutor,
     has_successful_finish: Arc<Mutex<bool>>,
@@ -20,15 +23,6 @@ impl OpencodeExecutor {
         Self {
             base: BaseExecutor::new(path),
             has_successful_finish: Arc::new(Mutex::new(false)),
-        }
-    }
-}
-
-impl Clone for OpencodeExecutor {
-    fn clone(&self) -> Self {
-        Self {
-            base: self.base.clone(),
-            has_successful_finish: self.has_successful_finish.clone(),
         }
     }
 }

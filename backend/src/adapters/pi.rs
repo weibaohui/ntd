@@ -29,6 +29,9 @@ use crate::models::utc_timestamp;
 /// `BaseExecutor` 持有 path + model + usage，
 /// pi 还维护一个独立的 `session_id` 字段，因为它的 session id 来源
 /// 与 `BaseExecutor::model` 等其他字段的生命周期不一致。
+// `BaseExecutor` 已经 derive Clone；`Arc<Mutex<...>>` 也派生 Clone（共享内部状态），
+// 因此组合结构体可直接 derive Clone，与原手写 impl 语义等价。
+#[derive(Clone)]
 pub struct PiExecutor {
     base: BaseExecutor,
     /// 从 session 事件中提取的 session id
@@ -123,17 +126,6 @@ impl PiExecutor {
             || buf.ends_with('！')
             || buf.ends_with('？')
             || buf.len() > 200
-    }
-}
-
-impl Clone for PiExecutor {
-    fn clone(&self) -> Self {
-        Self {
-            base: self.base.clone(),
-            session_id: self.session_id.clone(),
-            pending_text: self.pending_text.clone(),
-            full_text: self.full_text.clone(),
-        }
     }
 }
 

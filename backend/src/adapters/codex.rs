@@ -11,6 +11,8 @@ use crate::models::utc_timestamp;
 ///   - Codex：error 关键字 → "stderr" log_type；其他 → "info"
 ///
 /// 这种反向分类是历史行为，必须保留 override，不能直接删除该方法。
+// `BaseExecutor` 已经 `#[derive(Clone)]`，组合字段无需手写 Clone impl。
+#[derive(Clone)]
 pub struct CodexExecutor {
     base: BaseExecutor,
 }
@@ -18,12 +20,6 @@ pub struct CodexExecutor {
 impl CodexExecutor {
     pub fn new(path: String) -> Self {
         Self { base: BaseExecutor::new(path) }
-    }
-}
-
-impl Clone for CodexExecutor {
-    fn clone(&self) -> Self {
-        Self { base: self.base.clone() }
     }
 }
 
