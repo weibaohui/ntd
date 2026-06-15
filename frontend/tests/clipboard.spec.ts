@@ -13,17 +13,6 @@ import { test, expect, chromium } from '@playwright/test';
 
 const DEV_URL = process.env.E2E_BASE_URL || 'http://localhost:5173';
 
-/**
- * 直接通过 dynamic import 拉取 utils/clipboard.ts 中的 copyToClipboard。
- * 在浏览器里执行，绕开 Vite 的模块缓存，确保运行时真实代码路径被覆盖。
- */
-async function importClipboardInPage(page: import('@playwright/test').Page) {
-  return page.evaluate(async () => {
-    const mod = await import('/src/utils/clipboard.ts');
-    return { copyToClipboard: mod.copyToClipboard };
-  });
-}
-
 test.describe('copyToClipboard (clipboard.js 升级) — Issue #599', () => {
   test('复制普通文本应返回 true 并写入剪贴板', async () => {
     const browser = await chromium.launch();
@@ -34,7 +23,8 @@ test.describe('copyToClipboard (clipboard.js 升级) — Issue #599', () => {
     const page = await context.newPage();
     await page.goto(DEV_URL);
 
-    const { copyToClipboard } = await importClipboardInPage(page);
+    // 在浏览器里走一次 dynamic import，绕开 Vite 模块缓存，
+    // 确保覆盖的是运行时真实代码路径，而不是测试自己 mock 的版本
     const sample = `ntd-测试-${Date.now()}`;
 
     const ok = await page.evaluate(async (text) => {
