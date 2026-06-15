@@ -496,7 +496,8 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
       </div>
 
       {/* Search box - 在 todo 列表上方，按标题或提示词关键字搜索 */}
-      <div style={{ padding: '8px 16px', borderBottom: '1px solid #f0f0f0' }}>
+      {/* 横线颜色用 --color-border-light 而不是硬编码：useTheme 通过切换 documentElement 的 data-theme 来驱动 CSS 变量；浅色=#f1f5f9、暗色=#262637，与仓库其他 7 处分隔线（TodoDrawer/HistoryList/SessionDetailDrawer 等）保持一致，避免暗色下出现一条突兀的浅线 (issue #602) */}
+      <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
         <Input
           placeholder="搜索标题或提示词..."
           prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
