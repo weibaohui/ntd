@@ -71,20 +71,30 @@ RATING: <0-100 的整数>
 ///
 /// 向后兼容：旧库可能仍以旧标题"评审师模板"建过该 todo；新名查不到时会回退查找
 /// 旧名，并把那条记录就地 rename 为新标题，避免旧库升级后产生重复"评审任务"。
+///
+/// 提权保护：新标题"评审任务"较为通用，用户可能自建同名普通 todo (todo_type=0)。
+/// 命中这种记录时**绝不**把它强制改成 todo_type=1（会污染用户数据并打断 auto-review
+/// 上下文），而是先尝试 legacy 升级路径；若 legacy 也没有，则显式报错让运维介入。
 pub async fn ensure_reviewer_template(
     db: &Arc<crate::db::Database>,
     title: &str,
     default_prompt: &str,
 ) -> Result<i64, String> {
-    // 1) 先按新标题查找。
+    // 1) 先按新标题查找；只有 todo_type 已是 1（系统模板）才直接复用。
+    //    命中的是用户自建普通 todo 时只记下冲突 id，留到最后显式报错，
+    //    避免悄悄把用户数据提权为系统模板。
+    let mut title_occupied_by_user: Option<i64> = None;
     if let Some(t) = db
         .get_todo_by_title(title)
         .await
         .map_err(|e| format!("lookup reviewer template: {}", e))?
     {
-        return Ok(fixup_template_todo_type(db, t.id, t.todo_type).await?);
+        if t.todo_type == 1 {
+            return Ok(t.id);
+        }
+        title_occupied_by_user = Some(t.id);
     }
-    // 2) 新标题找不到时，探测旧标题；命中则就地改名为新标题再返回。
+    // 2) 探测旧标题；命中则就地改名为新标题复用（legacy 升级路径在用户占名时仍优先）。
     if title != REVIEWER_TEMPLATE_TITLE_LEGACY {
         if let Some(legacy) = db
             .get_todo_by_title(REVIEWER_TEMPLATE_TITLE_LEGACY)
@@ -95,7 +105,15 @@ pub async fn ensure_reviewer_template(
             return Ok(fixup_template_todo_type(db, legacy.id, legacy.todo_type).await?);
         }
     }
-    // 3) 新旧标题都不存在 -> 全新创建一条 todo_type=1 的系统专用 todo。
+    // 3) 没有可复用模板。若新标题已被用户占用 -> 显式报错（不悄悄创建重复）。
+    if let Some(uid) = title_occupied_by_user {
+        return Err(format!(
+            "user-created todo '{}' (id={}) is occupying the reviewer template title; \
+             rename or delete it before auto-review can initialize",
+            title, uid
+        ));
+    }
+    // 4) 新旧标题都不存在 -> 全新创建一条 todo_type=1 的系统专用 todo。
     let id = db
         .create_todo_with_extras(title, default_prompt, None, None)
         .await
@@ -363,5 +381,125 @@ mod tests {
                 .is_none(),
             "fresh install must not create a legacy-title todo"
         );
+    }
+
+    /// 场景 4：新标题已被系统模板 (todo_type=1) 占用时, ensure 直接复用, 不改名不改 type.
+    #[tokio::test]
+    async fn ensure_reuses_existing_new_title_template() {
+        let db = fresh_db().await;
+        // 手工写入一条 todo_type=1, 标题就是新名 (新装机的形态)
+        let existing_id = db
+            .create_todo_with_extras(REVIEWER_TEMPLATE_TITLE, "user-edited prompt", None, None)
+            .await
+            .expect("create");
+        db.set_todo_type(existing_id, 1).await.expect("mark template");
+
+        let returned_id = ensure_reviewer_template(
+            &db,
+            REVIEWER_TEMPLATE_TITLE,
+            DEFAULT_REVIEWER_PROMPT,
+        )
+        .await
+        .expect("ensure should reuse existing template");
+        assert_eq!(
+            returned_id, existing_id,
+            "should reuse existing system template, not create a duplicate"
+        );
+        let row = db
+            .get_todo_by_title(REVIEWER_TEMPLATE_TITLE)
+            .await
+            .expect("lookup")
+            .expect("present");
+        assert_eq!(row.id, existing_id);
+        assert_eq!(row.todo_type, 1);
+        assert_eq!(
+            row.prompt, "user-edited prompt",
+            "user-edited prompt must be preserved when reusing"
+        );
+    }
+
+    /// 场景 5：新标题被用户自建普通 todo (todo_type=0) 占用且没有 legacy ->
+    /// ensure 应当显式报错, 绝不提权用户数据, 也绝不悄悄建重复.
+    #[tokio::test]
+    async fn ensure_refuses_to_promote_user_titled_todo() {
+        let db = fresh_db().await;
+        let user_id = db
+            .create_todo_with_extras(REVIEWER_TEMPLATE_TITLE, "user prompt", None, None)
+            .await
+            .expect("create user todo");
+        // 默认 todo_type=0, 模拟用户自建普通 todo
+
+        let err = ensure_reviewer_template(
+            &db,
+            REVIEWER_TEMPLATE_TITLE,
+            DEFAULT_REVIEWER_PROMPT,
+        )
+        .await
+        .expect_err("ensure must refuse to promote user todo");
+        assert!(
+            err.contains(&user_id.to_string()),
+            "error must mention the conflicting user todo id, got: {}",
+            err
+        );
+
+        // 关键: 用户 todo 的 todo_type 必须仍是 0, prompt 也不能被系统默认值覆盖
+        let row = db
+            .get_todo_by_title(REVIEWER_TEMPLATE_TITLE)
+            .await
+            .expect("lookup")
+            .expect("present");
+        assert_eq!(row.id, user_id);
+        assert_eq!(
+            row.todo_type, 0,
+            "user todo must not be promoted to system template"
+        );
+        assert_eq!(
+            row.prompt, "user prompt",
+            "user prompt must not be overwritten"
+        );
+    }
+
+    /// 场景 6：新标题被用户占用 + 旧标题存在 -> legacy 升级路径仍应优先, 复用旧记录,
+    /// 用户数据保持原样 (不会触发冲突报错).
+    #[tokio::test]
+    async fn ensure_legacy_path_wins_over_user_titled_collision() {
+        let db = fresh_db().await;
+        let user_id = db
+            .create_todo_with_extras(REVIEWER_TEMPLATE_TITLE, "user prompt", None, None)
+            .await
+            .expect("create user todo");
+        let legacy_id = db
+            .create_todo_with_extras(REVIEWER_TEMPLATE_TITLE_LEGACY, "old prompt", None, None)
+            .await
+            .expect("create legacy");
+        db.set_todo_type(legacy_id, 1)
+            .await
+            .expect("mark legacy as template");
+
+        let returned_id = ensure_reviewer_template(
+            &db,
+            REVIEWER_TEMPLATE_TITLE,
+            DEFAULT_REVIEWER_PROMPT,
+        )
+        .await
+        .expect("ensure should succeed via legacy upgrade");
+        assert_eq!(
+            returned_id, legacy_id,
+            "legacy record should be promoted, not the user todo"
+        );
+        // 用户 todo 保持原样
+        let user_row = db
+            .get_todo_by_title(REVIEWER_TEMPLATE_TITLE)
+            .await
+            .expect("lookup user")
+            .expect("present");
+        let legacy_row = db
+            .get_todo_by_title(REVIEWER_TEMPLATE_TITLE_LEGACY)
+            .await
+            .expect("lookup legacy");
+        // legacy 已被 rename, 不应再以旧标题找到
+        assert!(legacy_row.is_none(), "legacy title must be gone after rename");
+        // 但新标题下现在有两条: 用户原始 todo + 已升级的 legacy
+        assert!(user_row.id == user_id || user_row.id == legacy_id);
     }
 }
