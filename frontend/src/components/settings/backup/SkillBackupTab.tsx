@@ -4,6 +4,7 @@ import { Cron } from 'react-js-cron';
 import 'react-js-cron/dist/styles.css';
 import { CronPresetSelect } from '@/components/CronPresetSelect';
 import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '@/utils/cron';
+import { formatFileSize } from '@/utils/format';
 
 interface ExecutorSkillInfo {
   executor: string;
@@ -112,7 +113,7 @@ export function SkillBackupTab({
                     <div>
                       <div style={{ fontWeight: 500 }}>{file.name}</div>
                       <div style={{ color: 'var(--color-text-tertiary)', fontSize: 11 }}>
-                        {(file.size / 1024).toFixed(1)} KB · {file.created_at}
+                        {formatFileSize(file.size)} · {file.created_at}
                       </div>
                     </div>
                     <Space size={4}>

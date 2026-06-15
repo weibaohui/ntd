@@ -136,3 +136,23 @@ export function elapsedSeconds(startTimeStr: string | null | undefined): number 
   const now = new Date();
   return Math.floor((now.getTime() - date.getTime()) / 1000);
 }
+
+/**
+ * 格式化文件大小为人类可读字符串（如 "1.5 MB"）。
+ *
+ * 规则：
+ * - < 1KB → 显示字节（如 "500 B"）
+ * - < 1MB → 显示 KB（如 "128.5 KB"）
+ * - < 1GB → 显示 MB（如 "2.5 MB"）
+ * - >= 1GB → 显示 GB（如 "1.2 GB"）
+ */
+export function formatFileSize(bytes: number): string {
+  const KB = 1024;
+  const MB = 1024 * KB;
+  const GB = 1024 * MB;
+
+  if (bytes < KB) return `${bytes} B`;
+  if (bytes < MB) return `${(bytes / KB).toFixed(1)} KB`;
+  if (bytes < GB) return `${(bytes / MB).toFixed(1)} MB`;
+  return `${(bytes / GB).toFixed(1)} GB`;
+}
