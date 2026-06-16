@@ -1,17 +1,19 @@
 use std::sync::Arc;
 use std::sync::OnceLock;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::sync::broadcast;
+use tokio::task::JoinHandle;
 use tracing::Instrument;
 use uuid::Uuid;
 
 use command_group::AsyncCommandGroup;
 
-use crate::adapters::{parse_executor_type, ExecutorRegistry};
+use crate::adapters::{parse_executor_type, CodeExecutor, ExecutorRegistry};
 use crate::db::{Database, NewExecutionRecord};
 use crate::handlers::ExecEvent;
 use crate::hooks::HookService;
-use crate::models::{ExecutorType, ParsedLogEntry};
+use crate::log_flusher::LogFlusher;
+use crate::models::{ExecutorType, ExecutionUsage, ParsedLogEntry, Todo};
 use crate::task_manager::TaskManager;
 
 fn send_event(tx: &broadcast::Sender<ExecEvent>, event: ExecEvent) {
@@ -69,6 +71,497 @@ pub struct RunTodoExecutionRequest {
     pub feishu_bot_id: Option<i64>,
     /// Feishu receive_id (open_id for p2p, chat_id for group).
     pub feishu_receive_id: Option<String>,
+}
+
+// ============================================================================
+//  `run_todo_execution` 拆出的子函数（issue #606）
+//
+//  设计意图：
+//  - 把 881 行巨型函数按阶段拆为职责单一的 helper，便于阅读与单测。
+//  - pre-spawn 阶段的纯函数（`resolve_executor_type` / `apply_worktree_flag` /
+//    `build_completion_record_update`）不依赖任何运行时状态，可直接 unit-test。
+//  - 涉及 IO / DB / 异步 spawn 的 helper（`count_active_running_for_todo` /
+//    `spawn_stdout_reader` / `spawn_stderr_reader`）通过明确的输入输出
+//    与顶级函数解耦，行为契约靠 doc comment 钉死。
+//  - 顶层 `run_todo_execution` 退化为"拼阶段 + 翻译 ExecutionResult"的骨架。
+// ============================================================================
+
+/// 选择执行器类型。优先级：调用方显式 `req_executor` > todo 存储的 `todo_executor` > 默认值。
+///
+/// - 输入字符串无法解析为已知 executor 时记 warn 并退到下一优先级；
+/// - 所有输入都解析失败时返回 `ExecutorType::default()`。
+///
+/// 不返回 `Result`，因为解析失败是预期内的"软"行为，调用方直接走默认分支即可。
+/// 把 warn 日志集中在这里，避免顶级函数里出现散落的 `tracing::warn!` 解释为什么降级。
+fn resolve_executor_type(req_executor: Option<&str>, todo_executor: Option<&str>) -> ExecutorType {
+    // 显式请求 > 存储值 > 默认。三层 or_else 形成优先级链。
+    req_executor
+        .and_then(|exec| {
+            parse_executor_type(exec).or_else(|| {
+                tracing::warn!("Unknown explicit executor '{}', trying todo executor", exec);
+                None
+            })
+        })
+        .or_else(|| {
+            todo_executor.and_then(|exec| {
+                parse_executor_type(exec).or_else(|| {
+                    tracing::warn!("Unknown todo executor '{}', falling back to default", exec);
+                    None
+                })
+            })
+        })
+        .unwrap_or_default()
+}
+
+/// 给 `command_args` 插入 `--worktree` 开关。
+///
+/// - 仅当 `worktree_enabled == true` 且 executor 是 `Claudecode` 或 `Hermes` 时生效；
+///   其他 executor 即使 todo 开启了 worktree，也会被静默忽略。
+/// - 位置约束：必须放在 `--session-id` / `--resume` 之前，否则 Claude Code / Hermes
+///   在 resume session 时不会触发 worktree 初始化。
+///   没找到这些开关时 append 到末尾，依然能让 Claude Code 自动管理 worktree。
+fn apply_worktree_flag(command_args: &mut Vec<String>, exec_type: ExecutorType, worktree_enabled: bool) {
+    if !worktree_enabled {
+        return;
+    }
+    match exec_type {
+        ExecutorType::Claudecode | ExecutorType::Hermes => {
+            // 找 `--session-id` 或 `--resume` 的位置；找不到就 append 到末尾。
+            let insert_pos = command_args
+                .iter()
+                .position(|s| s == "--session-id" || s == "--resume")
+                .unwrap_or(command_args.len());
+            command_args.insert(insert_pos, "--worktree".to_string());
+        }
+        // 其他 executor 不支持 worktree flag，todo 配置的 `worktree_enabled`
+        // 对它们而言无意义；显式忽略避免误把 flag 透传给不识别的二进制。
+        _ => {}
+    }
+}
+
+/// 统计 `todo_id` 下"真正在跑"的执行记录数，自动过滤掉僵尸记录。
+///
+/// 僵尸 = 数据库标记 running，但 `task_manager` 里查不到对应 task（多半是上一次
+/// daemon 重启 / 异常退出遗留的脏数据）。这种记录不算"占用并发配额"，否则 daemon
+/// 重启后所有 todo 都会被并发上限挡死。
+///
+/// 返回 `Result<usize, ()>`：
+/// - `Ok(n)` —— 真正的活跃数；调用方据此判断是否已超 `max_concurrent`。
+/// - `Err(())` —— DB 查询失败（已记 error 日志）；调用方应直接 abort 当次执行，
+///   而不是猜测并发是否够用。
+async fn count_active_running_for_todo(
+    task_manager: &TaskManager,
+    db: &Database,
+    todo_id: i64,
+) -> Result<usize, ()> {
+    // 一次性拿到 task_manager 的活跃 task 列表，后面用它来过滤 DB 的 running 记录。
+    let running_tasks = task_manager.get_all_task_infos().await;
+    let running_records = db
+        .get_running_records_by_todo_id(todo_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get running execution records: {}", e);
+        })?;
+    Ok(running_records
+        .iter()
+        .filter(|r| {
+            // 没有 task_id 的记录也算僵尸（早期 schema 不写这个字段），
+            // 一律不计入并发占用。
+            r.task_id
+                .as_ref()
+                .map(|task_id| running_tasks.iter().any(|t| t.task_id == *task_id))
+                .unwrap_or(false)
+        })
+        .count())
+}
+
+/// 启动一个 stderr reader 任务：逐行读 stderr -> 经 executor 解析 -> 推入 LogFlusher。
+///
+/// 返回 `None` 表示 executor 子进程根本没暴露 stderr（少见，比如某些 mock executor）。
+fn spawn_stderr_reader<R>(
+    stderr_handle: Option<R>,
+    executor: Arc<dyn CodeExecutor>,
+    log_flusher: Arc<LogFlusher>,
+    tx: broadcast::Sender<ExecEvent>,
+    task_id: String,
+) -> Option<JoinHandle<()>>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    stderr_handle.map(|stderr_reader| {
+        tokio::spawn(async move {
+            // BufReader::lines 在读到 EOF 时返回 Ok(None)，循环自然退出。
+            let mut reader = BufReader::new(stderr_reader).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                // 优先让 executor 自定义解析；解析不到就当 raw stderr 行（log_type="stderr"）。
+                let entry = executor
+                    .parse_stderr_line(&line)
+                    .unwrap_or_else(|| ParsedLogEntry::stderr(line.clone()));
+                log_flusher.push(entry.clone()).await;
+                send_event(
+                    &tx,
+                    ExecEvent::Output {
+                        task_id: task_id.clone(),
+                        entry,
+                    },
+                );
+            }
+        })
+    })
+}
+
+/// 启动一个 stdout reader 任务：逐行读 stdout -> 提取 session_id / todo_progress / 统计 ->
+/// 推入 LogFlusher + emit Output event。
+///
+/// 返回 `None` 表示 executor 子进程没暴露 stdout。
+///
+/// 与 stderr reader 不同，stdout 还要承担三件事：
+///   1. 第一次出现 `executor.extract_session_id` 时把 session_id 回写到 execution_records；
+///   2. 解析 `todo_progress` 时除写库外还要发 `TodoProgress` 事件（前端实时进度条）；
+///   3. 每 10 行 或 工具调用时扫一遍 buffer 计算 stats，emit `ExecutionStats`。
+/// 这三件事没法再下沉到 LogFlusher（一个是 DB 写，一个是 progress 事件），所以留在这里。
+fn spawn_stdout_reader<R>(
+    stdout_handle: Option<R>,
+    executor: Arc<dyn CodeExecutor>,
+    db: Arc<Database>,
+    log_flusher: Arc<LogFlusher>,
+    tx: broadcast::Sender<ExecEvent>,
+    task_id: String,
+    record_id: i64,
+) -> Option<JoinHandle<()>>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    let stdout_reader = stdout_handle?;
+    let tx_clone = tx.clone();
+    let executor_clone = executor.clone();
+    let db_for_todo = db.clone();
+    let log_flusher_for_stdout = log_flusher.clone();
+    let tid = task_id;
+    let rid = record_id;
+
+    Some(tokio::spawn(async move {
+        let mut reader = BufReader::new(stdout_reader).lines();
+        let mut log_count = 0u64;
+        // session_id 只更新一次：避免每次重复出现 session_id 时反复触发 DB UPDATE。
+        let mut session_id_updated = false;
+        while let Ok(Some(line)) = reader.next_line().await {
+            // 第一次出现 session_id 时回写 DB。后续再出现就不再更新——
+            // session_id 在同一次执行里是稳定的，写多次意义不大。
+            if !session_id_updated {
+                if let Some(sid) = executor_clone.extract_session_id(&line) {
+                    let _ = db_for_todo
+                        .update_execution_record_session_id(rid, &sid)
+                        .await;
+                    session_id_updated = true;
+                }
+            }
+            // executor 解析失败（不是 JSONL 格式的行）就跳过；不强制 stderr 兜底。
+            let Some(parsed) = executor_clone.parse_output_line(&line) else {
+                continue;
+            };
+            // todo_progress：写库 + 发事件，让前端能实时显示进度。
+            if let Some(progress) = crate::todo_progress::try_extract_todo_progress(&parsed) {
+                if let Ok(progress_json) = serde_json::to_string(&progress) {
+                    let _ = db_for_todo
+                        .update_execution_record_todo_progress(rid, &progress_json)
+                        .await;
+                }
+                send_event(
+                    &tx_clone,
+                    ExecEvent::TodoProgress {
+                        task_id: tid.clone(),
+                        progress,
+                    },
+                );
+            }
+
+            // 统计：工具调用必发；普通日志每 10 条发一次。
+            // 用 with_logs 持锁只读扫描，避免与 push 路径冲突。
+            let is_tool_call = parsed.log_type == "tool_use"
+                || parsed.log_type == "tool_call"
+                || parsed.log_type == "tool";
+            log_count += 1;
+            if is_tool_call || log_count.is_multiple_of(10) {
+                let stats = log_flusher_for_stdout
+                    .with_logs(|current_logs| {
+                        let tool_calls = current_logs
+                            .iter()
+                            .filter(|l| {
+                                l.log_type == "tool_use"
+                                    || l.log_type == "tool_call"
+                                    || l.log_type == "tool"
+                            })
+                            .count() as u64;
+                        let conversation_turns = current_logs
+                            .iter()
+                            .filter(|l| {
+                                l.log_type == "assistant"
+                                    || l.log_type == "result"
+                                    || l.log_type == "text"
+                            })
+                            .count() as u64;
+                        let thinking_count = current_logs
+                            .iter()
+                            .filter(|l| l.log_type == "thinking")
+                            .count() as u64;
+                        crate::models::ExecutionStats {
+                            tool_calls,
+                            conversation_turns,
+                            thinking_count,
+                        }
+                    })
+                    .await;
+                send_event(
+                    &tx_clone,
+                    ExecEvent::ExecutionStats {
+                        task_id: tid.clone(),
+                        stats,
+                    },
+                );
+            }
+
+            // 推入 flusher：内部 CAS 触发后台 flush。
+            log_flusher_for_stdout.push(parsed.clone()).await;
+            send_event(
+                &tx_clone,
+                ExecEvent::Output {
+                    task_id: tid.clone(),
+                    entry: parsed,
+                },
+            );
+        }
+    }))
+}
+
+/// 把 executor 报回的 `usage.duration_ms` 统一覆盖成 wall-clock 实际耗时。
+///
+/// 设计意图（issue #513 之后）：
+/// - 不同 executor 自己报的 duration 可能与"spawn 到 child.wait 返回"的实际耗时不一致；
+/// - UI / 日志需要的是真实墙钟时间，而不是 executor 内部估算。
+/// - usage 为 `None` 时构造一个全 0 + wall-clock duration 的占位，保证 DB 列一定有值。
+///
+/// 单独抽出来是因为这段"覆盖 vs 构造占位"的逻辑有 3 个分支，容易在重构里漂移；
+/// 单元测试可以只盯这个 helper，无需 mock DB。
+fn apply_wall_clock_duration(
+    usage: Option<ExecutionUsage>,
+    execution_start: std::time::Instant,
+) -> Option<ExecutionUsage> {
+    let wall_clock_duration_ms = execution_start.elapsed().as_millis() as u64;
+    match usage {
+        Some(mut u) => {
+            u.duration_ms = Some(wall_clock_duration_ms);
+            Some(u)
+        }
+        None => Some(ExecutionUsage {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
+            total_cost_usd: None,
+            duration_ms: Some(wall_clock_duration_ms),
+        }),
+    }
+}
+
+// ─── Pre-spawn 早返回 helper（issue #606 拆分） ───────────────────────
+//
+// 这四个 helper 把"任务失败时的 cleanup + Finished event + 返回 ExecutionResult"
+// 集中到一处。调用方从原来 25-30 行的 inline match arm 缩到 ~5 行：
+//   `return reject_xxx(...).await;`
+// 同时让"finish_todo_execution / task_manager.remove / Finished event"的顺序
+// 不再散落在四个分支里 —— 任何修改（比如新加 feishu 字段）只改一处。
+
+/// 并发上限拒接：仅发 Finished 事件 + 移除 task。
+/// 不调 `finish_todo_execution` —— todo 状态没变过，DB 里还是上一态。
+async fn reject_concurrency_limit(
+    task_manager: &TaskManager,
+    tx: &broadcast::Sender<ExecEvent>,
+    task_id: &str,
+    todo_id: i64,
+    todo_title: &str,
+    running_count: usize,
+    max_concurrent: u32,
+) -> ExecutionResult {
+    tracing::warn!(
+        "Todo {} has {} execution(s) still running (limit: {}), rejecting",
+        todo_id, running_count, max_concurrent
+    );
+    task_manager.remove(task_id).await;
+    send_event(
+        tx,
+        ExecEvent::Finished {
+            task_id: task_id.to_string(),
+            todo_id,
+            todo_title: todo_title.to_string(),
+            executor: "".to_string(),
+            success: false,
+            result: Some(format!(
+                "Todo {} has {} execution(s) still running (limit: {}). Please stop them first.",
+                todo_id, running_count, max_concurrent
+            )),
+            feishu_bot_id: None,
+            feishu_receive_id: None,
+        },
+    );
+    ExecutionResult {
+        task_id: task_id.to_string(),
+        record_id: None,
+    }
+}
+
+/// 没有可用 executor：发 Finished + finish_todo_execution（DB 回滚 todo 到非 running）。
+/// 不发 Output 事件 —— 这里没什么可观测的执行细节可报。
+async fn reject_no_executor(
+    db: &Database,
+    task_manager: &TaskManager,
+    tx: &broadcast::Sender<ExecEvent>,
+    task_id: &str,
+    todo_id: i64,
+    todo_title: &str,
+    executor_type: ExecutorType,
+) -> ExecutionResult {
+    tracing::error!(
+        "No executor available for type {:?} and no default registered",
+        executor_type
+    );
+    let _ = db.finish_todo_execution(todo_id, false).await;
+    send_event(
+        tx,
+        ExecEvent::Finished {
+            task_id: task_id.to_string(),
+            todo_id,
+            todo_title: todo_title.to_string(),
+            executor: executor_type.to_string(),
+            success: false,
+            result: Some("No executor available".to_string()),
+            feishu_bot_id: None,
+            feishu_receive_id: None,
+        },
+    );
+    task_manager.remove(task_id).await;
+    ExecutionResult {
+        task_id: task_id.to_string(),
+        record_id: None,
+    }
+}
+
+/// 创建 execution_record 失败：finish_todo_execution + 移除 task。
+/// 不发 Finished 事件 —— 没记录 id，前端无从关联；只清理内存 task。
+async fn reject_create_record_failure(
+    db: &Database,
+    task_manager: &TaskManager,
+    task_id: &str,
+    todo_id: i64,
+    error: impl std::fmt::Display,
+) -> ExecutionResult {
+    tracing::error!("Failed to create execution record: {}", error);
+    let _ = db.finish_todo_execution(todo_id, false).await;
+    task_manager.remove(task_id).await;
+    ExecutionResult {
+        task_id: task_id.to_string(),
+        record_id: None,
+    }
+}
+
+/// `start_todo_execution` 失败：发 Output/Finished 事件 + 写 record 为 Failed 状态 +
+/// finish_todo_execution + 移除 task。返回的 `record_id` 仍是 `Some`，
+/// 让调用方可以基于 record_id 后续追查失败记录。
+async fn reject_start_todo_failure(
+    db: &Database,
+    tx: &broadcast::Sender<ExecEvent>,
+    task_manager: &TaskManager,
+    task_id: &str,
+    todo_id: i64,
+    todo_title: &str,
+    executor_str: &str,
+    record_id: i64,
+    error: impl std::fmt::Display,
+) -> ExecutionResult {
+    tracing::error!("Failed to start todo execution: {}", error);
+    let entry = ParsedLogEntry::error(format!("Failed to start todo execution: {}", error));
+    send_event(
+        tx,
+        ExecEvent::Output {
+            task_id: task_id.to_string(),
+            entry,
+        },
+    );
+    send_event(
+        tx,
+        ExecEvent::Finished {
+            task_id: task_id.to_string(),
+            todo_id,
+            todo_title: todo_title.to_string(),
+            executor: executor_str.to_string(),
+            success: false,
+            result: Some("Failed to start execution".to_string()),
+            feishu_bot_id: None,
+            feishu_receive_id: None,
+        },
+    );
+    let _ = db.finish_todo_execution(todo_id, false).await;
+    let _ = db
+        .update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+            id: record_id,
+            status: crate::models::ExecutionStatus::Failed.as_str(),
+            remaining_logs: "[]",
+            result: &format!("Failed to start todo execution: {}", error),
+            usage: None,
+            model: None,
+            review_meta: None,
+        })
+        .await;
+    task_manager.remove(task_id).await;
+    ExecutionResult {
+        task_id: task_id.to_string(),
+        record_id: Some(record_id),
+    }
+}
+
+/// Fire "进入 Completed / Failed" 的 state-change 钩子。
+///
+/// 之所以单独抽出来：
+/// - executor 不经过 update_todo handler（status 是 db 层直接改的），
+///   这里是唯一能 observe "Running -> terminal" 转换的地方；
+/// - 抽出来之后 hook fire 和 `db.finish_todo_execution` 顺序可以独立测试
+///   （虽然实际仍需端到端验证，但至少逻辑分支不再深嵌在 spawn 闭包中）。
+///
+/// `chain` 必须 clone 一份传进来，否则 spawn 闭包 move 走的 chain 会让这里
+/// 借用检查失败。
+fn fire_completion_hooks(
+    todo: Option<&Todo>,
+    todo_id: i64,
+    success: bool,
+    chain: Vec<i64>,
+    hook_service: Arc<HookService>,
+) {
+    let Some(t) = todo else {
+        // todo 已被删除或加载失败时跳过 hook fire —— 没有 todo 上下文就没法构造 HookContext。
+        return;
+    };
+    let new_status = if success {
+        crate::models::TodoStatus::Completed
+    } else {
+        crate::models::TodoStatus::Failed
+    };
+    if let Some(ctx) = crate::hooks::models::HookContext::for_state_change(
+        todo_id,
+        t.title.clone(),
+        crate::models::TodoStatus::Running,
+        new_status,
+        t.executor.clone(),
+        t.workspace.clone(),
+        chain,
+    ) {
+        // fire_for_todo 内部 tokio::spawn，是 fire-and-forget。
+        tracing::debug!(
+            "firing state-change hook for todo #{} -> {:?}",
+            todo_id,
+            new_status
+        );
+        hook_service.fire_for_todo(todo_id, ctx);
+    }
 }
 
 /// Run a todo execution. Priority: explicit executor > todo stored executor > default.
@@ -133,70 +626,27 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         (cfg.max_concurrent_todos, cfg.execution_timeout_secs)
     };
 
-    // Get todo to read stored executor and check concurrency
+    // 加载 todo + 并发检查。Load todo metadata for executor selection, then run the
+    // zombie-aware concurrency check via `count_active_running_for_todo`.
+    // 任一步失败都返回失败 ExecutionResult（task_id 已生成，调用方可以基于它取消 task）。
     let todo = match db.get_todo(todo_id).await {
         Ok(Some(t)) => {
-            // 检查该 todo 下正在执行的记录数量是否已达并发上限
-            // 需要过滤掉孤儿记录：状态为 running 但 task_manager 中没有对应 task
-            let running_tasks = task_manager.get_all_task_infos().await;
-            let running_records = match db.get_running_records_by_todo_id(todo_id).await {
-                Ok(records) => records,
-                Err(e) => {
-                    tracing::error!("Failed to get running execution records: {}", e);
-                    return ExecutionResult {
-                        task_id,
-                        record_id: None,
-                    };
-                }
-            };
-            let running_count_for_todo = running_records
-                .iter()
-                .filter(|r| {
-                    // 排除僵尸记录：状态为 running 但 task_manager 中没有对应 task
-                    if let Some(task_id) = &r.task_id {
-                        running_tasks.iter().any(|t| t.task_id == *task_id)
-                    } else {
-                        false
-                    }
-                })
-                .count();
-            if running_count_for_todo >= max_concurrent as usize {
-                tracing::warn!(
-                    "Todo {} has {} execution(s) still running (limit: {}), rejecting",
-                    todo_id, running_count_for_todo, max_concurrent
-                );
-                task_manager.remove(&task_id).await;
-                send_event(
-                    &tx,
-                    ExecEvent::Finished {
-                        task_id: task_id.clone(),
-                        todo_id,
-                        todo_title: t.title.clone(),
-                        executor: "".to_string(),
-                        success: false,
-                        result: Some(format!(
-                            "Todo {} has {} execution(s) still running (limit: {}). Please stop them first.",
-                            todo_id, running_count_for_todo, max_concurrent
-                        )),
-                        feishu_bot_id: None,
-                        feishu_receive_id: None,
-                    },
-                );
-                return ExecutionResult {
-                    task_id,
-                    record_id: None,
+            let running_count_for_todo =
+                match count_active_running_for_todo(&task_manager, &db, todo_id).await {
+                    Ok(n) => n,
+                    Err(()) => return ExecutionResult { task_id, record_id: None },
                 };
+            if running_count_for_todo >= max_concurrent as usize {
+                return reject_concurrency_limit(
+                    &task_manager, &tx, &task_id, todo_id, &t.title,
+                    running_count_for_todo, max_concurrent,
+                ).await;
             }
-
             Some(t)
         }
         Ok(None) => None,
         Err(e) => {
-            tracing::error!(
-                "Failed to fetch todo {} for executor selection: {}",
-                todo_id,
-                e
-            );
+            tracing::error!("Failed to fetch todo {} for executor selection: {}", todo_id, e);
             None
         }
     };
@@ -204,56 +654,22 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
     let todo_workspace = todo.as_ref().and_then(|t| t.workspace.clone());
     let todo_worktree_enabled = todo.as_ref().map(|t| t.worktree_enabled).unwrap_or(false);
 
-    // Determine which executor to use: explicit > todo stored > default
-    let executor_type = req_executor
-        .as_deref()
-        .and_then(|exec| {
-            parse_executor_type(exec).or_else(|| {
-                tracing::warn!("Unknown explicit executor '{}', trying todo executor", exec);
-                None
-            })
-        })
-        .or_else(|| {
-            todo_executor.as_deref().and_then(|exec| {
-                parse_executor_type(exec).or_else(|| {
-                    tracing::warn!("Unknown todo executor '{}', falling back to default", exec);
-                    None
-                })
-            })
-        })
-        .unwrap_or_default();
+    // Determine which executor to use: explicit > todo stored > default.
+    // 抽到 `resolve_executor_type` 让 warn 日志集中，并支持单测。
+    let executor_type =
+        resolve_executor_type(req_executor.as_deref(), todo_executor.as_deref());
 
-    let executor = match executor_registry
-        .get(executor_type).await
-    {
+    let executor = match executor_registry.get(executor_type).await {
         Some(exec) => exec,
         None => match executor_registry.get_default().await {
             Some(exec) => exec,
             None => {
-                tracing::error!(
-                    "No executor available for type {:?} and no default registered",
-                    executor_type
-                );
-                let _ = db.finish_todo_execution(todo_id, false).await;
-                send_event(
-                    &tx,
-                    ExecEvent::Finished {
-                        task_id: task_id.clone(),
-                        todo_id,
-                        todo_title: todo.as_ref().map(|t| t.title.clone()).unwrap_or_default(),
-                        executor: executor_type.to_string(),
-                        success: false,
-                        result: Some("No executor available".to_string()),
-                        feishu_bot_id: None,
-                        feishu_receive_id: None,
-                    },
-                );
-                task_manager.remove(&task_id).await;
-                return ExecutionResult {
-                    task_id,
-                    record_id: None,
-                };
-            },
+                return reject_no_executor(
+                    &db, &task_manager, &tx, &task_id, todo_id,
+                    todo.as_ref().map(|t| t.title.as_str()).unwrap_or(""),
+                    executor_type,
+                ).await;
+            }
         },
     };
 
@@ -263,23 +679,12 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
     let mut command_args =
         executor.command_args_with_session(&message, Some(session_id_for_executor), is_resume);
 
-    // Add worktree flag for claude_code and hermes executors
-    // claude_code: --worktree (no path argument, Claude Code auto-manages worktree cleanup)
-    // hermes: --worktree (no path argument, uses current directory)
-    // Must be placed before --session-id or --resume flag
-    let exec_type = executor.executor_type();
-    if todo_worktree_enabled {
-        match exec_type {
-            ExecutorType::Claudecode | ExecutorType::Hermes => {
-                // Find position of --session-id or --resume and insert before it
-                let insert_pos = command_args.iter()
-                    .position(|s| s == "--session-id" || s == "--resume")
-                    .unwrap_or(command_args.len());
-                command_args.insert(insert_pos, "--worktree".to_string());
-            }
-            _ => {}
-        }
-    }
+    // 抽到 `apply_worktree_flag`：claude_code / hermes 之外不插，避免污染其它 executor 的 argv。
+    apply_worktree_flag(
+        &mut command_args,
+        executor.executor_type(),
+        todo_worktree_enabled,
+    );
 
     // Update todo's executor to the one being used
     let executor_str = executor.executor_type().to_string();
@@ -306,13 +711,7 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
     {
         Ok(id) => id,
         Err(e) => {
-            tracing::error!("Failed to create execution record: {}", e);
-            let _ = db.finish_todo_execution(todo_id, false).await;
-            task_manager.remove(&task_id).await;
-            return ExecutionResult {
-                task_id,
-                record_id: None,
-            };
+            return reject_create_record_failure(&db, &task_manager, &task_id, todo_id, e).await;
         }
     };
 
@@ -322,45 +721,11 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
 
     // Update todo status to running and associate with task
     if let Err(e) = db.start_todo_execution(todo_id, &task_id).await {
-        tracing::error!("Failed to start todo execution: {}", e);
-        let entry = ParsedLogEntry::error(format!("Failed to start todo execution: {}", e));
-        send_event(
-            &tx,
-            ExecEvent::Output {
-                task_id: task_id.clone(),
-                entry,
-            },
-        );
-        send_event(
-            &tx,
-            ExecEvent::Finished {
-                task_id: task_id.clone(),
-                todo_id,
-                todo_title: todo.as_ref().map(|t| t.title.clone()).unwrap_or_default(),
-                executor: executor_str.clone(),
-                success: false,
-                result: Some("Failed to start execution".to_string()),
-                feishu_bot_id: None,
-                feishu_receive_id: None,
-            },
-        );
-        let _ = db.finish_todo_execution(todo_id, false).await;
-        let _ = db
-            .update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
-                id: record_id,
-                status: crate::models::ExecutionStatus::Failed.as_str(),
-                remaining_logs: "[]",
-                result: &format!("Failed to start todo execution: {}", e),
-                usage: None,
-                model: None,
-                review_meta: None,
-            })
-            .await;
-        task_manager.remove(&task_id).await;
-        return ExecutionResult {
-            task_id,
-            record_id: Some(record_id),
-        };
+        return reject_start_todo_failure(
+            &db, &tx, &task_manager, &task_id, todo_id,
+            todo.as_ref().map(|t| t.title.as_str()).unwrap_or(""),
+            &executor_str, record_id, e,
+        ).await;
     }
 
     let task_id_return = task_id.clone();
@@ -512,139 +877,25 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
 
         let executor_for_parse = executor_spawn.clone();
 
-        // Process stdout
-        let stdout_task = if let Some(stdout_reader) = stdout_handle {
-            let tx_clone = tx.clone();
-            let tid = task_id.clone();
-            let executor_clone = executor_for_parse.clone();
-            let db_for_todo = db_clone.clone();
-            let rid = record_id;
-            let log_flusher_for_stdout = log_flusher.clone();
+        // Process stdout —— 拆到 `spawn_stdout_reader` helper。
+        let stdout_task = spawn_stdout_reader(
+            stdout_handle,
+            executor_for_parse.clone(),
+            db_clone.clone(),
+            log_flusher.clone(),
+            tx.clone(),
+            task_id.clone(),
+            record_id,
+        );
 
-            Some(tokio::spawn(async move {
-                let mut reader = BufReader::new(stdout_reader).lines();
-                let mut log_count = 0u64;
-                let mut session_id_updated = false;
-                while let Ok(Some(line)) = reader.next_line().await {
-                    // Extract and update session_id if present
-                    if !session_id_updated {
-                        if let Some(sid) = executor_clone.extract_session_id(&line) {
-                            let _ = db_for_todo
-                                .update_execution_record_session_id(rid, &sid)
-                                .await;
-                            session_id_updated = true;
-                        }
-                    }
-                    if let Some(parsed) = executor_clone.parse_output_line(&line) {
-                        // Detect todo progress updates
-                        if let Some(progress) =
-                            crate::todo_progress::try_extract_todo_progress(&parsed)
-                        {
-                            if let Ok(progress_json) = serde_json::to_string(&progress) {
-                                let _ = db_for_todo
-                                    .update_execution_record_todo_progress(rid, &progress_json)
-                                    .await;
-                            }
-                            send_event(
-                                &tx_clone,
-                                ExecEvent::TodoProgress {
-                                    task_id: tid.clone(),
-                                    progress,
-                                },
-                            );
-                        }
-
-                        // Send stats update after tool calls or every 10 log entries
-                        // 走 LogFlusher::with_logs 在持锁状态下扫描 buffer，比旧实现里
-                        // 直接 lock logs_for_db 更明确——锁只覆盖只读扫描，不会跨越 push。
-                        let is_tool_call = parsed.log_type == "tool_use"
-                            || parsed.log_type == "tool_call"
-                            || parsed.log_type == "tool";
-                        log_count += 1;
-                        if is_tool_call || log_count.is_multiple_of(10) {
-                            let stats = log_flusher_for_stdout
-                                .with_logs(|current_logs| {
-                                    let tool_calls = current_logs
-                                        .iter()
-                                        .filter(|l| {
-                                            l.log_type == "tool_use"
-                                                || l.log_type == "tool_call"
-                                                || l.log_type == "tool"
-                                        })
-                                        .count() as u64;
-                                    let conversation_turns = current_logs
-                                        .iter()
-                                        .filter(|l| {
-                                            l.log_type == "assistant"
-                                                || l.log_type == "result"
-                                                || l.log_type == "text"
-                                        })
-                                        .count()
-                                        as u64;
-                                    let thinking_count = current_logs
-                                        .iter()
-                                        .filter(|l| l.log_type == "thinking")
-                                        .count() as u64;
-                                    crate::models::ExecutionStats {
-                                        tool_calls,
-                                        conversation_turns,
-                                        thinking_count,
-                                    }
-                                })
-                                .await;
-                            send_event(
-                                &tx_clone,
-                                ExecEvent::ExecutionStats {
-                                    task_id: tid.clone(),
-                                    stats,
-                                },
-                            );
-                        }
-
-                        // 把日志推入 flusher：内部 CAS 触发后台 flush，
-                        // 替代了原 fetch_add+swap+store(0) 的非原子组合。
-                        log_flusher_for_stdout.push(parsed.clone()).await;
-                        send_event(
-                            &tx_clone,
-                            ExecEvent::Output {
-                                task_id: tid.clone(),
-                                entry: parsed,
-                            },
-                        );
-                    }
-                }
-            }))
-        } else {
-            None
-        };
-
-        // Capture stderr
-        let stderr_tx = tx.clone();
-        let stderr_tid = task_id.clone();
-        let executor_for_stderr = executor_spawn.clone();
-        let log_flusher_for_stderr = log_flusher.clone();
-        let stderr_task = stderr_handle.map(|stderr_reader| {
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stderr_reader).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
-                    let entry = if let Some(parsed) = executor_for_stderr.parse_stderr_line(&line) {
-                        parsed
-                    } else {
-                        ParsedLogEntry::stderr(line.clone())
-                    };
-                    // 推入 LogFlusher 走与 stdout 完全相同的 CAS 路径；
-                    // 不再有各自一份的 fetch_add/swap/store(0) 复制代码。
-                    log_flusher_for_stderr.push(entry.clone()).await;
-                    send_event(
-                        &stderr_tx,
-                        ExecEvent::Output {
-                            task_id: stderr_tid.clone(),
-                            entry,
-                        },
-                    );
-                }
-            })
-        });
+        // Capture stderr —— 拆到 `spawn_stderr_reader` helper。
+        let stderr_task = spawn_stderr_reader(
+            stderr_handle,
+            executor_for_parse.clone(),
+            log_flusher.clone(),
+            tx.clone(),
+            task_id.clone(),
+        );
 
         // 定时兜底 flush：每 3 秒检查未刷新条目，有则写库。
         // 直接走 LogFlusher::run_timer：内部已包含"pending 标志、shutdown 退出"逻辑，
@@ -815,11 +1066,10 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         let _ = flush_timer.await;
 
         // 从 execution_logs 表读取已刷入的日志（finalize 已把 buffer 全量写入）
-        let flushed_logs = db_clone
+        let all_logs_snapshot = db_clone
             .get_all_execution_logs(record_id)
             .await
             .unwrap_or_default();
-        let all_logs_snapshot = flushed_logs;
         let all_logs_json = serde_json::to_string(&all_logs_snapshot).unwrap_or_else(|e| {
             tracing::error!("Failed to serialize all logs: {}", e);
             "[]".to_string()
@@ -841,28 +1091,9 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         } else {
             crate::models::ExecutionStatus::Failed.as_str()
         };
-        let mut usage = executor_spawn.get_usage(&all_logs_snapshot);
+        // wall-clock duration 覆盖交给 helper 集中处理，避免三个终态分支各自维护。
+        let usage = apply_wall_clock_duration(executor_spawn.get_usage(&all_logs_snapshot), execution_start);
         let model = executor_spawn.get_model();
-
-        // Always use wall-clock duration (start to end of execution)
-        // This ensures duration is always available, regardless of executor support
-        let wall_clock_duration_ms = execution_start.elapsed().as_millis() as u64;
-        match usage.as_mut() {
-            Some(u) => {
-                // Override executor-reported duration with actual wall-clock time
-                u.duration_ms = Some(wall_clock_duration_ms);
-            }
-            None => {
-                usage = Some(crate::models::ExecutionUsage {
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    cache_read_input_tokens: None,
-                    cache_creation_input_tokens: None,
-                    total_cost_usd: None,
-                    duration_ms: Some(wall_clock_duration_ms),
-                });
-            }
-        }
 
         let _ = db_clone
             .update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
@@ -903,39 +1134,15 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         // Fire the state-change hook for "进入已完成/失败". The executor
         // bypasses the update_todo handler, so this is the only place the
         // transition to a terminal state is observed.
-        if let Some(t) = todo.as_ref() {
-            let new_status = if success {
-                crate::models::TodoStatus::Completed
-            } else {
-                crate::models::TodoStatus::Failed
-            };
-            if let Some(ctx) = crate::hooks::models::HookContext::for_state_change(
-                todo_id,
-                t.title.clone(),
-                crate::models::TodoStatus::Running,
-                new_status,
-                t.executor.clone(),
-                t.workspace.clone(),
-                chain.clone(),
-            ) {
-                // 复用 AppState 里共享的 HookService，而不是再 Arc::new 一份。
-                //
-                // 之前这里每次执行末段都重新构造 HookService + 重新 clone 5 个
-                // ServiceContext 字段 (db/executor_registry/tx/task_manager/config)，
-                // 造成 (1) 重复的 Arc 引用计数抖动，(2) 出现两份 HookService 实例
-                // 各自管自己内部状态的不一致 (例如后续想加共享缓存会立刻踩坑)。
-                // 现在与 handlers/todo.rs 走的是同一个 Arc<HookService> 单例。
-                //
-                // fire_for_todo 内部是 tokio::spawn 子任务 + fire-and-forget，
-                // 这里只追加一行 debug 日志方便排查"是否走到了 fire 路径"。
-                tracing::debug!(
-                    "firing state-change hook for todo #{} -> {:?}",
-                    todo_id,
-                    new_status
-                );
-                hook_service_spawn.clone().fire_for_todo(todo_id, ctx);
-            }
-        }
+        // 拆到 `fire_completion_hooks`：构造 HookContext 的样板代码集中维护，
+        // todo 缺失 / HookContext 构造失败的早返回都在 helper 里处理。
+        fire_completion_hooks(
+            todo.as_ref(),
+            todo_id,
+            success,
+            chain.clone(),
+            hook_service_spawn.clone(),
+        );
 
         let entry = ParsedLogEntry::new(
             if success { "info" } else { "error" },
@@ -1372,5 +1579,105 @@ mod tests {
         assert_eq!(stats.tool_calls, 5); // overridden
         assert_eq!(stats.conversation_turns, 0);
         assert_eq!(stats.thinking_count, 0);
+    }
+
+    // ─── issue #606 拆出的 helper 单测 ────────────────────────────────
+
+    /// `resolve_executor_type` 在显式 > 存储 > 默认 三层优先级上行为正确。
+    /// 同时验证无法解析的字符串会被降级到下一优先级，而不是直接吞掉返回 None。
+    #[test]
+    fn test_resolve_executor_type_priority_chain() {
+        // 显式有效值优先于 todo 存储值。
+        assert_eq!(
+            resolve_executor_type(Some("codex"), Some("claudecode")),
+            ExecutorType::Codex
+        );
+        // 显式无效时降级到 todo 存储值。
+        assert_eq!(
+            resolve_executor_type(Some("bogus"), Some("hermes")),
+            ExecutorType::Hermes
+        );
+        // todo 存储值也无效时回到默认。
+        assert_eq!(
+            resolve_executor_type(Some("bogus"), Some("also_bogus")),
+            ExecutorType::default()
+        );
+        // 两者都缺失时回到默认。
+        assert_eq!(resolve_executor_type(None, None), ExecutorType::default());
+        // 只有 todo 存储值有效时使用它。
+        assert_eq!(
+            resolve_executor_type(None, Some("pi")),
+            ExecutorType::Pi
+        );
+        // 只有显式值有效时使用它。
+        assert_eq!(
+            resolve_executor_type(Some("kimi"), None),
+            ExecutorType::Kimi
+        );
+    }
+
+    /// `apply_worktree_flag` 只对 Claudecode / Hermes 起作用，且插在 --session-id / --resume 之前。
+    /// 其他 executor 即使 todo 开了 worktree 也不会被污染 argv。
+    #[test]
+    fn test_apply_worktree_flag_inserts_before_session_id() {
+        // Claude Code：插入到 --session-id 之前。
+        let mut args = vec!["--print".to_string(), "--session-id".to_string(), "abc".to_string()];
+        apply_worktree_flag(&mut args, ExecutorType::Claudecode, true);
+        assert_eq!(args, vec!["--print", "--worktree", "--session-id", "abc"]);
+
+        // Hermes：插入到 --resume 之前。
+        let mut args = vec!["-p".to_string(), "--resume".to_string(), "xyz".to_string()];
+        apply_worktree_flag(&mut args, ExecutorType::Hermes, true);
+        assert_eq!(args, vec!["-p", "--worktree", "--resume", "xyz"]);
+
+        // 找不到 --session-id / --resume 时 append 到末尾。
+        let mut args = vec!["-p".to_string()];
+        apply_worktree_flag(&mut args, ExecutorType::Claudecode, true);
+        assert_eq!(args, vec!["-p", "--worktree"]);
+
+        // worktree_enabled = false 时不插入。
+        let mut args = vec!["--print".to_string()];
+        apply_worktree_flag(&mut args, ExecutorType::Claudecode, false);
+        assert_eq!(args, vec!["--print"]);
+
+        // 其他 executor 即使 worktree_enabled = true 也不插入。
+        let mut args = vec!["--print".to_string()];
+        apply_worktree_flag(&mut args, ExecutorType::Codex, true);
+        assert_eq!(args, vec!["--print"]);
+        apply_worktree_flag(&mut args, ExecutorType::Pi, true);
+        assert_eq!(args, vec!["--print"]);
+    }
+
+    /// `apply_wall_clock_duration` 在 `usage=None` / `usage=Some(...)` 两种情况下都填 wall-clock。
+    /// 这是 cancel / timeout / 自然退出三处共享的核心逻辑，必须保证不漂移。
+    #[test]
+    fn test_apply_wall_clock_duration_overrides_executor_report() {
+        // Some 情况：override duration_ms，其他字段保留。
+        let usage = ExecutionUsage {
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
+            total_cost_usd: None,
+            duration_ms: Some(999),
+        };
+        let start = std::time::Instant::now();
+        // sleep 1ms 确保 wall_clock > 0（避免极端情况下 elapsed=0 被实现忽略）
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        let updated = apply_wall_clock_duration(Some(usage.clone()), start).unwrap();
+        assert_eq!(updated.input_tokens, 10);
+        assert_eq!(updated.output_tokens, 20);
+        // 关键断言：duration 一定是 wall-clock，不是 executor 报的 999。
+        let wall = updated.duration_ms.unwrap();
+        assert!(wall < 999, "wall-clock should override executor-reported 999");
+        assert!(wall >= 1);
+
+        // None 情况：构造全 0 + wall-clock 的占位 usage。
+        let start2 = std::time::Instant::now();
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        let placeholder = apply_wall_clock_duration(None, start2).unwrap();
+        assert_eq!(placeholder.input_tokens, 0);
+        assert_eq!(placeholder.output_tokens, 0);
+        assert!(placeholder.duration_ms.unwrap() >= 1);
     }
 }
