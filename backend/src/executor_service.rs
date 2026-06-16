@@ -619,7 +619,7 @@ fn build_executor_command(
     command_args: &[String],
     workspace: Option<&str>,
 ) -> tokio::process::Command {
-    // 使用 command-group 创建进程组，自动管理进程树
+    // command-group 的 group_spawn 在调用方使用，这里只构造裸 Command。
     let mut cmd = tokio::process::Command::new(executable_path);
     cmd.args(command_args)
         .stdout(std::process::Stdio::piped())
