@@ -151,6 +151,61 @@ fn extract_text_content(value: &serde_json::Value) -> String {
     }
 }
 
+// ─── SessionScanner trait + registry ──────────────────────
+//
+// 抽象目标：让 6 个 executor 共享同一组「列出会话 / 取单个会话详情」的协议，
+// 调用方通过 `&'static dyn SessionScanner` 派发而不是裸函数指针。
+//
+// 选 `&'static dyn Trait` 而不是 `Box<dyn Trait>` 是因为：
+//   1) 6 个 scanner 是编译期已知的零大小单例（`ClaudeCodeScanner` 等都是 unit struct），
+//      引用语义天然满足 'static + Send + Sync；
+//   2) `Box<dyn>` 会让每次 `scan_for_executors` 触发堆分配，收益为 0；
+//   3) `inventory` 之类的注册宏会引入新依赖，与本仓 YAGNI 原则冲突。
+//
+// `name()` 同时承担「executor 标识」和 `SessionInfo.source` 写入——
+// 6 个 scanner 的 source 字符串与 name 完全一致（"claudecode" / "codex" / ...），
+// 拆两个方法只会引入没有差异的样板。
+pub trait SessionScanner: Send + Sync {
+    /// executor 标识；用于 `get_scanner(name)` 查找,也是 SessionInfo.source 的字面值
+    fn name(&self) -> &'static str;
+    /// 扫描 home_dir 下的会话文件,追加到 `out`
+    fn scan(&self, out: &mut Vec<SessionInfo>);
+    /// 按 session_id 取单个会话的完整详情,找不到返回 None
+    fn get_detail(&self, session_id: &str) -> Option<SessionDetail>;
+}
+
+/// 全局 scanner 注册表。顺序即 `get_session_detail` 的回退顺序。
+///
+/// 用 `static` 数组保证 'static 生命周期,scanner 本身是零大小 struct
+/// (`PhantomData` 都不需要) 不会增加可执行文件体积。
+pub static SCANNERS: &[&'static dyn SessionScanner] = &[
+    &ClaudeCodeScanner,
+    &CodexScanner,
+    &HermesScanner,
+    &KimiScanner,
+    &AtomCodeScanner,
+    &PiScanner,
+];
+
+/// 在子目录中枚举 `*.jsonl` 文件,以 `(path, file_name)` 形式产出。
+///
+/// 抽出这个 helper 是因为 claude-code / hermes / pi 三个 scanner 都按
+/// "目录下的 *.jsonl" 模式枚举,各自内联会让代码重复约 3 段同款 `if
+/// path.extension() == Some("jsonl")` 守卫。kimi 的 `context.jsonl` 是
+/// 固定名,codex 的 `rollout-*.jsonl` 有额外前缀——这两个仍保留各自内联过滤。
+fn iter_jsonl_files(dir: &std::path::Path) -> Vec<(std::path::PathBuf, String)> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+            let name = entry.file_name().to_string_lossy().to_string();
+            out.push((path, name));
+        }
+    }
+    out
+}
+
 // ─── Claude Code Scanner ──────────────────────────────────
 
 fn decode_project_path(encoded: &str) -> String {
@@ -256,64 +311,60 @@ fn scan_claude_code(sessions: &mut Vec<SessionInfo>) {
             }
             let project_path = decode_project_path(&project_name);
 
-            if let Ok(session_entries) = std::fs::read_dir(project_entry.path()) {
-                for session_entry in session_entries.flatten() {
-                    let path = session_entry.path();
-                    if path.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
+            // 内层 *.jsonl 枚举用 iter_jsonl_files 收敛 read_dir + 扩展名守卫。
+            for (path, _name) in iter_jsonl_files(&project_entry.path()) {
+                let session_id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                let file_content = std::fs::read_to_string(&path).unwrap_or_default();
 
-                    let session_id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
-                    let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                    let file_content = std::fs::read_to_string(&path).unwrap_or_default();
+                let mut first_ts: Option<String> = None;
+                let mut last_ts: Option<String> = None;
+                let mut model: Option<String> = None;
+                let mut git_branch: Option<String> = None;
+                let mut version: Option<String> = None;
+                let mut executor: Option<String> = None;
+                let mut first_prompt: Option<String> = None;
+                let mut msg_count: u32 = 0;
+                let mut total_in: u64 = 0;
+                let mut total_out: u64 = 0;
 
-                    let mut first_ts: Option<String> = None;
-                    let mut last_ts: Option<String> = None;
-                    let mut model: Option<String> = None;
-                    let mut git_branch: Option<String> = None;
-                    let mut version: Option<String> = None;
-                    let mut executor: Option<String> = None;
-                    let mut first_prompt: Option<String> = None;
-                    let mut msg_count: u32 = 0;
-                    let mut total_in: u64 = 0;
-                    let mut total_out: u64 = 0;
-
-                    for line in file_content.lines() {
-                        if let Some(meta) = parse_claude_line_metadata(line) {
-                            // 显式字段访问消除位置心智模型:
-                            // ts 出现就更新 last_ts,首次见到的作为 first_ts;
-                            // model/branch/version/entry 同理取"首次见到"的策略,
-                            // 与原 9 元组解构行为保持一致。
-                            if first_ts.is_none() { first_ts = meta.timestamp.clone(); }
-                            if meta.timestamp.is_some() { last_ts = meta.timestamp.clone(); }
-                            if meta.model.is_some() { model = meta.model; }
-                            if meta.git_branch.is_some() { git_branch = meta.git_branch; }
-                            if meta.version.is_some() { version = meta.version; }
-                            if meta.entrypoint.is_some() { executor = meta.entrypoint; }
-                            if first_prompt.is_none() && meta.prompt.is_some() { first_prompt = meta.prompt; }
-                            if meta.role == "user" || meta.role == "assistant" { msg_count += 1; }
-                            if let Some(i) = meta.input_tokens { total_in += i; }
-                            if let Some(o) = meta.output_tokens { total_out += o; }
-                        }
+                for line in file_content.lines() {
+                    if let Some(meta) = parse_claude_line_metadata(line) {
+                        // 显式字段访问消除位置心智模型:
+                        // ts 出现就更新 last_ts,首次见到的作为 first_ts;
+                        // model/branch/version/entry 同理取"首次见到"的策略,
+                        // 与原 9 元组解构行为保持一致。
+                        if first_ts.is_none() { first_ts = meta.timestamp.clone(); }
+                        if meta.timestamp.is_some() { last_ts = meta.timestamp.clone(); }
+                        if meta.model.is_some() { model = meta.model; }
+                        if meta.git_branch.is_some() { git_branch = meta.git_branch; }
+                        if meta.version.is_some() { version = meta.version; }
+                        if meta.entrypoint.is_some() { executor = meta.entrypoint; }
+                        if first_prompt.is_none() && meta.prompt.is_some() { first_prompt = meta.prompt; }
+                        if meta.role == "user" || meta.role == "assistant" { msg_count += 1; }
+                        if let Some(i) = meta.input_tokens { total_in += i; }
+                        if let Some(o) = meta.output_tokens { total_out += o; }
                     }
-
-                    sessions.push(SessionInfo {
-                        session_id: session_id.clone(),
-                        source: "claudecode".to_string(),
-                        project_path: project_path.clone(),
-                        status: if active_set.contains(&session_id) { "active".into() } else { "completed".into() },
-                        executor: executor.unwrap_or_else(|| "unknown".into()),
-                        model: model.unwrap_or_else(|| "-".into()),
-                        git_branch,
-                        message_count: msg_count,
-                        total_input_tokens: total_in,
-                        total_output_tokens: total_out,
-                        first_prompt: first_prompt.map(|p| truncate_str(&p, 200)),
-                        created_at: first_ts,
-                        last_active_at: last_ts,
-                        file_size,
-                        version,
-                        subagent_count: 0,
-                    });
                 }
+
+                sessions.push(SessionInfo {
+                    session_id: session_id.clone(),
+                    source: "claudecode".to_string(),
+                    project_path: project_path.clone(),
+                    status: if active_set.contains(&session_id) { "active".into() } else { "completed".into() },
+                    executor: executor.unwrap_or_else(|| "unknown".into()),
+                    model: model.unwrap_or_else(|| "-".into()),
+                    git_branch,
+                    message_count: msg_count,
+                    total_input_tokens: total_in,
+                    total_output_tokens: total_out,
+                    first_prompt: first_prompt.map(|p| truncate_str(&p, 200)),
+                    created_at: first_ts,
+                    last_active_at: last_ts,
+                    file_size,
+                    version,
+                    subagent_count: 0,
+                });
             }
         }
     }
@@ -436,17 +487,15 @@ fn scan_hermes(sessions: &mut Vec<SessionInfo>) {
     let dir = home_dir().join(".hermes/sessions");
     if !dir.exists() { return; }
 
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
-
-            let name = entry.file_name().to_string_lossy().to_string();
-            let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-            let content = match std::fs::read_to_string(&path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
+    // hermes 直接把所有 *.jsonl 平铺在 sessions 目录,无 project 层级,
+    // 是 iter_jsonl_files 抽象最贴合的场景——`read_dir` + 扩展名守卫
+    // 全部由 helper 承担,这里只关心解析逻辑。
+    for (path, name) in iter_jsonl_files(&dir) {
+        let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
 
             let mut first_ts: Option<String> = None;
             let mut last_ts: Option<String> = None;
@@ -514,7 +563,6 @@ fn scan_hermes(sessions: &mut Vec<SessionInfo>) {
                 version: None,
                 subagent_count: 0,
             });
-        }
     }
 }
 
@@ -841,14 +889,8 @@ fn scan_pi(sessions: &mut Vec<SessionInfo>) {
             })
             .unwrap_or(u64::MAX);
 
-        let files = match std::fs::read_dir(&path) {
-            Ok(it) => it,
-            Err(_) => continue,
-        };
-        for file in files.flatten() {
-            let fpath = file.path();
-            if fpath.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
-
+        // 项目目录内 *.jsonl 枚举交由 iter_jsonl_files 收敛 read_dir + 扩展名守卫。
+        for (fpath, _name) in iter_jsonl_files(&path) {
             // 文件名格式: <iso-ts>_<uuid>.jsonl
             // 例如: 2026-06-11T01-44-54-108Z_019eb45a-8e5c-7cf4-95f9-787b5a83b0fa.jsonl
             let stem = match fpath.file_stem().and_then(|s| s.to_str()) {
@@ -1157,81 +1199,67 @@ mod claude_line_meta_tests {
 
 // ─── Unified scan ─────────────────────────────────────────
 
-/// 占位 SessionScanner trait (issue #617)。
+/// 6 个 scanner 的零大小包装 struct —— 每个实例仅承载类型信息,
+/// 真正的 I/O 与解析逻辑仍由下文 `scan_X` / `get_X_detail` 私有函数承担。
 ///
-/// 设计意图:把 `get_scanner` 的函数指针派发改成 trait object 派发,
-/// 解开 `fn(&mut Vec<SessionInfo>)` 对签名的过度约束 —— 原来的指针
-/// 派发只允许所有 scanner 签名一致地接收 &mut Vec,无法做依赖注入
-/// (如持有 config / home_dir 引用),也不方便做单元测试替身。
-///
-/// 完整 trait 抽取(每个 scanner 独立 struct + 持有配置/home_dir 引用)
-/// 留待 #607;本 issue 只做"占位 trait + 静态分发表"。
-/// 后续 #607 落地时,只需把下面 `FnScanner` 的字段从 fn pointer 换成
-/// 真正的 struct impl,call site 一行都不用改。
-///
-/// 三个方法的语义约定:
-/// - `name`  : executor 名(对应 `ExecutorConfig.name`),派发 key
-/// - `scan`  : 把当前 scanner 能发现的全部 session 追加到 `out`,
-///             不清空 `out` —— 调用方在循环外只 `Vec::new()` 一次,
-///             避免每次 executor 都重建 vec
-/// - `detail`: 取单个 session 详情。占位实现已桥接到现有
-///             `get_claude_detail` / `get_codex_detail` 等函数,
-///             #607 时再考虑是否要按 scanner 拆 helper
-pub trait SessionScanner: Send + Sync {
-    fn name(&self) -> &'static str;
-    fn scan(&self, out: &mut Vec<SessionInfo>);
-    // `detail` 当前由 `FnScanner::detail_fn` 通过 trait 派发;`scan`
-    // 是 `scan_for_executors` 唯一入口,但 `detail` 在本 issue 内没有
-    // call site —— 占位 trait 已经把签名稳定下来,#607 会接入真实调用方。
-    #[allow(dead_code)]
-    fn detail(&self, id: &str) -> Option<SessionDetail>;
+/// 用 unit struct + `static SCANNERS` 而不是 `Box<dyn>` 是为了避免堆分配：
+/// 调用频率由 HTTP handler 决定,`spawn_blocking` 内每次 list_sessions
+/// 都会重建 dyn 引用,引用语义直接消化在 const 段。
+pub struct ClaudeCodeScanner;
+pub struct CodexScanner;
+pub struct HermesScanner;
+pub struct KimiScanner;
+pub struct AtomCodeScanner;
+pub struct PiScanner;
+
+impl SessionScanner for ClaudeCodeScanner {
+    fn name(&self) -> &'static str { "claudecode" }
+    fn scan(&self, out: &mut Vec<SessionInfo>) { scan_claude_code(out); }
+    fn get_detail(&self, session_id: &str) -> Option<SessionDetail> { get_claude_detail(session_id) }
+}
+impl SessionScanner for CodexScanner {
+    fn name(&self) -> &'static str { "codex" }
+    fn scan(&self, out: &mut Vec<SessionInfo>) { scan_codex(out); }
+    fn get_detail(&self, session_id: &str) -> Option<SessionDetail> { get_codex_detail(session_id) }
+}
+impl SessionScanner for HermesScanner {
+    fn name(&self) -> &'static str { "hermes" }
+    fn scan(&self, out: &mut Vec<SessionInfo>) { scan_hermes(out); }
+    fn get_detail(&self, session_id: &str) -> Option<SessionDetail> { get_hermes_detail(session_id) }
+}
+impl SessionScanner for KimiScanner {
+    fn name(&self) -> &'static str { "kimi" }
+    fn scan(&self, out: &mut Vec<SessionInfo>) { scan_kimi(out); }
+    fn get_detail(&self, session_id: &str) -> Option<SessionDetail> { get_kimi_detail(session_id) }
+}
+impl SessionScanner for AtomCodeScanner {
+    fn name(&self) -> &'static str { "atomcode" }
+    fn scan(&self, out: &mut Vec<SessionInfo>) { scan_atomcode(out); }
+    fn get_detail(&self, session_id: &str) -> Option<SessionDetail> { get_atomcode_detail(session_id) }
+}
+impl SessionScanner for PiScanner {
+    fn name(&self) -> &'static str { "pi" }
+    fn scan(&self, out: &mut Vec<SessionInfo>) { scan_pi(out); }
+    fn get_detail(&self, session_id: &str) -> Option<SessionDetail> { get_pi_detail(session_id) }
 }
 
-/// 内部占位:把现有的 `fn(&mut Vec<SessionInfo>)` 函数指针包成 `SessionScanner`。
+/// 把 `home_dir` 转成完整路径,并沿 `scan_for_executors` 旧行为——
+/// 若 `session_dir` 配了 `~` 前缀,做一次 `~` 展开,然后判断目录是否存在。
 ///
-/// `FnScanner` 只在 #607 落地前存在;之后会变成"每个 scanner 一个独立
-/// struct 持有自己的状态/配置,各自实现 `SessionScanner`"。
-/// `static SCANNERS` 数组的元素类型从 `&FnScanner` 变成
-/// `&SomeRealScanner`,外部调用方拿到的一直是 `&'static dyn SessionScanner`,
-/// 所以 trait 抽取前后的 call site 完全一致。
-#[allow(dead_code)] // `detail_fn` 在 #607 接入 call site 之前先静默,见 trait 内说明。
-struct FnScanner {
-    name: &'static str,
-    // 函数指针:在 #607 之前充当"伪依赖注入",之后会替换为
-    // 真正的 `scan` 方法体(逻辑直接写在新 struct impl 里)。
-    scan_fn: fn(&mut Vec<SessionInfo>),
-    detail_fn: fn(&str) -> Option<SessionDetail>,
+/// 提到独立函数以满足 ≤30 行函数体约束,逻辑上 1:1 对应旧版 `if !exists` 分支。
+fn exec_session_dir_exists(exec: &crate::models::ExecutorConfig) -> bool {
+    if exec.session_dir.is_empty() {
+        // 空 session_dir 视为"用 home_dir 下的默认路径"——scanner 内部自行定位,
+        // 此处不阻断,沿用旧行为。
+        return true;
+    }
+    let expanded = exec.session_dir.replace('~', &dirs::home_dir().unwrap_or_default().to_string_lossy());
+    std::path::Path::new(&expanded).exists()
 }
 
-impl SessionScanner for FnScanner {
-    fn name(&self) -> &'static str { self.name }
-    fn scan(&self, out: &mut Vec<SessionInfo>) { (self.scan_fn)(out) }
-    fn detail(&self, id: &str) -> Option<SessionDetail> { (self.detail_fn)(id) }
-}
-
-/// 6 个 scanner 的静态分发表。
-///
-/// 用 const slice 一次性列全,而不是 `match`,是为了消除
-/// "加新 executor 必须改 match"的 Open/Closed 违反:加一行 push 即可。
-///
-/// 任何不在表内的 executor 名(包括 `codebuddy` / `opencode` /
-/// `mobilecoder` / `mimo` 这些"暂未发现 session 存储"的项目),
-/// `get_scanner` 会直接返 None,行为与重构前的 match 分支完全一致。
-static SCANNERS: &[&'static dyn SessionScanner] = &[
-    &FnScanner { name: "claudecode", scan_fn: scan_claude_code, detail_fn: get_claude_detail },
-    &FnScanner { name: "codex",      scan_fn: scan_codex,      detail_fn: get_codex_detail },
-    &FnScanner { name: "hermes",     scan_fn: scan_hermes,     detail_fn: get_hermes_detail },
-    &FnScanner { name: "kimi",       scan_fn: scan_kimi,       detail_fn: get_kimi_detail },
-    &FnScanner { name: "atomcode",   scan_fn: scan_atomcode,   detail_fn: get_atomcode_detail },
-    &FnScanner { name: "pi",         scan_fn: scan_pi,         detail_fn: get_pi_detail },
-];
-
-/// Map executor name to its scanner.
-///
-/// 派发语义:
-/// - 表内有 → 返回对应 `&'static dyn SessionScanner`
-/// - 表内无(包含未支持的 executor) → 返回 None,call site 用 `if let Some`
-///   兜底跳过,与重构前一致
+/// 在 SCANNERS 中按 name 查找。返回 trait object 引用,生命周期 'static
+/// 由注册表保证;`exec.name` 不在注册表(如 codebuddy / opencode 等未实现
+/// session 存储的 executor)时返回 None,沿用旧 `get_scanner` 的 None 语义。
 fn get_scanner(name: &str) -> Option<&'static dyn SessionScanner> {
     SCANNERS.iter().copied().find(|s| s.name() == name)
 }
@@ -1240,18 +1268,12 @@ fn scan_for_executors(enabled_executors: &[crate::models::ExecutorConfig]) -> Ve
     let mut sessions = Vec::new();
 
     for exec in enabled_executors {
-        // Check if session_dir is configured and exists
-        if !exec.session_dir.is_empty() {
-            let expanded = exec.session_dir.replace('~', &dirs::home_dir().unwrap_or_default().to_string_lossy());
-            if !std::path::Path::new(&expanded).exists() {
-                continue;
-            }
+        // session_dir 显式配置但目录不存在 → 跳过该 executor,沿用旧逻辑
+        if !exec_session_dir_exists(exec) {
+            continue;
         }
 
         if let Some(scanner) = get_scanner(&exec.name) {
-            // 走 trait object 调用:取代直接调 `fn(&mut Vec)` 指针。
-            // 这样 #607 把 FnScanner 替换为持有 home_dir / config 的
-            // 真正 struct impl 时,这里一行不用改。
             scanner.scan(&mut sessions);
         }
     }
@@ -1367,21 +1389,14 @@ pub async fn get_session_detail(
     State(_state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<ApiResponse<SessionDetail>, AppError> {
+    // 通过 SCANNERS 注册表顺序遍历,与重构前 `if let Some(d) = get_X_detail(...)`
+    // 的回退顺序一致——遇到第一个命中的 scanner 即返回,未命中走 NotFound。
     let detail = tokio::task::spawn_blocking(move || {
-        // Try each source to find the session
-
-        // Claude Code
-        if let Some(d) = get_claude_detail(&session_id) { return Some(d); }
-        // Codex
-        if let Some(d) = get_codex_detail(&session_id) { return Some(d); }
-        // Hermes
-        if let Some(d) = get_hermes_detail(&session_id) { return Some(d); }
-        // Kimi
-        if let Some(d) = get_kimi_detail(&session_id) { return Some(d); }
-        // AtomCode
-        if let Some(d) = get_atomcode_detail(&session_id) { return Some(d); }
-        // Pi
-        if let Some(d) = get_pi_detail(&session_id) { return Some(d); }
+        for scanner in SCANNERS {
+            if let Some(d) = scanner.get_detail(&session_id) {
+                return Some(d);
+            }
+        }
         None
     })
     .await
@@ -2171,3 +2186,116 @@ fn get_pi_detail(session_id: &str) -> Option<SessionDetail> {
 }
 
 
+
+// ─── SessionScanner trait + registry tests ─────────────────
+//
+// 覆盖 6 个 scanner impl 的 name() 派发 + 注册表查找 + 异名容错:
+//  - name() 必须与原 scan_X / get_X_detail 内部 hardcode 的 source 字符串一致,
+//    否则 SessionInfo.source 会被改写,违反"不改 SessionInfo 字段语义"约束。
+//  - SCANNERS 长度必须是 6,保证不漏注册 scanner。
+//  - get_scanner("unknown") 返回 None,沿用旧 `match _ => None` 行为。
+//  - iter_jsonl_files 在空目录 / 不存在目录 / 混合扩展名 下的边界。
+#[cfg(test)]
+mod session_scanner_tests {
+    use super::*;
+
+    /// 锁定 6 个 scanner 的 name() 输出,与原 match 分支的 source 字符串一一对应。
+    /// 任一字符串漂移都会触发其它 session 测试的 SessionInfo.source 断言失败。
+    #[test]
+    fn scanner_name_matches_existing_source_strings() {
+        assert_eq!(ClaudeCodeScanner.name(), "claudecode");
+        assert_eq!(CodexScanner.name(), "codex");
+        assert_eq!(HermesScanner.name(), "hermes");
+        assert_eq!(KimiScanner.name(), "kimi");
+        assert_eq!(AtomCodeScanner.name(), "atomcode");
+        assert_eq!(PiScanner.name(), "pi");
+    }
+
+    /// SCANNERS 注册表长度 = 6,与原 match 分支的 Some(...) 数量一致。
+    /// 若日后新增 scanner,这里需要同步增加——这正是「单一注册表」想暴露的回归点。
+    #[test]
+    fn scanners_registry_has_six_entries() {
+        assert_eq!(SCANNERS.len(), 6);
+    }
+
+    /// get_scanner(name) 对 6 个合法 name 都返回 Some,对未知 name 返 None。
+    /// 这条同时验证 SCANNERS 顺序无关性——所有合法 name 都能命中,无所谓注册顺序。
+    #[test]
+    fn get_scanner_dispatches_all_six_names() {
+        for name in ["claudecode", "codex", "hermes", "kimi", "atomcode", "pi"] {
+            assert!(get_scanner(name).is_some(), "scanner {name} should be registered");
+            assert_eq!(get_scanner(name).unwrap().name(), name);
+        }
+        // 旧 match 中显式 None 的几个 executor 继续走 None 分支
+        for name in ["codebuddy", "opencode", "mobilecoder", "mimo", "unknown", ""] {
+            assert!(get_scanner(name).is_none(), "scanner {name} should NOT be registered");
+        }
+    }
+
+    /// 验证 `get_scanner` 返回的 trait object 是 'static 引用,与 SCANNERS 同生命周期。
+    /// 这条主要防止有人误把 SCANNERS 改成 Vec/Box 后导致签名破坏。
+    #[test]
+    fn get_scanner_returns_static_dyn() {
+        let s: &'static dyn SessionScanner = get_scanner("claudecode").expect("registered");
+        // 触发 vtable 调用,确认 dyn dispatch 路径通
+        let _ = s.name();
+    }
+
+    /// iter_jsonl_files 在目录不存在 / 目录存在但为空 / 混合扩展名 三种输入下的行为。
+    /// 防御"目录不可读时 panic"——返回空 Vec 是最稳的退化形式。
+    #[test]
+    fn iter_jsonl_files_handles_missing_or_empty_dir() {
+        let missing = std::path::Path::new("/tmp/__ntd_no_such_dir_iter_jsonl_tests__");
+        assert!(iter_jsonl_files(missing).is_empty());
+
+        let tmp = std::env::temp_dir().join("__ntd_iter_jsonl_empty__");
+        let _ = std::fs::create_dir_all(&tmp);
+        assert!(iter_jsonl_files(&tmp).is_empty());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// iter_jsonl_files 过滤非 .jsonl 文件,只产出 .jsonl 条目。
+    #[test]
+    fn iter_jsonl_files_filters_by_extension() {
+        let tmp = std::env::temp_dir().join("__ntd_iter_jsonl_filter__");
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::write(tmp.join("a.jsonl"), "line\n");
+        let _ = std::fs::write(tmp.join("b.json"), "{}");
+        let _ = std::fs::write(tmp.join("c.txt"), "x");
+        let _ = std::fs::write(tmp.join("nested.jsonl"), ""); // 同名扩展名应被收录
+
+        let got = iter_jsonl_files(&tmp);
+        let names: Vec<String> = got.into_iter().map(|(_, n)| n).collect();
+        // 只列顶层;同目录的 a.jsonl / nested.jsonl 都在
+        assert!(names.contains(&"a.jsonl".to_string()));
+        assert!(names.contains(&"nested.jsonl".to_string()));
+        assert!(!names.iter().any(|n| n == "b.json" || n == "c.txt"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// exec_session_dir_exists 必须与旧 `if !exec.session_dir.is_empty() { 展开 ~ + exists }` 行为一致:
+    ///   - 空 session_dir → true (走 scanner 内部 home_dir 定位)
+    ///   - 配 ~ 且目录不存在 → false
+    ///   - 配 ~ 且目录存在 → true
+    #[test]
+    fn exec_session_dir_exists_behavior() {
+        let mk = |d: &str| crate::models::ExecutorConfig {
+            id: 0,
+            name: "x".into(),
+            path: String::new(),
+            enabled: true,
+            display_name: "x".into(),
+            session_dir: d.into(),
+            created_at: None,
+            updated_at: None,
+        };
+        assert!(exec_session_dir_exists(&mk("")), "empty session_dir should not block");
+        // 配一个几乎肯定不存在的路径
+        let p = mk("/__ntd_no_such_path_for_session_dir_test__");
+        assert!(!exec_session_dir_exists(&p));
+        // 配一个真实存在的临时目录
+        let tmp = std::env::temp_dir().to_string_lossy().to_string();
+        assert!(exec_session_dir_exists(&mk(&tmp)));
+    }
+}
