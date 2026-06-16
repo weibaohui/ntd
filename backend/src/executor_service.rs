@@ -564,6 +564,447 @@ fn fire_completion_hooks(
     }
 }
 
+// ============================================================================
+//  spawn 闭包阶段的 helper（issue #635 拆分）
+//
+//  `run_todo_execution` 内嵌的 `tokio::spawn` 闭包原本约 400 行，
+//  按职责拆成以下 7 个 helper：
+//    - emit_started_event            // Started 事件 + 首条 info 日志
+//    - build_executor_command        // 构造 tokio::process::Command
+//    - handle_spawn_failure          // group_spawn 失败时的清理 + 事件
+//    - save_child_pid_and_close_stdin // 关 stdin + 写 PID
+//    - setup_log_capture_pipeline    // flusher + stdout/stderr reader + flush timer
+//    - drain_readers_and_flush       // cancel/timeout 通用清理（drain readers + finalize flusher）
+//    - handle_cancellation_branch    // cancel 分支专属：写 DB + 事件
+//    - handle_timeout_branch         // timeout 分支专属：写 DB + 事件
+//    - persist_completion_record     // 正常完成：stats + usage + DB 更新
+//    - emit_completion_event_and_cleanup // 末段 Output/Finished 事件 + remove task
+//
+//  每个 helper ≤ 30 行、嵌套 ≤ 2 层；spawn 闭包本体退化为"拼阶段"。
+// ============================================================================
+
+/// 发送 Started 事件 + 首条 info 日志。
+///
+/// 这两条信息是前端"执行已开始"的视觉信号：Started 用来切 tab / 滚动日志区，
+/// info 日志用来让用户的"日志空"状态立刻出现一行，避免疑惑是否卡住。
+fn emit_started_event(
+    tx: &broadcast::Sender<ExecEvent>,
+    task_id: &str,
+    todo_id: i64,
+    todo_title: &str,
+    executor: &dyn crate::adapters::CodeExecutor,
+) {
+    send_event(
+        tx,
+        ExecEvent::Started {
+            task_id: task_id.to_string(),
+            todo_id,
+            todo_title: todo_title.to_string(),
+            executor: executor.executor_type().to_string(),
+        },
+    );
+    let entry = ParsedLogEntry::info(format!("Starting {}", executor.executor_type()));
+    send_event(tx, ExecEvent::Output {
+        task_id: task_id.to_string(),
+        entry,
+    });
+}
+
+/// 构造 executor 子进程命令，统一设置 stdout/stderr/stdin 为 piped。
+///
+/// workspace 设置为 `cmd.current_dir`，但仅在 todo 指定 workspace 时生效——
+/// 没设 workspace 的 todo 让 executor 用 daemon 当前目录即可。
+fn build_executor_command(
+    executable_path: &str,
+    command_args: &[String],
+    workspace: Option<&str>,
+) -> tokio::process::Command {
+    // 使用 command-group 创建进程组，自动管理进程树
+    let mut cmd = tokio::process::Command::new(executable_path);
+    cmd.args(command_args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::piped());
+    if let Some(ws) = workspace {
+        cmd.current_dir(ws);
+    }
+    cmd
+}
+
+/// `group_spawn` 失败时的清理：发 Output/Finished 事件 + finish_todo_execution + remove task。
+///
+/// 返回 bool 仅用于"是否真的需要继续后续逻辑"，调用方一般是直接 return。
+async fn handle_spawn_failure(
+    db: &Database,
+    tx: &broadcast::Sender<ExecEvent>,
+    task_manager: &TaskManager,
+    task_id: &str,
+    todo_id: i64,
+    todo_title: &str,
+    executor: &dyn crate::adapters::CodeExecutor,
+    feishu_bot_id: Option<i64>,
+    feishu_receive_id: Option<String>,
+    error: std::io::Error,
+) {
+    let error_msg = format!("Failed to spawn executor: {}", error);
+    let entry = ParsedLogEntry::error(error_msg.clone());
+    send_event(tx, ExecEvent::Output { task_id: task_id.to_string(), entry });
+    send_event(tx, ExecEvent::Finished {
+        task_id: task_id.to_string(),
+        todo_id,
+        todo_title: todo_title.to_string(),
+        executor: executor.executor_type().to_string(),
+        success: false,
+        result: Some(error_msg),
+        feishu_bot_id,
+        feishu_receive_id,
+    });
+    let _ = db.finish_todo_execution(todo_id, false).await;
+    task_manager.remove(task_id).await;
+}
+
+/// 关掉子进程 stdin 并把进程组 leader PID 写库。
+///
+/// 关 stdin 是必须的：不少 executor 在执行完后会再读一次 stdin，没有 EOF 就会 hang。
+/// PID 写库是为了后续 cancel / status 查询能定位进程；child.id() == None 表示
+/// 进程已退出（race），跳过写库即可。
+async fn save_child_pid_and_close_stdin(
+    child: &mut command_group::AsyncGroupChild,
+    db: &Database,
+    record_id: i64,
+) {
+    // Close stdin immediately so child processes get EOF when they try to read it.
+    // Without this, processes that read stdin after finishing work will hang forever.
+    drop(child.inner().stdin.take());
+    let child_id = child.id().unwrap_or(0);
+    if child_id > 0 {
+        let _ = db
+            .update_execution_record_pid(record_id, Some(child_id as i32))
+            .await;
+    }
+}
+
+/// LogFlusher 配置 + stdout/stderr reader + flush timer 一起初始化。
+///
+/// 拆出来是因为这三件事之间没有逻辑耦合，但都需要从 child 拿 stdout/stderr handle；
+/// 把它们打包成一个函数能减少 spawn 闭包里的"先建 flusher → spawn stdout → spawn stderr →
+/// spawn timer"线性铺陈，并显式表达"`LogFlusher::for_record` 才是单实例"的语义。
+///
+/// `SO`/`SE` 两个泛型分别对应 stdout/stderr handle 的真实类型（tokio 的 ChildStdout
+/// 和 ChildStderr 是两个不同类型，没法合并成一个 `R`），其余参数都是共享引用，
+/// 由调用方在闭包里 clone 进来。
+async fn setup_log_capture_pipeline<SO, SE>(
+    stdout_handle: Option<SO>,
+    stderr_handle: Option<SE>,
+    executor: Arc<dyn crate::adapters::CodeExecutor>,
+    db: Arc<Database>,
+    tx: broadcast::Sender<ExecEvent>,
+    task_id: String,
+    record_id: i64,
+) -> (
+    Arc<LogFlusher>,
+    Option<JoinHandle<()>>,
+    Option<JoinHandle<()>>,
+    JoinHandle<()>,
+)
+where
+    SO: AsyncRead + Unpin + Send + 'static,
+    SE: AsyncRead + Unpin + Send + 'static,
+{
+    // 统一管理 stdout/stderr 推入的日志 buffer 与后台 flush。
+    // 详见 `crate::log_flusher` 文档（issue #496）：用 CAS + pending 标志替代旧的
+    // fetch_add+swap+store(0) 三步非原子组合；用 oneshot-style 标记驱动 shutdown。
+    let log_flusher = Arc::new(crate::log_flusher::LogFlusher::new(
+        Box::new(crate::log_flusher::DatabaseLogSink::new(db.clone())),
+        crate::log_flusher::LogFlusherConfig::for_record(record_id),
+    ));
+    let stdout_task = spawn_stdout_reader(
+        stdout_handle,
+        executor.clone(),
+        db.clone(),
+        log_flusher.clone(),
+        tx.clone(),
+        task_id.clone(),
+        record_id,
+    );
+    let stderr_task = spawn_stderr_reader(
+        stderr_handle,
+        executor.clone(),
+        log_flusher.clone(),
+        tx.clone(),
+        task_id.clone(),
+    );
+    // 定时兜底 flush：每 3 秒检查未刷新条目，有则写库。
+    let flush_timer = {
+        let log_flusher_for_timer = log_flusher.clone();
+        tokio::spawn(async move { log_flusher_for_timer.run_timer().await })
+    };
+    (log_flusher, stdout_task, stderr_task, flush_timer)
+}
+
+/// cancel / timeout 分支共享的清理：杀进程 → 等子进程退出 → drain readers → finalize flusher → 等 timer。
+///
+/// `child.inner().wait()` 与 `child.wait()` 等价；这里保留 `child.wait()` 是为了
+/// 复用 Rust 的 Drop 语义（命令组在 child drop 时清理进程组）。
+///
+/// `log_flusher` 接 `Arc<LogFlusher>` 而不是 `&LogFlusher`，因为 `finalize` 的签名
+/// 是 `async fn finalize(self: Arc<Self>)`，需要拿所有权才能走完 drain 流程。
+async fn drain_readers_and_flush(
+    child: &mut command_group::AsyncGroupChild,
+    stdout_task: Option<JoinHandle<()>>,
+    stderr_task: Option<JoinHandle<()>>,
+    log_flusher: Arc<LogFlusher>,
+    flush_timer: JoinHandle<()>,
+) {
+    // 收割僵尸进程
+    let _status = child.wait().await;
+    if let Some(handle) = stdout_task {
+        let _ = handle.await;
+    }
+    if let Some(handle) = stderr_task {
+        let _ = handle.await;
+    }
+    // LogFlusher::finalize 一并处理:
+    //   1) 标记 shutdown 让 timer 退出
+    //   2) 等所有 in-flight flush task 完成
+    //   3) drain buffer 残余一次性 append
+    //   4) 等 timer + 所有 spawned flush task 退出
+    log_flusher.finalize().await;
+    let _ = flush_timer.await;
+}
+
+/// 读全部 execution_logs 序列化为 JSON 字符串。
+///
+/// 失败一律回落到 `"[]"`，避免外部 IO 错误把 cancel / timeout 流程带崩。
+async fn fetch_remaining_logs_json(db: &Database, record_id: i64) -> String {
+    db.get_all_execution_logs(record_id)
+        .await
+        .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".to_string()))
+        .unwrap_or_else(|_| "[]".to_string())
+}
+
+/// cancel 分支末段：写 DB（cancelled/failed + 空 result） + 发 Output/Finished 事件 + remove task。
+///
+/// 抽出来让 cancel 分支的 select! 臂保持 ≤ 30 行：杀进程 + drain 已经抽到
+/// `drain_readers_and_flush`，剩下的就是"DB + 事件 + cleanup"。
+async fn handle_cancellation_branch(
+    db: &Database,
+    tx: &broadcast::Sender<ExecEvent>,
+    task_manager: &TaskManager,
+    task_id: &str,
+    todo_id: i64,
+    todo_title: &str,
+    executor: &dyn crate::adapters::CodeExecutor,
+    record_id: i64,
+    feishu_bot_id: Option<i64>,
+    feishu_receive_id: Option<String>,
+) {
+    let _ = db.update_todo_status(todo_id, crate::models::TodoStatus::Cancelled).await;
+    let _ = db.update_todo_task_id(todo_id, None).await;
+    let remaining_logs = fetch_remaining_logs_json(db, record_id).await;
+    let _ = db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+        id: record_id,
+        status: crate::models::ExecutionStatus::Failed.as_str(),
+        remaining_logs: &remaining_logs,
+        result: "任务已被手动停止",
+        usage: None,
+        model: None,
+        review_meta: None,
+    }).await;
+    let entry = ParsedLogEntry::error("Execution cancelled by user");
+    send_event(tx, ExecEvent::Output { task_id: task_id.to_string(), entry });
+    send_event(tx, ExecEvent::Finished {
+        task_id: task_id.to_string(),
+        todo_id,
+        todo_title: todo_title.to_string(),
+        executor: executor.executor_type().to_string(),
+        success: false,
+        result: Some("Task was cancelled by user".to_string()),
+        feishu_bot_id,
+        feishu_receive_id,
+    });
+    task_manager.remove(task_id).await;
+}
+
+/// timeout 分支末段：写 DB（failed + 包含超时常量文案） + 发 Output/Finished 事件 + remove task。
+async fn handle_timeout_branch(
+    db: &Database,
+    tx: &broadcast::Sender<ExecEvent>,
+    task_manager: &TaskManager,
+    task_id: &str,
+    todo_id: i64,
+    todo_title: &str,
+    executor: &dyn crate::adapters::CodeExecutor,
+    record_id: i64,
+    execution_timeout_secs: u64,
+    timeout_str: String,
+    feishu_bot_id: Option<i64>,
+    feishu_receive_id: Option<String>,
+) {
+    tracing::warn!(
+        "Execution timeout, terminating process: timeout={}s, todo_id={}, task_id={}",
+        execution_timeout_secs, todo_id, task_id
+    );
+    let remaining_logs = fetch_remaining_logs_json(db, record_id).await;
+    let _ = db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+        id: record_id,
+        status: crate::models::ExecutionStatus::Failed.as_str(),
+        remaining_logs: &remaining_logs,
+        result: "Execution timeout",
+        usage: None,
+        model: None,
+        review_meta: None,
+    }).await;
+    let entry = ParsedLogEntry::error("Execution timeout, process terminated by system");
+    send_event(tx, ExecEvent::Output { task_id: task_id.to_string(), entry });
+    send_event(tx, ExecEvent::Finished {
+        task_id: task_id.to_string(),
+        todo_id,
+        todo_title: todo_title.to_string(),
+        executor: executor.executor_type().to_string(),
+        success: false,
+        result: Some(format!("Execution timeout, exceeded {}", timeout_str)),
+        feishu_bot_id,
+        feishu_receive_id,
+    });
+    task_manager.remove(task_id).await;
+}
+
+/// 正常完成分支：把全量日志、stats、usage、model 写库。
+///
+/// `executor_spawn` 是 executor 的共享引用（stdout reader 里持有的是同一份），
+/// 这里再调用 `get_final_result` / `get_usage` / `get_model` 不会产生竞争——
+/// 这三个方法只读内部 state，且只在 finalization 时调用一次。
+async fn persist_completion_record(
+    db: &Database,
+    executor: &dyn crate::adapters::CodeExecutor,
+    record_id: i64,
+    all_logs: &[crate::models::ParsedLogEntry],
+    all_logs_json: &str,
+    success: bool,
+    execution_start: std::time::Instant,
+) {
+    let result_str = executor.get_final_result(all_logs).unwrap_or_default();
+    let stats = extract_execution_stats(all_logs, executor.get_tool_calls_count());
+    if let Ok(stats_json) = serde_json::to_string(&stats) {
+        let _ = db
+            .update_execution_record_stats(record_id, &stats_json)
+            .await;
+    }
+    let final_status = if success {
+        crate::models::ExecutionStatus::Success.as_str()
+    } else {
+        crate::models::ExecutionStatus::Failed.as_str()
+    };
+    // wall-clock duration 覆盖交给 helper 集中处理，避免三个终态分支各自维护。
+    let usage = apply_wall_clock_duration(executor.get_usage(all_logs), execution_start);
+    let model = executor.get_model();
+    let _ = db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+        id: record_id,
+        status: final_status,
+        remaining_logs: all_logs_json,
+        result: &result_str,
+        usage: usage.as_ref(),
+        model: model.as_deref(),
+        review_meta: None,
+    }).await;
+}
+
+/// executor 后置 todo_progress 钩子：把 executor 内部 state 推出的进度写库 + 发事件。
+///
+/// 部分 executor（如 hermes）不在 stdout 中暴露 tool call，但内部已经累积了
+/// todo_progress —— 这里给它们一个补 push 的口子。
+async fn emit_post_execution_todo_progress(
+    db: &Database,
+    tx: &broadcast::Sender<ExecEvent>,
+    executor: &dyn crate::adapters::CodeExecutor,
+    task_id: &str,
+    record_id: i64,
+) {
+    if let Some(progress) = executor.post_execution_todo_progress() {
+        if let Ok(progress_json) = serde_json::to_string(&progress) {
+            let _ = db
+                .update_execution_record_todo_progress(record_id, &progress_json)
+                .await;
+            send_event(tx, ExecEvent::TodoProgress {
+                task_id: task_id.to_string(),
+                progress,
+            });
+        }
+    }
+}
+
+/// 正常完成末段：auto-review + finish_todo_execution + completion hook + 末段事件 + remove task。
+///
+/// auto-review 仅在 `trigger_type != "auto_review"` 时启动（防止评审实例自身再触发评审）；
+/// 钩子 fire 在 finish 之后调用，符合"rating gate 要求评审完成后再触发"的语义。
+async fn finalize_normal_completion(
+    db: Arc<Database>,
+    executor_registry: Arc<crate::adapters::ExecutorRegistry>,
+    tx: broadcast::Sender<ExecEvent>,
+    task_manager: Arc<TaskManager>,
+    config: Arc<std::sync::RwLock<crate::config::Config>>,
+    hook_service: Arc<HookService>,
+    executor: Arc<dyn crate::adapters::CodeExecutor>,
+    task_id: String,
+    todo_id: i64,
+    todo_title: String,
+    todo: Option<Todo>,
+    chain: Vec<i64>,
+    record_id: i64,
+    success: bool,
+    exit_code: i32,
+    result_str: String,
+    trigger_type: String,
+    feishu_bot_id: Option<i64>,
+    feishu_receive_id: Option<String>,
+) {
+    // ===== 自动评审 (auto-review) =====
+    // 仅在以下条件同时满足时启动:
+    //   - trigger_type != "auto_review" 避免评审实例本身反向触发评审
+    //   - 正常执行 (success/failed), 不是被中断
+    //
+    // 同步语义: Hook fire 在这之后才进行, rating gate 要求评审完成后再触发,
+    // 所以评审要同步跑完. run_auto_review 内部 std::thread::spawn + block_on,
+    // 与本 spawned task 完全隔离, 不存在 Send 问题.
+    if trigger_type != "auto_review" {
+        run_auto_review(
+            db.clone(),
+            executor_registry.clone(),
+            tx.clone(),
+            task_manager.clone(),
+            config.clone(),
+            hook_service.clone(),
+            todo_id,
+            record_id,
+        )
+        .await;
+    }
+    let _ = db.finish_todo_execution(todo_id, success).await;
+    // 拆到 `fire_completion_hooks`：构造 HookContext 的样板代码集中维护，
+    // todo 缺失 / HookContext 构造失败的早返回都在 helper 里处理。
+    fire_completion_hooks(todo.as_ref(), todo_id, success, chain, hook_service.clone());
+    let entry = ParsedLogEntry::new(
+        if success { "info" } else { "error" },
+        format!(
+            "Executor finished with exit_code: {}, result: {}",
+            exit_code, result_str
+        ),
+    );
+    send_event(&tx, ExecEvent::Output { task_id: task_id.clone(), entry });
+    send_event(&tx, ExecEvent::Finished {
+        task_id: task_id.clone(),
+        todo_id,
+        todo_title: todo_title.clone(),
+        executor: executor.executor_type().to_string(),
+        success,
+        result: Some(result_str),
+        feishu_bot_id,
+        feishu_receive_id,
+    });
+    task_manager.remove(&task_id).await;
+}
+
 /// Run a todo execution. Priority: explicit executor > todo stored executor > default.
 ///
 /// 整条执行路径放进一个 `todo_execution` span，附 todo_id / trigger_type / req_executor
@@ -802,132 +1243,63 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         // 将 task_guard 移入异步闭包，使其存活到整个执行周期。
         // 若不绑定，外层 drop 时会误删 Sender 导致 cancel_rx.recv() 返回 None。
         let _task_guard = task_guard;
+        // wall-clock 起点在 spawned 闭包最早位置取，避免后续 finalization 时把
+        // setup / DB 写入耗时也算进 duration。
         let execution_start = std::time::Instant::now();
 
-        send_event(
+        emit_started_event(
             &tx_clone,
-            ExecEvent::Started {
-                task_id: task_id.clone(),
-                todo_id,
-                todo_title: todo_title.clone(),
-                executor: executor_spawn.executor_type().to_string(),
-            },
+            &task_id,
+            todo_id,
+            &todo_title,
+            executor_spawn.as_ref(),
         );
-
-        let entry = ParsedLogEntry::info(format!("Starting {}", executor_spawn.executor_type()));
-        send_event(
-            &tx_clone,
-            ExecEvent::Output {
-                task_id: task_id.clone(),
-                entry,
-            },
-        );
-
-        // 使用 command-group 创建进程组，自动管理进程树
-        let mut cmd = tokio::process::Command::new(&executable_path);
 
         tracing::debug!(
             executable = %executable_path,
             arg_count = command_args.len(),
             "Spawning executor"
         );
-
-        cmd.args(&command_args)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .stdin(std::process::Stdio::piped());
-
-        // 设置工作目录（如果指定了 workspace）
-        if let Some(ws) = todo_workspace.as_ref() {
-            cmd.current_dir(ws);
-        }
+        let mut cmd = build_executor_command(
+            &executable_path,
+            &command_args,
+            todo_workspace.as_deref(),
+        );
 
         // 使用 command-group 的 group_spawn 创建进程组
         let mut child = match cmd.group_spawn() {
             Ok(c) => c,
             Err(e) => {
-                let error_msg = format!("Failed to spawn executor: {}", e);
-                let entry = ParsedLogEntry::error(error_msg.clone());
-                send_event(
+                handle_spawn_failure(
+                    &db_clone,
                     &tx_clone,
-                    ExecEvent::Output {
-                        task_id: task_id.clone(),
-                        entry,
-                    },
-                );
-                send_event(
-                    &tx_clone,
-                    ExecEvent::Finished {
-                        task_id: task_id.clone(),
-                        todo_id,
-                        todo_title: todo_title.clone(),
-                        executor: executor_spawn.executor_type().to_string(),
-                        success: false,
-                        result: Some(error_msg),
-                        feishu_bot_id,
-                        feishu_receive_id,
-                    },
-                );
-                let _ = db_clone.finish_todo_execution(todo_id, false).await;
-                task_manager_spawn.remove(&task_id).await;
+                    &task_manager_spawn,
+                    &task_id,
+                    todo_id,
+                    &todo_title,
+                    executor_spawn.as_ref(),
+                    feishu_bot_id,
+                    feishu_receive_id,
+                    e,
+                )
+                .await;
                 return;
             }
         };
-
-        let child_id = child.id().unwrap_or(0);
-
-        // Close stdin immediately so child processes get EOF when they try to read it.
-        // Without this, processes that read stdin after finishing work will hang forever.
-        drop(child.inner().stdin.take());
-
-        // 保存 pid 到 execution_records 表 (使用进程组 leader 的 pid)
-        if child_id > 0 {
-            let _ = db_clone
-                .update_execution_record_pid(record_id, Some(child_id as i32))
-                .await;
-        }
+        save_child_pid_and_close_stdin(&mut child, &db_clone, record_id).await;
 
         let stdout_handle = child.inner().stdout.take();
         let stderr_handle = child.inner().stderr.take();
-
-        // 统一管理 stdout/stderr 推入的日志 buffer 与后台 flush。
-        // 详见 `crate::log_flusher` 文档（issue #496）：用 CAS + pending 标志替代旧的
-        // fetch_add+swap+store(0) 三步非原子组合；用 oneshot-style 标记驱动 shutdown，
-        // 不再有"4s sleep 在 select! 里永远胜出不了 interval.tick"的死代码。
-        let log_flusher = Arc::new(crate::log_flusher::LogFlusher::new(
-            Box::new(crate::log_flusher::DatabaseLogSink::new(db_clone.clone())),
-            crate::log_flusher::LogFlusherConfig::for_record(record_id),
-        ));
-
-        let executor_for_parse = executor_spawn.clone();
-
-        // Process stdout —— 拆到 `spawn_stdout_reader` helper。
-        let stdout_task = spawn_stdout_reader(
+        let (log_flusher, stdout_task, stderr_task, flush_timer) = setup_log_capture_pipeline(
             stdout_handle,
-            executor_for_parse.clone(),
+            stderr_handle,
+            executor_spawn.clone(),
             db_clone.clone(),
-            log_flusher.clone(),
             tx.clone(),
             task_id.clone(),
             record_id,
-        );
-
-        // Capture stderr —— 拆到 `spawn_stderr_reader` helper。
-        let stderr_task = spawn_stderr_reader(
-            stderr_handle,
-            executor_for_parse.clone(),
-            log_flusher.clone(),
-            tx.clone(),
-            task_id.clone(),
-        );
-
-        // 定时兜底 flush：每 3 秒检查未刷新条目，有则写库。
-        // 直接走 LogFlusher::run_timer：内部已包含"pending 标志、shutdown 退出"逻辑，
-        // 这里不再重复 select! 的 4s sleep 死代码（issue #496 第三点）。
-        let flush_timer = {
-            let log_flusher_for_timer = log_flusher.clone();
-            tokio::spawn(async move { log_flusher_for_timer.run_timer().await })
-        };
+        )
+        .await;
 
         // execution_timeout_secs is captured by value here — config changes after this
         // task starts have no effect. To pick up a new timeout, wait for the current
@@ -939,264 +1311,148 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         let timeout_sleep = tokio::time::sleep(timeout_duration);
         tokio::pin!(timeout_sleep);
 
-        let status = tokio::select! {
+        // 用 enum 携带 select! 结果，避免在三个分支里各重复"杀进程 + drain + finalize"的
+        // 清理模板。每个分支走完之后 child 仍然在手，能继续调 kill_process_tree。
+        enum RunOutcome {
+            Cancelled,
+            TimedOut,
+            Completed(std::io::Result<std::process::ExitStatus>),
+        }
+        let outcome = tokio::select! {
             biased;
-            _ = cancel_rx.recv() => {
+            _ = cancel_rx.recv() => RunOutcome::Cancelled,
+            _ = &mut timeout_sleep, if timeout_enabled => RunOutcome::TimedOut,
+            status = child.wait() => RunOutcome::Completed(status),
+        };
+
+        match outcome {
+            RunOutcome::Cancelled => {
                 // Cancelled (or channel closed): 使用 command-group 安全杀死整个进程组
                 kill_process_tree(&mut child).await;
-
-                // 收割僵尸进程
-                let _status = child.wait().await;
-
+                drain_readers_and_flush(
+                    &mut child,
+                    stdout_task,
+                    stderr_task,
+                    log_flusher.clone(),
+                    flush_timer,
+                )
+                .await;
+                handle_cancellation_branch(
+                    &db_clone,
+                    &tx_clone,
+                    &task_manager_spawn,
+                    &task_id,
+                    todo_id,
+                    &todo_title,
+                    executor_spawn.as_ref(),
+                    record_id,
+                    feishu_bot_id,
+                    feishu_receive_id,
+                )
+                .await;
+            }
+            RunOutcome::TimedOut => {
+                kill_process_tree(&mut child).await;
+                drain_readers_and_flush(
+                    &mut child,
+                    stdout_task,
+                    stderr_task,
+                    log_flusher.clone(),
+                    flush_timer,
+                )
+                .await;
+                handle_timeout_branch(
+                    &db_clone,
+                    &tx_clone,
+                    &task_manager_spawn,
+                    &task_id,
+                    todo_id,
+                    &todo_title,
+                    executor_spawn.as_ref(),
+                    record_id,
+                    execution_timeout_secs,
+                    timeout_str,
+                    feishu_bot_id,
+                    feishu_receive_id,
+                )
+                .await;
+            }
+            RunOutcome::Completed(status) => {
+                // 子进程已自然退出，stdout/stderr 管道已关闭；先 await reader 让它们
+                // 把 buffer 里残余的行都解析完，再 finalize flusher 一次性写库。
                 if let Some(handle) = stdout_task {
                     let _ = handle.await;
                 }
                 if let Some(handle) = stderr_task {
                     let _ = handle.await;
                 }
+                let exit_code = status
+                    .as_ref()
+                    .map(|s| s.code().unwrap_or(-1))
+                    .unwrap_or(-1);
+                let success = executor_spawn.check_success(exit_code);
 
-                // LogFlusher::finalize 一并处理:
-                //   1) 标记 shutdown 让 timer 退出
-                //   2) 等所有 in-flight flush task 完成
-                //   3) drain buffer 残余一次性 append
-                //   4) 等 timer + 所有 spawned flush task 退出
-                // ——替代旧的"set flag → 等 timer → drain flush_handles → serialize buffer"四步分散逻辑。
+                emit_post_execution_todo_progress(
+                    &db_clone,
+                    &tx_clone,
+                    executor_spawn.as_ref(),
+                    &task_id,
+                    record_id,
+                )
+                .await;
+
+                // 正常退出：与 cancel/timeout 一样走 finalize 把残余刷到 DB
                 log_flusher.finalize().await;
                 let _ = flush_timer.await;
 
-                let _ = db_clone.update_todo_status(todo_id, crate::models::TodoStatus::Cancelled).await;
-                let _ = db_clone.update_todo_task_id(todo_id, None).await;
-
-                // 此时 buffer 已被 finalize drain 到 DB；从 DB 读全量日志做 remaining_logs 字段
-                let remaining_logs = db_clone
+                let all_logs_snapshot = db_clone
                     .get_all_execution_logs(record_id)
                     .await
-                    .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".to_string()))
-                    .unwrap_or_else(|_| "[]".to_string());
-                let _ = db_clone.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
-                    id: record_id,
-                    status: crate::models::ExecutionStatus::Failed.as_str(),
-                    remaining_logs: &remaining_logs,
-                    result: "任务已被手动停止",
-                    usage: None,
-                    model: None,
-                    review_meta: None,
-                }).await;
+                    .unwrap_or_default();
+                let all_logs_json =
+                    serde_json::to_string(&all_logs_snapshot).unwrap_or_else(|e| {
+                        tracing::error!("Failed to serialize all logs: {}", e);
+                        "[]".to_string()
+                    });
+                let result_str = executor_spawn
+                    .get_final_result(&all_logs_snapshot)
+                    .unwrap_or_default();
 
-                let entry = ParsedLogEntry::error("Execution cancelled by user");
-                send_event(&tx_clone, ExecEvent::Output { task_id: task_id.clone(), entry });
-                send_event(&tx_clone, ExecEvent::Finished {
-                    task_id: task_id.clone(),
-                    todo_id,
-                    todo_title: todo_title.clone(),
-                    executor: executor_spawn.executor_type().to_string(),
-                    success: false,
-                    result: Some("Task was cancelled by user".to_string()),
-                    feishu_bot_id,
-                    feishu_receive_id,
-                });
-                task_manager_spawn.remove(&task_id).await;
-                return;
-            }
-            _ = &mut timeout_sleep, if timeout_enabled => {
-                // Timeout: 自动终止执行时间过长的进程，释放资源
-                tracing::warn!(
-                    "Execution timeout, terminating process: timeout={}s, todo_id={}, task_id={}",
-                    execution_timeout_secs, todo_id, task_id
-                );
-                kill_process_tree(&mut child).await;
-
-                let _status = child.wait().await;
-
-                if let Some(handle) = stdout_task {
-                    let _ = handle.await;
-                }
-                if let Some(handle) = stderr_task {
-                    let _ = handle.await;
-                }
-
-                log_flusher.finalize().await;
-                if let Err(e) = flush_timer.await {
-                    tracing::error!("flush_timer panicked: {}", e);
-                }
-
-                let remaining_logs = db_clone
-                    .get_all_execution_logs(record_id)
-                    .await
-                    .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".to_string()))
-                    .unwrap_or_else(|_| "[]".to_string());
-                let _ = db_clone.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
-                    id: record_id,
-                    status: crate::models::ExecutionStatus::Failed.as_str(),
-                    remaining_logs: &remaining_logs,
-                    result: "Execution timeout",
-                    usage: None,
-                    model: None,
-                    review_meta: None,
-                }).await;
-
-                let entry = ParsedLogEntry::error("Execution timeout, process terminated by system");
-                send_event(&tx_clone, ExecEvent::Output { task_id: task_id.clone(), entry });
-                send_event(&tx_clone, ExecEvent::Finished {
-                    task_id: task_id.clone(),
-                    todo_id,
-                    todo_title: todo_title.clone(),
-                    executor: executor_spawn.executor_type().to_string(),
-                    success: false,
-                    result: Some(format!("Execution timeout, exceeded {}", timeout_str)),
-                    feishu_bot_id,
-                    feishu_receive_id,
-                });
-                task_manager_spawn.remove(&task_id).await;
-                return;
-            }
-            status = child.wait() => {
-                // 子进程已自然退出，command-group 的进程组已自动清理
-                if let Some(handle) = stdout_task {
-                    let _ = handle.await;
-                }
-                if let Some(handle) = stderr_task {
-                    let _ = handle.await;
-                }
-
-                status
-            }
-        };
-
-        let exit_code = status
-            .as_ref()
-            .map(|s| s.code().unwrap_or(-1))
-            .unwrap_or(-1);
-        let success = executor_spawn.check_success(exit_code);
-
-        // Try post-execution todo progress extraction (for executors like hermes that don't expose tool calls in stdout)
-        if let Some(progress) = executor_spawn.post_execution_todo_progress() {
-            if let Ok(progress_json) = serde_json::to_string(&progress) {
-                let _ = db_clone
-                    .update_execution_record_todo_progress(record_id, &progress_json)
-                    .await;
-                send_event(
-                    &tx_clone,
-                    ExecEvent::TodoProgress {
-                        task_id: task_id.clone(),
-                        progress,
-                    },
-                );
-            }
-        }
-
-        // 正常退出：与 cancel/timeout 一样走 finalize 把残余刷到 DB
-        log_flusher.finalize().await;
-        let _ = flush_timer.await;
-
-        // 从 execution_logs 表读取已刷入的日志（finalize 已把 buffer 全量写入）
-        let all_logs_snapshot = db_clone
-            .get_all_execution_logs(record_id)
-            .await
-            .unwrap_or_default();
-        let all_logs_json = serde_json::to_string(&all_logs_snapshot).unwrap_or_else(|e| {
-            tracing::error!("Failed to serialize all logs: {}", e);
-            "[]".to_string()
-        });
-        let result_str = executor_spawn
-            .get_final_result(&all_logs_snapshot)
-            .unwrap_or_default();
-
-        // Extract execution stats from logs in single pass
-        let execution_stats = extract_execution_stats(&all_logs_snapshot, executor_spawn.get_tool_calls_count());
-        if let Ok(stats_json) = serde_json::to_string(&execution_stats) {
-            let _ = db_clone
-                .update_execution_record_stats(record_id, &stats_json)
+                persist_completion_record(
+                    &db_clone,
+                    executor_spawn.as_ref(),
+                    record_id,
+                    &all_logs_snapshot,
+                    &all_logs_json,
+                    success,
+                    execution_start,
+                )
                 .await;
+
+                finalize_normal_completion(
+                    db_clone.clone(),
+                    executor_registry_spawn.clone(),
+                    tx_clone.clone(),
+                    task_manager_spawn.clone(),
+                    config_spawn.clone(),
+                    hook_service_spawn.clone(),
+                    executor_spawn.clone(),
+                    task_id.clone(),
+                    todo_id,
+                    todo_title.clone(),
+                    todo.clone(),
+                    chain.clone(),
+                    record_id,
+                    success,
+                    exit_code,
+                    result_str,
+                    trigger_type.clone(),
+                    feishu_bot_id,
+                    feishu_receive_id,
+                )
+                .await;
+            }
         }
-
-        let final_status = if success {
-            crate::models::ExecutionStatus::Success.as_str()
-        } else {
-            crate::models::ExecutionStatus::Failed.as_str()
-        };
-        // wall-clock duration 覆盖交给 helper 集中处理，避免三个终态分支各自维护。
-        let usage = apply_wall_clock_duration(executor_spawn.get_usage(&all_logs_snapshot), execution_start);
-        let model = executor_spawn.get_model();
-
-        let _ = db_clone
-            .update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
-                id: record_id,
-                status: final_status,
-                remaining_logs: &all_logs_json,
-                result: &result_str,
-                usage: usage.as_ref(),
-                model: model.as_deref(),
-                review_meta: None,
-            })
-            .await;
-
-        // ===== 自动评审 (auto-review) =====
-        // 仅在以下条件同时满足时启动:
-        //   - trigger_type != "auto_review" 避免评审实例本身反向触发评审
-        //   - 正常执行 (success/failed), 不是被中断
-        //
-        // 同步语义: Hook fire 在这之后才进行, rating gate 要求评审完成后再触发,
-        // 所以评审要同步跑完. run_auto_review 内部 std::thread::spawn + block_on,
-        // 与本 spawned task 完全隔离, 不存在 Send 问题.
-        if trigger_type != "auto_review" {
-            run_auto_review(
-                db_clone.clone(),
-                executor_registry_spawn.clone(),
-                tx_clone.clone(),
-                task_manager_spawn.clone(),
-                config_spawn.clone(),
-                hook_service_spawn.clone(),
-                todo_id,
-                record_id,
-            )
-            .await;
-        }
-
-        let _ = db_clone.finish_todo_execution(todo_id, success).await;
-
-        // Fire the state-change hook for "进入已完成/失败". The executor
-        // bypasses the update_todo handler, so this is the only place the
-        // transition to a terminal state is observed.
-        // 拆到 `fire_completion_hooks`：构造 HookContext 的样板代码集中维护，
-        // todo 缺失 / HookContext 构造失败的早返回都在 helper 里处理。
-        fire_completion_hooks(
-            todo.as_ref(),
-            todo_id,
-            success,
-            chain.clone(),
-            hook_service_spawn.clone(),
-        );
-
-        let entry = ParsedLogEntry::new(
-            if success { "info" } else { "error" },
-            format!(
-                "Executor finished with exit_code: {}, result: {}",
-                exit_code, result_str
-            ),
-        );
-        send_event(
-            &tx_clone,
-            ExecEvent::Output {
-                task_id: task_id.clone(),
-                entry,
-            },
-        );
-
-        send_event(
-            &tx_clone,
-            ExecEvent::Finished {
-                task_id: task_id.clone(),
-                todo_id,
-                todo_title: todo_title.clone(),
-                executor: executor_spawn.executor_type().to_string(),
-                success,
-                result: Some(result_str),
-                feishu_bot_id,
-                feishu_receive_id,
-            },
-        );
-        task_manager_spawn.remove(&task_id).await;
     }
     .instrument(executor_span));
 
@@ -1703,5 +1959,70 @@ mod tests {
         assert_eq!(placeholder.input_tokens, 0);
         assert_eq!(placeholder.output_tokens, 0);
         assert!(placeholder.duration_ms.unwrap() >= 1);
+    }
+
+    // ─── issue #635 拆出的 helper 单测 ────────────────────────────────
+
+    /// `build_executor_command` 必须：把 executable 作为 argv[0]、追加 args、设置 piped stdio。
+    /// 工作目录仅在显式传 workspace 时设置；workspace=None 时 executor 沿用 daemon cwd。
+    #[test]
+    fn test_build_executor_command_basic_args() {
+        let args = vec!["-p".to_string(), "hello".to_string()];
+        let cmd = build_executor_command("/usr/bin/claude", &args, None);
+        // std::process::Command 的 as_std() 可以拿到 std 命令，argv 在 std::process::Command 里是私有字段。
+        // 这里用 tokio::process::Command 暴露的 std() 拿底层 std::process::Command。
+        let std_cmd: &std::process::Command = cmd.as_std();
+        let program = std_cmd.get_program();
+        assert_eq!(program, "/usr/bin/claude");
+        let std_args: Vec<&std::ffi::OsStr> = std_cmd.get_args().collect();
+        assert_eq!(std_args.len(), 2);
+        assert_eq!(std_args[0], "-p");
+        assert_eq!(std_args[1], "hello");
+    }
+
+    /// `build_executor_command` 在传入 workspace 时应设置 current_dir，不传则保持 None。
+    #[test]
+    fn test_build_executor_command_workspace_sets_current_dir() {
+        let args = vec!["-p".to_string()];
+        let with_ws = build_executor_command("/bin/echo", &args, Some("/tmp/work"));
+        assert_eq!(with_ws.as_std().get_current_dir().unwrap(), std::path::Path::new("/tmp/work"));
+
+        let no_ws = build_executor_command("/bin/echo", &args, None);
+        assert!(no_ws.as_std().get_current_dir().is_none());
+    }
+
+    /// `build_executor_command` 一定能构造出一个 Command 且 std 命令的 program/args 正确。
+    /// stdio 是否 piped 没法直接断言（std::process::Command 没暴露 getter），只能通过
+    /// `group_spawn()` 实际执行观察；但 program + args 的 getter 已经足以验证核心逻辑。
+    #[test]
+    fn test_build_executor_command_constructs_cleanly() {
+        let args = vec!["-p".to_string(), "build me a web app".to_string()];
+        let cmd = build_executor_command("/usr/local/bin/codex", &args, None);
+        let std_cmd = cmd.as_std();
+        assert_eq!(std_cmd.get_program(), "/usr/local/bin/codex");
+        let std_args: Vec<&std::ffi::OsStr> = std_cmd.get_args().collect();
+        assert_eq!(std_args.len(), 2);
+        assert_eq!(std_args[1], "build me a web app");
+    }
+
+    /// `format_timeout_secs` 在 60 秒以下的边界值要正确。
+    /// 0 表示无超时，1 秒显示 "0 min 1 sec"，59 秒同理。
+    #[test]
+    fn test_format_timeout_secs_edges_under_minute() {
+        assert_eq!(format_timeout_secs(0), "0 min");
+        assert_eq!(format_timeout_secs(1), "0 min 1 sec");
+        assert_eq!(format_timeout_secs(59), "0 min 59 sec");
+    }
+
+    /// `format_timeout_secs` 在"恰好为 60 的整数倍"上不应带 "sec" 后缀。
+    /// 例如 60 秒 = "1 min"，120 秒 = "2 min"，这是因为 remaining_secs == 0 时
+    /// 直接走 hours/days 分支。
+    #[test]
+    fn test_format_timeout_secs_exact_minutes() {
+        assert_eq!(format_timeout_secs(60), "1 min");
+        assert_eq!(format_timeout_secs(120), "2 min");
+        assert_eq!(format_timeout_secs(3540), "59 min");
+        // 60 min 是 3600 秒，进 hour 分支。
+        assert_eq!(format_timeout_secs(3600), "1 hour(s)");
     }
 }
