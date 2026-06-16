@@ -372,113 +372,151 @@ fn scan_claude_code(sessions: &mut Vec<SessionInfo>) {
 
 // ─── Codex CLI Scanner ────────────────────────────────────
 
+/// codex 在 sessions/YYYY/MM/DD/ 下按日期组织 JSONL 文件。
+/// 用闭包+?扁平化原本嵌套 7+ 层的 read_dir 链,每层只负责"是否进入下一层目录"。
+fn iter_codex_rollout_files(base: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(years) = std::fs::read_dir(base) else { return Vec::new() };
+    let mut out = Vec::new();
+    // 用 flat_map 把三层 read_dir + is_dir 守卫压平成一次迭代;
+    // 任一层不可读或非目录,该项被过滤,继续走下一项。
+    // .flatten() 在每一层消费 Result<DirEntry, io::Error>,遇到错误跳过该项。
+    for day_entry in years
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .flat_map(|y| std::fs::read_dir(y.path()).ok().into_iter().flatten())
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .flat_map(|m| std::fs::read_dir(m.path()).ok().into_iter().flatten())
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .flat_map(|d| std::fs::read_dir(d.path()).ok().into_iter().flatten())
+        .flatten()
+    {
+        let path = day_entry.path();
+        if !path.is_file() { continue; }
+        let name = day_entry.file_name().to_string_lossy().to_string();
+        // codex 的命名约定:rollout-<timestamp>-<uuid>.jsonl
+        if name.starts_with("rollout-") && name.ends_with(".jsonl") {
+            out.push(path);
+        }
+    }
+    out
+}
+
+/// 解析单行 session_meta,得到 id/cwd/version/model_provider 等会话级字段。
+/// 返回 None 表示该行不是 session_meta 或缺失 payload。
+fn parse_codex_session_meta(line: &serde_json::Value) -> Option<CodexSessionMeta> {
+    if line.get("type").and_then(|t| t.as_str()) != Some("session_meta") { return None; }
+    let payload = line.get("payload")?;
+    Some(CodexSessionMeta {
+        session_id: payload.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string(),
+        project_path: payload.get("cwd").and_then(|c| c.as_str()).unwrap_or("").to_string(),
+        version: payload.get("cli_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        model: payload.get("model_provider").and_then(|m| m.as_str()).unwrap_or("openai").to_string(),
+    })
+}
+
+/// codex session_meta 解析出的会话级元数据。
+/// 用具名字段代替原嵌套 `.get(...).and_then(...)` 链,降低嵌套层级并自解释。
+struct CodexSessionMeta {
+    session_id: String,
+    project_path: String,
+    version: String,
+    model: String,
+}
+
+/// 解析 event_msg 行的 message 事件,抽取 user 的首个文本作为 first_prompt。
+/// 返回 Some(text) 表示该行是 user 消息;返回 None 表示无关事件或角色非 user。
+/// 计数由调用方根据返回值是否 Some 来决定,避免内嵌 if 嵌套。
+fn parse_codex_user_prompt(line: &serde_json::Value) -> Option<String> {
+    if line.get("type").and_then(|t| t.as_str()) != Some("event_msg") { return None; }
+    let payload = line.get("payload")?;
+    if payload.get("type").and_then(|t| t.as_str()) != Some("message") { return None; }
+    let msg = payload.get("message")?;
+    if msg.get("role").and_then(|r| r.as_str()) != Some("user") { return None; }
+    msg.get("content").and_then(|c| c.as_str()).filter(|t| !t.is_empty()).map(String::from)
+}
+
+/// event_msg:message 类型的消息计数,user/assistant 都计入 msg_count。
+/// 拆分自内联 `if event_type == "message"` 嵌套。
+fn is_codex_message_event(line: &serde_json::Value) -> bool {
+    if line.get("type").and_then(|t| t.as_str()) != Some("event_msg") { return false; }
+    line.get("payload")
+        .and_then(|p| p.get("type"))
+        .and_then(|t| t.as_str())
+        == Some("message")
+}
+
+/// 汇总单文件扫描结果,只在调用方 flat_map 的回调里组装 SessionInfo。
+/// 抽到这里是为把 scan_codex 主循环压到 ≤30 行。
+fn build_codex_session_info(_path: &std::path::Path, content: &str, file_size: u64) -> Option<SessionInfo> {
+    let mut session_id = String::new();
+    let mut project_path = String::new();
+    let mut version = String::new();
+    let mut model = String::new();
+    let mut first_ts: Option<String> = None;
+    let mut last_ts: Option<String> = None;
+    let mut first_prompt: Option<String> = None;
+    let mut msg_count: u32 = 0;
+
+    // 逐行解析:用 ? / filter 替代内嵌 if let Some() 链,最深嵌套降到 2 层。
+    for line in content.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let ts = v.get("timestamp").and_then(|t| t.as_str()).map(String::from);
+
+        if let Some(meta) = parse_codex_session_meta(&v) {
+            session_id = meta.session_id;
+            project_path = meta.project_path;
+            version = meta.version;
+            model = meta.model;
+            first_ts = ts.clone();
+        }
+        if is_codex_message_event(&v) {
+            msg_count += 1;
+            if let Some(text) = parse_codex_user_prompt(&v) {
+                if first_prompt.is_none() {
+                    first_prompt = Some(truncate_str(&text, 200));
+                }
+            }
+        }
+        if ts.is_some() { last_ts = ts; }
+    }
+
+    if session_id.is_empty() { return None; }
+    Some(SessionInfo {
+        session_id,
+        source: "codex".to_string(),
+        project_path,
+        status: "completed".to_string(),
+        executor: "codex".to_string(),
+        model,
+        git_branch: None,
+        message_count: msg_count,
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        first_prompt,
+        created_at: first_ts,
+        last_active_at: last_ts,
+        file_size,
+        version: if version.is_empty() { None } else { Some(version) },
+        subagent_count: 0,
+    })
+}
+
 fn scan_codex(sessions: &mut Vec<SessionInfo>) {
     let base = home_dir().join(".codex/sessions");
     if !base.exists() { return; }
 
-    // Walk date-organized directories: sessions/YYYY/MM/DD/rollout-*.jsonl
-    if let Ok(years) = std::fs::read_dir(&base) {
-        for year_entry in years.flatten() {
-            if !year_entry.path().is_dir() { continue; }
-            if let Ok(months) = std::fs::read_dir(year_entry.path()) {
-                for month_entry in months.flatten() {
-                    if !month_entry.path().is_dir() { continue; }
-                    if let Ok(days) = std::fs::read_dir(month_entry.path()) {
-                        for day_entry in days.flatten() {
-                            let day_path = day_entry.path();
-                            if !day_path.is_dir() { continue; }
-                            // Iterate files inside the day directory
-                            if let Ok(files) = std::fs::read_dir(&day_path) {
-                                for file_entry in files.flatten() {
-                                    let path = file_entry.path();
-                                    if !path.is_file() { continue; }
-                                    let name = file_entry.file_name().to_string_lossy().to_string();
-                                    if !name.starts_with("rollout-") || !name.ends_with(".jsonl") { continue; }
-
-                            let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                            let content = match std::fs::read_to_string(&path) {
-                                Ok(c) => c,
-                                Err(_) => continue,
-                            };
-
-                            let mut session_id = String::new();
-                            let mut project_path = String::new();
-                            let mut version = String::new();
-                            let mut model = String::new();
-                            let mut first_ts: Option<String> = None;
-                            let mut last_ts: Option<String> = None;
-                            let mut first_prompt: Option<String> = None;
-                            let mut msg_count: u32 = 0;
-
-                            for line in content.lines() {
-                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                                    let ts = v.get("timestamp").and_then(|t| t.as_str()).map(String::from);
-                                    let line_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
-
-                                    match line_type {
-                                        "session_meta" => {
-                                            if let Some(payload) = v.get("payload") {
-                                                session_id = payload.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
-                                                project_path = payload.get("cwd").and_then(|c| c.as_str()).unwrap_or("").to_string();
-                                                version = payload.get("cli_version").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                                model = payload.get("model_provider").and_then(|m| m.as_str()).unwrap_or("openai").to_string();
-                                            }
-                                            first_ts = ts.clone();
-                                        }
-                                        "event_msg" => {
-                                            if let Some(payload) = v.get("payload") {
-                                                let event_type = payload.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                                                if event_type == "message" {
-                                                    let role = payload.get("message").and_then(|m| m.get("role")).and_then(|r| r.as_str()).unwrap_or("");
-                                                    if role == "user" {
-                                                        let text = payload.get("message")
-                                                            .and_then(|m| m.get("content"))
-                                                            .and_then(|c| c.as_str())
-                                                            .unwrap_or("");
-                                                        if first_prompt.is_none() && !text.is_empty() {
-                                                            first_prompt = Some(truncate_str(text, 200));
-                                                        }
-                                                    }
-                                                    msg_count += 1;
-                                                }
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                    if ts.is_some() { last_ts = ts; }
-                                }
-                            }
-
-                            if session_id.is_empty() {
-                                session_id = name.trim_end_matches(".jsonl").to_string();
-                            }
-
-                            sessions.push(SessionInfo {
-                                session_id,
-                                source: "codex".to_string(),
-                                project_path,
-                                status: "completed".to_string(),
-                                executor: "codex".to_string(),
-                                model,
-                                git_branch: None,
-                                message_count: msg_count,
-                                total_input_tokens: 0,
-                                total_output_tokens: 0,
-                                first_prompt,
-                                created_at: first_ts,
-                                last_active_at: last_ts,
-                                file_size,
-                                version: if version.is_empty() { None } else { Some(version) },
-                                subagent_count: 0,
-                            });
-                            } // end for file_entry
-                            } // end if let Ok(files)
-                        } // end for day_entry
-                    } // end if let Ok(days)
-                } // end for month
-            } // end if let Ok(months)
-        } // end for year
-    } // end if let Ok(years)
+    // 三层目录遍历 + rollout 前缀过滤收敛到一次调用,
+    // 原本的 7+ 层 if let Ok / is_dir / starts_with 嵌套全部消失。
+    for path in iter_codex_rollout_files(&base) {
+        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        // 单文件解析收敛到一个函数,主循环只剩"遍历 + 推入结果"。
+        if let Some(info) = build_codex_session_info(&path, &content, file_size) {
+            sessions.push(info);
+        }
+    }
 }
 
 // ─── Hermes Scanner ───────────────────────────────────────
@@ -752,85 +790,48 @@ fn parse_pi_line(line: &str) -> Option<(String, serde_json::Value)> {
 ///
 /// 完整 JSONL 解析代价较大（实测单个 session 最高 1.5MB、772 行），但 JSONL 解析一次到
 /// `serde_json::Value` 比逐字段 char-level 解析要快且安全。该函数只走一遍文件。
-fn summarize_pi_jsonl(content: &str) -> PiSessionSummary {
-    let mut summary = PiSessionSummary::default();
-    let mut found_user_prompt = false;
-
-    for line in content.lines() {
-        if line.is_empty() {
-            continue;
-        }
-        let Some((event_type, v)) = parse_pi_line(line) else {
-            continue;
-        };
-
-        // 第一行 (event_type == "session") 优先拿 cwd / id / timestamp，跳过 content 解析
-        if event_type == "session" {
-            if summary.cwd.is_none() {
-                summary.cwd = v.get("cwd").and_then(|c| c.as_str()).map(String::from);
-            }
-            if summary.created_at.is_none() {
-                summary.created_at = v.get("timestamp").and_then(|t| t.as_str()).map(String::from);
-            }
-            if summary.version.is_none() {
-                summary.version = v.get("version").and_then(|v| v.as_u64()).map(|n| n.to_string());
-            }
-            continue;
-        }
-
-        // model_change 事件：provider + modelId。只在未设置时记录（第一条 model_change 决定 session 模型）
-        if event_type == "model_change" {
+/// 抽取单行 pi JSONL 并按 event_type 分派到对应 summary 更新函数。
+/// 复用 build_pi_messages 里相同的 helper,保证两条扫描路径在 first_prompt、
+/// model、tokens 等字段上的语义完全一致。
+fn apply_pi_event(summary: &mut PiSessionSummary, event_type: &str, v: &serde_json::Value) {
+    match event_type {
+        "session" => apply_pi_session_event(summary, v),
+        "model_change" => {
             if summary.model.is_none() {
-                let model_id = v.get("modelId").and_then(|m| m.as_str()).map(String::from);
-                let provider = v.get("provider").and_then(|p| p.as_str()).map(String::from);
-                summary.model = match (provider, model_id) {
-                    (Some(p), Some(m)) => Some(format!("{}/{}", p, m)),
-                    (_, Some(m)) => Some(m),
-                    (Some(p), None) => Some(p),
-                    _ => None,
-                };
+                summary.model = pi_model_from_change_event(v);
             }
-            continue;
         }
-
-        if event_type == "message" {
+        "message" => {
+            // 跳过缺 message 字段的行(防御性,与原 match Some(m) 行为一致)
+            let Some(msg) = v.get("message") else { return };
             summary.message_count += 1;
-            let msg = match v.get("message") {
-                Some(m) => m,
-                None => continue,
-            };
-
-            // 首个 user prompt 提取
-            if !found_user_prompt {
-                let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
-                if role == "user" {
-                    if let Some(text) = msg.get("content").and_then(|c| c.as_array()).and_then(|arr| {
-                        arr.iter().find_map(|c| c.get("text").and_then(|t| t.as_str()))
-                    }) {
-                        summary.first_prompt = Some(text.to_string());
-                        found_user_prompt = true;
-                    }
+            // 首条 user message 的文本作为 first_prompt,后续不再覆盖
+            if summary.first_prompt.is_none()
+                && msg.get("role").and_then(|r| r.as_str()) == Some("user")
+            {
+                if let Some(text) = msg.get("content").and_then(extract_first_user_prompt_text) {
+                    summary.first_prompt = Some(text);
                 }
             }
-
-            // tokens 累加：pi 的 usage 里 input 是不含缓存读写的净 input，
-            // cacheRead/cacheWrite 单独记录；本 scan 把 cache 命中量计入 input
-            // 等价物，避免反复读缓存的 session 在面板上只看到 output 高、input 低。
             if let Some(usage) = msg.get("usage") {
-                let i = usage.get("input").and_then(|n| n.as_u64()).unwrap_or(0);
-                let cr = usage.get("cacheRead").and_then(|n| n.as_u64()).unwrap_or(0);
-                let cw = usage.get("cacheWrite").and_then(|n| n.as_u64()).unwrap_or(0);
-                summary.total_input_tokens += i + cr + cw;
-                if let Some(o) = usage.get("output").and_then(|n| n.as_u64()) {
-                    summary.total_output_tokens += o;
-                }
+                accumulate_pi_usage(summary, usage);
             }
-
-            // 取 message 行的时间戳作为 last_active_at（持续更新为最新）
+            // 持续更新为最新一行 message 的 timestamp,符合旧实现语义
             if let Some(ts) = v.get("timestamp").and_then(|t| t.as_str()) {
                 summary.last_active_at = Some(ts.to_string());
             }
         }
+        _ => {}
+    }
+}
+
+fn summarize_pi_jsonl(content: &str) -> PiSessionSummary {
+    let mut summary = PiSessionSummary::default();
+
+    for line in content.lines() {
+        if line.is_empty() { continue; }
+        let Some((event_type, v)) = parse_pi_line(line) else { continue };
+        apply_pi_event(&mut summary, &event_type, &v);
     }
     summary
 }
@@ -863,102 +864,100 @@ fn pi_mtime_to_rfc3339(path: &std::path::Path) -> Option<String> {
 /// active，代价仅是列表多一条 "active"，可以接受。
 const PI_ACTIVE_WINDOW_SECONDS: u64 = 5 * 60;
 
+/// 把 SystemTime 转成「距 now 的秒数」;文件不可读 / mtime 不可取时返 u64::MAX。
+/// 抽出是为了在 scan_pi / scan_X 三个地方复用同样的"now-relative age"计算,
+/// 避免各自重写一遍 metadata + modified + chrono 转换链。
+fn file_age_seconds(path: &std::path::Path) -> u64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .map(|t| {
+            let dt: chrono::DateTime<chrono::Utc> = t.into();
+            (chrono::Utc::now() - dt).num_seconds().max(0) as u64
+        })
+        .unwrap_or(u64::MAX)
+}
+
+/// pi session 文件名 = "<iso-ts>_<uuid>.jsonl",session_id 是后半 UUID 段。
+/// 没有下划线分隔时退化为整个 stem,与 scan_pi 旧实现一致(防止编码缺失)。
+fn pi_session_id_from_path(path: &std::path::Path) -> Option<String> {
+    let stem = path.file_stem().and_then(|s| s.to_str())?;
+    match stem.rsplit_once('_') {
+        Some((_ts, uuid)) => Some(uuid.to_string()),
+        None => Some(stem.to_string()),
+    }
+}
+
+/// 单个 pi JSONL 文件 -> SessionInfo。
+/// 把 scan_pi 主循环里的 mtime / cwd 优先级 / last_active_at 优先级 / 0 字节跳过
+/// 等逻辑收敛到一处;调用方只剩遍历 + 推入结果。
+fn build_pi_session_info_from_file(
+    fpath: &std::path::Path,
+    decoded_cwd: &str,
+) -> Option<SessionInfo> {
+    let session_id = pi_session_id_from_path(fpath)?;
+    let file_size = std::fs::metadata(fpath).map(|m| m.len()).unwrap_or(0);
+    // 0 字节文件通常是断电/crash 残留,跳过后不会贡献空 session
+    if file_size == 0 { return None; }
+
+    let file_mtime = file_age_seconds(fpath);
+    // mtime < 5min 视为 active;父目录 mtime 只在「文件增/删」时更新,
+    // 不能反映文件内容修改,所以只看文件 mtime(原代码注释已说明此取舍)
+    let is_active = file_mtime < PI_ACTIVE_WINDOW_SECONDS;
+
+    let content = std::fs::read_to_string(fpath).ok()?;
+    let summary = summarize_pi_jsonl(&content);
+
+    // cwd 优先级:JSONL 首行 > 文件名反编码
+    let cwd = summary.cwd.unwrap_or_else(|| decoded_cwd.to_string());
+    // last_active_at 优先级:JSONL 最后事件时间戳 > 文件 mtime
+    let last_active_at = summary
+        .last_active_at
+        .clone()
+        .or_else(|| pi_mtime_to_rfc3339(fpath));
+
+    Some(SessionInfo {
+        session_id,
+        source: "pi".to_string(),
+        project_path: cwd,
+        status: if is_active { "active".into() } else { "completed".into() },
+        executor: "pi".to_string(),
+        model: summary.model.unwrap_or_else(|| "-".into()),
+        git_branch: None, // pi 不跟踪 git 分支
+        message_count: summary.message_count,
+        total_input_tokens: summary.total_input_tokens,
+        total_output_tokens: summary.total_output_tokens,
+        first_prompt: summary.first_prompt.map(|p| truncate_str(&p, 200)),
+        created_at: summary.created_at,
+        last_active_at,
+        file_size,
+        version: summary.version,
+        subagent_count: 0,
+    })
+}
+
+/// 把单个项目目录下所有 *.jsonl 解析后追加到 sessions。
+/// 抽离是为了让 scan_pi 主循环只剩「遍历项目目录」一层 for,
+/// 嵌套深度压到 2 层。
+fn collect_pi_sessions_in_project(project_dir: &std::path::Path, sessions: &mut Vec<SessionInfo>) {
+    // 文件名格式: --Users-weibh-projects-rust-nothing-todo--(首尾各一个 -)
+    let encoded = project_dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let decoded_cwd = decode_pi_cwd(&encoded);
+    for (fpath, _name) in iter_jsonl_files(project_dir) {
+        if let Some(info) = build_pi_session_info_from_file(&fpath, &decoded_cwd) {
+            sessions.push(info);
+        }
+    }
+}
+
 fn scan_pi(sessions: &mut Vec<SessionInfo>) {
     let root = home_dir().join(".pi/agent/sessions");
     if !root.exists() { return; }
+    let Ok(project_dirs) = std::fs::read_dir(&root) else { return };
 
-    let project_dirs = match std::fs::read_dir(&root) {
-        Ok(it) => it,
-        Err(_) => return,
-    };
-
-    for project_entry in project_dirs.flatten() {
-        let path = project_entry.path();
-        if !path.is_dir() { continue; }
-
-        // 文件名格式: --Users-weibh-projects-rust-nothing-todo--（首尾各一个 -）
-        let encoded = project_entry.file_name().to_string_lossy().to_string();
-        let decoded_cwd = decode_pi_cwd(&encoded);
-        let dir_mtime = std::fs::metadata(&path)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| {
-                let dt: chrono::DateTime<chrono::Utc> = t.into();
-                let secs = (chrono::Utc::now() - dt).num_seconds().max(0) as u64;
-                Some(secs)
-            })
-            .unwrap_or(u64::MAX);
-
-        // 项目目录内 *.jsonl 枚举交由 iter_jsonl_files 收敛 read_dir + 扩展名守卫。
-        for (fpath, _name) in iter_jsonl_files(&path) {
-            // 文件名格式: <iso-ts>_<uuid>.jsonl
-            // 例如: 2026-06-11T01-44-54-108Z_019eb45a-8e5c-7cf4-95f9-787b5a83b0fa.jsonl
-            let stem = match fpath.file_stem().and_then(|s| s.to_str()) {
-                Some(s) => s.to_string(),
-                None => continue,
-            };
-            let session_id = match stem.rsplit_once('_') {
-                Some((_ts, uuid)) => uuid.to_string(),
-                None => stem.clone(),
-            };
-
-            let file_size = std::fs::metadata(&fpath).map(|m| m.len()).unwrap_or(0);
-            let file_mtime = std::fs::metadata(&fpath)
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|t| {
-                    let dt: chrono::DateTime<chrono::Utc> = t.into();
-                    let secs = (chrono::Utc::now() - dt).num_seconds().max(0) as u64;
-                    Some(secs)
-                })
-                .unwrap_or(u64::MAX);
-
-            // mtime 检查：仅看文件 mtime。父目录 mtime 只在「文件增/删/重命名」时更新，
-            // 不反映文件内容修改；用「同项目下其他老 session 在新 session 创建后被错标为 active」。
-            // 父目录 mtime 信息保留在 dir_mtime 变量中供以后需要独立状态时使用。
-            let _ = dir_mtime;
-            let is_active = file_mtime < PI_ACTIVE_WINDOW_SECONDS;
-
-            // 跳过过期的 0 字节文件
-            if file_size == 0 {
-                continue;
-            }
-
-            // 解析整个文件：取 cwd / model / tokens / first_prompt 等。
-            // mtime 启发式已经能给出 active 标记，因此我们只走一遍文件
-            let content = match std::fs::read_to_string(&fpath) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            let summary = summarize_pi_jsonl(&content);
-
-            // cwd 优先级：JSONL 首行 > 文件名反编码
-            let cwd = summary.cwd.unwrap_or_else(|| decoded_cwd.clone());
-            // last_active_at 优先级：JSONL 最后事件时间戳 > 文件 mtime
-            let last_active_at = summary
-                .last_active_at
-                .clone()
-                .or_else(|| pi_mtime_to_rfc3339(&fpath));
-
-            sessions.push(SessionInfo {
-                session_id,
-                source: "pi".to_string(),
-                project_path: cwd,
-                status: if is_active { "active".into() } else { "completed".into() },
-                executor: "pi".to_string(),
-                model: summary.model.unwrap_or_else(|| "-".into()),
-                git_branch: None, // pi 不跟踪 git 分支
-                message_count: summary.message_count,
-                total_input_tokens: summary.total_input_tokens,
-                total_output_tokens: summary.total_output_tokens,
-                first_prompt: summary.first_prompt.map(|p| truncate_str(&p, 200)),
-                created_at: summary.created_at,
-                last_active_at,
-                file_size,
-                version: summary.version,
-                subagent_count: 0,
-            });
-        }
+    // 外层循环遍历项目目录,内层全部委托给 helper,scan_pi 嵌套深度 ≤2 层。
+    for project_entry in project_dirs.flatten().filter(|e| e.path().is_dir()) {
+        collect_pi_sessions_in_project(&project_entry.path(), sessions);
     }
 }
 
@@ -1436,95 +1435,123 @@ pub async fn delete_session(
 
 // ─── Detail getters per source ────────────────────────────
 
-fn get_claude_detail(session_id: &str) -> Option<SessionDetail> {
+/// 在 claude-code projects 目录下找 session_id 对应的 jsonl 文件,并反推项目路径。
+/// 找不到返回 None,get_claude_detail 直接返回 None,与原语义一致。
+fn find_claude_jsonl_for_session(session_id: &str) -> Option<(PathBuf, String)> {
     let projects_dir = home_dir().join(".claude/projects");
-    let mut jsonl_path: Option<PathBuf> = None;
-    let mut project_path = String::new();
-
-    if let Ok(entries) = std::fs::read_dir(&projects_dir) {
-        for entry in entries.flatten() {
-            let candidate = entry.path().join(format!("{}.jsonl", session_id));
-            if candidate.exists() {
-                jsonl_path = Some(candidate);
-                project_path = decode_project_path(&entry.file_name().to_string_lossy());
-                break;
-            }
+    let Ok(entries) = std::fs::read_dir(&projects_dir) else { return None };
+    for entry in entries.flatten() {
+        let candidate = entry.path().join(format!("{}.jsonl", session_id));
+        if candidate.exists() {
+            let project_path = decode_project_path(&entry.file_name().to_string_lossy());
+            return Some((candidate, project_path));
         }
     }
-    let path = jsonl_path?;
+    None
+}
+
+/// 从 subagents 目录下收集所有 *.meta.json 的 agent_type / description。
+/// 抽离是因为原本 5 层 if let Some / exists / extension 嵌套读起来很痛苦。
+fn collect_claude_subagents(session_jsonl_path: &std::path::Path) -> Vec<SubAgentInfo> {
+    let session_dir = session_jsonl_path.with_extension("");
+    let subagents_dir = session_dir.join("subagents");
+    let Ok(entries) = std::fs::read_dir(&subagents_dir) else { return Vec::new() };
+
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let p = entry.path();
+            // subagent 元数据约定: <agent-id>.meta.json
+            if p.extension().and_then(|e| e.to_str()) != Some("json") { return None; }
+            let name = p.file_stem().and_then(|n| n.to_str())?;
+            if !name.ends_with(".meta") { return None; }
+            let c = std::fs::read_to_string(&p).ok()?;
+            let meta: serde_json::Value = serde_json::from_str(&c).ok()?;
+            Some(SubAgentInfo {
+                agent_type: meta.get("agentType").and_then(|t| t.as_str()).unwrap_or("unknown").to_string(),
+                description: meta.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
+                message_count: 0,
+            })
+        })
+        .collect()
+}
+
+/// 单行 ParsedSessionLine -> 可选的 SessionMessage 预览。
+/// user / assistant 角色才有预览,queue 角色跳过 msg_count 计数但仍参与元信息。
+fn claude_meta_to_session_message(meta: &ParsedSessionLine) -> Option<SessionMessage> {
+    if meta.role != "user" && meta.role != "assistant" { return None; }
+    let preview = meta.prompt.as_ref().map(|p| truncate_str(p, 500)).unwrap_or_default();
+    Some(SessionMessage {
+        role: meta.role.clone(),
+        content_preview: preview,
+        model: meta.model.clone(),
+        input_tokens: meta.input_tokens,
+        output_tokens: meta.output_tokens,
+        timestamp: meta.timestamp.clone(),
+        stop_reason: None,
+    })
+}
+
+/// 把 jsonl 全文解析成 (claude 累计元信息, messages)。
+/// 用 fold 累加 first/last/model/branch 等「首次见到 / 最新见到」字段,
+/// 比手写 10 个 mutable Option 干净。
+fn parse_claude_messages(content: &str) -> (ClaudeAccumulator, Vec<SessionMessage>) {
+    let mut acc = ClaudeAccumulator::default();
+    let mut messages = Vec::new();
+    for line in content.lines() {
+        let Some(meta) = parse_claude_line_metadata(line) else { continue };
+        acc.absorb(&meta);
+        if let Some(msg) = claude_meta_to_session_message(&meta) {
+            messages.push(msg);
+        }
+    }
+    (acc, messages)
+}
+
+/// Claude Code 会话级元信息累加器,封装「首次见到 / 最新见到」的更新策略。
+/// 抽出来避免 parse_claude_messages 里 10 个 if Some() = ... 的样板。
+#[derive(Default)]
+struct ClaudeAccumulator {
+    first_ts: Option<String>,
+    last_ts: Option<String>,
+    model: Option<String>,
+    git_branch: Option<String>,
+    version: Option<String>,
+    executor: Option<String>,
+    first_prompt: Option<String>,
+    msg_count: u32,
+    total_in: u64,
+    total_out: u64,
+}
+
+impl ClaudeAccumulator {
+    /// 把一行 ParsedSessionLine 累加进当前累计状态。
+    fn absorb(&mut self, meta: &ParsedSessionLine) {
+        if self.first_ts.is_none() { self.first_ts = meta.timestamp.clone(); }
+        if meta.timestamp.is_some() { self.last_ts = meta.timestamp.clone(); }
+        if meta.model.is_some() { self.model = meta.model.clone(); }
+        if meta.git_branch.is_some() { self.git_branch = meta.git_branch.clone(); }
+        if meta.version.is_some() { self.version = meta.version.clone(); }
+        if meta.entrypoint.is_some() { self.executor = meta.entrypoint.clone(); }
+        if self.first_prompt.is_none() && meta.prompt.is_some() {
+            self.first_prompt = meta.prompt.clone();
+        }
+        if meta.role == "user" || meta.role == "assistant" {
+            self.msg_count += 1;
+        }
+        if let Some(i) = meta.input_tokens { self.total_in += i; }
+        if let Some(o) = meta.output_tokens { self.total_out += o; }
+    }
+}
+
+fn get_claude_detail(session_id: &str) -> Option<SessionDetail> {
+    let (path, project_path) = find_claude_jsonl_for_session(session_id)?;
     let content = std::fs::read_to_string(&path).ok()?;
     let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     let active_set = collect_claude_active_sessions();
 
-    let mut first_ts: Option<String> = None;
-    let mut last_ts: Option<String> = None;
-    let mut model: Option<String> = None;
-    let mut git_branch: Option<String> = None;
-    let mut version: Option<String> = None;
-    let mut executor: Option<String> = None;
-    let mut first_prompt: Option<String> = None;
-    let mut msg_count: u32 = 0;
-    let mut total_in: u64 = 0;
-    let mut total_out: u64 = 0;
-    let mut messages: Vec<SessionMessage> = Vec::new();
-
-    for line in content.lines() {
-        if let Some(meta) = parse_claude_line_metadata(line) {
-            // 显式字段名让 first/last 时间的判定、消息预览、token 累加
-            // 全部变成自解释的字段引用,无须记住元组位置。
-            if first_ts.is_none() { first_ts = meta.timestamp.clone(); }
-            if meta.timestamp.is_some() { last_ts = meta.timestamp.clone(); }
-            if meta.model.is_some() { model = meta.model.clone(); }
-            if meta.git_branch.is_some() { git_branch = meta.git_branch; }
-            if meta.version.is_some() { version = meta.version; }
-            if meta.entrypoint.is_some() { executor = meta.entrypoint; }
-            if first_prompt.is_none() && meta.prompt.is_some() { first_prompt = meta.prompt.clone(); }
-            if meta.role == "user" || meta.role == "assistant" {
-                msg_count += 1;
-                // preview 与 push 都消费 meta.prompt/move 元数据,故 clone prompt;
-                // role/model 也可能后面还要用,所以都 clone。
-                let preview = meta.prompt.as_ref().map(|p| truncate_str(p, 500)).unwrap_or_default();
-                messages.push(SessionMessage {
-                    role: meta.role.clone(),
-                    content_preview: preview,
-                    model: meta.model.clone(),
-                    input_tokens: meta.input_tokens,
-                    output_tokens: meta.output_tokens,
-                    timestamp: meta.timestamp,
-                    stop_reason: None,
-                });
-            }
-            if let Some(i) = meta.input_tokens { total_in += i; }
-            if let Some(o) = meta.output_tokens { total_out += o; }
-        }
-    }
-
-    // Subagents
-    let session_dir = path.with_extension("");
-    let subagents_dir = session_dir.join("subagents");
-    let mut subagents: Vec<SubAgentInfo> = Vec::new();
-    if subagents_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&subagents_dir) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.extension().and_then(|e| e.to_str()) == Some("json") {
-                    if let Some(name) = p.file_stem().and_then(|n| n.to_str()) {
-                        if name.ends_with(".meta") {
-                            if let Ok(c) = std::fs::read_to_string(&p) {
-                                if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&c) {
-                                    subagents.push(SubAgentInfo {
-                                        agent_type: meta.get("agentType").and_then(|t| t.as_str()).unwrap_or("unknown").to_string(),
-                                        description: meta.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
-                                        message_count: 0,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let (acc, messages) = parse_claude_messages(&content);
+    let subagents = collect_claude_subagents(&path);
 
     Some(SessionDetail {
         info: SessionInfo {
@@ -1532,17 +1559,17 @@ fn get_claude_detail(session_id: &str) -> Option<SessionDetail> {
             source: "claudecode".to_string(),
             project_path,
             status: if active_set.contains(session_id) { "active".into() } else { "completed".into() },
-            executor: executor.unwrap_or_else(|| "unknown".into()),
-            model: model.unwrap_or_else(|| "-".into()),
-            git_branch,
-            message_count: msg_count,
-            total_input_tokens: total_in,
-            total_output_tokens: total_out,
-            first_prompt: first_prompt.map(|p| truncate_str(&p, 200)),
-            created_at: first_ts,
-            last_active_at: last_ts,
+            executor: acc.executor.unwrap_or_else(|| "unknown".into()),
+            model: acc.model.unwrap_or_else(|| "-".into()),
+            git_branch: acc.git_branch,
+            message_count: acc.msg_count,
+            total_input_tokens: acc.total_in,
+            total_output_tokens: acc.total_out,
+            first_prompt: acc.first_prompt.map(|p| truncate_str(&p, 200)),
+            created_at: acc.first_ts,
+            last_active_at: acc.last_ts,
             file_size,
-            version,
+            version: acc.version,
             subagent_count: subagents.len() as u32,
         },
         messages,
@@ -1550,110 +1577,110 @@ fn get_claude_detail(session_id: &str) -> Option<SessionDetail> {
     })
 }
 
+/// 读取 codex rollout 文件首行,得到 session_meta 中的 id。
+/// 用作 get_codex_detail 的快路径匹配,避免对每个候选文件做全量 JSON 解析。
+fn codex_session_id_from_first_line(content: &str) -> Option<String> {
+    let first = serde_json::from_str::<serde_json::Value>(content.lines().next()?).ok()?;
+    first.get("payload")
+        .and_then(|p| p.get("id"))
+        .and_then(|i| i.as_str())
+        .map(String::from)
+}
+
+/// codex 单文件 -> SessionDetail。
+/// 把 get_codex_detail 主循环里的 5+ 层 if let Ok / is_dir 嵌套全部收敛到此处;
+/// 命中条件:首行 session_meta.id 匹配 OR 文件名包含 session_id(双保险)。
+fn build_codex_session_detail(path: &std::path::Path, session_id: &str) -> Option<SessionDetail> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let sid = codex_session_id_from_first_line(&content).unwrap_or_default();
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if sid != session_id && !name.contains(session_id) { return None; }
+
+    let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let mut project_path = String::new();
+    let mut version = String::new();
+    let mut model = String::new();
+    let mut first_ts: Option<String> = None;
+    let mut last_ts: Option<String> = None;
+    let mut first_prompt: Option<String> = None;
+    let mut msg_count: u32 = 0;
+    let mut messages: Vec<SessionMessage> = Vec::new();
+
+    for line in content.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let ts = v.get("timestamp").and_then(|t| t.as_str()).map(String::from);
+
+        if let Some(meta) = parse_codex_session_meta(&v) {
+            project_path = meta.project_path;
+            version = meta.version;
+            model = meta.model;
+            first_ts = ts.clone();
+        }
+        if is_codex_message_event(&v) {
+            if let Some(text) = parse_codex_user_prompt(&v) {
+                if first_prompt.is_none() {
+                    first_prompt = Some(truncate_str(&text, 200));
+                }
+            }
+            // codex 的 event_msg:message 不区分 user/assistant,只记录文本,
+            // 这里统一构造一条 SessionMessage 推入 messages。
+            let role = v.get("payload")
+                .and_then(|p| p.get("message"))
+                .and_then(|m| m.get("role"))
+                .and_then(|r| r.as_str())
+                .unwrap_or("")
+                .to_string();
+            let text = v.get("payload")
+                .and_then(|p| p.get("message"))
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string();
+            msg_count += 1;
+            messages.push(SessionMessage {
+                role: role.clone(),
+                content_preview: truncate_str(&text, 500),
+                model: if role == "assistant" { Some(model.clone()) } else { None },
+                input_tokens: None,
+                output_tokens: None,
+                timestamp: ts.clone(),
+                stop_reason: None,
+            });
+        }
+        if ts.is_some() { last_ts = ts; }
+    }
+
+    Some(SessionDetail {
+        info: SessionInfo {
+            session_id: session_id.to_string(),
+            source: "codex".to_string(),
+            project_path,
+            status: "completed".to_string(),
+            executor: "codex".to_string(),
+            model,
+            git_branch: None,
+            message_count: msg_count,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            first_prompt,
+            created_at: first_ts,
+            last_active_at: last_ts,
+            file_size,
+            version: if version.is_empty() { None } else { Some(version) },
+            subagent_count: 0,
+        },
+        messages,
+        subagents: vec![],
+    })
+}
+
 fn get_codex_detail(session_id: &str) -> Option<SessionDetail> {
     let base = home_dir().join(".codex/sessions");
     if !base.exists() { return None; }
-
-    // Walk to find matching rollout file
-    if let Ok(y1) = std::fs::read_dir(&base) {
-        for y in y1.flatten().filter(|e| e.path().is_dir()) {
-            if let Ok(m1) = std::fs::read_dir(y.path()) {
-                for m in m1.flatten().filter(|e| e.path().is_dir()) {
-                    if let Ok(d1) = std::fs::read_dir(m.path()) {
-                        for f in d1.flatten() {
-                            let p = f.path();
-                            if !p.is_file() { continue; }
-                            let name = f.file_name().to_string_lossy().to_string();
-                            if !name.starts_with("rollout-") || !name.ends_with(".jsonl") { continue; }
-
-                            // Check if session_id matches the id in session_meta
-                            let content = std::fs::read_to_string(&p).ok()?;
-                            let first_line = content.lines().next()?;
-                            let first: serde_json::Value = serde_json::from_str(first_line).ok()?;
-                            let sid = first.get("payload").and_then(|p| p.get("id")).and_then(|i| i.as_str()).unwrap_or("");
-                            if sid != session_id && !name.contains(session_id) { continue; }
-
-                            let file_size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
-                            let mut project_path = String::new();
-                            let mut version = String::new();
-                            let mut model = String::new();
-                            let mut first_ts: Option<String> = None;
-                            let mut last_ts: Option<String> = None;
-                            let mut first_prompt: Option<String> = None;
-                            let mut msg_count: u32 = 0;
-                            let mut messages: Vec<SessionMessage> = Vec::new();
-
-                            for line in content.lines() {
-                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                                    let ts = v.get("timestamp").and_then(|t| t.as_str()).map(String::from);
-                                    let line_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
-
-                                    match line_type {
-                                        "session_meta" => {
-                                            if let Some(payload) = v.get("payload") {
-                                                project_path = payload.get("cwd").and_then(|c| c.as_str()).unwrap_or("").to_string();
-                                                version = payload.get("cli_version").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                                model = payload.get("model_provider").and_then(|m| m.as_str()).unwrap_or("openai").to_string();
-                                            }
-                                            first_ts = ts.clone();
-                                        }
-                                        "event_msg" => {
-                                            if let Some(payload) = v.get("payload") {
-                                                let event_type = payload.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                                                if event_type == "message" {
-                                                    let role = payload.get("message").and_then(|m| m.get("role")).and_then(|r| r.as_str()).unwrap_or("").to_string();
-                                                    let text = payload.get("message")
-                                                        .and_then(|m| m.get("content"))
-                                                        .and_then(|c| c.as_str())
-                                                        .unwrap_or("").to_string();
-                                                    if first_prompt.is_none() && role == "user" && !text.is_empty() {
-                                                        first_prompt = Some(truncate_str(&text, 200));
-                                                    }
-                                                    msg_count += 1;
-                                                    messages.push(SessionMessage {
-                                                        role: role.clone(),
-                                                        content_preview: truncate_str(&text, 500),
-                                                        model: if role == "assistant" { Some(model.clone()) } else { None },
-                                                        input_tokens: None,
-                                                        output_tokens: None,
-                                                        timestamp: ts.clone(),
-                                                        stop_reason: None,
-                                                    });
-                                                }
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                    if ts.is_some() { last_ts = ts; }
-                                }
-                            }
-
-                            return Some(SessionDetail {
-                                info: SessionInfo {
-                                    session_id: session_id.to_string(),
-                                    source: "codex".to_string(),
-                                    project_path,
-                                    status: "completed".to_string(),
-                                    executor: "codex".to_string(),
-                                    model,
-                                    git_branch: None,
-                                    message_count: msg_count,
-                                    total_input_tokens: 0,
-                                    total_output_tokens: 0,
-                                    first_prompt,
-                                    created_at: first_ts,
-                                    last_active_at: last_ts,
-                                    file_size,
-                                    version: if version.is_empty() { None } else { Some(version) },
-                                    subagent_count: 0,
-                                },
-                                messages,
-                                subagents: vec![],
-                            });
-                        }
-                    }
-                }
-            }
+    // 复用 iter_codex_rollout_files 把三层目录遍历压平,主循环只剩"找匹配 + 返回"。
+    for path in iter_codex_rollout_files(&base) {
+        if let Some(detail) = build_codex_session_detail(&path, session_id) {
+            return Some(detail);
         }
     }
     None
@@ -1892,111 +1919,129 @@ fn get_atomcode_detail(session_id: &str) -> Option<SessionDetail> {
 ///
 /// 优先复用 scan_pi 用的 summarize 逻辑，但详情页面要 messages 数组而不仅是
 /// 计数，所以这里另外走一遍 file。
+/// 从 session 事件里抽取 cwd / created_at / version,使用「首次见到」策略。
+/// 抽离是为了让 build_pi_messages 主循环压到 ≤30 行,同时复用给 summarize_pi_jsonl。
+fn apply_pi_session_event(summary: &mut PiSessionSummary, v: &serde_json::Value) {
+    if summary.cwd.is_none() {
+        summary.cwd = v.get("cwd").and_then(|c| c.as_str()).map(String::from);
+    }
+    if summary.created_at.is_none() {
+        summary.created_at = v.get("timestamp").and_then(|t| t.as_str()).map(String::from);
+    }
+    if summary.version.is_none() {
+        summary.version = v.get("version").and_then(|v| v.as_u64()).map(|n| n.to_string());
+    }
+}
+
+/// 从 model_change 事件里构造 "<provider>/<modelId>" 形式的 model 字符串。
+/// 仅在 summary.model 尚未设置时生效——首条 model_change 决定整 session 的模型。
+fn pi_model_from_change_event(v: &serde_json::Value) -> Option<String> {
+    let model_id = v.get("modelId").and_then(|m| m.as_str()).map(String::from);
+    let provider = v.get("provider").and_then(|p| p.as_str()).map(String::from);
+    match (provider, model_id) {
+        (Some(p), Some(m)) => Some(format!("{}/{}", p, m)),
+        (_, Some(m)) => Some(m),
+        (Some(p), None) => Some(p),
+        _ => None,
+    }
+}
+
+/// 把 message.content 数组里的 text / toolCall / toolResult 拼接成预览。
+/// 单层 for + match,比原来嵌套的 and_then + if let 链更易读且避免 4 层嵌套。
+fn format_pi_message_preview(content: &serde_json::Value) -> String {
+    let Some(arr) = content.as_array() else { return String::new() };
+    let mut pieces: Vec<String> = Vec::new();
+    for block in arr {
+        match block.get("type").and_then(|t| t.as_str()) {
+            Some("text") => {
+                if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
+                    pieces.push(t.to_string());
+                }
+            }
+            Some("toolCall") => {
+                // 工具调用只展示 name,完整 arguments 可能很大不适合预览
+                let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+                pieces.push(format!("[toolCall: {}]", name));
+            }
+            Some("toolResult") => {
+                // 工具输出可能巨大,预览里只占位
+                pieces.push("[toolResult]".to_string());
+            }
+            _ => {}
+        }
+    }
+    pieces.join("\n")
+}
+
+/// 从 message.content 数组里取第一条 text block 作为 user prompt。
+/// find_map 把嵌套的 Option 链压平,只用一层表达式表达。
+fn extract_first_user_prompt_text(content: &serde_json::Value) -> Option<String> {
+    content.as_array().and_then(|arr| {
+        arr.iter().find_map(|c| c.get("text").and_then(|t| t.as_str()).map(String::from))
+    })
+}
+
+/// 把 pi 的 usage 字段累加到 summary(pi 把 cache 命中量计入 input 等价物)。
+/// cacheRead/cacheWrite 不存在时按 0 处理,符合 scan_pi 旧实现。
+fn accumulate_pi_usage(summary: &mut PiSessionSummary, usage: &serde_json::Value) {
+    let i = usage.get("input").and_then(|n| n.as_u64()).unwrap_or(0);
+    let cr = usage.get("cacheRead").and_then(|n| n.as_u64()).unwrap_or(0);
+    let cw = usage.get("cacheWrite").and_then(|n| n.as_u64()).unwrap_or(0);
+    summary.total_input_tokens += i + cr + cw;
+    if let Some(o) = usage.get("output").and_then(|n| n.as_u64()) {
+        summary.total_output_tokens += o;
+    }
+}
+
+/// 从 message 事件构造一条 SessionMessage 预览;同时累加 summary.message_count、
+/// first_prompt、tokens、last_active_at 等可由本消息推导的字段。
+/// 抽出来是为了把 build_pi_messages 主循环压到 ≤30 行。
+fn build_pi_session_message(msg: &serde_json::Value, envelope_ts: Option<&str>) -> SessionMessage {
+    let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("").to_string();
+    let preview = msg.get("content").map(format_pi_message_preview).unwrap_or_default();
+    let input_tokens = msg.get("usage").and_then(|u| u.get("input")).and_then(|n| n.as_u64());
+    let output_tokens = msg.get("usage").and_then(|u| u.get("output")).and_then(|n| n.as_u64());
+    let stop_reason = msg.get("stopReason").and_then(|s| s.as_str()).map(String::from);
+    let model = msg.get("model").and_then(|m| m.as_str()).map(String::from);
+    let timestamp = envelope_ts.map(String::from);
+    SessionMessage {
+        role,
+        content_preview: truncate_str(&preview, 500),
+        model,
+        input_tokens,
+        output_tokens,
+        timestamp,
+        stop_reason,
+    }
+}
+
+/// 处理一条 message 事件,既更新 summary 也产出对应的 SessionMessage 预览。
+/// 抽离是为了把 build_pi_messages 主循环的 match 臂嵌套压平到 2 层。
+fn process_pi_message_event(
+    v: &serde_json::Value,
+    summary: &mut PiSessionSummary,
+    out: &mut Vec<SessionMessage>,
+) {
+    let Some(msg) = v.get("message") else { return };
+    let envelope_ts = v.get("timestamp").and_then(|t| t.as_str());
+    apply_pi_event(summary, "message", v);
+    out.push(build_pi_session_message(msg, envelope_ts));
+}
+
 fn build_pi_messages(content: &str) -> (Vec<SessionMessage>, PiSessionSummary) {
     let mut messages: Vec<SessionMessage> = Vec::new();
     let mut summary = PiSessionSummary::default();
 
     for line in content.lines() {
         if line.is_empty() { continue; }
-        let Some((event_type, v)) = parse_pi_line(line) else { continue; };
+        let Some((event_type, v)) = parse_pi_line(line) else { continue };
 
-        if event_type == "session" {
-            if summary.cwd.is_none() {
-                summary.cwd = v.get("cwd").and_then(|c| c.as_str()).map(String::from);
-            }
-            if summary.created_at.is_none() {
-                summary.created_at = v.get("timestamp").and_then(|t| t.as_str()).map(String::from);
-            }
-            if summary.version.is_none() {
-                summary.version = v.get("version").and_then(|v| v.as_u64()).map(|n| n.to_string());
-            }
-            continue;
+        // 复用 summarize 的派发逻辑,保证两条路径在同一 JSONL 上的
+        // summary 字段一致;唯一差异是 build_pi_messages 额外收集每条 message 的预览。
+        match event_type.as_str() {
+            "message" => process_pi_message_event(&v, &mut summary, &mut messages),
+            _ => apply_pi_event(&mut summary, event_type.as_str(), &v),
         }
-
-        if event_type == "model_change" {
-            if summary.model.is_none() {
-                let model_id = v.get("modelId").and_then(|m| m.as_str()).map(String::from);
-                let provider = v.get("provider").and_then(|p| p.as_str()).map(String::from);
-                summary.model = match (provider, model_id) {
-                    (Some(p), Some(m)) => Some(format!("{}/{}", p, m)),
-                    (_, Some(m)) => Some(m),
-                    (Some(p), None) => Some(p),
-                    _ => None,
-                };
-            }
-            continue;
-        }
-
-        if event_type != "message" { continue; }
-        let Some(msg) = v.get("message") else { continue; };
-        summary.message_count += 1;
-
-        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("").to_string();
-        // 从 content 数组里拼接 text / toolCall 名作为预览
-        let preview = msg.get("content")
-            .and_then(|c| c.as_array())
-            .map(|arr| {
-                let mut pieces: Vec<String> = Vec::new();
-                for block in arr {
-                    match block.get("type").and_then(|t| t.as_str()) {
-                        Some("text") => {
-                            if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
-                                pieces.push(t.to_string());
-                            }
-                        }
-                        Some("toolCall") => {
-                            let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("?");
-                            pieces.push(format!("[toolCall: {}]", name));
-                        }
-                        Some("toolResult") => {
-                            // 预览里仅占位，避免巨大工具输出烒友预览
-                            pieces.push("[toolResult]".to_string());
-                        }
-                        _ => {}
-                    }
-                }
-                pieces.join("\n")
-            })
-            .unwrap_or_default();
-
-        let input_tokens = msg.get("usage").and_then(|u| u.get("input")).and_then(|n| n.as_u64());
-        let output_tokens = msg.get("usage").and_then(|u| u.get("output")).and_then(|n| n.as_u64());
-        let stop_reason = msg.get("stopReason").and_then(|s| s.as_str()).map(String::from);
-        let model = msg.get("model").and_then(|m| m.as_str()).map(String::from);
-        let timestamp = v.get("timestamp").and_then(|t| t.as_str()).map(String::from);
-
-        // first_prompt 提取（与 scan_pi 逻辑一致）
-        if summary.first_prompt.is_none() && role == "user" {
-            if let Some(text) = msg.get("content").and_then(|c| c.as_array()).and_then(|arr| {
-                arr.iter().find_map(|c| c.get("text").and_then(|t| t.as_str()))
-            }) {
-                summary.first_prompt = Some(text.to_string());
-            }
-        }
-
-        // tokens 累加（与 scan_pi 一致：cache 计入 input）
-        if let Some(usage) = msg.get("usage") {
-            let i = usage.get("input").and_then(|n| n.as_u64()).unwrap_or(0);
-            let cr = usage.get("cacheRead").and_then(|n| n.as_u64()).unwrap_or(0);
-            let cw = usage.get("cacheWrite").and_then(|n| n.as_u64()).unwrap_or(0);
-            summary.total_input_tokens += i + cr + cw;
-            if let Some(o) = usage.get("output").and_then(|n| n.as_u64()) {
-                summary.total_output_tokens += o;
-            }
-        }
-        if let Some(ts) = &timestamp {
-            summary.last_active_at = Some(ts.clone());
-        }
-
-        messages.push(SessionMessage {
-            role,
-            content_preview: truncate_str(&preview, 500),
-            model,
-            input_tokens,
-            output_tokens,
-            timestamp,
-            stop_reason,
-        });
     }
 
     (messages, summary)
@@ -2121,65 +2166,69 @@ mod session_scanner_dispatch_tests {
     }
 }
 
+/// 在 project_dir 下找文件名匹配的 pi JSONL 并解析为 SessionDetail。
+/// 抽离出"找文件 + 比对 session_id + 解析文件"三件事,get_pi_detail 主循环只剩
+/// "遍历项目目录 + 用 helper"。
+fn find_pi_detail_in_project(
+    project_dir: &std::path::Path,
+    session_id: &str,
+) -> Option<SessionDetail> {
+    // 在项目目录里按文件名 UUID 后缀找匹配的 jsonl
+    let path = iter_jsonl_files(project_dir)
+        .into_iter()
+        .map(|(p, _)| p)
+        .find(|p| pi_session_id_from_path(p).as_deref() == Some(session_id))?;
+    let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    let content = std::fs::read_to_string(&path).ok()?;
+    let (messages, summary) = build_pi_messages(&content);
+
+    // cwd 优先级:JSONL 首行 > 文件名反编码(同 scan_pi 策略)
+    let project_path = summary.cwd.clone().unwrap_or_else(|| {
+        let encoded = project_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        decode_pi_cwd(&encoded)
+    });
+    let last_active_at = summary.last_active_at.or_else(|| pi_mtime_to_rfc3339(&path));
+    let model = summary.model.unwrap_or_else(|| "-".into());
+    let first_prompt = summary.first_prompt.map(|p| truncate_str(&p, 200));
+    let created_at = summary.created_at;
+    let version = summary.version;
+
+    Some(SessionDetail {
+        info: SessionInfo {
+            session_id: session_id.to_string(),
+            source: "pi".to_string(),
+            project_path,
+            status: "completed".to_string(),
+            executor: "pi".to_string(),
+            model,
+            git_branch: None,
+            message_count: summary.message_count,
+            total_input_tokens: summary.total_input_tokens,
+            total_output_tokens: summary.total_output_tokens,
+            first_prompt,
+            created_at,
+            last_active_at,
+            file_size,
+            version,
+            subagent_count: 0,
+        },
+        messages,
+        subagents: vec![],
+    })
+}
+
 fn get_pi_detail(session_id: &str) -> Option<SessionDetail> {
     let root = home_dir().join(".pi/agent/sessions");
     if !root.exists() { return None; }
-
     let project_dirs = std::fs::read_dir(&root).ok()?;
+
+    // 主循环只剩"遍历项目目录 + 委托给 helper",内层 if let Some 链全消失
     for project_dir in project_dirs.flatten().filter(|e| e.path().is_dir()) {
-        let files = match std::fs::read_dir(project_dir.path()) {
-            Ok(it) => it,
-            Err(_) => continue,
-        };
-        for file in files.flatten() {
-            let path = file.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
-            let stem = match path.file_stem().and_then(|s| s.to_str()) {
-                Some(s) => s.to_string(),
-                None => continue,
-            };
-            // 文件名 = <iso-ts>_<uuid>.jsonl，session_id 是后半 UUID
-            let parsed_sid = match stem.rsplit_once('_') {
-                Some((_ts, uuid)) => uuid.to_string(),
-                None => stem.clone(),
-            };
-            if parsed_sid != session_id { continue; }
-
-            let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-            let content = std::fs::read_to_string(&path).ok()?;
-            let (messages, summary) = build_pi_messages(&content);
-
-            let project_path = summary.cwd.clone().unwrap_or_else(|| {
-                let encoded = project_dir.file_name().to_string_lossy().to_string();
-                decode_pi_cwd(&encoded)
-            });
-            let last_active_at = summary
-                .last_active_at
-                .clone()
-                .or_else(|| pi_mtime_to_rfc3339(&path));
-
-            return Some(SessionDetail {
-                info: SessionInfo {
-                    session_id: session_id.to_string(),
-                    source: "pi".to_string(),
-                    project_path,
-                    status: "completed".to_string(),
-                    executor: "pi".to_string(),
-                    model: summary.model.clone().unwrap_or_else(|| "-".into()),
-                    git_branch: None,
-                    message_count: summary.message_count,
-                    total_input_tokens: summary.total_input_tokens,
-                    total_output_tokens: summary.total_output_tokens,
-                    first_prompt: summary.first_prompt.clone().map(|p| truncate_str(&p, 200)),
-                    created_at: summary.created_at.clone(),
-                    last_active_at,
-                    file_size,
-                    version: summary.version.clone(),
-                    subagent_count: 0,
-                },
-                messages,
-                subagents: vec![],
-            });
+        if let Some(detail) = find_pi_detail_in_project(&project_dir.path(), session_id) {
+            return Some(detail);
         }
     }
     None
@@ -2297,5 +2346,246 @@ mod session_scanner_tests {
         // 配一个真实存在的临时目录
         let tmp = std::env::temp_dir().to_string_lossy().to_string();
         assert!(exec_session_dir_exists(&mk(&tmp)));
+    }
+}
+
+/// 覆盖 issue #637 重构后新增的 helper:
+/// - file_age_seconds / pi_session_id_from_path / format_pi_message_preview
+/// - accumulate_pi_usage / apply_pi_session_event / pi_model_from_change_event
+/// - parse_codex_session_meta / parse_codex_user_prompt / is_codex_message_event
+/// - claude_meta_to_session_message / ClaudeAccumulator::absorb
+/// - codex_session_id_from_first_line
+/// 这些都是 issue 抽取出来的纯函数,值得单测覆盖以防回归。
+#[cfg(test)]
+mod refactor_helpers_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn file_age_seconds_handles_missing_and_existing() {
+        // 不存在的路径 → u64::MAX(防止减法下溢,与旧代码 .unwrap_or(u64::MAX) 一致)
+        assert_eq!(
+            file_age_seconds(std::path::Path::new("/__no_such__/__ntd__")),
+            u64::MAX
+        );
+        // 真实文件 → 应该是有限且 < u64::MAX
+        let tmp = std::env::temp_dir().join("__ntd_file_age__");
+        std::fs::write(&tmp, b"x").unwrap();
+        let age = file_age_seconds(&tmp);
+        assert!(age < u64::MAX, "real file should yield finite age, got {age}");
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn pi_session_id_from_path_splits_on_underscore() {
+        let p = std::path::Path::new("/x/2026-06-11T01-44-54-108Z_019eb45a-8e5c-7cf4-95f9-787b5a83b0fa.jsonl");
+        assert_eq!(
+            pi_session_id_from_path(p).as_deref(),
+            Some("019eb45a-8e5c-7cf4-95f9-787b5a83b0fa")
+        );
+        // 没有下划线时退化为整个 stem
+        let p2 = std::path::Path::new("/x/justname.jsonl");
+        assert_eq!(pi_session_id_from_path(p2).as_deref(), Some("justname"));
+    }
+
+    #[test]
+    fn format_pi_message_preview_concatenates_text_toolcall_toolresult() {
+        let v = json!([
+            {"type": "text", "text": "hello"},
+            {"type": "toolCall", "name": "bash"},
+            {"type": "toolResult"},
+            {"type": "unknown", "x": 1},
+        ]);
+        let preview = format_pi_message_preview(&v);
+        assert!(preview.contains("hello"), "preview should include text body: {preview}");
+        assert!(preview.contains("[toolCall: bash]"), "preview should label tool calls: {preview}");
+        assert!(preview.contains("[toolResult]"), "preview should placeholder tool results: {preview}");
+        // 顺序: text 在前,toolCall 在中,toolResult 在后
+        assert!(preview.find("hello").unwrap() < preview.find("[toolCall: bash]").unwrap());
+        assert!(preview.find("[toolCall: bash]").unwrap() < preview.find("[toolResult]").unwrap());
+        // 非数组内容 → 空字符串
+        assert_eq!(format_pi_message_preview(&json!("plain")), "");
+        assert_eq!(format_pi_message_preview(&json!(null)), "");
+    }
+
+    #[test]
+    fn accumulate_pi_usage_counts_input_and_cache_and_output() {
+        let mut summary = PiSessionSummary::default();
+        let usage = json!({
+            "input": 10,
+            "cacheRead": 100,
+            "cacheWrite": 50,
+            "output": 7,
+        });
+        accumulate_pi_usage(&mut summary, &usage);
+        // 10 + 100 + 50 = 160
+        assert_eq!(summary.total_input_tokens, 160);
+        assert_eq!(summary.total_output_tokens, 7);
+        // 累加:再喂一条只含 cacheWrite
+        accumulate_pi_usage(&mut summary, &json!({"input": 0, "cacheWrite": 30, "output": 0}));
+        assert_eq!(summary.total_input_tokens, 190);
+        // 缺字段时按 0 处理,不 panic
+        accumulate_pi_usage(&mut summary, &json!({}));
+        assert_eq!(summary.total_input_tokens, 190);
+    }
+
+    #[test]
+    fn apply_pi_session_event_uses_first_seen_strategy() {
+        let mut s = PiSessionSummary::default();
+        apply_pi_session_event(&mut s, &json!({"cwd": "/x", "timestamp": "t1", "version": 3}));
+        assert_eq!(s.cwd.as_deref(), Some("/x"));
+        assert_eq!(s.created_at.as_deref(), Some("t1"));
+        assert_eq!(s.version.as_deref(), Some("3"));
+        // 再次设置不同值,不覆盖
+        apply_pi_session_event(&mut s, &json!({"cwd": "/y", "timestamp": "t2", "version": 5}));
+        assert_eq!(s.cwd.as_deref(), Some("/x"));
+        assert_eq!(s.created_at.as_deref(), Some("t1"));
+        assert_eq!(s.version.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn pi_model_from_change_event_formats_provider_and_model() {
+        let v = json!({"provider": "anthropic", "modelId": "claude-opus-4"});
+        assert_eq!(pi_model_from_change_event(&v).as_deref(), Some("anthropic/claude-opus-4"));
+        // 缺 provider
+        let v2 = json!({"modelId": "gpt-4"});
+        assert_eq!(pi_model_from_change_event(&v2).as_deref(), Some("gpt-4"));
+        // 缺 modelId
+        let v3 = json!({"provider": "anthropic"});
+        assert_eq!(pi_model_from_change_event(&v3).as_deref(), Some("anthropic"));
+        // 全缺
+        assert!(pi_model_from_change_event(&json!({})).is_none());
+    }
+
+    #[test]
+    fn parse_codex_session_meta_returns_none_for_non_meta() {
+        assert!(parse_codex_session_meta(&json!({"type": "event_msg"})).is_none());
+        let meta = parse_codex_session_meta(&json!({
+            "type": "session_meta",
+            "payload": {"id": "abc", "cwd": "/w", "cli_version": "0.1", "model_provider": "oai"},
+        })).expect("session_meta should parse");
+        assert_eq!(meta.session_id, "abc");
+        assert_eq!(meta.project_path, "/w");
+        assert_eq!(meta.version, "0.1");
+        assert_eq!(meta.model, "oai");
+    }
+
+    #[test]
+    fn parse_codex_user_prompt_filters_by_role_and_non_empty_text() {
+        // 非 event_msg
+        assert!(parse_codex_user_prompt(&json!({"type": "session_meta"})).is_none());
+        // event_msg 但非 message
+        assert!(parse_codex_user_prompt(&json!({"type": "event_msg", "payload": {"type": "x"}})).is_none());
+        // event_msg:message 但非 user
+        assert!(parse_codex_user_prompt(&json!({
+            "type": "event_msg",
+            "payload": {"type": "message", "message": {"role": "assistant", "content": "hi"}}
+        })).is_none());
+        // user 但空文本 → None(filter 排除)
+        assert!(parse_codex_user_prompt(&json!({
+            "type": "event_msg",
+            "payload": {"type": "message", "message": {"role": "user", "content": ""}}
+        })).is_none());
+        // 命中
+        let got = parse_codex_user_prompt(&json!({
+            "type": "event_msg",
+            "payload": {"type": "message", "message": {"role": "user", "content": "hello"}}
+        })).expect("should return Some");
+        assert_eq!(got, "hello");
+    }
+
+    #[test]
+    fn is_codex_message_event_only_true_for_event_msg_type_message() {
+        assert!(!is_codex_message_event(&json!({"type": "session_meta"})));
+        assert!(!is_codex_message_event(&json!({"type": "event_msg", "payload": {"type": "x"}})));
+        assert!(is_codex_message_event(&json!({"type": "event_msg", "payload": {"type": "message"}})));
+    }
+
+    #[test]
+    fn claude_meta_to_session_message_skips_queue_role() {
+        let user = ParsedSessionLine {
+            timestamp: Some("t".into()),
+            model: None,
+            git_branch: None,
+            version: None,
+            entrypoint: None,
+            prompt: Some("hi".into()),
+            input_tokens: None,
+            output_tokens: None,
+            role: "user".into(),
+        };
+        let m = claude_meta_to_session_message(&user).expect("user should produce a message");
+        assert_eq!(m.role, "user");
+        assert!(m.content_preview.contains("hi"));
+
+        // queue 行不计入 messages
+        let mut queue = user.clone();
+        queue.role = "queue".into();
+        assert!(claude_meta_to_session_message(&queue).is_none());
+    }
+
+    #[test]
+    fn claude_accumulator_absorb_first_seen_and_latest_seen() {
+        let mut acc = ClaudeAccumulator::default();
+        let m1 = ParsedSessionLine {
+            timestamp: Some("t1".into()),
+            model: Some("claude-opus-4".into()),
+            git_branch: None,
+            version: None,
+            entrypoint: Some("sdk".into()),
+            prompt: Some("first".into()),
+            input_tokens: Some(10),
+            output_tokens: Some(20),
+            role: "user".into(),
+        };
+        acc.absorb(&m1);
+        assert_eq!(acc.first_ts.as_deref(), Some("t1"));
+        assert_eq!(acc.last_ts.as_deref(), Some("t1"));
+        assert_eq!(acc.model.as_deref(), Some("claude-opus-4"));
+        assert_eq!(acc.first_prompt.as_deref(), Some("first"));
+        assert_eq!(acc.msg_count, 1);
+        assert_eq!(acc.total_in, 10);
+        assert_eq!(acc.total_out, 20);
+
+        // 第二行:model/branch 等空 → 不覆盖;但 last_ts / total 更新
+        let m2 = ParsedSessionLine {
+            timestamp: Some("t2".into()),
+            model: None,
+            git_branch: None,
+            version: None,
+            entrypoint: None,
+            prompt: None,
+            input_tokens: Some(5),
+            output_tokens: Some(3),
+            role: "assistant".into(),
+        };
+        acc.absorb(&m2);
+        assert_eq!(acc.first_ts.as_deref(), Some("t1")); // 不变
+        assert_eq!(acc.last_ts.as_deref(), Some("t2")); // 更新为最新
+        assert_eq!(acc.model.as_deref(), Some("claude-opus-4")); // 不变
+        assert_eq!(acc.msg_count, 2);
+        assert_eq!(acc.total_in, 15);
+        assert_eq!(acc.total_out, 23);
+    }
+
+    #[test]
+    fn codex_session_id_from_first_line_reads_payload_id() {
+        let content = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"abc-123\",\"cwd\":\"/x\"}}\n{\"type\":\"event_msg\"}";
+        assert_eq!(
+            codex_session_id_from_first_line(content).as_deref(),
+            Some("abc-123")
+        );
+        // 缺 payload.id → None
+        assert!(codex_session_id_from_first_line("{}").is_none());
+        // 非 JSON → None
+        assert!(codex_session_id_from_first_line("not json").is_none());
+        // 空内容 → None
+        assert!(codex_session_id_from_first_line("").is_none());
+    }
+
+    #[test]
+    fn iter_codex_rollout_files_returns_empty_for_missing_root() {
+        let p = std::path::Path::new("/__no_such__/__ntd__/codex_root");
+        assert!(iter_codex_rollout_files(p).is_empty());
     }
 }
