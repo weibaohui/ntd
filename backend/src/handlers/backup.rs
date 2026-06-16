@@ -219,19 +219,66 @@ pub async fn merge_backup(
 
 // ============ 数据库备份 ============
 
+/// 备份类型枚举 —— 把"备份目录是 db / todo / skill"用强类型表达，
+/// 避免调用点继续用字符串 `"db"` / `"todo"` / `"skills"` 散落拼接。
+///
+/// 与旧版裸函数（`backup_dir` / `db_backup_dir` / `todo_backup_dir` /
+/// `skill_backup_dir`）共存：薄包装函数保留以减小调用方 diff，
+/// 内部统一走 `BackupKind::dir` 派发，新增 kind 时只改本枚举即可。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BackupKind {
+    /// 数据库备份；携带数据库文件名作为子目录隔离多 db 场景
+    Db(String),
+    /// Todo YAML 备份
+    Todo,
+    /// Skill 目录备份（落盘目录名历史上是 `skills`，与 enum 变体名拼写略有差异，
+    /// 这里显式写出，避免后人"按枚举名修正"破坏既有路径）
+    Skill,
+}
+
+impl BackupKind {
+    /// 备份根目录 `~/.ntd/backups`。
+    ///
+    /// 集中 `dirs::home_dir()` 的 fallback：未取到 home 时统一回退到当前目录 `.`，
+    /// 与重构前 `backup_dir()` 行为一致，避免各 handler 自行 `unwrap_or`
+    /// 出现 `.` / `/tmp` / `expect` 不一致。
+    fn root() -> PathBuf {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        home.join(".ntd").join("backups")
+    }
+
+    /// 派发到具体子目录：Db 加一层 `db/{filename}`，Todo / Skill 仅一层。
+    ///
+    /// 返回的 `PathBuf` 不保证在磁盘上存在（与旧函数语义一致）。
+    fn dir(&self) -> PathBuf {
+        match self {
+            // 既有路径是 `~/.ntd/backups/db/{filename}`，filename 由调用方提供
+            BackupKind::Db(filename) => Self::root().join("db").join(filename),
+            BackupKind::Todo => Self::root().join("todo"),
+            // 既有路径是 `~/.ntd/backups/skills`（注意带 s），保留以兼容既有落盘数据
+            BackupKind::Skill => Self::root().join("skills"),
+        }
+    }
+}
+
+/// 备份根目录（`~/.ntd/backups`）的薄包装；新代码建议直接用 `BackupKind::root()`。
+///
+/// 保留以减小调用方 diff（issue #616）。当前文件内无内部调用方，
+/// 但作为模块对外可见的命名入口，外部代码可能仍在引用；
+/// 若确认无人使用，可在后续清理 issue 中删除。
+#[allow(dead_code)]
 fn backup_dir() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".ntd").join("backups")
+    BackupKind::root()
 }
 
-/// 获取数据库备份目录（按数据库文件名分目录）
+/// 获取数据库备份目录（按数据库文件名分目录）的薄包装。
 fn db_backup_dir(db_filename: &str) -> PathBuf {
-    backup_dir().join("db").join(db_filename)
+    BackupKind::Db(db_filename.to_string()).dir()
 }
 
-/// 获取Todo备份目录
+/// 获取 Todo 备份目录的薄包装。
 fn todo_backup_dir() -> PathBuf {
-    backup_dir().join("todo")
+    BackupKind::Todo.dir()
 }
 
 /// 手动下载数据库文件（zip 压缩格式）
@@ -1118,9 +1165,9 @@ pub async fn trigger_log_cleanup(
 
 // ============ Skill 备份 ============
 
-/// Skill 备份目录
+/// Skill 备份目录的薄包装。
 fn skill_backup_dir() -> PathBuf {
-    backup_dir().join("skills")
+    BackupKind::Skill.dir()
 }
 
 /// 获取所有执行器的 skills 目录
@@ -1948,5 +1995,108 @@ mod tests {
             bytes.len(),
             payload.len()
         );
+    }
+
+    // ============ BackupKind 派发行为验证 ============
+    //
+    // 验证 `BackupKind::root` / `BackupKind::dir` 与既有裸函数返回路径字节级一致，
+    // 防止未来修改 enum 派发逻辑时把既有落盘数据移动到新路径，
+    // 那样会导致备份恢复 / 清理逻辑全部失效。
+
+    /// 验证 `BackupKind::root()` 返回 `~/.ntd/backups`，与 `backup_dir()` 字节级一致。
+    #[test]
+    fn test_backup_kind_root_matches_legacy_backup_dir() {
+        let legacy = backup_dir();
+        let from_enum = BackupKind::root();
+        assert_eq!(
+            legacy, from_enum,
+            "BackupKind::root() 应与原 backup_dir() 路径一致"
+        );
+        // 显式断言末尾两段是 .ntd / backups，避免后人悄悄把根目录改掉
+        let segments: Vec<_> = from_enum
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect();
+        let tail = &segments[segments.len() - 2..];
+        assert_eq!(tail, [".ntd", "backups"], "根目录尾段必须固定为 .ntd/backups");
+    }
+
+    /// 验证 `Db(filename)` 派发路径 `~/.ntd/backups/db/{filename}`。
+    /// filename 应被原样拼接到 db 子目录下，不做任何 sanitize，
+    /// 避免与既有 `db_backup_dir` 行为出现分叉。
+    #[test]
+    fn test_backup_kind_db_dir_dispatches_to_db_subdir() {
+        let from_enum = BackupKind::Db("ntd.db".to_string()).dir();
+        let legacy = db_backup_dir("ntd.db");
+        assert_eq!(
+            from_enum, legacy,
+            "BackupKind::Db 应与原 db_backup_dir 路径一致"
+        );
+
+        let segments: Vec<_> = from_enum
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect();
+        let tail = &segments[segments.len() - 3..];
+        assert_eq!(
+            tail,
+            ["backups", "db", "ntd.db"],
+            "Db 派发路径尾段必须为 backups/db/{{filename}}"
+        );
+    }
+
+    /// 验证 `Todo` 派发路径 `~/.ntd/backups/todo`，与原 `todo_backup_dir` 一致。
+    #[test]
+    fn test_backup_kind_todo_dir_dispatches_to_todo_subdir() {
+        let from_enum = BackupKind::Todo.dir();
+        let legacy = todo_backup_dir();
+        assert_eq!(
+            from_enum, legacy,
+            "BackupKind::Todo 应与原 todo_backup_dir 路径一致"
+        );
+
+        let segments: Vec<_> = from_enum
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect();
+        let last = segments.last().unwrap();
+        assert_eq!(last, "todo", "Todo 派发路径末段必须为 todo");
+    }
+
+    /// 验证 `Skill` 派发路径 `~/.ntd/backups/skills`。
+    ///
+    /// 注意：enum 变体名是 `Skill`（无 s），但落盘子目录历史上是 `skills`（带 s），
+    /// 该测试用来锁住这一历史拼写差异，防止后人"按枚举名修正目录名"导致
+    /// 既有备份数据变成"找不到"的状态。
+    #[test]
+    fn test_backup_kind_skill_dir_dispatches_to_skills_subdir() {
+        let from_enum = BackupKind::Skill.dir();
+        let legacy = skill_backup_dir();
+        assert_eq!(
+            from_enum, legacy,
+            "BackupKind::Skill 应与原 skill_backup_dir 路径一致"
+        );
+
+        let segments: Vec<_> = from_enum
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect();
+        let last = segments.last().unwrap();
+        assert_eq!(
+            last, "skills",
+            "Skill 派发路径末段必须为 skills（注意带 s），保留既有落盘路径"
+        );
+    }
+
+    /// 验证 `BackupKind` 枚举本身可被 Debug / Clone / PartialEq 正常使用，
+    /// 后续若在 handler 里作为参数传递，这些 trait 不能少。
+    #[test]
+    fn test_backup_kind_traits_debug_clone_eq() {
+        let a = BackupKind::Db("a.db".to_string());
+        let b = a.clone();
+        assert_eq!(a, b, "Clone 后应与原值相等");
+        // Debug 渲染应包含变体名，便于日志定位
+        let dbg = format!("{:?}", BackupKind::Todo);
+        assert!(dbg.contains("Todo"), "Debug 输出应包含变体名，实际: {}", dbg);
     }
 }
