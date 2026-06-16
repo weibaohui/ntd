@@ -1512,15 +1512,16 @@ mod app_error_tests {
     fn test_from_db_err_via_from_trait() {
         let err: sea_orm::DbErr = sea_orm::DbErr::RecordNotFound("x".into());
         let app: AppError = err.into();
-        // 通过 from_db_err 走同一工厂；从 From trait 入口验证等价
-        matches!(app, AppError::NotFound);
+        // 通过 From trait 入口走同一工厂；断言变体一致（不写 assert! 的 matches!
+        // 返回 bool 直接被丢弃，等于测试空跑——见 scheduler.rs:20 文档约定的写法）。
+        assert!(matches!(app, AppError::NotFound));
     }
 
     #[test]
     fn test_from_io_err_via_from_trait() {
         let err: std::io::Error = std::io::Error::other("boom");
         let app: AppError = err.into();
-        matches!(app, AppError::Internal(_));
+        assert!(matches!(app, AppError::Internal(_)));
     }
 
     #[test]
@@ -1537,7 +1538,7 @@ mod app_error_tests {
     fn test_from_scheduler_error_via_from_trait() {
         let err = SchedulerError::InvalidTimezone("bad/tz".to_string());
         let app: AppError = err.into();
-        matches!(app, AppError::BadRequest(_));
+        assert!(matches!(app, AppError::BadRequest(_)));
     }
 
     // === IntoResponse 公开行为：保证重构前后字节级一致 ===
