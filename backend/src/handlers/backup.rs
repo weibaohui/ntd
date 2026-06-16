@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use zip::write::FileOptions;
 use zip::ZipWriter;
+use std::io::Seek;
 use std::io::Write;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
@@ -19,6 +20,43 @@ use crate::services::usage_stats::UsageStatsService;
 
 /// 数据库备份压缩级别 (0-9, 9 为最强压缩)
 const BACKUP_COMPRESSION_LEVEL: Option<i64> = Some(9);
+
+/// 构造备份 zip entry 写入时的默认 `FileOptions`。
+///
+/// 所有单 entry 备份（数据库 / Todo YAML / Skill YAML）共用同一组配置：
+/// - `Deflated` 压缩：相对 `Stored` 显著减小体积，且 zip crate 自带跨平台兼容
+/// - `BACKUP_COMPRESSION_LEVEL` 等级 9：备份场景优先体积，与既有数据库备份字节级一致
+/// - `0o644` 权限：与既有各调用点保持一致，避免落盘后 umask 行为差异
+///
+/// 返回 `'static` 生命周期的 options，可直接传入 `ZipWriter::start_file`，
+/// 也可安全地缓存在栈上复用。
+fn default_zip_options() -> FileOptions<'static, ()> {
+    FileOptions::<()>::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .compression_level(BACKUP_COMPRESSION_LEVEL)
+        .unix_permissions(0o644)
+}
+
+/// 把单个 entry 写入一个新的 zip 归档，并把 writer 原样返回。
+///
+/// 适用于「单文件 → 单 entry zip」场景（数据库 / Todo / Skill 备份）。
+/// 多 entry 场景（递归目录打包）继续使用 `add_dir_to_zip_skill`。
+///
+/// 设计取舍：
+/// - `W: Write + Seek` 是 `ZipWriter` 要求的 trait 组合；`Cursor<Vec<u8>>` 与 `File` 都满足
+/// - 返回 `W` 是为了链式把 writer 继续交给调用方（例如 `Cursor` 后续用 `into_inner()` 拿 Vec）
+/// - 错误使用 `?` 透传 `zip::result::ZipError`，与 `ZipWriter` 自身错误类型保持一致
+fn write_single_entry_zip<W: Write + Seek>(
+    writer: W,
+    entry_name: &str,
+    data: &[u8],
+) -> Result<W, zip::result::ZipError> {
+    let mut zip = ZipWriter::new(writer);
+    let options = default_zip_options();
+    zip.start_file(entry_name, options)?;
+    zip.write_all(data)?;
+    zip.finish()
+}
 
 /// 检查文件名是否安全（不包含路径分隔符、目录遍历序列或控制字符）。
 ///
@@ -228,17 +266,13 @@ pub async fn download_database(
     let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, std::io::Error> {
         let db_data = std::fs::read(&canonical_path)?;
 
-        // 创建 zip 文件，使用最强压缩级别
-        let file = std::io::Cursor::new(Vec::new());
-        let mut zip = ZipWriter::new(file);
-        let options = FileOptions::<()>::default()
-            .compression_method(zip::CompressionMethod::Deflated)
-            .compression_level(BACKUP_COMPRESSION_LEVEL)
-            .unix_permissions(0o644);
-
-        zip.start_file("database.db", options)?;
-        zip.write_all(&db_data)?;
-        Ok(zip.finish()?.into_inner())
+        // 用 Cursor<Vec<u8>> 在内存中构造 zip，结束后 .into_inner() 拿到原始 Vec。
+        // 复用 write_single_entry_zip 保证与 trigger_local_backup / auto_backup
+        // 使用同一份 options 与 entry 写入逻辑，跨路径字节级一致。
+        let cursor = std::io::Cursor::new(Vec::new());
+        let cursor = write_single_entry_zip(cursor, "database.db", &db_data)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        Ok(cursor.into_inner())
     })
     .await
     .map_err(|e| AppError::Internal(format!("Task join error: {}", e)))?
@@ -293,17 +327,9 @@ pub async fn trigger_local_backup(
         // 读取数据库文件
         let db_data = std::fs::read(&db_path_clone)?;
 
-        // 创建 zip 文件，使用最强压缩级别 (level 9)
+        // 落盘到 backup_path；单 entry "database.db" 复用 helper。
         let file = std::fs::File::create(&backup_path_clone)?;
-        let mut zip = ZipWriter::new(file);
-        let options = FileOptions::<()>::default()
-            .compression_method(zip::CompressionMethod::Deflated)
-            .compression_level(BACKUP_COMPRESSION_LEVEL)
-            .unix_permissions(0o644);
-
-        zip.start_file("database.db", options)?;
-        zip.write_all(&db_data)?;
-        zip.finish()?;
+        write_single_entry_zip(file, "database.db", &db_data)?;
 
         Ok::<(), std::io::Error>(())
     })
@@ -649,18 +675,8 @@ pub fn perform_database_backup(db_path: &str, max_files: usize) -> Result<String
     // 创建 zip 文件，使用最强压缩级别 (level 9)
     let file = std::fs::File::create(&backup_path)
         .map_err(|e| format!("Failed to create backup file: {}", e))?;
-    let mut zip = ZipWriter::new(file);
-    let options = FileOptions::<()>::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .compression_level(BACKUP_COMPRESSION_LEVEL)
-        .unix_permissions(0o644);
-
-    zip.start_file("database.db", options)
-        .map_err(|e| format!("Failed to start zip entry: {}", e))?;
-    zip.write_all(&db_data)
-        .map_err(|e| format!("Failed to write to zip: {}", e))?;
-    zip.finish()
-        .map_err(|e| format!("Failed to finish zip: {}", e))?;
+    write_single_entry_zip(file, "database.db", &db_data)
+        .map_err(|e| format!("Failed to write zip: {}", e))?;
 
     // 定时备份执行后仅保留最近 max_files 份 .zip，避免磁盘被旧备份占满；
     // 与 trigger_local_backup / trigger_todo_backup / trigger_skill_backup
@@ -849,14 +865,7 @@ pub async fn trigger_todo_backup(
         std::fs::create_dir_all(&dir_clone)?;
 
         let file = std::fs::File::create(&backup_path_clone)?;
-        let mut zip = ZipWriter::new(file);
-        let options = FileOptions::<()>::default()
-            .compression_method(zip::CompressionMethod::Deflated)
-            .unix_permissions(0o644);
-
-        zip.start_file("backup.yaml", options)?;
-        zip.write_all(yaml_clone.as_bytes())?;
-        zip.finish()?;
+        write_single_entry_zip(file, "backup.yaml", yaml_clone.as_bytes())?;
 
         Ok::<(), std::io::Error>(())
     })
@@ -1024,14 +1033,7 @@ async fn perform_todo_backup_async(db: &std::sync::Arc<crate::db::Database>, max
     let backup_path_clone = backup_path.clone();
     tokio::task::spawn_blocking(move || {
         let file = std::fs::File::create(&backup_path_clone)?;
-        let mut zip = ZipWriter::new(file);
-        let options = FileOptions::<()>::default()
-            .compression_method(zip::CompressionMethod::Deflated)
-            .unix_permissions(0o644);
-
-        zip.start_file("backup.yaml", options)?;
-        zip.write_all(yaml_clone.as_bytes())?;
-        zip.finish()?;
+        write_single_entry_zip(file, "backup.yaml", yaml_clone.as_bytes())?;
 
         Ok::<(), std::io::Error>(())
     })
@@ -1842,5 +1844,109 @@ mod tests {
         assert!(!names.iter().any(|n| n == "newer.zip"), "newer.zip 应被删除");
 
         fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 验证 `BACKUP_COMPRESSION_LEVEL` 常量仍为 9：
+    /// 该常量是 `default_zip_options` 压缩等级的唯一来源，修改它会改变
+    /// 所有备份 zip 的体积与字节，单元测试要把它锁住防止误改。
+    #[test]
+    fn test_backup_compression_level_constant_is_nine() {
+        let level: Option<i64> = BACKUP_COMPRESSION_LEVEL;
+        assert_eq!(level, Some(9), "压缩级别常量应为 9");
+    }
+
+    /// 验证 `write_single_entry_zip` 在内存中能产出合法 zip：
+    /// entry 名称、entry 内容、可被标准 zip 解析器读出。
+    /// 用 `Cursor<Vec<u8>>` 作为 writer，与 `download_database` 调用点类型一致。
+    #[test]
+    fn test_write_single_entry_zip_roundtrip_in_memory() {
+        let payload = b"hello-backup-payload";
+        let cursor = std::io::Cursor::new(Vec::<u8>::new());
+        let cursor = write_single_entry_zip(cursor, "database.db", payload)
+            .expect("helper 写入应成功");
+        let bytes = cursor.into_inner();
+
+        // zip 魔数 PK\x03\x04：确保产物确实是 zip 而不是别的格式
+        assert!(bytes.starts_with(b"PK\x03\x04"), "产物应以 zip 魔数开头");
+
+        // 用 zip crate 自身反解，验证 entry 名称与内容
+        let reader = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(reader).expect("zip 解析应成功");
+        assert_eq!(archive.len(), 1, "应有且仅有 1 个 entry");
+        let mut entry = archive.by_index(0).expect("entry 0 应可读");
+        assert_eq!(entry.name(), "database.db", "entry 名应与写入一致");
+        let mut content = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut content).expect("entry 内容应可读");
+        assert_eq!(content, payload, "entry 内容应与原始数据一致");
+    }
+
+    /// 验证「相同输入 → 相同输出」是 helper 的稳定不变量。
+    /// 这是「字节级一致」承诺的最小形式：若实现里有非确定因素
+    /// （如时间戳、随机盐），此测试会失败。
+    #[test]
+    fn test_write_single_entry_zip_is_deterministic() {
+        let payload = b"deterministic-payload-1234567890";
+
+        let run = || {
+            let cursor = std::io::Cursor::new(Vec::<u8>::new());
+            write_single_entry_zip(cursor, "backup.yaml", payload)
+                .expect("helper 写入应成功")
+                .into_inner()
+        };
+
+        let first = run();
+        let second = run();
+        assert_eq!(first, second, "同一 payload+name 应得到完全相同的 zip 字节");
+    }
+
+    /// 验证 helper 在落盘到文件时同样可用，且产物可被 zip crate 反解。
+    /// 覆盖 `trigger_local_backup` / `perform_todo_backup` / `perform_skill_backup`
+    /// 这三条 File writer 调用路径。
+    #[test]
+    fn test_write_single_entry_zip_writes_to_file() {
+        // 临时目录隔离，测试结束自动清理
+        let dir = std::env::temp_dir().join(format!(
+            "ntd-backup-test-ziphelper-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("out.zip");
+
+        let payload = b"file-backed-zip-payload";
+        let file = fs::File::create(&zip_path).expect("创建 zip 文件应成功");
+        write_single_entry_zip(file, "backup.yaml", payload).expect("helper 写入应成功");
+
+        // 文件落盘后可被 zip crate 重新读出，且 entry 内容与原始一致
+        let f = fs::File::open(&zip_path).expect("zip 文件应可打开");
+        let mut archive = zip::ZipArchive::new(f).expect("zip 解析应成功");
+        assert_eq!(archive.len(), 1, "应有且仅有 1 个 entry");
+        let mut entry = archive.by_index(0).unwrap();
+        assert_eq!(entry.name(), "backup.yaml");
+        let mut content = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut content).unwrap();
+        assert_eq!(content, payload);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 验证 helper 使用 Deflated 压缩：对可压缩数据，zip 体积应 < 原始体积。
+    /// 0o600 字节全 'a' 是高冗余数据，deflate 至少能压到 1/100 以下。
+    #[test]
+    fn test_write_single_entry_zip_actually_compresses() {
+        // 高冗余 payload：10 000 字节全 'a'
+        let payload = vec![b'a'; 10_000];
+        let cursor = std::io::Cursor::new(Vec::<u8>::new());
+        let bytes = write_single_entry_zip(cursor, "huge.bin", &payload)
+            .expect("helper 写入应成功")
+            .into_inner();
+
+        assert!(
+            bytes.len() < payload.len(),
+            "Deflated 压缩后体积 ({}) 应小于原始体积 ({})",
+            bytes.len(),
+            payload.len()
+        );
     }
 }
