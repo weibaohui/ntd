@@ -9,6 +9,9 @@ use crate::models::utc_timestamp;
 ///
 /// `BaseExecutor` 持有 path + model + usage，
 /// 额外保留 `has_done` 状态字段用于在 stderr 中检测到 "done" 事件。
+// `BaseExecutor` 已经 derive Clone；`Arc<Mutex<...>>` 也派生 Clone（共享内部状态），
+// 因此组合结构体可直接 derive Clone，与原手写 impl 语义等价。
+#[derive(Clone)]
 pub struct AtomcodeExecutor {
     base: BaseExecutor,
     /// 标记是否已收到 done 事件，用于 stderr 流处理
@@ -20,15 +23,6 @@ impl AtomcodeExecutor {
         Self {
             base: BaseExecutor::new(path),
             has_done: Arc::new(Mutex::new(false)),
-        }
-    }
-}
-
-impl Clone for AtomcodeExecutor {
-    fn clone(&self) -> Self {
-        Self {
-            base: self.base.clone(),
-            has_done: self.has_done.clone(),
         }
     }
 }

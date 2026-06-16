@@ -6,6 +6,8 @@ use crate::models::utc_timestamp;
 /// Codebuddy executor。
 ///
 /// 与 ClaudeCode 结构对称（path + model），统一通过 `BaseExecutor` 共享状态。
+// `BaseExecutor` 已经 `#[derive(Clone)]`，组合字段无需手写 Clone impl。
+#[derive(Clone)]
 pub struct CodebuddyExecutor {
     base: BaseExecutor,
 }
@@ -13,12 +15,6 @@ pub struct CodebuddyExecutor {
 impl CodebuddyExecutor {
     pub fn new(path: String) -> Self {
         Self { base: BaseExecutor::new(path) }
-    }
-}
-
-impl Clone for CodebuddyExecutor {
-    fn clone(&self) -> Self {
-        Self { base: self.base.clone() }
     }
 }
 

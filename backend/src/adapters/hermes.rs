@@ -10,6 +10,9 @@ use crate::models::{utc_timestamp, TodoItem};
 /// `BaseExecutor` 持有 path + model + usage 三件套，
 /// Hermes 还有 4 个执行期专用状态：`has_done`、`session_id`、`tool_calls_count`，
 /// 以及一个自定义的 `get_tool_calls_count()` override。
+// `BaseExecutor` 已经 derive Clone；`Arc<Mutex<...>>` 也派生 Clone（共享内部状态），
+// 因此组合结构体可直接 derive Clone，与原手写 impl 语义等价。
+#[derive(Clone)]
 pub struct HermesExecutor {
     base: BaseExecutor,
     has_done: Arc<Mutex<bool>>,
@@ -24,17 +27,6 @@ impl HermesExecutor {
             has_done: Arc::new(Mutex::new(false)),
             session_id: Arc::new(Mutex::new(None)),
             tool_calls_count: Arc::new(Mutex::new(0)),
-        }
-    }
-}
-
-impl Clone for HermesExecutor {
-    fn clone(&self) -> Self {
-        Self {
-            base: self.base.clone(),
-            has_done: self.has_done.clone(),
-            session_id: self.session_id.clone(),
-            tool_calls_count: self.tool_calls_count.clone(),
         }
     }
 }

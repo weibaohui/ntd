@@ -5,6 +5,8 @@ use crate::models::utc_timestamp;
 ///
 /// 内部使用 `BaseExecutor` 持有共享状态（path + model + usage），
 /// Kimi 自身不维护额外的执行期状态，因此 `BaseExecutor` 的所有字段默认即可。
+// `BaseExecutor` 已经 `#[derive(Clone)]`，组合字段无需手写 Clone impl。
+#[derive(Clone)]
 pub struct KimiExecutor {
     base: BaseExecutor,
 }
@@ -12,14 +14,6 @@ pub struct KimiExecutor {
 impl KimiExecutor {
     pub fn new(path: String) -> Self {
         Self { base: BaseExecutor::new(path) }
-    }
-}
-
-// `BaseExecutor` 已经 `#[derive(Clone)]`，
-// 通过结构体组合自动获得 Clone 能力，无需手写 impl Clone。
-impl Clone for KimiExecutor {
-    fn clone(&self) -> Self {
-        Self { base: self.base.clone() }
     }
 }
 

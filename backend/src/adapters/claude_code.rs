@@ -9,6 +9,8 @@ use crate::models::utc_timestamp;
 /// `usage` 字段虽然未被本 executor 直接使用（claude_code 的 usage 走
 /// `super::get_usage_from_logs` 从 result 事件提取），但 BaseExecutor 仍然保留这个
 /// `Arc<Mutex<Option<ExecutionUsage>>>` 字段，方便与其他 executor 行为保持一致。
+// `BaseExecutor` 已经 `#[derive(Clone)]`，组合字段无需手写 Clone impl。
+#[derive(Clone)]
 pub struct ClaudeCodeExecutor {
     base: BaseExecutor,
 }
@@ -16,12 +18,6 @@ pub struct ClaudeCodeExecutor {
 impl ClaudeCodeExecutor {
     pub fn new(path: String) -> Self {
         Self { base: BaseExecutor::new(path) }
-    }
-}
-
-impl Clone for ClaudeCodeExecutor {
-    fn clone(&self) -> Self {
-        Self { base: self.base.clone() }
     }
 }
 

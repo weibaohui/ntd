@@ -17,7 +17,10 @@ use super::{BaseExecutor, CodeExecutor, ExecutorType, ParsedLogEntry};
 use crate::adapters::ExecutionUsage;
 use crate::models::utc_timestamp;
 
-/// Codewhale executor implementation.
+/// Codewhale executor implementation。
+///
+/// `#[derive(Clone)]` 由 `BaseExecutor`（已经 derive Clone）和自身所有 Arc<Mutex<...>> 字段共同保证安全。
+#[derive(Clone)]
 pub struct CodewhaleExecutor {
     /// 共享状态：path + model + usage。
     base: BaseExecutor,
@@ -26,12 +29,6 @@ pub struct CodewhaleExecutor {
 impl CodewhaleExecutor {
     pub fn new(path: String) -> Self {
         Self { base: BaseExecutor::new(path) }
-    }
-}
-
-impl Clone for CodewhaleExecutor {
-    fn clone(&self) -> Self {
-        Self { base: self.base.clone() }
     }
 }
 
