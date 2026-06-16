@@ -53,6 +53,67 @@ impl AppState {
     pub async fn require_todo(&self, id: i64) -> Result<crate::models::Todo, AppError> {
         self.db.get_todo(id).await?.ok_or(AppError::NotFound)
     }
+
+    /// 在闭包中读 config,锁卫在闭包返回时立即 drop。
+    ///
+    /// 适用于"读 config → 拷出 owned 值 → 立刻释放 std 读锁卫 → 后续 await 不持锁"的模板。
+    /// 不允许在 `f` 内部 `await`:如果需要,先把 owned 值拷出再 await。
+    ///
+    /// 返回 `f(&Config) -> R` 的结果。闭包签名简单,call site 形如:
+    /// ```ignore
+    /// let (db_path, max_files) = state.config_snapshot(|c|
+    ///     (PathBuf::from(&c.db_path), c.auto_backup_max_files)
+    /// );
+    /// ```
+    pub fn config_snapshot<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&Config) -> R,
+    {
+        // 块作用域收紧 `RwLockReadGuard` 生命周期:闭包返回时 guard 随作用域
+        // 结束而 drop,后续 await 一定不会持 std 读锁卫跨 .await。
+        let cfg = self.config.read().unwrap();
+        f(&cfg)
+    }
+
+    /// 一次性 clone 出 owned `Config`,读锁卫立即 drop。
+    ///
+    /// 适用于"读取完整 config → clone 一份 owned 值 → 立即释放读锁卫 → 后续
+    /// 在 spawn_blocking 内使用 cfg"的模板。`std::sync::RwLockReadGuard`
+    /// 跨 .await 会让 future 变 !Send,所以必须先把 cfg clone 出来再 await。
+    ///
+    /// 与 `config_snapshot` 区分:`config_snapshot` 用于"只读 + 投影出 owned
+    /// 字段"场景,这个方法用于"需要完整 owned `Config` 副本"场景。
+    pub fn config_clone(&self) -> Config {
+        // 块作用域与 `config_snapshot` 同理:guard 在表达式结束时 drop,
+        // 后续 await 不会持读锁卫,future 保持 Send。
+        self.config.read().unwrap().clone()
+    }
+
+    /// 在闭包中修改 config 并返回 owned `Config`,写锁卫在闭包返回时立即 drop。
+    ///
+    /// 适用于"修改 config 字段 → clone 一份 owned 值 → 立即释放写锁卫 → 后续
+    /// 在 spawn_blocking 内调 `cfg.save()`"的模板。`std::sync::RwLockWriteGuard`
+    /// 跨 .await 会让 future 变 !Send,所以必须先把 cfg clone 出来再 await。
+    ///
+    /// call site 形如:
+    /// ```ignore
+    /// let cfg = state.config_write_clone(|c| {
+    ///     c.auto_backup_enabled = req.enabled;
+    ///     c.auto_backup_cron = req.cron;
+    ///     c.normalize_paths();
+    ///     c.clamp_execution_timeout_secs();
+    ///     c.clone()
+    /// });
+    /// ```
+    pub fn config_write_clone<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut Config) -> R,
+    {
+        // 块作用域收紧 `RwLockWriteGuard` 生命周期:闭包返回时 guard 随作用域
+        // 结束而 drop,后续 await 一定不会持 std 写锁卫跨 .await。
+        let mut cfg = self.config.write().unwrap();
+        f(&mut cfg)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1589,5 +1650,184 @@ mod app_error_tests {
         let body_str = String::from_utf8_lossy(&body);
         assert!(body_str.contains(&format!("\"code\":{}", codes::INTERNAL)));
         assert!(body_str.contains("db down"));
+    }
+}
+
+#[cfg(test)]
+mod app_state_config_helpers_tests {
+    //! 覆盖 `AppState` 上 issue #609 新增的三个 config 辅助方法：
+    //! 1. `config_snapshot` —— 读锁卫在闭包返回时立即 drop
+    //! 2. `config_clone` —— 返回 owned `Config`,读锁卫立即 drop
+    //! 3. `config_write_clone` —— 写锁卫在闭包返回时立即 drop
+    //!
+    //! 这三个方法的核心契约都是"锁卫在闭包返回后立即 drop,后续 await 不会持 std
+    //! 锁卫跨 .await"。这里构造一个最小可用的 `AppState` —— 用 `Database::new(
+    //! ":memory:")` 启一个真 db,再用它构造 `ServiceContext` / `HookService` /
+    //! `TodoScheduler` 等依赖 —— 验证关键行为:闭包返回后立刻能再获取写锁。
+    use super::AppState;
+    use crate::adapters::ExecutorRegistry;
+    use crate::config::Config;
+    use crate::service_context::ServiceContext;
+    use crate::task_manager::TaskManager;
+    use std::sync::{Arc, RwLock};
+    use tokio::sync::broadcast;
+
+    /// 在测试运行时构造最小可用的 `AppState`。
+    ///
+    /// `Database::new` / `TodoScheduler::new` 是 async 的,所以整体包在
+    /// `#[tokio::test]` 的 runtime 里。三个被测方法本身是 sync 的,放到
+    /// `block_on` 闭包外执行,避免对 runtime 类型造成约束。
+    async fn build_minimal_state_async() -> AppState {
+        // 内存数据库:不依赖外部文件,跑得快,适合单测。
+        let db = Arc::new(crate::db::Database::new(":memory:").await.unwrap());
+
+        // ServiceContext 是其他几个组件共用的依赖(Scheduler / FeishuListener
+        // / HookService 都需要它)。先把它准备好,后续用其 clone 出多个引用。
+        let (tx, _rx) = broadcast::channel(1);
+        let ctx = ServiceContext {
+            db: db.clone(),
+            executor_registry: Arc::new(ExecutorRegistry::default()),
+            tx,
+            task_manager: Arc::new(TaskManager::default()),
+            config: Arc::new(RwLock::new(Config::default())),
+        };
+
+        // HookService 依赖 ServiceContext。这里用全新 ctx 避免和上面那个
+        // 共享状态,便于独立测试。
+        let hook_service = Arc::new(crate::hooks::HookService::new(ctx.clone()));
+
+        // TodoScheduler::new 是 async 的;其内部 `JobScheduler` 需要 tokio runtime。
+        // 这里 block_on 直接拿;在 `#[tokio::test]` 的 runtime 里调用,不会有额外约束。
+        let scheduler = Arc::new(
+            crate::scheduler::TodoScheduler::new(hook_service.clone())
+                .await
+                .unwrap(),
+        );
+
+        // FeishuListener::new 需要 ServiceContext + MessageDebounce。MessageDebounce
+        // 接受 ServiceContext + HookService,这里复用已经构造好的 ctx/hook_service。
+        let debounce = Arc::new(crate::services::message_debounce::MessageDebounce::new(
+            ctx.clone(),
+            hook_service.clone(),
+        ));
+        let feishu_listener = Arc::new(
+            crate::services::feishu_listener::FeishuListener::new(ctx.clone(), debounce),
+        );
+
+        let (feishu_push_mutator, _rx2) = broadcast::channel(1);
+
+        AppState {
+            db,
+            executor_registry: Arc::new(ExecutorRegistry::default()),
+            tx: ctx.tx.clone(),
+            scheduler,
+            task_manager: ctx.task_manager.clone(),
+            config: ctx.config.clone(),
+            feishu_listener,
+            feishu_push_mutator,
+            hook_service,
+        }
+    }
+
+    #[tokio::test]
+    async fn config_snapshot_returns_value_and_drops_lock() {
+        // 用一个默认 Config 配上一个非默认字段值,确认闭包能读到 cfg。
+        let state = build_minimal_state_async().await;
+        {
+            let mut guard = state.config.write().unwrap();
+            guard.auto_backup_max_files = 7;
+        }
+
+        // 闭包内取出 owned 投影值,验证 `config_snapshot` 行为。
+        let observed = state.config_snapshot(|c| c.auto_backup_max_files);
+        assert_eq!(observed, 7);
+
+        // 关键契约:闭包返回后,读锁卫必须立即 drop,
+        // 否则下面这次写锁会阻塞到 deadlock。这里用 `try_write` 验证
+        // 锁是可立即获取的——如果闭包未 drop guard,`try_write` 会返回 Err。
+        let write_result = state.config.try_write();
+        assert!(
+            write_result.is_ok(),
+            "config_snapshot 闭包返回后必须立即 drop 读锁卫,但 try_write 仍失败: {:?}",
+            write_result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn config_snapshot_returns_projection_tuple() {
+        // 验证多字段投影:tuple 解构也能正常工作,call site 形如
+        // `let (db_path, max) = state.config_snapshot(|c| (..., c.auto_backup_max_files));`
+        let state = build_minimal_state_async().await;
+        {
+            let mut guard = state.config.write().unwrap();
+            guard.db_path = "/tmp/test-data.db".to_string();
+            guard.auto_backup_max_files = 5;
+        }
+
+        let (db_path, max_files) = state.config_snapshot(|c| {
+            (std::path::PathBuf::from(&c.db_path), c.auto_backup_max_files)
+        });
+        assert_eq!(db_path.to_str().unwrap(), "/tmp/test-data.db");
+        assert_eq!(max_files, 5);
+
+        // 同样验证锁卫已 drop。
+        assert!(state.config.try_write().is_ok());
+    }
+
+    #[tokio::test]
+    async fn config_clone_returns_owned_and_drops_lock() {
+        let state = build_minimal_state_async().await;
+        {
+            let mut guard = state.config.write().unwrap();
+            guard.auto_cleanup_logs_days = Some(30);
+        }
+
+        let cloned = state.config_clone();
+        assert_eq!(cloned.auto_cleanup_logs_days, Some(30));
+
+        // 修改原 cfg 不影响 clone 出的副本,验证是真正的 owned clone 而非引用。
+        {
+            let mut guard = state.config.write().unwrap();
+            guard.auto_cleanup_logs_days = Some(60);
+        }
+        assert_eq!(cloned.auto_cleanup_logs_days, Some(30));
+
+        // 锁卫在 `config_clone` 返回后已 drop。
+        assert!(state.config.try_write().is_ok());
+    }
+
+    #[tokio::test]
+    async fn config_write_clone_mutates_and_drops_lock() {
+        let state = build_minimal_state_async().await;
+        {
+            let mut guard = state.config.write().unwrap();
+            guard.auto_backup_max_files = 0;
+        }
+
+        // 闭包内修改 cfg 字段并返回 owned clone。
+        let cloned = state.config_write_clone(|c| {
+            c.auto_backup_max_files = 9;
+            c.clone()
+        });
+
+        // 闭包外的 clone 应该看到修改后的值。
+        assert_eq!(cloned.auto_backup_max_files, 9);
+        // AppState 内部 cfg 也应该被修改(写锁是 in-place)。
+        assert_eq!(state.config.read().unwrap().auto_backup_max_files, 9);
+
+        // 写锁卫在闭包返回后已 drop,可立刻再次获取。
+        assert!(state.config.try_write().is_ok());
+    }
+
+    #[tokio::test]
+    async fn config_write_clone_propagates_closure_error() {
+        // 闭包返回 `Result<_, AppError>` 时,`?` 应当能直接传播 Err。
+        // 这里构造一个失败的闭包,验证外层能拿到 Err。
+        let state = build_minimal_state_async().await;
+        let result: Result<i64, &'static str> = state.config_write_clone(|_c| Err("boom"));
+        assert!(matches!(result, Err("boom")));
+
+        // 写锁卫仍然在闭包返回后立即 drop,即使闭包返回 Err。
+        assert!(state.config.try_write().is_ok());
     }
 }

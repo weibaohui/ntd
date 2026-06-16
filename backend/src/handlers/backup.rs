@@ -219,78 +219,28 @@ pub async fn merge_backup(
 
 // ============ 数据库备份 ============
 
-/// 备份类型枚举 —— 把"备份目录是 db / todo / skill"用强类型表达，
-/// 避免调用点继续用字符串 `"db"` / `"todo"` / `"skills"` 散落拼接。
-///
-/// 与旧版裸函数（`backup_dir` / `db_backup_dir` / `todo_backup_dir` /
-/// `skill_backup_dir`）共存：薄包装函数保留以减小调用方 diff，
-/// 内部统一走 `BackupKind::dir` 派发，新增 kind 时只改本枚举即可。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BackupKind {
-    /// 数据库备份；携带数据库文件名作为子目录隔离多 db 场景
-    Db(String),
-    /// Todo YAML 备份
-    Todo,
-    /// Skill 目录备份（落盘目录名历史上是 `skills`，与 enum 变体名拼写略有差异，
-    /// 这里显式写出，避免后人"按枚举名修正"破坏既有路径）
-    Skill,
-}
-
-impl BackupKind {
-    /// 备份根目录 `~/.ntd/backups`。
-    ///
-    /// 集中 `dirs::home_dir()` 的 fallback：未取到 home 时统一回退到当前目录 `.`，
-    /// 与重构前 `backup_dir()` 行为一致，避免各 handler 自行 `unwrap_or`
-    /// 出现 `.` / `/tmp` / `expect` 不一致。
-    fn root() -> PathBuf {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        home.join(".ntd").join("backups")
-    }
-
-    /// 派发到具体子目录：Db 加一层 `db/{filename}`，Todo / Skill 仅一层。
-    ///
-    /// 返回的 `PathBuf` 不保证在磁盘上存在（与旧函数语义一致）。
-    fn dir(&self) -> PathBuf {
-        match self {
-            // 既有路径是 `~/.ntd/backups/db/{filename}`，filename 由调用方提供
-            BackupKind::Db(filename) => Self::root().join("db").join(filename),
-            BackupKind::Todo => Self::root().join("todo"),
-            // 既有路径是 `~/.ntd/backups/skills`（注意带 s），保留以兼容既有落盘数据
-            BackupKind::Skill => Self::root().join("skills"),
-        }
-    }
-}
-
-/// 备份根目录（`~/.ntd/backups`）的薄包装；新代码建议直接用 `BackupKind::root()`。
-///
-/// 保留以减小调用方 diff（issue #616）。当前文件内无内部调用方，
-/// 但作为模块对外可见的命名入口，外部代码可能仍在引用；
-/// 若确认无人使用，可在后续清理 issue 中删除。
-#[allow(dead_code)]
 fn backup_dir() -> PathBuf {
-    BackupKind::root()
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    home.join(".ntd").join("backups")
 }
 
-/// 获取数据库备份目录（按数据库文件名分目录）的薄包装。
+/// 获取数据库备份目录（按数据库文件名分目录）
 fn db_backup_dir(db_filename: &str) -> PathBuf {
-    BackupKind::Db(db_filename.to_string()).dir()
+    backup_dir().join("db").join(db_filename)
 }
 
-/// 获取 Todo 备份目录的薄包装。
+/// 获取Todo备份目录
 fn todo_backup_dir() -> PathBuf {
-    BackupKind::Todo.dir()
+    backup_dir().join("todo")
 }
 
 /// 手动下载数据库文件（zip 压缩格式）
 pub async fn download_database(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, AppError> {
-    // 把 db_path 拷出 owned 值,释放读锁,避免后续的 spawn_blocking().await
-    // 持 std::sync 读锁卫跨 .await(否则 future 变 !Send)。
-    let db_path = {
-        let cfg = state.config.read().unwrap();
-        PathBuf::from(&cfg.db_path)
-    };
+    // `config_snapshot` 在闭包返回时立即 drop 读锁卫,
+    // 避免后续的 spawn_blocking().await 持 std 读锁卫跨 .await。
+    let db_path = state.config_snapshot(|c| PathBuf::from(&c.db_path));
 
     // 路径穿越防护：验证数据库路径位于安全目录 ~/.ntd/ 内
     let canonicalized = std::fs::canonicalize(&db_path)
@@ -342,11 +292,11 @@ pub async fn download_database(
 pub async fn trigger_local_backup(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<String>, AppError> {
-    // 块作用域内拷出 owned 值,锁卫立即 drop,避免后续的 await 持 std 读锁卫。
-    let (db_path, max_files) = {
-        let cfg = state.config.read().unwrap();
-        (PathBuf::from(&cfg.db_path), cfg.auto_backup_max_files)
-    };
+    // `config_snapshot` 在闭包返回时立即 drop 读锁卫,
+    // 避免后续的 await 持 std 读锁卫。
+    let (db_path, max_files) = state.config_snapshot(|c| {
+        (PathBuf::from(&c.db_path), c.auto_backup_max_files)
+    });
 
     if !db_path.exists() {
         return Err(AppError::Internal("Database file not found".to_string()));
@@ -402,11 +352,9 @@ pub async fn trigger_local_backup(
 pub async fn database_optimize(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<String>, AppError> {
-    // 块作用域拷出 owned 值,锁卫立即 drop,避免后续的 await 持 std 读锁卫。
-    let db_path = {
-        let cfg = state.config.read().unwrap();
-        PathBuf::from(&cfg.db_path)
-    };
+    // `config_snapshot` 在闭包返回时立即 drop 读锁卫,
+    // 避免后续的 await 持 std 读锁卫。
+    let db_path = state.config_snapshot(|c| PathBuf::from(&c.db_path));
 
     if !db_path.exists() {
         return Err(AppError::Internal("Database file not found".to_string()));
@@ -442,19 +390,17 @@ pub struct BackupStatus {
 pub async fn get_database_backup_status(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<BackupStatus>, AppError> {
-    // 块作用域内取读锁、拷出 owned 值、立即释放锁卫,避免后续 spawn_blocking().await
-    // 持 std::sync::RwLockReadGuard 跨 .await(否则 future 变 !Send,handler trait
-    // 不再 implement)。NLL 对显式 drop() 的处理在 async fn state machine 中
-    // 过于保守,直接走块作用域把锁卫边界收紧。
-    let (db_path, auto_backup_enabled, auto_backup_cron, auto_backup_max_files) = {
-        let cfg = state.config.read().unwrap();
-        (
-            PathBuf::from(&cfg.db_path),
-            cfg.auto_backup_enabled,
-            cfg.auto_backup_cron.clone(),
-            cfg.auto_backup_max_files,
-        )
-    };
+    // `config_snapshot` 在闭包返回时立即 drop 读锁卫,
+    // 避免后续 spawn_blocking().await 持 std 读锁卫跨 .await。
+    let (db_path, auto_backup_enabled, auto_backup_cron, auto_backup_max_files) =
+        state.config_snapshot(|c| {
+            (
+                PathBuf::from(&c.db_path),
+                c.auto_backup_enabled,
+                c.auto_backup_cron.clone(),
+                c.auto_backup_max_files,
+            )
+        });
 
     // 获取原始数据库文件名
     let db_filename = db_path.file_name()
@@ -526,11 +472,9 @@ pub async fn update_auto_backup(
             .ok_or_else(|| AppError::BadRequest("Cron expression has no future executions".to_string()))?;
     }
 
-    // 关键：先把改动落到 owned clone 上，再立刻释放 std::sync 写锁，最后才 await
-    // 落盘。`std::sync::RwLockWriteGuard` 跨 .await 会让 future 变成 !Send，
-    // 破坏 tokio 多线程 runtime 的 spawn 约束；这里用块作用域把锁卫在 await 之前 drop。
-    let cfg_clone = {
-        let mut cfg = state.config.write().unwrap();
+    // `config_write_clone` 在闭包返回时立即 drop 写锁卫,
+    // 避免 `std::sync::RwLockWriteGuard` 跨 .await 让 future 变成 !Send。
+    let cfg_clone = state.config_write_clone(|cfg| -> Result<_, AppError> {
         cfg.auto_backup_enabled = req.enabled;
         cfg.auto_backup_cron = req.cron;
         if let Some(max_files) = req.max_files {
@@ -541,8 +485,8 @@ pub async fn update_auto_backup(
         }
         cfg.normalize_paths();
         cfg.clamp_execution_timeout_secs();
-        cfg.clone()
-    };
+        Ok(cfg.clone())
+    })?;
 
     tokio::task::spawn_blocking(move || cfg_clone.save())
         .await
@@ -567,16 +511,16 @@ pub async fn delete_backup_file(
         return Err(AppError::BadRequest("Invalid filename".to_string()));
     }
 
-    // 拷出 path 释放读锁,避免 spawn_blocking().await 持锁卫跨 .await。
-    let path = {
-        let cfg = state.config.read().unwrap();
-        let db_path = PathBuf::from(&cfg.db_path);
+    // `config_snapshot` 在闭包返回时立即 drop 读锁卫,
+    // 避免 spawn_blocking().await 持锁卫跨 .await。
+    let path = state.config_snapshot(|c| {
+        let db_path = PathBuf::from(&c.db_path);
         let db_filename = db_path.file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
         db_backup_dir(&db_filename).join(&req.filename)
-    };
+    });
 
     if !path.exists() {
         return Err(AppError::NotFound);
@@ -602,16 +546,16 @@ pub async fn download_backup_file(
         return Err(AppError::BadRequest("Invalid filename".to_string()));
     }
 
-    // 拷出 path 释放读锁,避免 spawn_blocking().await 持锁卫跨 .await。
-    let path = {
-        let cfg = state.config.read().unwrap();
-        let db_path = PathBuf::from(&cfg.db_path);
+    // `config_snapshot` 在闭包返回时立即 drop 读锁卫,
+    // 避免 spawn_blocking().await 持锁卫跨 .await。
+    let path = state.config_snapshot(|c| {
+        let db_path = PathBuf::from(&c.db_path);
         let db_filename = db_path.file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
         db_backup_dir(&db_filename).join(&query.filename)
-    };
+    });
 
     if !path.exists() {
         return Err(AppError::NotFound);
@@ -824,15 +768,16 @@ pub struct TodoBackupStatus {
 pub async fn get_todo_backup_status(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<TodoBackupStatus>, AppError> {
-    // 块作用域拷出 owned 值,锁卫立即 drop,避免后续 spawn_blocking().await 持 std 读锁卫。
-    let (auto_backup_enabled, auto_backup_cron, auto_backup_max_files) = {
-        let cfg = state.config.read().unwrap();
-        (
-            cfg.auto_todo_backup_enabled,
-            cfg.auto_todo_backup_cron.clone(),
-            cfg.auto_todo_backup_max_files,
-        )
-    };
+    // `config_snapshot` 在闭包返回时立即 drop 读锁卫,
+    // 避免后续 spawn_blocking().await 持 std 读锁卫。
+    let (auto_backup_enabled, auto_backup_cron, auto_backup_max_files) =
+        state.config_snapshot(|c| {
+            (
+                c.auto_todo_backup_enabled,
+                c.auto_todo_backup_cron.clone(),
+                c.auto_todo_backup_max_files,
+            )
+        });
 
     let dir = todo_backup_dir();
 
@@ -881,11 +826,9 @@ pub async fn get_todo_backup_status(
 pub async fn trigger_todo_backup(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<String>, AppError> {
-    // 块作用域拷出 owned 值,锁卫立即 drop,避免后续 .await 持 std 读锁卫。
-    let max_files = {
-        let cfg = state.config.read().unwrap();
-        cfg.auto_todo_backup_max_files
-    };
+    // `config_snapshot` 在闭包返回时立即 drop 读锁卫,
+    // 避免后续 .await 持 std 读锁卫。
+    let max_files = state.config_snapshot(|c| c.auto_todo_backup_max_files);
 
     let dir = todo_backup_dir();
     let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
@@ -955,10 +898,9 @@ pub async fn update_todo_auto_backup(
             .ok_or_else(|| AppError::BadRequest("Cron expression has no future executions".to_string()))?;
     }
 
-    // 块作用域内 clone 出 owned 值,await 落盘前写锁已 drop,
+    // `config_write_clone` 在闭包返回时立即 drop 写锁卫,
     // 避免 std::sync::RwLockWriteGuard 跨 .await 让 future 变成 !Send。
-    let cfg_clone = {
-        let mut cfg = state.config.write().unwrap();
+    let cfg_clone = state.config_write_clone(|cfg| -> Result<_, AppError> {
         cfg.auto_todo_backup_enabled = req.enabled;
         cfg.auto_todo_backup_cron = req.cron;
         if let Some(max_files) = req.max_files {
@@ -969,8 +911,8 @@ pub async fn update_todo_auto_backup(
         }
         cfg.normalize_paths();
         cfg.clamp_execution_timeout_secs();
-        cfg.clone()
-    };
+        Ok(cfg.clone())
+    })?;
 
     tokio::task::spawn_blocking(move || cfg_clone.save())
         .await
@@ -1110,10 +1052,9 @@ pub struct LogCleanupStatus {
 pub async fn get_log_cleanup_status(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<LogCleanupStatus>, AppError> {
-    let cfg = state.config.read().unwrap();
-    Ok(ApiResponse::ok(LogCleanupStatus {
-        cleanup_days: cfg.auto_cleanup_logs_days,
-    }))
+    // `config_snapshot` 在闭包返回时立即 drop 读锁卫,future 保持 Send。
+    let cleanup_days = state.config_snapshot(|c| c.auto_cleanup_logs_days);
+    Ok(ApiResponse::ok(LogCleanupStatus { cleanup_days }))
 }
 
 #[derive(Deserialize)]
@@ -1131,12 +1072,12 @@ pub async fn update_log_cleanup(
         }
     }
 
-    // 块作用域内 clone 出 owned 值,await 落盘前写锁已 drop。
-    let cfg_clone = {
-        let mut cfg = state.config.write().unwrap();
+    // `config_write_clone` 在闭包返回时立即 drop 写锁卫,
+    // 避免 std::sync::RwLockWriteGuard 跨 .await 让 future 变成 !Send。
+    let cfg_clone = state.config_write_clone(|cfg| {
         cfg.auto_cleanup_logs_days = req.days;
         cfg.clone()
-    };
+    });
 
     tokio::task::spawn_blocking(move || cfg_clone.save())
         .await
@@ -1149,10 +1090,8 @@ pub async fn update_log_cleanup(
 pub async fn trigger_log_cleanup(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<String>, AppError> {
-    let days = {
-        let cfg = state.config.read().unwrap();
-        cfg.auto_cleanup_logs_days
-    };
+    // `config_snapshot` 在闭包返回时立即 drop 读锁卫。
+    let days = state.config_snapshot(|c| c.auto_cleanup_logs_days);
 
     let days = days.ok_or_else(|| AppError::BadRequest("日志清理未启用，请先设置保留天数".to_string()))?;
 
@@ -1165,9 +1104,9 @@ pub async fn trigger_log_cleanup(
 
 // ============ Skill 备份 ============
 
-/// Skill 备份目录的薄包装。
+/// Skill 备份目录
 fn skill_backup_dir() -> PathBuf {
-    BackupKind::Skill.dir()
+    backup_dir().join("skills")
 }
 
 /// 获取所有执行器的 skills 目录
@@ -1237,15 +1176,16 @@ pub struct ExecutorSkillInfo {
 pub async fn get_skill_backup_status(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<SkillBackupStatus>, AppError> {
-    // 块作用域拷出 owned 值,锁卫立即 drop,避免后续 .await 持 std 读锁卫。
-    let (auto_backup_enabled, auto_backup_cron, auto_backup_max_files) = {
-        let cfg = state.config.read().unwrap();
-        (
-            cfg.auto_skill_backup_enabled,
-            cfg.auto_skill_backup_cron.clone(),
-            cfg.auto_skill_backup_max_files,
-        )
-    };
+    // `config_snapshot` 在闭包返回时立即 drop 读锁卫,
+    // 避免后续 .await 持 std 读锁卫。
+    let (auto_backup_enabled, auto_backup_cron, auto_backup_max_files) =
+        state.config_snapshot(|c| {
+            (
+                c.auto_skill_backup_enabled,
+                c.auto_skill_backup_cron.clone(),
+                c.auto_skill_backup_max_files,
+            )
+        });
 
     let dir = skill_backup_dir();
 
@@ -1352,11 +1292,9 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::
 pub async fn trigger_skill_backup(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<String>, AppError> {
-    // 块作用域拷出 owned 值,锁卫立即 drop,避免后续 .await 持 std 读锁卫。
-    let max_files = {
-        let cfg = state.config.read().unwrap();
-        cfg.auto_skill_backup_max_files
-    };
+    // `config_snapshot` 在闭包返回时立即 drop 读锁卫,
+    // 避免后续 .await 持 std 读锁卫。
+    let max_files = state.config_snapshot(|c| c.auto_skill_backup_max_files);
 
     let dir = skill_backup_dir();
     let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
@@ -1482,9 +1420,9 @@ pub async fn update_skill_auto_backup(
             .ok_or_else(|| AppError::BadRequest("Cron expression has no future executions".to_string()))?;
     }
 
-    // 块作用域内 clone 出 owned 值,await 落盘前写锁已 drop。
-    let cfg_clone = {
-        let mut cfg = state.config.write().unwrap();
+    // `config_write_clone` 在闭包返回时立即 drop 写锁卫,
+    // 避免 std::sync::RwLockWriteGuard 跨 .await 让 future 变成 !Send。
+    let cfg_clone = state.config_write_clone(|cfg| -> Result<_, AppError> {
         cfg.auto_skill_backup_enabled = req.enabled;
         cfg.auto_skill_backup_cron = req.cron;
         if let Some(max_files) = req.max_files {
@@ -1495,8 +1433,8 @@ pub async fn update_skill_auto_backup(
         }
         cfg.normalize_paths();
         cfg.clamp_execution_timeout_secs();
-        cfg.clone()
-    };
+        Ok(cfg.clone())
+    })?;
 
     tokio::task::spawn_blocking(move || cfg_clone.save())
         .await
@@ -1995,108 +1933,5 @@ mod tests {
             bytes.len(),
             payload.len()
         );
-    }
-
-    // ============ BackupKind 派发行为验证 ============
-    //
-    // 验证 `BackupKind::root` / `BackupKind::dir` 与既有裸函数返回路径字节级一致，
-    // 防止未来修改 enum 派发逻辑时把既有落盘数据移动到新路径，
-    // 那样会导致备份恢复 / 清理逻辑全部失效。
-
-    /// 验证 `BackupKind::root()` 返回 `~/.ntd/backups`，与 `backup_dir()` 字节级一致。
-    #[test]
-    fn test_backup_kind_root_matches_legacy_backup_dir() {
-        let legacy = backup_dir();
-        let from_enum = BackupKind::root();
-        assert_eq!(
-            legacy, from_enum,
-            "BackupKind::root() 应与原 backup_dir() 路径一致"
-        );
-        // 显式断言末尾两段是 .ntd / backups，避免后人悄悄把根目录改掉
-        let segments: Vec<_> = from_enum
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().to_string())
-            .collect();
-        let tail = &segments[segments.len() - 2..];
-        assert_eq!(tail, [".ntd", "backups"], "根目录尾段必须固定为 .ntd/backups");
-    }
-
-    /// 验证 `Db(filename)` 派发路径 `~/.ntd/backups/db/{filename}`。
-    /// filename 应被原样拼接到 db 子目录下，不做任何 sanitize，
-    /// 避免与既有 `db_backup_dir` 行为出现分叉。
-    #[test]
-    fn test_backup_kind_db_dir_dispatches_to_db_subdir() {
-        let from_enum = BackupKind::Db("ntd.db".to_string()).dir();
-        let legacy = db_backup_dir("ntd.db");
-        assert_eq!(
-            from_enum, legacy,
-            "BackupKind::Db 应与原 db_backup_dir 路径一致"
-        );
-
-        let segments: Vec<_> = from_enum
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().to_string())
-            .collect();
-        let tail = &segments[segments.len() - 3..];
-        assert_eq!(
-            tail,
-            ["backups", "db", "ntd.db"],
-            "Db 派发路径尾段必须为 backups/db/{{filename}}"
-        );
-    }
-
-    /// 验证 `Todo` 派发路径 `~/.ntd/backups/todo`，与原 `todo_backup_dir` 一致。
-    #[test]
-    fn test_backup_kind_todo_dir_dispatches_to_todo_subdir() {
-        let from_enum = BackupKind::Todo.dir();
-        let legacy = todo_backup_dir();
-        assert_eq!(
-            from_enum, legacy,
-            "BackupKind::Todo 应与原 todo_backup_dir 路径一致"
-        );
-
-        let segments: Vec<_> = from_enum
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().to_string())
-            .collect();
-        let last = segments.last().unwrap();
-        assert_eq!(last, "todo", "Todo 派发路径末段必须为 todo");
-    }
-
-    /// 验证 `Skill` 派发路径 `~/.ntd/backups/skills`。
-    ///
-    /// 注意：enum 变体名是 `Skill`（无 s），但落盘子目录历史上是 `skills`（带 s），
-    /// 该测试用来锁住这一历史拼写差异，防止后人"按枚举名修正目录名"导致
-    /// 既有备份数据变成"找不到"的状态。
-    #[test]
-    fn test_backup_kind_skill_dir_dispatches_to_skills_subdir() {
-        let from_enum = BackupKind::Skill.dir();
-        let legacy = skill_backup_dir();
-        assert_eq!(
-            from_enum, legacy,
-            "BackupKind::Skill 应与原 skill_backup_dir 路径一致"
-        );
-
-        let segments: Vec<_> = from_enum
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().to_string())
-            .collect();
-        let last = segments.last().unwrap();
-        assert_eq!(
-            last, "skills",
-            "Skill 派发路径末段必须为 skills（注意带 s），保留既有落盘路径"
-        );
-    }
-
-    /// 验证 `BackupKind` 枚举本身可被 Debug / Clone / PartialEq 正常使用，
-    /// 后续若在 handler 里作为参数传递，这些 trait 不能少。
-    #[test]
-    fn test_backup_kind_traits_debug_clone_eq() {
-        let a = BackupKind::Db("a.db".to_string());
-        let b = a.clone();
-        assert_eq!(a, b, "Clone 后应与原值相等");
-        // Debug 渲染应包含变体名，便于日志定位
-        let dbg = format!("{:?}", BackupKind::Todo);
-        assert!(dbg.contains("Todo"), "Debug 输出应包含变体名，实际: {}", dbg);
     }
 }
