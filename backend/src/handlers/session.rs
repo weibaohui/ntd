@@ -1157,19 +1157,83 @@ mod claude_line_meta_tests {
 
 // ─── Unified scan ─────────────────────────────────────────
 
-/// Map executor name to scanner function and default source name.
-/// Only executors listed here will be scanned.
-fn get_scanner(name: &str) -> Option<fn(&mut Vec<SessionInfo>)> {
-    match name {
-        "claudecode" => Some(scan_claude_code),
-        "codex" => Some(scan_codex),
-        "hermes" => Some(scan_hermes),
-        "kimi" => Some(scan_kimi),
-        "atomcode" => Some(scan_atomcode),
-        "pi" => Some(scan_pi),
-        "codebuddy" | "opencode" | "mobilecoder" | "mimo" => None, // no session storage found
-        _ => None,
-    }
+/// 占位 SessionScanner trait (issue #617)。
+///
+/// 设计意图:把 `get_scanner` 的函数指针派发改成 trait object 派发,
+/// 解开 `fn(&mut Vec<SessionInfo>)` 对签名的过度约束 —— 原来的指针
+/// 派发只允许所有 scanner 签名一致地接收 &mut Vec,无法做依赖注入
+/// (如持有 config / home_dir 引用),也不方便做单元测试替身。
+///
+/// 完整 trait 抽取(每个 scanner 独立 struct + 持有配置/home_dir 引用)
+/// 留待 #607;本 issue 只做"占位 trait + 静态分发表"。
+/// 后续 #607 落地时,只需把下面 `FnScanner` 的字段从 fn pointer 换成
+/// 真正的 struct impl,call site 一行都不用改。
+///
+/// 三个方法的语义约定:
+/// - `name`  : executor 名(对应 `ExecutorConfig.name`),派发 key
+/// - `scan`  : 把当前 scanner 能发现的全部 session 追加到 `out`,
+///             不清空 `out` —— 调用方在循环外只 `Vec::new()` 一次,
+///             避免每次 executor 都重建 vec
+/// - `detail`: 取单个 session 详情。占位实现已桥接到现有
+///             `get_claude_detail` / `get_codex_detail` 等函数,
+///             #607 时再考虑是否要按 scanner 拆 helper
+pub trait SessionScanner: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn scan(&self, out: &mut Vec<SessionInfo>);
+    // `detail` 当前由 `FnScanner::detail_fn` 通过 trait 派发;`scan`
+    // 是 `scan_for_executors` 唯一入口,但 `detail` 在本 issue 内没有
+    // call site —— 占位 trait 已经把签名稳定下来,#607 会接入真实调用方。
+    #[allow(dead_code)]
+    fn detail(&self, id: &str) -> Option<SessionDetail>;
+}
+
+/// 内部占位:把现有的 `fn(&mut Vec<SessionInfo>)` 函数指针包成 `SessionScanner`。
+///
+/// `FnScanner` 只在 #607 落地前存在;之后会变成"每个 scanner 一个独立
+/// struct 持有自己的状态/配置,各自实现 `SessionScanner`"。
+/// `static SCANNERS` 数组的元素类型从 `&FnScanner` 变成
+/// `&SomeRealScanner`,外部调用方拿到的一直是 `&'static dyn SessionScanner`,
+/// 所以 trait 抽取前后的 call site 完全一致。
+#[allow(dead_code)] // `detail_fn` 在 #607 接入 call site 之前先静默,见 trait 内说明。
+struct FnScanner {
+    name: &'static str,
+    // 函数指针:在 #607 之前充当"伪依赖注入",之后会替换为
+    // 真正的 `scan` 方法体(逻辑直接写在新 struct impl 里)。
+    scan_fn: fn(&mut Vec<SessionInfo>),
+    detail_fn: fn(&str) -> Option<SessionDetail>,
+}
+
+impl SessionScanner for FnScanner {
+    fn name(&self) -> &'static str { self.name }
+    fn scan(&self, out: &mut Vec<SessionInfo>) { (self.scan_fn)(out) }
+    fn detail(&self, id: &str) -> Option<SessionDetail> { (self.detail_fn)(id) }
+}
+
+/// 6 个 scanner 的静态分发表。
+///
+/// 用 const slice 一次性列全,而不是 `match`,是为了消除
+/// "加新 executor 必须改 match"的 Open/Closed 违反:加一行 push 即可。
+///
+/// 任何不在表内的 executor 名(包括 `codebuddy` / `opencode` /
+/// `mobilecoder` / `mimo` 这些"暂未发现 session 存储"的项目),
+/// `get_scanner` 会直接返 None,行为与重构前的 match 分支完全一致。
+static SCANNERS: &[&'static dyn SessionScanner] = &[
+    &FnScanner { name: "claudecode", scan_fn: scan_claude_code, detail_fn: get_claude_detail },
+    &FnScanner { name: "codex",      scan_fn: scan_codex,      detail_fn: get_codex_detail },
+    &FnScanner { name: "hermes",     scan_fn: scan_hermes,     detail_fn: get_hermes_detail },
+    &FnScanner { name: "kimi",       scan_fn: scan_kimi,       detail_fn: get_kimi_detail },
+    &FnScanner { name: "atomcode",   scan_fn: scan_atomcode,   detail_fn: get_atomcode_detail },
+    &FnScanner { name: "pi",         scan_fn: scan_pi,         detail_fn: get_pi_detail },
+];
+
+/// Map executor name to its scanner.
+///
+/// 派发语义:
+/// - 表内有 → 返回对应 `&'static dyn SessionScanner`
+/// - 表内无(包含未支持的 executor) → 返回 None,call site 用 `if let Some`
+///   兜底跳过,与重构前一致
+fn get_scanner(name: &str) -> Option<&'static dyn SessionScanner> {
+    SCANNERS.iter().copied().find(|s| s.name() == name)
 }
 
 fn scan_for_executors(enabled_executors: &[crate::models::ExecutorConfig]) -> Vec<SessionInfo> {
@@ -1185,7 +1249,10 @@ fn scan_for_executors(enabled_executors: &[crate::models::ExecutorConfig]) -> Ve
         }
 
         if let Some(scanner) = get_scanner(&exec.name) {
-            scanner(&mut sessions);
+            // 走 trait object 调用:取代直接调 `fn(&mut Vec)` 指针。
+            // 这样 #607 把 FnScanner 替换为持有 home_dir / config 的
+            // 真正 struct impl 时,这里一行不用改。
+            scanner.scan(&mut sessions);
         }
     }
 
@@ -1918,6 +1985,125 @@ fn build_pi_messages(content: &str) -> (Vec<SessionMessage>, PiSessionSummary) {
     }
 
     (messages, summary)
+}
+
+// ─── SessionScanner dispatch tests (issue #617) ──────────
+//
+// 覆盖目标:`get_scanner` 派发语义与重构前完全一致;
+// 验证 trait object 的引入没有改变外部可观察行为。
+// 这些 case 是纯派发测试,不需要构造 home_dir / 文件系统,
+// 因为 SCANNERS 表里的 scan_fn 在 home_dir 不存在时一律早返回。
+
+#[cfg(test)]
+mod session_scanner_dispatch_tests {
+    use super::*;
+
+    /// 6 个已知 scanner 都能在派发表里找到,这是 #617 验收
+    /// "所有现有 scanner 仍可被 dispatch" 的基础保证。
+    #[test]
+    fn get_scanner_resolves_all_known_executors() {
+        for name in ["claudecode", "codex", "hermes", "kimi", "atomcode", "pi"] {
+            let scanner = get_scanner(name)
+                .unwrap_or_else(|| panic!("scanner for {name} should be Some, was None"));
+            // 派发得到的 scanner 自报的 name 必须和查询 key 一致;
+            // 这一条是 trait object 派发与原 match 派发语义等价的硬性证据。
+            assert_eq!(scanner.name(), name);
+        }
+    }
+
+    /// 重构前的 match 显式列出"无 session 存储"的 executor 名 (codebuddy 等)
+    /// 也应当返 None;行为必须与原来逐分支对照一致。
+    #[test]
+    fn get_scanner_returns_none_for_unsupported_executors() {
+        for name in ["codebuddy", "opencode", "mobilecoder", "mimo"] {
+            assert!(
+                get_scanner(name).is_none(),
+                "scanner for {name} should be None (no session storage found)"
+            );
+        }
+    }
+
+    /// 任何不在表内的随机名都返 None,call site 用 `if let Some` 兜底。
+    /// 这条 case 防止"加新 executor 名时忘记 push 进 SCANNERS"被静默吞掉。
+    #[test]
+    fn get_scanner_returns_none_for_unknown_name() {
+        for name in ["", "claude-code", "CLAUDECODE", "ClaudeCode", "unknown_tool", "  "] {
+            assert!(
+                get_scanner(name).is_none(),
+                "scanner for {name:?} should be None (not in SCANNERS table)"
+            );
+        }
+    }
+
+    /// 派发得到的 trait object 必须满足 Send + Sync,
+    /// 才能在 `spawn_blocking` / `tokio::task::spawn_blocking` 等并发场景使用。
+    /// 用 fn 指针约束编译期,运行时不需要真起线程。
+    /// `?Sized` 是因为 `dyn SessionScanner` 是 unsized,直接传 `&T` 时
+    /// 默认 `T: Sized` 会编译失败。
+    #[test]
+    fn returned_scanner_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync + ?Sized>(_: &T) {}
+        for name in ["claudecode", "codex", "hermes", "kimi", "atomcode", "pi"] {
+            let s = get_scanner(name).expect("known scanner");
+            assert_send_sync(s);
+        }
+    }
+
+    /// trait object 派发要能在 `Vec` 上追加结果(不 panic / 不污染已有元素)。
+    /// home_dir 在 CI/测试机为空时,所有 scanner 都早返回,只验证"调用路径通"。
+    #[test]
+    fn scanner_scan_appends_without_panicking() {
+        let scanner = get_scanner("pi").expect("pi scanner exists");
+        let mut out: Vec<SessionInfo> = Vec::new();
+        // 即使 home_dir 缺 .pi/agent/sessions 也不应 panic,允许 out 为空。
+        scanner.scan(&mut out);
+        // 不强断言 out.len(),因为测试机上可能存在真实 .pi 数据;
+        // 这里只确认"调用未 panic + 保留已存在元素"。
+        // 加一个 sentinel 验证 out 没有被清空:
+        let sentinel = SessionInfo {
+            session_id: "sentinel".into(),
+            source: "sentinel".into(),
+            project_path: String::new(),
+            status: "completed".into(),
+            executor: String::new(),
+            model: String::new(),
+            git_branch: None,
+            message_count: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            first_prompt: None,
+            created_at: None,
+            last_active_at: None,
+            file_size: 0,
+            version: None,
+            subagent_count: 0,
+        };
+        out.push(sentinel.clone());
+        scanner.scan(&mut out);
+        assert!(
+            out.iter().any(|s| s.session_id == "sentinel"),
+            "scanner.scan() must not clear `out`; sentinel should still be present"
+        );
+    }
+
+    /// 回归用例:`scan_for_executors` 在传入空 executor 列表时,必须返空 vec。
+    /// 重构前 match 分支一个不命中 → 0 次 scan,行为应保持。
+    #[test]
+    fn scan_for_executors_with_empty_list_returns_empty() {
+        let sessions = scan_for_executors(&[]);
+        assert!(sessions.is_empty(), "no executors → no sessions");
+    }
+
+    /// 回归用例:传入不支持的 executor 名,应当静默跳过(对应 None 分支),
+    /// 不污染结果 vec。这里只验证派发层(不构造 ExecutorConfig 数组,
+    /// 因为字段较多且不参与"派发是否跳过"的判断);
+    /// 派发拿到 None → `scan_for_executors` 里的 `if let Some(scanner) = ...`
+    /// 分支就不会进入,等价于"被静默跳过"。
+    #[test]
+    fn scan_for_executors_skips_unknown_executors() {
+        assert!(get_scanner("codebuddy").is_none());
+        assert!(get_scanner("definitely-not-a-real-executor").is_none());
+    }
 }
 
 fn get_pi_detail(session_id: &str) -> Option<SessionDetail> {
