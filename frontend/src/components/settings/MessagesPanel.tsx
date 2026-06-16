@@ -355,6 +355,7 @@ export function MessagesPanel({ configForm, configSaving, handleSaveConfig, onBa
                 onLoadHistorySenders={loadHistorySenders}
                 onStartBind={handleStartFeishuBind}
                 onRefresh={() => { loadAgentBots(); loadFeishuPush(); }}
+                onAfterBindModalClose={() => { loadAgentBots(); loadFeishuPush(); }}
               />
             ),
           },

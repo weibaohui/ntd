@@ -14,7 +14,7 @@ export function BindTab({
   setWhitelistOpenId, setWhitelistName, setBindModalOpen, setQrCodeUrl, setPollError, setBindSuccess,
   setWhitelistBotId, setHistoryViewMsg,
   onDeleteBot, onAddWhitelist, onDeleteWhitelist, onLoadGroupWhitelist, onLoadHistorySenders, onStartBind,
-  onRefresh,
+  onRefresh, onAfterBindModalClose,
 }: {
   agentBots: db.AgentBot[];
   botsLoading: boolean;
@@ -49,6 +49,8 @@ export function BindTab({
   onLoadHistorySenders: () => Promise<void>;
   onStartBind: () => Promise<void>;
   onRefresh: () => void;
+  /** Called after the bind modal finishes its close animation — use this to reload bot list */
+  onAfterBindModalClose?: () => void;
 }) {
   return (
     <div className="settings-messages-tab" style={{ maxWidth: 700 }}>
@@ -348,6 +350,7 @@ export function BindTab({
       <Modal title={<Space><QrcodeOutlined />绑定飞书智能体</Space>} open={bindModalOpen}
         onCancel={() => { setBindModalOpen(false); setQrCodeUrl(''); setPollError(''); setBindSuccess(false); }}
         footer={null} width={400} centered className="settings-bind-modal"
+        afterClose={onAfterBindModalClose}
       >
         <div style={{ textAlign: 'center', padding: '16px 0' }}>
           {pollError && <div style={{ marginBottom: 16, color: '#ff4d4f', fontSize: 13 }}>{pollError}</div>}
