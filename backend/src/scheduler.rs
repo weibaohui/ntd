@@ -87,7 +87,7 @@ fn arithmetic_step(items: &[u32]) -> Option<u32> {
         return None;
     }
     // 步长为零的退化情况(去重集合理论上不会出现,但 `BTreeSet` 转 `Vec` 仍可能
-    // 出现 caller 误传含重复元素的情况): 显式拒掉,避免后续下标减法溢出。
+    // 出现 caller 误传含重复元素的情况): 显式拒掉,避免后续值下溢。
     let step = items[1].checked_sub(items[0])?;
     if step == 0 {
         return None;
@@ -122,16 +122,17 @@ fn format_cron_field(set: &BTreeSet<u32>) -> String {
     }
 
     // 连续区间: 步长 1 的等差,先匹配以避免被通用 arithmetic_step 抢走。
+    // 安全: `is_contiguous` 在 `len() < 2` 时返回 false,能走到这里时 `len() >= 2`,
+    // `items[items.len() - 1]` 不会越界; 风格上沿用主分支的索引取末位写法,避免 `.last().unwrap()` 触发 `clippy::unwrap_used`。
     if is_contiguous(&items) {
-        // unwrap 安全: `is_contiguous` 在 len < 2 时返回 false,能走到这里 len >= 2,
-        // `last()` 一定有值。
-        let last = items.last().unwrap();
+        let last = items[items.len() - 1];
         return format!("{}-{}", items[0], last);
     }
 
     // 等差数列 (步长固定,> 0): `a-b/N` 紧凑表示。
+    // 安全同上的 `len() >= 2` 不变式,索引取末位不会越界。
     if let Some(step) = arithmetic_step(&items) {
-        let last = items.last().unwrap();
+        let last = items[items.len() - 1];
         return format!("{}-{}/{}", items[0], last, step);
     }
 
