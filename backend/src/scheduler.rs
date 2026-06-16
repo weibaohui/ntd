@@ -121,45 +121,6 @@ fn format_cron_field(set: &BTreeSet<u32>) -> String {
         .join(",")
 }
 
-/// Convert a cron expression from user timezone to UTC timezone.
-/// This is necessary because tokio-cron-scheduler always executes in UTC.
-/// For example, if user is in Asia/Shanghai (UTC+8) and wants 9:00 local time,
-/// we need to schedule UTC 1:00 (9:00 - 8 hours = 1:00).
-///
-/// 段落总览:
-/// 把"用户时区的 cron 表达式"转成"等价的 UTC cron 表达式",驱动
-/// `tokio-cron-scheduler` 在用户期望的时刻触发。
-///
-/// 关键点(对应 issue #502 列的几个 bug):
-/// 1. **DST 正确**:用 `cron::Schedule` 在 1 年内枚举所有 occurrence,
-///    逐个转 UTC,再统计"出现最多的 (h,m,s) 元组"。这样无论 DST
-///    切换日偏移怎么变,主用值都能稳定取到,且和当前偏移不再耦合
-///    (原实现用 `now()` 算偏移 → 跨天/跨年后会漂移)。
-/// 2. **复杂表达式**:把枚举结果按 (h, m, s) 收集成 set,格式化时
-///    自动选最紧凑的表示 —— 连续区间写 `a-b`,等差数列写 `a-b/N`,
-///    其它写 `a,b,c`。`*/2`、`9,12,18`、`9-17` 一视同仁。
-/// 3. **跨日回卷**:枚举时是 `DateTime<Tz>`,chrono 自动处理 wrap,
-///    不会出现"减 8 小时后小时为负"的脏数据。
-///
-/// 简化点:
-/// - day-of-month / month / day-of-week 字段保持原值。
-///   在常见的"每天/每月几点"调度里这些字段都是 `*`,不会受影响;
-///   即便不是 `*`,跨时区时这些字段的偏移对用户意义不大,改它反而
-///   引入歧义。如果未来有强需求,可以再扩展。
-/// - DST 切换日会"丢 1 小时"或"重 1 小时":这是单 cron 表达式表达
-///   不出 1 年内多个 UTC 时刻的根本限制,会在日志 warn 提示用户。
-/// 把用户时区的 cron 表达式转换为 UTC 等价表达式。
-///
-/// 返回类型 `Result<String, SchedulerError>`（PR #543 review CRITICAL #1 修复）：
-/// - 旧实现返回 `Result<String, String>`，让 `upsert_task` 只能 `match` + warn + fallback 到
-///   原 `cron_expr`，结果 `SchedulerError::InvalidTimezone` 在生产代码不可达，
-///   `From<SchedulerError> for AppError` 的 400 映射是死代码。
-/// - 新实现用 typed error，调用方 `?` 直接传播 `InvalidTimezone` / `InvalidCron`，
-///   handler 真的会返回 400。
-///
-/// `todo_id` 透传给 `SchedulerError::InvalidCron { expr, todo_id }`，让响应体
-/// 能告诉调用方"是哪条 todo 的 cron 错了"。`load_from_db` 用 sentinel `-1`
-/// 因为那是从 DB 加载历史数据，没有具体的 user-facing todo_id。
 /// 解析 `chrono_tz::Tz`,失败时返回结构化 `InvalidTimezone` 错误。
 ///
 /// 把时区解析从 `convert_cron_to_utc` 抽出来,是因为后续 split phase
