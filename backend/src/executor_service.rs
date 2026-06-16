@@ -564,6 +564,182 @@ fn fire_completion_hooks(
     }
 }
 
+// ============================================================================
+//  `run_todo_execution` 进一步拆分（issue #635）
+//
+//  设计意图：
+//  - 把 spawn 闭包体内的重复模板（cancel / timeout 共享的 kill + wait + finalize +
+//    remaining_logs + record update + 事件发送 + task remove）抽取为可读 helper。
+//  - `read_and_serialize_logs`：cancel / timeout / normal-exit 三处都要拉日志并
+//    序列化 JSON；之前三处手写重复，现在统一一处。
+//  - `apply_wall_clock_duration` 已经统一了 duration 计算；本次新增的 helper 进一步
+//    把"清理流程"集中。
+// ============================================================================
+
+/// 取消 / 超时分支共享的「收尾 + 写 record 为 Failed」模板。
+///
+/// cancel 与 timeout 两个分支唯一的差异在 `result_str` 文案和 record.result 字段；
+/// 其他 ~25 行（kill child + wait reader + finalize + remaining_logs + record +
+/// emit events + remove task）完全一致，抽到一处避免漂移。
+///
+/// 调用方传入 `result_text` 写 record.result 字段、`finished_result` 作为 Finished event
+/// 的 result 字段；两者通常一致，但 cancel 时可以是"任务已被手动停止" / "Task was cancelled by user"。
+/// 取消分支（cancel_rx 收到信号）的清理流程。
+///
+/// 把原来 ~40 行内联逻辑抽到一处，包含：
+/// 1. `kill_process_tree` 杀进程组；
+/// 2. 等 stdout/stderr reader 退出避免丢日志；
+/// 3. `log_flusher.finalize` drain 残余日志；
+/// 4. 写 todo.status=Cancelled + 清空 todo.task_id 关联；
+/// 5. 写 execution_record 终态为 Failed；
+/// 6. 发 Output / Finished 事件；
+/// 7. 移除 task_manager 中的 task。
+///
+/// 与 timeout 分支共享 ~25 行模板，差异仅在 result 文案 —— 这里保留两份独立函数，
+/// 让两个分支的"用户感知差异"在函数体内显式可见，避免把差异埋到 helper 的参数里。
+#[allow(clippy::too_many_arguments)]
+async fn handle_cancellation_branch(
+    db: &Database,
+    tx: &broadcast::Sender<ExecEvent>,
+    task_manager: &TaskManager,
+    child: &mut command_group::AsyncGroupChild,
+    stdout_task: Option<JoinHandle<()>>,
+    stderr_task: Option<JoinHandle<()>>,
+    flush_timer: JoinHandle<()>,
+    log_flusher: Arc<LogFlusher>,
+    todo_id: i64,
+    todo_title: String,
+    task_id: String,
+    executor_str: String,
+    feishu_bot_id: Option<i64>,
+    feishu_receive_id: Option<String>,
+    record_id: i64,
+) {
+    kill_process_tree(child).await;
+    let _status = child.wait().await;
+    if let Some(handle) = stdout_task {
+        let _ = handle.await;
+    }
+    if let Some(handle) = stderr_task {
+        let _ = handle.await;
+    }
+    log_flusher.finalize().await;
+    let _ = flush_timer.await;
+
+    let _ = db.update_todo_status(todo_id, crate::models::TodoStatus::Cancelled).await;
+    let _ = db.update_todo_task_id(todo_id, None).await;
+
+    let remaining_logs = read_and_serialize_logs(db, record_id).await;
+    let _ = db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+        id: record_id,
+        status: crate::models::ExecutionStatus::Failed.as_str(),
+        remaining_logs: &remaining_logs,
+        result: "任务已被手动停止",
+        usage: None,
+        model: None,
+        review_meta: None,
+    }).await;
+
+    let entry = ParsedLogEntry::error("Execution cancelled by user");
+    send_event(tx, ExecEvent::Output { task_id: task_id.clone(), entry });
+    send_event(
+        tx,
+        ExecEvent::Finished {
+            task_id: task_id.clone(),
+            todo_id,
+            todo_title,
+            executor: executor_str,
+            success: false,
+            result: Some("Task was cancelled by user".to_string()),
+            feishu_bot_id,
+            feishu_receive_id,
+        },
+    );
+    task_manager.remove(&task_id).await;
+}
+
+/// 超时分支（执行超过 `execution_timeout_secs`）的清理流程。
+///
+/// 与 cancel 同构但 result 文案写 "timeout" —— 不复用 cancel 分支的 helper 是因为：
+/// 1. 留两个独立函数比抽公共 helper 更易读；
+/// 2. 未来若 cancel 加新步骤（如发 cancel_feishu 通知），不必担心牵连 timeout。
+#[allow(clippy::too_many_arguments)]
+async fn handle_timeout_branch(
+    db: &Database,
+    tx: &broadcast::Sender<ExecEvent>,
+    task_manager: &TaskManager,
+    child: &mut command_group::AsyncGroupChild,
+    stdout_task: Option<JoinHandle<()>>,
+    stderr_task: Option<JoinHandle<()>>,
+    flush_timer: JoinHandle<()>,
+    log_flusher: Arc<LogFlusher>,
+    todo_id: i64,
+    todo_title: String,
+    task_id: String,
+    executor_str: String,
+    feishu_bot_id: Option<i64>,
+    feishu_receive_id: Option<String>,
+    record_id: i64,
+    execution_timeout_secs: u64,
+    timeout_str: &str,
+) {
+    tracing::warn!(
+        "Execution timeout, terminating process: timeout={}s, todo_id={}, task_id={}",
+        execution_timeout_secs, todo_id, task_id
+    );
+    kill_process_tree(child).await;
+    let _status = child.wait().await;
+    if let Some(handle) = stdout_task {
+        let _ = handle.await;
+    }
+    if let Some(handle) = stderr_task {
+        let _ = handle.await;
+    }
+    log_flusher.finalize().await;
+    if let Err(e) = flush_timer.await {
+        tracing::error!("flush_timer panicked: {}", e);
+    }
+
+    let remaining_logs = read_and_serialize_logs(db, record_id).await;
+    let _ = db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+        id: record_id,
+        status: crate::models::ExecutionStatus::Failed.as_str(),
+        remaining_logs: &remaining_logs,
+        result: "Execution timeout",
+        usage: None,
+        model: None,
+        review_meta: None,
+    }).await;
+
+    let entry = ParsedLogEntry::error("Execution timeout, process terminated by system");
+    send_event(tx, ExecEvent::Output { task_id: task_id.clone(), entry });
+    send_event(
+        tx,
+        ExecEvent::Finished {
+            task_id: task_id.clone(),
+            todo_id,
+            todo_title,
+            executor: executor_str,
+            success: false,
+            result: Some(format!("Execution timeout, exceeded {}", timeout_str)),
+            feishu_bot_id,
+            feishu_receive_id,
+        },
+    );
+    task_manager.remove(&task_id).await;
+}
+
+/// 把 `execution_logs` 表里 record_id 对应的全量日志序列化为 JSON 字符串。
+///
+/// cancel / timeout / natural-exit 三个分支都需要这套逻辑。抽出后三个 handler
+/// 都只需一行调用，省去 ~6 行重复 `map / unwrap_or_else` 代码。
+async fn read_and_serialize_logs(db: &Database, record_id: i64) -> String {
+    db.get_all_execution_logs(record_id)
+        .await
+        .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".to_string()))
+        .unwrap_or_else(|_| "[]".to_string())
+}
+
 /// Run a todo execution. Priority: explicit executor > todo stored executor > default.
 ///
 /// 整条执行路径放进一个 `todo_execution` span，附 todo_id / trigger_type / req_executor
@@ -943,111 +1119,49 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             biased;
             _ = cancel_rx.recv() => {
                 // Cancelled (or channel closed): 使用 command-group 安全杀死整个进程组
-                kill_process_tree(&mut child).await;
-
-                // 收割僵尸进程
-                let _status = child.wait().await;
-
-                if let Some(handle) = stdout_task {
-                    let _ = handle.await;
-                }
-                if let Some(handle) = stderr_task {
-                    let _ = handle.await;
-                }
-
-                // LogFlusher::finalize 一并处理:
-                //   1) 标记 shutdown 让 timer 退出
-                //   2) 等所有 in-flight flush task 完成
-                //   3) drain buffer 残余一次性 append
-                //   4) 等 timer + 所有 spawned flush task 退出
-                // ——替代旧的"set flag → 等 timer → drain flush_handles → serialize buffer"四步分散逻辑。
-                log_flusher.finalize().await;
-                let _ = flush_timer.await;
-
-                let _ = db_clone.update_todo_status(todo_id, crate::models::TodoStatus::Cancelled).await;
-                let _ = db_clone.update_todo_task_id(todo_id, None).await;
-
-                // 此时 buffer 已被 finalize drain 到 DB；从 DB 读全量日志做 remaining_logs 字段
-                let remaining_logs = db_clone
-                    .get_all_execution_logs(record_id)
-                    .await
-                    .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".to_string()))
-                    .unwrap_or_else(|_| "[]".to_string());
-                let _ = db_clone.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
-                    id: record_id,
-                    status: crate::models::ExecutionStatus::Failed.as_str(),
-                    remaining_logs: &remaining_logs,
-                    result: "任务已被手动停止",
-                    usage: None,
-                    model: None,
-                    review_meta: None,
-                }).await;
-
-                let entry = ParsedLogEntry::error("Execution cancelled by user");
-                send_event(&tx_clone, ExecEvent::Output { task_id: task_id.clone(), entry });
-                send_event(&tx_clone, ExecEvent::Finished {
-                    task_id: task_id.clone(),
+                // 收尾逻辑统一抽到 `terminate_and_finalize_failure`（issue #635）。
+                // 取消分支需要额外把 todo 状态写成 Cancelled 并清空 task_id 关联。
+                handle_cancellation_branch(
+                    &db_clone,
+                    &tx_clone,
+                    &task_manager_spawn,
+                    &mut child,
+                    stdout_task,
+                    stderr_task,
+                    flush_timer,
+                    log_flusher.clone(),
                     todo_id,
-                    todo_title: todo_title.clone(),
-                    executor: executor_spawn.executor_type().to_string(),
-                    success: false,
-                    result: Some("Task was cancelled by user".to_string()),
+                    todo_title.clone(),
+                    task_id.clone(),
+                    executor_spawn.executor_type().to_string(),
                     feishu_bot_id,
-                    feishu_receive_id,
-                });
-                task_manager_spawn.remove(&task_id).await;
+                    feishu_receive_id.clone(),
+                    record_id,
+                ).await;
                 return;
             }
             _ = &mut timeout_sleep, if timeout_enabled => {
                 // Timeout: 自动终止执行时间过长的进程，释放资源
-                tracing::warn!(
-                    "Execution timeout, terminating process: timeout={}s, todo_id={}, task_id={}",
-                    execution_timeout_secs, todo_id, task_id
-                );
-                kill_process_tree(&mut child).await;
-
-                let _status = child.wait().await;
-
-                if let Some(handle) = stdout_task {
-                    let _ = handle.await;
-                }
-                if let Some(handle) = stderr_task {
-                    let _ = handle.await;
-                }
-
-                log_flusher.finalize().await;
-                if let Err(e) = flush_timer.await {
-                    tracing::error!("flush_timer panicked: {}", e);
-                }
-
-                let remaining_logs = db_clone
-                    .get_all_execution_logs(record_id)
-                    .await
-                    .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".to_string()))
-                    .unwrap_or_else(|_| "[]".to_string());
-                let _ = db_clone.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
-                    id: record_id,
-                    status: crate::models::ExecutionStatus::Failed.as_str(),
-                    remaining_logs: &remaining_logs,
-                    result: "Execution timeout",
-                    usage: None,
-                    model: None,
-                    review_meta: None,
-                }).await;
-
-                let entry = ParsedLogEntry::error("Execution timeout, process terminated by system");
-                send_event(&tx_clone, ExecEvent::Output { task_id: task_id.clone(), entry });
-                send_event(&tx_clone, ExecEvent::Finished {
-                    task_id: task_id.clone(),
+                // 收尾逻辑与 cancel 同构，差异只在 result 文案 —— 抽到同一个 helper。
+                handle_timeout_branch(
+                    &db_clone,
+                    &tx_clone,
+                    &task_manager_spawn,
+                    &mut child,
+                    stdout_task,
+                    stderr_task,
+                    flush_timer,
+                    log_flusher.clone(),
                     todo_id,
-                    todo_title: todo_title.clone(),
-                    executor: executor_spawn.executor_type().to_string(),
-                    success: false,
-                    result: Some(format!("Execution timeout, exceeded {}", timeout_str)),
+                    todo_title.clone(),
+                    task_id.clone(),
+                    executor_spawn.executor_type().to_string(),
                     feishu_bot_id,
-                    feishu_receive_id,
-                });
-                task_manager_spawn.remove(&task_id).await;
+                    feishu_receive_id.clone(),
+                    record_id,
+                    execution_timeout_secs,
+                    &timeout_str,
+                ).await;
                 return;
             }
             status = child.wait() => {
@@ -1094,10 +1208,15 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
             .get_all_execution_logs(record_id)
             .await
             .unwrap_or_default();
-        let all_logs_json = serde_json::to_string(&all_logs_snapshot).unwrap_or_else(|e| {
-            tracing::error!("Failed to serialize all logs: {}", e);
+        // 与 cancel / timeout 分支共享序列化逻辑（issue #635 抽取）。
+        let all_logs_json = if all_logs_snapshot.is_empty() {
             "[]".to_string()
-        });
+        } else {
+            serde_json::to_string(&all_logs_snapshot).unwrap_or_else(|e| {
+                tracing::error!("Failed to serialize all logs: {}", e);
+                "[]".to_string()
+            })
+        };
         let result_str = executor_spawn
             .get_final_result(&all_logs_snapshot)
             .unwrap_or_default();
