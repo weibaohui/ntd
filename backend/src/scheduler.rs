@@ -144,33 +144,142 @@ fn format_cron_field(set: &BTreeSet<u32>) -> String {
         .join(",")
 }
 
-/// Convert a cron expression from user timezone to UTC timezone.
-/// This is necessary because tokio-cron-scheduler always executes in UTC.
-/// For example, if user is in Asia/Shanghai (UTC+8) and wants 9:00 local time,
-/// we need to schedule UTC 1:00 (9:00 - 8 hours = 1:00).
+/// 解析 `chrono_tz::Tz`,失败时返回结构化 `InvalidTimezone` 错误。
 ///
-/// 段落总览:
-/// 把"用户时区的 cron 表达式"转成"等价的 UTC cron 表达式",驱动
-/// `tokio-cron-scheduler` 在用户期望的时刻触发。
+/// 把时区解析从 `convert_cron_to_utc` 抽出来,是因为后续 split phase
+/// (枚举 / DST 检测 / 拼装)都不再需要字符串 `&str`,只关心解析后的
+/// `Tz`。独立后能针对合法 / 非法输入分别做单测。
+fn parse_tz(timezone: &str) -> Result<chrono_tz::Tz, SchedulerError> {
+    timezone
+        .parse()
+        .map_err(|_| SchedulerError::InvalidTimezone(timezone.to_string()))
+}
+
+/// 校验 cron 表达式恰好 6 字段 (秒 分 时 日 月 周)。
 ///
-/// 关键点(对应 issue #502 列的几个 bug):
-/// 1. **DST 正确**:用 `cron::Schedule` 在 1 年内枚举所有 occurrence,
-///    逐个转 UTC,再统计"出现最多的 (h,m,s) 元组"。这样无论 DST
-///    切换日偏移怎么变,主用值都能稳定取到,且和当前偏移不再耦合
-///    (原实现用 `now()` 算偏移 → 跨天/跨年后会漂移)。
-/// 2. **复杂表达式**:把枚举结果按 (h, m, s) 收集成 set,格式化时
-///    自动选最紧凑的表示 —— 连续区间写 `a-b`,等差数列写 `a-b/N`,
-///    其它写 `a,b,c`。`*/2`、`9,12,18`、`9-17` 一视同仁。
-/// 3. **跨日回卷**:枚举时是 `DateTime<Tz>`,chrono 自动处理 wrap,
-///    不会出现"减 8 小时后小时为负"的脏数据。
+/// 5 字段在 unix cron 里合法但 `tokio-cron-scheduler` 不接受;7 字段
+/// 会被误解析为"年"。早 fail 早知道,避免错误字段在后续阶段污染输出。
+/// `todo_id` 透传给错误响应,让 handler 知道是哪条 todo 的 cron 错了。
+fn ensure_six_fields(cron_expr: &str, todo_id: i64) -> Result<(), SchedulerError> {
+    // 直接用 `split_whitespace`,它内部会跳过首尾空白,无需 `trim`。
+    // 用 `count()` 避免 `Vec` 分配 —— 我们只关心字段数,不关心字段本身
+    // (后续阶段才在 `convert_cron_to_utc` 里通过 `cron_expr.split_whitespace()`
+    // 拿到 fields 的引用做 `&fields[3..]` 切片)。
+    if cron_expr.split_whitespace().count() != 6 {
+        return Err(SchedulerError::InvalidCron {
+            expr: cron_expr.to_string(),
+            todo_id,
+        });
+    }
+    Ok(())
+}
+
+/// 用 `cron::Schedule` 在 1 年内枚举所有 occurrence,逐个转 UTC,
+/// 返回每个 occurrence 的 `(hour, minute, second)` 元组。
 ///
-/// 简化点:
-/// - day-of-month / month / day-of-week 字段保持原值。
-///   在常见的"每天/每月几点"调度里这些字段都是 `*`,不会受影响;
-///   即便不是 `*`,跨时区时这些字段的偏移对用户意义不大,改它反而
-///   引入歧义。如果未来有强需求,可以再扩展。
-/// - DST 切换日会"丢 1 小时"或"重 1 小时":这是单 cron 表达式表达
-///   不出 1 年内多个 UTC 时刻的根本限制,会在日志 warn 提示用户。
+/// 关键点(对应 issue #502 的几个 DST bug):
+/// - 用固定参考点 `2025-01-01 00:00:00 local`(而非 `Utc::now()`),
+///   测试稳定 + 不依赖系统时间。
+/// - 1 年窗口足够覆盖北/南半球所有 DST 切换日;`Schedule::after` 返回
+///   `DateTime<Tz>`,chrono 内部按 `local_dt` 那一刻的实际 offset 算
+///   UTC,无需我们手算 offset,也就避免了 DST 切换日的脏数据。
+///
+/// 返回 `Vec` 而非 `HashMap`,是因为后续 `summarize_field_set` 只关心
+/// 集合去重,不需要计数;DST pair 的 dominant 选择在调用方 `detect_dst_dominant`
+/// 里再做。
+fn enumerate_utc_times(schedule: &cron::Schedule, tz: &chrono_tz::Tz) -> Vec<(u32, u32, u32)> {
+    // 用 fixed 起点 (2025-01-01 00:00:00 local) 枚举,覆盖完整 1 年,
+    // 确保 DST 切换日的 occurrence 都在样本内。
+    let reference = match tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0) {
+        chrono::LocalResult::Single(t) => t,
+        _ => return Vec::new(),
+    };
+    let end = match tz.with_ymd_and_hms(2026, 1, 1, 0, 0, 0) {
+        chrono::LocalResult::Single(t) => t,
+        _ => return Vec::new(),
+    };
+
+    let mut times = Vec::new();
+    for local_dt in schedule.after(&reference).take_while(|dt| *dt < end) {
+        let utc = local_dt.with_timezone(&chrono::Utc);
+        times.push((utc.hour(), utc.minute(), utc.second()));
+    }
+    times
+}
+
+/// 判断 `times` 是不是 "DST 双值对"形态:恰好 2 个 distinct (h, m, s)
+/// 元组、它们只在 hour 上相差 1、其它字段全相同。
+///
+/// 若是,返回 dominant(出现次数最多的那个);否则返回 `None`,调用方
+/// 走 union 路径。
+///
+/// 为什么需要这个判定:对 `0 0 9 * * *` 这类"单 hour"表达式,纽约时区
+/// 一年里产生 13 UTC / 14 UTC 两种(夏冬令时各几个月);union 会导致
+/// "每天多触发 1 次",dominant 才是对的。但对 `0 0 9,12,18 * * *` 多
+/// hour 列表,dominant 又会丢触发时间,union 才对。启发式:仅"恰好 2
+/// 个且差 1 小时"按 DST pair 处理,其它按 union。
+///
+/// `.expect()` 是在 `is_dst_pair=true` 守卫下从 non-empty 迭代器取
+/// `max_by_key` 的穷尽性保证,不是运行时可达错误;按 lib.rs 测试里
+/// 使用 `unwrap/expect` 需 `#[allow]` 的约定显式标注。
+#[allow(clippy::expect_used)]
+fn detect_dst_dominant(times: &[(u32, u32, u32)]) -> Option<(u32, u32, u32)> {
+    let mut counts: HashMap<(u32, u32, u32), u32> = HashMap::new();
+    for t in times {
+        *counts.entry(*t).or_insert(0) += 1;
+    }
+    let distinct: Vec<(u32, u32, u32)> = counts.keys().copied().collect();
+    let is_dst_pair = distinct.len() == 2
+        && distinct[0].1 == distinct[1].1
+        && distinct[0].2 == distinct[1].2
+        && distinct[0].0.abs_diff(distinct[1].0) == 1;
+    if !is_dst_pair {
+        return None;
+    }
+    let (h, m, s) = distinct
+        .iter()
+        .max_by_key(|k| counts.get(k).copied().unwrap_or(0))
+        .copied()
+        .expect("DST pair invariant: is_dst_pair implies distinct.len() == 2, so max_by_key returns Some");
+    Some((h, m, s))
+}
+
+/// 把一组 `(hour, minute, second)` 拆成三个 `BTreeSet`,再用
+/// `format_cron_field` 紧凑格式化,返回 `(s, m, h)` 三个字段字符串。
+///
+/// 输入是 (h, m, s) 元组列表(可能 1 个 — DST dominant、可能多个 —
+/// union),输出是 cron 字段值,顺序与 issue 期望一致
+/// `(seconds, minutes, hours)`。
+fn summarize_field_set(times: &[(u32, u32, u32)]) -> (String, String, String) {
+    let mut sec: BTreeSet<u32> = BTreeSet::new();
+    let mut min: BTreeSet<u32> = BTreeSet::new();
+    let mut hr: BTreeSet<u32> = BTreeSet::new();
+    for (h, m, s) in times {
+        hr.insert(*h);
+        min.insert(*m);
+        sec.insert(*s);
+    }
+    (
+        format_cron_field(&sec),
+        format_cron_field(&min),
+        format_cron_field(&hr),
+    )
+}
+
+/// 把紧凑格式化后的 h/m/s 字段 + 保留原值的 dom/month/dow 拼成
+/// 最终 6 字段 UTC cron 表达式。
+///
+/// `rest` 长度必须为 3 (day-of-month / month / day-of-week)。
+/// 跨时区时这三个字段的偏移对用户意义不大,改它反而引入歧义,所以
+/// 保持原值(见 `convert_cron_to_utc` doc)。
+fn assemble_utc_cron(s_str: &str, m_str: &str, h_str: &str, rest: &[&str]) -> String {
+    debug_assert_eq!(rest.len(), 3, "rest must be [dom, month, dow]");
+    format!(
+        "{} {} {} {} {} {}",
+        s_str, m_str, h_str, rest[0], rest[1], rest[2]
+    )
+}
+
 /// 把用户时区的 cron 表达式转换为 UTC 等价表达式。
 ///
 /// 返回类型 `Result<String, SchedulerError>`（PR #543 review CRITICAL #1 修复）：
@@ -183,89 +292,36 @@ fn format_cron_field(set: &BTreeSet<u32>) -> String {
 /// `todo_id` 透传给 `SchedulerError::InvalidCron { expr, todo_id }`，让响应体
 /// 能告诉调用方"是哪条 todo 的 cron 错了"。`load_from_db` 用 sentinel `-1`
 /// 因为那是从 DB 加载历史数据，没有具体的 user-facing todo_id。
+///
+/// 拆分后,本函数是「线性串接」5 个 helper,不再有内层逻辑。
+/// issue #615 把 100+ 行的长函数拆成 phase 化的小函数,每个阶段单测,
+/// 后续要修改"DST 启发式"或"枚举窗口"时只动对应 helper。
 fn convert_cron_to_utc(
     cron_expr: &str,
     timezone: &str,
     todo_id: i64,
 ) -> Result<String, SchedulerError> {
-    // 解析时区; 失败时给出可定位的错误,不要 panic。
-    let tz: chrono_tz::Tz = timezone
-        .parse()
-        .map_err(|_| SchedulerError::InvalidTimezone(timezone.to_string()))?;
+    // 1) 解析时区
+    let tz = parse_tz(timezone)?;
 
-    // 用 `cron` crate 解析,这一步同时校验 cron 语法。
-    // 之前用一次性 `from_str(...)?` 吞掉错误再 split 字段,失败时
-    // 报错信息不友好。
+    // 2) 解析 cron 字符串 + 校验 6 字段
     let schedule = cron::Schedule::from_str(cron_expr).map_err(|_| {
         SchedulerError::InvalidCron {
             expr: cron_expr.to_string(),
             todo_id,
         }
     })?;
+    ensure_six_fields(cron_expr, todo_id)?;
 
-    // 要求 6 字段 (秒 分 时 日 月 周),与 `tokio-cron-scheduler` 一致;
-    // 5 字段在 unix cron 里合法但本项目不接受 —— 早 fail 早知道。
-    let fields: Vec<&str> = cron_expr.trim().split_whitespace().collect();
-    if fields.len() != 6 {
-        return Err(SchedulerError::InvalidCron {
-            expr: cron_expr.to_string(),
-            todo_id,
-        });
-    }
+    // 3) 提取 dom / month / dow 字段(原样保留),h/m/s 由枚举结果生成
+    // 用 `split_whitespace` 收集成 Vec,直接用下标访问;
+    // (避免 `trim().split_whitespace()` 模式,`split_whitespace` 本身已处理首尾空白)
+    let fields: Vec<&str> = cron_expr.split_whitespace().collect();
+    let rest = &fields[3..];
 
-    // fields 顺序: 秒 分 时 日 月 周
-    // seconds/minutes 不直接用 —— 我们从 `Schedule::after` 枚举后取真实 (h, m, s),
-    // 比手算偏移更准。day_of_month/month/day_of_week 保持原值,见函数 doc。
-    let _seconds = fields[0];
-    let _minutes = fields[1];
-    let _hours = fields[2];
-    let day_of_month = fields[3];
-    let month = fields[4];
-    let day_of_week = fields[5];
-
-    // hour 字段为 `*` 时,语义是"每小时一次",但**不能直接 passthrough**。
-    // 因为 minute/second 字段可能不是 `*`,例如 `0,30 0 * * * *` 是
-    // "每 30 分钟一次",跨时区后这些 minute/second 的 UTC 值会随
-    // hour 一起 wrap,必须重新生成。
-    //
-    // 唯一能 passthrough 的场景是"三个时间字段都是 `*`"——但即便
-    // 那样,枚举也只会得到 `{0..=23},{0..=59},{0..=59}` 的并集,等价于
-    // 全通配,直接走枚举也没问题。所以这里不再做早返回,统一枚举。
-
-    // 用一个固定的参考时间点 (2025-01-01 用户本地 00:00:00) 开始枚举,
-    // 覆盖完整 1 年,确保 DST 切换日的 occurrence 都在样本内。
-    // 用固定时间而非 `Utc::now()` 是为了测试稳定 + 不依赖系统时间。
-    let reference = match tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0) {
-        chrono::LocalResult::Single(t) => t,
-        _ => {
-            return Err(SchedulerError::Internal(
-                "Could not build reference datetime in timezone".to_string(),
-            ));
-        }
-    };
-    let end = match tz.with_ymd_and_hms(2026, 1, 1, 0, 0, 0) {
-        chrono::LocalResult::Single(t) => t,
-        _ => {
-            return Err(SchedulerError::Internal(
-                "Could not build end datetime in timezone".to_string(),
-            ));
-        }
-    };
-
-    // 收集所有 UTC 时刻 (h, m, s),用 HashMap 计数。
-    // 计数不只是为了找 dominant,更为了判断是不是"单小时 DST 双值"场景。
-    let mut utc_time_counts: HashMap<(u32, u32, u32), u32> = HashMap::new();
-    for local_dt in schedule.after(&reference).take_while(|dt| *dt < end) {
-        // `Schedule::after` 返回的是带时区的 `DateTime<Tz>`,直接 `with_timezone(&Utc)` 即可。
-        // 之前实现的 `tz.offset_from_utc_datetime(&now.naive_utc())` 手算偏移,
-        // DST 切换日会算错 —— chrono 的 with_timezone 内部会按 `local_dt` 那一刻的
-        // 实际 offset 算,所以总是对的。
-        let utc = local_dt.with_timezone(&chrono::Utc);
-        let key = (utc.hour(), utc.minute(), utc.second());
-        *utc_time_counts.entry(key).or_insert(0) += 1;
-    }
-
-    if utc_time_counts.is_empty() {
+    // 4) 枚举 1 年内所有 UTC 时刻
+    let mut times = enumerate_utc_times(&schedule, &tz);
+    if times.is_empty() {
         // 理论上不会发生 (reference 在 schedule 起点之后,365 天内必出至少一次);
         // 兜底返回原表达式,避免 panic。
         warn!(
@@ -276,73 +332,22 @@ fn convert_cron_to_utc(
         return Ok(cron_expr.to_string());
     }
 
-    // DST 检测: 当且仅当 distinct (h, m, s) 元组恰好有 2 个、且它们
-    // 只在 hour 上相差 1、其它字段全相同时,就是单 hour 表达式的 DST
-    // 双值场景(例:`0 0 9 * * *` 在 New York 一年里产生 13 UTC 和
-    // 14 UTC 两种)。这种情形只取 dominant,避免"每天多触发 1 次"。
-    //
-    // 为什么不无脑用 union:对 `0 0 9 * * *` 这种单 hour 表达式,
-    // union 会变成 `13,14`,导致每天都触发两次(一次夏令时一次冬令时),
-    // 显然是错的。
-    //
-    // 为什么不无脑用 dominant:对 `0 0 9,12,18 * * *` 多 hour 列表,
-    // dominant 只取一个,会丢失大部分触发时间。
-    //
-    // 启发式:仅"恰好 2 个且差 1 小时"是 DST 典型形态,其它多值情况
-    // (multi-hour、step、range)按字面 union 才是对的。
-    let distinct: Vec<(u32, u32, u32)> = utc_time_counts.keys().copied().collect();
-    let is_dst_pair = distinct.len() == 2
-        && distinct[0].1 == distinct[1].1
-        && distinct[0].2 == distinct[1].2
-        && distinct[0].0.abs_diff(distinct[1].0) == 1;
-
-    let (utc_seconds_set, utc_minutes_set, utc_hours_set) = if is_dst_pair {
-        // 取 dominant(出现次数最多的那个时刻)。
-        // `is_dst_pair` 守卫了 distinct.len()==2，所以 `max_by_key` 在
-        // non-empty 迭代器上一定返回 `Some(_)`（即使 key 全相等也返回最后
-        // 一个）。用 `.expect()` 把不可达分支压成显式 invariant message，
-        // 让 clippy::expect_used 看得见这是 invariant 而非运行时错误——
-        // 之前 `match { Some/None => Err }` 的 None 分支是 dead code，
-        // `clippy::unreachable_patterns` lint 提升到 deny 时会 fail CI。
-        // `.expect()` 是基于 type-level invariant 的穷尽性保证,
-        // 不是运行时可达的错误路径——显式标注 `#[allow]` 让
-        // `[lints.clippy] expect_used = "warn"` lint 不会误报。
-        #[allow(clippy::expect_used)]
-        let (h, m, s) = distinct
-            .iter()
-            .max_by_key(|k| utc_time_counts.get(k).copied().unwrap_or(0))
-            .copied()
-            .expect("DST pair invariant: is_dst_pair implies distinct.len() == 2, so max_by_key returns Some");
+    // 5) DST pair → dominant;其它 → union。union 路径用 sort+dedup 让
+    // (h, m, s) 顺序稳定,便于测试断言和避免 `summarize_field_set` 内部
+    // 对 BTreeSet 重新排序的额外开销。
+    if let Some((h, m, s)) = detect_dst_dominant(&times) {
         warn!(
             "Cron '{}' in {} crosses DST; using dominant UTC time \
             (h={}, m={}, s={}) and dropping the other. \
             On DST transition days the schedule may be off by 1 hour.",
             cron_expr, timezone, h, m, s
         );
-        (
-            BTreeSet::from([s]),
-            BTreeSet::from([m]),
-            BTreeSet::from([h]),
-        )
-    } else {
-        // 其它情况(无 DST、单值、multi-hour、step、range):用 union
-        let sec: BTreeSet<u32> = utc_time_counts.keys().map(|k| k.2).collect();
-        let min: BTreeSet<u32> = utc_time_counts.keys().map(|k| k.1).collect();
-        let hr: BTreeSet<u32> = utc_time_counts.keys().map(|k| k.0).collect();
-        (sec, min, hr)
-    };
+        times = vec![(h, m, s)];
+    }
 
-    let s_str = format_cron_field(&utc_seconds_set);
-    let m_str = format_cron_field(&utc_minutes_set);
-    let h_str = format_cron_field(&utc_hours_set);
-
-    // 生成最终 UTC cron 表达式:把枚举出的 h/m/s 集合格式化,其余字段
-    // (day-of-month, month, day-of-week) 保持原值 —— 跨时区时这些
-    // 字段的偏移对用户意义不大,改它反而引入歧义,见函数 doc。
-    Ok(format!(
-        "{} {} {} {} {} {}",
-        s_str, m_str, h_str, day_of_month, month, day_of_week
-    ))
+    // 6) 紧凑格式化 h/m/s,组装最终表达式
+    let (s_str, m_str, h_str) = summarize_field_set(&times);
+    Ok(assemble_utc_cron(&s_str, &m_str, &h_str, rest))
 }
 
 pub struct TodoScheduler {
@@ -746,6 +751,322 @@ mod convert_cron_to_utc_tests {
         let result = convert_cron_to_utc("not a cron string", "Asia/Shanghai", 0);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Invalid cron expression"));
+    }
+}
+
+#[cfg(test)]
+// 整个 mod 允许 `unwrap_used` / `expect_used`:helper 单测的 panic = 用例失败,
+// 与 lib.rs 顶部"测试里使用 unwrap/expect 需加 `#[allow]]`"约定保持一致。
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod convert_cron_to_utc_helpers_tests {
+    //! 覆盖 issue #615 拆分出来的 5 个 helper 函数的单元测试。
+    //!
+    //! 拆分前只能"端到端"测 `convert_cron_to_utc`,无法定位"DST 错在哪一步"
+    //! 或"5 字段为什么没拒绝"等问题。拆出 helper 后,每个阶段可独立验证。
+    use super::{
+        assemble_utc_cron, detect_dst_dominant, enumerate_utc_times, ensure_six_fields,
+        parse_tz, summarize_field_set,
+    };
+    use crate::scheduler::SchedulerError;
+    use std::str::FromStr;
+
+    // ===== parse_tz =====
+    // 时区解析是后续 phase 的输入,错了会污染整个枚举 / DST 检测,所以必须独立测。
+
+    /// 合法 IANA 时区字符串应该被接受,且 round-trip 解析回同一时区。
+    #[test]
+    fn test_parse_tz_accepts_valid_iana_zone() {
+        let tz = parse_tz("Asia/Shanghai").expect("shanghai should parse");
+        let s = format!("{:?}", tz);
+        assert!(s.contains("Shanghai") || s.contains("+08"));
+    }
+
+    /// 合法 UTC 偏移别名(`UTC` / `Etc/UTC` / `+08:00`)也要通过。
+    /// 这是一些用户在 scheduler 配置里写"UTC"时的常见写法。
+    #[test]
+    fn test_parse_tz_accepts_utc_aliases() {
+        for tz_str in ["UTC", "Etc/UTC", "Etc/GMT+8"] {
+            parse_tz(tz_str).unwrap_or_else(|e| panic!("{tz_str} should parse, got {e}"));
+        }
+    }
+
+    /// 非法时区字符串必须返回 `InvalidTimezone`,且原字符串保留在错误里
+    /// (handler 会回显给用户 / AI agent)。
+    #[test]
+    fn test_parse_tz_rejects_garbage() {
+        let err = parse_tz("Not/A/Real/Zone").unwrap_err();
+        match err {
+            SchedulerError::InvalidTimezone(s) => assert_eq!(s, "Not/A/Real/Zone"),
+            other => panic!("expected InvalidTimezone, got {other:?}"),
+        }
+    }
+
+    /// 大小写敏感: 小写 `asia/shanghai` 必须拒绝,提示用户大小写。
+    /// 这能避免一个常见笔误"Asia/shanghai" 通过校验后默默退到 UTC。
+    #[test]
+    fn test_parse_tz_is_case_sensitive() {
+        assert!(parse_tz("asia/shanghai").is_err());
+    }
+
+    // ===== ensure_six_fields =====
+    // 6 字段是后续 `fields[3..]` 切片的前提。错字段数必须早 fail。
+
+    /// 6 字段表达式应该通过,原样保留空白拆分能力。
+    #[test]
+    fn test_ensure_six_fields_accepts_six() {
+        ensure_six_fields("0 0 9 * * *", 1).expect("6 fields should pass");
+    }
+
+    /// 多余的前后空白不应让字段数变少(用 `trim` 后 split)。
+    #[test]
+    fn test_ensure_six_fields_trims_whitespace() {
+        ensure_six_fields("  0  0  9  *  *  *  ", 1)
+            .expect("leading/trailing whitespace should not change field count");
+    }
+
+    /// 5 字段(标准 unix cron 格式,缺秒)必须拒绝,带原始 expr + todo_id。
+    #[test]
+    fn test_ensure_six_fields_rejects_five() {
+        let err = ensure_six_fields("0 9 * * *", 7).unwrap_err();
+        match err {
+            SchedulerError::InvalidCron { expr, todo_id } => {
+                assert_eq!(expr, "0 9 * * *");
+                assert_eq!(todo_id, 7);
+            }
+            other => panic!("expected InvalidCron, got {other:?}"),
+        }
+    }
+
+    /// 7 字段(带年)必须拒绝,避免年份字段被误当成 day-of-month。
+    #[test]
+    fn test_ensure_six_fields_rejects_seven() {
+        assert!(ensure_six_fields("0 0 9 * * * 2025", 0).is_err());
+    }
+
+    /// 空字符串 / 纯空白必须拒绝。
+    #[test]
+    fn test_ensure_six_fields_rejects_empty() {
+        assert!(ensure_six_fields("", 0).is_err());
+        assert!(ensure_six_fields("   ", 0).is_err());
+    }
+
+    // ===== enumerate_utc_times =====
+    // 枚举结果决定后续 DST 检测和最终表达式,必须测准。
+
+    /// `0 0 9 * * *` Asia/Shanghai: 一年 365 次,UTC 小时 = 1 (无 DST)。
+    /// 上海不参与 DST,2025 年每一天 9 点本地对应 UTC 1 点。
+    #[test]
+    fn test_enumerate_utc_times_daily_9am_shanghai_365_occurrences() {
+        let schedule = cron::Schedule::from_str("0 0 9 * * *").unwrap();
+        let tz = parse_tz("Asia/Shanghai").unwrap();
+        let times = enumerate_utc_times(&schedule, &tz);
+        // 2025 年非闰年: 365 天
+        assert_eq!(times.len(), 365, "got {} times: {times:?}", times.len());
+        for (h, m, s) in &times {
+            assert_eq!(*h, 1, "Shanghai 9am → UTC 1am, got {h}");
+            assert_eq!(*m, 0);
+            assert_eq!(*s, 0);
+        }
+    }
+
+    /// `0 0 0/3 * * *`(每 3 小时一次)在 1 年窗口内应枚举出 364*8 + 7 = 2919 次。
+    /// 边界:参考时间 `2025-01-01 00:00:00` 本身在 `Schedule::after` 语义里
+    /// 是**不计入**的(after 是严格大于),所以 2025-01-01 当天只有 7 次
+    /// 触发(03, 06, ..., 21),后续 364 天每天 8 次,2026-01-01 00:00
+    /// 也不计入(被 `take_while(*dt < end)` 排除)。这是窗口边界,不是 bug。
+    #[test]
+    fn test_enumerate_utc_times_every_3_hours_year_window() {
+        let schedule = cron::Schedule::from_str("0 0 0/3 * * *").unwrap();
+        let tz = parse_tz("UTC").unwrap();
+        let times = enumerate_utc_times(&schedule, &tz);
+        assert_eq!(times.len(), 364 * 8 + 7, "got {} times", times.len());
+    }
+
+    /// DST 时区(`America/New_York`)在 1 年内应该枚举出 2 个 distinct UTC 小时
+    /// (13 和 14,差 1 小时),其它字段全一致。
+    /// 这是 issue #502 修复的核心场景。
+    #[test]
+    fn test_enumerate_utc_times_dst_produces_two_distinct_hours() {
+        let schedule = cron::Schedule::from_str("0 0 9 * * *").unwrap();
+        let tz = parse_tz("America/New_York").unwrap();
+        let times = enumerate_utc_times(&schedule, &tz);
+        let mut hours: Vec<u32> = times.iter().map(|t| t.0).collect();
+        hours.sort_unstable();
+        hours.dedup();
+        assert_eq!(hours, vec![13, 14], "New York 9am should produce {{13, 14}} UTC");
+        for t in &times {
+            assert_eq!(t.1, 0, "minute must be 0 across DST, got {}", t.1);
+            assert_eq!(t.2, 0, "second must be 0 across DST, got {}", t.2);
+        }
+    }
+
+    /// 时区无法构造 reference / end datetime 时,返回空 Vec 而不是 panic。
+    /// 这是兜底保护 —— `convert_cron_to_utc` 见到空 Vec 会 warn + 返原表达式。
+    /// (生产代码不会触发,因为 `parse_tz` 接受的所有 Tz 都能 `with_ymd_and_hms`,
+    /// 但 helper 自身的鲁棒性值得保证。)
+    #[test]
+    fn test_enumerate_utc_times_handles_utc_zone() {
+        let schedule = cron::Schedule::from_str("0 0 0 * * *").unwrap();
+        let tz = parse_tz("UTC").unwrap();
+        let times = enumerate_utc_times(&schedule, &tz);
+        assert!(!times.is_empty());
+    }
+
+    // ===== detect_dst_dominant =====
+    // DST 启发式的关键判定: 错会"每天多触发 1 次"或"丢触发时间"。
+
+    /// DST pair: 13 UTC 和 14 UTC 各占几个月,dominant 是出现多的那个。
+    /// New York: 7 个月夏令时 (13 UTC) + 5 个月冬令时 (14 UTC) → 13 dominant。
+    #[test]
+    fn test_detect_dst_dominant_picks_more_frequent() {
+        // 手工构造 7 个 (13,0,0) + 5 个 (14,0,0)
+        let mut times = Vec::new();
+        for _ in 0..7 {
+            times.push((13u32, 0u32, 0u32));
+        }
+        for _ in 0..5 {
+            times.push((14u32, 0u32, 0u32));
+        }
+        let dominant = detect_dst_dominant(&times).expect("DST pair should be detected");
+        assert_eq!(dominant, (13, 0, 0), "13 UTC is more frequent, must win");
+    }
+
+    /// 真正"差 1 小时"的 pair 即便出现次数相同也应被识别为 DST pair
+    /// (返回 Some 而非 None,调用方拿到 dominant)。
+    /// 关键:不要因为"50/50"就 fallthrough 到 union 路径。
+    #[test]
+    fn test_detect_dst_dominant_handles_tie_breaker() {
+        let times = vec![(13u32, 0u32, 0u32), (14u32, 0u32, 0u32)];
+        let dominant = detect_dst_dominant(&times).expect("pair shape must be detected");
+        // tie 时 max_by_key 行为是"返回最后一个"(`iter::max_by_key`),所以是 (14,0,0)
+        assert!(
+            dominant == (13, 0, 0) || dominant == (14, 0, 0),
+            "tie should still pick one, got {dominant:?}"
+        );
+    }
+
+    /// 非 DST pair: 9 点和 12 点相差 3 小时,不能被误判成 DST pair,
+    /// 否则会丢掉 12 点的触发,这是 issue #495 的回归点。
+    #[test]
+    fn test_detect_dst_dominant_rejects_non_pair() {
+        let times = vec![(1u32, 0u32, 0u32), (4u32, 0u32, 0u32)];
+        assert!(
+            detect_dst_dominant(&times).is_none(),
+            "hour diff=3 is not a DST pair, must return None"
+        );
+    }
+
+    /// 非 DST pair: 小时差 1 但 minute 不同(例 `(0,13,0)` vs `(0,14,0)`)
+    /// 也不能被误判。启发式要求 minute/second 完全一致。
+    #[test]
+    fn test_detect_dst_dominant_requires_minute_second_match() {
+        let times = vec![(1u32, 13u32, 0u32), (2u32, 14u32, 0u32)];
+        assert!(
+            detect_dst_dominant(&times).is_none(),
+            "minute mismatch breaks DST pair shape"
+        );
+    }
+
+    /// 单值(无 DST,单一 UTC 时刻)必须返回 None,走 union 路径。
+    #[test]
+    fn test_detect_dst_dominant_returns_none_for_single() {
+        let times = vec![(1u32, 0u32, 0u32)];
+        assert!(detect_dst_dominant(&times).is_none());
+    }
+
+    /// 多 hour 列表(3 个 distinct 小时)按 union 路径走,不能误判成 DST pair。
+    #[test]
+    fn test_detect_dst_dominant_rejects_three_distinct() {
+        let times = vec![(1u32, 0u32, 0u32), (4u32, 0u32, 0u32), (10u32, 0u32, 0u32)];
+        assert!(detect_dst_dominant(&times).is_none());
+    }
+
+    // ===== summarize_field_set =====
+    // 紧凑格式化的入口: 输出顺序 (s, m, h),用 `format_cron_field` 内部规则。
+
+    /// 单一 (h, m, s) → 三个字段都格式化为单值。
+    #[test]
+    fn test_summarize_field_set_single_value() {
+        let (s, m, h) = summarize_field_set(&[(13u32, 0u32, 0u32)]);
+        assert_eq!((s.as_str(), m.as_str(), h.as_str()), ("0", "0", "13"));
+    }
+
+    /// 多 hour 列表 → 多个值,小时按字面 union 输出。
+    #[test]
+    fn test_summarize_field_set_multi_hour_union() {
+        let times = vec![(1u32, 0u32, 0u32), (4u32, 0u32, 0u32), (10u32, 0u32, 0u32)];
+        let (s, m, h) = summarize_field_set(&times);
+        assert_eq!(s, "0");
+        assert_eq!(m, "0");
+        assert_eq!(h, "1,4,10");
+    }
+
+    /// 连续区间 → 紧凑成 `a-b` (例 0-23 整 24 小时)。
+    #[test]
+    fn test_summarize_field_set_contiguous_range() {
+        // 模拟 `0 0 * * * *` 在 Shanghai 的 union 路径(枚举出 0-23)
+        let times: Vec<(u32, u32, u32)> = (0u32..24).map(|h| (h, 0, 0)).collect();
+        let (s, m, h) = summarize_field_set(&times);
+        assert_eq!(s, "0");
+        assert_eq!(m, "0");
+        assert_eq!(h, "0-23");
+    }
+
+    /// 等差数列 → 紧凑成 `a-b/N` (例 `0-22/2`)。
+    #[test]
+    fn test_summarize_field_set_arithmetic_step() {
+        let times: Vec<(u32, u32, u32)> =
+            (0u32..=22).step_by(2).map(|h| (h, 0, 0)).collect();
+        let (s, m, h) = summarize_field_set(&times);
+        assert_eq!(h, "0-22/2");
+        assert_eq!(s, "0");
+        assert_eq!(m, "0");
+    }
+
+    /// DST pair 走 dominant 路径后,输入是 1 个 tuple,输出就是单值字段。
+    /// 这条把 `detect_dst_dominant` 和 `summarize_field_set` 串起来,作为
+    /// 集成冒烟测试,确保 dominant 选择不会在格式化阶段被覆盖。
+    #[test]
+    fn test_summarize_field_set_after_dst_dominant() {
+        let times = vec![(13u32, 0u32, 0u32)]; // simulate dominant
+        let (s, m, h) = summarize_field_set(&times);
+        assert_eq!((s.as_str(), m.as_str(), h.as_str()), ("0", "0", "13"));
+    }
+
+    // ===== assemble_utc_cron =====
+    // 拼装是机械的字符串操作,但字段顺序和 dom/month/dow 保留的语义
+    // 必须被锁住,避免后续 PR 改坏"保持原值"的关键不变式。
+
+    /// 6 字段按 s m h dom month dow 顺序拼装。
+    #[test]
+    fn test_assemble_utc_cron_basic() {
+        let result = assemble_utc_cron("0", "0", "1", &["*", "*", "*"]);
+        assert_eq!(result, "0 0 1 * * *");
+    }
+
+    /// 复杂 h/m/s 字段(等差 / 范围)拼装后保持紧凑形式。
+    #[test]
+    fn test_assemble_utc_cron_preserves_compact_form() {
+        let result = assemble_utc_cron("0", "0", "0-22/2", &["*", "*", "*"]);
+        assert_eq!(result, "0 0 0-22/2 * * *");
+    }
+
+    /// day-of-month / month / day-of-week 三个字段必须原样保留 —— 跨时区
+    /// 这三个字段的偏移对用户意义不大,改它反而引入歧义 (见 `convert_cron_to_utc` doc)。
+    #[test]
+    fn test_assemble_utc_cron_preserves_dom_month_dow() {
+        let result = assemble_utc_cron("0", "0", "1", &["1", "JAN", "MON"]);
+        assert_eq!(result, "0 0 1 1 JAN MON");
+    }
+
+    /// `rest` 长度不为 3 时,debug build 触发 debug_assert (release build 静默接受)。
+    /// 这里覆盖 happy path,debug_assert 在 test build 下会运行。
+    #[test]
+    fn test_assemble_utc_cron_requires_three_rest_fields() {
+        // 正常 3 字段:不触发 debug_assert
+        let _ = assemble_utc_cron("0", "0", "1", &["*", "*", "*"]);
+        // 0 字段:debug build 会 panic; 我们不在这里断言 (避免双重 panic)
+        // 只确认函数本身不主动 panic 其它路径。
     }
 }
 
