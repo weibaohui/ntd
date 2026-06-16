@@ -143,12 +143,17 @@ export function elapsedSeconds(startTimeStr: string | null | undefined): number 
  * 规则：
  * - < 1KB → 显示字节（如 "500 B"）
  * - < 1MB → 显示 KB（如 "1.5 KB"）
- * - < 1GB → 显示 MB（如 "2.5 MB"）
- * - >= 1GB → 显示 GB（如 "1.2 GB"）
+ * - < 1GB → 显示 M（如 "2.5 M"），不带 B 后缀，节省 UI 空间
+ * - >= 1GB → 显示 G（如 "1.2 G"），不带 B 后缀，节省 UI 空间
+ *
+ * 设计权衡：
+ * - M/G 不带 B 是为了节省设置-备份列表的横向空间，避免长单位撑开 List 行；
+ *   在 M/G 量级下单位语义已足够清晰，B 后缀是冗余的。
+ * - 仍使用 1024 进制（KB/MB/GB 二进制语义），与文件管理器习惯一致。
  */
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} M`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} G`;
 }
