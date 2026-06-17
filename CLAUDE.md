@@ -201,3 +201,46 @@ test('深色模式渲染校验', async ({ page }) => {
 });
 ```
 
+## 证据与截图发布规范
+
+**强制要求：测试结论、功能完成证据的截图必须发布到 PR 评论或 GitHub Issue 中，不得作为源码提交到 git 仓库。**
+
+### 发布位置
+
+- **PR 评论**：使用 `gh pr comment <PR号> --body-file <说明文件>` 把 Markdown 结论发到 PR；如果有图，直接在 PR 页面的评论框拖拽上传。
+- **Issue 评论**：在关联 issue 下用 `gh issue comment <Issue号> --body-file <说明文件>` 发布证据。
+
+### 禁止行为
+
+- ❌ **不要** 把截图（`.png`/`.jpg`/`.gif`/`.webp` 等）放进 `frontend/`、`backend/`、`docs/`、`tests/` 等源码目录后 `git add` 提交。
+- ❌ **不要** 把验证截图放进 `frontend/tests/__screenshots__/` 后 `git add` —— 该目录在 `.gitignore` 中已忽略，目的是避免污染 git 历史。
+- ❌ **不要** 把截图塞进 Git LFS 提交，除非项目本身已经启用 LFS 流程。
+- ❌ **不要** 把 PNG/JPG 二进制文件 base64 编码后塞进 Markdown 文档随代码提交 —— 这同样会污染 diff。
+
+### 允许的视觉证据形式
+
+- ✅ 纯文本 / Markdown 表格、ASCII 流程图、代码块。
+- ✅ SVG 矢量图（文本形式，diff 友好）。
+- ✅ 外部链接：Figma 设计稿、在线仪表盘截图链接、CI 构建产物的 URL。
+- ✅ Markdown 中的相对路径图片引用（指向 PR 评论或 issue 中已上传的图片 URL）。
+
+### 为什么这么要求
+
+- 仓库是**源代码版本库**：二进制截图会让 `git clone` 变慢、history 臃肿、code review 噪声大。
+- **可读性**：截图的权威来源是 PR/Issue 评论流，读者在 PR 页面直接可见，无需 checkout 仓库。
+- **一致性**：Playwright 的 `test-results/`、截图目录已在 `.gitignore` 中忽略；保持这条边界，不要因为"留个证据"就破例提交。
+- **可追溯**：图片上传到 GitHub 后会得到永久 URL，git 仓库的 commit 历史与 PR/Issue 评论流是独立通道，互不污染。
+
+### 常用发布命令
+
+```bash
+# 把准备好的证据 Markdown 发到 PR 评论
+gh pr comment 650 --body-file /tmp/evidence.md
+
+# 发到关联 issue 评论
+gh issue comment 647 --body-file /tmp/evidence.md
+
+# 查看自己的 PR 列表
+gh pr list --author @me
+```
+

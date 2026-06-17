@@ -53,6 +53,10 @@ step6-same-again.png
 datalog
 .cc-connect
 frontend/test-results/.last-run.json
+# Playwright 截图本地调试产物 (issue #649 引入)
+# CLAUDE.md 规则要求截图必须发布到 PR/Issue 评论，禁止作为源码提交。
+# 配合该规则把截图目录加入 .gitignore，避免开发者误提交污染仓库历史。
+frontend/tests/__screenshots__/
 .deepseek/trusted
 .sisyphus/
 .worktrees
