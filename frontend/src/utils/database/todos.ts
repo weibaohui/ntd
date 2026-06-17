@@ -136,6 +136,10 @@ export interface ProjectDirectory {
   name: string | null;
   created_at: string;
   updated_at: string;
+  // issue #643: 项目目录级 git worktree 开关。
+  // 后端从 v2 schema migration 开始携带这两个字段；旧库会是 false（migration 默认值）。
+  git_worktree_enabled?: boolean;
+  auto_cleanup?: boolean;
 }
 
 export async function getProjectDirectories(): Promise<ProjectDirectory[]> {
@@ -144,14 +148,31 @@ export async function getProjectDirectories(): Promise<ProjectDirectory[]> {
 
 // 创建项目目录：后端要求 name 必填，调用方需保证传入非空字符串。
 // 返回完整 ProjectDirectory 对象（含 id），供调用方更新本地状态。
-export async function createProjectDirectory(path: string, name: string): Promise<ProjectDirectory> {
-  return unwrap(await api.post('/api/project-directories', { path, name })); // POST 创建，后端会做 trim+唯一约束校验
+// issue #643 修复：create 接口在后端并不消费 gitWorktreeEnabled / autoCleanup 字段，
+// 发送它们只会让前端误以为「新建时就能决定策略」，实际上策略需要在 update 时设置。
+// 这里彻底删除 options 参数与对应 body 字段，调用方需要时改走 updateProjectDirectory。
+export async function createProjectDirectory(
+  path: string,
+  name: string,
+): Promise<ProjectDirectory> {
+  return unwrap(await api.post('/api/project-directories', { path, name }));
 }
 
-// 更新项目目录名称：与新增保持一致约束（名称必填），避免出现"无名项目"。
-// path 不可变，仅允许修改 name。
-export async function updateProjectDirectory(id: number, name: string): Promise<void> {
-  await api.put(`/api/project-directories/${id}`, { name }); // PUT 全量替换 name 字段
+// 更新项目目录。`name` 必填；worktree 开关可选（不传=保持现状）。
+// 后端在 handler 区分 `None`/`Some` 两种语义，前端用 hasOwnProperty 表达"我故意没传"。
+export async function updateProjectDirectory(
+  id: number,
+  name: string,
+  options?: { gitWorktreeEnabled?: boolean; autoCleanup?: boolean },
+): Promise<void> {
+  const body: Record<string, unknown> = { name };
+  if (options?.gitWorktreeEnabled !== undefined) {
+    body.git_worktree_enabled = options.gitWorktreeEnabled;
+  }
+  if (options?.autoCleanup !== undefined) {
+    body.auto_cleanup = options.autoCleanup;
+  }
+  await api.put(`/api/project-directories/${id}`, body);
 }
 
 export async function deleteProjectDirectory(id: number): Promise<void> {

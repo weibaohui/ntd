@@ -11,6 +11,15 @@ pub struct Model {
     pub name: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+    /// issue #643: 项目目录级开关，开启后 ntd 在该目录下执行 Todo 时自动创建 git worktree。
+    /// 默认 false，旧库通过迁移加列后保持 false，对存量行为零影响。
+    #[sea_orm(default)]
+    pub git_worktree_enabled: bool,
+    /// issue #643: 执行结束（成功/失败/取消）后是否自动清理 worktree。
+    /// 仅在 `git_worktree_enabled = true` 时才有意义；前端会在 UI 上把"自动清理"
+    /// 开关禁用到 `git_worktree_enabled` 之外，确保不会出现"开了清理但没开 worktree"的废组合。
+    #[sea_orm(default)]
+    pub auto_cleanup: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

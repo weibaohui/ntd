@@ -52,6 +52,10 @@ pub struct Model {
     pub last_review_status: Option<String>,
     /// 最近一次评审 spawn 的 UTC 时间戳.
     pub last_reviewed_at: Option<String>,
+    /// issue #643: 本次执行实际使用的 git worktree 目录路径。
+    /// NULL = 未启用 worktree 或尚未确定目录。`auto_cleanup = true` 时，执行结束后
+    /// 该目录会被 WorktreeService 删除，但 `worktree_path` 字段会保留在记录里便于排查。
+    pub worktree_path: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

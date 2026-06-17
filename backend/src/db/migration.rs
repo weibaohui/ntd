@@ -41,6 +41,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V2TodoRatingDropColumn),
         Box::new(V3LogsToExecutionLogs),
         Box::new(V4FeishuFkCascade),
+        Box::new(V5ProjectDirectoryWorktree),
     ]
 }
 
@@ -1608,4 +1609,79 @@ mod needs_fk_migration_tests {
         // 单引号 + SQL 注释符的经典注入 payload
         let _ = needs_fk_migration(&db.conn, "evil'; DROP TABLE x; --").await;
     }
+}
+
+// ---------------------------------------------------------------------------
+// v5: 项目目录级 git worktree 支持 (issue #643)
+// ---------------------------------------------------------------------------
+
+/// v5 迁移：增加 3 个字段
+///   - project_directories.git_worktree_enabled (NOT NULL DEFAULT 0)
+///   - project_directories.auto_cleanup         (NOT NULL DEFAULT 0)
+///   - execution_records.worktree_path          (NULL)
+///
+/// 全部使用 `ADD COLUMN IF NOT EXISTS` / `unwrap_or_else` 兼容旧库：
+/// 字段在 IF NOT EXISTS 不被 SQLite 支持时（旧版 < 3.35）回退到忽略"已存在"错误。
+pub(super) struct V5ProjectDirectoryWorktree;
+
+#[async_trait]
+impl Migration for V5ProjectDirectoryWorktree {
+    fn version(&self) -> i64 {
+        5
+    }
+    fn name(&self) -> &'static str {
+        "project_directory_worktree"
+    }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        v5_project_directory_worktree(db).await
+    }
+}
+
+/// 把 v5 三条 ALTER 串成一条：只在 "duplicate column name" 类型的错误上吞掉并 warn，
+/// 其它真实错误（表不存在、SQL 语法错误等）必须传播出去——否则迁移被错误地标记为已应用，
+/// 后续运行会因为缺列而炸在更难定位的位置。
+///
+/// SQLite 错误信息中 "duplicate column name" 由原生接口直接产出，未走 i18n；按子串匹配即可。
+async fn run_v5_alter(db: &Database, sql: &str, label: &str) -> Result<(), sea_orm::DbErr> {
+    if let Err(e) = db.exec(sql).await {
+        // 仅在「列已存在」这一类幂等错误上跳过，其它错误必须向上抛
+        let msg = e.to_string();
+        if msg.contains("duplicate column name") {
+            tracing::warn!(
+                "migration v5: {} column may already exist, skipping: {}",
+                label,
+                msg
+            );
+            Ok(())
+        } else {
+            Err(e)
+        }
+    } else {
+        Ok(())
+    }
+}
+
+async fn v5_project_directory_worktree(db: &Database) -> Result<(), sea_orm::DbErr> {
+    // 加列失败时只在「duplicate column name」语义下吞掉并 warn：老库可能已经手工补过这些列。
+    // 其它错误（如表不存在、SQL 语法错误）必须传播，避免迁移被错误标记为已应用后留下隐患。
+    run_v5_alter(
+        db,
+        "ALTER TABLE project_directories ADD COLUMN git_worktree_enabled INTEGER NOT NULL DEFAULT 0",
+        "git_worktree_enabled",
+    )
+    .await?;
+    run_v5_alter(
+        db,
+        "ALTER TABLE project_directories ADD COLUMN auto_cleanup INTEGER NOT NULL DEFAULT 0",
+        "auto_cleanup",
+    )
+    .await?;
+    run_v5_alter(
+        db,
+        "ALTER TABLE execution_records ADD COLUMN worktree_path TEXT",
+        "worktree_path",
+    )
+    .await?;
+    Ok(())
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Button, Popconfirm, Input, Space, List, Empty, Spin, message } from 'antd';
-import { PlusOutlined, FolderOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Button, Popconfirm, Input, Space, List, Empty, Spin, Switch, message, Tooltip } from 'antd';
+import { PlusOutlined, FolderOutlined, EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import type { ProjectDirectory } from '@/utils/database';
 
@@ -76,6 +76,44 @@ export function ProjectDirectoriesPanel() {
     }
   };
 
+  /// issue #643: 切换 worktree 开关。state 乐观更新 + 失败回滚，避免用户点完后看到
+  /// 状态没反应误以为系统卡住。
+  const handleToggleWorktree = async (id: number, flag: 'gitWorktreeEnabled' | 'autoCleanup', next: boolean) => {
+    const target = projectDirectories.find(d => d.id === id);
+    if (!target) return;
+    // auto_cleanup 强依赖 git_worktree_enabled 开启：开 auto 但关 worktree 是废组合，
+    // 这里在前端先拦一道，避免后端拒绝请求时还走一次无谓的 HTTP。
+    if (flag === 'autoCleanup' && next && !target.git_worktree_enabled) {
+      message.warning('请先开启"启用 Git Worktree"');
+      return;
+    }
+    // 计算乐观更新与请求体：键名要用 snake_case（与后端/类型定义一致），
+    // 之前用 `[flag]: next` 直接挂 camelCase 键会导致 UI 与 API 不一致。
+    // 当关闭 git_worktree_enabled 时联动把 auto_cleanup 复位为 false：
+    // 因为 auto_cleanup 在 git worktree 关闭后已无意义，留着只会让 UI 显示一个永远
+    // 不会触发的「自动清理」勾，给人误导。
+    const nextGit = flag === 'gitWorktreeEnabled' ? next : (target.git_worktree_enabled ?? false);
+    const nextAuto = flag === 'autoCleanup' ? next : (target.auto_cleanup ?? false);
+    const optimistic: ProjectDirectory = {
+      ...target,
+      git_worktree_enabled: nextGit,
+      // 仅在「关闭 git_worktree_enabled」时把 auto_cleanup 拉回 false，单独切 auto_cleanup 不联动 git
+      auto_cleanup: nextGit ? nextAuto : false,
+    };
+    setProjectDirectories(prev => prev.map(d => d.id === id ? optimistic : d));
+    const previous = target;
+    try {
+      await db.updateProjectDirectory(id, target.name ?? '', {
+        gitWorktreeEnabled: nextGit,
+        autoCleanup: nextGit ? nextAuto : false,
+      });
+    } catch (err: any) {
+      // 失败回滚到之前的值，并提示用户
+      setProjectDirectories(prev => prev.map(d => d.id === id ? previous : d));
+      message.error('更新失败: ' + (err?.message || String(err)));
+    }
+  };
+
   const handleDeleteProjectDirectory = async (id: number) => {
     try {
       await db.deleteProjectDirectory(id);
@@ -134,6 +172,7 @@ export function ProjectDirectoriesPanel() {
                   borderRadius: 6,
                   marginBottom: 8,
                   border: '1px solid var(--color-border-light)',
+                  display: 'block',
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
@@ -165,24 +204,51 @@ export function ProjectDirectoriesPanel() {
                       </>
                     )}
                   </div>
+                  <Space size={4}>
+                    {editingDirId !== dir.id && (
+                      <Button
+                        type="text"
+                        icon={<EditOutlined />}
+                        size="small"
+                        onClick={() => { setEditingDirId(dir.id); setEditingDirName(dir.name || ''); }}
+                      />
+                    )}
+                    <Popconfirm
+                      title="删除目录"
+                      description={`确定要删除 "${dir.name || dir.path}" 吗？`}
+                      onConfirm={() => handleDeleteProjectDirectory(dir.id)}
+                    >
+                      <Button type="text" danger icon={<DeleteOutlined />} size="small" />
+                    </Popconfirm>
+                  </Space>
                 </div>
-                <Space size={4}>
-                  {editingDirId !== dir.id && (
-                    <Button
-                      type="text"
-                      icon={<EditOutlined />}
-                      size="small"
-                      onClick={() => { setEditingDirId(dir.id); setEditingDirName(dir.name || ''); }}
-                    />
-                  )}
-                  <Popconfirm
-                    title="删除目录"
-                    description={`确定要删除 "${dir.name || dir.path}" 吗？`}
-                    onConfirm={() => handleDeleteProjectDirectory(dir.id)}
-                  >
-                    <Button type="text" danger icon={<DeleteOutlined />} size="small" />
-                  </Popconfirm>
-                </Space>
+                {/* issue #643: worktree 开关区。放在主行下方独立一行，避免和编辑/删除按钮挤在同一行
+                    触发布局错位。label 紧贴 Switch 表达"操作对象 + 状态"，Tooltip 提供解释。 */}
+                <div style={{ display: 'flex', gap: 24, marginTop: 10, paddingLeft: 28, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Tooltip title="开启后，ntd 会在该目录下执行 Todo 时自动创建 git worktree，目录非 git 仓库时会自动 init">
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <Switch
+                        size="small"
+                        checked={!!dir.git_worktree_enabled}
+                        onChange={(v) => handleToggleWorktree(dir.id, 'gitWorktreeEnabled', v)}
+                      />
+                      <span style={{ fontSize: 12 }}>启用 Git Worktree</span>
+                      <QuestionCircleOutlined style={{ color: 'var(--color-text-secondary)', fontSize: 12 }} />
+                    </span>
+                  </Tooltip>
+                  <Tooltip title="依赖上一项。开启后执行结束（成功/失败/取消）自动删除 worktree 目录">
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <Switch
+                        size="small"
+                        checked={!!dir.auto_cleanup}
+                        disabled={!dir.git_worktree_enabled}
+                        onChange={(v) => handleToggleWorktree(dir.id, 'autoCleanup', v)}
+                      />
+                      <span style={{ fontSize: 12, color: !dir.git_worktree_enabled ? 'var(--color-text-secondary)' : undefined }}>自动清理</span>
+                      <QuestionCircleOutlined style={{ color: 'var(--color-text-secondary)', fontSize: 12 }} />
+                    </span>
+                  </Tooltip>
+                </div>
               </List.Item>
             )}
           />

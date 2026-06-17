@@ -1801,6 +1801,7 @@ dependencies = [
  "url",
  "uuid",
  "vergen-gitcl",
+ "wait-timeout",
  "which",
  "zip",
 ]
