@@ -281,9 +281,9 @@ pub struct ParsedLogEntry {
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<ExecutionUsage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "toolName", alias = "tool_name", skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "toolInputJson", alias = "tool_input_json", skip_serializing_if = "Option::is_none")]
     pub tool_input_json: Option<String>,
 }
 
