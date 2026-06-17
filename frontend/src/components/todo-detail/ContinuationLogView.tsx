@@ -9,9 +9,9 @@ import type { LogEntry } from '@/types';
 export function ContinuationLogView({ logs, isRunning, viewMode, onRefresh, onViewModeChange }: {
   logs: LogEntry[];
   isRunning: boolean;
-  viewMode: 'log' | 'chat';
+  viewMode: 'log' | 'chat' | 'command';
   onRefresh: () => void;
-  onViewModeChange: (mode: 'log' | 'chat') => void;
+  onViewModeChange: (mode: 'log' | 'chat' | 'command') => void;
 }) {
   const defaultOpen = isRunning || viewMode === 'chat';
   const [isExpanded, setIsExpanded] = useState(defaultOpen);

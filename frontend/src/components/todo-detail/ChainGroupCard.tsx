@@ -21,11 +21,11 @@ function ChainGroupCard({ group, onOpenResume, onExport, onStop, messageApi, vie
   onExport: (r: ExecutionRecord) => void;
   onStop: (id: number) => Promise<void>;
   messageApi: any;
-  viewMode: 'log' | 'chat';
+  viewMode: 'log' | 'chat' | 'command';
   parseLogs: (r: ExecutionRecord) => LogEntry[];
   onRefresh: (id: number) => Promise<void>;
   resolveStats: (r: ExecutionRecord, running: boolean) => ExecutionStats | null | undefined;
-  onViewModeChange: (mode: 'log' | 'chat') => void;
+  onViewModeChange: (mode: 'log' | 'chat' | 'command') => void;
 }) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const mainRecord = group.records[0];

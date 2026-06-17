@@ -8,9 +8,9 @@ import type { LogEntry, ExecutionRecord } from '@/types';
 /** Lazy-load logs for a continuation record in ChainGroupCard */
 export function ContinuationLogsLoader({ record, viewMode, onRefresh, onViewModeChange }: {
   record: ExecutionRecord;
-  viewMode: 'log' | 'chat';
+  viewMode: 'log' | 'chat' | 'command';
   onRefresh: (id: number) => Promise<void>;
-  onViewModeChange: (mode: 'log' | 'chat') => void;
+  onViewModeChange: (mode: 'log' | 'chat' | 'command') => void;
 }) {
   const [logs, setLogs] = useState<LogEntry[] | null>(null);
   const [isExpanded, setIsExpanded] = useState(viewMode === 'chat');

@@ -8,7 +8,38 @@ export interface LogEntry {
   timestamp: string;
   type: 'info' | 'stdout' | 'stderr' | 'error' | 'text' | 'tool' | 'tool_use' | 'tool_call' | 'tool_result' | 'step_start' | 'step_finish' | 'result' | 'assistant' | 'user' | 'system' | 'thinking' | 'tokens';
   content: string;
+  // issue #648: 工具调用上下文，从后端 ParsedLogEntry 的 metadata 透出
+  // （详见 backend/src/db/execution.rs 中的 metadata 序列化）。
+  toolName?: string;
+  toolInputJson?: string;
+  /** 工具返回的原始文本（仅在 log_type === 'tool_result' 时填充） */
+  toolResult?: string;
+  /** 关联 ID；前后端尚未透出 id 时退化为顺序配对 */
+  toolCallId?: string;
+  isError?: boolean;
 }
+
+/**
+ * issue #648: 从日志中提取出的"命令+返回"对。
+ *
+ * 之所以用独立类型而不是直接渲染 LogEntry，是因为：
+ * - 一个 Bash 调用跨两条日志（tool_use + tool_result）；
+ * - 不同执行器协议差异巨大，需要在 view 层做归一化。
+ */
+export interface CommandEntry {
+  id: string;
+  toolName: string;
+  command: string;
+  args?: string;
+  output?: string;
+  success: boolean;
+  exitCode?: number;
+  durationMs?: number;
+  timestamp: string;
+}
+
+/** issue #648: 执行历史记录页内的视图模式（Segmented 选项） */
+export type LogViewMode = 'log' | 'chat' | 'command';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool' | 'thinking' | 'result';

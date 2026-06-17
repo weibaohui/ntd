@@ -11,9 +11,9 @@ export function NarrowLogView({ record, isRunning, displayLogs, liveLogs, viewMo
   isRunning: boolean;
   displayLogs: LogEntry[];
   liveLogs: LogEntry[] | null;
-  viewMode: 'log' | 'chat';
+  viewMode: 'log' | 'chat' | 'command';
   onRefresh: (id: number) => Promise<void>;
-  onViewModeChange: (mode: 'log' | 'chat') => void;
+  onViewModeChange: (mode: 'log' | 'chat' | 'command') => void;
 }) {
   const defaultOpen = isRunning || viewMode === 'chat';
   const [isExpanded, setIsExpanded] = useState(defaultOpen);

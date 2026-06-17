@@ -1,7 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { Button, Tag, Empty, Segmented, Popconfirm, Tooltip, Pagination, message, Popover, InputNumber, Space } from 'antd';
 import { StarOutlined, StarFilled, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, PauseCircleOutlined } from '@ant-design/icons';
-import { MessageOutlined, FileTextOutlined, StopOutlined, CopyOutlined, UnorderedListOutlined, LinkOutlined, LoadingOutlined, BranchesOutlined } from '@ant-design/icons';
+import { MessageOutlined, FileTextOutlined, StopOutlined, CopyOutlined, UnorderedListOutlined, LinkOutlined, LoadingOutlined, BranchesOutlined, CodeOutlined } from '@ant-design/icons';
 import XMarkdown from '@ant-design/x-markdown';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { ChatView } from '@/components/ChatView';
@@ -14,6 +14,7 @@ import { supportsResume } from '@/types';
 import type { ExecutionRecord, LogEntry } from '@/types';
 import { getHookTriggerLabel } from '@/utils/database/hooks';
 import { copyToClipboard } from '@/utils/clipboard';
+import { CommandPanel } from '@/components/CommandPanel';
 
 export function RecordDetailView({
   isLoadingDetail, record, sessionGroups,
@@ -26,8 +27,8 @@ export function RecordDetailView({
   record: ExecutionRecord | null;
   sessionGroups: SessionGroup[];
   onSelectRecord: (id: number) => void;
-  viewMode: 'log' | 'chat';
-  onViewModeChange: (mode: 'log' | 'chat') => void;
+  viewMode: 'log' | 'chat' | 'command';
+  onViewModeChange: (mode: 'log' | 'chat' | 'command') => void;
   onOpenResume: (record: ExecutionRecord) => void;
   onExportMarkdown: (record: ExecutionRecord) => Promise<void>;
   onStop: (recordId: number) => Promise<void>;
@@ -245,52 +246,56 @@ export function RecordDetailView({
       })()}
       {(() => {
         if (!isRunning && displayLogs.length === 0) return null;
+        // issue #648: 把头部 Segmented 抽到三个分支共享，body 各自渲染
+        const header = (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-primary)' }}>
+                {viewMode === 'command'
+                  ? `命令视图 (${displayLogs.length} 条${isRunning && liveLogs && liveLogs.length > 0 ? ' · 实时' : ''})`
+                  : viewMode === 'chat'
+                    ? `对话视图 (${displayLogs.length} 条${isRunning && liveLogs && liveLogs.length > 0 ? ' · 实时' : ''})`
+                    : `执行过程 (${isRunning ? displayLogs.length : logsTotal} 条${isRunning && liveLogs && liveLogs.length > 0 ? ' · 实时' : ''})`}
+              </span>
+              <RefreshBtn onClick={() => {
+                onRefreshSingle(record.id);
+                onLoadLogs(record.id, logsPage);
+              }} />
+            </div>
+            <Segmented
+              size="small"
+              value={viewMode}
+              onChange={(value) => onViewModeChange(value as 'log' | 'chat' | 'command')}
+              options={[
+                { value: 'log', icon: <UnorderedListOutlined />, label: '日志' },
+                { value: 'chat', icon: <MessageOutlined />, label: '对话' },
+                { value: 'command', icon: <CodeOutlined />, label: '命令' },
+              ]}
+            />
+          </div>
+        );
         if (viewMode === 'chat') {
           return (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexShrink: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-primary)' }}>
-                    对话视图 ({displayLogs.length} 条){isRunning && liveLogs && liveLogs.length > 0 ? ' · 实时' : ''}
-                  </span>
-                  <RefreshBtn onClick={() => onRefreshSingle(record.id)} />
-                </div>
-                <Segmented
-                  size="small"
-                  value={viewMode}
-                  onChange={(value) => onViewModeChange(value as 'log' | 'chat')}
-                  options={[
-                    { value: 'log', icon: <UnorderedListOutlined />, label: '日志' },
-                    { value: 'chat', icon: <MessageOutlined />, label: '对话' },
-                  ]}
-                />
-              </div>
+              {header}
               <ChatView logs={displayLogs as LogEntry[]} isRunning={isRunning} />
+            </div>
+          );
+        }
+        // issue #648: 命令视图 — 走 CommandPanel
+        if (viewMode === 'command') {
+          return (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              {header}
+              <div style={{ flex: 1, overflow: 'auto', padding: 4 }}>
+                <CommandPanel logs={displayLogs} executor={record.executor} />
+              </div>
             </div>
           );
         }
         return (
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-primary)' }}>
-                  执行过程 ({isRunning ? displayLogs.length : logsTotal} 条{isRunning && liveLogs && liveLogs.length > 0 ? ' · 实时' : ''})
-                </span>
-                <RefreshBtn onClick={() => {
-                  onRefreshSingle(record.id);
-                  onLoadLogs(record.id, logsPage);
-                }} />
-              </div>
-              <Segmented
-                size="small"
-                value={viewMode}
-                onChange={(value) => onViewModeChange(value as 'log' | 'chat')}
-                options={[
-                  { value: 'log', icon: <UnorderedListOutlined />, label: '日志' },
-                  { value: 'chat', icon: <MessageOutlined />, label: '对话' },
-                ]}
-              />
-            </div>
+            {header}
             <div style={{
               background: 'var(--log-bg)',
               color: 'var(--log-text)',

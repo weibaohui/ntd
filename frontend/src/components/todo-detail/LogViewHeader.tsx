@@ -10,8 +10,8 @@ export const RefreshBtn = ({ onClick, size = 'small' }: { onClick: () => void; s
 /** 日志视图头部组件 */
 export function LogViewHeader({ title, viewMode, onViewModeChange, onRefresh, fontSize = 12 }: {
   title: string;
-  viewMode: 'log' | 'chat';
-  onViewModeChange: (mode: 'log' | 'chat') => void;
+  viewMode: 'log' | 'chat' | 'command';
+  onViewModeChange: (mode: 'log' | 'chat' | 'command') => void;
   onRefresh: () => void;
   fontSize?: number;
 }) {

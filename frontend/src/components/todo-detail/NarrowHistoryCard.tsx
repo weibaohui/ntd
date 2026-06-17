@@ -16,7 +16,7 @@ import { copyToClipboard } from '@/utils/clipboard';
 /** Narrow mode: single history card */
 export function NarrowHistoryCard({ record, viewMode, onOpenResume, onExport, onStop, onRefresh, onRate, getRunningTask, resolveStats, parseLogs, messageApi, onViewModeChange }: {
   record: ExecutionRecord;
-  viewMode: 'log' | 'chat';
+  viewMode: 'log' | 'chat' | 'command';
   onOpenResume: (r: ExecutionRecord) => void;
   onExport: (r: ExecutionRecord) => void;
   onStop: (id: number) => Promise<void>;
@@ -26,7 +26,7 @@ export function NarrowHistoryCard({ record, viewMode, onOpenResume, onExport, on
   resolveStats: (r: ExecutionRecord, running: boolean) => ExecutionStats | null | undefined;
   parseLogs: (r: ExecutionRecord) => LogEntry[];
   messageApi: any;
-  onViewModeChange: (mode: 'log' | 'chat') => void;
+  onViewModeChange: (mode: 'log' | 'chat' | 'command') => void;
 }) {
   const isRunning = record.status === 'running';
   const runningTask = isRunning ? getRunningTask(record) : null;

@@ -24,7 +24,7 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
   const { todos, selectedTodoId, executionRecords, runningTasks } = state;
   const isMobile = useIsMobile();
   const isWide = !useIsMobile(BREAKPOINTS.wide);
-  const [viewMode, setViewMode] = useState<'log' | 'chat'>('log');
+  const [viewMode, setViewMode] = useState<'log' | 'chat' | 'command'>('log');
   const selectedTodo = todos.find(t => t.id === selectedTodoId);
 
   const [todoDrawerOpen, setTodoDrawerOpen] = useState(false);
