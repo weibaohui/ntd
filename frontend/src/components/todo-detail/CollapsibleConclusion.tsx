@@ -15,8 +15,9 @@
  * 对应 issue：#652 「todo执行历史页面 结论 显示区做成可折叠的效果」
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, message as antdMessage } from 'antd';
+import type { MessageInstance } from 'antd/es/message/interface';
 import { CaretDownOutlined, CaretUpOutlined, CopyOutlined } from '@ant-design/icons';
 import XMarkdown from '@ant-design/x-markdown';
 import { copyToClipboard } from '@/utils/clipboard';
@@ -37,7 +38,7 @@ export interface CollapsibleConclusionProps {
   /** 执行状态，仅用于切换 success / failed 背景色 */
   status: string;
   /** 动态 message 实例；不传则使用 antd 静态 message */
-  messageApi?: { success: (msg: string) => void; error: (msg: string) => void };
+  messageApi?: MessageInstance;
   /** 是否在头部显示「结论」二字标题；目前仅 RecordDetailView 启用 */
   showTitle?: boolean;
   /** 记录 ID；提供时折叠状态会按 ID 持久化到 localStorage */
@@ -91,8 +92,14 @@ export function CollapsibleConclusion({
   });
 
   // recordId 变化时（如切换到另一条执行记录）重新读取持久化值，
-  // 让每条记录各自的折叠状态独立保持。
+  // 让每条记录各自的折叠状态独立保持。首次挂载由 useState lazy init 处理，
+  // 用 isFirst 跳过首次 effect 调用避免一次多余的 no-op 重渲染。
+  const isFirstMountRef = useRef(true);
   useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
     const stored = readCollapsedState(storageKey);
     // 显式区分 "未持久化" 与 "持久化为 false"：前者用默认 false，后者用持久化值
     setCollapsed(stored ?? false);
@@ -118,7 +125,9 @@ export function CollapsibleConclusion({
     }
   };
 
-  // 与原实现保持一致：成功用绿底，失败用红底，其他状态（如 running）暂走 failed 视觉
+  // 与原实现保持一致：成功用绿底，失败用红底。
+  // 保留旧行为：running / pending / cancelled 等非 success 状态
+  // 暂走 failed 视觉（历史包袱，未在本次 PR 中调整）。
   const statusClass = status === 'success'
     ? 'history-result-success'
     : 'history-result-failed';
@@ -168,7 +177,9 @@ export function CollapsibleConclusion({
               fontWeight: 500,
             }}
           >
-            {result.length} 字
+            {/* 用 spread 数 code points 而非 UTF-16 code units，
+                避免一个 emoji 被算成 2 字让字数虚高。 */}
+            {[...result].length} 字
           </span>
         </Button>
         <Button
