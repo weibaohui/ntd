@@ -66,6 +66,8 @@ export interface ExecutionRecord {
   last_review_status?: 'pending' | 'success' | 'failed' | 'interrupted' | null;
   /** ISO timestamp when the most recent auto-review finished. */
   last_reviewed_at?: string | null;
+  /** issue #643/#645: 本次执行使用的 git worktree 目录路径；未启用 worktree 时为 null。 */
+  worktree_path?: string | null;
 }
 
 export interface ExecutionSummary {

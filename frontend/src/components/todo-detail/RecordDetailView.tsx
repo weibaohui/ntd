@@ -1,7 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { Button, Tag, Empty, Segmented, Popconfirm, Tooltip, Pagination, message, Popover, InputNumber, Space } from 'antd';
 import { StarOutlined, StarFilled, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, PauseCircleOutlined } from '@ant-design/icons';
-import { MessageOutlined, FileTextOutlined, StopOutlined, CopyOutlined, UnorderedListOutlined, LinkOutlined, LoadingOutlined } from '@ant-design/icons';
+import { MessageOutlined, FileTextOutlined, StopOutlined, CopyOutlined, UnorderedListOutlined, LinkOutlined, LoadingOutlined, BranchesOutlined } from '@ant-design/icons';
 import XMarkdown from '@ant-design/x-markdown';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { ChatView } from '@/components/ChatView';
@@ -191,6 +191,8 @@ export function RecordDetailView({
           </div>
         </Tooltip>
       )}
+      {/* issue #645: 展示本次执行使用的 git worktree 目录路径；目录可能已被清理，但仍保留在记录里便于排查 */}
+      <WorktreePathDisplay worktreePath={record.worktree_path ?? null} />
       {record.result !== null && record.result !== '' && (
         <div className={`history-result ${record.status === 'success' ? 'history-result-success' : 'history-result-failed'}`} style={{ marginBottom: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
@@ -473,5 +475,53 @@ export function ReviewStatusBadge({ status }: { status?: 'pending' | 'success' |
       {s.icon}
       {s.text}
     </span>
+  );
+}
+
+/**
+ * issue #645: 展示执行记录关联的 git worktree 目录路径。
+ *
+ * - 未启用 worktree 时不渲染（`worktree_path` 为 `null` 或空串）。
+ * - 点击整行即可复制完整路径；与命令复制复用同一 `copyToClipboard` 工具，兼容 HTTP 环境。
+ * - 路径可能已被 `WorktreeService::cleanup_worktree` 清理，复制仍可成功，
+ *   用于排查"当时用了哪个 worktree"非常方便。
+ */
+function WorktreePathDisplay({ worktreePath }: { worktreePath: string | null }) {
+  // 空值时整段不渲染，避免出现 "Worktree: " 这种空标签
+  if (!worktreePath) return null;
+
+  // 路径过长时只展示尾部，鼠标悬停 tooltip 显示完整路径
+  const displayPath = worktreePath.length > 60
+    ? `…${worktreePath.slice(-59)}`
+    : worktreePath;
+
+  return (
+    <Tooltip title={worktreePath}>
+      <div
+        onClick={async () => {
+          // 复用统一的复制工具：HTTPS 走 navigator.clipboard，
+          // HTTP 环境自动 fallback 到 execCommand，保持与命令复制一致
+          const ok = await copyToClipboard(worktreePath);
+          message[ok ? 'success' : 'error'](ok ? '已复制 worktree 路径' : '复制失败');
+        }}
+        // 与命令展示行保持一致的视觉权重：四级文本色、等宽字体、单行省略
+        style={{
+          fontSize: 11,
+          color: 'var(--color-text-quaternary)',
+          marginBottom: 12,
+          fontFamily: 'var(--font-mono)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+        }}
+      >
+        <BranchesOutlined style={{ fontSize: 11, color: 'var(--color-primary)' }} />
+        <span>Worktree: {displayPath}</span>
+      </div>
+    </Tooltip>
   );
 }

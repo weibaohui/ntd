@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@5/dist/reset.css" />
+    <style>
+      body { padding: 24px; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+      .case { margin-bottom: 24px; padding: 12px 16px; border: 1px solid #eee; border-radius: 8px; }
+      h3 { margin: 0 0 12px; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      import React from 'react';
+      import { createRoot } from 'react-dom/client';
+      import { ConfigProvider } from 'antd';
+      // 走 vite 真实源码 import：变更若不在源码里，这里会编译失败
+      const detailMod = await import('/src/components/todo-detail/RecordDetailView.tsx');
+      const { RecordDetailView } = detailMod;
+
+      // 构造两条样例数据：一条带 worktree_path，一条不带
+      // 关键点: withWorktree.worktree_path 字段在 TS 编译期会强制 ExecutionRecord 类型校验
+      const withWorktree = {
+        id: 1, todo_id: 2, status: 'success',
+        command: 'claude-code', stdout: '', stderr: '',
+        result: 'ok', started_at: '2026-06-16T00:00:00Z', finished_at: '2026-06-16T00:01:00Z',
+        usage: null, executor: 'claudecode', model: null,
+        trigger_type: 'manual', pid: null,
+        worktree_path: '/tmp/proj-a/.ntd-worktrees/123',
+      };
+      const withoutWorktree = { ...withWorktree, id: 2, worktree_path: null };
+
+      const noop = () => {};
+      const baseProps = {
+        isLoadingDetail: false, sessionGroups: [],
+        onSelectRecord: noop, viewMode: 'log', onViewModeChange: noop,
+        onOpenResume: noop, onExportMarkdown: async () => {}, onStop: async () => {},
+        onRefreshSingle: async () => {}, onRate: async () => {},
+        paginatedLogs: [], logsTotal: 0, logsPage: 1, logsPerPage: 50,
+        onLoadLogs: async () => {}, isLoadingLogs: false,
+        getRunningTaskForRecord: () => null, resolveExecutionStats: () => null,
+      };
+
+      function App() {
+        return React.createElement(ConfigProvider, null,
+          React.createElement('div', null,
+            React.createElement('div', { className: 'case', 'data-case': 'with' },
+              React.createElement('h3', null, 'case A: worktree_path 有值'),
+              React.createElement(RecordDetailView, { ...baseProps, record: withWorktree }),
+            ),
+            React.createElement('div', { className: 'case', 'data-case': 'without' },
+              React.createElement('h3', null, 'case B: worktree_path = null'),
+              React.createElement(RecordDetailView, { ...baseProps, record: withoutWorktree }),
+            ),
+          )
+        );
+      }
+      createRoot(document.getElementById('root')).render(React.createElement(App));
+      window.__testReady = true;
+    </script>
+  </body>
+</html>
