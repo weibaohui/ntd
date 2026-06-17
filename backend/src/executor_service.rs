@@ -1381,11 +1381,12 @@ async fn select_executor_and_build_command(
     };
 
     let executable_path = executor.executable_path().to_string();
-    let task_id_placeholder = "fallback".to_string();
+    // 首次执行时需要有效的 UUID 作为 session-id，不能用 "fallback" 这种占位符。
+    // resume_session_id 为 None 时生成新 UUID，确保 Claude Code CLI 不会报 "Invalid session ID" 错误。
     let session_id_for_executor = request
         .resume_session_id
         .clone()
-        .unwrap_or(task_id_placeholder);
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let is_resume = request.resume_session_id.is_some();
     let mut command_args = executor.command_args_with_session(
         message,
