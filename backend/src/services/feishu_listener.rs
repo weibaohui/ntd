@@ -475,9 +475,15 @@ impl FeishuListener {
         if !should_resume {
             return (None, None);
         }
-        let real_sid = latest_record
-            .and_then(|r| r.session_id.clone())
-            .or_else(|| binding.session_id.clone());
+        // 已通过 should_resume 守卫：latest_record 是 Some 且 r.session_id 是 Some，
+        // 旧代码 `.or_else(|| binding.session_id.clone())` 是不可达分支——
+        // binding.session_id 在首次执行时被设成 task_id 占位，fallback 永远不会触发。
+        // 用 expect 表达「在 guard 假设下必定成立」，替代曾经的 or_else 占位。
+        let real_sid = Some(
+            latest_record
+                .and_then(|r| r.session_id.clone())
+                .expect("should_resume=true guarantees latest_record.session_id is Some"),
+        );
         (real_sid, Some(content.to_string()))
     }
 
