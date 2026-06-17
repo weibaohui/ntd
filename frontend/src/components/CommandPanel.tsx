@@ -41,14 +41,20 @@ export function CommandPanel({ logs, executor }: CommandPanelProps) {
 
   if (commands.length === 0) {
     return (
-      <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '48px 24px',
-        gap: 12,
-      }}>
+      // role="status" + aria-live 让屏幕阅读器在命令列表为空时主动播报，
+      // 取代之前 antd Empty 内置的 role="status" 行为
+      <div
+        role="status"
+        aria-live="polite"
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '48px 24px',
+          gap: 12,
+        }}
+      >
         <CodeOutlined style={{ fontSize: 32, color: 'var(--color-text-tertiary)' }} />
         <div style={{
           fontSize: 14,

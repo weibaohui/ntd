@@ -140,7 +140,11 @@ export function CommandCard({ command, index }: CommandCardProps) {
           {/* 展开/收起按钮 */}
           {isLong && (
             <button
+              type="button"
               onClick={() => setExpanded(v => !v)}
+              aria-expanded={expanded}
+              aria-controls={`command-output-${index}`}
+              className="command-toggle-btn"
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -153,10 +157,7 @@ export function CommandCard({ command, index }: CommandCardProps) {
                 fontSize: 11,
                 fontFamily: 'var(--font-sans)',
                 cursor: 'pointer',
-                transition: 'background var(--transition-fast)',
               }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-bg-hover)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'var(--color-bg)')}
             >
               {expanded ? <DownOutlined /> : <RightOutlined />}
               {expanded ? '收起输出' : `展开全部（${command.output!.length} 字符）`}
@@ -164,6 +165,7 @@ export function CommandCard({ command, index }: CommandCardProps) {
           )}
           {/* 输出内容 */}
           <pre
+            id={`command-output-${index}`}
             data-testid={`command-output-${index}`}
             style={{
               margin: 0,

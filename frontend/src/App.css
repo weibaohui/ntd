@@ -3997,3 +3997,14 @@ code {
 .running-mobile-tabs .ant-tabs-tab {
   font-size: 13px;
 }
+
+/* ---------- Command View ---------- */
+/* 命令卡片展开/收起按钮的 hover 反馈：CSS class 实现可让 transition 真的生效；
+   之前 inline onMouseEnter 直接改 style.background 会瞬时切换，transition 形同虚设。 */
+.command-toggle-btn {
+  background: var(--color-bg);
+  transition: background var(--transition-fast);
+}
+.command-toggle-btn:hover {
+  background: var(--color-bg-hover);
+}
