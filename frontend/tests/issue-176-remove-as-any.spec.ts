@@ -34,48 +34,61 @@ async function collectBorderLeftColors(page: Page): Promise<string[]> {
 
 test.describe('Issue #176 — 移除 TodoList 多余 as any 后行为不变', () => {
   test('type 移除 as any 后 TodoList 仍可渲染、todo 条目带 border-left', async () => {
+    // 把浏览器/上下文生命周期放进 try/finally：
+    // 当 itemCount === 0 触发 test.skip() + return 提前退出时，
+    // finally 分支仍会执行 context.close()/browser.close()，
+    // 避免在 CI 反复运行时出现「僵尸 chromium 进程 / 文件描述符耗尽」。
     const browser = await chromium.launch();
-    const context = await browser.newContext();
-    const page = await context.newPage();
+    try {
+      const context = await browser.newContext();
+      try {
+        const page = await context.newPage();
 
-    // 收集浏览器侧控制台错误，组件抛错时立刻失败
-    const consoleErrors: string[] = [];
-    page.on('pageerror', (err) => consoleErrors.push(err.message));
-    page.on('console', (msg) => {
-      if (msg.type() === 'error') consoleErrors.push(msg.text());
-    });
+        // 收集浏览器侧控制台错误，组件抛错时立刻失败
+        const consoleErrors: string[] = [];
+        page.on('pageerror', (err) => consoleErrors.push(err.message));
+        page.on('console', (msg) => {
+          if (msg.type() === 'error') consoleErrors.push(msg.text());
+        });
 
-    await page.goto(DEV_URL, { waitUntil: 'domcontentloaded' });
-    await waitForTodoList(page);
-    // 等 React effect 跑完 + 数据库初始化完成
-    await page.waitForTimeout(2000);
+        await page.goto(DEV_URL, { waitUntil: 'domcontentloaded' });
+        await waitForTodoList(page);
+        // 等 React effect 跑完 + 数据库初始化完成
+        await page.waitForTimeout(2000);
 
-    // 如果列表为空就跳过断言，但仍然验证页面没崩；
-    // dev 环境通常有 seed 数据，但 CI 上不能假定
-    const itemCount = await countTodoItems(page);
-    if (itemCount === 0) {
-      test.skip(true, '当前 dev 环境无 todo 数据，跳过 render 验证；type 编译已通过');
-      return;
+        // 如果列表为空就跳过断言，但仍然验证页面没崩；
+        // dev 环境通常有 seed 数据，但 CI 上不能假定
+        const itemCount = await countTodoItems(page);
+        if (itemCount === 0) {
+          test.skip(true, '当前 dev 环境无 todo 数据，跳过 render 验证；type 编译已通过');
+          return;
+        }
+
+        const borderColors = await collectBorderLeftColors(page);
+        // 至少有 N 个 border-left 颜色记录，对应 N 个 todo 条目
+        expect(borderColors.length).toBe(itemCount);
+        // 每个颜色都是合法的 rgb()/rgba() 字符串（不能是空字符串 — 空串代表样式没生效）
+        for (const c of borderColors) {
+          expect(c).toMatch(/rgba?\(/);
+        }
+
+        // 页面侧不能有未捕获错误
+        expect(consoleErrors.filter((e) => !e.includes('favicon'))).toEqual([]);
+
+        // Playwright 把 path 解析为相对 cwd（项目根 frontend/）的相对路径，
+        // 所以这里写 `tests/__screenshots__/...`，落到 frontend/tests/__screenshots__/。
+        // 这样 git diff 时就是相对仓库的稳定路径。
+        await page.screenshot({
+          path: 'tests/__screenshots__/issue-176-render.png',
+          fullPage: false,
+        });
+      } finally {
+        // 显式关 context：让 page 关联的监听器、target 资源先于 browser 释放，
+        // 否则 context 内仍有未释放的引用，close() 会变 noisy warning
+        await context.close();
+      }
+    } finally {
+      await browser.close();
     }
-
-    const borderColors = await collectBorderLeftColors(page);
-    // 至少有 N 个 border-left 颜色记录，对应 N 个 todo 条目
-    expect(borderColors.length).toBe(itemCount);
-    // 每个颜色都是合法的 rgb()/rgba() 字符串（不能是空字符串 — 空串代表样式没生效）
-    for (const c of borderColors) {
-      expect(c).toMatch(/rgba?\(/);
-    }
-
-    // 页面侧不能有未捕获错误
-    expect(consoleErrors.filter((e) => !e.includes('favicon'))).toEqual([]);
-
-    // Playwright 把 path 解析为相对 cwd（项目根 frontend/）的相对路径，
-    // 所以这里写 `tests/__screenshots__/...`，落到 frontend/tests/__screenshots__/。
-    // 这样 git diff 时就是相对仓库的稳定路径。
-    await page.screenshot({
-      path: 'tests/__screenshots__/issue-176-render.png',
-      fullPage: false,
-    });
-    await browser.close();
   });
 });

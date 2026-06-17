@@ -124,7 +124,9 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
     // 先按标签过滤
     // 按选中标签过滤：直接读 Todo.tag_ids 即可，
     // 不需要 `as any` — Todo 类型已在 frontend/src/types/todo.ts 中声明该字段。
-    let result = selectedTagId
+    // 显式用 `!== null` 判定而不是真值判断：selectedTagId 类型是 number | null，
+    // 0 是合法 id，truthy 判定会把合法的 0 当作「未选中」而错误地跳过过滤。
+    let result = selectedTagId !== null
       ? todos.filter(t => t.tag_ids?.includes(selectedTagId))
       : todos;
     
