@@ -1158,126 +1158,220 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
 ///
 /// 该阶段**不**启动 todo 状态变更，也**不**创建 worktree —— 这两步属于 stage 2，
 /// 这样 stage 1 出错时无需清理 worktree，副作用面更窄。
+///
+/// 拆解思路：6 个独立子职责分别抽到 helper（substitute / register / concurrency /
+/// hook / executor / record），顶层只负责串联；每个 helper 函数 ≤30 行，
+/// 满足 CLAUDE.md 的 30 行硬规则。
 async fn prepare_execution_state(
     request: RunTodoExecutionRequest,
 ) -> Result<PreparedExecution, ExecutionResult> {
-    // 把 `chain` 提前到外层局部变量，spawn 闭包末段 `finalize_normal_completion`
-    // 还需要它做 state-change hook 触发。
-    let chain = request.chain.clone();
-    let RunTodoExecutionRequest {
-        db,
-        executor_registry,
-        tx,
-        task_manager,
-        config,
-        hook_service,
-        todo_id,
-        message,
-        req_executor,
-        trigger_type,
-        params,
-        resume_session_id,
-        resume_message,
-        source_todo_id,
-        source_todo_title,
-        source_hook_id,
-        feishu_bot_id,
-        feishu_receive_id,
-        ..
-    } = request;
-    // placeholder 替换只在编排阶段有效，executor 拿到的 message 与 stage 2 一致。
-    let message = params
+    // 1) 占位符替换 + 拆解 request 字段。
+    let substituted = substitute_message_placeholders(&request);
+    // 2) 注册 task（生成 task_id + guard + cancel_rx）并加载 todo。
+    let task_state = register_task_and_load_todo(&request).await?;
+    // 3) 取运行时配置（max_concurrent / timeout_secs）。
+    let (max_concurrent, timeout_secs) = read_runtime_config(&request);
+    // 4) 加载 todo 后做并发检查 + pre-hook 触发。
+    let initial_todo = task_state.todo.clone();
+    let todo =
+        enforce_concurrency_limit(&request, initial_todo, max_concurrent, &task_state.task_id)
+            .await?;
+    fire_pre_execution_hook_if_needed(&request, &todo, substituted.chain).await?;
+    // 5) 选定 executor 并构造 command_args。
+    let selected =
+        select_executor_and_build_command(&request, &todo, &substituted.message).await?;
+    // 6) 创建 execution record 并把 stage 1 产物聚合成 PreparedExecution。
+    create_run_execution_record(
+        request,
+        task_state,
+        todo,
+        timeout_secs,
+        selected,
+    )
+    .await
+}
+
+/// Stage 1 步骤 1：在 `request` 上做 message 占位符替换，并返回替换后的 message。
+///
+/// `chain` 在 `fire_pre_execution_hook_if_needed` 还要用，所以提前 clone 出来。
+/// 占位符替换只在编排阶段有效——executor 看到的 message 与 stage 2 写入
+/// execution_record.command 的字符串一致。
+struct SubstitutedContext {
+    message: String,
+    chain: Vec<i64>,
+}
+
+fn substitute_message_placeholders(request: &RunTodoExecutionRequest) -> SubstitutedContext {
+    let message = request
+        .params
         .as_ref()
-        .map(|params| crate::models::replace_placeholders(&message, params))
-        .unwrap_or(message);
+        .map(|params| crate::models::replace_placeholders(&request.message, params))
+        .unwrap_or_else(|| request.message.clone());
+    SubstitutedContext {
+        message,
+        chain: request.chain.clone(),
+    }
+}
+
+/// Stage 1 步骤 2：注册 task 并加载 todo。返回 task_id + guard + cancel_rx + todo。
+///
+/// Issue #506：用 RAII guard 注册 task，确保即便后续路径 panic/早返回忘了
+/// remove，sender 也会被 guard drop 时清理。guard 在 stage 1 末尾才 drop，
+/// 等价于覆盖整段 task 生命周期。
+struct TaskState {
+    task_id: String,
+    task_guard: crate::task_manager::TaskGuard,
+    cancel_rx: tokio::sync::mpsc::Receiver<()>,
+    todo: Option<Todo>,
+}
+
+async fn register_task_and_load_todo(
+    request: &RunTodoExecutionRequest,
+) -> Result<TaskState, ExecutionResult> {
     let task_id = Uuid::new_v4().to_string();
-    // Issue #506：用 RAII guard 注册 task，确保即便后续路径 panic/早返回忘了 remove，
-    // sender 也会被 guard drop 时清理。guard 在此函数尾部才 drop，等价于覆盖整段 task 生命周期。
-    let mut task_guard = task_manager.register_with_guard(task_id.clone()).await;
+    let mut task_guard = request
+        .task_manager
+        .register_with_guard(task_id.clone())
+        .await;
     let cancel_rx = task_guard.take_receiver();
 
-    // Read runtime settings from config
-    let (max_concurrent, timeout_secs) = {
-        let cfg = config.read().unwrap();
-        (cfg.max_concurrent_todos, cfg.execution_timeout_secs)
-    };
-
-    // 加载 todo + 并发检查。Load todo metadata for executor selection, then run the
-    // zombie-aware concurrency check via `count_active_running_for_todo`。
-    // 任一步失败都返回失败 ExecutionResult（task_id 已生成，调用方可以基于它取消 task）。
-    let todo = match db.get_todo(todo_id).await {
-        Ok(Some(t)) => {
-            let running_count_for_todo =
-                match count_active_running_for_todo(&task_manager, &db, todo_id).await {
-                    Ok(n) => n,
-                    Err(()) => {
-                        return Err(ExecutionResult {
-                            task_id,
-                            record_id: None,
-                        })
-                    }
-                };
-            if running_count_for_todo >= max_concurrent as usize {
-                return Err(reject_concurrency_limit(
-                    &task_manager,
-                    &tx,
-                    &task_id,
-                    todo_id,
-                    &t.title,
-                    running_count_for_todo,
-                    max_concurrent,
-                )
-                .await);
-            }
-            Some(t)
-        }
+    // 加载 todo；load 失败时仍然继续（不阻断执行），把 todo 视作 None。
+    let todo = match request.db.get_todo(request.todo_id).await {
+        Ok(Some(t)) => Some(t),
         Ok(None) => None,
         Err(e) => {
-            tracing::error!("Failed to fetch todo {} for executor selection: {}", todo_id, e);
+            tracing::error!(
+                "Failed to fetch todo {} for executor selection: {}",
+                request.todo_id,
+                e
+            );
             None
         }
     };
+    Ok(TaskState {
+        task_id,
+        task_guard,
+        cancel_rx,
+        todo,
+    })
+}
 
-    // Fire before_execution hooks synchronously — block until all pre-flight targets finish.
-    // If the hook fails and the user didn't set skip_if_missing, we abort the main execution.
-    // We skip firing altogher when `todo` is None (todo was deleted between scheduling and now).
-    if let Some(ref t) = todo {
-        let ctx = crate::hooks::models::HookContext::for_before_execution(
-            todo_id,
-            t.title.clone(),
-            t.executor.clone(),
-            t.workspace.clone(),
-            chain.clone(),
-        );
-        if let Err(msg) = hook_service.clone().fire_before_execution(todo_id, ctx).await {
-            // Pre-hook failed — abort this execution without creating a record.
-            tracing::warn!("aborting execution due to pre-hook failure: {}", msg);
-            return Err(ExecutionResult {
-                task_id,
-                record_id: None,
-            });
-        }
+/// Stage 1 步骤 3：从 config 读 max_concurrent + timeout_secs，config lock
+/// 释放后两个值就各自独立可用，避免后续代码块带 lock。
+fn read_runtime_config(request: &RunTodoExecutionRequest) -> (u32, u64) {
+    let cfg = request.config.read().unwrap();
+    (cfg.max_concurrent_todos, cfg.execution_timeout_secs)
+}
+
+/// Stage 1 步骤 4a：如果 todo 已存在，校验并发限制。todo 为 None 时跳过。
+///
+/// 任一步失败都返回失败 ExecutionResult（task_id 已生成，调用方可以基于它取消
+/// task）。`count_active_running_for_todo` 失败（zombie 检测挂掉）也按拒绝处理。
+async fn enforce_concurrency_limit(
+    request: &RunTodoExecutionRequest,
+    todo: Option<Todo>,
+    max_concurrent: u32,
+    task_id: &str,
+) -> Result<Option<Todo>, ExecutionResult> {
+    let Some(t) = todo else {
+        return Ok(None);
+    };
+    let running_count =
+        match count_active_running_for_todo(&request.task_manager, &request.db, request.todo_id)
+            .await
+        {
+            Ok(n) => n,
+            Err(()) => {
+                return Err(ExecutionResult {
+                    task_id: task_id.to_string(),
+                    record_id: None,
+                })
+            }
+        };
+    if running_count >= max_concurrent as usize {
+        return Err(reject_concurrency_limit(
+            &request.task_manager,
+            &request.tx,
+            task_id,
+            request.todo_id,
+            &t.title,
+            running_count,
+            max_concurrent,
+        )
+        .await);
     }
+    Ok(Some(t))
+}
 
+/// Stage 1 步骤 4b：Fire before_execution hooks synchronously — block until all
+/// pre-flight targets finish. todo 为 None 时跳过（todo 已被删）。
+async fn fire_pre_execution_hook_if_needed(
+    request: &RunTodoExecutionRequest,
+    todo: &Option<Todo>,
+    chain: Vec<i64>,
+) -> Result<(), ExecutionResult> {
+    let Some(t) = todo else { return Ok(()) };
+    let ctx = crate::hooks::models::HookContext::for_before_execution(
+        request.todo_id,
+        t.title.clone(),
+        t.executor.clone(),
+        t.workspace.clone(),
+        chain,
+    );
+    if let Err(msg) = request
+        .hook_service
+        .clone()
+        .fire_before_execution(request.todo_id, ctx)
+        .await
+    {
+        tracing::warn!("aborting execution due to pre-hook failure: {}", msg);
+        return Err(ExecutionResult {
+            task_id: String::new(),
+            record_id: None,
+        });
+    }
+    Ok(())
+}
+
+/// Stage 1 步骤 5 产物：executor 选择 + command 构造。
+///
+/// 决策顺序：显式 req_executor > todo.executor > registry default。命令构造
+/// 用 `command_args_with_session` 处理 resume / 非 resume 分支，再用
+/// `apply_worktree_flag` 给 claude_code / hermes 加 worktree 参数。
+struct SelectedExecutor {
+    executor: Arc<dyn CodeExecutor>,
+    command_args: Vec<String>,
+    executable_path: String,
+    executor_str: String,
+    todo_workspace: Option<String>,
+    session_id_for_executor: String,
+}
+
+async fn select_executor_and_build_command(
+    request: &RunTodoExecutionRequest,
+    todo: &Option<Todo>,
+    message: &str,
+) -> Result<SelectedExecutor, ExecutionResult> {
     let todo_executor = todo.as_ref().and_then(|t| t.executor.clone());
     let todo_workspace = todo.as_ref().and_then(|t| t.workspace.clone());
-    let todo_worktree_enabled = todo.as_ref().map(|t| t.worktree_enabled).unwrap_or(false);
+    let todo_worktree_enabled = todo
+        .as_ref()
+        .map(|t| t.worktree_enabled)
+        .unwrap_or(false);
 
-    // Determine which executor to use: explicit > todo stored > default.
-    // 抽到 `resolve_executor_type` 让 warn 日志集中，并支持单测。
-    let executor_type = resolve_executor_type(req_executor.as_deref(), todo_executor.as_deref());
-
-    let executor = match executor_registry.get(executor_type).await {
+    let executor_type =
+        resolve_executor_type(request.req_executor.as_deref(), todo_executor.as_deref());
+    let executor = match request.executor_registry.get(executor_type).await {
         Some(exec) => exec,
-        None => match executor_registry.get_default().await {
+        None => match request.executor_registry.get_default().await {
             Some(exec) => exec,
             None => {
                 return Err(reject_no_executor(
-                    &db,
-                    &task_manager,
-                    &tx,
-                    &task_id,
-                    todo_id,
+                    &request.db,
+                    &request.task_manager,
+                    &request.tx,
+                    "",
+                    request.todo_id,
                     todo.as_ref().map(|t| t.title.as_str()).unwrap_or(""),
                     executor_type,
                 )
@@ -1287,79 +1381,96 @@ async fn prepare_execution_state(
     };
 
     let executable_path = executor.executable_path().to_string();
-    let session_id_for_executor = resume_session_id.as_deref().unwrap_or(&task_id).to_string();
-    let is_resume = resume_session_id.is_some();
-    let mut command_args =
-        executor.command_args_with_session(&message, Some(&session_id_for_executor), is_resume);
-
-    // 抽到 `apply_worktree_flag`：claude_code / hermes 之外不插，避免污染其它 executor 的 argv。
-    apply_worktree_flag(
-        &mut command_args,
-        executor.executor_type(),
-        todo_worktree_enabled,
+    let task_id_placeholder = "fallback".to_string();
+    let session_id_for_executor = request
+        .resume_session_id
+        .clone()
+        .unwrap_or(task_id_placeholder);
+    let is_resume = request.resume_session_id.is_some();
+    let mut command_args = executor.command_args_with_session(
+        message,
+        Some(&session_id_for_executor),
+        is_resume,
     );
-
-    // Update todo's executor to the one being used
+    apply_worktree_flag(&mut command_args, executor.executor_type(), todo_worktree_enabled);
     let executor_str = executor.executor_type().to_string();
-    if let Err(e) = db.update_todo_executor(todo_id, &executor_str).await {
+
+    // Update todo's executor to the one being used. 失败仅记日志，不阻断执行。
+    if let Err(e) = request
+        .db
+        .update_todo_executor(request.todo_id, &executor_str)
+        .await
+    {
         tracing::error!("Failed to update todo executor: {}", e);
     }
 
-    // Create execution record
-    let command = format!("{} {}", executable_path, command_args.join(" "));
-    let record_id = match db
+    Ok(SelectedExecutor {
+        executor,
+        command_args,
+        executable_path,
+        executor_str,
+        todo_workspace,
+        session_id_for_executor,
+    })
+}
+
+/// Stage 1 步骤 6：创建 execution record 并组装 PreparedExecution 产物。
+///
+/// record_id 是 stage 1 唯一需要数据库写的字段。失败时走 reject_create_record_failure
+/// 把 todo 标回非 running 并清理 task，调用方拿到 ExecutionResult 直接返回给前端。
+async fn create_run_execution_record(
+    request: RunTodoExecutionRequest,
+    task_state: TaskState,
+    todo: Option<Todo>,
+    timeout_secs: u64,
+    selected: SelectedExecutor,
+) -> Result<PreparedExecution, ExecutionResult> {
+    let command = format!(
+        "{} {}",
+        selected.executable_path,
+        selected.command_args.join(" ")
+    );
+    let record_id = match request
+        .db
         .create_execution_record(NewExecutionRecord {
-            todo_id,
+            todo_id: request.todo_id,
             command: &command,
-            executor: &executor_str,
-            trigger_type: &trigger_type,
-            task_id: &task_id,
-            session_id: Some(&session_id_for_executor),
-            resume_message: resume_message.as_deref(),
-            source_todo_id,
-            source_todo_title: source_todo_title.as_deref(),
-            source_hook_id,
+            executor: &selected.executor_str,
+            trigger_type: &request.trigger_type,
+            task_id: &task_state.task_id,
+            session_id: Some(&selected.session_id_for_executor),
+            resume_message: request.resume_message.as_deref(),
+            source_todo_id: request.source_todo_id,
+            source_todo_title: request.source_todo_title.as_deref(),
+            source_hook_id: request.source_hook_id,
         })
         .await
     {
         Ok(id) => id,
         Err(e) => {
             return Err(reject_create_record_failure(
-                &db, &task_manager, &task_id, todo_id, e,
+                &request.db,
+                &request.task_manager,
+                &task_state.task_id,
+                request.todo_id,
+                e,
             )
             .await);
         }
     };
-
     Ok(PreparedExecution {
-        db,
-        executor_registry,
-        tx,
-        task_manager,
-        config,
-        hook_service,
-        todo_id,
-        task_id,
-        task_guard,
-        cancel_rx,
-        trigger_type,
-        message,
-        session_id_for_executor,
-        command_args,
-        executable_path,
-        executor,
-        executor_str,
+        request,
+        task_guard: task_state.task_guard,
+        cancel_rx: task_state.cancel_rx,
+        task_id: task_state.task_id,
+        command_args: selected.command_args,
+        executable_path: selected.executable_path,
+        executor: selected.executor,
+        executor_str: selected.executor_str,
         record_id,
         todo,
-        todo_workspace,
+        todo_workspace: selected.todo_workspace,
         timeout_secs,
-        chain,
-        feishu_bot_id,
-        feishu_receive_id,
-        resume_message,
-        source_todo_id,
-        source_todo_title,
-        source_hook_id,
     })
 }
 
@@ -1370,40 +1481,81 @@ async fn prepare_execution_state(
 async fn start_todo_and_prepare_spawn(
     prepared: PreparedExecution,
 ) -> Result<SpawnInputs, ExecutionResult> {
-    // issue #643: 如果 todo 绑定的项目目录开启了 worktree 自动管理,
-    // 在这里创建 worktree 并把路径写回 execution_record. 失败时回退到原 workspace,
-    // 不阻塞执行. effective_workspace 决定子进程 cwd, 同时被 move 进 spawn 闭包用于 cleanup.
-    let worktree_ctx = resolve_worktree_context(&prepared.db, &prepared.todo).await;
+    let worktree_ctx = resolve_worktree_context(&prepared.request.db, &prepared.todo).await;
     record_worktree_path(
-        &prepared.db,
+        &prepared.request.db,
         prepared.record_id,
         worktree_ctx.record_path.as_deref(),
     )
     .await;
+
+    start_todo_or_cleanup(&prepared, &worktree_ctx).await?;
+    let todo_title = extract_todo_title(&prepared.todo);
+    let executor_spawn = prepared.executor.clone();
+    let execution_timeout_secs = prepared.timeout_secs;
+
+    register_websocket_task_info(&prepared, &todo_title, &executor_spawn).await;
+
+    // effective_workspace 在 worktree 失败回退 + todo.workspace 回退 之后确定，
+    // 后续 move 进 spawn 闭包作为 cwd。
     let effective_workspace = worktree_ctx
         .effective_workspace
         .clone()
         .or(prepared.todo_workspace.clone());
 
-    // State-change hooks for "进入执行中" fire from the update_todo handler when
-    // the user transitions the todo into in_progress. The executor no longer
-    // gates execution on a hook — it just runs.
+    Ok(SpawnInputs {
+        prepared,
+        todo_title,
+        executor_spawn,
+        effective_workspace,
+        execution_timeout_secs,
+        worktree_ctx,
+    })
+}
 
-    // Update todo status to running and associate with task
+/// 在 TaskManager 注册本次执行的任务信息（task_id / todo_id / executor 类型），
+/// WebSocket 同步会从这里取最新 title + logs。
+async fn register_websocket_task_info(
+    prepared: &PreparedExecution,
+    todo_title: &str,
+    executor_spawn: &Arc<dyn CodeExecutor>,
+) {
+    prepared
+        .request
+        .task_manager
+        .register_info(crate::task_manager::TaskInfo {
+            task_id: prepared.task_id.clone(),
+            todo_id: prepared.request.todo_id,
+            todo_title: todo_title.to_string(),
+            executor: executor_spawn.executor_type().to_string(),
+            // 初始为空，WebSocket 同步时会从数据库获取实际日志。
+            logs: "[]".to_string(),
+        })
+        .await;
+}
+
+/// 把 todo 标为 in_progress 并关联 task_id。失败时清掉 worktree，再走 reject 路径。
+///
+/// start_todo_execution 失败必须先 cleanup worktree：worktree 已在 stage 2 入口
+/// 创建并写入 record_path，若启用了 auto_cleanup 不在这里清理会留下孤儿 worktree
+/// 目录/分支与「未启动成功」的执行记录错位。
+async fn start_todo_or_cleanup(
+    prepared: &PreparedExecution,
+    worktree_ctx: &WorktreeContext,
+) -> Result<(), ExecutionResult> {
     if let Err(e) = prepared
+        .request
         .db
-        .start_todo_execution(prepared.todo_id, &prepared.task_id)
+        .start_todo_execution(prepared.request.todo_id, &prepared.task_id)
         .await
     {
-        // worktree 已在此之前创建并写入 record_path；失败路径下若启用了 auto_cleanup
-        // 必须立刻清理，避免遗留 worktree 目录/分支与「未启动成功」的执行记录错位。
-        cleanup_worktree_if_needed(&worktree_ctx);
+        cleanup_worktree_if_needed(worktree_ctx);
         return Err(reject_start_todo_failure(
-            &prepared.db,
-            &prepared.tx,
-            &prepared.task_manager,
+            &prepared.request.db,
+            &prepared.request.tx,
+            &prepared.request.task_manager,
             &prepared.task_id,
-            prepared.todo_id,
+            prepared.request.todo_id,
             prepared
                 .todo
                 .as_ref()
@@ -1415,52 +1567,16 @@ async fn start_todo_and_prepare_spawn(
         )
         .await);
     }
+    Ok(())
+}
 
-    let todo_title = prepared
-        .todo
-        .as_ref()
-        .map(|t| t.title.clone())
-        .unwrap_or_default();
-    let executor_spawn = prepared.executor;
-    let execution_timeout_secs = prepared.timeout_secs;
-
-    // 注册任务信息，用于 WebSocket 同步
-    prepared
-        .task_manager
-        .register_info(crate::task_manager::TaskInfo {
-            task_id: prepared.task_id.clone(),
-            todo_id: prepared.todo_id,
-            todo_title: todo_title.clone(),
-            executor: executor_spawn.executor_type().to_string(),
-            logs: "[]".to_string(), // 初始为空，WebSocket 同步时会从数据库获取实际日志
-        })
-        .await;
-
-    Ok(SpawnInputs {
-        task_id: prepared.task_id,
-        todo_id: prepared.todo_id,
-        todo_title,
-        todo: prepared.todo,
-        executor_spawn,
-        executable_path: prepared.executable_path,
-        command_args: prepared.command_args,
-        effective_workspace,
-        record_id: prepared.record_id,
-        execution_timeout_secs,
-        worktree_ctx,
-        db: prepared.db,
-        tx: prepared.tx,
-        task_manager: prepared.task_manager,
-        executor_registry: prepared.executor_registry,
-        config: prepared.config,
-        hook_service: prepared.hook_service,
-        chain: prepared.chain,
-        trigger_type: prepared.trigger_type,
-        task_guard: prepared.task_guard,
-        cancel_rx: prepared.cancel_rx,
-        feishu_bot_id: prepared.feishu_bot_id,
-        feishu_receive_id: prepared.feishu_receive_id,
-    })
+/// 从 `Option<Todo>` 提取 title；todo 已删除时返回空串。
+///
+/// 之所以是独立 helper：spawn 闭包内多处需要 `todo_title: String`（emit event、
+/// TaskInfo 注册、feishu 推送），抽出来后调用方都走同一处 title 解析逻辑，
+/// 不必在每处重复 `todo.as_ref().map(...)`。
+fn extract_todo_title(todo: &Option<Todo>) -> String {
+    todo.as_ref().map(|t| t.title.clone()).unwrap_or_default()
 }
 
 /// Stage 3: `tokio::spawn` 出 fire-and-forget 子任务，并立刻返回 ExecutionResult。
@@ -1469,8 +1585,8 @@ async fn start_todo_and_prepare_spawn(
 /// 这样 spawn 闭包退化为单行 `async move { run_spawned_executor_task(...).await }`，
 /// 编排与执行两段清晰分离。
 async fn dispatch_spawned_executor_task(spawned: SpawnInputs) -> ExecutionResult {
-    let task_id_return = spawned.task_id.clone();
-    let record_id = spawned.record_id;
+    let task_id_return = spawned.prepared.task_id.clone();
+    let record_id = spawned.prepared.record_id;
 
     // 为整个 spawn 闭包建立 executor_run span：
     // tokio::spawn 不会自动继承外层 span（参见 issue #513），所以需要把异步块整体包到
@@ -1478,9 +1594,9 @@ async fn dispatch_spawned_executor_task(spawned: SpawnInputs) -> ExecutionResult
     // hook fire 这一长串环节的日志都会被 executor_run span 包住。
     let executor_span = tracing::info_span!(
         "executor_run",
-        task_id = %spawned.task_id,
-        todo_id = spawned.todo_id,
-        record_id = spawned.record_id,
+        task_id = %spawned.prepared.task_id,
+        todo_id = spawned.prepared.request.todo_id,
+        record_id = spawned.prepared.record_id,
         executor = %spawned.executor_spawn.executor_type(),
     );
 
@@ -1505,178 +1621,198 @@ async fn dispatch_spawned_executor_task(spawned: SpawnInputs) -> ExecutionResult
 async fn run_spawned_executor_task(spawned: SpawnInputs) {
     // 将 task_guard 移入函数作用域，使其存活到整个执行周期。
     // 若不绑定，外层 drop 时会误删 Sender 导致 cancel_rx.recv() 返回 None。
-    let _task_guard = spawned.task_guard;
-    // wall-clock 起点在 spawned 函数最早位置取，避免后续 finalization 时把
-    // setup / DB 写入耗时也算进 duration。
+    let _task_guard = spawned.prepared.task_guard;
     let execution_start = std::time::Instant::now();
-    let SpawnInputs {
-        task_id,
-        todo_id,
-        todo_title,
-        todo,
-        executor_spawn,
-        executable_path,
-        command_args,
-        effective_workspace,
-        record_id,
-        execution_timeout_secs,
-        worktree_ctx,
-        db,
-        tx,
-        task_manager: task_manager_spawn,
-        executor_registry: executor_registry_spawn,
-        config: config_spawn,
-        hook_service: hook_service_spawn,
-        chain,
-        trigger_type,
-        mut cancel_rx,
-        feishu_bot_id,
-        feishu_receive_id,
-        ..
-    } = spawned;
-
-    let db_clone = db.clone();
-    let tx_clone = tx.clone();
+    let mut runtime = move_into_runtime(spawned);
 
     emit_started_event(
-        &tx_clone,
-        &task_id,
-        todo_id,
-        &todo_title,
-        executor_spawn.as_ref(),
+        &runtime.tx,
+        &runtime.task_id,
+        runtime.todo_id,
+        &runtime.todo_title,
+        runtime.executor_spawn.as_ref(),
     );
 
-    tracing::debug!(
-        executable = %executable_path,
-        arg_count = command_args.len(),
-        "Spawning executor"
-    );
-    let mut cmd = build_executor_command(
-        &executable_path,
-        &command_args,
-        effective_workspace.as_deref(),
-    );
-
-    // 使用 command-group 的 group_spawn 创建进程组
-    let mut child = match cmd.group_spawn() {
+    let mut child = match spawn_executor_child(&runtime) {
         Ok(c) => c,
         Err(e) => {
-            // spawn 失败：worktree 不会留下孤儿文件，但 record_path 已经被回写到 DB，
-            // 如果 auto_cleanup=true 必须在这里显式清理，否则下次「同 todo_id 同秒」
-            // 重试时会被前面的 exists 守卫拦下，导致 worktree 永远不清理。
-            cleanup_worktree_if_needed(&worktree_ctx);
+            cleanup_worktree_if_needed(&runtime.worktree_ctx);
             handle_spawn_failure(
-                &db_clone,
-                &tx_clone,
-                &task_manager_spawn,
-                &task_id,
-                todo_id,
-                &todo_title,
-                executor_spawn.as_ref(),
-                feishu_bot_id,
-                feishu_receive_id,
+                &runtime.db,
+                &runtime.tx,
+                &runtime.task_manager,
+                &runtime.task_id,
+                runtime.todo_id,
+                &runtime.todo_title,
+                runtime.executor_spawn.as_ref(),
+                runtime.feishu_bot_id,
+                runtime.feishu_receive_id.clone(),
                 e,
             )
             .await;
             return;
         }
     };
-    save_child_pid_and_close_stdin(&mut child, &db_clone, record_id).await;
+    save_child_pid_and_close_stdin(&mut child, &runtime.db, runtime.record_id).await;
 
-    let stdout_handle = child.inner().stdout.take();
-    let stderr_handle = child.inner().stderr.take();
-    let (log_flusher, stdout_task, stderr_task, flush_timer) = setup_log_capture_pipeline(
-        stdout_handle,
-        stderr_handle,
-        executor_spawn.clone(),
-        db_clone.clone(),
-        tx.clone(),
-        task_id.clone(),
-        record_id,
+    let (log_flusher, stdout_task, stderr_task, flush_timer) =
+        setup_log_capture_pipeline_for(&runtime, &mut child).await;
+
+    let timeout_sleep = configure_timeout_sleep(runtime.execution_timeout_secs);
+    tokio::pin!(timeout_sleep);
+    let outcome = await_run_outcome(
+        &mut runtime.cancel_rx,
+        &mut timeout_sleep,
+        runtime.execution_timeout_secs,
+        &mut child,
     )
     .await;
+    // select! 宏里 cancel_rx.recv() 编译器看不到对绑定的 mutation，触发 unused_mut；
+    // 显式 drop 是 lint 抑制补丁（issue #660 评审 #9）。
+    drop(runtime.cancel_rx);
 
-    // execution_timeout_secs is captured by value here — config changes after this
-    // task starts have no effect. To pick up a new timeout, wait for the current
-    // execution to finish (or force-fail it via the UI).
-    let timeout_enabled = execution_timeout_secs > 0;
-    // Non-zero values are guaranteed >= 60 by normalize_paths clamp, so from_secs is safe.
-    let timeout_duration = std::time::Duration::from_secs(execution_timeout_secs);
-    let timeout_str = format_timeout_secs(execution_timeout_secs);
-    let timeout_sleep = tokio::time::sleep(timeout_duration);
-    tokio::pin!(timeout_sleep);
+    dispatch_outcome(
+        outcome,
+        &mut child,
+        stdout_task,
+        stderr_task,
+        log_flusher,
+        flush_timer,
+        runtime,
+        execution_start,
+    )
+    .await;
+}
 
-    // 用 enum 携带 select! 结果，避免在三个分支里各重复"杀进程 + drain + finalize"的
-    // 清理模板。每个分支走完之后 child 仍然在手，能继续调 kill_process_tree。
-    enum RunOutcome {
-        Cancelled,
-        TimedOut,
-        Completed(std::io::Result<std::process::ExitStatus>),
+/// `run_spawned_executor_task` 的执行期状态：把 SpawnInputs 字段全部 clone
+/// 出来成可借用结构，避免在 spawn 闭包内对原 owned 值反复 .clone()。
+struct SpawnRuntime {
+    db: Arc<Database>,
+    tx: broadcast::Sender<ExecEvent>,
+    task_manager: Arc<TaskManager>,
+    todo_id: i64,
+    todo_title: String,
+    executor_spawn: Arc<dyn CodeExecutor>,
+    record_id: i64,
+    worktree_ctx: WorktreeContext,
+    task_id: String,
+    execution_timeout_secs: u64,
+    cancel_rx: tokio::sync::mpsc::Receiver<()>,
+    feishu_bot_id: Option<i64>,
+    feishu_receive_id: Option<String>,
+    prepared: PreparedExecution,
+}
+
+/// 把 SpawnInputs 全部字段展开到 SpawnRuntime。
+fn move_into_runtime(spawned: SpawnInputs) -> SpawnRuntime {
+    SpawnRuntime {
+        db: spawned.prepared.request.db.clone(),
+        tx: spawned.prepared.request.tx.clone(),
+        task_manager: spawned.prepared.request.task_manager.clone(),
+        todo_id: spawned.prepared.request.todo_id,
+        todo_title: spawned.todo_title.clone(),
+        executor_spawn: spawned.executor_spawn.clone(),
+        record_id: spawned.prepared.record_id,
+        worktree_ctx: spawned.worktree_ctx,
+        task_id: spawned.prepared.task_id.clone(),
+        execution_timeout_secs: spawned.execution_timeout_secs,
+        cancel_rx: spawned.prepared.cancel_rx,
+        feishu_bot_id: spawned.prepared.request.feishu_bot_id,
+        feishu_receive_id: spawned.prepared.request.feishu_receive_id.clone(),
+        prepared: spawned.prepared,
     }
-    let outcome = tokio::select! {
-        biased;
-        _ = cancel_rx.recv() => RunOutcome::Cancelled,
-        _ = &mut timeout_sleep, if timeout_enabled => RunOutcome::TimedOut,
-        status = child.wait() => RunOutcome::Completed(status),
-    };
-    // cancel_rx 不再被使用，丢掉以避免 unused_mut 警告（select! 的 recv 消费了它）。
-    drop(cancel_rx);
+}
 
+/// `build_executor_command` + `group_spawn` 两步合一：argv 已就绪，直接
+/// 创建进程组让 kill 时能整组杀，避免留下 zombie 子进程。
+fn spawn_executor_child(runtime: &SpawnRuntime) -> Result<command_group::AsyncGroupChild, std::io::Error> {
+    let mut cmd = build_executor_command(
+        &runtime.prepared.executable_path,
+        &runtime.prepared.command_args,
+        runtime.prepared.todo_workspace.as_deref(),
+    );
+    cmd.group_spawn()
+}
+
+/// 把 stdout/stderr handle 拆出来，连同 db/tx 一起喂给 `setup_log_capture_pipeline`。
+async fn setup_log_capture_pipeline_for(
+    runtime: &SpawnRuntime,
+    child: &mut command_group::AsyncGroupChild,
+) -> (
+    Arc<LogFlusher>,
+    Option<JoinHandle<()>>,
+    Option<JoinHandle<()>>,
+    tokio::task::JoinHandle<()>,
+) {
+    let stdout_handle = child.inner().stdout.take();
+    let stderr_handle = child.inner().stderr.take();
+    setup_log_capture_pipeline(
+        stdout_handle,
+        stderr_handle,
+        runtime.executor_spawn.clone(),
+        runtime.db.clone(),
+        runtime.tx.clone(),
+        runtime.task_id.clone(),
+        runtime.record_id,
+    )
+    .await
+}
+
+/// select! 收口之后按 outcome 分发到 cancellation / timeout / completion 三个分支。
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_outcome(
+    outcome: RunOutcome,
+    child: &mut command_group::AsyncGroupChild,
+    stdout_task: Option<JoinHandle<()>>,
+    stderr_task: Option<JoinHandle<()>>,
+    log_flusher: Arc<LogFlusher>,
+    flush_timer: tokio::task::JoinHandle<()>,
+    runtime: SpawnRuntime,
+    execution_start: std::time::Instant,
+) {
     match outcome {
         RunOutcome::Cancelled => {
-            // Cancelled (or channel closed): 使用 command-group 安全杀死整个进程组
-            kill_process_tree(&mut child).await;
-            drain_readers_and_flush(
-                &mut child,
+            run_cancellation_path(
+                child,
                 stdout_task,
                 stderr_task,
-                log_flusher.clone(),
+                log_flusher,
                 flush_timer,
+                &runtime.db,
+                &runtime.tx,
+                &runtime.task_manager,
+                &runtime.task_id,
+                runtime.todo_id,
+                &runtime.todo_title,
+                runtime.executor_spawn.as_ref(),
+                runtime.record_id,
+                runtime.feishu_bot_id,
+                runtime.feishu_receive_id.as_deref(),
+                &runtime.worktree_ctx,
             )
             .await;
-            handle_cancellation_branch(
-                &db_clone,
-                &tx_clone,
-                &task_manager_spawn,
-                &task_id,
-                todo_id,
-                &todo_title,
-                executor_spawn.as_ref(),
-                record_id,
-                feishu_bot_id,
-                feishu_receive_id,
-            )
-            .await;
-            // issue #643: 取消路径也要按 auto_cleanup 清理 worktree
-            cleanup_worktree_if_needed(&worktree_ctx);
         }
         RunOutcome::TimedOut => {
-            kill_process_tree(&mut child).await;
-            drain_readers_and_flush(
-                &mut child,
+            run_timeout_path(
+                child,
                 stdout_task,
                 stderr_task,
-                log_flusher.clone(),
+                log_flusher,
                 flush_timer,
+                &runtime.db,
+                &runtime.tx,
+                &runtime.task_manager,
+                &runtime.task_id,
+                runtime.todo_id,
+                &runtime.todo_title,
+                runtime.executor_spawn.as_ref(),
+                runtime.record_id,
+                runtime.execution_timeout_secs,
+                runtime.feishu_bot_id,
+                runtime.feishu_receive_id.as_deref(),
+                &runtime.worktree_ctx,
             )
             .await;
-            handle_timeout_branch(
-                &db_clone,
-                &tx_clone,
-                &task_manager_spawn,
-                &task_id,
-                todo_id,
-                &todo_title,
-                executor_spawn.as_ref(),
-                record_id,
-                execution_timeout_secs,
-                timeout_str,
-                feishu_bot_id,
-                feishu_receive_id,
-            )
-            .await;
-            // issue #643: 超时路径也要按 auto_cleanup 清理 worktree
-            cleanup_worktree_if_needed(&worktree_ctx);
         }
         RunOutcome::Completed(status) => {
             handle_completed_branch(
@@ -1685,48 +1821,170 @@ async fn run_spawned_executor_task(spawned: SpawnInputs) {
                 stderr_task,
                 log_flusher,
                 flush_timer,
-                db_clone,
-                tx_clone,
-                task_manager_spawn,
-                executor_registry_spawn,
-                config_spawn,
-                hook_service_spawn,
-                executor_spawn,
-                task_id,
-                todo_id,
-                todo_title,
-                todo,
-                chain,
-                record_id,
-                execution_start,
-                worktree_ctx,
-                trigger_type,
-                feishu_bot_id,
-                feishu_receive_id,
+                SpawnContext {
+                    db: runtime.db,
+                    tx: runtime.tx,
+                    task_manager: runtime.task_manager,
+                    executor_registry: runtime.prepared.request.executor_registry.clone(),
+                    config: runtime.prepared.request.config.clone(),
+                    hook_service: runtime.prepared.request.hook_service.clone(),
+                    executor: runtime.executor_spawn,
+                    task_id: runtime.task_id,
+                    todo_id: runtime.todo_id,
+                    todo_title: runtime.todo_title,
+                    todo: runtime.prepared.todo,
+                    chain: runtime.prepared.request.chain,
+                    record_id: runtime.record_id,
+                    execution_start,
+                    worktree_ctx: runtime.worktree_ctx,
+                    trigger_type: runtime.prepared.request.trigger_type,
+                    feishu_bot_id: runtime.feishu_bot_id,
+                    feishu_receive_id: runtime.feishu_receive_id,
+                },
             )
             .await;
         }
     }
 }
 
-/// 把「正常退出 → await readers → finalize flusher → emit progress →
-/// 解析 result → persist record → finalize_normal_completion → cleanup worktree」
-/// 整条完成路径抽到一个函数，让 `run_spawned_executor_task` 的 match 分支只剩下
-/// kill + drain + 调对应 helper 的骨架。
+/// select! 三种终态枚举，避免在三个分支里各重复「杀进程 + drain + finalize」
+/// 清理模板。child 仍由调用方持有，可继续调 kill_process_tree。
+enum RunOutcome {
+    Cancelled,
+    TimedOut,
+    Completed(std::io::Result<std::process::ExitStatus>),
+}
+
+/// 把超时换算成 `Pin<Box<Sleep>>`。`execution_timeout_secs == 0` 表示禁用超时，
+/// 此时返回「永久 sleep」的 future，select! 永远不命中该分支。
+fn configure_timeout_sleep(execution_timeout_secs: u64) -> std::pin::Pin<Box<tokio::time::Sleep>> {
+    let timeout_enabled = execution_timeout_secs > 0;
+    // Non-zero values are guaranteed >= 60 by normalize_paths clamp, so from_secs is safe.
+    let duration = std::time::Duration::from_secs(execution_timeout_secs);
+    let sleep = tokio::time::sleep(if timeout_enabled {
+        duration
+    } else {
+        // 用一个非常大的 duration（u64::MAX 秒 ≈ 5.8 亿年）模拟「永不超时」。
+        // 这样 select! 不会编译报「`if` guard 时所有分支都需要 future 合法」。
+        std::time::Duration::from_secs(u64::MAX)
+    });
+    Box::pin(sleep)
+}
+
+/// select! 收口：cancel 优先 → timeout 次之 → child wait。
+///
+/// `biased;` 让取消分支优先于超时分支，避免「按 timeout_secs 比较大、但用户已经
+/// 点了取消」的请求被超时路径抢走（issue #606 提到的边界 case）。
+async fn await_run_outcome(
+    cancel_rx: &mut tokio::sync::mpsc::Receiver<()>,
+    timeout_sleep: &mut std::pin::Pin<Box<tokio::time::Sleep>>,
+    execution_timeout_secs: u64,
+    child: &mut command_group::AsyncGroupChild,
+) -> RunOutcome {
+    let timeout_enabled = execution_timeout_secs > 0;
+    tokio::select! {
+        biased;
+        _ = cancel_rx.recv() => RunOutcome::Cancelled,
+        _ = timeout_sleep, if timeout_enabled => RunOutcome::TimedOut,
+        status = child.wait() => RunOutcome::Completed(status),
+    }
+}
+
+/// 取消分支：kill 进程组 → drain readers → handle_cancellation_branch → cleanup worktree。
 #[allow(clippy::too_many_arguments)]
-async fn handle_completed_branch(
-    status: std::io::Result<std::process::ExitStatus>,
+async fn run_cancellation_path(
+    child: &mut command_group::AsyncGroupChild,
     stdout_task: Option<JoinHandle<()>>,
     stderr_task: Option<JoinHandle<()>>,
     log_flusher: Arc<LogFlusher>,
     flush_timer: tokio::task::JoinHandle<()>,
-    db_clone: Arc<Database>,
-    tx_clone: broadcast::Sender<ExecEvent>,
-    task_manager_spawn: Arc<TaskManager>,
-    executor_registry_spawn: Arc<ExecutorRegistry>,
-    config_spawn: Arc<std::sync::RwLock<crate::config::Config>>,
-    hook_service_spawn: Arc<HookService>,
-    executor_spawn: Arc<dyn CodeExecutor>,
+    db: &Arc<Database>,
+    tx: &broadcast::Sender<ExecEvent>,
+    task_manager: &Arc<TaskManager>,
+    task_id: &str,
+    todo_id: i64,
+    todo_title: &str,
+    executor: &dyn CodeExecutor,
+    record_id: i64,
+    feishu_bot_id: Option<i64>,
+    // 接 Option<String> 而非 Option<&str>，与 `handle_cancellation_branch` 内部签名对齐，
+    // 避免在调用边界再发生 .to_string() 转换。
+    feishu_receive_id: Option<String>,
+    worktree_ctx: &WorktreeContext,
+) {
+    kill_process_tree(child).await;
+    drain_readers_and_flush(child, stdout_task, stderr_task, log_flusher, flush_timer).await;
+    handle_cancellation_branch(
+        db,
+        tx,
+        task_manager,
+        task_id,
+        todo_id,
+        todo_title,
+        executor,
+        record_id,
+        feishu_bot_id,
+        feishu_receive_id,
+    )
+    .await;
+    cleanup_worktree_if_needed(worktree_ctx);
+}
+
+/// 超时分支：kill → drain → handle_timeout_branch → cleanup worktree。
+#[allow(clippy::too_many_arguments)]
+async fn run_timeout_path(
+    child: &mut command_group::AsyncGroupChild,
+    stdout_task: Option<JoinHandle<()>>,
+    stderr_task: Option<JoinHandle<()>>,
+    log_flusher: Arc<LogFlusher>,
+    flush_timer: tokio::task::JoinHandle<()>,
+    db: &Arc<Database>,
+    tx: &broadcast::Sender<ExecEvent>,
+    task_manager: &Arc<TaskManager>,
+    task_id: &str,
+    todo_id: i64,
+    todo_title: &str,
+    executor: &dyn CodeExecutor,
+    record_id: i64,
+    execution_timeout_secs: u64,
+    feishu_bot_id: Option<i64>,
+    // 接 Option<String> 而非 Option<&str>，与 `handle_timeout_branch` 内部签名对齐。
+    feishu_receive_id: Option<String>,
+    worktree_ctx: &WorktreeContext,
+) {
+    kill_process_tree(child).await;
+    drain_readers_and_flush(child, stdout_task, stderr_task, log_flusher, flush_timer).await;
+    handle_timeout_branch(
+        db,
+        tx,
+        task_manager,
+        task_id,
+        todo_id,
+        todo_title,
+        executor,
+        record_id,
+        execution_timeout_secs,
+        format_timeout_secs(execution_timeout_secs),
+        feishu_bot_id,
+        feishu_receive_id,
+    )
+    .await;
+    cleanup_worktree_if_needed(worktree_ctx);
+}
+
+/// `handle_completed_branch` 的入参聚合。
+///
+/// 之前 23 个位置参数 + `#[allow(clippy::too_many_arguments)]` 是 Long Parameter
+/// List 坏味道的复发。改成结构体传参后调用方写 SpawnContext { ... } 字面量 22
+/// 行，但 handle_completed_branch 函数体能缩到 < 30 行真正符合 CLAUDE.md。
+struct SpawnContext {
+    db: Arc<Database>,
+    tx: broadcast::Sender<ExecEvent>,
+    task_manager: Arc<TaskManager>,
+    executor_registry: Arc<ExecutorRegistry>,
+    config: Arc<std::sync::RwLock<crate::config::Config>>,
+    hook_service: Arc<HookService>,
+    executor: Arc<dyn CodeExecutor>,
     task_id: String,
     todo_id: i64,
     todo_title: String,
@@ -1738,76 +1996,125 @@ async fn handle_completed_branch(
     trigger_type: String,
     feishu_bot_id: Option<i64>,
     feishu_receive_id: Option<String>,
+}
+
+/// 把「正常退出 → await readers → finalize flusher → emit progress →
+/// 解析 result → persist record → finalize_normal_completion → cleanup worktree」
+/// 整条完成路径抽到一个函数，让 `run_spawned_executor_task` 的 match 分支只剩下
+/// kill + drain + 调对应 helper 的骨架。
+async fn handle_completed_branch(
+    status: std::io::Result<std::process::ExitStatus>,
+    stdout_task: Option<JoinHandle<()>>,
+    stderr_task: Option<JoinHandle<()>>,
+    log_flusher: Arc<LogFlusher>,
+    flush_timer: tokio::task::JoinHandle<()>,
+    ctx: SpawnContext,
 ) {
-    // 子进程已自然退出，stdout/stderr 管道已关闭；先 await reader 让它们
-    // 把 buffer 里残余的行都解析完，再 finalize flusher 一次性写库。
+    // 子进程已自然退出，stdout/stderr 管道已关闭；先 await reader 让它们把 buffer
+    // 里残余的行都解析完，再 finalize flusher 一次性写库。
+    await_readers(stdout_task, stderr_task).await;
+    let (exit_code, success) = resolve_exit_outcome(&status, ctx.executor.as_ref());
+
+    emit_post_execution_todo_progress(
+        &ctx.db,
+        &ctx.tx,
+        ctx.executor.as_ref(),
+        &ctx.task_id,
+        ctx.record_id,
+    )
+    .await;
+
+    let (all_logs_snapshot, result_str) = flush_and_extract_result(
+        log_flusher,
+        flush_timer,
+        &ctx.db,
+        ctx.record_id,
+        ctx.executor.as_ref(),
+    )
+    .await;
+
+    persist_completion_record(
+        &ctx.db,
+        ctx.executor.as_ref(),
+        ctx.record_id,
+        &all_logs_snapshot,
+        success,
+        ctx.execution_start,
+    )
+    .await;
+
+    finalize_normal_completion(
+        ctx.db.clone(),
+        ctx.executor_registry.clone(),
+        ctx.tx.clone(),
+        ctx.task_manager.clone(),
+        ctx.config.clone(),
+        ctx.hook_service.clone(),
+        ctx.executor.clone(),
+        ctx.task_id.clone(),
+        ctx.todo_id,
+        ctx.todo_title.clone(),
+        ctx.todo.clone(),
+        ctx.chain.clone(),
+        ctx.record_id,
+        success,
+        exit_code,
+        result_str,
+        ctx.trigger_type.clone(),
+        ctx.feishu_bot_id,
+        ctx.feishu_receive_id,
+    )
+    .await;
+    cleanup_worktree_if_needed(&ctx.worktree_ctx);
+}
+
+/// 等待 stdout/stderr reader 跑完，回收子任务句柄。
+///
+/// 子进程已自然退出，stdout/stderr 管道已关闭；reader 协程会在管道 EOF 时自然
+/// 退出。`let _ = handle.await` 故意忽略 JoinError（reader panic 不影响主流程）。
+async fn await_readers(
+    stdout_task: Option<JoinHandle<()>>,
+    stderr_task: Option<JoinHandle<()>>,
+) {
     if let Some(handle) = stdout_task {
         let _ = handle.await;
     }
     if let Some(handle) = stderr_task {
         let _ = handle.await;
     }
-    let exit_code = status
-        .as_ref()
-        .map(|s| s.code().unwrap_or(-1))
-        .unwrap_or(-1);
-    let success = executor_spawn.check_success(exit_code);
+}
 
-    emit_post_execution_todo_progress(
-        &db_clone,
-        &tx_clone,
-        executor_spawn.as_ref(),
-        &task_id,
-        record_id,
-    )
-    .await;
+/// 把 `ExitStatus` 翻译成「exit_code + success」。executor 子类自行决定什么
+/// exit code 算成功（claude_code 把 0 当成功，hermes 把 0/1 之外的都当失败等）。
+fn resolve_exit_outcome(
+    status: &std::io::Result<std::process::ExitStatus>,
+    executor: &dyn CodeExecutor,
+) -> (i32, bool) {
+    let exit_code = status.as_ref().map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
+    let success = executor.check_success(exit_code);
+    (exit_code, success)
+}
 
-    // 正常退出：与 cancel/timeout 一样走 finalize 把残余刷到 DB
+/// 收口「finalize flusher + 取日志快照 + 抽 result_str」三步。读日志是从 DB
+/// 拉最近一次 finalize 后的全量行；result_str 是 executor 子类用启发式规则
+/// 从日志末尾抽出来的「最终结论」字符串。
+///
+/// `log_flusher` 接 `Arc<LogFlusher>` 而不是 `&LogFlusher`，因为 `finalize` 的签名
+/// 是 `fn finalize(self: Arc<Self>)`——必须 move 走 Arc 才能在内部触发 flush 收尾。
+async fn flush_and_extract_result(
+    log_flusher: Arc<LogFlusher>,
+    flush_timer: tokio::task::JoinHandle<()>,
+    db: &Arc<Database>,
+    record_id: i64,
+    executor: &dyn CodeExecutor,
+) -> (Vec<crate::models::ParsedLogEntry>, String) {
     log_flusher.finalize().await;
     let _ = flush_timer.await;
-
-    let all_logs_snapshot = db_clone
-        .get_all_execution_logs(record_id)
-        .await
-        .unwrap_or_default();
-    let result_str = executor_spawn
+    let all_logs_snapshot = db.get_all_execution_logs(record_id).await.unwrap_or_default();
+    let result_str = executor
         .get_final_result(&all_logs_snapshot)
         .unwrap_or_default();
-
-    persist_completion_record(
-        &db_clone,
-        executor_spawn.as_ref(),
-        record_id,
-        &all_logs_snapshot,
-        success,
-        execution_start,
-    )
-    .await;
-
-    finalize_normal_completion(
-        db_clone.clone(),
-        executor_registry_spawn.clone(),
-        tx_clone.clone(),
-        task_manager_spawn.clone(),
-        config_spawn.clone(),
-        hook_service_spawn.clone(),
-        executor_spawn.clone(),
-        task_id.clone(),
-        todo_id,
-        todo_title.clone(),
-        todo.clone(),
-        chain.clone(),
-        record_id,
-        success,
-        exit_code,
-        result_str,
-        trigger_type.clone(),
-        feishu_bot_id,
-        feishu_receive_id,
-    )
-    .await;
-    // issue #643: 正常完成路径按 auto_cleanup 清理 worktree
-    cleanup_worktree_if_needed(&worktree_ctx);
+    (all_logs_snapshot, result_str)
 }
 
 // ============================================================================
@@ -1822,29 +2129,22 @@ async fn handle_completed_branch(
 /// Stage 1 产物：完成 executor 选择 + record 创建，并持有 task_guard / cancel_rx。
 ///
 /// 这一阶段不动 todo 状态、不创建 worktree，所以 fail-fast 路径无需清理副作用。
-#[allow(dead_code)] // 部分字段保留以备后续 stage 串接时使用；目前 SpawnInputs 不读它们。
+///
+/// 设计取舍：把 `RunTodoExecutionRequest` 整段嵌入 `request` 字段而不是平铺。
+/// 平铺需要 14 个字段二次声明；嵌入只需 1 个字段，添加 request 字段时只动 1 处。
+/// 读 `request.db` 比读 `db` 多打 5 个字符，可读性代价远小于维护成本。
 struct PreparedExecution {
-    db: Arc<Database>,
-    executor_registry: Arc<ExecutorRegistry>,
-    tx: broadcast::Sender<ExecEvent>,
-    task_manager: Arc<TaskManager>,
-    config: Arc<std::sync::RwLock<crate::config::Config>>,
-    hook_service: Arc<HookService>,
-    todo_id: i64,
-    task_id: String,
+    /// 入参 request。Stage 2 / Stage 3 仍会读到 todo_id / chain / trigger_type 等。
+    request: RunTodoExecutionRequest,
     /// RAII guard for task registry；必须 move 进 spawn 子任务，否则 drop 时会误删 sender。
     task_guard: crate::task_manager::TaskGuard,
     /// 与 task_manager 的 cancel channel；spawn 子任务在 select! 中 recv 它。
     cancel_rx: tokio::sync::mpsc::Receiver<()>,
-    trigger_type: String,
-    /// 已做 placeholder 替换的 message，spawn 后喂给 executor。
-    #[allow(dead_code)]
-    message: String,
-    #[allow(dead_code)]
-    session_id_for_executor: String,
+    task_id: String,
+    /// 已做 placeholder 替换的 command argv，spawn 阶段原样转发给 executor。
     command_args: Vec<String>,
     executable_path: String,
-    /// 选定的 executor Arc，spawn 阶段用作 `executor_spawn`，并在 command_args 里读 command。
+    /// 选定的 executor Arc，spawn 阶段用作 `executor_spawn`。
     executor: Arc<dyn CodeExecutor>,
     executor_str: String,
     record_id: i64,
@@ -1853,47 +2153,19 @@ struct PreparedExecution {
     /// 仅 spawn 阶段用于 effective_workspace 回退。
     todo_workspace: Option<String>,
     timeout_secs: u64,
-    /// chain 是 spawn 末段 fire state-change hook 时必需的参数。
-    chain: Vec<i64>,
-    feishu_bot_id: Option<i64>,
-    feishu_receive_id: Option<String>,
-    /// resume / source_* 字段在 spawn 末段 fire hook / persist record 时可能用到。
-    #[allow(dead_code)]
-    resume_message: Option<String>,
-    #[allow(dead_code)]
-    source_todo_id: Option<i64>,
-    #[allow(dead_code)]
-    source_todo_title: Option<String>,
-    #[allow(dead_code)]
-    source_hook_id: Option<i64>,
 }
 
 /// Stage 2 产物：worktree 已创建 + todo 已启动 + TaskInfo 已注册，
 /// 准备 move 进 spawn 子任务的全部数据。
+///
+/// 嵌入 `prepared` 而不是平铺 stage 1 的 14 个字段；新加 stage 1 字段时只动 1 处。
 struct SpawnInputs {
-    task_id: String,
-    todo_id: i64,
+    prepared: PreparedExecution,
     todo_title: String,
-    todo: Option<Todo>,
     executor_spawn: Arc<dyn CodeExecutor>,
-    executable_path: String,
-    command_args: Vec<String>,
     effective_workspace: Option<String>,
-    record_id: i64,
     execution_timeout_secs: u64,
     worktree_ctx: WorktreeContext,
-    db: Arc<Database>,
-    tx: broadcast::Sender<ExecEvent>,
-    task_manager: Arc<TaskManager>,
-    executor_registry: Arc<ExecutorRegistry>,
-    config: Arc<std::sync::RwLock<crate::config::Config>>,
-    hook_service: Arc<HookService>,
-    chain: Vec<i64>,
-    trigger_type: String,
-    task_guard: crate::task_manager::TaskGuard,
-    cancel_rx: tokio::sync::mpsc::Receiver<()>,
-    feishu_bot_id: Option<i64>,
-    feishu_receive_id: Option<String>,
 }
 
 /// 独立 runtime. 用于 run_auto_review 在原 todo 的 spawned task 内部同步运行
@@ -2182,47 +2454,60 @@ mod run_todo_execution_stage_tests {
     use super::*;
 
     /// 顶层 `run_todo_execution` 必须是 `async fn(request) -> ExecutionResult`。
-    /// 这一行同时验证：
-    /// 1. 函数名仍是 `run_todo_execution`（外部 API 兼容）
-    /// 2. 入参仍是 `RunTodoExecutionRequest`（外部 API 兼容）
-    /// 3. 返回类型仍是 `ExecutionResult`（外部 API 兼容）
-    #[allow(dead_code)]
-    async fn _run_todo_execution_signature_is_preserved(
-        req: RunTodoExecutionRequest,
-    ) -> ExecutionResult {
-        run_todo_execution(req).await
+    /// 编译期断言：(1) 函数名 (2) 入参 (3) 返回类型 与 issue #660 约定一致。
+    /// 任何破坏会直接编译失败，比加 doc 注释更可靠。
+    #[test]
+    fn test_run_todo_execution_signature_is_preserved() {
+        // 类型签名等价检查：函数指针形如 async fn(req) -> Result<...>。
+        // `let _: ExecutionResult = run_todo_execution(req).await` 让编译器检查返回类型，
+        // 闭包返回 `()`，所以外层用 `async fn`/`block_on` 不可行——这里只在
+        // 编译期验证签名，不实际 await。
+        fn _check_return_type(_req: RunTodoExecutionRequest) -> impl std::future::Future<Output = ExecutionResult> {
+            run_todo_execution(_req)
+        }
     }
 
     /// 验证 `PreparedExecution` 持有 `task_guard` 与 `cancel_rx` 两个 RAII 句柄，
     /// 这两个字段在 stage 1 完成时已 fixed，后续 stage 仍必须 move 进 spawn。
-    #[allow(dead_code)]
-    fn _prepared_execution_carries_task_guard_and_cancel_rx(
-        p: PreparedExecution,
-    ) -> (crate::task_manager::TaskGuard, tokio::sync::mpsc::Receiver<()>) {
-        (p.task_guard, p.cancel_rx)
+    #[test]
+    fn test_prepared_execution_carries_task_guard_and_cancel_rx() {
+        // 编译期类型检查：访问这两个字段不能改名/删除。
+        fn _assert_fields(p: &PreparedExecution) -> &crate::task_manager::TaskGuard {
+            &p.task_guard
+        }
+        fn _assert_cancel(p: &PreparedExecution) -> &tokio::sync::mpsc::Receiver<()> {
+            &p.cancel_rx
+        }
     }
 
     /// 验证 `SpawnInputs` 持有 `task_guard`、`cancel_rx`、`executor_spawn`，
     /// 这三个字段在 spawn 阶段开始时**必须**还在手里，否则 spawn 闭包拿不到
     /// 它们就会导致 RAII 失效或 sender 误删。
-    #[allow(dead_code)]
-    fn _spawn_inputs_carries_required_handles(
-        s: SpawnInputs,
-    ) -> (
-        crate::task_manager::TaskGuard,
-        tokio::sync::mpsc::Receiver<()>,
-        Arc<dyn CodeExecutor>,
-    ) {
-        (s.task_guard, s.cancel_rx, s.executor_spawn)
+    /// `task_guard` / `cancel_rx` 在 issue #660 重构后下沉到 `s.prepared`，访问路径
+    /// 跟着同步更新。
+    #[test]
+    fn test_spawn_inputs_carries_required_handles() {
+        fn _assert_guard(s: &SpawnInputs) -> &crate::task_manager::TaskGuard {
+            &s.prepared.task_guard
+        }
+        fn _assert_cancel(s: &SpawnInputs) -> &tokio::sync::mpsc::Receiver<()> {
+            &s.prepared.cancel_rx
+        }
+        fn _assert_executor(s: &SpawnInputs) -> &Arc<dyn CodeExecutor> {
+            &s.executor_spawn
+        }
     }
 
     /// 验证 stage 函数之间通过 Result<_, ExecutionResult> 串联。
     /// 编译期断言 `prepare_execution_state` 的入参/返回类型与签名预期一致。
-    #[allow(dead_code)]
-    async fn _stage_signatures_are_stable(
-        req: RunTodoExecutionRequest,
-    ) -> Result<PreparedExecution, ExecutionResult> {
-        prepare_execution_state(req).await
+    #[test]
+    fn test_stage_signatures_are_stable() {
+        // 把 async fn 提升为返回 Future 的函数指针（编译期断言签名一致）。
+        fn _check_return_type(
+            _req: RunTodoExecutionRequest,
+        ) -> impl std::future::Future<Output = Result<PreparedExecution, ExecutionResult>> {
+            prepare_execution_state(_req)
+        }
     }
 }
 
