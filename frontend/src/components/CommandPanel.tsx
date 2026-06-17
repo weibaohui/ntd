@@ -41,11 +41,10 @@ export function CommandPanel({ logs, executor }: CommandPanelProps) {
 
   if (commands.length === 0) {
     return (
-      // role="status" + aria-live 让屏幕阅读器在命令列表为空时主动播报，
+      // role="status" 隐式 aria-live="polite"，无需重复声明；
       // 取代之前 antd Empty 内置的 role="status" 行为
       <div
         role="status"
-        aria-live="polite"
         style={{
           display: 'flex',
           flexDirection: 'column',

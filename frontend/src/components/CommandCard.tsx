@@ -40,152 +40,21 @@ export function CommandCard({ command, index }: CommandCardProps) {
     message[ok ? 'success' : 'error'](ok ? '已复制命令' : '复制失败');
   };
 
-  // 状态色：成功用绿色，失败用红色
-  const statusColor = command.success ? 'var(--color-success)' : 'var(--color-error)';
-  const statusText = command.success ? '成功' : '失败';
-  const StatusIcon = command.success
-    ? <CheckCircleFilled style={{ color: 'var(--color-success)' }} />
-    : <CloseCircleFilled style={{ color: 'var(--color-error)' }} />;
-
-  // 折叠状态下只展示前 N 字符 + 省略号
-  const displayedOutput = hasOutput && !expanded
-    ? `${command.output!.slice(0, OUTPUT_PREVIEW_LIMIT)}…`
-    : command.output || '';
-
   return (
     <div
       data-testid={`command-card-${index}`}
       style={{
         border: '1px solid var(--color-border-light)',
-        borderLeft: `3px solid ${statusColor}`,
+        borderLeft: `3px solid ${command.success ? 'var(--color-success)' : 'var(--color-error)'}`,
         borderRadius: 8,
         background: 'var(--color-bg-elevated)',
         overflow: 'hidden',
       }}
     >
-      {/* 标题行：状态 + 命令 + 操作 */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        padding: '8px 12px',
-        borderBottom: hasOutput ? '1px solid var(--color-border-light)' : 'none',
-      }}>
-        {/* 状态图标 + 文本 */}
-        <span style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-          fontSize: 12,
-          color: statusColor,
-          flexShrink: 0,
-        }}>
-          {StatusIcon}
-          <span>{statusText}</span>
-        </span>
-        {/* 命令文本 */}
-        <code
-          data-testid={`command-text-${index}`}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            fontFamily: 'var(--font-mono)',
-            fontSize: 13,
-            fontWeight: 500,
-            color: 'var(--color-text)',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          <span style={{ color: 'var(--color-text-tertiary)', userSelect: 'none' }}>$ </span>
-          {command.command || '(空命令)'}
-        </code>
-        {/* 右侧操作区 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-          {/* 耗时 */}
-          {command.durationMs != null && (
-            <span style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 3,
-              fontSize: 11,
-              color: 'var(--color-text-tertiary)',
-              padding: '2px 6px',
-              borderRadius: 4,
-              background: 'var(--color-bg)',
-            }}>
-              <ClockCircleOutlined />
-              {formatDuration(command.durationMs)}
-            </span>
-          )}
-          {/* 复制按钮 */}
-          <Tooltip title="复制命令">
-            <Button
-              type="text"
-              size="small"
-              icon={<CopyOutlined />}
-              onClick={onCopy}
-              aria-label="复制命令"
-              data-testid={`command-copy-${index}`}
-              style={{ color: 'var(--color-text-tertiary)' }}
-            />
-          </Tooltip>
-        </div>
-      </div>
-
-      {/* 输出区域 */}
-      {hasOutput && (
-        <div>
-          {/* 展开/收起按钮 */}
-          {isLong && (
-            <button
-              type="button"
-              onClick={() => setExpanded(v => !v)}
-              aria-expanded={expanded}
-              aria-controls={`command-output-${index}`}
-              className="command-toggle-btn"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 4,
-                width: '100%',
-                padding: '5px 12px',
-                border: 'none',
-                background: 'var(--color-bg)',
-                color: 'var(--color-primary)',
-                fontSize: 11,
-                fontFamily: 'var(--font-sans)',
-                cursor: 'pointer',
-              }}
-            >
-              {expanded ? <DownOutlined /> : <RightOutlined />}
-              {expanded ? '收起输出' : `展开全部（${command.output!.length} 字符）`}
-            </button>
-          )}
-          {/* 输出内容 */}
-          <pre
-            id={`command-output-${index}`}
-            data-testid={`command-output-${index}`}
-            style={{
-              margin: 0,
-              padding: '10px 12px',
-              background: 'var(--command-output-bg, var(--color-bg))',
-              color: 'var(--color-text-secondary)',
-              fontFamily: 'var(--font-mono)',
-              fontSize: 12,
-              lineHeight: 1.6,
-              maxHeight: expanded ? 400 : 120,
-              overflow: 'auto',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
-            }}
-          >{displayedOutput}</pre>
-        </div>
-      )}
-
-      {/* 无输出提示 */}
-      {!hasOutput && (
+      <CardHeader command={command} index={index} onCopy={onCopy} hasOutput={hasOutput} />
+      {hasOutput ? (
+        <CardOutput command={command} index={index} expanded={expanded} onToggle={() => setExpanded(v => !v)} isLong={isLong} />
+      ) : (
         <div style={{
           padding: '6px 12px',
           fontSize: 12,
@@ -195,6 +64,127 @@ export function CommandCard({ command, index }: CommandCardProps) {
           无返回结果
         </div>
       )}
+    </div>
+  );
+}
+
+/** 卡片标题行：状态 + 命令文本 + 耗时 + 复制按钮 */
+function CardHeader({
+  command, index, onCopy, hasOutput,
+}: { command: CommandEntry; index: number; onCopy: () => void | Promise<void>; hasOutput: boolean }) {
+  const statusColor = command.success ? 'var(--color-success)' : 'var(--color-error)';
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      padding: '8px 12px',
+      // 仅在有输出时画分隔线，避免空态卡片多一条空线
+      borderBottom: hasOutput ? '1px solid var(--color-border-light)' : 'none',
+    }}>
+      {/* 状态徽标：颜色从 token 拿，保证 light/dark 主题都正确 */}
+      <span style={{
+        display: 'flex', alignItems: 'center', gap: 4,
+        fontSize: 12, color: statusColor, flexShrink: 0,
+      }}>
+        {command.success
+          ? <CheckCircleFilled style={{ color: 'var(--color-success)' }} />
+          : <CloseCircleFilled style={{ color: 'var(--color-error)' }} />}
+        <span>{command.success ? '成功' : '失败'}</span>
+      </span>
+      {/* 等宽命令文本：单行省略号，避免长命令撑爆布局 */}
+      <code
+        data-testid={`command-text-${index}`}
+        style={{
+          flex: 1, minWidth: 0,
+          fontFamily: 'var(--font-mono)',
+          fontSize: 13, fontWeight: 500,
+          color: 'var(--color-text)',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}
+      >
+        <span style={{ color: 'var(--color-text-tertiary)', userSelect: 'none' }}>$ </span>
+        {command.command || '(空命令)'}
+      </code>
+      {/* 右侧操作区：耗时 chip + 复制按钮 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+        {command.durationMs != null && (
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 3,
+            fontSize: 11, color: 'var(--color-text-tertiary)',
+            padding: '2px 6px', borderRadius: 4, background: 'var(--color-bg)',
+          }}>
+            <ClockCircleOutlined />
+            {formatDuration(command.durationMs)}
+          </span>
+        )}
+        <Tooltip title="复制命令">
+          <Button
+            type="text" size="small"
+            icon={<CopyOutlined />}
+            onClick={onCopy}
+            aria-label="复制命令"
+            data-testid={`command-copy-${index}`}
+            style={{ color: 'var(--color-text-tertiary)' }}
+          />
+        </Tooltip>
+      </div>
+    </div>
+  );
+}
+
+/** 卡片输出区：长输出默认折叠（展示前 N 字符 + 省略号），点击展开/收起 */
+function CardOutput({
+  command, index, expanded, onToggle, isLong,
+}: { command: CommandEntry; index: number; expanded: boolean; onToggle: () => void; isLong: boolean }) {
+  // 折叠态截断到 OUTPUT_PREVIEW_LIMIT；展开态直接展示原文
+  const displayedOutput = !expanded && isLong
+    ? `${command.output!.slice(0, OUTPUT_PREVIEW_LIMIT)}…`
+    : command.output || '';
+  return (
+    <div>
+      {isLong && (
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={expanded}
+          aria-controls={`command-output-${index}`}
+          className="command-toggle-btn"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            width: '100%',
+            padding: '5px 12px',
+            border: 'none',
+            // 背景走 .command-toggle-btn 的 CSS 变量，
+            // :hover 才能真正覆盖；inline background 会把 hover 锁死
+            color: 'var(--color-primary)',
+            fontSize: 11,
+            fontFamily: 'var(--font-sans)',
+            cursor: 'pointer',
+          }}
+        >
+          {expanded ? <DownOutlined /> : <RightOutlined />}
+          {expanded ? '收起输出' : `展开全部（${command.output!.length} 字符）`}
+        </button>
+      )}
+      {/* maxHeight 120 = 折叠预览（~10 行）；展开后 400 给出读全文的滚动条 */}
+      <pre
+        id={`command-output-${index}`}
+        data-testid={`command-output-${index}`}
+        style={{
+          margin: 0,
+          padding: '10px 12px',
+          background: 'var(--command-output-bg, var(--color-bg))',
+          color: 'var(--color-text-secondary)',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 12,
+          lineHeight: 1.6,
+          maxHeight: expanded ? 400 : 120,
+          overflow: 'auto',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-all',
+        }}
+      >{displayedOutput}</pre>
     </div>
   );
 }

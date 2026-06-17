@@ -119,6 +119,29 @@ test.describe('commandExtractor — Issue #648', () => {
     expect(result[0].output).toBe('/home/user');
   });
 
+  test('codewhale 应按 exec_shell + status=success 判定结果', async ({ page }) => {
+    await page.goto(DEV_URL);
+    const result = await page.evaluate(async () => {
+      const mod = await import('/src/utils/commandExtractor.ts');
+      const logs = [
+        {
+          timestamp: 't1', type: 'tool_call', content: 'x', toolName: 'exec_shell',
+          toolCallId: 'cw1',
+          toolInputJson: JSON.stringify({ command: 'pwd' }),
+        },
+        {
+          timestamp: 't2', type: 'tool_result', content: '/home/user', toolCallId: 'cw1',
+          toolInputJson: JSON.stringify({ status: 'success' }),
+        },
+      ];
+      return mod.__test__.extractCodeWhaleCommands(logs);
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0].command).toBe('pwd');
+    expect(result[0].output).toBe('/home/user');
+    expect(result[0].success).toBe(true);
+  });
+
   test('codex 应支持字符串数组形式的 command', async ({ page }) => {
     await page.goto(DEV_URL);
     const result = await page.evaluate(async () => {
