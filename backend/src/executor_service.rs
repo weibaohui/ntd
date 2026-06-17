@@ -866,20 +866,14 @@ async fn drain_readers_and_flush(
     let _ = flush_timer.await;
 }
 
-/// 读全部 execution_logs 序列化为 JSON 字符串。
-///
-/// 失败一律回落到 `"[]"`，避免外部 IO 错误把 cancel / timeout 流程带崩。
-async fn fetch_remaining_logs_json(db: &Database, record_id: i64) -> String {
-    db.get_all_execution_logs(record_id)
-        .await
-        .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".to_string()))
-        .unwrap_or_else(|_| "[]".to_string())
-}
-
 /// cancel 分支末段：写 DB（cancelled/failed + 空 result） + 发 Output/Finished 事件 + remove task。
 ///
 /// 抽出来让 cancel 分支的 select! 臂保持 ≤ 30 行：杀进程 + drain 已经抽到
 /// `drain_readers_and_flush`，剩下的就是"DB + 事件 + cleanup"。
+///
+/// 日志写入不再走 `remaining_logs`：进入本函数前 `drain_readers_and_flush` 已经调用
+/// `log_flusher.finalize()` 把残余 buffer 一次性入库；再传全量日志会触发
+/// `update_execution_record` 的 `insert_execution_logs` 分支重复插入（issue #653）。
 async fn handle_cancellation_branch(
     db: &Database,
     tx: &broadcast::Sender<ExecEvent>,
@@ -894,11 +888,11 @@ async fn handle_cancellation_branch(
 ) {
     let _ = db.update_todo_status(todo_id, crate::models::TodoStatus::Cancelled).await;
     let _ = db.update_todo_task_id(todo_id, None).await;
-    let remaining_logs = fetch_remaining_logs_json(db, record_id).await;
     let _ = db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
         id: record_id,
         status: crate::models::ExecutionStatus::Failed.as_str(),
-        remaining_logs: &remaining_logs,
+        // 日志已由 LogFlusher 全部入库；传 "[]" 避免重复插入。
+        remaining_logs: "[]",
         result: "任务已被手动停止",
         usage: None,
         model: None,
@@ -920,6 +914,9 @@ async fn handle_cancellation_branch(
 }
 
 /// timeout 分支末段：写 DB（failed + 包含超时常量文案） + 发 Output/Finished 事件 + remove task。
+///
+/// 日志写入策略与 [`handle_cancellation_branch`] 一致：进入本函数前 `LogFlusher::finalize`
+/// 已 drain 全部日志到 DB，`remaining_logs` 传 `"[]"` 避免重复插入（issue #653）。
 async fn handle_timeout_branch(
     db: &Database,
     tx: &broadcast::Sender<ExecEvent>,
@@ -938,11 +935,11 @@ async fn handle_timeout_branch(
         "Execution timeout, terminating process: timeout={}s, todo_id={}, task_id={}",
         execution_timeout_secs, todo_id, task_id
     );
-    let remaining_logs = fetch_remaining_logs_json(db, record_id).await;
     let _ = db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
         id: record_id,
         status: crate::models::ExecutionStatus::Failed.as_str(),
-        remaining_logs: &remaining_logs,
+        // 日志已由 LogFlusher 全部入库；传 "[]" 避免重复插入。
+        remaining_logs: "[]",
         result: "Execution timeout",
         usage: None,
         model: None,
@@ -963,7 +960,13 @@ async fn handle_timeout_branch(
     task_manager.remove(task_id).await;
 }
 
-/// 正常完成分支：把全量日志、stats、usage、model 写库。
+/// 正常完成分支：把 stats、usage、model 写库；status 更新交给 `update_execution_record`。
+///
+/// 日志写入不在这条路径上：执行过程中 [`crate::log_flusher::LogFlusher`] 已经按阈值 / timer
+/// 批量写库，进入本函数前 [`LogFlusher::finalize`] 也已 drain 残余 buffer（详见
+/// `run_todo_execution` 的 `RunOutcome::Completed` 分支）。这里再把"全量日志"以
+/// `remaining_logs` 传入会触发 [`crate::db::Database::update_execution_record`] 的
+/// `insert_execution_logs` 分支，导致每条日志被插两次（issue #653）。因此固定传 `"[]"`。
 ///
 /// `executor_spawn` 是 executor 的共享引用（stdout reader 里持有的是同一份），
 /// 这里再调用 `get_final_result` / `get_usage` / `get_model` 不会产生竞争——
@@ -973,7 +976,6 @@ async fn persist_completion_record(
     executor: &dyn crate::adapters::CodeExecutor,
     record_id: i64,
     all_logs: &[crate::models::ParsedLogEntry],
-    all_logs_json: &str,
     success: bool,
     execution_start: std::time::Instant,
 ) {
@@ -992,10 +994,11 @@ async fn persist_completion_record(
     // wall-clock duration 覆盖交给 helper 集中处理，避免三个终态分支各自维护。
     let usage = apply_wall_clock_duration(executor.get_usage(all_logs), execution_start);
     let model = executor.get_model();
+    // remaining_logs 故意传 "[]"：日志已由 LogFlusher 全部入库，再传全量会导致重复插入。
     let _ = db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
         id: record_id,
         status: final_status,
-        remaining_logs: all_logs_json,
+        remaining_logs: "[]",
         result: &result_str,
         usage: usage.as_ref(),
         model: model.as_deref(),
@@ -1523,11 +1526,6 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                     .get_all_execution_logs(record_id)
                     .await
                     .unwrap_or_default();
-                let all_logs_json =
-                    serde_json::to_string(&all_logs_snapshot).unwrap_or_else(|e| {
-                        tracing::error!("Failed to serialize all logs: {}", e);
-                        "[]".to_string()
-                    });
                 let result_str = executor_spawn
                     .get_final_result(&all_logs_snapshot)
                     .unwrap_or_default();
@@ -1537,7 +1535,6 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                     executor_spawn.as_ref(),
                     record_id,
                     &all_logs_snapshot,
-                    &all_logs_json,
                     success,
                     execution_start,
                 )

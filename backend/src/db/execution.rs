@@ -273,6 +273,15 @@ impl Database {
         let updated = res.rows_affected() > 0;
 
         // Only insert logs if the status update succeeded (prevent duplicate logs on concurrent writes)
+        //
+        // 注：截至当前（fix #653 之后）已无内部 caller 触发此分支 —— 所有生产 caller（终态 cancel /
+        // timeout / 正常完成 / 启动失败 共 4 处）均传 `remaining_logs: "[]"`，日志全部交给
+        // `LogFlusher` 在 `finalize()` 阶段 drain 入库。本分支保留的原因：
+        // 1. `UpdateExecutionRecord` 是公共 API surface，外部集成方可能仍依赖此行为；
+        // 2. `backend/src/db/mod.rs::test_update_execution_record_does_not_duplicate_logs_issue_653`
+        //    故意传全量 JSON 来回归 issue #653（5/10/5 断言）。
+        // 后续若 release window 有空档，建议把此分支抽成 `append_logs_only` 单独方法并删除，
+        // 让 `update_execution_record` 只负责 status / stats / usage 字段。
         if updated && !req.remaining_logs.is_empty() && req.remaining_logs != "[]" {
             self.insert_execution_logs(req.id, req.remaining_logs).await?;
         }
