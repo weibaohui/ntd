@@ -92,6 +92,7 @@ impl From<execution_records::Model> for ExecutionRecord {
             source_execution_record_id: m.source_execution_record_id,
             last_review_status: m.last_review_status,
             last_reviewed_at: m.last_reviewed_at,
+            worktree_path: m.worktree_path,
         }
     }
 }
@@ -288,6 +289,25 @@ impl Database {
         let am = execution_records::ActiveModel {
             id: ActiveValue::Unchanged(id),
             pid: ActiveValue::Set(pid),
+            ..Default::default()
+        };
+        self.exec_update(am).await
+    }
+
+    /// issue #643: 把本次执行实际使用的 git worktree 目录回写到 execution_record。
+    ///
+    /// 这一步在 `create_execution_record` 之后、真正 spawn 子进程之前发生，
+    /// 用于"事后排查"：用户看到执行记录时能直接定位 worktree 目录。
+    ///
+    /// 失败时只 warn 不中断执行流程：worktree 路径写不进 DB 不影响子进程跑通。
+    pub async fn update_execution_record_worktree_path(
+        &self,
+        id: i64,
+        worktree_path: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        let am = execution_records::ActiveModel {
+            id: ActiveValue::Unchanged(id),
+            worktree_path: ActiveValue::Set(Some(worktree_path.to_string())),
             ..Default::default()
         };
         self.exec_update(am).await

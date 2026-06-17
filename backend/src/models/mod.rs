@@ -229,6 +229,10 @@ pub struct ExecutionRecord {
     /// 这条原执行记录最近一次自动评审 spawn 的 UTC 时间.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_reviewed_at: Option<String>,
+    /// issue #643: 本次执行使用的 git worktree 目录。None = 未启用 worktree 或未创建成功。
+    /// 字段语义：仅供"事后排查"，不影响子进程 cwd；auto_cleanup 决定它在执行后是否被删。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

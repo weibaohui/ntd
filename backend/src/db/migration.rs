@@ -41,6 +41,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V2TodoRatingDropColumn),
         Box::new(V3LogsToExecutionLogs),
         Box::new(V4FeishuFkCascade),
+        Box::new(V5ProjectDirectoryWorktree),
     ]
 }
 
@@ -1608,4 +1609,61 @@ mod needs_fk_migration_tests {
         // 单引号 + SQL 注释符的经典注入 payload
         let _ = needs_fk_migration(&db.conn, "evil'; DROP TABLE x; --").await;
     }
+}
+
+// ---------------------------------------------------------------------------
+// v5: 项目目录级 git worktree 支持 (issue #643)
+// ---------------------------------------------------------------------------
+
+/// v5 迁移：增加 3 个字段
+///   - project_directories.git_worktree_enabled (NOT NULL DEFAULT 0)
+///   - project_directories.auto_cleanup         (NOT NULL DEFAULT 0)
+///   - execution_records.worktree_path          (NULL)
+///
+/// 全部使用 `ADD COLUMN IF NOT EXISTS` / `unwrap_or_else` 兼容旧库：
+/// 字段在 IF NOT EXISTS 不被 SQLite 支持时（旧版 < 3.35）回退到忽略"已存在"错误。
+pub(super) struct V5ProjectDirectoryWorktree;
+
+#[async_trait]
+impl Migration for V5ProjectDirectoryWorktree {
+    fn version(&self) -> i64 {
+        5
+    }
+    fn name(&self) -> &'static str {
+        "project_directory_worktree"
+    }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        v5_project_directory_worktree(db).await
+    }
+}
+
+async fn v5_project_directory_worktree(db: &Database) -> Result<(), sea_orm::DbErr> {
+    // 加列失败时只 warn 不阻塞启动：老库可能已经手工补过这些列，
+    // 此时 `duplicate column name` 是预期情况，与 V1 的向后兼容 ALTER 一致。
+    db.exec("ALTER TABLE project_directories ADD COLUMN git_worktree_enabled INTEGER NOT NULL DEFAULT 0")
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                "migration v5: ALTER TABLE project_directories ADD COLUMN git_worktree_enabled: {} (column may already exist)",
+                e
+            );
+        });
+    db.exec("ALTER TABLE project_directories ADD COLUMN auto_cleanup INTEGER NOT NULL DEFAULT 0")
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                "migration v5: ALTER TABLE project_directories ADD COLUMN auto_cleanup: {} (column may already exist)",
+                e
+            );
+        });
+    db.exec("ALTER TABLE execution_records ADD COLUMN worktree_path TEXT")
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                "migration v5: ALTER TABLE execution_records ADD COLUMN worktree_path: {} (column may already exist)",
+                e
+            );
+        });
+    Ok(())
 }

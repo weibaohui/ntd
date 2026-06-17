@@ -13,9 +13,19 @@ pub struct CreateProjectDirectoryRequest {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UpdateProjectDirectoryRequest {
+    /// 修改后的名称（必填）。name="" 由 handler 拒绝。
     pub name: String,
+    /// issue #643: 是否在该目录下执行 Todo 时由 ntd 托管 git worktree。
+    /// `None` 表示不修改；`Some(bool)` 表示更新。
+    /// 缺省走 `#[serde(default)]`，兼容老客户端只发 `{name}` 的请求。
+    #[serde(default)]
+    pub git_worktree_enabled: Option<bool>,
+    /// issue #643: 执行结束（成功/失败/取消）后是否自动清理 worktree。
+    /// 语义同上，None=不修改，Some=更新。
+    #[serde(default)]
+    pub auto_cleanup: Option<bool>,
 }
 
 pub async fn list_project_directories(
@@ -56,9 +66,10 @@ pub async fn update_project_directory(
     if name.is_empty() {
         return Ok(ApiResponse::err(crate::models::codes::BAD_REQUEST, "Name is required"));
     }
+    // issue #643: 即使前端没传 worktree 字段也允许请求继续，老客户端 PUT 不会 400。
     state
         .db
-        .update_project_directory(id, Some(name))
+        .update_project_directory(id, Some(name), req.git_worktree_enabled, req.auto_cleanup)
         .await?;
     Ok(ApiResponse::ok(()))
 }

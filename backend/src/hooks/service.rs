@@ -514,6 +514,8 @@ mod tests {
             source_execution_record_id: None,
             last_review_status: None,
             last_reviewed_at: None,
+            // issue #643: 测试夹具不模拟 worktree 场景，固定 None
+            worktree_path: None,
         }
     }
 

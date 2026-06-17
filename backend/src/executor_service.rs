@@ -14,10 +14,103 @@ use crate::handlers::ExecEvent;
 use crate::hooks::HookService;
 use crate::log_flusher::LogFlusher;
 use crate::models::{ExecutorType, ExecutionUsage, ParsedLogEntry, Todo};
+use crate::services::worktree::WorktreeService;
 use crate::task_manager::TaskManager;
 
 fn send_event(tx: &broadcast::Sender<ExecEvent>, event: ExecEvent) {
     let _ = tx.send(event);
+}
+
+// ============================================================================
+//  Git Worktree 集成 (issue #643)
+//
+//  这里只放 3 个细粒度辅助函数，遵循 issue #635/640 倡导的"run_todo_execution 不再
+//  持有逻辑，只负责编排"原则。每个函数 ≤ 20 行，职责单一。
+// ============================================================================
+
+/// issue #643: 单次执行使用的 worktree 上下文。
+///
+/// - `effective_workspace`: 子进程的 cwd。None=继续用 todo.workspace；
+///   Some(p)=worktree 目录被 ntd 接管，子进程在 worktree 内运行。
+/// - `record_path`: 回写到 execution_records.worktree_path 的值（None=无需记录）。
+/// - `auto_cleanup`: 终态时是否需要调用 WorktreeService::cleanup_worktree。
+#[derive(Debug, Clone, Default)]
+struct WorktreeContext {
+    effective_workspace: Option<String>,
+    record_path: Option<String>,
+    auto_cleanup: bool,
+}
+
+/// 根据 todo.workspace 找到对应的 project_directory，决定是否开 worktree。
+///
+/// 不在 `WorktreeContext` 内持有数据库句柄——这是个**纯异步查询**函数，方便在
+/// run_todo_execution 主路径上独立调用并把结果 move 进 spawn 闭包。
+async fn resolve_worktree_context(
+    db: &Database,
+    todo: &Option<Todo>,
+) -> WorktreeContext {
+    // 没有 todo（被 hook 删除）/ 没有 workspace 关联项目目录——不启用 worktree
+    let Some(t) = todo.as_ref() else {
+        return WorktreeContext::default();
+    };
+    let Some(ws) = t.workspace.as_deref() else {
+        return WorktreeContext::default();
+    };
+    // 目录在 project_directories 表里没登记——同样不启用（避免给任意 workspace 路径做 worktree）
+    let Ok(Some(dir)) = db.get_project_directory_by_path(ws).await else {
+        return WorktreeContext::default();
+    };
+    if !dir.git_worktree_enabled {
+        return WorktreeContext::default();
+    }
+
+    // 走到这里说明用户在该目录下开启了 worktree 自动管理。
+    // 创建失败时不阻塞执行——回退到原始 workspace，子进程仍然能跑通。
+    let svc = WorktreeService::new();
+    match svc.create_worktree(ws, t.id) {
+        Ok(wt_path) => WorktreeContext {
+            effective_workspace: Some(wt_path.clone()),
+            record_path: Some(wt_path),
+            auto_cleanup: dir.auto_cleanup,
+        },
+        Err(e) => {
+            tracing::warn!(
+                workspace = %ws,
+                todo_id = t.id,
+                error = %e,
+                "failed to create git worktree, falling back to original workspace"
+            );
+            WorktreeContext::default()
+        }
+    }
+}
+
+/// 把 worktree_path 持久化到 execution_records。
+///
+/// 这一步不在 `resolve_worktree_context` 内做，因为该函数不持有 record_id；
+/// 调用方在拿到 `create_execution_record` 返回的 id 之后再回填。
+async fn record_worktree_path(db: &Database, record_id: i64, path: Option<&str>) {
+    if let Some(p) = path {
+        if let Err(e) = db.update_execution_record_worktree_path(record_id, p).await {
+            tracing::warn!(record_id, error = ?e, "failed to persist worktree_path");
+        }
+    }
+}
+
+/// 执行结束后清理 worktree（如果启用了 auto_cleanup）。
+///
+/// `WorktreeError` 不会出现：本服务把失败映射成 warn，不再向上抛。
+fn cleanup_worktree_if_needed(ctx: &WorktreeContext) {
+    if !ctx.auto_cleanup {
+        return;
+    }
+    let Some(path) = ctx.record_path.as_deref() else {
+        return;
+    };
+    let svc = WorktreeService::new();
+    if let Err(e) = svc.cleanup_worktree(path) {
+        tracing::warn!(worktree = %path, error = %e, "worktree cleanup failed");
+    }
 }
 
 /// 使用 command-group 安全地杀死进程树
@@ -1180,6 +1273,16 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         }
     };
 
+    // issue #643: 如果 todo 绑定的项目目录开启了 worktree 自动管理,
+    // 在这里创建 worktree 并把路径写回 execution_record. 失败时回退到原 workspace,
+    // 不阻塞执行. effective_workspace 决定子进程 cwd, 同时被 move 进 spawn 闭包用于 cleanup.
+    let worktree_ctx = resolve_worktree_context(&db, &todo).await;
+    record_worktree_path(&db, record_id, worktree_ctx.record_path.as_deref()).await;
+    let effective_workspace = worktree_ctx
+        .effective_workspace
+        .clone()
+        .or(todo_workspace.clone());
+
     // State-change hooks for "进入执行中" fire from the update_todo handler when
     // the user transitions the todo into in_progress. The executor no longer
     // gates execution on a hook — it just runs.
@@ -1263,7 +1366,7 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
         let mut cmd = build_executor_command(
             &executable_path,
             &command_args,
-            todo_workspace.as_deref(),
+            effective_workspace.as_deref(),
         );
 
         // 使用 command-group 的 group_spawn 创建进程组
@@ -1350,6 +1453,8 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                     feishu_receive_id,
                 )
                 .await;
+                // issue #643: 取消路径也要按 auto_cleanup 清理 worktree
+                cleanup_worktree_if_needed(&worktree_ctx);
             }
             RunOutcome::TimedOut => {
                 kill_process_tree(&mut child).await;
@@ -1376,6 +1481,8 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                     feishu_receive_id,
                 )
                 .await;
+                // issue #643: 超时路径也要按 auto_cleanup 清理 worktree
+                cleanup_worktree_if_needed(&worktree_ctx);
             }
             RunOutcome::Completed(status) => {
                 // 子进程已自然退出，stdout/stderr 管道已关闭；先 await reader 让它们
@@ -1451,6 +1558,8 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
                     feishu_receive_id,
                 )
                 .await;
+                // issue #643: 正常完成路径按 auto_cleanup 清理 worktree
+                cleanup_worktree_if_needed(&worktree_ctx);
             }
         }
     }
@@ -2024,5 +2133,44 @@ mod tests {
         assert_eq!(format_timeout_secs(3540), "59 min");
         // 60 min 是 3600 秒，进 hour 分支。
         assert_eq!(format_timeout_secs(3600), "1 hour(s)");
+    }
+
+    // ====== issue #643: WorktreeContext 辅助函数 ======
+
+    /// `cleanup_worktree_if_needed` 在 `auto_cleanup = false` 时不做任何事。
+    /// 用 record_path 指向一个不存在的路径验证：即使路径无效也不会调用 svc，
+    /// 也就不会触发任何 warn 日志或失败。
+    #[test]
+    fn test_cleanup_worktree_if_needed_disabled() {
+        let ctx = WorktreeContext {
+            effective_workspace: None,
+            record_path: Some("/tmp/ntd-643-disabled".into()),
+            auto_cleanup: false,
+        };
+        // 不应 panic，不应触发任何 git 调用
+        cleanup_worktree_if_needed(&ctx);
+    }
+
+    /// `cleanup_worktree_if_needed` 在 `auto_cleanup = true` 但 record_path 为 None 时
+    /// 同样直接返回。这种情况理论上不会出现（auto_cleanup 开启一定会有 record_path），
+    /// 但作为防御性测试可以确认不会空跑。
+    #[test]
+    fn test_cleanup_worktree_if_needed_no_path() {
+        let ctx = WorktreeContext {
+            effective_workspace: None,
+            record_path: None,
+            auto_cleanup: true,
+        };
+        cleanup_worktree_if_needed(&ctx);
+    }
+
+    /// `WorktreeContext::default()` 三个字段都是 "未启用 worktree" 的初始值。
+    /// 验证整个 resolve 链上的"早退"分支共用同一个默认值。
+    #[test]
+    fn test_worktree_context_default_is_disabled() {
+        let ctx = WorktreeContext::default();
+        assert!(ctx.effective_workspace.is_none());
+        assert!(ctx.record_path.is_none());
+        assert!(!ctx.auto_cleanup);
     }
 }
