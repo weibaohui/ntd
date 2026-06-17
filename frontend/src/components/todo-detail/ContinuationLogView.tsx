@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ChatView } from '@/components/ChatView';
 import { CommandPanel } from '@/components/CommandPanel';
 import { LogViewHeader } from './LogViewHeader';
@@ -25,6 +25,13 @@ export function ContinuationLogView({ record, logs, isRunning, viewMode, onRefre
   // 用户主动切到「命令」时默认展开，让命令面板直接可见。
   const defaultOpen = isRunning || viewMode === 'chat' || viewMode === 'command';
   const [isExpanded, setIsExpanded] = useState(defaultOpen);
+  // PR #657 复查 C1 修复：useState 初始值只读一次，viewMode 后续变化不会触发展开。
+  // 显式同步「切到 chat/command 必展开」这条约束；用户后续手动 collapse 仍可生效。
+  useEffect(() => {
+    if (viewMode === 'chat' || viewMode === 'command') {
+      setIsExpanded(true);
+    }
+  }, [viewMode]);
   // 抽 titleMap 替代三元嵌套：新增视图模式只需改这张表，不重写条件。
   const titleMap = { log: `日志 (${logs.length})`, chat: `对话 (${logs.length})`, command: `命令 (${logs.length})` } as const;
   const title = titleMap[viewMode];

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ChatView } from '@/components/ChatView';
 import { LogViewHeader } from './LogViewHeader';
 import { formatLogTime } from './helpers';
@@ -28,6 +28,13 @@ export function NarrowLogView({ record, isRunning, displayLogs, liveLogs, viewMo
   // 用户主动切到「对话/命令」时直接展开，否则只对运行中的记录展开（更符合直觉）。
   const defaultOpen = isRunning || viewMode === 'chat' || viewMode === 'command';
   const [isExpanded, setIsExpanded] = useState(defaultOpen);
+  // PR #657 复查 C1 修复：useState 初始值只读一次，viewMode 后续变化不会触发展开。
+  // 显式同步「切到 chat/command 必展开」这条约束；用户后续手动 collapse 仍可生效。
+  useEffect(() => {
+    if (viewMode === 'chat' || viewMode === 'command') {
+      setIsExpanded(true);
+    }
+  }, [viewMode]);
   // 抽 liveTag：避免在三个分支里复制同一表达式；新增视图模式只需扩 titleMap。
   const liveTag = isRunning && liveLogs && liveLogs.length > 0 ? ' · 实时' : '';
   const titleMap = {

@@ -7,8 +7,12 @@
  * 从 URL hash 读 component / logs / record，渲染对应组件（NarrowLogView /
  * ContinuationLogView / ContinuationLogsLoader）到 #test-target，便于
  * Playwright 在窄屏下校验「命令」视图分支是否生效。
+ *
+ * PR #657 复查 C1 修复：Harness 用 useState 跟踪 viewMode，让 mount harness
+ * 真的把 Segmented 的 onChange 反馈回受测组件，从而能验证"切到 chat/command
+ * 自动展开"的 useEffect 同步逻辑。
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { NarrowLogView } from '../src/components/todo-detail/NarrowLogView.tsx';
 import { ContinuationLogView } from '../src/components/todo-detail/ContinuationLogView.tsx';
@@ -16,18 +20,20 @@ import { ContinuationLogsLoader } from '../src/components/todo-detail/Continuati
 import type { LogEntry, ExecutionRecord } from '../src/types/index.ts';
 
 type ComponentKind = 'NarrowLogView' | 'ContinuationLogView' | 'ContinuationLogsLoader';
+type ViewMode = 'log' | 'chat' | 'command';
 
 interface MountData {
   component: ComponentKind;
   logs: LogEntry[];
   executor: string;
-  viewMode: 'log' | 'chat' | 'command';
+  viewMode: ViewMode;
   recordId: number;
 }
 
 interface MountWindow extends Window {
   __renderDone?: boolean;
   __renderError?: string;
+  __viewModeChanges?: ViewMode[];
 }
 
 const w = window as MountWindow;
@@ -44,14 +50,54 @@ function readDataFromHash(): MountData {
   }
 }
 
-const data = readDataFromHash();
+const initialData = readDataFromHash();
 
 const sampleRecord: ExecutionRecord = {
-  id: data.recordId,
+  id: initialData.recordId,
   todoId: 1,
-  executor: data.executor,
+  executor: initialData.executor,
   status: 'success',
 } as unknown as ExecutionRecord;
+
+/**
+ * 包装受测组件：让 viewMode 由 React state 控制，模拟真实业务下"用户点击 Segmented 切视图"的链路。
+ * 没有这个 Harness，onViewModeChange 是 no-op，useEffect 同步逻辑根本测不到。
+ */
+function Harness() {
+  const [viewMode, setViewMode] = useState<ViewMode>(initialData.viewMode);
+  const handleChange = (m: ViewMode) => {
+    w.__viewModeChanges = [...(w.__viewModeChanges || []), m];
+    setViewMode(m);
+  };
+  if (initialData.component === 'NarrowLogView') {
+    return React.createElement(NarrowLogView, {
+      record: sampleRecord,
+      isRunning: false,
+      displayLogs: initialData.logs,
+      liveLogs: null,
+      viewMode,
+      onRefresh: () => {},
+      onViewModeChange: handleChange,
+    });
+  } else if (initialData.component === 'ContinuationLogView') {
+    return React.createElement(ContinuationLogView, {
+      record: sampleRecord,
+      logs: initialData.logs,
+      isRunning: false,
+      viewMode,
+      onRefresh: () => {},
+      onViewModeChange: handleChange,
+    });
+  }
+  // ContinuationLogsLoader：直接传 logs 跳过懒加载，方便静态 mount 渲染命令面板。
+  return React.createElement(ContinuationLogsLoader, {
+    record: sampleRecord,
+    logs: initialData.logs,
+    viewMode,
+    onRefresh: () => {},
+    onViewModeChange: handleChange,
+  });
+}
 
 try {
   const container = document.createElement('div');
@@ -62,38 +108,8 @@ try {
   container.style.margin = '0 auto';
   document.body.appendChild(container);
 
-  let element: React.ReactElement;
-  if (data.component === 'NarrowLogView') {
-    element = React.createElement(NarrowLogView, {
-      record: sampleRecord,
-      isRunning: false,
-      displayLogs: data.logs,
-      liveLogs: null,
-      viewMode: data.viewMode,
-      onRefresh: () => {},
-      onViewModeChange: () => {},
-    });
-  } else if (data.component === 'ContinuationLogView') {
-    element = React.createElement(ContinuationLogView, {
-      record: sampleRecord,
-      logs: data.logs,
-      isRunning: false,
-      viewMode: data.viewMode,
-      onRefresh: () => {},
-      onViewModeChange: () => {},
-    });
-  } else {
-    // 直接传入 logs：跳过懒加载让组件在无后端的静态 mount 下也能渲染命令视图。
-    element = React.createElement(ContinuationLogsLoader, {
-      record: sampleRecord,
-      logs: data.logs,
-      viewMode: data.viewMode,
-      onRefresh: () => {},
-      onViewModeChange: () => {},
-    });
-  }
   const root = createRoot(container);
-  root.render(element);
+  root.render(React.createElement(Harness));
   // 等 React 提交一帧
   setTimeout(() => { w.__renderDone = true; }, 500);
 } catch (e) {

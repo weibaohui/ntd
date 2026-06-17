@@ -158,4 +158,43 @@ test.describe('issue #657 — 窄屏命令视图', () => {
     // 不应出现 CommandPanel 计数
     expect(rendered.text).not.toContain('共 2 条命令');
   });
+
+  // PR #657 复查 C1 回归测试：useState 初始值只读一次。
+  // 之前从 log 视图切到 command 视图时 details 不会自动展开，用户必须再点一次 summary。
+  // 修复后：切到 chat/command 应自动展开 details 露出 CommandPanel。
+  test('NarrowLogView 在 log 视图下点击「命令」应自动展开 details', async ({ page }) => {
+    const rendered = await mountAndRead(page, {
+      component: 'NarrowLogView',
+      logs: SAMPLE_LOGS,
+      executor: 'claudecode',
+      viewMode: 'log',
+      recordId: 42,
+    });
+
+    // 初始 log 视图：标题是「查看日志」，details 默认收起。
+    expect(rendered.text).toContain('查看日志');
+    const initiallyOpen = await page.evaluate(() => {
+      const d = document.querySelector('#test-target details');
+      return d ? d.hasAttribute('open') : false;
+    });
+    expect(initiallyOpen).toBe(false);
+
+    // 模拟用户在 Segmented 上点「命令」按钮：useEffect 应自动展开 details。
+    await page.locator('#test-target .ant-segmented-item:has-text("命令")').first().click();
+    await page.waitForTimeout(300);
+
+    const afterOpen = await page.evaluate(() => {
+      const d = document.querySelector('#test-target details');
+      return d ? d.hasAttribute('open') : false;
+    });
+    expect(afterOpen).toBe(true);
+
+    // CommandPanel 内容应可见
+    const cmdText = await page.evaluate(() => {
+      const d = document.querySelector('#test-target');
+      return d?.textContent || '';
+    });
+    expect(cmdText).toContain('git pull origin main');
+    expect(cmdText).toContain('共 2 条命令');
+  });
 });

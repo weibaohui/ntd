@@ -32,6 +32,13 @@ export function ContinuationLogsLoader({
   const [logs, setLogs] = useState<LogEntry[] | null>(initialLogs ?? null);
   // 切到「对话/命令」视图时直接展开，避免用户多次点击。
   const [isExpanded, setIsExpanded] = useState(viewMode === 'chat' || viewMode === 'command');
+  // PR #657 复查 C1 修复：useState 初始值只读一次，viewMode 后续变化不会触发展开。
+  // 显式同步「切到 chat/command 必展开」这条约束；用户后续手动 collapse 仍可生效。
+  useEffect(() => {
+    if (viewMode === 'chat' || viewMode === 'command') {
+      setIsExpanded(true);
+    }
+  }, [viewMode]);
   useEffect(() => {
     // 显式传入 logs 时直接跳过网络请求，让父组件（如 mount harness / 单测）完全控制数据。
     if (initialLogs !== undefined) return;
@@ -41,9 +48,10 @@ export function ContinuationLogsLoader({
     // 把 record.executor 加入 deps：执行器协议切换时让 CommandPanel 看到的是同一份最新 logs。
   }, [record.id, record.executor, initialLogs]);
   if (logs === null) return null;
-  // 即便 logs 为空也继续渲染：details/Segmented/CommandPanel 空态对用户可见，
-  // 与 NarrowLogView/ContinuationLogView 行为对齐，避免手机端命令视图被吞掉。
-  if (logs.length === 0 && initialLogs === undefined) return null;
+  // PR #657 复查 C2 修复：去掉"懒加载 + 空 logs 就 return null"的旧分支。
+  // 旧逻辑下，ChainGroupCard 在 logs.length === 0 && !isRunning 的场景渲染本组件，
+  // 懒加载 fetch 完仍是空数组会让整个组件消失，命令面板永远渲染不出来。
+  // 现在由 CommandPanel 自带的"未捕获到可提取的 Bash 命令"空态兜底。
   // 抽 titleMap 替代三元嵌套：新增视图模式只需改这张表。
   const titleMap = { log: `日志 (${logs.length})`, chat: `对话 (${logs.length})`, command: `命令 (${logs.length})` } as const;
   const title = titleMap[viewMode];
