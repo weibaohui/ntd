@@ -15,22 +15,35 @@ import type { LogEntry, ExecutionRecord } from '@/types';
  * - 'chat'：对话视图
  * - 'command'：命令视图（CommandPanel）
  */
-export function ContinuationLogsLoader({ record, viewMode, onRefresh, onViewModeChange }: {
+export function ContinuationLogsLoader({
+  record,
+  logs: initialLogs,
+  viewMode,
+  onRefresh,
+  onViewModeChange,
+}: {
+  // 允许 mount/测试场景直接传入 logs 跳过懒加载，避免在没有后端时整个组件返回 null。
   record: ExecutionRecord;
+  logs?: LogEntry[];
   viewMode: 'log' | 'chat' | 'command';
   onRefresh: (id: number) => Promise<void>;
   onViewModeChange: (mode: 'log' | 'chat' | 'command') => void;
 }) {
-  const [logs, setLogs] = useState<LogEntry[] | null>(null);
+  const [logs, setLogs] = useState<LogEntry[] | null>(initialLogs ?? null);
   // 切到「对话/命令」视图时直接展开，避免用户多次点击。
   const [isExpanded, setIsExpanded] = useState(viewMode === 'chat' || viewMode === 'command');
   useEffect(() => {
+    // 显式传入 logs 时直接跳过网络请求，让父组件（如 mount harness / 单测）完全控制数据。
+    if (initialLogs !== undefined) return;
     db.getExecutionLogs(record.id, 1, 200)
       .then(r => setLogs(r.logs))
       .catch(() => setLogs([]));
-  }, [record.id]);
+    // 把 record.executor 加入 deps：执行器协议切换时让 CommandPanel 看到的是同一份最新 logs。
+  }, [record.id, record.executor, initialLogs]);
   if (logs === null) return null;
-  if (logs.length === 0) return null;
+  // 即便 logs 为空也继续渲染：details/Segmented/CommandPanel 空态对用户可见，
+  // 与 NarrowLogView/ContinuationLogView 行为对齐，避免手机端命令视图被吞掉。
+  if (logs.length === 0 && initialLogs === undefined) return null;
   // 抽 titleMap 替代三元嵌套：新增视图模式只需改这张表。
   const titleMap = { log: `日志 (${logs.length})`, chat: `对话 (${logs.length})`, command: `命令 (${logs.length})` } as const;
   const title = titleMap[viewMode];

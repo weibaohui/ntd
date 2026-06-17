@@ -83,8 +83,10 @@ try {
       onViewModeChange: () => {},
     });
   } else {
+    // 直接传入 logs：跳过懒加载让组件在无后端的静态 mount 下也能渲染命令视图。
     element = React.createElement(ContinuationLogsLoader, {
       record: sampleRecord,
+      logs: data.logs,
       viewMode: data.viewMode,
       onRefresh: () => {},
       onViewModeChange: () => {},

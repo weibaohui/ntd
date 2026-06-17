@@ -20,7 +20,8 @@ import { mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const DEV_URL = process.env.E2E_BASE_URL || 'http://localhost:18089';
+// 端口与 vite.config.ts server.port 对齐（5173），与 playwright.config.ts baseURL 一致。
+const DEV_URL = process.env.E2E_BASE_URL || 'http://localhost:5173';
 const HARNESS_URL = `${DEV_URL}/tests/issue-648-mount.html`;
 
 const __filename = fileURLToPath(import.meta.url);

@@ -19,7 +19,9 @@ import { mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const DEV_URL = process.env.E2E_BASE_URL || 'http://localhost:18089';
+// 端口与 vite.config.ts server.port 对齐（5173），避免与 baseURL 不一致导致连接拒绝。
+// 也允许通过 E2E_BASE_URL 在 CI 上覆盖。
+const DEV_URL = process.env.E2E_BASE_URL || 'http://localhost:5173';
 const HARNESS_URL = `${DEV_URL}/tests/issue-657-mount.html`;
 
 const __filename = fileURLToPath(import.meta.url);
@@ -122,8 +124,7 @@ test.describe('issue #657 — 窄屏命令视图', () => {
   });
 
   test('ContinuationLogsLoader 在 command 视图下应渲染 CommandPanel', async ({ page }) => {
-    // ContinuationLogsLoader 走 db.getExecutionLogs 懒加载，跟真实后端耦合。
-    // 这里只校验：标题、Segmented 三选项存在、CommandPanel 已挂载（即便没有命令也会显示「未捕获到」空态）。
+    // 通过 mount 显式传入 logs 跳过懒加载，让组件在静态 harness 下也能渲染命令视图。
     const rendered = await mountAndRead(page, {
       component: 'ContinuationLogsLoader',
       logs: SAMPLE_LOGS,
@@ -138,8 +139,9 @@ test.describe('issue #657 — 窄屏命令视图', () => {
     expect(rendered.text).toContain('日志');
     expect(rendered.text).toContain('对话');
     expect(rendered.text).toContain('命令');
-    // CommandPanel 的空态文案（没匹配到命令时）
-    expect(rendered.text).toContain('未捕获到');
+    // CommandPanel 拿到 logs 后正常提取命令：覆盖命令卡片与计数
+    expect(rendered.text).toContain('git pull origin main');
+    expect(rendered.text).toContain('共 2 条命令');
   });
 
   test('NarrowLogView 在 log 视图下应渲染原始日志，不渲染 CommandPanel', async ({ page }) => {
