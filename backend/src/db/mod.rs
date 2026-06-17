@@ -1372,6 +1372,82 @@ mod tests {
         assert_eq!(logs[0].log_type, "info");
     }
 
+    /// Issue #653 回归：执行期间 LogFlusher 已经按批次把日志写库，终态分支
+    /// （Completed / Cancelled / TimedOut）调用 `update_execution_record` 时
+    /// `remaining_logs` 必须传 `"[]"`，不能再传全量日志，否则每条日志都会被插两次。
+    ///
+    /// 用例分两步：
+    /// 1. 旧 buggy 路径：`append_execution_record_logs` 写 5 条，再以全量 JSON
+    ///    调 `update_execution_record`，断言出现 10 条重复日志（确认 bug 可复现）。
+    /// 2. 修复后路径：同样 append 5 条，再以 `"[]"` 调 `update_execution_record`，
+    ///    断言最终仍是 5 条（确认修复生效）。
+    #[tokio::test]
+    async fn test_update_execution_record_does_not_duplicate_logs_issue_653() {
+        let db = setup_db().await;
+        let todo_id = db.create_todo("DupLogs", "Prompt").await.unwrap();
+        let record_id = create_test_execution_record(&db, todo_id, "echo hi").await;
+
+        // 模拟 LogFlusher 期间已经把 5 条日志写到 execution_logs。
+        let logs_json = r#"[
+            {"timestamp":"2026-01-01T00:00:00.000Z","type":"info","content":"log 1"},
+            {"timestamp":"2026-01-01T00:00:01.000Z","type":"info","content":"log 2"},
+            {"timestamp":"2026-01-01T00:00:02.000Z","type":"info","content":"log 3"},
+            {"timestamp":"2026-01-01T00:00:03.000Z","type":"info","content":"log 4"},
+            {"timestamp":"2026-01-01T00:00:04.000Z","type":"info","content":"log 5"}
+        ]"#;
+        db.append_execution_record_logs(record_id, logs_json)
+            .await
+            .unwrap();
+        let (logs, total) = db.get_execution_logs(record_id, 1, 100).await.unwrap();
+        assert_eq!(total, 5, "append 阶段：5 条日志写库");
+        assert_eq!(logs.len(), 5);
+
+        // 1) 旧 buggy 路径：remaining_logs 传全量 JSON → 再次插入，验证 bug 可复现。
+        db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+            id: record_id,
+            status: crate::models::ExecutionStatus::Success.as_str(),
+            remaining_logs: logs_json,
+            result: "done",
+            usage: None,
+            model: None,
+            review_meta: None,
+        })
+        .await
+        .unwrap();
+        let (_, total_after_dup) = db.get_execution_logs(record_id, 1, 100).await.unwrap();
+        assert_eq!(
+            total_after_dup, 10,
+            "旧 buggy 路径：传全量日志会导致 5+5=10 条重复日志（issue #653）"
+        );
+
+        // 2) 修复后路径：另起一条记录，传 "[]"，验证日志条数保持不变。
+        let record_id2 = create_test_execution_record(&db, todo_id, "echo hi").await;
+        db.append_execution_record_logs(record_id2, logs_json)
+            .await
+            .unwrap();
+        db.update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {
+            id: record_id2,
+            status: crate::models::ExecutionStatus::Success.as_str(),
+            // 修复点：remaining_logs 传 "[]"，避免重复插入。
+            remaining_logs: "[]",
+            result: "done",
+            usage: None,
+            model: None,
+            review_meta: None,
+        })
+        .await
+        .unwrap();
+        let (logs2, total2) = db.get_execution_logs(record_id2, 1, 100).await.unwrap();
+        assert_eq!(
+            total2, 5,
+            "修复后路径：传 \"[]\" 时日志条数保持 5 条，无重复"
+        );
+        assert_eq!(logs2.len(), 5);
+        // 内容应当与原始 append 的一致
+        assert_eq!(logs2[0].content, "log 1");
+        assert_eq!(logs2[4].content, "log 5");
+    }
+
     #[tokio::test]
     async fn test_get_execution_summary_empty() {
         let db = setup_db().await;
