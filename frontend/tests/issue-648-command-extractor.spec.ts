@@ -14,8 +14,9 @@
 
 import { test, expect } from '@playwright/test';
 
-// 与 playwright.config.ts 的 baseURL 保持一致（Vite dev server 默认 5173），
-// 不要写成 18088（那是 `make dev` 起的后端 embedded 端口，不会暴露 /src/* 模块路径）。
+// 与 playwright.config.ts 的 baseURL 保持一致（Vite dev server 默认 5173）。
+// 5173 = `npm run dev`（Vite 单独），spec 只需 Vite 暴露 `/src/*` 即可加载 ESM 模块。
+// `make dev` 的 18088（Vite + Rust embedded）也可，但启动更重；本 spec 选 5173 走轻量路径。
 const DEV_URL = process.env.E2E_BASE_URL || 'http://localhost:5173';
 
 test.describe('commandExtractor — Issue #648', () => {
@@ -216,6 +217,86 @@ test.describe('commandExtractor — Issue #648', () => {
     expect(result[0].command).toBe('echo hi');
     expect(result[0].output).toBe('hi');
     expect(result[0].success).toBe(true);
+  });
+
+  test('pi FIFO 配对：tool_result 无 toolCallId 时按顺序填到未填的 cmd', async ({ page }) => {
+    // 覆盖 applyPiResult 的 fillPiByFifo 分支（PR #656 评审 MEDIUM #2 缺漏）。
+    // pushPiCall 不带 toolCallId → cmd.id = cmd-pi-N-...；
+    // applyPiResult 的 result 也不带 toolCallId → 走 FIFO 兜底，命中第一条 output 未填的 cmd。
+    await page.goto(DEV_URL);
+    const result = await page.evaluate(async () => {
+      const mod = await import('/src/utils/commandExtractor.ts');
+      const logs = [
+        {
+          timestamp: 't1', type: 'tool_use', content: 'x', toolName: 'bash',
+          // 无 toolCallId：让 pushPiCall 走自动生成 id 路径
+          toolInputJson: JSON.stringify({ args: { command: 'echo first' } }),
+        },
+        {
+          timestamp: 't2', type: 'tool_use', content: 'x', toolName: 'bash',
+          toolInputJson: JSON.stringify({ args: { command: 'echo second' } }),
+        },
+        {
+          timestamp: 't3', type: 'tool_result', content: 'x', toolCallId: undefined,
+          // 无 toolCallId：让 applyPiResult 走 fillPiByFifo 分支
+          toolInputJson: JSON.stringify({ output: 'first-output', status: 'success', duration_ms: 77 }),
+        },
+      ];
+      return mod.__test__.extractPiCommands(logs);
+    });
+    expect(result).toHaveLength(2);
+    // FIFO 命中第一条
+    expect(result[0].command).toBe('echo first');
+    expect(result[0].output).toBe('first-output');
+    expect(result[0].success).toBe(true);
+    // durationMs 只在 fillPiByToolCallId 路径设置，fillPiByFifo 走 pairByOrder
+    // 不携带 duration_ms，所以这里是 undefined（与 fillPiByFifo 的实现契约一致）
+    expect(result[0].durationMs).toBeUndefined();
+    // 第二条不应被错误填充
+    expect(result[1].output).toBeUndefined();
+    expect(result[1].success).toBe(false);
+  });
+
+  test('kimi toolCallId 成功判定：output 含 error 时 success=false，否则 true', async ({ page }) => {
+    // 覆盖 extractKimiCommands 的 toolCallId 分支 success 判定
+    // （PR #656 评审 MEDIUM #2 缺漏）。
+    // 判定规则（commandExtractor.ts:174）：`cmd.success = !/error/i.test(cmd.output || '')`。
+    await page.goto(DEV_URL);
+    const result = await page.evaluate(async () => {
+      const mod = await import('/src/utils/commandExtractor.ts');
+      // 3 条命令 + 3 条 result，分别用 toolCallId 对齐，混合正常 / 错误 / 边界输出
+      const logs = [
+        // case 1: 正常输出
+        { timestamp: 't1', type: 'tool_call', content: 'x', toolName: 'Shell',
+          toolInputJson: JSON.stringify({ command: 'pwd' }),
+          toolCallId: 'k1' },
+        { timestamp: 't2', type: 'tool_result', content: '/home/user', toolCallId: 'k1', isError: false },
+        // case 2: output 含 error 子串 → success=false
+        { timestamp: 't3', type: 'tool_call', content: 'x', toolName: 'Shell',
+          toolInputJson: JSON.stringify({ command: 'git status' }),
+          toolCallId: 'k2' },
+        { timestamp: 't4', type: 'tool_result', content: 'Error: not a git repo', toolCallId: 'k2', isError: true },
+        // case 3: output 大小写混合的 ERROR（regex /error/i 大小写无关）
+        { timestamp: 't5', type: 'tool_call', content: 'x', toolName: 'Shell',
+          toolInputJson: JSON.stringify({ command: 'unknown-cmd' }),
+          toolCallId: 'k3' },
+        { timestamp: 't6', type: 'tool_result', content: 'command not found', toolCallId: 'k3', isError: true },
+      ];
+      return mod.__test__.extractKimiCommands(logs);
+    });
+    expect(result).toHaveLength(3);
+    // 正常：不含 error → success=true
+    expect(result[0].command).toBe('pwd');
+    expect(result[0].output).toBe('/home/user');
+    expect(result[0].success).toBe(true);
+    // 含 Error → success=false
+    expect(result[1].command).toBe('git status');
+    expect(result[1].output).toBe('Error: not a git repo');
+    expect(result[1].success).toBe(false);
+    // isError=true 但 output 不含 error → 仍判 success=true（kimi 信任 output 文本）
+    expect(result[2].command).toBe('unknown-cmd');
+    expect(result[2].output).toBe('command not found');
+    expect(result[2].success).toBe(true);
   });
 
   test('atomcode 应能从 stderr 风格 content 解析 [tool→ / [tool←', async ({ page }) => {

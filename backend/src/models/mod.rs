@@ -1020,6 +1020,54 @@ mod tests {
         assert_eq!(usage.output_tokens, 20);
     }
 
+    /// 锁住 `ParsedLogEntry` 的 wire 格式契约：序列化输出 camelCase（`toolName` /
+    /// `toolInputJson`），None 字段被省略（`skip_serializing_if`），并通过 `alias`
+    /// 兼容反序列化 snake_case 旧数据。
+    /// 对应 PR #656 评审 MEDIUM #1：单元测试覆盖序列化产物与反序列化兼容性。
+    #[test]
+    fn test_parsed_log_entry_serde_uses_camel_case() {
+        // 准备：直接构造全量字段的 entry，绕开 builder 缺失（目前无 with_tool_name）
+        let mut entry = ParsedLogEntry::info("hi");
+        entry.tool_name = Some("Bash".to_string());
+        entry.tool_input_json = Some("{\"cmd\":\"ls\"}".to_string());
+
+        // 序列化：wire 必须是 camelCase
+        let value = serde_json::to_value(&entry).expect("serialize");
+        assert_eq!(value["toolName"], "Bash", "wire 格式必须为 toolName");
+        assert_eq!(
+            value["toolInputJson"], "{\"cmd\":\"ls\"}",
+            "wire 格式必须为 toolInputJson"
+        );
+        // 旧 snake_case 字段不应出现在序列化产物中（rename 而非 alias 输出）
+        assert!(
+            value.get("tool_name").is_none(),
+            "序列化不应输出 snake_case tool_name"
+        );
+        assert!(
+            value.get("tool_input_json").is_none(),
+            "序列化不应输出 snake_case tool_input_json"
+        );
+
+        // None 时字段被省略（skip_serializing_if）
+        let bare = ParsedLogEntry::info("hi");
+        let bare_value = serde_json::to_value(&bare).expect("serialize bare");
+        assert!(bare_value.get("toolName").is_none());
+        assert!(bare_value.get("toolInputJson").is_none());
+        assert!(bare_value.get("usage").is_none());
+
+        // alias 兼容：DB 历史数据若仍写 snake_case，反序列化能正确读出
+        let legacy = serde_json::json!({
+            "timestamp": "2026-01-01T00:00:00.000Z",
+            "type": "info",
+            "content": "legacy",
+            "tool_name": "Read",
+            "tool_input_json": "{\"path\":\"/tmp/x\"}"
+        });
+        let de: ParsedLogEntry = serde_json::from_value(legacy).expect("alias deserialize");
+        assert_eq!(de.tool_name.as_deref(), Some("Read"));
+        assert_eq!(de.tool_input_json.as_deref(), Some("{\"path\":\"/tmp/x\"}"));
+    }
+
     #[test]
     fn test_api_response_ok() {
         let resp = ApiResponse::ok(42);

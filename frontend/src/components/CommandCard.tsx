@@ -9,7 +9,7 @@
  * - 所有交互元素有 cursor:pointer 和 hover 反馈
  */
 import { useState } from 'react';
-import { Button, Tooltip, message } from 'antd';
+import { Button, message } from 'antd';
 import {
   CopyOutlined,
   CheckCircleFilled,
@@ -55,12 +55,17 @@ export function CommandCard({ command, index }: CommandCardProps) {
       {hasOutput ? (
         <CardOutput command={command} index={index} expanded={expanded} onToggle={() => setExpanded(v => !v)} isLong={isLong} />
       ) : (
-        <div style={{
-          padding: '6px 12px',
-          fontSize: 12,
-          color: 'var(--color-text-tertiary)',
-          fontStyle: 'italic',
-        }}>
+        // role="status" 让屏幕阅读器在 UI 切换到「无返回结果」时主动播报，
+        // 与「已展开 / 已复制」等其他状态变更提示的可达性保持一致
+        <div
+          role="status"
+          style={{
+            padding: '6px 12px',
+            fontSize: 12,
+            color: 'var(--color-text-tertiary)',
+            fontStyle: 'italic',
+          }}
+        >
           无返回结果
         </div>
       )}
@@ -118,16 +123,18 @@ function CardHeader({
             {formatDuration(command.durationMs)}
           </span>
         )}
-        <Tooltip title="复制命令">
-          <Button
-            type="text" size="small"
-            icon={<CopyOutlined />}
-            onClick={onCopy}
-            aria-label="复制命令"
-            data-testid={`command-copy-${index}`}
-            style={{ color: 'var(--color-text-tertiary)' }}
-          />
-        </Tooltip>
+        {/* 原 antd Tooltip wrapper 重复声明「复制命令」（aria-label 与 title 同文），
+            改为 Button 原生 `title` 承担视觉 hover 提示，`aria-label` 专给屏幕阅读器。
+            二者文案必须保持一致，否则 a11y 与视觉提示会脱节。 */}
+        <Button
+          type="text" size="small"
+          icon={<CopyOutlined />}
+          onClick={onCopy}
+          aria-label="复制命令"
+          title="复制命令"
+          data-testid={`command-copy-${index}`}
+          style={{ color: 'var(--color-text-tertiary)' }}
+        />
       </div>
     </div>
   );

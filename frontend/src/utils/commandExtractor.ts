@@ -544,5 +544,7 @@ export const __test__ = {
   extractCodexCommands,
   extractPiCommands,
   extractAtomcodeCommands,
+  // hermes 走「不支持」分支（返回 []），挂出便于测试兜底契约不被误改
+  extractHermesCommands,
   parseDuration,
 };
