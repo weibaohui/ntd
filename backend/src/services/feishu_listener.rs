@@ -371,19 +371,35 @@ impl FeishuListener {
         msg: &ChannelMessage,
         prep: &MessagePrep<'_>,
     ) {
-        let bindings = context.db
-            .get_feishu_project_bindings(context.bot_id)
+        // 守卫 1：当前 chat 已存在 binding（无论是 pending 还是已关联）就不再晋升；
+        // 避免把 pending binding 错误覆盖到已关联的真实 binding 上
+        // （也避免 unique 约束冲突：chat_id 在 (bot_id, chat_id) 上唯一）
+        if context.db
+            .get_feishu_project_binding(context.bot_id, &msg.channel)
             .await
-            .unwrap_or_default();
-        let pending = bindings.iter()
-            .find(|b| b.chat_id == crate::models::PENDING_CHAT_ID)
-            .cloned();
-        // 防御：页面可能已经删了 todo 但 binding 残留，没 todo 就别关联过去
-        let pending = match pending {
-            Some(p) if context.db.get_todo(p.todo_id).await.ok().flatten().is_some() => Some(p),
-            _ => None,
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return;
+        }
+        // 单行查询代替之前 `get_feishu_project_bindings(bot)` 全表扫；
+        // PENDING_CHAT_ID 是约定的占位 chat_id，直接命中 unique 索引
+        let pending = match context.db
+            .get_feishu_project_binding(context.bot_id, crate::models::PENDING_CHAT_ID)
+            .await
+        {
+            Ok(Some(p)) => p,
+            Ok(None) => return,
+            Err(e) => {
+                tracing::warn!("[feishu:{}] failed to query pending binding: {}", context.bot_id, e);
+                return;
+            }
         };
-        let Some(pending) = pending else { return };
+        // 防御：页面可能已经删了 todo 但 binding 残留，没 todo 就别关联过去
+        if context.db.get_todo(pending.todo_id).await.ok().flatten().is_none() {
+            return;
+        }
         match context.db
             .attach_feishu_project_binding(pending.id, &msg.channel, prep.chat_type)
             .await
@@ -401,8 +417,11 @@ impl FeishuListener {
 
     /// 阶段 5：项目绑定执行路径
     /// - 无绑定 / 绑定 todo 不存在 → 返回 false，让控制流落到斜杠命令/默认回复
-    /// - 绑定 enabled=false → 清理 reaction 后返回 false，让控制流落到斜杠命令/默认回复
-    ///   （保留原始行为：disabled 绑定不再触发项目执行，与 enabled 路径完全分离）
+    /// - 绑定 enabled=false → **直接返回 false**，让控制流落到斜杠命令/默认回复
+    ///   ⚠ 这是相对 pre-refactor 的**有意行为变化**：pre-refactor 的 disabled
+    ///   分支只清 reaction 后继续走 todo/debounce；重构后 disabled 不再触发项目
+    ///   执行，与 enabled 路径完全分离。reaction 清理统一由编排器末尾
+    ///   （handle_message 收尾）兜底，本分支不再重复 `cleanup_reaction`。
     /// - 绑定 enabled 且 todo 在 → 决定 resume 还是新 session，push 到 debounce 后返回 true
     async fn try_route_project_binding(
         context: &ListenerMessageContext<'_>,
@@ -412,10 +431,10 @@ impl FeishuListener {
         let Some(binding) = Self::resolve_project_binding(context.db, context.bot_id, &msg.channel).await else {
             return false; // 无绑定 / DB 错误 → 让控制流落到兜底
         };
-        // enabled=false 的绑定不参与路由：清理 reaction 后让控制流落到兜底
+        // enabled=false 的绑定不参与路由：直接让控制流落到兜底；
+        // reaction 清理交给 handle_message 末尾统一收尾（见 docstring）
         if !binding.enabled {
             tracing::info!("[feishu:{}] binding {} disabled, fall through", context.bot_id, binding.id);
-            Self::cleanup_reaction(context, msg, prep.reaction_id.as_deref()).await;
             return false;
         }
         let Some(todo) = context.db.get_todo(binding.todo_id).await.ok().flatten() else {

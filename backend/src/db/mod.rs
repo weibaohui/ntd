@@ -595,7 +595,7 @@ mod skills;
 pub use feishu_message::{NewFeishuHistoryMessage, NewFeishuMessage};
 mod feishu_group_whitelist;
 mod feishu_history_chat;
-pub mod feishu_project_binding;
+pub(crate) mod feishu_project_binding;
 mod feishu_push_target;
 mod feishu_response_config;
 pub mod project_directory;
