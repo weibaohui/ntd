@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Button, Popconfirm, Tag, Tooltip } from 'antd';
-import { MessageOutlined, FileTextOutlined, StopOutlined, CopyOutlined, LinkOutlined, UpOutlined, DownOutlined } from '@ant-design/icons';
-import { XMarkdown } from '@ant-design/x-markdown';
+import { MessageOutlined, FileTextOutlined, StopOutlined, LinkOutlined, UpOutlined, DownOutlined } from '@ant-design/icons';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
+import { CollapsibleConclusion } from './CollapsibleConclusion';
 import { supportsResume } from '@/types';
 import { formatLocalDateTime, formatDurationSec } from '@/utils/datetime';
 import * as db from '@/utils/database';
@@ -123,26 +123,14 @@ function ChainGroupCard({ group, onOpenResume, onExport, onStop, messageApi, vie
           </Tooltip>
         )}
         {mainRecord.result && (
-          <div className={`history-result ${mainRecord.status === 'success' ? 'history-result-success' : 'history-result-failed'}`}>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
-              {/* 复制结论文本：使用 copyToClipboard 统一处理，兼容 HTTP 环境 */}
-              <Button type="text" size="small" icon={<CopyOutlined />} onClick={async () => {
-                try {
-                  // 调用统一的复制工具（内置 fallback，兼容 HTTP 环境）
-                  const ok = await copyToClipboard(mainRecord.result || '');
-                  // 根据返回结果提示用户
-                  if (ok) {
-                    messageApi.success('已复制到剪贴板');
-                  } else {
-                    messageApi.error('复制失败');
-                  }
-                } catch {
-                  messageApi.error('复制失败');
-                }
-              }} />
-            </div>
-            <XMarkdown content={mainRecord.result} />
-          </div>
+          // 折叠/展开控制由 CollapsibleConclusion 内部状态管理；
+          // 传 recordId 让折叠状态按记录持久化。
+          <CollapsibleConclusion
+            result={mainRecord.result}
+            status={mainRecord.status}
+            messageApi={messageApi}
+            recordId={mainRecord.id}
+          />
         )}
         {(() => {
           const stats = resolveStats(mainRecord, mainRecord.status === 'running');
@@ -234,26 +222,14 @@ function ChainGroupCard({ group, onOpenResume, onExport, onStop, messageApi, vie
                 border: '1px solid var(--color-border-light)',
               }}>
                 {record.result && (
-                  <div className={`history-result ${record.status === 'success' ? 'history-result-success' : 'history-result-failed'}`} style={{ marginBottom: 6 }}>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
-                      {/* 复制续轮结论文本：使用 copyToClipboard 统一处理，兼容 HTTP 环境 */}
-                      <Button type="text" size="small" icon={<CopyOutlined />} onClick={async () => {
-                        try {
-                          // 调用统一的复制工具（内置 fallback，兼容 HTTP 环境）
-                          const ok = await copyToClipboard(record.result || '');
-                          // 根据返回结果提示用户
-                          if (ok) {
-                            messageApi.success('已复制');
-                          } else {
-                            messageApi.error('复制失败');
-                          }
-                        } catch {
-                          messageApi.error('复制失败');
-                        }
-                      }} />
-                    </div>
-                    <XMarkdown content={record.result} />
-                  </div>
+                  // 续轮结论同样接入 CollapsibleConclusion；
+                  // 不带 showTitle，因为 ChainGroupCard 在头部已有标识。
+                  <CollapsibleConclusion
+                    result={record.result}
+                    status={record.status}
+                    messageApi={messageApi}
+                    recordId={record.id}
+                  />
                 )}
                 {record.usage && (
                   <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', marginBottom: 4, display: 'flex', gap: 8 }}>

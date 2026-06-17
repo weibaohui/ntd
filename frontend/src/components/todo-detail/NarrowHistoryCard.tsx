@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Button, Popconfirm, Tag, Tooltip, Popover, InputNumber, Space } from 'antd';
-import { MessageOutlined, FileTextOutlined, StopOutlined, CopyOutlined, LinkOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
+import { MessageOutlined, FileTextOutlined, StopOutlined, LinkOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
-import { XMarkdown } from '@ant-design/x-markdown';
 import { supportsResume } from '@/types';
 import { formatLocalDateTime, formatDurationSec } from '@/utils/datetime';
 import * as db from '@/utils/database';
@@ -10,6 +9,7 @@ import { getElapsedSeconds, hasLogsStatic } from './helpers';
 import { NarrowLogView } from './NarrowLogView';
 import { getHookTriggerLabel } from '@/utils/database/hooks';
 import { ReviewStatusBadge } from './RecordDetailView';
+import { CollapsibleConclusion } from './CollapsibleConclusion';
 import type { ExecutionRecord, ExecutionStats, LogEntry } from '@/types';
 import { copyToClipboard } from '@/utils/clipboard';
 
@@ -128,26 +128,14 @@ export function NarrowHistoryCard({ record, viewMode, onOpenResume, onExport, on
         </Tooltip>
       )}
       {record.result !== null && record.result !== '' && (
-        <div className={`history-result ${record.status === 'success' ? 'history-result-success' : 'history-result-failed'}`}>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
-            {/* 复制结论文本：使用 copyToClipboard 统一处理，兼容 HTTP 环境 */}
-            <Button type="text" size="small" icon={<CopyOutlined />} onClick={async () => {
-              try {
-                // 调用统一的复制工具（内置 fallback，兼容 HTTP 环境）
-                const ok = await copyToClipboard(record.result || '');
-                // 根据返回结果提示用户
-                if (ok) {
-                  messageApi.success('已复制到剪贴板');
-                } else {
-                  messageApi.error('复制失败');
-                }
-              } catch {
-                messageApi.error('复制失败');
-              }
-            }} />
-          </div>
-          <XMarkdown content={record.result} />
-        </div>
+        // 窄屏/手机版的结论区与桌面端共用同一 CollapsibleConclusion，
+        // 折叠状态按 recordId 持久化，长结论在窄屏下尤其友好。
+        <CollapsibleConclusion
+          result={record.result}
+          status={record.status}
+          messageApi={messageApi}
+          recordId={record.id}
+        />
       )}
       {record.usage && (
         <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 8, display: 'flex', gap: 12, flexWrap: 'wrap' }}>

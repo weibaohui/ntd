@@ -1,8 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { Button, Tag, Empty, Segmented, Popconfirm, Tooltip, Pagination, message, Popover, InputNumber, Space } from 'antd';
 import { StarOutlined, StarFilled, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, PauseCircleOutlined } from '@ant-design/icons';
-import { MessageOutlined, FileTextOutlined, StopOutlined, CopyOutlined, UnorderedListOutlined, LinkOutlined, LoadingOutlined, BranchesOutlined, CodeOutlined } from '@ant-design/icons';
-import XMarkdown from '@ant-design/x-markdown';
+import { MessageOutlined, FileTextOutlined, StopOutlined, UnorderedListOutlined, LinkOutlined, LoadingOutlined, BranchesOutlined, CodeOutlined } from '@ant-design/icons';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { ChatView } from '@/components/ChatView';
 import { RefreshBtn } from './LogViewHeader';
@@ -15,6 +14,7 @@ import type { ExecutionRecord, LogEntry } from '@/types';
 import { getHookTriggerLabel } from '@/utils/database/hooks';
 import { copyToClipboard } from '@/utils/clipboard';
 import { CommandPanel } from '@/components/CommandPanel';
+import { CollapsibleConclusion } from './CollapsibleConclusion';
 
 export function RecordDetailView({
   isLoadingDetail, record, sessionGroups,
@@ -195,32 +195,15 @@ export function RecordDetailView({
       {/* issue #645: 展示本次执行使用的 git worktree 目录路径；目录可能已被清理，但仍保留在记录里便于排查 */}
       <WorktreePathDisplay worktreePath={record.worktree_path ?? null} />
       {record.result !== null && record.result !== '' && (
-        <div className={`history-result ${record.status === 'success' ? 'history-result-success' : 'history-result-failed'}`} style={{ marginBottom: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text)' }}>结论</span>
-            {/* 复制结论文本：使用 copyToClipboard 统一处理，兼容 HTTP 环境 */}
-            <Button
-              type="text"
-              size="small"
-              icon={<CopyOutlined />}
-              onClick={async () => {
-                try {
-                  // 调用统一的复制工具（内置 fallback，兼容 HTTP 环境）
-                  const ok = await copyToClipboard(record.result || '');
-                  // 根据返回结果提示用户
-                  if (ok) {
-                    message.success('已复制到剪贴板');
-                  } else {
-                    message.error('复制失败');
-                  }
-                } catch {
-                  message.error('复制失败');
-                }
-              }}
-            />
-          </div>
-          <XMarkdown content={record.result} />
-        </div>
+        // 折叠/展开控制由 CollapsibleConclusion 内部状态管理；
+        // 传 recordId 让折叠状态按记录持久化，避免每次重渲染都重新展开长结论。
+        <CollapsibleConclusion
+          result={record.result}
+          status={record.status}
+          messageApi={message}
+          showTitle
+          recordId={record.id}
+        />
       )}
       {record.usage && (
         <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap' }}>

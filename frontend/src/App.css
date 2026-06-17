@@ -718,6 +718,26 @@ body {
   color: var(--color-error);
 }
 
+/* issue #652: 折叠态下压缩到只剩一行头部，展开态保留正常内边距与过渡 */
+.history-result-collapsed {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.history-result-expanded {
+  transition: padding 0.15s ease;
+}
+
+/* Markdown 内容区域加一个轻量的出现动画，避免切换时生硬 */
+.conclusion-content {
+  animation: conclusion-fade-in 0.15s ease;
+}
+
+@keyframes conclusion-fade-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* ---------- Chat View ---------- */
 .chat-container {
   flex: 1;
