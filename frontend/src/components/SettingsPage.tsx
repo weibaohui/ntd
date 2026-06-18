@@ -200,7 +200,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
     },
     {
       key: 'projectDirectories',
-      label: <span><FolderOutlined style={{ marginRight: 6 }} />项目目录</span>,
+      label: <span><FolderOutlined style={{ marginRight: 6 }} />工作空间</span>,
       children: <ProjectDirectoriesPanel />,
     },
     {

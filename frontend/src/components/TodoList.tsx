@@ -3,7 +3,7 @@ import { useApp } from '@/hooks/useApp';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { Button, Dropdown, Empty, Tooltip, Input } from 'antd';
 import type { MenuProps } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined, UnorderedListOutlined, FolderOpenOutlined, RightOutlined, MoreOutlined, SearchOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined, FolderOpenOutlined, MoreOutlined, SearchOutlined, DownOutlined } from '@ant-design/icons';
 import { useTheme } from '@/hooks/useTheme';
 import { StatusPicker } from './StatusPicker';
 import * as db from '@/utils/database';
@@ -33,20 +33,6 @@ function SkeletonList() {
       ))}
     </div>
   );
-}
-
-// 列表显示模式：flat 是当前的平铺模式；grouped 按项目目录把 todo 折叠成"文件夹"分组
-type ListDisplayMode = 'flat' | 'grouped';
-
-const DISPLAY_MODE_KEY = 'app_display_mode';
-
-// 从 localStorage 读取上次的显示模式，读取失败时默认平铺
-function getInitialDisplayMode(): ListDisplayMode {
-  try {
-    const saved = localStorage.getItem(DISPLAY_MODE_KEY);
-    if (saved === 'flat' || saved === 'grouped') return saved;
-  } catch {}
-  return 'flat';
 }
 
 /**
@@ -85,18 +71,13 @@ function buildDesktopNavActions(
 export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSettings }: TodoListProps) {
   const { state, dispatch } = useApp();
   const { themeMode, toggleTheme } = useTheme();
-  const { todos, selectedTodoId, selectedTagId, tags } = state;
+  const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
   const isMobile = useIsMobile();
   const [isLoading, setIsLoading] = useState(true);
   // 搜索关键字状态，用于按标题或提示词过滤 todo 列表
   const [searchKeyword, setSearchKeyword] = useState('');
-  // 显示模式：从 localStorage 读取上次用户选择，刷新后保留
-  const [displayMode, setDisplayMode] = useState<ListDisplayMode>(getInitialDisplayMode);
-  // 项目目录：分组视图需要按项目维度折叠，必须先有这份映射；
-  // 即使切回平铺视图也保留数据，避免切换时闪烁
+  // 项目目录：工作空间选择器需要目录列表
   const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
-  // 记录每个分组的折叠状态，key 为 workspace 路径
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     setIsLoading(false);
@@ -130,6 +111,12 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
       ? todos.filter(t => t.tag_ids?.includes(selectedTagId))
       : todos;
     
+    // 按 workspace 过滤：selectedWorkspace 为 null 时显示全部，
+    // 否则只显示匹配 workspace 路径的 todo
+    if (selectedWorkspace !== null) {
+      result = result.filter(todo => todo.workspace === selectedWorkspace);
+    }
+    
     // 再按关键字搜索（匹配标题或提示词）
     if (searchKeyword.trim()) {
       const keyword = searchKeyword.toLowerCase().trim();
@@ -141,37 +128,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
     }
     
     return result;
-  }, [todos, selectedTagId, searchKeyword]);
-
-  // 按 workspace 路径分组；workspace 为空或 null 的归入"未分组"虚拟分组，
-  // 保证游离 todo 不会消失，只是放到列表底部
-  const groupedByProject = useMemo(() => {
-    // path -> { name, items }：用 path 作为 key，避免同路径多份目录实体造成的重复分组
-    // 用 Map 存储目录查找表，把内层 O(n·m) 查找降为 O(1)
-    const dirByPath = new Map(projectDirectories.map(d => [d.path, d]));
-    const groups = new Map<string, { name: string; items: Todo[] }>();
-    for (const todo of filteredTodos) {
-      const ws = (todo.workspace || '').trim(); // 取 workspace 路径，空字符串视为未分组
-      if (!ws) {
-        const bucket = groups.get('__ungrouped__') ?? { name: '未分组', items: [] }; // 虚拟分组 key，不会与真实路径冲突
-        bucket.items.push(todo);
-        groups.set('__ungrouped__', bucket);
-        continue;
-      }
-      const dir = dirByPath.get(ws); // O(1) 查找目录实体，取项目名称
-      const bucket = groups.get(ws) ?? { name: dir?.name || ws, items: [] }; // 有名称用名称，无则回退显示路径
-      bucket.items.push(todo);
-      groups.set(ws, bucket);
-    }
-    // 稳定顺序：项目目录按 name 排序，未分组始终在最末
-    const entries = Array.from(groups.entries());
-    entries.sort((a, b) => {
-      if (a[0] === '__ungrouped__') return 1;
-      if (b[0] === '__ungrouped__') return -1;
-      return a[1].name.localeCompare(b[1].name);
-    });
-    return entries;
-  }, [filteredTodos, projectDirectories]);
+  }, [todos, selectedTagId, selectedWorkspace, searchKeyword]);
 
   const handleStatusChange = useCallback(async (todoId: number, title: string, prompt: string, newStatus: string) => {
     try {
@@ -187,29 +144,10 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
     [onShowDashboard, onShowMemorial, onShowRelationMap],
   );
 
-  const toggleGroupCollapse = useCallback((key: string) => {
-    setCollapsedGroups(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      return next;
-    });
-  }, []);
-
   /**
-   * 处理桌面端头部“更多”菜单点击。
+   * 处理桌面端头部"更多"菜单点击。
    */
   const handleHeaderMenuClick = useCallback<NonNullable<MenuProps['onClick']>>(({ key }) => {
-    if (key === 'display-mode') {
-      // 切换后立即持久化到 localStorage，确保刷新后不丢失
-      const next = displayMode === 'flat' ? 'grouped' : 'flat';
-      setDisplayMode(next);
-      try { localStorage.setItem(DISPLAY_MODE_KEY, next); } catch {}
-      return;
-    }
     if (key === 'theme') {
       toggleTheme();
       return;
@@ -221,15 +159,6 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
 
   const headerMenuItems = useMemo<MenuProps['items']>(() => {
     const items: NonNullable<MenuProps['items']> = [
-      {
-        key: 'display-mode',
-        icon: displayMode === 'flat' ? <FolderOpenOutlined /> : <UnorderedListOutlined />,
-        label: (
-          <span aria-pressed={displayMode === 'grouped'}>
-            {displayMode === 'flat' ? '分组' : '平铺'}
-          </span>
-        ),
-      },
       {
         key: 'theme',
         icon: themeMode === 'light' ? <MoonOutlined /> : <SunOutlined />,
@@ -249,7 +178,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
     }
 
     return items;
-  }, [displayMode, themeMode, onShowSettings]);
+  }, [themeMode, onShowSettings]);
 
   const tagMap = useMemo(() => {
     const map = new Map<number, typeof tags[0]>();
@@ -460,21 +389,6 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
 
           {isMobile && (
             <div className="header-nav-cluster" aria-label="移动端操作">
-              <Tooltip title={displayMode === 'flat' ? '分组' : '平铺'}>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={displayMode === 'flat' ? <FolderOpenOutlined /> : <UnorderedListOutlined />}
-                  onClick={() => {
-                  const next = displayMode === 'flat' ? 'grouped' : 'flat';
-                  setDisplayMode(next);
-                  try { localStorage.setItem(DISPLAY_MODE_KEY, next); } catch {}
-                }}
-                  className="header-nav-btn"
-                  aria-label={displayMode === 'flat' ? '分组' : '平铺'}
-                  aria-pressed={displayMode === 'grouped'}
-                />
-              </Tooltip>
               <Tooltip title={themeMode === 'light' ? '暗色' : '亮色'}>
                 <Button
                   type="text"
@@ -499,6 +413,66 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
           )}
           </div>
         </div>
+      </div>
+
+      {/* Workspace selector - 在搜索框上方，用于切换不同工作空间 */}
+      <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
+        <Dropdown
+          menu={{
+            items: [
+              {
+                key: '__all__',
+                label: '全部工作空间',
+                icon: <ApartmentOutlined />,
+              },
+              ...projectDirectories.map(dir => ({
+                key: dir.path,
+                label: dir.name || dir.path,
+                icon: <FolderOpenOutlined />,
+              })),
+              { type: 'divider' as const },
+              {
+                key: '__manage__',
+                label: '管理工作空间',
+                icon: <SettingOutlined />,
+              },
+            ],
+            onClick: ({ key }) => {
+              if (key === '__manage__') {
+                onShowSettings?.();
+              } else {
+                dispatch({ type: 'SELECT_WORKSPACE', payload: key === '__all__' ? null : key });
+              }
+            },
+          }}
+          trigger={['click']}
+        >
+          <Button
+            type="text"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              width: '100%',
+              justifyContent: 'space-between',
+              padding: '8px 12px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--color-bg-elevated)',
+              border: '1px solid var(--color-border)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <ApartmentOutlined style={{ color: 'var(--color-primary)' }} />
+              <span style={{ fontWeight: 500 }}>
+                {selectedWorkspace
+                  ? projectDirectories.find(d => d.path === selectedWorkspace)?.name || selectedWorkspace
+                  : '全部工作空间'
+                }
+              </span>
+            </div>
+            <DownOutlined style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }} />
+          </Button>
+        </Dropdown>
       </div>
 
       {/* Search box - 在 todo 列表上方，按标题或提示词关键字搜索 */}
@@ -556,49 +530,6 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
               }
               image={Empty.PRESENTED_IMAGE_SIMPLE}
             />
-          </div>
-        ) : displayMode === 'grouped' ? (
-          // 分组视图：每个项目一个"文件夹"块，块内平铺 todo；
-          // 文件夹头部用项目名 + 数量徽标，方便一眼看清每个项目下堆积了多少 todo
-          <div className="todo-grouped-list">
-            {groupedByProject.map(([key, group]) => {
-              const isCollapsed = collapsedGroups.has(key);
-              return (
-                <div key={key} className="todo-group">
-                  <div
-                    className="todo-group-header"
-                    onClick={() => toggleGroupCollapse(key)}
-                    style={{ cursor: 'pointer' }}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        toggleGroupCollapse(key);
-                      }
-                    }}
-                    aria-expanded={!isCollapsed}
-                  >
-                    <RightOutlined
-                      style={{
-                        color: 'var(--color-primary)',
-                        marginRight: 6,
-                        fontSize: 10,
-                        transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)',
-                        transition: 'transform 0.2s',
-                      }}
-                    />
-                    <span className="todo-group-title">{group.name}</span>
-                    <span className="todo-group-count">{group.items.length}</span>
-                  </div>
-                  {!isCollapsed && (
-                    <div className="todo-group-items">
-                      {group.items.map(renderTodoItem)}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
           </div>
         ) : (
           filteredTodos.map(renderTodoItem)

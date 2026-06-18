@@ -492,69 +492,6 @@ body {
   background: var(--color-border-light);
 }
 
-/* ---------- Grouped Todo View ---------- */
-/* 分组视图把 todo 按"项目目录"折叠成文件夹；每个分组是一块带左侧色条与标题的卡片 */
-.todo-grouped-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-}
-
-.todo-group {
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
-  overflow: hidden;
-}
-
-.todo-group-header {
-  display: flex;
-  align-items: center;
-  padding: 10px 14px;
-  background: var(--color-bg);
-  border-bottom: 1px solid var(--color-border-light);
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-text);
-}
-
-.todo-group-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.todo-group-count {
-  /* 项目下 todo 数量的徽标；浅色背景 + 主色字，与主色调一致 */
-  background: var(--color-primary-bg);
-  color: var(--color-primary);
-  font-size: 12px;
-  font-weight: 600;
-  padding: 1px 8px;
-  border-radius: 10px;
-  margin-left: 8px;
-  flex-shrink: 0;
-}
-
-.todo-group-items {
-  padding: var(--space-sm) var(--space-md);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-
-/* 分组内的 todo 取消外边距，让卡片在文件夹里更紧凑 */
-.todo-group-items .todo-item {
-  margin-bottom: 0;
-}
-
-[data-theme="dark"] .todo-group-header {
-  background: var(--color-bg);
-}
-
 /* ---------- Detail Panel ---------- */
 .detail-panel {
   background: var(--color-bg-elevated);

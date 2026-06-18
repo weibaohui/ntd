@@ -23,6 +23,8 @@ interface TodoState {
   selectedTodoId: number | null;
   /** null = no tag selected (show all); number = filtered view */
   selectedTagId: number | null;
+  /** null = show all workspaces; string = filter by workspace path */
+  selectedWorkspace: string | null;
 }
 
 // ─── Actions ─────────────────────────────────────────────────
@@ -42,15 +44,27 @@ type TodoAction =
   | { type: 'DELETE_TODO'; payload: number }        // remove by id
   | { type: 'SELECT_TODO'; payload: number | null } // open detail / close detail
   | { type: 'SELECT_TAG'; payload: number | null }   // filter by tag / clear filter
+  | { type: 'SELECT_WORKSPACE'; payload: string | null } // filter by workspace / clear filter
   | { type: 'ADD_TAG'; payload: Tag }               // create tag
   | { type: 'DELETE_TAG'; payload: number }         // remove tag by id
   | { type: 'UPDATE_TODO_STATUS'; payload: { id: number; status: Todo['status'] } }; // quick status toggle
+
+// 从 localStorage 读取上次选中的 workspace，刷新后保持选择
+function getInitialWorkspace(): string | null {
+  try {
+    const saved = localStorage.getItem('selected_workspace');
+    return saved || null;
+  } catch {
+    return null;
+  }
+}
 
 const initialState: TodoState = {
   todos: [],
   tags: [],
   selectedTodoId: null,
   selectedTagId: null,
+  selectedWorkspace: getInitialWorkspace(),
 };
 
 // ─── Reducer ─────────────────────────────────────────────────
@@ -73,6 +87,17 @@ function reducer(state: TodoState, action: TodoAction): TodoState {
     // without prop-drilling.  null clears the selection.
     case 'SELECT_TODO': return { ...state, selectedTodoId: action.payload };
     case 'SELECT_TAG': return { ...state, selectedTagId: action.payload };
+    case 'SELECT_WORKSPACE': {
+      // 持久化到 localStorage，刷新后保持选择
+      try {
+        if (action.payload) {
+          localStorage.setItem('selected_workspace', action.payload);
+        } else {
+          localStorage.removeItem('selected_workspace');
+        }
+      } catch {}
+      return { ...state, selectedWorkspace: action.payload };
+    }
 
     // ADD_TAG appends the new tag (tags are displayed in insertion order).
     case 'ADD_TAG': return { ...state, tags: [...state.tags, action.payload] };
