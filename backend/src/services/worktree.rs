@@ -14,8 +14,8 @@
 //!   3. 这部分逻辑只在前置/收尾阶段跑一次，不在 hot path，开销可以接受。
 //! - 所有同步 git 调用统一走 `run_git_with_timeout` 包装，避免在 lock / I/O hang 时
 //!   阻塞调用方线程。超时后会主动 `kill` 子进程并返回 WorktreeError::GitTimeout。
-//! - worktree 目录名格式：`<todo_id>-<unix_secs>`。`unix_secs` 选秒而不是纳秒，
-//!   避免出现同名 worktree 时仅相差几纳秒无法区分。
+//! - worktree 目录名格式：`<todo_id>-<yymmddHHMMss>-<rand8>`。用 `yymmddHHMMss`（可读时间）
+//!   + 8 hex 字符（UUIDv4 高 32 bit）确保唯一性。
 //! - `cleanup_worktree` 在目录已不存在或 `git worktree remove` 失败时**不报错**：
 //!   用户手动删除或 git 元数据丢失时，让"清理"成为幂等 no-op 而非阻塞执行结果。
 
@@ -24,6 +24,7 @@ use std::process::Command;
 use std::time::Duration;
 use thiserror::Error;
 use tracing::{info, warn};
+use uuid::Uuid;
 use wait_timeout::ChildExt;
 
 /// 单次 git 命令的硬超时。30 秒覆盖「首次 init + 空 commit」最坏路径，
@@ -64,6 +65,13 @@ pub enum WorktreeError {
 /// "由 ntd 程序托管 worktree 生命周期" —— 用一个具名类型让调用方更明确
 /// 表达"这是 worktree 相关操作"，未来加 metrics/tracing 接入也好挂。
 pub struct WorktreeService;
+
+/// `dir_and_branch` helper 的返回值。私有 struct，只在 worktree 模块内部用，
+/// 故不暴露 `Clone` / `Debug` 等 trait 派生，保持 API 表面积最小（YAGNI）。
+struct WorktreeNames {
+    dir: String,
+    branch: String,
+}
 
 /// 给同步 git 命令加超时边界。
 ///
@@ -199,7 +207,7 @@ impl WorktreeService {
         Ok(())
     }
 
-    /// 基于 `<project>/.worktrees/<todo_id>-<unix_secs>/` 下创建 worktree。
+    /// 基于 `<project>/.worktrees/<todo_id>-<yymmddHHMMss>-<rand8>/` 下创建 worktree。
     ///
     /// 如果当前分支还不存在（仓库刚 init），则先建一个空 commit 避免
     /// `git worktree add` 报 "fatal: invalid reference"。
@@ -222,16 +230,37 @@ impl WorktreeService {
             self.ensure_empty_commit(project_path)?;
         }
 
-        let worktree_dir = self.worktree_path(project_path, todo_id);
+        // 生成唯一标识：`yymmddHHMMss` 时间戳 + 8 hex 随机数（UUIDv4 高 32 bit）。
+        // 目录名与分支名共享同一 identity 仅便于 `git worktree list` 人肉对账；
+        // cleanup 通过 .git 文件里的 gitdir 指针定位主仓，不需要解析 identity。
+        let identity = Self::mint_identity();
+        // 分支名提前到这里构造：exists() 命中时 warn 需要把孤儿分支路径一起打出，
+        // 便于操作者直接定位并手动清理（git worktree remove + git branch -D）。
+        // 走 helper 统一生成，避免「wt-」前缀在两处字符串字面量复制漂移。
+        let names = Self::dir_and_branch(todo_id, &identity);
+        let worktree_dir = PathBuf::from(project_path)
+            .join(WORKTREE_ROOT_DIR)
+            .join(&names.dir);
         if worktree_dir.exists() {
-            // 同名目录已存在（todo_id 复用 + 同一秒碰撞）——不再静默复用：
-            // 复用「脏」目录会让新执行继承上一次留下的未追踪文件 / 残留分支，
+            // 同名目录已存在（典型场景：上一轮 cleanup 未跑 / 同 todo_id 跨进程并发创建竞争）——
+            // 不再静默复用：复用「脏」目录会让新执行继承上一次留下的未追踪文件 / 残留分支，
             // 把问题推迟到执行末段更难排查。这里返回 Err 让上层 `resolve_worktree_context`
-            // 走 `WorktreeContext::default()` 回退到原始 workspace。
+            // 走 `WorktreeContext::default()` 回退到原始 workspace。Err 路径至少把孤儿路径
+            // 打到 warn，便于人工介入清理；不做主动 remove/branch -D 是因为同名 worktree
+            // 可能属于另一条正在执行的 execution，主动回收风险大（见 review followup）。
+            // 把要拼进 warn 消息的两条字符串提到外面避免 macro 内部借用；
+            // tracing macro 的 `%expr` Display 语法只对前导 field 生效，
+            // 这里的 `dir` / `branch` 是 message 段 `{dir}` `{branch}` 占位的参数，
+            // 直接传 &str 即可，不需要 owned。
+            let dir_str = worktree_dir.display().to_string();
             warn!(
                 worktree = %worktree_dir.display(),
+                orphan_branch = %names.branch,
                 todo_id = todo_id,
-                "worktree directory already exists, aborting to let caller fall back"
+                "worktree directory already exists, aborting to let caller fall back; \
+                 manual cleanup if stale: `git worktree remove --force {dir} && git branch -D {branch}`",
+                dir = dir_str.as_str(),
+                branch = names.branch.as_str(),
             );
             return Err(WorktreeError::GitCommandFailed {
                 cmd: "worktree add".into(),
@@ -255,22 +284,14 @@ impl WorktreeService {
         // 基于当前分支的 HEAD 创建 worktree，不再硬编码 "main"。
         // 当前分支名由 `current_branch` 探测得到，兼容 main/master/自定义分支。
         let base = self.current_branch(project_path)?;
-        // 分支名只允许 [a-zA-Z0-9_-]，时间戳里如果带 `:` / `.` 会触发
-        // "is not a valid branch name"，所以这里只取秒级 unix 时间。
-        let now = crate::models::utc_timestamp();
-        let sec_marker: i64 = now
-            .chars()
-            .take_while(|c| c.is_ascii_digit())
-            .collect::<String>()
-            .parse()
-            .unwrap_or(0);
-        let branch_name = format!("wt-{}-{}", todo_id, sec_marker);
+        // 分支名在前面 exists() 检查之前已经构造好（用于 orphan warn），这里直接复用。
+        // 分支名只允许 [a-zA-Z0-9_-]，yymmddHHMMss-随机数 格式完全符合规则。
         let mut add_cmd = Command::new("git");
         add_cmd
             .arg("worktree")
             .arg("add")
             .arg("-b")
-            .arg(&branch_name)
+            .arg(&names.branch)
             .arg(&worktree_dir)
             .arg(&base)
             .current_dir(project_path);
@@ -337,12 +358,35 @@ impl WorktreeService {
         }
     }
 
-    /// worktree 目录的绝对路径（不含创建动作），便于单测与日志展示。
-    pub fn worktree_path(&self, project_path: &str, todo_id: i64) -> PathBuf {
-        let now = crate::models::utc_timestamp();
-        PathBuf::from(project_path)
-            .join(WORKTREE_ROOT_DIR)
-            .join(format!("{}-{}", todo_id, now))
+    /// 生成 worktree 目录/分支名的唯一标识后缀。
+    ///
+    /// 格式：`<yymmddHHMMss>-<8 hex>`，例如 `260618043952-a3f12b4c`。
+    /// - `yymmddHHMMss`：UTC 时间的紧凑可读形式，不包含 `-` `:` `.` 等非法分支名字符。
+    /// - 8 hex 字符取 UUIDv4 高 32 bit（`time_low` 字段）：
+    ///   UUIDv4 在 RFC 4122 字节序下，`time_low`（bytes 0-3 = u128 高 32 bit）是整段
+    ///   32 bit 连续全随机的窗口——version 4 bit 在 byte 6 高 nibble（u128 bits 79..76），
+    ///   variant 2 bit 在 byte 8 高 2（u128 bits 63..62），都不在 `time_low` 里。
+    ///   因此 `as_u128() >> 96` 抽出的 32 bit 全部可用，熵 = 32 bit ≈ 4.3B，
+    ///   birthday 边界 ≈ 65K（同秒同 todo_id 并发）。
+    ///   选 `>> 96` 而不是 `>> 64` / `>> 80` 是因为后者会切到含 version/variant
+    ///   固定字段的区段，反而引入 bit 漂移。
+    ///   直接用 `as_u128() >> 96` 抽位，不依赖 `simple()` 的字符串格式。
+    /// 分支名 = `wt-{todo_id}-{identity}`，目录名 = `{todo_id}-{identity}`。
+    fn mint_identity() -> String {
+        let now = chrono::Utc::now();
+        let ts = now.format("%y%m%d%H%M%S").to_string();
+        let rand8 = format!("{:08x}", Uuid::new_v4().as_u128() >> 96);
+        format!("{}-{}", ts, rand8)
+    }
+
+    /// 由 `todo_id` + `identity` 拼出 worktree 目录名与分支名，集中维护避免漂移。
+    /// 单独抽出来不是为了性能，而是为了让「分支前缀 wt-」「目录无前缀」这种
+    /// 不对称规则只有一处事实来源——以后改命名规则只动这里。
+    fn dir_and_branch(todo_id: i64, identity: &str) -> WorktreeNames {
+        WorktreeNames {
+            dir: format!("{}-{}", todo_id, identity),
+            branch: format!("wt-{}-{}", todo_id, identity),
+        }
     }
 
     /// 探测仓库是否有任意 commit（HEAD 是否解析得到）。
@@ -491,13 +535,38 @@ mod tests {
             .expect("re-call should be noop");
     }
 
-    /// worktree_path 不依赖文件系统状态，只把 todo_id 拼进路径里。
+    /// 验证 mint_identity 输出格式稳定：12 位数字 + '-' + 8 位小写 hex。
+    /// 不再硬编码字面量——直接调 mint_identity 并解析结果，格式漂移会立刻 fail。
     #[test]
-    fn test_worktree_path_format() {
-        let svc = WorktreeService::new();
-        let p = svc.worktree_path("/tmp/proj", 42);
-        let s = p.to_string_lossy();
-        assert!(s.contains("/tmp/proj/.worktrees/42-"), "got: {}", s);
+    fn test_mint_identity_format() {
+        let id = WorktreeService::mint_identity();
+        assert_eq!(id.len(), 21, "identity 应该是 21 字符，实际: {}", id);
+        assert_eq!(id.chars().nth(12), Some('-'), "分隔符应在第 12 位，实际: {}", id);
+        let (ts, rand) = id.split_once('-').expect("包含 '-' 分隔符");
+        assert_eq!(ts.len(), 12, "时间戳 12 位数字，实际: {}", ts);
+        assert_eq!(rand.len(), 8, "随机段 8 位 hex，实际: {}", rand);
+        assert!(ts.chars().all(|c| c.is_ascii_digit()), "时间戳全数字，实际: {}", ts);
+        assert!(
+            rand.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')),
+            "随机段全小写 hex，实际: {}",
+            rand
+        );
+    }
+
+    /// 验证 mint_identity 在 1 秒内 500 次调用无碰撞。
+    /// 500 次采样在 32 bit 熵空间（UUIDv4 `time_low`）的生日碰撞概率 ≈ 3e-5，
+    /// 远低于 CI 偶发噪声，不会 flake；N 选 500 而非 1000 是 review followup
+    /// 决定的——再大就接近 1e-4 量级，长时间 CI 跑会出现「本地过 CI 偶发挂」。
+    /// 跨秒时 timestamp 也会变化，但仅依赖 rand 也已经够了——`time_low` 抽出的
+    /// 32 bit 本身就是连续全随机的窗口（version/variant 固定字段不在其中），
+    /// 不存在 partial entropy degradation。
+    #[test]
+    fn test_mint_identity_uniqueness_within_one_second() {
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..500 {
+            let id = WorktreeService::mint_identity();
+            assert!(seen.insert(id), "collision within 500 calls");
+        }
     }
 
     /// 完整 create + cleanup 流程，验证 worktree 真的被 git 管起来。
@@ -523,11 +592,36 @@ mod tests {
         assert!(status.success(), "initial empty commit should succeed");
 
         let svc = WorktreeService::new();
+        // 把 todo_id 抽成局部变量，后续断言直接引用它，避免 hardcode "1" 假阳：
+        // 将来如果有人把这里改成 2/3/...，旧的断言会立刻 fail 而不是默默通过。
+        let todo_id: i64 = 1;
         let wt = svc
-            .create_worktree(dir.path().to_str().unwrap(), 1)
+            .create_worktree(dir.path().to_str().unwrap(), todo_id)
             .expect("create worktree");
         let wt_path = PathBuf::from(&wt);
         assert!(wt_path.exists(), "worktree dir should exist after create");
+        // 验证 create_worktree 产出的路径格式：<project>/.worktrees/<todo_id>-<12digits>-<8hex>
+        // 走真实生产路径，覆盖 inline 在 create_worktree 里的 format 串；
+        // 替代旧版 test_worktree_path_format（用字面量、未调 mint_identity 的假阳测试）。
+        let wt_name = wt_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("worktree dir name utf8");
+        let parts: Vec<&str> = wt_name.split('-').collect();
+        assert_eq!(parts.len(), 3, "expected 3 '-'-separated parts, got: {}", wt_name);
+        assert_eq!(parts[0], todo_id.to_string(), "todo_id 前缀不匹配, got: {}", wt_name);
+        assert_eq!(parts[1].len(), 12, "timestamp 应 12 位, got: {}", parts[1]);
+        assert!(
+            parts[1].chars().all(|c| c.is_ascii_digit()),
+            "timestamp 全数字, got: {}",
+            parts[1]
+        );
+        assert_eq!(parts[2].len(), 8, "random 应 8 位, got: {}", parts[2]);
+        assert!(
+            parts[2].chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')),
+            "random 全小写 hex, got: {}",
+            parts[2]
+        );
         // .worktrees 子目录在主仓下应当存在
         let wt_root = dir.path().join(WORKTREE_ROOT_DIR);
         assert!(wt_root.exists(), ".worktrees root should be created");
