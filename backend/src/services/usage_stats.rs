@@ -944,3 +944,95 @@ impl UsageStatsService {
         }).collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! 回归测试：Zhanlu (Issue #673) jsonl 走 `parse_generic_jsonl_line` 必须正确解析
+    //! `usage` / `timestamp` / `model` / cache token 字段，与 Opencode 行为一致。
+    //!
+    //! 该测试针对 PR #677 review H2 —— 之前 zhanlu jsonl 复用 opencode 解析器但
+    //! 没有专门的回归测试，运行时才能发现字段名是否真的 byte-for-byte 一致。
+    use super::*;
+    use std::sync::Arc;
+
+    /// 构造一个 UsageStatsService 实例用于测试其 impl 方法。
+    /// `parse_generic_jsonl_line` 是 &self 方法但不触碰 self.db，所以传任意 Database 即可。
+    async fn make_service() -> UsageStatsService {
+        let db = Arc::new(
+            crate::db::Database::new(":memory:")
+                .await
+                .expect("内存 db 必须能创建"),
+        );
+        UsageStatsService::new(db)
+    }
+
+    /// Zhanlu (与 Opencode 一致) 风格 jsonl：顶层 `usage` + `timestamp` + `model`。
+    /// 走 parse_generic_jsonl_line 后应填入对应字段。
+    #[tokio::test]
+    async fn test_parse_zhanlu_jsonl_step_with_usage() {
+        let svc = make_service().await;
+        let line = r#"{
+            "type": "step_start",
+            "sessionID": "ses_zhanlu_001",
+            "timestamp": "2026-06-18T12:34:56Z",
+            "model": "zhanlu-test-model",
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_read_input_tokens": 20,
+                "cache_creation_input_tokens": 10
+            }
+        }"#;
+        let entry = svc
+            .parse_generic_jsonl_line(line, "ses_zhanlu_001", "/tmp/zhanlu")
+            .expect("zhanlu jsonl 应被 parse");
+
+        assert_eq!(entry.session_id, "ses_zhanlu_001");
+        assert_eq!(entry.project_path, "/tmp/zhanlu");
+        assert_eq!(entry.model.as_deref(), Some("zhanlu-test-model"));
+        assert_eq!(entry.input_tokens, 100);
+        assert_eq!(entry.output_tokens, 50);
+        assert_eq!(entry.cache_read_tokens, 20);
+        assert_eq!(entry.cache_creation_tokens, 10);
+        assert_eq!(entry.date, "2026-06-18");
+    }
+
+    /// Zhanlu 把 usage 嵌进 `data.usage`（与 Opencode 嵌套形态一致）也能被解析。
+    /// 这是 parse_generic_jsonl_line 的 fallback 分支，必须能正确回退。
+    #[tokio::test]
+    async fn test_parse_zhanlu_jsonl_nested_data_usage() {
+        let svc = make_service().await;
+        let line = r#"{
+            "type": "step_finish",
+            "data": {
+                "usage": {
+                    "input_tokens": 200,
+                    "output_tokens": 80,
+                    "cache_creation_input_tokens": 5
+                },
+                "model": "nested-zhanlu-model"
+            },
+            "created_at": "2026-06-18T13:00:00Z"
+        }"#;
+        let entry = svc
+            .parse_generic_jsonl_line(line, "ses_zhanlu_002", "/tmp/zhanlu")
+            .expect("嵌套 data.usage 应被 parse");
+
+        assert_eq!(entry.input_tokens, 200);
+        assert_eq!(entry.output_tokens, 80);
+        assert_eq!(entry.cache_creation_tokens, 5);
+        assert_eq!(entry.cache_read_tokens, 0); // 字段缺失 → 0
+        assert_eq!(entry.model.as_deref(), Some("nested-zhanlu-model"));
+        assert_eq!(entry.date, "2026-06-18");
+    }
+
+    /// 没有 usage 字段的行（如纯文本 / metadata）应返回 None，不污染 entries。
+    #[tokio::test]
+    async fn test_parse_zhanlu_jsonl_skips_non_usage_lines() {
+        let svc = make_service().await;
+        let line = r#"{"type": "text", "text": "hello"}"#;
+        assert!(svc
+            .parse_generic_jsonl_line(line, "ses_zhanlu_003", "/tmp/zhanlu")
+            .is_none());
+    }
+}

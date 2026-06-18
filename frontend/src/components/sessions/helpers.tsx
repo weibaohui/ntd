@@ -1,17 +1,18 @@
 import { Tag } from 'antd';
 import { formatTokens, formatRelativeTimeFromNow } from '@/utils/format';
+import { EXECUTOR_COLORS } from '@/types/execution';
 
 export const sourceConfig: Record<string, { label: string; color: string }> = {
-  'claudecode': { label: 'Claude Code', color: '#d97706' },
-  'codex': { label: 'Codex', color: '#10a37f' },
-  'hermes': { label: 'Hermes', color: '#8b5cf6' },
-  'kimi': { label: 'Kimi', color: '#3b82f6' },
-  'atomcode': { label: 'AtomCode', color: '#ef4444' },
-  'codebuddy': { label: 'CodeBuddy', color: '#f59e0b' },
-  'opencode': { label: 'OpenCode', color: '#22c55e' },
-  'mobilecoder': { label: 'MobileCoder', color: '#6366f1' },
-  // Issue #673: zhanlu 与 opencode 输出格式一致，使用相近色便于视觉区分
-  'zhanlu': { label: 'Zhanlu', color: '#0f766e' },
+  'claudecode': { label: 'Claude Code', color: EXECUTOR_COLORS.claudecode },
+  'codex': { label: 'Codex', color: EXECUTOR_COLORS.codex },
+  'hermes': { label: 'Hermes', color: EXECUTOR_COLORS.hermes },
+  'kimi': { label: 'Kimi', color: EXECUTOR_COLORS.kimi },
+  'atomcode': { label: 'AtomCode', color: EXECUTOR_COLORS.atomcode },
+  'codebuddy': { label: 'CodeBuddy', color: EXECUTOR_COLORS.codebuddy },
+  'opencode': { label: 'OpenCode', color: EXECUTOR_COLORS.opencode },
+  'mobilecoder': { label: 'MobileCoder', color: EXECUTOR_COLORS.mobilecoder },
+  // Issue #673: zhanlu 颜色从 EXECUTOR_COLORS 取，保持与 execution.tsx 单点 SoT。
+  'zhanlu': { label: 'Zhanlu', color: EXECUTOR_COLORS.zhanlu },
 };
 
 export function sourceTag(source: string) {

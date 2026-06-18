@@ -134,10 +134,9 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         aliases: &["mimocode"],
     },
     ExecutorDef {
-        // Zhanlu: Issue #673 新增的执行器，行为与 opencode 完全一致；
-        // 使用 ~/.zhanlu/bin/zl 二进制，session 目录是 ~/.local/share/zhanlu/storage。
-        // 默认路径写成 `zl` 而不是 `~/.zhanlu/bin/zl` 是为了走 PATH 查找，
-        // 与其他 executor 的 default_path 风格保持一致（统一从 PATH 解析）。
+        // Zhanlu: Issue #673 新增的执行器，行为与 opencode 完全一致。
+        // binary_name / default_path 都走 PATH 解析（统一为 `zl`），
+        // session 目录是 ~/.local/share/zhanlu/storage。
         name: "zhanlu",
         executor_type: ExecutorType::Zhanlu,
         binary_name: "zl",
