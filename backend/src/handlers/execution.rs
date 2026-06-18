@@ -476,9 +476,12 @@ pub async fn resume_execution_handler(
         .filter(|m| !m.is_empty())
         .map(|m| m.to_string());
 
-    let resume_session_id = record.session_id.or(record.task_id).ok_or_else(|| {
-        AppError::BadRequest("No session_id found for this execution record".to_string())
-    })?;
+    // 只能从 session_id resume。task_id 是执行启动时生成的随机 UUID，
+    // 不是 Claude Code 的真实 session ID，不能作为 resume 的凭据。
+    // session_id 由 executor 在解析 stdout 的 system 事件时异步回写 DB；
+    // 若执行异常退出或 extractor 未实现，DB 里的 session_id 仍为 NULL，
+    // 此时调用 resume 需等待或重试。
+    let resume_session_id = resolve_resume_session_id(&record)?;
 
     let result = start_todo_execution(RunTodoExecutionRequest {
         db: state.db.clone(),
@@ -670,4 +673,102 @@ pub async fn smart_create_handler(
         "todo_id": todo_id,
         "todo_title": todo.title,
     })))
+}
+
+/// 从执行记录中解析出可用的 resume session_id。
+///
+/// 严格化策略：只接受 DB 里的 `session_id`（由 executor 在解析 stdout 的
+/// system 事件时异步回写），不再回退到 `task_id`。
+/// `task_id` 是后端生成的随机 UUID，不能作为 Claude Code / Kimi 等
+/// 执行器的真实会话凭据，传给 `--resume` / `-S` 会导致 CLI 报错。
+///
+/// 该函数独立于 AppState / DB，方便单测覆盖核心拒绝逻辑。
+fn resolve_resume_session_id(
+    record: &crate::models::ExecutionRecord,
+) -> Result<String, AppError> {
+    record.session_id.clone().ok_or_else(|| {
+        AppError::BadRequest("No session_id available for resume".to_string())
+    })
+}
+
+#[cfg(test)]
+mod resume_session_id_tests {
+    use super::*;
+    use crate::models::{ExecutionRecord, ExecutionStatus};
+
+    /// 构造一个最小可用的测试 ExecutionRecord，固定关键字段。
+    fn make_record(session_id: Option<&str>, task_id: Option<&str>) -> ExecutionRecord {
+        ExecutionRecord {
+            id: 1,
+            todo_id: 1,
+            status: ExecutionStatus::Success,
+            command: String::new(),
+            stdout: String::new(),
+            stderr: String::new(),
+            result: None,
+            started_at: String::new(),
+            finished_at: None,
+            usage: None,
+            executor: None,
+            model: None,
+            trigger_type: "manual".to_string(),
+            pid: None,
+            task_id: task_id.map(|s| s.to_string()),
+            session_id: session_id.map(|s| s.to_string()),
+            todo_progress: None,
+            execution_stats: None,
+            resume_message: None,
+            source_todo_id: None,
+            source_todo_title: None,
+            source_hook_id: None,
+            rating: None,
+            source_execution_record_id: None,
+            last_review_status: None,
+            last_reviewed_at: None,
+            worktree_path: None,
+        }
+    }
+
+    #[test]
+    fn test_resolve_resume_session_id_none_returns_err() {
+        // session_id 为 None：必须返回 400，绝不能放行
+        let record = make_record(None, Some("task-uuid-123"));
+        let err = resolve_resume_session_id(&record).unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+        if let AppError::BadRequest(msg) = err {
+            assert!(msg.contains("No session_id available for resume"));
+        }
+    }
+
+    #[test]
+    fn test_resolve_resume_session_id_both_none_returns_err() {
+        // session_id 与 task_id 都为 None：仍然返回 400
+        let record = make_record(None, None);
+        let err = resolve_resume_session_id(&record).unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_resolve_resume_session_id_with_sid_returns_sid() {
+        // session_id 有值：直接返回 session_id
+        let record = make_record(Some("real-claude-sid-abc"), Some("task-uuid-123"));
+        let sid = resolve_resume_session_id(&record).unwrap();
+        assert_eq!(sid, "real-claude-sid-abc");
+    }
+
+    #[test]
+    fn test_resolve_resume_session_id_ignores_task_id() {
+        // 即便 task_id 有值、session_id 为 None，也必须拒绝（不能 fallback）
+        let record = make_record(None, Some("task-uuid-123"));
+        assert!(resolve_resume_session_id(&record).is_err());
+    }
+
+    #[test]
+    fn test_resolve_resume_session_id_sid_takes_precedence() {
+        // 两者都有时返回 session_id，绝不会把 task_id 当作 sid
+        let record = make_record(Some("real-sid"), Some("random-task-uuid"));
+        let sid = resolve_resume_session_id(&record).unwrap();
+        assert_eq!(sid, "real-sid");
+        assert_ne!(sid, "random-task-uuid");
+    }
 }

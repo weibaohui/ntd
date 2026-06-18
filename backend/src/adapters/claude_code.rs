@@ -1,3 +1,7 @@
+use std::sync::Arc;
+
+use parking_lot::Mutex;
+
 use super::helpers;
 use super::{BaseExecutor, CodeExecutor, ExecutorType, ParsedLogEntry};
 use super::claude_protocol::{ClaudeMessage, ClaudeContentBlock};
@@ -10,21 +14,33 @@ use crate::models::utc_timestamp;
 /// `usage` 字段虽然未被本 executor 直接使用（claude_code 的 usage 走
 /// `super::get_usage_from_logs` 从 result 事件提取），但 BaseExecutor 仍然保留这个
 /// `Arc<Mutex<Option<ExecutionUsage>>>` 字段，方便与其他 executor 行为保持一致。
-// `BaseExecutor` 已经 `#[derive(Clone)]`，组合字段无需手写 Clone impl。
+/// `session_id` 单独维护：来自 Claude Code system 事件，与 model/usage 生命周期不同，
+/// 避免污染 BaseExecutor 共享字段的语义。
+// `BaseExecutor` 已经 `#[derive(Clone)]`，组合字段无需手写 Clone impl；
+// `Arc<Mutex<...>>` 也派生 Clone（共享内部状态），与原手写 impl 语义等价。
 #[derive(Clone)]
 pub struct ClaudeCodeExecutor {
     base: BaseExecutor,
+    /// 从 system 事件中提取的 session id，供 extract_session_id 读取
+    session_id: Arc<Mutex<Option<String>>>,
 }
 
 impl ClaudeCodeExecutor {
     pub fn new(path: String) -> Self {
-        Self { base: BaseExecutor::new(path) }
+        Self {
+            base: BaseExecutor::new(path),
+            session_id: Arc::new(Mutex::new(None)),
+        }
     }
 
-    /// 处理 system 事件：把 model 写入 base.state，content 显示 session init 摘要。
+    /// 处理 system 事件：把 model 写入 base.state，session_id 写入独立字段，
+    /// content 显示 session init 摘要。
     fn handle_system(&self, model: Option<&String>, session_id: Option<&String>, subtype: Option<&String>) -> Option<ParsedLogEntry> {
         if let Some(m) = model {
             *self.base.model.lock() = Some(m.clone());
+        }
+        if let Some(sid) = session_id {
+            *self.session_id.lock() = Some(sid.clone());
         }
         Some(helpers::entry(
             "system",
@@ -198,6 +214,16 @@ impl CodeExecutor for ClaudeCodeExecutor {
         true
     }
 
+    /// 从 stdout 行提取 session_id。
+    ///
+    /// Claude Code 的 system 事件在对话开始时就会带 `session_id` 字段；
+    /// `handle_system` 解析时已写入 `self.session_id`，本方法直接读取并返回。
+    /// 一旦写过一次就不再变（system 事件在同一次执行里只触发一次），
+    /// 与 executor_service 中"只回写一次 DB"的语义一致。
+    fn extract_session_id(&self, _line: &str) -> Option<String> {
+        self.session_id.lock().clone()
+    }
+
     fn parse_output_line(&self, line: &str) -> Option<ParsedLogEntry> {
         if line.is_empty() {
             return None;
@@ -346,5 +372,55 @@ mod tests {
     fn test_get_model_before_system() {
         let executor = ClaudeCodeExecutor::new("claude".to_string());
         assert!(executor.get_model().is_none());
+    }
+
+    #[test]
+    fn test_extract_session_id_before_system() {
+        // system 事件未到达时返回 None
+        let executor = ClaudeCodeExecutor::new("claude".to_string());
+        let line = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}"#;
+        assert_eq!(executor.extract_session_id(line), None);
+    }
+
+    #[test]
+    fn test_extract_session_id_from_system() {
+        // system 事件携带 session_id，handle_system 写入后 extract_session_id 能拿到
+        let executor = ClaudeCodeExecutor::new("claude".to_string());
+        let line = r#"{"type":"system","session_id":"sess_abc123","model":"claude-3-5-sonnet"}"#;
+        // 走 parse_output_line 触发 handle_system 写入
+        let _ = executor.parse_output_line(line);
+        assert_eq!(
+            executor.extract_session_id(""),
+            Some("sess_abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_session_id_system_without_sid() {
+        // system 事件没有 session_id 字段时保持 None
+        let executor = ClaudeCodeExecutor::new("claude".to_string());
+        let line = r#"{"type":"system","model":"claude-3-5-sonnet"}"#;
+        let _ = executor.parse_output_line(line);
+        assert_eq!(executor.extract_session_id(""), None);
+    }
+
+    #[test]
+    fn test_extract_session_id_empty_line() {
+        let executor = ClaudeCodeExecutor::new("claude".to_string());
+        assert_eq!(executor.extract_session_id(""), None);
+    }
+
+    #[test]
+    fn test_extract_session_id_is_stable_across_lines() {
+        // 第一次解析到 system 写入 sid 后，后续任意行（哪怕是 assistant）继续返回同一 sid
+        let executor = ClaudeCodeExecutor::new("claude".to_string());
+        let sys = r#"{"type":"system","session_id":"sess_xyz","model":"m"}"#;
+        let _ = executor.parse_output_line(sys);
+        let assistant = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}"#;
+        let _ = executor.parse_output_line(assistant);
+        assert_eq!(
+            executor.extract_session_id(assistant),
+            Some("sess_xyz".to_string())
+        );
     }
 }
