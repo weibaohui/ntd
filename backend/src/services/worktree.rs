@@ -222,7 +222,12 @@ impl WorktreeService {
             self.ensure_empty_commit(project_path)?;
         }
 
-        let worktree_dir = self.worktree_path(project_path, todo_id);
+        // 用微秒级时间戳确保唯一性：同一毫秒内的多次调用也得到不同值。
+        // 目录名与分支名保持一致，均为 `{todo_id}-{timestamp}` 格式。
+        let timestamp = Self::unique_timestamp();
+        let branch_name = format!("wt-{}-{}", todo_id, timestamp);
+        let worktree_dir = self.worktree_path(project_path, todo_id, timestamp);
+
         if worktree_dir.exists() {
             // 同名目录已存在（todo_id 复用 + 同一秒碰撞）——不再静默复用：
             // 复用「脏」目录会让新执行继承上一次留下的未追踪文件 / 残留分支，
@@ -255,16 +260,6 @@ impl WorktreeService {
         // 基于当前分支的 HEAD 创建 worktree，不再硬编码 "main"。
         // 当前分支名由 `current_branch` 探测得到，兼容 main/master/自定义分支。
         let base = self.current_branch(project_path)?;
-        // 分支名只允许 [a-zA-Z0-9_-]，时间戳里如果带 `:` / `.` 会触发
-        // "is not a valid branch name"，所以这里只取秒级 unix 时间。
-        let now = crate::models::utc_timestamp();
-        let sec_marker: i64 = now
-            .chars()
-            .take_while(|c| c.is_ascii_digit())
-            .collect::<String>()
-            .parse()
-            .unwrap_or(0);
-        let branch_name = format!("wt-{}-{}", todo_id, sec_marker);
         let mut add_cmd = Command::new("git");
         add_cmd
             .arg("worktree")
@@ -337,12 +332,24 @@ impl WorktreeService {
         }
     }
 
+    /// 获取微秒级唯一时间戳，用作 worktree 目录名和分支名。
+    ///
+    /// 选微秒而不是纳诺秒是因为：1）git 分支名不允许 `:` 和 `.`，纯数字最安全；
+    /// 2）微秒足够区分同一毫秒内的多次调用，且数值不会过长。
+    /// Unix epoch 以来的微秒数在可预见的未来都不会回环。
+    fn unique_timestamp() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before UNIX_EPOCH")
+            .as_micros() as i64
+    }
+
     /// worktree 目录的绝对路径（不含创建动作），便于单测与日志展示。
-    pub fn worktree_path(&self, project_path: &str, todo_id: i64) -> PathBuf {
-        let now = crate::models::utc_timestamp();
+    pub fn worktree_path(&self, project_path: &str, todo_id: i64, timestamp: i64) -> PathBuf {
+        // 目录名与分支名保持一致，均为 `{todo_id}-{timestamp}`
         PathBuf::from(project_path)
             .join(WORKTREE_ROOT_DIR)
-            .join(format!("{}-{}", todo_id, now))
+            .join(format!("{}-{}", todo_id, timestamp))
     }
 
     /// 探测仓库是否有任意 commit（HEAD 是否解析得到）。
@@ -495,9 +502,10 @@ mod tests {
     #[test]
     fn test_worktree_path_format() {
         let svc = WorktreeService::new();
-        let p = svc.worktree_path("/tmp/proj", 42);
+        let ts = 1_234_567_890_000_i64; // 微秒时间戳
+        let p = svc.worktree_path("/tmp/proj", 42, ts);
         let s = p.to_string_lossy();
-        assert!(s.contains("/tmp/proj/.worktrees/42-"), "got: {}", s);
+        assert_eq!(s, "/tmp/proj/.worktrees/42-1234567890000");
     }
 
     /// 完整 create + cleanup 流程，验证 worktree 真的被 git 管起来。
