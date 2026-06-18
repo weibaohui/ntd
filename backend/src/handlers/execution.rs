@@ -476,8 +476,11 @@ pub async fn resume_execution_handler(
         .filter(|m| !m.is_empty())
         .map(|m| m.to_string());
 
-    let resume_session_id = record.session_id.or(record.task_id).ok_or_else(|| {
-        AppError::BadRequest("No session_id found for this execution record".to_string())
+    // 只能从 session_id resume。task_id 是执行启动时的随机 UUID，
+    // 不是 Claude Code 的真实 session ID，不能作为 resume 的凭据。
+    // 如果 session_id 还未回写（首次执行刚结束），用户应等待或发起新的执行。
+    let resume_session_id = record.session_id.ok_or_else(|| {
+        AppError::BadRequest("Session not yet established. Please wait for the execution to finalize or start a new execution.".to_string())
     })?;
 
     let result = start_todo_execution(RunTodoExecutionRequest {
