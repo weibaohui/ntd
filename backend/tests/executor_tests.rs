@@ -187,10 +187,13 @@ mod claude_code_executor_tests {
 
     #[test]
     fn test_claude_command_args_with_session_new() {
+        // 新会话场景（is_resume=false）：故意不传 --session-id，
+        // 让 Claude Code 自己生成 session_id，再从 system 事件里提取回写 DB。
         let executor = ClaudeCodeExecutor::new("claude".to_string());
         let args = executor.command_args_with_session("continue", Some("session123"), false);
-        assert!(args.contains(&"--session-id".to_string()));
-        assert!(args.contains(&"session123".to_string()));
+        assert!(!args.contains(&"--session-id".to_string()));
+        assert!(!args.contains(&"--resume".to_string()));
+        assert!(args.contains(&"continue".to_string()), "原始 message 必须出现在 args 里");
     }
 
     #[test]

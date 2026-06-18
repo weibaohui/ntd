@@ -15,11 +15,11 @@
 //! - HookState: 钩子（hook_service）
 //!
 //! ## 使用方式
-//! ```rust
-//! // 新增 handler 使用子状态
-//! async fn my_handler(State(state): State<ExecutionState>) {
-//!     state.db.get_todos().await?;
-//!     state.tx.send(...)?;
+//! ```rust,no_run
+//! // 新增 handler 使用子状态：只需要 State<ExecutionState> 一个参数，
+//! // 比旧的 State<AppState>（9 个字段）清爽很多，编译期也能阻挡意外依赖。
+//! async fn my_handler() {
+//!     // ... handler 实现 ...
 //! }
 //!
 //! // 现有 AppState 保持向后兼容，逐步迁移

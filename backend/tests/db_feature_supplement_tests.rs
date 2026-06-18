@@ -336,7 +336,7 @@ async fn test_project_directory_create_and_get_by_id() {
     // 正常路径：创建后立即按 id 读出，path/name 时间戳均存在。
     let db = setup_db().await;
     let id = db
-        .create_project_directory("/tmp/proj-a", Some("项目A"))
+        .create_project_directory("/tmp/proj-a", Some("项目A"), false, false)
         .await
         .unwrap();
     let dir = db.get_project_directory_by_id(id).await.unwrap().unwrap();
@@ -350,10 +350,10 @@ async fn test_project_directory_create_and_get_by_id() {
 async fn test_project_directory_get_by_path() {
     // 同一 path 只能查到自己这一条；不同 path 互不影响。
     let db = setup_db().await;
-    db.create_project_directory("/tmp/proj-b", Some("B"))
+    db.create_project_directory("/tmp/proj-b", Some("B"), false, false)
         .await
         .unwrap();
-    db.create_project_directory("/tmp/proj-c", Some("C"))
+    db.create_project_directory("/tmp/proj-c", Some("C"), false, false)
         .await
         .unwrap();
     let b = db
@@ -373,11 +373,11 @@ async fn test_project_directory_get_by_path() {
 async fn test_project_directory_unique_constraint() {
     // path 上有 UNIQUE 约束：重复插入必须报错（外层 get_or_create 依赖该错误来重试）。
     let db = setup_db().await;
-    db.create_project_directory("/tmp/dup", Some("first"))
+    db.create_project_directory("/tmp/dup", Some("first"), false, false)
         .await
         .unwrap();
     let err = db
-        .create_project_directory("/tmp/dup", Some("second"))
+        .create_project_directory("/tmp/dup", Some("second"), false, false)
         .await
         .expect_err("重复 path 应触发唯一约束错误");
     let s = format!("{:?}", err);
@@ -441,12 +441,12 @@ async fn test_project_directory_update_name() {
     // 仅更新 name，并刷新 updated_at；path 保持不变。
     let db = setup_db().await;
     let id = db
-        .create_project_directory("/tmp/upd", Some("old"))
+        .create_project_directory("/tmp/upd", Some("old"), false, false)
         .await
         .unwrap();
     let before = db.get_project_directory_by_id(id).await.unwrap().unwrap();
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    db.update_project_directory(id, Some("new"))
+    db.update_project_directory(id, Some("new"), None, None)
         .await
         .unwrap();
     let after = db.get_project_directory_by_id(id).await.unwrap().unwrap();
@@ -460,7 +460,7 @@ async fn test_project_directory_delete_removes_row() {
     // 删除后通过 by-id 与 by-path 都不应再查到。
     let db = setup_db().await;
     let id = db
-        .create_project_directory("/tmp/del", Some("x"))
+        .create_project_directory("/tmp/del", Some("x"), false, false)
         .await
         .unwrap();
     db.delete_project_directory(id).await.unwrap();
@@ -476,9 +476,15 @@ async fn test_project_directory_delete_removes_row() {
 async fn test_project_directory_list_orders_by_path() {
     // 列表按 path 升序，方便前端做字典序展示。
     let db = setup_db().await;
-    db.create_project_directory("/tmp/zzz", None).await.unwrap();
-    db.create_project_directory("/tmp/aaa", None).await.unwrap();
-    db.create_project_directory("/tmp/mmm", None).await.unwrap();
+    db.create_project_directory("/tmp/zzz", None, false, false)
+        .await
+        .unwrap();
+    db.create_project_directory("/tmp/aaa", None, false, false)
+        .await
+        .unwrap();
+    db.create_project_directory("/tmp/mmm", None, false, false)
+        .await
+        .unwrap();
     let list = db.get_project_directories().await.unwrap();
     let paths: Vec<&str> = list.iter().map(|d| d.path.as_str()).collect();
     assert_eq!(paths, vec!["/tmp/aaa", "/tmp/mmm", "/tmp/zzz"]);
