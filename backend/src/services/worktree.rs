@@ -347,7 +347,10 @@ impl WorktreeService {
     ///
     /// 格式：`<yymmddHHMMss>-<8 hex>`，例如 `260618043952-a3f12b4c`。
     /// - `yymmddHHMMss`：UTC 时间的紧凑可读形式，不包含 `-` `:` `.` 等非法分支名字符。
-    /// - 8 hex 字符取 UUIDv4 高 32 bit（16^8 = 4G 空间），使用 OS CSPRNG，无模偏置；
+    /// - 8 hex 字符取 UUIDv4 高 32 bit：UUIDv4 共 122 bit 随机（去掉 version 4 bit + variant 2 bit），
+    ///   `>> 96` 取出的 32 bit 中前 6 bit 是固定字段，实际熵 ≈ 26 bit（≈ 2^26 = 67M）。
+    ///   与测试 doc 已坦诚的 partial entropy degradation 局限对齐——ntd 同 todo_id 在
+    ///   同一秒并发远超 8K 量级才会撞 birthday boundary，PR 自述 YAGNI 不做。
     ///   直接用 `as_u128() >> 96` 抽位，不依赖 `simple()` 的字符串格式。
     /// 分支名 = `wt-{todo_id}-{identity}`，目录名 = `{todo_id}-{identity}`。
     fn mint_identity() -> String {
