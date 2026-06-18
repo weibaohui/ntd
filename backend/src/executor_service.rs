@@ -1344,7 +1344,7 @@ struct SelectedExecutor {
     executable_path: String,
     executor_str: String,
     todo_workspace: Option<String>,
-    session_id_for_executor: String,
+    session_id_for_executor: Option<String>,
 }
 
 async fn select_executor_and_build_command(
@@ -1381,16 +1381,13 @@ async fn select_executor_and_build_command(
     };
 
     let executable_path = executor.executable_path().to_string();
-    // 首次执行时需要有效的 UUID 作为 session-id，不能用 "fallback" 这种占位符。
-    // resume_session_id 为 None 时生成新 UUID，确保 Claude Code CLI 不会报 "Invalid session ID" 错误。
-    let session_id_for_executor = request
-        .resume_session_id
-        .clone()
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    // 首次执行时不需要传 session_id，让执行器自己生成（如 Claude Code）或不使用（如 Pi）。
+    // resume 时使用 DB 中存储的 session_id。
+    let session_id_for_executor = request.resume_session_id.clone();
     let is_resume = request.resume_session_id.is_some();
     let mut command_args = executor.command_args_with_session(
         message,
-        Some(&session_id_for_executor),
+        session_id_for_executor.as_deref(),
         is_resume,
     );
     apply_worktree_flag(&mut command_args, executor.executor_type(), todo_worktree_enabled);
@@ -2933,20 +2930,13 @@ mod tests {
     #[test]
     fn test_session_id_handling_when_resume_is_none() {
         // 模拟首次执行场景：request.resume_session_id = None。
-        // 由于无法轻易构造完整的 RunTodoExecutionRequest（需要 db / task_manager / tx / 等依赖），
-        // 这里直接测试生成逻辑：None.unwrap_or_else(|| Uuid::new_v4().to_string()) 的行为。
+        // 首次执行时不需要传 session_id，让执行器自己生成（如 Claude Code）或不使用（如 Pi）。
         let resume_session_id: Option<String> = None;
-        let session_id_for_executor = resume_session_id
-            .clone()
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let session_id_for_executor = resume_session_id.clone();
         let is_resume = resume_session_id.is_some();
 
-        // 断言生成的 session_id 是有效的 UUID v4 字符串（36 字符，包含连字符）。
-        // 格式如: "550e8400-e29b-41d4-a716-446655440000"
-        assert_eq!(session_id_for_executor.len(), 36);
-        assert!(session_id_for_executor.contains('-'));
-        // 验证可以被解析为合法 UUID（核心目的：不是 "fallback" 占位符）。
-        assert!(Uuid::parse_str(&session_id_for_executor).is_ok());
+        // 断言首次执行时 session_id_for_executor 为 None。
+        assert!(session_id_for_executor.is_none());
         // 验证 is_resume 标志在首次执行时为 false。
         assert!(!is_resume);
     }
@@ -2956,19 +2946,16 @@ mod tests {
     ///
     /// 这是恢复会话分支的回归测试：确保用户显式传入的 session-id 不被覆盖，
     /// 且 executor 能正确识别这是一个 resume 请求（而非 new session）。
-    /// 实现位置：`select_executor_and_build_command` 函数中的 `.clone().unwrap_or_else(...)`。
     #[test]
     fn test_session_id_handling_when_resume_is_some() {
         // 模拟恢复会话场景：request.resume_session_id = Some("existing-uuid")。
         let existing_uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
         let resume_session_id: Option<String> = Some(existing_uuid.to_string());
-        let session_id_for_executor = resume_session_id
-            .clone()
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let session_id_for_executor = resume_session_id.clone();
         let is_resume = resume_session_id.is_some();
 
-        // 断言传入的 session_id 被原封不动地保留（未被 unwrap_or_else 的 fallback 覆盖）。
-        assert_eq!(session_id_for_executor, existing_uuid);
+        // 断言传入的 session_id 被原封不动地保留。
+        assert_eq!(session_id_for_executor, Some(existing_uuid.to_string()));
         // 验证 is_resume 标志在恢复会话时为 true，让 executor 知道这是 resume 而非 new。
         assert!(is_resume);
     }

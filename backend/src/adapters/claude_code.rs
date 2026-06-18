@@ -1,5 +1,4 @@
 use std::sync::Arc;
-
 use parking_lot::Mutex;
 
 use super::helpers;
@@ -14,14 +13,13 @@ use crate::models::utc_timestamp;
 /// `usage` 字段虽然未被本 executor 直接使用（claude_code 的 usage 走
 /// `super::get_usage_from_logs` 从 result 事件提取），但 BaseExecutor 仍然保留这个
 /// `Arc<Mutex<Option<ExecutionUsage>>>` 字段，方便与其他 executor 行为保持一致。
-/// `session_id` 单独维护：来自 Claude Code system 事件，与 model/usage 生命周期不同，
-/// 避免污染 BaseExecutor 共享字段的语义。
-// `BaseExecutor` 已经 `#[derive(Clone)]`，组合字段无需手写 Clone impl；
-// `Arc<Mutex<...>>` 也派生 Clone（共享内部状态），与原手写 impl 语义等价。
+///
+/// `session_id` 用于保存从 Claude Code system 事件中提取的真实 session_id，
+/// 首次执行时由 Claude Code 自己生成，resume 时从 DB 读取。
+// `BaseExecutor` 已经 `#[derive(Clone)]`，组合字段无需手写 Clone impl。
 #[derive(Clone)]
 pub struct ClaudeCodeExecutor {
     base: BaseExecutor,
-    /// 从 system 事件中提取的 session id，供 extract_session_id 读取
     session_id: Arc<Mutex<Option<String>>>,
 }
 
@@ -33,12 +31,12 @@ impl ClaudeCodeExecutor {
         }
     }
 
-    /// 处理 system 事件：把 model 写入 base.state，session_id 写入独立字段，
-    /// content 显示 session init 摘要。
+    /// 处理 system 事件：把 model 写入 base.state，session_id 写入 executor 状态，content 显示 session init 摘要。
     fn handle_system(&self, model: Option<&String>, session_id: Option<&String>, subtype: Option<&String>) -> Option<ParsedLogEntry> {
         if let Some(m) = model {
             *self.base.model.lock() = Some(m.clone());
         }
+        // 保存 session_id，用于后续回写 DB 和 resume 时传递给 Claude Code CLI。
         if let Some(sid) = session_id {
             *self.session_id.lock() = Some(sid.clone());
         }
@@ -197,13 +195,14 @@ impl CodeExecutor for ClaudeCodeExecutor {
             "--output-format".to_string(),
             "stream-json".to_string(),
         ];
-        if let Some(sid) = session_id {
-            if is_resume {
+        // 首次执行时不传 --session-id，让 Claude Code 自己生成 session_id，
+        // 然后从 system 事件中提取真实 session_id 回写 DB。
+        // resume 时传 --resume <session_id>，恢复之前的会话。
+        if is_resume {
+            if let Some(sid) = session_id {
                 args.push("--resume".to_string());
-            } else {
-                args.push("--session-id".to_string());
+                args.push(sid.to_string());
             }
-            args.push(sid.to_string());
         }
         args.push("--verbose".to_string());
         args.push(message.to_string());
@@ -214,14 +213,22 @@ impl CodeExecutor for ClaudeCodeExecutor {
         true
     }
 
-    /// 从 stdout 行提取 session_id。
-    ///
-    /// Claude Code 的 system 事件在对话开始时就会带 `session_id` 字段；
-    /// `handle_system` 解析时已写入 `self.session_id`，本方法直接读取并返回。
-    /// 一旦写过一次就不再变（system 事件在同一次执行里只触发一次），
-    /// 与 executor_service 中"只回写一次 DB"的语义一致。
-    fn extract_session_id(&self, _line: &str) -> Option<String> {
-        self.session_id.lock().clone()
+    /// 从 stdout 中提取 session_id。
+    /// Claude Code 的 session_id 在 system 事件的 session_id 字段中输出。
+    /// 提取成功后保存到 executor 状态，供后续回写 DB 使用。
+    fn extract_session_id(&self, line: &str) -> Option<String> {
+        if line.is_empty() {
+            return None;
+        }
+        // 解析 JSON，提取 system 事件中的 session_id
+        if let Ok(msg) = serde_json::from_str::<ClaudeMessage>(line) {
+            if let ClaudeMessage::System { session_id: Some(sid), .. } = msg {
+                // 保存到 executor 状态
+                *self.session_id.lock() = Some(sid.clone());
+                return Some(sid);
+            }
+        }
+        None
     }
 
     fn parse_output_line(&self, line: &str) -> Option<ParsedLogEntry> {
