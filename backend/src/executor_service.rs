@@ -1381,11 +1381,12 @@ async fn select_executor_and_build_command(
     };
 
     let executable_path = executor.executable_path().to_string();
-    let task_id_placeholder = "fallback".to_string();
+    // 首次执行时需要有效的 UUID 作为 session-id，不能用 "fallback" 这种占位符。
+    // resume_session_id 为 None 时生成新 UUID，确保 Claude Code CLI 不会报 "Invalid session ID" 错误。
     let session_id_for_executor = request
         .resume_session_id
         .clone()
-        .unwrap_or(task_id_placeholder);
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let is_resume = request.resume_session_id.is_some();
     let mut command_args = executor.command_args_with_session(
         message,
@@ -1430,6 +1431,12 @@ async fn create_run_execution_record(
         selected.executable_path,
         selected.command_args.join(" ")
     );
+    // DB 记录的 session_id 必须与 request.resume_session_id 保持一致：
+    //   - 首次执行（None）：写 None，真实 sid 由 stdout reader 从 Claude Code 的 system 事件解析后回写。
+    //   - resume（Some(sid)）：写原 sid。
+    // 不能用 selected.session_id_for_executor——首次执行时它是后台合成的 UUID，
+    // 直接写进 DB 会让 feishu_listener::decide_resume_session 拿合成 sid 触发 resume，
+    // 把"Invalid session ID"错误从首次执行搬到第二次。
     let record_id = match request
         .db
         .create_execution_record(NewExecutionRecord {
@@ -1438,7 +1445,7 @@ async fn create_run_execution_record(
             executor: &selected.executor_str,
             trigger_type: &request.trigger_type,
             task_id: &task_state.task_id,
-            session_id: Some(&selected.session_id_for_executor),
+            session_id: request.resume_session_id.as_deref(),
             resume_message: request.resume_message.as_deref(),
             source_todo_id: request.source_todo_id,
             source_todo_title: request.source_todo_title.as_deref(),
@@ -2914,5 +2921,55 @@ mod tests {
         assert!(ctx.effective_workspace.is_none());
         assert!(ctx.record_path.is_none());
         assert!(!ctx.auto_cleanup);
+    }
+
+    // ====== Regression tests for session-id handling (issue related to commit e4b3953) ======
+
+    /// 验证当 `resume_session_id` 为 `None` 时，生成有效的 UUID 字符串（而非 "fallback" 占位符），
+    /// 且 `is_resume` 标志为 `false`。
+    ///
+    /// 这是首次执行分支的回归测试：确保 Claude Code CLI 不会因 session-id 格式无效而拒绝执行。
+    /// 实现位置：`select_executor_and_build_command` 函数中的 `unwrap_or_else(|| Uuid::new_v4().to_string())`。
+    #[test]
+    fn test_session_id_handling_when_resume_is_none() {
+        // 模拟首次执行场景：request.resume_session_id = None。
+        // 由于无法轻易构造完整的 RunTodoExecutionRequest（需要 db / task_manager / tx / 等依赖），
+        // 这里直接测试生成逻辑：None.unwrap_or_else(|| Uuid::new_v4().to_string()) 的行为。
+        let resume_session_id: Option<String> = None;
+        let session_id_for_executor = resume_session_id
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let is_resume = resume_session_id.is_some();
+
+        // 断言生成的 session_id 是有效的 UUID v4 字符串（36 字符，包含连字符）。
+        // 格式如: "550e8400-e29b-41d4-a716-446655440000"
+        assert_eq!(session_id_for_executor.len(), 36);
+        assert!(session_id_for_executor.contains('-'));
+        // 验证可以被解析为合法 UUID（核心目的：不是 "fallback" 占位符）。
+        assert!(Uuid::parse_str(&session_id_for_executor).is_ok());
+        // 验证 is_resume 标志在首次执行时为 false。
+        assert!(!is_resume);
+    }
+
+    /// 验证当 `resume_session_id` 为 `Some(value)` 时，提供的值被原样保留在 `session_id_for_executor` 中，
+    /// 且 `is_resume` 标志为 `true`。
+    ///
+    /// 这是恢复会话分支的回归测试：确保用户显式传入的 session-id 不被覆盖，
+    /// 且 executor 能正确识别这是一个 resume 请求（而非 new session）。
+    /// 实现位置：`select_executor_and_build_command` 函数中的 `.clone().unwrap_or_else(...)`。
+    #[test]
+    fn test_session_id_handling_when_resume_is_some() {
+        // 模拟恢复会话场景：request.resume_session_id = Some("existing-uuid")。
+        let existing_uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+        let resume_session_id: Option<String> = Some(existing_uuid.to_string());
+        let session_id_for_executor = resume_session_id
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let is_resume = resume_session_id.is_some();
+
+        // 断言传入的 session_id 被原封不动地保留（未被 unwrap_or_else 的 fallback 覆盖）。
+        assert_eq!(session_id_for_executor, existing_uuid);
+        // 验证 is_resume 标志在恢复会话时为 true，让 executor 知道这是 resume 而非 new。
+        assert!(is_resume);
     }
 }
