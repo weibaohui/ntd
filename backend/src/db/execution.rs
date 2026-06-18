@@ -44,6 +44,29 @@ pub struct ExecutionRecordQuery<'a> {
     pub status: Option<&'a str>,
 }
 
+/// `get_execution_summary` 使用的固定 SQL 字面量。
+const EXECUTION_SUMMARY_SQL: &str = "SELECT \
+            COUNT(*) as total, \
+            COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success_count, \
+            COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed_count, \
+            COALESCE(SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END), 0) as running_count, \
+            COALESCE(SUM(COALESCE(json_extract(usage, '$.input_tokens'), 0)), 0) as input_tokens, \
+            COALESCE(SUM(COALESCE(json_extract(usage, '$.output_tokens'), 0)), 0) as output_tokens, \
+            COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_read_input_tokens'), 0)), 0) as cache_read, \
+            COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_creation_input_tokens'), 0)), 0) as cache_creation, \
+            COALESCE(SUM(COALESCE(json_extract(usage, '$.total_cost_usd'), 0.0)), 0.0) as total_cost \
+            FROM execution_records WHERE todo_id = $1";
+
+/// Skills 总体统计的扁平中间结构（`fetch_skills_overall` 的返回类型）。
+#[derive(Default)]
+struct SkillsOverallRow {
+    total: i64,
+    success: i64,
+    failed: i64,
+    avg_duration_ms: f64,
+    today: i64,
+}
+
 impl From<execution_records::Model> for ExecutionRecord {
     fn from(m: execution_records::Model) -> Self {
         let usage = m
@@ -206,19 +229,49 @@ impl Database {
         req: UpdateExecutionRecordRequest<'_>,
     ) -> Result<bool, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
-        let usage_json = req.usage.map(|u| {
+        let usage_json = Self::serialize_usage_json(req.usage);
+        let model_val = req.model.map(|s| s.to_string());
+        let backend = self.conn.get_database_backend();
+        let (sql, values) = Self::build_update_statement(&req, now.clone(), usage_json, model_val);
+
+        let res = self
+            .conn
+            .execute(Statement::from_sql_and_values(backend, sql, values))
+            .await?;
+        let updated = res.rows_affected() > 0;
+
+        // Only insert logs if the status update succeeded (prevent duplicate logs on concurrent writes)
+        //
+        // 注：截至当前（fix #653 之后）已无内部 caller 触发此分支 —— 所有生产 caller（终态 cancel /
+        // timeout / 正常完成 / 启动失败 共 4 处）均传 `remaining_logs: "[]"`，日志全部交给
+        // `LogFlusher` 在 `finalize()` 阶段 drain 入库。本分支保留的原因：
+        // 1. `UpdateExecutionRecord` 是公共 API surface，外部集成方可能仍依赖此行为；
+        // 2. `backend/src/db/mod.rs::test_update_execution_record_does_not_duplicate_logs_issue_653`
+        //    故意传全量 JSON 来回归 issue #653（5/10/5 断言）。
+        // 后续若 release window 有空档，建议把此分支抽成 `append_logs_only` 单独方法并删除，
+        // 让 `update_execution_record` 只负责 status / stats / usage 字段。
+        Self::maybe_append_remaining_logs(self, req.id, updated, req.remaining_logs).await?;
+        Ok(updated)
+    }
+
+    /// 将 `ExecutionUsage` 序列化为 JSON 字符串；序列化失败时降级为空串。
+    fn serialize_usage_json(usage: Option<&crate::models::ExecutionUsage>) -> Option<String> {
+        usage.map(|u| {
             serde_json::to_string(u).unwrap_or_else(|e| {
                 tracing::error!("Failed to serialize usage: {}", e);
                 String::new()
             })
-        });
-        let model_val = req.model.map(|s| s.to_string());
+        })
+    }
 
-        // Use raw SQL with WHERE status='running' to prevent race condition:
-        // both the stop handler and spawned task's cancellation branch may try to
-        // update the same record concurrently -- only the first write succeeds.
-        let backend = self.conn.get_database_backend();
-        let (sql, values): (&str, Vec<sea_orm::Value>) = if let Some((source_record_id, review_status)) = req.review_meta {
+    /// 根据是否携带 `review_meta` 构造两条不同的 UPDATE 语句。
+    fn build_update_statement<'a>(
+        req: &UpdateExecutionRecordRequest<'a>,
+        now: String,
+        usage_json: Option<String>,
+        model_val: Option<String>,
+    ) -> (&'static str, Vec<sea_orm::Value>) {
+        if let Some((source_record_id, review_status)) = req.review_meta {
             (
                 "UPDATE execution_records SET \
                     status = $1, \
@@ -260,33 +313,20 @@ impl Database {
                     req.id.into(),
                 ],
             )
-        };
-
-        let res = self
-            .conn
-            .execute(Statement::from_sql_and_values(
-                backend,
-                sql,
-                values,
-            ))
-            .await?;
-        let updated = res.rows_affected() > 0;
-
-        // Only insert logs if the status update succeeded (prevent duplicate logs on concurrent writes)
-        //
-        // 注：截至当前（fix #653 之后）已无内部 caller 触发此分支 —— 所有生产 caller（终态 cancel /
-        // timeout / 正常完成 / 启动失败 共 4 处）均传 `remaining_logs: "[]"`，日志全部交给
-        // `LogFlusher` 在 `finalize()` 阶段 drain 入库。本分支保留的原因：
-        // 1. `UpdateExecutionRecord` 是公共 API surface，外部集成方可能仍依赖此行为；
-        // 2. `backend/src/db/mod.rs::test_update_execution_record_does_not_duplicate_logs_issue_653`
-        //    故意传全量 JSON 来回归 issue #653（5/10/5 断言）。
-        // 后续若 release window 有空档，建议把此分支抽成 `append_logs_only` 单独方法并删除，
-        // 让 `update_execution_record` 只负责 status / stats / usage 字段。
-        if updated && !req.remaining_logs.is_empty() && req.remaining_logs != "[]" {
-            self.insert_execution_logs(req.id, req.remaining_logs).await?;
         }
+    }
 
-        Ok(updated)
+    /// 当 status 更新成功且 remaining_logs 携带真实日志时，写入 execution_logs。
+    async fn maybe_append_remaining_logs(
+        &self,
+        record_id: i64,
+        updated: bool,
+        remaining_logs: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        if updated && !remaining_logs.is_empty() && remaining_logs != "[]" {
+            self.insert_execution_logs(record_id, remaining_logs).await?;
+        }
+        Ok(())
     }
 
     /// 更新执行记录的 pid
@@ -567,134 +607,149 @@ impl Database {
         &self,
         hours: Option<u32>,
     ) -> Result<crate::models::DashboardStats, sea_orm::DbErr> {
-        use std::collections::HashMap;
+        let ctx = self.build_dashboard_query_context(hours);
+        let raw = self.fetch_dashboard_raw_stats(&ctx).await?;
+        Ok(self.build_dashboard_stats(raw, &ctx.time_filter).await)
+    }
 
+    /// 构建 Dashboard 查询上下文（包含过滤条件、DB backend 等共享参数）。
+    fn build_dashboard_query_context(&self, hours: Option<u32>) -> crate::db::dashboard::DashboardQueryContext<'_> {
         let backend = self.conn.get_database_backend();
-        let hours = hours.unwrap_or(720); // default 30 days = 720 hours (matches frontend)
+        // default 30 days = 720 hours (matches frontend)
+        let hours = hours.unwrap_or(720);
         let time_filter = format!("datetime('now', '-{} hours')", hours);
-
         // 热力图使用固定时间范围：当年1月1日到12月31日，不受过滤条件影响
         let heatmap_filter = format!("datetime(strftime('%Y', 'now') || '-01-01 00:00:00')");
-        let heatmap_limit = 366; // 闰年最多366天
-
-        // 创建查询上下文，避免在每个函数中重复传递连接和过滤条件
-        let ctx = crate::db::dashboard::DashboardQueryContext {
+        crate::db::dashboard::DashboardQueryContext {
             conn: &self.conn,
             backend,
             time_filter,
             heatmap_filter,
-        };
+        }
+    }
 
-        // 并行执行独立的查询，提高性能。
-        // 关于 &self.conn 的并发安全性：
-        // self.conn 是 sea_orm::DatabaseConnection（PR #477 后底层是 sqlx Pool，
-        // max_connections=10），传递 &self.conn 给每个 fetch_* 函数，
-        // fetch_* 内部调用 query_all() 时会从池中 acquire() 不同连接。
-        // 多个 future 在 tokio::try_join! 中交错执行时，pool 调度确保
-        // 同一连接不会被两个查询同时占用，因此这里真正能做到并行查询。
-        // 不用担心"单连接顺序 await"——那是裸 &ConnectionTrait 直拿单一连接的情况。
-        let (
-            (total_todos, pending_todos, running_todos, completed_todos, failed_todos, scheduled_todos),
-            (total_executions, success_executions, failed_executions, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_creation_tokens, total_cost, total_duration, duration_count),
-            executor_todo_counts,
-            tags_result,
-        ) = tokio::try_join!(
-            crate::db::dashboard::fetch_todo_stats(&ctx),
-            crate::db::dashboard::fetch_execution_overall(&ctx),
-            crate::db::dashboard::fetch_executor_todo_counts(&ctx),
+    /// 第一阶段：并行拉取 Dashboard 所需的全部原始统计数据。
+    ///
+    /// 关于 &self.conn 的并发安全性：
+    /// self.conn 是 sea_orm::DatabaseConnection（PR #477 后底层是 sqlx Pool，
+    /// max_connections=10），传递 &self.conn 给每个 fetch_* 函数，
+    /// fetch_* 内部调用 query_all() 时会从池中 acquire() 不同连接。
+    /// 多个 future 在 tokio::try_join! 中交错执行时，pool 调度确保
+    /// 同一连接不会被两个查询同时占用，因此这里真正能做到并行查询。
+    async fn fetch_dashboard_raw_stats(
+        &self,
+        ctx: &crate::db::dashboard::DashboardQueryContext<'_>,
+    ) -> Result<crate::db::dashboard::RawDashboardStats, sea_orm::DbErr> {
+        let base = self.fetch_dashboard_base_stats(ctx).await?;
+        let dist = self
+            .fetch_dashboard_distribution_stats(ctx, &base.executor_todo_counts, &base.tags)
+            .await?;
+        Ok(crate::db::dashboard::assemble_raw_dashboard_stats(base, dist))
+    }
+
+    /// 第一轮并行查询：todo 状态、execution 总体、executor todo 计数、tags 列表。
+    async fn fetch_dashboard_base_stats(
+        &self,
+        ctx: &crate::db::dashboard::DashboardQueryContext<'_>,
+    ) -> Result<crate::db::dashboard::BaseStats, sea_orm::DbErr> {
+        let (todo_stats, execution_overall, executor_todo_counts, tags) = tokio::try_join!(
+            crate::db::dashboard::fetch_todo_stats(ctx),
+            crate::db::dashboard::fetch_execution_overall(ctx),
+            crate::db::dashboard::fetch_executor_todo_counts(ctx),
             self.get_tags(),
         )?;
+        Ok(crate::db::dashboard::BaseStats {
+            todo_stats,
+            execution_overall,
+            executor_todo_counts,
+            tags,
+        })
+    }
 
-        let total_tags = tags_result.len() as i64;
-
-        // 计算平均时长
-        let avg_duration_ms = if duration_count > 0 {
-            total_duration / duration_count
-        } else {
-            0
-        };
-
-        // 并行执行独立的分布查询（tag_todo_counts 一并纳入避免串行等待）
+    /// 第二轮并行查询：11 个独立分布查询 + tag_distribution 派生查询。
+    ///
+    /// 依赖第一轮的 `executor_todo_counts` 和 `tags`：前者用于
+    /// `fetch_executor_distribution`，后者用于 `fetch_tag_distribution`。
+    async fn fetch_dashboard_distribution_stats(
+        &self,
+        ctx: &crate::db::dashboard::DashboardQueryContext<'_>,
+        executor_todo_counts: &std::collections::HashMap<String, i64>,
+        tags: &[crate::models::Tag],
+    ) -> Result<crate::db::dashboard::DistributionStats, sea_orm::DbErr> {
+        let heatmap_limit = 366; // 闰年最多366天
+        // 第一步：11 个独立 GROUP BY 查询并行执行
         let (
             executor_distribution,
             model_distribution,
             trigger_type_distribution,
             executor_duration_stats,
             model_cache_stats,
-            (daily_executions, daily_token_stats),
+            daily_stats,
             recent_executions,
-            (today_executions, executions_change),
+            execution_change,
             success_rate_change,
             cost_change,
             tag_todo_counts,
         ) = tokio::try_join!(
-            crate::db::dashboard::fetch_executor_distribution(&ctx, &executor_todo_counts),
-            crate::db::dashboard::fetch_model_distribution(&ctx),
-            crate::db::dashboard::fetch_trigger_distribution(&ctx),
-            crate::db::dashboard::fetch_executor_durations(&ctx),
-            crate::db::dashboard::fetch_model_cache_stats(&ctx),
-            crate::db::dashboard::fetch_daily_stats(&ctx, heatmap_limit),
-            crate::db::dashboard::fetch_recent_executions(&ctx),
-            crate::db::dashboard::fetch_execution_change(&ctx),
-            crate::db::dashboard::fetch_success_rate_change(&ctx),
-            crate::db::dashboard::fetch_cost_change(&ctx),
-            // tag_todo_counts 是独立的 GROUP BY 查询，不依赖其他结果，
-            // 并入 try_join 能使 11 个查询并行执行，减少总体等待时间
-            async {
-                let sql = "SELECT tag_id, COUNT(*) as todo_count FROM todo_tags GROUP BY tag_id";
-                let rows = self.conn
-                    .query_all(Statement::from_string(backend, sql.to_string()))
-                    .await?;
-                let map: HashMap<i64, i64> = rows.into_iter()
-                    .filter_map(|row| {
-                        let tag_id: i64 = row.try_get_by("tag_id").ok()?;
-                        let count: i64 = row.try_get_by("todo_count").ok()?;
-                        Some((tag_id, count))
-                    })
-                    .collect();
-                Ok(map)
-            },
+            crate::db::dashboard::fetch_executor_distribution(ctx, executor_todo_counts),
+            crate::db::dashboard::fetch_model_distribution(ctx),
+            crate::db::dashboard::fetch_trigger_distribution(ctx),
+            crate::db::dashboard::fetch_executor_durations(ctx),
+            crate::db::dashboard::fetch_model_cache_stats(ctx),
+            crate::db::dashboard::fetch_daily_stats(ctx, heatmap_limit),
+            crate::db::dashboard::fetch_recent_executions(ctx),
+            crate::db::dashboard::fetch_execution_change(ctx),
+            crate::db::dashboard::fetch_success_rate_change(ctx),
+            crate::db::dashboard::fetch_cost_change(ctx),
+            crate::db::dashboard::fetch_tag_todo_counts(ctx),
         )?;
 
-        // 标签分布计算（tags_result 已从第一轮 try_join 获取，
-        // tag_todo_counts 已从第二轮 try_join 获取）
+        // 第二步：派生 tag_distribution（依赖 tags + tag_todo_counts）
         let tag_distribution = crate::db::dashboard::fetch_tag_distribution(
-            &ctx, &tags_result, &tag_todo_counts,
+            ctx, tags, &tag_todo_counts,
         ).await?;
+        Ok(crate::db::dashboard::DistributionStats {
+            executor_distribution,
+            model_distribution,
+            trigger_type_distribution,
+            executor_duration_stats,
+            model_cache_stats,
+            daily_stats,
+            recent_executions,
+            execution_change,
+            success_rate_change,
+            cost_change,
+            tag_distribution,
+        })
+    }
 
-        // 计算连续活跃天数
-        let active_days = daily_executions.len() as i64;
-        let streak_days = crate::db::dashboard::calculate_streak_days(&daily_executions);
+    /// 第二阶段：基于原始统计数据计算派生字段、组装 `DashboardStats`。
+    async fn build_dashboard_stats(
+        &self,
+        raw: crate::db::dashboard::RawDashboardStats,
+        time_filter: &str,
+    ) -> crate::models::DashboardStats {
+        let derived = crate::db::dashboard::compute_dashboard_derived(&raw);
+        let (skills_stats, backup_stats) =
+            self.load_skills_and_backup_stats(time_filter).await;
+        crate::db::dashboard::assemble_dashboard_response(raw, derived, skills_stats, backup_stats)
+    }
 
-        // 计算峰值每日执行数
-        let peak_daily_executions = daily_executions.iter()
-            .map(|d| d.success + d.failed)
-            .max()
-            .unwrap_or(0);
-
-        // 找出最佳模型
-        let (top_model, top_model_tokens) = if !model_distribution.is_empty() {
-            let top = model_distribution.iter()
-                .max_by_key(|m| m.total_input_tokens + m.total_output_tokens)
-                .unwrap();
-            (Some(top.model.clone()), Some(top.total_input_tokens + top.total_output_tokens))
-        } else {
-            (None, None)
-        };
-
-        // 构建排行榜
-        let leaderboard = crate::db::dashboard::build_leaderboard(&model_distribution);
-
-        // Skills 统计
-        let skills_stats = match self.get_skills_stats(&ctx.time_filter).await {
+    /// 软失败加载 Skills/Backup 统计。
+    async fn load_skills_and_backup_stats(
+        &self,
+        time_filter: &str,
+    ) -> (
+        Option<crate::models::SkillsStats>,
+        Option<crate::models::BackupStats>,
+    ) {
+        let skills_stats = match self.get_skills_stats(time_filter).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!("Failed to load skills stats: {}", e);
                 None
             }
         };
-
-        // Backup 统计
         let backup_stats = match self.get_backup_stats().await {
             Ok(v) => v,
             Err(e) => {
@@ -702,48 +757,7 @@ impl Database {
                 None
             }
         };
-
-        Ok(crate::models::DashboardStats {
-            total_todos,
-            pending_todos,
-            running_todos,
-            completed_todos,
-            failed_todos,
-            total_tags,
-            scheduled_todos,
-            total_executions,
-            success_executions,
-            failed_executions,
-            total_input_tokens,
-            total_output_tokens,
-            total_cache_read_tokens,
-            total_cache_creation_tokens,
-            total_cost_usd: total_cost,
-            avg_duration_ms,
-            executor_distribution,
-            tag_distribution,
-            model_distribution,
-            daily_executions,
-            daily_token_stats,
-            recent_executions,
-            trigger_type_distribution,
-            executor_duration_stats,
-            model_cache_stats,
-            // Enhanced metrics
-            today_executions,
-            executions_change,
-            success_rate_change,
-            cost_change,
-            active_days,
-            streak_days,
-            peak_daily_executions,
-            top_model,
-            top_model_tokens,
-            leaderboard,
-            // Skills & Backup metrics
-            skills_stats,
-            backup_stats,
-        })
+        (skills_stats, backup_stats)
     }
 
     pub async fn get_execution_summary(
@@ -751,66 +765,59 @@ impl Database {
         todo_id: i64,
     ) -> Result<ExecutionSummary, sea_orm::DbErr> {
         let backend = self.conn.get_database_backend();
-        let sql = "SELECT \
-                COUNT(*) as total, \
-                COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success_count, \
-                COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed_count, \
-                COALESCE(SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END), 0) as running_count, \
-                COALESCE(SUM(COALESCE(json_extract(usage, '$.input_tokens'), 0)), 0) as input_tokens, \
-                COALESCE(SUM(COALESCE(json_extract(usage, '$.output_tokens'), 0)), 0) as output_tokens, \
-                COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_read_input_tokens'), 0)), 0) as cache_read, \
-                COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_creation_input_tokens'), 0)), 0) as cache_creation, \
-                COALESCE(SUM(COALESCE(json_extract(usage, '$.total_cost_usd'), 0.0)), 0.0) as total_cost \
-                FROM execution_records WHERE todo_id = $1";
-
-        if let Some(row) = self
+        let row = self
             .conn
             .query_one(Statement::from_sql_and_values(
                 backend,
-                sql,
+                EXECUTION_SUMMARY_SQL,
                 [todo_id.into()],
             ))
-            .await?
-        {
-            let total_executions: i64 = row.try_get_by("total").unwrap_or(0);
-            let success_count: i64 = row.try_get_by("success_count").unwrap_or(0);
-            let failed_count: i64 = row.try_get_by("failed_count").unwrap_or(0);
-            let running_count: i64 = row.try_get_by("running_count").unwrap_or(0);
-            let input_tokens: i64 = row.try_get_by("input_tokens").unwrap_or(0);
-            let output_tokens: i64 = row.try_get_by("output_tokens").unwrap_or(0);
-            let cache_read: i64 = row.try_get_by("cache_read").unwrap_or(0);
-            let cache_creation: i64 = row.try_get_by("cache_creation").unwrap_or(0);
-            let total_cost: f64 = row.try_get_by("total_cost").unwrap_or(0.0);
+            .await?;
+        Ok(match row {
+            Some(r) => Self::parse_summary_row(todo_id, &r),
+            None => Self::empty_summary(todo_id),
+        })
+    }
 
-            Ok(ExecutionSummary {
-                todo_id,
-                total_executions,
-                success_count,
-                failed_count,
-                running_count,
-                total_input_tokens: input_tokens as u64,
-                total_output_tokens: output_tokens as u64,
-                total_cache_read_tokens: cache_read as u64,
-                total_cache_creation_tokens: cache_creation as u64,
-                total_cost_usd: if total_cost > 0.0 {
-                    Some(total_cost)
-                } else {
-                    None
-                },
-            })
-        } else {
-            Ok(ExecutionSummary {
-                todo_id,
-                total_executions: 0,
-                success_count: 0,
-                failed_count: 0,
-                running_count: 0,
-                total_input_tokens: 0,
-                total_output_tokens: 0,
-                total_cache_read_tokens: 0,
-                total_cache_creation_tokens: 0,
-                total_cost_usd: None,
-            })
+    /// 从单行查询结果解析为 `ExecutionSummary`。
+    fn parse_summary_row(todo_id: i64, row: &sea_orm::QueryResult) -> ExecutionSummary {
+        let total_executions: i64 = row.try_get_by("total").unwrap_or(0);
+        let success_count: i64 = row.try_get_by("success_count").unwrap_or(0);
+        let failed_count: i64 = row.try_get_by("failed_count").unwrap_or(0);
+        let running_count: i64 = row.try_get_by("running_count").unwrap_or(0);
+        let input_tokens: i64 = row.try_get_by("input_tokens").unwrap_or(0);
+        let output_tokens: i64 = row.try_get_by("output_tokens").unwrap_or(0);
+        let cache_read: i64 = row.try_get_by("cache_read").unwrap_or(0);
+        let cache_creation: i64 = row.try_get_by("cache_creation").unwrap_or(0);
+        let total_cost: f64 = row.try_get_by("total_cost").unwrap_or(0.0);
+
+        ExecutionSummary {
+            todo_id,
+            total_executions,
+            success_count,
+            failed_count,
+            running_count,
+            total_input_tokens: input_tokens as u64,
+            total_output_tokens: output_tokens as u64,
+            total_cache_read_tokens: cache_read as u64,
+            total_cache_creation_tokens: cache_creation as u64,
+            total_cost_usd: if total_cost > 0.0 { Some(total_cost) } else { None },
+        }
+    }
+
+    /// 查询无结果时返回的全零 `ExecutionSummary`。
+    fn empty_summary(todo_id: i64) -> ExecutionSummary {
+        ExecutionSummary {
+            todo_id,
+            total_executions: 0,
+            success_count: 0,
+            failed_count: 0,
+            running_count: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_cache_read_tokens: 0,
+            total_cache_creation_tokens: 0,
+            total_cost_usd: None,
         }
     }
 
@@ -887,8 +894,34 @@ impl Database {
     ) -> Result<Option<crate::models::SkillsStats>, sea_orm::DbErr> {
         let backend = self.conn.get_database_backend();
 
-        // Skills overall stats
-        let skills_overall_sql = format!(
+        // 第一阶段：并行拉取 4 类原始数据
+        let (overall, top_skills, executor_skills_count, daily_invocations) = tokio::try_join!(
+            Self::fetch_skills_overall(backend, &self.conn, time_filter),
+            Self::fetch_top_skills(backend, &self.conn, time_filter),
+            Self::fetch_executor_skills_count(backend, &self.conn, time_filter),
+            Self::fetch_daily_skill_invocations(backend, &self.conn, time_filter),
+        )?;
+
+        // 若无任何调用记录，整体短路返回 None（与重构前语义一致）
+        if overall.total == 0 {
+            return Ok(None);
+        }
+
+        Ok(Some(Self::build_skills_response(
+            overall,
+            top_skills,
+            executor_skills_count,
+            daily_invocations,
+        )))
+    }
+
+    /// 查询 skills 总体统计：(总数, 成功, 失败, 平均时长, 今日数)。
+    async fn fetch_skills_overall(
+        backend: sea_orm::DbBackend,
+        conn: &sea_orm::DatabaseConnection,
+        time_filter: &str,
+    ) -> Result<SkillsOverallRow, sea_orm::DbErr> {
+        let sql = format!(
             "SELECT \
             COUNT(*) as total, \
             COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success, \
@@ -899,27 +932,26 @@ impl Database {
             WHERE invoked_at >= {}",
             time_filter
         );
+        let row = conn.query_one(Statement::from_string(backend, sql)).await?;
+        Ok(match row {
+            Some(r) => SkillsOverallRow {
+                total: r.try_get_by::<i64, _>("total").unwrap_or(0),
+                success: r.try_get_by::<i64, _>("success").unwrap_or(0),
+                failed: r.try_get_by::<i64, _>("failed").unwrap_or(0),
+                avg_duration_ms: r.try_get_by::<f64, _>("avg_duration").unwrap_or(0.0),
+                today: r.try_get_by::<i64, _>("today").unwrap_or(0),
+            },
+            None => SkillsOverallRow::default(),
+        })
+    }
 
-        let (total_invocations, success_invocations, failed_invocations, avg_duration_ms, invocations_today) =
-            if let Some(row) = self.conn.query_one(Statement::from_string(backend, skills_overall_sql)).await? {
-                (
-                    row.try_get_by::<i64, _>("total").unwrap_or(0),
-                    row.try_get_by::<i64, _>("success").unwrap_or(0),
-                    row.try_get_by::<i64, _>("failed").unwrap_or(0),
-                    row.try_get_by::<f64, _>("avg_duration").unwrap_or(0.0),
-                    row.try_get_by::<i64, _>("today").unwrap_or(0),
-                )
-            } else {
-                (0, 0, 0, 0.0, 0)
-            };
-
-        // If no invocations, return None
-        if total_invocations == 0 {
-            return Ok(None);
-        }
-
-        // Top skills by invocation count
-        let top_skills_sql = format!(
+    /// 查询调用次数 Top 10 skills。
+    async fn fetch_top_skills(
+        backend: sea_orm::DbBackend,
+        conn: &sea_orm::DatabaseConnection,
+        time_filter: &str,
+    ) -> Result<Vec<crate::models::SkillTop>, sea_orm::DbErr> {
+        let sql = format!(
             "SELECT skill_name, COUNT(*) as count, \
             CAST(COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS FLOAT) / COUNT(*) * 100 as success_rate \
             FROM skill_invocations \
@@ -928,48 +960,51 @@ impl Database {
             ORDER BY count DESC LIMIT 10",
             time_filter
         );
-
-        let top_skills: Vec<crate::models::SkillTop> = self.conn
-            .query_all(Statement::from_string(backend, top_skills_sql))
+        Ok(conn
+            .query_all(Statement::from_string(backend, sql))
             .await?
             .into_iter()
             .filter_map(|row| {
                 let skill_name: String = row.try_get_by("skill_name").ok()?;
                 let count: i64 = row.try_get_by("count").ok()?;
                 let success_rate: f64 = row.try_get_by("success_rate").ok()?;
-                Some(crate::models::SkillTop {
-                    skill_name,
-                    count,
-                    success_rate,
-                })
+                Some(crate::models::SkillTop { skill_name, count, success_rate })
             })
-            .collect();
+            .collect())
+    }
 
-        // Executor skills count (distinct skill names per executor)
-        let executor_skills_sql = format!(
+    /// 查询每个执行器调用过的不同 skill 数量。
+    async fn fetch_executor_skills_count(
+        backend: sea_orm::DbBackend,
+        conn: &sea_orm::DatabaseConnection,
+        time_filter: &str,
+    ) -> Result<Vec<crate::models::ExecutorSkillCount>, sea_orm::DbErr> {
+        let sql = format!(
             "SELECT executor, COUNT(DISTINCT skill_name) as skills_count \
             FROM skill_invocations \
             WHERE invoked_at >= {} \
             GROUP BY executor",
             time_filter
         );
-
-        let executor_skills_count: Vec<crate::models::ExecutorSkillCount> = self.conn
-            .query_all(Statement::from_string(backend, executor_skills_sql))
+        Ok(conn
+            .query_all(Statement::from_string(backend, sql))
             .await?
             .into_iter()
             .filter_map(|row| {
                 let executor: String = row.try_get_by("executor").ok()?;
                 let skills_count: i64 = row.try_get_by("skills_count").ok()?;
-                Some(crate::models::ExecutorSkillCount {
-                    executor,
-                    skills_count,
-                })
+                Some(crate::models::ExecutorSkillCount { executor, skills_count })
             })
-            .collect();
+            .collect())
+    }
 
-        // Daily skill invocations (last 30 days)
-        let daily_skills_sql = format!(
+    /// 查询最近 30 天的每日 skill 调用次数。
+    async fn fetch_daily_skill_invocations(
+        backend: sea_orm::DbBackend,
+        conn: &sea_orm::DatabaseConnection,
+        time_filter: &str,
+    ) -> Result<Vec<crate::models::DailySkillInvocation>, sea_orm::DbErr> {
+        let sql = format!(
             "SELECT SUBSTR(COALESCE(invoked_at, ''), 1, 10) as day, \
             COUNT(*) as count, \
             COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success \
@@ -979,33 +1014,36 @@ impl Database {
             ORDER BY day DESC LIMIT 30",
             time_filter
         );
-
-        let daily_invocations: Vec<crate::models::DailySkillInvocation> = self.conn
-            .query_all(Statement::from_string(backend, daily_skills_sql))
+        Ok(conn
+            .query_all(Statement::from_string(backend, sql))
             .await?
             .into_iter()
             .filter_map(|row| {
                 let date: String = row.try_get_by("day").ok()?;
                 let count: i64 = row.try_get_by("count").ok()?;
                 let success: i64 = row.try_get_by("success").ok()?;
-                Some(crate::models::DailySkillInvocation {
-                    date,
-                    count,
-                    success,
-                })
+                Some(crate::models::DailySkillInvocation { date, count, success })
             })
-            .collect();
+            .collect())
+    }
 
-        Ok(Some(crate::models::SkillsStats {
-            total_invocations,
-            success_invocations,
-            failed_invocations,
-            avg_duration_ms,
-            invocations_today,
+    /// 组装 `SkillsStats` 响应结构体。
+    fn build_skills_response(
+        overall: SkillsOverallRow,
+        top_skills: Vec<crate::models::SkillTop>,
+        executor_skills_count: Vec<crate::models::ExecutorSkillCount>,
+        daily_invocations: Vec<crate::models::DailySkillInvocation>,
+    ) -> crate::models::SkillsStats {
+        crate::models::SkillsStats {
+            total_invocations: overall.total,
+            success_invocations: overall.success,
+            failed_invocations: overall.failed,
+            avg_duration_ms: overall.avg_duration_ms,
+            invocations_today: overall.today,
             top_skills,
             executor_skills_count,
             daily_invocations,
-        }))
+        }
     }
 
     /// Get backup statistics by scanning filesystem
@@ -1018,56 +1056,18 @@ impl Database {
             return Ok(None);
         }
 
-        // Scan backup subdirectories
+        // 三个分类目录相互独立，逐个扫描。
+        // 这里保留同步调用：每个 scan 是单次目录 read_dir，文件量级在百以内，
+        // 引入 spawn_blocking 反而增加跨线程调度成本，违背 YAGNI。
         let database_stats = Self::scan_backup_category(&backup_dir.join("db"));
         let todo_stats = Self::scan_backup_category(&backup_dir.join("todo"));
         let skills_stats = Self::scan_backup_category(&backup_dir.join("skills"));
+        let recent_backups = Self::collect_recent_backups(&backup_dir);
 
-        let total_file_count = database_stats.file_count + todo_stats.file_count + skills_stats.file_count;
-        let total_size = database_stats.total_size + todo_stats.total_size + skills_stats.total_size;
-
-        // Collect recent backups from all categories
-        let mut recent_backups: Vec<crate::models::RecentBackup> = Vec::new();
-
-        if let Some(files) = Self::collect_backup_files(&backup_dir.join("db")) {
-            for f in files.into_iter().take(5) {
-                recent_backups.push(crate::models::RecentBackup {
-                    backup_type: "database".to_string(),
-                    name: f.name,
-                    size: f.size,
-                    created_at: f.created_at,
-                });
-            }
-        }
-        if let Some(files) = Self::collect_backup_files(&backup_dir.join("todo")) {
-            for f in files.into_iter().take(5) {
-                recent_backups.push(crate::models::RecentBackup {
-                    backup_type: "todo".to_string(),
-                    name: f.name,
-                    size: f.size,
-                    created_at: f.created_at,
-                });
-            }
-        }
-        if let Some(files) = Self::collect_backup_files(&backup_dir.join("skills")) {
-            for f in files.into_iter().take(5) {
-                recent_backups.push(crate::models::RecentBackup {
-                    backup_type: "skills".to_string(),
-                    name: f.name,
-                    size: f.size,
-                    created_at: f.created_at,
-                });
-            }
-        }
-
-        // Sort by created_at desc and take top 10
-        recent_backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        recent_backups.truncate(10);
-
-        // Find overall last backup time
+        let (total_file_count, total_size) = Self::aggregate_backup_totals([
+            &database_stats, &todo_stats, &skills_stats,
+        ]);
         let last_backup = recent_backups.first().map(|b| b.created_at.clone());
-
-        // Format total size
         let total_size_formatted = Self::format_bytes(total_size as u64);
 
         Ok(Some(crate::models::BackupStats {
@@ -1082,6 +1082,50 @@ impl Database {
             total_size_formatted,
             recent_backups,
         }))
+    }
+
+    /// 聚合三个分类的 (file_count, total_size)。
+    fn aggregate_backup_totals(
+        categories: [&crate::models::BackupCategoryStats; 3],
+    ) -> (i64, i64) {
+        let total_file_count = categories.iter().map(|c| c.file_count).sum();
+        let total_size = categories.iter().map(|c| c.total_size).sum();
+        (total_file_count, total_size)
+    }
+
+    /// 收集所有 backup 子目录（db/todo/skills）的最近 5 条，
+    /// 合并后按时间排序并截断到前 10 条。
+    fn collect_recent_backups(
+        backup_dir: &std::path::Path,
+    ) -> Vec<crate::models::RecentBackup> {
+        let buckets = [
+            ("database", Self::collect_backup_files(&backup_dir.join("db"))),
+            ("todo", Self::collect_backup_files(&backup_dir.join("todo"))),
+            ("skills", Self::collect_backup_files(&backup_dir.join("skills"))),
+        ];
+        Self::merge_recent_backup_buckets(&buckets)
+    }
+
+    /// 把三个分类的 recent 文件合并为统一排序的列表，截断到前 10 条。
+    fn merge_recent_backup_buckets(
+        buckets: &[(&str, Option<Vec<crate::models::RecentBackup>>); 3],
+    ) -> Vec<crate::models::RecentBackup> {
+        let mut recent_backups: Vec<crate::models::RecentBackup> = Vec::new();
+        for (backup_type, files) in buckets {
+            if let Some(files) = files {
+                for f in files.iter().take(5) {
+                    recent_backups.push(crate::models::RecentBackup {
+                        backup_type: (*backup_type).to_string(),
+                        name: f.name.clone(),
+                        size: f.size,
+                        created_at: f.created_at.clone(),
+                    });
+                }
+            }
+        }
+        recent_backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        recent_backups.truncate(10);
+        recent_backups
     }
 
     /// Scan a backup category directory and return stats
@@ -1231,5 +1275,143 @@ impl Database {
             ..Default::default()
         };
         self.exec_update(am).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{BackupCategoryStats, ExecutionUsage, RecentBackup};
+
+    #[test]
+    fn test_serialize_usage_json_some_returns_valid_json() {
+        let usage = ExecutionUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_input_tokens: Some(10),
+            cache_creation_input_tokens: Some(0),
+            total_cost_usd: Some(0.01),
+            duration_ms: Some(1000),
+        };
+        let json = Database::serialize_usage_json(Some(&usage)).expect("usage Some");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse roundtrip");
+        assert_eq!(parsed["input_tokens"], serde_json::json!(100));
+        assert_eq!(parsed["output_tokens"], serde_json::json!(50));
+    }
+
+    #[test]
+    fn test_serialize_usage_json_none_returns_none() {
+        assert!(Database::serialize_usage_json(None).is_none());
+    }
+
+    #[test]
+    fn test_empty_summary_returns_all_zeros_with_todo_id() {
+        let s = Database::empty_summary(42);
+        assert_eq!(s.todo_id, 42);
+        assert_eq!(s.total_executions, 0);
+        assert_eq!(s.success_count, 0);
+        assert_eq!(s.failed_count, 0);
+        assert_eq!(s.running_count, 0);
+        assert_eq!(s.total_input_tokens, 0);
+        assert_eq!(s.total_output_tokens, 0);
+        assert_eq!(s.total_cache_read_tokens, 0);
+        assert_eq!(s.total_cache_creation_tokens, 0);
+        assert!(s.total_cost_usd.is_none());
+    }
+
+    #[test]
+    fn test_aggregate_backup_totals_sums_all_three_categories() {
+        let db = BackupCategoryStats { file_count: 10, total_size: 1024, last_backup: None };
+        let todo = BackupCategoryStats { file_count: 5, total_size: 2048, last_backup: None };
+        let skills = BackupCategoryStats { file_count: 3, total_size: 4096, last_backup: None };
+        let (count, size) = Database::aggregate_backup_totals([&db, &todo, &skills]);
+        assert_eq!(count, 18);
+        assert_eq!(size, 7168);
+    }
+
+    #[test]
+    fn test_aggregate_backup_totals_empty_categories() {
+        let zero = BackupCategoryStats { file_count: 0, total_size: 0, last_backup: None };
+        let (count, size) = Database::aggregate_backup_totals([&zero, &zero, &zero]);
+        assert_eq!(count, 0);
+        assert_eq!(size, 0);
+    }
+
+    #[test]
+    fn test_merge_recent_backup_buckets_sorts_and_truncates_to_ten() {
+        let make = |prefix: &str, n: i64| -> Vec<RecentBackup> {
+            (0..n).map(|i| RecentBackup {
+                backup_type: String::new(),
+                name: format!("{}-{}", prefix, i),
+                size: 100,
+                created_at: format!("2026-06-18T10:00:{:02}Z", i),
+            }).collect()
+        };
+        let buckets = [
+            ("database", Some(make("db", 5))),
+            ("todo", Some(make("todo", 5))),
+            ("skills", Some(make("sk", 5))),
+        ];
+        let merged = Database::merge_recent_backup_buckets(&buckets);
+        assert_eq!(merged.len(), 10);
+        assert!(merged[0].created_at >= merged[9].created_at);
+        assert!(merged.iter().all(|b| !b.backup_type.is_empty()));
+    }
+
+    #[test]
+    fn test_merge_recent_backup_buckets_handles_none_inputs() {
+        let buckets: [(&str, Option<Vec<RecentBackup>>); 3] = [
+            ("database", None),
+            ("todo", Some(vec![RecentBackup {
+                backup_type: String::new(),
+                name: "only".into(),
+                size: 1,
+                created_at: "2026-06-18T10:00:00Z".into(),
+            }])),
+            ("skills", None),
+        ];
+        let merged = Database::merge_recent_backup_buckets(&buckets);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].backup_type, "todo");
+    }
+
+    /// 校验 `build_update_statement` 在两个分支下的占位符顺序与数量。
+    #[test]
+    fn test_build_update_statement_normal_branch() {
+        let req = UpdateExecutionRecordRequest {
+            id: 7,
+            status: "success",
+            remaining_logs: "[]",
+            result: "ok",
+            usage: None,
+            model: Some("claude"),
+            review_meta: None,
+        };
+        let (sql, values) = Database::build_update_statement(
+            &req, "2026-06-18T10:00:00Z".to_string(), None, Some("claude".to_string()),
+        );
+        assert!(sql.contains("$6"));
+        assert!(!sql.contains("source_execution_record_id"));
+        assert_eq!(values.len(), 6);
+    }
+
+    #[test]
+    fn test_build_update_statement_review_branch() {
+        let req = UpdateExecutionRecordRequest {
+            id: 7,
+            status: "success",
+            remaining_logs: "[]",
+            result: "ok",
+            usage: None,
+            model: Some("claude"),
+            review_meta: Some((100, "success")),
+        };
+        let (sql, values) = Database::build_update_statement(
+            &req, "2026-06-18T10:00:00Z".to_string(), None, Some("claude".to_string()),
+        );
+        assert!(sql.contains("source_execution_record_id"));
+        assert!(sql.contains("last_review_status"));
+        assert!(sql.contains("$9"));
+        assert_eq!(values.len(), 9);
     }
 }
