@@ -14,8 +14,8 @@
 //!   3. 这部分逻辑只在前置/收尾阶段跑一次，不在 hot path，开销可以接受。
 //! - 所有同步 git 调用统一走 `run_git_with_timeout` 包装，避免在 lock / I/O hang 时
 //!   阻塞调用方线程。超时后会主动 `kill` 子进程并返回 WorktreeError::GitTimeout。
-//! - worktree 目录名格式：`<todo_id>-<yymmddHHMMss>-<rand4>`。用 `yymmddHHMMss`（可读时间）
-//!   + 4 位随机数（取自纳秒末 4 位）确保唯一性，避免同一秒内并发碰撞。
+//! - worktree 目录名格式：`<todo_id>-<yymmddHHMMss>-<rand8>`。用 `yymmddHHMMss`（可读时间）
+//!   + 8 hex 字符（uuid::Uuid::new_v4 前 8 位）确保唯一性。
 //! - `cleanup_worktree` 在目录已不存在或 `git worktree remove` 失败时**不报错**：
 //!   用户手动删除或 git 元数据丢失时，让"清理"成为幂等 no-op 而非阻塞执行结果。
 
@@ -24,6 +24,7 @@ use std::process::Command;
 use std::time::Duration;
 use thiserror::Error;
 use tracing::{info, warn};
+use uuid::Uuid;
 use wait_timeout::ChildExt;
 
 /// 单次 git 命令的硬超时。30 秒覆盖「首次 init + 空 commit」最坏路径，
@@ -336,9 +337,9 @@ impl WorktreeService {
     }
 
     /// worktree 目录的绝对路径（不含创建动作），便于单测与日志展示。
-    /// 格式：`<project>/.worktrees/<todo_id>-<yymmddHHMMss>-<rand4>/`。
-    pub fn worktree_path(&self, project_path: &str, todo_id: i64) -> PathBuf {
-        let identity = Self::mint_identity();
+    /// 格式：`<project>/.worktrees/<todo_id>-<identity>`。
+    /// `identity` 应来自 `Self::mint_identity()`。
+    pub fn worktree_path(&self, project_path: &str, todo_id: i64, identity: &str) -> PathBuf {
         PathBuf::from(project_path)
             .join(WORKTREE_ROOT_DIR)
             .join(format!("{}-{}", todo_id, identity))
@@ -346,16 +347,15 @@ impl WorktreeService {
 
     /// 生成 worktree 目录/分支名的唯一标识后缀。
     ///
-    /// 格式：`<yymmddHHMMss>-<4 位随机数>`，例如 `260618043952-3815`。
+    /// 格式：`<yymmddHHMMss>-<8 hex>`，例如 `260618043952-a3f12b4c`。
     /// - `yymmddHHMMss`：UTC 时间的紧凑可读形式，不包含 `-` `:` `.` 等非法分支名字符。
-    /// - 4 位随机数用 `rand::random` 生成，避免系统时钟精度不足导致「伪随机」问题
-    ///   （macOS 微秒级精度下 `timestamp_subsec_nanos % 10000` 永远是 0/1000/2000…）。
+    /// - 8 hex 字符取 UUIDv4 前 8 位（16^8 = 4G 空间），使用 OS CSPRNG，无模偏置。
     /// 分支名 = `wt-{todo_id}-{identity}`，目录名 = `{todo_id}-{identity}`。
     fn mint_identity() -> String {
         let now = chrono::Utc::now();
         let ts = now.format("%y%m%d%H%M%S").to_string();
-        let random: u16 = rand::random();
-        format!("{}-{:04}", ts, random % 10000)
+        let rand8 = Uuid::new_v4().simple().to_string()[..8].to_string();
+        format!("{}-{}", ts, rand8)
     }
 
     /// 探测仓库是否有任意 commit（HEAD 是否解析得到）。
@@ -508,20 +508,21 @@ mod tests {
     #[test]
     fn test_worktree_path_format() {
         let svc = WorktreeService::new();
-        let p = svc.worktree_path("/tmp/proj", 42);
+        let identity = "260618043952-a3f12b4c";
+        let p = svc.worktree_path("/tmp/proj", 42, identity);
         let s = p.to_string_lossy();
-        // 格式：.../42-<yymmddHHMMss>-<4digit>
-        assert!(s.contains("/tmp/proj/.worktrees/42-"), "got: {}", s);
-        // 验证紧跟的是 yymmddHHMMss 格式（12 位数字）
-        let suffix = s.strip_prefix("/tmp/proj/.worktrees/42-").unwrap();
-        assert!(suffix.len() == 17, "expected 17 chars (12+1+4), got: '{}' (len={})", suffix, suffix.len());
-        // 格式应为 "260618043952-3815" 即 12 位数字 + 短横 + 4 位数字
-        let parts: Vec<&str> = suffix.split('-').collect();
-        assert_eq!(parts.len(), 2, "expected 2 dash-separated parts, got: {:?}", parts);
-        assert_eq!(parts[0].len(), 12, "timestamp part should be 12 chars (yymmddHHMMss)");
-        assert!(parts[0].chars().all(|c| c.is_ascii_digit()), "timestamp should be all digits");
-        assert_eq!(parts[1].len(), 4, "random part should be 4 digits");
-        assert!(parts[1].chars().all(|c| c.is_ascii_digit()), "random should be all digits");
+        assert_eq!(s, "/tmp/proj/.worktrees/42-260618043952-a3f12b4c");
+    }
+
+    /// 验证 mint_identity 在 1 秒内 500 次调用无碰撞。
+    /// 如果 uuid 或时间戳退化，这里会暴露。
+    #[test]
+    fn test_mint_identity_uniqueness_within_one_second() {
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..500 {
+            let id = WorktreeService::mint_identity();
+            assert!(seen.insert(id), "collision within 500 calls");
+        }
     }
 
     /// 完整 create + cleanup 流程，验证 worktree 真的被 git 管起来。
