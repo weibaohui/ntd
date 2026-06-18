@@ -23,6 +23,8 @@ interface TodoState {
   selectedTodoId: number | null;
   /** null = no tag selected (show all); number = filtered view */
   selectedTagId: number | null;
+  /** null = show all workspaces; string = filter by workspace path */
+  selectedWorkspace: string | null;
 }
 
 // ─── Actions ─────────────────────────────────────────────────
@@ -42,6 +44,7 @@ type TodoAction =
   | { type: 'DELETE_TODO'; payload: number }        // remove by id
   | { type: 'SELECT_TODO'; payload: number | null } // open detail / close detail
   | { type: 'SELECT_TAG'; payload: number | null }   // filter by tag / clear filter
+  | { type: 'SELECT_WORKSPACE'; payload: string | null } // filter by workspace / clear filter
   | { type: 'ADD_TAG'; payload: Tag }               // create tag
   | { type: 'DELETE_TAG'; payload: number }         // remove tag by id
   | { type: 'UPDATE_TODO_STATUS'; payload: { id: number; status: Todo['status'] } }; // quick status toggle
@@ -51,6 +54,7 @@ const initialState: TodoState = {
   tags: [],
   selectedTodoId: null,
   selectedTagId: null,
+  selectedWorkspace: null,
 };
 
 // ─── Reducer ─────────────────────────────────────────────────
@@ -73,6 +77,7 @@ function reducer(state: TodoState, action: TodoAction): TodoState {
     // without prop-drilling.  null clears the selection.
     case 'SELECT_TODO': return { ...state, selectedTodoId: action.payload };
     case 'SELECT_TAG': return { ...state, selectedTagId: action.payload };
+    case 'SELECT_WORKSPACE': return { ...state, selectedWorkspace: action.payload };
 
     // ADD_TAG appends the new tag (tags are displayed in insertion order).
     case 'ADD_TAG': return { ...state, tags: [...state.tags, action.payload] };

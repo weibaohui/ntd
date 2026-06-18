@@ -3,7 +3,7 @@ import { useApp } from '@/hooks/useApp';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { Button, Dropdown, Empty, Tooltip, Input } from 'antd';
 import type { MenuProps } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined, UnorderedListOutlined, FolderOpenOutlined, RightOutlined, MoreOutlined, SearchOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined, UnorderedListOutlined, FolderOpenOutlined, RightOutlined, MoreOutlined, SearchOutlined, DownOutlined } from '@ant-design/icons';
 import { useTheme } from '@/hooks/useTheme';
 import { StatusPicker } from './StatusPicker';
 import * as db from '@/utils/database';
@@ -85,7 +85,7 @@ function buildDesktopNavActions(
 export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSettings }: TodoListProps) {
   const { state, dispatch } = useApp();
   const { themeMode, toggleTheme } = useTheme();
-  const { todos, selectedTodoId, selectedTagId, tags } = state;
+  const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
   const isMobile = useIsMobile();
   const [isLoading, setIsLoading] = useState(true);
   // 搜索关键字状态，用于按标题或提示词过滤 todo 列表
@@ -130,6 +130,12 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
       ? todos.filter(t => t.tag_ids?.includes(selectedTagId))
       : todos;
     
+    // 按 workspace 过滤：selectedWorkspace 为 null 时显示全部，
+    // 否则只显示匹配 workspace 路径的 todo
+    if (selectedWorkspace !== null) {
+      result = result.filter(todo => todo.workspace === selectedWorkspace);
+    }
+    
     // 再按关键字搜索（匹配标题或提示词）
     if (searchKeyword.trim()) {
       const keyword = searchKeyword.toLowerCase().trim();
@@ -141,7 +147,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
     }
     
     return result;
-  }, [todos, selectedTagId, searchKeyword]);
+  }, [todos, selectedTagId, selectedWorkspace, searchKeyword]);
 
   // 按 workspace 路径分组；workspace 为空或 null 的归入"未分组"虚拟分组，
   // 保证游离 todo 不会消失，只是放到列表底部
@@ -499,6 +505,66 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
           )}
           </div>
         </div>
+      </div>
+
+      {/* Workspace selector - 在搜索框上方，用于切换不同工作区 */}
+      <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
+        <Dropdown
+          menu={{
+            items: [
+              {
+                key: '__all__',
+                label: '全部工作区',
+                icon: <ApartmentOutlined />,
+              },
+              ...projectDirectories.map(dir => ({
+                key: dir.path,
+                label: dir.name || dir.path,
+                icon: <FolderOpenOutlined />,
+              })),
+              { type: 'divider' as const },
+              {
+                key: '__manage__',
+                label: '管理工作区',
+                icon: <SettingOutlined />,
+              },
+            ],
+            onClick: ({ key }) => {
+              if (key === '__manage__') {
+                onShowSettings?.();
+              } else {
+                dispatch({ type: 'SELECT_WORKSPACE', payload: key === '__all__' ? null : key });
+              }
+            },
+          }}
+          trigger={['click']}
+        >
+          <Button
+            type="text"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              width: '100%',
+              justifyContent: 'space-between',
+              padding: '8px 12px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--color-bg-elevated)',
+              border: '1px solid var(--color-border)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <ApartmentOutlined style={{ color: 'var(--color-primary)' }} />
+              <span style={{ fontWeight: 500 }}>
+                {selectedWorkspace
+                  ? projectDirectories.find(d => d.path === selectedWorkspace)?.name || selectedWorkspace
+                  : '全部工作区'
+                }
+              </span>
+            </div>
+            <DownOutlined style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }} />
+          </Button>
+        </Dropdown>
       </div>
 
       {/* Search box - 在 todo 列表上方，按标题或提示词关键字搜索 */}

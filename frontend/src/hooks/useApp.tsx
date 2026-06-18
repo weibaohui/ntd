@@ -84,7 +84,7 @@ export function useApp() {
     if (
       t === 'SET_TODOS' || t === 'SET_TAGS' || t === 'ADD_TODO' ||
       t === 'UPDATE_TODO' || t === 'DELETE_TODO' || t === 'SELECT_TODO' ||
-      t === 'SELECT_TAG' || t === 'ADD_TAG' || t === 'DELETE_TAG' ||
+      t === 'SELECT_TAG' || t === 'SELECT_WORKSPACE' || t === 'ADD_TAG' || t === 'DELETE_TAG' ||
       t === 'UPDATE_TODO_STATUS'
     ) {
       todoDispatch(action as Parameters<typeof todoDispatch>[0]);
