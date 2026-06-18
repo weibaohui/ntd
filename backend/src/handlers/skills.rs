@@ -527,7 +527,7 @@ fn executor_label_for_source(name: &str) -> &'static str {
 ///
 /// GET /api/skills - List skills grouped by executor
 ///
-/// 扫描 8 个 ExecutorType 之外，还扫 `~/.agents/skills`（只读 skill 来源）。
+/// 扫描 11 个 ExecutorType 之外，还扫 `~/.agents/skills`（只读 skill 来源）。
 /// agents 不参与 Todo 执行，但能在 Skills 总览/对比/同步里看到并使用。
 ///
 /// 实现选择：每个来源的目录 IO 放在 `spawn_blocking` 里跑，
@@ -537,7 +537,7 @@ pub async fn list_skills(
 ) -> Result<ApiResponse<Vec<ExecutorSkills>>, AppError> {
     // spawn_blocking：磁盘 IO 不能跑在 tokio reactor 上，否则会卡住其他请求
     let result = tokio::task::spawn_blocking(move || {
-        // 顺序遍历 10 个来源：单次调用只 IO 一次，顺序 vs 并行收益不大，
+        // 顺序遍历 12 个来源：单次调用只 IO 一次，顺序 vs 并行收益不大，
         // 而且顺序能保证响应里 source 顺序稳定，方便前端按位置渲染 Tab
         ALL_SKILL_SOURCES
             .iter()
