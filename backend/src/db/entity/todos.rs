@@ -33,9 +33,6 @@ pub struct Model {
     pub parent_todo_id: Option<i64>,
     /// 是否在执行完成后自动派生一个评审 todo (默认 true, 只对 normal 类型有效).
     pub auto_review_enabled: Option<bool>,
-    /// 'item' = 一次性事项, 'expert' = 可复用的专家 (loop 编排引用)。
-    /// 同一张 todos 表承载两种语义, 由 kind 列区分; 详细见 migrations v3。
-    pub kind: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

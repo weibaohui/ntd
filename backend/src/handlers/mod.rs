@@ -46,17 +46,6 @@ pub struct AppState {
     pub feishu_listener: Arc<FeishuListener>,
     pub feishu_push_mutator: broadcast::Sender<crate::services::feishu_push::PushConfigUpdate>,
     pub hook_service: Arc<HookService>,
-    /// Loop Studio: 独立 cron 调度器。
-    /// 改用 `Arc<OnceCell<...>>` 是为了让 `LoopScheduler::start` (async) 能在
-    /// `tokio::spawn` 后台启动, 避免 `block_in_place + block_on` 在 current_thread
-    /// runtime 单元测试场景下 panic (issue H1)。start 完成后 cell 才有值,
-    /// 调用方继续用 `state.loop_scheduler.get()` 取 `Option<&Arc<...>>`,
-    /// 行为与原来的 `Option<...>` 字段一致。
-    pub loop_scheduler: Arc<tokio::sync::OnceCell<Arc<crate::services::loop_scheduler::LoopScheduler>>>,
-    /// Loop Studio: 触发器分发器（None 同上）
-    pub loop_trigger_dispatcher: Option<Arc<crate::services::loop_trigger::LoopTriggerDispatcher>>,
-    /// Loop Studio: loop runner（手动触发 / dispatcher / cron 都通过它启动执行）
-    pub loop_runner: Option<Arc<crate::services::loop_runner::LoopRunner>>,
 }
 
 impl AppState {
@@ -331,7 +320,6 @@ pub mod custom_template;
 pub mod webhook;
 pub mod usage_stats;
 pub mod sync;
-pub mod loop_;
 
 // WebSocket handler
 pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
@@ -983,7 +971,6 @@ fn mount_domain_routes() -> Router<AppState> {
         .merge(custom_template_routes())
         .merge(cloud_routes())
         .merge(events_routes())
-        .merge(loop_::loop_routes())
 }
 
 /// 给 TraceLayer 用的 span 工厂：把 `request_id` / `method` / `uri` 直接挂在 span 字段上，
@@ -1006,8 +993,8 @@ fn make_request_span(req: &Request) -> tracing::Span {
 }
 
 /// 构造 `AppState` 并按需启动后台服务（feishu bot / stale binding cleanup / history fetcher /
-/// reviewer template 初始化 + Loop Studio 三件套）。所有 `.await` 都在 `tokio::spawn` 或
-/// `block_in_place` 中处理，保持 `build_app_state` 自身为同步函数。
+/// reviewer template 初始化）。所有 `.await` 都在 `tokio::spawn` 或 `block_in_place` 中处理，
+/// 保持 `build_app_state` 自身为同步函数。
 fn build_app_state(
     ctx: ServiceContext,
     scheduler: Arc<TodoScheduler>,
@@ -1033,16 +1020,8 @@ fn build_app_state(
     let (push_service, push_mutator) = FeishuPushService::new(db.clone(), feishu_listener.clone());
     push_service.start(tx.subscribe());
 
-    spawn_feishu_history_fetcher(ctx.clone(), db.clone(), feishu_listener.clone(), debounce.clone());
+    spawn_feishu_history_fetcher(ctx, db.clone(), feishu_listener.clone(), debounce.clone());
     ensure_reviewer_template_blocking(&db);
-
-    // ====== Loop Studio 三件套初始化 ======
-    // 这三件套是「可选能力」,初始化失败不阻塞 daemon 启动,只把 cell 留空。
-    // scheduler 的实际启动 (LoopScheduler::start 是 async) 改为在
-    // init_loop_studio_services 内部 tokio::spawn 异步完成, AppState 拿到
-    // 一个 OnceCell, start 完成后 cell 被填充,调用方继续按 Option 风格取用。
-    let (loop_runner, loop_trigger_dispatcher, loop_scheduler) =
-        init_loop_studio_services(ctx.clone(), hook_service.clone(), tx.clone());
 
     AppState {
         db,
@@ -1054,64 +1033,7 @@ fn build_app_state(
         feishu_listener: feishu_listener.clone(),
         feishu_push_mutator: push_mutator,
         hook_service,
-        loop_scheduler,
-        loop_trigger_dispatcher,
-        loop_runner,
     }
-}
-
-/// 初始化 Loop Studio 三件套：runner / dispatcher / scheduler。
-///
-/// 全部失败容忍：返回的 `OnceCell` 留空表示「loop 功能未启用或初始化失败」,handler
-/// 在被调用时返回 503 风格错误。daemon 启动不因 loop 故障而被拖垮。
-///
-/// scheduler 的实际启动 (async) 用 `tokio::spawn` 推到后台执行;若 build_app_state
-/// 在 current_thread runtime (单元测试场景) 被调用,也不会因 `block_in_place +
-/// block_on` 限制 panic (issue H1)。
-fn init_loop_studio_services(
-    ctx: ServiceContext,
-    hook_service: Arc<crate::hooks::HookService>,
-    tx: tokio::sync::broadcast::Sender<ExecEvent>,
-) -> (
-    Option<Arc<crate::services::loop_runner::LoopRunner>>,
-    Option<Arc<crate::services::loop_trigger::LoopTriggerDispatcher>>,
-    Arc<tokio::sync::OnceCell<Arc<crate::services::loop_scheduler::LoopScheduler>>>,
-) {
-    use crate::services::loop_runner::LoopRunner;
-    use crate::services::loop_trigger::LoopTriggerDispatcher;
-    // runner 与 dispatcher 是纯内存构造,无 IO,失败概率低
-    let runner = Arc::new(LoopRunner::new(ctx.clone(), hook_service, tx));
-    // dispatcher 复用 runner 的 ctx.db
-    let dispatcher = Arc::new(LoopTriggerDispatcher::new(
-        runner.clone(),
-        ctx.clone(),
-    ));
-    // scheduler 启动是 async; 用 tokio::spawn 推到后台, 把结果填进 OnceCell,
-    // build_app_state (sync) 立即返回, 避免在 current_thread runtime 下
-    // block_in_place + block_on panic。
-    let scheduler_cell: Arc<
-        tokio::sync::OnceCell<Arc<crate::services::loop_scheduler::LoopScheduler>>,
-    > = Arc::new(tokio::sync::OnceCell::new());
-    let cell_for_task = scheduler_cell.clone();
-    let db_for_task = ctx.db.clone();
-    let runner_for_task = runner.clone();
-    tokio::spawn(async move {
-        match crate::services::loop_scheduler::LoopScheduler::start(
-            db_for_task,
-            runner_for_task,
-        )
-        .await
-        {
-            Ok(sched) => {
-                let _ = cell_for_task.set(sched);
-            }
-            Err(e) => {
-                tracing::error!("loop_scheduler start failed: {}", e);
-            }
-        }
-    });
-    // 即使 scheduler 尚未启动,runner / dispatcher 仍可用（手动触发仍可工作）
-    (Some(runner), Some(dispatcher), scheduler_cell)
 }
 
 /// 后台任务：启动所有已启用的飞书 bot。失败仅记录日志，不影响主流程。
@@ -1212,14 +1134,7 @@ fn todo_routes() -> Router<AppState> {
         .route("/api/todos/{id}/summary", get(execution::get_execution_summary))
         .route("/api/todos/{id}/scheduler", put(scheduler::update_scheduler))
         .route("/api/todos/recent-completed", get(todo::get_recent_completed_todos))
-        // 专家相关：promote / demote 走 todo 路径,因为它们本质是修改 todo.kind
-        .route("/api/todos/{id}/promote", post(todo::promote_todo_to_expert))
-        .route("/api/todos/{id}/demote", post(todo::demote_todo_to_item))
         .route("/api/todos/{id}", get(todo::get_todo).put(todo::update_todo).delete(todo::delete_todo))
-        // 专家专用：list / candidates / 单查,语义上独立于 todo CRUD
-        .route("/api/experts", get(todo::list_experts))
-        .route("/api/experts/candidates", get(todo::list_expert_candidates))
-        .route("/api/experts/{id}", get(todo::get_expert))
         .route("/api/tags", get(tag::get_tags).post(tag::create_tag))
         .route("/api/tags/{id}", delete(tag::delete_tag))
 }
@@ -1940,10 +1855,6 @@ mod app_state_config_helpers_tests {
             feishu_listener,
             feishu_push_mutator,
             hook_service,
-            // 测试用最小 AppState 不需要 loop 服务
-            loop_scheduler: Arc::new(tokio::sync::OnceCell::new()),
-            loop_trigger_dispatcher: None,
-            loop_runner: None,
         }
     }
 

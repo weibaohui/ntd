@@ -1,15 +1,14 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useApp } from '@/hooks/useApp';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import { Button, Dropdown, Empty, Tooltip, Input, Segmented } from 'antd';
+import { Button, Dropdown, Empty, Tooltip, Input } from 'antd';
 import type { MenuProps } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined, FolderOpenOutlined, MoreOutlined, SearchOutlined, DownOutlined, ExperimentOutlined, FormOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined, FolderOpenOutlined, MoreOutlined, SearchOutlined, DownOutlined } from '@ant-design/icons';
 import { useTheme } from '@/hooks/useTheme';
 import { StatusPicker } from './StatusPicker';
 import * as db from '@/utils/database';
 import type { ProjectDirectory, Todo } from '@/types';
 import { ExecutorBadge } from './ExecutorBadge';
-import { PromoteToExpertButton } from './PromoteToExpertButton';
 import { formatRelativeTime } from '@/utils/datetime';
 
 interface TodoListProps {
@@ -19,8 +18,6 @@ interface TodoListProps {
   onShowDashboard?: () => void;
   onShowMemorial?: () => void;
   onShowRelationMap?: () => void;
-  onShowExperts?: () => void;
-  onShowLoop?: () => void;
   onShowSettings?: () => void;
 }
 
@@ -45,8 +42,6 @@ function buildDesktopNavActions(
   onShowDashboard: TodoListProps['onShowDashboard'],
   onShowMemorial: TodoListProps['onShowMemorial'],
   onShowRelationMap: TodoListProps['onShowRelationMap'],
-  onShowExperts?: () => void,
-  onShowLoop?: () => void,
 ) {
   return [
     {
@@ -70,24 +65,10 @@ function buildDesktopNavActions(
       onClick: onShowRelationMap ? () => onShowRelationMap() : undefined,
       ariaLabel: '关联图',
     },
-    {
-      key: 'experts',
-      title: '专家',
-      icon: <ExperimentOutlined />,
-      onClick: onShowExperts,
-      ariaLabel: '专家管理',
-    },
-    {
-      key: 'loop',
-      title: '环路',
-      icon: <FormOutlined />,
-      onClick: onShowLoop,
-      ariaLabel: '环路编排',
-    },
   ].filter(action => typeof action.onClick === 'function');
 }
 
-export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowExperts, onShowLoop, onShowSettings }: TodoListProps) {
+export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSettings }: TodoListProps) {
   const { state, dispatch } = useApp();
   const { themeMode, toggleTheme } = useTheme();
   const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
@@ -95,8 +76,6 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
   const [isLoading, setIsLoading] = useState(true);
   // 搜索关键字状态，用于按标题或提示词过滤 todo 列表
   const [searchKeyword, setSearchKeyword] = useState('');
-  // 类型过滤（v3 kind 列）：'all' = 全部, 'item' = 仅事项, 'expert' = 仅专家
-  const [kindFilter, setKindFilter] = useState<'all' | 'item' | 'expert'>('all');
   // 项目目录：工作空间选择器需要目录列表
   const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
 
@@ -147,14 +126,9 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
         return title.includes(keyword) || prompt.includes(keyword);
       });
     }
-
-    // 按类型过滤 (v3 kind 列)
-    if (kindFilter !== 'all') {
-      result = result.filter(todo => (todo.kind ?? 'item') === kindFilter);
-    }
-
+    
     return result;
-  }, [todos, selectedTagId, selectedWorkspace, searchKeyword, kindFilter]);
+  }, [todos, selectedTagId, selectedWorkspace, searchKeyword]);
 
   const handleStatusChange = useCallback(async (todoId: number, title: string, prompt: string, newStatus: string) => {
     try {
@@ -166,8 +140,8 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
   }, [dispatch]);
 
   const desktopNavActions = useMemo(
-    () => buildDesktopNavActions(onShowDashboard, onShowMemorial, onShowRelationMap, onShowExperts, onShowLoop),
-    [onShowDashboard, onShowMemorial, onShowRelationMap, onShowExperts, onShowLoop],
+    () => buildDesktopNavActions(onShowDashboard, onShowMemorial, onShowRelationMap),
+    [onShowDashboard, onShowMemorial, onShowRelationMap],
   );
 
   /**
@@ -255,48 +229,6 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
                 <span style={{ color: '#999', marginRight: 4, fontSize: 13 }}>#{todo.id}</span>{todo.title}
               </div>
               <ExecutorBadge executor={todo.executor || 'claudecode'} />
-              {/* 类型标签: v3 kind 列。缺失时按 item 兜底, 避免显示空白徽章。 */}
-              {(todo.kind ?? 'item') === 'expert' ? (
-                <Tooltip title="专家 — 可被 loop 编排引用">
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 2,
-                      padding: '1px 6px',
-                      borderRadius: 8,
-                      background: '#722ed1',
-                      color: '#fff',
-                      fontSize: 11,
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    <ExperimentOutlined /> 专家
-                  </span>
-                </Tooltip>
-              ) : (
-                <Tooltip title="事项 — 一次性使用">
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 2,
-                      padding: '1px 6px',
-                      borderRadius: 8,
-                      background: '#f0f0f0',
-                      color: '#666',
-                      fontSize: 11,
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    <InboxOutlined /> 事项
-                  </span>
-                </Tooltip>
-              )}
-              {/* 晋级入口: 仅事项状态可见, 专家行不再显示 (避免重复晋级 + 与 ExpertList 的降级入口职责分明) */}
-              {(todo.kind ?? 'item') === 'expert' ? null : (
-                <PromoteToExpertButton todoId={todo.id} todoTitle={todo.title} />
-              )}
             </div>
             {todo.prompt && (
               <div className="todo-item-desc">
@@ -553,23 +485,6 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
           onChange={(e) => setSearchKeyword(e.target.value)}
           allowClear
           size="small"
-        />
-      </div>
-
-      {/* 类型过滤（事项 / 专家 / 全部）— v3 kind 列引入后，TodoList 也支持按 kind 过滤。
-        默认 'all' 与旧版本保持完全一致；切到 'expert' 视图与专家管理页面等价（共享同一批数据），
-        切到 'item' 只看一次性事项。这里用客户端过滤，避免切换时重新请求列表。 */}
-      <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
-        <Segmented
-          block
-          size="small"
-          value={kindFilter}
-          onChange={(v) => setKindFilter(v as 'all' | 'item' | 'expert')}
-          options={[
-            { label: '全部', value: 'all' },
-            { label: '事项', value: 'item' },
-            { label: '专家', value: 'expert' },
-          ]}
         />
       </div>
 

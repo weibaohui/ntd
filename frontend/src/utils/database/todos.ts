@@ -4,13 +4,8 @@ import type { TodoHookItem } from './hooks';
 
 // Todo APIs
 
-/**
- * 列出 todos，可选按 kind 过滤（'item' / 'expert' / 不传=全部）。
- * 后端 get_todos handler 支持 `?kind=` query；不传则保持向后兼容，返回所有 todo。
- */
-export async function getAllTodos(kind?: 'item' | 'expert' | 'all'): Promise<Todo[]> {
-  const query = kind && kind !== 'all' ? `?kind=${encodeURIComponent(kind)}` : '';
-  return unwrap(await api.get(`/api/todos${query}`));
+export async function getAllTodos(): Promise<Todo[]> {
+  return unwrap(await api.get('/api/todos'));
 }
 
 export async function createTodo(

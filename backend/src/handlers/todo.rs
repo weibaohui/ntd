@@ -25,24 +25,8 @@ fn validate_cron_expression(expr: &str) -> Result<(), String> {
         })
 }
 
-pub async fn get_todos(
-    State(state): State<AppState>,
-    axum::extract::Query(params): axum::extract::Query<TodoListQuery>,
-) -> Result<ApiResponse<Vec<Todo>>, AppError> {
-    // kind=item / kind=expert / kind=all(默认) 三种过滤。
-    // 保持向后兼容：未传参时返回所有 todo。
-    let todos = match params.kind.as_deref() {
-        Some("item") => state.db.list_todos_by_kind("item").await?,
-        Some("expert") => state.db.list_todos_by_kind("expert").await?,
-        _ => state.db.get_todos().await?,
-    };
-    Ok(ApiResponse::ok(todos))
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct TodoListQuery {
-    #[serde(default)]
-    pub kind: Option<String>,
+pub async fn get_todos(State(state): State<AppState>) -> Result<ApiResponse<Vec<Todo>>, AppError> {
+    Ok(ApiResponse::ok(state.db.get_todos().await?))
 }
 
 pub async fn get_todo(
@@ -161,8 +145,6 @@ pub async fn create_todo(
         todo_type: 0,
         parent_todo_id: None,
         auto_review_enabled: req.auto_review_enabled.unwrap_or(true),
-        // 新建 todo 默认 kind='item'；如需专家，由 promote 接口或新建时显式指定。
-        kind: "item".to_string(),
     }))
 }
 
@@ -346,82 +328,4 @@ pub async fn get_recent_completed_todos(
     Ok(ApiResponse::ok(
         state.db.get_recent_completed_todos(hours).await?,
     ))
-}
-
-// ====== 专家管理（kind=expert）======
-//
-// 路由：
-// - GET    /api/experts                    列出所有专家 + 各自的 loop 引用计数
-// - GET    /api/experts/:id                单个专家详情
-// - GET    /api/experts/candidates         loop 编辑器选专家用的精简候选列表
-// - POST   /api/todos/:id/promote          事项 → 专家
-// - POST   /api/todos/:id/demote           专家 → 事项（被 loop 引用时拒绝）
-
-/// GET /api/experts — 列出所有专家,带"被哪些 loop 用"复用度计数
-pub async fn list_experts(
-    State(state): State<AppState>,
-) -> Result<ApiResponse<Vec<crate::models::ExpertSummary>>, AppError> {
-    Ok(ApiResponse::ok(state.db.list_experts_with_usage().await?))
-}
-
-/// GET /api/experts/candidates — loop stage 编辑器选专家用,字段与 Todo 一致
-pub async fn list_expert_candidates(
-    State(state): State<AppState>,
-) -> Result<ApiResponse<Vec<Todo>>, AppError> {
-    Ok(ApiResponse::ok(state.db.list_expert_candidates().await?))
-}
-
-/// GET /api/experts/:id — 单个专家详情,带 loop 引用计数
-pub async fn get_expert(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<ApiResponse<crate::models::ExpertSummary>, AppError> {
-    let todo = state
-        .db
-        .get_todo(id)
-        .await?
-        .ok_or(AppError::NotFound)?;
-    // 必须是 expert,否则返回 404（统一对外语义：专家 ID 不存在即 404）
-    if todo.kind != "expert" {
-        return Err(AppError::NotFound);
-    }
-    let used_by_loop_stage_count = state.db.count_loop_stages_using_todo(id).await?;
-    Ok(ApiResponse::ok(crate::models::ExpertSummary {
-        used_by_loop_stage_count,
-        todo,
-    }))
-}
-
-/// POST /api/todos/:id/promote — 事项提升为专家
-pub async fn promote_todo_to_expert(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<ApiResponse<()>, AppError> {
-    // 校验 todo 存在,否则 404
-    state
-        .db
-        .get_todo(id)
-        .await?
-        .ok_or(AppError::NotFound)?;
-    state.db.promote_to_expert(id).await?;
-    Ok(ApiResponse::ok(()))
-}
-
-/// POST /api/todos/:id/demote — 专家降级为事项
-pub async fn demote_todo_to_item(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<ApiResponse<()>, AppError> {
-    // 校验 todo 存在,否则 404
-    state
-        .db
-        .get_todo(id)
-        .await?
-        .ok_or(AppError::NotFound)?;
-    state
-        .db
-        .demote_to_item(id)
-        .await
-        .map_err(AppError::BadRequest)?;
-    Ok(ApiResponse::ok(()))
 }

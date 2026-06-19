@@ -50,34 +50,16 @@ pub struct Migration {
 /// The runner applies every entry whose `version` is greater than the value
 /// stored in `schema_version`. New entries must be APPENDED (never reorder,
 /// never reuse a version number).
-pub const ALL_MIGRATIONS: &[Migration] = &[
-    Migration {
-        version: 1,
-        name: "initial_schema",
-        description:
-            "Initial schema: todos, tags, todo_tags, execution_records, execution_logs, \
-             skill_invocations, agent_bots, feishu_*, executors, project_directories, \
-             todo_templates, webhooks, webhook_records, usage_*, sync_records + all \
-             indexes/triggers and backward-compat ALTER TABLE migrations",
-        statements: INITIAL_SCHEMA_STATEMENTS,
-    },
-    Migration {
-        version: 2,
-        name: "loop_studio",
-        description:
-            "Loop Studio: loops, loop_triggers, loop_stages, loop_hooks, \
-             loop_executions, loop_stage_executions + indexes/triggers",
-        statements: LOOP_STUDIO_STATEMENTS,
-    },
-    Migration {
-        version: 3,
-        name: "todo_kind",
-        description:
-            "区分事项 vs 专家: todos 加 kind 列 ('item'|'expert'), 默认 'item'; \
-             回填 loop_stages 引用的 todo 为 'expert'。这是底层抽象, 不破坏现有数据。",
-        statements: TODO_KIND_STATEMENTS,
-    },
-];
+pub const ALL_MIGRATIONS: &[Migration] = &[Migration {
+    version: 1,
+    name: "initial_schema",
+    description:
+        "Initial schema: todos, tags, todo_tags, execution_records, execution_logs, \
+         skill_invocations, agent_bots, feishu_*, executors, project_directories, \
+         todo_templates, webhooks, webhook_records, usage_*, sync_records + all \
+         indexes/triggers and backward-compat ALTER TABLE migrations",
+    statements: INITIAL_SCHEMA_STATEMENTS,
+}];
 
 /// All DDL for the initial schema (extracted from the previous monolithic
 /// `init_tables()` function).
@@ -524,183 +506,6 @@ const INITIAL_SCHEMA_STATEMENTS: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_todos_parent_todo_id ON todos(parent_todo_id)",
     "CREATE INDEX IF NOT EXISTS idx_todos_todo_type ON todos(todo_type)",
     "CREATE INDEX IF NOT EXISTS idx_execution_records_source_record_id ON execution_records(source_execution_record_id)",
-];
-
-// ===== Migration v2: Loop Studio =====
-//
-// Why: 用户希望在 todo + 内联 hooks 之上增加一个「环路」编排层，把"一组 todo +
-// 触发条件 + 前后 hook + 定时"统一管理为一个场景级自动化能力。一个 Loop 包含:
-// - 基本信息 (name/description/product/repo/branch/color/status)
-// - 多个触发器 (manual/cron/webhook/feishu_message/feishu_command/todo_completed/tag_added)
-// - 多个有序阶段 (每个阶段绑定一个 todo，顺序执行，含 rating 闸门)
-// - 多个 hook (pre_loop / post_loop / pre_stage / post_stage)
-// - 每次执行的运行记录 (loop_executions + loop_stage_executions)
-//
-// 与现有 todos.hooks 字段的关系：并存策略。todo 自己的内联 hooks 仍适用于
-// 单 todo 的链式场景；loop_hooks 是 loop 级的编排视图，二者职责分离。
-const LOOP_STUDIO_STATEMENTS: &[&str] = &[
-    // ===== loops: 环路主表 =====
-    // status 三态: draft(草稿)/enabled(启用)/paused(暂停),与 CODELOOP 视觉一致
-    "CREATE TABLE IF NOT EXISTS loops (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        description TEXT DEFAULT '',
-        product TEXT DEFAULT '',
-        repo TEXT DEFAULT '',
-        branch TEXT DEFAULT '',
-        status TEXT NOT NULL DEFAULT 'draft',
-        color TEXT DEFAULT '#722ed1',
-        icon TEXT DEFAULT 'loop',
-        created_at TEXT,
-        updated_at TEXT
-    )",
-    "CREATE INDEX IF NOT EXISTS idx_loops_status ON loops(status)",
-    "CREATE INDEX IF NOT EXISTS idx_loops_updated_at ON loops(updated_at DESC)",
-    // 自动维护 created_at / updated_at
-    "CREATE TRIGGER IF NOT EXISTS set_loops_created_at_utc AFTER INSERT ON loops
-     WHEN new.created_at IS NULL OR new.created_at = ''
-     BEGIN
-         UPDATE loops SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-     END",
-    "CREATE TRIGGER IF NOT EXISTS set_loops_updated_at_utc BEFORE UPDATE ON loops
-     WHEN new.updated_at IS NULL OR new.updated_at = ''
-     BEGIN
-         UPDATE loops SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-     END",
-    // ===== loop_triggers: 多类型触发器 =====
-    // trigger_type: manual / cron / webhook / feishu_message / feishu_command /
-    //               todo_completed / todo_state_changed / tag_added
-    // config 是 JSON,具体 schema 由 trigger_type 决定:
-    //   cron:               {"cron":"0 0 9 * * *","timezone":"Asia/Shanghai"}
-    //   webhook:            {"webhook_id":5}
-    //   feishu_message:     {"bot_id":1,"chat_id":"oc_xxx","match":"keyword|regex","pattern":"...","match_type":"exact|regex|contains"}
-    //   feishu_command:     {"bot_id":1,"command":"/run"}
-    //   todo_completed:     {"todo_id":7}
-    //   todo_state_changed: {"todo_id":7,"to_status":"completed"}
-    //   tag_added:          {"tag_id":3}
-    "CREATE TABLE IF NOT EXISTS loop_triggers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        loop_id INTEGER NOT NULL,
-        trigger_type TEXT NOT NULL,
-        config TEXT DEFAULT '{}',
-        enabled INTEGER NOT NULL DEFAULT 1,
-        priority INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT,
-        FOREIGN KEY (loop_id) REFERENCES loops(id) ON DELETE CASCADE
-    )",
-    "CREATE INDEX IF NOT EXISTS idx_loop_triggers_loop_id ON loop_triggers(loop_id)",
-    "CREATE INDEX IF NOT EXISTS idx_loop_triggers_type_enabled ON loop_triggers(trigger_type, enabled)",
-    "CREATE TRIGGER IF NOT EXISTS set_loop_triggers_created_at_utc AFTER INSERT ON loop_triggers
-     WHEN new.created_at IS NULL OR new.created_at = ''
-     BEGIN
-         UPDATE loop_triggers SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-     END",
-    // ===== loop_stages: 有序阶段 =====
-    // todo_id 引用现有 todos 表;首版 run_mode 固定 sequential,字段预留
-    "CREATE TABLE IF NOT EXISTS loop_stages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        loop_id INTEGER NOT NULL,
-        name TEXT NOT NULL,
-        description TEXT DEFAULT '',
-        order_index INTEGER NOT NULL DEFAULT 0,
-        todo_id INTEGER NOT NULL,
-        run_mode TEXT NOT NULL DEFAULT 'sequential',
-        skip_on_source_failed INTEGER NOT NULL DEFAULT 0,
-        min_rating INTEGER,
-        unrated_policy TEXT NOT NULL DEFAULT 'skip',
-        enabled INTEGER NOT NULL DEFAULT 1,
-        created_at TEXT,
-        FOREIGN KEY (loop_id) REFERENCES loops(id) ON DELETE CASCADE,
-        FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE RESTRICT
-    )",
-    "CREATE INDEX IF NOT EXISTS idx_loop_stages_loop_id ON loop_stages(loop_id)",
-    "CREATE INDEX IF NOT EXISTS idx_loop_stages_loop_order ON loop_stages(loop_id, order_index)",
-    "CREATE TRIGGER IF NOT EXISTS set_loop_stages_created_at_utc AFTER INSERT ON loop_stages
-     WHEN new.created_at IS NULL OR new.created_at = ''
-     BEGIN
-         UPDATE loop_stages SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-     END",
-    // ===== loop_hooks: 环路级 hook =====
-    // hook_position: pre_loop / post_loop / pre_stage / post_stage
-    // source_stage_id: pre_loop/post_loop 时为 null;pre_stage/post_stage 时必填
-    "CREATE TABLE IF NOT EXISTS loop_hooks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        loop_id INTEGER NOT NULL,
-        hook_position TEXT NOT NULL,
-        source_stage_id INTEGER,
-        target_todo_id INTEGER NOT NULL,
-        skip_if_missing INTEGER NOT NULL DEFAULT 0,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        min_rating INTEGER,
-        unrated_policy TEXT NOT NULL DEFAULT 'skip',
-        created_at TEXT,
-        FOREIGN KEY (loop_id) REFERENCES loops(id) ON DELETE CASCADE,
-        FOREIGN KEY (source_stage_id) REFERENCES loop_stages(id) ON DELETE CASCADE,
-        FOREIGN KEY (target_todo_id) REFERENCES todos(id) ON DELETE RESTRICT
-    )",
-    "CREATE INDEX IF NOT EXISTS idx_loop_hooks_loop_id ON loop_hooks(loop_id)",
-    "CREATE INDEX IF NOT EXISTS idx_loop_hooks_source_stage ON loop_hooks(source_stage_id)",
-    "CREATE TRIGGER IF NOT EXISTS set_loop_hooks_created_at_utc AFTER INSERT ON loop_hooks
-     WHEN new.created_at IS NULL OR new.created_at = ''
-     BEGIN
-         UPDATE loop_hooks SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-     END",
-    // ===== loop_executions: 每次运行的顶层记录 =====
-    // trigger_meta 是 JSON,记录是谁/什么触发的(例: feishu 消息原文、webhook body 等)
-    "CREATE TABLE IF NOT EXISTS loop_executions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        loop_id INTEGER NOT NULL,
-        trigger_id INTEGER,
-        trigger_type TEXT NOT NULL,
-        trigger_meta TEXT DEFAULT '{}',
-        started_at TEXT NOT NULL,
-        finished_at TEXT,
-        status TEXT NOT NULL DEFAULT 'running',
-        total_stages INTEGER NOT NULL DEFAULT 0,
-        completed_stages INTEGER NOT NULL DEFAULT 0,
-        failed_stages INTEGER NOT NULL DEFAULT 0,
-        FOREIGN KEY (loop_id) REFERENCES loops(id) ON DELETE CASCADE,
-        FOREIGN KEY (trigger_id) REFERENCES loop_triggers(id) ON DELETE SET NULL
-    )",
-    "CREATE INDEX IF NOT EXISTS idx_loop_executions_loop_id ON loop_executions(loop_id)",
-    "CREATE INDEX IF NOT EXISTS idx_loop_executions_started_at ON loop_executions(started_at DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_loop_executions_status ON loop_executions(status)",
-    // ===== loop_stage_executions: 每个阶段的执行 =====
-    "CREATE TABLE IF NOT EXISTS loop_stage_executions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        loop_execution_id INTEGER NOT NULL,
-        stage_id INTEGER NOT NULL,
-        todo_id INTEGER NOT NULL,
-        execution_record_id INTEGER,
-        status TEXT NOT NULL DEFAULT 'pending',
-        started_at TEXT,
-        finished_at TEXT,
-        error_message TEXT,
-        FOREIGN KEY (loop_execution_id) REFERENCES loop_executions(id) ON DELETE CASCADE,
-        FOREIGN KEY (stage_id) REFERENCES loop_stages(id) ON DELETE CASCADE,
-        FOREIGN KEY (execution_record_id) REFERENCES execution_records(id) ON DELETE SET NULL
-    )",
-    "CREATE INDEX IF NOT EXISTS idx_loop_stage_executions_loop_exec ON loop_stage_executions(loop_execution_id)",
-    "CREATE INDEX IF NOT EXISTS idx_loop_stage_executions_record ON loop_stage_executions(execution_record_id)",
-];
-
-/// v3 — todos.kind 列。
-///
-/// 设计动机：
-/// - 一次性 todo 是「事项」，循环复用的 todo 是「专家（Agent）」；
-/// - 环路编排应当只引用专家，不应误选一次性事项；
-/// - 同一张 todos 表承载两种语义，靠 `kind` 列区分，避免新建 experts 表的迁移成本；
-/// - `expert` 与 `item` 在存储层完全等价（prompt/executor/tag_ids 都共用），只是用法不同。
-///
-/// 升级策略：
-/// - 加列：`ALTER TABLE todos ADD COLUMN kind TEXT NOT NULL DEFAULT 'item'`
-/// - 回填：把当前已经被 loop_stages 引用的 todo 标记为 'expert'，
-///   未被引用的保持默认 'item'；
-/// - 加索引：`(kind)` 用于专家/事项过滤查询。
-const TODO_KIND_STATEMENTS: &[&str] = &[
-    "ALTER TABLE todos ADD COLUMN kind TEXT NOT NULL DEFAULT 'item'",
-    "UPDATE todos SET kind = 'expert' WHERE id IN (SELECT DISTINCT todo_id FROM loop_stages)",
-    "CREATE INDEX IF NOT EXISTS idx_todos_kind ON todos(kind)",
 ];
 
 /// SQL to create the `schema_version` meta table. Idempotent.
