@@ -56,6 +56,9 @@ pub struct Model {
     /// NULL = 未启用 worktree 或尚未确定目录。`auto_cleanup = true` 时，执行结束后
     /// 该目录会被 WorktreeService 删除，但 `worktree_path` 字段会保留在记录里便于排查。
     pub worktree_path: Option<String>,
+    /// 当本次执行是 loop 环节的一部分时，指向 loop_step_executions 表的 id。
+    /// NULL = 普通 todo 执行，非 loop 环节执行。
+    pub loop_step_execution_id: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -21,6 +21,8 @@ pub struct NewExecutionRecord<'a> {
     pub source_todo_id: Option<i64>,
     pub source_todo_title: Option<&'a str>,
     pub source_hook_id: Option<i64>,
+    /// 当本次执行是 loop 环节的一部分时，指向 loop_step_executions 表的 id。
+    pub loop_step_execution_id: Option<i64>,
 }
 
 pub struct UpdateExecutionRecordRequest<'a> {
@@ -213,6 +215,7 @@ impl Database {
             source_todo_id: ActiveValue::Set(record.source_todo_id),
             source_todo_title: ActiveValue::Set(record.source_todo_title.map(|s| s.to_string())),
             source_hook_id: ActiveValue::Set(record.source_hook_id),
+            loop_step_execution_id: ActiveValue::Set(record.loop_step_execution_id),
             ..Default::default()
         };
         let inserted = am.insert(&self.conn).await?;

@@ -752,6 +752,7 @@ mod tests {
             source_todo_id: None,
             source_todo_title: None,
             source_hook_id: None,
+            loop_step_execution_id: None,
         })
         .await
         .unwrap()
@@ -1695,6 +1696,7 @@ mod tests {
             source_todo_id: None,
             source_todo_title: None,
             source_hook_id: None,
+            loop_step_execution_id: None,
         }).await.unwrap();
 
         // Detach task_id from todo so the record becomes "orphan" (running but todo.task_id IS NULL)

@@ -234,7 +234,7 @@ impl LoopRunner {
             };
 
             let record_id = match self
-                .start_step_todo(&todo, &trigger_type, idx as i64)
+                .start_step_todo(&todo, &trigger_type, idx as i64, step_exec.id)
                 .await
             {
                 Ok(rid) => rid,
@@ -285,7 +285,16 @@ impl LoopRunner {
                 .await
                 .map_err(|e| e.to_string())?;
 
-            if step_status == "success" {
+            // 4e. 评分闸门：若 step 成功且设置了 min_rating，等待自动评审并做阈值判断
+            let passed = if step_status == "success" && step.min_rating.is_some() {
+                self.apply_rating_gate(record_id, step.min_rating.unwrap(), &step.unrated_policy)
+                    .await
+                    .map_err(|e| e.to_string())?
+            } else {
+                step_status == "success"
+            };
+
+            if passed {
                 completed += 1;
                 last_failed_record = None;
                 let _ = self
@@ -303,7 +312,7 @@ impl LoopRunner {
                     .await;
             }
 
-            // 4e.
+            // 4f.
         }
 
         // 5. 计算最终 status
@@ -333,6 +342,7 @@ impl LoopRunner {
         todo: &crate::models::Todo,
         trigger_type: &str,
         loop_idx: i64,
+        step_exec_id: i64,
     ) -> Result<i64, String> {
         let request = RunTodoExecutionRequest {
             db: self.ctx.db.clone(),
@@ -356,6 +366,7 @@ impl LoopRunner {
             source_todo_id: None,
             source_todo_title: None,
             source_hook_id: None,
+            loop_step_execution_id: Some(step_exec_id),
             feishu_bot_id: None,
             feishu_receive_id: None,
         };
@@ -463,5 +474,50 @@ impl LoopRunner {
             .await
             .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    /// 评分闸门：等待自动评审完成，解析 rating，与阈值比较。
+    /// 返回 true = 通过（继续下一环节），false = 未通过。
+    async fn apply_rating_gate(
+        &self,
+        record_id: i64,
+        min_rating: i32,
+        unrated_policy: &str,
+    ) -> Result<bool, String> {
+        let poll_start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(300);
+        loop {
+            let rec = self
+                .ctx
+                .db
+                .get_execution_record(record_id)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("execution record #{} not found", record_id))?;
+
+            let review_status = rec.last_review_status.as_deref().unwrap_or("");
+            if review_status.is_empty() || review_status == "pending" {
+                if poll_start.elapsed() > timeout {
+                    warn!("rating gate: record #{} review timeout, policy={}", record_id, unrated_policy);
+                    return Ok(unrated_policy == "pass");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            }
+
+            match rec.rating {
+                Some(rating) => {
+                    let passed = rating >= min_rating;
+                    info!("rating gate: record #{} rating={} min_rating={} {}",
+                        record_id, rating, min_rating, if passed { "PASS" } else { "FAIL" });
+                    if passed { return Ok(true); }
+                    return Ok(unrated_policy == "pass");
+                }
+                None => {
+                    info!("rating gate: record #{} no rating, policy={}", record_id, unrated_policy);
+                    return Ok(unrated_policy == "pass");
+                }
+            }
+        }
     }
 }
