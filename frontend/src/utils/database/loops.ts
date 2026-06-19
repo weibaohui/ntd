@@ -18,6 +18,7 @@ import { api, unwrap } from './client';
 import type {
   CreateHookRequest,
   CreateLoopRequest,
+  CreateStageRequest,
   CreateTriggerRequest,
   LoopDetail,
   LoopExecutionDetail,
@@ -25,11 +26,14 @@ import type {
   LoopExecutionListResponse,
   LoopHookDto,
   LoopListItem,
+  LoopStageDto,
   LoopTriggerDto,
   LoopTriggerResponse,
+  ReorderStagesRequest,
   UpdateHookRequest,
   UpdateLoopRequest,
   UpdateLoopStatusRequest,
+  UpdateStageRequest,
   UpdateTriggerRequest,
 } from '@/types/loop';
 
@@ -101,6 +105,35 @@ export async function updateTrigger(
 
 export async function deleteTrigger(loopId: number, triggerId: number): Promise<void> {
   await api.delete(`/api/loops/${loopId}/triggers/${triggerId}`);
+}
+
+// ====== Stages ======
+
+export async function listStages(loopId: number): Promise<LoopStageDto[]> {
+  return unwrap(await api.get(`/api/loops/${loopId}/stages`));
+}
+
+export async function createStage(
+  loopId: number,
+  req: CreateStageRequest,
+): Promise<LoopStageDto> {
+  return unwrap(await api.post(`/api/loops/${loopId}/stages`, req));
+}
+
+export async function updateStage(
+  loopId: number,
+  stageId: number,
+  req: UpdateStageRequest,
+): Promise<LoopStageDto> {
+  return unwrap(await api.put(`/api/loops/${loopId}/stages/${stageId}`, req));
+}
+
+export async function deleteStage(loopId: number, stageId: number): Promise<void> {
+  await api.delete(`/api/loops/${loopId}/stages/${stageId}`);
+}
+
+export async function reorderStages(loopId: number, ordered_ids: number[]): Promise<void> {
+  await api.post(`/api/loops/${loopId}/stages/reorder`, { ordered_ids } satisfies ReorderStagesRequest);
 }
 
 // ====== Hooks ======

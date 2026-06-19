@@ -111,10 +111,68 @@ export interface LoopDetail {
   created_at: string | null;
   updated_at: string | null;
   triggers: LoopTriggerDto[];
-  // 后端仍通过 loop_stages 表返回阶段数据，前端简化展示为执行环节列表
-  stages: Record<string, any>[];
+  stages: LoopStageDto[];
   hooks: LoopHookDto[];
   todo_map: Record<number, TodoSummaryForLoop>;
+}
+
+export interface LoopStageRawDto {
+  id: number;
+  loop_id: number;
+  name: string;
+  description: string;
+  order_index: number;
+  todo_id: number;
+  run_mode: string;
+  skip_on_source_failed: boolean;
+  min_rating: number | null;
+  unrated_policy: string;
+  enabled: boolean;
+  created_at: string | null;
+}
+
+export interface LoopStageDto {
+  id: number;
+  loop_id: number;
+  name: string;
+  description: string;
+  order_index: number;
+  todo_id: number;
+  run_mode: string;
+  skip_on_source_failed: boolean;
+  min_rating: number | null;
+  unrated_policy: string;
+  enabled: boolean;
+  created_at: string | null;
+  todo_title: string;
+  todo_executor: string;
+  todo_status: string;
+}
+
+export interface CreateStageRequest {
+  name: string;
+  description?: string;
+  todo_id: number;
+  run_mode?: string;
+  skip_on_source_failed?: boolean;
+  min_rating?: number | null;
+  unrated_policy?: string;
+  enabled?: boolean;
+}
+
+export interface UpdateStageRequest {
+  name: string;
+  description: string;
+  todo_id: number;
+  run_mode: string;
+  skip_on_source_failed: boolean;
+  min_rating: number | null;
+  unrated_policy: string;
+  enabled: boolean;
+}
+
+export interface ReorderStagesRequest {
+  ordered_ids: number[];
 }
 
 export interface LoopListItem {

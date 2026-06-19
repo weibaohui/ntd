@@ -26,6 +26,7 @@ import * as dbLoops from '@/utils/database/loops';
 import * as db from '@/utils/database';
 import type { LoopDetail, UpdateLoopRequest } from '@/types/loop';
 import { LoopTriggersPanel } from './LoopStudioTriggersPanel';
+import { LoopStagesPanel } from './LoopStudioStagesPanel';
 import { LoopHooksPanel } from './LoopStudioHooksPanel';
 import { LoopExecutionsPanel } from './LoopStudioExecutionsPanel';
 
@@ -217,44 +218,17 @@ export function LoopDetailPanel({
         />
       </DetailSection>
 
-      {/* 执行环节: 关联的 todo 列表 */}
+      {/* 执行环节: 横向卡片布局 */}
       <DetailSection title="执行环节" extra={
         <span style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
           {detail.stages.length} 个环节按顺序执行
         </span>
       }>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {detail.stages.map((s, idx) => {
-            const todo = detail.todo_map[s.todo_id];
-            return (
-              <div key={s.id} style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '8px 12px',
-                background: 'var(--color-bg-elevated, #fff)',
-                border: '1px solid var(--color-border, #e2e8f0)',
-                borderRadius: 8,
-              }}>
-                <span style={{
-                  width: 24, height: 24, borderRadius: 12,
-                  background: 'var(--color-primary, #0891b2)', color: '#fff',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 11, fontWeight: 600, flexShrink: 0,
-                }}>{idx + 1}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 500, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {todo ? `#${todo.id} ${todo.title}` : `todo #${s.todo_id}`}
-                  </div>
-                  {s.description && (
-                    <div style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>{s.description}</div>
-                  )}
-                </div>
-                <span style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
-                  {s.enabled ? '已启用' : '已禁用'}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+        <LoopStagesPanel
+          loopId={loopId}
+          stages={detail.stages}
+          onChanged={() => { reload(); onChanged(); }}
+        />
       </DetailSection>
 
       {/* 折叠区: 钩子 + 执行历史, 默认收起 (不常用, 避免首屏信息过载) */}
