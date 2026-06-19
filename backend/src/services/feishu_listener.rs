@@ -1982,7 +1982,7 @@ mod tests {
             source_todo_id: None,
             source_todo_title: None,
             source_hook_id: None,
-            rating: None,
+            loop_step_execution_id: None,            rating: None,
             source_execution_record_id: None,
             last_review_status: None,
             last_reviewed_at: None,

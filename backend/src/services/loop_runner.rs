@@ -23,6 +23,7 @@ use crate::executor_service::{run_todo_execution_with_params, RunTodoExecutionRe
 use crate::hooks::HookService;
 use crate::models::ExecutionStatus;
 use crate::service_context::ServiceContext;
+use crate::db::entity::steps;
 
 /// LoopRunner 依赖：与现有 HookService 共享一个 spawn-friendly 结构。
 pub struct LoopRunner {
@@ -200,17 +201,17 @@ impl LoopRunner {
                 .await
                 .map_err(|e| e.to_string())?;
 
-            // b. 实际执行 todo
-            let todo = match self
+            // b. 实际执行 step（从 steps 表加载环节自身的数据）
+            let step_meta = match self
                 .ctx
                 .db
-                .get_todo(step.todo_id)
+                .get_step(step.todo_id)
                 .await
                 .map_err(|e| e.to_string())?
             {
-                Some(t) => t,
+                Some(s) => s,
                 None => {
-                    let msg = format!("step #{} todo #{} not found", step.id, step.todo_id);
+                    let msg = format!("step #{} (steps id={}) not found", step.id, step.todo_id);
                     warn!("loop_runner: {}", msg);
                     self.ctx
                         .db
@@ -234,7 +235,7 @@ impl LoopRunner {
             };
 
             let record_id = match self
-                .start_step_todo(&todo, &trigger_type, idx as i64)
+                .start_step_todo(&step_meta, &trigger_type, idx as i64, step_exec.id)
                 .await
             {
                 Ok(rid) => rid,
@@ -285,7 +286,16 @@ impl LoopRunner {
                 .await
                 .map_err(|e| e.to_string())?;
 
-            if step_status == "success" {
+            // 4e. 评分闸门：若 step 成功且设置了 min_rating，等待自动评审并做阈值判断
+            let passed = if step_status == "success" && step.min_rating.is_some() {
+                self.apply_rating_gate(record_id, step.min_rating.unwrap(), &step.unrated_policy)
+                    .await
+                    .map_err(|e| e.to_string())?
+            } else {
+                step_status == "success"
+            };
+
+            if passed {
                 completed += 1;
                 last_failed_record = None;
                 let _ = self
@@ -327,12 +337,13 @@ impl LoopRunner {
         Ok(())
     }
 
-    /// 启动 step.todo 的执行,返回 execution_record_id。
+    /// 启动 step 的执行（从 steps 表加载环节自身数据），返回 execution_record_id。
     async fn start_step_todo(
         &self,
-        todo: &crate::models::Todo,
+        step_meta: &steps::Model,
         trigger_type: &str,
         loop_idx: i64,
+        step_exec_id: i64,
     ) -> Result<i64, String> {
         let request = RunTodoExecutionRequest {
             db: self.ctx.db.clone(),
@@ -341,9 +352,9 @@ impl LoopRunner {
             task_manager: self.ctx.task_manager.clone(),
             config: self.ctx.config.clone(),
             hook_service: self.hook_service.clone(),
-            todo_id: todo.id,
-            message: todo.prompt.clone(),
-            req_executor: todo.executor.clone(),
+            todo_id: step_meta.source_todo_id.unwrap_or(0),
+            message: step_meta.prompt.clone(),
+            req_executor: step_meta.executor.clone(),
             trigger_type: format!("loop_stage:{}", trigger_type),
             params: Some({
                 let mut p = std::collections::HashMap::new();
@@ -356,6 +367,7 @@ impl LoopRunner {
             source_todo_id: None,
             source_todo_title: None,
             source_hook_id: None,
+            loop_step_execution_id: Some(step_exec_id),
             feishu_bot_id: None,
             feishu_receive_id: None,
         };
@@ -463,5 +475,48 @@ impl LoopRunner {
             .await
             .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    /// 评分闸门：等待自动评审完成，读取 rating 与阈值比较。
+    /// 返回 true = 通过，false = 未通过。
+    async fn apply_rating_gate(
+        &self,
+        record_id: i64,
+        min_rating: i32,
+        unrated_policy: &str,
+    ) -> Result<bool, String> {
+        let poll_start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(300);
+        loop {
+            let rec = self
+                .ctx
+                .db
+                .get_execution_record(record_id)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("execution record #{} not found", record_id))?;
+            let review_status = rec.last_review_status.as_deref().unwrap_or("");
+            if review_status.is_empty() || review_status == "pending" {
+                if poll_start.elapsed() > timeout {
+                    warn!("rating gate: record #{} review timeout, policy={}", record_id, unrated_policy);
+                    return Ok(unrated_policy == "pass");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            }
+            match rec.rating {
+                Some(rating) => {
+                    let passed = rating >= min_rating;
+                    info!("rating gate: record #{} rating={} min_rating={} {}",
+                        record_id, rating, min_rating, if passed { "PASS" } else { "FAIL" });
+                    if passed { return Ok(true); }
+                    return Ok(unrated_policy == "pass");
+                }
+                None => {
+                    info!("rating gate: record #{} no rating, policy={}", record_id, unrated_policy);
+                    return Ok(unrated_policy == "pass");
+                }
+            }
+        }
     }
 }

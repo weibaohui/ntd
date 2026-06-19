@@ -8,7 +8,7 @@
 
 import { useState, useRef, useCallback } from 'react';
 import {
-  App as AntApp, Button, Modal, Form, Input, Select, Switch, Popconfirm, Empty,
+  App as AntApp, Button, Modal, Form, Input, InputNumber, Select, Switch, Popconfirm, Empty,
 } from 'antd';
 import {
   PlusOutlined,
@@ -71,6 +71,9 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
       todo_id: step.todo_id,
       description: step.description,
       enabled: step.enabled,
+      min_rating: step.min_rating,
+      unrated_policy: step.unrated_policy,
+      skip_on_source_failed: step.skip_on_source_failed,
     });
     setModalOpen(true);
   }, [form]);
@@ -86,9 +89,9 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
           description: values.description ?? '',
           todo_id: values.todo_id,
           run_mode: 'sequential',
-          skip_on_source_failed: false,
-          min_rating: null,
-          unrated_policy: 'skip',
+          skip_on_source_failed: values.skip_on_source_failed ?? false,
+          min_rating: values.min_rating ?? null,
+          unrated_policy: values.unrated_policy ?? 'skip',
           enabled: values.enabled ?? true,
         });
         message.success('环节已更新');
@@ -98,9 +101,9 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
           description: values.description ?? '',
           todo_id: values.todo_id,
           run_mode: 'sequential',
-          skip_on_source_failed: false,
-          min_rating: null,
-          unrated_policy: 'skip',
+          skip_on_source_failed: values.skip_on_source_failed ?? false,
+          min_rating: values.min_rating ?? null,
+          unrated_policy: values.unrated_policy ?? 'skip',
           enabled: values.enabled ?? true,
         });
         message.success('环节已添加');
@@ -417,6 +420,20 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
             <Input.TextArea rows={2} maxLength={500} placeholder="可选描述" />
           </Form.Item>
           <Form.Item label="启用" name="enabled" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Form.Item label="评分阈值" name="min_rating" tooltip="自动评审得分低于此值时，按下方策略处理（0-100，留空=不启用）">
+              <InputNumber min={0} max={100} placeholder="留空=不启用" style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item label="未达阈值策略" name="unrated_policy" tooltip="评分低于阈值或未评分时：skip=跳过后续环节，pass=放行">
+              <Select>
+                <Select.Option value="skip">跳过后续环节</Select.Option>
+                <Select.Option value="pass">放行</Select.Option>
+              </Select>
+            </Form.Item>
+          </div>
+          <Form.Item label="上游失败时跳过本环节" name="skip_on_source_failed" valuePropName="checked" tooltip="上一个环节失败时，自动跳过本环节继续执行后续">
             <Switch />
           </Form.Item>
         </Form>

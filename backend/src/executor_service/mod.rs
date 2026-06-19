@@ -76,6 +76,8 @@ pub struct RunTodoExecutionRequest {
     pub feishu_bot_id: Option<i64>,
     /// Feishu receive_id (open_id for p2p, chat_id for group).
     pub feishu_receive_id: Option<String>,
+    /// 当本次执行是 loop 环节的一部分时，指向 loop_step_executions 表的 id。
+    pub loop_step_execution_id: Option<i64>,
 }
 
 /// Run a todo execution. Priority: explicit executor > todo stored executor > default.
