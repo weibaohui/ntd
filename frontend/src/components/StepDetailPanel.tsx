@@ -147,7 +147,7 @@ export function StepDetailPanel({ stepId, onStepUpdated }: StepDetailPanelProps)
     } finally {
       setSaving(false);
     }
-  }, [editTitle, editPrompt, editExecutor, editAcceptanceCriteria, stepId, message]);
+  }, [editTitle, editPrompt, editExecutor, editColor, editAcceptanceCriteria, stepId, message]);
 
   if (loading) {
     return <Skeleton active style={{ padding: 24 }} />;
