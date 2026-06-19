@@ -19,9 +19,9 @@
 
 use ntd::config::ExecutorPaths;
 use ntd::db::Database;
-use ntd::db::entity::tags;
-use sea_orm::{ActiveValue, EntityTrait};
-use std::collections::HashMap;
+use ntd::db::entity::{executors, tags, todo_tags};
+use sea_orm::{ActiveValue, ColumnTrait, EntityTrait, QueryFilter};
+use std::collections::{HashMap, HashSet};
 
 // 共用的内存数据库初始化函数：与 db/mod.rs 内置测试保持一致。
 async fn setup_db() -> Database {
@@ -67,6 +67,8 @@ mod tag_tests {
     /// tag 与 todo 的多对多关系：
     ///   add_todo_tag 重复调用是幂等的；set_todo_tags 会先清空再重建集合。
     /// 选用先 add 再 set 的组合：这是前端表单"打标签 → 整体提交"的真实场景。
+    /// 通过 db.conn() + todo_tags Entity 直查关联表来真正断言事务级语义,
+    /// 而非仅看 add_todo_tag / set_todo_tags 的返回 Ok。
     #[tokio::test]
     async fn test_todo_tag_associations_and_set_replaces() {
         let db = setup_db().await;
@@ -75,23 +77,52 @@ mod tag_tests {
         let tag_b = db.create_tag("feature", "#0f0").await.unwrap();
         let tag_c = db.create_tag("chore", "#00f").await.unwrap();
 
+        // 查 todo_tags 表的辅助函数：避免每处都重复写 Entity::find().filter
+        let fetch_linked = |todo_id: i64| {
+            let db = &db;
+            async move {
+                todo_tags::Entity::find()
+                    .filter(todo_tags::Column::TodoId.eq(todo_id))
+                    .all(db.conn())
+                    .await
+                    .unwrap()
+            }
+        };
+
         // 重复 add 同一个 (todo,tag) 必须幂等 —— 不能让主键冲突冒泡成 DbErr
         db.add_todo_tag(todo_id, tag_a).await.unwrap();
         db.add_todo_tag(todo_id, tag_a).await.unwrap();
         db.add_todo_tag(todo_id, tag_b).await.unwrap();
+        let links = fetch_linked(todo_id).await;
+        assert_eq!(links.len(), 2, "add_todo_tag 幂等后应有 2 条关联");
+        let linked_ids: HashSet<i64> = links.iter().map(|l| l.tag_id).collect();
+        assert_eq!(linked_ids, HashSet::from([tag_a, tag_b]));
 
         // set_todo_tags 把 todo 的关联整体替换为 {tag_a, tag_c}
         //   tag_b 应当消失；tag_a 保留；tag_c 新增。
         db.set_todo_tags(todo_id, &[tag_a, tag_c]).await.unwrap();
+        let links = fetch_linked(todo_id).await;
+        assert_eq!(links.len(), 2, "set_todo_tags 替换后应有 2 条关联");
+        let linked_ids: HashSet<i64> = links.iter().map(|l| l.tag_id).collect();
+        assert_eq!(
+            linked_ids,
+            HashSet::from([tag_a, tag_c]),
+            "tag_b 应当消失,tag_c 应当新增"
+        );
 
-        let tags = db.get_tags().await.unwrap();
-        assert_eq!(tags.len(), 3, "tag 数量本身没变,只是关联变了");
-
-        // 再用 set_todo_tags(empty) 验证清空路径 —— 前端"取消所有标签"必须能用。
+        // set_todo_tags([]) 验证清空分支 —— 事务级语义,直接查表
         db.set_todo_tags(todo_id, &[]).await.unwrap();
-        // 这里没法直接 get_todo_tags,但 set_todo_tags 的成功即代表清空事务 OK;
-        // 后续再 add 一个新 tag 不会因为残留旧关联而 UNIQUE 冲突。
+        let links = fetch_linked(todo_id).await;
+        assert!(
+            links.is_empty(),
+            "set_todo_tags(empty) 必须清空关联 —— 前端'取消所有标签'依赖这条"
+        );
+
+        // 再次 add 应当成功 —— 没有残留旧关联就不会撞 UNIQUE
         db.add_todo_tag(todo_id, tag_b).await.unwrap();
+        let links = fetch_linked(todo_id).await;
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].tag_id, tag_b);
     }
 
     /// get_tag_backups 是云同步 export 用的接口；颜色为空时回退到空串,
@@ -117,6 +148,21 @@ mod tag_tests {
         assert_eq!(backups[0].name, "legacy");
         // color 是 String,不应当是 None —— 即使 DB 里是 NULL 也得给空串兜底
         assert_eq!(backups[0].color, "");
+    }
+
+    /// get_tag_backups 的"正常路径"对照：create_tag 写 Some(color) 时,
+    /// 颜色必须原样保留。如果某天被改成 unwrap_or("#000") 这类默认值,
+    /// 仅靠 NULL → "" 那条测试是检测不出来的。
+    #[tokio::test]
+    async fn test_get_tag_backups_preserves_normal_color() {
+        let db = setup_db().await;
+        db.create_tag("normal", "#abc123").await.unwrap();
+
+        let backups = db.get_tag_backups().await.unwrap();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(backups[0].name, "normal");
+        // 正常路径: 颜色原样保留,不是空串,也不是默认值
+        assert_eq!(backups[0].color, "#abc123");
     }
 }
 
@@ -389,23 +435,14 @@ mod executor_config_tests {
             .await
             .unwrap()
             .is_none());
-        // 真实存在的执行器应当查得到 —— 至少有一个 EXECUTORS 常量项能查到
-        let mut found_any = false;
-        for exec in EXECUTORS {
-            if db
-                .get_executor_by_name(exec.name)
-                .await
-                .unwrap()
-                .is_some()
-            {
-                found_any = true;
-                break;
-            }
-        }
-        assert!(
-            found_any,
-            "至少应有一个 EXECUTORS 常量项在 seed 后能查到"
-        );
+        // 真实存在的执行器应当查得到 —— 硬编码 "claudecode" 比"EXECUTORS 中任一"
+        // 的循环断言可读性更好,且与 test_migrate_from_config_only_runs_when_empty
+        // 使用的常量保持一致。
+        assert!(db
+            .get_executor_by_name("claudecode")
+            .await
+            .unwrap()
+            .is_some());
     }
 
     /// sync_new_executors 的语义：
@@ -438,6 +475,40 @@ mod executor_config_tests {
             total_after.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names_before, names_after, "执行器名称集合应保持稳定");
         assert_eq!(enabled_before.len(), enabled_after.len(), "enabled 集合应保持稳定");
+    }
+
+    /// sync_new_executors 的"禁用"分支：DB 里有但代码 EXECUTORS 常量里没有的
+    /// executor,应当被自动标记为 enabled=false。这条覆盖 db/executor_config.rs
+    /// 的 update 分支(同步禁用历史执行器),是"零运维"契约的另一半。
+    #[tokio::test]
+    async fn test_sync_new_executors_disables_removed_executors() {
+        let db = setup_db().await;
+        db.seed_default_executors().await.unwrap();
+
+        // 注入一个"代码里没有的"历史 executor,模拟升级后被废弃的执行器
+        executors::Entity::insert(executors::ActiveModel {
+            name: ActiveValue::Set("legacy-deprecated".to_string()),
+            path: ActiveValue::Set("/old/path".to_string()),
+            enabled: ActiveValue::Set(true),
+            display_name: ActiveValue::Set("legacy".to_string()),
+            session_dir: ActiveValue::Set(String::new()),
+            ..Default::default()
+        })
+        .exec(db.conn())
+        .await
+        .unwrap();
+
+        // 同步:代码里没有的 executor 必须被自动禁用
+        db.sync_new_executors().await.unwrap();
+        let legacy = db
+            .get_executor_by_name("legacy-deprecated")
+            .await
+            .unwrap()
+            .expect("注入的 legacy executor 应当在表中");
+        assert!(
+            !legacy.enabled,
+            "sync_new_executors 必须自动禁用代码里已删除的 executor"
+        );
     }
 
     /// migrate_from_config 只在 executors 表为空时生效,
