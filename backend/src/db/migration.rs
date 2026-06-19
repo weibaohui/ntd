@@ -46,6 +46,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V7LoopStudio),
         Box::new(V8LoopWorkspace),
         Box::new(V9IndependentSteps),
+        Box::new(V10StepColor),
     ]
 }
 
@@ -2052,4 +2053,23 @@ async fn v9_independent_steps(db: &Database) -> Result<(), sea_orm::DbErr> {
     )
     .await?;
     Ok(())
+}
+
+// ===== V10: steps 表增加 color 列 =====
+
+pub(super) struct V10StepColor;
+
+#[async_trait]
+impl Migration for V10StepColor {
+    fn version(&self) -> i64 {
+        10
+    }
+    fn name(&self) -> &'static str {
+        "step_color"
+    }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        add_column_warn(db, "ALTER TABLE steps ADD COLUMN color TEXT NOT NULL DEFAULT '#722ed1'").await;
+        Ok(())
+    }
 }

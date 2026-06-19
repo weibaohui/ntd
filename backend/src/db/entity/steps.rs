@@ -16,6 +16,8 @@ pub struct Model {
     pub acceptance_criteria: Option<String>,
     /// 来源 todo id（仅记录，不影响 todo）
     pub source_todo_id: Option<i64>,
+    #[sea_orm(default_value = "#722ed1")]
+    pub color: String,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }

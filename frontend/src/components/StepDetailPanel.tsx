@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
-  Skeleton, Empty, Tag, Descriptions, Button, Drawer, Input, Divider, App as AntApp,
+  Skeleton, Empty, Tag, Descriptions, Button, Drawer, Input, Divider, ColorPicker, App as AntApp,
 } from 'antd';
 import { ApartmentOutlined, ThunderboltOutlined, EditOutlined } from '@ant-design/icons';
 import { ExecutorPicker } from './todo-drawer/ExecutorPicker';
@@ -31,6 +31,7 @@ export function StepDetailPanel({ stepId }: StepDetailPanelProps) {
   const [editTitle, setEditTitle] = useState('');
   const [editPrompt, setEditPrompt] = useState('');
   const [editExecutor, setEditExecutor] = useState('');
+  const [editColor, setEditColor] = useState('#722ed1');
   const [editAcceptanceCriteria, setEditAcceptanceCriteria] = useState('');
 
   // Prompt 编辑器 ref（用于光标插入）
@@ -70,6 +71,7 @@ export function StepDetailPanel({ stepId }: StepDetailPanelProps) {
     setEditTitle(step.title);
     setEditPrompt(step.prompt);
     setEditExecutor(step.executor || '');
+    setEditColor(step.color || '#722ed1');
     setEditAcceptanceCriteria(step.acceptance_criteria || '');
     setSkillsExpanded(false);
     setSkillSearchText('');
@@ -133,6 +135,7 @@ export function StepDetailPanel({ stepId }: StepDetailPanelProps) {
         prompt: editPrompt,
         executor: editExecutor || null,
         acceptance_criteria: editAcceptanceCriteria || null,
+        color: editColor,
       });
       setStep(updated);
       message.success('环节已更新');
@@ -267,6 +270,17 @@ export function StepDetailPanel({ stepId }: StepDetailPanelProps) {
             executorOptions={EXECUTORS}
             onChange={setEditExecutor}
           />
+
+          {/* 颜色 */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8, fontWeight: 600, fontSize: 14 }}>颜色</div>
+            <ColorPicker
+              value={editColor}
+              onChange={(c) => setEditColor(c.toHexString())}
+              showText
+              format="hex"
+            />
+          </div>
 
           <Divider style={{ margin: '8px 0 16px' }} />
 

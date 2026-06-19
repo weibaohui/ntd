@@ -34,7 +34,7 @@ export async function promoteTodoToStep(id: number): Promise<StepSummary> {
 /** 更新环节基本信息。 */
 export async function updateStep(
   id: number,
-  data: { title: string; prompt?: string; executor?: string | null; acceptance_criteria?: string | null },
+  data: { title: string; prompt?: string; executor?: string | null; acceptance_criteria?: string | null; color?: string },
 ): Promise<StepSummary> {
   return unwrap(await api.put(`/api/steps/${id}`, data));
 }

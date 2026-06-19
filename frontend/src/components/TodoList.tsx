@@ -606,7 +606,7 @@ export function TodoList(props: TodoListProps) {
               style={{ marginTop: 32 }}
             />
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {stepList.map(step => (
                 <div
                   key={step.id}
@@ -618,45 +618,71 @@ export function TodoList(props: TodoListProps) {
                   tabIndex={0}
                   onKeyDown={(e) => { if (e.key === 'Enter') { setSelectedStepId(step.id); onSelectStep?.(step.id); }}}
                   style={{
-                    display: 'flex', alignItems: 'center', gap: 8,
-                    padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
+                    position: 'relative',
                     background: selectedStepId === step.id
                       ? 'var(--color-primary-bg, #f0f9ff)'
-                      : 'transparent',
-                    border: selectedStepId === step.id
-                      ? '1px solid var(--color-primary, #0891b2)'
-                      : '1px solid transparent',
-                    transition: 'background 200ms',
+                      : 'var(--color-bg-elevated, #ffffff)',
+                    border: `1px solid ${selectedStepId === step.id
+                      ? 'var(--color-primary, #0891b2)'
+                      : 'var(--color-border, #e2e8f0)'}`,
+                    boxShadow: selectedStepId === step.id
+                      ? 'inset 0 0 0 1px var(--color-primary, #0891b2)'
+                      : '0 1px 2px color-mix(in srgb, var(--color-text, #0f172a) 6%, transparent)',
+                    borderRadius: 10,
+                    padding: '12px 12px 14px 16px',
+                    cursor: 'pointer',
+                    overflow: 'hidden',
+                    transition: 'background 200ms, border-color 200ms, box-shadow 200ms, transform 200ms',
                   }}
                   onMouseEnter={(e) => {
-                    if (selectedStepId !== step.id) e.currentTarget.style.background = 'var(--color-bg-hover, #f1f5f9)';
+                    if (selectedStepId !== step.id) {
+                      e.currentTarget.style.borderColor = 'var(--color-text-tertiary, #94a3b8)';
+                      e.currentTarget.style.boxShadow = '0 4px 10px color-mix(in srgb, var(--color-text, #0f172a) 10%, transparent)';
+                      e.currentTarget.style.transform = 'translateY(-1px)';
+                    }
                   }}
                   onMouseLeave={(e) => {
-                    if (selectedStepId !== step.id) e.currentTarget.style.background = 'transparent';
+                    if (selectedStepId !== step.id) {
+                      e.currentTarget.style.borderColor = 'var(--color-border, #e2e8f0)';
+                      e.currentTarget.style.boxShadow = '0 1px 2px color-mix(in srgb, var(--color-text, #0f172a) 6%, transparent)';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                    }
                   }}
                 >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{
-                      fontWeight: 500, fontSize: 13,
-                      color: 'var(--color-text, #0f172a)',
+                  {/* 左侧 3px 颜色条 */}
+                  <span style={{
+                    position: 'absolute', left: 0, top: 0, bottom: 0, width: 3,
+                    background: step.color || 'var(--color-primary, #0891b2)',
+                    borderRadius: '10px 0 0 10px',
+                  }} />
+
+                  {/* 标题行: #id + 名称 */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <span style={{ color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 11, fontFamily: 'monospace' }}>#{step.id}</span>
+                    <span style={{
+                      fontWeight: 600, fontSize: 14, flex: 1, minWidth: 0,
                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      color: 'var(--color-text, #0f172a)',
                     }}>
                       {step.title}
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)', marginTop: 2 }}>
-                      <ApartmentOutlined style={{ marginRight: 4 }} />{step.used_by_loop_stage_count} 引用
-                    </div>
-                  </div>
-                  {step.executor && (
-                    <span style={{
-                      fontSize: 10, padding: '1px 6px', borderRadius: 4,
-                      background: 'var(--color-bg-hover, #f1f5f9)',
-                      color: 'var(--color-text-tertiary, #94a3b8)',
-                      whiteSpace: 'nowrap', flexShrink: 0,
-                    }}>
-                      <ThunderboltOutlined /> {step.executor}
                     </span>
-                  )}
+                  </div>
+
+                  {/* meta: 执行器 + 引用次数 */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
+                    {step.executor && (
+                      <span><ThunderboltOutlined /> {step.executor}</span>
+                    )}
+                    <span><ApartmentOutlined /> {step.used_by_loop_stage_count} 引用</span>
+                  </div>
+
+                  {/* 底部 3px 进度条（淡出指示条） */}
+                  <div style={{
+                    position: 'absolute', left: 0, right: 0, bottom: 0, height: 3,
+                    background: step.color || 'var(--color-primary, #0891b2)',
+                    opacity: 0.25,
+                    borderRadius: '0 0 10px 10px',
+                  }} />
                 </div>
               ))}
             </div>

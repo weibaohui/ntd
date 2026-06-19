@@ -414,6 +414,7 @@ pub async fn update_step(
             &req.prompt,
             req.executor.as_deref(),
             req.acceptance_criteria.as_deref(),
+            req.color.as_deref(),
         )
         .await?;
     // 查回最新数据
@@ -440,6 +441,7 @@ pub async fn promote_todo_to_step(
             todo.executor.as_deref(),
             todo.acceptance_criteria.as_deref(),
             Some(todo.id),
+            None,
         )
         .await?;
     Ok(ApiResponse::ok(StepDto::from(step)))

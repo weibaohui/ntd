@@ -13,6 +13,7 @@ pub struct StepDto {
     pub source_todo_id: Option<i64>,
     /// 被多少个 loop stage 引用
     pub used_by_loop_stage_count: i64,
+    pub color: String,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -27,6 +28,7 @@ impl From<steps::Model> for StepDto {
             acceptance_criteria: m.acceptance_criteria,
             source_todo_id: m.source_todo_id,
             used_by_loop_stage_count: 0,
+            color: m.color,
             created_at: m.created_at,
             updated_at: m.updated_at,
         }
@@ -47,4 +49,5 @@ pub struct UpdateStepRequest {
     pub prompt: String,
     pub executor: Option<String>,
     pub acceptance_criteria: Option<String>,
+    pub color: Option<String>,
 }

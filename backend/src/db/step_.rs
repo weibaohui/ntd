@@ -28,10 +28,12 @@ impl Database {
         executor: Option<&str>,
         acceptance_criteria: Option<&str>,
         source_todo_id: Option<i64>,
+        color: Option<&str>,
     ) -> Result<steps::Model, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
-        let sql = "INSERT INTO steps (title, prompt, executor, acceptance_criteria, source_todo_id, created_at, updated_at) \
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+        let c = color.unwrap_or("#722ed1");
+        let sql = "INSERT INTO steps (title, prompt, executor, acceptance_criteria, source_todo_id, color, created_at, updated_at) \
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)";
         self.conn
             .execute(Statement::from_sql_and_values(
                 sea_orm::DbBackend::Sqlite,
@@ -42,6 +44,7 @@ impl Database {
                     executor.map(|s| s.to_string()).into(),
                     acceptance_criteria.map(|s| s.to_string()).into(),
                     source_todo_id.into(),
+                    c.to_string().into(),
                     now.clone().into(),
                     now.into(),
                 ],
@@ -107,23 +110,39 @@ impl Database {
         prompt: &str,
         executor: Option<&str>,
         acceptance_criteria: Option<&str>,
+        color: Option<&str>,
     ) -> Result<(), sea_orm::DbErr> {
-        use sea_orm::{EntityTrait, QueryFilter};
-        use sea_orm::ConnectionTrait;
-        let sql = "UPDATE steps SET title = ?1, prompt = ?2, executor = ?3, acceptance_criteria = ?4, updated_at = ?5 WHERE id = ?6";
         let now = crate::models::utc_timestamp();
+        let sql = if let Some(c) = color {
+            "UPDATE steps SET title = ?1, prompt = ?2, executor = ?3, acceptance_criteria = ?4, color = ?5, updated_at = ?6 WHERE id = ?7"
+        } else {
+            "UPDATE steps SET title = ?1, prompt = ?2, executor = ?3, acceptance_criteria = ?4, updated_at = ?5 WHERE id = ?6"
+        };
+        let vals: Vec<sea_orm::Value> = if let Some(c) = color {
+            vec![
+                title.to_string().into(),
+                prompt.to_string().into(),
+                executor.map(|s| s.to_string()).into(),
+                acceptance_criteria.map(|s| s.to_string()).into(),
+                c.to_string().into(),
+                now.into(),
+                id.into(),
+            ]
+        } else {
+            vec![
+                title.to_string().into(),
+                prompt.to_string().into(),
+                executor.map(|s| s.to_string()).into(),
+                acceptance_criteria.map(|s| s.to_string()).into(),
+                now.into(),
+                id.into(),
+            ]
+        };
         self.conn
             .execute(sea_orm::Statement::from_sql_and_values(
                 sea_orm::DbBackend::Sqlite,
                 sql,
-                [
-                    title.to_string().into(),
-                    prompt.to_string().into(),
-                    executor.map(|s| s.to_string()).into(),
-                    acceptance_criteria.map(|s| s.to_string()).into(),
-                    now.into(),
-                    id.into(),
-                ],
+                vals,
             ))
             .await?;
         Ok(())
