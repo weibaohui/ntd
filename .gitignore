@@ -76,3 +76,7 @@ frontend/node_modules
 # proptest 会在测试失败时保存最小反例到 `*/proptest-regressions/`，
 # 这些是 local debug 产物,不应提交。
 **/proptest-regressions/
+*.png
+frontend/dist
+test-results/
+frontend/test-results/
