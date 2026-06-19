@@ -58,7 +58,7 @@ async fn v6_migration_backfills_expert_for_loop_referenced_todos() {
     // 直接 promote 模拟「v6 回填」后状态
     db.promote_to_step(todo_id).await.unwrap();
     let todo = db.get_todo(todo_id).await.unwrap().unwrap();
-    assert_eq!(todo.kind, "expert");
+    assert_eq!(todo.kind, "step");
     assert!(
         db.count_loop_stages_using_todo(todo_id).await.unwrap() >= 1,
         "被 stage 引用, 引用次数 >= 1"
@@ -76,7 +76,7 @@ async fn promote_item_to_expert_changes_kind() {
     // 初始 'item'
     assert_eq!(db.get_todo(id).await.unwrap().unwrap().kind, "item");
     db.promote_to_step(id).await.unwrap();
-    assert_eq!(db.get_todo(id).await.unwrap().unwrap().kind, "expert");
+    assert_eq!(db.get_todo(id).await.unwrap().unwrap().kind, "step");
 }
 
 #[tokio::test]
@@ -105,7 +105,7 @@ async fn demote_expert_blocked_when_loop_references_it() {
         result
     );
     // 状态保持 expert
-    assert_eq!(db.get_todo(todo_id).await.unwrap().unwrap().kind, "expert");
+    assert_eq!(db.get_todo(todo_id).await.unwrap().unwrap().kind, "step");
 }
 
 #[tokio::test]

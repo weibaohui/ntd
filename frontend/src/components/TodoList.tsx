@@ -93,8 +93,8 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
   const [isLoading, setIsLoading] = useState(true);
   // 搜索关键字状态，用于按标题或提示词过滤 todo 列表
   const [searchKeyword, setSearchKeyword] = useState('');
-  // 列表模式：'item' = 事项, 'expert' = 环节, 'loop' = 环路
-  const [listMode, setListMode] = useState<'item' | 'expert' | 'loop'>('item');
+  // 列表模式：'item' = 事项, 'step' = 环节, 'loop' = 环路
+  const [listMode, setListMode] = useState<'item' | 'step' | 'loop'>('item');
   // 环路列表数据（只在 listMode === 'loop' 时使用）
   const [loopList, setLoopList] = useState<LoopListItem[]>([]);
   const [loopLoading, setLoopLoading] = useState(false);
@@ -165,12 +165,12 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
       });
     }
 
-    // 按类型过滤 (v3 kind 列)：'item' = 仅事项，'expert' = 仅环节
+    // 按类型过滤 (v3 kind 列)：'item' = 仅事项，'step' = 仅环节
     // 两个模式都显式过滤，避免事项列表中出现环节。
     if (listMode === 'item') {
       result = result.filter(todo => (todo.kind ?? 'item') === 'item');
-    } else if (listMode === 'expert') {
-      result = result.filter(todo => (todo.kind ?? 'item') === 'expert');
+    } else if (listMode === 'step') {
+      result = result.filter(todo => (todo.kind ?? 'item') === 'step');
     }
 
     return result;
@@ -276,7 +276,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
               </div>
               <ExecutorBadge executor={todo.executor || 'claudecode'} />
               {/* 升级/降级入口: 事项行显示"升级为环节", 环节行显示"降级为事项" */}
-              {(todo.kind ?? 'item') === 'expert' ? (
+              {(todo.kind ?? 'item') === 'step' ? (
                 <Popconfirm
                   title="降级为事项"
                   description="确定将此环节降级为事项？降级后不会被任何 loop 引用"
@@ -568,10 +568,10 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
           block
           size="small"
           value={listMode}
-          onChange={(v) => setListMode(v as 'item' | 'expert' | 'loop')}
+          onChange={(v) => setListMode(v as 'item' | 'step' | 'loop')}
           options={[
             { label: '事项', value: 'item' },
-            { label: '环节', value: 'expert' },
+            { label: '环节', value: 'step' },
             { label: '环路', value: 'loop' },
           ]}
         />

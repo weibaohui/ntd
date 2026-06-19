@@ -27,9 +27,9 @@ export interface Todo {
   todo_type?: 0 | 1 | 2;
   /** For review instances: the original todo that was reviewed. */
   parent_todo_id?: number | null;
-  /** 事项 vs 环节。'item' = 一次性事项(默认), 'expert' = 可复用的环节(loop 编排引用).
+  /** 事项 vs 环节。'item' = 一次性事项(默认), 'step' = 可复用的环节(loop 编排引用).
    * 后端 v3 migration 引入; 前端不传时按 'item' 兜底. */
-  kind?: 'item' | 'expert';
+  kind?: 'item' | 'step';
 }
 
 /** 环节视图 — 在 Todo 基础上叠加"被多少个 loop 引用"复用度指标. */

@@ -6,7 +6,7 @@
 //   这里采用列表 + 操作按钮的紧凑布局，强调"被哪些 loop 引用"这一复用度指标。
 // - 内联新建环节：点击 "+ 新建环节" 弹出 modal，要求 title + prompt + executor，
 //   保存后立即出现在列表里。复用现有 createTodo 但后端默认 kind=item，
-//   所以保存成功后立刻调用 promote 接口把 kind 改为 'expert'，避免双 round-trip 时的中间态问题。
+//   所以保存成功后立刻调用 promote 接口把 kind 改为 'step'，避免双 round-trip 时的中间态问题。
 // - 降级：仅当 used_by_loop_stage_count === 0 时允许 demote，且要求二次确认。
 
 import { useEffect, useState, useCallback, useMemo } from 'react';

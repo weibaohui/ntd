@@ -973,7 +973,7 @@ impl Database {
     pub async fn list_steps(&self) -> Result<Vec<Todo>, sea_orm::DbErr> {
         let models = todos::Entity::find()
             .filter(todos::Column::DeletedAt.is_null())
-            .filter(todos::Column::Kind.eq("expert"))
+            .filter(todos::Column::Kind.eq("step"))
             .order_by_desc(todos::Column::UpdatedAt)
             .all(&self.conn)
             .await?;
@@ -1002,12 +1002,12 @@ impl Database {
         let now = crate::models::utc_timestamp();
         let am = todos::ActiveModel {
             id: ActiveValue::Unchanged(id),
-            kind: ActiveValue::Set(Some("expert".to_string())),
+            kind: ActiveValue::Set(Some("step".to_string())),
             updated_at: ActiveValue::Set(Some(now)),
             ..Default::default()
         };
         let res = am.update(&self.conn).await?;
-        Ok(res.kind.as_deref() == Some("expert"))
+        Ok(res.kind.as_deref() == Some("step"))
     }
 
     /// 把环节降级为事项。

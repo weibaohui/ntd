@@ -33,7 +33,7 @@ pub async fn get_todos(
     // 保持向后兼容：未传参时返回所有 todo。
     let todos = match params.kind.as_deref() {
         Some("item") => state.db.list_todos_by_kind("item").await?,
-        Some("expert") => state.db.list_todos_by_kind("expert").await?,
+        Some("step") => state.db.list_todos_by_kind("step").await?,
         _ => state.db.get_todos().await?,
     };
     Ok(ApiResponse::ok(todos))
@@ -351,27 +351,27 @@ pub async fn get_recent_completed_todos(
 // ====== 环节管理（kind=expert）======
 //
 // 路由：
-// - GET    /api/experts                    列出所有环节 + 各自的 loop 引用计数
-// - GET    /api/experts/:id                单个环节详情
-// - GET    /api/experts/candidates         loop 编辑器选环节用的精简候选列表
+// - GET    /api/steps                    列出所有环节 + 各自的 loop 引用计数
+// - GET    /api/steps/:id                单个环节详情
+// - GET    /api/steps/candidates         loop 编辑器选环节用的精简候选列表
 // - POST   /api/todos/:id/promote          事项 → 环节
 // - POST   /api/todos/:id/demote           环节 → 事项（被 loop 引用时拒绝）
 
-/// GET /api/experts — 列出所有环节,带"被哪些 loop 用"复用度计数
+/// GET /api/steps — 列出所有环节,带"被哪些 loop 用"复用度计数
 pub async fn list_steps(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<Vec<crate::models::StepSummary>>, AppError> {
     Ok(ApiResponse::ok(state.db.list_steps_with_usage().await?))
 }
 
-/// GET /api/experts/candidates — loop 编辑器选环节用,字段与 Todo 一致
+/// GET /api/steps/candidates — loop 编辑器选环节用,字段与 Todo 一致
 pub async fn list_step_candidates(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<Vec<Todo>>, AppError> {
     Ok(ApiResponse::ok(state.db.list_step_candidates().await?))
 }
 
-/// GET /api/experts/:id — 单个环节详情,带 loop 引用计数
+/// GET /api/steps/:id — 单个环节详情,带 loop 引用计数
 pub async fn get_step(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -382,7 +382,7 @@ pub async fn get_step(
         .await?
         .ok_or(AppError::NotFound)?;
     // 必须是 expert,否则返回 404
-    if todo.kind != "expert" {
+    if todo.kind != "step" {
         return Err(AppError::NotFound);
     }
     let used_by_loop_stage_count = state.db.count_loop_stages_using_todo(id).await?;

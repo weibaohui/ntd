@@ -1,6 +1,6 @@
 // 「升级为环节」按钮 + 确认 Modal。
 //
-// 放在 todo 行内 (TodoList), 只在 kind !== 'expert' 时显示,
+// 放在 todo 行内 (TodoList), 只在 kind !== 'step' 时显示,
 // 因为已经升级过的 todo 不需要重复升级, 环节视图里通常走降级路径。
 //
 // 为什么不直接走环节新建流程: 现实场景中, 用户往往先在一个 todo 上把 prompt /

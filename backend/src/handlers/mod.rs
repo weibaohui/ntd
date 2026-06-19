@@ -1198,9 +1198,9 @@ fn todo_routes() -> Router<AppState> {
         .route("/api/todos/{id}/demote", post(todo::demote_todo_to_item))
         .route("/api/todos/{id}", get(todo::get_todo).put(todo::update_todo).delete(todo::delete_todo))
         // 环节专用：list / candidates / 单查,语义上独立于 todo CRUD
-        .route("/api/experts", get(todo::list_steps))
-        .route("/api/experts/candidates", get(todo::list_step_candidates))
-        .route("/api/experts/{id}", get(todo::get_step))
+        .route("/api/steps", get(todo::list_steps))
+        .route("/api/steps/candidates", get(todo::list_step_candidates))
+        .route("/api/steps/{id}", get(todo::get_step))
         .route("/api/tags", get(tag::get_tags).post(tag::create_tag))
         .route("/api/tags/{id}", delete(tag::delete_tag))
 }

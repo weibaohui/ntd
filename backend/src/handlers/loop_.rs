@@ -305,7 +305,7 @@ pub async fn create_stage(
         .get_todo(req.todo_id)
         .await?
         .ok_or_else(|| AppError::BadRequest(format!("todo #{} 不存在", req.todo_id)))?;
-    if target.kind != "expert" {
+    if target.kind != "step" {
         return Err(AppError::BadRequest(format!(
             "todo #{} 不是环节(kind={}); 请先在环节页 promote,或在循环编辑器中创建环节",
             req.todo_id, target.kind
@@ -365,7 +365,7 @@ pub async fn update_stage(
             .get_todo(req.todo_id)
             .await?
             .ok_or_else(|| AppError::BadRequest(format!("todo #{} 不存在", req.todo_id)))?;
-        if target.kind != "expert" {
+        if target.kind != "step" {
             return Err(AppError::BadRequest(format!(
                 "todo #{} 不是环节(kind={}); 不能作为 stage 的目标",
                 req.todo_id, target.kind
