@@ -353,7 +353,7 @@ impl LoopRunner {
             task_manager: self.ctx.task_manager.clone(),
             config: self.ctx.config.clone(),
             hook_service: self.hook_service.clone(),
-            todo_id: 0, // loop 环节执行不是 todo 执行，避免混入 todo 历史
+            todo_id: step_meta.source_todo_id.unwrap_or(0),
             message: step_meta.prompt.clone(),
             req_executor: step_meta.executor.clone(),
             trigger_type: format!("loop_stage:{}", trigger_type),
