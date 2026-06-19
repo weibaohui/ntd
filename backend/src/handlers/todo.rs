@@ -161,7 +161,7 @@ pub async fn create_todo(
         todo_type: 0,
         parent_todo_id: None,
         auto_review_enabled: req.auto_review_enabled.unwrap_or(true),
-        // 新建 todo 默认 kind='item'；如需专家，由 promote 接口或新建时显式指定。
+        // 新建 todo 默认 kind='item'；如需环节，由 promote 接口或新建时显式指定。
         kind: "item".to_string(),
     }))
 }
@@ -348,52 +348,52 @@ pub async fn get_recent_completed_todos(
     ))
 }
 
-// ====== 专家管理（kind=expert）======
+// ====== 环节管理（kind=expert）======
 //
 // 路由：
-// - GET    /api/experts                    列出所有专家 + 各自的 loop 引用计数
-// - GET    /api/experts/:id                单个专家详情
-// - GET    /api/experts/candidates         loop 编辑器选专家用的精简候选列表
-// - POST   /api/todos/:id/promote          事项 → 专家
-// - POST   /api/todos/:id/demote           专家 → 事项（被 loop 引用时拒绝）
+// - GET    /api/experts                    列出所有环节 + 各自的 loop 引用计数
+// - GET    /api/experts/:id                单个环节详情
+// - GET    /api/experts/candidates         loop 编辑器选环节用的精简候选列表
+// - POST   /api/todos/:id/promote          事项 → 环节
+// - POST   /api/todos/:id/demote           环节 → 事项（被 loop 引用时拒绝）
 
-/// GET /api/experts — 列出所有专家,带"被哪些 loop 用"复用度计数
-pub async fn list_experts(
+/// GET /api/experts — 列出所有环节,带"被哪些 loop 用"复用度计数
+pub async fn list_steps(
     State(state): State<AppState>,
-) -> Result<ApiResponse<Vec<crate::models::ExpertSummary>>, AppError> {
-    Ok(ApiResponse::ok(state.db.list_experts_with_usage().await?))
+) -> Result<ApiResponse<Vec<crate::models::StepSummary>>, AppError> {
+    Ok(ApiResponse::ok(state.db.list_steps_with_usage().await?))
 }
 
-/// GET /api/experts/candidates — loop stage 编辑器选专家用,字段与 Todo 一致
-pub async fn list_expert_candidates(
+/// GET /api/experts/candidates — loop 编辑器选环节用,字段与 Todo 一致
+pub async fn list_step_candidates(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<Vec<Todo>>, AppError> {
-    Ok(ApiResponse::ok(state.db.list_expert_candidates().await?))
+    Ok(ApiResponse::ok(state.db.list_step_candidates().await?))
 }
 
-/// GET /api/experts/:id — 单个专家详情,带 loop 引用计数
-pub async fn get_expert(
+/// GET /api/experts/:id — 单个环节详情,带 loop 引用计数
+pub async fn get_step(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> Result<ApiResponse<crate::models::ExpertSummary>, AppError> {
+) -> Result<ApiResponse<crate::models::StepSummary>, AppError> {
     let todo = state
         .db
         .get_todo(id)
         .await?
         .ok_or(AppError::NotFound)?;
-    // 必须是 expert,否则返回 404（统一对外语义：专家 ID 不存在即 404）
+    // 必须是 expert,否则返回 404
     if todo.kind != "expert" {
         return Err(AppError::NotFound);
     }
     let used_by_loop_stage_count = state.db.count_loop_stages_using_todo(id).await?;
-    Ok(ApiResponse::ok(crate::models::ExpertSummary {
+    Ok(ApiResponse::ok(crate::models::StepSummary {
         used_by_loop_stage_count,
         todo,
     }))
 }
 
-/// POST /api/todos/:id/promote — 事项提升为专家
-pub async fn promote_todo_to_expert(
+/// POST /api/todos/:id/promote — 事项提升为环节
+pub async fn promote_todo_to_step(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<ApiResponse<()>, AppError> {
@@ -403,11 +403,11 @@ pub async fn promote_todo_to_expert(
         .get_todo(id)
         .await?
         .ok_or(AppError::NotFound)?;
-    state.db.promote_to_expert(id).await?;
+    state.db.promote_to_step(id).await?;
     Ok(ApiResponse::ok(()))
 }
 
-/// POST /api/todos/:id/demote — 专家降级为事项
+/// POST /api/todos/:id/demote — 环节降级为事项
 pub async fn demote_todo_to_item(
     State(state): State<AppState>,
     Path(id): Path<i64>,

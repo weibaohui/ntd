@@ -131,7 +131,7 @@ async fn v1_initial_schema(db: &Database) -> Result<(), sea_orm::DbErr> {
 
 /// todos 主表:所有 todo 的根表。`executor` / `scheduler_*` 等字段最初都在这里。
 ///
-/// `kind` 列(事项 vs 专家)由 v6 迁移加进来; 但为了 fresh DB 一建表就拥有
+/// `kind` 列(事项 vs 环节)由 v6 迁移加进来; 但为了 fresh DB 一建表就拥有
 /// 该列(避免空库启动后还要跑一次 v6 兼容 ALTER), 把它直接写进 v1 DDL。
 /// 重复列错误被 v6 的 `add_column_warn` 静默吞掉, 与历史 add_legacy_*_columns
 /// 同一处理风格。
@@ -1684,15 +1684,15 @@ async fn v5_project_directory_worktree(db: &Database) -> Result<(), sea_orm::DbE
 }
 
 // ---------------------------------------------------------------------------
-// v6: todos.kind 列 (issue #674: 事项 vs 专家区分)
+// v6: todos.kind 列 (issue #674: 事项 vs 环节区分)
 // ---------------------------------------------------------------------------
 
 /// v6 迁移：为 todos 表增加 `kind` 列, 区分一次性事项('item')和
-/// 可被 loop 编排复用的专家('expert')。
+/// 可被 loop 编排复用的环节('expert')。
 ///
 /// 设计动机：
-/// - 一次性 todo 是「事项」，循环复用的 todo 是「专家（Agent）」；
-/// - 环路编排的节点只应引用专家，引用一次性事项会污染"循环复用"语义；
+/// - 一次性 todo 是「事项」，循环复用的 todo 是「环节（Agent）」；
+/// - 环路编排的节点只应引用环节，引用一次性事项会污染"循环复用"语义；
 /// - 同一张 todos 表承载两种语义, 靠 `kind` 列区分; 避免新建 experts 表的
 ///   schema 迁移 + 跨表 JOIN 成本。
 ///

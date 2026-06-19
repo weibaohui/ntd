@@ -297,7 +297,7 @@ pub async fn create_stage(
         return Err(AppError::BadRequest("name 不能为空".to_string()));
     }
     state.db.get_loop(loop_id).await?.ok_or(AppError::NotFound)?;
-    // Loop 编排的「节点」必须是专家,不允许引用一次性事项。
+    // Loop 编排的「节点」必须是环节,不允许引用一次性事项。
     // 这是 v3 migration 引入 kind 列后的语义约束：loop 是"循环复用的编排"，
     // 一次性事项没有跨 loop 的复用价值,挂在 stage 里会导致引用方向混乱。
     let target = state
@@ -307,7 +307,7 @@ pub async fn create_stage(
         .ok_or_else(|| AppError::BadRequest(format!("todo #{} 不存在", req.todo_id)))?;
     if target.kind != "expert" {
         return Err(AppError::BadRequest(format!(
-            "todo #{} 不是专家(kind={}); 请先在专家页面 promote,或在循环编辑器内联新建专家",
+            "todo #{} 不是环节(kind={}); 请先在环节页 promote,或在循环编辑器中创建环节",
             req.todo_id, target.kind
         )));
     }
@@ -357,8 +357,8 @@ pub async fn update_stage(
             "stage 不属于该 loop".to_string(),
         ));
     }
-    // 与 create_stage 一致: 切换 todo_id 时也必须指向专家。
-    // 防御性: 即便前端已经在候选里筛了专家,后端再校验一次避免越权。
+    // 与 create_stage 一致: 切换 todo_id 时也必须指向环节。
+    // 防御性: 即便前端已经在候选里筛了环节,后端再校验一次避免越权。
     if req.todo_id != stage.todo_id {
         let target = state
             .db
@@ -367,7 +367,7 @@ pub async fn update_stage(
             .ok_or_else(|| AppError::BadRequest(format!("todo #{} 不存在", req.todo_id)))?;
         if target.kind != "expert" {
             return Err(AppError::BadRequest(format!(
-                "todo #{} 不是专家(kind={}); 不能作为 stage 的目标",
+                "todo #{} 不是环节(kind={}); 不能作为 stage 的目标",
                 req.todo_id, target.kind
             )));
         }

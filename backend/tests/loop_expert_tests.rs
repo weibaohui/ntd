@@ -1,11 +1,11 @@
-//! Loop Studio + 专家(kind=expert)集成测试。
+//! Loop Studio + 环节(kind=expert)集成测试。
 //!
 //! 覆盖：
 //! - v6 migration: todos 加 kind 列, 默认 'item'; 被 loop_stages 引用回填为 'expert'
 //! - promote_todo_to_expert: 把 'item' 升为 'expert'
 //! - demote_todo_to_item: 'expert' → 'item'; 被 loop_stages 引用时必须拒绝
 //! - count_loop_stages_using_todo: 被引用次数与 stage 增删保持一致
-//! - list_experts_with_usage: 包含引用次数; 顺序按 updated_at 倒序
+//! - list_steps_with_usage: 包含引用次数; 顺序按 updated_at 倒序
 //!
 //! 复用 db_feature_supplement_tests 的内存库模式, 不污染开发/生产数据。
 //! 内存库走 v1-v7 runner 迁移 (见 db/migration.rs), 自动建出 loops/loop_stages/
@@ -47,7 +47,7 @@ async fn v6_migration_creates_kind_column_with_default_item() {
 #[tokio::test]
 async fn v6_migration_backfills_expert_for_loop_referenced_todos() {
     // 先建 todo + loop + stage (stage 引用 todo), 再 promote 检查
-    // 走 list_experts_with_usage 应该看到该 todo, 且 used_by >= 1
+    // 走 list_steps_with_usage 应该看到该 todo, 且 used_by >= 1
     let db = setup_db().await;
     let todo_id = create_todo(&db, "被 loop 引用的 todo").await;
     let loop_id = create_loop(&db, "测试 loop").await;
@@ -56,7 +56,7 @@ async fn v6_migration_backfills_expert_for_loop_referenced_todos() {
         .unwrap();
 
     // 直接 promote 模拟「v6 回填」后状态
-    db.promote_to_expert(todo_id).await.unwrap();
+    db.promote_to_step(todo_id).await.unwrap();
     let todo = db.get_todo(todo_id).await.unwrap().unwrap();
     assert_eq!(todo.kind, "expert");
     assert!(
@@ -75,15 +75,15 @@ async fn promote_item_to_expert_changes_kind() {
     let id = create_todo(&db, "待提升").await;
     // 初始 'item'
     assert_eq!(db.get_todo(id).await.unwrap().unwrap().kind, "item");
-    db.promote_to_expert(id).await.unwrap();
+    db.promote_to_step(id).await.unwrap();
     assert_eq!(db.get_todo(id).await.unwrap().unwrap().kind, "expert");
 }
 
 #[tokio::test]
 async fn demote_expert_to_item_succeeds_when_no_loop_refs() {
     let db = setup_db().await;
-    let id = create_todo(&db, "未引用专家").await;
-    db.promote_to_expert(id).await.unwrap();
+    let id = create_todo(&db, "未引用环节").await;
+    db.promote_to_step(id).await.unwrap();
     db.demote_to_item(id).await.unwrap();
     assert_eq!(db.get_todo(id).await.unwrap().unwrap().kind, "item");
 }
@@ -91,8 +91,8 @@ async fn demote_expert_to_item_succeeds_when_no_loop_refs() {
 #[tokio::test]
 async fn demote_expert_blocked_when_loop_references_it() {
     let db = setup_db().await;
-    let todo_id = create_todo(&db, "被引用的专家").await;
-    db.promote_to_expert(todo_id).await.unwrap();
+    let todo_id = create_todo(&db, "被引用的环节").await;
+    db.promote_to_step(todo_id).await.unwrap();
     let loop_id = create_loop(&db, "引用 loop").await;
     db.create_stage(loop_id, "阶段", "", todo_id, "sequential", false, None, "skip", true)
         .await
@@ -101,7 +101,7 @@ async fn demote_expert_blocked_when_loop_references_it() {
     let result = db.demote_to_item(todo_id).await;
     assert!(
         result.is_err(),
-        "被引用的专家 demote 必须失败, 实际 {:?}",
+        "被引用的环节 demote 必须失败, 实际 {:?}",
         result
     );
     // 状态保持 expert
@@ -112,7 +112,7 @@ async fn demote_expert_blocked_when_loop_references_it() {
 async fn demote_succeeds_after_stage_deleted() {
     let db = setup_db().await;
     let todo_id = create_todo(&db, "被引用后释放").await;
-    db.promote_to_expert(todo_id).await.unwrap();
+    db.promote_to_step(todo_id).await.unwrap();
     let loop_id = create_loop(&db, "loop").await;
     let stage_id = db
         .create_stage(loop_id, "阶段", "", todo_id, "sequential", false, None, "skip", true)
@@ -128,7 +128,7 @@ async fn demote_succeeds_after_stage_deleted() {
 }
 
 // =====================================================================
-// list_experts / list_experts_with_usage
+// list_experts / list_steps_with_usage
 // =====================================================================
 
 #[tokio::test]
@@ -136,7 +136,7 @@ async fn list_experts_excludes_items() {
     let db = setup_db().await;
     let item_id = create_todo(&db, "item 1").await;
     let expert_id = create_todo(&db, "expert 1").await;
-    db.promote_to_expert(expert_id).await.unwrap();
+    db.promote_to_step(expert_id).await.unwrap();
     let experts = db.list_experts().await.unwrap();
     let ids: Vec<i64> = experts.iter().map(|e| e.id).collect();
     assert!(ids.contains(&expert_id));
@@ -144,18 +144,18 @@ async fn list_experts_excludes_items() {
 }
 
 #[tokio::test]
-async fn list_experts_with_usage_includes_count() {
+async fn list_steps_with_usage_includes_count() {
     let db = setup_db().await;
-    let e1 = create_todo(&db, "专家 1").await;
-    db.promote_to_expert(e1).await.unwrap();
-    let e2 = create_todo(&db, "专家 2").await;
-    db.promote_to_expert(e2).await.unwrap();
+    let e1 = create_todo(&db, "环节 1").await;
+    db.promote_to_step(e1).await.unwrap();
+    let e2 = create_todo(&db, "环节 2").await;
+    db.promote_to_step(e2).await.unwrap();
     // 1 个 stage 引用 e2
     let loop_id = create_loop(&db, "loop").await;
     db.create_stage(loop_id, "阶段", "", e2, "sequential", false, None, "skip", true)
         .await
         .unwrap();
-    let list = db.list_experts_with_usage().await.unwrap();
+    let list = db.list_steps_with_usage().await.unwrap();
     let e1_summary = list.iter().find(|x| x.todo.id == e1).expect("e1 exists");
     let e2_summary = list.iter().find(|x| x.todo.id == e2).expect("e2 exists");
     assert_eq!(e1_summary.used_by_loop_stage_count, 0);
@@ -169,8 +169,8 @@ async fn list_experts_with_usage_includes_count() {
 #[tokio::test]
 async fn count_loop_stages_reflects_stage_changes() {
     let db = setup_db().await;
-    let todo_id = create_todo(&db, "专家").await;
-    db.promote_to_expert(todo_id).await.unwrap();
+    let todo_id = create_todo(&db, "环节").await;
+    db.promote_to_step(todo_id).await.unwrap();
     let loop_id = create_loop(&db, "loop").await;
 
     // 初始 0

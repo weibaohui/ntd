@@ -1193,14 +1193,14 @@ fn todo_routes() -> Router<AppState> {
         .route("/api/todos/{id}/summary", get(execution::get_execution_summary))
         .route("/api/todos/{id}/scheduler", put(scheduler::update_scheduler))
         .route("/api/todos/recent-completed", get(todo::get_recent_completed_todos))
-        // 专家相关：promote / demote 走 todo 路径,因为它们本质是修改 todo.kind
-        .route("/api/todos/{id}/promote", post(todo::promote_todo_to_expert))
+        // 环节相关：promote / demote 走 todo 路径,因为它们本质是修改 todo.kind
+        .route("/api/todos/{id}/promote", post(todo::promote_todo_to_step))
         .route("/api/todos/{id}/demote", post(todo::demote_todo_to_item))
         .route("/api/todos/{id}", get(todo::get_todo).put(todo::update_todo).delete(todo::delete_todo))
-        // 专家专用：list / candidates / 单查,语义上独立于 todo CRUD
-        .route("/api/experts", get(todo::list_experts))
-        .route("/api/experts/candidates", get(todo::list_expert_candidates))
-        .route("/api/experts/{id}", get(todo::get_expert))
+        // 环节专用：list / candidates / 单查,语义上独立于 todo CRUD
+        .route("/api/experts", get(todo::list_steps))
+        .route("/api/experts/candidates", get(todo::list_step_candidates))
+        .route("/api/experts/{id}", get(todo::get_step))
         .route("/api/tags", get(tag::get_tags).post(tag::create_tag))
         .route("/api/tags/{id}", delete(tag::delete_tag))
 }

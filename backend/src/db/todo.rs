@@ -945,12 +945,12 @@ impl Database {
             .collect())
     }
 
-    // ====== 专家（kind=expert）相关 CRUD ======
+    // ====== 环节（kind=expert）相关 CRUD ======
     //
-    // 设计与 v3 migration 对齐：todos.kind 列区分事项与专家。
-    // 这里只读 kind='expert' 的子集，loop_stages 强校验只能引用专家。
+    // 设计与 v3 migration 对齐：todos.kind 列区分事项与环节。
+    // 这里只读 kind='expert' 的子集，loop_stages 强校验只能引用环节。
 
-    /// 按 kind 列过滤列出 todo。供 TodoList 前端 filter 用（事项 / 专家 / 全部）。
+    /// 按 kind 列过滤列出 todo。供 TodoList 前端 filter 用（事项 / 环节 / 全部）。
     pub async fn list_todos_by_kind(&self, kind: &str) -> Result<Vec<Todo>, sea_orm::DbErr> {
         let models = todos::Entity::find()
             .filter(todos::Column::DeletedAt.is_null())
@@ -969,8 +969,8 @@ impl Database {
             .collect())
     }
 
-    /// 列出所有专家（kind='expert' 且未删除），按更新时间倒序。
-    pub async fn list_experts(&self) -> Result<Vec<Todo>, sea_orm::DbErr> {
+    /// 列出所有环节（kind='expert' 且未删除），按更新时间倒序。
+    pub async fn list_steps(&self) -> Result<Vec<Todo>, sea_orm::DbErr> {
         let models = todos::Entity::find()
             .filter(todos::Column::DeletedAt.is_null())
             .filter(todos::Column::Kind.eq("expert"))
@@ -988,17 +988,17 @@ impl Database {
             .collect())
     }
 
-    /// 列出可被 loop stage 选择的专家候选（kind='expert' 且未删除），
+    /// 列出可被 loop stage 选择的环节候选（kind='expert' 且未删除），
     /// 字段精简（id/title/executor/prompt），供 loop 编辑器下拉框使用。
-    pub async fn list_expert_candidates(&self) -> Result<Vec<Todo>, sea_orm::DbErr> {
-        // 与 list_experts 同样的过滤条件,字段也由 Todo DTO 决定,
+    pub async fn list_step_candidates(&self) -> Result<Vec<Todo>, sea_orm::DbErr> {
+        // 与 list_steps 同样的过滤条件,字段也由 Todo DTO 决定,
         // 前端拿到后只展示需要的列即可。
-        self.list_experts().await
+        self.list_steps().await
     }
 
-    /// 把事项提升为专家。仅当目标 todo 当前不是 expert 时生效（幂等）。
+    /// 把事项提升为环节。仅当目标 todo 当前不是 expert 时生效（幂等）。
     /// 返回是否真的发生了状态变更。
-    pub async fn promote_to_expert(&self, id: i64) -> Result<bool, sea_orm::DbErr> {
+    pub async fn promote_to_step(&self, id: i64) -> Result<bool, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let am = todos::ActiveModel {
             id: ActiveValue::Unchanged(id),
@@ -1010,7 +1010,7 @@ impl Database {
         Ok(res.kind.as_deref() == Some("expert"))
     }
 
-    /// 把专家降级为事项。
+    /// 把环节降级为事项。
     /// 若该 todo 正被 loop_stages 引用，禁止降级（返回错误，避免破坏环路引用一致性）。
     pub async fn demote_to_item(&self, id: i64) -> Result<(), String> {
         // 校验是否被 loop_stages 引用
@@ -1036,7 +1036,7 @@ impl Database {
         Ok(())
     }
 
-    /// 计算一个 todo 被多少个 loop stage 引用（专家页面展示"被哪些 loop 使用"）。
+    /// 计算一个 todo 被多少个 loop stage 引用（环节页展示"被哪些 loop 使用"）。
     pub async fn count_loop_stages_using_todo(&self, todo_id: i64) -> Result<i64, sea_orm::DbErr> {
         use sea_orm::PaginatorTrait;
         crate::db::entity::loop_stages::Entity::find()
@@ -1047,7 +1047,7 @@ impl Database {
     }
 
     /// 批量计算一组 todo 被多少个 loop stage 引用，返回 todo_id -> count 的 map。
-    /// 用于专家列表页一次性把所有专家的复用度算出来，避免 N+1。
+    /// 用于环节列表页一次性把所有环节的复用度算出来，避免 N+1。
     pub async fn count_loop_stages_for_todos(
         &self,
         todo_ids: &[i64],
@@ -1081,16 +1081,16 @@ impl Database {
         Ok(map)
     }
 
-    /// 列出所有专家 + 各自的 loop stage 引用计数,组装成 ExpertSummary。
-    pub async fn list_experts_with_usage(
+    /// 列出所有环节 + 各自的 loop stage 引用计数,组装成 StepSummary。
+    pub async fn list_steps_with_usage(
         &self,
-    ) -> Result<Vec<crate::models::ExpertSummary>, sea_orm::DbErr> {
-        let experts = self.list_experts().await?;
-        let ids: Vec<i64> = experts.iter().map(|t| t.id).collect();
+    ) -> Result<Vec<crate::models::StepSummary>, sea_orm::DbErr> {
+        let steps = self.list_steps().await?;
+        let ids: Vec<i64> = steps.iter().map(|t| t.id).collect();
         let usage = self.count_loop_stages_for_todos(&ids).await?;
-        Ok(experts
+        Ok(steps
             .into_iter()
-            .map(|todo| crate::models::ExpertSummary {
+            .map(|todo| crate::models::StepSummary {
                 used_by_loop_stage_count: usage.get(&todo.id).copied().unwrap_or(0),
                 todo,
             })
