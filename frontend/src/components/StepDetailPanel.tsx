@@ -122,28 +122,13 @@ export function StepDetailPanel({ stepId }: StepDetailPanelProps) {
           </Descriptions>
         </section>
 
-        {/* 验收标准 */}
-        {step.acceptance_criteria && (
-          <section style={{
-            background: 'var(--color-bg-elevated, #ffffff)',
-            border: '1px solid var(--color-border, #e2e8f0)',
-            borderRadius: 8,
-            padding: 16,
-            marginBottom: 12,
-          }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text, #0f172a)', marginBottom: 8 }}>验收标准</div>
-            <div style={{ fontSize: 13, color: 'var(--color-text-secondary, #475569)', whiteSpace: 'pre-wrap' }}>
-              {step.acceptance_criteria}
-            </div>
-          </section>
-        )}
-
         {/* Prompt */}
         <section style={{
           background: 'var(--color-bg-elevated, #ffffff)',
           border: '1px solid var(--color-border, #e2e8f0)',
           borderRadius: 8,
           padding: 16,
+          marginBottom: 12,
         }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text, #0f172a)', marginBottom: 8 }}>提示词 (Prompt)</div>
           <div style={{
@@ -153,6 +138,22 @@ export function StepDetailPanel({ stepId }: StepDetailPanelProps) {
             lineHeight: 1.6,
           }}>
             {step.prompt || <span style={{ color: 'var(--color-text-tertiary, #94a3b8)' }}>无提示词</span>}
+          </div>
+        </section>
+
+        {/* 验收标准 — 始终显示 */}
+        <section style={{
+          background: 'var(--color-bg-elevated, #ffffff)',
+          border: '1px solid var(--color-border, #e2e8f0)',
+          borderRadius: 8,
+          padding: 16,
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text, #0f172a)', marginBottom: 8 }}>验收标准</div>
+          <div style={{
+            fontSize: 13, color: 'var(--color-text-secondary, #475569)',
+            whiteSpace: 'pre-wrap', minHeight: 40,
+          }}>
+            {step.acceptance_criteria || <span style={{ color: 'var(--color-text-tertiary, #94a3b8)' }}>无验收标准</span>}
           </div>
         </section>
       </div>
