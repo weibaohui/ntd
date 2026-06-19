@@ -1,15 +1,19 @@
 // 环节详情面板 + 编辑功能。
-// 编辑交互与 TodoDrawer 一致：Drawer 右侧滑出，字段布局对齐 todo 编辑页。
+// 编辑交互与 TodoDrawer 一致：Drawer 右侧滑出，Prompt/Skill/Template 完全复用。
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
   Skeleton, Empty, Tag, Descriptions, Button, Drawer, Input, Divider, App as AntApp,
 } from 'antd';
 import { ApartmentOutlined, ThunderboltOutlined, EditOutlined } from '@ant-design/icons';
 import { ExecutorPicker } from './todo-drawer/ExecutorPicker';
+import { PromptEditor } from './todo-drawer/PromptEditor';
+import { SkillSelector } from './todo-drawer/SkillSelector';
+import { TemplateModal } from './todo-drawer/TemplateModal';
 import * as dbSteps from '@/utils/database/steps';
-import type { StepSummary } from '@/types';
-import { EXECUTORS } from '@/types';
+import * as db from '@/utils/database';
+import type { StepSummary, SkillMeta, ExecutorSkills, TodoTemplate } from '@/types';
+import { EXECUTORS, getExecutorColor } from '@/types';
 import { formatRelativeTime } from '@/utils/datetime';
 
 interface StepDetailPanelProps {
@@ -23,11 +27,33 @@ export function StepDetailPanel({ stepId }: StepDetailPanelProps) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // 编辑表单状态（与 TodoDrawer 对齐）
+  // 编辑表单状态
   const [editTitle, setEditTitle] = useState('');
   const [editPrompt, setEditPrompt] = useState('');
   const [editExecutor, setEditExecutor] = useState('');
   const [editAcceptanceCriteria, setEditAcceptanceCriteria] = useState('');
+
+  // Prompt 编辑器 ref（用于光标插入）
+  const editorRef = useRef<any>(null);
+
+  // Skills
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillsExpanded, setSkillsExpanded] = useState(false);
+  const [skillSearchText, setSkillSearchText] = useState('');
+  const [allExecutorSkills, setAllExecutorSkills] = useState<ExecutorSkills[]>([]);
+
+  // 模板
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [templates, setTemplates] = useState<TodoTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+
+  // 当前执行器对应的 skills
+  const currentSkills = useMemo(() => {
+    const found = allExecutorSkills.find((e: any) => e.executor === editExecutor);
+    return found?.skills || [];
+  }, [editExecutor, allExecutorSkills]);
+
+  const executorColor = getExecutorColor(editExecutor);
 
   const loadStep = useCallback(() => {
     setLoading(true);
@@ -45,8 +71,58 @@ export function StepDetailPanel({ stepId }: StepDetailPanelProps) {
     setEditPrompt(step.prompt);
     setEditExecutor(step.executor || '');
     setEditAcceptanceCriteria(step.acceptance_criteria || '');
+    setSkillsExpanded(false);
+    setSkillSearchText('');
+
+    // 加载 skills
+    setSkillsLoading(true);
+    db.getSkillsList()
+      .then((data) => setAllExecutorSkills(data))
+      .catch(() => {})
+      .finally(() => setSkillsLoading(false));
+
     setEditing(true);
   }, [step]);
+
+  // 光标插入文本
+  const insertTextAtCursor = useCallback((text: string) => {
+    const editor = editorRef.current;
+    if (editor?.insertText) {
+      editor.insertText(text);
+    } else {
+      setEditPrompt(prev => prev + text);
+    }
+  }, []);
+
+  // 技能点击 → 插入 /skill_name
+  const handleSkillClick = useCallback((skill: SkillMeta) => {
+    insertTextAtCursor(`/${skill.name}`);
+  }, [insertTextAtCursor]);
+
+  // 模板
+  const loadTemplates = useCallback(() => {
+    setTemplatesLoading(true);
+    db.getTodoTemplates()
+      .then(setTemplates)
+      .catch(() => message.error('加载模板失败'))
+      .finally(() => setTemplatesLoading(false));
+  }, [message]);
+
+  const handleOpenTemplate = useCallback(() => {
+    loadTemplates();
+    setTemplateModalOpen(true);
+  }, [loadTemplates]);
+
+  const handleSelectTemplate = useCallback((template: TodoTemplate) => {
+    if (template.prompt) {
+      insertTextAtCursor(template.prompt);
+    }
+    if (template.title) {
+      setEditTitle(prev => prev || template.title);
+    }
+    setTemplateModalOpen(false);
+    message.success(`已应用模板「${template.title}」`);
+  }, [insertTextAtCursor, message]);
 
   const handleSave = useCallback(async () => {
     if (!editTitle.trim()) { message.error('标题不能为空'); return; }
@@ -141,7 +217,7 @@ export function StepDetailPanel({ stepId }: StepDetailPanelProps) {
           </div>
         </section>
 
-        {/* 验收标准 — 始终显示 */}
+        {/* 验收标准 */}
         <section style={{
           background: 'var(--color-bg-elevated, #ffffff)',
           border: '1px solid var(--color-border, #e2e8f0)',
@@ -158,7 +234,7 @@ export function StepDetailPanel({ stepId }: StepDetailPanelProps) {
         </section>
       </div>
 
-      {/* 编辑 Drawer — 与 TodoDrawer 对齐的样式和交互 */}
+      {/* 编辑 Drawer — 与 TodoDrawer 完全对齐 */}
       <Drawer
         title="编辑环节"
         open={editing}
@@ -195,16 +271,25 @@ export function StepDetailPanel({ stepId }: StepDetailPanelProps) {
           <Divider style={{ margin: '8px 0 16px' }} />
 
           {/* Prompt */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ marginBottom: 8, fontWeight: 600, fontSize: 14 }}>提示词 (Prompt)</div>
-            <Input.TextArea
-              value={editPrompt}
-              onChange={e => setEditPrompt(e.target.value)}
-              placeholder="描述这个环节能做什么..."
-              rows={8}
-              style={{ resize: 'vertical' }}
-            />
-          </div>
+          <PromptEditor
+            value={editPrompt}
+            onChange={setEditPrompt}
+            editorRef={editorRef}
+            onOpenTemplate={handleOpenTemplate}
+            onInsertText={insertTextAtCursor}
+          />
+
+          {/* Skills */}
+          <SkillSelector
+            skills={currentSkills}
+            loading={skillsLoading}
+            executorColor={executorColor}
+            searchText={skillSearchText}
+            onSearchChange={setSkillSearchText}
+            expanded={skillsExpanded}
+            onToggle={() => setSkillsExpanded(!skillsExpanded)}
+            onSkillClick={handleSkillClick}
+          />
 
           <Divider style={{ margin: '8px 0 16px' }} />
 
@@ -221,6 +306,15 @@ export function StepDetailPanel({ stepId }: StepDetailPanelProps) {
           </div>
         </div>
       </Drawer>
+
+      {/* 模板 Modal */}
+      <TemplateModal
+        open={templateModalOpen}
+        templates={templates}
+        loading={templatesLoading}
+        onClose={() => setTemplateModalOpen(false)}
+        onSelect={handleSelectTemplate}
+      />
     </>
   );
 }
