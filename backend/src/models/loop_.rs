@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::db::entity::{
-    loop_executions, loop_stage_executions, loop_stages, loop_triggers, loops,
+    loop_executions, loop_step_executions, loop_steps, loop_triggers, loops,
 };
 use crate::db::loop_::{LoopFullView, LoopListRow};
 use crate::models::TodoStatus;
@@ -18,7 +18,7 @@ pub struct LoopListItem {
     #[serde(flatten)]
     pub loop_: LoopDto,
     pub trigger_count: i32,
-    pub stage_count: i32,
+    pub step_count: i32,
     pub last_execution_status: String,
     pub last_execution_at: Option<String>,
 }
@@ -28,7 +28,7 @@ impl From<LoopListRow> for LoopListItem {
         Self {
             loop_: row.loop_.into(),
             trigger_count: row.trigger_count,
-            stage_count: row.stage_count,
+            step_count: row.step_count,
             last_execution_status: row.last_execution_status,
             last_execution_at: row.last_execution_at,
         }
@@ -41,8 +41,8 @@ pub struct LoopDetail {
     #[serde(flatten)]
     pub loop_: LoopDto,
     pub triggers: Vec<LoopTriggerDto>,
-    pub stages: Vec<LoopStageDto>,
-    /// todo_id -> TodoDto,前端展示 stage 关联的 todo 信息时直接 lookup
+    pub steps: Vec<LoopStepDto>,
+    /// todo_id -> TodoDto,前端展示 step 关联的 todo 信息时直接 lookup
     pub todo_map: std::collections::HashMap<i64, TodoSummary>,
 }
 
@@ -63,11 +63,11 @@ impl From<LoopFullView> for LoopDetail {
                 )
             })
             .collect();
-        let stages = view
-            .stages_meta
+        let steps = view
+            .steps_meta
             .into_iter()
-            .map(|(s, todo_title, todo_executor, todo_status): (loop_stages::Model, String, String, String)| LoopStageDto {
-                stage: s.into(),
+            .map(|(s, todo_title, todo_executor, todo_status): (loop_steps::Model, String, String, String)| LoopStepDto {
+                step: s.into(),
                 todo_title,
                 todo_executor,
                 todo_status,
@@ -76,7 +76,7 @@ impl From<LoopFullView> for LoopDetail {
         Self {
             loop_: view.loop_.into(),
             triggers: view.triggers.into_iter().map(Into::into).collect(),
-            stages,
+            steps,
             todo_map,
         }
     }
@@ -146,9 +146,9 @@ impl From<loop_triggers::Model> for LoopTriggerDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LoopStageDto {
+pub struct LoopStepDto {
     #[serde(flatten)]
-    pub stage: LoopStageRawDto,
+    pub step: LoopStepRawDto,
     /// 冗余字段,JOIN 时一并查出来,避免前端再请求 todo 详情
     pub todo_title: String,
     pub todo_executor: String,
@@ -156,7 +156,7 @@ pub struct LoopStageDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LoopStageRawDto {
+pub struct LoopStepRawDto {
     pub id: i64,
     pub loop_id: i64,
     pub name: String,
@@ -171,8 +171,8 @@ pub struct LoopStageRawDto {
     pub created_at: Option<String>,
 }
 
-impl From<loop_stages::Model> for LoopStageRawDto {
-    fn from(m: loop_stages::Model) -> Self {
+impl From<loop_steps::Model> for LoopStepRawDto {
+    fn from(m: loop_steps::Model) -> Self {
         Self {
             id: m.id,
             loop_id: m.loop_id,
@@ -200,9 +200,9 @@ pub struct LoopExecutionDto {
     pub started_at: String,
     pub finished_at: Option<String>,
     pub status: String,
-    pub total_stages: i32,
-    pub completed_stages: i32,
-    pub failed_stages: i32,
+    pub total_steps: i32,
+    pub completed_steps: i32,
+    pub failed_steps: i32,
 }
 
 impl From<loop_executions::Model> for LoopExecutionDto {
@@ -216,18 +216,18 @@ impl From<loop_executions::Model> for LoopExecutionDto {
             started_at: m.started_at,
             finished_at: m.finished_at,
             status: m.status,
-            total_stages: m.total_stages,
-            completed_stages: m.completed_stages,
-            failed_stages: m.failed_stages,
+            total_steps: m.total_steps,
+            completed_steps: m.completed_steps,
+            failed_steps: m.failed_steps,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LoopStageExecutionDto {
+pub struct LoopStepExecutionDto {
     pub id: i64,
     pub loop_execution_id: i64,
-    pub stage_id: i64,
+    pub step_id: i64,
     pub todo_id: i64,
     pub execution_record_id: Option<i64>,
     pub status: String,
@@ -236,12 +236,12 @@ pub struct LoopStageExecutionDto {
     pub error_message: Option<String>,
 }
 
-impl From<loop_stage_executions::Model> for LoopStageExecutionDto {
-    fn from(m: loop_stage_executions::Model) -> Self {
+impl From<loop_step_executions::Model> for LoopStepExecutionDto {
+    fn from(m: loop_step_executions::Model) -> Self {
         Self {
             id: m.id,
             loop_execution_id: m.loop_execution_id,
-            stage_id: m.stage_id,
+            step_id: m.step_id,
             todo_id: m.todo_id,
             execution_record_id: m.execution_record_id,
             status: m.status,
@@ -256,7 +256,7 @@ impl From<loop_stage_executions::Model> for LoopStageExecutionDto {
 pub struct LoopExecutionDetail {
     #[serde(flatten)]
     pub execution: LoopExecutionDto,
-    pub stage_executions: Vec<LoopStageExecutionDto>,
+    pub step_executions: Vec<LoopStepExecutionDto>,
     pub loop_name: String,
 }
 
@@ -316,7 +316,7 @@ pub struct UpdateTriggerRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct CreateStageRequest {
+pub struct CreateLoopStepRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -337,7 +337,7 @@ fn default_run_mode() -> String { "sequential".to_string() }
 fn default_unrated_policy() -> String { "skip".to_string() }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct UpdateStageRequest {
+pub struct UpdateLoopStepRequest {
     pub name: String,
     pub description: String,
     pub todo_id: i64,
@@ -349,8 +349,8 @@ pub struct UpdateStageRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ReorderStagesRequest {
-    /// 新顺序的 stage id 列表
+pub struct ReorderLoopStepsRequest {
+    /// 新顺序的 step id 列表
     pub ordered_ids: Vec<i64>,
 }
 
@@ -391,7 +391,7 @@ pub fn loop_status_color(status: &str) -> &'static str {
     }
 }
 
-pub fn stage_execution_color(status: &str) -> &'static str {
+pub fn step_execution_color(status: &str) -> &'static str {
     match status {
         "pending" => "#bfbfbf",
         "running" => "#1890ff",

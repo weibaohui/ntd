@@ -139,8 +139,8 @@ fn default_todo_kind() -> String {
 
 /// 环节视图（带复用度指标）。
 ///
-/// 与 `Todo` 相比，多一个 `used_by_loop_stage_count` 字段，
-/// 环节页用这个数判断「这个环节被多少个 loop stage 引用」作为复用度排序依据。
+/// 与 `Todo` 相比，多一个 `used_by_loop_step_count` 字段，
+/// 环节页用这个数判断「这个环节被多少个 loop step 引用」作为复用度排序依据。
 ///
 /// 实现上后端做 N+1：list_steps 后单独跑一次 COUNT GROUP BY 查询，
 /// 然后按 todo_id 合并。前端拿到这个 DTO 直接展示，不需要二次请求。
@@ -148,8 +148,8 @@ fn default_todo_kind() -> String {
 pub struct StepSummary {
     #[serde(flatten)]
     pub todo: Todo,
-    /// 被多少个 loop stage 引用。0 = 没有任何 loop 在用（孤儿环节）。
-    pub used_by_loop_stage_count: i64,
+    /// 被多少个 loop step 引用。0 = 没有任何 loop 在用（孤儿环节）。
+    pub used_by_loop_step_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

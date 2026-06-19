@@ -21,11 +21,11 @@ pub struct Model {
     #[sea_orm(default_value = "running")]
     pub status: String,
     #[sea_orm(default_value = "0")]
-    pub total_stages: i32,
+    pub total_steps: i32,
     #[sea_orm(default_value = "0")]
-    pub completed_stages: i32,
+    pub completed_steps: i32,
     #[sea_orm(default_value = "0")]
-    pub failed_stages: i32,
+    pub failed_steps: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -42,8 +42,8 @@ pub enum Relation {
         to = "super::loop_triggers::Column::Id"
     )]
     BelongsToTrigger,
-    #[sea_orm(has_many = "super::loop_stage_executions::Entity")]
-    LoopStageExecutions,
+    #[sea_orm(has_many = "super::loop_step_executions::Entity")]
+    LoopStepExecutions,
 }
 
 impl Related<super::loops::Entity> for Entity {
@@ -54,8 +54,8 @@ impl Related<super::loop_triggers::Entity> for Entity {
     fn to() -> RelationDef { Relation::BelongsToTrigger.def() }
 }
 
-impl Related<super::loop_stage_executions::Entity> for Entity {
-    fn to() -> RelationDef { Relation::LoopStageExecutions.def() }
+impl Related<super::loop_step_executions::Entity> for Entity {
+    fn to() -> RelationDef { Relation::LoopStepExecutions.def() }
 }
 
 impl ActiveModelBehavior for ActiveModel {}

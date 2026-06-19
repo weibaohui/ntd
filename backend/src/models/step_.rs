@@ -11,8 +11,8 @@ pub struct StepDto {
     pub executor: Option<String>,
     pub acceptance_criteria: Option<String>,
     pub source_todo_id: Option<i64>,
-    /// 被多少个 loop stage 引用
-    pub used_by_loop_stage_count: i64,
+    /// 被多少个 loop step 引用
+    pub used_by_loop_step_count: i64,
     pub color: String,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
@@ -27,7 +27,7 @@ impl From<steps::Model> for StepDto {
             executor: m.executor,
             acceptance_criteria: m.acceptance_criteria,
             source_todo_id: m.source_todo_id,
-            used_by_loop_stage_count: 0,
+            used_by_loop_step_count: 0,
             color: m.color,
             created_at: m.created_at,
             updated_at: m.updated_at,
@@ -37,7 +37,7 @@ impl From<steps::Model> for StepDto {
 
 impl StepDto {
     pub fn with_usage(mut self, count: i64) -> Self {
-        self.used_by_loop_stage_count = count;
+        self.used_by_loop_step_count = count;
         self
     }
 }

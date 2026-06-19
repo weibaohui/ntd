@@ -40,8 +40,8 @@ export interface StepSummary {
   executor?: string;
   acceptance_criteria?: string | null;
   source_todo_id?: number;
-  /** 被多少个 loop stage 引用 */
-  used_by_loop_stage_count: number;
+  /** 被多少个 loop step 引用 */
+  used_by_loop_step_count: number;
   color: string;
   created_at?: string;
   updated_at?: string;

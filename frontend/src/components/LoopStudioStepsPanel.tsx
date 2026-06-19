@@ -18,27 +18,27 @@ import {
 } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import * as dbSteps from '@/utils/database/steps';
-import type { LoopStageDto, CreateStageRequest } from '@/types/loop';
+import type { LoopStepDto, CreateLoopStepRequest } from '@/types/loop';
 import type { StepSummary } from '@/types';
 
-interface StagesPanelProps {
+interface StepsPanelProps {
   loopId: number;
-  stages: LoopStageDto[];
+  steps: LoopStepDto[];
   onChanged: () => void;
 }
 
-export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps) {
+export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
   const { message } = AntApp.useApp();
 
   // Modal 状态
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingStage, setEditingStage] = useState<LoopStageDto | null>(null);
+  const [editingStep, setEditingStep] = useState<LoopStepDto | null>(null);
   const [saving, setSaving] = useState(false);
   const [candidates, setCandidates] = useState<StepSummary[]>([]);
-  const [form] = Form.useForm<CreateStageRequest & { todo_title: string }>();
+  const [form] = Form.useForm<CreateLoopStepRequest & { todo_title: string }>();
 
   // Hover 状态（显示删除按钮）
-  const [hoveredStageId, setHoveredStageId] = useState<number | null>(null);
+  const [hoveredStepId, setHoveredStepId] = useState<number | null>(null);
 
   // 拖拽状态
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -46,7 +46,7 @@ export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps)
 
   // 打开新增 Modal
   const handleOpenAdd = useCallback(async () => {
-    setEditingStage(null);
+    setEditingStep(null);
     form.resetFields();
     try {
       const list = await dbSteps.listStepCandidates();
@@ -58,8 +58,8 @@ export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps)
   }, [form]);
 
   // 打开编辑 Modal
-  const handleOpenEdit = useCallback(async (stage: LoopStageDto) => {
-    setEditingStage(stage);
+  const handleOpenEdit = useCallback(async (step: LoopStepDto) => {
+    setEditingStep(step);
     try {
       const list = await dbSteps.listStepCandidates();
       setCandidates(list);
@@ -67,10 +67,10 @@ export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps)
       setCandidates([]);
     }
     form.setFieldsValue({
-      name: stage.name,
-      todo_id: stage.todo_id,
-      description: stage.description,
-      enabled: stage.enabled,
+      name: step.name,
+      todo_id: step.todo_id,
+      description: step.description,
+      enabled: step.enabled,
     });
     setModalOpen(true);
   }, [form]);
@@ -80,8 +80,8 @@ export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps)
     const values = await form.validateFields();
     setSaving(true);
     try {
-      if (editingStage) {
-        await dbLoops.updateStage(loopId, editingStage.id, {
+      if (editingStep) {
+        await dbLoops.updateLoopStep(loopId, editingStep.id, {
           name: values.name.trim(),
           description: values.description ?? '',
           todo_id: values.todo_id,
@@ -93,7 +93,7 @@ export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps)
         });
         message.success('环节已更新');
       } else {
-        await dbLoops.createStage(loopId, {
+        await dbLoops.createLoopStep(loopId, {
           name: values.name.trim(),
           description: values.description ?? '',
           todo_id: values.todo_id,
@@ -112,12 +112,12 @@ export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps)
     } finally {
       setSaving(false);
     }
-  }, [form, loopId, editingStage, message, onChanged]);
+  }, [form, loopId, editingStep, message, onChanged]);
 
   // 删除环节
-  const handleDelete = useCallback(async (stageId: number) => {
+  const handleDelete = useCallback(async (stepId: number) => {
     try {
-      await dbLoops.deleteStage(loopId, stageId);
+      await dbLoops.deleteLoopStep(loopId, stepId);
       message.success('环节已删除');
       onChanged();
     } catch {
@@ -150,31 +150,31 @@ export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps)
     }
     if (dragIndex !== null) {
       setDragIndex(null);
-      const orderedIds = stages.map(s => s.id);
+      const orderedIds = steps.map(s => s.id);
       try {
-        await dbLoops.reorderStages(loopId, orderedIds);
+        await dbLoops.reorderLoopSteps(loopId, orderedIds);
         onChanged();
       } catch {
         // 静默
       }
     }
-  }, [dragIndex, stages, loopId, onChanged]);
+  }, [dragIndex, steps, loopId, onChanged]);
 
   // 选择 step 后自动填充 name
   const handleTodoChange = useCallback((todo_id: number) => {
     const selected = candidates.find(c => c.id === todo_id);
     if (selected) {
       const currentName = form.getFieldValue('name');
-      if (!currentName || !editingStage) {
+      if (!currentName || !editingStep) {
         form.setFieldsValue({ name: selected.title, todo_title: selected.title });
       }
     }
-  }, [candidates, form, editingStage]);
+  }, [candidates, form, editingStep]);
 
   return (
     <>
       <div style={{ display: 'flex', gap: 0, overflowX: 'auto', paddingBottom: 8, alignItems: 'stretch' }}>
-        {stages.length === 0 ? (
+        {steps.length === 0 ? (
           <div
             onClick={handleOpenAdd}
             role="button"
@@ -196,8 +196,8 @@ export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps)
             <span>暂无执行环节，点击添加</span>
           </div>
         ) : (
-          stages.map((stage, idx) => (
-            <div key={stage.id} style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+          steps.map((step, idx) => (
+            <div key={step.id} style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
               {/* 箭头连接（第一项前不显示） */}
               {idx > 0 && (
                 <div style={{ display: 'flex', alignItems: 'center', padding: '0 4px' }}>
@@ -211,15 +211,15 @@ export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps)
                 onDragStart={(e) => handleDragStart(e, idx)}
                 onDragOver={(e) => handleDragOver(e, idx)}
                 onDragEnd={handleDragEnd}
-                onClick={() => handleOpenEdit(stage)}
+                onClick={() => handleOpenEdit(step)}
                 onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => {
-                  setHoveredStageId(stage.id);
+                  setHoveredStepId(step.id);
                   e.currentTarget.style.boxShadow = '0 4px 12px color-mix(in srgb, var(--color-text, #0f172a) 10%, transparent)';
                   e.currentTarget.style.borderColor = 'var(--color-primary, #0891b2)';
                   e.currentTarget.style.transform = 'translateY(-2px)';
                 }}
                 onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => {
-                  setHoveredStageId(null);
+                  setHoveredStepId(null);
                   e.currentTarget.style.boxShadow = 'none';
                   e.currentTarget.style.borderColor = 'var(--color-border, #e2e8f0)';
                   e.currentTarget.style.transform = 'translateY(0)';
@@ -265,7 +265,7 @@ export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps)
                   marginBottom: 4,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>
-                  {stage.name}
+                  {step.name}
                 </div>
 
                 {/* 关联 todo */}
@@ -275,7 +275,7 @@ export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps)
                   marginBottom: 10,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>
-                  {stage.todo_title || `#${stage.todo_id}`}
+                  {step.todo_title || `#${step.todo_id}`}
                 </div>
 
                 {/* 底部：执行者 + 顺序执行标签 */}
@@ -287,15 +287,15 @@ export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps)
                     color: 'var(--color-primary, #0891b2)',
                     fontSize: 10, fontWeight: 600, flexShrink: 0,
                   }}>
-                    {stage.todo_executor ? stage.todo_executor.charAt(0).toUpperCase() : '?'}
+                    {step.todo_executor ? step.todo_executor.charAt(0).toUpperCase() : '?'}
                   </span>
                   <span style={{
                     fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)',
                     flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }}>
-                    {stage.todo_executor || '未指派'}
+                    {step.todo_executor || '未指派'}
                   </span>
-                  {stage.run_mode === 'sequential' && (
+                  {step.run_mode === 'sequential' && (
                     <span style={{
                       fontSize: 10, padding: '1px 6px', borderRadius: 4,
                       background: 'var(--color-bg-hover, #f1f5f9)',
@@ -311,7 +311,7 @@ export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps)
                 <div style={{ position: 'absolute', top: 10, right: 28 }}>
                   <span style={{
                     display: 'inline-block', width: 8, height: 8, borderRadius: 4,
-                    background: stage.enabled ? 'var(--color-success, #22c55e)' : 'var(--color-text-tertiary, #94a3b8)',
+                    background: step.enabled ? 'var(--color-success, #22c55e)' : 'var(--color-text-tertiary, #94a3b8)',
                   }} />
                 </div>
 
@@ -319,15 +319,15 @@ export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps)
                 <div
                   style={{
                     position: 'absolute', bottom: 8, right: 8,
-                    opacity: hoveredStageId === stage.id ? 1 : 0,
+                    opacity: hoveredStepId === step.id ? 1 : 0,
                     transition: 'opacity 150ms',
                   }}
                   onClick={(e) => e.stopPropagation()}
                 >
                   <Popconfirm
                     title="删除环节"
-                    description={`确定删除「${stage.name}」？`}
-                    onConfirm={() => handleDelete(stage.id)}
+                    description={`确定删除「${step.name}」？`}
+                    onConfirm={() => handleDelete(step.id)}
                     okText="确定"
                     cancelText="取消"
                   >
@@ -345,7 +345,7 @@ export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps)
         )}
 
         {/* 添加按钮 */}
-        {stages.length > 0 && (
+        {steps.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', padding: '0 4px' }}>
               <ArrowRightOutlined style={{ color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 16 }} />
@@ -384,11 +384,11 @@ export function LoopStagesPanel({ loopId, stages, onChanged }: StagesPanelProps)
 
       {/* 新增 / 编辑 Modal */}
       <Modal
-        title={editingStage ? '编辑环节' : '新增环节'}
+        title={editingStep ? '编辑环节' : '新增环节'}
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         onOk={handleSave}
-        okText={editingStage ? '保存' : '添加'}
+        okText={editingStep ? '保存' : '添加'}
         cancelText="取消"
         confirmLoading={saving}
         width={520}

@@ -5,12 +5,12 @@ use serde::{Deserialize, Serialize};
 ///
 /// execution_record_id 指向 execution_records，关联到具体的 executor run。
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
-#[sea_orm(table_name = "loop_stage_executions")]
+#[sea_orm(table_name = "loop_step_executions")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
     pub loop_execution_id: i64,
-    pub stage_id: i64,
+    pub step_id: i64,
     pub todo_id: i64,
     pub execution_record_id: Option<i64>,
     /// pending | running | success | failed | skipped
@@ -30,11 +30,11 @@ pub enum Relation {
     )]
     BelongsToLoopExecution,
     #[sea_orm(
-        belongs_to = "super::loop_stages::Entity",
-        from = "Column::StageId",
-        to = "super::loop_stages::Column::Id"
+        belongs_to = "super::loop_steps::Entity",
+        from = "Column::StepId",
+        to = "super::loop_steps::Column::Id"
     )]
-    BelongsToStage,
+    BelongsToStep,
     #[sea_orm(
         belongs_to = "super::todos::Entity",
         from = "Column::TodoId",
@@ -53,8 +53,8 @@ impl Related<super::loop_executions::Entity> for Entity {
     fn to() -> RelationDef { Relation::BelongsToLoopExecution.def() }
 }
 
-impl Related<super::loop_stages::Entity> for Entity {
-    fn to() -> RelationDef { Relation::BelongsToStage.def() }
+impl Related<super::loop_steps::Entity> for Entity {
+    fn to() -> RelationDef { Relation::BelongsToStep.def() }
 }
 
 impl Related<super::todos::Entity> for Entity {

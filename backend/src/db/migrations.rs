@@ -65,8 +65,8 @@ pub const ALL_MIGRATIONS: &[Migration] = &[
         version: 2,
         name: "loop_studio",
         description:
-            "Loop Studio: loops, loop_triggers, loop_stages, \
-             loop_executions, loop_stage_executions + indexes/triggers",
+            "Loop Studio: loops, loop_triggers, loop_steps, \
+             loop_executions, loop_step_executions + indexes/triggers",
         statements: LOOP_STUDIO_STATEMENTS,
     },
     Migration {
@@ -74,7 +74,7 @@ pub const ALL_MIGRATIONS: &[Migration] = &[
         name: "todo_kind",
         description:
             "区分事项 vs 环节: todos 加 kind 列 ('item'|'step'), 默认 'item'; \
-             回填 loop_stages 引用的 todo 为 'step'。这是底层抽象, 不破坏现有数据。",
+             回填 loop_steps 引用的 todo 为 'step'。这是底层抽象, 不破坏现有数据。",
         statements: TODO_KIND_STATEMENTS,
     },
     Migration {
@@ -542,7 +542,7 @@ const INITIAL_SCHEMA_STATEMENTS: &[&str] = &[
 // - 多个触发器 (manual/cron/webhook/feishu_message/feishu_command/todo_completed/tag_added)
 // - 多个有序阶段 (每个阶段绑定一个 todo，顺序执行，含 rating 闸门)
 // - 多个 hook (pre_loop / post_loop / pre_stage / post_stage)
-// - 每次执行的运行记录 (loop_executions + loop_stage_executions)
+// - 每次执行的运行记录 (loop_executions + loop_step_executions)
 //
 // 与现有 todos.hooks 字段的关系：并存策略。todo 自己的内联 hooks 仍适用于
 // 单 todo 的链式场景；loop_hooks 是 loop 级的编排视图，二者职责分离。
@@ -603,9 +603,9 @@ const LOOP_STUDIO_STATEMENTS: &[&str] = &[
      BEGIN
          UPDATE loop_triggers SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
      END",
-    // ===== loop_stages: 有序阶段 =====
+    // ===== loop_steps: 有序阶段 =====
     // todo_id 引用现有 todos 表;首版 run_mode 固定 sequential,字段预留
-    "CREATE TABLE IF NOT EXISTS loop_stages (
+    "CREATE TABLE IF NOT EXISTS loop_steps (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         loop_id INTEGER NOT NULL,
         name TEXT NOT NULL,
@@ -621,12 +621,12 @@ const LOOP_STUDIO_STATEMENTS: &[&str] = &[
         FOREIGN KEY (loop_id) REFERENCES loops(id) ON DELETE CASCADE,
         FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE RESTRICT
     )",
-    "CREATE INDEX IF NOT EXISTS idx_loop_stages_loop_id ON loop_stages(loop_id)",
-    "CREATE INDEX IF NOT EXISTS idx_loop_stages_loop_order ON loop_stages(loop_id, order_index)",
-    "CREATE TRIGGER IF NOT EXISTS set_loop_stages_created_at_utc AFTER INSERT ON loop_stages
+    "CREATE INDEX IF NOT EXISTS idx_loop_steps_loop_id ON loop_steps(loop_id)",
+    "CREATE INDEX IF NOT EXISTS idx_loop_steps_loop_order ON loop_steps(loop_id, order_index)",
+    "CREATE TRIGGER IF NOT EXISTS set_loop_steps_created_at_utc AFTER INSERT ON loop_steps
      WHEN new.created_at IS NULL OR new.created_at = ''
      BEGIN
-         UPDATE loop_stages SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
+         UPDATE loop_steps SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
      END",
     // ===== loop_executions: 每次运行的顶层记录 =====
     // trigger_meta 是 JSON,记录是谁/什么触发的(例: feishu 消息原文、webhook body 等)
@@ -639,20 +639,20 @@ const LOOP_STUDIO_STATEMENTS: &[&str] = &[
         started_at TEXT NOT NULL,
         finished_at TEXT,
         status TEXT NOT NULL DEFAULT 'running',
-        total_stages INTEGER NOT NULL DEFAULT 0,
-        completed_stages INTEGER NOT NULL DEFAULT 0,
-        failed_stages INTEGER NOT NULL DEFAULT 0,
+        total_steps INTEGER NOT NULL DEFAULT 0,
+        completed_steps INTEGER NOT NULL DEFAULT 0,
+        failed_steps INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (loop_id) REFERENCES loops(id) ON DELETE CASCADE,
         FOREIGN KEY (trigger_id) REFERENCES loop_triggers(id) ON DELETE SET NULL
     )",
     "CREATE INDEX IF NOT EXISTS idx_loop_executions_loop_id ON loop_executions(loop_id)",
     "CREATE INDEX IF NOT EXISTS idx_loop_executions_started_at ON loop_executions(started_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_loop_executions_status ON loop_executions(status)",
-    // ===== loop_stage_executions: 每个阶段的执行 =====
-    "CREATE TABLE IF NOT EXISTS loop_stage_executions (
+    // ===== loop_step_executions: 每个阶段的执行 =====
+    "CREATE TABLE IF NOT EXISTS loop_step_executions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         loop_execution_id INTEGER NOT NULL,
-        stage_id INTEGER NOT NULL,
+        step_id INTEGER NOT NULL,
         todo_id INTEGER NOT NULL,
         execution_record_id INTEGER,
         status TEXT NOT NULL DEFAULT 'pending',
@@ -660,11 +660,11 @@ const LOOP_STUDIO_STATEMENTS: &[&str] = &[
         finished_at TEXT,
         error_message TEXT,
         FOREIGN KEY (loop_execution_id) REFERENCES loop_executions(id) ON DELETE CASCADE,
-        FOREIGN KEY (stage_id) REFERENCES loop_stages(id) ON DELETE CASCADE,
+        FOREIGN KEY (step_id) REFERENCES loop_steps(id) ON DELETE CASCADE,
         FOREIGN KEY (execution_record_id) REFERENCES execution_records(id) ON DELETE SET NULL
     )",
-    "CREATE INDEX IF NOT EXISTS idx_loop_stage_executions_loop_exec ON loop_stage_executions(loop_execution_id)",
-    "CREATE INDEX IF NOT EXISTS idx_loop_stage_executions_record ON loop_stage_executions(execution_record_id)",
+    "CREATE INDEX IF NOT EXISTS idx_loop_step_executions_loop_exec ON loop_step_executions(loop_execution_id)",
+    "CREATE INDEX IF NOT EXISTS idx_loop_step_executions_record ON loop_step_executions(execution_record_id)",
 ];
 
 /// v3 — todos.kind 列。
@@ -677,12 +677,12 @@ const LOOP_STUDIO_STATEMENTS: &[&str] = &[
 ///
 /// 升级策略：
 /// - 加列：`ALTER TABLE todos ADD COLUMN kind TEXT NOT NULL DEFAULT 'item'`
-/// - 回填：把当前已经被 loop_stages 引用的 todo 标记为 'step'，
+/// - 回填：把当前已经被 loop_steps 引用的 todo 标记为 'step'，
 ///   未被引用的保持默认 'item'；
 /// - 加索引：`(kind)` 用于环节/事项过滤查询。
 const TODO_KIND_STATEMENTS: &[&str] = &[
     "ALTER TABLE todos ADD COLUMN kind TEXT NOT NULL DEFAULT 'item'",
-    "UPDATE todos SET kind = 'step' WHERE id IN (SELECT DISTINCT todo_id FROM loop_stages)",
+    "UPDATE todos SET kind = 'step' WHERE id IN (SELECT DISTINCT todo_id FROM loop_steps)",
     "CREATE INDEX IF NOT EXISTS idx_todos_kind ON todos(kind)",
 ];
 

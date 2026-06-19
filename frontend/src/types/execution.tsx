@@ -154,23 +154,25 @@ export interface ExecutorOption {
   label: string;
   color: string;
   icon: ReactNode;
+  /** 是否支持继续对话（resumable）。默认 false。 */
+  resumable?: boolean;
 }
 
 export const EXECUTORS: ExecutorOption[] = [
-  { value: 'claudecode', label: 'Claude',    color: '#e17055', icon: <FaSquare color="#e17055" size={14} /> },
+  { value: 'claudecode', label: 'Claude',    color: '#e17055', icon: <FaSquare color="#e17055" size={14} />, resumable: true },
   { value: 'codebuddy',  label: 'CodeBuddy', color: '#00b894', icon: <FaSquare color="#00b894" size={14} /> },
-  { value: 'opencode',   label: 'Opencode',  color: '#fdcb6e', icon: <FaSquare color="#fdcb6e" size={14} /> },
-  { value: 'mobilecoder', label: 'MobileCoder', color: '#6c5ce7', icon: <FaSquare color="#6c5ce7" size={14} /> },
+  { value: 'opencode',   label: 'Opencode',  color: '#fdcb6e', icon: <FaSquare color="#fdcb6e" size={14} />, resumable: true },
+  { value: 'mobilecoder', label: 'MobileCoder', color: '#6c5ce7', icon: <FaSquare color="#6c5ce7" size={14} />, resumable: true },
   { value: 'atomcode',   label: 'AtomCode',  color: '#e84393', icon: <FaSquare color="#e84393" size={14} /> },
-  { value: 'hermes',     label: 'Hermes',    color: '#0984e3', icon: <FaSquare color="#0984e3" size={14} /> },
-  { value: 'kimi',       label: 'Kimi',      color: '#d63031', icon: <FaSquare color="#d63031" size={14} /> },
+  { value: 'hermes',     label: 'Hermes',    color: '#0984e3', icon: <FaSquare color="#0984e3" size={14} />, resumable: true },
+  { value: 'kimi',       label: 'Kimi',      color: '#d63031', icon: <FaSquare color="#d63031" size={14} />, resumable: true },
   { value: 'codex',      label: 'Codex',     color: '#488597', icon: <FaSquare color="#488597" size={14} /> },
-  { value: 'codewhale',  label: 'CodeWhale', color: '#00cec9', icon: <FaSquare color="#00cec9" size={14} /> },
-  { value: 'pi',        label: 'Pi',        color: '#8e44ad', icon: <FaSquare color="#8e44ad" size={14} /> },
-  { value: 'mimo',      label: 'MiMo',      color: '#ff6b6b', icon: <FaSquare color="#ff6b6b" size={14} /> },
+  { value: 'codewhale',  label: 'CodeWhale', color: '#00cec9', icon: <FaSquare color="#00cec9" size={14} />, resumable: true },
+  { value: 'pi',        label: 'Pi',        color: '#8e44ad', icon: <FaSquare color="#8e44ad" size={14} />, resumable: true },
+  { value: 'mimo',      label: 'MiMo',      color: '#ff6b6b', icon: <FaSquare color="#ff6b6b" size={14} />, resumable: true },
   // Issue #673: 新增 Zhanlu 执行器，与 Opencode 输出格式一致
   // 颜色与下方 EXECUTOR_COLORS.zhanlu 同步为 #0f766e，与 agents(#2d3436) 视觉可分。
-  { value: 'zhanlu',    label: 'Zhanlu',    color: '#0f766e', icon: <FaSquare color="#0f766e" size={14} /> },
+  { value: 'zhanlu',    label: 'Zhanlu',    color: '#0f766e', icon: <FaSquare color="#0f766e" size={14} />, resumable: true },
   // `agents` is read-only skill source (`~/.agents/skills`), not shown in executor management.
   // Included here so it appears in Skills overview/sync tabs.
   { value: 'agents',     label: 'Agents',    color: '#2d3436', icon: <FaSquare color="#2d3436" size={14} /> },
@@ -209,7 +211,11 @@ export function getExecutorOption(value: string): ExecutorOption {
   return EXECUTORS.find(e => e.value === value.toLowerCase()) || EXECUTORS[0];
 }
 
-export const RESUMABLE_EXECUTORS = new Set(['claudecode', 'kimi', 'opencode', 'mobilecoder', 'hermes', 'codewhale', 'pi', 'mimo', 'zhanlu']);
+/** 不包含 `agents` 的执行器列表，用于执行器选择 UI（agents 是只读 skill 来源，不是执行器）。 */
+export const EXECUTORS_FOR_PICKER = EXECUTORS.filter(e => e.value !== 'agents');
+
+/** 支持继续对话的执行器 value 集合。从 EXECUTORS 的 resumable 标志自动派生，无需手动维护。 */
+export const RESUMABLE_EXECUTORS = new Set(EXECUTORS.filter(e => e.resumable).map(e => e.value));
 
 /// 默认执行器
 export const DEFAULT_EXECUTOR = 'claudecode';

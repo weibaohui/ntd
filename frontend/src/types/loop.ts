@@ -55,15 +55,15 @@ export interface LoopExecutionDto {
   started_at: string;
   finished_at: string | null;
   status: string;
-  total_stages: number;
-  completed_stages: number;
-  failed_stages: number;
+  total_steps: number;
+  completed_steps: number;
+  failed_steps: number;
 }
 
-export interface LoopStageExecutionDto {
+export interface LoopStepExecutionDto {
   id: number;
   loop_execution_id: number;
-  stage_id: number;
+  step_id: number;
   todo_id: number;
   status: string;
   execution_record_id: number | null;
@@ -79,7 +79,7 @@ export interface TodoSummaryForLoop {
   executor: string;
 }
 
-export interface LoopStageRawDto {
+export interface LoopStepRawDto {
   id: number;
   loop_id: number;
   name: string;
@@ -94,7 +94,7 @@ export interface LoopStageRawDto {
   created_at: string | null;
 }
 
-export interface LoopStageDto {
+export interface LoopStepDto {
   id: number;
   loop_id: number;
   name: string;
@@ -112,7 +112,7 @@ export interface LoopStageDto {
   todo_status: string;
 }
 
-export interface CreateStageRequest {
+export interface CreateLoopStepRequest {
   name: string;
   description?: string;
   todo_id: number;
@@ -123,7 +123,7 @@ export interface CreateStageRequest {
   enabled?: boolean;
 }
 
-export interface UpdateStageRequest {
+export interface UpdateLoopStepRequest {
   name: string;
   description: string;
   todo_id: number;
@@ -134,7 +134,7 @@ export interface UpdateStageRequest {
   enabled: boolean;
 }
 
-export interface ReorderStagesRequest {
+export interface ReorderLoopStepsRequest {
   ordered_ids: number[];
 }
 
@@ -149,7 +149,7 @@ export interface LoopDetail {
   created_at: string | null;
   updated_at: string | null;
   triggers: LoopTriggerDto[];
-  stages: LoopStageDto[];
+  steps: LoopStepDto[];
   todo_map: Record<number, TodoSummaryForLoop>;
 }
 
@@ -164,7 +164,7 @@ export interface LoopListItem {
   created_at: string | null;
   updated_at: string | null;
   trigger_count: number;
-  stage_count: number;
+  step_count: number;
   last_execution_status: string;
   last_execution_at: string | null;
 }
@@ -178,10 +178,10 @@ export interface LoopExecutionDetail {
   started_at: string;
   finished_at: string | null;
   status: string;
-  total_stages: number;
-  completed_stages: number;
-  failed_stages: number;
-  stage_executions: Record<string, any>[];
+  total_steps: number;
+  completed_steps: number;
+  failed_steps: number;
+  step_executions: Record<string, any>[];
   loop_name: string;
 }
 

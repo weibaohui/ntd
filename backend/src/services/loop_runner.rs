@@ -1,11 +1,11 @@
-//! Loop Runner — 顺序执行 loop 的所有 stage。
+//! Loop Runner — 顺序执行 loop 的所有 step。
 //!
 //! 执行模型：
 //! 1. 创建 loop_executions 行（status=running）
-//! 2. 按 order_index 顺序遍历 stages：
-//!    a. 启动 stage.todo 的执行（复用 executor_service::start_todo_execution）
-//!    b. 写 loop_stage_execution 行
-//!    c. 订阅 broadcast::tx 等待该 stage 的 ExecEvent::Finished
+//! 2. 按 order_index 顺序遍历 steps：
+//!    a. 启动 step.todo 的执行（复用 executor_service::start_todo_execution）
+//!    b. 写 loop_step_execution 行
+//!    c. 订阅 broadcast::tx 等待该 step 的 ExecEvent::Finished
 //!    d. 应用 rating gate（决定是否继续 / 中止 loop）
 //! 3. 计算最终 status（success / partial / failed / cancelled）
 //! 4. 写回 loop_executions
@@ -57,7 +57,7 @@ impl LoopRunner {
         let this = self.clone();
         let trigger_type = trigger_type.to_string();
         // 先建 loop_execution 行拿到 id,然后后台异步跑整个流程
-        let initial_total_stages = 0i32; // 创建时还没确定 stage 数,后面在 run_inner 里 update
+        let initial_total_steps = 0i32; // 创建时还没确定 step 数,后面在 run_inner 里 update
         let loop_execution_id_res: Result<i64, String> = tokio::task::block_in_place(|| {
             let rt = tokio::runtime::Handle::current();
             rt.block_on(async {
@@ -68,7 +68,7 @@ impl LoopRunner {
                         trigger_id,
                         &trigger_type,
                         &trigger_meta.to_string(),
-                        initial_total_stages,
+                        initial_total_steps,
                     )
                     .await
                     .map(|m| m.id)
@@ -130,15 +130,15 @@ impl LoopRunner {
             ));
         }
 
-        // 2. 加载所有 enabled stages
-        let stages = self
+        // 2. 加载所有 enabled steps
+        let steps = self
             .ctx
             .db
-            .list_enabled_stages_by_loop(loop_id)
+            .list_enabled_loop_steps_by_loop(loop_id)
             .await
             .map_err(|e| e.to_string())?;
-        if stages.is_empty() {
-            // 没有 stage,直接 mark 为 success
+        if steps.is_empty() {
+            // 没有 step,直接 mark 为 success
             self.ctx
                 .db
                 .finish_loop_execution(loop_execution_id, "success", 0, 0)
@@ -146,7 +146,7 @@ impl LoopRunner {
                 .map_err(|e| e.to_string())?;
             return Ok(());
         }
-        // 更新 total_stages
+        // 更新 total_steps
         self.ctx
             .db
             .finish_loop_execution(loop_execution_id, "running", 0, 0)
@@ -155,26 +155,26 @@ impl LoopRunner {
         // 上面 finish 是把 status 写回 running 但也设置了 finished_at,这里重新刷一下
         // 改为直接 SQL 清掉 finished_at
         self.clear_finished_at(loop_execution_id).await?;
-        self.update_total_stages(loop_execution_id, stages.len() as i32)
+        self.update_total_steps(loop_execution_id, steps.len() as i32)
             .await?;
 
-        // 3. 顺序遍历 stages
+        // 3. 顺序遍历 steps
         let mut completed: i32 = 0;
         let mut failed: i32 = 0;
         let mut last_failed_record: Option<i64> = None;
-        for (idx, stage) in stages.iter().enumerate() {
-            // 若上一阶段失败且当前 stage 设置了 skip_on_source_failed,则跳过
-            if last_failed_record.is_some() && stage.skip_on_source_failed != 0 {
+        for (idx, step) in steps.iter().enumerate() {
+            // 若上一阶段失败且当前 step 设置了 skip_on_source_failed,则跳过
+            if last_failed_record.is_some() && step.skip_on_source_failed != 0 {
                 info!(
-                    "loop #{} stage #{} skipped: upstream stage failed and skip_on_source_failed=true",
-                    loop_id, stage.id
+                    "loop #{} step #{} skipped: upstream step failed and skip_on_source_failed=true",
+                    loop_id, step.id
                 );
                 self.ctx
                     .db
-                    .create_loop_stage_execution(
+                    .create_loop_step_execution(
                         loop_execution_id,
-                        stage.id,
-                        stage.todo_id,
+                        step.id,
+                        step.todo_id,
                         "skipped",
                     )
                     .await
@@ -182,21 +182,21 @@ impl LoopRunner {
                 continue;
             }
 
-            // a. 启动 stage execution
-            let stage_exec = self
+            // a. 启动 step execution
+            let step_exec = self
                 .ctx
                 .db
-                .create_loop_stage_execution(
+                .create_loop_step_execution(
                     loop_execution_id,
-                    stage.id,
-                    stage.todo_id,
+                    step.id,
+                    step.todo_id,
                     "running",
                 )
                 .await
                 .map_err(|e| e.to_string())?;
             self.ctx
                 .db
-                .mark_stage_execution_started(stage_exec.id)
+                .mark_step_execution_started(step_exec.id)
                 .await
                 .map_err(|e| e.to_string())?;
 
@@ -204,18 +204,18 @@ impl LoopRunner {
             let todo = match self
                 .ctx
                 .db
-                .get_todo(stage.todo_id)
+                .get_todo(step.todo_id)
                 .await
                 .map_err(|e| e.to_string())?
             {
                 Some(t) => t,
                 None => {
-                    let msg = format!("stage #{} todo #{} not found", stage.id, stage.todo_id);
+                    let msg = format!("step #{} todo #{} not found", step.id, step.todo_id);
                     warn!("loop_runner: {}", msg);
                     self.ctx
                         .db
-                        .finish_stage_execution(
-                            stage_exec.id,
+                        .finish_step_execution(
+                            step_exec.id,
                             "failed",
                             None,
                             Some(&msg),
@@ -234,17 +234,17 @@ impl LoopRunner {
             };
 
             let record_id = match self
-                .start_stage_todo(&todo, &trigger_type, idx as i64)
+                .start_step_todo(&todo, &trigger_type, idx as i64)
                 .await
             {
                 Ok(rid) => rid,
                 Err(e) => {
-                    let msg = format!("stage #{} start failed: {}", stage.id, e);
+                    let msg = format!("step #{} start failed: {}", step.id, e);
                     warn!("loop_runner: {}", msg);
                     self.ctx
                         .db
-                        .finish_stage_execution(
-                            stage_exec.id,
+                        .finish_step_execution(
+                            step_exec.id,
                             "failed",
                             None,
                             Some(&msg),
@@ -262,30 +262,30 @@ impl LoopRunner {
                 }
             };
 
-            // 4d. 等待 stage 执行结束
-            let stage_status = match self.wait_for_stage_finish(record_id).await {
+            // 4d. 等待 step 执行结束
+            let step_status = match self.wait_for_step_finish(record_id).await {
                 Ok(s) => s,
                 Err(e) => {
-                    let msg = format!("stage #{} wait failed: {}", stage.id, e);
+                    let msg = format!("step #{} wait failed: {}", step.id, e);
                     warn!("loop_runner: {}", msg);
                     "failed".to_string()
                 }
             };
 
-            // 4e. 写回 stage execution
-            let final_stage_status = stage_status.clone();
+            // 4e. 写回 step execution
+            let final_step_status = step_status.clone();
             self.ctx
                 .db
-                .finish_stage_execution(
-                    stage_exec.id,
-                    &final_stage_status,
+                .finish_step_execution(
+                    step_exec.id,
+                    &final_step_status,
                     Some(record_id),
                     None,
                 )
                 .await
                 .map_err(|e| e.to_string())?;
 
-            if stage_status == "success" {
+            if step_status == "success" {
                 completed += 1;
                 last_failed_record = None;
                 let _ = self
@@ -327,8 +327,8 @@ impl LoopRunner {
         Ok(())
     }
 
-    /// 启动 stage.todo 的执行,返回 execution_record_id。
-    async fn start_stage_todo(
+    /// 启动 step.todo 的执行,返回 execution_record_id。
+    async fn start_step_todo(
         &self,
         todo: &crate::models::Todo,
         trigger_type: &str,
@@ -347,7 +347,7 @@ impl LoopRunner {
             trigger_type: format!("loop_stage:{}", trigger_type),
             params: Some({
                 let mut p = std::collections::HashMap::new();
-                p.insert("loop_stage_index".to_string(), loop_idx.to_string());
+                p.insert("loop_step_index".to_string(), loop_idx.to_string());
                 p
             }),
             resume_session_id: None,
@@ -369,7 +369,7 @@ impl LoopRunner {
 
     /// 订阅 broadcast 等待指定 record_id 的 Finished 事件。
     /// timeout 24h 防止长跑任务永久挂住 loop。
-    async fn wait_for_stage_finish(&self, record_id: i64) -> Result<String, String> {
+    async fn wait_for_step_finish(&self, record_id: i64) -> Result<String, String> {
         let mut rx = self.tx.subscribe();
         let wait_timeout = Duration::from_secs(24 * 60 * 60);
         let result = timeout(wait_timeout, async {
@@ -389,7 +389,7 @@ impl LoopRunner {
                         // 这里简化为: 任意 Finished 事件都先接住,再用 record_id 反查
                         // 但实际是 broadcast 只发 task_id 不发 record_id;
                         // 所以我们用 fallback: 任意 Finished 来就直接退出,
-                        // 因为 loop 是顺序的,这时只有当前 stage 在跑。
+                        // 因为 loop 是顺序的,这时只有当前 step 在跑。
                         // （多 loop 并发时会有歧义；首版接受这个限制,后期可扩展 event 加 record_id）
                         return if success {
                             Ok(ExecutionStatus::Success.as_str().to_string())
@@ -431,7 +431,7 @@ impl LoopRunner {
                 }
             }
             Err(_) => Err(format!(
-                "stage execution (record #{}) timeout after 24h",
+                "step execution (record #{}) timeout after 24h",
                 record_id
             )),
         }
@@ -450,10 +450,10 @@ impl LoopRunner {
         Ok(())
     }
 
-    async fn update_total_stages(&self, id: i64, total: i32) -> Result<(), String> {
+    async fn update_total_steps(&self, id: i64, total: i32) -> Result<(), String> {
         use sea_orm::{ConnectionTrait, Statement};
         let sql = format!(
-            "UPDATE loop_executions SET total_stages = {} WHERE id = {}",
+            "UPDATE loop_executions SET total_steps = {} WHERE id = {}",
             total, id
         );
         self.ctx

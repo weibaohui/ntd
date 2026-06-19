@@ -59,28 +59,28 @@ impl Database {
             .expect("freshly inserted step should exist"))
     }
 
-    /// 统计某个 step 被多少 loop stage 引用。
-    pub async fn count_loop_stages_using_step(
+    /// 统计某个 step 被多少 loop step 引用。
+    pub async fn count_loop_steps_using_step(
         &self,
         step_id: i64,
     ) -> Result<i64, sea_orm::DbErr> {
-        use crate::db::entity::loop_stages;
-        Ok(loop_stages::Entity::find()
-            .filter(loop_stages::Column::TodoId.eq(step_id))
+        use crate::db::entity::loop_steps;
+        Ok(loop_steps::Entity::find()
+            .filter(loop_steps::Column::TodoId.eq(step_id))
             .count(&self.conn)
             .await? as i64)
     }
 
     /// 批量统计多个 step 的引用计数。
-    pub async fn count_loop_stages_for_steps(
+    pub async fn count_loop_steps_for_steps(
         &self,
         step_ids: &[i64],
     ) -> Result<std::collections::HashMap<i64, i64>, sea_orm::DbErr> {
-        use crate::db::entity::loop_stages;
+        use crate::db::entity::loop_steps;
         let mut map = std::collections::HashMap::new();
         for id in step_ids {
-            let count = loop_stages::Entity::find()
-                .filter(loop_stages::Column::TodoId.eq(*id))
+            let count = loop_steps::Entity::find()
+                .filter(loop_steps::Column::TodoId.eq(*id))
                 .count(&self.conn)
                 .await? as i64;
             map.insert(*id, count);
@@ -92,7 +92,7 @@ impl Database {
     pub async fn list_steps_with_usage_pure(&self) -> Result<Vec<(steps::Model, i64)>, sea_orm::DbErr> {
         let items = self.list_steps_pure().await?;
         let ids: Vec<i64> = items.iter().map(|s| s.id).collect();
-        let usage = self.count_loop_stages_for_steps(&ids).await?;
+        let usage = self.count_loop_steps_for_steps(&ids).await?;
         Ok(items
             .into_iter()
             .map(|s| {

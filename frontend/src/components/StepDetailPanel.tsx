@@ -13,7 +13,7 @@ import { TemplateModal } from './todo-drawer/TemplateModal';
 import * as dbSteps from '@/utils/database/steps';
 import * as db from '@/utils/database';
 import type { StepSummary, SkillMeta, ExecutorSkills, TodoTemplate } from '@/types';
-import { EXECUTORS, getExecutorColor } from '@/types';
+import { EXECUTORS_FOR_PICKER, getExecutorColor } from '@/types';
 import { formatRelativeTime } from '@/utils/datetime';
 
 interface StepDetailPanelProps {
@@ -186,8 +186,8 @@ export function StepDetailPanel({ stepId, onStepUpdated }: StepDetailPanelProps)
               )}
             </Descriptions.Item>
             <Descriptions.Item label="复用次数">
-              <Tag icon={<ApartmentOutlined />} color={step.used_by_loop_stage_count > 0 ? 'purple' : 'default'}>
-                {step.used_by_loop_stage_count}
+              <Tag icon={<ApartmentOutlined />} color={step.used_by_loop_step_count > 0 ? 'purple' : 'default'}>
+                {step.used_by_loop_step_count}
               </Tag>
             </Descriptions.Item>
             <Descriptions.Item label="来源事项">
@@ -269,7 +269,7 @@ export function StepDetailPanel({ stepId, onStepUpdated }: StepDetailPanelProps)
           {/* 执行器 */}
           <ExecutorPicker
             executor={editExecutor}
-            executorOptions={EXECUTORS}
+            executorOptions={EXECUTORS_FOR_PICKER}
             onChange={setEditExecutor}
           />
 

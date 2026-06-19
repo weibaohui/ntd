@@ -16,7 +16,7 @@ use sea_orm::{
 use std::collections::HashMap;
 
 use crate::db::entity::{
-    loop_executions, loop_stage_executions, loop_stages, loop_triggers, loops,
+    loop_executions, loop_step_executions, loop_steps, loop_triggers, loops,
 };
 use crate::db::Database;
 
@@ -106,7 +106,7 @@ impl Database {
         Ok(())
     }
 
-    /// 复制 loop 及其所有 trigger/stage；execution 不复制。
+    /// 复制 loop 及其所有 trigger.step；execution 不复制。
     ///
     /// 用于 UI 的「另存为」/「复制为新版本」按钮。
     /// 复制时 name 追加「(副本)」前缀，status 重置为 draft，
@@ -142,10 +142,10 @@ impl Database {
             .await?;
         }
 
-        // 复制 stages (按原 order 写入,新 order 自动递增)
-        let stages = self.list_stages_by_loop(source_id).await?;
-        for s in stages {
-            self.create_stage(
+        // 复制 steps (按原 order 写入,新 order 自动递增)
+        let steps = self.list_loop_steps_by_loop(source_id).await?;
+        for s in steps {
+            self.create_loop_step(
                 new_loop.id,
                 &s.name,
                 &s.description,
@@ -269,40 +269,40 @@ impl Database {
 
     // ====== Loop Stages ======
 
-    pub async fn list_stages_by_loop(
+    pub async fn list_loop_steps_by_loop(
         &self,
         loop_id: i64,
-    ) -> Result<Vec<loop_stages::Model>, sea_orm::DbErr> {
-        loop_stages::Entity::find()
-            .filter(loop_stages::Column::LoopId.eq(loop_id))
-            .order_by_asc(loop_stages::Column::OrderIndex)
-            .order_by_asc(loop_stages::Column::Id)
+    ) -> Result<Vec<loop_steps::Model>, sea_orm::DbErr> {
+        loop_steps::Entity::find()
+            .filter(loop_steps::Column::LoopId.eq(loop_id))
+            .order_by_asc(loop_steps::Column::OrderIndex)
+            .order_by_asc(loop_steps::Column::Id)
             .all(&self.conn)
             .await
     }
 
     /// 列出 loop 的启用阶段,用于 loop runner 按序执行。
-    pub async fn list_enabled_stages_by_loop(
+    pub async fn list_enabled_loop_steps_by_loop(
         &self,
         loop_id: i64,
-    ) -> Result<Vec<loop_stages::Model>, sea_orm::DbErr> {
-        loop_stages::Entity::find()
-            .filter(loop_stages::Column::LoopId.eq(loop_id))
-            .filter(loop_stages::Column::Enabled.eq(1))
-            .order_by_asc(loop_stages::Column::OrderIndex)
-            .order_by_asc(loop_stages::Column::Id)
+    ) -> Result<Vec<loop_steps::Model>, sea_orm::DbErr> {
+        loop_steps::Entity::find()
+            .filter(loop_steps::Column::LoopId.eq(loop_id))
+            .filter(loop_steps::Column::Enabled.eq(1))
+            .order_by_asc(loop_steps::Column::OrderIndex)
+            .order_by_asc(loop_steps::Column::Id)
             .all(&self.conn)
             .await
     }
 
-    pub async fn get_stage(
+    pub async fn get_loop_step(
         &self,
         id: i64,
-    ) -> Result<Option<loop_stages::Model>, sea_orm::DbErr> {
-        loop_stages::Entity::find_by_id(id).one(&self.conn).await
+    ) -> Result<Option<loop_steps::Model>, sea_orm::DbErr> {
+        loop_steps::Entity::find_by_id(id).one(&self.conn).await
     }
 
-    pub async fn create_stage(
+    pub async fn create_loop_step(
         &self,
         loop_id: i64,
         name: &str,
@@ -313,10 +313,10 @@ impl Database {
         min_rating: Option<i32>,
         unrated_policy: &str,
         enabled: bool,
-    ) -> Result<loop_stages::Model, sea_orm::DbErr> {
+    ) -> Result<loop_steps::Model, sea_orm::DbErr> {
         // 自动分配 order_index: 当前最大 + 1
         let next_order = self
-            .list_stages_by_loop(loop_id)
+            .list_loop_steps_by_loop(loop_id)
             .await?
             .iter()
             .map(|s| s.order_index)
@@ -324,7 +324,7 @@ impl Database {
             .map(|m| m + 1)
             .unwrap_or(0);
         let now = crate::models::utc_timestamp();
-        let am = loop_stages::ActiveModel {
+        let am = loop_steps::ActiveModel {
             loop_id: ActiveValue::Set(loop_id),
             name: ActiveValue::Set(name.to_string()),
             description: ActiveValue::Set(description.to_string()),
@@ -341,7 +341,7 @@ impl Database {
         am.insert(&self.conn).await
     }
 
-    pub async fn update_stage(
+    pub async fn update_loop_step(
         &self,
         id: i64,
         name: &str,
@@ -353,9 +353,9 @@ impl Database {
         unrated_policy: &str,
         enabled: bool,
     ) -> Result<(), sea_orm::DbErr> {
-        let existing = loop_stages::Entity::find_by_id(id).one(&self.conn).await?;
+        let existing = loop_steps::Entity::find_by_id(id).one(&self.conn).await?;
         if let Some(c) = existing {
-            let mut am: loop_stages::ActiveModel = c.into();
+            let mut am: loop_steps::ActiveModel = c.into();
             am.name = ActiveValue::Set(name.to_string());
             am.description = ActiveValue::Set(description.to_string());
             am.todo_id = ActiveValue::Set(todo_id);
@@ -370,30 +370,30 @@ impl Database {
         Ok(())
     }
 
-    pub async fn delete_stage(&self, id: i64) -> Result<(), sea_orm::DbErr> {
-        loop_stages::Entity::delete_by_id(id).exec(&self.conn).await?;
+    pub async fn delete_loop_step(&self, id: i64) -> Result<(), sea_orm::DbErr> {
+        loop_steps::Entity::delete_by_id(id).exec(&self.conn).await?;
         Ok(())
     }
 
     /// 批量重排阶段。前端拖拽排序后调用,传入完整的新顺序。
     /// `ordered_ids` 的顺序即新的 order_index(从 0 开始递增)。
-    pub async fn reorder_stages(
+    pub async fn reorder_loop_steps(
         &self,
         loop_id: i64,
         ordered_ids: &[i64],
     ) -> Result<(), sea_orm::DbErr> {
-        // 1. 先把所有相关 stage 取出,确保 ordered_ids 全部属于 loop_id
-        let stages = self.list_stages_by_loop(loop_id).await?;
-        let valid: std::collections::HashSet<i64> = stages.iter().map(|s| s.id).collect();
+        // 1. 先把所有相关 step 取出,确保 ordered_ids 全部属于 loop_id
+        let steps = self.list_loop_steps_by_loop(loop_id).await?;
+        let valid: std::collections::HashSet<i64> = steps.iter().map(|s| s.id).collect();
         for (idx, id) in ordered_ids.iter().enumerate() {
             if !valid.contains(id) {
                 return Err(sea_orm::DbErr::Custom(format!(
-                    "stage #{} 不属于 loop #{}",
+                    "step #{} 不属于 loop #{}",
                     id, loop_id
                 )));
             }
-            let stage = stages.iter().find(|s| s.id == *id).unwrap();
-            let mut am: loop_stages::ActiveModel = stage.clone().into();
+            let step = steps.iter().find(|s| s.id == *id).unwrap();
+            let mut am: loop_steps::ActiveModel = step.clone().into();
             am.order_index = Set(idx as i32);
             am.update(&self.conn).await?;
         }
@@ -408,7 +408,7 @@ impl Database {
         trigger_id: Option<i64>,
         trigger_type: &str,
         trigger_meta: &str,
-        total_stages: i32,
+        total_steps: i32,
     ) -> Result<loop_executions::Model, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let am = loop_executions::ActiveModel {
@@ -418,9 +418,9 @@ impl Database {
             trigger_meta: ActiveValue::Set(trigger_meta.to_string()),
             started_at: ActiveValue::Set(now),
             status: ActiveValue::Set("running".to_string()),
-            total_stages: ActiveValue::Set(total_stages),
-            completed_stages: ActiveValue::Set(0),
-            failed_stages: ActiveValue::Set(0),
+            total_steps: ActiveValue::Set(total_steps),
+            completed_steps: ActiveValue::Set(0),
+            failed_steps: ActiveValue::Set(0),
             ..Default::default()
         };
         am.insert(&self.conn).await
@@ -465,8 +465,8 @@ impl Database {
         &self,
         id: i64,
         status: &str,
-        completed_stages: i32,
-        failed_stages: i32,
+        completed_steps: i32,
+        failed_steps: i32,
     ) -> Result<(), sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let existing = loop_executions::Entity::find_by_id(id).one(&self.conn).await?;
@@ -474,8 +474,8 @@ impl Database {
             let mut am: loop_executions::ActiveModel = c.into();
             am.status = ActiveValue::Set(status.to_string());
             am.finished_at = ActiveValue::Set(Some(now));
-            am.completed_stages = ActiveValue::Set(completed_stages);
-            am.failed_stages = ActiveValue::Set(failed_stages);
+            am.completed_steps = ActiveValue::Set(completed_steps);
+            am.failed_steps = ActiveValue::Set(failed_steps);
             am.update(&self.conn).await?;
         }
         Ok(())
@@ -489,8 +489,8 @@ impl Database {
     ) -> Result<(), sea_orm::DbErr> {
         // 通过 SQL 累加;避免读写竞争
         let sql = format!(
-            "UPDATE loop_executions SET completed_stages = completed_stages + {}, \
-             failed_stages = failed_stages + {} WHERE id = {}",
+            "UPDATE loop_executions SET completed_steps = completed_steps + {}, \
+             failed_steps = failed_steps + {} WHERE id = {}",
             success_delta, failed_delta, id
         );
         use sea_orm::{ConnectionTrait, Statement};
@@ -502,16 +502,16 @@ impl Database {
 
     // ====== Loop Stage Executions ======
 
-    pub async fn create_loop_stage_execution(
+    pub async fn create_loop_step_execution(
         &self,
         loop_execution_id: i64,
-        stage_id: i64,
+        step_id: i64,
         todo_id: i64,
         status: &str,
-    ) -> Result<loop_stage_executions::Model, sea_orm::DbErr> {
-        let am = loop_stage_executions::ActiveModel {
+    ) -> Result<loop_step_executions::Model, sea_orm::DbErr> {
+        let am = loop_step_executions::ActiveModel {
             loop_execution_id: ActiveValue::Set(loop_execution_id),
-            stage_id: ActiveValue::Set(stage_id),
+            step_id: ActiveValue::Set(step_id),
             todo_id: ActiveValue::Set(todo_id),
             status: ActiveValue::Set(status.to_string()),
             ..Default::default()
@@ -519,25 +519,25 @@ impl Database {
         am.insert(&self.conn).await
     }
 
-    pub async fn list_loop_stage_executions(
+    pub async fn list_loop_step_executions(
         &self,
         loop_execution_id: i64,
-    ) -> Result<Vec<loop_stage_executions::Model>, sea_orm::DbErr> {
-        loop_stage_executions::Entity::find()
-            .filter(loop_stage_executions::Column::LoopExecutionId.eq(loop_execution_id))
-            .order_by_asc(loop_stage_executions::Column::Id)
+    ) -> Result<Vec<loop_step_executions::Model>, sea_orm::DbErr> {
+        loop_step_executions::Entity::find()
+            .filter(loop_step_executions::Column::LoopExecutionId.eq(loop_execution_id))
+            .order_by_asc(loop_step_executions::Column::Id)
             .all(&self.conn)
             .await
     }
 
-    pub async fn mark_stage_execution_started(
+    pub async fn mark_step_execution_started(
         &self,
         id: i64,
     ) -> Result<(), sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
-        let existing = loop_stage_executions::Entity::find_by_id(id).one(&self.conn).await?;
+        let existing = loop_step_executions::Entity::find_by_id(id).one(&self.conn).await?;
         if let Some(c) = existing {
-            let mut am: loop_stage_executions::ActiveModel = c.into();
+            let mut am: loop_step_executions::ActiveModel = c.into();
             am.status = ActiveValue::Set("running".to_string());
             am.started_at = ActiveValue::Set(Some(now));
             am.update(&self.conn).await?;
@@ -545,7 +545,7 @@ impl Database {
         Ok(())
     }
 
-    pub async fn finish_stage_execution(
+    pub async fn finish_step_execution(
         &self,
         id: i64,
         status: &str,
@@ -553,9 +553,9 @@ impl Database {
         error_message: Option<&str>,
     ) -> Result<(), sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
-        let existing = loop_stage_executions::Entity::find_by_id(id).one(&self.conn).await?;
+        let existing = loop_step_executions::Entity::find_by_id(id).one(&self.conn).await?;
         if let Some(c) = existing {
-            let mut am: loop_stage_executions::ActiveModel = c.into();
+            let mut am: loop_step_executions::ActiveModel = c.into();
             am.status = ActiveValue::Set(status.to_string());
             am.finished_at = ActiveValue::Set(Some(now));
             if let Some(rid) = execution_record_id {
@@ -569,14 +569,14 @@ impl Database {
         Ok(())
     }
 
-    // ====== 辅助：批量取 stage + todo 元信息 ======
+    // ====== 辅助：批量取 step + todo 元信息 ======
 
-    /// 一次 SQL 把 stage + 关联 todo 的 title/executor/status 拉出来。
+    /// 一次 SQL 把 step + 关联 todo 的 title/executor/status 拉出来。
     /// 供前端 LoopStudio 详情页直接渲染(避免 N+1)。
-    pub async fn list_stages_with_todo_meta(
+    pub async fn list_loop_steps_with_todo_meta(
         &self,
         loop_id: i64,
-    ) -> Result<Vec<(loop_stages::Model, String, String, String)>, sea_orm::DbErr> {
+    ) -> Result<Vec<(loop_steps::Model, String, String, String)>, sea_orm::DbErr> {
         // 用 raw SQL JOIN; SeaORM 的 join API 对 has-many/belongs-to 支持有限,
         // 一次写清晰且类型稳定。
         use sea_orm::{ConnectionTrait, Statement};
@@ -585,7 +585,7 @@ impl Database {
                     s.run_mode, s.skip_on_source_failed, s.min_rating, s.unrated_policy, \
                     s.enabled, s.created_at, \
                     t.title as todo_title, t.executor as todo_executor, t.status as todo_status \
-             FROM loop_stages s \
+             FROM loop_steps s \
              INNER JOIN todos t ON t.id = s.todo_id \
              WHERE s.loop_id = {} \
              ORDER BY s.order_index ASC, s.id ASC",
@@ -597,7 +597,7 @@ impl Database {
             .await?;
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
-            let model = loop_stages::Model {
+            let model = loop_steps::Model {
                 id: row.try_get_by::<i64, _>("id")?,
                 loop_id: row.try_get_by::<i64, _>("loop_id")?,
                 name: row.try_get_by::<String, _>("name")?,
@@ -625,7 +625,7 @@ impl Database {
 
     // ====== 辅助：批量取 loop + 计数 ======
 
-    /// 一次 SQL 把所有 loop + 它的 trigger/stage 数 + 最近一次 execution 状态拉出来。
+    /// 一次 SQL 把所有 loop + 它的 trigger.step 数 + 最近一次 execution 状态拉出来。
     /// 供左侧 LoopList 用,避免 N+1。
     pub async fn list_loops_with_counts(
         &self,
@@ -634,7 +634,7 @@ impl Database {
         let sql = "SELECT l.id, l.name, l.description, l.workspace, \
                           l.status, l.color, l.icon, l.created_at, l.updated_at, \
                           (SELECT COUNT(*) FROM loop_triggers t WHERE t.loop_id = l.id) as trigger_count, \
-                          (SELECT COUNT(*) FROM loop_stages s WHERE s.loop_id = l.id) as stage_count, \
+                          (SELECT COUNT(*) FROM loop_steps s WHERE s.loop_id = l.id) as step_count, \
                           (SELECT le.status FROM loop_executions le \
                            WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_status, \
                           (SELECT le.started_at FROM loop_executions le \
@@ -660,7 +660,7 @@ impl Database {
                     updated_at: row.try_get_by::<Option<String>, _>("updated_at")?,
                 },
                 trigger_count: row.try_get_by::<i32, _>("trigger_count")?,
-                stage_count: row.try_get_by::<i32, _>("stage_count")?,
+                step_count: row.try_get_by::<i32, _>("step_count")?,
                 last_execution_status: row
                     .try_get_by::<Option<String>, _>("last_execution_status")?
                     .unwrap_or_default(),
@@ -681,19 +681,19 @@ impl Database {
             return Ok(None);
         };
         let triggers = self.list_triggers_by_loop(loop_id).await?;
-        let stages_with_meta = self.list_stages_with_todo_meta(loop_id).await?;
-        let mut todo_ids: Vec<i64> = stages_with_meta.iter().map(|(s, _, _, _)| s.todo_id).collect();
+        let steps_with_meta = self.list_loop_steps_with_todo_meta(loop_id).await?;
+        let mut todo_ids: Vec<i64> = steps_with_meta.iter().map(|(s, _, _, _)| s.todo_id).collect();
         todo_ids.sort_unstable();
         todo_ids.dedup();
         let todos = self.get_todos_by_ids(&todo_ids).await?;
         let todo_map: HashMap<i64, _> = todos.into_iter().map(|t| (t.id, t)).collect();
-        let stages: Vec<loop_stages::Model> =
-            stages_with_meta.iter().map(|(s, _, _, _)| s.clone()).collect();
+        let steps: Vec<loop_steps::Model> =
+            steps_with_meta.iter().map(|(s, _, _, _)| s.clone()).collect();
         Ok(Some(LoopFullView {
             loop_,
             triggers,
-            stages,
-            stages_meta: stages_with_meta,
+            steps,
+            steps_meta: steps_with_meta,
             todo_map,
         }))
     }
@@ -704,7 +704,7 @@ impl Database {
 pub struct LoopListRow {
     pub loop_: loops::Model,
     pub trigger_count: i32,
-    pub stage_count: i32,
+    pub step_count: i32,
     pub last_execution_status: String,
     pub last_execution_at: Option<String>,
 }
@@ -714,8 +714,8 @@ pub struct LoopListRow {
 pub struct LoopFullView {
     pub loop_: loops::Model,
     pub triggers: Vec<loop_triggers::Model>,
-    pub stages: Vec<loop_stages::Model>,
-    /// (stage, todo_title, todo_executor, todo_status)
-    pub stages_meta: Vec<(loop_stages::Model, String, String, String)>,
+    pub steps: Vec<loop_steps::Model>,
+    /// (step, todo_title, todo_executor, todo_status)
+    pub steps_meta: Vec<(loop_steps::Model, String, String, String)>,
     pub todo_map: HashMap<i64, crate::db::entity::todos::Model>,
 }

@@ -1,9 +1,9 @@
 // Loop Studio API 客户端。
 //
 // 后端路由在 backend/src/handlers/loop_.rs：
-// - GET    /api/loops                        列表(带 trigger/stage/exec 计数)
+// - GET    /api/loops                        列表(带 trigger/step/exec 计数)
 // - POST   /api/loops                        新建(draft)
-// - GET    /api/loops/{id}                   详情(loop + triggers + stages + todo_map)
+// - GET    /api/loops/{id}                   详情(loop + triggers + steps + todo_map)
 // - PUT    /api/loops/{id}                   全量更新基本字段
 // - DELETE /api/loops/{id}                   删除(级联清子表)
 // - PUT    /api/loops/{id}/status            切换 draft/enabled/paused
@@ -16,20 +16,20 @@
 import { api, unwrap } from './client';
 import type {
   CreateLoopRequest,
-  CreateStageRequest,
+  CreateLoopStepRequest,
   CreateTriggerRequest,
   LoopDetail,
   LoopExecutionDetail,
   LoopExecutionListQuery,
   LoopExecutionListResponse,
   LoopListItem,
-  LoopStageDto,
+  LoopStepDto,
   LoopTriggerDto,
   LoopTriggerResponse,
-  ReorderStagesRequest,
+  ReorderLoopStepsRequest,
   UpdateLoopRequest,
   UpdateLoopStatusRequest,
-  UpdateStageRequest,
+  UpdateLoopStepRequest,
   UpdateTriggerRequest,
 } from '@/types/loop';
 
@@ -40,7 +40,7 @@ export async function listLoops(): Promise<LoopListItem[]> {
   return unwrap(await api.get('/api/loops'));
 }
 
-/** 单个 loop 详情,含 triggers/stages/hooks/todo_map。 */
+/** 单个 loop 详情,含 triggers/steps/hooks/todo_map。 */
 export async function getLoop(id: number): Promise<LoopDetail> {
   return unwrap(await api.get(`/api/loops/${id}`));
 }
@@ -103,33 +103,33 @@ export async function deleteTrigger(loopId: number, triggerId: number): Promise<
   await api.delete(`/api/loops/${loopId}/triggers/${triggerId}`);
 }
 
-// ====== Stages ======
+// ====== Steps ======
 
-export async function listStages(loopId: number): Promise<LoopStageDto[]> {
-  return unwrap(await api.get(`/api/loops/${loopId}/stages`));
+export async function listLoopSteps(loopId: number): Promise<LoopStepDto[]> {
+  return unwrap(await api.get(`/api/loops/${loopId}/steps`));
 }
 
-export async function createStage(
+export async function createLoopStep(
   loopId: number,
-  req: CreateStageRequest,
-): Promise<LoopStageDto> {
-  return unwrap(await api.post(`/api/loops/${loopId}/stages`, req));
+  req: CreateLoopStepRequest,
+): Promise<LoopStepDto> {
+  return unwrap(await api.post(`/api/loops/${loopId}/steps`, req));
 }
 
-export async function updateStage(
+export async function updateLoopStep(
   loopId: number,
-  stageId: number,
-  req: UpdateStageRequest,
-): Promise<LoopStageDto> {
-  return unwrap(await api.put(`/api/loops/${loopId}/stages/${stageId}`, req));
+  stepId: number,
+  req: UpdateLoopStepRequest,
+): Promise<LoopStepDto> {
+  return unwrap(await api.put(`/api/loops/${loopId}/steps/${stepId}`, req));
 }
 
-export async function deleteStage(loopId: number, stageId: number): Promise<void> {
-  await api.delete(`/api/loops/${loopId}/stages/${stageId}`);
+export async function deleteLoopStep(loopId: number, stepId: number): Promise<void> {
+  await api.delete(`/api/loops/${loopId}/steps/${stepId}`);
 }
 
-export async function reorderStages(loopId: number, ordered_ids: number[]): Promise<void> {
-  await api.post(`/api/loops/${loopId}/stages/reorder`, { ordered_ids } satisfies ReorderStagesRequest);
+export async function reorderLoopSteps(loopId: number, ordered_ids: number[]): Promise<void> {
+  await api.post(`/api/loops/${loopId}/steps/reorder`, { ordered_ids } satisfies ReorderLoopStepsRequest);
 }
 
 // ====== Executions ======
@@ -146,7 +146,7 @@ export async function listExecutions(
   return unwrap(await api.get(`/api/loops/${loopId}/executions${qs}`));
 }
 
-/** 单次执行详情(含 stage_executions)。 */
+/** 单次执行详情(含 step_executions)。 */
 export async function getExecution(
   loopId: number,
   executionId: number,

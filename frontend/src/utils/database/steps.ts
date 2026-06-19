@@ -11,7 +11,7 @@
 import { api, unwrap } from './client';
 import type { StepSummary } from '@/types';
 
-/** 列出所有环节 + 各自的 loop stage 引用计数。 */
+/** 列出所有环节 + 各自的 loop step 引用计数。 */
 export async function listSteps(): Promise<StepSummary[]> {
   return unwrap(await api.get('/api/steps'));
 }
@@ -21,7 +21,7 @@ export async function listStepCandidates(): Promise<StepSummary[]> {
   return unwrap(await api.get('/api/steps/candidates'));
 }
 
-/** 单个环节详情, 返回 StepSummary (含 used_by_loop_stage_count)。 */
+/** 单个环节详情, 返回 StepSummary (含 used_by_loop_step_count)。 */
 export async function getStep(id: number): Promise<StepSummary> {
   return unwrap(await api.get(`/api/steps/${id}`));
 }

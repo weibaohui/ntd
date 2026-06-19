@@ -188,7 +188,7 @@ export function StepList({ onBack }: StepListProps) {
                       fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)', marginTop: 2,
                     }}>
                       <ApartmentOutlined style={{ marginRight: 4 }} />
-                      {step.used_by_loop_stage_count} 引用 · 更新于 {formatRelativeTime(step.updated_at)}
+                      {step.used_by_loop_step_count} 引用 · 更新于 {formatRelativeTime(step.updated_at)}
                     </div>
                   </div>
                   {step.executor && (

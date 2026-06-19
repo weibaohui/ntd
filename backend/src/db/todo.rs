@@ -948,7 +948,7 @@ impl Database {
     // ====== 环节（kind=step）相关 CRUD ======
     //
     // 设计与 v3 migration 对齐：todos.kind 列区分事项与环节。
-    // 这里只读 kind='step' 的子集，loop_stages 强校验只能引用环节。
+    // 这里只读 kind='step' 的子集，loop_steps 强校验只能引用环节。
 
     /// 按 kind 列过滤列出 todo。供 TodoList 前端 filter 用（事项 / 环节 / 全部）。
     pub async fn list_todos_by_kind(&self, kind: &str) -> Result<Vec<Todo>, sea_orm::DbErr> {
@@ -988,7 +988,7 @@ impl Database {
             .collect())
     }
 
-    /// 列出可被 loop stage 选择的环节候选（kind='step' 且未删除），
+    /// 列出可被 loop step 选择的环节候选（kind='step' 且未删除），
     /// 字段精简（id/title/executor/prompt），供 loop 编辑器下拉框使用。
     pub async fn list_step_candidates(&self) -> Result<Vec<Todo>, sea_orm::DbErr> {
         // 与 list_steps 同样的过滤条件,字段也由 Todo DTO 决定,
@@ -1011,17 +1011,17 @@ impl Database {
     }
 
     /// 把环节降级为事项。
-    /// 若该 todo 正被 loop_stages 引用，禁止降级（返回错误，避免破坏环路引用一致性）。
+    /// 若该 todo 正被 loop_steps 引用，禁止降级（返回错误，避免破坏环路引用一致性）。
     pub async fn demote_to_item(&self, id: i64) -> Result<(), String> {
-        // 校验是否被 loop_stages 引用
-        let in_use = crate::db::entity::loop_stages::Entity::find()
-            .filter(crate::db::entity::loop_stages::Column::TodoId.eq(id))
+        // 校验是否被 loop_steps 引用
+        let in_use = crate::db::entity::loop_steps::Entity::find()
+            .filter(crate::db::entity::loop_steps::Column::TodoId.eq(id))
             .one(&self.conn)
             .await
             .map_err(|e| e.to_string())?;
         if in_use.is_some() {
             return Err(format!(
-                "todo #{} is referenced by loop_stages, cannot demote to item",
+                "todo #{} is referenced by loop_steps, cannot demote to item",
                 id
             ));
         }
@@ -1036,19 +1036,19 @@ impl Database {
         Ok(())
     }
 
-    /// 计算一个 todo 被多少个 loop stage 引用（环节页展示"被哪些 loop 使用"）。
-    pub async fn count_loop_stages_using_todo(&self, todo_id: i64) -> Result<i64, sea_orm::DbErr> {
+    /// 计算一个 todo 被多少个 loop step 引用（环节页展示"被哪些 loop 使用"）。
+    pub async fn count_loop_steps_using_todo(&self, todo_id: i64) -> Result<i64, sea_orm::DbErr> {
         use sea_orm::PaginatorTrait;
-        crate::db::entity::loop_stages::Entity::find()
-            .filter(crate::db::entity::loop_stages::Column::TodoId.eq(todo_id))
+        crate::db::entity::loop_steps::Entity::find()
+            .filter(crate::db::entity::loop_steps::Column::TodoId.eq(todo_id))
             .count(&self.conn)
             .await
             .map(|c| c as i64)
     }
 
-    /// 批量计算一组 todo 被多少个 loop stage 引用，返回 todo_id -> count 的 map。
+    /// 批量计算一组 todo 被多少个 loop step 引用，返回 todo_id -> count 的 map。
     /// 用于环节列表页一次性把所有环节的复用度算出来，避免 N+1。
-    pub async fn count_loop_stages_for_todos(
+    pub async fn count_loop_steps_for_todos(
         &self,
         todo_ids: &[i64],
     ) -> Result<std::collections::HashMap<i64, i64>, sea_orm::DbErr> {
@@ -1063,7 +1063,7 @@ impl Database {
             .collect::<Vec<_>>()
             .join(",");
         let sql = format!(
-            "SELECT todo_id, COUNT(*) AS cnt FROM loop_stages WHERE todo_id IN ({}) GROUP BY todo_id",
+            "SELECT todo_id, COUNT(*) AS cnt FROM loop_steps WHERE todo_id IN ({}) GROUP BY todo_id",
             ids_csv
         );
         let result = self
@@ -1081,17 +1081,17 @@ impl Database {
         Ok(map)
     }
 
-    /// 列出所有环节 + 各自的 loop stage 引用计数,组装成 StepSummary。
+    /// 列出所有环节 + 各自的 loop step 引用计数,组装成 StepSummary。
     pub async fn list_steps_with_usage(
         &self,
     ) -> Result<Vec<crate::models::StepSummary>, sea_orm::DbErr> {
         let steps = self.list_steps().await?;
         let ids: Vec<i64> = steps.iter().map(|t| t.id).collect();
-        let usage = self.count_loop_stages_for_todos(&ids).await?;
+        let usage = self.count_loop_steps_for_todos(&ids).await?;
         Ok(steps
             .into_iter()
             .map(|todo| crate::models::StepSummary {
-                used_by_loop_stage_count: usage.get(&todo.id).copied().unwrap_or(0),
+                used_by_loop_step_count: usage.get(&todo.id).copied().unwrap_or(0),
                 todo,
             })
             .collect())

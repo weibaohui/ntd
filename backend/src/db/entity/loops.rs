@@ -28,8 +28,8 @@ pub struct Model {
 pub enum Relation {
     #[sea_orm(has_many = "super::loop_triggers::Entity")]
     LoopTriggers,
-    #[sea_orm(has_many = "super::loop_stages::Entity")]
-    LoopStages,
+    #[sea_orm(has_many = "super::loop_steps::Entity")]
+    LoopSteps,
     #[sea_orm(has_many = "super::loop_executions::Entity")]
     LoopExecutions,
 }
@@ -38,8 +38,8 @@ impl Related<super::loop_triggers::Entity> for Entity {
     fn to() -> RelationDef { Relation::LoopTriggers.def() }
 }
 
-impl Related<super::loop_stages::Entity> for Entity {
-    fn to() -> RelationDef { Relation::LoopStages.def() }
+impl Related<super::loop_steps::Entity> for Entity {
+    fn to() -> RelationDef { Relation::LoopSteps.def() }
 }
 
 impl Related<super::loop_executions::Entity> for Entity {

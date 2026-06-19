@@ -674,7 +674,7 @@ export function TodoList(props: TodoListProps) {
                     {step.executor && (
                       <span><ThunderboltOutlined /> {step.executor}</span>
                     )}
-                    <span><ApartmentOutlined /> {step.used_by_loop_stage_count} 引用</span>
+                    <span><ApartmentOutlined /> {step.used_by_loop_step_count} 引用</span>
                   </div>
 
                   {/* 底部 3px 进度条（淡出指示条） */}

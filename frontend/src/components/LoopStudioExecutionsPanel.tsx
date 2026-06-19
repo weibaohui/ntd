@@ -2,7 +2,7 @@
 //
 // 展示 loop 的运行历史, 每行是一次 execution (一次完整 loop 调用)：
 // - id / 触发类型 / 开始时间 / 耗时 / 状态 / 阶段完成进度
-// - 点击行展开看 stage_executions 明细
+// - 点击行展开看 step_executions 明细
 //
 // 分页: page + limit, 简单表格不引入分页器, 改成"加载更多"按钮避免侵入式 UI
 
@@ -79,7 +79,7 @@ export function LoopExecutionsPanel({ loopId, loopName }: Props) {
 
   useEffect(() => { loadPage(1); }, [loadPage]);
 
-  // 展开行: 拉取该 execution 的 stage 详情
+  // 展开行: 拉取该 execution 的 step 详情
   const handleExpand = useCallback(async (execId: number) => {
     if (expandedId === execId) {
       setExpandedId(null);
@@ -143,10 +143,10 @@ export function LoopExecutionsPanel({ loopId, loopName }: Props) {
                       <span style={{ color: 'var(--color-text-tertiary, #94a3b8)' }}>{formatRelativeTime(e.started_at)}</span>
                     </Tooltip>
                     <span style={{ color: 'var(--color-text-secondary, #475569)' }}>
-                      {e.completed_stages}/{e.total_stages} 阶段
+                      {e.completed_steps}/{e.total_steps} 环节
                     </span>
-                    {e.failed_stages > 0 && (
-                      <Tag color="red">{e.failed_stages} 失败</Tag>
+                    {e.failed_steps > 0 && (
+                      <Tag color="red">{e.failed_steps} 失败</Tag>
                     )}
                     <span style={{ color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 12 }}>
                       耗时 {durationLabel(e.started_at, e.finished_at)}
@@ -158,7 +158,7 @@ export function LoopExecutionsPanel({ loopId, loopName }: Props) {
                     {expandedLoading ? (
                       <Skeleton active />
                     ) : expandedDetail && expandedDetail.id === e.id ? (
-                      <StageExecList stageExecs={expandedDetail.stage_executions} />
+                      <StepExecList stepExecs={expandedDetail.step_executions} />
                     ) : null}
                   </div>
                 )}
@@ -179,19 +179,19 @@ export function LoopExecutionsPanel({ loopId, loopName }: Props) {
 }
 
 // 阶段执行明细, 单独抽出来便于阅读
-function StageExecList({ stageExecs }: { stageExecs: Record<string, any>[] }) {
-  if (stageExecs.length === 0) {
-    return <Empty description="无阶段执行记录" />;
+function StepExecList({ stepExecs }: { stepExecs: Record<string, any>[] }) {
+  if (stepExecs.length === 0) {
+    return <Empty description="无环节执行记录" />;
   }
   return (
     <Collapse
       size="small"
-      items={stageExecs.map(s => ({
+      items={stepExecs.map(s => ({
         key: s.id,
         label: (
           <Space>
             {execStatusView(s.status).icon}
-            <span>阶段 #{s.stage_id}</span>
+            <span>环节 #{s.step_id}</span>
             <Tag color={execStatusView(s.status).color}>{s.status}</Tag>
             {s.started_at && (
               <span style={{ color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 12 }}>
@@ -202,7 +202,7 @@ function StageExecList({ stageExecs }: { stageExecs: Record<string, any>[] }) {
         ),
         children: (
           <Descriptions size="small" column={1}>
-            <Descriptions.Item label="阶段 ID">{s.stage_id}</Descriptions.Item>
+            <Descriptions.Item label="环节 ID">{s.step_id}</Descriptions.Item>
             <Descriptions.Item label="Todo ID">{s.todo_id}</Descriptions.Item>
             <Descriptions.Item label="执行记录">
               {s.execution_record_id ? `#${s.execution_record_id}` : '-'}

@@ -391,8 +391,8 @@ pub async fn get_step(
         .get_step(id)
         .await?
         .ok_or(AppError::NotFound)?;
-    let used_by_loop_stage_count = state.db.count_loop_stages_using_step(id).await?;
-    Ok(ApiResponse::ok(StepDto::from(s).with_usage(used_by_loop_stage_count)))
+    let used_by_loop_step_count = state.db.count_loop_steps_using_step(id).await?;
+    Ok(ApiResponse::ok(StepDto::from(s).with_usage(used_by_loop_step_count)))
 }
 
 /// PUT /api/steps/:id — 更新环节基本信息
@@ -419,8 +419,8 @@ pub async fn update_step(
         .await?;
     // 查回最新数据
     let s = state.db.get_step(id).await?.ok_or(AppError::NotFound)?;
-    let used_by_loop_stage_count = state.db.count_loop_stages_using_step(id).await?;
-    Ok(ApiResponse::ok(StepDto::from(s).with_usage(used_by_loop_stage_count)))
+    let used_by_loop_step_count = state.db.count_loop_steps_using_step(id).await?;
+    Ok(ApiResponse::ok(StepDto::from(s).with_usage(used_by_loop_step_count)))
 }
 
 /// POST /api/todos/:id/promote — 事项提升为环节（复制数据到 steps 表，原 todo 保留）

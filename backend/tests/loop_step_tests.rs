@@ -1,14 +1,14 @@
 //! Loop Studio + 环节(kind=step)集成测试。 
 //! 
 //! 覆盖：
-//! - v6 migration: todos 加 kind 列, 默认 'item'; 被 loop_stages 引用回填为 'step'
+//! - v6 migration: todos 加 kind 列, 默认 'item'; 被 loop_steps 引用回填为 'step'
 //! - promote_todo_to_step: 把 'item' 升为 'step'
-//! - demote_todo_to_item: 'step' → 'item'; 被 loop_stages 引用时必须拒绝
-//! - count_loop_stages_using_todo: 被引用次数与 stage 增删保持一致
+//! - demote_todo_to_item: 'step' → 'item'; 被 loop_steps 引用时必须拒绝
+//! - count_loop_steps_using_todo: 被引用次数与 step 增删保持一致
 //! - list_steps_with_usage: 包含引用次数; 顺序按 updated_at 倒序
 //!
 //! 复用 db_feature_supplement_tests 的内存库模式, 不污染开发/生产数据。
-//! 内存库走 v1-v7 runner 迁移 (见 db/migration.rs), 自动建出 loops/loop_stages/
+//! 内存库走 v1-v7 runner 迁移 (见 db/migration.rs), 自动建出 loops/loop_steps/
 //! loop_hooks 等 Loop Studio 表。
 
 use ntd::db::Database;
@@ -46,7 +46,7 @@ async fn v6_migration_creates_kind_column_with_default_item() {
 
 #[tokio::test]
 async fn v6_migration_backfills_step_for_loop_referenced_todos() {
-    // 先建 todo + loop + stage (stage 引用 todo), 再 promote 检查
+    // 先建 todo + loop + step (step 引用 todo), 再 promote 检查
     // 走 list_steps_with_usage 应该看到该 todo, 且 used_by >= 1
     let db = setup_db().await;
     let todo_id = create_todo(&db, "被 loop 引用的 todo").await;
@@ -60,8 +60,8 @@ async fn v6_migration_backfills_step_for_loop_referenced_todos() {
     let todo = db.get_todo(todo_id).await.unwrap().unwrap();
     assert_eq!(todo.kind, "step");
     assert!(
-        db.count_loop_stages_using_todo(todo_id).await.unwrap() >= 1,
-        "被 stage 引用, 引用次数 >= 1"
+        db.count_loop_steps_using_todo(todo_id).await.unwrap() >= 1,
+        "被 step 引用, 引用次数 >= 1"
     );
 }
 
@@ -114,15 +114,15 @@ async fn demote_succeeds_after_stage_deleted() {
     let todo_id = create_todo(&db, "被引用后释放").await;
     db.promote_to_step(todo_id).await.unwrap();
     let loop_id = create_loop(&db, "loop").await;
-    let stage_id = db
+    let step_id = db
         .create_stage(loop_id, "阶段", "", todo_id, "sequential", false, None, "skip", true)
         .await
         .unwrap()
         .id;
     // 先 demote 失败
     assert!(db.demote_to_item(todo_id).await.is_err());
-    // 删 stage 后 demote 成功
-    db.delete_stage(stage_id).await.unwrap();
+    // 删 step 后 demote 成功
+    db.delete_stage(step_id).await.unwrap();
     db.demote_to_item(todo_id).await.unwrap();
     assert_eq!(db.get_todo(todo_id).await.unwrap().unwrap().kind, "item");
 }
@@ -150,7 +150,7 @@ async fn list_steps_with_usage_includes_count() {
     db.promote_to_step(e1).await.unwrap();
     let e2 = create_todo(&db, "环节 2").await;
     db.promote_to_step(e2).await.unwrap();
-    // 1 个 stage 引用 e2
+    // 1 个 step 引用 e2
     let loop_id = create_loop(&db, "loop").await;
     db.create_stage(loop_id, "阶段", "", e2, "sequential", false, None, "skip", true)
         .await
@@ -158,39 +158,39 @@ async fn list_steps_with_usage_includes_count() {
     let list = db.list_steps_with_usage().await.unwrap();
     let e1_summary = list.iter().find(|x| x.todo.id == e1).expect("e1 exists");
     let e2_summary = list.iter().find(|x| x.todo.id == e2).expect("e2 exists");
-    assert_eq!(e1_summary.used_by_loop_stage_count, 0);
-    assert_eq!(e2_summary.used_by_loop_stage_count, 1);
+    assert_eq!(e1_summary.used_by_loop_step_count, 0);
+    assert_eq!(e2_summary.used_by_loop_step_count, 1);
 }
 
 // =====================================================================
-// count_loop_stages_using_todo
+// count_loop_steps_using_todo
 // =====================================================================
 
 #[tokio::test]
-async fn count_loop_stages_reflects_stage_changes() {
+async fn count_loop_steps_reflects_stage_changes() {
     let db = setup_db().await;
     let todo_id = create_todo(&db, "环节").await;
     db.promote_to_step(todo_id).await.unwrap();
     let loop_id = create_loop(&db, "loop").await;
 
     // 初始 0
-    assert_eq!(db.count_loop_stages_using_todo(todo_id).await.unwrap(), 0);
+    assert_eq!(db.count_loop_steps_using_todo(todo_id).await.unwrap(), 0);
 
-    // 加一个 stage → 1
+    // 加一个 step → 1
     let s1 = db
         .create_stage(loop_id, "s1", "", todo_id, "sequential", false, None, "skip", true)
         .await
         .unwrap()
         .id;
-    assert_eq!(db.count_loop_stages_using_todo(todo_id).await.unwrap(), 1);
+    assert_eq!(db.count_loop_steps_using_todo(todo_id).await.unwrap(), 1);
 
-    // 加第二个 stage → 2
+    // 加第二个 step → 2
     db.create_stage(loop_id, "s2", "", todo_id, "sequential", false, None, "skip", true)
         .await
         .unwrap();
-    assert_eq!(db.count_loop_stages_using_todo(todo_id).await.unwrap(), 2);
+    assert_eq!(db.count_loop_steps_using_todo(todo_id).await.unwrap(), 2);
 
     // 删一个 → 1
     db.delete_stage(s1).await.unwrap();
-    assert_eq!(db.count_loop_stages_using_todo(todo_id).await.unwrap(), 1);
+    assert_eq!(db.count_loop_steps_using_todo(todo_id).await.unwrap(), 1);
 }

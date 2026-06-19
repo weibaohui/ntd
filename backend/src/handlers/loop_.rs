@@ -8,9 +8,9 @@
 //! - `/api/loops/{id}/trigger`             POST(手动触发)
 //! - `/api/loops/{id}/triggers`            GET(子资源) / POST
 //! - `/api/loops/{id}/triggers/{tid}`      PUT / DELETE
-//! - `/api/loops/{id}/stages`              GET / POST
-//! - `/api/loops/{id}/stages/reorder`      POST(批量重排)
-//! - `/api/loops/{id}/stages/{sid}`        PUT / DELETE
+//! - `/api/loops/{id}/steps`              GET / POST
+//! - `/api/loops/{id}/steps/reorder`      POST(批量重排)
+//! - `/api/loops/{id}/steps/{sid}`        PUT / DELETE
 //! - `/api/loops/{id}/executions`          GET(运行历史,分页)
 //! - `/api/loops/{id}/executions/{eid}`    GET(单次执行详情)
 use axum::{
@@ -24,10 +24,10 @@ use serde::Deserialize;
 use crate::handlers::{AppError, AppState};
 use crate::models::{
     self,
-    ApiResponse, CreateLoopRequest, CreateStageRequest, CreateTriggerRequest,
+    ApiResponse, CreateLoopRequest, CreateLoopStepRequest, CreateTriggerRequest,
     LoopDetail, LoopDto, LoopExecutionDetail, LoopExecutionDto, LoopListItem,
-    LoopStageDto, LoopTriggerDto, ReorderStagesRequest,
-    UpdateLoopRequest, UpdateLoopStatusRequest, UpdateStageRequest,
+    LoopStepDto, LoopTriggerDto, ReorderLoopStepsRequest,
+    UpdateLoopRequest, UpdateLoopStatusRequest, UpdateLoopStepRequest,
     UpdateTriggerRequest,
 };
 
@@ -36,7 +36,7 @@ const MAX_PAGE_LIMIT: u64 = 100;
 
 // ====== Loop 主体 ======
 
-/// GET /api/loops — 左栏列表,一次查询带 trigger/stage/exec 计数
+/// GET /api/loops — 左栏列表,一次查询带 trigger/step/exec 计数
 pub async fn list_loops(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, AppError> {
@@ -66,7 +66,7 @@ pub async fn create_loop(
     Ok((StatusCode::CREATED, ApiResponse::ok(LoopDto::from(created))))
 }
 
-/// GET /api/loops/{id} — 完整详情(loop + triggers + stages + todos)
+/// GET /api/loops/{id} — 完整详情(loop + triggers + steps + todos)
 pub async fn get_loop(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -108,7 +108,7 @@ pub async fn update_loop(
     Ok(ApiResponse::ok(LoopDto::from(updated)))
 }
 
-/// DELETE /api/loops/{id} — 删 loop（CASCADE 删 triggers/stages）
+/// DELETE /api/loops/{id} — 删 loop（CASCADE 删 triggers/steps）
 pub async fn delete_loop(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -263,15 +263,15 @@ pub async fn delete_trigger(
 
 // ====== Stages ======
 
-pub async fn list_stages(
+pub async fn list_loop_steps(
     State(state): State<AppState>,
     Path(loop_id): Path<i64>,
 ) -> Result<impl IntoResponse, AppError> {
-    let rows = state.db.list_stages_with_todo_meta(loop_id).await?;
-    let dtos: Vec<LoopStageDto> = rows
+    let rows = state.db.list_loop_steps_with_todo_meta(loop_id).await?;
+    let dtos: Vec<LoopStepDto> = rows
         .into_iter()
-        .map(|(s, todo_title, todo_executor, todo_status)| LoopStageDto {
-            stage: s.into(),
+        .map(|(s, todo_title, todo_executor, todo_status)| LoopStepDto {
+            step: s.into(),
             todo_title,
             todo_executor,
             todo_status,
@@ -280,10 +280,10 @@ pub async fn list_stages(
     Ok(ApiResponse::ok(dtos))
 }
 
-pub async fn create_stage(
+pub async fn create_loop_step(
     State(state): State<AppState>,
     Path(loop_id): Path<i64>,
-    Json(req): Json<CreateStageRequest>,
+    Json(req): Json<CreateLoopStepRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     if req.name.trim().is_empty() {
         return Err(AppError::BadRequest("name 不能为空".to_string()));
@@ -297,7 +297,7 @@ pub async fn create_stage(
         .ok_or_else(|| AppError::BadRequest(format!("step #{} 不存在", req.todo_id)))?;
     let created = state
         .db
-        .create_stage(
+        .create_loop_step(
             loop_id,
             req.name.trim(),
             &req.description,
@@ -311,15 +311,15 @@ pub async fn create_stage(
         .await?;
     let (_, todo_title, todo_executor, todo_status) = state
         .db
-        .list_stages_with_todo_meta(loop_id)
+        .list_loop_steps_with_todo_meta(loop_id)
         .await?
         .into_iter()
         .find(|(s, _, _, _)| s.id == created.id)
-        .ok_or_else(|| AppError::Internal("created stage missing".to_string()))?;
+        .ok_or_else(|| AppError::Internal("created step missing".to_string()))?;
     Ok((
         StatusCode::CREATED,
-        ApiResponse::ok(LoopStageDto {
-            stage: created.into(),
+        ApiResponse::ok(LoopStepDto {
+            step: created.into(),
             todo_title,
             todo_executor,
             todo_status,
@@ -327,22 +327,22 @@ pub async fn create_stage(
     ))
 }
 
-pub async fn update_stage(
+pub async fn update_loop_step(
     State(state): State<AppState>,
     Path((loop_id, sid)): Path<(i64, i64)>,
-    Json(req): Json<UpdateStageRequest>,
+    Json(req): Json<UpdateLoopStepRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     if req.name.trim().is_empty() {
         return Err(AppError::BadRequest("name 不能为空".to_string()));
     }
-    let stage = state.db.get_stage(sid).await?.ok_or(AppError::NotFound)?;
-    if stage.loop_id != loop_id {
+    let step = state.db.get_loop_step(sid).await?.ok_or(AppError::NotFound)?;
+    if step.loop_id != loop_id {
         return Err(AppError::BadRequest(
-            "stage 不属于该 loop".to_string(),
+            "step 不属于该 loop".to_string(),
         ));
     }
-    // 与 create_stage 一致: 切换 todo_id 时也必须指向有效的步骤。
-    if req.todo_id != stage.todo_id {
+    // 与 create_loop_step 一致: 切换 todo_id 时也必须指向有效的步骤。
+    if req.todo_id != step.todo_id {
         state
             .db
             .get_step(req.todo_id)
@@ -351,7 +351,7 @@ pub async fn update_stage(
     }
     state
         .db
-        .update_stage(
+        .update_loop_step(
             sid,
             req.name.trim(),
             &req.description,
@@ -365,35 +365,35 @@ pub async fn update_stage(
         .await?;
     let (_, todo_title, todo_executor, todo_status) = state
         .db
-        .list_stages_with_todo_meta(loop_id)
+        .list_loop_steps_with_todo_meta(loop_id)
         .await?
         .into_iter()
         .find(|(s, _, _, _)| s.id == sid)
-        .ok_or_else(|| AppError::Internal("updated stage missing".to_string()))?;
-    Ok(ApiResponse::ok(LoopStageDto {
-        stage: state.db.get_stage(sid).await?.ok_or(AppError::Internal("stage missing".to_string()))?.into(),
+        .ok_or_else(|| AppError::Internal("updated step missing".to_string()))?;
+    Ok(ApiResponse::ok(LoopStepDto {
+        step: state.db.get_loop_step(sid).await?.ok_or(AppError::Internal("step missing".to_string()))?.into(),
         todo_title,
         todo_executor,
         todo_status,
     }))
 }
 
-pub async fn delete_stage(
+pub async fn delete_loop_step(
     State(state): State<AppState>,
     Path((_loop_id, sid)): Path<(i64, i64)>,
 ) -> Result<impl IntoResponse, AppError> {
-    state.db.get_stage(sid).await?.ok_or(AppError::NotFound)?;
-    state.db.delete_stage(sid).await?;
+    state.db.get_loop_step(sid).await?.ok_or(AppError::NotFound)?;
+    state.db.delete_loop_step(sid).await?;
     Ok(ApiResponse::ok(()))
 }
 
-pub async fn reorder_stages(
+pub async fn reorder_loop_steps(
     State(state): State<AppState>,
     Path(loop_id): Path<i64>,
-    Json(req): Json<ReorderStagesRequest>,
+    Json(req): Json<ReorderLoopStepsRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     state.db.get_loop(loop_id).await?.ok_or(AppError::NotFound)?;
-    state.db.reorder_stages(loop_id, &req.ordered_ids).await?;
+    state.db.reorder_loop_steps(loop_id, &req.ordered_ids).await?;
     Ok(ApiResponse::ok(()))
 }
 
@@ -438,9 +438,9 @@ pub async fn get_execution(
             "execution 不属于该 loop".to_string(),
         ));
     }
-    let stage_execs = state
+    let step_execs = state
         .db
-        .list_loop_stage_executions(eid)
+        .list_loop_step_executions(eid)
         .await?;
     let loop_name = state
         .db
@@ -450,7 +450,7 @@ pub async fn get_execution(
         .unwrap_or_default();
     Ok(ApiResponse::ok(LoopExecutionDetail {
         execution: exec.into(),
-        stage_executions: stage_execs.into_iter().map(Into::into).collect(),
+        step_executions: step_execs.into_iter().map(Into::into).collect(),
         loop_name,
     }))
 }
@@ -470,11 +470,11 @@ pub fn loop_routes() -> axum::Router<AppState> {
             "/api/loops/{id}/triggers/{tid}",
             put(update_trigger).delete(delete_trigger),
         )
-        .route("/api/loops/{id}/stages", get(list_stages).post(create_stage))
-        .route("/api/loops/{id}/stages/reorder", post(reorder_stages))
+        .route("/api/loops/{id}/steps", get(list_loop_steps).post(create_loop_step))
+        .route("/api/loops/{id}/steps/reorder", post(reorder_loop_steps))
         .route(
-            "/api/loops/{id}/stages/{sid}",
-            put(update_stage).delete(delete_stage),
+            "/api/loops/{id}/steps/{sid}",
+            put(update_loop_step).delete(delete_loop_step),
         )
         .route("/api/loops/{id}/executions", get(list_executions))
         .route("/api/loops/{id}/executions/{eid}", get(get_execution))

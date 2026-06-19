@@ -24,7 +24,7 @@ import * as dbLoops from '@/utils/database/loops';
 import * as db from '@/utils/database';
 import type { LoopDetail, UpdateLoopRequest } from '@/types/loop';
 import { LoopTriggersPanel, TRIGGER_META } from './LoopStudioTriggersPanel';
-import { LoopStagesPanel } from './LoopStudioStagesPanel';
+import { LoopStepsPanel } from './LoopStudioStepsPanel';
 import { LoopExecutionsPanel } from './LoopStudioExecutionsPanel';
 
 interface LoopDetailPanelProps {
@@ -157,7 +157,7 @@ export function LoopDetailPanel({
           <Button size="small" icon={<EditOutlined />} onClick={handleOpenEdit}>编辑</Button>
           <Popconfirm
             title="删除 loop"
-            description="将级联删除 triggers/stages,无法恢复"
+            description="将级联删除 triggers/steps,无法恢复"
             okType="danger"
             onConfirm={onDelete}
           >
@@ -202,12 +202,12 @@ export function LoopDetailPanel({
       {/* 执行环节: 横向卡片布局 */}
       <DetailSection title="执行环节" extra={
         <span style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
-          {detail.stages.length} 个环节按顺序执行
+          {detail.steps.length} 个环节按顺序执行
         </span>
       }>
-        <LoopStagesPanel
+        <LoopStepsPanel
           loopId={loopId}
-          stages={detail.stages}
+          steps={detail.steps}
           onChanged={() => { reload(); onChanged(); }}
         />
       </DetailSection>

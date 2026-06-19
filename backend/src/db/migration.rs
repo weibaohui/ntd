@@ -1702,7 +1702,7 @@ async fn v5_project_directory_worktree(db: &Database) -> Result<(), sea_orm::DbE
 /// 升级策略：
 /// - 新库: v1 的 CREATE TABLE 已经包含 `kind` 列, v6 ALTER 在 v1 之后跑会
 ///   触发 "duplicate column name", 与历史 add_legacy_*_columns 同样的 warn-skip 模式;
-/// - 旧库: ALTER TABLE 加列, 默认 'item'; 把被 loop_stages 引用的 todo
+/// - 旧库: ALTER TABLE 加列, 默认 'item'; 把被 loop_steps 引用的 todo
 ///   标记为 'step', 避免环路失效;
 /// - 加 `(kind)` 索引支持按 kind 过滤。
 pub(super) struct V6TodoKind;
@@ -1724,14 +1724,14 @@ impl Migration for V6TodoKind {
 async fn v6_todo_kind(db: &Database) -> Result<(), sea_orm::DbErr> {
     // 1) 加列, 旧库上没有 kind 列时生效; 新库已由 v1 CREATE TABLE 包含, 静默跳过
     add_column_warn(db, "ALTER TABLE todos ADD COLUMN kind TEXT NOT NULL DEFAULT 'item'").await;
-    // 2) 回填: 被 loop_stages 引用的 todo 升级为 step
-    // loop_stages 表不一定存在 (旧库, 或 fresh 跑 v1 没建), 探测一下避免 UPDATE 失败
+    // 2) 回填: 被 loop_steps 引用的 todo 升级为 step
+    // loop_steps 表不一定存在 (旧库, 或 fresh 跑 v1 没建), 探测一下避免 UPDATE 失败
     if table_has_column(db, "todos", "kind").await?
-        && table_exists(db, "loop_stages").await?
+        && table_exists(db, "loop_steps").await?
     {
         db.exec(
             "UPDATE todos SET kind = 'step' \
-             WHERE id IN (SELECT DISTINCT todo_id FROM loop_stages)",
+             WHERE id IN (SELECT DISTINCT todo_id FROM loop_steps)",
         )
         .await?;
     }
@@ -1772,8 +1772,8 @@ async fn table_exists(db: &Database, table: &str) -> Result<bool, sea_orm::DbErr
 /// 设计动机:
 /// - 旧 `migrations.rs::run_migrations` 没被 `Database::new` 调用
 ///   (issue #498 引入 runner 后取代了它), 导致测试内存库缺失
-///   loops/loop_stages/loop_hooks/loop_triggers/loop_executions/
-///   loop_stage_executions 这 6 张表, 测试不得不手工建表或绕开;
+///   loops/loop_steps/loop_hooks/loop_triggers/loop_executions/
+///   loop_step_executions 这 6 张表, 测试不得不手工建表或绕开;
 /// - 把 DDL 集中到 runner 系统后, 内存测试和真实生产 DB 走同一条
 ///   迁移路径, 避免「测试通过, 生产报错」的分裂.
 ///
@@ -1794,8 +1794,8 @@ impl Migration for V7LoopStudio {
     }
 }
 
-/// 6 张表 DDL + 索引 + 触发器. 顺序按 (loops, loop_triggers, loop_stages,
-/// loop_hooks, loop_executions, loop_stage_executions), 外键引用
+/// 6 张表 DDL + 索引 + 触发器. 顺序按 (loops, loop_triggers, loop_steps,
+/// loop_hooks, loop_executions, loop_step_executions), 外键引用
 /// 关系保证后续表能成功建出.
 async fn v7_loop_studio(db: &Database) -> Result<(), sea_orm::DbErr> {
     for stmt in LOOP_STUDIO_DDL {
@@ -1850,8 +1850,8 @@ const LOOP_STUDIO_DDL: &[&str] = &[
      BEGIN
          UPDATE loop_triggers SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
      END",
-    // ===== loop_stages: 有序阶段 =====
-    "CREATE TABLE IF NOT EXISTS loop_stages (
+    // ===== loop_steps: 有序阶段 =====
+    "CREATE TABLE IF NOT EXISTS loop_steps (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         loop_id INTEGER NOT NULL,
         name TEXT NOT NULL,
@@ -1867,19 +1867,19 @@ const LOOP_STUDIO_DDL: &[&str] = &[
         FOREIGN KEY (loop_id) REFERENCES loops(id) ON DELETE CASCADE,
         FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE RESTRICT
     )",
-    "CREATE INDEX IF NOT EXISTS idx_loop_stages_loop_id ON loop_stages(loop_id)",
-    "CREATE INDEX IF NOT EXISTS idx_loop_stages_loop_order ON loop_stages(loop_id, order_index)",
-    "CREATE TRIGGER IF NOT EXISTS set_loop_stages_created_at_utc AFTER INSERT ON loop_stages
+    "CREATE INDEX IF NOT EXISTS idx_loop_steps_loop_id ON loop_steps(loop_id)",
+    "CREATE INDEX IF NOT EXISTS idx_loop_steps_loop_order ON loop_steps(loop_id, order_index)",
+    "CREATE TRIGGER IF NOT EXISTS set_loop_steps_created_at_utc AFTER INSERT ON loop_steps
      WHEN new.created_at IS NULL OR new.created_at = ''
      BEGIN
-         UPDATE loop_stages SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
+         UPDATE loop_steps SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
      END",
     // ===== loop_hooks: 环路级 hook =====
     "CREATE TABLE IF NOT EXISTS loop_hooks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         loop_id INTEGER NOT NULL,
         hook_position TEXT NOT NULL,
-        source_stage_id INTEGER,
+        source_step_id INTEGER,
         target_todo_id INTEGER NOT NULL,
         skip_if_missing INTEGER NOT NULL DEFAULT 0,
         enabled INTEGER NOT NULL DEFAULT 1,
@@ -1887,11 +1887,11 @@ const LOOP_STUDIO_DDL: &[&str] = &[
         unrated_policy TEXT NOT NULL DEFAULT 'skip',
         created_at TEXT,
         FOREIGN KEY (loop_id) REFERENCES loops(id) ON DELETE CASCADE,
-        FOREIGN KEY (source_stage_id) REFERENCES loop_stages(id) ON DELETE CASCADE,
+        FOREIGN KEY (source_step_id) REFERENCES loop_steps(id) ON DELETE CASCADE,
         FOREIGN KEY (target_todo_id) REFERENCES todos(id) ON DELETE RESTRICT
     )",
     "CREATE INDEX IF NOT EXISTS idx_loop_hooks_loop_id ON loop_hooks(loop_id)",
-    "CREATE INDEX IF NOT EXISTS idx_loop_hooks_source_stage ON loop_hooks(source_stage_id)",
+    "CREATE INDEX IF NOT EXISTS idx_loop_hooks_source_stage ON loop_hooks(source_step_id)",
     "CREATE TRIGGER IF NOT EXISTS set_loop_hooks_created_at_utc AFTER INSERT ON loop_hooks
      WHEN new.created_at IS NULL OR new.created_at = ''
      BEGIN
@@ -1907,20 +1907,20 @@ const LOOP_STUDIO_DDL: &[&str] = &[
         started_at TEXT NOT NULL,
         finished_at TEXT,
         status TEXT NOT NULL DEFAULT 'running',
-        total_stages INTEGER NOT NULL DEFAULT 0,
-        completed_stages INTEGER NOT NULL DEFAULT 0,
-        failed_stages INTEGER NOT NULL DEFAULT 0,
+        total_steps INTEGER NOT NULL DEFAULT 0,
+        completed_steps INTEGER NOT NULL DEFAULT 0,
+        failed_steps INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (loop_id) REFERENCES loops(id) ON DELETE CASCADE,
         FOREIGN KEY (trigger_id) REFERENCES loop_triggers(id) ON DELETE SET NULL
     )",
     "CREATE INDEX IF NOT EXISTS idx_loop_executions_loop_id ON loop_executions(loop_id)",
     "CREATE INDEX IF NOT EXISTS idx_loop_executions_started_at ON loop_executions(started_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_loop_executions_status ON loop_executions(status)",
-    // ===== loop_stage_executions: 每个阶段的执行 =====
-    "CREATE TABLE IF NOT EXISTS loop_stage_executions (
+    // ===== loop_step_executions: 每个阶段的执行 =====
+    "CREATE TABLE IF NOT EXISTS loop_step_executions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         loop_execution_id INTEGER NOT NULL,
-        stage_id INTEGER NOT NULL,
+        step_id INTEGER NOT NULL,
         todo_id INTEGER NOT NULL,
         execution_record_id INTEGER,
         status TEXT NOT NULL DEFAULT 'pending',
@@ -1928,11 +1928,11 @@ const LOOP_STUDIO_DDL: &[&str] = &[
         finished_at TEXT,
         error_message TEXT,
         FOREIGN KEY (loop_execution_id) REFERENCES loop_executions(id) ON DELETE CASCADE,
-        FOREIGN KEY (stage_id) REFERENCES loop_stages(id) ON DELETE CASCADE,
+        FOREIGN KEY (step_id) REFERENCES loop_steps(id) ON DELETE CASCADE,
         FOREIGN KEY (execution_record_id) REFERENCES execution_records(id) ON DELETE SET NULL
     )",
-    "CREATE INDEX IF NOT EXISTS idx_loop_stage_executions_loop_exec ON loop_stage_executions(loop_execution_id)",
-    "CREATE INDEX IF NOT EXISTS idx_loop_stage_executions_record ON loop_stage_executions(execution_record_id)",
+    "CREATE INDEX IF NOT EXISTS idx_loop_step_executions_loop_exec ON loop_step_executions(loop_execution_id)",
+    "CREATE INDEX IF NOT EXISTS idx_loop_step_executions_record ON loop_step_executions(execution_record_id)",
 ];
 
 #[cfg(test)]
@@ -1946,10 +1946,10 @@ mod v7_loop_studio_tests {
         for table in [
             "loops",
             "loop_triggers",
-            "loop_stages",
+            "loop_steps",
             "loop_hooks",
             "loop_executions",
-            "loop_stage_executions",
+            "loop_step_executions",
         ] {
             assert!(
                 table_exists(&db, table).await.unwrap(),
