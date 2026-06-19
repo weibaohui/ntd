@@ -15,7 +15,7 @@ import { SettingsPage } from './components/SettingsPage';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
-import { ExpertList } from './components/ExpertList';
+import { StepList } from './components/StepList';
 import { LoopStudio } from './components/LoopStudio';
 import { LoopDetailPanel } from './components/LoopStudioDetailPanel';
 import * as dbLoops from './utils/database/loops';
@@ -252,7 +252,7 @@ function AppContent() {
             ) : activeView === 'relation' ? (
               <RelationMap onBack={isMobile ? backToList : undefined} />
             ) : activeView === 'experts' ? (
-              <ExpertList onBack={isMobile ? backToList : undefined} />
+              <StepList onBack={isMobile ? backToList : undefined} />
             ) : activeView === 'loop' ? (
               <LoopStudio onBack={isMobile ? backToList : undefined} />
             ) : (

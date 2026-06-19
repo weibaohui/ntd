@@ -25,10 +25,9 @@ import {
 } from 'antd';
 import { PlusOutlined, DeleteOutlined, EditOutlined, LinkOutlined } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
-import * as dbExperts from '@/utils/database/experts';
+import * as dbExperts from '@/utils/database/steps';
 import type {
   LoopHookDto,
-  LoopStageDto,
   LoopDetail,
   CreateHookRequest,
   UpdateHookRequest,
@@ -38,7 +37,7 @@ import type { Todo } from '@/types';
 interface Props {
   loopId: number;
   hooks: LoopHookDto[];
-  stages: LoopStageDto[];
+  stages: Record<string, any>[];
   todoMap: LoopDetail['todo_map'];
   onChanged: () => void;
 }
@@ -71,7 +70,7 @@ export function LoopHooksPanel({ loopId, hooks, stages, todoMap, onChanged }: Pr
   // 加载专家候选
   useEffect(() => {
     setExpertsLoading(true);
-    dbExperts.listExpertCandidates()
+    dbExperts.listStepCandidates()
       .then(setExperts)
       .catch(() => setExperts([]))
       .finally(() => setExpertsLoading(false));

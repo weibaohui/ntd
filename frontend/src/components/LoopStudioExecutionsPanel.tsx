@@ -17,7 +17,7 @@ import {
   HistoryOutlined,
 } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
-import type { LoopExecutionDto, LoopExecutionDetail, LoopStageExecutionDto } from '@/types/loop';
+import type { LoopExecutionDto, LoopExecutionDetail } from '@/types/loop';
 import { formatRelativeTime } from '@/utils/datetime';
 
 interface Props {
@@ -179,7 +179,7 @@ export function LoopExecutionsPanel({ loopId, loopName }: Props) {
 }
 
 // 阶段执行明细, 单独抽出来便于阅读
-function StageExecList({ stageExecs }: { stageExecs: LoopStageExecutionDto[] }) {
+function StageExecList({ stageExecs }: { stageExecs: Record<string, any>[] }) {
   if (stageExecs.length === 0) {
     return <Empty description="无阶段执行记录" />;
   }

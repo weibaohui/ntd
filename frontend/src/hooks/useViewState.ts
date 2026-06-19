@@ -8,8 +8,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-// 'experts' = 专家管理页面 (v3 kind=expert), 'loop' = 环路编排页面。
-// 复用现有的 'detail' panel,专家/环路页面本身就是 detail panel 内容。
+// 'experts' = 环节管理页面 (v3 kind=expert), 'loop' = 环路编排页面。
+// 复用现有的 'detail' panel,环节/环路页面本身就是 detail panel 内容。
 export type View = 'dashboard' | 'settings' | 'memorial' | 'relation' | 'experts' | 'loop';
 export type Panel = 'list' | 'detail';
 

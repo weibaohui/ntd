@@ -9,12 +9,12 @@ import { StatusPicker } from './StatusPicker';
 import * as db from '@/utils/database';
 import type { ProjectDirectory, Todo } from '@/types';
 import { ExecutorBadge } from './ExecutorBadge';
-import { PromoteToExpertButton } from './PromoteToExpertButton';
+import { PromoteToStepButton } from './PromoteToStepButton';
 import { LoopListPanel } from './LoopStudioListPanel';
 import { LoopIcon } from './LoopIcon';
 import type { LoopListItem } from '@/types/loop';
 import * as dbLoops from '@/utils/database/loops';
-import { demoteTodoToItem } from '@/utils/database/experts';
+import { demoteTodoToItem } from '@/utils/database/steps';
 import { formatRelativeTime } from '@/utils/datetime';
 
 interface TodoListProps {
@@ -93,7 +93,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
   const [isLoading, setIsLoading] = useState(true);
   // 搜索关键字状态，用于按标题或提示词过滤 todo 列表
   const [searchKeyword, setSearchKeyword] = useState('');
-  // 列表模式：'item' = 事项, 'expert' = 专家, 'loop' = 环路
+  // 列表模式：'item' = 事项, 'expert' = 环节, 'loop' = 环路
   const [listMode, setListMode] = useState<'item' | 'expert' | 'loop'>('item');
   // 环路列表数据（只在 listMode === 'loop' 时使用）
   const [loopList, setLoopList] = useState<LoopListItem[]>([]);
@@ -126,7 +126,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
   }, [reloadProjectDirectories]);
 
   // 当列表切换到「环路」时，自动加载 loop 列表；
-  // 切换到「事项」或「专家」时不做额外操作。
+  // 切换到「事项」或「环节」时不做额外操作。
   useEffect(() => {
     if (listMode !== 'loop') return;
     setLoopLoading(true);
@@ -165,8 +165,8 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
       });
     }
 
-    // 按类型过滤 (v3 kind 列)：'item' = 仅事项，'expert' = 仅专家
-    // 两个模式都显式过滤，避免事项列表中出现专家。
+    // 按类型过滤 (v3 kind 列)：'item' = 仅事项，'expert' = 仅环节
+    // 两个模式都显式过滤，避免事项列表中出现环节。
     if (listMode === 'item') {
       result = result.filter(todo => (todo.kind ?? 'item') === 'item');
     } else if (listMode === 'expert') {
@@ -275,11 +275,11 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
                 <span style={{ color: '#999', marginRight: 4, fontSize: 13 }}>#{todo.id}</span>{todo.title}
               </div>
               <ExecutorBadge executor={todo.executor || 'claudecode'} />
-              {/* 晋级/降级入口: 事项行显示"晋级", 专家行显示"降级" */}
+              {/* 升级/降级入口: 事项行显示"升级为环节", 环节行显示"降级为事项" */}
               {(todo.kind ?? 'item') === 'expert' ? (
                 <Popconfirm
                   title="降级为事项"
-                  description="确定将此专家降级为事项？降级后不会被任何 loop 引用"
+                  description="确定将此环节降级为事项？降级后不会被任何 loop 引用"
                   onConfirm={async () => {
                     try {
                       await demoteTodoToItem(todo.id);
@@ -296,11 +296,11 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
                     icon={<ExperimentOutlined />}
                     aria-label={`将「${todo.title}」降级为事项`}
                   >
-                    降级
+                    降级为事项
                   </Button>
                 </Popconfirm>
               ) : (
-                <PromoteToExpertButton todoId={todo.id} todoTitle={todo.title} />
+                <PromoteToStepButton todoId={todo.id} todoTitle={todo.title} />
               )}
             </div>
             {todo.prompt && (
@@ -571,7 +571,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
           onChange={(v) => setListMode(v as 'item' | 'expert' | 'loop')}
           options={[
             { label: '事项', value: 'item' },
-            { label: '专家', value: 'expert' },
+            { label: '环节', value: 'expert' },
             { label: '环路', value: 'loop' },
           ]}
         />

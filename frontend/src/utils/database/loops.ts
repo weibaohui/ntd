@@ -10,8 +10,6 @@
 // - POST   /api/loops/{id}/duplicate         复制
 // - POST   /api/loops/{id}/trigger           手动触发
 // - GET/POST/PUT/DELETE /api/loops/{id}/triggers[/tid]
-// - GET/POST/PUT/DELETE /api/loops/{id}/stages[/sid]
-// - POST   /api/loops/{id}/stages/reorder    批量重排
 // - GET/POST/PUT/DELETE /api/loops/{id}/hooks[/hid]
 // - GET    /api/loops/{id}/executions        运行历史(分页)
 // - GET    /api/loops/{id}/executions/{eid}  单次执行详情
@@ -20,7 +18,6 @@ import { api, unwrap } from './client';
 import type {
   CreateHookRequest,
   CreateLoopRequest,
-  CreateStageRequest,
   CreateTriggerRequest,
   LoopDetail,
   LoopExecutionDetail,
@@ -28,14 +25,11 @@ import type {
   LoopExecutionListResponse,
   LoopHookDto,
   LoopListItem,
-  LoopStageDto,
   LoopTriggerDto,
   LoopTriggerResponse,
-  ReorderStagesRequest,
   UpdateHookRequest,
   UpdateLoopRequest,
   UpdateLoopStatusRequest,
-  UpdateStageRequest,
   UpdateTriggerRequest,
 } from '@/types/loop';
 
@@ -107,40 +101,6 @@ export async function updateTrigger(
 
 export async function deleteTrigger(loopId: number, triggerId: number): Promise<void> {
   await api.delete(`/api/loops/${loopId}/triggers/${triggerId}`);
-}
-
-// ====== Stages ======
-
-export async function listStages(loopId: number): Promise<LoopStageDto[]> {
-  return unwrap(await api.get(`/api/loops/${loopId}/stages`));
-}
-
-/** 创建 stage。后端强校验 todo.kind === 'expert',否则 400。 */
-export async function createStage(
-  loopId: number,
-  req: CreateStageRequest,
-): Promise<LoopStageDto> {
-  return unwrap(await api.post(`/api/loops/${loopId}/stages`, req));
-}
-
-export async function updateStage(
-  loopId: number,
-  stageId: number,
-  req: UpdateStageRequest,
-): Promise<LoopStageDto> {
-  return unwrap(await api.put(`/api/loops/${loopId}/stages/${stageId}`, req));
-}
-
-export async function deleteStage(loopId: number, stageId: number): Promise<void> {
-  await api.delete(`/api/loops/${loopId}/stages/${stageId}`);
-}
-
-/** 按新顺序批量重排 stage;ordered_ids 即新的 stage id 列表。 */
-export async function reorderStages(
-  loopId: number,
-  req: ReorderStagesRequest,
-): Promise<void> {
-  await api.post(`/api/loops/${loopId}/stages/reorder`, req);
 }
 
 // ====== Hooks ======

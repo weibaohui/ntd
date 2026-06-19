@@ -228,7 +228,7 @@ function LoopCard({ loop, selected, onClick }: {
         </div>
       )}
 
-      {/* meta: 触发器/阶段/最近执行 + 时间 */}
+      {/* meta: 触发器/环节数/最近执行 + 时间 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
         <span><ThunderboltOutlined /> {loop.trigger_count}</span>
         <span><ApartmentOutlined /> {loop.stage_count}</span>

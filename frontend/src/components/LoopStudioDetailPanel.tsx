@@ -1,10 +1,10 @@
-// Loop Studio 右栏 detail 容器 (重做: 分段式布局, 替代 Tabs)。
+// Loop Studio 右栏 detail 容器。
 //
-// 对齐参考设计: 详情面板不再用 Tab 切 4 个视图, 改成上下分段的瀑布流:
+// 对齐参考设计: 详情面板分成上下分段:
 // - Header: 标题 + 操作 (触发/复制/启用暂停/编辑/删除)
-// - 基本信息: 3 列 (状态 / 产品 / 仓库分支), 与参考设计完全对齐
+// - 基本信息: 3 列 (状态 / 产品 / 仓库分支)
 // - 触发条件: 内联 toggle 列表 (8 种类型一行一条)
-// - 流水线阶段: 横向 → 连接
+// - 执行环节: 关联的 todo 列表（按顺序执行）
 // - 钩子 / 执行历史: 折叠区, 默认收起 (不常用)
 //
 // 编辑入口从 inline 改成完整 modal, 含 product / repo / branch 字段
@@ -26,7 +26,6 @@ import {
 import * as dbLoops from '@/utils/database/loops';
 import type { LoopDetail, UpdateLoopRequest } from '@/types/loop';
 import { LoopTriggersPanel } from './LoopStudioTriggersPanel';
-import { LoopStagesPanel } from './LoopStudioStagesPanel';
 import { LoopHooksPanel } from './LoopStudioHooksPanel';
 import { LoopExecutionsPanel } from './LoopStudioExecutionsPanel';
 
@@ -218,18 +217,44 @@ export function LoopDetailPanel({
         />
       </DetailSection>
 
-      {/* Section: 流水线阶段 — 横向卡片 + 箭头 */}
-      <DetailSection title="流水线阶段" extra={
+      {/* 执行环节: 关联的 todo 列表 */}
+      <DetailSection title="执行环节" extra={
         <span style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
-          {detail.stages.length} 个阶段按从左到右顺序执行
+          {detail.stages.length} 个环节按顺序执行
         </span>
       }>
-        <LoopStagesPanel
-          loopId={loopId}
-          stages={detail.stages}
-          todoMap={detail.todo_map}
-          onChanged={() => { reload(); onChanged(); }}
-        />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {detail.stages.map((s, idx) => {
+            const todo = detail.todo_map[s.todo_id];
+            return (
+              <div key={s.id} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '8px 12px',
+                background: 'var(--color-bg-elevated, #fff)',
+                border: '1px solid var(--color-border, #e2e8f0)',
+                borderRadius: 8,
+              }}>
+                <span style={{
+                  width: 24, height: 24, borderRadius: 12,
+                  background: 'var(--color-primary, #0891b2)', color: '#fff',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 11, fontWeight: 600, flexShrink: 0,
+                }}>{idx + 1}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 500, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {todo ? `#${todo.id} ${todo.title}` : `todo #${s.todo_id}`}
+                  </div>
+                  {s.description && (
+                    <div style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>{s.description}</div>
+                  )}
+                </div>
+                <span style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
+                  {s.enabled ? '已启用' : '已禁用'}
+                </span>
+              </div>
+            );
+          })}
+        </div>
       </DetailSection>
 
       {/* 折叠区: 钩子 + 执行历史, 默认收起 (不常用, 避免首屏信息过载) */}

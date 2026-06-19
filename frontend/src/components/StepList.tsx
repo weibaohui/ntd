@@ -1,10 +1,10 @@
-// 专家管理页面（kind=expert）。
+// 环节管理页面（kind=expert）。
 //
 // 设计要点：
 // - 与 TodoList 共享底层数据（todos.kind 列），但语义独立：这里只看 kind=expert 的子集。
 // - 复用 TodoCard 之类的渲染组件不可行（TodoList 用的是整列平铺，跟纪念板卡片不同），
 //   这里采用列表 + 操作按钮的紧凑布局，强调"被哪些 loop 引用"这一复用度指标。
-// - 内联新建专家：点击 "+ 新建专家" 弹出 modal，要求 title + prompt + executor，
+// - 内联新建环节：点击 "+ 新建环节" 弹出 modal，要求 title + prompt + executor，
 //   保存后立即出现在列表里。复用现有 createTodo 但后端默认 kind=item，
 //   所以保存成功后立刻调用 promote 接口把 kind 改为 'expert'，避免双 round-trip 时的中间态问题。
 // - 降级：仅当 used_by_loop_stage_count === 0 时允许 demote，且要求二次确认。
@@ -33,40 +33,40 @@ import {
   DeleteOutlined,
 } from '@ant-design/icons';
 import * as db from '@/utils/database';
-import * as dbExperts from '@/utils/database/experts';
+import * as dbSteps from '@/utils/database/steps';
 import { formatRelativeTime } from '@/utils/datetime';
-import type { ExpertSummary, Todo } from '@/types';
+import type { StepSummary, Todo } from '@/types';
 
-interface ExpertListProps {
+interface StepListProps {
   onBack?: () => void;
 }
 
-interface ExpertCreateForm {
+interface StepCreateForm {
   title: string;
   prompt: string;
   executor?: string;
 }
 
-export function ExpertList({ onBack }: ExpertListProps) {
+export function StepList({ onBack }: StepListProps) {
   const { message } = AntApp.useApp();
-  const [experts, setExperts] = useState<ExpertSummary[]>([]);
+  const [steps, setSteps] = useState<StepSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
-  const [form] = Form.useForm<ExpertCreateForm>();
+  const [form] = Form.useForm<StepCreateForm>();
   const [creating, setCreating] = useState(false);
   // 复用 todo 列表里已有的执行器下拉选项
   const [executorOptions, setExecutorOptions] = useState<{ label: string; value: string }[]>([]);
 
-  // 加载专家列表
+  // 加载环节列表
   const reload = useCallback(() => {
     setLoading(true);
-    dbExperts
-      .listExperts()
-      .then(setExperts)
+    dbSteps
+      .listSteps()
+      .then(setSteps)
       .catch(() => {
-        message.error('加载专家列表失败');
-        setExperts([]);
+        message.error('加载环节列表失败');
+        setSteps([]);
       })
       .finally(() => setLoading(false));
   }, [message]);
@@ -97,17 +97,17 @@ export function ExpertList({ onBack }: ExpertListProps) {
   // 客户端过滤（标题 + 提示词）
   const filtered = useMemo(() => {
     const kw = searchKeyword.trim().toLowerCase();
-    if (!kw) return experts;
-    return experts.filter(e => {
+    if (!kw) return steps;
+    return steps.filter(e => {
       const title = (e.title || '').toLowerCase();
       const prompt = (e.prompt || '').toLowerCase();
       return title.includes(kw) || prompt.includes(kw);
     });
-  }, [experts, searchKeyword]);
+  }, [steps, searchKeyword]);
 
-  // 内联新建专家：先 createTodo（kind=item），再 promote，避免直接拼 SQL
+  // 内联新建环节：先 createTodo（kind=item），再 promote，避免直接拼 SQL
   const handleCreate = useCallback(
-    async (values: ExpertCreateForm) => {
+    async (values: StepCreateForm) => {
       if (!values.title.trim()) {
         message.error('标题必填');
         return;
@@ -124,8 +124,8 @@ export function ExpertList({ onBack }: ExpertListProps) {
           undefined,
         );
         // 2) 立刻 promote 为 expert。如果 promote 失败, 已经创建的孤儿 todo 留给用户手动清理。
-        await dbExperts.promoteTodoToExpert(created.id);
-        message.success(`专家「${created.title}」已创建`);
+        await dbSteps.promoteTodoToStep(created.id);
+        message.success(`环节「${created.title}」已创建`);
         setCreateOpen(false);
         form.resetFields();
         reload();
@@ -141,9 +141,9 @@ export function ExpertList({ onBack }: ExpertListProps) {
 
   // 降级：先看是否被 loop 引用, 再走 demote 接口
   const handleDemote = useCallback(
-    async (expert: ExpertSummary) => {
+    async (expert: StepSummary) => {
       try {
-        await dbExperts.demoteTodoToItem(expert.id);
+        await dbSteps.demoteTodoToItem(expert.id);
         message.success(`「${expert.title}」已降级为事项`);
         reload();
       } catch {
@@ -170,7 +170,7 @@ export function ExpertList({ onBack }: ExpertListProps) {
           )}
           <h2 style={{ margin: 0, fontSize: 18 }}>
             <ExperimentOutlined style={{ marginRight: 8 }} />
-            专家管理
+            环节管理
           </h2>
           <div style={{ flex: 1 }} />
           <Button
@@ -178,12 +178,12 @@ export function ExpertList({ onBack }: ExpertListProps) {
             icon={<PlusOutlined />}
             onClick={() => setCreateOpen(true)}
           >
-            新建专家
+            新建环节
           </Button>
         </div>
         <div className="expert-search-bar">
           <Input
-            placeholder="搜索专家标题或提示词..."
+            placeholder="搜索环节标题或提示词..."
             prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
             value={searchKeyword}
             onChange={e => setSearchKeyword(e.target.value)}
@@ -200,8 +200,8 @@ export function ExpertList({ onBack }: ExpertListProps) {
           <Empty
             description={
               searchKeyword.trim()
-                ? '没有匹配的专家'
-                : '暂无专家；点击右上角「新建专家」或在 TodoList 把已有事项提升为专家'
+                ? '没有匹配的环节'
+                : '暂无环节；点击右上角「新建环节」或在 TodoList 把已有事项提升为环节'
             }
           />
         ) : (
@@ -218,7 +218,7 @@ export function ExpertList({ onBack }: ExpertListProps) {
       </div>
 
       <Modal
-        title="新建专家"
+        title="新建环节"
         open={createOpen}
         onCancel={() => {
           setCreateOpen(false);
@@ -241,16 +241,16 @@ export function ExpertList({ onBack }: ExpertListProps) {
             name="title"
             rules={[{ required: true, message: '标题必填' }]}
           >
-            <Input placeholder="例如：代码审查专家" maxLength={100} />
+            <Input placeholder="例如：代码审查环节" maxLength={100} />
           </Form.Item>
           <Form.Item
             label="提示词 (Prompt)"
             name="prompt"
-            tooltip="描述这个专家能做什么,会被作为 system/initial prompt 注入执行器"
+            tooltip="描述这个环节能做什么,会被作为 system/initial prompt 注入执行器"
           >
             <Input.TextArea
               rows={5}
-              placeholder="例如：你是资深代码审查专家,负责..."
+              placeholder="例如：你是资深代码审查员,负责..."
               maxLength={4000}
             />
           </Form.Item>
@@ -266,13 +266,13 @@ export function ExpertList({ onBack }: ExpertListProps) {
   );
 }
 
-// 单个专家卡片
+// 单个环节卡片
 function ExpertCard({
   expert,
   onDemote,
 }: {
-  expert: ExpertSummary;
-  onDemote: (e: ExpertSummary) => void;
+  expert: StepSummary;
+  onDemote: (e: StepSummary) => void;
 }) {
   const canDemote = expert.used_by_loop_stage_count === 0;
   return (
@@ -315,8 +315,8 @@ function ExpertCard({
             title="降级为事项"
             description={
               canDemote
-                ? '确定将此专家降级为事项?降级后不会被任何 loop 引用'
-                : '该专家正被 loop 引用,无法降级'
+                ? '确定将此环节降级为事项?降级后不会被任何 loop 引用'
+                : '该环节正被 loop 引用,无法降级'
             }
             okButtonProps={{ disabled: !canDemote }}
             onConfirm={() => onDemote(expert)}
@@ -329,7 +329,7 @@ function ExpertCard({
               disabled={!canDemote}
               aria-label="降级为事项"
             >
-              降级
+              降级为事项
             </Button>
           </Popconfirm>
         </div>
