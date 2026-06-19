@@ -14,6 +14,12 @@ import * as db from '@/utils/database';
 import type { StepSummary, SkillMeta, ExecutorSkills, TodoTemplate } from '@/types';
 import { EXECUTORS_FOR_PICKER, getExecutorColor } from '@/types';
 
+// 编辑器 ref 接口：描述 MdEditor 暴露的方法，用于替代 any 类型，
+// 提高类型安全性，避免隐式 any 带来的潜在错误。
+interface MdEditorRef {
+  insertText: (text: string) => void;
+}
+
 interface StepEditDrawerProps {
   open: boolean;
   step: StepSummary;
@@ -31,7 +37,9 @@ function useEditForm(step: StepSummary) {
   const [editColor, setEditColor] = useState('#722ed1');
   const [editAcceptanceCriteria, setEditAcceptanceCriteria] = useState('');
   const [saving, setSaving] = useState(false);
-  const editorRef = useRef<any>(null);
+  // 使用具体的编辑器 ref 类型而非 any，提高类型安全性，
+  // 与 MdEditor 组件暴露的接口保持一致。
+  const editorRef = useRef<MdEditorRef | null>(null);
 
   // Skills 相关状态
   const [skillsLoading, setSkillsLoading] = useState(false);

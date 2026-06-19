@@ -451,28 +451,37 @@ impl LoopRunner {
     }
 
     /// 把 loop_executions 的 finished_at 清空（避免被 finish_loop_execution 错填）。
+    /// 使用参数化查询而非字符串插值，与项目其他地方（如 step_.rs 的 update_step）保持一致，
+    /// 避免 SQL 注入风险并遵循最佳实践。
     async fn clear_finished_at(&self, id: i64) -> Result<(), String> {
         use sea_orm::{ConnectionTrait, Statement};
-        let sql = format!("UPDATE loop_executions SET finished_at = NULL WHERE id = {}", id);
+        let sql = "UPDATE loop_executions SET finished_at = NULL WHERE id = ?1";
         self.ctx
             .db
             .conn
-            .execute(Statement::from_string(sea_orm::DbBackend::Sqlite, sql))
+            .execute(Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                [id.into()],
+            ))
             .await
             .map_err(|e| e.to_string())?;
         Ok(())
     }
 
+    /// 更新环节总数：使用参数化查询，与 clear_finished_at 保持一致风格，
+    /// 避免 format! 拼接 SQL 带来的安全隐患。
     async fn update_total_steps(&self, id: i64, total: i32) -> Result<(), String> {
         use sea_orm::{ConnectionTrait, Statement};
-        let sql = format!(
-            "UPDATE loop_executions SET total_steps = {} WHERE id = {}",
-            total, id
-        );
+        let sql = "UPDATE loop_executions SET total_steps = ?1 WHERE id = ?2";
         self.ctx
             .db
             .conn
-            .execute(Statement::from_string(sea_orm::DbBackend::Sqlite, sql))
+            .execute(Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                [total.into(), id.into()],
+            ))
             .await
             .map_err(|e| e.to_string())?;
         Ok(())

@@ -89,6 +89,9 @@ export function StepList({ onBack }: StepListProps) {
       setCreateOpen(false);
       form.resetFields();
       reload();
+      // 创建成功后自动选中新建环节，让用户可以立即看到并编辑详情，
+      // 避免右侧面板保持空白造成困惑。
+      setSelectedStepId(created.id);
     } catch {
       // axios 拦截器已弹错
     } finally {
