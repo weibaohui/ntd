@@ -22,6 +22,9 @@ use tracing::{debug, info, warn};
 
 use crate::services::loop_runner::LoopRunner;
 
+/// Webhook body 上限 64 KiB。触顶直接拒绝,避免 DoS / DB 膨胀。
+const MAX_WEBHOOK_BODY_BYTES: usize = 64 * 1024;
+
 pub struct LoopTriggerDispatcher {
     runner: Arc<LoopRunner>,
     ctx: crate::service_context::ServiceContext,
@@ -34,11 +37,27 @@ impl LoopTriggerDispatcher {
 
     /// Webhook 触发：从 webhook 入口的 (webhook_id, body, query) 中匹配 loop trigger。
     /// 配置示例：`{"webhook_id": 5}`
+    ///
+    /// 安全约束:
+    /// - body 上限 64 KiB,超限直接拒绝（避免 DoS / loop_executions.trigger_meta 膨胀）
+    /// - HMAC 签名校验尚未实现(见 issue 后续);当前按 webhook_id 路由足够用于内网。
+    ///   公开部署时应在 handler 层加 X-Signature 校验后再调用本方法。
     pub async fn dispatch_webhook(
         &self,
         webhook_id: i64,
         body: Option<&str>,
     ) -> Vec<i64> {
+        // 上限 64 KiB,触顶直接拒绝 — 不写库、不 spawn
+        if let Some(b) = body {
+            if b.len() > MAX_WEBHOOK_BODY_BYTES {
+                warn!(
+                    "loop_trigger: webhook body too large ({} bytes, limit {}), reject",
+                    b.len(),
+                    MAX_WEBHOOK_BODY_BYTES
+                );
+                return vec![];
+            }
+        }
         let triggers = match self
             .ctx
             .db
@@ -290,7 +309,8 @@ impl LoopTriggerDispatcher {
         let id = self
             .runner
             .clone()
-            .spawn_run(loop_id, trigger_id, trigger_type, meta);
+            .spawn_run(loop_id, trigger_id, trigger_type, meta)
+            .await;
         info!(
             "loop_trigger: started loop #{} execution #{} via {}",
             loop_id, id, trigger_type
@@ -321,14 +341,13 @@ fn matches_message(match_type: &str, pattern: &str, content: &str) -> bool {
     }
 }
 
-/// 极简 regex: 避免引入 regex crate (已经引入了,但尽量减少 use), 仅支持
-/// `^...$` 包裹的简单模式或 `regex` crate 的标准语法。
+/// 真实 regex 匹配:用 `regex` crate 全功能语法。
 ///
-/// 如果项目已经引入了 `regex` crate（看 Cargo.toml），则用完整 regex 引擎。
-/// 为减少依赖膨胀，这里用一个简化版：仅区分「字面量」与「包含」。
+/// 之前用 contains 假实现,导致用户配 `match_type: "regex"` + `pattern: "^/run \\d+$"`
+/// 时 `/runabc` 也会命中,违反配置语义。`regex` 已经在 Cargo.toml 里,直接用。
 fn regex_lite_match(pattern: &str, content: &str) -> Result<bool, String> {
-    // 这里直接走 contains,完整 regex 留给 issue 后续加 dep 时再做
-    Ok(content.contains(pattern))
+    let re = regex::Regex::new(pattern).map_err(|e| format!("invalid regex: {}", e))?;
+    Ok(re.is_match(content))
 }
 
 #[cfg(test)]
@@ -356,5 +375,21 @@ mod tests {
     #[test]
     fn matches_message_unknown_falls_back_to_contains() {
         assert!(matches_message("fancy", "abc", "xx-abcyy"));
+    }
+
+    /// 验证 regex 不再降级为 contains: `^/run \\d+$` 应只匹配 `/run 123`,
+    /// 不应匹配 `/runabc`(之前 contains 假实现会通过)。
+    #[test]
+    fn matches_message_regex_uses_real_engine() {
+        assert!(matches_message("regex", r"^/run \d+$", "/run 123"));
+        assert!(!matches_message("regex", r"^/run \d+$", "/runabc"));
+        assert!(!matches_message("regex", r"^/run \d+$", "pre /run 123"));
+    }
+
+    /// 无效 regex 模式应该 warn 降级,而不是 panic。
+    #[test]
+    fn matches_message_invalid_regex_falls_back_to_contains() {
+        // 未闭合的方括号是无效 regex
+        assert!(!matches_message("regex", "[unclosed", "anything"));
     }
 }

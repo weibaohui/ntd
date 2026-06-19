@@ -597,6 +597,29 @@ impl Database {
             .map(|c| c as i64)
     }
 
+    /// 把 loop execution 标记为 running,并一次性写入 total_stages 与清掉 finished_at。
+    ///
+    /// 之前通过「finish_loop_execution(running) + clear_finished_at」两步实现,
+    /// 两次 UPDATE 之间有可见窗口,前端 poll 会看到 status=running 但 finished_at=now
+    /// 的错配状态,误判为已完成。这里合并为单条 SQL,消除 race。
+    pub async fn mark_loop_execution_running(
+        &self,
+        id: i64,
+        total_stages: i32,
+    ) -> Result<(), sea_orm::DbErr> {
+        use sea_orm::{ConnectionTrait, Statement};
+        // 直接用 i64 数字拼接;total_stages 是 i32、id 是 i64,内部不接收外部字符串,无注入面
+        let sql = format!(
+            "UPDATE loop_executions SET status = 'running', total_stages = {}, \
+             finished_at = NULL WHERE id = {}",
+            total_stages, id
+        );
+        self.conn
+            .execute(Statement::from_string(sea_orm::DbBackend::Sqlite, sql))
+            .await?;
+        Ok(())
+    }
+
     /// 终态化 loop execution: 设置 status、finished_at 并按需累加 completed/failed 计数。
     ///
     /// 计数更新由调用方传入,因为 runner 在每个阶段结束时增量更新,效率更高。

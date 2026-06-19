@@ -29,7 +29,6 @@ use tracing::{error, info, warn};
 
 use crate::executor_service::{run_todo_execution_with_params, RunTodoExecutionRequest};
 use crate::hooks::HookService;
-use crate::models::ExecutionStatus;
 use crate::service_context::ServiceContext;
 
 /// LoopRunner 依赖：与现有 HookService 共享一个 spawn-friendly 结构。
@@ -55,7 +54,10 @@ impl LoopRunner {
     }
 
     /// Spawn 一条 loop 执行（fire-and-forget）。返回 loop_execution_id 给调用方。
-    pub fn spawn_run(
+    ///
+    /// 之前用 `block_in_place + block_on` 在 current_thread runtime 下会 panic;
+    /// 现在改为 async,所有调用方本来就在 async 上下文,直接 await 即可。
+    pub async fn spawn_run(
         self: Arc<Self>,
         loop_id: i64,
         trigger_id: Option<i64>,
@@ -65,26 +67,21 @@ impl LoopRunner {
         let this = self.clone();
         let trigger_type = trigger_type.to_string();
         // 先建 loop_execution 行拿到 id,然后后台异步跑整个流程
-        let initial_total_stages = 0i32; // 创建时还没确定 stage 数,后面在 run_inner 里 update
-        let loop_execution_id_res: Result<i64, String> = tokio::task::block_in_place(|| {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(async {
-                this.ctx
-                    .db
-                    .create_loop_execution(
-                        loop_id,
-                        trigger_id,
-                        &trigger_type,
-                        &trigger_meta.to_string(),
-                        initial_total_stages,
-                    )
-                    .await
-                    .map(|m| m.id)
-                    .map_err(|e| e.to_string())
-            })
-        });
-        let loop_execution_id = match loop_execution_id_res {
-            Ok(id) => id,
+        // total_stages 暂记 0,run_inner 在确认 stage 数后通过 mark_loop_execution_running 一次写入
+        let initial_total_stages = 0i32;
+        let loop_execution_id = match this
+            .ctx
+            .db
+            .create_loop_execution(
+                loop_id,
+                trigger_id,
+                &trigger_type,
+                &trigger_meta.to_string(),
+                initial_total_stages,
+            )
+            .await
+        {
+            Ok(m) => m.id,
             Err(e) => {
                 error!("loop_runner: failed to create loop_execution: {}", e);
                 return -1;
@@ -154,17 +151,13 @@ impl LoopRunner {
                 .map_err(|e| e.to_string())?;
             return Ok(());
         }
-        // 更新 total_stages
+        // 一次性把 status=running / total_stages=N / finished_at=NULL 写回,
+        // 避免「先写 running 带 finished_at,再清 finished_at」的可见窗口
         self.ctx
             .db
-            .finish_loop_execution(loop_execution_id, "running", 0, 0)
+            .mark_loop_execution_running(loop_execution_id, stages.len() as i32)
             .await
-            .map_err(|e| e.to_string())?; // placeholder,会再被覆盖
-        // 上面 finish 是把 status 写回 running 但也设置了 finished_at,这里重新刷一下
-        // 改为直接 SQL 清掉 finished_at
-        self.clear_finished_at(loop_execution_id).await?;
-        self.update_total_stages(loop_execution_id, stages.len() as i32)
-            .await?;
+            .map_err(|e| e.to_string())?;
 
         // 3. fire pre_loop hooks
         let pre_loop_hooks = self
@@ -419,33 +412,32 @@ impl LoopRunner {
 
     /// 订阅 broadcast 等待指定 record_id 的 Finished 事件。
     /// timeout 24h 防止长跑任务永久挂住 loop。
+    ///
+    /// broadcast 事件本身不带 record_id,这里在收到 Finished 后用 record_id 反查
+    /// execution_records 状态:若本 record 还未到终态,继续等下一个 Finished;
+    /// 多 loop 并发时,别人的 Finished 不会误判为本 record 完成。
     async fn wait_for_stage_finish(&self, record_id: i64) -> Result<String, String> {
         let mut rx = self.tx.subscribe();
         let wait_timeout = Duration::from_secs(24 * 60 * 60);
         let result = timeout(wait_timeout, async {
             loop {
                 match rx.recv().await {
-                    Ok(crate::handlers::ExecEvent::Finished {
-                        task_id: _,
-                        todo_id: _,
-                        todo_title: _,
-                        executor: _,
-                        success,
-                        result: _,
-                        feishu_bot_id: _,
-                        feishu_receive_id: _,
-                    }) => {
-                        // Finished 不带 record_id,需要靠 todo 状态二次查询确认
-                        // 这里简化为: 任意 Finished 事件都先接住,再用 record_id 反查
-                        // 但实际是 broadcast 只发 task_id 不发 record_id;
-                        // 所以我们用 fallback: 任意 Finished 来就直接退出,
-                        // 因为 loop 是顺序的,这时只有当前 stage 在跑。
-                        // （多 loop 并发时会有歧义；首版接受这个限制,后期可扩展 event 加 record_id）
-                        return if success {
-                            Ok(ExecutionStatus::Success.as_str().to_string())
-                        } else {
-                            Ok(ExecutionStatus::Failed.as_str().to_string())
-                        };
+                    Ok(crate::handlers::ExecEvent::Finished { .. }) => {
+                        // 反查: 这个 Finished 是不是 record_id 触发的?
+                        // 不是则继续等
+                        match self.ctx.db.get_execution_record(record_id).await {
+                            Ok(Some(rec))
+                                if matches!(
+                                    rec.status.as_str(),
+                                    "success" | "failed" | "cancelled" | "partial"
+                                ) =>
+                            {
+                                return Ok(rec.status.to_string());
+                            }
+                            Ok(Some(_)) => continue, // 还在 running,等下一个
+                            Ok(None) => continue,    // 已被清理/查不到,等下一个
+                            Err(_) => continue,      // DB 抖动,等下一个,最后再兜底
+                        }
                     }
                     Ok(crate::handlers::ExecEvent::Started { .. })
                     | Ok(crate::handlers::ExecEvent::Output { .. })
@@ -463,23 +455,9 @@ impl LoopRunner {
         .await;
 
         match result {
-            Ok(inner) => {
-                // inner 是 broadcast waiter 返回的 Result<String,String>
-                // 二次确认: 用 record_id 反查 execution_records 拿到实际 status
-                match inner {
-                    Ok(broadcast_status) => match self
-                        .ctx
-                        .db
-                        .get_execution_record(record_id)
-                        .await
-                    {
-                        Ok(Some(rec)) => Ok(rec.status.to_string()),
-                        Ok(None) => Ok(broadcast_status),
-                        Err(_) => Ok(broadcast_status),
-                    },
-                    Err(e) => Err(e),
-                }
-            }
+            // result 是 `Result<Result<String, String>, tokio::time::error::Elapsed>`,
+            // 外层 Ok 是 timeout 没到,内层是 waiter 自己返回的结果
+            Ok(inner) => inner,
             Err(_) => Err(format!(
                 "stage execution (record #{}) timeout after 24h",
                 record_id
@@ -530,34 +508,6 @@ impl LoopRunner {
             feishu_receive_id: None,
         };
         let _ = run_todo_execution_with_params(request).await;
-        Ok(())
-    }
-
-    /// 把 loop_executions 的 finished_at 清空（避免被 finish_loop_execution 错填）。
-    async fn clear_finished_at(&self, id: i64) -> Result<(), String> {
-        use sea_orm::{ConnectionTrait, Statement};
-        let sql = format!("UPDATE loop_executions SET finished_at = NULL WHERE id = {}", id);
-        self.ctx
-            .db
-            .conn
-            .execute(Statement::from_string(sea_orm::DbBackend::Sqlite, sql))
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(())
-    }
-
-    async fn update_total_stages(&self, id: i64, total: i32) -> Result<(), String> {
-        use sea_orm::{ConnectionTrait, Statement};
-        let sql = format!(
-            "UPDATE loop_executions SET total_stages = {} WHERE id = {}",
-            total, id
-        );
-        self.ctx
-            .db
-            .conn
-            .execute(Statement::from_string(sea_orm::DbBackend::Sqlite, sql))
-            .await
-            .map_err(|e| e.to_string())?;
         Ok(())
     }
 }

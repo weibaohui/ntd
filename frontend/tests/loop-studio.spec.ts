@@ -3,7 +3,7 @@
  *
  * 验证关键流程:
  * - 从 TodoList 点击「环路」按钮进入 LoopStudio
- * - 新建 loop 后出现在左栏, 详情面板可切换 4 个 tab
+ * - 新建 loop 后出现在左栏, 详情面板显示 4 个分区(分段式布局, 非 Tabs)
  * - 新建阶段时, 若选不到专家应可走「内联新建专家」流程
  * - 触发器 / 钩子增删 UI 可用
  * - 删除 loop 后从列表消失
@@ -74,11 +74,14 @@ test.describe('Loop Studio 端到端', () => {
     // 列表里出现 "测试 loop A"
     await expect(page.getByText('测试 loop A').first()).toBeVisible({ timeout: 5000 });
 
-    // 详情面板可见 (右侧空 detail 也会显示阶段/触发器/钩子/执行历史 tabs)
-    await expect(page.getByRole('tab', { name: '阶段' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: '触发器' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: '钩子' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: '执行历史' })).toBeVisible();
+    // 详情面板可见 (新设计是分段式: 阶段/触发器是 DetailSection 常驻可见;
+    // 钩子/执行历史是 Collapse 默认收起, label 在 DOM 内可见)
+    // 注意: 新设计不再用 antd Tabs, 不能用 getByRole('tab') — 改用 text 匹配
+    await expect(page.getByText('流水线阶段').first()).toBeVisible();
+    await expect(page.getByText('触发条件').first()).toBeVisible();
+    // Collapse label 在 DOM 内, 用 .first() 取到即视为存在
+    await expect(page.getByText(/^钩子 \(\d+\)$/).first()).toBeAttached();
+    await expect(page.getByText('执行历史').first()).toBeAttached();
   });
 
   test('阶段 tab 支持内联新建专家 (无 expert 候选时)', async ({ page }) => {
@@ -92,10 +95,9 @@ test.describe('Loop Studio 端到端', () => {
     await page.locator(`[role="dialog"] button:has-text("建")`).first().click();
     await expect(page.getByText('阶段测试 loop').first()).toBeVisible({ timeout: 5000 });
 
-    // 进入「阶段」tab (默认就在这个 tab, 但点击确保)
-    await page.getByRole('tab', { name: '阶段' }).click();
-
-    // 新建阶段按钮
+    // 滚到「流水线阶段」section 区域, 找到「新增阶段」按钮
+    // 新设计「流水线阶段」是常驻可见的 DetailSection, 无需切换 tab
+    await expect(page.getByText('流水线阶段').first()).toBeVisible();
     await page.getByRole('button', { name: '新增阶段' }).first().click();
 
     // modal 里有「内联新建专家」入口
@@ -122,9 +124,9 @@ test.describe('Loop Studio 端到端', () => {
     await page.locator(`[role="dialog"] button:has-text("建")`).first().click();
     await expect(page.getByText('触发器测试 loop').first()).toBeVisible({ timeout: 5000 });
 
-    // 选中该 loop (点列表行), 切到触发器 tab
+    // 选中该 loop (点列表行), 「触发条件」section 在新设计里常驻可见, 无需切换
     await page.locator('.loop-list-panel .loop-row').filter({ hasText: '触发器测试 loop' }).first().click();
-    await page.getByRole('tab', { name: /触发器/ }).click();
+    await expect(page.getByText('触发条件').first()).toBeVisible();
 
     // 打开「新增触发器」modal
     await page.getByRole('button', { name: '新增触发器' }).click();

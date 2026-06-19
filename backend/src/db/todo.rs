@@ -998,7 +998,20 @@ impl Database {
 
     /// 把事项提升为专家。仅当目标 todo 当前不是 expert 时生效（幂等）。
     /// 返回是否真的发生了状态变更。
+    ///
+    /// 之前 `update()` 返回的 Model 永远带刚写的值,直接 `res.kind == "expert"`
+    /// 恒为 true,idempotency 承诺是空头支票。这里先 SELECT 当前 kind,
+    /// 仅在需要时 UPDATE,确保返回值反映真实变更。
     pub async fn promote_to_expert(&self, id: i64) -> Result<bool, sea_orm::DbErr> {
+        // 先读当前 kind,避免在已经是 expert 的 todo 上空写一遍 updated_at
+        let current = todos::Entity::find_by_id(id).one(&self.conn).await?;
+        let Some(existing) = current else {
+            return Ok(false);
+        };
+        if existing.kind.as_deref() == Some("expert") {
+            // 已经是 expert,幂等返回 false(无变更)
+            return Ok(false);
+        }
         let now = crate::models::utc_timestamp();
         let am = todos::ActiveModel {
             id: ActiveValue::Unchanged(id),
@@ -1006,8 +1019,8 @@ impl Database {
             updated_at: ActiveValue::Set(Some(now)),
             ..Default::default()
         };
-        let res = am.update(&self.conn).await?;
-        Ok(res.kind.as_deref() == Some("expert"))
+        am.update(&self.conn).await?;
+        Ok(true)
     }
 
     /// 把专家降级为事项。

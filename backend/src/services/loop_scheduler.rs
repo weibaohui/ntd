@@ -221,7 +221,8 @@ impl LoopScheduler {
             let _ = self
                 .runner
                 .clone()
-                .spawn_run(loop_id, Some(trigger_id), "cron", meta);
+                .spawn_run(loop_id, Some(trigger_id), "cron", meta)
+                .await;
         }
         Ok(())
     }
