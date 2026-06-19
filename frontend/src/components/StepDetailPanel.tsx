@@ -18,9 +18,10 @@ import { formatRelativeTime } from '@/utils/datetime';
 
 interface StepDetailPanelProps {
   stepId: number;
+  onStepUpdated?: () => void;
 }
 
-export function StepDetailPanel({ stepId }: StepDetailPanelProps) {
+export function StepDetailPanel({ stepId, onStepUpdated }: StepDetailPanelProps) {
   const { message } = AntApp.useApp();
   const [step, setStep] = useState<StepSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -140,6 +141,7 @@ export function StepDetailPanel({ stepId }: StepDetailPanelProps) {
       setStep(updated);
       message.success('环节已更新');
       setEditing(false);
+      onStepUpdated?.();
     } catch {
       // ignore
     } finally {

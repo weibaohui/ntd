@@ -37,8 +37,9 @@ function AppContent() {
   const [appConfig, setAppConfig] = useState<Config | null>(null);
   // 从左侧环路列表选中某个 loop 时记录其 id，右侧面板展示 LoopDetailPanel
   const [selectedLoopId, setSelectedLoopId] = useState<number | null>(null);
-  // 从左侧环节列表选中某个 step 时记录其 id，右侧面板展示 StepDetailPanel
+  // ���左侧环节列表选中某个 step 时记录其 id，右侧面板展示 StepDetailPanel
   const [selectedStepId, setSelectedStepId] = useState<number | null>(null);
+  const [stepUpdateCount, setStepUpdateCount] = useState(0);
   const isMobile = useIsMobile();
 
   const [panelCollapsed, setPanelCollapsed] = useState(() => {
@@ -217,6 +218,7 @@ function AppContent() {
               onShowRelationMap={() => { clearSelection(); showView('relation'); }}
               onShowSteps={() => { clearSelection(); showView('steps'); }}
               onSelectStep={handleSelectStep}
+              stepUpdateCount={stepUpdateCount}
               onShowSettings={() => { clearSelection(); showView('settings'); }}
               onSelectLoop={handleSelectLoop}
             />
@@ -252,7 +254,7 @@ function AppContent() {
                     </button>
                   </div>
                 )}
-                <StepDetailPanel stepId={selectedStepId} />
+                <StepDetailPanel stepId={selectedStepId} onStepUpdated={() => setStepUpdateCount(c => c + 1)} />
               </div>
             ) : selectedLoopId !== null ? (
               // 从左侧环路列表选中某个 loop，右侧展示 LoopDetailPanel；

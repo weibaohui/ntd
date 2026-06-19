@@ -27,6 +27,7 @@ interface TodoListProps {
   onShowSettings?: () => void;
   onSelectLoop?: (loopId: number) => void;
   onSelectStep?: (stepId: number) => void;
+  stepUpdateCount?: number;
 }
 
 function SkeletonRow() {
@@ -77,7 +78,7 @@ function buildDesktopNavActions(
 }
 
 export function TodoList(props: TodoListProps) {
-  const { onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSettings, onSelectLoop, onSelectStep } = props;
+  const { onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSettings, onSelectLoop, onSelectStep, stepUpdateCount } = props;
   const { state, dispatch } = useApp();
   const { themeMode, toggleTheme } = useTheme();
   const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
@@ -134,7 +135,7 @@ export function TodoList(props: TodoListProps) {
       .then(setStepList)
       .catch(() => setStepList([]))
       .finally(() => setStepLoading(false));
-  }, [listMode]);
+  }, [listMode, stepUpdateCount]);
 
   // 当列表切换到「环路」时，自动加载 loop 列表
   useEffect(() => {
