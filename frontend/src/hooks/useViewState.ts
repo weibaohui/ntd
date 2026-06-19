@@ -1,20 +1,20 @@
 /**
  * useViewState — URL-driven view navigation state.
  *
- * Manages activeView (dashboard | settings | memorial | relation | steps | loop),
+ * Manages activeView (dashboard | settings | memorial | relation | steps),
  * selectedPanel (list | detail), and browser history (pushState / popstate).
  * Decoupled from TodoContext so it can be tested / reused independently.
  */
 
 import { useState, useEffect, useCallback } from 'react';
 
-// 'steps' = 环节管理页面 (v3 kind=step), 'loop' = 环路编排页面。
-// 复用现有的 'detail' panel,环节/环路页面本身就是 detail panel 内容。
-export type View = 'dashboard' | 'settings' | 'memorial' | 'relation' | 'steps' | 'loop';
+// 'steps' = 环节管理页面 (v3 kind=step)。环路编排通过左栏 Segmented 的"环路"tab 访问。
+// 复用现有的 'detail' panel,环节页面本身就是 detail panel 内容。
+export type View = 'dashboard' | 'settings' | 'memorial' | 'relation' | 'steps';
 export type Panel = 'list' | 'detail';
 
 // 哪些 view 是合法的 URL 参数(popstate / 直接改 URL 都需要校验)
-const KNOWN_VIEWS: View[] = ['dashboard', 'settings', 'memorial', 'relation', 'steps', 'loop'];
+const KNOWN_VIEWS: View[] = ['dashboard', 'settings', 'memorial', 'relation', 'steps'];
 
 // ─── Helpers ─────────────────────────────────────────────────
 

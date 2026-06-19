@@ -16,7 +16,6 @@ import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
 import { StepList } from './components/StepList';
-import { LoopStudio } from './components/LoopStudio';
 import { LoopDetailPanel } from './components/LoopStudioDetailPanel';
 import * as dbLoops from './utils/database/loops';
 import { EXECUTION_PANEL, SIDEBAR_WIDTH } from './constants';
@@ -171,7 +170,6 @@ function AppContent() {
               onShowMemorial={() => { clearSelection(); showView('memorial'); }}
               onShowRelationMap={() => { clearSelection(); showView('relation'); }}
               onShowSteps={() => { clearSelection(); showView('steps'); }}
-              onShowLoop={() => { clearSelection(); showView('loop'); }}
               onShowSettings={() => { clearSelection(); showView('settings'); }}
               onSelectLoop={handleSelectLoop}
             />
@@ -253,8 +251,6 @@ function AppContent() {
               <RelationMap onBack={isMobile ? backToList : undefined} />
             ) : activeView === 'steps' ? (
               <StepList onBack={isMobile ? backToList : undefined} />
-            ) : activeView === 'loop' ? (
-              <LoopStudio onBack={isMobile ? backToList : undefined} />
             ) : (
               <Dashboard onBack={isMobile ? backToList : undefined} />
             )}

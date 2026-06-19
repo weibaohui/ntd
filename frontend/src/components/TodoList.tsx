@@ -11,7 +11,6 @@ import type { ProjectDirectory, Todo } from '@/types';
 import { ExecutorBadge } from './ExecutorBadge';
 import { PromoteToStepButton } from './PromoteToStepButton';
 import { LoopListPanel } from './LoopStudioListPanel';
-import { LoopIcon } from './LoopIcon';
 import type { LoopListItem } from '@/types/loop';
 import * as dbLoops from '@/utils/database/loops';
 import { demoteTodoToItem } from '@/utils/database/steps';
@@ -25,7 +24,6 @@ interface TodoListProps {
   onShowMemorial?: () => void;
   onShowRelationMap?: () => void;
   onShowSteps?: () => void;
-  onShowLoop?: () => void;
   onShowSettings?: () => void;
   onSelectLoop?: (loopId: number) => void;
 }
@@ -51,7 +49,6 @@ function buildDesktopNavActions(
   onShowDashboard: TodoListProps['onShowDashboard'],
   onShowMemorial: TodoListProps['onShowMemorial'],
   onShowRelationMap: TodoListProps['onShowRelationMap'],
-  onShowLoop?: () => void,
 ) {
   return [
     {
@@ -75,17 +72,10 @@ function buildDesktopNavActions(
       onClick: onShowRelationMap ? () => onShowRelationMap() : undefined,
       ariaLabel: '关联图',
     },
-    {
-      key: 'loop',
-      title: '环路',
-      icon: <LoopIcon style={{ fontSize: 16 }} />,
-      onClick: onShowLoop,
-      ariaLabel: '环路编排',
-    },
   ].filter(action => typeof action.onClick === 'function');
 }
 
-export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowLoop, onShowSettings, onSelectLoop }: TodoListProps) {
+export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSettings, onSelectLoop }: TodoListProps) {
   const { state, dispatch } = useApp();
   const { themeMode, toggleTheme } = useTheme();
   const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
@@ -186,8 +176,8 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
   }, [dispatch]);
 
   const desktopNavActions = useMemo(
-    () => buildDesktopNavActions(onShowDashboard, onShowMemorial, onShowRelationMap, onShowLoop),
-    [onShowDashboard, onShowMemorial, onShowRelationMap, onShowLoop],
+    () => buildDesktopNavActions(onShowDashboard, onShowMemorial, onShowRelationMap),
+    [onShowDashboard, onShowMemorial, onShowRelationMap],
   );
 
   /**
