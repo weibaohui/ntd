@@ -1,4 +1,4 @@
-use axum::{Json, extract::{Path, Query, State}};
+use axum::extract::{Path, Query, State};
 use cron::Schedule;
 use serde::Deserialize;
 use std::str::FromStr;

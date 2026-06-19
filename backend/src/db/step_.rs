@@ -76,8 +76,8 @@ impl Database {
         &self,
         step_ids: &[i64],
     ) -> Result<std::collections::HashMap<i64, i64>, sea_orm::DbErr> {
-        use crate::db::entity::loop_steps;
-        use sea_orm::{Statement, QueryResult};
+        
+        use sea_orm::Statement;
         
         // 早期返回空结果，避免构建空 SQL
         if step_ids.is_empty() {
