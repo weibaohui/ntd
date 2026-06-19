@@ -73,7 +73,7 @@ function buildDesktopNavActions(
   ].filter(action => typeof action.onClick === 'function');
 }
 
-export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSettings, onSelectLoop }: TodoListProps) {
+export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSteps, onShowSettings, onSelectLoop }: TodoListProps) {
   const { state, dispatch } = useApp();
   const { themeMode, toggleTheme } = useTheme();
   const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
@@ -82,9 +82,9 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
   // 搜索关键字状态，用于按标题或提示词过滤 todo 列表
   const [searchKeyword, setSearchKeyword] = useState('');
   // 列表模式：'item' = 事项, 'step' = 环节, 'loop' = 环路
-  const [listMode, setListMode] = useState<'item' | 'step' | 'loop'>(() => {
+  const [listMode, setListMode] = useState<'item' | 'loop'>(() => {
     const saved = localStorage.getItem('ntd_list_mode');
-    if (saved === 'item' || saved === 'step' || saved === 'loop') return saved;
+    if (saved === 'item' || saved === 'loop') return saved;
     return 'item';
   });
   // 环路列表数据（只在 listMode === 'loop' 时使用）
@@ -162,12 +162,9 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
       });
     }
 
-    // 按类型过滤 (v3 kind 列)：'item' = 仅事项，'step' = 仅环节
-    // 两个模式都显式过滤，避免事项列表中出现环节。
+    // 按类型过滤：仅显示事项
     if (listMode === 'item') {
       result = result.filter(todo => (todo.kind ?? 'item') === 'item');
-    } else if (listMode === 'step') {
-      result = result.filter(todo => (todo.kind ?? 'item') === 'step');
     }
 
     return result;
@@ -532,13 +529,20 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
         </div>
       )}
 
-      {/* 列表选择：事项 / 专家 / 环路 */}
+      {/* 列表选择：事项 / 环节 / 环路 */}
       <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
         <Segmented
           block
           size="small"
           value={listMode}
-          onChange={(v) => setListMode(v as 'item' | 'step' | 'loop')}
+          onChange={(v) => {
+            if (v === 'step') {
+              // 环节已有独立路由/页面，直接导航过去
+              onShowSteps?.();
+              return;
+            }
+            setListMode(v as 'item' | 'loop');
+          }}
           options={[
             { label: '事项', value: 'item' },
             { label: '环节', value: 'step' },
