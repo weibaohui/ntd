@@ -399,7 +399,7 @@ pub async fn get_step(
 pub async fn update_step(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-    Json(req): Json<UpdateStepRequest>,
+    ApiJson(req): ApiJson<UpdateStepRequest>,
 ) -> Result<ApiResponse<StepDto>, AppError> {
     if req.title.trim().is_empty() {
         return Err(AppError::BadRequest("title 不能为空".to_string()));
@@ -428,7 +428,6 @@ pub async fn delete_step(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<ApiResponse<()>, AppError> {
-    state.db.get_step(id).await?.ok_or(AppError::NotFound)?;
     // 环节可能被 loop 引用，由数据库外键约束保护（RESTRICT），
     // 被引用时后端返回外键冲突错误，前端会显示相应提示。
     state.db.delete_step(id).await?;

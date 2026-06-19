@@ -71,20 +71,47 @@ impl Database {
             .await? as i64)
     }
 
-    /// 批量统计多个 step 的引用计数。
+    /// 批量统计多个 step 的引用计数（使用单次聚合查询避免 N+1 问题）。
     pub async fn count_loop_steps_for_steps(
         &self,
         step_ids: &[i64],
     ) -> Result<std::collections::HashMap<i64, i64>, sea_orm::DbErr> {
         use crate::db::entity::loop_steps;
-        let mut map = std::collections::HashMap::new();
-        for id in step_ids {
-            let count = loop_steps::Entity::find()
-                .filter(loop_steps::Column::TodoId.eq(*id))
-                .count(&self.conn)
-                .await? as i64;
-            map.insert(*id, count);
+        use sea_orm::{Statement, QueryResult};
+        
+        // 早期返回空结果，避免构建空 SQL
+        if step_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
         }
+        
+        // 构建 IN 子句的占位符：?1, ?2, ?3, ...
+        let placeholders: Vec<String> = (1..=step_ids.len())
+            .map(|i| format!("?{}", i))
+            .collect();
+        let in_clause = placeholders.join(",");
+        
+        // 单次聚合查询：GROUP BY todo_id 一次性获取所有引用计数
+        let sql = format!(
+            "SELECT todo_id, COUNT(*) as cnt FROM loop_steps WHERE todo_id IN ({}) GROUP BY todo_id",
+            in_clause
+        );
+        
+        let values: Vec<sea_orm::Value> = step_ids
+            .iter()
+            .map(|id| (*id).into())
+            .collect();
+        
+        let stmt = Statement::from_sql_and_values(sea_orm::DbBackend::Sqlite, sql, values);
+        let rows = self.conn.query_all(stmt).await?;
+        
+        // 从查询结果构建 HashMap
+        let mut map = std::collections::HashMap::new();
+        for row in rows {
+            let todo_id: i64 = row.try_get("", "todo_id")?;
+            let cnt: i64 = row.try_get("", "cnt")?;
+            map.insert(todo_id, cnt);
+        }
+        
         Ok(map)
     }
 

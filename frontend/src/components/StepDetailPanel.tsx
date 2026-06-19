@@ -26,6 +26,7 @@ export function StepDetailPanel({ stepId, onStepUpdated }: StepDetailPanelProps)
   const { message } = AntApp.useApp();
   const [step, setStep] = useState<StepSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -60,9 +61,13 @@ export function StepDetailPanel({ stepId, onStepUpdated }: StepDetailPanelProps)
 
   const loadStep = useCallback(() => {
     setLoading(true);
+    setError(null);
     dbSteps.getStep(stepId)
       .then(setStep)
-      .catch(() => setStep(null))
+      .catch(() => {
+        setStep(null);
+        setError('加载环节失败');
+      })
       .finally(() => setLoading(false));
   }, [stepId]);
 
@@ -167,7 +172,7 @@ export function StepDetailPanel({ stepId, onStepUpdated }: StepDetailPanelProps)
     return <Skeleton active style={{ padding: 24 }} />;
   }
   if (!step) {
-    return <Empty description="无法加载该环节" style={{ marginTop: 64 }} />;
+    return <Empty description={error || "无法加载该环节"} style={{ marginTop: 64 }} />;
   }
 
   return (
