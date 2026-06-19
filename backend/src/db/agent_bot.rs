@@ -86,11 +86,18 @@ impl Database {
 
     pub async fn update_agent_bot_config(&self, id: i64, config: &str) -> Result<(), sea_orm::DbErr> {
         let bot = agent_bots::Entity::find_by_id(id).one(&self.conn).await?;
-        if let Some(bot) = bot {
-            let mut am: agent_bots::ActiveModel = bot.into();
-            am.config = ActiveValue::Set(Some(config.to_string()));
-            am.update(&self.conn).await?;
-        }
+        // 幽灵 id 静默 no-op 是历史契约；显式 warn 让上游 handler 传错 id 时
+        // 能在日志里看到提示,避免配置错误被静默吞掉。
+        let Some(bot) = bot else {
+            tracing::warn!(
+                bot_id = id,
+                "update_agent_bot_config called with unknown bot id; no-op"
+            );
+            return Ok(());
+        };
+        let mut am: agent_bots::ActiveModel = bot.into();
+        am.config = ActiveValue::Set(Some(config.to_string()));
+        am.update(&self.conn).await?;
         Ok(())
     }
 }

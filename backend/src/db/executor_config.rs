@@ -56,24 +56,31 @@ impl Database {
             .filter(executors::Column::Name.eq(name))
             .one(&self.conn)
             .await?;
-        if let Some(m) = model {
-            let now = crate::models::utc_timestamp();
-            let mut am: executors::ActiveModel = m.into();
-            if let Some(p) = path {
-                am.path = ActiveValue::Set(p.to_string());
-            }
-            if let Some(e) = enabled {
-                am.enabled = ActiveValue::Set(e);
-            }
-            if let Some(d) = display_name {
-                am.display_name = ActiveValue::Set(d.to_string());
-            }
-            if let Some(sd) = session_dir {
-                am.session_dir = ActiveValue::Set(sd.to_string());
-            }
-            am.updated_at = ActiveValue::Set(Some(now));
-            am.update(&self.conn).await?;
+        // 幽灵 id 走静默 no-op 是历史契约；显式 warn 让上游 handler 拼错 id 时
+        // 能在日志里看到提示,避免配置错误被静默吞掉。
+        let Some(m) = model else {
+            tracing::warn!(
+                executor_name = %name,
+                "update_executor called with unknown executor name; no-op"
+            );
+            return Ok(());
+        };
+        let now = crate::models::utc_timestamp();
+        let mut am: executors::ActiveModel = m.into();
+        if let Some(p) = path {
+            am.path = ActiveValue::Set(p.to_string());
         }
+        if let Some(e) = enabled {
+            am.enabled = ActiveValue::Set(e);
+        }
+        if let Some(d) = display_name {
+            am.display_name = ActiveValue::Set(d.to_string());
+        }
+        if let Some(sd) = session_dir {
+            am.session_dir = ActiveValue::Set(sd.to_string());
+        }
+        am.updated_at = ActiveValue::Set(Some(now));
+        am.update(&self.conn).await?;
         Ok(())
     }
 
@@ -84,7 +91,14 @@ impl Database {
         cfg_executors: &crate::config::ExecutorPaths,
     ) -> Result<(), sea_orm::DbErr> {
         let count = executors::Entity::find().count(&self.conn).await?;
+        // 首次迁移语义: 表非空时不再写 DB,避免覆盖用户通过 UI 改过的 path。
+        // 显式 warn 让用户改 config.yaml 重启后能在日志里看到"配置被忽略"的提示,
+        // 否则升级二进制路径的场景会悄无声息失效。
         if count > 0 {
+            tracing::warn!(
+                configured_executors = cfg_executors.paths.len(),
+                "executors table non-empty; skipping config.yaml migration (update via UI instead)"
+            );
             return Ok(());
         }
 
