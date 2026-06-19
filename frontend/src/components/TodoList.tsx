@@ -82,7 +82,11 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
   // 搜索关键字状态，用于按标题或提示词过滤 todo 列表
   const [searchKeyword, setSearchKeyword] = useState('');
   // 列表模式：'item' = 事项, 'step' = 环节, 'loop' = 环路
-  const [listMode, setListMode] = useState<'item' | 'step' | 'loop'>('item');
+  const [listMode, setListMode] = useState<'item' | 'step' | 'loop'>(() => {
+    const saved = localStorage.getItem('ntd_list_mode');
+    if (saved === 'item' || saved === 'step' || saved === 'loop') return saved;
+    return 'item';
+  });
   // 环路列表数据（只在 listMode === 'loop' 时使用）
   const [loopList, setLoopList] = useState<LoopListItem[]>([]);
   const [loopLoading, setLoopLoading] = useState(false);
@@ -122,6 +126,11 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
       .then(setLoopList)
       .catch(() => setLoopList([]))
       .finally(() => setLoopLoading(false));
+  }, [listMode]);
+
+  // 持久化列表模式到 localStorage
+  useEffect(() => {
+    localStorage.setItem('ntd_list_mode', listMode);
   }, [listMode]);
 
   const filteredTodos = useMemo(() => {
