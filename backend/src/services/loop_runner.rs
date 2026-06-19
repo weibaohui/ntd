@@ -273,29 +273,30 @@ impl LoopRunner {
                 }
             };
 
-            // 4e. 写回 step execution
-            let final_step_status = step_status.clone();
+            // 4e. 评分闸门：若 step 成功且设置了 min_rating，等待自动评审并做阈值判断
+            let final_step_status = if step_status == "success" && step.min_rating.is_some() {
+                let passed = self
+                    .apply_rating_gate(record_id, step.min_rating.unwrap(), &step.unrated_policy)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if passed { "success" } else { "failed" }
+            } else {
+                &step_status
+            };
+
+            // 4f. 写回 step execution（状态已包含评分闸门结果）
             self.ctx
                 .db
                 .finish_step_execution(
                     step_exec.id,
-                    &final_step_status,
+                    final_step_status,
                     Some(record_id),
                     None,
                 )
                 .await
                 .map_err(|e| e.to_string())?;
 
-            // 4e. 评分闸门：若 step 成功且设置了 min_rating，等待自动评审并做阈值判断
-            let passed = if step_status == "success" && step.min_rating.is_some() {
-                self.apply_rating_gate(record_id, step.min_rating.unwrap(), &step.unrated_policy)
-                    .await
-                    .map_err(|e| e.to_string())?
-            } else {
-                step_status == "success"
-            };
-
-            if passed {
+            if final_step_status == "success" {
                 completed += 1;
                 last_failed_record = None;
                 let _ = self
@@ -352,7 +353,7 @@ impl LoopRunner {
             task_manager: self.ctx.task_manager.clone(),
             config: self.ctx.config.clone(),
             hook_service: self.hook_service.clone(),
-            todo_id: step_meta.source_todo_id.unwrap_or(0),
+            todo_id: 0, // loop 环节执行不是 todo 执行，避免混入 todo 历史
             message: step_meta.prompt.clone(),
             req_executor: step_meta.executor.clone(),
             trigger_type: format!("loop_stage:{}", trigger_type),

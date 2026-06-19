@@ -15,6 +15,9 @@ import {
   MinusCircleOutlined,
   ReloadOutlined,
   HistoryOutlined,
+  LinkOutlined,
+  StarOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import type { LoopExecutionDto, LoopExecutionDetail } from '@/types/loop';
@@ -193,6 +196,17 @@ function StepExecList({ stepExecs }: { stepExecs: Record<string, any>[] }) {
             {execStatusView(s.status).icon}
             <span>环节 #{s.step_id}</span>
             <Tag color={execStatusView(s.status).color}>{s.status}</Tag>
+            {s.rating != null && (
+              <Tag color={s.rating >= (s.min_rating || 0) ? 'green' : 'orange'} icon={<StarOutlined />}>
+                评分 {s.rating}
+              </Tag>
+            )}
+            {s.min_rating != null && (
+              <Tag color="blue">阈值 {s.min_rating}</Tag>
+            )}
+            {s.unrated_policy && (
+              <Tag>{s.unrated_policy === 'skip' ? '未达标跳过' : '未达标放行'}</Tag>
+            )}
             {s.started_at && (
               <span style={{ color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 12 }}>
                 {durationLabel(s.started_at, s.finished_at)}
@@ -203,9 +217,39 @@ function StepExecList({ stepExecs }: { stepExecs: Record<string, any>[] }) {
         children: (
           <Descriptions size="small" column={1}>
             <Descriptions.Item label="环节 ID">{s.step_id}</Descriptions.Item>
-            <Descriptions.Item label="Todo ID">{s.todo_id}</Descriptions.Item>
+            <Descriptions.Item label="状态">
+              <Tag color={execStatusView(s.status).color}>{s.status}</Tag>
+            </Descriptions.Item>
+            {s.rating != null && (
+              <Descriptions.Item label="评分">
+                <Space>
+                  <span style={{ fontSize: 16, fontWeight: 600, color: s.rating >= (s.min_rating || 0) ? 'var(--color-success, #22c55e)' : 'var(--color-error, #ef4444)' }}>
+                    {s.rating}
+                  </span>
+                  <span style={{ color: 'var(--color-text-tertiary, #94a3b8)' }}>/ 100</span>
+                  {s.min_rating != null && (
+                    <span style={{ color: 'var(--color-text-tertiary, #94a3b8)', marginLeft: 8 }}>
+                      阈值 {s.min_rating}
+                      {s.rating >= s.min_rating ? ' ✅' : ' ❌'}
+                    </span>
+                  )}
+                </Space>
+              </Descriptions.Item>
+            )}
+            {s.unrated_policy && (
+              <Descriptions.Item label="未达标策略">
+                <Tag>{s.unrated_policy === 'skip' ? '跳过后续环节' : '放行'}</Tag>
+              </Descriptions.Item>
+            )}
+            {s.min_rating != null && s.rating == null && (
+              <Descriptions.Item label="评分">
+                <span style={{ color: 'var(--color-text-tertiary, #94a3b8)' }}>未评审</span>
+              </Descriptions.Item>
+            )}
             <Descriptions.Item label="执行记录">
-              {s.execution_record_id ? `#${s.execution_record_id}` : '-'}
+              {s.execution_record_id ? (
+                <span>#<code>{s.execution_record_id}</code></span>
+              ) : '-'}
             </Descriptions.Item>
             <Descriptions.Item label="开始">{s.started_at ?? '-'}</Descriptions.Item>
             <Descriptions.Item label="结束">{s.finished_at ?? '-'}</Descriptions.Item>

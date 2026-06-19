@@ -70,6 +70,9 @@ export interface LoopStepExecutionDto {
   error_message: string | null;
   started_at: string | null;
   finished_at: string | null;
+  rating: number | null;
+  unrated_policy: string | null;
+  min_rating: number | null;
 }
 
 export interface TodoSummaryForLoop {

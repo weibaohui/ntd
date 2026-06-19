@@ -234,6 +234,12 @@ pub struct LoopStepExecutionDto {
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub error_message: Option<String>,
+    /// 自动评审评分（0-100），来自关联的 execution_record
+    pub rating: Option<i32>,
+    /// 评分未达阈值时的策略（skip / pass）
+    pub unrated_policy: Option<String>,
+    /// 评分阈值
+    pub min_rating: Option<i32>,
 }
 
 impl From<loop_step_executions::Model> for LoopStepExecutionDto {
@@ -248,7 +254,19 @@ impl From<loop_step_executions::Model> for LoopStepExecutionDto {
             started_at: m.started_at,
             finished_at: m.finished_at,
             error_message: m.error_message,
+            rating: None,
+            unrated_policy: None,
+            min_rating: None,
         }
+    }
+}
+
+impl LoopStepExecutionDto {
+    pub fn with_review(mut self, rating: Option<i32>, policy: Option<String>, threshold: Option<i32>) -> Self {
+        self.rating = rating;
+        self.unrated_policy = policy;
+        self.min_rating = threshold;
+        self
     }
 }
 
