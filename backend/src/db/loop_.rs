@@ -16,7 +16,7 @@ use sea_orm::{
 use std::collections::HashMap;
 
 use crate::db::entity::{
-    loop_executions, loop_hooks, loop_stage_executions, loop_stages, loop_triggers, loops,
+    loop_executions, loop_stage_executions, loop_stages, loop_triggers, loops,
 };
 use crate::db::Database;
 
@@ -106,7 +106,7 @@ impl Database {
         Ok(())
     }
 
-    /// 复制 loop 及其所有 trigger/stage/hook；execution 不复制。
+    /// 复制 loop 及其所有 trigger/stage；execution 不复制。
     ///
     /// 用于 UI 的「另存为」/「复制为新版本」按钮。
     /// 复制时 name 追加「(副本)」前缀，status 重置为 draft，
@@ -157,27 +157,6 @@ impl Database {
                 s.enabled != 0,
             )
             .await?;
-        }
-
-        // 复制 hooks
-        let hooks = self.list_hooks_by_loop(source_id).await?;
-        for h in hooks {
-            // 注意: 复制 hooks 时 source_stage_id 需要映射到新 loop 的 stage id
-            // 因为 create_hook 不接受 source_stage_id 参数,这里直接走 SQL
-            let now = crate::models::utc_timestamp();
-            let am = loop_hooks::ActiveModel {
-                loop_id: ActiveValue::Set(new_loop.id),
-                hook_position: ActiveValue::Set(h.hook_position),
-                source_stage_id: ActiveValue::Set(h.source_stage_id),
-                target_todo_id: ActiveValue::Set(h.target_todo_id),
-                skip_if_missing: ActiveValue::Set(h.skip_if_missing),
-                enabled: ActiveValue::Set(h.enabled),
-                min_rating: ActiveValue::Set(h.min_rating),
-                unrated_policy: ActiveValue::Set(h.unrated_policy),
-                created_at: ActiveValue::Set(Some(now)),
-                ..Default::default()
-            };
-            am.insert(&self.conn).await?;
         }
 
         Ok(Some(new_loop))
@@ -418,115 +397,6 @@ impl Database {
             am.order_index = Set(idx as i32);
             am.update(&self.conn).await?;
         }
-        Ok(())
-    }
-
-    // ====== Loop Hooks ======
-
-    pub async fn list_hooks_by_loop(
-        &self,
-        loop_id: i64,
-    ) -> Result<Vec<loop_hooks::Model>, sea_orm::DbErr> {
-        loop_hooks::Entity::find()
-            .filter(loop_hooks::Column::LoopId.eq(loop_id))
-            .order_by_asc(loop_hooks::Column::Id)
-            .all(&self.conn)
-            .await
-    }
-
-    pub async fn list_hooks_by_loop_and_position(
-        &self,
-        loop_id: i64,
-        position: &str,
-    ) -> Result<Vec<loop_hooks::Model>, sea_orm::DbErr> {
-        loop_hooks::Entity::find()
-            .filter(loop_hooks::Column::LoopId.eq(loop_id))
-            .filter(loop_hooks::Column::HookPosition.eq(position))
-            .filter(loop_hooks::Column::Enabled.eq(1))
-            .order_by_asc(loop_hooks::Column::Id)
-            .all(&self.conn)
-            .await
-    }
-
-    /// 列出某阶段后置 hook(post_stage),用于阶段执行完后触发。
-    /// 同时支持 source_stage_id = NULL 的情况(供 post_loop 复用),调用方需自行过滤。
-    pub async fn list_post_stage_hooks(
-        &self,
-        loop_id: i64,
-        source_stage_id: i64,
-    ) -> Result<Vec<loop_hooks::Model>, sea_orm::DbErr> {
-        loop_hooks::Entity::find()
-            .filter(loop_hooks::Column::LoopId.eq(loop_id))
-            .filter(loop_hooks::Column::HookPosition.eq("post_stage"))
-            .filter(loop_hooks::Column::SourceStageId.eq(Some(source_stage_id)))
-            .filter(loop_hooks::Column::Enabled.eq(1))
-            .order_by_asc(loop_hooks::Column::Id)
-            .all(&self.conn)
-            .await
-    }
-
-    pub async fn get_hook(
-        &self,
-        id: i64,
-    ) -> Result<Option<loop_hooks::Model>, sea_orm::DbErr> {
-        loop_hooks::Entity::find_by_id(id).one(&self.conn).await
-    }
-
-    pub async fn create_hook(
-        &self,
-        loop_id: i64,
-        hook_position: &str,
-        source_stage_id: Option<i64>,
-        target_todo_id: i64,
-        skip_if_missing: bool,
-        enabled: bool,
-        min_rating: Option<i32>,
-        unrated_policy: &str,
-    ) -> Result<loop_hooks::Model, sea_orm::DbErr> {
-        let now = crate::models::utc_timestamp();
-        let am = loop_hooks::ActiveModel {
-            loop_id: ActiveValue::Set(loop_id),
-            hook_position: ActiveValue::Set(hook_position.to_string()),
-            source_stage_id: ActiveValue::Set(source_stage_id),
-            target_todo_id: ActiveValue::Set(target_todo_id),
-            skip_if_missing: ActiveValue::Set(if skip_if_missing { 1 } else { 0 }),
-            enabled: ActiveValue::Set(if enabled { 1 } else { 0 }),
-            min_rating: ActiveValue::Set(min_rating),
-            unrated_policy: ActiveValue::Set(unrated_policy.to_string()),
-            created_at: ActiveValue::Set(Some(now)),
-            ..Default::default()
-        };
-        am.insert(&self.conn).await
-    }
-
-    pub async fn update_hook(
-        &self,
-        id: i64,
-        hook_position: &str,
-        source_stage_id: Option<i64>,
-        target_todo_id: i64,
-        skip_if_missing: bool,
-        enabled: bool,
-        min_rating: Option<i32>,
-        unrated_policy: &str,
-    ) -> Result<(), sea_orm::DbErr> {
-        let existing = loop_hooks::Entity::find_by_id(id).one(&self.conn).await?;
-        if let Some(c) = existing {
-            let mut am: loop_hooks::ActiveModel = c.into();
-            am.hook_position = ActiveValue::Set(hook_position.to_string());
-            am.source_stage_id = ActiveValue::Set(source_stage_id);
-            am.target_todo_id = ActiveValue::Set(target_todo_id);
-            am.skip_if_missing = ActiveValue::Set(if skip_if_missing { 1 } else { 0 });
-            am.enabled = ActiveValue::Set(if enabled { 1 } else { 0 });
-            am.min_rating = ActiveValue::Set(min_rating);
-            am.unrated_policy = ActiveValue::Set(unrated_policy.to_string());
-            am.update(&self.conn).await?;
-        }
-        Ok(())
-    }
-
-    pub async fn delete_hook(&self, id: i64) -> Result<(), sea_orm::DbErr> {
-        loop_hooks::Entity::delete_by_id(id).exec(&self.conn).await?;
         Ok(())
     }
 
@@ -812,11 +682,7 @@ impl Database {
         };
         let triggers = self.list_triggers_by_loop(loop_id).await?;
         let stages_with_meta = self.list_stages_with_todo_meta(loop_id).await?;
-        let hooks = self.list_hooks_by_loop(loop_id).await?;
         let mut todo_ids: Vec<i64> = stages_with_meta.iter().map(|(s, _, _, _)| s.todo_id).collect();
-        for h in &hooks {
-            todo_ids.push(h.target_todo_id);
-        }
         todo_ids.sort_unstable();
         todo_ids.dedup();
         let todos = self.get_todos_by_ids(&todo_ids).await?;
@@ -828,7 +694,6 @@ impl Database {
             triggers,
             stages,
             stages_meta: stages_with_meta,
-            hooks,
             todo_map,
         }))
     }
@@ -852,6 +717,5 @@ pub struct LoopFullView {
     pub stages: Vec<loop_stages::Model>,
     /// (stage, todo_title, todo_executor, todo_status)
     pub stages_meta: Vec<(loop_stages::Model, String, String, String)>,
-    pub hooks: Vec<loop_hooks::Model>,
     pub todo_map: HashMap<i64, crate::db::entity::todos::Model>,
 }

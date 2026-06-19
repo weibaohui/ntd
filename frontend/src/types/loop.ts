@@ -3,7 +3,6 @@
 // 与 backend/src/models/loop_.rs 一一对应：
 // - LoopDto = 环路主表 DTO
 // - LoopTriggerDto = 触发器 DTO (cron / webhook / feishu / manual)
-// - LoopHookDto = loop hook DTO (pre_loop / post_loop / pre_stage / post_stage)
 // - LoopExecutionDto = 单次执行记录
 //
 // 前端组件用这些类型组装 LoopStudio 页面。
@@ -17,19 +16,13 @@ export type LoopTriggerType =
   | 'feishu_message'
   | 'feishu_command'
   | 'todo_completed'
-  | 'todo_state_changed'
-  | 'tag_added';
-
-export type LoopHookPosition = 'pre_loop' | 'post_loop' | 'pre_stage' | 'post_stage';
+  | 'todo_state_changed';
 
 export type LoopRunMode = 'sequential'; // 当前仅顺序; 留扩展位
 
 export type LoopUnratedPolicy = 'skip' | 'continue';
 
 export type LoopExecutionStatus = 'running' | 'success' | 'partial' | 'failed' | 'cancelled';
-
-// 后端仍返回 stages 数组（loop_stages 表），前端简化展示为"执行环节"列表
-// 后续 migration 去掉 loop_stages 表后，改为 step_ids 数组
 
 export interface LoopDto {
   id: number;
@@ -50,19 +43,6 @@ export interface LoopTriggerDto {
   config: string; // JSON 字符串 (cron 表达式 / webhook_id / matches 等)
   enabled: boolean;
   priority: number;
-  created_at: string | null;
-}
-
-export interface LoopHookDto {
-  id: number;
-  loop_id: number;
-  hook_position: string;
-  source_stage_id: number | null;
-  target_todo_id: number;
-  skip_if_missing: boolean;
-  enabled: boolean;
-  min_rating: number | null;
-  unrated_policy: string;
   created_at: string | null;
 }
 
@@ -97,23 +77,6 @@ export interface TodoSummaryForLoop {
   title: string;
   status: string;
   executor: string;
-}
-
-export interface LoopDetail {
-  // 后端用 #[serde(flatten)] 把 LoopDto 拍平
-  id: number;
-  name: string;
-  description: string;
-  workspace: string | null;
-  status: string;
-  color: string;
-  icon: string;
-  created_at: string | null;
-  updated_at: string | null;
-  triggers: LoopTriggerDto[];
-  stages: LoopStageDto[];
-  hooks: LoopHookDto[];
-  todo_map: Record<number, TodoSummaryForLoop>;
 }
 
 export interface LoopStageRawDto {
@@ -175,8 +138,22 @@ export interface ReorderStagesRequest {
   ordered_ids: number[];
 }
 
+export interface LoopDetail {
+  id: number;
+  name: string;
+  description: string;
+  workspace: string | null;
+  status: string;
+  color: string;
+  icon: string;
+  created_at: string | null;
+  updated_at: string | null;
+  triggers: LoopTriggerDto[];
+  stages: LoopStageDto[];
+  todo_map: Record<number, TodoSummaryForLoop>;
+}
+
 export interface LoopListItem {
-  // 后端用 #[serde(flatten)] 把 LoopDto 拍平
   id: number;
   name: string;
   description: string;
@@ -226,7 +203,6 @@ export interface CreateLoopRequest {
 }
 
 export interface UpdateLoopRequest {
-  // 后端要求全量更新, 所有字段必填
   name: string;
   description: string;
   workspace: string | null;
@@ -246,26 +222,6 @@ export interface UpdateTriggerRequest {
   config: string;
   enabled: boolean;
   priority: number;
-}
-
-export interface CreateHookRequest {
-  hook_position: LoopHookPosition | string;
-  source_stage_id?: number | null;
-  target_todo_id: number;
-  skip_if_missing?: boolean;
-  enabled?: boolean;
-  min_rating?: number | null;
-  unrated_policy?: LoopUnratedPolicy | string;
-}
-
-export interface UpdateHookRequest {
-  hook_position: LoopHookPosition | string;
-  source_stage_id: number | null;
-  target_todo_id: number;
-  skip_if_missing: boolean;
-  enabled: boolean;
-  min_rating: number | null;
-  unrated_policy: LoopUnratedPolicy | string;
 }
 
 export interface UpdateLoopStatusRequest {

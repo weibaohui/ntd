@@ -2,21 +2,13 @@
 //!
 //! 执行模型：
 //! 1. 创建 loop_executions 行（status=running）
-//! 2. fire pre_loop hooks
-//! 3. 按 order_index 顺序遍历 stages：
-//!    a. fire pre_stage hooks
-//!    b. 启动 stage.todo 的执行（复用 executor_service::start_todo_execution）
-//!    c. 写 loop_stage_execution 行
-//!    d. 订阅 broadcast::tx 等待该 stage 的 ExecEvent::Finished
-//!    e. 应用 rating gate（决定是否继续 / 中止 loop）
-//!    f. fire post_stage hooks
-//! 4. fire post_loop hooks
-//! 5. 计算最终 status（success / partial / failed / cancelled）
-//! 6. 写回 loop_executions
-//!
-//! 与 HookService 的关键差异：hook 是 fire-and-forget（不等待 target 执行完），
-//! loop 必须同步等每个 stage 完成才能做 rating gate 评估和「失败是否继续」决策。
-//! 因此这里用 broadcast::tx.subscribe() 监听 Finished 事件，按 record_id 过滤。
+//! 2. 按 order_index 顺序遍历 stages：
+//!    a. 启动 stage.todo 的执行（复用 executor_service::start_todo_execution）
+//!    b. 写 loop_stage_execution 行
+//!    c. 订阅 broadcast::tx 等待该 stage 的 ExecEvent::Finished
+//!    d. 应用 rating gate（决定是否继续 / 中止 loop）
+//! 3. 计算最终 status（success / partial / failed / cancelled）
+//! 4. 写回 loop_executions
 //!
 //! 整个 run_loop 是 `tokio::spawn` 的，不阻塞调用方（manual trigger / cron /
 //! dispatcher 都把 run_loop 扔到后台）。
@@ -166,18 +158,7 @@ impl LoopRunner {
         self.update_total_stages(loop_execution_id, stages.len() as i32)
             .await?;
 
-        // 3. fire pre_loop hooks
-        let pre_loop_hooks = self
-            .ctx
-            .db
-            .list_hooks_by_loop_and_position(loop_id, "pre_loop")
-            .await
-            .map_err(|e| e.to_string())?;
-        for h in pre_loop_hooks {
-            let _ = self.fire_single_loop_hook(&h, &loop_).await;
-        }
-
-        // 4. 顺序遍历 stages
+        // 3. 顺序遍历 stages
         let mut completed: i32 = 0;
         let mut failed: i32 = 0;
         let mut last_failed_record: Option<i64> = None;
@@ -201,18 +182,7 @@ impl LoopRunner {
                 continue;
             }
 
-            // 4a. pre_stage hooks
-            let pre_stage_hooks = self
-                .ctx
-                .db
-                .list_hooks_by_loop_and_position(loop_id, "pre_stage")
-                .await
-                .map_err(|e| e.to_string())?;
-            for h in pre_stage_hooks.iter().filter(|h| h.source_stage_id == Some(stage.id)) {
-                let _ = self.fire_single_loop_hook(h, &loop_).await;
-            }
-
-            // 4b. 启动 stage execution
+            // a. 启动 stage execution
             let stage_exec = self
                 .ctx
                 .db
@@ -230,7 +200,7 @@ impl LoopRunner {
                 .await
                 .map_err(|e| e.to_string())?;
 
-            // 4c. 实际执行 todo
+            // b. 实际执行 todo
             let todo = match self
                 .ctx
                 .db
@@ -333,30 +303,10 @@ impl LoopRunner {
                     .await;
             }
 
-            // 4f. post_stage hooks（不论成功失败都 fire,gate 由 hook 自身处理）
-            let post_stage_hooks = self
-                .ctx
-                .db
-                .list_post_stage_hooks(loop_id, stage.id)
-                .await
-                .map_err(|e| e.to_string())?;
-            for h in post_stage_hooks {
-                let _ = self.fire_single_loop_hook(&h, &loop_).await;
-            }
+            // 4e.
         }
 
-        // 5. fire post_loop hooks
-        let post_loop_hooks = self
-            .ctx
-            .db
-            .list_hooks_by_loop_and_position(loop_id, "post_loop")
-            .await
-            .map_err(|e| e.to_string())?;
-        for h in post_loop_hooks {
-            let _ = self.fire_single_loop_hook(&h, &loop_).await;
-        }
-
-        // 6. 计算最终 status
+        // 5. 计算最终 status
         let final_status = if failed == 0 {
             "success"
         } else if completed == 0 {
@@ -485,52 +435,6 @@ impl LoopRunner {
                 record_id
             )),
         }
-    }
-
-    /// 触发单个 loop hook（fire-and-forget,不阻塞 loop 主流程）。
-    async fn fire_single_loop_hook(
-        &self,
-        h: &crate::db::entity::loop_hooks::Model,
-        _loop_: &crate::db::entity::loops::Model,
-    ) -> Result<(), String> {
-        // 简化版: 复用 hooks::service 的 fire_for_todo 行为
-        // 创建一个对应 target_todo 的执行,把 source 设成 loop
-        let target = self
-            .ctx
-            .db
-            .get_todo(h.target_todo_id)
-            .await
-            .map_err(|e| e.to_string())?;
-        let Some(target) = target else {
-            if h.skip_if_missing != 0 {
-                return Ok(());
-            }
-            return Err(format!("target todo #{} not found", h.target_todo_id));
-        };
-
-        let request = RunTodoExecutionRequest {
-            db: self.ctx.db.clone(),
-            executor_registry: self.ctx.executor_registry.clone(),
-            tx: self.ctx.tx.clone(),
-            task_manager: self.ctx.task_manager.clone(),
-            config: self.ctx.config.clone(),
-            hook_service: self.hook_service.clone(),
-            todo_id: target.id,
-            message: target.prompt.clone(),
-            req_executor: target.executor.clone(),
-            trigger_type: format!("loop_hook:{}", h.hook_position),
-            params: None,
-            resume_session_id: None,
-            resume_message: None,
-            chain: vec![],
-            source_todo_id: None,
-            source_todo_title: None,
-            source_hook_id: Some(h.id),
-            feishu_bot_id: None,
-            feishu_receive_id: None,
-        };
-        let _ = run_todo_execution_with_params(request).await;
-        Ok(())
     }
 
     /// 把 loop_executions 的 finished_at 清空（避免被 finish_loop_execution 错填）。

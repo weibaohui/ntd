@@ -10,7 +10,6 @@ pub mod feishu_response_config;
 pub mod feishu_group_whitelist;
 pub mod feishu_project_bindings;
 pub mod loop_executions;
-pub mod loop_hooks;
 pub mod loop_stage_executions;
 pub mod loop_stages;
 pub mod loop_triggers;
@@ -40,7 +39,6 @@ pub mod prelude {
     pub use super::feishu_group_whitelist::Entity as FeishuGroupWhitelist;
     pub use super::feishu_project_bindings::Entity as FeishuProjectBindings;
     pub use super::loop_executions::Entity as LoopExecutions;
-    pub use super::loop_hooks::Entity as LoopHooks;
     pub use super::loop_stage_executions::Entity as LoopStageExecutions;
     pub use super::loop_stages::Entity as LoopStages;
     pub use super::loop_triggers::Entity as LoopTriggers;

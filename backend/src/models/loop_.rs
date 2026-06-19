@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::db::entity::{
-    loop_executions, loop_hooks, loop_stage_executions, loop_stages, loop_triggers, loops,
+    loop_executions, loop_stage_executions, loop_stages, loop_triggers, loops,
 };
 use crate::db::loop_::{LoopFullView, LoopListRow};
 use crate::models::TodoStatus;
@@ -42,8 +42,7 @@ pub struct LoopDetail {
     pub loop_: LoopDto,
     pub triggers: Vec<LoopTriggerDto>,
     pub stages: Vec<LoopStageDto>,
-    pub hooks: Vec<LoopHookDto>,
-    /// todo_id -> TodoDto,前端展示 stage/hook 关联的 todo 信息时直接 lookup
+    /// todo_id -> TodoDto,前端展示 stage 关联的 todo 信息时直接 lookup
     pub todo_map: std::collections::HashMap<i64, TodoSummary>,
 }
 
@@ -78,7 +77,6 @@ impl From<LoopFullView> for LoopDetail {
             loop_: view.loop_.into(),
             triggers: view.triggers.into_iter().map(Into::into).collect(),
             stages,
-            hooks: view.hooks.into_iter().map(Into::into).collect(),
             todo_map,
         }
     }
@@ -187,37 +185,6 @@ impl From<loop_stages::Model> for LoopStageRawDto {
             min_rating: m.min_rating,
             unrated_policy: m.unrated_policy,
             enabled: m.enabled != 0,
-            created_at: m.created_at,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LoopHookDto {
-    pub id: i64,
-    pub loop_id: i64,
-    pub hook_position: String,
-    pub source_stage_id: Option<i64>,
-    pub target_todo_id: i64,
-    pub skip_if_missing: bool,
-    pub enabled: bool,
-    pub min_rating: Option<i32>,
-    pub unrated_policy: String,
-    pub created_at: Option<String>,
-}
-
-impl From<loop_hooks::Model> for LoopHookDto {
-    fn from(m: loop_hooks::Model) -> Self {
-        Self {
-            id: m.id,
-            loop_id: m.loop_id,
-            hook_position: m.hook_position,
-            source_stage_id: m.source_stage_id,
-            target_todo_id: m.target_todo_id,
-            skip_if_missing: m.skip_if_missing != 0,
-            enabled: m.enabled != 0,
-            min_rating: m.min_rating,
-            unrated_policy: m.unrated_policy,
             created_at: m.created_at,
         }
     }

@@ -3,20 +3,18 @@
 // 后端路由在 backend/src/handlers/loop_.rs：
 // - GET    /api/loops                        列表(带 trigger/stage/exec 计数)
 // - POST   /api/loops                        新建(draft)
-// - GET    /api/loops/{id}                   详情(loop + triggers + stages + hooks + todo_map)
+// - GET    /api/loops/{id}                   详情(loop + triggers + stages + todo_map)
 // - PUT    /api/loops/{id}                   全量更新基本字段
 // - DELETE /api/loops/{id}                   删除(级联清子表)
 // - PUT    /api/loops/{id}/status            切换 draft/enabled/paused
 // - POST   /api/loops/{id}/duplicate         复制
 // - POST   /api/loops/{id}/trigger           手动触发
 // - GET/POST/PUT/DELETE /api/loops/{id}/triggers[/tid]
-// - GET/POST/PUT/DELETE /api/loops/{id}/hooks[/hid]
 // - GET    /api/loops/{id}/executions        运行历史(分页)
 // - GET    /api/loops/{id}/executions/{eid}  单次执行详情
 
 import { api, unwrap } from './client';
 import type {
-  CreateHookRequest,
   CreateLoopRequest,
   CreateStageRequest,
   CreateTriggerRequest,
@@ -24,13 +22,11 @@ import type {
   LoopExecutionDetail,
   LoopExecutionListQuery,
   LoopExecutionListResponse,
-  LoopHookDto,
   LoopListItem,
   LoopStageDto,
   LoopTriggerDto,
   LoopTriggerResponse,
   ReorderStagesRequest,
-  UpdateHookRequest,
   UpdateLoopRequest,
   UpdateLoopStatusRequest,
   UpdateStageRequest,
@@ -134,28 +130,6 @@ export async function deleteStage(loopId: number, stageId: number): Promise<void
 
 export async function reorderStages(loopId: number, ordered_ids: number[]): Promise<void> {
   await api.post(`/api/loops/${loopId}/stages/reorder`, { ordered_ids } satisfies ReorderStagesRequest);
-}
-
-// ====== Hooks ======
-
-export async function listHooks(loopId: number): Promise<LoopHookDto[]> {
-  return unwrap(await api.get(`/api/loops/${loopId}/hooks`));
-}
-
-export async function createHook(loopId: number, req: CreateHookRequest): Promise<LoopHookDto> {
-  return unwrap(await api.post(`/api/loops/${loopId}/hooks`, req));
-}
-
-export async function updateHook(
-  loopId: number,
-  hookId: number,
-  req: UpdateHookRequest,
-): Promise<LoopHookDto> {
-  return unwrap(await api.put(`/api/loops/${loopId}/hooks/${hookId}`, req));
-}
-
-export async function deleteHook(loopId: number, hookId: number): Promise<void> {
-  await api.delete(`/api/loops/${loopId}/hooks/${hookId}`);
 }
 
 // ====== Executions ======

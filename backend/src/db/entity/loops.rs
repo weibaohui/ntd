@@ -3,8 +3,7 @@ use serde::{Deserialize, Serialize};
 
 /// Loop 主体（一个自动化场景）。
 ///
-/// 与 `todos.hooks` 内联方案并存：loop 是更上层的编排单元，可以编排多个 todo
-/// 顺序执行、附带多种触发器与环路级 hook。
+/// 编排多个 todo 顺序执行、附带多种触发器。
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "loops")]
 pub struct Model {
@@ -31,8 +30,6 @@ pub enum Relation {
     LoopTriggers,
     #[sea_orm(has_many = "super::loop_stages::Entity")]
     LoopStages,
-    #[sea_orm(has_many = "super::loop_hooks::Entity")]
-    LoopHooks,
     #[sea_orm(has_many = "super::loop_executions::Entity")]
     LoopExecutions,
 }
@@ -43,10 +40,6 @@ impl Related<super::loop_triggers::Entity> for Entity {
 
 impl Related<super::loop_stages::Entity> for Entity {
     fn to() -> RelationDef { Relation::LoopStages.def() }
-}
-
-impl Related<super::loop_hooks::Entity> for Entity {
-    fn to() -> RelationDef { Relation::LoopHooks.def() }
 }
 
 impl Related<super::loop_executions::Entity> for Entity {

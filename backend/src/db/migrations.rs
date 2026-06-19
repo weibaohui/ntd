@@ -65,7 +65,7 @@ pub const ALL_MIGRATIONS: &[Migration] = &[
         version: 2,
         name: "loop_studio",
         description:
-            "Loop Studio: loops, loop_triggers, loop_stages, loop_hooks, \
+            "Loop Studio: loops, loop_triggers, loop_stages, \
              loop_executions, loop_stage_executions + indexes/triggers",
         statements: LOOP_STUDIO_STATEMENTS,
     },
@@ -619,31 +619,6 @@ const LOOP_STUDIO_STATEMENTS: &[&str] = &[
      WHEN new.created_at IS NULL OR new.created_at = ''
      BEGIN
          UPDATE loop_stages SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-     END",
-    // ===== loop_hooks: 环路级 hook =====
-    // hook_position: pre_loop / post_loop / pre_stage / post_stage
-    // source_stage_id: pre_loop/post_loop 时为 null;pre_stage/post_stage 时必填
-    "CREATE TABLE IF NOT EXISTS loop_hooks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        loop_id INTEGER NOT NULL,
-        hook_position TEXT NOT NULL,
-        source_stage_id INTEGER,
-        target_todo_id INTEGER NOT NULL,
-        skip_if_missing INTEGER NOT NULL DEFAULT 0,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        min_rating INTEGER,
-        unrated_policy TEXT NOT NULL DEFAULT 'skip',
-        created_at TEXT,
-        FOREIGN KEY (loop_id) REFERENCES loops(id) ON DELETE CASCADE,
-        FOREIGN KEY (source_stage_id) REFERENCES loop_stages(id) ON DELETE CASCADE,
-        FOREIGN KEY (target_todo_id) REFERENCES todos(id) ON DELETE RESTRICT
-    )",
-    "CREATE INDEX IF NOT EXISTS idx_loop_hooks_loop_id ON loop_hooks(loop_id)",
-    "CREATE INDEX IF NOT EXISTS idx_loop_hooks_source_stage ON loop_hooks(source_stage_id)",
-    "CREATE TRIGGER IF NOT EXISTS set_loop_hooks_created_at_utc AFTER INSERT ON loop_hooks
-     WHEN new.created_at IS NULL OR new.created_at = ''
-     BEGIN
-         UPDATE loop_hooks SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
      END",
     // ===== loop_executions: 每次运行的顶层记录 =====
     // trigger_meta 是 JSON,记录是谁/什么触发的(例: feishu 消息原文、webhook body 等)
