@@ -24,7 +24,7 @@ interface TodoListProps {
   onShowDashboard?: () => void;
   onShowMemorial?: () => void;
   onShowRelationMap?: () => void;
-  onShowExperts?: () => void;
+  onShowSteps?: () => void;
   onShowLoop?: () => void;
   onShowSettings?: () => void;
   onSelectLoop?: (loopId: number) => void;

@@ -5,8 +5,8 @@
 // - pre_stage / post_stage: 某个 stage 前后触发 (必须指定 source_stage_id)
 //
 // 钩子本质上指向一个 todo (target_todo_id) 作为执行节点。
-// 这里的目标 todo 不强制 expert, 因为 hook 是一次性的副作用, 不属于"循环复用"。
-// 但 v3 kind 列引入后, 约定: hook 引用 expert 更符合"循环复用"语义, 引导用户。
+// 这里的目标 todo 不强制 step, 因为 hook 是一次性的副作用, 不属于"循环复用"。
+// 但 v3 kind 列引入后, 约定: hook 引用 step 更符合"循环复用"语义, 引导用户。
 
 import { useState, useCallback, useEffect } from 'react';
 import {
@@ -64,8 +64,8 @@ export function LoopHooksPanel({ loopId, hooks, stages, todoMap, onChanged }: Pr
   const [editing, setEditing] = useState<{ hook: LoopHookDto } | null>(null);
   const [creating, setCreating] = useState(false);
   const [form] = Form.useForm<HookForm>();
-  const [experts, setExperts] = useState<Todo[]>([]);
-  const [expertsLoading, setExpertsLoading] = useState(false);
+  const [steps, setExperts] = useState<Todo[]>([]);
+  const [stepsLoading, setExpertsLoading] = useState(false);
 
   // 加载专家候选
   useEffect(() => {
@@ -248,11 +248,11 @@ export function LoopHooksPanel({ loopId, hooks, stages, todoMap, onChanged }: Pr
           </Form.Item>
           <Form.Item label="目标 todo" name="target_todo_id" rules={[{ required: true, message: '请选择目标' }]}>
             <Select
-              placeholder="选择 expert todo"
-              loading={expertsLoading}
+              placeholder="选择 step todo"
+              loading={stepsLoading}
               showSearch
               optionFilterProp="label"
-              options={experts.map(t => ({
+              options={steps.map(t => ({
                 value: t.id,
                 label: `#${t.id} ${t.title}`,
               }))}

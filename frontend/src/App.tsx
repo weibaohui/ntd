@@ -170,7 +170,7 @@ function AppContent() {
               onShowDashboard={() => { clearSelection(); showView('dashboard'); }}
               onShowMemorial={() => { clearSelection(); showView('memorial'); }}
               onShowRelationMap={() => { clearSelection(); showView('relation'); }}
-              onShowExperts={() => { clearSelection(); showView('experts'); }}
+              onShowSteps={() => { clearSelection(); showView('steps'); }}
               onShowLoop={() => { clearSelection(); showView('loop'); }}
               onShowSettings={() => { clearSelection(); showView('settings'); }}
               onSelectLoop={handleSelectLoop}
@@ -251,7 +251,7 @@ function AppContent() {
               <MemorialBoard onBack={isMobile ? backToList : undefined} />
             ) : activeView === 'relation' ? (
               <RelationMap onBack={isMobile ? backToList : undefined} />
-            ) : activeView === 'experts' ? (
+            ) : activeView === 'steps' ? (
               <StepList onBack={isMobile ? backToList : undefined} />
             ) : activeView === 'loop' ? (
               <LoopStudio onBack={isMobile ? backToList : undefined} />

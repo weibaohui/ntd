@@ -1,4 +1,4 @@
-// 环节（kind=expert）相关 API 客户端。
+// 环节（kind=step）相关 API 客户端。
 //
 // 设计与 todo CRUD 共享底层（todos.kind 列），但语义独立：
 // - GET /api/steps              列出环节 + 各自的 loop 引用计数
@@ -7,7 +7,7 @@
 // - POST /api/todos/:id/promote   事项 → 环节
 // - POST /api/todos/:id/demote    环节 → 事项（被 loop 引用时拒绝）
 //
-// 后端位于 handlers/todo.rs，实现走 db/todo.rs 的 list_experts / promote_to_expert 等。
+// 后端位于 handlers/todo.rs，实现走 db/todo.rs 的 list_steps / promote_to_step 等。
 
 import { api, unwrap } from './client';
 import type { StepSummary, Todo } from '@/types';

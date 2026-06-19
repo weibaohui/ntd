@@ -1,7 +1,7 @@
-// 环节管理页面（kind=expert）。
+// 环节管理页面（kind=step）。
 //
 // 设计要点：
-// - 与 TodoList 共享底层数据（todos.kind 列），但语义独立：这里只看 kind=expert 的子集。
+// - 与 TodoList 共享底层数据（todos.kind 列），但语义独立：这里只看 kind=step 的子集。
 // - 复用 TodoCard 之类的渲染组件不可行（TodoList 用的是整列平铺，跟纪念板卡片不同），
 //   这里采用列表 + 操作按钮的紧凑布局，强调"被哪些 loop 引用"这一复用度指标。
 // - 内联新建环节：点击 "+ 新建环节" 弹出 modal，要求 title + prompt + executor，
@@ -123,7 +123,7 @@ export function StepList({ onBack }: StepListProps) {
           undefined,
           undefined,
         );
-        // 2) 立刻 promote 为 expert。如果 promote 失败, 已经创建的孤儿 todo 留给用户手动清理。
+        // 2) 立刻 promote 为 step。如果 promote 失败, 已经创建的孤儿 todo 留给用户手动清理。
         await dbSteps.promoteTodoToStep(created.id);
         message.success(`环节「${created.title}」已创建`);
         setCreateOpen(false);
@@ -141,10 +141,10 @@ export function StepList({ onBack }: StepListProps) {
 
   // 降级：先看是否被 loop 引用, 再走 demote 接口
   const handleDemote = useCallback(
-    async (expert: StepSummary) => {
+    async (step: StepSummary) => {
       try {
-        await dbSteps.demoteTodoToItem(expert.id);
-        message.success(`「${expert.title}」已降级为事项`);
+        await dbSteps.demoteTodoToItem(step.id);
+        message.success(`「${step.title}」已降级为事项`);
         reload();
       } catch {
         // axios 拦截器弹错
@@ -154,9 +154,9 @@ export function StepList({ onBack }: StepListProps) {
   );
 
   return (
-    <div className="expert-list-page">
-      <div className="expert-header">
-        <div className="expert-header-top">
+    <div className="step-list-page">
+      <div className="step-header">
+        <div className="step-header-top">
           {onBack && (
             <Button
               type="text"
@@ -181,7 +181,7 @@ export function StepList({ onBack }: StepListProps) {
             新建环节
           </Button>
         </div>
-        <div className="expert-search-bar">
+        <div className="step-search-bar">
           <Input
             placeholder="搜索环节标题或提示词..."
             prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
@@ -193,7 +193,7 @@ export function StepList({ onBack }: StepListProps) {
         </div>
       </div>
 
-      <div className="expert-list-content" style={{ padding: '16px' }}>
+      <div className="step-list-content" style={{ padding: '16px' }}>
         {loading ? (
           <Skeleton active />
         ) : filtered.length === 0 ? (
@@ -206,10 +206,10 @@ export function StepList({ onBack }: StepListProps) {
           />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {filtered.map(expert => (
-              <ExpertCard
-                key={expert.id}
-                expert={expert}
+            {filtered.map(step => (
+              <StepCard
+                key={step.id}
+                step={step}
                 onDemote={handleDemote}
               />
             ))}
@@ -267,14 +267,14 @@ export function StepList({ onBack }: StepListProps) {
 }
 
 // 单个环节卡片
-function ExpertCard({
-  expert,
+function StepCard({
+  step,
   onDemote,
 }: {
-  expert: StepSummary;
+  step: StepSummary;
   onDemote: (e: StepSummary) => void;
 }) {
-  const canDemote = expert.used_by_loop_stage_count === 0;
+  const canDemote = step.used_by_loop_stage_count === 0;
   return (
     <Card
       size="small"
@@ -282,8 +282,8 @@ function ExpertCard({
       styles={{ body: { padding: 16 } }}
       title={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ color: '#999', fontSize: 13 }}>#{expert.id}</span>
-          <span style={{ fontWeight: 500 }}>{expert.title}</span>
+          <span style={{ color: '#999', fontSize: 13 }}>#{step.id}</span>
+          <span style={{ fontWeight: 500 }}>{step.title}</span>
           <Tooltip title="被多少个 loop stage 引用, 反映复用度">
             <span
               style={{
@@ -292,23 +292,23 @@ function ExpertCard({
                 gap: 4,
                 padding: '2px 8px',
                 borderRadius: 10,
-                background: expert.used_by_loop_stage_count > 0 ? '#722ed1' : '#f0f0f0',
-                color: expert.used_by_loop_stage_count > 0 ? '#fff' : '#999',
+                background: step.used_by_loop_stage_count > 0 ? '#722ed1' : '#f0f0f0',
+                color: step.used_by_loop_stage_count > 0 ? '#fff' : '#999',
                 fontSize: 12,
               }}
             >
               <ApartmentOutlined />
-              {expert.used_by_loop_stage_count}
+              {step.used_by_loop_stage_count}
             </span>
           </Tooltip>
         </div>
       }
       extra={
         <div style={{ display: 'flex', gap: 8 }}>
-          {expert.executor && (
-            <Tooltip title={`执行器: ${expert.executor}`}>
+          {step.executor && (
+            <Tooltip title={`执行器: ${step.executor}`}>
               <ThunderboltOutlined style={{ color: '#fa8c16' }} />
-              <span style={{ marginLeft: 4, fontSize: 12 }}>{expert.executor}</span>
+              <span style={{ marginLeft: 4, fontSize: 12 }}>{step.executor}</span>
             </Tooltip>
           )}
           <Popconfirm
@@ -319,7 +319,7 @@ function ExpertCard({
                 : '该环节正被 loop 引用,无法降级'
             }
             okButtonProps={{ disabled: !canDemote }}
-            onConfirm={() => onDemote(expert)}
+            onConfirm={() => onDemote(step)}
           >
             <Button
               type="text"
@@ -336,7 +336,7 @@ function ExpertCard({
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {expert.prompt && (
+        {step.prompt && (
           <div
             style={{
               fontSize: 13,
@@ -352,11 +352,11 @@ function ExpertCard({
               WebkitBoxOrient: 'vertical',
             }}
           >
-            {expert.prompt}
+            {step.prompt}
           </div>
         )}
         <div style={{ fontSize: 12, color: '#999' }}>
-          更新于 {formatRelativeTime(expert.updated_at)}
+          更新于 {formatRelativeTime(step.updated_at)}
         </div>
       </div>
     </Card>
