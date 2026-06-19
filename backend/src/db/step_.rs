@@ -147,4 +147,11 @@ impl Database {
             .await?;
         Ok(())
     }
+
+    /// 删除环节（从 steps 表中删除）。
+    pub async fn delete_step(&self, id: i64) -> Result<(), sea_orm::DbErr> {
+        use crate::db::entity::steps;
+        steps::Entity::delete_by_id(id).exec(&self.conn).await?;
+        Ok(())
+    }
 }

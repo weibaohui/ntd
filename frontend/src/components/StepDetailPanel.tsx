@@ -3,9 +3,9 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
-  Skeleton, Empty, Tag, Descriptions, Button, Drawer, Input, Divider, ColorPicker, App as AntApp,
+  Skeleton, Empty, Tag, Descriptions, Button, Drawer, Input, Divider, ColorPicker, Popconfirm, App as AntApp,
 } from 'antd';
-import { ApartmentOutlined, ThunderboltOutlined, EditOutlined } from '@ant-design/icons';
+import { ApartmentOutlined, ThunderboltOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import { ExecutorPicker } from '@/components/todo-drawer/ExecutorPicker';
 import { PromptEditor } from '@/components/todo-drawer/PromptEditor';
 import { SkillSelector } from '@/components/todo-drawer/SkillSelector';
@@ -88,6 +88,17 @@ export function StepDetailPanel({ stepId, onStepUpdated }: StepDetailPanelProps)
     setEditing(true);
   }, [step]);
 
+  const handleDelete = useCallback(async () => {
+    if (!step) return;
+    try {
+      await dbSteps.deleteStep(step.id);
+      message.success('环节已删除');
+      onStepUpdated?.();
+    } catch {
+      message.error('删除失败，环节可能正在被 loop 引用');
+    }
+  }, [step, message, onStepUpdated]);
+
   // 光标插入文本
   const insertTextAtCursor = useCallback((text: string) => {
     const editor = editorRef.current;
@@ -169,6 +180,14 @@ export function StepDetailPanel({ stepId, onStepUpdated }: StepDetailPanelProps)
           </h2>
           <span style={{ color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 12, fontFamily: 'monospace' }}>#{step.id}</span>
           <Button size="small" icon={<EditOutlined />} onClick={handleOpenEdit}>编辑</Button>
+          <Popconfirm
+            title="删除环节"
+            description="删除后无法恢复"
+            okType="danger"
+            onConfirm={handleDelete}
+          >
+            <Button size="small" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
         </div>
 
         {/* 基本信息 */}

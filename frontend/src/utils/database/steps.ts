@@ -38,3 +38,8 @@ export async function updateStep(
 ): Promise<StepSummary> {
   return unwrap(await api.put(`/api/steps/${id}`, data));
 }
+
+/** 删除环节。若被 loop 引用，后端会返回外键错误。 */
+export async function deleteStep(id: number): Promise<void> {
+  await api.delete(`/api/steps/${id}`);
+}

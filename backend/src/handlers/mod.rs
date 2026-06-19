@@ -1199,7 +1199,7 @@ fn todo_routes() -> Router<AppState> {
         // 环节专用：list / candidates / 单查 / 更新,数据来自独立的 steps 表
         .route("/api/steps", get(todo::list_steps))
         .route("/api/steps/candidates", get(todo::list_step_candidates))
-        .route("/api/steps/{id}", get(todo::get_step).put(todo::update_step))
+        .route("/api/steps/{id}", get(todo::get_step).put(todo::update_step).delete(todo::delete_step))
         .route("/api/tags", get(tag::get_tags).post(tag::create_tag))
         .route("/api/tags/{id}", delete(tag::delete_tag))
 }

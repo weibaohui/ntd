@@ -423,6 +423,18 @@ pub async fn update_step(
     Ok(ApiResponse::ok(StepDto::from(s).with_usage(used_by_loop_step_count)))
 }
 
+/// DELETE /api/steps/:id — 删除环节
+pub async fn delete_step(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<ApiResponse<()>, AppError> {
+    state.db.get_step(id).await?.ok_or(AppError::NotFound)?;
+    // 环节可能被 loop 引用，由数据库外键约束保护（RESTRICT），
+    // 被引用时后端返回外键冲突错误，前端会显示相应提示。
+    state.db.delete_step(id).await?;
+    Ok(ApiResponse::ok(()))
+}
+
 /// POST /api/todos/:id/promote — 事项提升为环节（复制数据到 steps 表，原 todo 保留）
 pub async fn promote_todo_to_step(
     State(state): State<AppState>,
