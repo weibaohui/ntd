@@ -1,4 +1,4 @@
-use axum::extract::{Path, Query, State};
+use axum::{Json, extract::{Path, Query, State}};
 use cron::Schedule;
 use serde::Deserialize;
 use std::str::FromStr;
@@ -8,7 +8,7 @@ use crate::handlers::{ApiJson, AppError, AppState};
 use crate::hooks::models::HookContext;
 use crate::models::{
     utc_timestamp, ApiResponse, CreateTodoRequest, RecentCompletedTodo, StepDto, Todo,
-    UpdateTagsRequest, UpdateTodoRequest,
+    UpdateStepRequest, UpdateTagsRequest, UpdateTodoRequest,
 };
 
 /// Validate cron expression, return helpful error for invalid ones
@@ -391,6 +391,33 @@ pub async fn get_step(
         .get_step(id)
         .await?
         .ok_or(AppError::NotFound)?;
+    let used_by_loop_stage_count = state.db.count_loop_stages_using_step(id).await?;
+    Ok(ApiResponse::ok(StepDto::from(s).with_usage(used_by_loop_stage_count)))
+}
+
+/// PUT /api/steps/:id — 更新环节基本信息
+pub async fn update_step(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(req): Json<UpdateStepRequest>,
+) -> Result<ApiResponse<StepDto>, AppError> {
+    if req.title.trim().is_empty() {
+        return Err(AppError::BadRequest("title 不能为空".to_string()));
+    }
+    // 校验环节存在
+    state.db.get_step(id).await?.ok_or(AppError::NotFound)?;
+    state
+        .db
+        .update_step(
+            id,
+            req.title.trim(),
+            &req.prompt,
+            req.executor.as_deref(),
+            req.acceptance_criteria.as_deref(),
+        )
+        .await?;
+    // 查回最新数据
+    let s = state.db.get_step(id).await?.ok_or(AppError::NotFound)?;
     let used_by_loop_stage_count = state.db.count_loop_stages_using_step(id).await?;
     Ok(ApiResponse::ok(StepDto::from(s).with_usage(used_by_loop_stage_count)))
 }

@@ -30,3 +30,11 @@ export async function getStep(id: number): Promise<StepSummary> {
 export async function promoteTodoToStep(id: number): Promise<StepSummary> {
   return unwrap(await api.post(`/api/todos/${id}/promote`, {}));
 }
+
+/** 更新环节基本信息。 */
+export async function updateStep(
+  id: number,
+  data: { title: string; prompt?: string; executor?: string | null; acceptance_criteria?: string | null },
+): Promise<StepSummary> {
+  return unwrap(await api.put(`/api/steps/${id}`, data));
+}

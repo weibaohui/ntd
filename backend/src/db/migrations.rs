@@ -78,7 +78,7 @@ pub const ALL_MIGRATIONS: &[Migration] = &[
         statements: TODO_KIND_STATEMENTS,
     },
     Migration {
-        version: 4,
+        version: 9,
         name: "independent_steps",
         description:
             "环节独立为 steps 表: 创建新表, 从 todos 复制数据; \

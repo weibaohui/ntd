@@ -39,3 +39,12 @@ impl StepDto {
         self
     }
 }
+
+/// 更新环节请求体。
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateStepRequest {
+    pub title: String,
+    pub prompt: String,
+    pub executor: Option<String>,
+    pub acceptance_criteria: Option<String>,
+}

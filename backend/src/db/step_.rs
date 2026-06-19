@@ -98,4 +98,34 @@ impl Database {
             })
             .collect())
     }
+
+    /// 更新环节基本信息。
+    pub async fn update_step(
+        &self,
+        id: i64,
+        title: &str,
+        prompt: &str,
+        executor: Option<&str>,
+        acceptance_criteria: Option<&str>,
+    ) -> Result<(), sea_orm::DbErr> {
+        use sea_orm::{EntityTrait, QueryFilter};
+        use sea_orm::ConnectionTrait;
+        let sql = "UPDATE steps SET title = ?1, prompt = ?2, executor = ?3, acceptance_criteria = ?4, updated_at = ?5 WHERE id = ?6";
+        let now = crate::models::utc_timestamp();
+        self.conn
+            .execute(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                [
+                    title.to_string().into(),
+                    prompt.to_string().into(),
+                    executor.map(|s| s.to_string()).into(),
+                    acceptance_criteria.map(|s| s.to_string()).into(),
+                    now.into(),
+                    id.into(),
+                ],
+            ))
+            .await?;
+        Ok(())
+    }
 }

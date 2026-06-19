@@ -1196,10 +1196,10 @@ fn todo_routes() -> Router<AppState> {
         // 环节相关：promote 复制到 steps 表,原 todo 保留
         .route("/api/todos/{id}/promote", post(todo::promote_todo_to_step))
         .route("/api/todos/{id}", get(todo::get_todo).put(todo::update_todo).delete(todo::delete_todo))
-        // 环节专用：list / candidates / 单查,数据来自独立的 steps 表
+        // 环节专用：list / candidates / 单查 / 更新,数据来自独立的 steps 表
         .route("/api/steps", get(todo::list_steps))
         .route("/api/steps/candidates", get(todo::list_step_candidates))
-        .route("/api/steps/{id}", get(todo::get_step))
+        .route("/api/steps/{id}", get(todo::get_step).put(todo::update_step))
         .route("/api/tags", get(tag::get_tags).post(tag::create_tag))
         .route("/api/tags/{id}", delete(tag::delete_tag))
 }
