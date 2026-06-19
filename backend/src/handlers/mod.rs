@@ -326,7 +326,7 @@ pub mod custom_template;
 pub mod webhook;
 pub mod usage_stats;
 pub mod sync;
-pub mod sub_states;
+pub mod sub_states; // 由 #604 引入，当前无内容占位
 pub mod loop_;
 
 // WebSocket handler
