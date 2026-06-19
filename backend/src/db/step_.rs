@@ -139,32 +139,7 @@ impl Database {
         acceptance_criteria: Option<&str>,
         color: Option<&str>,
     ) -> Result<(), sea_orm::DbErr> {
-        let now = crate::models::utc_timestamp();
-        let sql = if color.is_some() {
-            "UPDATE steps SET title = ?1, prompt = ?2, executor = ?3, acceptance_criteria = ?4, color = ?5, updated_at = ?6 WHERE id = ?7"
-        } else {
-            "UPDATE steps SET title = ?1, prompt = ?2, executor = ?3, acceptance_criteria = ?4, updated_at = ?5 WHERE id = ?6"
-        };
-        let vals: Vec<sea_orm::Value> = if let Some(c) = color {
-            vec![
-                title.to_string().into(),
-                prompt.to_string().into(),
-                executor.map(|s| s.to_string()).into(),
-                acceptance_criteria.map(|s| s.to_string()).into(),
-                c.to_string().into(),
-                now.into(),
-                id.into(),
-            ]
-        } else {
-            vec![
-                title.to_string().into(),
-                prompt.to_string().into(),
-                executor.map(|s| s.to_string()).into(),
-                acceptance_criteria.map(|s| s.to_string()).into(),
-                now.into(),
-                id.into(),
-            ]
-        };
+        let (sql, vals) = self.build_update_sql(id, title, prompt, executor, acceptance_criteria, color);
         self.conn
             .execute(sea_orm::Statement::from_sql_and_values(
                 sea_orm::DbBackend::Sqlite,
@@ -173,6 +148,36 @@ impl Database {
             ))
             .await?;
         Ok(())
+    }
+
+    /// 构建 update_step 的 SQL 和参数值
+    fn build_update_sql(
+        &self,
+        id: i64,
+        title: &str,
+        prompt: &str,
+        executor: Option<&str>,
+        acceptance_criteria: Option<&str>,
+        color: Option<&str>,
+    ) -> (&str, Vec<sea_orm::Value>) {
+        let now = crate::models::utc_timestamp();
+        let sql = if color.is_some() {
+            "UPDATE steps SET title = ?1, prompt = ?2, executor = ?3, acceptance_criteria = ?4, color = ?5, updated_at = ?6 WHERE id = ?7"
+        } else {
+            "UPDATE steps SET title = ?1, prompt = ?2, executor = ?3, acceptance_criteria = ?4, updated_at = ?5 WHERE id = ?6"
+        };
+        let mut vals: Vec<sea_orm::Value> = vec![
+            title.to_string().into(),
+            prompt.to_string().into(),
+            executor.map(|s| s.to_string()).into(),
+            acceptance_criteria.map(|s| s.to_string()).into(),
+        ];
+        if let Some(c) = color {
+            vals.push(c.to_string().into());
+        }
+        vals.push(now.into());
+        vals.push(id.into());
+        (sql, vals)
     }
 
     /// 删除环节（从 steps 表中删除）。
