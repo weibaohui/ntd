@@ -691,6 +691,9 @@ const TODO_KIND_STATEMENTS: &[&str] = &[
 /// 环节不再作为 todo 的一个 kind，而是独立的 steps 表，
 /// 仅保留标题、提示词、执行器、验收标准字段，去除 hook/定时/门禁等 todo 专属属性。
 /// 从 todo 升级时复制数据到 steps 表，原 todo 保留。
+///
+/// 回填策略：将 todos 表中已有 kind='step' 的数据复制到 steps 表，
+/// 确保升级前后环节列表不丢失。
 const INDEPENDENT_STEPS_STATEMENTS: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS steps (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -714,6 +717,10 @@ const INDEPENDENT_STEPS_STATEMENTS: &[&str] = &[
      BEGIN
          UPDATE steps SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
      END",
+    // 回填已有步骤：将 todos 表中 kind='step' 的数据复制到 steps 表
+    "INSERT INTO steps (title, prompt, executor, acceptance_criteria, source_todo_id, created_at, updated_at)
+     SELECT title, COALESCE(prompt, ''), executor, acceptance_criteria, id, created_at, updated_at
+     FROM todos WHERE kind = 'step' AND id NOT IN (SELECT source_todo_id FROM steps WHERE source_todo_id IS NOT NULL)",
 ];
 
 /// SQL to create the `schema_version` meta table. Idempotent.
