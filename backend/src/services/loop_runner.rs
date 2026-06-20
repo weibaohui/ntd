@@ -373,7 +373,7 @@ impl LoopRunner {
             }),
             resume_session_id: None,
             resume_message: None,
-            chain: vec![],
+            chain: step_meta.source_todo_id.map(|id| vec![id]).unwrap_or_default(),
             source_todo_id: None,
             source_todo_title: None,
             source_hook_id: None,
