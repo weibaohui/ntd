@@ -101,8 +101,9 @@ export function StepDetailPanel({ stepId, onStepUpdated, onStepDeleted }: StepDe
   const [editing, setEditing] = useState(false);
   const [viewMode, setViewMode] = useState<'log' | 'chat' | 'command'>('log');
 
-  // 执行历史：当 step 加载完成后，通过 source_todo_id 获取执行记录
+  // 执行历史：当 step 加载完成后，通过 source_todo_id 或 step_id 获取执行记录
   const todoIdForHistory = step?.source_todo_id ?? null;
+  const stepIdForHistory = step?.id ?? null;
   const {
     records,
     selectedHistoryRecordId,
@@ -123,6 +124,7 @@ export function StepDetailPanel({ stepId, onStepUpdated, onStepDeleted }: StepDe
     isLoadingLogs,
   } = useExecutionHistory({
     selectedTodoId: todoIdForHistory,
+    stepId: stepIdForHistory,
     storeRecords: todoIdForHistory ? (state.executionRecords[todoIdForHistory] ?? []) : [],
     dispatch,
   });

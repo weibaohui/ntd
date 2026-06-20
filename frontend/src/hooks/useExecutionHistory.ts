@@ -17,6 +17,8 @@ import * as db from '@/utils/database';
 
 interface UseExecutionHistoryOptions {
   selectedTodoId: number | null;
+  /** 按环节 id 查询（环节独立执行记录） */
+  stepId?: number | null;
   /** Records already in the global store for this todo */
   storeRecords: ExecutionRecord[];
   /** Dispatch from useApp() — used to sync fetched records back into global state */
@@ -58,6 +60,7 @@ interface UseExecutionHistoryResult {
 
 export function useExecutionHistory({
   selectedTodoId,
+  stepId,
   storeRecords,
   dispatch,
 }: UseExecutionHistoryOptions): UseExecutionHistoryResult {
@@ -86,21 +89,25 @@ export function useExecutionHistory({
   // ─── Load records ──────────────────────────────────────────
 
   const loadExecutionRecords = useCallback(async (page = 1, limit = historyLimit) => {
-    if (!selectedTodoId) return;
+    if (!selectedTodoId && !stepId) return;
     try {
       const statusFilter = historyStatusFilter === 'all' ? undefined : historyStatusFilter;
-      const pageData = await db.getExecutionRecords(selectedTodoId, page, limit, statusFilter);
-      dispatch({
-        type: 'SET_EXECUTION_RECORDS',
-        payload: { todoId: selectedTodoId, records: pageData.records },
-      });
+      const pageData = await db.getExecutionRecords(
+        selectedTodoId ?? undefined, page, limit, statusFilter, stepId ?? undefined
+      );
+      if (selectedTodoId) {
+        dispatch({
+          type: 'SET_EXECUTION_RECORDS',
+          payload: { todoId: selectedTodoId, records: pageData.records },
+        });
+      }
       setHistoryPage(pageData.page);
       setHistoryLimit(pageData.limit);
       setHistoryTotal(pageData.total);
     } catch {
       // ignore: interceptor already shows error toast
     }
-  }, [selectedTodoId, historyLimit, historyStatusFilter, dispatch]);
+  }, [selectedTodoId, stepId, historyLimit, historyStatusFilter, dispatch]);
 
   const refreshSingleRecord = useCallback(async (recordId: number) => {
     if (!selectedTodoId) return;
