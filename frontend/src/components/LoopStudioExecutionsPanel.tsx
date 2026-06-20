@@ -134,26 +134,32 @@ export function LoopExecutionsPanel({ loopId, loopName }: Props) {
                 <div
                   className="loop-exec-row-head"
                   onClick={() => handleExpand(e.id)}
-                  style={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--color-border, #e2e8f0)', marginBottom: 6, background: 'var(--color-bg-elevated, #ffffff)' }}
                 >
-                  <Space>
+                  {/* 第一行：图标 + 编号 + 状态 + 触发类型 */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                     {view.icon}
-                    <span>#{e.id}</span>
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>#{e.id}</span>
                     <Tag color={view.color}>{view.label}</Tag>
                     <Tag>{e.trigger_type}</Tag>
-                    <Tooltip title={`开始: ${e.started_at}`}>
-                      <span style={{ color: 'var(--color-text-tertiary, #94a3b8)' }}>{formatRelativeTime(e.started_at)}</span>
-                    </Tooltip>
-                    <span style={{ color: 'var(--color-text-secondary, #475569)' }}>
-                      {e.completed_steps}/{e.total_steps} 环节
-                    </span>
                     {e.failed_steps > 0 && (
                       <Tag color="red">{e.failed_steps} 失败</Tag>
                     )}
-                    <span style={{ color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 12 }}>
+                    {/* 展开/收起提示 */}
+                    <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
+                      {expanded ? '收起 ▲' : '展开 ▼'}
+                    </span>
+                  </div>
+                  {/* 第二行：时间 + 进度 + 耗时 */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, color: 'var(--color-text-secondary, #475569)' }}>
+                    <Tooltip title={`开始: ${e.started_at}`}>
+                      <span>{formatRelativeTime(e.started_at)}</span>
+                    </Tooltip>
+                    <span>{e.completed_steps}/{e.total_steps} 环节</span>
+                    <span style={{ fontFamily: 'monospace', color: 'var(--color-text-tertiary, #94a3b8)' }}>
                       耗时 {durationLabel(e.started_at, e.finished_at)}
                     </span>
-                  </Space>
+                  </div>
                 </div>
                 {expanded && (
                   <div className="loop-exec-row-detail">
