@@ -27,6 +27,7 @@ interface TodoListProps {
   onShowSettings?: () => void;
   onSelectLoop?: (loopId: number) => void;
   onSelectStep?: (stepId: number) => void;
+  onCreateLoop?: () => void;
   stepUpdateCount?: number;
   loopUpdateCount?: number;
 }
@@ -79,7 +80,7 @@ function buildDesktopNavActions(
 }
 
 export function TodoList(props: TodoListProps) {
-  const { onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSettings, onSelectLoop, onSelectStep, stepUpdateCount, loopUpdateCount } = props;
+  const { onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSettings, onSelectLoop, onSelectStep, onCreateLoop, stepUpdateCount, loopUpdateCount } = props;
   const { state, dispatch } = useApp();
   const { themeMode, toggleTheme } = useTheme();
   const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
@@ -702,6 +703,7 @@ export function TodoList(props: TodoListProps) {
                 setSelectedLoopId(id);
                 onSelectLoop?.(id);
               }}
+              onCreate={onCreateLoop}
             />
           )}
         </div>
