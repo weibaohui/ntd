@@ -409,6 +409,20 @@ impl CodeExecutor for PiExecutor {
     fn get_model(&self) -> Option<String> {
         self.base.model.lock().clone()
     }
+
+    /// 重写 parse_stderr_line：跳过 JSONL 行（pi --mode json 会同时输出 JSONL
+    /// 到 stdout 和 stderr）。JSONL 行已在 stdout reader 中被正确解析，
+    /// 若 stderr 再处理一次，每条日志会重复出现两次。
+    /// 非 JSON 的 stderr 行按默认关键字分类处理。
+    fn parse_stderr_line(&self, line: &str) -> Option<ParsedLogEntry> {
+        let trimmed = line.trim();
+        // 跳过空行，跳过 JSONL（以 { 或 [ 开头的行）
+        if trimmed.is_empty() || trimmed.starts_with('{') || trimmed.starts_with('[') {
+            return None;
+        }
+        // 非 JSON 的 stderr 行委托给默认关键字分类
+        BaseExecutor::default_parse_stderr_line(line)
+    }
 }
 
 #[cfg(test)]
@@ -660,4 +674,51 @@ mod tests {
         executor.parse_output_line(line);
         assert_eq!(executor.get_model(), Some("claude-opus-4-7".to_string()));
     }
+
+    // —— parse_stderr_line ——
+
+    #[test]
+    fn test_parse_stderr_line_skips_jsonl() {
+        // JSONL 行（pi --mode json 同时输出到 stdout 和 stderr）应被跳过，
+        // 避免与 stdout reader 的解析结果重复。
+        let executor = PiExecutor::new("pi".to_string());
+        let line = r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"hello"}}"#;
+        assert!(executor.parse_stderr_line(line).is_none(), "JSONL 行应被跳过");
+    }
+
+    #[test]
+    fn test_parse_stderr_line_skips_jsonl_array() {
+        // JSON 数组开头的 stderr 行也应被跳过。
+        let executor = PiExecutor::new("pi".to_string());
+        let line = r#"[{"key":"value"},{"key":"value2"}]
+"#;
+        assert!(executor.parse_stderr_line(line).is_none(), "JSON 数组行应被跳过");
+    }
+
+    #[test]
+    fn test_parse_stderr_line_skips_empty() {
+        // 空行应被跳过。
+        let executor = PiExecutor::new("pi".to_string());
+        assert!(executor.parse_stderr_line("").is_none());
+        assert!(executor.parse_stderr_line("   ").is_none());
+    }
+
+    #[test]
+    fn test_parse_stderr_line_passes_non_json() {
+        // 非 JSON 的 stderr 行（pi 真正的错误/警告信息）应按默认关键字分类处理。
+        let executor = PiExecutor::new("pi".to_string());
+        let entry = executor.parse_stderr_line("ERROR: something failed").unwrap();
+        assert_eq!(entry.log_type, "error", "含 error 的行应标记为 error");
+        assert!(entry.content.contains("ERROR"));
+    }
+
+    #[test]
+    fn test_parse_stderr_line_info() {
+        // 非 JSON、不含 error 关键字的 stderr 行应作为普通 stderr。
+        let executor = PiExecutor::new("pi".to_string());
+        let entry = executor.parse_stderr_line("loading config ...").unwrap();
+        assert_eq!(entry.log_type, "stderr");
+        assert_eq!(entry.content, "loading config ...");
+    }
+
 }
