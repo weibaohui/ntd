@@ -113,7 +113,12 @@ pub(crate) fn read_runtime_config(request: &RunTodoExecutionRequest) -> (u32, u6
 pub(crate) async fn start_todo_and_prepare_spawn(
     prepared: PreparedExecution,
 ) -> Result<SpawnInputs, ExecutionResult> {
-    let worktree_ctx = resolve_worktree_context(&prepared.request.db, &prepared.todo).await;
+    let worktree_ctx = resolve_worktree_context(
+        &prepared.request.db,
+        &prepared.todo,
+        prepared.request.workspace.as_deref(),
+    )
+    .await;
     record_worktree_path(
         &prepared.request.db,
         prepared.record_id,
@@ -135,12 +140,12 @@ pub(crate) async fn start_todo_and_prepare_spawn(
 
     register_websocket_task_info(&prepared, &todo_title, &executor_spawn).await;
 
-    // effective_workspace 在 worktree 失败回退 + todo.workspace 回退 之后确定，
-    // 后续 move 进 spawn 闭包作为 cwd。
+    // effective_workspace 优先级：worktree 路径 > todo.workspace > request.workspace（loop 场景）
     let effective_workspace = worktree_ctx
         .effective_workspace
         .clone()
-        .or(prepared.todo_workspace.clone());
+        .or(prepared.todo_workspace.clone())
+        .or(prepared.request.workspace.clone());
 
     Ok(SpawnInputs {
         prepared,

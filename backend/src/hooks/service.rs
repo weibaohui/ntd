@@ -438,6 +438,7 @@ async fn execute_target_todo(
             step_id: None,
             feishu_bot_id: None,
         feishu_receive_id: None,
+        workspace: None,
     };
 
     // Dispatch on a dedicated hook runtime. A `std::thread::spawn` is needed

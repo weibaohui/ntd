@@ -350,6 +350,9 @@ pub(crate) async fn create_run_execution_record(
         Ok(id) => id,
         Err(e) => return Err(e),
     };
+    // todo_workspace 优先来自 todo；当 todo 不存在（loop 环节执行）时回退到 request.workspace，
+    // 确保 worktree 创建失败后子进程 cwd 仍然是 loop 的 workspace。
+    let todo_workspace = selected.todo_workspace.or_else(|| request.workspace.clone());
     Ok(super::types::PreparedExecution {
         request,
         task_guard: task_state.task_guard,
@@ -361,7 +364,7 @@ pub(crate) async fn create_run_execution_record(
         executor_str: selected.executor_str,
         record_id,
         todo,
-        todo_workspace: selected.todo_workspace,
+        todo_workspace,
         timeout_secs,
     })
 }
