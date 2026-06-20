@@ -121,6 +121,8 @@ impl From<execution_records::Model> for ExecutionRecord {
             last_review_status: m.last_review_status,
             last_reviewed_at: m.last_reviewed_at,
             worktree_path: m.worktree_path,
+            loop_step_execution_id: m.loop_step_execution_id,
+            step_id: m.step_id,
         }
     }
 }

@@ -752,6 +752,8 @@ mod tests {
             source_todo_id: None,
             source_todo_title: None,
             source_hook_id: None,
+            loop_step_execution_id: None,
+            step_id: None,
         })
         .await
         .unwrap()
@@ -868,6 +870,7 @@ mod tests {
 
         let (records, _) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: Some(todo_id),
+            step_id: None,
             limit: 100,
             offset: 0,
             status: None,
@@ -904,6 +907,7 @@ mod tests {
 
         let (records, _) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: Some(todo_id),
+            step_id: None,
             limit: 100,
             offset: 0,
             status: None,
@@ -1193,6 +1197,7 @@ mod tests {
         let record_id = create_test_execution_record(&db, todo_id, "echo hi").await;
         let (records, total) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: Some(todo_id),
+            step_id: None,
             limit: 100,
             offset: 0,
             status: None,
@@ -1217,6 +1222,7 @@ mod tests {
         }
         let (records, total) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: Some(todo_id),
+            step_id: None,
             limit: 2,
             offset: 0,
             status: None,
@@ -1236,6 +1242,7 @@ mod tests {
         }
         let (records, total) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: Some(todo_id),
+            step_id: None,
             limit: 10,
             offset: 2,
             status: None,
@@ -1280,6 +1287,7 @@ mod tests {
         let (running, total_running) =
             db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
                 todo_id: Some(todo_id),
+            step_id: None,
                 limit: 10,
                 offset: 0,
                 status: Some("running"),
@@ -1293,6 +1301,7 @@ mod tests {
         let (success, total_success) =
             db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
                 todo_id: Some(todo_id),
+            step_id: None,
                 limit: 10,
                 offset: 0,
                 status: Some("success"),
@@ -1306,6 +1315,7 @@ mod tests {
         let (failed, total_failed) =
             db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
                 todo_id: Some(todo_id),
+            step_id: None,
                 limit: 10,
                 offset: 0,
                 status: Some("failed"),
@@ -1318,6 +1328,7 @@ mod tests {
 
         let (all, total_all) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: Some(todo_id),
+            step_id: None,
             limit: 10,
             offset: 0,
             status: None,
@@ -1331,6 +1342,7 @@ mod tests {
         let (all_filter, total_all_filter) =
             db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
                 todo_id: Some(todo_id),
+            step_id: None,
                 limit: 10,
                 offset: 0,
                 status: Some("all"),
@@ -1367,6 +1379,7 @@ mod tests {
         .unwrap();
         let (records, _) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: Some(todo_id),
+            step_id: None,
             limit: 100,
             offset: 0,
             status: None,
@@ -1695,6 +1708,8 @@ mod tests {
             source_todo_id: None,
             source_todo_title: None,
             source_hook_id: None,
+            loop_step_execution_id: None,
+            step_id: None,
         }).await.unwrap();
 
         // Detach task_id from todo so the record becomes "orphan" (running but todo.task_id IS NULL)

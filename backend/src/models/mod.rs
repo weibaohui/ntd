@@ -262,6 +262,12 @@ pub struct ExecutionRecord {
     /// 字段语义：仅供"事后排查"，不影响子进程 cwd；auto_cleanup 决定它在执行后是否被删。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_path: Option<String>,
+    /// 当本次执行是 loop 环节的一部分时，指向 loop_step_executions 表的 id。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_step_execution_id: Option<i64>,
+    /// 环节 id（指向 steps 表），环节独立执行时使用。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

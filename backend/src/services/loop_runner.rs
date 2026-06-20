@@ -795,3 +795,159 @@ impl LoopRunner {
             .ok_or_else(|| "reviewer template vanished".to_string())
     }
 }
+
+// ---------------------------------------------------------------------------
+// 单元测试
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── resolve_next 逻辑测试 ──
+    // 使用独立函数测试算法，避免依赖 ServiceContext 构造
+
+    fn make_step(
+        id: i64,
+        on_success: &str,
+        on_rating_fail: &str,
+        success_goto: Option<i64>,
+        fail_goto: Option<i64>,
+    ) -> loop_steps::Model {
+        loop_steps::Model {
+            id,
+            loop_id: 1,
+            name: format!("step_{}", id),
+            description: String::new(),
+            order_index: 0,
+            todo_id: 100 + id,
+            run_mode: "sequential".to_string(),
+            skip_on_source_failed: 0,
+            min_rating: None,
+            unrated_policy: "skip".to_string(),
+            on_success: on_success.to_string(),
+            success_goto_step_id: success_goto,
+            on_rating_fail: on_rating_fail.to_string(),
+            fail_goto_step_id: fail_goto,
+            enabled: 1,
+            created_at: None,
+        }
+    }
+
+    /// 模拟 resolve_next 的核心算法（不依赖 LoopRunner::resolve_next 的 &self）
+    fn resolve_next_algo(
+        step: &loop_steps::Model,
+        policy: &str,
+        step_id_to_idx: &HashMap<i64, usize>,
+        current_idx: usize,
+    ) -> Option<usize> {
+        match policy {
+            "next" => Some(current_idx + 1),
+            "goto" => {
+                let target = step.success_goto_step_id
+                    .or(step.fail_goto_step_id)?;
+                step_id_to_idx.get(&target).copied().or(Some(current_idx + 1))
+            }
+            "end" | "break" => None,
+            "skip" => Some(current_idx + 1),
+            _ => Some(current_idx + 1),
+        }
+    }
+
+    #[test]
+    fn resolve_next_success_next_returns_plus_one() {
+        let steps = vec![
+            make_step(1, "next", "break", None, None),
+            make_step(2, "next", "break", None, None),
+        ];
+        let mut idx_map = HashMap::new();
+        for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
+        assert_eq!(resolve_next_algo(&steps[0], "next", &idx_map, 0), Some(1));
+    }
+
+    #[test]
+    fn resolve_next_success_end_returns_none() {
+        let steps = vec![make_step(1, "end", "break", None, None)];
+        let mut idx_map = HashMap::new();
+        idx_map.insert(1, 0);
+        assert_eq!(resolve_next_algo(&steps[0], "end", &idx_map, 0), None);
+    }
+
+    #[test]
+    fn resolve_next_fail_break_returns_none() {
+        let steps = vec![make_step(1, "next", "break", None, None)];
+        let mut idx_map = HashMap::new();
+        idx_map.insert(1, 0);
+        assert_eq!(resolve_next_algo(&steps[0], "break", &idx_map, 0), None);
+    }
+
+    #[test]
+    fn resolve_next_fail_skip_returns_plus_one() {
+        let steps = vec![
+            make_step(1, "next", "skip", None, None),
+            make_step(2, "next", "break", None, None),
+        ];
+        let mut idx_map = HashMap::new();
+        for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
+        assert_eq!(resolve_next_algo(&steps[0], "skip", &idx_map, 0), Some(1));
+    }
+
+    #[test]
+    fn resolve_next_goto_found_returns_target() {
+        let steps = vec![
+            make_step(1, "goto", "break", Some(3), None),
+            make_step(2, "next", "break", None, None),
+            make_step(3, "next", "break", None, None),
+        ];
+        let mut idx_map = HashMap::new();
+        for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
+        // success_goto_step_id = 3 → idx 2
+        assert_eq!(resolve_next_algo(&steps[0], "goto", &idx_map, 0), Some(2));
+    }
+
+    #[test]
+    fn resolve_next_goto_missing_falls_back_to_next() {
+        let steps = vec![
+            make_step(1, "goto", "break", Some(999), None),
+            make_step(2, "next", "break", None, None),
+        ];
+        let mut idx_map = HashMap::new();
+        for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
+        // 目标 999 不存在 → fallback to next (idx 1)
+        assert_eq!(resolve_next_algo(&steps[0], "goto", &idx_map, 0), Some(1));
+    }
+
+    #[test]
+    fn resolve_next_unknown_policy_falls_back_to_next() {
+        let steps = vec![
+            make_step(1, "unknown", "unknown", None, None),
+            make_step(2, "next", "break", None, None),
+        ];
+        let mut idx_map = HashMap::new();
+        for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
+        assert_eq!(resolve_next_algo(&steps[0], "unknown", &idx_map, 0), Some(1));
+    }
+
+    // ── LimitsConfig 解析测试 ──
+
+    #[test]
+    fn limits_config_default_parses_to_empty() {
+        let config: LimitsConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.max_step_executions, None);
+        assert_eq!(config.max_total_tokens, None);
+    }
+
+    #[test]
+    fn limits_config_parses_max_step_executions() {
+        let config: LimitsConfig = serde_json::from_str(r#"{"max_step_executions": 20}"#).unwrap();
+        assert_eq!(config.max_step_executions, Some(20));
+    }
+
+    #[test]
+    fn limits_config_parses_all_fields() {
+        let config: LimitsConfig = serde_json::from_str(
+            r#"{"max_step_executions": 50, "max_total_tokens": 1000000}"#
+        ).unwrap();
+        assert_eq!(config.max_step_executions, Some(50));
+        assert_eq!(config.max_total_tokens, Some(1000000));
+    }
+}
