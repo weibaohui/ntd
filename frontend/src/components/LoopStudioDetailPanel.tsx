@@ -281,19 +281,34 @@ export function LoopDetailPanel({
       </div>
 
       {/* 折叠区: 执行历史, 默认收起 */}
-      <Collapse
-        ghost
-        style={{ marginTop: 8 }}
-        items={[
-          {
-            key: 'executions',
-            label: <span style={{ fontSize: 14, fontWeight: 600 }}>执行历史</span>,
-            children: (
-              <LoopExecutionsPanel loopId={loopId} loopName={detail.name} />
-            ),
-          },
-        ]}
-      />
+      <div style={{
+        background: 'var(--color-bg-elevated, #ffffff)',
+        border: '1px solid var(--color-border, #e2e8f0)',
+        borderRadius: 8,
+        marginTop: 12,
+        overflow: 'hidden',
+      }}>
+        <Collapse
+          ghost
+          expandIconPosition="end"
+          defaultActiveKey={[]}
+          items={[
+            {
+              key: 'executions',
+              label: (
+                <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text, #0f172a)' }}>
+                  执行历史
+                </span>
+              ),
+              children: (
+                <div style={{ paddingTop: 4 }}>
+                  <LoopExecutionsPanel loopId={loopId} loopName={detail.name} />
+                </div>
+              ),
+            },
+          ]}
+        />
+      </div>
 
       {/* 编辑基础信息 modal — 替代之前的 inline 编辑 */}
       <Modal
