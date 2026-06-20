@@ -80,18 +80,6 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
 
   useEffect(() => { loadPage(1); }, [loadPage]);
 
-  // WebSocket 实时事件驱动刷新：延迟片刻等后端写入完成后再刷新
-  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const refreshTimer2Ref = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useExecutionEvents(useCallback(() => {
-    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-    if (refreshTimer2Ref.current) clearTimeout(refreshTimer2Ref.current);
-    // 第一次刷新：较短延迟
-    refreshTimerRef.current = setTimeout(() => doRefresh(), 600);
-    // 第二次刷新：较长延迟，确保后端写入完成
-    refreshTimer2Ref.current = setTimeout(() => doRefresh(), 2000);
-  }, []));
-
   // 实际的刷新逻辑：拉取列表 + 展开详情
   const doRefresh = useCallback(() => {
     dbLoops.listExecutions(loopId, { page, limit: DEFAULT_PAGE_LIMIT })
@@ -112,6 +100,18 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
       })
       .catch(() => {});
   }, [page, loopId, expandedId]);
+
+  // WebSocket 实时事件驱动刷新（通过 ref 始终调用最新的 doRefresh）
+  const doRefreshRef = useRef(doRefresh);
+  doRefreshRef.current = doRefresh;
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshTimer2Ref = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useExecutionEvents(useCallback(() => {
+    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    if (refreshTimer2Ref.current) clearTimeout(refreshTimer2Ref.current);
+    refreshTimerRef.current = setTimeout(() => doRefreshRef.current(), 600);
+    refreshTimer2Ref.current = setTimeout(() => doRefreshRef.current(), 2000);
+  }, []));
 
   // 展开行: 拉取该 execution 的 step 详情
   const handleExpand = useCallback(async (execId: number) => {
