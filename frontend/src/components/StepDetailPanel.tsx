@@ -101,8 +101,7 @@ export function StepDetailPanel({ stepId, onStepUpdated, onStepDeleted }: StepDe
   const [editing, setEditing] = useState(false);
   const [viewMode, setViewMode] = useState<'log' | 'chat' | 'command'>('log');
 
-  // 执行历史：当 step 加载完成后，通过 source_todo_id 或 step_id 获取执行记录
-  const todoIdForHistory = step?.source_todo_id ?? null;
+  // 执行历史：通过 step_id 获取环节自己的执行记录
   const stepIdForHistory = step?.id ?? null;
   const {
     records,
@@ -123,9 +122,9 @@ export function StepDetailPanel({ stepId, onStepUpdated, onStepDeleted }: StepDe
     logsPerPage,
     isLoadingLogs,
   } = useExecutionHistory({
-    selectedTodoId: todoIdForHistory,
+    selectedTodoId: null,
     stepId: stepIdForHistory,
-    storeRecords: todoIdForHistory ? (state.executionRecords[todoIdForHistory] ?? []) : [],
+    storeRecords: [],
     dispatch,
   });
 
@@ -209,7 +208,7 @@ export function StepDetailPanel({ stepId, onStepUpdated, onStepDeleted }: StepDe
               </span>
             )}
           </div>
-          {todoIdForHistory ? (
+          {stepIdForHistory ? (
             records.length === 0 ? (
               <Empty description="暂无执行记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             ) : (
