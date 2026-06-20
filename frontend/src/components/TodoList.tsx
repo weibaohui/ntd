@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useApp } from '@/hooks/useApp';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import { Button, Dropdown, Empty, Tooltip, Input, Segmented, Skeleton } from 'antd';
+import { Button, Dropdown, Empty, Tooltip, Input } from 'antd';
 import type { MenuProps } from 'antd';
 import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined, FolderOpenOutlined, MoreOutlined, SearchOutlined, DownOutlined } from '@ant-design/icons';
 import { useTheme } from '@/hooks/useTheme';
@@ -9,9 +9,6 @@ import { StatusPicker } from './StatusPicker';
 import * as db from '@/utils/database';
 import type { ProjectDirectory, Todo } from '@/types';
 import { ExecutorBadge } from './ExecutorBadge';
-import { LoopListPanel } from './LoopStudioListPanel';
-import type { LoopListItem } from '@/types/loop';
-import * as dbLoops from '@/utils/database/loops';
 import { formatRelativeTime } from '@/utils/datetime';
 
 interface TodoListProps {
@@ -21,9 +18,7 @@ interface TodoListProps {
   onShowDashboard?: () => void;
   onShowMemorial?: () => void;
   onShowRelationMap?: () => void;
-  onShowSteps?: () => void;
   onShowSettings?: () => void;
-  onSelectLoop?: (loopId: number) => void;
 }
 
 function SkeletonRow() {
@@ -73,7 +68,7 @@ function buildDesktopNavActions(
   ].filter(action => typeof action.onClick === 'function');
 }
 
-export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSteps, onShowSettings, onSelectLoop }: TodoListProps) {
+export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSettings }: TodoListProps) {
   const { state, dispatch } = useApp();
   const { themeMode, toggleTheme } = useTheme();
   const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
@@ -81,17 +76,6 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
   const [isLoading, setIsLoading] = useState(true);
   // 搜索关键字状态，用于按标题或提示词过滤 todo 列表
   const [searchKeyword, setSearchKeyword] = useState('');
-  // 列表模式：'item' = 事项, 'step' = 环节, 'loop' = 环路
-  const [listMode, setListMode] = useState<'item' | 'loop'>(() => {
-    const saved = localStorage.getItem('ntd_list_mode');
-    if (saved === 'item' || saved === 'loop') return saved;
-    return 'item';
-  });
-  // 环路列表数据（只在 listMode === 'loop' 时使用）
-  const [loopList, setLoopList] = useState<LoopListItem[]>([]);
-  const [loopLoading, setLoopLoading] = useState(false);
-  // 当前选中的 loop id（来自左侧环路列表），用于高亮
-  const [selectedLoopId, setSelectedLoopId] = useState<number | null>(null);
   // 项目目录：工作空间选择器需要目录列表
   const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
 
@@ -117,26 +101,7 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
     return () => window.removeEventListener('projectDirectoryAdded', handleDirAdded); // 清理：卸载时移除监听
   }, [reloadProjectDirectories]);
 
-  // 当列表切换到「环路」时，自动加载 loop 列表；
-  // 切换到「事项」或「环节」时不做额外操作。
-  useEffect(() => {
-    if (listMode !== 'loop') return;
-    setLoopLoading(true);
-    dbLoops.listLoops()
-      .then(setLoopList)
-      .catch(() => setLoopList([]))
-      .finally(() => setLoopLoading(false));
-  }, [listMode]);
-
-  // 持久化列表模式到 localStorage
-  useEffect(() => {
-    localStorage.setItem('ntd_list_mode', listMode);
-  }, [listMode]);
-
   const filteredTodos = useMemo(() => {
-    // 环路模式下不需要过滤 todo（左侧渲染环路列表）
-    if (listMode === 'loop') return [];
-
     // 先按标签过滤
     // 按选中标签过滤：直接读 Todo.tag_ids 即可，
     // 不需要 `as any` — Todo 类型已在 frontend/src/types/todo.ts 中声明该字段。
@@ -161,14 +126,9 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
         return title.includes(keyword) || prompt.includes(keyword);
       });
     }
-
-    // 按类型过滤：仅显示事项
-    if (listMode === 'item') {
-      result = result.filter(todo => (todo.kind ?? 'item') === 'item');
-    }
-
+    
     return result;
-  }, [todos, selectedTagId, selectedWorkspace, searchKeyword, listMode]);
+  }, [todos, selectedTagId, selectedWorkspace, searchKeyword]);
 
   const handleStatusChange = useCallback(async (todoId: number, title: string, prompt: string, newStatus: string) => {
     try {
@@ -515,44 +475,21 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
         </Dropdown>
       </div>
 
-      {/* 搜索框：环路模式下隐藏，loop 列表有自己的过滤 */}
-      {listMode !== 'loop' && (
-        <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
-          <Input
-            placeholder="搜索标题或提示词..."
-            prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
-            value={searchKeyword}
-            onChange={(e) => setSearchKeyword(e.target.value)}
-            allowClear
-            size="small"
-          />
-        </div>
-      )}
-
-      {/* 列表选择：事项 / 环节 / 环路 */}
+      {/* Search box - 在 todo 列表上方，按标题或提示词关键字搜索 */}
+      {/* 横线颜色用 --color-border-light 而不是硬编码：useTheme 通过切换 documentElement 的 data-theme 来驱动 CSS 变量；浅色=#f1f5f9、暗色=#262637，与仓库其他 7 处分隔线（TodoDrawer/HistoryList/SessionDetailDrawer 等）保持一致，避免暗色下出现一条突兀的浅线 (issue #602) */}
       <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
-        <Segmented
-          block
+        <Input
+          placeholder="搜索标题或提示词..."
+          prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+          value={searchKeyword}
+          onChange={(e) => setSearchKeyword(e.target.value)}
+          allowClear
           size="small"
-          value={listMode}
-          onChange={(v) => {
-            if (v === 'step') {
-              // 环节已有独立路由/页面，直接导航过去
-              onShowSteps?.();
-              return;
-            }
-            setListMode(v as 'item' | 'loop');
-          }}
-          options={[
-            { label: '事项', value: 'item' },
-            { label: '环节', value: 'step' },
-            { label: '环路', value: 'loop' },
-          ]}
         />
       </div>
 
-      {/* 标签过滤：环路模式下不显示，loop 不按 tag 过滤 */}
-      {listMode !== 'loop' && tags.length > 0 && (
+      {/* Tag filter chips */}
+      {tags.length > 0 && (
         <div className="tag-filter-bar">
           <button
             className={`tag-chip ${selectedTagId === null ? 'active' : ''}`}
@@ -574,47 +511,30 @@ export function TodoList({ onOpenCreateModal, onOpenSmartCreate, onSelectTodo, o
         </div>
       )}
 
-      {/* 环路列表：在 listMode === 'loop' 时用 LoopListPanel 替代 todo 列表 */}
-      {listMode === 'loop' ? (
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-          {loopLoading ? (
-            <Skeleton active style={{ padding: 16 }} />
-          ) : (
-            <LoopListPanel
-              loops={loopList}
-              selectedId={selectedLoopId}
-              onSelect={(id) => {
-                setSelectedLoopId(id);
-                onSelectLoop?.(id);
-              }}
-            />
-          )}
-        </div>
-      ) : (
-        <div className="todo-list-content">
-          {filteredTodos.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-state-icon">
-                <InboxOutlined />
-              </div>
-              <Empty
-                description={
-                  <div style={{ color: 'var(--color-text-tertiary)', fontSize: 14 }}>
-                    {selectedTagId ? '该标签下暂无任务' : '暂无任务'}
-                    <br />
-                    <span style={{ fontSize: 13, marginTop: 4, display: 'inline-block' }}>
-                      点击右上角新建按钮创建第一个任务
-                    </span>
-                  </div>
-                }
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-              />
+      {/* Todo list */}
+      <div className="todo-list-content">
+        {filteredTodos.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">
+              <InboxOutlined />
             </div>
-          ) : (
-            filteredTodos.map(renderTodoItem)
-          )}
-        </div>
-      )}
+            <Empty
+              description={
+                <div style={{ color: 'var(--color-text-tertiary)', fontSize: 14 }}>
+                  {selectedTagId ? '该标签下暂无任务' : '暂无任务'}
+                  <br />
+                  <span style={{ fontSize: 13, marginTop: 4, display: 'inline-block' }}>
+                    点击右上角新建按钮创建第一个任务
+                  </span>
+                </div>
+              }
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+            />
+          </div>
+        ) : (
+          filteredTodos.map(renderTodoItem)
+        )}
+      </div>
     </div>
   );
 }

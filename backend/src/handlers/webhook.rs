@@ -351,21 +351,13 @@ async fn trigger_webhook_internal(
         method: req.method,
         path: req.path,
         query_params: query_params_json,
-        body: req.body.clone(),
+        body: req.body,
         content_type: req.content_type,
         triggered_todo_id: Some(req.todo_id),
         status_code: Some(status_code.as_u16() as i32),
         response_body: Some(response_body.clone()),
     }).await {
         tracing::warn!("Failed to create webhook record: {:?}", e);
-    }
-
-    // Loop Studio: 把 webhook 事件转给 loop_trigger_dispatcher,匹配 webhook 触发器
-    if let (Some(dispatcher), Some(webhook_id)) = (
-        state.loop_trigger_dispatcher.as_ref(),
-        req.webhook_id,
-    ) {
-        let _ = dispatcher.dispatch_webhook(webhook_id, req.body.as_deref()).await;
     }
 
     Ok((status_code, axum::Json(response_json)).into_response())

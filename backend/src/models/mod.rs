@@ -1,11 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-pub mod loop_;
-pub use loop_::*;
-
-pub mod step_;
-pub use step_::*;
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoStatus {
@@ -127,29 +121,6 @@ pub struct Todo {
     /// 是否在执行完成后自动派生一个评审 todo. 只对 normal 类型有意义.
     #[serde(default = "default_true")]
     pub auto_review_enabled: bool,
-    /// 'item' = 一次性事项, 'step' = 可复用的环节 (loop 编排引用).
-    /// 缺省时按 'item' 处理, 避免前端拿到 None 时还要兜底.
-    #[serde(default = "default_todo_kind")]
-    pub kind: String,
-}
-
-fn default_todo_kind() -> String {
-    "item".to_string()
-}
-
-/// 环节视图（带复用度指标）。
-///
-/// 与 `Todo` 相比，多一个 `used_by_loop_stage_count` 字段，
-/// 环节页用这个数判断「这个环节被多少个 loop stage 引用」作为复用度排序依据。
-///
-/// 实现上后端做 N+1：list_steps 后单独跑一次 COUNT GROUP BY 查询，
-/// 然后按 todo_id 合并。前端拿到这个 DTO 直接展示，不需要二次请求。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StepSummary {
-    #[serde(flatten)]
-    pub todo: Todo,
-    /// 被多少个 loop stage 引用。0 = 没有任何 loop 在用（孤儿环节）。
-    pub used_by_loop_stage_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

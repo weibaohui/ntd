@@ -46,12 +46,6 @@ pub struct AppState {
     pub feishu_listener: Arc<FeishuListener>,
     pub feishu_push_mutator: broadcast::Sender<crate::services::feishu_push::PushConfigUpdate>,
     pub hook_service: Arc<HookService>,
-    /// Loop Studio: 独立 cron 调度器（None 表示 loop 功能未启用或初始化失败）
-    pub loop_scheduler: Option<Arc<crate::services::loop_scheduler::LoopScheduler>>,
-    /// Loop Studio: 触发器分发器（None 同上）
-    pub loop_trigger_dispatcher: Option<Arc<crate::services::loop_trigger::LoopTriggerDispatcher>>,
-    /// Loop Studio: loop runner（手动触发 / dispatcher / cron 都通过它启动执行）
-    pub loop_runner: Option<Arc<crate::services::loop_runner::LoopRunner>>,
 }
 
 impl AppState {
@@ -326,8 +320,6 @@ pub mod custom_template;
 pub mod webhook;
 pub mod usage_stats;
 pub mod sync;
-pub mod sub_states; // 由 #604 引入，当前无内容占位
-pub mod loop_;
 
 // WebSocket handler
 pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
@@ -979,7 +971,6 @@ fn mount_domain_routes() -> Router<AppState> {
         .merge(custom_template_routes())
         .merge(cloud_routes())
         .merge(events_routes())
-        .merge(loop_::loop_routes())
 }
 
 /// 给 TraceLayer 用的 span 工厂：把 `request_id` / `method` / `uri` 直接挂在 span 字段上，
@@ -1002,8 +993,8 @@ fn make_request_span(req: &Request) -> tracing::Span {
 }
 
 /// 构造 `AppState` 并按需启动后台服务（feishu bot / stale binding cleanup / history fetcher /
-/// reviewer template 初始化 + Loop Studio 三件套）。所有 `.await` 都在 `tokio::spawn` 或
-/// `block_in_place` 中处理，保持 `build_app_state` 自身为同步函数。
+/// reviewer template 初始化）。所有 `.await` 都在 `tokio::spawn` 或 `block_in_place` 中处理，
+/// 保持 `build_app_state` 自身为同步函数。
 fn build_app_state(
     ctx: ServiceContext,
     scheduler: Arc<TodoScheduler>,
@@ -1029,14 +1020,8 @@ fn build_app_state(
     let (push_service, push_mutator) = FeishuPushService::new(db.clone(), feishu_listener.clone());
     push_service.start(tx.subscribe());
 
-    spawn_feishu_history_fetcher(ctx.clone(), db.clone(), feishu_listener.clone(), debounce.clone());
+    spawn_feishu_history_fetcher(ctx, db.clone(), feishu_listener.clone(), debounce.clone());
     ensure_reviewer_template_blocking(&db);
-
-    // ====== Loop Studio 三件套初始化 ======
-    // 用 block_in_place + Handle::block_on 走 sync 路径做 async DB 调用；
-    // 这三件套是「可选能力」,初始化失败不阻塞 daemon 启动,只把 Option 置 None。
-    let (loop_runner, loop_trigger_dispatcher, loop_scheduler) =
-        init_loop_studio_services(ctx.clone(), hook_service.clone(), tx.clone());
 
     AppState {
         db,
@@ -1048,51 +1033,7 @@ fn build_app_state(
         feishu_listener: feishu_listener.clone(),
         feishu_push_mutator: push_mutator,
         hook_service,
-        loop_scheduler,
-        loop_trigger_dispatcher,
-        loop_runner,
     }
-}
-
-/// 初始化 Loop Studio 三件套：runner / dispatcher / scheduler。
-///
-/// 全部失败容忍：返回 `None` 让 AppState 标记为「loop 功能不可用」,handler
-/// 在被调用时返回 503 风格错误。daemon 启动不因 loop 故障而被拖垮。
-fn init_loop_studio_services(
-    ctx: ServiceContext,
-    hook_service: Arc<crate::hooks::HookService>,
-    tx: tokio::sync::broadcast::Sender<ExecEvent>,
-) -> (
-    Option<Arc<crate::services::loop_runner::LoopRunner>>,
-    Option<Arc<crate::services::loop_trigger::LoopTriggerDispatcher>>,
-    Option<Arc<crate::services::loop_scheduler::LoopScheduler>>,
-) {
-    use crate::services::loop_runner::LoopRunner;
-    use crate::services::loop_trigger::LoopTriggerDispatcher;
-    // runner 与 dispatcher 是纯内存构造,无 IO,失败概率低
-    let runner = Arc::new(LoopRunner::new(ctx.clone(), hook_service, tx));
-    // dispatcher 复用 runner 的 ctx.db
-    let dispatcher = Arc::new(LoopTriggerDispatcher::new(
-        runner.clone(),
-        ctx.clone(),
-    ));
-    // scheduler 启动时需要 DB 读 + 启动后台 task,这里 block_in_place
-    let scheduler_res = tokio::task::block_in_place(|| {
-        let handle = tokio::runtime::Handle::current();
-        handle.block_on(crate::services::loop_scheduler::LoopScheduler::start(
-            ctx.db.clone(),
-            runner.clone(),
-        ))
-    });
-    let scheduler = match scheduler_res {
-        Ok(s) => Some(s),
-        Err(e) => {
-            tracing::error!("loop_scheduler start failed: {}", e);
-            None
-        }
-    };
-    // 即使 scheduler 失败,runner / dispatcher 仍可用（手动触发仍可工作）
-    (Some(runner), Some(dispatcher), scheduler)
 }
 
 /// 后台任务：启动所有已启用的飞书 bot。失败仅记录日志，不影响主流程。
@@ -1193,13 +1134,7 @@ fn todo_routes() -> Router<AppState> {
         .route("/api/todos/{id}/summary", get(execution::get_execution_summary))
         .route("/api/todos/{id}/scheduler", put(scheduler::update_scheduler))
         .route("/api/todos/recent-completed", get(todo::get_recent_completed_todos))
-        // 环节相关：promote 复制到 steps 表,原 todo 保留
-        .route("/api/todos/{id}/promote", post(todo::promote_todo_to_step))
         .route("/api/todos/{id}", get(todo::get_todo).put(todo::update_todo).delete(todo::delete_todo))
-        // 环节专用：list / candidates / 单查,数据来自独立的 steps 表
-        .route("/api/steps", get(todo::list_steps))
-        .route("/api/steps/candidates", get(todo::list_step_candidates))
-        .route("/api/steps/{id}", get(todo::get_step))
         .route("/api/tags", get(tag::get_tags).post(tag::create_tag))
         .route("/api/tags/{id}", delete(tag::delete_tag))
 }
@@ -1920,10 +1855,6 @@ mod app_state_config_helpers_tests {
             feishu_listener,
             feishu_push_mutator,
             hook_service,
-            // 测试用最小 AppState 不需要 loop 服务
-            loop_scheduler: None,
-            loop_trigger_dispatcher: None,
-            loop_runner: None,
         }
     }
 

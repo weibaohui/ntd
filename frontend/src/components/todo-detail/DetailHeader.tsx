@@ -1,5 +1,5 @@
 import { Button, Tag, Badge, Popconfirm } from 'antd';
-import { PlayCircleOutlined, ThunderboltOutlined, EditOutlined, DeleteOutlined, ArrowLeftOutlined, ExperimentOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, ThunderboltOutlined, EditOutlined, DeleteOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { StatusPicker } from '@/components/StatusPicker';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { PromptDisplay } from './PromptDisplay';
@@ -12,7 +12,6 @@ import type { Todo } from '@/types';
 export function DetailHeader({
   selectedTodo, executor, isExecuting, isMobile, summary, currentTodoProgress,
   records, onMobileBack, onDelete, onTodoDrawerOpen, onOpenExecuteWithArgs, onExecute, onStatusChange,
-  onPromoteToStep, onDemoteToItem,
 }: {
   selectedTodo: Todo;
   executor: string;
@@ -27,8 +26,6 @@ export function DetailHeader({
   onOpenExecuteWithArgs: () => void;
   onExecute: () => Promise<void>;
   onStatusChange: (status: string) => Promise<void>;
-  onPromoteToStep?: () => void;
-  onDemoteToItem?: () => void;
 }) {
   return (
     <>
@@ -48,16 +45,6 @@ export function DetailHeader({
           <h2 className="card-title" style={{ margin: 0, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedTodo.title}</h2>
           <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
             <Button type="text" icon={<EditOutlined />} onClick={onTodoDrawerOpen} className="icon-btn" aria-label="编辑任务" />
-            {/* 升级/降级按钮: 事项→升级为环节, 环节→降级为事项。互斥显示 */}
-            {(selectedTodo.kind ?? 'item') === 'step' ? (
-              <Popconfirm title="降级为事项" description="确定将此环节降级为事项？降级后不会被任何 loop 引用" onConfirm={onDemoteToItem}>
-                <Button type="text" icon={<ExperimentOutlined />} className="icon-btn" aria-label="降级为事项" />
-              </Popconfirm>
-            ) : (
-              <Popconfirm title="升级为环节" description="确定将此事提升级为环节？可在环路编排中复用" onConfirm={onPromoteToStep}>
-                <Button type="text" icon={<ExperimentOutlined />} className="icon-btn" aria-label="升级为环节" />
-              </Popconfirm>
-            )}
             <Popconfirm title="删除任务" description="确定要删除吗？" onConfirm={onDelete}>
               <Button type="text" danger icon={<DeleteOutlined />} className="icon-btn" aria-label="删除任务" />
             </Popconfirm>
