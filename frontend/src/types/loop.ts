@@ -82,6 +82,12 @@ export interface LoopStepExecutionDto {
   step_name: string | null;
   sequence_index: number;
   conclusion: string | null;
+  /** 该环节消耗的 token（从关联的 execution_record.usage 解析） */
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_input_tokens: number | null;
+  cache_creation_input_tokens: number | null;
+  total_cost_usd: number | null;
 }
 
 export interface TodoSummaryForLoop {
@@ -198,6 +204,14 @@ export interface LoopListItem {
   last_execution_at: string | null;
 }
 
+export interface LoopExecutionTokenSummary {
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cache_read_input_tokens: number;
+  total_cache_creation_input_tokens: number;
+  total_cost_usd: number;
+}
+
 export interface LoopExecutionDetail {
   id: number;
   loop_id: number;
@@ -213,6 +227,7 @@ export interface LoopExecutionDetail {
   total_executed_steps: number;
   step_executions: Record<string, any>[];
   loop_name: string;
+  token_summary: LoopExecutionTokenSummary;
 }
 
 export interface LoopExecutionListResponse {

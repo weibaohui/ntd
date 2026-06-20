@@ -25,7 +25,7 @@ async fn create_todo(db: &Database, title: &str) -> i64 {
 
 // 工具: 构造一个 loop, 返回 loop_id
 async fn create_loop(db: &Database, name: &str) -> i64 {
-    db.create_loop(name, "", None, "#722ed1", "loop")
+    db.create_loop(name, "", None, "#722ed1", "loop", None)
         .await
         .unwrap()
         .id
@@ -51,7 +51,7 @@ async fn v6_migration_backfills_step_for_loop_referenced_todos() {
     let db = setup_db().await;
     let todo_id = create_todo(&db, "被 loop 引用的 todo").await;
     let loop_id = create_loop(&db, "测试 loop").await;
-    db.create_loop_step(loop_id, "阶段 1", "", todo_id, "sequential", false, None, "skip", true)
+    db.create_loop_step(loop_id, "阶段 1", "", todo_id, "sequential", false, None, "skip", true, "next", None, "break", None)
         .await
         .unwrap();
 
@@ -94,7 +94,7 @@ async fn demote_step_blocked_when_loop_references_it() {
     let todo_id = create_todo(&db, "被引用的环节").await;
     db.promote_to_step(todo_id).await.unwrap();
     let loop_id = create_loop(&db, "引用 loop").await;
-    db.create_loop_step(loop_id, "阶段", "", todo_id, "sequential", false, None, "skip", true)
+    db.create_loop_step(loop_id, "阶段", "", todo_id, "sequential", false, None, "skip", true, "next", None, "break", None)
         .await
         .unwrap();
     // demote 应该失败 (返回 AppError::BadRequest 或 DbErr)
@@ -115,7 +115,7 @@ async fn demote_succeeds_after_stage_deleted() {
     db.promote_to_step(todo_id).await.unwrap();
     let loop_id = create_loop(&db, "loop").await;
     let step_id = db
-        .create_loop_step(loop_id, "阶段", "", todo_id, "sequential", false, None, "skip", true)
+        .create_loop_step(loop_id, "阶段", "", todo_id, "sequential", false, None, "skip", true, "next", None, "break", None)
         .await
         .unwrap()
         .id;
@@ -152,7 +152,7 @@ async fn list_steps_with_usage_includes_count() {
     db.promote_to_step(e2).await.unwrap();
     // 1 个 step 引用 e2
     let loop_id = create_loop(&db, "loop").await;
-    db.create_loop_step(loop_id, "阶段", "", e2, "sequential", false, None, "skip", true)
+    db.create_loop_step(loop_id, "阶段", "", e2, "sequential", false, None, "skip", true, "next", None, "break", None)
         .await
         .unwrap();
     let list = db.list_steps_with_usage().await.unwrap();
@@ -178,14 +178,14 @@ async fn count_loop_steps_reflects_stage_changes() {
 
     // 加一个 step → 1
     let s1 = db
-        .create_loop_step(loop_id, "s1", "", todo_id, "sequential", false, None, "skip", true)
+        .create_loop_step(loop_id, "s1", "", todo_id, "sequential", false, None, "skip", true, "next", None, "break", None)
         .await
         .unwrap()
         .id;
     assert_eq!(db.count_loop_steps_using_todo(todo_id).await.unwrap(), 1);
 
     // 加第二个 step → 2
-    db.create_loop_step(loop_id, "s2", "", todo_id, "sequential", false, None, "skip", true)
+    db.create_loop_step(loop_id, "s2", "", todo_id, "sequential", false, None, "skip", true, "next", None, "break", None)
         .await
         .unwrap();
     assert_eq!(db.count_loop_steps_using_todo(todo_id).await.unwrap(), 2);

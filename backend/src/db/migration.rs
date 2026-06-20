@@ -48,7 +48,31 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V9IndependentSteps),
         Box::new(V10StepColor),
         Box::new(V11LoopFlowControl),
+        Box::new(V12LoopStepExecution),
     ]
+}
+
+/// v12 迁移：execution_records 添加 loop 环节执行追踪列。
+///
+/// loop_step_execution_id 指向 loop_step_executions 表的 id，
+/// step_id 指向 steps 表的 id，用于追踪 loop 环节的执行记录。
+pub(super) struct V12LoopStepExecution;
+
+#[async_trait]
+impl Migration for V12LoopStepExecution {
+    fn version(&self) -> i64 {
+        12
+    }
+    fn name(&self) -> &'static str {
+        "loop_step_execution_columns"
+    }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        // 为已有的 execution_records 添加 loop 环节执行追踪字段
+        add_column_warn(db, "ALTER TABLE execution_records ADD COLUMN loop_step_execution_id BIGINT").await;
+        add_column_warn(db, "ALTER TABLE execution_records ADD COLUMN step_id BIGINT").await;
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

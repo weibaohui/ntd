@@ -485,7 +485,7 @@ mod hook_source_provenance_tests {
 
         let record_id = db
             .create_execution_record(NewExecutionRecord {
-                todo_id: target_id,
+                todo_id: Some(target_id),
                 command: "echo test",
                 executor: "claudecode",
                 trigger_type: "hook:state_changed_to_completed",
@@ -495,6 +495,8 @@ mod hook_source_provenance_tests {
                 source_todo_id: Some(42),
                 source_todo_title: Some("joke source"),
                 source_hook_id: Some(999001),
+                loop_step_execution_id: None,
+                step_id: None,
             })
             .await
             .unwrap();
@@ -514,7 +516,7 @@ mod hook_source_provenance_tests {
 
         let record_id = db
             .create_execution_record(NewExecutionRecord {
-                todo_id: target_id,
+                todo_id: Some(target_id),
                 command: "echo manual",
                 executor: "claudecode",
                 trigger_type: "manual",
@@ -524,6 +526,8 @@ mod hook_source_provenance_tests {
                 source_todo_id: None,
                 source_todo_title: None,
                 source_hook_id: None,
+                loop_step_execution_id: None,
+                step_id: None,
             })
             .await
             .unwrap();

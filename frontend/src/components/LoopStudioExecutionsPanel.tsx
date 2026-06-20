@@ -17,7 +17,7 @@ import {
   ArrowRightOutlined,
 } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
-import type { LoopExecutionDto, LoopExecutionDetail } from '@/types/loop';
+import type { LoopExecutionDto, LoopExecutionDetail, LoopExecutionTokenSummary } from '@/types/loop';
 import { formatRelativeTime } from '@/utils/datetime';
 import { useExecutionEvents } from '@/hooks/useExecutionEvents';
 
@@ -49,6 +49,70 @@ function durationLabel(start: string, end: string | null): string {
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
   return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`;
+}
+
+// Token 格式化：千位分隔
+function formatToken(n: number): string {
+  return n.toLocaleString();
+}
+
+// Cost 格式化：美元小数
+function formatCost(cost: number): string {
+  if (cost < 0.01) return '$<0.01';
+  return `$${cost.toFixed(4)}`;
+}
+
+// Token 汇总条组件：展示本次 loop execution 的 token 总消耗
+function TokenSummaryBar({ summary }: { summary: LoopExecutionTokenSummary }) {
+  // 只在有实际消耗时才显示
+  const hasTokens = summary.total_input_tokens > 0 || summary.total_output_tokens > 0;
+  if (!hasTokens && summary.total_cost_usd <= 0) return null;
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8, flexWrap: 'wrap',
+      padding: '8px 12px',
+      marginBottom: 8,
+      background: 'var(--color-bg-hover)',
+      borderRadius: 8,
+      border: '1px solid var(--color-border)',
+      fontSize: 12,
+    }}>
+      <span style={{ fontWeight: 600, color: 'var(--color-text)' }}>Token 消耗汇总</span>
+      <TokenBadge label="输入" value={`${formatToken(summary.total_input_tokens)}`} color="#1677ff" />
+      <TokenBadge label="输出" value={`${formatToken(summary.total_output_tokens)}`} color="#52c41a" />
+      {summary.total_cache_read_input_tokens > 0 && (
+        <TokenBadge label="缓存读取" value={`${formatToken(summary.total_cache_read_input_tokens)}`} color="#722ed1" />
+      )}
+      {summary.total_cache_creation_input_tokens > 0 && (
+        <TokenBadge label="缓存创建" value={`${formatToken(summary.total_cache_creation_input_tokens)}`} color="#eb2f96" />
+      )}
+      {summary.total_cost_usd > 0 && (
+        <span style={{
+          padding: '2px 6px', borderRadius: 4,
+          background: 'var(--color-warning-bg)', color: 'var(--color-warning)',
+          fontWeight: 600, fontSize: 12,
+        }}>
+          费用 {formatCost(summary.total_cost_usd)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// Token 徽章组件
+function TokenBadge({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 3,
+      padding: '1px 6px', borderRadius: 4,
+      background: `${color}0f`,
+      fontSize: 11, fontWeight: 500, color,
+    }}>
+      {label}: {value}
+    </span>
+  );
 }
 
 export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange, onExecutionTrace }: Props) {
@@ -203,7 +267,13 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
                     {expandedLoading ? (
                       <Skeleton active />
                     ) : expandedDetail && expandedDetail.id === e.id ? (
-                      <StepExecList stepExecs={expandedDetail.step_executions} />
+                      <>
+                        {/* Token 汇总条：展示本次 loop 执行的所有 token 消耗 */}
+                        {expandedDetail.token_summary && (
+                          <TokenSummaryBar summary={expandedDetail.token_summary} />
+                        )}
+                        <StepExecList stepExecs={expandedDetail.step_executions} />
+                      </>
                     ) : null}
                   </div>
                 )}
@@ -264,7 +334,7 @@ function StepExecList({ stepExecs }: { stepExecs: Record<string, any>[] }) {
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '0 2px' }}>
                 <ArrowRightOutlined style={{ color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 16 }} />
                 {s.sequence_index != null && (
-                  <span style={{ fontSize: 9, color: '#94a3b8', fontFamily: 'monospace', lineHeight: 1 }}>
+                  <span style={{ fontSize: 9, color: 'var(--color-text-tertiary)', fontFamily: 'monospace', lineHeight: 1 }}>
                     #{s.sequence_index}
                   </span>
                 )}
@@ -289,7 +359,7 @@ function StepExecList({ stepExecs }: { stepExecs: Record<string, any>[] }) {
               {/* 黑板序号 + 执行序号 */}
               <div style={{ position: 'absolute', top: 6, left: 10, fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary, #94a3b8)', display: 'flex', gap: 6 }}>
                 {s.sequence_index != null && <span style={{ fontFamily: 'monospace' }}>#{s.sequence_index}</span>}
-                <span style={{ fontFamily: 'monospace', color: '#cbd5e1' }}>/#{idx + 1}</span>
+                <span style={{ fontFamily: 'monospace', color: 'var(--color-text-tertiary)' }}>/#{idx + 1}</span>
               </div>
 
               {/* 状态指示圆点 */}
@@ -329,17 +399,62 @@ function StepExecList({ stepExecs }: { stepExecs: Record<string, any>[] }) {
                 )}
               </div>
 
+              {/* Token 消耗：从 execution_record.usage 解析 */}
+              {(s.input_tokens != null || s.output_tokens != null) && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap',
+                  marginTop: 4, marginBottom: 4,
+                }}>
+                  {s.input_tokens != null && (
+                    <span style={{
+                      padding: '1px 5px', borderRadius: 3,
+                      background: 'var(--color-info-bg)', fontSize: 10, color: 'var(--color-info)',
+                      fontWeight: 500, fontFamily: 'monospace',
+                    }}>
+                      i{formatToken(s.input_tokens)}
+                    </span>
+                  )}
+                  {s.output_tokens != null && (
+                    <span style={{
+                      padding: '1px 5px', borderRadius: 3,
+                      background: 'var(--color-success-bg)', fontSize: 10, color: 'var(--color-success)',
+                      fontWeight: 500, fontFamily: 'monospace',
+                    }}>
+                      o{formatToken(s.output_tokens)}
+                    </span>
+                  )}
+                  {s.cache_read_input_tokens != null && s.cache_read_input_tokens > 0 && (
+                    <span style={{
+                      padding: '1px 5px', borderRadius: 3,
+                      background: 'var(--color-info-bg)', fontSize: 10, color: 'var(--color-primary)',
+                      fontWeight: 500, fontFamily: 'monospace',
+                    }}>
+                      cr{formatToken(s.cache_read_input_tokens)}
+                    </span>
+                  )}
+                  {s.total_cost_usd != null && s.total_cost_usd > 0 && (
+                    <span style={{
+                      padding: '1px 5px', borderRadius: 3,
+                      background: 'var(--color-warning-bg)', fontSize: 10, color: 'var(--color-warning)',
+                      fontWeight: 500, fontFamily: 'monospace',
+                    }}>
+                      {formatCost(s.total_cost_usd)}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* 结论（黑板） */}
               {s.conclusion && (
                 <div style={{
                   marginTop: 6, padding: '6px 8px',
-                  background: '#f8fafc', borderRadius: 6,
-                  fontSize: 12, color: '#475569',
+                  background: 'var(--color-bg-hover)', borderRadius: 6,
+                  fontSize: 12, color: 'var(--color-text-secondary)',
                   lineHeight: 1.5, maxHeight: 60, overflow: 'hidden',
                   textOverflow: 'ellipsis',
-                  borderLeft: '3px solid #0891b2',
+                  borderLeft: '3px solid var(--color-primary)',
                 }}>
-                  <div style={{ fontSize: 10, fontWeight: 600, color: '#0891b2', marginBottom: 2 }}>结论</div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-primary)', marginBottom: 2 }}>结论</div>
                   {s.conclusion.length > 120 ? s.conclusion.slice(0, 120) + '…' : s.conclusion}
                 </div>
               )}
@@ -392,7 +507,7 @@ function StepExecList({ stepExecs }: { stepExecs: Record<string, any>[] }) {
         <div>
           <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14 }}>执行结果</div>
           <div style={{
-            background: 'var(--color-bg-secondary, #f8fafc)',
+            background: 'var(--color-bg-hover)',
             padding: 12, borderRadius: 6, fontSize: 13,
             whiteSpace: 'pre-wrap', lineHeight: 1.6, maxHeight: 400, overflow: 'auto',
           }}>

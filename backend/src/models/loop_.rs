@@ -258,6 +258,12 @@ pub struct LoopStepExecutionDto {
     pub sequence_index: i32,
     /// 本次步执行的结论摘要
     pub conclusion: Option<String>,
+    /// 本次环节执行消耗的 token（从 execution_record.usage JSON 解析）
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub cache_read_input_tokens: Option<i64>,
+    pub cache_creation_input_tokens: Option<i64>,
+    pub total_cost_usd: Option<f64>,
 }
 
 impl From<loop_step_executions::Model> for LoopStepExecutionDto {
@@ -278,6 +284,11 @@ impl From<loop_step_executions::Model> for LoopStepExecutionDto {
             step_name: None,
             sequence_index: m.sequence_index,
             conclusion: m.conclusion,
+            input_tokens: None,
+            output_tokens: None,
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
+            total_cost_usd: None,
         }
     }
 }
@@ -292,12 +303,25 @@ impl LoopStepExecutionDto {
     }
 }
 
+/// Loop Execution 附加的 token 汇总统计,
+/// 由后端在 get_execution 时从 execution_records.usage JSON 聚合计算。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LoopExecutionTokenSummary {
+    pub total_input_tokens: i64,
+    pub total_output_tokens: i64,
+    pub total_cache_read_input_tokens: i64,
+    pub total_cache_creation_input_tokens: i64,
+    pub total_cost_usd: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoopExecutionDetail {
     #[serde(flatten)]
     pub execution: LoopExecutionDto,
     pub step_executions: Vec<LoopStepExecutionDto>,
     pub loop_name: String,
+    /// 本次 loop execution 的 token 汇总统计
+    pub token_summary: LoopExecutionTokenSummary,
 }
 
 // ====== 请求体（创建/更新）======

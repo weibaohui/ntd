@@ -25,8 +25,8 @@ use crate::handlers::{AppError, AppState};
 use crate::models::{
     self,
     ApiResponse, CreateLoopRequest, CreateLoopStepRequest, CreateTriggerRequest,
-    LoopDetail, LoopDto, LoopExecutionDetail, LoopExecutionDto, LoopListItem,
-    LoopStepDto, LoopTriggerDto, ReorderLoopStepsRequest,
+    LoopDetail, LoopDto, LoopExecutionDetail, LoopExecutionDto, LoopExecutionTokenSummary,
+    LoopListItem, LoopStepDto, LoopStepExecutionDto, LoopTriggerDto, ReorderLoopStepsRequest,
     UpdateLoopRequest, UpdateLoopStatusRequest, UpdateLoopStepRequest,
     UpdateTriggerRequest,
 };
@@ -437,6 +437,78 @@ pub async fn list_executions(
     })))
 }
 
+/// 从 execution_record_id 读取 usage JSON 并解析为 LoopStepExecutionDto 的 token 字段。
+/// usage 是 JSON 字符串，格式见 ExecutionUsage。
+async fn enrich_step_execution_with_usage(
+    db: &crate::db::Database,
+    dto: &mut LoopStepExecutionDto,
+) {
+    // 只有关联了 execution_record 的 step 才有 usage 数据
+    let record_id = match dto.execution_record_id {
+        Some(id) => id,
+        None => return,
+    };
+    let record = match db.get_execution_record(record_id).await {
+        Ok(Some(r)) => r,
+        _ => return,
+    };
+    // 从 execution_record.usage 字段解析 token 用量
+    let usage = match record.usage {
+        Some(u) => u,
+        None => return,
+    };
+    // 转为 i64 送入 DTO（usage 字段是 u64），避免前端处理大数字溢出
+    dto.input_tokens = Some(usage.input_tokens as i64);
+    dto.output_tokens = Some(usage.output_tokens as i64);
+    dto.cache_read_input_tokens = usage.cache_read_input_tokens.map(|v| v as i64);
+    dto.cache_creation_input_tokens = usage.cache_creation_input_tokens.map(|v| v as i64);
+    dto.total_cost_usd = usage.total_cost_usd;
+}
+
+/// 遍历 step_executions，从每个环节关联的 execution_record.usage 聚合出总 Token 用量。
+async fn aggregate_step_execution_tokens(
+    db: &crate::db::Database,
+    step_execs: &[LoopStepExecutionDto],
+) -> LoopExecutionTokenSummary {
+    let mut total_input_tokens: i64 = 0;
+    let mut total_output_tokens: i64 = 0;
+    let mut total_cache_read_input_tokens: i64 = 0;
+    let mut total_cache_creation_input_tokens: i64 = 0;
+    let mut total_cost_usd: f64 = 0.0;
+    for se in step_execs {
+        let record_id = match se.execution_record_id {
+            Some(id) => id,
+            None => continue,
+        };
+        let record = match db.get_execution_record(record_id).await {
+            Ok(Some(r)) => r,
+            _ => continue,
+        };
+        let usage = match record.usage {
+            Some(u) => u,
+            None => continue,
+        };
+        total_input_tokens += usage.input_tokens as i64;
+        total_output_tokens += usage.output_tokens as i64;
+        if let Some(cr) = usage.cache_read_input_tokens {
+            total_cache_read_input_tokens += cr as i64;
+        }
+        if let Some(cc) = usage.cache_creation_input_tokens {
+            total_cache_creation_input_tokens += cc as i64;
+        }
+        if let Some(cost) = usage.total_cost_usd {
+            total_cost_usd += cost;
+        }
+    }
+    LoopExecutionTokenSummary {
+        total_input_tokens,
+        total_output_tokens,
+        total_cache_read_input_tokens,
+        total_cache_creation_input_tokens,
+        total_cost_usd,
+    }
+}
+
 pub async fn get_execution(
     State(state): State<AppState>,
     Path((loop_id, eid)): Path<(i64, i64)>,
@@ -461,20 +533,25 @@ pub async fn get_execution(
         .await?
         .map(|l| l.name)
         .unwrap_or_default();
-    // 为每个 step execution 补充 step_name（来自 loop_steps 表）
-    let mut enriched: Vec<crate::models::LoopStepExecutionDto> = vec![];
+    // 为每个 step execution 补充 step_name（来自 loop_steps 表）和 token 用量
+    let mut enriched: Vec<LoopStepExecutionDto> = vec![];
     for se in step_execs {
-        let mut dto: crate::models::LoopStepExecutionDto = se.into();
+        let mut dto: LoopStepExecutionDto = se.into();
         // 读取 loop_step 的名称（仅用于显示）
         if let Ok(Some(ls)) = state.db.get_loop_step(dto.step_id).await {
             dto.step_name = Some(ls.name);
         }
+        // 从关联的 execution_record 读取 token 用量
+        enrich_step_execution_with_usage(&state.db, &mut dto).await;
         enriched.push(dto);
     }
+    // 聚合 token 汇总
+    let token_summary = aggregate_step_execution_tokens(&state.db, &enriched).await;
     Ok(ApiResponse::ok(LoopExecutionDetail {
         execution: exec.into(),
         step_executions: enriched,
         loop_name,
+        token_summary,
     }))
 }
 
