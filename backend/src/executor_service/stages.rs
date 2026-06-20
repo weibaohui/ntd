@@ -33,7 +33,7 @@ use super::worktree::{
 use super::{ExecutionResult, RunTodoExecutionRequest};
 
 // Re-export types from types module for sub-modules.
-pub(crate) use super::types::{SubstitutedContext, TaskState};
+pub(crate) use super::types::TaskState;
 
 /// Stage 1: 把 request 拆解并完成「executor 选定 + record 创建」前所有同步/异步检查。
 ///

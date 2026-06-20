@@ -1,21 +1,26 @@
 /**
  * useViewState — URL-driven view navigation state.
  *
- * Manages activeView (dashboard | settings | memorial | relation),
+ * Manages activeView (dashboard | settings | memorial | relation | steps),
  * selectedPanel (list | detail), and browser history (pushState / popstate).
  * Decoupled from TodoContext so it can be tested / reused independently.
  */
 
 import { useState, useEffect, useCallback } from 'react';
 
-export type View = 'dashboard' | 'settings' | 'memorial' | 'relation';
+// 'steps' = 环节管理页面 (v3 kind=step)。环路编排通过左栏 Segmented 的"环路"tab 访问。
+// 复用现有的 'detail' panel,环节页面本身就是 detail panel 内容。
+export type View = 'dashboard' | 'settings' | 'memorial' | 'relation' | 'steps';
 export type Panel = 'list' | 'detail';
+
+// 哪些 view 是合法的 URL 参数(popstate / 直接改 URL 都需要校验)
+const KNOWN_VIEWS: View[] = ['dashboard', 'settings', 'memorial', 'relation', 'steps'];
 
 // ─── Helpers ─────────────────────────────────────────────────
 
 function getInitialView(): View {
   const view = new URLSearchParams(window.location.search).get('view');
-  if (view === 'settings' || view === 'memorial' || view === 'relation') return view;
+  if (view && (KNOWN_VIEWS as string[]).includes(view)) return view as View;
   return 'dashboard';
 }
 
@@ -57,7 +62,7 @@ export function useViewState() {
         // Selecting a todo always opens detail panel
         setSelectedPanel('detail');
         if (view) setActiveView(view);
-      } else if (view && ['settings', 'memorial', 'relation'].includes(view)) {
+      } else if (view && (KNOWN_VIEWS as string[]).includes(view)) {
         setActiveView(view);
         setSelectedPanel('detail');
       } else {
