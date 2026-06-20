@@ -597,8 +597,8 @@ impl LoopRunner {
                 }
             };
 
-            // 6) 轮询评审完成（最多等 60 秒）
-            let max_wait = std::time::Duration::from_secs(60);
+            // 6) 轮询评审完成（最多等 300 秒，与 todo 自动评审一致）
+            let max_wait = std::time::Duration::from_secs(300);
             let poll_interval = std::time::Duration::from_millis(500);
             let start_poll = std::time::Instant::now();
             let review_status_str = loop {
