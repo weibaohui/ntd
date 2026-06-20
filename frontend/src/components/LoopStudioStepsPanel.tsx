@@ -4,9 +4,9 @@
 
 import { useState, useCallback } from 'react';
 import {
-  App as AntApp, Button, Modal, Form, Input, InputNumber, Select, Switch, Popconfirm, Empty,
+  App as AntApp, Button, Modal, Form, Input, InputNumber, Select, Switch, Popconfirm, Empty, Space,
 } from 'antd';
-import { DeleteOutlined } from '@ant-design/icons';
+import { DeleteOutlined, CloseOutlined } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import * as dbSteps from '@/utils/database/steps';
 import type { LoopStepDto, CreateLoopStepRequest } from '@/types/loop';
@@ -16,12 +16,10 @@ import { LoopFlowGraph } from '@/components/loop-flow/LoopFlowGraph';
 interface StepsPanelProps {
   loopId: number;
   steps: LoopStepDto[];
-  tracedStepIds?: number[];
-  tracedSequenceMap?: Record<number, number>;
   onChanged: () => void;
 }
 
-export function LoopStepsPanel({ loopId, steps, tracedStepIds, tracedSequenceMap, onChanged }: StepsPanelProps) {
+export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
   const { message } = AntApp.useApp();
 
   // Modal 状态
@@ -147,26 +145,35 @@ export function LoopStepsPanel({ loopId, steps, tracedStepIds, tracedSequenceMap
       <LoopFlowGraph
         steps={steps}
         selectedStepId={editingStep?.id ?? null}
-        tracedStepIds={tracedStepIds}
-        tracedSequenceMap={tracedSequenceMap}
         onSelectStep={handleSelectStep}
         onAddStep={handleOpenAdd}
       />
 
-      {/* 删除按钮（仅在有步骤时显示在左下角） */}
+      {/* 操作区：仅在选中环节时显示。提供「取消选择」回到未选中态，
+          避免只能通过 modal 关闭或点空白来退出。删除用 Popconfirm 防误触。 */}
       {steps.length > 0 && editingStep && (
         <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
-          <Popconfirm
-            title="删除环节"
-            description={`确定删除「${editingStep.name}」？`}
-            onConfirm={() => { handleDelete(editingStep.id); setEditingStep(null); }}
-            okText="确定"
-            cancelText="取消"
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} style={{ fontSize: 12 }}>
-              删除选中环节
+          <Space size="small">
+            <Button
+              size="small"
+              icon={<CloseOutlined />}
+              style={{ fontSize: 12 }}
+              onClick={() => setEditingStep(null)}
+            >
+              取消选择
             </Button>
-          </Popconfirm>
+            <Popconfirm
+              title="删除环节"
+              description={`确定删除「${editingStep.name}」？`}
+              onConfirm={() => { handleDelete(editingStep.id); setEditingStep(null); }}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Button size="small" danger icon={<DeleteOutlined />} style={{ fontSize: 12 }}>
+                删除选中环节
+              </Button>
+            </Popconfirm>
+          </Space>
         </div>
       )}
 

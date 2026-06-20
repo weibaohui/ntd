@@ -80,6 +80,10 @@ pub struct RunTodoExecutionRequest {
     pub loop_step_execution_id: Option<i64>,
     /// 环节 id（steps 表），环节独立执行时设置
     pub step_id: Option<i64>,
+    /// 显式工作空间路径（用于 loop 场景：loop 有自己的 workspace，
+    /// 但 executor service 内部通过 todo 加载获取 workspace。当 todo 不存在
+    /// 或 todo_id=0 时，使用此字段作为 workspace 用于 worktree 创建和 cwd 回退）。
+    pub workspace: Option<String>,
 }
 
 /// Run a todo execution. Priority: explicit executor > todo stored executor > default.

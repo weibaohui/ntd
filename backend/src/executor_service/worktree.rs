@@ -25,20 +25,28 @@ pub(crate) struct WorktreeContext {
     pub auto_cleanup: bool,
 }
 
-/// 根据 todo.workspace 找到对应的 project_directory，决定是否开 worktree。
+/// 根据 todo.workspace 或显式 workspace 找到对应的 project_directory，决定是否开 worktree。
+///
+/// 优先使用 todo.workspace；当 todo 为 None 时回退到 `explicit_workspace`（loop 场景）。
 ///
 /// 不在 `WorktreeContext` 内持有数据库句柄——这是个**纯异步查询**函数，方便在
 /// run_todo_execution 主路径上独立调用并把结果 move 进 spawn 闭包。
-pub(crate) async fn resolve_worktree_context(db: &Database, todo: &Option<Todo>) -> WorktreeContext {
+pub(crate) async fn resolve_worktree_context(
+    db: &Database,
+    todo: &Option<Todo>,
+    explicit_workspace: Option<&str>,
+) -> WorktreeContext {
     // 没有 todo（被 hook 删除）/ 没有 workspace 关联项目目录——不启用 worktree
-    let Some(t) = todo.as_ref() else {
-        return WorktreeContext::default();
-    };
-    let Some(ws) = t.workspace.as_deref() else {
+    let t = todo.as_ref();
+    let ws = t
+        .and_then(|t| t.workspace.as_deref())
+        .or(explicit_workspace)
+        .map(|s| s.to_string());
+    let Some(ws) = ws else {
         return WorktreeContext::default();
     };
     // 目录在 project_directories 表里没登记——同样不启用（避免给任意 workspace 路径做 worktree）
-    let Ok(Some(dir)) = db.get_project_directory_by_path(ws).await else {
+    let Ok(Some(dir)) = db.get_project_directory_by_path(&ws).await else {
         return WorktreeContext::default();
     };
     if !dir.git_worktree_enabled {
@@ -47,8 +55,9 @@ pub(crate) async fn resolve_worktree_context(db: &Database, todo: &Option<Todo>)
 
     // 走到这里说明用户在该目录下开启了 worktree 自动管理。
     // 创建失败时不阻塞执行——回退到原始 workspace，子进程仍然能跑通。
+    let todo_id = t.as_ref().map(|t| t.id).unwrap_or(0);
     let svc = WorktreeService::new();
-    match svc.create_worktree(ws, t.id) {
+    match svc.create_worktree(&ws, todo_id) {
         Ok(wt_path) => WorktreeContext {
             effective_workspace: Some(wt_path.clone()),
             record_path: Some(wt_path),
@@ -57,7 +66,7 @@ pub(crate) async fn resolve_worktree_context(db: &Database, todo: &Option<Todo>)
         Err(e) => {
             tracing::warn!(
                 workspace = %ws,
-                todo_id = t.id,
+                todo_id = todo_id,
                 error = %e,
                 "failed to create git worktree, falling back to original workspace"
             );

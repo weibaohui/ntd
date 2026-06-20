@@ -261,7 +261,7 @@ impl LoopRunner {
 
             // 4f. 执行
             let record_id = match self
-                .start_step_todo_with_prompt(&step_meta, &trigger_type, idx as i64, step_exec.id, &enhanced_prompt)
+                .start_step_todo_with_prompt(&step_meta, &trigger_type, idx as i64, step_exec.id, &enhanced_prompt, loop_.workspace.clone())
                 .await
             {
                 Ok(rid) => rid,
@@ -389,6 +389,7 @@ impl LoopRunner {
         loop_idx: i64,
         step_exec_id: i64,
         enhanced_prompt: &str,
+        workspace: Option<String>,
     ) -> Result<i64, String> {
         let request = RunTodoExecutionRequest {
             db: self.ctx.db.clone(),
@@ -416,6 +417,7 @@ impl LoopRunner {
             step_id: Some(step_meta.id),
             feishu_bot_id: None,
             feishu_receive_id: None,
+            workspace,
         };
         let result = run_todo_execution_with_params(request).await;
         result
@@ -611,7 +613,10 @@ impl LoopRunner {
                 for marker in &["## 结论", "## Conclusion", "Conclusion:", "结论："] {
                     if let Some(pos) = output.find(marker) {
                         let after = &output[pos + marker.len()..].trim();
-                        let end = after.find('\n').unwrap_or(after.len().min(300));
+                        let end = after.find('\n').unwrap_or_else(|| {
+                            // 使用 char_indices 确保切片在字符边界上，避免切到多字节字符中间
+                            after.char_indices().nth(300).map(|(i, _)| i).unwrap_or(after.len())
+                        });
                         let slice = &after[..end].trim();
                         if !slice.is_empty() {
                             return slice.to_string();
@@ -721,6 +726,7 @@ impl LoopRunner {
                 step_id: None,
                 feishu_bot_id: None,
                 feishu_receive_id: None,
+                workspace: None,
             };
             let exec_result = crate::executor_service::run_todo_execution(request).await;
             let review_record_id = match exec_result.record_id {
