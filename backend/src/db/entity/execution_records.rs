@@ -58,6 +58,8 @@ pub struct Model {
     pub worktree_path: Option<String>,
     /// 当本次执行是 loop 环节的一部分时，指向 loop_step_executions 表的 id。
     pub loop_step_execution_id: Option<i64>,
+    /// 当本次执行是环节执行时，指向 steps 表的 id。
+    pub step_id: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

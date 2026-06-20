@@ -399,6 +399,7 @@ async fn create_record_or_reject(
             source_todo_title: request.source_todo_title.as_deref(),
             source_hook_id: request.source_hook_id,
             loop_step_execution_id: request.loop_step_execution_id,
+            step_id: request.step_id,
         })
         .await
     {

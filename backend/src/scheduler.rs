@@ -504,7 +504,7 @@ impl TodoScheduler {
                             source_todo_title: None,
                             source_hook_id: None,
             loop_step_execution_id: None,                            feishu_bot_id: None,
-                            feishu_receive_id: None,
+            step_id: None,                            feishu_receive_id: None,
                         })
                         .await;
                     }

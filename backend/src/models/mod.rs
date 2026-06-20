@@ -429,6 +429,8 @@ pub struct TodoIdQuery {
     #[serde(default)]
     pub todo_id: Option<i64>,
     #[serde(default)]
+    pub step_id: Option<i64>,
+    #[serde(default)]
     pub page: Option<i64>,
     #[serde(default)]
     pub limit: Option<i64>,

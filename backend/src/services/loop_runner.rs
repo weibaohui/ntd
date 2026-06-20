@@ -382,14 +382,13 @@ impl LoopRunner {
             resume_message: None,
             chain: vec![],
             source_todo_id: None,
-            source_todo_title: None,
+            source_todo_title: Some(step_meta.title.clone()),
             source_hook_id: None,
             loop_step_execution_id: Some(step_exec_id),
+            step_id: Some(step_meta.id),
             feishu_bot_id: None,
             feishu_receive_id: None,
         };
-
-        // run_todo_execution_with_params 是 async,我们 await
         let result = run_todo_execution_with_params(request).await;
         result
             .record_id
@@ -586,6 +585,7 @@ impl LoopRunner {
                 source_todo_title: None,
                 source_hook_id: None,
                 loop_step_execution_id: None,
+                step_id: None,
                 feishu_bot_id: None,
                 feishu_receive_id: None,
             };

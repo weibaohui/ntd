@@ -78,6 +78,8 @@ pub struct RunTodoExecutionRequest {
     pub feishu_receive_id: Option<String>,
     /// 当本次执行是 loop 环节的一部分时，指向 loop_step_executions 表的 id。
     pub loop_step_execution_id: Option<i64>,
+    /// 环节 id（steps 表），环节独立执行时设置
+    pub step_id: Option<i64>,
 }
 
 /// Run a todo execution. Priority: explicit executor > todo stored executor > default.
