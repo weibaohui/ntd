@@ -59,8 +59,6 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<LoopExecutionDetail | null>(null);
   const [expandedLoading, setExpandedLoading] = useState(false);
-  // 强制刷新展开的 StepExecList 的 key
-  const [detailRefreshKey, setDetailRefreshKey] = useState(0);
 
   // 加载一页执行记录
   const loadPage = useCallback((p: number) => {
@@ -95,23 +93,30 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
       .then((detail) => {
         if (detail) {
           setExpandedDetail(detail);
-          setDetailRefreshKey(k => k + 1);
         }
       })
       .catch(() => {});
   }, [page, loopId, expandedId]);
 
-  // WebSocket 实时事件驱动刷新（通过 ref 始终调用最新的 doRefresh）
-  const doRefreshRef = useRef(doRefresh);
-  doRefreshRef.current = doRefresh;
+  // WebSocket 事件触发刷新
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const refreshTimer2Ref = useRef<ReturnType<typeof setTimeout> | null>(null);
   useExecutionEvents(useCallback(() => {
     if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-    if (refreshTimer2Ref.current) clearTimeout(refreshTimer2Ref.current);
-    refreshTimerRef.current = setTimeout(() => doRefreshRef.current(), 600);
-    refreshTimer2Ref.current = setTimeout(() => doRefreshRef.current(), 2000);
-  }, []));
+    refreshTimerRef.current = setTimeout(() => doRefresh(), 800);
+  }, [doRefresh]));
+
+  // 展开详情后轮询直到所有步骤进入终态（running → success/failed/skipped）
+  useEffect(() => {
+    if (expandedId === null) return;
+    const hasRunning = expandedDetail?.step_executions?.some((s: any) => s.status === 'running');
+    if (!hasRunning) return;
+    const timer = setInterval(() => {
+      dbLoops.getExecution(loopId, expandedId)
+        .then(detail => setExpandedDetail(detail))
+        .catch(() => {});
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [expandedId, expandedDetail, loopId]);
 
   // 展开行: 拉取该 execution 的 step 详情
   const handleExpand = useCallback(async (execId: number) => {
@@ -200,7 +205,7 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
                     {expandedLoading ? (
                       <Skeleton active />
                     ) : expandedDetail && expandedDetail.id === e.id ? (
-                      <StepExecList key={detailRefreshKey} stepExecs={expandedDetail.step_executions} />
+                      <StepExecList stepExecs={expandedDetail.step_executions} />
                     ) : null}
                   </div>
                 )}
