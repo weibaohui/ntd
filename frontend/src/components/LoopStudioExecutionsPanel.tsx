@@ -130,11 +130,17 @@ export function LoopExecutionsPanel({ loopId, loopName }: Props) {
             const view = execStatusView(e.status);
             const expanded = expandedId === e.id;
             return (
-              <div key={e.id} className="loop-exec-row">
+              <div key={e.id} className="loop-exec-row" style={{ marginBottom: expanded ? 10 : 6 }}>
                 <div
                   className="loop-exec-row-head"
                   onClick={() => handleExpand(e.id)}
-                  style={{ cursor: 'pointer', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--color-border, #e2e8f0)', marginBottom: 6, background: 'var(--color-bg-elevated, #ffffff)' }}
+                  style={{
+                    cursor: 'pointer', padding: '10px 12px',
+                    background: 'var(--color-bg-elevated, #ffffff)',
+                    border: '1px solid var(--color-border, #e2e8f0)',
+                    borderRadius: expanded ? '8px 8px 0 0' : 8,
+                    borderBottom: expanded ? 'none' : '1px solid var(--color-border, #e2e8f0)',
+                  }}
                 >
                   {/* 第一行：图标 + 编号 + 状态 + 触发类型 */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -162,7 +168,13 @@ export function LoopExecutionsPanel({ loopId, loopName }: Props) {
                   </div>
                 </div>
                 {expanded && (
-                  <div className="loop-exec-row-detail">
+                  <div className="loop-exec-row-detail" style={{
+                    background: 'var(--color-bg-elevated, #ffffff)',
+                    border: '1px solid var(--color-border, #e2e8f0)',
+                    borderTop: 'none',
+                    borderRadius: '0 0 8px 8px',
+                    padding: '8px 12px 12px',
+                  }}>
                     {expandedLoading ? (
                       <Skeleton active />
                     ) : expandedDetail && expandedDetail.id === e.id ? (
