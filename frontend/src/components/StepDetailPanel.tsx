@@ -203,11 +203,6 @@ export function StepDetailPanel({ stepId, onStepUpdated, onStepDeleted }: StepDe
             <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text, #0f172a)' }}>
               执行历史
             </span>
-            {step.source_todo_id && (
-              <span style={{ fontSize: 12, color: 'var(--color-text-tertiary, #94a3b8)' }}>
-                (来源事项 #{step.source_todo_id})
-              </span>
-            )}
             {records.length > 0 && (
               <span style={{ fontSize: 12, color: 'var(--color-text-tertiary, #94a3b8)', marginLeft: 'auto' }}>
                 共 {historyTotal} 条
@@ -269,9 +264,7 @@ export function StepDetailPanel({ stepId, onStepUpdated, onStepDeleted }: StepDe
               </>
             )
           ) : (
-            <div style={{ color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 13, padding: 16 }}>
-              该环节无来源事项，无法加载执行历史
-            </div>
+              <Empty description="暂无执行记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
           )}
         </div>
       </div>
