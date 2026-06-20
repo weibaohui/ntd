@@ -35,9 +35,12 @@ import type {
 
 // ====== Loop 主体 ======
 
-/** 列出所有 loop,按更新时间倒序。 */
-export async function listLoops(): Promise<LoopListItem[]> {
-  return unwrap(await api.get('/api/loops'));
+/** 列出所有 loop,按更新时间倒序。可选按工作空间过滤。 */
+export async function listLoops(workspace?: string | null): Promise<LoopListItem[]> {
+  const params: Record<string, string> = {};
+  if (workspace) params.workspace = workspace;
+  const qs = Object.keys(params).length ? `?${new URLSearchParams(params).toString()}` : '';
+  return unwrap(await api.get(`/api/loops${qs}`));
 }
 
 /** 单个 loop 详情,含 triggers/steps/hooks/todo_map。 */

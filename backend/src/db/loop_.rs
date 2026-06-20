@@ -629,9 +629,11 @@ impl Database {
     /// 供左侧 LoopList 用,避免 N+1。
     pub async fn list_loops_with_counts(
         &self,
+        workspace: Option<&str>,
     ) -> Result<Vec<LoopListRow>, sea_orm::DbErr> {
         use sea_orm::{ConnectionTrait, Statement};
-        let sql = "SELECT l.id, l.name, l.description, l.workspace, \
+        let sql = match workspace {
+            Some(_) => "SELECT l.id, l.name, l.description, l.workspace, \
                           l.status, l.color, l.icon, l.created_at, l.updated_at, \
                           (SELECT COUNT(*) FROM loop_triggers t WHERE t.loop_id = l.id) as trigger_count, \
                           (SELECT COUNT(*) FROM loop_steps s WHERE s.loop_id = l.id) as step_count, \
@@ -640,11 +642,30 @@ impl Database {
                           (SELECT le.started_at FROM loop_executions le \
                            WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_at \
                    FROM loops l \
-                   ORDER BY l.updated_at DESC";
-        let rows = self
-            .conn
-            .query_all(Statement::from_string(sea_orm::DbBackend::Sqlite, sql))
-            .await?;
+                   WHERE l.workspace = ?1 \
+                   ORDER BY l.updated_at DESC",
+            None => "SELECT l.id, l.name, l.description, l.workspace, \
+                      l.status, l.color, l.icon, l.created_at, l.updated_at, \
+                      (SELECT COUNT(*) FROM loop_triggers t WHERE t.loop_id = l.id) as trigger_count, \
+                      (SELECT COUNT(*) FROM loop_steps s WHERE s.loop_id = l.id) as step_count, \
+                      (SELECT le.status FROM loop_executions le \
+                       WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_status, \
+                      (SELECT le.started_at FROM loop_executions le \
+                       WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_at \
+                   FROM loops l \
+                   ORDER BY l.updated_at DESC",
+        };
+        let rows = if let Some(w) = workspace {
+            self.conn
+                .query_all(
+                    Statement::from_sql_and_values(sea_orm::DbBackend::Sqlite, sql, [w.to_string().into()])
+                )
+                .await?
+        } else {
+            self.conn
+                .query_all(Statement::from_string(sea_orm::DbBackend::Sqlite, sql))
+                .await?
+        };
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
             out.push(LoopListRow {

@@ -103,11 +103,6 @@ export function TodoList(props: TodoListProps) {
   const [loopLoading, setLoopLoading] = useState(false);
   // 当前选中的 loop id（来自左侧环路列表），用于高亮
   const [selectedLoopId, setSelectedLoopId] = useState<number | null>(null);
-  // 按工作空间过滤环路列表
-  const filteredLoopList = useMemo(() => {
-    if (selectedWorkspace === null) return loopList;
-    return loopList.filter(l => l.workspace === selectedWorkspace);
-  }, [loopList, selectedWorkspace]);
   // 项目目录：工作空间选择器需要目录列表
   const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
 
@@ -147,11 +142,11 @@ export function TodoList(props: TodoListProps) {
   useEffect(() => {
     if (listMode !== 'loop') return;
     setLoopLoading(true);
-    dbLoops.listLoops()
+    dbLoops.listLoops(selectedWorkspace)
       .then(setLoopList)
       .catch(() => setLoopList([]))
       .finally(() => setLoopLoading(false));
-  }, [listMode, loopUpdateCount]);
+  }, [listMode, loopUpdateCount, selectedWorkspace]);
 
   // 持久化列表模式到 localStorage
   useEffect(() => {
@@ -701,7 +696,7 @@ export function TodoList(props: TodoListProps) {
             <Skeleton active style={{ padding: 16 }} />
           ) : (
             <LoopListPanel
-              loops={filteredLoopList}
+              loops={loopList}
               selectedId={selectedLoopId}
               onSelect={(id) => {
                 setSelectedLoopId(id);

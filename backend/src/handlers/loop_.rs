@@ -39,8 +39,10 @@ const MAX_PAGE_LIMIT: u64 = 100;
 /// GET /api/loops — 左栏列表,一次查询带 trigger/step/exec 计数
 pub async fn list_loops(
     State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<impl IntoResponse, AppError> {
-    let rows = state.db.list_loops_with_counts().await?;
+    let workspace = params.get("workspace").map(|s| s.as_str());
+    let rows = state.db.list_loops_with_counts(workspace).await?;
     let items: Vec<LoopListItem> = rows.into_iter().map(Into::into).collect();
     Ok(ApiResponse::ok(items))
 }
