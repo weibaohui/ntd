@@ -268,7 +268,18 @@ pub async fn update_todo_tags(
     Path(id): Path<i64>,
     ApiJson(req): ApiJson<UpdateTagsRequest>,
 ) -> Result<ApiResponse<()>, AppError> {
+    // 先查询之前关联的 tag（用于计算新增的 tag）
+    let old_tag_ids: std::collections::HashSet<i64> = state.db.get_todo_tag_ids(id).await.unwrap_or_default().into_iter().collect();
     state.db.set_todo_tags(id, &req.tag_ids).await?;
+    // Loop Studio: 对每个新增的 tag 派发 tag_added 触发器
+    if let Some(dispatcher) = state.loop_trigger_dispatcher.as_ref() {
+        for &tag_id in &req.tag_ids {
+            if !old_tag_ids.contains(&tag_id) {
+                // 只派发新增的 tag（已存在的 tag 不重复触发）
+                let _ = dispatcher.dispatch_tag_added(tag_id, id).await;
+            }
+        }
+    }
     Ok(ApiResponse::ok(()))
 }
 

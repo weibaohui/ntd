@@ -122,6 +122,16 @@ impl Database {
             .collect())
     }
 
+    /// 查询指定 todo 当前关联的所有 tag_id。
+    pub async fn get_todo_tag_ids(&self, todo_id: i64) -> Result<Vec<i64>, sea_orm::DbErr> {
+        use sea_orm::ColumnTrait;
+        let rows = todo_tags::Entity::find()
+            .filter(todo_tags::Column::TodoId.eq(todo_id))
+            .all(&self.conn)
+            .await?;
+        Ok(rows.into_iter().map(|r| r.tag_id).collect())
+    }
+
     pub async fn find_tag_by_name(&self, name: &str) -> Result<Option<i64>, sea_orm::DbErr> {
         use sea_orm::ColumnTrait;
         Ok(tags::Entity::find()

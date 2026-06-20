@@ -1038,6 +1038,9 @@ fn build_app_state(
     let (loop_runner, loop_trigger_dispatcher, loop_scheduler) =
         init_loop_studio_services(ctx.clone(), hook_service.clone(), tx.clone());
 
+    // 后台监听 todo 执行完成事件，派发给 loop_trigger_dispatcher
+    spawn_todo_completed_listener(tx.clone(), loop_trigger_dispatcher.clone());
+
     AppState {
         db,
         executor_registry,
@@ -1093,6 +1096,48 @@ fn init_loop_studio_services(
     };
     // 即使 scheduler 失败,runner / dispatcher 仍可用（手动触发仍可工作）
     (Some(runner), Some(dispatcher), scheduler)
+}
+
+/// 后台任务：监听 ExecEvent::Finished 事件并派发到 loop_trigger_dispatcher。
+///
+/// 当 todo 执行完成时，触发 loop 的 todo_completed 触发器。
+/// 这是一个 fire-and-forget 任务，失败不影响 daemon 主流程。
+fn spawn_todo_completed_listener(
+    tx: tokio::sync::broadcast::Sender<ExecEvent>,
+    dispatcher: Option<Arc<crate::services::loop_trigger::LoopTriggerDispatcher>>,
+) {
+    let Some(dispatcher) = dispatcher else {
+        return;
+    };
+    let mut rx = tx.subscribe();
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(ExecEvent::Finished {
+                    todo_id,
+                    success: true,
+                    ..
+                }) => {
+                    // 仅当执行成功时派发 todo_completed 触发器
+                    let _ = dispatcher.dispatch_todo_completed(todo_id, None).await;
+                }
+                // 忽略其它事件类型
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!(
+                        "todo_completed_listener: lagged by {} events",
+                        n
+                    );
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    tracing::info!(
+                        "todo_completed_listener: channel closed, exiting"
+                    );
+                    break;
+                }
+            }
+        }
+    });
 }
 
 /// 后台任务：启动所有已启用的飞书 bot。失败仅记录日志，不影响主流程。

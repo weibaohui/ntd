@@ -16,7 +16,8 @@ export type LoopTriggerType =
   | 'feishu_message'
   | 'feishu_command'
   | 'todo_completed'
-  | 'todo_state_changed';
+  | 'todo_state_changed'
+  | 'tag_added';
 
 export type LoopRunMode = 'sequential';
 
