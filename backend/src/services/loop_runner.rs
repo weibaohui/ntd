@@ -611,7 +611,10 @@ impl LoopRunner {
                 for marker in &["## 结论", "## Conclusion", "Conclusion:", "结论："] {
                     if let Some(pos) = output.find(marker) {
                         let after = &output[pos + marker.len()..].trim();
-                        let end = after.find('\n').unwrap_or(after.len().min(300));
+                        let end = after.find('\n').unwrap_or_else(|| {
+                            // 使用 char_indices 确保切片在字符边界上，避免切到多字节字符中间
+                            after.char_indices().nth(300).map(|(i, _)| i).unwrap_or(after.len())
+                        });
                         let slice = &after[..end].trim();
                         if !slice.is_empty() {
                             return slice.to_string();
