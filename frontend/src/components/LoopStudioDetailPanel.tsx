@@ -410,10 +410,10 @@ export function LoopDetailPanel({
             />
           </Form.Item>
           {/* ── 全局限制 ── */}
-          <div style={{ fontWeight: 600, fontSize: 14, marginTop: 16, marginBottom: 12, color: '#64748b' }}>
+          <div style={{ fontWeight: 600, fontSize: 14, marginTop: 16, marginBottom: 12, color: 'var(--color-text-secondary, #64748b)' }}>
             全局限制
           </div>
-          <div style={{ background: '#f8fafc', padding: 12, borderRadius: 8 }}>
+          <div style={{ background: 'var(--color-bg-elevated, #f8fafc)', padding: 12, borderRadius: 8 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <Form.Item label="最大执行步数" name={['max_step_executions']} tooltip="超出后自动终止 Loop（留空=不限制）">
                 <InputNumber min={1} max={9999} placeholder="不限" style={{ width: '100%' }} />
