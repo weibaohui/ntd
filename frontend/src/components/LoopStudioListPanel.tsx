@@ -10,11 +10,12 @@
 // - 单击切换 selectedId, 父组件维护; 当前选中卡片左侧条加亮 + 边框高亮
 
 import { useMemo, useState } from 'react';
-import { Tag, Segmented } from 'antd';
+import { Button, Tag, Segmented } from 'antd';
 import {
   ClockCircleOutlined,
   ApartmentOutlined,
   ThunderboltOutlined,
+  PlusOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   LoadingOutlined,
@@ -29,6 +30,7 @@ interface LoopListPanelProps {
   loops: LoopListItem[];
   selectedId: number | null;
   onSelect: (id: number) => void;
+  onCreate?: () => void;
 }
 
 // 状态 → 标签颜色, 集中在一处方便复用
@@ -69,7 +71,7 @@ function countByStatus(loops: LoopListItem[], filter: StatusFilter): number {
   return loops.filter(l => (l.status as LoopStatus) === filter).length;
 }
 
-export function LoopListPanel({ loops, selectedId, onSelect }: LoopListPanelProps) {
+export function LoopListPanel({ loops, selectedId, onSelect, onCreate }: LoopListPanelProps) {
   // 状态过滤状态, 默认全部; 本地持有, 切 loop 时不重置
   const [filter, setFilter] = useState<StatusFilter>('all');
 
@@ -119,9 +121,22 @@ export function LoopListPanel({ loops, selectedId, onSelect }: LoopListPanelProp
       {/* 卡片列表: flex 1 占满剩余空间, 内部滚动 */}
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 8 }}>
         {filtered.length === 0 ? (
-          <div style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 13 }}>
-            该状态下暂无 loop
-          </div>
+          loops.length === 0 ? (
+            <div style={{ padding: '40px 16px', textAlign: 'center' }}>
+              <div style={{ color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 13, marginBottom: 16 }}>
+                暂无环路，创建第一个环路开始自动化
+              </div>
+              {onCreate && (
+                <Button type="primary" icon={<PlusOutlined />} onClick={onCreate}>
+                  新建环路
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 13 }}>
+              该状态下暂无 loop
+            </div>
+          )
         ) : (
           filtered.map(loop => (
             <LoopCard

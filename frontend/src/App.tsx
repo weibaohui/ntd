@@ -228,6 +228,15 @@ function AppContent() {
               loopUpdateCount={loopUpdateCount}
               onShowSettings={() => { clearSelection(); showView('settings'); }}
               onSelectLoop={handleSelectLoop}
+              onCreateLoop={async () => {
+                try {
+                  const res = await dbLoops.createLoop({ name: '新建环路', description: '' });
+                  setSelectedLoopId(res.id);
+                  setLoopUpdateCount(c => c + 1);
+                } catch (err) {
+                  message.error('创建失败');
+                }
+              }}
             />
           </div>
 
