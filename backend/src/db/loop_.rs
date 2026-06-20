@@ -656,6 +656,7 @@ impl Database {
         let sql = format!(
             "SELECT s.id, s.loop_id, s.name, s.description, s.order_index, s.todo_id, \
                     s.run_mode, s.skip_on_source_failed, s.min_rating, s.unrated_policy, \
+                    s.on_success, s.success_goto_step_id, s.on_rating_fail, s.fail_goto_step_id, \
                     s.enabled, s.created_at, \
                     t.title as todo_title, t.executor as todo_executor, t.status as todo_status \
              FROM loop_steps s \
@@ -711,7 +712,7 @@ impl Database {
         use sea_orm::{ConnectionTrait, Statement};
         let sql = match workspace {
             Some(_) => "SELECT l.id, l.name, l.description, l.workspace, \
-                          l.status, l.color, l.icon, l.created_at, l.updated_at, \
+                          l.status, l.color, l.icon, l.limits_config, l.review_template_id, l.created_at, l.updated_at, \
                           (SELECT COUNT(*) FROM loop_triggers t WHERE t.loop_id = l.id) as trigger_count, \
                           (SELECT COUNT(*) FROM loop_steps s WHERE s.loop_id = l.id) as step_count, \
                           (SELECT le.status FROM loop_executions le \
@@ -722,7 +723,7 @@ impl Database {
                    WHERE l.workspace = ?1 \
                    ORDER BY l.updated_at DESC",
             None => "SELECT l.id, l.name, l.description, l.workspace, \
-                      l.status, l.color, l.icon, l.created_at, l.updated_at, \
+                      l.status, l.color, l.icon, l.limits_config, l.review_template_id, l.created_at, l.updated_at, \
                       (SELECT COUNT(*) FROM loop_triggers t WHERE t.loop_id = l.id) as trigger_count, \
                       (SELECT COUNT(*) FROM loop_steps s WHERE s.loop_id = l.id) as step_count, \
                       (SELECT le.status FROM loop_executions le \
