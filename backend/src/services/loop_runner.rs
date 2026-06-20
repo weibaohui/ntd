@@ -320,7 +320,6 @@ impl LoopRunner {
                     .await;
             } else {
                 failed += 1;
-                last_failed_record = Some(record_id);
                 let _ = self
                     .ctx
                     .db
