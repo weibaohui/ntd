@@ -180,6 +180,11 @@ impl LoopRunner {
             .map(|(i, s)| (s.id, i))
             .collect();
 
+        // 上一环节的执行结果（用于注入模板变量）
+        let mut last_output: Option<String> = None;
+        let mut last_conclusion: Option<String> = None;
+        let mut last_step_name: Option<String> = None;
+
         // 4. 主循环
         while let Some(idx) = current_idx {
             if idx >= all_steps.len() {
@@ -218,10 +223,17 @@ impl LoopRunner {
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("step #{} (todo_id={}) not found", step.id, step.todo_id))?;
 
-            // 4d. 构造增强 Prompt（注入黑板变量）
+            // 4d. 构造增强 Prompt（注入黑板变量 + 上一环节结果）
             let blackboard_text = self.build_blackboard_text(loop_execution_id).await;
+            let last_output_text = last_output.as_deref().unwrap_or("");
+            let last_conclusion_text = last_conclusion.as_deref().unwrap_or("");
+            let last_step_name_text = last_step_name.as_deref().unwrap_or("");
             let enhanced_prompt = step_meta.prompt
                 .replace("{blackboard}", &blackboard_text)
+                .replace("{last_output}", last_output_text)
+                .replace("{last_conclusion}", last_conclusion_text)
+                .replace("{last_step_name}", last_step_name_text)
+                .replace("{message}", last_output_text)
                 .replace("{loop_execution_id}", &loop_execution_id.to_string())
                 .replace("{loop_name}", &loop_.name);
 
@@ -333,6 +345,12 @@ impl LoopRunner {
                     .map_err(|e| e.to_string())?;
                 *consecutive_retries.entry(step.id).or_insert(0) += 1;
             }
+
+            // 记录上一环节的输出（供下一环节的 {last_output}/{message} 模板变量使用）
+            let exec_record = self.ctx.db.get_execution_record(record_id).await.ok().flatten();
+            last_output = exec_record.as_ref().and_then(|r| r.result.clone());
+            last_conclusion = Some(conclusion.clone());
+            last_step_name = Some(step.name.clone());
 
             // 4l. 确定下一步
             current_idx = if gate_passed {
