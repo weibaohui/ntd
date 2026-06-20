@@ -276,7 +276,13 @@ impl LoopRunner {
             // 4e. 评分闸门：若 step 成功且设置了 min_rating，等待自动评审并做阈值判断
             let final_step_status = if step_status == "success" && step.min_rating.is_some() {
                 let passed = self
-                    .apply_rating_gate(record_id, step.min_rating.unwrap(), &step.unrated_policy)
+                    .apply_rating_gate(
+                        record_id,
+                        step.min_rating.unwrap(),
+                        &step.unrated_policy,
+                        &step_meta.prompt,
+                        step_meta.acceptance_criteria.as_deref(),
+                    )
                     .await
                     .map_err(|e| e.to_string())?;
                 if passed { "success" } else { "failed" }
@@ -497,43 +503,172 @@ impl LoopRunner {
     }
 
     /// 评分闸门：检查 execution_record 的 rating 与阈值比较。
+    /// 若未评分且环节有验收标准，自动发起评审。
     /// 返回 true = 通过，false = 未通过。
     async fn apply_rating_gate(
         &self,
         record_id: i64,
         min_rating: i32,
         unrated_policy: &str,
+        step_prompt: &str,
+        step_acceptance_criteria: Option<&str>,
     ) -> Result<bool, String> {
-        // 最多等 30 秒让评审完成
-        let start = std::time::Instant::now();
-        let timeout = std::time::Duration::from_secs(30);
-        loop {
-            let rec = self
-                .ctx
-                .db
-                .get_execution_record(record_id)
-                .await
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("execution record #{} not found", record_id))?;
+        // 先检查是否已有评分
+        let rec = self
+            .ctx
+            .db
+            .get_execution_record(record_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("execution record #{} not found", record_id))?;
 
-            // 有评分直接比较
-            if let Some(rating) = rec.rating {
-                let passed = rating >= min_rating;
-                info!("rating gate: record #{} rating={} min_rating={} {}",
-                    record_id, rating, min_rating, if passed { "PASS" } else { "FAIL" });
+        if let Some(rating) = rec.rating {
+            let passed = rating >= min_rating;
+            info!("rating gate: record #{} rating={} min_rating={} {}",
+                record_id, rating, min_rating, if passed { "PASS" } else { "FAIL" });
+            return Ok(passed);
+        }
+
+        // 无评分但有验收标准：发起自动评审
+        if let Some(criteria) = step_acceptance_criteria.filter(|s| !s.trim().is_empty()) {
+            info!("rating gate: record #{} triggering auto-review", record_id);
+            
+            // 1) 确保评审模板存在
+            let template = self.ensure_review_template().await?;
+            
+            // 2) 获取执行记录的 result
+            let original_output = rec.result.as_deref().unwrap_or_default();
+            
+            // 3) 合成评审 prompt
+            use crate::services::auto_review::MAX_OUTPUT_CHARS;
+            let truncated: String = if original_output.chars().count() > MAX_OUTPUT_CHARS {
+                let mut s: String = original_output.chars().take(MAX_OUTPUT_CHARS).collect();
+                s.push_str("\n\n[...以下被截断...]");
+                s
+            } else {
+                original_output.to_string()
+            };
+            let review_prompt = template
+                .prompt
+                .replace("{original_prompt}", step_prompt)
+                .replace("{max_output_chars}", &MAX_OUTPUT_CHARS.to_string())
+                .replace("{original_output}", &truncated)
+                .replace("{acceptance_criteria}", criteria);
+
+            // 4) 标记评审状态为 pending
+            let _ = self.ctx.db.set_record_last_review_status(record_id, "pending").await;
+            let _ = self.ctx.db.set_record_last_reviewed_at(record_id).await;
+            let _ = self.ctx.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+                record_id,
+                todo_id: 0,
+                review_status: "pending".to_string(),
+            });
+
+            // 5) 执行评审
+            let request = crate::executor_service::RunTodoExecutionRequest {
+                db: self.ctx.db.clone(),
+                executor_registry: self.ctx.executor_registry.clone(),
+                tx: self.ctx.tx.clone(),
+                task_manager: self.ctx.task_manager.clone(),
+                config: self.ctx.config.clone(),
+                hook_service: self.hook_service.clone(),
+                todo_id: template.id,
+                message: review_prompt,
+                req_executor: template.executor.clone(),
+                trigger_type: "auto_review".to_string(),
+                params: None,
+                resume_session_id: None,
+                resume_message: None,
+                chain: vec![],
+                source_todo_id: None,
+                source_todo_title: None,
+                source_hook_id: None,
+                loop_step_execution_id: None,
+                feishu_bot_id: None,
+                feishu_receive_id: None,
+            };
+            let exec_result = crate::executor_service::run_todo_execution(request).await;
+            let review_record_id = match exec_result.record_id {
+                Some(id) => id,
+                None => {
+                    warn!("rating gate: review execution returned no record_id");
+                    let _ = self.ctx.db.set_record_last_review_status(record_id, "failed").await;
+                    return Ok(unrated_policy == "pass");
+                }
+            };
+
+            // 6) 轮询评审完成（最多等 60 秒）
+            let max_wait = std::time::Duration::from_secs(60);
+            let poll_interval = std::time::Duration::from_millis(500);
+            let start_poll = std::time::Instant::now();
+            let review_status_str = loop {
+                if start_poll.elapsed() > max_wait {
+                    warn!("rating gate: review record #{} timed out", review_record_id);
+                    let _ = self.ctx.db.set_record_last_review_status(record_id, "failed").await;
+                    let _ = self.ctx.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+                        record_id, todo_id: 0,
+                        review_status: "failed".to_string(),
+                    });
+                    return Ok(unrated_policy == "pass");
+                }
+                if let Ok(Some(r)) = self.ctx.db.get_execution_record(review_record_id).await {
+                    use crate::models::ExecutionStatus;
+                    if !matches!(r.status, ExecutionStatus::Running) {
+                        break r.status.to_string();
+                    }
+                }
+                tokio::time::sleep(poll_interval).await;
+            };
+
+            // 7) 解析评分
+            let review_result = self.ctx.db.get_execution_record(review_record_id).await
+                .ok().flatten()
+                .and_then(|r| r.result);
+            let rating = crate::services::auto_review::parse_rating_from_result(
+                review_result.as_deref()
+            );
+            if let Some(r) = rating {
+                let _ = self.ctx.db.update_execution_record_rating(record_id, Some(r)).await;
+            }
+
+            // 8) 链接评审记录到源记录
+            let _ = self.ctx.db.link_review_to_source(
+                review_record_id, record_id, &review_status_str
+            ).await;
+            let _ = self.ctx.db.set_record_last_review_status(record_id, &review_status_str).await;
+            let _ = self.ctx.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+                record_id, todo_id: 0,
+                review_status: review_status_str.to_string(),
+            });
+
+            info!("rating gate: review done record #{} rating={:?} status={}",
+                record_id, rating, review_status_str);
+
+            // 9) 最终检查评分
+            if let Some(r) = rating {
+                let passed = r >= min_rating;
+                info!("rating gate: record #{} final rating={} min_rating={} {}",
+                    record_id, r, min_rating, if passed { "PASS" } else { "FAIL" });
                 return Ok(passed);
             }
-
-            // 评审还在进行中则等待
-            let review_status = rec.last_review_status.as_deref().unwrap_or("");
-            if review_status == "pending" && start.elapsed() < timeout {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                continue;
-            }
-
-            // 无评分：按策略决定
-            info!("rating gate: record #{} no rating, policy={}", record_id, unrated_policy);
-            return Ok(unrated_policy == "pass");
         }
+
+        // 无评分：按策略决定
+        info!("rating gate: record #{} no rating, policy={}", record_id, unrated_policy);
+        Ok(unrated_policy == "pass")
+    }
+
+    /// 确保评审模板 todo 存在并返回
+    async fn ensure_review_template(&self) -> Result<crate::models::Todo, String> {
+        use crate::services::auto_review::{
+            ensure_reviewer_template, DEFAULT_REVIEWER_PROMPT, REVIEWER_TEMPLATE_TITLE,
+        };
+        let template_id = ensure_reviewer_template(
+            &self.ctx.db, REVIEWER_TEMPLATE_TITLE, DEFAULT_REVIEWER_PROMPT
+        ).await.map_err(|e| format!("ensure review template: {}", e))?;
+        self.ctx.db.get_todo(template_id)
+            .await
+            .map_err(|e| format!("load template: {}", e))?
+            .ok_or_else(|| "reviewer template vanished".to_string())
     }
 }
