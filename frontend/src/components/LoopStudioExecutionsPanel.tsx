@@ -82,29 +82,36 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
 
   // WebSocket 实时事件驱动刷新：延迟片刻等后端写入完成后再刷新
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshTimer2Ref = useRef<ReturnType<typeof setTimeout> | null>(null);
   useExecutionEvents(useCallback(() => {
     if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-    refreshTimerRef.current = setTimeout(() => {
-      // 先刷新列表，再刷新展开的详情
-      dbLoops.listExecutions(loopId, { page, limit: DEFAULT_PAGE_LIMIT })
-        .then((res) => {
-          setItems(res.items);
-          setTotal(res.total);
-          onTotalChange?.(res.total);
-          if (expandedId !== null) {
-            return dbLoops.getExecution(loopId, expandedId);
-          }
-          return null;
-        })
-        .then((detail) => {
-          if (detail) {
-            setExpandedDetail(detail);
-            setDetailRefreshKey(k => k + 1);
-          }
-        })
-        .catch(() => {});
-    }, 800);
-  }, [page, loopId, expandedId]));
+    if (refreshTimer2Ref.current) clearTimeout(refreshTimer2Ref.current);
+    // 第一次刷新：较短延迟
+    refreshTimerRef.current = setTimeout(() => doRefresh(), 600);
+    // 第二次刷新：较长延迟，确保后端写入完成
+    refreshTimer2Ref.current = setTimeout(() => doRefresh(), 2000);
+  }, []));
+
+  // 实际的刷新逻辑：拉取列表 + 展开详情
+  const doRefresh = useCallback(() => {
+    dbLoops.listExecutions(loopId, { page, limit: DEFAULT_PAGE_LIMIT })
+      .then((res) => {
+        setItems(res.items);
+        setTotal(res.total);
+        onTotalChange?.(res.total);
+        if (expandedId !== null) {
+          return dbLoops.getExecution(loopId, expandedId);
+        }
+        return null;
+      })
+      .then((detail) => {
+        if (detail) {
+          setExpandedDetail(detail);
+          setDetailRefreshKey(k => k + 1);
+        }
+      })
+      .catch(() => {});
+  }, [page, loopId, expandedId]);
 
   // 展开行: 拉取该 execution 的 step 详情
   const handleExpand = useCallback(async (execId: number) => {

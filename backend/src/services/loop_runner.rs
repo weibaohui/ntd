@@ -296,6 +296,13 @@ impl LoopRunner {
                 .await
                 .map_err(|e| e.to_string())?;
 
+            // 发射事件通知前端步骤执行状态已更新
+            let _ = self.ctx.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+                record_id,
+                todo_id: step_meta.source_todo_id.unwrap_or(0),
+                review_status: final_step_status.to_string(),
+            });
+
             if final_step_status == "success" {
                 completed += 1;
                 last_failed_record = None;
