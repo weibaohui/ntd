@@ -89,6 +89,13 @@
   --color-primary-light: #0c4a5e;
   --color-primary-bg: #0a2e3d;
 
+  /* Status foregrounds - soften saturated light-mode colors for dark backgrounds
+     (Catppuccin Mocha hues to match the rest of the dark palette) */
+  --color-success: #a6e3a1;
+  --color-warning: #f9e2af;
+  --color-error: #f38ba8;
+  --color-info: #89b4fa;
+
   /* Status backgrounds */
   --color-success-bg: #052e16;
   --color-warning-bg: #422006;

@@ -216,7 +216,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
           </Form.Item>
 
           {/* ── 门禁配置 ── */}
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12, color: '#f97316' }}>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12, color: 'var(--color-warning, #f97316)' }}>
             评分门禁
           </div>
           <Form.Item label="评分阈值" name="min_rating" tooltip="启用后 AI 自动评分，低于此值视为不通过（0-100，留空=不启用）">
@@ -224,11 +224,16 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
           </Form.Item>
 
           {/* ── 控制流配置 ── */}
-          <div style={{ fontWeight: 600, fontSize: 14, marginTop: 16, marginBottom: 12, color: '#0891b2' }}>
+          <div style={{ fontWeight: 600, fontSize: 14, marginTop: 16, marginBottom: 12, color: 'var(--color-primary, #0891b2)' }}>
             控制流
           </div>
 
-          <div style={{ background: '#f0fdf4', padding: 12, borderRadius: 8, marginBottom: 12 }}>
+          <div style={{
+            // 用 success-bg 的语义变量驱动暗色背景；亮色 fallback 保持原浅绿观感
+            background: 'var(--color-success-bg, #f0fdf4)',
+            border: '1px solid var(--color-border-light, #f1f5f9)',
+            padding: 12, borderRadius: 8, marginBottom: 12,
+          }}>
             <Form.Item label="✅ 成功时" name="on_success" initialValue="next">
               <Select>
                 <Select.Option value="next">下一步（顺序执行）</Select.Option>
@@ -248,7 +253,12 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
             )}
           </div>
 
-          <div style={{ background: '#fef2f2', padding: 12, borderRadius: 8, marginBottom: 12 }}>
+          <div style={{
+            // 同上，用 error-bg 让暗色下不再刺眼；保留浅红 fallback
+            background: 'var(--color-error-bg, #fef2f2)',
+            border: '1px solid var(--color-border-light, #f1f5f9)',
+            padding: 12, borderRadius: 8, marginBottom: 12,
+          }}>
             <Form.Item label="❌ 评分不通过时" name="on_rating_fail" initialValue="break">
               <Select>
                 <Select.Option value="break">终止 Loop</Select.Option>
