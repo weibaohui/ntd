@@ -93,9 +93,7 @@ export function useExecutionEvents(onRefresh?: () => void) {
         try {
           const data: ExecEvent = JSON.parse(event.data);
           // 先触发外部回调（用于 loop 等面板刷新）
-          if (data.type === 'Finished' || data.type === 'ReviewStatusChanged' || data.type === 'Sync') {
-            onRefreshRef.current?.();
-          }
+          onRefreshRef.current?.();
 
           switch (data.type) {
             case 'Sync': {
