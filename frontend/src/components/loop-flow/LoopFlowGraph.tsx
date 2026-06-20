@@ -3,31 +3,30 @@
 // 布局：dagre 自动排列虚拟 Start/End + 真实 step 节点。
 // 渲染：边（FlowEdge） + 真实环节卡片 + Start/End 虚拟节点（FlowVirtualNodes）。
 // 回环：当某环节失败要回到前面重做（fail-goto 目标 step index < 源 step index），
-//       用 U 形向上拱的弧线 + 加粗红色虚线 + 白底「↻ 重试」标签，跟普通跳转区分。
+//       用正交折线（顶边出 + 顶边入）+ 加粗红色虚线 + 白底「↻ 重试」标签。
 //
 // 文件按 500 行硬限拆为：
 // - LoopFlowGraph.tsx（本文件）：布局 + 主组装
 // - FlowEdge.tsx：单条边渲染与路径计算
-// - FlowVirtualNodes.tsx：Start/End 节点 + 触发条件徽章
+// - FlowVirtualNodes.tsx：Start/End 节点
 // - flowConstants.ts / flowTypes.ts：共享常量与类型
 
 import { useMemo } from 'react';
 import dagre from 'dagre';
-import type { LoopStepDto, LoopTriggerDto } from '@/types/loop';
+import type { LoopStepDto } from '@/types/loop';
 import {
-  StartNode, EndNode, TriggerBadges,
+  StartNode, EndNode,
 } from '@/components/loop-flow/FlowVirtualNodes';
 import { FlowEdge, classifyEdge, resolveTargetStep } from '@/components/loop-flow/FlowEdge';
 import {
   NODE_WIDTH, NODE_HEIGHT, RANK_SEP, NODE_SEP,
-  TRIGGER_AREA_WIDTH, LOOP_BACK_TOP_PADDING,
+  LOOP_BACK_TOP_PADDING,
   VIRTUAL_NODE_RADIUS, START_NODE_ID, END_NODE_ID,
 } from '@/components/loop-flow/flowConstants';
 import type { LayoutNode, LayoutEdge } from '@/components/loop-flow/flowTypes';
 
 interface FlowGraphProps {
   steps: LoopStepDto[];
-  triggers?: LoopTriggerDto[];
   selectedStepId: number | null;
   tracedStepIds?: number[];
   tracedSequenceMap?: Record<number, number>;
@@ -35,12 +34,12 @@ interface FlowGraphProps {
   onAddStep: () => void;
 }
 
-function useFlowLayout(steps: LoopStepDto[], triggerCount: number) {
+function useFlowLayout(steps: LoopStepDto[]) {
   return useMemo(() => {
     if (steps.length === 0) return {
       nodes: [] as LayoutNode[], edges: [] as LayoutEdge[], width: 0, height: 0,
       startX: 0, startY: 0, endX: 0, endY: 0,
-      triggerAreaWidth: 0, hasLoopBack: false,
+      hasLoopBack: false,
     };
 
     const g = new dagre.graphlib.Graph();
@@ -167,32 +166,28 @@ function useFlowLayout(steps: LoopStepDto[], triggerCount: number) {
     return {
       nodes,
       edges: layoutEdges,
-      width: graphWidth + 40 + (triggerCount > 0 ? TRIGGER_AREA_WIDTH : 0),
+      width: graphWidth + 40,
       height: graphHeight + 40 + loopBackPad,
       startX: startPos?.x ?? 40,
       startY: startPos?.y ?? 40,
       endX: endPos?.x ?? graphWidth - 40,
       endY: endPos?.y ?? graphHeight - 40,
-      triggerAreaWidth: triggerCount > 0 ? TRIGGER_AREA_WIDTH : 0,
       hasLoopBack,
     };
-  }, [steps, triggerCount]);
+  }, [steps]);
 }
 
 export function LoopFlowGraph({
-  steps, triggers = [],
+  steps,
   selectedStepId, tracedStepIds = [], tracedSequenceMap: _tracedSequenceMap = {},
   onSelectStep, onAddStep,
 }: FlowGraphProps) {
-  const enabledTriggerCount = useMemo(
-    () => triggers.filter(t => t.enabled).length, [triggers],
-  );
   const {
     nodes, edges, width, height,
-    startX, startY, endX, endY, triggerAreaWidth,
+    startX, startY, endX, endY,
     hasLoopBack,
-  } = useFlowLayout(steps, enabledTriggerCount);
-  // 有回环时把 dagre 内容整体下移，让 U 形弧线在顶部有画布。
+  } = useFlowLayout(steps);
+  // 有回环时把 dagre 内容整体下移，让顶部正交折线有画布。
   const dagreOffsetY = hasLoopBack ? LOOP_BACK_TOP_PADDING : 0;
 
   // 判断节点/边是否在执行轨迹中。轨迹为空表示全亮。
@@ -236,18 +231,9 @@ export function LoopFlowGraph({
   return (
     <div style={{ overflowX: 'auto', overflowY: 'hidden', padding: '12px 0', minHeight: 160 }}>
       <svg width={width} height={height} style={{ display: 'block' }}>
-        {/* 触发条件徽章：放在 SVG 绝对坐标系的左侧，不参与 dagre 平移。
-            这样徽章的几何中心能与右侧 dagre 内容的 Start 节点垂直对齐。 */}
-        <TriggerBadges
-          triggers={triggers}
-          startX={triggerAreaWidth + startX}
-          startY={startY}
-        />
-
-        {/* dagre 布局的所有内容（边、真实环节、Start/End 节点）整体右移
-            triggerAreaWidth，让出左侧徽章区域；如有回环则再下移 dagreOffsetY
-            腾出顶部空间画 U 形弧线。 */}
-        <g transform={`translate(${triggerAreaWidth}, ${dagreOffsetY})`}>
+        {/* dagre 布局的所有内容（边、真实环节、Start/End 节点）。
+            有回环时下移 dagreOffsetY 腾出顶部空间画正交折线。 */}
+        <g transform={`translate(0, ${dagreOffsetY})`}>
           {/* 边 */}
           {edges.map((edge, i) => (
             <FlowEdge

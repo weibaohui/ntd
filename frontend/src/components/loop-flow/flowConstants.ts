@@ -11,10 +11,6 @@ export const NODE_SEP = 30;
 export const VIRTUAL_NODE_RADIUS = 20;
 export const VIRTUAL_NODE_SIZE = VIRTUAL_NODE_RADIUS * 2;
 
-// 触发条件徽章占用区：放在 Start 节点左侧。
-// 140 = 8 左内边距 + 110 徽章 + 22 间距 + dagre marginx(20) 的预留
-export const TRIGGER_AREA_WIDTH = 140;
-
 // 回环边弧顶距 dagre 内容顶部的距离。决定 SVG 顶部留白大小，
 // 同时也是 buildEdgePath 中回环控制点的 Y 偏移（绝对值）。
 export const LOOP_BACK_TOP_PADDING = 100;

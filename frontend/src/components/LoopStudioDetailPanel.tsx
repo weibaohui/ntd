@@ -292,7 +292,6 @@ export function LoopDetailPanel({
         <LoopStepsPanel
           loopId={loopId}
           steps={detail.steps}
-          triggers={detail.triggers}
           tracedStepIds={tracedStepIds}
           tracedSequenceMap={tracedSequenceMap}
           onChanged={() => { reload(); onChanged(); }}

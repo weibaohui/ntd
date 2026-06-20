@@ -9,20 +9,19 @@ import {
 import { DeleteOutlined } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import * as dbSteps from '@/utils/database/steps';
-import type { LoopStepDto, LoopTriggerDto, CreateLoopStepRequest } from '@/types/loop';
+import type { LoopStepDto, CreateLoopStepRequest } from '@/types/loop';
 import type { StepSummary } from '@/types';
 import { LoopFlowGraph } from '@/components/loop-flow/LoopFlowGraph';
 
 interface StepsPanelProps {
   loopId: number;
   steps: LoopStepDto[];
-  triggers: LoopTriggerDto[];
   tracedStepIds?: number[];
   tracedSequenceMap?: Record<number, number>;
   onChanged: () => void;
 }
 
-export function LoopStepsPanel({ loopId, steps, triggers, tracedStepIds, tracedSequenceMap, onChanged }: StepsPanelProps) {
+export function LoopStepsPanel({ loopId, steps, tracedStepIds, tracedSequenceMap, onChanged }: StepsPanelProps) {
   const { message } = AntApp.useApp();
 
   // Modal 状态
@@ -147,7 +146,6 @@ export function LoopStepsPanel({ loopId, steps, triggers, tracedStepIds, tracedS
       {/* 流程图 */}
       <LoopFlowGraph
         steps={steps}
-        triggers={triggers}
         selectedStepId={editingStep?.id ?? null}
         tracedStepIds={tracedStepIds}
         tracedSequenceMap={tracedSequenceMap}
