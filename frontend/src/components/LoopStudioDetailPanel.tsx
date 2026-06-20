@@ -97,6 +97,13 @@ export function LoopDetailPanel({
       .catch(() => { /* 静默 */ });
   }, []);
 
+  // 预加载执行记录总数（用于折叠标签展示，不等用户展开后才显示）
+  useEffect(() => {
+    dbLoops.listExecutions(loopId, { page: 1, limit: 1 })
+      .then(res => setExecutionTotal(res.total))
+      .catch(() => { /* 静默 */ });
+  }, [loopId]);
+
   // 打开编辑 modal
   const handleOpenEdit = useCallback(() => {
     if (!detail) return;
