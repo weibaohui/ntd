@@ -151,24 +151,31 @@ export function useExecutionHistory({
   const cancelledRef = useRef(false);
   useEffect(() => {
     cancelledRef.current = false;
-    if (selectedTodoId) {
+    const effectiveId = selectedTodoId ?? stepId;
+    if (effectiveId != null) {
       setHistoryPage(1);
       const statusFilter = historyStatusFilter === 'all' ? undefined : historyStatusFilter;
-      db.getExecutionRecords(selectedTodoId, 1, historyLimit, statusFilter).then(pageData => {
+      db.getExecutionRecords(
+        selectedTodoId ?? undefined, 1, historyLimit, statusFilter, stepId ?? undefined
+      ).then(pageData => {
         if (cancelledRef.current) return;
-        dispatch({ type: 'SET_EXECUTION_RECORDS', payload: { todoId: selectedTodoId, records: pageData.records } });
+        if (selectedTodoId) {
+          dispatch({ type: 'SET_EXECUTION_RECORDS', payload: { todoId: selectedTodoId, records: pageData.records } });
+        }
         setHistoryPage(pageData.page);
         setHistoryTotal(pageData.total);
       }).catch(() => {});
 
-      db.getExecutionSummary(selectedTodoId).then(sum => {
-        if (!cancelledRef.current) setSummary(sum);
-      }).catch(() => {});
+      if (selectedTodoId) {
+        db.getExecutionSummary(selectedTodoId).then(sum => {
+          if (!cancelledRef.current) setSummary(sum);
+        }).catch(() => {});
+      }
     } else {
       setSummary(null);
     }
     return () => { cancelledRef.current = true; };
-  }, [selectedTodoId, historyLimit, historyStatusFilter, dispatch]);
+  }, [selectedTodoId, stepId, historyLimit, historyStatusFilter, dispatch]);
 
   // ─── Load detail + logs when selected record changes ─────────
 

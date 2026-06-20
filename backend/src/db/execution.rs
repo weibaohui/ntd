@@ -130,12 +130,14 @@ impl Database {
         &self,
         query: ExecutionRecordQuery<'_>,
     ) -> Result<(Vec<ExecutionRecord>, i64), sea_orm::DbErr> {
-        let base_filter = match query.todo_id {
-            Some(todo_id) => execution_records::Column::TodoId.eq(todo_id),
-            None => match query.step_id {
-                Some(step_id) => execution_records::Column::StepId.eq(step_id),
-                None => execution_records::Column::TodoId.is_not_null(),
-            },
+        let base_filter = match (query.todo_id, query.step_id) {
+            (Some(tid), Some(sid)) => {
+                execution_records::Column::TodoId.eq(tid)
+                    .or(execution_records::Column::StepId.eq(sid))
+            }
+            (Some(tid), None) => execution_records::Column::TodoId.eq(tid),
+            (None, Some(sid)) => execution_records::Column::StepId.eq(sid),
+            (None, None) => execution_records::Column::TodoId.is_not_null(),
         };
         let filter = match query.status {
             Some("all") | None => base_filter,
