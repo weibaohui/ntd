@@ -68,6 +68,7 @@ impl Database {
         color: &str,
         icon: &str,
         review_template_id: Option<i64>,
+        limits_config: Option<&str>,
     ) -> Result<(), sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let existing = loops::Entity::find_by_id(id).one(&self.conn).await?;
@@ -79,6 +80,9 @@ impl Database {
             am.color = ActiveValue::Set(color.to_string());
             am.icon = ActiveValue::Set(icon.to_string());
             am.review_template_id = ActiveValue::Set(review_template_id);
+            if let Some(lc) = limits_config {
+                am.limits_config = ActiveValue::Set(lc.to_string());
+            }
             am.updated_at = ActiveValue::Set(Some(now));
             am.update(&self.conn).await?;
         }
@@ -160,6 +164,10 @@ impl Database {
                 s.min_rating,
                 &s.unrated_policy,
                 s.enabled != 0,
+                &s.on_success,
+                s.success_goto_step_id,
+                &s.on_rating_fail,
+                s.fail_goto_step_id,
             )
             .await?;
         }
@@ -318,6 +326,10 @@ impl Database {
         min_rating: Option<i32>,
         unrated_policy: &str,
         enabled: bool,
+        on_success: &str,
+        success_goto_step_id: Option<i64>,
+        on_rating_fail: &str,
+        fail_goto_step_id: Option<i64>,
     ) -> Result<loop_steps::Model, sea_orm::DbErr> {
         // 自动分配 order_index: 当前最大 + 1
         let next_order = self
@@ -340,6 +352,10 @@ impl Database {
             min_rating: ActiveValue::Set(min_rating),
             unrated_policy: ActiveValue::Set(unrated_policy.to_string()),
             enabled: ActiveValue::Set(if enabled { 1 } else { 0 }),
+            on_success: ActiveValue::Set(on_success.to_string()),
+            success_goto_step_id: ActiveValue::Set(success_goto_step_id),
+            on_rating_fail: ActiveValue::Set(on_rating_fail.to_string()),
+            fail_goto_step_id: ActiveValue::Set(fail_goto_step_id),
             created_at: ActiveValue::Set(Some(now)),
             ..Default::default()
         };
@@ -357,6 +373,10 @@ impl Database {
         min_rating: Option<i32>,
         unrated_policy: &str,
         enabled: bool,
+        on_success: &str,
+        success_goto_step_id: Option<i64>,
+        on_rating_fail: &str,
+        fail_goto_step_id: Option<i64>,
     ) -> Result<(), sea_orm::DbErr> {
         let existing = loop_steps::Entity::find_by_id(id).one(&self.conn).await?;
         if let Some(c) = existing {
@@ -370,6 +390,10 @@ impl Database {
             am.min_rating = ActiveValue::Set(min_rating);
             am.unrated_policy = ActiveValue::Set(unrated_policy.to_string());
             am.enabled = ActiveValue::Set(if enabled { 1 } else { 0 });
+            am.on_success = ActiveValue::Set(on_success.to_string());
+            am.success_goto_step_id = ActiveValue::Set(success_goto_step_id);
+            am.on_rating_fail = ActiveValue::Set(on_rating_fail.to_string());
+            am.fail_goto_step_id = ActiveValue::Set(fail_goto_step_id);
             am.update(&self.conn).await?;
         }
         Ok(())
@@ -491,12 +515,14 @@ impl Database {
         id: i64,
         success_delta: i32,
         failed_delta: i32,
+        executed_delta: i32,
     ) -> Result<(), sea_orm::DbErr> {
         // 通过 SQL 累加;避免读写竞争
         let sql = format!(
             "UPDATE loop_executions SET completed_steps = completed_steps + {}, \
-             failed_steps = failed_steps + {} WHERE id = {}",
-            success_delta, failed_delta, id
+             failed_steps = failed_steps + {}, \
+             total_executed_steps = total_executed_steps + {} WHERE id = {}",
+            success_delta, failed_delta, executed_delta, id
         );
         use sea_orm::{ConnectionTrait, Statement};
         self.conn
@@ -513,6 +539,7 @@ impl Database {
         step_id: i64,
         todo_id: i64,
         status: &str,
+        sequence_index: i32,
         min_rating: Option<i32>,
         unrated_policy: &str,
     ) -> Result<loop_step_executions::Model, sea_orm::DbErr> {
@@ -521,6 +548,7 @@ impl Database {
             step_id: ActiveValue::Set(step_id),
             todo_id: ActiveValue::Set(todo_id),
             status: ActiveValue::Set(status.to_string()),
+            sequence_index: ActiveValue::Set(sequence_index),
             min_rating: ActiveValue::Set(min_rating),
             unrated_policy: ActiveValue::Set(Some(unrated_policy.to_string())),
             ..Default::default()
@@ -534,7 +562,7 @@ impl Database {
     ) -> Result<Vec<loop_step_executions::Model>, sea_orm::DbErr> {
         loop_step_executions::Entity::find()
             .filter(loop_step_executions::Column::LoopExecutionId.eq(loop_execution_id))
-            .order_by_asc(loop_step_executions::Column::Id)
+            .order_by_asc(loop_step_executions::Column::SequenceIndex)
             .all(&self.conn)
             .await
     }
@@ -560,6 +588,8 @@ impl Database {
         status: &str,
         execution_record_id: Option<i64>,
         error_message: Option<&str>,
+        rating: Option<i32>,
+        conclusion: Option<&str>,
     ) -> Result<(), sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let existing = loop_step_executions::Entity::find_by_id(id).one(&self.conn).await?;
@@ -573,6 +603,40 @@ impl Database {
             if error_message.is_some() {
                 am.error_message = ActiveValue::Set(error_message.map(|s| s.to_string()));
             }
+            if conclusion.is_some() {
+                am.conclusion = ActiveValue::Set(conclusion.map(|s| s.to_string()));
+            }
+            if let Some(r) = rating {
+                am.rating = ActiveValue::Set(Some(r));
+            }
+            am.update(&self.conn).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn update_step_execution_conclusion(
+        &self,
+        id: i64,
+        conclusion: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        let existing = loop_step_executions::Entity::find_by_id(id).one(&self.conn).await?;
+        if let Some(c) = existing {
+            let mut am: loop_step_executions::ActiveModel = c.into();
+            am.conclusion = ActiveValue::Set(Some(conclusion.to_string()));
+            am.update(&self.conn).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn set_step_execution_rating(
+        &self,
+        id: i64,
+        rating: i32,
+    ) -> Result<(), sea_orm::DbErr> {
+        let existing = loop_step_executions::Entity::find_by_id(id).one(&self.conn).await?;
+        if let Some(c) = existing {
+            let mut am: loop_step_executions::ActiveModel = c.into();
+            am.rating = ActiveValue::Set(Some(rating));
             am.update(&self.conn).await?;
         }
         Ok(())
@@ -617,6 +681,10 @@ impl Database {
                 skip_on_source_failed: row.try_get_by::<i32, _>("skip_on_source_failed")?,
                 min_rating: row.try_get_by::<Option<i32>, _>("min_rating")?,
                 unrated_policy: row.try_get_by::<String, _>("unrated_policy")?,
+                on_success: row.try_get_by::<String, _>("on_success")?,
+                success_goto_step_id: row.try_get_by::<Option<i64>, _>("success_goto_step_id")?,
+                on_rating_fail: row.try_get_by::<String, _>("on_rating_fail")?,
+                fail_goto_step_id: row.try_get_by::<Option<i64>, _>("fail_goto_step_id")?,
                 enabled: row.try_get_by::<i32, _>("enabled")?,
                 created_at: row.try_get_by::<Option<String>, _>("created_at")?,
             };
@@ -687,6 +755,7 @@ impl Database {
                     color: row.try_get_by::<String, _>("color")?,
                     icon: row.try_get_by::<String, _>("icon")?,
                     review_template_id: row.try_get_by::<Option<i64>, _>("review_template_id")?,
+                    limits_config: row.try_get_by::<String, _>("limits_config")?,
                     created_at: row.try_get_by::<Option<String>, _>("created_at")?,
                     updated_at: row.try_get_by::<Option<String>, _>("updated_at")?,
                 },

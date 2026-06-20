@@ -93,6 +93,10 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
           min_rating: values.min_rating ?? null,
           unrated_policy: values.unrated_policy ?? 'skip',
           enabled: values.enabled ?? true,
+          on_success: values.on_success ?? 'next',
+          success_goto_step_id: values.success_goto_step_id ?? null,
+          on_rating_fail: values.on_rating_fail ?? 'break',
+          fail_goto_step_id: values.fail_goto_step_id ?? null,
         });
         message.success('环节已更新');
       } else {
@@ -105,6 +109,10 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
           min_rating: values.min_rating ?? null,
           unrated_policy: values.unrated_policy ?? 'skip',
           enabled: values.enabled ?? true,
+          on_success: values.on_success ?? 'next',
+          success_goto_step_id: values.success_goto_step_id ?? null,
+          on_rating_fail: values.on_rating_fail ?? 'break',
+          fail_goto_step_id: values.fail_goto_step_id ?? null,
         });
         message.success('环节已添加');
       }

@@ -26,6 +26,9 @@ pub struct Model {
     pub completed_steps: i32,
     #[sea_orm(default_value = "0")]
     pub failed_steps: i32,
+    /// 累计执行过的 step 次数（含循环重走）
+    #[sea_orm(default_value = "0")]
+    pub total_executed_steps: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

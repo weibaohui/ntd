@@ -21,6 +21,9 @@ pub struct Model {
     #[sea_orm(default_value = "loop")]
     pub icon: String,
     pub review_template_id: Option<i64>,
+    /// JSON 全局限制配置: {"max_step_executions": 20, "max_total_tokens": null}
+    #[sea_orm(default_value = "{}")]
+    pub limits_config: String,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }

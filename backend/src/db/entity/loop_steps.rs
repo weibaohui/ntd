@@ -27,6 +27,16 @@ pub struct Model {
     /// skip | pass
     #[sea_orm(default_value = "skip")]
     pub unrated_policy: String,
+    /// 成功时策略: "next" | "goto" | "end"
+    #[sea_orm(default_value = "next")]
+    pub on_success: String,
+    /// on_success="goto" 时的目标 step_id
+    pub success_goto_step_id: Option<i64>,
+    /// 评分不通过时策略: "break" | "skip" | "goto" | "end"
+    #[sea_orm(default_value = "break")]
+    pub on_rating_fail: String,
+    /// on_rating_fail="goto" 时的目标 step_id
+    pub fail_goto_step_id: Option<i64>,
     #[sea_orm(default_value = "1")]
     pub enabled: i32,
     pub created_at: Option<String>,

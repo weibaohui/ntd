@@ -18,11 +18,14 @@ export type LoopTriggerType =
   | 'todo_completed'
   | 'todo_state_changed';
 
-export type LoopRunMode = 'sequential'; // 当前仅顺序; 留扩展位
+export type LoopRunMode = 'sequential';
 
 export type LoopUnratedPolicy = 'skip' | 'continue';
 
-export type LoopExecutionStatus = 'running' | 'success' | 'partial' | 'failed' | 'cancelled';
+export type LoopOnSuccessPolicy = 'next' | 'goto' | 'end';
+export type LoopOnRatingFailPolicy = 'break' | 'skip' | 'goto' | 'end';
+
+export type LoopExecutionStatus = 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'capped';
 
 export interface LoopDto {
   id: number;
@@ -32,6 +35,7 @@ export interface LoopDto {
   status: string;
   color: string;
   icon: string;
+  limits_config: string;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -58,6 +62,7 @@ export interface LoopExecutionDto {
   total_steps: number;
   completed_steps: number;
   failed_steps: number;
+  total_executed_steps: number;
 }
 
 export interface LoopStepExecutionDto {
@@ -74,6 +79,8 @@ export interface LoopStepExecutionDto {
   unrated_policy: string | null;
   min_rating: number | null;
   step_name: string | null;
+  sequence_index: number;
+  conclusion: string | null;
 }
 
 export interface TodoSummaryForLoop {
@@ -94,6 +101,10 @@ export interface LoopStepRawDto {
   skip_on_source_failed: boolean;
   min_rating: number | null;
   unrated_policy: string;
+  on_success: string;
+  success_goto_step_id: number | null;
+  on_rating_fail: string;
+  fail_goto_step_id: number | null;
   enabled: boolean;
   created_at: string | null;
 }
@@ -109,6 +120,10 @@ export interface LoopStepDto {
   skip_on_source_failed: boolean;
   min_rating: number | null;
   unrated_policy: string;
+  on_success: string;
+  success_goto_step_id: number | null;
+  on_rating_fail: string;
+  fail_goto_step_id: number | null;
   enabled: boolean;
   created_at: string | null;
   todo_title: string;
@@ -125,6 +140,10 @@ export interface CreateLoopStepRequest {
   min_rating?: number | null;
   unrated_policy?: string;
   enabled?: boolean;
+  on_success?: string;
+  success_goto_step_id?: number | null;
+  on_rating_fail?: string;
+  fail_goto_step_id?: number | null;
 }
 
 export interface UpdateLoopStepRequest {
@@ -136,6 +155,10 @@ export interface UpdateLoopStepRequest {
   min_rating: number | null;
   unrated_policy: string;
   enabled: boolean;
+  on_success: string;
+  success_goto_step_id: number | null;
+  on_rating_fail: string;
+  fail_goto_step_id: number | null;
 }
 
 export interface ReorderLoopStepsRequest {
@@ -150,6 +173,7 @@ export interface LoopDetail {
   status: string;
   color: string;
   icon: string;
+  limits_config: string;
   created_at: string | null;
   updated_at: string | null;
   triggers: LoopTriggerDto[];
@@ -185,6 +209,7 @@ export interface LoopExecutionDetail {
   total_steps: number;
   completed_steps: number;
   failed_steps: number;
+  total_executed_steps: number;
   step_executions: Record<string, any>[];
   loop_name: string;
 }
@@ -214,6 +239,7 @@ export interface UpdateLoopRequest {
   color: string;
   icon: string;
   review_template_id?: number | null;
+  limits_config?: string | null;
 }
 
 export interface CreateTriggerRequest {

@@ -106,6 +106,7 @@ pub async fn update_loop(
             &req.color,
             &req.icon,
             req.review_template_id,
+            req.limits_config.as_deref(),
         )
         .await?;
     let updated = state.db.get_loop(id).await?.ok_or(AppError::NotFound)?;
@@ -311,6 +312,10 @@ pub async fn create_loop_step(
             req.min_rating,
             &req.unrated_policy,
             req.enabled,
+            &req.on_success,
+            req.success_goto_step_id,
+            &req.on_rating_fail,
+            req.fail_goto_step_id,
         )
         .await?;
     let (_, todo_title, todo_executor, todo_status) = state
@@ -365,6 +370,10 @@ pub async fn update_loop_step(
             req.min_rating,
             &req.unrated_policy,
             req.enabled,
+            &req.on_success,
+            req.success_goto_step_id,
+            &req.on_rating_fail,
+            req.fail_goto_step_id,
         )
         .await?;
     let (_, todo_title, todo_executor, todo_status) = state

@@ -47,6 +47,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V8LoopWorkspace),
         Box::new(V9IndependentSteps),
         Box::new(V10StepColor),
+        Box::new(V11LoopFlowControl),
     ]
 }
 
@@ -2070,6 +2071,38 @@ impl Migration for V10StepColor {
 
     async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
         add_column_warn(db, "ALTER TABLE steps ADD COLUMN color TEXT NOT NULL DEFAULT '#722ed1'").await;
+        Ok(())
+    }
+}
+
+pub(super) struct V11LoopFlowControl;
+
+#[async_trait]
+impl Migration for V11LoopFlowControl {
+    fn version(&self) -> i64 {
+        11
+    }
+    fn name(&self) -> &'static str {
+        "loop_flow_control"
+    }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        // loop_steps: 控制流字段
+        add_column_warn(db, "ALTER TABLE loop_steps ADD COLUMN on_success TEXT NOT NULL DEFAULT 'next'").await;
+        add_column_warn(db, "ALTER TABLE loop_steps ADD COLUMN success_goto_step_id BIGINT").await;
+        add_column_warn(db, "ALTER TABLE loop_steps ADD COLUMN on_rating_fail TEXT NOT NULL DEFAULT 'break'").await;
+        add_column_warn(db, "ALTER TABLE loop_steps ADD COLUMN fail_goto_step_id BIGINT").await;
+
+        // loops: 全局限制配置
+        add_column_warn(db, "ALTER TABLE loops ADD COLUMN limits_config TEXT NOT NULL DEFAULT '{}'").await;
+
+        // loop_executions: 累计执行步数
+        add_column_warn(db, "ALTER TABLE loop_executions ADD COLUMN total_executed_steps INTEGER NOT NULL DEFAULT 0").await;
+
+        // loop_step_executions: 黑板字段
+        add_column_warn(db, "ALTER TABLE loop_step_executions ADD COLUMN sequence_index INTEGER NOT NULL DEFAULT 0").await;
+        add_column_warn(db, "ALTER TABLE loop_step_executions ADD COLUMN conclusion TEXT").await;
+
         Ok(())
     }
 }

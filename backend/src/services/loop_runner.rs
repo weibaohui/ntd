@@ -15,6 +15,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use std::collections::HashMap;
 use tokio::sync::broadcast;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
@@ -23,7 +24,16 @@ use crate::executor_service::{run_todo_execution_with_params, RunTodoExecutionRe
 use crate::hooks::HookService;
 use crate::models::ExecutionStatus;
 use crate::service_context::ServiceContext;
-use crate::db::entity::steps;
+use crate::db::entity::{loop_steps, steps};
+
+/// 全局限制配置，从 loop.limits_config JSON 解析。
+#[derive(Debug, Default, Clone, serde::Deserialize)]
+struct LimitsConfig {
+    #[serde(default)]
+    max_step_executions: Option<i32>,
+    #[serde(default)]
+    max_total_tokens: Option<i64>,
+}
 
 /// LoopRunner 依赖：与现有 HookService 共享一个 spawn-friendly 结构。
 pub struct LoopRunner {
@@ -109,14 +119,14 @@ impl LoopRunner {
         loop_execution_id
     }
 
-    /// 实际的执行逻辑。
+    /// DAG 执行引擎主循环。
     async fn run_inner(
         self: Arc<Self>,
         loop_id: i64,
         loop_execution_id: i64,
         trigger_type: String,
     ) -> Result<(), String> {
-        // 1. 校验 loop 状态（如果已被禁用,直接拒绝）
+        // 1. 校验 loop 状态
         let loop_ = self
             .ctx
             .db
@@ -125,21 +135,17 @@ impl LoopRunner {
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("loop #{} not found", loop_id))?;
         if loop_.status != "enabled" {
-            return Err(format!(
-                "loop #{} is not enabled (status={})",
-                loop_id, loop_.status
-            ));
+            return Err(format!("loop #{} is not enabled (status={})", loop_id, loop_.status));
         }
 
         // 2. 加载所有 enabled steps
-        let steps = self
+        let all_steps = self
             .ctx
             .db
             .list_enabled_loop_steps_by_loop(loop_id)
             .await
             .map_err(|e| e.to_string())?;
-        if steps.is_empty() {
-            // 没有 step,直接 mark 为 success
+        if all_steps.is_empty() {
             self.ctx
                 .db
                 .finish_loop_execution(loop_execution_id, "success", 0, 0)
@@ -147,45 +153,79 @@ impl LoopRunner {
                 .map_err(|e| e.to_string())?;
             return Ok(());
         }
-        // 更新 total_steps
+
+        // 3. 初始化
         self.ctx
             .db
             .finish_loop_execution(loop_execution_id, "running", 0, 0)
             .await
-            .map_err(|e| e.to_string())?; // placeholder,会再被覆盖
-        // 上面 finish 是把 status 写回 running 但也设置了 finished_at,这里重新刷一下
-        // 改为直接 SQL 清掉 finished_at
+            .map_err(|e| e.to_string())?;
         self.clear_finished_at(loop_execution_id).await?;
-        self.update_total_steps(loop_execution_id, steps.len() as i32)
+        self.update_total_steps(loop_execution_id, all_steps.len() as i32)
             .await?;
 
-        // 3. 顺序遍历 steps
+        let limits: LimitsConfig = serde_json::from_str(&loop_.limits_config).unwrap_or_default();
+        let max_executions = limits.max_step_executions.unwrap_or(i32::MAX);
+
+        let mut current_idx: Option<usize> = Some(0);
+        let mut sequence_counter = 0i32;
+        let mut total_executed = 0i32;
         let mut completed: i32 = 0;
         let mut failed: i32 = 0;
-        let mut last_failed_record: Option<i64> = None;
-        for (idx, step) in steps.iter().enumerate() {
-            // 若上一阶段失败且当前 step 设置了 skip_on_source_failed,则跳过
-            if last_failed_record.is_some() && step.skip_on_source_failed != 0 {
-                info!(
-                    "loop #{} step #{} skipped: upstream step failed and skip_on_source_failed=true",
-                    loop_id, step.id
-                );
+        let mut consecutive_retries: HashMap<i64, i32> = HashMap::new();
+
+        let step_id_to_idx: HashMap<i64, usize> = all_steps
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.id, i))
+            .collect();
+
+        // 4. 主循环
+        while let Some(idx) = current_idx {
+            if idx >= all_steps.len() {
+                break;
+            }
+            let step = &all_steps[idx];
+
+            // 4a. 全局限制检查
+            if total_executed >= max_executions {
+                info!("loop #{} capped: total_executed={} >= max={}", loop_id, total_executed, max_executions);
                 self.ctx
                     .db
-                    .create_loop_step_execution(
-                        loop_execution_id,
-                        step.id,
-                        step.todo_id,
-                        "skipped",
-                        step.min_rating,
-                        &step.unrated_policy,
-                    )
+                    .finish_loop_execution(loop_execution_id, "capped", completed, failed)
                     .await
                     .map_err(|e| e.to_string())?;
-                continue;
+                return Ok(());
             }
 
-            // a. 启动 step execution
+            // 4b. 死循环检测：连续 5 次执行同一 step
+            let retry_count = consecutive_retries.entry(step.id).or_insert(0);
+            if *retry_count >= 5 {
+                warn!("loop #{}: step #{} retried {} times, aborting", loop_id, step.id, retry_count);
+                failed += 1;
+                break;
+            }
+
+            sequence_counter += 1;
+            total_executed += 1;
+
+            // 4c. 加载 step 元数据
+            let step_meta = self
+                .ctx
+                .db
+                .get_step(step.todo_id)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("step #{} (todo_id={}) not found", step.id, step.todo_id))?;
+
+            // 4d. 构造增强 Prompt（注入黑板变量）
+            let blackboard_text = self.build_blackboard_text(loop_execution_id).await;
+            let enhanced_prompt = step_meta.prompt
+                .replace("{blackboard}", &blackboard_text)
+                .replace("{loop_execution_id}", &loop_execution_id.to_string())
+                .replace("{loop_name}", &loop_.name);
+
+            // 4e. 创建 step execution 记录
             let step_exec = self
                 .ctx
                 .db
@@ -194,146 +234,112 @@ impl LoopRunner {
                     step.id,
                     step.todo_id,
                     "running",
+                    sequence_counter,
                     step.min_rating,
                     &step.unrated_policy,
                 )
                 .await
                 .map_err(|e| e.to_string())?;
+
             self.ctx
                 .db
                 .mark_step_execution_started(step_exec.id)
                 .await
                 .map_err(|e| e.to_string())?;
 
-            // b. 实际执行 step（从 steps 表加载环节自身的数据）
-            let step_meta = match self
-                .ctx
-                .db
-                .get_step(step.todo_id)
-                .await
-                .map_err(|e| e.to_string())?
-            {
-                Some(s) => s,
-                None => {
-                    let msg = format!("step #{} (steps id={}) not found", step.id, step.todo_id);
-                    warn!("loop_runner: {}", msg);
-                    self.ctx
-                        .db
-                        .finish_step_execution(
-                            step_exec.id,
-                            "failed",
-                            None,
-                            Some(&msg),
-                        )
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    failed += 1;
-                    last_failed_record = None;
-                    let _ = self
-                        .ctx
-                        .db
-                        .increment_loop_execution_counters(loop_execution_id, 0, 1)
-                        .await;
-                    continue;
-                }
-            };
-
+            // 4f. 执行
             let record_id = match self
-                .start_step_todo(&step_meta, &trigger_type, idx as i64, step_exec.id)
+                .start_step_todo_with_prompt(&step_meta, &trigger_type, idx as i64, step_exec.id, &enhanced_prompt)
                 .await
             {
                 Ok(rid) => rid,
                 Err(e) => {
-                    let msg = format!("step #{} start failed: {}", step.id, e);
-                    warn!("loop_runner: {}", msg);
+                    warn!("loop_runner: step #{} start failed: {}", step.id, e);
                     self.ctx
                         .db
-                        .finish_step_execution(
-                            step_exec.id,
-                            "failed",
-                            None,
-                            Some(&msg),
-                        )
+                        .finish_step_execution(step_exec.id, "failed", None, Some(&e), None, None)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    self.ctx
+                        .db
+                        .increment_loop_execution_counters(loop_execution_id, 0, 1, 1)
                         .await
                         .map_err(|e| e.to_string())?;
                     failed += 1;
-                    last_failed_record = None;
-                    let _ = self
-                        .ctx
-                        .db
-                        .increment_loop_execution_counters(loop_execution_id, 0, 1)
-                        .await;
+                    current_idx = self.resolve_next(step, &step.on_rating_fail, &step_id_to_idx, idx);
+                    *consecutive_retries.entry(step.id).or_insert(0) += 1;
                     continue;
                 }
             };
 
-            // 4d. 等待 step 执行结束
+            // 4g. 等待执行完成
             let step_status = match self.wait_for_step_finish(record_id).await {
                 Ok(s) => s,
                 Err(e) => {
-                    let msg = format!("step #{} wait failed: {}", step.id, e);
-                    warn!("loop_runner: {}", msg);
+                    warn!("loop_runner: step #{} wait failed: {}", step.id, e);
                     "failed".to_string()
                 }
             };
 
-            // 4e. 评分闸门：若 step 成功且设置了 min_rating，等待自动评审并做阈值判断
-            let final_step_status = if step_status == "success" && step.min_rating.is_some() {
-                let passed = self
+            // 4h. 评分闸门
+            let (gate_passed, step_rating) = if step_status == "success" && step.min_rating.is_some() {
+                self
                     .apply_rating_gate(
                         record_id,
                         step.min_rating.unwrap(),
-                        &step.unrated_policy,
                         &step_meta.prompt,
                         step_meta.acceptance_criteria.as_deref(),
                         loop_.review_template_id,
                     )
                     .await
-                    .map_err(|e| e.to_string())?;
-                if passed { "success" } else { "failed" }
+                    .map_err(|e| e.to_string())?
             } else {
-                &step_status
+                (step_status == "success", None)
             };
 
-            // 4f. 写回 step execution（状态已包含评分闸门结果）
+            let final_step_status = if gate_passed { "success" } else { "failed" };
+
+            // 4i. 提取结论
+            let conclusion = self.extract_conclusion(record_id).await;
+
+            // 4j. 写回 step execution
             self.ctx
                 .db
-                .finish_step_execution(
-                    step_exec.id,
-                    final_step_status,
-                    Some(record_id),
-                    None,
-                )
+                .finish_step_execution(step_exec.id, final_step_status, Some(record_id), None, step_rating, Some(&conclusion))
                 .await
                 .map_err(|e| e.to_string())?;
 
-            // 发射事件通知前端步骤执行状态已更新
-            let _ = self.ctx.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+            let _ = self.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
                 record_id,
-                todo_id: 0, // 环节独立执行
+                todo_id: 0,
                 review_status: final_step_status.to_string(),
             });
 
-            if final_step_status == "success" {
+            // 4k. 更新计数器
+            if gate_passed {
                 completed += 1;
-                last_failed_record = None;
-                let _ = self
-                    .ctx
+                self.ctx
                     .db
-                    .increment_loop_execution_counters(loop_execution_id, 1, 0)
-                    .await;
+                    .increment_loop_execution_counters(loop_execution_id, 1, 0, 1)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                *consecutive_retries.get_mut(&step.id).unwrap_or(&mut 0) = 0;
             } else {
                 failed += 1;
-                let _ = self
-                    .ctx
+                self.ctx
                     .db
-                    .increment_loop_execution_counters(loop_execution_id, 0, 1)
-                    .await;
-                // 评分闸门未通过时，跳过剩余所有步骤
-                break;
+                    .increment_loop_execution_counters(loop_execution_id, 0, 1, 1)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                *consecutive_retries.entry(step.id).or_insert(0) += 1;
             }
 
-            // 4e.
+            // 4l. 确定下一步
+            current_idx = if gate_passed {
+                self.resolve_next(step, &step.on_success, &step_id_to_idx, idx)
+            } else {
+                self.resolve_next(step, &step.on_rating_fail, &step_id_to_idx, idx)
+            };
         }
 
         // 5. 计算最终 status
@@ -351,19 +357,20 @@ impl LoopRunner {
             .map_err(|e| e.to_string())?;
 
         info!(
-            "loop #{} run done: status={} completed={} failed={}",
-            loop_id, final_status, completed, failed
+            "loop #{} run done: status={} completed={} failed={} total_executed={}",
+            loop_id, final_status, completed, failed, total_executed
         );
         Ok(())
     }
 
-    /// 启动 step 的执行（从 steps 表加载环节自身数据），返回 execution_record_id。
-    async fn start_step_todo(
+    /// 启动 step 的执行，使用增强后的 Prompt。
+    async fn start_step_todo_with_prompt(
         &self,
         step_meta: &steps::Model,
         trigger_type: &str,
         loop_idx: i64,
         step_exec_id: i64,
+        enhanced_prompt: &str,
     ) -> Result<i64, String> {
         let request = RunTodoExecutionRequest {
             db: self.ctx.db.clone(),
@@ -372,12 +379,12 @@ impl LoopRunner {
             task_manager: self.ctx.task_manager.clone(),
             config: self.ctx.config.clone(),
             hook_service: self.hook_service.clone(),
-            todo_id: 0, // 环节独立执行
-            message: step_meta.prompt.clone(),
+            todo_id: 0,
+            message: enhanced_prompt.to_string(),
             req_executor: step_meta.executor.clone(),
             trigger_type: format!("loop_stage:{}", trigger_type),
             params: Some({
-                let mut p = std::collections::HashMap::new();
+                let mut p = HashMap::new();
                 p.insert("loop_step_index".to_string(), loop_idx.to_string());
                 p
             }),
@@ -505,18 +512,117 @@ impl LoopRunner {
         Ok(())
     }
 
+    /// 解析下一步：根据策略和当前索引决定下一个 step 的索引。
+    fn resolve_next(
+        &self,
+        step: &loop_steps::Model,
+        policy: &str,
+        step_id_to_idx: &HashMap<i64, usize>,
+        current_idx: usize,
+    ) -> Option<usize> {
+        match policy {
+            "next" => Some(current_idx + 1),
+            "goto" => {
+                let target = step.success_goto_step_id
+                    .or(step.fail_goto_step_id)?;
+                match step_id_to_idx.get(&target) {
+                    Some(&idx) => {
+                        info!("loop_runner: goto step #{} (idx={})", target, idx);
+                        Some(idx)
+                    }
+                    None => {
+                        warn!("loop_runner: goto target step #{} not found, falling back to next", target);
+                        Some(current_idx + 1)
+                    }
+                }
+            }
+            "end" | "break" => None,
+            "skip" => Some(current_idx + 1),
+            _ => {
+                warn!("loop_runner: unknown policy '{}', falling back to next", policy);
+                Some(current_idx + 1)
+            }
+        }
+    }
+
+    /// 构建黑板文本：返回格式化的所有已完成的 step execution 记录。
+    async fn build_blackboard_text(&self, loop_execution_id: i64) -> String {
+        let execs = self
+            .ctx
+            .db
+            .list_loop_step_executions(loop_execution_id)
+            .await
+            .unwrap_or_default();
+
+        if execs.is_empty() {
+            return String::new();
+        }
+
+        let mut lines = Vec::new();
+        for e in &execs {
+            let status_icon = match e.status.as_str() {
+                "success" => "✅",
+                "failed" => "❌",
+                "skipped" => "⏭️",
+                _ => "⏳",
+            };
+            lines.push(format!(
+                "--- 执行记录 #{}: {} (评分: {}) ---\n结论: {}",
+                e.sequence_index,
+                status_icon,
+                e.rating.map(|r| r.to_string()).unwrap_or_else(|| "-".to_string()),
+                e.conclusion.as_deref().unwrap_or("(无结论)"),
+            ));
+        }
+        lines.join("\n\n")
+    }
+
+    /// 从 execution_record 提取结论摘要。
+    async fn extract_conclusion(&self, record_id: i64) -> String {
+        let rec = self
+            .ctx
+            .db
+            .get_execution_record(record_id)
+            .await
+            .ok()
+            .flatten();
+
+        match rec {
+            Some(r) => {
+                let output = r.result.as_deref().unwrap_or("");
+                for marker in &["## 结论", "## Conclusion", "Conclusion:", "结论："] {
+                    if let Some(pos) = output.find(marker) {
+                        let after = &output[pos + marker.len()..].trim();
+                        let end = after.find('\n').unwrap_or(after.len().min(300));
+                        let slice = &after[..end].trim();
+                        if !slice.is_empty() {
+                            return slice.to_string();
+                        }
+                    }
+                }
+                let truncated: String = output.chars().take(300).collect();
+                if truncated.len() < output.len() {
+                    format!("{}...", truncated)
+                } else {
+                    truncated
+                }
+            }
+            None => String::new(),
+        }
+    }
+
     /// 评分闸门：检查 execution_record 的 rating 与阈值比较。
     /// 若未评分且环节有验收标准，自动发起评审。
-    /// 返回 true = 通过，false = 未通过。
+    /// 无评分 = 0 分（不通过，除非 min_rating ≤ 0）。
+    /// 返回 (是否通过, 评分)。
     async fn apply_rating_gate(
         &self,
         record_id: i64,
         min_rating: i32,
-        unrated_policy: &str,
         step_prompt: &str,
         step_acceptance_criteria: Option<&str>,
         review_template_id: Option<i64>,
-    ) -> Result<bool, String> {
+    ) -> Result<(bool, Option<i32>), String> {
         // 先检查是否已有评分
         let rec = self
             .ctx
@@ -530,25 +636,25 @@ impl LoopRunner {
             let passed = rating >= min_rating;
             info!("rating gate: record #{} rating={} min_rating={} {}",
                 record_id, rating, min_rating, if passed { "PASS" } else { "FAIL" });
-            return Ok(passed);
+            return Ok((passed, Some(rating)));
         }
 
         // 无评分但有验收标准：发起自动评审
         if let Some(criteria) = step_acceptance_criteria.filter(|s| !s.trim().is_empty()) {
             info!("rating gate: record #{} triggering auto-review", record_id);
-            
-            // 1) 获取评审模板（优先使用 loop 配置的，否则用默认模板）
+
+            // 1) 获取评审模板
             let template = match self.ensure_review_template(review_template_id).await {
                 Ok(t) => t,
                 Err(e) => {
                     warn!("rating gate: failed to get review template: {}", e);
-                    return Ok(unrated_policy == "pass");
+                    return Ok((false, None));
                 }
             };
-            
+
             // 2) 获取执行记录的 result
             let original_output = rec.result.as_deref().unwrap_or_default();
-            
+
             // 3) 合成评审 prompt
             use crate::services::auto_review::MAX_OUTPUT_CHARS;
             let truncated: String = if original_output.chars().count() > MAX_OUTPUT_CHARS {
@@ -568,14 +674,14 @@ impl LoopRunner {
             // 4) 标记评审状态为 pending
             let _ = self.ctx.db.set_record_last_review_status(record_id, "pending").await;
             let _ = self.ctx.db.set_record_last_reviewed_at(record_id).await;
-            let _ = self.ctx.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+            let _ = self.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
                 record_id,
                 todo_id: 0,
                 review_status: "pending".to_string(),
             });
 
             // 5) 执行评审
-            let request = crate::executor_service::RunTodoExecutionRequest {
+            let request = RunTodoExecutionRequest {
                 db: self.ctx.db.clone(),
                 executor_registry: self.ctx.executor_registry.clone(),
                 tx: self.ctx.tx.clone(),
@@ -604,11 +710,11 @@ impl LoopRunner {
                 None => {
                     warn!("rating gate: review execution returned no record_id");
                     let _ = self.ctx.db.set_record_last_review_status(record_id, "failed").await;
-                    return Ok(unrated_policy == "pass");
+                    return Ok((false, None));
                 }
             };
 
-            // 6) 轮询评审完成（最多等 300 秒，与 todo 自动评审一致）
+            // 6) 轮询评审完成（最多等 300 秒）
             let max_wait = std::time::Duration::from_secs(300);
             let poll_interval = std::time::Duration::from_millis(500);
             let start_poll = std::time::Instant::now();
@@ -616,11 +722,11 @@ impl LoopRunner {
                 if start_poll.elapsed() > max_wait {
                     warn!("rating gate: review record #{} timed out", review_record_id);
                     let _ = self.ctx.db.set_record_last_review_status(record_id, "failed").await;
-                    let _ = self.ctx.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+                    let _ = self.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
                         record_id, todo_id: 0,
                         review_status: "failed".to_string(),
                     });
-                    return Ok(unrated_policy == "pass");
+                    return Ok((false, None));
                 }
                 if let Ok(Some(r)) = self.ctx.db.get_execution_record(review_record_id).await {
                     use crate::models::ExecutionStatus;
@@ -642,12 +748,12 @@ impl LoopRunner {
                 let _ = self.ctx.db.update_execution_record_rating(record_id, Some(r)).await;
             }
 
-            // 8) 链接评审记录到源记录
+            // 8) 链接评审记录
             let _ = self.ctx.db.link_review_to_source(
                 review_record_id, record_id, &review_status_str
             ).await;
             let _ = self.ctx.db.set_record_last_review_status(record_id, &review_status_str).await;
-            let _ = self.ctx.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+            let _ = self.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
                 record_id, todo_id: 0,
                 review_status: review_status_str.to_string(),
             });
@@ -655,18 +761,17 @@ impl LoopRunner {
             info!("rating gate: review done record #{} rating={:?} status={}",
                 record_id, rating, review_status_str);
 
-            // 9) 最终检查评分
             if let Some(r) = rating {
                 let passed = r >= min_rating;
                 info!("rating gate: record #{} final rating={} min_rating={} {}",
                     record_id, r, min_rating, if passed { "PASS" } else { "FAIL" });
-                return Ok(passed);
+                return Ok((passed, Some(r)));
             }
         }
 
-        // 无评分：按策略决定
-        info!("rating gate: record #{} no rating, policy={}", record_id, unrated_policy);
-        Ok(unrated_policy == "pass")
+        // 无评分且无验收标准 = 视为 0 分，不通过
+        info!("rating gate: record #{} no rating and no criteria, treating as FAIL", record_id);
+        Ok((false, None))
     }
 
     /// 获取评审模板 todo：优先使用 loop 配置的 id，否则用默认模板

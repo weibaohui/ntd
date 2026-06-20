@@ -25,6 +25,11 @@ pub struct Model {
     pub unrated_policy: Option<String>,
     /// 执行时的评审评分（快照，不随 execution_record 变化）
     pub rating: Option<i32>,
+    /// 本次 loop_execution 中的全局执行序号（1, 2, 3...）
+    #[sea_orm(default_value = "0")]
+    pub sequence_index: i32,
+    /// 本次步执行的核心结论摘要
+    pub conclusion: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

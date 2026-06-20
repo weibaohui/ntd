@@ -101,6 +101,7 @@ pub struct LoopDto {
     pub color: String,
     pub icon: String,
     pub review_template_id: Option<i64>,
+    pub limits_config: String,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -116,6 +117,7 @@ impl From<loops::Model> for LoopDto {
             color: m.color,
             icon: m.icon,
             review_template_id: m.review_template_id,
+            limits_config: m.limits_config,
             created_at: m.created_at,
             updated_at: m.updated_at,
         }
@@ -169,6 +171,10 @@ pub struct LoopStepRawDto {
     pub skip_on_source_failed: bool,
     pub min_rating: Option<i32>,
     pub unrated_policy: String,
+    pub on_success: String,
+    pub success_goto_step_id: Option<i64>,
+    pub on_rating_fail: String,
+    pub fail_goto_step_id: Option<i64>,
     pub enabled: bool,
     pub created_at: Option<String>,
 }
@@ -186,6 +192,10 @@ impl From<loop_steps::Model> for LoopStepRawDto {
             skip_on_source_failed: m.skip_on_source_failed != 0,
             min_rating: m.min_rating,
             unrated_policy: m.unrated_policy,
+            on_success: m.on_success,
+            success_goto_step_id: m.success_goto_step_id,
+            on_rating_fail: m.on_rating_fail,
+            fail_goto_step_id: m.fail_goto_step_id,
             enabled: m.enabled != 0,
             created_at: m.created_at,
         }
@@ -244,6 +254,10 @@ pub struct LoopStepExecutionDto {
     pub min_rating: Option<i32>,
     /// 环节名称，来自 loop_steps 表
     pub step_name: Option<String>,
+    /// 全局执行序号（黑板用）
+    pub sequence_index: i32,
+    /// 本次步执行的结论摘要
+    pub conclusion: Option<String>,
 }
 
 impl From<loop_step_executions::Model> for LoopStepExecutionDto {
@@ -262,6 +276,8 @@ impl From<loop_step_executions::Model> for LoopStepExecutionDto {
             unrated_policy: m.unrated_policy,
             min_rating: m.min_rating,
             step_name: None,
+            sequence_index: m.sequence_index,
+            conclusion: m.conclusion,
         }
     }
 }
@@ -311,6 +327,8 @@ pub struct UpdateLoopRequest {
     pub color: String,
     pub icon: String,
     pub review_template_id: Option<i64>,
+    #[serde(default)]
+    pub limits_config: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -357,10 +375,20 @@ pub struct CreateLoopStepRequest {
     pub unrated_policy: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default = "default_on_success")]
+    pub on_success: String,
+    #[serde(default)]
+    pub success_goto_step_id: Option<i64>,
+    #[serde(default = "default_on_rating_fail")]
+    pub on_rating_fail: String,
+    #[serde(default)]
+    pub fail_goto_step_id: Option<i64>,
 }
 
 fn default_run_mode() -> String { "sequential".to_string() }
 fn default_unrated_policy() -> String { "skip".to_string() }
+fn default_on_success() -> String { "next".to_string() }
+fn default_on_rating_fail() -> String { "break".to_string() }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateLoopStepRequest {
@@ -372,6 +400,10 @@ pub struct UpdateLoopStepRequest {
     pub min_rating: Option<i32>,
     pub unrated_policy: String,
     pub enabled: bool,
+    pub on_success: String,
+    pub success_goto_step_id: Option<i64>,
+    pub on_rating_fail: String,
+    pub fail_goto_step_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
