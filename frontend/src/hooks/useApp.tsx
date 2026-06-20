@@ -103,11 +103,9 @@ export function useApp() {
   }, [todoDispatch, execDispatch, uiDispatch]);
 
   const clearSelection = useCallback(() => {
-    // workspace 是一级筛选：调用方执行"清空所有筛选"时也必须把 workspace 还原到全部，
-    // 否则用户点了"全部"按钮但列表仍然按上次选的工作空间过滤，体验割裂。
+    // workspace 是一级筛选：不再自动清除，用户希望切换视图时保持选择
     todoDispatch({ type: 'SELECT_TODO', payload: null });
     todoDispatch({ type: 'SELECT_TAG', payload: null });
-    todoDispatch({ type: 'SELECT_WORKSPACE', payload: null });
   }, [todoDispatch]);
 
   return useMemo(() => ({ state, dispatch, clearSelection }), [state, dispatch, clearSelection]);
