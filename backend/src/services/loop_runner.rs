@@ -299,7 +299,7 @@ impl LoopRunner {
             // 发射事件通知前端步骤执行状态已更新
             let _ = self.ctx.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
                 record_id,
-                todo_id: step_meta.source_todo_id.unwrap_or(0),
+                todo_id: 0, // 环节独立执行
                 review_status: final_step_status.to_string(),
             });
 
@@ -362,7 +362,7 @@ impl LoopRunner {
             task_manager: self.ctx.task_manager.clone(),
             config: self.ctx.config.clone(),
             hook_service: self.hook_service.clone(),
-            todo_id: step_meta.source_todo_id.unwrap_or(0),
+            todo_id: 0, // 环节独立执行
             message: step_meta.prompt.clone(),
             req_executor: step_meta.executor.clone(),
             trigger_type: format!("loop_stage:{}", trigger_type),
@@ -373,7 +373,7 @@ impl LoopRunner {
             }),
             resume_session_id: None,
             resume_message: None,
-            chain: step_meta.source_todo_id.map(|id| vec![id]).unwrap_or_default(),
+            chain: vec![],
             source_todo_id: None,
             source_todo_title: None,
             source_hook_id: None,
