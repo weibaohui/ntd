@@ -9,7 +9,7 @@ use crate::db::Database;
 use crate::models::{ExecutionRecord, ExecutionStatus, ExecutionSummary, ExecutionUsage, ParsedLogEntry};
 
 pub struct NewExecutionRecord<'a> {
-    pub todo_id: i64,
+    pub todo_id: Option<i64>,
     pub command: &'a str,
     pub executor: &'a str,
     pub trigger_type: &'a str,
@@ -203,7 +203,7 @@ impl Database {
     ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let am = execution_records::ActiveModel {
-            todo_id: ActiveValue::Set(Some(record.todo_id)),
+            todo_id: ActiveValue::Set(record.todo_id),
             command: ActiveValue::Set(Some(record.command.to_string())),
             executor: ActiveValue::Set(Some(record.executor.to_string())),
             trigger_type: ActiveValue::Set(Some(record.trigger_type.to_string())),

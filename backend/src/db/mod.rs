@@ -742,7 +742,7 @@ mod tests {
             // `NewExecutionRecord.todo_id` 在一次重构里从 `Option<i64>` 收紧到
             // `i64` (db/execution.rs:12),这里忘了改,所以 `cargo test` 早就
             // 编不过。issue #502 的 PR 顺手把它对齐。
-            todo_id,
+            todo_id: Some(todo_id),
             command,
             executor: "claudecode",
             trigger_type: "manual",
@@ -1685,7 +1685,7 @@ mod tests {
 
         // Create a record with task_id directly, then clear the todo's task_id
         let record_id = db.create_execution_record(NewExecutionRecord {
-            todo_id,
+            todo_id: Some(todo_id),
             command: "echo orphan",
             executor: "claudecode",
             trigger_type: "manual",

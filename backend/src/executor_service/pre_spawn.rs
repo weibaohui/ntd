@@ -387,7 +387,7 @@ async fn create_record_or_reject(
     match request
         .db
         .create_execution_record(NewExecutionRecord {
-            todo_id: request.todo_id,
+            todo_id: if request.todo_id == 0 { None } else { Some(request.todo_id) },
             command,
             executor: &selected.executor_str,
             trigger_type: &request.trigger_type,
