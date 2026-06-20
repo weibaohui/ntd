@@ -23,6 +23,7 @@ import {
 import * as dbLoops from '@/utils/database/loops';
 import * as db from '@/utils/database';
 import type { LoopDetail, UpdateLoopRequest } from '@/types/loop';
+import type { ProjectDirectory } from '@/types';
 import { LoopTriggersPanel, TRIGGER_META } from './LoopStudioTriggersPanel';
 import { LoopStepsPanel } from './LoopStudioStepsPanel';
 import { LoopExecutionsPanel } from './LoopStudioExecutionsPanel';
@@ -53,6 +54,8 @@ export function LoopDetailPanel({
   const [form] = Form.useForm<UpdateLoopRequest>();
   // 工作空间下拉选项
   const [workspaceOptions, setWorkspaceOptions] = useState<{ label: string; value: string }[]>([]);
+  // 完整的项目目录列表（用于展示详情）
+  const [projectDirs, setProjectDirs] = useState<ProjectDirectory[]>([]);
 
   // 加载完整 detail, 子面板变更后也要重新拉以保持最新
   const reload = useCallback(() => {
@@ -80,9 +83,12 @@ export function LoopDetailPanel({
   // 加载工作空间列表供下拉选择
   useEffect(() => {
     db.getProjectDirectories()
-      .then(dirs => setWorkspaceOptions(
-        dirs.map(d => ({ label: d.name || d.path, value: d.path }))
-      ))
+      .then(dirs => {
+        setProjectDirs(dirs);
+        setWorkspaceOptions(
+          dirs.map(d => ({ label: d.name || d.path, value: d.path }))
+        );
+      })
       .catch(() => { /* 静默 */ });
   }, []);
 
@@ -196,7 +202,27 @@ export function LoopDetailPanel({
               </span>
             </span>
           } />
-          <DetailField label="关联工作空间" value={detail.workspace || <EmptyValue />} />
+          <DetailField label="关联工作空间" value={
+            detail.workspace ? (() => {
+              const dir = projectDirs.find(d => d.path === detail.workspace);
+              return dir ? (
+                <div>
+                  <div style={{ fontWeight: 500 }}>{dir.name || dir.path}</div>
+                  <div style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)', marginTop: 2 }}>
+                    {dir.path}
+                    {dir.git_worktree_enabled && (
+                      <span style={{ marginLeft: 8 }}>· Git Worktree</span>
+                    )}
+                    {dir.auto_cleanup && (
+                      <span style={{ marginLeft: 4 }}>· 自动清理</span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <span>{detail.workspace}</span>
+              );
+            })() : <EmptyValue />
+          } />
         </div>
       </DetailSection>
 
