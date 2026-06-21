@@ -301,18 +301,36 @@ async fn execute_review_instance(
     template: &crate::models::ReviewTemplate,
     composed_prompt: String,
 ) -> Result<i64, String> {
-    // 创建一个评审实例 todo (todo_type=2), prompt 已是 caller 合成的最终 prompt。
-    // executor 从源 todo 继承 (review_template 表没有 executor 字段)。
-    let review_todo_id = db
-        .create_review_instance_todo(
-            original.id,
-            template.id,
-            &template.name,
-            composed_prompt.clone(),
-            original.executor.clone(),
-        )
+    // 复用策略:同一 review_template 全局共享一条评审实例 todo,
+    // 避免「每次评审都新建 todo」把 todos 表刷成同一评审 N 份。
+    // - 已有 → 重置 prompt/executor/status(保留 id 和 execution_records 关联)
+    // - 没有 → 新建
+    let review_todo_id = match db
+        .find_review_instance_by_template(template.id)
         .await
-        .map_err(|e| format!("create review instance todo: {}", e))?;
+        .map_err(|e| format!("find review instance: {}", e))?
+    {
+        Some(existing) => {
+            db.reset_review_instance_for_reuse(
+                existing.id,
+                &composed_prompt,
+                original.executor.as_deref(),
+            )
+            .await
+            .map_err(|e| format!("reset review instance: {}", e))?;
+            existing.id
+        }
+        None => db
+            .create_review_instance_todo(
+                original.id,
+                template.id,
+                &template.name,
+                composed_prompt.clone(),
+                original.executor.clone(),
+            )
+            .await
+            .map_err(|e| format!("create review instance todo: {}", e))?,
+    };
 
     let request = RunTodoExecutionRequest {
         db: db.clone(),

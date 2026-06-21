@@ -53,6 +53,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V14LoopsReviewTemplateId),
         Box::new(V15ReviewTemplates),
         Box::new(V16LoopStepExecutionSnapshotColumns),
+        Box::new(V17ConsolidateReviewInstanceTodos),
     ]
 }
 
@@ -2748,5 +2749,250 @@ mod v16_loop_step_execution_snapshot_columns_tests {
         assert!(table_has_column(&db, "loop_step_executions", "min_rating").await);
         assert!(table_has_column(&db, "loop_step_executions", "unrated_policy").await);
         assert!(table_has_column(&db, "loop_step_executions", "rating").await);
+    }
+}
+
+// ====== V17: 评审实例 todo 收敛 ======
+//
+// 历史背景:评审实例 todo (todo_type=2) 历史上每次评审执行都新建一条 todo,
+// 同 review_template 的评审会留下 N 条「[评审] X」重复 todo 把 todos 表刷屏。
+// 本次改动 (commit 跟随 fix/reuse-review-instance-by-template) 把
+// `find_review_instance_by_template` + `reset_review_instance_for_reuse`
+// 引入 DAO,新建评审前先复用,不再无脑 INSERT。
+//
+// V17 的职责是「数据兜底」:对升级到 V17 的已有库,把同一 review_template_id
+// 对应的多个评审实例 todo 软删除(deleted_at=now),只保留 id 最大那条最新 todo。
+// execution_records 表不动 —— 历史评审执行记录照旧保留,前端/查询仍能 join 到
+// 那条「最新」的 todo 看到最新评分。
+//
+// 幂等:V17 跑完后所有 todo_type=2 行的 review_template_id 在 (review_template_id,
+// deleted_at IS NULL) 上天然 unique。再跑一次只会再软删除同一批已经被标记的
+// 行(条件 deleted_at IS NULL 不命中),不会动已被软删的行。
+pub(super) struct V17ConsolidateReviewInstanceTodos;
+
+#[async_trait]
+impl Migration for V17ConsolidateReviewInstanceTodos {
+    fn version(&self) -> i64 {
+        17
+    }
+    fn name(&self) -> &'static str {
+        "consolidate_review_instance_todos"
+    }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        consolidate_review_instance_todos(db).await
+    }
+}
+
+/// 数据迁移本体:每个 review_template_id 只保留一条未被软删的
+/// todo_type=2 评审实例 todo,其余软删除。
+///
+/// 实现选择 SQLite 友好的"两步走":
+/// 1) 用一条 UPDATE 把"每个 (review_template_id) 组里 id 不是最大"且"未软删"
+///    的 todo_type=2 行打上 deleted_at;
+/// 2) 已软删(deleted_at IS NOT NULL)的行不进 WHERE,所以幂等再跑无副作用。
+///
+/// SQLite 不支持 UPDATE ... FROM,但支持子查询,所以可以用
+/// `UPDATE todos SET deleted_at = ? WHERE id IN (SELECT id FROM ... WHERE ...)`。
+/// 用 `from_sql_and_values` 配合 `?` 占位参数化 timestamp,避免字符串拼接注入风险。
+async fn consolidate_review_instance_todos(db: &Database) -> Result<(), sea_orm::DbErr> {
+    let now = crate::models::utc_timestamp();
+    let sql = r#"
+        UPDATE todos
+        SET deleted_at = ?
+        WHERE todo_type = 2
+          AND deleted_at IS NULL
+          AND review_template_id IS NOT NULL
+          AND id NOT IN (
+            SELECT MAX(id) FROM todos
+            WHERE todo_type = 2
+              AND deleted_at IS NULL
+              AND review_template_id IS NOT NULL
+            GROUP BY review_template_id
+          )
+    "#;
+    db.conn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            sql,
+            [now.into()],
+        ))
+        .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod v17_consolidate_review_instance_todos_tests {
+    //! V17 迁移的回归测试。
+    //!
+    //! 覆盖:
+    //! 1) 同一 review_template_id 3 条 todo_type=2 → 软删 2 条,留 1 条最新;
+    //! 2) 不同 review_template_id 互不影响;
+    //! 3) 幂等:再跑一次不抛错、保留行不变;
+    //! 4) 已软删行不会被再次"打戳"。
+    //!
+    //! 注意:V17 是数据迁移,没有 schema 变更,所以不需要 add_column_if_missing。
+    //! 直接 INSERT + 调用迁移函数验证即可。
+
+    use super::*;
+    use sea_orm::{ActiveModelTrait, Set};
+    use crate::db::entity::todos;
+
+    async fn fresh_db() -> Database {
+        Database::new(":memory:").await.expect("memory db must open")
+    }
+
+    /// 注入一条 review_template 行,返回 id。V15 已自动 seed 默认模板,
+    /// 测试需要独立 id 以避免与默认行冲突,所以走 ActiveModel 自插。
+    async fn insert_review_template(db: &Database, name: &str) -> i64 {
+        let now = crate::models::utc_timestamp();
+        let am = crate::db::entity::review_templates::ActiveModel {
+            name: Set(name.to_string()),
+            description: Set(None),
+            prompt: Set(format!("{name} prompt")),
+            created_at: Set(Some(now.clone())),
+            updated_at: Set(Some(now)),
+            ..Default::default()
+        };
+        am.insert(&db.conn).await.expect("insert template").id
+    }
+
+    /// 注入一条 todo_type=2 评审实例 todo。
+    async fn insert_review_todo(
+        db: &Database,
+        template_id: i64,
+        title: &str,
+    ) -> i64 {
+        let now = crate::models::utc_timestamp();
+        let am = todos::ActiveModel {
+            title: Set(title.to_string()),
+            prompt: Set(Some("p".to_string())),
+            status: Set(Some("success".to_string())),
+            created_at: Set(Some(now.clone())),
+            updated_at: Set(Some(now)),
+            todo_type: Set(Some(2)),
+            review_template_id: Set(Some(template_id)),
+            auto_review_enabled: Set(Some(false)),
+            ..Default::default()
+        };
+        am.insert(&db.conn).await.expect("insert review todo").id
+    }
+
+    async fn count_active_review_todos(
+        db: &Database,
+        template_id: i64,
+    ) -> i64 {
+        let sql = format!(
+            "SELECT COUNT(*) AS n FROM todos WHERE todo_type = 2 \
+             AND review_template_id = {} AND deleted_at IS NULL",
+            template_id
+        );
+        let row = db
+            .conn
+            .query_one(Statement::from_string(DbBackend::Sqlite, sql))
+            .await
+            .expect("count")
+            .expect("row");
+        let n: i64 = row.try_get_by("n").unwrap_or(0i64);
+        n
+    }
+
+    #[tokio::test]
+    async fn v17_keeps_only_newest_per_template_and_soft_deletes_rest() {
+        let db = fresh_db().await;
+        let template_id = insert_review_template(&db, "T1").await;
+        let id1 = insert_review_todo(&db, template_id, "[评审] T1 v1").await;
+        let id2 = insert_review_todo(&db, template_id, "[评审] T1 v2").await;
+        let id3 = insert_review_todo(&db, template_id, "[评审] T1 v3").await;
+
+        consolidate_review_instance_todos(&db).await.expect("v17 up");
+
+        assert_eq!(count_active_review_todos(&db, template_id).await, 1,
+            "exactly one active review todo per template after V17");
+        // 最新 id (id3) 必须保留
+        let active = db
+            .find_review_instance_by_template(template_id)
+            .await
+            .expect("find")
+            .expect("newest todo must be findable");
+        assert_eq!(active.id, id3, "max id kept");
+        assert_ne!(id1, id3);
+        assert_ne!(id2, id3);
+    }
+
+    #[tokio::test]
+    async fn v17_isolates_templates() {
+        let db = fresh_db().await;
+        let t1 = insert_review_template(&db, "T1").await;
+        let t2 = insert_review_template(&db, "T2").await;
+        // T1: 2 条, T2: 3 条
+        insert_review_todo(&db, t1, "a").await;
+        insert_review_todo(&db, t1, "b").await;
+        insert_review_todo(&db, t2, "c").await;
+        insert_review_todo(&db, t2, "d").await;
+        insert_review_todo(&db, t2, "e").await;
+
+        consolidate_review_instance_todos(&db).await.expect("v17");
+
+        assert_eq!(count_active_review_todos(&db, t1).await, 1);
+        assert_eq!(count_active_review_todos(&db, t2).await, 1);
+    }
+
+    #[tokio::test]
+    async fn v17_is_idempotent() {
+        let db = fresh_db().await;
+        let template_id = insert_review_template(&db, "T").await;
+        insert_review_todo(&db, template_id, "v1").await;
+        insert_review_todo(&db, template_id, "v2").await;
+        insert_review_todo(&db, template_id, "v3").await;
+
+        consolidate_review_instance_todos(&db).await.expect("v17 first run");
+        consolidate_review_instance_todos(&db).await.expect("v17 second run (idempotent)");
+
+        assert_eq!(count_active_review_todos(&db, template_id).await, 1,
+            "idempotent — still exactly 1 active after re-run");
+    }
+
+    #[tokio::test]
+    async fn v17_does_not_touch_other_todo_types() {
+        // 普通 todo (todo_type=0) 不应被 V17 软删
+        let db = fresh_db().await;
+        let template_id = insert_review_template(&db, "T").await;
+        let review_id = insert_review_todo(&db, template_id, "r1").await;
+        let review_id2 = insert_review_todo(&db, template_id, "r2").await;
+        // 插一条普通 todo
+        let now = crate::models::utc_timestamp();
+        let normal_id = todos::ActiveModel {
+            title: Set("normal".to_string()),
+            prompt: Set(None),
+            created_at: Set(Some(now.clone())),
+            updated_at: Set(Some(now)),
+            todo_type: Set(Some(0)),
+            ..Default::default()
+        }
+        .insert(&db.conn)
+        .await
+        .expect("insert normal")
+        .id;
+
+        consolidate_review_instance_todos(&db).await.expect("v17");
+
+        // 普通 todo 仍存活
+        let sql = format!("SELECT deleted_at FROM todos WHERE id = {}", normal_id);
+        let row = db
+            .conn
+            .query_one(Statement::from_string(DbBackend::Sqlite, sql))
+            .await
+            .expect("q")
+            .expect("row");
+        let deleted_at: Option<String> = row.try_get_by("deleted_at").unwrap_or(None);
+        assert!(deleted_at.is_none(), "todo_type=0 must not be touched by V17");
+        // review 行里有一条被软删
+        let sql = format!("SELECT COUNT(*) AS n FROM todos WHERE id IN ({}, {}) AND deleted_at IS NOT NULL",
+            review_id, review_id2);
+        let row = db.conn.query_one(Statement::from_string(DbBackend::Sqlite, sql))
+            .await.expect("q").expect("row");
+        let n: i64 = row.try_get_by("n").unwrap_or(0i64);
+        assert!(n >= 1, "at least one old review todo must be soft-deleted");
     }
 }

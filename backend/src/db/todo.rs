@@ -420,6 +420,48 @@ impl Database {
         Ok(inserted.id)
     }
 
+    /// 根据 review_template_id 查找一条未删除的评审实例 todo (todo_type=2)。
+    ///
+    /// 复用语义：同一评审模板的所有评审执行共享同一条评审实例 todo,
+    /// 避免 todos 表被「同一模板 N 次评审 → N 条 todo」刷屏。
+    /// 多条匹配时返回 id 最大（最新创建）的那条，
+    /// 保证 V17 数据清理前老数据也能被定位到。
+    pub async fn find_review_instance_by_template(
+        &self,
+        review_template_id: i64,
+    ) -> Result<Option<todos::Model>, sea_orm::DbErr> {
+        todos::Entity::find()
+            .filter(todos::Column::TodoType.eq(2_i32))
+            .filter(todos::Column::ReviewTemplateId.eq(review_template_id))
+            .filter(todos::Column::DeletedAt.is_null())
+            .order_by_desc(todos::Column::Id)
+            .one(&self.conn)
+            .await
+    }
+
+    /// 复用现有评审实例 todo:重置 prompt/executor/status/updated_at,
+    /// 保留 todo id 和 execution_records 关联(历史 record 仍可见)。
+    ///
+    /// 调用方负责先调 `find_review_instance_by_template` 拿到 id;
+    /// 找不到时不要调本方法,应改走 `create_review_instance_todo`。
+    pub async fn reset_review_instance_for_reuse(
+        &self,
+        id: i64,
+        new_prompt: &str,
+        new_executor: Option<&str>,
+    ) -> Result<(), sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let am = todos::ActiveModel {
+            id: ActiveValue::Unchanged(id),
+            prompt: ActiveValue::Set(Some(new_prompt.to_string())),
+            executor: ActiveValue::Set(new_executor.map(|s| s.to_string())),
+            status: ActiveValue::Set(Some(TodoStatus::Pending.to_string())),
+            updated_at: ActiveValue::Set(Some(now)),
+            ..Default::default()
+        };
+        self.exec_update(am).await
+    }
+
     pub async fn force_update_todo_status(
         &self,
         id: i64,
@@ -1158,5 +1200,154 @@ impl Database {
                 todo,
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod review_instance_reuse_tests {
+    //! 评审实例 todo 复用逻辑的单元测试。
+    //!
+    //! 关注三个新方法:`create_review_instance_todo` /
+    //! `find_review_instance_by_template` / `reset_review_instance_for_reuse`。
+    //! 每次评审运行共享同一条 todo(todo_type=2, review_template_id=N),
+    //! 避免 todos 表被「同模板 N 次评审 → N 条 todo」刷屏。
+
+    use super::*;
+    use crate::db::Database;
+
+    async fn fresh_db() -> Database {
+        Database::new(":memory:").await.expect("memory db must open")
+    }
+
+    async fn seed_template(db: &Database, name: &str) -> i64 {
+        // review_templates 表有 review_template_id, 直接插一条确保模板存在
+        use sea_orm::{ActiveModelTrait, Set};
+        let now = crate::models::utc_timestamp();
+        let am = crate::db::entity::review_templates::ActiveModel {
+            name: Set(name.to_string()),
+            description: Set(None),
+            prompt: Set(format!("{name} prompt")),
+            created_at: Set(Some(now.clone())),
+            updated_at: Set(Some(now)),
+            ..Default::default()
+        };
+        let inserted = am.insert(&db.conn).await.expect("insert template");
+        inserted.id
+    }
+
+    // -------- find_review_instance_by_template --------
+
+    #[tokio::test]
+    async fn find_review_instance_by_template_returns_existing() {
+        let db = fresh_db().await;
+        let template_id = seed_template(&db, "默认评审").await;
+        let first_id = db
+            .create_review_instance_todo(0, template_id, "默认评审", "p1".into(), None)
+            .await
+            .expect("create first");
+        let second_id = db
+            .create_review_instance_todo(0, template_id, "默认评审", "p2".into(), None)
+            .await
+            .expect("create second");
+        // 多条匹配 → 返回最新 (id 大的那条)
+        let found = db
+            .find_review_instance_by_template(template_id)
+            .await
+            .expect("find");
+        assert!(found.is_some(), "must find a review instance");
+        let found = found.unwrap();
+        assert_eq!(found.id, second_id, "newest by id wins");
+        assert_ne!(first_id, second_id);
+        assert_eq!(found.review_template_id, Some(template_id));
+        assert_eq!(found.todo_type, Some(2));
+    }
+
+    #[tokio::test]
+    async fn find_review_instance_by_template_returns_none_when_absent() {
+        let db = fresh_db().await;
+        let template_id = seed_template(&db, "未使用").await;
+        let found = db
+            .find_review_instance_by_template(template_id)
+            .await
+            .expect("find");
+        assert!(found.is_none(), "no review instance yet");
+    }
+
+    #[tokio::test]
+    async fn find_review_instance_by_template_excludes_deleted() {
+        let db = fresh_db().await;
+        let template_id = seed_template(&db, "X").await;
+        let id = db
+            .create_review_instance_todo(0, template_id, "X", "p".into(), None)
+            .await
+            .expect("create");
+        // 软删除
+        use sea_orm::{ActiveModelTrait, Set};
+        let now = crate::models::utc_timestamp();
+        let am = todos::ActiveModel {
+            id: Set(id),
+            deleted_at: Set(Some(now)),
+            ..Default::default()
+        };
+        am.update(&db.conn).await.expect("soft delete");
+        let found = db
+            .find_review_instance_by_template(template_id)
+            .await
+            .expect("find");
+        assert!(found.is_none(), "soft-deleted must be excluded");
+    }
+
+    #[tokio::test]
+    async fn find_review_instance_by_template_isolates_by_template_id() {
+        let db = fresh_db().await;
+        let t1 = seed_template(&db, "T1").await;
+        let t2 = seed_template(&db, "T2").await;
+        db.create_review_instance_todo(0, t1, "T1", "p".into(), None).await.expect("c1");
+        db.create_review_instance_todo(0, t2, "T2", "p".into(), None).await.expect("c2");
+        let f1 = db.find_review_instance_by_template(t1).await.expect("f1");
+        let f2 = db.find_review_instance_by_template(t2).await.expect("f2");
+        assert_eq!(f1.unwrap().review_template_id, Some(t1));
+        assert_eq!(f2.unwrap().review_template_id, Some(t2));
+    }
+
+    // -------- reset_review_instance_for_reuse --------
+
+    #[tokio::test]
+    async fn reset_review_instance_for_reuse_updates_prompt_status_executor() {
+        let db = fresh_db().await;
+        let template_id = seed_template(&db, "R").await;
+        let id = db
+            .create_review_instance_todo(0, template_id, "R", "old-prompt".into(), Some("claude".to_string()))
+            .await
+            .expect("create");
+        db.reset_review_instance_for_reuse(id, "new-prompt", Some("pi"))
+            .await
+            .expect("reset");
+        let found = db
+            .find_review_instance_by_template(template_id)
+            .await
+            .expect("find")
+            .expect("must exist");
+        assert_eq!(found.id, id, "id preserved");
+        assert_eq!(found.prompt.as_deref(), Some("new-prompt"));
+        assert_eq!(found.executor.as_deref(), Some("pi"));
+        assert_eq!(found.status.as_deref(), Some("pending"), "reset to pending");
+        assert_eq!(found.review_template_id, Some(template_id));
+        assert_eq!(found.todo_type, Some(2));
+    }
+
+    #[tokio::test]
+    async fn reset_review_instance_for_reuse_allows_executor_to_become_none() {
+        let db = fresh_db().await;
+        let template_id = seed_template(&db, "N").await;
+        let id = db
+            .create_review_instance_todo(0, template_id, "N", "p".into(), Some("claude".to_string()))
+            .await
+            .expect("create");
+        db.reset_review_instance_for_reuse(id, "p2", None)
+            .await
+            .expect("reset");
+        let found = db.find_review_instance_by_template(template_id).await.expect("find").unwrap();
+        assert!(found.executor.is_none(), "executor must clear to None");
     }
 }

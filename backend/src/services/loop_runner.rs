@@ -661,6 +661,48 @@ impl LoopRunner {
         }
     }
 
+    /// 复用或新建评审实例 todo。
+    ///
+    /// 设计：同一 `review_template_id` 全局共享一条评审实例 todo,
+    /// 避免「每次 loop 执行都新建评审 todo」把 todos 表刷屏。
+    /// 已有 → `reset_review_instance_for_reuse`(保留 id + execution_records 关联)
+    /// 没有 → `create_review_instance_todo`(parent_todo_id=0,loop step 没有单一源 todo)
+    /// 抽成单独方法便于 loop_runner.rs 内复用,且控制函数行数 ≤ 30。
+    async fn reuse_or_create_review_instance(
+        &self,
+        template_id: i64,
+        template_name: &str,
+        review_prompt: &str,
+        review_executor: Option<&str>,
+    ) -> Result<i64, sea_orm::DbErr> {
+        match self
+            .ctx
+            .db
+            .find_review_instance_by_template(template_id)
+            .await?
+        {
+            Some(existing) => {
+                self.ctx
+                    .db
+                    .reset_review_instance_for_reuse(existing.id, review_prompt, review_executor)
+                    .await?;
+                Ok(existing.id)
+            }
+            None => {
+                self.ctx
+                    .db
+                    .create_review_instance_todo(
+                        0,
+                        template_id,
+                        template_name,
+                        review_prompt.to_string(),
+                        review_executor.map(|s| s.to_string()),
+                    )
+                    .await
+            }
+        }
+    }
+
     /// 评分闸门：检查 execution_record 的 rating 与阈值比较。
     /// 若未评分且环节有验收标准，自动发起评审。
     /// 无评分 = 0 分（不通过，除非 min_rating ≤ 0）。
@@ -732,19 +774,21 @@ impl LoopRunner {
                 review_status: "pending".to_string(),
             });
 
-            // 5) 创建一个 todo_type=2 的评审实例 todo (V15 之后 review_template 不再是 todo)。
-            //    parent_todo_id=0: loop step 没有单一 source todo, 用 0 表达。
+            // 5) 评审实例 todo 复用策略:同一 review_template 全局共享一条 todo,
+            //    避免「每次 loop 执行都新建评审 todo」把 todos 表刷屏。
+            //    parent_todo_id=0: loop step 没有单一 source todo。
             //    executor 继承自被评审的 record。
-            let review_todo_id = match self.ctx.db.create_review_instance_todo(
-                0,
+            //    - 已有 → reset prompt/executor/status,保留 id 和 execution_records 关联
+            //    - 没有 → 新建
+            let review_todo_id = match self.reuse_or_create_review_instance(
                 template.id,
                 &template.name,
-                review_prompt.clone(),
-                review_executor.clone(),
+                &review_prompt,
+                review_executor.as_deref(),
             ).await {
                 Ok(id) => id,
                 Err(e) => {
-                    warn!("rating gate: failed to create review instance todo: {}", e);
+                    warn!("rating gate: failed to reuse/create review instance todo: {}", e);
                     let _ = self.ctx.db.set_record_last_review_status(record_id, "failed").await;
                     return Ok((false, None));
                 }
