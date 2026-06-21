@@ -267,7 +267,7 @@ export function LoopDetailPanel({
               } catch { return <EmptyValue />; }
             })()
           } />
-          <DetailField label="最大 Token 数（预留）" value={
+          <DetailField label="最大 Token 数" value={
             (() => {
               try {
                 const lc = JSON.parse(detail.limits_config || '{}');
