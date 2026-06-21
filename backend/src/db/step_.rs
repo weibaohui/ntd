@@ -188,4 +188,33 @@ impl Database {
         steps::Entity::delete_by_id(id).exec(&self.conn).await?;
         Ok(())
     }
+
+    /// 批量更新环节执行器（单条 SQL，原子语义）。
+    /// 只更新 executor 列和 updated_at，其他字段保持不变。
+    pub async fn batch_update_steps_executor(
+        &self,
+        ids: &[i64],
+        executor: &str,
+    ) -> Result<u64, sea_orm::DbErr> {
+        use sea_orm::Statement;
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let now = crate::models::utc_timestamp();
+        // 构建 IN 占位符：?1, ?2, ...
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i)).collect();
+        let in_clause = placeholders.join(",");
+        // executor 占位符在 ids 之后：?{ids.len()+1}，updated_at 占位符最后
+        let executor_idx = ids.len() + 1;
+        let now_idx = ids.len() + 2;
+        let sql = format!(
+            "UPDATE steps SET executor = ?{executor_idx}, updated_at = ?{now_idx} WHERE id IN ({in_clause})"
+        );
+        let mut vals: Vec<sea_orm::Value> = ids.iter().map(|id| (*id).into()).collect();
+        vals.push(executor.to_string().into());
+        vals.push(now.into());
+        let stmt = Statement::from_sql_and_values(sea_orm::DbBackend::Sqlite, sql, vals);
+        let rows_affected = self.conn.execute(stmt).await?.rows_affected();
+        Ok(rows_affected)
+    }
 }

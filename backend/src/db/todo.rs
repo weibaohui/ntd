@@ -213,6 +213,31 @@ impl Database {
         self.exec_update(am).await
     }
 
+    /// 批量更新事项执行器（单条 SQL，原子语义）。
+    pub async fn batch_update_todos_executor(
+        &self,
+        ids: &[i64],
+        executor: &str,
+    ) -> Result<u64, sea_orm::DbErr> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let now = crate::models::utc_timestamp();
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i)).collect();
+        let in_clause = placeholders.join(",");
+        let executor_idx = ids.len() + 1;
+        let now_idx = ids.len() + 2;
+        let sql = format!(
+            "UPDATE todos SET executor = ?{executor_idx}, updated_at = ?{now_idx} WHERE id IN ({in_clause})"
+        );
+        let mut vals: Vec<sea_orm::Value> = ids.iter().map(|id| (*id).into()).collect();
+        vals.push(executor.to_string().into());
+        vals.push(now.into());
+        let stmt = sea_orm::Statement::from_sql_and_values(sea_orm::DbBackend::Sqlite, sql, vals);
+        let rows_affected = self.conn.execute(stmt).await?.rows_affected();
+        Ok(rows_affected)
+    }
+
     /// Replace the inline hook list for a todo. The list is stored as a JSON
     /// array in the `hooks` column.
     pub async fn update_todo_hooks(

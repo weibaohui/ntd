@@ -5,7 +5,7 @@
 use axum::extract::{Path, State};
 
 use crate::handlers::{ApiJson, AppError, AppState};
-use crate::models::{ApiResponse, StepDto, UpdateStepRequest};
+use crate::models::{ApiResponse, BatchUpdateStepExecutorRequest, BatchUpdateStepResult, StepDto, UpdateStepRequest};
 
 // ====== 环节管理（kind=step）======
 //
@@ -52,23 +52,31 @@ pub async fn get_step(
     Ok(ApiResponse::ok(StepDto::from(s).with_usage(used_by_loop_step_count)))
 }
 
-/// PUT /api/steps/:id — 更新环节基本信息
+/// PUT /api/steps/:id — 更新环节基本信息（部分更新，只传需要改的字段即可）
 pub async fn update_step(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     ApiJson(req): ApiJson<UpdateStepRequest>,
 ) -> Result<ApiResponse<StepDto>, AppError> {
-    if req.title.trim().is_empty() {
+    // 校验环节存在，并取出当前值用于回填未传字段
+    let existing = state
+        .db
+        .get_step(id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let title = req.title.unwrap_or_else(|| existing.title.clone());
+    if title.trim().is_empty() {
         return Err(AppError::BadRequest("title 不能为空".to_string()));
     }
-    // 校验环节存在
-    state.db.get_step(id).await?.ok_or(AppError::NotFound)?;
+    let prompt = req.prompt.unwrap_or_else(|| existing.prompt.clone());
+
     state
         .db
         .update_step(
             id,
-            req.title.trim(),
-            &req.prompt,
+            title.trim(),
+            &prompt,
             req.executor.as_deref(),
             req.acceptance_criteria.as_deref(),
             req.color.as_deref(),
@@ -89,4 +97,26 @@ pub async fn delete_step(
     // 被引用时后端返回外键冲突错误，前端会显示相应提示。
     state.db.delete_step(id).await?;
     Ok(ApiResponse::ok(()))
+}
+
+/// PUT /api/steps/batch-executor — 批量更新环节执行器
+pub async fn batch_update_steps_executor(
+    State(state): State<AppState>,
+    ApiJson(req): ApiJson<BatchUpdateStepExecutorRequest>,
+) -> Result<ApiResponse<BatchUpdateStepResult>, AppError> {
+    if req.ids.is_empty() {
+        return Err(AppError::BadRequest("ids 不能为空".to_string()));
+    }
+    if req.executor.trim().is_empty() {
+        return Err(AppError::BadRequest("executor 不能为空".to_string()));
+    }
+
+    let rows_affected = state
+        .db
+        .batch_update_steps_executor(&req.ids, req.executor.trim())
+        .await?;
+    Ok(ApiResponse::ok(BatchUpdateStepResult {
+        updated_count: rows_affected as i64,
+        total: req.ids.len() as i64,
+    }))
 }

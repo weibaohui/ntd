@@ -70,28 +70,18 @@ export async function updateTodoTags(todoId: number, tagIds: number[]): Promise<
   await api.put(`/api/todos/${todoId}/tags`, { tag_ids: tagIds });
 }
 
-// 批量更新执行器：后端暂未提供 PUT /api/todos/batch-executor 接口，
-// 暂时逐条调 updateTodo 实现批量语义，并在调用方提供「成功 / 失败」反馈。
-// 后端就绪后只需把这里换成单次 API 调用即可，外部签名保持不变。
+/** 批量更新事项执行器。后端提供专用接口，单次 SQL 完成。 */
 export async function batchUpdateTodosExecutor(
   ids: number[],
   executor: string,
-  fetchOne: (id: number) => Promise<Todo>,
 ): Promise<{ updated: number[]; failed: number[] }> {
-  const updated: number[] = [];
-  const failed: number[] = [];
-  // 串行而非 Promise.all：避免一次性打爆后端；同时后端对 todo 的 executor 更新
-  // 没有跨行事务要求，串行失败隔离足以满足「换执行器」的批量语义。
-  for (const id of ids) {
-    try {
-      const todo = await fetchOne(id);
-      await updateTodo(id, todo.title, todo.prompt, todo.status, executor);
-      updated.push(id);
-    } catch {
-      failed.push(id);
-    }
+  try {
+    const result = await unwrap(await api.put('/api/todos/batch-executor', { ids, executor }));
+    const body = result as { updated_count: number; total: number };
+    return { updated: ids.slice(0, body.updated_count), failed: ids.slice(body.updated_count) };
+  } catch {
+    return { updated: [], failed: ids };
   }
-  return { updated, failed };
 }
 
 // Tag APIs

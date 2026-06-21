@@ -7,8 +7,8 @@ use crate::db::TodoUpdate;
 use crate::handlers::{ApiJson, AppError, AppState};
 use crate::hooks::models::HookContext;
 use crate::models::{
-    utc_timestamp, ApiResponse, CreateTodoRequest, RecentCompletedTodo, StepDto, Todo,
-    UpdateTagsRequest, UpdateTodoRequest,
+    utc_timestamp, ApiResponse, BatchUpdateTodoExecutorRequest, BatchUpdateTodoResult,
+    CreateTodoRequest, RecentCompletedTodo, StepDto, Todo, UpdateTagsRequest, UpdateTodoRequest,
 };
 
 /// Validate cron expression, return helpful error for invalid ones
@@ -384,4 +384,25 @@ pub async fn promote_todo_to_step(
         )
         .await?;
     Ok(ApiResponse::ok(StepDto::from(step)))
+}
+
+/// PUT /api/todos/batch-executor — 批量更新事项执行器
+pub async fn batch_update_todos_executor(
+    State(state): State<AppState>,
+    ApiJson(req): ApiJson<BatchUpdateTodoExecutorRequest>,
+) -> Result<ApiResponse<BatchUpdateTodoResult>, AppError> {
+    if req.ids.is_empty() {
+        return Err(AppError::BadRequest("ids 不能为空".to_string()));
+    }
+    if req.executor.trim().is_empty() {
+        return Err(AppError::BadRequest("executor 不能为空".to_string()));
+    }
+    let rows_affected = state
+        .db
+        .batch_update_todos_executor(&req.ids, req.executor.trim())
+        .await?;
+    Ok(ApiResponse::ok(BatchUpdateTodoResult {
+        updated_count: rows_affected as i64,
+        total: req.ids.len() as i64,
+    }))
 }

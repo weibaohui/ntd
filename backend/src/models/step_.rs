@@ -43,11 +43,28 @@ impl StepDto {
 }
 
 /// 更新环节请求体。
+///
+/// 所有字段均可选，实现"部分更新"语义 —— 只传需要变更的字段，
+/// 未传的字段从数据库保持原值。批量更换执行器时只需传 `executor`。
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateStepRequest {
-    pub title: String,
-    pub prompt: String,
+    pub title: Option<String>,
+    pub prompt: Option<String>,
     pub executor: Option<String>,
     pub acceptance_criteria: Option<String>,
     pub color: Option<String>,
+}
+
+/// 批量更新环节执行器请求体。
+#[derive(Debug, Clone, Deserialize)]
+pub struct BatchUpdateStepExecutorRequest {
+    pub ids: Vec<i64>,
+    pub executor: String,
+}
+
+/// 批量更新环节执行器返回结果。
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchUpdateStepResult {
+    pub updated_count: i64,
+    pub total: i64,
 }

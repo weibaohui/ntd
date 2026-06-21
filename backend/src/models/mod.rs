@@ -444,6 +444,20 @@ pub struct TodoIdQuery {
     pub status: Option<String>,
 }
 
+/// 批量更新事项执行器请求体。
+#[derive(Debug, Clone, Deserialize)]
+pub struct BatchUpdateTodoExecutorRequest {
+    pub ids: Vec<i64>,
+    pub executor: String,
+}
+
+/// 批量更新事项执行器返回结果。
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchUpdateTodoResult {
+    pub updated_count: i64,
+    pub total: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunningBoardResponse {
     pub records: Vec<ExecutionRecord>,

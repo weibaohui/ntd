@@ -309,10 +309,8 @@ export function TodoList(props: TodoListProps) {
     setExecutorModalOpen(false);
     setPendingExecutorChangeIds([]);
     try {
-      // 事项模式：需要先 fetchOne 获取 title/prompt 再调 updateTodo；
-      // 这里直接传 fetchOne 闭包让 db 层内部处理
       const result = listMode === 'item'
-        ? await db.batchUpdateTodosExecutor(ids, executor, db.getTodo)
+        ? await db.batchUpdateTodosExecutor(ids, executor)
         : await dbSteps.batchUpdateStepsExecutor(ids, executor);
       if (result.failed.length === 0) {
         message.success(`已为 ${result.updated.length} 项更换执行器为「${executor}」`);
@@ -321,9 +319,9 @@ export function TodoList(props: TodoListProps) {
       }
       // 触发列表刷新：item 通过 stepUpdateCount 机制，step / loop 通过各自的 reload
       if (listMode === 'item') {
-        // item 模式依赖全局 todos 状态，由 useApp 拉取；增量更新单条避免全量重拉
-        for (const id of result.updated) {
-          const todo = await db.getTodo(id);
+        // item 模式依赖全局 todos 状态，由 useApp 拉取；全量表查一次避免 N 次单条 GET
+        const allItems = await db.getAllTodos('item');
+        for (const todo of allItems) {
           dispatch({ type: 'UPDATE_TODO', payload: todo });
         }
       } else if (listMode === 'step') {

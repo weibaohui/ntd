@@ -1240,6 +1240,7 @@ fn todo_routes() -> Router<AppState> {
         .route("/api/todos/{id}/summary", get(execution::get_execution_summary))
         .route("/api/todos/{id}/scheduler", put(scheduler::update_scheduler))
         .route("/api/todos/recent-completed", get(todo::get_recent_completed_todos))
+        .route("/api/todos/batch-executor", put(todo::batch_update_todos_executor))
         // 环节相关：promote 复制到 steps 表,原 todo 保留
         .route("/api/todos/{id}/promote", post(todo::promote_todo_to_step))
         .route("/api/todos/{id}", get(todo::get_todo).put(todo::update_todo).delete(todo::delete_todo))
@@ -1253,6 +1254,7 @@ fn step_routes() -> Router<AppState> {
     Router::new()
         .route("/api/steps", get(step_::list_steps))
         .route("/api/steps/candidates", get(step_::list_step_candidates))
+        .route("/api/steps/batch-executor", put(step_::batch_update_steps_executor))
         .route("/api/steps/{id}", get(step_::get_step).put(step_::update_step).delete(step_::delete_step))
 }
 

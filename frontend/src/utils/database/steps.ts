@@ -31,10 +31,10 @@ export async function promoteTodoToStep(id: number): Promise<StepSummary> {
   return unwrap(await api.post(`/api/todos/${id}/promote`, {}));
 }
 
-/** 更新环节基本信息。 */
+/** 更新环节基本信息（部分更新：只传需要变更的字段即可）。 */
 export async function updateStep(
   id: number,
-  data: { title: string; prompt?: string; executor?: string | null; acceptance_criteria?: string | null; color?: string },
+  data: { title?: string; prompt?: string; executor?: string | null; acceptance_criteria?: string | null; color?: string },
 ): Promise<StepSummary> {
   return unwrap(await api.put(`/api/steps/${id}`, data));
 }
@@ -44,26 +44,16 @@ export async function deleteStep(id: number): Promise<void> {
   await api.delete(`/api/steps/${id}`);
 }
 
-// 批量更新环节执行器：后端暂未提供 PUT /api/steps/batch-executor 接口，
-// 暂时逐条调 updateStep 实现批量语义。等后端就绪后只需替换函数体，
-// 外部签名保持不变。
+/** 批量更新环节执行器。后端提供专用接口，单次 SQL 完成。 */
 export async function batchUpdateStepsExecutor(
   ids: number[],
   executor: string,
 ): Promise<{ updated: number[]; failed: number[] }> {
-  const updated: number[] = [];
-  const failed: number[] = [];
-  // 串行执行：与 batchUpdateTodosExecutor 保持一致，避免瞬时并发压垮后端
-  for (const id of ids) {
-    try {
-      // updateStep 要求 title 必传，先 GET 一次拿原值再 PUT；
-      // 后端就绪后这层 GET 也能省掉。
-      const step = await getStep(id);
-      await updateStep(id, { title: step.title, executor });
-      updated.push(id);
-    } catch {
-      failed.push(id);
-    }
+  try {
+    const result = await unwrap(await api.put('/api/steps/batch-executor', { ids, executor }));
+    const body = result as { updated_count: number; total: number };
+    return { updated: ids.slice(0, body.updated_count), failed: ids.slice(body.updated_count) };
+  } catch {
+    return { updated: [], failed: ids };
   }
-  return { updated, failed };
 }
