@@ -400,7 +400,7 @@ mod whitelist_and_message_tests {
             .unwrap();
 
         // Save a message
-        let msg_id = db
+        let _msg_id = db
             .save_feishu_message(NewFeishuMessage {
                 bot_id,
                 message_id: "msg_fail_001",
@@ -444,7 +444,7 @@ mod whitelist_and_message_tests {
             .await
             .unwrap();
 
-        let msg_id = db
+        let _msg_id = db
             .save_feishu_history_message(NewFeishuHistoryMessage {
                 bot_id,
                 message_id: "msg_hist_001",

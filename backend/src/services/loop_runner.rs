@@ -31,8 +31,6 @@ use crate::db::entity::{loop_steps, steps};
 struct LimitsConfig {
     #[serde(default)]
     max_step_executions: Option<i32>,
-    #[serde(default)]
-    max_total_tokens: Option<i64>,
 }
 
 /// LoopRunner 依赖：与现有 HookService 共享一个 spawn-friendly 结构。
@@ -843,7 +841,7 @@ mod tests {
             name: format!("step_{}", id),
             description: String::new(),
             order_index: 0,
-            todo_id: 100 + id,
+            step_id: 100 + id,
             run_mode: "sequential".to_string(),
             skip_on_source_failed: 0,
             min_rating: None,
@@ -957,21 +955,11 @@ mod tests {
     fn limits_config_default_parses_to_empty() {
         let config: LimitsConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(config.max_step_executions, None);
-        assert_eq!(config.max_total_tokens, None);
     }
 
     #[test]
     fn limits_config_parses_max_step_executions() {
         let config: LimitsConfig = serde_json::from_str(r#"{"max_step_executions": 20}"#).unwrap();
         assert_eq!(config.max_step_executions, Some(20));
-    }
-
-    #[test]
-    fn limits_config_parses_all_fields() {
-        let config: LimitsConfig = serde_json::from_str(
-            r#"{"max_step_executions": 50, "max_total_tokens": 1000000}"#
-        ).unwrap();
-        assert_eq!(config.max_step_executions, Some(50));
-        assert_eq!(config.max_total_tokens, Some(1000000));
     }
 }
