@@ -10,7 +10,7 @@
 // - 单击切换 selectedId, 父组件维护; 当前选中卡片左侧条加亮 + 边框高亮
 
 import { useMemo, useState } from 'react';
-import { Button, Tag, Segmented } from 'antd';
+import { Button, Tag, Segmented, Checkbox } from 'antd';
 import {
   ClockCircleOutlined,
   ApartmentOutlined,
@@ -31,6 +31,9 @@ interface LoopListPanelProps {
   selectedId: number | null;
   onSelect: (id: number) => void;
   onCreate?: () => void;
+  // —— 多选支持（ActionToolbar 工具栏选中态）——
+  selectedIds?: number[];
+  onToggleSelect?: (id: number) => void;
 }
 
 // 状态 → 标签颜色, 集中在一处方便复用
@@ -71,7 +74,10 @@ function countByStatus(loops: LoopListItem[], filter: StatusFilter): number {
   return loops.filter(l => (l.status as LoopStatus) === filter).length;
 }
 
-export function LoopListPanel({ loops, selectedId, onSelect, onCreate }: LoopListPanelProps) {
+export function LoopListPanel({
+  loops, selectedId, onSelect, onCreate,
+  selectedIds, onToggleSelect,
+}: LoopListPanelProps) {
   // 状态过滤状态, 默认全部; 本地持有, 切 loop 时不重置
   const [filter, setFilter] = useState<StatusFilter>('all');
 
@@ -144,6 +150,8 @@ export function LoopListPanel({ loops, selectedId, onSelect, onCreate }: LoopLis
               loop={loop}
               selected={loop.id === selectedId}
               onClick={() => onSelect(loop.id)}
+              checked={selectedIds?.includes(loop.id) ?? false}
+              onToggleCheck={onToggleSelect ? () => onToggleSelect(loop.id) : undefined}
             />
           ))
         )}
@@ -153,10 +161,12 @@ export function LoopListPanel({ loops, selectedId, onSelect, onCreate }: LoopLis
 }
 
 // 单张 loop 卡片: 颜色条 + 标题区 + meta + 底部进度条
-function LoopCard({ loop, selected, onClick }: {
+function LoopCard({ loop, selected, onClick, checked, onToggleCheck }: {
   loop: LoopListItem;
   selected: boolean;
   onClick: () => void;
+  checked?: boolean;
+  onToggleCheck?: () => void;
 }) {
   const status: LoopStatus = (loop.status as LoopStatus) ?? 'paused';
   // 副标题优先用 workspace, 缺则降级到 description
@@ -216,8 +226,25 @@ function LoopCard({ loop, selected, onClick }: {
         }}
       />
 
-      {/* 标题行: #id + 名称 + 状态徽章 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+      {/* 多选复选框: 仅在父组件提供 onToggleCheck 时渲染；stopPropagation 避免触发卡片选中 */}
+      {onToggleCheck && (
+        <Checkbox
+          checked={checked ?? false}
+          onChange={(e) => {
+            e.stopPropagation();
+            onToggleCheck();
+          }}
+          onClick={(e) => e.stopPropagation()}
+          data-testid={`loop-row-checkbox-${loop.id}`}
+          style={{ position: 'absolute', top: 14, left: 12, zIndex: 1 }}
+        />
+      )}
+
+      {/* 标题行: #id + 名称 + 状态徽章。多选模式下左侧留出复选框空间 */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4,
+        paddingLeft: onToggleCheck ? 28 : 0,
+      }}>
         <span style={{ color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 11, fontFamily: 'monospace' }}>#{loop.id}</span>
         <span style={{
           fontWeight: 600, fontSize: 14, flex: 1, minWidth: 0,

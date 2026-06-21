@@ -90,28 +90,30 @@ impl Database {
             .collect();
         let in_clause = placeholders.join(",");
         
-        // 单次聚合查询：GROUP BY todo_id 一次性获取所有引用计数
+        // 单次聚合查询：GROUP BY step_id 一次性获取所有引用计数
+        // 注意：DB 列名是 step_id（commit 9590e63 把 stage→step 重命名后），
+        // 但 sea_orm entity 字段仍叫 todo_id，raw SQL 必须用真实列名 step_id。
         let sql = format!(
-            "SELECT todo_id, COUNT(*) as cnt FROM loop_steps WHERE todo_id IN ({}) GROUP BY todo_id",
+            "SELECT step_id, COUNT(*) as cnt FROM loop_steps WHERE step_id IN ({}) GROUP BY step_id",
             in_clause
         );
-        
+
         let values: Vec<sea_orm::Value> = step_ids
             .iter()
             .map(|id| (*id).into())
             .collect();
-        
+
         let stmt = Statement::from_sql_and_values(sea_orm::DbBackend::Sqlite, sql, values);
         let rows = self.conn.query_all(stmt).await?;
-        
+
         // 从查询结果构建 HashMap
         let mut map = std::collections::HashMap::new();
         for row in rows {
-            let todo_id: i64 = row.try_get("", "todo_id")?;
+            let step_id: i64 = row.try_get("", "step_id")?;
             let cnt: i64 = row.try_get("", "cnt")?;
-            map.insert(todo_id, cnt);
+            map.insert(step_id, cnt);
         }
-        
+
         Ok(map)
     }
 

@@ -156,3 +156,25 @@ export async function getExecution(
 ): Promise<LoopExecutionDetail> {
   return unwrap(await api.get(`/api/loops/${loopId}/executions/${executionId}`));
 }
+
+// ─── 批量操作（占位实现） ────────────────────────────────────────
+
+/**
+ * 批量强停环路。
+ *
+ * 后端目前没有「批量强停 loop」接口（handlers/loop_.rs 仅提供单条
+ * execution_record 的 stop API），这里只放前端占位：弹提示 + 返回空结果。
+ * 后续接入真实接口时，把函数体换成单次 POST 即可，外部签名保持不变。
+ *
+ * 期望后端契约：
+ *   POST /api/loops/batch-stop
+ *   body: { loop_ids: number[] }
+ *   response: { stopped: number[], failed: number[] }
+ */
+export async function forceStopLoops(
+  loopIds: number[],
+): Promise<{ stopped: number[]; failed: number[] }> {
+  // 占位：开发中提示由调用方弹（utils 内部不依赖 message 上下文）。
+  // 直接返回"全部失败"，强制调用方走失败分支走提示。
+  return { stopped: [], failed: [...loopIds] };
+}
