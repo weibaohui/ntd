@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useApp } from '@/hooks/useApp';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import { Button, Dropdown, Empty, Tooltip, Input, Segmented, Skeleton } from 'antd';
+import { Button, Dropdown, Empty, Tooltip, Input, Segmented, Skeleton, Checkbox, Modal, App as AntApp, Form, Select } from 'antd';
 import type { MenuProps } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined, FolderOpenOutlined, MoreOutlined, SearchOutlined, DownOutlined } from '@ant-design/icons';
+import { ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, ApartmentOutlined, FolderOpenOutlined, MoreOutlined, SearchOutlined, DownOutlined, SwapOutlined, StopOutlined } from '@ant-design/icons';
 import { useTheme } from '@/hooks/useTheme';
 import { StatusPicker } from './StatusPicker';
 import * as db from '@/utils/database';
@@ -14,6 +14,9 @@ import type { LoopListItem } from '@/types/loop';
 import * as dbLoops from '@/utils/database/loops';
 import * as dbSteps from '@/utils/database/steps';
 import type { StepSummary } from '@/types';
+import { EXECUTORS_FOR_PICKER } from '@/types/execution';
+import { ExecutorPicker } from './todo-drawer/ExecutorPicker';
+import { ActionToolbar, type BatchActionItem } from './common/ActionToolbar';
 import { formatRelativeTime } from '@/utils/datetime';
 
 interface TodoListProps {
@@ -84,6 +87,7 @@ export function TodoList(props: TodoListProps) {
   const { state, dispatch } = useApp();
   const { themeMode, toggleTheme } = useTheme();
   const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
+  const { message } = AntApp.useApp();
   const isMobile = useIsMobile();
   const [isLoading, setIsLoading] = useState(true);
   // 搜索关键字状态，用于按标题或提示词过滤 todo 列表
@@ -106,6 +110,51 @@ export function TodoList(props: TodoListProps) {
   const [selectedLoopId, setSelectedLoopId] = useState<number | null>(null);
   // 项目目录：工作空间选择器需要目录列表
   const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
+  // —— 通用工具栏：跨模式的多选 id 列表 ——
+  // 切换 listMode 时清空，避免不同模式 id 串台（todo/step/loop 都是 number id）
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  // 批量更换执行器 Modal（事项 / 环节共用）
+  const [executorModalOpen, setExecutorModalOpen] = useState(false);
+  const [pendingExecutorChangeIds, setPendingExecutorChangeIds] = useState<number[]>([]);
+  // 强停确认 Modal（环路）
+  const [forceStopModalOpen, setForceStopModalOpen] = useState(false);
+  const [pendingForceStopIds, setPendingForceStopIds] = useState<number[]>([]);
+  // 新建环节 Modal（环节模式「新建」入口）
+  const [stepCreateOpen, setStepCreateOpen] = useState(false);
+  const [stepCreateForm] = Form.useForm<{ title: string; prompt: string; executor?: string }>();
+  const [stepCreating, setStepCreating] = useState(false);
+
+  /**
+   * 新建环节：复用历史 StepList 实现的「先 createTodo 再 promoteTodoToStep」流程。
+   * 环节是独立实体，但历史 promote 接口要求从 todo 起步，这里保持一致。
+   */
+  const handleCreateStep = useCallback(async (values: { title: string; prompt: string; executor?: string }) => {
+    if (!values.title.trim()) { message.error('标题必填'); return; }
+    setStepCreating(true);
+    try {
+      const created = await db.createTodo(
+        values.title.trim(), values.prompt?.trim() ?? '', [], [], undefined, undefined,
+      );
+      await dbSteps.promoteTodoToStep(created.id);
+      // 把新环节的 executor 设回去（createTodo 不会保留 executor，promote 后再更新）
+      if (values.executor) {
+        await dbSteps.updateStep(created.id, { title: values.title, executor: values.executor });
+      }
+      message.success(`环节「${created.title}」已创建`);
+      setStepCreateOpen(false);
+      stepCreateForm.resetFields();
+      // 刷新环节列表
+      const fresh = await dbSteps.listSteps();
+      setStepList(fresh);
+      // 创建后自动选中，让用户能立即在右侧面板编辑详情
+      setSelectedStepId(created.id);
+      onSelectStep?.(created.id);
+    } catch {
+      // axios 拦截器已弹错
+    } finally {
+      setStepCreating(false);
+    }
+  }, [message, stepCreateForm, onSelectStep]);
 
   useEffect(() => {
     setIsLoading(false);
@@ -154,6 +203,17 @@ export function TodoList(props: TodoListProps) {
     localStorage.setItem('ntd_list_mode', listMode);
   }, [listMode]);
 
+  // 切换 listMode 时清空选择：todo/step/loop 虽然 id 都是 number，
+  // 但语义不同（同一数字可能指向不同实体），跨模式保留选择会让用户困惑。
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [listMode]);
+
+  // 切换单条 id 的选中态（toggle 语义，工具栏的「全选」用 onSelectionChange 全量覆盖）
+  const toggleSelect = useCallback((id: number) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  }, []);
+
   const filteredTodos = useMemo(() => {
     // 步骤模式下不需要过滤 todo（左侧渲染步骤列表）
     if (listMode === 'step') return [];
@@ -193,6 +253,27 @@ export function TodoList(props: TodoListProps) {
     return result;
   }, [todos, selectedTagId, selectedWorkspace, searchKeyword, listMode]);
 
+  // 通用关键字过滤：环节 / 环路模式也按标题搜索（用户反馈：避免切换时跳界面）
+  const filteredStepList = useMemo(() => {
+    const keyword = searchKeyword.trim().toLowerCase();
+    if (!keyword) return stepList;
+    return stepList.filter(s => (s.title || '').toLowerCase().includes(keyword));
+  }, [stepList, searchKeyword]);
+
+  const filteredLoopList = useMemo(() => {
+    const keyword = searchKeyword.trim().toLowerCase();
+    if (!keyword) return loopList;
+    return loopList.filter(l => (l.name || '').toLowerCase().includes(keyword));
+  }, [loopList, searchKeyword]);
+
+  // 当前 listMode 下"可见可选"的 id 列表，传给 ActionToolbar 用于「全选」/计数。
+  // 三种模式都按当前 searchKeyword 过滤后的列表计算，避免「全选」选中隐藏项。
+  const visibleIds = useMemo<number[]>(() => {
+    if (listMode === 'item') return filteredTodos.map(t => t.id);
+    if (listMode === 'step') return filteredStepList.map(s => s.id);
+    return filteredLoopList.map(l => l.id);
+  }, [listMode, filteredTodos, filteredStepList, filteredLoopList]);
+
   const handleStatusChange = useCallback(async (todoId: number, title: string, prompt: string, newStatus: string) => {
     try {
       const updated = await db.updateTodo(todoId, title, prompt, newStatus);
@@ -201,6 +282,121 @@ export function TodoList(props: TodoListProps) {
       // ignore: interceptor already shows error
     }
   }, [dispatch]);
+
+  // —— 批量操作：事项模式 ——
+  // 「更换执行器」打开 Modal，Modal 内确认后调 db.batchUpdateTodosExecutor
+  const openItemChangeExecutor = useCallback((ids: number[]) => {
+    setPendingExecutorChangeIds(ids);
+    setExecutorModalOpen(true);
+  }, []);
+
+  // —— 批量操作：环节模式 ——
+  const openStepChangeExecutor = useCallback((ids: number[]) => {
+    setPendingExecutorChangeIds(ids);
+    setExecutorModalOpen(true);
+  }, []);
+
+  // —— 批量操作：环路模式 ——
+  const openLoopForceStop = useCallback((ids: number[]) => {
+    setPendingForceStopIds(ids);
+    setForceStopModalOpen(true);
+  }, []);
+
+  // 确认更换执行器（事项 / 环节共用，根据 listMode 路由到不同的 db 函数）
+  const handleConfirmChangeExecutor = useCallback(async (executor: string) => {
+    const ids = pendingExecutorChangeIds;
+    if (ids.length === 0) return;
+    setExecutorModalOpen(false);
+    setPendingExecutorChangeIds([]);
+    try {
+      // 事项模式：需要先 fetchOne 获取 title/prompt 再调 updateTodo；
+      // 这里直接传 fetchOne 闭包让 db 层内部处理
+      const result = listMode === 'item'
+        ? await db.batchUpdateTodosExecutor(ids, executor, db.getTodo)
+        : await dbSteps.batchUpdateStepsExecutor(ids, executor);
+      if (result.failed.length === 0) {
+        message.success(`已为 ${result.updated.length} 项更换执行器为「${executor}」`);
+      } else {
+        message.warning(`成功 ${result.updated.length} 条，失败 ${result.failed.length} 条`);
+      }
+      // 触发列表刷新：item 通过 stepUpdateCount 机制，step / loop 通过各自的 reload
+      if (listMode === 'item') {
+        // item 模式依赖全局 todos 状态，由 useApp 拉取；增量更新单条避免全量重拉
+        for (const id of result.updated) {
+          const todo = await db.getTodo(id);
+          dispatch({ type: 'UPDATE_TODO', payload: todo });
+        }
+      } else if (listMode === 'step') {
+        // step 模式独立拉取：手动刷新一次
+        const fresh = await dbSteps.listSteps();
+        setStepList(fresh);
+      }
+    } catch {
+      // axios 拦截器已弹错
+    } finally {
+      setSelectedIds([]);
+    }
+  }, [pendingExecutorChangeIds, listMode, message, dispatch]);
+
+  // 确认强停（环路占位实现）
+  const handleConfirmForceStop = useCallback(async () => {
+    const ids = pendingForceStopIds;
+    if (ids.length === 0) return;
+    setForceStopModalOpen(false);
+    setPendingForceStopIds([]);
+    try {
+      const result = await dbLoops.forceStopLoops(ids);
+      if (result.stopped.length > 0) {
+        message.success(`已强停 ${result.stopped.length} 个环路`);
+      } else {
+        // 占位实现会全部走失败分支，统一提示"开发中"
+        message.warning(`环路强停功能开发中（已选 ${ids.length} 个）`);
+      }
+    } finally {
+      setSelectedIds([]);
+    }
+  }, [pendingForceStopIds, message]);
+
+  // 工具栏配置：按 listMode 切换 createLabel / batchActions。
+  // 「新建」按钮统一显示为「新建」2 字（用户能从当前 listMode 知道新建的是什么）；
+  // 批量菜单项按模式差异。
+  const toolbarConfig = useMemo<{
+    createLabel: string;
+    batchActions: BatchActionItem<number>[];
+  }>(() => {
+    if (listMode === 'item') {
+      return {
+        createLabel: '新建',
+        batchActions: [{
+          key: 'change-executor',
+          label: '更换执行器',
+          icon: <SwapOutlined />,
+          onClick: openItemChangeExecutor,
+        }],
+      };
+    }
+    if (listMode === 'step') {
+      return {
+        createLabel: '新建',
+        batchActions: [{
+          key: 'change-executor',
+          label: '更换执行器',
+          icon: <SwapOutlined />,
+          onClick: openStepChangeExecutor,
+        }],
+      };
+    }
+    return {
+      createLabel: '新建',
+      batchActions: [{
+        key: 'force-stop',
+        label: '强停',
+        icon: <StopOutlined />,
+        danger: true,
+        onClick: openLoopForceStop,
+      }],
+    };
+  }, [listMode, openItemChangeExecutor, openStepChangeExecutor, openLoopForceStop]);
 
   const desktopNavActions = useMemo(
     () => buildDesktopNavActions(onShowDashboard, onShowMemorial, onShowRelationMap),
@@ -257,6 +453,7 @@ export function TodoList(props: TodoListProps) {
     const primaryTag = todoTags[0];
     const isCompleted = todo.status === 'completed';
     const relativeTime = formatRelativeTime(todo.updated_at);
+    const isChecked = selectedIds.includes(todo.id);
 
     return (
       <div
@@ -271,6 +468,10 @@ export function TodoList(props: TodoListProps) {
           borderLeftColor: primaryTag?.color || '#cbd5e1',
           borderLeftWidth: 4,
           borderLeftStyle: 'solid',
+          // 工具栏的多选复选框用 position: absolute 浮在卡片左上；
+          // 若 .todo-item 不设 position: relative，复选框会逃逸到上层容器，
+          // 所有卡片的复选框都叠在同一个屏幕坐标，点击会命中最后渲染的那个。
+          position: 'relative',
         }}
         role="button"
         tabIndex={0}
@@ -282,7 +483,16 @@ export function TodoList(props: TodoListProps) {
           }
         }}
       >
-        <div className="todo-item-content">
+        {/* 多选复选框：position absolute 浮在卡片左上，避免打乱原本的 layout。
+            stopPropagation 阻止冒泡到卡片的 onClick（不会触发详情选中）。 */}
+        <Checkbox
+          checked={isChecked}
+          onChange={(e) => { e.stopPropagation(); toggleSelect(todo.id); }}
+          onClick={(e) => e.stopPropagation()}
+          data-testid={`todo-row-checkbox-${todo.id}`}
+          style={{ position: 'absolute', top: 12, left: 12, zIndex: 1 }}
+        />
+        <div className="todo-item-content" style={{ paddingLeft: 28 }}>
           <div className="todo-item-main">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <div
@@ -427,6 +637,8 @@ export function TodoList(props: TodoListProps) {
 
           {!isMobile && (
             <div className="header-quick-actions">
+              {/* header 只保留「智能新建」（AI 一句话生成）。普通新建入口已迁到
+                  ActionToolbar 的「新建事项 / 新建环节 / 新建环路」按钮，避免两处入口混淆。 */}
               <Tooltip title="智能新建">
                 <Button
                   type="text"
@@ -435,16 +647,6 @@ export function TodoList(props: TodoListProps) {
                   className="header-primary-action header-primary-action-smart"
                   onClick={onOpenSmartCreate}
                   aria-label="智能新建"
-                />
-              </Tooltip>
-              <Tooltip title="新建任务">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<PlusOutlined />}
-                  className="header-primary-action header-primary-action-create"
-                  onClick={onOpenCreateModal}
-                  aria-label="新建任务"
                 />
               </Tooltip>
             </div>
@@ -538,19 +740,22 @@ export function TodoList(props: TodoListProps) {
         </Dropdown>
       </div>
 
-      {/* 搜索框：环路模式下隐藏，loop 列表有自己的过滤 */}
-      {listMode === 'item' && (
-        <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
-          <Input
-            placeholder="搜索标题或提示词..."
-            prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
-            value={searchKeyword}
-            onChange={(e) => setSearchKeyword(e.target.value)}
-            allowClear
-            size="small"
-          />
-        </div>
-      )}
+      {/* 搜索框：三种模式都展示（用户反馈：环节/环路原本没有，切换时会跳界面）。
+          placeholder 按 listMode 切换，关键词同时匹配事项标题/提示词、环节标题、环路名称。 */}
+      <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
+        <Input
+          placeholder={
+            listMode === 'item' ? '搜索标题或提示词...'
+            : listMode === 'step' ? '搜索环节标题...'
+            : '搜索环路名称...'
+          }
+          prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+          value={searchKeyword}
+          onChange={(e) => setSearchKeyword(e.target.value)}
+          allowClear
+          size="small"
+        />
+      </div>
 
       {/* 列表选择：事项 / 环节 / 环路 */}
       <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
@@ -566,6 +771,21 @@ export function TodoList(props: TodoListProps) {
           ]}
         />
       </div>
+
+      {/* 通用操作工具栏：跨模式的「全选 / 批量 / 新建」入口。
+          createLabel / batchActions 按 listMode 在 toolbarConfig 中切换。 */}
+      <ActionToolbar
+        selectableIds={visibleIds}
+        selectedIds={selectedIds}
+        onSelectionChange={setSelectedIds}
+        createLabel={toolbarConfig.createLabel}
+        onCreate={
+          listMode === 'item' ? onOpenCreateModal
+          : listMode === 'step' ? () => setStepCreateOpen(true)
+          : onCreateLoop
+        }
+        batchActions={toolbarConfig.batchActions}
+      />
 
       {/* 标签过滤：环路模式下不显示，loop 不按 tag 过滤 */}
       {listMode === 'item' && tags.length > 0 && (
@@ -595,7 +815,7 @@ export function TodoList(props: TodoListProps) {
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 8 }}>
           {stepLoading ? (
             <Skeleton active style={{ padding: 16 }} />
-          ) : stepList.length === 0 ? (
+          ) : filteredStepList.length === 0 ? (
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
               description={
@@ -610,7 +830,7 @@ export function TodoList(props: TodoListProps) {
             />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {stepList.map(step => (
+              {filteredStepList.map(step => (
                 <div
                   key={step.id}
                   onClick={() => {
@@ -652,6 +872,14 @@ export function TodoList(props: TodoListProps) {
                     }
                   }}
                 >
+                  {/* 多选复选框：与 todo 卡片一致，绝对定位浮在卡片左上 */}
+                  <Checkbox
+                    checked={selectedIds.includes(step.id)}
+                    onChange={(e) => { e.stopPropagation(); toggleSelect(step.id); }}
+                    onClick={(e) => e.stopPropagation()}
+                    data-testid={`step-row-checkbox-${step.id}`}
+                    style={{ position: 'absolute', top: 14, left: 12, zIndex: 1 }}
+                  />
                   {/* 左侧 3px 颜色条 */}
                   <span style={{
                     position: 'absolute', left: 0, top: 0, bottom: 0, width: 3,
@@ -659,8 +887,8 @@ export function TodoList(props: TodoListProps) {
                     borderRadius: '10px 0 0 10px',
                   }} />
 
-                  {/* 标题行: #id + 名称 */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  {/* 标题行: #id + 名称，多选模式左侧留出复选框空间 */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, paddingLeft: 28 }}>
                     <span style={{ color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 11, fontFamily: 'monospace' }}>#{step.id}</span>
                     <span style={{
                       fontWeight: 600, fontSize: 14, flex: 1, minWidth: 0,
@@ -697,13 +925,15 @@ export function TodoList(props: TodoListProps) {
             <Skeleton active style={{ padding: 16 }} />
           ) : (
             <LoopListPanel
-              loops={loopList}
+              loops={filteredLoopList}
               selectedId={selectedLoopId}
               onSelect={(id) => {
                 setSelectedLoopId(id);
                 onSelectLoop?.(id);
               }}
               onCreate={onCreateLoop}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
             />
           )}
         </div>
@@ -732,6 +962,72 @@ export function TodoList(props: TodoListProps) {
           )}
         </div>
       )}
+
+      {/* 批量更换执行器 Modal：事项 / 环节共用。
+          关闭即作废，不会触发回调（避免半路取消导致 selectedIds 与 Modal 状态不一致）。 */}
+      <Modal
+        title={`更换执行器（${pendingExecutorChangeIds.length} 项）`}
+        open={executorModalOpen}
+        onCancel={() => { setExecutorModalOpen(false); setPendingExecutorChangeIds([]); }}
+        footer={null}
+        destroyOnClose
+      >
+        <ExecutorPicker
+          executor=""
+          executorOptions={EXECUTORS_FOR_PICKER}
+          onChange={(v) => handleConfirmChangeExecutor(v)}
+        />
+      </Modal>
+
+      {/* 强停环路确认 Modal：占位实现，最终会调真实接口 */}
+      <Modal
+        title="强停环路"
+        open={forceStopModalOpen}
+        onOk={handleConfirmForceStop}
+        onCancel={() => { setForceStopModalOpen(false); setPendingForceStopIds([]); }}
+        okText="强停"
+        cancelText="取消"
+        okButtonProps={{ danger: true }}
+        destroyOnClose
+      >
+        <p>将停止 <strong>{pendingForceStopIds.length}</strong> 个环路关联的所有正在运行的执行。</p>
+        <p style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>
+          （强停功能开发中，详见 utils/database/loops.ts 的 forceStopLoops 注释。）
+        </p>
+      </Modal>
+
+      {/* 新建环节 Modal：工具栏「新建环节」触发。
+          字段：标题（必填）/ 提示词 / 执行器，复用 StepList 的 createTodo + promote 流程。 */}
+      <Modal
+        title="新建环节"
+        open={stepCreateOpen}
+        onCancel={() => { setStepCreateOpen(false); stepCreateForm.resetFields(); }}
+        onOk={() => stepCreateForm.submit()}
+        confirmLoading={stepCreating}
+        okText="创建"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <Form
+          form={stepCreateForm}
+          layout="vertical"
+          onFinish={handleCreateStep}
+          initialValues={{ executor: 'claudecode' }}
+        >
+          <Form.Item label="标题" name="title" rules={[{ required: true, message: '标题必填' }]}>
+            <Input placeholder="例如：代码审查环节" maxLength={100} />
+          </Form.Item>
+          <Form.Item label="提示词 (Prompt)" name="prompt" tooltip="描述这个环节能做什么">
+            <Input.TextArea rows={5} placeholder="例如：你是资深代码审查员..." maxLength={4000} />
+          </Form.Item>
+          <Form.Item label="执行器" name="executor">
+            <Select
+              options={EXECUTORS_FOR_PICKER.map(e => ({ label: e.label, value: e.value }))}
+              placeholder="选择执行器"
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }
