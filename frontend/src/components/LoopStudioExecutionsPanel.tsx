@@ -32,6 +32,7 @@ interface Props {
 const DEFAULT_PAGE_LIMIT = 5;
 
 // 状态 → 颜色 + 图标, 与 LoopListPanel.executionIcon 保持一致
+// 兼容旧记录：旧版只支持步数限制，status = "capped" 视为步数超限。
 function execStatusView(status: string): { color: string; icon: React.ReactNode; label: string } {
   switch (status) {
     case 'success': return { color: 'green', icon: <CheckCircleOutlined />, label: '成功' };
@@ -39,6 +40,9 @@ function execStatusView(status: string): { color: string; icon: React.ReactNode;
     case 'partial': return { color: 'orange', icon: <CloseCircleOutlined />, label: '部分' };
     case 'running': return { color: 'blue', icon: <LoadingOutlined />, label: '运行中' };
     case 'cancelled': return { color: 'default', icon: <MinusCircleOutlined />, label: '已取消' };
+    case 'capped':
+    case 'capped_step': return { color: 'gold', icon: <MinusCircleOutlined />, label: '步数超限' };
+    case 'capped_token': return { color: 'purple', icon: <MinusCircleOutlined />, label: 'Token 超限' };
     default: return { color: 'default', icon: <MinusCircleOutlined />, label: status };
   }
 }

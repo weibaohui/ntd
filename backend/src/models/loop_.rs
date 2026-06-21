@@ -454,6 +454,8 @@ pub fn validate_loop_status(s: &str) -> Result<(), String> {
 }
 
 /// 把 loop_execution.status 归类为前端展示用的颜色。
+/// 注意区分「步数超限」和「Token 超限」两种 capped 场景，
+/// 分别用不同的颜色让用户一目了然。
 pub fn loop_execution_color(status: &str) -> &'static str {
     match status {
         "running" => "#1890ff",
@@ -461,6 +463,8 @@ pub fn loop_execution_color(status: &str) -> &'static str {
         "failed" => "#f5222d",
         "partial" => "#fa8c16",
         "cancelled" => "#8c8c8c",
+        "capped_step" => "#d4b106",   // 步数超限：黄色
+        "capped_token" => "#722ed1",  // Token 超限：紫色
         _ => "#bfbfbf",
     }
 }
