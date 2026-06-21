@@ -36,7 +36,9 @@ async fn create_test_step(db: &Database, title: &str) -> ntd::db::entity::steps:
 
 #[tokio::test]
 async fn test_create_step_stores_all_fields() {
-    // 创建环节时传入的所有字段都应正确存储，包括可选字段
+    // 创建环节时传入的所有字段都应正确存储，包括可选字段。
+    // source_todo_id 设 None 避免硬编码 todo id 触发 FK；
+    // 该字段的下游映射在 create_loop_step 等链路单独测。
     let db = setup_db().await;
     let step = db
         .create_step(
@@ -44,7 +46,7 @@ async fn test_create_step_stores_all_fields() {
             "测试提示词",
             Some("claude"),
             Some("验收标准"),
-            Some(42),
+            None,
             Some("#ff0000"),
         )
         .await
@@ -54,7 +56,7 @@ async fn test_create_step_stores_all_fields() {
     assert_eq!(step.prompt, "测试提示词");
     assert_eq!(step.executor.as_deref(), Some("claude"));
     assert_eq!(step.acceptance_criteria.as_deref(), Some("验收标准"));
-    assert_eq!(step.source_todo_id, Some(42));
+    assert_eq!(step.source_todo_id, None);
     assert_eq!(step.color, "#ff0000");
 }
 

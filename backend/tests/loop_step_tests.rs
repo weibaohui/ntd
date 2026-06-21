@@ -46,17 +46,16 @@ async fn v6_migration_creates_kind_column_with_default_item() {
 
 #[tokio::test]
 async fn v6_migration_backfills_step_for_loop_referenced_todos() {
-    // 先建 todo + loop + step (step 引用 todo), 再 promote 检查
-    // 走 list_steps_with_usage 应该看到该 todo, 且 used_by >= 1
+    // 先建 todo + promote 成 step (promote 会同步在 steps 表创建 id=todo_id 的行)，
+    // 再建 loop + loop_step 引用该 step_id，模拟「v6 回填后被 loop 引用」的终态。
     let db = setup_db().await;
     let todo_id = create_todo(&db, "被 loop 引用的 todo").await;
+    db.promote_to_step(todo_id).await.unwrap();
     let loop_id = create_loop(&db, "测试 loop").await;
     db.create_loop_step(loop_id, "阶段 1", "", todo_id, "sequential", false, None, "skip", true, "next", None, "break", None)
         .await
         .unwrap();
 
-    // 直接 promote 模拟「v6 回填」后状态
-    db.promote_to_step(todo_id).await.unwrap();
     let todo = db.get_todo(todo_id).await.unwrap().unwrap();
     assert_eq!(todo.kind, "step");
     assert!(
