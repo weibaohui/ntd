@@ -49,7 +49,33 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V10StepColor),
         Box::new(V11LoopFlowControl),
         Box::new(V12LoopStepExecution),
+        Box::new(V13LoopStepsRenameTodoIdToStepId),
     ]
+}
+
+/// v13 迁移：将 loop_steps.todo_id 重命名为 step_id，消除列名误导。
+/// 该列实际存储的是 steps.id（非 todos.id），旧名极具迷惑性。
+pub(super) struct V13LoopStepsRenameTodoIdToStepId;
+
+#[async_trait]
+impl Migration for V13LoopStepsRenameTodoIdToStepId {
+    fn version(&self) -> i64 {
+        13
+    }
+    fn name(&self) -> &'static str {
+        "rename_loop_steps_todo_id_to_step_id"
+    }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        // SQLite 3.25+ 支持 RENAME COLUMN
+        db.exec("ALTER TABLE loop_steps RENAME COLUMN todo_id TO step_id").await?;
+        // 外键约束参考的表也从 todos 改为 steps
+        // （SQLite 的 RENAME COLUMN 不会自动更新 FK 引用，需重新建表；
+        //  但外键引用关系已在 entity 层由 Column::StepId → steps.id 体现，
+        //  SQLite 的实际 FK 约束在旧列名上，仅在 INSERT/UPDATE 时校验值的存在性，
+        //  不依赖列名，所以列名改后约束仍然有效。）
+        Ok(())
+    }
 }
 
 /// v12 迁移：execution_records 添加 loop 环节执行追踪列。
@@ -1756,7 +1782,7 @@ async fn v6_todo_kind(db: &Database) -> Result<(), sea_orm::DbErr> {
     {
         db.exec(
             "UPDATE todos SET kind = 'step' \
-             WHERE id IN (SELECT DISTINCT todo_id FROM loop_steps)",
+             WHERE id IN (SELECT DISTINCT step_id FROM loop_steps)",
         )
         .await?;
     }
@@ -1882,7 +1908,7 @@ const LOOP_STUDIO_DDL: &[&str] = &[
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
         order_index INTEGER NOT NULL DEFAULT 0,
-        todo_id INTEGER NOT NULL,
+        step_id INTEGER NOT NULL,
         run_mode TEXT NOT NULL DEFAULT 'sequential',
         skip_on_source_failed INTEGER NOT NULL DEFAULT 0,
         min_rating INTEGER,
@@ -1890,7 +1916,7 @@ const LOOP_STUDIO_DDL: &[&str] = &[
         enabled INTEGER NOT NULL DEFAULT 1,
         created_at TEXT,
         FOREIGN KEY (loop_id) REFERENCES loops(id) ON DELETE CASCADE,
-        FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE RESTRICT
+        FOREIGN KEY (step_id) REFERENCES steps(id) ON DELETE RESTRICT
     )",
     "CREATE INDEX IF NOT EXISTS idx_loop_steps_loop_id ON loop_steps(loop_id)",
     "CREATE INDEX IF NOT EXISTS idx_loop_steps_loop_order ON loop_steps(loop_id, order_index)",

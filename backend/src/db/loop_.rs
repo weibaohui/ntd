@@ -654,14 +654,14 @@ impl Database {
         // 一次写清晰且类型稳定。
         use sea_orm::{ConnectionTrait, Statement};
         let sql = format!(
-            "SELECT s.id, s.loop_id, s.name, s.description, s.order_index, s.todo_id, \
+            "SELECT s.id, s.loop_id, s.name, s.description, s.order_index, s.step_id, \
                     s.run_mode, s.skip_on_source_failed, s.min_rating, s.unrated_policy, \
                     s.on_success, s.success_goto_step_id, s.on_rating_fail, s.fail_goto_step_id, \
                     s.enabled, s.created_at, \
                     t.title as todo_title, st.executor as todo_executor, t.status as todo_status \
              FROM loop_steps s \
-             INNER JOIN todos t ON t.id = s.todo_id \
-             LEFT JOIN steps st ON st.id = s.todo_id \
+             INNER JOIN todos t ON t.id = s.step_id \
+             LEFT JOIN steps st ON st.id = s.step_id \
              WHERE s.loop_id = {} \
              ORDER BY s.order_index ASC, s.id ASC",
             loop_id
@@ -678,7 +678,7 @@ impl Database {
                 name: row.try_get_by::<String, _>("name")?,
                 description: row.try_get_by::<String, _>("description")?,
                 order_index: row.try_get_by::<i32, _>("order_index")?,
-                todo_id: row.try_get_by::<i64, _>("todo_id")?,
+                step_id: row.try_get_by::<i64, _>("step_id")?,
                 run_mode: row.try_get_by::<String, _>("run_mode")?,
                 skip_on_source_failed: row.try_get_by::<i32, _>("skip_on_source_failed")?,
                 min_rating: row.try_get_by::<Option<i32>, _>("min_rating")?,
