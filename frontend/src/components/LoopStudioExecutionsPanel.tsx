@@ -6,8 +6,8 @@
 //
 // 分页: page + limit, 简单表格不引入分页器, 改成"加载更多"按钮避免侵入式 UI
 
-import { useState, useEffect, useCallback } from 'react';
-import { App as AntApp, Empty, Skeleton, Tag, Tooltip, Drawer, Descriptions, Pagination } from 'antd';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { App as AntApp, Button, Empty, Skeleton, Tag, Tooltip, Drawer, Descriptions, Pagination } from 'antd';
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -15,6 +15,7 @@ import {
   MinusCircleOutlined,
   StarOutlined,
   ArrowRightOutlined,
+  ReadOutlined,
 } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import type { LoopExecutionDto, LoopExecutionDetail, LoopExecutionTokenSummary } from '@/types/loop';
@@ -124,6 +125,29 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<LoopExecutionDetail | null>(null);
   const [expandedLoading, setExpandedLoading] = useState(false);
+  // 黑板抽屉：用于展示该次执行中所有环节的结论摘要。
+  // blackboardExecs 存储当前展开行的 step_executions 数组，
+  // 按 sequence_index 排序后供 BlackboardDrawer 渲染。
+  const [blackboardOpen, setBlackboardOpen] = useState(false);
+  const [blackboardExecs, setBlackboardExecs] = useState<Record<string, any>[]>([]);
+
+  // 打开黑板抽屉：传入当前展开行的 stepExecs，由用户点击「黑板」按钮触发。
+  const handleOpenBlackboard = useCallback((stepExecs: Record<string, any>[]) => {
+    setBlackboardExecs(stepExecs);
+    setBlackboardOpen(true);
+  }, []);
+
+  // 打开黑板抽屉：点击行内的「黑板」按钮时，直接加载该次执行的详情并打开黑板抽屉。
+  // 通过 stopPropagation 阻止冒泡到行的展开/收起。
+  const handleOpenBlackboardForExec = useCallback(async (ev: React.MouseEvent, execId: number) => {
+    ev.stopPropagation();
+    try {
+      const detail = await dbLoops.getExecution(loopId, execId);
+      handleOpenBlackboard(detail.step_executions);
+    } catch {
+      message.error('加载黑板数据失败');
+    }
+  }, [loopId, handleOpenBlackboard, message]);
 
   // 加载一页执行记录
   const loadPage = useCallback((p: number) => {
@@ -240,8 +264,16 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
                     {e.failed_steps > 0 && (
                       <Tag color="red">{e.failed_steps} 失败</Tag>
                     )}
-                    {/* 展开/收起提示 */}
-                    <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
+                    <Button
+                      size="small"
+                      type="text"
+                      icon={<ReadOutlined />}
+                      onClick={(ev) => { handleOpenBlackboardForExec(ev, e.id); }}
+                      style={{ marginLeft: 'auto', fontSize: 12 }}
+                    >
+                      黑板
+                    </Button>
+                    <span style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
                       {expanded ? '收起 ▲' : '展开 ▼'}
                     </span>
                   </div>
@@ -294,7 +326,122 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
           )}
         </>
       )}
+
+      {/* 黑板抽屉：按顺序展示该次执行中所有环节的结论，
+          让用户一次性纵览整条执行链路的输出摘要，
+          无需逐个展开每个环节的卡片查看 conclusion。 */}
+      <BlackboardDrawer
+        open={blackboardOpen}
+        stepExecs={blackboardExecs}
+        onClose={() => setBlackboardOpen(false)}
+      />
     </div>
+  );
+}
+
+// 黑板抽屉组件：以列表形式展示该次执行中所有环节的结论。
+// 按 sequence_index 排序，每个环节以卡片形式展示：
+// - 标题行：序号 + 环节名称
+// - 结论内容（markdown 区域）
+// 没有结论的环节展示「-无结论-」占位。
+function BlackboardDrawer({ open, stepExecs, onClose }: {
+  open: boolean;
+  stepExecs: Record<string, any>[];
+  onClose: () => void;
+}) {
+  // 按 sequence_index 排序，确保展示顺序与执行链一致
+  const sorted = useMemo(
+    () => [...stepExecs].sort((a, b) => (a.sequence_index || 0) - (b.sequence_index || 0)),
+    [stepExecs],
+  );
+
+  // 统计有结论的环节数，在标题栏展示
+  const conclusionCount = useMemo(
+    () => sorted.filter(s => s.conclusion).length,
+    [sorted],
+  );
+
+  return (
+    <Drawer
+      title={
+        <span>
+          <ReadOutlined style={{ marginRight: 8 }} />
+          黑板 · {sorted.length} 个环节
+          <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--color-text-tertiary, #94a3b8)', fontWeight: 400 }}>
+            {conclusionCount} 个有结论
+          </span>
+        </span>
+      }
+      placement="right"
+      width={520}
+      open={open}
+      onClose={onClose}
+      destroyOnClose
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {sorted.map((s, idx) => (
+          <div
+            key={s.id || idx}
+            style={{
+              background: 'var(--color-bg-elevated, #ffffff)',
+              border: '1px solid var(--color-border, #e2e8f0)',
+              borderRadius: 8,
+              padding: '12px 14px',
+            }}
+          >
+            {/* 标题行：序号 + 环节名称 + 状态标记 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+              <span style={{
+                width: 22, height: 22, borderRadius: 11,
+                background: 'var(--color-primary, #0891b2)',
+                color: '#fff', fontSize: 11, fontWeight: 700,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontFamily: 'monospace',
+              }}>
+                {idx + 1}
+              </span>
+              <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--color-text, #0f172a)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {s.step_name || `环节 #${s.step_id}`}
+              </span>
+              {s.status && (
+                <Tag color={execStatusView(s.status).color} style={{ margin: 0, fontSize: 10, lineHeight: '16px' }}>
+                  {execStatusView(s.status).label}
+                </Tag>
+              )}
+            </div>
+            {/* 结论内容 */}
+            {s.conclusion ? (
+              <div style={{
+                fontSize: 13, color: 'var(--color-text-secondary, #475569)',
+                background: 'var(--color-bg-hover, #f1f5f9)',
+                padding: 10, borderRadius: 6, whiteSpace: 'pre-wrap',
+                lineHeight: 1.6, maxHeight: 200, overflow: 'auto',
+              }}>
+                {s.conclusion}
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary, #94a3b8)', fontStyle: 'italic' }}>
+                - 无结论 -
+              </div>
+            )}
+            {/* 如果该环节有错误，在结论下方展示错误信息 */}
+            {s.error_message && (
+              <div style={{
+                marginTop: 6, fontSize: 12, color: 'var(--color-error, #ef4444)',
+                lineHeight: 1.5, maxHeight: 60, overflow: 'auto',
+              }}>
+                {s.error_message}
+              </div>
+            )}
+          </div>
+        ))}
+        {sorted.length === 0 && (
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary, #94a3b8)' }}>
+            暂无环节数据
+          </div>
+        )}
+      </div>
+    </Drawer>
   );
 }
 
