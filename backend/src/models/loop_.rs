@@ -166,7 +166,8 @@ pub struct LoopStepRawDto {
     pub name: String,
     pub description: String,
     pub order_index: i32,
-    pub todo_id: i64,
+    /// 关联的 step id（对应 steps 表）
+    pub step_id: i64,
     pub run_mode: String,
     pub skip_on_source_failed: bool,
     pub min_rating: Option<i32>,
@@ -187,7 +188,7 @@ impl From<loop_steps::Model> for LoopStepRawDto {
             name: m.name,
             description: m.description,
             order_index: m.order_index,
-            todo_id: m.todo_id,
+            step_id: m.step_id,
             run_mode: m.run_mode,
             skip_on_source_failed: m.skip_on_source_failed != 0,
             min_rating: m.min_rating,
@@ -388,7 +389,7 @@ pub struct CreateLoopStepRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub todo_id: i64,
+    pub step_id: i64,
     #[serde(default = "default_run_mode")]
     pub run_mode: String,
     #[serde(default)]
@@ -418,7 +419,7 @@ fn default_on_rating_fail() -> String { "break".to_string() }
 pub struct UpdateLoopStepRequest {
     pub name: String,
     pub description: String,
-    pub todo_id: i64,
+    pub step_id: i64,
     pub run_mode: String,
     pub skip_on_source_failed: bool,
     pub min_rating: Option<i32>,

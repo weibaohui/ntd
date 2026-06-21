@@ -218,10 +218,10 @@ impl LoopRunner {
             let step_meta = self
                 .ctx
                 .db
-                .get_step(step.todo_id)
+                .get_step(step.step_id)
                 .await
                 .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("step #{} (todo_id={}) not found", step.id, step.todo_id))?;
+                .ok_or_else(|| format!("step #{} (step_id={}) not found", step.id, step.step_id))?;
 
             // 4d. 构造增强 Prompt（注入黑板变量 + 上一环节结果）
             let blackboard_text = self.build_blackboard_text(loop_execution_id).await;
@@ -244,7 +244,7 @@ impl LoopRunner {
                 .create_loop_step_execution(
                     loop_execution_id,
                     step.id,
-                    step.todo_id,
+                    step.step_id,
                     "running",
                     sequence_counter,
                     step.min_rating,

@@ -158,7 +158,7 @@ impl Database {
                 new_loop.id,
                 &s.name,
                 &s.description,
-                s.todo_id,
+                s.step_id,
                 &s.run_mode,
                 s.skip_on_source_failed != 0,
                 s.min_rating,
@@ -320,7 +320,7 @@ impl Database {
         loop_id: i64,
         name: &str,
         description: &str,
-        todo_id: i64,
+        step_id: i64,
         run_mode: &str,
         skip_on_source_failed: bool,
         min_rating: Option<i32>,
@@ -346,7 +346,7 @@ impl Database {
             name: ActiveValue::Set(name.to_string()),
             description: ActiveValue::Set(description.to_string()),
             order_index: ActiveValue::Set(next_order),
-            todo_id: ActiveValue::Set(todo_id),
+            step_id: ActiveValue::Set(step_id),
             run_mode: ActiveValue::Set(run_mode.to_string()),
             skip_on_source_failed: ActiveValue::Set(if skip_on_source_failed { 1 } else { 0 }),
             min_rating: ActiveValue::Set(min_rating),
@@ -367,7 +367,7 @@ impl Database {
         id: i64,
         name: &str,
         description: &str,
-        todo_id: i64,
+        step_id: i64,
         run_mode: &str,
         skip_on_source_failed: bool,
         min_rating: Option<i32>,
@@ -383,7 +383,7 @@ impl Database {
             let mut am: loop_steps::ActiveModel = c.into();
             am.name = ActiveValue::Set(name.to_string());
             am.description = ActiveValue::Set(description.to_string());
-            am.todo_id = ActiveValue::Set(todo_id);
+            am.step_id = ActiveValue::Set(step_id);
             am.run_mode = ActiveValue::Set(run_mode.to_string());
             am.skip_on_source_failed =
                 ActiveValue::Set(if skip_on_source_failed { 1 } else { 0 });
@@ -654,13 +654,14 @@ impl Database {
         // 一次写清晰且类型稳定。
         use sea_orm::{ConnectionTrait, Statement};
         let sql = format!(
-            "SELECT s.id, s.loop_id, s.name, s.description, s.order_index, s.todo_id, \
+            "SELECT s.id, s.loop_id, s.name, s.description, s.order_index, s.step_id, \
                     s.run_mode, s.skip_on_source_failed, s.min_rating, s.unrated_policy, \
                     s.on_success, s.success_goto_step_id, s.on_rating_fail, s.fail_goto_step_id, \
                     s.enabled, s.created_at, \
-                    t.title as todo_title, t.executor as todo_executor, t.status as todo_status \
+                    t.title as todo_title, st.executor as todo_executor, t.status as todo_status \
              FROM loop_steps s \
-             INNER JOIN todos t ON t.id = s.todo_id \
+             INNER JOIN todos t ON t.id = s.step_id \
+             LEFT JOIN steps st ON st.id = s.step_id \
              WHERE s.loop_id = {} \
              ORDER BY s.order_index ASC, s.id ASC",
             loop_id
@@ -677,7 +678,7 @@ impl Database {
                 name: row.try_get_by::<String, _>("name")?,
                 description: row.try_get_by::<String, _>("description")?,
                 order_index: row.try_get_by::<i32, _>("order_index")?,
-                todo_id: row.try_get_by::<i64, _>("todo_id")?,
+                step_id: row.try_get_by::<i64, _>("step_id")?,
                 run_mode: row.try_get_by::<String, _>("run_mode")?,
                 skip_on_source_failed: row.try_get_by::<i32, _>("skip_on_source_failed")?,
                 min_rating: row.try_get_by::<Option<i32>, _>("min_rating")?,
@@ -783,7 +784,7 @@ impl Database {
         };
         let triggers = self.list_triggers_by_loop(loop_id).await?;
         let steps_with_meta = self.list_loop_steps_with_todo_meta(loop_id).await?;
-        let mut todo_ids: Vec<i64> = steps_with_meta.iter().map(|(s, _, _, _)| s.todo_id).collect();
+        let mut todo_ids: Vec<i64> = steps_with_meta.iter().map(|(s, _, _, _)| s.step_id).collect();
         todo_ids.sort_unstable();
         todo_ids.dedup();
         let todos = self.get_todos_by_ids(&todo_ids).await?;

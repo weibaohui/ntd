@@ -53,7 +53,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
     }
     form.setFieldsValue({
       name: step.name,
-      todo_id: step.todo_id,
+      step_id: step.step_id,
       description: step.description,
       enabled: step.enabled,
       min_rating: step.min_rating,
@@ -76,7 +76,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
         await dbLoops.updateLoopStep(loopId, editingStep.id, {
           name: values.name.trim(),
           description: values.description ?? '',
-          todo_id: values.todo_id,
+          step_id: values.step_id,
           run_mode: 'sequential',
           skip_on_source_failed: values.skip_on_source_failed ?? false,
           min_rating: values.min_rating ?? null,
@@ -92,7 +92,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
         await dbLoops.createLoopStep(loopId, {
           name: values.name.trim(),
           description: values.description ?? '',
-          todo_id: values.todo_id,
+          step_id: values.step_id,
           run_mode: 'sequential',
           skip_on_source_failed: values.skip_on_source_failed ?? false,
           min_rating: values.min_rating ?? null,
@@ -126,8 +126,8 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
   }, [loopId, message, onChanged]);
 
   // 选择 step 后自动填充 name
-  const handleTodoChange = useCallback((todo_id: number) => {
-    const selected = candidates.find(c => c.id === todo_id);
+  const handleTodoChange = useCallback((stepId: number) => {
+    const selected = candidates.find(c => c.id === stepId);
     if (selected) {
       const currentName = form.getFieldValue('name');
       if (!currentName || !editingStep) {
@@ -190,7 +190,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
         destroyOnClose
       >
         <Form form={form} layout="vertical">
-          <Form.Item label="关联环节" name="todo_id" rules={[{ required: true, message: '请选择关联的环节' }]}>
+          <Form.Item label="关联环节" name="step_id" rules={[{ required: true, message: '请选择关联的环节' }]}>
             <Select
               showSearch
               placeholder="选择已有的环节"
