@@ -4,7 +4,7 @@ use sea_orm::{
 };
 
 use crate::db::entity::tags;
-use crate::db::entity::{todo_tags, todos};
+use crate::db::entity::{steps, todo_tags, todos};
 use crate::db::Database;
 use crate::models::{Todo, TodoBackup, TodoStatus};
 
@@ -999,8 +999,13 @@ impl Database {
 
     /// 把事项提升为环节。仅当目标 todo 当前不是 step 时生效（幂等）。
     /// 返回是否真的发生了状态变更。
+    ///
+    /// 同步在 steps 表创建对应行（id 复用 todo.id），保证 loop_steps.step_id → steps.id
+    /// 与原 todo.id 的引用关系不破（V9 迁移的回填 INSERT 也用同样的 id 对齐策略）。
+    /// 已存在则跳过,避免重复行。
     pub async fn promote_to_step(&self, id: i64) -> Result<bool, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
+        let updated_now = now.clone();
         let am = todos::ActiveModel {
             id: ActiveValue::Unchanged(id),
             kind: ActiveValue::Set(Some("step".to_string())),
@@ -1008,7 +1013,31 @@ impl Database {
             ..Default::default()
         };
         let res = am.update(&self.conn).await?;
-        Ok(res.kind.as_deref() == Some("step"))
+        if res.kind.as_deref() != Some("step") {
+            return Ok(false);
+        }
+        // 幂等插入 steps 行：用 todo.id 作为 steps.id，复用 loop_steps.step_id 关联链
+        steps::Entity::insert(steps::ActiveModel {
+            id: ActiveValue::Set(id),
+            title: ActiveValue::Set(res.title.clone()),
+            prompt: ActiveValue::Set(res.prompt.clone().unwrap_or_default()),
+            executor: ActiveValue::Set(res.executor.clone()),
+            acceptance_criteria: ActiveValue::Set(res.acceptance_criteria.clone()),
+            source_todo_id: ActiveValue::Set(Some(id)),
+            color: ActiveValue::Set("#722ed1".to_string()),
+            created_at: ActiveValue::Set(res.created_at.clone()),
+            updated_at: ActiveValue::Set(Some(updated_now)),
+            ..Default::default()
+        })
+        .on_conflict(
+            sea_orm::sea_query::OnConflict::column(steps::Column::Id)
+                .do_nothing()
+                .to_owned(),
+        )
+        .exec_without_returning(&self.conn)
+        .await
+        .ok();
+        Ok(true)
     }
 
     /// 把环节降级为事项。
@@ -1064,7 +1093,7 @@ impl Database {
             .collect::<Vec<_>>()
             .join(",");
         let sql = format!(
-            "SELECT todo_id, COUNT(*) AS cnt FROM loop_steps WHERE todo_id IN ({}) GROUP BY todo_id",
+            "SELECT step_id, COUNT(*) AS cnt FROM loop_steps WHERE step_id IN ({}) GROUP BY step_id",
             ids_csv
         );
         let result = self
@@ -1073,10 +1102,10 @@ impl Database {
             .await?;
         let mut map = std::collections::HashMap::new();
         for row in result {
-            let todo_id: i64 = row.try_get_by("todo_id").unwrap_or(0);
+            let step_id: i64 = row.try_get_by("step_id").unwrap_or(0);
             let cnt: i64 = row.try_get_by("cnt").unwrap_or(0);
-            if todo_id > 0 {
-                map.insert(todo_id, cnt);
+            if step_id > 0 {
+                map.insert(step_id, cnt);
             }
         }
         Ok(map)

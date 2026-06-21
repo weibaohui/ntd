@@ -50,6 +50,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V11LoopFlowControl),
         Box::new(V12LoopStepExecution),
         Box::new(V13LoopStepsRenameTodoIdToStepId),
+        Box::new(V14LoopsReviewTemplateId),
     ]
 }
 
@@ -67,6 +68,12 @@ impl Migration for V13LoopStepsRenameTodoIdToStepId {
     }
 
     async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        // 幂等：fresh DB（V7 loop_studio 已直接用 step_id 建表）没有 todo_id 列，
+        // 跳过 RENAME。仅当旧库残留 todo_id 时才真正改名。
+        if !table_has_column(db, "loop_steps", "todo_id").await? {
+            tracing::info!("loop_steps.todo_id already absent, skip rename");
+            return Ok(());
+        }
         // SQLite 3.25+ 支持 RENAME COLUMN
         db.exec("ALTER TABLE loop_steps RENAME COLUMN todo_id TO step_id").await?;
         // 外键约束参考的表也从 todos 改为 steps
@@ -75,6 +82,34 @@ impl Migration for V13LoopStepsRenameTodoIdToStepId {
         //  SQLite 的实际 FK 约束在旧列名上，仅在 INSERT/UPDATE 时校验值的存在性，
         //  不依赖列名，所以列名改后约束仍然有效。）
         Ok(())
+    }
+}
+
+/// v14 迁移：loops 表追加 review_template_id 列。
+///
+/// feat(loop 支持配置评审模板) 在 entity / model / handler / runner 层加了该字段，
+/// 但漏写了迁移——fresh DB 跑完 V7→V13 后 loops 表仍然没有这一列，
+/// INSERT 时直接报 "table loops has no column named review_template_id"。
+/// 这里补一条幂等 ADD COLUMN 修正。
+pub(super) struct V14LoopsReviewTemplateId;
+
+#[async_trait]
+impl Migration for V14LoopsReviewTemplateId {
+    fn version(&self) -> i64 {
+        14
+    }
+    fn name(&self) -> &'static str {
+        "loops_review_template_id"
+    }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        add_column_if_missing(
+            db,
+            "loops",
+            "review_template_id",
+            "ALTER TABLE loops ADD COLUMN review_template_id INTEGER",
+        )
+        .await
     }
 }
 
