@@ -658,9 +658,10 @@ impl Database {
                     s.run_mode, s.skip_on_source_failed, s.min_rating, s.unrated_policy, \
                     s.on_success, s.success_goto_step_id, s.on_rating_fail, s.fail_goto_step_id, \
                     s.enabled, s.created_at, \
-                    t.title as todo_title, t.executor as todo_executor, t.status as todo_status \
+                    t.title as todo_title, st.executor as todo_executor, t.status as todo_status \
              FROM loop_steps s \
              INNER JOIN todos t ON t.id = s.todo_id \
+             LEFT JOIN steps st ON st.id = s.todo_id \
              WHERE s.loop_id = {} \
              ORDER BY s.order_index ASC, s.id ASC",
             loop_id
