@@ -4,3 +4,4 @@ export * from './execution';
 export * from './config';
 export * from './stats';
 export * from './loop';
+export * from './reviewTemplate';

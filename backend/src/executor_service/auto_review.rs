@@ -8,6 +8,10 @@
 //!   - `source_execution_record_id` 尚未被设置（避免重复评审同一条记录）
 //! 才启动评审。
 //!
+//! V15 之后评审模板是独立表（`review_templates`），不带 executor 字段。
+//! 评审时新建一个 todo_type=2 的"评审实例" todo, prompt 用 caller 合成好的
+//! `composed_prompt`, executor 继承自源 todo。
+//!
 //! 为避免与 `run_todo_execution` 的内部逻辑产生循环引用，这里用一个简化的
 //! 同步路径：等 `run_todo_execution` 启动后创建的 record 进入终态，再解析 rating 回填。
 
@@ -146,7 +150,7 @@ async fn run_auto_review_inner(
     // 2) 加载 source record + 校验 record 状态。
     let record = load_and_validate_record(&db, &tx, todo_id, record_id).await?;
 
-    // 3) 准备评审任务 todo。
+    // 3) 准备评审模板（review_templates 表行，不带 executor 字段）。
     let template = ensure_review_template(&db.clone()).await?;
 
     // 4) 合并 prompt（截断原 output + 替换模板占位符）。
@@ -156,7 +160,7 @@ async fn run_auto_review_inner(
     // 5) 标记 pending。
     mark_review_pending(&db, &tx, record_id, todo_id).await;
 
-    // 6) 执行评审实例（复用 run_todo_execution）。
+    // 6) 执行评审实例（创建 todo_type=2 的评审实例 todo + 复用 run_todo_execution）。
     let review_record_id = match execute_review_instance(
         &db,
         &executor_registry,
@@ -166,7 +170,6 @@ async fn run_auto_review_inner(
         &hook_service,
         &original,
         &template,
-        template.id,
         composed_prompt,
     )
     .await
@@ -224,14 +227,14 @@ async fn load_and_validate_record(
     Ok(record)
 }
 
-/// 准备评审任务 todo：ensure template 存在 + reload 拿到最新内容。
-async fn ensure_review_template(db: &Arc<Database>) -> Result<crate::models::Todo, String> {
-    use crate::services::auto_review::{
-        ensure_reviewer_template, DEFAULT_REVIEWER_PROMPT, REVIEWER_TEMPLATE_TITLE,
-    };
-    let template_id =
-        ensure_reviewer_template(db, REVIEWER_TEMPLATE_TITLE, DEFAULT_REVIEWER_PROMPT).await?;
-    db.get_todo(template_id)
+/// 准备评审模板：从 review_templates 表拿默认模板（确保存在 + reload 拿到最新内容）。
+/// V15 之后模板是独立表, 没有 executor 字段；executor 由 caller 从源 todo 继承。
+async fn ensure_review_template(db: &Arc<Database>) -> Result<crate::models::ReviewTemplate, String> {
+    let template_id = db
+        .ensure_default_review_template()
+        .await
+        .map_err(|e| format!("ensure default review template: {}", e))?;
+    db.get_review_template(template_id)
         .await
         .map_err(|e| format!("reload template: {}", e))?
         .ok_or_else(|| "reviewer template vanished".to_string())
@@ -240,7 +243,7 @@ async fn ensure_review_template(db: &Arc<Database>) -> Result<crate::models::Tod
 /// Step 4: 合并评审 prompt（截断原 output + 替换模板占位符）。
 fn compose_review_prompt(
     original: &crate::models::Todo,
-    template: &crate::models::Todo,
+    template: &crate::models::ReviewTemplate,
     original_output: Option<&str>,
 ) -> String {
     use crate::services::auto_review::MAX_OUTPUT_CHARS;
@@ -281,7 +284,11 @@ async fn mark_review_pending(
     });
 }
 
-/// Step 6: 同步执行评审实例，复用 [`super::run_todo_execution`]。
+/// Step 6: 同步执行评审实例 —— 创建一个 todo_type=2 的评审实例 todo,
+/// 再用 [`super::run_todo_execution`] 跑它。
+///
+/// V15 之后评审模板独立成表 (不带 executor), 评审实例的 executor
+/// 继承自源 todo (review_instance.executor = original.executor)。
 #[allow(clippy::too_many_arguments)]
 async fn execute_review_instance(
     db: &Arc<Database>,
@@ -291,12 +298,21 @@ async fn execute_review_instance(
     config: &Arc<std::sync::RwLock<crate::config::Config>>,
     hook_service: &Arc<HookService>,
     original: &crate::models::Todo,
-    template: &crate::models::Todo,
-    template_id: i64,
+    template: &crate::models::ReviewTemplate,
     composed_prompt: String,
 ) -> Result<i64, String> {
-    // 复用评审任务 todo，直接执行（不 clone 新实例）。
-    let review_todo_id = template_id;
+    // 创建一个评审实例 todo (todo_type=2), prompt 已是 caller 合成的最终 prompt。
+    // executor 从源 todo 继承 (review_template 表没有 executor 字段)。
+    let review_todo_id = db
+        .create_review_instance_todo(
+            original.id,
+            template.id,
+            &template.name,
+            composed_prompt.clone(),
+            original.executor.clone(),
+        )
+        .await
+        .map_err(|e| format!("create review instance todo: {}", e))?;
 
     let request = RunTodoExecutionRequest {
         db: db.clone(),
@@ -307,7 +323,7 @@ async fn execute_review_instance(
         hook_service: hook_service.clone(),
         todo_id: review_todo_id,
         message: composed_prompt,
-        req_executor: template.executor.clone(),
+        req_executor: original.executor.clone(),
         trigger_type: "auto_review".to_string(),
         params: None,
         resume_session_id: None,
@@ -317,7 +333,8 @@ async fn execute_review_instance(
         source_todo_title: Some(original.title.clone()),
         source_hook_id: None,
         loop_step_execution_id: None,
-            step_id: None,        feishu_bot_id: None,
+        step_id: None,
+        feishu_bot_id: None,
         feishu_receive_id: None,
         workspace: None,
     };

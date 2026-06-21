@@ -20,6 +20,7 @@ pub mod sync_records;
 pub mod tags;
 pub mod todo_tags;
 pub mod todo_templates;
+pub mod review_templates;
 pub mod todos;
 pub mod usage_model_breakdown;
 pub mod usage_stats;
@@ -49,6 +50,7 @@ pub mod prelude {
     pub use super::tags::Entity as Tags;
     pub use super::todo_tags::Entity as TodoTags;
     pub use super::todo_templates::Entity as TodoTemplates;
+    pub use super::review_templates::Entity as ReviewTemplates;
     pub use super::todos::Entity as Todos;
     pub use super::usage_model_breakdown::Entity as UsageModelBreakdowns;
     pub use super::usage_stats::Entity as UsageStats;

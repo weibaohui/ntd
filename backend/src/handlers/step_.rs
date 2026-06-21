@@ -5,12 +5,13 @@
 use axum::extract::{Path, State};
 
 use crate::handlers::{ApiJson, AppError, AppState};
-use crate::models::{ApiResponse, BatchUpdateStepExecutorRequest, BatchUpdateStepResult, StepDto, UpdateStepRequest};
+use crate::models::{ApiResponse, BatchUpdateStepExecutorRequest, BatchUpdateStepResult, CreateStepRequest, StepDto, UpdateStepRequest};
 
 // ====== 环节管理（kind=step）======
 //
 // 路由：
 // - GET    /api/steps                    列出所有环节 + 各自的 loop 引用计数
+// - POST   /api/steps                    直接创建环节（不走 createTodo+promote）
 // - GET    /api/steps/:id                单个环节详情
 // - GET    /api/steps/candidates         loop 编辑器选环节用的精简候选列表
 
@@ -24,6 +25,35 @@ pub async fn list_steps(
         .map(|(s, count)| StepDto::from(s).with_usage(count))
         .collect();
     Ok(ApiResponse::ok(items))
+}
+
+/// POST /api/steps — 直接创建环节。
+///
+/// 历史上 TodoList "新建环节" 走 createTodo + promoteTodoToStep 流程，
+/// 留下孤儿 todo + 错位 id；现在 todo 与 step 彻底拆开，前端必须直建。
+/// title 必填且非空，prompt/executor/acceptance_criteria 可空。
+pub async fn create_step(
+    State(state): State<AppState>,
+    ApiJson(req): ApiJson<CreateStepRequest>,
+) -> Result<ApiResponse<StepDto>, AppError> {
+    let title = req.title.trim();
+    if title.is_empty() {
+        return Err(AppError::BadRequest("title 不能为空".to_string()));
+    }
+    let prompt = req.prompt.unwrap_or_default();
+    let step = state
+        .db
+        .create_step(
+            title,
+            &prompt,
+            req.executor.as_deref(),
+            req.acceptance_criteria.as_deref(),
+            None, // 直建场景不绑定 source_todo_id（promote 链路才需要）
+            None, // 沿用 DB 默认色 #722ed1
+        )
+        .await?;
+    // 直建场景没有 loop 引用，usage 必为 0，但仍走 list 路径保证 DTO 字段齐全
+    Ok(ApiResponse::ok(StepDto::from(step).with_usage(0)))
 }
 
 /// GET /api/steps/candidates — loop 编辑器选环节用

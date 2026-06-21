@@ -323,6 +323,7 @@ mod feishu_history;
 mod session;
 pub mod project_directory;
 pub(crate) mod todo_template;
+pub(crate) mod review_template;
 pub mod custom_template;
 pub mod webhook;
 pub mod usage_stats;
@@ -977,6 +978,7 @@ fn mount_domain_routes() -> Router<AppState> {
         .merge(version_routes())
         .merge(static_routes())
         .merge(todo_template_routes())
+        .merge(review_template_routes())
         .merge(custom_template_routes())
         .merge(cloud_routes())
         .merge(events_routes())
@@ -1018,6 +1020,7 @@ fn build_app_state(
     let config = ctx.config.clone();
 
     // MessageDebounce 在 feishu_listener 和 history_fetcher 之间共享（issue #600）
+    use crate::services::auto_review::ensure_default_review_template_blocking;
     use crate::services::message_debounce::MessageDebounce;
     let debounce = Arc::new(MessageDebounce::new(ctx.clone(), hook_service.clone()));
     let feishu_listener = Arc::new(FeishuListener::new(ctx.clone(), debounce.clone()));
@@ -1032,7 +1035,7 @@ fn build_app_state(
     push_service.start(tx.subscribe());
 
     spawn_feishu_history_fetcher(ctx.clone(), db.clone(), feishu_listener.clone(), debounce.clone());
-    ensure_reviewer_template_blocking(&db);
+    ensure_default_review_template_blocking(&db);
 
     // ====== Loop Studio 三件套初始化 ======
     // 用 block_in_place + Handle::block_on 走 sync 路径做 async DB 调用；
@@ -1207,23 +1210,6 @@ fn spawn_feishu_history_fetcher(
     });
 }
 
-/// 同步确保 auto-review reviewer 模板存在。`create_app` 是 sync 函数不能直接 .await；
-/// 复用当前 tokio runtime 的 Handle 同步跑 init（带 block_in_place 避免阻塞 reactor 线程）。
-fn ensure_reviewer_template_blocking(db: &Arc<Database>) {
-    use crate::services::auto_review::{ensure_reviewer_template, DEFAULT_REVIEWER_PROMPT, REVIEWER_TEMPLATE_TITLE};
-    let db_for_init = db.clone();
-    let init_result = tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(ensure_reviewer_template(
-            &db_for_init,
-            REVIEWER_TEMPLATE_TITLE,
-            DEFAULT_REVIEWER_PROMPT,
-        ))
-    });
-    if let Err(e) = init_result {
-        tracing::warn!("Failed to ensure auto-review reviewer template: {}", e);
-    }
-}
-
 /// 根级系统路由（首页、健康检查）。这些不属于任何业务领域，单独放这里。
 fn root_routes() -> Router<AppState> {
     Router::new()
@@ -1250,9 +1236,12 @@ fn todo_routes() -> Router<AppState> {
 }
 
 /// 环节专用路由：数据来自独立的 steps 表，与 todo 完全隔离。
+///
+/// POST /api/steps 是直建入口：todo 与 step 拆开后，前端"新建环节"
+/// 不应再走 createTodo+promote（会留下孤儿 todo 与 id 错位）。
 fn step_routes() -> Router<AppState> {
     Router::new()
-        .route("/api/steps", get(step_::list_steps))
+        .route("/api/steps", get(step_::list_steps).post(step_::create_step))
         .route("/api/steps/candidates", get(step_::list_step_candidates))
         .route("/api/steps/batch-executor", put(step_::batch_update_steps_executor))
         .route("/api/steps/{id}", get(step_::get_step).put(step_::update_step).delete(step_::delete_step))
@@ -1408,6 +1397,18 @@ fn todo_template_routes() -> Router<AppState> {
         .route("/api/todo-templates", get(todo_template::get_templates).post(todo_template::create_template))
         .route("/api/todo-templates/{id}", put(todo_template::update_template).delete(todo_template::delete_template))
         .route("/api/todo-templates/{id}/copy", post(todo_template::copy_template))
+}
+
+/// 评审模板（自动评审用的 prompt 模板，独立于 todos 表）。
+///
+/// 路由说明：
+/// - `/api/review-templates/options` 必须在 `/api/review-templates/{id}` 之前定义，
+///   否则 axum 会把 "options" 当成 id 解析（路由匹配是顺序的）。
+fn review_template_routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/review-templates", get(review_template::list_review_templates).post(review_template::create_review_template))
+        .route("/api/review-templates/options", get(review_template::list_review_template_options))
+        .route("/api/review-templates/{id}", get(review_template::get_review_template).put(review_template::update_review_template).delete(review_template::delete_review_template))
 }
 
 /// 自定义模板（云端订阅）相关路由。
@@ -2161,12 +2162,13 @@ mod create_app_refactor_tests {
             version_routes(),
             static_routes(),
             todo_template_routes(),
+            review_template_routes(),
             custom_template_routes(),
             cloud_routes(),
             events_routes(),
         ];
-        // 18 个领域子路由函数（与 issue #661 中声明的拆分清单一致）
-        assert_eq!(routers.len(), 18, "领域子路由函数数量应与拆分清单一致");
+        // 19 个领域子路由函数（与 issue #661 中声明的拆分清单一致；review_template_routes 为评审模板新增）
+        assert_eq!(routers.len(), 19, "领域子路由函数数量应与拆分清单一致");
         // `Router` 在 axum 0.8 中没有公开的 route_count，这里只能断言"全部成功构造"
     }
 

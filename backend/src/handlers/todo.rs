@@ -160,6 +160,7 @@ pub async fn create_todo(
         acceptance_criteria: req.acceptance_criteria.clone(),
         todo_type: 0,
         parent_todo_id: None,
+        review_template_id: None,
         auto_review_enabled: req.auto_review_enabled.unwrap_or(true),
         // 新建 todo 默认 kind='item'；如需环节，由 promote 接口或新建时显式指定。
         kind: "item".to_string(),

@@ -125,32 +125,38 @@ export function TodoList(props: TodoListProps) {
   const [stepCreating, setStepCreating] = useState(false);
 
   /**
-   * 新建环节：复用历史 StepList 实现的「先 createTodo 再 promoteTodoToStep」流程。
-   * 环节是独立实体，但历史 promote 接口要求从 todo 起步，这里保持一致。
+   * 新建环节：直接 POST /api/steps。
+   *
+   * 历史上走"先 createTodo 再 promoteTodoToStep"两步流程，有两个副作用：
+   * 1) 每次新建都留一条孤儿 todo（污染 todos 表 + 误占「事项」列表）
+   * 2) promote 后的 step id 与原 todo id 不一致，前端用错 id 选中
+   *    触发 useStepDetail → GET /api/steps/{todoId} → 404，
+   *    axios 拦截器弹错，且 modal 在 catch 之前已经 setStepCreateOpen(false)，
+   *    但因为错误导致 React 状态机卡住，UI 表现为 modal 不关 + 报错。
+   *
+   * 现在 todo 与 step 彻底拆开，必须直建。返回的 step.id 直接用于选中。
    */
   const handleCreateStep = useCallback(async (values: { title: string; prompt: string; executor?: string }) => {
     if (!values.title.trim()) { message.error('标题必填'); return; }
     setStepCreating(true);
     try {
-      const created = await db.createTodo(
-        values.title.trim(), values.prompt?.trim() ?? '', [], [], undefined, undefined,
-      );
-      await dbSteps.promoteTodoToStep(created.id);
-      // 把新环节的 executor 设回去（createTodo 不会保留 executor，promote 后再更新）
-      if (values.executor) {
-        await dbSteps.updateStep(created.id, { title: values.title, executor: values.executor });
-      }
+      const created = await dbSteps.createStep({
+        title: values.title.trim(),
+        prompt: values.prompt?.trim() ?? '',
+        executor: values.executor,
+      });
       message.success(`环节「${created.title}」已创建`);
+      // 先关 modal 再做副作用刷新，避免 useStepDetail 失败时 React 状态混乱
       setStepCreateOpen(false);
       stepCreateForm.resetFields();
       // 刷新环节列表
       const fresh = await dbSteps.listSteps();
       setStepList(fresh);
-      // 创建后自动选中，让用户能立即在右侧面板编辑详情
+      // 用真实 step id（不是 todo id）选中
       setSelectedStepId(created.id);
       onSelectStep?.(created.id);
     } catch {
-      // axios 拦截器已弹错
+      // axios 拦截器已弹错；不关 modal 让用户能继续修改
     } finally {
       setStepCreating(false);
     }
@@ -530,19 +536,7 @@ export function TodoList(props: TodoListProps) {
                     }}
                   />
                 )}
-                {todo.todo_type === 1 && (
-                  <span
-                    className="todo-tag-badge"
-                    style={{
-                      backgroundColor: '#722ed118',
-                      color: '#722ed1',
-                      border: '1px solid #722ed130',
-                    }}
-                    title="评审任务：自动评审时复制此 todo"
-                  >
-                    [评审任务]
-                  </span>
-                )}
+                {/* todo_type === 1 已废弃：评审模板自 V15 起迁出至 review_templates 表。 */}
                 {todo.todo_type === 2 && (
                   <span
                     className="todo-tag-badge"

@@ -330,10 +330,17 @@ config.yaml 启动 → scheduler.load_from_db(&ctx)
 子 task Finished
   → 若 parent.auto_review_enabled=true 且 todo_type=normal
   → services::auto_review::spawn_review(parent_id, record_id)
-  → 在 system_review_todo (todo_type=1) 模板上 spawn todo_type=2 实例
+  → review_templates 表 ensure_default_review_template() 拿默认模板 id
+  → 合成评审 prompt (截断原 output + 模板占位符替换)
+  → db::todo::create_review_instance_todo() 新建 todo_type=2 实例
+     (parent_todo_id=原 todo, review_template_id=模板 id, executor=原 todo.executor)
   → executor_service::run_todo_execution(trigger_type="auto_review")
   → 评审完成 → execution_records.rating + last_review_status="success"
 ```
+
+注：V15 之后评审模板独立成 `review_templates` 表（不再挂 todo_type=1 行）。
+loop 评分闸门路径走同一条 `create_review_instance_todo`，但 parent_todo_id=0
+（loop step 无单一 source todo），executor 继承自被评审的 record。
 
 ---
 

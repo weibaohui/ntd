@@ -55,6 +55,21 @@ pub struct UpdateStepRequest {
     pub color: Option<String>,
 }
 
+/// 直接创建环节请求体。
+///
+/// 历史上"新建环节"由前端走 createTodo + promoteTodoToStep 间接完成，
+/// 这导致：(1) 每次新建环节都额外插一条 todo（孤儿），(2) promote 后
+/// step id 与 todo id 不一致，前端选错 id 触发 404。
+/// 现在 todo 和 step 已经彻底拆开，前端应直接 POST /api/steps。
+/// `title` 必填，其余字段可空。
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateStepRequest {
+    pub title: String,
+    pub prompt: Option<String>,
+    pub executor: Option<String>,
+    pub acceptance_criteria: Option<String>,
+}
+
 /// 批量更新环节执行器请求体。
 #[derive(Debug, Clone, Deserialize)]
 pub struct BatchUpdateStepExecutorRequest {

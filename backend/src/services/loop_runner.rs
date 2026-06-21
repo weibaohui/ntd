@@ -702,8 +702,10 @@ impl LoopRunner {
                 }
             };
 
-            // 2) 获取执行记录的 result
+            // 2) 获取执行记录的 result + executor
+            // executor 从已跑过的 record 继承 (review_template 不带 executor)。
             let original_output = rec.result.as_deref().unwrap_or_default();
+            let review_executor = rec.executor.clone();
 
             // 3) 合成评审 prompt
             use crate::services::auto_review::MAX_OUTPUT_CHARS;
@@ -730,7 +732,25 @@ impl LoopRunner {
                 review_status: "pending".to_string(),
             });
 
-            // 5) 执行评审
+            // 5) 创建一个 todo_type=2 的评审实例 todo (V15 之后 review_template 不再是 todo)。
+            //    parent_todo_id=0: loop step 没有单一 source todo, 用 0 表达。
+            //    executor 继承自被评审的 record。
+            let review_todo_id = match self.ctx.db.create_review_instance_todo(
+                0,
+                template.id,
+                &template.name,
+                review_prompt.clone(),
+                review_executor.clone(),
+            ).await {
+                Ok(id) => id,
+                Err(e) => {
+                    warn!("rating gate: failed to create review instance todo: {}", e);
+                    let _ = self.ctx.db.set_record_last_review_status(record_id, "failed").await;
+                    return Ok((false, None));
+                }
+            };
+
+            // 6) 执行评审
             let request = RunTodoExecutionRequest {
                 db: self.ctx.db.clone(),
                 executor_registry: self.ctx.executor_registry.clone(),
@@ -738,9 +758,9 @@ impl LoopRunner {
                 task_manager: self.ctx.task_manager.clone(),
                 config: self.ctx.config.clone(),
                 hook_service: self.hook_service.clone(),
-                todo_id: template.id,
+                todo_id: review_todo_id,
                 message: review_prompt,
-                req_executor: template.executor.clone(),
+                req_executor: review_executor,
                 trigger_type: "auto_review".to_string(),
                 params: None,
                 resume_session_id: None,
@@ -825,25 +845,30 @@ impl LoopRunner {
         Ok((false, None))
     }
 
-    /// 获取评审模板 todo：优先使用 loop 配置的 id，否则用默认模板
-    async fn ensure_review_template(&self, template_id: Option<i64>) -> Result<crate::models::Todo, String> {
-        // 如果 loop 指定了模板 id，直接加载
+    /// 获取评审模板：优先使用 loop 配置的 id，否则用默认模板。
+    /// V15 之后模板是独立表 (review_templates) 里的行, 不带 executor 字段。
+    async fn ensure_review_template(&self, template_id: Option<i64>) -> Result<crate::models::ReviewTemplate, String> {
+        // 如果 loop 指定了模板 id，先尝试加载 (loops.review_template_id 指向 review_templates.id)。
         if let Some(tid) = template_id {
-            if let Some(t) = self.ctx.db.get_todo(tid).await.map_err(|e| format!("load template: {}", e))? {
+            if let Some(t) = self.ctx.db.get_review_template(tid).await.map_err(|e| format!("load template: {}", e))? {
                 return Ok(t);
             }
+            // 指定 id 不存在 (例如被删了) -> 静默回退默认, 避免阻塞 loop 评分
+            tracing::warn!("review template #{} not found, falling back to default", tid);
         }
         // 回退到默认模板
-        use crate::services::auto_review::{
-            ensure_reviewer_template, DEFAULT_REVIEWER_PROMPT, REVIEWER_TEMPLATE_TITLE,
-        };
-        let default_id = ensure_reviewer_template(
-            &self.ctx.db, REVIEWER_TEMPLATE_TITLE, DEFAULT_REVIEWER_PROMPT
-        ).await.map_err(|e| format!("ensure review template: {}", e))?;
-        self.ctx.db.get_todo(default_id)
+        let default_id = self
+            .ctx
+            .db
+            .ensure_default_review_template()
             .await
-            .map_err(|e| format!("load template: {}", e))?
-            .ok_or_else(|| "reviewer template vanished".to_string())
+            .map_err(|e| format!("ensure review template: {}", e))?;
+        self.ctx
+            .db
+            .get_review_template(default_id)
+            .await
+            .map_err(|e| format!("load default template: {}", e))?
+            .ok_or_else(|| "default reviewer template vanished".to_string())
     }
 }
 

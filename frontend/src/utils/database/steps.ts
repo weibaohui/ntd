@@ -1,12 +1,13 @@
 // 环节（steps 表）相关 API 客户端。
 //
 // 环节是独立实体，不再寄生在 todos 表上：
-// - GET /api/steps              列出环节 + 各自的 loop 引用计数
-// - GET /api/steps/candidates   loop 编辑器选环节用的精简候选
-// - GET /api/steps/:id          单个环节详情 + 引用计数
-// - POST /api/todos/:id/promote   事项 → 环节（复制到 steps 表，原 todo 保留）
+// - GET  /api/steps               列出环节 + 各自的 loop 引用计数
+// - POST /api/steps               直建环节（todo/step 拆开后，绕开 createTodo+promote）
+// - GET  /api/steps/candidates    loop 编辑器选环节用的精简候选
+// - GET  /api/steps/:id           单个环节详情 + 引用计数
+// - POST /api/todos/:id/promote   事项 → 环节（保留入口，老 todo 升 step 时仍在用）
 //
-// 后端位于 handlers/todo.rs。
+// 后端位于 handlers/step_.rs（直建）+ handlers/todo.rs（promote 保留）。
 
 import { api, unwrap } from './client';
 import type { StepSummary } from '@/types';
@@ -26,7 +27,23 @@ export async function getStep(id: number): Promise<StepSummary> {
   return unwrap(await api.get(`/api/steps/${id}`));
 }
 
-/** 事项提升为环节。复制数据到 steps 表，原 todo 保留。返回新建的 StepSummary。 */
+/**
+ * 直建环节。
+ * 取代旧的「先 createTodo 再 promoteTodoToStep」两步走 —— 那条路径会留孤儿 todo，
+ * 且 promote 后的 step id 与原 todo id 不一致，前端选中错 id 触发 404。
+ * todo 与 step 已彻底拆开，新环节必须直接写 steps 表。
+ */
+export async function createStep(input: {
+  title: string;
+  prompt?: string;
+  executor?: string;
+  acceptance_criteria?: string;
+}): Promise<StepSummary> {
+  return unwrap(await api.post('/api/steps', input));
+}
+
+/** 事项提升为环节。复制数据到 steps 表，原 todo 保留。返回新建的 StepSummary。
+ *  仅用于"老 todo 升级为 step"的存量迁移场景；新建环节请用 createStep。 */
 export async function promoteTodoToStep(id: number): Promise<StepSummary> {
   return unwrap(await api.post(`/api/todos/${id}/promote`, {}));
 }

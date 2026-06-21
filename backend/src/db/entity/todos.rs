@@ -31,6 +31,9 @@ pub struct Model {
     pub todo_type: Option<i32>,
     /// 当 todo_type=2 (review instance) 时, 关联到被评审的原 todo.
     pub parent_todo_id: Option<i64>,
+    /// 当 todo_type=2 (review instance) 时, 关联到生成此评审实例的 review_template。
+    /// 0/NULL = 评审模板已删除或来自更老的迁移 (V15 之前)。
+    pub review_template_id: Option<i64>,
     /// 是否在执行完成后自动派生一个评审 todo (默认 true, 只对 normal 类型有效).
     pub auto_review_enabled: Option<bool>,
     /// 'item' = 一次性事项, 'step' = 可复用的环节 (loop 编排引用)。

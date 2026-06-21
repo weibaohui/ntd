@@ -22,8 +22,10 @@ import {
   PlusOutlined,
 } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
+import * as dbReviewTemplates from '@/utils/database/reviewTemplates';
 import * as db from '@/utils/database';
 import type { LoopDetail, UpdateLoopRequest } from '@/types/loop';
+import type { ReviewTemplateOption } from '@/types/reviewTemplate';
 import type { ProjectDirectory } from '@/types';
 import { LoopTriggersPanel, TRIGGER_META } from './LoopStudioTriggersPanel';
 import { LoopStepsPanel } from './LoopStudioStepsPanel';
@@ -107,6 +109,46 @@ export function LoopDetailPanel({
       .catch(() => { /* 静默 */ });
   }, []);
 
+  // 评审模板下拉选项 (含 inline 「+ 新建模板」流程所需)
+  const [reviewTemplateOptions, setReviewTemplateOptions] = useState<ReviewTemplateOption[]>([]);
+  const [creatingTemplate, setCreatingTemplate] = useState(false);
+  const [newTemplateForm] = Form.useForm<{ name: string; description?: string; prompt: string }>();
+
+  // 加载评审模板选项；保存/创建后也要重新拉以保持最新
+  const reloadTemplateOptions = useCallback(() => {
+    dbReviewTemplates.listReviewTemplateOptions()
+      .then(setReviewTemplateOptions)
+      .catch(() => { /* 静默：模板加载失败不影响 loop 编辑 */ });
+  }, []);
+
+  useEffect(() => { reloadTemplateOptions(); }, [reloadTemplateOptions]);
+
+  /**
+   * Inline 创建评审模板：弹一个小 Modal，输入 name + prompt，保存后
+   * 1) 把新模板写回 reviewTemplateOptions  2) 把 Select 当前值置为新 id
+   * 避免用户先关掉 loop 编辑器去设置里建模板再回来。
+   */
+  const handleCreateTemplate = useCallback(async () => {
+    const values = await newTemplateForm.validateFields();
+    setCreatingTemplate(true);
+    try {
+      const created = await dbReviewTemplates.createReviewTemplate({
+        name: values.name.trim(),
+        description: values.description?.trim() || null,
+        prompt: values.prompt,
+      });
+      message.success(`已创建模板「${created.name}」`);
+      // 刷新下拉 + 立即选中新建的
+      const opts = await dbReviewTemplates.listReviewTemplateOptions();
+      setReviewTemplateOptions(opts);
+      form.setFieldsValue({ review_template_id: created.id });
+      newTemplateForm.resetFields();
+      setCreatingTemplate(false);
+    } catch (e) {
+      message.error(`创建失败：${(e as Error).message}`);
+    }
+  }, [form, message, newTemplateForm]);
+
   // 预加载执行记录总数（用于折叠标签展示，不等用户展开后才显示）
   useEffect(() => {
     dbLoops.listExecutions(loopId, { page: 1, limit: 1 })
@@ -123,6 +165,8 @@ export function LoopDetailPanel({
       workspace: detail.workspace,
       color: detail.color,
       icon: detail.icon,
+      // review_template_id 是 Option<i64>，null 也要能透传
+      review_template_id: detail.review_template_id ?? null,
     });
     setEditing(true);
   }, [detail, form]);
@@ -144,6 +188,7 @@ export function LoopDetailPanel({
         workspace: values.workspace ?? null,
         color: colorHex,
         icon: values.icon ?? 'loop',
+        review_template_id: values.review_template_id ?? null,
         limits_config: Object.keys(limitsConfig).length > 0 ? JSON.stringify(limitsConfig) : null,
       });
       message.success('已保存');
@@ -401,12 +446,32 @@ export function LoopDetailPanel({
               <Input placeholder="loop" maxLength={50} />
             </Form.Item>
           </div>
-          <Form.Item label="评审模板" name="review_template_id" tooltip="选择用于自动评审的 todo，不选则使用默认评审模板">
+          <Form.Item
+            label="评审模板"
+            name="review_template_id"
+            tooltip="选择用于自动评审的模板（来自设置 → 评审模板管理）。不选则使用默认模板。"
+            extra={
+              <Button
+                type="link"
+                size="small"
+                icon={<PlusOutlined />}
+                style={{ padding: 0, marginTop: 4 }}
+                onClick={() => setCreatingTemplate(true)}
+              >
+                新建模板
+              </Button>
+            }
+          >
             <Select
               allowClear
               placeholder="使用默认评审模板"
               showSearch
               optionFilterProp="label"
+              // 不传 options 会被 antd 当成"自定义模板字符串"模式（与 value 是 number 冲突）。
+              options={reviewTemplateOptions.map((t) => ({
+                value: t.id,
+                label: t.name,
+              }))}
             />
           </Form.Item>
           {/* ── 全局限制 ── */}
@@ -423,6 +488,43 @@ export function LoopDetailPanel({
               </Form.Item>
             </div>
           </div>
+        </Form>
+      </Modal>
+
+      {/* Inline 新建评审模板的 Modal：在 loop 编辑器内就能创建并立即选中。 */}
+      <Modal
+        title="新建评审模板"
+        open={creatingTemplate}
+        onCancel={() => {
+          newTemplateForm.resetFields();
+          setCreatingTemplate(false);
+        }}
+        onOk={handleCreateTemplate}
+        confirmLoading={creatingTemplate}
+        destroyOnClose
+      >
+        <Form form={newTemplateForm} layout="vertical" preserve={false}>
+          <Form.Item
+            label="名称"
+            name="name"
+            rules={[{ required: true, message: '请输入名称' }]}
+          >
+            <Input placeholder="如：代码评审 / 文档评审" maxLength={128} />
+          </Form.Item>
+          <Form.Item label="描述" name="description">
+            <Input placeholder="（可选）简短说明这个模板的用途" maxLength={512} />
+          </Form.Item>
+          <Form.Item
+            label="Prompt 模板"
+            name="prompt"
+            rules={[{ required: true, message: '请输入 prompt 模板' }]}
+            tooltip="支持占位符 {original_prompt} {original_output} {acceptance_criteria} {max_output_chars}"
+          >
+            <Input.TextArea
+              rows={8}
+              placeholder="你是一个评审师…"
+            />
+          </Form.Item>
         </Form>
       </Modal>
     </div>

@@ -388,6 +388,7 @@ mod hook_dispatch_tests {
             acceptance_criteria: None,
             todo_type: 0,
             parent_todo_id: None,
+            review_template_id: None,
             auto_review_enabled: true,
             kind: "item".to_string(),
         }

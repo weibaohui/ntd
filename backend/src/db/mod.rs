@@ -618,6 +618,8 @@ mod feishu_response_config;
 pub mod project_directory;
 mod todo_template;
 pub use todo_template::TemplateInput;
+mod review_template;
+pub use review_template::ReviewTemplateInput;
 pub mod webhook;
 
 #[cfg(test)]

@@ -51,6 +51,8 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V12LoopStepExecution),
         Box::new(V13LoopStepsRenameTodoIdToStepId),
         Box::new(V14LoopsReviewTemplateId),
+        Box::new(V15ReviewTemplates),
+        Box::new(V16LoopStepExecutionSnapshotColumns),
     ]
 }
 
@@ -2189,5 +2191,562 @@ impl Migration for V11LoopFlowControl {
         add_column_warn(db, "ALTER TABLE loop_step_executions ADD COLUMN conclusion TEXT").await;
 
         Ok(())
+    }
+}
+
+// ===== V16: loop_step_executions 快照列补齐 =====
+//
+// 历史背景：commit ca1f7c4 ("fix: loop 步骤执行记录快照阈值/评分/策略")
+// 在 entity 加了 min_rating / unrated_policy / rating 三列做快照，
+// 让 loop_step_executions 不再随 loop 配置变化——但漏写了 schema 迁移。
+// 上线后所有跑过 V15 但没 ALTER 的实例（含 dev DB）在
+// `list_loop_step_executions` 时被 SeaORM 生成的 SELECT 报
+// `no such column: loop_step_executions.min_rating` → 500。
+//
+// V16 的职责：给 loop_step_executions 幂等补齐这三列。
+// 之所以"幂等补"而不是直接 ALTER ADD COLUMN：
+// - 同一 schema_version 表上 V16 只能跑一次；但开发/生产多套实例可能从
+//   不同起点（有的列已存在、有的没有）都希望跑 V16 后能自愈。
+// - 复用 V14 引入的 add_column_if_missing helper 模式。
+pub(super) struct V16LoopStepExecutionSnapshotColumns;
+
+#[async_trait]
+impl Migration for V16LoopStepExecutionSnapshotColumns {
+    fn version(&self) -> i64 {
+        16
+    }
+    fn name(&self) -> &'static str {
+        "loop_step_execution_snapshot_columns"
+    }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        // 3 列均为可空快照：
+        // - min_rating / unrated_policy 来自 loop_steps 对应阶段的配置快照
+        // - rating 来自评审模板给出的实际打分（execution_record 落库后再写）
+        add_column_if_missing(
+            db,
+            "loop_step_executions",
+            "min_rating",
+            "ALTER TABLE loop_step_executions ADD COLUMN min_rating INTEGER",
+        )
+        .await?;
+        add_column_if_missing(
+            db,
+            "loop_step_executions",
+            "unrated_policy",
+            "ALTER TABLE loop_step_executions ADD COLUMN unrated_policy TEXT",
+        )
+        .await?;
+        add_column_if_missing(
+            db,
+            "loop_step_executions",
+            "rating",
+            "ALTER TABLE loop_step_executions ADD COLUMN rating INTEGER",
+        )
+        .await?;
+        Ok(())
+    }
+}
+
+// ===== V15: review_templates 独立表 =====
+//
+// 历史：评审模板曾以 todos.todo_type=1（标题"评审任务"）兼任。这套设计在
+// - 前端 loop 编辑器里 UI 半成废 (select 没 options)
+// - 概念上 todo_type 三态语义过载
+// - V14 还要回填漏写的 schema 迁移
+// 三处反复爆出来，所以这次把评审模板拆到独立表 review_templates。
+//
+// 迁移策略：
+// - 新建 review_templates 表
+// - 把 todos WHERE todo_type=1 的行迁过去, 保留原 id 以免 loops.review_template_id 外键错位
+// - 默认模板兜底 (fresh install 没有 type=1 行,也得有一条可用的)
+// - 删掉 todos 里那批 type=1 行
+// - todos 加 review_template_id 列 (用于评审实例记录使用了哪个模板)
+// - 加索引
+pub(super) struct V15ReviewTemplates;
+
+#[async_trait]
+impl Migration for V15ReviewTemplates {
+    fn version(&self) -> i64 {
+        15
+    }
+    fn name(&self) -> &'static str {
+        "review_templates_table"
+    }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        v15_review_templates(db).await
+    }
+}
+
+async fn v15_review_templates(db: &Database) -> Result<(), sea_orm::DbErr> {
+    // 1) 建表：评审模板独立出来。
+    //    - id 保留以便 loops.review_template_id 旧引用不失效（迁移时显式 INSERT 旧 id）。
+    //    - 不用 AUTOINCREMENT：保留"删除后重用 id"的能力，让运维救火场景下
+    //      删除默认模板后能让遗留 type=1 todo 迁入到同一 id；FK 引用仍稳定。
+    //    - name 唯一靠业务层保证（DAO 在 create/update 时校验），不在 schema 上加 UNIQUE
+    //      约束，避免历史脏数据 + 迁移时短暂非唯一带来的兼容负担。
+    db.exec(
+        "CREATE TABLE IF NOT EXISTS review_templates (
+            id INTEGER PRIMARY KEY,
+            name VARCHAR(128) NOT NULL,
+            description VARCHAR(512),
+            prompt TEXT NOT NULL,
+            created_at TEXT,
+            updated_at TEXT
+        )",
+    )
+    .await?;
+
+    // 2) 老数据迁移：todos WHERE todo_type=1 的行搬到 review_templates，保留 id。
+    //    INSERT OR IGNORE 是为了在已迁移 DB 上重跑时不冲突（步骤 3 也会再次保护）。
+    //    description 没在老 todos 表里，置 NULL。
+    db.exec(
+        "INSERT OR IGNORE INTO review_templates (id, name, description, prompt, created_at, updated_at)
+         SELECT id, '默认评审任务', NULL, prompt, created_at, updated_at
+         FROM todos WHERE todo_type = 1",
+    )
+    .await?;
+
+    // 3) 默认模板兜底：fresh install 没有 type=1 老行，必须 seed 一条才能让
+    //    ensure_reviewer_template 之类的下游代码第一次启动就拿到默认模板。
+    //    prompt 内容用 auto_review 模块的 DEFAULT_REVIEWER_PROMPT 常量。
+    let default_prompt = crate::services::auto_review::DEFAULT_REVIEWER_PROMPT;
+    db.exec(&format!(
+        "INSERT OR IGNORE INTO review_templates (name, description, prompt, created_at, updated_at)
+         SELECT '默认评审任务', NULL, '{}', \
+                 strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), \
+                 strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+         WHERE NOT EXISTS (SELECT 1 FROM review_templates WHERE name = '默认评审任务')",
+        // 单引号转义：DEFAULT_REVIEWER_PROMPT 内含中文标点和换行，但不含单引号；保险起见显式 escape。
+        default_prompt.replace('\'', "''")
+    ))
+    .await?;
+
+    // 4) 删老 type=1 行：迁移后 todos 不再承担评审模板存储。
+    //
+    // 已知约束：loop_steps.step_id 和 loop_hooks.target_todo_id 通过
+    // `ON DELETE RESTRICT` 外键引用 todos(id)，所以直接 DELETE 会被外键拒绝。
+    // V15 之前的旧数据可能让某些 todo 既是 type=1（评审模板）又兼任 loop step，
+    // 这些 loop step / hook 在评审模板迁出后失去语义，必须在删 todo 之前先解绑。
+    //
+    // 设计选择：把指向 todo_type=1 的 loop_steps 和 loop_hooks 行也一起删掉（因为
+    // 这些 step / hook 的 step / target 本身就是评审模板，已无意义）。
+    // 影响面：仅限历史脏数据；fresh DB 没有这些 row，DELETE 0 行无副作用。
+    db.exec(
+        "DELETE FROM loop_steps WHERE step_id IN (SELECT id FROM todos WHERE todo_type = 1)"
+    )
+    .await?;
+    db.exec(
+        "DELETE FROM loop_hooks WHERE target_todo_id IN (SELECT id FROM todos WHERE todo_type = 1)"
+    )
+    .await?;
+    db.exec("DELETE FROM todos WHERE todo_type = 1").await?;
+
+    // 5) todos 加 review_template_id 列：评审实例（todo_type=2）记录自己用的是哪个模板。
+    add_column_warn(db, "ALTER TABLE todos ADD COLUMN review_template_id INTEGER").await;
+
+    // 6) 索引：未来按模板筛选审计视图会用到。
+    db.exec("CREATE INDEX IF NOT EXISTS idx_todos_review_template_id ON todos(review_template_id)")
+        .await?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod v15_review_templates_tests {
+    //! V15 迁移的回归测试：
+    //! - 在旧库（含 todo_type=1 todo 与指向它的 loops.review_template_id）上跑 V15，
+    //!   必须把老数据搬到 review_templates 并保留 id，使得 loops.review_template_id 仍然解析得到。
+    //! - 跑过的 DB 再跑一次 V15 必须幂等（不重复插入默认模板，不重复删 type=1 行）。
+    //! - fresh DB 跑 V15 必须 seed 一条默认模板，且 todos.review_template_id 列存在。
+
+    use super::*;
+    use crate::db::Database;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    async fn fresh_db() -> Database {
+        Database::new(":memory:").await.expect("memory db must open")
+    }
+
+    /// 直接 SELECT 一行，返回某列的值（None 当 NULL）。
+    async fn query_one_i64(db: &Database, sql: &str) -> Result<Option<i64>, sea_orm::DbErr> {
+        let stmt = Statement::from_string(DbBackend::Sqlite, sql);
+        let row = db.conn.query_one(stmt).await?;
+        Ok(row.and_then(|r| r.try_get_by_index::<Option<i64>>(0).ok().flatten()))
+    }
+
+    async fn query_one_text(db: &Database, sql: &str) -> Result<Option<String>, sea_orm::DbErr> {
+        let stmt = Statement::from_string(DbBackend::Sqlite, sql);
+        let row = db.conn.query_one(stmt).await?;
+        Ok(row.and_then(|r| r.try_get_by_index::<Option<String>>(0).ok().flatten()))
+    }
+
+    /// 在已跑完 V1-V14 的 fresh DB 上手工写入"评审任务"模板 todo + 一个指向它的 loop，
+    /// 模拟 V15 之前的数据库形态。返回 (todo_id, loop_id)。
+    async fn seed_pre_v15_state(db: &Database) -> (i64, i64) {
+        // 1) 插一条 todo_type=1 的 todos 行 (历史评审任务模板)
+        let todo_id: i64 = query_one_i64(
+            db,
+            "INSERT INTO todos (title, prompt, todo_type, created_at, updated_at) \
+             VALUES ('评审任务', 'legacy reviewer prompt', 1, \
+                     strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), \
+                     strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) \
+             RETURNING id",
+        )
+        .await
+        .expect("insert type=1 todo must succeed")
+        .expect("RETURNING id must yield a value");
+
+        // 2) 插一条 loop, review_template_id 指向 todo_id (V14 已经允许)
+        let loop_id: i64 = query_one_i64(
+            db,
+            "INSERT INTO loops (name, status, review_template_id, created_at, updated_at) \
+             VALUES ('loop-A', 'enabled', $1, \
+                     strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), \
+                     strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) \
+             RETURNING id",
+        )
+        .await
+        .expect("insert loop must succeed")
+        .expect("RETURNING id must yield a value");
+        // review_template_id 需要再 UPDATE 一次（SQLite 参数在 RETURNING 与 multi-stmt 上有别扭）
+        db.exec(&format!(
+            "UPDATE loops SET review_template_id = {} WHERE id = {}",
+            todo_id, loop_id
+        ))
+        .await
+        .expect("set loop.review_template_id must succeed");
+
+        (todo_id, loop_id)
+    }
+
+    /// 场景 1：fresh DB 跑过 V15 后, 我们手工插入一条 type=1 todo（模拟"漏迁"的脏数据
+    /// 或运维手动补的老记录），再次调用 V15 必须：
+    /// - 把这条新插的 type=1 todo 搬到 review_templates 并保留 id
+    /// - 老 todo 的 prompt 原样保留（用户改过的提示词不能被默认覆盖）
+    /// - 把新 type=1 todo 从 todos 里删掉
+    ///
+    /// 语义说明：迁移把遗留 type=1 todo 的 name 设为"默认评审任务"——遗留模板
+    /// 本身就是历史默认。再次跑 V15 时默认兜底会因 name 已存在而跳过，所以
+    /// review_templates 仍是 1 行（迁移过来的遗留行替换了占位默认）。
+    #[tokio::test]
+    async fn v15_migrates_legacy_type1_todo_to_review_templates_preserving_id() {
+        let db = fresh_db().await;
+        // V15 已经自动跑过：review_templates 表存在，且含 1 条默认模板（id=1）
+        let initial_default_count: i64 = query_one_i64(
+            &db,
+            "SELECT COUNT(*) FROM review_templates WHERE name = '默认评审任务'",
+        )
+        .await
+        .expect("count must succeed")
+        .unwrap_or(0);
+        assert_eq!(
+            initial_default_count, 1,
+            "precondition: fresh DB should have 1 default template after auto V15"
+        );
+
+        // 删掉占位默认，让遗留 type=1 todo 能迁入到同一 id（不依赖 AUTOINCREMENT 副作用）
+        db.exec("DELETE FROM review_templates WHERE name = '默认评审任务'")
+            .await
+            .expect("drop default before legacy insert must succeed");
+
+        // 模拟"还有遗留 type=1 todo 没被迁"：手工插入一条 + 一条 loop 引用它
+        let (legacy_todo_id, _loop_id) = seed_pre_v15_state(&db).await;
+
+        // 再跑一次 V15（场景：旧库升级期间类型=1 行就在; 或者事后插入了历史数据）
+        V15ReviewTemplates.up(&db)
+            .await
+            .expect("V15 must succeed on top of freshly migrated DB");
+
+        // 1. 老 type=1 行已搬到 review_templates，id 与 prompt 都保留
+        let migrated_prompt: Option<String> = query_one_text(
+            &db,
+            &format!("SELECT prompt FROM review_templates WHERE id = {}", legacy_todo_id),
+        )
+        .await
+        .expect("probe must succeed");
+        assert_eq!(
+            migrated_prompt.as_deref(),
+            Some("legacy reviewer prompt"),
+            "V15 must preserve original prompt content (user-edited)"
+        );
+
+        // 2. 老 type=1 行已从 todos 删除
+        let still_in_todos: Option<i64> = query_one_i64(
+            &db,
+            &format!("SELECT id FROM todos WHERE id = {}", legacy_todo_id),
+        )
+        .await
+        .expect("probe must succeed");
+        assert!(
+            still_in_todos.is_none(),
+            "legacy type=1 todo must be removed from todos table"
+        );
+
+        // 3. 仍然有"默认评审任务"行（要么是迁移过来的遗留行，要么是兜底行）
+        let default_count_after: i64 = query_one_i64(
+            &db,
+            "SELECT COUNT(*) FROM review_templates WHERE name = '默认评审任务'",
+        )
+        .await
+        .expect("count must succeed")
+        .unwrap_or(0);
+        assert_eq!(
+            default_count_after, 1,
+            "rerunning V15 must keep exactly 1 row named '默认评审任务'"
+        );
+
+        // 4. 总行数 = 1（迁移过来的遗留行已是默认；兜底因 name 已存在跳过）
+        let total: i64 = query_one_i64(&db, "SELECT COUNT(*) FROM review_templates")
+            .await
+            .expect("count must succeed")
+            .unwrap_or(0);
+        assert_eq!(
+            total, 1,
+            "review_templates must contain exactly 1 row (legacy IS the default)"
+        );
+    }
+
+    /// 场景 2：V15 在已经跑过的 DB 上重跑必须幂等——
+    /// 不应重复插入默认模板，不应删除新表里已存在的行。
+    #[tokio::test]
+    async fn v15_is_idempotent_on_already_migrated_db() {
+        let db = fresh_db().await;
+        // 第一次：模拟有老数据的迁移
+        let (legacy_id, _loop_id) = seed_pre_v15_state(&db).await;
+        V15ReviewTemplates.up(&db).await.expect("first V15 must succeed");
+
+        let count_after_first: i64 = query_one_i64(&db, "SELECT COUNT(*) FROM review_templates")
+            .await
+            .expect("count must succeed")
+            .unwrap_or(0);
+        assert_eq!(
+            count_after_first, 1,
+            "first migration must produce exactly 1 row (the migrated legacy todo)"
+        );
+
+        // 第二次：在已迁移 DB 上重跑 V15
+        V15ReviewTemplates.up(&db)
+            .await
+            .expect("V15 rerun must succeed (idempotent)");
+
+        let count_after_second: i64 = query_one_i64(&db, "SELECT COUNT(*) FROM review_templates")
+            .await
+            .expect("count must succeed")
+            .unwrap_or(0);
+        assert_eq!(
+            count_after_second, 1,
+            "second V15 must not duplicate rows"
+        );
+
+        // 原 id 仍然可解析
+        let still_there: Option<i64> = query_one_i64(
+            &db,
+            &format!("SELECT id FROM review_templates WHERE id = {}", legacy_id),
+        )
+        .await
+        .expect("probe must succeed");
+        assert_eq!(
+            still_there,
+            Some(legacy_id),
+            "rerun must not disturb existing rows"
+        );
+    }
+
+    /// 场景 3：fresh DB（无老数据）跑 V15 必须 seed 一条默认模板，
+    /// 名字叫 "默认评审任务"，prompt 是 DEFAULT_REVIEWER_PROMPT 的内容。
+    #[tokio::test]
+    async fn v15_seeds_default_template_on_fresh_db() {
+        let db = fresh_db().await;
+        // 前置：没有 type=1 todo (fresh install)
+        let pre_count: i64 = query_one_i64(&db, "SELECT COUNT(*) FROM todos WHERE todo_type = 1")
+            .await
+            .expect("count must succeed")
+            .unwrap_or(0);
+        assert_eq!(pre_count, 0, "precondition: fresh DB has no type=1 todo");
+
+        V15ReviewTemplates.up(&db).await.expect("V15 must succeed on fresh DB");
+
+        let count: i64 = query_one_i64(&db, "SELECT COUNT(*) FROM review_templates")
+            .await
+            .expect("count must succeed")
+            .unwrap_or(0);
+        assert_eq!(
+            count, 1,
+            "fresh install must seed exactly one default template"
+        );
+
+        let default_name: Option<String> = query_one_text(
+            &db,
+            "SELECT name FROM review_templates ORDER BY id LIMIT 1",
+        )
+        .await
+        .expect("probe must succeed");
+        assert_eq!(
+            default_name.as_deref(),
+            Some("默认评审任务"),
+            "default template must be named '默认评审任务'"
+        );
+    }
+
+    /// 场景 4：fresh DB 跑 V15 后, todos.review_template_id 列存在,
+    /// 且默认行写入的 prompt 内容与 DEFAULT_REVIEWER_PROMPT 常量一致。
+    #[tokio::test]
+    async fn v15_default_template_prompt_matches_constant() {
+        let db = fresh_db().await;
+        V15ReviewTemplates.up(&db).await.expect("V15 must succeed");
+
+        let stored_prompt: Option<String> = query_one_text(
+            &db,
+            "SELECT prompt FROM review_templates WHERE name = '默认评审任务'",
+        )
+        .await
+        .expect("probe must succeed");
+        assert!(
+            stored_prompt.is_some(),
+            "default template must have a non-null prompt"
+        );
+        let prompt_text = stored_prompt.unwrap();
+        // 默认 prompt 必须包含 "评审" 与 "RATING" 关键词——与 auto_review 模块的常量对齐
+        assert!(
+            prompt_text.contains("评审") && prompt_text.contains("RATING"),
+            "default prompt must contain 评审 + RATING markers, got first 80 chars: {:?}",
+            prompt_text.chars().take(80).collect::<String>()
+        );
+    }
+
+    /// 场景 5：旧库里有 todo_type=1 同时被 loop_steps.step_id / loop_hooks.target_todo_id
+    /// 引用（通过 ON DELETE RESTRICT 强约束），V15 必须能解绑这些外键并成功迁移。
+    /// 真实用户场景：Self-Improving 环路 (loop #54) 曾把评审模板 todo 同时作为 step。
+    #[tokio::test]
+    async fn v15_unbinds_loop_step_and_hook_pointing_to_type1_todo() {
+        let db = fresh_db().await;
+
+        // 前置：插一个 loop + 一个引用 type=1 todo 的 loop_steps 行 + 一个 loop_hooks 行。
+        // 注：fresh DB 上 loop_steps.step_id 引用 steps(id)（不是 todos），但 ON DELETE
+        // RESTRICT 的语义是"任何引用了 step_id 的行不能随便被删 todo"；为了模拟"旧脏数据
+        // 指向 todo_type=1"的真实场景，这里在 steps 表里也放一行 id=42，让 FK 通过。
+        db.conn.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT INTO loops (id, name, status) VALUES (1, 'test loop', 'draft')",
+        )).await.expect("insert loop");
+        db.conn.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT INTO todos (id, title, prompt, todo_type) VALUES (42, '评审模板(脏数据)', 'p', 1)",
+        )).await.expect("insert todo_type=1");
+        // steps 是 fresh schema 里 loop_steps.step_id 引用目标；插一行 id=42 模拟旧脏数据
+        // （旧库里 loop_steps.step_id 实际指 todos(id) 而非 steps(id)，但本次迁移的目的是
+        // 把这些"指向 type=1 todo 的 step"清掉，因此测试重点是 DELETE FROM loop_steps 的
+        // 子查询能找到 todo_type=1 行的 id=42, 而不是 FK 关系的精确性）。
+        db.conn.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT INTO steps (id, title, prompt) VALUES (42, '脏 step 占位', 'p')",
+        )).await.expect("insert steps placeholder");
+        db.conn.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT INTO loop_steps (id, loop_id, name, step_id) VALUES (100, 1, '脏 step', 42)",
+        )).await.expect("insert loop_step");
+        db.conn.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT INTO loop_hooks (id, loop_id, hook_position, target_todo_id) VALUES (200, 1, 'on_step_finish', 42)",
+        )).await.expect("insert loop_hook");
+
+        // 跑 V15: 之前会因为 RESTRICT 失败
+        V15ReviewTemplates.up(&db).await.expect("V15 must succeed even with FK refs to type=1 todo");
+
+        // 验证：脏 step / hook 已被清掉，type=1 todo 已迁移
+        let step_count: i64 = query_one_i64(&db, "SELECT COUNT(*) FROM loop_steps WHERE id = 100")
+            .await.expect("count step").unwrap_or(1);
+        assert_eq!(step_count, 0, "loop_step pointing to type=1 todo must be removed");
+        let hook_count: i64 = query_one_i64(&db, "SELECT COUNT(*) FROM loop_hooks WHERE id = 200")
+            .await.expect("count hook").unwrap_or(1);
+        assert_eq!(hook_count, 0, "loop_hook pointing to type=1 todo must be removed");
+        let todo_count: i64 = query_one_i64(&db, "SELECT COUNT(*) FROM todos WHERE id = 42")
+            .await.expect("count todo").unwrap_or(1);
+        assert_eq!(todo_count, 0, "type=1 todo must be deleted");
+        // 模板行已迁过去 (id 保留)
+        let template_id: Option<i64> = query_one_i64(
+            &db,
+            "SELECT id FROM review_templates WHERE id = 42",
+        ).await.expect("probe template");
+        assert_eq!(template_id, Some(42), "review_template must keep the original id");
+    }
+}
+
+#[cfg(test)]
+mod v16_loop_step_execution_snapshot_columns_tests {
+    //! V16 迁移的回归测试：
+    //!
+    //! 历史背景：commit ca1f7c4 ("loop 步骤执行记录快照阈值/评分/策略")
+    //! 在 entity 加了 min_rating / unrated_policy / rating 三列做快照，但
+    //! 漏写 schema 迁移——上线后所有跑过 V15 但没 ALTER 的实例
+    //! （含 dev DB）都在 `list_loop_step_executions` 时被 SeaORM 生成的
+    //! SELECT 报 `no such column: loop_step_executions.min_rating` → 500。
+    //!
+    //! V16 的职责：
+    //! 1) auto-migrate 跑到 V16 时必须给 loop_step_executions 补齐这三列；
+    //! 2) 已跑过 V16 的实例再跑一次 up() 必须幂等（不报 duplicate column）。
+
+    use super::*;
+    use crate::db::Database;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    async fn fresh_db() -> Database {
+        Database::new(":memory:").await.expect("memory db must open")
+    }
+
+    async fn table_has_column(db: &Database, table: &str, column: &str) -> bool {
+        super::table_has_column(db, table, column).await.unwrap_or(false)
+    }
+
+    /// 场景 1：auto-migrate 跑到 V16（含）后，
+    /// loop_step_executions 必须有 entity 声明的三个快照列。
+    /// 这条断言模拟的是"用户首次启动 → V1-V16 全跑"路径，回归"漏写迁移"的 bug。
+    #[tokio::test]
+    async fn v16_adds_snapshot_columns_to_loop_step_executions() {
+        let db = fresh_db().await;
+        assert!(
+            table_has_column(&db, "loop_step_executions", "min_rating").await,
+            "fresh DB 跑完 V16 后 min_rating 列必须存在"
+        );
+        assert!(
+            table_has_column(&db, "loop_step_executions", "unrated_policy").await,
+            "fresh DB 跑完 V16 后 unrated_policy 列必须存在"
+        );
+        assert!(
+            table_has_column(&db, "loop_step_executions", "rating").await,
+            "fresh DB 跑完 V16 后 rating 列必须存在"
+        );
+    }
+
+    /// 场景 2：V16 跑过两遍必须幂等（不报 duplicate column 错误）。
+    /// 这覆盖了"老 dev/prod 实例 V16 跑过一次，运维热重载再跑一次"的情况。
+    #[tokio::test]
+    async fn v16_is_idempotent() {
+        let db = fresh_db().await;
+        V16LoopStepExecutionSnapshotColumns
+            .up(&db)
+            .await
+            .expect("V16 up must be idempotent on already-migrated DB");
+
+        // 显式 SELECT 三列确保可读（用空表 + query_all 拿到列元信息）
+        let rows = db
+            .conn
+            .query_all(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT min_rating, unrated_policy, rating FROM loop_step_executions",
+            ))
+            .await
+            .expect("select with new columns must succeed");
+        assert!(
+            rows.is_empty(),
+            "fresh DB 应当没有 loop_step_execution 行；这一查的核心目的是验证列存在且可读"
+        );
+
+        // 三列都应在 schema 中
+        assert!(table_has_column(&db, "loop_step_executions", "min_rating").await);
+        assert!(table_has_column(&db, "loop_step_executions", "unrated_policy").await);
+        assert!(table_has_column(&db, "loop_step_executions", "rating").await);
     }
 }

@@ -185,6 +185,8 @@ export interface LoopDetail {
   color: string;
   icon: string;
   limits_config: string;
+  /** Review template to use for auto-review on loop steps. null = use default. */
+  review_template_id: number | null;
   created_at: string | null;
   updated_at: string | null;
   triggers: LoopTriggerDto[];

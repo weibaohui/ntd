@@ -23,10 +23,12 @@ export interface Todo {
   acceptance_criteria?: string | null;
   /** Whether to spawn an auto-review child todo after this one finishes. Default true. */
   auto_review_enabled?: boolean;
-  /** 0 = normal todo, 1 = reviewer template, 2 = review instance child. */
+  /** 0 = normal todo, 1 = 已废弃 (评审模板已迁出至 review_templates 表), 2 = review instance child. */
   todo_type?: 0 | 1 | 2;
   /** For review instances: the original todo that was reviewed. */
   parent_todo_id?: number | null;
+  /** For review instances: the review_template used to generate this instance. */
+  review_template_id?: number | null;
   /** 事项 vs 环节。'item' = 一次性事项(默认), 'step' = 可复用的环节(loop 编排引用).
    * 后端 v3 migration 引入; 前端不传时按 'item' 兜底. */
   kind?: 'item' | 'step';

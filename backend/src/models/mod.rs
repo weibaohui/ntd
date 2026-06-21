@@ -118,12 +118,17 @@ pub struct Todo {
     pub hooks: Vec<crate::hooks::TodoHookItem>,
     #[serde(default)]
     pub acceptance_criteria: Option<String>,
-    /// 0=normal, 1=reviewer_template(评审任务), 2=review_instance(评审实例).
+    /// 0=normal, 1=reviewer_template（已废弃：评审模板已迁出至 review_templates 表）,
+    /// 2=review_instance（评审实例）.
     #[serde(default)]
     pub todo_type: i32,
     /// review_instance 关联到被评审的原 todo; 其它类型为 None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_todo_id: Option<i64>,
+    /// review_instance 关联到生成它的 review_template; 其它类型为 None.
+    /// NULL/NONE 可能是 V15 之前的迁移产物.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_template_id: Option<i64>,
     /// 是否在执行完成后自动派生一个评审 todo. 只对 normal 类型有意义.
     #[serde(default = "default_true")]
     pub auto_review_enabled: bool,
@@ -879,6 +884,53 @@ impl<T> ApiResponse<T> {
 }
 
 pub type ClientResponse<T> = ApiResponse<T>;
+
+// ============================================================================
+// 评审模板 (review_templates) 模型
+// ============================================================================
+// 历史背景：评审模板曾以 todos.todo_type=1 (标题"评审任务") 兼任。V15 迁移
+// 把这部分数据搬到独立的 review_templates 表。与 todo_templates (可导入的
+// todo 模板库) 是不同概念，**不要混用**。
+
+/// 评审模板完整模型（含 prompt，用于评审时拉取原文）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewTemplate {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub prompt: String,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+/// 评审模板轻量选项（不含 prompt），用于 loop 编辑器下拉选择。
+/// 不返回 prompt 字段的原因：
+/// 1. 下拉列表不需要 prompt 内容，省字节
+/// 2. 防止前端误把 prompt 文本渲染到 UI（prompt 可能含占位符代码）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewTemplateOption {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// 评审模板创建请求。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateReviewTemplateRequest {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub prompt: String,
+}
+
+/// 评审模板更新请求（name/prompt 必传，description 可选）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateReviewTemplateRequest {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub prompt: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoTemplate {

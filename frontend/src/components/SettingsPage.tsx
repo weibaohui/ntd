@@ -15,6 +15,7 @@ import {
   LeftOutlined,
   ApiOutlined,
   CloudOutlined,
+  AuditOutlined,
 } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
 import * as db from '@/utils/database';
@@ -32,6 +33,7 @@ import { MessagesPanel } from './settings/MessagesPanel';
 import { TemplatesPanel } from './settings/TemplatesPanel';
 import { AboutPanel } from './settings/AboutPanel';
 import { CloudSyncPanel } from './settings/CloudSyncPanel';
+import { ReviewTemplatesPanel } from './settings/ReviewTemplatesPanel';
 
 import { DEFAULT_EXECUTION_TIMEOUT_SECS } from '@/constants';
 
@@ -207,6 +209,11 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
       key: 'templates',
       label: <span><FileTextOutlined style={{ marginRight: 6 }} />模板管理</span>,
       children: <TemplatesPanel />,
+    },
+    {
+      key: 'reviewTemplates',
+      label: <span><AuditOutlined style={{ marginRight: 6 }} />评审模板</span>,
+      children: <ReviewTemplatesPanel />,
     },
     {
       key: 'backup',

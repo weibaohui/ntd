@@ -68,6 +68,7 @@ impl Database {
             acceptance_criteria: m.acceptance_criteria,
             todo_type: m.todo_type.unwrap_or(0),
             parent_todo_id: m.parent_todo_id,
+            review_template_id: m.review_template_id,
             auto_review_enabled: m.auto_review_enabled.unwrap_or(true),
             // kind 默认 'item'；实际数据由 v3 migration 注入。
             // unwrap_or_default 兜底 None(例如老库 v3 升级前的行),与字段语义保持一致。
@@ -381,30 +382,37 @@ impl Database {
         self.exec_update(am).await
     }
 
-    /// 克隆一份 todo 作为"评审实例"。原 todo (template) 的所有字段都复制过来,
-    /// 但 todo_type=2, parent_todo_id=Some(parent_id), title 加前缀,
-    /// auto_review_enabled=false (评审实例自身不再评审).
-    /// 跳过 hooks / scheduler (评审实例是 transient 的).
-    pub async fn clone_todo_for_review(
+    /// 创建一个"评审实例" todo (todo_type=2)。
+    /// 设计原因: V15 之后 review_template 是独立表 (不再挂 todo_type=1),
+    /// 评审模板不再有 executor 字段。执行评审时需要新建一条 todo:
+    /// - `prompt` = caller 合成好的评审 prompt (含原 output 截断 + 模板占位符替换)
+    /// - `executor` = 从被评审的 record/original todo 继承 (review_template 不带 executor)
+    /// - `todo_type` = 2 (评审实例)
+    /// - `parent_todo_id` = 源 todo id (loop 触发时为 0, 因为 loop step 没有单一 source todo)
+    /// - `review_template_id` = 使用的评审模板 id
+    /// - `auto_review_enabled` = false (评审实例自身不再评审, 防止无限嵌套)
+    /// 评审实例是 transient 的, 不挂 hooks / scheduler.
+    pub async fn create_review_instance_todo(
         &self,
-        template_id: i64,
-        parent_id: i64,
+        parent_todo_id: i64,
+        review_template_id: i64,
+        review_template_name: &str,
+        composed_prompt: String,
+        executor: Option<String>,
     ) -> Result<i64, sea_orm::DbErr> {
-        let template = self
-            .get_todo(template_id)
-            .await?
-            .ok_or_else(|| sea_orm::DbErr::Custom(format!("template todo #{} not found", template_id)))?;
         let now = crate::models::utc_timestamp();
-        let title = format!("[评审] {}", template.title);
+        let title = format!("[评审] {}", review_template_name);
         let am = todos::ActiveModel {
             title: ActiveValue::Set(title),
-            prompt: ActiveValue::Set(template.prompt.clone().into()),
+            // todos.prompt 列是 Option<String>; 新建的评审实例一定有 prompt, 直接 Some 包一层.
+            prompt: ActiveValue::Set(Some(composed_prompt)),
             status: ActiveValue::Set(Some(TodoStatus::Pending.to_string())),
             created_at: ActiveValue::Set(Some(now.clone())),
             updated_at: ActiveValue::Set(Some(now)),
-            executor: ActiveValue::Set(template.executor.clone()),
+            executor: ActiveValue::Set(executor),
             todo_type: ActiveValue::Set(Some(2)),
-            parent_todo_id: ActiveValue::Set(Some(parent_id)),
+            parent_todo_id: ActiveValue::Set(Some(parent_todo_id)),
+            review_template_id: ActiveValue::Set(Some(review_template_id)),
             auto_review_enabled: ActiveValue::Set(Some(false)),
             ..Default::default()
         };
