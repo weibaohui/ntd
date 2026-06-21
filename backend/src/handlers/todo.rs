@@ -7,7 +7,7 @@ use crate::db::TodoUpdate;
 use crate::handlers::{ApiJson, AppError, AppState};
 use crate::hooks::models::HookContext;
 use crate::models::{
-    utc_timestamp, ApiResponse, CreateTodoRequest, RecentCompletedTodo, Todo,
+    utc_timestamp, ApiResponse, CreateTodoRequest, RecentCompletedTodo, StepDto, Todo,
     UpdateTagsRequest, UpdateTodoRequest,
 };
 
