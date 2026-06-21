@@ -8,7 +8,7 @@ use crate::handlers::{ApiJson, AppError, AppState};
 use crate::hooks::models::HookContext;
 use crate::models::{
     utc_timestamp, ApiResponse, CreateTodoRequest, RecentCompletedTodo, StepDto, Todo,
-    UpdateStepRequest, UpdateTagsRequest, UpdateTodoRequest,
+    UpdateTagsRequest, UpdateTodoRequest,
 };
 
 /// Validate cron expression, return helpful error for invalid ones
@@ -359,91 +359,8 @@ pub async fn get_recent_completed_todos(
     ))
 }
 
-// ====== 环节管理（kind=step）======
-//
-// 路由：
-// - GET    /api/steps                    列出所有环节 + 各自的 loop 引用计数
-// - GET    /api/steps/:id                单个环节详情
-// - GET    /api/steps/candidates         loop 编辑器选环节用的精简候选列表
-// - POST   /api/todos/:id/promote          事项 → 环节（复制到 steps 表，原 todo 保留）
-// （demote 已移除：环节是独立实体，不能降级）
-
-/// GET /api/steps — 列出所有环节,带"被哪些 loop 用"复用度计数
-pub async fn list_steps(
-    State(state): State<AppState>,
-) -> Result<ApiResponse<Vec<StepDto>>, AppError> {
-    let rows = state.db.list_steps_with_usage_pure().await?;
-    let items = rows
-        .into_iter()
-        .map(|(s, count)| StepDto::from(s).with_usage(count))
-        .collect();
-    Ok(ApiResponse::ok(items))
-}
-
-/// GET /api/steps/candidates — loop 编辑器选环节用
-pub async fn list_step_candidates(
-    State(state): State<AppState>,
-) -> Result<ApiResponse<Vec<StepDto>>, AppError> {
-    let rows = state.db.list_steps_with_usage_pure().await?;
-    let items = rows
-        .into_iter()
-        .map(|(s, count)| StepDto::from(s).with_usage(count))
-        .collect();
-    Ok(ApiResponse::ok(items))
-}
-
-/// GET /api/steps/:id — 单个环节详情,带 loop 引用计数
-pub async fn get_step(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<ApiResponse<StepDto>, AppError> {
-    let s = state
-        .db
-        .get_step(id)
-        .await?
-        .ok_or(AppError::NotFound)?;
-    let used_by_loop_step_count = state.db.count_loop_steps_using_step(id).await?;
-    Ok(ApiResponse::ok(StepDto::from(s).with_usage(used_by_loop_step_count)))
-}
-
-/// PUT /api/steps/:id — 更新环节基本信息
-pub async fn update_step(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-    ApiJson(req): ApiJson<UpdateStepRequest>,
-) -> Result<ApiResponse<StepDto>, AppError> {
-    if req.title.trim().is_empty() {
-        return Err(AppError::BadRequest("title 不能为空".to_string()));
-    }
-    // 校验环节存在
-    state.db.get_step(id).await?.ok_or(AppError::NotFound)?;
-    state
-        .db
-        .update_step(
-            id,
-            req.title.trim(),
-            &req.prompt,
-            req.executor.as_deref(),
-            req.acceptance_criteria.as_deref(),
-            req.color.as_deref(),
-        )
-        .await?;
-    // 查回最新数据
-    let s = state.db.get_step(id).await?.ok_or(AppError::NotFound)?;
-    let used_by_loop_step_count = state.db.count_loop_steps_using_step(id).await?;
-    Ok(ApiResponse::ok(StepDto::from(s).with_usage(used_by_loop_step_count)))
-}
-
-/// DELETE /api/steps/:id — 删除环节
-pub async fn delete_step(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<ApiResponse<()>, AppError> {
-    // 环节可能被 loop 引用，由数据库外键约束保护（RESTRICT），
-    // 被引用时后端返回外键冲突错误，前端会显示相应提示。
-    state.db.delete_step(id).await?;
-    Ok(ApiResponse::ok(()))
-}
+// ====== todo → step 提升 ======
+// 注意：环节 CRUD 已在 step_.rs 中，todo.rs 只保留 promote。
 
 /// POST /api/todos/:id/promote — 事项提升为环节（复制数据到 steps 表，原 todo 保留）
 pub async fn promote_todo_to_step(

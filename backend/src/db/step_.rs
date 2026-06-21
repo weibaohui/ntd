@@ -66,7 +66,7 @@ impl Database {
     ) -> Result<i64, sea_orm::DbErr> {
         use crate::db::entity::loop_steps;
         Ok(loop_steps::Entity::find()
-            .filter(loop_steps::Column::TodoId.eq(step_id))
+            .filter(loop_steps::Column::StepId.eq(step_id))
             .count(&self.conn)
             .await? as i64)
     }

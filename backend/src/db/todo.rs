@@ -1016,7 +1016,7 @@ impl Database {
     pub async fn demote_to_item(&self, id: i64) -> Result<(), String> {
         // 校验是否被 loop_steps 引用
         let in_use = crate::db::entity::loop_steps::Entity::find()
-            .filter(crate::db::entity::loop_steps::Column::TodoId.eq(id))
+            .filter(crate::db::entity::loop_steps::Column::StepId.eq(id))
             .one(&self.conn)
             .await
             .map_err(|e| e.to_string())?;
@@ -1041,7 +1041,7 @@ impl Database {
     pub async fn count_loop_steps_using_todo(&self, todo_id: i64) -> Result<i64, sea_orm::DbErr> {
         use sea_orm::PaginatorTrait;
         crate::db::entity::loop_steps::Entity::find()
-            .filter(crate::db::entity::loop_steps::Column::TodoId.eq(todo_id))
+            .filter(crate::db::entity::loop_steps::Column::StepId.eq(todo_id))
             .count(&self.conn)
             .await
             .map(|c| c as i64)

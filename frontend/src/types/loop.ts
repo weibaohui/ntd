@@ -103,7 +103,8 @@ export interface LoopStepRawDto {
   name: string;
   description: string;
   order_index: number;
-  todo_id: number;
+  /** 关联的 step id（对应 steps 表） */
+  step_id: number;
   run_mode: string;
   skip_on_source_failed: boolean;
   min_rating: number | null;
@@ -122,7 +123,8 @@ export interface LoopStepDto {
   name: string;
   description: string;
   order_index: number;
-  todo_id: number;
+  /** 关联的 step id（对应 steps 表） */
+  step_id: number;
   run_mode: string;
   skip_on_source_failed: boolean;
   min_rating: number | null;
@@ -141,7 +143,8 @@ export interface LoopStepDto {
 export interface CreateLoopStepRequest {
   name: string;
   description?: string;
-  todo_id: number;
+  /** 关联的 step id（对应 steps 表） */
+  step_id: number;
   run_mode?: string;
   skip_on_source_failed?: boolean;
   min_rating?: number | null;
@@ -156,7 +159,8 @@ export interface CreateLoopStepRequest {
 export interface UpdateLoopStepRequest {
   name: string;
   description: string;
-  todo_id: number;
+  /** 关联的 step id（对应 steps 表） */
+  step_id: number;
   run_mode: string;
   skip_on_source_failed: boolean;
   min_rating: number | null;
