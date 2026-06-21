@@ -27,10 +27,18 @@ use crate::service_context::ServiceContext;
 use crate::db::entity::{loop_steps, steps};
 
 /// 全局限制配置，从 loop.limits_config JSON 解析。
+///
+/// 支持两种限制方式：
+/// - max_step_executions：最大执行步数（已有）
+/// - max_total_tokens：最大消耗 Token 数（新增，input_tokens + output_tokens 之和）
 #[derive(Debug, Default, Clone, serde::Deserialize)]
 struct LimitsConfig {
     #[serde(default)]
     max_step_executions: Option<i32>,
+    /// 最大消耗 Token 数（input_tokens + output_tokens），超过后 Loop 被 capped 终止。
+    /// None 表示不限制。
+    #[serde(default)]
+    max_total_tokens: Option<i64>,
 }
 
 /// LoopRunner 依赖：与现有 HookService 共享一个 spawn-friendly 结构。
@@ -164,10 +172,12 @@ impl LoopRunner {
 
         let limits: LimitsConfig = serde_json::from_str(&loop_.limits_config).unwrap_or_default();
         let max_executions = limits.max_step_executions.unwrap_or(i32::MAX);
+        let max_total_tokens = limits.max_total_tokens.unwrap_or(i64::MAX);
 
         let mut current_idx: Option<usize> = Some(0);
         let mut sequence_counter = 0i32;
         let mut total_executed = 0i32;
+        let mut total_tokens_used: i64 = 0;
         let mut completed: i32 = 0;
         let mut failed: i32 = 0;
         let mut consecutive_retries: HashMap<i64, i32> = HashMap::new();
@@ -190,12 +200,24 @@ impl LoopRunner {
             }
             let step = &all_steps[idx];
 
-            // 4a. 全局限制检查
+            // 4a. 全局限制检查：步数限制 + Token 限制
             if total_executed >= max_executions {
                 info!("loop #{} capped: total_executed={} >= max={}", loop_id, total_executed, max_executions);
                 self.ctx
                     .db
-                    .finish_loop_execution(loop_execution_id, "capped", completed, failed)
+                    .finish_loop_execution(loop_execution_id, "capped_step", completed, failed)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                return Ok(());
+            }
+            if total_tokens_used >= max_total_tokens {
+                info!(
+                    "loop #{} capped by token: total_tokens_used={} >= max={}",
+                    loop_id, total_tokens_used, max_total_tokens
+                );
+                self.ctx
+                    .db
+                    .finish_loop_execution(loop_execution_id, "capped_token", completed, failed)
                     .await
                     .map_err(|e| e.to_string())?;
                 return Ok(());
@@ -345,10 +367,17 @@ impl LoopRunner {
             }
 
             // 记录上一环节的输出（供下一环节的 {last_output}/{message} 模板变量使用）
+            // 同时从 execution_record.usage 中提取 token 用量，累加到 total_tokens_used，
+            // 用于下一轮循环 4a 的 token 上限检查。
             let exec_record = self.ctx.db.get_execution_record(record_id).await.ok().flatten();
             last_output = exec_record.as_ref().and_then(|r| r.result.clone());
             last_conclusion = Some(conclusion.clone());
             last_step_name = Some(step.name.clone());
+            // 从 usage JSON 中取出 input_tokens + output_tokens 作为本次消耗的 token 数
+            if let Some(ref usage) = exec_record.and_then(|r| r.usage) {
+                let step_tokens = (usage.input_tokens + usage.output_tokens) as i64;
+                total_tokens_used += step_tokens;
+            }
 
             // 4l. 确定下一步
             current_idx = if gate_passed {
@@ -961,5 +990,33 @@ mod tests {
     fn limits_config_parses_max_step_executions() {
         let config: LimitsConfig = serde_json::from_str(r#"{"max_step_executions": 20}"#).unwrap();
         assert_eq!(config.max_step_executions, Some(20));
+    }
+
+    #[test]
+    fn limits_config_max_total_tokens_defaults_to_none() {
+        let config: LimitsConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.max_total_tokens, None);
+    }
+
+    #[test]
+    fn limits_config_parses_max_total_tokens() {
+        let config: LimitsConfig = serde_json::from_str(r#"{"max_total_tokens": 100000}"#).unwrap();
+        assert_eq!(config.max_total_tokens, Some(100000));
+    }
+
+    #[test]
+    fn limits_config_parses_both_limits() {
+        let config: LimitsConfig =
+            serde_json::from_str(r#"{"max_step_executions": 10, "max_total_tokens": 50000}"#).unwrap();
+        assert_eq!(config.max_step_executions, Some(10));
+        assert_eq!(config.max_total_tokens, Some(50000));
+    }
+
+    #[test]
+    fn limits_config_parses_partial_limits() {
+        // 只设 max_total_tokens，不设 max_step_executions
+        let config: LimitsConfig = serde_json::from_str(r#"{"max_total_tokens": 99999}"#).unwrap();
+        assert_eq!(config.max_step_executions, None);
+        assert_eq!(config.max_total_tokens, Some(99999));
     }
 }

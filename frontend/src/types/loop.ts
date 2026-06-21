@@ -26,7 +26,7 @@ export type LoopUnratedPolicy = 'skip' | 'continue';
 export type LoopOnSuccessPolicy = 'next' | 'goto' | 'end';
 export type LoopOnRatingFailPolicy = 'break' | 'skip' | 'goto' | 'end';
 
-export type LoopExecutionStatus = 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'capped';
+export type LoopExecutionStatus = 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'capped_step' | 'capped_token';
 
 export interface LoopDto {
   id: number;

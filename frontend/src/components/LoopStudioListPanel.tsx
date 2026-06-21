@@ -60,11 +60,14 @@ function progressBarColor(status: string): string {
 }
 
 // 最近执行状态 → 图标, 使用主题变量, 暗色下也保持对比度
+// 兼容旧记录：旧版只支持步数限制，status = "capped" 视为步数超限。
 function executionIcon(status: string) {
   if (status === 'success') return <CheckCircleOutlined style={{ color: 'var(--color-success, #22c55e)' }} />;
   if (status === 'failed') return <CloseCircleOutlined style={{ color: 'var(--color-error, #ef4444)' }} />;
   if (status === 'partial') return <CloseCircleOutlined style={{ color: 'var(--color-warning, #f59e0b)' }} />;
   if (status === 'running') return <LoadingOutlined style={{ color: 'var(--color-info, #3b82f6)' }} />;
+  if (status === 'capped' || status === 'capped_step') return <MinusCircleOutlined style={{ color: '#d4b106' }} />;
+  if (status === 'capped_token') return <MinusCircleOutlined style={{ color: '#722ed1' }} />;
   return <MinusCircleOutlined style={{ color: 'var(--color-text-tertiary, #94a3b8)' }} />;
 }
 
