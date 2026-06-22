@@ -38,6 +38,9 @@ pub struct Model {
     pub on_rating_fail: String,
     /// on_rating_fail="goto" 时的目标 step_id
     pub fail_goto_step_id: Option<i64>,
+    /// 评审类型: "ai" = AI 自动评审, "human" = 人工审批（默认 "ai"）
+    #[sea_orm(default_value = "ai")]
+    pub review_type: String,
     #[sea_orm(default_value = "1")]
     pub enabled: i32,
     pub created_at: Option<String>,

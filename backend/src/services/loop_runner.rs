@@ -17,7 +17,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::collections::HashMap;
 use tokio::sync::broadcast;
-use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use crate::executor_service::{run_todo_execution_with_params, RunTodoExecutionRequest};
@@ -125,12 +124,143 @@ impl LoopRunner {
         loop_execution_id
     }
 
+    /// 恢复被人工审批暂停的 loop 执行。
+    /// 由审批 API handler 调用。
+    /// 查找已审批的 step_execution，确定下一步，然后继续主循环。
+    pub async fn resume_loop_execution(
+        self: &Arc<Self>,
+        loop_execution_id: i64,
+    ) {
+        // 1. 加载 loop_execution，校验状态为 running
+        let loop_exec = match self.ctx.db.get_loop_execution(loop_execution_id).await {
+            Ok(Some(le)) => le,
+            _ => {
+                warn!("resume: loop_execution #{} not found", loop_execution_id);
+                return;
+            }
+        };
+        if loop_exec.status != "running" {
+            warn!("resume: loop_execution #{} status is {}, not running", loop_execution_id, loop_exec.status);
+            return;
+        }
+
+        // 2. 加载所有 step_executions，找到刚被审批的那条
+        let step_execs = match self.ctx.db.list_loop_step_executions(loop_execution_id).await {
+            Ok(se) => se,
+            Err(e) => {
+                warn!("resume: failed to list step_executions: {}", e);
+                return;
+            }
+        };
+
+        // 找 approval_status = "approved" 且原来状态是 pending_approval 的（已审批）
+        let approved_se = step_execs.iter().find(|se| {
+            se.approval_status.as_deref() == Some("approved") &&
+            (se.status == "success" || se.status == "failed")
+        });
+
+        let approved = match approved_se {
+            Some(se) => se,
+            None => {
+                warn!("resume: no approved step_execution found for loop_execution #{}", loop_execution_id);
+                return;
+            }
+        };
+
+        // 3. 加载 steps 以确定从哪个索引继续
+        let all_steps = match self.ctx.db.list_enabled_loop_steps_by_loop(loop_exec.loop_id).await {
+            Ok(steps) => steps,
+            Err(e) => {
+                warn!("resume: failed to load steps: {}", e);
+                return;
+            }
+        };
+
+        // 4. 找到被审批环节对应的 step，确定 gate_passed 和下一步索引
+        let step_id_to_idx: HashMap<i64, usize> = all_steps
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.id, i))
+            .collect();
+
+        let step_idx = match step_id_to_idx.get(&approved.step_id) {
+            Some(&idx) => idx,
+            None => {
+                warn!("resume: step #{} not found in current steps", approved.step_id);
+                return;
+            }
+        };
+
+        // 5. 根据审批评分和阈值决定下一步
+        let step = &all_steps[step_idx];
+        let rating = approved.rating.unwrap_or(0);
+        let min_rating = approved.min_rating.unwrap_or(0);
+        let gate_passed = rating >= min_rating;
+
+        // 6. 更新计数器（从已有 step_executions 推算）
+        let completed = step_execs.iter().filter(|se| se.status == "success").count() as i32;
+        let failed = step_execs.iter().filter(|se| se.status == "failed").count() as i32;
+        // 总额外步数 = 当前 sequence_index（最大序号即累计执行步数）
+        let _total_executed = step_execs.iter().map(|se| se.sequence_index).max().unwrap_or(0);
+        // 更新 loop_execution 中的计数器
+        let _ = self.ctx.db.increment_loop_execution_counters(
+            loop_execution_id,
+            if gate_passed { 1 } else { 0 },
+            if gate_passed { 0 } else { 1 },
+            0,
+        ).await;
+
+        // 7. 计算下一步索引
+        let next_policy = if gate_passed { &step.on_success } else { &step.on_rating_fail };
+        let next_idx = self.resolve_next(step, next_policy, &step_id_to_idx, step_idx);
+
+        info!(
+            "resume: loop_execution #{} step #{} rating={} min={} gate_passed={} next_idx={:?}",
+            loop_execution_id, approved.step_id, rating, min_rating, gate_passed, next_idx
+        );
+
+        // 8. 从下一步继续执行
+        if let Some(idx) = next_idx {
+            let self_clone = self.clone();
+            tokio::spawn(async move {
+                if let Err(e) = self_clone.run_inner_from(
+                    loop_exec.loop_id,
+                    loop_execution_id,
+                    loop_exec.trigger_type.clone(),
+                    Some(idx),
+                ).await {
+                    error!("resume: loop #{} continue failed: {}", loop_exec.loop_id, e);
+                }
+            });
+        } else {
+            // 没有下一步（end/break），结束 loop execution
+            let final_status = if completed > 0 { "success" } else { "failed" };
+            let _ = self.ctx.db.finish_loop_execution(
+                loop_execution_id, final_status, completed, failed,
+            ).await;
+            info!("resume: loop_execution #{} ended with status {}", loop_execution_id, final_status);
+        }
+    }
+
     /// DAG 执行引擎主循环。
+    /// resume_step_idx: None 表示全新执行，Some(idx) 表示从指定步骤继续（人工审批恢复）。
     async fn run_inner(
-        self: Arc<Self>,
+        self: &Arc<Self>,
         loop_id: i64,
         loop_execution_id: i64,
         trigger_type: String,
+    ) -> Result<(), String> {
+        self.run_inner_from(loop_id, loop_execution_id, trigger_type, None).await
+    }
+
+    /// DAG 执行引擎主循环（支持从指定步骤继续）。
+    /// resume_step_idx: None = 从头开始，Some(idx) = 从该步骤继续。
+    async fn run_inner_from(
+        self: &Arc<Self>,
+        loop_id: i64,
+        loop_execution_id: i64,
+        trigger_type: String,
+        resume_step_idx: Option<usize>,
     ) -> Result<(), String> {
         // 1. 校验 loop 状态
         let loop_ = self
@@ -160,26 +290,52 @@ impl LoopRunner {
             return Ok(());
         }
 
-        // 3. 初始化
-        self.ctx
-            .db
-            .finish_loop_execution(loop_execution_id, "running", 0, 0)
-            .await
-            .map_err(|e| e.to_string())?;
-        self.clear_finished_at(loop_execution_id).await?;
-        self.update_total_steps(loop_execution_id, all_steps.len() as i32)
-            .await?;
+        // 3. 初始化（全新执行）或恢复状态（续跑）
+        let is_resume = resume_step_idx.is_some();
+        if !is_resume {
+            // 全新执行：设置 loop execution 状态
+            self.ctx
+                .db
+                .finish_loop_execution(loop_execution_id, "running", 0, 0)
+                .await
+                .map_err(|e| e.to_string())?;
+            self.clear_finished_at(loop_execution_id).await?;
+            self.update_total_steps(loop_execution_id, all_steps.len() as i32)
+                .await?;
+        }
 
         let limits: LimitsConfig = serde_json::from_str(&loop_.limits_config).unwrap_or_default();
         let max_executions = limits.max_step_executions.unwrap_or(i32::MAX);
         let max_total_tokens = limits.max_total_tokens.unwrap_or(i64::MAX);
 
-        let mut current_idx: Option<usize> = Some(0);
-        let mut sequence_counter = 0i32;
-        let mut total_executed = 0i32;
+        // 恢复模式下从已有记录推算状态计数器
+        let (prev_completed, prev_failed, prev_total_executed, prev_max_sequence, prev_last_output, prev_last_conclusion, prev_last_step_name) =
+            if is_resume {
+                let execs = self.ctx.db.list_loop_step_executions(loop_execution_id).await
+                    .unwrap_or_default();
+                let completed = execs.iter().filter(|se| se.status == "success").count() as i32;
+                let failed = execs.iter().filter(|se| se.status == "failed").count() as i32;
+                let total_exec = execs.iter().map(|se| se.sequence_index).max().unwrap_or(0);
+                let max_seq = execs.iter().map(|se| se.sequence_index).max().unwrap_or(0);
+                // 找最后完成的 step 用于模板变量
+                let last_success = execs.iter()
+                    .filter(|se| se.status == "success" || se.status == "pending_approval")
+                    .max_by_key(|se| se.sequence_index);
+                let last_conclusion = last_success.and_then(|se| se.conclusion.clone());
+                let last_step_name = last_success.and_then(|se| {
+                    all_steps.iter().find(|s| s.id == se.step_id).map(|s| s.name.clone())
+                });
+                (completed, failed, total_exec, max_seq, None, last_conclusion, last_step_name)
+            } else {
+                (0, 0, 0, 0, None, None, None)
+            };
+
+        let mut current_idx: Option<usize> = resume_step_idx.or(Some(0));
+        let mut sequence_counter = if is_resume { prev_max_sequence } else { 0 };
+        let mut total_executed = prev_total_executed;
         let mut total_tokens_used: i64 = 0;
-        let mut completed: i32 = 0;
-        let mut failed: i32 = 0;
+        let mut completed = prev_completed;
+        let mut failed = prev_failed;
         let mut consecutive_retries: HashMap<i64, i32> = HashMap::new();
 
         let step_id_to_idx: HashMap<i64, usize> = all_steps
@@ -189,9 +345,9 @@ impl LoopRunner {
             .collect();
 
         // 上一环节的执行结果（用于注入模板变量）
-        let mut last_output: Option<String> = None;
-        let mut last_conclusion: Option<String> = None;
-        let mut last_step_name: Option<String> = None;
+        let mut last_output: Option<String> = prev_last_output;
+        let mut last_conclusion: Option<String> = prev_last_conclusion;
+        let mut last_step_name: Option<String> = prev_last_step_name;
 
         // 4. 主循环
         while let Some(idx) = current_idx {
@@ -315,6 +471,33 @@ impl LoopRunner {
 
             // 4h. 评分闸门
             let (gate_passed, step_rating) = if step_status == "success" && step.min_rating.is_some() {
+                // 人工审批类型：暂停等待，不自动评审
+                // 提取结论后写回 pending_approval 状态，然后退出主循环。
+                if step.review_type == "human" {
+                    let conclusion = self.extract_conclusion(record_id).await;
+                    self.ctx
+                        .db
+                        .finish_step_execution(
+                            step_exec.id, "pending_approval", Some(record_id), None, None, Some(&conclusion),
+                        )
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    // 标记审批状态为等待中；失败仅记录日志，不中断 loop 暂停流程，
+                    // 因为 step_execution 已经写为 pending_approval 状态，前端可继续操作。
+                    if let Err(e) = self.ctx.db.set_step_execution_approval_status(step_exec.id, "pending").await {
+                        warn!("loop #{} step #{}: failed to set approval_status to pending: {}", loop_id, step.id, e);
+                    }
+                    info!("loop #{} step #{} waiting for human approval", loop_id, step.id);
+                    // 发送 WebSocket 事件触发前端刷新（让执行历史列表显示"待审批"标记）
+                    let _ = self.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+                        record_id,
+                        todo_id: 0,
+                        review_status: "pending_approval".to_string(),
+                    });
+                    // 暂停循环（不写最终状态，loop execution 保持 running）
+                    return Ok(());
+                }
+                // AI 自动评审：原有逻辑
                 self
                     .apply_rating_gate(
                         record_id,
@@ -452,73 +635,59 @@ impl LoopRunner {
             .ok_or_else(|| "executor returned no record_id".to_string())
     }
 
-    /// 订阅 broadcast 等待指定 record_id 的 Finished 事件。
+    /// 轮询数据库确认指定 record_id 的执行记录是否进入终态。
     /// timeout 24h 防止长跑任务永久挂住 loop。
+    ///
+    /// 改用轮询而非 broadcast 的原因：broadcast 的 Finished 事件不带 record_id，
+    /// 多 loop 并发时会错误收到其他 loop 的 Finished 事件，导致提前返回错误状态。
+    /// 原注释已承认"多 loop 并发时会有歧义；首版接受这个限制"，此处修复该问题。
     async fn wait_for_step_finish(&self, record_id: i64) -> Result<String, String> {
-        let mut rx = self.tx.subscribe();
         let wait_timeout = Duration::from_secs(24 * 60 * 60);
-        let result = timeout(wait_timeout, async {
-            loop {
-                match rx.recv().await {
-                    Ok(crate::handlers::ExecEvent::Finished {
-                        task_id: _,
-                        todo_id: _,
-                        todo_title: _,
-                        executor: _,
-                        success,
-                        result: _,
-                        feishu_bot_id: _,
-                        feishu_receive_id: _,
-                    }) => {
-                        // Finished 不带 record_id,需要靠 todo 状态二次查询确认
-                        // 这里简化为: 任意 Finished 事件都先接住,再用 record_id 反查
-                        // 但实际是 broadcast 只发 task_id 不发 record_id;
-                        // 所以我们用 fallback: 任意 Finished 来就直接退出,
-                        // 因为 loop 是顺序的,这时只有当前 step 在跑。
-                        // （多 loop 并发时会有歧义；首版接受这个限制,后期可扩展 event 加 record_id）
-                        return if success {
-                            Ok(ExecutionStatus::Success.as_str().to_string())
-                        } else {
-                            Ok(ExecutionStatus::Failed.as_str().to_string())
-                        };
-                    }
-                    Ok(crate::handlers::ExecEvent::Started { .. })
-                    | Ok(crate::handlers::ExecEvent::Output { .. })
-                    | Ok(crate::handlers::ExecEvent::TodoProgress { .. })
-                    | Ok(crate::handlers::ExecEvent::ExecutionStats { .. })
-                    | Ok(crate::handlers::ExecEvent::ReviewStatusChanged { .. })
-                    | Ok(crate::handlers::ExecEvent::Sync { .. }) => continue,
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => {
-                        return Err("broadcast channel closed".to_string());
-                    }
-                }
-            }
-        })
-        .await;
+        let poll_interval = Duration::from_millis(500);
+        let start = std::time::Instant::now();
+        // 连续错误计数器：防止数据库持续异常导致无限轮询；
+        // 单次成功查询或查询返回 None（记录尚未创建）时重置计数。
+        let mut consecutive_errors = 0;
+        let max_consecutive_errors = 5;
 
-        match result {
-            Ok(inner) => {
-                // inner 是 broadcast waiter 返回的 Result<String,String>
-                // 二次确认: 用 record_id 反查 execution_records 拿到实际 status
-                match inner {
-                    Ok(broadcast_status) => match self
-                        .ctx
-                        .db
-                        .get_execution_record(record_id)
-                        .await
-                    {
-                        Ok(Some(rec)) => Ok(rec.status.to_string()),
-                        Ok(None) => Ok(broadcast_status),
-                        Err(_) => Ok(broadcast_status),
-                    },
-                    Err(e) => Err(e),
+        loop {
+            if start.elapsed() > wait_timeout {
+                return Err(format!(
+                    "step execution (record #{}) timeout after 24h",
+                    record_id
+                ));
+            }
+
+            // 按 record_id 精确查询执行记录状态，避免 broadcast 竞态
+            match self.ctx.db.get_execution_record(record_id).await {
+                Ok(Some(rec)) => {
+                    // 成功获取记录，重置错误计数
+                    consecutive_errors = 0;
+                    let status_str = rec.status.to_string();
+                    if !matches!(rec.status, ExecutionStatus::Running) {
+                        return Ok(status_str);
+                    }
+                }
+                Ok(None) => {
+                    // 记录尚未创建（执行尚未开始或尚未提交），继续等待；
+                    // 这是合法状态，重置错误计数。
+                    consecutive_errors = 0;
+                }
+                Err(e) => {
+                    consecutive_errors += 1;
+                    warn!("wait_for_step_finish: get_execution_record #{} error (consecutive: {}/{}): {}",
+                          record_id, consecutive_errors, max_consecutive_errors, e);
+                    // 达到连续错误阈值时停止轮询，防止数据库故障导致 loop 永久挂起
+                    if consecutive_errors >= max_consecutive_errors {
+                        return Err(format!(
+                            "step execution (record #{}) aborted after {} consecutive DB errors",
+                            record_id, max_consecutive_errors
+                        ));
+                    }
                 }
             }
-            Err(_) => Err(format!(
-                "step execution (record #{}) timeout after 24h",
-                record_id
-            )),
+
+            tokio::time::sleep(poll_interval).await;
         }
     }
 

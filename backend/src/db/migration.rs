@@ -54,6 +54,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V15ReviewTemplates),
         Box::new(V16LoopStepExecutionSnapshotColumns),
         Box::new(V17ConsolidateReviewInstanceTodos),
+        Box::new(V18LoopHumanReview),
     ]
 }
 
@@ -2994,5 +2995,55 @@ mod v17_consolidate_review_instance_todos_tests {
             .await.expect("q").expect("row");
         let n: i64 = row.try_get_by("n").unwrap_or(0i64);
         assert!(n >= 1, "at least one old review todo must be soft-deleted");
+    }
+}
+
+// ===== V18: loop 人工审批支持 =====
+//
+// 需求：loop 环节增加人工审批能力，评审类型分为 "ai" 和 "human" 两种。
+// - loop_steps 新增 review_type 列（默认 'ai' = 现有 AI 自动评审）
+// - loop_step_executions 新增 approval_status（审批状态）和 approval_comment（审批备注）
+//
+// 向后兼容：review_type 默认为 'ai'，所有旧数据行为不变。
+pub(super) struct V18LoopHumanReview;
+
+#[async_trait]
+impl Migration for V18LoopHumanReview {
+    fn version(&self) -> i64 {
+        18
+    }
+    fn name(&self) -> &'static str {
+        "loop_human_review"
+    }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        // loop_steps.review_type: 'ai' = AI 自动评审, 'human' = 人工审批
+        add_column_if_missing(
+            db,
+            "loop_steps",
+            "review_type",
+            "ALTER TABLE loop_steps ADD COLUMN review_type TEXT NOT NULL DEFAULT 'ai'",
+        )
+        .await?;
+
+        // loop_step_executions.approval_status: NULL | 'pending' | 'approved'
+        add_column_if_missing(
+            db,
+            "loop_step_executions",
+            "approval_status",
+            "ALTER TABLE loop_step_executions ADD COLUMN approval_status TEXT",
+        )
+        .await?;
+
+        // loop_step_executions.approval_comment: 审批人的备注/意见
+        add_column_if_missing(
+            db,
+            "loop_step_executions",
+            "approval_comment",
+            "ALTER TABLE loop_step_executions ADD COLUMN approval_comment TEXT",
+        )
+        .await?;
+
+        Ok(())
     }
 }

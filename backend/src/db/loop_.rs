@@ -11,7 +11,7 @@
 //! 不抽象 DAO trait，因为 codebase 其它 db 文件都这样做）。
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
-    Set,
+    Set, DbBackend, ConnectionTrait, Statement,
 };
 use std::collections::HashMap;
 
@@ -168,6 +168,7 @@ impl Database {
                 s.success_goto_step_id,
                 &s.on_rating_fail,
                 s.fail_goto_step_id,
+                &s.review_type,
             )
             .await?;
         }
@@ -330,6 +331,7 @@ impl Database {
         success_goto_step_id: Option<i64>,
         on_rating_fail: &str,
         fail_goto_step_id: Option<i64>,
+        review_type: &str,
     ) -> Result<loop_steps::Model, sea_orm::DbErr> {
         // 自动分配 order_index: 当前最大 + 1
         let next_order = self
@@ -356,6 +358,7 @@ impl Database {
             success_goto_step_id: ActiveValue::Set(success_goto_step_id),
             on_rating_fail: ActiveValue::Set(on_rating_fail.to_string()),
             fail_goto_step_id: ActiveValue::Set(fail_goto_step_id),
+            review_type: ActiveValue::Set(review_type.to_string()),
             created_at: ActiveValue::Set(Some(now)),
             ..Default::default()
         };
@@ -377,6 +380,7 @@ impl Database {
         success_goto_step_id: Option<i64>,
         on_rating_fail: &str,
         fail_goto_step_id: Option<i64>,
+        review_type: &str,
     ) -> Result<(), sea_orm::DbErr> {
         let existing = loop_steps::Entity::find_by_id(id).one(&self.conn).await?;
         if let Some(c) = existing {
@@ -394,6 +398,7 @@ impl Database {
             am.success_goto_step_id = ActiveValue::Set(success_goto_step_id);
             am.on_rating_fail = ActiveValue::Set(on_rating_fail.to_string());
             am.fail_goto_step_id = ActiveValue::Set(fail_goto_step_id);
+            am.review_type = ActiveValue::Set(review_type.to_string());
             am.update(&self.conn).await?;
         }
         Ok(())
@@ -484,6 +489,61 @@ impl Database {
             .count(&self.conn)
             .await
             .map(|c| c as i64)
+    }
+
+    /// 统计该 loop 下所有待人工审批的环节执行数。
+    /// 条件：loop_step_executions 关联到该 loop 的运行中 execution，且 approval_status = 'pending'。
+    pub async fn count_pending_approvals_for_loop(
+        &self,
+        loop_id: i64,
+    ) -> Result<i32, sea_orm::DbErr> {
+        use sea_orm::{ConnectionTrait, Statement};
+        let sql = format!(
+            "SELECT COUNT(*) AS n FROM loop_step_executions lse \
+             INNER JOIN loop_executions le ON le.id = lse.loop_execution_id \
+             WHERE le.loop_id = {} AND lse.approval_status = 'pending'",
+            loop_id
+        );
+        let row = self
+            .conn
+            .query_one(Statement::from_string(DbBackend::Sqlite, sql))
+            .await?
+            .ok_or(sea_orm::DbErr::RecordNotFound("count query returned no rows".into()))?;
+        Ok(row.try_get_by::<i32, _>("n").unwrap_or(0))
+    }
+
+    /// 批量查询指定 loop_execution 列表的待审批数，返回 execution_id → count 映射。
+    pub async fn count_pending_approvals_by_execution_ids(
+        &self,
+        execution_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, i32>, sea_orm::DbErr> {
+        use sea_orm::{ConnectionTrait, Statement};
+        let mut map = std::collections::HashMap::new();
+        if execution_ids.is_empty() {
+            return Ok(map);
+        }
+        let ids_str: String = execution_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT lse.loop_execution_id, COUNT(*) AS n \
+             FROM loop_step_executions lse \
+             WHERE lse.loop_execution_id IN ({}) AND lse.approval_status = 'pending' \
+             GROUP BY lse.loop_execution_id",
+            ids_str
+        );
+        let rows = self
+            .conn
+            .query_all(Statement::from_string(DbBackend::Sqlite, sql))
+            .await?;
+        for row in rows {
+            let exec_id: i64 = row.try_get_by("loop_execution_id")?;
+            let n: i32 = row.try_get_by("n").unwrap_or(0);
+            map.insert(exec_id, n);
+        }
+        Ok(map)
     }
 
     /// 终态化 loop execution: 设置 status、finished_at 并按需累加 completed/failed 计数。
@@ -642,6 +702,42 @@ impl Database {
         Ok(())
     }
 
+    /// 设置环节执行记录的审批状态（人工审批流程专用）。
+    pub async fn set_step_execution_approval_status(
+        &self,
+        id: i64,
+        approval_status: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        let existing = loop_step_executions::Entity::find_by_id(id).one(&self.conn).await?;
+        if let Some(c) = existing {
+            let mut am: loop_step_executions::ActiveModel = c.into();
+            am.approval_status = ActiveValue::Set(Some(approval_status.to_string()));
+            am.update(&self.conn).await?;
+        }
+        Ok(())
+    }
+
+    /// 人工审批：写入评分、审批意见，更新状态。
+    /// 调用前由 handler 校验 approval_status = "pending"。
+    pub async fn approve_step_execution(
+        &self,
+        id: i64,
+        rating: i32,
+        status: &str,
+        comment: Option<&str>,
+    ) -> Result<(), sea_orm::DbErr> {
+        let existing = loop_step_executions::Entity::find_by_id(id).one(&self.conn).await?;
+        if let Some(c) = existing {
+            let mut am: loop_step_executions::ActiveModel = c.into();
+            am.rating = ActiveValue::Set(Some(rating));
+            am.status = ActiveValue::Set(status.to_string());
+            am.approval_status = ActiveValue::Set(Some("approved".to_string()));
+            am.approval_comment = ActiveValue::Set(comment.map(|s| s.to_string()));
+            am.update(&self.conn).await?;
+        }
+        Ok(())
+    }
+
     // ====== 辅助：批量取 step + todo 元信息 ======
 
     /// 一次 SQL 把 step + 关联 todo 的 title/executor/status 拉出来。
@@ -657,6 +753,7 @@ impl Database {
             "SELECT s.id, s.loop_id, s.name, s.description, s.order_index, s.step_id, \
                     s.run_mode, s.skip_on_source_failed, s.min_rating, s.unrated_policy, \
                     s.on_success, s.success_goto_step_id, s.on_rating_fail, s.fail_goto_step_id, \
+                    s.review_type, \
                     s.enabled, s.created_at, \
                     t.title as todo_title, st.executor as todo_executor, t.status as todo_status \
              FROM loop_steps s \
@@ -687,6 +784,7 @@ impl Database {
                 success_goto_step_id: row.try_get_by::<Option<i64>, _>("success_goto_step_id")?,
                 on_rating_fail: row.try_get_by::<String, _>("on_rating_fail")?,
                 fail_goto_step_id: row.try_get_by::<Option<i64>, _>("fail_goto_step_id")?,
+                review_type: row.try_get_by::<String, _>("review_type")?,
                 enabled: row.try_get_by::<i32, _>("enabled")?,
                 created_at: row.try_get_by::<Option<String>, _>("created_at")?,
             };
@@ -719,7 +817,10 @@ impl Database {
                           (SELECT le.status FROM loop_executions le \
                            WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_status, \
                           (SELECT le.started_at FROM loop_executions le \
-                           WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_at \
+                           WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_at, \
+                          (SELECT COUNT(*) FROM loop_step_executions lse \
+                           INNER JOIN loop_executions le2 ON le2.id = lse.loop_execution_id \
+                           WHERE le2.loop_id = l.id AND lse.approval_status = 'pending') as pending_approval_count \
                    FROM loops l \
                    WHERE l.workspace = ?1 \
                    ORDER BY l.updated_at DESC",
@@ -730,7 +831,10 @@ impl Database {
                       (SELECT le.status FROM loop_executions le \
                        WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_status, \
                       (SELECT le.started_at FROM loop_executions le \
-                       WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_at \
+                       WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_at, \
+                      (SELECT COUNT(*) FROM loop_step_executions lse \
+                       INNER JOIN loop_executions le2 ON le2.id = lse.loop_execution_id \
+                       WHERE le2.loop_id = l.id AND lse.approval_status = 'pending') as pending_approval_count \
                    FROM loops l \
                    ORDER BY l.updated_at DESC",
         };
@@ -768,6 +872,7 @@ impl Database {
                     .unwrap_or_default(),
                 last_execution_at: row
                     .try_get_by::<Option<String>, _>("last_execution_at")?,
+                pending_approval_count: row.try_get_by::<i32, _>("pending_approval_count").unwrap_or(0),
             });
         }
         Ok(out)
@@ -791,12 +896,15 @@ impl Database {
         let todo_map: HashMap<i64, _> = todos.into_iter().map(|t| (t.id, t)).collect();
         let steps: Vec<loop_steps::Model> =
             steps_with_meta.iter().map(|(s, _, _, _)| s.clone()).collect();
+        // 统计该 loop 下待人工审批的环节执行数
+        let pending_approval_count = self.count_pending_approvals_for_loop(loop_id).await?;
         Ok(Some(LoopFullView {
             loop_,
             triggers,
             steps,
             steps_meta: steps_with_meta,
             todo_map,
+            pending_approval_count,
         }))
     }
 }
@@ -809,6 +917,8 @@ pub struct LoopListRow {
     pub step_count: i32,
     pub last_execution_status: String,
     pub last_execution_at: Option<String>,
+    /// 该 loop 下所有待人工审批的环节执行数
+    pub pending_approval_count: i32,
 }
 
 /// LoopStudio 详情页单次请求所需的完整数据。
@@ -820,4 +930,6 @@ pub struct LoopFullView {
     /// (step, todo_title, todo_executor, todo_status)
     pub steps_meta: Vec<(loop_steps::Model, String, String, String)>,
     pub todo_map: HashMap<i64, crate::db::entity::todos::Model>,
+    /// 该 loop 下待人工审批的环节执行数
+    pub pending_approval_count: i32,
 }

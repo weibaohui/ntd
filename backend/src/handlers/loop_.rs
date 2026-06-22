@@ -28,7 +28,7 @@ use crate::models::{
     LoopDetail, LoopDto, LoopExecutionDetail, LoopExecutionDto, LoopExecutionTokenSummary,
     LoopListItem, LoopStepDto, LoopStepExecutionDto, LoopTriggerDto, ReorderLoopStepsRequest,
     UpdateLoopRequest, UpdateLoopStatusRequest, UpdateLoopStepRequest,
-    UpdateTriggerRequest,
+    UpdateTriggerRequest, ApproveStepExecutionRequest,
 };
 
 const DEFAULT_PAGE_LIMIT: u64 = 20;
@@ -316,6 +316,7 @@ pub async fn create_loop_step(
             req.success_goto_step_id,
             &req.on_rating_fail,
             req.fail_goto_step_id,
+            &req.review_type,
         )
         .await?;
     let (_, todo_title, todo_executor, todo_status) = state
@@ -390,6 +391,7 @@ pub async fn update_loop_step(
             req.success_goto_step_id,
             &req.on_rating_fail,
             req.fail_goto_step_id,
+            &req.review_type,
         )
         .await?;
     let (_, todo_title, todo_executor, todo_status) = state
@@ -414,6 +416,81 @@ pub async fn delete_loop_step(
     state.db.get_loop_step(sid).await?.ok_or(AppError::NotFound)?;
     state.db.delete_loop_step(sid).await?;
     Ok(ApiResponse::ok(()))
+}
+
+/// POST /api/loops/{loop_id}/executions/{execution_id}/steps/{step_execution_id}/approve
+/// 人工审批：对等待审批的环节执行记录打分并继续 loop 执行。
+pub async fn approve_step_execution(
+    State(state): State<AppState>,
+    Path((_loop_id, execution_id, step_execution_id)): Path<(i64, i64, i64)>,
+    Json(req): Json<ApproveStepExecutionRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    // 1. 校验评分范围
+    if req.rating < 0 || req.rating > 100 {
+        return Err(AppError::BadRequest("评分必须在 0-100 之间".to_string()));
+    }
+
+    // 2. 查询 step_execution 记录
+    let step_execs = state.db.list_loop_step_executions(execution_id).await?;
+    let step_exec = step_execs
+        .iter()
+        .find(|se| se.id == step_execution_id)
+        .ok_or_else(|| AppError::NotFound)?;
+
+    // 2.5. 校验 execution 归属于指定 loop_id，防止路径参数伪造
+    // 先获取 loop_execution 记录，确认其 loop_id 与 URL 路径中的 _loop_id 一致
+    let loop_exec = state
+        .db
+        .get_loop_execution(execution_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound)?;
+    if loop_exec.loop_id != _loop_id {
+        return Err(AppError::BadRequest(
+            "该 execution 不属于指定的 loop".to_string(),
+        ));
+    }
+
+    // 3. 校验当前状态是 "pending_approval"
+    if step_exec.status != "pending_approval" {
+        return Err(AppError::BadRequest(
+            "该环节当前不需要审批".to_string(),
+        ));
+    }
+
+    // 4. 根据评分和阈值决定最终状态
+    let min_rating = step_exec.min_rating.unwrap_or(0);
+    let final_status = if req.rating >= min_rating { "success" } else { "failed" };
+
+    // 5. 写入审批结果
+    state
+        .db
+        .approve_step_execution(
+            step_execution_id,
+            req.rating,
+            final_status,
+            req.comment.as_deref(),
+        )
+        .await?;
+
+    // 5b. 发送 WebSocket 事件触发前端刷新
+    let _ = state.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+        record_id: step_exec.execution_record_id.unwrap_or(0),
+        todo_id: step_exec.todo_id,
+        review_status: final_status.to_string(),
+    });
+
+    // 6. 尝试恢复 loop 执行
+    let runner = state
+        .loop_runner
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("loop runner not ready".to_string()))?;
+    runner.resume_loop_execution(execution_id).await;
+
+    Ok(ApiResponse::ok(serde_json::json!({
+        "step_execution_id": step_execution_id,
+        "rating": req.rating,
+        "status": final_status,
+    })))
 }
 
 pub async fn reorder_loop_steps(
@@ -444,7 +521,14 @@ pub async fn list_executions(
     let offset = (page - 1) * limit;
     let records = state.db.list_loop_executions(loop_id, limit, offset).await?;
     let total = state.db.count_loop_executions(loop_id).await?;
-    let items: Vec<LoopExecutionDto> = records.into_iter().map(Into::into).collect();
+    // 批量查询各执行记录的待审批数量
+    let exec_ids: Vec<i64> = records.iter().map(|r| r.id).collect();
+    let pending_counts = state.db.count_pending_approvals_by_execution_ids(&exec_ids).await?;
+    let mut items: Vec<LoopExecutionDto> = records.into_iter().map(Into::into).collect();
+    // 填充 pending_approval_count
+    for item in &mut items {
+        item.pending_approval_count = pending_counts.get(&item.id).copied().unwrap_or(0);
+    }
     Ok(ApiResponse::ok(serde_json::json!({
         "items": items,
         "total": total,
@@ -594,4 +678,5 @@ pub fn loop_routes() -> axum::Router<AppState> {
         )
         .route("/api/loops/{id}/executions", get(list_executions))
         .route("/api/loops/{id}/executions/{eid}", get(get_execution))
+        .route("/api/loops/{id}/executions/{eid}/steps/{seid}/approve", post(approve_step_execution))
 }

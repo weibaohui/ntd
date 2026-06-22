@@ -157,6 +157,23 @@ export async function getExecution(
   return unwrap(await api.get(`/api/loops/${loopId}/executions/${executionId}`));
 }
 
+/**
+ * 人工审批环节执行。
+ * POST /api/loops/{loopId}/executions/{executionId}/steps/{stepExecutionId}/approve
+ */
+export async function approveStepExecution(
+  loopId: number,
+  executionId: number,
+  stepExecutionId: number,
+  rating: number,
+  comment?: string,
+): Promise<{ step_execution_id: number; rating: number; status: string }> {
+  return unwrap(await api.post(
+    `/api/loops/${loopId}/executions/${executionId}/steps/${stepExecutionId}/approve`,
+    { rating, comment },
+  ));
+}
+
 // ─── 批量操作（占位实现） ────────────────────────────────────────
 
 /**

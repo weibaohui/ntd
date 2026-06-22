@@ -67,6 +67,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
       on_rating_fail: step.on_rating_fail,
       fail_goto_step_id: step.fail_goto_step_id,
       skip_on_source_failed: step.skip_on_source_failed,
+      review_type: step.review_type ?? 'ai',
     });
     setModalOpen(true);
   }, [form]);
@@ -100,6 +101,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
           success_goto_step_id: values.success_goto_step_id ?? null,
           on_rating_fail: values.on_rating_fail ?? 'break',
           fail_goto_step_id: values.fail_goto_step_id ?? null,
+          review_type: values.review_type ?? 'ai',
         });
         message.success('环节已更新');
       } else {
@@ -116,6 +118,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
           success_goto_step_id: values.success_goto_step_id ?? null,
           on_rating_fail: values.on_rating_fail ?? 'break',
           fail_goto_step_id: values.fail_goto_step_id ?? null,
+          review_type: values.review_type ?? 'ai',
         });
         message.success('环节已添加');
       }
@@ -233,7 +236,18 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12, color: 'var(--color-warning, #f97316)' }}>
             评分门禁
           </div>
-          <Form.Item label="评分阈值" name="min_rating" tooltip="启用后 AI 自动评分，低于此值视为不通过（0-100，留空=不启用）">
+          <Form.Item
+            label="评审类型"
+            name="review_type"
+            initialValue="ai"
+            tooltip="AI 自动评审：执行完后 AI 自动打分；人工审批：执行完后暂停等待人工打分"
+          >
+            <Select>
+              <Select.Option value="ai">🤖 AI 自动评审</Select.Option>
+              <Select.Option value="human">👤 人工审批</Select.Option>
+            </Select>
+          </Form.Item>
+          <Form.Item label="评分阈值" name="min_rating" tooltip="启用后根据评审类型进行评分，低于此值视为不通过（0-100，留空=不启用）">
             <InputNumber min={0} max={100} placeholder="留空=不启用" style={{ width: '100%' }} />
           </Form.Item>
 

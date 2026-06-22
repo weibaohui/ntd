@@ -21,6 +21,9 @@ pub struct LoopListItem {
     pub step_count: i32,
     pub last_execution_status: String,
     pub last_execution_at: Option<String>,
+    /// 该 loop 下所有待人工审批的环节执行数
+    #[serde(default)]
+    pub pending_approval_count: i32,
 }
 
 impl From<LoopListRow> for LoopListItem {
@@ -31,6 +34,7 @@ impl From<LoopListRow> for LoopListItem {
             step_count: row.step_count,
             last_execution_status: row.last_execution_status,
             last_execution_at: row.last_execution_at,
+            pending_approval_count: row.pending_approval_count,
         }
     }
 }
@@ -44,6 +48,9 @@ pub struct LoopDetail {
     pub steps: Vec<LoopStepDto>,
     /// todo_id -> TodoDto,前端展示 step 关联的 todo 信息时直接 lookup
     pub todo_map: std::collections::HashMap<i64, TodoSummary>,
+    /// 待人工审批的环节执行数（approval_status='pending' 的 loop_step_executions 数量）
+    #[serde(default)]
+    pub pending_approval_count: i32,
 }
 
 impl From<LoopFullView> for LoopDetail {
@@ -78,6 +85,7 @@ impl From<LoopFullView> for LoopDetail {
             triggers: view.triggers.into_iter().map(Into::into).collect(),
             steps,
             todo_map,
+            pending_approval_count: view.pending_approval_count,
         }
     }
 }
@@ -176,6 +184,8 @@ pub struct LoopStepRawDto {
     pub success_goto_step_id: Option<i64>,
     pub on_rating_fail: String,
     pub fail_goto_step_id: Option<i64>,
+    /// 评审类型: "ai" = AI 自动评审, "human" = 人工审批
+    pub review_type: String,
     pub enabled: bool,
     pub created_at: Option<String>,
 }
@@ -197,6 +207,7 @@ impl From<loop_steps::Model> for LoopStepRawDto {
             success_goto_step_id: m.success_goto_step_id,
             on_rating_fail: m.on_rating_fail,
             fail_goto_step_id: m.fail_goto_step_id,
+            review_type: m.review_type,
             enabled: m.enabled != 0,
             created_at: m.created_at,
         }
@@ -216,6 +227,9 @@ pub struct LoopExecutionDto {
     pub total_steps: i32,
     pub completed_steps: i32,
     pub failed_steps: i32,
+    /// 待人工审批的环节数（approval_status='pending' 的 loop_step_executions 数量）
+    #[serde(default)]
+    pub pending_approval_count: i32,
 }
 
 impl From<loop_executions::Model> for LoopExecutionDto {
@@ -232,6 +246,7 @@ impl From<loop_executions::Model> for LoopExecutionDto {
             total_steps: m.total_steps,
             completed_steps: m.completed_steps,
             failed_steps: m.failed_steps,
+            pending_approval_count: 0, // 由 handler 后续查询填充
         }
     }
 }
@@ -259,6 +274,10 @@ pub struct LoopStepExecutionDto {
     pub sequence_index: i32,
     /// 本次步执行的结论摘要
     pub conclusion: Option<String>,
+    /// 人工审批状态: NULL | "pending" | "approved"
+    pub approval_status: Option<String>,
+    /// 审批人的备注/意见
+    pub approval_comment: Option<String>,
     /// 本次环节执行消耗的 token（从 execution_record.usage JSON 解析）
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
@@ -285,6 +304,8 @@ impl From<loop_step_executions::Model> for LoopStepExecutionDto {
             step_name: None,
             sequence_index: m.sequence_index,
             conclusion: m.conclusion,
+            approval_status: m.approval_status,
+            approval_comment: m.approval_comment,
             input_tokens: None,
             output_tokens: None,
             cache_read_input_tokens: None,
@@ -408,12 +429,16 @@ pub struct CreateLoopStepRequest {
     pub on_rating_fail: String,
     #[serde(default)]
     pub fail_goto_step_id: Option<i64>,
+    /// 评审类型: "ai" | "human"（默认 "ai"）
+    #[serde(default = "default_review_type")]
+    pub review_type: String,
 }
 
 fn default_run_mode() -> String { "sequential".to_string() }
 fn default_unrated_policy() -> String { "skip".to_string() }
 fn default_on_success() -> String { "next".to_string() }
 fn default_on_rating_fail() -> String { "break".to_string() }
+fn default_review_type() -> String { "ai".to_string() }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateLoopStepRequest {
@@ -429,6 +454,18 @@ pub struct UpdateLoopStepRequest {
     pub success_goto_step_id: Option<i64>,
     pub on_rating_fail: String,
     pub fail_goto_step_id: Option<i64>,
+    /// 评审类型: "ai" | "human"（默认 "ai"）
+    #[serde(default = "default_review_type")]
+    pub review_type: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApproveStepExecutionRequest {
+    /// 审批人给出的评分 (0-100)
+    pub rating: i32,
+    /// 审批人的备注/意见（可选）
+    #[serde(default)]
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -480,6 +517,7 @@ pub fn loop_status_color(status: &str) -> &'static str {
 pub fn step_execution_color(status: &str) -> &'static str {
     match status {
         "pending" => "#bfbfbf",
+        "pending_approval" => "#fa8c16", // 等待人工审批
         "running" => "#1890ff",
         "success" => "#52c41a",
         "failed" => "#f5222d",

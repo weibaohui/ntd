@@ -13,9 +13,9 @@ import {
   CloseCircleOutlined,
   LoadingOutlined,
   MinusCircleOutlined,
-  StarOutlined,
   ArrowRightOutlined,
   ReadOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import type { LoopExecutionDto, LoopExecutionDetail, LoopExecutionTokenSummary } from '@/types/loop';
@@ -43,6 +43,7 @@ function execStatusView(status: string): { color: string; icon: React.ReactNode;
     case 'capped':
     case 'capped_step': return { color: 'gold', icon: <MinusCircleOutlined />, label: '步数超限' };
     case 'capped_token': return { color: 'purple', icon: <MinusCircleOutlined />, label: 'Token 超限' };
+    case 'pending_approval': return { color: 'orange', icon: <ExclamationCircleOutlined />, label: '等待审批' };
     default: return { color: 'default', icon: <MinusCircleOutlined />, label: status };
   }
 }
@@ -265,8 +266,10 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
                     <span style={{ fontWeight: 600, fontSize: 14 }}>#{e.id}</span>
                     <Tag color={view.color}>{view.label}</Tag>
                     <Tag>{e.trigger_type}</Tag>
-                    {e.failed_steps > 0 && (
-                      <Tag color="red">{e.failed_steps} 失败</Tag>
+                    {e.pending_approval_count > 0 && (
+                      <Tag color="red" style={{ fontWeight: 600 }}>
+                        <ExclamationCircleOutlined /> {e.pending_approval_count} 待审批
+                      </Tag>
                     )}
                     <Button
                       size="small"
@@ -308,7 +311,7 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
                         {expandedDetail.token_summary && (
                           <TokenSummaryBar summary={expandedDetail.token_summary} />
                         )}
-                        <StepExecList stepExecs={expandedDetail.step_executions} />
+                        <StepExecList stepExecs={expandedDetail.step_executions} loopId={loopId} executionId={expandedDetail.id} onApproved={() => loadPage(page)} />
                       </>
                     ) : null}
                   </div>
@@ -450,9 +453,14 @@ function BlackboardDrawer({ open, stepExecs, onClose }: {
 }
 
 // 环节执行卡片：卡片式布局 + 箭头连接展示执行顺序，每张卡展示执行详情
-function StepExecList({ stepExecs }: { stepExecs: Record<string, any>[] }) {
+function StepExecList({ stepExecs, loopId, executionId, onApproved }: { stepExecs: Record<string, any>[]; loopId: number; executionId: number; onApproved: () => void }) {
+  const { message } = AntApp.useApp();
   const [drawerRecord, setDrawerRecord] = useState<any | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
+  // 人工审批状态
+  const [approvingId, setApprovingId] = useState<number | null>(null);
+  const [approveRating, setApproveRating] = useState<number>(70);
+  const [approveComment, setApproveComment] = useState<string>('');
 
   const handleCardClick = useCallback(async (s: any) => {
     if (!s.execution_record_id) return;
@@ -467,6 +475,25 @@ function StepExecList({ stepExecs }: { stepExecs: Record<string, any>[] }) {
       setDrawerLoading(false);
     }
   }, []);
+
+  // 人工审批提交
+  const handleApprove = useCallback(async (stepExecutionId: number) => {
+    setApprovingId(stepExecutionId);
+    try {
+      const { approveStepExecution } = await import('@/utils/database/loops');
+      await approveStepExecution(loopId, executionId, stepExecutionId, approveRating, approveComment || undefined);
+      message.success('审批已提交');
+      // 重置审批表单状态为初始值，防止下一张待审卡片复用上次的评分与备注；
+      // 70 分是默认通过评分，空字符串确保备注框干净。
+      setApproveRating(70);
+      setApproveComment('');
+      onApproved();
+    } catch (e: any) {
+      message.error(e?.message || '审批失败');
+    } finally {
+      setApprovingId(null);
+    }
+  }, [loopId, executionId, approveRating, approveComment, message, onApproved]);
 
   if (stepExecs.length === 0) {
     return <Empty description="无环节执行记录" />;
@@ -529,71 +556,29 @@ function StepExecList({ stepExecs }: { stepExecs: Record<string, any>[] }) {
               </div>
 
               {/* 评分 / 阈值 */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
-                {s.rating != null ? (
-                  <span style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 2,
-                    padding: '1px 6px', borderRadius: 4, fontSize: 12,
-                    background: ratingPassed ? 'var(--color-success-bg, #f0fdf4)' : 'var(--color-error-bg, #fef2f2)',
-                    color: ratingPassed ? 'var(--color-success, #22c55e)' : 'var(--color-error, #ef4444)',
-                    fontWeight: 600,
-                  }}>
-                    <StarOutlined style={{ fontSize: 10 }} /> {s.rating}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+                {s.min_rating != null && (
+                  <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+                    阈值 {s.min_rating}
                   </span>
+                )}
+                {s.rating != null ? (
+                  <>
+                    <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+                      评分 {s.rating}
+                    </span>
+                    <span style={{
+                      padding: '1px 6px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                      background: ratingPassed ? 'var(--color-success-bg, #f0fdf4)' : 'var(--color-error-bg, #fef2f2)',
+                      color: ratingPassed ? 'var(--color-success, #22c55e)' : 'var(--color-error, #ef4444)',
+                    }}>
+                      {ratingPassed ? '通过' : '不通过'}
+                    </span>
+                  </>
                 ) : (
                   <span style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>未评审</span>
                 )}
-                {s.min_rating != null && (
-                  <span style={{ fontSize: 11, color: s.rating != null && s.rating >= s.min_rating ? 'var(--color-success, #22c55e)' : 'var(--color-error, #ef4444)' }}>
-                    {s.rating != null && (s.rating >= s.min_rating ? '✅' : '❌')} {s.min_rating}
-                  </span>
-                )}
               </div>
-
-              {/* Token 消耗：从 execution_record.usage 解析 */}
-              {(s.input_tokens != null || s.output_tokens != null) && (
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap',
-                  marginTop: 4, marginBottom: 4,
-                }}>
-                  {s.input_tokens != null && (
-                    <span style={{
-                      padding: '1px 5px', borderRadius: 3,
-                      background: 'var(--color-info-bg)', fontSize: 10, color: 'var(--color-info)',
-                      fontWeight: 500, fontFamily: 'monospace',
-                    }}>
-                      i{formatToken(s.input_tokens)}
-                    </span>
-                  )}
-                  {s.output_tokens != null && (
-                    <span style={{
-                      padding: '1px 5px', borderRadius: 3,
-                      background: 'var(--color-success-bg)', fontSize: 10, color: 'var(--color-success)',
-                      fontWeight: 500, fontFamily: 'monospace',
-                    }}>
-                      o{formatToken(s.output_tokens)}
-                    </span>
-                  )}
-                  {s.cache_read_input_tokens != null && s.cache_read_input_tokens > 0 && (
-                    <span style={{
-                      padding: '1px 5px', borderRadius: 3,
-                      background: 'var(--color-info-bg)', fontSize: 10, color: 'var(--color-primary)',
-                      fontWeight: 500, fontFamily: 'monospace',
-                    }}>
-                      cr{formatToken(s.cache_read_input_tokens)}
-                    </span>
-                  )}
-                  {s.total_cost_usd != null && s.total_cost_usd > 0 && (
-                    <span style={{
-                      padding: '1px 5px', borderRadius: 3,
-                      background: 'var(--color-warning-bg)', fontSize: 10, color: 'var(--color-warning)',
-                      fontWeight: 500, fontFamily: 'monospace',
-                    }}>
-                      {formatCost(s.total_cost_usd)}
-                    </span>
-                  )}
-                </div>
-              )}
 
               {/* 结论（黑板） */}
               {s.conclusion && (
@@ -616,10 +601,82 @@ function StepExecList({ stepExecs }: { stepExecs: Record<string, any>[] }) {
                 · 结束 {s.finished_at ? new Date(s.finished_at).toLocaleTimeString() : '-'}
               </div>
 
+              {/* Token 消耗 */}
+              {(s.input_tokens != null || s.output_tokens != null) && (
+                <div style={{
+                  display: 'flex', flexWrap: 'wrap', gap: 4,
+                  marginTop: 4, fontSize: 10, color: 'var(--color-text-tertiary)',
+                }}>
+                  {s.input_tokens != null && (
+                    <span>输入 {formatToken(s.input_tokens)}</span>
+                  )}
+                  {s.output_tokens != null && (
+                    <span>输出 {formatToken(s.output_tokens)}</span>
+                  )}
+                  {s.cache_read_input_tokens != null && s.cache_read_input_tokens > 0 && (
+                    <span>缓存读 {formatToken(s.cache_read_input_tokens)}</span>
+                  )}
+                </div>
+              )}
+
               {/* 错误 */}
               {s.error_message && (
                 <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-error, #ef4444)', lineHeight: 1.4 }}>
                   {s.error_message}
+                </div>
+              )}
+
+              {/* 人工审批操作区域：pending_approval 状态时显示 */}
+              {s.status === 'pending_approval' && (
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    marginTop: 8,
+                    padding: '8px 10px',
+                    background: 'var(--color-warning-bg, #fffbeb)',
+                    border: '1px solid var(--color-warning, #f59e0b)',
+                    borderRadius: 8,
+                  }}
+                >
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-warning, #f59e0b)', marginBottom: 6 }}>
+                    ⏳ 等待人工审批
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>评分</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={approveRating}
+                      onChange={(e) => setApproveRating(Number(e.target.value))}
+                      style={{ flex: 1, minWidth: 60 }}
+                    />
+                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text)', minWidth: 24, textAlign: 'right' }}>
+                      {approveRating}
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="审批意见（可选）"
+                    value={approveComment}
+                    onChange={(e) => setApproveComment(e.target.value)}
+                    style={{
+                      width: '100%', padding: '3px 6px', fontSize: 11,
+                      borderRadius: 4, border: '1px solid var(--color-border, #e2e8f0)',
+                      background: 'var(--color-bg-elevated, #fff)',
+                      color: 'var(--color-text)',
+                      marginBottom: 6, boxSizing: 'border-box',
+                    }}
+                  />
+                  <Button
+                    size="small"
+                    type="primary"
+                    loading={approvingId === s.id}
+                    onClick={() => handleApprove(s.id)}
+                    style={{ width: '100%', fontSize: 11 }}
+                  >
+                    提交审批
+                  </Button>
                 </div>
               )}
             </div>

@@ -30,6 +30,10 @@ pub struct Model {
     pub sequence_index: i32,
     /// 本次步执行的核心结论摘要
     pub conclusion: Option<String>,
+    /// 人工审批状态: NULL | "pending" | "approved"（非人工审批环节为 NULL）
+    pub approval_status: Option<String>,
+    /// 审批人的备注/意见
+    pub approval_comment: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

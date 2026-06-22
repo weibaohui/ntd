@@ -20,6 +20,7 @@ import {
   DeleteOutlined,
   EditOutlined,
   PlusOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import * as dbReviewTemplates from '@/utils/database/reviewTemplates';
@@ -305,6 +306,21 @@ export function LoopDetailPanel({
               );
             })() : <EmptyValue />
           } />
+          {/* 待人工审批提示 */}
+          {detail.pending_approval_count > 0 && (
+            <DetailField label="待审批" value={
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '2px 10px', borderRadius: 12,
+                background: 'var(--color-error-bg, #fef2f2)',
+                color: 'var(--color-error, #ef4444)',
+                fontWeight: 700, fontSize: 14,
+              }}>
+                <ExclamationCircleOutlined />
+                {detail.pending_approval_count} 条待审批
+              </span>
+            } />
+          )}
         </div>
       </DetailSection>
 
@@ -386,7 +402,7 @@ export function LoopDetailPanel({
         />
       </div>
 
-      {/* 折叠区: 执行历史, 默认收起 */}
+      {/* 折叠区: 执行历史 */}
       <div style={{
         background: 'var(--color-bg-elevated, #ffffff)',
         border: '1px solid var(--color-border, #e2e8f0)',
@@ -397,7 +413,7 @@ export function LoopDetailPanel({
         <Collapse
           ghost
           expandIconPosition="end"
-          defaultActiveKey={[]}
+          defaultActiveKey={['executions']}
           items={[
             {
               key: 'executions',
