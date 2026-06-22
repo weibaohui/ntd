@@ -15,5 +15,8 @@ export const VIRTUAL_NODE_SIZE = VIRTUAL_NODE_RADIUS * 2;
 // 同时也是 buildEdgePath 中回环控制点的 Y 偏移（绝对值）。
 export const LOOP_BACK_TOP_PADDING = 100;
 
+/** 自环（goto self）折线底部距环节底边的垂直距离。 */
+export const SELF_LOOP_GAP = 50;
+
 export const START_NODE_ID = -1;
 export const END_NODE_ID = -2;

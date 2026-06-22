@@ -1,10 +1,12 @@
 // Loop 流程图边渲染 + 路径/中点计算。
 //
-// 边分两类：
+// 边分三类：
 // 1) 普通前向边（success-next / success-goto / fail-skip / fail-goto / fail-break / end）：
 //    横向 S 形贝塞尔曲线，按 EDGE_STYLES 着色。
 // 2) 回环边（isLoopBack=true）：目标 step 排在源 step 之前的 goto。
 //    用 U 形向上拱的曲线 + 加重样式 + 白底加粗标签，从普通边里跳出来。
+// 3) 自环边（isSelfLoop=true）：goto-self（重试），从环节右下角出、左下角入，
+//    底部走 U 形折线，橙色/红色标识。
 //
 // 之所以独立成文件：让 LoopFlowGraph 主文件保持在 500 行硬限内，
 // 边相关的样式/路径/标签测量都是独立关注点。
@@ -12,7 +14,7 @@
 import type { LoopStepDto } from '@/types/loop';
 import {
   START_NODE_ID, END_NODE_ID, VIRTUAL_NODE_RADIUS,
-  NODE_WIDTH, NODE_HEIGHT, LOOP_BACK_TOP_PADDING,
+  NODE_WIDTH, NODE_HEIGHT, LOOP_BACK_TOP_PADDING, SELF_LOOP_GAP,
 } from '@/components/loop-flow/flowConstants';
 import type { LayoutNode, LayoutEdge, EdgeType } from '@/components/loop-flow/flowTypes';
 
@@ -99,6 +101,20 @@ export function buildEdgePath(
   edge: LayoutEdge, nodes: LayoutNode[],
   startX: number, startY: number, endX: number, endY: number,
 ): string {
+  if (edge.isSelfLoop) {
+    // 自环（goto-self）：从环节右侧偏下位置出发，向下走 SELF_LOOP_GAP，
+    // 水平横穿到环节左侧，再向上回到左侧偏下位置。
+    // 路径：右→下→左→上，形成底部折线。
+    const node = nodes.find(n => n.id === edge.fromId);
+    if (!node) return '';
+    const exitX = node.x + NODE_WIDTH;
+    const exitY = node.y + NODE_HEIGHT * 0.60;
+    const entryX = node.x;
+    const entryY = node.y + NODE_HEIGHT * 0.60;
+    const bottomY = node.y + NODE_HEIGHT + SELF_LOOP_GAP;
+    return `M ${exitX} ${exitY} V ${bottomY} H ${entryX} V ${entryY}`;
+  }
+
   const from = getEdgeAnchor(edge.fromId, nodes, startX, startY, endX, endY, 'right');
   const to = getEdgeAnchor(edge.toId, nodes, startX, startY, endX, endY, 'left');
   if (!from || !to) return '';
@@ -132,6 +148,12 @@ export function getEdgeMidX(
   edge: LayoutEdge, nodes: LayoutNode[],
   startX: number, endX: number,
 ): number {
+  // 自环标签放在底部水平线段的中点
+  if (edge.isSelfLoop) {
+    const node = nodes.find(n => n.id === edge.fromId);
+    if (node) return node.x + NODE_WIDTH / 2;
+    return 0;
+  }
   // 回环用 top 锚点的 x（顶边中点），跟路径的水平段两端对齐。
   if (edge.isLoopBack) {
     const fromTop = getEdgeAnchor(edge.fromId, nodes, startX, 0, endX, 0, 'top');
@@ -151,6 +173,15 @@ export function getEdgeMidY(
   const from = getEdgeAnchor(edge.fromId, nodes, 0, startY, 0, endY, 'right');
   const to = getEdgeAnchor(edge.toId, nodes, 0, startY, 0, endY, 'left');
   if (!from || !to) return 0;
+  // 自环标签：放在底部折线的水平段上方，用白底矩形包住。
+  if (edge.isSelfLoop) {
+    const node = nodes.find(n => n.id === edge.fromId);
+    if (node) {
+      const bottomY = node.y + NODE_HEIGHT + SELF_LOOP_GAP;
+      return bottomY - 6;
+    }
+    return 0;
+  }
   // 回环标签：水平折线段在 y=baseY-H，标签 y 设为 baseY-H-11 让白底矩形
   // 底边离折线 4px（rect 高度 16，y=midY-9 → 底边=midY+7），不会盖住折线。
   // 用 top 锚点的 y（节点顶边）而不是 right 锚点的 y（垂直中点），因为
@@ -186,6 +217,7 @@ interface FlowEdgeProps {
 
 // 单条边的渲染：箭头线 + 标签。回环边用白底圆角矩形包标签，
 // 让弧顶处的文字跟红色加粗虚线一起成为「回头重做」的强信号。
+// 自环边用底部折线，同样白底标签放在水平段上方。
 export function FlowEdge({
   edge, index, nodes, startX, startY, endX, endY,
 }: FlowEdgeProps) {
@@ -197,8 +229,15 @@ export function FlowEdge({
     dash: '',
     labelColor: edge.type === 'success-goto' ? '#15803d' : '#b91c1c',
   } : baseStyle;
+  // 自环边：成功自重用橙色（代表重试），失败自重用深红。
+  const selfLoopStyle = edge.isSelfLoop ? {
+    color: edge.type === 'success-goto' ? '#d97706' : '#b91c1c',
+    dash: '',
+    labelColor: edge.type === 'success-goto' ? '#d97706' : '#b91c1c',
+  } : null;
+  const activeStyle = selfLoopStyle || style;
   // 回环边：stroke 比普通边略粗（1.8 vs 1.5）即可，颜色已经够深无需再叠粗细差。
-  const strokeWidth = edge.isLoopBack ? 1.8 : 1.5;
+  const strokeWidth = edge.isLoopBack || edge.isSelfLoop ? 1.8 : 1.5;
   const markerSize = 6;
   const labelW = edge.label ? getLabelWidth(edge.label) : 0;
   const midX = getEdgeMidX(edge, nodes, startX, endX);
@@ -212,29 +251,29 @@ export function FlowEdge({
           viewBox="0 0 10 10" refX="10" refY="5"
           markerWidth={markerSize} markerHeight={markerSize} orient="auto"
         >
-          <path d="M 0 0 L 10 5 L 0 10 z" fill={style.color} />
+          <path d="M 0 0 L 10 5 L 0 10 z" fill={activeStyle.color} />
         </marker>
       </defs>
       <path
         d={buildEdgePath(edge, nodes, startX, startY, endX, endY)}
         fill="none"
-        stroke={style.color}
+        stroke={activeStyle.color}
         strokeWidth={strokeWidth}
-        strokeDasharray={style.dash || undefined}
+        strokeDasharray={activeStyle.dash || undefined}
         markerEnd={`url(#arrow-${index})`}
       />
       {edge.label && (
-        edge.isLoopBack ? (
+        edge.isLoopBack || edge.isSelfLoop ? (
           <g>
             <rect
               x={midX - labelW / 2 - 4} y={midY - 9}
               width={labelW + 8} height={16} rx={4}
-              fill="#ffffff" stroke={style.color} strokeWidth={1}
+              fill="#ffffff" stroke={activeStyle.color} strokeWidth={1}
             />
             <text
               x={midX} y={midY + 2}
               textAnchor="middle" fontSize={10} fontWeight={700}
-              fill={style.labelColor}
+              fill={activeStyle.labelColor}
               style={{ fontFamily: 'system-ui' }}
             >
               {edge.label}
@@ -244,7 +283,7 @@ export function FlowEdge({
           <text
             x={midX} y={midY - 6}
             textAnchor="middle" fontSize={10}
-            fill={style.labelColor}
+            fill={activeStyle.labelColor}
             style={{ fontFamily: 'monospace' }}
           >
             {edge.label}

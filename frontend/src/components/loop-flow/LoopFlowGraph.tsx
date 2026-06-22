@@ -20,7 +20,7 @@ import {
 import { FlowEdge, classifyEdge, resolveTargetStep } from '@/components/loop-flow/FlowEdge';
 import {
   NODE_WIDTH, NODE_HEIGHT, RANK_SEP, NODE_SEP,
-  LOOP_BACK_TOP_PADDING,
+  LOOP_BACK_TOP_PADDING, SELF_LOOP_GAP,
   VIRTUAL_NODE_RADIUS, START_NODE_ID, END_NODE_ID,
 } from '@/components/loop-flow/flowConstants';
 import type { LayoutNode, LayoutEdge } from '@/components/loop-flow/flowTypes';
@@ -79,18 +79,22 @@ function useFlowLayout(steps: LoopStepDto[]) {
       const successType = classifyEdge(step, steps, step.on_success, step.success_goto_step_id, true);
       const successTarget = resolveTargetStep(step, steps, step.on_success, step.success_goto_step_id);
       if (successTarget != null) {
-        g.setEdge(String(step.id), String(successTarget));
         const targetIdx = stepIndexById.get(successTarget);
-        const isLoopBack = successType === 'success-goto'
+        const isSelfLoop = targetIdx != null && targetIdx === sourceIdx;
+        const isLoopBack = !isSelfLoop && successType === 'success-goto'
           && targetIdx != null && targetIdx < sourceIdx;
+        // 自环边不加入 dagre（dagre 不支持自环），否则布局会乱
+        if (!isSelfLoop) {
+          g.setEdge(String(step.id), String(successTarget));
+        }
         const name = targetNameOf(successTarget);
         layoutEdges.push({
           from: String(step.id), to: String(successTarget),
-          label: isLoopBack
-            ? `跳回 ${name}`
+          label: isSelfLoop ? '✅ 重试'
+            : isLoopBack ? `跳回 ${name}`
             : step.on_success === 'goto' ? `✅→${name}` : '',
           type: successType, fromId: step.id, toId: successTarget,
-          isLoopBack,
+          isLoopBack, isSelfLoop,
         });
       }
 
@@ -99,22 +103,23 @@ function useFlowLayout(steps: LoopStepDto[]) {
         const failType = classifyEdge(step, steps, step.on_rating_fail, step.fail_goto_step_id, false);
         const failTarget = resolveTargetStep(step, steps, step.on_rating_fail, step.fail_goto_step_id);
         if (failTarget != null) {
-          g.setEdge(String(step.id), String(failTarget));
           const targetIdx = stepIndexById.get(failTarget);
-          const isLoopBack = failType === 'fail-goto'
+          const isSelfLoop = targetIdx != null && targetIdx === sourceIdx;
+          const isLoopBack = !isSelfLoop && failType === 'fail-goto'
             && targetIdx != null && targetIdx < sourceIdx;
-          // 回环边：标签只写阈值条件（<90分），不加 ↻ 之类的前缀符号。
-          // 路径已经是向上拱的正交折线 + 红色虚线，「回环」语义靠视觉传达，
-          // 文字聚焦在「什么情况下」这一核心信息上。
+          // 自环边不加入 dagre
+          if (!isSelfLoop) {
+            g.setEdge(String(step.id), String(failTarget));
+          }
           const name = targetNameOf(failTarget);
           layoutEdges.push({
             from: String(step.id), to: String(failTarget),
-            label: isLoopBack
-              ? `<${step.min_rating}分`
+            label: isSelfLoop ? `❌ <${step.min_rating}分`
+              : isLoopBack ? `<${step.min_rating}分`
               : step.on_rating_fail === 'goto' ? `❌→${name}`
               : step.on_rating_fail === 'skip' ? '失败→继续' : '',
             type: failType, fromId: step.id, toId: failTarget,
-            isLoopBack,
+            isLoopBack, isSelfLoop,
           });
         }
       }
@@ -162,13 +167,15 @@ function useFlowLayout(steps: LoopStepDto[]) {
     // 顶部留白：任一连线是回环（弧线向上），给 SVG 顶部加 padding，
     // 否则弧线会裁切。dagre 内容整体下移以让出顶部空间。
     const hasLoopBack = layoutEdges.some(e => e.isLoopBack);
+    const hasSelfLoop = layoutEdges.some(e => e.isSelfLoop);
     const loopBackPad = hasLoopBack ? LOOP_BACK_TOP_PADDING : 0;
+    const selfLoopPad = hasSelfLoop ? SELF_LOOP_GAP : 0;
 
     return {
       nodes,
       edges: layoutEdges,
       width: graphWidth + 40,
-      height: graphHeight + 40 + loopBackPad,
+      height: graphHeight + 40 + loopBackPad + selfLoopPad,
       startX: startPos?.x ?? 40,
       startY: startPos?.y ?? 40,
       endX: endPos?.x ?? graphWidth - 40,
