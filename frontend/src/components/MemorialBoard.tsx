@@ -9,10 +9,12 @@ import {
   SearchOutlined,
   FolderOutlined,
   ThunderboltOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
 import { KanbanBoard } from './KanbanBoard';
 import { RunningBoard } from './RunningBoard';
+import { LoopKanban } from './LoopKanban';
 import { TodoCard } from './TodoCard';
 import * as db from '@/utils/database';
 import { formatRelativeTime } from '@/utils/datetime';
@@ -30,7 +32,7 @@ interface MemorialBoardProps {
   onBack?: () => void;
 }
 
-type BoardMode = 'memorial' | 'kanban' | 'running';
+type BoardMode = 'memorial' | 'kanban' | 'running' | 'loop_kanban';
 
 export function MemorialBoard({ onBack }: MemorialBoardProps) {
   const { state, dispatch } = useApp();
@@ -371,6 +373,7 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
               { label: <span><ProfileOutlined /> 结论视图</span>, value: 'memorial' },
               { label: <span><AppstoreOutlined /> 看板视图</span>, value: 'kanban' },
               { label: <span><ThunderboltOutlined /> 运行视图</span>, value: 'running' },
+              { label: <span><SyncOutlined /> 环路看板</span>, value: 'loop_kanban' },
             ]}
           />
         </div>
@@ -433,6 +436,8 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
         <RunningBoard searchText={searchText} hours={hours} selectedProject={selectedProject} />
       ) : boardMode === 'kanban' ? (
         <KanbanBoard searchText={searchText} hours={hours} onSearchChange={setSearchText} onHoursChange={setHours} />
+      ) : boardMode === 'loop_kanban' ? (
+        <LoopKanban searchText={searchText} hours={hours} onSearchChange={setSearchText} onHoursChange={setHours} />
       ) : loading ? (
         <div className="memorial-grid">
           {Array.from({ length: columnCount }).map((_, colIdx) => (
