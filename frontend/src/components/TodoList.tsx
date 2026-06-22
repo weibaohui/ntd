@@ -925,6 +925,7 @@ export function TodoList(props: TodoListProps) {
               onCreate={onCreateLoop}
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
+              projectDirs={projectDirectories}
             />
           )}
         </div>
