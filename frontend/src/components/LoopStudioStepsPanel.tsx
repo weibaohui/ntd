@@ -17,9 +17,13 @@ interface StepsPanelProps {
   loopId: number;
   steps: LoopStepDto[];
   onChanged: () => void;
+  /** Loop 的最大执行步数限制，来自 loop.limits_config.max_step_executions */
+  maxStepExecutions?: number | null;
+  /** Loop 的最大 Token 数限制，来自 loop.limits_config.max_total_tokens */
+  maxTotalTokens?: number | null;
 }
 
-export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
+export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, maxTotalTokens }: StepsPanelProps) {
   const { message } = AntApp.useApp();
 
   // Modal 状态
@@ -70,6 +74,16 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
   // 保存
   const handleSave = useCallback(async () => {
     const values = await form.validateFields();
+    // 评分不通过时跳转到自身（重试），需要至少有一个兜底限制
+    if (
+      editingStep &&
+      values.on_rating_fail === 'goto' &&
+      values.fail_goto_step_id === editingStep.id &&
+      !maxStepExecutions && !maxTotalTokens
+    ) {
+      message.error('跳转到自身需要设置「最大执行步数」或「最大 Token 数」兜底，请在 Loop 基础信息中配置');
+      return;
+    }
     setSaving(true);
     try {
       if (editingStep) {
@@ -112,7 +126,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
     } finally {
       setSaving(false);
     }
-  }, [form, loopId, editingStep, message, onChanged]);
+  }, [form, loopId, editingStep, message, onChanged, maxStepExecutions, maxTotalTokens]);
 
   // 删除环节
   const handleDelete = useCallback(async (stepId: number) => {
@@ -270,10 +284,9 @@ export function LoopStepsPanel({ loopId, steps, onChanged }: StepsPanelProps) {
             {on_rating_fail === 'goto' && (
               <Form.Item label="目标环节" name="fail_goto_step_id">
                 <Select
-                  placeholder="选择目标环节"
+                  placeholder="选择目标环节（选择自身=重试）"
                   options={steps
-                    .filter(s => s.id !== editingStep?.id)
-                    .map(s => ({ label: `${s.name} (#${s.id})`, value: s.id }))}
+                    .map(s => ({ label: s.id === editingStep?.id ? `${s.name} (#${s.id}) ⬅ 重试` : `${s.name} (#${s.id})`, value: s.id }))}
                 />
               </Form.Item>
             )}

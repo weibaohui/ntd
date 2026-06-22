@@ -63,6 +63,9 @@ export function LoopDetailPanel({
   const [projectDirs, setProjectDirs] = useState<ProjectDirectory[]>([]);
   // 执行记录总数，由 LoopExecutionsPanel 通过回调更新
   const [executionTotal, setExecutionTotal] = useState(0);
+  // 从 loop.limits_config 解析出的限制值，传递给子面板做兜底校验
+  const [maxStepExecutions, setMaxStepExecutions] = useState<number | null>(null);
+  const [maxTotalTokens, setMaxTotalTokens] = useState<number | null>(null);
 
   // 加载完整 detail, 子面板变更后也要重新拉以保持最新
   const reload = useCallback(() => {
@@ -84,6 +87,9 @@ export function LoopDetailPanel({
             max_step_executions: lc.max_step_executions ?? null,
             max_total_tokens: lc.max_total_tokens ?? null,
           });
+          // 缓存限制值，传递给子面板做跳转自身时的兜底校验
+          setMaxStepExecutions(lc.max_step_executions ?? null);
+          setMaxTotalTokens(lc.max_total_tokens ?? null);
         } catch {
           // 忽略解析错误
         }
@@ -335,6 +341,8 @@ export function LoopDetailPanel({
           loopId={loopId}
           steps={detail.steps}
           onChanged={() => { reload(); onChanged(); }}
+          maxStepExecutions={maxStepExecutions}
+          maxTotalTokens={maxTotalTokens}
         />
       </DetailSection>
 

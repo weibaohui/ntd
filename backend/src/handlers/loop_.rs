@@ -358,6 +358,22 @@ pub async fn update_loop_step(
             .await?
             .ok_or_else(|| AppError::BadRequest(format!("step #{} 不存在", req.step_id)))?;
     }
+    // 评分不通过时跳转到自身（重试），需要 loop 有兜底限制
+    if req.on_rating_fail == "goto" && req.fail_goto_step_id == Some(sid) {
+        let loop_ = state.db.get_loop(loop_id).await?.ok_or(AppError::NotFound)?;
+        // 解析 limits_config，检查是否配置了步数或 Token 限制
+        #[derive(serde::Deserialize, Default)]
+        struct LimitsConfig {
+            max_step_executions: Option<i32>,
+            max_total_tokens: Option<i64>,
+        }
+        let limits: LimitsConfig = serde_json::from_str(&loop_.limits_config).unwrap_or_default();
+        if limits.max_step_executions.is_none() && limits.max_total_tokens.is_none() {
+            return Err(AppError::BadRequest(
+                "评分不通过时跳转到自身需要配置「最大执行步数」或「最大 Token 数」兜底".to_string(),
+            ));
+        }
+    }
     state
         .db
         .update_loop_step(
