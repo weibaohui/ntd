@@ -23,6 +23,7 @@ import {
 } from '@ant-design/icons';
 import { formatRelativeTime } from '@/utils/datetime';
 import type { LoopListItem, LoopStatus } from '@/types/loop';
+import type { ProjectDirectory } from '@/types';
 
 type StatusFilter = 'all' | LoopStatus;
 
@@ -34,6 +35,8 @@ interface LoopListPanelProps {
   // —— 多选支持（ActionToolbar 工具栏选中态）——
   selectedIds?: number[];
   onToggleSelect?: (id: number) => void;
+  // 项目目录列表，用于将 workspace 路径映射为可读名称
+  projectDirs?: ProjectDirectory[];
 }
 
 // 状态 → 标签颜色, 集中在一处方便复用
@@ -79,7 +82,7 @@ function countByStatus(loops: LoopListItem[], filter: StatusFilter): number {
 
 export function LoopListPanel({
   loops, selectedId, onSelect, onCreate,
-  selectedIds, onToggleSelect,
+  selectedIds, onToggleSelect, projectDirs,
 }: LoopListPanelProps) {
   // 状态过滤状态, 默认全部; 本地持有, 切 loop 时不重置
   const [filter, setFilter] = useState<StatusFilter>('all');
@@ -155,6 +158,7 @@ export function LoopListPanel({
               onClick={() => onSelect(loop.id)}
               checked={selectedIds?.includes(loop.id) ?? false}
               onToggleCheck={onToggleSelect ? () => onToggleSelect(loop.id) : undefined}
+              projectDirs={projectDirs}
             />
           ))
         )}
@@ -164,16 +168,21 @@ export function LoopListPanel({
 }
 
 // 单张 loop 卡片: 颜色条 + 标题区 + meta + 底部进度条
-function LoopCard({ loop, selected, onClick, checked, onToggleCheck }: {
+function LoopCard({ loop, selected, onClick, checked, onToggleCheck, projectDirs }: {
   loop: LoopListItem;
   selected: boolean;
   onClick: () => void;
   checked?: boolean;
   onToggleCheck?: () => void;
+  projectDirs?: ProjectDirectory[];
 }) {
   const status: LoopStatus = (loop.status as LoopStatus) ?? 'paused';
-  // 副标题优先用 workspace, 缺则降级到 description
-  const subtitle = loop.workspace || loop.description || '';
+  // 通过 projectDirs 查找工作空间的可读名称，降级到路径
+  const workspaceName = loop.workspace
+    ? (projectDirs?.find(d => d.path === loop.workspace)?.name || loop.workspace)
+    : '';
+  // 副标题优先用工作空间名称, 缺则降级到 description
+  const subtitle = workspaceName || loop.description || '';
 
   return (
     <div
