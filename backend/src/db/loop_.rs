@@ -11,7 +11,7 @@
 //! 不抽象 DAO trait，因为 codebase 其它 db 文件都这样做）。
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
-    Set,
+    Set, DbBackend, ConnectionTrait, Statement,
 };
 use std::collections::HashMap;
 
@@ -491,6 +491,61 @@ impl Database {
             .map(|c| c as i64)
     }
 
+    /// 统计该 loop 下所有待人工审批的环节执行数。
+    /// 条件：loop_step_executions 关联到该 loop 的运行中 execution，且 approval_status = 'pending'。
+    pub async fn count_pending_approvals_for_loop(
+        &self,
+        loop_id: i64,
+    ) -> Result<i32, sea_orm::DbErr> {
+        use sea_orm::{ConnectionTrait, Statement};
+        let sql = format!(
+            "SELECT COUNT(*) AS n FROM loop_step_executions lse \
+             INNER JOIN loop_executions le ON le.id = lse.loop_execution_id \
+             WHERE le.loop_id = {} AND lse.approval_status = 'pending'",
+            loop_id
+        );
+        let row = self
+            .conn
+            .query_one(Statement::from_string(DbBackend::Sqlite, sql))
+            .await?
+            .ok_or(sea_orm::DbErr::RecordNotFound("count query returned no rows".into()))?;
+        Ok(row.try_get_by::<i32, _>("n").unwrap_or(0))
+    }
+
+    /// 批量查询指定 loop_execution 列表的待审批数，返回 execution_id → count 映射。
+    pub async fn count_pending_approvals_by_execution_ids(
+        &self,
+        execution_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, i32>, sea_orm::DbErr> {
+        use sea_orm::{ConnectionTrait, Statement};
+        let mut map = std::collections::HashMap::new();
+        if execution_ids.is_empty() {
+            return Ok(map);
+        }
+        let ids_str: String = execution_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT lse.loop_execution_id, COUNT(*) AS n \
+             FROM loop_step_executions lse \
+             WHERE lse.loop_execution_id IN ({}) AND lse.approval_status = 'pending' \
+             GROUP BY lse.loop_execution_id",
+            ids_str
+        );
+        let rows = self
+            .conn
+            .query_all(Statement::from_string(DbBackend::Sqlite, sql))
+            .await?;
+        for row in rows {
+            let exec_id: i64 = row.try_get_by("loop_execution_id")?;
+            let n: i32 = row.try_get_by("n").unwrap_or(0);
+            map.insert(exec_id, n);
+        }
+        Ok(map)
+    }
+
     /// 终态化 loop execution: 设置 status、finished_at 并按需累加 completed/failed 计数。
     ///
     /// 计数更新由调用方传入,因为 runner 在每个阶段结束时增量更新,效率更高。
@@ -834,12 +889,15 @@ impl Database {
         let todo_map: HashMap<i64, _> = todos.into_iter().map(|t| (t.id, t)).collect();
         let steps: Vec<loop_steps::Model> =
             steps_with_meta.iter().map(|(s, _, _, _)| s.clone()).collect();
+        // 统计该 loop 下待人工审批的环节执行数
+        let pending_approval_count = self.count_pending_approvals_for_loop(loop_id).await?;
         Ok(Some(LoopFullView {
             loop_,
             triggers,
             steps,
             steps_meta: steps_with_meta,
             todo_map,
+            pending_approval_count,
         }))
     }
 }
@@ -863,4 +921,6 @@ pub struct LoopFullView {
     /// (step, todo_title, todo_executor, todo_status)
     pub steps_meta: Vec<(loop_steps::Model, String, String, String)>,
     pub todo_map: HashMap<i64, crate::db::entity::todos::Model>,
+    /// 该 loop 下待人工审批的环节执行数
+    pub pending_approval_count: i32,
 }

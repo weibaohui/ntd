@@ -514,7 +514,14 @@ pub async fn list_executions(
     let offset = (page - 1) * limit;
     let records = state.db.list_loop_executions(loop_id, limit, offset).await?;
     let total = state.db.count_loop_executions(loop_id).await?;
-    let items: Vec<LoopExecutionDto> = records.into_iter().map(Into::into).collect();
+    // 批量查询各执行记录的待审批数量
+    let exec_ids: Vec<i64> = records.iter().map(|r| r.id).collect();
+    let pending_counts = state.db.count_pending_approvals_by_execution_ids(&exec_ids).await?;
+    let mut items: Vec<LoopExecutionDto> = records.into_iter().map(Into::into).collect();
+    // 填充 pending_approval_count
+    for item in &mut items {
+        item.pending_approval_count = pending_counts.get(&item.id).copied().unwrap_or(0);
+    }
     Ok(ApiResponse::ok(serde_json::json!({
         "items": items,
         "total": total,

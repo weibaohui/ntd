@@ -44,6 +44,9 @@ pub struct LoopDetail {
     pub steps: Vec<LoopStepDto>,
     /// todo_id -> TodoDto,前端展示 step 关联的 todo 信息时直接 lookup
     pub todo_map: std::collections::HashMap<i64, TodoSummary>,
+    /// 待人工审批的环节执行数（approval_status='pending' 的 loop_step_executions 数量）
+    #[serde(default)]
+    pub pending_approval_count: i32,
 }
 
 impl From<LoopFullView> for LoopDetail {
@@ -78,6 +81,7 @@ impl From<LoopFullView> for LoopDetail {
             triggers: view.triggers.into_iter().map(Into::into).collect(),
             steps,
             todo_map,
+            pending_approval_count: view.pending_approval_count,
         }
     }
 }
@@ -219,6 +223,9 @@ pub struct LoopExecutionDto {
     pub total_steps: i32,
     pub completed_steps: i32,
     pub failed_steps: i32,
+    /// 待人工审批的环节数（approval_status='pending' 的 loop_step_executions 数量）
+    #[serde(default)]
+    pub pending_approval_count: i32,
 }
 
 impl From<loop_executions::Model> for LoopExecutionDto {
@@ -235,6 +242,7 @@ impl From<loop_executions::Model> for LoopExecutionDto {
             total_steps: m.total_steps,
             completed_steps: m.completed_steps,
             failed_steps: m.failed_steps,
+            pending_approval_count: 0, // 由 handler 后续查询填充
         }
     }
 }

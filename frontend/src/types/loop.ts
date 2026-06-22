@@ -66,6 +66,8 @@ export interface LoopExecutionDto {
   completed_steps: number;
   failed_steps: number;
   total_executed_steps: number;
+  /** 待人工审批的环节数 */
+  pending_approval_count: number;
 }
 
 export interface LoopStepExecutionDto {
@@ -211,6 +213,8 @@ export interface LoopDetail {
   triggers: LoopTriggerDto[];
   steps: LoopStepDto[];
   todo_map: Record<number, TodoSummaryForLoop>;
+  /** 待人工审批的环节执行数 */
+  pending_approval_count: number;
 }
 
 export interface LoopListItem {
