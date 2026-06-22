@@ -21,6 +21,9 @@ pub struct LoopListItem {
     pub step_count: i32,
     pub last_execution_status: String,
     pub last_execution_at: Option<String>,
+    /// 该 loop 下所有待人工审批的环节执行数
+    #[serde(default)]
+    pub pending_approval_count: i32,
 }
 
 impl From<LoopListRow> for LoopListItem {
@@ -31,6 +34,7 @@ impl From<LoopListRow> for LoopListItem {
             step_count: row.step_count,
             last_execution_status: row.last_execution_status,
             last_execution_at: row.last_execution_at,
+            pending_approval_count: row.pending_approval_count,
         }
     }
 }

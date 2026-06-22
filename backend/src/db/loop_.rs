@@ -817,7 +817,10 @@ impl Database {
                           (SELECT le.status FROM loop_executions le \
                            WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_status, \
                           (SELECT le.started_at FROM loop_executions le \
-                           WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_at \
+                           WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_at, \
+                          (SELECT COUNT(*) FROM loop_step_executions lse \
+                           INNER JOIN loop_executions le2 ON le2.id = lse.loop_execution_id \
+                           WHERE le2.loop_id = l.id AND lse.approval_status = 'pending') as pending_approval_count \
                    FROM loops l \
                    WHERE l.workspace = ?1 \
                    ORDER BY l.updated_at DESC",
@@ -828,7 +831,10 @@ impl Database {
                       (SELECT le.status FROM loop_executions le \
                        WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_status, \
                       (SELECT le.started_at FROM loop_executions le \
-                       WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_at \
+                       WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_at, \
+                      (SELECT COUNT(*) FROM loop_step_executions lse \
+                       INNER JOIN loop_executions le2 ON le2.id = lse.loop_execution_id \
+                       WHERE le2.loop_id = l.id AND lse.approval_status = 'pending') as pending_approval_count \
                    FROM loops l \
                    ORDER BY l.updated_at DESC",
         };
@@ -866,6 +872,7 @@ impl Database {
                     .unwrap_or_default(),
                 last_execution_at: row
                     .try_get_by::<Option<String>, _>("last_execution_at")?,
+                pending_approval_count: row.try_get_by::<i32, _>("pending_approval_count").unwrap_or(0),
             });
         }
         Ok(out)
@@ -910,6 +917,8 @@ pub struct LoopListRow {
     pub step_count: i32,
     pub last_execution_status: String,
     pub last_execution_at: Option<String>,
+    /// 该 loop 下所有待人工审批的环节执行数
+    pub pending_approval_count: i32,
 }
 
 /// LoopStudio 详情页单次请求所需的完整数据。

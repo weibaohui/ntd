@@ -231,6 +231,8 @@ export interface LoopListItem {
   step_count: number;
   last_execution_status: string;
   last_execution_at: string | null;
+  /** 待人工审批的环节执行数 */
+  pending_approval_count: number;
 }
 
 export interface LoopExecutionTokenSummary {

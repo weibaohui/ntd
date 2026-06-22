@@ -20,6 +20,7 @@ import {
   CloseCircleOutlined,
   LoadingOutlined,
   MinusCircleOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import { formatRelativeTime } from '@/utils/datetime';
 import type { LoopListItem, LoopStatus } from '@/types/loop';
@@ -285,6 +286,17 @@ function LoopCard({ loop, selected, onClick, checked, onToggleCheck, projectDirs
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
         <span><ThunderboltOutlined /> {loop.trigger_count}</span>
         <span><ApartmentOutlined /> {loop.step_count}</span>
+        {loop.pending_approval_count > 0 && (
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 2,
+            padding: '1px 6px', borderRadius: 8,
+            background: 'var(--color-error-bg, #fef2f2)',
+            color: 'var(--color-error, #ef4444)',
+            fontWeight: 600, fontSize: 11,
+          }}>
+            <ExclamationCircleOutlined style={{ fontSize: 10 }} /> {loop.pending_approval_count}
+          </span>
+        )}
         <span>{executionIcon(loop.last_execution_status)}</span>
         {loop.updated_at && (
           <span style={{ marginLeft: 'auto' }}>
