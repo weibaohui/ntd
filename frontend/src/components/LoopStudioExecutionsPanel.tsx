@@ -13,7 +13,6 @@ import {
   CloseCircleOutlined,
   LoadingOutlined,
   MinusCircleOutlined,
-  StarOutlined,
   ArrowRightOutlined,
   ReadOutlined,
   ExclamationCircleOutlined,
@@ -557,71 +556,29 @@ function StepExecList({ stepExecs, loopId, executionId, onApproved }: { stepExec
               </div>
 
               {/* 评分 / 阈值 */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
-                {s.rating != null ? (
-                  <span style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 2,
-                    padding: '1px 6px', borderRadius: 4, fontSize: 12,
-                    background: ratingPassed ? 'var(--color-success-bg, #f0fdf4)' : 'var(--color-error-bg, #fef2f2)',
-                    color: ratingPassed ? 'var(--color-success, #22c55e)' : 'var(--color-error, #ef4444)',
-                    fontWeight: 600,
-                  }}>
-                    <StarOutlined style={{ fontSize: 10 }} /> {s.rating}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+                {s.min_rating != null && (
+                  <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+                    阈值 {s.min_rating}
                   </span>
+                )}
+                {s.rating != null ? (
+                  <>
+                    <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+                      评分 {s.rating}
+                    </span>
+                    <span style={{
+                      padding: '1px 6px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                      background: ratingPassed ? 'var(--color-success-bg, #f0fdf4)' : 'var(--color-error-bg, #fef2f2)',
+                      color: ratingPassed ? 'var(--color-success, #22c55e)' : 'var(--color-error, #ef4444)',
+                    }}>
+                      {ratingPassed ? '通过' : '不通过'}
+                    </span>
+                  </>
                 ) : (
                   <span style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>未评审</span>
                 )}
-                {s.min_rating != null && (
-                  <span style={{ fontSize: 11, color: s.rating != null && s.rating >= s.min_rating ? 'var(--color-success, #22c55e)' : 'var(--color-error, #ef4444)' }}>
-                    {s.rating != null && (s.rating >= s.min_rating ? '✅' : '❌')} {s.min_rating}
-                  </span>
-                )}
               </div>
-
-              {/* Token 消耗：从 execution_record.usage 解析 */}
-              {(s.input_tokens != null || s.output_tokens != null) && (
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap',
-                  marginTop: 4, marginBottom: 4,
-                }}>
-                  {s.input_tokens != null && (
-                    <span style={{
-                      padding: '1px 5px', borderRadius: 3,
-                      background: 'var(--color-info-bg)', fontSize: 10, color: 'var(--color-info)',
-                      fontWeight: 500, fontFamily: 'monospace',
-                    }}>
-                      i{formatToken(s.input_tokens)}
-                    </span>
-                  )}
-                  {s.output_tokens != null && (
-                    <span style={{
-                      padding: '1px 5px', borderRadius: 3,
-                      background: 'var(--color-success-bg)', fontSize: 10, color: 'var(--color-success)',
-                      fontWeight: 500, fontFamily: 'monospace',
-                    }}>
-                      o{formatToken(s.output_tokens)}
-                    </span>
-                  )}
-                  {s.cache_read_input_tokens != null && s.cache_read_input_tokens > 0 && (
-                    <span style={{
-                      padding: '1px 5px', borderRadius: 3,
-                      background: 'var(--color-info-bg)', fontSize: 10, color: 'var(--color-primary)',
-                      fontWeight: 500, fontFamily: 'monospace',
-                    }}>
-                      cr{formatToken(s.cache_read_input_tokens)}
-                    </span>
-                  )}
-                  {s.total_cost_usd != null && s.total_cost_usd > 0 && (
-                    <span style={{
-                      padding: '1px 5px', borderRadius: 3,
-                      background: 'var(--color-warning-bg)', fontSize: 10, color: 'var(--color-warning)',
-                      fontWeight: 500, fontFamily: 'monospace',
-                    }}>
-                      {formatCost(s.total_cost_usd)}
-                    </span>
-                  )}
-                </div>
-              )}
 
               {/* 结论（黑板） */}
               {s.conclusion && (
@@ -643,6 +600,24 @@ function StepExecList({ stepExecs, loopId, executionId, onApproved }: { stepExec
                 开始 {s.started_at ? new Date(s.started_at).toLocaleTimeString() : '-'}
                 · 结束 {s.finished_at ? new Date(s.finished_at).toLocaleTimeString() : '-'}
               </div>
+
+              {/* Token 消耗 */}
+              {(s.input_tokens != null || s.output_tokens != null) && (
+                <div style={{
+                  display: 'flex', flexWrap: 'wrap', gap: 4,
+                  marginTop: 4, fontSize: 10, color: 'var(--color-text-tertiary)',
+                }}>
+                  {s.input_tokens != null && (
+                    <span>输入 {formatToken(s.input_tokens)}</span>
+                  )}
+                  {s.output_tokens != null && (
+                    <span>输出 {formatToken(s.output_tokens)}</span>
+                  )}
+                  {s.cache_read_input_tokens != null && s.cache_read_input_tokens > 0 && (
+                    <span>缓存读 {formatToken(s.cache_read_input_tokens)}</span>
+                  )}
+                </div>
+              )}
 
               {/* 错误 */}
               {s.error_message && (
