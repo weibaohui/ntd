@@ -118,6 +118,7 @@ export function LoopDetailPanel({
   // 评审模板下拉选项 (含 inline 「+ 新建模板」流程所需)
   const [reviewTemplateOptions, setReviewTemplateOptions] = useState<ReviewTemplateOption[]>([]);
   const [creatingTemplate, setCreatingTemplate] = useState(false);
+  const [creatingTemplateSaving, setCreatingTemplateSaving] = useState(false);
   const [newTemplateForm] = Form.useForm<{ name: string; description?: string; prompt: string }>();
 
   // 加载评审模板选项；保存/创建后也要重新拉以保持最新
@@ -136,7 +137,7 @@ export function LoopDetailPanel({
    */
   const handleCreateTemplate = useCallback(async () => {
     const values = await newTemplateForm.validateFields();
-    setCreatingTemplate(true);
+    setCreatingTemplateSaving(true);
     try {
       const created = await dbReviewTemplates.createReviewTemplate({
         name: values.name.trim(),
@@ -149,9 +150,11 @@ export function LoopDetailPanel({
       setReviewTemplateOptions(opts);
       form.setFieldsValue({ review_template_id: created.id });
       newTemplateForm.resetFields();
+      setCreatingTemplateSaving(false);
       setCreatingTemplate(false);
     } catch (e) {
       message.error(`创建失败：${(e as Error).message}`);
+      setCreatingTemplateSaving(false);
     }
   }, [form, message, newTemplateForm]);
 
@@ -508,7 +511,7 @@ export function LoopDetailPanel({
           setCreatingTemplate(false);
         }}
         onOk={handleCreateTemplate}
-        confirmLoading={creatingTemplate}
+        confirmLoading={creatingTemplateSaving}
         destroyOnClose
       >
         <Form form={newTemplateForm} layout="vertical" preserve={false}>
