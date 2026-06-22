@@ -235,22 +235,26 @@ export function LoopDetailPanel({
               icon={<ThunderboltOutlined />}
               onClick={onTrigger}
               disabled={detail.status !== 'enabled'}
-            >
-              触发
-            </Button>
+            />
           </Tooltip>
           <Tooltip title="复制">
             <Button size="small" icon={<CopyOutlined />} onClick={onDuplicate} />
           </Tooltip>
-          <Button size="small" icon={<EditOutlined />} onClick={handleOpenEdit}>编辑</Button>
-          <Button size="small" icon={<PlusOutlined />} onClick={onCreate}>新建</Button>
+          <Tooltip title="编辑">
+            <Button size="small" icon={<EditOutlined />} onClick={handleOpenEdit} />
+          </Tooltip>
+          <Tooltip title="新建">
+            <Button size="small" icon={<PlusOutlined />} onClick={onCreate} />
+          </Tooltip>
           <Popconfirm
             title="删除 loop"
             description="将级联删除 triggers/steps,无法恢复"
             okType="danger"
             onConfirm={onDelete}
           >
-            <Button size="small" danger icon={<DeleteOutlined />} />
+            <Tooltip title="删除">
+              <Button size="small" danger icon={<DeleteOutlined />} />
+            </Tooltip>
           </Popconfirm>
         </Space>
       </div>
