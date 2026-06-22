@@ -8,13 +8,13 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-// 'steps' = 环节管理页面 (v3 kind=step)。环路编排通过左栏 Segmented 的"环路"tab 访问。
-// 复用现有的 'detail' panel,环节页面本身就是 detail panel 内容。
-export type View = 'dashboard' | 'settings' | 'memorial' | 'relation' | 'steps';
+// 'steps' view 已移除（StepList 组件已删除），
+// 环节管理由 TodoList 的 step mode（listMode === 'step'）承担。
+export type View = 'dashboard' | 'settings' | 'memorial' | 'relation';
 export type Panel = 'list' | 'detail';
 
 // 哪些 view 是合法的 URL 参数(popstate / 直接改 URL 都需要校验)
-const KNOWN_VIEWS: View[] = ['dashboard', 'settings', 'memorial', 'relation', 'steps'];
+const KNOWN_VIEWS: View[] = ['dashboard', 'settings', 'memorial', 'relation'];
 
 // ─── Helpers ─────────────────────────────────────────────────
 

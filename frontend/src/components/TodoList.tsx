@@ -26,7 +26,6 @@ interface TodoListProps {
   onShowDashboard?: () => void;
   onShowMemorial?: () => void;
   onShowRelationMap?: () => void;
-  onShowSteps?: () => void;
   onShowSettings?: () => void;
   onSelectLoop?: (loopId: number) => void;
   onSelectStep?: (stepId: number) => void;
@@ -989,7 +988,7 @@ export function TodoList(props: TodoListProps) {
       </Modal>
 
       {/* 新建环节 Modal：工具栏「新建环节」触发。
-          字段：标题（必填）/ 提示词 / 执行器，复用 StepList 的 createTodo + promote 流程。 */}
+          字段：标题（必填）/ 提示词 / 执行器，复用 createTodo + promote 流程。 */}
       <Modal
         title="新建环节"
         open={stepCreateOpen}

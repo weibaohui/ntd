@@ -15,7 +15,6 @@ import { SettingsPage } from './components/SettingsPage';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
-import { StepList } from './components/StepList';
 import { StepDetailPanel } from '@/components/StepDetailPanel';
 import { LoopDetailPanel } from './components/LoopStudioDetailPanel';
 import * as dbLoops from './utils/database/loops';
@@ -230,7 +229,6 @@ function AppContent() {
               onShowDashboard={() => handleShowView('dashboard')}
               onShowMemorial={() => handleShowView('memorial')}
               onShowRelationMap={() => handleShowView('relation')}
-              onShowSteps={() => handleShowView('steps')}
               onSelectStep={handleSelectStep}
               stepUpdateCount={stepUpdateCount}
               loopUpdateCount={loopUpdateCount}
@@ -360,8 +358,6 @@ function AppContent() {
               <MemorialBoard onBack={isMobile ? backToList : undefined} />
             ) : activeView === 'relation' ? (
               <RelationMap onBack={isMobile ? backToList : undefined} />
-            ) : activeView === 'steps' ? (
-              <StepList onBack={isMobile ? backToList : undefined} />
             ) : (
               <Dashboard onBack={isMobile ? backToList : undefined} />
             )}
