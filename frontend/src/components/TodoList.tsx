@@ -892,9 +892,9 @@ export function TodoList(props: TodoListProps) {
                   </div>
 
                   {/* meta: 执行器 + 引用次数 */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
                     {step.executor && (
-                      <span><ThunderboltOutlined /> {step.executor}</span>
+                      <ExecutorBadge executor={step.executor} style={{ fontSize: 9, padding: '1px 5px' }} />
                     )}
                     <span><ApartmentOutlined /> {step.used_by_loop_step_count} 引用</span>
                   </div>
