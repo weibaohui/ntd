@@ -21,9 +21,6 @@ pub struct LoopListItem {
     pub step_count: i32,
     pub last_execution_status: String,
     pub last_execution_at: Option<String>,
-    /// 该 loop 下各环节使用的执行器列表（去重）。
-    #[serde(default)]
-    pub step_executors: Vec<String>,
 }
 
 impl From<LoopListRow> for LoopListItem {
@@ -34,7 +31,6 @@ impl From<LoopListRow> for LoopListItem {
             step_count: row.step_count,
             last_execution_status: row.last_execution_status,
             last_execution_at: row.last_execution_at,
-            step_executors: row.step_executors,
         }
     }
 }

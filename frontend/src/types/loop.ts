@@ -208,8 +208,6 @@ export interface LoopListItem {
   step_count: number;
   last_execution_status: string;
   last_execution_at: string | null;
-  /** 该 loop 下各环节使用的执行器列表（去重）。 */
-  step_executors: string[];
 }
 
 export interface LoopExecutionTokenSummary {

@@ -2,11 +2,11 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
-  Button, Empty, Skeleton, Input, Modal, Form, Select, Tooltip, App as AntApp,
+  Button, Empty, Skeleton, Input, Modal, Form, Select, App as AntApp,
 } from 'antd';
 import {
   LeftOutlined, PlusOutlined, ExperimentOutlined, SearchOutlined,
-  ThunderboltOutlined, ApartmentOutlined,
+  ApartmentOutlined,
 } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import * as dbSteps from '@/utils/database/steps';
@@ -14,6 +14,7 @@ import { formatRelativeTime } from '@/utils/datetime';
 import { StepDetailPanel } from './StepDetailPanel';
 import type { StepSummary, Todo } from '@/types';
 import { EXECUTORS } from '@/types';
+import { ExecutorBadge } from '@/components/ExecutorBadge';
 
 // 执行器选项：直接从全局 EXECUTORS 常量派生，避免重复维护
 const executorOptions = EXECUTORS
@@ -187,16 +188,7 @@ export function StepList({ onBack }: StepListProps) {
                     </div>
                   </div>
                   {step.executor && (
-                    <Tooltip title={step.executor}>
-                      <span style={{
-                        fontSize: 10, padding: '1px 6px', borderRadius: 4,
-                        background: 'var(--color-bg-hover, #f1f5f9)',
-                        color: 'var(--color-text-tertiary, #94a3b8)',
-                        whiteSpace: 'nowrap', flexShrink: 0,
-                      }}>
-                        <ThunderboltOutlined /> {step.executor}
-                      </span>
-                    </Tooltip>
+                    <ExecutorBadge executor={step.executor} />
                   )}
                 </div>
               ))}

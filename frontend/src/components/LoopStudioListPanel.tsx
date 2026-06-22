@@ -23,7 +23,6 @@ import {
 } from '@ant-design/icons';
 import { formatRelativeTime } from '@/utils/datetime';
 import type { LoopListItem, LoopStatus } from '@/types/loop';
-import { ExecutorBadge } from '@/components/ExecutorBadge';
 
 type StatusFilter = 'all' | LoopStatus;
 
@@ -273,16 +272,8 @@ function LoopCard({ loop, selected, onClick, checked, onToggleCheck }: {
         </div>
       )}
 
-      {/* meta: 执行器 / 触发器数 / 环节数 / 最近执行 + 时间 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)', flexWrap: 'wrap' }}>
-        {/* 执行器 badge（去重列表），向 TodoList 的显示风格看齐 */}
-        {loop.step_executors && loop.step_executors.length > 0 && (
-          <span style={{ display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap' }}>
-            {loop.step_executors.map((exe) => (
-              <ExecutorBadge key={exe} executor={exe} style={{ fontSize: 9, padding: '1px 5px' }} />
-            ))}
-          </span>
-        )}
+      {/* meta: 触发器/环节数/最近执行 + 时间 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
         <span><ThunderboltOutlined /> {loop.trigger_count}</span>
         <span><ApartmentOutlined /> {loop.step_count}</span>
         <span>{executionIcon(loop.last_execution_status)}</span>

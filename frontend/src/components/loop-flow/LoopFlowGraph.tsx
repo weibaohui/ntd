@@ -24,7 +24,6 @@ import {
   VIRTUAL_NODE_RADIUS, START_NODE_ID, END_NODE_ID,
 } from '@/components/loop-flow/flowConstants';
 import type { LayoutNode, LayoutEdge } from '@/components/loop-flow/flowTypes';
-import { ExecutorBadge } from '@/components/ExecutorBadge';
 
 interface FlowGraphProps {
   steps: LoopStepDto[];
@@ -303,16 +302,13 @@ export function LoopFlowGraph({
                 >
                   {truncateText(node.step.todo_title || `#${node.step.step_id}`, 22)}
                 </text>
-                {/* 执行器 badge：用 foreignObject 嵌入 HTML ExecutorBadge 组件，
-                    让执行器显示与 TodoList 一致的带颜色标签。 */}
-                <foreignObject
-                  x={node.x + 12} y={node.y + 46}
-                  width={NODE_WIDTH - 24} height={22}
+                <text
+                  x={node.x + 12} y={node.y + 56}
+                  fontSize={10}
+                  fill="#94a3b8"
                 >
-                  <div {...{ 'xmlns': 'http://www.w3.org/1999/xhtml' } as any} style={{ height: '100%' }}>
-                    <ExecutorBadge executor={node.step.todo_executor || '未指派'} />
-                  </div>
-                </foreignObject>
+                  {node.step.todo_executor || '未指派'}
+                </text>
                 {node.step.min_rating != null && (
                   <text
                     x={node.x + NODE_WIDTH - 8} y={node.y + NODE_HEIGHT - 6}

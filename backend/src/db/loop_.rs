@@ -719,9 +719,7 @@ impl Database {
                           (SELECT le.status FROM loop_executions le \
                            WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_status, \
                           (SELECT le.started_at FROM loop_executions le \
-                           WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_at, \
-                          COALESCE((SELECT GROUP_CONCAT(DISTINCT s.todo_executor) FROM loop_steps s \
-                           WHERE s.loop_id = l.id AND s.todo_executor IS NOT NULL AND s.todo_executor != ''), '') as executors \
+                           WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_at \
                    FROM loops l \
                    WHERE l.workspace = ?1 \
                    ORDER BY l.updated_at DESC",
@@ -732,9 +730,7 @@ impl Database {
                       (SELECT le.status FROM loop_executions le \
                        WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_status, \
                       (SELECT le.started_at FROM loop_executions le \
-                       WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_at, \
-                      COALESCE((SELECT GROUP_CONCAT(DISTINCT s.todo_executor) FROM loop_steps s \
-                       WHERE s.loop_id = l.id AND s.todo_executor IS NOT NULL AND s.todo_executor != ''), '') as executors \
+                       WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_at \
                    FROM loops l \
                    ORDER BY l.updated_at DESC",
         };
@@ -772,16 +768,6 @@ impl Database {
                     .unwrap_or_default(),
                 last_execution_at: row
                     .try_get_by::<Option<String>, _>("last_execution_at")?,
-                step_executors: {
-                    let raw: String = row
-                        .try_get_by::<Option<String>, _>("executors")?
-                        .unwrap_or_default();
-                    if raw.is_empty() {
-                        vec![]
-                    } else {
-                        raw.split(',').map(|s| s.trim().to_string()).collect()
-                    }
-                },
             });
         }
         Ok(out)
@@ -823,8 +809,6 @@ pub struct LoopListRow {
     pub step_count: i32,
     pub last_execution_status: String,
     pub last_execution_at: Option<String>,
-    /// 该 loop 下各环节使用的执行器列表（去重），逗号分隔。
-    pub step_executors: Vec<String>,
 }
 
 /// LoopStudio 详情页单次请求所需的完整数据。
