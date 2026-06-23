@@ -12,7 +12,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   Skeleton, App as AntApp, Button, Space, Tooltip, Popconfirm, Empty,
-  Modal, Form, Input, InputNumber, ColorPicker, Collapse, Select, Switch,
+  Modal, Form, Input, InputNumber, Collapse, Select, Switch,
 } from 'antd';
 import {
   ThunderboltOutlined,
@@ -28,12 +28,15 @@ import * as db from '@/utils/database';
 import type { LoopDetail, UpdateLoopRequest } from '@/types/loop';
 import type { ReviewTemplateOption } from '@/types/reviewTemplate';
 import type { ProjectDirectory } from '@/types';
+import { TagCheckCardGroup } from './TagCheckCard';
 import { LoopTriggersPanel, TRIGGER_META } from './LoopStudioTriggersPanel';
 import { LoopStepsPanel } from './LoopStudioStepsPanel';
 import { LoopExecutionsPanel } from './LoopStudioExecutionsPanel';
 
 interface LoopDetailPanelProps {
   loopId: number;
+  /** 可用标签列表（复用 Todo 的标签体系） */
+  tags: Array<{ id: number; name: string; color: string }>;
   onTrigger: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
@@ -44,6 +47,7 @@ interface LoopDetailPanelProps {
 
 export function LoopDetailPanel({
   loopId,
+  tags,
   onTrigger,
   onDuplicate,
   onDelete,
@@ -67,6 +71,8 @@ export function LoopDetailPanel({
   // 从 loop.limits_config 解析出的限制值，传递给子面板做兜底校验
   const [maxStepExecutions, setMaxStepExecutions] = useState<number | null>(null);
   const [maxTotalTokens, setMaxTotalTokens] = useState<number | null>(null);
+  // 编辑时选中的标签（单选）
+  const [editingTag, setEditingTag] = useState<number | null>(null);
 
   // 加载完整 detail, 子面板变更后也要重新拉以保持最新
   const reload = useCallback(() => {
@@ -78,7 +84,6 @@ export function LoopDetailPanel({
           name: d.name,
           description: d.description,
           workspace: d.workspace,
-          color: d.color,
           icon: d.icon,
         });
         // 解析 limits_config 到同一 form
@@ -173,11 +178,12 @@ export function LoopDetailPanel({
       name: detail.name,
       description: detail.description,
       workspace: detail.workspace,
-      color: detail.color,
       icon: detail.icon,
       // review_template_id 是 Option<i64>，null 也要能透传
       review_template_id: detail.review_template_id ?? null,
     });
+    // 初始化标签（单选）
+    setEditingTag(detail.tag_ids?.[0] ?? null);
     setEditing(true);
   }, [detail, form]);
 
@@ -186,20 +192,21 @@ export function LoopDetailPanel({
     const values = await form.validateFields();
     setSaving(true);
     try {
-      const colorHex = String(values.color || 'var(--color-primary, #0891b2)');
       // 构建 limits_config（从主 form 读取）
       const limitsConfig: Record<string, any> = {};
       if (values.max_step_executions != null) limitsConfig.max_step_executions = values.max_step_executions;
       if (values.max_total_tokens != null) limitsConfig.max_total_tokens = values.max_total_tokens;
 
+      // 一次性保存基础信息+标签，避免分两次 API 调用导致部分提交风险
       await dbLoops.updateLoop(loopId, {
         name: values.name.trim(),
         description: values.description ?? '',
         workspace: values.workspace ?? null,
-        color: colorHex,
         icon: values.icon ?? 'loop',
         review_template_id: values.review_template_id ?? null,
         limits_config: Object.keys(limitsConfig).length > 0 ? JSON.stringify(limitsConfig) : null,
+        // 标签合并到同一请求体中，后端 handler 在更新基本信息后一并持久化标签关联
+        tag_ids: editingTag != null ? [editingTag] : [],
       });
       message.success('已保存');
       setEditing(false);
@@ -210,7 +217,7 @@ export function LoopDetailPanel({
     } finally {
       setSaving(false);
     }
-  }, [form, loopId, message, reload, onChanged]);
+  }, [form, loopId, editingTag, message, reload, onChanged]);
 
   if (loading && !detail) {
     return <Skeleton active style={{ padding: 24 }} />;
@@ -222,9 +229,12 @@ export function LoopDetailPanel({
   return (
     // 父容器已 overflow:auto, 这里只负责垂直 padding, 不再 height:100%
     <div className="loop-detail-panel" style={{ padding: '20px 24px' }}>
-      {/* Header: 颜色条 + 标题 + 操作按钮 */}
+      {/* Header: 标签色条 + 标题 + 操作按钮 */}
       <div className="loop-detail-header" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <span style={{ width: 4, height: 24, background: detail.color, borderRadius: 2 }} />
+        {(() => {
+          const tag = tags.find(t => detail.tag_ids?.includes(t.id));
+          return <span style={{ width: 4, height: 24, background: tag?.color || '#722ed1', borderRadius: 2 }} />;
+        })()}
         <h2 style={{ margin: 0, fontSize: 18, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--color-text, #0f172a)' }}>
           {detail.name}
         </h2>
@@ -469,14 +479,18 @@ export function LoopDetailPanel({
               optionFilterProp="label"
             />
           </Form.Item>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Form.Item label="颜色" name="color" getValueFromEvent={(c) => c?.toHexString?.() ?? c}>
-              <ColorPicker showText format="hex" />
+          {tags.length > 0 && (
+            <Form.Item label="标签">
+              <TagCheckCardGroup
+                tags={tags}
+                value={editingTag}
+                onChange={(val) => setEditingTag(val as number | null)}
+              />
             </Form.Item>
-            <Form.Item label="图标" name="icon" tooltip="预留字段, 当前仅展示">
-              <Input placeholder="loop" maxLength={50} />
-            </Form.Item>
-          </div>
+          )}
+          <Form.Item label="图标" name="icon" tooltip="预留字段, 当前仅展示">
+            <Input placeholder="loop" maxLength={50} />
+          </Form.Item>
           <Form.Item
             label="评审模板"
             name="review_template_id"

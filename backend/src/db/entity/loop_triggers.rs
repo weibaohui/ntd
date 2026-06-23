@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 /// 环路触发器：决定 loop 何时被启动。
 ///
-/// trigger_type 决定 config JSON 的 schema（见 migrations.rs v2 注释）。
+/// trigger_type 决定 config JSON 的 schema（见 db/migration.rs v7 LoopStudio 迁移）。
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "loop_triggers")]
 pub struct Model {

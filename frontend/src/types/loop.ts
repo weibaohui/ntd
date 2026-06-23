@@ -36,7 +36,8 @@ export interface LoopDto {
   description: string;
   workspace: string | null;
   status: string;
-  color: string;
+  /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
+  tag_ids: number[];
   icon: string;
   limits_config: string;
   created_at: string | null;
@@ -205,7 +206,8 @@ export interface LoopDetail {
   description: string;
   workspace: string | null;
   status: string;
-  color: string;
+  /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
+  tag_ids: number[];
   icon: string;
   limits_config: string;
   /** Review template to use for auto-review on loop steps. null = use default. */
@@ -225,7 +227,8 @@ export interface LoopListItem {
   description: string;
   workspace: string | null;
   status: string;
-  color: string;
+  /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
+  tag_ids: number[];
   icon: string;
   created_at: string | null;
   updated_at: string | null;
@@ -276,7 +279,8 @@ export interface CreateLoopRequest {
   name: string;
   description?: string;
   workspace?: string | null;
-  color?: string;
+  tag_ids?: number[];
+  /** 创建时可选预绑定单个标签；省略时后端按空标签处理，兼容旧调用方。 */
   icon?: string;
   review_template_id?: number | null;
 }
@@ -285,10 +289,11 @@ export interface UpdateLoopRequest {
   name: string;
   description: string;
   workspace: string | null;
-  color: string;
   icon: string;
   review_template_id?: number | null;
   limits_config?: string | null;
+  /** 可选更新标签 ID（传空数组清除标签，省略不更新）。合并到同一请求避免多次 API 调用导致的部分提交风险。 */
+  tag_ids?: number[] | null;
 }
 
 export interface CreateTriggerRequest {

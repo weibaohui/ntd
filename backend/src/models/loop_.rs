@@ -39,6 +39,16 @@ impl From<LoopListRow> for LoopListItem {
     }
 }
 
+impl LoopListItem {
+    /// 在 handler 已完成关联表查询后注入标签，避免列表行转换隐式依赖数据库访问。
+    /// 不放入 `From<LoopListRow>` 是因为标签信息需要额外跨表查询，
+    /// 由 handler 在操作事务边界外统一获取后注入。
+    pub fn with_tags(mut self, tag_ids: Vec<i64>) -> Self {
+        self.loop_ = self.loop_.with_tags(tag_ids);
+        self
+    }
+}
+
 /// Loop 详情(基本+子项完整数据),LoopStudio 详情页一次拿到。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoopDetail {
@@ -106,7 +116,9 @@ pub struct LoopDto {
     pub description: String,
     pub workspace: Option<String>,
     pub status: String,
-    pub color: String,
+    /// 标签 ID 列表（单选，复用 Todo 的标签体系）
+    #[serde(default)]
+    pub tag_ids: Vec<i64>,
     pub icon: String,
     pub review_template_id: Option<i64>,
     pub limits_config: String,
@@ -122,13 +134,23 @@ impl From<loops::Model> for LoopDto {
             description: m.description,
             workspace: m.workspace,
             status: m.status,
-            color: m.color,
+            tag_ids: vec![],
             icon: m.icon,
             review_template_id: m.review_template_id,
             limits_config: m.limits_config,
             created_at: m.created_at,
             updated_at: m.updated_at,
         }
+    }
+}
+
+impl LoopDto {
+    /// 将外部查询到的标签关联附加到基础 DTO，保持 `From<loops::Model>` 只做纯字段映射。
+    /// 标签属于跨表关联数据，不应在 ORM 模型转换时隐式查询，
+    /// 由 handler 使用此方法在查询事务边界外手动注入。
+    pub fn with_tags(mut self, tag_ids: Vec<i64>) -> Self {
+        self.tag_ids = tag_ids;
+        self
     }
 }
 
@@ -360,14 +382,13 @@ pub struct CreateLoopRequest {
     pub description: String,
     #[serde(default)]
     pub workspace: Option<String>,
-    #[serde(default = "default_color")]
-    pub color: String,
+    #[serde(default)]
+    pub tag_ids: Vec<i64>,
     #[serde(default = "default_icon")]
     pub icon: String,
     pub review_template_id: Option<i64>,
 }
 
-fn default_color() -> String { "#722ed1".to_string() }
 fn default_icon() -> String { "loop".to_string() }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -375,11 +396,13 @@ pub struct UpdateLoopRequest {
     pub name: String,
     pub description: String,
     pub workspace: Option<String>,
-    pub color: String,
     pub icon: String,
     pub review_template_id: Option<i64>,
     #[serde(default)]
     pub limits_config: Option<String>,
+    /// 可选更新的标签 ID（单选）；传空数组或无字段表示不更新标签
+    #[serde(default)]
+    pub tag_ids: Option<Vec<i64>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

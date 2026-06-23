@@ -58,6 +58,11 @@ export async function updateLoop(id: number, req: UpdateLoopRequest): Promise<Lo
   return unwrap(await api.put(`/api/loops/${id}`, req));
 }
 
+/** 更新环路标签（全量替换）。 */
+export async function updateLoopTags(id: number, tagIds: number[]): Promise<LoopListItem> {
+  return unwrap(await api.put(`/api/loops/${id}/tags`, { tag_ids: tagIds }));
+}
+
 /** 删除 loop,级联清子表。 */
 export async function deleteLoop(id: number): Promise<void> {
   await api.delete(`/api/loops/${id}`);

@@ -5,7 +5,7 @@
 use axum::extract::{Path, State};
 
 use crate::handlers::{ApiJson, AppError, AppState};
-use crate::models::{ApiResponse, BatchUpdateStepExecutorRequest, BatchUpdateStepResult, CreateStepRequest, StepDto, UpdateStepRequest};
+use crate::models::{ApiResponse, BatchUpdateStepExecutorRequest, BatchUpdateStepResult, CreateStepRequest, StepDto, UpdateStepRequest, UpdateTagsRequest};
 
 // ====== 环节管理（kind=step）======
 //
@@ -20,9 +20,15 @@ pub async fn list_steps(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<Vec<StepDto>>, AppError> {
     let rows = state.db.list_steps_with_usage_pure().await?;
-    let items = rows
+    // 批量查询所有环节的标签映射，消除逐条 N+1 查询
+    let step_ids: Vec<i64> = rows.iter().map(|(s, _)| s.id).collect();
+    let tag_map = state.db.get_step_tag_ids_batch(&step_ids).await?;
+    let items: Vec<StepDto> = rows
         .into_iter()
-        .map(|(s, count)| StepDto::from(s).with_usage(count))
+        .map(|(s, count)| {
+            let tag_ids = tag_map.get(&s.id).cloned().unwrap_or_default();
+            StepDto::from(s).with_usage(count).with_tags(tag_ids)
+        })
         .collect();
     Ok(ApiResponse::ok(items))
 }
@@ -49,11 +55,11 @@ pub async fn create_step(
             req.executor.as_deref(),
             req.acceptance_criteria.as_deref(),
             None, // 直建场景不绑定 source_todo_id（promote 链路才需要）
-            None, // 沿用 DB 默认色 #722ed1
         )
         .await?;
+    let tag_ids = state.db.get_step_tag_ids(step.id).await?;
     // 直建场景没有 loop 引用，usage 必为 0，但仍走 list 路径保证 DTO 字段齐全
-    Ok(ApiResponse::ok(StepDto::from(step).with_usage(0)))
+    Ok(ApiResponse::ok(StepDto::from(step).with_usage(0).with_tags(tag_ids)))
 }
 
 /// GET /api/steps/candidates — loop 编辑器选环节用
@@ -61,9 +67,15 @@ pub async fn list_step_candidates(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<Vec<StepDto>>, AppError> {
     let rows = state.db.list_steps_with_usage_pure().await?;
-    let items = rows
+    // 批量查询标签，避免 N+1
+    let step_ids: Vec<i64> = rows.iter().map(|(s, _)| s.id).collect();
+    let tag_map = state.db.get_step_tag_ids_batch(&step_ids).await?;
+    let items: Vec<StepDto> = rows
         .into_iter()
-        .map(|(s, count)| StepDto::from(s).with_usage(count))
+        .map(|(s, count)| {
+            let tag_ids = tag_map.get(&s.id).cloned().unwrap_or_default();
+            StepDto::from(s).with_usage(count).with_tags(tag_ids)
+        })
         .collect();
     Ok(ApiResponse::ok(items))
 }
@@ -79,7 +91,8 @@ pub async fn get_step(
         .await?
         .ok_or(AppError::NotFound)?;
     let used_by_loop_step_count = state.db.count_loop_steps_using_step(id).await?;
-    Ok(ApiResponse::ok(StepDto::from(s).with_usage(used_by_loop_step_count)))
+    let tag_ids = state.db.get_step_tag_ids(id).await?;
+    Ok(ApiResponse::ok(StepDto::from(s).with_usage(used_by_loop_step_count).with_tags(tag_ids)))
 }
 
 /// PUT /api/steps/:id — 更新环节基本信息（部分更新，只传需要改的字段即可）
@@ -109,13 +122,39 @@ pub async fn update_step(
             &prompt,
             req.executor.as_deref(),
             req.acceptance_criteria.as_deref(),
-            req.color.as_deref(),
         )
         .await?;
     // 查回最新数据
     let s = state.db.get_step(id).await?.ok_or(AppError::NotFound)?;
     let used_by_loop_step_count = state.db.count_loop_steps_using_step(id).await?;
-    Ok(ApiResponse::ok(StepDto::from(s).with_usage(used_by_loop_step_count)))
+    // 如果请求携带了 tag_ids，则更新标签关联；
+    // 合并到同一个 handler 中避免前端分两次保存导致的部分提交风险
+    if let Some(ref tag_ids) = req.tag_ids {
+        if tag_ids.len() > 1 {
+            return Err(AppError::BadRequest("环节只能选择一个标签".to_string()));
+        }
+        state.db.set_step_tags(id, tag_ids).await?;
+    }
+    let tag_ids = state.db.get_step_tag_ids(id).await?;
+    Ok(ApiResponse::ok(StepDto::from(s).with_usage(used_by_loop_step_count).with_tags(tag_ids)))
+}
+
+/// PUT /api/steps/:id/tags — 更新环节标签（全量替换）
+pub async fn update_step_tags(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    ApiJson(req): ApiJson<UpdateTagsRequest>,
+) -> Result<ApiResponse<StepDto>, AppError> {
+    state.db.get_step(id).await?.ok_or(AppError::NotFound)?;
+    // 强制单选标签约束：前端是 TagCheckCardGroup 单选，后端防御多于 1 个标签的非法请求
+    if req.tag_ids.len() > 1 {
+        return Err(AppError::BadRequest("环节只能选择一个标签".to_string()));
+    }
+    state.db.set_step_tags(id, &req.tag_ids).await?;
+    let s = state.db.get_step(id).await?.ok_or(AppError::NotFound)?;
+    let used_by_loop_step_count = state.db.count_loop_steps_using_step(id).await?;
+    let tag_ids = state.db.get_step_tag_ids(id).await?;
+    Ok(ApiResponse::ok(StepDto::from(s).with_usage(used_by_loop_step_count).with_tags(tag_ids)))
 }
 
 /// DELETE /api/steps/:id — 删除环节

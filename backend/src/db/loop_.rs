@@ -39,7 +39,6 @@ impl Database {
         name: &str,
         description: &str,
         workspace: Option<&str>,
-        color: &str,
         icon: &str,
         review_template_id: Option<i64>,
     ) -> Result<loops::Model, sea_orm::DbErr> {
@@ -48,7 +47,6 @@ impl Database {
             name: ActiveValue::Set(name.to_string()),
             description: ActiveValue::Set(description.to_string()),
             workspace: ActiveValue::Set(workspace.map(|s| s.to_string())),
-            color: ActiveValue::Set(color.to_string()),
             icon: ActiveValue::Set(icon.to_string()),
             review_template_id: ActiveValue::Set(review_template_id),
             status: ActiveValue::Set("paused".to_string()),
@@ -65,7 +63,6 @@ impl Database {
         name: &str,
         description: &str,
         workspace: Option<&str>,
-        color: &str,
         icon: &str,
         review_template_id: Option<i64>,
         limits_config: Option<&str>,
@@ -77,7 +74,6 @@ impl Database {
             am.name = ActiveValue::Set(name.to_string());
             am.description = ActiveValue::Set(description.to_string());
             am.workspace = ActiveValue::Set(workspace.map(|s| s.to_string()));
-            am.color = ActiveValue::Set(color.to_string());
             am.icon = ActiveValue::Set(icon.to_string());
             am.review_template_id = ActiveValue::Set(review_template_id);
             if let Some(lc) = limits_config {
@@ -132,7 +128,6 @@ impl Database {
                 &format!("{}(副本)", source.name),
                 &source.description,
                 source.workspace.as_deref(),
-                &source.color,
                 &source.icon,
                 source.review_template_id,
             )

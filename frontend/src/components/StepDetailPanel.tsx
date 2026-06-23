@@ -26,6 +26,8 @@ interface StepDetailPanelProps {
   onStepUpdated?: () => void;
   // 删除环节后通知父组件清除选中状态，防止 UI 仍显示已删除环节的详情面板
   onStepDeleted?: () => void;
+  // 可用标签列表（传递给编辑抽屉）
+  tags?: Array<{ id: number; name: string; color: string }>;
 }
 
 // 基本信息区段：展示执行器、复用次数、来源事项、更新时间
@@ -96,7 +98,7 @@ const textDisplayStyle: React.CSSProperties = {
   lineHeight: 1.6, minHeight: 40,
 };
 
-export function StepDetailPanel({ stepId, onStepUpdated, onStepDeleted }: StepDetailPanelProps) {
+export function StepDetailPanel({ stepId, onStepUpdated, onStepDeleted, tags = [] }: StepDetailPanelProps) {
   const { message } = AntApp.useApp();
   const { state, dispatch } = useApp();
   const { step, loading, error, loadStep } = useStepDetail(stepId);
@@ -272,6 +274,7 @@ export function StepDetailPanel({ stepId, onStepUpdated, onStepDeleted }: StepDe
       <StepEditDrawer
         open={editing}
         step={step}
+        tags={tags}
         onClose={() => setEditing(false)}
         onSaved={() => { loadStep(); onStepUpdated?.(); }}
       />

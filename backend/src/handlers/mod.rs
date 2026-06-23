@@ -1245,6 +1245,7 @@ fn step_routes() -> Router<AppState> {
         .route("/api/steps/candidates", get(step_::list_step_candidates))
         .route("/api/steps/batch-executor", put(step_::batch_update_steps_executor))
         .route("/api/steps/{id}", get(step_::get_step).put(step_::update_step).delete(step_::delete_step))
+        .route("/api/steps/{id}/tags", put(step_::update_step_tags))
 }
 
 /// 执行记录、执行触发、执行控制相关路由。

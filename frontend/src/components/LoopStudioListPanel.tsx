@@ -38,6 +38,8 @@ interface LoopListPanelProps {
   onToggleSelect?: (id: number) => void;
   // 项目目录列表，用于将 workspace 路径映射为可读名称
   projectDirs?: ProjectDirectory[];
+  /** 可用标签列表（用于解析环路颜色） */
+  tags?: Array<{ id: number; name: string; color: string }>;
 }
 
 // 状态 → 标签颜色, 集中在一处方便复用
@@ -83,7 +85,7 @@ function countByStatus(loops: LoopListItem[], filter: StatusFilter): number {
 
 export function LoopListPanel({
   loops, selectedId, onSelect, onCreate,
-  selectedIds, onToggleSelect, projectDirs,
+  selectedIds, onToggleSelect, projectDirs, tags = [],
 }: LoopListPanelProps) {
   // 状态过滤状态, 默认全部; 本地持有, 切 loop 时不重置
   const [filter, setFilter] = useState<StatusFilter>('all');
@@ -160,6 +162,7 @@ export function LoopListPanel({
               checked={selectedIds?.includes(loop.id) ?? false}
               onToggleCheck={onToggleSelect ? () => onToggleSelect(loop.id) : undefined}
               projectDirs={projectDirs}
+              tags={tags}
             />
           ))
         )}
@@ -169,13 +172,14 @@ export function LoopListPanel({
 }
 
 // 单张 loop 卡片: 颜色条 + 标题区 + meta + 底部进度条
-function LoopCard({ loop, selected, onClick, checked, onToggleCheck, projectDirs }: {
+function LoopCard({ loop, selected, onClick, checked, onToggleCheck, projectDirs, tags }: {
   loop: LoopListItem;
   selected: boolean;
   onClick: () => void;
   checked?: boolean;
   onToggleCheck?: () => void;
   projectDirs?: ProjectDirectory[];
+  tags?: Array<{ id: number; name: string; color: string }>;
 }) {
   const status: LoopStatus = (loop.status as LoopStatus) ?? 'paused';
   // 通过 projectDirs 查找工作空间的可读名称，降级到路径
@@ -235,7 +239,10 @@ function LoopCard({ loop, selected, onClick, checked, onToggleCheck, projectDirs
       <span
         style={{
           position: 'absolute', left: 0, top: 0, bottom: 0, width: 3,
-          background: loop.color || 'var(--color-primary, #0891b2)',
+          background: (() => {
+            const tag = (tags ?? []).find((t: { id: number }) => loop.tag_ids?.includes(t.id));
+            return tag?.color || 'var(--color-primary, #0891b2)';
+          })(),
         }}
       />
 

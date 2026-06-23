@@ -28,12 +28,10 @@ impl Database {
         executor: Option<&str>,
         acceptance_criteria: Option<&str>,
         source_todo_id: Option<i64>,
-        color: Option<&str>,
     ) -> Result<steps::Model, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
-        let c = color.unwrap_or("#722ed1");
-        let sql = "INSERT INTO steps (title, prompt, executor, acceptance_criteria, source_todo_id, color, created_at, updated_at) \
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)";
+        let sql = "INSERT INTO steps (title, prompt, executor, acceptance_criteria, source_todo_id, created_at, updated_at) \
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
         self.conn
             .execute(Statement::from_sql_and_values(
                 sea_orm::DbBackend::Sqlite,
@@ -44,7 +42,6 @@ impl Database {
                     executor.map(|s| s.to_string()).into(),
                     acceptance_criteria.map(|s| s.to_string()).into(),
                     source_todo_id.into(),
-                    c.to_string().into(),
                     now.clone().into(),
                     now.into(),
                 ],
@@ -139,9 +136,8 @@ impl Database {
         prompt: &str,
         executor: Option<&str>,
         acceptance_criteria: Option<&str>,
-        color: Option<&str>,
     ) -> Result<(), sea_orm::DbErr> {
-        let (sql, vals) = self.build_update_sql(id, title, prompt, executor, acceptance_criteria, color);
+        let (sql, vals) = self.build_update_sql(id, title, prompt, executor, acceptance_criteria);
         self.conn
             .execute(sea_orm::Statement::from_sql_and_values(
                 sea_orm::DbBackend::Sqlite,
@@ -160,25 +156,17 @@ impl Database {
         prompt: &str,
         executor: Option<&str>,
         acceptance_criteria: Option<&str>,
-        color: Option<&str>,
     ) -> (&str, Vec<sea_orm::Value>) {
         let now = crate::models::utc_timestamp();
-        let sql = if color.is_some() {
-            "UPDATE steps SET title = ?1, prompt = ?2, executor = ?3, acceptance_criteria = ?4, color = ?5, updated_at = ?6 WHERE id = ?7"
-        } else {
-            "UPDATE steps SET title = ?1, prompt = ?2, executor = ?3, acceptance_criteria = ?4, updated_at = ?5 WHERE id = ?6"
-        };
-        let mut vals: Vec<sea_orm::Value> = vec![
+        let sql = "UPDATE steps SET title = ?1, prompt = ?2, executor = ?3, acceptance_criteria = ?4, updated_at = ?5 WHERE id = ?6";
+        let vals: Vec<sea_orm::Value> = vec![
             title.to_string().into(),
             prompt.to_string().into(),
             executor.map(|s| s.to_string()).into(),
             acceptance_criteria.map(|s| s.to_string()).into(),
+            now.into(),
+            id.into(),
         ];
-        if let Some(c) = color {
-            vals.push(c.to_string().into());
-        }
-        vals.push(now.into());
-        vals.push(id.into());
         (sql, vals)
     }
 

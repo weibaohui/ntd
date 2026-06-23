@@ -276,7 +276,7 @@ function AppContent() {
                     </button>
                   </div>
                 )}
-                <StepDetailPanel stepId={selectedStepId} onStepUpdated={() => setStepUpdateCount(c => c + 1)} onStepDeleted={() => setSelectedStepId(null)} />
+                <StepDetailPanel stepId={selectedStepId} onStepUpdated={() => setStepUpdateCount(c => c + 1)} onStepDeleted={() => setSelectedStepId(null)} tags={state.tags} />
               </div>
             ) : selectedLoopId !== null ? (
               // 从左侧环路列表选中某个 loop，右侧展示 LoopDetailPanel；
@@ -298,6 +298,7 @@ function AppContent() {
                 )}
                 <LoopDetailPanel
                   loopId={selectedLoopId}
+                  tags={state.tags}
                   onTrigger={async () => {
                     try {
                       const res = await dbLoops.triggerLoop(selectedLoopId);

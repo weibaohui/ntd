@@ -13,7 +13,9 @@ pub struct StepDto {
     pub source_todo_id: Option<i64>,
     /// 被多少个 loop step 引用
     pub used_by_loop_step_count: i64,
-    pub color: String,
+    /// 标签 ID 列表（单选，复用 Todo 的标签体系）
+    #[serde(default)]
+    pub tag_ids: Vec<i64>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -28,7 +30,7 @@ impl From<steps::Model> for StepDto {
             acceptance_criteria: m.acceptance_criteria,
             source_todo_id: m.source_todo_id,
             used_by_loop_step_count: 0,
-            color: m.color,
+            tag_ids: vec![],
             created_at: m.created_at,
             updated_at: m.updated_at,
         }
@@ -38,6 +40,13 @@ impl From<steps::Model> for StepDto {
 impl StepDto {
     pub fn with_usage(mut self, count: i64) -> Self {
         self.used_by_loop_step_count = count;
+        self
+    }
+
+    /// 将 handler 从 step_tags 关联表查询到的标签注入 DTO，避免 `From<steps::Model>` 依赖额外查询。
+    /// 标签信息由 handler 在 DB 事务边界外统一获取后调用此方法装配，保持转换层的纯净职责。
+    pub fn with_tags(mut self, tag_ids: Vec<i64>) -> Self {
+        self.tag_ids = tag_ids;
         self
     }
 }
@@ -52,7 +61,9 @@ pub struct UpdateStepRequest {
     pub prompt: Option<String>,
     pub executor: Option<String>,
     pub acceptance_criteria: Option<String>,
-    pub color: Option<String>,
+    /// 可选更新的标签 ID（单选）；传空数组或无字段表示不更新标签
+    #[serde(default)]
+    pub tag_ids: Option<Vec<i64>>,
 }
 
 /// 直接创建环节请求体。

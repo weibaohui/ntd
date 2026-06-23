@@ -871,10 +871,13 @@ export function TodoList(props: TodoListProps) {
                     data-testid={`step-row-checkbox-${step.id}`}
                     style={{ position: 'absolute', top: 14, left: 12, zIndex: 1 }}
                   />
-                  {/* 左侧 3px 颜色条 */}
+                  {/* 左侧 3px 颜色条（从标签解析颜色） */}
                   <span style={{
                     position: 'absolute', left: 0, top: 0, bottom: 0, width: 3,
-                    background: step.color || 'var(--color-primary, #0891b2)',
+                    background: (() => {
+                      const tag = tags.find(t => step.tag_ids?.includes(t.id));
+                      return tag?.color || 'var(--color-primary, #0891b2)';
+                    })(),
                     borderRadius: '10px 0 0 10px',
                   }} />
 
@@ -901,7 +904,10 @@ export function TodoList(props: TodoListProps) {
                   {/* 底部 3px 进度条（淡出指示条） */}
                   <div style={{
                     position: 'absolute', left: 0, right: 0, bottom: 0, height: 3,
-                    background: step.color || 'var(--color-primary, #0891b2)',
+                    background: (() => {
+                      const tag = tags.find(t => step.tag_ids?.includes(t.id));
+                      return tag?.color || 'var(--color-primary, #0891b2)';
+                    })(),
                     opacity: 0.25,
                     borderRadius: '0 0 10px 10px',
                   }} />
@@ -926,6 +932,7 @@ export function TodoList(props: TodoListProps) {
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
               projectDirs={projectDirectories}
+              tags={tags}
             />
           )}
         </div>

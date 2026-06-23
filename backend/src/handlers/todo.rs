@@ -381,7 +381,6 @@ pub async fn promote_todo_to_step(
             todo.executor.as_deref(),
             todo.acceptance_criteria.as_deref(),
             Some(todo.id),
-            None,
         )
         .await?;
     Ok(ApiResponse::ok(StepDto::from(step)))

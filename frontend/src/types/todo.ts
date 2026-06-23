@@ -44,7 +44,8 @@ export interface StepSummary {
   source_todo_id?: number;
   /** 被多少个 loop step 引用 */
   used_by_loop_step_count: number;
-  color: string;
+  /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
+  tag_ids: number[];
   created_at?: string;
   updated_at?: string;
 }

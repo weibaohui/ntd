@@ -1,14 +1,15 @@
 // 环节编辑 Drawer：封装编辑表单的所有状态和交互逻辑。
-// 将 340 行的大组件拆分为：数据加载 hook + 编辑 Drawer + 3 个展示区段，
+// 将大组件拆分为：数据加载 hook + 编辑 Drawer + 各展示区段，
 // 每个子组件体均控制在 30 行以内。
 
 import { useState, useCallback, useRef, useMemo } from 'react';
-import { Drawer, Input, Divider, ColorPicker, App as AntApp } from 'antd';
+import { Drawer, Input, Divider, App as AntApp } from 'antd';
 import { Button } from 'antd';
 import { ExecutorPicker } from '@/components/todo-drawer/ExecutorPicker';
 import { PromptEditor } from '@/components/todo-drawer/PromptEditor';
 import { SkillSelector } from '@/components/todo-drawer/SkillSelector';
 import { TemplateModal } from '@/components/todo-drawer/TemplateModal';
+import { TagCheckCardGroup } from './TagCheckCard';
 import * as dbSteps from '@/utils/database/steps';
 import * as db from '@/utils/database';
 import type { StepSummary, SkillMeta, ExecutorSkills, TodoTemplate } from '@/types';
@@ -23,18 +24,21 @@ interface MdEditorRef {
 interface StepEditDrawerProps {
   open: boolean;
   step: StepSummary;
+  /** 可用标签列表（复用 Todo 的标签体系） */
+  tags: Array<{ id: number; name: string; color: string }>;
   onClose: () => void;
   onSaved: () => void;
 }
 
-// 编辑表单 hook：集中管理标题、提示词、执行器、颜色、验收标准等状态，
+// 编辑表单 hook：集中管理标题、提示词、执行器、标签、验收标准等状态，
 // 以及 skills / 模板的加载和交互逻辑，降低主组件的 useState 数量。
 function useEditForm(step: StepSummary) {
   const { message } = AntApp.useApp();
   const [editTitle, setEditTitle] = useState('');
   const [editPrompt, setEditPrompt] = useState('');
   const [editExecutor, setEditExecutor] = useState('');
-  const [editColor, setEditColor] = useState('#722ed1');
+  // 标签状态：单选，仅允许选中一个标签（与 Todo 保持一致）
+  const [selectedTag, setSelectedTag] = useState<number | null>(null);
   const [editAcceptanceCriteria, setEditAcceptanceCriteria] = useState('');
   const [saving, setSaving] = useState(false);
   // 使用具体的编辑器 ref 类型而非 any，提高类型安全性，
@@ -65,7 +69,8 @@ function useEditForm(step: StepSummary) {
     setEditTitle(step.title);
     setEditPrompt(step.prompt);
     setEditExecutor(step.executor || '');
-    setEditColor(step.color || '#722ed1');
+    // 初始化标签：从 step.tag_ids 取第一个（单选）
+    setSelectedTag(step.tag_ids?.[0] ?? null);
     setEditAcceptanceCriteria(step.acceptance_criteria || '');
     setSkillsExpanded(false);
     setSkillSearchText('');
@@ -115,7 +120,7 @@ function useEditForm(step: StepSummary) {
 
   return {
     message, editTitle, setEditTitle, editPrompt, setEditPrompt,
-    editExecutor, setEditExecutor, editColor, setEditColor,
+    editExecutor, setEditExecutor, selectedTag, setSelectedTag,
     editAcceptanceCriteria, setEditAcceptanceCriteria, saving, setSaving,
     editorRef, skillsLoading, skillsExpanded, setSkillsExpanded,
     skillSearchText, setSkillSearchText, currentSkills, executorColor,
@@ -139,9 +144,9 @@ function EditTitleSection({ value, onChange }: { value: string; onChange: (v: st
   );
 }
 
-// 编辑 Drawer 的滚动内容区：执行器、颜色、Prompt、Skills、验收标准
+// 编辑 Drawer 的滚动内容区：执行器、标签、Prompt、Skills、验收标准
 // 将长表单拆为独立区段，便于阅读和维护
-function EditContentSection({ form }: { form: ReturnType<typeof useEditForm> }) {
+function EditContentSection({ form, tags }: { form: ReturnType<typeof useEditForm>; tags: StepEditDrawerProps['tags'] }) {
   return (
     <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px' }}>
       <ExecutorPicker
@@ -149,7 +154,7 @@ function EditContentSection({ form }: { form: ReturnType<typeof useEditForm> }) 
         executorOptions={EXECUTORS_FOR_PICKER}
         onChange={form.setEditExecutor}
       />
-      <ColorSection value={form.editColor} onChange={form.setEditColor} />
+      <TagSection form={form} tags={tags} />
       <Divider style={{ margin: '8px 0 16px' }} />
       <PromptSection form={form} />
       <SkillsSection form={form} />
@@ -159,16 +164,16 @@ function EditContentSection({ form }: { form: ReturnType<typeof useEditForm> }) 
   );
 }
 
-// 颜色选择区段
-function ColorSection({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+// 标签选择区段（复用 Todo 的标签体系，单选）
+function TagSection({ form, tags }: { form: ReturnType<typeof useEditForm>; tags: StepEditDrawerProps['tags'] }) {
+  if (tags.length === 0) return null;
   return (
     <div style={{ marginBottom: 16 }}>
-      <div style={{ marginBottom: 8, fontWeight: 600, fontSize: 14 }}>颜色</div>
-      <ColorPicker
-        value={value}
-        onChange={(c: any) => onChange(c?.toHexString?.() ?? c)}
-        showText
-        format="hex"
+      <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14 }}>标签</div>
+      <TagCheckCardGroup
+        tags={tags}
+        value={form.selectedTag}
+        onChange={(val) => form.setSelectedTag(val as number | null)}
       />
     </div>
   );
@@ -274,7 +279,7 @@ function AcceptanceCriteriaSection({ value, onChange }: { value: string; onChang
 }
 
 // 编辑 Drawer 主组件：打开时初始化表单，保存时调用 API
-export function StepEditDrawer({ open, step, onClose, onSaved }: StepEditDrawerProps) {
+export function StepEditDrawer({ open, step, tags, onClose, onSaved }: StepEditDrawerProps) {
   const { message } = AntApp.useApp();
   const form = useEditForm(step);
 
@@ -283,17 +288,19 @@ export function StepEditDrawer({ open, step, onClose, onSaved }: StepEditDrawerP
     form.initFromStep();
   }, [form]);
 
-  // 保存：校验 → 调用 API → 通知父组件
+  // 保存：校验 → 调用 API（基本信息 + 标签分开保存）→ 通知父组件
   const handleSave = useCallback(async () => {
     if (!form.editTitle.trim()) { message.error('标题不能为空'); return; }
     form.setSaving(true);
     try {
+      // 一次性保存基本信息+标签，避免分两次 API 调用导致部分提交风险；
+      // 后端 update_step handler 已支持 tag_ids 字段，收到后一并持久化标签关联
       await dbSteps.updateStep(step.id, {
         title: form.editTitle.trim(),
         prompt: form.editPrompt,
         executor: form.editExecutor || null,
         acceptance_criteria: form.editAcceptanceCriteria || null,
-        color: form.editColor,
+        tag_ids: form.selectedTag != null ? [form.selectedTag] : [],
       });
       message.success('环节已更新');
       onSaved();
@@ -319,7 +326,7 @@ export function StepEditDrawer({ open, step, onClose, onSaved }: StepEditDrawerP
         extra={<Button type="primary" loading={form.saving} onClick={handleSave}>保存</Button>}
       >
         <EditTitleSection value={form.editTitle} onChange={form.setEditTitle} />
-        <EditContentSection form={form} />
+        <EditContentSection form={form} tags={tags} />
       </Drawer>
       <TemplateModal
         open={form.templateModalOpen}

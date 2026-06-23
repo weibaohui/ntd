@@ -24,7 +24,6 @@ async fn create_test_step(db: &Database, title: &str) -> ntd::db::entity::steps:
         Some("claude"),
         Some("acceptance criteria"),
         None,
-        Some("#722ed1"),
     )
     .await
     .unwrap()
@@ -47,7 +46,6 @@ async fn test_create_step_stores_all_fields() {
             Some("claude"),
             Some("验收标准"),
             None,
-            Some("#ff0000"),
         )
         .await
         .unwrap();
@@ -57,7 +55,6 @@ async fn test_create_step_stores_all_fields() {
     assert_eq!(step.executor.as_deref(), Some("claude"));
     assert_eq!(step.acceptance_criteria.as_deref(), Some("验收标准"));
     assert_eq!(step.source_todo_id, None);
-    assert_eq!(step.color, "#ff0000");
 }
 
 #[tokio::test]
@@ -65,7 +62,7 @@ async fn test_create_step_with_null_optional_fields() {
     // 可选字段传 None 时，应存储为 NULL（Rust 侧为 None）
     let db = setup_db().await;
     let step = db
-        .create_step("最简环节", "", None, None, None, None)
+        .create_step("最简环节", "", None, None, None)
         .await
         .unwrap();
 
@@ -103,11 +100,10 @@ async fn test_get_step_returns_none_for_nonexistent_id() {
 // =====================================================================
 
 #[tokio::test]
-async fn test_update_step_without_color() {
-    // 更新时 color 传 None，应保留原 color 不变，其他字段正常更新
+async fn test_update_step_basic_fields() {
+    // 更新时仅更新基本信息字段，tag 和 color 通过独立 API 管理
     let db = setup_db().await;
     let step = create_test_step(&db, "原标题").await;
-    let original_color = step.color.clone();
 
     db.update_step(
         step.id,
@@ -115,7 +111,6 @@ async fn test_update_step_without_color() {
         "新提示词",
         Some("gpt4"),
         Some("新验收标准"),
-        None, // 不更新 color
     )
     .await
     .unwrap();
@@ -125,30 +120,6 @@ async fn test_update_step_without_color() {
     assert_eq!(updated.prompt, "新提示词");
     assert_eq!(updated.executor.as_deref(), Some("gpt4"));
     assert_eq!(updated.acceptance_criteria.as_deref(), Some("新验收标准"));
-    // color 应保持原值，因为 update 时传了 None
-    assert_eq!(updated.color, original_color);
-}
-
-#[tokio::test]
-async fn test_update_step_with_color() {
-    // 更新时 color 传 Some，应同时更新 color 字段
-    let db = setup_db().await;
-    let step = create_test_step(&db, "待改色").await;
-
-    db.update_step(
-        step.id,
-        "改色后标题",
-        "改色后提示词",
-        Some("claude"),
-        None,
-        Some("#00ff00"), // 更新 color
-    )
-    .await
-    .unwrap();
-
-    let updated = db.get_step(step.id).await.unwrap().unwrap();
-    assert_eq!(updated.title, "改色后标题");
-    assert_eq!(updated.color, "#00ff00");
 }
 
 #[tokio::test]
@@ -159,7 +130,7 @@ async fn test_update_step_clears_optional_fields() {
     assert!(step.executor.is_some());
     assert!(step.acceptance_criteria.is_some());
 
-    db.update_step(step.id, "标题", "", None, None, None)
+    db.update_step(step.id, "标题", "", None, None)
         .await
         .unwrap();
 
