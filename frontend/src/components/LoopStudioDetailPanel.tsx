@@ -197,6 +197,7 @@ export function LoopDetailPanel({
       if (values.max_step_executions != null) limitsConfig.max_step_executions = values.max_step_executions;
       if (values.max_total_tokens != null) limitsConfig.max_total_tokens = values.max_total_tokens;
 
+      // 一次性保存基础信息+标签，避免分两次 API 调用导致部分提交风险
       await dbLoops.updateLoop(loopId, {
         name: values.name.trim(),
         description: values.description ?? '',
@@ -204,9 +205,9 @@ export function LoopDetailPanel({
         icon: values.icon ?? 'loop',
         review_template_id: values.review_template_id ?? null,
         limits_config: Object.keys(limitsConfig).length > 0 ? JSON.stringify(limitsConfig) : null,
+        // 标签合并到同一请求体中，后端 handler 在更新基本信息后一并持久化标签关联
+        tag_ids: editingTag != null ? [editingTag] : [],
       });
-      // 保存标签（单选）
-      await dbLoops.updateLoopTags(loopId, editingTag != null ? [editingTag] : []);
       message.success('已保存');
       setEditing(false);
       reload();

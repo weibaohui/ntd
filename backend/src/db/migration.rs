@@ -55,6 +55,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V16LoopStepExecutionSnapshotColumns),
         Box::new(V17ConsolidateReviewInstanceTodos),
         Box::new(V18LoopHumanReview),
+        Box::new(V19StepLoopTags),
     ]
 }
 
@@ -1855,13 +1856,12 @@ async fn table_exists(db: &Database, table: &str) -> Result<bool, sea_orm::DbErr
 // v7: Loop Studio (issue #670: 把 Loop Studio DDL 迁到 runner 系统)
 // ---------------------------------------------------------------------------
 
-/// v7 迁移: 把 Loop Studio 的 6 张表 + 索引/触发器从 `db/migrations.rs`
-/// (旧版本化迁移) 搬到 runner 系统, 让所有新建内存库 (测试用) 都能跑出
+/// v7 迁移: 把 Loop Studio 的 6 张表 + 索引/触发器从旧 `db/migrations.rs`
+/// (已废弃的声明式 DDL 迁移) 搬到 runner 系统, 让所有新建内存库 (测试用) 都能跑出
 /// 完整 schema.
 ///
 /// 设计动机:
-/// - 旧 `migrations.rs::run_migrations` 没被 `Database::new` 调用
-///   (issue #498 引入 runner 后取代了它), 导致测试内存库缺失
+/// - 旧 `db/migrations.rs`（声明式 DDL 系统）已废弃并移除，其迁移内容已全部迁移至此 runner 系统。
 ///   loops/loop_steps/loop_hooks/loop_triggers/loop_executions/
 ///   loop_step_executions 这 6 张表, 测试不得不手工建表或绕开;
 /// - 把 DDL 集中到 runner 系统后, 内存测试和真实生产 DB 走同一条
@@ -3043,6 +3043,55 @@ impl Migration for V18LoopHumanReview {
             "ALTER TABLE loop_step_executions ADD COLUMN approval_comment TEXT",
         )
         .await?;
+
+        Ok(())
+    }
+}
+
+/// v19 迁移：创建 step_tags 和 loop_tags 关联表，复用 Todo 的标签体系。
+///
+/// 环节和环路使用标签（Tag）替代原有的 color 字段来管理颜色和分类。
+/// 两张关联表的结构完全对称（联合主键 + 外键 CASCADE），
+/// 因 ORM ActiveModel 字段名不同（step_id / loop_id），在 db 层保持独立实现。
+pub(super) struct V19StepLoopTags;
+
+#[async_trait]
+impl Migration for V19StepLoopTags {
+    fn version(&self) -> i64 {
+        19
+    }
+    fn name(&self) -> &'static str {
+        "step_loop_tags"
+    }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        // step_tags 表：环节与标签的关联
+        db.exec(
+            "CREATE TABLE IF NOT EXISTS step_tags (
+                step_id INTEGER NOT NULL,
+                tag_id INTEGER NOT NULL,
+                PRIMARY KEY (step_id, tag_id),
+                FOREIGN KEY (step_id) REFERENCES steps(id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+            )",
+        )
+        .await?;
+        db.exec("CREATE INDEX IF NOT EXISTS idx_step_tags_step_id ON step_tags(step_id)")
+            .await?;
+
+        // loop_tags 表：环路与标签的关联
+        db.exec(
+            "CREATE TABLE IF NOT EXISTS loop_tags (
+                loop_id INTEGER NOT NULL,
+                tag_id INTEGER NOT NULL,
+                PRIMARY KEY (loop_id, tag_id),
+                FOREIGN KEY (loop_id) REFERENCES loops(id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+            )",
+        )
+        .await?;
+        db.exec("CREATE INDEX IF NOT EXISTS idx_loop_tags_loop_id ON loop_tags(loop_id)")
+            .await?;
 
         Ok(())
     }

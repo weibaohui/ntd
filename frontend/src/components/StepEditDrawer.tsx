@@ -293,15 +293,15 @@ export function StepEditDrawer({ open, step, tags, onClose, onSaved }: StepEditD
     if (!form.editTitle.trim()) { message.error('标题不能为空'); return; }
     form.setSaving(true);
     try {
-      // 先保存基本信息
+      // 一次性保存基本信息+标签，避免分两次 API 调用导致部分提交风险；
+      // 后端 update_step handler 已支持 tag_ids 字段，收到后一并持久化标签关联
       await dbSteps.updateStep(step.id, {
         title: form.editTitle.trim(),
         prompt: form.editPrompt,
         executor: form.editExecutor || null,
         acceptance_criteria: form.editAcceptanceCriteria || null,
+        tag_ids: form.selectedTag != null ? [form.selectedTag] : [],
       });
-      // 再保存标签（单选，取 selectedTag 或空数组）
-      await dbSteps.updateStepTags(step.id, form.selectedTag != null ? [form.selectedTag] : []);
       message.success('环节已更新');
       onSaved();
       onClose();

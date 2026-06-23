@@ -280,6 +280,7 @@ export interface CreateLoopRequest {
   description?: string;
   workspace?: string | null;
   tag_ids?: number[];
+  /** 创建时可选预绑定单个标签；省略时后端按空标签处理，兼容旧调用方。 */
   icon?: string;
   review_template_id?: number | null;
 }
@@ -291,6 +292,8 @@ export interface UpdateLoopRequest {
   icon: string;
   review_template_id?: number | null;
   limits_config?: string | null;
+  /** 可选更新标签 ID（传空数组清除标签，省略不更新）。合并到同一请求避免多次 API 调用导致的部分提交风险。 */
+  tag_ids?: number[] | null;
 }
 
 export interface CreateTriggerRequest {

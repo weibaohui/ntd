@@ -40,6 +40,9 @@ impl From<LoopListRow> for LoopListItem {
 }
 
 impl LoopListItem {
+    /// 在 handler 已完成关联表查询后注入标签，避免列表行转换隐式依赖数据库访问。
+    /// 不放入 `From<LoopListRow>` 是因为标签信息需要额外跨表查询，
+    /// 由 handler 在操作事务边界外统一获取后注入。
     pub fn with_tags(mut self, tag_ids: Vec<i64>) -> Self {
         self.loop_ = self.loop_.with_tags(tag_ids);
         self
@@ -142,6 +145,9 @@ impl From<loops::Model> for LoopDto {
 }
 
 impl LoopDto {
+    /// 将外部查询到的标签关联附加到基础 DTO，保持 `From<loops::Model>` 只做纯字段映射。
+    /// 标签属于跨表关联数据，不应在 ORM 模型转换时隐式查询，
+    /// 由 handler 使用此方法在查询事务边界外手动注入。
     pub fn with_tags(mut self, tag_ids: Vec<i64>) -> Self {
         self.tag_ids = tag_ids;
         self
@@ -394,6 +400,9 @@ pub struct UpdateLoopRequest {
     pub review_template_id: Option<i64>,
     #[serde(default)]
     pub limits_config: Option<String>,
+    /// 可选更新的标签 ID（单选）；传空数组或无字段表示不更新标签
+    #[serde(default)]
+    pub tag_ids: Option<Vec<i64>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

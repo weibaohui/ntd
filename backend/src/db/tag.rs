@@ -1,6 +1,7 @@
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, TransactionTrait,
 };
+use std::collections::HashMap;
 
 use crate::db::Database;
 use crate::db::entity::{tags, todo_tags, step_tags, loop_tags};
@@ -143,7 +144,9 @@ impl Database {
 
     // ====== Step Tags ======
 
-    /// 设置环节的标签（全量替换）。
+    /// 设置环节的标签（全量替换）。与 set_loop_tags 结构对称，因 step_tags / loop_tags
+    /// 的 ActiveModel 字段名不同（step_id / loop_id），无法用普通函数参数化，保持两处
+    /// 独立实现；修改一处请同步修改另一处。
     pub async fn set_step_tags(&self, step_id: i64, tag_ids: &[i64]) -> Result<(), sea_orm::DbErr> {
         let tag_ids = tag_ids.to_vec();
         self.conn
@@ -199,9 +202,28 @@ impl Database {
         Ok(rows.into_iter().map(|r| r.tag_id).collect())
     }
 
+    /// 批量查询多个环节的标签映射，key=step_id, value=tag_ids。
+    /// 消除列表/候选接口中间接 N+1 查询：先收集所有 step_id，一次查询再按 id 分组返回。
+    pub async fn get_step_tag_ids_batch(&self, step_ids: &[i64]) -> Result<HashMap<i64, Vec<i64>>, sea_orm::DbErr> {
+        if step_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        // is_in 需要 owned Vec<i64>，从 slice 克隆一次
+        let ids: Vec<i64> = step_ids.to_vec();
+        let rows = step_tags::Entity::find()
+            .filter(step_tags::Column::StepId.is_in(ids))
+            .all(&self.conn)
+            .await?;
+        let mut map: HashMap<i64, Vec<i64>> = HashMap::new();
+        for row in rows {
+            map.entry(row.step_id).or_default().push(row.tag_id);
+        }
+        Ok(map)
+    }
+
     // ====== Loop Tags ======
 
-    /// 设置环路的标签（全量替换）。
+    /// 设置环路的标签（全量替换）。与 set_step_tags 结构对称，修改一处请同步修改另一处。
     pub async fn set_loop_tags(&self, loop_id: i64, tag_ids: &[i64]) -> Result<(), sea_orm::DbErr> {
         let tag_ids = tag_ids.to_vec();
         self.conn
@@ -255,5 +277,24 @@ impl Database {
             .all(&self.conn)
             .await?;
         Ok(rows.into_iter().map(|r| r.tag_id).collect())
+    }
+
+    /// 批量查询多个环路的标签映射，key=loop_id, value=tag_ids。
+    /// 消除列表接口中间接 N+1 查询：先收集所有 loop_id，一次查询再按 id 分组返回。
+    pub async fn get_loop_tag_ids_batch(&self, loop_ids: &[i64]) -> Result<HashMap<i64, Vec<i64>>, sea_orm::DbErr> {
+        if loop_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        // is_in 需要 owned Vec<i64>，从 slice 克隆一次
+        let ids: Vec<i64> = loop_ids.to_vec();
+        let rows = loop_tags::Entity::find()
+            .filter(loop_tags::Column::LoopId.is_in(ids))
+            .all(&self.conn)
+            .await?;
+        let mut map: HashMap<i64, Vec<i64>> = HashMap::new();
+        for row in rows {
+            map.entry(row.loop_id).or_default().push(row.tag_id);
+        }
+        Ok(map)
     }
 }

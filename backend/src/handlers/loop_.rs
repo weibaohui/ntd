@@ -28,7 +28,7 @@ use crate::models::{
     LoopDetail, LoopDto, LoopExecutionDetail, LoopExecutionDto, LoopExecutionTokenSummary,
     LoopListItem, LoopStepDto, LoopStepExecutionDto, LoopTriggerDto, ReorderLoopStepsRequest,
     UpdateLoopRequest, UpdateLoopStatusRequest, UpdateLoopStepRequest,
-    UpdateTriggerRequest, ApproveStepExecutionRequest, UpdateTagsRequest, TodoSummary,
+    UpdateTriggerRequest, ApproveStepExecutionRequest, UpdateTagsRequest,
 };
 
 const DEFAULT_PAGE_LIMIT: u64 = 20;
@@ -43,15 +43,18 @@ pub async fn list_loops(
 ) -> Result<impl IntoResponse, AppError> {
     let workspace = params.get("workspace").map(|s| s.as_str());
     let rows = state.db.list_loops_with_counts(workspace).await?;
-    let mut items: Vec<LoopListItem> = rows.into_iter().map(Into::into).collect();
-    // 为每个 loop 加载标签 ID
-    let mut results: Vec<LoopListItem> = Vec::with_capacity(items.len());
-    for item in items {
-        let tag_ids = state.db.get_loop_tag_ids(item.loop_.id).await.unwrap_or_default();
-        results.push(item.with_tags(tag_ids));
-    }
-    items = results;
-    Ok(ApiResponse::ok(items))
+    let items: Vec<LoopListItem> = rows.into_iter().map(Into::into).collect();
+    // 批量查询所有 loop 的标签映射，避免逐条 N+1 查询
+    let loop_ids: Vec<i64> = items.iter().map(|item| item.loop_.id).collect();
+    let tag_map = state.db.get_loop_tag_ids_batch(&loop_ids).await?;
+    let results: Vec<LoopListItem> = items
+        .into_iter()
+        .map(|item| {
+            let tag_ids = tag_map.get(&item.loop_.id).cloned().unwrap_or_default();
+            item.with_tags(tag_ids)
+        })
+        .collect();
+    Ok(ApiResponse::ok(results))
 }
 
 /// POST /api/loops — 新建 loop,status 强制为 paused
@@ -61,6 +64,10 @@ pub async fn create_loop(
 ) -> Result<impl IntoResponse, AppError> {
     if req.name.trim().is_empty() {
         return Err(AppError::BadRequest("name 不能为空".to_string()));
+    }
+    // 创建环路前校验标签约束：环路只能选择一个标签
+    if req.tag_ids.len() > 1 {
+        return Err(AppError::BadRequest("环路只能选择一个标签".to_string()));
     }
     let created = state
         .db
@@ -72,8 +79,12 @@ pub async fn create_loop(
             req.review_template_id,
         )
         .await?;
-    // 新建时没有标签，tag_ids 为空
-    Ok((StatusCode::CREATED, ApiResponse::ok(LoopDto::from(created))))
+    // 如果创建请求携带了 tag_ids，则持久化标签关联；否则新建环路从空标签开始
+    if !req.tag_ids.is_empty() {
+        state.db.set_loop_tags(created.id, &req.tag_ids).await?;
+    }
+    let tag_ids = state.db.get_loop_tag_ids(created.id).await?;
+    Ok((StatusCode::CREATED, ApiResponse::ok(LoopDto::from(created).with_tags(tag_ids))))
 }
 
 /// GET /api/loops/{id} — 完整详情(loop + triggers + steps + todos)
@@ -86,39 +97,10 @@ pub async fn get_loop(
         .load_loop_full(id)
         .await?
         .ok_or(AppError::NotFound)?;
-    // 加载环路关联的标签 ID
-    let tag_ids = state.db.get_loop_tag_ids(id).await.unwrap_or_default();
-    let loop_dto = LoopDto::from(view.loop_).with_tags(tag_ids);
-    let detail = LoopDetail {
-        loop_: loop_dto,
-        triggers: view.triggers.into_iter().map(Into::into).collect(),
-        steps: view
-            .steps_meta
-            .into_iter()
-            .map(|(s, todo_title, todo_executor, todo_status)| LoopStepDto {
-                step: s.into(),
-                todo_title,
-                todo_executor,
-                todo_status,
-            })
-            .collect(),
-        todo_map: view
-            .todo_map
-            .into_iter()
-            .map(|(id, t)| {
-                (
-                    id,
-                    TodoSummary {
-                        id: t.id,
-                        title: t.title,
-                        status: t.status.unwrap_or_default(),
-                        executor: t.executor.unwrap_or_default(),
-                    },
-                )
-            })
-            .collect(),
-        pending_approval_count: view.pending_approval_count,
-    };
+    // 加载环路关联的标签 ID（复用模型层 LoopDetail::from 转换，只注入 tags）
+    let tag_ids = state.db.get_loop_tag_ids(id).await?;
+    let mut detail = LoopDetail::from(view);
+    detail.loop_ = detail.loop_.with_tags(tag_ids);
     Ok(ApiResponse::ok(detail))
 }
 
@@ -148,8 +130,16 @@ pub async fn update_loop(
             req.limits_config.as_deref(),
         )
         .await?;
+    // 如果请求携带了 tag_ids，则更新标签关联；
+    // 合并到同一个 handler 中避免前端分两次保存导致的部分提交风险
+    if let Some(ref tag_ids) = req.tag_ids {
+        if tag_ids.len() > 1 {
+            return Err(AppError::BadRequest("环路只能选择一个标签".to_string()));
+        }
+        state.db.set_loop_tags(id, tag_ids).await?;
+    }
     let updated = state.db.get_loop(id).await?.ok_or(AppError::NotFound)?;
-    let tag_ids = state.db.get_loop_tag_ids(id).await.unwrap_or_default();
+    let tag_ids = state.db.get_loop_tag_ids(id).await?;
     Ok(ApiResponse::ok(LoopDto::from(updated).with_tags(tag_ids)))
 }
 
@@ -185,7 +175,7 @@ pub async fn update_loop_status(
         let _ = sched.reload_all().await;
     }
     let updated = state.db.get_loop(id).await?.ok_or(AppError::NotFound)?;
-    let tag_ids = state.db.get_loop_tag_ids(id).await.unwrap_or_default();
+    let tag_ids = state.db.get_loop_tag_ids(id).await?;
     Ok(ApiResponse::ok(LoopDto::from(updated).with_tags(tag_ids)))
 }
 
@@ -214,9 +204,13 @@ pub async fn update_loop_tags(
     Json(req): Json<UpdateTagsRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     state.db.get_loop(id).await?.ok_or(AppError::NotFound)?;
+    // 强制单选标签约束：前端是 TagCheckCardGroup 单选，后端防御多于 1 个标签的非法请求
+    if req.tag_ids.len() > 1 {
+        return Err(AppError::BadRequest("环路只能选择一个标签".to_string()));
+    }
     state.db.set_loop_tags(id, &req.tag_ids).await?;
     let updated = state.db.get_loop(id).await?.ok_or(AppError::NotFound)?;
-    let tag_ids = state.db.get_loop_tag_ids(id).await.unwrap_or_default();
+    let tag_ids = state.db.get_loop_tag_ids(id).await?;
     Ok(ApiResponse::ok(LoopDto::from(updated).with_tags(tag_ids)))
 }
 

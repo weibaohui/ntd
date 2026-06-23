@@ -25,7 +25,7 @@ async fn create_todo(db: &Database, title: &str) -> i64 {
 
 // 工具: 构造一个 loop, 返回 loop_id
 async fn create_loop(db: &Database, name: &str) -> i64 {
-    db.create_loop(name, "", None, "#722ed1", "loop", None)
+    db.create_loop(name, "", None, "loop", None)
         .await
         .unwrap()
         .id
@@ -52,7 +52,7 @@ async fn v6_migration_backfills_step_for_loop_referenced_todos() {
     let todo_id = create_todo(&db, "被 loop 引用的 todo").await;
     db.promote_to_step(todo_id).await.unwrap();
     let loop_id = create_loop(&db, "测试 loop").await;
-    db.create_loop_step(loop_id, "阶段 1", "", todo_id, "sequential", false, None, "skip", true, "next", None, "break", None)
+    db.create_loop_step(loop_id, "阶段 1", "", todo_id, "sequential", false, None, "skip", true, "next", None, "break", None, "ai")
         .await
         .unwrap();
 
@@ -93,7 +93,7 @@ async fn demote_step_blocked_when_loop_references_it() {
     let todo_id = create_todo(&db, "被引用的环节").await;
     db.promote_to_step(todo_id).await.unwrap();
     let loop_id = create_loop(&db, "引用 loop").await;
-    db.create_loop_step(loop_id, "阶段", "", todo_id, "sequential", false, None, "skip", true, "next", None, "break", None)
+    db.create_loop_step(loop_id, "阶段", "", todo_id, "sequential", false, None, "skip", true, "next", None, "break", None, "ai")
         .await
         .unwrap();
     // demote 应该失败 (返回 AppError::BadRequest 或 DbErr)
@@ -114,7 +114,7 @@ async fn demote_succeeds_after_stage_deleted() {
     db.promote_to_step(todo_id).await.unwrap();
     let loop_id = create_loop(&db, "loop").await;
     let step_id = db
-        .create_loop_step(loop_id, "阶段", "", todo_id, "sequential", false, None, "skip", true, "next", None, "break", None)
+        .create_loop_step(loop_id, "阶段", "", todo_id, "sequential", false, None, "skip", true, "next", None, "break", None, "ai")
         .await
         .unwrap()
         .id;
@@ -151,7 +151,7 @@ async fn list_steps_with_usage_includes_count() {
     db.promote_to_step(e2).await.unwrap();
     // 1 个 step 引用 e2
     let loop_id = create_loop(&db, "loop").await;
-    db.create_loop_step(loop_id, "阶段", "", e2, "sequential", false, None, "skip", true, "next", None, "break", None)
+    db.create_loop_step(loop_id, "阶段", "", e2, "sequential", false, None, "skip", true, "next", None, "break", None, "ai")
         .await
         .unwrap();
     let list = db.list_steps_with_usage().await.unwrap();
@@ -177,14 +177,14 @@ async fn count_loop_steps_reflects_stage_changes() {
 
     // 加一个 step → 1
     let s1 = db
-        .create_loop_step(loop_id, "s1", "", todo_id, "sequential", false, None, "skip", true, "next", None, "break", None)
+        .create_loop_step(loop_id, "s1", "", todo_id, "sequential", false, None, "skip", true, "next", None, "break", None, "ai")
         .await
         .unwrap()
         .id;
     assert_eq!(db.count_loop_steps_using_todo(todo_id).await.unwrap(), 1);
 
     // 加第二个 step → 2
-    db.create_loop_step(loop_id, "s2", "", todo_id, "sequential", false, None, "skip", true, "next", None, "break", None)
+    db.create_loop_step(loop_id, "s2", "", todo_id, "sequential", false, None, "skip", true, "next", None, "break", None, "ai")
         .await
         .unwrap();
     assert_eq!(db.count_loop_steps_using_todo(todo_id).await.unwrap(), 2);
@@ -206,11 +206,11 @@ async fn test_update_step_title_and_color() {
     db.promote_to_step(todo_id).await.unwrap();
     
     // 创建 step 记录
-    let step = db.create_step("原始标题", "原始提示", None, None, Some(todo_id), Some("#ff0000"))
+    let step = db.create_step("原始标题", "原始提示", None, None, Some(todo_id))
         .await.unwrap();
     
-    // 更新标题和颜色
-    db.update_step(step.id, "新标题", "新提示", Some("claude"), Some("验收标准"), Some("#00ff00"))
+    // 更新标题
+    db.update_step(step.id, "新标题", "新提示", Some("claude"), Some("验收标准"))
         .await.unwrap();
     
     // 验证更新成功
@@ -219,7 +219,6 @@ async fn test_update_step_title_and_color() {
     assert_eq!(updated.prompt, "新提示");
     assert_eq!(updated.executor, Some("claude".to_string()));
     assert_eq!(updated.acceptance_criteria, Some("验收标准".to_string()));
-    assert_eq!(updated.color, "#00ff00");
 }
 
 /// 测试 update_step 函数：不更新颜色（color 为 None）
@@ -229,17 +228,16 @@ async fn test_update_step_without_color() {
     let todo_id = create_todo(&db, "不更新颜色").await;
     db.promote_to_step(todo_id).await.unwrap();
     
-    let step = db.create_step("测试", "提示", None, None, Some(todo_id), Some("#123456"))
+    let step = db.create_step("测试", "提示", None, None, Some(todo_id))
         .await.unwrap();
     
-    // 更新但不传颜色
-    db.update_step(step.id, "新标题", "新提示", None, None, None)
+    // 更新基本信息
+    db.update_step(step.id, "新标题", "新提示", None, None)
         .await.unwrap();
     
-    // 验证颜色保持不变
+    // 验证更新成功
     let updated = db.get_step(step.id).await.unwrap().unwrap();
     assert_eq!(updated.title, "新标题");
-    assert_eq!(updated.color, "#123456"); // 颜色未变
 }
 
 /// 测试 delete_step 函数：正常删除
@@ -249,7 +247,7 @@ async fn test_delete_step_success() {
     let todo_id = create_todo(&db, "待删除").await;
     db.promote_to_step(todo_id).await.unwrap();
     
-    let step = db.create_step("待删除", "提示", None, None, Some(todo_id), None)
+    let step = db.create_step("待删除", "提示", None, None, Some(todo_id))
         .await.unwrap();
     let step_id = step.id;
     
@@ -277,6 +275,6 @@ async fn test_update_step_not_found() {
     let db = setup_db().await;
     
     // 更新不存在的 ID，应该成功但无实际影响
-    let result = db.update_step(99999, "标题", "提示", None, None, None).await;
+    let result = db.update_step(99999, "标题", "提示", None, None).await;
     assert!(result.is_ok(), "更新不存在的 step 应该成功（SQL UPDATE 不影响任何行）");
 }

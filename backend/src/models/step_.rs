@@ -43,6 +43,8 @@ impl StepDto {
         self
     }
 
+    /// 将 handler 从 step_tags 关联表查询到的标签注入 DTO，避免 `From<steps::Model>` 依赖额外查询。
+    /// 标签信息由 handler 在 DB 事务边界外统一获取后调用此方法装配，保持转换层的纯净职责。
     pub fn with_tags(mut self, tag_ids: Vec<i64>) -> Self {
         self.tag_ids = tag_ids;
         self
@@ -59,6 +61,9 @@ pub struct UpdateStepRequest {
     pub prompt: Option<String>,
     pub executor: Option<String>,
     pub acceptance_criteria: Option<String>,
+    /// 可选更新的标签 ID（单选）；传空数组或无字段表示不更新标签
+    #[serde(default)]
+    pub tag_ids: Option<Vec<i64>>,
 }
 
 /// 直接创建环节请求体。
