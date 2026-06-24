@@ -13,10 +13,10 @@ import { App as AntApp, Modal, Form, Input, InputNumber, Select, Button } from '
 import { PlusOutlined } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import * as dbReviewTemplates from '@/utils/database/reviewTemplates';
-import * as db from '@/utils/database';
 import type { UpdateLoopRequest } from '@/types/loop';
 import type { ReviewTemplateOption } from '@/types/reviewTemplate';
 import { TagCheckCardGroup } from './TagCheckCard';
+import { WorkspaceSelect } from './common/WorkspaceSelect';
 
 // ---------- props ----------
 
@@ -60,22 +60,17 @@ export function LoopFormModal({
   const [form] = Form.useForm<FormValues>();
   // 标签选中态（单选）
   const [editingTag, setEditingTag] = useState<number | null>(null);
-  // 工作空间下拉选项
-  const [workspaceOptions, setWorkspaceOptions] = useState<{ label: string; value: string }[]>([]);
+  // 工作空间受控值（与 form.setFieldsValue 配合，避免直接操作 form 内部状态）
+  const [workspaceValue, setWorkspaceValue] = useState<string | null>(null);
   // 评审模板
   const [reviewTemplateOptions, setReviewTemplateOptions] = useState<ReviewTemplateOption[]>([]);
   const [creatingTemplate, setCreatingTemplate] = useState(false);
   const [creatingTemplateSaving, setCreatingTemplateSaving] = useState(false);
   const [newTemplateForm] = Form.useForm<{ name: string; description?: string; prompt: string }>();
 
-  // 打开时加载工作空间列表 + 评审模板选项
+  // 打开时加载评审模板选项
   useEffect(() => {
     if (!open) return;
-    // 加载项目目录用于工作空间下拉
-    db.getProjectDirectories()
-      .then(dirs => setWorkspaceOptions(dirs.map(d => ({ label: d.name || d.path, value: d.path }))))
-      .catch(() => { /* 静默 */ });
-    // 加载评审模板选项
     dbReviewTemplates.listReviewTemplateOptions()
       .then(setReviewTemplateOptions)
       .catch(() => { /* 静默 */ });
@@ -88,10 +83,10 @@ export function LoopFormModal({
       form.setFieldsValue({
         name: initialData.name,
         description: initialData.description,
-        workspace: initialData.workspace ?? null,
         icon: initialData.icon,
         review_template_id: initialData.review_template_id ?? null,
       });
+      setWorkspaceValue(initialData.workspace ?? null);
       // 解析 limits_config
       try {
         const lc = JSON.parse(initialData.limits_config || '{}');
@@ -105,6 +100,7 @@ export function LoopFormModal({
       // 创建模式：清空表单
       form.resetFields();
       setEditingTag(null);
+      setWorkspaceValue(null);
     }
   }, [open, mode, initialData, form]);
 
@@ -149,7 +145,7 @@ export function LoopFormModal({
       const basePayload = {
         name: values.name.trim(),
         description: values.description ?? '',
-        workspace: values.workspace ?? null,
+        workspace: workspaceValue ?? null,
         icon: values.icon ?? 'loop',
         review_template_id: values.review_template_id ?? null,
         limits_config: Object.keys(limitsConfig).length > 0 ? JSON.stringify(limitsConfig) : null,
@@ -158,7 +154,7 @@ export function LoopFormModal({
 
       if (mode === 'create') {
         // 创建模式：工作空间必填
-        if (!values.workspace?.trim()) {
+        if (!workspaceValue?.trim()) {
           message.error('请选择工作空间');
           setSaving(false);
           return;
@@ -166,7 +162,7 @@ export function LoopFormModal({
         const res = await dbLoops.createLoop({
           name: basePayload.name,
           description: basePayload.description,
-          workspace: values.workspace.trim(),
+          workspace: workspaceValue.trim(),
           tag_ids: basePayload.tag_ids,
           icon: basePayload.icon,
           review_template_id: basePayload.review_template_id,
@@ -186,7 +182,7 @@ export function LoopFormModal({
     } finally {
       setSaving(false);
     }
-  }, [form, editingTag, mode, loopId, message, onSaved, onClose]);
+  }, [form, editingTag, workspaceValue, mode, loopId, message, onSaved, onClose]);
 
   return (
     <>
@@ -214,16 +210,16 @@ export function LoopFormModal({
           <Form.Item
             label={<>工作空间 {mode === 'create' && <span style={{ color: '#ff4d4f' }}>*</span>}</>
           }
-            name="workspace"
             tooltip="此 loop 所属的工作空间"
             rules={mode === 'create' ? [{ required: true, message: '请选择工作空间' }] : []}
           >
-            <Select
-              allowClear
-              placeholder="选择工作空间"
-              options={workspaceOptions}
-              showSearch
-              optionFilterProp="label"
+            <WorkspaceSelect
+              value={workspaceValue}
+              onChange={(v) => {
+                setWorkspaceValue(v);
+                form.setFieldsValue({ workspace: v });
+              }}
+              required={mode === 'create'}
             />
           </Form.Item>
           {tags.length > 0 && (
