@@ -210,14 +210,14 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
     try {
       const detail = await dbLoops.getExecution(loopId, execId);
       setExpandedDetail(detail);
-      // 提取轨迹：按 sequence_index 排序的 step_id 列表
+      // 提取轨迹：按 sequence_index 排序的 loop_step_id 列表
       const sorted = [...detail.step_executions].sort(
         (a: any, b: any) => (a.sequence_index || 0) - (b.sequence_index || 0)
       );
-      const tracedIds = sorted.map((s: any) => s.step_id);
+      const tracedIds = sorted.map((s: any) => s.loop_step_id);
       const seqMap: Record<number, number> = {};
       sorted.forEach((s: any) => {
-        if (s.sequence_index != null) seqMap[s.step_id] = s.sequence_index;
+        if (s.sequence_index != null) seqMap[s.loop_step_id] = s.sequence_index;
       });
       onExecutionTrace?.(tracedIds, seqMap);
     } catch {
@@ -408,7 +408,7 @@ export function BlackboardDrawer({ open, stepExecs, onClose }: {
                 {idx + 1}
               </span>
               <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--color-text, #0f172a)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {s.step_name || `环节 #${s.step_id}`}
+                {s.step_name || `环节 #${s.loop_step_id}`}
               </span>
               {s.status && (
                 <Tag color={execStatusView(s.status).color} style={{ margin: 0, fontSize: 10, lineHeight: '16px' }}>
@@ -545,7 +545,7 @@ export function StepExecList({ stepExecs, loopId, executionId, onApproved }: { s
 
               {/* 环节名称 */}
               <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text, #0f172a)', marginBottom: 2, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {s.step_name || `环节 #${s.step_id}`}
+                {s.step_name || `环节 #${s.loop_step_id}`}
               </div>
 
               {/* 状态 + 耗时 */}

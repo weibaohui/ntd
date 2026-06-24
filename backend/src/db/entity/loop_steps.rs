@@ -15,8 +15,8 @@ pub struct Model {
     pub description: String,
     #[sea_orm(default_value = "0")]
     pub order_index: i32,
-    /// 关联的 step id（对应 steps 表）
-    pub step_id: i64,
+    /// 关联的 todo id
+    pub todo_id: i64,
     /// sequential (reserved for parallel)
     #[sea_orm(default_value = "sequential")]
     pub run_mode: String,
@@ -55,19 +55,19 @@ pub enum Relation {
     )]
     BelongsToLoop,
     #[sea_orm(
-        belongs_to = "super::steps::Entity",
-        from = "Column::StepId",
-        to = "super::steps::Column::Id"
+        belongs_to = "super::todos::Entity",
+        from = "Column::TodoId",
+        to = "super::todos::Column::Id"
     )]
-    BelongsToStep,
+    BelongsToTodo,
 }
 
 impl Related<super::loops::Entity> for Entity {
     fn to() -> RelationDef { Relation::BelongsToLoop.def() }
 }
 
-impl Related<super::steps::Entity> for Entity {
-    fn to() -> RelationDef { Relation::BelongsToStep.def() }
+impl Related<super::todos::Entity> for Entity {
+    fn to() -> RelationDef { Relation::BelongsToTodo.def() }
 }
 
 impl ActiveModelBehavior for ActiveModel {}
