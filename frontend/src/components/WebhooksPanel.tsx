@@ -114,9 +114,9 @@ function WebhookCard({
 }) {
   // 根据类型生成触发 URL
   const triggerUrl = webhook.webhook_type === 'todo' && webhook.default_todo_id
-    ? `${baseUrl}/webhook/trigger/${webhook.default_todo_id}/todo`
-    : webhook.webhook_type === 'loop' && webhook.id
-    ? `${baseUrl}/webhook/trigger/${webhook.id}/loop`
+    ? `${baseUrl}/webhook/trigger/todo/${webhook.default_todo_id}`
+    : webhook.webhook_type === 'loop' && webhook.loop_id
+    ? `${baseUrl}/webhook/trigger/loop/${webhook.loop_id}`
     : null;
 
   return (
@@ -418,10 +418,10 @@ export function WebhooksPanel({ todos }: WebhooksPanelProps) {
       key: 'urls',
       width: 320,
       render: (_: any, record: Webhook) => {
-        const url = record.webhook_type === 'loop' && record.id
-          ? `${baseUrl}/webhook/trigger/${record.id}/loop`
+        const url = record.webhook_type === 'loop' && record.loop_id
+          ? `${baseUrl}/webhook/trigger/loop/${record.loop_id}`
           : record.default_todo_id
-          ? `${baseUrl}/webhook/trigger/${record.default_todo_id}/todo`
+          ? `${baseUrl}/webhook/trigger/todo/${record.default_todo_id}`
           : null;
         if (!url) {
           return (

@@ -268,7 +268,7 @@ pub async fn trigger_webhook_with_todo(
             todo_id,
             webhook_id: Some(webhook.id),
             method: "GET".to_string(),
-            path: format!("/webhook/trigger/{}/todo", todo_id),
+            path: format!("/webhook/trigger/todo/{}", todo_id),
             query_params: params,
             content_type: None,
             body: None,
@@ -298,7 +298,7 @@ pub async fn trigger_webhook_with_todo_post_json(
             todo_id,
             webhook_id: Some(webhook.id),
             method: "POST".to_string(),
-            path: format!("/webhook/trigger/{}/todo", todo_id),
+            path: format!("/webhook/trigger/todo/{}", todo_id),
             query_params: params,
             content_type: Some("application/json".to_string()),
             body: Some(body_str),
@@ -306,52 +306,48 @@ pub async fn trigger_webhook_with_todo_post_json(
     ).await
 }
 
-/// Trigger endpoint for loop webhook (with webhook_id) - GET
+/// Trigger endpoint for loop webhook (with loop_id) - GET
 pub async fn trigger_webhook_with_loop_get(
     State(state): State<AppState>,
-    Path(webhook_id): Path<i64>,
+    Path(loop_id): Path<i64>,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, AppError> {
-    trigger_webhook_loop_internal(Arc::new(state), webhook_id, "GET", params, None, None).await
+    trigger_webhook_loop_internal(Arc::new(state), loop_id, "GET", params, None, None).await
 }
 
-/// Trigger endpoint for loop webhook (with webhook_id) - POST with JSON body
+/// Trigger endpoint for loop webhook (with loop_id) - POST with JSON body
 pub async fn trigger_webhook_with_loop_post(
     State(state): State<AppState>,
-    Path(webhook_id): Path<i64>,
+    Path(loop_id): Path<i64>,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, AppError> {
     let body_str = serde_json::to_string(&body).ok();
     let content_type = Some("application/json".to_string());
-    trigger_webhook_loop_internal(Arc::new(state), webhook_id, "POST", params, content_type, body_str).await
+    trigger_webhook_loop_internal(Arc::new(state), loop_id, "POST", params, content_type, body_str).await
 }
 
 /// Internal loop webhook trigger implementation
 async fn trigger_webhook_loop_internal(
     state: Arc<AppState>,
-    webhook_id: i64,
+    loop_id: i64,
     method: &str,
     query_params: HashMap<String, String>,
     content_type: Option<String>,
     body: Option<String>,
 ) -> Result<impl IntoResponse, AppError> {
-    // Verify webhook exists and is enabled, then dispatch to loop_trigger_dispatcher
-    let webhook = state.db.get_webhook(webhook_id).await?
+    // Find enabled loop webhook for this loop_id
+    let webhook = state.db.get_webhook_by_loop(loop_id).await?
         .ok_or_else(|| AppError::NotFound)?;
 
     if !webhook.enabled {
         return Err(AppError::BadRequest("Webhook is disabled".to_string()));
     }
 
-    if webhook.webhook_type != "loop" {
-        return Err(AppError::BadRequest("This webhook is not configured for loops".to_string()));
-    }
-
     // Record the webhook call
     let response_body = if let Some(dispatcher) = state.loop_trigger_dispatcher.as_ref() {
         // Dispatch to loop trigger - this triggers all loop triggers that reference this webhook
-        let started = dispatcher.dispatch_webhook(webhook_id, body.as_deref()).await;
+        let started = dispatcher.dispatch_webhook(webhook.id, body.as_deref()).await;
         serde_json::json!({ "success": true, "dispatched": true, "started_runs": started }).to_string()
     } else {
         serde_json::json!({ "success": false, "error": "Loop trigger dispatcher not available" }).to_string()
@@ -364,9 +360,9 @@ async fn trigger_webhook_loop_internal(
     };
 
     if let Err(e) = state.db.create_webhook_record(NewWebhookRecord {
-        webhook_id: Some(webhook_id),
+        webhook_id: Some(webhook.id),
         method: method.to_string(),
-        path: format!("/webhook/trigger/{}/loop", webhook_id),
+        path: format!("/webhook/trigger/loop/{}", loop_id),
         query_params: query_params_json,
         body: body.clone(),
         content_type: content_type.clone(),
