@@ -65,6 +65,10 @@ pub async fn create_loop(
     if req.name.trim().is_empty() {
         return Err(AppError::BadRequest("name 不能为空".to_string()));
     }
+    // 创建环路前校验工作空间必填
+    if req.workspace.trim().is_empty() {
+        return Err(AppError::BadRequest("workspace 不能为空".to_string()));
+    }
     // 创建环路前校验标签约束：环路只能选择一个标签
     if req.tag_ids.len() > 1 {
         return Err(AppError::BadRequest("环路只能选择一个标签".to_string()));
@@ -74,7 +78,7 @@ pub async fn create_loop(
         .create_loop(
             req.name.trim(),
             &req.description,
-            req.workspace.as_deref(),
+            Some(req.workspace.trim()),
             &req.icon,
             req.review_template_id,
         )

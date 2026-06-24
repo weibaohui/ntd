@@ -217,6 +217,12 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
       return;
     }
 
+    // 创建模式：工作空间为必填项
+    if (!isEditMode && !workspace.trim()) {
+      message.error('请选择项目目录（工作空间）');
+      return;
+    }
+
     setLoading(true);
     try {
       const trimmedWorkspace = workspace.trim() || null;
@@ -356,7 +362,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
           <div style={{ marginBottom: 16 }}>
             <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14 }}>
               <FolderOutlined style={{ color: 'var(--color-primary)', marginRight: 6 }} />
-              项目目录
+              项目目录 <span style={{ color: '#ff4d4f' }}>*</span>
             </div>
             {projectDirectories.length === 0 ? (
               // 没有可用项目目录时给出空态提示，避免用户面对一个无选项的下拉茫然

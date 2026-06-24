@@ -271,7 +271,8 @@ export interface LoopExecutionListResponse {
 export interface CreateLoopRequest {
   name: string;
   description?: string;
-  workspace?: string | null;
+  /** 工作空间（项目目录路径），必填。 */
+  workspace: string;
   tag_ids?: number[];
   /** 创建时可选预绑定单个标签；省略时后端按空标签处理，兼容旧调用方。 */
   icon?: string;

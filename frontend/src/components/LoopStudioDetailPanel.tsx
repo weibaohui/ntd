@@ -12,23 +12,20 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   Skeleton, App as AntApp, Button, Space, Tooltip, Popconfirm, Empty,
-  Modal, Form, Input, InputNumber, Collapse, Select, Switch,
+  Collapse, Switch,
 } from 'antd';
 import {
   ThunderboltOutlined,
   CopyOutlined,
   DeleteOutlined,
   EditOutlined,
-  PlusOutlined,
   ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
-import * as dbReviewTemplates from '@/utils/database/reviewTemplates';
 import * as db from '@/utils/database';
-import type { LoopDetail, UpdateLoopRequest } from '@/types/loop';
-import type { ReviewTemplateOption } from '@/types/reviewTemplate';
+import type { LoopDetail } from '@/types/loop';
 import type { ProjectDirectory } from '@/types';
-import { TagCheckCardGroup } from './TagCheckCard';
+import { LoopFormModal } from './LoopFormModal';
 import { LoopTriggersPanel, TRIGGER_META } from './LoopStudioTriggersPanel';
 import { LoopStepsPanel } from './LoopStudioStepsPanel';
 import { LoopExecutionsPanel } from './LoopStudioExecutionsPanel';
@@ -40,7 +37,6 @@ interface LoopDetailPanelProps {
   onTrigger: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
-  onCreate: () => void;
   onToggleStatus: () => void;
   onChanged: () => void;
 }
@@ -51,7 +47,6 @@ export function LoopDetailPanel({
   onTrigger,
   onDuplicate,
   onDelete,
-  onCreate,
   onToggleStatus,
   onChanged,
 }: LoopDetailPanelProps) {
@@ -60,10 +55,6 @@ export function LoopDetailPanel({
   const [loading, setLoading] = useState(true);
   // 基础信息编辑 modal 开关 (替代之前的 inline 编辑)
   const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [form] = Form.useForm<UpdateLoopRequest & { max_step_executions?: number; max_total_tokens?: number }>();
-  // 工作空间下拉选项
-  const [workspaceOptions, setWorkspaceOptions] = useState<{ label: string; value: string }[]>([]);
   // 完整的项目目录列表（用于展示详情）
   const [projectDirs, setProjectDirs] = useState<ProjectDirectory[]>([]);
   // 执行记录总数，由 LoopExecutionsPanel 通过回调更新
@@ -71,8 +62,12 @@ export function LoopDetailPanel({
   // 从 loop.limits_config 解析出的限制值，传递给子面板做兜底校验
   const [maxStepExecutions, setMaxStepExecutions] = useState<number | null>(null);
   const [maxTotalTokens, setMaxTotalTokens] = useState<number | null>(null);
-  // 编辑时选中的标签（单选）
-  const [editingTag, setEditingTag] = useState<number | null>(null);
+  // 编辑弹窗预填数据，从 detail 提取
+  const [editInitialData, setEditInitialData] = useState<{
+    name: string; description: string; workspace: string | null;
+    icon: string; review_template_id: number | null;
+    tag_ids: number[]; limits_config: string | null;
+  } | null>(null);
 
   // 加载完整 detail, 子面板变更后也要重新拉以保持最新
   const reload = useCallback(() => {
@@ -80,20 +75,9 @@ export function LoopDetailPanel({
     dbLoops.getLoop(loopId)
       .then((d) => {
         setDetail(d);
-        form.setFieldsValue({
-          name: d.name,
-          description: d.description,
-          workspace: d.workspace,
-          icon: d.icon,
-        });
-        // 解析 limits_config 到同一 form
+        // 解析 limits_config 缓存限制值，传递给子面板做跳转自身时的兜底校验
         try {
           const lc = JSON.parse(d.limits_config || '{}');
-          form.setFieldsValue({
-            max_step_executions: lc.max_step_executions ?? null,
-            max_total_tokens: lc.max_total_tokens ?? null,
-          });
-          // 缓存限制值，传递给子面板做跳转自身时的兜底校验
           setMaxStepExecutions(lc.max_step_executions ?? null);
           setMaxTotalTokens(lc.max_total_tokens ?? null);
         } catch {
@@ -105,64 +89,16 @@ export function LoopDetailPanel({
         setDetail(null);
       })
       .finally(() => setLoading(false));
-  }, [loopId, form, message]);
+  }, [loopId, message]);
 
   useEffect(() => { reload(); }, [reload]);
 
-  // 加载工作空间列表供下拉选择
+  // 加载项目目录列表（用于详情页展示工作空间名称）
   useEffect(() => {
     db.getProjectDirectories()
-      .then(dirs => {
-        setProjectDirs(dirs);
-        setWorkspaceOptions(
-          dirs.map(d => ({ label: d.name || d.path, value: d.path }))
-        );
-      })
+      .then(dirs => setProjectDirs(dirs))
       .catch(() => { /* 静默 */ });
   }, []);
-
-  // 评审模板下拉选项 (含 inline 「+ 新建模板」流程所需)
-  const [reviewTemplateOptions, setReviewTemplateOptions] = useState<ReviewTemplateOption[]>([]);
-  const [creatingTemplate, setCreatingTemplate] = useState(false);
-  const [creatingTemplateSaving, setCreatingTemplateSaving] = useState(false);
-  const [newTemplateForm] = Form.useForm<{ name: string; description?: string; prompt: string }>();
-
-  // 加载评审模板选项；保存/创建后也要重新拉以保持最新
-  const reloadTemplateOptions = useCallback(() => {
-    dbReviewTemplates.listReviewTemplateOptions()
-      .then(setReviewTemplateOptions)
-      .catch(() => { /* 静默：模板加载失败不影响 loop 编辑 */ });
-  }, []);
-
-  useEffect(() => { reloadTemplateOptions(); }, [reloadTemplateOptions]);
-
-  /**
-   * Inline 创建评审模板：弹一个小 Modal，输入 name + prompt，保存后
-   * 1) 把新模板写回 reviewTemplateOptions  2) 把 Select 当前值置为新 id
-   * 避免用户先关掉 loop 编辑器去设置里建模板再回来。
-   */
-  const handleCreateTemplate = useCallback(async () => {
-    const values = await newTemplateForm.validateFields();
-    setCreatingTemplateSaving(true);
-    try {
-      const created = await dbReviewTemplates.createReviewTemplate({
-        name: values.name.trim(),
-        description: values.description?.trim() || null,
-        prompt: values.prompt,
-      });
-      message.success(`已创建模板「${created.name}」`);
-      // 刷新下拉 + 立即选中新建的
-      const opts = await dbReviewTemplates.listReviewTemplateOptions();
-      setReviewTemplateOptions(opts);
-      form.setFieldsValue({ review_template_id: created.id });
-      newTemplateForm.resetFields();
-      setCreatingTemplateSaving(false);
-      setCreatingTemplate(false);
-    } catch (e) {
-      message.error(`创建失败：${(e as Error).message}`);
-      setCreatingTemplateSaving(false);
-    }
-  }, [form, message, newTemplateForm]);
 
   // 预加载执行记录总数（用于折叠标签展示，不等用户展开后才显示）
   useEffect(() => {
@@ -171,53 +107,28 @@ export function LoopDetailPanel({
       .catch(() => { /* 静默 */ });
   }, [loopId]);
 
-  // 打开编辑 modal
+  // 打开编辑 modal：从 detail 提取预填数据
   const handleOpenEdit = useCallback(() => {
     if (!detail) return;
-    form.setFieldsValue({
+    setEditInitialData({
       name: detail.name,
       description: detail.description,
       workspace: detail.workspace,
       icon: detail.icon,
-      // review_template_id 是 Option<i64>，null 也要能透传
       review_template_id: detail.review_template_id ?? null,
+      tag_ids: detail.tag_ids ?? [],
+      limits_config: detail.limits_config,
     });
-    // 初始化标签（单选）
-    setEditingTag(detail.tag_ids?.[0] ?? null);
     setEditing(true);
-  }, [detail, form]);
+  }, [detail]);
 
-  // 保存基础信息 (后端要求全量)
-  const handleSave = useCallback(async () => {
-    const values = await form.validateFields();
-    setSaving(true);
-    try {
-      // 构建 limits_config（从主 form 读取）
-      const limitsConfig: Record<string, any> = {};
-      if (values.max_step_executions != null) limitsConfig.max_step_executions = values.max_step_executions;
-      if (values.max_total_tokens != null) limitsConfig.max_total_tokens = values.max_total_tokens;
-
-      // 一次性保存基础信息+标签，避免分两次 API 调用导致部分提交风险
-      await dbLoops.updateLoop(loopId, {
-        name: values.name.trim(),
-        description: values.description ?? '',
-        workspace: values.workspace ?? null,
-        icon: values.icon ?? 'loop',
-        review_template_id: values.review_template_id ?? null,
-        limits_config: Object.keys(limitsConfig).length > 0 ? JSON.stringify(limitsConfig) : null,
-        // 标签合并到同一请求体中，后端 handler 在更新基本信息后一并持久化标签关联
-        tag_ids: editingTag != null ? [editingTag] : [],
-      });
-      message.success('已保存');
-      setEditing(false);
-      reload();
-      onChanged();
-    } catch (e) {
-      message.error('保存失败，请重试');
-    } finally {
-      setSaving(false);
-    }
-  }, [form, loopId, editingTag, message, reload, onChanged]);
+  // 编辑保存后的回调：刷新详情 + 通知父组件
+  const handleEditSaved = useCallback(() => {
+    setEditing(false);
+    setEditInitialData(null);
+    reload();
+    onChanged();
+  }, [reload, onChanged]);
 
   if (loading && !detail) {
     return <Skeleton active style={{ padding: 24 }} />;
@@ -253,9 +164,6 @@ export function LoopDetailPanel({
           </Tooltip>
           <Tooltip title="编辑">
             <Button size="small" icon={<EditOutlined />} onClick={handleOpenEdit} />
-          </Tooltip>
-          <Tooltip title="新建">
-            <Button size="small" icon={<PlusOutlined />} onClick={onCreate} />
           </Tooltip>
           <Popconfirm
             title="删除 loop"
@@ -451,127 +359,19 @@ export function LoopDetailPanel({
         />
       </div>
 
-      {/* 编辑基础信息 modal — 替代之前的 inline 编辑 */}
-      <Modal
-        title="编辑 loop"
+      {/* 编辑基础信息 modal — 复用 LoopFormModal 组件 */}
+      <LoopFormModal
         open={editing}
-        onCancel={() => setEditing(false)}
-        onOk={handleSave}
-        okText="保存"
-        cancelText="取消"
-        confirmLoading={saving}
-        width={560}
-        destroyOnClose
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item label="名称" name="name" rules={[{ required: true, message: '名称必填' }]}>
-            <Input maxLength={100} />
-          </Form.Item>
-          <Form.Item label="描述" name="description">
-            <Input.TextArea rows={2} maxLength={500} />
-          </Form.Item>
-          <Form.Item label="关联工作空间" name="workspace" tooltip="此 loop 所属的工作空间">
-            <Select
-              allowClear
-              placeholder="选择工作空间"
-              options={workspaceOptions}
-              showSearch
-              optionFilterProp="label"
-            />
-          </Form.Item>
-          {tags.length > 0 && (
-            <Form.Item label="标签">
-              <TagCheckCardGroup
-                tags={tags}
-                value={editingTag}
-                onChange={(val) => setEditingTag(val as number | null)}
-              />
-            </Form.Item>
-          )}
-          <Form.Item label="图标" name="icon" tooltip="预留字段, 当前仅展示">
-            <Input placeholder="loop" maxLength={50} />
-          </Form.Item>
-          <Form.Item
-            label="评审模板"
-            name="review_template_id"
-            tooltip="选择用于自动评审的模板（来自设置 → 评审模板管理）。不选则使用默认模板。"
-            extra={
-              <Button
-                type="link"
-                size="small"
-                icon={<PlusOutlined />}
-                style={{ padding: 0, marginTop: 4 }}
-                onClick={() => setCreatingTemplate(true)}
-              >
-                新建模板
-              </Button>
-            }
-          >
-            <Select
-              allowClear
-              placeholder="使用默认评审模板"
-              showSearch
-              optionFilterProp="label"
-              // 不传 options 会被 antd 当成"自定义模板字符串"模式（与 value 是 number 冲突）。
-              options={reviewTemplateOptions.map((t) => ({
-                value: t.id,
-                label: t.name,
-              }))}
-            />
-          </Form.Item>
-          {/* ── 全局限制 ── */}
-          <div style={{ fontWeight: 600, fontSize: 14, marginTop: 16, marginBottom: 12, color: 'var(--color-text-secondary, #64748b)' }}>
-            全局限制
-          </div>
-          <div style={{ background: 'var(--color-bg-elevated, #f8fafc)', padding: 12, borderRadius: 8 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <Form.Item label="最大执行步数" name={['max_step_executions']} tooltip="超出后自动终止 Loop（留空=不限制）">
-                <InputNumber min={1} max={9999} placeholder="不限" style={{ width: '100%' }} />
-              </Form.Item>
-              <Form.Item label="最大 Token 数" name={['max_total_tokens']} tooltip="超出后自动终止（留空=不限制）">
-                <InputNumber min={1} max={9999999999} placeholder="不限" style={{ width: '100%' }} step={1000000} />
-              </Form.Item>
-            </div>
-          </div>
-        </Form>
-      </Modal>
-
-      {/* Inline 新建评审模板的 Modal：在 loop 编辑器内就能创建并立即选中。 */}
-      <Modal
-        title="新建评审模板"
-        open={creatingTemplate}
-        onCancel={() => {
-          newTemplateForm.resetFields();
-          setCreatingTemplate(false);
+        mode="edit"
+        loopId={loopId}
+        initialData={editInitialData ?? undefined}
+        tags={tags}
+        onSaved={handleEditSaved}
+        onClose={() => {
+          setEditing(false);
+          setEditInitialData(null);
         }}
-        onOk={handleCreateTemplate}
-        confirmLoading={creatingTemplateSaving}
-        destroyOnClose
-      >
-        <Form form={newTemplateForm} layout="vertical" preserve={false}>
-          <Form.Item
-            label="名称"
-            name="name"
-            rules={[{ required: true, message: '请输入名称' }]}
-          >
-            <Input placeholder="如：代码评审 / 文档评审" maxLength={128} />
-          </Form.Item>
-          <Form.Item label="描述" name="description">
-            <Input placeholder="（可选）简短说明这个模板的用途" maxLength={512} />
-          </Form.Item>
-          <Form.Item
-            label="Prompt 模板"
-            name="prompt"
-            rules={[{ required: true, message: '请输入 prompt 模板' }]}
-            tooltip="支持占位符 {original_prompt} {original_output} {acceptance_criteria} {max_output_chars}"
-          >
-            <Input.TextArea
-              rows={8}
-              placeholder="你是一个评审师…"
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
+      />
     </div>
   );
 }

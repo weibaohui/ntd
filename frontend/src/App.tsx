@@ -17,6 +17,7 @@ import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
 import { StepDetailPanel } from '@/components/StepDetailPanel';
 import { LoopDetailPanel } from './components/LoopStudioDetailPanel';
+import { LoopFormModal } from './components/LoopFormModal';
 import * as dbLoops from './utils/database/loops';
 import { EXECUTION_PANEL, SIDEBAR_WIDTH } from './constants';
 import * as db from './utils/database';
@@ -34,6 +35,8 @@ function AppContent() {
   const [smartCreateOpen, setSmartCreateOpen] = useState(false);
   const [fabExpanded, setFabExpanded] = useState(false);
   const [appConfig, setAppConfig] = useState<Config | null>(null);
+  // 新建环路弹窗（使用 LoopFormModal create 模式）
+  const [loopCreateModalOpen, setLoopCreateModalOpen] = useState(false);
   // 从左侧环路列表选中某个 loop 时记录其 id，右侧面板展示 LoopDetailPanel
   const [selectedLoopId, setSelectedLoopId] = useState<number | null>(null);
   // ���左侧环节列表选中某个 step 时记录其 id，右侧面板展示 StepDetailPanel
@@ -234,14 +237,9 @@ function AppContent() {
               loopUpdateCount={loopUpdateCount}
               onShowSettings={() => handleShowView('settings')}
               onSelectLoop={handleSelectLoop}
-              onCreateLoop={async () => {
-                try {
-                  const res = await dbLoops.createLoop({ name: '新建环路', description: '' });
-                  setSelectedLoopId(res.id);
-                  setLoopUpdateCount(c => c + 1);
-                } catch (err) {
-                  message.error('创建失败');
-                }
+              onCreateLoop={() => {
+                // 打开 LoopFormModal 创建模式，用户填写完整信息后创建环路
+                setLoopCreateModalOpen(true);
               }}
             />
           </div>
@@ -326,15 +324,6 @@ function AppContent() {
                       message.error('删除失败，环路可能正在被引用');
                     }
                   }}
-                  onCreate={async () => {
-                    try {
-                      const res = await dbLoops.createLoop({ name: '新建环路', description: '' });
-                      setSelectedLoopId(res.id);
-                      setLoopUpdateCount(c => c + 1);
-                    } catch (err) {
-                      message.error('创建失败');
-                    }
-                  }}
                   onToggleStatus={async () => {
                     try {
                       const loops = await dbLoops.listLoops();
@@ -396,6 +385,19 @@ function AppContent() {
             localStorage.setItem('execution_panel_collapsed', String(next));
           } catch {}
         }}
+      />
+
+      {/* 新建环路弹窗 — 复用 LoopFormModal create 模式，用户填写完整信息后创建 */}
+      <LoopFormModal
+        open={loopCreateModalOpen}
+        mode="create"
+        tags={state.tags}
+        onSaved={(newLoopId) => {
+          if (newLoopId) setSelectedLoopId(newLoopId);
+          setLoopUpdateCount(c => c + 1);
+          setLoopCreateModalOpen(false);
+        }}
+        onClose={() => setLoopCreateModalOpen(false)}
       />
     </Layout>
   );

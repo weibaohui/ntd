@@ -352,8 +352,8 @@ pub struct CreateLoopRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    #[serde(default)]
-    pub workspace: Option<String>,
+    /// 工作空间（项目目录路径），必填。
+    pub workspace: String,
     #[serde(default)]
     pub tag_ids: Vec<i64>,
     #[serde(default = "default_icon")]
