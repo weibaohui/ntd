@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback, useReducer } from 'react';
-import { Drawer, Input, Button, App, Divider, Switch } from 'antd';
-import { FolderOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { Drawer, Input, Button, App, Divider } from 'antd';
+import { FolderOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import { WorkspaceSelect } from './common/WorkspaceSelect';
 
@@ -47,7 +47,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
   // 从 formState 中解构出常用的字段
   const {
     title, prompt, selectedTags, executor, workspace,
-    schedulerEnabled, schedulerConfig, acceptanceCriteria, autoReviewEnabled,
+    schedulerEnabled, schedulerConfig, acceptanceCriteria,
   } = formState;
 
   // 设置单个字段的快捷函数
@@ -189,13 +189,12 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
           executor, schedulerEnabled, schedulerConfig || null,
           trimmedWorkspace,
           acceptanceCriteria || null,
-          autoReviewEnabled,
         );
         await db.updateScheduler(todo.id, schedulerEnabled, schedulerConfig || null);
         await db.updateTodoTags(todo.id, selectedTags);
         message.success('任务已更新');
       } else {
-        const newTodo = await db.createTodo(title.trim(), prompt.trim(), selectedTags, acceptanceCriteria || undefined, autoReviewEnabled);
+        const newTodo = await db.createTodo(title.trim(), prompt.trim(), selectedTags, acceptanceCriteria || undefined);
 
         // WorkspaceSelect 只允许从下拉列表选择，无需二次校验
         const workspaceToSave = trimmedWorkspace;
@@ -206,7 +205,6 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
             executor, schedulerEnabled, schedulerConfig || null,
             workspaceToSave,
             acceptanceCriteria || null,
-            autoReviewEnabled,
           );
           await db.updateScheduler(newTodo.id, schedulerEnabled, schedulerConfig || null);
         }
@@ -328,33 +326,6 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
             />
           </div>
 
-          {/* 执行后自动评审：仅对普通 todo（不是评审实例/模板）可见。
-              业务上默认关闭（reducer 初始态为 false），仅在用户手动开启时启用；
-              loop 通过后端 API 创建 step todo，仍走 DB 默认 true，不受影响。 */}
-          {(todo?.todo_type ?? 0) === 0 && (
-            <>
-              <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>
-                    <ThunderboltOutlined style={{ color: 'var(--color-primary)', marginRight: 6 }} />
-                    执行后自动评审
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2 }}>
-                    本次执行完成后，自动派生一个评审实例对结果打分（0-100）
-                  </div>
-                </div>
-                <Switch
-                  checked={autoReviewEnabled}
-                  onChange={(v) => setField('autoReviewEnabled', v)}
-                  checkedChildren="开启"
-                  unCheckedChildren="关闭"
-                />
-              </div>
-              <Divider style={{ margin: '8px 0 16px' }} />
-            </>
-          )}
-
-          <Divider style={{ margin: '8px 0 16px' }} />
         </div>
       </div>
 

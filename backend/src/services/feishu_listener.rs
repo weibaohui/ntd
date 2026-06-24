@@ -1934,7 +1934,7 @@ mod tests {
             todo_type: 0,
             parent_todo_id: None,
             review_template_id: None,
-            auto_review_enabled: true,
+            auto_review_enabled: false,
         }
     }
 

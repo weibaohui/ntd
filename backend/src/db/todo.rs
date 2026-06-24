@@ -66,7 +66,7 @@ impl Database {
             todo_type: m.todo_type.unwrap_or(0),
             parent_todo_id: m.parent_todo_id,
             review_template_id: m.review_template_id,
-            auto_review_enabled: m.auto_review_enabled.unwrap_or(true),
+            auto_review_enabled: m.auto_review_enabled.unwrap_or(false),
         }
     }
 
@@ -139,7 +139,7 @@ impl Database {
             updated_at: ActiveValue::Set(Some(now)),
             executor: ActiveValue::Set(Some(executor_str.to_string())),
             acceptance_criteria: ActiveValue::Set(acceptance_criteria.map(|s| s.to_string())),
-            auto_review_enabled: ActiveValue::Set(Some(true)),
+            auto_review_enabled: ActiveValue::Set(Some(false)),
             todo_type: ActiveValue::Set(Some(0)),
             ..Default::default()
         };

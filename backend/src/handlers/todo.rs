@@ -144,7 +144,7 @@ pub async fn create_todo(
         todo_type: 0,
         parent_todo_id: None,
         review_template_id: None,
-        auto_review_enabled: req.auto_review_enabled.unwrap_or(true),
+        auto_review_enabled: req.auto_review_enabled.unwrap_or(false),
     }))
 }
 

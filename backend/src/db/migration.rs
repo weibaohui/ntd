@@ -57,6 +57,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V18LoopHumanReview),
         Box::new(V19StepLoopTags),
         Box::new(V25WebhooksLoopSupport),
+        Box::new(V26DisableAutoReviewForNormalTodos),
         Box::new(V23DropTodoHooksColumns),
         Box::new(RenameLoopStepsStepIdBackToTodoId),
     ]
@@ -3274,6 +3275,37 @@ impl Migration for V25WebhooksLoopSupport {
         // 幂等：列已存在时跳过
         add_column_if_missing(db, "webhooks", "loop_id", "ALTER TABLE webhooks ADD COLUMN loop_id INTEGER").await?;
         add_column_if_missing(db, "webhooks", "webhook_type", "ALTER TABLE webhooks ADD COLUMN webhook_type TEXT NOT NULL DEFAULT 'todo'").await?;
+        Ok(())
+    }
+}
+
+// ===== V26: 禁用普通事项的自动评审 =====
+//
+// 背景：事项（todo_type=0）的"执行后自动评审"功能与 Loop 环节的评分闸门评审重复，
+// 给用户造成困扰。Loop 的评审依赖 apply_rating_gate 独立实现，不依赖
+// todo.auto_review_enabled 字段，因此可以安全地将该字段在所有普通 todo 上设为 false。
+//
+// 影响：
+// - 普通事项执行完成后不再触发自动评审（由 completion.rs:maybe_run_auto_review 兜底）
+// - Loop 环节的评分闸门评审完全不受影响（apply_rating_gate 不读该字段）
+// - 飞书创建的事项也走相同的默认值逻辑，不受影响
+//
+// 幂等：已关闭的再次关闭仍为关闭。
+pub(super) struct V26DisableAutoReviewForNormalTodos;
+
+#[async_trait]
+impl Migration for V26DisableAutoReviewForNormalTodos {
+    fn version(&self) -> i64 {
+        26
+    }
+    fn name(&self) -> &'static str {
+        "disable_auto_review_for_normal_todos"
+    }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        db.exec(
+            "UPDATE todos SET auto_review_enabled = 0 WHERE auto_review_enabled IS NULL OR auto_review_enabled = 1"
+        ).await?;
         Ok(())
     }
 }
