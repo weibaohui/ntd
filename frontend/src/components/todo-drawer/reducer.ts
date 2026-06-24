@@ -4,10 +4,12 @@
  * 使用 useReducer 替代多个 useState，将相关状态集中管理。
  * 表单状态（title、prompt、executor 等）在编辑模式和创建模式之间切换时
  * 需要批量重置，useReducer 可以通过单个 RESET_FORM action 原子性地完成。
+ *
+ * todo hook 已整块移除（plan `purring-forging-petal`），表单状态里
+ * 也不再持有 `hooks: TodoHookItem[]`。
  */
 
 import type { Todo } from '@/types';
-import type { TodoHookItem } from '@/utils/database/hooks';
 import { DEFAULT_EXECUTOR } from '@/types/execution';
 
 /** 表单数据状态 */
@@ -28,8 +30,6 @@ export interface TodoFormState {
   schedulerEnabled: boolean;
   /** 调度器 cron 表达式 */
   schedulerConfig: string;
-  /** 钩子列表 */
-  hooks: TodoHookItem[];
   /** 验收标准 */
   acceptanceCriteria: string;
   /** 是否启用自动评审 */
@@ -54,7 +54,6 @@ export const initialFormState: TodoFormState = {
   worktreeEnabled: false,
   schedulerEnabled: false,
   schedulerConfig: '',
-  hooks: [],
   acceptanceCriteria: '',
   autoReviewEnabled: true,
 };
@@ -84,7 +83,6 @@ export function todoFormReducer(state: TodoFormState, action: TodoFormAction): T
           worktreeEnabled: action.todo.worktree_enabled || false,
           schedulerEnabled: action.todo.scheduler_enabled || false,
           schedulerConfig: action.todo.scheduler_config || '',
-          hooks: action.todo.hooks ?? [],
           acceptanceCriteria: action.todo.acceptance_criteria ?? '',
           autoReviewEnabled: action.todo.auto_review_enabled ?? true,
         };

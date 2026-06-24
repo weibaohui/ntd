@@ -13,9 +13,7 @@ use ntd::{
     config::Config,
     db::Database,
     handlers::create_app,
-    hooks::HookService,
     scheduler::TodoScheduler,
-    service_context::ServiceContext,
     task_manager::TaskManager,
 };
 
@@ -29,15 +27,7 @@ async fn create_test_app() -> axum::Router {
     let task_manager = Arc::new(TaskManager::new());
 
     let config = Arc::new(std::sync::RwLock::new(Config::default()));
-    let tmp_ctx = ServiceContext {
-        db: db.clone(),
-        executor_registry: executor_registry.clone(),
-        tx: tx.clone(),
-        task_manager: task_manager.clone(),
-        config: config.clone(),
-    };
-    let hook_service = Arc::new(HookService::new(tmp_ctx));
-    let scheduler = Arc::new(TodoScheduler::new(hook_service.clone()).await.unwrap());
+    let scheduler = Arc::new(TodoScheduler::new().await.unwrap());
     let ctx = ntd::service_context::ServiceContext {
         db: db.clone(),
         executor_registry: executor_registry.clone(),
@@ -51,7 +41,7 @@ async fn create_test_app() -> axum::Router {
         .unwrap();
     scheduler.start().await.unwrap();
 
-    create_app(ctx, scheduler, hook_service)
+    create_app(ctx, scheduler)
 }
 
 async fn read_json_body<T: serde::de::DeserializeOwned>(

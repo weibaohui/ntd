@@ -23,7 +23,6 @@ use crate::adapters::ExecutorRegistry;
 use crate::Assets;
 use crate::config::Config;
 use crate::db::Database;
-use crate::hooks::HookService;
 use crate::models::{ApiResponse, ParsedLogEntry};
 use crate::scheduler::TodoScheduler;
 use crate::services::feishu_listener::FeishuListener;
@@ -45,7 +44,6 @@ pub struct AppState {
     pub config: Arc<std::sync::RwLock<Config>>,
     pub feishu_listener: Arc<FeishuListener>,
     pub feishu_push_mutator: broadcast::Sender<crate::services::feishu_push::PushConfigUpdate>,
-    pub hook_service: Arc<HookService>,
     /// Loop Studio: 独立 cron 调度器（None 表示 loop 功能未启用或初始化失败）
     pub loop_scheduler: Option<Arc<crate::services::loop_scheduler::LoopScheduler>>,
     /// Loop Studio: 触发器分发器（None 同上）
@@ -933,15 +931,16 @@ async fn version_upgrade_handler() -> impl IntoResponse {
 // =========================================================================
 
 /// 入口：装配整个 Axum 路由。所有领域路由以 merge 形式聚合，layer 链统一叠加。
+///
+/// todo hook 已整块移除（见 plan `purring-forging-petal`）：函数不再接收
+/// `hook_service`，避免出现「hook 体系已经从编排链摘除，但 AppState 还挂着
+/// Arc<HookService>」的接口残留。
 pub fn create_app(
     ctx: ServiceContext,
     scheduler: Arc<TodoScheduler>,
-    // 由 main.rs 构造好透传进来的 hook_service 单例。create_app 不再自行 Arc::new，
-    // 避免出现两份 HookService 各自管自己内部状态、彼此观察不到对方 (见 issue #509)。
-    hook_service: Arc<HookService>,
 ) -> Router {
     // 把状态构造与中间件叠加分两步：先 build 再 merge，便于读者按"装配顺序"线性阅读
-    let state = build_app_state(ctx, scheduler, hook_service);
+    let state = build_app_state(ctx, scheduler);
 
     Router::new()
         .merge(mount_domain_routes())
@@ -1008,10 +1007,12 @@ fn make_request_span(req: &Request) -> tracing::Span {
 /// 构造 `AppState` 并按需启动后台服务（feishu bot / stale binding cleanup / history fetcher /
 /// reviewer template 初始化 + Loop Studio 三件套）。所有 `.await` 都在 `tokio::spawn` 或
 /// `block_in_place` 中处理，保持 `build_app_state` 自身为同步函数。
+///
+/// todo hook 已整块移除，`build_app_state` 不再接收 hook_service 参数；下游的
+/// MessageDebounce / LoopRunner 同步取消该字段。
 fn build_app_state(
     ctx: ServiceContext,
     scheduler: Arc<TodoScheduler>,
-    hook_service: Arc<HookService>,
 ) -> AppState {
     let db = ctx.db.clone();
     let executor_registry = ctx.executor_registry.clone();
@@ -1022,7 +1023,7 @@ fn build_app_state(
     // MessageDebounce 在 feishu_listener 和 history_fetcher 之间共享（issue #600）
     use crate::services::auto_review::ensure_default_review_template_blocking;
     use crate::services::message_debounce::MessageDebounce;
-    let debounce = Arc::new(MessageDebounce::new(ctx.clone(), hook_service.clone()));
+    let debounce = Arc::new(MessageDebounce::new(ctx.clone()));
     let feishu_listener = Arc::new(FeishuListener::new(ctx.clone(), debounce.clone()));
 
     // 启动后台任务：bot 自启、stale binding 周期清理、history fetcher、reviewer template 初始化
@@ -1041,7 +1042,7 @@ fn build_app_state(
     // 用 block_in_place + Handle::block_on 走 sync 路径做 async DB 调用；
     // 这三件套是「可选能力」,初始化失败不阻塞 daemon 启动,只把 Option 置 None。
     let (loop_runner, loop_trigger_dispatcher, loop_scheduler) =
-        init_loop_studio_services(ctx.clone(), hook_service.clone(), tx.clone());
+        init_loop_studio_services(ctx.clone(), tx.clone());
 
     // 后台监听 todo 执行完成事件，派发给 loop_trigger_dispatcher
     spawn_todo_completed_listener(tx.clone(), loop_trigger_dispatcher.clone());
@@ -1055,7 +1056,6 @@ fn build_app_state(
         config,
         feishu_listener: feishu_listener.clone(),
         feishu_push_mutator: push_mutator,
-        hook_service,
         loop_scheduler,
         loop_trigger_dispatcher,
         loop_runner,
@@ -1068,7 +1068,6 @@ fn build_app_state(
 /// 在被调用时返回 503 风格错误。daemon 启动不因 loop 故障而被拖垮。
 fn init_loop_studio_services(
     ctx: ServiceContext,
-    hook_service: Arc<crate::hooks::HookService>,
     tx: tokio::sync::broadcast::Sender<ExecEvent>,
 ) -> (
     Option<Arc<crate::services::loop_runner::LoopRunner>>,
@@ -1078,7 +1077,7 @@ fn init_loop_studio_services(
     use crate::services::loop_runner::LoopRunner;
     use crate::services::loop_trigger::LoopTriggerDispatcher;
     // runner 与 dispatcher 是纯内存构造,无 IO,失败概率低
-    let runner = Arc::new(LoopRunner::new(ctx.clone(), hook_service, tx));
+    let runner = Arc::new(LoopRunner::new(ctx.clone(), tx));
     // dispatcher 复用 runner 的 ctx.db
     let dispatcher = Arc::new(LoopTriggerDispatcher::new(
         runner.clone(),
@@ -1931,8 +1930,9 @@ mod app_state_config_helpers_tests {
         // 内存数据库:不依赖外部文件,跑得快,适合单测。
         let db = Arc::new(crate::db::Database::new(":memory:").await.unwrap());
 
-        // ServiceContext 是其他几个组件共用的依赖(Scheduler / FeishuListener
-        // / HookService 都需要它)。先把它准备好,后续用其 clone 出多个引用。
+        // ServiceContext 是其他几个组件共用的依赖（Scheduler / FeishuListener
+        // 都需要它）。先把它准备好，后续用其 clone 出多个引用。
+        // todo hook 已整块移除，下游不再需要 HookService 透传。
         let (tx, _rx) = broadcast::channel(1);
         let ctx = ServiceContext {
             db: db.clone(),
@@ -1942,24 +1942,15 @@ mod app_state_config_helpers_tests {
             config: Arc::new(RwLock::new(Config::default())),
         };
 
-        // HookService 依赖 ServiceContext。这里用全新 ctx 避免和上面那个
-        // 共享状态,便于独立测试。
-        let hook_service = Arc::new(crate::hooks::HookService::new(ctx.clone()));
-
-        // TodoScheduler::new 是 async 的;其内部 `JobScheduler` 需要 tokio runtime。
-        // 这里 block_on 直接拿;在 `#[tokio::test]` 的 runtime 里调用,不会有额外约束。
-        let scheduler = Arc::new(
-            crate::scheduler::TodoScheduler::new(hook_service.clone())
-                .await
-                .unwrap(),
-        );
+        // TodoScheduler::new 是 async 的；其内部 `JobScheduler` 需要 tokio runtime。
+        // 这里 block_on 直接拿；在 `#[tokio::test]` 的 runtime 里调用，不会有额外约束。
+        let scheduler = Arc::new(crate::scheduler::TodoScheduler::new().await.unwrap());
 
         // FeishuListener::new 需要 ServiceContext + MessageDebounce。MessageDebounce
-        // 接受 ServiceContext + HookService,这里复用已经构造好的 ctx/hook_service。
-        let debounce = Arc::new(crate::services::message_debounce::MessageDebounce::new(
-            ctx.clone(),
-            hook_service.clone(),
-        ));
+        // 现在只依赖 ServiceContext，不再需要 HookService 注入。
+        let debounce = Arc::new(
+            crate::services::message_debounce::MessageDebounce::new(ctx.clone()),
+        );
         let feishu_listener = Arc::new(
             crate::services::feishu_listener::FeishuListener::new(ctx.clone(), debounce),
         );
@@ -1975,7 +1966,6 @@ mod app_state_config_helpers_tests {
             config: ctx.config.clone(),
             feishu_listener,
             feishu_push_mutator,
-            hook_service,
             // 测试用最小 AppState 不需要 loop 服务
             loop_scheduler: None,
             loop_trigger_dispatcher: None,

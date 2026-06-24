@@ -5,7 +5,7 @@ use std::str::FromStr;
 
 use crate::db::TodoUpdate;
 use crate::handlers::{ApiJson, AppError, AppState};
-use crate::hooks::models::HookContext;
+// todo hook 已整块移除（plan `purring-forging-petal`），HookContext 不再导入。
 use crate::models::{
     utc_timestamp, ApiResponse, BatchUpdateTodoExecutorRequest, BatchUpdateTodoResult,
     CreateTodoRequest, RecentCompletedTodo, StepDto, Todo, UpdateTagsRequest, UpdateTodoRequest,
@@ -124,14 +124,8 @@ pub async fn create_todo(
         tracing::warn!("Failed to update scheduler for todo {}: {}", id, e);
     }
 
-    // Persist inline hooks if the caller supplied them. Skipping the call when
-    // `None` means we keep the default empty list, which matches what was
-    // there before this field was added.
-    if let Some(ref hooks) = req.hooks {
-        if let Err(e) = state.db.update_todo_hooks(id, hooks).await {
-            tracing::warn!("Failed to set initial hooks for todo {}: {}", id, e);
-        }
-    }
+    // todo hook 已整块移除（plan `purring-forging-petal`）：不再处理 inline hooks 列表。
+    // 原来的 `update_todo_hooks(id, hooks)` 也已删除（hooks 列随 V23 迁移一起 drop）。
 
     // auto_review_enabled: 请求中显式指定为 Some(false) 时关闭, 其它情况保持默认 true
     if let Some(false) = req.auto_review_enabled {
@@ -156,7 +150,6 @@ pub async fn create_todo(
         task_id: None,
         workspace: None,
         worktree_enabled: false,
-        hooks: req.hooks.clone().unwrap_or_default(),
         acceptance_criteria: req.acceptance_criteria.clone(),
         todo_type: 0,
         parent_todo_id: None,
@@ -192,9 +185,6 @@ pub async fn update_todo(
     let executor = req.executor.or(current.executor);
     let workspace = req.workspace.or(current.workspace);
     let worktree_enabled = req.worktree_enabled.unwrap_or(current.worktree_enabled);
-
-    // Check if status is actually changing
-    let status_changed = req.status.is_some() && req.status.unwrap() != current.status;
 
     let scheduler_config = req
         .scheduler_config
@@ -236,29 +226,9 @@ pub async fn update_todo(
         .await
         .map_err(AppError::from)?;
 
-    if let Some(ref hooks) = req.hooks {
-        state
-            .db
-            .update_todo_hooks(id, hooks)
-            .await
-            .map_err(AppError::from)?;
-    }
-
-    // Fire state-change hooks (asynchronously)
-    if status_changed {
-        let old_status = current.status;
-        if let Some(ctx) = HookContext::for_state_change(
-            id,
-            title.clone(),
-            old_status,
-            new_status,
-            executor.clone(),
-            workspace.clone(),
-            vec![id],
-        ) {
-            state.hook_service.clone().fire_for_todo(id, ctx);
-        }
-    }
+    // todo hook 已整块移除（plan `purring-forging-petal`）：todo 不再持有
+    // inline hooks 列表，也不会在状态变化时 fire 任何 hook。原先的两步
+    // 「更新 hooks 列 / 异步 fire state-change 钩子」已经全部移除。
 
     let todo = state.require_todo(id).await?;
     Ok(ApiResponse::ok(todo))
@@ -312,29 +282,13 @@ pub async fn force_update_todo_status(
     ApiJson(req): ApiJson<UpdateTodoRequest>,
 ) -> Result<ApiResponse<Todo>, AppError> {
     if let Some(new_status) = req.status {
-        let current = state.require_todo(id).await?;
-        let old_status = current.status;
-
         state
             .db
             .force_update_todo_status(id, new_status)
             .await
             .map_err(AppError::from)?;
 
-        // Fire state-change hooks (asynchronously)
-        if old_status != new_status {
-            if let Some(ctx) = HookContext::for_state_change(
-                id,
-                current.title.clone(),
-                old_status,
-                new_status,
-                current.executor.clone(),
-                current.workspace.clone(),
-                vec![id],
-            ) {
-                state.hook_service.clone().fire_for_todo(id, ctx);
-            }
-        }
+        // todo hook 已整块移除：不再在状态变化时 fire state-change 钩子。
     }
     let todo = state.require_todo(id).await?;
     Ok(ApiResponse::ok(todo))

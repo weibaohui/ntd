@@ -21,7 +21,7 @@ use crate::adapters::CodeExecutor;
 use crate::models::Todo;
 
 use super::pre_spawn::{
-    create_run_execution_record, enforce_concurrency_limit, fire_pre_execution_hook_if_needed,
+    create_run_execution_record, enforce_concurrency_limit,
     reject_start_todo_failure, select_executor_and_build_command,
     substitute_message_placeholders,
 };
@@ -51,12 +51,11 @@ pub(crate) async fn prepare_execution_state(
     let task_state = register_task_and_load_todo(&request).await?;
     // 3) 取运行时配置（max_concurrent / timeout_secs）。
     let (max_concurrent, timeout_secs) = read_runtime_config(&request);
-    // 4) 加载 todo 后做并发检查 + pre-hook 触发。
+    // 4) 加载 todo 后做并发检查（pre-hook 已在 refactor 中移除）。
     let initial_todo = task_state.todo.clone();
     let todo =
         enforce_concurrency_limit(&request, initial_todo, max_concurrent, &task_state.task_id)
             .await?;
-    fire_pre_execution_hook_if_needed(&request, &todo, substituted.chain).await?;
     // 5) 选定 executor 并构造 command_args。
     let selected = select_executor_and_build_command(&request, &todo, &substituted.message).await?;
     // 6) 创建 execution record 并把 stage 1 产物聚合成 PreparedExecution。

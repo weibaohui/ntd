@@ -1,5 +1,3 @@
-import type { TodoHookItem } from '@/utils/database/hooks';
-
 // ─── Core Todo types ────────────────────────────────────────
 
 export interface Todo {
@@ -19,7 +17,6 @@ export interface Todo {
   task_id?: string | null;
   workspace?: string | null;
   worktree_enabled?: boolean;
-  hooks?: TodoHookItem[];
   acceptance_criteria?: string | null;
   /** Whether to spawn an auto-review child todo after this one finishes. Default true. */
   auto_review_enabled?: boolean;

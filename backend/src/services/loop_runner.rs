@@ -20,7 +20,6 @@ use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
 use crate::executor_service::{run_todo_execution_with_params, RunTodoExecutionRequest};
-use crate::hooks::HookService;
 use crate::models::ExecutionStatus;
 use crate::service_context::ServiceContext;
 use crate::db::entity::{loop_steps, steps};
@@ -40,20 +39,19 @@ struct LimitsConfig {
     max_total_tokens: Option<i64>,
 }
 
-/// LoopRunner 依赖：与现有 HookService 共享一个 spawn-friendly 结构。
+/// LoopRunner 依赖：不再持有 HookService，todo hook 已整块移除（见
+/// plan `purring-forging-petal`）。循环只与 ctx / tx 直接耦合。
 pub struct LoopRunner {
     ctx: ServiceContext,
-    hook_service: Arc<HookService>,
     tx: broadcast::Sender<crate::handlers::ExecEvent>,
 }
 
 impl LoopRunner {
     pub fn new(
         ctx: ServiceContext,
-        hook_service: Arc<HookService>,
         tx: broadcast::Sender<crate::handlers::ExecEvent>,
     ) -> Self {
-        Self { ctx, hook_service, tx }
+        Self { ctx, tx }
     }
 
     /// 暴露 ServiceContext 供 LoopScheduler / 测试 / 上层使用。
@@ -607,7 +605,6 @@ impl LoopRunner {
             tx: self.ctx.tx.clone(),
             task_manager: self.ctx.task_manager.clone(),
             config: self.ctx.config.clone(),
-            hook_service: self.hook_service.clone(),
             todo_id: 0,
             message: enhanced_prompt.to_string(),
             req_executor: step_meta.executor.clone(),
@@ -619,10 +616,8 @@ impl LoopRunner {
             }),
             resume_session_id: None,
             resume_message: None,
-            chain: vec![],
             source_todo_id: None,
             source_todo_title: Some(step_meta.title.clone()),
-            source_hook_id: None,
             loop_step_execution_id: Some(step_exec_id),
             step_id: Some(step_meta.id),
             feishu_bot_id: None,
@@ -970,7 +965,6 @@ impl LoopRunner {
                 tx: self.ctx.tx.clone(),
                 task_manager: self.ctx.task_manager.clone(),
                 config: self.ctx.config.clone(),
-                hook_service: self.hook_service.clone(),
                 todo_id: review_todo_id,
                 message: review_prompt,
                 req_executor: review_executor,
@@ -978,10 +972,8 @@ impl LoopRunner {
                 params: None,
                 resume_session_id: None,
                 resume_message: None,
-                chain: vec![],
                 source_todo_id: None,
                 source_todo_title: None,
-                source_hook_id: None,
                 loop_step_execution_id: None,
                 step_id: None,
                 feishu_bot_id: None,

@@ -15,7 +15,6 @@ import {
   ApiOutlined,
   MessageOutlined,
   ScheduleOutlined,
-  LinkOutlined,
   LeftOutlined,
 } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
@@ -24,7 +23,7 @@ import * as db from '@/utils/database';
 import type { Webhook } from '@/utils/database/webhooks';
 import type { Config } from '@/types';
 import { TodoNode, WebhookNode, FeishuNode, SchedulerNode } from './Nodes';
-import { HookEdge, WebhookEdge, FeishuEdge, SchedulerEdge } from './Edges';
+import { WebhookEdge, FeishuEdge, SchedulerEdge } from './Edges';
 import { buildRelationMap } from './GraphBuilder';
 import './relation-map.css';
 
@@ -36,7 +35,6 @@ const nodeTypes: NodeTypes = {
 };
 
 const edgeTypes: EdgeTypes = {
-  hook: HookEdge,
   webhook: WebhookEdge,
   feishu: FeishuEdge,
   scheduler: SchedulerEdge,
@@ -54,7 +52,6 @@ export function RelationMap({ onBack }: RelationMapProps) {
   const [loading, setLoading] = useState(true);
 
   // 过滤器
-  const [showHooks, setShowHooks] = useState(true);
   const [showWebhooks, setShowWebhooks] = useState(true);
   const [showFeishu, setShowFeishu] = useState(true);
   const [showScheduler, setShowScheduler] = useState(true);
@@ -73,8 +70,8 @@ export function RelationMap({ onBack }: RelationMapProps) {
 
   // 构建图数据
   const { nodes: builtNodes, edges: builtEdges } = useMemo(
-    () => buildRelationMap(state.todos, webhooks, config, showHooks, showWebhooks, showFeishu, showScheduler),
-    [state.todos, webhooks, config, showHooks, showWebhooks, showFeishu, showScheduler],
+    () => buildRelationMap(state.todos, webhooks, config, showWebhooks, showFeishu, showScheduler),
+    [state.todos, webhooks, config, showWebhooks, showFeishu, showScheduler],
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(builtNodes);
@@ -169,11 +166,6 @@ export function RelationMap({ onBack }: RelationMapProps) {
         <Panel position="top-right" className="relation-map-filters">
           <div className="filter-group">
             <div className="filter-item">
-              <LinkOutlined style={{ color: '#52c41a', marginRight: 4 }} />
-              <span className="filter-label">Hook</span>
-              <Switch size="small" checked={showHooks} onChange={setShowHooks} />
-            </div>
-            <div className="filter-item">
               <ApiOutlined style={{ color: '#722ed1', marginRight: 4 }} />
               <span className="filter-label">Webhook</span>
               <Switch size="small" checked={showWebhooks} onChange={setShowWebhooks} />
@@ -193,10 +185,6 @@ export function RelationMap({ onBack }: RelationMapProps) {
 
         {/* 底部图例 */}
         <Panel position="bottom-left" className="relation-map-legend">
-          <div className="legend-item">
-            <span className="legend-line solid" style={{ background: '#52c41a' }} />
-            <span>Hook（实线）</span>
-          </div>
           <div className="legend-item">
             <span className="legend-line dashed" style={{ background: '#722ed1' }} />
             <span>Webhook（虚线）</span>
@@ -220,7 +208,7 @@ export function RelationMap({ onBack }: RelationMapProps) {
                 <div>
                   <p style={{ color: 'var(--color-text-secondary)', marginBottom: 8 }}>暂无关联关系</p>
                   <p style={{ color: 'var(--color-text-tertiary)', fontSize: 13 }}>
-                    为 Todo 添加 Hook 或配置 Webhook 后，关联关系将在此显示
+                    配置 Webhook / 飞书命令 / 定时调度后，关联关系将在此显示
                   </p>
                 </div>
               }

@@ -12,8 +12,6 @@ import { PromptEditor } from './todo-drawer/PromptEditor';
 import { SkillSelector } from './todo-drawer/SkillSelector';
 import { SchedulerSection } from './todo-drawer/SchedulerSection';
 import { TemplateModal } from './todo-drawer/TemplateModal';
-import { TodoHooksEditor } from './todo-detail/TodoHooksEditor';
-import { useApp } from '@/hooks/useApp';
 import {
   todoFormReducer,
   initialFormState,
@@ -48,12 +46,12 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
   const [quickAddForm] = Form.useForm<{ name: string; path: string }>();
   const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
   const editorRef = useRef<any>(null);
-  const { state: appState } = useApp();
+  // 旧版 hook 编辑器消费 useApp 的 todos，todo hook 已整块移除后该 hook 不再需要。
 
   // 从 formState 中解构出常用的字段
   const {
     title, prompt, selectedTags, executor, workspace, worktreeEnabled,
-    schedulerEnabled, schedulerConfig, hooks, acceptanceCriteria, autoReviewEnabled,
+    schedulerEnabled, schedulerConfig, acceptanceCriteria, autoReviewEnabled,
   } = formState;
 
   // 设置单个字段的快捷函数
@@ -242,14 +240,14 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
           todo.id, title.trim(), prompt.trim(), todo.status,
           executor, schedulerEnabled, schedulerConfig || null,
           workspaceToSave, worktreeEnabled,
-          hooks, acceptanceCriteria || null,
+          acceptanceCriteria || null,
           autoReviewEnabled,
         );
         await db.updateScheduler(todo.id, schedulerEnabled, schedulerConfig || null);
         await db.updateTodoTags(todo.id, selectedTags);
         message.success('任务已更新');
       } else {
-        const newTodo = await db.createTodo(title.trim(), prompt.trim(), selectedTags, hooks, acceptanceCriteria || undefined, autoReviewEnabled);
+        const newTodo = await db.createTodo(title.trim(), prompt.trim(), selectedTags, acceptanceCriteria || undefined, autoReviewEnabled);
 
         // 创建模式：只在路径存在于目录列表时才设置 workspace，否则为 null（避免创建无名项目）
         const workspaceToSave = trimmedWorkspace && projectDirectories.some(d => d.path === trimmedWorkspace) ? trimmedWorkspace : null;
@@ -259,7 +257,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
             newTodo.id, newTodo.title, newTodo.prompt, newTodo.status,
             executor, schedulerEnabled, schedulerConfig || null,
             workspaceToSave, worktreeEnabled,
-            hooks, acceptanceCriteria || null,
+            acceptanceCriteria || null,
             autoReviewEnabled,
           );
           await db.updateScheduler(newTodo.id, schedulerEnabled, schedulerConfig || null);
@@ -454,7 +452,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
                     执行后自动评审
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2 }}>
-                    本次执行完成后，自动派生一个评审实例对结果打分（0-100），供下游 Hook 的评分闸门使用
+                    本次执行完成后，自动派生一个评审实例对结果打分（0-100）
                   </div>
                 </div>
                 <Switch
@@ -469,14 +467,6 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
           )}
 
           <Divider style={{ margin: '8px 0 16px' }} />
-
-          <TodoHooksEditor
-            todos={appState.todos}
-            ownerId={todo?.id ?? null}
-            hooks={hooks}
-            onChange={(v) => setField('hooks', v)}
-            disabled={loading}
-          />
         </div>
       </div>
 

@@ -11,7 +11,7 @@ import { LOG_TYPE_COLORS, LOG_TYPE_LABELS } from '@/constants';
 import type { SessionGroup } from './helpers';
 import { supportsResume } from '@/types';
 import type { ExecutionRecord, LogEntry } from '@/types';
-import { getHookTriggerLabel } from '@/utils/database/hooks';
+// todo hook 已整块移除（plan `purring-forging-petal`），不再需要 getHookTriggerLabel。
 import { copyToClipboard } from '@/utils/clipboard';
 import { CommandPanel } from '@/components/CommandPanel';
 import { CollapsibleConclusion } from './CollapsibleConclusion';
@@ -122,15 +122,6 @@ export function RecordDetailView({
           }}>
             {record.status === 'success' ? '成功' : record.status === 'failed' ? '失败' : '进行中'}
           </span>
-          {(() => {
-            const label = getHookTriggerLabel(record.trigger_type);
-            if (!label || record.source_todo_id == null) return null;
-            return (
-              <Tag color="purple" icon={<LinkOutlined />} style={{ margin: 0 }}>
-                被 #{record.source_todo_id} {record.source_todo_title ?? '?'} 的「{label}」hook 触发
-              </Tag>
-            );
-          })()}
           {record.status !== 'running' && record.usage?.duration_ms && (
             <span style={{ fontSize: 12, color: 'var(--color-success)', fontWeight: 600 }}>
               {formatDurationSec(record.usage.duration_ms / 1000)}

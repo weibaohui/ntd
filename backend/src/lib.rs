@@ -10,7 +10,6 @@ pub mod db;
 pub mod executor_service;
 pub mod feishu;
 pub mod handlers;
-pub mod hooks;
 pub mod log_flusher;
 pub mod models;
 pub mod npm_utils;

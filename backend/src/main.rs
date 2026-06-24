@@ -4,7 +4,6 @@ use tokio::sync::broadcast;
 use tracing::info;
 
 use std::path::PathBuf;
-use ntd::hooks::HookService;
 use ntd::service_context::ServiceContext;
 use ntd::{adapters, cli, daemon, db, handlers, scheduler::TodoScheduler, task_manager::TaskManager};
 use ntd::NtdSkills;
@@ -511,23 +510,10 @@ async fn run_server(cli_port: Option<u16>) {
     let task_manager = Arc::new(TaskManager::new());
     let config = Arc::new(std::sync::RwLock::new(cfg.clone()));
 
-    // 在 TodoScheduler 之前构造一份共享的 HookService 单例：scheduler 的 cron 回调
-    // 以及 create_app 内的 handler 路径都要用同一份 Arc<HookService>，避免 executor
-    // 末段 fire 钩子时再 Arc::new 一份 (见 issue #509)。这里先准备 ServiceContext，
-    // 后续在 sched 创建之前完成 hook_service 构造。
-    let shared_ctx = ServiceContext {
-        db: db.clone(),
-        executor_registry: executor_registry.clone(),
-        tx: tx.clone(),
-        task_manager: task_manager.clone(),
-        config: config.clone(),
-    };
-    let hook_service = Arc::new(HookService::new(shared_ctx));
-
     let scheduler = Arc::new({
-        // 把 hook_service.clone() 传给 TodoScheduler，让 cron 触发的执行末段
-        // 也能复用同一份 HookService 单例 (issue #509)。
-        let sched = TodoScheduler::new(hook_service.clone()).await.unwrap_or_else(|e| {
+        // TodoScheduler 现在不再持有 hook_service（todo hook 已整块移除），
+        // 构造函数无参；保留 ServiceContext 透传给 load_from_db 走调度加载。
+        let sched = TodoScheduler::new().await.unwrap_or_else(|e| {
             tracing::error!("Failed to create scheduler: {}. Exiting.", e);
             std::process::exit(1);
         });
@@ -598,9 +584,6 @@ async fn run_server(cli_port: Option<u16>) {
             config: config.clone(),
         },
         scheduler,
-        // 把已经构造好的 hook_service 透传给 create_app，create_app 内部
-        // 不再自己 Arc::new 一份。所有 fire 钩子的入口都走同一份单例。
-        hook_service,
     );
 
     let port = cli_port.unwrap_or(cfg.port);

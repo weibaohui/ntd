@@ -13,7 +13,6 @@ use tokio::sync::broadcast;
 use crate::adapters::{CodeExecutor, ExecutorRegistry};
 use crate::db::Database;
 use crate::handlers::ExecEvent;
-use crate::hooks::HookService;
 
 use super::worktree::WorktreeContext;
 use super::RunTodoExecutionRequest;
@@ -26,7 +25,7 @@ use super::RunTodoExecutionRequest;
 /// 平铺需要 14 个字段二次声明；嵌入只需 1 个字段，添加 request 字段时只动 1 处。
 #[allow(dead_code)]
 pub(crate) struct PreparedExecution {
-    /// 入参 request。Stage 2 / Stage 3 仍会读到 todo_id / chain / trigger_type 等。
+    /// 入参 request。Stage 2 / Stage 3 仍会读到 todo_id / trigger_type 等。
     pub request: RunTodoExecutionRequest,
     /// RAII guard for task registry；必须 move 进 spawn 子任务，否则 drop 时会误删 sender。
     pub task_guard: crate::task_manager::TaskGuard,
@@ -98,13 +97,10 @@ pub(crate) struct SpawnContext {
     pub task_manager: Arc<crate::task_manager::TaskManager>,
     pub executor_registry: Arc<ExecutorRegistry>,
     pub config: Arc<std::sync::RwLock<crate::config::Config>>,
-    pub hook_service: Arc<HookService>,
     pub executor: Arc<dyn CodeExecutor>,
     pub task_id: String,
     pub todo_id: i64,
     pub todo_title: String,
-    pub todo: Option<crate::models::Todo>,
-    pub chain: Vec<i64>,
     pub record_id: i64,
     pub execution_start: std::time::Instant,
     pub worktree_ctx: WorktreeContext,
@@ -124,7 +120,6 @@ pub(crate) enum RunOutcome {
 /// Stage 1 步骤 1：在 `request` 上做 message 占位符替换，并返回替换后的 message。
 pub(crate) struct SubstitutedContext {
     pub message: String,
-    pub chain: Vec<i64>,
 }
 
 /// Stage 1 步骤 2：注册 task 并加载 todo。返回 task_id + guard + cancel_rx + todo。

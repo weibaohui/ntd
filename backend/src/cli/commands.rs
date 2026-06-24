@@ -352,7 +352,6 @@ async fn handle_todo(
                         scheduler_enabled: None,
                         scheduler_config: None,
                         scheduler_timezone: None,
-                        hooks: None,
                         acceptance_criteria: value.get("acceptance_criteria").and_then(|v| v.as_str()).map(|s| s.to_string()),
                         auto_review_enabled: value.get("auto_review_enabled").and_then(|v| v.as_bool()),
                     });
@@ -376,7 +375,6 @@ async fn handle_todo(
                     scheduler_enabled: None,
                     scheduler_config: None,
                     scheduler_timezone: None,
-                    hooks: None,
                     acceptance_criteria: None,
                     auto_review_enabled: None,
                 }

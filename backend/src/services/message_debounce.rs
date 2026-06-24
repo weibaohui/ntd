@@ -6,7 +6,6 @@ use tokio::task::JoinHandle;
 
 use crate::executor_service::RunTodoExecutionRequest;
 use crate::handlers::execution::start_todo_execution;
-use crate::hooks::HookService;
 use crate::service_context::ServiceContext;
 
 #[derive(Debug, Clone)]
@@ -38,21 +37,13 @@ struct DebounceEntry {
 pub struct MessageDebounce {
     entries: Arc<DashMap<(i64, String), DebounceEntry>>,
     ctx: ServiceContext,
-    /// 共享的 HookService 单例（来自 AppState）。
-    ///
-    /// debounce 触发的执行末段也要 fire 状态变更钩子。如果 debounce 在每次
-    /// `new()` 时都重新 `Arc::new(HookService::new(...))` 会出现多份实例，
-    /// 造成 hook 链路彼此看不见的问题（见 issue #509）。直接透传 AppState
-    /// 里的单例即可。
-    hook_service: Arc<HookService>,
 }
 
 impl MessageDebounce {
-    pub fn new(ctx: ServiceContext, hook_service: Arc<HookService>) -> Self {
+    pub fn new(ctx: ServiceContext) -> Self {
         Self {
             entries: Arc::new(DashMap::new()),
             ctx,
-            hook_service,
         }
     }
 
@@ -79,9 +70,8 @@ impl MessageDebounce {
             let tx = self.ctx.tx.clone();
             let task_manager = self.ctx.task_manager.clone();
             let config = self.ctx.config.clone();
-            // 把 self.hook_service clone 一份进闭包，timer 触发时直接复用
-            // AppState 里的单例 (见 issue #509)。
-            let hook_service = self.hook_service.clone();
+            // todo hook 已整块移除（plan `purring-forging-petal`），debounce 触发的
+            // 执行不再需要透传 hook_service。
             let bot_id = key.0;
             let chat_id = key.1.clone();
             let target_type = all_msgs
@@ -153,8 +143,6 @@ impl MessageDebounce {
                         tx,
                         task_manager,
                         config,
-                        // debounce 触发的执行末段也要复用同一份 hook_service 单例 (issue #509)。
-                        hook_service,
                         todo_id: last.todo_id,
                         message: exec_message,
                         req_executor: last.executor.clone(),
@@ -162,13 +150,13 @@ impl MessageDebounce {
                         params: if is_resume { None } else { Some(merged_params) },
                         resume_session_id: resume_sid,
                         resume_message: resume_msg,
-                        chain: vec![],
                         source_todo_id: None,
                         source_todo_title: None,
-                        source_hook_id: None,
-            loop_step_execution_id: None,                        feishu_bot_id: if last.binding_id.is_some() { Some(last.bot_id) } else { None },
-            step_id: None,                        feishu_receive_id: if last.binding_id.is_some() { Some(last.sender.clone()) } else { None },
-                            workspace: None,
+                        loop_step_execution_id: None,
+                        step_id: None,
+                        feishu_bot_id: if last.binding_id.is_some() { Some(last.bot_id) } else { None },
+                        feishu_receive_id: if last.binding_id.is_some() { Some(last.sender.clone()) } else { None },
+                        workspace: None,
                     })
                     .await;
 

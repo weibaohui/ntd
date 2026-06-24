@@ -28,7 +28,6 @@ use tokio::sync::broadcast;
 use crate::adapters::ExecutorRegistry;
 use crate::db::Database;
 use crate::handlers::ExecEvent;
-use crate::hooks::HookService;
 use crate::task_manager::TaskManager;
 
 /// 执行结束返回给调用方的最小契约。
@@ -51,12 +50,6 @@ pub struct RunTodoExecutionRequest {
     pub tx: broadcast::Sender<ExecEvent>,
     pub task_manager: Arc<TaskManager>,
     pub config: Arc<std::sync::RwLock<crate::config::Config>>,
-    /// 共享的 hook 触发器（来自 AppState 单例）。
-    ///
-    /// 之所以放在 request 里而不是在 `run_todo_execution` 内重新 `Arc::new(HookService::new(...))`，
-    /// 是因为 `HookService` 本身持有 `ServiceContext`（5 个 Arc + tokio::RwLock），每次执行末
-    /// 段 fire 钩子时重新 clone 5 个 Arc 是无意义的开销。
-    pub hook_service: Arc<HookService>,
     pub todo_id: i64,
     pub message: String,
     pub req_executor: Option<String>,
@@ -64,14 +57,13 @@ pub struct RunTodoExecutionRequest {
     pub params: Option<std::collections::HashMap<String, String>>,
     pub resume_session_id: Option<String>,
     pub resume_message: Option<String>,
-    /// Todo ids already visited on the dispatch path, used to break cycles
-    /// when a hook triggers a todo that would re-fire the source.
-    pub chain: Vec<i64>,
-    /// Hook trigger provenance. `None` for manual/cron/webhook/feishu
-    /// triggers; populated by `execute_target_todo` for hook firings.
+    /// 触发这次执行的源 todo id（如 loop 评审任务、cron 任务）。
+    /// 持久化到 `execution_records.source_todo_id`，供前端 step 面板
+    /// 「这条执行由谁触发」展示用。
     pub source_todo_id: Option<i64>,
+    /// 触发源的展示标题（loop 写 step 标题，auto_review 写原 todo 标题）。
+    /// 持久化到 `execution_records.source_todo_title`。
     pub source_todo_title: Option<String>,
-    pub source_hook_id: Option<i64>,
     /// Feishu bot to send result directly to binding chat.
     pub feishu_bot_id: Option<i64>,
     /// Feishu receive_id (open_id for p2p, chat_id for group).
@@ -128,21 +120,4 @@ pub async fn run_todo_execution_with_params(
         request.message = crate::models::replace_placeholders(&request.message, &params);
     }
     run_todo_execution(request).await
-}
-
-#[cfg(test)]
-mod tests {
-    //! 钉死 `RunTodoExecutionRequest::hook_service` 字段被正确暴露，
-    //! 防止后续重构无意中把它移除/改名、导致 executor_service 末段又
-    //! 回退到 `Arc::new(HookService::new(...))` 重复构造 (issue #509)。
-
-    use std::sync::Arc;
-
-    /// 编译期断言：把 `RunTodoExecutionRequest` 的 `hook_service` 字段
-    /// 投影成 `&Arc<HookService>`，相当于把字段的类型和名字"钉死"。
-    fn _hook_service_field_is_arc_hook_service(
-        r: &super::RunTodoExecutionRequest,
-    ) -> &Arc<crate::hooks::HookService> {
-        &r.hook_service
-    }
 }

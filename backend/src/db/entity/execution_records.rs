@@ -32,9 +32,6 @@ pub struct Model {
     /// render "triggered by todo #X 'Title'" without joining `todos` (the
     /// source may be deleted or renamed later).
     pub source_todo_title: Option<String>,
-    /// The `TodoHookItem.id` that fired. Combined with `source_todo_id` this
-    /// points at the exact hook entry that triggered this execution.
-    pub source_hook_id: Option<i64>,
     /// User-provided score for this execution's result (0-100, optional).
     /// Only meaningful on terminal records (success/failed).
     pub rating: Option<i32>,
