@@ -1,6 +1,6 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { Button, Tag, Empty, Segmented, Popconfirm, Tooltip, Pagination, message, Popover, InputNumber, Space } from 'antd';
-import { StarOutlined, StarFilled, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, PauseCircleOutlined } from '@ant-design/icons';
+import { StarOutlined, StarFilled, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, PauseCircleOutlined, MinusCircleOutlined } from '@ant-design/icons';
 import { MessageOutlined, FileTextOutlined, StopOutlined, UnorderedListOutlined, LinkOutlined, LoadingOutlined, BranchesOutlined, CodeOutlined } from '@ant-design/icons';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { ChatView } from '@/components/ChatView';
@@ -424,14 +424,15 @@ function RecordRatingControl({
   );
 }
 
-/** 评审状态徽章: pending(评审中) / success(评审成功) / failed(评审失败) / interrupted(被打断) */
-export function ReviewStatusBadge({ status }: { status?: 'pending' | 'success' | 'failed' | 'interrupted' | null }) {
+/** 评审状态徽章: pending(评审中) / success(评审成功) / failed(评审失败) / interrupted(被打断) / skipped(跳过) */
+export function ReviewStatusBadge({ status }: { status?: 'pending' | 'success' | 'failed' | 'interrupted' | 'skipped' | null }) {
   if (!status) return null;
   const map: Record<string, { color: string; bg: string; border: string; text: string; icon: ReactNode }> = {
     pending:     { color: '#1677ff', bg: '#1677ff14', border: '#1677ff30', text: '⏳ 评审中',   icon: <SyncOutlined spin /> },
     success:     { color: '#52c41a', bg: '#52c41a14', border: '#52c41a30', text: '✅ 评审成功', icon: <CheckCircleOutlined /> },
     failed:      { color: '#ff4d4f', bg: '#ff4d4f14', border: '#ff4d4f30', text: '❌ 评审失败', icon: <CloseCircleOutlined /> },
     interrupted: { color: '#faad14', bg: '#faad1414', border: '#faad1430', text: '⏸ 中断',     icon: <PauseCircleOutlined /> },
+    skipped:     { color: '#6b7280', bg: '#6b728014', border: '#6b728030', text: '⏭ 跳过',     icon: <MinusCircleOutlined /> },
   };
   const s = map[status];
   if (!s) return null;

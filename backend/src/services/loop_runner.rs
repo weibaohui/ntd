@@ -468,7 +468,7 @@ impl LoopRunner {
             };
 
             // 4h. 评分闸门
-            let (gate_passed, step_rating) = if step_status == "success" && step.min_rating.is_some() {
+            let (gate_passed, step_rating, error_msg) = if step_status == "success" && step.min_rating.is_some() {
                 // 人工审批类型：暂停等待，不自动评审
                 // 提取结论后写回 pending_approval 状态，然后退出主循环。
                 if step.review_type == "human" {
@@ -507,7 +507,7 @@ impl LoopRunner {
                     .await
                     .map_err(|e| e.to_string())?
             } else {
-                (step_status == "success", None)
+                (step_status == "success", None, None)
             };
 
             let final_step_status = if gate_passed { "success" } else { "failed" };
@@ -515,10 +515,10 @@ impl LoopRunner {
             // 4i. 提取结论
             let conclusion = self.extract_conclusion(record_id).await;
 
-            // 4j. 写回 step execution
+            // 4j. 写回 step execution（携 error_msg 让前端展示失败原因）
             self.ctx
                 .db
-                .finish_step_execution(step_exec.id, final_step_status, Some(record_id), None, step_rating, Some(&conclusion))
+                .finish_step_execution(step_exec.id, final_step_status, Some(record_id), error_msg.as_deref(), step_rating, Some(&conclusion))
                 .await
                 .map_err(|e| e.to_string())?;
 
@@ -872,7 +872,7 @@ impl LoopRunner {
     /// 评分闸门：检查 execution_record 的 rating 与阈值比较。
     /// 若未评分且环节有验收标准，自动发起评审。
     /// 无评分 = 0 分（不通过，除非 min_rating ≤ 0）。
-    /// 返回 (是否通过, 评分)。
+    /// 返回 (是否通过, 评分, 失败原因说明).
     async fn apply_rating_gate(
         &self,
         record_id: i64,
@@ -880,7 +880,7 @@ impl LoopRunner {
         step_prompt: &str,
         step_acceptance_criteria: Option<&str>,
         review_template_id: Option<i64>,
-    ) -> Result<(bool, Option<i32>), String> {
+    ) -> Result<(bool, Option<i32>, Option<String>), String> {
         // 先检查是否已有评分
         let rec = self
             .ctx
@@ -894,7 +894,7 @@ impl LoopRunner {
             let passed = rating >= min_rating;
             info!("rating gate: record #{} rating={} min_rating={} {}",
                 record_id, rating, min_rating, if passed { "PASS" } else { "FAIL" });
-            return Ok((passed, Some(rating)));
+            return Ok((passed, Some(rating), None));
         }
 
         // 无评分但有验收标准：发起自动评审
@@ -906,7 +906,7 @@ impl LoopRunner {
                 Ok(t) => t,
                 Err(e) => {
                     warn!("rating gate: failed to get review template: {}", e);
-                    return Ok((false, None));
+                    return Ok((false, None, Some(format!("获取评审模板失败: {}", e))));
                 }
             };
 
@@ -956,7 +956,7 @@ impl LoopRunner {
                 Err(e) => {
                     warn!("rating gate: failed to reuse/create review instance todo: {}", e);
                     let _ = self.ctx.db.set_record_last_review_status(record_id, "failed").await;
-                    return Ok((false, None));
+                    return Ok((false, None, Some(format!("创建评审实例失败: {}", e))));
                 }
             };
 
@@ -988,7 +988,7 @@ impl LoopRunner {
                 None => {
                     warn!("rating gate: review execution returned no record_id");
                     let _ = self.ctx.db.set_record_last_review_status(record_id, "failed").await;
-                    return Ok((false, None));
+                    return Ok((false, None, Some("评审执行未返回记录ID".to_string())));
                 }
             };
 
@@ -1004,7 +1004,7 @@ impl LoopRunner {
                         record_id, todo_id: 0,
                         review_status: "failed".to_string(),
                     });
-                    return Ok((false, None));
+                    return Ok((false, None, Some("评审超时".to_string())));
                 }
                 if let Ok(Some(r)) = self.ctx.db.get_execution_record(review_record_id).await {
                     use crate::models::ExecutionStatus;
@@ -1043,13 +1043,13 @@ impl LoopRunner {
                 let passed = r >= min_rating;
                 info!("rating gate: record #{} final rating={} min_rating={} {}",
                     record_id, r, min_rating, if passed { "PASS" } else { "FAIL" });
-                return Ok((passed, Some(r)));
+                return Ok((passed, Some(r), None));
             }
         }
 
         // 无评分且无验收标准 = 视为 0 分，不通过
         info!("rating gate: record #{} no rating and no criteria, treating as FAIL", record_id);
-        Ok((false, None))
+        Ok((false, None, Some("环节未设置验收标准，无法触发自动评审".to_string())))
     }
 
     /// 获取评审模板：优先使用 loop 配置的 id，否则用默认模板。
