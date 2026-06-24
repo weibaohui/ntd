@@ -435,7 +435,9 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
             />
           </div>
 
-          {/* 执行后自动评审：仅对普通 todo（不是评审实例/模板）可见 */}
+          {/* 执行后自动评审：仅对普通 todo（不是评审实例/模板）可见。
+              业务上默认关闭（reducer 初始态为 false），仅在用户手动开启时启用；
+              loop 通过后端 API 创建 step todo，仍走 DB 默认 true，不受影响。 */}
           {(todo?.todo_type ?? 0) === 0 && (
             <>
               <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
