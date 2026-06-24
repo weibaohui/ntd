@@ -38,7 +38,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
     setEditingStep(null);
     form.resetFields();
     try {
-      const list = await db.getAllTodos('step');
+      const list = await db.getAllTodos();
       setCandidates(list);
     } catch {
       setCandidates([]);
@@ -50,7 +50,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
   const handleSelectStep = useCallback(async (step: LoopStepDto) => {
     setEditingStep(step);
     try {
-      const list = await db.getAllTodos('step');
+      const list = await db.getAllTodos();
       setCandidates(list);
     } catch {
       setCandidates([]);
@@ -218,7 +218,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
                 value: c.id,
               }))}
               notFoundContent={
-                <Empty description="暂无环节，请先创建事项后关联" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                <Empty description="暂无待关联的事项" image={Empty.PRESENTED_IMAGE_SIMPLE} />
               }
             />
           </Form.Item>
