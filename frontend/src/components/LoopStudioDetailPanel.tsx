@@ -314,6 +314,7 @@ export function LoopDetailPanel({
                 <div style={{ paddingTop: 4 }}>
                   <LoopTriggersPanel
                     loopId={loopId}
+                    loopName={detail.name}
                     triggers={detail.triggers}
                     onChanged={() => { reload(); onChanged(); }}
                   />

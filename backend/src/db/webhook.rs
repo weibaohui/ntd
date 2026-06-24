@@ -59,6 +59,17 @@ impl Database {
         webhooks::Entity::find()
             .filter(webhooks::Column::Enabled.eq(true))
             .filter(webhooks::Column::DefaultTodoId.eq(todo_id))
+            .filter(webhooks::Column::WebhookType.eq("todo"))
+            .one(&self.conn)
+            .await
+    }
+
+    /// Get an enabled webhook that has the given loop_id (webhook_type = "loop").
+    pub async fn get_webhook_by_loop(&self, loop_id: i64) -> Result<Option<webhooks::Model>, sea_orm::DbErr> {
+        webhooks::Entity::find()
+            .filter(webhooks::Column::Enabled.eq(true))
+            .filter(webhooks::Column::LoopId.eq(loop_id))
+            .filter(webhooks::Column::WebhookType.eq("loop"))
             .one(&self.conn)
             .await
     }
@@ -69,12 +80,16 @@ impl Database {
         name: &str,
         enabled: bool,
         default_todo_id: Option<i64>,
+        loop_id: Option<i64>,
+        webhook_type: &str,
     ) -> Result<webhooks::Model, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let am = webhooks::ActiveModel {
             name: ActiveValue::Set(name.to_string()),
             enabled: ActiveValue::Set(enabled),
             default_todo_id: ActiveValue::Set(default_todo_id),
+            loop_id: ActiveValue::Set(loop_id),
+            webhook_type: ActiveValue::Set(webhook_type.to_string()),
             created_at: ActiveValue::Set(Some(now.clone())),
             updated_at: ActiveValue::Set(Some(now)),
             ..Default::default()
@@ -89,6 +104,8 @@ impl Database {
         name: &str,
         enabled: bool,
         default_todo_id: Option<i64>,
+        loop_id: Option<i64>,
+        webhook_type: &str,
     ) -> Result<(), sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let existing = webhooks::Entity::find_by_id(id)
@@ -100,6 +117,8 @@ impl Database {
             am.name = ActiveValue::Set(name.to_string());
             am.enabled = ActiveValue::Set(enabled);
             am.default_todo_id = ActiveValue::Set(default_todo_id);
+            am.loop_id = ActiveValue::Set(loop_id);
+            am.webhook_type = ActiveValue::Set(webhook_type.to_string());
             am.updated_at = ActiveValue::Set(Some(now));
             am.update(&self.conn).await?;
         }

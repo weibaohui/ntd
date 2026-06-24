@@ -112,13 +112,20 @@ function WebhookCard({
   onDelete: () => void;
   onToggle: () => void;
 }) {
+  // 根据类型生成触发 URL
+  const triggerUrl = webhook.webhook_type === 'todo' && webhook.default_todo_id
+    ? `${baseUrl}/webhook/trigger/${webhook.default_todo_id}/todo`
+    : webhook.webhook_type === 'loop' && webhook.id
+    ? `${baseUrl}/webhook/trigger/${webhook.id}/loop`
+    : null;
+
   return (
     <Card
       size="small"
       style={{ marginBottom: 12 }}
       styles={{ body: { padding: 12 } }}
     >
-      {/* 顶部：名称 + 启用开关 + 操作 */}
+      {/* 顶部：名称 + 类型标签 + 启用开关 + 操作 */}
       <div
         style={{
           display: 'flex',
@@ -141,6 +148,12 @@ function WebhookCard({
           title={webhook.name}
         >
           {webhook.name}
+          <Tag
+            color={webhook.webhook_type === 'loop' ? 'purple' : 'blue'}
+            style={{ marginLeft: 6, fontSize: 10, lineHeight: '16px' }}
+          >
+            {webhook.webhook_type === 'loop' ? 'Loop' : 'Todo'}
+          </Tag>
         </div>
         <Space size={4} style={{ flexShrink: 0 }}>
           <Switch
@@ -171,7 +184,7 @@ function WebhookCard({
         </Space>
       </div>
 
-      {/* 默认触发 Todo */}
+      {/* 关联目标 */}
       <div
         style={{
           fontSize: 12,
@@ -181,7 +194,9 @@ function WebhookCard({
           gap: 4,
         }}
       >
-        <span style={{ flexShrink: 0 }}>默认 Todo：</span>
+        <span style={{ flexShrink: 0 }}>
+          {webhook.webhook_type === 'loop' ? '关联 Loop：' : '默认 Todo：'}
+        </span>
         <span
           style={{
             flex: 1,
@@ -190,21 +205,22 @@ function WebhookCard({
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
           }}
-          title={todo?.title || (webhook.default_todo_id ? `Todo #${webhook.default_todo_id}` : '')}
+          title={webhook.webhook_type === 'loop'
+            ? (webhook.loop_id ? `Loop #${webhook.loop_id}` : '')
+            : (todo?.title || (webhook.default_todo_id ? `Todo #${webhook.default_todo_id}` : ''))}
         >
-          {webhook.default_todo_id
-            ? (todo?.title || `Todo #${webhook.default_todo_id}`)
-            : <span style={{ opacity: 0.5 }}>未设置</span>}
+          {webhook.webhook_type === 'loop'
+            ? (webhook.loop_id ? `Loop #${webhook.loop_id}` : <span style={{ opacity: 0.5 }}>未设置</span>)
+            : (webhook.default_todo_id
+              ? (todo?.title || `Todo #${webhook.default_todo_id}`)
+              : <span style={{ opacity: 0.5 }}>未设置</span>)}
         </span>
       </div>
 
-      {/* URL 区域 —— 仅在配置了默认 Todo 时显示触发 URL */}
-      {webhook.default_todo_id ? (
+      {/* URL 区域 */}
+      {triggerUrl ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
-          <CopyableUrl
-            url={`${baseUrl}/webhook/trigger/${webhook.default_todo_id}`}
-            compact
-          />
+          <CopyableUrl url={triggerUrl} compact />
         </div>
       ) : (
         <div
@@ -215,7 +231,7 @@ function WebhookCard({
             padding: '4px 0',
           }}
         >
-          未配置默认 Todo，无法生成触发 URL
+          未配置目标，无法生成触发 URL
         </div>
       )}
 
@@ -285,7 +301,9 @@ export function WebhooksPanel({ todos }: WebhooksPanelProps) {
     webhookForm.setFieldsValue({
       name: webhook.name,
       enabled: webhook.enabled,
+      webhook_type: webhook.webhook_type,
       default_todo_id: webhook.default_todo_id,
+      loop_id: webhook.loop_id,
     });
     setWebhookFormOpen(true);
   }, [webhookForm]);
@@ -296,10 +314,23 @@ export function WebhooksPanel({ todos }: WebhooksPanelProps) {
       setWebhookFormSaving(true);
 
       if (editingWebhook) {
-        await db.updateWebhook(editingWebhook.id, values.name, values.enabled, values.default_todo_id);
+        await db.updateWebhook(
+          editingWebhook.id,
+          values.name,
+          values.enabled,
+          values.webhook_type,
+          values.webhook_type === 'todo' ? values.default_todo_id : undefined,
+          values.webhook_type === 'loop' ? values.loop_id : undefined,
+        );
         message.success('Webhook 已更新');
       } else {
-        await db.createWebhook(values.name, values.enabled, values.default_todo_id);
+        await db.createWebhook(
+          values.name,
+          values.enabled,
+          values.webhook_type,
+          values.webhook_type === 'todo' ? values.default_todo_id : undefined,
+          values.webhook_type === 'loop' ? values.loop_id : undefined,
+        );
         message.success('Webhook 已创建');
       }
 
@@ -325,7 +356,14 @@ export function WebhooksPanel({ todos }: WebhooksPanelProps) {
 
   const handleToggleEnabled = useCallback(async (webhook: Webhook) => {
     try {
-      await db.updateWebhook(webhook.id, webhook.name, !webhook.enabled, webhook.default_todo_id ?? undefined);
+      await db.updateWebhook(
+        webhook.id,
+        webhook.name,
+        !webhook.enabled,
+        webhook.webhook_type,
+        webhook.default_todo_id ?? undefined,
+        webhook.loop_id ?? undefined,
+      );
       loadWebhooks();
     } catch (e: any) {
       message.error('更新失败: ' + (e?.message || String(e)));
@@ -342,6 +380,17 @@ export function WebhooksPanel({ todos }: WebhooksPanelProps) {
       width: 150,
     },
     {
+      title: '类型',
+      dataIndex: 'webhook_type',
+      key: 'webhook_type',
+      width: 80,
+      render: (type: 'todo' | 'loop') => (
+        <Tag color={type === 'loop' ? 'purple' : 'blue'}>
+          {type === 'loop' ? 'Loop' : 'Todo'}
+        </Tag>
+      ),
+    },
+    {
       title: '状态',
       dataIndex: 'enabled',
       key: 'enabled',
@@ -351,14 +400,17 @@ export function WebhooksPanel({ todos }: WebhooksPanelProps) {
       ),
     },
     {
-      title: '默认触发 Todo',
+      title: '关联目标',
       dataIndex: 'default_todo_id',
-      key: 'default_todo_id',
+      key: 'target',
       width: 200,
-      render: (todoId: number | null) => {
-        if (!todoId) return <span style={{ color: 'var(--color-text-tertiary)' }}>未设置</span>;
-        const todo = todos.find(t => t.id === todoId);
-        return todo ? todo.title : `Todo #${todoId}`;
+      render: (_: any, record: Webhook) => {
+        if (record.webhook_type === 'loop') {
+          return record.loop_id ? `Loop #${record.loop_id}` : <span style={{ color: 'var(--color-text-tertiary)' }}>未设置</span>;
+        }
+        if (!record.default_todo_id) return <span style={{ color: 'var(--color-text-tertiary)' }}>未设置</span>;
+        const todo = todos.find(t => t.id === record.default_todo_id);
+        return todo ? todo.title : `Todo #${record.default_todo_id}`;
       },
     },
     {
@@ -366,19 +418,19 @@ export function WebhooksPanel({ todos }: WebhooksPanelProps) {
       key: 'urls',
       width: 320,
       render: (_: any, record: Webhook) => {
-        if (!record.default_todo_id) {
+        const url = record.webhook_type === 'loop' && record.id
+          ? `${baseUrl}/webhook/trigger/${record.id}/loop`
+          : record.default_todo_id
+          ? `${baseUrl}/webhook/trigger/${record.default_todo_id}/todo`
+          : null;
+        if (!url) {
           return (
             <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>
-              请先配置默认 Todo
+              请先配置目标
             </span>
           );
         }
-        return (
-          <CopyableUrl
-            url={`${baseUrl}/webhook/trigger/${record.default_todo_id}`}
-            compact={false}
-          />
-        );
+        return <CopyableUrl url={url} compact={false} />;
       },
     },
     {
@@ -598,30 +650,58 @@ export function WebhooksPanel({ todos }: WebhooksPanelProps) {
             <Input placeholder="例如: 默认 Webhook" />
           </Form.Item>
           <Form.Item
+            name="webhook_type"
+            label="类型"
+            tooltip="Todo 类型通过 /webhook/trigger/{todo_id}/todo 触发；Loop 类型通过 /webhook/trigger/{webhook_id}/loop 触发"
+            rules={[{ required: true, message: '请选择类型' }]}
+          >
+            <Select
+              placeholder="选择 webhook 类型"
+              options={[
+                { value: 'todo', label: 'Todo - 触发指定 Todo 执行' },
+                { value: 'loop', label: 'Loop - 触发 Loop 的 webhook 触发器' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, curr) => prev.webhook_type !== curr.webhook_type}>
+            {({ getFieldValue }) =>
+              getFieldValue('webhook_type') === 'todo' ? (
+                <Form.Item
+                  name="default_todo_id"
+                  label="默认触发 Todo"
+                  tooltip="配置后可通过 /webhook/trigger/{todo_id}/todo 显式触发；必须设置才能生成触发 URL"
+                >
+                  <Select
+                    allowClear
+                    placeholder="选择默认触发的 Todo"
+                    showSearch
+                    filterOption={(input, option) =>
+                      (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                    }
+                    options={todos.map(t => ({
+                      value: t.id,
+                      label: t.title,
+                    }))}
+                  />
+                </Form.Item>
+              ) : (
+                <Form.Item
+                  name="loop_id"
+                  label="关联 Loop"
+                  tooltip="配置后可通过 /webhook/trigger/{webhook_id}/loop 触发此 Loop；必须设置才能生成触发 URL"
+                >
+                  <Input type="number" placeholder="输入 Loop ID" />
+                </Form.Item>
+              )
+            }
+          </Form.Item>
+          <Form.Item
             name="enabled"
             label="启用状态"
             valuePropName="checked"
             initialValue={true}
           >
             <Switch />
-          </Form.Item>
-          <Form.Item
-            name="default_todo_id"
-            label="默认触发 Todo"
-            tooltip="配置后可通过 /webhook/trigger/{todo_id} 显式触发；必须设置才能生成触发 URL"
-          >
-            <Select
-              allowClear
-              placeholder="选择默认触发的 Todo"
-              showSearch
-              filterOption={(input, option) =>
-                (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-              }
-              options={todos.map(t => ({
-                value: t.id,
-                label: t.title,
-              }))}
-            />
           </Form.Item>
         </Form>
       </Modal>

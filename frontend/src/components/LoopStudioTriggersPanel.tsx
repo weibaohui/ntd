@@ -45,6 +45,7 @@ import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '@/utils/cron';
 
 interface Props {
   loopId: number;
+  loopName: string;
   triggers: LoopTriggerDto[];
   onChanged: () => void;
 }
@@ -655,7 +656,7 @@ function TriggerConfigContent({ type, value, onChange }: {
 
 // ====== 主面板组件 ======
 
-export function LoopTriggersPanel({ loopId, triggers, onChanged }: Props) {
+export function LoopTriggersPanel({ loopId, loopName, triggers, onChanged }: Props) {
   const { message } = AntApp.useApp();
   // 当前正在配置的 trigger_type (open=true 时): null=关闭
   const [configuring, setConfiguring] = useState<{ type: string; existing: LoopTriggerDto | null } | null>(null);
@@ -811,6 +812,39 @@ export function LoopTriggersPanel({ loopId, triggers, onChanged }: Props) {
         {isOn ? (
           <Tooltip title={isEnabled ? '点击禁用' : '点击启用'}>
             <Switch size="small" checked={isEnabled} onChange={(v) => handleToggleEnabled(existing!, v)} />
+          </Tooltip>
+        ) : type === 'webhook' ? (
+          // Webhook 快速启用：一键创建 webhook 并启用触发器
+          <Tooltip title="一键创建 Webhook 并启用触发器">
+            <Button
+              size="small"
+              type="primary"
+              onClick={async () => {
+                try {
+                  // 用 loop 名称作为 webhook 名称，创建 loop 类型 webhook
+                  const wh = await db.createWebhook(
+                    `${loopName} Webhook`,
+                    true,
+                    'loop',
+                    undefined, // defaultTodoId
+                    loopId,   // loopId
+                  );
+                  // 同时创建 webhook 触发器，config 中引用该 webhook
+                  await dbLoops.createTrigger(loopId, {
+                    trigger_type: 'webhook',
+                    config: JSON.stringify({ webhook_id: wh.id }),
+                    enabled: true,
+                    priority: 0,
+                  } as CreateTriggerRequest);
+                  message.success(`已为「${loopName}」创建 Webhook 并启用触发器`);
+                  onChanged();
+                } catch {
+                  // 拦截器已弹错
+                }
+              }}
+            >
+              快速启用
+            </Button>
           </Tooltip>
         ) : (
           <Tooltip title={meta.noConfig ? '直接启用（无需配置）' : '配置后启用'}>

@@ -500,7 +500,7 @@ async fn test_webhook_create_and_get() {
     let db = setup_db().await;
     let todo_id = db.create_todo("test", "").await.unwrap();
     let w = db
-        .create_webhook("hook-1", true, Some(todo_id))
+        .create_webhook("hook-1", true, Some(todo_id), None, "todo")
         .await
         .unwrap();
     assert_eq!(w.name, "hook-1");
@@ -518,11 +518,11 @@ async fn test_webhook_update_partial_fields() {
     // update_webhook 会刷新 updated_at，并把 name/enabled/default_todo_id 一起覆盖。
     let db = setup_db().await;
     let todo_id = db.create_todo("t1", "").await.unwrap();
-    let w = db.create_webhook("orig", true, None).await.unwrap();
+    let w = db.create_webhook("orig", true, None, None, "todo").await.unwrap();
     let before_updated_at = w.updated_at.clone();
 
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    db.update_webhook(w.id, "renamed", false, Some(todo_id))
+    db.update_webhook(w.id, "renamed", false, Some(todo_id), None, "todo")
         .await
         .unwrap();
     let after = db.get_webhook(w.id).await.unwrap().unwrap();
@@ -535,7 +535,7 @@ async fn test_webhook_update_partial_fields() {
 #[tokio::test]
 async fn test_webhook_delete() {
     let db = setup_db().await;
-    let w = db.create_webhook("to-del", true, None).await.unwrap();
+    let w = db.create_webhook("to-del", true, None, None, "todo").await.unwrap();
     db.delete_webhook(w.id).await.unwrap();
     assert!(db.get_webhook(w.id).await.unwrap().is_none());
 }
@@ -552,9 +552,9 @@ async fn test_webhook_get_by_ids_empty_input() {
 async fn test_webhook_get_by_ids_filters() {
     // 只返回 ids 列表内的 webhook，其他记录不应混入。
     let db = setup_db().await;
-    let w1 = db.create_webhook("a", true, None).await.unwrap();
-    let w2 = db.create_webhook("b", true, None).await.unwrap();
-    let w3 = db.create_webhook("c", true, None).await.unwrap();
+    let w1 = db.create_webhook("a", true, None, None, "todo").await.unwrap();
+    let w2 = db.create_webhook("b", true, None, None, "todo").await.unwrap();
+    let w3 = db.create_webhook("c", true, None, None, "todo").await.unwrap();
     let picked = db.get_webhooks_by_ids(&[w1.id, w3.id]).await.unwrap();
     let picked_ids: Vec<i64> = picked.iter().map(|w| w.id).collect();
     assert_eq!(picked_ids.len(), 2);
@@ -569,7 +569,7 @@ async fn test_webhook_get_by_default_todo_respects_enabled_flag() {
     let db = setup_db().await;
     let todo_id = db.create_todo("t", "").await.unwrap();
     let w = db
-        .create_webhook("by-default", true, Some(todo_id))
+        .create_webhook("by-default", true, Some(todo_id), None, "todo")
         .await
         .unwrap();
 
@@ -581,7 +581,7 @@ async fn test_webhook_get_by_default_todo_respects_enabled_flag() {
     assert_eq!(hit.id, w.id);
 
     // 关闭后再查，应返回 None
-    db.update_webhook(w.id, "by-default", false, Some(todo_id))
+    db.update_webhook(w.id, "by-default", false, Some(todo_id), None, "todo")
         .await
         .unwrap();
     assert!(db
@@ -595,7 +595,7 @@ async fn test_webhook_get_by_default_todo_respects_enabled_flag() {
 async fn test_webhook_record_create_and_paginate() {
     // 写入多条记录，按 id 倒序、分页参数 limit/offset 正确生效。
     let db = setup_db().await;
-    let w = db.create_webhook("rec", true, None).await.unwrap();
+    let w = db.create_webhook("rec", true, None, None, "todo").await.unwrap();
     for i in 0..5 {
         db.create_webhook_record(ntd::db::webhook::NewWebhookRecord {
             webhook_id: Some(w.id),
@@ -632,7 +632,7 @@ async fn test_webhook_record_cleanup_old_returns_zero_for_recent() {
     // 这里不依赖底层 SQL 直写（db.exec 是 pub(super)，外部测试不可见），
     // 只通过公开 API 写入并验证函数在常见参数下行为稳定。
     let db = setup_db().await;
-    let w = db.create_webhook("clean", true, None).await.unwrap();
+    let w = db.create_webhook("clean", true, None, None, "todo").await.unwrap();
     db.create_webhook_record(ntd::db::webhook::NewWebhookRecord {
         webhook_id: Some(w.id),
         method: "POST".into(),
@@ -658,7 +658,7 @@ async fn test_webhook_record_cleanup_old_returns_zero_for_recent() {
 async fn test_webhook_record_get_by_id() {
     // get_webhook_record 应能按主键精确取回。
     let db = setup_db().await;
-    let w = db.create_webhook("find", true, None).await.unwrap();
+    let w = db.create_webhook("find", true, None, None, "todo").await.unwrap();
     let rec = db
         .create_webhook_record(ntd::db::webhook::NewWebhookRecord {
             webhook_id: Some(w.id),
