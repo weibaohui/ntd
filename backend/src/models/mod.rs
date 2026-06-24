@@ -113,9 +113,6 @@ pub struct Todo {
     pub workspace: Option<String>,
     #[serde(default)]
     pub worktree_enabled: bool,
-    /// Inline hooks owned by this todo. Parsed from the `todos.hooks` column.
-    #[serde(default)]
-    pub hooks: Vec<crate::hooks::TodoHookItem>,
     #[serde(default)]
     pub acceptance_criteria: Option<String>,
     /// 0=normal, 1=reviewer_template（已废弃：评审模板已迁出至 review_templates 表）,
@@ -244,9 +241,6 @@ pub struct ExecutionRecord {
     /// Snapshot of the source todo's title at trigger time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_todo_title: Option<String>,
-    /// The `TodoHookItem.id` that triggered this execution.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_hook_id: Option<i64>,
     /// User-provided score for this execution's result (0-100, optional).
     /// Only meaningful on terminal records (success/failed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -373,8 +367,6 @@ pub struct CreateTodoRequest {
     #[serde(default)]
     pub scheduler_timezone: Option<String>,
     #[serde(default)]
-    pub hooks: Option<Vec<crate::hooks::TodoHookItem>>,
-    #[serde(default)]
     pub acceptance_criteria: Option<String>,
     #[serde(default)]
     pub auto_review_enabled: Option<bool>,
@@ -400,9 +392,6 @@ pub struct UpdateTodoRequest {
     pub workspace: Option<String>,
     #[serde(default)]
     pub worktree_enabled: Option<bool>,
-    /// Replace the todo's inline hooks. `None` keeps the existing list.
-    #[serde(default)]
-    pub hooks: Option<Vec<crate::hooks::TodoHookItem>>,
     #[serde(default)]
     pub acceptance_criteria: Option<String>,
     /// None=不变, Some(true)/Some(false)=更新. 不允许改 reviewer template 的开关.

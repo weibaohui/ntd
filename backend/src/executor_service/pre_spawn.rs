@@ -400,7 +400,6 @@ async fn create_record_or_reject(
             resume_message: request.resume_message.as_deref(),
             source_todo_id: request.source_todo_id,
             source_todo_title: request.source_todo_title.as_deref(),
-            source_hook_id: request.source_hook_id,
             loop_step_execution_id: request.loop_step_execution_id,
             step_id: request.step_id,
         })
@@ -420,7 +419,6 @@ async fn create_record_or_reject(
 
 /// Stage 1 步骤 1：在 `request` 上做 message 占位符替换，并返回替换后的 message。
 ///
-/// `chain` 在 `fire_pre_execution_hook_if_needed` 还要用，所以提前 clone 出来。
 /// 占位符替换只在编排阶段有效——executor 看到的 message 与 stage 2 写入
 /// execution_record.command 的字符串一致。
 pub(crate) fn substitute_message_placeholders(
@@ -431,10 +429,7 @@ pub(crate) fn substitute_message_placeholders(
         .as_ref()
         .map(|params| crate::models::replace_placeholders(&request.message, params))
         .unwrap_or_else(|| request.message.clone());
-    super::types::SubstitutedContext {
-        message,
-        chain: request.chain.clone(),
-    }
+    super::types::SubstitutedContext { message }
 }
 
 /// Stage 1 步骤 4a：如果 todo 已存在，校验并发限制。todo 为 None 时跳过。
@@ -472,38 +467,6 @@ pub(crate) async fn enforce_concurrency_limit(
         .await);
     }
     Ok(Some(t))
-}
-
-/// Stage 1 步骤 4b：Fire before_execution hooks synchronously — block until all
-/// pre-flight targets finish. todo 为 None 时跳过（todo 已被删）。
-pub(crate) async fn fire_pre_execution_hook_if_needed(
-    request: &super::RunTodoExecutionRequest,
-    todo: &Option<crate::models::Todo>,
-    chain: Vec<i64>,
-) -> Result<(), super::ExecutionResult> {
-    let Some(t) = todo else {
-        return Ok(());
-    };
-    let ctx = crate::hooks::models::HookContext::for_before_execution(
-        request.todo_id,
-        t.title.clone(),
-        t.executor.clone(),
-        t.workspace.clone(),
-        chain,
-    );
-    if let Err(msg) = request
-        .hook_service
-        .clone()
-        .fire_before_execution(request.todo_id, ctx)
-        .await
-    {
-        tracing::warn!("aborting execution due to pre-hook failure: {}", msg);
-        return Err(super::ExecutionResult {
-            task_id: String::new(),
-            record_id: None,
-        });
-    }
-    Ok(())
 }
 
 #[cfg(test)]

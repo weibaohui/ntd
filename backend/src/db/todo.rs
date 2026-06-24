@@ -64,7 +64,6 @@ impl Database {
             task_id: m.task_id,
             workspace: m.workspace,
             worktree_enabled: m.worktree_enabled.unwrap_or(false),
-            hooks: crate::hooks::TodoHooks::parse(m.hooks.as_deref()).items,
             acceptance_criteria: m.acceptance_criteria,
             todo_type: m.todo_type.unwrap_or(0),
             parent_todo_id: m.parent_todo_id,
@@ -239,28 +238,8 @@ impl Database {
         Ok(rows_affected)
     }
 
-    /// Replace the inline hook list for a todo. The list is stored as a JSON
-    /// array in the `hooks` column.
-    pub async fn update_todo_hooks(
-        &self,
-        id: i64,
-        items: &[crate::hooks::TodoHookItem],
-    ) -> Result<(), sea_orm::DbErr> {
-        let wrapped = crate::hooks::TodoHooks {
-            items: items.to_vec(),
-        };
-        let json = serde_json::to_string(&wrapped).map_err(|e| {
-            sea_orm::DbErr::Custom(format!("failed to encode hooks for todo #{}: {}", id, e))
-        })?;
-        let now = crate::models::utc_timestamp();
-        let am = todos::ActiveModel {
-            id: ActiveValue::Unchanged(id),
-            hooks: ActiveValue::Set(Some(json)),
-            updated_at: ActiveValue::Set(Some(now)),
-            ..Default::default()
-        };
-        self.exec_update(am).await
-    }
+    /// todo hook 已整块移除（见 plan `purring-forging-petal`），`update_todo_hooks` 不再存在：
+    /// todo 的 `hooks` 字段与 `todos.hooks` 列随 V23 迁移一起删掉。
 
     pub async fn update_todo_task_id(
         &self,

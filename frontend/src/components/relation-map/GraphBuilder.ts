@@ -8,7 +8,6 @@ export interface TodoNodeData extends Record<string, unknown> {
   status: string;
   executor: string;
   executorName: string;
-  hasHooks: boolean;
   todoId: number;
 }
 
@@ -32,92 +31,13 @@ export interface SchedulerNodeData extends Record<string, unknown> {
   todoId: number;
 }
 
-export interface HookEdgeData extends Record<string, unknown> {
-  trigger: string;
-  hookId: number;
-  enabled: boolean;
-  /** 评分闸门阈值（0-100），undefined/null 表示无闸门 */
-  minRating?: number | null;
-  /** 未评分时的策略：'skip' | 'pass' */
-  unratedPolicy?: string;
-}
-
 export interface WebhookEdgeData extends Record<string, unknown> {
   webhookId: number;
   webhookName: string;
 }
 
 export type RelationMapNode = Node<TodoNodeData | WebhookNodeData | FeishuNodeData | SchedulerNodeData>;
-export type RelationMapEdge = Edge<HookEdgeData | WebhookEdgeData | Record<string, unknown>>;
-
-/** 构建 Todo → Hook → Todo 的节点和边 */
-function buildHookRelations(
-  todos: Todo[],
-): { nodes: RelationMapNode[]; edges: RelationMapEdge[] } {
-  const nodes: RelationMapNode[] = [];
-  const edges: RelationMapEdge[] = [];
-  const todoMap = new Map<number, Todo>();
-
-  for (const t of todos) {
-    todoMap.set(t.id, t);
-  }
-  const hookTodoIds = new Set<number>();
-  for (const t of todos) {
-    if (t.hooks && t.hooks.length > 0) {
-      hookTodoIds.add(t.id);
-      for (const h of t.hooks) {
-        if (h.enabled) hookTodoIds.add(h.target_todo_id);
-      }
-    }
-  }
-
-  // 创建 Todo 节点
-  let todoIndex = 0;
-  for (const id of hookTodoIds) {
-    const t = todoMap.get(id);
-    if (!t) continue;
-    const executor = EXECUTORS.find(e => e.value === (t.executor || 'claudecode'));
-    nodes.push({
-      id: `todo-${id}`,
-      type: 'todo',
-      position: { x: 0, y: 0 }, // layout 会重新计算
-      data: {
-        title: t.title,
-        status: t.status,
-        executor: t.executor || 'claudecode',
-        executorName: executor?.label || t.executor || 'Claude',
-        hasHooks: !!(t.hooks && t.hooks.length > 0),
-        todoId: id,
-      },
-    });
-    todoIndex++;
-  }
-
-  // 创建 Hook 边
-  for (const t of todos) {
-    if (!t.hooks) continue;
-    for (const h of t.hooks) {
-      if (!h.enabled) continue;
-      if (!hookTodoIds.has(h.target_todo_id)) continue;
-      edges.push({
-        id: `hook-${h.id}`,
-        source: `todo-${t.id}`,
-        target: `todo-${h.target_todo_id}`,
-        type: 'hook',
-        data: {
-          trigger: h.trigger,
-          hookId: h.id,
-          enabled: h.enabled,
-          minRating: h.min_rating,
-          unratedPolicy: h.unrated_policy,
-        },
-        animated: false,
-      });
-    }
-  }
-
-  return { nodes, edges };
-}
+export type RelationMapEdge = Edge<WebhookEdgeData | Record<string, unknown>>;
 
 /** 构建 Webhook → Todo 的节点和边 */
 function buildWebhookRelations(
@@ -273,7 +193,7 @@ function applyLayout(nodes: RelationMapNode[], edges: RelationMapEdge[]): Relati
     }
   }
 
-  // 如果没有纯 source，从 hook/webhook/feishu/scheduler 类型开始
+  // 如果没有纯 source，从 webhook/feishu/scheduler 类型开始
   if (queue.length === 0) {
     for (const n of nodes) {
       if (n.type !== 'todo') {
@@ -358,7 +278,7 @@ function applyLayout(nodes: RelationMapNode[], edges: RelationMapEdge[]): Relati
   return result;
 }
 
-/** 收集被任意关系引用到的 Todo 节点和 id 集合（与 showHooks 解耦） */
+/** 收集被任意关系引用到的 Todo 节点和 id 集合 */
 function collectReferencedTodoIds(
   todos: Todo[],
   webhooks: Webhook[],
@@ -371,41 +291,31 @@ function collectReferencedTodoIds(
 
   const referencedTodoIds = new Set<number>();
 
-  // 1. Hook 关系中涉及的 Todo
-  for (const t of todos) {
-    if (t.hooks && t.hooks.length > 0) {
-      referencedTodoIds.add(t.id);
-      for (const h of t.hooks) {
-        if (h.enabled) referencedTodoIds.add(h.target_todo_id);
-      }
-    }
-  }
-
-  // 2. Webhook 的默认目标 Todo
+  // 1. Webhook 的默认目标 Todo
   for (const wh of webhooks) {
     if (wh.default_todo_id != null) {
       referencedTodoIds.add(wh.default_todo_id);
     }
   }
 
-  // 3. 飞书斜杠命令的目标 Todo
+  // 2. 飞书斜杠命令的目标 Todo
   for (const rule of config?.slash_command_rules || []) {
     if (rule.enabled) referencedTodoIds.add(rule.todo_id);
   }
 
-  // 4. 飞书默认响应 Todo
+  // 3. 飞书默认响应 Todo
   if (config?.default_response_todo_id) {
     referencedTodoIds.add(config.default_response_todo_id);
   }
 
-  // 5. 启用了调度的 Todo
+  // 4. 启用了调度的 Todo
   for (const t of todos) {
     if (t.scheduler_enabled && t.scheduler_config) {
       referencedTodoIds.add(t.id);
     }
   }
 
-  // 为所有被引用的 Todo 创建基础节点（与 showHooks 解耦）
+  // 为所有被引用的 Todo 创建基础节点
   const todoNodes: RelationMapNode[] = [];
   for (const id of referencedTodoIds) {
     const t = todoMap.get(id);
@@ -420,7 +330,6 @@ function collectReferencedTodoIds(
         status: t.status,
         executor: t.executor || 'claudecode',
         executorName: executor?.label || t.executor || 'Claude',
-        hasHooks: !!(t.hooks && t.hooks.length > 0),
         todoId: id,
       },
     });
@@ -429,12 +338,16 @@ function collectReferencedTodoIds(
   return { referencedTodoIds, todoNodes };
 }
 
-/** 主构建函数 */
+/**
+ * 主构建函数
+ *
+ * todo hook 已整块移除（plan `purring-forging-petal`），不再构建 Todo→Todo 的
+ * hook 边，也不再需要 `showHooks` 参数；上游调用方需要相应地收敛开关 UI。
+ */
 export function buildRelationMap(
   todos: Todo[],
   webhooks: Webhook[],
   config: Config | null,
-  showHooks: boolean,
   showWebhooks: boolean,
   showFeishu: boolean,
   showScheduler: boolean,
@@ -443,18 +356,10 @@ export function buildRelationMap(
   const allEdges: RelationMapEdge[] = [];
 
   // 收集被任意关系引用到的 Todo 节点和 id 集合
-  // 这一步与 showHooks 解耦，确保关闭 Hook 开关后其它类型仍能正确指向 Todo 节点
   const { referencedTodoIds, todoNodes } = collectReferencedTodoIds(todos, webhooks, config);
   allNodes.push(...todoNodes);
 
-  // Hook 关系
-  if (showHooks) {
-    const { nodes, edges } = buildHookRelations(todos);
-    allNodes.push(...nodes);
-    allEdges.push(...edges);
-  }
-
-  // Webhook 关系（基于被引用的 Todo id 集合，不再受 showHooks 影响）
+  // Webhook 关系
   if (showWebhooks) {
     const { nodes, edges } = buildWebhookRelations(webhooks, referencedTodoIds);
     allNodes.push(...nodes);

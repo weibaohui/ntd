@@ -56,6 +56,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V17ConsolidateReviewInstanceTodos),
         Box::new(V18LoopHumanReview),
         Box::new(V19StepLoopTags),
+        Box::new(V23DropTodoHooksColumns),
     ]
 }
 
@@ -3095,4 +3096,65 @@ impl Migration for V19StepLoopTags {
 
         Ok(())
     }
+}
+
+/// v23 迁移：删除 todo hook 相关列。
+///
+/// 计划 `purring-forging-petal` 把 todo 上的 inline hook 与 execution_records
+/// 上的 source_hook_id 整块移除，对应列随之清理：
+///   - `todos.hooks`           : 内联 hook JSON 数组
+///   - `execution_records.source_hook_id` : 触发本次执行的 TodoHookItem.id
+///
+/// 用 PRAGMA table_info 做存在性检查 → ALTER TABLE DROP COLUMN，保证幂等：
+///   - dev 库 schema_version=22 但 v20-v22 都是幽灵迁移（reverted 分支残留），
+///     V23 不在已应用集合里，会跑这一次；
+///   - fresh 库每次都从干净 schema 启动（CREATE TABLE 已不带这些列），存在性检查
+///     让这次 ALTER 退化为 no-op，避免误伤；
+///   - 生产库未来升级时同样跳过。
+pub(super) struct V23DropTodoHooksColumns;
+
+#[async_trait]
+impl Migration for V23DropTodoHooksColumns {
+    fn version(&self) -> i64 {
+        23
+    }
+    fn name(&self) -> &'static str {
+        "drop_todo_hooks_columns"
+    }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        drop_column_if_exists(db, "todos", "hooks").await?;
+        drop_column_if_exists(db, "execution_records", "source_hook_id").await?;
+        Ok(())
+    }
+}
+
+/// 「PRAGMA table_info 存在性检查 → ALTER TABLE DROP COLUMN」的最小封装。
+///
+/// 返回值是「实际是否发生 drop」之外的元信息（drop_sql 实际结果），调用方只需关心成功。
+async fn drop_column_if_exists(
+    db: &Database,
+    table: &str,
+    column: &str,
+) -> Result<(), sea_orm::DbErr> {
+    // pragma_table_info('table') 会返回该表所有列；按列名匹配，COUNT(*) > 0 即存在。
+    // 注意：SQLite 表名用单引号包起来，列名用字符串拼接前已被 Rust 端固定（无注入面）。
+    let check_sql = format!(
+        "SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name='{}'",
+        table, column
+    );
+    let result = db
+        .conn
+        .query_one(Statement::from_string(DbBackend::Sqlite, check_sql))
+        .await?;
+    let exists = result
+        .and_then(|r| r.try_get_by_index::<i64>(0).ok())
+        .unwrap_or(0)
+        > 0;
+    if !exists {
+        return Ok(());
+    }
+    let drop_sql = format!("ALTER TABLE {} DROP COLUMN {}", table, column);
+    tracing::info!("Dropping {}.{} ...", table, column);
+    db.exec(&drop_sql).await
 }

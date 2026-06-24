@@ -1,4 +1,3 @@
-import { useCallback, useMemo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Tag } from 'antd';
 import {
@@ -48,10 +47,6 @@ export function TodoNode({ data, selected }: NodeProps & { data: TodoNodeData })
         </Tag>
         <span className="todo-node-status" style={{ color: status.color }}>{status.label}</span>
       </div>
-
-      {data.hasHooks && (
-        <div className="todo-node-hook-indicator" title="有 Hook 关联">H</div>
-      )}
 
       {isRunning && <div className="todo-node-pulse" />}
 
@@ -117,29 +112,3 @@ export function SchedulerNode({ data, selected }: NodeProps & { data: SchedulerN
   );
 }
 
-/** Hook 边的标签 */
-export function HookEdgeLabel({ trigger }: { trigger: string }) {
-  const getTriggerInfo = useCallback((t: string) => {
-    switch (t) {
-      case 'state_changed_to_completed':
-        return { label: 'completed', color: '#52c41a' };
-      case 'state_changed_to_failed':
-        return { label: 'failed', color: '#ff4d4f' };
-      case 'state_changed_to_pending':
-        return { label: 'pending', color: '#8c8c8c' };
-      case 'state_changed_to_in_progress':
-        return { label: 'in_progress', color: '#1677ff' };
-      default:
-        return { label: t, color: '#999' };
-    }
-  }, []);
-
-  const info = useMemo(() => getTriggerInfo(trigger), [trigger, getTriggerInfo]);
-
-  return (
-    <div className="hook-edge-label" style={{ borderColor: info.color }}>
-      <span style={{ color: info.color, fontSize: 10 }}>{info.label}</span>
-      <span style={{ fontSize: 9, color: '#999' }}>→</span>
-    </div>
-  );
-}

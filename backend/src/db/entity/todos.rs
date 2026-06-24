@@ -19,10 +19,6 @@ pub struct Model {
     pub task_id: Option<String>,
     pub workspace: Option<String>,
     pub worktree_enabled: Option<bool>,
-    /// Inline hook definitions stored as a JSON array of `TodoHookItem`.
-    /// Each item binds a trigger to a target todo that should run when the
-    /// parent todo's lifecycle event matches.
-    pub hooks: Option<String>,
     /// 验收标准（自动评审时作为评审 prompt 的一部分）。
     pub acceptance_criteria: Option<String>,
     /// 0=普通 todo, 1=评审任务（系统自动维护的专用 todo）,

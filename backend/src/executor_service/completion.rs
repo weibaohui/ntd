@@ -1,14 +1,13 @@
-//! 终态分支（正常完成 / 取消 / 超时）+ completion hook + emit event。
+//! 终态分支（正常完成 / 取消 / 超时）+ emit event。
 //!
 //! 模块职责：
 //!   1. [`emit_started_event`] —— 启动阶段：Started 事件 + 首条 info 日志
 //!   2. [`persist_completion_record`] —— 正常完成：把 stats / usage / model 写库
 //!   3. [`emit_post_execution_todo_progress`] —— 后置 todo_progress 钩子
-//!   4. [`finalize_normal_completion`] —— 正常完成末段：auto-review + finish + hook + emit
+//!   4. [`finalize_normal_completion`] —— 正常完成末段：auto-review + finish + emit
 //!   5. [`handle_cancellation_branch`] / [`handle_timeout_branch`] —— 终态分支
-//!   6. [`fire_completion_hooks`] —— Fire state-change 钩子（Completed/Failed）
-//!   7. [`apply_wall_clock_duration`] —— 用 wall-clock 覆盖 executor 报的 duration
-//!   8. [`format_timeout_secs`] —— 把超时秒数格式化为人类可读字符串
+//!   6. [`apply_wall_clock_duration`] —— 用 wall-clock 覆盖 executor 报的 duration
+//!   7. [`format_timeout_secs`] —— 把超时秒数格式化为人类可读字符串
 //!
 //! 各函数 ≤ 30 行；编排层只调用入口。
 
@@ -19,53 +18,11 @@ use tokio::sync::broadcast;
 use crate::adapters::CodeExecutor;
 use crate::db::Database;
 use crate::handlers::ExecEvent;
-use crate::hooks::HookService;
-use crate::models::{ExecutionUsage, ParsedLogEntry, Todo};
+use crate::models::{ExecutionUsage, ParsedLogEntry};
 use crate::task_manager::TaskManager;
 
 use super::auto_review::run_auto_review;
 use super::log_capture::send_event;
-
-/// Fire "进入 Completed / Failed" 的 state-change 钩子。
-///
-/// 之所以单独抽出来：
-/// - executor 不经过 update_todo handler（status 是 db 层直接改的），
-///   这里是唯一能 observe "Running -> terminal" 转换的地方；
-/// - 抽出来之后 hook fire 和 `db.finish_todo_execution` 顺序可以独立测试。
-pub(crate) fn fire_completion_hooks(
-    todo: Option<&Todo>,
-    todo_id: i64,
-    success: bool,
-    chain: Vec<i64>,
-    hook_service: Arc<HookService>,
-) {
-    let Some(t) = todo else {
-        // todo 已被删除或加载失败时跳过 hook fire —— 没有 todo 上下文就没法构造 HookContext。
-        return;
-    };
-    let new_status = if success {
-        crate::models::TodoStatus::Completed
-    } else {
-        crate::models::TodoStatus::Failed
-    };
-    if let Some(ctx) = crate::hooks::models::HookContext::for_state_change(
-        todo_id,
-        t.title.clone(),
-        crate::models::TodoStatus::Running,
-        new_status,
-        t.executor.clone(),
-        t.workspace.clone(),
-        chain,
-    ) {
-        // fire_for_todo 内部 tokio::spawn，是 fire-and-forget。
-        tracing::debug!(
-            "firing state-change hook for todo #{} -> {:?}",
-            todo_id,
-            new_status
-        );
-        hook_service.fire_for_todo(todo_id, ctx);
-    }
-}
 
 /// 把 executor 报回的 `usage.duration_ms` 统一覆盖成 wall-clock 实际耗时。
 ///
@@ -312,10 +269,9 @@ pub(crate) async fn handle_timeout_branch(
     task_manager.remove(task_id).await;
 }
 
-/// 正常完成末段：auto-review + finish_todo_execution + completion hook + 末段事件 + remove task。
+/// 正常完成末段：auto-review + finish_todo_execution + 末段事件 + remove task。
 ///
-/// auto-review 仅在 `trigger_type != "auto_review"` 时启动（防止评审实例自身再触发评审）；
-/// 钩子 fire 在 finish 之后调用，符合"rating gate 要求评审完成后再触发"的语义。
+/// auto-review 仅在 `trigger_type != "auto_review"` 时启动（防止评审实例自身再触发评审）。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn finalize_normal_completion(
     db: Arc<Database>,
@@ -323,13 +279,10 @@ pub(crate) async fn finalize_normal_completion(
     tx: broadcast::Sender<ExecEvent>,
     task_manager: Arc<TaskManager>,
     config: Arc<std::sync::RwLock<crate::config::Config>>,
-    hook_service: Arc<HookService>,
     executor: Arc<dyn CodeExecutor>,
     task_id: String,
     todo_id: i64,
     todo_title: String,
-    todo: Option<Todo>,
-    chain: Vec<i64>,
     record_id: i64,
     success: bool,
     exit_code: i32,
@@ -348,14 +301,12 @@ pub(crate) async fn finalize_normal_completion(
         &tx,
         &task_manager,
         &config,
-        &hook_service,
         todo_id,
         record_id,
         &trigger_type,
     )
     .await;
     let _ = db.finish_todo_execution(todo_id, success).await;
-    fire_completion_hooks(todo.as_ref(), todo_id, success, chain, hook_service.clone());
     emit_completion_events(
         &tx,
         &executor,
@@ -379,7 +330,6 @@ async fn maybe_run_auto_review(
     tx: &broadcast::Sender<ExecEvent>,
     task_manager: &Arc<TaskManager>,
     config: &Arc<std::sync::RwLock<crate::config::Config>>,
-    hook_service: &Arc<HookService>,
     todo_id: i64,
     record_id: i64,
     trigger_type: &str,
@@ -393,7 +343,6 @@ async fn maybe_run_auto_review(
         tx.clone(),
         task_manager.clone(),
         config.clone(),
-        hook_service.clone(),
         todo_id,
         record_id,
     )

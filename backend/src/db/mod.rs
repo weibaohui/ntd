@@ -641,8 +641,9 @@ mod tests {
             .await
             .unwrap()
             .expect("schema_version should be Some after fresh init");
-        let latest = migration::all_migrations()
-            .into_iter()
+        let migrations = migration::all_migrations();
+        let latest = migrations
+            .iter()
             .map(|m| m.version())
             .max()
             .expect("at least one migration registered");
@@ -652,10 +653,14 @@ mod tests {
         );
 
         let applied = db.get_applied_migrations().await.unwrap();
+        // 注意：fresh 库实际写入 schema_version 的行数 == 已注册迁移数，
+        // 而不是「1..=latest_version」连续区间 —— v20-v22 是 phantom（reverted 分支
+        // 残留），不在代码 all_migrations() 里，所以 fresh 库也不会写入它们。
+        // 见 plan `purring-forging-petal`。
         assert_eq!(
             applied.len() as i64,
-            latest,
-            "schema_version must contain a row per registered migration"
+            migrations.len() as i64,
+            "schema_version row count must equal registered migration count"
         );
         for (ver, _name, _at) in &applied {
             assert!(*ver >= 1 && *ver <= latest);
@@ -753,7 +758,6 @@ mod tests {
             resume_message: None,
             source_todo_id: None,
             source_todo_title: None,
-            source_hook_id: None,
             loop_step_execution_id: None,
             step_id: None,
         })
@@ -1709,7 +1713,6 @@ mod tests {
             resume_message: None,
             source_todo_id: None,
             source_todo_title: None,
-            source_hook_id: None,
             loop_step_execution_id: None,
             step_id: None,
         }).await.unwrap();

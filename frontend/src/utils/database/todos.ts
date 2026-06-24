@@ -1,6 +1,5 @@
 import { api, unwrap } from './client';
 import type { Todo, Tag, TodoTemplate, CustomTemplateStatus } from '@/types';
-import type { TodoHookItem } from './hooks';
 
 // Todo APIs
 
@@ -17,11 +16,10 @@ export async function createTodo(
   title: string,
   prompt: string = '',
   tagIds: number[] = [],
-  hooks: TodoHookItem[] = [],
   acceptanceCriteria?: string,
   autoReviewEnabled?: boolean,
 ): Promise<Todo> {
-  const body: Record<string, unknown> = { title, prompt, tag_ids: tagIds, hooks };
+  const body: Record<string, unknown> = { title, prompt, tag_ids: tagIds };
   if (acceptanceCriteria !== undefined) body.acceptance_criteria = acceptanceCriteria;
   if (autoReviewEnabled !== undefined) body.auto_review_enabled = autoReviewEnabled;
   return unwrap(await api.post('/api/todos', body));
@@ -37,7 +35,6 @@ export async function updateTodo(
   scheduler_config?: string | null,
   workspace?: string | null,
   worktree_enabled?: boolean,
-  hooks?: TodoHookItem[],
   acceptance_criteria?: string | null,
   auto_review_enabled?: boolean,
 ): Promise<Todo> {
@@ -47,15 +44,10 @@ export async function updateTodo(
   if (scheduler_config !== undefined) body.scheduler_config = scheduler_config;
   if (workspace !== undefined) body.workspace = workspace;
   if (worktree_enabled !== undefined) body.worktree_enabled = worktree_enabled;
-  if (hooks !== undefined) body.hooks = hooks;
   if (acceptance_criteria !== undefined) body.acceptance_criteria = acceptance_criteria;
   if (auto_review_enabled !== undefined) body.auto_review_enabled = auto_review_enabled;
 
   return unwrap(await api.put(`/api/todos/${id}`, body));
-}
-
-export async function updateTodoHooks(id: number, hooks: TodoHookItem[]): Promise<Todo> {
-  return unwrap(await api.put(`/api/todos/${id}`, { hooks }));
 }
 
 export async function deleteTodo(id: number): Promise<void> {

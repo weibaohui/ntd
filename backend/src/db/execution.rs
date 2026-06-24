@@ -16,11 +16,10 @@ pub struct NewExecutionRecord<'a> {
     pub task_id: &'a str,
     pub session_id: Option<&'a str>,
     pub resume_message: Option<&'a str>,
-    /// Hook trigger provenance. `None` for manual/cron/webhook/feishu
-    /// triggers; set by `execute_target_todo` for hook firings.
+    /// 触发这次执行的源 todo id（loop 评审或外部来源）。`None` 表示手动/无来源。
     pub source_todo_id: Option<i64>,
+    /// 触发源的展示标题（loop 写 step 标题，auto_review 写原 todo 标题）。
     pub source_todo_title: Option<&'a str>,
-    pub source_hook_id: Option<i64>,
     /// 当本次执行是 loop 环节的一部分时，指向 loop_step_executions 表的 id。
     pub loop_step_execution_id: Option<i64>,
     /// 环节 id（指向 steps 表），环节独立执行时使用
@@ -115,7 +114,6 @@ impl From<execution_records::Model> for ExecutionRecord {
             resume_message: m.resume_message,
             source_todo_id: m.source_todo_id,
             source_todo_title: m.source_todo_title,
-            source_hook_id: m.source_hook_id,
             rating: m.rating,
             source_execution_record_id: m.source_execution_record_id,
             last_review_status: m.last_review_status,
@@ -223,7 +221,6 @@ impl Database {
             resume_message: ActiveValue::Set(record.resume_message.map(|s| s.to_string())),
             source_todo_id: ActiveValue::Set(record.source_todo_id),
             source_todo_title: ActiveValue::Set(record.source_todo_title.map(|s| s.to_string())),
-            source_hook_id: ActiveValue::Set(record.source_hook_id),
             loop_step_execution_id: ActiveValue::Set(record.loop_step_execution_id),
             step_id: ActiveValue::Set(record.step_id),
             ..Default::default()

@@ -21,7 +21,6 @@ use tokio::sync::broadcast;
 
 use crate::db::Database;
 use crate::handlers::ExecEvent;
-use crate::hooks::HookService;
 use crate::task_manager::TaskManager;
 
 use super::RunTodoExecutionRequest;
@@ -42,7 +41,7 @@ fn review_runtime() -> &'static tokio::runtime::Runtime {
 
 /// 同步运行自动评审。在原 todo 执行完成、update_execution_record 写入 success/failed 后调用。
 ///
-/// 参数: (db, todo, record_id, executor_registry, tx, task_manager, config, hook_service).
+/// 参数: (db, todo, record_id, executor_registry, tx, task_manager, config).
 /// 任何错误都只记 warn 日志，不影响原 todo 的完成响应。
 ///
 /// 实现: 由于 `run_auto_review_inner` 内部需要 await `run_todo_execution`（后者会
@@ -54,7 +53,6 @@ pub(crate) async fn run_auto_review(
     tx: broadcast::Sender<ExecEvent>,
     task_manager: Arc<TaskManager>,
     config: Arc<std::sync::RwLock<crate::config::Config>>,
-    hook_service: Arc<HookService>,
     todo_id: i64,
     record_id: i64,
 ) {
@@ -65,11 +63,10 @@ pub(crate) async fn run_auto_review(
     let tx_outer = tx.clone();
     let tm_c = task_manager.clone();
     let cfg_c = config.clone();
-    let hs_c = hook_service.clone();
     let runtime = review_runtime();
     std::thread::spawn(move || {
         let result = runtime.block_on(run_auto_review_inner(
-            db_c, er_c, tx_c, tm_c, cfg_c, hs_c, todo_id, record_id,
+            db_c, er_c, tx_c, tm_c, cfg_c, todo_id, record_id,
         ));
         let _ = reply_tx.send(result);
     });
@@ -136,7 +133,6 @@ async fn run_auto_review_inner(
     tx: broadcast::Sender<ExecEvent>,
     task_manager: Arc<TaskManager>,
     config: Arc<std::sync::RwLock<crate::config::Config>>,
-    hook_service: Arc<HookService>,
     todo_id: i64,
     record_id: i64,
 ) -> Result<(), String> {
@@ -167,7 +163,6 @@ async fn run_auto_review_inner(
         &tx,
         &task_manager,
         &config,
-        &hook_service,
         &original,
         &template,
         composed_prompt,
@@ -296,7 +291,6 @@ async fn execute_review_instance(
     tx: &broadcast::Sender<ExecEvent>,
     task_manager: &Arc<TaskManager>,
     config: &Arc<std::sync::RwLock<crate::config::Config>>,
-    hook_service: &Arc<HookService>,
     original: &crate::models::Todo,
     template: &crate::models::ReviewTemplate,
     composed_prompt: String,
@@ -338,7 +332,6 @@ async fn execute_review_instance(
         tx: tx.clone(),
         task_manager: task_manager.clone(),
         config: config.clone(),
-        hook_service: hook_service.clone(),
         todo_id: review_todo_id,
         message: composed_prompt,
         req_executor: original.executor.clone(),
@@ -346,10 +339,8 @@ async fn execute_review_instance(
         params: None,
         resume_session_id: None,
         resume_message: None,
-        chain: vec![],
         source_todo_id: Some(original.id),
         source_todo_title: Some(original.title.clone()),
-        source_hook_id: None,
         loop_step_execution_id: None,
         step_id: None,
         feishu_bot_id: None,
