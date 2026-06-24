@@ -12,8 +12,6 @@ import { ExecutorBadge } from './ExecutorBadge';
 import { LoopListPanel } from './LoopStudioListPanel';
 import type { LoopListItem } from '@/types/loop';
 import * as dbLoops from '@/utils/database/loops';
-import * as dbSteps from '@/utils/database/steps';
-import type { StepSummary } from '@/types';
 import { EXECUTORS_FOR_PICKER } from '@/types/execution';
 import { ExecutorPicker } from './todo-drawer/ExecutorPicker';
 import { ActionToolbar, type BatchActionItem } from './common/ActionToolbar';
@@ -28,9 +26,7 @@ interface TodoListProps {
   onShowRelationMap?: () => void;
   onShowSettings?: () => void;
   onSelectLoop?: (loopId: number) => void;
-  onSelectStep?: (stepId: number) => void;
   onCreateLoop?: () => void;
-  stepUpdateCount?: number;
   loopUpdateCount?: number;
 }
 
@@ -82,7 +78,7 @@ function buildDesktopNavActions(
 }
 
 export function TodoList(props: TodoListProps) {
-  const { onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSettings, onSelectLoop, onSelectStep, onCreateLoop, stepUpdateCount, loopUpdateCount } = props;
+  const { onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSettings, onSelectLoop, onCreateLoop, loopUpdateCount } = props;
   const { state, dispatch } = useApp();
   const { themeMode, toggleTheme } = useTheme();
   const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
@@ -98,7 +94,7 @@ export function TodoList(props: TodoListProps) {
     return 'item';
   });
   // 环节列表数据（只在 listMode === 'step' 时使用）
-  const [stepList, setStepList] = useState<StepSummary[]>([]);
+  const [stepList, setStepList] = useState<Todo[]>([]);
   const [stepLoading, setStepLoading] = useState(false);
   // 当前选中的 step id（高亮选中状态）
   const [selectedStepId, setSelectedStepId] = useState<number | null>(null);
@@ -124,42 +120,27 @@ export function TodoList(props: TodoListProps) {
   const [stepCreating, setStepCreating] = useState(false);
 
   /**
-   * 新建环节：直接 POST /api/steps。
+   * 新建环节：直接创建 kind='step' 的 Todo。
    *
-   * 历史上走"先 createTodo 再 promoteTodoToStep"两步流程，有两个副作用：
-   * 1) 每次新建都留一条孤儿 todo（污染 todos 表 + 误占「事项」列表）
-   * 2) promote 后的 step id 与原 todo id 不一致，前端用错 id 选中
-   *    触发 useStepDetail → GET /api/steps/{todoId} → 404，
-   *    axios 拦截器弹错，且 modal 在 catch 之前已经 setStepCreateOpen(false)，
-   *    但因为错误导致 React 状态机卡住，UI 表现为 modal 不关 + 报错。
-   *
-   * 现在 todo 与 step 彻底拆开，必须直建。返回的 step.id 直接用于选中。
+   * 环节与 Todo 已在后端合并，LoopStep 直接引用 Todo。
    */
   const handleCreateStep = useCallback(async (values: { title: string; prompt: string; executor?: string }) => {
     if (!values.title.trim()) { message.error('标题必填'); return; }
     setStepCreating(true);
     try {
-      const created = await dbSteps.createStep({
-        title: values.title.trim(),
-        prompt: values.prompt?.trim() ?? '',
-        executor: values.executor,
-      });
+      const created = await db.createTodo(values.title.trim(), values.prompt?.trim() ?? '', [], undefined, undefined, 'step' as any);
       message.success(`环节「${created.title}」已创建`);
-      // 先关 modal 再做副作用刷新，避免 useStepDetail 失败时 React 状态混乱
       setStepCreateOpen(false);
       stepCreateForm.resetFields();
       // 刷新环节列表
-      const fresh = await dbSteps.listSteps();
+      const fresh = await db.getAllTodos('step');
       setStepList(fresh);
-      // 用真实 step id（不是 todo id）选中
-      setSelectedStepId(created.id);
-      onSelectStep?.(created.id);
     } catch {
       // axios 拦截器已弹错；不关 modal 让用户能继续修改
     } finally {
       setStepCreating(false);
     }
-  }, [message, stepCreateForm, onSelectStep]);
+  }, [message, stepCreateForm]);
 
   useEffect(() => {
     setIsLoading(false);
@@ -187,11 +168,11 @@ export function TodoList(props: TodoListProps) {
   useEffect(() => {
     if (listMode !== 'step') return;
     setStepLoading(true);
-    dbSteps.listSteps()
+    db.getAllTodos('step')
       .then(setStepList)
       .catch(() => setStepList([]))
       .finally(() => setStepLoading(false));
-  }, [listMode, stepUpdateCount]);
+  }, [listMode]);
 
   // 当列表切换到「环路」时，自动加载 loop 列表；或环路变更时刷新
   useEffect(() => {
@@ -316,13 +297,13 @@ export function TodoList(props: TodoListProps) {
     try {
       const result = listMode === 'item'
         ? await db.batchUpdateTodosExecutor(ids, executor)
-        : await dbSteps.batchUpdateStepsExecutor(ids, executor);
+        : await db.batchUpdateTodosExecutor(ids, executor);
       if (result.failed.length === 0) {
         message.success(`已为 ${result.updated.length} 项更换执行器为「${executor}」`);
       } else {
         message.warning(`成功 ${result.updated.length} 条，失败 ${result.failed.length} 条`);
       }
-      // 触发列表刷新：item 通过 stepUpdateCount 机制，step / loop 通过各自的 reload
+      // 触发列表刷新：loop 通过各自的 reload
       if (listMode === 'item') {
         // item 模式依赖全局 todos 状态，由 useApp 拉取；全量表查一次避免 N 次单条 GET
         const allItems = await db.getAllTodos('item');
@@ -331,7 +312,7 @@ export function TodoList(props: TodoListProps) {
         }
       } else if (listMode === 'step') {
         // step 模式独立拉取：手动刷新一次
-        const fresh = await dbSteps.listSteps();
+        const fresh = await db.getAllTodos('step');
         setStepList(fresh);
       }
     } catch {
@@ -826,11 +807,11 @@ export function TodoList(props: TodoListProps) {
                   key={step.id}
                   onClick={() => {
                     setSelectedStepId(step.id);
-                    onSelectStep?.(step.id);
+  
                   }}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { setSelectedStepId(step.id); onSelectStep?.(step.id); }}}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { }}}
                   style={{
                     position: 'relative',
                     background: selectedStepId === step.id
@@ -893,12 +874,11 @@ export function TodoList(props: TodoListProps) {
                     </span>
                   </div>
 
-                  {/* meta: 执行器 + 引用次数 */}
+                  {/* meta: 执行器 */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
                     {step.executor && (
                       <ExecutorBadge executor={step.executor} style={{ fontSize: 9, padding: '1px 5px' }} />
                     )}
-                    <span><ApartmentOutlined /> {step.used_by_loop_step_count} 引用</span>
                   </div>
 
                   {/* 底部 3px 进度条（淡出指示条） */}

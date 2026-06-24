@@ -8,7 +8,6 @@ import { TodoDrawer } from './TodoDrawer';
 import { parseLogsToMessages } from './ChatView';
 import { BREAKPOINTS, EXPORT } from '@/constants';
 import * as db from '@/utils/database';
-import { promoteTodoToStep } from '@/utils/database/steps';
 import { conversationToYaml } from '@/utils/markdown';
 import { getExecutorOption } from '@/types';
 import type { ExecutionRecord, LogEntry } from '@/types';
@@ -273,20 +272,7 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
     }
   }, [selectedTodo, dispatch]);
 
-  // 升级为环节
-  const handlePromoteToStep = useCallback(async () => {
-    if (!selectedTodo) return;
-    try {
-      await promoteTodoToStep(selectedTodo.id);
-      message.success(`「${selectedTodo.title}」已升级为环节`);
-      const todos = await db.getAllTodos();
-      dispatch({ type: 'SET_TODOS', payload: todos });
-    } catch {
-      // ignore
-    }
-  }, [selectedTodo, dispatch, message]);
-
-  // 降级已移除：环节是独立实体，不能降级
+  // 升级/降级已移除：环节与 Todo 合一，无需 promote 流程
 
   const handleDelete = async () => {
     if (!selectedTodo) return;
@@ -364,7 +350,6 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
         onOpenExecuteWithArgs={handleOpenExecuteWithArgs}
         onExecute={handleExecute}
         onStatusChange={handleStatusChange}
-        onPromoteToStep={handlePromoteToStep}
       />
 
       {/* Execution History */}

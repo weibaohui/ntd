@@ -3,9 +3,6 @@ use serde::{Deserialize, Serialize};
 pub mod loop_;
 pub use loop_::*;
 
-pub mod step_;
-pub use step_::*;
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoStatus {
@@ -137,21 +134,6 @@ fn default_todo_kind() -> String {
     "item".to_string()
 }
 
-/// 环节视图（带复用度指标）。
-///
-/// 与 `Todo` 相比，多一个 `used_by_loop_step_count` 字段，
-/// 环节页用这个数判断「这个环节被多少个 loop step 引用」作为复用度排序依据。
-///
-/// 实现上后端做 N+1：list_steps 后单独跑一次 COUNT GROUP BY 查询，
-/// 然后按 todo_id 合并。前端拿到这个 DTO 直接展示，不需要二次请求。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StepSummary {
-    #[serde(flatten)]
-    pub todo: Todo,
-    /// 被多少个 loop step 引用。0 = 没有任何 loop 在用（孤儿环节）。
-    pub used_by_loop_step_count: i64,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tag {
     pub id: i64,
@@ -262,7 +244,7 @@ pub struct ExecutionRecord {
     /// 当本次执行是 loop 环节的一部分时，指向 loop_step_executions 表的 id。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_step_execution_id: Option<i64>,
-    /// 环节 id（指向 steps 表），环节独立执行时使用。
+    /// 已废弃，曾用于环节独立执行。现始终为 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step_id: Option<i64>,
 }
@@ -368,6 +350,9 @@ pub struct CreateTodoRequest {
     pub acceptance_criteria: Option<String>,
     #[serde(default)]
     pub auto_review_enabled: Option<bool>,
+    /// kind: "item" or "step". Defaults to "item" if not specified.
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]

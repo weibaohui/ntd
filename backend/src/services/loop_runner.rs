@@ -22,7 +22,7 @@ use tracing::{error, info, warn};
 use crate::executor_service::{run_todo_execution_with_params, RunTodoExecutionRequest};
 use crate::models::ExecutionStatus;
 use crate::service_context::ServiceContext;
-use crate::db::entity::{loop_steps, steps};
+use crate::db::entity::{loop_steps};
 
 /// 全局限制配置，从 loop.limits_config JSON 解析。
 ///
@@ -388,21 +388,21 @@ impl LoopRunner {
             sequence_counter += 1;
             total_executed += 1;
 
-            // 4c. 加载 step 元数据
-            let step_meta = self
+            // 4c. 加载 todo 元数据
+            let todo = self
                 .ctx
                 .db
-                .get_step(step.step_id)
+                .get_todo(step.todo_id)
                 .await
                 .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("step #{} (step_id={}) not found", step.id, step.step_id))?;
+                .ok_or_else(|| format!("todo #{} (todo_id={}) not found", step.id, step.todo_id))?;
 
             // 4d. 构造增强 Prompt（注入黑板变量 + 上一环节结果）
             let blackboard_text = self.build_blackboard_text(loop_execution_id).await;
             let last_output_text = last_output.as_deref().unwrap_or("");
             let last_conclusion_text = last_conclusion.as_deref().unwrap_or("");
             let last_step_name_text = last_step_name.as_deref().unwrap_or("");
-            let enhanced_prompt = step_meta.prompt
+            let enhanced_prompt = todo.prompt
                 .replace("{{blackboard}}", &blackboard_text)
                 .replace("{{last_output}}", last_output_text)
                 .replace("{{last_conclusion}}", last_conclusion_text)
@@ -418,7 +418,7 @@ impl LoopRunner {
                 .create_loop_step_execution(
                     loop_execution_id,
                     step.id,
-                    step.step_id,
+                    step.todo_id,
                     "running",
                     sequence_counter,
                     step.min_rating,
@@ -435,7 +435,7 @@ impl LoopRunner {
 
             // 4f. 执行
             let record_id = match self
-                .start_step_todo_with_prompt(&step_meta, &trigger_type, idx as i64, step_exec.id, &enhanced_prompt, loop_.workspace.clone())
+                .start_step_todo_with_prompt(&todo, &trigger_type, idx as i64, step_exec.id, &enhanced_prompt, loop_.workspace.clone())
                 .await
             {
                 Ok(rid) => rid,
@@ -500,8 +500,8 @@ impl LoopRunner {
                     .apply_rating_gate(
                         record_id,
                         step.min_rating.unwrap(),
-                        &step_meta.prompt,
-                        step_meta.acceptance_criteria.as_deref(),
+                        &todo.prompt,
+                        todo.acceptance_criteria.as_deref(),
                         loop_.review_template_id,
                     )
                     .await
@@ -592,7 +592,7 @@ impl LoopRunner {
     /// 启动 step 的执行，使用增强后的 Prompt。
     async fn start_step_todo_with_prompt(
         &self,
-        step_meta: &steps::Model,
+        todo: &crate::models::Todo,
         trigger_type: &str,
         loop_idx: i64,
         step_exec_id: i64,
@@ -607,7 +607,7 @@ impl LoopRunner {
             config: self.ctx.config.clone(),
             todo_id: 0,
             message: enhanced_prompt.to_string(),
-            req_executor: step_meta.executor.clone(),
+            req_executor: todo.executor.clone(),
             trigger_type: format!("loop_stage:{}", trigger_type),
             params: Some({
                 let mut p = HashMap::new();
@@ -617,9 +617,9 @@ impl LoopRunner {
             resume_session_id: None,
             resume_message: None,
             source_todo_id: None,
-            source_todo_title: Some(step_meta.title.clone()),
+            source_todo_title: Some(todo.title.clone()),
             loop_step_execution_id: Some(step_exec_id),
-            step_id: Some(step_meta.id),
+            step_id: None,
             feishu_bot_id: None,
             feishu_receive_id: None,
             workspace,
@@ -1100,7 +1100,7 @@ mod tests {
             name: format!("step_{}", id),
             description: String::new(),
             order_index: 0,
-            step_id: 100 + id,
+            todo_id: 100 + id,
             run_mode: "sequential".to_string(),
             skip_on_source_failed: 0,
             min_rating: None,

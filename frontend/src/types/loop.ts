@@ -76,7 +76,7 @@ export interface LoopExecutionDto {
 export interface LoopStepExecutionDto {
   id: number;
   loop_execution_id: number;
-  step_id: number;
+  loop_step_id: number;
   todo_id: number;
   status: string;
   execution_record_id: number | null;
@@ -107,8 +107,8 @@ export interface LoopStepRawDto {
   name: string;
   description: string;
   order_index: number;
-  /** 关联的 step id（对应 steps 表） */
-  step_id: number;
+  /** 关联的 todo id */
+  todo_id: number;
   run_mode: string;
   skip_on_source_failed: boolean;
   min_rating: number | null;
@@ -129,8 +129,8 @@ export interface LoopStepDto {
   name: string;
   description: string;
   order_index: number;
-  /** 关联的 step id（对应 steps 表） */
-  step_id: number;
+  /** 关联的 todo id */
+  todo_id: number;
   run_mode: string;
   skip_on_source_failed: boolean;
   min_rating: number | null;
@@ -143,7 +143,7 @@ export interface LoopStepDto {
   review_type: string;
   enabled: boolean;
   created_at: string | null;
-  /** 关联 step 模板的 title（来自 steps 表） */
+  /** 关联的 todo title */
   todo_title: string;
   /** 关联 step 模板的执行器 */
   todo_executor: string;
@@ -152,8 +152,8 @@ export interface LoopStepDto {
 export interface CreateLoopStepRequest {
   name: string;
   description?: string;
-  /** 关联的 step id（对应 steps 表） */
-  step_id: number;
+  /** 关联的 todo id */
+  todo_id: number;
   run_mode?: string;
   skip_on_source_failed?: boolean;
   min_rating?: number | null;
@@ -170,8 +170,8 @@ export interface CreateLoopStepRequest {
 export interface UpdateLoopStepRequest {
   name: string;
   description: string;
-  /** 关联的 step id（对应 steps 表） */
-  step_id: number;
+  /** 关联的 todo id */
+  todo_id: number;
   run_mode: string;
   skip_on_source_failed: boolean;
   min_rating: number | null;

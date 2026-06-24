@@ -611,7 +611,6 @@ pub use feishu_message::{NewFeishuHistoryMessage, NewFeishuMessage};
 mod feishu_group_whitelist;
 mod feishu_history_chat;
 pub mod loop_;
-pub mod step_;
 pub(crate) mod feishu_project_binding;
 mod feishu_push_target;
 mod feishu_response_config;

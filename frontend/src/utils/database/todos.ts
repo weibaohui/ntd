@@ -18,10 +18,12 @@ export async function createTodo(
   tagIds: number[] = [],
   acceptanceCriteria?: string,
   autoReviewEnabled?: boolean,
+  kind?: string,
 ): Promise<Todo> {
   const body: Record<string, unknown> = { title, prompt, tag_ids: tagIds };
   if (acceptanceCriteria !== undefined) body.acceptance_criteria = acceptanceCriteria;
   if (autoReviewEnabled !== undefined) body.auto_review_enabled = autoReviewEnabled;
+  if (kind !== undefined) body.kind = kind;
   return unwrap(await api.post('/api/todos', body));
 }
 

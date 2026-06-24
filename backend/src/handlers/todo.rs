@@ -8,7 +8,7 @@ use crate::handlers::{ApiJson, AppError, AppState};
 // todo hook 已整块移除（plan `purring-forging-petal`），HookContext 不再导入。
 use crate::models::{
     utc_timestamp, ApiResponse, BatchUpdateTodoExecutorRequest, BatchUpdateTodoResult,
-    CreateTodoRequest, RecentCompletedTodo, StepDto, Todo, UpdateTagsRequest, UpdateTodoRequest,
+    CreateTodoRequest, RecentCompletedTodo, Todo, UpdateTagsRequest, UpdateTodoRequest,
 };
 
 /// Validate cron expression, return helpful error for invalid ones
@@ -134,6 +134,14 @@ pub async fn create_todo(
         }
     }
 
+    // kind: 默认为 "item"，请求中显式指定时更新
+    let kind = req.kind.as_deref().unwrap_or("item");
+    if kind != "item" {
+        if let Err(e) = state.db.update_todo_kind(id, kind).await {
+            tracing::warn!("Failed to set kind for todo {}: {}", id, e);
+        }
+    }
+
     Ok(ApiResponse::ok(Todo {
         id,
         title: title.to_string(),
@@ -154,8 +162,8 @@ pub async fn create_todo(
         parent_todo_id: None,
         review_template_id: None,
         auto_review_enabled: req.auto_review_enabled.unwrap_or(true),
-        // 新建 todo 默认 kind='item'；如需环节，由 promote 接口或新建时显式指定。
-        kind: "item".to_string(),
+        // kind 由请求中的 req.kind 决定，已在前面更新到 DB。
+        kind: kind.to_string(),
     }))
 }
 
@@ -309,32 +317,6 @@ pub async fn get_recent_completed_todos(
     Ok(ApiResponse::ok(
         state.db.get_recent_completed_todos(hours).await?,
     ))
-}
-
-// ====== todo → step 提升 ======
-// 注意：环节 CRUD 已在 step_.rs 中，todo.rs 只保留 promote。
-
-/// POST /api/todos/:id/promote — 事项提升为环节（复制数据到 steps 表，原 todo 保留）
-pub async fn promote_todo_to_step(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<ApiResponse<StepDto>, AppError> {
-    let todo = state
-        .db
-        .get_todo(id)
-        .await?
-        .ok_or(AppError::NotFound)?;
-    let step = state
-        .db
-        .create_step(
-            &todo.title,
-            &todo.prompt,
-            todo.executor.as_deref(),
-            todo.acceptance_criteria.as_deref(),
-            Some(todo.id),
-        )
-        .await?;
-    Ok(ApiResponse::ok(StepDto::from(step)))
 }
 
 /// PUT /api/todos/batch-executor — 批量更新事项执行器

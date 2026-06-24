@@ -346,19 +346,19 @@ pub async fn create_loop_step(
         return Err(AppError::BadRequest("name 不能为空".to_string()));
     }
     state.db.get_loop(loop_id).await?.ok_or(AppError::NotFound)?;
-    // Loop 编排的「节点」必须是环节（来自 steps 表），按 step_id 校验。
+    // Loop 编排的节点必须是 todo，按 todo_id 校验存在性。
     state
         .db
-        .get_step(req.step_id)
+        .get_todo(req.todo_id)
         .await?
-        .ok_or_else(|| AppError::BadRequest(format!("step #{} 不存在", req.step_id)))?;
+        .ok_or_else(|| AppError::BadRequest(format!("todo #{} 不存在", req.todo_id)))?;
     let created = state
         .db
         .create_loop_step(
             loop_id,
             req.name.trim(),
             &req.description,
-            req.step_id,
+            req.todo_id,
             &req.run_mode,
             req.skip_on_source_failed,
             req.min_rating,
@@ -402,13 +402,13 @@ pub async fn update_loop_step(
             "step 不属于该 loop".to_string(),
         ));
     }
-    // 与 create_loop_step 一致: 切换 step_id 时也必须指向有效的步骤。
-    if req.step_id != step.step_id {
+    // 与 create_loop_step 一致: 切换 todo_id 时也必须指向有效的 todo。
+    if req.todo_id != step.todo_id {
         state
             .db
-            .get_step(req.step_id)
+            .get_todo(req.todo_id)
             .await?
-            .ok_or_else(|| AppError::BadRequest(format!("step #{} 不存在", req.step_id)))?;
+            .ok_or_else(|| AppError::BadRequest(format!("todo #{} 不存在", req.todo_id)))?;
     }
     // 评分不通过时跳转到自身（重试），需要 loop 有兜底限制
     if req.on_rating_fail == "goto" && req.fail_goto_step_id == Some(sid) {
@@ -432,7 +432,7 @@ pub async fn update_loop_step(
             sid,
             req.name.trim(),
             &req.description,
-            req.step_id,
+            req.todo_id,
             &req.run_mode,
             req.skip_on_source_failed,
             req.min_rating,

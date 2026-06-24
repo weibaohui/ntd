@@ -49,7 +49,7 @@ pub enum Relation {
         from = "Column::StepId",
         to = "super::loop_steps::Column::Id"
     )]
-    BelongsToStep,
+    BelongsToLoopStep,
     #[sea_orm(
         belongs_to = "super::todos::Entity",
         from = "Column::TodoId",
@@ -69,7 +69,7 @@ impl Related<super::loop_executions::Entity> for Entity {
 }
 
 impl Related<super::loop_steps::Entity> for Entity {
-    fn to() -> RelationDef { Relation::BelongsToStep.def() }
+    fn to() -> RelationDef { Relation::BelongsToLoopStep.def() }
 }
 
 impl Related<super::todos::Entity> for Entity {

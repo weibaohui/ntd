@@ -308,7 +308,6 @@ where
 
 mod todo;
 mod tag;
-mod step_;
 pub(crate) mod execution;
 mod scheduler;
 pub mod backup;
@@ -982,7 +981,6 @@ fn mount_domain_routes() -> Router<AppState> {
         .merge(cloud_routes())
         .merge(events_routes())
         .merge(loop_::loop_routes())
-        .merge(step_routes())
 }
 
 /// 给 TraceLayer 用的 span 工厂：把 `request_id` / `method` / `uri` 直接挂在 span 字段上，
@@ -1226,25 +1224,9 @@ fn todo_routes() -> Router<AppState> {
         .route("/api/todos/{id}/scheduler", put(scheduler::update_scheduler))
         .route("/api/todos/recent-completed", get(todo::get_recent_completed_todos))
         .route("/api/todos/batch-executor", put(todo::batch_update_todos_executor))
-        // 环节相关：promote 复制到 steps 表,原 todo 保留
-        .route("/api/todos/{id}/promote", post(todo::promote_todo_to_step))
         .route("/api/todos/{id}", get(todo::get_todo).put(todo::update_todo).delete(todo::delete_todo))
-        // 环节专用路由已移至 step_routes()
         .route("/api/tags", get(tag::get_tags).post(tag::create_tag))
         .route("/api/tags/{id}", delete(tag::delete_tag))
-}
-
-/// 环节专用路由：数据来自独立的 steps 表，与 todo 完全隔离。
-///
-/// POST /api/steps 是直建入口：todo 与 step 拆开后，前端"新建环节"
-/// 不应再走 createTodo+promote（会留下孤儿 todo 与 id 错位）。
-fn step_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/steps", get(step_::list_steps).post(step_::create_step))
-        .route("/api/steps/candidates", get(step_::list_step_candidates))
-        .route("/api/steps/batch-executor", put(step_::batch_update_steps_executor))
-        .route("/api/steps/{id}", get(step_::get_step).put(step_::update_step).delete(step_::delete_step))
-        .route("/api/steps/{id}/tags", put(step_::update_step_tags))
 }
 
 /// 执行记录、执行触发、执行控制相关路由。

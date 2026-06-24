@@ -152,7 +152,7 @@ impl Database {
                 new_loop.id,
                 &s.name,
                 &s.description,
-                s.step_id,
+                s.todo_id,
                 &s.run_mode,
                 s.skip_on_source_failed != 0,
                 s.min_rating,
@@ -315,7 +315,7 @@ impl Database {
         loop_id: i64,
         name: &str,
         description: &str,
-        step_id: i64,
+        todo_id: i64,
         run_mode: &str,
         skip_on_source_failed: bool,
         min_rating: Option<i32>,
@@ -342,7 +342,7 @@ impl Database {
             name: ActiveValue::Set(name.to_string()),
             description: ActiveValue::Set(description.to_string()),
             order_index: ActiveValue::Set(next_order),
-            step_id: ActiveValue::Set(step_id),
+            todo_id: ActiveValue::Set(todo_id),
             run_mode: ActiveValue::Set(run_mode.to_string()),
             skip_on_source_failed: ActiveValue::Set(if skip_on_source_failed { 1 } else { 0 }),
             min_rating: ActiveValue::Set(min_rating),
@@ -364,7 +364,7 @@ impl Database {
         id: i64,
         name: &str,
         description: &str,
-        step_id: i64,
+        todo_id: i64,
         run_mode: &str,
         skip_on_source_failed: bool,
         min_rating: Option<i32>,
@@ -381,7 +381,7 @@ impl Database {
             let mut am: loop_steps::ActiveModel = c.into();
             am.name = ActiveValue::Set(name.to_string());
             am.description = ActiveValue::Set(description.to_string());
-            am.step_id = ActiveValue::Set(step_id);
+            am.todo_id = ActiveValue::Set(todo_id);
             am.run_mode = ActiveValue::Set(run_mode.to_string());
             am.skip_on_source_failed =
                 ActiveValue::Set(if skip_on_source_failed { 1 } else { 0 });
@@ -734,14 +734,10 @@ impl Database {
 
     // ====== 辅助：批量取 step + todo 元信息 ======
 
-    /// 一次 SQL 把 loop_step + 关联 steps 模板的 title/executor 拉出来。
+    /// 一次 SQL 把 loop_step + 关联 todo 的 title/executor 拉出来。
     /// 供前端 LoopStudio 详情页直接渲染(避免 N+1)。
     ///
-    /// 历史注记：早期 `loop_steps.step_id` 指向 `todos.id`，后来重构为指向 `steps.id`
-    /// （环节成为可复用模板）。本 SQL 必须 INNER JOIN `steps`，不能再 JOIN `todos`。
-    /// 否则会把同名 ID 的 todo title 错配到 step 上，例如 loop 绑定 steps.id=3 时
-    /// 拿到的是 todos.id=3 的 title。前端 LoopFlowGraph / LoopStudioStepsPanel 第二列
-    /// 都依赖这个字段，错配会直接展示错误标题。
+    /// `loop_steps.todo_id` 直接 JOIN `todos` 表读取 title 和 executor。
     pub async fn list_loop_steps_with_todo_meta(
         &self,
         loop_id: i64,
@@ -750,18 +746,16 @@ impl Database {
         // 一次写清晰且类型稳定。
         //
         // 仅返回 (loop_step, template_title, template_executor) 三元组。
-        // 原 tuple 还包含 `todo_status`，但 `steps` 表没有 status 列（环节是模板不是任务），
-        // 且前端从不消费该字段，所以一并移除。
         use sea_orm::{ConnectionTrait, Statement};
         let sql = format!(
-            "SELECT s.id, s.loop_id, s.name, s.description, s.order_index, s.step_id, \
+            "SELECT s.id, s.loop_id, s.name, s.description, s.order_index, s.todo_id, \
                     s.run_mode, s.skip_on_source_failed, s.min_rating, s.unrated_policy, \
                     s.on_success, s.success_goto_step_id, s.on_rating_fail, s.fail_goto_step_id, \
                     s.review_type, \
                     s.enabled, s.created_at, \
                     st.title as todo_title, st.executor as todo_executor \
              FROM loop_steps s \
-             INNER JOIN steps st ON st.id = s.step_id \
+             INNER JOIN todos st ON st.id = s.todo_id \
              WHERE s.loop_id = {} \
              ORDER BY s.order_index ASC, s.id ASC",
             loop_id
@@ -778,7 +772,7 @@ impl Database {
                 name: row.try_get_by::<String, _>("name")?,
                 description: row.try_get_by::<String, _>("description")?,
                 order_index: row.try_get_by::<i32, _>("order_index")?,
-                step_id: row.try_get_by::<i64, _>("step_id")?,
+                todo_id: row.try_get_by::<i64, _>("todo_id")?,
                 run_mode: row.try_get_by::<String, _>("run_mode")?,
                 skip_on_source_failed: row.try_get_by::<i32, _>("skip_on_source_failed")?,
                 min_rating: row.try_get_by::<Option<i32>, _>("min_rating")?,
@@ -881,10 +875,7 @@ impl Database {
     /// 加载 loop 详情(基本+所有子项)给前端 LoopStudio 详情面板用。
     /// 单次返回所有必要数据,前端无需多次请求。
     ///
-    /// 历史注记：早期实现还会 JOIN `todos` 表构建 `todo_map`，但 `loop_steps.step_id`
-    /// 重构后指向 `steps` 表（reusable 环节模板），且 todo_map 字段在前端从未被消费。
-    /// 本方法现在直接返回 `(loop_step, template_title, template_executor)` 三元组，
-    /// 不再做多余的 todos 拼装。
+    /// `loop_steps.todo_id` 直接指向 `todos` 表，不再经过 `steps` 中间层。
     pub async fn load_loop_full(
         &self,
         loop_id: i64,

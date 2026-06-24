@@ -8,9 +8,9 @@ import {
 } from 'antd';
 import { DeleteOutlined, CloseOutlined } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
-import * as dbSteps from '@/utils/database/steps';
+import * as db from '@/utils/database';
 import type { LoopStepDto, CreateLoopStepRequest } from '@/types/loop';
-import type { StepSummary } from '@/types';
+import type { Todo } from '@/types';
 import { LoopFlowGraph } from '@/components/loop-flow/LoopFlowGraph';
 
 interface StepsPanelProps {
@@ -30,7 +30,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
   const [modalOpen, setModalOpen] = useState(false);
   const [editingStep, setEditingStep] = useState<LoopStepDto | null>(null);
   const [saving, setSaving] = useState(false);
-  const [candidates, setCandidates] = useState<StepSummary[]>([]);
+  const [candidates, setCandidates] = useState<Todo[]>([]);
   const [form] = Form.useForm<CreateLoopStepRequest & { todo_title: string }>();
 
   // 打开新增 Modal
@@ -38,7 +38,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
     setEditingStep(null);
     form.resetFields();
     try {
-      const list = await dbSteps.listStepCandidates();
+      const list = await db.getAllTodos('step');
       setCandidates(list);
     } catch {
       setCandidates([]);
@@ -50,14 +50,14 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
   const handleSelectStep = useCallback(async (step: LoopStepDto) => {
     setEditingStep(step);
     try {
-      const list = await dbSteps.listStepCandidates();
+      const list = await db.getAllTodos('step');
       setCandidates(list);
     } catch {
       setCandidates([]);
     }
     form.setFieldsValue({
       name: step.name,
-      step_id: step.step_id,
+      todo_id: step.todo_id,
       description: step.description,
       enabled: step.enabled,
       min_rating: step.min_rating,
@@ -91,7 +91,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
         await dbLoops.updateLoopStep(loopId, editingStep.id, {
           name: values.name.trim(),
           description: values.description ?? '',
-          step_id: values.step_id,
+          todo_id: values.todo_id,
           run_mode: 'sequential',
           skip_on_source_failed: values.skip_on_source_failed ?? false,
           min_rating: values.min_rating ?? null,
@@ -108,7 +108,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
         await dbLoops.createLoopStep(loopId, {
           name: values.name.trim(),
           description: values.description ?? '',
-          step_id: values.step_id,
+          todo_id: values.todo_id,
           run_mode: 'sequential',
           skip_on_source_failed: values.skip_on_source_failed ?? false,
           min_rating: values.min_rating ?? null,
@@ -207,7 +207,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
         destroyOnClose
       >
         <Form form={form} layout="vertical">
-          <Form.Item label="关联环节" name="step_id" rules={[{ required: true, message: '请选择关联的环节' }]}>
+          <Form.Item label="关联环节" name="todo_id" rules={[{ required: true, message: '请选择关联的环节' }]}>
             <Select
               showSearch
               placeholder="选择已有的环节"
