@@ -5,11 +5,10 @@
 //!   1. 根据 todo.workspace 决定是否开 worktree（`resolve_worktree_context`）
 //!   2. 把 worktree 路径回写到 execution_records（`record_worktree_path`）
 //!   3. 执行结束后清理 worktree（`cleanup_worktree_if_needed`）
-//!   4. 给 claude_code / hermes 注入 `--worktree` 开关（`apply_worktree_flag`）
-//!   5. 杀进程组（`kill_process_tree`，command-group 集成）
+//!   4. 杀进程组（`kill_process_tree`，command-group 集成）
 
 use crate::db::Database;
-use crate::models::{ExecutorType, Todo};
+use crate::models::Todo;
 use crate::services::worktree::WorktreeService;
 
 /// issue #643: 单次执行使用的 worktree 上下文。
@@ -103,36 +102,6 @@ pub(crate) fn cleanup_worktree_if_needed(ctx: &WorktreeContext) {
     }
 }
 
-/// 给 `command_args` 插入 `--worktree` 开关。
-///
-/// - 仅当 `worktree_enabled == true` 且 executor 是 `Claudecode` 或 `Hermes` 时生效；
-///   其他 executor 即使 todo 开启了 worktree，也会被静默忽略。
-/// - 位置约束：必须放在 `--session-id` / `--resume` 之前，否则 Claude Code / Hermes
-///   在 resume session 时不会触发 worktree 初始化。
-///   没找到这些开关时 append 到末尾，依然能让 Claude Code 自动管理 worktree。
-pub(crate) fn apply_worktree_flag(
-    command_args: &mut Vec<String>,
-    exec_type: ExecutorType,
-    worktree_enabled: bool,
-) {
-    if !worktree_enabled {
-        return;
-    }
-    match exec_type {
-        ExecutorType::Claudecode | ExecutorType::Hermes => {
-            // 找 `--session-id` 或 `--resume` 的位置；找不到就 append 到末尾。
-            let insert_pos = command_args
-                .iter()
-                .position(|s| s == "--session-id" || s == "--resume")
-                .unwrap_or(command_args.len());
-            command_args.insert(insert_pos, "--worktree".to_string());
-        }
-        // 其他 executor 不支持 worktree flag，todo 配置的 `worktree_enabled`
-        // 对它们而言无意义；显式忽略避免误把 flag 透传给不识别的二进制。
-        _ => {}
-    }
-}
-
 /// 使用 command-group 安全地杀死进程树
 /// command-group 会自动创建进程组，kill() 时会杀死整个进程组
 pub(crate) async fn kill_process_tree(child: &mut command_group::AsyncGroupChild) {
@@ -144,36 +113,6 @@ pub(crate) async fn kill_process_tree(child: &mut command_group::AsyncGroupChild
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_apply_worktree_flag_inserts_before_session_id() {
-        // Claude Code：插入到 --session-id 之前。
-        let mut args = vec!["--print".to_string(), "--session-id".to_string(), "abc".to_string()];
-        apply_worktree_flag(&mut args, ExecutorType::Claudecode, true);
-        assert_eq!(args, vec!["--print", "--worktree", "--session-id", "abc"]);
-
-        // Hermes：插入到 --resume 之前。
-        let mut args = vec!["-p".to_string(), "--resume".to_string(), "xyz".to_string()];
-        apply_worktree_flag(&mut args, ExecutorType::Hermes, true);
-        assert_eq!(args, vec!["-p", "--worktree", "--resume", "xyz"]);
-
-        // 找不到 --session-id / --resume 时 append 到末尾。
-        let mut args = vec!["-p".to_string()];
-        apply_worktree_flag(&mut args, ExecutorType::Claudecode, true);
-        assert_eq!(args, vec!["-p", "--worktree"]);
-
-        // worktree_enabled = false 时不插入。
-        let mut args = vec!["--print".to_string()];
-        apply_worktree_flag(&mut args, ExecutorType::Claudecode, false);
-        assert_eq!(args, vec!["--print"]);
-
-        // 其他 executor 即使 worktree_enabled = true 也不插入。
-        let mut args = vec!["--print".to_string()];
-        apply_worktree_flag(&mut args, ExecutorType::Codex, true);
-        assert_eq!(args, vec!["--print"]);
-        apply_worktree_flag(&mut args, ExecutorType::Pi, true);
-        assert_eq!(args, vec!["--print"]);
-    }
 
     #[test]
     fn test_cleanup_worktree_if_needed_disabled() {

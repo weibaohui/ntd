@@ -112,8 +112,6 @@ pub struct Todo {
     #[serde(default)]
     pub workspace: Option<String>,
     #[serde(default)]
-    pub worktree_enabled: bool,
-    #[serde(default)]
     pub acceptance_criteria: Option<String>,
     /// 0=normal, 1=reviewer_template（已废弃：评审模板已迁出至 review_templates 表）,
     /// 2=review_instance（评审实例）.
@@ -390,8 +388,6 @@ pub struct UpdateTodoRequest {
     pub scheduler_timezone: Option<String>,
     #[serde(default)]
     pub workspace: Option<String>,
-    #[serde(default)]
-    pub worktree_enabled: Option<bool>,
     #[serde(default)]
     pub acceptance_criteria: Option<String>,
     /// None=不变, Some(true)/Some(false)=更新. 不允许改 reviewer template 的开关.

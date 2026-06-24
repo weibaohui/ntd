@@ -34,7 +34,6 @@ export async function updateTodo(
   scheduler_enabled?: boolean,
   scheduler_config?: string | null,
   workspace?: string | null,
-  worktree_enabled?: boolean,
   acceptance_criteria?: string | null,
   auto_review_enabled?: boolean,
 ): Promise<Todo> {
@@ -43,7 +42,6 @@ export async function updateTodo(
   if (scheduler_enabled !== undefined) body.scheduler_enabled = scheduler_enabled;
   if (scheduler_config !== undefined) body.scheduler_config = scheduler_config;
   if (workspace !== undefined) body.workspace = workspace;
-  if (worktree_enabled !== undefined) body.worktree_enabled = worktree_enabled;
   if (acceptance_criteria !== undefined) body.acceptance_criteria = acceptance_criteria;
   if (auto_review_enabled !== undefined) body.auto_review_enabled = auto_review_enabled;
 

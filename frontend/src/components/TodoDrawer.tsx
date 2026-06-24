@@ -50,7 +50,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
 
   // 从 formState 中解构出常用的字段
   const {
-    title, prompt, selectedTags, executor, workspace, worktreeEnabled,
+    title, prompt, selectedTags, executor, workspace,
     schedulerEnabled, schedulerConfig, acceptanceCriteria, autoReviewEnabled,
   } = formState;
 
@@ -239,7 +239,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
         await db.updateTodo(
           todo.id, title.trim(), prompt.trim(), todo.status,
           executor, schedulerEnabled, schedulerConfig || null,
-          workspaceToSave, worktreeEnabled,
+          workspaceToSave,
           acceptanceCriteria || null,
           autoReviewEnabled,
         );
@@ -252,11 +252,11 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
         // 创建模式：只在路径存在于目录列表时才设置 workspace，否则为 null（避免创建无名项目）
         const workspaceToSave = trimmedWorkspace && projectDirectories.some(d => d.path === trimmedWorkspace) ? trimmedWorkspace : null;
 
-        if (workspaceToSave || schedulerEnabled || executor !== DEFAULT_EXECUTOR || worktreeEnabled) {
+        if (workspaceToSave || schedulerEnabled || executor !== DEFAULT_EXECUTOR) {
           await db.updateTodo(
             newTodo.id, newTodo.title, newTodo.prompt, newTodo.status,
             executor, schedulerEnabled, schedulerConfig || null,
-            workspaceToSave, worktreeEnabled,
+            workspaceToSave,
             acceptanceCriteria || null,
             autoReviewEnabled,
           );
@@ -409,14 +409,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
             )}
           </div>
 
-          {(executor === DEFAULT_EXECUTOR || executor === 'claude_code' || executor === 'hermes') && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>Git Worktree</div>
-                <Switch checked={worktreeEnabled} onChange={(checked) => setField('worktreeEnabled', checked)} />
-              </div>
-            </div>
-          )}
+
 
           <Divider style={{ margin: '8px 0 16px' }} />
 

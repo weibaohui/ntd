@@ -22,7 +22,6 @@ use crate::task_manager::TaskManager;
 use super::ExecutionResult;
 use super::RunTodoExecutionRequest;
 use super::log_capture::send_event;
-use super::worktree::apply_worktree_flag;
 
 /// 选择执行器类型。优先级：调用方显式 `req_executor` > todo 存储的 `todo_executor` > 默认值。
 ///
@@ -235,8 +234,7 @@ pub(crate) async fn reject_start_todo_failure(
 /// Stage 1 步骤 5 产物：executor 选择 + command 构造。
 ///
 /// 决策顺序：显式 req_executor > todo.executor > registry default。命令构造
-/// 用 `command_args_with_session` 处理 resume / 非 resume 分支，再用
-/// [`apply_worktree_flag`] 给 claude_code / hermes 加 worktree 参数。
+/// 用 `command_args_with_session` 处理 resume / 非 resume 分支。
 #[allow(dead_code)]
 pub(crate) struct SelectedExecutor {
     pub executor: Arc<dyn CodeExecutor>,
@@ -255,14 +253,14 @@ pub(crate) async fn select_executor_and_build_command(
     todo: &Option<crate::models::Todo>,
     message: &str,
 ) -> Result<SelectedExecutor, ExecutionResult> {
-    let (todo_workspace, todo_worktree_enabled, todo_executor) = extract_todo_executor_fields(todo);
+    let (todo_workspace, todo_executor) = extract_todo_executor_fields(todo);
     let executor_type =
         resolve_executor_type(request.req_executor.as_deref(), todo_executor.as_deref());
     let executor =
         resolve_executor_instance(request, todo, executor_type).await?;
     let executable_path = executor.executable_path().to_string();
     let command_args =
-        build_executor_command_args(&executor, message, request.resume_session_id.as_deref(), todo_worktree_enabled);
+        build_executor_command_args(&executor, message, request.resume_session_id.as_deref());
     let executor_str = executor.executor_type().to_string();
     persist_executor_choice(&request.db, request.todo_id, &executor_str).await;
     Ok(SelectedExecutor {
@@ -275,13 +273,12 @@ pub(crate) async fn select_executor_and_build_command(
     })
 }
 
-/// 从 `Option<Todo>` 提取 (workspace, worktree_enabled, executor_str) 三元组。
+/// 从 `Option<Todo>` 提取 (workspace, executor_str) 二元组。
 fn extract_todo_executor_fields(
     todo: &Option<crate::models::Todo>,
-) -> (Option<String>, bool, Option<String>) {
+) -> (Option<String>, Option<String>) {
     (
         todo.as_ref().and_then(|t| t.workspace.clone()),
-        todo.as_ref().map(|t| t.worktree_enabled).unwrap_or(false),
         todo.as_ref().and_then(|t| t.executor.clone()),
     )
 }
@@ -310,20 +307,17 @@ async fn resolve_executor_instance(
     .await)
 }
 
-/// 构造 argv：先按 executor 规则拼 + 再插入 --worktree flag（如果需要）。
+/// 构造 argv：直接按 executor 规则拼。
 fn build_executor_command_args(
     executor: &Arc<dyn CodeExecutor>,
     message: &str,
     resume_session_id: Option<&str>,
-    todo_worktree_enabled: bool,
 ) -> Vec<String> {
-    let mut args = executor.command_args_with_session(
+    executor.command_args_with_session(
         message,
         resume_session_id,
         resume_session_id.is_some(),
-    );
-    apply_worktree_flag(&mut args, executor.executor_type(), todo_worktree_enabled);
-    args
+    )
 }
 
 /// Update todo's executor to the one being used. 失败仅记日志，不阻断执行。

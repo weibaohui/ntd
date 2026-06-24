@@ -18,7 +18,6 @@ pub struct TodoUpdate<'a> {
     pub scheduler_config: Option<&'a str>,
     pub scheduler_timezone: Option<&'a str>,
     pub workspace: Option<&'a str>,
-    pub worktree_enabled: Option<bool>,
     pub acceptance_criteria: Option<&'a str>,
     pub auto_review_enabled: Option<bool>,
 }
@@ -63,7 +62,6 @@ impl Database {
             scheduler_next_run_at,
             task_id: m.task_id,
             workspace: m.workspace,
-            worktree_enabled: m.worktree_enabled.unwrap_or(false),
             acceptance_criteria: m.acceptance_criteria,
             todo_type: m.todo_type.unwrap_or(0),
             parent_todo_id: m.parent_todo_id,
@@ -186,9 +184,6 @@ impl Database {
                 am.workspace = ActiveValue::Set(Some(ws.to_string()));
             }
         }
-        if let Some(wt) = update.worktree_enabled {
-            am.worktree_enabled = ActiveValue::Set(Some(wt));
-        }
         if let Some(criteria) = update.acceptance_criteria {
             am.acceptance_criteria = ActiveValue::Set(Some(criteria.to_string()));
         }
@@ -292,21 +287,6 @@ impl Database {
         let am = todos::ActiveModel {
             id: ActiveValue::Unchanged(id),
             workspace: ActiveValue::Set(ws),
-            updated_at: ActiveValue::Set(Some(now)),
-            ..Default::default()
-        };
-        self.exec_update(am).await
-    }
-
-    pub async fn update_todo_worktree_enabled(
-        &self,
-        id: i64,
-        enabled: bool,
-    ) -> Result<(), sea_orm::DbErr> {
-        let now = crate::models::utc_timestamp();
-        let am = todos::ActiveModel {
-            id: ActiveValue::Unchanged(id),
-            worktree_enabled: ActiveValue::Set(Some(enabled)),
             updated_at: ActiveValue::Set(Some(now)),
             ..Default::default()
         };
@@ -633,11 +613,7 @@ impl Database {
                     scheduler_config: m.scheduler_config,
                     tag_names,
                     workspace: m.workspace.clone(),
-                    worktree: if m.worktree_enabled.unwrap_or(false) {
-                        m.workspace.clone()
-                    } else {
-                        None
-                    },
+                    worktree: None,
                 }
             })
             .collect::<Vec<_>>())
@@ -688,11 +664,7 @@ impl Database {
                     scheduler_config: m.scheduler_config,
                     tag_names,
                     workspace: m.workspace.clone(),
-                    worktree: if m.worktree_enabled.unwrap_or(false) {
-                        m.workspace.clone()
-                    } else {
-                        None
-                    },
+                    worktree: None,
                 }
             })
             .collect())
@@ -749,8 +721,7 @@ impl Database {
         // 导入 todo
         for todo in todos_in {
             let now = crate::models::utc_timestamp();
-            let workspace = todo.worktree.clone().or(todo.workspace.clone());
-            let worktree_enabled = todo.worktree.is_some();
+            let workspace = todo.workspace.clone();
             let am = todos::ActiveModel {
                 title: ActiveValue::Set(todo.title.clone()),
                 prompt: ActiveValue::Set(Some(todo.prompt.clone())),
@@ -759,7 +730,6 @@ impl Database {
                 scheduler_enabled: ActiveValue::Set(Some(todo.scheduler_enabled)),
                 scheduler_config: ActiveValue::Set(todo.scheduler_config.clone()),
                 workspace: ActiveValue::Set(workspace),
-                worktree_enabled: ActiveValue::Set(Some(worktree_enabled)),
                 created_at: ActiveValue::Set(Some(now.clone())),
                 updated_at: ActiveValue::Set(Some(now)),
                 ..Default::default()
@@ -848,8 +818,7 @@ impl Database {
                 am.executor = ActiveValue::Set(todo.executor.clone());
                 am.scheduler_enabled = ActiveValue::Set(Some(todo.scheduler_enabled));
                 am.scheduler_config = ActiveValue::Set(todo.scheduler_config.clone());
-                am.workspace = ActiveValue::Set(todo.worktree.clone().or(todo.workspace.clone()));
-                am.worktree_enabled = ActiveValue::Set(Some(todo.worktree.is_some()));
+                am.workspace = ActiveValue::Set(todo.workspace.clone());
                 am.updated_at = ActiveValue::Set(Some(crate::models::utc_timestamp()));
                 let saved = am.update(&txn).await?;
 
@@ -881,8 +850,7 @@ impl Database {
             } else {
                 // 新建
                 let now = crate::models::utc_timestamp();
-                let workspace = todo.worktree.clone().or(todo.workspace.clone());
-                let worktree_enabled = todo.worktree.is_some();
+                let workspace = todo.workspace.clone();
                 let am = todos::ActiveModel {
                     title: ActiveValue::Set(todo.title.clone()),
                     prompt: ActiveValue::Set(Some(todo.prompt.clone())),
@@ -891,7 +859,6 @@ impl Database {
                     scheduler_enabled: ActiveValue::Set(Some(todo.scheduler_enabled)),
                     scheduler_config: ActiveValue::Set(todo.scheduler_config.clone()),
                     workspace: ActiveValue::Set(workspace),
-                    worktree_enabled: ActiveValue::Set(Some(worktree_enabled)),
                     created_at: ActiveValue::Set(Some(now.clone())),
                     updated_at: ActiveValue::Set(Some(now)),
                     ..Default::default()

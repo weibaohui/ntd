@@ -314,7 +314,6 @@ async fn merge_cloud_todos_to_local(
                         scheduler_config: None,
                         scheduler_timezone: None,
                         workspace: item.workspace.as_deref(),
-                        worktree_enabled: None,
                         acceptance_criteria: None,
                         auto_review_enabled: None,
                     })
@@ -370,7 +369,7 @@ fn local_todos_to_cloud(todos: Vec<Todo>, tag_map: HashMap<i64, String>) -> Clou
                 scheduler_config: t.scheduler_config,
                 tag_names,
                 workspace: t.workspace,
-                worktree: t.worktree_enabled.then(|| "auto".to_string()),
+                worktree: None,
             }
         })
         .collect();

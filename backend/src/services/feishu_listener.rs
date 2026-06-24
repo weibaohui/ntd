@@ -1126,7 +1126,6 @@ impl FeishuListener {
                     match db.create_todo(&todo_title, &todo_prompt).await {
                         Ok(todo_id) => {
                             let _ = db.update_todo_workspace(todo_id, Some(&dir.path)).await;
-                            let _ = db.update_todo_worktree_enabled(todo_id, false).await;
                             match db.create_feishu_project_binding(bot_id, channel, chat_type, dir.id, todo_id).await {
                                 Ok(binding_id) => {
                                     let dir_name = dir.name.as_deref().unwrap_or("unknown");
@@ -1931,7 +1930,6 @@ mod tests {
             scheduler_next_run_at: None,
             task_id: None,
             workspace: None,
-            worktree_enabled: false,
             acceptance_criteria: None,
             todo_type: 0,
             parent_todo_id: None,

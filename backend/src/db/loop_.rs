@@ -13,7 +13,6 @@ use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
     Set, DbBackend,
 };
-use std::collections::HashMap;
 
 use crate::db::entity::{
     loop_executions, loop_step_executions, loop_steps, loop_triggers, loops,
@@ -735,14 +734,24 @@ impl Database {
 
     // ====== 辅助：批量取 step + todo 元信息 ======
 
-    /// 一次 SQL 把 step + 关联 todo 的 title/executor/status 拉出来。
+    /// 一次 SQL 把 loop_step + 关联 steps 模板的 title/executor 拉出来。
     /// 供前端 LoopStudio 详情页直接渲染(避免 N+1)。
+    ///
+    /// 历史注记：早期 `loop_steps.step_id` 指向 `todos.id`，后来重构为指向 `steps.id`
+    /// （环节成为可复用模板）。本 SQL 必须 INNER JOIN `steps`，不能再 JOIN `todos`。
+    /// 否则会把同名 ID 的 todo title 错配到 step 上，例如 loop 绑定 steps.id=3 时
+    /// 拿到的是 todos.id=3 的 title。前端 LoopFlowGraph / LoopStudioStepsPanel 第二列
+    /// 都依赖这个字段，错配会直接展示错误标题。
     pub async fn list_loop_steps_with_todo_meta(
         &self,
         loop_id: i64,
-    ) -> Result<Vec<(loop_steps::Model, String, String, String)>, sea_orm::DbErr> {
+    ) -> Result<Vec<(loop_steps::Model, String, String)>, sea_orm::DbErr> {
         // 用 raw SQL JOIN; SeaORM 的 join API 对 has-many/belongs-to 支持有限,
         // 一次写清晰且类型稳定。
+        //
+        // 仅返回 (loop_step, template_title, template_executor) 三元组。
+        // 原 tuple 还包含 `todo_status`，但 `steps` 表没有 status 列（环节是模板不是任务），
+        // 且前端从不消费该字段，所以一并移除。
         use sea_orm::{ConnectionTrait, Statement};
         let sql = format!(
             "SELECT s.id, s.loop_id, s.name, s.description, s.order_index, s.step_id, \
@@ -750,10 +759,9 @@ impl Database {
                     s.on_success, s.success_goto_step_id, s.on_rating_fail, s.fail_goto_step_id, \
                     s.review_type, \
                     s.enabled, s.created_at, \
-                    t.title as todo_title, st.executor as todo_executor, t.status as todo_status \
+                    st.title as todo_title, st.executor as todo_executor \
              FROM loop_steps s \
-             INNER JOIN todos t ON t.id = s.step_id \
-             LEFT JOIN steps st ON st.id = s.step_id \
+             INNER JOIN steps st ON st.id = s.step_id \
              WHERE s.loop_id = {} \
              ORDER BY s.order_index ASC, s.id ASC",
             loop_id
@@ -787,10 +795,7 @@ impl Database {
             let todo_executor: String = row
                 .try_get_by::<Option<String>, _>("todo_executor")?
                 .unwrap_or_default();
-            let todo_status: String = row
-                .try_get_by::<Option<String>, _>("todo_status")?
-                .unwrap_or_default();
-            out.push((model, todo_title, todo_executor, todo_status));
+            out.push((model, todo_title, todo_executor));
         }
         Ok(out)
     }
@@ -875,6 +880,11 @@ impl Database {
 
     /// 加载 loop 详情(基本+所有子项)给前端 LoopStudio 详情面板用。
     /// 单次返回所有必要数据,前端无需多次请求。
+    ///
+    /// 历史注记：早期实现还会 JOIN `todos` 表构建 `todo_map`，但 `loop_steps.step_id`
+    /// 重构后指向 `steps` 表（reusable 环节模板），且 todo_map 字段在前端从未被消费。
+    /// 本方法现在直接返回 `(loop_step, template_title, template_executor)` 三元组，
+    /// 不再做多余的 todos 拼装。
     pub async fn load_loop_full(
         &self,
         loop_id: i64,
@@ -884,13 +894,8 @@ impl Database {
         };
         let triggers = self.list_triggers_by_loop(loop_id).await?;
         let steps_with_meta = self.list_loop_steps_with_todo_meta(loop_id).await?;
-        let mut todo_ids: Vec<i64> = steps_with_meta.iter().map(|(s, _, _, _)| s.step_id).collect();
-        todo_ids.sort_unstable();
-        todo_ids.dedup();
-        let todos = self.get_todos_by_ids(&todo_ids).await?;
-        let todo_map: HashMap<i64, _> = todos.into_iter().map(|t| (t.id, t)).collect();
         let steps: Vec<loop_steps::Model> =
-            steps_with_meta.iter().map(|(s, _, _, _)| s.clone()).collect();
+            steps_with_meta.iter().map(|(s, _, _)| s.clone()).collect();
         // 统计该 loop 下待人工审批的环节执行数
         let pending_approval_count = self.count_pending_approvals_for_loop(loop_id).await?;
         Ok(Some(LoopFullView {
@@ -898,7 +903,6 @@ impl Database {
             triggers,
             steps,
             steps_meta: steps_with_meta,
-            todo_map,
             pending_approval_count,
         }))
     }
@@ -922,9 +926,9 @@ pub struct LoopFullView {
     pub loop_: loops::Model,
     pub triggers: Vec<loop_triggers::Model>,
     pub steps: Vec<loop_steps::Model>,
-    /// (step, todo_title, todo_executor, todo_status)
-    pub steps_meta: Vec<(loop_steps::Model, String, String, String)>,
-    pub todo_map: HashMap<i64, crate::db::entity::todos::Model>,
+    /// (step, template_title, template_executor)
+    /// template_* 字段从 steps 表读（不是 todos），见 list_loop_steps_with_todo_meta。
+    pub steps_meta: Vec<(loop_steps::Model, String, String)>,
     /// 该 loop 下待人工审批的环节执行数
     pub pending_approval_count: i32,
 }

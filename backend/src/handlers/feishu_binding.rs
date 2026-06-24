@@ -145,10 +145,6 @@ pub async fn create_binding(
         if let Err(e) = state.db.update_todo_workspace(tid, Some(&dir.path)).await {
             tracing::warn!("[binding] failed to update todo {} workspace: {e}", tid);
         }
-        // 被飞书绑定使用的 Todo 必须关闭 worktree，避免 worktree 路径与 workspace 不一致。
-        if let Err(e) = state.db.update_todo_worktree_enabled(tid, false).await {
-            tracing::warn!("[binding] failed to set worktree_enabled for todo {}: {e}", tid);
-        }
         tid
     } else {
         // 新建 Todo，title/prompt 模板与 feishu_listener.rs 保持一致。
@@ -169,9 +165,6 @@ pub async fn create_binding(
         ).await?;
         if let Err(e) = state.db.update_todo_workspace(new_todo_id, Some(&dir.path)).await {
             tracing::warn!("[binding] failed to set todo workspace: {e}");
-        }
-        if let Err(e) = state.db.update_todo_worktree_enabled(new_todo_id, false).await {
-            tracing::warn!("[binding] failed to set worktree_enabled: {e}");
         }
         new_todo_id
     };

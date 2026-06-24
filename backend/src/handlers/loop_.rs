@@ -324,11 +324,10 @@ pub async fn list_loop_steps(
     let rows = state.db.list_loop_steps_with_todo_meta(loop_id).await?;
     let dtos: Vec<LoopStepDto> = rows
         .into_iter()
-        .map(|(s, todo_title, todo_executor, todo_status)| LoopStepDto {
+        .map(|(s, todo_title, todo_executor)| LoopStepDto {
             step: s.into(),
             todo_title,
             todo_executor,
-            todo_status,
         })
         .collect();
     Ok(ApiResponse::ok(dtos))
@@ -368,12 +367,12 @@ pub async fn create_loop_step(
             &req.review_type,
         )
         .await?;
-    let (_, todo_title, todo_executor, todo_status) = state
+    let (_, todo_title, todo_executor) = state
         .db
         .list_loop_steps_with_todo_meta(loop_id)
         .await?
         .into_iter()
-        .find(|(s, _, _, _)| s.id == created.id)
+        .find(|(s, _, _)| s.id == created.id)
         .ok_or_else(|| AppError::Internal("created step missing".to_string()))?;
     Ok((
         StatusCode::CREATED,
@@ -381,7 +380,6 @@ pub async fn create_loop_step(
             step: created.into(),
             todo_title,
             todo_executor,
-            todo_status,
         }),
     ))
 }
@@ -443,18 +441,17 @@ pub async fn update_loop_step(
             &req.review_type,
         )
         .await?;
-    let (_, todo_title, todo_executor, todo_status) = state
+    let (_, todo_title, todo_executor) = state
         .db
         .list_loop_steps_with_todo_meta(loop_id)
         .await?
         .into_iter()
-        .find(|(s, _, _, _)| s.id == sid)
+        .find(|(s, _, _)| s.id == sid)
         .ok_or_else(|| AppError::Internal("updated step missing".to_string()))?;
     Ok(ApiResponse::ok(LoopStepDto {
         step: state.db.get_loop_step(sid).await?.ok_or(AppError::Internal("step missing".to_string()))?.into(),
         todo_title,
         todo_executor,
-        todo_status,
     }))
 }
 

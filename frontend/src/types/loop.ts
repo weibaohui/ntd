@@ -101,13 +101,6 @@ export interface LoopStepExecutionDto {
   total_cost_usd: number | null;
 }
 
-export interface TodoSummaryForLoop {
-  id: number;
-  title: string;
-  status: string;
-  executor: string;
-}
-
 export interface LoopStepRawDto {
   id: number;
   loop_id: number;
@@ -150,9 +143,10 @@ export interface LoopStepDto {
   review_type: string;
   enabled: boolean;
   created_at: string | null;
+  /** 关联 step 模板的 title（来自 steps 表） */
   todo_title: string;
+  /** 关联 step 模板的执行器 */
   todo_executor: string;
-  todo_status: string;
 }
 
 export interface CreateLoopStepRequest {
@@ -216,7 +210,6 @@ export interface LoopDetail {
   updated_at: string | null;
   triggers: LoopTriggerDto[];
   steps: LoopStepDto[];
-  todo_map: Record<number, TodoSummaryForLoop>;
   /** 待人工审批的环节执行数 */
   pending_approval_count: number;
 }

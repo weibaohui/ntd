@@ -813,7 +813,6 @@ mod tests {
             scheduler_config: None,
             scheduler_timezone: None,
             workspace: None,
-            worktree_enabled: None,
             acceptance_criteria: None,
             auto_review_enabled: None,
         })
@@ -976,7 +975,6 @@ mod tests {
             scheduler_config: Some("0 0 * * *"),
             scheduler_timezone: None,
             workspace: Some("/tmp/workspace"),
-            worktree_enabled: None,
             acceptance_criteria: None,
             auto_review_enabled: None,
         })

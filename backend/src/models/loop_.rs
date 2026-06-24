@@ -56,8 +56,6 @@ pub struct LoopDetail {
     pub loop_: LoopDto,
     pub triggers: Vec<LoopTriggerDto>,
     pub steps: Vec<LoopStepDto>,
-    /// todo_id -> TodoDto,前端展示 step 关联的 todo 信息时直接 lookup
-    pub todo_map: std::collections::HashMap<i64, TodoSummary>,
     /// 待人工审批的环节执行数（approval_status='pending' 的 loop_step_executions 数量）
     #[serde(default)]
     pub pending_approval_count: i32,
@@ -65,48 +63,22 @@ pub struct LoopDetail {
 
 impl From<LoopFullView> for LoopDetail {
     fn from(view: LoopFullView) -> Self {
-        let todo_map = view
-            .todo_map
-            .into_iter()
-            .map(|(id, t)| {
-                (
-                    id,
-                    TodoSummary {
-                        id: t.id,
-                        title: t.title,
-                        status: t.status.unwrap_or_default(),
-                        executor: t.executor.unwrap_or_default(),
-                    },
-                )
-            })
-            .collect();
         let steps = view
             .steps_meta
             .into_iter()
-            .map(|(s, todo_title, todo_executor, todo_status): (loop_steps::Model, String, String, String)| LoopStepDto {
+            .map(|(s, todo_title, todo_executor): (loop_steps::Model, String, String)| LoopStepDto {
                 step: s.into(),
                 todo_title,
                 todo_executor,
-                todo_status,
             })
             .collect();
         Self {
             loop_: view.loop_.into(),
             triggers: view.triggers.into_iter().map(Into::into).collect(),
             steps,
-            todo_map,
             pending_approval_count: view.pending_approval_count,
         }
     }
-}
-
-/// 极简的 todo 摘要(嵌在 loop detail 里),不暴露 prompt 等敏感字段。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TodoSummary {
-    pub id: i64,
-    pub title: String,
-    pub status: String,
-    pub executor: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,10 +155,10 @@ impl From<loop_triggers::Model> for LoopTriggerDto {
 pub struct LoopStepDto {
     #[serde(flatten)]
     pub step: LoopStepRawDto,
-    /// 冗余字段,JOIN 时一并查出来,避免前端再请求 todo 详情
+    /// 冗余字段,JOIN 时一并查出来,避免前端再请求 step 模板详情。
+    /// 修复 JOIN 误用 todos 表后：todo_title/todo_executor 现在都从 steps 表读。
     pub todo_title: String,
     pub todo_executor: String,
-    pub todo_status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

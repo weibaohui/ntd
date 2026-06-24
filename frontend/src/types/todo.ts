@@ -16,7 +16,6 @@ export interface Todo {
   scheduler_next_run_at?: string | null;
   task_id?: string | null;
   workspace?: string | null;
-  worktree_enabled?: boolean;
   acceptance_criteria?: string | null;
   /** Whether to spawn an auto-review child todo after this one finishes. Default true. */
   auto_review_enabled?: boolean;
