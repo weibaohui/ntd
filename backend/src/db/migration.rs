@@ -56,6 +56,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V17ConsolidateReviewInstanceTodos),
         Box::new(V18LoopHumanReview),
         Box::new(V19StepLoopTags),
+        Box::new(V25WebhooksLoopSupport),
         Box::new(V23DropTodoHooksColumns),
         Box::new(RenameLoopStepsStepIdBackToTodoId),
     ]
@@ -212,9 +213,6 @@ async fn v1_initial_schema(db: &Database) -> Result<(), sea_orm::DbErr> {
     create_project_directories_table(db).await?;
     create_todo_templates_table(db).await?;
     create_webhooks_table(db).await?;
-    // 为 webhooks 表添加 loop_id 和 webhook_type 列（v8 Loop Webhook 支持）
-    add_column_if_missing(db, "webhooks", "loop_id", "ALTER TABLE webhooks ADD COLUMN loop_id INTEGER").await?;
-    add_column_if_missing(db, "webhooks", "webhook_type", "ALTER TABLE webhooks ADD COLUMN webhook_type TEXT NOT NULL DEFAULT 'todo'").await?;
     create_webhook_records_table(db).await?;
     create_usage_daily_stats_table(db).await?;
     create_usage_daily_stats_trigger(db).await?;
@@ -3258,4 +3256,24 @@ async fn drop_column_if_exists(
     let drop_sql = format!("ALTER TABLE {} DROP COLUMN {}", table, column);
     tracing::info!("Dropping {}.{} ...", table, column);
     db.exec(&drop_sql).await
+}
+
+/// v25 迁移：为 webhooks 表添加 loop_id 和 webhook_type 列，支持 loop webhook 类型。
+pub(super) struct V25WebhooksLoopSupport;
+
+#[async_trait]
+impl Migration for V25WebhooksLoopSupport {
+    fn version(&self) -> i64 {
+        25
+    }
+    fn name(&self) -> &'static str {
+        "webhooks_loop_support"
+    }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        // 幂等：列已存在时跳过
+        add_column_if_missing(db, "webhooks", "loop_id", "ALTER TABLE webhooks ADD COLUMN loop_id INTEGER").await?;
+        add_column_if_missing(db, "webhooks", "webhook_type", "ALTER TABLE webhooks ADD COLUMN webhook_type TEXT NOT NULL DEFAULT 'todo'").await?;
+        Ok(())
+    }
 }
