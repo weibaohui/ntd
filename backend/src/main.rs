@@ -44,6 +44,11 @@ enum Commands {
         #[command(subcommand)]
         action: cli::TodoAction,
     },
+    /// Loop management
+    Loop {
+        #[command(subcommand)]
+        action: cli::LoopAction,
+    },
     /// Tag management
     Tag {
         #[command(subcommand)]
@@ -210,6 +215,10 @@ async fn main() {
         }
         Some(Commands::Todo { action }) => {
             dispatch_subcommand(&cli, cli::Commands::Todo { action: action.clone() }).await;
+            return;
+        }
+        Some(Commands::Loop { action }) => {
+            dispatch_subcommand(&cli, cli::Commands::Loop { action: action.clone() }).await;
             return;
         }
         Some(Commands::Tag { action }) => {

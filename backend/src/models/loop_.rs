@@ -383,6 +383,16 @@ pub struct UpdateLoopStatusRequest {
     pub status: String,
 }
 
+/// 手动触发 Loop 的请求体，支持传递参数到 prompt 占位符。
+/// 对应 CLI 命令：`ntd loop trigger <id> --param key=value`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TriggerLoopRequest {
+    /// 触发时传递的参数，会注入到 step prompt 的 {{params.key}} 占位符。
+    /// 例如：`{"project_name": "myproject"}` 会将 prompt 中的 `{{project_name}}` 替换为 `myproject`。
+    #[serde(default)]
+    pub params: std::collections::HashMap<String, String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateTriggerRequest {
     pub trigger_type: String,

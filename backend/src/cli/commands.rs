@@ -7,7 +7,8 @@ use serde_json::Value;
 
 use crate::models::{
     ClientResponse, CreateTagRequest, CreateTodoRequest, DashboardStats, ExecutionRecord,
-    ExecutionRecordsPage, ExecutionSummary, Tag, Todo, ExecuteRequest,
+    ExecutionRecordsPage, ExecutionSummary, Tag, Todo, ExecuteRequest, LoopDto,
+    TriggerLoopRequest,
 };
 use crate::cli::client::ApiClient;
 use crate::config;
@@ -51,6 +52,11 @@ pub enum Commands {
     Todo {
         #[command(subcommand)]
         action: TodoAction,
+    },
+    /// Loop management
+    Loop {
+        #[command(subcommand)]
+        action: LoopAction,
     },
     /// Tag management
     Tag {
@@ -255,6 +261,56 @@ pub enum TagAction {
     },
 }
 
+// ============== Loop Commands ==============
+
+/// Loop CLI actions, mirrors the structure of Todo commands for consistency.
+#[derive(Debug, Clone, Subcommand)]
+pub enum LoopAction {
+    /// List all loops
+    List {
+        /// Filter by workspace
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Get loop details
+    Get {
+        /// Loop ID
+        id: i64,
+    },
+    /// Trigger (execute) a loop
+    Trigger {
+        /// Loop ID
+        id: i64,
+
+        /// Parameters for placeholder replacement (key=value format, can be repeated)
+        /// Example: --param project_name=myproject --param env=production
+        /// These params will be injected into step prompts via {{params.key}} placeholders.
+        #[arg(long = "param", num_args = 1, value_parser = parse_key_value)]
+        params: Option<Vec<(String, String)>>,
+    },
+    /// Get loop execution history
+    Executions {
+        /// Loop ID
+        id: i64,
+
+        /// Page number
+        #[arg(long, default_value = "1")]
+        page: i64,
+
+        /// Items per page
+        #[arg(long, default_value = "20")]
+        limit: i64,
+    },
+    /// Get execution details
+    Execution {
+        /// Loop ID
+        loop_id: i64,
+
+        /// Execution ID
+        execution_id: i64,
+    },
+}
+
 // ============== Helper Functions ==============
 
 fn read_prompt_from_file(file: &Option<String>) -> Result<String> {
@@ -320,6 +376,7 @@ pub async fn run_command(cli: &Cli) -> Result<()> {
 
     match &cli.command {
         Commands::Todo { action } => handle_todo(&client, action, &cli.output, &cli.fields).await?,
+        Commands::Loop { action } => handle_loop(&client, action, &cli.output, &cli.fields).await?,
         Commands::Tag { action } => handle_tag(&client, action, &cli.output, &cli.fields).await?,
         Commands::Stats => handle_stats(&client, &cli.output, &cli.fields).await?,
     }
@@ -575,6 +632,59 @@ async fn handle_stats(
 ) -> Result<()> {
     let resp: ClientResponse<DashboardStats> = client.get("/dashboard-stats").await?;
     print_response(resp, output, fields)?;
+    Ok(())
+}
+
+// ============== Loop Handlers ==============
+
+async fn handle_loop(
+    client: &ApiClient,
+    action: &LoopAction,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    match action {
+        LoopAction::List { workspace } => {
+            let path = if let Some(w) = workspace {
+                format!("/loops?workspace={}", w)
+            } else {
+                "/loops".to_string()
+            };
+            let resp: ClientResponse<Vec<LoopDto>> = client.get(&path).await?;
+            print_response(resp, output, fields)?;
+        }
+        LoopAction::Get { id } => {
+            let resp: ClientResponse<LoopDto> = client.get(&format!("/loops/{}", id)).await?;
+            print_response(resp, output, fields)?;
+        }
+        LoopAction::Trigger { id, params } => {
+            let params_map: std::collections::HashMap<String, String> = params
+                .as_ref()
+                .map(|vec| vec.iter().cloned().collect())
+                .unwrap_or_default();
+            let req = TriggerLoopRequest { params: params_map };
+            let resp: ClientResponse<serde_json::Value> = client.post(
+                &format!("/loops/{}/trigger", id),
+                &req,
+            ).await?;
+            print_response(resp, output, fields)?;
+        }
+        LoopAction::Executions { id, page, limit } => {
+            let path = format!(
+                "/loops/{}/executions?page={}&limit={}",
+                id, page, limit
+            );
+            let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
+            print_response(resp, output, fields)?;
+        }
+        LoopAction::Execution { loop_id, execution_id } => {
+            let resp: ClientResponse<serde_json::Value> = client.get(&format!(
+                "/loops/{}/executions/{}",
+                loop_id, execution_id
+            )).await?;
+            print_response(resp, output, fields)?;
+        }
+    }
     Ok(())
 }
 
