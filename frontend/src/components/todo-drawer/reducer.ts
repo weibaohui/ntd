@@ -52,7 +52,10 @@ export const initialFormState: TodoFormState = {
   schedulerEnabled: false,
   schedulerConfig: '',
   acceptanceCriteria: '',
-  autoReviewEnabled: true,
+  // 默认关闭执行后自动评审：业务上不再需要该能力；
+  // loop 仍依赖自动评审，但其 step todo 由后端 API 创建，
+  // 走后端默认 true 的路径，不受此处默认值影响。
+  autoReviewEnabled: false,
 };
 
 /** 表单 reducer */
@@ -80,7 +83,9 @@ export function todoFormReducer(state: TodoFormState, action: TodoFormAction): T
           schedulerEnabled: action.todo.scheduler_enabled || false,
           schedulerConfig: action.todo.scheduler_config || '',
           acceptanceCriteria: action.todo.acceptance_criteria ?? '',
-          autoReviewEnabled: action.todo.auto_review_enabled ?? true,
+          // 编辑既有 todo 时若 DB 中未显式存值，默认关闭，
+          // 与创建模式默认值保持一致；老数据若显式开启则如实回填。
+          autoReviewEnabled: action.todo.auto_review_enabled ?? false,
         };
       }
       return initialFormState;
