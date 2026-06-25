@@ -20,6 +20,8 @@ import {
   DeleteOutlined,
   EditOutlined,
   ExclamationCircleOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
 } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import * as db from '@/utils/database';
@@ -271,6 +273,34 @@ export function LoopDetailPanel({
                   ? <span style={{ fontWeight: 500 }}>{lc.max_total_tokens.toLocaleString()}</span>
                   : <span style={{ color: '#94a3b8' }}>未限制</span>;
               } catch { return <EmptyValue />; }
+            })()
+          } />
+          <DetailField label="超限异常处理" value={
+            (() => {
+              const hasHandler = detail.abnormal_handler_todo_id != null;
+              const triggerOn = detail.abnormal_handler_trigger_on ? JSON.parse(detail.abnormal_handler_trigger_on) : [];
+              const hasCappedTrigger = Array.isArray(triggerOn) && (triggerOn.includes('capped_step') || triggerOn.includes('capped_token'));
+              const enabled = hasHandler && hasCappedTrigger;
+              return (
+                <span style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '2px 8px',
+                  borderRadius: 12,
+                  background: enabled ? '#dcfce7' : '#f1f5f9',
+                  color: enabled ? '#166534' : '#64748b',
+                  fontSize: 12,
+                  fontWeight: 500,
+                }}>
+                  {enabled ? (
+                    <CheckCircleOutlined style={{ fontSize: 12 }} />
+                  ) : (
+                    <CloseCircleOutlined style={{ fontSize: 12 }} />
+                  )}
+                  {enabled ? '已启用' : '未启用'}
+                </span>
+              );
             })()
           } />
         </div>
