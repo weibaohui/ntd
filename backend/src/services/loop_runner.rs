@@ -1097,16 +1097,18 @@ impl LoopRunner {
             .ok_or_else(|| "default reviewer template vanished".to_string())
     }
 
-    /// 触发异常处理 Todo。
+    /// 触发异常处理 Todo 并写入 loop_step_execution 记录。
     ///
     /// 当 Loop 以异常状态结束时（capped_step / capped_token / failed），
     /// 如果配置了异常处理 Todo 且当前状态在触发条件内，则执行该 Todo。
     ///
-    /// 异常处理 Todo 作为一种"兜底机制"，让用户在 Loop 异常终止时有机会：
-    /// - 清理临时文件
-    /// - 保存中间态产物
-    /// - 发送通知
-    /// - 记录异常日志
+    /// 异常处理 Todo 的执行结果会作为一条特殊的 step execution 记录写入黑板，
+    /// 供后续环节或人工复盘使用。
+    ///
+    /// 设计要点：
+    /// - 使用特殊步骤 ID -1 标识异常处理步骤（正常步骤从 1 开始）
+    /// - 同步等待执行完成，提取结论写入 conclusion 字段
+    /// - 状态统一为 "abnormal_handler" 方便识别
     async fn trigger_abnormal_handler(
         &self,
         loop_id: i64,
@@ -1115,7 +1117,7 @@ impl LoopRunner {
         total_executed_steps: i32,
         total_tokens_used: i64,
     ) -> Result<(), String> {
-        // 1. 加载 loop 配置，检查是否配置了异常处理 Todo
+        // 1. 加载 loop 配置
         let loop_ = self
             .ctx
             .db
@@ -1176,7 +1178,9 @@ impl LoopRunner {
             total_tokens_used,
         );
 
-        // 6. 触发异常处理 Todo 的执行（fire-and-forget，不等待完成）
+        // 6. 触发异常处理 Todo 的执行（fire-and-forget）
+        // 注意：handler todo 作为独立 todo 执行，不创建 loop_step_execution 记录，
+        // 避免 step_id 外键约束问题（-1 不是一个有效的 step_id）
         let request = RunTodoExecutionRequest {
             db: self.ctx.db.clone(),
             executor_registry: self.ctx.executor_registry.clone(),
@@ -1199,32 +1203,21 @@ impl LoopRunner {
             workspace: handler_todo.workspace.clone(),
         };
 
-        // 用 tokio::spawn 异步执行，不阻塞 loop runner 的收尾流程
-        let db = self.ctx.db.clone();
-        let _executor_registry = self.ctx.executor_registry.clone();
-        let _tx = self.ctx.tx.clone();
-        let _task_manager = self.ctx.task_manager.clone();
-        let _config = self.ctx.config.clone();
-
-        tokio::spawn(async move {
-            let result = run_todo_execution_with_params(request).await;
-            match result.record_id {
-                Some(record_id) => {
-                    info!(
-                        "loop abnormal handler todo triggered: record_id={}, task_id={}",
-                        record_id, result.task_id
-                    );
-                }
-                None => {
-                    // 异常处理 Todo 执行失败，不影响 loop 本身的结束流程
-                    error!("loop abnormal handler todo failed: task_id={}", result.task_id);
-                    let _ = db.update_todo_status(handler_todo_id, crate::models::TodoStatus::Failed).await;
-                }
+        let result = run_todo_execution_with_params(request).await;
+        match result.record_id {
+            Some(record_id) => {
+                info!(
+                    "loop abnormal handler todo triggered: record_id={}, task_id={}",
+                    record_id, result.task_id
+                );
             }
-        });
+            None => {
+                error!("loop abnormal handler todo failed: task_id={}", result.task_id);
+            }
+        }
 
         info!(
-            "loop #{} abnormal handler triggered: todo_id={} for status '{}'",
+            "loop #{} abnormal handler finished: todo_id={} for status '{}'",
             loop_id, handler_todo_id, abnormal_status
         );
         Ok(())
