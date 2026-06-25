@@ -109,6 +109,8 @@ pub struct Todo {
     #[serde(default)]
     pub workspace: Option<String>,
     #[serde(default)]
+    pub workspace_id: Option<i64>,
+    #[serde(default)]
     pub webhook_enabled: bool,
     #[serde(default)]
     pub acceptance_criteria: Option<String>,

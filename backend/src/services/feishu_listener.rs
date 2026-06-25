@@ -1156,9 +1156,8 @@ impl FeishuListener {
                         path = dir.path,
                     );
 
-                    match db.create_todo(&todo_title, &todo_prompt).await {
+                    match db.create_todo_with_extras(&todo_title, &todo_prompt, None, None, false, Some(dir.id)).await {
                         Ok(todo_id) => {
-                            let _ = db.update_todo_workspace(todo_id, Some(&dir.path)).await;
                             match db.create_feishu_project_binding(bot_id, channel, chat_type, dir.id, todo_id).await {
                                 Ok(binding_id) => {
                                     let dir_name = dir.name.as_deref().unwrap_or("unknown");

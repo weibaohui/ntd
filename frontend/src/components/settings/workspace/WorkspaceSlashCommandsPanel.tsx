@@ -8,8 +8,6 @@ import type { Todo } from '@/types';
 
 interface WorkspaceSlashCommandsPanelProps {
   workspaceId: number;
-  /** 当前工作空间名称，用于过滤 Todo 列表 */
-  workspaceName: string;
   /** 是否显示操作列（如在 workspace 详情页内嵌则传 false） */
   showActions?: boolean;
   /** 当 slash command 列表变化时的回调 */
@@ -18,7 +16,6 @@ interface WorkspaceSlashCommandsPanelProps {
 
 export function WorkspaceSlashCommandsPanel({
   workspaceId,
-  workspaceName,
   showActions = true,
   onChanged,
 }: WorkspaceSlashCommandsPanelProps) {
@@ -40,7 +37,7 @@ export function WorkspaceSlashCommandsPanel({
   };
 
   const loadTodos = () => {
-    db.getAllTodos(workspaceName).then(setTodos).catch(() => {});
+    db.getAllTodos(workspaceId).then(setTodos).catch(() => {});
   };
 
   useEffect(() => {

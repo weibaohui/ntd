@@ -4,13 +4,12 @@ import type { Todo, Tag, TodoTemplate, CustomTemplateStatus } from '@/types';
 // Todo APIs
 
 /**
- * 列出 todos，可按工作空间名称过滤。
+ * 列出 todos，可按工作空间 ID 过滤。
  */
-export async function getAllTodos(workspaceName?: string): Promise<Todo[]> {
-  const params: Record<string, string> = {};
-  // 空字符串不传过滤参数，避免后端把空字符串当条件查询导致无结果
-  if (workspaceName) {
-    params.workspace_name = workspaceName;
+export async function getAllTodos(workspaceId?: number): Promise<Todo[]> {
+  const params: Record<string, number> = {};
+  if (workspaceId !== undefined) {
+    params.workspace_id = workspaceId;
   }
   return unwrap(await api.get('/api/todos', { params }));
 }

@@ -63,6 +63,7 @@ impl Database {
             scheduler_next_run_at,
             task_id: m.task_id,
             workspace: m.workspace,
+            workspace_id: m.workspace_id,
             webhook_enabled: m.webhook_enabled.unwrap_or(false),
             acceptance_criteria: m.acceptance_criteria,
             todo_type: m.todo_type.unwrap_or(0),
@@ -110,16 +111,14 @@ impl Database {
             .collect())
     }
 
-    /// 按工作空间名称过滤 Todo
-    pub async fn get_todos_by_workspace(&self, workspace_name: Option<&str>) -> Result<Vec<Todo>, sea_orm::DbErr> {
+    /// 按工作空间 ID 过滤 Todo
+    pub async fn get_todos_by_workspace_id(&self, workspace_id: Option<i64>) -> Result<Vec<Todo>, sea_orm::DbErr> {
         let mut query = todos::Entity::find()
             .filter(todos::Column::DeletedAt.is_null())
             .order_by_desc(todos::Column::UpdatedAt);
 
-        if let Some(name) = workspace_name {
-            // todos.workspace 存的是目录路径（如 /tmp/xyz），workspace_name 存的是工作空间名称（如 xyz）。
-            // 用 LIKE 匹配：路径中包含工作空间名称。
-            query = query.filter(todos::Column::Workspace.like(format!("%{}%", name)));
+        if let Some(id) = workspace_id {
+            query = query.filter(todos::Column::WorkspaceId.eq(id));
         }
 
         let models = query.all(&self.conn).await?;
@@ -143,7 +142,7 @@ impl Database {
     /// 创建 Todo，可指定执行器。
     /// executor 为 None、空串或仅空白时默认为 claudecode（防止空/空白字符串污染 DB）。
     pub async fn create_todo_with_executor(&self, title: &str, prompt: &str, executor: Option<&str>) -> Result<i64, sea_orm::DbErr> {
-        self.create_todo_with_extras(title, prompt, executor, None, false).await
+        self.create_todo_with_extras(title, prompt, executor, None, false, None).await
     }
 
     /// 创建 Todo，带所有可选字段。
@@ -154,6 +153,7 @@ impl Database {
         executor: Option<&str>,
         acceptance_criteria: Option<&str>,
         webhook_enabled: bool,
+        workspace_id: Option<i64>,
     ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let executor_str = executor
@@ -171,6 +171,7 @@ impl Database {
             webhook_enabled: ActiveValue::Set(Some(webhook_enabled)),
             auto_review_enabled: ActiveValue::Set(Some(false)),
             todo_type: ActiveValue::Set(Some(0)),
+            workspace_id: ActiveValue::Set(workspace_id),
             ..Default::default()
         };
         let inserted = am.insert(&self.conn).await?;

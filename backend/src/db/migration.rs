@@ -63,6 +63,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V28DropLoopStepExecutionsStepIdFk),
         Box::new(V29WebhookEnabledFields),
         Box::new(V30WorkspaceRefactor),
+        Box::new(V31AddTodosWorkspaceId),
     ]
 }
 
@@ -3496,3 +3497,38 @@ impl Migration for V30WorkspaceRefactor {
         Ok(())
     }
 }
+
+/// V31: 给 todos 表加 workspace_id 字段，建立与 project_directories 的关联。
+/// 幂等：列已存在时直接跳过。
+struct V31AddTodosWorkspaceId;
+#[async_trait::async_trait]
+impl Migration for V31AddTodosWorkspaceId {
+    fn version(&self) -> i64 { 31 }
+    fn name(&self) -> &'static str { "add_todos_workspace_id" }
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        // 列已存在时跳过 ALTER，避免 "duplicate column name" 错误
+        if table_has_column(db, "todos", "workspace_id").await? {
+            tracing::info!("todos.workspace_id already exists, skip V31");
+            return Ok(());
+        }
+        db.exec(
+            "ALTER TABLE todos ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT 0",
+        )
+        .await?;
+
+        // 回填：todos.workspace（目录路径）与 project_directories.path 匹配
+        db.exec(
+            "UPDATE todos
+             SET workspace_id = (
+                 SELECT pd.id FROM project_directories pd
+                 WHERE pd.path = todos.workspace
+                 LIMIT 1
+             )
+             WHERE workspace IS NOT NULL AND workspace != ''",
+        )
+        .await?;
+
+        Ok(())
+    }
+}
+

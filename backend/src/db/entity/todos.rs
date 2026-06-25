@@ -18,6 +18,8 @@ pub struct Model {
     pub scheduler_timezone: Option<String>,
     pub task_id: Option<String>,
     pub workspace: Option<String>,
+    /// 该 todo 所属的工作空间 ID（关联 project_directories.id）
+    pub workspace_id: Option<i64>,
     pub webhook_enabled: Option<bool>,
     /// 验收标准（自动评审时作为评审 prompt 的一部分）。
     pub acceptance_criteria: Option<String>,
