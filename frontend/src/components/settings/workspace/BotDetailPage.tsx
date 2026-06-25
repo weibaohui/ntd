@@ -218,7 +218,8 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
         </Card>
       )}
 
-      {/* 详情主体：基本配置 + 绑定信息合并 */}
+      {/* 详情主体：基本配置 + 绑定信息合并（消息面板展开时隐藏） */}
+      {!showHistory && (
       <div style={{ maxWidth: 700 }}>
         {/* Bot 基本信息 */}
         <Card title="基本信息" size="small" style={{ marginBottom: 16 }}>
@@ -316,6 +317,7 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
           </Card>
         )}
       </div>
+      )}
 
       {/* 消息详情弹窗 */}
       <Modal open={!!historyViewMsg} onCancel={() => setHistoryViewMsg(null)} footer={null} width={560} title="消息详情">
