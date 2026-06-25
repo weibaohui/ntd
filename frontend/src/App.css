@@ -3952,3 +3952,20 @@ code {
 .command-toggle-btn:hover {
   background: var(--color-bg-hover);
 }
+
+/* ---------- Workspace Detail Page Tabs ---------- */
+/* 手机端工作空间详情页 Tabs 横向滚动，避免内容被截断无法操作 */
+.workspace-detail-page .ant-tabs-nav {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none;
+}
+
+.workspace-detail-page .ant-tabs-nav::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
+.workspace-detail-page .ant-tabs-tab {
+  flex-shrink: 0;
+}
