@@ -124,6 +124,8 @@ export function TodoList(props: TodoListProps) {
       });
   }, []);
 
+  // 首次加载目录后，如果没有选中工作空间且存在目录，自动选中第一个。
+  // 这样保证用户必须工作在某个空间下，实现工作空间隔离。
   useEffect(() => {
     reloadProjectDirectories(); // 首次加载目录
     // 监听 TodoDrawer 快速新增项目目录的事件，及时刷新分组数据
@@ -131,6 +133,13 @@ export function TodoList(props: TodoListProps) {
     window.addEventListener('projectDirectoryAdded', handleDirAdded); // 跨组件通知
     return () => window.removeEventListener('projectDirectoryAdded', handleDirAdded); // 清理：卸载时移除监听
   }, [reloadProjectDirectories]);
+
+  // 当目录列表加载完成后，若当前未选中任何工作空间且存在目录，自动选中第一个
+  useEffect(() => {
+    if (projectDirectories.length > 0 && selectedWorkspace === null) {
+      dispatch({ type: 'SELECT_WORKSPACE', payload: projectDirectories[0].path });
+    }
+  }, [projectDirectories, selectedWorkspace, dispatch]);
 
   // 当列表切换到「环路」时，自动加载 loop 列表；或环路变更时刷新
   useEffect(() => {
@@ -571,16 +580,12 @@ export function TodoList(props: TodoListProps) {
         </div>
       </div>
 
-      {/* Workspace selector - 在搜索框上方，用于切换不同工作空间 */}
+      {/* Workspace selector - 在搜索框上方，用于切换不同工作空间。
+          已移除"全部工作空间"选项，强制用户必须选择一个工作空间。 */}
       <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
         <Dropdown
           menu={{
             items: [
-              {
-                key: '__all__',
-                label: '全部工作空间',
-                icon: <ApartmentOutlined />,
-              },
               ...projectDirectories.map(dir => ({
                 key: dir.path,
                 label: dir.name || dir.path,
@@ -597,7 +602,7 @@ export function TodoList(props: TodoListProps) {
               if (key === '__manage__') {
                 onShowSettings?.();
               } else {
-                dispatch({ type: 'SELECT_WORKSPACE', payload: key === '__all__' ? null : key });
+                dispatch({ type: 'SELECT_WORKSPACE', payload: key });
               }
             },
           }}
@@ -622,7 +627,7 @@ export function TodoList(props: TodoListProps) {
               <span style={{ fontWeight: 500 }}>
                 {selectedWorkspace
                   ? projectDirectories.find(d => d.path === selectedWorkspace)?.name || selectedWorkspace
-                  : '全部工作空间'
+                  : '请选择工作空间'
                 }
               </span>
             </div>
