@@ -412,6 +412,8 @@ pub struct AgentBotResponse {
     pub enabled: bool,
     pub config: String,
     pub created_at: String,
+    /// Bot 所属的工作空间 ID
+    pub workspace_id: i64,
 }
 
 pub async fn list_agent_bots(
@@ -431,6 +433,7 @@ pub async fn list_agent_bots(
             enabled: b.enabled,
             config: b.config,
             created_at: b.created_at,
+            workspace_id: b.workspace_id,
         })
         .collect();
 

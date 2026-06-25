@@ -11,6 +11,97 @@ export interface AgentBot {
   enabled: boolean;
   config: string;
   created_at: string;
+  /** Bot 所属的工作空间 ID */
+  workspace_id: number;
+}
+
+// ============================================================================
+// Workspace 斜杠命令类型（阶段7）
+// ============================================================================
+
+export interface WorkspaceSlashCommand {
+  id: number;
+  workspace_id: number;
+  slash_command: string;
+  todo_id: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateWorkspaceSlashCommandParams {
+  slash_command: string;
+  todo_id: number;
+  enabled?: boolean;
+}
+
+export interface UpdateWorkspaceSlashCommandParams {
+  slash_command?: string;
+  todo_id?: number;
+  enabled?: boolean;
+}
+
+// ============================================================================
+// Workspace 设置类型（阶段7）
+// ============================================================================
+
+export interface WorkspaceSettings {
+  workspace_id: number;
+  default_response_todo_id: number | null;
+  updated_at: string | null;
+}
+
+export interface UpdateWorkspaceSettingsParams {
+  default_response_todo_id?: number;
+}
+
+// ============================================================================
+// Workspace API 函数（阶段8）
+// ============================================================================
+
+/** 获取工作空间的斜杠命令列表 */
+export async function getWorkspaceSlashCommands(workspaceId: number): Promise<WorkspaceSlashCommand[]> {
+  return unwrap(await api.get(`/api/workspace/${workspaceId}/slash-commands`));
+}
+
+/** 创建工作空间的斜杠命令 */
+export async function createWorkspaceSlashCommand(
+  workspaceId: number,
+  params: CreateWorkspaceSlashCommandParams,
+): Promise<{ id: number }> {
+  return unwrap(await api.post(`/api/workspace/${workspaceId}/slash-commands`, params));
+}
+
+/** 更新工作空间的斜杠命令 */
+export async function updateWorkspaceSlashCommand(
+  workspaceId: number,
+  cmdId: number,
+  params: UpdateWorkspaceSlashCommandParams,
+): Promise<void> {
+  await api.put(`/api/workspace/${workspaceId}/slash-commands/${cmdId}`, params);
+}
+
+/** 删除工作空间的斜杠命令 */
+export async function deleteWorkspaceSlashCommand(workspaceId: number, cmdId: number): Promise<void> {
+  await api.delete(`/api/workspace/${workspaceId}/slash-commands/${cmdId}`);
+}
+
+/** 获取工作空间的设置 */
+export async function getWorkspaceSettings(workspaceId: number): Promise<WorkspaceSettings> {
+  return unwrap(await api.get(`/api/workspace/${workspaceId}/settings`));
+}
+
+/** 更新工作空间的设置 */
+export async function updateWorkspaceSettings(
+  workspaceId: number,
+  params: UpdateWorkspaceSettingsParams,
+): Promise<void> {
+  await api.put(`/api/workspace/${workspaceId}/settings`, params);
+}
+
+/** 将 Bot 移动到另一个工作空间（阶段6级联） */
+export async function moveBotToWorkspace(botId: number, workspaceId: number): Promise<void> {
+  await api.put(`/api/agent-bots/${botId}/workspace`, { workspace_id: workspaceId });
 }
 
 export interface FeishuBeginResponse {

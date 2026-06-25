@@ -1,0 +1,4 @@
+export { WorkspaceAgentPanel } from './WorkspaceAgentPanel';
+export { WorkspaceSlashCommandsPanel } from './WorkspaceSlashCommandsPanel';
+export { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel';
+export { WorkspaceDetailPage } from './WorkspaceDetailPage';

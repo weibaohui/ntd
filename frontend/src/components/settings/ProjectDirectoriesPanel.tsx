@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Button, Popconfirm, Input, Space, List, Empty, Spin, Switch, message, Tooltip } from 'antd';
-import { PlusOutlined, FolderOutlined, EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOutlined, EditOutlined, DeleteOutlined, QuestionCircleOutlined, RightOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import type { ProjectDirectory } from '@/utils/database';
+import { WorkspaceDetailPage } from './workspace';
 
 export function ProjectDirectoriesPanel() {
   // 项目目录列表；按 path 升序，保持稳定可读
@@ -14,6 +15,8 @@ export function ProjectDirectoriesPanel() {
   const [addingDir, setAddingDir] = useState(false);
   const [editingDirId, setEditingDirId] = useState<number | null>(null);
   const [editingDirName, setEditingDirName] = useState('');
+  // 进入工作空间详情页
+  const [selectedWorkspace, setSelectedWorkspace] = useState<ProjectDirectory | null>(null);
 
   // 每次进入页面都重新拉取一次，确保用户在其他地方新增/删除后能立刻看到
   const loadProjectDirectories = () => {
@@ -124,6 +127,16 @@ export function ProjectDirectoriesPanel() {
     }
   };
 
+  // 选中工作空间，显示详情页
+  if (selectedWorkspace) {
+    return (
+      <WorkspaceDetailPage
+        workspace={selectedWorkspace}
+        onBack={() => setSelectedWorkspace(null)}
+      />
+    );
+  }
+
   return (
     <div style={{ maxWidth: 700 }}>
       <Spin spinning={projectDirsLoading}>
@@ -205,6 +218,13 @@ export function ProjectDirectoriesPanel() {
                     )}
                   </div>
                   <Space size={4}>
+                    <Button
+                      type="text"
+                      icon={<RightOutlined />}
+                      size="small"
+                      onClick={() => setSelectedWorkspace(dir)}
+                      title="工作空间详情"
+                    />
                     {editingDirId !== dir.id && (
                       <Button
                         type="text"
