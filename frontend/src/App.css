@@ -3953,19 +3953,19 @@ code {
   background: var(--color-bg-hover);
 }
 
-/* ---------- Workspace Detail Page Tabs ---------- */
-/* 手机端工作空间详情页 Tabs 横向滚动，避免内容被截断无法操作 */
-.workspace-detail-page .ant-tabs-nav {
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none;
-}
+/* ---------- Workspace Detail Page ---------- */
+/* 手机端工作空间详情页：Select 切换，内容全宽显示 */
+@media (max-width: 767px) {
+  .workspace-detail-page .mobile-tabs-container {
+    padding: 0 12px;
+  }
 
-.workspace-detail-page .ant-tabs-nav::-webkit-scrollbar {
-  display: none; /* Chrome/Safari */
-}
+  .workspace-detail-page .mobile-tabs-container .ant-select {
+    width: 100% !important;
+  }
 
-.workspace-detail-page .ant-tabs-tab {
-  flex-shrink: 0;
+  .workspace-detail-page .mobile-tab-content {
+    width: 100%;
+    overflow-x: auto;
+  }
 }
