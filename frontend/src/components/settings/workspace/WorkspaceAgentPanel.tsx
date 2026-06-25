@@ -265,6 +265,8 @@ export function WorkspaceAgentPanel({ workspaceId, onBotChanged }: WorkspaceAgen
         loading={loading}
         pagination={false}
         locale={{ emptyText: '暂无智能体' }}
+        scroll={{ x: 'max-content' }}
+        size="small"
       />
 
       {otherBots.length > 0 && (
@@ -290,6 +292,7 @@ export function WorkspaceAgentPanel({ workspaceId, onBotChanged }: WorkspaceAgen
             rowKey="id"
             pagination={false}
             size="small"
+            scroll={{ x: 'max-content' }}
           />
         </>
       )}

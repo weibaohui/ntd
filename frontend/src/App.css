@@ -3956,8 +3956,13 @@ code {
 /* ---------- Workspace Detail Page ---------- */
 /* 手机端工作空间详情页：Select 切换，内容全宽显示 */
 @media (max-width: 767px) {
+  .workspace-detail-page {
+    overflow-x: hidden;
+  }
+
   .workspace-detail-page .mobile-tabs-container {
     padding: 0 12px;
+    overflow-x: hidden;
   }
 
   .workspace-detail-page .mobile-tabs-container .ant-select {
@@ -3967,5 +3972,15 @@ code {
   .workspace-detail-page .mobile-tab-content {
     width: 100%;
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .workspace-detail-page .ant-table-wrapper {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .workspace-detail-page .ant-table {
+    min-width: 600px;
   }
 }
