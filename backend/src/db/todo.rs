@@ -117,7 +117,9 @@ impl Database {
             .order_by_desc(todos::Column::UpdatedAt);
 
         if let Some(name) = workspace_name {
-            query = query.filter(todos::Column::Workspace.eq(name));
+            // todos.workspace 存的是目录路径（如 /tmp/xyz），workspace_name 存的是工作空间名称（如 xyz）。
+            // 用 LIKE 匹配：路径中包含工作空间名称。
+            query = query.filter(todos::Column::Workspace.like(format!("%{}%", name)));
         }
 
         let models = query.all(&self.conn).await?;
