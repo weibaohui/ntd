@@ -18,6 +18,7 @@ pub struct Model {
     pub scheduler_timezone: Option<String>,
     pub task_id: Option<String>,
     pub workspace: Option<String>,
+    pub webhook_enabled: Option<bool>,
     /// 验收标准（自动评审时作为评审 prompt 的一部分）。
     pub acceptance_criteria: Option<String>,
     /// 0=普通 todo, 1=评审任务（系统自动维护的专用 todo）,

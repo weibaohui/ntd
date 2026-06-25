@@ -24,6 +24,8 @@ export interface TodoFormState {
   executor: string;
   /** 工作目录路径 */
   workspace: string;
+  /** 是否启用 Webhook 触发 */
+  webhookEnabled: boolean;
   /** 是否启用调度器 */
   schedulerEnabled: boolean;
   /** 调度器 cron 表达式 */
@@ -47,6 +49,7 @@ export const initialFormState: TodoFormState = {
   selectedTags: [],
   executor: DEFAULT_EXECUTOR,
   workspace: '',
+  webhookEnabled: false,
   schedulerEnabled: false,
   schedulerConfig: '',
   acceptanceCriteria: '',
@@ -74,6 +77,7 @@ export function todoFormReducer(state: TodoFormState, action: TodoFormAction): T
           selectedTags: action.todo.tag_ids || [],
           executor: action.todo.executor || DEFAULT_EXECUTOR,
           workspace: action.todo.workspace || '',
+          webhookEnabled: action.todo.webhook_enabled || false,
           schedulerEnabled: action.todo.scheduler_enabled || false,
           schedulerConfig: action.todo.scheduler_config || '',
           acceptanceCriteria: action.todo.acceptance_criteria ?? '',

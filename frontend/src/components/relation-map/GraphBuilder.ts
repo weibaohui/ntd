@@ -1,6 +1,5 @@
 import type { Node, Edge } from '@xyflow/react';
 import type { Todo, Config, SlashCommandRule } from '@/types';
-import type { Webhook } from '@/utils/database/webhooks';
 import { EXECUTORS } from '@/types';
 
 export interface TodoNodeData extends Record<string, unknown> {
@@ -9,13 +8,6 @@ export interface TodoNodeData extends Record<string, unknown> {
   executor: string;
   executorName: string;
   todoId: number;
-}
-
-export interface WebhookNodeData extends Record<string, unknown> {
-  name: string;
-  enabled: boolean;
-  webhookId: number;
-  defaultTodoId: number | null;
 }
 
 export interface FeishuNodeData extends Record<string, unknown> {
@@ -31,56 +23,8 @@ export interface SchedulerNodeData extends Record<string, unknown> {
   todoId: number;
 }
 
-export interface WebhookEdgeData extends Record<string, unknown> {
-  webhookId: number;
-  webhookName: string;
-}
-
-export type RelationMapNode = Node<TodoNodeData | WebhookNodeData | FeishuNodeData | SchedulerNodeData>;
-export type RelationMapEdge = Edge<WebhookEdgeData | Record<string, unknown>>;
-
-/** 构建 Webhook → Todo 的节点和边 */
-function buildWebhookRelations(
-  webhooks: Webhook[],
-  existingTodoIds: Set<number>,
-): { nodes: RelationMapNode[]; edges: RelationMapEdge[] } {
-  const nodes: RelationMapNode[] = [];
-  const edges: RelationMapEdge[] = [];
-
-  for (const wh of webhooks) {
-    if (wh.default_todo_id == null) continue;
-    // 仅在目标 Todo 存在时，才创建 Webhook 节点及其边
-    // 避免出现没有连线的孤立 Webhook 节点
-    if (!existingTodoIds.has(wh.default_todo_id)) continue;
-
-    nodes.push({
-      id: `webhook-${wh.id}`,
-      type: 'webhook',
-      position: { x: 0, y: 0 },
-      data: {
-        name: wh.name,
-        enabled: wh.enabled,
-        webhookId: wh.id,
-        defaultTodoId: wh.default_todo_id,
-      },
-    });
-
-    const targetId = `todo-${wh.default_todo_id}`;
-    edges.push({
-      id: `webhook-edge-${wh.id}`,
-      source: `webhook-${wh.id}`,
-      target: targetId,
-      type: 'webhook',
-      data: {
-        webhookId: wh.id,
-        webhookName: wh.name,
-      },
-      animated: false,
-    });
-  }
-
-  return { nodes, edges };
-}
+export type RelationMapNode = Node<TodoNodeData | FeishuNodeData | SchedulerNodeData>;
+export type RelationMapEdge = Edge<Record<string, unknown>>;
 
 /** 构建飞书消息 → Todo 和 调度器 → Todo 的节点和边 */
 function buildTriggerSourceRelations(
@@ -281,7 +225,6 @@ function applyLayout(nodes: RelationMapNode[], edges: RelationMapEdge[]): Relati
 /** 收集被任意关系引用到的 Todo 节点和 id 集合 */
 function collectReferencedTodoIds(
   todos: Todo[],
-  webhooks: Webhook[],
   config: Config | null,
 ): { referencedTodoIds: Set<number>; todoNodes: RelationMapNode[] } {
   const todoMap = new Map<number, Todo>();
@@ -291,24 +234,17 @@ function collectReferencedTodoIds(
 
   const referencedTodoIds = new Set<number>();
 
-  // 1. Webhook 的默认目标 Todo
-  for (const wh of webhooks) {
-    if (wh.default_todo_id != null) {
-      referencedTodoIds.add(wh.default_todo_id);
-    }
-  }
-
-  // 2. 飞书斜杠命令的目标 Todo
+  // 1. 飞书斜杠命令的目标 Todo
   for (const rule of config?.slash_command_rules || []) {
     if (rule.enabled) referencedTodoIds.add(rule.todo_id);
   }
 
-  // 3. 飞书默认响应 Todo
+  // 2. 飞书默认响应 Todo
   if (config?.default_response_todo_id) {
     referencedTodoIds.add(config.default_response_todo_id);
   }
 
-  // 4. 启用了调度的 Todo
+  // 3. 启用了调度的 Todo
   for (const t of todos) {
     if (t.scheduler_enabled && t.scheduler_config) {
       referencedTodoIds.add(t.id);
@@ -346,9 +282,7 @@ function collectReferencedTodoIds(
  */
 export function buildRelationMap(
   todos: Todo[],
-  webhooks: Webhook[],
   config: Config | null,
-  showWebhooks: boolean,
   showFeishu: boolean,
   showScheduler: boolean,
 ): { nodes: RelationMapNode[]; edges: RelationMapEdge[] } {
@@ -356,15 +290,8 @@ export function buildRelationMap(
   const allEdges: RelationMapEdge[] = [];
 
   // 收集被任意关系引用到的 Todo 节点和 id 集合
-  const { referencedTodoIds, todoNodes } = collectReferencedTodoIds(todos, webhooks, config);
+  const { referencedTodoIds, todoNodes } = collectReferencedTodoIds(todos, config);
   allNodes.push(...todoNodes);
-
-  // Webhook 关系
-  if (showWebhooks) {
-    const { nodes, edges } = buildWebhookRelations(webhooks, referencedTodoIds);
-    allNodes.push(...nodes);
-    allEdges.push(...edges);
-  }
 
   // 飞书和调度器关系
   if (showFeishu || showScheduler) {

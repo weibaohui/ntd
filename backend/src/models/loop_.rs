@@ -87,6 +87,7 @@ pub struct LoopDto {
     pub name: String,
     pub description: String,
     pub workspace: Option<String>,
+    pub webhook_enabled: bool,
     pub status: String,
     /// 标签 ID 列表（单选，复用 Todo 的标签体系）
     #[serde(default)]
@@ -109,6 +110,7 @@ impl From<loops::Model> for LoopDto {
             name: m.name,
             description: m.description,
             workspace: m.workspace,
+            webhook_enabled: m.webhook_enabled,
             status: m.status,
             tag_ids: vec![],
             icon: m.icon,
@@ -361,6 +363,8 @@ pub struct CreateLoopRequest {
     /// 工作空间（项目目录路径），必填。
     pub workspace: String,
     #[serde(default)]
+    pub webhook_enabled: bool,
+    #[serde(default)]
     pub tag_ids: Vec<i64>,
     #[serde(default = "default_icon")]
     pub icon: String,
@@ -383,6 +387,8 @@ pub struct UpdateLoopRequest {
     pub name: String,
     pub description: String,
     pub workspace: Option<String>,
+    #[serde(default)]
+    pub webhook_enabled: bool,
     pub icon: String,
     pub review_template_id: Option<i64>,
     #[serde(default)]
@@ -508,7 +514,7 @@ pub struct ReorderLoopStepsRequest {
 /// 触发器类型的辅助校验。
 pub fn validate_trigger_type(t: &str) -> Result<(), String> {
     match t {
-        "manual" | "cron" | "webhook" | "feishu_message" | "feishu_command"
+        "manual" | "cron" | "feishu_message" | "feishu_command"
         | "todo_completed" | "todo_state_changed" | "tag_added" => Ok(()),
         _ => Err(format!("未知的 trigger_type: {}", t)),
     }
@@ -562,7 +568,6 @@ pub fn trigger_type_icon(t: &str) -> &'static str {
     match t {
         "manual" => "play",
         "cron" => "clock",
-        "webhook" => "api",
         "feishu_message" => "message",
         "feishu_command" => "command",
         "todo_completed" => "check",

@@ -619,7 +619,6 @@ mod todo_template;
 pub use todo_template::TemplateInput;
 mod review_template;
 pub use review_template::ReviewTemplateInput;
-pub mod webhook;
 
 #[cfg(test)]
 mod tests {
@@ -1723,49 +1722,4 @@ mod tests {
             "orphan running record without todo task_id should be failed");
     }
 
-    #[tokio::test]
-    async fn test_cleanup_old_webhook_records() {
-        let db = setup_db().await;
-
-        // Insert an "old" webhook record (created_at = 31 days ago)
-        let old_date = chrono::Utc::now()
-            .checked_sub_signed(chrono::Duration::days(31))
-            .unwrap()
-            .format("%Y-%m-%dT%H:%M:%SZ")
-            .to_string();
-        db.conn
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT INTO webhook_records (method, path, created_at) VALUES ('GET', '/old', ?)",
-                [old_date.into()],
-            ))
-            .await
-            .unwrap();
-
-        // Insert a "recent" record (1 day ago)
-        let recent_date = chrono::Utc::now()
-            .checked_sub_signed(chrono::Duration::days(1))
-            .unwrap()
-            .format("%Y-%m-%dT%H:%M:%SZ")
-            .to_string();
-        db.conn
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT INTO webhook_records (method, path, created_at) VALUES ('GET', '/recent', ?)",
-                [recent_date.into()],
-            ))
-            .await
-            .unwrap();
-
-        let count_before = db.get_webhook_records_count().await.unwrap();
-        assert_eq!(count_before, 2);
-
-        // Cleanup records older than 30 days
-        let deleted = db.cleanup_old_webhook_records(30).await.unwrap();
-        assert_eq!(deleted, 1, "should delete 1 old record");
-
-        let remaining = db.get_webhook_records(10, 0).await.unwrap();
-        assert_eq!(remaining.len(), 1, "only recent record should remain");
-        assert_eq!(remaining[0].path, "/recent");
-    }
 }

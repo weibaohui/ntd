@@ -100,7 +100,7 @@ sqlite3 ~/.ntd/data.db "DELETE FROM execution_logs WHERE timestamp < datetime('n
 ## 6.ntd 日志格式
 
 ```
-[2026-06-04T20:00:00.123Z] INFO ntd::handlers: Webhook records cleanup completed
+[2026-06-04T20:00:00.123Z] INFO ntd::handlers: 定时清理已完成
 [2026-06-04T20:00:00.234Z] ERROR ntd::db: connection lost
 ```
 
@@ -115,10 +115,10 @@ sqlite3 ~/.ntd/data.db "DELETE FROM execution_logs WHERE timestamp < datetime('n
 
 ```bash
 #  macOS
-tail -f ~/.ntd/run.log | grep -i "sync|webhook"
+tail -f ~/.ntd/run.log | grep -i "sync"
 
 #  Linux（systemd）
-journalctl --user -u ntd -f | grep -i "sync|webhook"
+journalctl --user -u ntd -f | grep -i "sync"
 ```
 
 ### 7.2找错误

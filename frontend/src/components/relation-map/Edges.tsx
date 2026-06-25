@@ -5,40 +5,7 @@ import {
 } from '@xyflow/react';
 
 // todo hook 已整块移除（plan `purring-forging-petal`），不再导出 HookEdge。
-// 关联图保留 webhook / feishu / scheduler 三类边。
-
-/** Webhook 边：紫色虚线 */
-export function WebhookEdge({
-  id,
-  sourceX,
-  sourceY,
-  targetX,
-  targetY,
-  sourcePosition,
-  targetPosition,
-  selected,
-}: EdgeProps) {
-  const [edgePath] = getBezierPath({
-    sourceX,
-    sourceY,
-    targetX,
-    targetY,
-    sourcePosition,
-    targetPosition,
-  });
-
-  return (
-    <BaseEdge
-      id={id}
-      path={edgePath}
-      style={{
-        stroke: selected ? '#9254de' : '#722ed1',
-        strokeWidth: selected ? 2.5 : 1.5,
-        strokeDasharray: '6 3',
-      }}
-    />
-  );
-}
+// 关联图保留 feishu / scheduler 两类边。
 
 /** 飞书消息边：蓝色点线 */
 export function FeishuEdge({

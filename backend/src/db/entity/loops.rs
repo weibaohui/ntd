@@ -13,6 +13,8 @@ pub struct Model {
     #[sea_orm(default_value = "")]
     pub description: String,
     pub workspace: Option<String>,
+    #[sea_orm(default_value = false)]
+    pub webhook_enabled: bool,
     /// enabled | paused
     #[sea_orm(default_value = "paused")]
     pub status: String,

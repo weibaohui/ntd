@@ -314,6 +314,7 @@ async fn merge_cloud_todos_to_local(
                         scheduler_config: None,
                         scheduler_timezone: None,
                         workspace: item.workspace.as_deref(),
+                        webhook_enabled: None,
                         acceptance_criteria: None,
                         auto_review_enabled: None,
                     })

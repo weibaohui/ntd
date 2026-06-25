@@ -27,6 +27,7 @@ import * as dbLoops from '@/utils/database/loops';
 import * as db from '@/utils/database';
 import type { LoopDetail } from '@/types/loop';
 import type { ProjectDirectory } from '@/types';
+import { copyToClipboard } from '@/utils/clipboard';
 import { LoopFormModal } from './LoopFormModal';
 import { LoopTriggersPanel, TRIGGER_META } from './LoopStudioTriggersPanel';
 import { LoopStepsPanel } from './LoopStudioStepsPanel';
@@ -67,6 +68,7 @@ export function LoopDetailPanel({
   // 编辑弹窗预填数据，从 detail 提取
   const [editInitialData, setEditInitialData] = useState<{
     name: string; description: string; workspace: string | null;
+    webhook_enabled: boolean;
     icon: string; review_template_id: number | null;
     tag_ids: number[]; limits_config: string | null;
     abnormal_handler_todo_id: number | null;
@@ -118,6 +120,7 @@ export function LoopDetailPanel({
       name: detail.name,
       description: detail.description,
       workspace: detail.workspace,
+      webhook_enabled: detail.webhook_enabled,
       icon: detail.icon,
       review_template_id: detail.review_template_id ?? null,
       tag_ids: detail.tag_ids ?? [],
@@ -234,6 +237,36 @@ export function LoopDetailPanel({
               );
             })() : <EmptyValue />
           } />
+          <DetailField label="Webhook" value={
+            detail.webhook_enabled ? (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 500,
+                    color: 'var(--color-text, #0f172a)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={`${window.location.origin}/webhook/trigger/loop/${detail.id}`}
+                >
+                  {`${window.location.origin}/webhook/trigger/loop/${detail.id}`}
+                </span>
+                <Button
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={async () => {
+                    const ok = await copyToClipboard(`${window.location.origin}/webhook/trigger/loop/${detail.id}`);
+                    if (ok) message.success('已复制 Webhook 地址');
+                    else message.error('复制失败');
+                  }}
+                />
+              </span>
+            ) : (
+              <span style={{ color: 'var(--color-text-tertiary, #94a3b8)' }}>未启用</span>
+            )
+          } />
           {/* 待人工审批提示 */}
           {detail.pending_approval_count > 0 && (
             <DetailField label="待审批" value={
@@ -348,7 +381,6 @@ export function LoopDetailPanel({
                 <div style={{ paddingTop: 4 }}>
                   <LoopTriggersPanel
                     loopId={loopId}
-                    loopName={detail.name}
                     triggers={detail.triggers}
                     onChanged={() => { reload(); onChanged(); }}
                   />

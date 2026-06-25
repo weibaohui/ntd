@@ -1387,48 +1387,23 @@ GET /api/events
 
 ---
 
-## 19. Webhook 管理
+## 19. Webhook 触发
 
-### 列出/创建 Webhook
-```
-GET  /api/webhooks
-POST /api/webhooks
-```
+Webhook 不再作为“设置中心里的独立资源”管理，而是 Todo / Loop 的内建能力开关。
 
----
-
-### 详情/更新/删除 Webhook
+### 外部触发 Todo
 ```
-GET    /api/webhooks/{id}
-PUT    /api/webhooks/{id}
-DELETE /api/webhooks/{id}
+GET  /webhook/trigger/todo/{todo_id}
+POST /webhook/trigger/todo/{todo_id}
 ```
 
----
-
-### 列出 Webhook 触发记录
+### 外部触发 Loop
 ```
-GET /api/webhook-records
-```
-
-查询参数与后端具体实现一致，一般包含 `webhook_id` / `page` / `limit` 等。
-
----
-
-### Webhook 触发记录详情
-```
-GET /api/webhook-records/{id}
+GET  /webhook/trigger/loop/{loop_id}
+POST /webhook/trigger/loop/{loop_id}
 ```
 
----
-
-### 外部触发 Webhook
-```
-GET  /webhook/trigger/{todo_id}
-POST /webhook/trigger/{todo_id}
-```
-
-注意：路径**没有** `/api/` 前缀，作用与系统集成（如外部调度系统）。`todo_id` 为必填路径参数，明确指定要触发的目标 Todo，避免「最近启用的 Todo」这种含糊的默认行为。
+注意：路径**没有** `/api/` 前缀，作用是系统集成（如外部调度系统）。当目标 Todo/Loop 未启用 webhook 时会返回 400。
 
 ---
 

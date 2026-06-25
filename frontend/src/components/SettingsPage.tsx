@@ -13,7 +13,6 @@ import {
   LaptopOutlined,
   FileTextOutlined,
   LeftOutlined,
-  ApiOutlined,
   CloudOutlined,
   AuditOutlined,
 } from '@ant-design/icons';
@@ -22,7 +21,6 @@ import * as db from '@/utils/database';
 import type { Config, ExecutorConfig, SlashCommandRule } from '@/types';
 import { SkillsPanel } from './SkillsPanel';
 import { SessionManager } from './SessionManager';
-import { WebhooksPanel } from './WebhooksPanel';
 import { SystemSettingsPanel } from './settings/SystemSettingsPanel';
 import { ExecutorsPanel } from './settings/ExecutorsPanel';
 import { TagsPanel } from './settings/TagsPanel';
@@ -152,7 +150,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
   // 3. 项目目录、模板管理 → 项目相关
   // 4. 备份与恢复 → 数据安全（用户配置完毕后最后考虑）
   // 5. Skills 管理、运行管理 → 高级功能放中间层
-  // 6. Webhook、云端同步 → 外部集成邻近放置
+  // 6. 云端同步 → 外部集成邻近放置
   // 7. 关于 → 信息页末位
   const tabItems = [
     {
@@ -236,11 +234,6 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
           executorDisplayNames={executorDisplayNames}
         />
       ),
-    },
-    {
-      key: 'webhooks',
-      label: <span><ApiOutlined style={{ marginRight: 6 }} />Webhook</span>,
-      children: <WebhooksPanel todos={state.todos} />,
     },
     {
       key: 'cloudSync',

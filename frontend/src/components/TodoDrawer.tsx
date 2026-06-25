@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, useReducer } from 'react';
-import { Drawer, Input, Button, App, Divider } from 'antd';
+import { Drawer, Input, Button, App, Divider, Switch } from 'antd';
 import { FolderOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import { WorkspaceSelect } from './common/WorkspaceSelect';
@@ -47,7 +47,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
   // 从 formState 中解构出常用的字段
   const {
     title, prompt, selectedTags, executor, workspace,
-    schedulerEnabled, schedulerConfig, acceptanceCriteria,
+    webhookEnabled, schedulerEnabled, schedulerConfig, acceptanceCriteria,
   } = formState;
 
   // 设置单个字段的快捷函数
@@ -188,22 +188,31 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
           todo.id, title.trim(), prompt.trim(), todo.status,
           executor, schedulerEnabled, schedulerConfig || null,
           trimmedWorkspace,
+          webhookEnabled,
           acceptanceCriteria || null,
         );
         await db.updateScheduler(todo.id, schedulerEnabled, schedulerConfig || null);
         await db.updateTodoTags(todo.id, selectedTags);
         message.success('任务已更新');
       } else {
-        const newTodo = await db.createTodo(title.trim(), prompt.trim(), selectedTags, acceptanceCriteria || undefined);
+        const newTodo = await db.createTodo(
+          title.trim(),
+          prompt.trim(),
+          selectedTags,
+          acceptanceCriteria || undefined,
+          undefined,
+          webhookEnabled,
+        );
 
         // WorkspaceSelect 只允许从下拉列表选择，无需二次校验
         const workspaceToSave = trimmedWorkspace;
 
-        if (workspaceToSave || schedulerEnabled || executor !== DEFAULT_EXECUTOR) {
+        if (workspaceToSave || schedulerEnabled || executor !== DEFAULT_EXECUTOR || webhookEnabled) {
           await db.updateTodo(
             newTodo.id, newTodo.title, newTodo.prompt, newTodo.status,
             executor, schedulerEnabled, schedulerConfig || null,
             workspaceToSave,
+            webhookEnabled,
             acceptanceCriteria || null,
           );
           await db.updateScheduler(newTodo.id, schedulerEnabled, schedulerConfig || null);
@@ -300,7 +309,19 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
             />
           </div>
 
+          <Divider style={{ margin: '8px 0 16px' }} />
 
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14 }}>
+              Webhook
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Switch checked={webhookEnabled} onChange={(v) => setField('webhookEnabled', v)} />
+              <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                启用后可通过固定 URL 触发该事项执行
+              </span>
+            </div>
+          </div>
 
           <Divider style={{ margin: '8px 0 16px' }} />
 

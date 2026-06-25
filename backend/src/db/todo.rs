@@ -18,6 +18,7 @@ pub struct TodoUpdate<'a> {
     pub scheduler_config: Option<&'a str>,
     pub scheduler_timezone: Option<&'a str>,
     pub workspace: Option<&'a str>,
+    pub webhook_enabled: Option<bool>,
     pub acceptance_criteria: Option<&'a str>,
     pub auto_review_enabled: Option<bool>,
 }
@@ -62,6 +63,7 @@ impl Database {
             scheduler_next_run_at,
             task_id: m.task_id,
             workspace: m.workspace,
+            webhook_enabled: m.webhook_enabled.unwrap_or(false),
             acceptance_criteria: m.acceptance_criteria,
             todo_type: m.todo_type.unwrap_or(0),
             parent_todo_id: m.parent_todo_id,
@@ -115,7 +117,7 @@ impl Database {
     /// 创建 Todo，可指定执行器。
     /// executor 为 None、空串或仅空白时默认为 claudecode（防止空/空白字符串污染 DB）。
     pub async fn create_todo_with_executor(&self, title: &str, prompt: &str, executor: Option<&str>) -> Result<i64, sea_orm::DbErr> {
-        self.create_todo_with_extras(title, prompt, executor, None).await
+        self.create_todo_with_extras(title, prompt, executor, None, false).await
     }
 
     /// 创建 Todo，带所有可选字段。
@@ -125,6 +127,7 @@ impl Database {
         prompt: &str,
         executor: Option<&str>,
         acceptance_criteria: Option<&str>,
+        webhook_enabled: bool,
     ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let executor_str = executor
@@ -139,6 +142,7 @@ impl Database {
             updated_at: ActiveValue::Set(Some(now)),
             executor: ActiveValue::Set(Some(executor_str.to_string())),
             acceptance_criteria: ActiveValue::Set(acceptance_criteria.map(|s| s.to_string())),
+            webhook_enabled: ActiveValue::Set(Some(webhook_enabled)),
             auto_review_enabled: ActiveValue::Set(Some(false)),
             todo_type: ActiveValue::Set(Some(0)),
             ..Default::default()
@@ -180,6 +184,9 @@ impl Database {
             } else {
                 am.workspace = ActiveValue::Set(Some(ws.to_string()));
             }
+        }
+        if let Some(webhook_enabled) = update.webhook_enabled {
+            am.webhook_enabled = ActiveValue::Set(Some(webhook_enabled));
         }
         if let Some(criteria) = update.acceptance_criteria {
             am.acceptance_criteria = ActiveValue::Set(Some(criteria.to_string()));

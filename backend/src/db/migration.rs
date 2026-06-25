@@ -56,7 +56,6 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V17ConsolidateReviewInstanceTodos),
         Box::new(V18LoopHumanReview),
         Box::new(V19StepLoopTags),
-        Box::new(V25WebhooksLoopSupport),
         Box::new(V26DisableAutoReviewForNormalTodos),
         Box::new(V23DropTodoHooksColumns),
         Box::new(RenameLoopStepsStepIdBackToTodoId),
@@ -191,7 +190,7 @@ impl Migration for V1InitialSchema {
 //   - 建高频过滤索引(依赖以上表已存在)
 //   - 建 UTC 触发器(依赖 todos / tags 表已存在)
 //   - 建功能模块表(agent_bots / feishu_* / executors / project_directories /
-//     todo_templates / webhooks / usage_* / sync_records)
+//     todo_templates / usage_* / sync_records)
 //   - 最后追加历史兼容列(仅在旧库缺列时才生效)
 
 /// v1 初始 schema 的总编排入口。每个子函数职责单一、≤ 30 行。
@@ -215,8 +214,6 @@ async fn v1_initial_schema(db: &Database) -> Result<(), sea_orm::DbErr> {
     create_executors_table(db).await?;
     create_project_directories_table(db).await?;
     create_todo_templates_table(db).await?;
-    create_webhooks_table(db).await?;
-    create_webhook_records_table(db).await?;
     create_usage_daily_stats_table(db).await?;
     create_usage_daily_stats_trigger(db).await?;
     create_usage_model_breakdowns_table(db).await?;
@@ -250,6 +247,7 @@ async fn create_todos_table(db: &Database) -> Result<(), sea_orm::DbErr> {
             scheduler_config TEXT,
             task_id TEXT,
             workspace TEXT,
+            webhook_enabled INTEGER NOT NULL DEFAULT 0,
             kind TEXT NOT NULL DEFAULT 'item'
         )",
     )
@@ -645,59 +643,6 @@ async fn create_todo_templates_table(db: &Database) -> Result<(), sea_orm::DbErr
     .await
 }
 
-/// webhooks 主表 + UTC created_at 触发器。
-async fn create_webhooks_table(db: &Database) -> Result<(), sea_orm::DbErr> {
-    db.exec(
-        "CREATE TABLE IF NOT EXISTS webhooks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            enabled INTEGER NOT NULL DEFAULT 1,
-            default_todo_id INTEGER,
-            created_at TEXT,
-            updated_at TEXT
-        )",
-    )
-    .await?;
-    db.exec(
-        "CREATE TRIGGER IF NOT EXISTS set_webhooks_created_at_utc AFTER INSERT ON webhooks
-         WHEN new.created_at IS NULL OR new.created_at = ''
-         BEGIN
-             UPDATE webhooks SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-         END",
-    )
-    .await
-}
-
-/// webhook_records 表 + 3 个索引 + UTC created_at 触发器。
-async fn create_webhook_records_table(db: &Database) -> Result<(), sea_orm::DbErr> {
-    db.exec(
-        "CREATE TABLE IF NOT EXISTS webhook_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            webhook_id INTEGER,
-            method TEXT NOT NULL,
-            path TEXT NOT NULL,
-            query_params TEXT,
-            body TEXT,
-            content_type TEXT,
-            triggered_todo_id INTEGER,
-            status_code INTEGER,
-            response_body TEXT,
-            created_at TEXT
-        )",
-    )
-    .await?;
-    db.exec("CREATE INDEX IF NOT EXISTS idx_webhook_records_webhook_id ON webhook_records(webhook_id)").await?;
-    db.exec("CREATE INDEX IF NOT EXISTS idx_webhook_records_triggered_todo_id ON webhook_records(triggered_todo_id)").await?;
-    db.exec("CREATE INDEX IF NOT EXISTS idx_webhook_records_created_at ON webhook_records(created_at)").await?;
-    db.exec(
-        "CREATE TRIGGER IF NOT EXISTS set_webhook_records_created_at_utc AFTER INSERT ON webhook_records
-         WHEN new.created_at IS NULL OR new.created_at = ''
-         BEGIN
-             UPDATE webhook_records SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-         END",
-    )
-    .await
-}
 
 /// usage_daily_stats 表 + 索引(UTC 触发器拆到独立函数,避免本函数超 30 行)。
 async fn create_usage_daily_stats_table(db: &Database) -> Result<(), sea_orm::DbErr> {
@@ -1910,6 +1855,7 @@ const LOOP_STUDIO_DDL: &[&str] = &[
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
         workspace TEXT,
+        webhook_enabled INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'draft',
         color TEXT DEFAULT '#722ed1',
         icon TEXT DEFAULT 'loop',
@@ -3259,26 +3205,6 @@ async fn drop_column_if_exists(
     let drop_sql = format!("ALTER TABLE {} DROP COLUMN {}", table, column);
     tracing::info!("Dropping {}.{} ...", table, column);
     db.exec(&drop_sql).await
-}
-
-/// v25 迁移：为 webhooks 表添加 loop_id 和 webhook_type 列，支持 loop webhook 类型。
-pub(super) struct V25WebhooksLoopSupport;
-
-#[async_trait]
-impl Migration for V25WebhooksLoopSupport {
-    fn version(&self) -> i64 {
-        25
-    }
-    fn name(&self) -> &'static str {
-        "webhooks_loop_support"
-    }
-
-    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
-        // 幂等：列已存在时跳过
-        add_column_if_missing(db, "webhooks", "loop_id", "ALTER TABLE webhooks ADD COLUMN loop_id INTEGER").await?;
-        add_column_if_missing(db, "webhooks", "webhook_type", "ALTER TABLE webhooks ADD COLUMN webhook_type TEXT NOT NULL DEFAULT 'todo'").await?;
-        Ok(())
-    }
 }
 
 // ===== V26: 禁用普通事项的自动评审 =====

@@ -2,7 +2,7 @@
 //
 // 与 backend/src/models/loop_.rs 一一对应：
 // - LoopDto = 环路主表 DTO
-// - LoopTriggerDto = 触发器 DTO (cron / webhook / feishu / manual)
+// - LoopTriggerDto = 触发器 DTO (cron / feishu / manual)
 // - LoopExecutionDto = 单次执行记录
 //
 // 前端组件用这些类型组装 LoopStudio 页面。
@@ -12,7 +12,6 @@ export type LoopStatus = 'enabled' | 'paused';
 export type LoopTriggerType =
   | 'manual'
   | 'cron'
-  | 'webhook'
   | 'feishu_message'
   | 'feishu_command'
   | 'todo_completed'
@@ -35,6 +34,7 @@ export interface LoopDto {
   name: string;
   description: string;
   workspace: string | null;
+  webhook_enabled: boolean;
   status: string;
   /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
   tag_ids: number[];
@@ -205,6 +205,7 @@ export interface LoopDetail {
   name: string;
   description: string;
   workspace: string | null;
+  webhook_enabled: boolean;
   status: string;
   /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
   tag_ids: number[];
@@ -229,6 +230,7 @@ export interface LoopListItem {
   name: string;
   description: string;
   workspace: string | null;
+  webhook_enabled: boolean;
   status: string;
   /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
   tag_ids: number[];
@@ -283,6 +285,7 @@ export interface CreateLoopRequest {
   description?: string;
   /** 工作空间（项目目录路径），必填。 */
   workspace: string;
+  webhook_enabled?: boolean;
   tag_ids?: number[];
   /** 创建时可选预绑定单个标签；省略时后端按空标签处理，兼容旧调用方。 */
   icon?: string;
@@ -299,6 +302,7 @@ export interface UpdateLoopRequest {
   name: string;
   description: string;
   workspace: string | null;
+  webhook_enabled: boolean;
   icon: string;
   review_template_id?: number | null;
   limits_config?: string | null;

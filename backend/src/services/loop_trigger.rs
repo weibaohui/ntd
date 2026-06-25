@@ -2,7 +2,7 @@
 //! 匹配到对应 loop 的 trigger,并 spawn loop_runner 启动执行。
 //!
 //! 入口：
-//! - `dispatch_webhook(webhook_id)` — webhook handler 调用
+//! - `dispatch_loop_webhook(loop_id, ...)` — loop webhook handler 调用
 //! - `dispatch_feishu_message(bot_id, chat_id, msg_type, content)` — feishu listener 调用
 //! - `dispatch_feishu_command(bot_id, command)` — feishu slash command 调用
 //! - `dispatch_todo_completed(todo_id, record_id)` — todo 执行完成时调用
@@ -32,46 +32,42 @@ impl LoopTriggerDispatcher {
         Self { runner, ctx }
     }
 
-    /// Webhook 触发：从 webhook 入口的 (webhook_id, body, query) 中匹配 loop trigger。
-    /// 配置示例：`{"webhook_id": 5}`
-    pub async fn dispatch_webhook(
+    pub async fn dispatch_loop_webhook(
         &self,
-        webhook_id: i64,
+        loop_id: i64,
+        method: &str,
+        query_params: &std::collections::HashMap<String, String>,
         body: Option<&str>,
-    ) -> Vec<i64> {
-        let triggers = match self
-            .ctx
-            .db
-            .list_enabled_triggers_by_type("webhook")
-            .await
-        {
-            Ok(t) => t,
-            Err(e) => {
-                warn!("loop_trigger: failed to list webhook triggers: {}", e);
-                return vec![];
-            }
-        };
-        let mut started: Vec<i64> = vec![];
-        for t in triggers {
-            let cfg: serde_json::Value =
-                serde_json::from_str(&t.config).unwrap_or_default();
-            if cfg
-                .get("webhook_id")
-                .and_then(|v| v.as_i64())
-                .map(|id| id == webhook_id)
-                .unwrap_or(false)
-            {
-                let meta = serde_json::json!({
-                    "webhook_id": webhook_id,
-                    "body": body.unwrap_or(""),
-                });
-                let run_id = self.spawn_run(t.loop_id, Some(t.id), "webhook", meta).await;
-                if run_id > 0 {
-                    started.push(run_id);
-                }
-            }
+        content_type: Option<&str>,
+    ) -> Option<i64> {
+        let loop_ = self.ctx.db.get_loop(loop_id).await.ok().flatten();
+        if loop_.is_none() {
+            return None;
         }
-        started
+        let loop_ = loop_.unwrap();
+        if loop_.status != "enabled" {
+            warn!(
+                "loop_trigger: webhook dispatch on loop #{} skipped (status != enabled)",
+                loop_id
+            );
+            return None;
+        }
+        if !loop_.webhook_enabled {
+            warn!(
+                "loop_trigger: webhook dispatch on loop #{} skipped (webhook_enabled=false)",
+                loop_id
+            );
+            return None;
+        }
+        let meta = serde_json::json!({
+            "source": "webhook",
+            "method": method,
+            "query_params": query_params,
+            "content_type": content_type.unwrap_or(""),
+            "body": body.unwrap_or(""),
+        });
+        let id = self.spawn_run(loop_id, None, "webhook", meta).await;
+        if id > 0 { Some(id) } else { None }
     }
 
     /// 飞书消息触发：匹配 trigger.config.bot_id + chat_id + 内容。

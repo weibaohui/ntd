@@ -1,11 +1,10 @@
 // Loop 触发条件面板。
 //
-// 设计目标：8 种触发类型（manual/cron/webhook/feishu_message/feishu_command/
+// 设计目标：7 种触发类型（manual/cron/feishu_message/feishu_command/
 // todo_completed/todo_state_changed/tag_added）全部以行内 toggle 展示。
 // 每种类型有独立的配置弹窗，不再需要用户手写 JSON。
 //
 // 定时调度（cron）使用 react-js-cron + CronPresetSelect（和 todo 定时调度一致）。
-// Webhook 复用已有的 webhook 列表选择（而非手填 webhook_id）。
 // Todos / Tags / Feishu bots 等通过 Select 下拉选取已有数据。
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
@@ -21,7 +20,6 @@ import {
   Tag as AntTag,
 } from 'antd';
 import {
-  ApiOutlined,
   ClockCircleOutlined,
   PlayCircleOutlined,
   MessageOutlined,
@@ -36,7 +34,6 @@ import * as dbLoops from '@/utils/database/loops';
 import * as db from '@/utils/database';
 import type { LoopTriggerDto, CreateTriggerRequest, UpdateTriggerRequest } from '@/types/loop';
 import type { Todo, Tag } from '@/types';
-import type { Webhook } from '@/utils/database/webhooks';
 import { formatRelativeTime } from '@/utils/datetime';
 import { CronPresetSelect } from '@/components/CronPresetSelect';
 import { Cron } from 'react-js-cron';
@@ -45,7 +42,6 @@ import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '@/utils/cron';
 
 interface Props {
   loopId: number;
-  loopName: string;
   triggers: LoopTriggerDto[];
   onChanged: () => void;
 }
@@ -69,11 +65,6 @@ export const TRIGGER_META: Record<string, {
     icon: <ClockCircleOutlined />,
     label: '定时调度',
     desc: '按 cron 表达式周期性触发',
-  },
-  webhook: {
-    icon: <ApiOutlined />,
-    label: 'Webhook',
-    desc: '外部 HTTP 回调触发（复用已有的 webhook 配置）',
   },
   feishu_message: {
     icon: <MessageOutlined />,
@@ -170,79 +161,6 @@ function CronConfigForm({ value, onChange }: {
           ]}
         />
       </Form.Item>
-    </div>
-  );
-}
-
-/**
- * Webhook 配置：从已有 webhook 列表中选择。
- * 存储格式：{"webhook_id": 5}
- */
-function WebhookConfigForm({ value, onChange }: {
-  value: string;
-  onChange: (json: string) => void;
-}) {
-  const [webhooks, setWebhooks] = useState<Webhook[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const parsed = useMemo(() => {
-    try {
-      const v = JSON.parse(value || '{}');
-      return { webhook_id: v.webhook_id ?? null };
-    } catch {
-      return { webhook_id: null };
-    }
-  }, [value]);
-
-  const [selectedId, setSelectedId] = useState<number | null>(parsed.webhook_id);
-
-  // 加载 webhook 列表
-  useEffect(() => {
-    setLoading(true);
-    db.getWebhooks()
-      .then((list) => setWebhooks(list))
-      .catch(() => { /* 静默 */ })
-      .finally(() => setLoading(false));
-  }, []);
-
-  const handleChange = useCallback((id: number | null) => {
-    setSelectedId(id);
-    if (id) {
-      onChange(JSON.stringify({ webhook_id: id }));
-    } else {
-      onChange('{}');
-    }
-  }, [onChange]);
-
-  return (
-    <div>
-      <Form.Item label="选择 Webhook" tooltip="触发该 Loop 时，将使用已配置的 webhook 接收 HTTP 请求">
-        <Select
-          value={selectedId}
-          onChange={handleChange}
-          loading={loading}
-          allowClear
-          placeholder="选择一个已创建的 webhook"
-          showSearch
-          filterOption={(input, option) =>
-            (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-          }
-          options={webhooks.map((w) => ({
-            value: w.id,
-            label: `${w.name}${w.default_todo_id ? ' (已关联)' : ''}`,
-          }))}
-        />
-      </Form.Item>
-      {selectedId && (
-        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary, #94a3b8)', marginTop: -12, marginBottom: 12 }}>
-          webhook_id = {selectedId} · 当外部 HTTP 调用匹配此 webhook 时触发
-        </div>
-      )}
-      {webhooks.length === 0 && !loading && (
-        <div style={{ fontSize: 12, color: '#fa8c16', marginBottom: 8 }}>
-          暂无 webhook 配置，请先在 Webhook 设置页面创建
-        </div>
-      )}
     </div>
   );
 }
@@ -628,8 +546,6 @@ function TriggerConfigContent({ type, value, onChange }: {
   switch (type) {
     case 'cron':
       return <CronConfigForm value={value} onChange={onChange} />;
-    case 'webhook':
-      return <WebhookConfigForm value={value} onChange={onChange} />;
     case 'feishu_message':
       return <FeishuMessageConfigForm value={value} onChange={onChange} />;
     case 'feishu_command':
@@ -656,7 +572,7 @@ function TriggerConfigContent({ type, value, onChange }: {
 
 // ====== 主面板组件 ======
 
-export function LoopTriggersPanel({ loopId, loopName, triggers, onChanged }: Props) {
+export function LoopTriggersPanel({ loopId, triggers, onChanged }: Props) {
   const { message } = AntApp.useApp();
   // 当前正在配置的 trigger_type (open=true 时): null=关闭
   const [configuring, setConfiguring] = useState<{ type: string; existing: LoopTriggerDto | null } | null>(null);
@@ -812,39 +728,6 @@ export function LoopTriggersPanel({ loopId, loopName, triggers, onChanged }: Pro
         {isOn ? (
           <Tooltip title={isEnabled ? '点击禁用' : '点击启用'}>
             <Switch size="small" checked={isEnabled} onChange={(v) => handleToggleEnabled(existing!, v)} />
-          </Tooltip>
-        ) : type === 'webhook' ? (
-          // Webhook 快速启用：一键创建 webhook 并启用触发器
-          <Tooltip title="一键创建 Webhook 并启用触发器">
-            <Button
-              size="small"
-              type="primary"
-              onClick={async () => {
-                try {
-                  // 用 loop 名称作为 webhook 名称，创建 loop 类型 webhook
-                  const wh = await db.createWebhook(
-                    `${loopName} Webhook`,
-                    true,
-                    'loop',
-                    undefined, // defaultTodoId
-                    loopId,   // loopId
-                  );
-                  // 同时创建 webhook 触发器，config 中引用该 webhook
-                  await dbLoops.createTrigger(loopId, {
-                    trigger_type: 'webhook',
-                    config: JSON.stringify({ webhook_id: wh.id }),
-                    enabled: true,
-                    priority: 0,
-                  } as CreateTriggerRequest);
-                  message.success(`已为「${loopName}」创建 Webhook 并启用触发器`);
-                  onChanged();
-                } catch {
-                  // 拦截器已弹错
-                }
-              }}
-            >
-              快速启用
-            </Button>
           </Tooltip>
         ) : (
           <Tooltip title={meta.noConfig ? '直接启用（无需配置）' : '配置后启用'}>

@@ -5,12 +5,11 @@ import {
   ClockCircleOutlined,
   ExclamationCircleOutlined,
   PlayCircleOutlined,
-  ApiOutlined,
   MessageOutlined,
   ScheduleOutlined,
 } from '@ant-design/icons';
 import { getExecutorColor } from '@/types';
-import type { TodoNodeData, WebhookNodeData, FeishuNodeData, SchedulerNodeData } from './types';
+import type { TodoNodeData, FeishuNodeData, SchedulerNodeData } from './types';
 
 const STATUS_CONFIG: Record<string, { color: string; icon: React.ReactNode; label: string }> = {
   pending: { color: '#8c8c8c', icon: <ClockCircleOutlined />, label: '待执行' },
@@ -55,25 +54,6 @@ export function TodoNode({ data, selected }: NodeProps & { data: TodoNodeData })
   );
 }
 
-/** Webhook 节点 */
-export function WebhookNode({ data, selected }: NodeProps & { data: WebhookNodeData }) {
-  return (
-    <div className={`relation-map-node source-node webhook-node ${selected ? 'selected' : ''}`}>
-      <Handle type="source" position={Position.Right} className="relation-map-handle" />
-
-      <div className="source-node-icon" style={{ background: '#722ed1' }}>
-        <ApiOutlined style={{ color: '#fff', fontSize: 18 }} />
-      </div>
-      <div className="source-node-label">{data.name}</div>
-      {data.enabled ? (
-        <Tag color="green" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0 }}>已启用</Tag>
-      ) : (
-        <Tag color="default" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0 }}>已禁用</Tag>
-      )}
-    </div>
-  );
-}
-
 /** 飞书消息节点 */
 export function FeishuNode({ data, selected }: NodeProps & { data: FeishuNodeData }) {
   return (
@@ -111,4 +91,3 @@ export function SchedulerNode({ data, selected }: NodeProps & { data: SchedulerN
     </div>
   );
 }
-

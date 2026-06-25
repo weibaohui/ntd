@@ -9,7 +9,7 @@
 // 被 LoopStudioDetailPanel（编辑）和 App.tsx（新建）共用。
 
 import { useEffect, useState, useCallback } from 'react';
-import { App as AntApp, Drawer, Form, Input, InputNumber, Select, Button, Checkbox, Modal } from 'antd';
+import { App as AntApp, Drawer, Form, Input, InputNumber, Select, Button, Checkbox, Modal, Switch } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import * as dbReviewTemplates from '@/utils/database/reviewTemplates';
@@ -33,6 +33,7 @@ interface LoopFormModalProps {
     name: string;
     description: string;
     workspace: string | null;
+    webhook_enabled: boolean;
     icon: string;
     review_template_id: number | null;
     tag_ids: number[];
@@ -95,6 +96,7 @@ export function LoopFormModal({
         name: initialData.name,
         description: initialData.description,
         icon: initialData.icon,
+        webhook_enabled: initialData.webhook_enabled ?? false,
         review_template_id: initialData.review_template_id ?? null,
         abnormal_handler_todo_id: initialData.abnormal_handler_todo_id ?? null,
       });
@@ -118,6 +120,7 @@ export function LoopFormModal({
     } else if (mode === 'create') {
       // 创建模式：清空表单
       form.resetFields();
+      form.setFieldsValue({ webhook_enabled: false });
       setEditingTag(null);
       setWorkspaceValue(null);
     }
@@ -170,6 +173,7 @@ export function LoopFormModal({
         name: values.name.trim(),
         description: values.description ?? '',
         workspace: workspaceValue ?? null,
+        webhook_enabled: values.webhook_enabled === true,
         icon: values.icon ?? 'loop',
         review_template_id: values.review_template_id ?? null,
         limits_config: Object.keys(limitsConfig).length > 0 ? JSON.stringify(limitsConfig) : null,
@@ -189,6 +193,7 @@ export function LoopFormModal({
           name: basePayload.name,
           description: basePayload.description,
           workspace: workspaceValue.trim(),
+          webhook_enabled: basePayload.webhook_enabled,
           tag_ids: basePayload.tag_ids,
           icon: basePayload.icon,
           review_template_id: basePayload.review_template_id,
@@ -254,6 +259,9 @@ export function LoopFormModal({
               }}
               required={mode === 'create'}
             />
+          </Form.Item>
+          <Form.Item label="Webhook" name="webhook_enabled" valuePropName="checked" tooltip="启用后可通过固定 URL 触发该 Loop 执行">
+            <Switch />
           </Form.Item>
           {tags.length > 0 && (
             <Form.Item label="标签">

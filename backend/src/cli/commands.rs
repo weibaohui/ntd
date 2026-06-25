@@ -411,11 +411,12 @@ async fn handle_todo(
                         scheduler_timezone: None,
                         acceptance_criteria: value.get("acceptance_criteria").and_then(|v| v.as_str()).map(|s| s.to_string()),
                         auto_review_enabled: value.get("auto_review_enabled").and_then(|v| v.as_bool()),
+                        webhook_enabled: None,
                     });
-                if workspace.is_some() {
-                    // workspace is sent separately in the full JSON body
-                }
-                req
+                    if workspace.is_some() {
+                        // workspace is sent separately in the full JSON body
+                    }
+                    req
             } else {
                 let title = title.clone().ok_or_else(|| anyhow::anyhow!("Title is required. Use --stdin to read from stdin."))?;
                 let prompt_content = if let Some(p) = prompt {
@@ -433,6 +434,7 @@ async fn handle_todo(
                     scheduler_config: None,
                     scheduler_timezone: None,
                     acceptance_criteria: None,
+                    webhook_enabled: None,
                     auto_review_enabled: None,
                 }
             };

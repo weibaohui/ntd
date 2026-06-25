@@ -54,7 +54,6 @@
 | `/api/todos` | Todo CRUD |
 | `/api/execute` | 跑 Todo |
 | `/api/execution-records` | 执行记录 |
-| `/api/webhooks` | Webhook 管理 |
 | `/api/agent-bots` | 飞书 Bot |
 | `/api/cloud/*` | 云端同步 |
 | `/api/skills/*` | Skill 管理 |
@@ -64,4 +63,5 @@
 | `/api/usage-stats/*` | AI 使用统计 |
 | `/api/version/*` | 版本管理 |
 | `/api/events` (WS) | 实时事件流 |
-| `/webhook/trigger/{todo_id}` | 外网触发 |
+| `/webhook/trigger/todo/{todo_id}` | 外网触发（事项） |
+| `/webhook/trigger/loop/{loop_id}` | 外网触发（环路） |

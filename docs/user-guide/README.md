@@ -28,7 +28,6 @@
 | 备份与恢复 | [settings/backup-and-restore.md](settings/backup-and-restore.md) | 数据库 / Todo / Skills 三类备份 |
 | Skills 管理 | [settings/skills.md](settings/skills.md) | 总览 / 对比分析 / 同步管理 / 调用追踪 4 个子视图 |
 | 运行管理 | [settings/runtime-management.md](settings/runtime-management.md) | 实时运行任务、批量停止 |
-| Webhook | [settings/webhooks.md](settings/webhooks.md) | 外网触发、定向 todo |
 | **云端同步** | **[settings/cloud-sync.md](settings/cloud-sync.md)** | **冲突策略、推送/拉取、Dry Run** |
 | 关于 | [settings/about-and-upgrade.md](settings/about-and-upgrade.md) | 版本检查、一键升级 |
 
@@ -41,7 +40,6 @@
 - [关系图](features/relation-map.md) — Todo 关联图谱
 - [Skills 管理](features/skills-overview.md) — 总览 / 对比 / 同步 / 追踪
 - [AI 使用统计](features/ai-usage-stats.md)
-- [Webhook & 自动化](features/webhooks-and-automations.md)
 
 ## 运维
 

@@ -38,6 +38,7 @@ impl Database {
         name: &str,
         description: &str,
         workspace: Option<&str>,
+        webhook_enabled: bool,
         icon: &str,
         review_template_id: Option<i64>,
         limits_config: Option<&str>,
@@ -49,6 +50,7 @@ impl Database {
             name: ActiveValue::Set(name.to_string()),
             description: ActiveValue::Set(description.to_string()),
             workspace: ActiveValue::Set(workspace.map(|s| s.to_string())),
+            webhook_enabled: ActiveValue::Set(webhook_enabled),
             icon: ActiveValue::Set(icon.to_string()),
             review_template_id: ActiveValue::Set(review_template_id),
             limits_config: ActiveValue::Set(limits_config.unwrap_or("{}").to_string()),
@@ -68,6 +70,7 @@ impl Database {
         name: &str,
         description: &str,
         workspace: Option<&str>,
+        webhook_enabled: bool,
         icon: &str,
         review_template_id: Option<i64>,
         limits_config: Option<&str>,
@@ -81,6 +84,7 @@ impl Database {
             am.name = ActiveValue::Set(name.to_string());
             am.description = ActiveValue::Set(description.to_string());
             am.workspace = ActiveValue::Set(workspace.map(|s| s.to_string()));
+            am.webhook_enabled = ActiveValue::Set(webhook_enabled);
             am.icon = ActiveValue::Set(icon.to_string());
             am.review_template_id = ActiveValue::Set(review_template_id);
             if let Some(lc) = limits_config {
@@ -137,6 +141,7 @@ impl Database {
                 &format!("{}(副本)", source.name),
                 &source.description,
                 source.workspace.as_deref(),
+                source.webhook_enabled,
                 &source.icon,
                 source.review_template_id,
                 Some(source.limits_config.as_str()),
@@ -846,6 +851,7 @@ impl Database {
         let sql = match workspace {
             Some(_) => "SELECT l.id, l.name, l.description, l.workspace, \
                           l.status, l.color, l.icon, l.limits_config, l.review_template_id, \
+                          l.webhook_enabled, \
                           l.abnormal_handler_todo_id, l.abnormal_handler_trigger_on, \
                           l.created_at, l.updated_at, \
                           (SELECT COUNT(*) FROM loop_triggers t WHERE t.loop_id = l.id) as trigger_count, \
@@ -862,6 +868,7 @@ impl Database {
                    ORDER BY l.updated_at DESC",
             None => "SELECT l.id, l.name, l.description, l.workspace, \
                       l.status, l.color, l.icon, l.limits_config, l.review_template_id, \
+                      l.webhook_enabled, \
                       l.abnormal_handler_todo_id, l.abnormal_handler_trigger_on, \
                       l.created_at, l.updated_at, \
                       (SELECT COUNT(*) FROM loop_triggers t WHERE t.loop_id = l.id) as trigger_count, \
@@ -895,6 +902,7 @@ impl Database {
                     name: row.try_get_by::<String, _>("name")?,
                     description: row.try_get_by::<String, _>("description")?,
                     workspace: row.try_get_by::<Option<String>, _>("workspace")?,
+                    webhook_enabled: row.try_get_by::<bool, _>("webhook_enabled")?,
                     status: row.try_get_by::<String, _>("status")?,
                     color: row.try_get_by::<String, _>("color")?,
                     icon: row.try_get_by::<String, _>("icon")?,

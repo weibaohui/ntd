@@ -16,10 +16,12 @@ export async function createTodo(
   tagIds: number[] = [],
   acceptanceCriteria?: string,
   autoReviewEnabled?: boolean,
+  webhookEnabled?: boolean,
 ): Promise<Todo> {
   const body: Record<string, unknown> = { title, prompt, tag_ids: tagIds };
   if (acceptanceCriteria !== undefined) body.acceptance_criteria = acceptanceCriteria;
   if (autoReviewEnabled !== undefined) body.auto_review_enabled = autoReviewEnabled;
+  if (webhookEnabled !== undefined) body.webhook_enabled = webhookEnabled;
   return unwrap(await api.post('/api/todos', body));
 }
 
@@ -32,6 +34,7 @@ export async function updateTodo(
   scheduler_enabled?: boolean,
   scheduler_config?: string | null,
   workspace?: string | null,
+  webhook_enabled?: boolean,
   acceptance_criteria?: string | null,
   auto_review_enabled?: boolean,
 ): Promise<Todo> {
@@ -40,6 +43,7 @@ export async function updateTodo(
   if (scheduler_enabled !== undefined) body.scheduler_enabled = scheduler_enabled;
   if (scheduler_config !== undefined) body.scheduler_config = scheduler_config;
   if (workspace !== undefined) body.workspace = workspace;
+  if (webhook_enabled !== undefined) body.webhook_enabled = webhook_enabled;
   if (acceptance_criteria !== undefined) body.acceptance_criteria = acceptance_criteria;
   if (auto_review_enabled !== undefined) body.auto_review_enabled = auto_review_enabled;
 

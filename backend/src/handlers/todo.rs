@@ -68,6 +68,7 @@ pub async fn create_todo(
         &prompt,
         Some(&executor),
         req.acceptance_criteria.as_deref(),
+        req.webhook_enabled.unwrap_or(false),
     ).await?;
 
     // Update executor if specified
@@ -140,6 +141,7 @@ pub async fn create_todo(
         scheduler_next_run_at: None,
         task_id: None,
         workspace: None,
+        webhook_enabled: req.webhook_enabled.unwrap_or(false),
         acceptance_criteria: req.acceptance_criteria.clone(),
         todo_type: 0,
         parent_todo_id: None,
@@ -206,6 +208,7 @@ pub async fn update_todo(
             scheduler_config: scheduler_config.as_deref(),
             scheduler_timezone: scheduler_timezone.as_deref(),
             workspace: workspace.as_deref(),
+            webhook_enabled: req.webhook_enabled,
             acceptance_criteria: req.acceptance_criteria.as_deref(),
             auto_review_enabled: req.auto_review_enabled,
         })

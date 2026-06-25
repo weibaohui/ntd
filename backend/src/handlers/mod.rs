@@ -1339,10 +1339,6 @@ fn webhook_routes() -> Router<AppState> {
         .route("/webhook/trigger/todo/{todo_id}", get(webhook::trigger_webhook_with_todo).post(webhook::trigger_webhook_with_todo_post_json))
         // Loop webhook: /webhook/trigger/loop/{loop_id}
         .route("/webhook/trigger/loop/{loop_id}", get(webhook::trigger_webhook_with_loop_get).post(webhook::trigger_webhook_with_loop_post))
-        .route("/api/webhooks", get(webhook::list_webhooks).post(webhook::create_webhook))
-        .route("/api/webhooks/{id}", get(webhook::get_webhook).put(webhook::update_webhook).delete(webhook::delete_webhook))
-        .route("/api/webhook-records", get(webhook::get_webhook_records))
-        .route("/api/webhook-records/{id}", get(webhook::get_webhook_record))
 }
 
 /// Session 管理路由（列表、统计、详情、删除）。
