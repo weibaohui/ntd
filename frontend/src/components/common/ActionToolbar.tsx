@@ -93,6 +93,43 @@ function SelectAll<TId extends Key>({ selectableIds, selectedIds, onChange }: Se
   );
 }
 
+// ─── 内部子组件：InvertSelect ─────────────────────────────────
+
+interface InvertSelectProps<TId extends Key> {
+  selectableIds: TId[];
+  selectedIds: TId[];
+  onChange: (next: TId[]) => void;
+}
+
+function InvertSelect<TId extends Key>({ selectableIds, selectedIds, onChange }: InvertSelectProps<TId>) {
+  // 反选逻辑：将当前未选中的 selectableIds 加入选中列表，已选中的移除
+  const handleInvert = () => {
+    const selectedSet = new Set<TId>(selectedIds);
+    const inverted: TId[] = [];
+    for (const id of selectableIds) {
+      if (!selectedSet.has(id)) {
+        inverted.push(id);
+      }
+    }
+    onChange(inverted);
+  };
+
+  // 当没有可选项目时禁用按钮
+  const disabled = selectableIds.length === 0;
+
+  return (
+    <Button
+      size="small"
+      onClick={handleInvert}
+      disabled={disabled}
+      data-testid="action-toolbar-invert-select"
+      style={{ marginLeft: 4 }}
+    >
+      反选
+    </Button>
+  );
+}
+
 // ─── 内部子组件：BatchDropdown ──────────────────────────────
 
 interface BatchDropdownProps<TId extends Key> {
@@ -186,6 +223,11 @@ export function ActionToolbar<TId extends Key = number>(props: ActionToolbarProp
       }}
     >
       <SelectAll
+        selectableIds={selectableIds}
+        selectedIds={selectedIds}
+        onChange={onSelectionChange}
+      />
+      <InvertSelect
         selectableIds={selectableIds}
         selectedIds={selectedIds}
         onChange={onSelectionChange}
