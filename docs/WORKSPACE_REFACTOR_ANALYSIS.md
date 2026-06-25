@@ -287,22 +287,35 @@ bot 详情 → "变更到其他工作空间" → 选择目标 workspace
 
 ## 5. 实施计划
 
-| 阶段 | 内容 | 依赖 | 产出 |
-|------|------|------|------|
-| 1 | 后端 DB 迁移 + 实体层 | 无 | migration.rs + entity 文件 |
-| 2 | 后端 CRUD 层（新表） | 1 | db/workspace_slash_command.rs, db/workspace_setting.rs |
-| 3 | 后端 Config 清理（删除 2 个字段） | 1 | config.rs 简化 |
-| 4 | 后端 feishu_listener 改造（workspace 路由） | 2,3 | feishu_listener.rs |
-| 5 | 后端 API handlers（新接口 + bot 接口加 workspace_id） | 2 | handlers/ 目录 |
-| 6 | 后端 agent_bot handler（级联逻辑） | 2,5 | handlers/agent_bot.rs |
-| 7 | 前端类型定义更新 | 5 | types/ 目录 |
-| 8 | 前端 API 调用层更新 | 7 | utils/database/ 目录 |
-| 9 | 前端 SettingsPage 重构（分组 Tab） | 8 | SettingsPage.tsx |
-| 10 | 前端 workspace 详情页 + 智能体面板 | 8,9 | 新增文件 |
-| 11 | 前端斜杠命令面板 | 8,9 | 新增文件 |
-| 12 | 集成测试 + 数据迁移测试 | 全部 | tests/ |
+| 阶段 | 内容 | 依赖 | 产出 | 状态 |
+|------|------|------|------|------|
+| 1 | 后端 DB 迁移 + 实体层 | 无 | migration.rs + entity 文件 | ✅ 已完成 |
+| 2 | 后端 CRUD 层（新表） | 1 | db/workspace_slash_command.rs, db/workspace_setting.rs | ✅ 已完成 |
+| 3 | 后端 Config 清理（删除 2 个字段） | 1 | config.rs 简化 | ✅ 已完成 |
+| 4 | 后端 feishu_listener 改造（workspace 路由） | 2,3 | feishu_listener.rs | 🔄 部分完成 |
+| 5 | 后端 API handlers（新接口 + bot 接口加 workspace_id） | 2 | handlers/ 目录 | ⏳ 待完成 |
+| 6 | 后端 agent_bot handler（级联逻辑） | 2,5 | handlers/agent_bot.rs | ⏳ 待完成 |
+| 7 | 前端类型定义更新 | 5 | types/ 目录 | ⏳ 待完成 |
+| 8 | 前端 API 调用层更新 | 7 | utils/database/ 目录 | ⏳ 待完成 |
+| 9 | 前端 SettingsPage 重构（分组 Tab） | 8 | SettingsPage.tsx | ⏳ 待完成 |
+| 10 | 前端 workspace 详情页 + 智能体面板 | 8,9 | 新增文件 | ⏳ 待完成 |
+| 11 | 前端斜杠命令面板 | 8,9 | 新增文件 | ⏳ 待完成 |
+| 12 | 集成测试 + 数据迁移测试 | 全部 | tests/ | ⏳ 待完成 |
+
+**图例**：✅ 已完成 | 🔄 部分完成 | ⏳ 待完成
 
 建议顺序：1→2→3→4→5→6→7→8→9→10→11→12
+
+### 阶段完成说明
+
+**阶段1-3**：已完成
+- V30 迁移：创建 `workspace_slash_commands` 和 `workspace_settings` 表
+- `agent_bots` 表新增 `workspace_id` 字段
+- Config 删除 `slash_command_rules` 和 `default_response_todo_id` 字段
+
+**阶段4**：部分完成
+- `feishu_listener.rs` 已改为从数据库查询斜杠命令和默认响应
+- `feishu_history_fetcher.rs` 的 `resolve_todo_id` 暂时返回 `None`，待实现 workspace 查询
 
 ---
 
