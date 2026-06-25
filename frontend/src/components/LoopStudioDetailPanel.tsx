@@ -120,8 +120,8 @@ export function LoopDetailPanel({
       review_template_id: detail.review_template_id ?? null,
       tag_ids: detail.tag_ids ?? [],
       limits_config: detail.limits_config,
-      abnormal_handler_todo_id: (detail as any).abnormal_handler_todo_id ?? null,
-      abnormal_handler_trigger_on: (detail as any).abnormal_handler_trigger_on ?? '["capped_step","capped_token","failed"]',
+      abnormal_handler_todo_id: detail.abnormal_handler_todo_id ?? null,
+      abnormal_handler_trigger_on: detail.abnormal_handler_trigger_on ?? '["capped_step","capped_token","failed"]',
     });
     setEditing(true);
   }, [detail]);

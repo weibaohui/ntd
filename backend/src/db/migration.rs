@@ -3390,10 +3390,23 @@ impl V28DropLoopStepExecutionsStepIdFk {
     /// 重建 loop_step_executions 表，去掉 step_id 的 FK 约束。
     async fn rebuild_table(db: &Database) -> Result<(), sea_orm::DbErr> {
         let backup = "loop_step_executions_backup_v2";
-        // 1) 重命名旧表
+        Self::rename_to_backup(db, backup).await?;
+        Self::create_new_table(db).await?;
+        Self::migrate_data(db, backup).await?;
+        Self::recreate_indexes(db).await?;
+        Self::cleanup_backup(db, backup).await?;
+        Ok(())
+    }
+
+    /// 将旧表重命名为备份表。
+    async fn rename_to_backup(db: &Database, backup: &str) -> Result<(), sea_orm::DbErr> {
         db.exec(&format!("ALTER TABLE loop_step_executions RENAME TO {}", backup))
             .await?;
-        // 2) 建新表（无 step_id FK，保留所有列）
+        Ok(())
+    }
+
+    /// 创建无 step_id FK 的新表（保留所有列）。
+    async fn create_new_table(db: &Database) -> Result<(), sea_orm::DbErr> {
         db.exec(
             r#"CREATE TABLE loop_step_executions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3417,7 +3430,11 @@ impl V28DropLoopStepExecutionsStepIdFk {
             )"#,
         )
         .await?;
-        // 3) 复制数据
+        Ok(())
+    }
+
+    /// 从备份表复制数据到新表。
+    async fn migrate_data(db: &Database, backup: &str) -> Result<(), sea_orm::DbErr> {
         db.exec(&format!(
             r#"INSERT INTO loop_step_executions
                 (id, loop_execution_id, step_id, todo_id, execution_record_id, status,
@@ -3430,12 +3447,20 @@ impl V28DropLoopStepExecutionsStepIdFk {
             backup
         ))
         .await?;
-        // 4) 重建索引
+        Ok(())
+    }
+
+    /// 重建索引。
+    async fn recreate_indexes(db: &Database) -> Result<(), sea_orm::DbErr> {
         db.exec("CREATE INDEX IF NOT EXISTS idx_loop_step_executions_loop_exec ON loop_step_executions(loop_execution_id)")
             .await?;
         db.exec("CREATE INDEX IF NOT EXISTS idx_loop_step_executions_record ON loop_step_executions(execution_record_id)")
             .await?;
-        // 5) 删除旧表
+        Ok(())
+    }
+
+    /// 删除备份表。
+    async fn cleanup_backup(db: &Database, backup: &str) -> Result<(), sea_orm::DbErr> {
         db.exec(&format!("DROP TABLE {}", backup)).await?;
         Ok(())
     }

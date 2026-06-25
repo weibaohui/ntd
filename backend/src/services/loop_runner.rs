@@ -1214,7 +1214,7 @@ impl LoopRunner {
             workspace: handler_todo.workspace.clone(),
         };
 
-        // 9. 等待 handler 执行完成（轮询方式，最多等 5 分钟）
+        // 9. 等待 handler 执行完成（复用的 wait_for_step_finish，最长 24h）
         let record_id = match run_todo_execution_with_params(request).await.record_id {
             Some(id) => id,
             None => {

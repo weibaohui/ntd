@@ -37,6 +37,8 @@ interface LoopFormModalProps {
     review_template_id: number | null;
     tag_ids: number[];
     limits_config: string | null;
+    abnormal_handler_todo_id?: number | null;
+    abnormal_handler_trigger_on?: string;
   };
   /** 可用标签列表 */
   tags: Array<{ id: number; name: string; color: string }>;
@@ -94,7 +96,7 @@ export function LoopFormModal({
         description: initialData.description,
         icon: initialData.icon,
         review_template_id: initialData.review_template_id ?? null,
-        abnormal_handler_todo_id: (initialData as any).abnormal_handler_todo_id ?? null,
+        abnormal_handler_todo_id: initialData.abnormal_handler_todo_id ?? null,
       });
       setWorkspaceValue(initialData.workspace ?? null);
       // 解析 limits_config
@@ -107,7 +109,7 @@ export function LoopFormModal({
       } catch { /* 忽略解析错误 */ }
       // 解析异常处理触发条件
       try {
-        const triggerOn = JSON.parse((initialData as any).abnormal_handler_trigger_on || '["capped_step","capped_token","failed"]');
+        const triggerOn = JSON.parse(initialData.abnormal_handler_trigger_on || '["capped_step","capped_token","failed"]');
         form.setFieldsValue({ abnormal_handler_trigger_on: triggerOn });
       } catch {
         form.setFieldsValue({ abnormal_handler_trigger_on: ['capped_step', 'capped_token', 'failed'] });
@@ -191,6 +193,8 @@ export function LoopFormModal({
           icon: basePayload.icon,
           review_template_id: basePayload.review_template_id,
           limits_config: basePayload.limits_config,
+          abnormal_handler_todo_id: basePayload.abnormal_handler_todo_id,
+          abnormal_handler_trigger_on: basePayload.abnormal_handler_trigger_on,
         });
         message.success('环路已创建');
         onSaved(res.id);
@@ -217,7 +221,7 @@ export function LoopFormModal({
         open={open}
         onClose={onClose}
         width={600}
-        destroyOnClose
+        destroyOnHidden
         footer={
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <Button onClick={onClose}>取消</Button>
@@ -325,10 +329,10 @@ export function LoopFormModal({
               label="触发条件"
               name="abnormal_handler_trigger_on"
               tooltip="哪些异常状态时触发异常处理 Todo"
+              initialValue={['capped_step', 'capped_token', 'failed']}
               style={{ marginBottom: 0 }}
             >
               <Checkbox.Group
-                defaultValue={['capped_step', 'capped_token', 'failed']}
                 options={[
                   { label: '超步数', value: 'capped_step' },
                   { label: '超 Token', value: 'capped_token' },
@@ -350,7 +354,7 @@ export function LoopFormModal({
         }}
         onOk={handleCreateTemplate}
         confirmLoading={creatingTemplateSaving}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={newTemplateForm} layout="vertical" preserve={false}>
           <Form.Item label="名称" name="name" rules={[{ required: true, message: '请输入名称' }]}>

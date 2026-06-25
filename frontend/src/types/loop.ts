@@ -218,6 +218,10 @@ export interface LoopDetail {
   steps: LoopStepDto[];
   /** 待人工审批的环节执行数 */
   pending_approval_count: number;
+  /** 异常处理 Todo ID */
+  abnormal_handler_todo_id?: number | null;
+  /** 异常处理触发条件 JSON 字符串 */
+  abnormal_handler_trigger_on?: string;
 }
 
 export interface LoopListItem {
