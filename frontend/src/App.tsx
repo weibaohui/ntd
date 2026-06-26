@@ -22,6 +22,7 @@ import { SmartCreateModal } from './components/SmartCreateModal';
 import { LoopDetailPanel } from './components/LoopStudioDetailPanel';
 import { LoopFormModal } from './components/LoopFormModal';
 import { LeftRail, type LeftRailKey } from './components/shell/LeftRail';
+import { EmptyDetailSkeleton } from './components/EmptyDetailSkeleton';
 
 import * as dbLoops from './utils/database/loops';
 import { EXECUTION_PANEL, LEFT_RAIL_WIDTH, SIDEBAR_WIDTH } from './constants';
@@ -485,11 +486,11 @@ function AppContent() {
             ) : activeView === 'memorial' ? (
               <MemorialBoard />
             ) : activeView === 'items' ? (
-              // 事项视图但未选中具体条目：展示空白区域
-              <div />
+              // 事项视图但未选中具体条目：展示骨架屏占位
+              <EmptyDetailSkeleton />
             ) : activeView === 'loops' ? (
-              // 环路视图但未选中具体环路：展示空白区域
-              <div />
+              // 环路视图但未选中具体环路：展示骨架屏占位
+              <EmptyDetailSkeleton />
             ) : (
               <Dashboard />
             )}
