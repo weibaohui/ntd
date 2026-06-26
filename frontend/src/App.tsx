@@ -32,7 +32,7 @@ const { Content } = Layout;
 
 function AppContent() {
   const { state, dispatch, clearSelection } = useApp();
-  const { activeView, selectedId, selectedPanel, showView, pushUrl } = useViewState();
+  const { activeView, selectedId, activePanel, showView, pushUrl, replaceUrl, backToList } = useViewState();
   const { themeMode, toggleTheme } = useTheme();
 
   const [todoModalOpen, setTodoModalOpen] = useState(false);
@@ -63,11 +63,12 @@ function AppContent() {
   }, [activeView]);
   const isMobile = useIsMobile();
 
-  // 手机端有效面板：items/loops 视图使用 selectedPanel（基于 id 判断），
-  // 其他视图（dashboard/memorial/settings 等）始终显示 detail 面板
+  // 手机端有效面板：
+  // - items/loops 视图：使用 activePanel（来自 URL，支持 list/detail 独立页面）
+  // - 其他视图（dashboard/memorial/settings 等）：始终显示 detail（全屏页面）
   const effectiveMobilePanel = isMobile && activeView !== 'items' && activeView !== 'loops'
     ? 'detail'
-    : selectedPanel;
+    : activePanel;
 
   // 切换视图或面板时收起 FAB，避免遗留
   useEffect(() => {
@@ -147,7 +148,8 @@ function AppContent() {
       // 选中 todo 时清除 loop 选择，避免右侧面板显示冲突
       setSelectedLoopId(null);
       dispatch({ type: 'SELECT_TODO', payload: Number(todoId) });
-      pushUrl('items', { id: Number(todoId) });
+      // 使用 replaceUrl + panel=detail：移动端 list→detail 切换不产生历史记录
+      replaceUrl('items', { id: Number(todoId), panel: 'detail' });
     }
   };
 
@@ -156,8 +158,9 @@ function AppContent() {
     // 清除 todo 选择，避免 state.selectedTodoId 抢占右侧面板
     clearSelection();
     setSelectedLoopId(loopId);
-    pushUrl('loops', { id: loopId });
-  }, [clearSelection, pushUrl]);
+    // 使用 replaceUrl + panel=detail：移动端 list→detail 切换不产生历史记录
+    replaceUrl('loops', { id: loopId, panel: 'detail' });
+  }, [clearSelection, replaceUrl]);
 
   const handleSmartCreateSubmitted = () => {
     db.getAllTodos().then(todos => {
@@ -256,11 +259,19 @@ function AppContent() {
       {/* Mobile Header with Back Button + Hamburger Menu */}
       {isMobile && (
         <div className="mobile-header">
-          {activeView !== 'items' ? (
-            // 非事项视图时显示返回按钮，使用浏览器历史记录返回
+          {(activePanel === 'detail' || (activeView !== 'items' && activeView !== 'loops')) ? (
+            // 返回按钮显示条件：
+            // 1. items/loops 视图处于 detail panel → backToList（回到列表页）
+            // 2. 其他视图（dashboard/memorial/settings 等）→ 回到首页 items
             <button
               className="mobile-header-menu-btn"
-              onClick={() => window.history.back()}
+              onClick={() => {
+                if (activeView === 'items' || activeView === 'loops') {
+                  backToList();
+                } else {
+                  showView('items');
+                }
+              }}
               aria-label="返回"
             >
               <ArrowLeftOutlined />

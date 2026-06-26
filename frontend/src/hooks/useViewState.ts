@@ -15,6 +15,10 @@
  *   /?view=sessions            会话
  *   /?view=executors           执行器
  *
+ * 移动端 panel 参数（用于 list/detail 独立页面）：
+ *   /?view=items&panel=list        事项列表（全屏）
+ *   /?view=items&panel=detail&id=123  事项详情（全屏）
+ *
  * 只管理 URL + 派生的 React 状态，不持有 Todo/Loop 的 app 数据。
  */
 
@@ -60,11 +64,20 @@ function getInitialTab(): string | null {
   return tab || null;
 }
 
-function buildUrl(view: View, opts?: { id?: number | null; tab?: string | null }): string {
+function getInitialPanel(): Panel {
+  // 移动端使用 panel 参数区分列表/详情页面
+  // 桌面端忽略此参数，始终显示 list+detail 双栏布局
+  const panel = new URLSearchParams(window.location.search).get('panel') as Panel | null;
+  return panel === 'detail' ? 'detail' : 'list';
+}
+
+function buildUrl(view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel }): string {
   const params = new URLSearchParams();
   params.set('view', view);
   if (opts?.id != null) params.set('id', String(opts.id));
   if (typeof opts?.tab === 'string' && opts.tab.trim()) params.set('tab', opts.tab);
+  // 只有移动端需要 panel 参数，桌面端不需要（双栏布局始终显示）
+  if (opts?.panel === 'detail') params.set('panel', 'detail');
   const qs = params.toString();
   return qs ? `/?${qs}` : '/';
 }
@@ -96,14 +109,29 @@ export function useViewState() {
   const [selectedId, setSelectedId] = useState<number | null>(getInitialId);
   // tab 只用于 settings view，暴露给 SettingsPage 使用
   const [activeTab, setActiveTab] = useState<string | null>(getInitialTab);
+  // panel 只用于移动端 list/detail 独立页面，桌面端忽略（始终显示双栏）
+  const [activePanel, setActivePanel] = useState<Panel>(getInitialPanel);
 
-  // 统一 push URL + React state
-  const pushUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null }) => {
+  // 统一 push URL + React state — 用于视图间导航（首页 → 各视图）
+  const pushUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel }) => {
     const url = buildUrl(view, opts);
     window.history.pushState(null, '', url);
     setActiveView(view);
     setSelectedId(opts?.id ?? null);
     setActiveTab(opts?.tab ?? null);
+    // panel 仅在移动端有意义，桌面端始终为 list
+    setActivePanel(opts?.panel ?? 'list');
+  }, []);
+
+  // replaceUrl — 用于移动端 list/detail 内部切换，不污染浏览器历史
+  // 桌面端也可以用，保持行为一致
+  const replaceUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel }) => {
+    const url = buildUrl(view, opts);
+    window.history.replaceState(null, '', url);
+    setActiveView(view);
+    setSelectedId(opts?.id ?? null);
+    setActiveTab(opts?.tab ?? null);
+    setActivePanel(opts?.panel ?? 'list');
   }, []);
 
   // 统一 popstate 处理 — 替代了之前分散在 App.tsx / SettingsPage 的三个监听器
@@ -113,11 +141,14 @@ export function useViewState() {
       const view = params.get('view') as View | null;
       const idStr = params.get('id');
       const tab = params.get('tab');
+      const panel = params.get('panel') as Panel | null;
       const resolvedView = view && ALL_VIEWS.includes(view) ? view : 'items';
       const resolvedId = idStr ? (Number.isFinite(Number(idStr)) ? Number(idStr) : null) : null;
       setActiveView(resolvedView);
       setSelectedId(resolvedId);
       setActiveTab(tab || null);
+      // panel 只在移动端使用，桌面端始终为 list
+      setActivePanel(panel === 'detail' ? 'detail' : 'list');
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -135,22 +166,26 @@ export function useViewState() {
     pushUrl('items', { id: todoId });
   }, [pushUrl]);
 
-  // backToList: 回到当前视图的概览（清空 id），用于移动端返回按钮
+  // backToList: 回到当前视图的概览（清空 id，切到 list panel），用于移动端返回按钮
+  // 使用 replaceUrl 避免污染浏览器历史（list/detail 切换不应产生历史记录）
   const backToList = useCallback(() => {
-    pushUrl(activeView);
-  }, [activeView, pushUrl]);
+    replaceUrl(activeView, { panel: 'list' });
+  }, [activeView, replaceUrl]);
 
-  // selectedPanel 从 URL 派生：有 id 表示「详情」，否则为「列表」
+  // selectedPanel 从 URL 派生：移动端使用 activePanel，桌面端始终为 list+detail 双栏
+  // 桌面端不需要区分 list/detail panel（双栏同时显示），移动端才需要
   const selectedPanel = useMemo<Panel>(() => (selectedId !== null ? 'detail' : 'list'), [selectedId]);
 
   return {
     activeView,
     selectedId,
     activeTab,
+    activePanel,
     selectedPanel,
     showView,
     selectTodo,
     backToList,
     pushUrl,
+    replaceUrl,
   };
 }
