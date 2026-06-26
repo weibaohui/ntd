@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ConfigProvider, Layout, App as AntApp, Drawer, message, Form } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, CloseOutlined, LeftOutlined, PlayCircleOutlined, LaptopOutlined, FolderOutlined, MenuOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, CloseOutlined, ArrowLeftOutlined, PlayCircleOutlined, LaptopOutlined, FolderOutlined, MenuOutlined } from '@ant-design/icons';
 import { AppProvider, useApp } from './hooks/useApp';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useExecutionEvents } from './hooks/useExecutionEvents';
@@ -276,14 +276,14 @@ function AppContent() {
       {/* Mobile Header with Back Button + Hamburger Menu */}
       {isMobile && (
         <div className="mobile-header">
-          {selectedId !== null ? (
-            // 有选中项时显示返回按钮，回到列表视图
+          {activeView !== 'items' ? (
+            // 非事项视图时显示返回按钮，使用浏览器历史记录返回
             <button
               className="mobile-header-menu-btn"
-              onClick={backToList}
-              aria-label="返回列表"
+              onClick={() => window.history.back()}
+              aria-label="返回"
             >
-              <LeftOutlined />
+              <ArrowLeftOutlined />
             </button>
           ) : null}
           <button
@@ -430,22 +430,8 @@ function AppContent() {
               />
             ) : selectedLoopId !== null ? (
               // 从左侧环路列表选中某个 loop，右侧展示 LoopDetailPanel；
-              // 借用一个轻量容器提供 overflow:auto + 返回按钮。
+              // 借用一个轻量容器提供 overflow:auto。
               <div style={{ height: '100%', overflow: 'auto' }}>
-                {isMobile && (
-                  <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border, #e2e8f0)' }}>
-                    <button
-                      onClick={() => setSelectedLoopId(null)}
-                      style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', gap: 4,
-                        color: 'var(--color-text-secondary, #475569)', fontSize: 14,
-                      }}
-                    >
-                      <LeftOutlined /> 返回
-                    </button>
-                  </div>
-                )}
                 <LoopDetailPanel
                   loopId={selectedLoopId}
                   tags={state.tags}

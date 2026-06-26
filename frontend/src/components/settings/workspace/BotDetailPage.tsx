@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Card, Button, Switch, Input, Select, Tag, message, Modal, Typography, AutoComplete, Table } from 'antd';
-import { LeftOutlined, CopyOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, CopyOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import type { AgentBot, FeishuPushStatus, WhitelistEntry, FeishuSenderItem } from '@/utils/database';
 import type { FeishuHistoryMessage, FeishuHistoryChat, ExecutionRecord } from '@/types';
@@ -189,7 +189,7 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
     <div className="bot-detail-page">
       {/* 头部：返回、名称、标签 */}
       <div className="detail-header" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-        <Button type="text" size="small" icon={<LeftOutlined />} onClick={onBack} className="back-btn" />
+        <Button type="text" size="small" icon={<ArrowLeftOutlined />} onClick={onBack} className="back-btn" />
         <h3 className="card-title" style={{ margin: 0 }}>{bot.bot_name}</h3>
         <Tag color={bot.enabled ? 'green' : 'default'}>
           {bot.enabled ? '已启用' : '已禁用'}

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Tabs, Form, message } from 'antd';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import {
   SettingOutlined,
   CodeOutlined,
@@ -28,6 +29,7 @@ import { DEFAULT_EXECUTION_TIMEOUT_SECS } from '@/constants';
 export function SettingsPage() {
   const { state, dispatch } = useApp();
   const { tags } = state;
+  const isMobile = useIsMobile();
 
   const [configForm] = Form.useForm();
   const [configLoading, setConfigLoading] = useState(false);
@@ -194,14 +196,14 @@ export function SettingsPage() {
   return (
     <PageCard
       icon={<SettingOutlined />}
-      title="配置管理"
+      title="设置"
     >
       <Tabs
         className="settings-tabs"
         items={tabItems}
         type="card"
         size="small"
-        tabPosition="left"
+        tabPosition={isMobile ? 'top' : 'left'}
         activeKey={resolvedTab}
         onChange={handleTabChange}
       />

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Tabs, Select, Button } from 'antd';
-import { LeftOutlined, RobotOutlined, SettingOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, RobotOutlined, SettingOutlined } from '@ant-design/icons';
 import type { ProjectDirectory } from '@/utils/database';
 import { WorkspaceAgentPanel } from './WorkspaceAgentPanel';
 import { WorkspaceSlashCommandsPanel } from './WorkspaceSlashCommandsPanel';
@@ -39,7 +39,7 @@ export function WorkspaceDetailPage({ workspace, onBack }: WorkspaceDetailPagePr
         <Button
           type="text"
           size="small"
-          icon={<LeftOutlined />}
+          icon={<ArrowLeftOutlined />}
           onClick={onBack}
           className="back-btn"
         />
