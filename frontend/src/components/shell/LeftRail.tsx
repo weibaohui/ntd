@@ -8,6 +8,8 @@ import {
   DashboardOutlined,
   ReadOutlined,
   SettingOutlined,
+  DoubleRightOutlined,
+  DoubleLeftOutlined,
 } from '@ant-design/icons';
 
 export type LeftRailKey = 'inbox' | 'loops' | 'dashboard' | 'memorial' | 'settings';
@@ -26,13 +28,15 @@ interface LeftRailProps {
   activeKey: LeftRailKey;
   onSelect: (key: LeftRailKey) => void;
   variant?: LeftRailVariant;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
 
 /**
  * 左侧主导航栏。
  * 目标：为“中间列表 + 右侧工作区”补上一层全局导航，让用户能用更低成本在核心区域间切换。
  */
-export function LeftRail({ activeKey, onSelect, variant = 'rail' }: LeftRailProps) {
+export function LeftRail({ activeKey, onSelect, variant = 'rail', collapsed = true, onToggleCollapsed }: LeftRailProps) {
   const items = useMemo<LeftRailItem[]>(() => ([
     {
       key: 'inbox',
@@ -67,6 +71,7 @@ export function LeftRail({ activeKey, onSelect, variant = 'rail' }: LeftRailProp
   ]), []);
 
   const isDrawer = variant === 'drawer';
+  const shouldShowLabels = isDrawer || !collapsed;
 
   /**
    * 渲染单个导航按钮。
@@ -91,29 +96,56 @@ export function LeftRail({ activeKey, onSelect, variant = 'rail' }: LeftRailProp
           {...commonProps}
           className={`${commonProps.className} ${isActive ? 'active' : ''}`}
         >
-          <span className="ntd-left-rail-drawer-label">{item.label}</span>
+          <span className="ntd-left-rail-drawer-label" data-testid={`left-rail-label-${item.key}`}>{item.label}</span>
         </Button>
       );
     }
 
+    if (!shouldShowLabels) {
+      return (
+        <Tooltip key={item.key} title={item.label} placement="right">
+          <Button
+            {...commonProps}
+            className={`${commonProps.className} ${isActive ? 'active' : ''}`}
+          />
+        </Tooltip>
+      );
+    }
+
     return (
-      <Tooltip key={item.key} title={item.label} placement="right">
-        <Button
-          {...commonProps}
-          className={`${commonProps.className} ${isActive ? 'active' : ''}`}
-        />
-      </Tooltip>
+      <Button
+        key={item.key}
+        {...commonProps}
+        className={`ntd-left-rail-expanded-btn ${isActive ? 'active' : ''}`}
+      >
+        <span className="ntd-left-rail-expanded-label" data-testid={`left-rail-label-${item.key}`}>{item.label}</span>
+      </Button>
     );
   };
 
   return (
     <div
-      className={isDrawer ? 'ntd-left-rail-drawer' : 'ntd-left-rail'}
+      className={isDrawer ? 'ntd-left-rail-drawer' : `ntd-left-rail ${shouldShowLabels ? 'expanded' : 'collapsed'}`}
       data-testid="left-rail"
     >
       <div className={isDrawer ? 'ntd-left-rail-drawer-top' : 'ntd-left-rail-top'}>
         {items.map(renderNavButton)}
       </div>
+
+      {!isDrawer && (
+        <div className="ntd-left-rail-bottom">
+          <Tooltip title={shouldShowLabels ? '收起导航' : '展开导航'} placement="right">
+            <Button
+              type="text"
+              className="ntd-left-rail-toggle"
+              icon={shouldShowLabels ? <DoubleLeftOutlined /> : <DoubleRightOutlined />}
+              onClick={onToggleCollapsed}
+              aria-label={shouldShowLabels ? '收起导航' : '展开导航'}
+              data-testid="left-rail-toggle"
+            />
+          </Tooltip>
+        </div>
+      )}
     </div>
   );
 }

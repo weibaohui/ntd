@@ -134,7 +134,10 @@ export const SIDEBAR_WIDTH = {
 } as const;
 
 /** 左侧主导航栏宽度（桌面端）。 */
-export const LEFT_RAIL_WIDTH = 72;
+export const LEFT_RAIL_WIDTH = {
+  collapsed: 72,
+  expanded: 240,
+} as const;
 
 /** 执行面板高度 */
 export const EXECUTION_PANEL = {

@@ -3989,6 +3989,11 @@ code {
    Left Rail Shell — 左侧主导航（桌面/移动抽屉）
    ============================================================ */
 
+.ntd-left-rail-slot {
+  flex-shrink: 0;
+  transition: width var(--transition-slow);
+}
+
 .ntd-left-rail {
   height: 100%;
   display: flex;
@@ -3999,12 +4004,21 @@ code {
   border-right: 1px solid var(--color-border-light);
 }
 
+.ntd-left-rail.expanded {
+  align-items: stretch;
+  padding: 10px 10px;
+}
+
 .ntd-left-rail-top {
   display: flex;
   flex-direction: column;
   gap: 6px;
   width: 100%;
   align-items: center;
+}
+
+.ntd-left-rail.expanded .ntd-left-rail-top {
+  align-items: stretch;
 }
 
 .ntd-left-rail-btn {
@@ -4025,6 +4039,59 @@ code {
   background: var(--color-primary-bg) !important;
   color: var(--color-primary) !important;
   box-shadow: var(--shadow-sm);
+}
+
+.ntd-left-rail-expanded-btn {
+  height: 44px !important;
+  border-radius: 14px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  padding: 0 12px !important;
+  gap: 10px !important;
+  color: var(--color-text-secondary) !important;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.ntd-left-rail-expanded-btn:hover {
+  background: var(--color-bg-hover) !important;
+  color: var(--color-text) !important;
+}
+
+.ntd-left-rail-expanded-btn.active {
+  background: var(--color-primary-bg) !important;
+  color: var(--color-primary) !important;
+  box-shadow: var(--shadow-sm);
+}
+
+.ntd-left-rail-expanded-label {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.ntd-left-rail-bottom {
+  margin-top: auto;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding-top: 10px;
+}
+
+.ntd-left-rail.expanded .ntd-left-rail-bottom {
+  justify-content: flex-end;
+}
+
+.ntd-left-rail-toggle {
+  width: 44px !important;
+  height: 44px !important;
+  border-radius: 14px !important;
+  color: var(--color-text-tertiary) !important;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.ntd-left-rail-toggle:hover {
+  background: var(--color-bg-hover) !important;
+  color: var(--color-text) !important;
 }
 
 .ntd-left-rail-drawer {

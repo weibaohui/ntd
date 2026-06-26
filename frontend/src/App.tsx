@@ -34,6 +34,16 @@ function AppContent() {
   const [smartCreateOpen, setSmartCreateOpen] = useState(false);
   const [fabExpanded, setFabExpanded] = useState(false);
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
+  const [railCollapsed, setRailCollapsed] = useState(() => {
+    try {
+      const saved = localStorage.getItem('ntd_left_rail_collapsed');
+      if (saved === 'true') return true;
+      if (saved === 'false') return false;
+      return true;
+    } catch {
+      return true;
+    }
+  });
   const [appConfig, setAppConfig] = useState<Config | null>(null);
   // 新建环路弹窗（使用 LoopFormModal create 模式）
   const [loopCreateModalOpen, setLoopCreateModalOpen] = useState(false);
@@ -238,8 +248,25 @@ function AppContent() {
       )}
 
       {!isMobile && (
-        <div style={{ width: LEFT_RAIL_WIDTH, height: `calc(100vh - ${panelHeight}px)` }}>
-          <LeftRail activeKey={activeRailKey} onSelect={handleRailSelect} />
+        <div
+          className="ntd-left-rail-slot"
+          style={{
+            width: railCollapsed ? LEFT_RAIL_WIDTH.collapsed : LEFT_RAIL_WIDTH.expanded,
+            height: `calc(100vh - ${panelHeight}px)`,
+          }}
+        >
+          <LeftRail
+            activeKey={activeRailKey}
+            onSelect={handleRailSelect}
+            collapsed={railCollapsed}
+            onToggleCollapsed={() => {
+              const next = !railCollapsed;
+              setRailCollapsed(next);
+              try {
+                localStorage.setItem('ntd_left_rail_collapsed', String(next));
+              } catch {}
+            }}
+          />
         </div>
       )}
 
