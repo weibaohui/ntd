@@ -644,6 +644,7 @@ impl LoopRunner {
             feishu_bot_id: None,
             feishu_receive_id: None,
             workspace,
+            workspace_id: None,
         };
         let result = run_todo_execution_with_params(request).await;
         result
@@ -1009,6 +1010,7 @@ impl LoopRunner {
                 feishu_bot_id: None,
                 feishu_receive_id: None,
                 workspace: None,
+                workspace_id: None,
             };
             let exec_result = crate::executor_service::run_todo_execution(request).await;
             let review_record_id = match exec_result.record_id {
@@ -1231,6 +1233,7 @@ impl LoopRunner {
             feishu_bot_id: None,
             feishu_receive_id: None,
             workspace: handler_todo.workspace.clone(),
+            workspace_id: None,
         };
 
         // 9. 等待 handler 执行完成（复用的 wait_for_step_finish，最长 24h）

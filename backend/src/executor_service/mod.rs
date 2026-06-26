@@ -76,6 +76,10 @@ pub struct RunTodoExecutionRequest {
     /// 但 executor service 内部通过 todo 加载获取 workspace。当 todo 不存在
     /// 或 todo_id=0 时，使用此字段作为 workspace 用于 worktree 创建和 cwd 回退）。
     pub workspace: Option<String>,
+    /// 工作空间 ID（用于 FeishuPushService 按 workspace 隔离推送目标）。
+    /// 与 workspace 字段（路径）分开存储：workspace 用于 worktree 创建，
+    /// workspace_id 用于 Feishu 推送隔离。
+    pub workspace_id: Option<i64>,
 }
 
 /// Run a todo execution. Priority: explicit executor > todo stored executor > default.

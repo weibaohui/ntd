@@ -227,6 +227,7 @@ pub async fn execute_handler(
         feishu_bot_id: None,
         feishu_receive_id: None,
         workspace: None,
+        workspace_id: None,
     })
     .await;
     let result = result?;
@@ -503,6 +504,7 @@ pub async fn resume_execution_handler(
         feishu_bot_id: None,
         feishu_receive_id: None,
         workspace: None,
+        workspace_id: None,
     })
     .await?;
     let record_id = result.record_id
@@ -659,6 +661,7 @@ pub async fn smart_create_handler(
         feishu_bot_id: None,
         feishu_receive_id: None,
         workspace: None,
+        workspace_id: None,
     })
     .await?;
 

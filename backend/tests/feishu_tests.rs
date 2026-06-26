@@ -215,6 +215,7 @@ mod pending_message_tests {
             resume_session_id: None,
             resume_message: None,
             binding_id: None,
+            workspace_id: None,
         };
 
         assert_eq!(msg.bot_id, 1);
@@ -244,6 +245,7 @@ mod pending_message_tests {
             resume_session_id: None,
             resume_message: None,
             binding_id: None,
+            workspace_id: None,
         };
 
         assert!(msg.params.is_some());

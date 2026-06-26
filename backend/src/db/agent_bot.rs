@@ -124,4 +124,11 @@ impl Database {
         am.update(&self.conn).await?;
         Ok(())
     }
+
+    /// 获取 workspace 名称（通过 workspace_id 查 project_directories 表）
+    pub async fn get_workspace_name_by_id(&self, workspace_id: i64) -> Result<Option<String>, sea_orm::DbErr> {
+        use crate::db::entity::project_directories;
+        let ws = project_directories::Entity::find_by_id(workspace_id).one(&self.conn).await?;
+        Ok(ws.and_then(|w| w.name))
+    }
 }

@@ -484,9 +484,12 @@ impl TodoScheduler {
                             resume_message: None,
                             source_todo_id: None,
                             source_todo_title: None,
-                            loop_step_execution_id: None,                            feishu_bot_id: None,
-            step_id: None,                            feishu_receive_id: None,
+                            loop_step_execution_id: None,
+                            feishu_bot_id: None,
+                            step_id: None,
+                            feishu_receive_id: None,
                             workspace: None,
+                            workspace_id: None,
                         })
                         .await;
                     }

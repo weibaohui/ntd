@@ -464,6 +464,7 @@ impl FeishuListener {
             &todo,
             resume_session_id,
             resume_message,
+            None, // binding path uses feishu_bot_id directly in push service
         );
         Self::cleanup_reaction(context, msg, prep.reaction_id.as_deref()).await;
         true
@@ -532,6 +533,7 @@ impl FeishuListener {
         todo: &crate::models::Todo,
         resume_session_id: Option<String>,
         resume_message: Option<String>,
+        workspace_id: Option<i64>,
     ) {
         let pending = Self::build_binding_execution_message(
             msg,
@@ -541,6 +543,7 @@ impl FeishuListener {
             todo,
             resume_session_id,
             resume_message,
+            workspace_id,
         );
         debounce.push(pending);
     }
@@ -557,6 +560,7 @@ impl FeishuListener {
         todo: &crate::models::Todo,
         resume_session_id: Option<String>,
         resume_message: Option<String>,
+        workspace_id: Option<i64>,
     ) -> PendingMessage {
         let executor = todo.executor.as_deref().unwrap_or("claudecode");
         PendingMessage {
@@ -574,6 +578,7 @@ impl FeishuListener {
             resume_session_id,
             resume_message,
             binding_id: Some(binding.id),
+            workspace_id,
         }
     }
 
@@ -629,7 +634,7 @@ impl FeishuListener {
             format!("{} {}", command_ctx.command, command_ctx.body)
         };
         let (_, params) = build_trigger_params(&trigger_str);
-        Self::push_slash_command_message(context.debounce, context.bot_id, msg, prep.chat_type, &todo, command_ctx.body, params);
+        Self::push_slash_command_message(context.debounce, context.bot_id, msg, prep.chat_type, &todo, command_ctx.body, params, Some(workspace_id));
     }
 
     /// 阶段 6a-i：查 enabled 的斜杠命令规则（按 workspace 查询）
@@ -654,6 +659,7 @@ impl FeishuListener {
         todo: &crate::models::Todo,
         body: &str,
         params: std::collections::HashMap<String, String>,
+        workspace_id: Option<i64>,
     ) {
         debounce.push(PendingMessage {
             bot_id,
@@ -670,6 +676,7 @@ impl FeishuListener {
             resume_session_id: None,
             resume_message: None,
             binding_id: None,
+            workspace_id,
         });
     }
 
@@ -737,6 +744,7 @@ impl FeishuListener {
             resume_session_id: None,
             resume_message: None,
             binding_id: None,
+            workspace_id: None,
         });
     }
 
@@ -1883,6 +1891,7 @@ mod tests {
             &todo,
             None,
             None,
+            None,
         );
         assert_eq!(pending.content, "请帮我修复登录 bug");
         assert!(pending.resume_message.is_none());
@@ -1904,6 +1913,7 @@ mod tests {
             &todo,
             Some("real_sid".into()),
             Some("继续".into()),
+            None,
         );
         assert_eq!(pending.content, "继续");
         assert_eq!(pending.resume_message.as_deref(), Some("继续"));
@@ -1939,6 +1949,7 @@ mod tests {
             scheduler_next_run_at: None,
             task_id: None,
             workspace: None,
+            workspace_id: None,
             webhook_enabled: false,
             acceptance_criteria: None,
             todo_type: 0,

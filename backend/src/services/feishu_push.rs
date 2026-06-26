@@ -38,8 +38,8 @@ impl FeishuPushService {
         let db = self.db.clone();
         let feishu_listener = self.feishu_listener.clone();
         let mut config_rx = self.mutator.subscribe();
-        // workspace_name → [(bot_id, receive_id, receive_id_type, push_level)]
-        let mut targets_cache: std::collections::HashMap<Option<String>, Vec<(i64, String, String, String)>> = std::collections::HashMap::new();
+        // workspace_id → [(bot_id, receive_id, receive_id_type, push_level)]
+        let mut targets_cache: std::collections::HashMap<Option<i64>, Vec<(i64, String, String, String)>> = std::collections::HashMap::new();
         let mut last_refresh = Instant::now();
 
         tokio::spawn(async move {
@@ -70,15 +70,15 @@ impl FeishuPushService {
                                     }
                                 }
 
-                                // Extract workspace_name from Finished event
-                                let event_workspace = match &ev {
-                                    ExecEvent::Finished { workspace_name, .. } => workspace_name.clone(),
+                                // Extract workspace_id from Finished event
+                                let event_workspace_id = match &ev {
+                                    ExecEvent::Finished { workspace_id, .. } => *workspace_id,
                                     _ => None,
                                 };
 
                                 // Only send to bots in the same workspace
-                                let Some(targets) = targets_cache.get(&event_workspace).or_else(|| {
-                                    if event_workspace.is_some() {
+                                let Some(targets) = targets_cache.get(&event_workspace_id).or_else(|| {
+                                    if event_workspace_id.is_some() {
                                         targets_cache.get(&None)
                                     } else {
                                         None
@@ -144,7 +144,7 @@ impl FeishuPushService {
         }
     }
 
-    async fn refresh_targets(db: &Database, targets: &mut std::collections::HashMap<Option<String>, Vec<(i64, String, String, String)>>) {
+    async fn refresh_targets(db: &Database, targets: &mut std::collections::HashMap<Option<i64>, Vec<(i64, String, String, String)>>) {
         targets.clear();
         match db.get_all_push_targets_by_workspace().await {
             Ok(targets_map) => {

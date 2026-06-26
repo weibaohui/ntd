@@ -27,6 +27,8 @@ pub struct PendingMessage {
     pub resume_message: Option<String>,
     /// feishu_project_bindings.id — set when this message comes from a bound chat
     pub binding_id: Option<i64>,
+    /// 工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标
+    pub workspace_id: Option<i64>,
 }
 
 struct DebounceEntry {
@@ -157,6 +159,7 @@ impl MessageDebounce {
                         feishu_bot_id: if last.binding_id.is_some() { Some(last.bot_id) } else { None },
                         feishu_receive_id: if last.binding_id.is_some() { Some(last.sender.clone()) } else { None },
                         workspace: None,
+                        workspace_id: last.workspace_id,
                     })
                     .await;
 
@@ -330,6 +333,7 @@ mod merge_pending_messages_tests {
             resume_session_id: None,
             resume_message: None,
             binding_id: None,
+            workspace_id: None,
         }
     }
 

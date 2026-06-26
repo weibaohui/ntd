@@ -1,8 +1,6 @@
 use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter};
 use crate::db::Database;
 use crate::db::entity::feishu_push_targets;
-use crate::db::entity::agent_bots;
-use crate::db::entity::project_directories;
 
 impl Database {
     /// Get or create a push target row for a bot. Returns the active model for mutation.
@@ -100,11 +98,11 @@ impl Database {
             .await
     }
 
-    /// Get all push targets with push_level != "disabled", grouped by workspace_name.
-    /// Returns (workspace_name, targets). workspace_name = None means bots without workspace.
+    /// Get all push targets with push_level != "disabled", grouped by workspace_id.
+    /// Returns (workspace_id, targets). workspace_id = None means bots without workspace.
     pub async fn get_all_push_targets_by_workspace(
         &self,
-    ) -> Result<std::collections::HashMap<Option<String>, Vec<(i64, String, String, String)>>, sea_orm::DbErr> {
+    ) -> Result<std::collections::HashMap<Option<i64>, Vec<(i64, String, String, String)>>, sea_orm::DbErr> {
         use std::collections::HashMap;
         use sea_orm::EntityTrait;
 
@@ -112,7 +110,7 @@ impl Database {
             .all(&self.conn)
             .await?;
 
-        let mut map: HashMap<Option<String>, Vec<(i64, String, String, String)>> = HashMap::new();
+        let mut map: HashMap<Option<i64>, Vec<(i64, String, String, String)>> = HashMap::new();
 
         for t in targets.into_iter().filter(|t| t.push_level != "disabled") {
             let receive_id = match t.receive_id_type.as_str() {
@@ -123,33 +121,16 @@ impl Database {
                 continue;
             }
 
-            // Get bot's workspace_name via agent_bots table
-            let workspace_name = self.get_agent_bot_workspace_name(t.bot_id).await?;
+            // Get bot's workspace_id directly from agent_bots table
+            let workspace_id = self.get_agent_bot_workspace_id(t.bot_id).await?;
 
-            let entry = map.entry(workspace_name).or_default();
+            let entry = map.entry(workspace_id).or_default();
             entry.push((t.bot_id, receive_id, t.receive_id_type.clone(), t.push_level.clone()));
         }
 
         Ok(map)
     }
 
-    /// Get agent bot's workspace_name by bot_id.
-    /// Resolves bot.workspace_id → project_directories.name.
-    pub async fn get_agent_bot_workspace_name(&self, bot_id: i64) -> Result<Option<String>, sea_orm::DbErr> {
-        let bot = agent_bots::Entity::find_by_id(bot_id)
-            .one(&self.conn)
-            .await?;
-
-        match bot {
-            Some(b) => {
-                let ws = project_directories::Entity::find_by_id(b.workspace_id)
-                    .one(&self.conn)
-                    .await?;
-                Ok(ws.and_then(|w| w.name))
-            }
-            None => Ok(None),
-        }
-    }
 
 
     /// Get all (bot_id, group_chat_id) pairs where group_chat_id is set.

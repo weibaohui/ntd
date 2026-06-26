@@ -107,8 +107,8 @@ pub(crate) struct SpawnContext {
     pub trigger_type: String,
     pub feishu_bot_id: Option<i64>,
     pub feishu_receive_id: Option<String>,
-    /// 执行所在的工作空间名称，用于 FeishuPushService 按 workspace 隔离推送目标
-    pub workspace_name: Option<String>,
+    /// 工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标
+    pub workspace_id: Option<i64>,
 }
 
 /// select! 三种终态枚举，避免在三个分支里各重复「杀进程 + drain + finalize」

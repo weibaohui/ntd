@@ -172,7 +172,7 @@ pub(crate) async fn handle_cancellation_branch(
     record_id: i64,
     feishu_bot_id: Option<i64>,
     feishu_receive_id: Option<String>,
-    workspace_name: Option<String>,
+    workspace_id: Option<i64>,
 ) {
     let _ = db
         .update_todo_status(todo_id, crate::models::TodoStatus::Cancelled)
@@ -209,7 +209,7 @@ pub(crate) async fn handle_cancellation_branch(
             result: Some("Task was cancelled by user".to_string()),
             feishu_bot_id,
             feishu_receive_id,
-            workspace_name,
+            workspace_id,
         },
     );
     task_manager.remove(task_id).await;
@@ -230,7 +230,7 @@ pub(crate) async fn handle_timeout_branch(
     timeout_str: String,
     feishu_bot_id: Option<i64>,
     feishu_receive_id: Option<String>,
-    workspace_name: Option<String>,
+    workspace_id: Option<i64>,
 ) {
     tracing::warn!(
         "Execution timeout, terminating process: timeout={}s, todo_id={}, task_id={}",
@@ -267,7 +267,7 @@ pub(crate) async fn handle_timeout_branch(
             result: Some(format!("Execution timeout, exceeded {}", timeout_str)),
             feishu_bot_id,
             feishu_receive_id,
-            workspace_name,
+            workspace_id,
         },
     );
     task_manager.remove(task_id).await;
@@ -294,7 +294,7 @@ pub(crate) async fn finalize_normal_completion(
     trigger_type: String,
     feishu_bot_id: Option<i64>,
     feishu_receive_id: Option<String>,
-    workspace_name: Option<String>,
+    workspace_id: Option<i64>,
 ) {
     // ===== 自动评审 (auto-review) =====
     // 仅在以下条件同时满足时启动:
@@ -323,7 +323,7 @@ pub(crate) async fn finalize_normal_completion(
         &result_str,
         feishu_bot_id,
         feishu_receive_id,
-        workspace_name,
+        workspace_id,
     );
     task_manager.remove(&task_id).await;
 }
@@ -368,7 +368,7 @@ fn emit_completion_events(
     result_str: &str,
     feishu_bot_id: Option<i64>,
     feishu_receive_id: Option<String>,
-    workspace_name: Option<String>,
+    workspace_id: Option<i64>,
 ) {
     let entry = ParsedLogEntry::new(
         if success { "info" } else { "error" },
@@ -395,7 +395,7 @@ fn emit_completion_events(
             result: Some(result_str.to_string()),
             feishu_bot_id,
             feishu_receive_id,
-            workspace_name,
+            workspace_id,
         },
     );
 }

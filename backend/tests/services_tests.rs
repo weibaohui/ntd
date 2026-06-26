@@ -400,6 +400,7 @@ mod feishu_push_service_tests {
             result,
             feishu_bot_id: None,
             feishu_receive_id: None,
+            workspace_id: None,
         }
     }
 }

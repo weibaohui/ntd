@@ -111,7 +111,7 @@ pub(crate) async fn reject_concurrency_limit(
             )),
             feishu_bot_id: None,
             feishu_receive_id: None,
-            workspace_name: None,
+            workspace_id: None,
         },
     );
     ExecutionResult {
@@ -146,7 +146,7 @@ pub(crate) async fn reject_no_executor(
             result: Some("No executor available".to_string()),
             feishu_bot_id: None,
             feishu_receive_id: None,
-            workspace_name: None,
+            workspace_id: None,
         },
     );
     task_manager.remove(task_id).await;
@@ -208,7 +208,7 @@ pub(crate) async fn reject_start_todo_failure(
             result: Some("Failed to start execution".to_string()),
             feishu_bot_id: None,
             feishu_receive_id: None,
-            workspace_name: None,
+            workspace_id: None,
         },
     );
     let _ = db.finish_todo_execution(todo_id, false).await;
