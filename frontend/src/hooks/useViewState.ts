@@ -1,7 +1,7 @@
 /**
  * useViewState — URL-driven view navigation state.
  *
- * Manages activeView (dashboard | settings | memorial | relation | steps),
+ * Manages activeView (dashboard | settings | memorial | steps),
  * selectedPanel (list | detail), and browser history (pushState / popstate).
  * Decoupled from TodoContext so it can be tested / reused independently.
  */
@@ -10,11 +10,12 @@ import { useState, useEffect, useCallback } from 'react';
 
 // 'steps' view 已移除（StepList 组件已删除），
 // 环节管理由 TodoList 的 step mode（listMode === 'step'）承担。
-export type View = 'dashboard' | 'settings' | 'memorial' | 'relation';
+// 'relation' view 已移除（关联图组件已删除）。
+export type View = 'dashboard' | 'settings' | 'memorial';
 export type Panel = 'list' | 'detail';
 
 // 哪些 view 是合法的 URL 参数(popstate / 直接改 URL 都需要校验)
-const KNOWN_VIEWS: View[] = ['dashboard', 'settings', 'memorial', 'relation'];
+const KNOWN_VIEWS: View[] = ['dashboard', 'settings', 'memorial'];
 
 // ─── Helpers ─────────────────────────────────────────────────
 

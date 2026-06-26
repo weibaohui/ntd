@@ -23,7 +23,6 @@ interface TodoListProps {
   onSelectTodo?: (todoId: string | number) => void;
   onShowDashboard?: () => void;
   onShowMemorial?: () => void;
-  onShowRelationMap?: () => void;
   onShowSettings?: () => void;
   onSelectLoop?: (loopId: number) => void;
   onCreateLoop?: () => void;
@@ -50,7 +49,6 @@ function SkeletonList() {
 function buildDesktopNavActions(
   onShowDashboard: TodoListProps['onShowDashboard'],
   onShowMemorial: TodoListProps['onShowMemorial'],
-  onShowRelationMap: TodoListProps['onShowRelationMap'],
 ) {
   return [
     {
@@ -67,18 +65,11 @@ function buildDesktopNavActions(
       onClick: onShowMemorial ? () => onShowMemorial() : undefined,
       ariaLabel: '看板',
     },
-    {
-      key: 'relation-map',
-      title: '关联图',
-      icon: <ApartmentOutlined />,
-      onClick: onShowRelationMap ? () => onShowRelationMap() : undefined,
-      ariaLabel: '关联图',
-    },
   ].filter(action => typeof action.onClick === 'function');
 }
 
 export function TodoList(props: TodoListProps) {
-  const { onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowRelationMap, onShowSettings, onSelectLoop, onCreateLoop, loopUpdateCount } = props;
+  const { onOpenCreateModal, onOpenSmartCreate, onSelectTodo, onShowDashboard, onShowMemorial, onShowSettings, onSelectLoop, onCreateLoop, loopUpdateCount } = props;
   const { state, dispatch } = useApp();
   const { themeMode, toggleTheme } = useTheme();
   const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
@@ -311,8 +302,8 @@ export function TodoList(props: TodoListProps) {
   }, [listMode, openItemChangeExecutor, openLoopForceStop]);
 
   const desktopNavActions = useMemo(
-    () => buildDesktopNavActions(onShowDashboard, onShowMemorial, onShowRelationMap),
-    [onShowDashboard, onShowMemorial, onShowRelationMap],
+    () => buildDesktopNavActions(onShowDashboard, onShowMemorial),
+    [onShowDashboard, onShowMemorial],
   );
 
   /**

@@ -10,7 +10,6 @@ import { TodoList } from './components/TodoList';
 import { TodoDetail } from './components/TodoDetail';
 import { Dashboard } from './components/Dashboard';
 import { MemorialBoard } from './components/MemorialBoard';
-import { RelationMap } from './components/relation-map';
 import { SettingsPage } from './components/SettingsPage';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
@@ -212,7 +211,6 @@ function AppContent() {
               onSelectTodo={handleSelectTodo}
               onShowDashboard={() => handleShowView('dashboard')}
               onShowMemorial={() => handleShowView('memorial')}
-              onShowRelationMap={() => handleShowView('relation')}
               loopUpdateCount={loopUpdateCount}
               onShowSettings={() => handleShowView('settings')}
               onSelectLoop={handleSelectLoop}
@@ -307,8 +305,6 @@ function AppContent() {
               <SettingsPage onBack={isMobile ? backToList : undefined} />
             ) : activeView === 'memorial' ? (
               <MemorialBoard onBack={isMobile ? backToList : undefined} />
-            ) : activeView === 'relation' ? (
-              <RelationMap onBack={isMobile ? backToList : undefined} />
             ) : (
               <Dashboard onBack={isMobile ? backToList : undefined} />
             )}
