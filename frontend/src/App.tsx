@@ -337,14 +337,17 @@ function AppContent() {
             transition: 'height 0.3s ease, padding-bottom 0.3s ease',
           }}
         >
-          {/* Middle List Panel */}
+          {/* 中间列表面板：仅在「事项」或「环路」导航选中时显示；
+              仪表盘/看板/配置等页面由右侧面板独占，不需要中间列表 */}
           <div
             className={(!isMobile || selectedPanel === 'list') ? 'animate-fade-in' : ''}
             style={{
               width: isMobile ? SIDEBAR_WIDTH.mobile : SIDEBAR_WIDTH.desktop,
               flexShrink: 0,
               height: '100%',
-              display: !isMobile || selectedPanel === 'list' ? 'block' : 'none',
+              display: isMobile
+                ? (selectedPanel === 'list' ? 'block' : 'none')
+                : (activeNavKey === 'items' || activeNavKey === 'loops' ? 'block' : 'none'),
             }}
           >
             <TodoList
