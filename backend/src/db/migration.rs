@@ -65,6 +65,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V30WorkspaceRefactor),
         Box::new(V31AddTodosWorkspaceId),
         Box::new(V32ReviewTemplatesWorkspaceId),
+        Box::new(V33ReviewTemplatesEnsureWorkspaceId),
     ]
 }
 
@@ -3553,6 +3554,27 @@ impl Migration for V32ReviewTemplatesWorkspaceId {
         }
         db.exec("ALTER TABLE review_templates ADD COLUMN workspace_id INTEGER").await?;
         tracing::info!("V32: added review_templates.workspace_id column");
+        Ok(())
+    }
+}
+
+/// V33 迁移：确保 review_templates 表存在 workspace_id 列。
+///
+/// 背景：V32 最初添加的是 workspace TEXT 列，后修正为 workspace_id INTEGER。
+/// 但由于 V32 已在部分环境中执行过（workspace TEXT），版本号无法覆写，
+/// 故新增 V33 作为补救：跳过已存在 workspace_id 的环境，不存在则补加。
+pub(super) struct V33ReviewTemplatesEnsureWorkspaceId;
+#[async_trait::async_trait]
+impl Migration for V33ReviewTemplatesEnsureWorkspaceId {
+    fn version(&self) -> i64 { 33 }
+    fn name(&self) -> &'static str { "ensure_review_templates_workspace_id" }
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        if table_has_column(db, "review_templates", "workspace_id").await? {
+            tracing::info!("review_templates.workspace_id already exists, skip V33");
+            return Ok(());
+        }
+        db.exec("ALTER TABLE review_templates ADD COLUMN workspace_id INTEGER").await?;
+        tracing::info!("V33: added review_templates.workspace_id column");
         Ok(())
     }
 }
