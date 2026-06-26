@@ -33,7 +33,7 @@ const { Content } = Layout;
 
 function AppContent() {
   const { state, dispatch, clearSelection } = useApp();
-  const { activeView, selectedId, selectedPanel, showView, backToList, pushUrl } = useViewState();
+  const { activeView, selectedId, selectedPanel, showView, pushUrl } = useViewState();
   const { themeMode, toggleTheme } = useTheme();
 
   const [todoModalOpen, setTodoModalOpen] = useState(false);
@@ -426,9 +426,7 @@ function AppContent() {
             }}
           >
             {state.selectedTodoId ? (
-              <TodoDetail
-                onBack={isMobile ? backToList : undefined}
-              />
+              <TodoDetail />
             ) : selectedLoopId !== null ? (
               // 从左侧环路列表选中某个 loop，右侧展示 LoopDetailPanel；
               // 借用一个轻量容器提供 overflow:auto。

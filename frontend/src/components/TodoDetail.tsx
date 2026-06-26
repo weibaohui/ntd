@@ -18,11 +18,10 @@ import { DetailHeader } from './todo-detail/DetailHeader';
 import { HistoryList } from './todo-detail/HistoryList';
 import { RecordDetailView } from './todo-detail/RecordDetailView';
 
-export function TodoDetail({ onBack }: { onBack?: () => void }) {
+export function TodoDetail() {
   const { state, dispatch } = useApp();
   const { message } = App.useApp();
   const { todos, selectedTodoId, executionRecords, runningTasks } = state;
-  const isMobile = useIsMobile();
   const isWide = !useIsMobile(BREAKPOINTS.wide);
   const [viewMode, setViewMode] = useState<'log' | 'chat' | 'command'>('log');
   const selectedTodo = todos.find(t => t.id === selectedTodoId);
@@ -286,14 +285,6 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
     }
   };
 
-  const handleMobileBack = () => {
-    if (onBack) {
-      onBack();
-    } else {
-      dispatch({ type: 'SELECT_TODO', payload: null });
-    }
-  };
-
   if (!selectedTodo) {
     return (
       <div className="detail-panel" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -340,11 +331,9 @@ export function TodoDetail({ onBack }: { onBack?: () => void }) {
         selectedTodo={selectedTodo}
         executor={executor}
         isExecuting={isExecuting}
-        isMobile={isMobile}
         summary={summary}
         currentTodoProgress={currentTodoProgress}
         records={records}
-        onMobileBack={handleMobileBack}
         onDelete={handleDelete}
         onTodoDrawerOpen={() => setTodoDrawerOpen(true)}
         onOpenExecuteWithArgs={handleOpenExecuteWithArgs}
