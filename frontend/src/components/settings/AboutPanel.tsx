@@ -423,9 +423,9 @@ export function AboutPanel() {
         ) : (
           <Empty description="无法获取版本信息" />
         )}
-      </div>
-      <div style={{ marginTop: 24 }}>
-        <ShareCard />
+        <div style={{ marginTop: 24 }}>
+          <ShareCard />
+        </div>
       </div>
     </Spin>
   );
