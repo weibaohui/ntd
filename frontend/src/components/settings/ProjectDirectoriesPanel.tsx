@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Button, Popconfirm, Input, Space, List, Empty, Spin, Switch, message, Tooltip } from 'antd';
 import { PlusOutlined, FolderOutlined, EditOutlined, DeleteOutlined, QuestionCircleOutlined, RightOutlined } from '@ant-design/icons';
+import { PageCard } from '@/components/common/PageCard';
 import * as db from '@/utils/database';
 import type { ProjectDirectory } from '@/utils/database';
 import { WorkspaceDetailPage } from './workspace';
@@ -138,8 +139,9 @@ export function ProjectDirectoriesPanel() {
   }
 
   return (
-    <div style={{ maxWidth: 700 }}>
-      <Spin spinning={projectDirsLoading}>
+    <PageCard icon={<FolderOutlined />} title="工作空间">
+      <div style={{ maxWidth: 700 }}>
+        <Spin spinning={projectDirsLoading}>
         <div style={{ marginBottom: 12, fontWeight: 600 }}>添加项目目录</div>
         <div style={{ marginBottom: 24 }}>
           <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 12 }}>
@@ -273,7 +275,8 @@ export function ProjectDirectoriesPanel() {
             )}
           />
         )}
-      </Spin>
-    </div>
+        </Spin>
+      </div>
+    </PageCard>
   );
 }

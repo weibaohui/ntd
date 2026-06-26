@@ -3,8 +3,9 @@ import {
   Table, Tag, Space, Input, Select, Button, Popconfirm, Typography, Tooltip, message,
 } from 'antd';
 import {
-  SearchOutlined, ReloadOutlined, EyeOutlined, DeleteOutlined,
+  SearchOutlined, ReloadOutlined, EyeOutlined, DeleteOutlined, LaptopOutlined,
 } from '@ant-design/icons';
+import { PageCard } from '@/components/common/PageCard';
 import * as db from '@/utils/database';
 import type { SessionInfo, SessionStats } from '@/utils/database';
 import { StatsCards } from './sessions/StatsCards';
@@ -101,8 +102,9 @@ export function SessionManager() {
   ];
 
   return (
-    <div>
-      <StatsCards stats={stats} />
+    <PageCard icon={<LaptopOutlined />} title="会话">
+      <div>
+        <StatsCards stats={stats} />
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <Input placeholder="搜索 Prompt 内容..." prefix={<SearchOutlined />} value={searchText} onChange={(e) => { setSearchText(e.target.value); setPage(1); }} style={{ width: 220 }} allowClear />
@@ -123,6 +125,7 @@ export function SessionManager() {
       />
 
       <SessionDetailDrawer sessionId={selectedSessionId} open={drawerOpen} onClose={() => { setDrawerOpen(false); setSelectedSessionId(null); }} />
-    </div>
-  );
+        </div>
+      </PageCard>
+    );
 }

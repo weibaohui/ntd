@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { Card, InputNumber, Tooltip, Button, Popconfirm, Table, Empty, Switch, message, Form } from 'antd';
-import { InfoCircleOutlined, SaveOutlined, StopOutlined, ReloadOutlined } from '@ant-design/icons';
+import { InfoCircleOutlined, SaveOutlined, StopOutlined, ReloadOutlined, PlayCircleOutlined } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
+import { PageCard } from '@/components/common/PageCard';
 import * as db from '@/utils/database';
 import type { ExecutionRecord } from '@/types';
 
@@ -97,10 +98,11 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
   };
 
   return (
-    <div style={{ padding: '8px 0' }}>
-      <Card
-        size="small"
-        title="运行配置"
+    <PageCard icon={<PlayCircleOutlined />} title="运行管理">
+      <div style={{ padding: '8px 0' }}>
+        <Card
+          size="small"
+          title="运行配置"
         style={{ marginBottom: 16 }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
@@ -252,7 +254,8 @@ export function RuntimePanel({ configForm, configSaving, handleSaveConfig, execu
           },
         ]}
         locale={{ emptyText: <Empty description="暂无运行中任务" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
-      />
-    </div>
+        />
+      </div>
+    </PageCard>
   );
 }

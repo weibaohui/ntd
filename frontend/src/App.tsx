@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ConfigProvider, Layout, App as AntApp, Drawer, message, Form } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, CloseOutlined, ArrowLeftOutlined, PlayCircleOutlined, LaptopOutlined, FolderOutlined, MenuOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, CloseOutlined, ArrowLeftOutlined, MenuOutlined } from '@ant-design/icons';
 import { AppProvider, useApp } from './hooks/useApp';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useExecutionEvents } from './hooks/useExecutionEvents';
@@ -21,7 +21,7 @@ import { SmartCreateModal } from './components/SmartCreateModal';
 import { LoopDetailPanel } from './components/LoopStudioDetailPanel';
 import { LoopFormModal } from './components/LoopFormModal';
 import { LeftRail, type LeftRailKey } from './components/shell/LeftRail';
-import { PageCard } from './components/common/PageCard';
+
 import * as dbLoops from './utils/database/loops';
 import { EXECUTION_PANEL, LEFT_RAIL_WIDTH, SIDEBAR_WIDTH } from './constants';
 import * as db from './utils/database';
@@ -495,26 +495,18 @@ function AppContent() {
               </div>
             ) : activeView === 'runtime' ? (
               // 运行管理 — 独立页面（非设置内嵌标签页）
-              <PageCard icon={<PlayCircleOutlined />} title="运行管理">
-                <RuntimePanel
-                  configForm={runtimeConfigForm}
-                  configSaving={runtimeConfigSaving}
-                  handleSaveConfig={handleRuntimeSaveConfig}
-                  executorDisplayNames={runtimeExecutorDisplayNames}
-                />
-              </PageCard>
+              <RuntimePanel
+                configForm={runtimeConfigForm}
+                configSaving={runtimeConfigSaving}
+                handleSaveConfig={handleRuntimeSaveConfig}
+                executorDisplayNames={runtimeExecutorDisplayNames}
+              />
             ) : activeView === 'skills' ? (
-              <PageCard icon={<ThunderboltOutlined />} title="Skills">
-                <SkillsPanel />
-              </PageCard>
+              <SkillsPanel />
             ) : activeView === 'projectDirectories' ? (
-              <PageCard icon={<FolderOutlined />} title="工作空间">
-                <ProjectDirectoriesPanel />
-              </PageCard>
+              <ProjectDirectoriesPanel />
             ) : activeView === 'sessions' ? (
-              <PageCard icon={<LaptopOutlined />} title="会话">
-                <SessionManager />
-              </PageCard>
+              <SessionManager />
             ) : activeView === 'settings' ? (
               <SettingsPage />
             ) : activeView === 'memorial' ? (
