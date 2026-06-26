@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { ConfigProvider, Layout, App as AntApp, Drawer, message } from 'antd';
+import { ConfigProvider, Layout, App as AntApp, Drawer } from 'antd';
 import { PlusOutlined, ThunderboltOutlined, CloseOutlined, ArrowLeftOutlined, MenuOutlined } from '@ant-design/icons';
 import { AppProvider, useApp } from './hooks/useApp';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useExecutionEvents } from './hooks/useExecutionEvents';
 import { useViewState, viewToNavKey, type View } from './hooks/useViewState';
 import { ThemeProvider, useTheme } from './hooks/useTheme';
-import { TodoList } from './components/TodoList';
-import { TodoDetail } from './components/TodoDetail';
+import { TodoPage } from './components/TodoPage';
+import { LoopPage } from './components/LoopPage';
 import { Dashboard } from './components/Dashboard';
 import { MemorialBoard } from './components/MemorialBoard';
 import { SettingsPage } from './components/SettingsPage';
@@ -19,15 +19,10 @@ import { ExecutorsPanel } from './components/settings/ExecutorsPanel';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
-import { LoopDetailPanel } from './components/LoopStudioDetailPanel';
 import { LoopFormModal } from './components/LoopFormModal';
 import { LeftRail, type LeftRailKey } from './components/shell/LeftRail';
-import { EmptyDetailPlaceholder } from './components/EmptyDetailPlaceholder';
-import { PageCard } from './components/common/PageCard';
-import { UnorderedListOutlined, RetweetOutlined } from '@ant-design/icons';
 
-import * as dbLoops from './utils/database/loops';
-import { EXECUTION_PANEL, LEFT_RAIL_WIDTH, SIDEBAR_WIDTH } from './constants';
+import { EXECUTION_PANEL, LEFT_RAIL_WIDTH } from './constants';
 import * as db from './utils/database';
 import type { Config, ExecutorConfig } from './types';
 import zhCN from 'antd/locale/zh_CN';
@@ -377,205 +372,36 @@ function AppContent() {
             transition: 'height 0.3s ease, padding-bottom 0.3s ease',
           }}
         >
-          {/* 事项 / 环路视图：左右两栏统一包裹在 PageCard 中 */}
-          {(activeView === 'items' || activeView === 'loops') && !isMobile && (
-            <PageCard
-              icon={activeView === 'items' ? <UnorderedListOutlined /> : <RetweetOutlined />}
-              title={activeView === 'items' ? '事项' : '环路'}
-              className="todo-view-page-card"
-              style={{ height: '100%', flex: 1, minWidth: 0 }}
-              contentStyle={{ padding: 0, display: 'flex', flexDirection: 'row', height: 'calc(100% - 49px)' }}
-            >
-              {/* 左侧列表 */}
-              <div
-                className={effectiveMobilePanel === 'list' ? 'animate-fade-in' : ''}
-                style={{
-                  width: SIDEBAR_WIDTH.desktop,
-                  flexShrink: 0,
-                  height: '100%',
-                  borderRight: '1px solid var(--color-border-light)',
-                }}
-              >
-                <TodoList
-                  onOpenCreateModal={() => setTodoModalOpen(true)}
-                  onSelectTodo={(todoId) => {
-                    handleSelectTodo(todoId);
-                  }}
-                  loopUpdateCount={loopUpdateCount}
-                  onSelectLoop={(loopId) => {
-                    handleSelectLoop(loopId);
-                  }}
-                  onCreateLoop={() => {
-                    setLoopCreateModalOpen(true);
-                  }}
-                  forcedListMode={forcedListMode}
-                  onListModeChange={() => {
-                    setForcedListMode(undefined);
-                  }}
-                />
-              </div>
-
-              {/* 右侧详情 */}
-              <div
-                className={effectiveMobilePanel === 'detail' ? 'animate-slide-in-right' : ''}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  height: '100%',
-                  overflow: 'hidden',
-                  padding: 16,
-                }}
-              >
-                {state.selectedTodoId ? (
-                  <TodoDetail />
-                ) : selectedLoopId !== null ? (
-                  <LoopDetailPanel
-                    loopId={selectedLoopId}
-                    tags={state.tags}
-                    onTrigger={async () => {
-                      try {
-                        const res = await dbLoops.triggerLoop(selectedLoopId);
-                        message.success(`已触发 (execution #${res.execution_id})`);
-                      } catch (err) {
-                        message.error(`触发失败: ${err instanceof Error ? err.message : '未知错误'}`);
-                      }
-                    }}
-                    onDuplicate={async () => {
-                      try {
-                        await dbLoops.duplicateLoop(selectedLoopId);
-                        message.success('已复制');
-                      } catch (err) {
-                        message.error(`复制失败: ${err instanceof Error ? err.message : '未知错误'}`);
-                      }
-                    }}
-                    onDelete={async () => {
-                      try {
-                        await dbLoops.deleteLoop(selectedLoopId);
-                        message.success('已删除');
-                        setLoopUpdateCount(c => c + 1);
-                      } catch (err) {
-                        message.error('删除失败，环路可能正在被引用');
-                      }
-                    }}
-                    onToggleStatus={async () => {
-                      try {
-                        const loops = await dbLoops.listLoops();
-                        const loop = loops.find(l => l.id === selectedLoopId);
-                        if (!loop) return;
-                        const next = loop.status === 'enabled' ? 'paused' : 'enabled';
-                        await dbLoops.updateLoopStatus(selectedLoopId, { status: next } as any);
-                        message.success(`已${next === 'enabled' ? '启用' : '暂停'}`);
-                      } catch (err) {
-                        message.error(`状态切换失败: ${err instanceof Error ? err.message : '未知错误'}`);
-                      }
-                    }}
-                    onChanged={() => {
-                      setLoopUpdateCount(c => c + 1);
-                    }}
-                  />
-                ) : activeView === 'items' ? (
-                  <EmptyDetailPlaceholder />
-                ) : (
-                  <EmptyDetailPlaceholder />
-                )}
-              </div>
-            </PageCard>
+          {/* 事项页面 */}
+          {activeView === 'items' && (
+            <TodoPage
+              selectedTodoId={state.selectedTodoId}
+              onOpenCreateModal={() => setTodoModalOpen(true)}
+              onSelectTodo={handleSelectTodo}
+              loopUpdateCount={loopUpdateCount}
+              onSelectLoop={handleSelectLoop}
+              onCreateLoop={() => setLoopCreateModalOpen(true)}
+              forcedListMode={forcedListMode}
+              onListModeChange={() => setForcedListMode(undefined)}
+              effectiveMobilePanel={effectiveMobilePanel}
+            />
           )}
 
-          {/* 移动端：事项 / 环路视图（单列切换） */}
-          {(activeView === 'items' || activeView === 'loops') && isMobile && (
-            <>
-              <div
-                className={effectiveMobilePanel === 'list' ? 'animate-fade-in' : ''}
-                style={{
-                  width: SIDEBAR_WIDTH.mobile,
-                  flexShrink: 0,
-                  height: '100%',
-                  display: effectiveMobilePanel === 'list' ? 'block' : 'none',
-                }}
-              >
-                <TodoList
-                  onOpenCreateModal={() => setTodoModalOpen(true)}
-                  onSelectTodo={(todoId) => {
-                    handleSelectTodo(todoId);
-                  }}
-                  loopUpdateCount={loopUpdateCount}
-                  onSelectLoop={(loopId) => {
-                    handleSelectLoop(loopId);
-                  }}
-                  onCreateLoop={() => {
-                    setLoopCreateModalOpen(true);
-                  }}
-                  forcedListMode={forcedListMode}
-                  onListModeChange={() => {
-                    setForcedListMode(undefined);
-                  }}
-                />
-              </div>
-              <div
-                className={effectiveMobilePanel === 'detail' ? 'animate-slide-in-right' : ''}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  height: '100%',
-                  overflow: 'hidden',
-                  display: effectiveMobilePanel === 'detail' ? 'block' : 'none',
-                }}
-              >
-                {state.selectedTodoId ? (
-                  <TodoDetail />
-                ) : selectedLoopId !== null ? (
-                  <LoopDetailPanel
-                    loopId={selectedLoopId}
-                    tags={state.tags}
-                    onTrigger={async () => {
-                      try {
-                        const res = await dbLoops.triggerLoop(selectedLoopId);
-                        message.success(`已触发 (execution #${res.execution_id})`);
-                      } catch (err) {
-                        message.error(`触发失败: ${err instanceof Error ? err.message : '未知错误'}`);
-                      }
-                    }}
-                    onDuplicate={async () => {
-                      try {
-                        await dbLoops.duplicateLoop(selectedLoopId);
-                        message.success('已复制');
-                      } catch (err) {
-                        message.error(`复制失败: ${err instanceof Error ? err.message : '未知错误'}`);
-                      }
-                    }}
-                    onDelete={async () => {
-                      try {
-                        await dbLoops.deleteLoop(selectedLoopId);
-                        message.success('已删除');
-                        setLoopUpdateCount(c => c + 1);
-                      } catch (err) {
-                        message.error('删除失败，环路可能正在被引用');
-                      }
-                    }}
-                    onToggleStatus={async () => {
-                      try {
-                        const loops = await dbLoops.listLoops();
-                        const loop = loops.find(l => l.id === selectedLoopId);
-                        if (!loop) return;
-                        const next = loop.status === 'enabled' ? 'paused' : 'enabled';
-                        await dbLoops.updateLoopStatus(selectedLoopId, { status: next } as any);
-                        message.success(`已${next === 'enabled' ? '启用' : '暂停'}`);
-                      } catch (err) {
-                        message.error(`状态切换失败: ${err instanceof Error ? err.message : '未知错误'}`);
-                      }
-                    }}
-                    onChanged={() => {
-                      setLoopUpdateCount(c => c + 1);
-                    }}
-                  />
-                ) : activeView === 'items' ? (
-                  <EmptyDetailPlaceholder />
-                ) : (
-                  <EmptyDetailPlaceholder />
-                )}
-              </div>
-            </>
+          {/* 环路页面 */}
+          {activeView === 'loops' && (
+            <LoopPage
+              selectedLoopId={selectedLoopId}
+              tags={state.tags}
+              onOpenCreateModal={() => setTodoModalOpen(true)}
+              onSelectTodo={handleSelectTodo}
+              loopUpdateCount={loopUpdateCount}
+              onSelectLoop={handleSelectLoop}
+              onCreateLoop={() => setLoopCreateModalOpen(true)}
+              forcedListMode={forcedListMode}
+              onListModeChange={() => setForcedListMode(undefined)}
+              onLoopChanged={() => setLoopUpdateCount(c => c + 1)}
+              effectiveMobilePanel={effectiveMobilePanel}
+            />
           )}
 
           {/* 非事项/环路视图：右侧独占 */}
