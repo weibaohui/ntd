@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Spin, Card, Empty, Space, Typography, Button, Alert, Modal, Collapse, message } from 'antd';
+import { Spin, Empty, Space, Typography, Button, Alert, Modal, Collapse, message } from 'antd';
 import { ExclamationCircleFilled, ReloadOutlined, CloudDownloadOutlined, CopyOutlined, CodeOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import { ShareCard } from '@/components/ShareCard';
@@ -206,7 +206,8 @@ export function AboutPanel() {
 
   return (
     <Spin spinning={versionLoading}>
-      <Card title="NTD 版本信息" style={{ maxWidth: 600 }}>
+      <div style={{ maxWidth: 600 }}>
+        <div style={{ fontWeight: 600, marginBottom: 16, fontSize: 16 }}>NTD 版本信息</div>
         {versionInfo ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div>
@@ -422,8 +423,10 @@ export function AboutPanel() {
         ) : (
           <Empty description="无法获取版本信息" />
         )}
-      </Card>
-      <ShareCard />
+      </div>
+      <div style={{ marginTop: 24 }}>
+        <ShareCard />
+      </div>
     </Spin>
   );
 }
