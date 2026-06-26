@@ -15,6 +15,7 @@ import { SkillsPanel } from './components/SkillsPanel';
 import { SessionManager } from './components/SessionManager';
 import { ProjectDirectoriesPanel } from './components/settings/ProjectDirectoriesPanel';
 import { RuntimePanel } from './components/settings/RuntimePanel';
+import { ExecutorsPanel } from './components/settings/ExecutorsPanel';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
@@ -266,6 +267,10 @@ function AppContent() {
       showStandaloneSettingsPanel('skills');
       return;
     }
+    if (key === 'settings_executors') {
+      showStandaloneSettingsPanel('executors');
+      return;
+    }
     showStandaloneSettingsPanel('runtime');
   }, [handleShowView, showListSection, showSettings, showStandaloneSettingsPanel]);
 
@@ -507,6 +512,8 @@ function AppContent() {
               <ProjectDirectoriesPanel />
             ) : activeView === 'sessions' ? (
               <SessionManager />
+            ) : activeView === 'executors' ? (
+              <ExecutorsPanel />
             ) : activeView === 'settings' ? (
               <SettingsPage />
             ) : activeView === 'memorial' ? (
@@ -515,24 +522,8 @@ function AppContent() {
               // 事项视图但未选中具体条目：展示空白区域
               <div />
             ) : activeView === 'loops' ? (
-              // 环路视图：始终渲染 TodoList（环路列表），即使未选中具体环路
-              <TodoList
-                onOpenCreateModal={() => setTodoModalOpen(true)}
-                onSelectTodo={(todoId) => {
-                  handleSelectTodo(todoId);
-                }}
-                loopUpdateCount={loopUpdateCount}
-                onSelectLoop={(loopId) => {
-                  handleSelectLoop(loopId);
-                }}
-                onCreateLoop={() => {
-                  setLoopCreateModalOpen(true);
-                }}
-                forcedListMode={forcedListMode}
-                onListModeChange={() => {
-                  setForcedListMode(undefined);
-                }}
-              />
+              // 环路视图但未选中具体环路：展示空白区域
+              <div />
             ) : (
               <Dashboard />
             )}

@@ -1,20 +1,20 @@
 import { useState, useEffect } from 'react';
 import { Button, Card, Input, Switch, Spin, Tooltip, Modal, message, Typography } from 'antd';
-import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined, BugOutlined } from '@ant-design/icons';
+import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined, BugOutlined, CodeOutlined } from '@ant-design/icons';
 import { Cron } from 'react-js-cron';
 import 'react-js-cron/dist/styles.css';
 import { CronPresetSelect } from '@/components/CronPresetSelect';
 import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '@/utils/cron';
+import { PageCard } from '@/components/common/PageCard';
 import * as db from '@/utils/database';
 import type { ExecutorConfig } from '@/types';
 
 const { Paragraph } = Typography;
 
-export function ExecutorsPanel({ executors, setExecutors, executorsLoading }: {
-  executors: ExecutorConfig[];
-  setExecutors: (updater: ExecutorConfig[] | ((prev: ExecutorConfig[]) => ExecutorConfig[])) => void;
-  executorsLoading: boolean;
-}) {
+/** 执行器管理面板，负责展示和管理各执行器的配置与可用性检测。 */
+export function ExecutorsPanel() {
+  const [executors, setExecutors] = useState<ExecutorConfig[]>([]);
+  const [executorsLoading, setExecutorsLoading] = useState(false);
   const [detectResults, setDetectResults] = useState<Record<string, { found: boolean; resolved: string | null }>>({});
   const [detectingExecutor, setDetectingExecutor] = useState<string | null>(null);
   const [testingExecutor, setTestingExecutor] = useState<string | null>(null);
@@ -30,8 +30,22 @@ export function ExecutorsPanel({ executors, setExecutors, executorsLoading }: {
   const [usageStatsSaving, setUsageStatsSaving] = useState(false);
 
   useEffect(() => {
+    loadExecutors();
     loadUsageStatsSettings();
   }, []);
+
+  /** 从数据库加载执行器配置列表。 */
+  const loadExecutors = async () => {
+    try {
+      setExecutorsLoading(true);
+      const list = await db.getExecutors();
+      setExecutors(list);
+    } catch (err: any) {
+      message.error('加载执行器配置失败: ' + (err?.message || String(err)));
+    } finally {
+      setExecutorsLoading(false);
+    }
+  };
 
   const loadUsageStatsSettings = async () => {
     try {
@@ -59,8 +73,9 @@ export function ExecutorsPanel({ executors, setExecutors, executorsLoading }: {
   };
 
   return (
-    <Spin spinning={executorsLoading}>
-      <div style={{ maxWidth: 800 }}>
+    <PageCard icon={<CodeOutlined />} title="执行器">
+      <Spin spinning={executorsLoading}>
+        <div style={{ maxWidth: 800 }}>
         <Paragraph type="secondary" style={{ marginBottom: 16 }}>
           管理执行器的路径、开关状态，并检测二进制是否可用。关闭开关的执行器不会出现在 Todo 的执行器选择列表中。
         </Paragraph>
@@ -356,6 +371,7 @@ export function ExecutorsPanel({ executors, setExecutors, executorsLoading }: {
           </div>
         )}
       </Modal>
-    </Spin>
+      </Spin>
+    </PageCard>
   );
 }
