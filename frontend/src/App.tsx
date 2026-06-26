@@ -64,6 +64,12 @@ function AppContent() {
   }, [activeView]);
   const isMobile = useIsMobile();
 
+  // 手机端有效面板：items/loops 视图使用 selectedPanel（基于 id 判断），
+  // 其他视图（dashboard/memorial/settings 等）始终显示 detail 面板
+  const effectiveMobilePanel = isMobile && activeView !== 'items' && activeView !== 'loops'
+    ? 'detail'
+    : selectedPanel;
+
   const [panelCollapsed, setPanelCollapsed] = useState(() => {
     try {
       return localStorage.getItem('execution_panel_collapsed') === 'true';
@@ -181,6 +187,7 @@ function AppContent() {
   };
 
   // 统一导航处理：切换 view 时清空 loop 选择，避免旧选择抢占右侧面板
+  // 手机端：非 items/loops 视图需要切换到 detail 面板，确保显示右侧内容而非中间列表
   const handleShowView = useCallback((view: View) => {
     setSelectedLoopId(null);
     clearSelection();
@@ -279,7 +286,7 @@ function AppContent() {
         </div>
       )}
       {/* Mobile FAB Group */}
-      {isMobile && selectedPanel === 'list' && (
+      {isMobile && effectiveMobilePanel === 'list' && (
         <>
           {fabExpanded && (
             <div className="mobile-fab-backdrop" onClick={handleFabBackdropClick} />
@@ -367,13 +374,13 @@ function AppContent() {
           {/* 中间列表面板：仅在「事项」或「环路」导航选中时显示；
               仪表盘/看板/配置等页面由右侧面板独占，不需要中间列表 */}
           <div
-            className={(!isMobile || selectedPanel === 'list') ? 'animate-fade-in' : ''}
+            className={(!isMobile || effectiveMobilePanel === 'list') ? 'animate-fade-in' : ''}
             style={{
               width: isMobile ? SIDEBAR_WIDTH.mobile : SIDEBAR_WIDTH.desktop,
               flexShrink: 0,
               height: '100%',
               display: isMobile
-                ? (selectedPanel === 'list' ? 'block' : 'none')
+                ? (effectiveMobilePanel === 'list' ? 'block' : 'none')
                 : (activeView === 'items' || activeView === 'loops' ? 'block' : 'none'),
             }}
           >
@@ -400,12 +407,12 @@ function AppContent() {
 
           {/* Right Workspace */}
           <div
-            className={(!isMobile || selectedPanel === 'detail') ? 'animate-slide-in-right' : ''}
+            className={(!isMobile || effectiveMobilePanel === 'detail') ? 'animate-slide-in-right' : ''}
             style={{
               flex: 1,
               height: '100%',
               overflow: 'hidden',
-              display: !isMobile || selectedPanel === 'detail' ? 'block' : 'none',
+              display: !isMobile || effectiveMobilePanel === 'detail' ? 'block' : 'none',
             }}
           >
             {state.selectedTodoId ? (
