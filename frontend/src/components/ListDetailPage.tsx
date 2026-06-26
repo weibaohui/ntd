@@ -33,7 +33,7 @@ export function ListDetailPage({ icon, title, listPanel, detailPanel }: ListDeta
       title={title}
       className="list-detail-page-card"
       style={{ height: '100%', flex: 1, minWidth: 0 }}
-      contentStyle={{ padding: 0, display: 'flex', flexDirection: 'row', height: 'calc(100% - 49px)' }}
+      contentStyle={{ padding: 0, display: 'flex', flexDirection: 'row', height: 'calc(100% - 43px)' }}
     >
       <div
         style={{

@@ -4418,8 +4418,8 @@ code {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px 20px;
-  min-height: 56px;
+  padding: 12px 20px;
+  min-height: 42px;
   flex-shrink: 0;
   min-width: 0;
 }
@@ -4427,19 +4427,19 @@ code {
 .ntd-page-card-title {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 
 .ntd-page-card-icon {
-  font-size: 18px;
+  font-size: 15px;
   color: var(--color-primary);
   display: flex;
   align-items: center;
 }
 
 .ntd-page-card-title-text {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--color-text);
   overflow: hidden;
