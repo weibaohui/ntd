@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { ConfigProvider, Layout, App as AntApp, Drawer, message, Form } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, CloseOutlined, ArrowLeftOutlined, PlayCircleOutlined, LaptopOutlined, FolderOutlined, MenuOutlined } from '@ant-design/icons';
+import { ConfigProvider, Layout, App as AntApp, Drawer } from 'antd';
+import { PlusOutlined, ThunderboltOutlined, CloseOutlined, ArrowLeftOutlined, MenuOutlined } from '@ant-design/icons';
 import { AppProvider, useApp } from './hooks/useApp';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useExecutionEvents } from './hooks/useExecutionEvents';
 import { useViewState, viewToNavKey, type View } from './hooks/useViewState';
 import { ThemeProvider, useTheme } from './hooks/useTheme';
-import { TodoList } from './components/TodoList';
-import { TodoDetail } from './components/TodoDetail';
+import { TodoPage } from './components/TodoPage';
+import { LoopPage } from './components/LoopPage';
 import { Dashboard } from './components/Dashboard';
 import { MemorialBoard } from './components/MemorialBoard';
 import { SettingsPage } from './components/SettingsPage';
@@ -15,15 +15,14 @@ import { SkillsPanel } from './components/SkillsPanel';
 import { SessionManager } from './components/SessionManager';
 import { ProjectDirectoriesPanel } from './components/settings/ProjectDirectoriesPanel';
 import { RuntimePanel } from './components/settings/RuntimePanel';
+import { ExecutorsPanel } from './components/settings/ExecutorsPanel';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
-import { LoopDetailPanel } from './components/LoopStudioDetailPanel';
 import { LoopFormModal } from './components/LoopFormModal';
 import { LeftRail, type LeftRailKey } from './components/shell/LeftRail';
-import { PageCard } from './components/common/PageCard';
-import * as dbLoops from './utils/database/loops';
-import { EXECUTION_PANEL, LEFT_RAIL_WIDTH, SIDEBAR_WIDTH } from './constants';
+
+import { EXECUTION_PANEL, LEFT_RAIL_WIDTH } from './constants';
 import * as db from './utils/database';
 import type { Config, ExecutorConfig } from './types';
 import zhCN from 'antd/locale/zh_CN';
@@ -95,18 +94,8 @@ function AppContent() {
     db.getConfig().then(setAppConfig).catch(() => {});
   }, []);
 
-  // —— 独立页面：「运行管理」与「设置页」共享的配置表单状态 —
-  // RuntimePanel 从设置标签页剥离成独立页面后，需要自己的 Form 实例 + 配置加载/保存逻辑。
-  const [runtimeConfigForm] = Form.useForm();
-  const [runtimeConfigSaving, setRuntimeConfigSaving] = useState(false);
-  // 执行器列表供 executorDisplayNames 使用
+  // 执行器列表供 RuntimePanel 的 executorDisplayNames 使用
   const [runtimeExecutors, setRuntimeExecutors] = useState<ExecutorConfig[]>([]);
-
-  useEffect(() => {
-    db.getConfig().then((cfg) => {
-      runtimeConfigForm.setFieldsValue(cfg);
-    }).catch(() => {});
-  }, [runtimeConfigForm]);
 
   useEffect(() => {
     db.getExecutors().then(setRuntimeExecutors).catch(() => {});
@@ -119,20 +108,6 @@ function AppContent() {
     }
     return map;
   }, [runtimeExecutors]);
-
-  const handleRuntimeSaveConfig = useCallback(async () => {
-    try {
-      const values = await runtimeConfigForm.validateFields();
-      setRuntimeConfigSaving(true);
-      await db.updateConfig(values);
-      message.success('配置已保存');
-    } catch (err: any) {
-      if (err?.errorFields) return;
-      message.error('保存失败: ' + (err?.message || String(err)));
-    } finally {
-      setRuntimeConfigSaving(false);
-    }
-  }, [runtimeConfigForm]);
 
   // URL → React state 恢复（首次加载完成后执行）
   useEffect(() => {
@@ -266,6 +241,10 @@ function AppContent() {
       showStandaloneSettingsPanel('skills');
       return;
     }
+    if (key === 'settings_executors') {
+      showStandaloneSettingsPanel('executors');
+      return;
+    }
     showStandaloneSettingsPanel('runtime');
   }, [handleShowView, showListSection, showSettings, showStandaloneSettingsPanel]);
 
@@ -393,158 +372,69 @@ function AppContent() {
             transition: 'height 0.3s ease, padding-bottom 0.3s ease',
           }}
         >
-          {/* 中间列表面板：仅在「事项」或「环路」导航选中时显示；
-              仪表盘/看板/配置等页面由右侧面板独占，不需要中间列表 */}
-          <div
-            className={(!isMobile || effectiveMobilePanel === 'list') ? 'animate-fade-in' : ''}
-            style={{
-              width: isMobile ? SIDEBAR_WIDTH.mobile : SIDEBAR_WIDTH.desktop,
-              flexShrink: 0,
-              height: '100%',
-              display: isMobile
-                ? (effectiveMobilePanel === 'list' ? 'block' : 'none')
-                : (activeView === 'items' || activeView === 'loops' ? 'block' : 'none'),
-            }}
-          >
-            <TodoList
+          {/* 事项页面 */}
+          {activeView === 'items' && (
+            <TodoPage
+              selectedTodoId={state.selectedTodoId}
               onOpenCreateModal={() => setTodoModalOpen(true)}
-              onSelectTodo={(todoId) => {
-                handleSelectTodo(todoId);
-              }}
+              onSelectTodo={handleSelectTodo}
               loopUpdateCount={loopUpdateCount}
-              onSelectLoop={(loopId) => {
-                handleSelectLoop(loopId);
-              }}
-              onCreateLoop={() => {
-                // 打开 LoopFormModal 创建模式，用户填写完整信息后创建环路
-                setLoopCreateModalOpen(true);
-              }}
+              onSelectLoop={handleSelectLoop}
+              onCreateLoop={() => setLoopCreateModalOpen(true)}
               forcedListMode={forcedListMode}
-              onListModeChange={() => {
-                setForcedListMode(undefined);
-              }}
+              onListModeChange={() => setForcedListMode(undefined)}
+              effectiveMobilePanel={effectiveMobilePanel}
             />
-          </div>
+          )}
 
-          {/* Right Workspace */}
-          <div
-            className={(!isMobile || effectiveMobilePanel === 'detail') ? 'animate-slide-in-right' : ''}
-            style={{
-              flex: 1,
-              // 允许右侧工作区在 flex 布局中收缩到可视区宽度内，
-              // 避免内部横向内容把整个页面主容器反向撑宽。
-              minWidth: 0,
-              height: '100%',
-              overflow: 'hidden',
-              display: !isMobile || effectiveMobilePanel === 'detail' ? 'block' : 'none',
-            }}
-          >
-            {state.selectedTodoId ? (
-              <TodoDetail />
-            ) : selectedLoopId !== null ? (
-              // 从左侧环路列表选中某个 loop，右侧展示 LoopDetailPanel；
-              // 借用一个轻量容器提供 overflow:auto。
-              <div style={{ height: '100%', overflow: 'auto' }}>
-                <LoopDetailPanel
-                  loopId={selectedLoopId}
-                  tags={state.tags}
-                  onTrigger={async () => {
-                    try {
-                      const res = await dbLoops.triggerLoop(selectedLoopId);
-                      message.success(`已触发 (execution #${res.execution_id})`);
-                    } catch (err) {
-                      // 触发失败时给用户反馈，避免静默吞掉错误
-                      message.error(`触发失败: ${err instanceof Error ? err.message : '未知错误'}`);
-                    }
-                  }}
-                  onDuplicate={async () => {
-                    try {
-                      await dbLoops.duplicateLoop(selectedLoopId);
-                      message.success('已复制');
-                    } catch (err) {
-                      // 复制失败时给用户反馈，避免静默吞掉错误
-                      message.error(`复制失败: ${err instanceof Error ? err.message : '未知错误'}`);
-                    }
-                  }}
-                  onDelete={async () => {
-                    try {
-                      await dbLoops.deleteLoop(selectedLoopId);
-                      message.success('已删除');
-                      setLoopUpdateCount(c => c + 1);
-                    } catch (err) {
-                      message.error('删除失败，环路可能正在被引用');
-                    }
-                  }}
-                  onToggleStatus={async () => {
-                    try {
-                      const loops = await dbLoops.listLoops();
-                      const loop = loops.find(l => l.id === selectedLoopId);
-                      if (!loop) return;
-                      const next = loop.status === 'enabled' ? 'paused' : 'enabled';
-                      await dbLoops.updateLoopStatus(selectedLoopId, { status: next } as any);
-                      message.success(`已${next === 'enabled' ? '启用' : '暂停'}`);
-                    } catch (err) {
-                      // 状态切换失败时给用户反馈，避免静默吞掉错误
-                      message.error(`状态切换失败: ${err instanceof Error ? err.message : '未知错误'}`);
-                    }
-                  }}
-                  onChanged={() => {
-                    setLoopUpdateCount(c => c + 1);
-                  }}
-                />
-              </div>
-            ) : activeView === 'runtime' ? (
-              // 运行管理 — 独立页面（非设置内嵌标签页）
-              <PageCard icon={<PlayCircleOutlined />} title="运行管理">
+          {/* 环路页面 */}
+          {activeView === 'loops' && (
+            <LoopPage
+              selectedLoopId={selectedLoopId}
+              tags={state.tags}
+              onOpenCreateModal={() => setTodoModalOpen(true)}
+              onSelectTodo={handleSelectTodo}
+              loopUpdateCount={loopUpdateCount}
+              onSelectLoop={handleSelectLoop}
+              onCreateLoop={() => setLoopCreateModalOpen(true)}
+              forcedListMode={forcedListMode}
+              onListModeChange={() => setForcedListMode(undefined)}
+              onLoopChanged={() => setLoopUpdateCount(c => c + 1)}
+              effectiveMobilePanel={effectiveMobilePanel}
+            />
+          )}
+
+          {/* 非事项/环路视图：右侧独占 */}
+          {(activeView !== 'items' && activeView !== 'loops') && (
+            <div
+              style={{
+                flex: 1,
+                minWidth: 0,
+                height: '100%',
+                overflow: 'hidden',
+              }}
+            >
+              {activeView === 'runtime' ? (
                 <RuntimePanel
-                  configForm={runtimeConfigForm}
-                  configSaving={runtimeConfigSaving}
-                  handleSaveConfig={handleRuntimeSaveConfig}
                   executorDisplayNames={runtimeExecutorDisplayNames}
                 />
-              </PageCard>
-            ) : activeView === 'skills' ? (
-              <PageCard icon={<ThunderboltOutlined />} title="Skills">
+              ) : activeView === 'skills' ? (
                 <SkillsPanel />
-              </PageCard>
-            ) : activeView === 'projectDirectories' ? (
-              <PageCard icon={<FolderOutlined />} title="工作空间">
+              ) : activeView === 'projectDirectories' ? (
                 <ProjectDirectoriesPanel />
-              </PageCard>
-            ) : activeView === 'sessions' ? (
-              <PageCard icon={<LaptopOutlined />} title="会话">
+              ) : activeView === 'sessions' ? (
                 <SessionManager />
-              </PageCard>
-            ) : activeView === 'settings' ? (
-              <SettingsPage />
-            ) : activeView === 'memorial' ? (
-              <MemorialBoard />
-            ) : activeView === 'items' ? (
-              // 事项视图但未选中具体条目：展示空白区域
-              <div />
-            ) : activeView === 'loops' ? (
-              // 环路视图：始终渲染 TodoList（环路列表），即使未选中具体环路
-              <TodoList
-                onOpenCreateModal={() => setTodoModalOpen(true)}
-                onSelectTodo={(todoId) => {
-                  handleSelectTodo(todoId);
-                }}
-                loopUpdateCount={loopUpdateCount}
-                onSelectLoop={(loopId) => {
-                  handleSelectLoop(loopId);
-                }}
-                onCreateLoop={() => {
-                  setLoopCreateModalOpen(true);
-                }}
-                forcedListMode={forcedListMode}
-                onListModeChange={() => {
-                  setForcedListMode(undefined);
-                }}
-              />
-            ) : (
-              <Dashboard />
-            )}
-          </div>
+              ) : activeView === 'executors' ? (
+                <ExecutorsPanel />
+              ) : activeView === 'settings' ? (
+                <SettingsPage />
+              ) : activeView === 'memorial' ? (
+                <MemorialBoard />
+              ) : (
+                <Dashboard />
+              )}
+            </div>
+          )}
         </Content>
       </Layout>
 

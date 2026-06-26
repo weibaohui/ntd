@@ -3,7 +3,7 @@ import { useApp } from '@/hooks/useApp';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useExecutionHistory } from '@/hooks/useExecutionHistory';
 import { Button, Empty, App, Pagination, Modal, Input, Select } from 'antd';
-import { CheckCircleOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { CheckCircleOutlined, ReloadOutlined, ThunderboltOutlined, FullscreenOutlined, FullscreenExitOutlined } from '@ant-design/icons';
 import { TodoDrawer } from './TodoDrawer';
 import { parseLogsToMessages } from './ChatView';
 import { BREAKPOINTS, EXPORT } from '@/constants';
@@ -27,6 +27,7 @@ export function TodoDetail() {
   const selectedTodo = todos.find(t => t.id === selectedTodoId);
 
   const [todoDrawerOpen, setTodoDrawerOpen] = useState(false);
+  const [isHistoryFullscreen, setIsHistoryFullscreen] = useState(false);
 
   // 使用 useExecutionHistory hook 获取执行历史相关的状态和操作
   const {
@@ -372,6 +373,14 @@ export function TodoDetail() {
             >
               刷新
             </Button>
+            <Button
+              type="text"
+              size="small"
+              icon={<FullscreenOutlined />}
+              onClick={() => setIsHistoryFullscreen(true)}
+            >
+              放大
+            </Button>
           </div>
         </div>
         {records.length === 0 ? (
@@ -484,6 +493,100 @@ export function TodoDetail() {
           }
         }}
       />
+
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 4px' }}>
+            <span style={{ fontWeight: 600 }}>执行历史</span>
+            <Button
+              type="text"
+              size="small"
+              icon={<FullscreenExitOutlined />}
+              onClick={() => setIsHistoryFullscreen(false)}
+            >
+              退出全屏
+            </Button>
+          </div>
+        }
+        open={isHistoryFullscreen}
+        onCancel={() => setIsHistoryFullscreen(false)}
+        footer={null}
+        width="100%"
+        style={{ top: 0, height: '100vh' }}
+        bodyStyle={{ padding: 0, height: 'calc(100vh - 55px)', overflow: 'hidden' }}
+        closable={false}
+        maskClosable
+        destroyOnClose={false}
+      >
+        {records.length === 0 ? (
+          <Empty description="暂无执行记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '16px 20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Select
+                  size="small"
+                  value={historyStatusFilter}
+                  onChange={setHistoryStatusFilter}
+                  style={{ width: 100 }}
+                  options={[
+                    { value: 'all', label: '全部' },
+                    { value: 'running', label: '进行中' },
+                    { value: 'success', label: '成功' },
+                    { value: 'failed', label: '失败' },
+                  ]}
+                />
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  onClick={() => loadExecutionRecords(historyPage, historyLimit)}
+                  loading={isExecuting}
+                >
+                  刷新
+                </Button>
+              </div>
+            </div>
+            <div style={{ flex: 1, display: 'flex', gap: 16, overflow: 'hidden', minHeight: 0 }}>
+              <HistoryList
+                sessionGroups={sessionGroups}
+                selectedHistoryRecordId={selectedHistoryRecordId}
+                onSelectRecord={(id) => setSelectedHistoryRecordId(id)}
+                historyTotal={historyTotal}
+                historyLimit={historyLimit}
+                historyPage={historyPage}
+                onPageChange={handleHistoryPageChange}
+                onOpenResume={handleOpenResume}
+                onExportMarkdown={handleExportMarkdown}
+              />
+              <div style={{ width: 1, background: 'var(--color-border-light)', flexShrink: 0 }} />
+              <div className="history-detail-column" style={{ flex: 1, minWidth: 0 }}>
+                <RecordDetailView
+                  isLoadingDetail={isLoadingDetail}
+                  record={selectedHistoryRecord}
+                  sessionGroups={sessionGroups}
+                  onSelectRecord={(id) => setSelectedHistoryRecordId(id)}
+                  viewMode={viewMode}
+                  onViewModeChange={setViewMode}
+                  onOpenResume={handleOpenResume}
+                  onExportMarkdown={handleExportMarkdown}
+                  onStop={handleStopExecution}
+                  onRefreshSingle={refreshSingleRecord}
+                  onRate={handleRateExecution}
+                  paginatedLogs={paginatedLogs}
+                  logsTotal={logsTotal}
+                  logsPage={logsPage}
+                  logsPerPage={logsPerPage}
+                  onLoadLogs={loadLogs}
+                  isLoadingLogs={isLoadingLogs}
+                  getRunningTaskForRecord={getRunningTaskForRecord}
+                  resolveExecutionStats={resolveExecutionStats}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal
         title="继续对话"

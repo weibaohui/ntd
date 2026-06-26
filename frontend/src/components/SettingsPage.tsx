@@ -3,7 +3,6 @@ import { Tabs, Form, message } from 'antd';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import {
   SettingOutlined,
-  CodeOutlined,
   TagOutlined,
   SaveOutlined,
   FileTextOutlined,
@@ -14,9 +13,8 @@ import { PageCard } from '@/components/common/PageCard';
 import { useApp } from '@/hooks/useApp';
 import { useViewState } from '@/hooks/useViewState';
 import * as db from '@/utils/database';
-import type { Config, ExecutorConfig, SlashCommandRule } from '@/types';
+import type { Config, SlashCommandRule } from '@/types';
 import { SystemSettingsPanel } from './settings/SystemSettingsPanel';
-import { ExecutorsPanel } from './settings/ExecutorsPanel';
 import { TagsPanel } from './settings/TagsPanel';
 import { BackupPanel } from './settings/BackupPanel';
 import { TemplatesPanel } from './settings/TemplatesPanel';
@@ -35,10 +33,6 @@ export function SettingsPage() {
   const [configLoading, setConfigLoading] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
 
-  // Executors state
-  const [executors, setExecutors] = useState<ExecutorConfig[]>([]);
-  const [executorsLoading, setExecutorsLoading] = useState(false);
-
   // Load config on mount
   useEffect(() => {
     setConfigLoading(true);
@@ -54,19 +48,6 @@ export function SettingsPage() {
       })
       .finally(() => setConfigLoading(false));
   }, [configForm]);
-
-  // Load executors from database
-  useEffect(() => {
-    setExecutorsLoading(true);
-    db.getExecutors()
-      .then((list) => {
-        setExecutors(list);
-      })
-      .catch((err) => {
-        message.error('加载执行器配置失败: ' + (err?.message || String(err)));
-      })
-      .finally(() => setExecutorsLoading(false));
-  }, []);
 
   /** 汇总表单值并保存当前系统配置。 */
   const handleSaveConfig = async () => {
@@ -124,13 +105,13 @@ export function SettingsPage() {
   };
 
   // Tab 顺序说明：
-  // 1. 系统设置、执行器管理、标签管理 → 基础配置优先
-  // 2. 模板管理 → 项目相关
+  // 1. 系统设置、标签管理 → 基础配置优先
+  // 2. 事项模板 → 项目相关
   // 3. 备份与恢复 → 数据安全
   // 4. 云端同步 → 外部集成
   // 5. 关于 → 信息页末位
   //
-  // 会话管理、工作空间、Skills 管理、运行管理已独立为左侧导航菜单项，
+  // 执行器管理、会话管理、工作空间、Skills 管理、运行管理已独立为左侧导航菜单项，
   // 不再嵌套在设置页的标签页中。
   const tabItems = [
     {
@@ -146,24 +127,13 @@ export function SettingsPage() {
       ),
     },
     {
-      key: 'executors',
-      label: <span><CodeOutlined style={{ marginRight: 6 }} />执行器管理</span>,
-      children: (
-        <ExecutorsPanel
-          executors={executors}
-          setExecutors={setExecutors}
-          executorsLoading={executorsLoading}
-        />
-      ),
-    },
-    {
       key: 'tags',
       label: <span><TagOutlined style={{ marginRight: 6 }} />标签管理</span>,
       children: <TagsPanel tags={tags} dispatch={dispatch} />,
     },
     {
       key: 'templates',
-      label: <span><FileTextOutlined style={{ marginRight: 6 }} />模板管理</span>,
+      label: <span><FileTextOutlined style={{ marginRight: 6 }} />事项模板</span>,
       children: <TemplatesPanel />,
     },
     {

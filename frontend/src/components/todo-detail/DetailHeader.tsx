@@ -126,12 +126,18 @@ export function DetailHeader({
           )}
         </div>
         {selectedTodo.prompt && <PromptDisplay content={selectedTodo.prompt} />}
-        {(selectedTodo.acceptance_criteria) && (
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 2, marginBottom: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+        {(selectedTodo.acceptance_criteria || selectedTodo.workspace) && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 2, marginBottom: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
             {selectedTodo.acceptance_criteria && (
-              <div style={{ flex: 1, minWidth: 200 }}>
+              <div>
                 <span style={{ fontWeight: 600 }}>验收标准：</span>
                 <span>{selectedTodo.acceptance_criteria}</span>
+              </div>
+            )}
+            {selectedTodo.workspace && (
+              <div>
+                <span style={{ fontWeight: 600 }}>工作区目录：</span>
+                <span>{selectedTodo.workspace}</span>
               </div>
             )}
           </div>

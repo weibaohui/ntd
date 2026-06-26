@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Card, Form, Input, Button, Space, Table, Tag, message, Divider, Alert, Modal, Checkbox, Radio } from 'antd';
+import { Form, Input, Button, Space, Table, Tag, message, Divider, Alert, Modal, Checkbox, Radio } from 'antd';
 import { CloudOutlined, SyncOutlined, SaveOutlined, DeleteOutlined } from '@ant-design/icons';
 import * as syncApi from '@/utils/database/sync';
 import './CloudSyncPanel.css';
@@ -204,143 +204,138 @@ export function CloudSyncPanel() {
   ];
 
   return (
-    <div style={{ padding: 16 }} className="cloud-sync-panel">
-      <Card
-        title={
-          <Space>
-            <CloudOutlined />
-            <span>云端同步</span>
-          </Space>
-        }
-        extra={
-          <Space size="small">
-            {isAuthenticated && (
-              <>
-                <Button
-                  size="small"
-                  icon={<SyncOutlined />}
-                  onClick={() => openSyncModal('push')}
-                  loading={syncing}
-                >
-                  推送
-                </Button>
-                <Button
-                  size="small"
-                  icon={<SyncOutlined style={{ transform: 'rotate(180deg)' }} />}
-                  onClick={() => openSyncModal('pull')}
-                  loading={syncing}
-                >
-                  拉取
-                </Button>
-              </>
-            )}
-          </Space>
-        }
-      >
-        {/* 连接状态 */}
-        <div style={{ marginBottom: 16 }}>
-          {isConnected ? (
-            isAuthenticated ? (
-              <Alert
-                message={
-                  <Space size="small">
-                    <span className="status-text">已连接 ({statusInfo?.server_url})</span>
-                    {statusInfo?.last_sync_at && (
-                      <span className="status-text">最后同步: {new Date(statusInfo.last_sync_at).toLocaleString('zh-CN')}</span>
-                    )}
-                  </Space>
-                }
-                type="success"
-                showIcon
-              />
-            ) : (
-              <Alert
-                message={
-                  <Space size="small">
-                    <span className="status-text">已连接但未配置 Token</span>
-                  </Space>
-                }
-                type="warning"
-                showIcon
-              />
-            )
-          ) : (
+    <div className="cloud-sync-panel" style={{ maxWidth: 600 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 16 }}>
+          <CloudOutlined />
+          <span>云端同步</span>
+        </div>
+        <Space size="small">
+          {isAuthenticated && (
+            <>
+              <Button
+                size="small"
+                icon={<SyncOutlined />}
+                onClick={() => openSyncModal('push')}
+                loading={syncing}
+              >
+                推送
+              </Button>
+              <Button
+                size="small"
+                icon={<SyncOutlined style={{ transform: 'rotate(180deg)' }} />}
+                onClick={() => openSyncModal('pull')}
+                loading={syncing}
+              >
+                拉取
+              </Button>
+            </>
+          )}
+        </Space>
+      </div>
+      {/* 连接状态 */}
+      <div style={{ marginBottom: 16 }}>
+        {isConnected ? (
+          isAuthenticated ? (
             <Alert
-              message="未配置云端服务器地址"
-              description="请在下方配置服务器地址和同步 Token。"
-              type="info"
+              message={
+                <Space size="small">
+                  <span className="status-text">已连接 ({statusInfo?.server_url})</span>
+                  {statusInfo?.last_sync_at && (
+                    <span className="status-text">最后同步: {new Date(statusInfo.last_sync_at).toLocaleString('zh-CN')}</span>
+                  )}
+                </Space>
+              }
+              type="success"
               showIcon
             />
-          )}
-        </div>
+          ) : (
+            <Alert
+              message={
+                <Space size="small">
+                  <span className="status-text">已连接但未配置 Token</span>
+                </Space>
+              }
+              type="warning"
+              showIcon
+            />
+          )
+        ) : (
+          <Alert
+            message="未配置云端服务器地址"
+            description="请在下方配置服务器地址和同步 Token。"
+            type="info"
+            showIcon
+          />
+        )}
+      </div>
 
-        {/* 配置表单 */}
-        <Form form={configForm} layout="vertical" size="small">
-          <Form.Item
-            label="服务器地址"
-            name="server_url"
-            rules={[{ required: true, message: '请输入服务器地址' }]}
+      {/* 配置表单 */}
+      <Form form={configForm} layout="vertical" size="small">
+        <Form.Item
+          label="服务器地址"
+          name="server_url"
+          rules={[{ required: true, message: '请输入服务器地址' }]}
+        >
+          <Input placeholder="http://localhost:8089" />
+        </Form.Item>
+
+        <Form.Item
+          label="同步 Token"
+          name="sync_token"
+          rules={[{ required: true, message: '请输入同步 Token' }]}
+        >
+          <Input.Password placeholder="ntd_xxx 格式的同步 Token" />
+        </Form.Item>
+
+        <Form.Item style={{ marginBottom: 0 }}>
+          <Button
+            type="primary"
+            icon={<SaveOutlined />}
+            onClick={handleSaveConfig}
+            loading={loading}
+            size="small"
           >
-            <Input placeholder="http://localhost:8089" />
-          </Form.Item>
+            保存配置
+          </Button>
+        </Form.Item>
+      </Form>
 
-          <Form.Item
-            label="同步 Token"
-            name="sync_token"
-            rules={[{ required: true, message: '请输入同步 Token' }]}
+      <Divider style={{ margin: '16px 0' }}>
+        <Space>
+          <span>同步历史</span>
+          <Button
+            type="link"
+            size="small"
+            danger
+            icon={<DeleteOutlined />}
+            disabled={historyTotal === 0}
+            onClick={handleClearHistory}
           >
-            <Input.Password placeholder="ntd_xxx 格式的同步 Token" />
-          </Form.Item>
+            清空
+          </Button>
+        </Space>
+      </Divider>
 
-          <Form.Item style={{ marginBottom: 0 }}>
-            <Button
-              type="primary"
-              icon={<SaveOutlined />}
-              onClick={handleSaveConfig}
-              loading={loading}
-              size="small"
-            >
-              保存配置
-            </Button>
-          </Form.Item>
-        </Form>
-
-        <Divider style={{ margin: '16px 0' }}>
-          <Space>
-            <span>同步历史</span>
-            <Button
-              type="link"
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
-              disabled={historyTotal === 0}
-              onClick={handleClearHistory}
-            >
-              清空
-            </Button>
-          </Space>
-        </Divider>
-
-        <Table
-          columns={columns}
-          dataSource={syncHistory}
-          rowKey="id"
-          size="small"
-          pagination={{
-            current: historyPage,
-            pageSize: historyPageSize,
-            total: historyTotal,
-            showSizeChanger: false,
-            // 切换页码时按需加载对应分页的数据
-            onChange: (page) => {
-              setHistoryPage(page);
-              loadSyncHistory(page, historyPageSize);
-            },
-          }}
-          locale={{ emptyText: '暂无同步记录' }}
-          scroll={{ x: 400 }}
-        />
-      </Card>
+      <Table
+        columns={columns}
+        dataSource={syncHistory}
+        rowKey="id"
+        size="small"
+        pagination={{
+          current: historyPage,
+          pageSize: historyPageSize,
+          total: historyTotal,
+          showSizeChanger: false,
+          // 切换页码时按需加载对应分页的数据
+          onChange: (page) => {
+            setHistoryPage(page);
+            loadSyncHistory(page, historyPageSize);
+          },
+        }}
+        locale={{ emptyText: '暂无同步记录' }}
+        scroll={{ x: 400 }}
+      />
 
       {/* 同步策略选择弹窗（受控组件，解决 Modal.confirm 闭包问题） */}
       <Modal

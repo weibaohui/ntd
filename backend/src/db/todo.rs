@@ -171,7 +171,7 @@ impl Database {
             webhook_enabled: ActiveValue::Set(Some(webhook_enabled)),
             auto_review_enabled: ActiveValue::Set(Some(false)),
             todo_type: ActiveValue::Set(Some(0)),
-            workspace_id: ActiveValue::Set(workspace_id),
+            workspace_id: ActiveValue::Set(workspace_id.or(Some(0))),
             ..Default::default()
         };
         let inserted = am.insert(&self.conn).await?;

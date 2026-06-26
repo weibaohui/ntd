@@ -29,6 +29,10 @@
   --color-border: #e2e8f0;
   --color-border-light: #f1f5f9;
 
+  /* 卡片及三级背景 */
+  --color-bg-card: #f8fafc;
+  --color-bg-tertiary: #f1f5f9;
+
   --color-text: #0f172a;
   --color-text-secondary: #475569;
   --color-text-tertiary: #94a3b8;
@@ -103,12 +107,22 @@
   --color-info-bg: #172554;
 
   /* Base surfaces - Catppuccin Mocha */
-  --color-bg: #11111b;
-  --color-bg-layout: #11111b;
+  --color-bg: #1e1e2e;
+  --color-bg-layout: #1e1e2e;
   --color-bg-elevated: #1e1e2e;
   --color-bg-elevated-alpha: rgba(30, 30, 46, 0.9);
   --color-bg-hover: #262637;
   --color-bg-active: #313244;
+
+  /* Ant Design fill colors - 调浅避免过深 */
+  --color-fill-quaternary: #262637;
+  --color-fill-tertiary: #313244;
+  --color-fill-secondary: #45475a;
+  --color-fill-primary: #585b70;
+
+  /* 卡片及三级背景 */
+  --color-bg-card: #262637;
+  --color-bg-tertiary: #313244;
 
   /* Borders */
   --color-border: #313244;
@@ -157,12 +171,13 @@
   box-sizing: border-box;
 }
 
-body {
+html, body {
   margin: 0;
   padding: 0;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background: var(--color-bg);
 }
 
 /* Ant Design overrides */
@@ -507,6 +522,14 @@ body {
   height: 100%;
   overflow-y: auto;
   padding: var(--space-xl);
+}
+
+/* 在 ListDetailPage 内部的详情面板：去掉外层装饰，因为 PageCard 已经提供了 */
+.list-detail-page-right .detail-panel {
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 16px 20px;
 }
 
 .detail-card {
@@ -4395,8 +4418,8 @@ code {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px 20px;
-  min-height: 56px;
+  padding: 12px 20px;
+  min-height: 42px;
   flex-shrink: 0;
   min-width: 0;
 }
@@ -4404,19 +4427,19 @@ code {
 .ntd-page-card-title {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 
 .ntd-page-card-icon {
-  font-size: 18px;
+  font-size: 15px;
   color: var(--color-primary);
   display: flex;
   align-items: center;
 }
 
 .ntd-page-card-title-text {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--color-text);
   overflow: hidden;
@@ -4442,7 +4465,7 @@ code {
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 0;
+  padding: 16px 20px;
 }
 
 /* Dark theme adjustments */

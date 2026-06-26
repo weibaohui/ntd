@@ -13,6 +13,7 @@
  *   /?view=skills              Skills
  *   /?view=projectDirectories  工作空间
  *   /?view=sessions            会话
+ *   /?view=executors           执行器
  *
  * 只管理 URL + 派生的 React 状态，不持有 Todo/Loop 的 app 数据。
  */
@@ -28,14 +29,15 @@ export type View =
   | 'runtime'
   | 'skills'
   | 'projectDirectories'
-  | 'sessions';
+  | 'sessions'
+  | 'executors';
 
 export type Panel = 'list' | 'detail';
 
 const ALL_VIEWS: View[] = [
   'items', 'loops',
   'dashboard', 'settings', 'memorial',
-  'runtime', 'skills', 'projectDirectories', 'sessions',
+  'runtime', 'skills', 'projectDirectories', 'sessions', 'executors',
 ];
 
 // ─── URL 解析/构建 ─────────────────────────────────────────
@@ -80,6 +82,7 @@ const VIEW_TO_NAV_KEY: Record<View, string> = {
   skills: 'settings_skills',
   projectDirectories: 'settings_projectDirectories',
   sessions: 'settings_sessions',
+  executors: 'settings_executors',
 };
 
 export function viewToNavKey(view: View): string {

@@ -232,11 +232,11 @@ export function TemplatesPanel() {
             },
             {
               key: 'system',
-              label: '系统模板',
+              label: '内置模板',
               children: (
                 <div>
                   {templates.filter(t => t.is_system).length === 0 ? (
-                    <Empty description="暂无系统模板" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                    <Empty description="暂无内置模板" image={Empty.PRESENTED_IMAGE_SIMPLE} />
                   ) : (
                     Array.from(new Set(templates.filter(t => t.is_system).map(t => t.category))).sort().map(category => (
                       <Card key={category} title={category || '未分类'} size="small" style={{ marginBottom: 12 }}>
@@ -266,7 +266,7 @@ export function TemplatesPanel() {
             },
             {
               key: 'custom',
-              label: '自定义',
+              label: '在线模板',
               children: (
                 <div>
                   <Spin spinning={customTemplateLoading}>
@@ -333,7 +333,7 @@ export function TemplatesPanel() {
                           <Typography.Text strong>模板列表</Typography.Text>
                         </div>
                         {customTemplateStatus.templates.length === 0 ? (
-                          <Empty description="暂无自定义模板" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                          <Empty description="暂无在线模板" image={Empty.PRESENTED_IMAGE_SIMPLE} />
                         ) : (
                           Array.from(new Set(customTemplateStatus.templates.map(t => t.category))).sort().map(category => (
                             <Card key={category} title={category || '未分类'} size="small" style={{ marginBottom: 12 }}>

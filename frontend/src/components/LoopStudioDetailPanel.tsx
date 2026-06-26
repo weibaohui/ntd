@@ -148,7 +148,7 @@ export function LoopDetailPanel({
 
   return (
     // 父容器已 overflow:auto, 这里只负责垂直 padding, 不再 height:100%
-    <div className="loop-detail-panel" style={{ padding: '20px 24px' }}>
+    <div className="loop-detail-panel detail-panel" style={{ padding: 'var(--space-xl)' }}>
       {/* Header: 标签色条 + 标题 + 操作按钮 */}
       <div className="loop-detail-header" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         {(() => {

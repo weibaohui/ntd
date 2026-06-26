@@ -44,6 +44,8 @@ export interface ActionToolbarProps<TId extends Key = number> {
   createLabel: string;
   createIcon?: ReactNode;
   onCreate?: () => void;
+  /** 隐藏新建按钮（比如把新建按钮放到页面标题栏时） */
+  hideCreate?: boolean;
 
   // —— 批量菜单（差异点 #2：每种模式不同） ——
   batchActions: BatchActionItem<TId>[];
@@ -186,7 +188,7 @@ function CreateButton({ label, icon, onClick }: CreateButtonProps) {
 export function ActionToolbar<TId extends Key = number>(props: ActionToolbarProps<TId>) {
   const {
     selectableIds, selectedIds, onSelectionChange,
-    createLabel, createIcon, onCreate,
+    createLabel, createIcon, onCreate, hideCreate,
     batchActions, batchLabel = '批量',
     hidden, className,
   } = props;
@@ -221,7 +223,7 @@ export function ActionToolbar<TId extends Key = number>(props: ActionToolbarProp
         batchActions={batchActions}
         batchLabel={batchLabel}
       />
-      <CreateButton label={createLabel} icon={createIcon} onClick={onCreate} />
+      {!hideCreate && <CreateButton label={createLabel} icon={createIcon} onClick={onCreate} />}
     </div>
   );
 }

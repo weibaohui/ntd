@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ReactNode, CSSProperties } from 'react';
 
 /**
  * 右侧页面卡片容器。
@@ -13,20 +13,32 @@ import type { ReactNode } from 'react';
  * @param title    - 页面标题文本
  * @param extra    - 标题栏右侧的操作按钮区域
  * @param children - 页面内容（渲染在横线下方）
+ * @param className - 自定义类名
+ * @param style - 自定义样式
+ * @param contentClassName - 内容区域自定义类名
+ * @param contentStyle - 内容区域自定义样式
  */
 export function PageCard({
   icon,
   title,
   extra,
   children,
+  className,
+  style,
+  contentClassName,
+  contentStyle,
 }: {
   icon?: ReactNode;
   title?: ReactNode;
   extra?: ReactNode;
   children: ReactNode;
+  className?: string;
+  style?: CSSProperties;
+  contentClassName?: string;
+  contentStyle?: CSSProperties;
 }) {
   return (
-    <div className="ntd-page-card">
+    <div className={`ntd-page-card ${className || ''}`} style={style}>
       {/* 顶部标题栏：图标 + 标题 + 操作按钮 */}
       <div className="ntd-page-card-header">
         <div className="ntd-page-card-title">
@@ -38,7 +50,7 @@ export function PageCard({
       {/* 横线分隔 */}
       <div className="ntd-page-card-divider" />
       {/* 内容区域 */}
-      <div className="ntd-page-card-content">
+      <div className={`ntd-page-card-content ${contentClassName || ''}`} style={contentStyle}>
         {children}
       </div>
     </div>

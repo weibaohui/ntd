@@ -22,6 +22,7 @@ interface TodoListProps {
   loopUpdateCount?: number;
   forcedListMode?: 'item' | 'loop';
   onListModeChange?: (mode: 'item' | 'loop') => void;
+  hideCreateButton?: boolean;
 }
 
 function SkeletonRow() {
@@ -39,7 +40,7 @@ function SkeletonList() {
 }
 
 export function TodoList(props: TodoListProps) {
-  const { onOpenCreateModal, onSelectTodo, onSelectLoop, onCreateLoop, loopUpdateCount, forcedListMode, onListModeChange } = props;
+  const { onOpenCreateModal, onSelectTodo, onSelectLoop, onCreateLoop, loopUpdateCount, forcedListMode, onListModeChange, hideCreateButton } = props;
   const { state, dispatch } = useApp();
   const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
   const { message } = AntApp.useApp();
@@ -465,6 +466,7 @@ export function TodoList(props: TodoListProps) {
           : onCreateLoop
         }
         batchActions={toolbarConfig.batchActions}
+        hideCreate={hideCreateButton}
       />
 
       {/* 标签过滤：环路模式下不显示，loop 不按 tag 过滤 */}
