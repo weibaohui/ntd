@@ -496,7 +496,7 @@ export function TodoDetail() {
 
       <Modal
         title={
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 4px' }}>
             <span style={{ fontWeight: 600 }}>执行历史</span>
             <Button
               type="text"
@@ -511,9 +511,11 @@ export function TodoDetail() {
         open={isHistoryFullscreen}
         onCancel={() => setIsHistoryFullscreen(false)}
         footer={null}
-        width="90vw"
-        style={{ top: 20 }}
-        styles={{ body: { padding: 0, height: 'calc(90vh - 60px)', overflow: 'hidden' } }}
+        width="100%"
+        style={{ top: 0, height: '100vh' }}
+        bodyStyle={{ padding: 0, height: 'calc(100vh - 55px)', overflow: 'hidden' }}
+        closable={false}
+        maskClosable
         destroyOnClose={false}
       >
         {records.length === 0 ? (
