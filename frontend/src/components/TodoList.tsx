@@ -123,6 +123,18 @@ export function TodoList(props: TodoListProps) {
     localStorage.setItem('ntd_list_mode', listMode);
   }, [listMode]);
 
+  // 进入环路列表且加载完成后，若未选中任何 loop，自动选中第一个。
+  // 目的是让右侧直接展示环路详情而不显示空白仪表盘。
+  useEffect(() => {
+    if (listMode !== 'loop') return;
+    if (loopLoading) return;
+    if (selectedLoopId !== null) return;
+    if (loopList.length === 0) return;
+    const firstId = loopList[0].id;
+    setSelectedLoopId(firstId);
+    onSelectLoop?.(firstId);
+  }, [listMode, loopLoading, loopList, selectedLoopId, onSelectLoop]);
+
   // 向壳层同步当前列表模式，便于左侧主导航高亮与全局路由状态保持一致。
   useEffect(() => {
     onListModeChange?.(listMode);
@@ -132,6 +144,7 @@ export function TodoList(props: TodoListProps) {
   // 但语义不同（同一数字可能指向不同实体），跨模式保留选择会让用户困惑。
   useEffect(() => {
     setSelectedIds([]);
+    setSelectedLoopId(null);
   }, [listMode]);
 
   // 切换单条 id 的选中态（toggle 语义，工具栏的「全选」用 onSelectionChange 全量覆盖）

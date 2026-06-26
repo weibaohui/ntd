@@ -243,6 +243,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
         items={tabItems}
         type="card"
         size="small"
+        tabPosition="left"
         activeKey={activeTab}
         onChange={handleTabChange}
       />

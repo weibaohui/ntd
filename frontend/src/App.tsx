@@ -250,15 +250,27 @@ function AppContent() {
   /**
    * 切换到“事项/环路”这类列表型入口。
    * 目标：在桌面端保持三栏结构（左主导航 + 中间列表 + 右工作区），移动端回到列表面板。
+   * 进入后自动选中第一项，让右侧直接展示详情，避免显示空白仪表盘页。
    */
   const showListSection = useCallback((mode: 'item' | 'loop') => {
+    // 先清除旧选择，再设置新的列表模式
     setSelectedLoopId(null);
     dispatch({ type: 'SELECT_TODO', payload: null });
     clearSelection();
     setForcedListMode(mode);
     setActiveNavKey(mode === 'loop' ? 'loops' : 'items');
     backToList();
-  }, [backToList, clearSelection, dispatch]);
+
+    // 自动选中第一项：事项模式选中第一个 todo，环路模式由 TodoList 加载后自动选中第一项
+    if (mode === 'item') {
+      const todos = state.todos;
+      if (todos.length > 0) {
+        const firstId = todos[0].id;
+        dispatch({ type: 'SELECT_TODO', payload: firstId });
+        selectTodo(firstId);
+      }
+    }
+  }, [backToList, clearSelection, dispatch, state.todos, selectTodo]);
 
   /**
    * 左侧主导航点击处理（桌面侧栏/移动抽屉共用）。
