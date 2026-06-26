@@ -22,6 +22,8 @@ pub struct Model {
     pub is_history: Option<bool>,
     pub fetch_time: Option<String>,
     pub created_at: Option<String>,
+    /// 消息接收时，智能体所属的工作空间 ID
+    pub workspace_id: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

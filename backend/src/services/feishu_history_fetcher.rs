@@ -225,6 +225,9 @@ impl FeishuHistoryFetcher {
             _ => None,
         };
 
+        // 获取 bot 所属的 workspace_id，保存到消息记录中
+        let workspace_id = self.ctx.db.get_agent_bot_workspace_id(bot_id).await.unwrap_or(None);
+
         let mut total_fetched = 0;
         let mut page_token: Option<String> = None;
         let mut has_more = true;
@@ -321,6 +324,7 @@ impl FeishuHistoryFetcher {
                             content: content.as_deref(),
                             msg_type: &item.msg_type,
                             created_at: &created_at,
+                            workspace_id,
                         })
                         .await
                     {

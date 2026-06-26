@@ -38,6 +38,8 @@ pub struct HistoryMessageItem {
     pub processed_todo_id: Option<i64>,
     pub execution_record_id: Option<i64>,
     pub created_at: Option<String>,
+    /// 消息接收时，智能体所属的工作空间 ID
+    pub workspace_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,6 +93,7 @@ pub async fn get_history_messages(
             processed_todo_id: m.processed_todo_id,
             execution_record_id: m.execution_record_id,
             created_at: m.created_at,
+            workspace_id: m.workspace_id,
         })
         .collect();
 

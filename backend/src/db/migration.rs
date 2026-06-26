@@ -823,7 +823,7 @@ async fn add_legacy_todos_columns(db: &Database) -> Result<(), sea_orm::DbErr> {
 }
 
 /// feishu_messages 历史追加列:4 条走 `ADD COLUMN IF NOT EXISTS`(SQLite 3.35+),
-/// 2 条(processed_todo_id / execution_record_id)在 IF NOT EXISTS 失败时回退。
+/// 3 条(processed_todo_id / execution_record_id / workspace_id)在 IF NOT EXISTS 失败时回退。
 async fn add_legacy_feishu_messages_columns(db: &Database) -> Result<(), sea_orm::DbErr> {
     const IF_NOT_EXISTS_COLS: &[&str] = &[
         "ALTER TABLE feishu_messages ADD COLUMN IF NOT EXISTS sender_nickname TEXT",
@@ -845,6 +845,12 @@ async fn add_legacy_feishu_messages_columns(db: &Database) -> Result<(), sea_orm
         db,
         "ALTER TABLE feishu_messages ADD COLUMN IF NOT EXISTS execution_record_id INTEGER",
         "ALTER TABLE feishu_messages ADD COLUMN execution_record_id INTEGER",
+    )
+    .await?;
+    add_column_with_fallback(
+        db,
+        "ALTER TABLE feishu_messages ADD COLUMN IF NOT EXISTS workspace_id INTEGER",
+        "ALTER TABLE feishu_messages ADD COLUMN workspace_id INTEGER",
     )
     .await
 }

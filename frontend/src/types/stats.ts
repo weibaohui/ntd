@@ -192,6 +192,7 @@ export interface FeishuHistoryMessage {
   processed_todo_id: number | null;
   execution_record_id: number | null;
   created_at: string | null;
+  workspace_id: number | null;
 }
 
 export interface FeishuHistoryMessagesPage {

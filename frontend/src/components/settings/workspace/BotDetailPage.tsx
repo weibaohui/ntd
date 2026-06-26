@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Card, Button, Switch, Input, Select, Tag, message, List, Modal, Typography, AutoComplete } from 'antd';
+import { Card, Button, Switch, Input, Select, Tag, message, Modal, Typography, AutoComplete, Table } from 'antd';
 import { LeftOutlined, CopyOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import type { AgentBot, FeishuPushStatus, WhitelistEntry, FeishuSenderItem } from '@/utils/database';
@@ -34,7 +34,7 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyTotal, setHistoryTotal] = useState(0);
   const [historyPage, setHistoryPage] = useState(1);
-  const [historyPageSize] = useState(20);
+  const [historyPageSize, setHistoryPageSize] = useState(20);
   const [historySelectedChatId, setHistorySelectedChatId] = useState<string | undefined>(undefined);
   const [historyIsHistory, setHistoryIsHistory] = useState<boolean | undefined>(undefined);
   const [historySelectedSenderId] = useState<string | undefined>(undefined);
@@ -191,30 +191,138 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
             />
           </div>
 
-          <List
-            loading={historyLoading}
+          <Table
             dataSource={historyMessages}
-            locale={{ emptyText: '暂无消息记录' }}
-            renderItem={msg => (
-              <List.Item key={msg.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--color-border-light)' }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 4 }}>
-                    <span style={{ fontWeight: 500 }}>{msg.sender_nickname || msg.sender_open_id}</span>
-                    <span style={{ marginLeft: 8 }}>{msg.created_at ? new Date(msg.created_at).toLocaleString() : ''}</span>
-                    {msg.is_history && <Tag style={{ marginLeft: 8 }}>历史</Tag>}
-                  </div>
-                  <div style={{ fontSize: 13 }}>{msg.content}</div>
-                </div>
-                <Button size="small" type="link" onClick={() => setHistoryViewMsg(msg.content || '')}>详情</Button>
-              </List.Item>
-            )}
+            rowKey="id"
+            loading={historyLoading}
+            size="small"
+            scroll={{ x: 'max-content' }}
+            pagination={{
+              current: historyPage,
+              pageSize: historyPageSize,
+              total: historyTotal,
+              showSizeChanger: true,
+              showQuickJumper: true,
+              showTotal: (t: number) => `共 ${t} 条`,
+              onChange: (p, ps) => { setHistoryPage(p); setHistoryPageSize(ps || 20); },
+            }}
+            columns={[
+              {
+                title: '时间',
+                dataIndex: 'created_at',
+                key: 'created_at',
+                width: 150,
+                render: (text: string) => {
+                  if (!text) return '-';
+                  const d = new Date(text);
+                  return isNaN(d.getTime()) ? text : d.toLocaleString('zh-CN');
+                },
+              },
+              {
+                title: '来源',
+                key: 'source',
+                width: 80,
+                render: (_, record) => (
+                  <Tag color={record.is_history ? 'orange' : 'cyan'}>
+                    {record.is_history ? '历史' : '实时'}
+                  </Tag>
+                ),
+              },
+              {
+                title: '发送者',
+                key: 'sender',
+                width: 160,
+                render: (_, record) => {
+                  const isBot = record.sender_type === 'app';
+                  return (
+                    <span style={{ fontSize: 12 }}>
+                      <Tag color={isBot ? 'blue' : 'green'}>
+                        {isBot ? '智能体' : '用户'}
+                      </Tag>
+                      {record.sender_nickname || record.sender_open_id?.slice(0, 8) || '-'}
+                    </span>
+                  );
+                },
+              },
+              {
+                title: '内容',
+                dataIndex: 'content',
+                key: 'content',
+                width: 200,
+                render: (content: string, record) => {
+                  let text: string;
+                  if (record.msg_type === 'text') {
+                    try {
+                      const parsed = JSON.parse(content);
+                      text = parsed.text || content;
+                    } catch {
+                      text = content || '';
+                    }
+                  } else {
+                    return <Tag>{record.msg_type}</Tag>;
+                  }
+                  const MAX = 40;
+                  const truncated = text.length > MAX ? text.slice(0, MAX) + '...' : text;
+                  return (
+                    <span
+                      style={{ cursor: 'pointer', fontSize: 12 }}
+                      onClick={() => setHistoryViewMsg(text)}
+                    >
+                      {truncated}
+                    </span>
+                  );
+                },
+              },
+              {
+                title: '处理状态',
+                key: 'processed',
+                width: 90,
+                render: (_, record) => (
+                  record.processed ? (
+                    <Tag color="green">已处理</Tag>
+                  ) : (
+                    <Tag color="default">未处理</Tag>
+                  )
+                ),
+              },
+              {
+                title: '触发Todo',
+                key: 'processed_todo_id',
+                width: 80,
+                render: (_, record) => (
+                  record.processed_todo_id ? (
+                    <Typography.Text style={{ fontSize: 12 }}>#{record.processed_todo_id}</Typography.Text>
+                  ) : (
+                    <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>-</span>
+                  )
+                ),
+              },
+              {
+                title: '执行记录',
+                key: 'execution_record_id',
+                width: 80,
+                render: (_, record) => (
+                  record.execution_record_id ? (
+                    <Typography.Text style={{ fontSize: 12 }}>#{record.execution_record_id}</Typography.Text>
+                  ) : (
+                    <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>-</span>
+                  )
+                ),
+              },
+              {
+                title: '工作空间',
+                key: 'workspace_id',
+                width: 80,
+                render: (_, record) => (
+                  record.workspace_id ? (
+                    <Typography.Text style={{ fontSize: 12 }}>#{record.workspace_id}</Typography.Text>
+                  ) : (
+                    <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>-</span>
+                  )
+                ),
+              },
+            ]}
           />
-
-          <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <Button size="small" disabled={historyPage <= 1} onClick={() => setHistoryPage(p => p - 1)}>上一页</Button>
-            <span style={{ fontSize: 12, lineHeight: '24px' }}>第 {historyPage} 页，共 {historyTotal} 条</span>
-            <Button size="small" disabled={historyPage * historyPageSize >= historyTotal} onClick={() => setHistoryPage(p => p + 1)}>下一页</Button>
-          </div>
         </Card>
       )}
 

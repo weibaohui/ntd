@@ -221,7 +221,9 @@ impl FeishuListener {
         let is_mention = !msg.mentioned_open_ids.is_empty();
         let content = msg.content.trim();
         // 持久化是 audit 用途，失败仅记录；不影响主流程决策
-        Self::persist_inbound_message(context.db, context.bot_id, msg, chat_type, is_mention).await;
+        // workspace_id 在消息接收时确定，记录该 bot 所属的工作空间
+        let workspace_id = context.db.get_agent_bot_workspace_id(context.bot_id).await.unwrap_or(None);
+        Self::persist_inbound_message(context.db, context.bot_id, msg, chat_type, is_mention, workspace_id).await;
         let reaction_id = Self::add_processing_reaction(
             context.credentials, context.token_manager, context.bot_id, &msg.id,
         ).await;
@@ -235,6 +237,7 @@ impl FeishuListener {
         msg: &ChannelMessage,
         chat_type: &str,
         is_mention: bool,
+        workspace_id: Option<i64>,
     ) {
         db.save_feishu_message(NewFeishuMessage {
             bot_id,
@@ -246,6 +249,7 @@ impl FeishuListener {
             content: Some(&msg.content),
             msg_type: "text",
             is_mention,
+            workspace_id,
         })
         .await
         .ok();

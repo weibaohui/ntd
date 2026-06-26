@@ -26,6 +26,7 @@ pub struct FeishuMessageRecord {
     pub is_history: bool,
     pub fetch_time: Option<String>,
     pub created_at: Option<String>,
+    pub workspace_id: Option<i64>,
 }
 
 pub struct NewFeishuMessage<'a> {
@@ -38,6 +39,8 @@ pub struct NewFeishuMessage<'a> {
     pub content: Option<&'a str>,
     pub msg_type: &'a str,
     pub is_mention: bool,
+    /// 消息接收时，智能体所属的工作空间 ID
+    pub workspace_id: Option<i64>,
 }
 
 pub struct NewFeishuHistoryMessage<'a> {
@@ -51,6 +54,8 @@ pub struct NewFeishuHistoryMessage<'a> {
     pub content: Option<&'a str>,
     pub msg_type: &'a str,
     pub created_at: &'a str,
+    /// 消息接收时，智能体所属的工作空间 ID
+    pub workspace_id: Option<i64>,
 }
 
 impl Database {
@@ -74,6 +79,7 @@ impl Database {
             is_history: ActiveValue::Set(Some(false)),
             fetch_time: ActiveValue::Set(None),
             created_at: ActiveValue::Set(Some(now)),
+            workspace_id: ActiveValue::Set(message.workspace_id),
             ..Default::default()
         };
         let inserted = am.insert(&self.conn).await?;
@@ -100,6 +106,7 @@ impl Database {
             is_history: ActiveValue::Set(Some(true)),
             fetch_time: ActiveValue::Set(Some(now)),
             created_at: ActiveValue::Set(Some(message.created_at.to_string())),
+            workspace_id: ActiveValue::Set(message.workspace_id),
             ..Default::default()
         };
         let inserted = am.insert(&self.conn).await?;
@@ -138,6 +145,7 @@ impl Database {
                 is_history: m.is_history.unwrap_or(false),
                 fetch_time: m.fetch_time,
                 created_at: m.created_at,
+                workspace_id: m.workspace_id,
             })
             .collect())
     }
@@ -194,6 +202,7 @@ impl Database {
                 is_history: m.is_history.unwrap_or(false),
                 fetch_time: m.fetch_time,
                 created_at: m.created_at,
+                workspace_id: m.workspace_id,
             })
             .collect();
 
