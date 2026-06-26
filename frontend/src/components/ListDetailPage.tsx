@@ -29,7 +29,7 @@ export function ListDetailPage({
     try {
       return localStorage.getItem(storageKey) === 'true';
     } catch {
-      return false;
+      return true; // 默认展开
     }
   });
 
@@ -81,17 +81,49 @@ export function ListDetailPage({
       <div
         className="list-detail-page-sidebar"
         style={{
-          width: sidebarCollapsed ? 0 : SIDEBAR_WIDTH.desktop,
+          width: sidebarCollapsed ? 16 : SIDEBAR_WIDTH.desktop,
           flexShrink: 0,
           height: '100%',
           overflow: 'hidden',
-          borderRight: sidebarCollapsed ? 'none' : '1px solid var(--color-border-light)',
-          transition: 'width 0.2s ease, border-right-width 0.2s ease',
+          transition: 'width 0.2s ease',
+          cursor: sidebarCollapsed ? 'pointer' : 'ew-resize',
+          position: 'relative',
+          background: sidebarCollapsed ? 'var(--color-bg-elevated)' : undefined,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
         }}
+        onClick={sidebarCollapsed ? toggleSidebar : undefined}
+        title={sidebarCollapsed ? '点击展开列表' : undefined}
       >
-        <div style={{ width: SIDEBAR_WIDTH.desktop, height: '100%' }}>
-          {listPanel}
-        </div>
+        {!sidebarCollapsed && (
+          <div style={{ width: SIDEBAR_WIDTH.desktop, height: '100%', overflow: 'hidden' }}>
+            {listPanel}
+          </div>
+        )}
+        {sidebarCollapsed && (
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 4,
+              opacity: 0.4,
+            }}
+          >
+            {[...Array(3)].map((_, i) => (
+              <div
+                key={i}
+                style={{
+                  width: 4,
+                  height: 4,
+                  borderRadius: '50%',
+                  background: 'var(--color-text-tertiary)',
+                }}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       <div
