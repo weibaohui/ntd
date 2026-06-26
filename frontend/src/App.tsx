@@ -23,6 +23,8 @@ import { LoopDetailPanel } from './components/LoopStudioDetailPanel';
 import { LoopFormModal } from './components/LoopFormModal';
 import { LeftRail, type LeftRailKey } from './components/shell/LeftRail';
 import { EmptyDetailPlaceholder } from './components/EmptyDetailPlaceholder';
+import { PageCard } from './components/common/PageCard';
+import { UnorderedListOutlined, RetweetOutlined } from '@ant-design/icons';
 
 import * as dbLoops from './utils/database/loops';
 import { EXECUTION_PANEL, LEFT_RAIL_WIDTH, SIDEBAR_WIDTH } from './constants';
@@ -375,126 +377,238 @@ function AppContent() {
             transition: 'height 0.3s ease, padding-bottom 0.3s ease',
           }}
         >
-          {/* 中间列表面板：仅在「事项」或「环路」导航选中时显示；
-              仪表盘/看板/配置等页面由右侧面板独占，不需要中间列表 */}
-          <div
-            className={(!isMobile || effectiveMobilePanel === 'list') ? 'animate-fade-in' : ''}
-            style={{
-              width: isMobile ? SIDEBAR_WIDTH.mobile : SIDEBAR_WIDTH.desktop,
-              flexShrink: 0,
-              height: '100%',
-              display: isMobile
-                ? (effectiveMobilePanel === 'list' ? 'block' : 'none')
-                : (activeView === 'items' || activeView === 'loops' ? 'block' : 'none'),
-            }}
-          >
-            <TodoList
-              onOpenCreateModal={() => setTodoModalOpen(true)}
-              onSelectTodo={(todoId) => {
-                handleSelectTodo(todoId);
-              }}
-              loopUpdateCount={loopUpdateCount}
-              onSelectLoop={(loopId) => {
-                handleSelectLoop(loopId);
-              }}
-              onCreateLoop={() => {
-                // 打开 LoopFormModal 创建模式，用户填写完整信息后创建环路
-                setLoopCreateModalOpen(true);
-              }}
-              forcedListMode={forcedListMode}
-              onListModeChange={() => {
-                setForcedListMode(undefined);
-              }}
-            />
-          </div>
+          {/* 事项 / 环路视图：左右两栏统一包裹在 PageCard 中 */}
+          {(activeView === 'items' || activeView === 'loops') && !isMobile && (
+            <PageCard
+              icon={activeView === 'items' ? <UnorderedListOutlined /> : <RetweetOutlined />}
+              title={activeView === 'items' ? '事项' : '环路'}
+              className="todo-view-page-card"
+              style={{ height: '100%', flex: 1, minWidth: 0 }}
+              contentStyle={{ padding: 0, display: 'flex', flexDirection: 'row', height: 'calc(100% - 49px)' }}
+            >
+              {/* 左侧列表 */}
+              <div
+                className={effectiveMobilePanel === 'list' ? 'animate-fade-in' : ''}
+                style={{
+                  width: SIDEBAR_WIDTH.desktop,
+                  flexShrink: 0,
+                  height: '100%',
+                  borderRight: '1px solid var(--color-border-light)',
+                }}
+              >
+                <TodoList
+                  onOpenCreateModal={() => setTodoModalOpen(true)}
+                  onSelectTodo={(todoId) => {
+                    handleSelectTodo(todoId);
+                  }}
+                  loopUpdateCount={loopUpdateCount}
+                  onSelectLoop={(loopId) => {
+                    handleSelectLoop(loopId);
+                  }}
+                  onCreateLoop={() => {
+                    setLoopCreateModalOpen(true);
+                  }}
+                  forcedListMode={forcedListMode}
+                  onListModeChange={() => {
+                    setForcedListMode(undefined);
+                  }}
+                />
+              </div>
 
-          {/* Right Workspace */}
-          <div
-            className={(!isMobile || effectiveMobilePanel === 'detail') ? 'animate-slide-in-right' : ''}
-            style={{
-              flex: 1,
-              // 允许右侧工作区在 flex 布局中收缩到可视区宽度内，
-              // 避免内部横向内容把整个页面主容器反向撑宽。
-              minWidth: 0,
-              height: '100%',
-              overflow: 'hidden',
-              display: !isMobile || effectiveMobilePanel === 'detail' ? 'block' : 'none',
-            }}
-          >
-            {state.selectedTodoId ? (
-              <TodoDetail />
-            ) : selectedLoopId !== null ? (
-              <LoopDetailPanel
-                loopId={selectedLoopId}
-                tags={state.tags}
-                onTrigger={async () => {
-                  try {
-                    const res = await dbLoops.triggerLoop(selectedLoopId);
-                    message.success(`已触发 (execution #${res.execution_id})`);
-                  } catch (err) {
-                    message.error(`触发失败: ${err instanceof Error ? err.message : '未知错误'}`);
-                  }
+              {/* 右侧详情 */}
+              <div
+                className={effectiveMobilePanel === 'detail' ? 'animate-slide-in-right' : ''}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  height: '100%',
+                  overflow: 'hidden',
+                  padding: 16,
                 }}
-                onDuplicate={async () => {
-                  try {
-                    await dbLoops.duplicateLoop(selectedLoopId);
-                    message.success('已复制');
-                  } catch (err) {
-                    message.error(`复制失败: ${err instanceof Error ? err.message : '未知错误'}`);
-                  }
+              >
+                {state.selectedTodoId ? (
+                  <TodoDetail />
+                ) : selectedLoopId !== null ? (
+                  <LoopDetailPanel
+                    loopId={selectedLoopId}
+                    tags={state.tags}
+                    onTrigger={async () => {
+                      try {
+                        const res = await dbLoops.triggerLoop(selectedLoopId);
+                        message.success(`已触发 (execution #${res.execution_id})`);
+                      } catch (err) {
+                        message.error(`触发失败: ${err instanceof Error ? err.message : '未知错误'}`);
+                      }
+                    }}
+                    onDuplicate={async () => {
+                      try {
+                        await dbLoops.duplicateLoop(selectedLoopId);
+                        message.success('已复制');
+                      } catch (err) {
+                        message.error(`复制失败: ${err instanceof Error ? err.message : '未知错误'}`);
+                      }
+                    }}
+                    onDelete={async () => {
+                      try {
+                        await dbLoops.deleteLoop(selectedLoopId);
+                        message.success('已删除');
+                        setLoopUpdateCount(c => c + 1);
+                      } catch (err) {
+                        message.error('删除失败，环路可能正在被引用');
+                      }
+                    }}
+                    onToggleStatus={async () => {
+                      try {
+                        const loops = await dbLoops.listLoops();
+                        const loop = loops.find(l => l.id === selectedLoopId);
+                        if (!loop) return;
+                        const next = loop.status === 'enabled' ? 'paused' : 'enabled';
+                        await dbLoops.updateLoopStatus(selectedLoopId, { status: next } as any);
+                        message.success(`已${next === 'enabled' ? '启用' : '暂停'}`);
+                      } catch (err) {
+                        message.error(`状态切换失败: ${err instanceof Error ? err.message : '未知错误'}`);
+                      }
+                    }}
+                    onChanged={() => {
+                      setLoopUpdateCount(c => c + 1);
+                    }}
+                  />
+                ) : activeView === 'items' ? (
+                  <EmptyDetailPlaceholder />
+                ) : (
+                  <EmptyDetailPlaceholder />
+                )}
+              </div>
+            </PageCard>
+          )}
+
+          {/* 移动端：事项 / 环路视图（单列切换） */}
+          {(activeView === 'items' || activeView === 'loops') && isMobile && (
+            <>
+              <div
+                className={effectiveMobilePanel === 'list' ? 'animate-fade-in' : ''}
+                style={{
+                  width: SIDEBAR_WIDTH.mobile,
+                  flexShrink: 0,
+                  height: '100%',
+                  display: effectiveMobilePanel === 'list' ? 'block' : 'none',
                 }}
-                onDelete={async () => {
-                  try {
-                    await dbLoops.deleteLoop(selectedLoopId);
-                    message.success('已删除');
-                    setLoopUpdateCount(c => c + 1);
-                  } catch (err) {
-                    message.error('删除失败，环路可能正在被引用');
-                  }
+              >
+                <TodoList
+                  onOpenCreateModal={() => setTodoModalOpen(true)}
+                  onSelectTodo={(todoId) => {
+                    handleSelectTodo(todoId);
+                  }}
+                  loopUpdateCount={loopUpdateCount}
+                  onSelectLoop={(loopId) => {
+                    handleSelectLoop(loopId);
+                  }}
+                  onCreateLoop={() => {
+                    setLoopCreateModalOpen(true);
+                  }}
+                  forcedListMode={forcedListMode}
+                  onListModeChange={() => {
+                    setForcedListMode(undefined);
+                  }}
+                />
+              </div>
+              <div
+                className={effectiveMobilePanel === 'detail' ? 'animate-slide-in-right' : ''}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  height: '100%',
+                  overflow: 'hidden',
+                  display: effectiveMobilePanel === 'detail' ? 'block' : 'none',
                 }}
-                onToggleStatus={async () => {
-                  try {
-                    const loops = await dbLoops.listLoops();
-                    const loop = loops.find(l => l.id === selectedLoopId);
-                    if (!loop) return;
-                    const next = loop.status === 'enabled' ? 'paused' : 'enabled';
-                    await dbLoops.updateLoopStatus(selectedLoopId, { status: next } as any);
-                    message.success(`已${next === 'enabled' ? '启用' : '暂停'}`);
-                  } catch (err) {
-                    message.error(`状态切换失败: ${err instanceof Error ? err.message : '未知错误'}`);
-                  }
-                }}
-                onChanged={() => {
-                  setLoopUpdateCount(c => c + 1);
-                }}
-              />
-            ) : activeView === 'runtime' ? (
-              // 运行管理 — 独立页面（非设置内嵌标签页）
-              <RuntimePanel
-                executorDisplayNames={runtimeExecutorDisplayNames}
-              />
-            ) : activeView === 'skills' ? (
-              <SkillsPanel />
-            ) : activeView === 'projectDirectories' ? (
-              <ProjectDirectoriesPanel />
-            ) : activeView === 'sessions' ? (
-              <SessionManager />
-            ) : activeView === 'executors' ? (
-              <ExecutorsPanel />
-            ) : activeView === 'settings' ? (
-              <SettingsPage />
-            ) : activeView === 'memorial' ? (
-              <MemorialBoard />
-            ) : activeView === 'items' ? (
-              // 事项视图但未选中具体条目：展示静态占位区域
-              <EmptyDetailPlaceholder />
-            ) : activeView === 'loops' ? (
-              // 环路视图但未选中具体环路：展示静态占位区域
-              <EmptyDetailPlaceholder />
-            ) : (
-              <Dashboard />
-            )}
-          </div>
+              >
+                {state.selectedTodoId ? (
+                  <TodoDetail />
+                ) : selectedLoopId !== null ? (
+                  <LoopDetailPanel
+                    loopId={selectedLoopId}
+                    tags={state.tags}
+                    onTrigger={async () => {
+                      try {
+                        const res = await dbLoops.triggerLoop(selectedLoopId);
+                        message.success(`已触发 (execution #${res.execution_id})`);
+                      } catch (err) {
+                        message.error(`触发失败: ${err instanceof Error ? err.message : '未知错误'}`);
+                      }
+                    }}
+                    onDuplicate={async () => {
+                      try {
+                        await dbLoops.duplicateLoop(selectedLoopId);
+                        message.success('已复制');
+                      } catch (err) {
+                        message.error(`复制失败: ${err instanceof Error ? err.message : '未知错误'}`);
+                      }
+                    }}
+                    onDelete={async () => {
+                      try {
+                        await dbLoops.deleteLoop(selectedLoopId);
+                        message.success('已删除');
+                        setLoopUpdateCount(c => c + 1);
+                      } catch (err) {
+                        message.error('删除失败，环路可能正在被引用');
+                      }
+                    }}
+                    onToggleStatus={async () => {
+                      try {
+                        const loops = await dbLoops.listLoops();
+                        const loop = loops.find(l => l.id === selectedLoopId);
+                        if (!loop) return;
+                        const next = loop.status === 'enabled' ? 'paused' : 'enabled';
+                        await dbLoops.updateLoopStatus(selectedLoopId, { status: next } as any);
+                        message.success(`已${next === 'enabled' ? '启用' : '暂停'}`);
+                      } catch (err) {
+                        message.error(`状态切换失败: ${err instanceof Error ? err.message : '未知错误'}`);
+                      }
+                    }}
+                    onChanged={() => {
+                      setLoopUpdateCount(c => c + 1);
+                    }}
+                  />
+                ) : activeView === 'items' ? (
+                  <EmptyDetailPlaceholder />
+                ) : (
+                  <EmptyDetailPlaceholder />
+                )}
+              </div>
+            </>
+          )}
+
+          {/* 非事项/环路视图：右侧独占 */}
+          {(activeView !== 'items' && activeView !== 'loops') && (
+            <div
+              style={{
+                flex: 1,
+                minWidth: 0,
+                height: '100%',
+                overflow: 'hidden',
+              }}
+            >
+              {activeView === 'runtime' ? (
+                <RuntimePanel
+                  executorDisplayNames={runtimeExecutorDisplayNames}
+                />
+              ) : activeView === 'skills' ? (
+                <SkillsPanel />
+              ) : activeView === 'projectDirectories' ? (
+                <ProjectDirectoriesPanel />
+              ) : activeView === 'sessions' ? (
+                <SessionManager />
+              ) : activeView === 'executors' ? (
+                <ExecutorsPanel />
+              ) : activeView === 'settings' ? (
+                <SettingsPage />
+              ) : activeView === 'memorial' ? (
+                <MemorialBoard />
+              ) : (
+                <Dashboard />
+              )}
+            </div>
+          )}
         </Content>
       </Layout>
 

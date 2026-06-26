@@ -1,9 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useApp } from '@/hooks/useApp';
 import { Empty, Input, Skeleton, Checkbox, Modal, App as AntApp } from 'antd';
-import { ClockCircleOutlined, InboxOutlined, SearchOutlined, SwapOutlined, StopOutlined, UnorderedListOutlined, RetweetOutlined } from '@ant-design/icons';
+import { ClockCircleOutlined, InboxOutlined, SearchOutlined, SwapOutlined, StopOutlined } from '@ant-design/icons';
 import { StatusPicker } from './StatusPicker';
-import { PageCard } from './common/PageCard';
 import * as db from '@/utils/database';
 import type { ProjectDirectory, Todo } from '@/types';
 import { ExecutorBadge } from './ExecutorBadge';
@@ -430,25 +429,14 @@ export function TodoList(props: TodoListProps) {
 
   if (isLoading) {
     return (
-      <PageCard
-        icon={<UnorderedListOutlined />}
-        title="事项"
-        contentStyle={{ padding: 0 }}
-        style={{ height: '100%' }}
-      >
+      <div className="todo-list-container">
         <SkeletonList />
-      </PageCard>
+      </div>
     );
   }
 
   return (
-    <PageCard
-      icon={listMode === 'item' ? <UnorderedListOutlined /> : <RetweetOutlined />}
-      title={listMode === 'item' ? '事项' : '环路'}
-      className="todo-list-page-card"
-      contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column' }}
-      style={{ height: '100%' }}
-    >
+    <div className="todo-list-container">
       {/* 搜索框：两种模式都展示（用户反馈：环路原本没有，切换时会跳界面）。
           placeholder 按 listMode 切换，关键词同时匹配事项标题/提示词、环路名称。 */}
       <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
@@ -580,6 +568,6 @@ export function TodoList(props: TodoListProps) {
           （强停功能开发中，详见 utils/database/loops.ts 的 forceStopLoops 注释。）
         </p>
       </Modal>
-    </PageCard>
+    </div>
   );
 }
