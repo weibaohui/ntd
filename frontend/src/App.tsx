@@ -273,9 +273,19 @@ function AppContent() {
 
   return (
     <Layout style={{ height: '100vh', flexDirection: isMobile ? 'column' : 'row' }}>
-      {/* Mobile Header with Hamburger Menu */}
+      {/* Mobile Header with Back Button + Hamburger Menu */}
       {isMobile && (
         <div className="mobile-header">
+          {selectedId !== null ? (
+            // 有选中项时显示返回按钮，回到列表视图
+            <button
+              className="mobile-header-menu-btn"
+              onClick={backToList}
+              aria-label="返回列表"
+            >
+              <LeftOutlined />
+            </button>
+          ) : null}
           <button
             className="mobile-header-menu-btn"
             onClick={() => setNavDrawerOpen(true)}
@@ -507,9 +517,9 @@ function AppContent() {
                 <SessionManager />
               </PageCard>
             ) : activeView === 'settings' ? (
-              <SettingsPage onBack={isMobile ? backToList : undefined} />
+              <SettingsPage />
             ) : activeView === 'memorial' ? (
-              <MemorialBoard onBack={isMobile ? backToList : undefined} />
+              <MemorialBoard />
             ) : activeView === 'items' ? (
               // 事项视图但未选中具体条目：展示空白区域
               <div />
@@ -533,7 +543,7 @@ function AppContent() {
                 }}
               />
             ) : (
-              <Dashboard onBack={isMobile ? backToList : undefined} />
+              <Dashboard />
             )}
           </div>
         </Content>

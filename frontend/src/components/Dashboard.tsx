@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Card, Table, Badge, Tag, Empty, Masonry, App, Button } from 'antd';
+import { Card, Table, Badge, Tag, Empty, Masonry, App } from 'antd';
 import {
-  LeftOutlined,
   ThunderboltOutlined,
   DashboardOutlined,
 } from '@ant-design/icons';
@@ -27,7 +26,7 @@ import {
 } from './dashboard/ChartCards';
 import { ActiveTasksCard, LeaderboardCard, ShareCardPanel, TimeRangeSelector } from './dashboard/SpecialCards';
 
-export function Dashboard({ onBack }: { onBack?: () => void }) {
+export function Dashboard() {
   const { state } = useApp();
   const { message } = App.useApp();
   const { todos, tags, runningTasks } = state;
@@ -198,11 +197,6 @@ export function Dashboard({ onBack }: { onBack?: () => void }) {
     <PageCard
       icon={<DashboardOutlined />}
       title="仪表盘"
-      extra={
-        onBack ? (
-          <Button type="text" size="small" icon={<LeftOutlined />} onClick={onBack} aria-label="返回" />
-        ) : undefined
-      }
     >
       <div style={{ padding: '16px 20px', background: 'var(--color-bg-layout)' }}>
         <style>{`

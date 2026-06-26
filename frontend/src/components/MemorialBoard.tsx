@@ -1,9 +1,8 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Card, Segmented, Skeleton, Empty, Button, Input, Select } from 'antd';
+import { Card, Segmented, Skeleton, Empty, Input, Select } from 'antd';
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
-  LeftOutlined,
   AppstoreOutlined,
   ProfileOutlined,
   SearchOutlined,
@@ -32,16 +31,12 @@ const TIME_OPTIONS: { label: string; value: number }[] = [
   { label: '7d', value: 168 },
 ];
 
-interface MemorialBoardProps {
-  onBack?: () => void;
-}
-
 // 看板模式类型：支持四种视图切换。
 // 为什么新增 loop_kanban：环路执行历史需要独立视图，与 todo 维度的看板互补。
 // 设计取舍：复用同一个 Segmented 切换，避免多入口导航混乱。
 type BoardMode = 'memorial' | 'kanban' | 'running' | 'loop_kanban';
 
-export function MemorialBoard({ onBack }: MemorialBoardProps) {
+export function MemorialBoard() {
   const { state, dispatch } = useApp();
   const [boardMode, setBoardMode] = useState<BoardMode>('memorial');
   const [items, setItems] = useState<RecentCompletedTodo[]>([]);
@@ -366,15 +361,6 @@ export function MemorialBoard({ onBack }: MemorialBoardProps) {
       title="看板"
       extra={
         <>
-          {onBack && (
-            <Button
-              type="text"
-              size="small"
-              icon={<LeftOutlined />}
-              onClick={onBack}
-              aria-label="返回"
-            />
-          )}
           {/* 视图模式切换：四种视图平铺展示。
               为什么新增"环路看板"选项：
               - memorial：按完成时间聚合 todo 的执行结论，适合快速回顾成果
