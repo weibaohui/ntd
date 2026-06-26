@@ -29,6 +29,10 @@
   --color-border: #e2e8f0;
   --color-border-light: #f1f5f9;
 
+  /* 卡片及三级背景 */
+  --color-bg-card: #f8fafc;
+  --color-bg-tertiary: #f1f5f9;
+
   --color-text: #0f172a;
   --color-text-secondary: #475569;
   --color-text-tertiary: #94a3b8;
@@ -104,11 +108,21 @@
 
   /* Base surfaces - Catppuccin Mocha */
   --color-bg: #11111b;
-  --color-bg-layout: #11111b;
+  --color-bg-layout: #1e1e2e;
   --color-bg-elevated: #1e1e2e;
   --color-bg-elevated-alpha: rgba(30, 30, 46, 0.9);
   --color-bg-hover: #262637;
   --color-bg-active: #313244;
+
+  /* Ant Design fill colors - 调浅避免过深 */
+  --color-fill-quaternary: #262637;
+  --color-fill-tertiary: #313244;
+  --color-fill-secondary: #45475a;
+  --color-fill-primary: #585b70;
+
+  /* 卡片及三级背景 */
+  --color-bg-card: #262637;
+  --color-bg-tertiary: #313244;
 
   /* Borders */
   --color-border: #313244;

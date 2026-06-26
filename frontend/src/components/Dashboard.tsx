@@ -198,7 +198,7 @@ export function Dashboard() {
       icon={<DashboardOutlined />}
       title="仪表盘"
     >
-      <div style={{ padding: '16px 20px', background: 'var(--color-bg-layout)' }}>
+      <div style={{ padding: '16px 20px', background: 'var(--color-bg-elevated)' }}>
         <style>{`
           .dashboard-card { transition: border-color 0.2s, box-shadow 0.2s; }
           .dashboard-card:hover { border-color: var(--color-border); box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
