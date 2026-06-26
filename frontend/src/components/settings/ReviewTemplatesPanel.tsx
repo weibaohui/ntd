@@ -5,7 +5,7 @@
 // 业务层决定是否置 NULL)。
 
 import { useState, useEffect } from 'react';
-import { Table, Button, Space, Modal, Form, Input, Popconfirm, Empty, App as AntApp } from 'antd';
+import { Table, Button, Space, Modal, Form, Input, Popconfirm, Empty, Select, App as AntApp } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import * as dbReviewTemplates from '@/utils/database/reviewTemplates';
 import type { ReviewTemplate } from '@/types/reviewTemplate';
@@ -16,7 +16,12 @@ interface FormValues {
   prompt: string;
 }
 
-export function ReviewTemplatesPanel() {
+interface ReviewTemplatesPanelProps {
+  /** 可选：在某个工作空间上下文中使用时传入，隐藏过滤框且只显示该工作空间下的模板 */
+  workspace?: string;
+}
+
+export function ReviewTemplatesPanel({ workspace }: ReviewTemplatesPanelProps) {
   const { message } = AntApp.useApp();
   const [templates, setTemplates] = useState<ReviewTemplate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -24,17 +29,41 @@ export function ReviewTemplatesPanel() {
   const [formOpen, setFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<FormValues>();
+  // 工作空间过滤（仅非 workspace 上下文时展示）
+  const [workspaceFilter, setWorkspaceFilter] = useState<string | undefined>(undefined);
+  const [workspaceOptions, setWorkspaceOptions] = useState<{ label: string; value: string }[]>([]);
+
+  /** 实际用于 API 请求的 workspace 参数 */
+  const effectiveWorkspace = workspace ?? workspaceFilter;
 
   /** 拉一次列表, 供 mount 与增删改后刷新用。 */
   const reload = () => {
     setLoading(true);
-    dbReviewTemplates.listReviewTemplates()
-      .then(setTemplates)
+    dbReviewTemplates.listReviewTemplates(effectiveWorkspace)
+      .then((list) => {
+        setTemplates(list);
+        // 仅在非 workspace 上下文时维护过滤选项
+        if (!workspace) {
+          dbReviewTemplates.listReviewTemplates()
+            .then((all) => {
+              const allWs = Array.from(
+                new Set(all.filter(t => t.workspace).map(t => t.workspace!))
+              );
+              setWorkspaceOptions(allWs.map(w => ({ label: w, value: w })));
+            })
+            .catch(() => {
+              const uniqueWorkspaces = Array.from(
+                new Set(list.filter(t => t.workspace).map(t => t.workspace!))
+              );
+              setWorkspaceOptions(uniqueWorkspaces.map(w => ({ label: w, value: w })));
+            });
+        }
+      })
       .catch((err) => message.error(`加载失败: ${err?.message || err}`))
       .finally(() => setLoading(false));
   };
 
-  useEffect(reload, []);
+  useEffect(reload, [effectiveWorkspace]);
 
   /** 打开表单: editing 存在则进入编辑模式, 不存在则新建。 */
   const openForm = (template?: ReviewTemplate) => {
@@ -74,7 +103,11 @@ export function ReviewTemplatesPanel() {
         await dbReviewTemplates.updateReviewTemplate(editing.id, payload);
         message.success('已更新');
       } else {
-        await dbReviewTemplates.createReviewTemplate(payload);
+        // 新建时使用当前 workspace 上下文或过滤值作为模板所属 workspace
+        await dbReviewTemplates.createReviewTemplate({
+          ...payload,
+          workspace: effectiveWorkspace ?? null,
+        });
         message.success('已创建');
       }
       closeForm();
@@ -103,11 +136,23 @@ export function ReviewTemplatesPanel() {
 
   return (
     <div style={{ maxWidth: 1000 }}>
-      <Space style={{ marginBottom: 16 }}>
+      <Space style={{ marginBottom: 16 }} wrap>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => openForm()}>
           新建模板
         </Button>
         <Button onClick={reload}>刷新</Button>
+        {!workspace && (
+          <Select
+            allowClear
+            placeholder="按工作空间过滤"
+            value={workspaceFilter}
+            onChange={(v) => setWorkspaceFilter(v ?? undefined)}
+            options={workspaceOptions}
+            showSearch
+            style={{ minWidth: 200 }}
+            optionFilterProp="label"
+          />
+        )}
       </Space>
 
       <Table<ReviewTemplate>
@@ -128,6 +173,13 @@ export function ReviewTemplatesPanel() {
             dataIndex: 'description',
             ellipsis: true,
             render: (text: string | null) => text || <span style={{ color: 'var(--color-text-tertiary)' }}>—</span>,
+          },
+          {
+            title: '工作空间',
+            dataIndex: 'workspace',
+            width: 180,
+            ellipsis: true,
+            render: (text: string | null) => text || <span style={{ color: 'var(--color-text-tertiary)' }}>全局</span>,
           },
           {
             title: 'Prompt 预览',

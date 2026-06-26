@@ -24,6 +24,8 @@ pub struct Model {
     pub name: String,
     pub description: Option<String>,
     pub prompt: String,
+    /// 所属工作空间（目录路径）。None = 全局模板（不限制工作空间）。
+    pub workspace: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }

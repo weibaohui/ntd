@@ -64,6 +64,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V29WebhookEnabledFields),
         Box::new(V30WorkspaceRefactor),
         Box::new(V31AddTodosWorkspaceId),
+        Box::new(V32ReviewTemplatesWorkspace),
     ]
 }
 
@@ -3534,6 +3535,24 @@ impl Migration for V31AddTodosWorkspaceId {
         )
         .await?;
 
+        Ok(())
+    }
+}
+
+/// V32 迁移：为 review_templates 表添加 workspace 列，实现按工作空间隔离。
+pub(super) struct V32ReviewTemplatesWorkspace;
+#[async_trait::async_trait]
+impl Migration for V32ReviewTemplatesWorkspace {
+    fn version(&self) -> i64 { 32 }
+    fn name(&self) -> &'static str { "add_review_templates_workspace" }
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        // 幂等：列已存在时跳过 ALTER
+        if table_has_column(db, "review_templates", "workspace").await? {
+            tracing::info!("review_templates.workspace already exists, skip V32");
+            return Ok(());
+        }
+        db.exec("ALTER TABLE review_templates ADD COLUMN workspace TEXT").await?;
+        tracing::info!("V32: added review_templates.workspace column");
         Ok(())
     }
 }
