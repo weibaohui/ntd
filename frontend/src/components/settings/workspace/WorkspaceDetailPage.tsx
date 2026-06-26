@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Tabs, Select, Button } from 'antd';
 import { ArrowLeftOutlined, RobotOutlined, SettingOutlined } from '@ant-design/icons';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import type { ProjectDirectory } from '@/utils/database';
 import { WorkspaceAgentPanel } from './WorkspaceAgentPanel';
 import { WorkspaceSlashCommandsPanel } from './WorkspaceSlashCommandsPanel';
@@ -21,17 +22,7 @@ const TAB_OPTIONS = [
 
 export function WorkspaceDetailPage({ workspace, onBack }: WorkspaceDetailPageProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('agents');
-  const [isMobile, setIsMobile] = useState(false);
-
-  // 检测手机端：屏幕宽度 < 768px
-  useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
+  const isMobile = useIsMobile();
 
   return (
     <div className="workspace-detail-page">

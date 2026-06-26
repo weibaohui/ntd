@@ -1,5 +1,5 @@
 import { Button, Tag, Badge, Popconfirm, App } from 'antd';
-import { PlayCircleOutlined, ThunderboltOutlined, EditOutlined, DeleteOutlined, ArrowLeftOutlined, CopyOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, ThunderboltOutlined, EditOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons';
 import { StatusPicker } from '@/components/StatusPicker';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { PromptDisplay } from './PromptDisplay';
@@ -11,17 +11,15 @@ import type { ExecutionSummary, ExecutionRecord } from '@/types';
 import type { Todo } from '@/types';
 
 export function DetailHeader({
-  selectedTodo, executor, isExecuting, isMobile, summary, currentTodoProgress,
-  records, onMobileBack, onDelete, onTodoDrawerOpen, onOpenExecuteWithArgs, onExecute, onStatusChange,
+  selectedTodo, executor, isExecuting, summary, currentTodoProgress,
+  records, onDelete, onTodoDrawerOpen, onOpenExecuteWithArgs, onExecute, onStatusChange,
 }: {
   selectedTodo: Todo;
   executor: string;
   isExecuting: boolean;
-  isMobile: boolean;
   summary: ExecutionSummary | null;
   currentTodoProgress: any;
   records: ExecutionRecord[];
-  onMobileBack: () => void;
   onDelete: () => Promise<void>;
   onTodoDrawerOpen: () => void;
   onOpenExecuteWithArgs: () => void;
@@ -33,16 +31,6 @@ export function DetailHeader({
 
   return (
     <>
-      {isMobile && (
-        <Button
-          type="text"
-          icon={<ArrowLeftOutlined />}
-          onClick={onMobileBack}
-          style={{ marginBottom: 8, marginLeft: -4 }}
-        >
-          返回
-        </Button>
-      )}
       <div className="detail-card header-card">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <StatusPicker value={selectedTodo.status} onChange={onStatusChange} disabled={isExecuting} />
