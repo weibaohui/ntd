@@ -1,8 +1,8 @@
-// 环路看板功能测试。
+// 环路视图功能测试。
 //
-// 设计意图：验证环路看板的视图切换、工具栏渲染、搜索与时间过滤等核心功能。
+// 设计意图：验证环路视图的视图切换、工具栏渲染、搜索与时间过滤等核心功能。
 // 为什么需要这套测试：
-// - 环路看板是新增视图，需要确保与已有 memorial/kanban/running 视图的切换链路正常
+// - 环路视图是新增视图，需要确保与已有 memorial/kanban/running 视图的切换链路正常
 // - 搜索和时间过滤是跨视图共享状态，需要验证受控组件模式下的数据流正确性
 // - 看板组件的加载、空状态、列渲染有多条分支，需要覆盖边界条件避免回归
 // 边界条件：
@@ -12,7 +12,7 @@
 
 import { test, expect } from '@playwright/test';
 
-test.describe('环路看板功能测试', () => {
+test.describe('环路视图功能测试', () => {
 
   // 为什么在 beforeEach 中导航到看板页：
   // - 所有测试用例的前置条件是进入 MemorialBoard，抽成 hook 避免重复代码
@@ -46,12 +46,12 @@ test.describe('环路看板功能测试', () => {
     await expect(options).toHaveCount(4);
   });
 
-  // 测试切换到环路看板视图的交互流程（核心功能路径）。
-  // 为什么需要：环路看板是新增功能，必须验证从 memorial 切换过去的完整链路。
+  // 测试切换到环路视图的交互流程（核心功能路径）。
+  // 为什么需要：环路视图是新增功能，必须验证从 memorial 切换过去的完整链路。
   test('test_switch_to_loop_kanban_view', async ({ page }) => {
-    // 为什么用 getByText 定位"环路看板"：文本内容比 nth(3) 更明确表达意图，
+    // 为什么用文本定位"环路视图"：文本内容比 nth(3) 更明确表达意图，
     // 且当选项顺序调整时不会误点到其他视图。
-    const loopKanbanOption = page.getByRole('radio', { name: /环路看板/ });
+    const loopKanbanOption = page.getByText('环路视图');
     await expect(loopKanbanOption).toBeVisible({ timeout: 5000 });
     await loopKanbanOption.click();
 
@@ -61,11 +61,11 @@ test.describe('环路看板功能测试', () => {
     await expect(searchInput).toBeVisible({ timeout: 5000 });
   });
 
-  // 测试环路看板的核心 UI 元素渲染（工具栏 + 看板主体或空状态）。
+  // 测试环路视图的核心 UI 元素渲染（工具栏 + 看板主体或空状态）。
   // 为什么需要：覆盖加载态、空态、正常态三种分支，确保 UI 不会白屏或卡死。
   test('test_loop_kanban_renders_board_or_empty_state', async ({ page }) => {
     // 为什么先切换视图：前置条件，确保测试的是 loop_kanban 模式
-    const loopKanbanOption = page.getByRole('radio', { name: /环路看板/ });
+    const loopKanbanOption = page.getByText('环路视图');
     await loopKanbanOption.click();
 
     // 为什么验证工具栏：工具栏是 LoopKanban 的固定部分，无论有无数据都应渲染
@@ -90,7 +90,7 @@ test.describe('环路看板功能测试', () => {
   // 测试时间过滤功能（边界条件：切换选项后数据重新过滤）。
   // 为什么需要：时间过滤是跨视图共享状态，loop_kanban 需验证 onHoursChange 回调正确触发。
   test('test_loop_kanban_time_filter', async ({ page }) => {
-    const loopKanbanOption = page.getByRole('radio', { name: /环路看板/ });
+    const loopKanbanOption = page.getByText('环路视图');
     await loopKanbanOption.click();
 
     // 为什么先等工具栏可见：确保组件已挂载，避免点击时元素未渲染
@@ -111,7 +111,7 @@ test.describe('环路看板功能测试', () => {
   // 测试搜索功能（边界条件：输入 -> 清空 -> 数据恢复）。
   // 为什么需要：搜索框是受控组件，需验证 onChange 回调正确触发且清空后状态重置。
   test('test_loop_kanban_search', async ({ page }) => {
-    const loopKanbanOption = page.getByRole('radio', { name: /环路看板/ });
+    const loopKanbanOption = page.getByText('环路视图');
     await loopKanbanOption.click();
 
     // 为什么用 getByPlaceholder：搜索框的语义化定位，比 class 或 nth() 更明确

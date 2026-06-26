@@ -229,6 +229,7 @@ function KanbanColumn({ col, items, renderCard }: KanbanColumnProps) {
         flex: 1,
         display: 'flex',
         flexDirection: 'column',
+        minHeight: 0,
       }}
     >
       <ColumnHeader col={col} count={items.length} />
@@ -277,7 +278,7 @@ function ColumnHeader({ col, count }: { col: ColumnDef; count: number }) {
 // 为什么独立：body 的滚动容器逻辑与 header 独立，方便后续增加虚拟滚动优化。
 function ColumnBody({ items, renderCard }: { items: LoopExecutionWithLoopName[]; renderCard: (exec: LoopExecutionWithLoopName) => React.ReactNode }) {
   return (
-    <div className="loop-kanban-column-body" style={{ flex: 1, overflowY: 'auto', padding: '0 4px' }}>
+    <div className="loop-kanban-column-body" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 4px' }}>
       {items.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--color-text-tertiary)', fontSize: 12 }}>
           暂无
@@ -496,17 +497,13 @@ export function LoopKanban({ searchText: externalSearch, hours: externalHours, o
       ) : filtered.length === 0 ? (
         <Empty description="暂无环路执行记录" style={{ padding: 60 }} />
       ) : (
-        <div
-          style={{
-            display: 'flex',
-            gap: 12,
-            padding: '12px 16px',
-            overflowX: 'auto',
-            alignItems: 'flex-start',
-          }}
-        >
+        <>
+          {/* 让超宽只发生在看板内部，而不是把外层 PageCard / App 主视图撑宽。
+              这样切换到环路视图时，顶部视图切换按钮仍然留在屏幕内。 */}
+          <div className="loop-kanban-columns-container">
           {COLUMNS.map(renderColumn)}
-        </div>
+          </div>
+        </>
       )}
 
       {/* 执行轨迹侧边栏：点击卡片时打开，上方展示该环路的环节设计流程图，

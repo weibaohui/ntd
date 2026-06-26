@@ -368,9 +368,20 @@ function AppContent() {
         </div>
       )}
 
-      <Layout>
+      <Layout
+        style={{
+          // 右侧主区域在外层横向布局里必须允许收缩，
+          // 否则内部超宽内容会把这一整列 Layout 撑宽到视口外。
+          flex: 1,
+          minWidth: 0,
+        }}
+      >
         <Content
           style={{
+            // Content 也要显式参与剩余空间分配，
+            // 避免按内容宽度自适应时把整个页面主区域撑宽。
+            flex: 1,
+            minWidth: 0,
             display: 'flex',
             flexDirection: isMobile ? 'column' : 'row',
             padding: isMobile ? 0 : 12,
@@ -419,6 +430,9 @@ function AppContent() {
             className={(!isMobile || effectiveMobilePanel === 'detail') ? 'animate-slide-in-right' : ''}
             style={{
               flex: 1,
+              // 允许右侧工作区在 flex 布局中收缩到可视区宽度内，
+              // 避免内部横向内容把整个页面主容器反向撑宽。
+              minWidth: 0,
               height: '100%',
               overflow: 'hidden',
               display: !isMobile || effectiveMobilePanel === 'detail' ? 'block' : 'none',

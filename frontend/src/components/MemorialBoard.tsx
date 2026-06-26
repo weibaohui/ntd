@@ -15,7 +15,7 @@ import { PageCard } from '@/components/common/PageCard';
 import { useApp } from '@/hooks/useApp';
 import { KanbanBoard } from './KanbanBoard';
 import { RunningBoard } from './RunningBoard';
-// 引入环路看板组件：与 KanbanBoard（todo 看板）、RunningBoard（运行视图）并列，
+// 引入环路视图组件：与 KanbanBoard（todo 看板）、RunningBoard（运行视图）并列，
 // 为什么需要：提供环路维度的执行历史聚合视图，补齐 todo 维度之外的监控缺口。
 import { LoopKanban } from './LoopKanban';
 import { TodoCard } from './TodoCard';
@@ -362,7 +362,7 @@ export function MemorialBoard() {
       extra={
         <>
           {/* 视图模式切换：四种视图平铺展示。
-              为什么新增"环路看板"选项：
+              为什么新增"环路视图"选项：
               - memorial：按完成时间聚合 todo 的执行结论，适合快速回顾成果
               - kanban：todo 维度的状态流转看板（待办/进行中/已完成/失败）
               - running：实时运行状态监控
@@ -377,7 +377,7 @@ export function MemorialBoard() {
               { label: <span><ProfileOutlined /> 结论视图</span>, value: 'memorial' },
               { label: <span><AppstoreOutlined /> 看板视图</span>, value: 'kanban' },
               { label: <span><ThunderboltOutlined /> 运行视图</span>, value: 'running' },
-              { label: <span><SyncOutlined /> 环路看板</span>, value: 'loop_kanban' },
+              { label: <span><SyncOutlined /> 环路视图</span>, value: 'loop_kanban' },
             ]}
           />
         </>
