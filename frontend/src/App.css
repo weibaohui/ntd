@@ -4211,11 +4211,34 @@ code {
   width: 100%;
   display: flex;
   justify-content: center;
+  gap: 4px;
   padding-top: 10px;
 }
 
 .ntd-left-rail.expanded .ntd-left-rail-bottom {
   justify-content: flex-end;
+}
+
+/* 亮/暗色主题切换按钮 — 与折叠按钮同款样式，保持底部操作一致性 */
+.ntd-left-rail-theme-toggle {
+  width: 44px !important;
+  height: 44px !important;
+  border-radius: 14px !important;
+  color: var(--color-text-tertiary) !important;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.ntd-left-rail-theme-toggle:hover {
+  background: var(--color-bg-hover) !important;
+  color: var(--color-text) !important;
+}
+
+/* 移动端抽屉底部区域 — 放置主题切换按钮，撑满剩余空间 */
+.ntd-left-rail-drawer-bottom {
+  margin-top: auto;
+  width: 100%;
+  padding: 10px 10px 0;
+  border-top: 1px solid var(--color-border-light);
 }
 
 .ntd-left-rail-toggle {

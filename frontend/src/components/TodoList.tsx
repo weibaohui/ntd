@@ -3,8 +3,7 @@ import { useApp } from '@/hooks/useApp';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { Button, Dropdown, Empty, Tooltip, Input, Segmented, Skeleton, Checkbox, Modal, App as AntApp } from 'antd';
 import type { MenuProps } from 'antd';
-import { ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, SunOutlined, MoonOutlined, MoreOutlined, SearchOutlined, SwapOutlined, StopOutlined } from '@ant-design/icons';
-import { useTheme } from '@/hooks/useTheme';
+import { ThunderboltOutlined, ClockCircleOutlined, InboxOutlined, DashboardOutlined, ReadOutlined, SettingOutlined, MoreOutlined, SearchOutlined, SwapOutlined, StopOutlined } from '@ant-design/icons';
 import { StatusPicker } from './StatusPicker';
 import * as db from '@/utils/database';
 import type { ProjectDirectory, Todo } from '@/types';
@@ -74,7 +73,6 @@ function buildDesktopNavActions(
 export function TodoList(props: TodoListProps) {
   const { onOpenCreateModal, onOpenSmartCreate, onOpenNav, onSelectTodo, onShowDashboard, onShowMemorial, onShowSettings, onSelectLoop, onCreateLoop, loopUpdateCount, forcedListMode, onListModeChange } = props;
   const { state, dispatch } = useApp();
-  const { themeMode, toggleTheme } = useTheme();
   const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
   const { message } = AntApp.useApp();
   const isMobile = useIsMobile();
@@ -326,23 +324,13 @@ export function TodoList(props: TodoListProps) {
    * 处理桌面端头部"更多"菜单点击。
    */
   const handleHeaderMenuClick = useCallback<NonNullable<MenuProps['onClick']>>(({ key }) => {
-    if (key === 'theme') {
-      toggleTheme();
-      return;
-    }
     if (key === 'settings') {
       onShowSettings?.();
     }
-  }, [onShowSettings, toggleTheme]);
+  }, [onShowSettings]);
 
   const headerMenuItems = useMemo<MenuProps['items']>(() => {
-    const items: NonNullable<MenuProps['items']> = [
-      {
-        key: 'theme',
-        icon: themeMode === 'light' ? <MoonOutlined /> : <SunOutlined />,
-        label: themeMode === 'light' ? '暗色' : '亮色',
-      },
-    ];
+    const items: NonNullable<MenuProps['items']> = [];
 
     if (onShowSettings) {
       items.push(
@@ -356,7 +344,7 @@ export function TodoList(props: TodoListProps) {
     }
 
     return items;
-  }, [themeMode, onShowSettings]);
+  }, [onShowSettings]);
 
   const tagMap = useMemo(() => {
     const map = new Map<number, typeof tags[0]>();
@@ -572,16 +560,6 @@ export function TodoList(props: TodoListProps) {
 
           {isMobile && (
             <div className="header-nav-cluster" aria-label="移动端操作">
-              <Tooltip title={themeMode === 'light' ? '暗色' : '亮色'}>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={themeMode === 'light' ? <MoonOutlined /> : <SunOutlined />}
-                  onClick={toggleTheme}
-                  className="header-nav-btn"
-                  aria-label={themeMode === 'light' ? '暗色' : '亮色'}
-                />
-              </Tooltip>
               <Tooltip title="设置">
                 <Button
                   type="text"

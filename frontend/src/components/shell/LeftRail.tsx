@@ -14,6 +14,8 @@ import {
   FolderOutlined,
   DoubleRightOutlined,
   DoubleLeftOutlined,
+  SunOutlined,
+  MoonOutlined,
 } from '@ant-design/icons';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
@@ -46,6 +48,8 @@ interface LeftRailProps {
   onToggleCollapsed?: () => void;
   workspace?: string | null;
   onWorkspaceChange?: (workspace: string) => void;
+  themeMode: 'light' | 'dark';
+  toggleTheme: () => void;
 }
 
 /**
@@ -60,6 +64,8 @@ export function LeftRail({
   onToggleCollapsed,
   workspace,
   onWorkspaceChange,
+  themeMode,
+  toggleTheme,
 }: LeftRailProps) {
   const sections = useMemo(() => ([
     {
@@ -191,8 +197,37 @@ export function LeftRail({
         ))}
       </div>
 
+      {isDrawer && (
+        <div className="ntd-left-rail-drawer-bottom">
+          {/* 移动端抽屉底部：亮/暗色主题切换按钮 */}
+          <Button
+            type="text"
+            block
+            icon={themeMode === 'light' ? <MoonOutlined /> : <SunOutlined />}
+            onClick={toggleTheme}
+            className="ntd-left-rail-drawer-btn"
+            data-testid="left-rail-theme-toggle"
+          >
+            <span className="ntd-left-rail-drawer-label">
+              {themeMode === 'light' ? '暗色模式' : '亮色模式'}
+            </span>
+          </Button>
+        </div>
+      )}
+
       {!isDrawer && (
         <div className="ntd-left-rail-bottom">
+          {/* 亮/暗色主题切换按钮 — 当前为亮色显示太阳，暗色显示月亮，点击切换 */}
+          <Tooltip title={themeMode === 'light' ? '切换暗色' : '切换亮色'} placement="right">
+            <Button
+              type="text"
+              className="ntd-left-rail-theme-toggle"
+              icon={themeMode === 'light' ? <SunOutlined /> : <MoonOutlined />}
+              onClick={toggleTheme}
+              aria-label={themeMode === 'light' ? '切换暗色' : '切换亮色'}
+              data-testid="left-rail-theme-toggle"
+            />
+          </Tooltip>
           <Tooltip title={shouldShowLabels ? '收起导航' : '展开导航'} placement="right">
             <Button
               type="text"

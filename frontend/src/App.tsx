@@ -29,6 +29,7 @@ const { Content } = Layout;
 function AppContent() {
   const { state, dispatch, clearSelection } = useApp();
   const { activeView, selectedPanel, setSelectedPanel, showView, selectTodo, backToList } = useViewState();
+  const { themeMode, toggleTheme } = useTheme();
 
   const [todoModalOpen, setTodoModalOpen] = useState(false);
   const [smartCreateOpen, setSmartCreateOpen] = useState(false);
@@ -317,6 +318,8 @@ function AppContent() {
             onWorkspaceChange={(workspace) => {
               dispatch({ type: 'SELECT_WORKSPACE', payload: workspace });
             }}
+            themeMode={themeMode}
+            toggleTheme={toggleTheme}
           />
         </div>
       )}
@@ -481,6 +484,8 @@ function AppContent() {
           onWorkspaceChange={(workspace) => {
             dispatch({ type: 'SELECT_WORKSPACE', payload: workspace });
           }}
+          themeMode={themeMode}
+          toggleTheme={toggleTheme}
         />
       </Drawer>
 
