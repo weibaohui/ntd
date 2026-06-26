@@ -78,7 +78,7 @@ export function WorkspaceDetailPage({ workspace, onBack }: WorkspaceDetailPagePr
                 </div>
               </>
             )}
-            {activeTab === 'loop-settings' && <ReviewTemplatesPanel />}
+            {activeTab === 'loop-settings' && <ReviewTemplatesPanel workspaceId={workspace.id} />}
           </div>
         </div>
       ) : (
@@ -114,7 +114,7 @@ export function WorkspaceDetailPage({ workspace, onBack }: WorkspaceDetailPagePr
                   <SettingOutlined /> Loop设置
                 </span>
               ),
-              children: <ReviewTemplatesPanel />,
+              children: <ReviewTemplatesPanel workspaceId={workspace.id} />,
             },
           ]}
         />

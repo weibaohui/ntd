@@ -5,6 +5,7 @@
 // - mode="edit"：编辑已有环路，需传 loopId + initialData 预填
 // - 工作空间为必填项（创建模式强制，编辑模式 allowClear 但保存时校验不通过)
 // - 评审模板 inline 创建逻辑一并迁入，避免用户切到设置页
+// - 工作空间与评审模板联动：选择工作空间后过滤可选的评审模板
 //
 // 被 LoopStudioDetailPanel（编辑）和 App.tsx（新建）共用。
 
@@ -14,6 +15,7 @@ import { PlusOutlined } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import * as dbReviewTemplates from '@/utils/database/reviewTemplates';
 import * as dbTodos from '@/utils/database/todos';
+import { getProjectDirectories } from '@/utils/database/todos';
 import type { UpdateLoopRequest } from '@/types/loop';
 import type { ReviewTemplateOption } from '@/types/reviewTemplate';
 import type { Todo } from '@/types/todo';
@@ -76,13 +78,35 @@ export function LoopFormModal({
   const [newTemplateForm] = Form.useForm<{ name: string; description?: string; prompt: string }>();
   // 异常处理 Todo
   const [abnormalHandlerTodoOptions, setAbnormalHandlerTodoOptions] = useState<Todo[]>([]);
+  // 工作空间路径→ID 映射（用于评审模板 API，其过滤/新建需 workspace_id 而非路径字符串）
+  const [pathToWorkspaceId, setPathToWorkspaceId] = useState<Record<string, number>>({});
 
-  // 打开时加载评审模板选项和异常处理 Todo 选项
+  // 打开时加载工作空间目录列表（建立路径→ID 映射）
   useEffect(() => {
     if (!open) return;
-    dbReviewTemplates.listReviewTemplateOptions()
+    getProjectDirectories().then((dirs) => {
+      const map: Record<string, number> = {};
+      for (const d of dirs) {
+        if (d.path) map[d.path] = d.id;
+      }
+      setPathToWorkspaceId(map);
+    }).catch(() => { /* 静默 */ });
+  }, [open]);
+
+  /** 根据当前 workspaceValue（路径）推导对应的 workspace_id，用于评审模板 API */
+  const workspaceIdForReview: number | undefined = workspaceValue ? pathToWorkspaceId[workspaceValue] : undefined;
+
+  // 打开时 + workspace 变化时重新加载评审模板选项（按 workspace_id 过滤）
+  useEffect(() => {
+    if (!open) return;
+    dbReviewTemplates.listReviewTemplateOptions(workspaceIdForReview)
       .then(setReviewTemplateOptions)
       .catch(() => { /* 静默 */ });
+  }, [open, workspaceIdForReview]);
+
+  // 打开时加载异常处理 Todo 选项
+  useEffect(() => {
+    if (!open) return;
     dbTodos.getAllTodos()
       .then(setAbnormalHandlerTodoOptions)
       .catch(() => { /* 静默 */ });
@@ -126,14 +150,14 @@ export function LoopFormModal({
     }
   }, [open, mode, initialData, form]);
 
-  // 刷新评审模板并选中新建的模板
+  // 刷新评审模板（按当前 workspace_id 过滤）并选中新建的模板
   const reloadTemplatesAndSelect = useCallback(async (selectedId: number) => {
-    const opts = await dbReviewTemplates.listReviewTemplateOptions();
+    const opts = await dbReviewTemplates.listReviewTemplateOptions(workspaceIdForReview);
     setReviewTemplateOptions(opts);
     form.setFieldsValue({ review_template_id: selectedId });
-  }, [form]);
+  }, [form, workspaceIdForReview]);
 
-  // inline 创建评审模板
+  // inline 创建评审模板（归属当前选中的工作空间）
   const handleCreateTemplate = useCallback(async () => {
     const values = await newTemplateForm.validateFields();
     setCreatingTemplateSaving(true);
@@ -142,6 +166,7 @@ export function LoopFormModal({
         name: values.name.trim(),
         description: values.description?.trim() || null,
         prompt: values.prompt,
+        workspace_id: workspaceIdForReview ?? null,
       });
       message.success(`已创建模板「${created.name}」`);
       await reloadTemplatesAndSelect(created.id);
@@ -152,7 +177,7 @@ export function LoopFormModal({
     } finally {
       setCreatingTemplateSaving(false);
     }
-  }, [newTemplateForm, message, reloadTemplatesAndSelect]);
+  }, [newTemplateForm, workspaceValue, message, reloadTemplatesAndSelect]);
 
   // 保存（创建 / 编辑共用）
   const handleSave = useCallback(async () => {
@@ -244,22 +269,60 @@ export function LoopFormModal({
           <Form.Item label="描述" name="description">
             <Input.TextArea rows={2} maxLength={500} />
           </Form.Item>
-          {/* 工作空间：创建模式必填，编辑模式可选 */}
-          <Form.Item
-            label={<>工作空间 {mode === 'create' && <span style={{ color: '#ff4d4f' }}>*</span>}</>
-          }
-            tooltip="此 loop 所属的工作空间"
-            rules={mode === 'create' ? [{ required: true, message: '请选择工作空间' }] : []}
-          >
-            <WorkspaceSelect
-              value={workspaceValue}
-              onChange={(v) => {
-                setWorkspaceValue(v);
-                form.setFieldsValue({ workspace: v });
-              }}
-              required={mode === 'create'}
-            />
-          </Form.Item>
+
+          {/* 工作空间 + 评审模板联动区 */}
+          <div style={{ fontWeight: 600, fontSize: 14, marginTop: 16, marginBottom: 8, color: 'var(--color-text-secondary, #64748b)' }}>
+            工作空间与评审模板
+          </div>
+          <div style={{ background: 'var(--color-bg-elevated, #f8fafc)', padding: 12, borderRadius: 8 }}>
+            {/* 工作空间：创建模式必填，编辑模式可选 */}
+            <Form.Item
+              label={<>工作空间 {mode === 'create' && <span style={{ color: '#ff4d4f' }}>*</span>}</>
+            }
+              tooltip="此 loop 所属的工作空间，切换后评审模板自动过滤"
+              rules={mode === 'create' ? [{ required: true, message: '请选择工作空间' }] : []}
+            >
+              <WorkspaceSelect
+                value={workspaceValue}
+                onChange={(v) => {
+                  setWorkspaceValue(v);
+                  form.setFieldsValue({ workspace: v, review_template_id: null });
+                }}
+                required={mode === 'create'}
+              />
+            </Form.Item>
+            {/* 评审模板（随 workspace 联动过滤） */}
+            <Form.Item
+              label="评审模板"
+              name="review_template_id"
+              tooltip="选择用于自动评审的模板（不选则使用默认模板）。切换工作空间后自动过滤。"
+              extra={
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<PlusOutlined />}
+                  style={{ padding: 0, marginTop: 4 }}
+                  onClick={() => setCreatingTemplate(true)}
+                >
+                  新建模板
+                </Button>
+              }
+            >
+              <Select
+                allowClear
+                placeholder="使用默认评审模板"
+                showSearch
+                optionFilterProp="label"
+                options={
+                  workspaceValue
+                    ? reviewTemplateOptions.map(t => ({ value: t.id, label: t.name }))
+                    : reviewTemplateOptions.map(t => ({ value: t.id, label: t.name }))
+                }
+                notFoundContent={workspaceValue ? '暂无模板，可点击"新建模板"' : '请先选择工作空间'}
+              />
+            </Form.Item>
+          </div>
+
           <Form.Item label="Webhook" name="webhook_enabled" valuePropName="checked" tooltip="启用后可通过固定 URL 触发该 Loop 执行">
             <Switch />
           </Form.Item>
@@ -275,31 +338,7 @@ export function LoopFormModal({
           <Form.Item label="图标" name="icon" tooltip="预留字段, 当前仅展示">
             <Input placeholder="loop" maxLength={50} />
           </Form.Item>
-          {/* 评审模板 */}
-          <Form.Item
-            label="评审模板"
-            name="review_template_id"
-            tooltip="选择用于自动评审的模板（来自设置 → 评审模板管理）。不选则使用默认模板。"
-            extra={
-              <Button
-                type="link"
-                size="small"
-                icon={<PlusOutlined />}
-                style={{ padding: 0, marginTop: 4 }}
-                onClick={() => setCreatingTemplate(true)}
-              >
-                新建模板
-              </Button>
-            }
-          >
-            <Select
-              allowClear
-              placeholder="使用默认评审模板"
-              showSearch
-              optionFilterProp="label"
-              options={reviewTemplateOptions.map(t => ({ value: t.id, label: t.name }))}
-            />
-          </Form.Item>
+
           {/* 全局限制 */}
           <div style={{ fontWeight: 600, fontSize: 14, marginTop: 16, marginBottom: 12, color: 'var(--color-text-secondary, #64748b)' }}>
             全局限制
@@ -379,6 +418,11 @@ export function LoopFormModal({
           >
             <Input.TextArea rows={8} placeholder="你是一个评审师…" />
           </Form.Item>
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary, #94a3b8)', marginTop: -8 }}>
+            {workspaceValue
+              ? `新建模板将归属于当前工作空间「${workspaceValue}」`
+              : '不选择工作空间则新建全局模板'}
+          </div>
         </Form>
       </Modal>
     </>

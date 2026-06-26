@@ -1,8 +1,8 @@
 //! 评审模板 HTTP handler。
 //!
 //! 端点（与 `db/review_template.rs` DAO 一一对应）：
-//! - `GET    /api/review-templates`          列出全部（含 prompt，用于管理面板）
-//! - `GET    /api/review-templates/options`  轻量选项（不含 prompt，用于 loop 选择器）
+//! - `GET    /api/review-templates?workspace=`   列出（含 prompt，可选按 workspace 过滤）
+//! - `GET    /api/review-templates/options?workspace=`  轻量选项（可选按 workspace 过滤）
 //! - `GET    /api/review-templates/{id}`     取单条
 //! - `POST   /api/review-templates`          创建
 //! - `PUT    /api/review-templates/{id}`     更新（PUT 全字段语义）
@@ -10,8 +10,9 @@
 //!
 //! 路由构建函数 `review_template_routes()` 在 `handlers/mod.rs` 内组装。
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::Json;
+use serde::Deserialize;
 
 use crate::db::ReviewTemplateInput;
 use crate::handlers::{ApiJson, AppError, AppState};
@@ -20,19 +21,27 @@ use crate::models::{
     UpdateReviewTemplateRequest,
 };
 
+/// 查询参数：可选的 workspace_id 过滤。
+#[derive(Debug, Default, Deserialize)]
+pub struct ReviewTemplateQuery {
+    pub workspace_id: Option<i64>,
+}
+
 /// 列表（完整模型，含 prompt）。
 pub async fn list_review_templates(
     State(state): State<AppState>,
+    Query(query): Query<ReviewTemplateQuery>,
 ) -> Result<Json<ApiResponse<Vec<ReviewTemplate>>>, AppError> {
-    let templates = state.db.list_review_templates().await?;
+    let templates = state.db.list_review_templates(query.workspace_id).await?;
     Ok(Json(ApiResponse::ok(templates)))
 }
 
 /// 选项列表（轻量，不含 prompt）。
 pub async fn list_review_template_options(
     State(state): State<AppState>,
+    Query(query): Query<ReviewTemplateQuery>,
 ) -> Result<Json<ApiResponse<Vec<ReviewTemplateOption>>>, AppError> {
-    let opts = state.db.list_review_template_options().await?;
+    let opts = state.db.list_review_template_options(query.workspace_id).await?;
     Ok(Json(ApiResponse::ok(opts)))
 }
 
@@ -66,6 +75,7 @@ pub async fn create_review_template(
         name: name.to_string(),
         description: req.description.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
         prompt: prompt.to_string(),
+        workspace_id: req.workspace_id,
     };
     let id = state.db.create_review_template(&input).await?;
     let t = state
@@ -94,6 +104,7 @@ pub async fn update_review_template(
         name: name.to_string(),
         description: req.description.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
         prompt: prompt.to_string(),
+        workspace_id: None, // 更新时不修改 workspace_id
     };
     state.db.update_review_template(id, &input).await?;
     let t = state

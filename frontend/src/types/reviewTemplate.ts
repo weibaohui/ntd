@@ -13,6 +13,8 @@ export interface ReviewTemplate {
   name: string;
   description: string | null;
   prompt: string;
+  /** 所属工作空间 ID（project_directories.id）。null=全局模板。 */
+  workspace_id: number | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -22,6 +24,8 @@ export interface ReviewTemplateOption {
   id: number;
   name: string;
   description: string | null;
+  /** 所属工作空间 ID（project_directories.id）。null=全局模板。 */
+  workspace_id: number | null;
 }
 
 /** 创建评审模板请求体。 */
@@ -29,6 +33,8 @@ export interface CreateReviewTemplateRequest {
   name: string;
   description?: string | null;
   prompt: string;
+  /** 所属工作空间 ID（project_directories.id）。不传=全局模板。 */
+  workspace_id?: number | null;
 }
 
 /** 全量更新评审模板请求体（PUT 语义）。 */

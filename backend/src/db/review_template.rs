@@ -28,6 +28,7 @@ pub struct ReviewTemplateInput {
     pub name: String,
     pub description: Option<String>,
     pub prompt: String,
+    pub workspace_id: Option<i64>,
 }
 
 impl From<&CreateReviewTemplateRequest> for ReviewTemplateInput {
@@ -36,6 +37,7 @@ impl From<&CreateReviewTemplateRequest> for ReviewTemplateInput {
             name: r.name.clone(),
             description: r.description.clone(),
             prompt: r.prompt.clone(),
+            workspace_id: r.workspace_id,
         }
     }
 }
@@ -46,6 +48,7 @@ impl From<&UpdateReviewTemplateRequest> for ReviewTemplateInput {
             name: r.name.clone(),
             description: r.description.clone(),
             prompt: r.prompt.clone(),
+            workspace_id: None, // 更新时不修改 workspace_id
         }
     }
 }
@@ -58,6 +61,7 @@ fn to_domain(m: review_templates::Model) -> ReviewTemplate {
         name: m.name,
         description: m.description,
         prompt: m.prompt,
+        workspace_id: m.workspace_id,
         created_at: m.created_at,
         updated_at: m.updated_at,
     }
@@ -68,26 +72,43 @@ fn to_option(m: review_templates::Model) -> ReviewTemplateOption {
         id: m.id,
         name: m.name,
         description: m.description,
+        workspace_id: m.workspace_id,
     }
 }
 
 impl Database {
     /// 列出全部评审模板，按 id 升序。返回完整模型（含 prompt）。
+    /// 可选按 workspace_id 过滤（None = 不过滤）。
     /// 设计原因：管理面板需要看 prompt；选项下拉请用 `list_review_template_options`。
-    pub async fn list_review_templates(&self) -> Result<Vec<ReviewTemplate>, sea_orm::DbErr> {
-        let models = review_templates::Entity::find()
-            .order_by_asc(review_templates::Column::Id)
-            .all(&self.conn)
-            .await?;
+    pub async fn list_review_templates(
+        &self,
+        workspace_id: Option<i64>,
+    ) -> Result<Vec<ReviewTemplate>, sea_orm::DbErr> {
+        let mut query = review_templates::Entity::find()
+            .order_by_asc(review_templates::Column::Id);
+
+        if let Some(ws_id) = workspace_id {
+            query = query.filter(review_templates::Column::WorkspaceId.eq(ws_id));
+        }
+
+        let models = query.all(&self.conn).await?;
         Ok(models.into_iter().map(to_domain).collect())
     }
 
     /// 列出评审模板的轻量选项（不含 prompt），用于 loop 编辑器下拉。
-    pub async fn list_review_template_options(&self) -> Result<Vec<ReviewTemplateOption>, sea_orm::DbErr> {
-        let models = review_templates::Entity::find()
-            .order_by_asc(review_templates::Column::Id)
-            .all(&self.conn)
-            .await?;
+    /// 可选按 workspace_id 过滤（None = 不过滤）。
+    pub async fn list_review_template_options(
+        &self,
+        workspace_id: Option<i64>,
+    ) -> Result<Vec<ReviewTemplateOption>, sea_orm::DbErr> {
+        let mut query = review_templates::Entity::find()
+            .order_by_asc(review_templates::Column::Id);
+
+        if let Some(ws_id) = workspace_id {
+            query = query.filter(review_templates::Column::WorkspaceId.eq(ws_id));
+        }
+
+        let models = query.all(&self.conn).await?;
         Ok(models.into_iter().map(to_option).collect())
     }
 
@@ -119,6 +140,7 @@ impl Database {
             name: ActiveValue::Set(input.name.clone()),
             description: ActiveValue::Set(input.description.clone()),
             prompt: ActiveValue::Set(input.prompt.clone()),
+            workspace_id: ActiveValue::Set(input.workspace_id),
             created_at: ActiveValue::Set(Some(now.clone())),
             updated_at: ActiveValue::Set(Some(now)),
             ..Default::default()
@@ -216,6 +238,7 @@ mod tests {
             name: name.to_string(),
             description: Some(format!("{name} 描述")),
             prompt: prompt.to_string(),
+            workspace_id: None,
         }
     }
 
@@ -225,7 +248,7 @@ mod tests {
     async fn list_returns_only_seeded_default_on_fresh_db() {
         // V15 迁移在 fresh DB 上自动 seed 一条默认模板, list 不该空着。
         let db = fresh_db().await;
-        let list = db.list_review_templates().await.expect("list must succeed");
+        let list = db.list_review_templates(None).await.expect("list must succeed");
         assert_eq!(list.len(), 1, "V15 seeds exactly one default template");
         assert_eq!(list[0].name, "默认评审任务");
     }
@@ -238,7 +261,7 @@ mod tests {
         db.delete_review_template(default_id).await.expect("del default");
         db.create_review_template(&sample_input("B", "p-b")).await.expect("create B");
         db.create_review_template(&sample_input("A", "p-a")).await.expect("create A");
-        let list = db.list_review_templates().await.expect("list");
+        let list = db.list_review_templates(None).await.expect("list");
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].name, "B", "first by id ascending");
         assert_eq!(list[1].name, "A");
@@ -255,7 +278,7 @@ mod tests {
         db.create_review_template(&sample_input("代码评审", "敏感 prompt 内含 RATING 占位符"))
             .await
             .expect("create");
-        let opts = db.list_review_template_options().await.expect("opts");
+        let opts = db.list_review_template_options(None).await.expect("opts");
         assert_eq!(opts.len(), 2, "default + created = 2");
         // 第二条是「代码评审」, 验证其字段且不带 prompt (编译期由 ReviewTemplateOption 字段保证)
         let code_review = opts.iter().find(|o| o.name == "代码评审").expect("must find");
@@ -396,6 +419,8 @@ mod tests {
         let row = db.get_review_template(id).await.expect("get").expect("some");
         assert_eq!(row.name, "默认评审任务");
         assert!(row.prompt.contains("评审") && row.prompt.contains("RATING"));
+        // 默认模板的 workspace_id 应为 None（全局模板）
+        assert!(row.workspace_id.is_none(), "default template must be global (no workspace_id)");
     }
 
     #[tokio::test]
@@ -439,7 +464,7 @@ mod tests {
         let id_b = id_b.expect("ensure B");
         assert_eq!(id_a, id_b, "concurrent ensure must converge on same id");
         // 必须恰好一行（不会重复插入）
-        let list = db.list_review_templates().await.expect("list");
+        let list = db.list_review_templates(None).await.expect("list");
         assert_eq!(list.len(), 1, "concurrent ensure must not duplicate");
     }
 }

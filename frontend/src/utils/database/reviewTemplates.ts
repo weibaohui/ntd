@@ -16,14 +16,16 @@ import type {
   UpdateReviewTemplateRequest,
 } from '@/types/reviewTemplate';
 
-/** 列出全部评审模板（含 prompt）。管理面板用。 */
-export async function listReviewTemplates(): Promise<ReviewTemplate[]> {
-  return unwrap(await api.get('/api/review-templates'));
+/** 列出全部评审模板（含 prompt）。管理面板用。可选按 workspace_id 过滤。 */
+export async function listReviewTemplates(workspaceId?: number): Promise<ReviewTemplate[]> {
+  const params = workspaceId !== undefined ? { workspace_id: workspaceId } : undefined;
+  return unwrap(await api.get('/api/review-templates', { params }));
 }
 
-/** 列出评审模板的轻量选项（不含 prompt）。loop 编辑器选择器用。 */
-export async function listReviewTemplateOptions(): Promise<ReviewTemplateOption[]> {
-  return unwrap(await api.get('/api/review-templates/options'));
+/** 列出评审模板的轻量选项（不含 prompt）。loop 编辑器选择器用。可选按 workspace_id 过滤。 */
+export async function listReviewTemplateOptions(workspaceId?: number): Promise<ReviewTemplateOption[]> {
+  const params = workspaceId !== undefined ? { workspace_id: workspaceId } : undefined;
+  return unwrap(await api.get('/api/review-templates/options', { params }));
 }
 
 /** 取单条模板。 */
