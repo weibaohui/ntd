@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import { Button, Card, Input, Switch, Spin, Tooltip, Modal, message, Typography } from 'antd';
-import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined, BugOutlined, CodeOutlined } from '@ant-design/icons';
+import { useState, useEffect, useRef } from 'react';
+import { Button, Card, Input, Switch, Spin, Tooltip, Modal, message, Typography, InputNumber, Form, Table, Space, Empty } from 'antd';
+import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined, BugOutlined, CodeOutlined, InfoCircleOutlined, SaveOutlined } from '@ant-design/icons';
 import { Cron } from 'react-js-cron';
 import 'react-js-cron/dist/styles.css';
 import { CronPresetSelect } from '@/components/CronPresetSelect';
@@ -8,6 +8,8 @@ import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '@/utils/cron';
 import { PageCard } from '@/components/common/PageCard';
 import * as db from '@/utils/database';
 import type { ExecutorConfig } from '@/types';
+
+import { DEFAULT_EXECUTION_TIMEOUT_SECS, MAX_EXECUTION_TIMEOUT_MINUTES } from '@/constants';
 
 const { Paragraph } = Typography;
 
@@ -23,6 +25,32 @@ export function ExecutorsPanel() {
   const [testModalData, setTestModalData] = useState<{ name: string; result: { test_passed: boolean; output: string | null; error: string | null } } | null>(null);
   const [savingExecutor, setSavingExecutor] = useState<string | null>(null);
 
+  // 运行配置：并发数、超时等
+  const [configForm] = Form.useForm();
+  const [configSaving, setConfigSaving] = useState(false);
+  const [executionTimeoutSecs, setExecutionTimeoutSecs] = useState<number>(() => DEFAULT_EXECUTION_TIMEOUT_SECS);
+  const lastEnabledExecutionTimeoutSecsRef = useRef<number>(DEFAULT_EXECUTION_TIMEOUT_SECS);
+
+  // 使用 Form.useWatch 订阅表单字段，直接响应 setFieldsValue 变化。
+  const watchedTimeoutSecs = Form.useWatch('execution_timeout_secs', configForm);
+
+  // 同步 watch 值到本地 state（仅处理外部 setFieldsValue 调用，如后端配置加载）。
+  useEffect(() => {
+    if (watchedTimeoutSecs === undefined) return;
+    if (watchedTimeoutSecs !== executionTimeoutSecs) {
+      setExecutionTimeoutSecs(watchedTimeoutSecs);
+    }
+    if (watchedTimeoutSecs !== 0) {
+      lastEnabledExecutionTimeoutSecsRef.current = watchedTimeoutSecs;
+    }
+  }, [watchedTimeoutSecs, executionTimeoutSecs]);
+
+  // 0 表示禁用执行超时，其余值至少为 60 秒
+  const executionTimeoutEnabled = executionTimeoutSecs !== 0;
+  const executionTimeoutMinutes = executionTimeoutEnabled
+    ? Math.max(1, Math.round(executionTimeoutSecs / 60))
+    : undefined;
+
   // Usage stats settings
   const [usageStatsEnabled, setUsageStatsEnabled] = useState(false);
   const [usageStatsCron, setUsageStatsCron] = useState('0 0 1 * * *');
@@ -31,8 +59,19 @@ export function ExecutorsPanel() {
 
   useEffect(() => {
     loadExecutors();
+    loadConfig();
     loadUsageStatsSettings();
   }, []);
+
+  /** 加载应用配置（并发数、超时等）。 */
+  const loadConfig = async () => {
+    try {
+      const cfg = await db.getConfig();
+      configForm.setFieldsValue(cfg);
+    } catch {
+      // 加载失败时使用默认值
+    }
+  };
 
   /** 从数据库加载执行器配置列表。 */
   const loadExecutors = async () => {
@@ -70,6 +109,38 @@ export function ExecutorsPanel() {
     } finally {
       setUsageStatsSaving(false);
     }
+  };
+
+  /**
+   * 保存运行配置（并发数、超时等）。
+   */
+  const handleSaveConfig = async () => {
+    try {
+      const values = await configForm.validateFields();
+      setConfigSaving(true);
+      await db.updateConfig(values);
+      message.success('配置已保存');
+    } catch (err: any) {
+      if (err?.errorFields) return;
+      message.error('保存失败: ' + (err?.message || String(err)));
+    } finally {
+      setConfigSaving(false);
+    }
+  };
+
+  /**
+   * 切换是否启用执行超时控制。
+   */
+  const handleExecutionTimeoutToggle = (checked: boolean) => {
+    if (!checked) {
+      // 关闭时记录当前非零值，供后续重新开启时恢复。
+      lastEnabledExecutionTimeoutSecsRef.current = executionTimeoutSecs;
+    }
+    const next = checked ? lastEnabledExecutionTimeoutSecsRef.current : 0;
+    // 直接更新本地 state，确保 Switch 立即响应；
+    // 同时调用 setFieldsValue 同步到表单供保存时读取。
+    setExecutionTimeoutSecs(next);
+    configForm.setFieldsValue({ execution_timeout_secs: next });
   };
 
   return (
@@ -287,6 +358,73 @@ export function ExecutorsPanel() {
             );
           })}
         </div>
+
+        {/* 运行配置区域 */}
+        <Card
+          size="small"
+          title={<><PlayCircleOutlined style={{ marginRight: 6 }} />运行配置</>}
+          style={{ marginTop: 16 }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>最大并发数</span>
+              <InputNumber
+                size="small"
+                min={1}
+                max={20}
+                value={configForm.getFieldValue('max_concurrent_todos') ?? 1}
+                onChange={(v) => {
+                  if (v) {
+                    configForm.setFieldsValue({ max_concurrent_todos: v });
+                  }
+                }}
+                style={{ width: 70 }}
+              />
+              <Tooltip title="同时运行的最大 Todo 数量，超出将排队等待">
+                <InfoCircleOutlined style={{ color: 'var(--color-text-quaternary)', fontSize: 12 }} />
+              </Tooltip>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>执行超时</span>
+              <Switch
+                size="small"
+                checked={executionTimeoutEnabled}
+                checkedChildren="开启"
+                unCheckedChildren="关闭"
+                onChange={handleExecutionTimeoutToggle}
+              />
+              <InputNumber
+                size="small"
+                min={1}
+                max={MAX_EXECUTION_TIMEOUT_MINUTES}
+                style={{ width: 80 }}
+                disabled={!executionTimeoutEnabled}
+                value={executionTimeoutMinutes}
+                onChange={(v) => {
+                  if (v) {
+                    const nextSecs = v * 60;
+                    setExecutionTimeoutSecs(nextSecs);
+                    configForm.setFieldsValue({ execution_timeout_secs: nextSecs });
+                    lastEnabledExecutionTimeoutSecsRef.current = nextSecs;
+                  }
+                }}
+              />
+              <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>分钟</span>
+              <Tooltip title={`单个执行任务的最大时长（1 ~ ${MAX_EXECUTION_TIMEOUT_MINUTES} 分钟，上限 7 天）；关闭后不再因超时自动终止`}>
+                <InfoCircleOutlined style={{ color: 'var(--color-text-quaternary)', fontSize: 12 }} />
+              </Tooltip>
+            </div>
+            <Button
+              size="small"
+              type="primary"
+              icon={<SaveOutlined />}
+              loading={configSaving}
+              onClick={handleSaveConfig}
+            >
+              保存
+            </Button>
+          </div>
+        </Card>
 
         <Card
           size="small"

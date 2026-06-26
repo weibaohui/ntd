@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Button, Popconfirm, Input, Space, List, Empty, Spin, Switch, message, Tooltip } from 'antd';
-import { PlusOutlined, FolderOutlined, EditOutlined, DeleteOutlined, QuestionCircleOutlined, RightOutlined } from '@ant-design/icons';
+import { Button, Popconfirm, Input, Space, Empty, Spin, Switch, message, Tooltip } from 'antd';
+import { PlusOutlined, FolderOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import * as db from '@/utils/database';
 import type { ProjectDirectory } from '@/utils/database';
@@ -140,141 +140,184 @@ export function ProjectDirectoriesPanel() {
 
   return (
     <PageCard icon={<FolderOutlined />} title="工作空间">
-      <div style={{ maxWidth: 700 }}>
+      <div style={{ maxWidth: 760 }}>
         <Spin spinning={projectDirsLoading}>
-        <div style={{ marginBottom: 12, fontWeight: 600 }}>添加项目目录</div>
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 12 }}>
-            添加常用项目目录。目录路径与项目名称均为必填，Todo 侧会按项目名称来选择与展示。
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-            <Input
-              value={newDirPath}
-              onChange={(e) => setNewDirPath(e.target.value)}
-              placeholder="目录路径（必填）"
-              style={{ flex: 2 }}
-              onPressEnter={handleAddProjectDirectory}
-            />
-            <Input
-              value={newDirName}
-              onChange={(e) => setNewDirName(e.target.value)}
-              placeholder="项目名称（必填）"
-              style={{ flex: 1 }}
-              onPressEnter={handleAddProjectDirectory}
-            />
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              loading={addingDir}
-              onClick={handleAddProjectDirectory}
-            >
-              添加
-            </Button>
-          </div>
-        </div>
-
-        <div style={{ marginBottom: 12, fontWeight: 600 }}>已添加的目录</div>
-        {projectDirectories.length === 0 ? (
-          <Empty description="暂无项目目录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-        ) : (
-          <List
-            dataSource={projectDirectories}
-            renderItem={(dir) => (
-              <List.Item
-                style={{
-                  padding: '12px',
-                  background: 'var(--color-bg)',
-                  borderRadius: 6,
-                  marginBottom: 8,
-                  border: '1px solid var(--color-border-light)',
-                  display: 'block',
-                }}
+          {/* 新建工作空间区域 */}
+          <div
+            style={{
+              background: 'var(--color-bg)',
+              border: '1px solid var(--color-border-light)',
+              borderRadius: 10,
+              padding: 16,
+              marginBottom: 20,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <PlusOutlined style={{ color: 'var(--color-primary)', fontSize: 14 }} />
+              <span style={{ fontWeight: 600, fontSize: 14 }}>新建工作空间</span>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 12 }}>
+              添加本地目录作为工作空间，按项目维度组织和管理事项。
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <Input
+                value={newDirName}
+                onChange={(e) => setNewDirName(e.target.value)}
+                placeholder="名称，如 my-app"
+                style={{ flex: 1 }}
+                onPressEnter={handleAddProjectDirectory}
+              />
+              <Input
+                value={newDirPath}
+                onChange={(e) => setNewDirPath(e.target.value)}
+                placeholder="路径，如 /Users/name/projects/my-app"
+                style={{ flex: 2 }}
+                onPressEnter={handleAddProjectDirectory}
+              />
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                loading={addingDir}
+                onClick={handleAddProjectDirectory}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-                  <FolderOutlined style={{ fontSize: 18, color: '#1890ff', flexShrink: 0 }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    {editingDirId === dir.id ? (
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                        <Input
-                          value={editingDirName}
-                          onChange={(e) => setEditingDirName(e.target.value)}
-                          placeholder="输入项目名称"
-                          size="small"
-                          style={{ width: 160 }}
-                          onPressEnter={() => handleUpdateProjectDirectoryName(dir.id)}
-                          autoFocus
-                        />
-                        <Button size="small" type="primary" onClick={() => handleUpdateProjectDirectoryName(dir.id)}>保存</Button>
-                        <Button size="small" onClick={() => { setEditingDirId(null); setEditingDirName(''); }}>取消</Button>
+                添加
+              </Button>
+            </div>
+          </div>
+
+          {/* 工作空间列表 */}
+          {projectDirectories.length === 0 ? (
+            <Empty description="暂无工作空间" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {projectDirectories.map((dir) => (
+                <div
+                  key={dir.id}
+                  style={{
+                    background: 'var(--color-bg)',
+                    border: '1px solid var(--color-border-light)',
+                    borderRadius: 10,
+                    padding: 14,
+                    transition: 'all 0.2s',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                    {/* 左侧：图标 + 名称 + 路径 */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                        <FolderOutlined style={{ fontSize: 18, color: '#1890ff', flexShrink: 0 }} />
+                        {editingDirId === dir.id ? (
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            <Input
+                              value={editingDirName}
+                              onChange={(e) => setEditingDirName(e.target.value)}
+                              placeholder="输入名称"
+                              size="small"
+                              style={{ width: 180 }}
+                              onPressEnter={() => handleUpdateProjectDirectoryName(dir.id)}
+                              autoFocus
+                            />
+                            <Button size="small" type="primary" onClick={() => handleUpdateProjectDirectoryName(dir.id)}>保存</Button>
+                            <Button size="small" onClick={() => { setEditingDirId(null); setEditingDirName(''); }}>取消</Button>
+                          </div>
+                        ) : (
+                          <span style={{
+                            fontSize: 15,
+                            fontWeight: 600,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            color: 'var(--color-text)',
+                          }}>
+                            {dir.name || <span style={{ color: 'var(--color-warning)' }}>未命名</span>}
+                          </span>
+                        )}
                       </div>
-                    ) : (
-                      <>
-                        {/* 名称是项目维度的"主键"，固定作为第一行显示；缺失时退化到路径但给出视觉提示 */}
-                        <div style={{ fontSize: 14, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {dir.name || <span style={{ color: 'var(--color-warning)' }}>{dir.path}（未命名）</span>}
-                        </div>
-                        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {dir.path}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                  <Space size={4}>
-                    <Button
-                      type="text"
-                      icon={<RightOutlined />}
-                      size="small"
-                      onClick={() => setSelectedWorkspace(dir)}
-                      title="工作空间详情"
-                    />
-                    {editingDirId !== dir.id && (
+                      <div style={{
+                        fontSize: 12,
+                        color: 'var(--color-text-secondary)',
+                        paddingLeft: 26,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        fontFamily: 'monospace',
+                      }}>
+                        {dir.path}
+                      </div>
+                    </div>
+
+                    {/* 右侧：操作按钮 */}
+                    <Space size={4}>
+                      {editingDirId !== dir.id && (
+                        <Button
+                          size="small"
+                          onClick={() => { setEditingDirId(dir.id); setEditingDirName(dir.name || ''); }}
+                        >
+                          编辑
+                        </Button>
+                      )}
                       <Button
-                        type="text"
-                        icon={<EditOutlined />}
+                        type="primary"
                         size="small"
-                        onClick={() => { setEditingDirId(dir.id); setEditingDirName(dir.name || ''); }}
-                      />
-                    )}
-                    <Popconfirm
-                      title="删除目录"
-                      description={`确定要删除 "${dir.name || dir.path}" 吗？`}
-                      onConfirm={() => handleDeleteProjectDirectory(dir.id)}
-                    >
-                      <Button type="text" danger icon={<DeleteOutlined />} size="small" />
-                    </Popconfirm>
-                  </Space>
+                        onClick={() => setSelectedWorkspace(dir)}
+                      >
+                        配置
+                      </Button>
+                      <Popconfirm
+                        title="删除工作空间"
+                        description={`确定要删除 "${dir.name || dir.path}" 吗？`}
+                        onConfirm={() => handleDeleteProjectDirectory(dir.id)}
+                      >
+                        <Button size="small" danger>删除</Button>
+                      </Popconfirm>
+                    </Space>
+                  </div>
+
+                  {/* 底部：功能开关区 */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 20,
+                      marginTop: 12,
+                      paddingTop: 12,
+                      borderTop: '1px solid var(--color-border-light)',
+                      paddingLeft: 26,
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <Tooltip title="执行事项时自动创建 git worktree，保持工作区干净">
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                        <Switch
+                          size="small"
+                          checked={!!dir.git_worktree_enabled}
+                          onChange={(v) => handleToggleWorktree(dir.id, 'gitWorktreeEnabled', v)}
+                        />
+                        <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>Git Worktree</span>
+                        <QuestionCircleOutlined style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }} />
+                      </span>
+                    </Tooltip>
+                    <Tooltip title="执行结束后自动清理 worktree 目录（需先开启 Worktree）">
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                        <Switch
+                          size="small"
+                          checked={!!dir.auto_cleanup}
+                          disabled={!dir.git_worktree_enabled}
+                          onChange={(v) => handleToggleWorktree(dir.id, 'autoCleanup', v)}
+                        />
+                        <span style={{
+                          fontSize: 12,
+                          color: !dir.git_worktree_enabled ? 'var(--color-text-tertiary)' : 'var(--color-text-secondary)',
+                        }}>
+                          自动清理
+                        </span>
+                        <QuestionCircleOutlined style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }} />
+                      </span>
+                    </Tooltip>
+                  </div>
                 </div>
-                {/* issue #643: worktree 开关区。放在主行下方独立一行，避免和编辑/删除按钮挤在同一行
-                    触发布局错位。label 紧贴 Switch 表达"操作对象 + 状态"，Tooltip 提供解释。 */}
-                <div style={{ display: 'flex', gap: 24, marginTop: 10, paddingLeft: 28, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <Tooltip title="开启后，ntd 会在该目录下执行 Todo 时自动创建 git worktree，目录非 git 仓库时会自动 init">
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      <Switch
-                        size="small"
-                        checked={!!dir.git_worktree_enabled}
-                        onChange={(v) => handleToggleWorktree(dir.id, 'gitWorktreeEnabled', v)}
-                      />
-                      <span style={{ fontSize: 12 }}>启用 Git Worktree</span>
-                      <QuestionCircleOutlined style={{ color: 'var(--color-text-secondary)', fontSize: 12 }} />
-                    </span>
-                  </Tooltip>
-                  <Tooltip title="依赖上一项。开启后执行结束（成功/失败/取消）自动删除 worktree 目录">
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      <Switch
-                        size="small"
-                        checked={!!dir.auto_cleanup}
-                        disabled={!dir.git_worktree_enabled}
-                        onChange={(v) => handleToggleWorktree(dir.id, 'autoCleanup', v)}
-                      />
-                      <span style={{ fontSize: 12, color: !dir.git_worktree_enabled ? 'var(--color-text-secondary)' : undefined }}>自动清理</span>
-                      <QuestionCircleOutlined style={{ color: 'var(--color-text-secondary)', fontSize: 12 }} />
-                    </span>
-                  </Tooltip>
-                </div>
-              </List.Item>
-            )}
-          />
-        )}
+              ))}
+            </div>
+          )}
         </Spin>
       </div>
     </PageCard>

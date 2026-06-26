@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { ConfigProvider, Layout, App as AntApp, Drawer, message, Form } from 'antd';
+import { ConfigProvider, Layout, App as AntApp, Drawer, message } from 'antd';
 import { PlusOutlined, ThunderboltOutlined, CloseOutlined, ArrowLeftOutlined, MenuOutlined } from '@ant-design/icons';
 import { AppProvider, useApp } from './hooks/useApp';
 import { useIsMobile } from './hooks/useIsMobile';
@@ -96,18 +96,8 @@ function AppContent() {
     db.getConfig().then(setAppConfig).catch(() => {});
   }, []);
 
-  // —— 独立页面：「运行管理」与「设置页」共享的配置表单状态 —
-  // RuntimePanel 从设置标签页剥离成独立页面后，需要自己的 Form 实例 + 配置加载/保存逻辑。
-  const [runtimeConfigForm] = Form.useForm();
-  const [runtimeConfigSaving, setRuntimeConfigSaving] = useState(false);
-  // 执行器列表供 executorDisplayNames 使用
+  // 执行器列表供 RuntimePanel 的 executorDisplayNames 使用
   const [runtimeExecutors, setRuntimeExecutors] = useState<ExecutorConfig[]>([]);
-
-  useEffect(() => {
-    db.getConfig().then((cfg) => {
-      runtimeConfigForm.setFieldsValue(cfg);
-    }).catch(() => {});
-  }, [runtimeConfigForm]);
 
   useEffect(() => {
     db.getExecutors().then(setRuntimeExecutors).catch(() => {});
@@ -120,20 +110,6 @@ function AppContent() {
     }
     return map;
   }, [runtimeExecutors]);
-
-  const handleRuntimeSaveConfig = useCallback(async () => {
-    try {
-      const values = await runtimeConfigForm.validateFields();
-      setRuntimeConfigSaving(true);
-      await db.updateConfig(values);
-      message.success('配置已保存');
-    } catch (err: any) {
-      if (err?.errorFields) return;
-      message.error('保存失败: ' + (err?.message || String(err)));
-    } finally {
-      setRuntimeConfigSaving(false);
-    }
-  }, [runtimeConfigForm]);
 
   // URL → React state 恢复（首次加载完成后执行）
   useEffect(() => {
@@ -447,63 +423,53 @@ function AppContent() {
             {state.selectedTodoId ? (
               <TodoDetail />
             ) : selectedLoopId !== null ? (
-              // 从左侧环路列表选中某个 loop，右侧展示 LoopDetailPanel；
-              // 借用一个轻量容器提供 overflow:auto。
-              <div style={{ height: '100%', overflow: 'auto' }}>
-                <LoopDetailPanel
-                  loopId={selectedLoopId}
-                  tags={state.tags}
-                  onTrigger={async () => {
-                    try {
-                      const res = await dbLoops.triggerLoop(selectedLoopId);
-                      message.success(`已触发 (execution #${res.execution_id})`);
-                    } catch (err) {
-                      // 触发失败时给用户反馈，避免静默吞掉错误
-                      message.error(`触发失败: ${err instanceof Error ? err.message : '未知错误'}`);
-                    }
-                  }}
-                  onDuplicate={async () => {
-                    try {
-                      await dbLoops.duplicateLoop(selectedLoopId);
-                      message.success('已复制');
-                    } catch (err) {
-                      // 复制失败时给用户反馈，避免静默吞掉错误
-                      message.error(`复制失败: ${err instanceof Error ? err.message : '未知错误'}`);
-                    }
-                  }}
-                  onDelete={async () => {
-                    try {
-                      await dbLoops.deleteLoop(selectedLoopId);
-                      message.success('已删除');
-                      setLoopUpdateCount(c => c + 1);
-                    } catch (err) {
-                      message.error('删除失败，环路可能正在被引用');
-                    }
-                  }}
-                  onToggleStatus={async () => {
-                    try {
-                      const loops = await dbLoops.listLoops();
-                      const loop = loops.find(l => l.id === selectedLoopId);
-                      if (!loop) return;
-                      const next = loop.status === 'enabled' ? 'paused' : 'enabled';
-                      await dbLoops.updateLoopStatus(selectedLoopId, { status: next } as any);
-                      message.success(`已${next === 'enabled' ? '启用' : '暂停'}`);
-                    } catch (err) {
-                      // 状态切换失败时给用户反馈，避免静默吞掉错误
-                      message.error(`状态切换失败: ${err instanceof Error ? err.message : '未知错误'}`);
-                    }
-                  }}
-                  onChanged={() => {
+              <LoopDetailPanel
+                loopId={selectedLoopId}
+                tags={state.tags}
+                onTrigger={async () => {
+                  try {
+                    const res = await dbLoops.triggerLoop(selectedLoopId);
+                    message.success(`已触发 (execution #${res.execution_id})`);
+                  } catch (err) {
+                    message.error(`触发失败: ${err instanceof Error ? err.message : '未知错误'}`);
+                  }
+                }}
+                onDuplicate={async () => {
+                  try {
+                    await dbLoops.duplicateLoop(selectedLoopId);
+                    message.success('已复制');
+                  } catch (err) {
+                    message.error(`复制失败: ${err instanceof Error ? err.message : '未知错误'}`);
+                  }
+                }}
+                onDelete={async () => {
+                  try {
+                    await dbLoops.deleteLoop(selectedLoopId);
+                    message.success('已删除');
                     setLoopUpdateCount(c => c + 1);
-                  }}
-                />
-              </div>
+                  } catch (err) {
+                    message.error('删除失败，环路可能正在被引用');
+                  }
+                }}
+                onToggleStatus={async () => {
+                  try {
+                    const loops = await dbLoops.listLoops();
+                    const loop = loops.find(l => l.id === selectedLoopId);
+                    if (!loop) return;
+                    const next = loop.status === 'enabled' ? 'paused' : 'enabled';
+                    await dbLoops.updateLoopStatus(selectedLoopId, { status: next } as any);
+                    message.success(`已${next === 'enabled' ? '启用' : '暂停'}`);
+                  } catch (err) {
+                    message.error(`状态切换失败: ${err instanceof Error ? err.message : '未知错误'}`);
+                  }
+                }}
+                onChanged={() => {
+                  setLoopUpdateCount(c => c + 1);
+                }}
+              />
             ) : activeView === 'runtime' ? (
               // 运行管理 — 独立页面（非设置内嵌标签页）
               <RuntimePanel
-                configForm={runtimeConfigForm}
-                configSaving={runtimeConfigSaving}
-                handleSaveConfig={handleRuntimeSaveConfig}
                 executorDisplayNames={runtimeExecutorDisplayNames}
               />
             ) : activeView === 'skills' ? (
