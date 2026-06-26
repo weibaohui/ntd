@@ -1,22 +1,22 @@
 import { useState, useEffect } from 'react';
 import { Tabs, Select, Button } from 'antd';
-import { LeftOutlined, RobotOutlined, ThunderboltOutlined, SettingOutlined } from '@ant-design/icons';
+import { LeftOutlined, RobotOutlined, SettingOutlined } from '@ant-design/icons';
 import type { ProjectDirectory } from '@/utils/database';
 import { WorkspaceAgentPanel } from './WorkspaceAgentPanel';
 import { WorkspaceSlashCommandsPanel } from './WorkspaceSlashCommandsPanel';
 import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel';
+import { ReviewTemplatesPanel } from '../ReviewTemplatesPanel';
 
 interface WorkspaceDetailPageProps {
   workspace: ProjectDirectory;
   onBack: () => void;
 }
 
-type TabKey = 'agents' | 'slash-commands' | 'settings';
+type TabKey = 'agents' | 'loop-settings';
 
 const TAB_OPTIONS = [
   { value: 'agents' as TabKey, label: '智能体', icon: <RobotOutlined /> },
-  { value: 'slash-commands' as TabKey, label: '斜杠命令', icon: <ThunderboltOutlined /> },
-  { value: 'settings' as TabKey, label: '设置', icon: <SettingOutlined /> },
+  { value: 'loop-settings' as TabKey, label: 'Loop设置', icon: <SettingOutlined /> },
 ];
 
 export function WorkspaceDetailPage({ workspace, onBack }: WorkspaceDetailPageProps) {
@@ -32,17 +32,6 @@ export function WorkspaceDetailPage({ workspace, onBack }: WorkspaceDetailPagePr
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
-
-  const renderContent = () => {
-    switch (activeTab) {
-      case 'agents':
-        return <WorkspaceAgentPanel workspaceId={workspace.id} />;
-      case 'slash-commands':
-        return <WorkspaceSlashCommandsPanel workspaceId={workspace.id} />;
-      case 'settings':
-        return <WorkspaceSettingsPanel workspaceId={workspace.id} />;
-    }
-  };
 
   return (
     <div className="workspace-detail-page">
@@ -61,7 +50,7 @@ export function WorkspaceDetailPage({ workspace, onBack }: WorkspaceDetailPagePr
         <span style={{ color: '#666', fontSize: 12 }}>{workspace.path}</span>
       </div>
 
-      {/* 手机端：使用 Select 下拉切换，平铺内容 */}
+      {/* 手机端：使用 Select 下拉切换 */}
       {isMobile ? (
         <div className="mobile-tabs-container">
           <Select
@@ -78,7 +67,21 @@ export function WorkspaceDetailPage({ workspace, onBack }: WorkspaceDetailPagePr
             }))}
           />
           <div className="mobile-tab-content">
-            {renderContent()}
+            {activeTab === 'agents' && (
+              <>
+                <WorkspaceAgentPanel workspaceId={workspace.id} />
+                <div style={{ marginTop: 24 }}>
+                  <WorkspaceSlashCommandsPanel workspaceId={workspace.id} />
+                </div>
+                <div style={{ marginTop: 24 }}>
+                  <ReviewTemplatesPanel />
+                </div>
+                <div style={{ marginTop: 24 }}>
+                  <WorkspaceSettingsPanel workspaceId={workspace.id} />
+                </div>
+              </>
+            )}
+            {activeTab === 'loop-settings' && <ReviewTemplatesPanel />}
           </div>
         </div>
       ) : (
@@ -87,15 +90,39 @@ export function WorkspaceDetailPage({ workspace, onBack }: WorkspaceDetailPagePr
           activeKey={activeTab}
           onChange={(v) => setActiveTab(v as TabKey)}
           style={{ marginTop: 8 }}
-          items={TAB_OPTIONS.map((opt) => ({
-            key: opt.value,
-            label: (
-              <span>
-                {opt.icon} {opt.label}
-              </span>
-            ),
-            children: renderContent(),
-          }))}
+          items={[
+            {
+              key: 'agents',
+              label: (
+                <span>
+                  <RobotOutlined /> 智能体
+                </span>
+              ),
+              children: (
+                <>
+                  <WorkspaceAgentPanel workspaceId={workspace.id} />
+                  <div style={{ marginTop: 24 }}>
+                    <WorkspaceSlashCommandsPanel workspaceId={workspace.id} />
+                  </div>
+                  <div style={{ marginTop: 24 }}>
+                    <ReviewTemplatesPanel />
+                  </div>
+                  <div style={{ marginTop: 24 }}>
+                    <WorkspaceSettingsPanel workspaceId={workspace.id} />
+                  </div>
+                </>
+              ),
+            },
+            {
+              key: 'loop-settings',
+              label: (
+                <span>
+                  <SettingOutlined /> Loop设置
+                </span>
+              ),
+              children: <ReviewTemplatesPanel />,
+            },
+          ]}
         />
       )}
     </div>
