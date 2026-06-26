@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useApp } from '@/hooks/useApp';
 import { Empty, Input, Skeleton, Checkbox, Modal, App as AntApp } from 'antd';
-import { ClockCircleOutlined, InboxOutlined, SearchOutlined, SwapOutlined, StopOutlined } from '@ant-design/icons';
+import { ClockCircleOutlined, InboxOutlined, SearchOutlined, SwapOutlined, StopOutlined, UnorderedListOutlined, RetweetOutlined } from '@ant-design/icons';
 import { StatusPicker } from './StatusPicker';
+import { PageCard } from './common/PageCard';
 import * as db from '@/utils/database';
 import type { ProjectDirectory, Todo } from '@/types';
 import { ExecutorBadge } from './ExecutorBadge';

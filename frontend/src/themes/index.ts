@@ -155,6 +155,13 @@ export const darkTheme: ThemeConfig = {
       itemSelectedColor: cyanAccent.primary,
       itemHoverColor: catppuccinMocha.text,
     },
+    Segmented: {
+      colorBgLayout: catppuccinMocha.surface0,
+      itemColor: catppuccinMocha.subtext1,
+      itemSelectedBg: catppuccinMocha.surface1,
+      itemSelectedColor: catppuccinMocha.text,
+      itemHoverBg: catppuccinMocha.surface1,
+    },
     Table: {
       colorBgContainer: catppuccinMocha.base,
       colorFillSecondary: catppuccinMocha.surface0,
