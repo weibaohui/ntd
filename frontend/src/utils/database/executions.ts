@@ -38,9 +38,11 @@ export async function getExecutionSummary(todoId: number): Promise<ExecutionSumm
   return unwrap(await api.get(`/api/todos/${todoId}/summary`));
 }
 
-export async function getRecentCompletedTodos(hours?: number): Promise<import('@/types').RecentCompletedTodo[]> {
-  const p = hours !== undefined ? { hours } : undefined;
-  return unwrap(await api.get('/api/todos/recent-completed', { params: p }));
+export async function getRecentCompletedTodos(hours?: number, workspaceId?: number): Promise<import('@/types').RecentCompletedTodo[]> {
+  const p: Record<string, number> = {};
+  if (hours !== undefined) p.hours = hours;
+  if (workspaceId !== undefined) p.workspace_id = workspaceId;
+  return unwrap(await api.get('/api/todos/recent-completed', { params: Object.keys(p).length > 0 ? p : undefined }));
 }
 
 export async function getDashboardStats(hours?: number): Promise<import('@/types').DashboardStats> {

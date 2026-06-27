@@ -62,7 +62,7 @@ export function MemorialBoard() {
     if (boardMode !== 'memorial') return;
     let cancelled = false;
     setLoading(true);
-    db.getRecentCompletedTodos(hours)
+    db.getRecentCompletedTodos(hours, state.selectedWorkspace ?? undefined)
       .then(data => {
         if (!cancelled) {
           setItems(data);

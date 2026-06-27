@@ -327,6 +327,9 @@ pub async fn force_update_todo_status(
 pub struct RecentCompletedParams {
     #[serde(default = "default_recent_hours")]
     pub hours: u32,
+    /// 按工作空间 ID 过滤；不传则返回全部工作空间的已完成 todo。
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
 }
 
 fn default_recent_hours() -> u32 {
@@ -339,7 +342,7 @@ pub async fn get_recent_completed_todos(
 ) -> Result<ApiResponse<Vec<RecentCompletedTodo>>, AppError> {
     let hours = params.hours.clamp(1, 720);
     Ok(ApiResponse::ok(
-        state.db.get_recent_completed_todos(hours).await?,
+        state.db.get_recent_completed_todos(hours, params.workspace_id).await?,
     ))
 }
 
