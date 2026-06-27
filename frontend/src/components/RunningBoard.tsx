@@ -207,7 +207,8 @@ function RunningBoardColumnView({
 export interface RunningBoardProps {
   searchText?: string;
   hours?: number;
-  selectedProject?: string | null;
+  /** 工作空间 ID（project_directories.id），不再用 path。 */
+  selectedProject?: number | null;
 }
 
 export function RunningBoard({ searchText, hours, selectedProject }: RunningBoardProps = {}) {
@@ -235,9 +236,12 @@ export function RunningBoard({ searchText, hours, selectedProject }: RunningBoar
   const filteredRecords = useMemo(() => {
     let result = records;
 
-    // Project filter
-    if (selectedProject) {
-      result = result.filter(r => todoById.get(r.todo_id)?.workspace_path === selectedProject);
+    // Project filter：按 workspace_id 匹配
+    if (selectedProject != null) {
+      result = result.filter(r => {
+        const todo = todoById.get(r.todo_id);
+        return todo?.workspace_id === selectedProject;
+      });
     }
 
     // Time filter: only for completed/failed records
@@ -271,8 +275,8 @@ export function RunningBoard({ searchText, hours, selectedProject }: RunningBoar
   const filteredScheduledTodos = useMemo(() => {
     let result = scheduledTodos;
 
-    if (selectedProject) {
-      result = result.filter(t => t.workspace_path === selectedProject);
+    if (selectedProject != null) {
+      result = result.filter(t => t.workspace_id === selectedProject);
     }
 
     if (searchText?.trim()) {

@@ -19,7 +19,8 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
   const { message } = App.useApp();
   const { todos, tags, selectedTodoId } = state;
   const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
-  const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  // selectedProject 使用 workspace_id（project_directories.id），不再用 path。
+  const [selectedProject, setSelectedProject] = useState<number | null>(null);
 
   const [internalSearch, setInternalSearch] = useState('');
   const [internalHours, setInternalHours] = useState(24);
@@ -55,10 +56,9 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
   /* ─── Filter by search + time + project ─── */
   const filteredTodos = useMemo(() => {
     let result = todos;
-    // 按项目目录过滤：用户选中某个项目后，只展示 workspace 匹配该目录路径的 todo；
-    // selectedProject 为 null 时表示"全部"，不做过滤
-    if (selectedProject) {
-      result = result.filter(t => t.workspace_path === selectedProject);
+    // 按工作空间过滤：selectedProject 为 workspace_id，与 todo.workspace_id 匹配
+    if (selectedProject != null) {
+      result = result.filter(t => t.workspace_id === selectedProject);
     }
     const cutoff = hours ? Date.now() - hours * 3600 * 1000 : 0;
     return result.filter(t => {
@@ -184,7 +184,7 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
   const renderCard = (todo: Todo) => {
     const column = getColumnForStatus(todo.status);
     const todoTags = tags.filter(t => todo.tag_ids?.includes(t.id));
-    const projectDir = projectDirectories.find(d => d.path === todo.workspace_path);
+    const projectDir = projectDirectories.find(d => d.id === todo.workspace_id);
     const projectName = projectDir?.name || null;
     const isDragging = draggingId === todo.id;
     const isSuccess = todo.status === 'completed';
@@ -401,7 +401,7 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
               style={{ width: 150, marginLeft: 8 }}
               suffixIcon={<FolderOutlined />}
               options={projectDirectories.map(d => ({
-                value: d.path,
+                value: d.id, // value 用 workspace_id（唯一键）
                 label: d.name || d.path,
               }))}
             />

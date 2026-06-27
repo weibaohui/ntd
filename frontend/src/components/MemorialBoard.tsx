@@ -49,7 +49,8 @@ export function MemorialBoard() {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [promptExpandedIds, setPromptExpandedIds] = useState<Set<number>>(new Set());
   const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
-  const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  // selectedProject 使用 workspace_id（project_directories.id），不再用 path。
+  const [selectedProject, setSelectedProject] = useState<number | null>(null);
 
   /* ─── Run history switching ─── */
   const [selectedRunIndex, setSelectedRunIndex] = useState<Record<number, number>>({});
@@ -189,12 +190,12 @@ export function MemorialBoard() {
 
   const filteredItems = useMemo(() => {
     let result = items;
-    // 按项目目录过滤：选中某项目后，只展示 workspace 匹配该目录的已完成 todo；
-    // 因为 items 是轻量快照（不含 workspace 字段），需要回查 state.todos 取 workspace
-    if (selectedProject) {
+    // 按工作空间过滤：selectedProject 为 workspace_id。
+    // items 是轻量快照（不含 workspace 字段），需要回查 state.todos 取 workspace_id
+    if (selectedProject != null) {
       result = result.filter(i => {
-        const todo = state.todos.find(t => t.id === i.todo_id); // 回查全量 todo 取 workspace_path
-        return todo?.workspace_path === selectedProject; // 匹配选中项目的路径
+        const todo = state.todos.find(t => t.id === i.todo_id);
+        return todo?.workspace_id === selectedProject;
       });
     }
     // 按搜索文本过滤：匹配标题或 prompt
@@ -271,9 +272,9 @@ export function MemorialBoard() {
     const isSuccess = item.execution_status === 'success';
     const expanded = expandedIds.has(item.todo_id);
     const resolvedTags = item.tag_ids.map(tid => state.tags.find(t => t.id === tid)).filter(Boolean) as Tag[];
-    // 获取项目名称
+    // 获取项目名称（按 workspace_id 匹配）
     const todo = state.todos.find(t => t.id === item.todo_id);
-    const projectDir = projectDirectories.find(d => d.path === todo?.workspace_path);
+    const projectDir = projectDirectories.find(d => d.id === todo?.workspace_id);
     const projectName = projectDir?.name || null;
 
     // Run history: determine which run to display
@@ -403,7 +404,7 @@ export function MemorialBoard() {
               if (opt) setHours(opt.value);
             }}
           />
-          {/* 项目过滤下拉：value 为目录路径（与 workspace 字段匹配），label 优先显示项目名 */}
+          {/* 项目过滤下拉：value 为 workspace_id，label 优先显示项目名 */}
           <Select
             size="small"
             placeholder="项目过滤"
@@ -413,8 +414,8 @@ export function MemorialBoard() {
             style={{ width: 150 }}
             suffixIcon={<FolderOutlined />}
             options={projectDirectories.map(d => ({
-              value: d.path, // value 存路径，与 todo.workspace_path 对比
-              label: d.name || d.path, // 优先展示项目名，无名则回退显示路径
+              value: d.id, // value 用 workspace_id（唯一键）
+              label: d.name || d.path,
             }))}
           />
           {boardMode === 'memorial' ? (
