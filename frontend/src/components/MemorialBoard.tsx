@@ -61,6 +61,7 @@ export function MemorialBoard() {
   useEffect(() => {
     if (boardMode !== 'memorial') return;
     let cancelled = false;
+    setItems([]); // 切换 workspace 或重新加载时先清空旧数据
     setLoading(true);
     db.getRecentCompletedTodos(hours, state.selectedWorkspace ?? undefined)
       .then(data => {

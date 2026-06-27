@@ -51,6 +51,8 @@ export function useRunningBoard(workspaceId?: number | null): RunningBoardState 
   const refresh = useCallback(async () => {
     try {
       setLoading(true);
+      setRecords([]); // 切换 workspace 时先清空，避免旧数据闪烁
+      setScheduledTodos([]);
       // 运行看板不分页，拉取最近的一批数据即可
       const data = await db.getRunningBoardData(undefined, 200, workspaceId ?? undefined);
       if (mountedRef.current) {

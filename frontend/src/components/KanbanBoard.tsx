@@ -39,9 +39,11 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
   const cache = useKanbanExecutionCache({ todos, storeRecords: state.executionRecords, workspaceId: state.selectedWorkspace });
 
   // 切换工作空间后立即拉取该 workspace 的 todo，保证数据最新。
+  // 先 dispatch 空数组占位清除旧数据，避免闪烁。
   useEffect(() => {
     const wid = state.selectedWorkspace;
     if (wid == null) return;
+    dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: [] });
     db.getAllTodos(wid).then(todos => {
       dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
     });
