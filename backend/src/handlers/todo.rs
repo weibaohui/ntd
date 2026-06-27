@@ -32,6 +32,10 @@ pub struct TodoListQuery {
     /// 按工作空间 ID 过滤 Todo（对应 todos.workspace_id 字段）
     #[serde(default)]
     pub workspace_id: Option<i64>,
+    /// 按最近 N 小时过滤（对 updated_at 生效，completed/failed 状态的 todo
+    /// 按 finished_at 过滤）；不传或 0 表示不过滤。
+    #[serde(default)]
+    pub hours: Option<u32>,
 }
 
 pub async fn get_todos(
@@ -39,6 +43,23 @@ pub async fn get_todos(
     axum::extract::Query(params): axum::extract::Query<TodoListQuery>,
 ) -> Result<ApiResponse<Vec<Todo>>, AppError> {
     let todos = state.db.get_todos_by_workspace_id(params.workspace_id).await?;
+    // 按 hours 过滤：只保留在最近 N 小时内更新过的 todo
+    let todos = if let Some(h) = params.hours.filter(|&h| h > 0) {
+        let cutoff = chrono::Utc::now() - chrono::Duration::hours(h as i64);
+        let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%S").to_string();
+        todos.into_iter().filter(|t| {
+            // completed/failed 的 todo 按 finished_at 过滤，其他按 updated_at
+            let time_field = match t.status {
+                crate::models::TodoStatus::Completed | crate::models::TodoStatus::Failed => {
+                    t.finished_at.as_deref().unwrap_or(&t.updated_at)
+                }
+                _ => &t.updated_at,
+            };
+            time_field >= &cutoff_str
+        }).collect()
+    } else {
+        todos
+    };
     Ok(ApiResponse::ok(todos))
 }
 

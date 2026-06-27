@@ -18,6 +18,9 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
   const { state, dispatch } = useApp();
   const { message } = App.useApp();
   const { todos, tags, selectedTodoId } = state;
+  // 本地时间过滤后的 todo 列表：当 hours 有值时，按 API 过滤结果只保留最近 N 小时的 todo。
+  // 不与全局 store 共享，避免污染其他视图。
+  const [kanbanTodos, setKanbanTodos] = useState<Todo[] | null>(null);
   const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
   // selectedProject 使用 workspace_id（project_directories.id），不再用 path。
   const [selectedProject, setSelectedProject] = useState<number | null>(null);
@@ -35,8 +38,11 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
   const isMobile = useIsMobile();
   const [activeKey, setActiveKey] = useState<Todo['status']>('pending');
 
+  // 渲染用的 todo 列表：有本地过滤结果则用，否则用全局 store
+  const displayTodos = kanbanTodos ?? todos;
+
   /* ─── Execution record cache (delegated to hook) ─── */
-  const cache = useKanbanExecutionCache({ todos, storeRecords: state.executionRecords, workspaceId: state.selectedWorkspace });
+  const cache = useKanbanExecutionCache({ todos: displayTodos, storeRecords: state.executionRecords, workspaceId: state.selectedWorkspace });
 
   // 切换工作空间后立即拉取该 workspace 的 todo，保证数据最新。
   // 先 dispatch 空数组占位清除旧数据，避免闪烁。
@@ -48,6 +54,14 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
       dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
     });
   }, [state.selectedWorkspace, dispatch]);
+
+  // 时间分段按钮切换时，用 hours 参数重新拉取（只影响本地 kanbanTodos，不污染全局 store）。
+  useEffect(() => {
+    const wid = state.selectedWorkspace;
+    if (wid == null) return;
+    if (hours == null) { setKanbanTodos(null); return; }
+    db.getAllTodos(wid, hours).then(setKanbanTodos).catch(() => {});
+  }, [state.selectedWorkspace, hours, dispatch]);
 
   // 加载项目目录列表，供项目维度过滤使用。
   // 监听 'projectDirectoryAdded' 事件：当 TodoDrawer 中快速新增目录后，
@@ -66,7 +80,7 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
 
   /* ─── Filter by search + time ─── */
   const filteredTodos = useMemo(() => {
-    let result = todos;
+    let result = displayTodos;
     const cutoff = hours ? Date.now() - hours * 3600 * 1000 : 0;
     return result.filter(t => {
       // Time filter: only for completed/failed todos
@@ -82,7 +96,7 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
       }
       return true;
     });
-  }, [todos, searchText, hours]);
+  }, [displayTodos, searchText, hours]);
 
   /* ─── Group by status ─── */
   const grouped = useMemo(() => {

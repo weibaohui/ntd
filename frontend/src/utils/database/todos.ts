@@ -6,10 +6,13 @@ import type { Todo, Tag, TodoTemplate, CustomTemplateStatus } from '@/types';
 /**
  * 列出 todos，可按工作空间 ID 过滤。
  */
-export async function getAllTodos(workspaceId?: number): Promise<Todo[]> {
+export async function getAllTodos(workspaceId?: number, hours?: number): Promise<Todo[]> {
   const params: Record<string, number> = {};
   if (workspaceId !== undefined) {
     params.workspace_id = workspaceId;
+  }
+  if (hours !== undefined) {
+    params.hours = hours;
   }
   return unwrap(await api.get('/api/todos', { params }));
 }
