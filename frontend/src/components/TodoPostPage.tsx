@@ -38,9 +38,9 @@ import {
   InputNumber,
   Space,
   Tooltip,
-  Popconfirm,
+  message as antdMessage,
 } from "antd";
-import { StarOutlined, StarFilled, FileTextOutlined, MessageOutlined } from "@ant-design/icons";
+import { StarOutlined, StarFilled, FileTextOutlined } from "@ant-design/icons";
 
 /**
  * 全屏帖子详情页 —— 按 session_id 加载同 session 的所有记录。
@@ -576,10 +576,10 @@ function LogDrawer({
   const [viewMode, setViewMode] = useState<"chat" | "command" | "log">("chat");
 
   const liveLogs = (() => {
-    if (!recordId) return null;
+    if (!record) return null;
     const allTasks = Object.values(runningTasks);
     for (const t of allTasks) {
-      if (t.recordId === recordId) return t.logs || null;
+      if (t.recordId === record.id) return t.logs || null;
     }
     return null;
   })();
@@ -588,21 +588,51 @@ function LogDrawer({
 
   return (
     <Drawer
-      title={
-        viewMode === "chat"
-          ? `对话视图 #${recordId || ""}`
-          : viewMode === "command"
-          ? `命令视图 #${recordId || ""}`
-          : `执行日志 #${recordId || ""}`
-      }
+      title={`执行详情 #${record?.id || ""}`}
       open={open}
       onClose={onClose}
       width="60%"
-      styles={{ body: { padding: "12px 16px" } }}
+      styles={{ body: { padding: "12px 16px", display: "flex", flexDirection: "column" } }}
     >
-      <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
-        <RefreshBtn onClick={() => { if (recordId) onLoadLogs(recordId, logsPage); }} />
+      {/* 执行命令 */}
+      {record?.command && (
+        <Tooltip title="点击复制命令">
+          <div
+            onClick={async () => {
+              try {
+                const ok = await copyToClipboard(record.command || "");
+                antdMessage[ok ? "success" : "error"](ok ? "已复制" : "复制失败");
+              } catch { antdMessage.error("复制失败"); }
+            }}
+            style={{
+              fontSize: 11, color: "var(--color-text-quaternary)", marginBottom: 12,
+              fontFamily: "var(--font-mono)", overflow: "hidden",
+              textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer",
+              padding: "6px 10px", background: "var(--color-bg-elevated)", borderRadius: 6,
+              border: "1px solid var(--color-border-light)",
+            }}
+          >
+            {record.command}
+          </div>
+        </Tooltip>
+      )}
+
+      {/* 元信息行：评分 + 导出 */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        {record && record.status !== "running" && (
+          <RatingControl record={record} onRate={onRate} />
+        )}
+        {record && record.status !== "running" && !!record.finished_at && (
+          <Button type="text" size="small" icon={<FileTextOutlined />} onClick={() => onExport(record)}>
+            导出YAML
+          </Button>
+        )}
         <div style={{ flex: 1 }} />
+        <RefreshBtn onClick={() => { if (record) onLoadLogs(record.id, logsPage); }} />
+      </div>
+
+      {/* 视图切换 */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <Button type={viewMode === "chat" ? "primary" : "default"} size="small" onClick={() => setViewMode("chat")}>
           对话
         </Button>
@@ -642,5 +672,83 @@ function LogDrawer({
         )}
       </div>
     </Drawer>
+  );
+}
+
+// ─── 评分控件 ──────────────────────────────────────────────
+
+function RatingControl({
+  record,
+  onRate,
+}: {
+  record: ExecutionRecord;
+  onRate: (recordId: number, rating: number | null) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState<number | null>(record.rating ?? null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setValue(record.rating ?? null);
+  }, [record.rating, record.id]);
+
+  const handleSubmit = async (next: number | null) => {
+    setSubmitting(true);
+    try {
+      await onRate(record.id, next);
+      setOpen(false);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (record.rating != null) {
+    return (
+      <Popover
+        open={open}
+        onOpenChange={setOpen}
+        trigger="click"
+        content={
+          <Space.Compact style={{ width: 200 }}>
+            <InputNumber
+              min={0} max={100} value={value}
+              onChange={v => setValue(typeof v === "number" ? v : null)}
+              placeholder="0-100" style={{ width: "100%" }}
+              onPressEnter={() => { if (value != null) handleSubmit(value); }}
+            />
+            <Button type="primary" loading={submitting} onClick={() => { if (value != null) handleSubmit(value); }}>
+              更新
+            </Button>
+          </Space.Compact>
+        }
+      >
+        <Button type="text" size="small" icon={<StarFilled style={{ color: "#faad14" }} />}>
+          {record.rating}
+        </Button>
+      </Popover>
+    );
+  }
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={setOpen}
+      trigger="click"
+      content={
+        <Space.Compact style={{ width: 200 }}>
+          <InputNumber
+            min={0} max={100} value={value}
+            onChange={v => setValue(typeof v === "number" ? v : null)}
+            placeholder="0-100" style={{ width: "100%" }}
+            onPressEnter={() => { if (value != null) handleSubmit(value); }}
+          />
+          <Button type="primary" loading={submitting} onClick={() => { if (value != null) handleSubmit(value); }}>
+            评分
+          </Button>
+        </Space.Compact>
+      }
+    >
+      <Button type="text" size="small" icon={<StarOutlined />}>评分</Button>
+    </Popover>
   );
 }
