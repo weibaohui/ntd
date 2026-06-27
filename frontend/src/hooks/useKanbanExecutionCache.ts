@@ -18,6 +18,8 @@ interface UseKanbanExecutionCacheOptions {
   todos: Todo[];
   /** executionRecords from global store, keyed by todoId */
   storeRecords: Record<number, ExecutionRecord[]>;
+  /** 当前选中的 workspace_id（project_directories.id），传透到 execution-records API */
+  workspaceId?: number | null;
 }
 
 interface UseKanbanExecutionCacheResult {
@@ -42,6 +44,7 @@ interface UseKanbanExecutionCacheResult {
 export function useKanbanExecutionCache({
   todos,
   storeRecords,
+  workspaceId,
 }: UseKanbanExecutionCacheOptions): UseKanbanExecutionCacheResult {
   // ─── Eager cache prefetch ────────────────────────────────
   // Cache of the "latest record" for each finished todo (used by collapsed cards)
@@ -82,7 +85,7 @@ export function useKanbanExecutionCache({
       }
 
       // Lazy-fetch from API
-      db.getExecutionRecords(todo.id, 1, 1).then(page => {
+      db.getExecutionRecords(todo.id, 1, 1, undefined, undefined, workspaceId ?? undefined).then(page => {
         if (page.records.length > 0) {
           setExecRecordCache(prev => {
             if (prev[todo.id]) return prev;
@@ -114,7 +117,7 @@ export function useKanbanExecutionCache({
       if (loadingResults.has(todoId)) return;
       setLoadingResults(prev => { const n = new Set(prev); n.add(todoId); return n; });
       try {
-        const page = await db.getExecutionRecords(todoId, 1, 1);
+        const page = await db.getExecutionRecords(todoId, 1, 1, undefined, undefined, workspaceId ?? undefined);
         if (page.records.length > 0 && page.records[0].result) {
           setTodoResults(prev => ({ ...prev, [todoId]: page.records[0].result! }));
         }
@@ -151,7 +154,7 @@ export function useKanbanExecutionCache({
     try {
       // Pagination is 1-indexed and sorted newest-first: runIndex=0 is the latest
       // record (page 1), runIndex=1 is the second-latest (page 2), etc.
-      const page = await db.getExecutionRecords(todoId, runIndex + 1, 1);
+      const page = await db.getExecutionRecords(todoId, runIndex + 1, 1, undefined, undefined, workspaceId ?? undefined);
       if (page.records.length > 0) {
         const record = page.records[0];
         setRunDataCache(prev => {

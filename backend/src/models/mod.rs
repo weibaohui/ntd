@@ -429,6 +429,9 @@ pub struct TodoIdQuery {
     pub limit: Option<i64>,
     #[serde(default)]
     pub status: Option<String>,
+    /// 按工作空间 ID 过滤；不传则不过滤。当提供 todo_id 或 step_id 时忽略此字段。
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
 }
 
 /// 批量更新事项执行器请求体。

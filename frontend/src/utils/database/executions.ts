@@ -1,13 +1,14 @@
 import { api, unwrap } from './client';
 import type { ExecutionRecord, ExecutionSummary, ExecutionRecordsPage, ExecutionLogsPage, RunningBoardData } from '@/types';
 
-export async function getExecutionRecords(todoId?: number, page?: number, limit?: number, status?: string, stepId?: number): Promise<ExecutionRecordsPage> {
+export async function getExecutionRecords(todoId?: number, page?: number, limit?: number, status?: string, stepId?: number, workspaceId?: number): Promise<ExecutionRecordsPage> {
   const params: Record<string, unknown> = {};
   if (todoId !== undefined) params.todo_id = todoId;
   if (stepId !== undefined) params.step_id = stepId;
   if (page !== undefined) params.page = page;
   if (limit !== undefined) params.limit = limit;
   if (status !== undefined) params.status = status;
+  if (workspaceId !== undefined) params.workspace_id = workspaceId;
   return unwrap(await api.get('/api/execution-records', { params }));
 }
 

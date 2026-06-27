@@ -53,6 +53,18 @@ pub async fn get_execution_records(
             status,
         })
         .await?;
+
+    // 当提供了 todo_id 或 step_id 时，workspace_id 是隐含的（由 todo 决定）。
+    // 仅在 todo_id/step_id 都为空且 workspace_id 有值时过滤——目前没有调用方
+    // 走这个分支，但保持接口一致性，传了就能用。
+    let records = if query.workspace_id.is_some() && query.todo_id.is_none() && query.step_id.is_none() {
+        let wid = query.workspace_id.unwrap();
+        let ws_todos = state.db.get_todos_by_workspace_id(Some(wid)).await.unwrap_or_default();
+        let ws_todo_ids: std::collections::HashSet<i64> = ws_todos.iter().map(|t| t.id).collect();
+        records.into_iter().filter(|r| ws_todo_ids.contains(&r.todo_id)).collect()
+    } else {
+        records
+    };
     Ok(ApiResponse::ok(ExecutionRecordsPage {
         records,
         total,

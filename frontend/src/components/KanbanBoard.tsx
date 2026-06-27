@@ -36,7 +36,7 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
   const [activeKey, setActiveKey] = useState<Todo['status']>('pending');
 
   /* ─── Execution record cache (delegated to hook) ─── */
-  const cache = useKanbanExecutionCache({ todos, storeRecords: state.executionRecords });
+  const cache = useKanbanExecutionCache({ todos, storeRecords: state.executionRecords, workspaceId: state.selectedWorkspace });
 
   // 切换工作空间后，若当前桶为空（从未加载过），自动拉取该 workspace 的 todo。
   // 与 TodoList 中的同款 effect 语义一致：分桶改造后，切换 workspace 时目标桶
