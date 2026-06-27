@@ -64,6 +64,7 @@ impl FeishuPushService {
                                     } else {
                                         debug!("[feishu-push] executor direct response sent to bot {}: {}", bot_id, &content[..content.len().min(60)]);
                                     }
+                                    continue;
                                 }
 
                                 // For Finished events with feishu_chat_id (binding chat), send directly

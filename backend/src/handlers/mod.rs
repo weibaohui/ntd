@@ -1032,6 +1032,12 @@ fn build_app_state(
     let task_manager = ctx.task_manager.clone();
     let config = ctx.config.clone();
 
+    // ====== Loop Studio 三件套初始化 ======
+    // 用 block_in_place + Handle::block_on 走 sync 路径做 async DB 调用；
+    // 这三件套是「可选能力」,初始化失败不阻塞 daemon 启动,只把 Option 置 None。
+    let (loop_runner, loop_trigger_dispatcher, loop_scheduler) =
+        init_loop_studio_services(ctx.clone(), tx.clone());
+
     // MessageDebounce 在 feishu_listener 和 history_fetcher 之间共享（issue #600）
     use crate::services::auto_review::ensure_default_review_template_blocking;
     use crate::services::message_debounce::MessageDebounce;
@@ -1049,12 +1055,6 @@ fn build_app_state(
 
     spawn_feishu_history_fetcher(ctx.clone(), db.clone(), feishu_listener.clone(), debounce.clone());
     ensure_default_review_template_blocking(&db);
-
-    // ====== Loop Studio 三件套初始化 ======
-    // 用 block_in_place + Handle::block_on 走 sync 路径做 async DB 调用；
-    // 这三件套是「可选能力」,初始化失败不阻塞 daemon 启动,只把 Option 置 None。
-    let (loop_runner, loop_trigger_dispatcher, loop_scheduler) =
-        init_loop_studio_services(ctx.clone(), tx.clone());
 
     // 后台监听 todo 执行完成事件，派发给 loop_trigger_dispatcher
     spawn_todo_completed_listener(tx.clone(), loop_trigger_dispatcher.clone());
@@ -1086,10 +1086,17 @@ fn init_loop_studio_services(
     Option<Arc<crate::services::loop_trigger::LoopTriggerDispatcher>>,
     Option<Arc<crate::services::loop_scheduler::LoopScheduler>>,
 ) {
-    use crate::services::loop_runner::LoopRunner;
+    use crate::services::loop_runner::{LoopRunner, LoopRunnerCtx};
     use crate::services::loop_trigger::LoopTriggerDispatcher;
     // runner 与 dispatcher 是纯内存构造,无 IO,失败概率低
-    let runner = Arc::new(LoopRunner::new(ctx.clone(), tx));
+    // 创建 LoopRunnerCtx：从 ServiceContext 中取出 LoopRunner 需要的字段
+    let loop_runner_ctx = LoopRunnerCtx {
+        db: ctx.db.clone(),
+        executor_registry: ctx.executor_registry.clone(),
+        task_manager: ctx.task_manager.clone(),
+        config: ctx.config.clone(),
+    };
+    let runner = Arc::new(LoopRunner::new(loop_runner_ctx, tx));
     // dispatcher 复用 runner 的 ctx.db
     let dispatcher = Arc::new(LoopTriggerDispatcher::new(
         runner.clone(),

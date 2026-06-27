@@ -102,7 +102,8 @@ export function WorkspaceSlashCommandsPanel({
         slash_command: values.slash_command,
         command_type: values.command_type,
         todo_id: values.command_type === 'todo' ? values.todo_id : 0,
-        loop_id: values.command_type === 'loop' ? values.loop_id : undefined,
+        // command_type === 'todo' 时用 0 告诉后端清空 loop_id；'loop' 时传具体值
+        loop_id: values.command_type === 'loop' ? values.loop_id : 0,
         enabled: values.enabled,
       };
       if (editingId) {

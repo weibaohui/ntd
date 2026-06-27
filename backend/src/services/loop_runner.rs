@@ -19,9 +19,12 @@ use std::collections::HashMap;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
+use crate::adapters::ExecutorRegistry;
+use crate::config::Config;
+use crate::db::Database;
 use crate::executor_service::{run_todo_execution_with_params, RunTodoExecutionRequest};
 use crate::models::ExecutionStatus;
-use crate::service_context::ServiceContext;
+use crate::task_manager::TaskManager;
 use crate::db::entity::{loop_steps};
 
 /// 全局限制配置，从 loop.limits_config JSON 解析。
@@ -41,23 +44,39 @@ struct LimitsConfig {
 
 /// LoopRunner 依赖：不再持有 HookService，todo hook 已整块移除（见
 /// plan `purring-forging-petal`）。循环只与 ctx / tx 直接耦合。
+///
+/// 使用独立的 LoopRunnerCtx 而非完整 ServiceContext，避免循环引用：
+/// ServiceContext -> loop_runner: Option<Arc<LoopRunner>> -> LoopRunner -> ctx: ServiceContext
+#[derive(Clone)]
+pub struct LoopRunnerCtx {
+    pub db: Arc<Database>,
+    pub executor_registry: Arc<ExecutorRegistry>,
+    pub task_manager: Arc<TaskManager>,
+    pub config: Arc<std::sync::RwLock<crate::config::Config>>,
+}
+
 pub struct LoopRunner {
-    ctx: ServiceContext,
+    ctx: LoopRunnerCtx,
     tx: broadcast::Sender<crate::handlers::ExecEvent>,
 }
 
 impl LoopRunner {
     pub fn new(
-        ctx: ServiceContext,
+        ctx: LoopRunnerCtx,
         tx: broadcast::Sender<crate::handlers::ExecEvent>,
     ) -> Self {
         Self { ctx, tx }
     }
 
-    /// 暴露 ServiceContext 供 LoopScheduler / 测试 / 上层使用。
-    /// 只读引用,不会让调用方修改 ctx 内部状态。
-    pub fn ctx_ref(&self) -> &ServiceContext {
+    /// 暴露 LoopRunnerCtx 供 LoopScheduler / 测试 / 上层使用。
+    /// 只读引用。
+    pub fn ctx_ref(&self) -> &LoopRunnerCtx {
         &self.ctx
+    }
+
+    /// 暴露 tx 供 LoopScheduler 构造 ServiceContext。
+    pub fn tx(&self) -> &broadcast::Sender<crate::handlers::ExecEvent> {
+        &self.tx
     }
 
     /// Spawn 一条 loop 执行（fire-and-forget）。返回 loop_execution_id 给调用方。
@@ -621,7 +640,7 @@ impl LoopRunner {
         let request = RunTodoExecutionRequest {
             db: self.ctx.db.clone(),
             executor_registry: self.ctx.executor_registry.clone(),
-            tx: self.ctx.tx.clone(),
+            tx: self.tx.clone(),
             task_manager: self.ctx.task_manager.clone(),
             config: self.ctx.config.clone(),
             // 使用 todo.id 而非 0，确保 execution_record 能关联到正确的 todo，
@@ -993,7 +1012,7 @@ impl LoopRunner {
             let request = RunTodoExecutionRequest {
                 db: self.ctx.db.clone(),
                 executor_registry: self.ctx.executor_registry.clone(),
-                tx: self.ctx.tx.clone(),
+                tx: self.tx.clone(),
                 task_manager: self.ctx.task_manager.clone(),
                 config: self.ctx.config.clone(),
                 todo_id: review_todo_id,
@@ -1216,7 +1235,7 @@ impl LoopRunner {
         let request = RunTodoExecutionRequest {
             db: self.ctx.db.clone(),
             executor_registry: self.ctx.executor_registry.clone(),
-            tx: self.ctx.tx.clone(),
+            tx: self.tx.clone(),
             task_manager: self.ctx.task_manager.clone(),
             config: self.ctx.config.clone(),
             todo_id: handler_todo_id,

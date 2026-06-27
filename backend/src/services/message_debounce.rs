@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
@@ -147,16 +148,9 @@ impl MessageDebounce {
                     // 根据 trigger_type 分发到不同的处理函数
                     let result: Result<crate::executor_service::ExecutionResult, ()> = match last.trigger_type.as_str() {
                         "default_response_loop" | "slash_command_loop" => {
-                            // 环路默认响应 或 斜杠命令触发环路：直接触发环路执行
-                            Self::handle_default_response_loop(
-                                &db,
-                                &task_manager,
-                                &config,
-                                last.todo_id, // loop_id
-                                &merged_content,
-                                last.workspace_id,
-                            )
-                            .await
+                            // 环路默认响应暂不支持，跳过
+                            tracing::warn!("[debounce] loop default response not yet supported for trigger {}", last.trigger_type);
+                            Err(())
                         }
                         "default_response_executor" => {
                             // 执行器默认响应：直接调用执行器交互（不存储执行记录）
@@ -357,17 +351,15 @@ pub fn merge_pending_messages(messages: &[PendingMessage]) -> String {
 
 impl MessageDebounce {
     /// 处理默认响应类型为 loop 的情况
-    /// 直接触发环路执行，类似于 dispatch_manual 的逻辑
+    /// 直接通过 LoopRunner 触发环路执行（fire-and-forget）
     async fn handle_default_response_loop(
-        db: &Arc<Database>,
-        _task_manager: &Arc<TaskManager>,
-        _config: &Arc<std::sync::RwLock<crate::config::Config>>,
+        ctx: &ServiceContext,
+        loop_runner: &Option<Arc<crate::services::loop_runner::LoopRunner>>,
         loop_id: i64,
         message: &str,
-        _workspace_id: Option<i64>,
     ) -> Result<crate::executor_service::ExecutionResult, ()> {
         // 检查环路是否存在且状态为 enabled
-        let loop_ = match db.get_loop(loop_id).await {
+        let loop_ = match ctx.db.get_loop(loop_id).await {
             Ok(Some(l)) => l,
             Ok(None) => {
                 tracing::warn!("[debounce] loop {} not found", loop_id);
@@ -384,48 +376,40 @@ impl MessageDebounce {
             return Err(());
         }
 
-        // 创建环路执行记录
+        // 构建 trigger_meta
         let meta = serde_json::json!({
             "source": "default_response",
             "message": message,
         });
 
-        // 获取环路步骤数量
-        let steps = match db.list_loop_steps_by_loop(loop_id).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("[debounce] failed to get loop steps: {}", e);
-                return Err(());
-            }
+        // 通过 LoopRunner 触发环路执行
+        let Some(ref runner) = loop_runner else {
+            tracing::error!("[debounce] loop_runner not available");
+            return Err(());
         };
 
-        // 创建 loop_execution 记录
-        let execution = match db.create_loop_execution(
+        // spawn_run 需要 Arc<Self>，clone 增加引用计数，方法结束后 Arc 会被 drop
+        let execution_id = runner.clone().spawn_run(
             loop_id,
             None, // trigger_id
             "default_response",
-            &meta.to_string(),
-            steps.len() as i32,
-        ).await {
-            Ok(exec) => exec,
-            Err(e) => {
-                tracing::error!("[debounce] failed to create loop execution: {}", e);
-                return Err(());
-            }
-        };
+            meta,
+        );
+
+        if execution_id < 0 {
+            tracing::error!("[debounce] loop_runner.spawn_run failed for loop {}", loop_id);
+            return Err(());
+        }
 
         tracing::info!(
             "[debounce] triggered loop {} as default response, execution_id={}",
             loop_id,
-            execution.id
+            execution_id
         );
 
-        // 注意：环路的后续执行由 loop_trigger_dispatcher 处理
-        // 这里我们只是创建了执行记录并触发它
-
         Ok(crate::executor_service::ExecutionResult {
-            task_id: format!("loop-{}", execution.id),
-            record_id: Some(execution.id),
+            task_id: format!("loop-{}", execution_id),
+            record_id: Some(execution_id),
         })
     }
 
@@ -492,25 +476,29 @@ impl MessageDebounce {
         let mut cmd = tokio::process::Command::new(executor.executable_path());
         cmd.args(&command_args)
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
             .stdin(std::process::Stdio::piped())
             .current_dir(&workspace_path);
 
-        // 预写 stdin payload（部分执行器需要，如 pi）
-        if let Some(payload) = executor.stdin_payload() {
-            cmd.arg(payload);
-        }
-
-        // 静默丢弃 stderr，只捕获 stdout 发送给 Feishu
-        cmd.stderr(std::process::Stdio::null());
-
-        let child = match cmd.spawn() {
+        let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!("[debounce] failed to spawn executor {}: {}", executor_type, e);
                 return Err(());
             }
         };
+
+        // 预写 stdin payload（部分执行器需要，如 pi）：写入后立即 flush 并 drop 以关闭 stdin
+        if let Some(payload) = executor.stdin_payload() {
+            if let Some(mut stdin) = child.stdin.take() {
+                if let Err(e) = stdin.write_all(payload.as_bytes()).await {
+                    tracing::warn!("[debounce] failed to write stdin payload for {}: {}", executor_type, e);
+                } else if let Err(e) = stdin.flush().await {
+                    tracing::warn!("[debounce] failed to flush stdin for {}: {}", executor_type, e);
+                }
+                drop(stdin);
+            }
+        }
 
         // 等待执行器完成并捕获输出
         let output = match child.wait_with_output().await {

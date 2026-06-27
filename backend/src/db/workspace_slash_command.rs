@@ -105,8 +105,13 @@ pub async fn update_workspace_slash_command(
     if let Some(tid) = todo_id {
         am.todo_id = ActiveValue::Set(tid);
     }
+    // loop_id = Some(0) 表示清空，Some(n) where n > 0 表示设置为该 ID
     if let Some(lid) = loop_id {
-        am.loop_id = ActiveValue::Set(Some(lid));
+        if lid == 0 {
+            am.loop_id = ActiveValue::Set(None);
+        } else {
+            am.loop_id = ActiveValue::Set(Some(lid));
+        }
     }
     if let Some(enabled) = enabled {
         am.enabled = ActiveValue::Set(enabled);
