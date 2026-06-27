@@ -172,8 +172,12 @@ function AppContent() {
   }, [clearSelection, replaceUrl]);
 
   const handleSmartCreateSubmitted = () => {
-    db.getAllTodos().then(todos => {
-      dispatch({ type: 'SET_TODOS', payload: todos });
+    // 智能创建后只刷新当前 workspace 桶，避免 getAllTodos() 全量回拉；
+    // 新建 todo 落到 selectedWorkspace 里。
+    const wid = state.selectedWorkspace;
+    if (wid == null) return;
+    db.getAllTodos(wid).then(todos => {
+      dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
     });
   };
 
@@ -520,8 +524,11 @@ function AppContent() {
         tags={state.tags}
         onClose={() => setTodoModalOpen(false)}
         onSaved={() => {
-          db.getAllTodos().then(todos => {
-            dispatch({ type: 'SET_TODOS', payload: todos });
+          // 抽屉保存后只刷新当前 workspace 桶，避免全量回拉
+          const wid = state.selectedWorkspace;
+          if (wid == null) return;
+          db.getAllTodos(wid).then(todos => {
+            dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
           });
         }}
         defaultWorkspaceId={state.selectedWorkspace}

@@ -299,9 +299,13 @@ export function TodoList(props: TodoListProps) {
 
       // 刷新数据
       if (context === 'item') {
-        const allItems = await db.getAllTodos();
-        for (const todo of allItems) {
-          dispatch({ type: 'UPDATE_TODO', payload: todo });
+        // 批量操作可能跨 workspace（用户从 A 移到 B），但 store 里只会展示当前
+        // workspace 的桶。简化策略：只拉当前 workspace 的桶；若需要跨 workspace
+        // 全量刷新，可单独走 SET_WORKSPACE_TODOS 多次（暂不优化）。
+        const wid = selectedWorkspace;
+        const allItems = wid != null ? await db.getAllTodos(wid) : [];
+        if (wid != null) {
+          dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: allItems });
         }
       } else {
         // 环路模式：刷新 loop 列表。selectedWorkspace 现已统一为 id，直接传即可。
@@ -331,11 +335,12 @@ export function TodoList(props: TodoListProps) {
       } else {
         message.warning(`成功 ${result.updated.length} 条，失败 ${result.failed.length} 条`);
       }
-      // 触发列表刷新：item 模式依赖全局 todos 状态，由 useApp 拉取；全量表查一次避免 N 次单条 GET
+      // 触发列表刷新：item 模式依赖全局 todos 状态，由 useApp 拉取；只拉当前 workspace 桶
       if (listMode === 'item') {
-        const allItems = await db.getAllTodos();
-        for (const todo of allItems) {
-          dispatch({ type: 'UPDATE_TODO', payload: todo });
+        const wid = selectedWorkspace;
+        if (wid != null) {
+          const allItems = await db.getAllTodos(wid);
+          dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: allItems });
         }
       }
     } catch {

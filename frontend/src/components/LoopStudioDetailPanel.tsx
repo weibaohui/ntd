@@ -386,6 +386,7 @@ export function LoopDetailPanel({
                     loopId={loopId}
                     triggers={detail.triggers}
                     onChanged={() => { reload(); onChanged(); }}
+                    workspaceId={detail.workspace_id}
                   />
                 </div>
               ),

@@ -3,21 +3,23 @@ import type { Todo, Tag } from '@/types';
 
 // ─── Design Overview ──────────────────────────────────────────
 //
-// This context stores the source-of-truth for todos and tags, plus the two
-// selection states (selectedTodoId / selectedTagId).  The separation of
-// TodoState from ExecutionState is intentional: components that only care
-// about which todo is selected should import useTodos() and not re-render
-// when execution records change.
+// 分桶改造（2026-06-27）：
+// - `todos: Todo[]` → `todosByWorkspace: Record<number, Todo[]>`。
+//   每个工作空间的 todo 独立放在一个桶里，切换 workspace 时不重拉。
+// - `visibleTodos` 由 `useVisibleTodos()` selector 根据
+//   `selectedWorkspace` 合成，不再用 flat todos 过滤。
+// - 所有 mutation action（ADD / UPDATE / DELETE / UPDATE_STATUS）
+//   现在需要 **显式传递 workspaceId**，不再靠遍历扁平数组。
 //
-// selectedTodoId / selectedTagId can both be null — null means "no filter"
-// (show all).  Null is used for both the "all" selection and the "nothing
-// selected" state; they are equivalent in the UI so we don't need a third
-// sentinel value.
+// selectedTodoId / selectedTagId 语义不变：
+// null = "nothing selected"。
 
 // ─── State ───────────────────────────────────────────────────
 
 interface TodoState {
-  todos: Todo[];
+  /** 按 workspace_id 分桶存储。key = workspace.id，value = 该空间下的 todo 列表。
+   *  切换 workspace 时不需要重新拉取（如果已经拉过）。 */
+  todosByWorkspace: Record<number, Todo[]>;
   tags: Tag[];
   /** null = no todo selected (list view); number = detail view */
   selectedTodoId: number | null;
@@ -32,25 +34,36 @@ interface TodoState {
 
 // ─── Actions ─────────────────────────────────────────────────
 //
-// Actions follow the standard CRUD pattern:
-//   SET   – replace collection (initial load / reload)
-//   ADD   – prepend to collection (optimistic insert)
-//   UPDATE – replace single item by id
-//   DELETE – remove single item by id
-//   SELECT – update UI selection state (not persisted)
+// 分桶改造后，所有 mutation action 都必须携带 workspaceId（ADD / UPDATE / DELETE
+// 都要知道操作哪个桶）。跨桶操作在 reducer 内部遍历 todosByWorkspace 查找。
 
 type TodoAction =
-  | { type: 'SET_TODOS'; payload: Todo[] }          // full reload from server
-  | { type: 'SET_TAGS'; payload: Tag[] }             // full reload from server
-  | { type: 'ADD_TODO'; payload: Todo }             // optimistic insert (newest first)
-  | { type: 'UPDATE_TODO'; payload: Todo }           // inline edit or status change
-  | { type: 'DELETE_TODO'; payload: number }        // remove by id
-  | { type: 'SELECT_TODO'; payload: number | null } // open detail / close detail
-  | { type: 'SELECT_TAG'; payload: number | null }   // filter by tag / clear filter
-  | { type: 'SELECT_WORKSPACE'; payload: number | null } // filter by workspace id / clear filter
-  | { type: 'ADD_TAG'; payload: Tag }               // create tag
-  | { type: 'DELETE_TAG'; payload: number }         // remove tag by id
-  | { type: 'UPDATE_TODO_STATUS'; payload: { id: number; status: Todo['status'] } }; // quick status toggle
+  // ── 替换整个桶（从后端拉完一整个 workspace 的数据后调用）─
+  | { type: 'SET_TODOS_BY_WORKSPACE'; workspaceId: number; payload: Todo[] }
+
+  // ── 全量替换 tags（数据量极小，不分桶）──
+  | { type: 'SET_TAGS'; payload: Tag[] }
+
+  // ── 新增 todo：必须携带 workspaceId，reducer 推入对应桶的顶部 ─
+  | { type: 'ADD_TODO'; workspaceId: number; payload: Todo }
+
+  // ── 更新单条 todo：遍历所有桶找到同 id 的替换 ─
+  | { type: 'UPDATE_TODO'; payload: Todo }
+
+  // ── 删除单条 todo：遍历所有桶找到同 id 的删除 ─
+  | { type: 'DELETE_TODO'; payload: number }
+
+  // ── 快速更新 todo status（Kanban 拖拽专用）─
+  | { type: 'UPDATE_TODO_STATUS'; payload: { id: number; status: Todo['status'] } }
+
+  // ── 选择态 ─
+  | { type: 'SELECT_TODO'; payload: number | null }
+  | { type: 'SELECT_TAG'; payload: number | null }
+  | { type: 'SELECT_WORKSPACE'; payload: number | null }
+
+  // ── tag CRUD ─
+  | { type: 'ADD_TAG'; payload: Tag }
+  | { type: 'DELETE_TAG'; payload: number };
 
 // 从 localStorage 读取上次选中的 workspace id，刷新后保持选择。
 // 字符串 → 数字：旧数据可能残留 path 字符串，统一按 Number 解析；失败时回退到 null。
@@ -66,7 +79,7 @@ function getInitialWorkspace(): number | null {
 }
 
 const initialState: TodoState = {
-  todos: [],
+  todosByWorkspace: {},
   tags: [],
   selectedTodoId: null,
   selectedTagId: null,
@@ -77,24 +90,75 @@ const initialState: TodoState = {
 
 function reducer(state: TodoState, action: TodoAction): TodoState {
   switch (action.type) {
-    case 'SET_TODOS': return { ...state, todos: action.payload };
+    // 替换整个桶：同一个 workspace 的 todo 全量覆盖。
+    // 如果桶不存在则新建，已存在则替换。
+    case 'SET_TODOS_BY_WORKSPACE':
+      return {
+        ...state,
+        todosByWorkspace: {
+          ...state.todosByWorkspace,
+          [action.workspaceId]: action.payload,
+        },
+      };
+
     case 'SET_TAGS': return { ...state, tags: action.payload };
 
-    // ADD_TODO prepends so new todos appear at the top of the list.
-    case 'ADD_TODO': return { ...state, todos: [action.payload, ...state.todos] };
+    // 新增：推入对应桶的顶部（最新排最前）。
+    // 如果桶不存在（极少出情况，兜底=创建），直接推入。
+    case 'ADD_TODO': {
+      const bucket = state.todosByWorkspace[action.workspaceId];
+      const newTodos = bucket
+        ? { ...state.todosByWorkspace, [action.workspaceId]: [action.payload, ...bucket] }
+        : state.todosByWorkspace;
+      // 桶不存在时也创建，避免丢失新增数据。
+      if (!bucket) {
+        newTodos[action.workspaceId] = [action.payload];
+      }
+      return { ...state, todosByWorkspace: newTodos };
+    }
 
-    // UPDATE_TODO replaces the item with the same id; leaves others untouched.
-    case 'UPDATE_TODO': return { ...state, todos: state.todos.map(t => t.id === action.payload.id ? action.payload : t) };
+    // 更新：遍历所有桶，替换同 id 的 todo。
+    // 效率 O(n*m)：todolist 总量一般 < 2000，可接受。
+    case 'UPDATE_TODO': {
+      const updated = action.payload;
+      const newBuckets: Record<number, Todo[]> = {};
+      let changed = false;
+      for (const [key, todos] of Object.entries(state.todosByWorkspace)) {
+        const wid = Number(key);
+        const idx = todos.findIndex(t => t.id === updated.id);
+        if (idx !== -1) {
+          const copy = [...todos];
+          copy[idx] = updated;
+          newBuckets[wid] = copy;
+          changed = true;
+        } else {
+          newBuckets[wid] = todos;
+        }
+      }
+      // 找不到时 TODO 可能刚被创建且桶还不存在 —— 尝试从 payload.workspace_id 推入
+      if (!changed && updated.workspace_id != null) {
+        const bucket = state.todosByWorkspace[updated.workspace_id] || [];
+        newBuckets[updated.workspace_id] = [
+          updated,
+          ...bucket.filter(t => t.id !== updated.id),
+        ];
+      }
+      return { ...state, todosByWorkspace: newBuckets };
+    }
 
-    // DELETE_TODO removes by id; safe when id doesn't exist (no-op).
-    case 'DELETE_TODO': return { ...state, todos: state.todos.filter(t => t.id !== action.payload) };
+    // 删除：遍历所有桶删除同 id 的 todo。
+    case 'DELETE_TODO': {
+      const id = action.payload;
+      const newBuckets: Record<number, Todo[]> = {};
+      for (const [key, todos] of Object.entries(state.todosByWorkspace)) {
+        newBuckets[Number(key)] = todos.filter(t => t.id !== id);
+      }
+      return { ...state, todosByWorkspace: newBuckets };
+    }
 
-    // Selection is stored here so the list and detail panel stay in sync
-    // without prop-drilling.  null clears the selection.
     case 'SELECT_TODO': return { ...state, selectedTodoId: action.payload };
     case 'SELECT_TAG': return { ...state, selectedTagId: action.payload };
     case 'SELECT_WORKSPACE': {
-      // 持久化到 localStorage，刷新后保持选择（id 持久化为字符串）。
       try {
         if (action.payload != null) {
           localStorage.setItem('selected_workspace', String(action.payload));
@@ -105,23 +169,21 @@ function reducer(state: TodoState, action: TodoAction): TodoState {
       return { ...state, selectedWorkspace: action.payload };
     }
 
-    // ADD_TAG appends the new tag (tags are displayed in insertion order).
     case 'ADD_TAG': return { ...state, tags: [...state.tags, action.payload] };
-
-    // DELETE_TAG removes by id; safe when id doesn't exist.
     case 'DELETE_TAG': return { ...state, tags: state.tags.filter(t => t.id !== action.payload) };
 
-    // UPDATE_TODO_STATUS is a fast-path for Kanban drag-and-drop: only the
-    // status field and updated_at change; we avoid a full record fetch.
-    case 'UPDATE_TODO_STATUS':
-      return {
-        ...state,
-        todos: state.todos.map(t =>
-          t.id === action.payload.id
-            ? { ...t, status: action.payload.status as Todo['status'], updated_at: new Date().toISOString() }
-            : t
-        ),
-      };
+    case 'UPDATE_TODO_STATUS': {
+      const { id, status } = action.payload;
+      const newBuckets: Record<number, Todo[]> = {};
+      for (const [key, todos] of Object.entries(state.todosByWorkspace)) {
+        newBuckets[Number(key)] = todos.map(t =>
+          t.id === id
+            ? { ...t, status: status as Todo['status'], updated_at: new Date().toISOString() }
+            : t,
+        );
+      }
+      return { ...state, todosByWorkspace: newBuckets };
+    }
 
     default: return state;
   }
@@ -132,26 +194,34 @@ function reducer(state: TodoState, action: TodoAction): TodoState {
 const TodoContext = createContext<{ state: TodoState; dispatch: React.Dispatch<TodoAction> } | null>(null);
 
 // ─── Provider ─────────────────────────────────────────────────
-//
-// Memoizes the context value so that useTodos() subscribers only re-render
-// when TodoState actually changes, not on every dispatch.
 
 export function TodoProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const ctx = useMemo(() => ({ state, dispatch }), [state]);
   return <TodoContext.Provider value={ctx}>{children}</TodoContext.Provider>;
 }
 
-// ─── Hook ─────────────────────────────────────────────────────
-//
-// Throws if called outside TodoProvider — fail-fast prevents subtle bugs where
-// a component gets a null context and silently reads stale state.
+// ─── Hooks ─────────────────────────────────────────────────────
 
 export function useTodos() {
   const ctx = useContext(TodoContext);
   if (!ctx) throw new Error('useTodos must be used within TodoProvider');
   return ctx;
+}
+
+/**
+ * 根据当前 selectedWorkspace 返回可见的 todo 列表。
+ * - selectedWorkspace 非 null → 返回对应桶的 todos（无桶时返回空数组）。
+ * - selectedWorkspace 为 null → 返回所有桶的 todos 扁平合并
+ *   （极少数场景，如 BackupPanel 导入去重需要全局视图）。
+ */
+export function useVisibleTodos(): Todo[] {
+  const { state } = useTodos();
+  const { selectedWorkspace, todosByWorkspace } = state;
+  if (selectedWorkspace != null) {
+    return todosByWorkspace[selectedWorkspace] ?? [];
+  }
+  return Object.values(todosByWorkspace).flat();
 }
 
 export type { TodoAction };

@@ -113,9 +113,13 @@ export function TodoMobilePage({
         tags={state.tags}
         onClose={() => setTodoDrawerOpen(false)}
         onSaved={() => {
-          db.getAllTodos().then(todos => {
-            dispatch({ type: 'SET_TODOS', payload: todos });
-          });
+          // 只刷新当前 workspace 桶
+          const wid = state.selectedWorkspace;
+          if (wid != null) {
+            db.getAllTodos(wid).then(todos => {
+              dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
+            });
+          }
         }}
       />
     </PageCard>

@@ -44,6 +44,8 @@ interface Props {
   loopId: number;
   triggers: LoopTriggerDto[];
   onChanged: () => void;
+  /** 按 loop 所属工作空间过滤可选的 todo（触发型触发器需要选同 workspace 的 todo） */
+  workspaceId?: number | null;
 }
 
 // ====== 触发器元数据 ======
@@ -169,9 +171,10 @@ function CronConfigForm({ value, onChange }: {
  * Todo 选择器（todo_completed / todo_state_changed 共用）。
  * 存储格式：{"todo_id": 7}
  */
-function TodoSelectorForm({ value, onChange }: {
+function TodoSelectorForm({ value, onChange, workspaceId }: {
   value: string;
   onChange: (json: string) => void;
+  workspaceId?: number | null;
 }) {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -187,10 +190,10 @@ function TodoSelectorForm({ value, onChange }: {
 
   const [selectedId, setSelectedId] = useState<number | null>(parsed.todo_id);
 
-  // 加载所有 todo 列表（items + steps）
+  // 加载 todo 列表：按 loop 所属工作空间过滤（如果 workspaceId 可用）
   useEffect(() => {
     setLoading(true);
-    db.getAllTodos()
+    db.getAllTodos(workspaceId ?? undefined)
       .then((list) => setTodos(list))
       .catch(() => { /* 静默 */ })
       .finally(() => setLoading(false));
@@ -457,9 +460,10 @@ function FeishuCommandConfigForm({ value, onChange }: {
  * Todo 状态变更配置（todo_state_changed 专用）：选择 todo 和过滤条件。
  * 存储格式：{"todo_id":7,"to_status":"completed"}
  */
-function TodoStateChangedConfigForm({ value, onChange }: {
+function TodoStateChangedConfigForm({ value, onChange, workspaceId }: {
   value: string;
   onChange: (json: string) => void;
+  workspaceId?: number | null;
 }) {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -481,7 +485,7 @@ function TodoStateChangedConfigForm({ value, onChange }: {
 
   useEffect(() => {
     setLoading(true);
-    db.getAllTodos()
+    db.getAllTodos(workspaceId ?? undefined)
       .then((list) => setTodos(list))
       .catch(() => { /* 静默 */ })
       .finally(() => setLoading(false));
@@ -538,10 +542,11 @@ function TodoStateChangedConfigForm({ value, onChange }: {
  * 根据 trigger_type 返回对应的配置表单组件。
  * 对于 manual 这种无需配置的类型，返回 null。
  */
-function TriggerConfigContent({ type, value, onChange }: {
+function TriggerConfigContent({ type, value, onChange, workspaceId }: {
   type: string;
   value: string;
   onChange: (json: string) => void;
+  workspaceId?: number | null;
 }) {
   switch (type) {
     case 'cron':
@@ -551,9 +556,9 @@ function TriggerConfigContent({ type, value, onChange }: {
     case 'feishu_command':
       return <FeishuCommandConfigForm value={value} onChange={onChange} />;
     case 'todo_completed':
-      return <TodoSelectorForm value={value} onChange={onChange} />;
+      return <TodoSelectorForm value={value} onChange={onChange} workspaceId={workspaceId} />;
     case 'todo_state_changed':
-      return <TodoStateChangedConfigForm value={value} onChange={onChange} />;
+      return <TodoStateChangedConfigForm value={value} onChange={onChange} workspaceId={workspaceId} />;
     case 'tag_added':
       return <TagSelectorForm value={value} onChange={onChange} />;
     default:
@@ -572,7 +577,7 @@ function TriggerConfigContent({ type, value, onChange }: {
 
 // ====== 主面板组件 ======
 
-export function LoopTriggersPanel({ loopId, triggers, onChanged }: Props) {
+export function LoopTriggersPanel({ loopId, triggers, onChanged, workspaceId }: Props) {
   const { message } = AntApp.useApp();
   // 当前正在配置的 trigger_type (open=true 时): null=关闭
   const [configuring, setConfiguring] = useState<{ type: string; existing: LoopTriggerDto | null } | null>(null);
@@ -809,6 +814,7 @@ export function LoopTriggersPanel({ loopId, triggers, onChanged }: Props) {
                 type={configuring.type}
                 value={configJson}
                 onChange={setConfigJson}
+                workspaceId={workspaceId}
               />
             </div>
           </>

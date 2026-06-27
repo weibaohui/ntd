@@ -448,9 +448,13 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
         tags={state.tags}
         onClose={() => setTodoDrawerOpen(false)}
         onSaved={() => {
-          db.getAllTodos().then(todos => {
-            dispatch({ type: 'SET_TODOS', payload: todos });
-          });
+          // 只刷新当前 workspace 桶：抽屉保存的 todo 必然属于该 workspace。
+          const wid = state.selectedWorkspace;
+          if (wid != null) {
+            db.getAllTodos(wid).then(todos => {
+              dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
+            });
+          }
           if (selectedTodoId) {
             loadExecutionRecords(1, historyLimit);
           }

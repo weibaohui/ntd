@@ -6,6 +6,7 @@
 
 import React, { useMemo, useCallback, useEffect } from 'react';
 import * as db from '@/utils/database';
+import type { Todo } from '@/types';
 
 // Re-export domain hooks and providers (they are defined in separate files)
 export { useTodos, TodoProvider } from './useTodoContext';
@@ -16,7 +17,7 @@ export { useUI, UIProvider } from './useUIContext';
 
 // ─── Direct imports (needed within this file) ─────────────────
 
-import { useTodos } from './useTodoContext';
+import { useTodos, useVisibleTodos } from './useTodoContext';
 import { useExecution } from './useExecutionContext';
 import { useUI } from './useUIContext';
 import { TodoProvider } from './useTodoContext';
@@ -36,18 +37,41 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ─── DataLoader (loads initial todos/tags on mount) ───────────
+// ─── DataLoader (按需加载第一个 workspace 的 todos) ───────────
+//
+// 性能优化（perf/todo-by-workspace）：
+// - 不再启动时 getAllTodos() 拉全量；改为先拉 project_directories 选第一个
+//   workspace（按持久化的 selectedWorkspace > 第一个），然后只拉那一个桶。
+// - 多 workspace 用户切到新 workspace 时由 TodoList 等组件触发按需拉，本组件
+//   不主动拉取。
+// - tags 仍是全量加载（基数小，按 id 查找频率高，缓存整集合值得）。
 
 function DataLoader() {
   const { dispatch: todoDispatch } = useTodos();
   const { dispatch: uiDispatch } = useUI();
+  const { state } = useTodos();
 
   useEffect(() => {
     async function loadData() {
       try {
-        const [todos, tags] = await Promise.all([db.getAllTodos(), db.getAllTags()]);
-        todoDispatch({ type: 'SET_TODOS', payload: todos });
+        // 1. 先拉目录列表，用来决定第一个 workspace
+        const dirs = await db.getProjectDirectories();
+        // 持久化的 selectedWorkspace 若仍有效，优先用它；否则用第一个目录。
+        const remembered = state.selectedWorkspace;
+        const initialId =
+          (remembered != null && dirs.some(d => d.id === remembered))
+            ? remembered
+            : (dirs[0]?.id ?? null);
+
+        // 2. 并行加载：tags（全量）+ 第一个 workspace 的 todos（按 workspace_id）
+        const [tags, initialTodos] = await Promise.all([
+          db.getAllTags(),
+          initialId != null ? db.getAllTodos(initialId) : Promise.resolve([] as Todo[]),
+        ]);
         todoDispatch({ type: 'SET_TAGS', payload: tags });
+        if (initialId != null) {
+          todoDispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: initialId, payload: initialTodos });
+        }
       } catch {
         // Non-fatal: app will show empty state
       } finally {
@@ -69,22 +93,28 @@ export function useApp() {
   const { state: todoState, dispatch: todoDispatch } = useTodos();
   const { state: execState, dispatch: execDispatch } = useExecution();
   const { state: uiState, dispatch: uiDispatch } = useUI();
+  // visibleTodos：按 selectedWorkspace 返回当前桶；null 时聚合所有桶。
+  // 把派生字段挂在 state 上，让 ~30 个老调用方读 state.todos 不用改。
+  const visibleTodos = useVisibleTodos();
 
-  // Merge all sub-states into a flat object
+  // Merge all sub-states into a flat object. todosByWorkspace 故意不展开成 todos：
+  // 派生字段 `todos` 已经按 selectedWorkspace 过滤好，老调用方继续读 state.todos 即可。
   const state = useMemo(() => ({
     ...todoState,
+    todos: visibleTodos,
     ...execState,
     ...uiState,
-  }), [todoState, execState, uiState]);
+  }), [todoState, visibleTodos, execState, uiState]);
 
   // Combined dispatch routes actions to the appropriate sub-dispatcher
   // based on the action's `type` discriminator field.
   const dispatch = useCallback((action: unknown) => {
     const t = (action as { type: string }).type;
     if (
-      t === 'SET_TODOS' || t === 'SET_TAGS' || t === 'ADD_TODO' ||
+      t === 'SET_TODOS_BY_WORKSPACE' || t === 'SET_TAGS' || t === 'ADD_TODO' ||
       t === 'UPDATE_TODO' || t === 'DELETE_TODO' || t === 'SELECT_TODO' ||
-      t === 'SELECT_TAG' || t === 'SELECT_WORKSPACE' || t === 'ADD_TAG' || t === 'DELETE_TAG' ||
+      t === 'SELECT_TAG' || t === 'SELECT_WORKSPACE' ||
+      t === 'ADD_TAG' || t === 'DELETE_TAG' ||
       t === 'UPDATE_TODO_STATUS'
     ) {
       todoDispatch(action as Parameters<typeof todoDispatch>[0]);
