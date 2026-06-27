@@ -303,8 +303,11 @@ function useLoopExecutions(workspaceId?: number | null) {
   const [loading, setLoading] = useState(true);
 
   // 加载环路列表：按 workspace_id 过滤（如果传了）。
+  // 切换 workspace 时先清空旧列表和执行记录，避免旧数据闪烁或触发无效的追加请求。
   useEffect(() => {
     let ignore = false;
+    setAllLoops([]);
+    setExecutions([]);
     setLoading(true);
     dbLoops.listLoops(workspaceId ?? undefined)
       .then(data => { if (!ignore) setAllLoops(data); })
@@ -314,11 +317,12 @@ function useLoopExecutions(workspaceId?: number | null) {
   }, [workspaceId]);
 
   // 环路列表加载后，批量并发拉取每个环路的执行历史。
-  // 为什么用 Promise.all：并发请求减少总耗时，看板对实时性要求高。
-  // 为什么在每个 loop 的 catch 中返回 []：单个环路失败不影响其他环路数据展示。
+  // allLoops 为空时（无内容 / 切换 workspace 已清空）也清空执行记录。
   useEffect(() => {
-    // 空列表时跳过：避免无意义的 Promise.all([]) 触发 loading
-    if (allLoops.length === 0) return;
+    if (allLoops.length === 0) {
+      setExecutions([]);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
 
