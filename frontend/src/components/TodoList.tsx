@@ -469,29 +469,6 @@ export function TodoList(props: TodoListProps) {
         hideCreate={hideCreateButton}
       />
 
-      {/* 标签过滤：环路模式下不显示，loop 不按 tag 过滤 */}
-      {listMode === 'item' && tags.length > 0 && (
-        <div className="tag-filter-bar">
-          <button
-            className={`tag-chip ${selectedTagId === null ? 'active' : ''}`}
-            onClick={() => dispatch({ type: 'SELECT_TAG', payload: null })}
-          >
-            全部
-          </button>
-          {tags.map(tag => (
-            <button
-              key={tag.id}
-              className={`tag-chip ${selectedTagId === tag.id ? 'active' : ''}`}
-              style={{ '--tag-color': tag.color } as React.CSSProperties}
-              onClick={() => dispatch({ type: 'SELECT_TAG', payload: tag.id })}
-            >
-              <span className="tag-dot" style={{ backgroundColor: tag.color }} />
-              {tag.name}
-            </button>
-          ))}
-        </div>
-      )}
-
       {listMode === 'loop' ? (
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
           {loopLoading ? (
