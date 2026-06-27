@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Tabs, Tag, Skeleton, Card } from 'antd';
 import {
   ClockCircleOutlined,
@@ -12,6 +12,7 @@ import { useApp } from '@/hooks/useApp';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useViewState } from '@/hooks/useViewState';
 import { ExecutorBadge } from './ExecutorBadge';
+import * as db from '@/utils/database';
 import { RunningRecordDrawer } from './RunningRecordDrawer';
 import {
   useRunningBoard,
@@ -220,6 +221,18 @@ export function RunningBoard({ searchText, hours, selectedProject }: RunningBoar
 
   const { records, scheduledTodos, loading, refresh } = useRunningBoard();
   useAutoRefreshRunningBoard(refresh);
+
+  // 切换工作空间后自动拉取 todo（与 KanbanBoard 同款 effect）
+  const { dispatch } = useApp();
+  useEffect(() => {
+    const wid = state.selectedWorkspace;
+    if (wid == null) return;
+    const bucket = state.todosByWorkspace?.[wid];
+    if (bucket !== undefined) return;
+    db.getAllTodos(wid).then(todos => {
+      dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
+    });
+  }, [state.selectedWorkspace, state.todosByWorkspace, dispatch]);
 
   const handleCardClick = useCallback((record: ExecutionRecord) => {
     setDrawerRecord(record);
