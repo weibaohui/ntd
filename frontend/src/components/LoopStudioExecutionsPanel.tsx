@@ -18,6 +18,7 @@ import {
   ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
+import * as dbExecutions from '@/utils/database/executions';
 import type { LoopExecutionDto, LoopExecutionDetail, LoopExecutionTokenSummary } from '@/types/loop';
 import { formatRelativeTime } from '@/utils/datetime';
 import { useExecutionEvents } from '@/hooks/useExecutionEvents';
@@ -466,7 +467,7 @@ export function StepExecList({ stepExecs, loopId, executionId, onApproved }: { s
     if (!s.execution_record_id) return;
     setDrawerLoading(true);
     try {
-      const { getExecutionRecord } = await import('@/utils/database/executions');
+      const { getExecutionRecord } = dbExecutions;
       const rec = await getExecutionRecord(s.execution_record_id);
       setDrawerRecord(rec);
     } catch {
@@ -480,7 +481,7 @@ export function StepExecList({ stepExecs, loopId, executionId, onApproved }: { s
   const handleApprove = useCallback(async (stepExecutionId: number) => {
     setApprovingId(stepExecutionId);
     try {
-      const { approveStepExecution } = await import('@/utils/database/loops');
+      const { approveStepExecution } = dbLoops;
       await approveStepExecution(loopId, executionId, stepExecutionId, approveRating, approveComment || undefined);
       message.success('审批已提交');
       // 重置审批表单状态为初始值，防止下一张待审卡片复用上次的评分与备注；
