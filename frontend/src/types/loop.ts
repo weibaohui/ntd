@@ -79,6 +79,8 @@ export interface LoopExecutionDto {
   pending_approval_count: number;
   /** 该次执行的 Token 消耗汇总（从 step_executions 的 usage 聚合计算） */
   token_summary?: LoopExecutionTokenSummary;
+  /** 执行失败时的错误说明（仅在 status=failed 时有值） */
+  error_message?: string | null;
 }
 
 export interface LoopStepExecutionDto {

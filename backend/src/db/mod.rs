@@ -880,6 +880,7 @@ mod tests {
             limit: 100,
             offset: 0,
             status: None,
+            hours: None,
         })
         .await
         .unwrap();
@@ -917,6 +918,7 @@ mod tests {
             limit: 100,
             offset: 0,
             status: None,
+            hours: None,
         })
         .await
         .unwrap();
@@ -1208,6 +1210,7 @@ mod tests {
             limit: 100,
             offset: 0,
             status: None,
+            hours: None,
         })
         .await
         .unwrap();
@@ -1233,6 +1236,7 @@ mod tests {
             limit: 2,
             offset: 0,
             status: None,
+            hours: None,
         })
         .await
         .unwrap();
@@ -1253,6 +1257,7 @@ mod tests {
             limit: 10,
             offset: 2,
             status: None,
+            hours: None,
         })
         .await
         .unwrap();
@@ -1298,6 +1303,7 @@ mod tests {
                 limit: 10,
                 offset: 0,
                 status: Some("running"),
+                hours: None,
             })
             .await
             .unwrap();
@@ -1312,6 +1318,7 @@ mod tests {
                 limit: 10,
                 offset: 0,
                 status: Some("success"),
+                hours: None,
             })
             .await
             .unwrap();
@@ -1326,6 +1333,7 @@ mod tests {
                 limit: 10,
                 offset: 0,
                 status: Some("failed"),
+                hours: None,
             })
             .await
             .unwrap();
@@ -1339,6 +1347,7 @@ mod tests {
             limit: 10,
             offset: 0,
             status: None,
+            hours: None,
         })
         .await
         .unwrap();
@@ -1353,6 +1362,7 @@ mod tests {
                 limit: 10,
                 offset: 0,
                 status: Some("all"),
+                hours: None,
             })
             .await
                 .unwrap();
@@ -1390,6 +1400,7 @@ mod tests {
             limit: 100,
             offset: 0,
             status: None,
+            hours: None,
         })
         .await
         .unwrap();
