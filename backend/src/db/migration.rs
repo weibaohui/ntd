@@ -68,7 +68,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V33ReviewTemplatesEnsureWorkspaceId),
         Box::new(V34MigrateOrphansToTempWorkspace),
         Box::new(V35RenameWorkspaceToWorkspacePath),
-        Box::new(V36SlashCommandLoopSupport),
+        Box::new(V37SlashCommandLoopSupport),
     ]
 }
 
@@ -3764,15 +3764,15 @@ impl Migration for V35RenameWorkspaceToWorkspacePath {
     }
 }
 
-/// V36: 扩展 workspace_slash_commands 表支持环路
+/// V37: 扩展 workspace_slash_commands 表支持环路
 ///
 /// 添加 command_type ('todo' | 'loop') 和 loop_id 列，
 /// 使斜杠命令可以触发 todo 或环路。
-pub(super) struct V36SlashCommandLoopSupport;
+pub(super) struct V37SlashCommandLoopSupport;
 
 #[async_trait::async_trait]
-impl Migration for V36SlashCommandLoopSupport {
-    fn version(&self) -> i64 { 36 }
+impl Migration for V37SlashCommandLoopSupport {
+    fn version(&self) -> i64 { 37 }
     fn name(&self) -> &'static str { "slash_command_loop_support" }
 
     async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
