@@ -68,7 +68,29 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V33ReviewTemplatesEnsureWorkspaceId),
         Box::new(V34MigrateOrphansToTempWorkspace),
         Box::new(V35RenameWorkspaceToWorkspacePath),
+        Box::new(V36LoopExecutionsErrorMessage),
     ]
+}
+
+/// V36 迁移：给 loop_executions 表添加 error_message 列，用于存储执行失败的原因。
+///
+/// 当 loop 因工作空间不一致等原因在启动步骤前失败时，error_message 会记录具体原因，
+/// 供前端在失败记录上展示，避免用户只能通过后台日志排查。
+pub(super) struct V36LoopExecutionsErrorMessage;
+#[async_trait::async_trait]
+impl Migration for V36LoopExecutionsErrorMessage {
+    fn version(&self) -> i64 { 36 }
+    fn name(&self) -> &'static str { "add_loop_executions_error_message" }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        // 幂等：列已存在时跳过
+        if !table_has_column(db, "loop_executions", "error_message").await? {
+            db.exec("ALTER TABLE loop_executions ADD COLUMN error_message TEXT DEFAULT NULL")
+                .await?;
+            tracing::info!("V36: loop_executions.error_message column added");
+        }
+        Ok(())
+    }
 }
 
 /// v13 迁移：将 loop_steps.todo_id 重命名为 step_id，消除列名误导。

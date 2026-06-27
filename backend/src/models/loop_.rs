@@ -239,6 +239,9 @@ pub struct LoopExecutionDto {
     /// 仅在 list_executions 响应中由 handler 填充，从 Model 转换时默认为空。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_summary: Option<LoopExecutionTokenSummary>,
+    /// 执行失败时的错误说明（仅在 status=failed 时有值）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
 }
 
 impl From<loop_executions::Model> for LoopExecutionDto {
@@ -257,6 +260,7 @@ impl From<loop_executions::Model> for LoopExecutionDto {
             failed_steps: m.failed_steps,
             pending_approval_count: 0, // 由 handler 后续查询填充
             token_summary: None,       // 由 handler 后续加载 step_executions 后聚合填充
+            error_message: m.error_message, // 直接透传 DB 中的错误说明
         }
     }
 }
