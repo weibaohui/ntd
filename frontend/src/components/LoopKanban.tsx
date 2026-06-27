@@ -297,7 +297,7 @@ function ColumnBody({ items, renderCard }: { items: LoopExecutionWithLoopName[];
 // - 使用 cancelledRef 防御快速切换时的竞态条件：晚返回的请求若发现已卸载，直接丢弃结果
 // - limit=20 的边界：看板场景下只需展示近期执行，20 条足够覆盖常见时间窗口且避免首屏过慢
 // - loading 状态在空列表时也能正确重置：确保空状态能正常展示，而非永久 loading
-function useLoopExecutions(workspaceId?: number | null) {
+function useLoopExecutions(workspaceId?: number | null, hours?: number) {
   const [allLoops, setAllLoops] = useState<LoopListItem[]>([]);
   const [executions, setExecutions] = useState<LoopExecutionWithLoopName[]>([]);
   const [loading, setLoading] = useState(true);
@@ -318,6 +318,7 @@ function useLoopExecutions(workspaceId?: number | null) {
 
   // 环路列表加载后，批量并发拉取每个环路的执行历史。
   // allLoops 为空时（无内容 / 切换 workspace 已清空）也清空执行记录。
+  // hours 变化时也重新拉取（时间过滤条件变了）。
   useEffect(() => {
     if (allLoops.length === 0) {
       setExecutions([]);
@@ -328,7 +329,7 @@ function useLoopExecutions(workspaceId?: number | null) {
 
     Promise.all(
       allLoops.map(loop =>
-        dbLoops.listExecutions(loop.id, { page: 1, limit: 20 })
+        dbLoops.listExecutions(loop.id, { page: 1, limit: 20, hours: hours ?? undefined })
           .then(res => res.items.map(e => ({ ...e, loop_name: loop.name })))
           .catch(() => []) // 单个环路失败回退为空数组，不阻塞其他数据
       )
@@ -349,7 +350,7 @@ function useLoopExecutions(workspaceId?: number | null) {
       });
 
     return () => { cancelled = true; };
-  }, [allLoops]);
+  }, [allLoops, hours]);
 
   return { executions, loading };
 }
@@ -377,7 +378,7 @@ export function LoopKanban({ searchText: externalSearch, hours: externalHours, o
   const { state } = useApp();
 
   // 使用自定义 Hook 加载数据，逻辑抽离后函数体长度可控
-  const { executions, loading } = useLoopExecutions(state.selectedWorkspace);
+  const { executions, loading } = useLoopExecutions(state.selectedWorkspace, hours);
 
   // ── 轨迹侧边栏状态 ────────────────────────────────────
   const [selectedExec, setSelectedExec] = useState<LoopExecutionWithLoopName | null>(null);
