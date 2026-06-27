@@ -38,6 +38,19 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
   /* ─── Execution record cache (delegated to hook) ─── */
   const cache = useKanbanExecutionCache({ todos, storeRecords: state.executionRecords });
 
+  // 切换工作空间后，若当前桶为空（从未加载过），自动拉取该 workspace 的 todo。
+  // 与 TodoList 中的同款 effect 语义一致：分桶改造后，切换 workspace 时目标桶
+  // 可能为空，需要主动 fetch 一次才能让 useVisibleTodos() 返回数据。
+  useEffect(() => {
+    const wid = state.selectedWorkspace;
+    if (wid == null) return;
+    const bucket = state.todosByWorkspace?.[wid];
+    if (bucket !== undefined) return;
+    db.getAllTodos(wid).then(todos => {
+      dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
+    });
+  }, [state.selectedWorkspace, state.todosByWorkspace, dispatch]);
+
   // 加载项目目录列表，供项目维度过滤使用。
   // 监听 'projectDirectoryAdded' 事件：当 TodoDrawer 中快速新增目录后，
   // 此处会重拉列表，保证下拉选项和过滤条件与最新数据同步。
