@@ -85,7 +85,7 @@ export function MemorialBoard() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [hours, boardMode]);
+  }, [hours, boardMode, state.selectedWorkspace]);
 
   // 切换工作空间后立即拉取该 workspace 的 todo，保证数据最新。
   useEffect(() => {
