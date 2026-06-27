@@ -371,7 +371,7 @@ impl TodoScheduler {
         &self,
         ctx: &ServiceContext,
     ) -> Result<(), SchedulerError> {
-        let todos = ctx.db.get_scheduler_todos().await?;
+        let todos = ctx.db.get_scheduler_todos(None).await?;
 
         for todo in todos {
             if let Some(ref config) = todo.scheduler_config {

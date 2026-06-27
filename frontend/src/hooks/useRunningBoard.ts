@@ -41,7 +41,7 @@ function classifyRecord(record: ExecutionRecord): RunningBoardColumn {
   return 'failed';
 }
 
-export function useRunningBoard(): RunningBoardState {
+export function useRunningBoard(workspaceId?: number | null): RunningBoardState {
   const [records, setRecords] = useState<ExecutionRecord[]>([]);
   const [scheduledTodos, setScheduledTodos] = useState<ScheduledTodo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,7 +53,7 @@ export function useRunningBoard(): RunningBoardState {
   const refresh = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await db.getRunningBoardData(page, limit);
+      const data = await db.getRunningBoardData(page, limit, workspaceId ?? undefined);
       if (mountedRef.current) {
         setRecords(data.records);
         setScheduledTodos(data.scheduled_todos);
@@ -67,7 +67,7 @@ export function useRunningBoard(): RunningBoardState {
     } finally {
       if (mountedRef.current) setLoading(false);
     }
-  }, [page, limit]);
+  }, [page, limit, workspaceId]);
 
   useEffect(() => {
     mountedRef.current = true;

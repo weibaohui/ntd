@@ -219,7 +219,7 @@ export function RunningBoard({ searchText, hours, selectedProject }: RunningBoar
   const [activeKey, setActiveKey] = useState<RunningBoardColumn>('running');
   const [drawerRecord, setDrawerRecord] = useState<ExecutionRecord | null>(null);
 
-  const { records, scheduledTodos, loading, refresh } = useRunningBoard();
+  const { records, scheduledTodos, loading, refresh } = useRunningBoard(state.selectedWorkspace);
   useAutoRefreshRunningBoard(refresh);
 
   // 切换工作空间后自动拉取 todo（与 KanbanBoard 同款 effect）

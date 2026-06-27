@@ -87,5 +87,5 @@ pub async fn update_scheduler(
 pub async fn get_scheduler_todos(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<Vec<Todo>>, AppError> {
-    Ok(ApiResponse::ok(state.db.get_scheduler_todos().await?))
+    Ok(ApiResponse::ok(state.db.get_scheduler_todos(None).await?))
 }

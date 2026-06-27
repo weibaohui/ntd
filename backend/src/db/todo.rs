@@ -593,13 +593,15 @@ impl Database {
         Ok(Some(Self::model_to_todo(model, tag_ids)))
     }
 
-    pub async fn get_scheduler_todos(&self) -> Result<Vec<Todo>, sea_orm::DbErr> {
-        let models = todos::Entity::find()
+    pub async fn get_scheduler_todos(&self, workspace_id: Option<i64>) -> Result<Vec<Todo>, sea_orm::DbErr> {
+        let mut find = todos::Entity::find()
             .filter(todos::Column::DeletedAt.is_null())
             .filter(todos::Column::SchedulerEnabled.eq(true))
-            .filter(todos::Column::SchedulerConfig.is_not_null())
-            .all(&self.conn)
-            .await?;
+            .filter(todos::Column::SchedulerConfig.is_not_null());
+        if let Some(wid) = workspace_id {
+            find = find.filter(todos::Column::WorkspaceId.eq(wid));
+        }
+        let models = find.all(&self.conn).await?;
 
         let ids: Vec<i64> = models.iter().map(|m| m.id).collect();
         let tag_map = self.fetch_tag_ids_for_many(&ids).await?;

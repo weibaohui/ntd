@@ -90,9 +90,10 @@ export async function smartCreate(content: string): Promise<SmartCreateResult> {
   return unwrap(await api.post('/api/smart-create', { content }));
 }
 
-export async function getRunningBoardData(page?: number, limit?: number): Promise<RunningBoardData> {
+export async function getRunningBoardData(page?: number, limit?: number, workspaceId?: number): Promise<RunningBoardData> {
   const params: Record<string, unknown> = {};
   if (page !== undefined) params.page = page;
   if (limit !== undefined) params.limit = limit;
+  if (workspaceId !== undefined) params.workspace_id = workspaceId;
   return unwrap(await api.get('/api/running-board', { params }));
 }

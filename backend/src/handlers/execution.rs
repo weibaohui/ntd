@@ -324,6 +324,9 @@ pub struct RunningBoardQuery {
     pub page: Option<i64>,
     #[serde(default)]
     pub limit: Option<i64>,
+    /// 按工作空间 ID 过滤；不传返回全部。
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
 }
 
 pub async fn get_running_board(
@@ -345,7 +348,18 @@ pub async fn get_running_board(
         })
         .await?;
 
-    let scheduled_todos = state.db.get_scheduler_todos().await?;
+    // 按 workspace_id 过滤 execution records（表本身无 workspace_id，
+    // 需通过 todos 表关联过滤）。一次查出该 workspace 下所有 todo_ids，
+    // 构建 Hashset 后在内存中过滤。
+    let records = if let Some(wid) = query.workspace_id {
+        let ws_todos = state.db.get_todos_by_workspace_id(Some(wid)).await.unwrap_or_default();
+        let ws_todo_ids: std::collections::HashSet<i64> = ws_todos.iter().map(|t| t.id).collect();
+        records.into_iter().filter(|r| ws_todo_ids.contains(&r.todo_id)).collect()
+    } else {
+        records
+    };
+
+    let scheduled_todos = state.db.get_scheduler_todos(query.workspace_id).await?;
 
     Ok(ApiResponse::ok(crate::models::RunningBoardResponse {
         records,

@@ -1086,7 +1086,7 @@ mod tests {
             .await
             .unwrap();
         let id2 = db.create_todo("Normal", "Prompt").await.unwrap();
-        let scheduled = db.get_scheduler_todos().await.unwrap();
+        let scheduled = db.get_scheduler_todos(None).await.unwrap();
         assert_eq!(scheduled.len(), 1);
         assert_eq!(scheduled[0].id, id1);
         assert!(scheduled.iter().all(|t| t.id != id2));
