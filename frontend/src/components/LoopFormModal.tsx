@@ -99,12 +99,13 @@ export function LoopFormModal({
   }, [open, workspaceIdForReview]);
 
   // 打开时加载异常处理 Todo 选项
+  // 必须按当前 loop 的 workspace_id 过滤——异常处理 handler 跨工作空间串进来会触发错乱执行。
   useEffect(() => {
     if (!open) return;
-    dbTodos.getAllTodos()
+    dbTodos.getAllTodos(workspaceIdForReview)
       .then(setAbnormalHandlerTodoOptions)
       .catch(() => { /* 静默 */ });
-  }, [open]);
+  }, [open, workspaceIdForReview]);
 
   // 打开时（仅编辑模式）预填表单
   useEffect(() => {
