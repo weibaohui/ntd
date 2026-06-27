@@ -15,7 +15,8 @@ export interface Todo {
   scheduler_timezone?: string | null;
   scheduler_next_run_at?: string | null;
   task_id?: string | null;
-  workspace?: string | null;
+  workspace_path?: string | null;
+  workspace_id?: number | null;
   webhook_enabled?: boolean;
   acceptance_criteria?: string | null;
   /** 已废弃：UI 层面不再展示该开关，事项执行后不再触发自动评审。保留字段用于 API 向下兼容。 */

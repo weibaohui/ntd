@@ -209,9 +209,9 @@ export function ProjectBindsTab() {
     const selectedDir = directories.find(d => d.id === selectedDirId);
     const dirPath = selectedDir?.path;
     return todos.filter(t => {
-      if (!t.workspace) return false;
-      // 若已选目录，仅显示 workspace 与目录路径一致的 Todo
-      return dirPath ? t.workspace === dirPath : true;
+      if (!t.workspace_path) return false;
+      // 若已选目录，仅显示 workspace_path 与目录路径一致的 Todo
+      return dirPath ? t.workspace_path === dirPath : true;
     });
   }, [todos, directories, selectedDirId]);
 
@@ -378,7 +378,7 @@ export function ProjectBindsTab() {
               value={selectedTodoId}
               onChange={setSelectedTodoId}
               options={projectTodos.map(t => ({
-                label: `#${t.id} ${t.title} ${t.workspace ? `· ${t.workspace}` : ''}`,
+                label: `#${t.id} ${t.title} ${t.workspace_path ? `· ${t.workspace_path}` : ''}`,
                 value: t.id,
               }))}
             />

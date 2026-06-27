@@ -130,7 +130,7 @@ export function DetailHeader({
           )}
         </div>
         {selectedTodo.prompt && <PromptDisplay content={selectedTodo.prompt} />}
-        {(selectedTodo.acceptance_criteria || selectedTodo.workspace) && (
+        {(selectedTodo.acceptance_criteria || selectedTodo.workspace_path) && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 2, marginBottom: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
             {selectedTodo.acceptance_criteria && (
               <div>
@@ -138,10 +138,10 @@ export function DetailHeader({
                 <span>{selectedTodo.acceptance_criteria}</span>
               </div>
             )}
-            {selectedTodo.workspace && (
+            {selectedTodo.workspace_path && (
               <div>
                 <span style={{ fontWeight: 600 }}>工作区目录：</span>
-                <span>{selectedTodo.workspace}</span>
+                <span>{selectedTodo.workspace_path}</span>
               </div>
             )}
           </div>

@@ -24,10 +24,9 @@ import {
   CloseCircleOutlined,
 } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
-import * as db from '@/utils/database';
 import type { LoopDetail } from '@/types/loop';
-import type { ProjectDirectory } from '@/types';
 import { copyToClipboard } from '@/utils/clipboard';
+import { getWorkspaceDisplayName, useProjectDirectories } from '@/utils/workspaceDisplay';
 import { LoopFormModal } from './LoopFormModal';
 import { LoopTriggersPanel, TRIGGER_META } from './LoopStudioTriggersPanel';
 import { LoopStepsPanel } from './LoopStudioStepsPanel';
@@ -60,8 +59,8 @@ export function LoopDetailPanel({
   const [loading, setLoading] = useState(true);
   // 基础信息编辑 modal 开关 (替代之前的 inline 编辑)
   const [editing, setEditing] = useState(false);
-  // 完整的项目目录列表（用于展示详情）
-  const [projectDirs, setProjectDirs] = useState<ProjectDirectory[]>([]);
+  // 工作空间目录（低基数集合，详情展示时把 path 转成 name 用）
+  const { dirs: projectDirs } = useProjectDirectories();
   // 执行记录总数，由 LoopExecutionsPanel 通过回调更新
   const [executionTotal, setExecutionTotal] = useState(0);
   // 从 loop.limits_config 解析出的限制值，传递给子面板做兜底校验
@@ -69,7 +68,7 @@ export function LoopDetailPanel({
   const [maxTotalTokens, setMaxTotalTokens] = useState<number | null>(null);
   // 编辑弹窗预填数据，从 detail 提取
   const [editInitialData, setEditInitialData] = useState<{
-    name: string; description: string; workspace: string | null;
+    name: string; description: string; workspace_path: string | null;
     webhook_enabled: boolean;
     icon: string; review_template_id: number | null;
     tag_ids: number[]; limits_config: string | null;
@@ -101,13 +100,6 @@ export function LoopDetailPanel({
 
   useEffect(() => { reload(); }, [reload]);
 
-  // 加载项目目录列表（用于详情页展示工作空间名称）
-  useEffect(() => {
-    db.getProjectDirectories()
-      .then(dirs => setProjectDirs(dirs))
-      .catch(() => { /* 静默 */ });
-  }, []);
-
   // 预加载执行记录总数（用于折叠标签展示，不等用户展开后才显示）
   useEffect(() => {
     dbLoops.listExecutions(loopId, { page: 1, limit: 1 })
@@ -121,7 +113,7 @@ export function LoopDetailPanel({
     setEditInitialData({
       name: detail.name,
       description: detail.description,
-      workspace: detail.workspace,
+      workspace_path: detail.workspace_path,
       webhook_enabled: detail.webhook_enabled,
       icon: detail.icon,
       review_template_id: detail.review_template_id ?? null,
@@ -223,11 +215,12 @@ export function LoopDetailPanel({
             </span>
           } />
           <DetailField label="关联工作空间" value={
-            detail.workspace ? (() => {
-              const dir = projectDirs.find(d => d.path === detail.workspace);
+            detail.workspace_path ? (() => {
+              const displayName = getWorkspaceDisplayName(projectDirs, detail.workspace_path);
+              const dir = projectDirs.find(d => d.path === detail.workspace_path);
               return dir ? (
                 <div>
-                  <div style={{ fontWeight: 500 }}>{dir.name || dir.path}</div>
+                  <div style={{ fontWeight: 500 }}>{displayName}</div>
                   <div style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)', marginTop: 2 }}>
                     {dir.path}
                     {dir.git_worktree_enabled && (
@@ -239,7 +232,7 @@ export function LoopDetailPanel({
                   </div>
                 </div>
               ) : (
-                <span>{detail.workspace}</span>
+                <span>{displayName}</span>
               );
             })() : <EmptyValue />
           } />
@@ -357,6 +350,7 @@ export function LoopDetailPanel({
           onChanged={() => { reload(); onChanged(); }}
           maxStepExecutions={maxStepExecutions}
           maxTotalTokens={maxTotalTokens}
+          workspacePath={detail.workspace_path}
         />
       </DetailSection>
 

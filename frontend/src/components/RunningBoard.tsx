@@ -237,7 +237,7 @@ export function RunningBoard({ searchText, hours, selectedProject }: RunningBoar
 
     // Project filter
     if (selectedProject) {
-      result = result.filter(r => todoById.get(r.todo_id)?.workspace === selectedProject);
+      result = result.filter(r => todoById.get(r.todo_id)?.workspace_path === selectedProject);
     }
 
     // Time filter: only for completed/failed records
@@ -272,7 +272,7 @@ export function RunningBoard({ searchText, hours, selectedProject }: RunningBoar
     let result = scheduledTodos;
 
     if (selectedProject) {
-      result = result.filter(t => t.workspace === selectedProject);
+      result = result.filter(t => t.workspace_path === selectedProject);
     }
 
     if (searchText?.trim()) {

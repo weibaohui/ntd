@@ -25,9 +25,11 @@ interface TodoDrawerProps {
   tags: Array<{ id: number; name: string; color: string }>;
   onClose: () => void;
   onSaved: (todo?: Todo) => void;
+  /** 打开创建模式时自动选中的工作空间路径 */
+  defaultWorkspace?: string | null;
 }
 
-export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerProps) {
+export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspace }: TodoDrawerProps) {
   const { message } = App.useApp();
   const isEditMode = todo !== null;
 
@@ -46,7 +48,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
 
   // 从 formState 中解构出常用的字段
   const {
-    title, prompt, selectedTags, executor, workspace,
+    title, prompt, selectedTags, executor, workspacePath,
     webhookEnabled, schedulerEnabled, schedulerConfig, acceptanceCriteria,
   } = formState;
 
@@ -133,6 +135,13 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
     }
   }, [open, todo]);
 
+  // 创建模式下自动选中当前工作空间（打开时 todo=null 触发）
+  useEffect(() => {
+    if (open && !todo && defaultWorkspace) {
+      setField('workspacePath', defaultWorkspace);
+    }
+  }, [open, todo, defaultWorkspace, setField]);
+
   const handleSkillClick = useCallback((skill: SkillMeta) => {
     insertTextAtCursor(`/${skill.name}`);
   }, [insertTextAtCursor]);
@@ -173,14 +182,14 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
     }
 
     // 创建模式：工作空间为必填项
-    if (!isEditMode && !workspace.trim()) {
+    if (!isEditMode && !workspacePath.trim()) {
       message.error('请选择工作空间');
       return;
     }
 
     setLoading(true);
     try {
-      const trimmedWorkspace = workspace.trim() || null;
+      const trimmedWorkspace = workspacePath.trim() || null;
 
       if (isEditMode && todo) {
         // WorkspaceSelect 只允许从下拉列表选择有效路径，无需二次校验
@@ -303,8 +312,8 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved }: TodoDrawerPro
               工作空间 <span style={{ color: '#ff4d4f' }}>*</span>
             </div>
             <WorkspaceSelect
-              value={workspace}
-              onChange={(v) => setField('workspace', v ?? '')}
+              value={workspacePath}
+              onChange={(v) => setField('workspacePath', v ?? '')}
               required
             />
           </div>

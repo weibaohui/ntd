@@ -1,6 +1,12 @@
 // Loop Studio 执行环节面板：DAG 流程图布局，支持控制流配置。
 //
 // 使用 dagre 自动布局，SVG 绘制有向边，支持条件分支可视化。
+//
+// 「关联环节」下拉按 loop 所属工作空间过滤候选 todo：
+// - 有 workspace 时调 db.getAllTodos(workspace_id)，只显示同工作空间下的事项
+// - 无 workspace 时不过滤（保留旧行为，不丢已有选项）
+// - 编辑环节时，已关联的 todo 若不在过滤结果里，额外补回，
+//   避免「选了别的工作空间的 todo 就再看不到」的边界陷阱
 
 import { useState, useCallback } from 'react';
 import {
@@ -9,6 +15,11 @@ import {
 import { DeleteOutlined, CloseOutlined } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import * as db from '@/utils/database';
+import {
+  getWorkspaceDisplayName,
+  getWorkspaceIdByPath,
+  useProjectDirectories,
+} from '@/utils/workspaceDisplay';
 import type { LoopStepDto, CreateLoopStepRequest } from '@/types/loop';
 import type { Todo } from '@/types';
 import { LoopFlowGraph } from '@/components/loop-flow/LoopFlowGraph';
@@ -21,10 +32,15 @@ interface StepsPanelProps {
   maxStepExecutions?: number | null;
   /** Loop 的最大 Token 数限制，来自 loop.limits_config.max_total_tokens */
   maxTotalTokens?: number | null;
+  /** Loop 所属工作空间路径（来自 loop.workspace_path 字段，对应 project_directories.path）。
+   *  用于过滤「关联环节」候选 todo，并把 path 转成 name 展示给用户。 */
+  workspacePath?: string | null;
 }
 
-export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, maxTotalTokens }: StepsPanelProps) {
+export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, maxTotalTokens, workspacePath }: StepsPanelProps) {
   const { message } = AntApp.useApp();
+  // 工作空间目录（低基数集合，一次性拉取，避免每次打开 modal 都重复请求）
+  const { dirs: projectDirs } = useProjectDirectories();
 
   // Modal 状态
   const [modalOpen, setModalOpen] = useState(false);
@@ -37,24 +53,14 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
   const handleOpenAdd = useCallback(async () => {
     setEditingStep(null);
     form.resetFields();
-    try {
-      const list = await db.getAllTodos();
-      setCandidates(list);
-    } catch {
-      setCandidates([]);
-    }
+    await loadCandidatesForCurrentLoop(null);
     setModalOpen(true);
-  }, [form]);
+  }, [form, workspacePath]);
 
   // 点击流程图节点打开编辑
   const handleSelectStep = useCallback(async (step: LoopStepDto) => {
     setEditingStep(step);
-    try {
-      const list = await db.getAllTodos();
-      setCandidates(list);
-    } catch {
-      setCandidates([]);
-    }
+    await loadCandidatesForCurrentLoop(step);
     form.setFieldsValue({
       name: step.name,
       todo_id: step.todo_id,
@@ -70,7 +76,45 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
       review_type: step.review_type ?? 'ai',
     });
     setModalOpen(true);
-  }, [form]);
+  }, [form, workspacePath]);
+
+  /**
+   * 按 loop 所属工作空间加载候选 todo 列表。
+   *
+   * 设计取舍：
+   * - workspacePath 非空 → 在已缓存的 projectDirs 中查到 workspace_id，
+   *   调 getAllTodos(workspaceId) 只拿同空间下的事项，避免误把别的工作空间的事项
+   *   串到当前 loop 的环节里。
+   * - workspacePath 为空 → 回退到不过滤（getAllTodos()），保持旧行为，不丢选项。
+   * - 编辑环节时，已关联的 todo 若不在过滤结果里，额外补回，保证用户至少能看到
+   *   当前环节指向的 todo 仍然可选（避免「换工作空间 → 旧 todo 从下拉消失 → 选不回去」
+   *   的死循环）。
+   *
+   * 失败一律静默回退为空数组，不阻塞打开 modal；空态由 Select 的 notFoundContent 兜底。
+   */
+  const loadCandidatesForCurrentLoop = useCallback(async (stepForEdit: LoopStepDto | null) => {
+    try {
+      const workspaceId = getWorkspaceIdByPath(projectDirs, workspacePath);
+      const list = await db.getAllTodos(workspaceId);
+      // 编辑模式下若已绑定的 todo 不在过滤结果里，附加一次单条查询补回选项，
+      // 确保用户依然能在下拉里看到/选中当前关联的 todo。
+      // 不附加 workspaceId 过滤，因为这条记录可能原本属于其他工作空间。
+      if (stepForEdit && !list.some(t => t.id === stepForEdit.todo_id)) {
+        try {
+          const current = await db.getTodo(stepForEdit.todo_id);
+          if (current) setCandidates([...list, current]);
+          else setCandidates(list);
+        } catch {
+          setCandidates(list);
+        }
+      } else {
+        setCandidates(list);
+      }
+    } catch {
+      // 拉取失败兜底为空数组；用户看到「暂无待关联的事项」即可，不阻塞流程
+      setCandidates([]);
+    }
+  }, [projectDirs, workspacePath]);
 
   // 保存
   const handleSave = useCallback(async () => {
@@ -208,7 +252,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
           <Form.Item label="关联环节" name="todo_id" rules={[{ required: true, message: '请选择关联的环节' }]}>
             <Select
               showSearch
-              placeholder="选择已有的环节"
+              placeholder={workspacePath ? `仅显示「${getWorkspaceDisplayName(projectDirs, workspacePath)}」工作空间下的事项` : '选择已有的环节'}
               optionFilterProp="label"
               onChange={handleTodoChange}
               options={candidates.map(c => ({
@@ -216,7 +260,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
                 value: c.id,
               }))}
               notFoundContent={
-                <Empty description="暂无待关联的事项" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                <Empty description={workspacePath ? `「${getWorkspaceDisplayName(projectDirs, workspacePath)}」下暂无待关联的事项` : '暂无待关联的事项'} image={Empty.PRESENTED_IMAGE_SIMPLE} />
               }
             />
           </Form.Item>

@@ -35,10 +35,10 @@ import type {
 
 // ====== Loop 主体 ======
 
-/** 列出所有 loop,按更新时间倒序。可选按工作空间过滤。 */
-export async function listLoops(workspace?: string | null): Promise<LoopListItem[]> {
+/** 列出所有 loop,按更新时间倒序。可选按工作空间 ID 过滤。 */
+export async function listLoops(workspace_id?: number | null): Promise<LoopListItem[]> {
   const params: Record<string, string> = {};
-  if (workspace) params.workspace = workspace;
+  if (workspace_id != null) params.workspace_id = String(workspace_id);
   const qs = Object.keys(params).length ? `?${new URLSearchParams(params).toString()}` : '';
   return unwrap(await api.get(`/api/loops${qs}`));
 }
@@ -199,4 +199,20 @@ export async function forceStopLoops(
   // 占位：开发中提示由调用方弹（utils 内部不依赖 message 上下文）。
   // 直接返回"全部失败"，强制调用方走失败分支走提示。
   return { stopped: [], failed: [...loopIds] };
+}
+
+/** 批量移动环路到其他工作空间。 */
+export async function batchMoveLoopsWorkspace(
+  ids: number[],
+  workspace_path: string,
+): Promise<{ updated_count: number; total: number }> {
+  return unwrap(await api.put('/api/loops/batch-workspace', { ids, workspace_path }));
+}
+
+/** 批量复制环路到其他工作空间。 */
+export async function batchCopyLoopsWorkspace(
+  ids: number[],
+  workspace_path: string,
+): Promise<{ updated_count: number; total: number }> {
+  return unwrap(await api.post('/api/loops/batch-copy-workspace', { ids, workspace_path }));
 }

@@ -33,7 +33,7 @@ export interface LoopDto {
   id: number;
   name: string;
   description: string;
-  workspace: string | null;
+  workspace_path: string | null;
   webhook_enabled: boolean;
   status: string;
   /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
@@ -204,7 +204,7 @@ export interface LoopDetail {
   id: number;
   name: string;
   description: string;
-  workspace: string | null;
+  workspace_path: string | null;
   webhook_enabled: boolean;
   status: string;
   /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
@@ -229,7 +229,7 @@ export interface LoopListItem {
   id: number;
   name: string;
   description: string;
-  workspace: string | null;
+  workspace_path: string | null;
   webhook_enabled: boolean;
   status: string;
   /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
@@ -283,8 +283,8 @@ export interface LoopExecutionListResponse {
 export interface CreateLoopRequest {
   name: string;
   description?: string;
-  /** 工作空间（项目目录路径），必填。 */
-  workspace: string;
+  /** 工作空间目录路径（对应 project_directories.path），必填。 */
+  workspace_path: string;
   webhook_enabled?: boolean;
   tag_ids?: number[];
   /** 创建时可选预绑定单个标签；省略时后端按空标签处理，兼容旧调用方。 */
@@ -301,7 +301,7 @@ export interface CreateLoopRequest {
 export interface UpdateLoopRequest {
   name: string;
   description: string;
-  workspace: string | null;
+  workspace_path: string | null;
   webhook_enabled: boolean;
   icon: string;
   review_template_id?: number | null;

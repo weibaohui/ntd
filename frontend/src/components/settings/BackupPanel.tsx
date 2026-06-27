@@ -354,7 +354,7 @@ export function BackupPanel() {
           scheduler_enabled: todo.scheduler_enabled,
           scheduler_config: todo.scheduler_config,
           tag_names: todo.tag_names || [],
-          workspace: todo.workspace,
+          workspace_path: todo.workspace_path,
           action: exists ? 'overwrite' as const : 'new' as const,
           existingTitle: existing?.title,
         };

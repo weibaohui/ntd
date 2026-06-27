@@ -90,9 +90,9 @@ pub enum TodoAction {
         #[arg(short, long)]
         executor: Option<String>,
 
-        /// Working directory
-        #[arg(short, long)]
-        workspace: Option<String>,
+        /// Working directory (workspace path)
+        #[arg(short = 'w', long = "workspace-path")]
+        workspace_path: Option<String>,
 
         /// Tag IDs (comma-separated)
         #[arg(long)]
@@ -154,9 +154,9 @@ pub enum TodoAction {
         #[arg(long)]
         executor: Option<String>,
 
-        /// New working directory
-        #[arg(long)]
-        workspace: Option<String>,
+        /// New working directory (workspace path)
+        #[arg(long = "workspace-path")]
+        workspace_path: Option<String>,
 
         /// New tag IDs (comma-separated)
         #[arg(long)]
@@ -268,9 +268,10 @@ pub enum TagAction {
 pub enum LoopAction {
     /// List all loops
     List {
-        /// Filter by workspace
-        #[arg(long)]
-        workspace: Option<String>,
+        /// Filter by workspace ID (unique key; use --workspace-id instead of path
+        /// since path is not unique across project_directories).
+        #[arg(long = "workspace-id")]
+        workspace_id: Option<i64>,
     },
     /// Get loop details
     Get {
@@ -393,7 +394,7 @@ async fn handle_todo(
     fields: &Option<String>,
 ) -> Result<()> {
     match action {
-        TodoAction::Create { title, prompt, file, stdin, executor, workspace, tags, schedule } => {
+        TodoAction::Create { title, prompt, file, stdin, executor, workspace_path, tags, schedule } => {
             let mut req = if *stdin {
                 // Read from stdin
                 let value = read_stdin_json()?;
@@ -413,8 +414,8 @@ async fn handle_todo(
                         auto_review_enabled: value.get("auto_review_enabled").and_then(|v| v.as_bool()),
                         webhook_enabled: None,
                     });
-                    if workspace.is_some() {
-                        // workspace is sent separately in the full JSON body
+                    if workspace_path.is_some() {
+                        // workspace_path is sent separately in the full JSON body
                     }
                     req
             } else {
@@ -496,7 +497,7 @@ async fn handle_todo(
             let resp: ClientResponse<Todo> = client.get(&format!("/todos/{}", id)).await?;
             print_response(resp, output, fields)?;
         }
-        TodoAction::Update { id, title, prompt, file, stdin, status, executor, workspace, tags, schedule } => {
+        TodoAction::Update { id, title, prompt, file, stdin, status, executor, workspace_path, tags, schedule } => {
             let mut req = if *stdin {
                 read_stdin_json()?
             } else {
@@ -510,7 +511,7 @@ async fn handle_todo(
                     "prompt": prompt_content,
                     "status": status,
                     "executor": executor,
-                    "workspace": workspace,
+                    "workspace_path": workspace_path,
                 })
             };
 
@@ -519,7 +520,7 @@ async fn handle_todo(
             if let Some(p) = prompt { req["prompt"] = p.clone().into(); }
             if let Some(s) = status { req["status"] = s.clone().into(); }
             if let Some(e) = executor { req["executor"] = e.clone().into(); }
-            if let Some(w) = workspace { req["workspace"] = w.clone().into(); }
+            if let Some(w) = workspace_path { req["workspace_path"] = w.clone().into(); }
             if let Some(t) = tags {
                 let tag_ids: Vec<i64> = t.split(',').filter_map(|s| s.trim().parse().ok()).collect();
                 req["tag_ids"] = tag_ids.into();
@@ -646,9 +647,9 @@ async fn handle_loop(
     fields: &Option<String>,
 ) -> Result<()> {
     match action {
-        LoopAction::List { workspace } => {
-            let path = if let Some(w) = workspace {
-                format!("/loops?workspace={}", w)
+        LoopAction::List { workspace_id } => {
+            let path = if let Some(wid) = workspace_id {
+                format!("/loops?workspace_id={}", wid)
             } else {
                 "/loops".to_string()
             };

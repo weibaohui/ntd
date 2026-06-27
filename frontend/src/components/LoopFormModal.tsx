@@ -15,10 +15,10 @@ import { PlusOutlined } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import * as dbReviewTemplates from '@/utils/database/reviewTemplates';
 import * as dbTodos from '@/utils/database/todos';
-import { getProjectDirectories } from '@/utils/database/todos';
 import type { UpdateLoopRequest } from '@/types/loop';
 import type { ReviewTemplateOption } from '@/types/reviewTemplate';
 import type { Todo } from '@/types/todo';
+import { getWorkspaceDisplayName, getWorkspaceIdByPath, useProjectDirectories } from '@/utils/workspaceDisplay';
 import { TagCheckCardGroup } from './TagCheckCard';
 import { WorkspaceSelect } from './common/WorkspaceSelect';
 
@@ -34,7 +34,7 @@ interface LoopFormModalProps {
   initialData?: {
     name: string;
     description: string;
-    workspace: string | null;
+    workspace_path: string | null;
     webhook_enabled: boolean;
     icon: string;
     review_template_id: number | null;
@@ -48,6 +48,8 @@ interface LoopFormModalProps {
   /** 保存成功回调（创建模式回传新 loopId） */
   onSaved: (loopId?: number) => void;
   onClose: () => void;
+  /** 打开创建模式时自动选中的工作空间路径 */
+  defaultWorkspace?: string | null;
 }
 
 // ---------- Form values type ----------
@@ -62,7 +64,7 @@ type FormValues = UpdateLoopRequest & {
 // ---------- component ----------
 
 export function LoopFormModal({
-  open, mode, loopId, initialData, tags, onSaved, onClose,
+  open, mode, loopId, initialData, tags, onSaved, onClose, defaultWorkspace,
 }: LoopFormModalProps) {
   const { message } = AntApp.useApp();
   const [saving, setSaving] = useState(false);
@@ -78,23 +80,15 @@ export function LoopFormModal({
   const [newTemplateForm] = Form.useForm<{ name: string; description?: string; prompt: string }>();
   // 异常处理 Todo
   const [abnormalHandlerTodoOptions, setAbnormalHandlerTodoOptions] = useState<Todo[]>([]);
-  // 工作空间路径→ID 映射（用于评审模板 API，其过滤/新建需 workspace_id 而非路径字符串）
-  const [pathToWorkspaceId, setPathToWorkspaceId] = useState<Record<string, number>>({});
+  // 工作空间目录（低基数集合，path→id 与 path→name 共用此数据源）
+  const { dirs: projectDirs } = useProjectDirectories();
 
-  // 打开时加载工作空间目录列表（建立路径→ID 映射）
-  useEffect(() => {
-    if (!open) return;
-    getProjectDirectories().then((dirs) => {
-      const map: Record<string, number> = {};
-      for (const d of dirs) {
-        if (d.path) map[d.path] = d.id;
-      }
-      setPathToWorkspaceId(map);
-    }).catch(() => { /* 静默 */ });
-  }, [open]);
-
-  /** 根据当前 workspaceValue（路径）推导对应的 workspace_id，用于评审模板 API */
-  const workspaceIdForReview: number | undefined = workspaceValue ? pathToWorkspaceId[workspaceValue] : undefined;
+  /**
+   * 根据当前 workspaceValue（路径）推导对应的 workspace_id，用于评审模板 API。
+   * 注意：path 是 LoopFormModal 与后端之间的"工作空间标识符"，
+   * 评审模板 API 真正消费的是 project_directories.id。
+   */
+  const workspaceIdForReview: number | undefined = getWorkspaceIdByPath(projectDirs, workspaceValue);
 
   // 打开时 + workspace 变化时重新加载评审模板选项（按 workspace_id 过滤）
   useEffect(() => {
@@ -124,7 +118,7 @@ export function LoopFormModal({
         review_template_id: initialData.review_template_id ?? null,
         abnormal_handler_todo_id: initialData.abnormal_handler_todo_id ?? null,
       });
-      setWorkspaceValue(initialData.workspace ?? null);
+      setWorkspaceValue(initialData.workspace_path ?? null);
       // 解析 limits_config
       try {
         const lc = JSON.parse(initialData.limits_config || '{}');
@@ -146,9 +140,10 @@ export function LoopFormModal({
       form.resetFields();
       form.setFieldsValue({ webhook_enabled: false });
       setEditingTag(null);
-      setWorkspaceValue(null);
+      // 自动选中当前工作空间
+      setWorkspaceValue(defaultWorkspace ?? null);
     }
-  }, [open, mode, initialData, form]);
+  }, [open, mode, initialData, form, defaultWorkspace]);
 
   // 刷新评审模板（按当前 workspace_id 过滤）并选中新建的模板
   const reloadTemplatesAndSelect = useCallback(async (selectedId: number) => {
@@ -197,7 +192,7 @@ export function LoopFormModal({
       const basePayload = {
         name: values.name.trim(),
         description: values.description ?? '',
-        workspace: workspaceValue ?? null,
+        workspace_path: workspaceValue ?? null,
         webhook_enabled: values.webhook_enabled === true,
         icon: values.icon ?? 'loop',
         review_template_id: values.review_template_id ?? null,
@@ -217,7 +212,7 @@ export function LoopFormModal({
         const res = await dbLoops.createLoop({
           name: basePayload.name,
           description: basePayload.description,
-          workspace: workspaceValue.trim(),
+          workspace_path: workspaceValue.trim(),
           webhook_enabled: basePayload.webhook_enabled,
           tag_ids: basePayload.tag_ids,
           icon: basePayload.icon,
@@ -286,7 +281,7 @@ export function LoopFormModal({
                 value={workspaceValue}
                 onChange={(v) => {
                   setWorkspaceValue(v);
-                  form.setFieldsValue({ workspace: v, review_template_id: null });
+                  form.setFieldsValue({ workspace_path: v, review_template_id: null });
                 }}
                 required={mode === 'create'}
               />
@@ -420,7 +415,7 @@ export function LoopFormModal({
           </Form.Item>
           <div style={{ fontSize: 12, color: 'var(--color-text-tertiary, #94a3b8)', marginTop: -8 }}>
             {workspaceValue
-              ? `新建模板将归属于当前工作空间「${workspaceValue}」`
+              ? `新建模板将归属于当前工作空间「${getWorkspaceDisplayName(projectDirs, workspaceValue)}」`
               : '不选择工作空间则新建全局模板'}
           </div>
         </Form>

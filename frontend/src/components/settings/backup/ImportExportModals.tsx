@@ -12,7 +12,7 @@ export interface BackupDataYaml {
     scheduler_enabled: boolean;
     scheduler_config?: string;
     tag_names: string[];
-    workspace?: string;
+    workspace_path?: string;
   }[];
 }
 
@@ -25,7 +25,7 @@ export interface ImportItem {
   scheduler_enabled: boolean;
   scheduler_config?: string;
   tag_names: string[];
-  workspace?: string;
+  workspace_path?: string;
   action: 'new' | 'overwrite';
   existingTitle?: string;
 }

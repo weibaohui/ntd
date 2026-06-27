@@ -193,8 +193,8 @@ export function MemorialBoard() {
     // 因为 items 是轻量快照（不含 workspace 字段），需要回查 state.todos 取 workspace
     if (selectedProject) {
       result = result.filter(i => {
-        const todo = state.todos.find(t => t.id === i.todo_id); // 回查全量 todo 取 workspace
-        return todo?.workspace === selectedProject; // 匹配选中项目的路径
+        const todo = state.todos.find(t => t.id === i.todo_id); // 回查全量 todo 取 workspace_path
+        return todo?.workspace_path === selectedProject; // 匹配选中项目的路径
       });
     }
     // 按搜索文本过滤：匹配标题或 prompt
@@ -273,7 +273,7 @@ export function MemorialBoard() {
     const resolvedTags = item.tag_ids.map(tid => state.tags.find(t => t.id === tid)).filter(Boolean) as Tag[];
     // 获取项目名称
     const todo = state.todos.find(t => t.id === item.todo_id);
-    const projectDir = projectDirectories.find(d => d.path === todo?.workspace);
+    const projectDir = projectDirectories.find(d => d.path === todo?.workspace_path);
     const projectName = projectDir?.name || null;
 
     // Run history: determine which run to display
@@ -413,7 +413,7 @@ export function MemorialBoard() {
             style={{ width: 150 }}
             suffixIcon={<FolderOutlined />}
             options={projectDirectories.map(d => ({
-              value: d.path, // value 存路径，与 todo.workspace 对比
+              value: d.path, // value 存路径，与 todo.workspace_path 对比
               label: d.name || d.path, // 优先展示项目名，无名则回退显示路径
             }))}
           />

@@ -18,7 +18,7 @@ export async function importBackup(yamlContent: string): Promise<string> {
   }));
 }
 
-export async function mergeBackup(tags: { name: string; color: string }[], todos: { title: string; prompt: string; status: string; executor?: string; scheduler_enabled: boolean; scheduler_config?: string; tag_names: string[]; workspace?: string }[]): Promise<string> {
+export async function mergeBackup(tags: { name: string; color: string }[], todos: { title: string; prompt: string; status: string; executor?: string; scheduler_enabled: boolean; scheduler_config?: string; tag_names: string[]; workspace_path?: string }[]): Promise<string> {
   return unwrap(await api.post('/api/backup/merge', { tags, todos }));
 }
 

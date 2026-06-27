@@ -300,7 +300,7 @@ export function LoopFlowGraph({
                   fontSize={11}
                   fill="#64748b"
                 >
-                  {truncateText(node.step.todo_title || `#${node.step.todo_id}`, 22)}
+                  {truncateText(node.step.todo_title ? `#${node.step.todo_id} ${node.step.todo_title}` : `#${node.step.todo_id}`, 24)}
                 </text>
                 <text
                   x={node.x + 12} y={node.y + 56}

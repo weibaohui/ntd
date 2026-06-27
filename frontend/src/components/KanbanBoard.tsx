@@ -58,7 +58,7 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
     // 按项目目录过滤：用户选中某个项目后，只展示 workspace 匹配该目录路径的 todo；
     // selectedProject 为 null 时表示"全部"，不做过滤
     if (selectedProject) {
-      result = result.filter(t => t.workspace === selectedProject);
+      result = result.filter(t => t.workspace_path === selectedProject);
     }
     const cutoff = hours ? Date.now() - hours * 3600 * 1000 : 0;
     return result.filter(t => {
@@ -184,7 +184,7 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
   const renderCard = (todo: Todo) => {
     const column = getColumnForStatus(todo.status);
     const todoTags = tags.filter(t => todo.tag_ids?.includes(t.id));
-    const projectDir = projectDirectories.find(d => d.path === todo.workspace);
+    const projectDir = projectDirectories.find(d => d.path === todo.workspace_path);
     const projectName = projectDir?.name || null;
     const isDragging = draggingId === todo.id;
     const isSuccess = todo.status === 'completed';

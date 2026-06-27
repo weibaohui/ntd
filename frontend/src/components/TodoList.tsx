@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useApp } from '@/hooks/useApp';
 import { Empty, Input, Skeleton, Checkbox, Modal, App as AntApp } from 'antd';
-import { ClockCircleOutlined, InboxOutlined, SearchOutlined, SwapOutlined, StopOutlined } from '@ant-design/icons';
+import { ClockCircleOutlined, InboxOutlined, SearchOutlined, SwapOutlined, StopOutlined, CopyOutlined, DragOutlined } from '@ant-design/icons';
 import { StatusPicker } from './StatusPicker';
 import * as db from '@/utils/database';
 import type { ProjectDirectory, Todo } from '@/types';
@@ -13,6 +13,7 @@ import { EXECUTORS_FOR_PICKER } from '@/types/execution';
 import { ExecutorPicker } from './todo-drawer/ExecutorPicker';
 import { ActionToolbar, type BatchActionItem } from './common/ActionToolbar';
 import { formatRelativeTime } from '@/utils/datetime';
+import { WorkspaceSelect } from './common/WorkspaceSelect';
 
 interface TodoListProps {
   onOpenCreateModal: () => void;
@@ -71,6 +72,13 @@ export function TodoList(props: TodoListProps) {
   // 强停确认 Modal（环路）
   const [forceStopModalOpen, setForceStopModalOpen] = useState(false);
   const [pendingForceStopIds, setPendingForceStopIds] = useState<number[]>([]);
+  // 批量工作空间操作 Modal（事项/环路共用）
+  const [workspaceBatchModalOpen, setWorkspaceBatchModalOpen] = useState(false);
+  const [workspaceBatchMode, setWorkspaceBatchMode] = useState<'copy' | 'move'>('copy');
+  const [workspaceBatchTarget, setWorkspaceBatchTarget] = useState<string | null>(null);
+  const [pendingWorkspaceBatchIds, setPendingWorkspaceBatchIds] = useState<number[]>([]);
+  const [workspaceBatchProcessing, setWorkspaceBatchProcessing] = useState(false);
+  const [workspaceBatchContext, setWorkspaceBatchContext] = useState<'item' | 'loop'>('item');
 
   useEffect(() => {
     setIsLoading(false);
@@ -116,13 +124,18 @@ export function TodoList(props: TodoListProps) {
 
   // 当列表切换到「环路」时，自动加载 loop 列表；或环路变更时刷新
   // 必须等待项目目录加载完成且工作空间已确定，否则请求不携带 workspace 参数返回错误数据。
+  // 筛选必须用 id：selectedWorkspace 是路径字符串，这里从 projectDirectories 反查 workspace_id
+  // 再传给 listLoops（path 不唯一，id 唯一）。
   useEffect(() => {
     if (listMode !== 'loop') return;
     if (!directoriesReady) return;
     // 已有目录但尚未选定工作空间 → 等待 auto-select 后再加载
     if (projectDirectories.length > 0 && selectedWorkspace === null) return;
+    const workspaceId = selectedWorkspace
+      ? projectDirectories.find(d => d.path === selectedWorkspace)?.id ?? null
+      : null;
     setLoopLoading(true);
-    dbLoops.listLoops(selectedWorkspace)
+    dbLoops.listLoops(workspaceId)
       .then(setLoopList)
       .catch(() => setLoopList([]))
       .finally(() => setLoopLoading(false));
@@ -166,7 +179,7 @@ export function TodoList(props: TodoListProps) {
     // 按 workspace 过滤：selectedWorkspace 为 null 时显示全部，
     // 否则只显示匹配 workspace 路径的 todo
     if (selectedWorkspace !== null) {
-      result = result.filter(todo => todo.workspace === selectedWorkspace);
+      result = result.filter(todo => todo.workspace_path === selectedWorkspace);
     }
     
     // 再按关键字搜索（匹配标题或提示词）
@@ -216,6 +229,94 @@ export function TodoList(props: TodoListProps) {
     setPendingForceStopIds(ids);
     setForceStopModalOpen(true);
   }, []);
+
+  // —— 批量操作：工作空间复制/移动（事项模式） ——
+  const openItemCopyWorkspace = useCallback((ids: number[]) => {
+    setWorkspaceBatchContext('item');
+    setWorkspaceBatchMode('copy');
+    setPendingWorkspaceBatchIds(ids);
+    setWorkspaceBatchTarget(null);
+    setWorkspaceBatchModalOpen(true);
+  }, []);
+  const openItemMoveWorkspace = useCallback((ids: number[]) => {
+    setWorkspaceBatchContext('item');
+    setWorkspaceBatchMode('move');
+    setPendingWorkspaceBatchIds(ids);
+    setWorkspaceBatchTarget(null);
+    setWorkspaceBatchModalOpen(true);
+  }, []);
+
+  // —— 批量操作：工作空间复制/移动（环路模式） ——
+  const openLoopCopyWorkspace = useCallback((ids: number[]) => {
+    setWorkspaceBatchContext('loop');
+    setWorkspaceBatchMode('copy');
+    setPendingWorkspaceBatchIds(ids);
+    setWorkspaceBatchTarget(null);
+    setWorkspaceBatchModalOpen(true);
+  }, []);
+  const openLoopMoveWorkspace = useCallback((ids: number[]) => {
+    setWorkspaceBatchContext('loop');
+    setWorkspaceBatchMode('move');
+    setPendingWorkspaceBatchIds(ids);
+    setWorkspaceBatchTarget(null);
+    setWorkspaceBatchModalOpen(true);
+  }, []);
+
+  // 确认工作空间批量操作
+  const handleConfirmWorkspaceBatch = useCallback(async () => {
+    const ids = pendingWorkspaceBatchIds;
+    const target = workspaceBatchTarget;
+    if (ids.length === 0 || !target?.trim()) return;
+    setWorkspaceBatchProcessing(true);
+    try {
+      const mode = workspaceBatchMode;
+      const context = workspaceBatchContext;
+      let result: { updated_count: number; total: number };
+
+      if (context === 'item') {
+        if (mode === 'copy') {
+          result = await db.batchCopyTodosWorkspace(ids, target.trim());
+        } else {
+          result = await db.batchMoveTodosWorkspace(ids, target.trim());
+        }
+      } else {
+        if (mode === 'copy') {
+          result = await dbLoops.batchCopyLoopsWorkspace(ids, target.trim());
+        } else {
+          result = await dbLoops.batchMoveLoopsWorkspace(ids, target.trim());
+        }
+      }
+
+      const actionLabel = mode === 'copy' ? '复制' : '移动';
+      if (result.updated_count === result.total) {
+        message.success(`已${actionLabel} ${result.updated_count} 项到「${target.trim()}」`);
+      } else {
+        message.warning(`${actionLabel}成功 ${result.updated_count} 条，失败 ${result.total - result.updated_count} 条`);
+      }
+
+      // 刷新数据
+      if (context === 'item') {
+        const allItems = await db.getAllTodos();
+        for (const todo of allItems) {
+          dispatch({ type: 'UPDATE_TODO', payload: todo });
+        }
+      } else {
+        // 环路模式：刷新 loop 列表。筛选必须用 id：路径反查 workspace_id。
+        const workspaceId = selectedWorkspace
+          ? projectDirectories.find(d => d.path === selectedWorkspace)?.id ?? null
+          : null;
+        const loops = await dbLoops.listLoops(workspaceId);
+        setLoopList(loops);
+      }
+
+      setWorkspaceBatchModalOpen(false);
+      setSelectedIds([]);
+    } catch (err) {
+      message.error(`操作失败: ${err instanceof Error ? err.message : '未知错误'}`);
+    } finally {
+      setWorkspaceBatchProcessing(false);
+    }
+  }, [pendingWorkspaceBatchIds, workspaceBatchTarget, workspaceBatchMode, workspaceBatchContext, message, dispatch, selectedWorkspace]);
 
   // 确认更换执行器（事项模式）
   const handleConfirmChangeExecutor = useCallback(async (executor: string) => {
@@ -278,12 +379,32 @@ export function TodoList(props: TodoListProps) {
           label: '更换执行器',
           icon: <SwapOutlined />,
           onClick: openItemChangeExecutor,
+        }, {
+          key: 'copy-workspace',
+          label: '复制到',
+          icon: <CopyOutlined />,
+          onClick: openItemCopyWorkspace,
+        }, {
+          key: 'move-workspace',
+          label: '移动到',
+          icon: <DragOutlined />,
+          onClick: openItemMoveWorkspace,
         }],
       };
     }
     return {
       createLabel: '新建',
       batchActions: [{
+        key: 'copy-workspace',
+        label: '复制到',
+        icon: <CopyOutlined />,
+        onClick: openLoopCopyWorkspace,
+      }, {
+        key: 'move-workspace',
+        label: '移动到',
+        icon: <DragOutlined />,
+        onClick: openLoopMoveWorkspace,
+      }, {
         key: 'force-stop',
         label: '强停',
         icon: <StopOutlined />,
@@ -291,7 +412,7 @@ export function TodoList(props: TodoListProps) {
         onClick: openLoopForceStop,
       }],
     };
-  }, [listMode, openItemChangeExecutor, openLoopForceStop]);
+  }, [listMode, openItemChangeExecutor, openItemCopyWorkspace, openItemMoveWorkspace, openLoopCopyWorkspace, openLoopMoveWorkspace, openLoopForceStop]);
 
   const tagMap = useMemo(() => {
     const map = new Map<number, typeof tags[0]>();
@@ -546,6 +667,35 @@ export function TodoList(props: TodoListProps) {
         <p style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>
           （强停功能开发中，详见 utils/database/loops.ts 的 forceStopLoops 注释。）
         </p>
+      </Modal>
+
+      {/* 批量工作空间操作 Modal（复制到/移动到） */}
+      <Modal
+        title={workspaceBatchMode === 'copy' ? '复制到工作空间' : '移动到工作空间'}
+        open={workspaceBatchModalOpen}
+        onOk={handleConfirmWorkspaceBatch}
+        onCancel={() => { setWorkspaceBatchModalOpen(false); setPendingWorkspaceBatchIds([]); }}
+        okText={workspaceBatchMode === 'copy' ? '确认复制' : '确认移动'}
+        cancelText="取消"
+        confirmLoading={workspaceBatchProcessing}
+        okButtonProps={{ disabled: !workspaceBatchTarget?.trim() }}
+        destroyOnClose
+      >
+        <p>
+          {workspaceBatchMode === 'copy' ? '复制' : '移动'} <strong>{pendingWorkspaceBatchIds.length}</strong> 项到目标工作空间：
+        </p>
+        <div style={{ marginTop: 12 }}>
+          <WorkspaceSelect
+            value={workspaceBatchTarget}
+            onChange={(v) => setWorkspaceBatchTarget(v ?? null)}
+            required
+          />
+        </div>
+        {workspaceBatchMode === 'copy' && (
+          <p style={{ color: 'var(--color-text-tertiary)', fontSize: 12, marginTop: 8 }}>
+            复制后，原工作空间和目标工作空间中各有一份相同的条目。
+          </p>
+        )}
       </Modal>
     </div>
   );
