@@ -165,6 +165,18 @@ pub enum ExecEvent {
         todo_id: i64,
         review_status: String,
     },
+    /// 执行器直接响应：消息经 executor 处理后直接把结果发回飞书，不存储执行记录。
+    /// 用于工作空间默认响应配置中选择"执行器"类型的场景。
+    ExecutorDirectResponse {
+        /// Feishu bot_id
+        bot_id: i64,
+        /// 接收者 ID（open_id 或 chat_id）
+        receive_id: String,
+        /// 接收者类型（open_id / chat_id）
+        receive_id_type: String,
+        /// 要发送的文本内容
+        content: String,
+    },
 }
 
 /// HTTP handler 统一错误类型。

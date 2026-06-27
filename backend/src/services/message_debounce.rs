@@ -2,11 +2,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
+use crate::adapters::parse_executor_type;
+use crate::db::Database;
 use crate::executor_service::RunTodoExecutionRequest;
-use crate::handlers::execution::start_todo_execution;
+use crate::handlers::{ExecEvent, execution::start_todo_execution};
+use crate::models::ParsedLogEntry;
 use crate::service_context::ServiceContext;
+use crate::task_manager::TaskManager;
 
 #[derive(Debug, Clone)]
 pub struct PendingMessage {
@@ -139,29 +144,65 @@ impl MessageDebounce {
                     let is_resume = resume_sid.is_some();
                     let sid_for_binding = resume_sid.clone();
 
-                    let result = start_todo_execution(RunTodoExecutionRequest {
-                        db: db.clone(),
-                        executor_registry,
-                        tx,
-                        task_manager,
-                        config,
-                        todo_id: last.todo_id,
-                        message: exec_message,
-                        req_executor: last.executor.clone(),
-                        trigger_type: last.trigger_type.clone(),
-                        params: if is_resume { None } else { Some(merged_params) },
-                        resume_session_id: resume_sid,
-                        resume_message: resume_msg,
-                        source_todo_id: None,
-                        source_todo_title: None,
-                        loop_step_execution_id: None,
-                        step_id: None,
-                        feishu_bot_id: if last.binding_id.is_some() { Some(last.bot_id) } else { None },
-                        feishu_receive_id: if last.binding_id.is_some() { Some(last.sender.clone()) } else { None },
-                        workspace_path: None,
-                        workspace_id: last.workspace_id,
-                    })
-                    .await;
+                    // 根据 trigger_type 分发到不同的处理函数
+                    let result: Result<crate::executor_service::ExecutionResult, ()> = match last.trigger_type.as_str() {
+                        "default_response_loop" => {
+                            // 环路默认响应：直接触发环路执行
+                            Self::handle_default_response_loop(
+                                &db,
+                                &task_manager,
+                                &config,
+                                last.todo_id, // loop_id
+                                &merged_content,
+                                last.workspace_id,
+                            )
+                            .await
+                        }
+                        "default_response_executor" => {
+                            // 执行器默认响应：直接调用执行器交互（不存储执行记录）
+                            Self::handle_default_response_executor(
+                                &db,
+                                &executor_registry,
+                                &task_manager,
+                                &config,
+                                &tx,
+                                last.bot_id,
+                                last.sender.clone(),
+                                last.executor.as_deref(),
+                                last.workspace_id,
+                                &merged_content,
+                                resume_sid.clone(),
+                            )
+                            .await
+                        }
+                        _ => {
+                            // 普通的默认响应（todo 类型）或斜杠命令
+                            start_todo_execution(RunTodoExecutionRequest {
+                                db: db.clone(),
+                                executor_registry,
+                                tx,
+                                task_manager,
+                                config,
+                                todo_id: last.todo_id,
+                                message: exec_message,
+                                req_executor: last.executor.clone(),
+                                trigger_type: last.trigger_type.clone(),
+                                params: if is_resume { None } else { Some(merged_params) },
+                                resume_session_id: resume_sid,
+                                resume_message: resume_msg,
+                                source_todo_id: None,
+                                source_todo_title: None,
+                                loop_step_execution_id: None,
+                                step_id: None,
+                                feishu_bot_id: if last.binding_id.is_some() { Some(last.bot_id) } else { None },
+                                feishu_receive_id: if last.binding_id.is_some() { Some(last.sender.clone()) } else { None },
+                                workspace_path: None,
+                                workspace_id: last.workspace_id,
+                            })
+                            .await
+                            .map_err(|_| ())
+                        }
+                    };
 
                     let record_id = match &result {
                         Ok(r) => Some(r.record_id),
@@ -308,6 +349,208 @@ pub fn merge_pending_messages(messages: &[PendingMessage]) -> String {
         .map(|m| m.content.as_str())
         .collect::<Vec<&str>>()
         .join("\n---\n")
+}
+
+// ============================================================================
+// 默认响应处理器：处理 loop 和 executor 类型的默认响应
+// ============================================================================
+
+impl MessageDebounce {
+    /// 处理默认响应类型为 loop 的情况
+    /// 直接触发环路执行，类似于 dispatch_manual 的逻辑
+    async fn handle_default_response_loop(
+        db: &Arc<Database>,
+        _task_manager: &Arc<TaskManager>,
+        _config: &Arc<std::sync::RwLock<crate::config::Config>>,
+        loop_id: i64,
+        message: &str,
+        _workspace_id: Option<i64>,
+    ) -> Result<crate::executor_service::ExecutionResult, ()> {
+        // 检查环路是否存在且状态为 enabled
+        let loop_ = match db.get_loop(loop_id).await {
+            Ok(Some(l)) => l,
+            Ok(None) => {
+                tracing::warn!("[debounce] loop {} not found", loop_id);
+                return Err(());
+            }
+            Err(e) => {
+                tracing::error!("[debounce] failed to get loop {}: {}", loop_id, e);
+                return Err(());
+            }
+        };
+
+        if loop_.status != "enabled" {
+            tracing::warn!("[debounce] loop {} is not enabled (status={})", loop_id, loop_.status);
+            return Err(());
+        }
+
+        // 创建环路执行记录
+        let meta = serde_json::json!({
+            "source": "default_response",
+            "message": message,
+        });
+
+        // 获取环路步骤数量
+        let steps = match db.list_loop_steps_by_loop(loop_id).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("[debounce] failed to get loop steps: {}", e);
+                return Err(());
+            }
+        };
+
+        // 创建 loop_execution 记录
+        let execution = match db.create_loop_execution(
+            loop_id,
+            None, // trigger_id
+            "default_response",
+            &meta.to_string(),
+            steps.len() as i32,
+        ).await {
+            Ok(exec) => exec,
+            Err(e) => {
+                tracing::error!("[debounce] failed to create loop execution: {}", e);
+                return Err(());
+            }
+        };
+
+        tracing::info!(
+            "[debounce] triggered loop {} as default response, execution_id={}",
+            loop_id,
+            execution.id
+        );
+
+        // 注意：环路的后续执行由 loop_trigger_dispatcher 处理
+        // 这里我们只是创建了执行记录并触发它
+
+        Ok(crate::executor_service::ExecutionResult {
+            task_id: format!("loop-{}", execution.id),
+            record_id: Some(execution.id),
+        })
+    }
+
+    /// 处理默认响应类型为 executor 的情况
+    /// 直接调用执行器进行交互，不创建执行记录
+    async fn handle_default_response_executor(
+        db: &Arc<Database>,
+        executor_registry: &Arc<crate::adapters::ExecutorRegistry>,
+        _task_manager: &Arc<TaskManager>,
+        _config: &Arc<std::sync::RwLock<crate::config::Config>>,
+        tx: &broadcast::Sender<ExecEvent>,
+        bot_id: i64,
+        receive_id: String,
+        executor_type: Option<&str>,
+        workspace_id: Option<i64>,
+        message: &str,
+        _resume_session_id: Option<String>,
+    ) -> Result<crate::executor_service::ExecutionResult, ()> {
+        let executor_type = executor_type.unwrap_or("claudecode");
+
+        // 获取工作空间路径
+        let workspace_path = if let Some(wid) = workspace_id {
+            match db.get_project_directory_by_id(wid).await {
+                Ok(Some(pd)) => pd.path,
+                Ok(None) => {
+                    tracing::warn!("[debounce] workspace {} not found", wid);
+                    return Err(());
+                }
+                Err(e) => {
+                    tracing::error!("[debounce] failed to get workspace {}: {}", wid, e);
+                    return Err(());
+                }
+            }
+        } else {
+            tracing::warn!("[debounce] no workspace_id for executor default response");
+            return Err(());
+        };
+
+        // 获取执行器
+        let exec_type = match parse_executor_type(executor_type) {
+            Some(t) => t,
+            None => {
+                tracing::warn!("[debounce] unknown executor type: {}", executor_type);
+                return Err(());
+            }
+        };
+        let executor = match executor_registry.get(exec_type).await {
+            Some(e) => e,
+            None => {
+                tracing::warn!("[debounce] executor {} not found", executor_type);
+                return Err(());
+            }
+        };
+
+        tracing::info!(
+            "[debounce] executor {} direct response in workspace {:?}, message len={}",
+            executor_type,
+            workspace_path,
+            message.len()
+        );
+
+        // 构建执行器命令
+        let command_args = executor.command_args(message);
+        let mut cmd = tokio::process::Command::new(executor.executable_path());
+        cmd.args(&command_args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .stdin(std::process::Stdio::piped())
+            .current_dir(&workspace_path);
+
+        // 预写 stdin payload（部分执行器需要，如 pi）
+        if let Some(payload) = executor.stdin_payload() {
+            cmd.arg(payload);
+        }
+
+        // 静默丢弃 stderr，只捕获 stdout 发送给 Feishu
+        cmd.stderr(std::process::Stdio::null());
+
+        let child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("[debounce] failed to spawn executor {}: {}", executor_type, e);
+                return Err(());
+            }
+        };
+
+        // 等待执行器完成并捕获输出
+        let output = match child.wait_with_output().await {
+            Ok(o) => o,
+            Err(e) => {
+                tracing::error!("[debounce] failed to wait for executor {}: {}", executor_type, e);
+                return Err(());
+            }
+        };
+
+        // 解析执行器输出：按行解析，提取 result/text 类型的日志
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let logs: Vec<ParsedLogEntry> = stdout
+            .lines()
+            .filter_map(|line| executor.parse_output_line(line))
+            .collect();
+        let result_text = executor.get_final_result(&logs);
+
+        // 发送结果到 Feishu
+        let content = result_text.unwrap_or_else(|| {
+            if output.status.success() {
+                stdout.to_string()
+            } else {
+                format!("执行失败（退出码：{:?}）\n\n输出：\n{}", output.status.code(), stdout)
+            }
+        });
+
+        let receive_id_type = "open_id"; // 默认用 open_id，环路直接响应场景通常是 p2p
+        let _ = tx.send(ExecEvent::ExecutorDirectResponse {
+            bot_id,
+            receive_id,
+            receive_id_type: receive_id_type.to_string(),
+            content,
+        });
+
+        Ok(crate::executor_service::ExecutionResult {
+            task_id: format!("executor-{}-{}", executor_type, uuid::Uuid::new_v4()),
+            record_id: None, // executor 类型不存储执行记录
+        })
+    }
 }
 
 #[cfg(test)]

@@ -57,6 +57,15 @@ impl FeishuPushService {
                                     last_refresh = Instant::now();
                                 }
 
+                                // 执行器直接响应：绕过 push_level 过滤和 workspace 隔离，直接发回飞书
+                                if let ExecEvent::ExecutorDirectResponse { bot_id, receive_id, receive_id_type, content } = &ev {
+                                    if let Err(e) = feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, content).await {
+                                        warn!("[feishu-push] executor direct response failed for bot {}: {}", bot_id, e);
+                                    } else {
+                                        debug!("[feishu-push] executor direct response sent to bot {}: {}", bot_id, &content[..content.len().min(60)]);
+                                    }
+                                }
+
                                 // For Finished events with feishu_chat_id (binding chat), send directly
                                 if let ExecEvent::Finished { feishu_bot_id, feishu_receive_id, .. } = &ev {
                                     if let (Some(bot_id), Some(receive_id)) = (feishu_bot_id, feishu_receive_id) {
@@ -219,6 +228,8 @@ impl FeishuPushService {
             }
             ExecEvent::Sync { .. } => None,
             ExecEvent::ReviewStatusChanged { .. } => None,
+            // ExecutorDirectResponse 由 FeishuPushService 直接发送，不走 format_event
+            ExecEvent::ExecutorDirectResponse { .. } => None,
         }
     }
 }
