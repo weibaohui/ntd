@@ -399,12 +399,12 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 <span style={{ fontSize: 12, width: 60, color: 'var(--color-text-tertiary)' }}>单聊ID:</span>
                 <Input size="small" value={pushStatus.p2p_receive_id} style={{ flex: 1, fontSize: 12 }} />
-                <Button size="small" icon={<CopyOutlined />} onClick={() => doCopyText(pushStatus.p2p_receive_id, 'p2p_receive_id')} />
+                <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => doCopyText(pushStatus.p2p_receive_id, 'p2p_receive_id')} />
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 <span style={{ fontSize: 12, width: 60, color: 'var(--color-text-tertiary)' }}>群ID:</span>
                 <Input size="small" value={pushStatus.group_chat_id || ''} style={{ flex: 1, fontSize: 12 }} />
-                <Button size="small" icon={<CopyOutlined />} onClick={() => doCopyText(pushStatus.group_chat_id || '', 'group_chat_id')} />
+                <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => doCopyText(pushStatus.group_chat_id || '', 'group_chat_id')} />
               </div>
             </div>
             <div style={{ display: 'flex', gap: 16, fontSize: 13 }}>

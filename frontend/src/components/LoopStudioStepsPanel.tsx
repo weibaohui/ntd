@@ -171,9 +171,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
       {steps.length > 0 && editingStep && (
         <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
           <Space size="small">
-            <Button
-              size="small"
-              icon={<CloseOutlined />}
+            <Button type="text" size="small" icon={<CloseOutlined />}
               style={{ fontSize: 12 }}
               onClick={() => setEditingStep(null)}
             >
@@ -186,7 +184,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
               okText="确定"
               cancelText="取消"
             >
-              <Button size="small" danger icon={<DeleteOutlined />} style={{ fontSize: 12 }}>
+              <Button type="text" size="small" icon={<DeleteOutlined />} style={{ fontSize: 12 }}>
                 删除选中环节
               </Button>
             </Popconfirm>

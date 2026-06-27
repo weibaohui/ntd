@@ -140,7 +140,7 @@ export function RuntimePanel({ executorDisplayNames }: RuntimePanelProps) {
                     loadRunningRecords();
                   } catch (err) { message.error(`停止失败: ${err instanceof Error ? err.message : String(err)}`); }
                 }}>
-                  <Button size="small" danger icon={<StopOutlined />} />
+                  <Button type="text" size="small" icon={<StopOutlined />} />
                 </Popconfirm>
               ),
             },

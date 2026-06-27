@@ -214,7 +214,7 @@ export function ReviewTemplatesPanel({ workspaceId }: ReviewTemplatesPanelProps)
                   okButtonProps={{ danger: true }}
                   onConfirm={() => handleDelete(record.id, record.name)}
                 >
-                  <Button type="text" danger icon={<DeleteOutlined />} size="small">
+                  <Button type="text" icon={<DeleteOutlined />} size="small">
                     删除
                   </Button>
                 </Popconfirm>

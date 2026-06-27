@@ -213,7 +213,7 @@ export function TemplatesPanel() {
                               actions={[
                                 <Button key="edit" type="text" icon={<EditOutlined />} size="small" onClick={() => openTemplateForm(template)} />,
                                 <Popconfirm key="delete" title="删除模板" description={`确定要删除模板 "${template.title}" 吗？`} onConfirm={() => handleDeleteTemplate(template.id)}>
-                                  <Button type="text" danger icon={<DeleteOutlined />} size="small" />
+                                  <Button type="text" icon={<DeleteOutlined />} size="small" />
                                 </Popconfirm>,
                               ]}
                             >

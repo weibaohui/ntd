@@ -150,10 +150,10 @@ export function LoopMobilePage({
             />
           </Tooltip>
           <Tooltip title="复制">
-            <Button size="small" icon={<CopyOutlined />} onClick={handleDuplicate} />
+            <Button type="text" size="small" icon={<CopyOutlined />} onClick={handleDuplicate} />
           </Tooltip>
           <Tooltip title="编辑">
-            <Button size="small" icon={<EditOutlined />} onClick={() => setEditModalOpen(true)} />
+            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => setEditModalOpen(true)} />
           </Tooltip>
           <Popconfirm
             title="删除 loop"
@@ -162,7 +162,7 @@ export function LoopMobilePage({
             onConfirm={handleDelete}
           >
             <Tooltip title="删除">
-              <Button size="small" icon={<DeleteOutlined />} />
+              <Button type="text" size="small" icon={<DeleteOutlined />} />
             </Tooltip>
           </Popconfirm>
         </Space>

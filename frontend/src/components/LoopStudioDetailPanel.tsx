@@ -173,10 +173,10 @@ export function LoopDetailPanel({
                 />
               </Tooltip>
               <Tooltip title="复制">
-                <Button size="small" icon={<CopyOutlined />} onClick={onDuplicate} />
+                <Button type="text" size="small" icon={<CopyOutlined />} onClick={onDuplicate} />
               </Tooltip>
               <Tooltip title="编辑">
-                <Button size="small" icon={<EditOutlined />} onClick={handleOpenEdit} />
+                <Button type="text" size="small" icon={<EditOutlined />} onClick={handleOpenEdit} />
               </Tooltip>
               <Popconfirm
                 title="删除 loop"
@@ -185,7 +185,7 @@ export function LoopDetailPanel({
                 onConfirm={onDelete}
               >
                 <Tooltip title="删除">
-                  <Button size="small" icon={<DeleteOutlined />} />
+                  <Button type="text" size="small" icon={<DeleteOutlined />} />
                 </Tooltip>
               </Popconfirm>
             </Space>
