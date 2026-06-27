@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Button, Dropdown, App } from 'antd';
 import type { MenuProps } from 'antd';
-import { ApartmentOutlined, FolderOpenOutlined, SettingOutlined, DownOutlined } from '@ant-design/icons';
+import { FolderOutlined, FolderOpenOutlined, SettingOutlined, DownOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import type { ProjectDirectory } from '@/types';
 
@@ -91,7 +91,7 @@ export function WorkspaceSwitcher({ value, onChange, onManage, mode = 'full' }: 
         <Button
           type="text"
           className="ntd-workspace-switcher-compact"
-          icon={<ApartmentOutlined />}
+          icon={<FolderOutlined />}
           loading={loading}
           aria-label="切换工作空间"
           data-testid="left-rail-workspace"
@@ -114,7 +114,7 @@ export function WorkspaceSwitcher({ value, onChange, onManage, mode = 'full' }: 
         data-testid="left-rail-workspace-switcher"
       >
         <span className="ntd-workspace-switcher-left">
-          <ApartmentOutlined style={{ color: 'var(--color-primary)' }} />
+          <FolderOutlined style={{ color: 'var(--color-primary)' }} />
           <span className="ntd-workspace-switcher-label" title={selectedLabel}>{selectedLabel}</span>
         </span>
         <span className="ntd-workspace-switcher-right">

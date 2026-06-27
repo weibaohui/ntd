@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Button, Popconfirm, Input, Space, Empty, Spin, Switch, message, Tooltip } from 'antd';
-import { PlusOutlined, FolderOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { Button, Input, Empty, Spin, Switch, message, Tooltip, Typography, Card, Dropdown } from 'antd';
+import { PlusOutlined, FolderOutlined, RobotOutlined, SettingOutlined, EditOutlined, DeleteOutlined, MessageOutlined, MoreOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import * as db from '@/utils/database';
-import type { ProjectDirectory } from '@/utils/database';
-import { WorkspaceDetailPage } from './workspace';
+import type { ProjectDirectory, AgentBot } from '@/utils/database';
+import { WorkspaceMessageConfigPage } from './workspace/WorkspaceMessageConfigPage';
+import { WorkspaceLoopConfigPage } from './workspace/WorkspaceLoopConfigPage';
 
 export function ProjectDirectoriesPanel() {
   // 项目目录列表；按 path 升序，保持稳定可读
@@ -16,8 +17,11 @@ export function ProjectDirectoriesPanel() {
   const [addingDir, setAddingDir] = useState(false);
   const [editingDirId, setEditingDirId] = useState<number | null>(null);
   const [editingDirName, setEditingDirName] = useState('');
-  // 进入工作空间详情页
+  // 智能体列表，用于统计每个工作区的绑定数量
+  const [agentBots, setAgentBots] = useState<AgentBot[]>([]);
+  // 选中的工作空间和页面类型
   const [selectedWorkspace, setSelectedWorkspace] = useState<ProjectDirectory | null>(null);
+  const [selectedPageType, setSelectedPageType] = useState<'message' | 'loop' | null>(null);
 
   // 每次进入页面都重新拉取一次，确保用户在其他地方新增/删除后能立刻看到
   const loadProjectDirectories = () => {
@@ -28,8 +32,25 @@ export function ProjectDirectoriesPanel() {
       .finally(() => setProjectDirsLoading(false));
   };
 
+  /**
+   * 加载智能体列表，用于统计每个工作区的绑定数量
+   */
+  const loadAgentBots = () => {
+    db.getAgentBots()
+      .then(setAgentBots)
+      .catch((err: any) => message.error('加载智能体列表失败: ' + (err?.message || String(err))));
+  };
+
+  /**
+   * 获取指定工作区的智能体数量
+   */
+  const getWorkspaceBotCount = (workspaceId: number) => {
+    return agentBots.filter(bot => bot.workspace_id === workspaceId).length;
+  };
+
   useEffect(() => {
     loadProjectDirectories();
+    loadAgentBots();
     // 监听其他组件新增目录的事件，及时刷新列表
     const reload = () => loadProjectDirectories();
     window.addEventListener('projectDirectoryAdded', reload);
@@ -128,86 +149,101 @@ export function ProjectDirectoriesPanel() {
     }
   };
 
-  // 选中工作空间，显示详情页
-  if (selectedWorkspace) {
+  // 选中工作空间，显示对应配置页
+  if (selectedWorkspace && selectedPageType === 'message') {
     return (
-      <WorkspaceDetailPage
+      <WorkspaceMessageConfigPage
         workspace={selectedWorkspace}
-        onBack={() => setSelectedWorkspace(null)}
+        onBack={() => { setSelectedWorkspace(null); setSelectedPageType(null); loadAgentBots(); }}
+      />
+    );
+  }
+  if (selectedWorkspace && selectedPageType === 'loop') {
+    return (
+      <WorkspaceLoopConfigPage
+        workspace={selectedWorkspace}
+        onBack={() => { setSelectedWorkspace(null); setSelectedPageType(null); }}
       />
     );
   }
 
   return (
     <PageCard icon={<FolderOutlined />} title="工作空间">
-      <div style={{ maxWidth: 760 }}>
+      <div style={{ maxWidth: 800 }}>
         <Spin spinning={projectDirsLoading}>
           {/* 新建工作空间区域 */}
-          <div
-            style={{
-              background: 'var(--color-bg)',
-              border: '1px solid var(--color-border-light)',
-              borderRadius: 10,
-              padding: 16,
-              marginBottom: 20,
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <PlusOutlined style={{ color: 'var(--color-primary)', fontSize: 14 }} />
-              <span style={{ fontWeight: 600, fontSize: 14 }}>新建工作空间</span>
+          <Card size="small" style={{ marginBottom: 24, borderRadius: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <PlusOutlined style={{ color: 'var(--color-primary)', fontSize: 16 }} />
+              <span style={{ fontWeight: 600, fontSize: 15 }}>新建工作空间</span>
             </div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 16 }}>
               添加本地目录作为工作空间，按项目维度组织和管理事项。
             </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
               <Input
                 value={newDirName}
                 onChange={(e) => setNewDirName(e.target.value)}
-                placeholder="名称，如 my-app"
-                style={{ flex: 1 }}
+                placeholder="名称"
+                style={{ width: 180 }}
                 onPressEnter={handleAddProjectDirectory}
+                size="large"
               />
               <Input
                 value={newDirPath}
                 onChange={(e) => setNewDirPath(e.target.value)}
-                placeholder="路径，如 /Users/name/projects/my-app"
-                style={{ flex: 2 }}
+                placeholder="路径"
+                style={{ flex: 1 }}
                 onPressEnter={handleAddProjectDirectory}
+                size="large"
               />
               <Button
                 type="primary"
                 icon={<PlusOutlined />}
                 loading={addingDir}
                 onClick={handleAddProjectDirectory}
+                size="large"
               >
                 添加
               </Button>
             </div>
-          </div>
+          </Card>
 
           {/* 工作空间列表 */}
           {projectDirectories.length === 0 ? (
             <Empty description="暂无工作空间" image={Empty.PRESENTED_IMAGE_SIMPLE} />
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {projectDirectories.map((dir) => (
-                <div
+                <Card
                   key={dir.id}
+                  size="small"
                   style={{
-                    background: 'var(--color-bg)',
-                    border: '1px solid var(--color-border-light)',
-                    borderRadius: 10,
-                    padding: 14,
+                    borderRadius: 12,
                     transition: 'all 0.2s',
+                    border: '1px solid var(--color-border-light)',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                    {/* 左侧：图标 + 名称 + 路径 */}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                        <FolderOutlined style={{ fontSize: 18, color: '#1890ff', flexShrink: 0 }} />
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    {/* 左侧：图标 + 名称 + 路径 + 智能体数量 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          width: 40,
+                          height: 40,
+                          borderRadius: 10,
+                          background: 'linear-gradient(135deg, #1890ff 0%, #096dd9 100%)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <FolderOutlined style={{ fontSize: 20, color: '#fff' }} />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
                         {editingDirId === dir.id ? (
-                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                             <Input
                               value={editingDirName}
                               onChange={(e) => setEditingDirName(e.target.value)}
@@ -221,83 +257,116 @@ export function ProjectDirectoriesPanel() {
                             <Button size="small" onClick={() => { setEditingDirId(null); setEditingDirName(''); }}>取消</Button>
                           </div>
                         ) : (
-                          <span style={{
-                            fontSize: 15,
-                            fontWeight: 600,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            color: 'var(--color-text)',
-                          }}>
-                            {dir.name || <span style={{ color: 'var(--color-warning)' }}>未命名</span>}
-                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{
+                              fontSize: 15,
+                              fontWeight: 600,
+                              color: 'var(--color-text)',
+                            }}>
+                              {dir.name || <span style={{ color: 'var(--color-warning)' }}>未命名</span>}
+                            </span>
+                            {/* 绑定消息智能体数量，可点击进入消息配置页 */}
+                            <Typography.Link
+                              type="secondary"
+                              style={{
+                                fontSize: 12,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                padding: '2px 8px',
+                                background: 'var(--color-bg)',
+                                borderRadius: 4,
+                              }}
+                              onClick={() => { setSelectedWorkspace(dir); setSelectedPageType('message'); }}
+                            >
+                              <RobotOutlined />
+                              {getWorkspaceBotCount(dir.id)}
+                            </Typography.Link>
+                          </div>
                         )}
-                      </div>
-                      <div style={{
-                        fontSize: 12,
-                        color: 'var(--color-text-secondary)',
-                        paddingLeft: 26,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        fontFamily: 'monospace',
-                      }}>
-                        {dir.path}
+                        <div style={{
+                          fontSize: 13,
+                          color: 'var(--color-text-secondary)',
+                          marginTop: 2,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          fontFamily: 'monospace',
+                        }}>
+                          {dir.path}
+                        </div>
                       </div>
                     </div>
 
-                    {/* 右侧：操作按钮 */}
-                    <Space size={4}>
-                      {editingDirId !== dir.id && (
-                        <Button
-                          size="small"
-                          onClick={() => { setEditingDirId(dir.id); setEditingDirName(dir.name || ''); }}
-                        >
-                          编辑
-                        </Button>
-                      )}
+                    {/* 右侧：操作区域 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      {/* 快捷配置按钮 */}
                       <Button
-                        type="primary"
                         size="small"
-                        onClick={() => setSelectedWorkspace(dir)}
+                        icon={<MessageOutlined />}
+                        onClick={() => { setSelectedWorkspace(dir); setSelectedPageType('message'); }}
                       >
-                        配置
+                        消息配置
                       </Button>
-                      <Popconfirm
-                        title="删除工作空间"
-                        description={`确定要删除 "${dir.name || dir.path}" 吗？`}
-                        onConfirm={() => handleDeleteProjectDirectory(dir.id)}
+                      <Button
+                        size="small"
+                        icon={<SettingOutlined />}
+                        onClick={() => { setSelectedWorkspace(dir); setSelectedPageType('loop'); }}
                       >
-                        <Button size="small" danger>删除</Button>
-                      </Popconfirm>
-                    </Space>
+                        环路配置
+                      </Button>
+                      {/* 更多操作菜单 */}
+                      <Dropdown
+                        menu={{
+                          items: [
+                            {
+                              key: 'edit',
+                              icon: <EditOutlined />,
+                              label: '编辑',
+                              onClick: () => { setEditingDirId(dir.id); setEditingDirName(dir.name || ''); },
+                            },
+                            {
+                              key: 'delete',
+                              icon: <DeleteOutlined />,
+                              label: '删除',
+                              danger: true,
+                            },
+                          ],
+                          onClick: ({ key }) => {
+                            if (key === 'delete') {
+                              handleDeleteProjectDirectory(dir.id);
+                            }
+                          },
+                        }}
+                      >
+                        <Button type="text" size="small" icon={<MoreOutlined />} />
+                      </Dropdown>
+                    </div>
                   </div>
 
                   {/* 底部：功能开关区 */}
                   <div
                     style={{
                       display: 'flex',
-                      gap: 20,
-                      marginTop: 12,
+                      gap: 24,
+                      marginTop: 16,
                       paddingTop: 12,
                       borderTop: '1px solid var(--color-border-light)',
-                      paddingLeft: 26,
                       flexWrap: 'wrap',
                     }}
                   >
                     <Tooltip title="执行事项时自动创建 git worktree，保持工作区干净">
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                         <Switch
                           size="small"
                           checked={!!dir.git_worktree_enabled}
                           onChange={(v) => handleToggleWorktree(dir.id, 'gitWorktreeEnabled', v)}
                         />
-                        <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>Git Worktree</span>
-                        <QuestionCircleOutlined style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }} />
+                        <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>Git Worktree</span>
                       </span>
                     </Tooltip>
                     <Tooltip title="执行结束后自动清理 worktree 目录（需先开启 Worktree）">
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                         <Switch
                           size="small"
                           checked={!!dir.auto_cleanup}
@@ -305,16 +374,15 @@ export function ProjectDirectoriesPanel() {
                           onChange={(v) => handleToggleWorktree(dir.id, 'autoCleanup', v)}
                         />
                         <span style={{
-                          fontSize: 12,
+                          fontSize: 13,
                           color: !dir.git_worktree_enabled ? 'var(--color-text-tertiary)' : 'var(--color-text-secondary)',
                         }}>
                           自动清理
                         </span>
-                        <QuestionCircleOutlined style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }} />
                       </span>
                     </Tooltip>
                   </div>
-                </div>
+                </Card>
               ))}
             </div>
           )}
