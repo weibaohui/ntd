@@ -187,9 +187,7 @@ export function LeftRail({
               </div>
             )}
             <div className={isDrawer ? 'ntd-left-rail-drawer-section-body' : 'ntd-left-rail-section-body'}>
-              {section.items
-                .filter(it => shouldShowLabels ? true : !String(it.key).startsWith('settings_'))
-                .map(renderNavButton)}
+              {section.items.map(renderNavButton)}
             </div>
           </div>
         ))}
