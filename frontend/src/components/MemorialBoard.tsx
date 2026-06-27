@@ -87,16 +87,14 @@ export function MemorialBoard() {
     return () => { cancelled = true; };
   }, [hours, boardMode]);
 
-  // 切换工作空间后自动拉取 todo（与 KanbanBoard 同款 effect）
+  // 切换工作空间后立即拉取该 workspace 的 todo，保证数据最新。
   useEffect(() => {
     const wid = state.selectedWorkspace;
     if (wid == null) return;
-    const bucket = state.todosByWorkspace?.[wid];
-    if (bucket !== undefined) return;
     db.getAllTodos(wid).then(todos => {
       dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
     });
-  }, [state.selectedWorkspace, state.todosByWorkspace, dispatch]);
+  }, [state.selectedWorkspace, dispatch]);
 
   // 加载项目目录列表，供项目维度过滤使用。
   // 与 KanbanBoard 逻辑一致：首次加载 + 监听 TodoDrawer 快速新增事件刷新。

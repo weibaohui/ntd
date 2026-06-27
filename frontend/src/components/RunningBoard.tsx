@@ -222,17 +222,15 @@ export function RunningBoard({ searchText, hours, selectedProject }: RunningBoar
   const { records, scheduledTodos, loading, refresh } = useRunningBoard(state.selectedWorkspace);
   useAutoRefreshRunningBoard(refresh);
 
-  // 切换工作空间后自动拉取 todo（与 KanbanBoard 同款 effect）
+  // 切换工作空间后立即拉取该 workspace 的 todo，保证数据最新。
   const { dispatch } = useApp();
   useEffect(() => {
     const wid = state.selectedWorkspace;
     if (wid == null) return;
-    const bucket = state.todosByWorkspace?.[wid];
-    if (bucket !== undefined) return;
     db.getAllTodos(wid).then(todos => {
       dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
     });
-  }, [state.selectedWorkspace, state.todosByWorkspace, dispatch]);
+  }, [state.selectedWorkspace, dispatch]);
 
   const handleCardClick = useCallback((record: ExecutionRecord) => {
     setDrawerRecord(record);
