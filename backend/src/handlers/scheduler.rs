@@ -84,8 +84,15 @@ pub async fn update_scheduler(
     Ok(ApiResponse::ok(todo))
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct SchedulerTodosQuery {
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
+}
+
 pub async fn get_scheduler_todos(
     State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<SchedulerTodosQuery>,
 ) -> Result<ApiResponse<Vec<Todo>>, AppError> {
-    Ok(ApiResponse::ok(state.db.get_scheduler_todos(None).await?))
+    Ok(ApiResponse::ok(state.db.get_scheduler_todos(params.workspace_id).await?))
 }

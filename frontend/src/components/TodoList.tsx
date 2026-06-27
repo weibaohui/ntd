@@ -193,12 +193,6 @@ export function TodoList(props: TodoListProps) {
       ? todos.filter(t => t.tag_ids?.includes(selectedTagId))
       : todos;
     
-    // 按 workspace 过滤：selectedWorkspace 为 null 时显示全部，
-    // 否则只显示匹配 workspace id 的 todo
-    if (selectedWorkspace !== null) {
-      result = result.filter(todo => todo.workspace_id === selectedWorkspace);
-    }
-    
     // 再按关键字搜索（匹配标题或提示词）
     if (searchKeyword.trim()) {
       const keyword = searchKeyword.toLowerCase().trim();
@@ -210,7 +204,7 @@ export function TodoList(props: TodoListProps) {
     }
 
     return result;
-  }, [todos, selectedTagId, selectedWorkspace, searchKeyword, listMode]);
+  }, [todos, selectedTagId, searchKeyword, listMode]);
 
   const filteredLoopList = useMemo(() => {
     const keyword = searchKeyword.trim().toLowerCase();

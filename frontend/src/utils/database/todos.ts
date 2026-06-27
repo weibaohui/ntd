@@ -225,8 +225,13 @@ export async function updateScheduler(
   return unwrap(await api.put(`/api/todos/${id}/scheduler`, { scheduler_enabled, scheduler_config }));
 }
 
-export async function getSchedulerTodos(): Promise<Todo[]> {
-  return unwrap(await api.get('/api/scheduler/todos'));
+export async function getSchedulerTodos(workspaceId?: number): Promise<Todo[]> {
+  const params: Record<string, string> = {};
+  if (workspaceId !== undefined) {
+    params.workspace_id = String(workspaceId);
+  }
+  const qs = Object.keys(params).length ? `?${new URLSearchParams(params).toString()}` : '';
+  return unwrap(await api.get(`/api/scheduler/todos${qs}`));
 }
 
 export async function getRunningTodos(): Promise<Todo[]> {

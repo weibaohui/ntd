@@ -64,13 +64,9 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
     return () => window.removeEventListener('projectDirectoryAdded', reload); // 清理：避免泄漏
   }, []);
 
-  /* ─── Filter by search + time + project ─── */
+  /* ─── Filter by search + time ─── */
   const filteredTodos = useMemo(() => {
     let result = todos;
-    // 按工作空间过滤：selectedProject 为 workspace_id，与 todo.workspace_id 匹配
-    if (selectedProject != null) {
-      result = result.filter(t => t.workspace_id === selectedProject);
-    }
     const cutoff = hours ? Date.now() - hours * 3600 * 1000 : 0;
     return result.filter(t => {
       // Time filter: only for completed/failed todos
