@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Button, Popconfirm, Input, Space, Empty, Spin, Switch, message, Tooltip } from 'antd';
-import { PlusOutlined, FolderOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { Button, Popconfirm, Input, Space, Empty, Spin, Switch, message, Tooltip, Badge } from 'antd';
+import { PlusOutlined, FolderOutlined, QuestionCircleOutlined, RobotOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import * as db from '@/utils/database';
-import type { ProjectDirectory } from '@/utils/database';
-import { WorkspaceDetailPage } from './workspace';
+import type { ProjectDirectory, AgentBot } from '@/utils/database';
+import { WorkspaceDetailPage, BotDetailPage } from './workspace';
 
 export function ProjectDirectoriesPanel() {
   // 项目目录列表；按 path 升序，保持稳定可读
@@ -18,12 +18,19 @@ export function ProjectDirectoriesPanel() {
   const [editingDirName, setEditingDirName] = useState('');
   // 进入工作空间详情页
   const [selectedWorkspace, setSelectedWorkspace] = useState<ProjectDirectory | null>(null);
+  // 直接进入 Bot 详情页（消息智能体配置）
+  const [selectedBotForDetail, setSelectedBotForDetail] = useState<AgentBot | null>(null);
+  // 全部智能体列表（用于按 workspace 过滤显示数量）
+  const [allBots, setAllBots] = useState<AgentBot[]>([]);
 
   // 每次进入页面都重新拉取一次，确保用户在其他地方新增/删除后能立刻看到
   const loadProjectDirectories = () => {
     setProjectDirsLoading(true);
-    db.getProjectDirectories()
-      .then(setProjectDirectories)
+    Promise.all([db.getProjectDirectories(), db.getAgentBots()])
+      .then(([dirs, bots]) => {
+        setProjectDirectories(dirs);
+        setAllBots(bots);
+      })
       .catch((err: any) => message.error('加载项目目录失败: ' + (err?.message || String(err))))
       .finally(() => setProjectDirsLoading(false));
   };
@@ -128,7 +135,37 @@ export function ProjectDirectoriesPanel() {
     }
   };
 
-  // 选中工作空间，显示详情页
+  // 获取指定工作空间绑定的智能体数量
+  const getBotCount = (workspaceId: number) => allBots.filter(b => b.workspace_id === workspaceId).length;
+
+  // 点击智能体数量，进入该工作空间第一个智能体的详情页
+  const handleBotCountClick = (workspaceId: number) => {
+    const botsInWorkspace = allBots.filter(b => b.workspace_id === workspaceId);
+    if (botsInWorkspace.length > 0) {
+      setSelectedBotForDetail(botsInWorkspace[0]);
+    } else {
+      message.info('该工作空间暂无绑定的消息智能体');
+    }
+  };
+
+  // 选中 Bot，显示消息智能体配置页
+  if (selectedBotForDetail) {
+    return (
+      <BotDetailPage
+        bot={selectedBotForDetail}
+        onBack={() => {
+          setSelectedBotForDetail(null);
+          // 刷新一下 bot 列表，确保数量准确
+          db.getAgentBots().then(setAllBots).catch(() => {});
+        }}
+        onRefresh={() => {
+          db.getAgentBots().then(setAllBots).catch(() => {});
+        }}
+      />
+    );
+  }
+
+  // 选中工作空间，显示详情页（Loop 配置直接展示，不再有 tab 切换）
   if (selectedWorkspace) {
     return (
       <WorkspaceDetailPage
@@ -256,12 +293,24 @@ export function ProjectDirectoriesPanel() {
                           编辑
                         </Button>
                       )}
+                      {/* 消息智能体数量badge，点击进入配置页 */}
+                      <Tooltip title="点击进入消息智能体配置">
+                        <Badge count={getBotCount(dir.id)} size="small" offset={[-2, 0]}>
+                          <Button
+                            type="primary"
+                            size="small"
+                            icon={<RobotOutlined />}
+                            onClick={() => handleBotCountClick(dir.id)}
+                          >
+                            消息配置
+                          </Button>
+                        </Badge>
+                      </Tooltip>
                       <Button
-                        type="primary"
                         size="small"
                         onClick={() => setSelectedWorkspace(dir)}
                       >
-                        配置
+                        Loop配置
                       </Button>
                       <Popconfirm
                         title="删除工作空间"
