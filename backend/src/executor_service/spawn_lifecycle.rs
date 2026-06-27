@@ -13,6 +13,7 @@
 use std::sync::Arc;
 
 use command_group::AsyncCommandGroup;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
@@ -54,7 +55,7 @@ pub(crate) async fn run_spawned_executor_task(spawned: super::types::SpawnInputs
     let Some(mut child) = try_spawn_executor_child(&runtime).await else {
         return;
     };
-    save_child_pid_and_close_stdin(&mut child, &runtime.db, runtime.record_id).await;
+    save_child_pid_and_close_stdin(&mut child, runtime.executor_spawn.as_ref(), &runtime.db, runtime.record_id).await;
 
     let (log_flusher, stdout_task, stderr_task, flush_timer) =
         setup_log_capture_pipeline_for(&runtime, &mut child).await;
@@ -148,12 +149,37 @@ pub(crate) async fn handle_spawn_failure(
 /// 关 stdin 是必须的：不少 executor 在执行完后会再读一次 stdin，没有 EOF 就会 hang。
 /// PID 写库是为了后续 cancel / status 查询能定位进程；child.id() == None 表示
 /// 进程已退出（race），跳过写库即可。
+///
+/// `executor` 用于查询 `stdin_payload()`：部分执行器（pi 等）需要在关闭 stdin 之前
+/// 预写自动应答，避免子进程卡在交互式 prompt 上；等价于 `echo y | pi -p ...`。
 pub(crate) async fn save_child_pid_and_close_stdin(
     child: &mut command_group::AsyncGroupChild,
+    executor: &dyn crate::adapters::CodeExecutor,
     db: &Database,
     record_id: i64,
 ) {
-    // Close stdin immediately so child processes get EOF when they try to read it.
+    // 若执行器声明需要预写 stdin（典型场景：pi 启用 Worktree 后会在交互式 prompt
+    // 卡住，等价于 `echo y | pi ...` 的管道输入），先一次性写入再关闭 stdin。
+    // 写入失败不视为致命：关 stdin 本身仍能让子进程正常退出。
+    if let Some(payload) = executor.stdin_payload() {
+        if let Some(stdin) = child.inner().stdin.as_mut() {
+            if let Err(e) = stdin.write_all(payload.as_bytes()).await {
+                tracing::warn!(
+                    "[spawn] 写入执行器 stdin payload 失败: executor={} err={}",
+                    executor.executor_type().as_str(),
+                    e
+                );
+            }
+            if let Err(e) = stdin.flush().await {
+                tracing::warn!(
+                    "[spawn] flush 执行器 stdin 失败: executor={} err={}",
+                    executor.executor_type().as_str(),
+                    e
+                );
+            }
+        }
+    }
+    // 关 stdin 让子进程在读完 payload 后立即收到 EOF，避免挂起。
     drop(child.inner().stdin.take());
     let child_id = child.id().unwrap_or(0);
     if child_id > 0 {

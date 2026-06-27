@@ -373,6 +373,19 @@ pub trait CodeExecutor: Send + Sync {
     fn get_tool_calls_count(&self) -> Option<u64> {
         None
     }
+
+    /// 子进程启动后、关闭 stdin 之前要写入的内容。
+    ///
+    /// 用途：等价于 `echo "<content>" | <executor> ...` 的管道输入。
+    /// 默认 `None`（直接关闭 stdin，与重构前一致）；个别执行器需要在 stdin 上预置
+    /// 自动应答（例如 pi 在启用 Worktree 切目录后会在交互式 prompt 卡住，
+    /// 通过预写 "y" 自动确认目录切换）时可 override 返回 `Some(...)`。
+    ///
+    /// 实现要求：内容应一次性写入并立刻 flush；写入失败由调用方记录 warning 但不视为致命错误，
+    /// 因为 stdin 关闭本身仍能保证子进程正常退出。
+    fn stdin_payload(&self) -> Option<String> {
+        None
+    }
 }
 
 /// 代码执行器注册表

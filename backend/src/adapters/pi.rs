@@ -309,6 +309,17 @@ impl CodeExecutor for PiExecutor {
         &self.base.path
     }
 
+    /// pi 在启用 Worktree 并切换工作目录时会卡在交互式确认 prompt 上（"directory changed, continue? [y/N]"）。
+    /// 通过 stdin 预写一个 "y\n" 自动应答，相当于在 shell 里 `echo "y" | pi -p ...`。
+    /// 等价于 `echo y | pi ...`：预写一行 y 后关闭 stdin，pi 读到 y 后继续后续执行，
+    /// 不会再向 stdin 请求输入。
+    ///
+    /// 仅在 pi 启动时（-p 模式）需要这一次应答；非交互模式（-p 下 pi 也走 stdin 询问）
+    /// 下也安全：多写一个 y 不会让 pi 异常。
+    fn stdin_payload(&self) -> Option<String> {
+        Some("y\n".to_string())
+    }
+
     fn command_args(&self, message: &str) -> Vec<String> {
         vec![
             "-p".to_string(),
@@ -451,6 +462,14 @@ mod tests {
         let executor = PiExecutor::new("pi".to_string());
         assert_eq!(executor.extract_session_id(""), None);
         assert_eq!(executor.extract_session_id("not json"), None);
+    }
+
+    /// stdin_payload 应返回 "y\n" —— 等价于 `echo "y" | pi -p ...`，
+    /// 用来自动应答 pi 启用 Worktree 切目录后的交互式确认 prompt。
+    #[test]
+    fn test_stdin_payload_returns_y() {
+        let executor = PiExecutor::new("pi".to_string());
+        assert_eq!(executor.stdin_payload(), Some("y\n".to_string()));
     }
 
     #[test]
