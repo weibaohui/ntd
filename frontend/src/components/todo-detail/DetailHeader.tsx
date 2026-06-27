@@ -41,7 +41,7 @@ export function DetailHeader({
             <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
               <Button type="text" icon={<EditOutlined />} onClick={onTodoDrawerOpen} className="icon-btn" aria-label="编辑任务" />
               <Popconfirm title="删除任务" description="确定要删除吗？" onConfirm={onDelete}>
-                <Button type="text" danger icon={<DeleteOutlined />} className="icon-btn" aria-label="删除任务" />
+                <Button type="text" icon={<DeleteOutlined />} className="icon-btn" aria-label="删除任务" />
               </Popconfirm>
             </div>
           </div>

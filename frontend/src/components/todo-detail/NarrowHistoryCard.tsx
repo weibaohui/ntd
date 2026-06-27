@@ -84,11 +84,11 @@ export function NarrowHistoryCard({ record, viewMode, onOpenResume, onExport, on
             <NarrowRatingControl record={record} onRate={onRate} />
           )}
           {hasLogsStatic(record) && (
-            <Button size="small" icon={<FileTextOutlined />} onClick={() => onExport(record)}>导出YAML</Button>
+            <Button type="text" size="small" icon={<FileTextOutlined />} onClick={() => onExport(record)}>导出YAML</Button>
           )}
           {isRunning && (
             <Popconfirm title="确定强制停止该任务？" okText="停止" cancelText="取消" onConfirm={() => onStop(record.id)}>
-              <Button type="primary" danger size="middle" icon={<StopOutlined />} style={{ fontSize: 14, fontWeight: 600, height: '32px', display: 'flex', alignItems: 'center', gap: '6px' }}>停止任务</Button>
+              <Button type="text" size="small" icon={<StopOutlined />} style={{ fontSize: 14, fontWeight: 600, height: '32px', display: 'flex', alignItems: 'center', gap: '6px' }}>停止任务</Button>
             </Popconfirm>
           )}
         </div>

@@ -151,7 +151,7 @@ export function WorkspaceSlashCommandsPanel({
             okText="删除"
             cancelText="取消"
           >
-            <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+            <Button type="text" size="small" icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
       ),

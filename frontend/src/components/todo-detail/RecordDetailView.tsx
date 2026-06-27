@@ -144,7 +144,7 @@ export function RecordDetailView({
             />
           )}
           {record.status !== 'running' && !!record.finished_at && (
-            <Button size="small" icon={<FileTextOutlined />} onClick={() => onExportMarkdown(record)}>导出YAML</Button>
+            <Button type="text" size="small" icon={<FileTextOutlined />} onClick={() => onExportMarkdown(record)}>导出YAML</Button>
           )}
           {record.status === 'running' && (
             <Popconfirm
@@ -153,7 +153,7 @@ export function RecordDetailView({
               cancelText="取消"
               onConfirm={async () => { await onStop(record.id); }}
             >
-              <Button type="primary" danger size="small" icon={<StopOutlined />}>停止</Button>
+              <Button type="text" size="small" icon={<StopOutlined />}>停止</Button>
             </Popconfirm>
           )}
         </div>

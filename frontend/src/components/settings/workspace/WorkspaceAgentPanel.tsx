@@ -224,7 +224,7 @@ export function WorkspaceAgentPanel({ workspaceId, onBotChanged }: WorkspaceAgen
             okText="删除"
             cancelText="取消"
           >
-            <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+            <Button type="text" size="small" icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
       ),
@@ -297,7 +297,7 @@ export function WorkspaceAgentPanel({ workspaceId, onBotChanged }: WorkspaceAgen
                     okText="确认"
                     cancelText="取消"
                   >
-                    <Button size="small" icon={<SwapOutlined />}>
+                    <Button type="text" size="small" icon={<SwapOutlined />}>
                       移动到当前
                     </Button>
                   </Popconfirm>

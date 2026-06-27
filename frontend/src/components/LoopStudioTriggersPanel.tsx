@@ -789,7 +789,7 @@ export function LoopTriggersPanel({ loopId, triggers, onChanged }: Props) {
         destroyOnClose
         width={520}
         footer={configuring?.existing ? [
-          <Button key="del" danger icon={<DeleteOutlined />} onClick={() => handleDelete(configuring.existing!.id)}>
+          <Button key="del" type="text" icon={<DeleteOutlined />} onClick={() => handleDelete(configuring.existing!.id)}>
             删除
           </Button>,
           <Button key="cancel" onClick={closeConfig}>取消</Button>,

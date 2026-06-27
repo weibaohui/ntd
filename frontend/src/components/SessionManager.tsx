@@ -95,7 +95,7 @@ export function SessionManager() {
       <Space size={4}>
         <Button type="text" size="small" icon={<EyeOutlined />} onClick={(e) => { e.stopPropagation(); setSelectedSessionId(r.session_id); setDrawerOpen(true); }} />
         <Popconfirm title="确定删除该 Session？" description="将删除会话文件数据（不可恢复）" onConfirm={(e) => { e?.stopPropagation(); handleDelete(r.session_id); }} okText="删除" cancelText="取消">
-          <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+          <Button type="text" size="small" icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
         </Popconfirm>
       </Space>
     )},
