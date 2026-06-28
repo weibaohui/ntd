@@ -234,6 +234,9 @@ pub struct IncomingMessage {
     /// （避免 bot 复读自己的回复触发死循环）。
     #[serde(default)]
     pub is_from_self: bool,
+    /// 群聊 @ 到的用户 ID 列表。反向转换时恢复，避免 is_mention 精度损失。
+    #[serde(default)]
+    pub mentioned_open_ids: Vec<String>,
 }
 
 /// 发送者类型。
@@ -442,6 +445,7 @@ mod tests {
             is_mention: true,
             sender_kind: SenderKind::User,
             is_from_self: false,
+            mentioned_open_ids: vec![],
         };
         let json = serde_json::to_string(&msg).unwrap();
         let back: IncomingMessage = serde_json::from_str(&json).unwrap();

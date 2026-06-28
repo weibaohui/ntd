@@ -208,7 +208,7 @@ pub mod tests {
             is_mention: false,
             sender_kind: crate::types::SenderKind::User,
             is_from_self: false,
-        }
+            mentioned_open_ids: vec![],        }
     }
 
     /// Channel trait 方法（reply/send/stop）必须按调用顺序记入 mock。

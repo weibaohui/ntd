@@ -179,7 +179,7 @@ fn sample_msg(ts: i64, key: &str) -> IncomingMessage {
         is_mention: false,
         sender_kind: SenderKind::User,
         is_from_self: false,
-    }
+            mentioned_open_ids: vec![],    }
 }
 
 // ============================================================

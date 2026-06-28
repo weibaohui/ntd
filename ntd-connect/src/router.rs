@@ -137,7 +137,10 @@ impl Router for MessageRouter {
         // 阶段 2：builtin 命令
         match self.hooks.try_route_builtin(&msg).await {
             Ok(Some(text)) => {
-                self.reply(&msg, &text).await;
+                // 空字符串表示 handler 已内部回复，dispatcher 无需再发
+                if !text.is_empty() {
+                    self.reply(&msg, &text).await;
+                }
                 let _ = self.hooks.finalize(&msg, reaction_id.as_deref()).await;
                 return Decision::Handled;
             }
@@ -168,7 +171,9 @@ impl Router for MessageRouter {
         // 阶段 5：项目绑定路由
         match self.hooks.try_route_project_binding(&msg).await {
             Ok(Some(text)) => {
-                self.reply(&msg, &text).await;
+                if !text.is_empty() {
+                    self.reply(&msg, &text).await;
+                }
                 let _ = self.hooks.finalize(&msg, reaction_id.as_deref()).await;
                 return Decision::Handled;
             }
@@ -181,7 +186,9 @@ impl Router for MessageRouter {
         // 阶段 6：slash 命令 / 默认回复
         match self.hooks.try_route_slash_or_default(&msg).await {
             Ok(Some(text)) => {
-                self.reply(&msg, &text).await;
+                if !text.is_empty() {
+                    self.reply(&msg, &text).await;
+                }
                 let _ = self.hooks.finalize(&msg, reaction_id.as_deref()).await;
                 return Decision::Handled;
             }
@@ -238,6 +245,7 @@ mod tests {
             is_mention: false,
             sender_kind: SenderKind::User,
             is_from_self: false,
+            mentioned_open_ids: vec![],
         }
     }
 

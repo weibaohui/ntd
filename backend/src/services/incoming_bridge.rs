@@ -69,6 +69,7 @@ pub fn channel_message_to_incoming(msg: &ChannelMessage, bot_open_id: Option<&st
         is_mention,
         sender_kind,
         is_from_self,
+        mentioned_open_ids: msg.mentioned_open_ids.clone(),
     }
 }
 
@@ -265,8 +266,8 @@ pub fn incoming_to_channel_message(msg: &ntd_connect::types::IncomingMessage) ->
         channel,
         timestamp: (msg.timestamp_ms / 1000) as u64,
         chat_type,
-        // 精度损失：v1 IncomingMessage 没存 mentioned_open_ids 列表
-        mentioned_open_ids: Vec::new(),
+        // 反向恢复 mentioned_open_ids，消除 v1 精度损失
+        mentioned_open_ids: msg.mentioned_open_ids.clone(),
     }
 }
 
@@ -290,6 +291,7 @@ mod reverse_tests {
             is_mention: true,
             sender_kind: SenderKind::User,
             is_from_self: false,
+            mentioned_open_ids: vec![],
         }
     }
 

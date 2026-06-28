@@ -57,15 +57,15 @@ fn parse_connect_domain(s: &str) -> ConnectFeishuDomain {
     }
 }
 
-struct ListenerMessageContext<'a> {
-    db: &'a Arc<Database>,
-    token_manager: &'a Arc<TokenManager>,
-    credentials: &'a DashMap<i64, (String, String, String)>,
-    debounce: &'a Arc<MessageDebounce>,
-    task_manager: &'a Arc<TaskManager>,
-    bot_id: i64,
-    bot_open_id: &'a str,
-    bot_config: &'a BotConfig,
+pub(crate) struct ListenerMessageContext<'a> {
+    pub(crate) db: &'a Arc<Database>,
+    pub(crate) token_manager: &'a Arc<TokenManager>,
+    pub(crate) credentials: &'a DashMap<i64, (String, String, String)>,
+    pub(crate) debounce: &'a Arc<MessageDebounce>,
+    pub(crate) task_manager: &'a Arc<TaskManager>,
+    pub(crate) bot_id: i64,
+    pub(crate) bot_open_id: &'a str,
+    pub(crate) bot_config: &'a BotConfig,
 }
 
 struct FeishuCommandContext<'a> {
@@ -84,11 +84,11 @@ struct FeishuCommandContext<'a> {
 /// 编排器专用：handle_message 阶段函数之间传递的"消息预处理结果"。
 /// 把 trim content / chat_type / is_mention / reaction_id 这类一次性解析的字段聚在一起，
 /// 避免每个阶段函数都重复算一遍，编排器也只需要在 phases 间传一个 &MessagePrep。
-struct MessagePrep<'a> {
-    chat_type: &'a str,
-    content: &'a str,
-    is_mention: bool,
-    reaction_id: Option<String>,
+pub(crate) struct MessagePrep<'a> {
+    pub(crate) chat_type: &'a str,
+    pub(crate) content: &'a str,
+    pub(crate) is_mention: bool,
+    pub(crate) reaction_id: Option<String>,
 }
 
 impl FeishuListener {
@@ -106,6 +106,32 @@ impl FeishuListener {
             feishu_platforms: Arc::new(DashMap::new()),
             http: SharedHttpClient::new(),
             dispatchers: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// 构造 `ListenerMessageContext`，供 `FeishuRouterHooks` 调用 stage 函数。
+    ///
+    /// hooks 不持有 `&FeishuListener` 引用，而是自己存一份依赖；
+    /// 需要调 stage 函数时通过此方法构造上下文。
+    pub fn build_hook_context<'a>(
+        db: &'a Arc<Database>,
+        token_manager: &'a Arc<TokenManager>,
+        credentials: &'a DashMap<i64, (String, String, String)>,
+        debounce: &'a Arc<MessageDebounce>,
+        task_manager: &'a Arc<TaskManager>,
+        bot_id: i64,
+        bot_open_id: &'a str,
+        bot_config: &'a BotConfig,
+    ) -> ListenerMessageContext<'a> {
+        ListenerMessageContext {
+            db,
+            token_manager,
+            credentials,
+            debounce,
+            task_manager,
+            bot_id,
+            bot_open_id,
+            bot_config,
         }
     }
 
@@ -204,20 +230,6 @@ impl FeishuListener {
         platform.register_self_arc();
         self.feishu_platforms.insert(bot.id, platform);
 
-        // M12 总闸：为该 bot 构造 per-bot dispatcher。
-        // platform 已入 feishu_platforms，取出引用作为 channel；
-        // agent 用 ClaudeCodeAgent（M4，真实进程 spawn）。
-        if crate::services::master_switch::is_dispatcher_enabled() {
-            use ntd_connect::agent_impl::claude_code::ClaudeCodeAgent;
-            use ntd_connect::dispatcher::{Dispatcher, DispatcherConfig};
-            if let Some(chan) = self.feishu_platforms.get(&bot.id) {
-                let agent = Arc::new(ClaudeCodeAgent::new());
-                let dispatcher = Arc::new(Dispatcher::new(chan.clone(), agent, DispatcherConfig::default()));
-                self.set_dispatcher_for_bot(bot.id, dispatcher);
-                tracing::info!("[feishu:{}] dispatcher created (master switch on)", bot.id);
-            }
-        }
-
         let real_bot_open_id =
             Self::resolve_bot_open_id(&self.bot_credentials, &self.token_manager, bot.id)
                 .await
@@ -234,6 +246,39 @@ impl FeishuListener {
 
         let db = self.ctx.db.clone();
         let bot_open_id = real_bot_open_id;
+
+        // M12 总闸：为该 bot 构造 per-bot dispatcher + Router + FeishuRouterHooks。
+        // platform 已入 feishu_platforms，取引用作为 channel；
+        // hooks 持有 db/token_manager/credentials/debounce/task_manager，
+        // Router 编排 7 阶段决策树，dispatcher worker 调 router.route(msg)。
+        if crate::services::master_switch::is_dispatcher_enabled() {
+            use ntd_connect::agent_impl::claude_code::ClaudeCodeAgent;
+            use ntd_connect::dispatcher::{Dispatcher, DispatcherConfig};
+            use ntd_connect::router::MessageRouter;
+            if let Some(chan) = self.feishu_platforms.get(&bot.id) {
+                let agent = Arc::new(ClaudeCodeAgent::new());
+                let hooks = crate::services::router_hooks::build_router_hooks(
+                    bot.id,
+                    bot_open_id.clone(),
+                    bot_config.clone(),
+                    self.ctx.db.clone(),
+                    self.token_manager.clone(),
+                    self.bot_credentials.clone(),
+                    self.debounce.clone(),
+                    self.ctx.task_manager.clone(),
+                );
+                let router = Arc::new(MessageRouter::new(hooks, chan.clone()));
+                let dispatcher = Arc::new(Dispatcher::with_router(
+                    chan.clone(),
+                    agent,
+                    Some(router),
+                    DispatcherConfig::default(),
+                ));
+                self.set_dispatcher_for_bot(bot.id, dispatcher);
+                tracing::info!("[feishu:{}] dispatcher+router created (master switch on)", bot.id);
+            }
+        }
+
         let bot_config_clone = bot_config;
         let credentials = self.bot_credentials.clone();
         let token_manager = self.token_manager.clone();
@@ -772,7 +817,7 @@ impl FeishuListener {
     }
 
     /// 阶段 6a-i：查 enabled 的斜杠命令规则（按 workspace 查询）
-    async fn find_slash_rule(
+    pub(crate) async fn find_slash_rule(
         db: &Database,
         workspace_id: i64,
         command: &str,
@@ -1050,7 +1095,7 @@ impl FeishuListener {
     }
 
     /// 解析斜杠命令，只匹配首个词。
-    fn parse_slash_command(content: &str) -> Option<SlashCommandMatch<'_>> {
+    pub(crate) fn parse_slash_command(content: &str) -> Option<SlashCommandMatch<'_>> {
         let trimmed = content.trim();
         if !trimmed.starts_with('/') {
             return None;

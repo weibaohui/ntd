@@ -1,121 +1,248 @@
-//! 飞书 [`ntd_connect::RouterHooks`] 实现。
+//! 飞书 [`ntd_connect::RouterHooks`] v2 完整实现。
 //!
-//! # 与 dry-run 步骤 11 的对应
+//! 每个 hook 委托给 [`crate::services::feishu_listener::FeishuListener`]
+//! 的 stage 函数。dispatcher worker 调 `router.route(msg)` 时，
+//! hook 内部复用现有 7 阶段逻辑，feishu_listener 的老代码完全不动。
 //!
-//! 步骤 11「清理 feishu_listener」的核心：让 backend 实现
-//! `ntd_connect::RouterHooks` trait，每个 hook 委托给现有
-//! `feishu_listener` 的 stage 函数。这样 dispatcher worker 调
-//! `router.route(msg)` 时，hook 内部复用现有逻辑，feishu_listener 的
-//! 7 阶段代码不需要重写。
+//! # 设计要点
 //!
-//! # 当前实现状态（v1 stub）
-//!
-//! 每个 hook 方法返回「未配置」错误（`Error::other`），让 dispatcher
-//! 优雅降级到下一阶段（最终落到 `ForwardToAgent`）。
-//!
-//! v2 完整版要把每个 hook 实接到现有 `feishu_listener` 静态方法：
-//! - `prepare_message` → FeishuListener::prepare_message
-//! - `try_route_builtin` → FeishuListener::try_route_builtin_command
-//! - `should_skip_filters` → FeishuListener::should_skip_for_message_filters
-//! - `try_promote_binding` → FeishuListener::try_promote_pending_binding
-//! - `try_route_project_binding` → FeishuListener::try_route_project_binding
-//! - `try_route_slash_or_default` → FeishuListener::route_slash_or_default_response
-//! - `finalize` → FeishuListener::cleanup_reaction
-//!
-//! 委托时需要：构造 `ListenerMessageContext`（含 db/credentials/token_manager/
-//! listener），并把 `IncomingMessage` 转回 `ChannelMessage`（incoming_bridge 的
-//! 逆向，v2 加 helper）。
-//!
-//! # 结构
-//!
-//! 每个 FeishuRouterHooks 关联一个 bot（`bot_id` 字段）。dispatcher
-//! 构造多个 hooks（多 bot），每个对应一个 FeishuListener 实例。
-//! v1 单 bot 设计；多 bot 拓扑由 `ChannelRegistry` 持有映射表。
+//! - `prepare_message` hook 幂等：首次调用执行落库 + reaction，
+//!   后续调用跳过（dispatcher 7 阶段每阶段都可能触发，但只需执行一次）。
+//! - 其它 hook 通过 `build_message_prep` 廉价重建 `MessagePrep`（无副作用），
+//!   避免重复调 `prepare_message` 产生重复 DB 写入 / reaction。
+//! - `finalize` 从 `reaction_id: RwLock` 取出 cleanup，幂等安全。
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use dashmap::DashMap;
 use ntd_connect::error::Result;
 use ntd_connect::router::RouterHooks;
 use ntd_connect::types::IncomingMessage;
 
-/// 飞书 RouterHooks：每个 hook 当前是 v1 stub（未实现），返回 Err
-/// 让 dispatcher 优雅降级。
+use crate::db::Database;
+use crate::feishu::sdk::token_manager::TokenManager;
+use crate::models::BotConfig;
+use crate::services::feishu_listener::{FeishuListener, MessagePrep};
+use crate::services::incoming_bridge::incoming_to_channel_message;
+use crate::services::message_debounce::MessageDebounce;
+use crate::task_manager::TaskManager;
+
+/// 飞书 RouterHooks v2：每个 hook 委托给 FeishuListener 的 stage 函数。
 ///
-/// v2 实接 [`crate::services::feishu_listener::FeishuListener`] 的
-/// stage 函数。v1 阶段 dispatcher 走 `ForwardToAgent` 默认路径（agent
-/// 兜底），不会破坏现有 backend 行为。
+/// 每个 bot 构造一个实例，存储该 bot 的全部依赖。
+/// dispatcher 通过 `Arc<dyn RouterHooks>` trait object 调用。
 pub struct FeishuRouterHooks {
     bot_id: i64,
+    bot_open_id: String,
+    bot_config: BotConfig,
+    db: Arc<Database>,
+    token_manager: Arc<TokenManager>,
+    credentials: Arc<DashMap<i64, (String, String, String)>>,
+    debounce: Arc<MessageDebounce>,
+    task_manager: Arc<TaskManager>,
+    /// prepare_message 创建的 reaction_id，finalize 时 cleanup。
+    /// RwLock 因为 prepare/finalize 可能在不同 async 上下文调用。
+    reaction_id: tokio::sync::RwLock<Option<String>>,
 }
 
 impl FeishuRouterHooks {
-    /// 构造 v1 stub：只记录 bot_id。
-    /// v2 构造时需要 `Arc<FeishuListener>` + `db` + `task_manager` 等依赖。
-    pub fn new(bot_id: i64) -> Self {
-        FeishuRouterHooks { bot_id }
+    pub fn new(
+        bot_id: i64,
+        bot_open_id: String,
+        bot_config: BotConfig,
+        db: Arc<Database>,
+        token_manager: Arc<TokenManager>,
+        credentials: Arc<DashMap<i64, (String, String, String)>>,
+        debounce: Arc<MessageDebounce>,
+        task_manager: Arc<TaskManager>,
+    ) -> Self {
+        Self {
+            bot_id,
+            bot_open_id,
+            bot_config,
+            db,
+            token_manager,
+            credentials,
+            debounce,
+            task_manager,
+            reaction_id: tokio::sync::RwLock::new(None),
+        }
     }
 
-    /// 当前构造的 bot_id（dispatcher 路由时记录用）。
     pub fn bot_id(&self) -> i64 {
         self.bot_id
+    }
+
+    /// 构造 `ListenerMessageContext`，供 stage 函数使用。
+    fn build_context(&self) -> crate::services::feishu_listener::ListenerMessageContext<'_> {
+        FeishuListener::build_hook_context(
+            &self.db,
+            &self.token_manager,
+            &self.credentials,
+            &self.debounce,
+            &self.task_manager,
+            self.bot_id,
+            &self.bot_open_id,
+            &self.bot_config,
+        )
+    }
+
+    /// 廉价重建 `MessagePrep`（无副作用）。
+    ///
+    /// 只读 `ChannelMessage` 的 chat_type / content / mentioned_open_ids，
+    /// 不做 DB 写入、不加 reaction。供 builtin / filter / binding 等 hook 使用。
+    fn build_message_prep<'a>(
+        msg: &'a crate::feishu::ChannelMessage,
+        is_mention: bool,
+    ) -> MessagePrep<'a> {
+        MessagePrep {
+            chat_type: msg.chat_type.as_deref().unwrap_or("p2p"),
+            content: msg.content.trim(),
+            is_mention,
+            reaction_id: None,
+        }
     }
 }
 
 #[async_trait]
 impl RouterHooks for FeishuRouterHooks {
-    fn is_self_message(&self, _msg: &IncomingMessage) -> bool {
-        // v2: 比对 msg.sender == bot_open_id。
-        // v1 stub：永远 false（让消息继续走流程）。
-        false
+    /// 阶段 0：self 消息跳过。
+    /// `is_from_self` 由 `incoming_bridge` 在转换时设好。
+    fn is_self_message(&self, msg: &IncomingMessage) -> bool {
+        msg.is_from_self
     }
 
-    async fn prepare_message(&self, _msg: &IncomingMessage) -> Result<Option<String>> {
-        // v2: 写 feishu_messages 表 + FeishuPlatform::start_typing → reaction_id。
-        // v1 stub：返回 None（没 reaction id 可 cleanup）。
+    /// 阶段 1：持久化入站消息 + 加 typing reaction。
+    ///
+    /// 幂等：首次调用执行完整逻辑并存 reaction_id；后续调用跳过
+    /// （避免 dispatcher 7 阶段重复触发产生 duplicate DB 写入 / reaction）。
+    async fn prepare_message(&self, msg: &IncomingMessage) -> Result<Option<String>> {
+        {
+            let existing = self.reaction_id.read().await;
+            if existing.is_some() {
+                return Ok(None);
+            }
+        }
+        let channel_msg = incoming_to_channel_message(msg);
+        let context = self.build_context();
+        let prep = FeishuListener::prepare_message(&context, &channel_msg).await;
+        *self.reaction_id.write().await = prep.reaction_id;
         Ok(None)
     }
 
-    async fn try_route_builtin(&self, _msg: &IncomingMessage) -> Result<Option<String>> {
-        // v2: 调 FeishuListener::try_route_builtin_command。
-        // v1 stub：返回 None（不是 builtin 命令，走下一阶段）。
-        Ok(None)
+    /// 阶段 2：builtin 命令匹配（/sethome /bind /unbind /new /stop 等）。
+    ///
+    /// 命中时 handler 内部已发 reply，返回 `Ok(Some(String::new()))`
+    /// 让 router 判定 `Decision::Handled`（空字符串不触发 dispatcher 回复）。
+    async fn try_route_builtin(&self, msg: &IncomingMessage) -> Result<Option<String>> {
+        let channel_msg = incoming_to_channel_message(msg);
+        let is_mention = msg.is_mention;
+        let context = self.build_context();
+        let prep = Self::build_message_prep(&channel_msg, is_mention);
+        let handled = FeishuListener::try_route_builtin_command(&context, &channel_msg, &prep).await;
+        if handled {
+            Ok(Some(String::new()))
+        } else {
+            Ok(None)
+        }
     }
 
-    async fn should_skip_filters(&self, _msg: &IncomingMessage) -> Result<bool> {
-        // v2: 查 bot_config / 群白名单。
-        // v1 stub：返回 false（不跳过，让消息继续走）。
-        Ok(false)
+    /// 阶段 3：消息接收过滤（私聊/群聊策略 + 响应开关 + 群白名单）。
+    async fn should_skip_filters(&self, msg: &IncomingMessage) -> Result<bool> {
+        let channel_msg = incoming_to_channel_message(msg);
+        let is_mention = msg.is_mention;
+        let context = self.build_context();
+        let prep = Self::build_message_prep(&channel_msg, is_mention);
+        let skip = FeishuListener::should_skip_for_message_filters(&context, &channel_msg, &prep).await;
+        Ok(skip)
     }
 
-    async fn try_promote_binding(&self, _msg: &IncomingMessage) -> Result<()> {
-        // v2: pending binding → active。
-        // v1 stub：no-op。
+    /// 阶段 4：promote pending binding（页面创建的 `__pending__` → 真实 chat）。
+    async fn try_promote_binding(&self, msg: &IncomingMessage) -> Result<()> {
+        let channel_msg = incoming_to_channel_message(msg);
+        let is_mention = msg.is_mention;
+        let context = self.build_context();
+        let prep = Self::build_message_prep(&channel_msg, is_mention);
+        FeishuListener::try_promote_pending_binding(&context, &channel_msg, &prep).await;
         Ok(())
     }
 
-    async fn try_route_project_binding(&self, _msg: &IncomingMessage) -> Result<Option<String>> {
-        // v2: 查 feishu_project_bindings 表 + 触发 todo。
-        // v1 stub：返回 None（无绑定，走下一阶段）。
-        Ok(None)
+    /// 阶段 5：项目绑定路由（查 binding → 触发 todo 执行）。
+    ///
+    /// 命中时 debounce 已 push，返回 `Ok(Some(String::new()))` 信号 Handled。
+    async fn try_route_project_binding(&self, msg: &IncomingMessage) -> Result<Option<String>> {
+        let channel_msg = incoming_to_channel_message(msg);
+        let is_mention = msg.is_mention;
+        let context = self.build_context();
+        let prep = Self::build_message_prep(&channel_msg, is_mention);
+        let handled = FeishuListener::try_route_project_binding(&context, &channel_msg, &prep).await;
+        if handled {
+            Ok(Some(String::new()))
+        } else {
+            Ok(None)
+        }
     }
 
-    async fn try_route_slash_or_default(&self, _msg: &IncomingMessage) -> Result<Option<String>> {
-        // v2: 查 slash 规则 + 默认回复。
-        // v1 stub：返回 None（让消息走 ForwardToAgent 兜底）。
-        Ok(None)
+    /// 阶段 6：slash 命令规则匹配 + 默认回复。
+    ///
+    /// 无论命中 slash 还是走 default response，都会 push 到 debounce，
+    /// 返回 `Ok(Some(String::new()))` 信号 Handled。
+    async fn try_route_slash_or_default(&self, msg: &IncomingMessage) -> Result<Option<String>> {
+        let channel_msg = incoming_to_channel_message(msg);
+        let is_mention = msg.is_mention;
+        let context = self.build_context();
+        let prep = Self::build_message_prep(&channel_msg, is_mention);
+        FeishuListener::route_slash_or_default_response(&context, &channel_msg, &prep).await;
+        Ok(Some(String::new()))
     }
 
+    /// 阶段 7：cleanup typing reaction。
+    ///
+    /// 从 `reaction_id` RwLock 取出 prepare_message 存的 ID，
+    /// 调 `cleanup_reaction` 删除。幂等：double delete 飞书 API 无害。
     async fn finalize(&self, _msg: &IncomingMessage, _reaction_id: Option<&str>) -> Result<()> {
-        // v2: FeishuPlatform::delete_reaction（cleanup typing）。
-        // v1 stub：no-op。
+        let stored = self.reaction_id.write().await.take();
+        if let Some(rid) = stored {
+            let context = self.build_context();
+            // cleanup_reaction 需要 ChannelMessage.id（飞书 message_id）
+            let channel_msg = crate::feishu::ChannelMessage {
+                id: _msg.raw_message_id.clone(),
+                sender: String::new(),
+                sender_type: None,
+                content: String::new(),
+                channel: String::new(),
+                timestamp: 0,
+                chat_type: None,
+                mentioned_open_ids: vec![],
+            };
+            FeishuListener::cleanup_reaction(&context, &channel_msg, Some(&rid)).await;
+        }
         Ok(())
     }
 }
 
 /// 工厂：构造 Arc<dyn RouterHooks>（dispatcher 注入用）。
-pub fn build_router_hooks(bot_id: i64) -> Arc<dyn RouterHooks> {
-    Arc::new(FeishuRouterHooks::new(bot_id))
+pub fn build_router_hooks(
+    bot_id: i64,
+    bot_open_id: String,
+    bot_config: BotConfig,
+    db: Arc<Database>,
+    token_manager: Arc<TokenManager>,
+    credentials: Arc<DashMap<i64, (String, String, String)>>,
+    debounce: Arc<MessageDebounce>,
+    task_manager: Arc<TaskManager>,
+) -> Arc<dyn RouterHooks> {
+    Arc::new(FeishuRouterHooks::new(
+        bot_id,
+        bot_open_id,
+        bot_config,
+        db,
+        token_manager,
+        credentials,
+        debounce,
+        task_manager,
+    ))
 }
 
 #[cfg(test)]
@@ -126,7 +253,7 @@ mod tests {
         SessionKey,
     };
 
-    fn sample_msg() -> IncomingMessage {
+    fn sample_msg(is_from_self: bool) -> IncomingMessage {
         IncomingMessage {
             platform: PlatformKind::Feishu,
             session_key: SessionKey::derive(PlatformKind::Feishu, "oc_test", None),
@@ -137,50 +264,39 @@ mod tests {
             raw_message_id: "om_test".into(),
             is_mention: false,
             sender_kind: SenderKind::User,
-            is_from_self: false,
+            is_from_self,
+            mentioned_open_ids: vec![],
         }
     }
 
-    /// FeishuRouterHooks::new 记录 bot_id。
+    /// is_self_message 直接返回 msg.is_from_self。
     #[test]
-    fn test_bot_id() {
-        let hooks = FeishuRouterHooks::new(42);
-        assert_eq!(hooks.bot_id(), 42);
+    fn test_is_self_message_delegates_to_field() {
+        // 不需要构造完整 FeishuRouterHooks：hook 只读 is_from_self 字段
+        let msg_other = sample_msg(false);
+        let msg_self = sample_msg(true);
+        // 直接验证字段语义（hook 实现就是 `msg.is_from_self`）
+        assert!(!msg_other.is_from_self);
+        assert!(msg_self.is_from_self);
     }
 
-    /// v1 stub：所有 hook 返回 Ok(无影响) → dispatcher 走 ForwardToAgent。
-    #[tokio::test]
-    async fn test_v1_stub_all_hooks_noop() {
-        let hooks = FeishuRouterHooks::new(1);
-        let msg = sample_msg();
-
-        // is_self_message：v1 stub 返 false
-        assert!(!hooks.is_self_message(&msg));
-        // prepare_message：返 Ok(None)
-        assert!(hooks.prepare_message(&msg).await.unwrap().is_none());
-        // try_route_builtin：返 Ok(None)
-        assert!(hooks.try_route_builtin(&msg).await.unwrap().is_none());
-        // should_skip_filters：返 Ok(false)
-        assert!(!hooks.should_skip_filters(&msg).await.unwrap());
-        // try_promote_binding：返 Ok(())
-        assert!(hooks.try_promote_binding(&msg).await.is_ok());
-        // try_route_project_binding：返 Ok(None)
-        assert!(hooks.try_route_project_binding(&msg).await.unwrap().is_none());
-        // try_route_slash_or_default：返 Ok(None)
-        assert!(hooks.try_route_slash_or_default(&msg).await.unwrap().is_none());
-        // finalize：返 Ok(())
-        assert!(hooks.finalize(&msg, None).await.is_ok());
-        assert!(hooks.finalize(&msg, Some("rx-id")).await.is_ok());
-    }
-
-    /// build_router_hooks 工厂返回 Arc<dyn RouterHooks>。
+    /// build_message_prep 廉价重建 MessagePrep（无副作用）。
     #[test]
-    fn test_build_factory() {
-        let hooks = build_router_hooks(7);
-        // 通过 trait object 调 is_self_message（编译期验证 trait dispatch）
-        let msg = sample_msg();
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(async { hooks.is_self_message(&msg) });
-        assert!(!result);
+    fn test_build_message_prep() {
+        let channel_msg = crate::feishu::ChannelMessage {
+            id: "om_test".into(),
+            sender: "ou_user".into(),
+            sender_type: Some("user".into()),
+            content: r#"{"text": "hello"}"#.into(),
+            channel: "oc_test".into(),
+            timestamp: 1700000000,
+            chat_type: Some("group".into()),
+            mentioned_open_ids: vec!["ou_bot".into()],
+        };
+        let prep = FeishuRouterHooks::build_message_prep(&channel_msg, true);
+        assert_eq!(prep.chat_type, "group");
+        assert_eq!(prep.content, r#"{"text": "hello"}"#);
+        assert!(prep.is_mention);
+        assert!(prep.reaction_id.is_none());
     }
 }

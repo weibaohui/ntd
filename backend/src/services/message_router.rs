@@ -145,6 +145,7 @@ mod tests {
             is_mention: false,
             sender_kind: SenderKind::User,
             is_from_self: false,
+            mentioned_open_ids: vec![],
         };
 
         // context 用 None 字段也行（route 不访问 context）；v1 stub 不依赖任何字段。

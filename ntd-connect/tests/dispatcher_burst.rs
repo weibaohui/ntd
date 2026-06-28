@@ -160,7 +160,7 @@ fn sample_msg(ts: i64, key: &str, raw_id: &str) -> IncomingMessage {
         is_mention: false,
         sender_kind: ntd_connect::types::SenderKind::User,
         is_from_self: false,
-    }
+            mentioned_open_ids: vec![],    }
 }
 
 /// 公开 API 端到端：100 条消息分 5 个 session，断言总耗时 < 5s。
