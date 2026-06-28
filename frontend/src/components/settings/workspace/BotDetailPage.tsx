@@ -6,7 +6,7 @@ import * as dbLoops from '@/utils/database/loops';
 import type { AgentBot, FeishuPushStatus, WhitelistEntry, FeishuSenderItem } from '@/utils/database';
 import type { FeishuHistoryMessage, FeishuHistoryChat, ExecutionRecord } from '@/types';
 import { copyToClipboard } from '@/utils/clipboard';
-import { ExecutionDetailModal } from '../messages/ExecutionDetailModal';
+import { ExecutionRecordDrawer } from '../messages/ExecutionRecordDrawer';
 import { BlackboardDrawer } from '@/components/LoopStudioExecutionsPanel';
 
 const { Paragraph } = Typography;
@@ -504,7 +504,7 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
       </Modal>
 
       {/* 执行记录详情弹窗 */}
-      <ExecutionDetailModal record={execDetailRecord} onClose={() => setExecDetailRecord(null)} />
+      <ExecutionRecordDrawer record={execDetailRecord} onClose={() => setExecDetailRecord(null)} />
 
       {/* Todo 详情弹窗 */}
       <Modal
