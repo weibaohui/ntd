@@ -26,13 +26,13 @@
 |----|------|------|------|
 | 1-3 | ntd-connect M1/M2/M3 + workspace | — | ✅ 完成 |
 | **4** | `backend/Cargo.toml` 加 `ntd-connect` dep | 低 | ✅ 完成 |
-| **5** | `build_app_state` 加 `ChannelRegistry` + `SharedHttpClient` + dummy 字段；`feishu_listener` 仍并行 | 低 | ✅ 完成 |
-| **6** | `feishu_listener` 加 `feishu_platforms` map + `SharedHttpClient` + `send_raw_via_platform`；`feishu_push.rs` 三个 send_raw 调用切到「优先平台委托 + 失败回退」 | 中 | ✅ 完成 |
-| **7** | `FeishuPlatform::start` 接 backend `FeishuChannelService.listen(tx)`，`ChannelMessage` → `IncomingMessage` 调 handler | 中 | ⏸ 待做 |
-| **8** | 抽 `MessageRouter`（backend）；7 阶段逻辑搬到 router | **高** | ⏸ 待做 |
-| **9** | 真 `Dispatcher` 接入；worker 调 `MessageRouter`，**不接 agent** | 中 | ⏸ 待做 |
+| **5** | `build_app_state` 加 `ChannelRegistry` + `SharedHttpClient`；`feishu_listener` 仍并行 | 低 | ✅ 完成 |
+| **6** | `feishu_listener` 加 `feishu_platforms` map + `SharedHttpClient` + `send_raw_via_platform`；`feishu_push.rs` 切到「优先平台委托 + 失败回退」 | 中 | ✅ 完成 |
+| **7** | WS 桥接：新建 `incoming_bridge.rs` 把 `ChannelMessage` 转 `IncomingMessage`（转换层就位；dispatcher 接入留 step 9）| 中 | ✅ 完成 |
+| **8** | `MessageRouter` 骨架 + `Decision` 枚举 + `route()` 入口（v1 stub：固定返回 `ForwardToAgent`；完整抽取留后续）| **高** | 🟡 骨架完成 |
+| **9** | 真 `Dispatcher` 接入；worker 调 `MessageRouter`，**不接 agent** | 中 | ⏸ 待做（依赖 M4 Agent）|
 | **10** | M4 Claude Code executor | 高 | ⏸ 待 M4 |
-| **11** | 删 `feishu_listener.rs` 已迁部分；清理 AppState | 低 | ⏸ 待做 |
+| **11** | 删 `feishu_listener.rs` 已迁部分 | 低 | ⏸ 待 step 8 完整版 |
 | **12** | v2 token 缓存统一 | 低 | ⏸ v2 |
 
 ## 关键调用方改造
