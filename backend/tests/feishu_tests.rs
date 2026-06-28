@@ -285,6 +285,7 @@ mod cascade_delete_tests {
             content: Some("hello"),
             msg_type: "text",
             is_mention: false,
+            workspace_id: None,
         })
         .await
         .unwrap();
@@ -413,7 +414,8 @@ mod whitelist_and_message_tests {
                 content: Some("hello"),
                 msg_type: "text",
                 is_mention: false,
-            })
+            workspace_id: None,
+        })
             .await
             .unwrap();
 
@@ -458,7 +460,8 @@ mod whitelist_and_message_tests {
                 content: Some("historical message"),
                 msg_type: "text",
                 created_at: "2025-01-01T00:00:00Z",
-            })
+            workspace_id: None,
+        })
             .await
             .unwrap();
 

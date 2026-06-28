@@ -67,12 +67,12 @@ mod todo_create_command_tests {
     #[test]
     fn test_todo_create_with_workspace() {
         let cli =
-            Cli::try_parse_from(["ntd", "todo", "create", "Task", "-w", "/path/to/dir"]).unwrap();
+            Cli::try_parse_from(["ntd", "todo", "create", "Task", "-w", "42"]).unwrap();
         match cli.command {
             Commands::Todo {
-                action: TodoAction::Create { workspace, .. },
+                action: TodoAction::Create { workspace_id, .. },
             } => {
-                assert_eq!(workspace, Some("/path/to/dir".to_string()));
+                assert_eq!(workspace_id, Some(42));
             }
             _ => panic!("Expected Todo::Create with workspace"),
         }

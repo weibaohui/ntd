@@ -3,6 +3,7 @@ pub mod channel_registry;
 pub mod feishu_history_fetcher;
 pub mod feishu_listener;
 pub mod feishu_push;
+pub mod incoming_bridge;
 pub mod loop_runner;
 pub mod loop_scheduler;
 pub mod loop_trigger;

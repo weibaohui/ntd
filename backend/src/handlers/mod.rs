@@ -1980,6 +1980,7 @@ mod app_state_config_helpers_tests {
             task_manager: ctx.task_manager.clone(),
             config: ctx.config.clone(),
             feishu_listener,
+            channel_registry: Arc::new(crate::services::channel_registry::ChannelRegistry::new()),
             feishu_push_mutator,
             // 测试用最小 AppState 不需要 loop 服务
             loop_scheduler: None,

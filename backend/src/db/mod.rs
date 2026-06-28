@@ -880,7 +880,8 @@ mod tests {
             limit: 100,
             offset: 0,
             status: None,
-        })
+                hours: None,
+            })
         .await
         .unwrap();
         let record = records.into_iter().find(|r| r.id == record_id).unwrap();
@@ -917,7 +918,8 @@ mod tests {
             limit: 100,
             offset: 0,
             status: None,
-        })
+                hours: None,
+            })
         .await
         .unwrap();
         let record = records.into_iter().find(|r| r.id == record_id).unwrap();
@@ -1208,7 +1210,8 @@ mod tests {
             limit: 100,
             offset: 0,
             status: None,
-        })
+                hours: None,
+            })
         .await
         .unwrap();
         assert_eq!(total, 1);
@@ -1233,7 +1236,8 @@ mod tests {
             limit: 2,
             offset: 0,
             status: None,
-        })
+                hours: None,
+            })
         .await
         .unwrap();
         assert_eq!(total, 5);
@@ -1253,7 +1257,8 @@ mod tests {
             limit: 10,
             offset: 2,
             status: None,
-        })
+                hours: None,
+            })
         .await
         .unwrap();
         assert_eq!(total, 3);
@@ -1298,6 +1303,7 @@ mod tests {
                 limit: 10,
                 offset: 0,
                 status: Some("running"),
+                hours: None,
             })
             .await
             .unwrap();
@@ -1312,6 +1318,7 @@ mod tests {
                 limit: 10,
                 offset: 0,
                 status: Some("success"),
+                hours: None,
             })
             .await
             .unwrap();
@@ -1326,6 +1333,7 @@ mod tests {
                 limit: 10,
                 offset: 0,
                 status: Some("failed"),
+                hours: None,
             })
             .await
             .unwrap();
@@ -1339,7 +1347,8 @@ mod tests {
             limit: 10,
             offset: 0,
             status: None,
-        })
+                hours: None,
+            })
         .await
         .unwrap();
         assert_eq!(total_all, 3);
@@ -1353,6 +1362,7 @@ mod tests {
                 limit: 10,
                 offset: 0,
                 status: Some("all"),
+                hours: None,
             })
             .await
                 .unwrap();
@@ -1390,7 +1400,8 @@ mod tests {
             limit: 100,
             offset: 0,
             status: None,
-        })
+                hours: None,
+            })
         .await
         .unwrap();
         let record = records.iter().find(|r| r.id == record_id).unwrap();
