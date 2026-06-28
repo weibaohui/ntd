@@ -103,7 +103,7 @@ jobs:
       - name: Prepare binary for upload
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/${{ matrix.bin }} "dist/${{ matrix.name }}"
+          cp backend/target/${{ matrix.target }}/release/${{ matrix.bin }} "dist/${{ matrix.name }}"
           chmod +x "dist/${{ matrix.name }}" || true
 
       - name: Upload artifact
