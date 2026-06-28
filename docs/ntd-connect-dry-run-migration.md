@@ -24,16 +24,16 @@
 
 | 步 | 工作 | 风险 | 状态 |
 |----|------|------|------|
-| 1-3 | ntd-connect M1/M2/M3 + workspace | — | ✅ 已完成 |
-| **4** | `backend/Cargo.toml` 加 `ntd-connect` dep | 低 | 待做 |
-| **5** | `build_app_state` 构造 `SharedHttpClient` + `ChannelRegistry` + dummy MessageHandler；不动 dispatcher，先验证 bot 创建/start | 低 | 待做 |
-| **6** | 把 feishu_listener HTTP helpers 抽到 backend `FeishuApiClient` thin wrapper，转发到 ntd-connect；改 feishu_push.rs / feishu_history_fetcher.rs | 中 | 待做 |
-| **7** | `FeishuPlatform::start` 接 backend `FeishuChannelService.listen(tx)`，`ChannelMessage` → `IncomingMessage` 调 handler.on_message；dummy handler | 中 | 待做 |
-| **8** | 抽 `MessageRouter`（backend）；7 阶段逻辑搬到 router；路由结果仍走老路径（debounce / builtin）| **高**（最大逻辑改动）| 待做 |
-| **9** | 真 `Dispatcher`；所有 channel 指向它；worker 内部调 `MessageRouter`，**不接 agent** | 中 | 待做 |
-| **10** | M4（Claude Code executor）完成后，worker 接真 agent | 高 | 待 M4 |
-| **11** | 删 `feishu_listener.rs`；清理 AppState.feishu_listener | 低 | 待做 |
-| **12** | v2：暴露 `FeishuPlatform::get_token()` 给 backend；删 backend `TokenManager` | 低 | v2 |
+| 1-3 | ntd-connect M1/M2/M3 + workspace | — | ✅ 完成 |
+| **4** | `backend/Cargo.toml` 加 `ntd-connect` dep | 低 | ✅ 完成 |
+| **5** | `build_app_state` 加 `ChannelRegistry` + `SharedHttpClient` + dummy 字段；`feishu_listener` 仍并行 | 低 | ✅ 完成 |
+| **6** | `feishu_listener` 加 `feishu_platforms` map + `SharedHttpClient` + `send_raw_via_platform`；`feishu_push.rs` 三个 send_raw 调用切到「优先平台委托 + 失败回退」 | 中 | ✅ 完成 |
+| **7** | `FeishuPlatform::start` 接 backend `FeishuChannelService.listen(tx)`，`ChannelMessage` → `IncomingMessage` 调 handler | 中 | ⏸ 待做 |
+| **8** | 抽 `MessageRouter`（backend）；7 阶段逻辑搬到 router | **高** | ⏸ 待做 |
+| **9** | 真 `Dispatcher` 接入；worker 调 `MessageRouter`，**不接 agent** | 中 | ⏸ 待做 |
+| **10** | M4 Claude Code executor | 高 | ⏸ 待 M4 |
+| **11** | 删 `feishu_listener.rs` 已迁部分；清理 AppState | 低 | ⏸ 待做 |
+| **12** | v2 token 缓存统一 | 低 | ⏸ v2 |
 
 ## 关键调用方改造
 
