@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Card, Button, Switch, Input, Select, Tag, message, Modal, Typography, AutoComplete, Table } from 'antd';
-import { ArrowLeftOutlined, CopyOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, CopyOutlined, ReloadOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import type { AgentBot, FeishuPushStatus, WhitelistEntry, FeishuSenderItem } from '@/utils/database';
 import type { FeishuHistoryMessage, FeishuHistoryChat, ExecutionRecord } from '@/types';
@@ -210,6 +210,10 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
               onChange={v => { setHistoryIsHistory(v); setHistoryPage(1); }}
               options={[{ value: true, label: '历史消息' }, { value: false, label: '实时消息' }]}
             />
+            {/* 刷新：手动触发 loadHistoryMessages，避免被动等分页/筛选变化；和 RecordTab 行为一致 */}
+            <Button size="small" icon={<ReloadOutlined />} onClick={loadHistoryMessages}>
+              刷新
+            </Button>
           </div>
 
           <Table
