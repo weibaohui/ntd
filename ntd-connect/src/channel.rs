@@ -179,6 +179,8 @@ mod tests {
     }
 
     /// 构造测试用的样例消息，集中常量避免散落。
+    /// 字段顺序对齐 types.rs 的 struct 定义（含 M1.5 followup 新增的
+    /// is_mention / sender_kind / is_from_self），编译期强制更新。
     fn sample_message() -> IncomingMessage {
         IncomingMessage {
             platform: PlatformKind::Feishu,
@@ -188,6 +190,9 @@ mod tests {
             reply_target: ReplyTarget::feishu("oc_test", None, FeishuChatType::P2p),
             timestamp_ms: 1_700_000_000_000,
             raw_message_id: "om_test".into(),
+            is_mention: false,
+            sender_kind: crate::types::SenderKind::User,
+            is_from_self: false,
         }
     }
 

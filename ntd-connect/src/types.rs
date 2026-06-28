@@ -194,6 +194,15 @@ impl Attachment {
 ///
 /// 这是 dispatcher 看到的唯一入参；channel 实现把自家消息解码后构造
 /// 这个结构。`raw_message_id` 用于 dispatcher 的 dedup。
+///
+/// # 字段填充责任
+///
+/// 所有字段都**必须**由 channel 实现层填好，dispatcher 不应再做猜测：
+/// - `is_mention` / `sender_kind`：channel 解码自家协议帧时直接拿
+///   到，比 dispatcher 事后推断准确。
+/// - `is_from_self`：channel 已知 resolved bot_open_id，
+///   `sender == bot_open_id` 时填 `true`；dispatcher 不应持有
+///   bot_open_id（多 bot 场景会泄露）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IncomingMessage {
     /// 来源平台。
@@ -210,6 +219,38 @@ pub struct IncomingMessage {
     pub timestamp_ms: i64,
     /// 平台原始 message_id，用于 dedup。
     pub raw_message_id: String,
+    /// 群聊是否 @ 了 bot。仅群聊消息有意义；私聊固定 `false`。
+    ///
+    /// dispatcher 闸 3 用它判断群聊是否需要响应（参考
+    /// `feishu_listener.rs:306 should_skip_for_message_filters`）。
+    #[serde(default)]
+    pub is_mention: bool,
+    /// 发送者类型。多数 IM 平台在事件帧里直接给 `sender_type`
+    /// （user / bot / app），channel 实现直接透传即可。
+    #[serde(default)]
+    pub sender_kind: SenderKind,
+    /// 是否 bot 自己发的消息。channel 解码时由
+    /// `sender == resolved_bot_open_id` 判断；dispatcher 据此跳过
+    /// （避免 bot 复读自己的回复触发死循环）。
+    #[serde(default)]
+    pub is_from_self: bool,
+}
+
+/// 发送者类型。
+///
+/// 区分 user / bot 是多数 IM 协议的 first-class 字段（飞书
+/// `sender_type: "user" | "app"` / Slack `subtype: "bot"`）。
+/// dispatcher 用它做几件事：
+/// - 跳过 `is_from_self`（已在 `IncomingMessage` 字段里集中判断）
+/// - 渲染消息时区分「智能体」和「用户」（前端表格标签）
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum SenderKind {
+    /// 普通用户。默认值，覆盖「未知 / 平台未分类」场景。
+    #[default]
+    User,
+    /// 机器人 / 应用账号。
+    Bot,
 }
 
 /// Reply 调用附带的上下文（超时、trace 等）。
@@ -386,6 +427,8 @@ mod tests {
     }
 
     /// IncomingMessage 必能 serde 序列化（保证 channel ↔ dispatcher 协议稳定）。
+    /// 必须把 M1.5 followup 新增的 3 个字段（is_mention / sender_kind /
+    /// is_from_self）一起验证，确保 channel ↔ dispatcher JSON 协议对得上。
     #[test]
     fn test_incoming_message_serialize_roundtrip() {
         let msg = IncomingMessage {
@@ -396,10 +439,41 @@ mod tests {
             reply_target: ReplyTarget::feishu("oc", None, FeishuChatType::P2p),
             timestamp_ms: 1234567890,
             raw_message_id: "om_xxx".into(),
+            is_mention: true,
+            sender_kind: SenderKind::User,
+            is_from_self: false,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let back: IncomingMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, back);
+    }
+
+    /// 新增字段必须能 serde 反序列化缺失场景（兼容老 JSON），
+    /// 防止 dispatcher 重启后吃老消息炸掉。
+    /// `#[serde(default)]` 在每个新字段上保证这一点。
+    #[test]
+    fn test_incoming_message_backward_compat_missing_new_fields() {
+        // 模拟旧版 JSON（没有新字段）。
+        let old_json = r#"{
+            "platform": "Feishu",
+            "session_key": "feishu:oc",
+            "sender": "ou_a",
+            "content": {"Text": "hi"},
+            "reply_target": {"Feishu": {"chat_id": "oc", "chat_type": "P2p"}},
+            "timestamp_ms": 1234567890,
+            "raw_message_id": "om_xxx"
+        }"#;
+        let msg: IncomingMessage = serde_json::from_str(old_json).unwrap();
+        // 缺省值应是安全的「中性」值。
+        assert!(!msg.is_mention, "缺省 is_mention 应为 false");
+        assert_eq!(msg.sender_kind, SenderKind::User);
+        assert!(!msg.is_from_self);
+    }
+
+    /// SenderKind 默认值必须是 User（保守默认：用户）。
+    #[test]
+    fn test_sender_kind_default_is_user() {
+        assert_eq!(SenderKind::default(), SenderKind::User);
     }
 
     /// OutgoingContent::Card 必须能容纳任意 JSON（飞书卡片 schema 是动态的）。
