@@ -2,10 +2,12 @@ import { useState, useEffect } from 'react';
 import { Card, Button, Switch, Input, Select, Tag, message, Modal, Typography, AutoComplete, Table } from 'antd';
 import { ArrowLeftOutlined, CopyOutlined, ReloadOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
+import * as dbLoops from '@/utils/database/loops';
 import type { AgentBot, FeishuPushStatus, WhitelistEntry, FeishuSenderItem } from '@/utils/database';
 import type { FeishuHistoryMessage, FeishuHistoryChat, ExecutionRecord } from '@/types';
 import { copyToClipboard } from '@/utils/clipboard';
 import { ExecutionDetailModal } from '../messages/ExecutionDetailModal';
+import { BlackboardDrawer } from '@/components/LoopStudioExecutionsPanel';
 
 const { Paragraph } = Typography;
 
@@ -42,6 +44,21 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
   const [historyViewMsg, setHistoryViewMsg] = useState<string | null>(null);
   const [execDetailRecord, setExecDetailRecord] = useState<ExecutionRecord | null>(null);
   const [todoDetail, setTodoDetail] = useState<{ id: number; title: string; prompt: string; status: string } | null>(null);
+  // 黑板抽屉：展示"slash_command_loop"类型消息的环路执行详情
+  const [blackboardOpen, setBlackboardOpen] = useState(false);
+  const [blackboardExecs, setBlackboardExecs] = useState<Record<string, any>[]>([]);
+
+  const handleProcessedTypeClick = async (record: FeishuHistoryMessage) => {
+    if (record.processed_type !== 'slash_command_loop' || !record.processed_id) return;
+    try {
+      const detail = await dbLoops.getExecutionById(record.processed_id);
+      setBlackboardExecs(detail.step_executions || []);
+      setBlackboardOpen(true);
+    } catch {
+      message.error('加载环路执行详情失败');
+    }
+  };
+
   const showHistory = autoShowHistory;
 
   // 加载 bot 配置
@@ -332,9 +349,18 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
                 key: 'processed_type',
                 width: 100,
                 render: (_, record) => (
-                  <span style={{ fontSize: 12 }}>
-                    {record.processed_type || '-'}
-                  </span>
+                  record.processed_type === 'slash_command_loop' ? (
+                    <Typography.Link
+                      style={{ fontSize: 12 }}
+                      onClick={() => handleProcessedTypeClick(record)}
+                    >
+                      {record.processed_type}
+                    </Typography.Link>
+                  ) : (
+                    <span style={{ fontSize: 12 }}>
+                      {record.processed_type || '-'}
+                    </span>
+                  )
                 ),
               },
               {
@@ -494,6 +520,13 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
           </div>
         )}
       </Modal>
+
+      {/* 黑板抽屉：slash_command_loop 点击处理类型时展示环路执行详情 */}
+      <BlackboardDrawer
+        open={blackboardOpen}
+        stepExecs={blackboardExecs}
+        onClose={() => setBlackboardOpen(false)}
+      />
     </div>
   );
 }

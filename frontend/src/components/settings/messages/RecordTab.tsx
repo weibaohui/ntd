@@ -1,8 +1,11 @@
 import { Button, Select, Table, Tag, Typography, Modal, Form, Input, Space, Tooltip, message } from 'antd';
 import { ReloadOutlined, PlusOutlined, HistoryOutlined, QuestionCircleOutlined, CopyOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
+import * as dbLoops from '@/utils/database/loops';
 import type { FeishuHistoryMessage, FeishuHistoryChat } from '@/types';
 import { copyToClipboard } from '@/utils/clipboard';
+import { useState } from 'react';
+import { BlackboardDrawer } from '@/components/LoopStudioExecutionsPanel';
 
 const { Option } = Select;
 
@@ -42,6 +45,22 @@ export function RecordTab({
   onAddChat: () => Promise<void>;
   onAddModalCancel: () => void;
 }) {
+  // 黑板抽屉：展示"slash_command_loop"类型消息的环路执行详情
+  const [blackboardOpen, setBlackboardOpen] = useState(false);
+  const [blackboardExecs, setBlackboardExecs] = useState<Record<string, any>[]>([]);
+
+  // 点击 处理类型 为 slash_command_loop 时，获取执行详情并打开黑板抽屉
+  const handleProcessedTypeClick = async (record: FeishuHistoryMessage) => {
+    if (record.processed_type !== 'slash_command_loop' || !record.processed_id) return;
+    try {
+      const detail = await dbLoops.getExecutionById(record.processed_id);
+      setBlackboardExecs(detail.step_executions || []);
+      setBlackboardOpen(true);
+    } catch {
+      message.error('加载环路执行详情失败');
+    }
+  };
+
   return (
     <div className="settings-history-tab">
       <div
@@ -251,9 +270,18 @@ export function RecordTab({
             key: 'processed_type',
             width: 100,
             render: (_, record) => (
-              <span style={{ fontSize: 12 }}>
-                {record.processed_type || '-'}
-              </span>
+              record.processed_type === 'slash_command_loop' ? (
+                <Typography.Link
+                  style={{ fontSize: 12 }}
+                  onClick={() => handleProcessedTypeClick(record)}
+                >
+                  {record.processed_type}
+                </Typography.Link>
+              ) : (
+                <span style={{ fontSize: 12 }}>
+                  {record.processed_type || '-'}
+                </span>
+              )
             ),
           },
           {
@@ -306,6 +334,13 @@ export function RecordTab({
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* 黑板抽屉：slash_command_loop 点击处理类型时展示环路执行详情 */}
+      <BlackboardDrawer
+        open={blackboardOpen}
+        stepExecs={blackboardExecs}
+        onClose={() => setBlackboardOpen(false)}
+      />
     </div>
   );
 }

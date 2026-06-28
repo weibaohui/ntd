@@ -746,6 +746,49 @@ pub async fn get_execution(
     }))
 }
 
+/// 通过执行 ID 直接获取执行详情（无需 loop_id），供消息历史中 "处理类型" 列跳转使用。
+pub async fn get_execution_by_id(
+    State(state): State<AppState>,
+    Path(eid): Path<i64>,
+) -> Result<impl IntoResponse, AppError> {
+    let exec = state
+        .db
+        .get_loop_execution(eid)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let loop_id = exec.loop_id;
+    let step_execs = state
+        .db
+        .list_loop_step_executions(eid)
+        .await?;
+    let loop_name = state
+        .db
+        .get_loop(loop_id)
+        .await?
+        .map(|l| l.name)
+        .unwrap_or_default();
+    let mut enriched: Vec<LoopStepExecutionDto> = vec![];
+    for se in step_execs {
+        let mut dto: LoopStepExecutionDto = se.into();
+        if dto.step_id == -1 {
+            if let Ok(Some(todo)) = state.db.get_todo(dto.todo_id).await {
+                dto.step_name = Some(format!("[异常处理] {}", todo.title));
+            }
+        } else if let Ok(Some(ls)) = state.db.get_loop_step(dto.step_id).await {
+            dto.step_name = Some(ls.name);
+        }
+        enrich_step_execution_with_usage(&state.db, &mut dto).await;
+        enriched.push(dto);
+    }
+    let token_summary = aggregate_tokens_from_step_dtos(&enriched);
+    Ok(ApiResponse::ok(LoopExecutionDetail {
+        execution: exec.into(),
+        step_executions: enriched,
+        loop_name,
+        token_summary,
+    }))
+}
+
 // ====== 批量 workspace 操作 ======
 
 /// PUT /api/loops/batch-workspace — 批量移动环路到其他工作空间
@@ -823,4 +866,6 @@ pub fn loop_routes() -> axum::Router<AppState> {
         .route("/api/loops/{id}/executions", get(list_executions))
         .route("/api/loops/{id}/executions/{eid}", get(get_execution))
         .route("/api/loops/{id}/executions/{eid}/steps/{seid}/approve", post(approve_step_execution))
+        // 通过执行 ID 直接获取执行详情（无需 loop_id），供消息历史中 "处理类型" 列跳转使用
+        .route("/api/loop-executions/{eid}", get(get_execution_by_id))
 }
