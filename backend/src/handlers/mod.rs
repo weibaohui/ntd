@@ -26,6 +26,7 @@ use crate::db::Database;
 use crate::models::{ApiResponse, ParsedLogEntry};
 use crate::scheduler::TodoScheduler;
 use crate::services::channel_registry::ChannelRegistry;
+use dashmap::DashMap;
 use crate::services::feishu_listener::FeishuListener;
 use crate::task_manager::{TaskManager, TaskInfo};
 
@@ -48,6 +49,11 @@ pub struct AppState {
     /// key = bot_id，value = 已构造并 start 过的 FeishuPlatform。
     /// 现在仅 add/has/delete，dispatcher 接入由后续步骤完成。
     pub channel_registry: Arc<ChannelRegistry>,
+    /// key = bot_id，value = 该 bot 的 `ntd_connect::RouterHooks` impl。
+    /// v1 stub：build_router_hooks(bot_id) 直接返回 noop hooks；v2 实接
+    /// feishu_listener stage 函数。dispatcher 接入后，每个 bot 拿自己
+    /// 的 router 调 route(msg) → Decision。
+    pub router_hooks: Arc<DashMap<i64, Arc<dyn ntd_connect::router::RouterHooks>>>,
     pub feishu_push_mutator: broadcast::Sender<crate::services::feishu_push::PushConfigUpdate>,
     /// Loop Studio: 独立 cron 调度器（None 表示 loop 功能未启用或初始化失败）
     pub loop_scheduler: Option<Arc<crate::services::loop_scheduler::LoopScheduler>>,
@@ -1073,6 +1079,8 @@ fn build_app_state(
         config,
         feishu_listener: feishu_listener.clone(),
         channel_registry: Arc::new(ChannelRegistry::new()),
+        // 步骤 11：router_hooks 初始为空（按 bot 启动时 register）。
+        router_hooks: Arc::new(DashMap::new()),
         feishu_push_mutator: push_mutator,
         loop_scheduler,
         loop_trigger_dispatcher,
@@ -1933,6 +1941,7 @@ mod app_state_config_helpers_tests {
     use crate::config::Config;
     use crate::service_context::ServiceContext;
     use crate::task_manager::TaskManager;
+    use dashmap::DashMap;
     use std::sync::{Arc, RwLock};
     use tokio::sync::broadcast;
 
@@ -1981,6 +1990,8 @@ mod app_state_config_helpers_tests {
             config: ctx.config.clone(),
             feishu_listener,
             channel_registry: Arc::new(crate::services::channel_registry::ChannelRegistry::new()),
+            // 步骤 11：router_hooks 初始为空。
+            router_hooks: Arc::new(DashMap::new()),
             feishu_push_mutator,
             // 测试用最小 AppState 不需要 loop 服务
             loop_scheduler: None,
