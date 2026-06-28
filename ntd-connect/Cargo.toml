@@ -44,6 +44,13 @@ dashmap = "6"
 # tokio：M2 dispatcher 需要 JoinSet / Semaphore / spawn。
 # features 按需开：rt-multi-thread 给 JoinSet 用、time 给 sleep 用。
 tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "time", "macros"] }
+# futures-util：split stream 用于 WebSocket 帧解析（M3 飞书 pbbp2 协议）。
+futures-util = "0.3"
+# tokio-tungstenite：飞书 WS 长连接。TLS 后端用 rustls-tls-webpki-roots
+# 与 backend 对齐，避免 openssl 系统依赖。
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 
 [dev-dependencies]
-# 单元测试暂不需要外部 dev-dep；M2 dispatcher 测试会加 tokio test runtime。
+# wiremock：M3 feishu platform 集成测试用，模拟飞书 HTTP server 验证
+# reaction / messages API 调用格式。
+wiremock = "0.6"
