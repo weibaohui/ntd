@@ -7,6 +7,7 @@ pub mod incoming_bridge;
 pub mod loop_runner;
 pub mod loop_scheduler;
 pub mod loop_trigger;
+pub mod master_switch;
 pub mod message_debounce;
 pub mod message_router;
 pub mod router_hooks;

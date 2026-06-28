@@ -2,7 +2,7 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-use ntd_connect::channel::Channel;
+use ntd_connect::channel::{Channel, MessageHandler};
 use ntd_connect::http::SharedHttpClient;
 use ntd_connect::platform::feishu::{FeishuDomain as ConnectFeishuDomain, FeishuPlatform};
 
@@ -26,6 +26,11 @@ use crate::services::message_debounce::{MessageDebounce, PendingMessage};
 /// 供外部 caller（如 `feishu_push.rs`）逐步切换。旧 `send_raw` /
 /// `send_text` / reaction 路径保留（仍用 `reqwest::Client::new()`），
 /// 阶段 11 dispatcher 切流时整体替换为 platform 委托。
+///
+/// **双路径总闸**（M12）：`dispatcher` 字段允许注入 `Arc<Dispatcher>`。
+/// `start_bot` 的 recv loop 在 `master_switch::is_dispatcher_enabled()`
+/// 开启 + dispatcher 存在时调 `dispatcher.on_message`（新路径），
+/// 否则调 `handle_message`（老路径）。两条路径并行，老路径始终可用。
 #[derive(Clone)]
 pub struct FeishuListener {
     ctx: ServiceContext,
@@ -38,6 +43,10 @@ pub struct FeishuListener {
     /// 进程级共享 reqwest client（治 `Client::new()` 反模式 + 复用连接池）
     http: SharedHttpClient,
     debounce: Arc<MessageDebounce>,
+    /// M12：per-bot dispatcher（总闸切流路径）。
+    /// `start_bot` 创建 FeishuPlatform 后立即构造 dispatcher 并插入；
+    /// recv loop 按 bot_id 查找，不存在则 fallback 老路径。
+    dispatchers: Arc<DashMap<i64, Arc<ntd_connect::dispatcher::Dispatcher>>>,
 }
 
 /// 从 bot domain 字符串（"feishu" / "lark"）转 ntd-connect FeishuDomain enum。
@@ -96,7 +105,26 @@ impl FeishuListener {
             bot_credentials: Arc::new(DashMap::new()),
             feishu_platforms: Arc::new(DashMap::new()),
             http: SharedHttpClient::new(),
+            dispatchers: Arc::new(DashMap::new()),
         }
+    }
+
+    /// 注入 per-bot dispatcher（M12 总闸切流路径）。
+    ///
+    /// `start_bot` 创建 FeishuPlatform 后立即调用：
+    /// dispatcher 就位 → master_switch 开时 recv loop 走新路径；
+    /// 未注入 → recv loop 自动 fallback 老路径。
+    pub fn set_dispatcher_for_bot(
+        &self,
+        bot_id: i64,
+        dispatcher: Arc<ntd_connect::dispatcher::Dispatcher>,
+    ) {
+        self.dispatchers.insert(bot_id, dispatcher);
+    }
+
+    /// 按 bot_id 取 dispatcher 引用（recv loop 用）。
+    fn dispatcher_for(&self, bot_id: i64) -> Option<Arc<ntd_connect::dispatcher::Dispatcher>> {
+        self.dispatchers.get(&bot_id).map(|r| r.clone())
     }
 
     pub fn has_bot(&self, bot_id: i64) -> bool {
@@ -176,6 +204,20 @@ impl FeishuListener {
         platform.register_self_arc();
         self.feishu_platforms.insert(bot.id, platform);
 
+        // M12 总闸：为该 bot 构造 per-bot dispatcher。
+        // platform 已入 feishu_platforms，取出引用作为 channel；
+        // agent 用 ClaudeCodeAgent（M4，真实进程 spawn）。
+        if crate::services::master_switch::is_dispatcher_enabled() {
+            use ntd_connect::agent_impl::claude_code::ClaudeCodeAgent;
+            use ntd_connect::dispatcher::{Dispatcher, DispatcherConfig};
+            if let Some(chan) = self.feishu_platforms.get(&bot.id) {
+                let agent = Arc::new(ClaudeCodeAgent::new());
+                let dispatcher = Arc::new(Dispatcher::new(chan.clone(), agent, DispatcherConfig::default()));
+                self.set_dispatcher_for_bot(bot.id, dispatcher);
+                tracing::info!("[feishu:{}] dispatcher created (master switch on)", bot.id);
+            }
+        }
+
         let real_bot_open_id =
             Self::resolve_bot_open_id(&self.bot_credentials, &self.token_manager, bot.id)
                 .await
@@ -197,9 +239,35 @@ impl FeishuListener {
         let token_manager = self.token_manager.clone();
         let debounce = self.debounce.clone();
         let task_manager = self.ctx.task_manager.clone();
+        let listener_for_dispatch = self.clone();
+        let bot_open_id_for_dispatch = bot_open_id.clone();
+        let feishu_platforms_for_dispatch = self.feishu_platforms.clone();
         tokio::spawn(async move {
             tracing::info!("[feishu:{}] message receiver loop started", bot_id);
             while let Some(msg) = rx.recv().await {
+                // M12 双路径总闸：master_switch 开启 + dispatcher 已注入
+                // + 这个 bot 已注册 FeishuPlatform → 走 ntd-connect dispatcher
+                // 新路径；否则 fallback 老路径（始终可用，init 失败自动降级）。
+                let use_dispatcher = crate::services::master_switch::is_dispatcher_enabled()
+                    && listener_for_dispatch.dispatcher_for(bot_id).is_some()
+                    && feishu_platforms_for_dispatch.contains_key(&bot_id);
+                if use_dispatcher {
+                    let dispatcher = listener_for_dispatch.dispatcher_for(bot_id).unwrap();
+                    let platform = feishu_platforms_for_dispatch.get(&bot_id).unwrap().clone();
+                    let channel: Arc<dyn ntd_connect::channel::Channel> = platform;
+                    let incoming = crate::services::incoming_bridge::channel_message_to_incoming(
+                        &msg,
+                        Some(&bot_open_id_for_dispatch),
+                    );
+                    if let Err(e) = dispatcher.on_message(channel, incoming).await {
+                        tracing::error!(
+                            "[feishu:{}] dispatcher.on_message failed: {e}",
+                            bot_id
+                        );
+                    }
+                    continue;
+                }
+                // 老路径：feishu_listener 7 阶段 inline
                 let context = ListenerMessageContext {
                     db: &db,
                     token_manager: &token_manager,
