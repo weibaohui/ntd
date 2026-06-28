@@ -59,7 +59,16 @@ impl FeishuPushService {
 
                                 // 执行器直接响应：绕过 push_level 过滤和 workspace 隔离，直接发回飞书
                                 if let ExecEvent::ExecutorDirectResponse { bot_id, receive_id, receive_id_type, content } = &ev {
-                                    if let Err(e) = feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, content).await {
+                                    // M3 起：优先用 FeishuPlatform 委托（共享连接池 + token 缓存）；
+                                    // 失败时回退到老 send_raw（不阻塞推送链）。
+                                    let platform_send = feishu_listener
+                                        .send_raw_via_platform(*bot_id, receive_id, receive_id_type, content)
+                                        .await;
+                                    let res = match platform_send {
+                                        Ok(()) => Ok(()),
+                                        Err(_) => feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, content).await,
+                                    };
+                                    if let Err(e) = res {
                                         warn!("[feishu-push] executor direct response failed for bot {}: {}", bot_id, e);
                                     } else {
                                         debug!("[feishu-push] executor direct response sent to bot {}: {}", bot_id, &content[..content.len().min(60)]);
@@ -72,7 +81,15 @@ impl FeishuPushService {
                                     if let (Some(bot_id), Some(receive_id)) = (feishu_bot_id, feishu_receive_id) {
                                         let text = Self::format_event(&ev).unwrap_or_default();
                                         let receive_id_type = "open_id"; // binding chats are p2p
-                                        if let Err(e) = feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, &text).await {
+                                        // 同上：优先 FeishuPlatform，回退 send_raw。
+                                        let platform_send = feishu_listener
+                                            .send_raw_via_platform(*bot_id, receive_id, receive_id_type, &text)
+                                            .await;
+                                        let res = match platform_send {
+                                            Ok(()) => Ok(()),
+                                            Err(_) => feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, &text).await,
+                                        };
+                                        if let Err(e) = res {
                                             warn!("[feishu-push] binding direct send failed for bot {}: {}", bot_id, e);
                                         } else {
                                             debug!("[feishu-push] binding direct sent to bot {}: {}", bot_id, &text[..text.len().min(60)]);
@@ -109,7 +126,15 @@ impl FeishuPushService {
                                     if !Self::should_send(push_level, &ev) {
                                         continue;
                                     }
-                                    if let Err(e) = feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, &text).await {
+                                    // 同上：优先 FeishuPlatform 委托（连接池复用），失败回退。
+                                    let platform_send = feishu_listener
+                                        .send_raw_via_platform(*bot_id, receive_id, receive_id_type, &text)
+                                        .await;
+                                    let res = match platform_send {
+                                        Ok(()) => Ok(()),
+                                        Err(_) => feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, &text).await,
+                                    };
+                                    if let Err(e) = res {
                                         warn!("[feishu-push] send failed for bot {}: {}", bot_id, e);
                                     } else {
                                         debug!("[feishu-push] sent to bot {}: {}", bot_id, &text[..text.len().min(60)]);
