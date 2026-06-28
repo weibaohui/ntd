@@ -323,7 +323,11 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
                 key: 'execution_record_id',
                 width: 80,
                 render: (_, record) => (
-                  record.execution_record_id ? (
+                  record.processed_type === 'slash_command_loop' && record.execution_record_id ? (
+                    <Typography.Link style={{ fontSize: 12 }} onClick={() => handleProcessedTypeClick(record)}>
+                      #{record.execution_record_id}
+                    </Typography.Link>
+                  ) : record.execution_record_id ? (
                     <Typography.Link style={{ fontSize: 12 }} onClick={() => handleViewExecutionRecord(record.execution_record_id!)}>
                       #{record.execution_record_id}
                     </Typography.Link>
@@ -349,18 +353,9 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
                 key: 'processed_type',
                 width: 100,
                 render: (_, record) => (
-                  record.processed_type === 'slash_command_loop' ? (
-                    <Typography.Link
-                      style={{ fontSize: 12 }}
-                      onClick={() => handleProcessedTypeClick(record)}
-                    >
-                      {record.processed_type}
-                    </Typography.Link>
-                  ) : (
-                    <span style={{ fontSize: 12 }}>
-                      {record.processed_type || '-'}
-                    </span>
-                  )
+                  <span style={{ fontSize: 12 }}>
+                    {record.processed_type || '-'}
+                  </span>
                 ),
               },
               {

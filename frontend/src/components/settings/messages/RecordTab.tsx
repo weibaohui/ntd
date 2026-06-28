@@ -253,7 +253,14 @@ export function RecordTab({
             key: 'execution_record_id',
             width: 80,
             render: (_, record) => (
-              record.execution_record_id ? (
+              record.processed_type === 'slash_command_loop' && record.execution_record_id ? (
+                <Typography.Link
+                  style={{ fontSize: 12 }}
+                  onClick={() => handleProcessedTypeClick(record)}
+                >
+                  #{record.execution_record_id}
+                </Typography.Link>
+              ) : record.execution_record_id ? (
                 <Typography.Link
                   style={{ fontSize: 12 }}
                   onClick={() => onViewExecutionRecord(record.execution_record_id!)}
@@ -270,18 +277,9 @@ export function RecordTab({
             key: 'processed_type',
             width: 100,
             render: (_, record) => (
-              record.processed_type === 'slash_command_loop' ? (
-                <Typography.Link
-                  style={{ fontSize: 12 }}
-                  onClick={() => handleProcessedTypeClick(record)}
-                >
-                  {record.processed_type}
-                </Typography.Link>
-              ) : (
-                <span style={{ fontSize: 12 }}>
-                  {record.processed_type || '-'}
-                </span>
-              )
+              <span style={{ fontSize: 12 }}>
+                {record.processed_type || '-'}
+              </span>
             ),
           },
           {
