@@ -817,12 +817,18 @@ pub async fn get_workspace_settings(
     match settings {
         Some(s) => Ok(ApiResponse::ok(serde_json::json!({
             "workspace_id": s.workspace_id,
+            "default_response_type": s.default_response_type,
             "default_response_todo_id": s.default_response_todo_id,
+            "default_response_loop_id": s.default_response_loop_id,
+            "default_response_executor": s.default_response_executor,
             "updated_at": s.updated_at,
         }))),
         None => Ok(ApiResponse::ok(serde_json::json!({
             "workspace_id": workspace_id,
+            "default_response_type": "todo",
             "default_response_todo_id": null,
+            "default_response_loop_id": null,
+            "default_response_executor": null,
             "updated_at": null,
         }))),
     }
@@ -830,7 +836,10 @@ pub async fn get_workspace_settings(
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateWorkspaceSettingsRequest {
+    pub default_response_type: Option<String>,
     pub default_response_todo_id: Option<i64>,
+    pub default_response_loop_id: Option<i64>,
+    pub default_response_executor: Option<String>,
 }
 
 /// 更新工作空间的设置
@@ -842,7 +851,10 @@ pub async fn update_workspace_settings(
     crate::db::workspace_setting::upsert_workspace_settings(
         &*state.db,
         workspace_id,
+        req.default_response_type,
         req.default_response_todo_id,
+        req.default_response_loop_id,
+        req.default_response_executor,
     )
     .await
     .map_err(|e| AppError::Internal(e.to_string()))?;

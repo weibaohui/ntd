@@ -10,9 +10,15 @@ import { BotDetailPage } from './BotDetailPage';
 interface WorkspaceAgentPanelProps {
   workspaceId: number;
   onBotChanged?: () => void;
+  // 外部控制 bot 选择状态（用于 WorkspaceMessageConfigPage）
+  activeBot?: AgentBot | null;
+  onSelectBot?: (bot: AgentBot) => void;
+  onSelectBotForHistory?: (bot: AgentBot) => void;
+  onBotBack?: () => void;
+  autoShowHistory?: boolean;
 }
 
-export function WorkspaceAgentPanel({ workspaceId, onBotChanged }: WorkspaceAgentPanelProps) {
+export function WorkspaceAgentPanel({ workspaceId, onBotChanged, activeBot, onSelectBot, onSelectBotForHistory, onBotBack, autoShowHistory }: WorkspaceAgentPanelProps) {
   const [bots, setBots] = useState<AgentBot[]>([]);
   const [allBots, setAllBots] = useState<AgentBot[]>([]);
   const [workspaces, setWorkspaces] = useState<ProjectDirectory[]>([]);
@@ -20,10 +26,35 @@ export function WorkspaceAgentPanel({ workspaceId, onBotChanged }: WorkspaceAgen
   const [moveModalVisible, setMoveModalVisible] = useState(false);
   const [movingBotId, setMovingBotId] = useState<number | null>(null);
   const [targetWorkspaceId, setTargetWorkspaceId] = useState<number | null>(null);
-  // 选中的 bot，显示详情页
+  // 内部状态：选中的 bot，显示详情页
   const [selectedBot, setSelectedBot] = useState<AgentBot | null>(null);
   // 点击消息记录时，直接打开详情页并默认展开消息记录
   const [selectedBotForHistory, setSelectedBotForHistory] = useState<AgentBot | null>(null);
+
+  // 外部传入 bot 时直接渲染 BotDetailPage
+  if (activeBot) {
+    return (
+      <BotDetailPage
+        bot={activeBot}
+        onBack={onBotBack || (() => { setSelectedBot(null); setSelectedBotForHistory(null); })}
+        onRefresh={() => { loadBots(); onBotChanged?.(); }}
+        autoShowHistory={autoShowHistory || false}
+      />
+    );
+  }
+
+  // 内部状态选中的 bot（外部模式不使用）
+  const internalActiveBot = selectedBotForHistory || selectedBot;
+  if (internalActiveBot) {
+    return (
+      <BotDetailPage
+        bot={internalActiveBot}
+        onBack={() => { setSelectedBot(null); setSelectedBotForHistory(null); }}
+        onRefresh={() => { loadBots(); onBotChanged?.(); }}
+        autoShowHistory={!!selectedBotForHistory}
+      />
+    );
+  }
 
   // 绑定飞书状态
   const [binding, setBinding] = useState(false);
@@ -200,7 +231,7 @@ export function WorkspaceAgentPanel({ workspaceId, onBotChanged }: WorkspaceAgen
           <Button
             type="text"
             size="small"
-            onClick={() => setSelectedBot(bot)}
+            onClick={() => onSelectBot ? onSelectBot(bot) : setSelectedBot(bot)}
           >
             详情
           </Button>
@@ -208,7 +239,7 @@ export function WorkspaceAgentPanel({ workspaceId, onBotChanged }: WorkspaceAgen
             type="text"
             size="small"
             icon={<FileTextOutlined />}
-            onClick={() => setSelectedBotForHistory(bot)}
+            onClick={() => onSelectBotForHistory ? onSelectBotForHistory(bot) : setSelectedBotForHistory(bot)}
             title="查看消息记录"
           />
           <Button
@@ -233,19 +264,6 @@ export function WorkspaceAgentPanel({ workspaceId, onBotChanged }: WorkspaceAgen
 
   // 其他工作空间的 bots
   const otherBots = allBots.filter(b => b.workspace_id !== workspaceId);
-
-  // 选中 bot，显示详情页（优先处理消息记录跳转）
-  const activeBot = selectedBotForHistory || selectedBot;
-  if (activeBot) {
-    return (
-      <BotDetailPage
-        bot={activeBot}
-        onBack={() => { setSelectedBot(null); setSelectedBotForHistory(null); }}
-        onRefresh={() => { loadBots(); onBotChanged?.(); }}
-        autoShowHistory={!!selectedBotForHistory}
-      />
-    );
-  }
 
   return (
     <div>

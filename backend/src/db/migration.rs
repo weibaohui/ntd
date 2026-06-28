@@ -69,6 +69,8 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V34MigrateOrphansToTempWorkspace),
         Box::new(V35RenameWorkspaceToWorkspacePath),
         Box::new(V37SlashCommandLoopSupport),
+        Box::new(V38DefaultResponseType),
+        Box::new(V39FixFeishuMessagesWorkspaceId),
     ]
 }
 
@@ -3780,17 +3782,73 @@ impl Migration for V37SlashCommandLoopSupport {
         if !table_has_column(db, "workspace_slash_commands", "command_type").await? {
             db.exec("ALTER TABLE workspace_slash_commands ADD COLUMN command_type TEXT NOT NULL DEFAULT 'todo'")
                 .await?;
-            tracing::info!("V36: workspace_slash_commands.command_type column added");
+            tracing::info!("V37: workspace_slash_commands.command_type column added");
         }
 
         // 添加 loop_id 列（可为空，只有 command_type='loop' 时才有值）
         if !table_has_column(db, "workspace_slash_commands", "loop_id").await? {
             db.exec("ALTER TABLE workspace_slash_commands ADD COLUMN loop_id INTEGER")
                 .await?;
-            tracing::info!("V36: workspace_slash_commands.loop_id column added");
+            tracing::info!("V37: workspace_slash_commands.loop_id column added");
         }
 
         Ok(())
     }
 }
 
+
+/// V38: 扩展 workspace_settings 表支持三种默认响应类型
+///
+/// 添加 default_response_type ('todo' | 'loop' | 'executor')、
+/// default_response_loop_id 和 default_response_executor 列。
+pub(super) struct V38DefaultResponseType;
+
+#[async_trait::async_trait]
+impl Migration for V38DefaultResponseType {
+    fn version(&self) -> i64 { 38 }
+    fn name(&self) -> &'static str { "default_response_type" }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        // 添加 default_response_type 列（默认为 'todo' 保持向后兼容）
+        if !table_has_column(db, "workspace_settings", "default_response_type").await? {
+            db.exec("ALTER TABLE workspace_settings ADD COLUMN default_response_type TEXT NOT NULL DEFAULT 'todo'")
+                .await?;
+            tracing::info!("V38: workspace_settings.default_response_type column added");
+        }
+
+        // 添加 default_response_loop_id 列
+        if !table_has_column(db, "workspace_settings", "default_response_loop_id").await? {
+            db.exec("ALTER TABLE workspace_settings ADD COLUMN default_response_loop_id INTEGER")
+                .await?;
+            tracing::info!("V38: workspace_settings.default_response_loop_id column added");
+        }
+
+        // 添加 default_response_executor 列
+        if !table_has_column(db, "workspace_settings", "default_response_executor").await? {
+            db.exec("ALTER TABLE workspace_settings ADD COLUMN default_response_executor TEXT")
+                .await?;
+            tracing::info!("V38: workspace_settings.default_response_executor column added");
+        }
+
+        Ok(())
+    }
+}
+
+/// V39: 修复 feishu_messages 表缺失的 workspace_id 列。
+/// 之前在 V1 add_legacy_columns 中的 add_column_with_fallback 可能未能正确添加该列。
+pub(super) struct V39FixFeishuMessagesWorkspaceId;
+
+#[async_trait::async_trait]
+impl Migration for V39FixFeishuMessagesWorkspaceId {
+    fn version(&self) -> i64 { 39 }
+    fn name(&self) -> &'static str { "fix_feishu_messages_workspace_id" }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        if !table_has_column(db, "feishu_messages", "workspace_id").await? {
+            db.exec("ALTER TABLE feishu_messages ADD COLUMN workspace_id INTEGER")
+                .await?;
+            tracing::info!("V39: feishu_messages.workspace_id column added");
+        }
+        Ok(())
+    }
+}

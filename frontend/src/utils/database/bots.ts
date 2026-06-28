@@ -53,12 +53,18 @@ export interface UpdateWorkspaceSlashCommandParams {
 
 export interface WorkspaceSettings {
   workspace_id: number;
+  default_response_type: 'todo' | 'loop' | 'executor';
   default_response_todo_id: number | null;
+  default_response_loop_id: number | null;
+  default_response_executor: string | null;
   updated_at: string | null;
 }
 
 export interface UpdateWorkspaceSettingsParams {
+  default_response_type?: 'todo' | 'loop' | 'executor';
   default_response_todo_id?: number;
+  default_response_loop_id?: number;
+  default_response_executor?: string;
 }
 
 // ============================================================================

@@ -356,6 +356,7 @@ export function MessagesPanel({ configForm, configSaving, handleSaveConfig, onBa
                 onStartBind={handleStartFeishuBind}
                 onRefresh={() => { loadAgentBots(); loadFeishuPush(); }}
                 onAfterBindModalClose={() => { loadAgentBots(); loadFeishuPush(); }}
+                workspaceId={state.selectedWorkspace}
               />
             ),
           },
