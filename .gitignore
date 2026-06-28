@@ -11,7 +11,10 @@ dist-ssr/
 *.local
 
 # Rust build
+# workspace 化后所有 crate 的 target 都汇总到根 target/；
+# 保留 backend/target 兼容老 clone（部分本地环境可能仍用旧布局）。
 backend/target
+target
 *.db
 
 # Editor

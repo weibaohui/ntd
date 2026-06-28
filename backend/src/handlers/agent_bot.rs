@@ -699,13 +699,23 @@ pub async fn list_workspace_slash_commands(
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateWorkspaceSlashCommandRequest {
     pub slash_command: String,
+    /// 命令类型：'todo' 或 'loop'，默认为 'todo'
+    #[serde(default = "default_command_type")]
+    pub command_type: String,
+    /// 关联的 Todo ID（command_type='todo' 时使用）
     pub todo_id: i64,
+    /// 关联的 Loop ID（command_type='loop' 时使用）
+    pub loop_id: Option<i64>,
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_command_type() -> String {
+    "todo".to_string()
 }
 
 /// 创建工作空间的斜杠命令
@@ -718,12 +728,18 @@ pub async fn create_workspace_slash_command(
     if !req.slash_command.starts_with('/') {
         return Err(AppError::BadRequest("slash_command must start with /".to_string()));
     }
+    // 校验 command_type
+    if req.command_type != "todo" && req.command_type != "loop" {
+        return Err(AppError::BadRequest("command_type must be 'todo' or 'loop'".to_string()));
+    }
 
     let id = crate::db::workspace_slash_command::create_workspace_slash_command(
         &*state.db,
         workspace_id,
         &req.slash_command,
+        &req.command_type,
         req.todo_id,
+        req.loop_id,
         req.enabled,
     )
     .await
@@ -735,7 +751,12 @@ pub async fn create_workspace_slash_command(
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateWorkspaceSlashCommandRequest {
     pub slash_command: Option<String>,
+    /// 命令类型：'todo' 或 'loop'
+    pub command_type: Option<String>,
+    /// 关联的 Todo ID
     pub todo_id: Option<i64>,
+    /// 关联的 Loop ID
+    pub loop_id: Option<i64>,
     pub enabled: Option<bool>,
 }
 
@@ -751,12 +772,20 @@ pub async fn update_workspace_slash_command(
             return Err(AppError::BadRequest("slash_command must start with /".to_string()));
         }
     }
+    // 校验 command_type（如果提供）
+    if let Some(ref ct) = req.command_type {
+        if ct != "todo" && ct != "loop" {
+            return Err(AppError::BadRequest("command_type must be 'todo' or 'loop'".to_string()));
+        }
+    }
 
     crate::db::workspace_slash_command::update_workspace_slash_command(
         &*state.db,
         cmd_id,
         req.slash_command.as_deref(),
+        req.command_type.as_deref(),
         req.todo_id,
+        req.loop_id,
         req.enabled,
     )
     .await
@@ -788,12 +817,18 @@ pub async fn get_workspace_settings(
     match settings {
         Some(s) => Ok(ApiResponse::ok(serde_json::json!({
             "workspace_id": s.workspace_id,
+            "default_response_type": s.default_response_type,
             "default_response_todo_id": s.default_response_todo_id,
+            "default_response_loop_id": s.default_response_loop_id,
+            "default_response_executor": s.default_response_executor,
             "updated_at": s.updated_at,
         }))),
         None => Ok(ApiResponse::ok(serde_json::json!({
             "workspace_id": workspace_id,
+            "default_response_type": "todo",
             "default_response_todo_id": null,
+            "default_response_loop_id": null,
+            "default_response_executor": null,
             "updated_at": null,
         }))),
     }
@@ -801,7 +836,10 @@ pub async fn get_workspace_settings(
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateWorkspaceSettingsRequest {
+    pub default_response_type: Option<String>,
     pub default_response_todo_id: Option<i64>,
+    pub default_response_loop_id: Option<i64>,
+    pub default_response_executor: Option<String>,
 }
 
 /// 更新工作空间的设置
@@ -813,7 +851,10 @@ pub async fn update_workspace_settings(
     crate::db::workspace_setting::upsert_workspace_settings(
         &*state.db,
         workspace_id,
+        req.default_response_type,
         req.default_response_todo_id,
+        req.default_response_loop_id,
+        req.default_response_executor,
     )
     .await
     .map_err(|e| AppError::Internal(e.to_string()))?;

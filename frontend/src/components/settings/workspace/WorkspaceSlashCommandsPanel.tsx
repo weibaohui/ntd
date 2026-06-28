@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Table, Button, Space, Switch, Popconfirm, message, Modal, Form, Input, Select } from 'antd';
+import { Table, Button, Space, Switch, Popconfirm, message, Modal, Form, Input, Select, Radio } from 'antd';
 import { PlusOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import * as db from '@/utils/database';
 import type { WorkspaceSlashCommand } from '@/utils/database';
 import type { Todo } from '@/types';
+import type { LoopListItem } from '@/types/loop';
 
 interface WorkspaceSlashCommandsPanelProps {
   workspaceId: number;
@@ -22,11 +23,15 @@ export function WorkspaceSlashCommandsPanel({
   const [commands, setCommands] = useState<WorkspaceSlashCommand[]>([]);
   const [loading, setLoading] = useState(false);
   const [todos, setTodos] = useState<Todo[]>([]);
+  const [loops, setLoops] = useState<LoopListItem[]>([]);
 
   // Modal 状态
   const [modalVisible, setModalVisible] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form] = Form.useForm();
+
+  // 当前选中的命令类型
+  const commandType = Form.useWatch('command_type', form) as 'todo' | 'loop' | undefined;
 
   const loadCommands = () => {
     setLoading(true);
@@ -40,9 +45,14 @@ export function WorkspaceSlashCommandsPanel({
     db.getAllTodos(workspaceId).then(setTodos).catch(() => {});
   };
 
+  const loadLoops = () => {
+    db.listLoops(workspaceId).then(setLoops).catch(() => {});
+  };
+
   useEffect(() => {
     loadCommands();
     loadTodos();
+    loadLoops();
   }, [workspaceId]);
 
   const handleToggle = async (cmd: WorkspaceSlashCommand, enabled: boolean) => {
@@ -69,6 +79,7 @@ export function WorkspaceSlashCommandsPanel({
   const openCreateModal = () => {
     setEditingId(null);
     form.resetFields();
+    form.setFieldsValue({ command_type: 'todo', enabled: true });
     setModalVisible(true);
   };
 
@@ -76,7 +87,9 @@ export function WorkspaceSlashCommandsPanel({
     setEditingId(cmd.id);
     form.setFieldsValue({
       slash_command: cmd.slash_command,
-      todo_id: cmd.todo_id,
+      command_type: cmd.command_type,
+      todo_id: cmd.command_type === 'todo' ? cmd.todo_id : undefined,
+      loop_id: cmd.command_type === 'loop' ? cmd.loop_id : undefined,
       enabled: cmd.enabled,
     });
     setModalVisible(true);
@@ -85,11 +98,19 @@ export function WorkspaceSlashCommandsPanel({
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
+      const params: db.CreateWorkspaceSlashCommandParams = {
+        slash_command: values.slash_command,
+        command_type: values.command_type,
+        todo_id: values.command_type === 'todo' ? values.todo_id : 0,
+        // command_type === 'todo' 时用 0 告诉后端清空 loop_id；'loop' 时传具体值
+        loop_id: values.command_type === 'loop' ? values.loop_id : 0,
+        enabled: values.enabled,
+      };
       if (editingId) {
-        await db.updateWorkspaceSlashCommand(workspaceId, editingId, values);
+        await db.updateWorkspaceSlashCommand(workspaceId, editingId, params);
         message.success('更新成功');
       } else {
-        await db.createWorkspaceSlashCommand(workspaceId, values);
+        await db.createWorkspaceSlashCommand(workspaceId, params);
         message.success('创建成功');
       }
       setModalVisible(false);
@@ -110,12 +131,23 @@ export function WorkspaceSlashCommandsPanel({
       render: (cmd: string) => <code style={{ fontSize: 14 }}>{cmd}</code>,
     },
     {
-      title: '绑定 Todo',
-      dataIndex: 'todo_id',
-      key: 'todo_id',
-      render: (todoId: number) => {
-        const todo = todos.find(t => t.id === todoId);
-        return todo ? todo.title : `Todo #${todoId}`;
+      title: '类型',
+      dataIndex: 'command_type',
+      key: 'command_type',
+      width: 80,
+      render: (type: 'todo' | 'loop') => type === 'todo' ? 'Todo' : '环路',
+    },
+    {
+      title: '绑定目标',
+      key: 'target',
+      render: (_: any, cmd: WorkspaceSlashCommand) => {
+        if (cmd.command_type === 'todo') {
+          const todo = todos.find(t => t.id === cmd.todo_id);
+          return todo ? todo.title : `Todo #${cmd.todo_id}`;
+        } else {
+          const loop = loops.find(l => l.id === cmd.loop_id);
+          return loop ? loop.name : `环路 #${cmd.loop_id}`;
+        }
       },
     },
     {
@@ -183,6 +215,7 @@ export function WorkspaceSlashCommandsPanel({
         onCancel={() => setModalVisible(false)}
         okText={editingId ? '保存' : '创建'}
         cancelText="取消"
+        width={560}
       >
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
           <Form.Item
@@ -195,21 +228,54 @@ export function WorkspaceSlashCommandsPanel({
           >
             <Input placeholder="/todo" />
           </Form.Item>
+
           <Form.Item
-            name="todo_id"
-            label="绑定 Todo"
-            rules={[{ required: true, message: '请选择绑定的 Todo' }]}
+            name="command_type"
+            label="命令类型"
+            rules={[{ required: true, message: '请选择命令类型' }]}
           >
-            <Select showSearch placeholder="选择 Todo" filterOption={(input, option) =>
-              (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
-            }>
-              {todos.map(todo => (
-                <Select.Option key={todo.id} value={todo.id} label={todo.title}>
-                  {todo.title}
-                </Select.Option>
-              ))}
-            </Select>
+            <Radio.Group>
+              <Radio.Button value="todo">Todo</Radio.Button>
+              <Radio.Button value="loop">环路</Radio.Button>
+            </Radio.Group>
           </Form.Item>
+
+          {commandType === 'todo' && (
+            <Form.Item
+              name="todo_id"
+              label="绑定 Todo"
+              rules={[{ required: true, message: '请选择绑定的 Todo' }]}
+            >
+              <Select showSearch placeholder="选择 Todo" filterOption={(input, option) =>
+                (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
+              }>
+                {todos.map(todo => (
+                  <Select.Option key={todo.id} value={todo.id} label={todo.title}>
+                    {todo.title}
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+          )}
+
+          {commandType === 'loop' && (
+            <Form.Item
+              name="loop_id"
+              label="绑定环路"
+              rules={[{ required: true, message: '请选择绑定的环路' }]}
+            >
+              <Select showSearch placeholder="选择环路" filterOption={(input, option) =>
+                (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
+              }>
+                {loops.map(loop => (
+                  <Select.Option key={loop.id} value={loop.id} label={loop.name}>
+                    {loop.name}
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+          )}
+
           <Form.Item name="enabled" label="启用状态" valuePropName="checked" initialValue={true}>
             <Switch />
           </Form.Item>

@@ -163,6 +163,13 @@ export async function getExecution(
   return unwrap(await api.get(`/api/loops/${loopId}/executions/${executionId}`));
 }
 
+/** 通过执行 ID 直接获取执行详情（无需 loop_id），供消息历史跳转使用。 */
+export async function getExecutionById(
+  executionId: number,
+): Promise<LoopExecutionDetail> {
+  return unwrap(await api.get(`/api/loop-executions/${executionId}`));
+}
+
 /**
  * 人工审批环节执行。
  * POST /api/loops/{loopId}/executions/{executionId}/steps/{stepExecutionId}/approve

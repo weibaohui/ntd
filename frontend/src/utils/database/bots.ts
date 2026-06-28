@@ -23,7 +23,9 @@ export interface WorkspaceSlashCommand {
   id: number;
   workspace_id: number;
   slash_command: string;
+  command_type: 'todo' | 'loop';
   todo_id: number;
+  loop_id: number | null;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -31,13 +33,17 @@ export interface WorkspaceSlashCommand {
 
 export interface CreateWorkspaceSlashCommandParams {
   slash_command: string;
+  command_type?: 'todo' | 'loop';
   todo_id: number;
+  loop_id?: number | null;
   enabled?: boolean;
 }
 
 export interface UpdateWorkspaceSlashCommandParams {
   slash_command?: string;
+  command_type?: 'todo' | 'loop';
   todo_id?: number;
+  loop_id?: number | null;
   enabled?: boolean;
 }
 
@@ -47,12 +53,18 @@ export interface UpdateWorkspaceSlashCommandParams {
 
 export interface WorkspaceSettings {
   workspace_id: number;
+  default_response_type: 'todo' | 'loop' | 'executor';
   default_response_todo_id: number | null;
+  default_response_loop_id: number | null;
+  default_response_executor: string | null;
   updated_at: string | null;
 }
 
 export interface UpdateWorkspaceSettingsParams {
+  default_response_type?: 'todo' | 'loop' | 'executor';
   default_response_todo_id?: number;
+  default_response_loop_id?: number;
+  default_response_executor?: string;
 }
 
 // ============================================================================

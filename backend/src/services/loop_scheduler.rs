@@ -56,7 +56,7 @@ impl LoopScheduler {
             crate::service_context::ServiceContext {
                 db: db.clone(),
                 executor_registry: runner.ctx_ref().executor_registry.clone(),
-                tx: runner.ctx_ref().tx.clone(),
+                tx: runner.tx().clone(),
                 task_manager: runner.ctx_ref().task_manager.clone(),
                 config: runner.ctx_ref().config.clone(),
             },
@@ -221,7 +221,7 @@ impl LoopScheduler {
             let _ = self
                 .runner
                 .clone()
-                .spawn_run(loop_id, Some(trigger_id), "cron", meta);
+                .spawn_run(loop_id, Some(trigger_id), "cron", meta, None, None);
         }
         Ok(())
     }

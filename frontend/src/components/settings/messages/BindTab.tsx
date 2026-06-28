@@ -1,8 +1,10 @@
-import { Card, Button, Spin, List, Empty, Select, AutoComplete, Input, InputNumber, Switch, Modal, Tag, Typography, Form, Tooltip, Space, Popconfirm, message } from 'antd';
+import { Card, Button, Spin, List, Empty, Select, AutoComplete, Input, InputNumber, Switch, Modal, Tag, Typography, Form, Tooltip, Space, Popconfirm, message, Radio } from 'antd';
 import { QrcodeOutlined, DeleteOutlined, CopyOutlined, PlusOutlined, MinusCircleOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import type { FeishuPushStatus, WhitelistEntry, FeishuSenderItem } from '@/utils/database';
 import type { Todo } from '@/types';
+import type { LoopListItem } from '@/types/loop';
+import { useState, useEffect } from 'react';
 import { copyToClipboard } from '@/utils/clipboard';
 
 const { Paragraph } = Typography;
@@ -14,7 +16,7 @@ export function BindTab({
   setWhitelistOpenId, setWhitelistName, setBindModalOpen, setQrCodeUrl, setPollError, setBindSuccess,
   setWhitelistBotId, setHistoryViewMsg,
   onDeleteBot, onAddWhitelist, onDeleteWhitelist, onLoadGroupWhitelist, onLoadHistorySenders, onStartBind,
-  onRefresh, onAfterBindModalClose,
+  onRefresh, onAfterBindModalClose, workspaceId,
 }: {
   agentBots: db.AgentBot[];
   botsLoading: boolean;
@@ -51,7 +53,18 @@ export function BindTab({
   onRefresh: () => void;
   /** Called after the bind modal finishes its close animation — use this to reload bot list */
   onAfterBindModalClose?: () => void;
+  workspaceId: number | null;
 }) {
+  // 内部状态：环路列表
+  const [loops, setLoops] = useState<LoopListItem[]>([]);
+
+  // 加载环路列表
+  useEffect(() => {
+    if (workspaceId) {
+      db.listLoops(workspaceId).then(setLoops).catch(() => {});
+    }
+  }, [workspaceId]);
+
   return (
     <div className="settings-messages-tab" style={{ maxWidth: 700 }}>
       <Card
@@ -325,25 +338,37 @@ export function BindTab({
         extra={<Button type="primary" size="small" onClick={handleSaveConfig} loading={configSaving}>保存</Button>}
       >
         <Paragraph type="secondary" style={{ marginBottom: 16, fontSize: 13 }}>
-          当收到的消息没有匹配到任何斜杠命令时，执行默认响应的 Todo。支持使用 {'{{'}content{'}}'}、{'{{'}message{'}}'}、{'{{'}raw_message{'}}'}、{'{{'}slash_command{'}}'} 参数。
+          当收到的消息没有匹配到任何斜杠命令时，执行默认响应。支持使用 {'{{'}content{'}}'}、{'{{'}message{'}}'}、{'{{'}raw_message{'}}'}、{'{{'}slash_command{'}}'} 参数。
         </Paragraph>
         <Form form={configForm} layout="vertical" style={{ maxWidth: 400 }}>
-          <Form.Item name="default_response_todo_id" label="默认响应 Todo">
-            <Select showSearch allowClear placeholder="选择默认响应的 Todo" optionFilterProp="label" options={todos.map((todo) => ({ value: todo.id, label: `#${todo.id} ${todo.title}` }))} />
+          <Form.Item name="default_response_type" label="响应类型" initialValue="todo">
+            <Radio.Group>
+              <Radio.Button value="todo">Todo</Radio.Button>
+              <Radio.Button value="loop">环路</Radio.Button>
+              <Radio.Button value="executor">执行器</Radio.Button>
+            </Radio.Group>
           </Form.Item>
-        </Form>
-      </Card>
 
-      <Card title="历史消息处理" size="small" style={{ marginBottom: 24 }}
-        extra={<Button type="primary" size="small" onClick={handleSaveConfig} loading={configSaving}>保存</Button>}
-      >
-        <Paragraph type="secondary" style={{ marginBottom: 16, fontSize: 13 }}>
-          拉取历史消息时，超过设定时间的消息将保存但跳过处理，避免离线后重新处理大量旧消息。
-        </Paragraph>
-        <Form form={configForm} layout="vertical" style={{ maxWidth: 400 }}>
-          <Form.Item name="history_message_max_age_secs" label="最大处理年龄（秒）" tooltip="仅处理此时间内的历史消息，默认 600 秒（10 分钟）">
-            <InputNumber min={0} max={86400} step={60} placeholder="600" addonAfter="秒" style={{ width: '100%' }} />
-          </Form.Item>
+          {configForm?.getFieldValue?.('default_response_type') === 'todo' && (
+            <Form.Item name="default_response_todo_id" label="默认响应 Todo">
+              <Select showSearch allowClear placeholder="选择默认响应的 Todo" optionFilterProp="label" options={todos.map((todo) => ({ value: todo.id, label: `#${todo.id} ${todo.title}` }))} />
+            </Form.Item>
+          )}
+
+          {configForm?.getFieldValue?.('default_response_type') === 'loop' && (
+            <Form.Item name="default_response_loop_id" label="默认响应环路">
+              <Select showSearch allowClear placeholder="选择默认响应的环路" optionFilterProp="label" options={loops.map((loop) => ({ value: loop.id, label: loop.name }))} />
+            </Form.Item>
+          )}
+
+          {configForm?.getFieldValue?.('default_response_type') === 'executor' && (
+            <Form.Item name="default_response_executor" label="执行器类型" initialValue="claudecode">
+              <Select showSearch allowClear placeholder="选择执行器" options={[
+                { value: 'claudecode', label: 'Claude Code' },
+                { value: 'pi', label: 'PI' },
+              ]} />
+            </Form.Item>
+          )}
         </Form>
       </Card>
 

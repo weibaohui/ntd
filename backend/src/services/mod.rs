@@ -5,6 +5,7 @@ pub mod feishu_push;
 pub mod loop_runner;
 pub mod loop_scheduler;
 pub mod loop_trigger;
+pub mod master_switch;
 pub mod message_debounce;
 pub mod usage_stats;
 pub mod worktree;

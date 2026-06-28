@@ -47,7 +47,9 @@ build:
 # Clean all build artifacts
 clean:
 	rm -rf frontend/dist
-	rm -rf backend/target
+	# workspace 化后所有 cargo 产物在根 target/；
+	# 兼容老布局，backend/target 也清掉。
+	rm -rf target backend/target
 
 # Detect OS once for all targets
 _UNAME := $(shell uname -s)

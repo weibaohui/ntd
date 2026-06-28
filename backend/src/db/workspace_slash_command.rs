@@ -10,7 +10,9 @@ pub async fn create_workspace_slash_command(
     db: &Database,
     workspace_id: i64,
     slash_command: &str,
+    command_type: &str,
     todo_id: i64,
+    loop_id: Option<i64>,
     enabled: bool,
 ) -> Result<i64, sea_orm::DbErr> {
     use crate::db::entity::workspace_slash_commands as ws_cmd;
@@ -19,7 +21,9 @@ pub async fn create_workspace_slash_command(
     let am = ws_cmd::ActiveModel {
         workspace_id: ActiveValue::Set(workspace_id),
         slash_command: ActiveValue::Set(slash_command.to_string()),
+        command_type: ActiveValue::Set(command_type.to_string()),
         todo_id: ActiveValue::Set(todo_id),
+        loop_id: ActiveValue::Set(loop_id),
         enabled: ActiveValue::Set(enabled),
         created_at: ActiveValue::Set(Some(now.clone())),
         updated_at: ActiveValue::Set(Some(now)),
@@ -79,7 +83,9 @@ pub async fn update_workspace_slash_command(
     db: &Database,
     id: i64,
     slash_command: Option<&str>,
+    command_type: Option<&str>,
     todo_id: Option<i64>,
+    loop_id: Option<i64>,
     enabled: Option<bool>,
 ) -> Result<(), sea_orm::DbErr> {
     use crate::db::entity::workspace_slash_commands as ws_cmd;
@@ -93,8 +99,19 @@ pub async fn update_workspace_slash_command(
     if let Some(cmd) = slash_command {
         am.slash_command = ActiveValue::Set(cmd.to_string());
     }
+    if let Some(ct) = command_type {
+        am.command_type = ActiveValue::Set(ct.to_string());
+    }
     if let Some(tid) = todo_id {
         am.todo_id = ActiveValue::Set(tid);
+    }
+    // loop_id = Some(0) 表示清空，Some(n) where n > 0 表示设置为该 ID
+    if let Some(lid) = loop_id {
+        if lid == 0 {
+            am.loop_id = ActiveValue::Set(None);
+        } else {
+            am.loop_id = ActiveValue::Set(Some(lid));
+        }
     }
     if let Some(enabled) = enabled {
         am.enabled = ActiveValue::Set(enabled);

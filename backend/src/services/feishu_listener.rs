@@ -26,15 +26,15 @@ pub struct FeishuListener {
     debounce: Arc<MessageDebounce>,
 }
 
-struct ListenerMessageContext<'a> {
-    db: &'a Arc<Database>,
-    token_manager: &'a Arc<TokenManager>,
-    credentials: &'a DashMap<i64, (String, String, String)>,
-    debounce: &'a Arc<MessageDebounce>,
-    task_manager: &'a Arc<TaskManager>,
-    bot_id: i64,
-    bot_open_id: &'a str,
-    bot_config: &'a BotConfig,
+pub(crate) struct ListenerMessageContext<'a> {
+    pub(crate) db: &'a Arc<Database>,
+    pub(crate) token_manager: &'a Arc<TokenManager>,
+    pub(crate) credentials: &'a DashMap<i64, (String, String, String)>,
+    pub(crate) debounce: &'a Arc<MessageDebounce>,
+    pub(crate) task_manager: &'a Arc<TaskManager>,
+    pub(crate) bot_id: i64,
+    pub(crate) bot_open_id: &'a str,
+    pub(crate) bot_config: &'a BotConfig,
 }
 
 struct FeishuCommandContext<'a> {
@@ -53,11 +53,11 @@ struct FeishuCommandContext<'a> {
 /// 编排器专用：handle_message 阶段函数之间传递的"消息预处理结果"。
 /// 把 trim content / chat_type / is_mention / reaction_id 这类一次性解析的字段聚在一起，
 /// 避免每个阶段函数都重复算一遍，编排器也只需要在 phases 间传一个 &MessagePrep。
-struct MessagePrep<'a> {
-    chat_type: &'a str,
-    content: &'a str,
-    is_mention: bool,
-    reaction_id: Option<String>,
+pub(crate) struct MessagePrep<'a> {
+    pub(crate) chat_type: &'a str,
+    pub(crate) content: &'a str,
+    pub(crate) is_mention: bool,
+    pub(crate) reaction_id: Option<String>,
 }
 
 impl FeishuListener {
@@ -146,6 +146,7 @@ impl FeishuListener {
 
         let db = self.ctx.db.clone();
         let bot_open_id = real_bot_open_id;
+
         let bot_config_clone = bot_config;
         let credentials = self.bot_credentials.clone();
         let token_manager = self.token_manager.clone();
@@ -208,7 +209,7 @@ impl FeishuListener {
 
     /// 阶段 1：解析消息基本信息 + 持久化入站消息 + 加 processing reaction
     /// 返回 MessagePrep 供后续阶段复用（避免每个阶段重复 trim content / 查 chat_type）
-    async fn prepare_message<'a>(
+    pub(crate) async fn prepare_message<'a>(
         context: &ListenerMessageContext<'_>,
         msg: &'a ChannelMessage,
     ) -> MessagePrep<'a> {
@@ -262,7 +263,7 @@ impl FeishuListener {
 
     /// 阶段 2：内置斜杠命令路由（命中并处理后返回 true）
     /// 命令与处理函数的映射写在内部 if 链里，新增命令时在这里加一行
-    async fn try_route_builtin_command(
+    pub(crate) async fn try_route_builtin_command(
         context: &ListenerMessageContext<'_>,
         msg: &ChannelMessage,
         prep: &MessagePrep<'_>,
@@ -297,7 +298,7 @@ impl FeishuListener {
 
     /// 阶段 3：消息接收过滤（命中任一条就 return true）
     /// 三道闸：bot 是否接收此类消息 → 该 chat_type 是否启用响应 → 群聊白名单
-    async fn should_skip_for_message_filters(
+    pub(crate) async fn should_skip_for_message_filters(
         context: &ListenerMessageContext<'_>,
         msg: &ChannelMessage,
         prep: &MessagePrep<'_>,
@@ -352,7 +353,7 @@ impl FeishuListener {
     }
 
     /// 删除 THUMBSUP reaction（reaction_id 为 None 时是 no-op）
-    async fn cleanup_reaction(
+    pub(crate) async fn cleanup_reaction(
         context: &ListenerMessageContext<'_>,
         message: &ChannelMessage,
         reaction_id: Option<&str>,
@@ -365,7 +366,7 @@ impl FeishuListener {
 
     /// 阶段 4：把页面创建的 __pending__ binding 关联到当前真实 chat
     /// 页面"新建绑定"时 chat_id 未知，先写 __pending__ 占位；todo 不存在则放弃晋升
-    async fn try_promote_pending_binding(
+    pub(crate) async fn try_promote_pending_binding(
         context: &ListenerMessageContext<'_>,
         msg: &ChannelMessage,
         prep: &MessagePrep<'_>,
@@ -422,7 +423,7 @@ impl FeishuListener {
     ///   执行，与 enabled 路径完全分离。reaction 清理统一由编排器末尾
     ///   （handle_message 收尾）兜底，本分支不再重复 `cleanup_reaction`。
     /// - 绑定 enabled 且 todo 在 → 决定 resume 还是新 session，push 到 debounce 后返回 true
-    async fn try_route_project_binding(
+    pub(crate) async fn try_route_project_binding(
         context: &ListenerMessageContext<'_>,
         msg: &ChannelMessage,
         prep: &MessagePrep<'_>,
@@ -582,7 +583,7 @@ impl FeishuListener {
     }
 
     /// 阶段 6：兜底路由（自定义斜杠命令规则 或 默认回复 todo）
-    async fn route_slash_or_default_response(
+    pub(crate) async fn route_slash_or_default_response(
         context: &ListenerMessageContext<'_>,
         msg: &ChannelMessage,
         prep: &MessagePrep<'_>,
@@ -621,23 +622,44 @@ impl FeishuListener {
             // 没匹配上规则 → 走默认回复路径，保持向后兼容
             return Self::dispatch_default_response(context, msg, prep).await;
         };
-        // 防御：rule 关联的 todo 可能已被删，没拿到 todo 就不 push
-        let Ok(Some(todo)) = context.db.get_todo(rule.todo_id).await else {
-            tracing::error!("Failed to fetch todo {} for slash command", rule.todo_id);
-            return;
-        };
-        // 命令体可能为空（如 /j 直接触发），此时直接用命令名作为 trigger 参数字符串
-        let trigger_str = if command_ctx.body.is_empty() {
-            command_ctx.command.to_string()
-        } else {
-            format!("{} {}", command_ctx.command, command_ctx.body)
-        };
-        let (_, params) = build_trigger_params(&trigger_str);
-        Self::push_slash_command_message(context.debounce, context.bot_id, msg, prep.chat_type, &todo, command_ctx.body, params, Some(workspace_id));
+
+        // 根据 command_type 分发到 todo 或 loop 处理
+        match rule.command_type.as_str() {
+            "loop" => {
+                // 斜杠命令触发环路
+                let Some(loop_id) = rule.loop_id else {
+                    tracing::error!("slash command {} has loop_id=null, skipping", command_ctx.command);
+                    return;
+                };
+                Self::push_slash_command_loop_message(
+                    context.debounce,
+                    context.bot_id,
+                    msg,
+                    prep.chat_type,
+                    loop_id,
+                    command_ctx.body,
+                    Some(workspace_id),
+                );
+            }
+            _ => {
+                // 默认为 todo 类型（保持向后兼容）
+                let Ok(Some(todo)) = context.db.get_todo(rule.todo_id).await else {
+                    tracing::error!("Failed to fetch todo {} for slash command", rule.todo_id);
+                    return;
+                };
+                let trigger_str = if command_ctx.body.is_empty() {
+                    command_ctx.command.to_string()
+                } else {
+                    format!("{} {}", command_ctx.command, command_ctx.body)
+                };
+                let (_, params) = build_trigger_params(&trigger_str);
+                Self::push_slash_command_message(context.debounce, context.bot_id, msg, prep.chat_type, &todo, command_ctx.body, params, Some(workspace_id));
+            }
+        }
     }
 
     /// 阶段 6a-i：查 enabled 的斜杠命令规则（按 workspace 查询）
-    async fn find_slash_rule(
+    pub(crate) async fn find_slash_rule(
         db: &Database,
         workspace_id: i64,
         command: &str,
@@ -679,14 +701,43 @@ impl FeishuListener {
         });
     }
 
-    /// 阶段 6b：默认回复 todo（如果配置了的话）
+    /// 阶段 6a-iii：把斜杠命令触发环路的消息塞进 debounce
+    fn push_slash_command_loop_message(
+        debounce: &Arc<MessageDebounce>,
+        bot_id: i64,
+        msg: &ChannelMessage,
+        chat_type: &str,
+        loop_id: i64,
+        body: &str,
+        workspace_id: Option<i64>,
+    ) {
+        debounce.push(PendingMessage {
+            bot_id,
+            chat_id: msg.channel.clone(),
+            chat_type: chat_type.to_string(),
+            sender: msg.sender.clone(),
+            content: body.to_string(),
+            todo_id: loop_id, // 复用 todo_id 字段存储 loop_id
+            todo_prompt: String::new(), // 环路不使用 todo_prompt
+            executor: None,
+            trigger_type: "slash_command_loop".to_string(),
+            params: None,
+            message_id: Some(msg.id.clone()),
+            resume_session_id: None,
+            resume_message: None,
+            binding_id: None,
+            workspace_id,
+        });
+    }
+
+    /// 阶段 6b：默认回复——根据工作空间配置的响应类型分发
     /// todo 拉取失败时降级用空 prompt，避免整条消息被吞掉
     async fn dispatch_default_response(
         context: &ListenerMessageContext<'_>,
         msg: &ChannelMessage,
         prep: &MessagePrep<'_>,
     ) {
-        // 从数据库获取 bot 的 workspace_id，然后查询 workspace 设置中的 default_response_todo_id
+        // 从数据库获取 bot 的 workspace_id，然后查询 workspace 设置
         let workspace_id = match context.db.get_agent_bot_workspace_id(context.bot_id).await {
             Ok(Some(id)) => id,
             Ok(None) => {
@@ -699,22 +750,59 @@ impl FeishuListener {
             }
         };
 
-        let default_todo_id = crate::db::workspace_setting::get_workspace_settings(context.db, workspace_id)
+        // 读取工作空间的完整默认响应配置
+        let settings = crate::db::workspace_setting::get_workspace_settings(context.db, workspace_id)
             .await
             .ok()
-            .flatten()
-            .and_then(|s| s.default_response_todo_id);
+            .flatten();
 
-        let Some(todo_id) = default_todo_id else { return };
-        // 空消息不触发 todo
+        let Some(settings) = settings else { return };
+        // 空消息不触发任何响应
         if prep.content.is_empty() {
             return;
         }
-        // 防御：default todo 可能已被删，拉取失败用空 prompt 而不是吞消息
-        let todo_prompt = context.db.get_todo(todo_id).await
-            .ok().flatten().map(|t| t.prompt).unwrap_or_default();
-        let (_, params) = build_trigger_params(prep.content);
-        Self::debounce_push_default(context.debounce, context.bot_id, msg, prep.chat_type, todo_id, todo_prompt, prep.content, params);
+
+        // 根据 default_response_type 分发到不同的处理路径
+        match settings.default_response_type.as_str() {
+            "executor" => {
+                // 执行器类型：直接调用执行器交互（不存储执行记录）
+                let executor = settings.default_response_executor.clone()
+                    .unwrap_or_else(|| "claudecode".to_string());
+                Self::debounce_push_executor_default(
+                    context.debounce,
+                    context.bot_id,
+                    msg,
+                    prep.chat_type,
+                    &executor,
+                    prep.content,
+                    Some(workspace_id),
+                );
+            }
+            "loop" => {
+                // 环路类型：触发环路执行
+                let Some(loop_id) = settings.default_response_loop_id else { return };
+                Self::debounce_push_loop_default(
+                    context.debounce,
+                    context.bot_id,
+                    msg,
+                    prep.chat_type,
+                    loop_id,
+                    prep.content,
+                    Some(workspace_id),
+                );
+            }
+            _ => {
+                // todo 类型（默认值）：通过 todo 执行
+                let Some(todo_id) = settings.default_response_todo_id else { return };
+                let todo_prompt = context.db.get_todo(todo_id).await
+                    .ok().flatten().map(|t| t.prompt).unwrap_or_default();
+                let (_, params) = build_trigger_params(prep.content);
+                Self::debounce_push_default(
+                    context.debounce, context.bot_id, msg, prep.chat_type,
+                    todo_id, todo_prompt, prep.content, params, Some(workspace_id),
+                );
+            }
+        }
     }
 
     /// 阶段 6b-i：把默认回复消息塞进 debounce
@@ -727,6 +815,7 @@ impl FeishuListener {
         todo_prompt: String,
         content: &str,
         params: std::collections::HashMap<String, String>,
+        workspace_id: Option<i64>,
     ) {
         debounce.push(PendingMessage {
             bot_id,
@@ -743,13 +832,71 @@ impl FeishuListener {
             resume_session_id: None,
             resume_message: None,
             binding_id: None,
-            workspace_id: None,
+            workspace_id,
+        });
+    }
+
+    /// 阶段 6b-ii：把默认响应为 executor 类型的消息塞进 debounce
+    fn debounce_push_executor_default(
+        debounce: &Arc<MessageDebounce>,
+        bot_id: i64,
+        msg: &ChannelMessage,
+        chat_type: &str,
+        executor: &str,
+        content: &str,
+        workspace_id: Option<i64>,
+    ) {
+        debounce.push(PendingMessage {
+            bot_id,
+            chat_id: msg.channel.clone(),
+            chat_type: chat_type.to_string(),
+            sender: msg.sender.clone(),
+            content: content.to_string(),
+            todo_id: 0, // executor 类型不使用 todo_id
+            todo_prompt: String::new(),
+            executor: Some(executor.to_string()),
+            trigger_type: "default_response_executor".to_string(),
+            params: None,
+            message_id: Some(msg.id.clone()),
+            resume_session_id: None,
+            resume_message: None,
+            binding_id: None,
+            workspace_id,
+        });
+    }
+
+    /// 阶段 6b-iii：把默认响应为 loop 类型的消息塞进 debounce
+    fn debounce_push_loop_default(
+        debounce: &Arc<MessageDebounce>,
+        bot_id: i64,
+        msg: &ChannelMessage,
+        chat_type: &str,
+        loop_id: i64,
+        content: &str,
+        workspace_id: Option<i64>,
+    ) {
+        debounce.push(PendingMessage {
+            bot_id,
+            chat_id: msg.channel.clone(),
+            chat_type: chat_type.to_string(),
+            sender: msg.sender.clone(),
+            content: content.to_string(),
+            todo_id: loop_id, // 复用 todo_id 字段存储 loop_id
+            todo_prompt: String::new(), // 环路不使用 todo_prompt
+            executor: None,
+            trigger_type: "default_response_loop".to_string(),
+            params: None,
+            message_id: Some(msg.id.clone()),
+            resume_session_id: None,
+            resume_message: None,
+            binding_id: None,
+            workspace_id,
         });
     }
 
     /// 阶段 7：调试回显日志（仅在 bot_config.echo_reply 开启时记录）
     /// 纯 tracing! 调用、无 IO，保持 fn 而非 async fn，避免编排器里 .await 噪音
-    fn log_echo_reply(
+    pub fn log_echo_reply(
         bot_id: i64,
         msg: &ChannelMessage,
         chat_type: &str,
@@ -790,7 +937,7 @@ impl FeishuListener {
     }
 
     /// 解析斜杠命令，只匹配首个词。
-    fn parse_slash_command(content: &str) -> Option<SlashCommandMatch<'_>> {
+    pub(crate) fn parse_slash_command(content: &str) -> Option<SlashCommandMatch<'_>> {
         let trimmed = content.trim();
         if !trimmed.starts_with('/') {
             return None;
@@ -1802,7 +1949,7 @@ impl FeishuListener {
     }
 }
 
-struct SlashCommandMatch<'a> {
+pub(crate) struct SlashCommandMatch<'a> {
     command: &'a str,
     body: &'a str,
 }

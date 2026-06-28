@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Card, Button, Switch, Input, Select, Tag, message, Modal, Typography, AutoComplete, Table } from 'antd';
-import { ArrowLeftOutlined, CopyOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, CopyOutlined, ReloadOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
+import * as dbLoops from '@/utils/database/loops';
 import type { AgentBot, FeishuPushStatus, WhitelistEntry, FeishuSenderItem } from '@/utils/database';
 import type { FeishuHistoryMessage, FeishuHistoryChat, ExecutionRecord } from '@/types';
 import { copyToClipboard } from '@/utils/clipboard';
-import { ExecutionDetailModal } from '../messages/ExecutionDetailModal';
+import { ExecutionRecordDrawer } from '../messages/ExecutionRecordDrawer';
+import { BlackboardDrawer } from '@/components/LoopStudioExecutionsPanel';
 
 const { Paragraph } = Typography;
 
@@ -42,6 +44,39 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
   const [historyViewMsg, setHistoryViewMsg] = useState<string | null>(null);
   const [execDetailRecord, setExecDetailRecord] = useState<ExecutionRecord | null>(null);
   const [todoDetail, setTodoDetail] = useState<{ id: number; title: string; prompt: string; status: string } | null>(null);
+  // 黑板抽屉：展示"slash_command_loop"类型消息的环路执行详情
+  const [blackboardOpen, setBlackboardOpen] = useState(false);
+  const [blackboardExecs, setBlackboardExecs] = useState<Record<string, any>[]>([]);
+
+  // processed_type 英文 → 中文映射
+  const processedTypeLabel = (type: string | null): string => {
+    const map: Record<string, string> = {
+      'default_response': '默认响应-Todo',
+      'default_response_executor': '默认响应-执行器',
+      'default_response_loop': '默认响应-环路',
+      'slash_command': '斜杠命令',
+      'slash_command_loop': '斜杠命令-环路',
+      'feishu_project_bind': '项目绑定-Todo',
+    };
+    return map[type || ''] || type || '-';
+  };
+
+  // 是否为环路类型（点击执行记录应打开黑板抽屉）
+  const isLoopType = (type: string | null): boolean => {
+    return type === 'slash_command_loop';
+  };
+
+  const handleProcessedTypeClick = async (record: FeishuHistoryMessage) => {
+    if (!isLoopType(record.processed_type) || !record.processed_id) return;
+    try {
+      const detail = await dbLoops.getExecutionById(record.processed_id);
+      setBlackboardExecs(detail.step_executions || []);
+      setBlackboardOpen(true);
+    } catch {
+      message.error('加载环路执行详情失败');
+    }
+  };
+
   const showHistory = autoShowHistory;
 
   // 加载 bot 配置
@@ -105,15 +140,6 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
       setExecDetailRecord(r);
     } catch {
       message.error('加载执行记录失败');
-    }
-  };
-
-  const handleViewTodo = async (todoId: number) => {
-    try {
-      const t = await db.getTodo(todoId);
-      setTodoDetail({ id: t.id, title: t.title, prompt: t.prompt, status: t.status });
-    } catch {
-      message.error('加载 Todo 详情失败');
     }
   };
 
@@ -210,6 +236,10 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
               onChange={v => { setHistoryIsHistory(v); setHistoryPage(1); }}
               options={[{ value: true, label: '历史消息' }, { value: false, label: '实时消息' }]}
             />
+            {/* 刷新：手动触发 loadHistoryMessages，避免被动等分页/筛选变化；和 RecordTab 行为一致 */}
+            <Button size="small" icon={<ReloadOutlined />} onClick={loadHistoryMessages}>
+              刷新
+            </Button>
           </div>
 
           <Table
@@ -307,25 +337,15 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
                 ),
               },
               {
-                title: '触发Todo',
-                key: 'processed_todo_id',
-                width: 80,
-                render: (_, record) => (
-                  record.processed_todo_id ? (
-                    <Typography.Link style={{ fontSize: 12 }} onClick={() => handleViewTodo(record.processed_todo_id!)}>
-                      #{record.processed_todo_id}
-                    </Typography.Link>
-                  ) : (
-                    <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>-</span>
-                  )
-                ),
-              },
-              {
                 title: '执行记录',
                 key: 'execution_record_id',
                 width: 80,
                 render: (_, record) => (
-                  record.execution_record_id ? (
+                  isLoopType(record.processed_type) && record.execution_record_id ? (
+                    <Typography.Link style={{ fontSize: 12 }} onClick={() => handleProcessedTypeClick(record)}>
+                      #{record.execution_record_id}
+                    </Typography.Link>
+                  ) : record.execution_record_id ? (
                     <Typography.Link style={{ fontSize: 12 }} onClick={() => handleViewExecutionRecord(record.execution_record_id!)}>
                       #{record.execution_record_id}
                     </Typography.Link>
@@ -341,6 +361,30 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
                 render: (_, record) => (
                   record.workspace_id ? (
                     <Typography.Text style={{ fontSize: 12 }}>#{record.workspace_id}</Typography.Text>
+                  ) : (
+                    <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>-</span>
+                  )
+                ),
+              },
+              {
+                title: '处理类型',
+                key: 'processed_type',
+                width: 110,
+                render: (_, record) => (
+                  <span style={{ fontSize: 12 }}>
+                    {processedTypeLabel(record.processed_type)}
+                  </span>
+                ),
+              },
+              {
+                title: '处理ID',
+                key: 'processed_id',
+                width: 80,
+                render: (_, record) => (
+                  record.processed_id ? (
+                    <Typography.Text style={{ fontSize: 12 }}>
+                      #{record.processed_id}
+                    </Typography.Text>
                   ) : (
                     <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>-</span>
                   )
@@ -460,7 +504,7 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
       </Modal>
 
       {/* 执行记录详情弹窗 */}
-      <ExecutionDetailModal record={execDetailRecord} onClose={() => setExecDetailRecord(null)} />
+      <ExecutionRecordDrawer record={execDetailRecord} onClose={() => setExecDetailRecord(null)} />
 
       {/* Todo 详情弹窗 */}
       <Modal
@@ -489,6 +533,13 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
           </div>
         )}
       </Modal>
+
+      {/* 黑板抽屉：slash_command_loop 点击处理类型时展示环路执行详情 */}
+      <BlackboardDrawer
+        open={blackboardOpen}
+        stepExecs={blackboardExecs}
+        onClose={() => setBlackboardOpen(false)}
+      />
     </div>
   );
 }

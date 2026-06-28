@@ -21,12 +21,13 @@ pub struct FeishuMessageRecord {
     pub msg_type: String,
     pub is_mention: bool,
     pub processed: bool,
-    pub processed_todo_id: Option<i64>,
     pub execution_record_id: Option<i64>,
     pub is_history: bool,
     pub fetch_time: Option<String>,
     pub created_at: Option<String>,
     pub workspace_id: Option<i64>,
+    pub processed_type: Option<String>,
+    pub processed_id: Option<i64>,
 }
 
 pub struct NewFeishuMessage<'a> {
@@ -140,12 +141,13 @@ impl Database {
                 msg_type: m.msg_type,
                 is_mention: m.is_mention.unwrap_or(false),
                 processed: m.processed.unwrap_or(false),
-                processed_todo_id: m.processed_todo_id,
                 execution_record_id: m.execution_record_id,
                 is_history: m.is_history.unwrap_or(false),
                 fetch_time: m.fetch_time,
                 created_at: m.created_at,
                 workspace_id: m.workspace_id,
+                processed_type: m.processed_type,
+                processed_id: m.processed_id,
             })
             .collect())
     }
@@ -197,12 +199,13 @@ impl Database {
                 msg_type: m.msg_type,
                 is_mention: m.is_mention.unwrap_or(false),
                 processed: m.processed.unwrap_or(false),
-                processed_todo_id: m.processed_todo_id,
                 execution_record_id: m.execution_record_id,
                 is_history: m.is_history.unwrap_or(false),
                 fetch_time: m.fetch_time,
                 created_at: m.created_at,
                 workspace_id: m.workspace_id,
+                processed_type: m.processed_type,
+                processed_id: m.processed_id,
             })
             .collect();
 
@@ -275,6 +278,7 @@ impl Database {
         message_id: &str,
         todo_id: i64,
         execution_record_id: Option<i64>,
+        processed_type: Option<&str>,
     ) -> Result<(), sea_orm::DbErr> {
         let result = feishu_messages::Entity::find()
             .filter(feishu_messages::Column::MessageId.eq(message_id))
@@ -284,8 +288,10 @@ impl Database {
         if let Some(model) = result {
             let mut am: feishu_messages::ActiveModel = model.into();
             am.processed = ActiveValue::Set(Some(true));
-            am.processed_todo_id = ActiveValue::Set(Some(todo_id));
             am.execution_record_id = ActiveValue::Set(execution_record_id);
+            // processed_id 存 execution_record_id（有值）或 todo_id（回退）
+            am.processed_id = ActiveValue::Set(execution_record_id.or(Some(todo_id)));
+            am.processed_type = ActiveValue::Set(processed_type.map(|s| s.to_string()));
             am.update(&self.conn).await?;
         }
         Ok(())
@@ -305,7 +311,6 @@ impl Database {
         if let Some(model) = result {
             let mut am: feishu_messages::ActiveModel = model.into();
             am.processed = ActiveValue::Set(Some(false));
-            am.processed_todo_id = ActiveValue::Set(None);
             am.update(&self.conn).await?;
         }
         Ok(())
@@ -321,7 +326,7 @@ impl Database {
             COUNT(*) as total, \
             COALESCE(SUM(CASE WHEN processed = 1 OR processed = 'true' THEN 1 ELSE 0 END), 0) as processed, \
             COALESCE(SUM(CASE WHEN processed IS NULL OR processed = 0 OR processed = 'false' THEN 1 ELSE 0 END), 0) as unprocessed, \
-            COALESCE(SUM(CASE WHEN processed_todo_id IS NOT NULL THEN 1 ELSE 0 END), 0) as triggered_todos, \
+            COALESCE(SUM(CASE WHEN processed_id IS NOT NULL THEN 1 ELSE 0 END), 0) as triggered_todos, \
             COUNT(DISTINCT sender_open_id) as unique_senders, \
             COUNT(DISTINCT chat_id) as unique_chats \
             FROM feishu_messages \

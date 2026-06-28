@@ -19,9 +19,11 @@ use std::collections::HashMap;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
+use crate::adapters::ExecutorRegistry;
+use crate::db::Database;
 use crate::executor_service::{run_todo_execution_with_params, RunTodoExecutionRequest};
 use crate::models::ExecutionStatus;
-use crate::service_context::ServiceContext;
+use crate::task_manager::TaskManager;
 use crate::db::entity::{loop_steps};
 
 /// 全局限制配置，从 loop.limits_config JSON 解析。
@@ -41,23 +43,39 @@ struct LimitsConfig {
 
 /// LoopRunner 依赖：不再持有 HookService，todo hook 已整块移除（见
 /// plan `purring-forging-petal`）。循环只与 ctx / tx 直接耦合。
+///
+/// 使用独立的 LoopRunnerCtx 而非完整 ServiceContext，避免循环引用：
+/// ServiceContext -> loop_runner: Option<Arc<LoopRunner>> -> LoopRunner -> ctx: ServiceContext
+#[derive(Clone)]
+pub struct LoopRunnerCtx {
+    pub db: Arc<Database>,
+    pub executor_registry: Arc<ExecutorRegistry>,
+    pub task_manager: Arc<TaskManager>,
+    pub config: Arc<std::sync::RwLock<crate::config::Config>>,
+}
+
 pub struct LoopRunner {
-    ctx: ServiceContext,
+    ctx: LoopRunnerCtx,
     tx: broadcast::Sender<crate::handlers::ExecEvent>,
 }
 
 impl LoopRunner {
     pub fn new(
-        ctx: ServiceContext,
+        ctx: LoopRunnerCtx,
         tx: broadcast::Sender<crate::handlers::ExecEvent>,
     ) -> Self {
         Self { ctx, tx }
     }
 
-    /// 暴露 ServiceContext 供 LoopScheduler / 测试 / 上层使用。
-    /// 只读引用,不会让调用方修改 ctx 内部状态。
-    pub fn ctx_ref(&self) -> &ServiceContext {
+    /// 暴露 LoopRunnerCtx 供 LoopScheduler / 测试 / 上层使用。
+    /// 只读引用。
+    pub fn ctx_ref(&self) -> &LoopRunnerCtx {
         &self.ctx
+    }
+
+    /// 暴露 tx 供 LoopScheduler 构造 ServiceContext。
+    pub fn tx(&self) -> &broadcast::Sender<crate::handlers::ExecEvent> {
+        &self.tx
     }
 
     /// 校验 loop 所有步骤的 todo 是否都归属同一工作空间。
@@ -130,6 +148,8 @@ impl LoopRunner {
         trigger_id: Option<i64>,
         trigger_type: &str,
         trigger_meta: serde_json::Value,
+        feishu_bot_id: Option<i64>,
+        feishu_receive_id: Option<String>,
     ) -> i64 {
         let this = self.clone();
         let trigger_type = trigger_type.to_string();
@@ -162,38 +182,71 @@ impl LoopRunner {
 
         let this2 = self.clone();
         let this2_for_err = self.clone();
+        let this2_for_callback = self.clone();
         tokio::spawn(async move {
-            if let Err(e) = this2
+            let run_result = this2
                 .run_inner(loop_id, loop_execution_id, trigger_type)
-                .await
-            {
-                error!("loop_runner: run failed: {}", e);
-                // 终态化 loop execution
-                let _ = this2_for_err
-                    .ctx
-                    .db
-                    .finish_loop_execution(
-                        loop_execution_id,
-                        "failed",
-                        0,
-                        0,
-                        Some(&e),
-                    )
-                    .await;
-                // 触发异常处理 Todo（传入 0 作为步数/Token 统计）
-                let _ = this2_for_err
-                    .trigger_abnormal_handler(loop_id, loop_execution_id, "failed", 0, 0)
-                    .await;
-                // 发送 WebSocket 事件，触发前端刷新执行历史列表。
-                // 没有这步的话，前端 LoopExecutionsPanel 收不到事件通知，
-                // 用户无法在界面上看到这条 failed 记录，只能从后台日志中排查。
-                let _ = this2_for_err
-                    .tx
-                    .send(crate::handlers::ExecEvent::ReviewStatusChanged {
-                        record_id: 0,
-                        todo_id: 0,
-                        review_status: "failed".to_string(),
-                    });
+                .await;
+
+            match run_result {
+                Ok(()) => {
+                    // 环路执行成功：获取黑板文本并通过 ExecutorDirectResponse 发回飞书
+                    if let Some(ref receive_id) = feishu_receive_id {
+                        let blackboard = this2_for_callback
+                            .get_loop_blackboard_text(loop_execution_id, &trigger_meta)
+                            .await;
+                        info!(
+                            "[loop-runner] loop {} execution {} completed, sending result to Feishu",
+                            loop_id, loop_execution_id
+                        );
+                        this2_for_callback
+                            .send_result_to_feishu(
+                                feishu_bot_id,
+                                receive_id,
+                                &blackboard,
+                            )
+                            .await;
+                    }
+                }
+                Err(e) => {
+                    error!("loop_runner: run failed: {}", e);
+                    // 终态化 loop execution，携带错误原因供前端展示
+                    let _ = this2_for_err
+                        .ctx
+                        .db
+                        .finish_loop_execution(
+                            loop_execution_id,
+                            "failed",
+                            0,
+                            0,
+                            Some(&e),
+                        )
+                        .await;
+                    // 触发异常处理 Todo（传入 0 作为步数/Token 统计）
+                    let _ = this2_for_err
+                        .trigger_abnormal_handler(loop_id, loop_execution_id, "failed", 0, 0)
+                        .await;
+                    // 发送 WebSocket 事件，触发前端刷新执行历史列表。
+                    // 没有这步的话，前端 LoopExecutionsPanel 收不到事件通知，
+                    // 用户无法在界面上看到这条 failed 记录，只能从后台日志中排查。
+                    let _ = this2_for_err
+                        .tx
+                        .send(crate::handlers::ExecEvent::ReviewStatusChanged {
+                            record_id: 0,
+                            todo_id: 0,
+                            review_status: "failed".to_string(),
+                        });
+                    // 失败路径也发回消息
+                    if let Some(ref receive_id) = feishu_receive_id {
+                        this2_for_err
+                            .send_result_to_feishu(
+                                feishu_bot_id,
+                                receive_id,
+                                &format!("环路执行失败：{}", e),
+                            )
+                            .await;
+                    }
+                }
             }
         });
 
@@ -700,7 +753,7 @@ impl LoopRunner {
         let request = RunTodoExecutionRequest {
             db: self.ctx.db.clone(),
             executor_registry: self.ctx.executor_registry.clone(),
-            tx: self.ctx.tx.clone(),
+            tx: self.tx.clone(),
             task_manager: self.ctx.task_manager.clone(),
             config: self.ctx.config.clone(),
             // 使用 todo.id 而非 0，确保 execution_record 能关联到正确的 todo，
@@ -890,6 +943,31 @@ impl LoopRunner {
     }
 
     /// 从 execution_record 提取结论摘要。
+    /// 获取环路执行的黑板文本（供外部调用，如执行完成回发飞书时使用）
+    pub async fn get_loop_blackboard_text(
+        &self,
+        loop_execution_id: i64,
+        _trigger_meta: &serde_json::Value,
+    ) -> String {
+        self.build_blackboard_text(loop_execution_id).await
+    }
+
+    /// 通过 ExecutorDirectResponse 事件把环路执行结果发回飞书
+    pub async fn send_result_to_feishu(
+        &self,
+        feishu_bot_id: Option<i64>,
+        receive_id: &str,
+        text: &str,
+    ) {
+        let Some(bot_id) = feishu_bot_id else { return };
+        let _ = self.tx.send(crate::handlers::ExecEvent::ExecutorDirectResponse {
+            bot_id,
+            receive_id: receive_id.to_string(),
+            receive_id_type: "open_id".to_string(),
+            content: text.to_string(),
+        });
+    }
+
     async fn extract_conclusion(&self, record_id: i64) -> String {
         let rec = self
             .ctx
@@ -1072,7 +1150,7 @@ impl LoopRunner {
             let request = RunTodoExecutionRequest {
                 db: self.ctx.db.clone(),
                 executor_registry: self.ctx.executor_registry.clone(),
-                tx: self.ctx.tx.clone(),
+                tx: self.tx.clone(),
                 task_manager: self.ctx.task_manager.clone(),
                 config: self.ctx.config.clone(),
                 todo_id: review_todo_id,
@@ -1295,7 +1373,7 @@ impl LoopRunner {
         let request = RunTodoExecutionRequest {
             db: self.ctx.db.clone(),
             executor_registry: self.ctx.executor_registry.clone(),
-            tx: self.ctx.tx.clone(),
+            tx: self.tx.clone(),
             task_manager: self.ctx.task_manager.clone(),
             config: self.ctx.config.clone(),
             todo_id: handler_todo_id,
