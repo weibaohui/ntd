@@ -148,7 +148,7 @@ impl Database {
         use sea_orm::Condition;
         let filter = if let Some(h) = query.hours.filter(|&h| h > 0) {
             let time_expr = sea_orm::sea_query::Expr::cust(&format!(
-                "started_at >= datetime('now', '-{} hours')", h
+                "REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= datetime('now', '-{} hours')", h
             ));
             filter.add(time_expr)
         } else {

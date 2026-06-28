@@ -759,7 +759,7 @@ impl Database {
             .order_by_desc(loop_executions::Column::StartedAt);
         if let Some(h) = hours.filter(|&h| h > 0) {
             let time_expr = sea_orm::sea_query::Expr::cust(&format!(
-                "started_at >= datetime('now', '-{} hours')", h
+                "REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= datetime('now', '-{} hours')", h
             ));
             query = query.filter(time_expr);
         }
@@ -840,6 +840,7 @@ impl Database {
         status: &str,
         completed_steps: i32,
         failed_steps: i32,
+        error_message: Option<&str>,
     ) -> Result<(), sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let existing = loop_executions::Entity::find_by_id(id).one(&self.conn).await?;
@@ -849,6 +850,12 @@ impl Database {
             am.finished_at = ActiveValue::Set(Some(now));
             am.completed_steps = ActiveValue::Set(completed_steps);
             am.failed_steps = ActiveValue::Set(failed_steps);
+            // error_message 有值时写入 / 为 None 时保持数据库已有值不变。
+            // 这意味着后续可以覆盖但不主动清空。如果将来需要显式清空，
+            // 可改为 am.error_message = ActiveValue::Set(error_message.map(|s| s.to_string()));
+            if let Some(msg) = error_message {
+                am.error_message = ActiveValue::Set(Some(msg.to_string()));
+            }
             am.update(&self.conn).await?;
         }
         Ok(())

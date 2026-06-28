@@ -79,6 +79,69 @@ impl LoopRunner {
         &self.tx
     }
 
+    /// 校验 loop 所有步骤的 todo 是否都归属同一工作空间。
+    /// 环路运行时要求所有环节在同一工作空间下，否则 cwd / worktree 无法统一，
+    /// 且跨工作空间的数据流会导致不可预期的行为。
+    /// 返回 Err 时附带具体哪些步骤不在同一工作空间。
+    async fn check_workspace_consistency(
+        &self,
+        loop_: &crate::db::entity::loops::Model,
+        all_steps: &[loop_steps::Model],
+    ) -> Result<(), String> {
+        // 收集所有属于 loop 的步骤的 todo_id 的去重列表
+        // 使用 indexmap 保留顺序同时去重，避免同一个 todo 被多个 step 引用时重复检查
+        let mut seen = std::collections::HashSet::new();
+        let mut todo_ids = Vec::new();
+        for step in all_steps {
+            if seen.insert(step.todo_id) {
+                todo_ids.push(step.todo_id);
+            }
+        }
+
+        // 加载每个 todo 并校验 workspace_id 是否与 loop 一致
+        let mut mismatches: Vec<String> = Vec::new();
+        for &tid in &todo_ids {
+            let todo = self
+                .ctx
+                .db
+                .get_todo(tid)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("todo #{} (引用于 loop #{}) 已被删除", tid, loop_.id))?;
+
+            // 比较双方 workspace_id 是否一致。
+            // 特殊处理：Some(0)（todos 默认值，未分配工作空间）与 None（loop 默认值）语义等价，
+            // 都表示"未分配工作空间"，视为同一空间。
+            let loop_ws = loop_.workspace_id.filter(|&id| id != 0);
+            let todo_ws = todo.workspace_id.filter(|&id| id != 0);
+            if loop_ws != todo_ws {
+                let step_names: Vec<&str> = all_steps
+                    .iter()
+                    .filter(|s| s.todo_id == tid)
+                    .map(|s| s.name.as_str())
+                    .collect();
+                mismatches.push(format!(
+                    "环节「{}」(todo #{}) 所属工作空间 (id={:?}) 与 loop (id={:?}) 不一致",
+                    step_names.join("、"),
+                    tid,
+                    todo.workspace_id,
+                    loop_.workspace_id,
+                ));
+            }
+        }
+
+        if mismatches.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "loop #{}「{}」的环节不在同一工作空间下，无法执行：\n{}",
+                loop_.id,
+                loop_.name,
+                mismatches.join("\n"),
+            ))
+        }
+    }
+
     /// Spawn 一条 loop 执行（fire-and-forget）。返回 loop_execution_id 给调用方。
     pub fn spawn_run(
         self: Arc<Self>,
@@ -148,7 +211,7 @@ impl LoopRunner {
                 }
                 Err(e) => {
                     error!("loop_runner: run failed: {}", e);
-                    // 终态化 loop execution
+                    // 终态化 loop execution，携带错误原因供前端展示
                     let _ = this2_for_err
                         .ctx
                         .db
@@ -157,12 +220,23 @@ impl LoopRunner {
                             "failed",
                             0,
                             0,
+                            Some(&e),
                         )
                         .await;
                     // 触发异常处理 Todo（传入 0 作为步数/Token 统计）
                     let _ = this2_for_err
                         .trigger_abnormal_handler(loop_id, loop_execution_id, "failed", 0, 0)
                         .await;
+                    // 发送 WebSocket 事件，触发前端刷新执行历史列表。
+                    // 没有这步的话，前端 LoopExecutionsPanel 收不到事件通知，
+                    // 用户无法在界面上看到这条 failed 记录，只能从后台日志中排查。
+                    let _ = this2_for_err
+                        .tx
+                        .send(crate::handlers::ExecEvent::ReviewStatusChanged {
+                            record_id: 0,
+                            todo_id: 0,
+                            review_status: "failed".to_string(),
+                        });
                     // 失败路径也发回消息
                     if let Some(ref receive_id) = feishu_receive_id {
                         this2_for_err
@@ -292,7 +366,7 @@ impl LoopRunner {
             // 没有下一步（end/break），结束 loop execution
             let final_status = if completed > 0 { "success" } else { "failed" };
             let _ = self.ctx.db.finish_loop_execution(
-                loop_execution_id, final_status, completed, failed,
+                loop_execution_id, final_status, completed, failed, None,
             ).await;
             info!("resume: loop_execution #{} ended with status {}", loop_execution_id, final_status);
         }
@@ -340,19 +414,24 @@ impl LoopRunner {
         if all_steps.is_empty() {
             self.ctx
                 .db
-                .finish_loop_execution(loop_execution_id, "success", 0, 0)
+                .finish_loop_execution(loop_execution_id, "success", 0, 0, None)
                 .await
                 .map_err(|e| e.to_string())?;
             return Ok(());
         }
 
-        // 3. 初始化（全新执行）或恢复状态（续跑）
+        // 3. 校验所有步骤的 todo 是否都在同一工作空间下
+        // 环路运行时要求所有环节（step.todo）与 loop 属于同一 workspace，
+        // 否则 cwd/worktree 无法统一，跨空间数据流会导致不可预期的行为。
+        self.check_workspace_consistency(&loop_, &all_steps).await?;
+
+        // 4. 初始化（全新执行）或恢复状态（续跑）
         let is_resume = resume_step_idx.is_some();
         if !is_resume {
             // 全新执行：设置 loop execution 状态
             self.ctx
                 .db
-                .finish_loop_execution(loop_execution_id, "running", 0, 0)
+                .finish_loop_execution(loop_execution_id, "running", 0, 0, None)
                 .await
                 .map_err(|e| e.to_string())?;
             self.clear_finished_at(loop_execution_id).await?;
@@ -417,7 +496,7 @@ impl LoopRunner {
                 info!("loop #{} capped: total_executed={} >= max={}", loop_id, total_executed, max_executions);
                 self.ctx
                     .db
-                    .finish_loop_execution(loop_execution_id, "capped_step", completed, failed)
+                    .finish_loop_execution(loop_execution_id, "capped_step", completed, failed, None)
                     .await
                     .map_err(|e| e.to_string())?;
                 // 触发异常处理 Todo
@@ -433,7 +512,7 @@ impl LoopRunner {
                 );
                 self.ctx
                     .db
-                    .finish_loop_execution(loop_execution_id, "capped_token", completed, failed)
+                    .finish_loop_execution(loop_execution_id, "capped_token", completed, failed, None)
                     .await
                     .map_err(|e| e.to_string())?;
                 // 触发异常处理 Todo
@@ -644,7 +723,7 @@ impl LoopRunner {
         };
         self.ctx
             .db
-            .finish_loop_execution(loop_execution_id, final_status, completed, failed)
+            .finish_loop_execution(loop_execution_id, final_status, completed, failed, None)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -1556,5 +1635,187 @@ mod tests {
         assert!(trigger_on.contains(&"capped_step".to_string()));
         assert!(trigger_on.contains(&"capped_token".to_string()));
         assert!(trigger_on.contains(&"failed".to_string()));
+    }
+
+    // ── 工作空间一致性校验测试 ──
+    // 使用真实 DB 验证 check_workspace_consistency 方法的行为。
+
+    /// 构造最小 LoopRunner 供测试使用。
+    /// 用 `:memory:` 模式创建独立 SQLite 数据库，避免对外部文件依赖。
+    async fn make_test_runner() -> (LoopRunner, Arc<crate::db::Database>) {
+        use crate::adapters::ExecutorRegistry;
+        use crate::config::Config;
+        use crate::service_context::ServiceContext;
+        use crate::task_manager::TaskManager;
+        use std::sync::RwLock;
+        use tokio::sync::broadcast;
+
+        let db = Arc::new(crate::db::Database::new(":memory:").await.unwrap());
+        let (tx, _rx) = broadcast::channel(1);
+        let ctx = ServiceContext {
+            db: db.clone(),
+            executor_registry: Arc::new(ExecutorRegistry::default()),
+            tx,
+            task_manager: Arc::new(TaskManager::default()),
+            config: Arc::new(RwLock::new(Config::default())),
+        };
+        let runner = LoopRunner::new(ctx, broadcast::channel(1).0);
+        (runner, db)
+    }
+
+    /// 辅助：快速创建一个 workspace（project_directory），返回其 id。
+    async fn create_workspace(db: &crate::db::Database, id_suffix: i64) -> i64 {
+        db.create_project_directory(
+            &format!("/tmp/test-workspace-{}", id_suffix),
+            Some(&format!("test-ws-{}", id_suffix)),
+            false,
+            false,
+        )
+        .await
+        .unwrap()
+    }
+
+    /// 校验：所有 step 的 todo 与 loop 在同一工作空间 → 通过。
+    #[tokio::test]
+    async fn test_check_workspace_consistency_all_match() {
+        let (runner, db) = make_test_runner().await;
+        // 创建工作空间
+        let ws_id = create_workspace(&db, 1).await;
+        // 创建两个 todo 都在同一工作空间
+        let todo_a = db.create_todo_with_extras("task A", "do A", None, None, false, ws_id, "/tmp/ws").await.unwrap();
+        let todo_b = db.create_todo_with_extras("task B", "do B", None, None, false, ws_id, "/tmp/ws").await.unwrap();
+        // 创建 loop 属于同一工作空间
+        let loop_model = db.create_loop("test-loop", "", Some(ws_id), Some("/tmp/ws"), false, "loop", None, None, None, "[]").await.unwrap();
+        // 构造步骤列表（使用真实的 step model 但手动构建，无需写入 DB，因为
+        // check_workspace_consistency 只通过 todo_id 查 DB，不查 step 表本身）
+        let steps = vec![
+            loop_steps::Model {
+                id: 1, loop_id: loop_model.id, name: "步骤A".to_string(),
+                description: String::new(), order_index: 0, todo_id: todo_a,
+                run_mode: "sequential".to_string(), skip_on_source_failed: 0,
+                min_rating: None, unrated_policy: "skip".to_string(),
+                on_success: "next".to_string(), success_goto_step_id: None,
+                on_rating_fail: "break".to_string(), fail_goto_step_id: None,
+                review_type: "ai".to_string(), enabled: 1, created_at: None,
+            },
+            loop_steps::Model {
+                id: 2, loop_id: loop_model.id, name: "步骤B".to_string(),
+                description: String::new(), order_index: 1, todo_id: todo_b,
+                run_mode: "sequential".to_string(), skip_on_source_failed: 0,
+                min_rating: None, unrated_policy: "skip".to_string(),
+                on_success: "next".to_string(), success_goto_step_id: None,
+                on_rating_fail: "break".to_string(), fail_goto_step_id: None,
+                review_type: "ai".to_string(), enabled: 1, created_at: None,
+            },
+        ];
+        let result = runner.check_workspace_consistency(&loop_model, &steps).await;
+        assert!(result.is_ok(), "同一工作空间下应通过：{:?}", result.err());
+    }
+
+    /// 校验：step 的 todo 在另一工作空间 → 报错。
+    #[tokio::test]
+    async fn test_check_workspace_consistency_mismatch() {
+        let (runner, db) = make_test_runner().await;
+        let ws1 = create_workspace(&db, 1).await;
+        let ws2 = create_workspace(&db, 2).await;
+        // todo_a 在 ws1，todo_b 在 ws2
+        let todo_a = db.create_todo_with_extras("task A", "do A", None, None, false, ws1, "/tmp/ws1").await.unwrap();
+        let todo_b = db.create_todo_with_extras("task B", "do B", None, None, false, ws2, "/tmp/ws2").await.unwrap();
+        // loop 属于 ws1
+        let loop_model = db.create_loop("test-loop", "", Some(ws1), Some("/tmp/ws1"), false, "loop", None, None, None, "[]").await.unwrap();
+        let steps = vec![
+            loop_steps::Model {
+                id: 1, loop_id: loop_model.id, name: "步骤A".to_string(),
+                description: String::new(), order_index: 0, todo_id: todo_a,
+                run_mode: "sequential".to_string(), skip_on_source_failed: 0,
+                min_rating: None, unrated_policy: "skip".to_string(),
+                on_success: "next".to_string(), success_goto_step_id: None,
+                on_rating_fail: "break".to_string(), fail_goto_step_id: None,
+                review_type: "ai".to_string(), enabled: 1, created_at: None,
+            },
+            loop_steps::Model {
+                id: 2, loop_id: loop_model.id, name: "步骤B".to_string(),
+                description: String::new(), order_index: 1, todo_id: todo_b,
+                run_mode: "sequential".to_string(), skip_on_source_failed: 0,
+                min_rating: None, unrated_policy: "skip".to_string(),
+                on_success: "next".to_string(), success_goto_step_id: None,
+                on_rating_fail: "break".to_string(), fail_goto_step_id: None,
+                review_type: "ai".to_string(), enabled: 1, created_at: None,
+            },
+        ];
+        let result = runner.check_workspace_consistency(&loop_model, &steps).await;
+        assert!(result.is_err(), "跨工作空间应报错");
+        let err_msg = result.unwrap_err();
+        assert!(err_msg.contains("步骤B"), "错误信息应包含跨空间的步骤名");
+        assert!(err_msg.contains("不一致"), "错误信息应提示工作空间不一致");
+    }
+
+    /// 校验：loop 和 todos 都未设置工作空间（workspace_id=0/None）→ 通过。
+    /// 注：todos.workspace_id 列定义 NOT NULL DEFAULT 0，未分配工作空间时为 0；
+    /// loop.workspace_id 可选，未分配时为 None。两者应视为"均未设置"。
+    #[tokio::test]
+    async fn test_check_workspace_consistency_both_unset() {
+        let (runner, db) = make_test_runner().await;
+        // todo_a, todo_b: workspace_id=0（默认值，表示未分配工作空间）
+        let todo_a = db.create_todo_with_executor("task A", "do A", None).await.unwrap();
+        let todo_b = db.create_todo_with_executor("task B", "do B", None).await.unwrap();
+        // loop: workspace_id=None（也视为未分配）
+        let loop_model = db.create_loop("test-loop", "", None, None, false, "loop", None, None, None, "[]").await.unwrap();
+        let steps = vec![
+            loop_steps::Model {
+                id: 1, loop_id: loop_model.id, name: "步骤A".to_string(),
+                description: String::new(), order_index: 0, todo_id: todo_a,
+                run_mode: "sequential".to_string(), skip_on_source_failed: 0,
+                min_rating: None, unrated_policy: "skip".to_string(),
+                on_success: "next".to_string(), success_goto_step_id: None,
+                on_rating_fail: "break".to_string(), fail_goto_step_id: None,
+                review_type: "ai".to_string(), enabled: 1, created_at: None,
+            },
+            loop_steps::Model {
+                id: 2, loop_id: loop_model.id, name: "步骤B".to_string(),
+                description: String::new(), order_index: 1, todo_id: todo_b,
+                run_mode: "sequential".to_string(), skip_on_source_failed: 0,
+                min_rating: None, unrated_policy: "skip".to_string(),
+                on_success: "next".to_string(), success_goto_step_id: None,
+                on_rating_fail: "break".to_string(), fail_goto_step_id: None,
+                review_type: "ai".to_string(), enabled: 1, created_at: None,
+            },
+        ];
+        let result = runner.check_workspace_consistency(&loop_model, &steps).await;
+        // todo.workspace_id=Some(0) vs loop.workspace_id=None 在数据库中分别表示"未分配"，
+        // check_workspace_consistency 会将 0 和 None 统一视为"未设置"，二者等价，应通过。
+        assert!(result.is_ok(), "Some(0) 与 None 均表示未分配工作空间，应视为一致：{:?}", result.err());
+    }
+
+    /// 校验：同一 todo 被多个 step 引用时不会重复检查 → 仍通过。
+    #[tokio::test]
+    async fn test_check_workspace_consistency_duplicate_todo() {
+        let (runner, db) = make_test_runner().await;
+        let ws_id = create_workspace(&db, 1).await;
+        let todo_a = db.create_todo_with_extras("task A", "do A", None, None, false, ws_id, "/tmp/ws").await.unwrap();
+        let loop_model = db.create_loop("test-loop", "", Some(ws_id), Some("/tmp/ws"), false, "loop", None, None, None, "[]").await.unwrap();
+        // 两个 step 引用同一个 todo
+        let steps = vec![
+            loop_steps::Model {
+                id: 1, loop_id: loop_model.id, name: "步骤A-1".to_string(),
+                description: String::new(), order_index: 0, todo_id: todo_a,
+                run_mode: "sequential".to_string(), skip_on_source_failed: 0,
+                min_rating: None, unrated_policy: "skip".to_string(),
+                on_success: "next".to_string(), success_goto_step_id: None,
+                on_rating_fail: "break".to_string(), fail_goto_step_id: None,
+                review_type: "ai".to_string(), enabled: 1, created_at: None,
+            },
+            loop_steps::Model {
+                id: 2, loop_id: loop_model.id, name: "步骤A-2".to_string(),
+                description: String::new(), order_index: 1, todo_id: todo_a,
+                run_mode: "sequential".to_string(), skip_on_source_failed: 0,
+                min_rating: None, unrated_policy: "skip".to_string(),
+                on_success: "next".to_string(), success_goto_step_id: None,
+                on_rating_fail: "break".to_string(), fail_goto_step_id: None,
+                review_type: "ai".to_string(), enabled: 1, created_at: None,
+            },
+        ];
+        let result = runner.check_workspace_consistency(&loop_model, &steps).await;
+        assert!(result.is_ok(), "重复引用同一 todo 应通过：{:?}", result.err());
     }
 }

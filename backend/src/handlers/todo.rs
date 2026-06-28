@@ -48,7 +48,7 @@ pub async fn get_todos(
         let cutoff = chrono::Utc::now() - chrono::Duration::hours(h as i64);
         let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%S").to_string();
         todos.into_iter().filter(|t| {
-            // 按 updated_at 过滤
+            // 按 updated_at 过滤（finished_at 字段未在模型上实现，暂统一用 updated_at）
             t.updated_at >= cutoff_str
         }).collect()
     } else {

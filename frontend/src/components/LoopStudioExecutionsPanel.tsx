@@ -295,6 +295,19 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
                       耗时 {durationLabel(e.started_at, e.finished_at)}
                     </span>
                   </div>
+                  {/* 第三行：错误说明（仅在 status=failed 且有 error_message 时显示） */}
+                  {e.status === 'failed' && e.error_message && (
+                    <div style={{
+                      marginTop: 6, padding: '4px 8px',
+                      background: 'var(--color-error-bg, #fff1f0)',
+                      border: '1px solid var(--color-error-border, #ffccc7)',
+                      borderRadius: 4,
+                      fontSize: 12, color: 'var(--color-error-text, #cf1322)',
+                      lineHeight: 1.5, whiteSpace: 'pre-wrap',
+                    }}>
+                      {e.error_message}
+                    </div>
+                  )}
                 </div>
                 {expanded && (
                   <div className="loop-exec-row-detail" style={{

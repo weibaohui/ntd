@@ -1033,7 +1033,7 @@ impl Database {
         let mut conditions = vec![
             "t.deleted_at IS NULL".to_string(),
             "t.status IN ('completed', 'failed')".to_string(),
-            format!("er.finished_at >= {}", time_filter),
+            format!("REPLACE(REPLACE(er.finished_at, 'T', ' '), 'Z', '') >= {}", time_filter),
         ];
         // 按 workspace_id 过滤：仅显示该工作空间下的事项
         if let Some(wid) = workspace_id {

@@ -279,7 +279,7 @@ pub(super) async fn fetch_execution_overall(
         COALESCE(SUM(CASE WHEN json_extract(usage, '$.duration_ms') IS NOT NULL THEN json_extract(usage, '$.duration_ms') ELSE 0 END), 0) as total_duration, \
         COALESCE(SUM(CASE WHEN json_extract(usage, '$.duration_ms') IS NOT NULL THEN 1 ELSE 0 END), 0) as duration_count \
         FROM execution_records \
-        WHERE started_at >= {}",
+        WHERE REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= {}",
         ctx.time_filter
     );
 
@@ -341,7 +341,7 @@ pub(super) async fn fetch_executor_distribution(
         COALESCE(SUM(COALESCE(json_extract(usage, '$.output_tokens'), 0)), 0) as output_tokens, \
         COALESCE(SUM(COALESCE(json_extract(usage, '$.total_cost_usd'), 0.0)), 0.0) as cost \
         FROM execution_records \
-        WHERE started_at >= {} \
+        WHERE REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= {} \
         GROUP BY COALESCE(executor, 'claudecode')",
         ctx.time_filter
     );
@@ -391,7 +391,7 @@ pub(super) async fn fetch_model_distribution(
         COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_creation_input_tokens'), 0)), 0) as cache_creation, \
         COALESCE(SUM(COALESCE(json_extract(usage, '$.total_cost_usd'), 0.0)), 0.0) as cost \
         FROM execution_records \
-        WHERE started_at >= {} \
+        WHERE REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= {} \
         GROUP BY COALESCE(model, 'unknown')",
         ctx.time_filter
     );
@@ -440,7 +440,7 @@ pub(super) async fn fetch_trigger_distribution(
         COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success_count, \
         COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed_count \
         FROM execution_records \
-        WHERE started_at >= {} \
+        WHERE REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= {} \
         GROUP BY COALESCE(trigger_type, 'manual')",
         ctx.time_filter
     );
@@ -476,7 +476,7 @@ pub(super) async fn fetch_executor_durations(
         ROUND(AVG(json_extract(usage, '$.duration_ms')), 0) as avg_duration, \
         COUNT(*) as execution_count \
         FROM execution_records \
-        WHERE started_at >= {} AND json_extract(usage, '$.duration_ms') IS NOT NULL \
+        WHERE REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= {} AND json_extract(usage, '$.duration_ms') IS NOT NULL \
         GROUP BY COALESCE(executor, 'claudecode')",
         ctx.time_filter
     );
@@ -510,7 +510,7 @@ pub(super) async fn fetch_model_cache_stats(
         COALESCE(SUM(COALESCE(json_extract(usage, '$.input_tokens'), 0)), 0) as input_tokens, \
         COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_read_input_tokens'), 0)), 0) as cache_read \
         FROM execution_records \
-        WHERE started_at >= {} AND model IS NOT NULL \
+        WHERE REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= {} AND model IS NOT NULL \
         GROUP BY COALESCE(model, 'unknown')",
         ctx.time_filter
     );
@@ -554,7 +554,7 @@ pub(super) async fn fetch_daily_stats(
         COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_creation_input_tokens'), 0)), 0) as cache_creation, \
         COALESCE(SUM(COALESCE(json_extract(usage, '$.total_cost_usd'), 0.0)), 0.0) as cost \
         FROM execution_records \
-        WHERE started_at IS NOT NULL AND LENGTH(started_at) >= 10 AND started_at >= {} \
+        WHERE started_at IS NOT NULL AND LENGTH(started_at) >= 10 AND REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= {} \
         GROUP BY SUBSTR(started_at, 1, 10) \
         ORDER BY day DESC \
         LIMIT {}",
@@ -613,7 +613,7 @@ pub(super) async fn fetch_tag_distribution(
         COALESCE(SUM(COALESCE(json_extract(er.usage, '$.total_cost_usd'), 0.0)), 0.0) as cost \
         FROM execution_records er \
         INNER JOIN todo_tags tt ON tt.todo_id = er.todo_id \
-        WHERE er.todo_id IS NOT NULL AND er.started_at >= {} \
+        WHERE er.todo_id IS NOT NULL AND REPLACE(REPLACE(er.started_at, 'T', ' '), 'Z', '') >= {} \
         GROUP BY tt.tag_id",
         ctx.time_filter
     );
@@ -667,7 +667,7 @@ pub(super) async fn fetch_recent_executions(
 ) -> Result<Vec<ExecutionRecord>, sea_orm::DbErr> {
     let sql = format!(
         "SELECT id, todo_id, executor, trigger_type, status, started_at, finished_at, usage, task_id, session_id, result, resume_message FROM execution_records \
-        WHERE started_at >= {} \
+        WHERE REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= {} \
         ORDER BY started_at DESC LIMIT 10",
         ctx.time_filter
     );

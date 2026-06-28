@@ -29,6 +29,8 @@ pub struct Model {
     /// 累计执行过的 step 次数（含循环重走）
     #[sea_orm(default_value = "0")]
     pub total_executed_steps: i32,
+    /// 执行失败时的错误说明（如工作空间不一致）。仅在 status=failed 时有值。
+    pub error_message: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
