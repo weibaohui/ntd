@@ -14,9 +14,9 @@
 //!   长/短生命周期分层。
 //! - `Event` 是单一通道的 mpsc 消息流，事件类型由 enum 表达。Agent
 //!   进程 stdout 的所有协议帧都被归一化到这些 variant 上。
-//! - `take_events()` 返回 `Option<mpsc::Receiver<Event>>`：只允许
-//!   取一次，避免多消费者并发读（cc-connect `engine.go:3648-3657`
-//!   ownership 转移模式）。
+//! - `take_events()` 一次性 ownership 转移，Worker 跨整个 session
+//!   持有 receiver 处理多 turn；跨 worker 复用 agent_session 的优化
+//!   在 v1 不做（每次新 turn 都新建 session，性能代价在 v2 再优化）。
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -56,9 +56,9 @@ pub trait Agent: Send + Sync {
 
 /// 一个真正在跑的 AI executor 会话。
 ///
-/// 生命周期：调用方持有 `Box<dyn AgentSession>` → 调 [`send`](Self::send) /
-/// [`take_events`](Self::take_events) → 收到 [`Event::Result`] 表示 turn
-/// 完成 → 继续发下一轮或 [`close`](Self::close) 退出。
+/// 生命周期：调用方持有 `Box<dyn AgentSession>` → 调
+/// [`take_events`](Self::take_events) 拿到 receiver（一次性 ownership 转移）→
+/// 在循环里调 [`send`](Self::send) + 处理 events → 最后 [`close`](Self::close)。
 ///
 /// # `Send` 而非 `Send + Sync`
 ///
@@ -83,11 +83,11 @@ pub trait AgentSession: Send {
         result: PermissionResult,
     ) -> Result<()>;
 
-    /// 取出 events channel 的 receiver。
+    /// 取出 events channel 的 receiver（**一次性** ownership 转移）。
     ///
-    /// 只能调一次：返回 `None` 表示已经被取过。这是 ownership 转移
-    /// 模式，避免多消费者并发读 events。
-    fn take_events(&mut self) -> Option<mpsc::Receiver<Event>>;
+    /// 多次调用是 bug，会 panic（实现层用 `Option::take().expect()`）。
+    /// Worker 在持有 receiver 后跨越整个 session 读 events。
+    fn take_events(&mut self) -> mpsc::Receiver<Event>;
 
     /// 当前 session ID（Claude Code 是磁盘 JSONL 文件名）。
     fn session_id(&self) -> &str;
@@ -162,28 +162,41 @@ pub enum Event {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
+    //! Agent / AgentSession 的单元测试 + mock 实现。
+
     use super::*;
     // Arc 在 trait 定义里不需要（Agent 返回 Box<dyn AgentSession>），
     // 只在 mock 多态调用里用，所以 import 放在 tests mod 内部。
     use std::sync::Arc;
     use parking_lot::Mutex;
 
+    /// 工厂：构造一个 dummy agent session 给跨模块测试用。
+    ///
+    /// 例如 `session.rs` 测试需要验证 `set_agent_session` / `take_agent_session`，
+    /// 不想自己重新写 mock。pub 让 sibling 测试 mod 能直接调用。
+    /// 编译时受 `#[cfg(test)]` 约束，不会进 release 构建。
+    pub fn dummy_agent_session() -> Box<dyn AgentSession> {
+        Box::new(MockAgentSession::new("dummy".into()))
+    }
+
     /// MockAgent：实现 Agent trait，spawn MockAgentSession。
-    struct MockAgent {
+    pub struct MockAgent {
         name: &'static str,
         /// 启动过的 session 计数（用于断言）。
         started: Arc<Mutex<u32>>,
     }
 
     impl MockAgent {
-        fn new(name: &'static str) -> Self {
+        /// 构造一个新的 mock agent，name 是 `Agent::name()` 的返回值。
+        pub fn new(name: &'static str) -> Self {
             Self {
                 name,
                 started: Arc::new(Mutex::new(0)),
             }
         }
-        fn started_count(&self) -> u32 {
+        /// 测试断言：累计启动过的 session 数。
+        pub fn started_count(&self) -> u32 {
             *self.started.lock()
         }
     }
@@ -216,14 +229,15 @@ mod tests {
 
     /// MockAgentSession：用 mpsc channel 模拟 agent event 流。
     /// `take_events` 一次性返回 receiver；后续 `send` 不真做事。
-    struct MockAgentSession {
+    pub struct MockAgentSession {
         id: String,
         events: Option<mpsc::Receiver<Event>>,
         alive: bool,
     }
 
     impl MockAgentSession {
-        fn new(id: String) -> Self {
+        /// 构造一个新 mock agent session，预置 Text + Result + Closed 三条 event。
+        pub fn new(id: String) -> Self {
             // 预置一条 Text + Closed，模拟「agent 立即回复并退出」。
             let (tx, rx) = mpsc::channel(8);
             tx.try_send(Event::Text("hello".into())).unwrap();
@@ -256,8 +270,13 @@ mod tests {
             Ok(())
         }
 
-        fn take_events(&mut self) -> Option<mpsc::Receiver<Event>> {
-            self.events.take()
+        fn take_events(&mut self) -> mpsc::Receiver<Event> {
+            // 一次性 ownership 转移。多次调用是 bug，expect 让它炸出来。
+            // 比 `Option<Receiver>` 更明确：调用方拿到 receiver 后就
+            // 不能再来第二次，文档和 panic 双重保证。
+            self.events
+                .take()
+                .expect("AgentSession::take_events called twice — 这是 bug")
         }
 
         fn session_id(&self) -> &str {
@@ -282,6 +301,7 @@ mod tests {
     }
 
     /// Agent::start_session 必须 spawn session 并返回 sender session_id。
+    /// take_events 一次性：第二次调用必须 panic（避免调用方误用）。
     #[tokio::test]
     async fn test_agent_start_session_returns_session() {
         let agent = Arc::new(MockAgent::new("claude-code"));
@@ -293,11 +313,15 @@ mod tests {
         assert_eq!(session.session_id(), "new");
         assert!(session.alive());
         assert_eq!(agent.started_count(), 1);
-        // take_events 拿到 receiver；后续再 take 返回 None。
-        let rx = session.take_events();
-        assert!(rx.is_some());
-        let rx2 = session.take_events();
-        assert!(rx2.is_none(), "take_events 只能调一次（ownership 转移）");
+
+        // 第一次 take_events 拿到 receiver。
+        let _rx = session.take_events();
+
+        // 第二次必须 panic：所有权已转移。
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            session.take_events();
+        }));
+        assert!(result.is_err(), "take_events 二次调用应 panic（防误用）");
     }
 
     /// resume 模式：session_id=Some(id) 时透传给 session。
@@ -311,7 +335,7 @@ mod tests {
             .unwrap();
         assert_eq!(session.session_id(), "abc-123");
         // take 掉 events 避免 drop warning。
-        let _ = session.take_events();
+        let _rx = session.take_events();
     }
 
     /// Event 序列化稳定：Text / Result / Closed 等 variant 必须能 serde。
@@ -357,7 +381,7 @@ mod tests {
             .start_session(&AgentContext::default(), None)
             .await
             .unwrap();
-        let mut rx = session.take_events().unwrap();
+        let mut rx = session.take_events();
 
         // 依次读取预置的 Text / Result / Closed。
         let e1 = rx.recv().await.unwrap();

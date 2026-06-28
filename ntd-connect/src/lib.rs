@@ -18,7 +18,9 @@
 pub mod agent;
 pub mod channel;
 pub mod dedup;
+pub mod dispatcher;
 pub mod error;
 pub mod http;
+pub mod session;
 pub mod types;
 pub mod typing;

@@ -37,9 +37,13 @@ parking_lot = "0.12"
 # lru：基于哈希的 LRU 缓存。cc-connect `core/dedup.go` 也用 LRU，
 # 容量 4096 + TTL 60s 是经验值。
 lru = "0.12"
-# tokio 仅启用必要 feature（M1.4 dedup 暂不直接用，但 M2 dispatcher
-# 需要 JoinSet/Semaphore 等，提前引入减少 Cargo.toml 改动次数）。
-tokio = { version = "1", features = ["sync", "rt", "time", "macros"] }
+# dashmap：SessionManager 的 session map 多 reader / 多 writer，
+# 用 sharded map 比 parking_lot::Mutex<HashMap> 性能好。backend
+# 也在用，可对齐经验。
+dashmap = "6"
+# tokio：M2 dispatcher 需要 JoinSet / Semaphore / spawn。
+# features 按需开：rt-multi-thread 给 JoinSet 用、time 给 sleep 用。
+tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "time", "macros"] }
 
 [dev-dependencies]
 # 单元测试暂不需要外部 dev-dep；M2 dispatcher 测试会加 tokio test runtime。

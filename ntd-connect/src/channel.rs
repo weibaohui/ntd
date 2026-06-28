@@ -68,6 +68,19 @@ pub trait Channel: Send + Sync {
     /// 调用后 channel 不再发消息；handler 也不会再被调用。上层在
     /// shutdown / 配置变更时调用。
     async fn stop(&self) -> Result<()>;
+
+    /// 「处理中」typing 反应能力探测。
+    ///
+    /// 默认返回 `None`，表示 channel 不支持 typing（如没有 typing API 的平台）。
+    /// 飞书等支持 reaction 作为 typing 指示的平台应 override 返回
+    /// `Some(self)`（前提是 self 也实现了 [`crate::typing::TypingIndicator`]）。
+    ///
+    /// 这是 cc-connect Go 的「optional interface assertion」模式：
+    /// `if p, ok := p.(TypingIndicator); ok` 的 Rust 版。
+    /// default impl 让不支持的平台不用写 boilerplate。
+    fn as_typing_indicator(&self) -> Option<&dyn crate::typing::TypingIndicator> {
+        None
+    }
 }
 
 /// Dispatcher 实现此 trait 接收 channel 派发的入站消息。
@@ -89,7 +102,8 @@ pub trait MessageHandler: Send + Sync {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
+    //! Channel / MessageHandler 的单元测试 + mock 实现。
     use super::*;
     use crate::types::{FeishuChatType, IncomingContent, PlatformKind, SenderId, SessionKey};
     use parking_lot::Mutex;
@@ -99,7 +113,7 @@ mod tests {
     /// 设计要点：测试全程直接持有 `Arc<MockChannel>`，需要时再 cast 成
     /// `Arc<dyn Channel>` 调 trait 方法。避免 trait object downcast 的麻烦。
     #[derive(Debug)]
-    struct MockChannel {
+    pub struct MockChannel {
         name: &'static str,
         calls: Mutex<Vec<&'static str>>,
     }
@@ -111,14 +125,15 @@ mod tests {
     }
 
     impl MockChannel {
-        fn new(name: &'static str) -> Self {
+        /// 构造一个新的 mock channel，name 是 `Channel::name()` 的返回值。
+        pub fn new(name: &'static str) -> Self {
             Self {
                 name,
                 calls: Mutex::new(Vec::new()),
             }
         }
         /// 测试断言：拿到一份调用记录的快照。
-        fn calls_snapshot(&self) -> Vec<&'static str> {
+        pub fn calls_snapshot(&self) -> Vec<&'static str> {
             self.calls.lock().clone()
         }
     }
