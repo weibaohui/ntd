@@ -286,7 +286,7 @@ impl LoopTriggerDispatcher {
         let id = self
             .runner
             .clone()
-            .spawn_run(loop_id, trigger_id, trigger_type, meta);
+            .spawn_run(loop_id, trigger_id, trigger_type, meta, None, None);
         info!(
             "loop_trigger: started loop #{} execution #{} via {}",
             loop_id, id, trigger_type

@@ -166,6 +166,8 @@ impl MessageDebounce {
                                 loop_runner.clone(),
                                 last.todo_id, // loop_id
                                 &merged_content,
+                                Some(last.bot_id),
+                                Some(last.sender.clone()),
                             )
                             .await
                         }
@@ -377,6 +379,8 @@ impl MessageDebounce {
         loop_runner: Option<Arc<crate::services::loop_runner::LoopRunner>>,
         loop_id: i64,
         message: &str,
+        feishu_bot_id: Option<i64>,
+        feishu_receive_id: Option<String>,
     ) -> Result<crate::executor_service::ExecutionResult, ()> {
         // 检查环路是否存在且状态为 enabled
         let loop_ = match db.get_loop(loop_id).await {
@@ -414,6 +418,8 @@ impl MessageDebounce {
             None, // trigger_id
             "default_response",
             meta,
+            feishu_bot_id,
+            feishu_receive_id,
         );
 
         if execution_id < 0 {

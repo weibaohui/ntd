@@ -86,6 +86,8 @@ impl LoopRunner {
         trigger_id: Option<i64>,
         trigger_type: &str,
         trigger_meta: serde_json::Value,
+        feishu_bot_id: Option<i64>,
+        feishu_receive_id: Option<String>,
     ) -> i64 {
         let this = self.clone();
         let trigger_type = trigger_type.to_string();
@@ -118,27 +120,60 @@ impl LoopRunner {
 
         let this2 = self.clone();
         let this2_for_err = self.clone();
+        let this2_for_callback = self.clone();
         tokio::spawn(async move {
-            if let Err(e) = this2
+            let run_result = this2
                 .run_inner(loop_id, loop_execution_id, trigger_type)
-                .await
-            {
-                error!("loop_runner: run failed: {}", e);
-                // 终态化 loop execution
-                let _ = this2_for_err
-                    .ctx
-                    .db
-                    .finish_loop_execution(
-                        loop_execution_id,
-                        "failed",
-                        0,
-                        0,
-                    )
-                    .await;
-                // 触发异常处理 Todo（传入 0 作为步数/Token 统计）
-                let _ = this2_for_err
-                    .trigger_abnormal_handler(loop_id, loop_execution_id, "failed", 0, 0)
-                    .await;
+                .await;
+
+            match run_result {
+                Ok(()) => {
+                    // 环路执行成功：获取黑板文本并通过 ExecutorDirectResponse 发回飞书
+                    if let Some(ref receive_id) = feishu_receive_id {
+                        let blackboard = this2_for_callback
+                            .get_loop_blackboard_text(loop_execution_id, &trigger_meta)
+                            .await;
+                        info!(
+                            "[loop-runner] loop {} execution {} completed, sending result to Feishu",
+                            loop_id, loop_execution_id
+                        );
+                        this2_for_callback
+                            .send_result_to_feishu(
+                                feishu_bot_id,
+                                receive_id,
+                                &blackboard,
+                            )
+                            .await;
+                    }
+                }
+                Err(e) => {
+                    error!("loop_runner: run failed: {}", e);
+                    // 终态化 loop execution
+                    let _ = this2_for_err
+                        .ctx
+                        .db
+                        .finish_loop_execution(
+                            loop_execution_id,
+                            "failed",
+                            0,
+                            0,
+                        )
+                        .await;
+                    // 触发异常处理 Todo（传入 0 作为步数/Token 统计）
+                    let _ = this2_for_err
+                        .trigger_abnormal_handler(loop_id, loop_execution_id, "failed", 0, 0)
+                        .await;
+                    // 失败路径也发回消息
+                    if let Some(ref receive_id) = feishu_receive_id {
+                        this2_for_err
+                            .send_result_to_feishu(
+                                feishu_bot_id,
+                                receive_id,
+                                &format!("环路执行失败：{}", e),
+                            )
+                            .await;
+                    }
+                }
             }
         });
 
@@ -830,6 +865,31 @@ impl LoopRunner {
     }
 
     /// 从 execution_record 提取结论摘要。
+    /// 获取环路执行的黑板文本（供外部调用，如执行完成回发飞书时使用）
+    pub async fn get_loop_blackboard_text(
+        &self,
+        loop_execution_id: i64,
+        _trigger_meta: &serde_json::Value,
+    ) -> String {
+        self.build_blackboard_text(loop_execution_id).await
+    }
+
+    /// 通过 ExecutorDirectResponse 事件把环路执行结果发回飞书
+    pub async fn send_result_to_feishu(
+        &self,
+        feishu_bot_id: Option<i64>,
+        receive_id: &str,
+        text: &str,
+    ) {
+        let Some(bot_id) = feishu_bot_id else { return };
+        let _ = self.tx.send(crate::handlers::ExecEvent::ExecutorDirectResponse {
+            bot_id,
+            receive_id: receive_id.to_string(),
+            receive_id_type: "open_id".to_string(),
+            content: text.to_string(),
+        });
+    }
+
     async fn extract_conclusion(&self, record_id: i64) -> String {
         let rec = self
             .ctx
