@@ -1,4 +1,5 @@
 pub mod auto_review;
+pub mod channel_registry;
 pub mod feishu_history_fetcher;
 pub mod feishu_listener;
 pub mod feishu_push;

@@ -47,6 +47,10 @@ rusqlite = { version = "0.30", features = ["bundled"] }
 mime_guess = "2"
 sea-orm = { version = "1", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros", "with-chrono", "with-json"] }
 sqlx = { version = "0.7", default-features = false, features = ["sqlite", "runtime-tokio-rustls"] }
+# ntd-connect：多 channel → 多 executor 桥的抽象层（Channel / Agent /
+# TypingIndicator trait + Dispatcher）。M3 起 backend 逐步把
+# feishu_listener.rs 的协议层迁过去。
+ntd-connect = { path = "../ntd-connect" }
 # wait-timeout：给 WorktreeService 的 git 子命令加超时，避免 git 在持有锁 / I/O 卡顿时无限阻塞。
 # 已经在 lockfile 里作为传递依赖存在，直接 pin 为主依赖避免被传递路径剔除。
 wait-timeout = "0.2"

@@ -25,6 +25,7 @@ use crate::config::Config;
 use crate::db::Database;
 use crate::models::{ApiResponse, ParsedLogEntry};
 use crate::scheduler::TodoScheduler;
+use crate::services::channel_registry::ChannelRegistry;
 use crate::services::feishu_listener::FeishuListener;
 use crate::task_manager::{TaskManager, TaskInfo};
 
@@ -43,6 +44,10 @@ pub struct AppState {
     /// for the same rationale.
     pub config: Arc<std::sync::RwLock<Config>>,
     pub feishu_listener: Arc<FeishuListener>,
+    /// 多 bot 飞书 channel 注册表（M3 起逐步替代 `feishu_listener`）。
+    /// key = bot_id，value = 已构造并 start 过的 FeishuPlatform。
+    /// 现在仅 add/has/delete，dispatcher 接入由后续步骤完成。
+    pub channel_registry: Arc<ChannelRegistry>,
     pub feishu_push_mutator: broadcast::Sender<crate::services::feishu_push::PushConfigUpdate>,
     /// Loop Studio: 独立 cron 调度器（None 表示 loop 功能未启用或初始化失败）
     pub loop_scheduler: Option<Arc<crate::services::loop_scheduler::LoopScheduler>>,
@@ -1067,6 +1072,7 @@ fn build_app_state(
         task_manager,
         config,
         feishu_listener: feishu_listener.clone(),
+        channel_registry: Arc::new(ChannelRegistry::new()),
         feishu_push_mutator: push_mutator,
         loop_scheduler,
         loop_trigger_dispatcher,
