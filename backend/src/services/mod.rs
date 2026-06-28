@@ -8,5 +8,6 @@ pub mod loop_runner;
 pub mod loop_scheduler;
 pub mod loop_trigger;
 pub mod message_debounce;
+pub mod message_router;
 pub mod usage_stats;
 pub mod worktree;
