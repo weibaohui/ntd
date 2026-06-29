@@ -89,7 +89,7 @@ impl PiExecutor {
         flushed
     }
 
-    /// "message_update" 事件：text_delta / text_end / thinking_delta / thinking_end 四个 sub-type。
+    /// "message_update" 事件：text_delta / text_end / thinking_delta / thinking_end / toolcall_end 五个 sub-type。
     fn handle_message_update(&self, ame: Option<&PiAssistantMessageEvent>) -> Option<ParsedLogEntry> {
         let Some(ame) = ame else { return None };
         // 提取 model：顶层优先，partial 兜底；空串视为无
@@ -101,6 +101,7 @@ impl PiExecutor {
             Some("text_end") => self.handle_text_end(ame.usage.as_ref()),
             Some("thinking_delta") => self.handle_thinking_delta(ame.delta.as_deref()),
             Some("thinking_end") => self.handle_thinking_end(ame),
+            Some("toolcall_end") => self.handle_toolcall_end(ame),
             _ => None,
         }
     }
@@ -248,6 +249,30 @@ impl PiExecutor {
         }
         // partial 无 thinking 块时，flush 缓冲的 thinking_delta 兜底
         self.flush_pending_thinking()
+    }
+
+    /// "toolcall_end" 事件：partial.content 中可能包含 thinking 块，
+    /// 在该事件到达前可能没有 thinking_end（例如工具调用紧接思考后未发 thinking_end）。
+    /// 提取 thinking 并输出，避免思考内容丢失。
+    fn handle_toolcall_end(&self, ame: &PiAssistantMessageEvent) -> Option<ParsedLogEntry> {
+        // 优先从 partial.content 提取 Thinking 块
+        if let Some(content) = ame.partial.as_ref().and_then(|p| {
+            p.content.iter().find_map(|block| match block {
+                PiContentBlock::Thinking { thinking } => thinking.clone(),
+                _ => None,
+            })
+        }) {
+            let trimmed = content.trim().to_string();
+            if !trimmed.is_empty() {
+                // partial 有完整 thinking 内容，丢弃已缓冲的 thinking_delta 碎片
+                self.pending_thinking.lock().clear();
+                return Some(helpers::entry("thinking", trimmed));
+            }
+        }
+        // partial 无 thinking 时，flush 缓冲的 thinking_delta 兜底
+        let thinking = self.flush_pending_thinking();
+        if thinking.is_some() { return thinking; }
+        self.flush_pending_text()
     }
 
     /// 将缓冲的 text_delta 内容作为一个 assistant 日志条目刷出。
