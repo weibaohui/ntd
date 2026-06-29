@@ -47,6 +47,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V41ConsolidatedLoopFeatures),      // V6~V12,V14~V19,V23,V24,V26~V29
         Box::new(V42ConsolidatedWorkspaceRefactor), // V30~V35
         Box::new(V43ConsolidatedFinalFeatures),     // V36~V40
+        Box::new(V44AddFeishuMessagesProcessedId),  // 补加 processed_id / processed_type
     ]
 }
 
@@ -3096,6 +3097,30 @@ impl Migration for V43ConsolidatedFinalFeatures {
         drop_column_if_exists(db, "feishu_messages", "processed_todo_id").await?;
 
         tracing::info!("V43 (consolidated_final_features) applied");
+        Ok(())
+    }
+}
+
+/// V44: 补加 feishu_messages.processed_id / processed_type 列。
+///
+/// V1 的 CREATE TABLE IF NOT EXISTS 当前代码虽包含这两列，但老数据库可能是在
+/// 这两列加入 CREATE TABLE 之前创建的，IF NOT EXISTS 不会给已有表加列。
+/// V43 合并迁移（V39）补了 workspace_id，但从未添加 processed_id / processed_type，
+/// 导致 get_feishu_message_stats() 查询 "processed_id IS NOT NULL" 时报
+/// "no such column: processed_id" 错误，handler 返回 500。
+pub(super) struct V44AddFeishuMessagesProcessedId;
+
+#[async_trait::async_trait]
+impl Migration for V44AddFeishuMessagesProcessedId {
+    fn version(&self) -> i64 { 44 }
+    fn name(&self) -> &'static str { "add_feishu_messages_processed_id" }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        add_column_if_missing(db, "feishu_messages", "processed_id",
+            "ALTER TABLE feishu_messages ADD COLUMN processed_id INTEGER").await?;
+        add_column_if_missing(db, "feishu_messages", "processed_type",
+            "ALTER TABLE feishu_messages ADD COLUMN processed_type TEXT").await?;
+        tracing::info!("V44: feishu_messages.processed_id/processed_type columns added");
         Ok(())
     }
 }
