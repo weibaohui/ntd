@@ -375,6 +375,10 @@ async fn create_feishu_messages(db: &Database) -> Result<(), sea_orm::DbErr> {
             is_history INTEGER DEFAULT 0,
             fetch_time TEXT,
             created_at TEXT,
+            execution_record_id INTEGER,
+            workspace_id INTEGER,
+            processed_id INTEGER,
+            processed_type TEXT,
             FOREIGN KEY (bot_id) REFERENCES agent_bots(id) ON DELETE CASCADE
         )",
     )
