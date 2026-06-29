@@ -392,6 +392,7 @@ function AppContent() {
                 forcedListMode={forcedListMode}
                 onListModeChange={() => setForcedListMode(undefined)}
                 effectiveMobilePanel={effectiveMobilePanel}
+                onOpenPost={handleOpenPost}
               />
             ) : (
               <TodoPage

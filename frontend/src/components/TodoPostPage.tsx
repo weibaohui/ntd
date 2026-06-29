@@ -269,6 +269,7 @@ export function TodoPostPage({
             replyLoading={replyLoading}
             onOpenLogDrawer={openLogDrawer}
             resolveExecutionStats={resolveExecutionStats}
+            todoTitle={todoTitle}
           />
         ))
       )}
@@ -301,6 +302,7 @@ function ThreadGroup({
   replyLoading,
   onOpenLogDrawer,
   resolveExecutionStats,
+  todoTitle,
 }: {
   group: SessionGroup;
   getNextFloor: () => number;
@@ -310,6 +312,7 @@ function ThreadGroup({
   replyLoading: boolean;
   onOpenLogDrawer: (id: number) => void;
   resolveExecutionStats: (r: ExecutionRecord, running: boolean) => any;
+  todoTitle: string;
 }) {
   const allRecords = group.records;
   const lastRecord = allRecords[allRecords.length - 1];
@@ -326,6 +329,7 @@ function ThreadGroup({
           onStop={onStop}
           onOpenLogDrawer={onOpenLogDrawer}
           resolveExecutionStats={resolveExecutionStats}
+          todoTitle={todoTitle}
         />
       ))}
       <ReplyRow record={lastRecord} onReply={onReply} loading={replyLoading} />
@@ -343,6 +347,7 @@ function PostCard({
   onStop,
   onOpenLogDrawer,
   resolveExecutionStats,
+  todoTitle,
 }: {
   record: ExecutionRecord;
   floor: number;
@@ -351,6 +356,7 @@ function PostCard({
   onStop: (id: number) => Promise<void>;
   onOpenLogDrawer: (id: number) => void;
   resolveExecutionStats: (r: ExecutionRecord, running: boolean) => any;
+  todoTitle?: string;
 }) {
   const isRunning = record.status === "running";
   const [elapsedSec, setElapsedSec] = useState(
@@ -379,7 +385,7 @@ function PostCard({
         marginBottom: 2,
       }}
     >
-      {/* 帖子头 */}
+      {/* 帖子头：楼号、标题、状态和操作按钮 */}
       <div
         style={{
           display: "flex",
@@ -390,69 +396,25 @@ function PostCard({
           borderBottom: "1px dashed var(--color-border-light)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 14, fontWeight: 700, color: "var(--color-primary)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: "var(--color-primary)", flexShrink: 0 }}>
             #{floor}
           </span>
-          {isContinuation && (
-            <>
-              <LinkOutlined style={{ fontSize: 12, color: "var(--color-primary)" }} />
-              {record.resume_message ? (
-                <span style={{
-                  fontSize: 12,
-                  color: "var(--color-text-secondary)",
-                  fontStyle: "italic",
-                  maxWidth: 300,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}>
-                  {String(record.resume_message).length > 40
-                    ? String(record.resume_message).substring(0, 40) + "..."
-                    : record.resume_message}
-                </span>
-              ) : (
-                <span style={{ fontSize: 12, color: "var(--color-text-tertiary)" }}>
-                  继续对话
-                </span>
-              )}
-            </>
-          )}
-          {record.executor && !isContinuation && <ExecutorBadge executor={record.executor} />}
-          {record.model && (
-            <Tag color="#3b82f6" style={{ margin: 0, fontSize: 11 }}>
-              {record.model}
-            </Tag>
-          )}
-          <span style={{ fontSize: 12, color: "var(--color-text-tertiary)" }}>
-            {formatLocalDateTime(record.started_at)}
+          {isContinuation && <LinkOutlined style={{ fontSize: 12, color: "var(--color-primary)", flexShrink: 0 }} />}
+          <span style={{
+            fontSize: 13,
+            fontWeight: 500,
+            color: "var(--color-text)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}>
+            {isContinuation
+              ? (record.resume_message
+                  ? String(record.resume_message)
+                  : "继续对话")
+              : todoTitle || "初始执行"}
           </span>
-          <Tag
-            color={
-              record.trigger_type === "cron"
-                ? "#8b5cf6"
-                : record.trigger_type?.startsWith("hook:")
-                ? "#a855f7"
-                : "#6b7280"
-            }
-            style={{ margin: 0, fontSize: 11 }}
-          >
-            {record.trigger_type === "cron"
-              ? "Cron"
-              : record.trigger_type?.startsWith("hook:")
-              ? "Hook"
-              : "手动"}
-          </Tag>
-          {!isRunning && record.usage?.duration_ms && (
-            <span style={{ fontSize: 12, color: "var(--color-success)", fontWeight: 600 }}>
-              {formatDurationSec(record.usage.duration_ms / 1000)}
-            </span>
-          )}
-          {isRunning && elapsedSec > 0 && (
-            <span style={{ fontSize: 12, color: "var(--color-info)", fontWeight: 600 }}>
-              {formatDurationSec(elapsedSec)}
-            </span>
-          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span
@@ -502,8 +464,50 @@ function PostCard({
         </div>
       )}
 
-      {/* worktree 路径：仅当 record.worktree_path 非空时渲染，与 RecordDetailView 同款展示 */}
+      {/* worktree 路径：仅当 record.worktree_path 非空时渲染 */}
       <WorktreePathDisplay worktreePath={record.worktree_path ?? null} />
+
+      {/* 元信息：执行器、时间、触发类型、耗时 */}
+      <div style={{
+        display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap",
+        marginTop: 8, fontSize: 12,
+      }}>
+        {record.executor && <ExecutorBadge executor={record.executor} />}
+        {record.model && (
+          <Tag color="#3b82f6" style={{ margin: 0, fontSize: 11 }}>
+            {record.model}
+          </Tag>
+        )}
+        <span style={{ color: "var(--color-text-tertiary)" }}>
+          {formatLocalDateTime(record.started_at)}
+        </span>
+        <Tag
+          color={
+            record.trigger_type === "cron"
+              ? "#8b5cf6"
+              : record.trigger_type?.startsWith("hook:")
+              ? "#a855f7"
+              : "#6b7280"
+          }
+          style={{ margin: 0, fontSize: 11 }}
+        >
+          {record.trigger_type === "cron"
+            ? "Cron"
+            : record.trigger_type?.startsWith("hook:")
+            ? "Hook"
+            : "手动"}
+        </Tag>
+        {!isRunning && record.usage?.duration_ms && (
+          <span style={{ color: "var(--color-success)", fontWeight: 600 }}>
+            {formatDurationSec(record.usage.duration_ms / 1000)}
+          </span>
+        )}
+        {isRunning && elapsedSec > 0 && (
+          <span style={{ color: "var(--color-info)", fontWeight: 600 }}>
+            {formatDurationSec(elapsedSec)}
+          </span>
+        )}
+      </div>
 
       {/* 统计 */}
       <div style={{

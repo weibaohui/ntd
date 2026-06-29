@@ -1,14 +1,10 @@
-import { useState, useCallback } from 'react';
-import { UnorderedListOutlined, PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
-import { Button, Popconfirm, App } from 'antd';
+import { UnorderedListOutlined, PlusOutlined } from '@ant-design/icons';
+import { Button } from 'antd';
 import { PageCard } from '../common/PageCard';
 import { TodoList } from '../TodoList';
 import { TodoDetail } from '../TodoDetail';
-import { TodoDrawer } from '../TodoDrawer';
 import { EmptyDetailPlaceholder } from '../EmptyDetailPlaceholder';
 import { SIDEBAR_WIDTH } from '@/constants';
-import { useApp } from '@/hooks/useApp';
-import * as db from '@/utils/database';
 
 interface TodoMobilePageProps {
   selectedTodoId: string | number | null;
@@ -20,13 +16,13 @@ interface TodoMobilePageProps {
   forcedListMode?: 'item' | 'loop';
   onListModeChange: () => void;
   effectiveMobilePanel: 'list' | 'detail';
+  onOpenPost?: (todoId: number, recordId: number) => void;
 }
 
 /**
- * 移动端事项页面组件
- * 列表页和详情页为两个独立的 PageCard 页面，各自有完整的标题栏
- * 列表页：PageCard 标题为"事项"
- * 详情页：PageCard 标题为具体事项标题，操作按钮在标题栏右侧
+ * 移动端事项页面组件 —— 与桌面端统一设计
+ * 与 PC 端 ListDetailPage 一样，使用 PageCard 包裹详情页内容
+ * 列表页和详情页各自有 PageCard 容器，详情页内 TodoDetail 渲染完整头部
  */
 export function TodoMobilePage({
   selectedTodoId,
@@ -38,25 +34,8 @@ export function TodoMobilePage({
   forcedListMode,
   onListModeChange,
   effectiveMobilePanel,
+  onOpenPost,
 }: TodoMobilePageProps) {
-  const { state, dispatch } = useApp();
-  const { message } = App.useApp();
-  const { todos } = state;
-  const selectedTodo = todos.find(t => t.id === selectedTodoId);
-  const [todoDrawerOpen, setTodoDrawerOpen] = useState(false);
-
-  const handleDelete = useCallback(async () => {
-    if (!selectedTodo) return;
-    try {
-      await db.deleteTodo(selectedTodo.id);
-      dispatch({ type: 'DELETE_TODO', payload: selectedTodo.id });
-      dispatch({ type: 'SELECT_TODO', payload: null });
-      message.success('删除成功');
-    } catch {
-      // ignore: interceptor already shows error
-    }
-  }, [selectedTodo, dispatch, message]);
-
   const listPage = (
     <PageCard
       icon={<UnorderedListOutlined />}
@@ -87,46 +66,21 @@ export function TodoMobilePage({
     </PageCard>
   );
 
-  const detailPage = selectedTodo ? (
+  const detailPage = selectedTodoId ? (
     <PageCard
-      title={selectedTodo.title}
-      extra={
-        <div style={{ display: 'flex', gap: 4 }}>
-          <Button
-            type="text"
-            size="small"
-            icon={<EditOutlined />}
-            onClick={() => setTodoDrawerOpen(true)}
-          />
-          <Popconfirm title="删除任务" description="确定要删除吗？" onConfirm={handleDelete}>
-            <Button type="text" size="small" icon={<DeleteOutlined />} />
-          </Popconfirm>
-        </div>
-      }
-      style={{ height: '100%' }}
-      contentStyle={{ padding: 0, height: 'calc(100% - 43px)' }}
+      icon={<UnorderedListOutlined />}
+      title="事项"
+      style={{ height: '100%', flex: 1, minWidth: 0 }}
+      contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 43px)', overflow: 'hidden' }}
     >
-      <TodoDetail hideTitleRow={true} />
-      <TodoDrawer
-        open={todoDrawerOpen}
-        todo={selectedTodo}
-        tags={state.tags}
-        onClose={() => setTodoDrawerOpen(false)}
-        onSaved={() => {
-          // 只刷新当前 workspace 桶
-          const wid = state.selectedWorkspace;
-          if (wid != null) {
-            db.getAllTodos(wid).then(todos => {
-              dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
-            });
-          }
-        }}
-      />
+      <TodoDetail onOpenPost={onOpenPost} />
     </PageCard>
   ) : (
     <PageCard
-      style={{ height: '100%' }}
-      contentStyle={{ padding: 0, height: 'calc(100% - 43px)' }}
+      icon={<UnorderedListOutlined />}
+      title="事项"
+      style={{ height: '100%', flex: 1, minWidth: 0 }}
+      contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 43px)', overflow: 'hidden' }}
     >
       <EmptyDetailPlaceholder />
     </PageCard>

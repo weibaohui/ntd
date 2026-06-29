@@ -1,10 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
-import { RetweetOutlined, PlusOutlined, ThunderboltOutlined, CopyOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
-import { Button, Space, Tooltip, Popconfirm, message } from 'antd';
+import { RetweetOutlined, PlusOutlined } from '@ant-design/icons';
+import { Button, message } from 'antd';
 import { PageCard } from '../common/PageCard';
 import { TodoList } from '../TodoList';
 import { LoopDetailPanel } from '../LoopStudioDetailPanel';
-import { LoopFormModal } from '../LoopFormModal';
 import { EmptyDetailPlaceholder } from '../EmptyDetailPlaceholder';
 import { SIDEBAR_WIDTH } from '@/constants';
 import * as dbLoops from '@/utils/database/loops';
@@ -25,10 +24,9 @@ interface LoopMobilePageProps {
 }
 
 /**
- * 移动端环路页面组件
- * 列表页和详情页为两个独立的 PageCard 页面，各自有完整的标题栏
- * 列表页：PageCard 标题为"环路"
- * 详情页：PageCard 标题为具体环路标题，操作按钮在标题栏右侧
+ * 移动端环路页面组件 —— 与桌面端统一设计
+ * 与 PC 端 ListDetailPage 一样，使用 PageCard 包裹详情页内容
+ * 列表页和详情页各自有 PageCard 容器，详情页内 LoopDetailPanel 渲染完整头部
  */
 export function LoopMobilePage({
   selectedLoopId,
@@ -44,7 +42,6 @@ export function LoopMobilePage({
   effectiveMobilePanel,
 }: LoopMobilePageProps) {
   const [loopDetail, setLoopDetail] = useState<LoopDetail | null>(null);
-  const [editModalOpen, setEditModalOpen] = useState(false);
 
   const loadLoopDetail = useCallback(() => {
     if (selectedLoopId === null) {
@@ -137,38 +134,10 @@ export function LoopMobilePage({
 
   const detailPage = selectedLoopId !== null ? (
     <PageCard
-      title={loopDetail?.name ?? '加载中...'}
-      extra={
-        <Space size={4}>
-          <Tooltip title="手动触发">
-            <Button
-              type="primary"
-              size="small"
-              icon={<ThunderboltOutlined />}
-              onClick={handleTrigger}
-              disabled={loopDetail?.status !== 'enabled'}
-            />
-          </Tooltip>
-          <Tooltip title="复制">
-            <Button type="text" size="small" icon={<CopyOutlined />} onClick={handleDuplicate} />
-          </Tooltip>
-          <Tooltip title="编辑">
-            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => setEditModalOpen(true)} />
-          </Tooltip>
-          <Popconfirm
-            title="删除 loop"
-            description="将级联删除 triggers/steps,无法恢复"
-            okType="danger"
-            onConfirm={handleDelete}
-          >
-            <Tooltip title="删除">
-              <Button type="text" size="small" icon={<DeleteOutlined />} />
-            </Tooltip>
-          </Popconfirm>
-        </Space>
-      }
-      style={{ height: '100%' }}
-      contentStyle={{ padding: 0, height: 'calc(100% - 43px)' }}
+      icon={<RetweetOutlined />}
+      title="环路"
+      style={{ height: '100%', flex: 1, minWidth: 0 }}
+      contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 43px)', overflow: 'hidden' }}
     >
       <LoopDetailPanel
         loopId={selectedLoopId}
@@ -181,37 +150,14 @@ export function LoopMobilePage({
           loadLoopDetail();
           onLoopChanged();
         }}
-        hideTitleRow={true}
-      />
-      <LoopFormModal
-        open={editModalOpen}
-        mode="edit"
-        loopId={selectedLoopId ?? undefined}
-        initialData={loopDetail ? {
-          name: loopDetail.name,
-          description: loopDetail.description,
-          workspace_id: loopDetail.workspace_id,
-          webhook_enabled: loopDetail.webhook_enabled,
-          icon: loopDetail.icon,
-          review_template_id: loopDetail.review_template_id ?? null,
-          tag_ids: loopDetail.tag_ids ?? [],
-          limits_config: loopDetail.limits_config,
-          abnormal_handler_todo_id: loopDetail.abnormal_handler_todo_id ?? null,
-          abnormal_handler_trigger_on: loopDetail.abnormal_handler_trigger_on ?? '["capped_step","capped_token","failed"]',
-        } : undefined}
-        tags={tags}
-        onSaved={() => {
-          setEditModalOpen(false);
-          loadLoopDetail();
-          onLoopChanged();
-        }}
-        onClose={() => setEditModalOpen(false)}
       />
     </PageCard>
   ) : (
     <PageCard
-      style={{ height: '100%' }}
-      contentStyle={{ padding: 0, height: 'calc(100% - 43px)' }}
+      icon={<RetweetOutlined />}
+      title="环路"
+      style={{ height: '100%', flex: 1, minWidth: 0 }}
+      contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 43px)', overflow: 'hidden' }}
     >
       <EmptyDetailPlaceholder />
     </PageCard>

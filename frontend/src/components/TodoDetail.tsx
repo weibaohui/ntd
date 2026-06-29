@@ -2,18 +2,13 @@ import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useApp } from '@/hooks/useApp';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useExecutionHistory } from '@/hooks/useExecutionHistory';
-import { Button, Empty, App, Pagination, Modal, Input, Select } from 'antd';
+import { Button, Empty, App, Modal, Input } from 'antd';
 import { CheckCircleOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { TodoDrawer } from './TodoDrawer';
-import { parseLogsToMessages } from './ChatView';
-import { BREAKPOINTS, EXPORT } from '@/constants';
+import { BREAKPOINTS } from '@/constants';
 import * as db from '@/utils/database';
-import { conversationToYaml } from '@/utils/markdown';
-import { getExecutorOption } from '@/types';
-import type { ExecutionRecord, LogEntry } from '@/types';
+import type { ExecutionRecord } from '@/types';
 import { groupBySession } from './todo-detail/helpers';
-import { NarrowHistoryCard } from './todo-detail/NarrowHistoryCard';
-import { ChainGroupCard } from './todo-detail/ChainGroupCard';
 import { DetailHeader } from './todo-detail/DetailHeader';
 import { ForumPostList } from './todo-detail/ForumPostList';
 
@@ -30,8 +25,6 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
   const selectedTodo = todos.find(t => t.id === selectedTodoId);
 
   const [todoDrawerOpen, setTodoDrawerOpen] = useState(false);
-  // viewMode 仅窄屏模式使用（PostDetailDrawer 内部自己管理）
-  const [viewMode, setViewMode] = useState<'log' | 'chat' | 'command'>('log');
 
   // 使用 useExecutionHistory hook 获取执行历史相关的状态和操作
   const {
@@ -41,8 +34,6 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
     historyPage,
     historyLimit,
     historyTotal,
-    historyStatusFilter,
-    setHistoryStatusFilter,
     summary,
     selectedHistoryRecord,
     loadExecutionRecords,
@@ -93,19 +84,11 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
     return Object.values(runningTasks).find(t => t.todoId === record.todo_id) || null;
   };
 
-  const resolveExecutionStats = (record: ExecutionRecord, isRunning: boolean) => {
-    if (isRunning) {
-      const task = getRunningTaskForRecord(record);
-      if (task?.executionStats) return task.executionStats;
-    }
-    return record.execution_stats;
-  };
-
   useEffect(() => {
-    if (!isWide || records.length === 0) return;
+    if (records.length === 0) return;
     if (selectedHistoryRecordId !== null && records.find(r => r.id === selectedHistoryRecordId)) return;
     setSelectedHistoryRecordId(records[0].id);
-  }, [isWide, records, selectedHistoryRecordId]);
+  }, [records, selectedHistoryRecordId]);
 
   const handleExecute = async () => {
     if (!selectedTodo) return;
@@ -176,81 +159,7 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
     }
   };
 
-  const handleStopExecution = async (recordId: number) => {
-    try {
-      await db.stopExecution(recordId);
-      message.info('已发送停止指令');
-      await loadExecutionRecords(historyPage, historyLimit);
-    } catch (error) {
-      message.error('停止失败: ' + (error instanceof Error ? error.message : String(error)));
-    }
-  };
-
-  /**
-   * 给一条执行结果评分或清除评分。
-   * 后端会返回更新后的 record；刷新单条后 dispatcher 会同步本地缓存。
-   */
-  const handleRateExecution = async (recordId: number, rating: number | null) => {
-    await db.rateExecutionRecord(recordId, rating);
-    await refreshSingleRecord(recordId);
-    message.success(rating == null ? '已清除评分' : `已评分 ${rating}`);
-  };
-
   const sessionGroups = useMemo(() => groupBySession(records), [records]);
-
-  const handleReply = async (record: ExecutionRecord, replyMessage: string) => {
-    if (!replyMessage.trim()) return;
-    try {
-      await db.resumeExecutionRecord(record.id, replyMessage);
-      message.success('回复成功，开始执行');
-      await loadExecutionRecords(historyPage, historyLimit);
-    } catch (error) {
-      message.error('回复失败: ' + (error instanceof Error ? error.message : String(error)));
-    }
-  };
-
-  // 窄屏模式兼容：NarrowHistoryCard / ChainGroupCard 仍期望 onOpenResume 回调。
-  // 窄屏暂不做论坛式改造，保留简单 prompt 交互。
-  const handleOpenResume = (record: ExecutionRecord) => {
-    const input = prompt('输入要继续发送的消息：');
-    if (input && input.trim()) {
-      handleReply(record, input.trim());
-    }
-  };
-
-  const parseRecordLogs = (_record: ExecutionRecord): LogEntry[] => {
-    return [];
-  };
-
-  const handleExportMarkdown = async (record: ExecutionRecord) => {
-    let logs: LogEntry[] = [];
-    try {
-      const result = await db.getExecutionLogs(record.id, 1, EXPORT.maxLogs);
-      logs = result.logs;
-    } catch {
-      // ignore
-    }
-    const messages = parseLogsToMessages(logs);
-    const executorLabel = record.executor ? getExecutorOption(record.executor).label : undefined;
-    const content = conversationToYaml(messages, {
-      title: selectedTodo?.title,
-      executor: executorLabel,
-      model: record.model || undefined,
-      startedAt: record.started_at,
-      status: record.status,
-    });
-    const blob = new Blob([content], { type: 'application/x-yaml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    a.download = `exec-${record.id}-${timestamp}.yaml`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    message.success('导出成功');
-  };
 
   const handleStatusChange = useCallback(async (newStatus: string) => {
     if (!selectedTodo) return;
@@ -335,41 +244,22 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
       />
 
       {/* Execution History */}
-      <div
-        style={isWide
-          ? { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }
-          : { paddingBottom: 20, flexShrink: 0 }
-        }
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, ...(isWide ? { flexShrink: 0 } : {}) }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, marginBottom: 12 }}>
           <h4 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: 'var(--color-text)' }}>执行历史</h4>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Select
-              size="small"
-              value={historyStatusFilter}
-              onChange={setHistoryStatusFilter}
-              style={{ width: 100 }}
-              options={[
-                { value: 'all', label: '全部' },
-                { value: 'running', label: '进行中' },
-                { value: 'success', label: '成功' },
-                { value: 'failed', label: '失败' },
-              ]}
-            />
-            <Button
-              type="text"
-              size="small"
-              icon={<ReloadOutlined />}
-              onClick={() => loadExecutionRecords(historyPage, historyLimit)}
-              loading={isExecuting}
-            >
-              刷新
-            </Button>
-          </div>
+          <Button
+            type="text"
+            size="small"
+            icon={<ReloadOutlined />}
+            onClick={() => loadExecutionRecords(historyPage, historyLimit)}
+            loading={isExecuting}
+          >
+            刷新
+          </Button>
         </div>
         {records.length === 0 ? (
           <Empty description="暂无执行记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-        ) : isWide ? (
+        ) : (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
             <ForumPostList
               sessionGroups={sessionGroups}
@@ -386,59 +276,6 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
               onPageChange={handleHistoryPageChange}
             />
           </div>
-        ) : (
-          <>
-            {sessionGroups.map(group => {
-              const isSingle = group.records.length === 1 || !group.records[0].session_id;
-              if (isSingle) {
-                return group.records.map(record => (
-                  <NarrowHistoryCard
-                    key={record.id}
-                    record={record}
-                    viewMode={viewMode}
-                    onOpenResume={handleOpenResume}
-                    onExport={handleExportMarkdown}
-                    onStop={handleStopExecution}
-                    onRefresh={refreshSingleRecord}
-                    onRate={handleRateExecution}
-                    getRunningTask={getRunningTaskForRecord}
-                    resolveStats={resolveExecutionStats}
-                    parseLogs={parseRecordLogs}
-                    messageApi={message}
-                    onViewModeChange={setViewMode}
-                  />
-                ));
-              }
-              return (
-                <ChainGroupCard
-                  key={group.sessionId}
-                  group={group}
-                  onOpenResume={handleOpenResume}
-                  onExport={handleExportMarkdown}
-                  onStop={handleStopExecution}
-                  messageApi={message}
-                  viewMode={viewMode}
-                  parseLogs={parseRecordLogs}
-                  onRefresh={refreshSingleRecord}
-                  resolveStats={resolveExecutionStats}
-                  onViewModeChange={setViewMode}
-                />
-              );
-            })}
-            {historyTotal > historyLimit && (
-              <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16 }}>
-                <Pagination
-                  current={historyPage}
-                  pageSize={historyLimit}
-                  total={historyTotal}
-                  onChange={handleHistoryPageChange}
-                  size="small"
-                  showSizeChanger
-                  pageSizeOptions={['5', '10', '20']}
-                />
-              </div>
-            )}
-          </>
         )}
       </div>
 
