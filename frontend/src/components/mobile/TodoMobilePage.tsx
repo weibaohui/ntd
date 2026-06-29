@@ -16,6 +16,7 @@ interface TodoMobilePageProps {
   forcedListMode?: 'item' | 'loop';
   onListModeChange: () => void;
   effectiveMobilePanel: 'list' | 'detail';
+  onOpenPost?: (todoId: number, recordId: number) => void;
 }
 
 /**
@@ -33,6 +34,7 @@ export function TodoMobilePage({
   forcedListMode,
   onListModeChange,
   effectiveMobilePanel,
+  onOpenPost,
 }: TodoMobilePageProps) {
   const listPage = (
     <PageCard
@@ -71,7 +73,7 @@ export function TodoMobilePage({
       style={{ height: '100%', flex: 1, minWidth: 0 }}
       contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 43px)', overflow: 'hidden' }}
     >
-      <TodoDetail />
+      <TodoDetail onOpenPost={onOpenPost} />
     </PageCard>
   ) : (
     <PageCard
