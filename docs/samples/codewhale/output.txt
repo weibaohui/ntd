@@ -1,52 +1,68 @@
-# Codewhale 输出样本
+# Codewhale 真实输出样本
+# 采集时间: 2026-06-29T15:21:08Z
+# Prompt: Run the commands: date and whoami, output the results.
+# 执行命令: codewhale exec --auto --output-format stream-json Run the commands: date and whoami, output the results.
+# 退出码: 0
 
-Codewhale 输出 NDJSON（每行一个独立的 JSON 对象），事件类型包括：
-
-## 事件类型总览
-
-| 事件类型 | 含义 | 关键字段 |
-|---------|------|---------|
-| `tool_use` | 工具调用 | `name`, `id`, `input.command` |
-| `tool_result` | 工具结果 | `id`, `output`, `status` |
-| `content` | 文本回复 | `content` |
-| `session_capture` | 会话捕获 | `content` (session_id) |
-| `metadata` | 元数据 | `meta.model`, `meta.input_tokens`, `meta.output_tokens`, `meta.status` |
-| `done` | 执行结束 | 无关键字段 |
-
-## 样本输出
-
+## stdout
 ```
-{"type":"tool_use","name":"exec_shell","id":"call_001","input":{"command":"ls -la"}}
-```
-
-```
-{"type":"tool_result","id":"call_001","output":"total 10\ndrwxr-xr-x  2 user  staff   64 Jun 29 10:00 .\n-rw-r--r--  1 user  staff   15 Jun 29 10:00 file1.txt","status":"success"}
-```
-
-```
-{"type":"content","content":"Here are the files in the directory."}
-```
-
-```
-{"type":"session_capture","content":"uuid-xxx-yyy"}
-```
-
-```
-{"type":"metadata","meta":{"model":"deepseek-v4-pro","input_tokens":25182,"output_tokens":34,"session_id":"abc123","status":"completed"}}
-```
-
-```
+]9;4;1]0;🐳 CodeWhale]0;🐋 CodeWhale]0;🐳 CodeWhale]0;🐋 CodeWhale]0;🐳 CodeWhale]0;🐋 CodeWhale]0;🐳 CodeWhale]0;🐋 CodeWhale{"type":"tool_use","name":"exec_shell","id":"call_00_zrs7xbBOYZ3zNBzICwOy3455","input":{"command":"date"}}
+{"type":"tool_use","name":"exec_shell","id":"call_01_67iLb2Inv8rUwe0Tn4Lw4657","input":{"command":"whoami"}}
+{"type":"tool_result","id":"call_00_zrs7xbBOYZ3zNBzICwOy3455","output":"Mon Jun 29 23:21:04 CST 2026\n","status":"success"}
+{"type":"tool_result","id":"call_01_67iLb2Inv8rUwe0Tn4Lw4657","output":"weibh\n","status":"success"}
+]0;🐳 CodeWhale]0;🐋 CodeWhale{"type":"content","content":"-"}
+{"type":"content","content":" **"}
+{"type":"content","content":"date"}
+{"type":"content","content":"**:"}
+{"type":"content","content":" `"}
+{"type":"content","content":"Mon"}
+{"type":"content","content":" Jun"}
+{"type":"content","content":" "}
+{"type":"content","content":"29"}
+{"type":"content","content":" "}
+{"type":"content","content":"23"}
+{"type":"content","content":":"}
+{"type":"content","content":"21"}
+{"type":"content","content":":"}
+{"type":"content","content":"04"}
+{"type":"content","content":" CST"}
+{"type":"content","content":" "}
+{"type":"content","content":"202"}
+{"type":"content","content":"6"}
+{"type":"content","content":"`\n"}
+{"type":"content","content":"-"}
+{"type":"content","content":" **"}
+{"type":"content","content":"who"}
+{"type":"content","content":"ami"}
+{"type":"content","content":"**:"}
+{"type":"content","content":" `"}
+{"type":"content","content":"we"}
+{"type":"content","content":"ib"}
+{"type":"content","content":"h"}
+{"type":"content","content":"`"}
+]0;🐳 CodeWhale]0;🐋 CodeWhale{"type":"content","content":"两个"}
+{"type":"content","content":"命令"}
+{"type":"content","content":"均"}
+{"type":"content","content":"已完成"}
+{"type":"content","content":"（"}
+{"type":"content","content":"退出"}
+{"type":"content","content":"码"}
+{"type":"content","content":"均为"}
+{"type":"content","content":" "}
+{"type":"content","content":"0"}
+{"type":"content","content":"），"}
+{"type":"content","content":"结果"}
+{"type":"content","content":"已在"}
+{"type":"content","content":"上一"}
+{"type":"content","content":"轮"}
+{"type":"content","content":"输出"}
+{"type":"content","content":"。"}
+{"type":"session_capture","content":"f378a24d-3302-413a-bc58-999dee3febc9"}
+{"type":"metadata","meta":{"model":"deepseek-v4-pro","input_tokens":143660,"output_tokens":183,"session_id":"f378a24d-3302-413a-bc58-999dee3febc9","resume_command":"codewhale exec --resume f378a24d-3302-413a-bc58-999dee3febc9","workspace":"/Users/weibh/projects/rust/nothing-todo","message_count":7,"status":"completed"}}
 {"type":"done"}
 ```
 
-## 完整输出序列
-
-```jsonl
-{"type":"session_capture","content":"ses_cw_001"}
-{"type":"content","content":"I'll help you list the files."}
-{"type":"tool_use","name":"exec_shell","id":"call_001","input":{"command":"ls -la"}}
-{"type":"tool_result","id":"call_001","output":"file1.txt\nfile2.txt","status":"success"}
-{"type":"content","content":"Here are the files: file1.txt and file2.txt."}
-{"type":"metadata","meta":{"model":"deepseek-v4-pro","input_tokens":25182,"output_tokens":34,"session_id":"ses_cw_001","status":"completed"}}
-{"type":"done"}
+## stderr
+```
+DEBUG DEEPSEEK_BASE_URL not set
 ```

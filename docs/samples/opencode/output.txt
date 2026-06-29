@@ -1,0 +1,10 @@
+# Opencode 真实输出样本
+# 采集时间: 2026-06-29T15:17:53Z
+# Prompt: Run the commands: date and whoami, output the results.
+# 执行命令: opencode run --format json --dangerously-skip-permissions Run the commands: date and whoami, output the results.
+# 退出码: 124
+
+## stdout
+```
+```
+

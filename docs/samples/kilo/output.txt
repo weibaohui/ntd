@@ -1,0 +1,17 @@
+# Kilo 真实输出样本
+# 采集时间: 2026-06-29T15:18:51Z
+# Prompt: Run the commands: date and whoami, output the results.
+# 执行命令: kilo run --format json --dangerously-skip-permissions Run the commands: date and whoami, output the results.
+# 退出码: 0
+
+## stdout
+```
+{"type":"step_start","timestamp":1782746291193,"sessionID":"ses_0ec0a7f4bffe4lwwLMushFZMOt","part":{"id":"prt_f13f59bf7001lnhIerxPLvPfI4","messageID":"msg_f13f58778001FSbAjU4acK4Y13","sessionID":"ses_0ec0a7f4bffe4lwwLMushFZMOt","snapshot":"438f9944a8507cbf7a47c9d4c1bb5bd7e64e7637","type":"step-start"}}
+{"type":"tool_use","timestamp":1782746295626,"sessionID":"ses_0ec0a7f4bffe4lwwLMushFZMOt","part":{"type":"tool","tool":"bash","callID":"chatcmpl-tool-a8e0d1fbbed94c458c95d915bf817091","state":{"status":"completed","input":{"command":"date && whoami","description":"Run date and whoami commands"},"output":"Mon Jun 29 23:18:15 CST 2026\nweibh\n","metadata":{"output":"Mon Jun 29 23:18:15 CST 2026\nweibh\n","exit":0,"description":"Run date and whoami commands","truncated":false},"title":"Run date and whoami commands","time":{"start":1782746295556,"end":1782746295622}},"metadata":{"openrouter":{"reasoning_details":[{"type":"reasoning.text","text":"\nThe user wants me to run two commands: `date` and `whoami`, and output the results. I'll run both commands in parallel using bash.\n","format":"unknown","index":0}]}},"id":"prt_f13f5a878001317xg7KC26dcqg","sessionID":"ses_0ec0a7f4bffe4lwwLMushFZMOt","messageID":"msg_f13f58778001FSbAjU4acK4Y13"}}
+{"type":"text","timestamp":1782746295932,"sessionID":"ses_0ec0a7f4bffe4lwwLMushFZMOt","part":{"id":"prt_f13f5a83a001MRtky4W8JYgPH1","messageID":"msg_f13f58778001FSbAjU4acK4Y13","sessionID":"ses_0ec0a7f4bffe4lwwLMushFZMOt","type":"text","text":"\n\n","time":{"start":1782746294330,"end":1782746295929}}}
+{"type":"step_finish","timestamp":1782746295979,"sessionID":"ses_0ec0a7f4bffe4lwwLMushFZMOt","part":{"id":"prt_f13f5aea6001ktjCc3y0ANzirl","reason":"tool-calls","snapshot":"438f9944a8507cbf7a47c9d4c1bb5bd7e64e7637","messageID":"msg_f13f58778001FSbAjU4acK4Y13","sessionID":"ses_0ec0a7f4bffe4lwwLMushFZMOt","type":"step-finish","tokens":{"total":29040,"input":26359,"output":55,"reasoning":34,"cache":{"write":0,"read":2592}},"cost":0}}
+{"type":"step_start","timestamp":1782746301744,"sessionID":"ses_0ec0a7f4bffe4lwwLMushFZMOt","part":{"id":"prt_f13f5c52d001lfxoq2v9fS6vKH","messageID":"msg_f13f5aed9001g3x82YNZLq59Fl","sessionID":"ses_0ec0a7f4bffe4lwwLMushFZMOt","snapshot":"438f9944a8507cbf7a47c9d4c1bb5bd7e64e7637","type":"step-start"}}
+{"type":"text","timestamp":1782746316320,"sessionID":"ses_0ec0a7f4bffe4lwwLMushFZMOt","part":{"id":"prt_f13f5fb5d001mpnpfTysK7tKkM","messageID":"msg_f13f5aed9001g3x82YNZLq59Fl","sessionID":"ses_0ec0a7f4bffe4lwwLMushFZMOt","type":"text","text":"\ndate: Mon Jun 29 23:18:15 CST 2026\nwhoami: weibh\n","time":{"start":1782746315613,"end":1782746316317}}}
+{"type":"step_finish","timestamp":1782746316371,"sessionID":"ses_0ec0a7f4bffe4lwwLMushFZMOt","part":{"id":"prt_f13f5fe50001KrEdGU3HZ8jkd4","reason":"stop","snapshot":"438f9944a8507cbf7a47c9d4c1bb5bd7e64e7637","messageID":"msg_f13f5aed9001g3x82YNZLq59Fl","sessionID":"ses_0ec0a7f4bffe4lwwLMushFZMOt","type":"step-finish","tokens":{"total":29181,"input":26488,"output":32,"reasoning":69,"cache":{"write":0,"read":2592}},"cost":0}}
+```
+

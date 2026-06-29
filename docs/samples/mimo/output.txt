@@ -1,47 +1,17 @@
-# Mimo 输出样本
+# Mimo 真实输出样本
+# 采集时间: 2026-06-29T15:21:24Z
+# Prompt: Run the commands: date and whoami, output the results.
+# 执行命令: mimo run --format json --dangerously-skip-permissions Run the commands: date and whoami, output the results.
+# 退出码: 0
 
-Mimo 输出 JSONL（每行一个 JSON 对象），使用**下划线**分隔的事件类型名。
-
-## 事件类型总览
-
-| 事件类型 | 含义 | 关键字段 |
-|---------|------|---------|
-| `step_start` | 步骤开始 | `timestamp`, `sessionID` |
-| `text` | 文本回复 | `part.text` |
-| `reasoning` | 思考过程 | `part.text`（截断 500 字符） |
-| `tool_use` | 工具调用 | `part.tool`, `part.state.input`, `part.state.output` |
-| `step_finish` | 步骤结束 | `part.tokens`, `part.cost` |
-
-## 样本输出
-
+## stdout
 ```
-{"type":"step_start","timestamp":1700000000000,"sessionID":"ses_mimo_001"}
+{"type":"step_start","timestamp":1782746481589,"sessionID":"ses_0ec07876effecAsUjj0t3iLqmC","part":{"id":"prt_f13f883b30010mV5q6HkOjfWoH","messageID":"msg_f13f8796c0019Xi8p2dgNYj1c7","sessionID":"ses_0ec07876effecAsUjj0t3iLqmC","snapshot":"7d85322d70ebc306ceedf5eb1453f8ae3481e68c","type":"step-start"}}
+{"type":"tool_use","timestamp":1782746482471,"sessionID":"ses_0ec07876effecAsUjj0t3iLqmC","part":{"type":"tool","tool":"bash","callID":"call_38bd30f748184556ae275586","state":{"status":"completed","input":{"command":"date","description":"Get current date and time"},"output":"Mon Jun 29 23:21:22 CST 2026\n","metadata":{"output":"Mon Jun 29 23:21:22 CST 2026\n","exit":0,"description":"Get current date and time","truncated":false},"title":"Get current date and time","time":{"start":1782746482469,"end":1782746482471}},"id":"prt_f13f8859e001lQGcaP71bxzSdv","sessionID":"ses_0ec07876effecAsUjj0t3iLqmC","messageID":"msg_f13f8796c0019Xi8p2dgNYj1c7"}}
+{"type":"tool_use","timestamp":1782746482878,"sessionID":"ses_0ec07876effecAsUjj0t3iLqmC","part":{"type":"tool","tool":"bash","callID":"call_2ac8b4618358492bba26a78f","state":{"status":"completed","input":{"command":"whoami","description":"Get current username"},"output":"weibh\n","metadata":{"output":"weibh\n","exit":0,"description":"Get current username","truncated":false},"title":"Get current username","time":{"start":1782746482846,"end":1782746482878}},"id":"prt_f13f887740017r4NT4V42stJct","sessionID":"ses_0ec07876effecAsUjj0t3iLqmC","messageID":"msg_f13f8796c0019Xi8p2dgNYj1c7"}}
+{"type":"step_finish","timestamp":1782746482958,"sessionID":"ses_0ec07876effecAsUjj0t3iLqmC","part":{"id":"prt_f13f888fc0019LPF7XGn9UjBBD","reason":"tool-calls","snapshot":"7d85322d70ebc306ceedf5eb1453f8ae3481e68c","messageID":"msg_f13f8796c0019Xi8p2dgNYj1c7","sessionID":"ses_0ec07876effecAsUjj0t3iLqmC","type":"step-finish","tokens":{"total":41854,"input":39708,"output":68,"reasoning":30,"cache":{"write":0,"read":2048}},"cost":0.0404116}}
+{"type":"step_start","timestamp":1782746483872,"sessionID":"ses_0ec07876effecAsUjj0t3iLqmC","part":{"id":"prt_f13f88c9e001mee5jJKqtQYI8p","messageID":"msg_f13f8892f001TNiLICAegFx3oG","sessionID":"ses_0ec07876effecAsUjj0t3iLqmC","snapshot":"7d85322d70ebc306ceedf5eb1453f8ae3481e68c","type":"step-start"}}
+{"type":"text","timestamp":1782746484714,"sessionID":"ses_0ec07876effecAsUjj0t3iLqmC","part":{"id":"prt_f13f88e09001KQ6JNREB54WHtU","messageID":"msg_f13f8892f001TNiLICAegFx3oG","sessionID":"ses_0ec07876effecAsUjj0t3iLqmC","type":"text","text":"**date**: Mon Jun 29 23:21:22 CST 2026\n**whoami**: weibh","time":{"start":1782746484233,"end":1782746484712}}}
+{"type":"step_finish","timestamp":1782746484735,"sessionID":"ses_0ec07876effecAsUjj0t3iLqmC","part":{"id":"prt_f13f88feb001CWT7QBM2qY3qIO","reason":"stop","snapshot":"7d85322d70ebc306ceedf5eb1453f8ae3481e68c","messageID":"msg_f13f8892f001TNiLICAegFx3oG","sessionID":"ses_0ec07876effecAsUjj0t3iLqmC","type":"step-finish","tokens":{"total":41942,"input":166,"output":34,"reasoning":14,"cache":{"write":0,"read":41728}},"cost":0.0086556}}
 ```
 
-```
-{"type":"text","timestamp":1700000000001,"sessionID":"ses_mimo_001","part":{"type":"text","text":"I will help you with that."}}
-```
-
-```
-{"type":"reasoning","timestamp":1700000000002,"sessionID":"ses_mimo_001","part":{"type":"reasoning","text":"Let me think about the best approach..."}}
-```
-
-```
-{"type":"tool_use","timestamp":1700000000003,"sessionID":"ses_mimo_001","part":{"type":"tool_use","tool":"bash","state":{"status":"running","input":{"description":"list files","command":"ls -la"}}}}
-```
-
-```
-{"type":"step_finish","timestamp":1700000000004,"sessionID":"ses_mimo_001","part":{"type":"step_finish","tokens":{"total":100,"input":50,"output":50,"cache":{"read":10,"write":5}},"cost":0.001}}
-```
-
-## 完整输出序列
-
-```jsonl
-{"type":"step_start","timestamp":1700000000000,"sessionID":"ses_mimo_001"}
-{"type":"text","timestamp":1700000000001,"sessionID":"ses_mimo_001","part":{"type":"text","text":"I'll help you list the files."}}
-{"type":"reasoning","timestamp":1700000000002,"sessionID":"ses_mimo_001","part":{"type":"reasoning","text":"I need to run ls to see the files."}}
-{"type":"tool_use","timestamp":1700000000003,"sessionID":"ses_mimo_001","part":{"type":"tool_use","tool":"bash","state":{"status":"running","input":{"description":"list files","command":"ls -la"}}}}
-{"type":"tool_use","timestamp":1700000000004,"sessionID":"ses_mimo_001","part":{"type":"tool_use","tool":"bash","state":{"status":"success","input":{"description":"list files","command":"ls -la"},"output":"file1.txt\nfile2.txt"}}}
-{"type":"text","timestamp":1700000000005,"sessionID":"ses_mimo_001","part":{"type":"text","text":"Here are the files."}}
-{"type":"step_finish","timestamp":1700000000006,"sessionID":"ses_mimo_001","part":{"type":"step_finish","tokens":{"total":200,"input":120,"output":80,"cache":{"read":10,"write":5}},"cost":0.002}}
-```

@@ -1,0 +1,18 @@
+# Kimi 真实输出样本
+# 采集时间: 2026-06-29T15:21:15Z
+# Prompt: Run the commands: date and whoami, output the results.
+# 执行命令: kimi --print --output-format stream-json -p Run the commands: date and whoami, output the results.
+# 退出码: 0
+
+## stdout
+```
+{"role":"assistant","content":[{"type":"think","think":"The user wants me to run two simple commands: `date` and `whoami`. I'll run both in parallel since they're independent.","encrypted":"7050fa9ef560f8e131b66f3ed30f3c8408d86767a99856717e3fed5eb5abda34"}],"tool_calls":[{"type":"function","id":"call_function_rzy8zo0oqmky_1","function":{"name":"Shell","arguments":"{\"command\": \"date && echo \\\"---\\\" && whoami\", \"description\": \"Run date and whoami commands\"}"}}]}
+{"role":"tool","content":[{"type":"text","text":"<system>Command executed successfully.</system>"},{"type":"text","text":"Mon Jun 29 23:21:14 CST 2026\n---\nweibh\n"}],"tool_call_id":"call_function_rzy8zo0oqmky_1"}
+{"role":"assistant","content":[{"type":"think","think":"The commands executed successfully. Let me present the results clearly.","encrypted":"f15ef776e9822864f8b039a0c8f5f97ee0e4cca8b74130d1866b5fec8ba6ecde"},{"type":"text","text":"**Results:**\n\n| Command | Output |\n|---------|--------|\n| `date` | Mon Jun 29 23:21:14 CST 2026 |\n| `whoami` | weibh |"}]}
+```
+
+## stderr
+```
+
+To resume this session: kimi -r 7089cc87-32aa-46b6-adc9-b2eb91b6f4f1
+```

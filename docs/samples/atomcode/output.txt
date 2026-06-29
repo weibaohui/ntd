@@ -1,52 +1,53 @@
-# Atomcode 输出样本
+# Atomcode 真实输出样本
+# 采集时间: 2026-06-29T15:17:57Z
+# Prompt: Run the commands: date and whoami, output the results.
+# 执行命令: atomcode -v --dangerously-skip-permissions -p Run the commands: date and whoami, output the results.
+# 退出码: 0
 
-Atomcode 的输出比较特殊——**不是 JSON 格式**。stdout 是纯文本，stderr 包含结构化事件。
-
-## 输出结构
-
-| 流 | 格式 | 含义 |
-|----|------|------|
-| stdout | 纯文本 | AI 回复内容（直接透传） |
-| stderr | `[tokens] prompt=N completion=M` | Token 统计 |
-| stderr | `[tool→ <name> args={<json>}]` | 工具调用发起 |
-| stderr | `[tool← <name> args={<json>}]` | 工具调用返回 |
-| stderr | `[done] <duration> tokens=N turns=N tool_calls=N` | 执行完成 |
-| stderr | `[tool-streaming...]` | 跳过（流式标记） |
-| stderr | `[headless]` | 跳过（headless 标记） |
-
-## stdout 样本（纯文本）
-
+## stdout
 ```
-我来分析一下这个问题。
+结果如下：
 
-首先，让我看看当前目录下的文件结构。
+| 命令 | 输出 |
+|------|------|
+| `date` | Mon Jun 29 23:17:55 CST 2026 |
+| `whoami` | weibh |
 ```
 
-## stderr 样本（结构化事件）
-
+## stderr
 ```
-[tool→ bash args={"command": "ls -la"}
-[tool← bash args={"command": "ls -la"}
-[tokens] prompt=120 completion=45
-[tool→ Read args={"file_path": "src/main.rs"}
-[tool← Read args={"file_path": "src/main.rs"}
-[tokens] prompt=320 completion=120
-[done] 4.6s tokens=100 turns=2 tool_calls=1
-```
-
-## 完整输出序列
-
-```
-[tool→ bash args={"command": "ls -la"}
-total 10
-drwxr-xr-x  2 user  staff   64 Jun 29 10:00 .
-drwxr-xr-x  5 user  staff  160 Jun 29 10:00 ..
--rw-r--r--  1 user  staff   15 Jun 29 10:00 file1.txt
-[tool← bash args={"command": "ls -la"}
-[tokens] prompt=320 completion=120
-[tool→ Read args={"file_path": "file1.txt"}
-Hello, this is file1.txt.
-[tool← Read args={"file_path": "file1.txt"}
-[tokens] prompt=350 completion=50
-[done] 4.6s tokens=100 turns=2 tool_calls=1
+[engine v2] new stack active (model deepseek-v4-flash)
+[headless] --dangerously-skip-permissions: all tool calls are auto-approved
+[thinking] The user wants me to run two commands: date and whoami. These have no data dependency on each other, so I can run them in parallel.
+[tool-streaming← bash]
+[tool-streaming←  → {]
+[tool-streaming←  → "]
+[tool-streaming←  → command]
+[tool-streaming←  → "]
+[tool-streaming←  → : ]
+[tool-streaming←  → "]
+[tool-streaming←  → date]
+[tool-streaming←  → "]
+[tool-streaming←  → }]
+[tool-streaming← bash]
+[tool-streaming←  → {]
+[tool-streaming←  → "]
+[tool-streaming←  → command]
+[tool-streaming←  → "]
+[tool-streaming←  → : ]
+[tool-streaming←  → "]
+[tool-streaming←  → who]
+[tool-streaming←  → ami]
+[tool-streaming←  → "]
+[tool-streaming←  → }]
+[tokens] prompt=6362 completion=104 cached=1920 (30% hit)
+[tool-batch] 2 calls in parallel
+[tool→ bash args={"command": "date"}]
+[tool← bash OK 14ms] Mon Jun 29 23:17:55 CST 2026
+[tool→ bash args={"command": "whoami"}]
+[tool← bash OK 10ms] weibh
+[tool-batch] completed 2/2 ok in 27ms
+[thinking] The commands ran successfully. Let me summarize the results.
+[tokens] prompt=6560 completion=57 cached=6400 (98% hit)
+[done] 4.1s tokens=13.08K turns=2 tool_calls=2
 ```

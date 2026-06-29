@@ -1,46 +1,18 @@
-# Zhanlu 输出样本
+# Zhanlu 真实输出样本
+# 采集时间: 2026-06-29T15:21:35Z
+# Prompt: Run the commands: date and whoami, output the results.
+# 执行命令: zl run --format json --dangerously-skip-permissions Run the commands: date and whoami, output the results.
+# 退出码: 0
 
-Zhanlu 输出 JSONL（每行一个 JSON 对象），使用**连字符**分隔的事件类型名（与 Opencode 完全一致的格式）。
-
-## 事件类型总览
-
-| 事件类型 | 含义 | 关键字段 |
-|---------|------|---------|
-| `step-start` | 步骤开始 | `timestamp`, `sessionID` |
-| `text` | 文本回复 | `part.text` |
-| `reasoning` | 思考过程 | `part.text` |
-| `tool-use` | 工具调用 | `part.tool`, `part.state.input`, `part.state.output` |
-| `step-finish` | 步骤结束 | `part.tokens`, `part.cost` |
-
-## 样本输出
-
+## stdout
 ```
-{"type":"step-start","timestamp":1777471473403,"sessionID":"ses_zhanlu_001"}
+{"type":"step_start","timestamp":1782746489888,"sessionID":"ses_0ec0769c6ffe1wyR5XNsc2Fmzq","part":{"id":"prt_f13f8a41c001IzOthQWm7w7oC0","messageID":"msg_f13f89772001wJy39mHXjZ85lQ","sessionID":"ses_0ec0769c6ffe1wyR5XNsc2Fmzq","snapshot":"315dde64444848d1b1fcf46cb93842886a0e2f3a","type":"step-start"}}
+{"type":"text","timestamp":1782746491039,"sessionID":"ses_0ec0769c6ffe1wyR5XNsc2Fmzq","part":{"id":"prt_f13f8a789001j2NQFJR4PBtHuH","messageID":"msg_f13f89772001wJy39mHXjZ85lQ","sessionID":"ses_0ec0769c6ffe1wyR5XNsc2Fmzq","type":"text","text":"\n\n\n","time":{"start":1782746490761,"end":1782746491035}}}
+{"type":"tool_use","timestamp":1782746491082,"sessionID":"ses_0ec0769c6ffe1wyR5XNsc2Fmzq","part":{"type":"tool","tool":"bash","callID":"call_e5fcb8e4337940f18c0a31f9","state":{"status":"completed","input":{"command":"date","description":"Display current date and time"},"output":"Mon Jun 29 23:21:31 CST 2026\n","metadata":{"output":"Mon Jun 29 23:21:31 CST 2026\n","exit":0,"description":"Display current date and time","truncated":false},"title":"Display current date and time","time":{"start":1782746491078,"end":1782746491081}},"id":"prt_f13f8a87c001qfO1CLzk5v0Cbe","sessionID":"ses_0ec0769c6ffe1wyR5XNsc2Fmzq","messageID":"msg_f13f89772001wJy39mHXjZ85lQ"}}
+{"type":"tool_use","timestamp":1782746491092,"sessionID":"ses_0ec0769c6ffe1wyR5XNsc2Fmzq","part":{"type":"tool","tool":"bash","callID":"call_9610d39a90104d94a4501727","state":{"status":"completed","input":{"command":"whoami","description":"Display current username"},"output":"weibh\n","metadata":{"output":"weibh\n","exit":0,"description":"Display current username","truncated":false},"title":"Display current username","time":{"start":1782746491083,"end":1782746491086}},"id":"prt_f13f8a893001h42hXY5QwhHB0X","sessionID":"ses_0ec0769c6ffe1wyR5XNsc2Fmzq","messageID":"msg_f13f89772001wJy39mHXjZ85lQ"}}
+{"type":"step_finish","timestamp":1782746491110,"sessionID":"ses_0ec0769c6ffe1wyR5XNsc2Fmzq","part":{"id":"prt_f13f8a8e3001DISqzVqtC4xE4P","reason":"tool-calls","snapshot":"315dde64444848d1b1fcf46cb93842886a0e2f3a","messageID":"msg_f13f89772001wJy39mHXjZ85lQ","sessionID":"ses_0ec0769c6ffe1wyR5XNsc2Fmzq","type":"step-finish","tokens":{"total":27028,"input":26935,"output":71,"reasoning":22,"cache":{"write":0,"read":0}},"cost":0}}
+{"type":"step_start","timestamp":1782746493667,"sessionID":"ses_0ec0769c6ffe1wyR5XNsc2Fmzq","part":{"id":"prt_f13f8b2e0001sfWNAkLL4dxaoV","messageID":"msg_f13f8a9b3001VYhYq5qG14otMY","sessionID":"ses_0ec0769c6ffe1wyR5XNsc2Fmzq","snapshot":"315dde64444848d1b1fcf46cb93842886a0e2f3a","type":"step-start"}}
+{"type":"text","timestamp":1782746494231,"sessionID":"ses_0ec0769c6ffe1wyR5XNsc2Fmzq","part":{"id":"prt_f13f8b3c1001LejjGkuh973y9N","messageID":"msg_f13f8a9b3001VYhYq5qG14otMY","sessionID":"ses_0ec0769c6ffe1wyR5XNsc2Fmzq","type":"text","text":"\n\n**Results:**\n\n- **date:** Mon Jun 29 23:21:31 CST 2026\n- **whoami:** weibh","time":{"start":1782746493889,"end":1782746494228}}}
+{"type":"step_finish","timestamp":1782746494267,"sessionID":"ses_0ec0769c6ffe1wyR5XNsc2Fmzq","part":{"id":"prt_f13f8b538001T2JEL1sawHZ40N","reason":"stop","snapshot":"315dde64444848d1b1fcf46cb93842886a0e2f3a","messageID":"msg_f13f8a9b3001VYhYq5qG14otMY","sessionID":"ses_0ec0769c6ffe1wyR5XNsc2Fmzq","type":"step-finish","tokens":{"total":27088,"input":27044,"output":33,"reasoning":11,"cache":{"write":0,"read":0}},"cost":0}}
 ```
 
-```
-{"type":"text","timestamp":1777471505165,"sessionID":"ses_zhanlu_001","part":{"type":"text","text":"Hello, this is a test response"}}
-```
-
-```
-{"type":"reasoning","timestamp":1777471505166,"sessionID":"ses_zhanlu_001","part":{"type":"reasoning","text":"Let me analyze this step by step..."}}
-```
-
-```
-{"type":"tool-use","timestamp":1777471505167,"sessionID":"ses_zhanlu_001","part":{"type":"tool_use","tool":"bash","state":{"status":"running","input":{"description":"list files","command":"ls -la"}}}}
-```
-
-```
-{"type":"step-finish","timestamp":1777471505168,"sessionID":"ses_zhanlu_001","part":{"type":"step-finish","reason":"stop","tokens":{"total":14155,"input":13862,"output":293,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0}}
-```
-
-## 完整输出序列
-
-```jsonl
-{"type":"step-start","timestamp":1777471473403,"sessionID":"ses_zhanlu_001"}
-{"type":"text","timestamp":1777471473404,"sessionID":"ses_zhanlu_001","part":{"type":"text","text":"I'll help you with that task."}}
-{"type":"tool-use","timestamp":1777471473405,"sessionID":"ses_zhanlu_001","part":{"type":"tool_use","tool":"bash","state":{"status":"running","input":{"description":"list files","command":"ls -la"}}}}
-{"type":"tool-use","timestamp":1777471473410,"sessionID":"ses_zhanlu_001","part":{"type":"tool_use","tool":"bash","state":{"status":"success","input":{"description":"list files","command":"ls -la"},"output":"file1.txt\nfile2.txt"}}}
-{"type":"text","timestamp":1777471473415,"sessionID":"ses_zhanlu_001","part":{"type":"text","text":"Here are the files in the directory."}}
-{"type":"step-finish","timestamp":1777471505168,"sessionID":"ses_zhanlu_001","part":{"type":"step-finish","reason":"stop","tokens":{"total":14155,"input":13862,"output":293,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0}}
-```

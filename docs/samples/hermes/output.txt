@@ -1,0 +1,20 @@
+# Hermes 真实输出样本
+# 采集时间: 2026-06-29T15:21:08Z
+# Prompt: Run the commands: date and whoami, output the results.
+# 执行命令: hermes chat -q --yolo Run the commands: date and whoami, output the results.
+# 退出码: 2
+
+## stdout
+```
+```
+
+## stderr
+```
+usage: hermes chat [-h] [-q QUERY] [--image IMAGE] [-m MODEL] [-t TOOLSETS]
+                   [-s SKILLS]
+                   [--provider {auto,openrouter,nous,openai-codex,copilot-acp,copilot,anthropic,gemini,huggingface,zai,kimi-coding,minimax,minimax-cn,kilocode,xiaomi}]
+                   [-v] [-Q] [--resume SESSION_ID] [--continue [SESSION_NAME]]
+                   [--worktree] [--checkpoints] [--max-turns N] [--yolo]
+                   [--pass-session-id] [--source SOURCE]
+hermes chat: error: argument -q/--query: expected one argument
+```
