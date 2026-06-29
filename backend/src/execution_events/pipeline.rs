@@ -64,6 +64,30 @@ impl EventPipeline {
     pub fn finalize(&mut self) {
         let metadata = self.extractor.metadata();
 
+        // 如果没有 Result 事件，从最后一个非空的 Assistant 事件提取结论
+        let has_result = self
+            .events
+            .iter()
+            .any(|e| matches!(e, ExecutionEvent::Result { .. }));
+        if !has_result {
+            // 从后往前找最后一个非空的 Assistant 内容作为 Result
+            if let Some(last_assistant) = self.events.iter().rev().find_map(|e| {
+                if let ExecutionEvent::Assistant { content, .. } = e {
+                    if !content.trim().is_empty() {
+                        Some(content.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }) {
+                self.events.push(ExecutionEvent::Result {
+                    summary: last_assistant,
+                });
+            }
+        }
+
         // 生成会话结束事件
         if let Some(session_id) = &metadata.session_id {
             // 检查是否已有 SessionEnd 事件
