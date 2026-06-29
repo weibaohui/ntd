@@ -689,6 +689,27 @@ impl Database {
         Ok(())
     }
 
+    /// 仅更新步骤的 goto 跳转目标（用于导入时的伪ID解析）
+    pub async fn update_loop_step_goto(
+        &self,
+        id: i64,
+        success_goto_step_id: Option<i64>,
+        fail_goto_step_id: Option<i64>,
+    ) -> Result<(), sea_orm::DbErr> {
+        let existing = loop_steps::Entity::find_by_id(id).one(&self.conn).await?;
+        if let Some(c) = existing {
+            let mut am: loop_steps::ActiveModel = c.into();
+            if success_goto_step_id.is_some() {
+                am.success_goto_step_id = ActiveValue::Set(success_goto_step_id);
+            }
+            if fail_goto_step_id.is_some() {
+                am.fail_goto_step_id = ActiveValue::Set(fail_goto_step_id);
+            }
+            am.update(&self.conn).await?;
+        }
+        Ok(())
+    }
+
     /// 批量重排阶段。前端拖拽排序后调用,传入完整的新顺序。
     /// `ordered_ids` 的顺序即新的 order_index(从 0 开始递增)。
     pub async fn reorder_loop_steps(

@@ -17,7 +17,9 @@ use axum::{
     Json,
     extract::{Path, Query, State},
     http::StatusCode,
+    http::header,
     response::IntoResponse,
+    body::Bytes,
 };
 use serde::Deserialize;
 
@@ -30,7 +32,14 @@ use crate::models::{
     LoopListItem, LoopStepDto, LoopStepExecutionDto, LoopTriggerDto, ReorderLoopStepsRequest,
     UpdateLoopRequest, UpdateLoopStatusRequest, UpdateLoopStepRequest,
     UpdateTriggerRequest, ApproveStepExecutionRequest, UpdateTagsRequest, TriggerLoopRequest,
+    ExportLoopSelectedRequest,
+    LoopExportData, TagExportItem, ReviewTemplateExportItem, TodoExportItem,
+    LoopExportItem, LoopTriggerExportItem, LoopStepExportItem,
+    generate_pseudo_id, validate_pseudo_id,
+    LoopImportPreviewResponse, LoopImportSummary, LoopImportWarning,
+    LoopImportResponse, LoopImportCreatedCounts,
 };
+use crate::db::ReviewTemplateInput;
 
 const DEFAULT_PAGE_LIMIT: u64 = 20;
 const MAX_PAGE_LIMIT: u64 = 100;
@@ -845,6 +854,706 @@ pub async fn batch_copy_loops_workspace(
     }))
 }
 
+// ====== Loop 导入导出 ======
+
+/// GET /api/loops/{id}/export — 导出单个环路为 YAML 文件
+pub async fn export_loop(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, AppError> {
+    let loops = state.db.list_loops_with_counts(None).await?;
+    let loop_row = loops.into_iter().find(|l| l.loop_.id == id);
+
+    // 检查环路是否存在
+    if loop_row.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    let loop_ = loop_row.unwrap().loop_;
+    let yaml = build_loop_export_yaml(&state, &[id]).await?;
+    let filename = format!("{}-{}.loop.yaml",
+        loop_.name.replace(' ', "-"),
+        chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+
+    let _disposition = format!("attachment; filename=\"{}\"", filename);
+    Ok((
+        [(header::CONTENT_TYPE, "application/x-yaml; charset=utf-8")],
+        yaml,
+    ))
+}
+
+/// POST /api/loops/export-selected — 批量导出选中的环路
+pub async fn export_selected_loops(
+    State(state): State<AppState>,
+    Json(req): Json<ExportLoopSelectedRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    if req.loop_ids.is_empty() {
+        return Err(AppError::BadRequest("loop_ids 不能为空".to_string()));
+    }
+    let yaml = build_loop_export_yaml(&state, &req.loop_ids).await?;
+    let filename = format!("loops-export-{}.loop.yaml",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+
+    let _disposition = format!("attachment; filename=\"{}\"", filename);
+    Ok((
+        [(header::CONTENT_TYPE, "application/x-yaml; charset=utf-8")],
+        yaml,
+    ))
+}
+
+/// POST /api/loops/import/preview — 预览导入数据
+pub async fn import_preview(
+    State(_state): State<AppState>,
+    body: Bytes,
+) -> Result<impl IntoResponse, AppError> {
+    let yaml_str = String::from_utf8(body.to_vec())
+        .map_err(|_| AppError::BadRequest("Invalid UTF-8 in request body".to_string()))?;
+
+    // 解析 YAML
+    let data: LoopExportData = serde_yaml::from_str(&yaml_str)
+        .map_err(|e| AppError::BadRequest(format!("Invalid YAML: {}", e)))?;
+
+    // 基本校验
+    if data.loops.is_empty() {
+        return Err(AppError::BadRequest("No loops in export file".to_string()));
+    }
+
+    // 收集所有伪ID并检查格式和唯一性
+    let mut pseudo_ids: Vec<String> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+
+    // 收集标签伪ID
+    for tag in &data.tags {
+        if !validate_pseudo_id(&tag.id) {
+            errors.push(format!("Invalid pseudo-ID format: {}", tag.id));
+        }
+        pseudo_ids.push(tag.id.clone());
+    }
+
+    // 收集评审模板伪ID
+    for tmpl in &data.review_templates {
+        if !validate_pseudo_id(&tmpl.id) {
+            errors.push(format!("Invalid pseudo-ID format: {}", tmpl.id));
+        }
+        pseudo_ids.push(tmpl.id.clone());
+    }
+
+    // 收集Todo伪ID
+    for todo in &data.todos {
+        if !validate_pseudo_id(&todo.id) {
+            errors.push(format!("Invalid pseudo-ID format: {}", todo.id));
+        }
+        pseudo_ids.push(todo.id.clone());
+    }
+
+    // 收集环路伪ID
+    for loop_ in &data.loops {
+        if !validate_pseudo_id(&loop_.id) {
+            errors.push(format!("Invalid pseudo-ID format: {}", loop_.id));
+        }
+        pseudo_ids.push(loop_.id.clone());
+
+        // 收集触发器伪ID
+        for trigger in &loop_.triggers {
+            if !validate_pseudo_id(&trigger.id) {
+                errors.push(format!("Invalid pseudo-ID format: {}", trigger.id));
+            }
+            pseudo_ids.push(trigger.id.clone());
+        }
+
+        // 收集步骤伪ID
+        for step in &loop_.steps {
+            if !validate_pseudo_id(&step.id) {
+                errors.push(format!("Invalid pseudo-ID format: {}", step.id));
+            }
+            pseudo_ids.push(step.id.clone());
+        }
+    }
+
+    // 检查伪ID唯一性
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for id in &pseudo_ids {
+        if !seen.insert(id.clone()) {
+            errors.push(format!("Duplicate pseudo-ID: {}", id));
+        }
+    }
+
+    // 检查引用完整性
+    let all_tag_ids: std::collections::HashSet<_> = data.tags.iter().map(|t| t.id.clone()).collect();
+    let all_template_ids: std::collections::HashSet<_> = data.review_templates.iter().map(|t| t.id.clone()).collect();
+    let all_todo_ids: std::collections::HashSet<_> = data.todos.iter().map(|t| t.id.clone()).collect();
+    let all_step_ids: std::collections::HashSet<_> = data.loops.iter()
+        .flat_map(|l| l.steps.iter().map(|s| s.id.clone()))
+        .collect();
+
+    for loop_ in &data.loops {
+        // 检查环路引用的评审模板
+        if let Some(ref tid) = loop_.review_template_id {
+            if !all_template_ids.contains(tid) && !tid.is_empty() {
+                errors.push(format!("Loop '{}' references non-existent template: {}", loop_.name, tid));
+            }
+        }
+
+        // 检查异常处理Todo
+        if let Some(ref tid) = loop_.abnormal_handler_todo_id {
+            if !all_todo_ids.contains(tid) && !tid.is_empty() {
+                errors.push(format!("Loop '{}' references non-existent abnormal handler: {}", loop_.name, tid));
+            }
+        }
+
+        // 检查标签
+        for tid in &loop_.tag_ids {
+            if !all_tag_ids.contains(tid) && !tid.is_empty() {
+                errors.push(format!("Loop '{}' references non-existent tag: {}", loop_.name, tid));
+            }
+        }
+
+        for step in &loop_.steps {
+            // 检查步骤引用的Todo
+            if !all_todo_ids.contains(&step.todo_id) {
+                errors.push(format!("Step '{}' in loop '{}' references non-existent todo: {}", step.name, loop_.name, step.todo_id));
+            }
+
+            // 检查goto跳转
+            if let Some(ref sid) = step.success_goto_step_id {
+                if !all_step_ids.contains(sid) && !sid.is_empty() {
+                    errors.push(format!("Step '{}' success_goto references non-existent step: {}", step.name, sid));
+                }
+            }
+            if let Some(ref sid) = step.fail_goto_step_id {
+                if !all_step_ids.contains(sid) && !sid.is_empty() {
+                    errors.push(format!("Step '{}' fail_goto references non-existent step: {}", step.name, sid));
+                }
+            }
+        }
+    }
+
+    // 检查Todo引用的评审模板
+    for todo in &data.todos {
+        if let Some(ref tid) = todo.review_template_id {
+            if !all_template_ids.contains(tid) && !tid.is_empty() {
+                errors.push(format!("Todo '{}' references non-existent template: {}", todo.title, tid));
+            }
+        }
+        for tid in &todo.tag_ids {
+            if !all_tag_ids.contains(tid) && !tid.is_empty() {
+                errors.push(format!("Todo '{}' references non-existent tag: {}", todo.title, tid));
+            }
+        }
+    }
+
+    let valid = errors.is_empty();
+
+    // 构建摘要
+    let summary = LoopImportSummary {
+        loops: data.loops.len(),
+        steps: data.loops.iter().map(|l| l.steps.len()).sum(),
+        todos: data.todos.len(),
+        review_templates: data.review_templates.len(),
+        tags: data.tags.len(),
+        triggers: data.loops.iter().map(|l| l.triggers.len()).sum(),
+    };
+
+    // 生成警告（根据方案，cron触发器将被禁用）
+    let mut warnings: Vec<LoopImportWarning> = Vec::new();
+    for loop_ in &data.loops {
+        for trigger in &loop_.triggers {
+            if trigger.trigger_type == "cron" && trigger.enabled {
+                warnings.push(LoopImportWarning {
+                    warning_type: "cron_trigger_disabled".to_string(),
+                    message: format!("Loop '{}' cron trigger will be disabled after import", loop_.name),
+                });
+            }
+        }
+    }
+
+    let response = LoopImportPreviewResponse {
+        valid,
+        pseudo_ids,
+        summary,
+        conflicts: vec![],  // 新建模式无冲突
+        warnings,
+    };
+
+    Ok(ApiResponse::ok(response))
+}
+
+/// POST /api/loops/import — 执行导入（新建模式）
+#[derive(Deserialize)]
+pub struct ImportLoopRequest {
+    pub yaml: String,
+    pub workspace_id: i64,
+}
+
+pub async fn import_loops(
+    State(state): State<AppState>,
+    Json(req): Json<ImportLoopRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    // 解析 YAML
+    let data: LoopExportData = serde_yaml::from_str(&req.yaml)
+        .map_err(|e| AppError::BadRequest(format!("Invalid YAML: {}", e)))?;
+
+    // 基本校验
+    if data.loops.is_empty() {
+        return Err(AppError::BadRequest("No loops in export file".to_string()));
+    }
+
+    // 获取目标工作空间
+    let workspace_id = req.workspace_id;
+
+    // 验证工作空间存在
+    let workspace = state.db.get_project_directory_by_id(workspace_id).await?
+        .ok_or_else(|| AppError::BadRequest(format!("Workspace {} not found", workspace_id)))?;
+
+    // 构建伪ID -> 真实ID 的映射表
+    let mut tag_pseudo_to_real: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut template_pseudo_to_real: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut todo_pseudo_to_real: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut loop_pseudo_to_real: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut step_pseudo_to_real: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+
+    let mut created_counts = LoopImportCreatedCounts {
+        loops: 0,
+        todos: 0,
+        review_templates: 0,
+        tags: 0,
+        triggers: 0,
+        steps: 0,
+    };
+    let warnings: Vec<LoopImportWarning> = Vec::new();
+
+    // 阶段1: 导入标签
+    for tag in &data.tags {
+        let tag_id = state.db.create_tag(&tag.name, &tag.color).await?;
+        tag_pseudo_to_real.insert(tag.id.clone(), tag_id);
+        created_counts.tags += 1;
+    }
+
+    // 阶段2: 导入评审模板（到目标工作空间）
+    for tmpl in &data.review_templates {
+        let input = ReviewTemplateInput {
+            name: tmpl.name.clone(),
+            description: tmpl.description.clone(),
+            prompt: tmpl.prompt.clone(),
+            workspace_id: Some(workspace_id),
+        };
+        let new_tmpl = state.db.create_review_template(&input).await?;
+        template_pseudo_to_real.insert(tmpl.id.clone(), new_tmpl);
+        created_counts.review_templates += 1;
+    }
+
+    // 阶段3: 导入Todo模板
+    for todo in &data.todos {
+        let new_todo_id = state.db.create_todo_with_extras(
+            &todo.title,
+            &todo.prompt,
+            todo.executor.as_deref(),
+            todo.acceptance_criteria.as_deref(),
+            todo.webhook_enabled,
+            workspace_id,
+            &workspace.path,
+        ).await?;
+
+        todo_pseudo_to_real.insert(todo.id.clone(), new_todo_id);
+        created_counts.todos += 1;
+
+        // 关联标签（异常处理Todo不关联标签）
+        if !todo.is_abnormal_handler {
+            for (pseudo_tag_id, _) in todo.tag_ids.iter().zip(todo.tag_names.iter()) {
+                if let Some(&real_tag_id) = tag_pseudo_to_real.get(pseudo_tag_id) {
+                    state.db.add_todo_tag(new_todo_id, real_tag_id).await?;
+                }
+            }
+        }
+    }
+
+    // 阶段4: 导入环路主体
+    for loop_export in &data.loops {
+        let review_template_id = loop_export.review_template_id.as_ref()
+            .and_then(|tid| template_pseudo_to_real.get(tid))
+            .copied();
+
+        let abnormal_handler_todo_id = loop_export.abnormal_handler_todo_id.as_ref()
+            .and_then(|tid| todo_pseudo_to_real.get(tid))
+            .copied();
+
+        let limits_config = serde_json::to_string(&loop_export.limits_config)
+            .unwrap_or_else(|_| "{}".to_string());
+        let abnormal_handler_trigger_on = serde_json::to_string(&loop_export.abnormal_handler_trigger_on)
+            .unwrap_or_else(|_| "[]".to_string());
+
+        // 名称追加 "-导入" 后缀
+        let loop_name = format!("{}-导入", loop_export.name);
+
+        let new_loop = state.db.create_loop(
+            &loop_name,
+            &loop_export.description,
+            Some(workspace_id),
+            Some(workspace.path.as_str()),
+            loop_export.webhook_enabled,
+            &loop_export.icon,
+            review_template_id,
+            Some(&limits_config),
+            abnormal_handler_todo_id,
+            &abnormal_handler_trigger_on,
+        ).await?;
+
+        loop_pseudo_to_real.insert(loop_export.id.clone(), new_loop.id);
+        created_counts.loops += 1;
+
+        // 关联标签
+        for (pseudo_tag_id, _) in loop_export.tag_ids.iter().zip(loop_export.tag_names.iter()) {
+            if let Some(&real_tag_id) = tag_pseudo_to_real.get(pseudo_tag_id) {
+                state.db.set_loop_tags(new_loop.id, &[real_tag_id]).await?;
+            }
+        }
+
+        // 阶段5: 导入触发器
+        for trigger in &loop_export.triggers {
+            let _new_trigger = state.db.create_trigger(
+                new_loop.id,
+                &trigger.trigger_type,
+                &serde_json::to_string(&trigger.config).unwrap_or_else(|_| "{}".to_string()),
+                trigger.enabled,
+                trigger.priority,
+            ).await?;
+            // 注意: cron触发器在导出时已被禁用，这里保持原状态
+            created_counts.triggers += 1;
+        }
+
+        // 阶段6: 导入步骤（第一遍：创建所有步骤）
+        for step in &loop_export.steps {
+            let todo_id = todo_pseudo_to_real.get(&step.todo_id)
+                .copied()
+                .ok_or_else(|| AppError::BadRequest(format!("Step '{}' references unknown todo", step.name)))?;
+
+            let new_step = state.db.create_loop_step(
+                new_loop.id,
+                &step.name,
+                &step.description,
+                todo_id,
+                &step.run_mode,
+                step.skip_on_source_failed,
+                step.min_rating,
+                &step.unrated_policy,
+                step.enabled,
+                &step.on_success,
+                None,  // success_goto 第二遍再补
+                &step.on_rating_fail,
+                None,  // fail_goto 第二遍再补
+                &step.review_type,
+            ).await?;
+
+            step_pseudo_to_real.insert(step.id.clone(), new_step.id);
+            created_counts.steps += 1;
+        }
+
+        // 阶段7: 第二遍修复 goto 引用
+        for step in &loop_export.steps {
+            if let Some(&new_step_id) = step_pseudo_to_real.get(&step.id) {
+                let success_goto = step.success_goto_step_id.as_ref()
+                    .and_then(|sid| step_pseudo_to_real.get(sid))
+                    .copied();
+                let fail_goto = step.fail_goto_step_id.as_ref()
+                    .and_then(|sid| step_pseudo_to_real.get(sid))
+                    .copied();
+
+                if success_goto.is_some() || fail_goto.is_some() {
+                    state.db.update_loop_step_goto(new_step_id, success_goto, fail_goto).await?;
+                }
+            }
+        }
+    }
+
+    // 刷新scheduler以加载新的cron触发器
+    if let Some(sched) = state.loop_scheduler.as_ref() {
+        let _ = sched.reload_all().await;
+    }
+
+    let response = LoopImportResponse {
+        success: true,
+        created: created_counts,
+        warnings,
+    };
+
+    Ok(ApiResponse::ok(response))
+}
+
+/// 构建环路导出的 YAML 内容
+/// 收集所有依赖实体（标签、评审模板、Todo）并生成伪ID
+async fn build_loop_export_yaml(
+    state: &AppState,
+    loop_ids: &[i64],
+) -> Result<String, AppError> {
+    let mut all_tags: std::collections::HashMap<i64, TagExportItem> = std::collections::HashMap::new();
+    let mut all_templates: std::collections::HashMap<i64, ReviewTemplateExportItem> = std::collections::HashMap::new();
+    let mut all_todos: std::collections::HashMap<i64, TodoExportItem> = std::collections::HashMap::new();
+    let mut exported_loops: Vec<LoopExportItem> = Vec::new();
+
+    for (idx, &loop_id) in loop_ids.iter().enumerate() {
+        let view = state.db.load_loop_full(loop_id).await?
+            .ok_or_else(|| AppError::NotFound)?;
+
+        // 收集环路关联的标签
+        let loop_tag_ids = state.db.get_loop_tag_ids(loop_id).await?;
+        for tag_id in &loop_tag_ids {
+            if !all_tags.contains_key(tag_id) {
+                // 获取标签详情
+                if let Some(tag) = state.db.get_tag(*tag_id).await? {
+                    all_tags.insert(*tag_id, TagExportItem {
+                        id: generate_pseudo_id("tag", all_tags.len() + 1),
+                        name: tag.name,
+                        color: tag.color,
+                    });
+                }
+            }
+        }
+
+        // 收集环路引用的评审模板
+        if let Some(tpl_id) = view.loop_.review_template_id {
+            if !all_templates.contains_key(&tpl_id) {
+                if let Some(tpl) = state.db.get_review_template(tpl_id).await? {
+                    all_templates.insert(tpl_id, ReviewTemplateExportItem {
+                        id: generate_pseudo_id("template", all_templates.len() + 1),
+                        name: tpl.name,
+                        description: tpl.description,
+                        prompt: tpl.prompt,
+                    });
+                }
+            }
+        }
+
+        // 遍历步骤收集 Todo 和标签
+        for (step, _todo_title, _) in &view.steps_meta {
+            if !all_todos.contains_key(&step.todo_id) {
+                if let Some(todo) = state.db.get_todo_entity(step.todo_id).await? {
+                    // 收集 Todo 的标签
+                    let todo_tag_ids = state.db.get_todo_tag_ids(step.todo_id).await?;
+                    let mut todo_tag_items: Vec<TagExportItem> = Vec::new();
+                    for tag_id in &todo_tag_ids {
+                        if !all_tags.contains_key(tag_id) {
+                            if let Some(tag) = state.db.get_tag(*tag_id).await? {
+                                let pseudo_id = generate_pseudo_id("tag", all_tags.len() + 1);
+                                let color = tag.color.clone();
+                                all_tags.insert(*tag_id, TagExportItem {
+                                    id: pseudo_id.clone(),
+                                    name: tag.name.clone(),
+                                    color: color.clone(),
+                                });
+                                todo_tag_items.push(TagExportItem {
+                                    id: pseudo_id,
+                                    name: tag.name,
+                                    color,
+                                });
+                            }
+                        } else if let Some(existing) = all_tags.get(tag_id) {
+                            todo_tag_items.push(existing.clone());
+                        }
+                    }
+
+                    // 收集 Todo 引用的评审模板
+                    let mut review_template_id: Option<String> = None;
+                    let mut review_template_name: Option<String> = None;
+                    if let Some(rt_id) = todo.review_template_id {
+                        if !all_templates.contains_key(&rt_id) {
+                            if let Some(tpl) = state.db.get_review_template(rt_id).await? {
+                                review_template_id = Some(generate_pseudo_id("template", all_templates.len() + 1));
+                                review_template_name = Some(tpl.name.clone());
+                                all_templates.insert(rt_id, ReviewTemplateExportItem {
+                                    id: review_template_id.clone().unwrap(),
+                                    name: tpl.name,
+                                    description: tpl.description,
+                                    prompt: tpl.prompt,
+                                });
+                            }
+                        } else if let Some(existing) = all_templates.get(&rt_id) {
+                            review_template_id = Some(existing.id.clone());
+                            review_template_name = Some(existing.name.clone());
+                        }
+                    }
+
+                    let tag_ids: Vec<String> = todo_tag_items.iter().map(|t| t.id.clone()).collect();
+                    let tag_names: Vec<String> = todo_tag_items.iter().map(|t| t.name.clone()).collect();
+
+                    // 实体模型 status 是 Option<String>，需要 unwrap_or_default
+                    // kind 是 Option<String>，需要 unwrap_or_default
+                    all_todos.insert(step.todo_id, TodoExportItem {
+                        id: generate_pseudo_id("todo", all_todos.len() + 1),
+                        title: todo.title.clone(),
+                        prompt: todo.prompt.clone().unwrap_or_default(),
+                        status: todo.status.clone().unwrap_or_else(|| "pending".to_string()),
+                        executor: todo.executor.clone(),
+                        scheduler_enabled: todo.scheduler_enabled.unwrap_or(false),
+                        webhook_enabled: todo.webhook_enabled.unwrap_or(false),
+                        acceptance_criteria: todo.acceptance_criteria.clone(),
+                        auto_review_enabled: todo.auto_review_enabled.unwrap_or(false),
+                        review_template_id,
+                        review_template_name,
+                        kind: todo.kind.clone().unwrap_or_else(|| "item".to_string()),
+                        tag_ids,
+                        tag_names,
+                        is_abnormal_handler: false,
+                    });
+                }
+            }
+        }
+
+        // 收集异常处理 Todo（如果有）
+        let mut abnormal_handler_todo_id: Option<String> = None;
+        let mut abnormal_handler_todo_title: Option<String> = None;
+        if let Some(handler_todo_id) = view.loop_.abnormal_handler_todo_id {
+            if !all_todos.contains_key(&handler_todo_id) {
+                if let Some(todo) = state.db.get_todo_entity(handler_todo_id).await? {
+                    // 异常处理 Todo 不导出标签
+                    all_todos.insert(handler_todo_id, TodoExportItem {
+                        id: generate_pseudo_id("todo", all_todos.len() + 1),
+                        title: todo.title.clone(),
+                        prompt: todo.prompt.clone().unwrap_or_default(),
+                        status: todo.status.clone().unwrap_or_else(|| "pending".to_string()),
+                        executor: todo.executor.clone(),
+                        scheduler_enabled: todo.scheduler_enabled.unwrap_or(false),
+                        webhook_enabled: todo.webhook_enabled.unwrap_or(false),
+                        acceptance_criteria: todo.acceptance_criteria.clone(),
+                        auto_review_enabled: todo.auto_review_enabled.unwrap_or(false),
+                        review_template_id: None,
+                        review_template_name: None,
+                        kind: todo.kind.clone().unwrap_or_else(|| "item".to_string()),
+                        tag_ids: vec![],
+                        tag_names: vec![],
+                        is_abnormal_handler: true,
+                    });
+                }
+            }
+            if let Some(td) = all_todos.get(&handler_todo_id) {
+                abnormal_handler_todo_id = Some(td.id.clone());
+                abnormal_handler_todo_title = Some(td.title.clone());
+            }
+        }
+
+        // 构建环路导出项
+        let mut triggers: Vec<LoopTriggerExportItem> = Vec::new();
+        let mut trigger_idx = 0;
+        for t in &view.triggers {
+            // 只导出 manual 和 cron 触发器
+            if t.trigger_type != "manual" && t.trigger_type != "cron" {
+                continue;
+            }
+            trigger_idx += 1;
+            let mut enabled = t.enabled != 0;
+            // cron 触发器导出时强制禁用
+            if t.trigger_type == "cron" {
+                enabled = false;
+            }
+            triggers.push(LoopTriggerExportItem {
+                id: generate_pseudo_id("trigger", trigger_idx),
+                trigger_type: t.trigger_type.clone(),
+                config: serde_json::from_str(&t.config).unwrap_or_default(),
+                enabled,
+                priority: t.priority,
+            });
+        }
+
+        let mut steps: Vec<LoopStepExportItem> = Vec::new();
+        let mut step_idx = 0;
+        for (step, _todo_title, _) in &view.steps_meta {
+            step_idx += 1;
+            let todo_pseudo_id = all_todos.get(&step.todo_id)
+                .map(|t| t.id.clone())
+                .unwrap_or_else(|| generate_pseudo_id("todo", 999));
+
+            let success_goto_step_id = step.success_goto_step_id
+                .and_then(|gid| view.steps.iter().position(|s| s.id == gid))
+                .map(|pos| generate_pseudo_id("step", pos + 1));
+            let fail_goto_step_id = step.fail_goto_step_id
+                .and_then(|gid| view.steps.iter().position(|s| s.id == gid))
+                .map(|pos| generate_pseudo_id("step", pos + 1));
+
+            steps.push(LoopStepExportItem {
+                id: generate_pseudo_id("step", step_idx),
+                name: step.name.clone(),
+                description: step.description.clone(),
+                todo_id: todo_pseudo_id,
+                todo_title: all_todos.get(&step.todo_id).map(|t| t.title.clone()).unwrap_or_default(),
+                order_index: step.order_index,
+                run_mode: step.run_mode.clone(),
+                skip_on_source_failed: step.skip_on_source_failed != 0,
+                min_rating: step.min_rating,
+                unrated_policy: step.unrated_policy.clone(),
+                on_success: step.on_success.clone(),
+                success_goto_step_id,
+                success_goto_step_name: step.success_goto_step_id
+                    .and_then(|gid| view.steps.iter().find(|s| s.id == gid))
+                    .map(|s| s.name.clone()),
+                on_rating_fail: step.on_rating_fail.clone(),
+                fail_goto_step_id,
+                fail_goto_step_name: step.fail_goto_step_id
+                    .and_then(|gid| view.steps.iter().find(|s| s.id == gid))
+                    .map(|s| s.name.clone()),
+                review_type: step.review_type.clone(),
+                enabled: step.enabled != 0,
+            });
+        }
+
+        // 环路级别的评审模板
+        let mut loop_review_template_id: Option<String> = None;
+        let mut loop_review_template_name: Option<String> = None;
+        if let Some(rt_id) = view.loop_.review_template_id {
+            if let Some(existing) = all_templates.get(&rt_id) {
+                loop_review_template_id = Some(existing.id.clone());
+                loop_review_template_name = Some(existing.name.clone());
+            }
+        }
+
+        let loop_tag_ids = state.db.get_loop_tag_ids(loop_id).await?;
+        let loop_tag_pseudo_ids: Vec<String> = loop_tag_ids.iter()
+            .filter_map(|id| all_tags.get(id).map(|t| t.id.clone()))
+            .collect();
+        let loop_tag_names: Vec<String> = loop_tag_ids.iter()
+            .filter_map(|id| all_tags.get(id).map(|t| t.name.clone()))
+            .collect();
+
+        let limits_config: serde_json::Value = serde_json::from_str(&view.loop_.limits_config)
+            .unwrap_or_default();
+
+        let abnormal_handler_trigger_on: Vec<String> = serde_json::from_str(&view.loop_.abnormal_handler_trigger_on)
+            .unwrap_or_default();
+
+        exported_loops.push(LoopExportItem {
+            id: generate_pseudo_id("loop", idx + 1),
+            name: view.loop_.name.clone(),
+            description: view.loop_.description.clone(),
+            icon: view.loop_.icon.clone(),
+            color: view.loop_.color.clone(),
+            status: "paused".to_string(), // 导出时统一为 paused
+            webhook_enabled: view.loop_.webhook_enabled,
+            limits_config,
+            review_template_id: loop_review_template_id,
+            review_template_name: loop_review_template_name,
+            abnormal_handler_todo_id,
+            abnormal_handler_todo_title,
+            abnormal_handler_trigger_on,
+            tag_ids: loop_tag_pseudo_ids,
+            tag_names: loop_tag_names,
+            triggers,
+            steps,
+        });
+    }
+
+    let export_data = LoopExportData {
+        version: "1.0".to_string(),
+        export_type: "loop".to_string(),
+        created_at: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+        source: "nothing-todo".to_string(),
+        schema_version: 1,
+        tags: all_tags.into_values().collect(),
+        review_templates: all_templates.into_values().collect(),
+        todos: all_todos.into_values().collect(),
+        loops: exported_loops,
+    };
+
+    serde_yaml::to_string(&export_data).map_err(|e| AppError::Internal(e.to_string()))
+}
+
 // ====== 路由表 ======
 
 pub fn loop_routes() -> axum::Router<AppState> {
@@ -853,7 +1562,9 @@ pub fn loop_routes() -> axum::Router<AppState> {
         .route("/api/loops", get(list_loops).post(create_loop))
         .route("/api/loops/batch-workspace", put(batch_move_loops_workspace))
         .route("/api/loops/batch-copy-workspace", post(batch_copy_loops_workspace))
+        .route("/api/loops/export-selected", post(export_selected_loops))
         .route("/api/loops/{id}", get(get_loop).put(update_loop).delete(delete_loop))
+        .route("/api/loops/{id}/export", get(export_loop))
         .route("/api/loops/{id}/status", put(update_loop_status))
         .route("/api/loops/{id}/tags", put(update_loop_tags))
         .route("/api/loops/{id}/duplicate", post(duplicate_loop))
@@ -874,4 +1585,7 @@ pub fn loop_routes() -> axum::Router<AppState> {
         .route("/api/loops/{id}/executions/{eid}/steps/{seid}/approve", post(approve_step_execution))
         // 通过执行 ID 直接获取执行详情（无需 loop_id），供消息历史中 "处理类型" 列跳转使用
         .route("/api/loop-executions/{eid}", get(get_execution_by_id))
+        // 导入导出
+        .route("/api/loops/import/preview", post(import_preview))
+        .route("/api/loops/import", post(import_loops))
 }

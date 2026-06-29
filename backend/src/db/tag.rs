@@ -26,6 +26,17 @@ impl Database {
             .collect())
     }
 
+    /// 根据 ID 获取单个标签
+    pub async fn get_tag(&self, id: i64) -> Result<Option<Tag>, sea_orm::DbErr> {
+        let model = tags::Entity::find_by_id(id).one(&self.conn).await?;
+        Ok(model.map(|m| Tag {
+            id: m.id,
+            name: m.name,
+            color: m.color.unwrap_or_default(),
+            created_at: m.created_at.unwrap_or_default(),
+        }))
+    }
+
     pub async fn create_tag(&self, name: &str, color: &str) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let am = tags::ActiveModel {

@@ -593,6 +593,14 @@ impl Database {
         Ok(Some(Self::model_to_todo(model, tag_ids)))
     }
 
+    /// 获取 Todo 实体模型（包含 kind 等完整字段），用于导出等需要访问所有字段的场景
+    pub async fn get_todo_entity(&self, id: i64) -> Result<Option<todos::Model>, sea_orm::DbErr> {
+        todos::Entity::find_by_id(id)
+            .filter(todos::Column::DeletedAt.is_null())
+            .one(&self.conn)
+            .await
+    }
+
     pub async fn get_scheduler_todos(&self, workspace_id: Option<i64>) -> Result<Vec<Todo>, sea_orm::DbErr> {
         let mut find = todos::Entity::find()
             .filter(todos::Column::DeletedAt.is_null())

@@ -1028,11 +1028,232 @@ pub struct TodoBackup {
     pub worktree: Option<String>,
 }
 
+// ============ 环路导入导出 DTO ============
+// 方案：伪ID引用（@loop_1, @todo_1 等）解决跨实体引用问题
+
+/// 导出文件顶层结构
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopExportData {
+    pub version: String,
+    #[serde(rename = "type")]
+    pub export_type: String,
+    pub created_at: String,
+    pub source: String,
+    pub schema_version: i32,
+    pub tags: Vec<TagExportItem>,
+    pub review_templates: Vec<ReviewTemplateExportItem>,
+    pub todos: Vec<TodoExportItem>,
+    pub loops: Vec<LoopExportItem>,
+}
+
+/// 标签导出项（伪ID格式）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagExportItem {
+    pub id: String,    // 伪ID: "@tag_1"
+    pub name: String,
+    pub color: String,
+}
+
+/// 评审模板导出项（伪ID格式）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewTemplateExportItem {
+    pub id: String,               // 伪ID: "@template_1"
+    pub name: String,
+    pub description: Option<String>,
+    pub prompt: String,
+}
+
+/// Todo 导出项（伪ID格式）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodoExportItem {
+    pub id: String,               // 伪ID: "@todo_1"
+    pub title: String,
+    pub prompt: String,
+    pub status: String,
+    pub executor: Option<String>,
+    pub scheduler_enabled: bool,
+    pub webhook_enabled: bool,
+    pub acceptance_criteria: Option<String>,
+    pub auto_review_enabled: bool,
+    pub review_template_id: Option<String>,    // 伪ID引用
+    pub review_template_name: Option<String>,  // 展示用
+    pub kind: String,
+    pub tag_ids: Vec<String>,                   // 伪ID引用
+    pub tag_names: Vec<String>,                // 展示用
+    /// 是否为异常处理 Todo（异常处理 Todo 不导出标签）
+    #[serde(default)]
+    pub is_abnormal_handler: bool,
+}
+
+/// 环路导出项（伪ID格式）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopExportItem {
+    pub id: String,               // 伪ID: "@loop_1"
+    pub name: String,
+    pub description: String,
+    pub icon: String,
+    pub color: String,
+    pub status: String,
+    pub webhook_enabled: bool,
+    pub limits_config: serde_json::Value,
+    pub review_template_id: Option<String>,          // 伪ID引用
+    pub review_template_name: Option<String>,        // 展示用
+    pub abnormal_handler_todo_id: Option<String>,   // 伪ID引用
+    pub abnormal_handler_todo_title: Option<String>, // 展示用
+    pub abnormal_handler_trigger_on: Vec<String>,
+    pub tag_ids: Vec<String>,                        // 伪ID引用
+    pub tag_names: Vec<String>,                      // 展示用
+    pub triggers: Vec<LoopTriggerExportItem>,
+    pub steps: Vec<LoopStepExportItem>,
+}
+
+/// 触发器导出项（只包含 manual 和 cron）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopTriggerExportItem {
+    pub id: String,           // 伪ID: "@trigger_1"
+    pub trigger_type: String, // "manual" 或 "cron"
+    pub config: serde_json::Value,
+    pub enabled: bool,
+    pub priority: i32,
+}
+
+/// 步骤导出项（伪ID格式）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopStepExportItem {
+    pub id: String,               // 伪ID: "@step_1"
+    pub name: String,
+    pub description: String,
+    pub todo_id: String,          // 伪ID引用
+    pub todo_title: String,       // 展示用
+    pub order_index: i32,
+    pub run_mode: String,
+    pub skip_on_source_failed: bool,
+    pub min_rating: Option<i32>,
+    pub unrated_policy: String,
+    pub on_success: String,
+    pub success_goto_step_id: Option<String>,   // 伪ID引用
+    pub success_goto_step_name: Option<String>, // 展示用
+    pub on_rating_fail: String,
+    pub fail_goto_step_id: Option<String>,      // 伪ID引用
+    pub fail_goto_step_name: Option<String>,    // 展示用
+    pub review_type: String,
+    pub enabled: bool,
+}
+
+// ============ 导入预览/执行响应 DTO ============
+
+/// 导入预览响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopImportPreviewResponse {
+    pub valid: bool,
+    pub pseudo_ids: Vec<String>,
+    pub summary: LoopImportSummary,
+    pub conflicts: Vec<LoopImportConflict>,
+    pub warnings: Vec<LoopImportWarning>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopImportSummary {
+    pub loops: usize,
+    pub steps: usize,
+    pub todos: usize,
+    pub review_templates: usize,
+    pub tags: usize,
+    pub triggers: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopImportConflict {
+    #[serde(rename = "type")]
+    pub conflict_type: String,
+    pub name: String,
+    pub action: String, // "rename" | "overwrite" | "skip"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopImportWarning {
+    #[serde(rename = "type")]
+    pub warning_type: String,
+    pub message: String,
+}
+
+/// 导入执行响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopImportResponse {
+    pub success: bool,
+    pub created: LoopImportCreatedCounts,
+    pub warnings: Vec<LoopImportWarning>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopImportCreatedCounts {
+    pub loops: usize,
+    pub todos: usize,
+    pub review_templates: usize,
+    pub tags: usize,
+    pub triggers: usize,
+    pub steps: usize,
+}
+
+/// 导出选择请求
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExportLoopSelectedRequest {
+    pub loop_ids: Vec<i64>,
+}
+
 // Business error codes
 pub mod codes {
     pub const NOT_FOUND: i32 = 40001;
     pub const BAD_REQUEST: i32 = 40002;
     pub const INTERNAL: i32 = 50001;
+}
+
+// ============ 伪ID工具函数 ============
+
+/// 伪ID类型前缀
+const PSEUDO_ID_PREFIXES: &[&str] = &["loop", "todo", "step", "trigger", "template", "tag"];
+
+/// 生成伪ID: "@{prefix}_{index}"
+pub fn generate_pseudo_id(prefix: &str, index: usize) -> String {
+    format!("@{}_{}", prefix, index)
+}
+
+/// 校验伪ID格式是否合法
+/// 格式: ^@(loop|todo|step|trigger|template|tag)_\d+$
+pub fn validate_pseudo_id(id: &str) -> bool {
+    // 必须以 @ 开头
+    if !id.starts_with('@') {
+        return false;
+    }
+    // 去掉 @ 前缀后检查格式
+    let rest = &id[1..];
+    // 检查是否包含 _ 和数字部分
+    if let Some(underscore_pos) = rest.find('_') {
+        let prefix = &rest[..underscore_pos];
+        let suffix = &rest[underscore_pos + 1..];
+        return PSEUDO_ID_PREFIXES.contains(&prefix) && suffix.parse::<usize>().is_ok();
+    }
+    false
+}
+
+/// 从伪ID提取前缀
+pub fn extract_pseudo_prefix(id: &str) -> Option<&str> {
+    if !id.starts_with('@') {
+        return None;
+    }
+    let rest = &id[1..];
+    // 没有下划线则不是合法伪ID格式
+    let underscore_pos = rest.find('_')?;
+    Some(&rest[..underscore_pos])
+}
+
+/// 从伪ID提取序号
+pub fn extract_pseudo_index(id: &str) -> Option<usize> {
+    if !id.starts_with('@') {
+        return None;
+    }
+    let rest = &id[1..];
+    rest.split('_').nth(1)?.parse().ok()
 }
 
 /// 返回当前 UTC 时间的 ISO 8601 格式字符串 (2024-01-15T08:30:00.000Z)
@@ -1292,6 +1513,60 @@ mod tests {
         assert!(req.executor.is_none());
         assert!(req.scheduler_enabled.is_none());
         assert!(req.scheduler_config.is_none());
+    }
+
+    // ============ 伪ID工具函数测试 ============
+
+    #[test]
+    fn test_generate_pseudo_id() {
+        assert_eq!(generate_pseudo_id("loop", 1), "@loop_1");
+        assert_eq!(generate_pseudo_id("todo", 42), "@todo_42");
+        assert_eq!(generate_pseudo_id("step", 100), "@step_100");
+    }
+
+    #[test]
+    fn test_validate_pseudo_id_valid() {
+        assert!(validate_pseudo_id("@loop_1"));
+        assert!(validate_pseudo_id("@todo_42"));
+        assert!(validate_pseudo_id("@step_100"));
+        assert!(validate_pseudo_id("@trigger_5"));
+        assert!(validate_pseudo_id("@template_3"));
+        assert!(validate_pseudo_id("@tag_99"));
+    }
+
+    #[test]
+    fn test_validate_pseudo_id_invalid() {
+        // 不是以 @ 开头
+        assert!(!validate_pseudo_id("loop_1"));
+        assert!(!validate_pseudo_id(""));
+        // 没有下划线
+        assert!(!validate_pseudo_id("@loop"));
+        assert!(!validate_pseudo_id("@todoabc"));
+        // 前缀不合法
+        assert!(!validate_pseudo_id("@invalid_1"));
+        assert!(!validate_pseudo_id("@_1"));
+        // 数字部分不合法
+        assert!(!validate_pseudo_id("@loop_abc"));
+        assert!(!validate_pseudo_id("@loop_-1"));
+    }
+
+    #[test]
+    fn test_extract_pseudo_prefix() {
+        assert_eq!(extract_pseudo_prefix("@loop_1"), Some("loop"));
+        assert_eq!(extract_pseudo_prefix("@todo_42"), Some("todo"));
+        assert_eq!(extract_pseudo_prefix("@step_100"), Some("step"));
+        assert_eq!(extract_pseudo_prefix("loop_1"), None);  // 没有 @ 前缀
+        assert_eq!(extract_pseudo_prefix("@"), None);       // @ 后无下划线，不是合法伪ID
+    }
+
+    #[test]
+    fn test_extract_pseudo_index() {
+        assert_eq!(extract_pseudo_index("@loop_1"), Some(1));
+        assert_eq!(extract_pseudo_index("@todo_42"), Some(42));
+        assert_eq!(extract_pseudo_index("@step_100"), Some(100));
+        assert_eq!(extract_pseudo_index("loop_1"), None);
+        assert_eq!(extract_pseudo_index("@loop"), None);
+        assert_eq!(extract_pseudo_index("@loop_abc"), None);
     }
 }
 
