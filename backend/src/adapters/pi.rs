@@ -20,7 +20,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use super::helpers;
-use super::pi_event::{PiAssistantMessageEvent, PiEvent, PiMessage, PiToolExecution};
+use super::pi_event::{PiAssistantMessageEvent, PiContentBlock, PiEvent, PiMessage, PiToolExecution};
 use super::{BaseExecutor, CodeExecutor, ExecutorType, ParsedLogEntry};
 use crate::adapters::ExecutionUsage;
 use crate::models::utc_timestamp;
@@ -39,6 +39,8 @@ pub struct PiExecutor {
     session_id: Arc<Mutex<Option<String>>>,
     /// text_delta 缓冲：合并连续的增量文本，避免碎片化
     pending_text: Arc<Mutex<String>>,
+    /// thinking_delta 缓冲：合并逐字到达的思考内容，thinking_end 时一次性输出
+    pending_thinking: Arc<Mutex<String>>,
     /// 从 message_end 中提取的完整文本，供 get_final_result 使用
     full_text: Arc<Mutex<Option<String>>>,
 }
@@ -49,6 +51,7 @@ impl PiExecutor {
             base: BaseExecutor::new(path),
             session_id: Arc::new(Mutex::new(None)),
             pending_text: Arc::new(Mutex::new(String::new())),
+            pending_thinking: Arc::new(Mutex::new(String::new())),
             full_text: Arc::new(Mutex::new(None)),
         }
     }
@@ -62,9 +65,12 @@ impl PiExecutor {
     }
 
     /// "message_end" 事件：
-    /// - 非 assistant 角色的 message_end 只刷出缓冲文本；
+    /// - 非 assistant 角色的 message_end 只刷出缓冲文本和思考；
     /// - assistant 角色的 message_end 提取 model / usage / full_text，然后刷出缓冲。
     fn handle_message_end(&self, event: &PiEvent) -> Option<ParsedLogEntry> {
+        // 先 flush 思考缓冲（保证 thinking 在 assistant message_end 之前输出）
+        let thinking = self.flush_pending_thinking();
+        if thinking.is_some() { return thinking; }
         let flushed = self.flush_pending_text();
         let Some(msg) = &event.message else { return flushed };
         if msg.role.as_deref() != Some("assistant") {
@@ -83,7 +89,7 @@ impl PiExecutor {
         flushed
     }
 
-    /// "message_update" 事件：text_delta / text_end / thinking_delta 三个 sub-type。
+    /// "message_update" 事件：text_delta / text_end / thinking_delta / thinking_end 四个 sub-type。
     fn handle_message_update(&self, ame: Option<&PiAssistantMessageEvent>) -> Option<ParsedLogEntry> {
         let Some(ame) = ame else { return None };
         // 提取 model：顶层优先，partial 兜底；空串视为无
@@ -94,6 +100,7 @@ impl PiExecutor {
             Some("text_delta") => self.buffer_text_delta(ame.delta.as_deref()),
             Some("text_end") => self.handle_text_end(ame.usage.as_ref()),
             Some("thinking_delta") => self.handle_thinking_delta(ame.delta.as_deref()),
+            Some("thinking_end") => self.handle_thinking_end(ame),
             _ => None,
         }
     }
@@ -104,12 +111,14 @@ impl PiExecutor {
         None
     }
 
-    /// "tool_execution_start" 事件：先 flush 缓冲文本避免工具调用前的内容丢失，
+    /// "tool_execution_start" 事件：先 flush 缓冲文本和思考避免工具调用前的内容丢失，
     /// 然后返回 tool_use 日志。
     fn handle_tool_start(&self, te: Option<&PiToolExecution>) -> Option<ParsedLogEntry> {
-        if self.flush_pending_text().is_some() {
-            return self.flush_pending_text();
-        }
+        // 先 flush 思考缓冲，再 flush 文本缓冲（保证 thinking → text → tool 的顺序）
+        let thinking = self.flush_pending_thinking();
+        let text = self.flush_pending_text();
+        if thinking.is_some() { return thinking; }
+        if text.is_some() { return text; }
         let te = te?;
         let name = te.tool_name.clone().unwrap_or_else(|| "unknown".to_string());
         let input_str = te.args.as_ref().map(|i| serde_json::to_string(i).unwrap_or_default()).unwrap_or_default();
@@ -123,11 +132,13 @@ impl PiExecutor {
         })
     }
 
-    /// "tool_execution_end" 事件：先 flush 缓冲文本，返回 tool_result 日志。
+    /// "tool_execution_end" 事件：先 flush 缓冲文本和思考，返回 tool_result 日志。
     fn handle_tool_end(&self, te: Option<&PiToolExecution>) -> Option<ParsedLogEntry> {
-        if self.flush_pending_text().is_some() {
-            return self.flush_pending_text();
-        }
+        // 先 flush 思考缓冲，再 flush 文本缓冲（保证 thinking → text → tool_result 的顺序）
+        let thinking = self.flush_pending_thinking();
+        let text = self.flush_pending_text();
+        if thinking.is_some() { return thinking; }
+        if text.is_some() { return text; }
         let te = te?;
         let name = te.tool_name.clone().unwrap_or_else(|| "unknown".to_string());
         let output = te.output.clone().unwrap_or_default();
@@ -152,7 +163,7 @@ impl PiExecutor {
     }
 
     /// 把 text_delta 累加进 pending_text 缓冲；到达自然边界（句末标点 / 200 字符）
-    /// 时刷出为 assistant 日志。
+    /// 时先 flush 思考缓冲，再刷出为 assistant 日志。
     fn buffer_text_delta(&self, delta: Option<&str>) -> Option<ParsedLogEntry> {
         let delta = delta?;
         // 去掉 delta 中的换行，避免输出碎片化
@@ -165,6 +176,12 @@ impl PiExecutor {
         if !Self::is_text_boundary(&buf) {
             return None;
         }
+        // 到达文本边界时，先 flush 思考缓冲确保 thinking → text 的顺序
+        drop(buf);
+        if let Some(thinking) = self.flush_pending_thinking() {
+            return Some(thinking);
+        }
+        let mut buf = self.pending_text.lock();
         let content = std::mem::take(&mut *buf);
         drop(buf);
         Some(helpers::entry("assistant", content))
@@ -184,21 +201,53 @@ impl PiExecutor {
             };
             self.extract_usage_from_message(&tmp_msg);
         }
+        // text_end 时先 flush 思考缓冲，再 flush 文本缓冲（保证 thinking → text 的顺序）
+        let thinking = self.flush_pending_thinking();
+        if thinking.is_some() { return thinking; }
         self.flush_pending_text()
     }
 
-    /// "thinking_delta" 事件：先 flush 缓冲文本（保证 thinking 之前的文本不丢），
-    /// 然后返回 thinking 日志（限制 500 字符）。
+    /// "thinking_delta" 事件：将增量内容追加到 pending_thinking 缓冲，不立即输出。
+    /// 等待 thinking_end 或后续非思考事件触发 flush，避免逐字碎片化入库。
+    /// 先 flush pending_text，保证思考之前的文本不丢。
     fn handle_thinking_delta(&self, delta: Option<&str>) -> Option<ParsedLogEntry> {
-        if self.flush_pending_text().is_some() {
-            return self.flush_pending_text();
+        // 先 flush pending_text（如果有），保证 thinking 前已累积的文本先输出
+        if let Some(entry) = self.flush_pending_text() {
+            return Some(entry);
         }
         let delta = delta?;
         let trimmed = delta.trim_end();
         if trimmed.is_empty() {
             return None;
         }
-        Some(helpers::entry("thinking", trimmed.chars().take(500).collect::<String>()))
+        // 追加到 pending_thinking 缓冲，不立即创建日志条目
+        self.pending_thinking.lock().push_str(trimmed);
+        None
+    }
+
+    /// "thinking_end" 事件：从 partial.content 提取完整思考文本作为 thinking 日志，
+    /// 同时丢弃已累积的 pending_thinking 缓冲。
+    /// pi 的 thinking_end 携带 partial 字段，内含完整的思考内容块，
+    /// 一次性输出比逐条 thinking_delta 更节省存储空间。
+    /// 若 partial 缺失（降级路径），则 flush pending_thinking 缓冲兜底。
+    fn handle_thinking_end(&self, ame: &PiAssistantMessageEvent) -> Option<ParsedLogEntry> {
+        // 从 partial.content 中提取 Thinking 块的 thinking 字段
+        let from_partial = ame.partial.as_ref().and_then(|p| {
+            p.content.iter().find_map(|block| match block {
+                PiContentBlock::Thinking { thinking } => thinking.clone(),
+                _ => None,
+            })
+        });
+        if let Some(content) = from_partial {
+            let trimmed = content.trim().to_string();
+            if !trimmed.is_empty() {
+                // partial 有完整内容，丢弃缓冲的 thinking_delta 碎片
+                self.pending_thinking.lock().clear();
+                return Some(helpers::entry("thinking", trimmed));
+            }
+        }
+        // partial 无 thinking 块时，flush 缓冲的 thinking_delta 兜底
+        self.flush_pending_thinking()
     }
 
     /// 将缓冲的 text_delta 内容作为一个 assistant 日志条目刷出。
@@ -212,6 +261,26 @@ impl PiExecutor {
         Some(ParsedLogEntry {
             timestamp: utc_timestamp(),
             log_type: "assistant".to_string(),
+            content,
+            usage: None,
+            tool_name: None,
+            tool_input_json: None,
+        })
+    }
+
+    /// 将缓冲的 thinking_delta 内容作为一个 thinking 日志条目刷出。
+    /// 在非 thinking 事件（text_delta / tool_execution_start 等）到达时调用，
+    /// 确保前面累积的思考不会丢失。
+    fn flush_pending_thinking(&self) -> Option<ParsedLogEntry> {
+        let mut buf = self.pending_thinking.lock();
+        let content = std::mem::take(&mut *buf);
+        drop(buf);
+        if content.is_empty() {
+            return None;
+        }
+        Some(ParsedLogEntry {
+            timestamp: utc_timestamp(),
+            log_type: "thinking".to_string(),
             content,
             usage: None,
             tool_name: None,
@@ -567,11 +636,26 @@ mod tests {
     #[test]
     fn test_parse_output_line_thinking_delta() {
         let executor = PiExecutor::new("pi".to_string());
+        // thinking_delta 现在缓冲在 pending_thinking 中，不立即输出
         let line = r#"{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"thinking..."}}"#;
         let entry = executor.parse_output_line(line);
-        assert!(entry.is_some());
-        let e = entry.unwrap();
+        assert!(entry.is_none(), "thinking_delta 应缓冲不输出");
+    }
+
+    #[test]
+    fn test_thinking_delta_buffered_then_flushed_by_text() {
+        let executor = PiExecutor::new("pi".to_string());
+        // 先发 thinking_delta，被缓存
+        let delta_line = r#"{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"thinking about something"}}"#;
+        let r1 = executor.parse_output_line(delta_line);
+        assert!(r1.is_none(), "thinking_delta 应缓冲");
+        // text_delta 以句号结尾触发文本边界 flush，同时先 flush pending_thinking
+        let text_line = r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"OK."}}"#;
+        let r2 = executor.parse_output_line(text_line);
+        assert!(r2.is_some(), "text_delta 到达时触发 thinking flush");
+        let e = r2.unwrap();
         assert_eq!(e.log_type, "thinking");
+        assert!(e.content.contains("thinking about something"));
     }
 
     #[test]
