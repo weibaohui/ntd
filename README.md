@@ -116,12 +116,7 @@ ntd loop update <id> --name "新名称" --description "描述"
 # 删除 loop
 ntd loop delete <id>
 
-# 启动 loop（可指定 cron 调度或立即执行一次）
-ntd loop start <id>                                    # 立即执行一次
-ntd loop start <id> --schedule "0 */5 * * * *"       # 每5分钟执行
-ntd loop start <id> --param key=value                 # 带参数执行
-
-# 停止 loop（暂停所有触发器）
+# 停止 loop
 ntd loop stop <id>
 
 # 查看 loop 执行统计和最近执行

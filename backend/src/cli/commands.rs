@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::models::{
-    ClientResponse, CreateTagRequest, CreateTodoRequest, CreateTriggerRequest, DashboardStats,
+    ClientResponse, CreateTagRequest, CreateTodoRequest, DashboardStats,
     ExecutionRecord, ExecutionRecordsPage, ExecutionSummary, Tag, Todo, ExecuteRequest, LoopDto,
-    TriggerLoopRequest, LoopTriggerDto,
+    TriggerLoopRequest,
 };
 use crate::cli::client::ApiClient;
 use crate::config;
@@ -299,21 +299,6 @@ pub enum LoopAction {
     Delete {
         /// Loop ID
         id: i64,
-    },
-    /// Start a loop (create a cron trigger to run it periodically)
-    Start {
-        /// Loop ID
-        id: i64,
-
-        /// Cron expression (e.g., "0 */5 * * * *" for every 5 minutes)
-        /// Use "once" to run immediately without cron, or specify a cron schedule.
-        #[arg(long, default_value = "once")]
-        schedule: String,
-
-        /// Parameters for placeholder replacement (key=value format, can be repeated)
-        /// Example: --param project_name=myproject --param env=production
-        #[arg(long = "param", num_args = 1, value_parser = parse_key_value)]
-        params: Option<Vec<(String, String)>>,
     },
     /// Stop a loop (pause all cron triggers)
     Stop {
@@ -748,32 +733,6 @@ async fn handle_loop(
         }
         LoopAction::Delete { id } => {
             let resp: ClientResponse<()> = client.delete(&format!("/loops/{}", id)).await?;
-            print_response(resp, output, fields)?;
-        }
-        LoopAction::Start { id, schedule, params } => {
-            // Create a cron trigger for the loop
-            let params_map: std::collections::HashMap<String, String> = params
-                .as_ref()
-                .map(|vec| vec.iter().cloned().collect())
-                .unwrap_or_default();
-            let req = CreateTriggerRequest {
-                trigger_type: if schedule == "once" {
-                    "manual".to_string()
-                } else {
-                    "cron".to_string()
-                },
-                // config 是 String 类型，需要序列化为 JSON 字符串
-                config: serde_json::to_string(&serde_json::json!({
-                    "cron": schedule,
-                    "params": params_map,
-                }))?,
-                enabled: true,
-                priority: 0,
-            };
-            let resp: ClientResponse<LoopTriggerDto> = client.post(
-                &format!("/loops/{}/triggers", id),
-                &req,
-            ).await?;
             print_response(resp, output, fields)?;
         }
         LoopAction::Stop { id } => {
