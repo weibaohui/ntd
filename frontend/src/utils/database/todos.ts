@@ -21,11 +21,12 @@ export async function createTodo(
   title: string,
   prompt: string = '',
   tagIds: number[] = [],
+  workspaceId: number,
   acceptanceCriteria?: string,
   autoReviewEnabled?: boolean,
   webhookEnabled?: boolean,
 ): Promise<Todo> {
-  const body: Record<string, unknown> = { title, prompt, tag_ids: tagIds };
+  const body: Record<string, unknown> = { title, prompt, tag_ids: tagIds, workspace_id: workspaceId };
   if (acceptanceCriteria !== undefined) body.acceptance_criteria = acceptanceCriteria;
   if (autoReviewEnabled !== undefined) body.auto_review_enabled = autoReviewEnabled;
   if (webhookEnabled !== undefined) body.webhook_enabled = webhookEnabled;

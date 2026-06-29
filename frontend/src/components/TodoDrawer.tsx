@@ -210,6 +210,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
           title.trim(),
           prompt.trim(),
           selectedTags,
+          workspaceToSave!,
           acceptanceCriteria || undefined,
           undefined,
           webhookEnabled,
