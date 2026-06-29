@@ -96,6 +96,9 @@ pub struct PiAssistantMessageEvent {
     // assistantMessageEvent 级别的 usage 字段（出现在 text_end 中）
     #[serde(default)]
     pub usage: Option<PiUsage>,
+    // toolcall_end 中的 toolCall 字段，包含当前工具调用的名称和参数
+    #[serde(default, rename = "toolCall")]
+    pub tool_call: Option<PiToolCall>,
 }
 
 /// partial 内容（包含完整的 thinking 或 text）
@@ -126,6 +129,20 @@ pub struct PiToolExecution {
     pub output: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
+}
+
+/// toolcall_end 事件中的 toolCall 字段，包含当前工具调用的名称和参数。
+/// 格式示例：{"type":"toolCall","id":"call_xxx","name":"bash","arguments":{"command":"ping ..."}}
+#[derive(Debug, Clone, Deserialize)]
+pub struct PiToolCall {
+    #[serde(rename = "type")]
+    pub tool_type: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub arguments: Option<serde_json::Value>,
 }
 
 /// agent 事件（agent_start / agent_end）

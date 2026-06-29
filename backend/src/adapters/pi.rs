@@ -253,7 +253,8 @@ impl PiExecutor {
 
     /// "toolcall_end" 事件：partial.content 中可能包含 thinking 块，
     /// 在该事件到达前可能没有 thinking_end（例如工具调用紧接思考后未发 thinking_end）。
-    /// 提取 thinking 并输出，避免思考内容丢失。
+    /// 同时 toolCall 字段包含当前工具调用的名称和参数（如 bash 命令），
+    /// 提取两者并输出 tool_use 日志，避免思考内容和工具调用信息丢失。
     fn handle_toolcall_end(&self, ame: &PiAssistantMessageEvent) -> Option<ParsedLogEntry> {
         // 优先从 partial.content 提取 Thinking 块
         if let Some(content) = ame.partial.as_ref().and_then(|p| {
@@ -272,6 +273,23 @@ impl PiExecutor {
         // partial 无 thinking 时，flush 缓冲的 thinking_delta 兜底
         let thinking = self.flush_pending_thinking();
         if thinking.is_some() { return thinking; }
+        // 从 toolCall 字段提取当前工具调用信息，创建 tool_use 条目
+        if let Some(tc) = &ame.tool_call {
+            let name = tc.name.clone().unwrap_or_else(|| "unknown".to_string());
+            let input_str = tc.arguments.as_ref()
+                .map(|a| serde_json::to_string(a).unwrap_or_default())
+                .unwrap_or_default();
+            if !name.is_empty() {
+                return Some(ParsedLogEntry {
+                    timestamp: utc_timestamp(),
+                    log_type: "tool_use".to_string(),
+                    content: format!("开始工具: {}", name),
+                    usage: None,
+                    tool_name: Some(name),
+                    tool_input_json: Some(input_str),
+                });
+            }
+        }
         self.flush_pending_text()
     }
 
