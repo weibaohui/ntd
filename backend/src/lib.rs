@@ -7,6 +7,10 @@ pub mod cli;
 pub mod config;
 pub mod daemon;
 pub mod db;
+/// 执行反馈统一事件模块
+///
+/// 提供统一的事件抽象层，将各执行器的原始输出转换为结构化的 ExecutionEvent。
+pub mod execution_events;
 pub mod executor_service;
 pub mod feishu;
 pub mod handlers;
