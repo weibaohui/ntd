@@ -8,9 +8,7 @@ import {
   DashboardOutlined,
   ReadOutlined,
   SettingOutlined,
-  LaptopOutlined,
   ThunderboltOutlined,
-  PlayCircleOutlined,
   FolderOutlined,
   CodeOutlined,
   DoubleRightOutlined,
@@ -29,7 +27,6 @@ export type LeftRailKey =
   | 'settings_projectDirectories'
   | 'settings_sessions'
   | 'settings_skills'
-  | 'settings_runtime'
   | 'settings_executors';
 
 interface LeftRailItem {
@@ -83,11 +80,9 @@ export function LeftRail({
     {
       title: '配置',
       items: [
-        { key: 'settings_runtime', label: '运行管理', icon: <PlayCircleOutlined />, ariaLabel: '运行管理' },
         { key: 'settings_executors', label: '执行器', icon: <CodeOutlined />, ariaLabel: '执行器' },
         { key: 'settings_skills', label: 'Skills', icon: <ThunderboltOutlined />, ariaLabel: 'Skills' },
         { key: 'settings_projectDirectories', label: '工作空间', icon: <FolderOutlined />, ariaLabel: '工作空间' },
-        { key: 'settings_sessions', label: '会话', icon: <LaptopOutlined />, ariaLabel: '会话' },
         { key: 'settings', label: '设置', icon: <SettingOutlined />, ariaLabel: '设置' },
       ] satisfies LeftRailItem[],
     },
