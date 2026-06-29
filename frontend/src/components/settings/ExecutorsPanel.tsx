@@ -1,13 +1,15 @@
-import { useState, useEffect, useRef } from 'react';
-import { Button, Card, Input, Switch, Spin, Tooltip, Modal, message, Typography, InputNumber, Form, Table, Space, Empty } from 'antd';
-import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined, BugOutlined, CodeOutlined, InfoCircleOutlined, SaveOutlined } from '@ant-design/icons';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { Button, Card, Input, Switch, Spin, Tooltip, Modal, message, Typography, InputNumber, Form, Table, Space, Empty, Tabs, Popconfirm } from 'antd';
+import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined, BugOutlined, CodeOutlined, InfoCircleOutlined, SaveOutlined, StopOutlined, ReloadOutlined } from '@ant-design/icons';
 import { Cron } from 'react-js-cron';
 import 'react-js-cron/dist/styles.css';
 import { CronPresetSelect } from '@/components/CronPresetSelect';
 import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '@/utils/cron';
 import { PageCard } from '@/components/common/PageCard';
 import * as db from '@/utils/database';
-import type { ExecutorConfig } from '@/types';
+import type { ExecutorConfig, ExecutionRecord } from '@/types';
+import { useApp } from '@/hooks/useApp';
+import { SessionManager } from '@/components/SessionManager';
 
 import { DEFAULT_EXECUTION_TIMEOUT_SECS, MAX_EXECUTION_TIMEOUT_MINUTES } from '@/constants';
 
@@ -57,11 +59,64 @@ export function ExecutorsPanel() {
   const [usageStatsLoading, setUsageStatsLoading] = useState(false);
   const [usageStatsSaving, setUsageStatsSaving] = useState(false);
 
+  // 正在运行 tab 相关状态
+  const { state } = useApp();
+  const { todos } = state;
+  const [runningTab, setRunningTab] = useState<'executors' | 'running' | 'sessions'>('executors');
+  const [selectedRecordIds, setSelectedRecordIds] = useState<number[]>([]);
+  const [stoppingRecords, setStoppingRecords] = useState(false);
+  const [runningRecords, setRunningRecords] = useState<ExecutionRecord[]>([]);
+
   useEffect(() => {
     loadExecutors();
     loadConfig();
     loadUsageStatsSettings();
   }, []);
+
+  // 正在运行 tab：加载运行中记录
+  const loadRunningRecords = async () => {
+    try {
+      const records = await db.getRunningExecutionRecords();
+      setRunningRecords(records);
+    } catch (err) {
+      console.error('加载运行中任务失败:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (runningTab === 'running') {
+      loadRunningRecords();
+      const timer = setInterval(loadRunningRecords, 10000);
+      return () => clearInterval(timer);
+    }
+  }, [runningTab]);
+
+  // 正在运行 tab：批量停止
+  const handleBatchStop = async () => {
+    if (selectedRecordIds.length === 0) return;
+    setStoppingRecords(true);
+    const results = await Promise.allSettled(
+      selectedRecordIds.map(async (recordId) => {
+        await db.forceFailExecution(recordId);
+      })
+    );
+    const successCount = results.filter(r => r.status === 'fulfilled').length;
+    const failCount = results.filter(r => r.status === 'rejected').length;
+    setSelectedRecordIds([]);
+    setStoppingRecords(false);
+    if (successCount > 0) message.success(`已停止 ${successCount} 个任务`);
+    if (failCount > 0) message.error(`${failCount} 个任务停止失败`);
+    loadRunningRecords();
+  };
+
+  // 执行器 display_name 映射（供正在运行 tab 使用）
+  const executorDisplayNames = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const ec of executors) {
+      map[ec.name] = ec.display_name;
+    }
+    return map;
+  }, [executors]);
 
   /** 加载应用配置（并发数、超时等）。 */
   const loadConfig = async () => {
@@ -145,8 +200,16 @@ export function ExecutorsPanel() {
 
   return (
     <PageCard icon={<CodeOutlined />} title="执行器">
-      <Spin spinning={executorsLoading}>
-        <div style={{ maxWidth: 1000 }}>
+      <Tabs
+        activeKey={runningTab}
+        onChange={(key) => setRunningTab(key as 'executors' | 'running')}
+        items={[
+          {
+            key: 'executors',
+            label: '执行器',
+            children: (
+              <Spin spinning={executorsLoading}>
+                <div style={{ maxWidth: 1000 }}>
         <Paragraph type="secondary" style={{ marginBottom: 16 }}>
           管理执行器的路径、开关状态，并检测二进制是否可用。关闭开关的执行器不会出现在 Todo 的执行器选择列表中。
         </Paragraph>
@@ -526,45 +589,151 @@ export function ExecutorsPanel() {
             </div>
           )}
         </Card>
-      </div>
-      <Modal
-        title={testModalData ? `测试结果 - ${executors.find(e => e.name === testModalData.name)?.display_name || testModalData.name}` : '测试结果'}
-        open={testModalVisible}
-        onCancel={() => setTestModalVisible(false)}
-        footer={<Button onClick={() => setTestModalVisible(false)}>关闭</Button>}
-        width={500}
-      >
-        {testModalData && (
-          <div>
-            <p>
-              状态：{testModalData.result.test_passed
-                ? <span style={{ color: '#52c41a', fontWeight: 600 }}>通过</span>
-                : <span style={{ color: '#ff4d4f', fontWeight: 600 }}>失败</span>
-              }
-            </p>
-            {testModalData.result.error && (
-              <p style={{ color: '#ff4d4f' }}>错误：{testModalData.result.error}</p>
-            )}
-            {testModalData.result.output && (
-              <div>
-                <Paragraph type="secondary">输出：</Paragraph>
-                <pre style={{
-                  background: '#f5f5f5',
-                  padding: 12,
-                  borderRadius: 6,
-                  fontSize: 12,
-                  maxHeight: 300,
-                  overflow: 'auto',
-                  whiteSpace: 'pre-wrap',
-                }}>
-                  {testModalData.result.output}
-                </pre>
+            {/* 执行器检测/修复结果 Modal */}
+            <Modal
+              title={testModalData ? `测试结果 - ${executors.find(e => e.name === testModalData.name)?.display_name || testModalData.name}` : '测试结果'}
+              open={testModalVisible}
+              onCancel={() => setTestModalVisible(false)}
+              footer={<Button onClick={() => setTestModalVisible(false)}>关闭</Button>}
+              width={500}
+            >
+              {testModalData && (
+                <div>
+                  <p>
+                    状态：{testModalData.result.test_passed
+                      ? <span style={{ color: '#52c41a', fontWeight: 600 }}>通过</span>
+                      : <span style={{ color: '#ff4d4f', fontWeight: 600 }}>失败</span>
+                    }
+                  </p>
+                  {testModalData.result.error && (
+                    <p style={{ color: '#ff4d4f' }}>错误：{testModalData.result.error}</p>
+                  )}
+                  {testModalData.result.output && (
+                    <div>
+                      <Paragraph type="secondary">输出：</Paragraph>
+                      <pre style={{
+                        background: '#f5f5f5',
+                        padding: 12,
+                        borderRadius: 6,
+                        fontSize: 12,
+                        maxHeight: 300,
+                        overflow: 'auto',
+                        whiteSpace: 'pre-wrap',
+                      }}>
+                        {testModalData.result.output}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
+            </Modal>
               </div>
-            )}
-          </div>
-        )}
-      </Modal>
-      </Spin>
+            </Spin>
+          ),
+        },
+        {
+          key: 'running',
+          label: '正在运行',
+          children: (
+            <div style={{ padding: '8px 0' }}>
+              <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Button
+                  danger
+                  size="small"
+                  icon={<StopOutlined />}
+                  disabled={selectedRecordIds.length === 0}
+                  loading={stoppingRecords}
+                  onClick={handleBatchStop}
+                >
+                  批量停止 ({selectedRecordIds.length})
+                </Button>
+                <Button
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  onClick={loadRunningRecords}
+                >
+                  刷新
+                </Button>
+                <span style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>
+                  共 {runningRecords.length} 个运行中任务
+                </span>
+              </div>
+              <Table
+                size="small"
+                rowKey="id"
+                dataSource={runningRecords}
+                rowSelection={{
+                  selectedRowKeys: selectedRecordIds,
+                  onChange: (keys) => setSelectedRecordIds(keys as number[]),
+                }}
+                pagination={false}
+                columns={[
+                  {
+                    title: 'Todo',
+                    key: 'todo_title',
+                    ellipsis: true,
+                    render: (_: unknown, record: ExecutionRecord) => {
+                      const todo = todos.find(t => t.id === record.todo_id);
+                      return todo ? todo.title : `#${record.todo_id}`;
+                    },
+                  },
+                  {
+                    title: '执行器',
+                    dataIndex: 'executor',
+                    key: 'executor',
+                    width: 110,
+                    render: (v: string | null) => {
+                      return executorDisplayNames[v || ''] || v || '-';
+                    },
+                  },
+                  {
+                    title: '触发方式',
+                    dataIndex: 'trigger_type',
+                    key: 'trigger_type',
+                    width: 100,
+                    render: (v: string) => {
+                      const map: Record<string, string> = { manual: '手动', slash_command: '斜杠命令', default_response: '默认响应', scheduler: '定时' };
+                      return map[v] || v;
+                    },
+                  },
+                  {
+                    title: '开始时间',
+                    dataIndex: 'started_at',
+                    key: 'started_at',
+                    width: 170,
+                    render: (v: string) => v ? new Date(v).toLocaleString() : '-',
+                  },
+                  {
+                    title: '操作',
+                    key: 'action',
+                    width: 80,
+                    render: (_: unknown, record: ExecutionRecord) => (
+                      <Popconfirm title="确认停止此任务？" onConfirm={async () => {
+                        try {
+                          await db.forceFailExecution(record.id);
+                          message.success('已停止');
+                          loadRunningRecords();
+                        } catch (err) { message.error(`停止失败: ${err instanceof Error ? err.message : String(err)}`); }
+                      }}>
+                        <Button type="text" size="small" icon={<StopOutlined />} />
+                      </Popconfirm>
+                    ),
+                  },
+                ]}
+                locale={{ emptyText: <Empty description="暂无运行中任务" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
+              />
+            </div>
+          ),
+        },
+        {
+          key: 'sessions',
+          label: '会话',
+          children: (
+            <SessionManager embedded />
+          ),
+        },
+      ]}
+      />
     </PageCard>
   );
 }

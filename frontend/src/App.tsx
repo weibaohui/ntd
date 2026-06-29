@@ -15,9 +15,7 @@ import { Dashboard } from './components/Dashboard';
 import { MemorialBoard } from './components/MemorialBoard';
 import { SettingsPage } from './components/SettingsPage';
 import { SkillsPanel } from './components/SkillsPanel';
-import { SessionManager } from './components/SessionManager';
 import { ProjectDirectoriesPanel } from './components/settings/ProjectDirectoriesPanel';
-import { RuntimePanel } from './components/settings/RuntimePanel';
 import { ExecutorsPanel } from './components/settings/ExecutorsPanel';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
@@ -27,7 +25,7 @@ import { LeftRail, type LeftRailKey } from './components/shell/LeftRail';
 
 import { EXECUTION_PANEL, LEFT_RAIL_WIDTH } from './constants';
 import * as db from './utils/database';
-import type { Config, ExecutorConfig } from './types';
+import type { Config } from './types';
 import zhCN from 'antd/locale/zh_CN';
 import './App.css';
 
@@ -99,20 +97,6 @@ function AppContent() {
     db.getConfig().then(setAppConfig).catch(() => {});
   }, []);
 
-  // 执行器列表供 RuntimePanel 的 executorDisplayNames 使用
-  const [runtimeExecutors, setRuntimeExecutors] = useState<ExecutorConfig[]>([]);
-
-  useEffect(() => {
-    db.getExecutors().then(setRuntimeExecutors).catch(() => {});
-  }, []);
-
-  const runtimeExecutorDisplayNames = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const ec of runtimeExecutors) {
-      map[ec.name] = ec.display_name;
-    }
-    return map;
-  }, [runtimeExecutors]);
 
   // URL → React state 恢复（首次加载完成后执行）
   useEffect(() => {
@@ -250,10 +234,6 @@ function AppContent() {
       showStandaloneSettingsPanel('projectDirectories');
       return;
     }
-    if (key === 'settings_sessions') {
-      showStandaloneSettingsPanel('sessions');
-      return;
-    }
     if (key === 'settings_skills') {
       showStandaloneSettingsPanel('skills');
       return;
@@ -262,7 +242,6 @@ function AppContent() {
       showStandaloneSettingsPanel('executors');
       return;
     }
-    showStandaloneSettingsPanel('runtime');
   }, [handleShowView, showListSection, showSettings, showStandaloneSettingsPanel]);
 
   // FAB backdrop click to collapse
@@ -473,16 +452,10 @@ function AppContent() {
                 overflow: 'hidden',
               }}
             >
-              {activeView === 'runtime' ? (
-                <RuntimePanel
-                  executorDisplayNames={runtimeExecutorDisplayNames}
-                />
-              ) : activeView === 'skills' ? (
+              {activeView === 'skills' ? (
                 <SkillsPanel />
               ) : activeView === 'projectDirectories' ? (
                 <ProjectDirectoriesPanel />
-              ) : activeView === 'sessions' ? (
-                <SessionManager />
               ) : activeView === 'executors' ? (
                 <ExecutorsPanel />
               ) : activeView === 'settings' ? (

@@ -14,7 +14,12 @@ import { sourceTag, formatTokens, formatTime, shortId, sourceConfig } from './se
 
 const { Text } = Typography;
 
-export function SessionManager() {
+interface SessionManagerProps {
+  /** 为 true 时不渲染 PageCard 外层包装，用于嵌入到其他页面中 */
+  embedded?: boolean;
+}
+
+export function SessionManager({ embedded }: SessionManagerProps) {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [stats, setStats] = useState<SessionStats | null>(null);
   const [loading, setLoading] = useState(false);
@@ -101,10 +106,9 @@ export function SessionManager() {
     )},
   ];
 
-  return (
-    <PageCard icon={<LaptopOutlined />} title="会话">
-      <div>
-        <StatsCards stats={stats} />
+  const content = (
+    <div>
+      <StatsCards stats={stats} />
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <Input placeholder="搜索 Prompt 内容..." prefix={<SearchOutlined />} value={searchText} onChange={(e) => { setSearchText(e.target.value); setPage(1); }} style={{ width: 220 }} allowClear />
@@ -125,7 +129,16 @@ export function SessionManager() {
       />
 
       <SessionDetailDrawer sessionId={selectedSessionId} open={drawerOpen} onClose={() => { setDrawerOpen(false); setSelectedSessionId(null); }} />
-        </div>
-      </PageCard>
+    </div>
+  );
+
+  if (embedded) {
+    return content;
+  }
+
+  return (
+    <PageCard icon={<LaptopOutlined />} title="会话">
+      {content}
+    </PageCard>
     );
 }
