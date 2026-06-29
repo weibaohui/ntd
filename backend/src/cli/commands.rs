@@ -786,8 +786,9 @@ async fn handle_loop(
         }
         LoopAction::Results { execution_id } => {
             // Get execution results by execution ID directly
+            // 注意: ApiClient 已经自动添加 /api 前缀，所以路径不要带 /api
             let resp: ClientResponse<serde_json::Value> = client.get(&format!(
-                "/api/loop-executions/{}",
+                "/loop-executions/{}",
                 execution_id
             )).await?;
             print_response(resp, output, fields)?;

@@ -98,6 +98,42 @@ ntd upgrade      # 升级到最新版本
 ntd --help       # 查看帮助
 ```
 
+### Loop 命令
+
+Loop 是 ntd 的自动化循环任务功能，支持 Cron 调度和 AI 驱动的工作流。
+
+```bash
+# 查看所有 loop
+ntd loop list
+
+# 查看 loop 详情
+ntd loop get <id>
+
+# 启动 loop（可指定 cron 调度或立即执行一次）
+ntd loop start <id>                                    # 立即执行一次
+ntd loop start <id> --schedule "0 */5 * * * *"       # 每5分钟执行
+ntd loop start <id> --param key=value                 # 带参数执行
+
+# 停止 loop（暂停所有触发器）
+ntd loop stop <id>
+
+# 查看 loop 状态和最近执行
+ntd loop status <id>                                   # 查看状态 + 最近5次执行
+ntd loop status <id> --recent 10                       # 查看最近10次执行
+
+# 手动触发 loop
+ntd loop trigger <id> --param project=myproject
+
+# 查看执行历史
+ntd loop executions <id> --page 1 --limit 20
+
+# 查看执行详情
+ntd loop execution <loop_id> <execution_id>
+
+# 查看执行结果（步骤级摘要）
+ntd loop results <execution_id>
+```
+
 ### Skill 安装
 
 `ntd skill install` 将内置的 ntd 使用技能安装到各 AI 执行器的 skill 目录（如 `~/.claude/skills/ntd-usage/`），让 AI 执行器在执行任务时能更好地理解和使用 ntd。
