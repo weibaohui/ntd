@@ -22,12 +22,15 @@ pub trait EventExtractor: Send + Sync {
     ///
     /// # 返回
     /// - Vec<ExecutionEvent>：可能为空（行不产生事件）
-    fn extract(&self, line: &str) -> Vec<ExecutionEvent>;
+    ///
+    /// # 注意
+    /// 提取器内部状态（如 step_index, session_id 等）可在此方法中更新
+    fn extract(&mut self, line: &str) -> Vec<ExecutionEvent>;
 
     /// 从原始错误输出行提取事件
     ///
     /// 默认实现：将错误行包装为 Error 事件
-    fn extract_stderr(&self, line: &str) -> Option<ExecutionEvent> {
+    fn extract_stderr(&mut self, line: &str) -> Option<ExecutionEvent> {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             return None;
@@ -101,11 +104,11 @@ where
         &self.name
     }
 
-    fn extract(&self, line: &str) -> Vec<ExecutionEvent> {
+    fn extract(&mut self, line: &str) -> Vec<ExecutionEvent> {
         (self.extract_fn)(line)
     }
 
-    fn extract_stderr(&self, line: &str) -> Option<ExecutionEvent> {
+    fn extract_stderr(&mut self, line: &str) -> Option<ExecutionEvent> {
         (self.extract_stderr_fn)(line)
     }
 

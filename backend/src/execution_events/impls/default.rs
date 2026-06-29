@@ -34,7 +34,7 @@ impl EventExtractor for DefaultExtractor {
         &self.name
     }
 
-    fn extract(&self, line: &str) -> Vec<ExecutionEvent> {
+    fn extract(&mut self, line: &str) -> Vec<ExecutionEvent> {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             return Vec::new();
@@ -55,7 +55,7 @@ impl EventExtractor for DefaultExtractor {
         }
     }
 
-    fn extract_stderr(&self, line: &str) -> Option<ExecutionEvent> {
+    fn extract_stderr(&mut self, line: &str) -> Option<ExecutionEvent> {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             return None;
@@ -88,14 +88,14 @@ mod tests {
 
     #[test]
     fn test_empty_line() {
-        let extractor = DefaultExtractor::new("test");
+        let mut extractor = DefaultExtractor::new("test");
         assert!(extractor.extract("").is_empty());
         assert!(extractor.extract("   ").is_empty());
     }
 
     #[test]
     fn test_normal_text() {
-        let extractor = DefaultExtractor::new("test");
+        let mut extractor = DefaultExtractor::new("test");
         let events = extractor.extract("hello world");
         assert_eq!(events.len(), 1);
         assert!(matches!(&events[0], ExecutionEvent::Info { message } if message == "hello world"));
@@ -103,7 +103,7 @@ mod tests {
 
     #[test]
     fn test_json_line() {
-        let extractor = DefaultExtractor::new("test");
+        let mut extractor = DefaultExtractor::new("test");
         let events = extractor.extract(r#"{"type": "assistant", "content": "hi"}"#);
         assert_eq!(events.len(), 1);
         assert!(matches!(&events[0], ExecutionEvent::Info { .. }));
@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn test_stderr_error() {
-        let extractor = DefaultExtractor::new("test");
+        let mut extractor = DefaultExtractor::new("test");
         let event = extractor.extract_stderr("ERROR: something failed");
         assert!(event.is_some());
         assert!(matches!(event.unwrap(), ExecutionEvent::Error { .. }));
@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn test_stderr_info() {
-        let extractor = DefaultExtractor::new("test");
+        let mut extractor = DefaultExtractor::new("test");
         let event = extractor.extract_stderr("Just some warning");
         assert!(event.is_some());
         assert!(matches!(event.unwrap(), ExecutionEvent::Info { .. }));

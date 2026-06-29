@@ -2,8 +2,6 @@
 //!
 //! 负责接收原始输出行，调用 EventExtractor 转换为事件，累积元数据。
 
-use std::sync::Arc;
-
 use super::db_adapter::DbLogEntry;
 use super::event::ExecutionEvent;
 use super::extractor::EventExtractor;
@@ -34,14 +32,6 @@ impl EventPipeline {
     pub fn with_extractor(extractor: impl EventExtractor + 'static) -> Self {
         Self {
             extractor: Box::new(extractor),
-            events: Vec::new(),
-        }
-    }
-
-    /// 使用 Arc<dyn EventExtractor> 创建管道
-    pub fn with_arc_extractor(extractor: Arc<dyn EventExtractor>) -> Self {
-        Self {
-            extractor: Box::new(ArcExtractor(extractor)),
             events: Vec::new(),
         }
     }
@@ -197,83 +187,46 @@ impl EventPipeline {
     }
 }
 
-/// Arc 包装的提取器（用于共享场景）
-struct ArcExtractor(Arc<dyn EventExtractor>);
+/// 测试用的模拟提取器
+#[cfg(test)]
+mod test_extractor {
+    use super::*;
 
-impl EventExtractor for ArcExtractor {
-    fn executor_name(&self) -> &str {
-        self.0.executor_name()
+    pub struct TestExtractor {
+        metadata: ExecutionMetadata,
     }
 
-    fn extract(&self, line: &str) -> Vec<ExecutionEvent> {
-        self.0.extract(line)
-    }
-
-    fn extract_stderr(&self, line: &str) -> Option<ExecutionEvent> {
-        self.0.extract_stderr(line)
-    }
-
-    fn metadata(&self) -> &ExecutionMetadata {
-        self.0.metadata()
-    }
-
-    fn metadata_mut(&mut self) -> &mut ExecutionMetadata {
-        // ArcExtractor 不支持可变元数据，需要克隆
-        // 这里为了编译通过，返回一个占位值
-        // 实际使用时应使用 EventPipeline 的 extractor_mut
-        unimplemented!("ArcExtractor 不支持可变元数据")
-    }
-}
-
-/// 默认提取器实现
-///
-/// 对于无法识别为结构化格式的行，统一作为 Info 事件处理。
-pub struct DefaultExtractor {
-    metadata: ExecutionMetadata,
-}
-
-impl DefaultExtractor {
-    pub fn new(executor: impl Into<String>) -> Self {
-        Self {
-            metadata: ExecutionMetadata::new(executor),
+    impl TestExtractor {
+        pub fn new() -> Self {
+            Self {
+                metadata: ExecutionMetadata::new("test".to_string()),
+            }
         }
     }
-}
 
-impl EventExtractor for DefaultExtractor {
-    fn executor_name(&self) -> &str {
-        &self.metadata.executor
-    }
-
-    fn extract(&self, line: &str) -> Vec<ExecutionEvent> {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            return Vec::new();
+    impl EventExtractor for TestExtractor {
+        fn executor_name(&self) -> &str {
+            "test"
         }
 
-        // 尝试解析为 JSON
-        if trimmed.starts_with('{') {
-            // JSON 行，可能包含结构化信息，但默认提取器不解析
-            // 作为 info 处理
+        fn extract(&mut self, line: &str) -> Vec<ExecutionEvent> {
             vec![ExecutionEvent::Info {
-                message: trimmed.to_string(),
-            }]
-        } else {
-            // 普通文本行
-            vec![ExecutionEvent::Info {
-                message: trimmed.to_string(),
+                message: line.to_string(),
             }]
         }
-    }
 
-    fn metadata(&self) -> &ExecutionMetadata {
-        &self.metadata
-    }
+        fn metadata(&self) -> &ExecutionMetadata {
+            &self.metadata
+        }
 
-    fn metadata_mut(&mut self) -> &mut ExecutionMetadata {
-        &mut self.metadata
+        fn metadata_mut(&mut self) -> &mut ExecutionMetadata {
+            &mut self.metadata
+        }
     }
 }
+
+/// 默认提取器实现（从 impls 模块导入）
+use super::impls::DefaultExtractor;
 
 #[cfg(test)]
 mod tests {
