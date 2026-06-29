@@ -3092,6 +3092,14 @@ impl Migration for V43ConsolidatedFinalFeatures {
         add_column_if_missing(db, "feishu_messages", "workspace_id",
             "ALTER TABLE feishu_messages ADD COLUMN workspace_id INTEGER").await?;
 
+        // V1 CREATE TABLE IF NOT EXISTS 包含 processed_id / processed_type，
+        // 但老数据库可能是在这两列被加入 CREATE TABLE 之前创建的，
+        // IF NOT EXISTS 不会给已有表加列，这里兜底补加（幂等）。
+        add_column_if_missing(db, "feishu_messages", "processed_id",
+            "ALTER TABLE feishu_messages ADD COLUMN processed_id INTEGER").await?;
+        add_column_if_missing(db, "feishu_messages", "processed_type",
+            "ALTER TABLE feishu_messages ADD COLUMN processed_type TEXT").await?;
+
         // V40: 删除 feishu_messages.processed_todo_id
         drop_column_if_exists(db, "feishu_messages", "processed_todo_id").await?;
 
