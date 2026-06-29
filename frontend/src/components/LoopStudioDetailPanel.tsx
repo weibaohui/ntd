@@ -22,6 +22,7 @@ import {
   ExclamationCircleOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
+  ExportOutlined,
 } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import type { LoopDetail } from '@/types/loop';
@@ -54,13 +55,32 @@ export function LoopDetailPanel({
   onChanged,
   hideTitleRow = false,
 }: LoopDetailPanelProps) {
-  const { message } = AntApp.useApp();
+  const { message: antMessage } = AntApp.useApp();
   const [detail, setDetail] = useState<LoopDetail | null>(null);
   const [loading, setLoading] = useState(true);
   // 基础信息编辑 modal 开关 (替代之前的 inline 编辑)
   const [editing, setEditing] = useState(false);
   // 工作空间目录（低基数集合，详情展示时把 path 转成 name 用）
   const { dirs: projectDirs } = useProjectDirectories();
+
+  // 导出环路
+  const handleExport = async () => {
+    try {
+      const yaml = await dbLoops.exportLoop(loopId);
+      const blob = new Blob([yaml], { type: 'application/x-yaml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${detail?.name || 'loop'}.loop.yaml`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      antMessage.success('导出成功');
+    } catch (err: any) {
+      antMessage.error(err?.message || '导出失败');
+    }
+  };
   // 执行记录总数，由 LoopExecutionsPanel 通过回调更新
   const [executionTotal, setExecutionTotal] = useState(0);
   // 从 loop.limits_config 解析出的限制值，传递给子面板做兜底校验
@@ -95,11 +115,11 @@ export function LoopDetailPanel({
         }
       })
       .catch(() => {
-        message.error('加载 loop 详情失败');
+        antMessage.error('加载 loop 详情失败');
         setDetail(null);
       })
       .finally(() => setLoading(false));
-  }, [loopId, message]);
+  }, [loopId, antMessage]);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -169,6 +189,9 @@ export function LoopDetailPanel({
               </Tooltip>
               <Tooltip title="复制">
                 <Button type="text" size="small" icon={<CopyOutlined />} onClick={onDuplicate} />
+              </Tooltip>
+              <Tooltip title="导出">
+                <Button type="text" size="small" icon={<ExportOutlined />} onClick={handleExport} />
               </Tooltip>
               <Tooltip title="编辑">
                 <Button type="text" size="small" icon={<EditOutlined />} onClick={handleOpenEdit} />
@@ -260,8 +283,8 @@ export function LoopDetailPanel({
                   icon={<CopyOutlined />}
                   onClick={async () => {
                     const ok = await copyToClipboard(`${window.location.origin}/webhook/trigger/loop/${detail.id}`);
-                    if (ok) message.success('已复制 Webhook 地址');
-                    else message.error('复制失败');
+                    if (ok) antMessage.success('已复制 Webhook 地址');
+                    else antMessage.error('复制失败');
                   }}
                 />
               </span>
