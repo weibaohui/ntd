@@ -379,7 +379,7 @@ function PostCard({
         marginBottom: 2,
       }}
     >
-      {/* 帖子头：仅楼号、追问标记、状态和操作按钮 */}
+      {/* 帖子头：楼号、标题、状态和操作按钮 */}
       <div
         style={{
           display: "flex",
@@ -390,34 +390,25 @@ function PostCard({
           borderBottom: "1px dashed var(--color-border-light)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 14, fontWeight: 700, color: "var(--color-primary)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: "var(--color-primary)", flexShrink: 0 }}>
             #{floor}
           </span>
-          {isContinuation && (
-            <>
-              <LinkOutlined style={{ fontSize: 12, color: "var(--color-primary)" }} />
-              {record.resume_message ? (
-                <span style={{
-                  fontSize: 12,
-                  color: "var(--color-text-secondary)",
-                  fontStyle: "italic",
-                  maxWidth: 300,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}>
-                  {String(record.resume_message).length > 40
-                    ? String(record.resume_message).substring(0, 40) + "..."
-                    : record.resume_message}
-                </span>
-              ) : (
-                <span style={{ fontSize: 12, color: "var(--color-text-tertiary)" }}>
-                  继续对话
-                </span>
-              )}
-            </>
-          )}
+          {isContinuation && <LinkOutlined style={{ fontSize: 12, color: "var(--color-primary)", flexShrink: 0 }} />}
+          <span style={{
+            fontSize: 13,
+            fontWeight: 500,
+            color: "var(--color-text)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}>
+            {isContinuation
+              ? (record.resume_message
+                  ? String(record.resume_message)
+                  : "继续对话")
+              : "初始执行"}
+          </span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span
@@ -475,7 +466,7 @@ function PostCard({
         display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap",
         marginTop: 8, fontSize: 12,
       }}>
-        {record.executor && !isContinuation && <ExecutorBadge executor={record.executor} />}
+        {record.executor && <ExecutorBadge executor={record.executor} />}
         {record.model && (
           <Tag color="#3b82f6" style={{ margin: 0, fontSize: 11 }}>
             {record.model}
