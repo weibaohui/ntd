@@ -60,7 +60,7 @@ impl DbLogEntry {
                 timestamp,
                 log_type: "assistant".to_string(),
                 content: if let Some(t) = thinking {
-                    format!("{}\n\n[思考过程]\n{}", content, t)
+                    format!("{}\n{}", content, t)
                 } else {
                     content.clone()
                 },

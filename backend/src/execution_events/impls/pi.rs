@@ -1,7 +1,7 @@
 //! Pi 执行器的事件提取器实现
 //!
 //! Pi 使用 JSONL 流格式输出，包含多种事件类型：
-//! - message_update: 流式增量更新（thinking_delta / text_delta / toolcall_delta / thinking_end / text_end / toolcall_end）
+//! - message_update: 流式增量更新（thinking_start / thinking_delta / thinking_end / text_start / text_delta / text_end / toolcall_start / toolcall_delta / toolcall_end）
 //! - message_end: 完整消息（含 content[] + usage）
 //! - turn_end: 完整回合（同 message_end + toolResults[]）
 //! - session: 会话信息
@@ -157,6 +157,21 @@ impl PiExtractor {
         events
     }
 
+    /// 从 message 对象中仅提取 Cost（不含 Tokens，避免与 message_update:*_end 重复）
+    fn extract_cost_only(&self, msg: &serde_json::Value) -> Vec<ExecutionEvent> {
+        let mut events = Vec::new();
+        if let Some(usage) = msg.get("usage") {
+            if let Some(cost) = usage.get("cost") {
+                if let Some(total) = cost.get("total").and_then(|v| v.as_f64()) {
+                    if total > 0.0 {
+                        events.push(ExecutionEvent::Cost { cost_usd: total });
+                    }
+                }
+            }
+        }
+        events
+    }
+
     /// 从 usage JSON 对象中提取 Tokens 事件
     fn extract_usage_event(&self, usage: &serde_json::Value) -> Vec<ExecutionEvent> {
         let mut events = Vec::new();
@@ -301,7 +316,7 @@ impl PiExtractor {
                                 events.extend(self.extract_usage_event(usage));
                             }
                         }
-                        "toolcall_delta" | "toolcall_start" | "thinking_start" | "thinking_delta" | "text_delta" => {
+                        "toolcall_delta" | "toolcall_start" | "thinking_start" | "thinking_delta" | "text_start" | "text_delta" => {
                             // 增量或开始信号，还未完成，跳过
                         }
                         _ => {
@@ -330,17 +345,11 @@ impl PiExtractor {
                 }
             }
             "message_end" => {
-                // 完整消息结束：从 message 字段提取所有内容
+                // 完整消息结束：从 message 字段仅提取 model / stopReason。
+                // content[] 已由 message_update:*_end 提取，usage 与 text_end/toolcall_end
+                // 的最终值重复，这里不再重复提取。
                 if let Some(msg) = json.get("message") {
                     self.extract_model_from_message(msg);
-
-                    // 提取 content[] 中的事件
-                    if let Some(content) = msg.get("content").and_then(|v| v.as_array()) {
-                        events.extend(self.extract_content_blocks(content));
-                    }
-
-                    // 提取 usage
-                    events.extend(self.extract_usage_from_message(msg));
 
                     // 提取 stopReason
                     if let Some(stop_event) = Self::extract_stop_reason(msg) {
@@ -349,17 +358,13 @@ impl PiExtractor {
                 }
             }
             "turn_end" => {
-                // 完整回合结束：同 message_end + toolResults
+                // 完整回合结束：提取 model / stopReason / toolResults + 最终 Cost。
+                // content[] 和 Tokens 已由 message_update:*_end 提取，不重复。
                 if let Some(msg) = json.get("message") {
                     self.extract_model_from_message(msg);
 
-                    // 提取 content[] 中的事件
-                    if let Some(content) = msg.get("content").and_then(|v| v.as_array()) {
-                        events.extend(self.extract_content_blocks(content));
-                    }
-
-                    // 提取 usage
-                    events.extend(self.extract_usage_from_message(msg));
+                    // 仅提取 Cost（最终费用，非增量 Tokens）
+                    events.extend(self.extract_cost_only(msg));
 
                     // 提取 stopReason
                     if let Some(stop_event) = Self::extract_stop_reason(msg) {
@@ -367,38 +372,59 @@ impl PiExtractor {
                     }
                 }
 
-                // 提取 toolResults
+                // 提取 toolResults（仅在 turn_end 中有完整结果）
                 if let Some(results) = json.get("toolResults").and_then(|v| v.as_array()) {
                     events.extend(self.extract_tool_results(results));
                 }
             }
             "agent_end" => {
-                // agent 结束事件：提取最终助手消息的内容和用量
+                // agent 结束事件：提取最终结论（最后一条 assistant 消息的 thinking + text）。
+                // 这是整个 agent 执行的最终输出，内容不同于 turn 内的文本块。
                 if let Some(messages) = json.get("messages").and_then(|v| v.as_array()) {
-                    // 找到最后一条 assistant 消息
                     for msg in messages.iter().rev() {
-                        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
-                        if role != "assistant" {
+                        if msg.get("role").and_then(|v| v.as_str()) != Some("assistant") {
                             continue;
                         }
 
-                        // 提取最终结果文本
+                        self.extract_model_from_message(msg);
+
+                        // 从 content[] 提取 thinking + text 作为最终结论
+                        let mut conclusion_text = String::new();
+                        let mut conclusion_thinking = None;
+                        let message_id = msg.get("responseId")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+
                         if let Some(content) = msg.get("content").and_then(|v| v.as_array()) {
-                            for item in content {
-                                if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-                                    let trimmed = text.trim();
-                                    if !trimmed.is_empty() {
-                                        events.push(ExecutionEvent::Result {
-                                            summary: trimmed.to_string(),
-                                        });
-                                        break;
+                            for block in content {
+                                let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                                match block_type {
+                                    "thinking" => {
+                                        if let Some(t) = block.get("thinking").and_then(|v| v.as_str()) {
+                                            let trimmed = t.trim();
+                                            if !trimmed.is_empty() {
+                                                conclusion_thinking = Some(trimmed.to_string());
+                                            }
+                                        }
                                     }
+                                    "text" => {
+                                        if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
+                                            conclusion_text.push_str(t);
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
 
-                        // 提取最终 usage
-                        events.extend(self.extract_usage_from_message(msg));
+                        let text_trimmed = conclusion_text.trim();
+                        if !text_trimmed.is_empty() || conclusion_thinking.is_some() {
+                            events.push(ExecutionEvent::Assistant {
+                                content: text_trimmed.to_string(),
+                                thinking: conclusion_thinking,
+                                message_id,
+                            });
+                        }
                         break;
                     }
                 }
@@ -539,37 +565,35 @@ mod tests {
         }
     }
 
-    /// 测试：message_end 事件提取完整消息
+    /// 测试：message_end 事件仅提取 model + stopReason（content/usage 由 message_update:*_end 负责）
     #[test]
     fn test_message_end() {
         let mut extractor = PiExtractor::new();
         let json = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Let me think..."},{"type":"text","text":"Here is the answer."}],"model":"claude-sonnet-4","usage":{"input":100,"output":50,"cacheRead":10,"cacheWrite":5,"totalTokens":150,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0.003}},"stopReason":"end_turn"}}"#;
         let events = extractor.extract(json);
 
-        // 应该包含 Thinking + Assistant + Tokens + Cost + Result
-        assert!(events.len() >= 4);
-        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Thinking { .. })));
-        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Assistant { .. })));
-        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Tokens { .. })));
-        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Result { .. })));
+        // 仅提取 stopReason → Result（不重复 content[] 和 usage）
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], ExecutionEvent::Result { .. }));
 
-        // 验证元数据
+        // 验证元数据（model 仍会被更新）
         assert_eq!(extractor.metadata().model.as_deref(), Some("claude-sonnet-4"));
     }
 
-    /// 测试：turn_end 事件提取完整回合（含 tool results）
+    /// 测试：turn_end 事件提取 toolResults + Cost（不含 content[] 和 Tokens）
     #[test]
     fn test_turn_end_with_tool_results() {
         let mut extractor = PiExtractor::new();
         let json = r#"{"type":"turn_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"I need to run a command."},{"type":"toolCall","id":"call_456","name":"bash","arguments":{"command":"echo hello"}},{"type":"text","text":"Command executed."}],"usage":{"input":200,"output":100,"totalTokens":300,"cost":{"total":0.005}},"stopReason":"toolUse"},"toolResults":[{"role":"toolResult","toolCallId":"call_456","toolName":"bash","content":[{"type":"text","text":"hello\n"}],"isError":false}]}"#;
         let events = extractor.extract(json);
 
-        // 应该包含 Thinking + ToolCall + Assistant + Tokens + Cost + ToolResult
-        assert!(events.len() >= 5);
-        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Thinking { .. })));
-        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::ToolCall { .. })));
-        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Assistant { .. })));
-        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::ToolResult { .. })));
+        // Content 和 Tokens 不重复提取；仅提取 Cost + ToolResult
+        assert!(events.len() >= 1);
+        assert!(!events.iter().any(|e| matches!(e, ExecutionEvent::Thinking { .. })), "Thinking should not be extracted from turn_end");
+        assert!(!events.iter().any(|e| matches!(e, ExecutionEvent::Assistant { .. })), "Assistant should not be extracted from turn_end");
+        assert!(!events.iter().any(|e| matches!(e, ExecutionEvent::ToolCall { .. })), "ToolCall should not be extracted from turn_end");
+        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::ToolResult { .. })), "ToolResult should be extracted");
+        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Cost { .. })), "Cost should be extracted");
     }
 
     /// 测试：session 事件
@@ -680,32 +704,53 @@ mod tests {
         assert!(matches!(&events[1], ExecutionEvent::Tokens { input: 0, output: 38, cache_read: Some(10092), cache_write: Some(7), .. }));
     }
 
-    /// 测试：agent_end 提取最终文本和用量
+    /// 测试：agent_end 提取最终结论（thinking + text + responseId）
     #[test]
-    fn test_agent_end_with_usage() {
+    fn test_agent_end_conclusion() {
         let mut extractor = PiExtractor::new();
         let json = r#"{"type":"agent_end","messages":[
             {"role":"user","content":[{"type":"text","text":"hello"}]},
-            {"role":"assistant","content":[{"type":"thinking","thinking":"Let me think"},{"type":"text","text":"Here is the answer."}],"usage":{"input":100,"output":50,"cacheRead":10,"cacheWrite":5,"totalTokens":150,"cost":{"total":0.003}}}
+            {"role":"assistant","content":[{"type":"thinking","thinking":"Let me think"},{"type":"text","text":"Here is the answer."}],"usage":{"input":100,"output":50},"model":"deepseek-v4","responseId":"resp-abc-123"}
         ],"willRetry":false}"#;
         let events = extractor.extract(json);
 
-        // Result + Tokens + Cost
-        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Result { summary } if summary == "Here is the answer.")));
-        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Tokens { input: 100, output: 50, cache_read: Some(10), cache_write: Some(5), .. })));
+        // 产生 Conclusion（Assistant 事件），包含 thinking + text + message_id
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ExecutionEvent::Assistant { content, thinking, message_id } => {
+                assert_eq!(content, "Here is the answer.");
+                assert_eq!(thinking.as_deref(), Some("Let me think"));
+                assert_eq!(message_id.as_deref(), Some("resp-abc-123"));
+            }
+            _ => panic!("Expected Assistant event"),
+        }
+
+        // Usage/Tokens/Cost 不重复提取
+        assert!(!events.iter().any(|e| matches!(e, ExecutionEvent::Tokens { .. })));
+        assert!(!events.iter().any(|e| matches!(e, ExecutionEvent::Cost { .. })));
+        // model 仍会更新
+        assert_eq!(extractor.metadata().model.as_deref(), Some("deepseek-v4"));
     }
 
-    /// 测试：agent_end 提取 cache-only 用量（input=0, output=0, 但有 cache）
+    /// 测试：agent_end 仅提取 conclusion，缺少 text 时仅含 thinking
     #[test]
-    fn test_agent_end_with_cache_only_usage() {
+    fn test_agent_end_thinking_only() {
         let mut extractor = PiExtractor::new();
         let json = r#"{"type":"agent_end","messages":[
             {"role":"user","content":[{"type":"text","text":"hello"}]},
-            {"role":"assistant","content":[{"type":"text","text":"OK"}],"usage":{"input":0,"output":0,"cacheRead":10092,"cacheWrite":7,"totalTokens":10099,"cost":{"total":0.0}}}
+            {"role":"assistant","content":[{"type":"thinking","thinking":"I think..."}],"model":"gpt-5","responseId":"resp-456"}
         ],"willRetry":false}"#;
         let events = extractor.extract(json);
 
-        // 即使 input=0,output=0，有 cache 数据也应提取 Tokens
-        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Tokens { input: 0, output: 0, cache_read: Some(10092), cache_write: Some(7), .. })));
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ExecutionEvent::Assistant { content, thinking, message_id } => {
+                assert!(content.is_empty());
+                assert_eq!(thinking.as_deref(), Some("I think..."));
+                assert_eq!(message_id.as_deref(), Some("resp-456"));
+            }
+            _ => panic!("Expected Assistant event"),
+        }
+        assert_eq!(extractor.metadata().model.as_deref(), Some("gpt-5"));
     }
 }

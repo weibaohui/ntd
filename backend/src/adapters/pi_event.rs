@@ -61,16 +61,36 @@ pub struct PiMessage {
     pub usage: Option<PiUsage>,
 }
 
-/// 内容块（text / tool_call / tool_result / thinking）
+/// 内容块（text / toolCall / toolResult / thinking / redacted）
+///
+/// pi 输出 type 字段为 camelCase（如 "toolCall"），但也兼容 snake_case。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type")]
 pub enum PiContentBlock {
     #[serde(rename = "text")]
     Text { text: Option<String> },
-    #[serde(rename = "tool_call")]
-    ToolCall { id: Option<String>, name: Option<String>, input: serde_json::Value },
-    #[serde(rename = "tool_result")]
-    ToolResult { tool_call_id: Option<String>, content: Option<String>, is_error: Option<bool> },
+    /// 支持 "toolCall"（pi camelCase）和 "tool_call"（snake_case）
+    #[serde(rename = "toolCall", alias = "tool_call")]
+    ToolCall {
+        id: Option<String>,
+        name: Option<String>,
+        /// pi 输出字段名为 "arguments"，兼容 "input"
+        #[serde(default, alias = "arguments")]
+        input: serde_json::Value,
+    },
+    /// 支持 "toolResult"（pi camelCase）和 "tool_result"（snake_case）
+    #[serde(rename = "toolResult", alias = "tool_result")]
+    ToolResult {
+        /// pi 输出字段名为 "toolCallId"
+        #[serde(default, alias = "toolCallId")]
+        tool_call_id: Option<String>,
+        /// pi 输出 content 可能为字符串或数组，利用 serde_json::Value 兼容
+        #[serde(default)]
+        content: Option<serde_json::Value>,
+        /// pi 输出字段名为 "isError"
+        #[serde(default, alias = "isError")]
+        is_error: Option<bool>,
+    },
     #[serde(rename = "thinking")]
     Thinking { thinking: Option<String> },
     #[serde(rename = "redacted")]
@@ -188,4 +208,46 @@ pub struct PiCost {
     pub cache_write: Option<f64>,
     #[serde(default)]
     pub total: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// PiContentBlock ToolCall 变体：type 字段可能是 "toolCall"（camelCase，pi 实际输出）
+    #[test]
+    fn test_pi_content_block_toolcall_camelcase() {
+        // pi 实际输出：type=toolCall, arguments=command
+        let json = r#"{"type":"toolCall","id":"call_123","name":"bash","arguments":{"command":"date"}}"#;
+        let result = serde_json::from_str::<PiContentBlock>(json);
+        assert!(result.is_ok(), "Failed to parse toolCall: {:?}", result.err());
+        if let Ok(block) = result {
+            match block {
+                PiContentBlock::ToolCall { id, name, input } => {
+                    assert_eq!(id.as_deref(), Some("call_123"));
+                    assert_eq!(name.as_deref(), Some("bash"));
+                    // pi 输出用 "arguments"，反序列化后存入 input
+                    assert_eq!(input.get("command").and_then(|v| v.as_str()), Some("date"));
+                }
+                other => panic!("Expected ToolCall, got {:?}", std::mem::discriminant(&other)),
+            }
+        }
+    }
+
+    /// PiContentBlock ToolCall 变体：type 是 "tool_call"（snake_case，向后兼容）
+    #[test]
+    fn test_pi_content_block_toolcall_snakecase() {
+        let json = r#"{"type":"tool_call","id":"call_456","name":"bash","input":{"command":"ls"}}"#;
+        let result = serde_json::from_str::<PiContentBlock>(json);
+        assert!(result.is_ok(), "Failed to parse tool_call: {:?}", result.err());
+    }
+
+    /// PiContentBlock ToolResult 变体：pi 实际输出 camelCase 字段名
+    #[test]
+    fn test_pi_content_block_toolresult_camelcase() {
+        // pi 实际输出：type=toolResult, toolCallId=xxx, isError=false
+        let json = r#"{"type":"toolResult","toolCallId":"call_123","content":"hello","isError":false}"#;
+        let result = serde_json::from_str::<PiContentBlock>(json);
+        assert!(result.is_ok(), "Failed to parse toolResult: {:?}", result.err());
+    }
 }
