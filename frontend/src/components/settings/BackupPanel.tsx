@@ -6,7 +6,7 @@ import yaml from 'js-yaml';
 import { TodoBackupTab } from './backup/TodoBackupTab';
 import { SkillBackupTab } from './backup/SkillBackupTab';
 import { DatabaseBackupTab } from './backup/DatabaseBackupTab';
-import { LoopBackupTab } from './backup/LoopBackupTab';
+import { LoopBackupTab } from '@/components/settings/backup/LoopBackupTab';
 import { ImportExportModals, BackupDataYaml, ImportItem } from './backup/ImportExportModals';
 
 export function BackupPanel() {

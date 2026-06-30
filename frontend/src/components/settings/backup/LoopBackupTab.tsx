@@ -104,10 +104,15 @@ export function LoopBackupTab() {
     }
     setImporting(true);
     try {
-      // TODO: 合并模式 conflictResolutions 暂未支持后端
-      // 统一走 db.importLoops 创建模式
-      const result = await db.importLoops(yamlPreview, selectedWorkspaceId);
-      message.success(`导入成功：创建了 ${result.created.loops} 个环路`);
+      if (importMode === 'merge') {
+        const result = await db.mergeLoops(yamlPreview, selectedWorkspaceId, conflictResolutions);
+        message.success(
+          `导入完成：新建 ${result.created.loops} 个，更新 ${result.updated?.loops || 0} 个，跳过 ${result.skipped?.length || 0} 个`
+        );
+      } else {
+        const result = await db.importLoops(yamlPreview, selectedWorkspaceId);
+        message.success(`导入成功：创建了 ${result.created.loops} 个环路`);
+      }
       setImportModalOpen(false);
       setYamlPreview(null);
       setPreviewData(null);

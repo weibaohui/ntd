@@ -191,6 +191,48 @@ impl Database {
         Ok(inserted.id)
     }
 
+    /// 从环路导入时创建 Todo，支持完整字段（status/scheduler_enabled/auto_review_enabled/review_template_id/kind）。
+    pub async fn create_todo_for_import(
+        &self,
+        title: &str,
+        prompt: &str,
+        executor: Option<&str>,
+        acceptance_criteria: Option<&str>,
+        webhook_enabled: bool,
+        workspace_id: i64,
+        workspace_path: &str,
+        status: Option<&str>,
+        scheduler_enabled: Option<bool>,
+        auto_review_enabled: Option<bool>,
+        review_template_id: Option<i64>,
+        kind: Option<i32>,
+    ) -> Result<i64, sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let executor_str = executor
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(crate::adapters::DEFAULT_EXECUTOR);
+        let am = todos::ActiveModel {
+            title: ActiveValue::Set(title.to_string()),
+            prompt: ActiveValue::Set(Some(prompt.to_string())),
+            status: ActiveValue::Set(Some(status.unwrap_or("pending").to_string())),
+            created_at: ActiveValue::Set(Some(now.clone())),
+            updated_at: ActiveValue::Set(Some(now)),
+            executor: ActiveValue::Set(Some(executor_str.to_string())),
+            acceptance_criteria: ActiveValue::Set(acceptance_criteria.map(|s| s.to_string())),
+            webhook_enabled: ActiveValue::Set(Some(webhook_enabled)),
+            auto_review_enabled: ActiveValue::Set(auto_review_enabled),
+            todo_type: ActiveValue::Set(kind.or(Some(0))),
+            scheduler_enabled: ActiveValue::Set(scheduler_enabled),
+            workspace_id: ActiveValue::Set(Some(workspace_id)),
+            workspace_path: ActiveValue::Set(Some(workspace_path.to_string())),
+            review_template_id: ActiveValue::Set(review_template_id),
+            ..Default::default()
+        };
+        let inserted = am.insert(&self.conn).await?;
+        Ok(inserted.id)
+    }
+
     pub async fn update_todo_full(&self, update: TodoUpdate<'_>) -> Result<(), sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let mut am = todos::ActiveModel {
@@ -436,6 +478,30 @@ impl Database {
             ..Default::default()
         };
         self.exec_update(am).await
+    }
+
+    /// 按 title + prompt + workspace_id 精确查找未软删的 todo，用于环路导入合并时判断是否真正重复。
+    pub async fn get_todo_by_identity(
+        &self,
+        title: &str,
+        prompt: &str,
+        workspace_id: i64,
+    ) -> Result<Option<Todo>, sea_orm::DbErr> {
+        let mut query = todos::Entity::find()
+            .filter(todos::Column::Title.eq(title))
+            .filter(todos::Column::Prompt.eq(prompt))
+            .filter(todos::Column::DeletedAt.is_null());
+        query = query.filter(todos::Column::WorkspaceId.eq(workspace_id));
+        let model = query.one(&self.conn).await?;
+        let Some(m) = model else { return Ok(None) };
+        let tag_ids = todo_tags::Entity::find()
+            .filter(todo_tags::Column::TodoId.eq(m.id))
+            .all(&self.conn)
+            .await?
+            .into_iter()
+            .map(|t| t.tag_id)
+            .collect();
+        Ok(Some(Self::model_to_todo(m, tag_ids)))
     }
 
     /// 按 title 精确查找 todo (仅未软删的). 用于评审任务 todo 的探测.

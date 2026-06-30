@@ -115,8 +115,8 @@ export function LoopDetailPanel({
         }
       })
       .catch(() => {
+        // 只提示错误，不清空已加载的 detail；保留最后一次成功加载的数据供用户查看
         antMessage.error('加载 loop 详情失败');
-        setDetail(null);
       })
       .finally(() => setLoading(false));
   }, [loopId, antMessage]);

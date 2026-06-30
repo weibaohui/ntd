@@ -201,3 +201,13 @@ export interface LoopImportResult {
 export async function importLoops(yaml: string, workspace_id: number): Promise<LoopImportResult> {
   return unwrap(await api.post('/api/loops/import', { yaml, workspace_id }));
 }
+
+export type ConflictAction = 'rename' | 'overwrite' | 'skip';
+
+export async function mergeLoops(
+  yaml: string,
+  workspace_id: number,
+  conflict_resolution: Record<string, ConflictAction>,
+): Promise<{ success: boolean; created: LoopImportResult['created']; updated: LoopImportResult['created']; skipped: string[]; warnings: { type: string; message: string }[] }> {
+  return unwrap(await api.post('/api/loops/merge', { yaml, workspace_id, conflict_resolution }));
+}

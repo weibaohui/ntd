@@ -875,9 +875,12 @@ pub async fn export_loop(
         loop_.name.replace(' ', "-"),
         chrono::Utc::now().format("%Y%m%d-%H%M%S"));
 
-    let _disposition = format!("attachment; filename=\"{}\"", filename);
+    let disposition = format!("attachment; filename=\"{}\"", filename);
     Ok((
-        [(header::CONTENT_TYPE, "application/x-yaml; charset=utf-8")],
+        [
+            (header::CONTENT_TYPE, "application/x-yaml; charset=utf-8".to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
         yaml,
     ))
 }
@@ -894,9 +897,12 @@ pub async fn export_selected_loops(
     let filename = format!("loops-export-{}.loop.yaml",
         chrono::Utc::now().format("%Y%m%d-%H%M%S"));
 
-    let _disposition = format!("attachment; filename=\"{}\"", filename);
+    let disposition = format!("attachment; filename=\"{}\"", filename);
     Ok((
-        [(header::CONTENT_TYPE, "application/x-yaml; charset=utf-8")],
+        [
+            (header::CONTENT_TYPE, "application/x-yaml; charset=utf-8".to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
         yaml,
     ))
 }
@@ -1142,9 +1148,15 @@ pub async fn import_loops(
         created_counts.review_templates += 1;
     }
 
-    // 阶段3: 导入Todo模板
+    // 阶段3: 导入Todo模板（完整字段导入）
     for todo in &data.todos {
-        let new_todo_id = state.db.create_todo_with_extras(
+        // 解析 kind 字符串 → i32（导出时存为字符串以便序列化）
+        let kind: Option<i32> = todo.kind.parse().ok().or(Some(0));
+        // 解析 review_template_id 伪ID → 真实ID
+        let real_review_template_id = todo.review_template_id.as_ref()
+            .and_then(|tid| template_pseudo_to_real.get(tid))
+            .copied();
+        let new_todo_id = state.db.create_todo_for_import(
             &todo.title,
             &todo.prompt,
             todo.executor.as_deref(),
@@ -1152,6 +1164,11 @@ pub async fn import_loops(
             todo.webhook_enabled,
             workspace_id,
             &workspace.path,
+            Some(&todo.status),
+            Some(todo.scheduler_enabled),
+            Some(todo.auto_review_enabled),
+            real_review_template_id,
+            kind,
         ).await?;
 
         todo_pseudo_to_real.insert(todo.id.clone(), new_todo_id);
@@ -1201,11 +1218,12 @@ pub async fn import_loops(
         loop_pseudo_to_real.insert(loop_export.id.clone(), new_loop.id);
         created_counts.loops += 1;
 
-        // 关联标签
-        for (pseudo_tag_id, _) in loop_export.tag_ids.iter().zip(loop_export.tag_names.iter()) {
-            if let Some(&real_tag_id) = tag_pseudo_to_real.get(pseudo_tag_id) {
-                state.db.set_loop_tags(new_loop.id, &[real_tag_id]).await?;
-            }
+        // 关联标签 - 先收集所有 tag_id，再一次性写入，避免 set_loop_tags 全量替换导致只保留最后一个
+        let tag_ids: Vec<i64> = loop_export.tag_ids.iter()
+            .filter_map(|pseudo_tag_id| tag_pseudo_to_real.get(pseudo_tag_id).copied())
+            .collect();
+        if !tag_ids.is_empty() {
+            state.db.set_loop_tags(new_loop.id, &tag_ids).await?;
         }
 
         // 阶段5: 导入触发器
@@ -1368,14 +1386,20 @@ pub async fn merge_loops(
         }
     }
 
-    // 阶段3: 合并Todo（按title+prompt匹配）
+    // 阶段3: 合并Todo（按title+prompt+workspace匹配）
     for todo in &data.todos {
-        // 尝试查找同名Todo
-        if let Some(existing_todo) = state.db.get_todo_by_title(&todo.title).await? {
+        // 尝试查找完全相同的 Todo（title + prompt + workspace）
+        if let Some(existing_todo) = state.db.get_todo_by_identity(&todo.title, &todo.prompt, req.workspace_id).await? {
             // 存在则复用，不重复创建
             todo_pseudo_to_real.insert(todo.id.clone(), existing_todo.id);
         } else {
-            let new_todo_id = state.db.create_todo_with_extras(
+            // 解析 kind 字符串 → i32
+            let kind: Option<i32> = todo.kind.parse().ok().or(Some(0));
+            // 解析 review_template_id 伪ID → 真实ID
+            let real_review_template_id = todo.review_template_id.as_ref()
+                .and_then(|tid| template_pseudo_to_real.get(tid))
+                .copied();
+            let new_todo_id = state.db.create_todo_for_import(
                 &todo.title,
                 &todo.prompt,
                 todo.executor.as_deref(),
@@ -1383,6 +1407,11 @@ pub async fn merge_loops(
                 todo.webhook_enabled,
                 req.workspace_id,
                 &workspace.path,
+                Some(&todo.status),
+                Some(todo.scheduler_enabled),
+                Some(todo.auto_review_enabled),
+                real_review_template_id,
+                kind,
             ).await?;
             todo_pseudo_to_real.insert(todo.id.clone(), new_todo_id);
             created_counts.todos += 1;
@@ -1415,21 +1444,21 @@ pub async fn merge_loops(
                 ).await?;
                 (new_loop_id, false)
             }
-            // 重命名（追加后缀）
+            // 重命名（追加后缀后创建新环路）
             (Some(_), "rename") | (_, "rename") => {
                 let new_loop_id = create_loop_from_export(
                     &state, loop_export, req.workspace_id, &workspace.path,
                     &template_pseudo_to_real, &todo_pseudo_to_real, &tag_pseudo_to_real,
                 ).await?;
-                (new_loop_id, false)
+                (new_loop_id, true) // rename 创建了新环路
             }
-            // 默认重命名
+            // 默认：同名环路不存在，直接创建全新的
             (None, _) => {
                 let new_loop_id = create_loop_from_export(
                     &state, loop_export, req.workspace_id, &workspace.path,
                     &template_pseudo_to_real, &todo_pseudo_to_real, &tag_pseudo_to_real,
                 ).await?;
-                (new_loop_id, false)
+                (new_loop_id, true)
             }
             _ => continue,
         };
@@ -1497,11 +1526,12 @@ async fn create_loop_from_export(
         &abnormal_handler_trigger_on,
     ).await?;
 
-    // 关联标签
-    for (pseudo_tag_id, _) in loop_export.tag_ids.iter().zip(loop_export.tag_names.iter()) {
-        if let Some(&real_tag_id) = tag_pseudo_to_real.get(pseudo_tag_id) {
-            state.db.set_loop_tags(new_loop.id, &[real_tag_id]).await?;
-        }
+    // 关联标签 - 先收集所有 tag_id，再一次性写入，避免 set_loop_tags 全量替换导致只保留最后一个
+    let tag_ids: Vec<i64> = loop_export.tag_ids.iter()
+        .filter_map(|pseudo_tag_id| tag_pseudo_to_real.get(pseudo_tag_id).copied())
+        .collect();
+    if !tag_ids.is_empty() {
+        state.db.set_loop_tags(new_loop.id, &tag_ids).await?;
     }
 
     // 导入触发器
@@ -1569,6 +1599,10 @@ async fn build_loop_export_yaml(
     let mut all_templates: std::collections::HashMap<i64, ReviewTemplateExportItem> = std::collections::HashMap::new();
     let mut all_todos: std::collections::HashMap<i64, TodoExportItem> = std::collections::HashMap::new();
     let mut exported_loops: Vec<LoopExportItem> = Vec::new();
+
+    // 全局计数器，避免批量导出时多个环路的 trigger/step pseudo-ID 冲突
+    let mut global_trigger_idx = 0;
+    let mut global_step_idx = 0;
 
     for (idx, &loop_id) in loop_ids.iter().enumerate() {
         let view = state.db.load_loop_full(loop_id).await?
@@ -1712,20 +1746,19 @@ async fn build_loop_export_yaml(
 
         // 构建环路导出项
         let mut triggers: Vec<LoopTriggerExportItem> = Vec::new();
-        let mut trigger_idx = 0;
         for t in &view.triggers {
             // 只导出 manual 和 cron 触发器
             if t.trigger_type != "manual" && t.trigger_type != "cron" {
                 continue;
             }
-            trigger_idx += 1;
+            global_trigger_idx += 1;
             let mut enabled = t.enabled != 0;
             // cron 触发器导出时强制禁用
             if t.trigger_type == "cron" {
                 enabled = false;
             }
             triggers.push(LoopTriggerExportItem {
-                id: generate_pseudo_id("trigger", trigger_idx),
+                id: generate_pseudo_id("trigger", global_trigger_idx),
                 trigger_type: t.trigger_type.clone(),
                 config: serde_json::from_str(&t.config).unwrap_or_default(),
                 enabled,
@@ -1734,22 +1767,26 @@ async fn build_loop_export_yaml(
         }
 
         let mut steps: Vec<LoopStepExportItem> = Vec::new();
-        let mut step_idx = 0;
+        // 本地位置 → 全局 step pseudo-ID 映射（用于解析 goto 引用）
+        let mut step_pos_to_global: Vec<i32> = Vec::new();
         for (step, _todo_title, _) in &view.steps_meta {
-            step_idx += 1;
+            global_step_idx += 1;
+            step_pos_to_global.push(global_step_idx);
             let todo_pseudo_id = all_todos.get(&step.todo_id)
                 .map(|t| t.id.clone())
                 .unwrap_or_else(|| generate_pseudo_id("todo", 999));
 
             let success_goto_step_id = step.success_goto_step_id
                 .and_then(|gid| view.steps.iter().position(|s| s.id == gid))
-                .map(|pos| generate_pseudo_id("step", pos + 1));
+                .and_then(|pos| step_pos_to_global.get(pos).copied())
+                .map(|idx| generate_pseudo_id("step", idx as usize));
             let fail_goto_step_id = step.fail_goto_step_id
                 .and_then(|gid| view.steps.iter().position(|s| s.id == gid))
-                .map(|pos| generate_pseudo_id("step", pos + 1));
+                .and_then(|pos| step_pos_to_global.get(pos).copied())
+                .map(|idx| generate_pseudo_id("step", idx as usize));
 
             steps.push(LoopStepExportItem {
-                id: generate_pseudo_id("step", step_idx),
+                id: generate_pseudo_id("step", global_step_idx as usize),
                 name: step.name.clone(),
                 description: step.description.clone(),
                 todo_id: todo_pseudo_id,
