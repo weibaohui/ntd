@@ -612,13 +612,15 @@ export function ExecutorsPanel() {
                     <div>
                       <Paragraph type="secondary">输出：</Paragraph>
                       <pre style={{
-                        background: '#f5f5f5',
+                        background: 'var(--color-bg-container)',
+                        color: 'var(--color-text-secondary)',
                         padding: 12,
                         borderRadius: 6,
                         fontSize: 12,
                         maxHeight: 300,
                         overflow: 'auto',
                         whiteSpace: 'pre-wrap',
+                        margin: 0,
                       }}>
                         {testModalData.result.output}
                       </pre>

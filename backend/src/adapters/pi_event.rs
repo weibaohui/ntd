@@ -107,6 +107,9 @@ pub struct PiAssistantMessagePartial {
     pub content: Vec<PiContentBlock>,
     #[serde(default)]
     pub model: Option<String>,
+    /// text_end 中 partial 也携带 usage（与 message.usage 一致）
+    #[serde(default)]
+    pub usage: Option<PiUsage>,
 }
 
 /// 工具执行事件（tool_execution_start / tool_execution_update / tool_execution_end）

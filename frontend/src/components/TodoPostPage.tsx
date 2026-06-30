@@ -518,6 +518,12 @@ function PostCard({
           <>
             <span>Input: <b>{record.usage.input_tokens.toLocaleString()}</b></span>
             <span>Output: <b>{record.usage.output_tokens.toLocaleString()}</b></span>
+            {record.usage.cache_read_input_tokens != null && record.usage.cache_read_input_tokens > 0 && (
+              <span>缓存读: <b>{record.usage.cache_read_input_tokens.toLocaleString()}</b></span>
+            )}
+            {record.usage.cache_creation_input_tokens != null && record.usage.cache_creation_input_tokens > 0 && (
+              <span>缓存写: <b>{record.usage.cache_creation_input_tokens.toLocaleString()}</b></span>
+            )}
             {record.usage.total_cost_usd != null && (
               <span style={{ color: "var(--color-warning)" }}>
                 ${record.usage.total_cost_usd.toFixed(6)}

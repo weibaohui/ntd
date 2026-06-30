@@ -121,7 +121,7 @@ export function HistoryList({
           );
         })}
       </div>
-      {historyTotal > historyLimit && (
+      {historyTotal > 0 && (
         <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'center', padding: '8px 0 0', borderTop: '1px solid var(--color-border-light)' }}>
           <Pagination
             current={historyPage}

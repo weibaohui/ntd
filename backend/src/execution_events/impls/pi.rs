@@ -142,18 +142,7 @@ impl PiExtractor {
 
         // 提取 usage 对象
         if let Some(usage) = msg.get("usage") {
-            let input = usage.get("input").and_then(|v| v.as_u64()).unwrap_or(0);
-            let output = usage.get("output").and_then(|v| v.as_u64()).unwrap_or(0);
-
-            // input 和 output 均为 0 时跳过（中间状态的占位数据）
-            if input > 0 || output > 0 {
-                events.push(ExecutionEvent::Tokens {
-                    input,
-                    output,
-                    cache_read: usage.get("cacheRead").and_then(|v| v.as_u64()),
-                    cache_write: usage.get("cacheWrite").and_then(|v| v.as_u64()),
-                });
-            }
+            events.extend(self.extract_usage_event(usage));
 
             // 提取 cost
             if let Some(cost) = usage.get("cost") {
@@ -165,6 +154,26 @@ impl PiExtractor {
             }
         }
 
+        events
+    }
+
+    /// 从 usage JSON 对象中提取 Tokens 事件
+    fn extract_usage_event(&self, usage: &serde_json::Value) -> Vec<ExecutionEvent> {
+        let mut events = Vec::new();
+        let input = usage.get("input").and_then(|v| v.as_u64()).unwrap_or(0);
+        let output = usage.get("output").and_then(|v| v.as_u64()).unwrap_or(0);
+        let cache_read = usage.get("cacheRead").and_then(|v| v.as_u64()).unwrap_or(0);
+        let cache_write = usage.get("cacheWrite").and_then(|v| v.as_u64()).unwrap_or(0);
+
+        // input 和 output 均为 0 时跳过中间状态的占位数据，但保留 cache 数据
+        if input > 0 || output > 0 || cache_read > 0 || cache_write > 0 {
+            events.push(ExecutionEvent::Tokens {
+                input,
+                output,
+                cache_read: usage.get("cacheRead").and_then(|v| v.as_u64()),
+                cache_write: usage.get("cacheWrite").and_then(|v| v.as_u64()),
+            });
+        }
         events
     }
 
@@ -260,17 +269,11 @@ impl PiExtractor {
                             }
 
                             // text_end 可能携带 usage（message_end 未触发时兜底）
-                            if let Some(usage) = ame.get("usage") {
-                                let input = usage.get("input").and_then(|v| v.as_u64()).unwrap_or(0);
-                                let output = usage.get("output").and_then(|v| v.as_u64()).unwrap_or(0);
-                                if input > 0 || output > 0 {
-                                    events.push(ExecutionEvent::Tokens {
-                                        input,
-                                        output,
-                                        cache_read: usage.get("cacheRead").and_then(|v| v.as_u64()),
-                                        cache_write: usage.get("cacheWrite").and_then(|v| v.as_u64()),
-                                    });
-                                }
+                            // 实际数据中 usage 在 partial 下，而非 assistantMessageEvent 顶层
+                            if let Some(usage) = ame.get("usage")
+                                .or_else(|| ame.get("partial").and_then(|p| p.get("usage")))
+                            {
+                                events.extend(self.extract_usage_event(usage));
                             }
                         }
                         "toolcall_end" => {
@@ -291,6 +294,11 @@ impl PiExtractor {
                                 if !id.is_empty() {
                                     self.pending_tool_calls.push(id.to_string());
                                 }
+                            }
+
+                            // toolcall_end 可能携带 usage（在 partial 中）
+                            if let Some(usage) = ame.get("partial").and_then(|p| p.get("usage")) {
+                                events.extend(self.extract_usage_event(usage));
                             }
                         }
                         "toolcall_delta" | "toolcall_start" | "thinking_start" | "thinking_delta" | "text_delta" => {
@@ -362,6 +370,37 @@ impl PiExtractor {
                 // 提取 toolResults
                 if let Some(results) = json.get("toolResults").and_then(|v| v.as_array()) {
                     events.extend(self.extract_tool_results(results));
+                }
+            }
+            "agent_end" => {
+                // agent 结束事件：提取最终助手消息的内容和用量
+                if let Some(messages) = json.get("messages").and_then(|v| v.as_array()) {
+                    // 找到最后一条 assistant 消息
+                    for msg in messages.iter().rev() {
+                        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+                        if role != "assistant" {
+                            continue;
+                        }
+
+                        // 提取最终结果文本
+                        if let Some(content) = msg.get("content").and_then(|v| v.as_array()) {
+                            for item in content {
+                                if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                                    let trimmed = text.trim();
+                                    if !trimmed.is_empty() {
+                                        events.push(ExecutionEvent::Result {
+                                            summary: trimmed.to_string(),
+                                        });
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        // 提取最终 usage
+                        events.extend(self.extract_usage_from_message(msg));
+                        break;
+                    }
                 }
             }
             "error" => {
@@ -613,5 +652,60 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert!(matches!(&events[0], ExecutionEvent::Assistant { .. }));
         assert!(matches!(&events[1], ExecutionEvent::Tokens { input: 50, output: 30, .. }));
+    }
+
+    /// 测试：text_end 从 partial.usage 提取用量（实际 PI 数据路径）
+    #[test]
+    fn test_text_end_with_partial_usage() {
+        let mut extractor = PiExtractor::new();
+        let json = r#"{"type":"message_update","assistantMessageEvent":{"type":"text_end","content":"Done.","partial":{"role":"assistant","usage":{"input":0,"output":21,"cacheRead":10246,"cacheWrite":0,"totalTokens":10267,"cost":{"total":0.0}}}}}"#;
+        let events = extractor.extract(json);
+
+        // Assistant + Tokens
+        assert_eq!(events.len(), 2);
+        assert!(matches!(&events[0], ExecutionEvent::Assistant { .. }));
+        assert!(matches!(&events[1], ExecutionEvent::Tokens { input: 0, output: 21, cache_read: Some(10246), .. }));
+    }
+
+    /// 测试：toolcall_end 从 partial.usage 提取用量
+    #[test]
+    fn test_toolcall_end_with_partial_usage() {
+        let mut extractor = PiExtractor::new();
+        let json = r#"{"type":"message_update","assistantMessageEvent":{"type":"toolcall_end","toolCall":{"id":"call_1","name":"bash","arguments":{"command":"date"}},"partial":{"role":"assistant","usage":{"input":0,"output":38,"cacheRead":10092,"cacheWrite":7,"totalTokens":10137,"cost":{"total":0.0}}}}}"#;
+        let events = extractor.extract(json);
+
+        // ToolCall + Tokens
+        assert_eq!(events.len(), 2);
+        assert!(matches!(&events[0], ExecutionEvent::ToolCall { .. }));
+        assert!(matches!(&events[1], ExecutionEvent::Tokens { input: 0, output: 38, cache_read: Some(10092), cache_write: Some(7), .. }));
+    }
+
+    /// 测试：agent_end 提取最终文本和用量
+    #[test]
+    fn test_agent_end_with_usage() {
+        let mut extractor = PiExtractor::new();
+        let json = r#"{"type":"agent_end","messages":[
+            {"role":"user","content":[{"type":"text","text":"hello"}]},
+            {"role":"assistant","content":[{"type":"thinking","thinking":"Let me think"},{"type":"text","text":"Here is the answer."}],"usage":{"input":100,"output":50,"cacheRead":10,"cacheWrite":5,"totalTokens":150,"cost":{"total":0.003}}}
+        ],"willRetry":false}"#;
+        let events = extractor.extract(json);
+
+        // Result + Tokens + Cost
+        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Result { summary } if summary == "Here is the answer.")));
+        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Tokens { input: 100, output: 50, cache_read: Some(10), cache_write: Some(5), .. })));
+    }
+
+    /// 测试：agent_end 提取 cache-only 用量（input=0, output=0, 但有 cache）
+    #[test]
+    fn test_agent_end_with_cache_only_usage() {
+        let mut extractor = PiExtractor::new();
+        let json = r#"{"type":"agent_end","messages":[
+            {"role":"user","content":[{"type":"text","text":"hello"}]},
+            {"role":"assistant","content":[{"type":"text","text":"OK"}],"usage":{"input":0,"output":0,"cacheRead":10092,"cacheWrite":7,"totalTokens":10099,"cost":{"total":0.0}}}
+        ],"willRetry":false}"#;
+        let events = extractor.extract(json);
+
+        // 即使 input=0,output=0，有 cache 数据也应提取 Tokens
+        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Tokens { input: 0, output: 0, cache_read: Some(10092), cache_write: Some(7), .. })));
     }
 }

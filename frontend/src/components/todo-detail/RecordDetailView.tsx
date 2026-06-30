@@ -200,6 +200,12 @@ export function RecordDetailView({
         <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <span>Input: {record.usage.input_tokens.toLocaleString()}</span>
           <span>Output: {record.usage.output_tokens.toLocaleString()}</span>
+          {record.usage.cache_read_input_tokens != null && record.usage.cache_read_input_tokens > 0 && (
+            <span>缓存读: {record.usage.cache_read_input_tokens.toLocaleString()}</span>
+          )}
+          {record.usage.cache_creation_input_tokens != null && record.usage.cache_creation_input_tokens > 0 && (
+            <span>缓存写: {record.usage.cache_creation_input_tokens.toLocaleString()}</span>
+          )}
           {record.usage.total_cost_usd !== null && (
             <span style={{ color: 'var(--color-warning)', fontWeight: 600 }}>${record.usage.total_cost_usd.toFixed(6)}</span>
           )}

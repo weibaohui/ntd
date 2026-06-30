@@ -9,7 +9,7 @@
 //! - **不强加 trait 方法**：保持当前 `CodeExecutor` 的 trait 形状不变（避免一次性的大改动）。
 //! - **可单测**：每个 helper 都有独立单元测试覆盖空行、空白、非 JSON、JSON 错误等分支。
 
-use crate::adapters::ExecutionUsage;
+use crate::models::ExecutionUsage;
 use crate::models::{utc_timestamp, ParsedLogEntry};
 use serde_json::Value;
 

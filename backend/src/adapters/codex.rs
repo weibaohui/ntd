@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use super::helpers;
 use super::{BaseExecutor, CodeExecutor, ExecutorType, ParsedLogEntry};
-use crate::adapters::ExecutionUsage;
+use crate::models::ExecutionUsage;
 use crate::models::utc_timestamp;
 
 /// Codex executor。
@@ -57,9 +57,8 @@ impl CodexExecutor {
         }
     }
 
-    /// 把 ExecutionUsage 写进 base.usage 并返回 tokens 日志条目。
+    /// 返回 tokens 日志条目（usage 通过 ParsedLogEntry.usage 字段传递）。
     fn tokens_entry_from_usage(&self, usage: ExecutionUsage) -> ParsedLogEntry {
-        *self.base.usage.lock() = Some(usage.clone());
         helpers::tokens_entry(
             format!("Tokens: input={}, output={}", usage.input_tokens, usage.output_tokens),
             usage,
@@ -304,10 +303,6 @@ impl CodeExecutor for CodexExecutor {
         super::default_final_result_with_think_stripping(logs)
     }
 
-    fn get_usage(&self, _logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> {
-        self.base.usage.lock().clone()
-    }
-
     fn get_model(&self) -> Option<String> {
         self.base.model.lock().clone()
     }
@@ -443,7 +438,7 @@ mod tests {
         let line = r#"{"type":"turn.completed","usage":{"input_tokens":46503,"cached_input_tokens":45824,"output_tokens":90,"reasoning_output_tokens":0}}"#;
         let entry = executor.parse_output_line(line).unwrap();
         assert_eq!(entry.log_type, "tokens");
-        let usage = executor.get_usage(&[]).unwrap();
+        let usage = entry.usage.as_ref().unwrap();
         assert_eq!(usage.input_tokens, 46503);
         assert_eq!(usage.output_tokens, 90);
         assert_eq!(usage.cache_read_input_tokens, Some(45824));

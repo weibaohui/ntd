@@ -15,14 +15,14 @@ use serde_json::Value;
 
 use super::helpers;
 use super::{BaseExecutor, CodeExecutor, ExecutorType, ParsedLogEntry};
-use crate::adapters::ExecutionUsage;
+use crate::models::ExecutionUsage;
 
 /// Codewhale executor implementation。
 ///
 /// `#[derive(Clone)]` 由 `BaseExecutor`（已经 derive Clone）和自身所有 Arc<Mutex<...>> 字段共同保证安全。
 #[derive(Clone)]
 pub struct CodewhaleExecutor {
-    /// 共享状态：path + model + usage。
+    /// 共享状态：path + model。
     base: BaseExecutor,
 }
 
@@ -85,23 +85,24 @@ impl CodewhaleExecutor {
         let input_tokens = meta.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
         let output_tokens = meta.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
 
-        if input_tokens > 0 || output_tokens > 0 {
-            let usage = ExecutionUsage {
+        let usage = if input_tokens > 0 || output_tokens > 0 {
+            Some(ExecutionUsage {
                 input_tokens,
                 output_tokens,
                 cache_read_input_tokens: None,
                 cache_creation_input_tokens: None,
                 total_cost_usd: None,
                 duration_ms: None,
-            };
-            *self.base.usage.lock() = Some(usage);
-        }
+            })
+        } else {
+            None
+        };
 
         let status = meta.get("status").and_then(Value::as_str).unwrap_or("completed");
         Some(helpers::entry_with_usage(
             "tokens",
             format!("Tokens: input={}, output={}, status={}", input_tokens, output_tokens, status),
-            self.base.usage.lock().clone(),
+            usage,
         ))
     }
 }
@@ -223,10 +224,6 @@ impl CodeExecutor for CodewhaleExecutor {
         }
     }
 
-    fn get_usage(&self, _logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> {
-        self.base.usage.lock().clone()
-    }
-
     fn get_model(&self) -> Option<String> {
         self.base.model.lock().clone()
     }
@@ -318,8 +315,7 @@ mod tests {
         let line = r#"{"type":"metadata","meta":{"model":"deepseek-v4-pro","input_tokens":25182,"output_tokens":34,"session_id":"abc123","status":"completed"}}"#;
         let entry = executor.parse_output_line(line).unwrap();
         assert_eq!(entry.log_type, "tokens");
-
-        let usage = executor.get_usage(&[]).unwrap();
+        let usage = entry.usage.as_ref().unwrap();
         assert_eq!(usage.input_tokens, 25182);
         assert_eq!(usage.output_tokens, 34);
 

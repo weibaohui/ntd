@@ -3,11 +3,11 @@ use parking_lot::Mutex;
 
 use super::helpers;
 use super::{BaseExecutor, CodeExecutor, ExecutorType, ParsedLogEntry};
-use crate::adapters::ExecutionUsage;
+use crate::models::ExecutionUsage;
 
 /// AtomCode executor。
 ///
-/// `BaseExecutor` 持有 path + model + usage，
+/// `BaseExecutor` 持有 path + model，
 /// 额外保留 `has_done` 状态字段用于在 stderr 中检测到 "done" 事件。
 // `BaseExecutor` 已经 derive Clone；`Arc<Mutex<...>>` 也派生 Clone（共享内部状态），
 // 因此组合结构体可直接 derive Clone，与原手写 impl 语义等价。
@@ -90,10 +90,6 @@ impl CodeExecutor for AtomcodeExecutor {
         super::default_final_result_with_think_stripping(logs)
     }
 
-    fn get_usage(&self, _logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> {
-        self.base.usage.lock().clone()
-    }
-
     fn get_model(&self) -> Option<String> {
         None
     }
@@ -115,53 +111,37 @@ impl AtomcodeExecutor {
             }
         }
 
-        // 增量更新：已有 usage 时只覆盖 input/output，保留 cache / cost / duration 等字段。
-        let mut usage_guard = self.base.usage.lock();
-        if let Some(ref mut usage) = *usage_guard {
-            usage.input_tokens = prompt_tokens;
-            usage.output_tokens = completion_tokens;
-        } else {
-            *usage_guard = Some(ExecutionUsage {
+        let usage = if prompt_tokens > 0 || completion_tokens > 0 {
+            Some(ExecutionUsage {
                 input_tokens: prompt_tokens,
                 output_tokens: completion_tokens,
                 cache_read_input_tokens: None,
                 cache_creation_input_tokens: None,
                 total_cost_usd: None,
                 duration_ms: None,
-            });
-        }
+            })
+        } else {
+            None
+        };
 
-        Some(helpers::entry("tokens", trimmed))
+        Some(ParsedLogEntry {
+            timestamp: crate::models::utc_timestamp(),
+            log_type: "tokens".to_string(),
+            content: trimmed.to_string(),
+            usage,
+            tool_name: None,
+            tool_input_json: None,
+        })
     }
 
-    /// 解析 `[done] 4.6s tokens=N turns=N tool_calls=N ...` 行，更新 has_done + usage 并返回 step_finish 日志。
+    /// 解析 `[done] 4.6s tokens=N turns=N tool_calls=N ...` 行，更新 has_done 并返回 step_finish 日志。
     fn parse_done_line(&self, trimmed: &str) -> Option<ParsedLogEntry> {
         *self.has_done.lock() = true;
         let stats = parse_done_stats(trimmed);
-        self.update_usage_from_done(&stats);
         Some(helpers::entry(
             "step_finish",
             format!("Execution finished: {} turns, {} tool calls", stats.turns, stats.tool_calls),
         ))
-    }
-
-    /// 把 `[done]` 行的统计结果合并进 base.usage：
-    /// - 已有 usage 时补齐 duration；
-    /// - 之前无 usage 且 total_tokens>0 时新建一条。
-    fn update_usage_from_done(&self, stats: &DoneStats) {
-        let mut usage_guard = self.base.usage.lock();
-        if let Some(ref mut usage) = *usage_guard {
-            usage.duration_ms = stats.duration_ms;
-        } else if stats.total_tokens > 0 {
-            *usage_guard = Some(ExecutionUsage {
-                input_tokens: stats.total_tokens,
-                output_tokens: 0,
-                cache_read_input_tokens: None,
-                cache_creation_input_tokens: None,
-                total_cost_usd: None,
-                duration_ms: stats.duration_ms,
-            });
-        }
     }
 }
 
@@ -242,10 +222,8 @@ mod tests {
         let entry = executor.parse_stderr_line("[tokens] prompt=11 completion=5").unwrap();
         assert_eq!(entry.log_type, "tokens");
         assert_eq!(entry.content, "[tokens] prompt=11 completion=5");
-
-        let usage = executor.get_usage(&[]).unwrap();
-        assert_eq!(usage.input_tokens, 11);
-        assert_eq!(usage.output_tokens, 5);
+        assert_eq!(entry.usage.as_ref().unwrap().input_tokens, 11);
+        assert_eq!(entry.usage.as_ref().unwrap().output_tokens, 5);
     }
 
     #[test]
@@ -255,9 +233,6 @@ mod tests {
         assert_eq!(entry.log_type, "step_finish");
         assert!(entry.content.contains("2 turns"));
         assert!(entry.content.contains("1 tool calls"));
-
-        let usage = executor.get_usage(&[]).unwrap();
-        assert_eq!(usage.duration_ms, Some(4600));
     }
 
     #[test]
@@ -317,11 +292,6 @@ mod tests {
         assert_eq!(executor.get_final_result(&logs), Some("hello world".to_string()));
     }
 
-    #[test]
-    fn test_get_usage_before_tokens() {
-        let executor = AtomcodeExecutor::new("atomcode".to_string());
-        assert!(executor.get_usage(&[]).is_none());
-    }
 
     #[test]
     fn test_get_model_always_none() {

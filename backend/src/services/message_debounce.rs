@@ -559,7 +559,7 @@ impl MessageDebounce {
             .lines()
             .filter_map(|line| executor.parse_output_line(line))
             .collect();
-        let result_text = executor.get_final_result(&logs);
+        let result_text = crate::executor_service::completion::get_final_result_from_logs(&logs);
 
         // 发送结果到 Feishu
         let content = result_text.unwrap_or_else(|| {

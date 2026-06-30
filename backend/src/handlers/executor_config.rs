@@ -64,7 +64,7 @@ pub async fn test_executor(
         .ok_or(AppError::NotFound)?;
 
     let path = if ec.path.is_empty() { name.clone() } else { ec.path.clone() };
-    let (found, _) = detect_binary(&path);
+    let (found, resolved) = detect_binary(&path);
 
     if !found {
         return Ok(ApiResponse::ok(ExecutorTestResult {
@@ -74,10 +74,13 @@ pub async fn test_executor(
         }));
     }
 
+    // 使用 resolved 路径（detect_binary 已展开 ~ 等），避免原始路径含 ~ 导致 OS 找不到
+    let exec_path = resolved.unwrap_or_else(|| path.clone());
+
     // Try running --version with a short timeout
     let output = tokio::time::timeout(
         Duration::from_secs(10),
-        tokio::process::Command::new(&path)
+        tokio::process::Command::new(&exec_path)
             .arg("--version")
             .output(),
     ).await;

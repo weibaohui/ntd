@@ -24,6 +24,51 @@ use crate::task_manager::TaskManager;
 use super::auto_review::run_auto_review;
 use super::log_capture::send_event;
 
+/// 从 execution_events pipeline 生成的 tokens 日志条目中提取最终 usage。
+///
+/// 统一 usage 来源：所有 executor 的 token 用量都通过 EventPipeline 解析为
+/// ExecutionEvent::Tokens 事件 + LogFlusher 写库，不再依赖各 executor 各自的 get_usage() 实现。
+/// tokens 条目中的 usage 是累积值（非增量），取最后一条作为最终 total。
+pub(crate) fn get_usage_from_tokens_logs(logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> {
+    logs.iter().rev().find(|l| l.log_type == "tokens")?.usage.clone()
+}
+
+/// 从日志条目中提取最终结果文本。
+///
+/// 统一来源：pipeline 的 Result 事件写入 "result" 类型日志。
+/// 回退扫描 "text" 类型条目（某些 executor 可能不产生 result 类型）。
+pub(crate) fn get_final_result_from_logs(logs: &[ParsedLogEntry]) -> Option<String> {
+    logs.iter()
+        .rev()
+        .find(|l| l.log_type == "result" || l.log_type == "text")
+        .map(|l| l.content.clone())
+}
+
+/// 从日志条目中提取模型名称。
+///
+/// 统一来源：pipeline 的 ModelSwitch 事件写入 "model_switch" 类型日志，
+/// 内容格式为 "model: {name}"。
+/// 回退到 "system" 类型日志中查找含 "model" 关键字的条目。
+pub(crate) fn get_model_from_logs(logs: &[ParsedLogEntry]) -> Option<String> {
+    // 优先找 model_switch 条目
+    if let Some(log) = logs.iter().rev().find(|l| l.log_type == "model_switch") {
+        if let Some(model) = log.content.strip_prefix("model: ") {
+            return Some(model.to_string());
+        }
+    }
+    // 回退：从 system 条目中提取（旧格式："Model: claude-3-sonnet" 或含 model 字的）
+    logs.iter().rev().find_map(|l| {
+        if l.log_type == "system" {
+            l.content
+                .strip_prefix("Model: ")
+                .or_else(|| l.content.strip_prefix("model: "))
+                .map(|m| m.to_string())
+        } else {
+            None
+        }
+    })
+}
+
 /// 把 executor 报回的 `usage.duration_ms` 统一覆盖成 wall-clock 实际耗时。
 ///
 /// 设计意图（issue #513 之后）：
@@ -90,14 +135,13 @@ pub(crate) fn emit_started_event(
 /// `insert_execution_logs` 分支，导致每条日志被插两次（issue #653）。因此固定传 `"[]"`。
 pub(crate) async fn persist_completion_record(
     db: &Database,
-    executor: &dyn CodeExecutor,
     record_id: i64,
     all_logs: &[ParsedLogEntry],
     success: bool,
     execution_start: std::time::Instant,
 ) {
-    let result_str = executor.get_final_result(all_logs).unwrap_or_default();
-    let stats = super::log_capture::extract_execution_stats(all_logs, executor.get_tool_calls_count());
+    let result_str = get_final_result_from_logs(all_logs).unwrap_or_default();
+    let stats = super::log_capture::extract_execution_stats(all_logs, None);
     if let Ok(stats_json) = serde_json::to_string(&stats) {
         let _ = db
             .update_execution_record_stats(record_id, &stats_json)
@@ -109,8 +153,12 @@ pub(crate) async fn persist_completion_record(
         crate::models::ExecutionStatus::Failed.as_str()
     };
     // wall-clock duration 覆盖交给 helper 集中处理，避免三个终态分支各自维护。
-    let usage = apply_wall_clock_duration(executor.get_usage(all_logs), execution_start);
-    let model = executor.get_model();
+    // 统一从 execution_events pipeline 解析的 tokens 日志条目中获取 usage。
+    let usage = apply_wall_clock_duration(
+        get_usage_from_tokens_logs(all_logs),
+        execution_start,
+    );
+    let model = get_model_from_logs(all_logs);
     // remaining_logs 故意传 "[]"：日志已由 LogFlusher 全部入库，再传全量会导致重复插入。
     let _ = db
         .update_execution_record(crate::db::execution::UpdateExecutionRecordRequest {

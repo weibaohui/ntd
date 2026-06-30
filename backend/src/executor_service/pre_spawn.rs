@@ -287,11 +287,40 @@ fn extract_todo_executor_fields(
 }
 
 /// 从 registry 取 executor：先按类型取，取不到 fallback 到 default，再失败就走 reject。
+///
+/// 每次执行前从 DB 重新读取 executor 路径，如果 DB 路径与缓存不一致则刷新 registry，
+/// 确保用户在设置中修改路径后立即生效，无需重启。
 async fn resolve_executor_instance(
     request: &RunTodoExecutionRequest,
     todo: &Option<crate::models::Todo>,
     executor_type: ExecutorType,
 ) -> Result<Arc<dyn CodeExecutor>, ExecutionResult> {
+    // 每次执行前从 DB 重新读取 executor 配置，确保路径变更立即生效
+    if let Ok(Some(config)) = request.db.get_executor_by_name(executor_type.as_str()).await {
+        if config.enabled {
+            let db_path = if config.path.is_empty() {
+                executor_type.as_str()
+            } else {
+                &config.path
+            };
+            // 展开 ~ 为 home 目录，避免 tokio::process::Command 找不到文件
+            let expanded_path = expand_tilde(db_path);
+
+            // 检查缓存中的 executor 路径是否一致
+            let need_refresh = match request.executor_registry.get(executor_type).await {
+                Some(exec) => exec.executable_path() != expanded_path,
+                None => true,
+            };
+
+            if need_refresh {
+                request
+                    .executor_registry
+                    .register_by_name(executor_type.as_str(), &expanded_path)
+                    .await;
+            }
+        }
+    }
+
     if let Some(exec) = request.executor_registry.get(executor_type).await {
         return Ok(exec);
     }
@@ -308,6 +337,20 @@ async fn resolve_executor_instance(
         executor_type,
     )
     .await)
+}
+
+/// 展开路径中的 ~ 为用户 home 目录。
+/// 如果 ~ 展开失败或无 ~ 前缀则返回原路径。
+fn expand_tilde(path: &str) -> String {
+    if path.starts_with('~') {
+        if let Some(home) = dirs::home_dir() {
+            let relative = path
+                .trim_start_matches('~')
+                .trim_start_matches(std::path::MAIN_SEPARATOR);
+            return home.join(relative).to_string_lossy().to_string();
+        }
+    }
+    path.to_string()
 }
 
 /// 构造 argv：直接按 executor 规则拼。

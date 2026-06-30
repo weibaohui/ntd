@@ -588,7 +588,7 @@ pub(crate) async fn handle_completed_branch(
     )
     .await;
     let (logs_snapshot, result_str) =
-        flush_and_extract_result(log_flusher, flush_timer, &ctx.db, ctx.record_id, ctx.executor.as_ref()).await;
+        flush_and_extract_result(log_flusher, flush_timer, &ctx.db, ctx.record_id).await;
     persist_and_finalize_completion(&ctx, success, exit_code, &logs_snapshot, result_str).await;
     cleanup_worktree_if_needed(&ctx.worktree_ctx);
 }
@@ -619,7 +619,6 @@ pub(crate) async fn persist_and_finalize_completion(
 ) {
     persist_completion_record(
         &ctx.db,
-        ctx.executor.as_ref(),
         ctx.record_id,
         logs_snapshot,
         success,

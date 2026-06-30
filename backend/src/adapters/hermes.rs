@@ -3,7 +3,6 @@ use parking_lot::Mutex;
 
 use super::helpers;
 use super::{BaseExecutor, CodeExecutor, ExecutorType, ParsedLogEntry};
-use crate::adapters::ExecutionUsage;
 use crate::models::TodoItem;
 
 /// Hermes banner / 框线字符判定。
@@ -19,7 +18,7 @@ fn is_hermes_banner(trimmed: &str) -> bool {
 
 /// Hermes executor。
 ///
-/// `BaseExecutor` 持有 path + model + usage 三件套，
+/// `BaseExecutor` 持有 path + model，
 /// Hermes 还有 4 个执行期专用状态：`has_done`、`session_id`、`tool_calls_count`，
 /// 以及一个自定义的 `get_tool_calls_count()` override。
 // `BaseExecutor` 已经 derive Clone；`Arc<Mutex<...>>` 也派生 Clone（共享内部状态），
@@ -169,10 +168,6 @@ impl CodeExecutor for HermesExecutor {
         super::default_final_result_with_think_stripping(logs)
     }
 
-    fn get_usage(&self, _logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> {
-        self.base.usage.lock().clone()
-    }
-
     fn get_model(&self) -> Option<String> {
         None
     }
@@ -285,12 +280,6 @@ mod tests {
             ParsedLogEntry::new("text", "  hello world  "),
         ];
         assert_eq!(executor.get_final_result(&logs), Some("hello world".to_string()));
-    }
-
-    #[test]
-    fn test_get_usage_before_tokens() {
-        let executor = HermesExecutor::new("hermes".to_string());
-        assert!(executor.get_usage(&[]).is_none());
     }
 
     #[test]
