@@ -91,7 +91,7 @@ impl AtomcodeExtractor {
         self.flush_text(&mut events);
 
         // 跳过流式/headless 标记
-        if trimmed.starts_with("[tool-streaming") || trimmed.starts_with("[headless]") {
+        if trimmed.starts_with("[tool-streaming") || trimmed.starts_with("[headless]") || trimmed.starts_with("[tool-batch") {
             return events;
         }
 

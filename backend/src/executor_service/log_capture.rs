@@ -214,8 +214,9 @@ where
             // BufReader::lines 在读到 EOF 时返回 Ok(None)，循环自然退出。
             let mut reader = BufReader::new(stderr_reader).lines();
             while let Ok(Some(line)) = reader.next_line().await {
-                // 跳过流式输出行（atomcode 的 [tool-streaming 中间过程输出）
-                if line.trim_start().starts_with("[tool-streaming") {
+                // 跳过 atomcode 流式/中间过程输出行
+                let t = line.trim_start();
+                if t.starts_with("[tool-streaming") || t.starts_with("[tool-batch") {
                     continue;
                 }
                 // 优先尝试用 EventPipeline 解析

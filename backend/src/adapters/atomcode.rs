@@ -60,7 +60,7 @@ impl CodeExecutor for AtomcodeExecutor {
         let trimmed = helpers::trimmed_non_empty(line)?;
 
         // 跳过 streaming / headless 标记行：与原行为一致（不向前端展示）
-        if trimmed.starts_with("[tool-streaming") || trimmed.starts_with("[headless]") {
+        if trimmed.starts_with("[tool-streaming") || trimmed.starts_with("[headless]") || trimmed.starts_with("[tool-batch") {
             return None;
         }
 
