@@ -4,7 +4,6 @@ use parking_lot::Mutex;
 use super::helpers;
 use super::{BaseExecutor, CodeExecutor, ExecutorType, ParsedLogEntry};
 use super::claude_protocol::{ClaudeMessage, ClaudeContentBlock};
-use crate::adapters::ExecutionUsage;
 use crate::models::utc_timestamp;
 
 /// ClaudeCode executor。
@@ -252,10 +251,6 @@ impl CodeExecutor for ClaudeCodeExecutor {
         Some(helpers::text_entry(line))
     }
 
-    fn get_usage(&self, logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> {
-        super::get_usage_from_logs(logs)
-    }
-
     fn get_model(&self) -> Option<String> {
         self.base.model.lock().clone()
     }
@@ -264,7 +259,8 @@ impl CodeExecutor for ClaudeCodeExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::ParsedLogEntry;
+    use crate::executor_service::completion::get_usage_from_tokens_logs;
+    use crate::models::{ExecutionUsage, ParsedLogEntry};
 
     #[test]
     fn test_parse_output_line_system() {
@@ -344,8 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_usage_after_result() {
-        let executor = ClaudeCodeExecutor::new("claude".to_string());
+    fn test_usage_from_tokens_logs() {
         let logs = vec![
             ParsedLogEntry {
                 timestamp: utc_timestamp(),
@@ -363,16 +358,14 @@ mod tests {
             tool_input_json: None,
             },
         ];
-        let usage = executor.get_usage(&logs).unwrap();
-        assert_eq!(usage.input_tokens, 10);
-        assert_eq!(usage.output_tokens, 20);
+        let usage = get_usage_from_tokens_logs(&logs);
+        assert!(usage.is_none(), "should be None: result type, not tokens type");
     }
 
     #[test]
-    fn test_get_usage_no_result() {
-        let executor = ClaudeCodeExecutor::new("claude".to_string());
+    fn test_usage_from_tokens_logs_no_logs() {
         let logs: Vec<ParsedLogEntry> = vec![];
-        assert!(executor.get_usage(&logs).is_none());
+        assert!(get_usage_from_tokens_logs(&logs).is_none());
     }
 
     #[test]

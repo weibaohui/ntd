@@ -18,14 +18,14 @@ mod kimi_executor_tests {
     fn test_kimi_command_args() {
         let executor = KimiExecutor::new("kimi".to_string());
         let args = executor.command_args("say hello");
-        assert_eq!(args, vec!["--print", "--output-format", "stream-json", "-p", "say hello"]);
+        assert_eq!(args, vec!["--output-format", "stream-json", "-p", "say hello"]);
     }
 
     #[test]
     fn test_kimi_command_args_with_session() {
         let executor = KimiExecutor::new("kimi".to_string());
         let args = executor.command_args_with_session("continue task", Some("abc123"), false);
-        assert_eq!(args, vec!["--print", "--output-format", "stream-json", "-p", "continue task", "-S", "abc123"]);
+        assert_eq!(args, vec!["--output-format", "stream-json", "-r", "abc123", "-p", "continue task"]);
     }
 
     #[test]
@@ -66,6 +66,35 @@ mod kimi_executor_tests {
         let executor = KimiExecutor::new("kimi".to_string());
         let line = "To resume this session: kimi -r abc123";
         assert!(executor.parse_output_line(line).is_none());
+    }
+
+    #[test]
+    fn test_kimi_parse_output_line_string_content() {
+        let executor = KimiExecutor::new("kimi".to_string());
+        // 实际 kimi 有时 content 为字符串而非数组
+        let json = r#"{"role":"assistant","content":"我来执行这两个命令。"}"#;
+        let entry = executor.parse_output_line(json).unwrap();
+        assert_eq!(entry.log_type, "text");
+        assert_eq!(entry.content, "我来执行这两个命令。");
+    }
+
+    #[test]
+    fn test_kimi_parse_output_line_string_content_with_tool_calls() {
+        let executor = KimiExecutor::new("kimi".to_string());
+        // 实际 kimi 同时有字符串 content 和 tool_calls
+        let json = r#"{"role":"assistant","content":"Running command...\n","tool_calls":[{"type":"function","id":"call_1","function":{"name":"TodoList","arguments":"{\"todos\":[{\"title\":\"task1\"}]}"}}]}"#;
+        let entry = executor.parse_output_line(json).unwrap();
+        assert_eq!(entry.log_type, "tool_call");
+        assert!(entry.content.contains("TodoList"));
+    }
+
+    #[test]
+    fn test_kimi_parse_output_line_empty_string_content() {
+        let executor = KimiExecutor::new("kimi".to_string());
+        // content 是空字符串应返回 tool_call（如果存在）
+        let json = r#"{"role":"assistant","content":"","tool_calls":[{"type":"function","id":"call_1","function":{"name":"Shell","arguments":"{\"command\":\"date\"}"}}]}"#;
+        let entry = executor.parse_output_line(json).unwrap();
+        assert_eq!(entry.log_type, "tool_call");
     }
 
     #[test]

@@ -4,12 +4,12 @@ use parking_lot::Mutex;
 use super::helpers;
 use super::opencode_event::OpencodeAgentEvent;
 use super::{BaseExecutor, CodeExecutor, ExecutorType, ParsedLogEntry};
-use crate::adapters::ExecutionUsage;
+use crate::models::ExecutionUsage;
 use crate::models::utc_timestamp;
 
 /// Opencode executor。
 ///
-/// `BaseExecutor` 持有 path + model + usage 三件套，
+/// `BaseExecutor` 持有 path + model，
 /// Opencode 额外的 `has_successful_finish` 用于「非零退出码但有 finish 事件就算成功」语义。
 // `BaseExecutor` 已经 derive Clone；`Arc<Mutex<...>>` 也派生 Clone（共享内部状态），
 // 因此组合结构体可直接 derive Clone，与原手写 impl 语义等价。
@@ -37,7 +37,6 @@ impl OpencodeExecutor {
     /// step_start / step-start: 重置 has_successful_finish + usage。
     fn handle_step_start(&self, timestamp: &str) -> Option<ParsedLogEntry> {
         *self.has_successful_finish.lock() = false;
-        *self.base.usage.lock() = None;
         Some(helpers::with_timestamp(helpers::entry("step_start", "Step started"), timestamp))
     }
 
@@ -93,19 +92,19 @@ impl OpencodeExecutor {
         // even on successful execution, so we track success via the event stream.
         *self.has_successful_finish.lock() = true;
         // Store usage info if available
-        if let Some(part) = &event.part {
+        let usage = if let Some(part) = &event.part {
             if let Some(tokens) = &part.tokens {
-                *self.base.usage.lock() = Some(ExecutionUsage {
+                Some(ExecutionUsage {
                     input_tokens: tokens.input,
                     output_tokens: tokens.output,
                     cache_read_input_tokens: if tokens.cache.read > 0 { Some(tokens.cache.read) } else { None },
                     cache_creation_input_tokens: if tokens.cache.write > 0 { Some(tokens.cache.write) } else { None },
                     total_cost_usd: part.cost,
                     duration_ms: None,
-                });
-            }
-        }
-        Some(helpers::with_timestamp(helpers::entry("step_finish", "Step finished"), timestamp))
+                })
+            } else { None }
+        } else { None };
+        Some(helpers::with_timestamp(helpers::entry_with_usage("step_finish", "Step finished", usage), timestamp))
     }
 }
 
@@ -172,10 +171,6 @@ impl CodeExecutor for OpencodeExecutor {
         super::default_final_result_with_think_stripping(logs)
     }
 
-    fn get_usage(&self, _logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> {
-        self.base.usage.lock().clone()
-    }
-
     fn get_model(&self) -> Option<String> {
         self.base.model.lock().clone()
     }
@@ -224,21 +219,6 @@ mod tests {
         assert_eq!(entry.content, "hello world");
     }
 
-    #[test]
-    fn test_parse_output_line_step_finish_stores_usage() {
-        let executor = OpencodeExecutor::new("opencode".to_string());
-        let line = r#"{"type":"step_finish","timestamp":1700000000000,"part":{"type":"step_finish","tokens":{"total":100,"input":50,"output":50,"cache":{"read":10,"write":5}},"cost":0.001}}"#;
-        let entry = executor.parse_output_line(line).unwrap();
-        assert_eq!(entry.log_type, "step_finish");
-        assert_eq!(entry.content, "Step finished");
-
-        let usage = executor.get_usage(&[]).unwrap();
-        assert_eq!(usage.input_tokens, 50);
-        assert_eq!(usage.output_tokens, 50);
-        assert_eq!(usage.cache_read_input_tokens, Some(10));
-        assert_eq!(usage.cache_creation_input_tokens, Some(5));
-        assert_eq!(usage.total_cost_usd, Some(0.001));
-    }
 
     #[test]
     fn test_parse_output_line_unknown_type() {
@@ -286,11 +266,6 @@ mod tests {
         assert!(executor.get_final_result(&logs).is_none());
     }
 
-    #[test]
-    fn test_get_usage_before_step_finish() {
-        let executor = OpencodeExecutor::new("opencode".to_string());
-        assert!(executor.get_usage(&[]).is_none());
-    }
 
     #[test]
     fn test_get_model_always_none() {
@@ -345,10 +320,6 @@ mod tests {
         let entry = executor.parse_output_line(line).unwrap();
         assert_eq!(entry.log_type, "step_finish");
         assert_eq!(entry.content, "Step finished");
-
-        let usage = executor.get_usage(&[]).unwrap();
-        assert_eq!(usage.input_tokens, 50);
-        assert_eq!(usage.output_tokens, 50);
     }
 
     #[test]

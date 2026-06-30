@@ -23,12 +23,12 @@ use parking_lot::Mutex;
 use super::helpers;
 use super::mimo_event::MimoEvent;
 use super::{BaseExecutor, CodeExecutor, ExecutorType, ParsedLogEntry};
-use crate::adapters::ExecutionUsage;
+use crate::models::ExecutionUsage;
 use crate::models::utc_timestamp;
 
 /// MiMo executor。
 ///
-/// `BaseExecutor` 持有 path + model + usage 三件套，
+/// `BaseExecutor` 持有 path + model，
 /// MiMo 还有自己额外的 `has_successful_finish` 状态用于「非零退出码但有 step_finish 就算成功」的语义。
 // `BaseExecutor` 已经 derive Clone；`Arc<Mutex<...>>` 也派生 Clone（共享内部状态），
 // 因此组合结构体可直接 derive Clone，与原手写 impl 语义等价。
@@ -59,7 +59,6 @@ impl MimoExecutor {
     /// step_start: 重置 has_successful_finish + usage（新 step 累计值重置）。
     fn handle_step_start(&self, timestamp: &str) -> Option<ParsedLogEntry> {
         *self.has_successful_finish.lock() = false;
-        *self.base.usage.lock() = None;
         Some(helpers::with_timestamp(helpers::entry("step_start", "Step started"), timestamp))
     }
 
@@ -134,19 +133,19 @@ impl MimoExecutor {
         // 标记执行成功：即使退出码非零，只要收到 step_finish 事件即表示正常完成
         *self.has_successful_finish.lock() = true;
         // 从 step_finish 的 tokens 字段提取 usage
-        if let Some(part) = &event.part {
+        let usage = if let Some(part) = &event.part {
             if let Some(tokens) = &part.tokens {
-                *self.base.usage.lock() = Some(ExecutionUsage {
+                Some(ExecutionUsage {
                     input_tokens: tokens.input,
                     output_tokens: tokens.output,
                     cache_read_input_tokens: if tokens.cache.read > 0 { Some(tokens.cache.read) } else { None },
                     cache_creation_input_tokens: if tokens.cache.write > 0 { Some(tokens.cache.write) } else { None },
                     total_cost_usd: part.cost,
                     duration_ms: None,
-                });
-            }
-        }
-        Some(helpers::with_timestamp(helpers::entry("step_finish", "Step finished"), timestamp))
+                })
+            } else { None }
+        } else { None };
+        Some(helpers::with_timestamp(helpers::entry_with_usage("step_finish", "Step finished", usage), timestamp))
     }
 }
 
@@ -231,10 +230,6 @@ impl CodeExecutor for MimoExecutor {
         super::default_final_result_with_think_stripping(logs)
     }
 
-    fn get_usage(&self, _logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> {
-        self.base.usage.lock().clone()
-    }
-
     fn get_model(&self) -> Option<String> {
         // MiMo 的 JSON 输出中不包含模型名称字段，始终返回 None
         None
@@ -291,8 +286,7 @@ mod tests {
         let line = r#"{"type":"step_finish","timestamp":1700000000000,"sessionID":"ses_xxx","part":{"type":"step_finish","tokens":{"total":32086,"input":29146,"output":36,"reasoning":24,"cache":{"write":0,"read":2880}},"cost":0}}"#;
         let entry = executor.parse_output_line(line).unwrap();
         assert_eq!(entry.log_type, "step_finish");
-
-        let usage = executor.get_usage(&[]).unwrap();
+        let usage = entry.usage.as_ref().unwrap();
         assert_eq!(usage.input_tokens, 29146);
         assert_eq!(usage.output_tokens, 36);
         assert_eq!(usage.cache_read_input_tokens, Some(2880));

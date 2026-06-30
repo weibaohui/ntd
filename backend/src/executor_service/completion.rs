@@ -24,6 +24,15 @@ use crate::task_manager::TaskManager;
 use super::auto_review::run_auto_review;
 use super::log_capture::send_event;
 
+/// 从 execution_events pipeline 生成的 tokens 日志条目中提取最终 usage。
+///
+/// 统一 usage 来源：所有 executor 的 token 用量都通过 EventPipeline 解析为
+/// ExecutionEvent::Tokens 事件 + LogFlusher 写库，不再依赖各 executor 各自的 get_usage() 实现。
+/// tokens 条目中的 usage 是累积值（非增量），取最后一条作为最终 total。
+pub(crate) fn get_usage_from_tokens_logs(logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> {
+    logs.iter().rev().find(|l| l.log_type == "tokens")?.usage.clone()
+}
+
 /// 把 executor 报回的 `usage.duration_ms` 统一覆盖成 wall-clock 实际耗时。
 ///
 /// 设计意图（issue #513 之后）：
@@ -109,7 +118,11 @@ pub(crate) async fn persist_completion_record(
         crate::models::ExecutionStatus::Failed.as_str()
     };
     // wall-clock duration 覆盖交给 helper 集中处理，避免三个终态分支各自维护。
-    let usage = apply_wall_clock_duration(executor.get_usage(all_logs), execution_start);
+    // 统一从 execution_events pipeline 解析的 tokens 日志条目中获取 usage。
+    let usage = apply_wall_clock_duration(
+        get_usage_from_tokens_logs(all_logs),
+        execution_start,
+    );
     let model = executor.get_model();
     // remaining_logs 故意传 "[]"：日志已由 LogFlusher 全部入库，再传全量会导致重复插入。
     let _ = db

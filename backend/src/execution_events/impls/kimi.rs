@@ -51,40 +51,53 @@ impl KimiExtractor {
                 }
 
                 // 解析 content[]
-                if let Some(content) = json.get("content").and_then(|v| v.as_array()) {
-                    let mut texts: Vec<String> = Vec::new();
-                    let mut thinking: Option<String> = None;
-
-                    for item in content {
-                        match item.get("type").and_then(|v| v.as_str()) {
-                            Some("text") => {
-                                if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-                                    texts.push(text.to_string());
-                                }
-                            }
-                            Some("think") => {
-                                if let Some(text) = item.get("think").and_then(|v| v.as_str()) {
-                                    thinking = Some(text.to_string());
-                                }
-                            }
-                            _ => {}
+                if let Some(content) = json.get("content") {
+                    // 字符串格式：直接作为助手消息
+                    if let Some(s) = content.as_str() {
+                        let trimmed = s.trim();
+                        if !trimmed.is_empty() {
+                            events.push(ExecutionEvent::Assistant {
+                                content: trimmed.to_string(),
+                                thinking: None,
+                                message_id: None,
+                            });
                         }
-                    }
+                    // 数组格式：遍历 text/think
+                    } else if let Some(items) = content.as_array() {
+                        let mut texts: Vec<String> = Vec::new();
+                        let mut thinking: Option<String> = None;
 
-                    // 发送思考事件
-                    if let Some(ref t) = thinking {
-                        events.push(ExecutionEvent::Thinking {
-                            content: t.clone(),
-                        });
-                    }
+                        for item in items {
+                            match item.get("type").and_then(|v| v.as_str()) {
+                                Some("text") => {
+                                    if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                                        texts.push(text.to_string());
+                                    }
+                                }
+                                Some("think") => {
+                                    if let Some(text) = item.get("think").and_then(|v| v.as_str()) {
+                                        thinking = Some(text.to_string());
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
 
-                    // 发送助手消息
-                    if !texts.is_empty() {
-                        events.push(ExecutionEvent::Assistant {
-                            content: texts.join("\n"),
-                            thinking,
-                            message_id: None,
-                        });
+                        // 发送思考事件
+                        if let Some(ref t) = thinking {
+                            events.push(ExecutionEvent::Thinking {
+                                content: t.clone(),
+                            });
+                        }
+
+                        // 发送助手消息
+                        if !texts.is_empty() {
+                            events.push(ExecutionEvent::Assistant {
+                                content: texts.join("\n"),
+                                thinking,
+                                message_id: None,
+                            });
+                        }
                     }
                 }
             }

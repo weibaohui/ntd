@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::models::{ExecutorType, ParsedLogEntry, ExecutionUsage, TodoItem};
+use crate::models::{ExecutorType, ParsedLogEntry, TodoItem};
 
 /// Unified executor definition - single source of truth for all executor metadata.
 pub struct ExecutorDef {
@@ -212,23 +212,17 @@ pub fn default_final_result_with_think_stripping(logs: &[ParsedLogEntry]) -> Opt
     }
 }
 
-/// Extract usage from the last "result" log entry (used by claude_code, codebuddy).
-pub fn get_usage_from_logs(logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> {
-    logs.iter().rev().find(|l| l.log_type == "result")?.usage.clone()
-}
-
-/// 共享的执行器基础状态：path + 可选 model + 可选 usage。
+/// 共享的执行器基础状态：path + 可选 model。
 ///
 /// `BaseExecutor` 解决 Issue #504 提到的 10 个 executor 适配器高度重复的问题。
 /// 每个具体 executor 之前都要复制粘贴：
 /// - `path: String` 字段
 /// - `model: Arc<Mutex<Option<String>>>` 字段（部分）
-/// - `usage: Arc<Mutex<Option<ExecutionUsage>>>` 字段（部分）
 /// - `impl Clone { ... }` 块
 /// - `fn executable_path(&self) -> &str { &self.path }`
 /// - `fn parse_stderr_line(...)` 默认实现（基于 "error" 关键字判定 log_type）
 /// - `fn check_success(...)` 默认实现（exit_code == 0）
-/// - `fn get_usage(...)` / `fn get_model(...)` 默认从内部 state 拷贝
+/// - `fn get_model(...)` 默认从内部 state 拷贝
 ///
 /// 通过将这三个字段与默认行为集中到 `BaseExecutor`，
 /// 具体 executor 只需用 `base: BaseExecutor` 组合，并显式 override 差异部分。
@@ -248,8 +242,6 @@ pub struct BaseExecutor {
     pub path: String,
     /// 提取自 metadata/result 事件的模型名称，部分 executor 不使用
     pub model: Arc<Mutex<Option<String>>>,
-    /// 累计的 token 用量，部分 executor 不使用
-    pub usage: Arc<Mutex<Option<ExecutionUsage>>>,
 }
 
 impl BaseExecutor {
@@ -258,7 +250,6 @@ impl BaseExecutor {
         Self {
             path,
             model: Arc::new(Mutex::new(None)),
-            usage: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -381,8 +372,6 @@ pub trait CodeExecutor: Send + Sync {
             .map(|l| l.content.clone())
     }
 
-    /// 从日志列表中提取 usage 信息
-    fn get_usage(&self, logs: &[ParsedLogEntry]) -> Option<ExecutionUsage>;
     fn get_model(&self) -> Option<String>;
 
     /// 执行完成后从外部数据源提取 todo 进度（用于无法从 stdout 获取工具调用的执行器）
@@ -485,7 +474,7 @@ impl Default for ExecutorRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{ParsedLogEntry, ExecutionUsage};
+    use crate::models::ParsedLogEntry;
 
     #[test]
     fn test_parse_executor_type_claudecode() {
@@ -682,7 +671,6 @@ mod tests {
         fn executable_path(&self) -> &str { "mock" }
         fn command_args(&self, _message: &str) -> Vec<String> { vec![] }
         fn parse_output_line(&self, _line: &str) -> Option<ParsedLogEntry> { None }
-        fn get_usage(&self, _logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> { None }
         fn get_model(&self) -> Option<String> { None }
     }
 
@@ -791,9 +779,8 @@ mod tests {
     fn test_base_executor_new_initializes_fields() {
         let base = BaseExecutor::new("/usr/local/bin/claude".to_string());
         assert_eq!(base.path, "/usr/local/bin/claude");
-        // model/usage 默认为 None
+        // model 默认为 None
         assert!(base.model.lock().is_none());
-        assert!(base.usage.lock().is_none());
     }
 
     #[test]
@@ -809,17 +796,8 @@ mod tests {
         let base = BaseExecutor::new("claude".to_string());
         let cloned = base.clone();
         *base.model.lock() = Some("gpt-4".to_string());
-        *base.usage.lock() = Some(ExecutionUsage {
-            input_tokens: 100,
-            output_tokens: 50,
-            cache_read_input_tokens: None,
-            cache_creation_input_tokens: None,
-            total_cost_usd: None,
-            duration_ms: None,
-        });
-        // 克隆体能读到原始 base 写入的状态
+        // 克隆体能读到原始 base 写入的 model 状态
         assert_eq!(cloned.model.lock().clone(), Some("gpt-4".to_string()));
-        assert_eq!(cloned.usage.lock().as_ref().unwrap().input_tokens, 100);
     }
 
     #[test]
@@ -896,10 +874,6 @@ mod tests {
         fn executable_path(&self) -> &str { &self.base.path }
         fn command_args(&self, _message: &str) -> Vec<String> { vec![] }
         fn parse_output_line(&self, _line: &str) -> Option<ParsedLogEntry> { None }
-        // 委托给 BaseExecutor 的默认行为
-        fn get_usage(&self, _logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> {
-            self.base.usage.lock().clone()
-        }
         fn get_model(&self) -> Option<String> {
             self.base.model.lock().clone()
         }
@@ -929,22 +903,11 @@ mod tests {
     }
 
     #[test]
-    fn test_base_wrap_executor_get_usage_and_model_through_base() {
+    fn test_base_wrap_executor_get_model_through_base() {
         let exec = BaseWrapExecutor::new("claude".to_string());
         // 写入 base 的共享状态
         *exec.base.model.lock() = Some("claude-3-5-sonnet".to_string());
-        *exec.base.usage.lock() = Some(ExecutionUsage {
-            input_tokens: 10,
-            output_tokens: 20,
-            cache_read_input_tokens: None,
-            cache_creation_input_tokens: None,
-            total_cost_usd: None,
-            duration_ms: None,
-        });
         // 通过 trait 方法读出
         assert_eq!(exec.get_model(), Some("claude-3-5-sonnet".to_string()));
-        let usage = exec.get_usage(&[]).unwrap();
-        assert_eq!(usage.input_tokens, 10);
-        assert_eq!(usage.output_tokens, 20);
     }
 }

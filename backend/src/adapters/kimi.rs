@@ -3,7 +3,7 @@ use super::{BaseExecutor, CodeExecutor, ExecutorType, ParsedLogEntry};
 
 /// Kimi executor。
 ///
-/// 内部使用 `BaseExecutor` 持有共享状态（path + model + usage），
+/// 内部使用 `BaseExecutor` 持有共享状态（path + model），
 /// Kimi 自身不维护额外的执行期状态，因此 `BaseExecutor` 的所有字段默认即可。
 // `BaseExecutor` 已经 `#[derive(Clone)]`，组合字段无需手写 Clone impl。
 #[derive(Clone)]
@@ -41,9 +41,23 @@ impl KimiExecutor {
         None
     }
 
-    /// 收集 content[] 中的 text/think，按 text > thinking 优先级返回。
+    /// 收集 content 中的 text/think，按 text > thinking 优先级返回。
+    ///
+    /// content 可以是两种格式：
+    /// - 字符串：`"content":"Hello world"`
+    /// - 对象数组：`"content":[{"type":"text","text":"Hello"}]`
     fn parse_assistant_content(&self, json: &serde_json::Value) -> Option<ParsedLogEntry> {
-        let items = json.get("content")?.as_array()?;
+        let content_val = json.get("content")?;
+        // 字符串格式：直接作为 text
+        if let Some(s) = content_val.as_str() {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            return Some(helpers::text_entry(trimmed.to_string()));
+        }
+        // 数组格式：遍历 text/think
+        let items = content_val.as_array()?;
         let mut text: Option<String> = None;
         let mut think: Option<String> = None;
         for item in items {
@@ -160,10 +174,6 @@ impl CodeExecutor for KimiExecutor {
         }
     }
 
-    fn get_usage(&self, _logs: &[ParsedLogEntry]) -> Option<crate::adapters::ExecutionUsage> {
-        self.base.usage.lock().clone()
-    }
-
     fn get_model(&self) -> Option<String> {
         None
     }
@@ -181,9 +191,24 @@ mod tests {
     }
 
     #[test]
+    fn test_command_args_only_prompt() {
+        let executor = KimiExecutor::new("kimi".to_string());
+        let args = executor.command_args("hello");
+        assert_eq!(args, vec!["--output-format", "stream-json", "-p", "hello"]);
+    }
+
+    #[test]
     fn test_command_args_with_session() {
         let executor = KimiExecutor::new("kimi".to_string());
         let args = executor.command_args_with_session("continue task", Some("abc123"), false);
+        assert_eq!(args, vec!["--output-format", "stream-json", "-r", "abc123", "-p", "continue task"]);
+    }
+
+    #[test]
+    fn test_command_args_with_session_resume() {
+        let executor = KimiExecutor::new("kimi".to_string());
+        // 与普通 session 调用参数一致：kimi -r <session_id> -p <message>
+        let args = executor.command_args_with_session("continue task", Some("abc123"), true);
         assert_eq!(args, vec!["--output-format", "stream-json", "-r", "abc123", "-p", "continue task"]);
     }
 
@@ -225,5 +250,26 @@ mod tests {
         let executor = KimiExecutor::new("kimi".to_string());
         let line = "To resume this session: kimi -r abc123";
         assert!(executor.parse_output_line(line).is_none());
+    }
+
+    #[test]
+    fn test_parse_output_line_string_content() {
+        let executor = KimiExecutor::new("kimi".to_string());
+        // 实际 kimi 有时 content 为字符串而非数组
+        let json = r#"{"role":"assistant","content":"我来执行这两个命令。"}"#;
+        let entry = executor.parse_output_line(json).unwrap();
+        assert_eq!(entry.log_type, "text");
+        assert_eq!(entry.content, "我来执行这两个命令。");
+    }
+
+    #[test]
+    fn test_parse_output_line_string_content_with_tool_calls() {
+        let executor = KimiExecutor::new("kimi".to_string());
+        // 实际 kimi 同时有字符串 content 和 tool_calls
+        let json = r#"{"role":"assistant","content":"我来执行这两个命令。\n","tool_calls":[{"type":"function","id":"call_1","function":{"name":"TodoList","arguments":"{\"todos\":[{\"title\":\"task1\"}]}"}}]}"#;
+        let entry = executor.parse_output_line(json).unwrap();
+        assert_eq!(entry.log_type, "tool_call");
+        assert!(entry.content.contains("TodoList"));
+        assert!(entry.tool_input_json.is_some());
     }
 }
