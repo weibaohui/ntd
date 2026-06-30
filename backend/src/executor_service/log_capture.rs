@@ -564,13 +564,11 @@ pub(crate) async fn flush_and_extract_result(
     flush_timer: JoinHandle<()>,
     db: &Arc<Database>,
     record_id: i64,
-    executor: &dyn CodeExecutor,
 ) -> (Vec<ParsedLogEntry>, String) {
     log_flusher.finalize().await;
     let _ = flush_timer.await;
     let all_logs_snapshot = db.get_all_execution_logs(record_id).await.unwrap_or_default();
-    let result_str = executor
-        .get_final_result(&all_logs_snapshot)
+    let result_str = super::completion::get_final_result_from_logs(&all_logs_snapshot)
         .unwrap_or_default();
     (all_logs_snapshot, result_str)
 }
