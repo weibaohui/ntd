@@ -9,7 +9,7 @@
 //! - `[tool→ <name> args={<json>}]` → ToolCall 事件
 //! - `[tool← <name> ...]` → ToolResult 事件
 //! - `[engine v2] new stack active (model xxx)` → ModelSwitch 事件
-//! - stdout 纯文本 → Assistant 事件
+//! - `[thinking] <text>` → 思考内容（多行累积为一块直到非 [thinking] 行）
 
 use crate::execution_events::event::ExecutionEvent;
 use crate::execution_events::extractor::EventExtractor;
@@ -21,6 +21,8 @@ pub struct AtomcodeExtractor {
     metadata: ExecutionMetadata,
     /// 用于追踪 tool_call_id，匹配 tool→ 和 tool←
     pending_tool_id: Option<String>,
+    /// 思考块缓冲：多行 [thinking] 累积为一块，非 [thinking] 行触发 flush
+    pending_thinking: Vec<String>,
 }
 
 impl AtomcodeExtractor {
@@ -28,12 +30,23 @@ impl AtomcodeExtractor {
         Self {
             metadata: ExecutionMetadata::new("atomcode".to_string()),
             pending_tool_id: None,
+            pending_thinking: Vec::new(),
         }
     }
 
     /// 解析 stderr 中的结构化事件行（以 `[xxx]` 开头）
     fn parse_stderr_line(&mut self, trimmed: &str) -> Vec<ExecutionEvent> {
         let mut events = Vec::new();
+
+        // 思考块处理：多行 [thinking] 累积为一块
+        if trimmed.starts_with("[thinking]") {
+            let content = trimmed["[thinking]".len()..].trim();
+            self.pending_thinking.push(content.to_string());
+            return events;
+        }
+
+        // 非 thinking 行，先 flush 之前缓冲的思考块
+        self.flush_thinking(&mut events);
 
         // 跳过流式/headless 标记
         if trimmed.starts_with("[tool-streaming") || trimmed.starts_with("[headless]") {
@@ -158,6 +171,18 @@ impl AtomcodeExtractor {
         events
     }
 
+    /// 将缓冲的思考行合并为一个 Thinking 事件，然后清空缓冲
+    fn flush_thinking(&mut self, events: &mut Vec<ExecutionEvent>) {
+        if self.pending_thinking.is_empty() {
+            return;
+        }
+        let content = self.pending_thinking.join("\n");
+        self.pending_thinking.clear();
+        if !content.trim().is_empty() {
+            events.push(ExecutionEvent::Thinking { content });
+        }
+    }
+
     /// 解析 stdout 中的纯文本（AI 回复）
     fn parse_stdout_line(&mut self, trimmed: &str) -> Vec<ExecutionEvent> {
         if trimmed.is_empty() {
@@ -187,8 +212,11 @@ impl EventExtractor for AtomcodeExtractor {
             return self.parse_stderr_line(trimmed);
         }
 
-        // 否则当作 stdout 纯文本处理
-        self.parse_stdout_line(trimmed)
+        // stdout 纯文本行前，先 flush 之前缓冲的思考块
+        let mut events = Vec::new();
+        self.flush_thinking(&mut events);
+        events.extend(self.parse_stdout_line(trimmed));
+        events
     }
 
     fn extract_stderr(&mut self, line: &str) -> Option<ExecutionEvent> {
@@ -312,5 +340,42 @@ mod tests {
         let events2 = ext.extract("[engine v2] new stack active (model other-model)");
         assert_eq!(events2.len(), 0); // 已设置，不再生成
         assert_eq!(ext.metadata().model.as_deref(), Some("deepseek-v4-flash"));
+    }
+
+    #[test]
+    fn test_thinking_accumulation() {
+        // 多行 thinking 累积，直到非 thinking 行才输出
+        let mut ext = AtomcodeExtractor::new();
+        assert!(ext.extract("[thinking] line 1").is_empty());
+        assert!(ext.extract("[thinking] line 2").is_empty());
+        assert!(ext.extract("[thinking] line 3").is_empty());
+
+        let events = ext.extract("[done] 1s turns=1 tool_calls=0");
+        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Thinking { content } if content == "line 1\nline 2\nline 3")));
+        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::StepFinish { .. })));
+    }
+
+    #[test]
+    fn test_thinking_flushed_by_stdout() {
+        // stdout 纯文本行也能触发 thinking flush
+        let mut ext = AtomcodeExtractor::new();
+        assert!(ext.extract("[thinking] thinking text").is_empty());
+
+        let events = ext.extract("plain response");
+        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Thinking { .. })));
+        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Assistant { .. })));
+    }
+
+    #[test]
+    fn test_thinking_reset_between_blocks() {
+        // 两块 thinking 之间被非 thinking 行隔开，每块独立输出
+        let mut ext = AtomcodeExtractor::new();
+        assert!(ext.extract("[thinking] block 1").is_empty());
+        let events1 = ext.extract("[done] 1s turns=1 tool_calls=0");
+        assert!(events1.iter().any(|e| matches!(e, ExecutionEvent::Thinking { content } if content == "block 1")));
+
+        assert!(ext.extract("[thinking] block 2").is_empty());
+        let events2 = ext.extract("[done] 1s turns=1 tool_calls=0");
+        assert!(events2.iter().any(|e| matches!(e, ExecutionEvent::Thinking { content } if content == "block 2")));
     }
 }
