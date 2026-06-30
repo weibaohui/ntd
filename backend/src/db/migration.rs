@@ -51,27 +51,6 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
     ]
 }
 
-/// V36 迁移：给 loop_executions 表添加 error_message 列，用于存储执行失败的原因。
-///
-/// 当 loop 因工作空间不一致等原因在启动步骤前失败时，error_message 会记录具体原因，
-/// 供前端在失败记录上展示，避免用户只能通过后台日志排查。
-pub(super) struct V36LoopExecutionsErrorMessage;
-#[async_trait::async_trait]
-impl Migration for V36LoopExecutionsErrorMessage {
-    fn version(&self) -> i64 { 36 }
-    fn name(&self) -> &'static str { "add_loop_executions_error_message" }
-
-    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
-        // 幂等：列已存在时跳过
-        if !table_has_column(db, "loop_executions", "error_message").await? {
-            db.exec("ALTER TABLE loop_executions ADD COLUMN error_message TEXT DEFAULT NULL")
-                .await?;
-            tracing::info!("V36: loop_executions.error_message column added");
-        }
-        Ok(())
-    }
-}
-
 /// v40: 删除 feishu_messages.processed_todo_id 列，用 processed_id 代替。
 
 // ---------------------------------------------------------------------------
@@ -2276,94 +2255,6 @@ async fn drop_column_if_exists(
 // - 普通事项执行完成后不再触发自动评审（由 completion.rs:maybe_run_auto_review 兜底）
 // - Loop 环节的评分闸门评审完全不受影响（apply_rating_gate 不读该字段）
 // - 飞书创建的事项也走相同的默认值逻辑，不受影响
-//
-/// V37: 扩展 workspace_slash_commands 表支持环路
-///
-/// 添加 command_type ('todo' | 'loop') 和 loop_id 列，
-/// 使斜杠命令可以触发 todo 或环路。
-pub(super) struct V37SlashCommandLoopSupport;
-
-#[async_trait::async_trait]
-impl Migration for V37SlashCommandLoopSupport {
-    fn version(&self) -> i64 { 37 }
-    fn name(&self) -> &'static str { "slash_command_loop_support" }
-
-    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
-        // 添加 command_type 列（默认为 'todo' 保持向后兼容）
-        if !table_has_column(db, "workspace_slash_commands", "command_type").await? {
-            db.exec("ALTER TABLE workspace_slash_commands ADD COLUMN command_type TEXT NOT NULL DEFAULT 'todo'")
-                .await?;
-            tracing::info!("V37: workspace_slash_commands.command_type column added");
-        }
-
-        // 添加 loop_id 列（可为空，只有 command_type='loop' 时才有值）
-        if !table_has_column(db, "workspace_slash_commands", "loop_id").await? {
-            db.exec("ALTER TABLE workspace_slash_commands ADD COLUMN loop_id INTEGER")
-                .await?;
-            tracing::info!("V37: workspace_slash_commands.loop_id column added");
-        }
-
-        Ok(())
-    }
-}
-
-
-/// V38: 扩展 workspace_settings 表支持三种默认响应类型
-///
-/// 添加 default_response_type ('todo' | 'loop' | 'executor')、
-/// default_response_loop_id 和 default_response_executor 列。
-pub(super) struct V38DefaultResponseType;
-
-#[async_trait::async_trait]
-impl Migration for V38DefaultResponseType {
-    fn version(&self) -> i64 { 38 }
-    fn name(&self) -> &'static str { "default_response_type" }
-
-    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
-        // 添加 default_response_type 列（默认为 'todo' 保持向后兼容）
-        if !table_has_column(db, "workspace_settings", "default_response_type").await? {
-            db.exec("ALTER TABLE workspace_settings ADD COLUMN default_response_type TEXT NOT NULL DEFAULT 'todo'")
-                .await?;
-            tracing::info!("V38: workspace_settings.default_response_type column added");
-        }
-
-        // 添加 default_response_loop_id 列
-        if !table_has_column(db, "workspace_settings", "default_response_loop_id").await? {
-            db.exec("ALTER TABLE workspace_settings ADD COLUMN default_response_loop_id INTEGER")
-                .await?;
-            tracing::info!("V38: workspace_settings.default_response_loop_id column added");
-        }
-
-        // 添加 default_response_executor 列
-        if !table_has_column(db, "workspace_settings", "default_response_executor").await? {
-            db.exec("ALTER TABLE workspace_settings ADD COLUMN default_response_executor TEXT")
-                .await?;
-            tracing::info!("V38: workspace_settings.default_response_executor column added");
-        }
-
-        Ok(())
-    }
-}
-
-/// V39: 修复 feishu_messages 表缺失的 workspace_id 列。
-/// 之前在 V1 add_legacy_columns 中的 add_column_with_fallback 可能未能正确添加该列。
-pub(super) struct V39FixFeishuMessagesWorkspaceId;
-
-#[async_trait::async_trait]
-impl Migration for V39FixFeishuMessagesWorkspaceId {
-    fn version(&self) -> i64 { 39 }
-    fn name(&self) -> &'static str { "fix_feishu_messages_workspace_id" }
-
-    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
-        if !table_has_column(db, "feishu_messages", "workspace_id").await? {
-            db.exec("ALTER TABLE feishu_messages ADD COLUMN workspace_id INTEGER")
-                .await?;
-            tracing::info!("V39: feishu_messages.workspace_id column added");
-        }
-        Ok(())
-    }
-}
-
 /// v40: 删除 feishu_messages.processed_todo_id 列（用 processed_id 代替）。
 /// processed_id + processed_type 已能完整表达处理信息，去除冗余列。
 // =============================================================================
@@ -2416,6 +2307,7 @@ impl Migration for V39FixFeishuMessagesWorkspaceId {
 // ---------------------------------------------------------------------------
 
 /// v15_review_templates helper - used by v15_review_templates_tests
+#[cfg(test)]
 async fn v15_review_templates(db: &Database) -> Result<(), sea_orm::DbErr> {
     db.exec(
         "CREATE TABLE IF NOT EXISTS review_templates (
@@ -2465,6 +2357,7 @@ async fn v15_review_templates(db: &Database) -> Result<(), sea_orm::DbErr> {
 }
 
 /// consolidate_review_instance_todos helper - used by v17_consolidate_review_instance_todos_tests
+#[cfg(test)]
 async fn consolidate_review_instance_todos(db: &Database) -> Result<(), sea_orm::DbErr> {
     let now = crate::models::utc_timestamp();
     let sql = r#"
