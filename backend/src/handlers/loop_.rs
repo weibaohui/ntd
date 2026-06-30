@@ -1337,7 +1337,7 @@ pub async fn merge_loops(
     let mut template_pseudo_to_real: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     let mut todo_pseudo_to_real: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     let mut loop_pseudo_to_real: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    let mut step_pseudo_to_real: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let _step_pseudo_to_real: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
 
     let mut created_counts = LoopImportCreatedCounts {
         loops: 0, todos: 0, review_templates: 0, tags: 0, triggers: 0, steps: 0,
@@ -1346,7 +1346,7 @@ pub async fn merge_loops(
         loops: 0, todos: 0, review_templates: 0, tags: 0, triggers: 0, steps: 0,
     };
     let mut skipped: Vec<String> = Vec::new();
-    let mut warnings: Vec<LoopImportWarning> = Vec::new();
+    let warnings: Vec<LoopImportWarning> = Vec::new();
 
     // 阶段1: 合并标签（按name匹配，同名复用）
     for tag in &data.tags {

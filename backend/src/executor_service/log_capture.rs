@@ -20,7 +20,7 @@ use crate::adapters::CodeExecutor;
 use crate::db::Database;
 use crate::execution_events::{
     AtomcodeExtractor, ClaudeCodeExtractor, CodebuddyExtractor, CodewhaleExtractor,
-    CodexExtractor, DbLogEntry, DefaultExtractor, EventPipeline, ExecutionEvent,
+    CodexExtractor, DbLogEntry, EventPipeline, ExecutionEvent,
     HermesExtractor, KiloExtractor, KimiExtractor, MimoExtractor, MobilecoderExtractor,
     OpencodeExtractor, PiExtractor, ZhanluExtractor,
 };
@@ -78,8 +78,6 @@ fn create_pipeline_for_executor(executor: &dyn CodeExecutor) -> Option<EventPipe
         ExecutorType::Codebuddy => {
             EventPipeline::with_extractor(CodebuddyExtractor::new())
         }
-        // 其他执行器使用默认提取器（纯文本兜底）
-        _ => EventPipeline::new(executor_type.as_str()),
     };
 
     Some(pipeline)

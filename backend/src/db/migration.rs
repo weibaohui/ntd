@@ -55,6 +55,8 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
 ///
 /// 当 loop 因工作空间不一致等原因在启动步骤前失败时，error_message 会记录具体原因，
 /// 供前端在失败记录上展示，避免用户只能通过后台日志排查。
+/// 该迁移已被 V43ConsolidatedFinalFeatures 合并，保留结构体定义仅为兼容性参考。
+#[allow(dead_code)]
 pub(super) struct V36LoopExecutionsErrorMessage;
 #[async_trait::async_trait]
 impl Migration for V36LoopExecutionsErrorMessage {
@@ -2281,6 +2283,8 @@ async fn drop_column_if_exists(
 ///
 /// 添加 command_type ('todo' | 'loop') 和 loop_id 列，
 /// 使斜杠命令可以触发 todo 或环路。
+/// 该迁移已被 V43ConsolidatedFinalFeatures 合并，保留结构体定义仅为兼容性参考。
+#[allow(dead_code)]
 pub(super) struct V37SlashCommandLoopSupport;
 
 #[async_trait::async_trait]
@@ -2312,6 +2316,8 @@ impl Migration for V37SlashCommandLoopSupport {
 ///
 /// 添加 default_response_type ('todo' | 'loop' | 'executor')、
 /// default_response_loop_id 和 default_response_executor 列。
+/// 该迁移已被 V43ConsolidatedFinalFeatures 合并，保留结构体定义仅为兼容性参考。
+#[allow(dead_code)]
 pub(super) struct V38DefaultResponseType;
 
 #[async_trait::async_trait]
@@ -2347,6 +2353,8 @@ impl Migration for V38DefaultResponseType {
 
 /// V39: 修复 feishu_messages 表缺失的 workspace_id 列。
 /// 之前在 V1 add_legacy_columns 中的 add_column_with_fallback 可能未能正确添加该列。
+/// 该迁移已被 V43ConsolidatedFinalFeatures 合并，保留结构体定义仅为兼容性参考。
+#[allow(dead_code)]
 pub(super) struct V39FixFeishuMessagesWorkspaceId;
 
 #[async_trait::async_trait]
@@ -2416,6 +2424,7 @@ impl Migration for V39FixFeishuMessagesWorkspaceId {
 // ---------------------------------------------------------------------------
 
 /// v15_review_templates helper - used by v15_review_templates_tests
+#[cfg(test)]
 async fn v15_review_templates(db: &Database) -> Result<(), sea_orm::DbErr> {
     db.exec(
         "CREATE TABLE IF NOT EXISTS review_templates (
@@ -2465,6 +2474,7 @@ async fn v15_review_templates(db: &Database) -> Result<(), sea_orm::DbErr> {
 }
 
 /// consolidate_review_instance_todos helper - used by v17_consolidate_review_instance_todos_tests
+#[cfg(test)]
 async fn consolidate_review_instance_todos(db: &Database) -> Result<(), sea_orm::DbErr> {
     let now = crate::models::utc_timestamp();
     let sql = r#"
