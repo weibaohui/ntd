@@ -12,7 +12,8 @@
 //!   缓冲区都被清空。
 //! - **message_end**：提取完整的 assistant 文本存入 `full_text`，
 //!   供 `get_final_result` 返回最终结果（去掉换行），避免拼接碎片。
-//! - **thinking_delta**：作为 thinking 日志条目直接输出，不进入 text_delta 缓冲。
+//! - **thinking_delta**：增量内容由 PiExtractor 在 thinking_end 时输出完整版本；
+//!   adapter 中仅 flush 缓冲文本，不重复输出 thinking 片段。
 //!
 //! 适用于 pi --mode json 输出。
 
@@ -171,18 +172,12 @@ impl PiExecutor {
         self.flush_pending_text()
     }
 
-    /// "thinking_delta" 事件：先 flush 缓冲文本（保证 thinking 之前的文本不丢），
-    /// 然后返回 thinking 日志（限制 500 字符）。
-    fn handle_thinking_delta(&self, delta: Option<&str>) -> Option<ParsedLogEntry> {
-        if self.flush_pending_text().is_some() {
-            return self.flush_pending_text();
-        }
-        let delta = delta?;
-        let trimmed = delta.trim_end();
-        if trimmed.is_empty() {
-            return None;
-        }
-        Some(helpers::entry("thinking", trimmed.chars().take(500).collect::<String>()))
+    /// "thinking_delta" 事件：仅 flush 缓冲文本（保证 thinking 之前的文本不丢）。
+    ///
+    /// thinking 增量内容不再作为独立条目输出，因为 PiExtractor 会在
+    /// `thinking_end` 事件中输出完整版本，避免增量片段与完整内容重复出现。
+    fn handle_thinking_delta(&self, _delta: Option<&str>) -> Option<ParsedLogEntry> {
+        self.flush_pending_text()
     }
 
     /// 将缓冲的 text_delta 内容作为一个 assistant 日志条目刷出。
@@ -521,10 +516,9 @@ mod tests {
     fn test_parse_output_line_thinking_delta() {
         let executor = PiExecutor::new("pi".to_string());
         let line = r#"{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"thinking..."}}"#;
+        // thinking_delta 不再产生独立日志条目，完整内容由 PiExtractor 在 thinking_end 输出
         let entry = executor.parse_output_line(line);
-        assert!(entry.is_some());
-        let e = entry.unwrap();
-        assert_eq!(e.log_type, "thinking");
+        assert!(entry.is_none(), "thinking_delta should no longer produce log entries");
     }
 
     #[test]
