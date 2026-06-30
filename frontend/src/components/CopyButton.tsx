@@ -41,15 +41,19 @@ export const CopyButton = forwardRef<HTMLButtonElement | HTMLAnchorElement, Copy
 }, ref) {
   const innerRef = useRef<HTMLButtonElement | HTMLAnchorElement>(null);
   const clipboardRef = useRef<ClipboardJS | null>(null);
+  const onCopyRef = useRef(onCopy);
   const [copied, setCopied] = useState(false);
+
+  // 始终保持最新的 onCopy 引用，避免内联函数导致 ClipboardJS 实例频繁重建
+  onCopyRef.current = onCopy;
 
   const handleSuccess = useCallback(() => {
     setCopied(true);
-    onCopy?.();
+    onCopyRef.current?.();
     if (showFeedback) {
       setTimeout(() => setCopied(false), feedbackDuration);
     }
-  }, [onCopy, showFeedback, feedbackDuration]);
+  }, [showFeedback, feedbackDuration]);
 
   useEffect(() => {
     const el = innerRef.current;
