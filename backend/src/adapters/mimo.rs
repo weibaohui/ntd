@@ -225,18 +225,10 @@ impl CodeExecutor for MimoExecutor {
     }
 
     fn get_final_result(&self, logs: &[ParsedLogEntry]) -> Option<String> {
-        // 收集所有 text 类型的日志条目作为最终结果
-        let texts: Vec<String> = logs.iter()
-            .filter(|l| l.log_type == "text")
-            .map(|l| l.content.clone())
-            .filter(|t| !t.trim().is_empty())
-            .collect();
-
-        if !texts.is_empty() {
-            Some(texts.join("\n\n"))
-        } else {
-            None
-        }
+        // MimoExtractor 产生 Assistant 事件（log_type="assistant"），pipeline.finalize()
+        // 将最后一个 Assistant 提升为 Result 事件（log_type="result"）。使用通用提取逻辑
+        // 即可覆盖 result -> text -> stderr 的完整 fallback 链。
+        super::default_final_result_with_think_stripping(logs)
     }
 
     fn get_usage(&self, _logs: &[ParsedLogEntry]) -> Option<ExecutionUsage> {
@@ -360,7 +352,24 @@ mod tests {
             ParsedLogEntry::new("text", "hello"),
             ParsedLogEntry::new("text", "world"),
         ];
+        // text 类型作为 fallback 被 shared helper 支持
         assert_eq!(executor.get_final_result(&logs), Some("hello\n\nworld".to_string()));
+    }
+
+    #[test]
+    fn test_get_final_result_result_type_takes_priority_over_text() {
+        // pipeline.finalize() 将最后一个 Assistant 提升为 result 类型；
+        // get_final_result 应优先取 result 而非 text
+        let executor = MimoExecutor::new("mimo".to_string());
+        let logs = vec![
+            ParsedLogEntry::new("text", "fallback text"),
+            ParsedLogEntry::new("assistant", "assistant conclusion"),
+            ParsedLogEntry::new("result", "final conclusion from pipeline"),
+        ];
+        assert_eq!(
+            executor.get_final_result(&logs),
+            Some("final conclusion from pipeline".to_string())
+        );
     }
 
     #[test]

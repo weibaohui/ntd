@@ -66,7 +66,7 @@ export function useExecutionHistory({
 }: UseExecutionHistoryOptions): UseExecutionHistoryResult {
   // ─── Record list pagination ────────────────────────────────
   const [historyPage, setHistoryPage] = useState(1);
-  const [historyLimit, setHistoryLimit] = useState(5);
+  const [historyLimit, setHistoryLimit] = useState(10);
   const [historyTotal, setHistoryTotal] = useState(0);
   const [historyStatusFilter, setHistoryStatusFilter] = useState<'all' | 'running' | 'success' | 'failed'>('all');
   const [summary, setSummary] = useState<ExecutionSummary | null>(null);

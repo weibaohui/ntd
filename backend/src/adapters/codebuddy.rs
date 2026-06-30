@@ -161,6 +161,8 @@ impl CodeExecutor for CodebuddyExecutor {
             "--output-format".to_string(),
             "stream-json".to_string(),
             "--verbose".to_string(),
+            "--permission-mode".to_string(),
+            "bypassPermissions".to_string(),
             message.to_string(),
         ]
     }

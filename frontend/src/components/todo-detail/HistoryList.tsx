@@ -124,12 +124,13 @@ export function HistoryList({
       {historyTotal > historyLimit && (
         <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'center', padding: '8px 0 0', borderTop: '1px solid var(--color-border-light)' }}>
           <Pagination
-            simple
             current={historyPage}
             pageSize={historyLimit}
             total={historyTotal}
             onChange={onPageChange}
             size="small"
+            showSizeChanger
+            pageSizeOptions={[5, 10, 20, 50]}
           />
         </div>
       )}

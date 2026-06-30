@@ -184,8 +184,17 @@ pub fn strip_think_tags(content: &str) -> String {
 }
 
 /// Default `get_final_result` for executors that use text+stderr logs with think-tag stripping.
-/// Collects all "text" log entries (with think tags stripped), falling back to last "stderr" log.
+///
+/// Fallback 顺序（与 `pipeline.finalize()` 生成 `Result` 的逻辑保持一致）：
+///   1. `result` 类型条目 —— `pipeline.finalize()` 从最后一个 `Assistant` 自动生成的结论
+///   2. `text` 类型条目（去 think 标签后）—— 部分 executor 自己存储的文本内容
+///   3. `stderr` 条目 —— 最后的兜底
 pub fn default_final_result_with_think_stripping(logs: &[ParsedLogEntry]) -> Option<String> {
+    // 优先取 result 类型（finalize() 生成的结论）
+    if let Some(r) = logs.iter().rev().find(|l| l.log_type == "result") {
+        return Some(r.content.clone());
+    }
+    // 其次取 text 条目
     let texts: Vec<String> = logs.iter()
         .filter(|l| l.log_type == "text")
         .map(|l| strip_think_tags(&l.content))
@@ -195,6 +204,7 @@ pub fn default_final_result_with_think_stripping(logs: &[ParsedLogEntry]) -> Opt
     if !texts.is_empty() {
         Some(texts.join("\n\n"))
     } else {
+        // 最后兜底 stderr
         logs.iter()
             .rev()
             .find(|l| l.log_type == "stderr")
@@ -710,6 +720,66 @@ mod tests {
         let exec = MockExecutor;
         let logs = vec![ParsedLogEntry::new("info", "start")];
         assert_eq!(exec.get_final_result(&logs), None);
+    }
+
+    // ====================== default_final_result_with_think_stripping 单元测试 ======================
+
+    #[test]
+    fn test_default_final_result_result_type_takes_priority() {
+        // pipeline.finalize() 从最后一个 Assistant 生成 result 类型；
+        // get_final_result 应优先取 result（与 finalize 语义对齐）
+        let logs = vec![
+            ParsedLogEntry::new("text", "some text"),
+            ParsedLogEntry::new("assistant", "assistant content"),
+            ParsedLogEntry::new("result", "final conclusion from assistant"),
+        ];
+        assert_eq!(
+            default_final_result_with_think_stripping(&logs),
+            Some("final conclusion from assistant".to_string())
+        );
+    }
+
+    #[test]
+    fn test_default_final_result_text_fallback() {
+        // 没有 result 类型时，fallback 到 text（去 think 标签）
+        let logs = vec![
+            ParsedLogEntry::new("info", "start"),
+            ParsedLogEntry::new("text", "hello world"),
+        ];
+        assert_eq!(
+            default_final_result_with_think_stripping(&logs),
+            Some("hello world".to_string())
+        );
+    }
+
+    #[test]
+    fn test_default_final_result_stderr_fallback() {
+        // 没有 result 也没有 text 时，fallback 到 stderr
+        let logs = vec![
+            ParsedLogEntry::new("info", "start"),
+            ParsedLogEntry::new("stderr", "error output"),
+        ];
+        assert_eq!(
+            default_final_result_with_think_stripping(&logs),
+            Some("error output".to_string())
+        );
+    }
+
+    #[test]
+    fn test_default_final_result_strips_think_tags_from_text() {
+        let logs = vec![
+            ParsedLogEntry::new("text", "<think>thinking content</think>\nactual answer"),
+        ];
+        assert_eq!(
+            default_final_result_with_think_stripping(&logs),
+            Some("actual answer".to_string())
+        );
+    }
+
+    #[test]
+    fn test_default_final_result_empty_logs() {
+        let logs: Vec<ParsedLogEntry> = vec![];
+        assert_eq!(default_final_result_with_think_stripping(&logs), None);
     }
 
     // ====================== BaseExecutor 单元测试 ======================
