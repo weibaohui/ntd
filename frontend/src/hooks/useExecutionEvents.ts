@@ -62,7 +62,11 @@ interface ExecEventLoopFinished {
   loop_id: number;
   loop_title: string;
   status: string;
-  result: string | null;
+  total_steps: number;
+  completed_steps: number;
+  failed_steps: number;
+  duration_secs: number;
+  total_tokens: number;
   workspace_id: number | null;
 }
 
@@ -175,7 +179,7 @@ function connectShared(dispatch: ReturnType<typeof useApp>['dispatch']) {
           break;
         }
         case 'LoopFinished': {
-          window.dispatchEvent(new CustomEvent('loopExecutionFinished', { detail: { loopExecutionId: data.loop_execution_id, loopId: data.loop_id, status: data.status } }));
+          window.dispatchEvent(new CustomEvent('loopExecutionFinished', { detail: { loopExecutionId: data.loop_execution_id, loopId: data.loop_id, status: data.status, totalSteps: data.total_steps, completedSteps: data.completed_steps, failedSteps: data.failed_steps, durationSecs: data.duration_secs, totalTokens: data.total_tokens } }));
           break;
         }
       }

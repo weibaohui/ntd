@@ -373,7 +373,7 @@ mod feishu_push_service_tests {
             ExecEvent::ReviewStatusChanged { .. } => None,
             // ExecutorDirectResponse 由 FeishuPushService 直接发送，不走 format_event
             ExecEvent::ExecutorDirectResponse { .. } => None,
-            // LoopFinished 事件由 FeishuPushService 统一处理
+            // LoopFinished 事件发送统计摘要，不走 format_event（测试用）
             ExecEvent::LoopFinished { .. } => None,
         }
     }

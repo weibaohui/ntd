@@ -265,33 +265,31 @@ impl FeishuPushService {
             ExecEvent::ReviewStatusChanged { .. } => None,
             // ExecutorDirectResponse 由 FeishuPushService 直接发送，不走 format_event
             ExecEvent::ExecutorDirectResponse { .. } => None,
-            // LoopFinished 事件的格式化消息
-            ExecEvent::LoopFinished { loop_title, status, result, .. } => {
-                let result_preview = result.as_ref()
-                    .map(|r| {
-                        let trimmed = r.trim();
-                        if trimmed.is_empty() {
-                            String::new()
-                        } else {
-                            // 飞书消息长度限制约 4000 字符，为标题和状态预留空间
-                            const MAX_RESULT_CHARS: usize = 3500;
-                            if trimmed.chars().count() > MAX_RESULT_CHARS {
-                                format!("\n\n📤 结果:\n{}...", trimmed.chars().take(MAX_RESULT_CHARS).collect::<String>())
-                            } else {
-                                format!("\n\n📤 结果:\n{}", trimmed)
-                            }
-                        }
-                    })
-                    .unwrap_or_default();
+            // LoopFinished 事件的格式化消息 - 统计摘要
+            ExecEvent::LoopFinished { loop_title, status, total_steps, completed_steps, failed_steps, duration_secs, total_tokens, .. } => {
                 let status_icon = match status.as_str() {
                     "success" => "✅ 成功",
                     "failed" => "❌ 失败",
                     "partial" => "⚠️ 部分成功",
                     _ => "ℹ️ 完成",
                 };
+                
+                // 格式化时长
+                let duration_str = if *duration_secs >= 3600 {
+                    let hours = *duration_secs / 3600;
+                    let mins = (*duration_secs % 3600) / 60;
+                    format!("{}h {}m", hours, mins)
+                } else if *duration_secs >= 60 {
+                    let mins = *duration_secs / 60;
+                    let secs = *duration_secs % 60;
+                    format!("{}m {}s", mins, secs)
+                } else {
+                    format!("{}s", *duration_secs)
+                };
+                
                 Some(format!(
-                    "🔁 [环路执行完成]\n📋 {}\n{} {}",
-                    loop_title, status_icon, result_preview
+                    "🔁 [环路执行完成]\n📋 {}\n{} | 共 {} 步 | 成功 {} | 失败 {}\n⏱️ 用时 {} | 🔤 Token {}",
+                    loop_title, status_icon, *total_steps, *completed_steps, *failed_steps, duration_str, *total_tokens
                 ))
             }
         }
@@ -421,7 +419,11 @@ mod feishu_push_binding_tests {
             loop_id: 1,
             loop_title: "Test Loop".to_string(),
             status: "success".to_string(),
-            result: Some("完成".to_string()),
+            total_steps: 3,
+            completed_steps: 3,
+            failed_steps: 0,
+            duration_secs: 120,
+            total_tokens: 500,
             workspace_id: Some(1),
         };
         
@@ -437,7 +439,11 @@ mod feishu_push_binding_tests {
             loop_id: 1,
             loop_title: "Test Loop".to_string(),
             status: "success".to_string(),
-            result: Some("完成".to_string()),
+            total_steps: 3,
+            completed_steps: 3,
+            failed_steps: 0,
+            duration_secs: 120,
+            total_tokens: 500,
             workspace_id: Some(1),
         };
         
@@ -453,14 +459,18 @@ mod feishu_push_binding_tests {
             loop_id: 1,
             loop_title: "Test Loop".to_string(),
             status: "success".to_string(),
-            result: Some("完成".to_string()),
+            total_steps: 3,
+            completed_steps: 3,
+            failed_steps: 0,
+            duration_secs: 120,
+            total_tokens: 500,
             workspace_id: Some(1),
         };
         
         assert!(FeishuPushService::should_send(push_level, &event));
     }
 
-    /// 测试 LoopFinished 事件的格式化输出
+    /// 测试 LoopFinished 事件的格式化输出 - 成功状态
     #[test]
     fn test_format_loop_finished_success() {
         let event = ExecEvent::LoopFinished {
@@ -468,7 +478,11 @@ mod feishu_push_binding_tests {
             loop_id: 1,
             loop_title: "测试环路".to_string(),
             status: "success".to_string(),
-            result: Some("执行成功，结果如下".to_string()),
+            total_steps: 3,
+            completed_steps: 3,
+            failed_steps: 0,
+            duration_secs: 125,
+            total_tokens: 500,
             workspace_id: Some(1),
         };
         
@@ -476,7 +490,11 @@ mod feishu_push_binding_tests {
         assert!(formatted.contains("🔁 [环路执行完成]"));
         assert!(formatted.contains("测试环路"));
         assert!(formatted.contains("✅ 成功"));
-        assert!(formatted.contains("执行成功，结果如下"));
+        assert!(formatted.contains("共 3 步"));
+        assert!(formatted.contains("成功 3"));
+        assert!(formatted.contains("失败 0"));
+        assert!(formatted.contains("2m 5s"));
+        assert!(formatted.contains("Token 500"));
     }
 
     /// 测试 LoopFinished 失败状态的格式化输出
@@ -487,29 +505,43 @@ mod feishu_push_binding_tests {
             loop_id: 1,
             loop_title: "测试环路".to_string(),
             status: "failed".to_string(),
-            result: Some("执行失败".to_string()),
+            total_steps: 3,
+            completed_steps: 0,
+            failed_steps: 3,
+            duration_secs: 30,
+            total_tokens: 100,
             workspace_id: Some(1),
         };
         
         let formatted = FeishuPushService::format_event(&event).unwrap();
         assert!(formatted.contains("❌ 失败"));
-        assert!(formatted.contains("执行失败"));
+        assert!(formatted.contains("成功 0"));
+        assert!(formatted.contains("失败 3"));
+        assert!(formatted.contains("30s"));
     }
 
-    /// 测试 LoopFinished 无结果时的格式化输出
+    /// 测试 LoopFinished 部分成功状态的格式化输出
     #[test]
-    fn test_format_loop_finished_no_result() {
+    fn test_format_loop_finished_partial() {
         let event = ExecEvent::LoopFinished {
             loop_execution_id: 1,
             loop_id: 1,
             loop_title: "测试环路".to_string(),
-            status: "success".to_string(),
-            result: None,
+            status: "partial".to_string(),
+            total_steps: 5,
+            completed_steps: 3,
+            failed_steps: 2,
+            duration_secs: 3661,
+            total_tokens: 1000,
             workspace_id: Some(1),
         };
         
         let formatted = FeishuPushService::format_event(&event).unwrap();
-        assert!(formatted.contains("🔁 [环路执行完成]"));
-        assert!(formatted.contains("✅ 成功"));
+        assert!(formatted.contains("⚠️ 部分成功"));
+        assert!(formatted.contains("共 5 步"));
+        assert!(formatted.contains("成功 3"));
+        assert!(formatted.contains("失败 2"));
+        assert!(formatted.contains("1h 1m"));
+        assert!(formatted.contains("Token 1000"));
     }
 }

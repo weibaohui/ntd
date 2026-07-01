@@ -188,8 +188,16 @@ pub enum ExecEvent {
         loop_title: String,
         /// 执行状态（success / failed / partial）
         status: String,
-        /// 执行结果摘要（黑板文本）
-        result: Option<String>,
+        /// 总步数
+        total_steps: i32,
+        /// 成功步数
+        completed_steps: i32,
+        /// 失败步数
+        failed_steps: i32,
+        /// 执行时长（秒）
+        duration_secs: i64,
+        /// 累计 Token 消耗（input + output）
+        total_tokens: i64,
         /// 执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标
         workspace_id: Option<i64>,
     },

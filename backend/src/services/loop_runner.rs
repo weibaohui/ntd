@@ -194,26 +194,38 @@ impl LoopRunner {
             let loop_title = loop_info.as_ref().map(|l| l.name.clone()).unwrap_or_else(|| format!("Loop #{}", loop_id));
             let loop_workspace_id = loop_info.as_ref().and_then(|l| l.workspace_id);
 
+            // 获取 loop_execution 统计数据
+            let loop_exec = this2_for_event.ctx.db.get_loop_execution(loop_execution_id).await.ok().flatten();
+            let (final_status, total_steps, completed_steps, failed_steps, duration_secs) = match loop_exec {
+                Some(le) => {
+                    // 计算执行时长
+                    let duration = match (le.started_at.as_str(), le.finished_at.as_deref()) {
+                        (start, Some(finish)) => {
+                            let start_ts = chrono::DateTime::parse_from_rfc3339(start)
+                                .map(|dt| dt.timestamp())
+                                .unwrap_or(0);
+                            let finish_ts = chrono::DateTime::parse_from_rfc3339(finish)
+                                .map(|dt| dt.timestamp())
+                                .unwrap_or(0);
+                            finish_ts - start_ts
+                        }
+                        _ => 0,
+                    };
+                    (le.status, le.total_steps, le.completed_steps, le.failed_steps, duration)
+                }
+                None => ("failed".to_string(), 0, 0, 0, 0),
+            };
+
+            // 获取累计 Token 消耗（从所有 step executions 的 execution_record_id 查询）
+            let total_tokens = this2_for_event.get_loop_total_tokens(loop_execution_id).await;
+
             match run_result {
                 Ok(()) => {
-                    // 获取最终执行状态（从 run_inner 内的 finish_loop_execution 写入）
-                    let final_status = this2_for_event
-                        .ctx
-                        .db
-                        .get_loop_execution(loop_execution_id)
-                        .await
-                        .ok()
-                        .flatten()
-                        .map(|le| le.status)
-                        .unwrap_or_else(|| "success".to_string());
-
-                    // 环路执行成功：获取黑板文本
-                    let blackboard = this2_for_callback
-                        .get_loop_blackboard_text(loop_execution_id, &trigger_meta)
-                        .await;
-
-                    // 如果有 feishu_receive_id，直接回复原对话（binding chat 场景）
+                    // 如果有 feishu_receive_id，直接回复原对话（binding chat 场景）- 发送黑板全文
                     if let Some(ref receive_id) = feishu_receive_id {
+                        let blackboard = this2_for_callback
+                            .get_loop_blackboard_text(loop_execution_id, &trigger_meta)
+                            .await;
                         info!(
                             "[loop-runner] loop {} execution {} completed, sending result to Feishu binding chat",
                             loop_id, loop_execution_id
@@ -226,7 +238,7 @@ impl LoopRunner {
                             )
                             .await;
                     } else {
-                        // 没有绑定对话时，通过 LoopFinished 事件广播，
+                        // 没有绑定对话时，通过 LoopFinished 事件广播统计摘要，
                         // FeishuPushService 会按 workspace 配置的 push_level 推送
                         info!(
                             "[loop-runner] loop {} execution {} completed, broadcasting LoopFinished event",
@@ -237,7 +249,11 @@ impl LoopRunner {
                             loop_id,
                             loop_title,
                             status: final_status,
-                            result: Some(blackboard),
+                            total_steps,
+                            completed_steps,
+                            failed_steps,
+                            duration_secs,
+                            total_tokens,
                             workspace_id: loop_workspace_id,
                         });
                     }
@@ -286,7 +302,11 @@ impl LoopRunner {
                             loop_id,
                             loop_title: loop_title.clone(),
                             status: "failed".to_string(),
-                            result: Some(format!("环路执行失败：{}", e)),
+                            total_steps,
+                            completed_steps,
+                            failed_steps,
+                            duration_secs,
+                            total_tokens,
                             workspace_id: loop_workspace_id,
                         });
                     }
@@ -295,6 +315,28 @@ impl LoopRunner {
         });
 
         loop_execution_id
+    }
+
+    /// 获取 loop 执行的累计 Token 消耗。
+    /// 从所有 step_executions 的 execution_record_id 查询 execution_records 的 usage 字段。
+    async fn get_loop_total_tokens(&self, loop_execution_id: i64) -> i64 {
+        let step_execs = match self.ctx.db.list_loop_step_executions(loop_execution_id).await {
+            Ok(se) => se,
+            Err(_) => return 0,
+        };
+        
+        let mut total = 0i64;
+        for se in step_execs {
+            if let Some(record_id) = se.execution_record_id {
+                if let Some(rec) = self.ctx.db.get_execution_record(record_id).await.ok().flatten() {
+                    // usage 字段是 ExecutionUsage 类型
+                    if let Some(usage) = rec.usage {
+                        total += usage.input_tokens as i64 + usage.output_tokens as i64;
+                    }
+                }
+            }
+        }
+        total
     }
 
     /// 恢复被人工审批暂停的 loop 执行。
