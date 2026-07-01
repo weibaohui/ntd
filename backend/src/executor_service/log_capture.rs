@@ -86,6 +86,8 @@ fn create_pipeline_for_executor(executor: &dyn CodeExecutor) -> Option<EventPipe
 /// 将 ExecutionEvent 转换为 ParsedLogEntry 并发送 Output 事件
 ///
 /// 返回转换后的 ParsedLogEntry，供 LogFlusher 使用。
+/// workspace_id：执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标，
+/// 必须贯穿到每个事件发送路径，否则推送服务无法匹配到对应的推送目标。
 fn emit_execution_event(
     event: &ExecutionEvent,
     tx: &broadcast::Sender<ExecEvent>,
@@ -107,6 +109,8 @@ fn emit_execution_event(
 /// 尝试用 EventPipeline 解析一行，返回所有新事件的 ParsedLogEntry 列表
 ///
 /// 如果 EventPipeline 没有产生有效事件，返回空 Vec。
+/// workspace_id：执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标，
+/// 必须贯穿到每个事件发送路径，否则推送服务无法匹配到对应的推送目标。
 fn try_parse_with_pipeline(
     pipeline: &mut EventPipeline,
     line: &str,
@@ -175,6 +179,8 @@ fn try_parse_with_pipeline(
 }
 
 /// 尝试用 EventPipeline 解析 stderr 行，返回所有新事件的 ParsedLogEntry 列表
+/// workspace_id：执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标，
+/// 必须贯穿到每个事件发送路径，否则推送服务无法匹配到对应的推送目标。
 fn try_parse_stderr_with_pipeline(
     pipeline: &mut EventPipeline,
     line: &str,
@@ -205,6 +211,8 @@ fn try_parse_stderr_with_pipeline(
 /// 启动一个 stderr reader 任务：逐行读 stderr -> 经 executor 解析 -> 推入 LogFlusher。
 ///
 /// 返回 `None` 表示 executor 子进程根本没暴露 stderr（少见，比如某些 mock executor）。
+/// workspace_id：执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标，
+/// 必须贯穿到每个事件发送路径，否则推送服务无法匹配到对应的推送目标。
 pub(crate) fn spawn_stderr_reader<R>(
     stderr_handle: Option<R>,
     executor: Arc<dyn CodeExecutor>,
@@ -284,6 +292,8 @@ where
 ///   2. 解析 `todo_progress` 时除写库外还要发 `TodoProgress` 事件（前端实时进度条）；
 ///   3. 每 10 行 或 工具调用时扫一遍 buffer 计算 stats，emit `ExecutionStats`。
 /// 这三件事没法再下沉到 LogFlusher（一个是 DB 写，一个是 progress 事件），所以留在这里。
+/// workspace_id：执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标，
+/// 必须贯穿到每个事件发送路径，否则推送服务无法匹配到对应的推送目标。
 pub(crate) fn spawn_stdout_reader<R>(
     stdout_handle: Option<R>,
     executor: Arc<dyn CodeExecutor>,
@@ -425,6 +435,8 @@ async fn update_session_id_once(
 }
 
 /// 若 parsed 含 todo_progress 则写库 + 发事件。
+/// workspace_id：执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标，
+/// 必须贯穿到每个事件发送路径，否则推送服务无法匹配到对应的推送目标。
 async fn emit_todo_progress_if_present(
     db: &Arc<Database>,
     tx: &broadcast::Sender<ExecEvent>,
@@ -452,6 +464,8 @@ async fn emit_todo_progress_if_present(
 }
 
 /// 工具调用必发 stats；普通日志每 10 条发一次。
+/// workspace_id：执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标，
+/// 必须贯穿到每个事件发送路径，否则推送服务无法匹配到对应的推送目标。
 async fn maybe_emit_execution_stats(
     log_flusher: &Arc<LogFlusher>,
     tx: &broadcast::Sender<ExecEvent>,
@@ -513,6 +527,8 @@ async fn compute_execution_stats(
 ///
 /// `SO`/`SE` 两个泛型分别对应 stdout/stderr handle 的真实类型（tokio 的 ChildStdout
 /// 和 ChildStderr 是两个不同类型，没法合并成一个 `R`）。
+/// workspace_id：执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标，
+/// 必须贯穿到每个事件发送路径，否则推送服务无法匹配到对应的推送目标。
 pub(crate) async fn setup_log_capture_pipeline<SO, SE>(
     stdout_handle: Option<SO>,
     stderr_handle: Option<SE>,

@@ -70,29 +70,32 @@ impl FeishuPushService {
 
                                 // For Finished events with feishu_chat_id (binding chat), send directly
                                 // 但需要先检查该 bot 的 push_level 配置
+                                let mut binding_sent = false;
                                 if let ExecEvent::Finished { feishu_bot_id, feishu_receive_id, .. } = &ev {
                                     if let (Some(bot_id), Some(receive_id)) = (feishu_bot_id, feishu_receive_id) {
                                         // 查询该 bot 的 push_level 配置
                                         let push_level = Self::get_bot_push_level(&db, *bot_id).await;
                                         
                                         // 检查 push_level 配置是否允许发送
-                                        if !Self::should_send(&push_level, &ev) {
-                                            debug!("[feishu-push] binding send skipped for bot {} due to push_level={}", bot_id, push_level);
-                                            // 配置不允许发送时，跳过 push target 路径
-                                            continue;
-                                        }
-                                        
-                                        let text = Self::format_event(&ev).unwrap_or_default();
-                                        let receive_id_type = "open_id"; // binding chats are p2p
-                                        let res = feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, &text).await;
-                                        if let Err(e) = res {
-                                            warn!("[feishu-push] binding direct send failed for bot {}: {}", bot_id, e);
+                                        if Self::should_send(&push_level, &ev) {
+                                            let text = Self::format_event(&ev).unwrap_or_default();
+                                            let receive_id_type = "open_id"; // binding chats are p2p
+                                            let res = feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, &text).await;
+                                            if let Err(e) = res {
+                                                warn!("[feishu-push] binding direct send failed for bot {}: {}", bot_id, e);
+                                            } else {
+                                                debug!("[feishu-push] binding direct sent to bot {}: {}", bot_id, &text[..text.len().min(60)]);
+                                            }
+                                            binding_sent = true;
                                         } else {
-                                            debug!("[feishu-push] binding direct sent to bot {}: {}", bot_id, &text[..text.len().min(60)]);
+                                            debug!("[feishu-push] binding send skipped for bot {} due to push_level={}", bot_id, push_level);
+                                            // 仅跳过 binding 路径，继续执行下面的 workspace push target 逻辑
                                         }
-                                        // 直发成功后跳过 push target 路径，避免重复发送
-                                        continue;
                                     }
+                                }
+                                // binding direct send 成功后跳过 push target 路径，避免重复发送
+                                if binding_sent {
+                                    continue;
                                 }
 
                                 // Extract workspace_id from event (支持 Started, Output, Finished, TodoProgress, ExecutionStats, LoopFinished)
@@ -176,7 +179,9 @@ impl FeishuPushService {
     }
 
     /// 获取指定 bot 的 push_level 配置。
-    /// 如果 bot 不存在或未配置 push_target，返回默认值 "result_only"。
+    /// - bot 存在且有配置：返回实际配置值
+    /// - bot 未配置 push_target：返回默认 "result_only"（兼容旧数据）
+    /// - 数据库查询失败：fail closed 返回 "disabled"（安全优先，避免配置无法校验时误发）
     async fn get_bot_push_level(db: &Database, bot_id: i64) -> String {
         match db.get_feishu_push_target(bot_id).await {
             Ok(Some(target)) => target.push_level,
@@ -186,8 +191,9 @@ impl FeishuPushService {
                 "result_only".to_string()
             }
             Err(e) => {
-                warn!("[feishu-push] failed to get push_target for bot {}: {}, using default 'result_only'", bot_id, e);
-                "result_only".to_string()
+                // 数据库读取失败时 fail closed：宁可漏发也不能误发
+                warn!("[feishu-push] failed to get push_target for bot {}: {}, fail closed to 'disabled'", bot_id, e);
+                "disabled".to_string()
             }
         }
     }
@@ -285,6 +291,8 @@ impl FeishuPushService {
                     "success" => "✅ 成功",
                     "failed" => "❌ 失败",
                     "partial" => "⚠️ 部分成功",
+                    "capped_step" => "🚫 步数超限",
+                    "capped_token" => "🚫 Token超限",
                     _ => "ℹ️ 完成",
                 };
                 
@@ -395,6 +403,7 @@ mod feishu_push_binding_tests {
             todo_id: 1,
             todo_title: "Test Todo".to_string(),
             executor: "claudecode".to_string(),
+            workspace_id: None,
         };
         
         assert!(!FeishuPushService::should_send(push_level, &event));
@@ -409,6 +418,7 @@ mod feishu_push_binding_tests {
             todo_id: 1,
             todo_title: "Test Todo".to_string(),
             executor: "claudecode".to_string(),
+            workspace_id: None,
         };
         
         assert!(FeishuPushService::should_send(push_level, &event));
@@ -423,6 +433,7 @@ mod feishu_push_binding_tests {
             todo_id: 1,
             todo_title: "Test Todo".to_string(),
             executor: "claudecode".to_string(),
+            workspace_id: None,
         };
         
         assert!(!FeishuPushService::should_send(push_level, &event));

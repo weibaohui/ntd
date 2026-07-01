@@ -198,7 +198,12 @@ pub enum ExecEvent {
         loop_id: i64,
         /// loop 标题
         loop_title: String,
-        /// 执行状态（success / failed / partial）
+        /// 执行状态（终态枚举值，共 5 种）：
+        /// - success：全部成功
+        /// - partial：部分成功（有成功也有失败）
+        /// - failed：全部失败
+        /// - capped_step：因步数限制被截断终止
+        /// - capped_token：因 Token 限制被截断终止
         status: String,
         /// 总步数
         total_steps: i32,

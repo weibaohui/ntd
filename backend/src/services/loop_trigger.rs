@@ -66,7 +66,7 @@ impl LoopTriggerDispatcher {
             "content_type": content_type.unwrap_or(""),
             "body": body.unwrap_or(""),
         });
-        let id = self.spawn_run(loop_id, None, "webhook", meta, None, None).await;
+        let id = self.spawn_run(loop_id, None, "webhook", meta, None, None, None).await;
         if id > 0 { Some(id) } else { None }
     }
 
@@ -120,7 +120,7 @@ impl LoopTriggerDispatcher {
                 "content": content,
             });
             let run_id = self
-                .spawn_run(t.loop_id, Some(t.id), "feishu_message", meta, Some(bot_id), Some(chat_id.to_string()))
+                .spawn_run(t.loop_id, Some(t.id), "feishu_message", meta, Some(bot_id), Some(chat_id.to_string()), Some("chat_id".to_string()))
                 .await;
             if run_id > 0 {
                 started.push(run_id);
@@ -163,7 +163,7 @@ impl LoopTriggerDispatcher {
                     "command": command,
                 });
                 let run_id = self
-                    .spawn_run(t.loop_id, Some(t.id), "feishu_command", meta, Some(bot_id), None)
+                    .spawn_run(t.loop_id, Some(t.id), "feishu_command", meta, Some(bot_id), None, None)
                     .await;
                 if run_id > 0 {
                     started.push(run_id);
@@ -198,7 +198,7 @@ impl LoopTriggerDispatcher {
                 "execution_record_id": record_id,
             });
             let run_id = self
-                .spawn_run(t.loop_id, Some(t.id), "todo_completed", meta, None, None)
+                .spawn_run(t.loop_id, Some(t.id), "todo_completed", meta, None, None, None)
                 .await;
             if run_id > 0 {
                 started.push(run_id);
@@ -240,7 +240,7 @@ impl LoopTriggerDispatcher {
                     "todo_id": todo_id,
                 });
                 let run_id = self
-                        .spawn_run(t.loop_id, Some(t.id), "tag_added", meta, None, None)
+                        .spawn_run(t.loop_id, Some(t.id), "tag_added", meta, None, None, None)
                         .await;
                 if run_id > 0 {
                     started.push(run_id);
@@ -276,7 +276,7 @@ impl LoopTriggerDispatcher {
             );
             return None;
         }
-        let id = self.spawn_run(loop_id, None, "manual", trigger_meta, None, None).await;
+        let id = self.spawn_run(loop_id, None, "manual", trigger_meta, None, None, None).await;
         if id > 0 { Some(id) } else { None }
     }
 
@@ -289,6 +289,8 @@ impl LoopTriggerDispatcher {
         meta: serde_json::Value,
         feishu_bot_id: Option<i64>,
         feishu_receive_id: Option<String>,
+        // 接收者 ID 类型（"open_id" / "chat_id"）
+        feishu_receive_id_type: Option<String>,
     ) -> i64 {
         debug!(
             "loop_trigger: spawning loop #{} via {} (trigger_id={:?})",
@@ -297,7 +299,7 @@ impl LoopTriggerDispatcher {
         let id = self
             .runner
             .clone()
-            .spawn_run(loop_id, trigger_id, trigger_type, meta, feishu_bot_id, feishu_receive_id);
+            .spawn_run(loop_id, trigger_id, trigger_type, meta, feishu_bot_id, feishu_receive_id, feishu_receive_id_type);
         info!(
             "loop_trigger: started loop #{} execution #{} via {}",
             loop_id, id, trigger_type

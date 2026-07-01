@@ -161,6 +161,12 @@ impl MessageDebounce {
                     let result: Result<crate::executor_service::ExecutionResult, ()> = match last.trigger_type.as_str() {
                         "default_response_loop" | "slash_command_loop" => {
                             // 环路默认响应 或 斜杠命令触发环路：直接触发环路执行
+                            // 根据 chat_type 决定 receive_id_type：群聊用 chat_id，单聊用 open_id
+                            let receive_id_type = if last.chat_type == "group" {
+                                "chat_id".to_string()
+                            } else {
+                                "open_id".to_string()
+                            };
                             Self::handle_default_response_loop(
                                 db.clone(),
                                 loop_runner.clone(),
@@ -168,6 +174,7 @@ impl MessageDebounce {
                                 &merged_content,
                                 Some(last.bot_id),
                                 Some(last.sender.clone()),
+                                Some(receive_id_type),
                             )
                             .await
                         }
@@ -381,6 +388,7 @@ impl MessageDebounce {
         message: &str,
         feishu_bot_id: Option<i64>,
         feishu_receive_id: Option<String>,
+        feishu_receive_id_type: Option<String>,
     ) -> Result<crate::executor_service::ExecutionResult, ()> {
         // 检查环路是否存在且状态为 enabled
         let loop_ = match db.get_loop(loop_id).await {
@@ -420,6 +428,7 @@ impl MessageDebounce {
             meta,
             feishu_bot_id,
             feishu_receive_id,
+            feishu_receive_id_type,
         );
 
         if execution_id < 0 {

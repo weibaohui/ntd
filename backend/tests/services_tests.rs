@@ -312,7 +312,7 @@ mod feishu_push_service_tests {
     fn should_send_check(push_level: &str, event: &ExecEvent) -> bool {
         match push_level {
             "disabled" => false,
-            "result_only" => matches!(event, ExecEvent::Finished { .. }),
+            "result_only" => matches!(event, ExecEvent::Finished { .. } | ExecEvent::LoopFinished { .. }),
             "all" => true,
             _ => false,
         }
@@ -392,8 +392,35 @@ mod feishu_push_service_tests {
             ExecEvent::ReviewStatusChanged { .. } => None,
             // ExecutorDirectResponse 由 FeishuPushService 直接发送，不走 format_event
             ExecEvent::ExecutorDirectResponse { .. } => None,
-            // LoopFinished 事件发送统计摘要，不走 format_event（测试用）
-            ExecEvent::LoopFinished { .. } => None,
+            // LoopFinished 事件的格式化消息 - 统计摘要（与 feishu_push.rs 生产代码保持一致）
+            ExecEvent::LoopFinished { loop_title, status, total_steps, completed_steps, failed_steps, duration_secs, total_tokens, .. } => {
+                let status_icon = match status.as_str() {
+                    "success" => "✅ 成功",
+                    "failed" => "❌ 失败",
+                    "partial" => "⚠️ 部分成功",
+                    "capped_step" => "🚫 步数超限",
+                    "capped_token" => "🚫 Token超限",
+                    _ => "ℹ️ 完成",
+                };
+                
+                // 格式化时长
+                let duration_str = if *duration_secs >= 3600 {
+                    let hours = *duration_secs / 3600;
+                    let mins = (*duration_secs % 3600) / 60;
+                    format!("{}h {}m", hours, mins)
+                } else if *duration_secs >= 60 {
+                    let mins = *duration_secs / 60;
+                    let secs = *duration_secs % 60;
+                    format!("{}m {}s", mins, secs)
+                } else {
+                    format!("{}s", *duration_secs)
+                };
+                
+                Some(format!(
+                    "🔁 [环路执行完成]\n📋 {}\n{} | 共 {} 步 | 成功 {} | 失败 {}\n⏱️ 用时 {} | 🔤 Token {}",
+                    loop_title, status_icon, *total_steps, *completed_steps, *failed_steps, duration_str, *total_tokens
+                ))
+            }
         }
     }
 

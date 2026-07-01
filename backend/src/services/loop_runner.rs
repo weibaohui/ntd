@@ -59,6 +59,16 @@ pub struct LoopRunner {
     tx: broadcast::Sender<crate::handlers::ExecEvent>,
 }
 
+/// Loop 执行结果：区分「真正完成」和「暂停等待」，
+/// 用于避免人工审批等暂停状态误发 LoopFinished 事件。
+#[derive(Debug, PartialEq)]
+enum LoopRunOutcome {
+    /// 正常执行完成（终态：success / failed / partial / capped_step / capped_token）
+    Finished,
+    /// 暂停等待（非终态：如人工审批 pending_approval）
+    Paused,
+}
+
 impl LoopRunner {
     pub fn new(
         ctx: LoopRunnerCtx,
@@ -150,6 +160,8 @@ impl LoopRunner {
         trigger_meta: serde_json::Value,
         feishu_bot_id: Option<i64>,
         feishu_receive_id: Option<String>,
+        // 接收者 ID 类型（"open_id" / "chat_id"），用于飞书消息发送
+        feishu_receive_id_type: Option<String>,
     ) -> i64 {
         let this = self.clone();
         let trigger_type = trigger_type.to_string();
@@ -198,16 +210,19 @@ impl LoopRunner {
             let loop_exec = this2_for_event.ctx.db.get_loop_execution(loop_execution_id).await.ok().flatten();
             let (final_status, total_steps, completed_steps, failed_steps, duration_secs) = match loop_exec {
                 Some(le) => {
-                    // 计算执行时长
+                    // 计算执行时长：仅当起止时间都能解析且 finish >= start 时才计算，否则返回 0
                     let duration = match (le.started_at.as_str(), le.finished_at.as_deref()) {
                         (start, Some(finish)) => {
-                            let start_ts = chrono::DateTime::parse_from_rfc3339(start)
-                                .map(|dt| dt.timestamp())
-                                .unwrap_or(0);
-                            let finish_ts = chrono::DateTime::parse_from_rfc3339(finish)
-                                .map(|dt| dt.timestamp())
-                                .unwrap_or(0);
-                            finish_ts - start_ts
+                            match (
+                                chrono::DateTime::parse_from_rfc3339(start),
+                                chrono::DateTime::parse_from_rfc3339(finish),
+                            ) {
+                                (Ok(start_dt), Ok(finish_dt)) => {
+                                    let secs = finish_dt.timestamp() - start_dt.timestamp();
+                                    if secs >= 0 { secs } else { 0 }
+                                }
+                                _ => 0,
+                            }
                         }
                         _ => 0,
                     };
@@ -220,7 +235,7 @@ impl LoopRunner {
             let total_tokens = this2_for_event.get_loop_total_tokens(loop_execution_id).await;
 
             match run_result {
-                Ok(()) => {
+                Ok(LoopRunOutcome::Finished) => {
                     // 如果有 feishu_receive_id，直接回复原对话（binding chat 场景）- 发送黑板全文
                     if let Some(ref receive_id) = feishu_receive_id {
                         let blackboard = this2_for_callback
@@ -234,6 +249,7 @@ impl LoopRunner {
                             .send_result_to_feishu(
                                 feishu_bot_id,
                                 receive_id,
+                                feishu_receive_id_type.as_deref().unwrap_or("open_id"),
                                 &blackboard,
                             )
                             .await;
@@ -257,6 +273,14 @@ impl LoopRunner {
                             workspace_id: loop_workspace_id,
                         });
                     }
+                }
+                Ok(LoopRunOutcome::Paused) => {
+                    // 暂停状态（如人工审批等待中）：不发送 LoopFinished 事件，
+                    // 也不做终态化处理，loop_execution 保持 running 状态
+                    info!(
+                        "[loop-runner] loop {} execution {} paused (waiting for human approval)",
+                        loop_id, loop_execution_id
+                    );
                 }
                 Err(e) => {
                     error!("loop_runner: run failed: {}", e);
@@ -292,6 +316,7 @@ impl LoopRunner {
                             .send_result_to_feishu(
                                 feishu_bot_id,
                                 receive_id,
+                                feishu_receive_id_type.as_deref().unwrap_or("open_id"),
                                 &format!("环路执行失败：{}", e),
                             )
                             .await;
@@ -464,7 +489,7 @@ impl LoopRunner {
         loop_id: i64,
         loop_execution_id: i64,
         trigger_type: String,
-    ) -> Result<(), String> {
+    ) -> Result<LoopRunOutcome, String> {
         self.run_inner_from(loop_id, loop_execution_id, trigger_type, None).await
     }
 
@@ -476,7 +501,7 @@ impl LoopRunner {
         loop_execution_id: i64,
         trigger_type: String,
         resume_step_idx: Option<usize>,
-    ) -> Result<(), String> {
+    ) -> Result<LoopRunOutcome, String> {
         // 1. 校验 loop 状态
         let loop_ = self
             .ctx
@@ -502,7 +527,7 @@ impl LoopRunner {
                 .finish_loop_execution(loop_execution_id, "success", 0, 0, None)
                 .await
                 .map_err(|e| e.to_string())?;
-            return Ok(());
+            return Ok(LoopRunOutcome::Finished);
         }
 
         // 3. 校验所有步骤的 todo 是否都在同一工作空间下
@@ -601,7 +626,7 @@ impl LoopRunner {
                 let _ = self
                     .trigger_abnormal_handler(loop_id, loop_execution_id, "capped_step", total_executed, total_tokens_used)
                     .await;
-                return Ok(());
+                return Ok(LoopRunOutcome::Finished);
             }
             if total_tokens_used >= max_total_tokens {
                 info!(
@@ -617,7 +642,7 @@ impl LoopRunner {
                 let _ = self
                     .trigger_abnormal_handler(loop_id, loop_execution_id, "capped_token", total_executed, total_tokens_used)
                     .await;
-                return Ok(());
+                return Ok(LoopRunOutcome::Finished);
             }
 
             // 4b. 死循环检测：连续 5 次执行同一 step
@@ -736,7 +761,8 @@ impl LoopRunner {
                         review_status: "pending_approval".to_string(),
                     });
                     // 暂停循环（不写最终状态，loop execution 保持 running）
-                    return Ok(());
+                    // 返回 Paused 而非 Finished，避免误发 LoopFinished 事件
+                    return Ok(LoopRunOutcome::Paused);
                 }
                 // AI 自动评审：原有逻辑
                 self
@@ -836,7 +862,7 @@ impl LoopRunner {
             "loop #{} run done: status={} completed={} failed={} total_executed={}",
             loop_id, final_status, completed, failed, total_executed
         );
-        Ok(())
+        Ok(LoopRunOutcome::Finished)
     }
 
     /// 启动 step 的执行，使用增强后的 Prompt。
@@ -1053,17 +1079,19 @@ impl LoopRunner {
     }
 
     /// 通过 ExecutorDirectResponse 事件把环路执行结果发回飞书
+    /// receive_id_type: "open_id"（单聊）或 "chat_id"（群聊）
     pub async fn send_result_to_feishu(
         &self,
         feishu_bot_id: Option<i64>,
         receive_id: &str,
+        receive_id_type: &str,
         text: &str,
     ) {
         let Some(bot_id) = feishu_bot_id else { return };
         let _ = self.tx.send(crate::handlers::ExecEvent::ExecutorDirectResponse {
             bot_id,
             receive_id: receive_id.to_string(),
-            receive_id_type: "open_id".to_string(),
+            receive_id_type: receive_id_type.to_string(),
             content: text.to_string(),
         });
     }

@@ -140,6 +140,7 @@ pub(crate) async fn handle_spawn_failure(
             feishu_bot_id,
             feishu_receive_id,
             workspace_id,
+            // spawn 阶段尚未产生任何执行时长与 token 消耗，置 0 避免阻塞 Finished 事件下发
             duration_secs: 0,
             total_tokens: 0,
         },
