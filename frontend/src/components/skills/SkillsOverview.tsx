@@ -58,7 +58,8 @@ export function SkillsOverview() {
     const totalSkills = data.reduce((sum, e) => sum + e.skills.length, 0);
     const totalFiles = data.reduce((sum, e) => sum + e.skills.reduce((s, sk) => s + sk.file_count, 0), 0);
     const executorsWithSkills = data.filter(e => e.skills.length > 0).length;
-    return { totalSkills, totalFiles, executorsWithSkills };
+    // 分母用前端定义的执行器总数，而非 API 返回的数量（API 只返回有 skills 目录的）
+    return { totalSkills, totalFiles, executorsWithSkills, totalExecutors: EXECUTORS.length };
   }, [data]);
 
   // All skills flattened (filtered by executor, but not by search)
@@ -189,7 +190,7 @@ export function SkillsOverview() {
               <div style={{ fontSize: 12, color: 'var(--color-text-secondary, #475569)' }}>执行器</div>
               <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2, color: 'var(--color-text, #0f172a)' }}>
                 {stats.executorsWithSkills}
-                <span style={{ fontSize: 13, fontWeight: 400, marginLeft: 2 }}>/ {data.length}</span>
+                <span style={{ fontSize: 13, fontWeight: 400, marginLeft: 2 }}>/ {stats.totalExecutors}</span>
               </div>
             </div>
           </div>
