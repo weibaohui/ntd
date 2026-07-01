@@ -86,9 +86,10 @@ export function SkillsOverview() {
     );
   }, [allSkills, searchText]);
 
-  // Executor filter tabs with counts synced to search
+  // Executor filter tabs — counts reflect each executor's own skill total,
+  // only narrowed by search text; never zeroed out by executor filter selection.
   const executorTabs = useMemo(() => {
-    const filterMatch = (skills: SkillMeta[]) => {
+    const matchSearch = (skills: SkillMeta[]) => {
       if (!searchText) return skills.length;
       const lower = searchText.toLowerCase();
       return skills.filter(s =>
@@ -98,16 +99,13 @@ export function SkillsOverview() {
       ).length;
     };
 
-    const tabs = [{ key: 'all', label: '全部', count: filterMatch(allSkills.map(s => s.skill)) }];
+    const tabs = [{ key: 'all', label: '全部', count: matchSearch(allSkills.map(s => s.skill)) }];
     data.forEach(e => {
       const label = EXECUTORS.find(x => x.value === e.executor)?.label || e.executor;
-      const count = filterExecutor === 'all' || filterExecutor === e.executor
-        ? filterMatch(e.skills)
-        : 0;
-      tabs.push({ key: e.executor, label, count });
+      tabs.push({ key: e.executor, label, count: matchSearch(e.skills) });
     });
     return tabs;
-  }, [data, filterExecutor, searchText, allSkills]);
+  }, [data, searchText, allSkills]);
 
   const exportMenuItems: MenuProps['items'] = [
     { key: 'export', icon: <ExportOutlined />, label: '导出选中' },
