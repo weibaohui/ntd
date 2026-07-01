@@ -297,11 +297,11 @@ function AppContent() {
             {fabExpanded && (
               <>
                 <div className="mobile-fab-item" style={{ animationDelay: '0ms' }}>
-                  <span className="mobile-fab-item-label">智能新建</span>
+                  <span className="mobile-fab-item-label">闪念</span>
                   <button
                     className="mobile-fab-item-btn mobile-fab-smart"
-                    onClick={() => { setFabExpanded(false); setSmartCreateOpen(true); }}
-                    aria-label="智能新建"
+                    onClick={() => { setFabExpanded(false); setQuickCaptureOpen(true); }}
+                    aria-label="闪念捕捉"
                   >
                     <ThunderboltOutlined style={{ fontSize: 20, color: '#fff' }} />
                   </button>
