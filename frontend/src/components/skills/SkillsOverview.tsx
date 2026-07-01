@@ -247,24 +247,6 @@ export function SkillsOverview() {
             overflow: 'hidden',
           }}>
             <button
-              onClick={() => setViewMode('list')}
-              title="列表视图"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: 32,
-                height: 32,
-                border: 'none',
-                background: viewMode === 'list' ? 'var(--color-fill, #e2e8f0)' : 'transparent',
-                color: viewMode === 'list' ? 'var(--color-text, #0f172a)' : 'var(--color-text-tertiary, #94a3b8)',
-                cursor: 'pointer',
-                transition: 'all 0.2s',
-              }}
-            >
-              <UnorderedListOutlined />
-            </button>
-            <button
               onClick={() => setViewMode('card')}
               title="卡片视图"
               style={{
@@ -274,7 +256,6 @@ export function SkillsOverview() {
                 width: 32,
                 height: 32,
                 border: 'none',
-                borderLeft: '1px solid var(--color-border, #e2e8f0)',
                 background: viewMode === 'card' ? 'var(--color-fill, #e2e8f0)' : 'transparent',
                 color: viewMode === 'card' ? 'var(--color-text, #0f172a)' : 'var(--color-text-tertiary, #94a3b8)',
                 cursor: 'pointer',
@@ -282,6 +263,25 @@ export function SkillsOverview() {
               }}
             >
               <AppstoreOutlinedIcon />
+            </button>
+            <button
+              onClick={() => setViewMode('list')}
+              title="列表视图"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 32,
+                height: 32,
+                border: 'none',
+                borderLeft: '1px solid var(--color-border, #e2e8f0)',
+                background: viewMode === 'list' ? 'var(--color-fill, #e2e8f0)' : 'transparent',
+                color: viewMode === 'list' ? 'var(--color-text, #0f172a)' : 'var(--color-text-tertiary, #94a3b8)',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+              }}
+            >
+              <UnorderedListOutlined />
             </button>
           </div>
           <Dropdown menu={{ items: exportMenuItems, onClick: handleExportMenuClick }} trigger={['click']}>
