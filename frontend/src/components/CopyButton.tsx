@@ -1,8 +1,14 @@
 /**
  * 复制按钮组件
  *
- * 封装 clipboard.js，将 clipboard.js 直接绑定到真实按钮上，
- * 省去临时 DOM 创建/销毁的开销，遵循 clipboard.js 推荐的事件驱动模式。
+ * 采用同步 document.execCommand('copy') 方式复制文本，
+ * 不依赖异步 navigator.clipboard.writeText，不依赖 clipboard.js 事件绑定。
+ *
+ * 关键样式参数参考 clipboard.js 内部 createFakeElement 的实现：
+ * - position:absolute + left:-9999px 移到屏幕外（保持 textarea 自然尺寸，浏览器可选中）
+ * - opacity:0 视觉隐藏但保持 DOM 尺寸正常
+ * - readonly 防止移动端弹出键盘
+ * - focus() + select() 确保选区被浏览器认可
  *
  * 用法：
  * ```tsx
@@ -11,10 +17,9 @@
  * </CopyButton>
  * ```
  */
-import { useEffect, useRef, useCallback, useState, forwardRef } from 'react';
+import { useRef, useState, forwardRef, useCallback } from 'react';
 import { Button } from 'antd';
 import type { ButtonProps } from 'antd';
-import ClipboardJS from 'clipboard';
 import { CopyOutlined, CheckOutlined } from '@ant-design/icons';
 
 export interface CopyButtonProps extends Omit<ButtonProps, 'onClick' | 'children'> {
@@ -39,58 +44,75 @@ export const CopyButton = forwardRef<HTMLButtonElement | HTMLAnchorElement, Copy
   icon = <CopyOutlined />,
   ...rest
 }, ref) {
-  const innerRef = useRef<HTMLButtonElement | HTMLAnchorElement>(null);
-  const clipboardRef = useRef<ClipboardJS | null>(null);
-  const onCopyRef = useRef(onCopy);
   const [copied, setCopied] = useState(false);
+  const onCopyRef = useRef(onCopy);
+  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 始终保持最新的 onCopy 引用，避免内联函数导致 ClipboardJS 实例频繁重建
+  // 始终保持最新的 onCopy 引用
   onCopyRef.current = onCopy;
 
-  const handleSuccess = useCallback(() => {
+  // 复制成功后的通用反馈逻辑：更新图标状态、触发 onCopy 回调、
+  // 启动定时器在反馈持续时间后恢复图标。
+  const showCopiedFeedback = useCallback(() => {
     setCopied(true);
     onCopyRef.current?.();
     if (showFeedback) {
-      setTimeout(() => setCopied(false), feedbackDuration);
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = setTimeout(() => {
+        setCopied(false);
+        feedbackTimerRef.current = null;
+      }, feedbackDuration);
     }
   }, [showFeedback, feedbackDuration]);
 
-  useEffect(() => {
-    const el = innerRef.current;
-    if (!el) return;
+  // 点击处理：创建临时 textarea 并同步 execCommand('copy')。
+  // 样式完全复制 clipboard.js 内部 createFakeElement 的实现：
+  // - position:absolute + left:-9999px 移到屏幕外（而非 width/height=0）
+  // - opacity:0 视觉隐藏但 DOM 尺寸正常
+  // - readonly 防止移动端弹出键盘
+  // - 显式 focus + select 确保选区被浏览器认可
+  const handleClick = useCallback(() => {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    // 以下样式完全复制 clipboard.js 的 createFakeElement 实现
+    textarea.style.position = 'absolute';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '0px';
+    textarea.style.opacity = '0';
+    textarea.style.fontSize = '12pt';
+    textarea.style.border = '0';
+    textarea.style.padding = '0';
+    textarea.style.margin = '0';
+    textarea.style.overflow = 'hidden';
+    textarea.setAttribute('readonly', '');
 
-    // 使用 clipboard.js 数据属性方式绑定
-    el.setAttribute('data-clipboard-text', text);
+    document.body.appendChild(textarea);
+    // 部分浏览器要求 textarea 有 focus 后 select 才被认可
+    textarea.focus();
+    textarea.select();
 
-    const clipboard = new ClipboardJS(el as Element);
-    clipboardRef.current = clipboard;
-
-    clipboard.on('success', handleSuccess);
-    clipboard.on('error', () => {
-      // clipboard.js 失败时不处理，由上层 onCopy 决定是否提示
-    });
-
-    return () => {
-      clipboard.destroy();
-      clipboardRef.current = null;
-    };
-  }, [text, handleSuccess]);
-
-  // text 变化时更新 data 属性
-  useEffect(() => {
-    if (innerRef.current) {
-      innerRef.current.setAttribute('data-clipboard-text', text);
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch {
+      // execCommand 在不支持的环境中抛异常
     }
-  }, [text]);
+
+    document.body.removeChild(textarea);
+
+    if (ok) {
+      showCopiedFeedback();
+    }
+  }, [text, showCopiedFeedback]);
 
   return (
     <Button
       ref={(node) => {
-        innerRef.current = node;
         if (typeof ref === 'function') ref(node);
         else if (ref) ref.current = node;
       }}
       icon={copied ? <CheckOutlined /> : icon}
+      onClick={handleClick}
       {...rest}
     >
       {children}

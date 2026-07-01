@@ -273,6 +273,8 @@ export function TodoPostPage({
             onOpenLogDrawer={openLogDrawer}
             resolveExecutionStats={resolveExecutionStats}
             todoTitle={todoTitle}
+            onRate={handleRateExecution}
+            onExport={handleExportMarkdown}
           />
         ))
       )}
@@ -287,8 +289,6 @@ export function TodoPostPage({
         onLoadLogs={loadLogsForRecord}
         onClose={() => setLogDrawerOpen(false)}
         runningTasks={runningTasks}
-        onRate={handleRateExecution}
-        onExport={handleExportMarkdown}
       />
     </PageCard>
   );
@@ -306,6 +306,8 @@ function ThreadGroup({
   onOpenLogDrawer,
   resolveExecutionStats,
   todoTitle,
+  onRate,
+  onExport,
 }: {
   group: SessionGroup;
   getNextFloor: () => number;
@@ -316,6 +318,8 @@ function ThreadGroup({
   onOpenLogDrawer: (id: number) => void;
   resolveExecutionStats: (r: ExecutionRecord, running: boolean) => any;
   todoTitle: string;
+  onRate: (recordId: number, rating: number | null) => Promise<void>;
+  onExport: (record: ExecutionRecord) => Promise<void>;
 }) {
   const allRecords = group.records;
   const lastRecord = allRecords[allRecords.length - 1];
@@ -333,6 +337,8 @@ function ThreadGroup({
           onOpenLogDrawer={onOpenLogDrawer}
           resolveExecutionStats={resolveExecutionStats}
           todoTitle={todoTitle}
+          onRate={onRate}
+          onExport={onExport}
         />
       ))}
       <ReplyRow record={lastRecord} onReply={onReply} loading={replyLoading} />
@@ -351,6 +357,8 @@ function PostCard({
   onOpenLogDrawer,
   resolveExecutionStats,
   todoTitle,
+  onRate,
+  onExport,
 }: {
   record: ExecutionRecord;
   floor: number;
@@ -360,6 +368,8 @@ function PostCard({
   onOpenLogDrawer: (id: number) => void;
   resolveExecutionStats: (r: ExecutionRecord, running: boolean) => any;
   todoTitle?: string;
+  onRate: (recordId: number, rating: number | null) => Promise<void>;
+  onExport: (record: ExecutionRecord) => Promise<void>;
 }) {
   const isRunning = record.status === "running";
   const [elapsedSec, setElapsedSec] = useState(
@@ -470,7 +480,12 @@ function PostCard({
       {/* worktree 路径：仅当 record.worktree_path 非空时渲染 */}
       <WorktreePathDisplay worktreePath={record.worktree_path ?? null} />
 
-      {/* 元信息：执行器、时间、触发类型、耗时 */}
+      {/* 命令（可折叠，与结论样式一致）—— 从详情抽屉迁移到结论下方 */}
+      {record.command && (
+        <CollapsibleCommand command={record.command} title="命令" />
+      )}
+
+      {/* 元信息 + 操作：执行器、时间、触发类型、评分、导出、统计 */}
       <div style={{
         display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap",
         marginTop: 8, fontSize: 12,
@@ -510,37 +525,51 @@ function PostCard({
             {formatDurationSec(elapsedSec)}
           </span>
         )}
+        {/* 评分组件 —— 从详情抽屉迁移过来 */}
+        {!isRunning && (
+          <span onClick={(e) => e.stopPropagation()}>
+            <RatingControl record={record} onRate={onRate} />
+          </span>
+        )}
+        {/* 导出YAML按钮 —— 从详情抽屉迁移过来 */}
+        {!isRunning && !!record.finished_at && (
+          <Button type="text" size="small" icon={<FileTextOutlined />} onClick={(e) => { e.stopPropagation(); onExport(record); }}>
+            导出YAML
+          </Button>
+        )}
       </div>
 
       {/* 统计 */}
-      <div style={{
-        display: "flex", gap: 16, marginTop: 8, fontSize: 11,
-        color: "var(--color-text-tertiary)", flexWrap: "wrap",
-      }}>
-        {record.usage && (
-          <>
-            <span>Input: <b>{record.usage.input_tokens.toLocaleString()}</b></span>
-            <span>Output: <b>{record.usage.output_tokens.toLocaleString()}</b></span>
-            {record.usage.cache_read_input_tokens != null && record.usage.cache_read_input_tokens > 0 && (
-              <span>缓存读: <b>{record.usage.cache_read_input_tokens.toLocaleString()}</b></span>
-            )}
-            {record.usage.cache_creation_input_tokens != null && record.usage.cache_creation_input_tokens > 0 && (
-              <span>缓存写: <b>{record.usage.cache_creation_input_tokens.toLocaleString()}</b></span>
-            )}
-            {record.usage.total_cost_usd != null && (
-              <span style={{ color: "var(--color-warning)" }}>
-                ${record.usage.total_cost_usd.toFixed(6)}
-              </span>
-            )}
-          </>
-        )}
-        {stats && (
-          <>
-            <span>工具调用: <b style={{ color: "var(--color-primary)" }}>{stats.tool_calls}</b></span>
-            <span>对话轮次: <b style={{ color: "var(--color-primary)" }}>{stats.conversation_turns}</b></span>
-          </>
-        )}
-      </div>
+      {record.usage && stats && (
+        <div style={{
+          display: "flex", gap: 16, marginTop: 8, fontSize: 11,
+          color: "var(--color-text-tertiary)", flexWrap: "wrap",
+        }}>
+          {record.usage && (
+            <>
+              <span>Input: <b>{record.usage.input_tokens.toLocaleString()}</b></span>
+              <span>Output: <b>{record.usage.output_tokens.toLocaleString()}</b></span>
+              {record.usage.cache_read_input_tokens != null && record.usage.cache_read_input_tokens > 0 && (
+                <span>缓存读: <b>{record.usage.cache_read_input_tokens.toLocaleString()}</b></span>
+              )}
+              {record.usage.cache_creation_input_tokens != null && record.usage.cache_creation_input_tokens > 0 && (
+                <span>缓存写: <b>{record.usage.cache_creation_input_tokens.toLocaleString()}</b></span>
+              )}
+              {record.usage.total_cost_usd != null && (
+                <span style={{ color: "var(--color-warning)" }}>
+                  ${record.usage.total_cost_usd.toFixed(6)}
+                </span>
+              )}
+            </>
+          )}
+          {stats && (
+            <>
+              <span>工具调用: <b style={{ color: "var(--color-primary)" }}>{stats.tool_calls}</b></span>
+              <span>对话轮次: <b style={{ color: "var(--color-primary)" }}>{stats.conversation_turns}</b></span>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -575,8 +604,6 @@ function LogDrawer({
   onLoadLogs,
   onClose,
   runningTasks,
-  onRate,
-  onExport,
 }: {
   open: boolean;
   record: ExecutionRecord | null;
@@ -586,8 +613,6 @@ function LogDrawer({
   onLoadLogs: (recordId: number, page: number) => Promise<void>;
   onClose: () => void;
   runningTasks: Record<string, any>;
-  onRate: (recordId: number, rating: number | null) => Promise<void>;
-  onExport: (record: ExecutionRecord) => void;
 }) {
   const [viewMode, setViewMode] = useState<"chat" | "command" | "log">("chat");
 
@@ -615,25 +640,8 @@ function LogDrawer({
       width={isMobile ? undefined : "60%"}
       styles={{ body: { padding: "12px 16px", display: "flex", flexDirection: "column" } }}
     >
-      {/* 执行命令 —— 可折叠，默认收缩 */}
-      {record?.command && <CollapsibleCommand command={record.command} />}
-
-      {/* 元信息行：评分 + 导出 */}
+      {/* 刷新 + 视图切换 —— 详情抽屉只保留日志/对话/命令三个视图 */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        {record && record.status !== "running" && (
-          <RatingControl record={record} onRate={onRate} />
-        )}
-        {record && record.status !== "running" && !!record.finished_at && (
-          <Button type="text" size="small" icon={<FileTextOutlined />} onClick={() => onExport(record)}>
-            导出YAML
-          </Button>
-        )}
-        <div style={{ flex: 1 }} />
-        <RefreshBtn onClick={() => { if (record) onLoadLogs(record.id, logsPage); }} />
-      </div>
-
-      {/* 视图切换 */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <Button type={viewMode === "chat" ? "primary" : "default"} size="small" onClick={() => setViewMode("chat")}>
           对话
         </Button>
@@ -643,6 +651,8 @@ function LogDrawer({
         <Button type={viewMode === "log" ? "primary" : "default"} size="small" onClick={() => setViewMode("log")}>
           日志
         </Button>
+        <div style={{ flex: 1 }} />
+        <RefreshBtn onClick={() => { if (record) onLoadLogs(record.id, logsPage); }} />
       </div>
 
       <div style={{ overflow: "auto", flex: 1 }}>
@@ -694,58 +704,97 @@ function LogDrawer({
 // ─── 可折叠命令 ────────────────────────────────────────────
 
 /**
- * 可折叠的命令展示，默认收缩。
- * 折叠态显示命令前 60 字 + 复制按钮；
- * 展开态显示完整命令文本。
+ * 可折叠的命令展示，与 CollapsibleConclusion 样式完全一致：
+ * 可折叠头部（标题/字数/复制按钮） + 展开后正文渲染。
+ * 用于验证命令复制按钮在 Drawer 内/外的表现差异。
  */
-function CollapsibleCommand({ command }: { command: string }) {
-  const [expanded, setExpanded] = useState(false);
+function CollapsibleCommand({ command, title = "命令", messageApi: msgApi }: {
+  command: string;
+  /** 标题文字，Drawer 内用"命令"，PostCard 中用"命令(验证-Drawer外)"便于区分 */
+  title?: string;
+  messageApi?: any;
+}) {
+  // 默认折叠：命令通常是长文本，默认收起减少页面高度；用户有需要再手动展开
+  const [collapsed, setCollapsed] = useState(true);
+  const toggle = () => setCollapsed(prev => !prev);
 
-  const truncated = command.length > 60 ? command.substring(0, 60) + "..." : command;
+  const handleCopy = () => {
+    const api = msgApi ?? antdMessage;
+    api.success('已复制到剪贴板');
+  };
+
+  const contentId = `command-content-${title}`;
 
   return (
     <div
-      style={{
-        marginBottom: 12,
-        padding: "8px 12px",
-        background: "var(--log-bg)",
-        borderRadius: 6,
-        border: "1px solid var(--color-border-light)",
-      }}
+      style={{ marginBottom: 12 }}
+      data-testid={`collapsible-command-${title}`}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: collapsed ? 0 : 4,
+          gap: 8,
+        }}
+      >
         <Button
           type="text"
           size="small"
-          icon={expanded ? <CaretUpOutlined /> : <CaretDownOutlined />}
-          onClick={() => setExpanded(!expanded)}
-          style={{ flexShrink: 0, padding: "0 4px" }}
-        />
-        <span
-          style={{
-            flex: 1,
-            minWidth: 0,
-            fontSize: 11,
-            fontFamily: "var(--font-mono)",
-            color: "var(--log-text)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: expanded ? "pre-wrap" : "nowrap",
-            wordBreak: "break-all",
-            cursor: "pointer",
-          }}
-          onClick={() => setExpanded(!expanded)}
+          onClick={toggle}
+          icon={collapsed ? <CaretDownOutlined /> : <CaretUpOutlined />}
+          aria-expanded={!collapsed}
+          aria-controls={contentId}
+          aria-label={collapsed ? '展开命令' : '折叠命令'}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 8px' }}
         >
-          {expanded ? command : truncated}
-        </span>
+          <span
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              color: 'var(--color-text)',
+              marginRight: 4,
+            }}
+          >
+            {title}
+          </span>
+          <span
+            style={{
+              fontSize: 11,
+              color: 'var(--color-text-tertiary)',
+              fontWeight: 500,
+            }}
+          >
+            {[...command].length} 字
+          </span>
+        </Button>
         <CopyButton
+          text={command}
           type="text"
           size="small"
-          text={command}
-          onCopy={() => antdMessage.success("已复制")}
-          style={{ flexShrink: 0 }}
+          onCopy={handleCopy}
+          aria-label={`复制${title}`}
+          data-testid={`command-copy-${title}`}
         />
       </div>
+      {!collapsed && (
+        <div
+          id={contentId}
+          style={{
+            background: 'var(--log-bg)',
+            borderRadius: 6,
+            padding: '8px 12px',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+            color: 'var(--log-text)',
+          }}
+        >
+          {command}
+        </div>
+      )}
     </div>
   );
 }
