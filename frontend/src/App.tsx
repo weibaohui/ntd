@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { ConfigProvider, Layout, App as AntApp, Drawer } from 'antd';
+import { ConfigProvider, Layout, App as AntApp, Drawer, Tooltip } from 'antd';
 import { PlusOutlined, ThunderboltOutlined, CloseOutlined, ArrowLeftOutlined, MenuOutlined } from '@ant-design/icons';
 import { AppProvider, useApp } from './hooks/useApp';
 import { useIsMobile } from './hooks/useIsMobile';
@@ -20,6 +20,7 @@ import { ExecutorsPanel } from './components/settings/ExecutorsPanel';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
+import { QuickCaptureModal } from './components/QuickCaptureModal';
 import { LoopFormModal } from './components/LoopFormModal';
 import { LeftRail, type LeftRailKey } from './components/shell/LeftRail';
 
@@ -38,6 +39,7 @@ function AppContent() {
 
   const [todoModalOpen, setTodoModalOpen] = useState(false);
   const [smartCreateOpen, setSmartCreateOpen] = useState(false);
+  const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [fabExpanded, setFabExpanded] = useState(false);
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(() => {
@@ -95,6 +97,18 @@ function AppContent() {
   // Load app config on mount
   useEffect(() => {
     db.getConfig().then(setAppConfig).catch(() => {});
+  }, []);
+
+  // 全局快捷键 ⌘+K / Ctrl+K 打开闪念捕捉
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setQuickCaptureOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
 
@@ -517,6 +531,25 @@ function AppContent() {
         onSubmitted={handleSmartCreateSubmitted}
       />
 
+      <QuickCaptureModal
+        open={quickCaptureOpen}
+        onClose={() => setQuickCaptureOpen(false)}
+        isMobile={isMobile}
+        defaultWorkspaceId={state.selectedWorkspace}
+        onCreated={() => {
+          // 创建后刷新当前 workspace 的 todo 列表
+          const wid = state.selectedWorkspace;
+          if (wid != null) {
+            db.getAllTodos(wid).then(todos => {
+              dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
+            });
+          }
+        }}
+        onExecuted={() => {
+          // 执行后也会触发执行面板更新，无需额外操作
+        }}
+      />
+
       <ExecutionPanel
         collapsed={panelCollapsed}
         onToggleCollapse={() => {
@@ -541,6 +574,44 @@ function AppContent() {
         onClose={() => setLoopCreateModalOpen(false)}
         defaultWorkspaceId={state.selectedWorkspace}
       />
+
+      {/* 悬浮按钮：闪念捕捉入口（⌘+K 打开） */}
+      {!isMobile && (
+        <Tooltip title="闪念捕捉 (⌘+K)" placement="left">
+          <button
+            onClick={() => setQuickCaptureOpen(true)}
+            style={{
+              position: 'fixed',
+              bottom: 24,
+              right: 24,
+              width: 48,
+              height: 48,
+              borderRadius: '50%',
+              background: 'var(--color-primary)',
+              color: '#fff',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+              transition: 'transform 0.2s, box-shadow 0.2s',
+              zIndex: 1000,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'scale(1.1)';
+              e.currentTarget.style.boxShadow = '0 6px 16px rgba(0,0,0,0.3)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'scale(1)';
+              e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.2)';
+            }}
+            aria-label="闪念捕捉"
+          >
+            <ThunderboltOutlined style={{ fontSize: 22 }} />
+          </button>
+        </Tooltip>
+      )}
     </Layout>
   );
 }
