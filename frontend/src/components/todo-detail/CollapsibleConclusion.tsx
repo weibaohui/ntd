@@ -17,7 +17,6 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Button, message as antdMessage } from 'antd';
-import type { MessageInstance } from 'antd/es/message/interface';
 import { CaretDownOutlined, CaretUpOutlined } from '@ant-design/icons';
 import XMarkdown from '@ant-design/x-markdown';
 import { CopyButton } from '@/components/CopyButton';
@@ -35,14 +34,14 @@ const CONTAINER_MARGIN_BOTTOM = 12;
 // toggle 按钮与正文内容区的 id 关联前缀；拼上 recordId 防止同一页多条记录冲突
 const CONTENT_ID_PREFIX = 'conclusion-content-';
 
-export interface CollapsibleConclusionProps {
+interface CollapsibleConclusionProps {
   /** Markdown 文本，来自 ExecutionRecord.result */
   result: string;
   /** 执行状态，仅用于切换 success / failed 背景色 */
   status: string;
   /** 动态 message 实例；不传则使用 antd 静态 message */
   messageApi?: MessageInstance;
-  /** 是否在头部显示「结论」二字标题；目前仅 RecordDetailView 启用 */
+  /** 是否在头部显示「结论」二字标题 */
   showTitle?: boolean;
   /** 记录 ID；提供时折叠状态会按 ID 持久化到 localStorage */
   recordId?: number | string;
