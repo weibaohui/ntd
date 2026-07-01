@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 import type { ColumnsType } from 'antd/es/table';
 import * as db from '@/utils/database';
 import type { AgentBot, ProjectDirectory } from '@/utils/database';
-import { BotDetailPage } from './BotDetailPage';
+import { BotDetailPage } from '@/components/settings/bot/BotDetailPage';
 
 interface WorkspaceAgentPanelProps {
   workspaceId: number;
