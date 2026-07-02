@@ -115,6 +115,35 @@ fn resolve_skill_path_under(base: &Path, skill_name: &str) -> Result<PathBuf, Ap
     Ok(candidate_canonical)
 }
 
+/// 把外部 `skill_name` 解析为目录路径，用于**只读**操作（如获取内容、导出）。
+///
+/// 与 `resolve_skill_path_under` 的区别：
+/// - 允许符号链接指向 skills 目录外的路径（如 `~/.claude/skills/xxx -> ~/.agents/skills/xxx`）
+/// - 但仍拒绝绝对路径、`..` 父级引用等恶意输入
+///
+/// 这样用户可以通过符号链接访问其他位置的 skill，同时防止路径遍历攻击。
+pub(crate) fn resolve_skill_path_for_read(base: &Path, skill_name: &str) -> Result<PathBuf, AppError> {
+    // 第一道：纯字符串级校验（与 resolve_skill_path_under 相同）
+    let rel = Path::new(skill_name);
+    if rel.as_os_str().is_empty() {
+        return Err(AppError::BadRequest("Invalid skill name: empty".to_string()));
+    }
+    if rel.is_absolute() {
+        return Err(AppError::BadRequest("Invalid skill name: absolute paths are not allowed".to_string()));
+    }
+    if rel.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::Prefix(_))) {
+        return Err(AppError::BadRequest("Invalid skill name: parent directory traversal is not allowed".to_string()));
+    }
+
+    // 第二道：检查路径是否存在（不检查是否在 base 下，允许符号链接逃逸）
+    let candidate = base.join(rel);
+    if !candidate.exists() {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(candidate)
+}
+
 fn executor_label(et: ExecutorType) -> &'static str {
     match et {
         ExecutorType::Claudecode => "Claude Code",
@@ -249,6 +278,13 @@ pub struct SkillContentQuery {
 pub struct SkillExportQuery {
     pub executor: String,
     pub skill_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SkillFileQuery {
+    pub executor: String,
+    pub skill_name: String,
+    pub path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -559,9 +595,9 @@ pub async fn get_skill_content(
     let skills_dir = executor_skills_dir_str(&query.executor)
         .ok_or_else(|| AppError::BadRequest(format!("Unknown executor: {}", query.executor)))?;
 
-    // 用统一 helper 校验 skill_name 并解析出实际路径
-    // 比直接 join 多一层 canonicalize + starts_with 防御（防 ../ 逃逸和符号链接绕过）
-    let skill_dir = resolve_skill_path_under(&skills_dir, &query.skill_name)?;
+    // 用 resolve_skill_path_for_read 校验 skill_name
+    // 对于只读操作，允许符号链接指向 skills 目录外的路径
+    let skill_dir = resolve_skill_path_for_read(&skills_dir, &query.skill_name)?;
 
     let skill_name = query.skill_name.clone();
     let executor = query.executor.clone();
@@ -585,6 +621,43 @@ pub async fn get_skill_content(
     })
     .await
     .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))?;
+
+    Ok(ApiResponse::ok(result))
+}
+
+/// GET /api/skills/file - Get a single file's content within a skill
+pub async fn get_skill_file(
+    Query(query): Query<SkillFileQuery>,
+) -> Result<ApiResponse<SkillFileContentResponse>, AppError> {
+    let skills_dir = executor_skills_dir_str(&query.executor)
+        .ok_or_else(|| AppError::BadRequest(format!("Unknown executor: {}", query.executor)))?;
+
+    let skill_dir = resolve_skill_path_for_read(&skills_dir, &query.skill_name)?;
+
+    // 安全校验：防止路径遍历攻击
+    let file_path = skill_dir.join(&query.path);
+    let file_path_canonical = file_path.canonicalize()
+        .map_err(|e| AppError::Internal(format!("Failed to resolve file path: {}", e)))?;
+    let skill_dir_canonical = skill_dir.canonicalize()
+        .map_err(|e| AppError::Internal(format!("Failed to resolve skill dir: {}", e)))?;
+    if !file_path_canonical.starts_with(&skill_dir_canonical) {
+        return Err(AppError::BadRequest("Invalid file path: escapes skill directory".to_string()));
+    }
+
+    if !file_path.exists() || !file_path.is_file() {
+        return Err(AppError::NotFound);
+    }
+
+    let result = tokio::task::spawn_blocking(move || -> Result<SkillFileContentResponse, AppError> {
+        let content = std::fs::read_to_string(&file_path)
+            .map_err(|e| AppError::Internal(format!("Failed to read file: {}", e)))?;
+        Ok(SkillFileContentResponse {
+            path: query.path.clone(),
+            content,
+        })
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))??;
 
     Ok(ApiResponse::ok(result))
 }
@@ -650,8 +723,9 @@ pub async fn export_skill(
     let skills_dir = executor_skills_dir_str(&query.executor)
         .ok_or_else(|| AppError::BadRequest(format!("Unknown executor: {}", query.executor)))?;
 
-    // 统一 containment 校验
-    let skill_dir = resolve_skill_path_under(&skills_dir, &query.skill_name)?;
+    // 用 resolve_skill_path_for_read 校验 skill_name
+    // 对于只读操作，允许符号链接指向 skills 目录外的路径
+    let skill_dir = resolve_skill_path_for_read(&skills_dir, &query.skill_name)?;
 
     // Create zip in memory
     let mut zip_data = Vec::new();
@@ -934,6 +1008,12 @@ pub struct SkillFileInfo {
     pub path: String,
     pub size: u64,
     pub modified_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SkillFileContentResponse {
+    pub path: String,
+    pub content: String,
 }
 
 /// GET /api/skills/compare - Cross-executor skill comparison matrix
@@ -1376,5 +1456,35 @@ mod tests {
         let content = "# My Skill Title\nSome description text here.";
         let meta = parse_skill_yaml_header(content);
         assert_eq!(meta.name, "My Skill Title");
+    }
+
+    // ── resolve_skill_path_for_read() tests ─────────────────────────────────
+
+    #[test]
+    fn test_resolve_skill_path_for_read_empty_name() {
+        let base = Path::new("/skills");
+        let result = resolve_skill_path_for_read(base, "");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_skill_path_for_read_absolute_path_rejected() {
+        let base = Path::new("/skills");
+        let result = resolve_skill_path_for_read(base, "/etc/passwd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_skill_path_for_read_parent_traversal_rejected() {
+        let base = Path::new("/skills");
+        let result = resolve_skill_path_for_read(base, "../etc/passwd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_skill_path_for_read_double_parent_traversal_rejected() {
+        let base = Path::new("/skills");
+        let result = resolve_skill_path_for_read(base, "foo/../../../etc/passwd");
+        assert!(result.is_err());
     }
 }

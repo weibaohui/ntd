@@ -1364,6 +1364,7 @@ fn skills_routes() -> Router<AppState> {
         .route("/api/skills/sync", post(skills::sync_skill))
         .route("/api/skills/invocations", get(skills::list_invocations).post(skills::record_invocation))
         .route("/api/skills/content", get(skills::get_skill_content))
+        .route("/api/skills/file", get(skills::get_skill_file))
         .route("/api/skills/export", get(skills::export_skill))
         .route("/api/skills/import", post(skills::import_skill))
 }
