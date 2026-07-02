@@ -172,8 +172,8 @@ export function ActionButton({
         <div
           style={{
             padding: 12,
-            background: '#f6ffed',
-            border: '1px solid #b7eb8f',
+            background: 'var(--color-success-bg, #f6ffed)',
+            border: '1px solid var(--color-success-border, #b7eb8f)',
             borderRadius: 6,
             maxHeight: 400,
             overflow: 'auto',
