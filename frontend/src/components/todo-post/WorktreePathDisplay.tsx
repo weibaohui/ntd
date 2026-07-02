@@ -43,6 +43,7 @@ export function WorktreePathDisplay({ worktreePath }: WorktreePathDisplayProps) 
           lineHeight: 1.6,
           display: 'inline-flex',
           alignItems: 'center',
+          justifyContent: 'flex-start',
           gap: 6,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
