@@ -41,7 +41,7 @@ export function ReviewTemplatesPanel({ workspaceId }: ReviewTemplatesPanelProps)
   const loadWorkspaceOptions = () => {
     getProjectDirectories()
       .then((dirs) => {
-        setWorkspaceIdOptions(dirs.map(d => ({ label: d.name, value: d.id })));
+        setWorkspaceIdOptions(dirs.map(d => ({ label: d.name ?? '', value: d.id })));
       })
       .catch(() => { /* 静默 */ });
   };

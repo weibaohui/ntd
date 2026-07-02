@@ -52,8 +52,9 @@ export function WorkspaceSelect({ value, onChange, required, selectProps }: Work
     try {
       const dirs = await getProjectDirectories();
       setOptions(dirs.map(d => ({
-        // label 只展示 name，不在 UI 上暴露路径字符串
-        label: d.name,
+        // label 只展示 name，不在 UI 上暴露路径字符串；
+        // ?? '' 确保类型为 string（d.name 是 string | null），满足 antd Select 的 label 类型要求
+        label: d.name ?? '',
         value: d.id,
       })));
     } catch {
@@ -94,8 +95,8 @@ export function WorkspaceSelect({ value, onChange, required, selectProps }: Work
       // 刷新列表后选中新建项（按 id 选中）
       const dirs = await getProjectDirectories();
       setOptions(dirs.map(d => ({
-        // label 只展示 name
-        label: d.name,
+        // label 只展示 name；?? '' 确保 label 类型为 string
+        label: d.name ?? '',
         value: d.id,
       })));
       onChange?.(created.id);
