@@ -29,6 +29,3 @@ export interface ExecutorConfig {
   created_at: string | null;
   updated_at: string | null;
 }
-
-// Re-export executor helpers from execution module (avoids consumers needing to know which file)
-export { executorConfigToOption } from './execution';

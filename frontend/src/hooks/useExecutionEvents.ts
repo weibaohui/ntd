@@ -237,17 +237,19 @@ function teardownShared() {
  * @param onRefresh - 可选的回调，每次收到 WS 事件时触发（用于面板刷新等用途）
  */
 export function useExecutionEvents(onRefresh?: () => void) {
-  // 第一个调用方记下 dispatch 供全局使用；后续调用方共用同一份
   const { dispatch } = useApp();
-  if (!sharedDispatch) {
-    sharedDispatch = dispatch;
-  }
 
   // 用 ref 持有 onRefresh，使其始终指向最新值但不触发 effect 重新执行
   const onRefreshRef = useRef(onRefresh);
   onRefreshRef.current = onRefresh;
 
   useEffect(() => {
+    // 在 effect 内初始化全局 dispatch，避免渲染期间的副作用。
+    // dispatch 引用稳定（useCallback），只在首次挂载时赋值即可。
+    if (!sharedDispatch) {
+      sharedDispatch = dispatch;
+    }
+
     // 递增调用方计数，把 ref 推入数组（后续触发时读 ref.current 总能拿到最新回调）
     sharedInstanceCount += 1;
     sharedOnRefreshRefs.push(onRefreshRef);
@@ -270,8 +272,7 @@ export function useExecutionEvents(onRefresh?: () => void) {
         sharedDispatch = null;
       }
     };
-    // dispatch 来自 useApp()，其引用稳定（底层是 useCallback），
-    // 不会导致 effect 意外重跑。只有第一次挂载 / 最后一次卸载时驱动连接生命周期。
+    // dispatch 引用稳定（useCallback），不会导致 effect 重跑。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }

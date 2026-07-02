@@ -180,24 +180,20 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
     if (!newTitle) {
       throw new Error('无法从 AI 结果中提取标题');
     }
-    try {
-      const updated = await db.updateTodo(
-        selectedTodo.id,
-        newTitle,
-        selectedTodo.prompt || '',
-        selectedTodo.status || 'pending',
-        selectedTodo.executor || undefined,
-        selectedTodo.scheduler_enabled,
-        selectedTodo.scheduler_config,
-        selectedTodo.workspace_id,
-        selectedTodo.webhook_enabled,
-        selectedTodo.acceptance_criteria,
-        selectedTodo.auto_review_enabled,
-      );
-      dispatch({ type: 'UPDATE_TODO', payload: updated });
-    } catch (err: any) {
-      throw err;
-    }
+    const updated = await db.updateTodo(
+      selectedTodo.id,
+      newTitle,
+      selectedTodo.prompt || '',
+      selectedTodo.status || 'pending',
+      selectedTodo.executor || undefined,
+      selectedTodo.scheduler_enabled,
+      selectedTodo.scheduler_config,
+      selectedTodo.workspace_id,
+      selectedTodo.webhook_enabled,
+      selectedTodo.acceptance_criteria,
+      selectedTodo.auto_review_enabled,
+    );
+    dispatch({ type: 'UPDATE_TODO', payload: updated });
   }, [selectedTodo, dispatch]);
 
   // 升级/降级已移除：环节与 Todo 合一，无需 promote 流程

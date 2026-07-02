@@ -13,6 +13,9 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { ExecutionRecord, LogEntry, ExecutionSummary } from '@/types';
+import type { TodoAction } from './useTodoContext';
+import type { ExecutionAction } from './useExecutionContext';
+import type { UIAction } from './useUIContext';
 import * as db from '@/utils/database';
 
 interface UseExecutionHistoryOptions {
@@ -22,7 +25,7 @@ interface UseExecutionHistoryOptions {
   /** Records already in the global store for this todo */
   storeRecords: ExecutionRecord[];
   /** Dispatch from useApp() — used to sync fetched records back into global state */
-  dispatch: React.Dispatch<unknown>;
+  dispatch: React.Dispatch<TodoAction | ExecutionAction | UIAction>;
 }
 
 interface UseExecutionHistoryResult {
@@ -168,12 +171,16 @@ export function useExecutionHistory({
         }
         setHistoryPage(pageData.page);
         setHistoryTotal(pageData.total);
-      }).catch(() => {});
+      }).catch(() => {
+        // 执行记录加载失败时保持现有数据，不阻塞 UI
+      });
 
       if (selectedTodoId) {
         db.getExecutionSummary(selectedTodoId).then(sum => {
           if (!cancelledRef.current) setSummary(sum);
-        }).catch(() => {});
+        }).catch(() => {
+          // 汇总加载失败时保持 null，非关键路径
+        });
       }
     } else {
       setSummary(null);

@@ -461,15 +461,6 @@ html, body {
   line-height: 1.4;
 }
 
-
-/* (todo-item-desc 已移除 — 不再显示 prompt，对齐环路列表的简洁风格) */
-/* (todo-item-status 已移除 — 列表行中不再显示圆形状态按钮，通过底部颜色条展示状态) */
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-
 .todo-tag-badge {
   font-size: 11px;
   padding: 3px 8px;

@@ -45,10 +45,9 @@ export const STATUS_COLORS = {
   hook: '#a855f7',
 } as const;
 
-/** Log 类型颜色 */
+/** Log 类型颜色（浅色主题，供 Dashboard 等不区分主题的组件使用） */
 // 使用 Record<string, string> 而非 as const，因为 LOG_TYPE_COLORS 需要通过
 // 动态字符串键访问（如 LOG_TYPE_COLORS[log.type]，log.type 是运行时字符串）。
-// STATUS_COLORS 使用 as const 是因为所有使用处都是已知键（如 .running）。
 export const LOG_TYPE_COLORS: Record<string, string> = {
   info: '#6b7280',
   stdout: '#3b82f6',
@@ -70,11 +69,45 @@ export const LOG_TYPE_COLORS: Record<string, string> = {
   tool: '#fbbf24',
 };
 
+/** Log 类型颜色 — 浅色主题专用（ExecutionPanel 等需要区分主题的组件使用） */
+export const LOG_TYPE_COLORS_LIGHT: Record<string, string> = {
+  info: '#3b82f6',
+  text: '#22c55e',
+  tool: '#f59e0b',
+  step_start: '#8b5cf6',
+  step_finish: '#14b8a6',
+  stdout: '#64748b',
+  stderr: '#ef4444',
+  error: '#dc2626',
+  system: '#6b7280',
+  assistant: '#7c3aed',
+  user: '#0891b2',
+  result: '#22c55e',
+  thinking: '#f97316',
+};
+
+/** Log 类型颜色 — 深色主题专用（Catppuccin Mocha 风格） */
+export const LOG_TYPE_COLORS_DARK: Record<string, string> = {
+  info: '#89b4fa',
+  text: '#a6e3a1',
+  tool: '#f9e2af',
+  step_start: '#cba6f7',
+  step_finish: '#94e2d5',
+  stdout: '#cdd6f4',
+  stderr: '#f38ba8',
+  error: '#f38ba8',
+  system: '#6c7086',
+  assistant: '#cba6f7',
+  user: '#89dceb',
+  result: '#a6e3a1',
+  thinking: '#fab387',
+};
+
 /** Log 类型显示标签 */
 export const LOG_TYPE_LABELS: Record<string, string> = {
   info: 'INFO', text: 'TEXT', tool: 'TOOL', tool_use: 'TOOL', tool_call: 'TOOL',
   tool_result: 'RESULT', step_start: 'START', step_finish: 'END', stdout: 'OUT',
-  stderr: 'LOG', error: 'ERROR', system: 'SYS', assistant: 'ASST', user: 'USER',
+  stderr: 'ERR', error: 'ERROR', system: 'SYS', assistant: 'ASST', user: 'USER',
   result: 'RESULT', thinking: 'THINK', tokens: 'INFO',
 };
 

@@ -6,56 +6,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { getExecutorOption } from '@/types';
 import { stopExecution } from '@/utils/database';
 import { formatLocalDateTime, formatDurationSec } from '@/utils/datetime';
-
-// Light theme log colors
-const lightLogTypeColors: Record<string, string> = {
-  info: '#3b82f6',
-  text: '#22c55e',
-  tool: '#f59e0b',
-  step_start: '#8b5cf6',
-  step_finish: '#14b8a6',
-  stdout: '#64748b',
-  stderr: '#ef4444',
-  error: '#dc2626',
-  system: '#6b7280',
-  assistant: '#7c3aed',
-  user: '#0891b2',
-  result: '#22c55e',
-  thinking: '#f97316',
-};
-
-// Dark theme log colors - Catppuccin Mocha inspired
-const darkLogTypeColors: Record<string, string> = {
-  info: '#89b4fa',
-  text: '#a6e3a1',
-  tool: '#f9e2af',
-  step_start: '#cba6f7',
-  step_finish: '#94e2d5',
-  stdout: '#cdd6f4',
-  stderr: '#f38ba8',
-  error: '#f38ba8',
-  system: '#6c7086',
-  assistant: '#cba6f7',
-  user: '#89dceb',
-  result: '#a6e3a1',
-  thinking: '#fab387',
-};
-
-const logTypeLabels: Record<string, string> = {
-  info: 'INFO',
-  text: 'TEXT',
-  tool: 'TOOL',
-  step_start: 'START',
-  step_finish: 'END',
-  stdout: 'OUT',
-  stderr: 'ERR',
-  error: 'ERROR',
-  system: 'SYS',
-  assistant: 'ASST',
-  user: 'USER',
-  result: 'RESULT',
-  thinking: 'THINK',
-};
+import { LOG_TYPE_COLORS_LIGHT, LOG_TYPE_COLORS_DARK, LOG_TYPE_LABELS } from '@/constants';
 
 interface ExecutionPanelProps {
   collapsed: boolean;
@@ -84,7 +35,7 @@ export function ExecutionPanel({ collapsed, onToggleCollapse }: ExecutionPanelPr
   const logsEndRef = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
 
-  const logTypeColors = themeMode === 'dark' ? darkLogTypeColors : lightLogTypeColors;
+  const logTypeColors = themeMode === 'dark' ? LOG_TYPE_COLORS_DARK : LOG_TYPE_COLORS_LIGHT;
 
   const taskIds = Object.keys(runningTasks);
   const activeTask = activeTaskId ? runningTasks[activeTaskId] : null;
@@ -274,7 +225,7 @@ export function ExecutionPanel({ collapsed, onToggleCollapse }: ExecutionPanelPr
                       background: `${logTypeColors[log.type] || '#cbd5e1'}20`,
                     }}
                   >
-                    {logTypeLabels[log.type] || log.type}
+                    {LOG_TYPE_LABELS[log.type] || log.type}
                   </span>
                   <span className="log-content">{log.content}</span>
                 </div>
