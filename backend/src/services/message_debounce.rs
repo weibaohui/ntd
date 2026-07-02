@@ -8,8 +8,10 @@ use tokio::task::JoinHandle;
 
 use crate::adapters::parse_executor_type;
 use crate::db::Database;
-use crate::executor_service::RunTodoExecutionRequest;
-use crate::handlers::{ExecEvent, execution::start_todo_execution};
+use crate::executor_service::{
+    run_todo_execution, run_todo_execution_with_params, RunTodoExecutionRequest,
+};
+use crate::handlers::ExecEvent;
 use crate::models::ParsedLogEntry;
 use crate::service_context::ServiceContext;
 use crate::task_manager::TaskManager;
@@ -197,7 +199,7 @@ impl MessageDebounce {
                         }
                         _ => {
                             // 普通的默认响应（todo 类型）或斜杠命令
-                            start_todo_execution(RunTodoExecutionRequest {
+                            let request = RunTodoExecutionRequest {
                                 db: db.clone(),
                                 executor_registry,
                                 tx,
@@ -220,9 +222,13 @@ impl MessageDebounce {
                                 feishu_receive_id: Some(last.sender.clone()),
                                 workspace_path: None,
                                 workspace_id: last.workspace_id,
-                            })
-                            .await
-                            .map_err(|_| ())
+                            };
+                            let result = if request.params.is_some() {
+                                run_todo_execution_with_params(request).await
+                            } else {
+                                run_todo_execution(request).await
+                            };
+                            Ok(result)
                         }
                     };
 
