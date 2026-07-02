@@ -10,24 +10,28 @@
 
 - [一、任务管理 (Todo)](#一任务管理-todo)
 - [二、执行器与 AI 集成](#二执行器与-ai-集成)
-- [三、执行与会话 (Execution & Session)](#三执行与会话-execution--session)
-- [四、调度与触发 (Scheduling & Triggering)](#四调度与触发-scheduling--triggering)
-- [五、仪表盘与统计 (Dashboard & Stats)](#五仪表盘与统计-dashboard--stats)
-- [六、模板系统 (Template)](#六模板系统-template)
-- [七、标签与分类 (Tag)](#七标签与分类-tag)
-- [八、项目目录 (Project Directory)](#八项目目录-project-directory)
-- [九、Skills 管理](#九skills-管理)
-- [十、备份与恢复 (Backup)](#十备份与恢复-backup)
-- [十一、飞书消息集成 (Feishu)](#十一飞书消息集成-feishu)
-- [十二、Webhook 集成](#十二webhook-集成)
-- [十三、Hook 系统](#十三hook-系统)
-- [十四、系统与配置](#十四系统与配置)
-- [十五、版本与升级](#十五版本与升级)
-- [十六、守护进程管理 (Daemon)](#十六守护进程管理-daemon)
-- [十七、CLI 命令行](#十七cli-命令行)
-- [十八、跨平台与分发](#十八跨平台与分发)
-- [十九、前端 UI 能力](#十九前端-ui-能力)
-- [二十、可观测性与错误处理](#二十可观测性与错误处理)
+- [三、Loop Studio (自动化工作流)](#三loop-studio-自动化工作流)
+- [四、执行与会话 (Execution & Session)](#四执行与会话-execution--session)
+- [五、自动评审 (Auto Review)](#五自动评审-auto-review)
+- [六、调度与触发 (Scheduling & Triggering)](#六调度与触发-scheduling--triggering)
+- [七、仪表盘与统计 (Dashboard & Stats)](#七仪表盘与统计-dashboard--stats)
+- [八、使用统计 (Usage Stats)](#八使用统计-usage-stats)
+- [九、模板系统 (Template)](#九模板系统-template)
+- [十、标签与分类 (Tag)](#十标签与分类-tag)
+- [十一、项目目录 (Project Directory)](#十一项目目录-project-directory)
+- [十二、Skills 管理](#十二skills-管理)
+- [十三、备份与恢复 (Backup)](#十三备份与恢复-backup)
+- [十四、飞书消息集成 (Feishu)](#十四飞书消息集成-feishu)
+- [十五、Webhook 集成](#十五webhook-集成)
+- [十六、Hook 系统](#十六hook-系统)
+- [十七、云端同步 (Cloud Sync)](#十七云端同步-cloud-sync)
+- [十八、系统与配置](#十八系统与配置)
+- [十九、版本与升级](#十九版本与升级)
+- [二十、守护进程管理 (Daemon)](#二十守护进程管理-daemon)
+- [二十一、CLI 命令行](#二十一cli-命令行)
+- [二十二、跨平台与分发](#二十二跨平台与分发)
+- [二十三、前端 UI 能力](#二十三前端-ui-能力)
+- [二十四、可观测性与错误处理](#二十四可观测性与错误处理)
 
 ---
 
@@ -65,8 +69,13 @@
 | OpenCode | `adapters/opencode.rs` + `opencode_event.rs` | 开源代码助手 |
 | AtomCode | `adapters/atomcode.rs` | AI 代码编辑器 |
 | MobileCoder | `adapters/mobilecoder.rs` | 移动端代码助手 |
-| Hermes | `adapters/hermes.rs` | 通用 AI 适配 |
+| Hermes | `adapters/hermes.rs` | 通用 AI 适配、后置 Todo 进度提取 |
 | Kimi | `adapters/kimi.rs` | 月之暗面 Kimi |
+| Pi | `adapters/pi.rs` + `pi_event.rs` | Pi AI 助手 |
+| CodeWhale | `adapters/codewhale.rs` | CodeWhale AI |
+| MiMo | `adapters/mimo.rs` + `mimo_event.rs` | 小米 MiMo |
+| Zhanlu | `adapters/zhanlu.rs` + `zhanlu_event.rs` | 斩路 AI（输出格式同 OpenCode） |
+| Kilo | `adapters/kilo.rs` + `kilo_event.rs` | 千刻 AI |
 
 通用能力:
 - **执行器注册中心**:`executor_service.rs` 统一管理所有执行器
@@ -76,7 +85,28 @@
 
 ---
 
-## 三、执行与会话 (Execution & Session)
+## 三、Loop Studio (自动化工作流)
+
+> Loop Studio 是 ntd 的多步骤自动化工作流系统，支持 Cron/飞书/Webhook/标签等多种触发方式。
+
+| 功能点 | 说明 | 涉及模块 |
+|--------|------|----------|
+| Loop CRUD | 创建、读取、更新、删除 Loop | `handlers/loop_.rs`、`db/loop_.rs` |
+| 步骤管理 | Loop 内的有序步骤列表，每步可独立配置执行器和 Prompt | `db/entity/loop_steps.rs` |
+| 多种触发方式 | Cron 定时、飞书命令、飞书消息、Todo 完成、标签添加、Webhook | `db/entity/loop_triggers.rs` |
+| 步骤评审 | 每步可配置 AI 评审或人工评审 | `services/auto_review.rs` |
+| 执行记录 | 完整的 Loop 执行历史和步骤级执行记录 | `db/entity/loop_executions.rs` |
+| 执行引擎 | `LoopRunner` 异步执行 Loop，支持步骤间上下文传递 | `services/loop_runner.rs` |
+| 调度器 | `LoopScheduler` 基于 Cron 的 Loop 定时调度 | `services/loop_scheduler.rs` |
+| 触发分发 | `LoopTrigger` 统一分发多种触发源到 Loop 执行 | `services/loop_trigger.rs` |
+| 黑板上下文 | 步骤间共享的上下文数据（blackboard） | `db/entity/loop_step_executions.rs` |
+| Token 统计 | Loop 级别的 Token 用量汇总 | `handlers/loop_.rs` |
+| 流程图可视化 | 前端 Loop 流程图展示（@xyflow/react） | `components/loop-flow/` |
+| 看板视图 | Loop 执行状态看板 | `components/loop-kanban/` |
+
+---
+
+## 四、执行与会话 (Execution & Session)
 
 | 功能点 | 说明 | 模块 |
 |--------|------|------|
@@ -95,7 +125,22 @@
 
 ---
 
-## 四、调度与触发 (Scheduling & Triggering)
+## 五、自动评审 (Auto Review)
+
+> 执行完成后自动触发 AI 评审，支持自定义评审模板。
+
+| 功能点 | 说明 | 涉及模块 |
+|--------|------|----------|
+| 自动评审开关 | Todo 级别启用/禁用自动评审 | `todos.auto_review_enabled` |
+| 评审模板 | 独立的评审模板管理（CRUD） | `handlers/review_template.rs`、`db/review_template.rs` |
+| 评审实例 | 执行完成后自动创建评审 Todo（todo_type=2） | `services/auto_review.rs` |
+| 评审状态 | pending → success/failed/interrupted/skipped | `execution_records.last_review_status` |
+| 评审评分 | 评审完成后写入 rating 字段 | `execution_records.rating` |
+| Loop 评审 | Loop 步骤级评审，支持 AI/人工评审类型 | `services/auto_review.rs` |
+
+---
+
+## 六、调度与触发 (Scheduling & Triggering)
 
 | 触发方式 | 说明 | 入口 |
 |----------|------|------|
@@ -113,7 +158,7 @@
 
 ---
 
-## 五、仪表盘与统计 (Dashboard & Stats)
+## 七、仪表盘与统计 (Dashboard & Stats)
 
 > 完整图表/卡片清单见 [frontend-features.md § 三](./frontend-features.md#三仪表盘-dashboard),后端 API 见 [ntd-api.md § 16](./ntd-api.md)。
 
@@ -137,7 +182,22 @@
 
 ---
 
-## 六、模板系统 (Template)
+## 八、使用统计 (Usage Stats)
+
+> Token 用量、成本、模型维度统计，支持 ccusage 集成。
+
+| 功能点 | 说明 | 涉及模块 |
+|--------|------|----------|
+| 使用统计快照 | 按日汇总 Token 用量和成本 | `db/entity/usage_stats.rs` |
+| 模型维度 | 各模型的 Token/成本明细 | `db/entity/usage_model_breakdown.rs` |
+| 执行器维度 | 各执行器的每日聚合统计 | `db/entity/usage_executor_daily.rs` |
+| 统计刷新 | 手动触发统计重新计算 | `handlers/usage_stats.rs` |
+| 采集配置 | 配置统计采集开关和参数 | `services/usage_stats.rs` |
+| ccusage 集成 | 兼容 ccusage 格式的使用统计 | `frontend/src/utils/database/usage_stats.ts` |
+
+---
+
+## 九、模板系统 (Template)
 
 | 功能点 | 说明 |
 |--------|------|
@@ -153,7 +213,7 @@
 
 ---
 
-## 七、标签与分类 (Tag)
+## 十、标签与分类 (Tag)
 
 | 功能点 | 说明 |
 |--------|------|
@@ -165,7 +225,7 @@
 
 ---
 
-## 八、项目目录 (Project Directory)
+## 十一、项目目录 (Project Directory)
 
 | 功能点 | 说明 |
 |--------|------|
@@ -177,7 +237,7 @@
 
 ---
 
-## 九、Skills 管理
+## 十二、Skills 管理
 
 > Skills 是 AI 执行器的能力扩展包 (例如 `~/.claude/skills/`),ntd 提供跨执行器的统一管理。
 
@@ -197,7 +257,7 @@
 
 ---
 
-## 十、备份与恢复 (Backup)
+## 十三、备份与恢复 (Backup)
 
 提供三类数据备份机制,均支持自动 + 手动 + 文件管理。
 
@@ -226,7 +286,7 @@
 
 ---
 
-## 十一、飞书消息集成 (Feishu)
+## 十四、飞书消息集成 (Feishu)
 
 > 通过飞书自建应用 Bot 实现移动端触发与推送。
 
@@ -250,7 +310,7 @@
 
 ---
 
-## 十二、Webhook 集成
+## 十五、Webhook 集成
 
 | 功能点 | 说明 |
 |--------|------|
@@ -262,7 +322,7 @@
 
 ---
 
-## 十三、Hook 系统
+## 十六、Hook 系统
 
 > 任务生命周期钩子,可在 Todo 上声明:执行前、执行后、状态变更时触发其他 Todo。
 
@@ -276,7 +336,22 @@
 
 ---
 
-## 十四、系统与配置
+## 十七、云端同步 (Cloud Sync)
+
+> push/pull 本地变更到云端，支持增量同步。
+
+| 功能点 | 说明 | 涉及模块 |
+|--------|------|----------|
+| 同步配置 | 配置云端同步目标和参数 | `handlers/sync.rs` |
+| 推送变更 | 将本地 Todo/Tag/Template/ProjectDirectory 变更推送到云端 | `db/sync_record.rs` |
+| 拉取变更 | 从云端拉取变更到本地 | `handlers/sync.rs` |
+| 同步记录 | 记录每次同步的 delta 日志 | `db/entity/sync_records.rs` |
+| 增量同步 | 按 entity_type + entity_id 去重，只同步变更部分 | `db/sync_record.rs` |
+| 同步状态 | 查看最近一次同步状态（成功/失败/时间戳） | `handlers/sync.rs` |
+
+---
+
+## 十八、系统与配置
 
 | 配置项 | 说明 |
 |--------|------|
@@ -293,7 +368,7 @@
 
 ---
 
-## 十五、版本与升级
+## 十九、版本与升级
 
 | 功能点 | 说明 |
 |--------|------|
@@ -304,7 +379,7 @@
 
 ---
 
-## 十六、守护进程管理 (Daemon)
+## 二十、守护进程管理 (Daemon)
 
 通过 `ntd daemon ...` 子命令管理后台服务。
 
@@ -320,7 +395,7 @@
 
 ---
 
-## 十七、CLI 命令行
+## 二十一、CLI 命令行
 
 > 完整命令参考见 [ntd-cli.md](./ntd-cli.md)。下表为高层概览。
 
@@ -337,7 +412,8 @@ ntd [全局选项] <子命令>
   upgrade                 升级 ntd
   server start            启动 API 服务
   stats                   全局统计
-  todo                    Todo 管理 (create/list/get/update/delete/execute/stop/execution)
+  todo                    Todo 管理 (create/list/get/update/delete/execute/stop/execution/stats)
+  loop                    Loop 管理 (list/get/update/delete/stop/stats/execute/execution/results)
   tag                     标签管理 (list/create/delete)
   daemon                  守护进程管理
   skill install           安装 ntd-usage Skill
@@ -351,7 +427,7 @@ ntd [全局选项] <子命令>
 
 ---
 
-## 十八、跨平台与分发
+## 二十二、跨平台与分发
 
 | 平台 | 架构 | 分发包 |
 |------|------|--------|
@@ -366,7 +442,7 @@ ntd [全局选项] <子命令>
 
 ---
 
-## 十九、前端 UI 能力
+## 二十三、前端 UI 能力
 
 > 详细功能点参见 [frontend-features.md](./frontend-features.md)。下表为能力域总览。
 
@@ -389,7 +465,7 @@ ntd [全局选项] <子命令>
 
 ---
 
-## 二十、可观测性与错误处理
+## 二十四、可观测性与错误处理
 
 | 功能点 | 说明 |
 |--------|------|
@@ -409,24 +485,29 @@ ntd [全局选项] <子命令>
 | 域 | 后端模块 | 前端模块 |
 |----|----------|----------|
 | 任务 | `backend/src/handlers/todo.rs` | `frontend/src/components/TodoList.tsx`、`TodoDetail.tsx`、`TodoDrawer.tsx`、`TodoCard.tsx` |
-| 执行 | `backend/src/handlers/execution.rs` | `ChatView.tsx`、`ExecutionPanel.tsx` |
+| 执行 | `backend/src/handlers/execution.rs`、`executor_service/` | `ChatView.tsx`、`ExecutionPanel.tsx` |
+| Loop | `backend/src/handlers/loop_.rs`、`services/loop_runner.rs`、`services/loop_scheduler.rs` | `LoopPage.tsx`、`components/loop-studio/*`、`components/loop-flow/*` |
 | 调度 | `backend/src/scheduler.rs`、`handlers/scheduler.rs` | `SchedulerSection.tsx`、`CronPresetSelect.tsx` |
 | 标签 | `backend/src/handlers/tag.rs` | `TagsPanel.tsx`、`TagCheckCard.tsx` |
 | 模板 | `backend/src/handlers/todo_template.rs`、`custom_template.rs` | `TemplatesPanel.tsx`、`TemplateModal.tsx` |
+| 评审模板 | `backend/src/handlers/review_template.rs` | `ReviewTemplatesPanel.tsx` |
 | Skills | `backend/src/handlers/skills.rs` | `SkillsPanel.tsx` 及 `components/skills/*` |
 | 备份 | `backend/src/handlers/backup.rs` | `BackupPanel.tsx` 及 `components/settings/backup/*` |
-| 飞书 | `backend/src/feishu/*`、`handlers/agent_bot.rs`、`handlers/feishu_history.rs` | `MessagesPanel.tsx` 及 `components/settings/messages/*` |
-| Webhook | `backend/src/handlers/webhook.rs` | `WebhooksPanel.tsx` |
-| Hook | `backend/src/hooks/*` | `todo-detail/TodoHooksEditor.tsx` |
+| 飞书 | `backend/src/feishu/*`、`handlers/agent_bot.rs`、`handlers/feishu_history.rs` | `components/settings/bot/*`、`components/settings/messages/*` |
+| Webhook | `backend/src/handlers/webhook.rs` | - |
+| Hook | `backend/src/db/todo.rs`（hooks JSON 列） | `todo-detail/TodoHooksEditor.tsx` |
 | 项目目录 | `backend/src/handlers/project_directory.rs` | `ProjectDirectoriesPanel.tsx` |
-| 配置/系统 | `backend/src/handlers/config.rs` | `SystemSettingsPanel.tsx` |
+| 配置/系统 | `backend/src/handlers/config.rs`、`config.rs` | `SystemSettingsPanel.tsx` |
 | 执行器 | `backend/src/handlers/executor_config.rs` | `ExecutorsPanel.tsx` |
-| 运行管理 | `backend/src/task_manager.rs` | `RuntimePanel.tsx` |
+| 运行管理 | `backend/src/task_manager.rs` | `RunningBoard.tsx`、`components/running-board/*` |
 | 会话 | `backend/src/handlers/session.rs` | `SessionManager.tsx` 及 `components/sessions/*` |
-| 守护进程 | `backend/src/daemon.rs`、`main.rs` | `AboutPanel.tsx` |
-| CLI | `backend/src/cli/*` | - |
+| 守护进程 | `backend/src/daemon/`、`main.rs` | `AboutPanel.tsx` |
+| CLI | `backend/src/cli/` | - |
 | 仪表盘 | `backend/src/handlers/execution.rs`(stats)、`handlers/usage_stats.rs` | `Dashboard.tsx` 及 `components/dashboard/*` |
+| 使用统计 | `backend/src/services/usage_stats.rs` | `components/dashboard/UsageStatsCard.tsx` |
+| 云端同步 | `backend/src/handlers/sync.rs` | `CloudSyncPanel.tsx` |
 | 看板 | - | `KanbanBoard.tsx` 及 `components/kanban/*` |
+| Running Board | - | `RunningBoard.tsx` 及 `components/running-board/*` |
 | 纪念碑 | - | `MemorialBoard.tsx` |
 | 主题 | - | `themes/`、`hooks/useTheme.tsx` |
 

@@ -29,22 +29,39 @@ make clean      # 清理构建产物
 | 模式 | 前端 | 后端 |
 |------|------|------|
 | 生产模式 | 嵌入后端（8088） | 8088 |
-| 开发模式 | 5173 | 8088 |
+| 开发模式 | 嵌入后端（18088） | 18088 |
 
 ## 目录结构
 
 ```
 backend/           # Rust 后端代码
   src/
-    adapters/      # AI 执行器适配器
+    adapters/      # AI 执行器适配器（13 种执行器）
     handlers/      # HTTP 路由处理
-    db.rs          # 数据库操作
+    db/            # 数据库操作（SeaORM entity + 查询）
+    services/      # 业务服务（飞书监听、自动评审、Loop 引擎等）
+    cli/           # CLI 子命令
+    models/        # API 模型定义
+    config.rs      # 统一配置管理
     scheduler.rs   # Cron 调度器
     task_manager.rs # 任务生命周期管理
+    feishu/        # 飞书 SDK 集成
+    daemon/        # 守护进程管理（macOS/Linux/Windows）
+    executor_service/ # 执行器服务（进程管理、日志捕获）
+    execution_events/ # 事件管道
+  tests/           # 集成测试
 frontend/          # React 前端代码
+  src/
+    components/    # UI 组件（120+ 文件）
+    hooks/         # 自定义 Hooks
+    types/         # TypeScript 类型定义
+    utils/         # 工具函数
+    themes/        # 主题定义
+  tests/           # Playwright 测试
 packages/          # npm 跨平台分发包
 docs/              # 文档和截图
-tunnel.sh          # 内网穿透脚本
+ntd-skills/        # 内置 Skill 定义
+script/            # 构建和发布脚本
 ```
 
 ## 核心架构

@@ -104,6 +104,9 @@ ntd todo create [TITLE] [OPTIONS]
 - `codex` - Codex
 - `codewhale` - CodeWhale
 - `pi` - Pi
+- `mimo` - MiMo
+- `zhanlu` - Zhanlu
+- `kilo` - Kilo
 
 **示例：**
 ```bash
@@ -407,7 +410,119 @@ ntd tag delete 1
 
 ---
 
-### 6. 守护进程命令
+### 6. Loop 管理命令
+
+#### `ntd loop list`
+列出所有 Loop。
+
+```bash
+ntd loop list
+```
+
+---
+
+#### `ntd loop get <ID>`
+获取 Loop 详情。
+
+```bash
+ntd loop get <ID>
+```
+
+---
+
+#### `ntd loop update <ID>`
+更新 Loop 信息。
+
+```bash
+ntd loop update <ID> [OPTIONS]
+```
+
+**选项：**
+
+| 选项 | 简写 | 说明 |
+|------|------|------|
+| `--name <NAME>` | - | 新名称 |
+| `--description <DESC>` | - | 新描述 |
+| `--enabled <BOOL>` | - | 是否启用 |
+
+---
+
+#### `ntd loop delete <ID>`
+删除 Loop。
+
+```bash
+ntd loop delete <ID>
+```
+
+---
+
+#### `ntd loop stop <ID>`
+停止 Loop 执行。
+
+```bash
+ntd loop stop <ID>
+```
+
+---
+
+#### `ntd loop stats <ID>`
+获取 Loop 执行统计。
+
+```bash
+ntd loop stats <ID> [OPTIONS]
+```
+
+**选项：**
+
+| 选项 | 简写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--recent <NUM>` | - | 5 | 显示最近执行次数 |
+
+---
+
+#### `ntd loop execute <ID>`
+执行 Loop（立即触发）。
+
+```bash
+ntd loop execute <ID> [OPTIONS]
+```
+
+**选项：**
+
+| 选项 | 简写 | 说明 |
+|------|------|------|
+| `--param KEY=VALUE` | - | 模板占位符替换键值对，可重复传多次 |
+
+---
+
+#### `ntd loop execution list <LOOP_ID>`
+列出 Loop 执行记录。
+
+```bash
+ntd loop execution list <LOOP_ID>
+```
+
+---
+
+#### `ntd loop execution get <EXECUTION_ID>`
+获取 Loop 执行详情。
+
+```bash
+ntd loop execution get <EXECUTION_ID>
+```
+
+---
+
+#### `ntd loop results <EXECUTION_ID>`
+获取 Loop 执行结果（步骤级摘要）。
+
+```bash
+ntd loop results <EXECUTION_ID>
+```
+
+---
+
+### 7. 守护进程命令
 
 #### `ntd daemon install`
 安装 ntd 为系统守护进程。
@@ -563,7 +678,7 @@ ntd skill install [OPTIONS]
 | `--force` | `-f` | 强制重新安装（即使目录已存在） |
 | `--executor <LIST>` | `-e` | 仅安装到指定执行器（逗号分隔，例如 `claudecode,atomcode`）；不传则安装到全部已知执行器 |
 
-支持的执行器：`claudecode`、`hermes`、`codex`、`codebuddy`、`opencode`、`atomcode`、`kimi`、`mobilecoder`、`codewhale`、`pi`。
+支持的执行器：`claudecode`、`hermes`、`codex`、`codebuddy`、`opencode`、`atomcode`、`kimi`、`mobilecoder`、`codewhale`、`pi`、`mimo`、`zhanlu`、`kilo`。
 
 **示例：**
 ```bash

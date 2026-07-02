@@ -21,12 +21,14 @@ AI Todo 应用后端 API 参考手册。所有接口前缀为 `/api/`（WebSocke
 ### 13. 会话管理
 ### 14. 项目目录
 ### 15. Todo 模板
-### 16. 自定义模板
-### 17. 系统接口
-### 18. WebSocket 事件
-### 19. Webhook 管理
-### 20. 使用统计
-### 21. 云端同步
+### 16. 评审模板
+### 17. Loop Studio
+### 18. 自定义模板
+### 19. 系统接口
+### 20. WebSocket 事件
+### 21. Webhook 触发
+### 22. 使用统计
+### 23. 云端同步
 
 ---
 
@@ -197,6 +199,52 @@ GET /api/todos/recent-completed
 
 ---
 
+### 批量修改执行器
+```
+PUT /api/todos/batch-executor
+```
+
+**请求体：**
+```json
+{
+  "todo_ids": [1, 2, 3],
+  "executor": "claudecode"
+}
+```
+
+---
+
+### 批量移动工作目录
+```
+PUT /api/todos/batch-workspace
+```
+
+**请求体：**
+```json
+{
+  "todo_ids": [1, 2, 3],
+  "workspace": "/new/workspace/path"
+}
+```
+
+---
+
+### 批量复制工作目录
+```
+POST /api/todos/batch-copy-workspace
+```
+
+**请求体：**
+```json
+{
+  "todo_ids": [1, 2, 3],
+  "source_workspace": "/source/path",
+  "target_workspace": "/target/path"
+}
+```
+
+---
+
 ## 2. 标签管理
 
 ### 获取标签列表
@@ -308,6 +356,33 @@ POST /api/execution-records/{id}/resume
 
 ---
 
+### 评分执行记录
+```
+PUT /api/execution-records/{id}/rating
+```
+
+**请求体：**
+```json
+{
+  "rating": 85
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `rating` | number | 是 | 评分（0-100） |
+
+---
+
+### 获取 Running Board
+```
+GET /api/running-board
+```
+
+返回按状态分组的执行记录看板视图，包含 scheduled/running/completed/reviewing/review_passed/failed 六列。
+
+---
+
 ## 4. 执行操作
 
 ### 执行 Todo
@@ -401,6 +476,26 @@ GET /api/running-todos
 ```
 GET /api/dashboard-stats
 ```
+
+---
+
+### 执行 Action
+```
+POST /api/actions/execute
+```
+
+**请求体：**
+```json
+{
+  "action_type": "title_optimize",
+  "content": "原始内容"
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `action_type` | string | 是 | 操作类型（title_optimize / prompt_optimize 等） |
+| `content` | string | 是 | 输入内容 |
 
 ---
 
@@ -1216,7 +1311,220 @@ POST /api/todo-templates/{id}/copy
 
 ---
 
-## 16. 自定义模板
+## 16. 评审模板
+
+### 获取评审模板列表
+```
+GET /api/review-templates
+```
+
+---
+
+### 创建评审模板
+```
+POST /api/review-templates
+```
+
+**请求体：**
+```json
+{
+  "name": "代码质量评审",
+  "prompt_template": "请评审以下代码执行结果：\n{{output}}",
+  "is_default": false
+}
+```
+
+---
+
+### 更新评审模板
+```
+PUT /api/review-templates/{id}
+```
+
+---
+
+### 删除评审模板
+```
+DELETE /api/review-templates/{id}
+```
+
+---
+
+### 获取评审模板选项
+```
+GET /api/review-templates/options
+```
+
+返回所有评审模板的 id + name 列表，用于前端下拉选择。
+
+---
+
+## 17. Loop Studio
+
+### 获取 Loop 列表
+```
+GET /api/loops
+```
+
+---
+
+### 创建 Loop
+```
+POST /api/loops
+```
+
+**请求体：**
+```json
+{
+  "name": "每日代码审查",
+  "description": "自动审查当日提交的代码",
+  "enabled": true
+}
+```
+
+---
+
+### 获取 Loop 详情
+```
+GET /api/loops/{id}
+```
+
+---
+
+### 更新 Loop
+```
+PUT /api/loops/{id}
+```
+
+---
+
+### 删除 Loop
+```
+DELETE /api/loops/{id}
+```
+
+---
+
+### 获取 Loop 步骤列表
+```
+GET /api/loops/{id}/steps
+```
+
+---
+
+### 创建 Loop 步骤
+```
+POST /api/loops/{id}/steps
+```
+
+**请求体：**
+```json
+{
+  "name": "代码分析",
+  "prompt": "分析最近的代码变更",
+  "executor": "claudecode",
+  "sort_order": 100
+}
+```
+
+---
+
+### 更新 Loop 步骤
+```
+PUT /api/loops/{loop_id}/steps/{step_id}
+```
+
+---
+
+### 删除 Loop 步骤
+```
+DELETE /api/loops/{loop_id}/steps/{step_id}
+```
+
+---
+
+### 获取 Loop 触发器列表
+```
+GET /api/loops/{id}/triggers
+```
+
+---
+
+### 创建 Loop 触发器
+```
+POST /api/loops/{id}/triggers
+```
+
+**请求体：**
+```json
+{
+  "trigger_type": "cron",
+  "config": "{\"cron\": \"0 9 * * *\", \"timezone\": \"Asia/Shanghai\"}",
+  "enabled": true
+}
+```
+
+支持的触发类型：`cron`、`feishu_command`、`feishu_message`、`todo_completed`、`tag_added`、`webhook`
+
+---
+
+### 更新 Loop 触发器
+```
+PUT /api/loops/{loop_id}/triggers/{trigger_id}
+```
+
+---
+
+### 删除 Loop 触发器
+```
+DELETE /api/loops/{loop_id}/triggers/{trigger_id}
+```
+
+---
+
+### 执行 Loop
+```
+POST /api/loops/{id}/execute
+```
+
+**请求体：**
+```json
+{
+  "message": "立即执行"
+}
+```
+
+---
+
+### 停止 Loop 执行
+```
+POST /api/loops/{id}/stop
+```
+
+---
+
+### 获取 Loop 执行记录
+```
+GET /api/loops/{id}/executions
+```
+
+---
+
+### 获取 Loop 执行详情
+```
+GET /api/loops/executions/{execution_id}
+```
+
+---
+
+### 获取 Loop 步骤执行记录
+```
+GET /api/loops/executions/{execution_id}/steps
+```
+
+---
+
+## 18. 自定义模板
 
 ### 获取订阅状态
 ```
@@ -1275,7 +1583,7 @@ PUT /api/custom-templates/auto-sync
 
 ---
 
-## 17. 系统接口
+## 19. 系统接口
 
 ### 健康检查
 ```
@@ -1346,7 +1654,7 @@ POST /api/version/upgrade
 
 ---
 
-## 18. WebSocket 事件
+## 20. WebSocket 事件
 
 ### 事件订阅
 ```
@@ -1387,7 +1695,7 @@ GET /api/events
 
 ---
 
-## 19. Webhook 触发
+## 21. Webhook 触发
 
 Webhook 不再作为“设置中心里的独立资源”管理，而是 Todo / Loop 的内建能力开关。
 
@@ -1407,7 +1715,7 @@ POST /webhook/trigger/loop/{loop_id}
 
 ---
 
-## 20. 使用统计
+## 22. 使用统计
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -1418,7 +1726,7 @@ POST /webhook/trigger/loop/{loop_id}
 
 ---
 
-## 21. 云端同步
+## 23. 云端同步
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -1508,3 +1816,6 @@ POST /webhook/trigger/loop/{loop_id}
 | `codex` | Codex |
 | `codewhale` | CodeWhale |
 | `pi` | Pi |
+| `mimo` | MiMo |
+| `zhanlu` | Zhanlu |
+| `kilo` | Kilo |
