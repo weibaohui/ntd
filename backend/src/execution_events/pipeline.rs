@@ -229,11 +229,13 @@ impl EventPipeline {
 mod test_extractor {
     use super::*;
 
+    #[allow(dead_code)]
     pub struct TestExtractor {
         metadata: ExecutionMetadata,
     }
 
     impl TestExtractor {
+        #[allow(dead_code)]
         pub fn new() -> Self {
             Self {
                 metadata: ExecutionMetadata::new("test".to_string()),

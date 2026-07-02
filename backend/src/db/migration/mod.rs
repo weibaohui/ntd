@@ -48,7 +48,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
 }
 
 /// 用 `PRAGMA table_info` 判断某列是否存在。
-pub(super) async fn table_has_column(db: &Database, table: &str, column: &str) -> Result<bool, sea_orm::DbErr> {
+pub async fn table_has_column(db: &Database, table: &str, column: &str) -> Result<bool, sea_orm::DbErr> {
     let sql = format!(
         "SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name='{}'",
         table, column
@@ -97,7 +97,7 @@ pub(super) async fn add_column_if_missing(
 }
 
 /// 「执行一条 ALTER TABLE ADD COLUMN,失败仅 warn」。
-pub(super) async fn add_column_warn(db: &Database, sql: &str) {
+pub async fn add_column_warn(db: &Database, sql: &str) {
     if let Err(e) = db.exec(sql).await {
         tracing::warn!("migration v1: {}: {} (column likely already exists)", sql, e);
     }

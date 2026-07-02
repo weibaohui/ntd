@@ -8,7 +8,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use sea_orm::{
-    ActiveModelBehavior, ActiveModelTrait, ColumnTrait, ConnectionTrait,
+    ActiveModelBehavior, ActiveModelTrait, ConnectionTrait,
     DatabaseConnection, DbBackend, EntityTrait, IntoActiveModel, SqlxSqliteConnector, Statement,
 };
 

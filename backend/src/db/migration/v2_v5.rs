@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 use super::super::Database;
-use super::{Migration, table_has_column, add_column_warn};
+use super::Migration;
 
 pub(super) struct V2TodoRatingDropColumn;
 
@@ -974,17 +974,15 @@ mod v16_loop_step_execution_snapshot_columns_tests {
     //! V16 的职责：
     //! 1) auto-migrate 跑到 V16 时必须给 loop_step_executions 补齐这三列；
     //! 2) 已跑过 V16 的实例再跑一次 up() 必须幂等（不报 duplicate column）。
-
-    use super::*;
     use crate::db::Database;
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
 
     async fn fresh_db() -> Database {
         Database::new(":memory:").await.expect("memory db must open")
     }
 
     async fn table_has_column(db: &Database, table: &str, column: &str) -> bool {
-        super::table_has_column(db, table, column).await.unwrap_or(false)
+        crate::db::migration::table_has_column(db, table, column).await.unwrap_or(false)
     }
 
     /// 场景 1：auto-migrate 跑到 V16（含）后，
@@ -1340,7 +1338,7 @@ async fn v15_review_templates(db: &Database) -> Result<(), sea_orm::DbErr> {
     ))
     .await?;
 
-    if table_has_column(db, "loop_steps", "todo_id").await? {
+    if crate::db::migration::table_has_column(db, "loop_steps", "todo_id").await? {
         db.exec("DELETE FROM loop_steps WHERE todo_id IN (SELECT id FROM todos WHERE todo_type = 1)")
             .await?;
     } else {
@@ -1350,7 +1348,7 @@ async fn v15_review_templates(db: &Database) -> Result<(), sea_orm::DbErr> {
     db.exec("DELETE FROM loop_hooks WHERE target_todo_id IN (SELECT id FROM todos WHERE todo_type = 1)")
         .await?;
     db.exec("DELETE FROM todos WHERE todo_type = 1").await?;
-    add_column_warn(db, "ALTER TABLE todos ADD COLUMN review_template_id INTEGER").await;
+    crate::db::migration::add_column_warn(db, "ALTER TABLE todos ADD COLUMN review_template_id INTEGER").await;
     db.exec("CREATE INDEX IF NOT EXISTS idx_todos_review_template_id ON todos(review_template_id)")
         .await?;
 
