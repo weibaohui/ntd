@@ -4,6 +4,7 @@ import Typography from 'antd/es/typography';
 import {
   FileTextOutlined, DownloadOutlined, InfoCircleOutlined,
   SwapOutlined, DeleteOutlined, FolderOutlined,
+  ArrowLeftOutlined, EyeOutlined,
 } from '@ant-design/icons';
 import XMarkdown from '@ant-design/x-markdown';
 import * as db from '@/utils/database';
@@ -306,37 +307,168 @@ export function SkillDetailDrawer({ skill, executor, executorLabel, open, onClos
           },
         }}
       >
-        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-          {/* 左侧：文件树 */}
-          <div style={{
-            flex: '0 0 280px',
-            borderRight: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
-            overflow: 'auto',
-            background: isDark ? '#1a1a2e' : '#fff',
-          }}>
+        <FileBrowserFullscreen
+          files={files}
+          loading={loading}
+          selectedFile={selectedFile}
+          onFileSelect={setSelectedFile}
+          executor={executor}
+          skillName={skill?.name || ''}
+          isDark={isDark}
+        />
+      </Modal>
+    </>
+  );
+}
+
+// 文件浏览器全屏模态框内容组件，响应式支持手机端切换视图
+function FileBrowserFullscreen({
+  files,
+  loading,
+  selectedFile,
+  onFileSelect,
+  executor,
+  skillName,
+  isDark,
+}: {
+  files: SkillFileInfo[];
+  loading: boolean;
+  selectedFile: SkillFileInfo | null;
+  onFileSelect: (file: SkillFileInfo) => void;
+  executor: string;
+  skillName: string;
+  isDark: boolean;
+}) {
+  // 手机端使用独立状态控制视图模式，避免受 PC 端行为影响
+  const [isMobilePreviewMode, setIsMobilePreviewMode] = useState(false);
+
+  // 切换到文件列表视图时重置预览模式
+  const handleFileSelect = (file: SkillFileInfo) => {
+    onFileSelect(file);
+    // 手机端选中文件后自动进入预览模式
+    setIsMobilePreviewMode(true);
+  };
+
+  // 响应式布局：PC 端保持左右布局，手机端切换为单视图模式
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+
+  // PC 端或未选中文件时显示左右分栏布局
+  if (!isMobile && !isMobilePreviewMode) {
+    return (
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        {/* 左侧：文件树 */}
+        <div style={{
+          flex: '0 0 280px',
+          borderRight: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+          overflow: 'auto',
+          background: isDark ? '#1a1a2e' : '#fff',
+        }}>
+          <SkillFileBrowser
+            files={files}
+            loading={loading}
+            onFileSelect={onFileSelect}
+            selectedFile={selectedFile}
+            isDark={isDark}
+          />
+        </div>
+        {/* 右侧：文件预览 */}
+        <div style={{
+          flex: 1,
+          overflow: 'auto',
+          background: isDark ? '#1a1a2e' : '#fff',
+        }}>
+          <SkillFilePreview
+            file={selectedFile}
+            executor={executor}
+            skillName={skillName}
+            isDark={isDark}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // 手机端：显示文件列表视图或预览视图（通过按钮切换）
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* 手机端顶部切换按钮栏 */}
+      {isMobile && (
+        <div style={{
+          display: 'flex',
+          gap: 8,
+          padding: '8px 12px',
+          borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+          background: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
+        }}>
+          <Button
+            size="small"
+            icon={<FolderOutlined />}
+            type={!isMobilePreviewMode ? 'primary' : 'default'}
+            onClick={() => setIsMobilePreviewMode(false)}
+          >
+            文件列表
+          </Button>
+          <Button
+            size="small"
+            icon={<EyeOutlined />}
+            type={isMobilePreviewMode ? 'primary' : 'default'}
+            onClick={() => setIsMobilePreviewMode(true)}
+            disabled={!selectedFile}
+          >
+            预览
+          </Button>
+        </div>
+      )}
+
+      {/* 内容区域 */}
+      <div style={{ flex: 1, overflow: 'hidden' }}>
+        {isMobilePreviewMode ? (
+          // 预览视图
+          <div style={{ height: '100%', overflow: 'auto' }}>
+            {/* 手机端预览顶部导航栏 */}
+            {isMobile && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px 12px',
+                borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+                background: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
+              }}>
+                <Button
+                  size="small"
+                  icon={<ArrowLeftOutlined />}
+                  onClick={() => setIsMobilePreviewMode(false)}
+                >
+                  返回列表
+                </Button>
+                {selectedFile && (
+                  <Text style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {selectedFile.path}
+                  </Text>
+                )}
+              </div>
+            )}
+            <SkillFilePreview
+              file={selectedFile}
+              executor={executor}
+              skillName={skillName}
+              isDark={isDark}
+            />
+          </div>
+        ) : (
+          // 文件列表视图
+          <div style={{ height: '100%', overflow: 'auto' }}>
             <SkillFileBrowser
               files={files}
               loading={loading}
-              onFileSelect={setSelectedFile}
+              onFileSelect={handleFileSelect}
               selectedFile={selectedFile}
               isDark={isDark}
             />
           </div>
-          {/* 右侧：文件预览 */}
-          <div style={{
-            flex: 1,
-            overflow: 'auto',
-            background: isDark ? '#1a1a2e' : '#fff',
-          }}>
-            <SkillFilePreview
-              file={selectedFile}
-              executor={executor}
-              skillName={skill?.name || ''}
-              isDark={isDark}
-            />
-          </div>
-        </div>
-      </Modal>
-    </>
+        )}
+      </div>
+    </div>
   );
 }

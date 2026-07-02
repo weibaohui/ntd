@@ -281,6 +281,13 @@ pub struct SkillExportQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct SkillFileQuery {
+    pub executor: String,
+    pub skill_name: String,
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ImportRequest {
     pub executor: String,
     pub skill_name: Option<String>,
@@ -614,6 +621,43 @@ pub async fn get_skill_content(
     })
     .await
     .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))?;
+
+    Ok(ApiResponse::ok(result))
+}
+
+/// GET /api/skills/file - Get a single file's content within a skill
+pub async fn get_skill_file(
+    Query(query): Query<SkillFileQuery>,
+) -> Result<ApiResponse<SkillFileContentResponse>, AppError> {
+    let skills_dir = executor_skills_dir_str(&query.executor)
+        .ok_or_else(|| AppError::BadRequest(format!("Unknown executor: {}", query.executor)))?;
+
+    let skill_dir = resolve_skill_path_for_read(&skills_dir, &query.skill_name)?;
+
+    // 安全校验：防止路径遍历攻击
+    let file_path = skill_dir.join(&query.path);
+    let file_path_canonical = file_path.canonicalize()
+        .map_err(|e| AppError::Internal(format!("Failed to resolve file path: {}", e)))?;
+    let skill_dir_canonical = skill_dir.canonicalize()
+        .map_err(|e| AppError::Internal(format!("Failed to resolve skill dir: {}", e)))?;
+    if !file_path_canonical.starts_with(&skill_dir_canonical) {
+        return Err(AppError::BadRequest("Invalid file path: escapes skill directory".to_string()));
+    }
+
+    if !file_path.exists() || !file_path.is_file() {
+        return Err(AppError::NotFound);
+    }
+
+    let result = tokio::task::spawn_blocking(move || -> Result<SkillFileContentResponse, AppError> {
+        let content = std::fs::read_to_string(&file_path)
+            .map_err(|e| AppError::Internal(format!("Failed to read file: {}", e)))?;
+        Ok(SkillFileContentResponse {
+            path: query.path.clone(),
+            content,
+        })
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))??;
 
     Ok(ApiResponse::ok(result))
 }
@@ -964,6 +1008,12 @@ pub struct SkillFileInfo {
     pub path: String,
     pub size: u64,
     pub modified_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SkillFileContentResponse {
+    pub path: String,
+    pub content: String,
 }
 
 /// GET /api/skills/compare - Cross-executor skill comparison matrix

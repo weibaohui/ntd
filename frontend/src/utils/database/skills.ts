@@ -51,6 +51,17 @@ export async function getSkillContent(executor: string, skillName: string): Prom
   }));
 }
 
+export interface SkillFileContent {
+  path: string;
+  content: string;
+}
+
+export async function getSkillFileContent(executor: string, skillName: string, path: string): Promise<SkillFileContent> {
+  return unwrap(await api.get('/api/skills/file', {
+    params: { executor, skill_name: skillName, path },
+  }));
+}
+
 export async function exportSkill(executor: string, skillName: string): Promise<Blob> {
   const response = await api.get('/api/skills/export', {
     params: { executor, skill_name: skillName },

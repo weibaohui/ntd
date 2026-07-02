@@ -5,7 +5,7 @@ import {
 } from '@ant-design/icons';
 import XMarkdown from '@ant-design/x-markdown';
 import type { SkillFileInfo } from '@/utils/database/skills';
-import { getSkillContent } from '@/utils/database/skills';
+import { getSkillContent, getSkillFileContent } from '@/utils/database/skills';
 import { formatSize, formatTime } from './helpers';
 
 const { Text } = Typography;
@@ -59,14 +59,12 @@ export function SkillFilePreview({ file, executor, skillName, loading, isDark }:
       return;
     }
 
-    // 对于其他文件，需要通过 API 获取内容
-    // 目前后端没有提供单文件内容 API，这里显示文件信息
+    // 对于其他文件，通过 API 获取单文件内容
     setContentLoading(true);
-    // 模拟加载延迟
-    setTimeout(() => {
-      setContentLoading(false);
-      setContent(`# ${file.path}\n\n文件信息：\n- 大小: ${formatSize(file.size)}\n- 修改时间: ${formatTime(file.modified_at)}\n\n---\n\n文件内容预览功能开发中...`);
-    }, 300);
+    getSkillFileContent(executor, skillName, file.path)
+      .then(data => setContent(data.content))
+      .catch(() => setContent(`# ${file.path}\n\n文件信息：\n- 大小: ${formatSize(file.size)}\n- 修改时间: ${formatTime(file.modified_at)}\n\n---\n\n[无法加载文件内容]`))
+      .finally(() => setContentLoading(false));
   }, [file, executor, skillName]);
 
   // 主题相关颜色
