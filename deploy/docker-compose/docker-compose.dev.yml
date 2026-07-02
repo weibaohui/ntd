@@ -7,9 +7,9 @@ services:
     ports:
       - "${NTD_PORT:-18088}:8088"
     volumes:
-      - ntd-dev-data:/root/.ntd
+      - ntd-dev-data:/home/ntd/.ntd
     environment:
-      - NTD_MODE=development
+      - NTD_MODE=dev
       - RUST_LOG=debug
     restart: unless-stopped
 

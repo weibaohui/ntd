@@ -14,19 +14,29 @@ spec:
       labels:
         app: ntd
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
       - name: ntd
         image: ntd:latest
         ports:
         - containerPort: 8088
-        env:
-        - name: NTD_MODE
-          value: "production"
-        - name: RUST_LOG
-          value: "info"
+        envFrom:
+        - configMapRef:
+            name: ntd-config
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
         volumeMounts:
         - name: ntd-data
-          mountPath: /root/.ntd
+          mountPath: /home/ntd/.ntd
+        - name: tmp
+          mountPath: /tmp
         resources:
           requests:
             memory: "256Mi"
@@ -38,3 +48,5 @@ spec:
       - name: ntd-data
         persistentVolumeClaim:
           claimName: ntd-data-pvc
+      - name: tmp
+        emptyDir: {}
