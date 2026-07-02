@@ -1,5 +1,5 @@
 import { api, unwrap } from './client';
-import type { ExecutorSkills, SkillComparison, PaginatedInvocations } from '@/types';
+import type { ExecutorSkills, SkillComparison, SkillVersionUpdate, PaginatedInvocations } from '@/types';
 
 export async function getSkillsList(): Promise<ExecutorSkills[]> {
   return unwrap(await api.get('/api/skills'));
@@ -7,6 +7,10 @@ export async function getSkillsList(): Promise<ExecutorSkills[]> {
 
 export async function getSkillsComparison(): Promise<SkillComparison[]> {
   return unwrap(await api.get('/api/skills/compare'));
+}
+
+export async function getSkillVersionUpdates(): Promise<SkillVersionUpdate[]> {
+  return unwrap(await api.get('/api/skills/version-update'));
 }
 
 export async function syncSkill(sourceExecutor: string, skillName: string, targetExecutors: string[]): Promise<string> {

@@ -157,6 +157,25 @@ export interface SkillComparison {
   executors: Record<string, SkillPresence>;
 }
 
+/// 单个执行器的版本信息（用于版本更新检测）
+export interface SkillVersionInfo {
+  executor: string;
+  executor_label: string;
+  version: string | null;
+  modified_at: string | null;
+  is_latest: boolean;
+}
+
+/// 版本更新检测结果
+export interface SkillVersionUpdate {
+  skill_name: string;
+  description: string;
+  versions: SkillVersionInfo[];
+  latest_version: string | null;
+  latest_executor: string;
+  has_update: boolean;
+}
+
 export interface SkillInvocation {
   id: number;
   skill_name: string;

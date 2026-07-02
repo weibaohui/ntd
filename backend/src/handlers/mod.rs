@@ -1361,6 +1361,7 @@ fn skills_routes() -> Router<AppState> {
     Router::new()
         .route("/api/skills", get(skills::list_skills).delete(skills::delete_skill))
         .route("/api/skills/compare", get(skills::compare_skills))
+        .route("/api/skills/version-update", get(skills::version_update_list))
         .route("/api/skills/sync", post(skills::sync_skill))
         .route("/api/skills/invocations", get(skills::list_invocations).post(skills::record_invocation))
         .route("/api/skills/content", get(skills::get_skill_content))

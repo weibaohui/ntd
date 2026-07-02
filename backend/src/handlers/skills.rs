@@ -218,6 +218,27 @@ pub struct SkillPresence {
     pub modified_at: Option<String>,
 }
 
+/// 单个执行器的版本信息（用于版本更新检测）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillVersionInfo {
+    pub executor: String,
+    pub executor_label: String,
+    pub version: Option<String>,
+    pub modified_at: Option<String>,
+    pub is_latest: bool,
+}
+
+/// 版本更新检测结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillVersionUpdate {
+    pub skill_name: String,
+    pub description: String,
+    pub versions: Vec<SkillVersionInfo>,
+    pub latest_version: Option<String>,
+    pub latest_executor: String,
+    pub has_update: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillInvocation {
     pub id: i64,
@@ -1103,6 +1124,125 @@ pub async fn compare_skills(
     .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))?;
 
     Ok(ApiResponse::ok(comparisons))
+}
+
+/// 比较两个版本字符串，返回 Ordering
+/// 优先 semver 比较，无法解析时 fallback 到字符串比较
+fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
+    // 尝试 semver 解析
+    if let (Ok(va), Ok(vb)) = (semver::Version::parse(a), semver::Version::parse(b)) {
+        return va.cmp(&vb);
+    }
+    // fallback: 字符串比较
+    a.cmp(b)
+}
+
+/// 从多个版本中找出最新版本的执行器
+fn find_latest_executor(versions: &[SkillVersionInfo]) -> Option<&SkillVersionInfo> {
+    versions.iter()
+        .filter(|v| v.version.is_some())
+        .max_by(|a, b| {
+            compare_versions(
+                a.version.as_deref().unwrap_or(""),
+                b.version.as_deref().unwrap_or(""),
+            )
+        })
+}
+
+/// GET /api/skills/version-update - 检测 skill 版本更新
+///
+/// 返回所有在不同执行器间版本不同的 skill，标记最新版本和需要更新的执行器。
+/// 版本比较策略：优先 semver，无法解析时 fallback 到字符串比较。
+pub async fn version_update_list(
+    State(_state): State<AppState>,
+) -> Result<ApiResponse<Vec<SkillVersionUpdate>>, AppError> {
+    let updates = tokio::task::spawn_blocking(move || {
+        // 第一遍：把所有来源的 skills 扫成双层 map（source → name → meta）
+        let mut all_skills: HashMap<String, HashMap<String, SkillMeta>> = HashMap::new();
+        for name in ALL_SKILL_SOURCES {
+            let es = discover_skills_for(name, executor_label_for_source(name));
+            let mut map = HashMap::new();
+            for skill in es.skills {
+                map.insert(skill.name.clone(), skill);
+            }
+            all_skills.insert((*name).to_string(), map);
+        }
+
+        // 取所有来源的 skill 名字的并集
+        let mut skill_names: Vec<String> = all_skills.values()
+            .flat_map(|m| m.keys().cloned())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        skill_names.sort();
+
+        // 第二遍：每个 skill 名生成版本更新检测结果
+        let updates: Vec<SkillVersionUpdate> = skill_names.into_iter().filter_map(|name| {
+            // 收集所有执行器的版本信息
+            let mut versions: Vec<SkillVersionInfo> = Vec::new();
+            for src in ALL_SKILL_SOURCES {
+                let key = (*src).to_string();
+                if let Some(skill) = all_skills.get(&key).and_then(|m| m.get(&name)) {
+                    versions.push(SkillVersionInfo {
+                        executor: key.clone(),
+                        executor_label: executor_label_for_source(src).to_string(),
+                        version: skill.version.clone(),
+                        modified_at: skill.modified_at.clone(),
+                        is_latest: false,
+                    });
+                }
+            }
+
+            // 只有当 skill 在多个执行器中存在且版本不同时才返回
+            if versions.len() < 2 {
+                return None;
+            }
+
+            // 找出最新版本的执行器
+            let latest = find_latest_executor(&versions)?;
+            let latest_version = latest.version.clone();
+            let latest_executor = latest.executor.clone();
+
+            // 标记最新版本
+            for v in versions.iter_mut() {
+                v.is_latest = v.version == latest_version;
+            }
+
+            // 检查是否有执行器需要更新（版本不同或没有版本号）
+            let has_update = versions.iter().any(|v| {
+                v.executor != latest_executor && v.version != latest_version
+            });
+
+            // 只有存在版本差异时才返回
+            if !has_update {
+                return None;
+            }
+
+            // description 按 ALL_SKILL_SOURCES 固定顺序查，第一个非空的胜出
+            let description = ALL_SKILL_SOURCES
+                .iter()
+                .filter_map(|src| all_skills.get(*src).and_then(|m| m.get(&name)))
+                .find_map(|s| {
+                    if s.description.is_empty() { None } else { Some(s.description.clone()) }
+                })
+                .unwrap_or_default();
+
+            Some(SkillVersionUpdate {
+                skill_name: name,
+                description,
+                versions,
+                latest_version,
+                latest_executor,
+                has_update,
+            })
+        }).collect();
+
+        updates
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))?;
+
+    Ok(ApiResponse::ok(updates))
 }
 
 /// POST /api/skills/sync - Sync skill from one executor to others
