@@ -55,14 +55,14 @@ export function WorkspaceSwitcher({ value, onChange, onManage, mode = 'full' }: 
   const selectedLabel = useMemo(() => {
     if (value == null) return '请选择工作空间';
     const found = dirs.find(d => d.id === value);
-    return found?.name || found?.path || String(value);
+    return found?.name || String(value);
   }, [dirs, value]);
 
   const menuItems = useMemo<NonNullable<MenuProps['items']>>(() => {
     const items: NonNullable<MenuProps['items']> = [
       ...dirs.map(dir => ({
         key: String(dir.id),
-        label: dir.name || dir.path,
+        label: dir.name,
         icon: <FolderOpenOutlined />,
       })),
       { type: 'divider' as const },

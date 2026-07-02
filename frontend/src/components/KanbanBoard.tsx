@@ -422,7 +422,7 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
               suffixIcon={<FolderOutlined />}
               options={projectDirectories.map(d => ({
                 value: d.id, // value 用 workspace_id（唯一键）
-                label: d.name || d.path,
+                label: d.name,
               }))}
             />
           </div>
