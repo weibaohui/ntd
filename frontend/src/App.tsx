@@ -89,7 +89,9 @@ function AppContent() {
   const panelHeight = hasRunningTasks ? (panelCollapsed ? EXECUTION_PANEL.collapsed : EXECUTION_PANEL.expanded) : 0;
 
   useEffect(() => {
-    db.getConfig().then(setAppConfig).catch(() => {});
+    db.getConfig().then(setAppConfig).catch(() => {
+      // 配置加载失败时使用默认值，非关键路径不阻塞主流程
+    });
   }, []);
 
   // 全局快捷键
@@ -104,27 +106,15 @@ function AppContent() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // URL → React state 恢复
+  // URL → React state 恢复：根据 URL 中的 view/id 参数同步选中态。
+  // 合并为单个 useEffect，监听 activeView、selectedId、state.loading 和 state.todos。
+  // items 视图需要校验 todo 是否存在（可能已被删除），loops 和其他视图直接同步。
   useEffect(() => {
     if (state.loading) return;
-    if (activeView === 'items' && selectedId != null && state.todos.some(t => t.id === selectedId)) {
-      dispatch({ type: 'SELECT_TODO', payload: selectedId });
-      setSelectedLoopId(null);
-    } else if (activeView === 'loops' && selectedId != null) {
-      setSelectedLoopId(selectedId);
-      dispatch({ type: 'SELECT_TODO', payload: null });
-      clearSelection();
-    } else if (activeView !== 'items' && activeView !== 'loops') {
-      setSelectedLoopId(null);
-      dispatch({ type: 'SELECT_TODO', payload: null });
-    }
-  }, [state.loading, state.todos, dispatch, clearSelection, activeView, selectedId]);
-
-  useEffect(() => {
     if (activeView === 'items' && selectedId != null) {
-      setSelectedLoopId(null);
-      if (!state.loading) {
+      if (state.todos.some(t => t.id === selectedId)) {
         dispatch({ type: 'SELECT_TODO', payload: selectedId });
+        setSelectedLoopId(null);
       }
     } else if (activeView === 'loops' && selectedId != null) {
       setSelectedLoopId(selectedId);
@@ -132,8 +122,11 @@ function AppContent() {
       clearSelection();
     } else {
       setSelectedLoopId(null);
+      if (activeView !== 'items' && activeView !== 'loops') {
+        dispatch({ type: 'SELECT_TODO', payload: null });
+      }
     }
-  }, [activeView, selectedId, dispatch, clearSelection, state.loading]);
+  }, [activeView, selectedId, state.loading, state.todos, dispatch, clearSelection]);
 
   const handleSelectTodo = (todoId: string | number | null) => {
     if (todoId != null) {

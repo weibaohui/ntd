@@ -18,8 +18,11 @@ export { useUI, UIProvider } from './useUIContext';
 // ─── Direct imports (needed within this file) ─────────────────
 
 import { useTodos, useVisibleTodos } from './useTodoContext';
+import type { TodoAction } from './useTodoContext';
 import { useExecution } from './useExecutionContext';
+import type { ExecutionAction } from './useExecutionContext';
 import { useUI } from './useUIContext';
+import type { UIAction } from './useUIContext';
 import { TodoProvider } from './useTodoContext';
 import { ExecutionProvider } from './useExecutionContext';
 import { UIProvider } from './useUIContext';
@@ -108,8 +111,9 @@ export function useApp() {
 
   // Combined dispatch routes actions to the appropriate sub-dispatcher
   // based on the action's `type` discriminator field.
-  const dispatch = useCallback((action: unknown) => {
-    const t = (action as { type: string }).type;
+  // 使用 TodoAction | ExecutionAction | UIAction 联合类型替代 unknown，保留类型安全。
+  const dispatch = useCallback((action: TodoAction | ExecutionAction | UIAction) => {
+    const t = action.type;
     if (
       t === 'SET_TODOS_BY_WORKSPACE' || t === 'SET_TAGS' || t === 'ADD_TODO' ||
       t === 'UPDATE_TODO' || t === 'DELETE_TODO' || t === 'SELECT_TODO' ||
@@ -117,7 +121,7 @@ export function useApp() {
       t === 'ADD_TAG' || t === 'DELETE_TAG' ||
       t === 'UPDATE_TODO_STATUS'
     ) {
-      todoDispatch(action as Parameters<typeof todoDispatch>[0]);
+      todoDispatch(action);
     } else if (
       t === 'SET_EXECUTION_RECORDS' || t === 'ADD_EXECUTION_RECORD' ||
       t === 'UPDATE_EXECUTION_RECORD' || t === 'ADD_RUNNING_TASK' ||
@@ -126,9 +130,9 @@ export function useApp() {
       t === 'SET_ACTIVE_TASK' || t === 'UPDATE_TASK_TODO_PROGRESS' ||
       t === 'UPDATE_TASK_EXECUTION_STATS'
     ) {
-      execDispatch(action as Parameters<typeof execDispatch>[0]);
+      execDispatch(action);
     } else if (t === 'SET_LOADING') {
-      uiDispatch(action as Parameters<typeof uiDispatch>[0]);
+      uiDispatch(action);
     }
   }, [todoDispatch, execDispatch, uiDispatch]);
 

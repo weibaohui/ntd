@@ -36,3 +36,5 @@ export function useUI() {
   if (!ctx) throw new Error('useUI must be used within UIProvider');
   return ctx;
 }
+
+export type { UIAction };

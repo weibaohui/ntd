@@ -104,17 +104,18 @@ function reducer(state: TodoState, action: TodoAction): TodoState {
     case 'SET_TAGS': return { ...state, tags: action.payload };
 
     // 新增：推入对应桶的顶部（最新排最前）。
-    // 如果桶不存在（极少出情况，兜底=创建），直接推入。
+    // 桶不存在时也创建新桶，避免丢失新增数据。
     case 'ADD_TODO': {
       const bucket = state.todosByWorkspace[action.workspaceId];
-      const newTodos = bucket
-        ? { ...state.todosByWorkspace, [action.workspaceId]: [action.payload, ...bucket] }
-        : state.todosByWorkspace;
-      // 桶不存在时也创建，避免丢失新增数据。
-      if (!bucket) {
-        newTodos[action.workspaceId] = [action.payload];
-      }
-      return { ...state, todosByWorkspace: newTodos };
+      return {
+        ...state,
+        todosByWorkspace: {
+          ...state.todosByWorkspace,
+          [action.workspaceId]: bucket
+            ? [action.payload, ...bucket]
+            : [action.payload],
+        },
+      };
     }
 
     // 更新：遍历所有桶，替换同 id 的 todo。
