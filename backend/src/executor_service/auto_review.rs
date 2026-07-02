@@ -20,7 +20,7 @@ use std::sync::{Arc, OnceLock};
 use tokio::sync::broadcast;
 
 use crate::db::Database;
-use crate::handlers::ExecEvent;
+use crate::executor_service::ExecEvent;
 use crate::task_manager::TaskManager;
 
 use super::RunTodoExecutionRequest;

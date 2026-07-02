@@ -15,7 +15,7 @@ use tokio::sync::broadcast;
 
 use crate::adapters::{parse_executor_type, CodeExecutor};
 use crate::db::{Database, NewExecutionRecord};
-use crate::handlers::ExecEvent;
+use crate::executor_service::ExecEvent;
 use crate::models::{ExecutorType, ParsedLogEntry};
 use crate::task_manager::TaskManager;
 

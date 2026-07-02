@@ -4,7 +4,7 @@ use tokio::sync::broadcast;
 use crate::adapters::ExecutorRegistry;
 use crate::config::Config;
 use crate::db::Database;
-use crate::handlers::ExecEvent;
+use crate::executor_service::ExecEvent;
 use crate::task_manager::TaskManager;
 
 /// Shared context passed to services and schedulers.

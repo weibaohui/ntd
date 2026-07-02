@@ -24,7 +24,7 @@ use crate::execution_events::{
     HermesExtractor, KiloExtractor, KimiExtractor, MimoExtractor, MobilecoderExtractor,
     OpencodeExtractor, PiExtractor, ZhanluExtractor,
 };
-use crate::handlers::ExecEvent;
+use crate::executor_service::ExecEvent;
 use crate::log_flusher::LogFlusher;
 use crate::models::{ExecutorType, ParsedLogEntry};
 

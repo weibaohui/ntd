@@ -15,6 +15,7 @@
 
 pub(crate) mod auto_review;
 pub(crate) mod completion;
+pub mod events;
 pub(crate) mod log_capture;
 pub(crate) mod pre_spawn;
 pub(crate) mod spawn_lifecycle;
@@ -22,12 +23,13 @@ pub(crate) mod stages;
 pub(crate) mod types;
 pub(crate) mod worktree;
 
+pub use events::ExecEvent;
+
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::adapters::ExecutorRegistry;
 use crate::db::Database;
-use crate::handlers::ExecEvent;
 use crate::task_manager::TaskManager;
 
 /// 执行结束返回给调用方的最小契约。
