@@ -267,6 +267,7 @@ async fn execute_silent_upgrade() -> Result<(), String> {
     }
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
         let quoted = crate::daemon::common::shell_quote_single(&ntd_cmd);
         std::process::Command::new("cmd")
             .args(["/C", &format!(
