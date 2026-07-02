@@ -41,6 +41,7 @@ thiserror = "2"
 log = "0.4"
 dashmap = "6"
 which = "7"
+semver = "1"
 rusqlite = { version = "0.30", features = ["bundled"] }
 # MIME 类型推断库：根据文件扩展名返回标准 MIME，避免手写 if-else 漏覆盖、大小写敏感等问题。
 # 选用 2.x，与既有 `mime` 生态（http::HeaderValue）兼容。
