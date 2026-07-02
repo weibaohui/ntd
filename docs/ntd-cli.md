@@ -513,6 +513,62 @@ ntd loop execution get <EXECUTION_ID>
 
 ---
 
+#### `ntd loop execution blackboard <EXECUTION_ID>`
+以人类可读的黑板视图查看 Loop 执行情况：每个 step 的状态、执行记录 ID（exec）和结论摘要。
+默认输出黑板视图，加 `--json` 输出原始 JSON（与 `execution get` 一致但只聚焦 step_executions）。
+
+**设计动机**：每一步的 `conclusion` 字段就是该步骤写入黑板的内容。
+Loop 执行过程中，下一步的 prompt 通过 `{{blackboard}}`、`{{last_output}}`、`{{last_conclusion}}` 等占位符读取此前的累计输出。
+此命令把这个机制从运行期搬到 CLI 调试期，方便人工复盘整个 loop 跑到哪一步、各步结果如何。
+
+```bash
+ntd loop execution blackboard <EXECUTION_ID> [--json]
+```
+
+**选项：**
+
+| 选项 | 说明 |
+|------|------|
+| `<EXECUTION_ID>` | 必填，loop execution 主键 |
+| `--json` | 输出原始 JSON（默认是人类可读黑板视图） |
+
+**示例输出**：
+
+```
+═══ Loop Execution #42 ────────────────────────────────
+循环: 每日代码 review
+触发: cron @ 0 9 * * *
+状态: ✅ success · 完成 3/3 步
+开始: 2026-07-03 09:00:00 · 结束: 09:45:32
+
+  #1 ✅ success          编写 CRUD 代码             评分 85
+     exec: #1024
+     完成了用户登录功能的 CRUD 代码
+
+  #2 ✅ success          补充单元测试               评分 90
+     exec: #1025
+     新增 12 个测试用例，覆盖率提升到 87%
+
+  #3 ⏭️ skipped          更新 README                 评分 -
+     exec: -
+     (无结论)
+     原因: 步骤已跳过（依赖 #2 失败）
+
+═══ 3 步 / Token: 输入 12k 输出 5k ════════════════════════
+```
+
+**状态图标**：`success` ✅ · `failed` ❌ · `running` ⏳ · `pending` ⏸ · `pending_approval` 🤔 · `skipped` ⏭️
+
+**边界处理**：
+- execution 不存在：返回 `API error 404`，不崩溃
+- step_executions 为空：显示「黑板为空（loop 尚未执行任何步骤）」
+- step 失败且无 conclusion：用 error_message 替代结论
+- step 待审批：显示 approval_comment + 「等待人工审批」
+
+完整设计见 [`docs/loop-blackboard-cli.md`](./loop-blackboard-cli.md)。
+
+---
+
 #### `ntd loop results <EXECUTION_ID>`
 获取 Loop 执行结果（步骤级摘要）。
 

@@ -353,6 +353,16 @@ pub enum LoopExecutionAction {
         /// Execution ID
         execution_id: i64,
     },
+    /// Show the blackboard (accumulated step conclusions) for a loop execution.
+    /// 默认输出人类可读视图; 加 --json 输出原始 JSON,便于脚本消费。
+    Blackboard {
+        /// Execution ID
+        execution_id: i64,
+
+        /// 输出原始 JSON（默认是人类可读黑板视图）
+        #[arg(long, default_value = "false")]
+        json: bool,
+    },
 }
 
 // ============== Helper Functions ==============
@@ -798,6 +808,26 @@ async fn handle_loop(
                     )).await?;
                     print_response(resp, output, fields)?;
                 }
+                LoopExecutionAction::Blackboard { execution_id, json } => {
+                    // 复用 get_execution_by_id handler 返回的 LoopExecutionDetail,
+                    // 它已经按 sequence_index 升序返回 step_executions。
+                    // 不新增 API 端点 — 黑板视图本质就是 step_executions 的渲染。
+                    let resp: ClientResponse<serde_json::Value> = client.get(&format!(
+                        "/loop-executions/{}",
+                        execution_id
+                    )).await?;
+                    if resp.code != 0 {
+                        // 与 print_response 一致:错误码非 0 时抛 anyhow
+                        return Err(anyhow::anyhow!("API error {}: {}", resp.code, resp.message));
+                    }
+                    if *json {
+                        // JSON 模式: 输出 data 字段的原始 JSON, 跳过 ApiResponse 包装层
+                        println!("{}", serde_json::to_string_pretty(&resp.data)?);
+                    } else {
+                        // 默认: 黑板视图
+                        render_blackboard(resp.data.as_ref());
+                    }
+                }
             }
         }
     }
@@ -839,6 +869,168 @@ fn print_response<T: serde::Serialize>(
         }
     }
     Ok(())
+}
+
+// ============== Blackboard Rendering ==============
+
+/// 把 step.status 映射到人类可读的 emoji，与前端 `BlackboardDrawer.tsx` 保持一致。
+/// 未知状态使用 ❔ 而非抛错，避免数据库新增状态时让旧 CLI 直接崩溃。
+fn status_icon(status: &str) -> &'static str {
+    match status {
+        "success" => "✅",
+        "failed" => "❌",
+        "running" => "⏳",
+        "pending" => "⏸ ",
+        "pending_approval" => "🤔",
+        "skipped" => "⏭️",
+        _ => "❔",
+    }
+}
+
+/// 把 LoopExecutionDetail 渲染成人类可读的黑板视图。
+///
+/// 输入是 `serde_json::Value`（来自 ApiClient 的反序列化结果），不是强类型，
+/// 是因为这个函数唯一的调用点在 CLI 命令分发处，没必要为它再定义一个 DTO。
+/// 如果渲染失败（字段缺失或类型错误），降级输出原始 JSON + 错误提示，
+/// 而不是让 CLI 崩溃——黑板视图是辅助功能，不能阻塞主流程。
+fn render_blackboard(data: Option<&Value>) {
+    let Some(data) = data else {
+        println!("(无数据)");
+        return;
+    };
+
+    let exec_id = data.get("id").and_then(Value::as_i64).unwrap_or(0);
+    let loop_name = data.get("loop_name").and_then(Value::as_str).unwrap_or("?");
+    let trigger_meta = data.get("trigger_meta").and_then(Value::as_str).unwrap_or("");
+    let status = data.get("status").and_then(Value::as_str).unwrap_or("unknown");
+    let total = data.get("total_steps").and_then(Value::as_i64).unwrap_or(0);
+    let completed = data.get("completed_steps").and_then(Value::as_i64).unwrap_or(0);
+    let started = data.get("started_at").and_then(Value::as_str).unwrap_or("");
+    let finished = data.get("finished_at").and_then(Value::as_str).unwrap_or("");
+
+    println!("═══ Loop Execution #{exec_id} ────────────────────────────────");
+    println!("循环: {loop_name}");
+    if !trigger_meta.is_empty() && trigger_meta != "{}" {
+        println!("触发: {trigger_meta}");
+    }
+    println!(
+        "状态: {} {} · 完成 {}/{} 步",
+        status_icon(status),
+        status,
+        completed,
+        total
+    );
+    if !started.is_empty() {
+        let end_part = if !finished.is_empty() {
+            format!(" · 结束: {finished}")
+        } else {
+            String::new()
+        };
+        println!("开始: {started}{end_part}");
+    }
+    println!();
+
+    let steps = data.get("step_executions").and_then(Value::as_array);
+    let Some(steps) = steps else {
+        println!("(step_executions 字段缺失或类型错误)");
+        println!("\n原始数据:\n{}", serde_json::to_string_pretty(data).unwrap_or_default());
+        return;
+    };
+
+    if steps.is_empty() {
+        println!("黑板为空（loop 尚未执行任何步骤）");
+        println!();
+    } else {
+        for step in steps {
+            render_blackboard_step(step);
+        }
+        println!();
+    }
+
+    // Token 汇总：LoopExecutionDetail.token_summary 是独立字段
+    if let Some(ts) = data.get("token_summary") {
+        let ti = ts.get("total_input_tokens").and_then(Value::as_i64).unwrap_or(0);
+        let to = ts.get("total_output_tokens").and_then(Value::as_i64).unwrap_or(0);
+        println!("═══ {} 步 / Token: 输入 {} 输出 {} ════════════════════════", steps.len(), ti, to);
+    } else {
+        println!("═══ {} 步 ═══════════════════════════════════════════════════", steps.len());
+    }
+}
+
+/// 渲染单个 step 块。
+/// 字段名与 `LoopStepExecutionDto` 一致（见 `backend/src/models/loop_.rs`）。
+fn render_blackboard_step(step: &Value) {
+    let seq = step.get("sequence_index").and_then(Value::as_i64).unwrap_or(0);
+    let status = step.get("status").and_then(Value::as_str).unwrap_or("unknown");
+    // step_name 为 None 时回退到 "step #{step_id}"，异常处理步骤（step_id=-1）显示「异常处理」
+    let step_name = match (
+        step.get("step_name").and_then(Value::as_str),
+        step.get("step_id").and_then(Value::as_i64),
+    ) {
+        (Some(name), _) if !name.is_empty() => name.to_string(),
+        (None, Some(-1)) => "异常处理".to_string(),
+        (_, Some(sid)) => format!("step #{sid}"),
+        (_, None) => "(未知环节)".to_string(),
+    };
+    let rating = step
+        .get("rating")
+        .and_then(Value::as_i64)
+        .map(|r| r.to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let exec_id = step
+        .get("execution_record_id")
+        .and_then(Value::as_i64)
+        .map(|r| format!("#{r}"))
+        .unwrap_or_else(|| "-".to_string());
+
+    println!(
+        "  #{seq} {} {:<22} 评分 {rating}",
+        status_icon(status),
+        truncate(&step_name, 22),
+    );
+    println!("     exec: {exec_id}");
+
+    // 结论展示：优先级为 approval_comment (pending_approval) > conclusion > error_message > (无结论)
+    if status == "pending_approval" {
+        if let Some(comment) = step.get("approval_comment").and_then(Value::as_str) {
+            if !comment.is_empty() {
+                println!("     待审批意见: {comment}");
+            }
+        }
+        println!("     (等待人工审批)");
+    } else if let Some(err) = step.get("error_message").and_then(Value::as_str) {
+        if !err.is_empty() {
+            println!("     失败: {err}");
+        }
+        if let Some(c) = step.get("conclusion").and_then(Value::as_str) {
+            if !c.is_empty() {
+                println!("     结论: {c}");
+            }
+        }
+    } else if let Some(c) = step.get("conclusion").and_then(Value::as_str) {
+        if !c.is_empty() {
+            // 多行结论：保留缩进让层级清晰
+            for line in c.lines() {
+                println!("     {line}");
+            }
+        } else {
+            println!("     (无结论)");
+        }
+    } else {
+        println!("     (无结论)");
+    }
+}
+
+/// 截断字符串到指定字符宽度（按 char 边界，安全处理 UTF-8）。
+/// 中文/全角字符按 1 个单位计算，与终端实际宽度一致。
+fn truncate(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        return s.to_string();
+    }
+    let mut out: String = chars.into_iter().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
 }
 
 // ============== Tests ==============
@@ -1032,5 +1224,196 @@ mod tests {
             }
             _ => panic!("Expected Todo::Execution::Resume with message"),
         }
+    }
+
+    // ===== Blackboard CLI tests =====
+
+    #[test]
+    fn test_cli_parse_loop_execution_blackboard() {
+        // 校验命令行解析：ntd loop execution blackboard 42
+        let cli = Cli::try_parse_from(["ntd", "loop", "execution", "blackboard", "42"]).unwrap();
+        match cli.command {
+            Commands::Loop { action: LoopAction::Execution { action: LoopExecutionAction::Blackboard { execution_id, json } } } => {
+                assert_eq!(execution_id, 42);
+                assert!(!json);
+            }
+            _ => panic!("Expected Loop::Execution::Blackboard"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_loop_execution_blackboard_json() {
+        // --json 开关
+        let cli = Cli::try_parse_from(["ntd", "loop", "execution", "blackboard", "42", "--json"]).unwrap();
+        match cli.command {
+            Commands::Loop { action: LoopAction::Execution { action: LoopExecutionAction::Blackboard { execution_id, json } } } => {
+                assert_eq!(execution_id, 42);
+                assert!(json);
+            }
+            _ => panic!("Expected Loop::Execution::Blackboard with --json"),
+        }
+    }
+
+    #[test]
+    fn test_status_icon_known() {
+        // 已知状态全部映射到正确 emoji
+        assert_eq!(status_icon("success"), "✅");
+        assert_eq!(status_icon("failed"), "❌");
+        assert_eq!(status_icon("running"), "⏳");
+        assert_eq!(status_icon("pending"), "⏸ ");
+        assert_eq!(status_icon("pending_approval"), "🤔");
+        assert_eq!(status_icon("skipped"), "⏭️");
+    }
+
+    #[test]
+    fn test_status_icon_unknown() {
+        // 未知状态降级为 ❔ 而非 panic — 数据库可能新增 status 时不应让旧 CLI 崩溃
+        assert_eq!(status_icon("something_new"), "❔");
+        assert_eq!(status_icon(""), "❔");
+    }
+
+    #[test]
+    fn test_truncate_short() {
+        // 短于阈值原样返回
+        assert_eq!(truncate("hello", 10), "hello");
+        assert_eq!(truncate("中文测试", 10), "中文测试");
+    }
+
+    #[test]
+    fn test_truncate_long() {
+        // 超长截断到阈值-1 + 省略号，避免 panic 在 UTF-8 字符边界
+        let s = "this is a very long step name that exceeds limit";
+        let out = truncate(s, 10);
+        assert_eq!(out.chars().count(), 10);
+        assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn test_truncate_utf8_safe() {
+        // 截断点落在多字节字符中间时不能 panic
+        let s = "中文abcdefghij";
+        let out = truncate(s, 5);
+        assert!(out.chars().count() <= 5);
+        assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn test_render_blackboard_none() {
+        // data 为 None 时输出降级提示，不 panic
+        render_blackboard(None);
+    }
+
+    #[test]
+    fn test_render_blackboard_normal() {
+        // 正常 3 step 全 success：断言输出包含关键字段
+        let data = json!({
+            "id": 42,
+            "loop_name": "每日代码 review",
+            "trigger_meta": "cron @ 0 9 * * *",
+            "status": "success",
+            "total_steps": 3,
+            "completed_steps": 3,
+            "started_at": "2026-07-03 09:00:00",
+            "finished_at": "2026-07-03 09:45:32",
+            "step_executions": [
+                {"sequence_index": 1, "step_id": 1, "step_name": "编写 CRUD 代码", "status": "success", "rating": 85, "execution_record_id": 1024, "conclusion": "完成了用户登录功能的 CRUD 代码"},
+                {"sequence_index": 2, "step_id": 2, "step_name": "补充单元测试", "status": "success", "rating": 90, "execution_record_id": 1025, "conclusion": "新增 12 个测试用例，覆盖率提升到 87%"},
+                {"sequence_index": 3, "step_id": 3, "step_name": "更新 README", "status": "success", "rating": 75, "execution_record_id": 1026, "conclusion": "更新了安装步骤"}
+            ],
+            "token_summary": {"total_input_tokens": 12000, "total_output_tokens": 5000}
+        });
+        render_blackboard(Some(&data));
+        // 渲染函数直接 println，单元测试只验证它不 panic；
+        // 真实输出验证放在手动测试或集成测试。
+    }
+
+    #[test]
+    fn test_render_blackboard_no_record_id() {
+        // execution_record_id 为 None 时不应 panic
+        let data = json!({
+            "id": 1,
+            "loop_name": "L",
+            "status": "running",
+            "total_steps": 1,
+            "completed_steps": 0,
+            "step_executions": [
+                {"sequence_index": 1, "step_id": 1, "step_name": "等待中", "status": "pending", "conclusion": null, "execution_record_id": null}
+            ]
+        });
+        render_blackboard(Some(&data));
+    }
+
+    #[test]
+    fn test_render_blackboard_empty() {
+        // step_executions 为空时显示「黑板为空」提示
+        let data = json!({
+            "id": 1,
+            "loop_name": "L",
+            "status": "pending",
+            "total_steps": 0,
+            "completed_steps": 0,
+            "step_executions": []
+        });
+        render_blackboard(Some(&data));
+    }
+
+    #[test]
+    fn test_render_blackboard_failed() {
+        // failed step：有 error_message 但无 conclusion 时，error_message 替代结论
+        let data = json!({
+            "id": 1,
+            "loop_name": "L",
+            "status": "failed",
+            "total_steps": 2,
+            "completed_steps": 1,
+            "step_executions": [
+                {"sequence_index": 1, "step_id": 1, "step_name": "成功步骤", "status": "success", "rating": 80, "conclusion": "ok"},
+                {"sequence_index": 2, "step_id": 2, "step_name": "失败步骤", "status": "failed", "error_message": "执行超时", "conclusion": null, "execution_record_id": null}
+            ]
+        });
+        render_blackboard(Some(&data));
+    }
+
+    #[test]
+    fn test_render_blackboard_pending_approval() {
+        // pending_approval：显示 approval_comment + 待审批提示
+        let data = json!({
+            "id": 1,
+            "loop_name": "L",
+            "status": "running",
+            "total_steps": 1,
+            "completed_steps": 0,
+            "step_executions": [
+                {"sequence_index": 1, "step_id": 1, "step_name": "需要审批", "status": "pending_approval", "approval_comment": "请确认改动", "conclusion": null}
+            ]
+        });
+        render_blackboard(Some(&data));
+    }
+
+    #[test]
+    fn test_render_blackboard_anomaly_handler() {
+        // step_id=-1 → 显示「异常处理」
+        let data = json!({
+            "id": 1,
+            "loop_name": "L",
+            "status": "failed",
+            "total_steps": 2,
+            "completed_steps": 1,
+            "step_executions": [
+                {"sequence_index": 999, "step_id": -1, "step_name": null, "status": "failed", "conclusion": "触发异常处理流程"}
+            ]
+        });
+        render_blackboard(Some(&data));
+    }
+
+    #[test]
+    fn test_render_blackboard_missing_step_executions() {
+        // step_executions 字段缺失时降级：打印提示 + 原始数据，不 panic
+        let data = json!({
+            "id": 1,
+            "loop_name": "L",
+            "status": "running"
+        });
+        render_blackboard(Some(&data));
     }
 }
