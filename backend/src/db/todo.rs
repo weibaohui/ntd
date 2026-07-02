@@ -24,6 +24,12 @@ pub struct TodoUpdate<'a> {
     pub webhook_enabled: Option<bool>,
     pub acceptance_criteria: Option<&'a str>,
     pub auto_review_enabled: Option<bool>,
+    /// Action 类型标记（如 "title_optimize"、"prompt_optimize"）。
+    /// 与 action_key 配合，由 /api/actions/execute 用于查找或自动创建 action 模板 todo。
+    pub action_type: Option<&'a str>,
+    /// Action 键值，与 action_type 配合唯一标识一个 action 模板 todo。
+    /// 由 /api/actions/execute 用于查找或自动创建 action 模板 todo。
+    pub action_key: Option<&'a str>,
 }
 
 pub struct SchedulerUpdate<'a> {
@@ -75,6 +81,8 @@ impl Database {
             parent_todo_id: m.parent_todo_id,
             review_template_id: m.review_template_id,
             auto_review_enabled: m.auto_review_enabled.unwrap_or(false),
+            action_type: m.action_type,
+            action_key: m.action_key,
         }
     }
 
@@ -138,6 +146,26 @@ impl Database {
                 Self::model_to_todo(m, tag_ids)
             })
             .collect())
+    }
+
+    /// 按 action_type + action_key 查找 todo。
+    /// 用于 ActionButton 组件的 action 模板查找。
+    pub async fn get_todo_by_action_type_and_key(
+        &self,
+        action_type: &str,
+        action_key: &str,
+    ) -> Result<Option<Todo>, sea_orm::DbErr> {
+        let model = todos::Entity::find()
+            .filter(todos::Column::ActionType.eq(action_type))
+            .filter(todos::Column::ActionKey.eq(action_key))
+            .filter(todos::Column::DeletedAt.is_null())
+            .one(&self.conn)
+            .await?;
+
+        Ok(model.map(|m| {
+            let tag_ids = vec![]; // action template 不需要 tags
+            Self::model_to_todo(m, tag_ids)
+        }))
     }
 
     pub async fn create_todo(&self, title: &str, prompt: &str) -> Result<i64, sea_orm::DbErr> {
@@ -273,6 +301,12 @@ impl Database {
         }
         if let Some(enabled) = update.auto_review_enabled {
             am.auto_review_enabled = ActiveValue::Set(Some(enabled));
+        }
+        if let Some(at) = update.action_type {
+            am.action_type = ActiveValue::Set(Some(at.to_string()));
+        }
+        if let Some(ak) = update.action_key {
+            am.action_key = ActiveValue::Set(Some(ak.to_string()));
         }
         self.exec_update(am).await
     }
@@ -831,6 +865,8 @@ impl Database {
                     tag_names,
                     workspace_path: m.workspace_path.clone(),
                     worktree: None,
+                    action_type: m.action_type,
+                    action_key: m.action_key,
                 }
             })
             .collect::<Vec<_>>())
@@ -882,6 +918,8 @@ impl Database {
                     tag_names,
                     workspace_path: m.workspace_path.clone(),
                     worktree: None,
+                    action_type: m.action_type,
+                    action_key: m.action_key,
                 }
             })
             .collect())
@@ -949,6 +987,8 @@ impl Database {
                 workspace_path: ActiveValue::Set(workspace_path),
                 created_at: ActiveValue::Set(Some(now.clone())),
                 updated_at: ActiveValue::Set(Some(now)),
+                action_type: ActiveValue::Set(todo.action_type.clone()),
+                action_key: ActiveValue::Set(todo.action_key.clone()),
                 ..Default::default()
             };
             let inserted = am.insert(&txn).await?;
@@ -1037,6 +1077,8 @@ impl Database {
                 am.scheduler_config = ActiveValue::Set(todo.scheduler_config.clone());
                 am.workspace_path = ActiveValue::Set(todo.workspace_path.clone());
                 am.updated_at = ActiveValue::Set(Some(crate::models::utc_timestamp()));
+                am.action_type = ActiveValue::Set(todo.action_type.clone());
+                am.action_key = ActiveValue::Set(todo.action_key.clone());
                 let saved = am.update(&txn).await?;
 
                 // 重建 tag 关联
@@ -1078,6 +1120,8 @@ impl Database {
                     workspace_path: ActiveValue::Set(workspace_path),
                     created_at: ActiveValue::Set(Some(now.clone())),
                     updated_at: ActiveValue::Set(Some(now)),
+                    action_type: ActiveValue::Set(todo.action_type.clone()),
+                    action_key: ActiveValue::Set(todo.action_key.clone()),
                     ..Default::default()
                 };
                 let inserted = am.insert(&txn).await?;

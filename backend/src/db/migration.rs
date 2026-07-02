@@ -48,6 +48,8 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(V42ConsolidatedWorkspaceRefactor), // V30~V35
         Box::new(V43ConsolidatedFinalFeatures),     // V36~V40
         Box::new(V44AddFeishuMessagesProcessedId),  // 补加 processed_id / processed_type
+        Box::new(V45AddTodosActionType),            // 补加 todos.action_type 列
+        Box::new(V46AddTodosActionKey),             // 补加 todos.action_key 列
     ]
 }
 
@@ -3014,6 +3016,56 @@ impl Migration for V44AddFeishuMessagesProcessedId {
         add_column_if_missing(db, "feishu_messages", "processed_type",
             "ALTER TABLE feishu_messages ADD COLUMN processed_type TEXT").await?;
         tracing::info!("V44: feishu_messages.processed_id/processed_type columns added");
+        Ok(())
+    }
+}
+
+/// V45: 补加 todos.action_type 列。
+///
+/// action_type 用于标记 todo 的用途分类（如 "rewrite_title"、"optimize_prompt"），
+/// 供前端 ActionButton 组件做 UI 展示和筛选，不影响执行逻辑。
+pub(super) struct V45AddTodosActionType;
+
+#[async_trait::async_trait]
+impl Migration for V45AddTodosActionType {
+    fn version(&self) -> i64 { 45 }
+    fn name(&self) -> &'static str { "add_todos_action_type" }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        add_column_if_missing(db, "todos", "action_type",
+            "ALTER TABLE todos ADD COLUMN action_type TEXT").await?;
+        tracing::info!("V45: todos.action_type column added");
+        Ok(())
+    }
+}
+
+/// V46: 补加 todos.action_key 列，并为 (action_type, action_key) 创建唯一索引。
+///
+/// action_key 与 action_type 配合，唯一标识一个 action 模板 todo。
+/// 前端传 action_type + action_key，后端查找或自动创建对应的 todo。
+/// 唯一索引防止并发请求重复创建模板 todo。
+pub(super) struct V46AddTodosActionKey;
+
+#[async_trait::async_trait]
+impl Migration for V46AddTodosActionKey {
+    fn version(&self) -> i64 { 46 }
+    fn name(&self) -> &'static str { "add_todos_action_key" }
+
+    async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        add_column_if_missing(db, "todos", "action_key",
+            "ALTER TABLE todos ADD COLUMN action_key TEXT").await?;
+
+        // 创建唯一索引：(action_type, action_key) 组合唯一
+        // 忽略错误：索引已存在时会报错，属于正常情况
+        let _ = db
+            .conn
+            .execute(Statement::from_string(
+                sea_orm::DatabaseBackend::Sqlite,
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_action_type_key ON todos (action_type, action_key) WHERE action_type IS NOT NULL AND action_key IS NOT NULL".to_string(),
+            ))
+            .await;
+
+        tracing::info!("V46: todos.action_key column added with unique index");
         Ok(())
     }
 }

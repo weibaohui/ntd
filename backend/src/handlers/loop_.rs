@@ -1707,6 +1707,8 @@ async fn build_loop_export_yaml(
                         tag_ids,
                         tag_names,
                         is_abnormal_handler: false,
+                        action_type: todo.action_type.clone(),
+                        action_key: todo.action_key.clone(),
                     });
                 }
             }
@@ -1735,6 +1737,8 @@ async fn build_loop_export_yaml(
                         tag_ids: vec![],
                         tag_names: vec![],
                         is_abnormal_handler: true,
+                        action_type: todo.action_type.clone(),
+                        action_key: todo.action_key.clone(),
                     });
                 }
             }

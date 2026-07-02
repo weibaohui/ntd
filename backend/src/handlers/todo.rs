@@ -108,6 +108,28 @@ pub async fn create_todo(
         }
     }
 
+    // 落库 action_type/action_key（create_todo_with_extras 不支持这两个字段）
+    if req.action_type.is_some() || req.action_key.is_some() {
+        if let Err(e) = state.db.update_todo_full(crate::db::TodoUpdate {
+            id,
+            title,
+            prompt: &prompt,
+            status: crate::models::TodoStatus::Pending,
+            executor: None,
+            scheduler_enabled: None,
+            scheduler_config: None,
+            scheduler_timezone: None,
+            workspace_id: None,
+            webhook_enabled: None,
+            acceptance_criteria: None,
+            auto_review_enabled: None,
+            action_type: req.action_type.as_deref(),
+            action_key: req.action_key.as_deref(),
+        }).await {
+            tracing::warn!("Failed to set action_type/action_key for todo {}: {}", id, e);
+        }
+    }
+
     for tag_id in &req.tag_ids {
         state.db.add_todo_tag(id, *tag_id).await?;
     }
@@ -180,6 +202,8 @@ pub async fn create_todo(
         parent_todo_id: None,
         review_template_id: None,
         auto_review_enabled: req.auto_review_enabled.unwrap_or(false),
+        action_type: req.action_type.clone(),
+        action_key: req.action_key.clone(),
     }))
 }
 
@@ -256,6 +280,8 @@ pub async fn update_todo(
             webhook_enabled: req.webhook_enabled,
             acceptance_criteria: req.acceptance_criteria.as_deref(),
             auto_review_enabled: req.auto_review_enabled,
+            action_type: req.action_type.as_deref(),
+            action_key: req.action_key.as_deref(),
         })
         .await
         .map_err(AppError::from)?;

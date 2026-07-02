@@ -816,6 +816,8 @@ mod tests {
             webhook_enabled: None,
             acceptance_criteria: None,
             auto_review_enabled: None,
+            action_type: None,
+            action_key: None,
         })
         .await
         .unwrap();
@@ -981,6 +983,8 @@ mod tests {
             webhook_enabled: None,
             acceptance_criteria: None,
             auto_review_enabled: None,
+            action_type: None,
+            action_key: None,
         })
         .await
         .unwrap();

@@ -133,6 +133,14 @@ pub struct Todo {
     /// 是否在执行完成后自动派生一个评审 todo. 只对 normal 类型有意义.
     #[serde(default = "default_true")]
     pub auto_review_enabled: bool,
+    /// Action 类型标记（如 "title_optimize"、"prompt_optimize"）。
+    /// 与 action_key 配合，由 /api/actions/execute 用于查找或自动创建 action 模板 todo。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_type: Option<String>,
+    /// Action 键值，与 action_type 配合唯一标识一个 action 模板 todo。
+    /// 由 /api/actions/execute 用于查找或自动创建 action 模板 todo。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -358,6 +366,13 @@ pub struct CreateTodoRequest {
     /// 工作空间 ID（project_directories.id），唯一键。
     /// 创建时必填；handler 据此查 path 写入 DB cwd 字段。
     pub workspace_id: i64,
+    /// Action 类型标记（如 "rewrite_title"、"optimize_prompt"），
+    /// 仅供前端 ActionButton 组件做 UI 分类展示，不影响执行逻辑。
+    #[serde(default)]
+    pub action_type: Option<String>,
+    /// Action 键值，与 action_type 配合唯一标识一个 action 模板 todo。
+    #[serde(default)]
+    pub action_key: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -388,6 +403,13 @@ pub struct UpdateTodoRequest {
     /// None=不变, Some(true)/Some(false)=更新. 不允许改 reviewer template 的开关.
     #[serde(default)]
     pub auto_review_enabled: Option<bool>,
+    /// Action 类型标记（如 "rewrite_title"、"optimize_prompt"），
+    /// 仅供前端 ActionButton 组件做 UI 分类展示，不影响执行逻辑。
+    #[serde(default)]
+    pub action_type: Option<String>,
+    /// Action 键值，与 action_type 配合唯一标识一个 action 模板 todo。
+    #[serde(default)]
+    pub action_key: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1032,6 +1054,8 @@ pub struct TodoBackup {
     pub tag_names: Vec<String>,
     pub workspace_path: Option<String>,
     pub worktree: Option<String>,
+    pub action_type: Option<String>,
+    pub action_key: Option<String>,
 }
 
 // ============ 环路导入导出 DTO ============
@@ -1089,6 +1113,13 @@ pub struct TodoExportItem {
     /// 是否为异常处理 Todo（异常处理 Todo 不导出标签）
     #[serde(default)]
     pub is_abnormal_handler: bool,
+    /// Action 类型标记（如 "rewrite_title"、"optimize_prompt"），
+    /// 仅供前端 ActionButton 组件做 UI 分类展示，不影响执行逻辑。
+    #[serde(default)]
+    pub action_type: Option<String>,
+    /// Action 键值，与 action_type 配合唯一标识一个 action 模板 todo。
+    #[serde(default)]
+    pub action_key: Option<String>,
 }
 
 /// 环路导出项（伪ID格式）

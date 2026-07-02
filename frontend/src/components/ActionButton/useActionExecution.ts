@@ -1,0 +1,141 @@
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { getExecutionRecord } from '@/utils/database';
+import { useExecution } from '@/hooks/useExecutionContext';
+import type { ActionStatus } from './types';
+import { api, unwrap } from '@/utils/database/client';
+
+interface UseActionExecutionReturn {
+  status: ActionStatus;
+  result: string | null;
+  error: string | null;
+  recordId: number | null;
+  execute: (prompt: string, executor?: string) => Promise<void>;
+  retry: (prompt: string, executor?: string) => Promise<void>;
+  reset: () => void;
+}
+
+interface ExecuteActionResult {
+  task_id: string;
+  record_id: number;
+  todo_id: number;
+  todo_created: boolean;
+}
+
+/**
+ * 调用后端 POST /api/actions/execute 接口。
+ */
+async function callActionExecute(
+  actionType: string,
+  actionKey: string,
+  prompt: string,
+  params: Record<string, string>,
+  workspaceId?: number,
+  executor?: string,
+): Promise<ExecuteActionResult> {
+  return unwrap(
+    await api.post('/api/actions/execute', {
+      action_type: actionType,
+      action_key: actionKey,
+      prompt,
+      params,
+      workspace_id: workspaceId,
+      executor,
+    })
+  );
+}
+
+/**
+ * 管理 ActionButton 的执行状态。
+ *
+ * 流程：
+ * 1. execute() → 调用 POST /api/actions/execute
+ * 2. 通过 useExecutionContext 的 WebSocket 事件监听执行完成
+ * 3. 收到 FINISH_TASK 事件后，查询 execution_record 获取 result
+ */
+export function useActionExecution(
+  actionType: string,
+  actionKey: string,
+  _defaultPrompt: string,
+  params: Record<string, string>,
+  workspaceId?: number,
+  _defaultExecutor?: string,
+): UseActionExecutionReturn {
+  const [status, setStatus] = useState<ActionStatus>('idle');
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [recordId, setRecordId] = useState<number | null>(null);
+  const taskIdRef = useRef<string | null>(null);
+  const { state } = useExecution();
+
+  // 监听 WebSocket 的 FINISH_TASK 事件
+  useEffect(() => {
+    if (status !== 'executing' || !taskIdRef.current) return;
+
+    const task = state.runningTasks[taskIdRef.current];
+    if (task?.status === 'finished') {
+      if (task.success && task.result) {
+        setResult(task.result);
+        setStatus('completed');
+      } else if (!task.success) {
+        setError(task.result || '执行失败');
+        setStatus('failed');
+      } else {
+        fetchResultFromRecord();
+      }
+    }
+  }, [state.runningTasks, status]);
+
+  // 从 execution_record 查询结果（WebSocket 事件没有 result 时的 fallback）
+  const fetchResultFromRecord = useCallback(async () => {
+    if (!recordId) return;
+    try {
+      const record = await getExecutionRecord(recordId);
+      if (record.result) {
+        setResult(record.result);
+        setStatus('completed');
+      } else if (record.status === 'failed') {
+        setError(record.stderr || '执行失败');
+        setStatus('failed');
+      }
+    } catch (err: any) {
+      setError(err?.message || '查询执行结果失败');
+      setStatus('failed');
+    }
+  }, [recordId]);
+
+  const execute = useCallback(async (prompt: string, executor?: string) => {
+    setStatus('executing');
+    setResult(null);
+    setError(null);
+
+    try {
+      const res = await callActionExecute(
+        actionType,
+        actionKey,
+        prompt,
+        params,
+        workspaceId,
+        executor,
+      );
+      setRecordId(res.record_id);
+      taskIdRef.current = res.task_id;
+    } catch (err: any) {
+      setError(err?.message || '启动执行失败');
+      setStatus('failed');
+    }
+  }, [actionType, actionKey, params, workspaceId]);
+
+  const retry = useCallback(async (prompt: string, executor?: string) => {
+    await execute(prompt, executor);
+  }, [execute]);
+
+  const reset = useCallback(() => {
+    setStatus('idle');
+    setResult(null);
+    setError(null);
+    setRecordId(null);
+    taskIdRef.current = null;
+  }, []);
+
+  return { status, result, error, recordId, execute, retry, reset };
+}

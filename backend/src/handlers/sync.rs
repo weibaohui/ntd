@@ -332,6 +332,8 @@ async fn merge_cloud_todos_to_local(
                         webhook_enabled: None,
                         acceptance_criteria: None,
                         auto_review_enabled: None,
+                        action_type: None,
+                        action_key: None,
                     })
                     .await
                     .map_err(|e| e.to_string())?;

@@ -461,6 +461,8 @@ async fn handle_todo(
                         workspace_id: value.get("workspace_id").and_then(|v| v.as_i64())
                             .or(*workspace_id)
                             .unwrap_or(0),
+                        action_type: None,
+                        action_key: None,
                     });
                     req
             } else {
@@ -484,6 +486,8 @@ async fn handle_todo(
                     auto_review_enabled: None,
                     // 非 stdin 模式下 workspace_id 必填：CLI 唯一标识符是 id 而非 path
                     workspace_id: workspace_id.ok_or_else(|| anyhow::anyhow!("--workspace-id is required"))?,
+                    action_type: None,
+                    action_key: None,
                 }
             };
 

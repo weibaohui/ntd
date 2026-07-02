@@ -382,6 +382,7 @@ pub mod usage_stats;
 pub mod sync;
 pub mod sub_states; // 由 #604 引入，当前无内容占位
 pub mod loop_;
+pub mod action;
 
 // WebSocket handler
 pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
@@ -1312,6 +1313,7 @@ fn execution_routes() -> Router<AppState> {
         .route("/api/execute/stop", post(execution::stop_execution_handler))
         .route("/api/execute/force-fail", post(execution::force_fail_execution_handler))
         .route("/api/running-todos", get(execution::get_running_todos))
+        .route("/api/actions/execute", post(action::execute_action))
 }
 
 /// 定时任务相关路由（除 todo 内嵌的 scheduler 字段外，独立的查询入口）。

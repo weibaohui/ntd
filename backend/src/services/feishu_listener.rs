@@ -2102,6 +2102,8 @@ mod tests {
             parent_todo_id: None,
             review_template_id: None,
             auto_review_enabled: false,
+            action_type: None,
+            action_key: None,
         }
     }
 
