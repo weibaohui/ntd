@@ -33,73 +33,6 @@ impl PiExtractor {
         }
     }
 
-    /// 从 content[] 数组中提取 thinking / text / toolCall 事件
-    fn extract_content_blocks(&mut self, content: &[serde_json::Value]) -> Vec<ExecutionEvent> {
-        let mut events = Vec::new();
-
-        for block in content {
-            // 每个 block 有 "type" 字段标识内容类型
-            let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
-
-            match block_type {
-                "thinking" => {
-                    // 思考块：thinking 字段包含思考内容
-                    if let Some(thinking) = block.get("thinking").and_then(|v| v.as_str()) {
-                        let trimmed = thinking.trim();
-                        if !trimmed.is_empty() {
-                            events.push(ExecutionEvent::Thinking {
-                                content: trimmed.to_string(),
-                            });
-                        }
-                    }
-                }
-                "text" => {
-                    // 文本块：text 字段包含文本内容
-                    if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            events.push(ExecutionEvent::Assistant {
-                                content: trimmed.to_string(),
-                                thinking: None,
-                                message_id: None,
-                            });
-                        }
-                    }
-                }
-                "toolCall" | "tool_call" => {
-                    // 工具调用块：提取 id / name / arguments
-                    let id = block.get("id").and_then(|v| v.as_str()).unwrap_or_default();
-                    let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("bash");
-                    let input = block.get("arguments")
-                        .or_else(|| block.get("input"))
-                        .cloned()
-                        .unwrap_or(serde_json::json!({}));
-
-                    events.push(ExecutionEvent::ToolCall {
-                        id: id.to_string(),
-                        name: name.to_string(),
-                        input,
-                    });
-                    // 记录 pending tool call id，供后续 tool_result 匹配
-                    if !id.is_empty() {
-                        self.pending_tool_calls.push(id.to_string());
-                    }
-                }
-                _ => {
-                    // 未知内容块类型，作为 info 保留
-                    if let Some(text) = block.as_str() {
-                        if !text.trim().is_empty() {
-                            events.push(ExecutionEvent::Info {
-                                message: text.to_string(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        events
-    }
 
     /// 从工具结果数组中提取 ToolResult 事件
     fn extract_tool_results(&mut self, results: &[serde_json::Value]) -> Vec<ExecutionEvent> {
@@ -136,26 +69,6 @@ impl PiExtractor {
         events
     }
 
-    /// 从 message 对象中提取 usage 统计
-    fn extract_usage_from_message(&mut self, msg: &serde_json::Value) -> Vec<ExecutionEvent> {
-        let mut events = Vec::new();
-
-        // 提取 usage 对象
-        if let Some(usage) = msg.get("usage") {
-            events.extend(self.extract_usage_event(usage));
-
-            // 提取 cost
-            if let Some(cost) = usage.get("cost") {
-                if let Some(total) = cost.get("total").and_then(|v| v.as_f64()) {
-                    if total > 0.0 {
-                        events.push(ExecutionEvent::Cost { cost_usd: total });
-                    }
-                }
-            }
-        }
-
-        events
-    }
 
     /// 从 message 对象中仅提取 Cost（不含 Tokens，避免与 message_update:*_end 重复）
     fn extract_cost_only(&self, msg: &serde_json::Value) -> Vec<ExecutionEvent> {
