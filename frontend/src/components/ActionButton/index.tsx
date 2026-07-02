@@ -1,19 +1,14 @@
 import { useState, useEffect } from 'react';
-import { Button, Drawer, Spin, Typography, Space, message, Input, Select, Tag } from 'antd';
-import { ThunderboltOutlined, EditOutlined, CodeOutlined } from '@ant-design/icons';
+import { Button, Drawer, Spin, Typography, Space, message, Input, Tag } from 'antd';
+import { ThunderboltOutlined, EditOutlined } from '@ant-design/icons';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useActionExecution } from './useActionExecution';
+import { ExecutorPicker } from '@/components/todo-drawer/ExecutorPicker';
+import { EXECUTORS_FOR_PICKER } from '@/types/execution';
 import type { ActionButtonProps } from './types';
 
 const { Text, Paragraph } = Typography;
 const { TextArea } = Input;
-
-/** 可用的执行器选项 */
-const EXECUTOR_OPTIONS = [
-  { value: 'claudecode', label: 'Claude Code', color: '#d97706' },
-  { value: 'opencode', label: 'OpenCode', color: '#2563eb' },
-  { value: 'kilo', label: 'Kilo', color: '#7c3aed' },
-];
 
 /**
  * 可复用的一键 AI 执行组件。
@@ -116,19 +111,11 @@ export function ActionButton({
           </div>
 
           {/* 执行器选择 */}
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-              <CodeOutlined style={{ color: 'var(--color-text-secondary)' }} />
-              <Text strong style={{ fontSize: 13 }}>执行器</Text>
-            </div>
-            <Select
-              value={selectedExecutor}
-              onChange={setSelectedExecutor}
-              options={EXECUTOR_OPTIONS}
-              style={{ width: '100%' }}
-              placeholder="选择执行器"
-            />
-          </div>
+          <ExecutorPicker
+            executor={selectedExecutor || 'claudecode'}
+            executorOptions={EXECUTORS_FOR_PICKER}
+            onChange={setSelectedExecutor}
+          />
 
           {/* 参数预览 */}
           {paramsPreview.length > 0 && (
