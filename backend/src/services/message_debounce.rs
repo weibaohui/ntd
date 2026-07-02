@@ -11,7 +11,7 @@ use crate::db::Database;
 use crate::executor_service::{
     run_todo_execution, run_todo_execution_with_params, RunTodoExecutionRequest,
 };
-use crate::handlers::ExecEvent;
+use crate::executor_service::ExecEvent;
 use crate::models::ParsedLogEntry;
 use crate::service_context::ServiceContext;
 use crate::task_manager::TaskManager;

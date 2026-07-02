@@ -56,7 +56,7 @@ pub struct LoopRunnerCtx {
 
 pub struct LoopRunner {
     ctx: LoopRunnerCtx,
-    tx: broadcast::Sender<crate::handlers::ExecEvent>,
+    tx: broadcast::Sender<crate::executor_service::ExecEvent>,
 }
 
 /// Loop 执行结果：区分「真正完成」和「暂停等待」，
@@ -72,7 +72,7 @@ enum LoopRunOutcome {
 impl LoopRunner {
     pub fn new(
         ctx: LoopRunnerCtx,
-        tx: broadcast::Sender<crate::handlers::ExecEvent>,
+        tx: broadcast::Sender<crate::executor_service::ExecEvent>,
     ) -> Self {
         Self { ctx, tx }
     }
@@ -84,7 +84,7 @@ impl LoopRunner {
     }
 
     /// 暴露 tx 供 LoopScheduler 构造 ServiceContext。
-    pub fn tx(&self) -> &broadcast::Sender<crate::handlers::ExecEvent> {
+    pub fn tx(&self) -> &broadcast::Sender<crate::executor_service::ExecEvent> {
         &self.tx
     }
 
@@ -260,7 +260,7 @@ impl LoopRunner {
                             "[loop-runner] loop {} execution {} completed, broadcasting LoopFinished event",
                             loop_id, loop_execution_id
                         );
-                        let _ = this2_for_event.tx.send(crate::handlers::ExecEvent::LoopFinished {
+                        let _ = this2_for_event.tx.send(crate::executor_service::ExecEvent::LoopFinished {
                             loop_execution_id,
                             loop_id,
                             loop_title,
@@ -305,7 +305,7 @@ impl LoopRunner {
                     // 用户无法在界面上看到这条 failed 记录，只能从后台日志中排查。
                     let _ = this2_for_err
                         .tx
-                        .send(crate::handlers::ExecEvent::ReviewStatusChanged {
+                        .send(crate::executor_service::ExecEvent::ReviewStatusChanged {
                             record_id: 0,
                             todo_id: 0,
                             review_status: "failed".to_string(),
@@ -322,7 +322,7 @@ impl LoopRunner {
                             .await;
                     } else {
                         // 广播 LoopFinished 事件，FeishuPushService 按 workspace 配置推送
-                        let _ = this2_for_err.tx.send(crate::handlers::ExecEvent::LoopFinished {
+                        let _ = this2_for_err.tx.send(crate::executor_service::ExecEvent::LoopFinished {
                             loop_execution_id,
                             loop_id,
                             loop_title: loop_title.clone(),
@@ -755,7 +755,7 @@ impl LoopRunner {
                     }
                     info!("loop #{} step #{} waiting for human approval", loop_id, step.id);
                     // 发送 WebSocket 事件触发前端刷新（让执行历史列表显示"待审批"标记）
-                    let _ = self.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+                    let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
                         record_id,
                         todo_id: 0,
                         review_status: "pending_approval".to_string(),
@@ -791,7 +791,7 @@ impl LoopRunner {
                 .await
                 .map_err(|e| e.to_string())?;
 
-            let _ = self.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+            let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
                 record_id,
                 todo_id: 0,
                 review_status: final_step_status.to_string(),
@@ -1088,7 +1088,7 @@ impl LoopRunner {
         text: &str,
     ) {
         let Some(bot_id) = feishu_bot_id else { return };
-        let _ = self.tx.send(crate::handlers::ExecEvent::ExecutorDirectResponse {
+        let _ = self.tx.send(crate::executor_service::ExecEvent::ExecutorDirectResponse {
             bot_id,
             receive_id: receive_id.to_string(),
             receive_id_type: receive_id_type.to_string(),
@@ -1248,7 +1248,7 @@ impl LoopRunner {
             // 4) 标记评审状态为 pending
             let _ = self.ctx.db.set_record_last_review_status(record_id, "pending").await;
             let _ = self.ctx.db.set_record_last_reviewed_at(record_id).await;
-            let _ = self.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+            let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
                 record_id,
                 todo_id: 0,
                 review_status: "pending".to_string(),
@@ -1315,7 +1315,7 @@ impl LoopRunner {
                 if start_poll.elapsed() > max_wait {
                     warn!("rating gate: review record #{} timed out", review_record_id);
                     let _ = self.ctx.db.set_record_last_review_status(record_id, "failed").await;
-                    let _ = self.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+                    let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
                         record_id, todo_id: 0,
                         review_status: "failed".to_string(),
                     });
@@ -1346,7 +1346,7 @@ impl LoopRunner {
                 review_record_id, record_id, &review_status_str
             ).await;
             let _ = self.ctx.db.set_record_last_review_status(record_id, &review_status_str).await;
-            let _ = self.tx.send(crate::handlers::ExecEvent::ReviewStatusChanged {
+            let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
                 record_id, todo_id: 0,
                 review_status: review_status_str.to_string(),
             });

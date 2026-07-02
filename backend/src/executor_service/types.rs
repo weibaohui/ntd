@@ -12,7 +12,7 @@ use tokio::sync::broadcast;
 
 use crate::adapters::{CodeExecutor, ExecutorRegistry};
 use crate::db::Database;
-use crate::handlers::ExecEvent;
+use crate::executor_service::ExecEvent;
 
 use super::worktree::WorktreeContext;
 use super::RunTodoExecutionRequest;

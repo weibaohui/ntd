@@ -115,7 +115,7 @@ impl AppState {
     }
 }
 
-pub use events::ExecEvent;
+pub use crate::executor_service::ExecEvent;
 
 pub use errors::{AppError, ApiJson};
 
@@ -124,7 +124,6 @@ pub use middleware::{RequestId, propagate_request_id, cors_expose_headers};
 pub use static_handlers::{index_handler, static_handler, health_handler, version_handler, version_latest_handler, version_upgrade_handler};
 
 pub mod errors;
-pub mod events;
 pub mod middleware;
 pub mod static_handlers;
 

@@ -4,7 +4,7 @@ use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
 use crate::db::Database;
-use crate::handlers::ExecEvent;
+use crate::executor_service::ExecEvent;
 use crate::services::feishu_listener::FeishuListener;
 
 /// Subscribe to ExecEvent broadcast and push formatted messages to Feishu.

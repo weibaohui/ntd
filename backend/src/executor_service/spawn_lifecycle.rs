@@ -19,7 +19,7 @@ use tokio::task::JoinHandle;
 
 use crate::adapters::CodeExecutor;
 use crate::db::Database;
-use crate::handlers::ExecEvent;
+use crate::executor_service::ExecEvent;
 use crate::models::ParsedLogEntry;
 use crate::task_manager::TaskManager;
 
