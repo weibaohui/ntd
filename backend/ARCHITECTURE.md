@@ -15,7 +15,7 @@ ntd 后端是一个单进程 async 应用：
 - SQLite（WAL + 外键）
 - Cron 调度器（tokio-cron-scheduler）
 - 多路飞书长连接（每 bot 一条 WebSocket）
-- 多执行器子进程池（Claude Code / Codex / OpenCode / Hermes / Kimi / Mimo / MobileCoder / CodeWhale / Pi / CodeBuddy / AtomCode）
+- 多执行器子进程池（Claude Code / Codex / OpenCode / Hermes / Kimi / MiMo / MobileCoder / CodeWhale / Pi / CodeBuddy / AtomCode / Zhanlu / Kilo）
 
 **核心思想**：所有"用户视角的工作单元"都是 Todo；执行时把 Todo 的 `prompt` 喂给一个 AI CLI 子进程，解析 stdout/stderr，把进度、产物、统计通过 broadcast 通道实时推到前端。
 
@@ -27,7 +27,7 @@ ntd 后端是一个单进程 async 应用：
 flowchart TB
     main[main.rs] --> cli[cli/]
     main --> handlers[handlers/]
-    main --> daemon[daemon.rs]
+    main --> daemon[daemon/]
     main --> scheduler[scheduler.rs]
     main --> npm_utils[npm_utils.rs]
     main --> service_context[service_context.rs]
@@ -36,9 +36,8 @@ flowchart TB
     handlers --> service_context
     handlers --> adapters[adapters/]
     handlers --> db[db/]
-    handlers --> executor_service[executor_service.rs]
+    handlers --> executor_service[executor_service/]
     handlers --> task_manager[task_manager.rs]
-    handlers --> hooks[hooks/]
     handlers --> scheduler
     handlers --> feishu[feishu/]
     handlers --> services[services/]
@@ -58,10 +57,6 @@ flowchart TB
     services --> executor_service
     services --> service_context
     services --> config
-
-    hooks --> executor_service
-    hooks --> service_context
-    hooks --> models
 
     adapters --> models
     db --> models
@@ -90,13 +85,19 @@ erDiagram
     todos ||--o{ execution_records : "has many"
     todos ||--o{ todo_tags : "labeled"
     tags ||--o{ todo_tags : "applied to"
-    todos ||--o{ webhooks : "triggered by"
-    webhooks ||--o{ webhook_records : "deliveries"
     execution_records ||--o{ execution_logs : "stdout/stderr lines"
     execution_records ||--o| execution_records : "auto review (source_execution_record_id)"
     executors ||..|| todos : "executor column (loose FK)"
     project_directories ||--o{ todos : "workspace"
     todo_templates ||..o{ todos : "spawned from"
+    review_templates ||..o{ execution_records : "auto review"
+
+    loops ||--o{ loop_steps : "has many"
+    loops ||--o{ loop_executions : "executions"
+    loops ||--o{ loop_triggers : "triggers"
+    loops ||--o{ loop_tags : "labeled"
+    loop_steps ||--o{ loop_step_executions : "step runs"
+    loop_executions ||--o{ loop_step_executions : "step runs"
 
     agent_bots ||--o{ feishu_homes : "p2p chats"
     agent_bots ||--o{ feishu_messages : "received"
@@ -189,21 +190,58 @@ erDiagram
         i64 tag_id FK
     }
 
-    webhooks {
+    loops {
         i64 id PK
-        i64 todo_id FK
-        string url
-        string secret
+        string name
+        string description
         bool enabled
     }
 
-    webhook_records {
+    loop_steps {
         i64 id PK
-        i64 webhook_id FK
-        string payload
-        int http_status
-        string response_body
-        string delivered_at
+        i64 loop_id FK
+        string name
+        string prompt
+        string executor
+        int sort_order
+    }
+
+    loop_triggers {
+        i64 id PK
+        i64 loop_id FK
+        string trigger_type
+        string config
+        bool enabled
+    }
+
+    loop_executions {
+        i64 id PK
+        i64 loop_id FK
+        string status
+        string blackboard
+        string started_at
+        string finished_at
+    }
+
+    loop_step_executions {
+        i64 id PK
+        i64 loop_execution_id FK
+        i64 loop_step_id FK
+        i64 execution_record_id FK
+        string status
+    }
+
+    loop_tags {
+        i64 id PK
+        i64 loop_id FK
+        i64 tag_id FK
+    }
+
+    review_templates {
+        i64 id PK
+        string name
+        string prompt_template
+        bool is_default
     }
 
     agent_bots {
@@ -362,7 +400,7 @@ loop 评分闸门路径走同一条 `create_review_instance_todo`，但 parent_t
 ### 5.3 事件总线
 
 - 类型：`broadcast::Sender<ExecEvent>`（容量 100，详见 issue #503）。
-- 事件：`Started` / `Output` / `Finished` / `Sync` / `TodoProgress` / `ExecutionStats` / `ReviewStatusChanged`。
+- 事件：`Started` / `Output` / `Finished` / `Sync` / `TodoProgress` / `ExecutionStats` / `ReviewStatusChanged` / `LoopFinished`。
 - 前端 WebSocket 收到 `Sync` 时清空当前列表并用服务端推的 `TaskInfo[]` 重建。
 - 高负载下容量可能不足，需要按需调大。
 

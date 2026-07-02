@@ -5,8 +5,8 @@
 
 ## 开发环境要求
 
-- **Rust**: 1.75 或更高（与 `backend/Cargo.toml` 的 `rust-version` 字段一致）。
-- **Node.js**: 18+（前端构建需要）。
+- **Rust**: 1.81 或更高（与 `backend/Cargo.toml` 的 `rust-version` 字段一致）。
+- **Node.js**: 20+（前端构建需要）。
 - **OS**: macOS / Linux。Windows 下后端可以编译运行，但 daemon 子命令走 stub 分支。
 - **构建工具**:
   - `cargo` 自带。

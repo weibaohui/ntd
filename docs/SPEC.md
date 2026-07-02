@@ -13,7 +13,7 @@
 全栈应用 (Rust 后端 + React 前端 + 桌面端 + 飞书 Bot)
 
 ### 核心功能
-通过 React + AntDesign 构建的本地 todo 管理应用，支持调用本地 AI CLI 执行任务，并将执行过程完整记录到执行历史中。当前内置 10 个执行器：`claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `mobilecoder` / `codex` / `codewhale` / `pi`。
+通过 React + AntDesign 构建的本地 todo 管理应用，支持调用本地 AI CLI 执行任务，并将执行过程完整记录到执行历史中。当前内置 13 个执行器：`claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `mobilecoder` / `codex` / `codewhale` / `pi` / `mimo` / `zhanlu` / `kilo`。
 
 ### 目标用户
 需要任务管理并借助 AI 执行任务的技术用户
@@ -86,14 +86,17 @@
 
 ## 3. 数据模型
 
-> ⚠️ **本节为早期版本摘录**。当前数据库已扩展为 **20+ 张表**（详见 `backend/src/db/mod.rs::init_tables`），包括：
+> ⚠️ **本节为早期版本摘录**。当前数据库已扩展为 **28+ 张表**（详见 `backend/src/db/mod.rs::init_tables`），包括：
 >
-> - `todos` / `tags` / `todo_tags` / `todo_templates` / `todo_backups` / `project_directories`
-> - `execution_records` / `execution_logs` / `usage_daily_stats` / `skill_invocations`
+> - `todos` / `tags` / `todo_tags` / `todo_templates` / `project_directories`
+> - `execution_records` / `execution_logs` / `usage_stats` / `usage_model_breakdown` / `usage_executor_daily`
 > - `executors`（执行器元数据持久化表）
-> - `agent_bots` / `feishu_homes` / `feishu_messages` / `feishu_history_chats` / `feishu_push_targets` / `feishu_response_config` / `feishu_group_whitelist`
-> - `webhooks` / `webhook_records`
-> - 以及 `hooks`（作为 `todos` 表的 JSON 列存储，见 `db/todo.rs:178-198 update_todo_hooks`）
+> - `agent_bots` / `feishu_homes` / `feishu_messages` / `feishu_history_chats` / `feishu_push_targets` / `feishu_response_config` / `feishu_group_whitelist` / `feishu_project_bindings`
+> - `loops` / `loop_steps` / `loop_step_executions` / `loop_executions` / `loop_triggers` / `loop_tags`（Loop Studio）
+> - `review_templates`（评审模板）
+> - `sync_records`（云端同步）
+> - `workspace_settings` / `workspace_slash_commands`
+> - 以及 `hooks`（作为 `todos` 表的 JSON 列存储，见 `db/todo.rs`）
 >
 > 以下仅保留原 4 张核心表的早期字段定义。
 
@@ -144,7 +147,7 @@ finished_at: DATETIME NULL
 - **前端**: React 19.1.0 + TypeScript 5.8.3 + Vite 7.0.4
 - **UI 组件**: Ant Design 6.3.6
 - **状态管理**: React Context + useReducer
-- **数据存储**: SQLite (via SeaORM 0.12 + libsqlite3-sys 0.27 bundled)
+- **数据存储**: SQLite (via SeaORM 1.x + libsqlite3-sys bundled)
 - **命令执行**: tokio Command + command-group 5（进程组管理）
 
 ---
@@ -187,7 +190,7 @@ finished_at: DATETIME NULL
 
 ## 8. 执行器集成
 
-> 本节以 `claudecode` 为示例描述事件流格式。系统内置 10 个执行器（`claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `mobilecoder` / `codex` / `codewhale` / `pi`），其注册与调度由 `backend/src/adapters/mod.rs::EXECUTORS` 数组统一管理。
+> 本节以 `claudecode` 为示例描述事件流格式。系统内置 13 个执行器（`claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `mobilecoder` / `codex` / `codewhale` / `pi` / `mimo` / `zhanlu` / `kilo`），其注册与调度由 `backend/src/adapters/mod.rs::EXECUTORS` 数组统一管理。
 
 - 命令路径: 由 `Config.executors.paths` 解析（HashMap，键为 executor 名，如 `claudecode -> "claude"`）
 - 执行命令: 各 executor 通过实现 `CodeExecutor` trait 暴露 `executable_path` / `command_args` / `parse_output_line` 等
