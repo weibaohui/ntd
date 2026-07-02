@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ntd-config
+data:
+  NTD_MODE: "production"
+  RUST_LOG: "info"

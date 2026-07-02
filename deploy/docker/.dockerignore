@@ -1,0 +1,27 @@
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# 依赖目录
+node_modules
+target
+
+# 构建产物
+frontend/dist
+backend/target
+
+# 日志文件
+*.log
+
+# 环境变量
+.env
+.env.local
+
+# 测试文件
+test-results
+frontend/tests
+
+# 部署配置（避免循环包含）
+deploy

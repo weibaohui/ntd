@@ -1,0 +1,18 @@
+services:
+  ntd:
+    build:
+      context: ../../
+      dockerfile: deploy/docker/Dockerfile
+    container_name: ntd-dev
+    ports:
+      - "${NTD_PORT:-18088}:8088"
+    volumes:
+      - ntd-dev-data:/home/ntd/.ntd
+    environment:
+      - NTD_MODE=dev
+      - RUST_LOG=debug
+    restart: unless-stopped
+
+volumes:
+  ntd-dev-data:
+    driver: local
