@@ -151,21 +151,30 @@ export function SkillVersionUpdate() {
   };
 
   const handleSkillClick = (skill: SkillVersionUpdateType, executor: string) => {
-    // 构建 SkillMeta 对象
+    // 构建 SkillMeta 对象，包含执行器特定的版本信息
+    const versionInfo = skill.versions.find(v => v.executor === executor);
     const skillMeta: SkillMeta = {
       name: skill.skill_name,
       description: skill.description,
-      version: skill.latest_version,
+      version: versionInfo?.version || skill.latest_version,
       author: null,
       license: null,
       keywords: [],
       file_count: 0,
       total_size: 0,
-      modified_at: null,
+      modified_at: versionInfo?.modified_at || null,
     };
-    setDrawerSkill(skillMeta);
-    setDrawerExecutor(executor);
-    setDrawerOpen(true);
+    // 先关闭 drawer，再用 setTimeout 打开，确保 useEffect 能重新触发
+    setDrawerOpen(false);
+    setTimeout(() => {
+      setDrawerSkill(skillMeta);
+      setDrawerExecutor(executor);
+      setDrawerOpen(true);
+    }, 50);
+  };
+
+  const handleExecutorClick = (skill: SkillVersionUpdateType, executor: string) => {
+    handleSkillClick(skill, executor);
   };
 
   const handleConfirmUpdate = async () => {
@@ -281,7 +290,7 @@ export function SkillVersionUpdate() {
                   key={skill.skill_name}
                   skill={skill}
                   onUpdate={() => handleUpdateClick(skill)}
-                  onClick={() => handleSkillClick(skill, skill.latest_executor)}
+                  onExecutorClick={(executor) => handleExecutorClick(skill, executor)}
                 />
               ))}
             </div>
@@ -312,7 +321,7 @@ export function SkillVersionUpdate() {
                         key={skill.skill_name}
                         skill={skill}
                         onUpdate={() => {}}
-                        onClick={() => handleSkillClick(skill, skill.latest_executor)}
+                        onExecutorClick={(executor) => handleExecutorClick(skill, executor)}
                       />
                     ))}
                   </div>
@@ -380,22 +389,19 @@ export function SkillVersionUpdate() {
   );
 }
 
-function SkillVersionCard({ skill, onUpdate, onClick }: {
+function SkillVersionCard({ skill, onUpdate, onExecutorClick }: {
   skill: SkillVersionUpdateType;
   onUpdate: () => void;
-  onClick: () => void;
+  onExecutorClick: (executor: string) => void;
 }) {
   const latestExecutorLabel = EXECUTORS.find(e => e.value === skill.latest_executor)?.label || skill.latest_executor;
 
   return (
     <Card
       size="small"
-      hoverable
-      onClick={onClick}
       style={{
         borderRadius: 12,
         borderColor: skill.has_update ? 'rgba(245, 158, 11, 0.3)' : 'var(--color-border, #e2e8f0)',
-        cursor: 'pointer',
       }}
       styles={{ body: { padding: 16 } }}
     >
@@ -449,20 +455,29 @@ function SkillVersionCard({ skill, onUpdate, onClick }: {
         gap: 8,
       }}>
         {skill.versions.map(v => (
-          <ExecutorVersionBlock key={v.executor} versionInfo={v} />
+          <ExecutorVersionBlock
+            key={v.executor}
+            versionInfo={v}
+            onClick={() => onExecutorClick(v.executor)}
+          />
         ))}
       </div>
     </Card>
   );
 }
 
-function ExecutorVersionBlock({ versionInfo }: { versionInfo: SkillVersionInfo }) {
+function ExecutorVersionBlock({ versionInfo, onClick }: { versionInfo: SkillVersionInfo; onClick: () => void }) {
   const color = EXECUTOR_COLORS[versionInfo.executor] || '#64748b';
   const isLatest = versionInfo.is_latest;
 
   return (
-    <Tooltip title={`${versionInfo.executor_label}${isLatest ? ' (最新)' : ''}`}>
-      <div className={`executor-version-block ${isLatest ? 'executor-version-block--latest' : ''}`}
+    <Tooltip title={`${versionInfo.executor_label}${isLatest ? ' (最新)' : ''} - 点击查看详情`}>
+      <div
+        className={`executor-version-block ${isLatest ? 'executor-version-block--latest' : ''}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
         style={{
           display: 'flex',
           flexDirection: 'column',
@@ -470,6 +485,7 @@ function ExecutorVersionBlock({ versionInfo }: { versionInfo: SkillVersionInfo }
           padding: '8px 4px',
           borderRadius: 8,
           transition: 'all 0.2s',
+          cursor: 'pointer',
         }}
       >
         <div style={{
