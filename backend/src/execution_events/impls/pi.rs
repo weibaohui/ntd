@@ -34,7 +34,6 @@ impl PiExtractor {
     }
 
     /// 从 content[] 数组中提取 thinking / text / toolCall 事件
-    #[allow(dead_code)]
     fn extract_content_blocks(&mut self, content: &[serde_json::Value]) -> Vec<ExecutionEvent> {
         let mut events = Vec::new();
 
@@ -138,7 +137,6 @@ impl PiExtractor {
     }
 
     /// 从 message 对象中提取 usage 统计
-    #[allow(dead_code)]
     fn extract_usage_from_message(&mut self, msg: &serde_json::Value) -> Vec<ExecutionEvent> {
         let mut events = Vec::new();
 

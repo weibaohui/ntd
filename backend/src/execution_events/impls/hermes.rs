@@ -251,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_banner_filter() {
-        let _extractor = HermesExtractor::new();
+        let extractor = HermesExtractor::new();
         assert!(HermesExtractor::is_banner_line("╭─────"));
         assert!(HermesExtractor::is_banner_line("│ content"));
         assert!(HermesExtractor::is_banner_line("╰─────"));

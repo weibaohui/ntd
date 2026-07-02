@@ -317,7 +317,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[allow(unused_variables)]
     fn test_tokens_line() {
         let mut ext = AtomcodeExtractor::new();
         let events = ext.extract("[tokens] prompt=120 completion=45");
@@ -332,7 +331,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn test_done_line() {
         let mut ext = AtomcodeExtractor::new();
         let events = ext.extract("[done] 4.6s tokens=100 turns=2 tool_calls=1");
@@ -342,7 +340,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn test_tool_call() {
         let mut ext = AtomcodeExtractor::new();
         let events = ext.extract(r#"[tool→ bash args={"command": "ls -la"}]"#);
@@ -358,7 +355,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn test_tool_result_ok() {
         let mut ext = AtomcodeExtractor::new();
         let _ = ext.extract(r#"[tool→ bash args={"command": "date"}]"#);
@@ -375,7 +371,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn test_tool_result_error() {
         let mut ext = AtomcodeExtractor::new();
         let _ = ext.extract(r#"[tool→ bash args={"command": "nonexistent"}]"#);
@@ -391,7 +386,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn test_tool_id_increments() {
         let mut ext = AtomcodeExtractor::new();
         let events1 = ext.extract(r#"[tool→ bash args={"command":"1"}]"#);
@@ -407,7 +401,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn test_empty_line() {
         let mut ext = AtomcodeExtractor::new();
         assert!(ext.extract("").is_empty());
@@ -415,7 +408,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn test_streaming_marker_skipped() {
         let mut ext = AtomcodeExtractor::new();
         assert!(ext.extract("[tool-streaming...]").is_empty());
@@ -423,7 +415,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn test_engine_model_extraction() {
         let mut ext = AtomcodeExtractor::new();
         let events = ext.extract("[engine v2] new stack active (model deepseek-v4-flash)");
@@ -433,7 +424,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn test_engine_model_only_once() {
         let mut ext = AtomcodeExtractor::new();
         let events1 = ext.extract("[engine v2] new stack active (model deepseek-v4-flash)");
@@ -444,7 +434,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn test_thinking_accumulation() {
         let mut ext = AtomcodeExtractor::new();
         assert!(ext.extract("[thinking] line 1").is_empty());
@@ -457,7 +446,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn test_thinking_reset_between_blocks() {
         let mut ext = AtomcodeExtractor::new();
         assert!(ext.extract("[thinking] block 1").is_empty());
@@ -472,7 +460,6 @@ mod tests {
     // ── 文本块积累测试 ──────────────────────────────────────
 
     #[test]
-    #[allow(unused_variables)]
     fn test_text_accumulation_to_assistant() {
         // 多行无前缀文本累积为单个 Assistant 事件
         let mut ext = AtomcodeExtractor::new();
@@ -487,7 +474,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn test_text_accumulation_flushed_by_structured() {
         // [xx] 行到达时 flush 之前的文本块
         let mut ext = AtomcodeExtractor::new();
@@ -500,7 +486,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn test_embedded_structured_split() {
         // 文本末尾紧贴结构化标记: "当前任务已完成[tokens] prompt=10 completion=5"
         let mut ext = AtomcodeExtractor::new();
@@ -511,7 +496,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn test_embedded_structured_with_accumulated_text() {
         // 多条文本行 + 末尾拼贴结构化
         let mut ext = AtomcodeExtractor::new();
@@ -524,7 +508,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn test_thinking_flushed_by_plain_text() {
         // 单行 thinking 后紧跟纯文本，thinking 应被 flush
         let mut ext = AtomcodeExtractor::new();
@@ -537,7 +520,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn test_thinking_flushed_by_embedded_marker() {
         // thinking 后紧跟嵌入式标记行，thinking 应被 flush
         let mut ext = AtomcodeExtractor::new();
@@ -551,7 +533,6 @@ mod tests {
 
     /// 完整流程测试: thinking + 多行文本 + 嵌入式 [tokens] → 聚合 Assistant + 结构化事件
     #[test]
-    #[allow(unused_variables)]
     fn test_full_text_aggregation_with_thinking_and_tokens() {
         let mut ext = AtomcodeExtractor::new();
 
