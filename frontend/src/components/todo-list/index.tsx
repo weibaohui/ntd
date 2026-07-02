@@ -190,15 +190,6 @@ export function TodoList(props: TodoListProps) {
     return filteredLoopList.map(l => l.id);
   }, [listMode, filteredTodos, filteredLoopList]);
 
-  const handleStatusChange = useCallback(async (todoId: number, title: string, prompt: string, newStatus: string) => {
-    try {
-      const updated = await db.updateTodo(todoId, title, prompt, newStatus);
-      dispatch({ type: 'UPDATE_TODO', payload: updated });
-    } catch {
-      // ignore: interceptor already shows error
-    }
-  }, [dispatch]);
-
   // 批量操作 handlers
   const openItemChangeExecutor = useCallback((ids: number[]) => {
     setPendingExecutorChangeIds(ids);
@@ -482,7 +473,6 @@ export function TodoList(props: TodoListProps) {
                   onSelectTodo?.(id);
                 }}
                 onToggleSelect={toggleSelect}
-                onStatusChange={handleStatusChange}
               />
             ))
           )}

@@ -425,23 +425,20 @@ html, body {
 /* ---------- Todo Item ---------- */
 .todo-item {
   background: var(--color-bg-elevated);
-  border-radius: var(--radius-md);
-  padding: 14px var(--space-lg);
-  margin-bottom: var(--space-sm);
+  border-radius: 10px;
+  padding: 12px 12px 14px 16px;
+  margin-bottom: 8px;
   cursor: pointer;
   border: 1px solid var(--color-border-light);
-  box-shadow: var(--shadow-sm);
 }
 
 .todo-item:hover {
   border-color: var(--color-primary);
-  box-shadow: var(--shadow-md);
 }
 
 .todo-item.selected {
   border-color: var(--color-primary);
   background: var(--color-primary-bg);
-  box-shadow: var(--shadow-primary);
 }
 
 [data-theme="dark"] .todo-item.selected {
@@ -449,9 +446,7 @@ html, body {
 }
 
 .todo-item-content {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
+  /* 不再需要 flex — 右侧 StatusPicker 已移除，.todo-item-main 是唯一子元素 */
 }
 
 .todo-item-main {
@@ -463,19 +458,12 @@ html, body {
   font-weight: 600;
   font-size: 15px;
   color: var(--color-text);
-  margin-bottom: var(--space-xs);
   line-height: 1.4;
 }
 
 
-.todo-item-desc {
-  font-size: 13px;
-  color: var(--color-text-secondary);
-  line-height: 1.5;
-  margin-bottom: var(--space-xs);
-}
-
-.todo-item-tags {
+/* (todo-item-desc 已移除 — 不再显示 prompt，对齐环路列表的简洁风格) */
+/* (todo-item-status 已移除 — 列表行中不再显示圆形状态按钮，通过底部颜色条展示状态) */
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
@@ -498,21 +486,6 @@ html, body {
   letter-spacing: 0.5px;
 }
 
-/* Status Container */
-.todo-item-status {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  cursor: pointer;
-  border-radius: 50%;
-}
-
-.todo-item-status:hover {
-  background: var(--color-border-light);
-}
 
 /* ---------- Detail Panel ---------- */
 .detail-panel {
