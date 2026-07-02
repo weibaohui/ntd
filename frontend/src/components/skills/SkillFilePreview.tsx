@@ -6,7 +6,7 @@ import {
 import XMarkdown from '@ant-design/x-markdown';
 import type { SkillFileInfo } from '@/utils/database/skills';
 import { getSkillContent, getSkillFileContent } from '@/utils/database/skills';
-import { formatSize, formatTime } from './helpers';
+import { formatSize, formatTime, getFileColor } from './helpers';
 
 const { Text } = Typography;
 
@@ -16,26 +16,6 @@ interface SkillFilePreviewProps {
   skillName: string;
   loading?: boolean;
   isDark?: boolean;
-}
-
-// 获取文件扩展名对应的图标颜色
-function getFileColor(filename: string, isDark?: boolean): string {
-  const ext = filename.split('.').pop()?.toLowerCase();
-  const colorMap: Record<string, string> = {
-    md: '#0891b2',
-    ts: '#3178c6',
-    tsx: '#3178c6',
-    js: '#f7df1e',
-    jsx: '#f7df1e',
-    json: '#f59e0b',
-    yaml: '#e11d48',
-    yml: '#e11d48',
-    toml: '#9333ea',
-    txt: isDark ? '#94a3b8' : '#64748b',
-    css: '#06b6d4',
-    html: '#ea580c',
-  };
-  return colorMap[ext || ''] || (isDark ? '#94a3b8' : '#64748b');
 }
 
 export function SkillFilePreview({ file, executor, skillName, loading, isDark }: SkillFilePreviewProps) {

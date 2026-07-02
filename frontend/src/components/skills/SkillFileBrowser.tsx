@@ -4,7 +4,7 @@ import {
   SearchOutlined, FileOutlined, FolderOutlined, FolderOpenOutlined,
 } from '@ant-design/icons';
 import type { SkillFileInfo } from '@/utils/database/skills';
-import { formatSize } from './helpers';
+import { formatSize, getFileColor } from './helpers';
 
 const { Text } = Typography;
 
@@ -116,7 +116,7 @@ function FileTreeNodeItem({
   isDark?: boolean;
 }) {
   const isExpanded = expandedDirs.has(node.path);
-  const isSelected = selectedFile?.path === node.file?.path;
+  const isSelected = selectedFile !== null && node.file !== undefined && selectedFile?.path === node.file?.path;
 
   const handleClick = () => {
     if (node.isDir) {
@@ -124,26 +124,6 @@ function FileTreeNodeItem({
     } else if (node.file && onFileSelect) {
       onFileSelect(node.file);
     }
-  };
-
-  // 根据文件扩展名获取图标颜色
-  const getFileColor = (name: string) => {
-    const ext = name.split('.').pop()?.toLowerCase();
-    const colorMap: Record<string, string> = {
-      md: '#0891b2',
-      ts: '#3178c6',
-      tsx: '#3178c6',
-      js: '#f7df1e',
-      jsx: '#f7df1e',
-      json: '#f59e0b',
-      yaml: '#e11d48',
-      yml: '#e11d48',
-      toml: '#9333ea',
-      txt: isDark ? '#94a3b8' : '#64748b',
-      css: '#06b6d4',
-      html: '#ea580c',
-    };
-    return colorMap[ext || ''] || (isDark ? '#94a3b8' : '#64748b');
   };
 
   // 主题相关颜色
@@ -204,7 +184,7 @@ function FileTreeNodeItem({
             <FolderOutlined style={{ color: '#f59e0b', fontSize: 14 }} />
           )
         ) : (
-          <FileOutlined style={{ color: getFileColor(node.name), fontSize: 14 }} />
+          <FileOutlined style={{ color: getFileColor(node.name, isDark), fontSize: 14 }} />
         )}
 
         {/* 文件名 */}

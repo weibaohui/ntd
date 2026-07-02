@@ -13,6 +13,26 @@ export function formatSize(bytes: number): string {
 
 export { formatDateTime as formatTime };
 
+// 根据文件扩展名返回对应图标颜色，减少重复定义
+export function getFileColor(filename: string, isDark = false): string {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  const colorMap: Record<string, string> = {
+    md: '#0891b2',
+    ts: '#3178c6',
+    tsx: '#3178c6',
+    js: '#f7df1e',
+    jsx: '#f7df1e',
+    json: '#f59e0b',
+    yaml: '#e11d48',
+    yml: '#e11d48',
+    toml: '#9333ea',
+    txt: isDark ? '#94a3b8' : '#64748b',
+    css: '#06b6d4',
+    html: '#ea580c',
+  };
+  return colorMap[ext || ''] || (isDark ? '#94a3b8' : '#64748b');
+}
+
 export function normalizeExecutor(name: string): string {
   return name.toLowerCase().replace(/[_\s-]/g, '');
 }
