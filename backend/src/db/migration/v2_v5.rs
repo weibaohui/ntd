@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 use super::super::Database;
-use super::{Migration, add_column_if_missing, add_column_warn, get_project_directory_id_by_path, table_has_column, table_exists};
+use super::{Migration, table_has_column, add_column_warn};
 
 pub(super) struct V2TodoRatingDropColumn;
 

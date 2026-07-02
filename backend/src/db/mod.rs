@@ -9,8 +9,7 @@ use std::time::Duration;
 
 use sea_orm::{
     ActiveModelBehavior, ActiveModelTrait, ColumnTrait, ConnectionTrait,
-    DatabaseConnection, DbBackend, EntityTrait, IntoActiveModel,
-    Order, QueryFilter, QueryOrder, SqlxSqliteConnector, Statement,
+    DatabaseConnection, DbBackend, EntityTrait, IntoActiveModel, SqlxSqliteConnector, Statement,
 };
 
 pub mod entity;

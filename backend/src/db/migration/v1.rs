@@ -1,8 +1,7 @@
 use async_trait::async_trait;
-use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 use super::super::Database;
-use super::{Migration, add_column_if_missing, add_column_warn, add_column_with_fallback, get_project_directory_id_by_path, table_has_column, table_exists};
+use super::{Migration, add_column_if_missing, add_column_warn, add_column_with_fallback};
 
 /// v1 迁移：所有初始表、索引、触发器，以及历史上为兼容旧库加过的列。
 ///

@@ -1,9 +1,8 @@
 use axum::{
     Router,
-    extract::{Path, Request, State, WebSocketUpgrade},
-    http::{Method, StatusCode, header},
-    middleware::Next,
-    response::{Html, IntoResponse, Response},
+    extract::{Request, State, WebSocketUpgrade},
+    http::{Method, header},
+    response::Response,
     routing::{delete, get, patch, post, put},
 };
 use tower_http::compression::CompressionLayer;
@@ -15,7 +14,6 @@ use tokio::sync::broadcast;
 
 use crate::service_context::ServiceContext;
 use crate::adapters::ExecutorRegistry;
-use crate::Assets;
 use crate::config::Config;
 use crate::db::Database;
 use crate::models::ApiResponse;
