@@ -1,6 +1,7 @@
 // 回复输入行组件。
 
 import type { ExecutionRecord } from '@/types';
+import { supportsResume } from '@/types';
 import { ReplyInput } from '../todo-detail/ReplyInput';
 
 interface ReplyRowProps {
@@ -14,7 +15,7 @@ interface ReplyRowProps {
  */
 export function ReplyRow({ record, onReply, loading }: ReplyRowProps) {
   // 仅在 running 状态或不支持 resume 时不渲染
-  if (record.status === 'running' || !record.resume_message) return null;
+  if (!supportsResume(record)) return null;
   return (
     <div style={{ padding: "4px 0" }}>
       <ReplyInput record={record} onReply={onReply} loading={loading} />
