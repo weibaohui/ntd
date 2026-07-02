@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ntd
+  labels:
+    app: ntd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ntd
+  template:
+    metadata:
+      labels:
+        app: ntd
+    spec:
+      containers:
+      - name: ntd
+        image: ntd:latest
+        ports:
+        - containerPort: 8088
+        env:
+        - name: NTD_MODE
+          value: "production"
+        - name: RUST_LOG
+          value: "info"
+        volumeMounts:
+        - name: ntd-data
+          mountPath: /root/.ntd
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: ntd-data
+        persistentVolumeClaim:
+          claimName: ntd-data-pvc
