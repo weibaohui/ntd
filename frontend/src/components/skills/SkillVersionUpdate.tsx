@@ -100,8 +100,8 @@ export function SkillVersionUpdate() {
     loadData();
   }, []);
 
-  // 从 comparisonData 提取版本相同的 skill
-  const sameVersionSkills = useMemo(() => {
+  // 从 comparisonData 提取所有 skill（用于折叠区域）
+  const allSkills = useMemo(() => {
     // 获取有版本差异的 skill 名称集合
     const updateSkillNames = new Set(updateData.map(s => s.skill_name));
 
@@ -121,23 +121,23 @@ export function SkillVersionUpdate() {
     );
   }, [updateData, searchText]);
 
-  // 过滤版本相同的 skill
-  const filteredSameVersion = useMemo(() => {
-    if (!searchText) return sameVersionSkills;
+  // 过滤所有 skill（用于折叠区域）
+  const filteredAllSkills = useMemo(() => {
+    if (!searchText) return allSkills;
     const lower = searchText.toLowerCase();
-    return sameVersionSkills.filter(s =>
+    return allSkills.filter(s =>
       s.skill_name.toLowerCase().includes(lower) ||
       s.description?.toLowerCase().includes(lower)
     );
-  }, [sameVersionSkills, searchText]);
+  }, [allSkills, searchText]);
 
   const stats = useMemo(() => {
     const updatable = updateData.filter(s => s.has_update).length;
     return {
       updatable,
-      total: updateData.length + sameVersionSkills.length,
+      total: updateData.length + allSkills.length,
     };
-  }, [updateData, sameVersionSkills]);
+  }, [updateData, allSkills]);
 
   const handleUpdateClick = (skill: SkillVersionUpdateType) => {
     setSelectedSkill(skill);
@@ -246,7 +246,7 @@ export function SkillVersionUpdate() {
       </div>
 
       {/* 有版本差异的 Skill 列表 */}
-      {filteredUpdates.length === 0 && filteredSameVersion.length === 0 ? (
+      {filteredUpdates.length === 0 && filteredAllSkills.length === 0 ? (
         <Empty description="没有匹配的 Skills" />
       ) : (
         <>
@@ -262,8 +262,8 @@ export function SkillVersionUpdate() {
             </div>
           )}
 
-          {/* 版本相同的 Skill 折叠区域 */}
-          {filteredSameVersion.length > 0 && (
+          {/* 所有 Skill 折叠区域 */}
+          {filteredAllSkills.length > 0 && (
             <Collapse
               defaultActiveKey={[]}
               expandIcon={({ isActive }) => (
@@ -274,15 +274,15 @@ export function SkillVersionUpdate() {
                 border: '1px solid var(--color-border, #e2e8f0)',
               }}
               items={[{
-                key: 'same-version',
+                key: 'all-skills',
                 label: (
                   <span style={{ fontSize: 14, color: 'var(--color-text, #0f172a)' }}>
-                    版本相同的 Skills ({filteredSameVersion.length})
+                    其他 Skills ({filteredAllSkills.length})
                   </span>
                 ),
                 children: (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {filteredSameVersion.map(skill => (
+                    {filteredAllSkills.map(skill => (
                       <SkillVersionCard
                         key={skill.skill_name}
                         skill={skill}
