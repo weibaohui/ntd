@@ -111,18 +111,22 @@ function AppContent() {
   // items 视图需要校验 todo 是否存在（可能已被删除），loops 和其他视图直接同步。
   useEffect(() => {
     if (state.loading) return;
-    if (activeView === 'items' && selectedId != null) {
-      if (state.todos.some(t => t.id === selectedId)) {
-        dispatch({ type: 'SELECT_TODO', payload: selectedId });
-        setSelectedLoopId(null);
-      }
+    if (activeView === 'items') {
+      // items 视图必须让 selectedTodoId 与 URL 中的 id 保持一致：
+      // 找到有效 todo 时选中它；id 缺失或指向已删除的 todo 时显式清空，
+      // 避免 TodoPage/TodoMobilePage 残留上一次选中的详情态。
+      const matched = selectedId != null && state.todos.some(t => t.id === selectedId);
+      // matched 为 true 时 payload 是 selectedId，否则 null（清空旧选中态）
+      dispatch({ type: 'SELECT_TODO', payload: matched ? selectedId : null });
+      // items 视图下清空 loop 选中态，防止跨视图状态混淆
+      setSelectedLoopId(null);
     } else if (activeView === 'loops' && selectedId != null) {
       setSelectedLoopId(selectedId);
       dispatch({ type: 'SELECT_TODO', payload: null });
       clearSelection();
     } else {
       setSelectedLoopId(null);
-      if (activeView !== 'items' && activeView !== 'loops') {
+      if (activeView !== 'loops') {
         dispatch({ type: 'SELECT_TODO', payload: null });
       }
     }

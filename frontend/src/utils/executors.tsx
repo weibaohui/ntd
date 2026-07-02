@@ -53,13 +53,36 @@ export const EXECUTOR_COLORS: Record<string, string> = {
   'atom': '#e84393',
 };
 
+// 执行器名称别名映射：数据库中可能存储的历史名称 → EXECUTORS 数组中的规范值。
+// 用于统一 getExecutorOption 和 supportsResume 的查找逻辑，避免 alias 无法匹配。
+export const EXECUTOR_ALIASES: Record<string, string> = {
+  // 'claude' / 'claude_code' 是早期数据库写入的名称，统一映射到 'claudecode'
+  'claude': 'claudecode',
+  'claude_code': 'claudecode',
+  // 'cbc' 是 CodeBuddy 的旧称，映射到规范值 'codebuddy'
+  'cbc': 'codebuddy',
+  // 'atom' 是 AtomCode 的旧称，映射到规范值 'atomcode'
+  'atom': 'atomcode',
+};
+
+// 将执行器名称（可能是 alias）规范化为 EXECUTORS 数组中的 canonical value。
+// toLowerCase 后先查 alias 映射，找不到则返回小写本身（已是规范名或未知名）。
+function normalizeExecutorName(name: string): string {
+  const lower = name.toLowerCase();
+  // alias 存在时返回规范名，否则返回 lowercase 本身（兼容规范名和未来新执行器）
+  return EXECUTOR_ALIASES[lower] || lower;
+}
+
 export function getExecutorColor(name: string | undefined | null): string {
   if (!name) return '#999';
   return EXECUTOR_COLORS[name] || '#999';
 }
 
 export function getExecutorOption(value: string): ExecutorOption {
-  return EXECUTORS.find(e => e.value === value.toLowerCase()) || EXECUTORS[0];
+  // 先规范化 alias（如 'cbc' -> 'codebuddy'），再在 EXECUTORS 中查找，
+  // 避免 alias 直接查找失败、错误回退到 EXECUTORS[0]（claudecode）。
+  const normalized = normalizeExecutorName(value);
+  return EXECUTORS.find(e => e.value === normalized) || EXECUTORS[0];
 }
 
 /** 不包含 `agents` 的执行器列表，用于执行器选择 UI（agents 是只读 skill 来源，不是执行器）。 */
@@ -79,7 +102,9 @@ export function supportsResume(record: ExecutionRecord): boolean {
     record.status !== 'running' &&
     !!record.session_id &&
     !!record.executor &&
-    RESUMABLE_EXECUTORS.has(record.executor.toLowerCase())
+    // 先规范化 alias（如 'claude' -> 'claudecode'），再判断是否可恢复，
+    // 避免数据库中存储的旧名称（'claude'/'claude_code' 等）被误判为不可恢复。
+    RESUMABLE_EXECUTORS.has(normalizeExecutorName(record.executor))
   );
 }
 
