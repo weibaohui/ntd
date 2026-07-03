@@ -820,13 +820,21 @@ async fn handle_loop(
                         // 与 print_response 一致:错误码非 0 时抛 anyhow
                         return Err(anyhow::anyhow!("API error {}: {}", resp.code, resp.message));
                     }
+                    // 先写到 Vec<u8>, 最后一次性 stdout.lock().write_all,
+                    // 这样集成测试可以 capture 到完整输出, 不会出现 println!
+                    // 与 JSON 字符串交错污染。
+                    let mut buf: Vec<u8> = Vec::new();
                     if *human {
                         // 人类视图: 黑板文本渲染
-                        render_blackboard(resp.data.as_ref());
+                        render_blackboard_to(resp.data.as_ref(), &mut buf);
                     } else {
                         // 默认: JSON, 直接是 LoopExecutionDetail, AI/脚本友好
-                        println!("{}", serde_json::to_string_pretty(&resp.data)?);
+                        use std::io::Write;
+                        let pretty = serde_json::to_string_pretty(&resp.data)?;
+                        writeln!(buf, "{pretty}")?;
                     }
+                    use std::io::Write;
+                    let _ = std::io::stdout().lock().write_all(&buf);
                 }
             }
         }
@@ -904,9 +912,13 @@ fn render_blackboard(data: Option<&Value>) {
     let _ = std::io::stdout().write_all(&buf);
 }
 
-/// 把黑板渲染到任意 `Write` 目标，单元测试用 `Vec<u8>` 抓取输出做断言。
+// 保留为单元测试的稳定 stdout 入口；生产 dispatch 已直接走 render_blackboard_to 路径。
+#[allow(dead_code)]
+
+/// 把黑板渲染到任意 `Write` 目标，单元测试和集成测试用 `Vec<u8>` 抓取输出做断言。
 /// 所有 println! 在这里都改成 writeln!，避免分散在 helper 里写死 stdout。
-fn render_blackboard_to<W: std::io::Write>(data: Option<&Value>, w: &mut W) {
+/// `pub` 让 `tests/blackboard_cli_tests.rs` 集成测试能复用 (集成测试是独立 crate, pub(crate) 不可见)。
+pub fn render_blackboard_to<W: std::io::Write>(data: Option<&Value>, w: &mut W) {
     let Some(data) = data else {
         let _ = writeln!(w, "(无数据)");
         return;
