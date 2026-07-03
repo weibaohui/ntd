@@ -13,14 +13,18 @@ ntd 的 Loop Studio 提供「多步骤循环执行」能力：用户预先定义
 ## 2. 命令语法
 
 ```
-ntd loop execution blackboard <execution_id>
-ntd loop execution blackboard <execution_id> --json
+ntd loop execution blackboard <execution_id>            # 默认 JSON（AI/脚本友好）
+ntd loop execution blackboard <execution_id> --human    # 人类可读黑板视图
 ```
 
 | 选项 | 说明 |
 |------|------|
 | `<execution_id>` | 必填，loop_execution 主键 |
-| `--json` | 输出原始 JSON（默认是黑板专用视图） |
+| `--human` | 输出人类可读黑板视图（默认是 JSON） |
+
+### 2.1 为什么默认 JSON
+
+CLI 的主要消费者是 **AI（Claude Code 等执行器）和 shell 脚本**，人类有更好的 UI（前端 BlackboardDrawer）。所以默认走 JSON，管道友好；要看图的人显式加 `--human`。
 
 ### 为什么放在 `execution` 子命令下
 
@@ -30,7 +34,46 @@ ntd loop execution blackboard <execution_id> --json
 
 ## 3. 输出格式
 
-### 3.1 默认（人类可读）
+### 3.1 默认（JSON）
+
+直接打印 `GET /api/loop-executions/{eid}` 的响应体（`LoopExecutionDetail` 的全部字段），便于 AI/脚本消费：
+
+```json
+{
+  "id": 1105,
+  "loop_id": 1,
+  "loop_name": "笑话工厂",
+  "status": "success",
+  "total_steps": 1,
+  "completed_steps": 1,
+  "failed_steps": 0,
+  "started_at": "2026-07-03T00:10:23.855Z",
+  "finished_at": "2026-07-03T00:10:29.988Z",
+  "step_executions": [
+    {
+      "id": 1106,
+      "sequence_index": 1,
+      "step_id": 1,
+      "step_name": "讲个笑话",
+      "status": "success",
+      "execution_record_id": 1137,
+      "conclusion": "为什么程序员总是分不清万圣节和圣诞节？因为 Oct 31 等于 Dec 25！",
+      "rating": null,
+      "input_tokens": 13003,
+      "output_tokens": 628
+    }
+  ],
+  "token_summary": {
+    "total_input_tokens": 13003,
+    "total_output_tokens": 628,
+    "total_cache_read_input_tokens": 0,
+    "total_cache_creation_input_tokens": 0,
+    "total_cost_usd": 0.0
+  }
+}
+```
+
+### 3.2 `--human`（人类视图）
 
 ```
 ═══ Loop Execution #42 ────────────────────────────────────
@@ -55,9 +98,9 @@ ntd loop execution blackboard <execution_id> --json
 ═══ 3 步 / Token: 输入 12k 输出 5k ════════════════════════
 ```
 
-### 3.2 JSON 模式（`--json`）
+### 3.3 JSON 模式
 
-直接打印 `GET /api/loop-executions/{eid}` 的响应体，便于脚本消费。
+见 3.1 默认输出（已切换为 JSON）。
 
 ### 3.3 字段映射
 
@@ -107,9 +150,11 @@ ntd loop execution blackboard <execution_id> --json
 
 `GET /api/loop-executions/{eid}` 已经返回完整的 `LoopExecutionDetail`，包含按 `sequence_index` 排序的 `step_executions[]`。新增端点只是重复造轮子、增加维护成本，并可能与 DTO 漂移。CLI 端渲染逻辑放在客户端，避免服务端为不同 client（CLI / Feishu / 前端）重复实现 3 遍。
 
-### 5.2 为什么默认输出人类可读而不是 JSON
+### 5.2 为什么默认输出 JSON 而不是人类可读
 
-`ntd loop execution get` 已经负责 JSON 输出。新命令的存在价值是「一眼看清」，没有歧义。保留 `--json` 开关用于脚本消费，但默认走专用视图。
+CLI 的主要消费者是 **AI / 脚本**：Claude Code、其他执行器、cron 包装、监控告警等。人类调试场景存在但不是主诉求，且人类有更好的 UI（前端 BlackboardDrawer）。所以默认走 JSON，加 `--human` 走专用视图。
+
+历史版本曾把人类视图作为默认，但实际使用中 AI/脚本管道消费 JSON 是绝对主流（grep、jq、CI），人类随时可以 `--human` 切。
 
 ### 5.3 为什么不在 backend 新增黑板表
 

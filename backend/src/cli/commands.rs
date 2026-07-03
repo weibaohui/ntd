@@ -354,14 +354,14 @@ pub enum LoopExecutionAction {
         execution_id: i64,
     },
     /// Show the blackboard (accumulated step conclusions) for a loop execution.
-    /// 默认输出人类可读视图; 加 --json 输出原始 JSON,便于脚本消费。
+    /// 默认输出 JSON（AI/脚本友好）；加 --human 输出黑板视图（人眼友好）。
     Blackboard {
         /// Execution ID
         execution_id: i64,
 
-        /// 输出原始 JSON（默认是人类可读黑板视图）
+        /// 输出人类可读黑板视图（默认是 JSON，便于 AI/脚本消费）
         #[arg(long, default_value = "false")]
-        json: bool,
+        human: bool,
     },
 }
 
@@ -808,7 +808,7 @@ async fn handle_loop(
                     )).await?;
                     print_response(resp, output, fields)?;
                 }
-                LoopExecutionAction::Blackboard { execution_id, json } => {
+                LoopExecutionAction::Blackboard { execution_id, human } => {
                     // 复用 get_execution_by_id handler 返回的 LoopExecutionDetail,
                     // 它已经按 sequence_index 升序返回 step_executions。
                     // 不新增 API 端点 — 黑板视图本质就是 step_executions 的渲染。
@@ -820,12 +820,12 @@ async fn handle_loop(
                         // 与 print_response 一致:错误码非 0 时抛 anyhow
                         return Err(anyhow::anyhow!("API error {}: {}", resp.code, resp.message));
                     }
-                    if *json {
-                        // JSON 模式: 输出 data 字段的原始 JSON, 跳过 ApiResponse 包装层
-                        println!("{}", serde_json::to_string_pretty(&resp.data)?);
-                    } else {
-                        // 默认: 黑板视图
+                    if *human {
+                        // 人类视图: 黑板文本渲染
                         render_blackboard(resp.data.as_ref());
+                    } else {
+                        // 默认: JSON, 直接是 LoopExecutionDetail, AI/脚本友好
+                        println!("{}", serde_json::to_string_pretty(&resp.data)?);
                     }
                 }
             }
@@ -1231,26 +1231,27 @@ mod tests {
     #[test]
     fn test_cli_parse_loop_execution_blackboard() {
         // 校验命令行解析：ntd loop execution blackboard 42
+        // 默认行为: JSON 输出 (human=false)
         let cli = Cli::try_parse_from(["ntd", "loop", "execution", "blackboard", "42"]).unwrap();
         match cli.command {
-            Commands::Loop { action: LoopAction::Execution { action: LoopExecutionAction::Blackboard { execution_id, json } } } => {
+            Commands::Loop { action: LoopAction::Execution { action: LoopExecutionAction::Blackboard { execution_id, human } } } => {
                 assert_eq!(execution_id, 42);
-                assert!(!json);
+                assert!(!human, "默认应输出 JSON，human=false");
             }
             _ => panic!("Expected Loop::Execution::Blackboard"),
         }
     }
 
     #[test]
-    fn test_cli_parse_loop_execution_blackboard_json() {
-        // --json 开关
-        let cli = Cli::try_parse_from(["ntd", "loop", "execution", "blackboard", "42", "--json"]).unwrap();
+    fn test_cli_parse_loop_execution_blackboard_human() {
+        // --human 开关: 启用人类可读黑板视图
+        let cli = Cli::try_parse_from(["ntd", "loop", "execution", "blackboard", "42", "--human"]).unwrap();
         match cli.command {
-            Commands::Loop { action: LoopAction::Execution { action: LoopExecutionAction::Blackboard { execution_id, json } } } => {
+            Commands::Loop { action: LoopAction::Execution { action: LoopExecutionAction::Blackboard { execution_id, human } } } => {
                 assert_eq!(execution_id, 42);
-                assert!(json);
+                assert!(human, "--human 应启用人类视图");
             }
-            _ => panic!("Expected Loop::Execution::Blackboard with --json"),
+            _ => panic!("Expected Loop::Execution::Blackboard with --human"),
         }
     }
 

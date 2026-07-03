@@ -514,15 +514,16 @@ ntd loop execution get <EXECUTION_ID>
 ---
 
 #### `ntd loop execution blackboard <EXECUTION_ID>`
-以人类可读的黑板视图查看 Loop 执行情况：每个 step 的状态、执行记录 ID（exec）和结论摘要。
-默认输出黑板视图，加 `--json` 输出原始 JSON（与 `execution get` 一致但只聚焦 step_executions）。
+查看 Loop 执行的黑板视图：每个 step 的状态、执行记录 ID（exec）和结论摘要。
+**默认输出 JSON**（AI/脚本友好），加 `--human` 输出人类可读黑板文本。
 
 **设计动机**：每一步的 `conclusion` 字段就是该步骤写入黑板的内容。
 Loop 执行过程中，下一步的 prompt 通过 `{{blackboard}}`、`{{last_output}}`、`{{last_conclusion}}` 等占位符读取此前的累计输出。
-此命令把这个机制从运行期搬到 CLI 调试期，方便人工复盘整个 loop 跑到哪一步、各步结果如何。
+此命令把这个机制从运行期搬到 CLI 调试期。
 
 ```bash
-ntd loop execution blackboard <EXECUTION_ID> [--json]
+ntd loop execution blackboard <EXECUTION_ID>            # 默认 JSON
+ntd loop execution blackboard <EXECUTION_ID> --human    # 人类可读黑板视图
 ```
 
 **选项：**
@@ -530,9 +531,34 @@ ntd loop execution blackboard <EXECUTION_ID> [--json]
 | 选项 | 说明 |
 |------|------|
 | `<EXECUTION_ID>` | 必填，loop execution 主键 |
-| `--json` | 输出原始 JSON（默认是人类可读黑板视图） |
+| `--human` | 输出人类可读黑板视图（默认是 JSON） |
 
-**示例输出**：
+**为什么默认 JSON**：CLI 主要消费者是 AI（Claude Code 等）和 shell 脚本，jq/grep 友好是绝对主流。人类有更好的 UI（前端 BlackboardDrawer），需要时显式加 `--human`。
+
+**示例输出**（JSON，默认）：
+
+```json
+{
+  "id": 1105,
+  "loop_name": "笑话工厂",
+  "status": "success",
+  "step_executions": [
+    {
+      "sequence_index": 1,
+      "step_name": "讲个笑话",
+      "status": "success",
+      "execution_record_id": 1137,
+      "conclusion": "为什么程序员总是分不清万圣节和圣诞节？因为 Oct 31 等于 Dec 25！"
+    }
+  ],
+  "token_summary": {
+    "total_input_tokens": 13003,
+    "total_output_tokens": 628
+  }
+}
+```
+
+**示例输出**（`--human`）：
 
 ```
 ═══ Loop Execution #42 ────────────────────────────────
@@ -552,18 +578,17 @@ ntd loop execution blackboard <EXECUTION_ID> [--json]
   #3 ⏭️ skipped          更新 README                 评分 -
      exec: -
      (无结论)
-     原因: 步骤已跳过（依赖 #2 失败）
 
 ═══ 3 步 / Token: 输入 12k 输出 5k ════════════════════════
 ```
 
-**状态图标**：`success` ✅ · `failed` ❌ · `running` ⏳ · `pending` ⏸ · `pending_approval` 🤔 · `skipped` ⏭️
+**状态图标**（仅 `--human` 模式）：`success` ✅ · `failed` ❌ · `running` ⏳ · `pending` ⏸ · `pending_approval` 🤔 · `skipped` ⏭️
 
 **边界处理**：
-- execution 不存在：返回 `API error 404`，不崩溃
-- step_executions 为空：显示「黑板为空（loop 尚未执行任何步骤）」
-- step 失败且无 conclusion：用 error_message 替代结论
-- step 待审批：显示 approval_comment + 「等待人工审批」
+- execution 不存在：返回 `{"error":true,"message":"..."}`，exit 1
+- step_executions 为空：返回 `step_executions: []`，不报错
+- step 失败且无 conclusion：渲染时用 `error_message` 替代
+- step 待审批：渲染时显示 `approval_comment` + 「等待人工审批」
 
 完整设计见 [`docs/loop-blackboard-cli.md`](./loop-blackboard-cli.md)。
 
