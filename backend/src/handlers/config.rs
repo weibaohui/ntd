@@ -98,6 +98,12 @@ pub async fn update_config(
             }
             cfg.auto_update_hour = hour;
         }
+        if let Some(blackboard_update_prompt) = req.blackboard_update_prompt {
+            cfg.blackboard_update_prompt = blackboard_update_prompt;
+        }
+        if let Some(blackboard_refresh_prompt) = req.blackboard_refresh_prompt {
+            cfg.blackboard_refresh_prompt = blackboard_refresh_prompt;
+        }
 
         cfg.normalize_paths();
         cfg.clamp_execution_timeout_secs();

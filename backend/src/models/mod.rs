@@ -786,6 +786,12 @@ pub struct UpdateConfigRequest {
     pub auto_update_interval: Option<String>,
     /// 自动更新检查小时（0-23）
     pub auto_update_hour: Option<u32>,
+    /// 黑板更新提示词模板（包含占位符 {{current}}、{{conclusion}}、{{todo_id}}、{{todo_title}}）。
+    /// 设置为空字符串可恢复内置默认提示词。
+    pub blackboard_update_prompt: Option<String>,
+    /// 黑板刷新提示词模板（仅包含占位符 {{current}}）。
+    /// 设置为空字符串可恢复内置默认提示词。
+    pub blackboard_refresh_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
