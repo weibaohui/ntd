@@ -513,6 +513,87 @@ ntd loop execution get <EXECUTION_ID>
 
 ---
 
+#### `ntd loop execution blackboard <EXECUTION_ID>`
+查看 Loop 执行的黑板视图：每个 step 的状态、执行记录 ID（exec）和结论摘要。
+**默认输出 JSON**（AI/脚本友好），加 `--human` 输出人类可读黑板文本。
+
+**设计动机**：每一步的 `conclusion` 字段就是该步骤写入黑板的内容。
+Loop 执行过程中，下一步的 prompt 通过 `{{blackboard}}`、`{{last_output}}`、`{{last_conclusion}}` 等占位符读取此前的累计输出。
+此命令把这个机制从运行期搬到 CLI 调试期。
+
+```bash
+ntd loop execution blackboard <EXECUTION_ID>            # 默认 JSON
+ntd loop execution blackboard <EXECUTION_ID> --human    # 人类可读黑板视图
+```
+
+**选项：**
+
+| 选项 | 说明 |
+|------|------|
+| `<EXECUTION_ID>` | 必填，loop execution 主键 |
+| `--human` | 输出人类可读黑板视图（默认是 JSON） |
+
+**为什么默认 JSON**：CLI 主要消费者是 AI（Claude Code 等）和 shell 脚本，jq/grep 友好是绝对主流。人类有更好的 UI（前端 BlackboardDrawer），需要时显式加 `--human`。
+
+**示例输出**（JSON，默认）：
+
+```json
+{
+  "id": 1105,
+  "loop_name": "笑话工厂",
+  "status": "success",
+  "step_executions": [
+    {
+      "sequence_index": 1,
+      "step_name": "讲个笑话",
+      "status": "success",
+      "execution_record_id": 1137,
+      "conclusion": "为什么程序员总是分不清万圣节和圣诞节？因为 Oct 31 等于 Dec 25！"
+    }
+  ],
+  "token_summary": {
+    "total_input_tokens": 13003,
+    "total_output_tokens": 628
+  }
+}
+```
+
+**示例输出**（`--human`）：
+
+```
+═══ Loop Execution #42 ────────────────────────────────
+循环: 每日代码 review
+触发: cron @ 0 9 * * *
+状态: ✅ success · 完成 3/3 步
+开始: 2026-07-03 09:00:00 · 结束: 09:45:32
+
+  #1 ✅ success          编写 CRUD 代码             评分 85
+     exec: #1024
+     完成了用户登录功能的 CRUD 代码
+
+  #2 ✅ success          补充单元测试               评分 90
+     exec: #1025
+     新增 12 个测试用例，覆盖率提升到 87%
+
+  #3 ⏭️ skipped          更新 README                 评分 -
+     exec: -
+     (无结论)
+
+═══ 3 步 / Token: 输入 12k 输出 5k ════════════════════════
+```
+
+**状态图标**（仅 `--human` 模式）：`success` ✅ · `failed` ❌ · `running` ⏳ · `pending` ⏸ · `pending_approval` 🤔 · `skipped` ⏭️
+
+**边界处理**：
+- execution 不存在：返回 `{"error":true,"message":"..."}`，exit 1
+- step_executions 为空：返回 `step_executions: []`，不报错
+- step 失败且无 conclusion：渲染时用 `error_message` 替代
+- step 待审批：渲染时显示 `approval_comment` + 「等待人工审批」
+
+完整设计见 [`docs/loop-blackboard-cli.md`](./loop-blackboard-cli.md)。
+
+---
+
 #### `ntd loop results <EXECUTION_ID>`
 获取 Loop 执行结果（步骤级摘要）。
 

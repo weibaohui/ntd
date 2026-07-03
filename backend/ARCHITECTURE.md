@@ -218,17 +218,22 @@ erDiagram
         i64 id PK
         i64 loop_id FK
         string status
-        string blackboard
         string started_at
         string finished_at
     }
 
+    // 「黑板」并不是一个独立列,而是 loop_step_executions.conclusion 按
+    // sequence_index ASC 排序后渲染的虚拟视图。运行时通过 `build_blackboard_text`
+    // 在每步执行前组装（services/loop_runner.rs），注入到下一步的 prompt。
+    // CLI 端用 `ntd loop execution blackboard <eid>` 查看（docs/loop-blackboard-cli.md）。
     loop_step_executions {
         i64 id PK
         i64 loop_execution_id FK
         i64 loop_step_id FK
         i64 execution_record_id FK
         string status
+        i32 sequence_index
+        string conclusion  "黑板写入内容"
     }
 
     loop_tags {
