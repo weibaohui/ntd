@@ -2,7 +2,7 @@
  * 黑板设置弹窗验证：
  * 1. 直接导航到黑板页面
  * 2. 点击设置按钮能打开弹窗
- * 3. 防抖时间 InputNumber 正常显示和修改
+ * 3. 防抖周期和触发条数 InputNumber 正常显示和修改
  * 4. 保存后弹窗关闭并提示成功
  */
 import { test, expect } from '@playwright/test';

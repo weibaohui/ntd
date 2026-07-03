@@ -70,6 +70,8 @@ const DEFAULT_AUTO_UPDATE_HOUR: u32 = 3;
 const DEFAULT_AUTO_UPDATE_INTERVAL: &str = "day";
 /// 黑板更新防抖周期（秒），默认 10 分钟。
 const DEFAULT_BLACKBOARD_DEBOUNCE_SECS: u64 = 600;
+/// 黑板更新防抖条数阈值，达到此条数立即触发（不等周期）。
+const DEFAULT_BLACKBOARD_DEBOUNCE_COUNT: u64 = 10;
 
 /// 私有 helper:`auto_backup_*` / `auto_todo_backup_*` / `auto_skill_backup_*`
 /// 三组字段共享同一形状 (enabled: bool, cron: String, max_files: usize)。
@@ -182,6 +184,8 @@ pub struct Config {
     /// todo 执行完成后不会立即触发黑板更新，而是暂存到 pending 队列，
     /// 等到此周期到期后统一处理一次 LLM 调用。
     pub blackboard_debounce_secs: u64,
+    /// 黑板更新防抖条数阈值，达到此条数时立即触发（不等周期）。
+    pub blackboard_debounce_count: u64,
 }
 
 /// Paths for each supported executor binary.
@@ -291,6 +295,7 @@ impl Default for Config {
             auto_update_enabled: false, auto_update_interval: DEFAULT_AUTO_UPDATE_INTERVAL.to_string(),
             auto_update_hour: DEFAULT_AUTO_UPDATE_HOUR, auto_update_last_check_at: None,
             blackboard_debounce_secs: DEFAULT_BLACKBOARD_DEBOUNCE_SECS,
+            blackboard_debounce_count: DEFAULT_BLACKBOARD_DEBOUNCE_COUNT,
         }
     }
 }
