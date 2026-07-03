@@ -489,6 +489,13 @@ pub struct BatchCopyTodoWorkspaceRequest {
     pub workspace_id: i64,
 }
 
+/// 批量暂停/恢复周期执行请求体。scheduler_enabled 为 true 表示恢复，false 表示暂停。
+#[derive(Debug, Clone, Deserialize)]
+pub struct BatchUpdateTodoSchedulerRequest {
+    pub ids: Vec<i64>,
+    pub scheduler_enabled: bool,
+}
+
 /// 批量更新环路工作空间请求体（移动到其他工作空间）。
 #[derive(Debug, Clone, Deserialize)]
 pub struct BatchUpdateLoopWorkspaceRequest {

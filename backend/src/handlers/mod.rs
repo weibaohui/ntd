@@ -541,6 +541,7 @@ fn todo_routes() -> Router<AppState> {
         .route("/api/todos/batch-executor", put(todo::batch_update_todos_executor))
         .route("/api/todos/batch-workspace", put(todo::batch_move_todos_workspace))
         .route("/api/todos/batch-copy-workspace", post(todo::batch_copy_todos_workspace))
+        .route("/api/todos/batch-scheduler", put(todo::batch_update_todos_scheduler))
         .route("/api/todos/{id}", get(todo::get_todo).put(todo::update_todo).delete(todo::delete_todo))
         .route("/api/tags", get(tag::get_tags).post(tag::create_tag))
         .route("/api/tags/{id}", delete(tag::delete_tag))

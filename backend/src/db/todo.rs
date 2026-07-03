@@ -376,6 +376,32 @@ impl Database {
         Ok(rows_affected)
     }
 
+    /// 批量暂停/恢复事项的周期执行（单条 SQL，原子语义）。
+    /// scheduler_enabled 为 true 表示恢复调度，false 表示暂停调度；scheduler_config 保持不变。
+    pub async fn batch_update_todos_scheduler(
+        &self,
+        ids: &[i64],
+        scheduler_enabled: bool,
+    ) -> Result<u64, sea_orm::DbErr> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let now = crate::models::utc_timestamp();
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i)).collect();
+        let in_clause = placeholders.join(",");
+        let enabled_idx = ids.len() + 1;
+        let now_idx = ids.len() + 2;
+        let sql = format!(
+            "UPDATE todos SET scheduler_enabled = ?{enabled_idx}, updated_at = ?{now_idx} WHERE id IN ({in_clause})"
+        );
+        let mut vals: Vec<sea_orm::Value> = ids.iter().map(|id| (*id).into()).collect();
+        vals.push((scheduler_enabled as i32).into()); // SQLite 用整数存储布尔值
+        vals.push(now.into());
+        let stmt = sea_orm::Statement::from_sql_and_values(sea_orm::DbBackend::Sqlite, sql, vals);
+        let rows_affected = self.conn.execute(stmt).await?.rows_affected();
+        Ok(rows_affected)
+    }
+
     /// todo hook 已整块移除（见 plan `purring-forging-petal`），`update_todo_hooks` 不再存在：
     /// todo 的 `hooks` 字段与 `todos.hooks` 列随 V23 迁移一起删掉。
 

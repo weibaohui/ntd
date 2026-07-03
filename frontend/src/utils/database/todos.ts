@@ -84,6 +84,20 @@ export async function batchUpdateTodosExecutor(
   }
 }
 
+/** 批量暂停周期执行。将所选事项的 scheduler_enabled 设为 false，但不改变 scheduler_config。 */
+export async function batchPauseScheduler(
+  ids: number[],
+): Promise<{ updated_count: number; total: number }> {
+  return unwrap(await api.put('/api/todos/batch-scheduler', { ids, scheduler_enabled: false }));
+}
+
+/** 批量恢复周期执行。将所选事项的 scheduler_enabled 设为 true，使用原有的 scheduler_config。 */
+export async function batchResumeScheduler(
+  ids: number[],
+): Promise<{ updated_count: number; total: number }> {
+  return unwrap(await api.put('/api/todos/batch-scheduler', { ids, scheduler_enabled: true }));
+}
+
 /** 批量移动事项到其他工作空间。 */
 export async function batchMoveTodosWorkspace(
   ids: number[],
