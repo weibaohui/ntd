@@ -33,8 +33,8 @@ test('黑板设置弹窗能正常打开和保存', async ({ page }) => {
   // 等待一下让表单更新
   await page.waitForTimeout(500);
 
-  // 找到并点击保存按钮（注意：文字是"保 存"有空格）
-  const saveButton = page.locator('.ant-modal button:has-text("保 存")').first();
+  // 点击弹窗底部的确认按钮（primary button in footer）
+  const saveButton = page.locator('.ant-modal-footer .ant-btn-primary').first();
   await expect(saveButton).toBeVisible();
   await saveButton.click();
 

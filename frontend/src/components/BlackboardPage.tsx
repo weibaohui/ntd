@@ -14,7 +14,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Button, Typography, Skeleton, message, Modal, Form, InputNumber } from 'antd';
+import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space } from 'antd';
 import { ReloadOutlined, SettingOutlined } from '@ant-design/icons';
 import { XMarkdown } from '@ant-design/x-markdown';
 import { useTheme } from '@/hooks/useTheme';
@@ -235,7 +235,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         onCancel={() => setSettingsOpen(false)}
         okText="保存"
         confirmLoading={settingsSaving}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form layout="vertical">
           <Form.Item label="防抖周期">
@@ -248,13 +248,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
               style={{ width: 200 }}
             />
           </Form.Item>
-          <Form.Item
-            extra="周期到期后统一处理 pending 的 todo，减少频繁的 LLM 调用"
-          >
-            <span style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>
-              周期到期后统一处理 pending 的 todo，减少频繁的 LLM 调用
-            </span>
-          </Form.Item>
+          <Form.Item extra="周期到期后统一处理 pending 的 todo，减少频繁的 LLM 调用" />
         </Form>
       </Modal>
     </div>
@@ -291,7 +285,7 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
       <Title level={4} style={{ margin: 0 }}>
         黑板
       </Title>
-      <Button.Group>
+      <Space.Compact>
         <Button
           icon={<SettingOutlined />}
           onClick={props.onOpenSettings}
@@ -306,7 +300,7 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
         >
           {props.refreshing ? '更新中...' : '刷新'}
         </Button>
-      </Button.Group>
+      </Space.Compact>
     </div>
   );
 }
