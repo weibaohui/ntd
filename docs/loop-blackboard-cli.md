@@ -172,7 +172,7 @@ CLI 的主要消费者是 **AI / 脚本**：Claude Code、其他执行器、cron
 |------|------|------|
 | `backend/src/cli/commands.rs` | `LoopExecutionAction` 加 `Blackboard { execution_id, json }` 变体 | +10 |
 | `backend/src/cli/commands.rs` | `handle_loop` 加 match arm | +18 |
-| `backend/src/cli/commands.rs` | 新增 `render_blackboard(data: &Value)` 渲染函数 | ~70 |
+| `backend/src/cli/commands.rs` | 新增 `render_blackboard(data: Option<&Value>)` 渲染函数（handle_loop 直传，不强制预先过滤） | ~70 |
 | `backend/src/cli/commands.rs` | 新增 `status_icon(status: &str) -> &'static str` 帮助函数 | ~12 |
 | `backend/src/cli/commands.rs` | 单测 6 个：normal / no_record_id / empty / failed / pending_approval / status_icon | ~80 |
 | `docs/ntd-cli.md` | 命令列表加一条 + 示例输出 | +25 |

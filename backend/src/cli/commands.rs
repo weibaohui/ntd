@@ -887,18 +887,58 @@ fn status_icon(status: &str) -> &'static str {
     }
 }
 
-/// 把 LoopExecutionDetail 渲染成人类可读的黑板视图。
+/// 把 LoopExecutionDetail 渲染成人类可读的黑板视图（写到 stdout）。
 ///
-/// 输入是 `serde_json::Value`（来自 ApiClient 的反序列化结果），不是强类型，
-/// 是因为这个函数唯一的调用点在 CLI 命令分发处，没必要为它再定义一个 DTO。
-/// 如果渲染失败（字段缺失或类型错误），降级输出原始 JSON + 错误提示，
+/// 输入是 `Option<&serde_json::Value>` —— None 时由调用方传入表示「API 返回
+/// 的 data 字段为 null」，本函数显式处理这种情况而不是强制调用方过滤，
+/// 让 dispatch 层代码更扁平。
+///
+/// 渲染失败（字段缺失或类型错误）时降级输出原始 JSON + 错误提示，
 /// 而不是让 CLI 崩溃——黑板视图是辅助功能，不能阻塞主流程。
 fn render_blackboard(data: Option<&Value>) {
+    let mut buf: Vec<u8> = Vec::new();
+    render_blackboard_to(data, &mut buf);
+    // CLI 入口把 buf 一次性 flush 到 stdout, 而不是 println! 散落到各 helper,
+    // 这样测试也能通过 render_blackboard_to 抓取完整输出。
+    use std::io::Write;
+    let _ = std::io::stdout().write_all(&buf);
+}
+
+/// 把黑板渲染到任意 `Write` 目标，单元测试用 `Vec<u8>` 抓取输出做断言。
+/// 所有 println! 在这里都改成 writeln!，避免分散在 helper 里写死 stdout。
+fn render_blackboard_to<W: std::io::Write>(data: Option<&Value>, w: &mut W) {
     let Some(data) = data else {
-        println!("(无数据)");
+        let _ = writeln!(w, "(无数据)");
         return;
     };
 
+    write_blackboard_header(data, w);
+    let _ = writeln!(w);
+
+    match data.get("step_executions").and_then(Value::as_array) {
+        Some(steps) if !steps.is_empty() => {
+            for step in steps {
+                write_blackboard_step(step, w);
+            }
+            let _ = writeln!(w);
+            write_blackboard_footer(data, steps.len(), w);
+        }
+        Some(_) => {
+            let _ = writeln!(w, "黑板为空（loop 尚未执行任何步骤）");
+            let _ = writeln!(w);
+            write_blackboard_footer(data, 0, w);
+        }
+        None => {
+            let _ = writeln!(w, "(step_executions 字段缺失或类型错误)");
+            let _ = writeln!(w, "\n原始数据:\n{}", serde_json::to_string_pretty(data).unwrap_or_default());
+        }
+    }
+}
+
+/// 渲染黑板头部：循环名、触发信息、状态、时间。
+/// 字段全部缺失时降级为占位符，不影响主流程。
+fn write_blackboard_header<W: std::io::Write>(data: &Value, w: &mut W) {
+    use std::io::Write;
     let exec_id = data.get("id").and_then(Value::as_i64).unwrap_or(0);
     let loop_name = data.get("loop_name").and_then(Value::as_str).unwrap_or("?");
     let trigger_meta = data.get("trigger_meta").and_then(Value::as_str).unwrap_or("");
@@ -908,12 +948,13 @@ fn render_blackboard(data: Option<&Value>) {
     let started = data.get("started_at").and_then(Value::as_str).unwrap_or("");
     let finished = data.get("finished_at").and_then(Value::as_str).unwrap_or("");
 
-    println!("═══ Loop Execution #{exec_id} ────────────────────────────────");
-    println!("循环: {loop_name}");
+    let _ = writeln!(w, "═══ Loop Execution #{exec_id} ────────────────────────────────");
+    let _ = writeln!(w, "循环: {loop_name}");
     if !trigger_meta.is_empty() && trigger_meta != "{}" {
-        println!("触发: {trigger_meta}");
+        let _ = writeln!(w, "触发: {trigger_meta}");
     }
-    println!(
+    let _ = writeln!(
+        w,
         "状态: {} {} · 完成 {}/{} 步",
         status_icon(status),
         status,
@@ -926,42 +967,48 @@ fn render_blackboard(data: Option<&Value>) {
         } else {
             String::new()
         };
-        println!("开始: {started}{end_part}");
-    }
-    println!();
-
-    let steps = data.get("step_executions").and_then(Value::as_array);
-    let Some(steps) = steps else {
-        println!("(step_executions 字段缺失或类型错误)");
-        println!("\n原始数据:\n{}", serde_json::to_string_pretty(data).unwrap_or_default());
-        return;
-    };
-
-    if steps.is_empty() {
-        println!("黑板为空（loop 尚未执行任何步骤）");
-        println!();
-    } else {
-        for step in steps {
-            render_blackboard_step(step);
-        }
-        println!();
-    }
-
-    // Token 汇总：LoopExecutionDetail.token_summary 是独立字段
-    if let Some(ts) = data.get("token_summary") {
-        let ti = ts.get("total_input_tokens").and_then(Value::as_i64).unwrap_or(0);
-        let to = ts.get("total_output_tokens").and_then(Value::as_i64).unwrap_or(0);
-        println!("═══ {} 步 / Token: 输入 {} 输出 {} ════════════════════════", steps.len(), ti, to);
-    } else {
-        println!("═══ {} 步 ═══════════════════════════════════════════════════", steps.len());
+        let _ = writeln!(w, "开始: {started}{end_part}");
     }
 }
 
-/// 渲染单个 step 块。
+/// 渲染黑板尾部：步骤总数 + Token 汇总（如果有）。
+/// Token 汇总来自 LoopExecutionDetail.token_summary，与 step_executions 平级。
+fn write_blackboard_footer<W: std::io::Write>(data: &Value, step_count: usize, w: &mut W) {
+    use std::io::Write;
+    if let Some(ts) = data.get("token_summary") {
+        let ti = ts.get("total_input_tokens").and_then(Value::as_i64).unwrap_or(0);
+        let to = ts.get("total_output_tokens").and_then(Value::as_i64).unwrap_or(0);
+        let _ = writeln!(w, "═══ {} 步 / Token: 输入 {} 输出 {} ════════════════════════", step_count, ti, to);
+    } else {
+        let _ = writeln!(w, "═══ {} 步 ═══════════════════════════════════════════════════", step_count);
+    }
+}
+
+/// 渲染单个 step 块（标题行 + exec id + 多行结论）。
 /// 字段名与 `LoopStepExecutionDto` 一致（见 `backend/src/models/loop_.rs`）。
-fn render_blackboard_step(step: &Value) {
+fn write_blackboard_step<W: std::io::Write>(step: &Value, w: &mut W) {
+    use std::io::Write;
+    let header = format_step_header(step);
+    let _ = writeln!(w, "  {header}");
+    let exec_id = step
+        .get("execution_record_id")
+        .and_then(Value::as_i64)
+        .map(|r| format!("#{r}"))
+        .unwrap_or_else(|| "-".to_string());
+    let _ = writeln!(w, "     exec: {exec_id}");
+    write_step_body(step, w);
+}
+
+/// 格式化 step 标题行：`#<seq> <icon> <name(padded to 22)> 评分 <rating>`。
+/// 名字用 display-width-aware 截断，避免中文字符把对齐打乱。
+fn format_step_header(step: &Value) -> String {
     let seq = step.get("sequence_index").and_then(Value::as_i64).unwrap_or(0);
     let status = step.get("status").and_then(Value::as_str).unwrap_or("unknown");
+    let rating = step
+        .get("rating")
+        .and_then(Value::as_i64)
+        .map(|r| r.to_string())
+        .unwrap_or_else(|| "-".to_string());
     // step_name 为 None 时回退到 "step #{step_id}"，异常处理步骤（step_id=-1）显示「异常处理」
     let step_name = match (
         step.get("step_name").and_then(Value::as_str),
@@ -972,63 +1019,81 @@ fn render_blackboard_step(step: &Value) {
         (_, Some(sid)) => format!("step #{sid}"),
         (_, None) => "(未知环节)".to_string(),
     };
-    let rating = step
-        .get("rating")
-        .and_then(Value::as_i64)
-        .map(|r| r.to_string())
-        .unwrap_or_else(|| "-".to_string());
-    let exec_id = step
-        .get("execution_record_id")
-        .and_then(Value::as_i64)
-        .map(|r| format!("#{r}"))
-        .unwrap_or_else(|| "-".to_string());
-
-    println!(
-        "  #{seq} {} {:<22} 评分 {rating}",
+    // 按终端显示宽度截断（中文/Emoji 按 2 计算），并 pad 空格让「评分」列对齐。
+    let padded = truncate_to_width(&step_name, 22);
+    format!(
+        "#{seq} {} {:<22} 评分 {rating}",
         status_icon(status),
-        truncate(&step_name, 22),
-    );
-    println!("     exec: {exec_id}");
+        padded,
+    )
+}
 
-    // 结论展示：优先级为 approval_comment (pending_approval) > conclusion > error_message > (无结论)
+/// 写 step 正文：结论 / 错误 / 待审批意见。
+/// 优先级：pending_approval 的 approval_comment > error_message > conclusion > (无结论)。
+fn write_step_body<W: std::io::Write>(step: &Value, w: &mut W) {
+    use std::io::Write;
+    let status = step.get("status").and_then(Value::as_str).unwrap_or("unknown");
     if status == "pending_approval" {
         if let Some(comment) = step.get("approval_comment").and_then(Value::as_str) {
             if !comment.is_empty() {
-                println!("     待审批意见: {comment}");
+                let _ = writeln!(w, "     待审批意见: {comment}");
             }
         }
-        println!("     (等待人工审批)");
-    } else if let Some(err) = step.get("error_message").and_then(Value::as_str) {
+        let _ = writeln!(w, "     (等待人工审批)");
+        return;
+    }
+    if let Some(err) = step.get("error_message").and_then(Value::as_str) {
         if !err.is_empty() {
-            println!("     失败: {err}");
+            let _ = writeln!(w, "     失败: {err}");
         }
-        if let Some(c) = step.get("conclusion").and_then(Value::as_str) {
-            if !c.is_empty() {
-                println!("     结论: {c}");
-            }
-        }
-    } else if let Some(c) = step.get("conclusion").and_then(Value::as_str) {
-        if !c.is_empty() {
+    }
+    match step.get("conclusion").and_then(Value::as_str) {
+        Some(c) if !c.is_empty() => {
             // 多行结论：保留缩进让层级清晰
             for line in c.lines() {
-                println!("     {line}");
+                let _ = writeln!(w, "     {line}");
             }
-        } else {
-            println!("     (无结论)");
         }
-    } else {
-        println!("     (无结论)");
+        _ => {
+            let _ = writeln!(w, "     (无结论)");
+        }
     }
 }
 
-/// 截断字符串到指定字符宽度（按 char 边界，安全处理 UTF-8）。
-/// 中文/全角字符按 1 个单位计算，与终端实际宽度一致。
-fn truncate(s: &str, max: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max {
-        return s.to_string();
+/// 截断字符串到指定「终端显示宽度」（display width），按 char 边界安全处理 UTF-8。
+/// ASCII 按 1 计算宽度，CJK（>= U+0080）按 2。
+/// 注意：emoji 的实际宽度因字体而异，这里按统一近似计算；
+/// 真正的 terminal width 需要 unicode-width crate，但对黑板视图而言够用。
+///
+/// 输出长度恒等于 max_width：不足时右补空格（让对齐列就位），超出时截断到
+/// `max_width - 1` 个 width 后追加 `…` 占第 max_width 个 width。
+fn truncate_to_width(s: &str, max_width: usize) -> String {
+    // 第一遍: 计算 s 的真实 display width
+    let total: usize = s
+        .chars()
+        .map(|c| if (c as u32) < 0x80 { 1 } else { 2 })
+        .sum();
+    if total <= max_width {
+        // 短于阈值: 原样 + 补空格到 max_width
+        let mut out = String::with_capacity(max_width);
+        out.push_str(s);
+        for _ in 0..(max_width - total) {
+            out.push(' ');
+        }
+        return out;
     }
-    let mut out: String = chars.into_iter().take(max.saturating_sub(1)).collect();
+    // 超长: 截到 max_width - 1 个 width 的字符 + … = max_width
+    let mut out = String::with_capacity(max_width);
+    let mut w = 0usize;
+    let target = max_width.saturating_sub(1); // 留给 … 的位置
+    for c in s.chars() {
+        let cw = if (c as u32) < 0x80 { 1 } else { 2 };
+        if w + cw > target {
+            break;
+        }
+        out.push(c);
+        w += cw;
+    }
     out.push('…');
     out
 }
@@ -1274,39 +1339,50 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_short() {
-        // 短于阈值原样返回
-        assert_eq!(truncate("hello", 10), "hello");
-        assert_eq!(truncate("中文测试", 10), "中文测试");
+    fn test_truncate_to_width_short() {
+        // 短于阈值: 原样返回 + 补 pad 空格到 max_width
+        assert_eq!(truncate_to_width("hello", 10), "hello     ");
+        // 中文按 2 计算宽度, 4 个中文 = 8, 小于 10, pad 2 个空格
+        assert_eq!(truncate_to_width("中文测试", 10), "中文测试  ");
     }
 
     #[test]
-    fn test_truncate_long() {
-        // 超长截断到阈值-1 + 省略号，避免 panic 在 UTF-8 字符边界
+    fn test_truncate_to_width_ascii_overflow() {
+        // 超长 ASCII 截断: 末尾加 … 占第 max_width 位, 总长 = max_width
         let s = "this is a very long step name that exceeds limit";
-        let out = truncate(s, 10);
+        let out = truncate_to_width(s, 10);
+        // 9 个 ASCII + … = 10 字符, 总长 == max_width
+        assert_eq!(out, "this is a…");
         assert_eq!(out.chars().count(), 10);
-        assert!(out.ends_with('…'));
     }
 
     #[test]
-    fn test_truncate_utf8_safe() {
-        // 截断点落在多字节字符中间时不能 panic
-        let s = "中文abcdefghij";
-        let out = truncate(s, 5);
-        assert!(out.chars().count() <= 5);
-        assert!(out.ends_with('…'));
+    fn test_truncate_to_width_cjk_safe() {
+        // 中文按 2 计算宽度, 「中文abcdefghij」: 中(2)文(2)a(1)b(1)c(1)d(1)e(1)f(1)g(1)h(1)i(1)j(1) = 13
+        // 截断到 max_width=5: 留 1 个位置给 …, 所以填充 4 个 width 的字符 = 「中文」 (4), 再 + … = 5
+        let out = truncate_to_width("中文abcdefghij", 5);
+        assert_eq!(out, "中文…");
     }
 
+    #[test]
+    fn test_truncate_to_width_exact() {
+        // 宽度刚好等于 max_width 时, 不截断也不加 …
+        assert_eq!(truncate_to_width("hello", 5), "hello");
+        // 「中文ab」= 2+2+1+1=6, max_width=6, 刚好填满
+        assert_eq!(truncate_to_width("中文ab", 6), "中文ab");
+    }
+
+    /// 截断到指定 display width 的 helper 测试。
     #[test]
     fn test_render_blackboard_none() {
-        // data 为 None 时输出降级提示，不 panic
+        // data 为 None 时输出降级提示, 不 panic
+        // 内部只 println, 不返回 String, 此测试只验不崩溃
         render_blackboard(None);
     }
 
     #[test]
     fn test_render_blackboard_normal() {
-        // 正常 3 step 全 success：断言输出包含关键字段
+        // 正常 3 step 全 success: 不 panic
         let data = json!({
             "id": 42,
             "loop_name": "每日代码 review",
@@ -1318,14 +1394,98 @@ mod tests {
             "finished_at": "2026-07-03 09:45:32",
             "step_executions": [
                 {"sequence_index": 1, "step_id": 1, "step_name": "编写 CRUD 代码", "status": "success", "rating": 85, "execution_record_id": 1024, "conclusion": "完成了用户登录功能的 CRUD 代码"},
-                {"sequence_index": 2, "step_id": 2, "step_name": "补充单元测试", "status": "success", "rating": 90, "execution_record_id": 1025, "conclusion": "新增 12 个测试用例，覆盖率提升到 87%"},
+                {"sequence_index": 2, "step_id": 2, "step_name": "补充单元测试", "status": "success", "rating": 90, "execution_record_id": 1025, "conclusion": "新增 12 个测试用例"},
                 {"sequence_index": 3, "step_id": 3, "step_name": "更新 README", "status": "success", "rating": 75, "execution_record_id": 1026, "conclusion": "更新了安装步骤"}
             ],
             "token_summary": {"total_input_tokens": 12000, "total_output_tokens": 5000}
         });
         render_blackboard(Some(&data));
-        // 渲染函数直接 println，单元测试只验证它不 panic；
-        // 真实输出验证放在手动测试或集成测试。
+    }
+
+    #[test]
+    fn test_render_blackboard_normal_assert_output() {
+        // 把 render_blackboard 的输出抓到字符串, 断言关键片段, 防止回归。
+        let data = json!({
+            "id": 42,
+            "loop_name": "L",
+            "status": "success",
+            "total_steps": 1,
+            "completed_steps": 1,
+            "step_executions": [
+                {"sequence_index": 1, "step_id": 1, "step_name": "S1", "status": "success", "rating": 85, "execution_record_id": 1024, "conclusion": "ok"}
+            ]
+        });
+        let out = render_blackboard_to_string(Some(&data));
+        // 头部: 包含 exec id 和循环名
+        assert!(out.contains("Loop Execution #42"), "missing exec id header: {out}");
+        assert!(out.contains("循环: L"), "missing loop name: {out}");
+        // 状态行: 包含图标和进度
+        assert!(out.contains("✅"), "missing success icon: {out}");
+        assert!(out.contains("完成 1/1 步"), "missing progress: {out}");
+        // step 标题: 序号 + 图标 + 评分
+        assert!(out.contains("#1"), "missing seq: {out}");
+        assert!(out.contains("评分 85"), "missing rating: {out}");
+        // exec 行
+        assert!(out.contains("exec: #1024"), "missing exec id: {out}");
+        // 结论多行
+        assert!(out.contains("ok"), "missing conclusion: {out}");
+    }
+
+    #[test]
+    fn test_render_blackboard_failed_assert_output() {
+        // failed: 有 error_message 但无 conclusion 时, error_message 替代结论
+        let data = json!({
+            "id": 1,
+            "loop_name": "L",
+            "status": "failed",
+            "total_steps": 1,
+            "completed_steps": 0,
+            "step_executions": [
+                {"sequence_index": 1, "step_id": 1, "step_name": "失败步骤", "status": "failed", "error_message": "执行超时", "conclusion": null, "execution_record_id": null}
+            ]
+        });
+        let out = render_blackboard_to_string(Some(&data));
+        assert!(out.contains("❌"), "missing failed icon: {out}");
+        assert!(out.contains("失败: 执行超时"), "missing error message: {out}");
+        assert!(out.contains("(无结论)"), "missing fallback conclusion: {out}");
+        assert!(out.contains("exec: -"), "missing record id fallback: {out}");
+    }
+
+    #[test]
+    fn test_render_blackboard_pending_approval_assert_output() {
+        let data = json!({
+            "id": 1,
+            "loop_name": "L",
+            "status": "running",
+            "total_steps": 1,
+            "completed_steps": 0,
+            "step_executions": [
+                {"sequence_index": 1, "step_id": 1, "step_name": "需要审批", "status": "pending_approval", "approval_comment": "请确认改动", "conclusion": null}
+            ]
+        });
+        let out = render_blackboard_to_string(Some(&data));
+        assert!(out.contains("🤔"), "missing pending_approval icon: {out}");
+        assert!(out.contains("待审批意见: 请确认改动"), "missing approval comment: {out}");
+        assert!(out.contains("(等待人工审批)"), "missing pending hint: {out}");
+    }
+
+    #[test]
+    fn test_render_blackboard_missing_step_executions_assert_output() {
+        let data = json!({"id": 1, "loop_name": "L", "status": "running"});
+        let out = render_blackboard_to_string(Some(&data));
+        assert!(out.contains("(step_executions 字段缺失或类型错误)"), "missing fallback msg: {out}");
+        assert!(out.contains("原始数据:"), "missing raw data dump: {out}");
+    }
+
+    #[test]
+    fn test_render_blackboard_empty_assert_output() {
+        let data = json!({
+            "id": 1, "loop_name": "L", "status": "pending",
+            "total_steps": 0, "completed_steps": 0,
+            "step_executions": []
+        });
+        let out = render_blackboard_to_string(Some(&data));
+        assert!(out.contains("黑板为空"), "missing empty hint: {out}");
     }
 
     #[test]
@@ -1341,54 +1501,8 @@ mod tests {
                 {"sequence_index": 1, "step_id": 1, "step_name": "等待中", "status": "pending", "conclusion": null, "execution_record_id": null}
             ]
         });
-        render_blackboard(Some(&data));
-    }
-
-    #[test]
-    fn test_render_blackboard_empty() {
-        // step_executions 为空时显示「黑板为空」提示
-        let data = json!({
-            "id": 1,
-            "loop_name": "L",
-            "status": "pending",
-            "total_steps": 0,
-            "completed_steps": 0,
-            "step_executions": []
-        });
-        render_blackboard(Some(&data));
-    }
-
-    #[test]
-    fn test_render_blackboard_failed() {
-        // failed step：有 error_message 但无 conclusion 时，error_message 替代结论
-        let data = json!({
-            "id": 1,
-            "loop_name": "L",
-            "status": "failed",
-            "total_steps": 2,
-            "completed_steps": 1,
-            "step_executions": [
-                {"sequence_index": 1, "step_id": 1, "step_name": "成功步骤", "status": "success", "rating": 80, "conclusion": "ok"},
-                {"sequence_index": 2, "step_id": 2, "step_name": "失败步骤", "status": "failed", "error_message": "执行超时", "conclusion": null, "execution_record_id": null}
-            ]
-        });
-        render_blackboard(Some(&data));
-    }
-
-    #[test]
-    fn test_render_blackboard_pending_approval() {
-        // pending_approval：显示 approval_comment + 待审批提示
-        let data = json!({
-            "id": 1,
-            "loop_name": "L",
-            "status": "running",
-            "total_steps": 1,
-            "completed_steps": 0,
-            "step_executions": [
-                {"sequence_index": 1, "step_id": 1, "step_name": "需要审批", "status": "pending_approval", "approval_comment": "请确认改动", "conclusion": null}
-            ]
-        });
-        render_blackboard(Some(&data));
+        let out = render_blackboard_to_string(Some(&data));
+        assert!(out.contains("exec: -"), "expected exec: - fallback: {out}");
     }
 
     #[test]
@@ -1404,17 +1518,16 @@ mod tests {
                 {"sequence_index": 999, "step_id": -1, "step_name": null, "status": "failed", "conclusion": "触发异常处理流程"}
             ]
         });
-        render_blackboard(Some(&data));
+        let out = render_blackboard_to_string(Some(&data));
+        assert!(out.contains("异常处理"), "missing anomaly handler name: {out}");
     }
 
-    #[test]
-    fn test_render_blackboard_missing_step_executions() {
-        // step_executions 字段缺失时降级：打印提示 + 原始数据，不 panic
-        let data = json!({
-            "id": 1,
-            "loop_name": "L",
-            "status": "running"
-        });
-        render_blackboard(Some(&data));
+    /// 把 render_blackboard 的全部输出收集到 String，便于测试断言关键片段。
+    /// 底层走 render_blackboard_to(Vec<u8>)，避免直接 stdout 抓取（Rust 没有
+    /// 标准库的 stdout redirect API）。
+    fn render_blackboard_to_string(data: Option<&Value>) -> String {
+        let mut buf: Vec<u8> = Vec::new();
+        render_blackboard_to(data, &mut buf);
+        String::from_utf8(buf).unwrap_or_default()
     }
 }
