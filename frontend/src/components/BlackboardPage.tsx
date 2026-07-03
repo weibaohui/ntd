@@ -40,8 +40,6 @@ const URL_WORKSPACE_PARAM = 'workspace';
 /** 默认工作空间 ID（首屏兜底，避免 URL 未带参时无 workspace） */
 const DEFAULT_WORKSPACE_ID = 1;
 
-/** 触发刷新后延迟拉取最新内容的时间，让 LLM 任务有时间写库 */
-const REFRESH_POLL_DELAY_MS = 2000;
 
 /** Markdown 链接组件 props 形状（XMarkdown ComponentProps 简化版） */
 interface MarkdownLinkProps extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
@@ -127,16 +125,6 @@ async function fetchBlackboardData(workspaceId: number): Promise<BlackboardData>
   return json.data;
 }
 
-/** 触发手动刷新，返回是否成功 */
-async function triggerRefresh(workspaceId: number): Promise<void> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/blackboard/refresh`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  });
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`);
-  }
-}
 
 export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?: number | null }) {
   // 主题：决定黑板容器背景与文字色
@@ -147,7 +135,6 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
 
   // 数据状态：data 既是"内容"也是"是否加载完成"的判断
   const [data, setData] = useStateBlackboardData();
-  const [refreshing, setRefreshing] = useState(false);
   // 设置弹窗状态
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
@@ -199,33 +186,16 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     fetchData();
   }, [fetchData]);
 
-  // 刷新：发请求 + 延迟再拉取（让 LLM 任务有时间写库）
-  const handleRefresh = useCallback(async () => {
-    try {
-      setRefreshing(true);
-      await triggerRefresh(workspaceId);
-      message.success('黑板刷新已触发，请稍后查看');
-      // 延迟拉取：避免与触发请求竞争；用 setTimeout 即可，不需要后端推送
-      window.setTimeout(fetchData, REFRESH_POLL_DELAY_MS);
-    } catch (err) {
-      console.error('刷新黑板失败:', err);
-      message.error('刷新黑板失败');
-    } finally {
-      setRefreshing(false);
-    }
-  }, [workspaceId, fetchData]);
-
-  // 是否为空：id=0 是后端"无记录"的占位
-  const isEmpty = data === null || data.id === 0 || data.content.length === 0;
+  // 刷新：页面 reload，重新拉取最新内容
+  const handleRefresh = useCallback(() => {
+    window.location.reload();
+  }, []);
 
   return (
     <div style={{ padding: '16px 24px', height: '100%', overflow: 'auto' }}>
       <BlackboardHeader
         isDark={isDark}
-        refreshing={refreshing}
-        // 空状态时禁用刷新：避免无意义的 LLM 调用
         onRefresh={handleRefresh}
-        disabled={isEmpty}
         onOpenSettings={handleOpenSettings}
       />
       <BlackboardBody isDark={isDark} data={data} />
@@ -278,9 +248,7 @@ function useStateBlackboardData() {
 
 interface BlackboardHeaderProps {
   isDark: boolean;
-  refreshing: boolean;
   onRefresh: () => void;
-  disabled: boolean;
   onOpenSettings: () => void;
 }
 
@@ -307,11 +275,9 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
         <Button
           type="primary"
           icon={<ReloadOutlined />}
-          loading={props.refreshing}
           onClick={props.onRefresh}
-          disabled={props.disabled}
         >
-          {props.refreshing ? '更新中...' : '刷新'}
+          刷新
         </Button>
       </Space.Compact>
     </div>
