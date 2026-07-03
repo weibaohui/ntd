@@ -1,5 +1,6 @@
 pub mod auto_review;
 pub mod auto_update;
+pub mod blackboard;
 pub mod feishu_history_fetcher;
 pub mod feishu_listener;
 pub mod feishu_push;

@@ -11,6 +11,7 @@ use super::Database;
 mod v1;
 mod v2_v5;
 mod v41_v46;
+mod v47;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -44,6 +45,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v41_v46::V44AddFeishuMessagesProcessedId),
         Box::new(v41_v46::V45AddTodosActionType),
         Box::new(v41_v46::V46AddTodosActionKey),
+        Box::new(v47::V47CreateBlackboardsTable),
     ]
 }
 

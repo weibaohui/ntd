@@ -34,7 +34,8 @@ export type View =
   | 'skills'
   | 'projectDirectories'
   | 'sessions'
-  | 'executors';
+  | 'executors'
+  | 'blackboard';
 
 export type Panel = 'list' | 'detail' | 'post';
 
@@ -42,6 +43,7 @@ const ALL_VIEWS: View[] = [
   'items', 'loops',
   'dashboard', 'settings', 'memorial',
   'runtime', 'skills', 'projectDirectories', 'sessions', 'executors',
+  'blackboard',
 ];
 
 // ─── URL 解析/构建 ─────────────────────────────────────────
@@ -98,6 +100,7 @@ const VIEW_TO_NAV_KEY: Record<View, string> = {
   loops: 'loops',
   dashboard: 'dashboard',
   memorial: 'memorial',
+  blackboard: 'blackboard',
   settings: 'settings',
   runtime: 'settings_runtime',
   skills: 'settings_skills',

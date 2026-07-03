@@ -18,6 +18,7 @@ import { SettingsPage } from './components/SettingsPage';
 import { SkillsPanel } from './components/SkillsPanel';
 import { ProjectDirectoriesPanel } from './components/settings/ProjectDirectoriesPanel';
 import { ExecutorsPanel } from './components/settings/ExecutorsPanel';
+import { BlackboardPage } from './components/BlackboardPage';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
@@ -359,6 +360,8 @@ function AppContent() {
                 <SettingsPage />
               ) : activeView === 'memorial' ? (
                 <MemorialBoard />
+              ) : activeView === 'blackboard' ? (
+                <BlackboardPage />
               ) : (
                 <Dashboard />
               )}

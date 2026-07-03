@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use tokio::sync::broadcast;
 
-use crate::adapters::CodeExecutor;
+use crate::adapters::{CodeExecutor, ExecutorRegistry};
 use crate::db::Database;
 use crate::executor_service::ExecEvent;
 use crate::models::{ExecutionUsage, ParsedLogEntry};
@@ -409,6 +409,73 @@ pub(crate) async fn finalize_normal_completion(
         total_tokens,
     );
     task_manager.remove(&task_id).await;
+
+    // ===== 黑板更新 (blackboard) =====
+    // 任务执行成功后，异步更新黑板内容（仅当源任务不是 blackboard update todo 时）。
+    // 黑板更新任务自身完成后也会触发此 hook，但通过 action_type 检查避免无限循环。
+    if success {
+        if let Some(ws_id) = workspace_id {
+            // 查询当前 todo 的 action_type，跳过黑板更新任务自身
+            let is_blackboard = db
+                .get_todo(todo_id)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|t| t.action_type)
+                .map(|at| at == "blackboard")
+                .unwrap_or(false);
+
+            if !is_blackboard {
+                spawn_blackboard_update(
+                    db.clone(),
+                    executor_registry.clone(),
+                    tx.clone(),
+                    task_manager.clone(),
+                    config.clone(),
+                    ws_id,
+                    &result_str,
+                    todo_id,
+                    &todo_title,
+                );
+            }
+        }
+    }
+}
+
+/// 在后台异步触发黑板更新。
+///
+/// 将 async 调用包裹在独立的非 async 函数中，避免 Rust 编译器的 async 递归类型循环
+/// （`finalize_normal_completion` → `update_blackboard` → `run_todo_execution` → `dispatch_spawned_executor_task` → `finalize_normal_completion`）。
+fn spawn_blackboard_update(
+    db: Arc<Database>,
+    executor_registry: Arc<ExecutorRegistry>,
+    tx: broadcast::Sender<ExecEvent>,
+    task_manager: Arc<TaskManager>,
+    config: Arc<std::sync::RwLock<crate::config::Config>>,
+    workspace_id: i64,
+    result_str: &str,
+    todo_id: i64,
+    todo_title: &str,
+) {
+    let result_str = result_str.to_string();
+    let todo_title = todo_title.to_string();
+    tokio::spawn(async move {
+        if let Err(e) = crate::services::blackboard::update_blackboard(
+            db,
+            executor_registry,
+            tx,
+            task_manager,
+            config,
+            workspace_id,
+            &result_str,
+            todo_id,
+            &todo_title,
+        )
+        .await
+        {
+            tracing::warn!("黑板更新失败: todo_id={}, error={:?}", todo_id, e);
+        }
+    });
 }
 
 /// 仅在 trigger_type != "auto_review" 时启动自动评审，避免评审实例反向触发评审。

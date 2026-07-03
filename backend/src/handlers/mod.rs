@@ -147,6 +147,7 @@ pub mod sync;
 pub mod sub_states; // 由 #604 引入，当前无内容占位
 pub mod loop_;
 pub mod action;
+pub mod blackboard;
 
 // WebSocket handler
 pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
@@ -284,6 +285,7 @@ fn mount_domain_routes() -> Router<AppState> {
         .merge(custom_template_routes())
         .merge(cloud_routes())
         .merge(events_routes())
+        .merge(blackboard::blackboard_routes())
         .merge(loop_::loop_routes())
 }
 
@@ -1237,9 +1239,10 @@ mod create_app_refactor_tests {
             custom_template_routes(),
             cloud_routes(),
             events_routes(),
+            blackboard::blackboard_routes(),
         ];
-        // 19 个领域子路由函数（与 issue #661 中声明的拆分清单一致；review_template_routes 为评审模板新增）
-        assert_eq!(routers.len(), 19, "领域子路由函数数量应与拆分清单一致");
+        // 20 个领域子路由函数（blackboard_routes 为黑板功能新增）
+        assert_eq!(routers.len(), 20, "领域子路由函数数量应与拆分清单一致");
         // `Router` 在 axum 0.8 中没有公开的 route_count，这里只能断言"全部成功构造"
     }
 
