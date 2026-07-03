@@ -5,6 +5,7 @@ import { WorkspaceSelect } from '@/components/common/WorkspaceSelect';
 import { ExecutorPickerPopover } from '@/components/common/ExecutorPickerPopover';
 import * as db from '@/utils/database';
 import { DEFAULT_EXECUTOR } from '@/types';
+import { getLastExecutor, setLastExecutor } from '@/constants';
 
 interface QuickCaptureModalProps {
   open: boolean;
@@ -20,23 +21,6 @@ function extractTitle(content: string): string {
   const firstLine = content.split('\n')[0]?.trim() ?? '';
   if (firstLine.length <= 30) return firstLine;
   return firstLine.slice(0, 30) + '...';
-}
-
-// localStorage key for remembering last executor choice
-const STORAGE_KEY_LAST_EXECUTOR = 'ntd_quick_capture_last_executor';
-
-function getLastExecutor(): string {
-  try {
-    return localStorage.getItem(STORAGE_KEY_LAST_EXECUTOR) || DEFAULT_EXECUTOR;
-  } catch {
-    return DEFAULT_EXECUTOR;
-  }
-}
-
-function setLastExecutor(executor: string) {
-  try {
-    localStorage.setItem(STORAGE_KEY_LAST_EXECUTOR, executor);
-  } catch {}
 }
 
 export function QuickCaptureModal({

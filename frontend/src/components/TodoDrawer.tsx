@@ -6,6 +6,7 @@ import { WorkspaceSelect } from './common/WorkspaceSelect';
 
 import type { Todo, ExecutorConfig, ExecutorOption, SkillMeta, ExecutorSkills, TodoTemplate } from '@/types';
 import { EXECUTORS, executorConfigToOption, getExecutorColor, DEFAULT_EXECUTOR } from '@/types';
+import { getLastExecutor, setLastExecutor } from '@/constants';
 import { TagCheckCardGroup } from './TagCheckCard';
 import { ExecutorPicker } from './todo-drawer/ExecutorPicker';
 import { PromptEditor } from './todo-drawer/PromptEditor';
@@ -134,6 +135,14 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
       dispatch({ type: 'RESET_FORM', todo });
     }
   }, [open, todo]);
+
+  // 创建模式下，RESET_FORM 之后从 localStorage 恢复上次选择的执行器，
+  // 而不是每次都回退到 DEFAULT_EXECUTOR。编辑模式保持 todo 自带的 executor。
+  useEffect(() => {
+    if (open && !todo) {
+      setField('executor', getLastExecutor());
+    }
+  }, [open, todo, setField]);
 
   // 创建模式下自动选中当前工作空间（打开时 todo=null 触发）
   // 工作空间以 id（number）传递，不再用 path 字符串。
@@ -267,7 +276,12 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
         </div>
 
         <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px' }}>
-          <ExecutorPicker executor={executor} executorOptions={executorOptions} onChange={(v) => setField('executor', v)} />
+          {/* 执行器选择（创建模式下切换后自动记住到 localStorage，下次新建同理恢复） */}
+          <ExecutorPicker executor={executor} executorOptions={executorOptions} onChange={(v) => {
+            setField('executor', v);
+            // 只在创建模式下记忆——编辑模式用户只是临时调整，不应覆盖记忆
+            if (!todo) setLastExecutor(v);
+          }} />
 
           <Divider style={{ margin: '8px 0 16px' }} />
 

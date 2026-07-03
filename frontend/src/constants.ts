@@ -225,3 +225,31 @@ export const EXPORT = {
 
 /** 复制反馈延迟 */
 export const COPY_FEEDBACK_DELAY = 2000;
+
+// =============================================================================
+// Executor last-choice persistence — single key shared across all components
+// that offer executor selection (ActionButton, TodoDrawer, QuickCaptureModal).
+// When the user picks an executor in one place, the other two remember it too.
+// =============================================================================
+
+/** localStorage key 统一用于跨组件记忆用户上次选择的执行器 */
+export const LAST_EXECUTOR_STORAGE_KEY = 'ntd_last_executor';
+
+/** 从 localStorage 读出上次选择的执行器，不存在时回退到 DEFAULT_EXECUTOR */
+export function getLastExecutor(defaultExecutor: string = 'claudecode'): string {
+  try {
+    return localStorage.getItem(LAST_EXECUTOR_STORAGE_KEY) || defaultExecutor;
+  } catch {
+    // 隐私模式 / 配额满：静默吞掉
+    return defaultExecutor;
+  }
+}
+
+/** 将用户选择的执行器写入 localStorage */
+export function setLastExecutor(executor: string) {
+  try {
+    localStorage.setItem(LAST_EXECUTOR_STORAGE_KEY, executor);
+  } catch {
+    // 写入失败不阻塞用户体验
+  }
+}
