@@ -17,6 +17,8 @@ export interface Config {
   max_concurrent_todos?: number;
   execution_timeout_secs?: number;
   scheduler_default_timezone?: string;
+  /** 黑板更新防抖周期（秒），默认 600 秒 */
+  blackboard_debounce_secs?: number;
 }
 
 export interface ExecutorConfig {
