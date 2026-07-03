@@ -114,6 +114,9 @@ pub(crate) async fn reject_concurrency_limit(
             workspace_id: None,
             duration_secs: 0,
             total_tokens: 0,
+            // pre-spawn 阶段没有 trigger_type 上下文：阻塞/无 executor 都属于早期失败，
+            // 不会被黑板逻辑用到，None 即可。
+            trigger_type: None,
         },
     );
     ExecutionResult {
@@ -151,6 +154,7 @@ pub(crate) async fn reject_no_executor(
             workspace_id: None,
             duration_secs: 0,
             total_tokens: 0,
+            trigger_type: None,
         },
     );
     task_manager.remove(task_id).await;
@@ -217,6 +221,7 @@ pub(crate) async fn reject_start_todo_failure(
             workspace_id,
             duration_secs: 0,
             total_tokens: 0,
+            trigger_type: None,
         },
     );
     let _ = db.finish_todo_execution(todo_id, false).await;

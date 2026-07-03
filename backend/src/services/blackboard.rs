@@ -15,6 +15,9 @@ use crate::executor_service::{ExecEvent, RunTodoExecutionRequest};
 use crate::handlers::AppError;
 use crate::task_manager::TaskManager;
 
+/// 当前实现的固定 trigger_type：在 Finished 钩子中用于识别"自身"避免递归触发。
+const TRIGGER_TYPE_BLACKBOARD: &str = "blackboard";
+
 /// 查找或创建当前工作空间的黑板更新 Todo。
 ///
 /// 黑板更新 Todo 的特征是 action_type="blackboard", action_key="update"。
@@ -35,16 +38,19 @@ pub async fn find_or_create_blackboard_todo(
     }
 
     // 2. 未找到，自动创建
-    // 先获取工作空间的路径信息（create_todo_with_extras 需要）
+    //    create_todo_with_extras 需要 workspace 路径信息，先查询工作空间
     let dir = db
         .get_project_directory_by_id(workspace_id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
         .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", workspace_id)))?;
 
+    // 标题便于在 todo 列表中识别黑板更新 todo
     let title = format!("Blackboard: workspace_{}", workspace_id);
+    // prompt 模板内含占位符，下游 start_todo_execution 之前再做替换
     let prompt = build_blackboard_prompt();
 
+    // create_todo_with_extras 不支持直接传 action_type/action_key，先建再改
     let todo_id = db
         .create_todo_with_extras(
             &title,
@@ -58,7 +64,7 @@ pub async fn find_or_create_blackboard_todo(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    // 更新 action_type 和 action_key，标记为黑板更新 Todo
+    // 标记为黑板更新 todo：action_type/action_key 用于 find_or_create 的下次查找
     db.update_todo_full(crate::db::TodoUpdate {
         id: todo_id,
         title: &title,
@@ -118,15 +124,176 @@ fn build_blackboard_prompt() -> String {
 只输出更新后的黑板内容，不要输出任何解释。"#.to_string()
 }
 
+/// 读取指定工作空间的黑板内容；无记录时返回空字符串。
+///
+/// 隐藏 None/Some 差异，让上游不用每次都 .map().unwrap_or_default()。
+async fn read_current_content(
+    db: &Database,
+    workspace_id: i64,
+) -> Result<String, AppError> {
+    // 首次访问可能为 None：未创建过黑板的工作空间返回空字符串作为初始值
+    let board = db
+        .get_blackboard(workspace_id)
+        .await
+        .map_err(|e| AppError::Internal(format!("读取黑板失败: {}", e)))?;
+    Ok(board.map(|b| b.content).unwrap_or_default())
+}
+
+/// 构造带占位符替换的最终 prompt，并把原 params 一并返回（start_todo_execution 也需要）。
+fn assemble_prompt(
+    current_content: String,
+    conclusion: String,
+    source_todo_id: i64,
+    source_todo_title: &str,
+) -> (String, HashMap<String, String>) {
+    // 用与上游一致的 key 命名：current / conclusion / todo_id / todo_title
+    let mut params = HashMap::new();
+    params.insert("current".to_string(), current_content);
+    params.insert("conclusion".to_string(), conclusion);
+    params.insert("todo_id".to_string(), source_todo_id.to_string());
+    params.insert("todo_title".to_string(), source_todo_title.to_string());
+    // models::replace_placeholders 单遍替换 {{key}} -> params[key]
+    let message = crate::models::replace_placeholders(&build_blackboard_prompt(), &params);
+    (message, params)
+}
+
+/// 启动 blackboard todo 执行并阻塞等待它的 Finished 事件，返回 LLM 产出的新内容。
+///
+/// 核心时序（不可调整）：
+/// 1. tx.subscribe() 必须在 start_todo_execution 之前：极快完成的任务会在订阅前
+///    发出 Finished 事件，导致函数永远阻塞等待。
+/// 2. 等待阶段按 task_id 精确过滤：并发场景下其他任务的 Finished 会被忽略。
+///
+/// 返回的 String 是 LLM 输出的原始内容；调用方负责判空 + 写库。
+async fn run_blackboard_execution(
+    db: Arc<Database>,
+    executor_registry: Arc<ExecutorRegistry>,
+    tx: broadcast::Sender<ExecEvent>,
+    task_manager: Arc<TaskManager>,
+    config: Arc<std::sync::RwLock<Config>>,
+    workspace_id: i64,
+    todo_id: i64,
+    message: String,
+    params: HashMap<String, String>,
+    source_todo_id: Option<i64>,
+    source_todo_title: Option<String>,
+) -> Result<Option<String>, AppError> {
+    // 先订阅：broadcast 通道不会重发订阅前的事件，必须在 start 之前
+    let mut rx = tx.subscribe();
+    // 启动执行：trigger_type=blackboard 让 Finished 钩子识别"自身"避免递归
+    let result = crate::handlers::execution::start_todo_execution(RunTodoExecutionRequest {
+        db: db.clone(),
+        executor_registry,
+        tx,
+        task_manager,
+        config,
+        todo_id,
+        message,
+        req_executor: None,
+        trigger_type: TRIGGER_TYPE_BLACKBOARD.to_string(),
+        params: Some(params),
+        resume_session_id: None,
+        resume_message: None,
+        source_todo_id,
+        source_todo_title,
+        feishu_bot_id: None,
+        feishu_receive_id: None,
+        loop_step_execution_id: None,
+        step_id: None,
+        workspace_path: None,
+        workspace_id: Some(workspace_id),
+    })
+    .await?;
+    // record_id 为 None 视为启动失败；task_id 同时 clone 出来用于事件匹配
+    let task_id = result.task_id.clone();
+    result.record_id.ok_or_else(|| {
+        AppError::Internal("黑板更新任务启动失败".to_string())
+    })?;
+    // 阻塞等 Finished；返回 None 表示执行未产出结果（非错误）
+    wait_for_finished(&mut rx, &task_id, workspace_id).await
+}
+
+/// 等待目标 task_id 对应的 Finished 事件，区分"完成有空内容/无内容/通道异常"。
+async fn wait_for_finished(
+    rx: &mut tokio::sync::broadcast::Receiver<ExecEvent>,
+    task_id: &str,
+    workspace_id: i64,
+) -> Result<Option<String>, AppError> {
+    loop {
+        match rx.recv().await {
+            // 命中：result 携带 LLM 产出（可能为空字符串）
+            Ok(ExecEvent::Finished {
+                task_id: ref finished_task_id,
+                result: Some(ref new_content),
+                ..
+            }) if *finished_task_id == task_id => {
+                return Ok(Some(new_content.clone()));
+            }
+            // 命中但无 result：执行未产出结果，按"无内容"处理，不报错
+            Ok(ExecEvent::Finished {
+                task_id: ref finished_task_id,
+                result: None,
+                ..
+            }) if *finished_task_id == task_id => {
+                tracing::warn!(
+                    "黑板执行未产出结果: workspace_id={}, task_id={}",
+                    workspace_id,
+                    task_id
+                );
+                return Ok(None);
+            }
+            // 其他任务的 Finished / Started / Output：忽略继续等
+            Ok(_) => {}
+            // 通道积压：跳过丢失的事件继续等（task_id 匹配会再次命中）
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                tracing::warn!("黑板更新事件通道积压，跳过 {} 个事件", n);
+            }
+            // 通道关闭：异常状态，应当报错让上游知晓
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                return Err(AppError::Internal("事件通道已关闭".to_string()));
+            }
+        }
+    }
+}
+
+/// 把 LLM 产出写入黑板表，必要时跳过（空内容保护）。
+///
+/// 策略：
+/// - 产出为空 → 不覆盖现有黑板（LLM 偶发无意义输出时保护已有内容）
+/// - 产出非空 → 走 upsert，一次往返完成"创建/更新"判定 + 写入
+async fn save_blackboard(
+    db: &Database,
+    workspace_id: i64,
+    new_content: Option<String>,
+) -> Result<(), AppError> {
+    // None = 执行未产出结果：没有可写内容，按"无变化"处理
+    let Some(new_content) = new_content else {
+        return Ok(());
+    };
+    // 空内容保护：避免 LLM 偶发返回 "" 覆盖已有黑板
+    if new_content.trim().is_empty() {
+        tracing::warn!(
+            "黑板更新结果为空，跳过写入: workspace_id={}",
+            workspace_id
+        );
+        return Ok(());
+    }
+    // upsert：记录不存在时创建，已存在时覆盖 content/updated_at，保留 created_at
+    db.upsert_blackboard_content(workspace_id, &new_content)
+        .await
+        .map_err(|e| AppError::Internal(format!("更新黑板失败: {}", e)))?;
+    tracing::info!("黑板更新成功: workspace_id={}", workspace_id);
+    Ok(())
+}
+
 /// 更新黑板内容。
 ///
 /// 核心逻辑：
-/// 1. 读取当前黑板内容（来自 blackboards 表）
-/// 2. 查找或创建 blackboard update Todo（action_type="blackboard", action_key="update"）
-/// 3. 用 `replace_placeholders` 替换 Prompt 中的占位符
-/// 4. 调用 `run_todo_execution` 启动执行（复用现有的 LLM 执行机制）
-/// 5. 订阅 broadcast channel 等待 `Finished` 事件
-/// 6. 提取 `result` 并更新 blackboards 表
+/// 1. 读取当前黑板内容
+/// 2. 查找或创建 blackboard update Todo
+/// 3. 构造 Prompt + 启动执行
+/// 4. 阻塞等待 Finished 事件
+/// 5. upsert 写回黑板
 ///
 /// 黑板更新失败不会影响源任务的执行流程，只在日志中记录 warn。
 pub async fn update_blackboard(
@@ -140,150 +307,40 @@ pub async fn update_blackboard(
     source_todo_id: i64,
     source_todo_title: &str,
 ) -> Result<(), AppError> {
-    // 1. 读取当前黑板内容
-    //    首次使用时可能为 None，此时使用空字符串作为初始内容
-    let current = db.get_blackboard(workspace_id).await.map_err(|e| {
-        AppError::Internal(format!("读取黑板失败: {}", e))
-    })?;
-    let current_content = current
-        .map(|b| b.content)
-        .unwrap_or_default();
-
-    // 2. 查找或创建 blackboard update todo
-    //    每个工作空间使用独立的 blackboard todo，避免跨空间混淆
+    // 1+2: 读当前内容、找或建 todo；任一失败直接返回
+    let current_content = read_current_content(&db, workspace_id).await?;
     let (todo_id, _) = find_or_create_blackboard_todo(&db, workspace_id).await?;
-
-    // 3. 构造 prompt（复用 Action 的占位符替换机制）
-    //    models::replace_placeholders 将 {{key}} 占位符替换为 params 中的值
-    let prompt = build_blackboard_prompt();
-    let mut params = HashMap::new();
-    params.insert("current".to_string(), current_content);
-    params.insert("conclusion".to_string(), conclusion.to_string());
-    params.insert("todo_id".to_string(), source_todo_id.to_string());
-    params.insert("todo_title".to_string(), source_todo_title.to_string());
-    let message = crate::models::replace_placeholders(&prompt, &params);
-
-    // 4. 先订阅 broadcast channel（必须在启动执行之前订阅，否则极速完成的任务
-    //    会导致 Finished 事件在 subscribe 之前发出而被丢失，函数无限等待）
-    let mut rx = tx.subscribe();
-
-    // 5. 启动执行（复用 run_todo_execution）
-    //    使用 trigger_type="blackboard" 标记这是黑板更新任务，
-    //    这样 Finished 事件 Hook 中可以跳过再次触发黑板更新（避免无限循环）
-    let result = crate::handlers::execution::start_todo_execution(
-        RunTodoExecutionRequest {
-            db: db.clone(),
-            executor_registry,
-            tx,
-            task_manager,
-            config,
-            todo_id,
-            message,
-            req_executor: None,
-            trigger_type: "blackboard".to_string(),
-            params: Some(params),
-            resume_session_id: None,
-            resume_message: None,
-            source_todo_id: Some(source_todo_id),
-            source_todo_title: Some(source_todo_title.to_string()),
-            feishu_bot_id: None,
-            feishu_receive_id: None,
-            loop_step_execution_id: None,
-            step_id: None,
-            workspace_path: None,
-            workspace_id: Some(workspace_id),
-        },
+    // 3: 组装 prompt：source_todo_id/title 来自上游任务，conclusion 是任务执行结果
+    let (message, params) = assemble_prompt(
+        current_content,
+        conclusion.to_string(),
+        source_todo_id,
+        source_todo_title,
+    );
+    // 4: 启动执行 + 等待 Finished
+    let new_content = run_blackboard_execution(
+        db.clone(),
+        executor_registry,
+        tx,
+        task_manager,
+        config,
+        workspace_id,
+        todo_id,
+        message,
+        params,
+        Some(source_todo_id),
+        Some(source_todo_title.to_string()),
     )
     .await?;
-
-    // 获取 task_id 用于后续匹配 Finished 事件（ExecEvent::Finished 没有 record_id 字段，
-    // 用全局唯一的 task_id 区分多次执行，避免并发时匹配到错误的完成事件）
-    let task_id = result.task_id.clone();
-    result.record_id.ok_or_else(|| {
-        AppError::Internal("黑板更新任务启动失败".to_string())
-    })?;
-
-    // 6. 等待 Finished 事件
-    //    用 task_id 匹配对应的完成事件，忽略其他事件的干扰
-    loop {
-        match rx.recv().await {
-            Ok(ExecEvent::Finished {
-                task_id: ref finished_task_id,
-                result: Some(ref new_content),
-                ..
-            }) if *finished_task_id == task_id => {
-                let new_content = new_content.clone();
-                // 如果 LLM 返回空内容，跳过更新，保护已有黑板内容不被覆盖
-                if new_content.trim().is_empty() {
-                    tracing::warn!(
-                        "黑板更新结果为空，跳过更新: workspace_id={}, source_todo_id={}, task_id={}",
-                        workspace_id,
-                        source_todo_id,
-                        task_id
-                    );
-                    return Ok(());
-                }
-                // 6. 更新黑板内容到数据库
-                //    先确保黑板记录存在（首次更新时自动创建）
-                if db.get_blackboard(workspace_id).await.map_err(|e| {
-                    AppError::Internal(format!("查询黑板失败: {}", e))
-                })?.is_none() {
-                    db.create_blackboard(workspace_id).await.map_err(|e| {
-                        AppError::Internal(format!("创建黑板失败: {}", e))
-                    })?;
-                }
-
-                db.update_blackboard_content(workspace_id, &new_content)
-                    .await
-                    .map_err(|e| AppError::Internal(format!("更新黑板失败: {}", e)))?;
-
-                tracing::info!(
-                    "黑板更新成功: workspace_id={}, source_todo_id={}, task_id={}",
-                    workspace_id,
-                    source_todo_id,
-                    task_id
-                );
-                return Ok(());
-            }
-            // Finished 事件中 result 为 None 说明执行未产出结果，
-            // 跳过但不报错，避免阻塞后续黑板更新
-            Ok(ExecEvent::Finished {
-                task_id: ref finished_task_id,
-                result: None,
-                ..
-            }) if *finished_task_id == task_id => {
-                tracing::warn!(
-                    "黑板更新执行未产出结果: workspace_id={}, source_todo_id={}, task_id={}",
-                    workspace_id,
-                    source_todo_id,
-                    task_id
-                );
-                return Ok(());
-            }
-            Ok(_) => {
-                // 其他事件（Output/Started 等），忽略继续等待
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                // 通道积压：发生 Lagged 时跳过丢失的事件，继续等待
-                tracing::warn!("黑板更新事件通道积压，跳过 {} 个事件", n);
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                // 通道关闭：不应发生，如果通道关闭则返回错误
-                return Err(AppError::Internal("事件通道已关闭".to_string()));
-            }
-        }
-    }
+    // 5: 写回黑板（带空内容保护 + upsert）
+    save_blackboard(&db, workspace_id, new_content).await
 }
 
-/// 手动刷新黑板：重新执行 blackboard update todo。
+/// 手动刷新黑板：重新执行 blackboard update todo，让 LLM 重新组织现有内容。
 ///
-/// 与 `update_blackboard` 不同，手动刷新只是纯粹地要求 LLM 根据当前黑板内容
-/// 重新组织生成（没有新的结论输入）。效果相当于让 LLM"重新检视"现有内容。
-///
-/// 工作方式：
-/// 1. 查找 blackboard update todo
-/// 2. 以当前黑板内容 + "手动刷新"作为输入执行该 todo
-/// 3. 等待 Finished 事件并更新黑板
+/// 与 `update_blackboard` 的区别：conclusion 是占位文本"无新结论"，
+/// 作用是触发一次"基于现状的重新组织"而不是"基于新结论的合并"。
+/// 因此要求黑板非空：空黑板无内容可"重新组织"，直接返回 BadRequest。
 pub async fn refresh_blackboard(
     db: Arc<Database>,
     executor_registry: Arc<ExecutorRegistry>,
@@ -292,114 +349,127 @@ pub async fn refresh_blackboard(
     config: Arc<std::sync::RwLock<Config>>,
     workspace_id: i64,
 ) -> Result<(), AppError> {
-    // 查找黑板的当前内容，如果没有内容则无需刷新
-    let current = db.get_blackboard(workspace_id).await.map_err(|e| {
-        AppError::Internal(format!("读取黑板失败: {}", e))
-    })?;
-    let current_content = current
-        .map(|b| b.content)
-        .unwrap_or_default();
-
+    // 早退：空黑板没有"重新组织"的对象，避免无意义的 LLM 调用
+    let current_content = read_current_content(&db, workspace_id).await?;
     if current_content.is_empty() {
         return Err(AppError::BadRequest("黑板暂无内容，无需刷新".to_string()));
     }
-
-    // 查找或创建 blackboard update todo
+    // 复用同一 todo + 同一执行/等待/写入流程；source_todo_* 留 None 表示"非任务触发"
     let (todo_id, _) = find_or_create_blackboard_todo(&db, workspace_id).await?;
-
-    // 构造 prompt：使用当前黑板内容 + 手动刷新标记
-    let prompt = build_blackboard_prompt();
-    let mut params = HashMap::new();
-    params.insert("current".to_string(), current_content);
-    params.insert("conclusion".to_string(), "手动刷新：无新结论，请重新组织现有内容".to_string());
-    params.insert("todo_id".to_string(), "0".to_string());
-    params.insert("todo_title".to_string(), "手动刷新黑板".to_string());
-    let message = crate::models::replace_placeholders(&prompt, &params);
-
-    // 先订阅 broadcast channel，再启动执行，避免错过 Finished 事件
-    let mut rx = tx.subscribe();
-
-    // 启动执行
-    let result = crate::handlers::execution::start_todo_execution(
-        RunTodoExecutionRequest {
-            db: db.clone(),
-            executor_registry,
-            tx,
-            task_manager,
-            config,
-            todo_id,
-            message,
-            req_executor: None,
-            trigger_type: "blackboard".to_string(),
-            params: Some(params),
-            resume_session_id: None,
-            resume_message: None,
-            source_todo_id: None,
-            source_todo_title: None,
-            feishu_bot_id: None,
-            feishu_receive_id: None,
-            loop_step_execution_id: None,
-            step_id: None,
-            workspace_path: None,
-            workspace_id: Some(workspace_id),
-        },
+    let (message, params) = assemble_prompt(
+        current_content,
+        "手动刷新：无新结论，请重新组织现有内容".to_string(),
+        0,
+        "手动刷新黑板",
+    );
+    let new_content = run_blackboard_execution(
+        db.clone(),
+        executor_registry,
+        tx,
+        task_manager,
+        config,
+        workspace_id,
+        todo_id,
+        message,
+        params,
+        None,
+        None,
     )
     .await?;
+    save_blackboard(&db, workspace_id, new_content).await
+}
 
-    let task_id = result.task_id.clone();
-    result.record_id.ok_or_else(|| {
-        AppError::Internal("黑板刷新任务启动失败".to_string())
-    })?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Database;
 
-    // 等待 Finished 事件
-    loop {
-        match rx.recv().await {
-            Ok(ExecEvent::Finished {
-                task_id: ref finished_task_id,
-                result: Some(ref new_content),
-                ..
-            }) if *finished_task_id == task_id => {
-                let new_content = new_content.clone();
-                // 如果 LLM 返回空内容，跳过更新，保护已有黑板内容不被覆盖
-                if new_content.trim().is_empty() {
-                    tracing::warn!(
-                        "黑板刷新结果为空，跳过更新: workspace_id={}, task_id={}",
-                        workspace_id,
-                        task_id
-                    );
-                    return Ok(());
-                }
-                db.update_blackboard_content(workspace_id, &new_content)
-                    .await
-                    .map_err(|e| AppError::Internal(format!("更新黑板失败: {}", e)))?;
+    /// 测试用：建一个 workspace，返回 id。
+    async fn make_workspace(db: &Database) -> i64 {
+        db.create_project_directory("/tmp/test-blackboard-svc", None, false, false)
+            .await
+            .expect("create workspace must succeed")
+    }
 
-                tracing::info!(
-                    "黑板刷新成功: workspace_id={}, task_id={}",
-                    workspace_id,
-                    task_id
-                );
-                return Ok(());
-            }
-            // Finished 事件中 result 为 None 说明执行未产出结果
-            Ok(ExecEvent::Finished {
-                task_id: ref finished_task_id,
-                result: None,
-                ..
-            }) if *finished_task_id == task_id => {
-                tracing::warn!(
-                    "黑板刷新执行未产出结果: workspace_id={}, task_id={}",
-                    workspace_id,
-                    task_id
-                );
-                return Ok(());
-            }
-            Ok(_) => {}
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                tracing::warn!("黑板刷新事件通道积压，跳过 {} 个事件", n);
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                return Err(AppError::Internal("事件通道已关闭".to_string()));
-            }
+    /// 验证 build_blackboard_prompt 含所有必要占位符。
+    /// 缺占位符会导致 assemble_prompt 替换后 prompt 不完整，LLM 行为会偏离预期。
+    #[test]
+    fn test_prompt_contains_required_placeholders() {
+        let prompt = build_blackboard_prompt();
+        assert!(prompt.contains("{{current}}"));
+        assert!(prompt.contains("{{conclusion}}"));
+        assert!(prompt.contains("{{todo_id}}"));
+        assert!(prompt.contains("{{todo_title}}"));
+    }
+
+    /// 验证 assemble_prompt 正确替换占位符，且结论字段透传。
+    /// 防止模型 prompt 模板被误改后占位符替换断裂（导致 LLM 收到 "{{conclusion}}" 字面量）。
+    #[test]
+    fn test_assemble_prompt_replaces_all_placeholders() {
+        let (message, params) = assemble_prompt(
+            "已有黑板".to_string(),
+            "任务已成功".to_string(),
+            42,
+            "示例 todo",
+        );
+        // 原始占位符应全部被替换
+        assert!(!message.contains("{{current}}"));
+        assert!(!message.contains("{{conclusion}}"));
+        assert!(!message.contains("{{todo_id}}"));
+        assert!(!message.contains("{{todo_title}}"));
+        // 替换值应透传到 message
+        assert!(message.contains("已有黑板"));
+        assert!(message.contains("任务已成功"));
+        // params 也应原样返回，供 start_todo_execution 使用
+        assert_eq!(params.get("todo_id"), Some(&"42".to_string()));
+        assert_eq!(params.get("todo_title"), Some(&"示例 todo".to_string()));
+    }
+
+    /// 验证 find_or_create 第二次调用返回 (same_id, false)，避免重复创建。
+    /// 黑板更新 todo 重复创建会让数据库里出现多个 action_type=blackboard 记录，
+    /// 后续 update_blackboard 不知道该用哪个。
+    #[tokio::test]
+    async fn test_find_or_create_is_idempotent() {
+        let db = Database::new(":memory:").await.unwrap();
+        let ws_id = make_workspace(&db).await;
+        // 第一次：新建
+        let (id1, created1) = find_or_create_blackboard_todo(&db, ws_id).await.unwrap();
+        assert!(created1, "首次调用应返回 created=true");
+        // 第二次：复用
+        let (id2, created2) = find_or_create_blackboard_todo(&db, ws_id).await.unwrap();
+        assert!(!created2, "第二次调用应返回 created=false");
+        assert_eq!(id1, id2, "应返回同一 todo id");
+    }
+
+    /// 验证不同 workspace 各自有独立的 blackboard todo。
+    /// 工作空间隔离是黑板的关键约束：跨 workspace 复用 todo 会导致 prompt 串味。
+    /// 注意：两个 workspace 的 path 必须不同（project_directories.path 是 UNIQUE），
+    /// 这里用 ws_id 后缀保证唯一。
+    #[tokio::test]
+    async fn test_find_or_create_scoped_per_workspace() {
+        let db = Database::new(":memory:").await.unwrap();
+        let ws1 = db
+            .create_project_directory("/tmp/test-blackboard-svc-1", None, false, false)
+            .await
+            .unwrap();
+        let ws2 = db
+            .create_project_directory("/tmp/test-blackboard-svc-2", None, false, false)
+            .await
+            .unwrap();
+        let (id1, _) = find_or_create_blackboard_todo(&db, ws1).await.unwrap();
+        let (id2, _) = find_or_create_blackboard_todo(&db, ws2).await.unwrap();
+        assert_ne!(id1, id2, "不同 workspace 应当各自有独立 todo");
+    }
+
+    /// 验证 find_or_create 在 workspace 不存在时返回 BadRequest。
+    /// 用过宽松的 Internal 错误会掩盖调用方错误，BadRequest 更合适。
+    #[tokio::test]
+    async fn test_find_or_create_missing_workspace_returns_bad_request() {
+        let db = Database::new(":memory:").await.unwrap();
+        let result = find_or_create_blackboard_todo(&db, 9999).await;
+        match result {
+            Err(AppError::BadRequest(_)) => {}
+            other => panic!("expected BadRequest, got: {:?}", other),
         }
     }
 }

@@ -455,6 +455,7 @@ mod feishu_push_service_tests {
             workspace_id: None,
             duration_secs: 125,
             total_tokens: 500,
+            trigger_type: None,
         }
     }
 }

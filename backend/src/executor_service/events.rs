@@ -48,6 +48,10 @@ pub enum ExecEvent {
         duration_secs: i64,
         /// 累计 Token 消耗（input + output），用于推送统计摘要
         total_tokens: i64,
+        /// 本次执行的触发类型（"manual" / "smart_create" / "auto_review" / "blackboard" 等），
+        /// 用于黑板更新等场景在 Finished 钩子中识别"自身"以避免递归触发。
+        /// 旧代码路径未传时为 None。
+        trigger_type: Option<String>,
     },
     /// 同步事件：连接时发送当前实际运行的任务列表
     /// 前端收到此事件后应清空 runningTasks 并用此列表初始化

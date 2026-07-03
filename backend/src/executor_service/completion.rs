@@ -267,6 +267,9 @@ pub(crate) async fn handle_cancellation_branch(
             workspace_id,
             duration_secs: 0,
             total_tokens: 0,
+            // cancel 分支无法拿到原始 trigger_type（参数链已断），传 None。
+            // 取消是失败终态，黑板更新只在 success 时触发，不影响。
+            trigger_type: None,
         },
     );
     task_manager.remove(task_id).await;
@@ -328,6 +331,8 @@ pub(crate) async fn handle_timeout_branch(
             workspace_id,
             duration_secs: 0,
             total_tokens: 0,
+            // timeout 分支与 cancel 一样：失败终态不触发黑板，传 None 即可。
+            trigger_type: None,
         },
     );
     task_manager.remove(task_id).await;
@@ -407,37 +412,28 @@ pub(crate) async fn finalize_normal_completion(
         workspace_id,
         duration_secs,
         total_tokens,
+        Some(trigger_type.clone()),
     );
     task_manager.remove(&task_id).await;
 
     // ===== 黑板更新 (blackboard) =====
-    // 任务执行成功后，异步更新黑板内容（仅当源任务不是 blackboard update todo 时）。
-    // 黑板更新任务自身完成后也会触发此 hook，但通过 action_type 检查避免无限循环。
-    if success {
+    // 任务执行成功后，异步更新黑板内容。
+    // 用本作用域的 trigger_type 判定"自身"——黑板更新任务的 trigger_type == "blackboard"，
+    // 避免无限循环；与 todo.action_type 不同的是 trigger_type 跟随执行而非 todo，
+    // 即便以后新增相同 action_type 的非黑板 todo，也不会被错误地跳过。
+    if success && trigger_type != "blackboard" {
         if let Some(ws_id) = workspace_id {
-            // 查询当前 todo 的 action_type，跳过黑板更新任务自身
-            let is_blackboard = db
-                .get_todo(todo_id)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|t| t.action_type)
-                .map(|at| at == "blackboard")
-                .unwrap_or(false);
-
-            if !is_blackboard {
-                spawn_blackboard_update(
-                    db.clone(),
-                    executor_registry.clone(),
-                    tx.clone(),
-                    task_manager.clone(),
-                    config.clone(),
-                    ws_id,
-                    &result_str,
-                    todo_id,
-                    &todo_title,
-                );
-            }
+            spawn_blackboard_update(
+                db.clone(),
+                executor_registry.clone(),
+                tx.clone(),
+                task_manager.clone(),
+                config.clone(),
+                ws_id,
+                &result_str,
+                todo_id,
+                &todo_title,
+            );
         }
     }
 }
@@ -509,6 +505,7 @@ async fn maybe_run_auto_review(
 ///
 /// `duration_secs` 和 `total_tokens` 由调用方从 DB 查询 usage 后传入；
 /// 异常路径（cancel/timeout/spawn 失败等）传 0 即可。
+/// `trigger_type` 透传本次执行的触发类型，供下游识别"自身"避免递归（如 blackboard）。
 #[allow(clippy::too_many_arguments)]
 fn emit_completion_events(
     tx: &broadcast::Sender<ExecEvent>,
@@ -524,6 +521,7 @@ fn emit_completion_events(
     workspace_id: Option<i64>,
     duration_secs: i64,
     total_tokens: i64,
+    trigger_type: Option<String>,
 ) {
     let entry = ParsedLogEntry::new(
         if success { "info" } else { "error" },
@@ -554,6 +552,7 @@ fn emit_completion_events(
             workspace_id,
             duration_secs,
             total_tokens,
+            trigger_type,
         },
     );
 }

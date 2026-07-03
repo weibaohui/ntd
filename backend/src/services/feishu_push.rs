@@ -347,6 +347,8 @@ mod feishu_push_binding_tests {
             workspace_id: Some(1),
             duration_secs: 0,
             total_tokens: 0,
+            // 测试构造，无需真实 trigger_type 上下文
+            trigger_type: None,
         };
         
         assert!(!FeishuPushService::should_send(push_level, &event));
@@ -368,6 +370,8 @@ mod feishu_push_binding_tests {
             workspace_id: Some(1),
             duration_secs: 0,
             total_tokens: 0,
+            // 测试构造，无需真实 trigger_type 上下文
+            trigger_type: None,
         };
         
         assert!(FeishuPushService::should_send(push_level, &event));
@@ -389,6 +393,8 @@ mod feishu_push_binding_tests {
             workspace_id: Some(1),
             duration_secs: 0,
             total_tokens: 0,
+            // 测试构造，无需真实 trigger_type 上下文
+            trigger_type: None,
         };
         
         assert!(FeishuPushService::should_send(push_level, &event));
