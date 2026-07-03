@@ -25,6 +25,7 @@ const TRIGGER_TYPE_BLACKBOARD: &str = "blackboard";
 /// 每个工作空间独立维护自己的黑板更新 Todo。
 pub async fn find_or_create_blackboard_todo(
     db: &Database,
+    prompt_template: &str,
     workspace_id: i64,
 ) -> Result<(i64, bool), AppError> {
     // 1. 按 action_type + action_key + workspace_id 查找已有的 Todo
@@ -48,7 +49,7 @@ pub async fn find_or_create_blackboard_todo(
     // 标题便于在 todo 列表中识别黑板更新 todo
     let title = format!("Blackboard: workspace_{}", workspace_id);
     // prompt 模板内含占位符，下游 start_todo_execution 之前再做替换
-    let prompt = build_blackboard_prompt();
+    let prompt = prompt_template.to_string();
 
     // create_todo_with_extras 不支持直接传 action_type/action_key，先建再改
     let todo_id = db
@@ -174,7 +175,11 @@ async fn read_current_content(
 }
 
 /// 构造带占位符替换的最终 prompt，并把原 params 一并返回（start_todo_execution 也需要）。
+///
+/// 使用调用方传入的 prompt_template（来自运行时 config），而非从 DB 加载。
+/// 这样当用户修改 config 中的提示词后，下次执行会立即生效，无需重建 todo。
 fn assemble_prompt(
+    prompt_template: &str,
     current_content: String,
     conclusion: String,
     source_todo_id: i64,
@@ -187,7 +192,7 @@ fn assemble_prompt(
     params.insert("todo_id".to_string(), source_todo_id.to_string());
     params.insert("todo_title".to_string(), source_todo_title.to_string());
     // models::replace_placeholders 单遍替换 {{key}} -> params[key]
-    let message = crate::models::replace_placeholders(&build_blackboard_prompt(), &params);
+    let message = crate::models::replace_placeholders(prompt_template, &params);
     (message, params)
 }
 
@@ -343,9 +348,19 @@ pub async fn update_blackboard(
 ) -> Result<(), AppError> {
     // 1+2: 读当前内容、找或建 todo；任一失败直接返回
     let current_content = read_current_content(&db, workspace_id).await?;
-    let (todo_id, _) = find_or_create_blackboard_todo(&db, workspace_id).await?;
-    // 3: 组装 prompt：source_todo_id/title 来自上游任务，conclusion 是任务执行结果
+    // 从 config 中提取提示词模板（避免 guard 跨 await 持有）
+    let prompt_template = {
+        let guard = config.read().unwrap();
+        if guard.blackboard_update_prompt.is_empty() {
+            build_blackboard_prompt()
+        } else {
+            guard.blackboard_update_prompt.clone()
+        }
+    };
+    let (todo_id, _) = find_or_create_blackboard_todo(&db, &prompt_template, workspace_id).await?;
+    // 3: 组装 prompt：使用当前运行时 config 中的提示词模板
     let (message, params) = assemble_prompt(
+        &prompt_template,
         current_content,
         conclusion.to_string(),
         source_todo_id,
@@ -388,13 +403,28 @@ pub async fn refresh_blackboard(
     if current_content.is_empty() {
         return Err(AppError::BadRequest("黑板暂无内容，无需刷新".to_string()));
     }
+    // 从 config 中提取提示词模板（避免 guard 跨 await 持有）
+    let (update_prompt_template, refresh_prompt) = {
+        let guard = config.read().unwrap();
+        let update = if guard.blackboard_update_prompt.is_empty() {
+            build_blackboard_prompt()
+        } else {
+            guard.blackboard_update_prompt.clone()
+        };
+        let refresh = if guard.blackboard_refresh_prompt.is_empty() {
+            build_refresh_prompt()
+        } else {
+            guard.blackboard_refresh_prompt.clone()
+        };
+        (update, refresh)
+    };
     // 复用同一 todo + 同一执行/等待/写入流程；source_todo_* 留 None 表示"非任务触发"
-    let (todo_id, _) = find_or_create_blackboard_todo(&db, workspace_id).await?;
+    let (todo_id, _) = find_or_create_blackboard_todo(&db, &update_prompt_template, workspace_id).await?;
     // 手动刷新走独立 prompt 模板：避免 LLM 用 todo_id=0 拼出 ntd://todo/0 坏链接。
     // 模板只依赖 {{current}}，不需要 source_todo_* 之类的额外占位符。
     let mut params = HashMap::new();
     params.insert("current".to_string(), current_content);
-    let message = crate::models::replace_placeholders(&build_refresh_prompt(), &params);
+    let message = crate::models::replace_placeholders(&refresh_prompt, &params);
     let new_content = run_blackboard_execution(
         db.clone(),
         executor_registry,
@@ -462,7 +492,9 @@ mod tests {
     /// 防止模型 prompt 模板被误改后占位符替换断裂（导致 LLM 收到 "{{conclusion}}" 字面量）。
     #[test]
     fn test_assemble_prompt_replaces_all_placeholders() {
+        let prompt_template = build_blackboard_prompt();
         let (message, params) = assemble_prompt(
+            &prompt_template,
             "已有黑板".to_string(),
             "任务已成功".to_string(),
             42,
@@ -488,11 +520,12 @@ mod tests {
     async fn test_find_or_create_is_idempotent() {
         let db = Database::new(":memory:").await.unwrap();
         let ws_id = make_workspace(&db).await;
+        let prompt_template = build_blackboard_prompt();
         // 第一次：新建
-        let (id1, created1) = find_or_create_blackboard_todo(&db, ws_id).await.unwrap();
+        let (id1, created1) = find_or_create_blackboard_todo(&db, &prompt_template, ws_id).await.unwrap();
         assert!(created1, "首次调用应返回 created=true");
         // 第二次：复用
-        let (id2, created2) = find_or_create_blackboard_todo(&db, ws_id).await.unwrap();
+        let (id2, created2) = find_or_create_blackboard_todo(&db, &prompt_template, ws_id).await.unwrap();
         assert!(!created2, "第二次调用应返回 created=false");
         assert_eq!(id1, id2, "应返回同一 todo id");
     }
@@ -504,6 +537,7 @@ mod tests {
     #[tokio::test]
     async fn test_find_or_create_scoped_per_workspace() {
         let db = Database::new(":memory:").await.unwrap();
+        let prompt_template = build_blackboard_prompt();
         let ws1 = db
             .create_project_directory("/tmp/test-blackboard-svc-1", None, false, false)
             .await
@@ -512,8 +546,8 @@ mod tests {
             .create_project_directory("/tmp/test-blackboard-svc-2", None, false, false)
             .await
             .unwrap();
-        let (id1, _) = find_or_create_blackboard_todo(&db, ws1).await.unwrap();
-        let (id2, _) = find_or_create_blackboard_todo(&db, ws2).await.unwrap();
+        let (id1, _) = find_or_create_blackboard_todo(&db, &prompt_template, ws1).await.unwrap();
+        let (id2, _) = find_or_create_blackboard_todo(&db, &prompt_template, ws2).await.unwrap();
         assert_ne!(id1, id2, "不同 workspace 应当各自有独立 todo");
     }
 
@@ -522,7 +556,8 @@ mod tests {
     #[tokio::test]
     async fn test_find_or_create_missing_workspace_returns_bad_request() {
         let db = Database::new(":memory:").await.unwrap();
-        let result = find_or_create_blackboard_todo(&db, 9999).await;
+        let prompt_template = build_blackboard_prompt();
+        let result = find_or_create_blackboard_todo(&db, &prompt_template, 9999).await;
         match result {
             Err(AppError::BadRequest(_)) => {}
             other => panic!("expected BadRequest, got: {:?}", other),
