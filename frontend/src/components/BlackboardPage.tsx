@@ -14,11 +14,12 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Button, Typography, Skeleton, message } from 'antd';
-import { ReloadOutlined } from '@ant-design/icons';
+import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space } from 'antd';
+import { ReloadOutlined, SettingOutlined } from '@ant-design/icons';
 import { XMarkdown } from '@ant-design/x-markdown';
 import { useTheme } from '@/hooks/useTheme';
 import { useViewState } from '@/hooks/useViewState';
+import * as db from '@/utils/database';
 
 const { Title } = Typography;
 
@@ -147,6 +148,36 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   // 数据状态：data 既是"内容"也是"是否加载完成"的判断
   const [data, setData] = useStateBlackboardData();
   const [refreshing, setRefreshing] = useState(false);
+  // 设置弹窗状态
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [debounceSecs, setDebounceSecs] = useState<number>(600);
+
+  // 打开设置弹窗：先拉取最新 config
+  const handleOpenSettings = useCallback(async () => {
+    setSettingsOpen(true);
+    try {
+      const cfg = await db.getConfig();
+      setDebounceSecs(cfg.blackboard_debounce_secs ?? 600);
+    } catch {
+      setDebounceSecs(600);
+    }
+  }, []);
+
+  // 保存设置
+  const handleSaveSettings = useCallback(async () => {
+    setSettingsSaving(true);
+    try {
+      const current = await db.getConfig();
+      await db.updateConfig({ ...current, blackboard_debounce_secs: debounceSecs });
+      message.success('设置已保存');
+      setSettingsOpen(false);
+    } catch (err) {
+      message.error('保存失败: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setSettingsSaving(false);
+    }
+  }, [debounceSecs]);
 
   // 拉取（受 workspaceId 变化驱动）：useCallback 稳定引用，让 useEffect 只在 id 变时重跑
   const fetchData = useCallback(async () => {
@@ -192,8 +223,34 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         // 空状态时禁用刷新：避免无意义的 LLM 调用
         onRefresh={handleRefresh}
         disabled={isEmpty}
+        onOpenSettings={handleOpenSettings}
       />
       <BlackboardBody isDark={isDark} data={data} />
+
+      {/* 黑板设置弹窗 */}
+      <Modal
+        title="黑板设置"
+        open={settingsOpen}
+        onOk={handleSaveSettings}
+        onCancel={() => setSettingsOpen(false)}
+        okText="保存"
+        confirmLoading={settingsSaving}
+        destroyOnHidden
+      >
+        <Form layout="vertical">
+          <Form.Item label="防抖周期">
+            <InputNumber
+              value={debounceSecs}
+              onChange={(v) => setDebounceSecs(v ?? 600)}
+              min={10}
+              max={3600}
+              addonAfter="秒"
+              style={{ width: 200 }}
+            />
+          </Form.Item>
+          <Form.Item extra="周期到期后统一处理 pending 的 todo，减少频繁的 LLM 调用" />
+        </Form>
+      </Modal>
     </div>
   );
 }
@@ -211,9 +268,10 @@ interface BlackboardHeaderProps {
   refreshing: boolean;
   onRefresh: () => void;
   disabled: boolean;
+  onOpenSettings: () => void;
 }
 
-/** 顶部标题栏：标题 + 刷新按钮 */
+/** 顶部标题栏：标题 + 刷新按钮 + 设置按钮 */
 function BlackboardHeader(props: BlackboardHeaderProps) {
   return (
     <div
@@ -227,15 +285,22 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
       <Title level={4} style={{ margin: 0 }}>
         黑板
       </Title>
-      <Button
-        type="primary"
-        icon={<ReloadOutlined />}
-        loading={props.refreshing}
-        onClick={props.onRefresh}
-        disabled={props.disabled}
-      >
-        {props.refreshing ? '更新中...' : '刷新'}
-      </Button>
+      <Space.Compact>
+        <Button
+          icon={<SettingOutlined />}
+          onClick={props.onOpenSettings}
+          title="设置"
+        />
+        <Button
+          type="primary"
+          icon={<ReloadOutlined />}
+          loading={props.refreshing}
+          onClick={props.onRefresh}
+          disabled={props.disabled}
+        >
+          {props.refreshing ? '更新中...' : '刷新'}
+        </Button>
+      </Space.Compact>
     </div>
   );
 }

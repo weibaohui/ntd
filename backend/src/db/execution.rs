@@ -201,6 +201,22 @@ impl Database {
         Ok(m.map(Into::into))
     }
 
+    /// 获取指定 todo 的最新一条执行记录（按 id 降序）。
+    ///
+    /// 用于黑板 debouncer：从 pending 队列取出 todo_id 后查其最新执行结论。
+    pub async fn get_latest_execution_record_for_todo(
+        &self,
+        todo_id: i64,
+    ) -> Result<Option<ExecutionRecord>, sea_orm::DbErr> {
+        let m = execution_records::Entity::find()
+            .filter(execution_records::Column::TodoId.eq(todo_id))
+            .order_by_desc(execution_records::Column::Id)
+            .limit(1)
+            .one(&self.conn)
+            .await?;
+        Ok(m.map(Into::into))
+    }
+
     /// 批量根据 task_id 列表获取执行记录（用于 WebSocket 同步等场景）
     pub async fn get_execution_records_by_task_ids(
         &self,

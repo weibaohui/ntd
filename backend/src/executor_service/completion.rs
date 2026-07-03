@@ -417,61 +417,83 @@ pub(crate) async fn finalize_normal_completion(
     task_manager.remove(&task_id).await;
 
     // ===== 黑板更新 (blackboard) =====
-    // 任务执行成功后，异步更新黑板内容。
-    // 用本作用域的 trigger_type 判定"自身"——黑板更新任务的 trigger_type == "blackboard"，
-    // 避免无限循环；与 todo.action_type 不同的是 trigger_type 跟随执行而非 todo，
-    // 即便以后新增相同 action_type 的非黑板 todo，也不会被错误地跳过。
+    // 任务执行成功后，将 todo_id 追加到 pending 队列，由 debouncer 周期汇总触发。
+    // 用 trigger_type 判定"自身"——黑板更新任务的 trigger_type == "blackboard"，
+    // 避免无限循环；即使以后新增相同 action_type 的非黑板 todo，也不会被错误地跳过。
     if success && trigger_type != "blackboard" {
         if let Some(ws_id) = workspace_id {
-            spawn_blackboard_update(
-                db.clone(),
-                executor_registry.clone(),
-                tx.clone(),
-                task_manager.clone(),
-                config.clone(),
-                ws_id,
-                &result_str,
-                todo_id,
-                &todo_title,
-            );
+            crate::services::blackboard_debouncer::push_pending_todo(ws_id, todo_id, &db).await;
         }
     }
 }
 
-/// 在后台异步触发黑板更新。
-///
-/// 将 async 调用包裹在独立的非 async 函数中，避免 Rust 编译器的 async 递归类型循环
-/// （`finalize_normal_completion` → `update_blackboard` → `run_todo_execution` → `dispatch_spawned_executor_task` → `finalize_normal_completion`）。
-fn spawn_blackboard_update(
+/// 启动黑板 flush 监听器：监听 debouncer channel，收到消息后执行 update_blackboard
+pub async fn blackboard_flush_listener(
+    mut rx: tokio::sync::mpsc::Receiver<crate::services::blackboard_debouncer::BlackboardFlushMsg>,
     db: Arc<Database>,
     executor_registry: Arc<ExecutorRegistry>,
     tx: broadcast::Sender<ExecEvent>,
     task_manager: Arc<TaskManager>,
     config: Arc<std::sync::RwLock<crate::config::Config>>,
-    workspace_id: i64,
-    result_str: &str,
-    todo_id: i64,
-    todo_title: &str,
 ) {
-    let result_str = result_str.to_string();
-    let todo_title = todo_title.to_string();
-    tokio::spawn(async move {
+    while let Some(msg) = rx.recv().await {
+        tracing::debug!("黑板 flush listener 收到消息: workspace_id={}", msg.workspace_id);
+
+        // 从 DB 取出 pending 队列（take_pending_todo_ids 已清空队列）
+        let todo_ids = match db.take_pending_todo_ids(msg.workspace_id).await {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::warn!("取 pending 队列失败: workspace_id={}, error={}", msg.workspace_id, e);
+                continue;
+            }
+        };
+
+        if todo_ids.is_empty() {
+            tracing::debug!("黑板 pending 队列为空: workspace_id={}", msg.workspace_id);
+            continue;
+        }
+
+        tracing::info!(
+            "黑板 flush listener 处理: workspace_id={}, todo_ids={:?}",
+            msg.workspace_id, todo_ids
+        );
+
+        // 按顺序查询每条 todo 的最新执行结论
+        let mut conclusions = Vec::with_capacity(todo_ids.len());
+        for todo_id in &todo_ids {
+            if let Ok(Some(record)) = db.get_latest_execution_record_for_todo(*todo_id).await {
+                conclusions.push(format!(
+                    "- 任务 ID: {}\n  结论: {}",
+                    todo_id,
+                    record.result.as_deref().unwrap_or("(无结论)")
+                ));
+            }
+        }
+
+        if conclusions.is_empty() {
+            tracing::debug!("所有 todo 均无执行记录: workspace_id={}", msg.workspace_id);
+            continue;
+        }
+
+        let conclusion_text = conclusions.join("\n\n");
+
+        // 调用 update_blackboard
         if let Err(e) = crate::services::blackboard::update_blackboard(
-            db,
-            executor_registry,
-            tx,
-            task_manager,
-            config,
-            workspace_id,
-            &result_str,
-            todo_id,
-            &todo_title,
+            db.clone(),
+            executor_registry.clone(),
+            tx.clone(),
+            task_manager.clone(),
+            config.clone(),
+            msg.workspace_id,
+            &conclusion_text,
+            todo_ids[0],
+            &format!("批量更新 ({}条)", todo_ids.len()),
         )
         .await
         {
-            tracing::warn!("黑板更新失败: todo_id={}, error={:?}", todo_id, e);
+            tracing::warn!("黑板 update_blackboard 失败: workspace_id={}, error={:?}", msg.workspace_id, e);
         }
-    });
+    }
 }
 
 /// 仅在 trigger_type != "auto_review" 时启动自动评审，避免评审实例反向触发评审。

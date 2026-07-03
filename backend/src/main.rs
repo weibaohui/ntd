@@ -586,7 +586,8 @@ async fn run_server(cli_port: Option<u16>) {
             config: config.clone(),
         },
         scheduler,
-    );
+    )
+    .await;
 
     let port = cli_port.unwrap_or(cfg.port);
 

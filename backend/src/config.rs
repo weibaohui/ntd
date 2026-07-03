@@ -68,6 +68,8 @@ const DEFAULT_AUTO_USAGE_STATS_CRON: &str = "0 0 1 * * *";
 const DEFAULT_AUTO_UPDATE_HOUR: u32 = 3;
 /// 自动更新默认间隔类型:"day" / "week" / "month"。
 const DEFAULT_AUTO_UPDATE_INTERVAL: &str = "day";
+/// 黑板更新防抖周期（秒），默认 10 分钟。
+const DEFAULT_BLACKBOARD_DEBOUNCE_SECS: u64 = 600;
 
 /// 私有 helper:`auto_backup_*` / `auto_todo_backup_*` / `auto_skill_backup_*`
 /// 三组字段共享同一形状 (enabled: bool, cron: String, max_files: usize)。
@@ -176,6 +178,10 @@ pub struct Config {
     pub auto_update_hour: u32,
     /// 自动更新上次检查时间（ISO 8601），None 表示从未检查过
     pub auto_update_last_check_at: Option<String>,
+    /// 黑板更新防抖周期（秒），默认 600 秒（10 分钟）。
+    /// todo 执行完成后不会立即触发黑板更新，而是暂存到 pending 队列，
+    /// 等到此周期到期后统一处理一次 LLM 调用。
+    pub blackboard_debounce_secs: u64,
 }
 
 /// Paths for each supported executor binary.
@@ -284,6 +290,7 @@ impl Default for Config {
             cloud_sync: CloudSyncConfig::default(), cors_allowed_origins: Vec::new(),
             auto_update_enabled: false, auto_update_interval: DEFAULT_AUTO_UPDATE_INTERVAL.to_string(),
             auto_update_hour: DEFAULT_AUTO_UPDATE_HOUR, auto_update_last_check_at: None,
+            blackboard_debounce_secs: DEFAULT_BLACKBOARD_DEBOUNCE_SECS,
         }
     }
 }
