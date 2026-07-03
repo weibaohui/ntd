@@ -210,38 +210,98 @@ async fn update_blackboard(
 只输出更新后的黑板内容，不要输出任何解释。
 ```
 
-### 5.4 LLM 调用方式
+### 5.4 LLM 调用方式（复用现有 Action/Todo 执行机制）
 
-使用系统配置的 executor 模型，通过 `ExecutorRegistry` 调用。
+不复用 HTTP 直接调用，而是复用现有的 **Action/Todo 执行机制**：
 
-**简化方案**：Phase 1 使用 HTTP 直接调用配置模型的 API（OpenAI/Claude 兼容格式），不走 executor 子进程。
+1. **固定 Todo 模板**：`action_type="blackboard"`, `action_key="update"`
+2. **动态 Prompt**：通过 `params` 传入当前黑板内容 + 新结论，替换占位符
+3. **复用执行器**：走 `run_todo_execution` → 子进程执行 → 解析结果
+4. **同步等待**：Service 层订阅 broadcast channel，等待 `Finished` 事件，提取 `result`
+
+**复用的现有代码**：
+
+| 复用点 | 来源 |
+|--------|------|
+| `find_or_create_todo` | `handlers/action.rs` |
+| `replace_placeholders` | `handlers/action.rs` |
+| `run_todo_execution` | `executor_service/mod.rs` |
+| `ExecEvent::Finished` | `executor_service/events.rs` |
+| broadcast channel | 现有的 `tx` |
+
+**黑板更新 Service 核心逻辑**：
 
 ```rust
-async fn call_llm(prompt: &str) -> Result<String, Error> {
-    // 读取 config 中的模型配置
-    let config = load_config();
-    let model = config.executor_model;
-    let api_key = config.api_key;
+pub async fn update_blackboard(
+    db: Arc<Database>,
+    executor_registry: Arc<ExecutorRegistry>,
+    tx: broadcast::Sender<ExecEvent>,
+    task_manager: Arc<TaskManager>,
+    config: Arc<std::sync::RwLock<Config>>,
+    workspace_id: i64,
+    conclusion: &str,
+    source_todo_id: i64,
+    source_todo_title: &str,
+) -> Result<(), AppError> {
+    // 1. 读取当前黑板内容
+    let current = db.get_blackboard(workspace_id).await?;
+    let current_content = current.map(|b| b.content).unwrap_or_default();
     
-    // 直接 HTTP 调用
-    let client = reqwest::Client::new();
-    let response = client
-        .post("https://api.openai.com/v1/chat/completions")
-        .header("Authorization", format!("Bearer {api_key}"))
-        .json(&json!({
-            "model": model,
-            "messages": [
-                { "role": "system", "content": "你是一个工作空间知识库的维护者。" },
-                { "role": "user", "content": prompt }
-            ],
-            "temperature": 0.3
-        }))
-        .send()
-        .await?;
+    // 2. 查找或创建 blackboard update todo
+    let (todo_id, _) = find_or_create_blackboard_todo(&db, workspace_id).await?;
     
-    // 解析响应
-    let result = parse_response(response).await?;
-    Ok(result)
+    // 3. 构造 prompt（复用 Action 的占位符替换机制）
+    let prompt = build_blackboard_prompt();
+    let mut params = HashMap::new();
+    params.insert("current".to_string(), current_content);
+    params.insert("conclusion".to_string(), conclusion.to_string());
+    params.insert("todo_id".to_string(), source_todo_id.to_string());
+    params.insert("todo_title".to_string(), source_todo_title.to_string());
+    let message = replace_placeholders(&prompt, &params);
+    
+    // 4. 启动执行（复用 run_todo_execution）
+    let result = crate::executor_service::run_todo_execution(
+        RunTodoExecutionRequest {
+            db: db.clone(),
+            executor_registry,
+            tx: tx.clone(),
+            task_manager,
+            config,
+            todo_id,
+            message,
+            req_executor: None,
+            trigger_type: "blackboard".to_string(),
+            params: None,
+            resume_session_id: None,
+            resume_message: None,
+            source_todo_id: Some(source_todo_id),
+            source_todo_title: Some(source_todo_title.to_string()),
+            feishu_bot_id: None,
+            feishu_receive_id: None,
+            loop_step_execution_id: None,
+            step_id: None,
+            workspace_path: None,
+            workspace_id: Some(workspace_id),
+        },
+    ).await;
+    
+    let record_id = result.record_id.ok_or_else(|| {
+        AppError::Internal("黑板更新任务启动失败".to_string())
+    })?;
+    
+    // 5. 订阅 broadcast channel 等待 Finished 事件
+    let mut rx = tx.subscribe();
+    while let Ok(event) = rx.recv().await {
+        if let ExecEvent::Finished { record_id: finished_rid, result: Some(new_content), .. } = event {
+            if finished_rid == record_id {
+                // 6. 更新黑板
+                db.update_blackboard(workspace_id, &new_content).await?;
+                return Ok(());
+            }
+        }
+    }
+    
+    Ok(())
 }
 ```
 
@@ -316,23 +376,38 @@ const components = {
 // 在 emit_completion_events 之后
 async fn maybe_update_blackboard(
     db: &Arc<Database>,
+    executor_registry: &Arc<ExecutorRegistry>,
     tx: &broadcast::Sender<ExecEvent>,
+    task_manager: &Arc<TaskManager>,
+    config: &Arc<std::sync::RwLock<crate::config::Config>>,
     todo_id: i64,
     workspace_id: Option<i64>,
     result: &str,
     todo_title: &str,
+    todo_action_type: Option<&str>,
 ) {
     let Some(ws_id) = workspace_id else { return };
+    
+    // 跳过 blackboard update todo 自身，避免无限循环
+    if todo_action_type == Some("blackboard") {
+        return;
+    }
+    
     let result = result.to_string();
     let db = db.clone();
+    let executor_registry = executor_registry.clone();
+    let tx = tx.clone();
+    let task_manager = task_manager.clone();
+    let config = config.clone();
     let todo_title = todo_title.to_string();
     
     // 异步执行，不阻塞事件流
     tokio::spawn(async move {
         if let Err(e) = crate::services::blackboard::update_blackboard(
-            &db, ws_id, &result, todo_id, &todo_title
+            db, executor_registry, tx, task_manager, config,
+            ws_id, &result, todo_id, &todo_title
         ).await {
-            tracing::warn!("blackboard update failed: {}", e);
+            tracing::warn!("黑板更新失败: {}", e);
         }
     });
 }

@@ -96,29 +96,38 @@ cd backend && cargo test db::blackboard_tests -- --nocapture
 
 **工作内容：**
 - 创建 `backend/src/services/blackboard.rs`
-- 实现 `update_blackboard` 方法（读取当前内容、调用 LLM、更新当前）
-- 实现 `refresh_blackboard` 方法（手动刷新：重新总结当前所有相关结论）
+- 实现 `find_or_create_blackboard_todo`：查找或创建 `action_type="blackboard"`, `action_key="update"` 的 Todo 模板
+- 实现 `update_blackboard` 方法（复用 Action 机制，见 Phase 3 详细逻辑）
+- 实现 `refresh_blackboard` 方法（手动刷新：重新执行 blackboard update todo）
 
-**核心逻辑：**
+**核心逻辑（简化版，详见 Phase 3）：**
 ```rust
 pub async fn update_blackboard(
-    db: &Database,
+    db: Arc<Database>,
+    executor_registry: Arc<ExecutorRegistry>,
+    tx: broadcast::Sender<ExecEvent>,
+    task_manager: Arc<TaskManager>,
+    config: Arc<std::sync::RwLock<Config>>,
     workspace_id: i64,
     conclusion: &str,
-    todo_id: i64,
-    todo_title: &str,
+    source_todo_id: i64,
+    source_todo_title: &str,
 ) -> Result<(), AppError> {
     // 1. 读取当前黑板
     let current = db.get_blackboard(workspace_id).await?;
     let current_content = current.map(|b| b.content).unwrap_or_default();
     
-    // 2. 调用 LLM（Phase 3 实现）
-    let new_content = call_llm_update(&current_content, conclusion, todo_id, todo_title).await?;
+    // 2. 查找/创建 blackboard update todo（action_type="blackboard", action_key="update"）
+    let (todo_id, _) = find_or_create_blackboard_todo(&db, workspace_id).await?;
     
-    // 3. 更新当前黑板
-    db.update_blackboard(workspace_id, &new_content).await?;
+    // 3. 构造 message（占位符替换）
+    let message = build_message(&current_content, conclusion, source_todo_id, source_todo_title);
     
-    Ok(())
+    // 4. 启动执行（复用 run_todo_execution）
+    let result = crate::executor_service::run_todo_execution(...).await;
+    
+    // 5. 等待 Finished 事件并更新黑板（详见 Phase 3）
+    ...
 }
 ```
 
@@ -176,29 +185,35 @@ cd backend && cargo test handlers::mod_tests::each_domain_routes_function_return
 
 ## Phase 3：LLM 更新
 
-### 任务 3.1：实现 LLM 调用
+### 任务 3.1：实现黑板更新 Service（复用 Action 机制）
 
 **工作内容：**
-- 在 `backend/src/services/blackboard.rs` 中实现 `call_llm_update` 函数
-- 读取系统配置的模型和 API key
-- 构造 prompt（当前黑板 + 新结论）
-- HTTP 调用 LLM API
-- 解析返回内容
+- 创建 `backend/src/services/blackboard.rs`
+- 实现 `find_or_create_blackboard_todo`：查找或创建 `action_type="blackboard"`, `action_key="update"` 的 Todo 模板
+- 实现 `build_blackboard_prompt`：构造包含占位符的 Prompt 模板
+- 实现 `update_blackboard`：
+  1. 读取当前黑板内容
+  2. 查找/创建 blackboard update Todo
+  3. 用 `replace_placeholders` 替换占位符（复用 `handlers/action.rs`）
+  4. 调用 `run_todo_execution` 启动执行（复用 `executor_service/mod.rs`）
+  5. 订阅 broadcast channel 等待 `Finished` 事件
+  6. 提取 `result` 并更新 blackboards 表
+- 实现 `refresh_blackboard`：手动刷新（重新执行 blackboard update todo）
 
 **Prompt 模板：**
 ```rust
-fn build_prompt(current: &str, conclusion: &str, todo_id: i64, todo_title: &str) -> String {
-    format!(r#"你是一个工作空间知识库的维护者。你的任务是维护一个 Markdown 格式的"黑板"，记录工作空间中所有任务执行的结论和当前进展。
+fn build_blackboard_prompt() -> String {
+    r#"你是一个工作空间知识库的维护者。你的任务是维护一个 Markdown 格式的"黑板"，记录工作空间中所有任务执行的结论和当前进展。
 
 当前黑板内容：
 ```
-{current}
+{{current}}
 ```
 
 新任务结论：
-- 任务 ID: {todo_id}
-- 任务标题: {todo_title}
-- 执行结论: {conclusion}
+- 任务 ID: {{todo_id}}
+- 任务标题: {{todo_title}}
+- 执行结论: {{conclusion}}
 
 请更新黑板内容，要求：
 1. 将新结论整合到黑板中
@@ -209,31 +224,27 @@ fn build_prompt(current: &str, conclusion: &str, todo_id: i64, todo_title: &str)
    - ## 待解决问题
    - ## 矛盾/风险
    - ## 下一步建议
-3. 每条结论标注来源，格式：(来源: [todo_{{id}}](ntd://todo/{{id}}))
+3. 每条结论标注来源，格式：(来源: [todo_{{todo_id}}](ntd://todo/{{todo_id}}))
 4. 如果新结论与已有结论矛盾，在"矛盾/风险"中标注
 5. 如果新结论提出了未解决的问题，在"待解决问题"中列出
 6. 更新"下一步建议"
 7. 保持 Markdown 格式，不要添加 HTML
 8. 如果黑板为空，根据新结论创建初始结构
 
-只输出更新后的黑板内容，不要输出任何解释。"#,
-        current = if current.is_empty() { "（黑板为空）" } else { current },
-        conclusion = conclusion,
-        todo_id = todo_id,
-        todo_title = todo_title,
-    )
+只输出更新后的黑板内容，不要输出任何解释。"#.to_string()
 }
 ```
 
 **产出物：**
-- `backend/src/services/blackboard.rs` 中新增 LLM 调用逻辑
+- `backend/src/services/blackboard.rs`
+- `backend/src/services/mod.rs` 中注册模块
 
 **验证方法：**
 ```bash
-# 启动后端，手动触发一次任务执行
-# 检查黑板是否自动更新
+# 启动后端，执行一个 Todo
+# 检查日志中是否有 "黑板更新" 相关日志
+# 调用 API 查看黑板内容是否更新
 curl http://localhost:3000/api/workspaces/1/blackboard
-# 预期：返回包含新结论的黑板内容
 ```
 
 ---
@@ -242,27 +253,37 @@ curl http://localhost:3000/api/workspaces/1/blackboard
 
 **工作内容：**
 - 修改 `backend/src/executor_service/completion.rs`
-- 在 `finalize_normal_completion` 中，发送 `Finished` 事件后，异步触发黑板更新
+- 在 `finalize_normal_completion` 中，发送 `Finished` 事件后，**仅当源任务不是 blackboard update todo 时**，异步触发黑板更新
 - 在 `handle_cancellation_branch` 和 `handle_timeout_branch` 中跳过黑板更新（只有成功完成才更新）
+- 黑板更新任务自身完成后也会产生 `Finished` 事件，但不应再次触发黑板更新（避免无限循环）
 
 **Hook 位置：**
 ```rust
 // 在 finalize_normal_completion 末尾
 emit_completion_events(...);
 
-// 新增：异步更新黑板
+// 新增：异步更新黑板（仅当源任务不是 blackboard update todo）
 if success {
     if let Some(ws_id) = workspace_id {
-        let db_clone = db.clone();
-        let result_str_clone = result_str.clone();
-        let todo_title_clone = todo_title.clone();
-        tokio::spawn(async move {
-            if let Err(e) = crate::services::blackboard::update_blackboard(
-                &db_clone, ws_id, &result_str_clone, todo_id, &todo_title_clone
-            ).await {
-                tracing::warn!("黑板更新失败: {}", e);
-            }
-        });
+        // 检查当前 todo 不是 blackboard update todo
+        let is_blackboard_todo = todo_action_type.as_deref() == Some("blackboard");
+        if !is_blackboard_todo {
+            let db_clone = db.clone();
+            let executor_registry_clone = executor_registry.clone();
+            let tx_clone = tx.clone();
+            let task_manager_clone = task_manager.clone();
+            let config_clone = config.clone();
+            let result_str_clone = result_str.clone();
+            let todo_title_clone = todo_title.clone();
+            tokio::spawn(async move {
+                if let Err(e) = crate::services::blackboard::update_blackboard(
+                    db_clone, executor_registry_clone, tx_clone, task_manager_clone, config_clone,
+                    ws_id, &result_str_clone, todo_id, &todo_title_clone
+                ).await {
+                    tracing::warn!("黑板更新失败: {}", e);
+                }
+            });
+        }
     }
 }
 ```
