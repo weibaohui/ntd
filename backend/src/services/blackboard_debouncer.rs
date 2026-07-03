@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::{broadcast, mpsc, RwLock};
-use tokio::time::{interval, Duration};
+use tokio::time::Duration;
 
 use crate::db::Database;
 
@@ -97,12 +97,11 @@ pub async fn push_pending_todo(workspace_id: i64, todo_id: i64, db: &Arc<Databas
         let guard = FLUSH_TX.read().await;
         guard.as_ref().cloned()
     };
-    let db = db.clone();
 
     // 启动 timer
     tokio::spawn(async move {
-        let mut ticker = interval(Duration::from_secs(debounce_secs));
-        ticker.tick().await; // 等待 debounce 周期
+        // 使用 sleep 而非 interval：interval.tick() 第一次立即返回，不符合"等待周期"的需求
+        tokio::time::sleep(Duration::from_secs(debounce_secs)).await;
         tracing::debug!("黑板 debounce timer 触发: workspace_id={}", workspace_id);
 
         if let Some(tx) = tx {

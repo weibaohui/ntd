@@ -436,8 +436,6 @@ pub async fn blackboard_flush_listener(
     task_manager: Arc<TaskManager>,
     config: Arc<std::sync::RwLock<crate::config::Config>>,
 ) {
-    use crate::services::blackboard_debouncer::BlackboardFlushMsg;
-
     while let Some(msg) = rx.recv().await {
         tracing::debug!("黑板 flush listener 收到消息: workspace_id={}", msg.workspace_id);
 
