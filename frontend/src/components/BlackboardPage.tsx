@@ -8,6 +8,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Button, Typography, Skeleton, message } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
+import { useTheme } from '@/hooks/useTheme';
 
 const { Title } = Typography;
 
@@ -45,15 +46,16 @@ function renderMarkdownLinks(content: string): string {
  *   │  (或空状态提示"暂无内容...")        │
  *   └──────────────────────────────────┘
  */
-export function BlackboardPage() {
+export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?: number | null }) {
+  const { themeMode } = useTheme();
+  const isDark = themeMode === 'dark';
   const [data, setData] = useState<BlackboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // 当前工作空间 ID — 从 URL 参数或全局状态获取
-  // 后端 API 路径为 /api/workspaces/{workspace_id}/blackboard
-  // 这里从 URL 的 workspace 参数获取，默认使用 1
+  // 当前工作空间 ID：优先使用父组件传入的当前工作空间，降级到 URL 参数字段，默认 1
   const [workspaceId] = useState<number>(() => {
+    if (propWorkspaceId != null) return propWorkspaceId;
     const ws = new URLSearchParams(window.location.search).get('workspace');
     return ws ? Number(ws) : 1;
   });
@@ -149,12 +151,13 @@ export function BlackboardPage() {
       ) : data && data.content ? (
         <div
           style={{
-            background: '#fff',
+            background: isDark ? '#1f1f1f' : '#fff',
             borderRadius: 8,
             padding: 16,
             minHeight: 200,
             lineHeight: 1.8,
             fontSize: 14,
+            color: isDark ? '#e0e0e0' : '#333',
           }}
           dangerouslySetInnerHTML={{ __html: renderContent(data.content) }}
         />
@@ -163,10 +166,10 @@ export function BlackboardPage() {
           style={{
             textAlign: 'center',
             padding: '48px 0',
-            color: '#999',
+            color: isDark ? '#666' : '#999',
           }}
         >
-          <p style={{ fontSize: 16, marginBottom: 8 }}>暂无内容</p>
+          <p style={{ fontSize: 16, marginBottom: 8, color: isDark ? '#aaa' : '#666' }}>暂无内容</p>
           <p>任务执行后将自动更新黑板内容</p>
         </div>
       )}

@@ -190,6 +190,7 @@ function AppContent() {
     if (key === 'loops') { showListSection('loop'); return; }
     if (key === 'dashboard') { handleShowView('dashboard'); return; }
     if (key === 'memorial') { handleShowView('memorial'); return; }
+    if (key === 'blackboard') { handleShowView('blackboard'); return; }
     if (key === 'settings') { showSettings(null); return; }
     if (key === 'settings_projectDirectories') { showStandaloneSettingsPanel('projectDirectories'); return; }
     if (key === 'settings_skills') { showStandaloneSettingsPanel('skills'); return; }
@@ -361,7 +362,7 @@ function AppContent() {
               ) : activeView === 'memorial' ? (
                 <MemorialBoard />
               ) : activeView === 'blackboard' ? (
-                <BlackboardPage />
+                <BlackboardPage workspaceId={state.selectedWorkspace} />
               ) : (
                 <Dashboard />
               )}

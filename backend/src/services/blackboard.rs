@@ -163,14 +163,18 @@ pub async fn update_blackboard(
     params.insert("todo_title".to_string(), source_todo_title.to_string());
     let message = crate::models::replace_placeholders(&prompt, &params);
 
-    // 4. 启动执行（复用 run_todo_execution）
+    // 4. 先订阅 broadcast channel（必须在启动执行之前订阅，否则极速完成的任务
+    //    会导致 Finished 事件在 subscribe 之前发出而被丢失，函数无限等待）
+    let mut rx = tx.subscribe();
+
+    // 5. 启动执行（复用 run_todo_execution）
     //    使用 trigger_type="blackboard" 标记这是黑板更新任务，
     //    这样 Finished 事件 Hook 中可以跳过再次触发黑板更新（避免无限循环）
     let result = crate::handlers::execution::start_todo_execution(
         RunTodoExecutionRequest {
             db: db.clone(),
             executor_registry,
-            tx: tx.clone(),
+            tx,
             task_manager,
             config,
             todo_id,
@@ -199,9 +203,8 @@ pub async fn update_blackboard(
         AppError::Internal("黑板更新任务启动失败".to_string())
     })?;
 
-    // 5. 订阅 broadcast channel 等待 Finished 事件
+    // 6. 等待 Finished 事件
     //    用 task_id 匹配对应的完成事件，忽略其他事件的干扰
-    let mut rx = tx.subscribe();
     loop {
         match rx.recv().await {
             Ok(ExecEvent::Finished {
@@ -210,6 +213,16 @@ pub async fn update_blackboard(
                 ..
             }) if *finished_task_id == task_id => {
                 let new_content = new_content.clone();
+                // 如果 LLM 返回空内容，跳过更新，保护已有黑板内容不被覆盖
+                if new_content.trim().is_empty() {
+                    tracing::warn!(
+                        "黑板更新结果为空，跳过更新: workspace_id={}, source_todo_id={}, task_id={}",
+                        workspace_id,
+                        source_todo_id,
+                        task_id
+                    );
+                    return Ok(());
+                }
                 // 6. 更新黑板内容到数据库
                 //    先确保黑板记录存在（首次更新时自动创建）
                 if db.get_blackboard(workspace_id).await.map_err(|e| {
@@ -226,6 +239,21 @@ pub async fn update_blackboard(
 
                 tracing::info!(
                     "黑板更新成功: workspace_id={}, source_todo_id={}, task_id={}",
+                    workspace_id,
+                    source_todo_id,
+                    task_id
+                );
+                return Ok(());
+            }
+            // Finished 事件中 result 为 None 说明执行未产出结果，
+            // 跳过但不报错，避免阻塞后续黑板更新
+            Ok(ExecEvent::Finished {
+                task_id: ref finished_task_id,
+                result: None,
+                ..
+            }) if *finished_task_id == task_id => {
+                tracing::warn!(
+                    "黑板更新执行未产出结果: workspace_id={}, source_todo_id={}, task_id={}",
                     workspace_id,
                     source_todo_id,
                     task_id
@@ -288,12 +316,15 @@ pub async fn refresh_blackboard(
     params.insert("todo_title".to_string(), "手动刷新黑板".to_string());
     let message = crate::models::replace_placeholders(&prompt, &params);
 
+    // 先订阅 broadcast channel，再启动执行，避免错过 Finished 事件
+    let mut rx = tx.subscribe();
+
     // 启动执行
     let result = crate::handlers::execution::start_todo_execution(
         RunTodoExecutionRequest {
             db: db.clone(),
             executor_registry,
-            tx: tx.clone(),
+            tx,
             task_manager,
             config,
             todo_id,
@@ -321,7 +352,6 @@ pub async fn refresh_blackboard(
     })?;
 
     // 等待 Finished 事件
-    let mut rx = tx.subscribe();
     loop {
         match rx.recv().await {
             Ok(ExecEvent::Finished {
@@ -330,12 +360,34 @@ pub async fn refresh_blackboard(
                 ..
             }) if *finished_task_id == task_id => {
                 let new_content = new_content.clone();
+                // 如果 LLM 返回空内容，跳过更新，保护已有黑板内容不被覆盖
+                if new_content.trim().is_empty() {
+                    tracing::warn!(
+                        "黑板刷新结果为空，跳过更新: workspace_id={}, task_id={}",
+                        workspace_id,
+                        task_id
+                    );
+                    return Ok(());
+                }
                 db.update_blackboard_content(workspace_id, &new_content)
                     .await
                     .map_err(|e| AppError::Internal(format!("更新黑板失败: {}", e)))?;
 
                 tracing::info!(
                     "黑板刷新成功: workspace_id={}, task_id={}",
+                    workspace_id,
+                    task_id
+                );
+                return Ok(());
+            }
+            // Finished 事件中 result 为 None 说明执行未产出结果
+            Ok(ExecEvent::Finished {
+                task_id: ref finished_task_id,
+                result: None,
+                ..
+            }) if *finished_task_id == task_id => {
+                tracing::warn!(
+                    "黑板刷新执行未产出结果: workspace_id={}, task_id={}",
                     workspace_id,
                     task_id
                 );
