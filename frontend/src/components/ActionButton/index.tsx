@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Button, Drawer, Spin, Typography, Space, message, Input, Tag } from 'antd';
 import { ThunderboltOutlined, EditOutlined } from '@ant-design/icons';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useActionExecution } from './useActionExecution';
 import { ExecutorPicker } from '@/components/todo-drawer/ExecutorPicker';
 import { EXECUTORS_FOR_PICKER } from '@/types/execution';
+import { getLastExecutor, setLastExecutor } from '@/constants';
 import type { ActionButtonProps } from './types';
 
 const { Text, Paragraph } = Typography;
@@ -38,7 +39,10 @@ export function ActionButton({
 }: ActionButtonProps) {
   const [open, setOpen] = useState(false);
   const [editablePrompt, setEditablePrompt] = useState(prompt);
-  const [selectedExecutor, setSelectedExecutor] = useState<string | undefined>(executor);
+  // 初始化 selectedExecutor：优先从 localStorage 恢复上次选择，不存在时回退到 prop executor
+  const [selectedExecutor, setSelectedExecutor] = useState<string | undefined>(
+    () => getLastExecutor(executor)
+  );
   const isMobile = useIsMobile();
   const { status, result, error, execute, retry, reset } = useActionExecution(
     actionType,
@@ -49,13 +53,24 @@ export function ActionButton({
     executor,
   );
 
-  // 打开时重置 editablePrompt 为默认值
+  // 打开 Drawer 时：
+  // - 重置 editablePrompt 为最新的 prompt 默认值
+  // - 从 localStorage 恢复上次选的执行器（覆盖 prop 传入的默认值）
+  //   这样用户每次打开都是自己上次的选择，而不是每次回到默认。
   useEffect(() => {
     if (open) {
       setEditablePrompt(prompt);
-      setSelectedExecutor(executor);
+      const saved = getLastExecutor(executor);
+      setSelectedExecutor(saved);
     }
-  }, [open, prompt, executor]);
+  }, [open, prompt, executor, actionType, actionKey]);
+
+  // 用户切换执行器时同时保存选择到 localStorage，
+  // 确保本次关闭后下次打开 Drawer 能恢复成这个值。
+  const handleExecutorChange = useCallback((value: string) => {
+    setSelectedExecutor(value);
+    setLastExecutor(value);
+  }, []);
 
   const handleOpen = () => {
     reset();
@@ -110,11 +125,11 @@ export function ActionButton({
             />
           </div>
 
-          {/* 执行器选择 */}
+          {/* 执行器选择（选择后自动记住到 localStorage，下次打开同理恢复） */}
           <ExecutorPicker
             executor={selectedExecutor || 'claudecode'}
             executorOptions={EXECUTORS_FOR_PICKER}
-            onChange={setSelectedExecutor}
+            onChange={handleExecutorChange}
           />
 
           {/* 参数预览 */}
