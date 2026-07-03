@@ -99,7 +99,8 @@
 | 执行引擎 | `LoopRunner` 异步执行 Loop，支持步骤间上下文传递 | `services/loop_runner.rs` |
 | 调度器 | `LoopScheduler` 基于 Cron 的 Loop 定时调度 | `services/loop_scheduler.rs` |
 | 触发分发 | `LoopTrigger` 统一分发多种触发源到 Loop 执行 | `services/loop_trigger.rs` |
-| 黑板上下文 | 步骤间共享的上下文数据（blackboard） | `db/entity/loop_step_executions.rs` |
+| 黑板上下文 | 步骤间共享的上下文数据（blackboard，存储为 `loop_step_executions.conclusion`） | `db/entity/loop_step_executions.rs`、`services/loop_runner.rs::build_blackboard_text` |
+| 黑板 CLI 查询 | `ntd loop execution blackboard <eid>` 默认输出 JSON，加 `--human` 走人类视图 | `backend/src/cli/commands.rs`、`docs/loop-blackboard-cli.md` |
 | Token 统计 | Loop 级别的 Token 用量汇总 | `handlers/loop_.rs` |
 | 流程图可视化 | 前端 Loop 流程图展示（@xyflow/react） | `components/loop-flow/` |
 | 看板视图 | Loop 执行状态看板 | `components/loop-kanban/` |
