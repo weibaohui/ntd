@@ -239,12 +239,12 @@ pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade)
 /// todo hook 已整块移除（见 plan `purring-forging-petal`）：函数不再接收
 /// `hook_service`，避免出现「hook 体系已经从编排链摘除，但 AppState 还挂着
 /// Arc<HookService>」的接口残留。
-pub fn create_app(
+pub async fn create_app(
     ctx: ServiceContext,
     scheduler: Arc<TodoScheduler>,
 ) -> Router {
     // 把状态构造与中间件叠加分两步：先 build 再 merge，便于读者按"装配顺序"线性阅读
-    let state = build_app_state(ctx, scheduler);
+    let state = build_app_state(ctx, scheduler).await;
 
     Router::new()
         .merge(mount_domain_routes())
@@ -314,7 +314,7 @@ fn make_request_span(req: &Request) -> tracing::Span {
 ///
 /// todo hook 已整块移除，`build_app_state` 不再接收 hook_service 参数；下游的
 /// MessageDebounce / LoopRunner 同步取消该字段。
-fn build_app_state(
+async fn build_app_state(
     ctx: ServiceContext,
     scheduler: Arc<TodoScheduler>,
 ) -> AppState {
@@ -349,6 +349,18 @@ fn build_app_state(
 
     spawn_feishu_history_fetcher(ctx.clone(), db.clone(), feishu_listener.clone(), debounce.clone());
     ensure_default_review_template_blocking(&db);
+
+    // 黑板防抖器初始化，启动 flush 监听器（监听 channel，收到消息后执行 LLM 更新黑板）
+    let debounce_secs = config.read().unwrap().blackboard_debounce_secs.max(10);
+    let mut flush_rx = crate::services::blackboard_debouncer::init(debounce_secs).await;
+    tokio::spawn(crate::executor_service::completion::blackboard_flush_listener(
+        flush_rx,
+        db.clone(),
+        executor_registry.clone(),
+        tx.clone(),
+        task_manager.clone(),
+        config.clone(),
+    ));
 
     // 后台监听 todo 执行完成事件，派发给 loop_trigger_dispatcher
     spawn_todo_completed_listener(tx.clone(), loop_trigger_dispatcher.clone());
@@ -1256,8 +1268,8 @@ mod create_app_refactor_tests {
         const BODY_LINES_BUDGET: usize = 30;
         let src = include_str!("mod.rs");
 
-        // 1) regex 锚定 `pub fn create_app\s*(` 签名起点
-        let sig_re = regex::Regex::new(r"pub fn create_app\s*\(")
+        // 1) regex 锚定 `pub async fn create_app\s*(` 签名起点
+        let sig_re = regex::Regex::new(r"pub async fn create_app\s*\(")
             .expect("compile create_app signature regex");
         let sig_match = sig_re
             .find(src)

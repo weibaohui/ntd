@@ -41,6 +41,8 @@ impl Database {
             workspace_id: ActiveValue::Set(workspace_id),
             // 初始内容为空：创建时的黑板无内容，由后续 LLM 更新填充
             content: ActiveValue::Set(String::new()),
+            // 初始 pending 队列为空
+            pending_todo_ids: ActiveValue::Set("[]".to_string()),
             updated_at: ActiveValue::Set(Some(now)),
             created_at: ActiveValue::Set(Some(crate::models::utc_timestamp())),
             ..Default::default()
@@ -117,6 +119,7 @@ impl Database {
             content: ActiveValue::Set(content.to_string()),
             updated_at: ActiveValue::Set(Some(now.clone())),
             created_at: ActiveValue::Set(Some(now)),
+            pending_todo_ids: ActiveValue::Set("[]".to_string()),
             ..Default::default()
         };
         // ON CONFLICT(workspace_id)：命中后只覆盖 content/updated_at，保留 created_at
@@ -129,6 +132,77 @@ impl Database {
             .exec(&self.conn)
             .await?;
         Ok(())
+    }
+
+    /// 追加一个 todo_id 到黑板的 pending 队列。
+    ///
+    /// ORM 方式：读 → JSON parse → push → 序列化 → 写回。
+    /// 并发安全由 workspace_id 唯一约束保证串行写入。
+    pub async fn append_pending_todo_id(
+        &self,
+        workspace_id: i64,
+        todo_id: i64,
+    ) -> Result<(), sea_orm::DbErr> {
+        // 读取当前队列
+        let board = blackboards::Entity::find()
+            .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
+            .one(&self.conn)
+            .await?
+            .ok_or_else(|| sea_orm::DbErr::RecordNotFound(format!(
+                "blackboard for workspace {} not found",
+                workspace_id
+            )))?;
+
+        // 解析 + 追加
+        let mut ids: Vec<i64> = serde_json::from_str(&board.pending_todo_ids)
+            .unwrap_or_default();
+        ids.push(todo_id);
+        let ids_json = serde_json::to_string(&ids).unwrap_or_default();
+
+        // 写回
+        let now = crate::models::utc_timestamp();
+        let res = blackboards::ActiveModel {
+            workspace_id: ActiveValue::Unchanged(workspace_id),
+            pending_todo_ids: ActiveValue::Set(ids_json),
+            updated_at: ActiveValue::Set(Some(now)),
+            ..Default::default()
+        }.update(&self.conn).await?;
+
+        Ok(())
+    }
+
+    /// 取出并清空 pending 队列，返回待处理的 todo_id 列表。
+    ///
+    /// 两步非原子，竞态时可能丢失或重复，但 debounce 场景下可接受。
+    pub async fn take_pending_todo_ids(
+        &self,
+        workspace_id: i64,
+    ) -> Result<Vec<i64>, sea_orm::DbErr> {
+        // 读取当前队列
+        let board = blackboards::Entity::find()
+            .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
+            .one(&self.conn)
+            .await?
+            .ok_or_else(|| sea_orm::DbErr::RecordNotFound(format!(
+                "blackboard for workspace {} not found",
+                workspace_id
+            )))?;
+
+        let ids: Vec<i64> = serde_json::from_str(&board.pending_todo_ids)
+            .unwrap_or_default();
+
+        // 清空队列（非空才写，减少 DB 写入）
+        if !ids.is_empty() {
+            let now = crate::models::utc_timestamp();
+            let res = blackboards::ActiveModel {
+                workspace_id: ActiveValue::Unchanged(workspace_id),
+                pending_todo_ids: ActiveValue::Set("[]".to_string()),
+                updated_at: ActiveValue::Set(Some(now)),
+                ..Default::default()
+            }.update(&self.conn).await?;
+        }
+
+        Ok(ids)
     }
 }
 
