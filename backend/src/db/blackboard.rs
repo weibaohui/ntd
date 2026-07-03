@@ -27,8 +27,9 @@ impl Database {
 
     /// 为指定工作空间创建一条空的黑板记录。
     ///
-    /// 如果该工作空间已有黑板记录，会因 UNIQUE 约束失败返回 Err。
-    /// 调用方应先调用 get_blackboard 检查是否存在，或使用 Service 层的 find_or_create 封装方法。
+    /// 幂等实现：使用 `ON CONFLICT(workspace_id) DO NOTHING` + 重新查询，
+    /// 避免并发场景下两个请求同时走"先查后建"路径时因 UNIQUE 约束相互失败。
+    /// 返回值始终是该工作空间当前的黑板记录（新建或已存在）。
     pub async fn create_blackboard(
         &self,
         workspace_id: i64,
@@ -40,11 +41,33 @@ impl Database {
             workspace_id: ActiveValue::Set(workspace_id),
             // 初始内容为空：创建时的黑板无内容，由后续 LLM 更新填充
             content: ActiveValue::Set(String::new()),
-            updated_at: ActiveValue::Set(Some(now.clone())),
-            created_at: ActiveValue::Set(Some(now)),
+            updated_at: ActiveValue::Set(Some(now)),
+            created_at: ActiveValue::Set(Some(crate::models::utc_timestamp())),
             ..Default::default()
         };
-        model.insert(&self.conn).await
+        // ON CONFLICT(workspace_id) DO NOTHING：若记录已存在则跳过 insert，
+        // 避免并发竞争下两个并发请求都走 insert 路径时第二个失败。
+        // 后续重读以拿到稳定的 Model（含实际的主键 id）。
+        blackboards::Entity::insert(model)
+            .on_conflict(
+                OnConflict::column(blackboards::Column::WorkspaceId)
+                    .do_nothing()
+                    .to_owned(),
+            )
+            .exec_without_returning(&self.conn)
+            .await?;
+        // 重读：insert 的 ON CONFLICT DO NOTHING 不会返回行，必须重新查询拿主键
+        blackboards::Entity::find()
+            .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
+            .one(&self.conn)
+            .await?
+            // 极端情况：上一句 insert 后立刻被外部删除，理论上不会发生
+            .ok_or_else(|| {
+                sea_orm::DbErr::RecordNotFound(format!(
+                    "blackboard for workspace {} not found after upsert",
+                    workspace_id
+                ))
+            })
     }
 
     /// 更新指定工作空间的黑板内容（记录必须已存在）。
@@ -150,6 +173,35 @@ mod tests {
         let fetched = db.get_blackboard(ws_id).await.unwrap();
         assert!(fetched.is_some());
         assert_eq!(fetched.unwrap().id, board.id);
+    }
+
+    /// 验证 create_blackboard 在记录已存在时返回相同记录（幂等）。
+    /// 防止并发场景下两个请求同时首次创建时第二个因 UNIQUE 约束失败。
+    /// 行为：第二次调用应直接拿到第一条记录，不应 panic / 返回 Err。
+    #[tokio::test]
+    async fn test_create_blackboard_is_idempotent_for_same_workspace() {
+        let db = Database::new(":memory:")
+            .await
+            .expect(":memory: db must open");
+        let ws_id = create_test_workspace(&db).await;
+
+        // 第一次：创建
+        let first = db.create_blackboard(ws_id).await.unwrap();
+        // 第二次：应幂等返回同一条记录（不会因 UNIQUE 冲突失败）
+        let second = db.create_blackboard(ws_id).await.unwrap();
+        assert_eq!(
+            first.id, second.id,
+            "重复 create_blackboard 应返回同一条记录的 id"
+        );
+        assert_eq!(second.workspace_id, ws_id);
+        assert_eq!(second.content, "");
+        // 数据库中应只有一条记录，没有产生重复行
+        let all = blackboards::Entity::find()
+            .filter(blackboards::Column::WorkspaceId.eq(ws_id))
+            .all(&db.conn)
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 1, "同一 workspace 只能有一条黑板记录");
     }
 
     /// 验证 update_blackboard_content 更新成功。
