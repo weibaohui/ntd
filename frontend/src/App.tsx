@@ -18,6 +18,7 @@ import { SettingsPage } from './components/SettingsPage';
 import { SkillsPanel } from './components/SkillsPanel';
 import { ProjectDirectoriesPanel } from './components/settings/ProjectDirectoriesPanel';
 import { ExecutorsPanel } from './components/settings/ExecutorsPanel';
+import { BlackboardPage } from './components/BlackboardPage';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
@@ -189,6 +190,7 @@ function AppContent() {
     if (key === 'loops') { showListSection('loop'); return; }
     if (key === 'dashboard') { handleShowView('dashboard'); return; }
     if (key === 'memorial') { handleShowView('memorial'); return; }
+    if (key === 'blackboard') { handleShowView('blackboard'); return; }
     if (key === 'settings') { showSettings(null); return; }
     if (key === 'settings_projectDirectories') { showStandaloneSettingsPanel('projectDirectories'); return; }
     if (key === 'settings_skills') { showStandaloneSettingsPanel('skills'); return; }
@@ -359,6 +361,8 @@ function AppContent() {
                 <SettingsPage />
               ) : activeView === 'memorial' ? (
                 <MemorialBoard />
+              ) : activeView === 'blackboard' ? (
+                <BlackboardPage workspaceId={state.selectedWorkspace} />
               ) : (
                 <Dashboard />
               )}

@@ -143,6 +143,8 @@ pub(crate) async fn handle_spawn_failure(
             // spawn 阶段尚未产生任何执行时长与 token 消耗，置 0 避免阻塞 Finished 事件下发
             duration_secs: 0,
             total_tokens: 0,
+            // spawn 失败属于早期阶段，没有 trigger_type 上下文，传 None。
+            trigger_type: None,
         },
     );
     let _ = db.finish_todo_execution(todo_id, false).await;

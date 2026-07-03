@@ -148,6 +148,31 @@ impl Database {
             .collect())
     }
 
+    /// 按 action_type + action_key + workspace_id 查找 todo。
+    ///
+    /// 用于黑板（Blackboard）等需要按工作空间隔离 Action 模板的场景。
+    /// 每个工作空间可以有自己的 blackboard update todo。
+    pub async fn get_todo_by_action_type_and_key_and_workspace(
+        &self,
+        action_type: &str,
+        action_key: &str,
+        workspace_id: i64,
+    ) -> Result<Option<Todo>, sea_orm::DbErr> {
+        use crate::db::entity::todos;
+        let model = todos::Entity::find()
+            .filter(todos::Column::ActionType.eq(action_type))
+            .filter(todos::Column::ActionKey.eq(action_key))
+            .filter(todos::Column::WorkspaceId.eq(workspace_id))
+            .filter(todos::Column::DeletedAt.is_null())
+            .one(&self.conn)
+            .await?;
+
+        Ok(model.map(|m| {
+            let tag_ids = vec![]; // action template 不需要 tags
+            Self::model_to_todo(m, tag_ids)
+        }))
+    }
+
     /// 按 action_type + action_key 查找 todo。
     /// 用于 ActionButton 组件的 action 模板查找。
     pub async fn get_todo_by_action_type_and_key(

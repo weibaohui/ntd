@@ -11,6 +11,7 @@ import {
   ThunderboltOutlined,
   FolderOutlined,
   CodeOutlined,
+  FormOutlined,
   DoubleRightOutlined,
   DoubleLeftOutlined,
   SunOutlined,
@@ -23,6 +24,7 @@ export type LeftRailKey =
   | 'loops'
   | 'dashboard'
   | 'memorial'
+  | 'blackboard'
   | 'settings'
   | 'settings_projectDirectories'
   | 'settings_sessions'
@@ -73,6 +75,7 @@ export function LeftRail({
       items: [
         { key: 'items', label: '事项', icon: <UnorderedListOutlined />, ariaLabel: '事项' },
         { key: 'loops', label: '环路', icon: <RetweetOutlined />, ariaLabel: '环路' },
+        { key: 'blackboard', label: '黑板', icon: <FormOutlined />, ariaLabel: '黑板' },
         { key: 'dashboard', label: '仪表盘', icon: <DashboardOutlined />, ariaLabel: '仪表盘' },
         { key: 'memorial', label: '看板', icon: <ReadOutlined />, ariaLabel: '看板' },
       ] satisfies LeftRailItem[],
