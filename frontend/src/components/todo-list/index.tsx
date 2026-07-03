@@ -7,7 +7,7 @@ export { TodoItemRow } from './TodoItemRow';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useApp } from '@/hooks/useApp';
 import { Empty, Input, Skeleton, Modal, App as AntApp } from 'antd';
-import { InboxOutlined, SearchOutlined, SwapOutlined, StopOutlined, CopyOutlined, DragOutlined } from '@ant-design/icons';
+import { InboxOutlined, SearchOutlined, SwapOutlined, StopOutlined, CopyOutlined, DragOutlined, PauseCircleOutlined, PlayCircleOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import type { ProjectDirectory } from '@/types';
 import { LoopListPanel } from '@/components/LoopStudioListPanel';
@@ -71,6 +71,11 @@ export function TodoList(props: TodoListProps) {
   const [pendingWorkspaceBatchIds, setPendingWorkspaceBatchIds] = useState<number[]>([]);
   const [workspaceBatchProcessing, setWorkspaceBatchProcessing] = useState(false);
   const [workspaceBatchContext, setWorkspaceBatchContext] = useState<'item' | 'loop'>('item');
+  // 批量暂停/恢复周期执行 Modal
+  const [schedulerBatchModalOpen, setSchedulerBatchModalOpen] = useState(false);
+  const [schedulerBatchMode, setSchedulerBatchMode] = useState<'pause' | 'resume'>('pause');
+  const [pendingSchedulerBatchIds, setPendingSchedulerBatchIds] = useState<number[]>([]);
+  const [schedulerBatchProcessing, setSchedulerBatchProcessing] = useState(false);
 
   useEffect(() => {
     setIsLoading(false);
@@ -330,6 +335,51 @@ export function TodoList(props: TodoListProps) {
     }
   }, [pendingForceStopIds, message]);
 
+  // 打开暂停周期执行确认 Modal
+  const openItemPauseScheduler = useCallback((ids: number[]) => {
+    setSchedulerBatchMode('pause');
+    setPendingSchedulerBatchIds(ids);
+    setSchedulerBatchModalOpen(true);
+  }, []);
+
+  // 打开恢复周期执行确认 Modal
+  const openItemResumeScheduler = useCallback((ids: number[]) => {
+    setSchedulerBatchMode('resume');
+    setPendingSchedulerBatchIds(ids);
+    setSchedulerBatchModalOpen(true);
+  }, []);
+
+  // 确认暂停/恢复周期执行
+  const handleConfirmSchedulerBatch = useCallback(async () => {
+    const ids = pendingSchedulerBatchIds;
+    if (ids.length === 0) return;
+    setSchedulerBatchProcessing(true);
+    try {
+      const isPause = schedulerBatchMode === 'pause';
+      const result = isPause
+        ? await db.batchPauseScheduler(ids)
+        : await db.batchResumeScheduler(ids);
+      const actionLabel = isPause ? '暂停' : '恢复';
+      if (result.updated_count === result.total) {
+        message.success(`已${actionLabel} ${result.updated_count} 项的周期执行`);
+      } else {
+        message.warning(`${actionLabel}成功 ${result.updated_count} 条，失败 ${result.total - result.updated_count} 条`);
+      }
+      // 刷新列表
+      const wid = selectedWorkspace;
+      if (wid != null) {
+        const allItems = await db.getAllTodos(wid);
+        dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: allItems });
+      }
+      setSchedulerBatchModalOpen(false);
+      setSelectedIds([]);
+    } catch (err) {
+      message.error(`操作失败: ${err instanceof Error ? err.message : '未知错误'}`);
+    } finally {
+      setSchedulerBatchProcessing(false);
+    }
+  }, [pendingSchedulerBatchIds, schedulerBatchMode, message, selectedWorkspace, dispatch]);
+
   const toolbarConfig = useMemo<{
     createLabel: string;
     batchActions: BatchActionItem<number>[];
@@ -352,6 +402,16 @@ export function TodoList(props: TodoListProps) {
           label: '移动到',
           icon: <DragOutlined />,
           onClick: openItemMoveWorkspace,
+        }, {
+          key: 'pause-scheduler',
+          label: '暂停周期执行',
+          icon: <PauseCircleOutlined />,
+          onClick: openItemPauseScheduler,
+        }, {
+          key: 'resume-scheduler',
+          label: '恢复周期执行',
+          icon: <PlayCircleOutlined />,
+          onClick: openItemResumeScheduler,
         }],
       };
     }
@@ -375,7 +435,7 @@ export function TodoList(props: TodoListProps) {
         onClick: openLoopForceStop,
       }],
     };
-  }, [listMode, openItemChangeExecutor, openItemCopyWorkspace, openItemMoveWorkspace, openLoopCopyWorkspace, openLoopMoveWorkspace, openLoopForceStop]);
+  }, [listMode, openItemChangeExecutor, openItemCopyWorkspace, openItemMoveWorkspace, openLoopCopyWorkspace, openLoopMoveWorkspace, openLoopForceStop, openItemPauseScheduler, openItemResumeScheduler]);
 
   if (isLoading) {
     return (
@@ -538,6 +598,25 @@ export function TodoList(props: TodoListProps) {
             复制后，原工作空间和目标工作空间中各有一份相同的条目。
           </p>
         )}
+      </Modal>
+
+      {/* 批量暂停/恢复周期执行确认 Modal */}
+      <Modal
+        title={schedulerBatchMode === 'pause' ? '暂停周期执行' : '恢复周期执行'}
+        open={schedulerBatchModalOpen}
+        onOk={handleConfirmSchedulerBatch}
+        onCancel={() => { setSchedulerBatchModalOpen(false); setPendingSchedulerBatchIds([]); }}
+        okText="确认"
+        cancelText="取消"
+        confirmLoading={schedulerBatchProcessing}
+        destroyOnClose
+      >
+        <p>
+          {schedulerBatchMode === 'pause'
+            ? <>确定暂停 <strong>{pendingSchedulerBatchIds.length}</strong> 项的周期执行吗？暂停后定时调度将不再触发。</>
+            : <>确定恢复 <strong>{pendingSchedulerBatchIds.length}</strong> 项的周期执行吗？将使用原有的调度配置继续运行。</>
+          }
+        </p>
       </Modal>
     </div>
   );

@@ -9,7 +9,7 @@ use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::{
     utc_timestamp, ApiResponse, BatchCopyTodoWorkspaceRequest,
     BatchUpdateTodoExecutorRequest, BatchUpdateTodoResult,
-    BatchUpdateTodoWorkspaceRequest, BatchWorkspaceResult,
+    BatchUpdateTodoSchedulerRequest, BatchUpdateTodoWorkspaceRequest, BatchWorkspaceResult,
     CreateTodoRequest, RecentCompletedTodo, Todo, UpdateTagsRequest, UpdateTodoRequest,
 };
 
@@ -451,6 +451,24 @@ pub async fn batch_copy_todos_workspace(
         .await?;
     Ok(ApiResponse::ok(BatchWorkspaceResult {
         updated_count: created_ids.len() as i64,
+        total: req.ids.len() as i64,
+    }))
+}
+
+/// PUT /api/todos/batch-scheduler — 批量暂停/恢复事项的周期执行
+pub async fn batch_update_todos_scheduler(
+    State(state): State<AppState>,
+    ApiJson(req): ApiJson<BatchUpdateTodoSchedulerRequest>,
+) -> Result<ApiResponse<BatchWorkspaceResult>, AppError> {
+    if req.ids.is_empty() {
+        return Err(AppError::BadRequest("ids 不能为空".to_string()));
+    }
+    let rows_affected = state
+        .db
+        .batch_update_todos_scheduler(&req.ids, req.scheduler_enabled)
+        .await?;
+    Ok(ApiResponse::ok(BatchWorkspaceResult {
+        updated_count: rows_affected as i64,
         total: req.ids.len() as i64,
     }))
 }
