@@ -152,6 +152,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [debounceSecs, setDebounceSecs] = useState<number>(600);
+  const [debounceCount, setDebounceCount] = useState<number>(10);
 
   // 打开设置弹窗：先拉取最新 config
   const handleOpenSettings = useCallback(async () => {
@@ -159,8 +160,10 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     try {
       const cfg = await db.getConfig();
       setDebounceSecs(cfg.blackboard_debounce_secs ?? 600);
+      setDebounceCount(cfg.blackboard_debounce_count ?? 10);
     } catch {
       setDebounceSecs(600);
+      setDebounceCount(10);
     }
   }, []);
 
@@ -169,7 +172,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     setSettingsSaving(true);
     try {
       const current = await db.getConfig();
-      await db.updateConfig({ ...current, blackboard_debounce_secs: debounceSecs });
+      await db.updateConfig({ ...current, blackboard_debounce_secs: debounceSecs, blackboard_debounce_count: debounceCount });
       message.success('设置已保存');
       setSettingsOpen(false);
     } catch (err) {
@@ -177,7 +180,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     } finally {
       setSettingsSaving(false);
     }
-  }, [debounceSecs]);
+  }, [debounceSecs, debounceCount]);
 
   // 拉取（受 workspaceId 变化驱动）：useCallback 稳定引用，让 useEffect 只在 id 变时重跑
   const fetchData = useCallback(async () => {
@@ -248,7 +251,17 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
               style={{ width: 200 }}
             />
           </Form.Item>
-          <Form.Item extra="周期到期后统一处理 pending 的 todo，减少频繁的 LLM 调用" />
+          <Form.Item label="触发条数">
+            <InputNumber
+              value={debounceCount}
+              onChange={(v) => setDebounceCount(v ?? 10)}
+              min={1}
+              max={100}
+              addonAfter="条"
+              style={{ width: 200 }}
+            />
+          </Form.Item>
+          <Form.Item extra="达到条数阈值或周期到期时，统一处理 pending 的 todo，减少频繁的 LLM 调用" />
         </Form>
       </Modal>
     </div>

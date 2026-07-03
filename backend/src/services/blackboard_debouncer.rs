@@ -31,22 +31,24 @@ static FLUSH_TX: RwLock<Option<mpsc::Sender<BlackboardFlushMsg>>> = RwLock::cons
 struct Debouncer {
     timers: Arc<RwLock<HashMap<i64, bool>>>,
     debounce_secs: u64,
+    debounce_count: u64,
 }
 
 impl Debouncer {
-    fn new(debounce_secs: u64) -> Self {
+    fn new(debounce_secs: u64, debounce_count: u64) -> Self {
         Self {
             timers: Arc::new(RwLock::new(HashMap::new())),
             debounce_secs,
+            debounce_count,
         }
     }
 }
 
 /// 全局初始化：启动 channel，注册到全局，在 `build_app_state` 中调用
-pub async fn init(debounce_secs: u64) -> mpsc::Receiver<BlackboardFlushMsg> {
+pub async fn init(debounce_secs: u64, debounce_count: u64) -> mpsc::Receiver<BlackboardFlushMsg> {
     let (tx, rx) = mpsc::channel::<BlackboardFlushMsg>(100);
 
-    let debouncer = Debouncer::new(debounce_secs);
+    let debouncer = Debouncer::new(debounce_secs, debounce_count);
 
     {
         let mut w = DEBOUNCER.write().await;
@@ -73,7 +75,7 @@ pub async fn push_pending_todo(workspace_id: i64, todo_id: i64, db: &Arc<Databas
         return;
     }
 
-    // 检查并启动 timer
+    // 获取 debouncer
     let debouncer = {
         let guard = DEBOUNCER.read().await;
         guard.as_ref().cloned()
@@ -83,6 +85,32 @@ pub async fn push_pending_todo(workspace_id: i64, todo_id: i64, db: &Arc<Databas
         return;
     };
 
+    // 检查队列长度是否达到阈值，达到则立即触发
+    if let Ok(Some(board)) = db.get_blackboard(workspace_id).await {
+        let queue_len = serde_json::from_str::<Vec<i64>>(&board.pending_todo_ids)
+            .map(|v| v.len())
+            .unwrap_or(0);
+        if queue_len as u64 >= debouncer.debounce_count {
+            tracing::info!(
+                "黑板 pending 队列达到阈值 {} 条，立即触发: workspace_id={}",
+                queue_len, workspace_id
+            );
+            let tx = {
+                let guard = FLUSH_TX.read().await;
+                guard.as_ref().cloned()
+            };
+            if let Some(tx) = tx {
+                let msg = BlackboardFlushMsg { workspace_id };
+                if let Err(e) = tx.send(msg).await {
+                    tracing::warn!("发送 flush 消息失败: workspace_id={}, error={}", workspace_id, e);
+                }
+            }
+            // 达到阈值触发后，不等 timer，等下次 append 再检查
+            return;
+        }
+    }
+
+    // 未达阈值，检查并启动 timer
     let mut timers = debouncer.timers.write().await;
     if timers.get(&workspace_id).copied().unwrap_or(false) {
         return; // timer 已在运行

@@ -19,6 +19,8 @@ export interface Config {
   scheduler_default_timezone?: string;
   /** 黑板更新防抖周期（秒），默认 600 秒 */
   blackboard_debounce_secs?: number;
+  /** 黑板更新防抖条数阈值，达到此条数立即触发 */
+  blackboard_debounce_count?: number;
 }
 
 export interface ExecutorConfig {

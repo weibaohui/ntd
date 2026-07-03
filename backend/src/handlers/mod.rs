@@ -351,8 +351,11 @@ async fn build_app_state(
     ensure_default_review_template_blocking(&db);
 
     // 黑板防抖器初始化，启动 flush 监听器（监听 channel，收到消息后执行 LLM 更新黑板）
-    let debounce_secs = config.read().unwrap().blackboard_debounce_secs.max(10);
-    let mut flush_rx = crate::services::blackboard_debouncer::init(debounce_secs).await;
+    let cfg = config.read().unwrap();
+    let debounce_secs = cfg.blackboard_debounce_secs.max(10);
+    let debounce_count = cfg.blackboard_debounce_count.max(1);
+    drop(cfg);
+    let mut flush_rx = crate::services::blackboard_debouncer::init(debounce_secs, debounce_count).await;
     tokio::spawn(crate::executor_service::completion::blackboard_flush_listener(
         flush_rx,
         db.clone(),
