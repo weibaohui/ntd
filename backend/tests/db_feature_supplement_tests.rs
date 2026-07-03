@@ -723,3 +723,140 @@ async fn test_template_does_not_cascade_to_todo() {
     let todo = db.get_todo(todo_id).await.unwrap();
     assert!(todo.is_some(), "模板删除后 todo 必须仍然存在");
 }
+
+// =====================================================================
+// 批量周期调度相关测试
+// =====================================================================
+
+#[tokio::test]
+async fn test_batch_update_todos_scheduler_pause() {
+    // 批量暂停：scheduler_enabled 设为 false，scheduler_config 保持不变
+    let db = setup_db().await;
+
+    // 创建工作空间（todo 的 workspace_id 依赖）
+    let dir = db
+        .get_or_create_project_directory("/tmp/scheduler-test", Some("测试空间"))
+        .await
+        .unwrap();
+
+    // 创建带调度配置的 todo
+    let todo_id = db
+        .create_todo_with_extras(
+            "待暂停",
+            "Do it",
+            None,
+            None,
+            false,
+            dir.id,
+            &dir.path,
+        )
+        .await
+        .unwrap();
+
+    // 先开启调度（使用 SchedulerUpdate 结构）
+    db.update_todo_scheduler(ntd::db::SchedulerUpdate {
+        id: todo_id,
+        enabled: true,
+        config: Some("*/5 * * * * *"),
+        timezone: None,
+    })
+    .await
+    .unwrap();
+
+    // 批量暂停
+    let rows = db
+        .batch_update_todos_scheduler(&[todo_id], false)
+        .await
+        .unwrap();
+    assert_eq!(rows, 1);
+
+    // 验证 scheduler_enabled 已关闭，但 scheduler_config 仍保留
+    let todo = db.get_todo(todo_id).await.unwrap().unwrap();
+    assert_eq!(todo.scheduler_enabled, false, "scheduler_enabled should be false");
+    assert_eq!(todo.scheduler_config.as_deref(), Some("*/5 * * * * *"));
+}
+
+#[tokio::test]
+async fn test_batch_update_todos_scheduler_resume() {
+    // 批量恢复：scheduler_enabled 设为 true，scheduler_config 保持不变
+    let db = setup_db().await;
+
+    let dir = db
+        .get_or_create_project_directory("/tmp/scheduler-resume", Some("恢复空间"))
+        .await
+        .unwrap();
+
+    let todo_id = db
+        .create_todo_with_extras("待恢复", "Do it", None, None, false, dir.id, &dir.path)
+        .await
+        .unwrap();
+
+    // 开启调度后再暂停
+    db.update_todo_scheduler(ntd::db::SchedulerUpdate {
+        id: todo_id,
+        enabled: true,
+        config: Some("0 */10 * * * *"),
+        timezone: None,
+    })
+    .await
+    .unwrap();
+    db.batch_update_todos_scheduler(&[todo_id], false)
+        .await
+        .unwrap();
+
+    // 批量恢复
+    let rows = db
+        .batch_update_todos_scheduler(&[todo_id], true)
+        .await
+        .unwrap();
+    assert_eq!(rows, 1);
+
+    // 验证 scheduler_enabled 已开启，scheduler_config 保持
+    let todo = db.get_todo(todo_id).await.unwrap().unwrap();
+    assert_eq!(todo.scheduler_enabled, true);
+    assert_eq!(todo.scheduler_config.as_deref(), Some("0 */10 * * * *"));
+}
+
+#[tokio::test]
+async fn test_batch_update_todos_scheduler_empty_ids() {
+    // 空 ids 列表应直接返回 0，不报错
+    let db = setup_db().await;
+    let rows = db.batch_update_todos_scheduler(&[], true).await.unwrap();
+    assert_eq!(rows, 0);
+}
+
+#[tokio::test]
+async fn test_batch_update_todos_scheduler_multiple() {
+    // 批量操作多个 todos，应全部更新
+    let db = setup_db().await;
+
+    let dir = db
+        .get_or_create_project_directory("/tmp/batch-multi", Some("批量测试"))
+        .await
+        .unwrap();
+
+    let id1 = db
+        .create_todo_with_extras("A", "Do A", None, None, false, dir.id, &dir.path)
+        .await
+        .unwrap();
+    let id2 = db
+        .create_todo_with_extras("B", "Do B", None, None, false, dir.id, &dir.path)
+        .await
+        .unwrap();
+    let id3 = db
+        .create_todo_with_extras("C", "Do C", None, None, false, dir.id, &dir.path)
+        .await
+        .unwrap();
+
+    let rows = db
+        .batch_update_todos_scheduler(&[id1, id2, id3], false)
+        .await
+        .unwrap();
+    assert_eq!(rows, 3);
+
+    // 验证全部已暂停
+    for id in &[id1, id2, id3] {
+        let todo = db.get_todo(*id).await.unwrap().unwrap();
+        assert_eq!(todo.scheduler_enabled, false, "todo {} should be paused", id);
+    }
+}
