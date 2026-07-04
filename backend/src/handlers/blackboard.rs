@@ -249,7 +249,7 @@ pub fn blackboard_routes() -> Router<AppState> {
             get(list_blackboard_pages),
         )
         .route(
-            "/api/workspaces/{workspace_id}/blackboard/pages/:slug",
+            "/api/workspaces/{workspace_id}/blackboard/pages/{slug}",
             get(get_blackboard_page),
         )
 }

@@ -1,20 +1,24 @@
 /**
- * BlackboardPage — 黑板页面。
+ * BlackboardPage — 黑板 Wiki 页面。
  *
- * 渲染工作空间的黑板内容（Markdown 格式），
- * 支持手动刷新和 ntd://todo/{id} 内部链接跳转。
+ * Wiki 化后的黑板：左侧页面目录树，右侧 Markdown 内容区。
+ * 页面分为 index（目录）、topic（主题）、log（日志）三类。
  *
  * 布局：
- *   ┌──────────────────────────────────┐
- *   │ 黑板                     [刷新按钮] |
- *   ├──────────────────────────────────┤
- *   │            Markdown 内容          │
- *   │  (或空状态提示"暂无内容...")        │
- *   └──────────────────────────────────┘
+ *   ┌───────────────────────────────────────────┐
+ *   │ 黑板                 [倒计时] [设置] [刷新] │
+ *   ├──────────┬────────────────────────────────┤
+ *   │ 目录树    │        Markdown 内容区          │
+ *   │ - index   │   (index / topic / log 页面)   │
+ *   │ - 认证模块 │                                │
+ *   │ - 性能优化 │                                │
+ *   │ - ...     │                                │
+ *   │ - log     │                                │
+ *   └──────────┴────────────────────────────────┘
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs } from 'antd';
+import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu } from 'antd';
 import { ReloadOutlined, SettingOutlined } from '@ant-design/icons';
 import { TfiBlackboard } from 'react-icons/tfi';
 import { XMarkdown } from '@ant-design/x-markdown';
@@ -37,6 +41,29 @@ interface BlackboardData {
   blackboard_debounce_count: number;
   /** 黑板更新提示词模板（空字符串表示使用内置默认）*/
   blackboard_update_prompt: string;
+}
+
+/** 页面列表项（对应后端 BlackboardPageListItem） */
+interface BlackboardPageItem {
+  id: number;
+  slug: string;
+  title: string;
+  page_type: 'index' | 'topic' | 'log' | string;
+  source_count: number;
+  updated_at: string | null;
+}
+
+/** 页面详情（对应后端 BlackboardPageDetail） */
+interface BlackboardPageDetail {
+  id: number;
+  workspace_id: number;
+  slug: string;
+  title: string;
+  page_type: string;
+  content: string;
+  source_refs: number[];
+  updated_at: string | null;
+  created_at: string | null;
 }
 
 /** ntd://todo/{id} 协议的前缀，用于解析 LLM 注入的内部链接 */
@@ -154,15 +181,36 @@ function useEffectiveWorkspaceId(propWorkspaceId: number | null | undefined): nu
   }, [propWorkspaceId]);
 }
 
-/** 拉取黑板内容的纯函数，便于测试与复用 */
+/** 拉取黑板内容的纯函数，便于测试与复用（旧版单文件接口，保留兼容） */
 async function fetchBlackboardData(workspaceId: number): Promise<BlackboardData> {
-  // 走原生 fetch：项目其它页也直接用 fetch，引入 axios 不会带来收益
   const res = await fetch(`/api/workspaces/${workspaceId}/blackboard`);
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}`);
   }
-  // 后端返回 { data: {...} }：解包 data 字段
   const json = (await res.json()) as { data?: BlackboardData };
+  if (!json.data) {
+    throw new Error('Empty response body');
+  }
+  return json.data;
+}
+
+/** 拉取页面列表（Wiki 化） */
+async function fetchBlackboardPages(workspaceId: number): Promise<BlackboardPageItem[]> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/blackboard/pages`);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  const json = (await res.json()) as { data?: BlackboardPageItem[] };
+  return json.data ?? [];
+}
+
+/** 拉取单个页面详情（Wiki 化） */
+async function fetchBlackboardPageDetail(workspaceId: number, slug: string): Promise<BlackboardPageDetail> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/blackboard/pages/${slug}`);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  const json = (await res.json()) as { data?: BlackboardPageDetail };
   if (!json.data) {
     throw new Error('Empty response body');
   }
@@ -177,8 +225,14 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   // 派生值（不再 useState）：切换工作空间时自动跟随 prop 变化
   const workspaceId = useEffectiveWorkspaceId(propWorkspaceId);
 
-  // 数据状态：data 既是"内容"也是"是否加载完成"的判断
-  const [data, setData] = useStateBlackboardData();
+  // Wiki 化数据状态
+  const [pages, setPages] = useState<BlackboardPageItem[]>([]);
+  const [currentPage, setCurrentPage] = useState<BlackboardPageDetail | null>(null);
+  const [currentSlug, setCurrentSlug] = useState<string>('index');
+  const [pagesLoading, setPagesLoading] = useState(true);
+  const [pageLoading, setPageLoading] = useState(false);
+  // 旧版数据（配置用）
+  const [configData, setConfigData] = useStateBlackboardData();
   // 设置弹窗状态
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
@@ -193,10 +247,10 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
    * 不再需要单独调用 db.getConfig()（getConfig 是全局配置，与黑板配置无关）。
    */
   const handleOpenSettings = useCallback(() => {
-    if (data) {
-      setDebounceSecs(data.blackboard_debounce_secs ?? 600);
-      setDebounceCount(data.blackboard_debounce_count ?? 10);
-      setUpdatePrompt(data.blackboard_update_prompt ?? '');
+    if (configData) {
+      setDebounceSecs(configData.blackboard_debounce_secs ?? 600);
+      setDebounceCount(configData.blackboard_debounce_count ?? 10);
+      setUpdatePrompt(configData.blackboard_update_prompt ?? '');
     } else {
       setDebounceSecs(600);
       setDebounceCount(10);
@@ -204,7 +258,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     }
     setActiveTab('debounce');
     setSettingsOpen(true);
-  }, [data]);
+  }, [configData]);
 
   // 保存设置
   const handleSaveSettings = useCallback(async () => {
@@ -217,8 +271,8 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         blackboard_update_prompt: updatePrompt,
       });
       // 保存成功后同步更新 data，避免下次打开弹窗读到旧值
-      if (data) {
-        setData({ ...data, blackboard_debounce_secs: debounceSecs ?? 600, blackboard_debounce_count: debounceCount ?? 10, blackboard_update_prompt: updatePrompt });
+      if (configData) {
+        setConfigData({ ...configData, blackboard_debounce_secs: debounceSecs ?? 600, blackboard_debounce_count: debounceCount ?? 10, blackboard_update_prompt: updatePrompt });
       }
       message.success('设置已保存');
       setSettingsOpen(false);
@@ -227,7 +281,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     } finally {
       setSettingsSaving(false);
     }
-  }, [workspaceId, debounceSecs, debounceCount, updatePrompt, data]);
+  }, [workspaceId, debounceSecs, debounceCount, updatePrompt, configData]);
 
   /**
    * 恢复默认提示词：把 updatePrompt 设为 DEFAULT_BLACKBOARD_UPDATE_PROMPT（与后端内置一致）。
@@ -238,37 +292,85 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     setUpdatePrompt(DEFAULT_BLACKBOARD_UPDATE_PROMPT);
   }, []);
 
-  // 拉取（受 workspaceId 变化驱动）：useCallback 稳定引用，让 useEffect 只在 id 变时重跑
-  const fetchData = useCallback(async () => {
+  // 拉取页面列表
+  const fetchPages = useCallback(async () => {
+    try {
+      setPagesLoading(true);
+      const list = await fetchBlackboardPages(workspaceId);
+      setPages(list);
+      // 如果当前选中的页面不存在，默认跳到 index
+      const slugs = list.map(p => p.slug);
+      if (!slugs.includes(currentSlug)) {
+        setCurrentSlug('index');
+      }
+    } catch (err) {
+      console.error('获取页面列表失败:', err);
+      message.error('获取页面列表失败');
+    } finally {
+      setPagesLoading(false);
+    }
+  }, [workspaceId, currentSlug]);
+
+  // 拉取当前页面详情
+  const fetchCurrentPage = useCallback(async () => {
+    try {
+      setPageLoading(true);
+      const page = await fetchBlackboardPageDetail(workspaceId, currentSlug);
+      setCurrentPage(page);
+    } catch (err) {
+      console.error('获取页面详情失败:', err);
+      setCurrentPage(null);
+    } finally {
+      setPageLoading(false);
+    }
+  }, [workspaceId, currentSlug]);
+
+  // 拉取配置（旧版接口，只用于设置弹窗）
+  const fetchConfig = useCallback(async () => {
     try {
       const fetched = await fetchBlackboardData(workspaceId);
-      setData(fetched);
+      setConfigData(fetched);
     } catch (err) {
-      // 业务错误不影响页面骨架：仅弹 toast 让用户知晓
-      console.error('获取黑板失败:', err);
-      message.error('获取黑板内容失败');
+      console.error('获取黑板配置失败:', err);
     }
-  }, [workspaceId, setData]);
+  }, [workspaceId, setConfigData]);
 
   // 副作用：workspaceId 变化时重拉
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchPages();
+    fetchConfig();
+  }, [fetchPages, fetchConfig]);
 
-  // 刷新：页面 reload，重新拉取最新内容
+  // 副作用：currentSlug 变化时重拉页面详情
+  useEffect(() => {
+    fetchCurrentPage();
+  }, [fetchCurrentPage]);
+
+  // 刷新：重新拉取列表和当前页面
   const handleRefresh = useCallback(() => {
-    window.location.reload();
-  }, []);
+    fetchPages();
+    fetchCurrentPage();
+  }, [fetchPages, fetchCurrentPage]);
 
   return (
-    <div style={{ padding: '16px 24px', height: '100%', overflow: 'auto' }}>
-      <BlackboardHeader
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ padding: '12px 24px', flexShrink: 0 }}>
+        <BlackboardHeader
+          isDark={isDark}
+          onRefresh={handleRefresh}
+          onOpenSettings={handleOpenSettings}
+          workspaceId={workspaceId}
+        />
+      </div>
+      <BlackboardWikiLayout
         isDark={isDark}
-        onRefresh={handleRefresh}
-        onOpenSettings={handleOpenSettings}
-        workspaceId={workspaceId}
+        pages={pages}
+        currentPage={currentPage}
+        currentSlug={currentSlug}
+        onSelectSlug={setCurrentSlug}
+        pagesLoading={pagesLoading}
+        pageLoading={pageLoading}
       />
-      <BlackboardBody isDark={isDark} data={data} />
 
       {/* 黑板设置弹窗：Tab1 防抖设置，Tab2 提示词设置 */}
       <Modal
@@ -554,21 +656,100 @@ function BlackboardDebounceBar({ workspaceId }: BlackboardDebounceBarProps) {
   );
 }
 
-interface BlackboardBodyProps {
+interface BlackboardWikiLayoutProps {
   isDark: boolean;
-  data: BlackboardData | null;
+  pages: BlackboardPageItem[];
+  currentPage: BlackboardPageDetail | null;
+  currentSlug: string;
+  onSelectSlug: (slug: string) => void;
+  pagesLoading: boolean;
+  pageLoading: boolean;
 }
 
-/** 正文区：loading / 有内容 / 空状态三分支 */
-function BlackboardBody(props: BlackboardBodyProps) {
-  // 首次加载用 skeleton 提升感知性能；data 还没回来时显示占位
-  if (props.data === null) {
-    return <Skeleton active paragraph={{ rows: 8 }} />;
-  }
-  if (props.data.id === 0 || props.data.content.length === 0) {
-    return <BlackboardEmpty isDark={props.isDark} />;
-  }
-  return <BlackboardContent isDark={props.isDark} content={props.data.content} />;
+/** Wiki 布局：左侧目录树 + 右侧内容区 */
+function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
+  const { isDark, pages, currentPage, currentSlug, onSelectSlug, pagesLoading, pageLoading } = props;
+
+  // 构造 Menu items：index 在前，然后 topic（按更新时间倒序），最后 log
+  const menuItems = [
+    // index 页
+    ...pages.filter(p => p.page_type === 'index').map(p => ({
+      key: p.slug,
+      label: p.title,
+      type: 'item' as const,
+    })),
+    // 主题页分组
+    {
+      key: 'topics-group',
+      label: <span style={{ fontWeight: 600, fontSize: 12, color: isDark ? '#aaa' : '#666' }}>主题页面</span>,
+      type: 'group' as const,
+      children: pages.filter(p => p.page_type === 'topic').map(p => ({
+        key: p.slug,
+        label: (
+          <span title={p.title}>
+            {p.title}
+            <span style={{ color: isDark ? '#666' : '#aaa', fontSize: 12, marginLeft: 6 }}>
+              ({p.source_count})
+            </span>
+          </span>
+        ),
+        type: 'item' as const,
+      })),
+    },
+    // log 页
+    ...pages.filter(p => p.page_type === 'log').map(p => ({
+      key: p.slug,
+      label: p.title,
+      type: 'item' as const,
+    })),
+  ];
+
+  const sidebarBg = isDark ? '#1a1a1a' : '#fafafa';
+  const sidebarBorder = isDark ? '#333' : '#f0f0f0';
+
+  return (
+    <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
+      {/* 左侧目录树 */}
+      <div
+        style={{
+          width: 220,
+          flexShrink: 0,
+          background: sidebarBg,
+          borderRight: `1px solid ${sidebarBorder}`,
+          overflowY: 'auto',
+          padding: '8px 0',
+        }}
+      >
+        {pagesLoading ? (
+          <Skeleton active paragraph={{ rows: 6 }} style={{ padding: '0 12px' }} />
+        ) : pages.length === 0 ? (
+          <div style={{ padding: '24px 12px', textAlign: 'center', color: isDark ? '#666' : '#999', fontSize: 12 }}>
+            暂无页面
+          </div>
+        ) : (
+          <Menu
+            mode="inline"
+            selectedKeys={[currentSlug]}
+            onClick={({ key }) => onSelectSlug(key as string)}
+            style={{ background: 'transparent', borderRight: 'none' }}
+            theme={isDark ? 'dark' : 'light'}
+            items={menuItems}
+          />
+        )}
+      </div>
+
+      {/* 右侧内容区 */}
+      <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px', minWidth: 0 }}>
+        {pageLoading ? (
+          <Skeleton active paragraph={{ rows: 10 }} />
+        ) : !currentPage || currentPage.content.trim().length === 0 ? (
+          <BlackboardEmpty isDark={isDark} />
+        ) : (
+          <BlackboardContent isDark={isDark} content={currentPage.content} />
+        )}
+      </div>
+    </div>
+  );
 }
 
 interface BlackboardContentProps {

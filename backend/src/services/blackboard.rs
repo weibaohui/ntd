@@ -172,7 +172,7 @@ pub async fn find_or_create_blackboard_todo(
 /// 在执行前由 `replace_placeholders` 替换为实际值。
 /// 模板要求 AI 通过 CLI 命令主动查询执行记录，再将结论整合到黑板。
 fn build_blackboard_prompt() -> String {
-    r#"你是一个工作空间知识库的维护者。你的任务是维护一个 Markdown 格式的"黑板"，记录工作空间中所有任务执行的结论和当前进展。
+    r#"你是一个工作空间索引的维护者。你的任务是维护一个 Markdown 格式的"黑板"，记录工作空间中所有任务执行的结论和当前进展。
 
 当前黑板内容：
 ```
@@ -210,7 +210,10 @@ fn build_blackboard_prompt() -> String {
 ///
 /// 输出要求：严格 JSON 格式，包含 operations 数组，每项描述 create/update 哪个页面。
 fn build_wiki_analyze_prompt() -> String {
-    r##"你是一个工作空间知识库的维护者。你的任务是分析新的执行记录，决定它们应该归到哪些主题页面。
+    r##"你是一个工作空间黑板维护者。你的任务是分析新的执行记录，决定它们应该归到哪些主题页面。
+
+你拥有以下工具，可以直接在执行过程中调用：
+- `ntd todo execution get <id>`：获取指定执行记录的完整结论（result 字段）。例如：`ntd todo execution get 42` 获取第 42 条执行记录的结论。
 
 现有主题页面列表（slug | 标题 | 摘要）：
 ```
@@ -221,9 +224,9 @@ fn build_wiki_analyze_prompt() -> String {
 {{pending_record_ids}}
 
 请按以下步骤操作：
-1. 使用 `ntd todo execution get <id>` 命令获取每条执行记录的结论
-2. 分析每条结论涉及哪些主题领域
-3. 决定是创建新页面还是更新现有页面
+1. 逐个调用 `ntd todo execution get <id>` 获取每条执行记录的完整结论
+2. 仔细分析每条结论涉及哪些主题领域
+3. 根据分析结果决定：是创建新页面还是更新现有页面
 4. 输出严格的 JSON 格式，不要输出任何其他解释
 
 输出格式：
@@ -266,7 +269,10 @@ fn build_wiki_analyze_prompt() -> String {
 ///
 /// 输出要求：严格 JSON 格式，key 为 slug，value 为新的 Markdown 内容。
 fn build_wiki_execute_prompt() -> String {
-    r##"你是一个工作空间知识库的维护者。你的任务是根据分析结果，更新或创建主题页面的 Markdown 内容。
+    r##"你是一个工作空间黑板维护者。你的任务是根据分析结果，更新或创建主题页面的 Markdown 内容。
+
+你拥有以下工具，可以直接在执行过程中调用：
+- `ntd todo execution get <id>`：获取指定执行记录的完整结论（result 字段）。例如：`ntd todo execution get 42` 获取第 42 条执行记录的结论。
 
 操作列表（JSON）：
 ```json
@@ -279,8 +285,8 @@ fn build_wiki_execute_prompt() -> String {
 ```
 
 请按以下要求操作：
-1. 对于 action="create" 的页面：根据 record_ids 对应的执行记录结论，创建新的主题页面
-2. 对于 action="update" 的页面：将新结论整合到现有页面中，保持已有内容，补充新信息
+1. 对于 action="create" 的页面：调用 `ntd todo execution get <id>` 获取 record_ids 中每条执行记录的结论，根据这些结论创建新的主题页面
+2. 对于 action="update" 的页面：调用 `ntd todo execution get <id>` 获取 record_ids 中每条执行记录的结论，将新结论整合到现有页面中，保持已有内容，补充新信息
 3. 每个页面使用以下结构：
    - # 页面标题
    - ## 已确认
@@ -302,7 +308,6 @@ fn build_wiki_execute_prompt() -> String {
 
 只输出 JSON，不要输出其他任何文字。"##.to_string()
 }
-
 
 /// 读取指定工作空间的黑板内容；无记录时返回空字符串。
 ///
@@ -474,7 +479,7 @@ async fn regenerate_index_page(db: &Database, workspace_id: i64) -> Result<(), A
         AppError::Internal(format!("查询主题页面列表失败: {:?}", e))
     })?;
 
-    let mut md = String::from("# 工作空间知识库
+    let mut md = String::from("# 工作空间索引
 
 ");
     md.push_str("## 主题页面
@@ -509,8 +514,8 @@ async fn regenerate_index_page(db: &Database, workspace_id: i64) -> Result<(), A
         workspace_id,
         PAGE_TYPE_INDEX,
         "index",
-        "知识库目录",
-        "知识库目录索引",
+        "索引",
+        "页面索引",
         &md,
         &[],
     ).await.map_err(|e| AppError::Internal(format!("更新 index 页面失败: {:?}", e)))?;
@@ -596,7 +601,8 @@ async fn run_analyze_phase(
     let message = crate::models::replace_placeholders(&prompt_template, &params);
 
     // 3. 查找或创建 analyze 阶段的 Todo
-    let todo_id = find_or_create_wiki_todo(&db, &prompt_template, workspace_id, ACTION_KEY_ANALYZE).await?;
+    let action_key_analyze = format!("{}-{}", ACTION_KEY_ANALYZE, workspace_id);
+    let todo_id = find_or_create_wiki_todo(&db, &prompt_template, workspace_id, &action_key_analyze).await?;
 
     // 4. 启动执行，等待 Finished
     let result = run_blackboard_execution(
@@ -670,7 +676,8 @@ async fn run_execute_phase(
     let message = crate::models::replace_placeholders(&prompt_template, &params);
 
     // 4. 查找或创建 execute 阶段的 Todo
-    let todo_id = find_or_create_wiki_todo(&db, &prompt_template, workspace_id, ACTION_KEY_EXECUTE).await?;
+    let action_key_execute = format!("{}-{}", ACTION_KEY_EXECUTE, workspace_id);
+    let todo_id = find_or_create_wiki_todo(&db, &prompt_template, workspace_id, &action_key_execute).await?;
 
     // 5. 启动执行，等待 Finished
     let result = run_blackboard_execution(
