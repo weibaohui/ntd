@@ -1,29 +1,46 @@
 //! 黑板（Blackboard）API Handler。
 //!
-//! 提供两个端点：
-//! - `GET /api/workspaces/{workspace_id}/blackboard`：获取当前黑板内容
+//! 提供四个端点：
+//! - `GET /api/workspaces/{workspace_id}/blackboard`：获取当前黑板内容与配置
+//! - `PATCH /api/workspaces/{workspace_id}/blackboard`：更新黑板配置
+//! - `GET /api/workspaces/{workspace_id}/blackboard/config`：仅获取黑板配置
 //! - `POST /api/workspaces/{workspace_id}/blackboard/refresh`：手动触发热刷新
 
 use axum::extract::{Path, State};
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::Router;
 
+use crate::db::blackboard::BlackboardConfig;
 use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::ApiResponse;
 
-/// 黑板响应体
+/// 黑板响应体（含内容与 per-workspace 配置）
 #[derive(Debug, serde::Serialize)]
 pub struct BlackboardResponse {
     pub id: i64,
     pub workspace_id: i64,
     pub content: String,
     pub updated_at: Option<String>,
+    /// 黑板更新防抖周期（秒）
+    pub blackboard_debounce_secs: i64,
+    /// 黑板更新防抖条数阈值
+    pub blackboard_debounce_count: i64,
+    /// 黑板更新提示词模板（空字符串表示使用内置默认）
+    pub blackboard_update_prompt: String,
+}
+
+/// 更新黑板配置的请求体（所有字段可选，None 保持原值不变）。
+#[derive(Debug, serde::Deserialize)]
+pub struct UpdateBlackboardConfigRequest {
+    pub blackboard_debounce_secs: Option<i64>,
+    pub blackboard_debounce_count: Option<i64>,
+    pub blackboard_update_prompt: Option<String>,
 }
 
 /// `GET /api/workspaces/{workspace_id}/blackboard`
 ///
-/// 获取指定工作空间的当前黑板内容。
-/// 如果该工作空间还没有黑板记录，返回空内容（content=""）。
+/// 获取指定工作空间的当前黑板内容与配置。
+/// 如果该工作空间还没有黑板记录，返回空内容与默认配置（content=""）。
 pub async fn get_blackboard(
     State(state): State<AppState>,
     Path(workspace_id): Path<i64>,
@@ -38,14 +55,72 @@ pub async fn get_blackboard(
             workspace_id: model.workspace_id,
             content: model.content,
             updated_at: model.updated_at,
+            blackboard_debounce_secs: model.blackboard_debounce_secs,
+            blackboard_debounce_count: model.blackboard_debounce_count,
+            blackboard_update_prompt: model.blackboard_update_prompt,
         })),
         None => Ok(ApiResponse::ok(BlackboardResponse {
             id: 0,
             workspace_id,
             content: String::new(),
             updated_at: None,
+            // 无记录时返回默认值；配置会在首次 create_blackboard 时写入
+            blackboard_debounce_secs: 600,
+            blackboard_debounce_count: 10,
+            blackboard_update_prompt: String::new(),
         })),
     }
+}
+
+/// `GET /api/workspaces/{workspace_id}/blackboard/config`
+///
+/// 仅获取指定工作空间的黑板配置（防抖阈值、提示词）。
+/// 若黑板记录不存在，返回默认配置。
+pub async fn get_blackboard_config(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<i64>,
+) -> Result<ApiResponse<BlackboardConfig>, AppError> {
+    // 先确保黑板记录存在（幂等），避免首次访问时 get_blackboard_config 返回 None
+    if let Err(e) = state.db.create_blackboard(workspace_id).await {
+        tracing::warn!("get_blackboard_config: create_blackboard 幂等创建失败: {:?}", e);
+    }
+    let cfg = state.db.get_blackboard_config(workspace_id).await.map_err(|e| {
+        AppError::Internal(format!("查询黑板配置失败: {}", e))
+    })?;
+    match cfg {
+        Some(c) => Ok(ApiResponse::ok(c)),
+        None => Ok(ApiResponse::ok(BlackboardConfig {
+            debounce_secs: 600,
+            debounce_count: 10,
+            update_prompt: String::new(),
+        })),
+    }
+}
+
+/// `PATCH /api/workspaces/{workspace_id}/blackboard/config`
+///
+/// 更新指定工作空间的黑板配置（防抖阈值、提示词）。
+/// 若黑板记录不存在，先通过 create_blackboard 幂等创建（保证记录存在），再更新配置。
+/// 返回更新后的完整配置（从 DB 重新查询）。
+pub async fn update_blackboard_config(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<i64>,
+    ApiJson(req): ApiJson<UpdateBlackboardConfigRequest>,
+) -> Result<ApiResponse<BlackboardConfig>, AppError> {
+    // 先确保黑板记录已存在，避免在不存在的记录上更新
+    if let Err(e) = state.db.create_blackboard(workspace_id).await {
+        tracing::warn!("update_blackboard_config: create_blackboard 幂等创建失败: {:?}", e);
+    }
+    state.db.update_blackboard_config(
+        workspace_id,
+        req.blackboard_debounce_secs,
+        req.blackboard_debounce_count,
+        req.blackboard_update_prompt,
+    ).await.map_err(|e| AppError::Internal(format!("更新黑板配置失败: {}", e)))?;
+    let cfg = state.db.get_blackboard_config(workspace_id).await.map_err(|e| {
+        AppError::Internal(format!("更新后查询黑板配置失败: {}", e))
+    })?;
+    Ok(ApiResponse::ok(cfg.unwrap()))
 }
 
 /// 刷新请求体（预留，当前为空）
@@ -107,7 +182,11 @@ pub fn blackboard_routes() -> Router<AppState> {
     Router::new()
         .route(
             "/api/workspaces/{workspace_id}/blackboard",
-            get(get_blackboard),
+            get(get_blackboard).patch(update_blackboard_config),
+        )
+        .route(
+            "/api/workspaces/{workspace_id}/blackboard/config",
+            get(get_blackboard_config),
         )
         .route(
             "/api/workspaces/{workspace_id}/blackboard/refresh",
@@ -130,6 +209,9 @@ mod tests {
             workspace_id: 3,
             content: "# 工作空间进展".to_string(),
             updated_at: Some("2026-07-03T10:00:00Z".to_string()),
+            blackboard_debounce_secs: 600,
+            blackboard_debounce_count: 10,
+            blackboard_update_prompt: "custom prompt".to_string(),
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["id"], 7);
@@ -147,6 +229,9 @@ mod tests {
             workspace_id: 42,
             content: String::new(),
             updated_at: None,
+            blackboard_debounce_secs: 600,
+            blackboard_debounce_count: 10,
+            blackboard_update_prompt: String::new(),
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["id"], 0);
@@ -200,6 +285,9 @@ mod tests {
             workspace_id: board.workspace_id,
             content: board.content,
             updated_at: board.updated_at,
+            blackboard_debounce_secs: board.blackboard_debounce_secs,
+            blackboard_debounce_count: board.blackboard_debounce_count,
+            blackboard_update_prompt: board.blackboard_update_prompt,
         });
         let json = serde_json::to_value(&resp).unwrap();
         // ApiResponse 包装格式：{"data": {...}}

@@ -14,6 +14,7 @@ mod v41_v46;
 mod v47;
 mod v48;
 mod v49;
+mod v50;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -50,6 +51,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v47::V47CreateBlackboardsTable),
         Box::new(v48::V48ScopeTodosActionKeyByWorkspace),
         Box::new(v49::V49AddBlackboardPendingTodoIds),
+        Box::new(v50::V50AddBlackboardWorkspaceConfig),
     ]
 }
 

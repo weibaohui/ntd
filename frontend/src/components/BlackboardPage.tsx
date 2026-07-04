@@ -21,7 +21,7 @@ import { XMarkdown } from '@ant-design/x-markdown';
 import { useTheme } from '@/hooks/useTheme';
 import { useViewState } from '@/hooks/useViewState';
 import type { BlackboardDebounceStatus } from '@/hooks/useExecutionEvents';
-import * as db from '@/utils/database';
+import { updateBlackboardConfig } from '@/utils/database/blackboard';
 
 const { Title } = Typography;
 
@@ -31,6 +31,12 @@ interface BlackboardData {
   workspace_id: number;
   content: string;
   updated_at: string | null;
+  /** 黑板更新防抖周期（秒）*/
+  blackboard_debounce_secs: number;
+  /** 黑板更新防抖条数阈值 */
+  blackboard_debounce_count: number;
+  /** 黑板更新提示词模板（空字符串表示使用内置默认）*/
+  blackboard_update_prompt: string;
 }
 
 /** ntd://todo/{id} 协议的前缀，用于解析 LLM 注入的内部链接 */
@@ -180,31 +186,33 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const [activeTab, setActiveTab] = useState<'debounce' | 'prompt'>('debounce');
 
   /**
-   * 打开设置弹窗：先拉取最新 config，等拉完再打开 modal，避免默认值闪烁。
-   * 加载失败时使用空字符串作为 updatePrompt 的兜底——空字符串会触发"使用内置默认"的业务逻辑，
-   * 不使用 DEFAULT_BLACKBOARD_UPDATE_PROMPT 作为兜底，是为了避免把后端常量耦合进前端状态初始化。
+   * 打开设置弹窗：从已加载的黑板数据中读取 per-workspace 配置。
+   * 配置现在由 GET /api/workspaces/{workspaceId}/blackboard 接口随内容一并返回，
+   * 不再需要单独调用 db.getConfig()（getConfig 是全局配置，与黑板配置无关）。
    */
-  const handleOpenSettings = useCallback(async () => {
-    try {
-      const cfg = await db.getConfig();
-      setDebounceSecs(cfg.blackboard_debounce_secs ?? 600);
-      setDebounceCount(cfg.blackboard_debounce_count ?? 10);
-      setUpdatePrompt(cfg.blackboard_update_prompt ?? '');
-    } catch {
+  const handleOpenSettings = useCallback(() => {
+    if (data) {
+      setDebounceSecs(data.blackboard_debounce_secs ?? 600);
+      setDebounceCount(data.blackboard_debounce_count ?? 10);
+      setUpdatePrompt(data.blackboard_update_prompt ?? '');
+    } else {
       setDebounceSecs(600);
       setDebounceCount(10);
       setUpdatePrompt('');
     }
     setActiveTab('debounce');
     setSettingsOpen(true);
-  }, []);
+  }, [data]);
 
   // 保存设置
   const handleSaveSettings = useCallback(async () => {
     setSettingsSaving(true);
     try {
-      const current = await db.getConfig();
-      await db.updateConfig({ ...current, blackboard_debounce_secs: debounceSecs, blackboard_debounce_count: debounceCount, blackboard_update_prompt: updatePrompt });
+      await updateBlackboardConfig(workspaceId, {
+        blackboard_debounce_secs: debounceSecs,
+        blackboard_debounce_count: debounceCount,
+        blackboard_update_prompt: updatePrompt,
+      });
       message.success('设置已保存');
       setSettingsOpen(false);
     } catch (err) {
@@ -212,7 +220,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     } finally {
       setSettingsSaving(false);
     }
-  }, [debounceSecs, debounceCount, updatePrompt]);
+  }, [workspaceId, debounceSecs, debounceCount, updatePrompt]);
 
   /**
    * 恢复默认提示词：把 updatePrompt 设为 DEFAULT_BLACKBOARD_UPDATE_PROMPT（与后端内置一致）。

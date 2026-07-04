@@ -125,39 +125,6 @@ fn build_blackboard_prompt() -> String {
 只输出更新后的黑板内容，不要输出任何解释。"#.to_string()
 }
 
-/// 构建手动刷新黑板的 Prompt 模板。
-///
-/// 与 `build_blackboard_prompt` 的区别：
-/// - 没有"新任务结论"段（手动刷新不携带具体任务）
-/// - 明确禁止生成 `ntd://todo/{{id}}` 内部链接：
-///   手动刷新没有真实的"来源 todo"，沿用 update 模板会让 LLM 注入
-///   `ntd://todo/0` 这种指向不存在记录的坏链接
-/// - 目标是"重新组织现有信息"，不引入新事实
-///
-/// 仅依赖 `{{current}}` 占位符，调用方只需替换 current 即可。
-fn build_refresh_prompt() -> String {
-    r#"你是一个工作空间知识库的维护者。重新组织当前黑板内容，使其结构更清晰、信息更准确。
-
-当前黑板内容：
-```
-{{current}}
-```
-
-请重新组织黑板内容，要求：
-1. 保持以下结构：
-   - # 工作空间进展
-   - ## 已确认
-   - ## 新发现
-   - ## 待解决问题
-   - ## 矛盾/风险
-   - ## 下一步建议
-2. 不要添加任何新事实，不要虚构来源 todo；只整理、归并、提炼已有信息
-3. 禁止生成 ntd://todo/ 内部链接（手动刷新没有具体来源 todo）
-4. 合并相似条目；移除空段
-5. 保持 Markdown 格式，不要添加 HTML
-
-只输出重新组织后的黑板内容，不要输出任何解释。"#.to_string()
-}
 
 /// 读取指定工作空间的黑板内容；无记录时返回空字符串。
 ///
@@ -348,13 +315,11 @@ pub async fn update_blackboard(
 ) -> Result<(), AppError> {
     // 1+2: 读当前内容、找或建 todo；任一失败直接返回
     let current_content = read_current_content(&db, workspace_id).await?;
-    // 从 config 中提取提示词模板（避免 guard 跨 await 持有）
+    // 从 per-workspace 配置中提取提示词模板；若为空则使用内置默认
     let prompt_template = {
-        let guard = config.read().unwrap();
-        if guard.blackboard_update_prompt.is_empty() {
-            build_blackboard_prompt()
-        } else {
-            guard.blackboard_update_prompt.clone()
+        match db.get_blackboard_config(workspace_id).await {
+            Ok(Some(cfg)) if !cfg.update_prompt.is_empty() => cfg.update_prompt,
+            _ => build_blackboard_prompt(),
         }
     };
     let (todo_id, _) = find_or_create_blackboard_todo(&db, &prompt_template, workspace_id).await?;
@@ -403,28 +368,22 @@ pub async fn refresh_blackboard(
     if current_content.is_empty() {
         return Err(AppError::BadRequest("黑板暂无内容，无需刷新".to_string()));
     }
-    // 从 config 中提取提示词模板（避免 guard 跨 await 持有）
-    let (update_prompt_template, refresh_prompt) = {
-        let guard = config.read().unwrap();
-        let update = if guard.blackboard_update_prompt.is_empty() {
-            build_blackboard_prompt()
-        } else {
-            guard.blackboard_update_prompt.clone()
-        };
-        let refresh = if guard.blackboard_refresh_prompt.is_empty() {
-            build_refresh_prompt()
-        } else {
-            guard.blackboard_refresh_prompt.clone()
-        };
-        (update, refresh)
+    // 从 per-workspace 配置中提取更新提示词模板；若为空则使用内置默认。
+    // 注意：手动刷新复用 update_prompt 而非单独的 refresh_prompt。
+    // 旧版 refresh_prompt 曾有独立模板（禁止 ntd://todo/ 链接），但该功能已移除，
+    // 两个场景现共用同一套 prompt 模板，均由用户配置或使用内置默认。
+    let update_prompt_template = {
+        match db.get_blackboard_config(workspace_id).await {
+            Ok(Some(cfg)) if !cfg.update_prompt.is_empty() => cfg.update_prompt,
+            _ => build_blackboard_prompt(),
+        }
     };
     // 复用同一 todo + 同一执行/等待/写入流程；source_todo_* 留 None 表示"非任务触发"
     let (todo_id, _) = find_or_create_blackboard_todo(&db, &update_prompt_template, workspace_id).await?;
-    // 手动刷新走独立 prompt 模板：避免 LLM 用 todo_id=0 拼出 ntd://todo/0 坏链接。
-    // 模板只依赖 {{current}}，不需要 source_todo_* 之类的额外占位符。
+    // 手动刷新使用与更新相同的 prompt 模板（已包含 {{current}} 占位符）
     let mut params = HashMap::new();
     params.insert("current".to_string(), current_content);
-    let message = crate::models::replace_placeholders(&refresh_prompt, &params);
+    let message = crate::models::replace_placeholders(&update_prompt_template, &params);
     let new_content = run_blackboard_execution(
         db.clone(),
         executor_registry,
@@ -464,28 +423,6 @@ mod tests {
         assert!(prompt.contains("{{conclusion}}"));
         assert!(prompt.contains("{{todo_id}}"));
         assert!(prompt.contains("{{todo_title}}"));
-    }
-
-    /// 验证 build_refresh_prompt 不含 todo 来源占位符，并显式禁止 ntd:// 内部链接。
-    /// 防止手动刷新误用 update 模板生成 `ntd://todo/0` 坏链接。
-    #[test]
-    fn test_refresh_prompt_has_no_source_attribution() {
-        let prompt = build_refresh_prompt();
-        // 不应有 source-todo 相关占位符（手动刷新无来源 todo）
-        assert!(!prompt.contains("{{todo_id}}"));
-        assert!(!prompt.contains("{{todo_title}}"));
-        assert!(!prompt.contains("{{conclusion}}"));
-        // 应显式禁止生成 ntd://todo/ 内部链接
-        assert!(
-            prompt.contains("ntd://todo/"),
-            "refresh prompt 必须显式提到 ntd://todo/ 以提醒 LLM 不要伪造来源"
-        );
-        assert!(
-            prompt.contains("禁止") || prompt.contains("不要"),
-            "refresh prompt 应包含明确的禁止/不要类指令"
-        );
-        // 仍保留 {{current}} 占位符
-        assert!(prompt.contains("{{current}}"));
     }
 
     /// 验证 assemble_prompt 正确替换占位符，且结论字段透传。

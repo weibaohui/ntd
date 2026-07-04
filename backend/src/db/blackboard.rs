@@ -35,6 +35,8 @@ impl Database {
     /// 幂等实现：使用 `ON CONFLICT(workspace_id) DO NOTHING` + 重新查询，
     /// 避免并发场景下两个请求同时走"先查后建"路径时因 UNIQUE 约束相互失败。
     /// 返回值始终是该工作空间当前的黑板记录（新建或已存在）。
+    ///
+    /// 新记录初始化时配置字段均采用默认值（防抖周期 600s、阈值 10 条、提示词为空使用内置）。
     pub async fn create_blackboard(
         &self,
         workspace_id: i64,
@@ -48,8 +50,14 @@ impl Database {
             content: ActiveValue::Set(String::new()),
             // 初始 pending 队列为空
             pending_todo_ids: ActiveValue::Set("[]".to_string()),
-            updated_at: ActiveValue::Set(Some(now)),
-            created_at: ActiveValue::Set(Some(crate::models::utc_timestamp())),
+            // 默认防抖周期 600 秒
+            blackboard_debounce_secs: ActiveValue::Set(600),
+            // 默认防抖条数阈值 10 条
+            blackboard_debounce_count: ActiveValue::Set(10),
+            // 空字符串表示使用内置默认提示词模板
+            blackboard_update_prompt: ActiveValue::Set(String::new()),
+            updated_at: ActiveValue::Set(Some(now.clone())),
+            created_at: ActiveValue::Set(Some(now)),
             ..Default::default()
         };
         // ON CONFLICT(workspace_id) DO NOTHING：若记录已存在则跳过 insert，
@@ -111,6 +119,9 @@ impl Database {
     /// 通过 `INSERT ... ON CONFLICT(workspace_id) DO UPDATE` 一次往返完成
     /// 创建/更新判断 + 写入，避免 service 层先 get 再 create 再 update 的 3 次往返。
     /// 用 workspace_id 唯一约束做冲突判定，与 schema UNIQUE 保持一致。
+    ///
+    /// 新增字段（防抖阈值、提示词）仅在 INSERT 时填充默认值，冲突时不覆盖，
+    /// 保持已有工作空间的配置不被意外重置。
     pub async fn upsert_blackboard_content(
         &self,
         workspace_id: i64,
@@ -125,9 +136,12 @@ impl Database {
             updated_at: ActiveValue::Set(Some(now.clone())),
             created_at: ActiveValue::Set(Some(now)),
             pending_todo_ids: ActiveValue::Set("[]".to_string()),
+            blackboard_debounce_secs: ActiveValue::Set(600),
+            blackboard_debounce_count: ActiveValue::Set(10),
+            blackboard_update_prompt: ActiveValue::Set(String::new()),
             ..Default::default()
         };
-        // ON CONFLICT(workspace_id)：命中后只覆盖 content/updated_at，保留 created_at
+        // ON CONFLICT(workspace_id)：命中后只覆盖 content/updated_at，保留 created_at 和配置字段
         blackboards::Entity::insert(am)
             .on_conflict(
                 OnConflict::column(blackboards::Column::WorkspaceId)
@@ -211,6 +225,80 @@ impl Database {
 
         Ok(ids)
     }
+
+    /// 获取指定工作空间的黑板配置（防抖阈值、提示词）。
+    ///
+    /// 记录不存在时返回 None；调用方应确保黑板记录已通过 create_blackboard 初始化。
+    /// 返回的四个字段均为 per-workspace 配置，来自 blackboards 表的对应列。
+    pub async fn get_blackboard_config(
+        &self,
+        workspace_id: i64,
+    ) -> Result<Option<BlackboardConfig>, sea_orm::DbErr> {
+        let board = blackboards::Entity::find()
+            .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
+            .one(&self.conn)
+            .await?;
+        Ok(board.map(|b| BlackboardConfig {
+            debounce_secs: b.blackboard_debounce_secs,
+            debounce_count: b.blackboard_debounce_count,
+            update_prompt: b.blackboard_update_prompt,
+        }))
+    }
+
+    /// 更新指定工作空间的黑板配置。
+    ///
+    /// 更新指定工作空间的黑板配置。
+    ///
+    /// 输入：workspace_id + 三个可选字段（debounce_secs、debounce_count、update_prompt）。
+    /// 流程：先按 workspace_id 查出黑板记录（不存在则 RecordNotFound）→ 构造 ActiveModel
+    /// → 只对传入 Some 的字段写入，传入 None 的保持原值不变 → update。
+    /// 防抖阈值有下限保护：debounce_secs >= 10，debounce_count >= 1。
+    /// 记录不存在时返回 RecordNotFound；调用方应确保黑板记录已存在。
+    /// 各字段均为可选，仅更新传入 Some 的字段，None 保持原值不变。
+    pub async fn update_blackboard_config(
+        &self,
+        workspace_id: i64,
+        debounce_secs: Option<i64>,
+        debounce_count: Option<i64>,
+        update_prompt: Option<String>,
+    ) -> Result<(), sea_orm::DbErr> {
+        let board = blackboards::Entity::find()
+            .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
+            .one(&self.conn)
+            .await?
+            .ok_or_else(|| {
+                sea_orm::DbErr::RecordNotFound(format!(
+                    "blackboard for workspace {} not found",
+                    workspace_id
+                ))
+            })?;
+        let now = crate::models::utc_timestamp();
+        let mut am = blackboards::ActiveModel {
+            id: ActiveValue::Unchanged(board.id),
+            workspace_id: ActiveValue::Unchanged(workspace_id),
+            updated_at: ActiveValue::Set(Some(now)),
+            ..Default::default()
+        };
+        if let Some(v) = debounce_secs {
+            am.blackboard_debounce_secs = ActiveValue::Set(v.max(10));
+        }
+        if let Some(v) = debounce_count {
+            am.blackboard_debounce_count = ActiveValue::Set(v.max(1));
+        }
+        if let Some(v) = update_prompt {
+            am.blackboard_update_prompt = ActiveValue::Set(v);
+        }
+        am.update(&self.conn).await?;
+        Ok(())
+    }
+}
+
+/// 黑板 per-workspace 配置数据结构，对应 blackboards 表的三个配置列。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BlackboardConfig {
+    pub debounce_secs: i64,
+    pub debounce_count: i64,
+    pub update_prompt: String,
 }
 
 #[cfg(test)]
@@ -249,6 +337,10 @@ mod tests {
         assert_eq!(board.content, "");
         assert!(board.created_at.is_some());
         assert!(board.updated_at.is_some());
+        // 新增字段：默认值验证
+        assert_eq!(board.blackboard_debounce_secs, 600);
+        assert_eq!(board.blackboard_debounce_count, 10);
+        assert_eq!(board.blackboard_update_prompt, "");
 
         // 验证可通过 get 查到
         let fetched = db.get_blackboard(ws_id).await.unwrap();
@@ -359,5 +451,100 @@ mod tests {
         assert_eq!(second.id, first_id, "upsert 不应改变主键");
         assert_eq!(second.content, "# 第二次", "content 应当被覆盖");
         assert_eq!(second.created_at, first_created, "created_at 应当保留");
+    }
+
+    /// 验证 get_blackboard_config 在无记录时返回 None。
+    #[tokio::test]
+    async fn test_get_blackboard_config_returns_none_when_missing() {
+        let db = Database::new(":memory:").await.expect(":memory: must open");
+        let result = db.get_blackboard_config(999).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    /// 验证 get_blackboard_config 在有记录时返回正确默认值。
+    #[tokio::test]
+    async fn test_get_blackboard_config_returns_defaults_after_create() {
+        let db = Database::new(":memory:").await.expect(":memory: must open");
+        let ws_id = create_test_workspace(&db).await;
+        db.create_blackboard(ws_id).await.unwrap();
+
+        let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
+        assert_eq!(cfg.debounce_secs, 600);
+        assert_eq!(cfg.debounce_count, 10);
+        assert_eq!(cfg.update_prompt, "");
+    }
+
+    /// 验证 update_blackboard_config 正确更新各字段。
+    #[tokio::test]
+    async fn test_update_blackboard_config_updates_fields() {
+        let db = Database::new(":memory:").await.expect(":memory: must open");
+        let ws_id = create_test_workspace(&db).await;
+        db.create_blackboard(ws_id).await.unwrap();
+
+        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("custom".to_string()))
+            .await
+            .unwrap();
+
+        let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
+        assert_eq!(cfg.debounce_secs, 300);
+        assert_eq!(cfg.debounce_count, 5);
+        assert_eq!(cfg.update_prompt, "custom");
+    }
+
+    /// 验证 update_blackboard_config 对 None 字段保持原值。
+    #[tokio::test]
+    async fn test_update_blackboard_config_preserves_unchanged_fields() {
+        let db = Database::new(":memory:").await.expect(":memory: must open");
+        let ws_id = create_test_workspace(&db).await;
+        db.create_blackboard(ws_id).await.unwrap();
+
+        // 先全部更新
+        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("custom".to_string()))
+            .await
+            .unwrap();
+
+        // 再只更新其中两个
+        db.update_blackboard_config(ws_id, Some(900), None, None)
+            .await
+            .unwrap();
+
+        let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
+        assert_eq!(cfg.debounce_secs, 900);
+        assert_eq!(cfg.debounce_count, 5, "debounce_count 应保留之前的值");
+        assert_eq!(cfg.update_prompt, "custom", "update_prompt 应保留之前的值");
+    }
+
+    /// 验证 update_blackboard_config 在记录不存在时返回 RecordNotFound。
+    #[tokio::test]
+    async fn test_update_blackboard_config_record_not_found() {
+        let db = Database::new(":memory:").await.expect(":memory: must open");
+        let result = db.update_blackboard_config(999, Some(300), None, None).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            sea_orm::DbErr::RecordNotFound(_) => {}
+            other => panic!("expected RecordNotFound, got: {:?}", other),
+        }
+    }
+
+    /// 验证 update_blackboard_config 对防抖阈值做下限保护。
+    #[tokio::test]
+    async fn test_update_blackboard_config_debounce_minimum_guard() {
+        let db = Database::new(":memory:").await.expect(":memory: must open");
+        let ws_id = create_test_workspace(&db).await;
+        db.create_blackboard(ws_id).await.unwrap();
+
+        // 传入小于最小值的 debounce_secs，应被钳制到 10
+        db.update_blackboard_config(ws_id, Some(3), None, None)
+            .await
+            .unwrap();
+        let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
+        assert_eq!(cfg.debounce_secs, 10);
+
+        // 传入小于最小值的 debounce_count，应被钳制到 1
+        db.update_blackboard_config(ws_id, None, Some(0), None)
+            .await
+            .unwrap();
+        let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
+        assert_eq!(cfg.debounce_count, 1);
     }
 }
