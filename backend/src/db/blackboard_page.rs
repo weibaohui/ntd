@@ -7,7 +7,7 @@
 //! - log：由后端追加，调用 append_log_entry
 
 use sea_orm::{
-    sea_query::OnConflict, ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait,
+    sea_query::OnConflict, ActiveModelTrait, ColumnTrait, EntityTrait,
     Order, QueryFilter, QueryOrder, Set,
 };
 

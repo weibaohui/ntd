@@ -1,9 +1,11 @@
 //! 黑板（Blackboard）API Handler。
 //!
-//! 提供三个端点：
-//! - `GET /api/workspaces/{workspace_id}/blackboard`：获取当前黑板内容与配置
+//! 提供以下端点：
+//! - `GET /api/workspaces/{workspace_id}/blackboard`：获取当前黑板内容与配置（旧版单文件接口，保留兼容）
 //! - `PATCH /api/workspaces/{workspace_id}/blackboard`：更新黑板配置
 //! - `GET /api/workspaces/{workspace_id}/blackboard/config`：仅获取黑板配置
+//! - `GET /api/workspaces/{workspace_id}/blackboard/pages`：获取所有页面列表（Wiki 化后）
+//! - `GET /api/workspaces/{workspace_id}/blackboard/pages/{slug}`：获取单个页面内容（Wiki 化后）
 
 use axum::extract::{Path, State};
 use axum::routing::get;
@@ -26,6 +28,34 @@ pub struct BlackboardResponse {
     pub blackboard_debounce_count: i64,
     /// 黑板更新提示词模板（空字符串表示使用内置默认）
     pub blackboard_update_prompt: String,
+}
+
+/// 页面列表项：用于 GET /pages 接口，只返回摘要信息不返回完整 content。
+///
+/// 前端目录树用这个数据渲染，避免一次拉取所有页面的大文本。
+#[derive(Debug, serde::Serialize)]
+pub struct BlackboardPageListItem {
+    pub id: i64,
+    pub slug: String,
+    pub title: String,
+    pub page_type: String,
+    /// 来源记录数量（source_refs 数组长度）
+    pub source_count: usize,
+    pub updated_at: Option<String>,
+}
+
+/// 单页详情：用于 GET /pages/{slug}，返回完整 Markdown 内容。
+#[derive(Debug, serde::Serialize)]
+pub struct BlackboardPageDetail {
+    pub id: i64,
+    pub workspace_id: i64,
+    pub slug: String,
+    pub title: String,
+    pub page_type: String,
+    pub content: String,
+    pub source_refs: Vec<i64>,
+    pub updated_at: Option<String>,
+    pub created_at: Option<String>,
 }
 
 /// 更新黑板配置的请求体（所有字段可选，None 保持原值不变）。
@@ -137,6 +167,72 @@ pub async fn update_blackboard_config(
     Ok(ApiResponse::ok(cfg.unwrap()))
 }
 
+/// `GET /api/workspaces/{workspace_id}/blackboard/pages`
+///
+/// 获取指定工作空间的所有黑板页面列表（含 index/topic/log）。
+/// 返回摘要信息（不含完整 content），供前端目录树使用。
+/// 按 page_type 分组排序：topic 在前（按 updated_at 倒序），然后 index，然后 log。
+pub async fn list_blackboard_pages(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<i64>,
+) -> Result<ApiResponse<Vec<BlackboardPageListItem>>, AppError> {
+    let pages = state.db.list_blackboard_pages(workspace_id).await.map_err(|e| {
+        AppError::Internal(format!("查询黑板页面列表失败: {}", e))
+    })?;
+
+    // 将 entity model 转成列表项（计算 source_count）
+    let items: Vec<BlackboardPageListItem> = pages
+        .into_iter()
+        .map(|p| {
+            let source_count = serde_json::from_str::<Vec<i64>>(&p.source_refs)
+                .unwrap_or_default()
+                .len();
+            BlackboardPageListItem {
+                id: p.id,
+                slug: p.slug,
+                title: p.title,
+                page_type: p.page_type,
+                source_count,
+                updated_at: p.updated_at,
+            }
+        })
+        .collect();
+
+    Ok(ApiResponse::ok(items))
+}
+
+/// `GET /api/workspaces/{workspace_id}/blackboard/pages/{slug}`
+///
+/// 按 slug 获取单个黑板页面的完整内容。
+/// 页面不存在返回 404。
+pub async fn get_blackboard_page(
+    State(state): State<AppState>,
+    Path((workspace_id, slug)): Path<(i64, String)>,
+) -> Result<ApiResponse<BlackboardPageDetail>, AppError> {
+    let page = state.db.get_blackboard_page(workspace_id, &slug).await.map_err(|e| {
+        AppError::Internal(format!("查询黑板页面失败: {}", e))
+    })?;
+
+    match page {
+        Some(p) => {
+            let source_refs: Vec<i64> = serde_json::from_str(&p.source_refs)
+                .unwrap_or_default();
+            Ok(ApiResponse::ok(BlackboardPageDetail {
+                id: p.id,
+                workspace_id: p.workspace_id,
+                slug: p.slug,
+                title: p.title,
+                page_type: p.page_type,
+                content: p.content,
+                source_refs,
+                updated_at: p.updated_at,
+                created_at: p.created_at,
+            }))
+        }
+        None => Err(AppError::NotFound),
+    }
+}
+
 /// 返回黑板领域路由。
 pub fn blackboard_routes() -> Router<AppState> {
     Router::new()
@@ -147,6 +243,14 @@ pub fn blackboard_routes() -> Router<AppState> {
         .route(
             "/api/workspaces/{workspace_id}/blackboard/config",
             get(get_blackboard_config),
+        )
+        .route(
+            "/api/workspaces/{workspace_id}/blackboard/pages",
+            get(list_blackboard_pages),
+        )
+        .route(
+            "/api/workspaces/{workspace_id}/blackboard/pages/:slug",
+            get(get_blackboard_page),
         )
 }
 
