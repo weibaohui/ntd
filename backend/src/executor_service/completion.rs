@@ -562,31 +562,9 @@ pub async fn blackboard_flush_listener(
                             msg.workspace_id, record_ids
                         );
 
-                        // 按顺序查询每条 execution_record 的结论
-                        let mut conclusions = Vec::with_capacity(record_ids.len());
-                        // 取第一条记录的 todo_id 作为 update_blackboard 的 source_todo_id
-                        let mut source_todo_id = 0i64;
-                        for (i, record_id) in record_ids.iter().enumerate() {
-                            if let Ok(Some(record)) = db.get_execution_record(*record_id).await {
-                                if i == 0 {
-                                    source_todo_id = record.todo_id;
-                                }
-                                conclusions.push(format!(
-                                    "- 任务 ID: {}\n  结论: {}",
-                                    record.todo_id,
-                                    record.result.as_deref().unwrap_or("(无结论)")
-                                ));
-                            }
-                        }
-
-                        if conclusions.is_empty() {
-                            tracing::debug!("所有 todo 均无执行记录: workspace_id={}", msg.workspace_id);
-                            continue;
-                        }
-
-                        let conclusion_text = conclusions.join("\n\n");
-
-                        // 调用 update_blackboard
+                        // 不再由程序查询多条 execution_record 的结论注入 prompt，
+                        // 改为直接传 pending_record_ids，由 AI 自己通过 ntd todo execution get <id> 主动查询；
+                        // 这样减少 token 消耗、让 AI 自主决定处理哪些记录。
                         let update_result = crate::services::blackboard::update_blackboard(
                             db.clone(),
                             executor_registry.clone(),
@@ -594,9 +572,7 @@ pub async fn blackboard_flush_listener(
                             task_manager.clone(),
                             config.clone(),
                             msg.workspace_id,
-                            &conclusion_text,
-                            source_todo_id,
-                            &format!("批量更新 ({}条)", record_ids.len()),
+                            record_ids,
                         )
                         .await;
 
