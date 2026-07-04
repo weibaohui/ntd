@@ -78,7 +78,7 @@ dev: stop
 	@echo "[1/2] Building frontend..."
 	cd frontend && npm run build
 	@echo "[2/2] Building & running backend..."
-	cd backend && $(CARGO_ENV) NTD_MODE=dev RUST_BACKTRACE=1 RUST_LOG=info cargo run 2>&1 | tee ../backend.dev.log &
+	cd backend && $(CARGO_ENV) NTD_MODE=dev RUST_BACKTRACE=1 RUST_LOG=info cargo run -- server start 2>&1 | tee ../backend.dev.log &
 	@mkdir -p $$HOME/.ntd && echo $$! > $$HOME/.ntd/dev.pid
 	@echo "==========================================="
 	@echo "  Dev mode: http://localhost:18088"
