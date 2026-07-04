@@ -22,6 +22,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { useViewState } from '@/hooks/useViewState';
 import type { BlackboardDebounceStatus } from '@/hooks/useExecutionEvents';
 import { updateBlackboardConfig } from '@/utils/database/blackboard';
+import { normalizeBlackboardMarkdown } from '@/utils/markdown';
 
 const { Title } = Typography;
 
@@ -579,6 +580,8 @@ interface BlackboardContentProps {
 /** 真正渲染 Markdown：XMarkdown 内部走 DOMPurify 防止 XSS */
 function BlackboardContent(props: BlackboardContentProps) {
   const isDark = props.isDark;
+  // 前端兼容兜底：渲染前再剥一次外层 fenced markdown，保证历史脏数据也能正常显示
+  const renderedContent = normalizeBlackboardMarkdown(props.content);
   return (
     <div
       style={{
@@ -596,7 +599,7 @@ function BlackboardContent(props: BlackboardContentProps) {
         // 强制纯文本：XMarkdown 默认会注入 inline style，
         // className 包一层让主题色与外层容器保持一致
         className={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
-        content={props.content}
+        content={renderedContent}
         // 覆盖 a 标签渲染：让 ntd://todo/{id} 走内部导航
         components={{ a: TodoLink }}
         // DOMPurify 默认会拒绝 ntd:// 等未知协议，会把整条链接剥成纯文本。
