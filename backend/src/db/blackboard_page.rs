@@ -81,6 +81,7 @@ impl Database {
         page_type: &str,
         slug: &str,
         title: &str,
+        summary: &str,
         content: &str,
         source_refs: &[i64],
     ) -> Result<(), sea_orm::DbErr> {
@@ -94,6 +95,7 @@ impl Database {
             page_type: Set(page_type.to_string()),
             slug: Set(slug.to_string()),
             title: Set(title.to_string()),
+            summary: Set(summary.to_string()),
             content: Set(content.to_string()),
             source_refs: Set(refs_json),
             updated_at: Set(Some(now.clone())),
@@ -110,6 +112,7 @@ impl Database {
                 .update_columns([
                     blackboard_pages::Column::PageType,
                     blackboard_pages::Column::Title,
+                    blackboard_pages::Column::Summary,
                     blackboard_pages::Column::Content,
                     blackboard_pages::Column::SourceRefs,
                     blackboard_pages::Column::UpdatedAt,
@@ -173,6 +176,7 @@ impl Database {
                     page_type: Set(PAGE_TYPE_LOG.to_string()),
                     slug: Set(PAGE_TYPE_LOG.to_string()),
                     title: Set("更新日志".to_string()),
+                    summary: Set("按时间记录的黑板更新日志".to_string()),
                     content: Set(entry_markdown.to_string()),
                     source_refs: Set("[]".to_string()),
                     updated_at: Set(Some(now.clone())),
@@ -234,6 +238,7 @@ mod tests {
             PAGE_TYPE_TOPIC,
             "auth-module",
             "认证模块",
+            "关于认证的结论汇总",
             "# 认证模块\n\n内容",
             &[42, 45],
         )
@@ -260,6 +265,7 @@ mod tests {
             PAGE_TYPE_TOPIC,
             "auth",
             "认证",
+            "认证相关结论",
             "初始内容",
             &[1, 2],
         )
@@ -272,6 +278,7 @@ mod tests {
             PAGE_TYPE_TOPIC,
             "auth",
             "认证模块",
+            "认证模块相关结论",
             "更新内容",
             &[2, 3],
         )
@@ -293,13 +300,13 @@ mod tests {
         let ws_id = create_test_workspace(&db).await;
 
         // 创建三种类型的页面
-        db.upsert_blackboard_page(ws_id, PAGE_TYPE_INDEX, "index", "目录", "目录内容", &[])
+        db.upsert_blackboard_page(ws_id, PAGE_TYPE_INDEX, "index", "目录", "知识库目录", "目录内容", &[])
             .await
             .unwrap();
-        db.upsert_blackboard_page(ws_id, PAGE_TYPE_TOPIC, "auth", "认证", "认证内容", &[])
+        db.upsert_blackboard_page(ws_id, PAGE_TYPE_TOPIC, "auth", "认证", "认证相关", "认证内容", &[])
             .await
             .unwrap();
-        db.upsert_blackboard_page(ws_id, PAGE_TYPE_LOG, "log", "日志", "日志内容", &[])
+        db.upsert_blackboard_page(ws_id, PAGE_TYPE_LOG, "log", "日志", "更新日志", "日志内容", &[])
             .await
             .unwrap();
 
@@ -339,7 +346,7 @@ mod tests {
         let db = Database::new(":memory:").await.expect("db must open");
         let ws_id = create_test_workspace(&db).await;
 
-        db.upsert_blackboard_page(ws_id, PAGE_TYPE_TOPIC, "temp", "临时", "内容", &[])
+        db.upsert_blackboard_page(ws_id, PAGE_TYPE_TOPIC, "temp", "临时", "临时页面", "内容", &[])
             .await
             .unwrap();
         assert!(db.get_blackboard_page(ws_id, "temp").await.unwrap().is_some());
@@ -361,10 +368,10 @@ mod tests {
             .await
             .unwrap();
 
-        db.upsert_blackboard_page(ws1, PAGE_TYPE_TOPIC, "auth", "认证1", "内容1", &[])
+        db.upsert_blackboard_page(ws1, PAGE_TYPE_TOPIC, "auth", "认证1", "认证相关", "内容1", &[])
             .await
             .unwrap();
-        db.upsert_blackboard_page(ws2, PAGE_TYPE_TOPIC, "auth", "认证2", "内容2", &[])
+        db.upsert_blackboard_page(ws2, PAGE_TYPE_TOPIC, "auth", "认证2", "认证相关", "内容2", &[])
             .await
             .unwrap();
 

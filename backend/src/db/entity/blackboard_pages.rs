@@ -30,6 +30,9 @@ pub struct Model {
     /// 显示标题（如 "认证模块"）
     #[sea_orm(column_type = "Text")]
     pub title: String,
+    /// 一句话摘要，用于 index 页面和目录树展示
+    #[sea_orm(column_type = "Text")]
+    pub summary: String,
     /// Markdown 内容
     #[sea_orm(column_type = "Text")]
     pub content: String,

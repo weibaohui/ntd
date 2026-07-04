@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS blackboard_pages (
     page_type TEXT NOT NULL,
     slug TEXT NOT NULL,
     title TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
     content TEXT NOT NULL DEFAULT '',
     source_refs TEXT NOT NULL DEFAULT '[]',
     updated_at TEXT,

@@ -565,7 +565,7 @@ pub async fn blackboard_flush_listener(
                         // 不再由程序查询多条 execution_record 的结论注入 prompt，
                         // 改为直接传 pending_record_ids，由 AI 自己通过 ntd todo execution get <id> 主动查询；
                         // 这样减少 token 消耗、让 AI 自主决定处理哪些记录。
-                        let update_result = crate::services::blackboard::update_blackboard(
+                        let update_result = crate::services::blackboard::update_blackboard_wiki(
                             db.clone(),
                             executor_registry.clone(),
                             tx.clone(),
@@ -588,7 +588,7 @@ pub async fn blackboard_flush_listener(
                         let _ = tx.send(done_event);
 
                         if let Err(e) = update_result {
-                            tracing::warn!("黑板 update_blackboard 失败: workspace_id={}, error={:?}", msg.workspace_id, e);
+                            tracing::warn!("黑板 update_blackboard_wiki 失败: workspace_id={}, error={:?}", msg.workspace_id, e);
                         }
                     }
                     None => break, // channel 已关闭
