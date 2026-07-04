@@ -28,6 +28,8 @@ impl Migration for V50AddBlackboardWorkspaceConfig {
     }
 
     async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        // 执行流程：依次检查每个列是否存在（幂等）→ 不存在则 ALTER TABLE ADD COLUMN。
+        // 三列均 NOT NULL DEFAULT，迁移前已存在的记录自动获得默认值，不影响现有逻辑。
         // 1. blackboard_debounce_secs: INTEGER NOT NULL DEFAULT 600
         if !super::table_has_column(db, "blackboards", "blackboard_debounce_secs").await? {
             db.exec("ALTER TABLE blackboards ADD COLUMN blackboard_debounce_secs INTEGER NOT NULL DEFAULT 600")

@@ -247,6 +247,12 @@ impl Database {
 
     /// 更新指定工作空间的黑板配置。
     ///
+    /// 更新指定工作空间的黑板配置。
+    ///
+    /// 输入：workspace_id + 三个可选字段（debounce_secs、debounce_count、update_prompt）。
+    /// 流程：先按 workspace_id 查出黑板记录（不存在则 RecordNotFound）→ 构造 ActiveModel
+    /// → 只对传入 Some 的字段写入，传入 None 的保持原值不变 → update。
+    /// 防抖阈值有下限保护：debounce_secs >= 10，debounce_count >= 1。
     /// 记录不存在时返回 RecordNotFound；调用方应确保黑板记录已存在。
     /// 各字段均为可选，仅更新传入 Some 的字段，None 保持原值不变。
     pub async fn update_blackboard_config(

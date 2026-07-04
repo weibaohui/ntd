@@ -368,7 +368,10 @@ pub async fn refresh_blackboard(
     if current_content.is_empty() {
         return Err(AppError::BadRequest("黑板暂无内容，无需刷新".to_string()));
     }
-    // 从 per-workspace 配置中提取更新提示词模板；若为空则使用内置默认
+    // 从 per-workspace 配置中提取更新提示词模板；若为空则使用内置默认。
+    // 注意：手动刷新复用 update_prompt 而非单独的 refresh_prompt。
+    // 旧版 refresh_prompt 曾有独立模板（禁止 ntd://todo/ 链接），但该功能已移除，
+    // 两个场景现共用同一套 prompt 模板，均由用户配置或使用内置默认。
     let update_prompt_template = {
         match db.get_blackboard_config(workspace_id).await {
             Ok(Some(cfg)) if !cfg.update_prompt.is_empty() => cfg.update_prompt,

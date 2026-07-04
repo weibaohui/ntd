@@ -100,7 +100,8 @@ pub async fn get_blackboard_config(
 /// `PATCH /api/workspaces/{workspace_id}/blackboard/config`
 ///
 /// 更新指定工作空间的黑板配置（防抖阈值、提示词）。
-/// 若黑板记录不存在，先创建再更新。
+/// 若黑板记录不存在，先通过 create_blackboard 幂等创建（保证记录存在），再更新配置。
+/// 返回更新后的完整配置（从 DB 重新查询）。
 pub async fn update_blackboard_config(
     State(state): State<AppState>,
     Path(workspace_id): Path<i64>,

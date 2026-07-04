@@ -69,8 +69,9 @@ pub async fn init() -> mpsc::Receiver<BlackboardFlushMsg> {
 
 /// 追加一个 todo_id 到 pending 队列；若 timer 未运行则启动。
 ///
-/// 防抖阈值从 per-workspace 黑板配置（blackboards 表）读取，实现工作空间隔离。
-/// 不调用任何 blackboard/executor_service 函数，职责纯粹为"入队 + 启动 timer"。
+/// 核心流程：入队 → 检查阈值是否达到立即触发 → 检查 timer 是否在运行 → 启动 timer。
+/// 防抖阈值（debounce_secs、debounce_count）从 per-workspace 黑板配置（blackboards 表）读取，
+/// 实现各工作空间独立的防抖策略。不调用任何 blackboard/executor_service 函数，职责纯粹为"入队 + 启动 timer"。
 pub async fn push_pending_todo(workspace_id: i64, todo_id: i64, db: &Arc<Database>) {
     // 确保黑板记录已存在：首次有 todo 执行完成时，黑板记录还未创建。
     // create_blackboard 是幂等的（ON CONFLICT DO NOTHING），重复调用安全。
