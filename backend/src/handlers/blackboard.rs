@@ -102,6 +102,9 @@ pub async fn get_blackboard_config(
 /// 更新指定工作空间的黑板配置（防抖阈值、提示词）。
 /// 若黑板记录不存在，先通过 create_blackboard 幂等创建（保证记录存在），再更新配置。
 /// 返回更新后的完整配置（从 DB 重新查询）。
+///
+/// 当 debounce_secs 变更时，自动重置运行中的计时器，避免旧的计时状态与新的阈值不匹配
+/// 导致前端显示负数秒数。
 pub async fn update_blackboard_config(
     State(state): State<AppState>,
     Path(workspace_id): Path<i64>,
@@ -117,6 +120,18 @@ pub async fn update_blackboard_config(
         req.blackboard_debounce_count,
         req.blackboard_update_prompt,
     ).await.map_err(|e| AppError::Internal(format!("更新黑板配置失败: {}", e)))?;
+
+    // debounce_secs 变更时，根据已计时长决定：超则立即触发 flush，未超则继续用新阈值计时
+    // 传入钳制后的值，与 DB update_blackboard_config 内部 v.max(10) 保持一致
+    if let Some(new_secs) = req.blackboard_debounce_secs {
+        let clamped = new_secs.max(10);
+        crate::services::blackboard_debouncer::reconcile_timer_after_config_change(
+            workspace_id,
+            clamped,
+        )
+        .await;
+    }
+
     let cfg = state.db.get_blackboard_config(workspace_id).await.map_err(|e| {
         AppError::Internal(format!("更新后查询黑板配置失败: {}", e))
     })?;
