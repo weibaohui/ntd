@@ -794,9 +794,10 @@ function BlackboardContent(props: BlackboardContentProps) {
         // 覆盖 a 标签渲染：让 ntd://todo/{id} 走内部导航
         components={{ a: TodoLink }}
         // DOMPurify 默认会拒绝 ntd:// 等未知协议，会把整条链接剥成纯文本。
-        // 显式允许 ntd 协议，让内部链接得以保留；其它未知协议仍被拒绝。
+        // 显式允许 ntd 协议 + 以 / 开头的内部相对路径（如 /?view=items&id=16&panel=post&record=6513），
+        // 其它未知协议仍被拒绝。
         dompurifyConfig={{
-          ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|ntd):)/i,
+          ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|ntd):|\/)/i,
         }}
       />
     </div>
