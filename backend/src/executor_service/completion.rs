@@ -429,11 +429,14 @@ pub(crate) async fn finalize_normal_completion(
 
 /// 构建黑板防抖状态事件（用于 WebSocket 推送）。
 /// 从 DB 读取 pending 队列，从 debouncer 读取 timer 状态。
+/// `is_refreshing` 由调用方根据 refreshing_workspaces 集合传入，
+/// 确保 ticker 不会覆盖 spawned task 发出的 refreshing=true 状态。
 async fn build_blackboard_status(
     db: &Database,
     workspace_id: i64,
     debounce_secs: i64,
     debounce_count: i64,
+    is_refreshing: bool,
 ) -> ExecEvent {
     let pending_count = db
         .get_blackboard(workspace_id)
@@ -455,8 +458,8 @@ async fn build_blackboard_status(
                 .unwrap()
                 .as_millis() as i64
                 - state.started_at_ms as i64;
-            let remaining = state.debounce_secs as i64 - elapsed_ms / 1000;
-            remaining.max(0) as i64
+            let remaining = state.debounce_secs - elapsed_ms / 1000;
+            remaining.max(0)
         })
         .unwrap_or(-1);
 
@@ -466,14 +469,200 @@ async fn build_blackboard_status(
         threshold: debounce_count as u64,
         debounce_secs: debounce_secs as u64,
         remaining_secs,
-        refreshing: false,
+        refreshing: is_refreshing,
     }
 }
 
+/// 从 per-workspace 黑板配置中读取防抖参数的 helper。
+/// DB 查询失败时回退默认值（600s / 10 条），避免静默丢弃配置读取错误。
+async fn get_workspace_debounce(db: &Database, ws_id: i64) -> (i64, i64) {
+    match db.get_blackboard_config(ws_id).await {
+        Ok(Some(cfg)) => (cfg.debounce_secs, cfg.debounce_count),
+        Ok(None) => (600, 10), // 未配置时回退默认值
+        Err(e) => {
+            // DB 错误不应静默吞掉，记录 warn 后回退默认值以保证可用性
+            tracing::warn!("读取黑板防抖配置失败，使用默认值: workspace_id={}, error={}", ws_id, e);
+            (600, 10)
+        }
+    }
+}
+
+/// ticker 分支：每秒广播所有已知 workspace 的黑板防抖状态。
+/// refreshing 字段根据 refreshing_workspaces 集合动态设置，
+/// 确保 spawned task 发出的 refreshing=true 不被 ticker 覆盖。
+async fn broadcast_ticker_status(
+    db: &Database,
+    tx: &broadcast::Sender<ExecEvent>,
+    known_workspaces: &mut Vec<i64>,
+    refreshing_workspaces: &Arc<tokio::sync::Mutex<std::collections::HashSet<i64>>>,
+) {
+    // 首次：从 DB 拉取所有已知 workspace
+    if known_workspaces.is_empty() {
+        if let Ok(boards) = db.get_all_blackboards().await {
+            *known_workspaces = boards.iter().map(|b| b.workspace_id).collect();
+        }
+    }
+    for ws_id in known_workspaces.iter() {
+        let (debounce_secs, debounce_count) = get_workspace_debounce(db, *ws_id).await;
+        // 检查该 workspace 是否正在刷新中
+        let is_refreshing = {
+            let guard = refreshing_workspaces.lock().await;
+            guard.contains(ws_id)
+        };
+        let event = build_blackboard_status(db, *ws_id, debounce_secs, debounce_count, is_refreshing).await;
+        let _ = tx.send(event);
+    }
+}
+
+/// 派生独立 worker 任务执行 wiki 更新。
+///
+/// worker 内部循环处理：每次非破坏性读取 pending 队列，
+/// 处理成功后移除已处理 ID（保留期间新到达的记录），
+/// 若队列仍有剩余则继续处理下一批。
+/// 失败时保留队列不删除，退出循环避免死循环。
+#[allow(clippy::too_many_arguments)]
+fn spawn_flush_worker(
+    ws_id: i64,
+    debounce_secs: i64,
+    debounce_count: i64,
+    db: Arc<Database>,
+    executor_registry: Arc<ExecutorRegistry>,
+    tx: broadcast::Sender<ExecEvent>,
+    task_manager: Arc<TaskManager>,
+    config: Arc<std::sync::RwLock<crate::config::Config>>,
+    refreshing_workspaces: Arc<tokio::sync::Mutex<std::collections::HashSet<i64>>>,
+) {
+    tokio::spawn(async move {
+        // 循环处理，直到队列为空或某次处理失败
+        loop {
+            // 非破坏性读取 pending 队列（不用 take_pending_record_ids）
+            let record_ids = match db.get_blackboard(ws_id).await {
+                Ok(Some(board)) => {
+                    serde_json::from_str::<Vec<i64>>(&board.pending_record_ids).unwrap_or_default()
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    tracing::warn!("读取 pending 队列失败: workspace_id={}, error={}", ws_id, e);
+                    break;
+                }
+            };
+            if record_ids.is_empty() {
+                break;
+            }
+
+            // 广播 refreshing=true 状态
+            let _ = tx.send(ExecEvent::BlackboardDebounceStatus {
+                workspace_id: ws_id,
+                pending_count: record_ids.len() as u64,
+                threshold: debounce_count as u64,
+                debounce_secs: debounce_secs as u64,
+                remaining_secs: -1,
+                refreshing: true,
+            });
+
+            let update_result = crate::services::blackboard::update_blackboard_wiki(
+                db.clone(),
+                executor_registry.clone(),
+                tx.clone(),
+                task_manager.clone(),
+                config.clone(),
+                ws_id,
+                record_ids,
+            )
+            .await;
+
+            if let Err(ref e) = update_result {
+                tracing::warn!(
+                    "黑板 update_blackboard_wiki 失败: workspace_id={}, error={:?}",
+                    ws_id, e
+                );
+                // 失败时保留 pending 队列不删除（update_blackboard_wiki 内部
+                // 已改用 remove_specific_pending_record_ids，失败时不调用），
+                // 退出循环避免死循环
+                break;
+            }
+            // 成功：继续循环检查是否有新记录在处理期间到达
+        }
+
+        // 广播 refreshing=false 状态
+        let _ = tx.send(ExecEvent::BlackboardDebounceStatus {
+            workspace_id: ws_id,
+            pending_count: 0,
+            threshold: debounce_count as u64,
+            debounce_secs: debounce_secs as u64,
+            remaining_secs: -1,
+            refreshing: false,
+        });
+
+        // 释放 per-workspace 互斥锁
+        let mut guard = refreshing_workspaces.lock().await;
+        guard.remove(&ws_id);
+    });
+}
+
+/// 处理单条 flush 消息：非破坏性读取 pending 队列并派生 worker。
+///
+/// 若 workspace 已有 worker 运行中（refreshing_workspaces 包含），
+/// 不丢弃消息：worker 内部循环会自然处理新到达的记录。
+#[allow(clippy::too_many_arguments)]
+async fn handle_flush_msg(
+    msg: crate::services::blackboard_debouncer::BlackboardFlushMsg,
+    db: &Arc<Database>,
+    executor_registry: &Arc<ExecutorRegistry>,
+    tx: &broadcast::Sender<ExecEvent>,
+    task_manager: &Arc<TaskManager>,
+    config: &Arc<std::sync::RwLock<crate::config::Config>>,
+    refreshing_workspaces: &Arc<tokio::sync::Mutex<std::collections::HashSet<i64>>>,
+    known_workspaces: &mut Vec<i64>,
+) {
+    let ws_id = msg.workspace_id;
+
+    // 确保 workspace 在已知列表中
+    if !known_workspaces.contains(&ws_id) {
+        known_workspaces.push(ws_id);
+    }
+
+    // per-workspace 互斥：同一 workspace 同时只运行一个 worker
+    let should_spawn = {
+        let mut guard = refreshing_workspaces.lock().await;
+        if guard.contains(&ws_id) {
+            // 已有 worker 在运行：不丢弃消息也不重复 spawn。
+            // worker 内部循环会非破坏性读取队列，新到达的记录会被下一轮循环处理。
+            tracing::debug!(
+                "黑板 flush listener: workspace {} 已有 worker 运行中，依赖其内循环处理新记录",
+                ws_id
+            );
+            false
+        } else {
+            guard.insert(ws_id);
+            true
+        }
+    };
+
+    if !should_spawn {
+        return;
+    }
+
+    // 读取 per-workspace 防抖配置
+    let (debounce_secs, debounce_count) = get_workspace_debounce(db, ws_id).await;
+
+    spawn_flush_worker(
+        ws_id,
+        debounce_secs,
+        debounce_count,
+        db.clone(),
+        executor_registry.clone(),
+        tx.clone(),
+        task_manager.clone(),
+        config.clone(),
+        refreshing_workspaces.clone(),
+    );
+}
+
 /// 启动黑板 flush 监听器：
-/// - 监听 debouncer channel，收到消息后 spawn 独���任务执行 update_blackboard_wiki
+/// - 监听 debouncer channel，收到消息后 spawn 独立任务执行 update_blackboard_wiki
 /// - 每秒通过 broadcast::tx 推送一次 BlackboardDebounceStatus 事件
-/// - per-workspace 互斥：同一 workspace 同时只运行一个 wiki 更新，多余 flush 消息跳过
+/// - per-workspace 互斥：同一 workspace 同时只运行一个 wiki 更新 worker
 ///
 /// 防抖阈值（周期秒数、条数阈值）从 per-workspace 黑板配置（blackboards 表）读取，
 /// 实现工作空间隔离。
@@ -493,130 +682,26 @@ pub async fn blackboard_flush_listener(
     let mut known_workspaces: Vec<i64> = Vec::new();
 
     // per-workspace 互斥：标记哪些 workspace 正在执行 wiki 更新
-    let refreshing_workspaces = Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::<i64>::new()));
-
-    // 从 per-workspace 黑板配置中读取防��参数的 helper
-    async fn get_workspace_debounce(db: &Database, ws_id: i64) -> (i64, i64) {
-        match db.get_blackboard_config(ws_id).await {
-            Ok(Some(cfg)) => (cfg.debounce_secs, cfg.debounce_count),
-            _ => (600, 10), // 回退默认值
-        }
-    }
+    let refreshing_workspaces =
+        Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::<i64>::new()));
 
     loop {
         tokio::select! {
             // 每秒 ticker：广播所有已知 workspace 的状态
             _ = ticker.tick() => {
-                // 确保 known_workspaces 非空（首次）
-                if known_workspaces.is_empty() {
-                    if let Ok(boards) = db.get_all_blackboards().await {
-                        known_workspaces = boards.iter().map(|b| b.workspace_id).collect();
-                    }
-                }
-
-                for ws_id in &known_workspaces {
-                    let (debounce_secs, debounce_count) = get_workspace_debounce(&db, *ws_id).await;
-                    let event = build_blackboard_status(&db, *ws_id, debounce_secs, debounce_count).await;
-                    let _ = tx.send(event);
-                }
+                broadcast_ticker_status(
+                    &db, &tx, &mut known_workspaces, &refreshing_workspaces,
+                ).await;
             }
 
-            // flush 消息：spawn 独立任务执行黑板刷新，不阻塞 listener 循环
+            // flush 消息：非破坏性读取 pending 队列并派生 worker
             msg = rx.recv() => {
                 match msg {
                     Some(msg) => {
-                        let ws_id = msg.workspace_id;
-
-                        // per-workspace 互斥：同一 workspace 同时只运行一个 wiki 更新
-                        {
-                            let mut guard = refreshing_workspaces.lock().await;
-                            if guard.contains(&ws_id) {
-                                tracing::debug!("黑板 flush listener: workspace {} 正在更新中，跳过重复消息", ws_id);
-                                continue;
-                            }
-                            guard.insert(ws_id);
-                        }
-
-                        // 确保 workspace 在已知列表中
-                        if !known_workspaces.contains(&ws_id) {
-                            known_workspaces.push(ws_id);
-                        }
-
-                        // 读取该 workspace 的 per-workspace 防抖配置
-                        let (debounce_secs, debounce_count) =
-                            get_workspace_debounce(&db, ws_id).await;
-
-                        // 从 DB 取出 pending 队列（take_pending_record_ids 已清空队列）
-                        let record_ids = match db.take_pending_record_ids(ws_id).await {
-                            Ok(ids) => ids,
-                            Err(e) => {
-                                tracing::warn!("取 pending 队列失败: workspace_id={}, error={}", ws_id, e);
-                                let mut guard = refreshing_workspaces.lock().await;
-                                guard.remove(&ws_id);
-                                continue;
-                            }
-                        };
-
-                        if record_ids.is_empty() {
-                            tracing::debug!("黑板 pending 队列为空: workspace_id={}", ws_id);
-                            let mut guard = refreshing_workspaces.lock().await;
-                            guard.remove(&ws_id);
-                            continue;
-                        }
-
-                        tracing::info!(
-                            "黑板 flush listener 处理: workspace_id={}, record_ids={:?}",
-                            ws_id, record_ids
-                        );
-
-                        // spawn 独立任务执行 wiki 更新，不阻塞 listener 循环和 ticker
-                        let db2 = db.clone();
-                        let er2 = executor_registry.clone();
-                        let tx2 = tx.clone();
-                        let tm2 = task_manager.clone();
-                        let cfg2 = config.clone();
-                        let rw2 = refreshing_workspaces.clone();
-
-                        tokio::spawn(async move {
-                            // 广播 refreshing=true 状态
-                            let _ = tx2.send(ExecEvent::BlackboardDebounceStatus {
-                                workspace_id: ws_id,
-                                pending_count: 0,
-                                threshold: debounce_count as u64,
-                                debounce_secs: debounce_secs as u64,
-                                remaining_secs: -1,
-                                refreshing: true,
-                            });
-
-                            let update_result = crate::services::blackboard::update_blackboard_wiki(
-                                db2,
-                                er2,
-                                tx2.clone(),
-                                tm2,
-                                cfg2,
-                                ws_id,
-                                record_ids,
-                            )
-                            .await;
-
-                            if let Err(ref e) = update_result {
-                                tracing::warn!("黑板 update_blackboard_wiki 失败: workspace_id={}, error={:?}", ws_id, e);
-                            }
-
-                            // flush 完成，广播 refreshing=false 状态
-                            let _ = tx2.send(ExecEvent::BlackboardDebounceStatus {
-                                workspace_id: ws_id,
-                                pending_count: 0,
-                                threshold: debounce_count as u64,
-                                debounce_secs: debounce_secs as u64,
-                                remaining_secs: -1,
-                                refreshing: false,
-                            });
-
-                            // 释放 per-workspace 互斥锁
-                            let mut guard = rw2.lock().await;
-                            guard.remove(&ws_id);
-                        });
+                        handle_flush_msg(
+                            msg, &db, &executor_registry, &tx, &task_manager, &config,
+                            &refreshing_workspaces, &mut known_workspaces,
+                        ).await;
                     }
                     None => break,
                 }

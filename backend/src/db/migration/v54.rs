@@ -64,16 +64,18 @@ impl Migration for V54SplitBlackboardPrompt {
 mod tests {
     use super::*;
     use crate::db::Database;
-    use crate::db::migration::table_exists;
 
-    /// 验证 V54 迁移在全新数据库上正常执行。
-    #[tokio::test]
-    async fn test_v54_adds_wiki_prompt_columns() {
-        let db = Database::new(":memory:")
+    /// 准备 pre-V54 的 blackboards 表（含旧列 blackboard_update_prompt）。
+    ///
+    /// Database::new(":memory:") 会通过 init_tables 执行全部迁移（含 V54），
+    /// 导致 blackboards 表已是 V54 后结构。测试需要先删除已迁移的表，
+    /// 重建 pre-V54 旧表，再验证 V54 迁移本身。
+    async fn setup_pre_v54_table(db: &Database) {
+        // 删除 V54 已迁移的表（SQLite :memory: 无外键依赖风险）
+        db.exec("DROP TABLE IF EXISTS blackboards")
             .await
-            .expect(":memory: db must open");
-
-        // 先创建 blackboards 表（V54 假设表已存在）
+            .expect("drop blackboards table");
+        // 重建 pre-V54 旧表结构（含 blackboard_update_prompt，无 wiki_* 列）
         db.exec(
             "CREATE TABLE blackboards (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,14 +88,27 @@ mod tests {
                 updated_at TEXT,
                 created_at TEXT
             )"
-        ).await.expect("create blackboards table");
+        ).await.expect("create pre-V54 blackboards table");
+    }
+
+    /// 验证 V54 迁移在 pre-V54 旧表结构上正常执行。
+    #[tokio::test]
+    async fn test_v54_adds_wiki_prompt_columns() {
+        let db = Database::new(":memory:")
+            .await
+            .expect(":memory: db must open");
+        // 重建 pre-V54 旧表，模拟尚未执行 V54 的状态
+        setup_pre_v54_table(&db).await;
 
         let migration = V54SplitBlackboardPrompt;
         migration.up(&db).await.expect("V54 migration must succeed");
 
-        // 验证新列存在，旧列不存在
+        // 验证新列存在
         let result = db.exec("SELECT wiki_index_prompt, wiki_page_prompt FROM blackboards").await;
         assert!(result.is_ok(), "new columns must exist");
+        // 验证旧列已删除
+        let result = db.exec("SELECT blackboard_update_prompt FROM blackboards").await;
+        assert!(result.is_err(), "old column must not exist");
     }
 
     /// 验证 V54 迁移是幂等的。
@@ -102,20 +117,8 @@ mod tests {
         let db = Database::new(":memory:")
             .await
             .expect(":memory: db must open");
-
-        db.exec(
-            "CREATE TABLE blackboards (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                workspace_id INTEGER NOT NULL,
-                content TEXT NOT NULL DEFAULT '',
-                pending_record_ids TEXT NOT NULL DEFAULT '[]',
-                blackboard_debounce_secs INTEGER NOT NULL DEFAULT 600,
-                blackboard_debounce_count INTEGER NOT NULL DEFAULT 10,
-                blackboard_update_prompt TEXT NOT NULL DEFAULT '',
-                updated_at TEXT,
-                created_at TEXT
-            )"
-        ).await.expect("create blackboards table");
+        // 重建 pre-V54 旧表，模拟尚未执行 V54 的状态
+        setup_pre_v54_table(&db).await;
 
         let migration = V54SplitBlackboardPrompt;
         migration.up(&db).await.expect("First run must succeed");

@@ -228,6 +228,46 @@ impl Database {
         Ok(ids)
     }
 
+    /// 从 pending 队列中移除指定的 execution_record_id 列表，保留其余。
+    ///
+    /// 与 [`take_pending_record_ids`] 的"全量取出+清空"不同，本方法只删除传入的 ID，
+    /// 用于 flush listener 在 wiki 更新成功后只移除已处理的记录，保留期间新到达的记录。
+    /// 若队列中不存在指定 ID（如已被其他写入覆盖），静默跳过不报错。
+    pub async fn remove_specific_pending_record_ids(
+        &self,
+        workspace_id: i64,
+        ids_to_remove: &[i64],
+    ) -> Result<(), sea_orm::DbErr> {
+        // 读取当前队列
+        let board = blackboards::Entity::find()
+            .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
+            .one(&self.conn)
+            .await?
+            .ok_or_else(|| sea_orm::DbErr::RecordNotFound(format!(
+                "blackboard for workspace {} not found",
+                workspace_id
+            )))?;
+
+        // 解析 → 过滤 → 写回（仅当有变化时才写 DB，减少无谓 IO）
+        let mut ids: Vec<i64> = serde_json::from_str(&board.pending_record_ids)
+            .unwrap_or_default();
+        let before_len = ids.len();
+        // 用 HashSet 做高效成员判断
+        let remove_set: std::collections::HashSet<i64> = ids_to_remove.iter().copied().collect();
+        ids.retain(|id| !remove_set.contains(id));
+        if ids.len() != before_len {
+            let now = crate::models::utc_timestamp();
+            let _res = blackboards::ActiveModel {
+                id: ActiveValue::Unchanged(board.id),
+                workspace_id: ActiveValue::Unchanged(workspace_id),
+                pending_record_ids: ActiveValue::Set(serde_json::to_string(&ids).unwrap_or_default()),
+                updated_at: ActiveValue::Set(Some(now)),
+                ..Default::default()
+            }.update(&self.conn).await?;
+        }
+        Ok(())
+    }
+
     /// 获取指定工作空间的黑板配置（防抖阈值、提示词）。
     ///
     /// 记录不存在时返回 None；调用方应确保黑板记录已通过 create_blackboard 初始化。

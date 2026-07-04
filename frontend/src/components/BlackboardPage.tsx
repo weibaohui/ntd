@@ -223,9 +223,10 @@ function TodoLink(props: MarkdownLinkProps): React.ReactElement {
     );
   }
 
-  // 内部相对路径（以 / 开头，如 /?view=items&id=16&panel=post&record=6513）
+  // 内部相对路径（以 / 但非 // 开头，如 /?view=items&id=16&panel=post&record=6513）
   // → 新标签页打开，让用户同时保留当前 wiki 页面和查看源记录
-  if (href.startsWith('/')) {
+  // 排除 // 协议相对 URL，避免把外站链接当作 app 内路径
+  if (href.startsWith('/') && !href.startsWith('//')) {
     return (
       <a {...props} href={href} target="_blank" rel="noopener noreferrer">
         {props.children}
@@ -414,6 +415,14 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       console.error('获取黑板配置失败:', err);
     }
   }, [workspaceId, setConfigData]);
+
+  // workspace 切换时先清空隔离数据，避免加载失败或加载窗口期暴露上一工作空间内容
+  useEffect(() => {
+    setPages([]);
+    setCurrentPage(null);
+    setConfigData(null);
+    setCurrentSlug('index');
+  }, [workspaceId]);
 
   // 副作用：workspaceId 变化时重拉
   useEffect(() => {

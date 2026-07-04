@@ -424,10 +424,12 @@ async fn run_analyze_phase(
     }
 
     // 2. 构造分析阶段 prompt：优先使用用户配置的提示词，空则回退内置默认
+    // 区分 Err（DB 错误→返回错误）和 Ok(None)/Ok(Some(""))（未配置→回退默认）
     let prompt_template = {
         match db.get_blackboard_config(workspace_id).await {
             Ok(Some(ref cfg)) if !cfg.wiki_index_prompt.is_empty() => cfg.wiki_index_prompt.clone(),
-            _ => build_wiki_analyze_prompt(),
+            Ok(_) => build_wiki_analyze_prompt(),
+            Err(e) => return Err(AppError::Internal(format!("分析阶段：读取黑板配置失败: {:?}", e))),
         }
     };
     let ids_str = format!("{:?}", pending_record_ids);
@@ -504,10 +506,12 @@ async fn run_execute_phase(
     }
 
     // 3. 构造执行阶段 prompt：优先使用用户配置的提示词，空则回退内置默认
+    // 区分 Err（DB 错误→返回错误）和 Ok(None)/Ok(Some(""))（未配置→回退默认）
     let prompt_template = {
         match db.get_blackboard_config(workspace_id).await {
             Ok(Some(ref cfg)) if !cfg.wiki_page_prompt.is_empty() => cfg.wiki_page_prompt.clone(),
-            _ => build_wiki_execute_prompt(),
+            Ok(_) => build_wiki_execute_prompt(),
+            Err(e) => return Err(AppError::Internal(format!("执行阶段：读取黑板配置失败: {:?}", e))),
         }
     };
     let ops_json = serde_json::to_string_pretty(operations).unwrap_or_default();
@@ -670,10 +674,11 @@ pub async fn update_blackboard_wiki(
     // Phase 5: 追加 log 条目
     append_log_entry(&db, workspace_id, &pending_record_ids, &operations).await?;
 
-    // Phase 6: 清空 pending 队列
-    // 清空 pending 队列：take_pending_record_ids 会取出并清空
-    let _ = db.take_pending_record_ids(workspace_id).await.map_err(|e| {
-        AppError::Internal(format!("清空 pending 队列失败: {:?}", e))
+    // Phase 6: 移除已处理的 pending 记录（只移除本次处理的，保留期间新到达的）
+    // 注意：不使用 take_pending_record_ids（全量清空），以免丢失在 wiki 更新期间
+    // 新到达的 record_id；改为只移除本次实际处理的 ID。
+    db.remove_specific_pending_record_ids(workspace_id, &pending_record_ids).await.map_err(|e| {
+        AppError::Internal(format!("移除已处理 pending 记录失败: {:?}", e))
     })?;
 
     tracing::info!("Wiki 黑板更新完成: workspace_id={}, pages={}", workspace_id, operations.len());
