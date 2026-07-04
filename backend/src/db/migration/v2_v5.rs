@@ -688,21 +688,19 @@ async fn v5_project_directory_worktree(db: &Database) -> Result<(), sea_orm::DbE
 // v6: todos.kind 列 (issue #674: 事项 vs 环节区分)
 // ---------------------------------------------------------------------------
 
-/// v6 迁移：为 todos 表增加 `kind` 列, 区分一次性事项('item')和
-/// 可被 loop 编排复用的环节('step')。
-///
-/// 设计动机：
-/// - 一次性 todo 是「事项」，循环复用的 todo 是「环节（Agent）」；
-/// - 环路编排的节点只应引用环节，引用一次性事项会污染"循环复用"语义；
-/// - 同一张 todos 表承载两种语义, 靠 `kind` 列区分; 避免新建 steps 表的
-///   schema 迁移 + 跨表 JOIN 成本。
-///
-/// 升级策略：
-/// - 新库: v1 的 CREATE TABLE 已经包含 `kind` 列, v6 ALTER 在 v1 之后跑会
-///   触发 "duplicate column name", 与历史 add_legacy_*_columns 同样的 warn-skip 模式;
-/// - 旧库: ALTER TABLE 加列, 默认 'item'; 把被 loop_steps 引用的 todo
-///   标记为 'step', 避免环路失效;
-/// - 加 `(kind)` 索引支持按 kind 过滤。
+// v6 迁移：为 todos 表增加 `kind` 列, 区分一次性事项('item')和
+// 可被 loop 编排复用的环节('step')。
+// 设计动机：
+// - 一次性 todo 是「事项」，循环复用的 todo 是「环节（Agent）」；
+// - 环路编排的节点只应引用环节，引用一次性事项会污染"循环复用"语义；
+// - 同一张 todos 表承载两种语义, 靠 `kind` 列区分; 避免新建 steps 表的
+//   schema 迁移 + 跨表 JOIN 成本。
+// 升级策略：
+// - 新库: v1 的 CREATE TABLE 已经包含 `kind` 列, v6 ALTER 在 v1 之后跑会
+//   触发 "duplicate column name", 与历史 add_legacy_*_columns 同样的 warn-skip 模式;
+// - 旧库: ALTER TABLE 加列, 默认 'item'; 把被 loop_steps 引用的 todo
+//   标记为 'step', 避免环路失效;
+// - 加 `(kind)` 索引支持按 kind 过滤。
 
 #[cfg(test)]
 mod v15_review_templates_tests {
@@ -975,16 +973,15 @@ mod v16_loop_step_execution_snapshot_columns_tests {
     //! 1) auto-migrate 跑到 V16 时必须给 loop_step_executions 补齐这三列；
     //! 2) 已跑过 V16 的实例再跑一次 up() 必须幂等（不报 duplicate column）。
 
-    use super::*;
     use crate::db::Database;
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    use crate::db::migration::table_has_column as migration_table_has_column;
 
     async fn fresh_db() -> Database {
         Database::new(":memory:").await.expect("memory db must open")
     }
 
     async fn table_has_column(db: &Database, table: &str, column: &str) -> bool {
-        super::table_has_column(db, table, column).await.unwrap_or(false)
+        migration_table_has_column(db, table, column).await.unwrap_or(false)
     }
 
     /// 场景 1：auto-migrate 跑到 V16（含）后，
@@ -1256,8 +1253,8 @@ pub async fn drop_column_if_exists(
 // - 普通事项执行完成后不再触发自动评审（由 completion.rs:maybe_run_auto_review 兜底）
 // - Loop 环节的评分闸门评审完全不受影响（apply_rating_gate 不读该字段）
 // - 飞书创建的事项也走相同的默认值逻辑，不受影响
-/// v40: 删除 feishu_messages.processed_todo_id 列（用 processed_id 代替）。
-/// processed_id + processed_type 已能完整表达处理信息，去除冗余列。
+// v40: 删除 feishu_messages.processed_todo_id 列（用 processed_id 代替）。
+// processed_id + processed_type 已能完整表达处理信息，去除冗余列。
 // =============================================================================
 // 合并迁移 V41~V43
 //
@@ -1340,7 +1337,7 @@ async fn v15_review_templates(db: &Database) -> Result<(), sea_orm::DbErr> {
     ))
     .await?;
 
-    if table_has_column(db, "loop_steps", "todo_id").await? {
+    if crate::db::migration::table_has_column(db, "loop_steps", "todo_id").await? {
         db.exec("DELETE FROM loop_steps WHERE todo_id IN (SELECT id FROM todos WHERE todo_type = 1)")
             .await?;
     } else {
@@ -1350,7 +1347,7 @@ async fn v15_review_templates(db: &Database) -> Result<(), sea_orm::DbErr> {
     db.exec("DELETE FROM loop_hooks WHERE target_todo_id IN (SELECT id FROM todos WHERE todo_type = 1)")
         .await?;
     db.exec("DELETE FROM todos WHERE todo_type = 1").await?;
-    add_column_warn(db, "ALTER TABLE todos ADD COLUMN review_template_id INTEGER").await;
+    crate::db::migration::add_column_warn(db, "ALTER TABLE todos ADD COLUMN review_template_id INTEGER").await;
     db.exec("CREATE INDEX IF NOT EXISTS idx_todos_review_template_id ON todos(review_template_id)")
         .await?;
 
@@ -1384,4 +1381,3 @@ async fn consolidate_review_instance_todos(db: &Database) -> Result<(), sea_orm:
         .await?;
     Ok(())
 }
-
