@@ -19,20 +19,20 @@ export function normalizeBlackboardMarkdown(content: string): string {
     return content;
   }
   // 匹配开头的 fenced code block：```markdown, ```md, 或纯 ```
-  const startMarker = trimmed
-    .startsWith('```markdown')
-      ? trimmed.slice(11)
-    : trimmed.startsWith('```md')
-      ? trimmed.slice(7)
-      : trimmed.startsWith('```')
-        ? trimmed.slice(3)
-        : null;
-  if (startMarker === undefined || startMarker === null) {
+  let inner: string | null = null;
+  if (trimmed.startsWith('```markdown')) {
+    inner = trimmed.slice(11);
+  } else if (trimmed.startsWith('```md')) {
+    inner = trimmed.slice(5);
+  } else if (trimmed.startsWith('```')) {
+    inner = trimmed.slice(3);
+  }
+  if (inner === null) {
     // 不是以 ``` 开头，原样返回
     return content;
   }
   // 跳过开头的换行
-  const inner = startMarker.replace(/^\n+/, '');
+  inner = inner.replace(/^\n+/, '');
   // 检查末尾是否有匹配的 ```
   if (!(inner.endsWith('\n```') || inner === '```')) {
     // 末尾没有 ```，说明不是完整的外层包裹，原样返回
