@@ -903,6 +903,8 @@ fn status_icon(status: &str) -> &'static str {
 ///
 /// 渲染失败（字段缺失或类型错误）时降级输出原始 JSON + 错误提示，
 /// 而不是让 CLI 崩溃——黑板视图是辅助功能，不能阻塞主流程。
+// 保留为单元测试的稳定 stdout 入口；生产 dispatch 已直接走 render_blackboard_to 路径。
+#[allow(dead_code)]
 fn render_blackboard(data: Option<&Value>) {
     let mut buf: Vec<u8> = Vec::new();
     render_blackboard_to(data, &mut buf);
@@ -911,9 +913,6 @@ fn render_blackboard(data: Option<&Value>) {
     use std::io::Write;
     let _ = std::io::stdout().write_all(&buf);
 }
-
-// 保留为单元测试的稳定 stdout 入口；生产 dispatch 已直接走 render_blackboard_to 路径。
-#[allow(dead_code)]
 
 /// 把黑板渲染到任意 `Write` 目标，单元测试和集成测试用 `Vec<u8>` 抓取输出做断言。
 /// 所有 println! 在这里都改成 writeln!，避免分散在 helper 里写死 stdout。
@@ -950,7 +949,6 @@ pub fn render_blackboard_to<W: std::io::Write>(data: Option<&Value>, w: &mut W) 
 /// 渲染黑板头部：循环名、触发信息、状态、时间。
 /// 字段全部缺失时降级为占位符，不影响主流程。
 fn write_blackboard_header<W: std::io::Write>(data: &Value, w: &mut W) {
-    use std::io::Write;
     let exec_id = data.get("id").and_then(Value::as_i64).unwrap_or(0);
     let loop_name = data.get("loop_name").and_then(Value::as_str).unwrap_or("?");
     let trigger_meta = data.get("trigger_meta").and_then(Value::as_str).unwrap_or("");
@@ -986,7 +984,6 @@ fn write_blackboard_header<W: std::io::Write>(data: &Value, w: &mut W) {
 /// 渲染黑板尾部：步骤总数 + Token 汇总（如果有）。
 /// Token 汇总来自 LoopExecutionDetail.token_summary，与 step_executions 平级。
 fn write_blackboard_footer<W: std::io::Write>(data: &Value, step_count: usize, w: &mut W) {
-    use std::io::Write;
     if let Some(ts) = data.get("token_summary") {
         let ti = ts.get("total_input_tokens").and_then(Value::as_i64).unwrap_or(0);
         let to = ts.get("total_output_tokens").and_then(Value::as_i64).unwrap_or(0);
@@ -999,7 +996,6 @@ fn write_blackboard_footer<W: std::io::Write>(data: &Value, step_count: usize, w
 /// 渲染单个 step 块（标题行 + exec id + 多行结论）。
 /// 字段名与 `LoopStepExecutionDto` 一致（见 `backend/src/models/loop_.rs`）。
 fn write_blackboard_step<W: std::io::Write>(step: &Value, w: &mut W) {
-    use std::io::Write;
     let header = format_step_header(step);
     let _ = writeln!(w, "  {header}");
     let exec_id = step
@@ -1043,7 +1039,6 @@ fn format_step_header(step: &Value) -> String {
 /// 写 step 正文：结论 / 错误 / 待审批意见。
 /// 优先级：pending_approval 的 approval_comment > error_message > conclusion > (无结论)。
 fn write_step_body<W: std::io::Write>(step: &Value, w: &mut W) {
-    use std::io::Write;
     let status = step.get("status").and_then(Value::as_str).unwrap_or("unknown");
     if status == "pending_approval" {
         if let Some(comment) = step.get("approval_comment").and_then(Value::as_str) {

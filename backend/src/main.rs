@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use tokio::sync::broadcast;
 use tracing::info;
 
@@ -250,9 +250,10 @@ async fn main() {
             return;
         }
         None => {
-            // No subcommand: start server by default
-            println!("Starting ntd server...");
-            run_server(None).await;
+            // No subcommand: print help instead of starting server
+            let mut cmd = Cli::command();
+            let _ = cmd.print_help();
+            println!();
         }
     }
 }
