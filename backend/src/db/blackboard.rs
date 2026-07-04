@@ -526,7 +526,8 @@ mod tests {
     #[tokio::test]
     async fn test_update_blackboard_config_record_not_found() {
         let db = Database::new(":memory:").await.expect(":memory: must open");
-        let result = db.update_blackboard_config(999, Some(300), None, None).await;
+        // 第 5 个参数 wiki_page_prompt 传 None，不参与此次测试验证
+        let result = db.update_blackboard_config(999, Some(300), None, None, None).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             sea_orm::DbErr::RecordNotFound(_) => {}
@@ -542,14 +543,14 @@ mod tests {
         db.create_blackboard(ws_id).await.unwrap();
 
         // 传入小于最小值的 debounce_secs，应被钳制到 10
-        db.update_blackboard_config(ws_id, Some(3), None, None)
+        db.update_blackboard_config(ws_id, Some(3), None, None, None)
             .await
             .unwrap();
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
         assert_eq!(cfg.debounce_secs, 10);
 
         // 传入小于最小值的 debounce_count，应被钳制到 1
-        db.update_blackboard_config(ws_id, None, Some(0), None)
+        db.update_blackboard_config(ws_id, None, Some(0), None, None)
             .await
             .unwrap();
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();

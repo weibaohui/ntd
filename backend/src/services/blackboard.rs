@@ -571,7 +571,11 @@ fn extract_json_from_output(raw: &str) -> Result<serde_json::Value, AppError> {
             }
         }
     }
-    Err(AppError::Internal(format!("无法解析 LLM 输出为 JSON: {:?}", &trimmed[..trimmed.len().min(200)])))
+    // 按字符截断前 200 字，避免按字节切片在多字节字符（如中文）边界处 panic
+    Err(AppError::Internal(format!(
+        "无法解析 LLM 输出为 JSON: {:?}",
+        trimmed.chars().take(200).collect::<String>()
+    )))
 }
 
 /// Wiki 模式：更新黑板（两次 LLM 调用 + index/log 自动生成）。
@@ -633,9 +637,19 @@ pub async fn update_blackboard_wiki(
             .map(|arr| arr.iter().filter_map(|v| v.as_i64()).collect())
             .unwrap_or_default();
 
-        let content = page_contents.get(slug)
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AppError::Internal(format!("执行阶段未产出页面 {:?} 的内容", slug)))?;
+        // 若 LLM 未产出某个页面的内容，记录 warn 并跳过，不中止整个循环
+        // 避免因单个页面缺失导致已 upsert 的 topic 与 index/log 不一致
+        let content = match page_contents.get(slug).and_then(|v| v.as_str()) {
+            Some(c) => c,
+            None => {
+                tracing::warn!(
+                    "执行阶段未产出页面 {:?} 的内容，跳过该页面: workspace_id={}",
+                    slug,
+                    workspace_id
+                );
+                continue;
+            }
+        };
 
         db.upsert_blackboard_page(
             workspace_id,

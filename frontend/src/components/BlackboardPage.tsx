@@ -284,7 +284,8 @@ async function fetchBlackboardPages(workspaceId: number): Promise<BlackboardPage
 
 /** 拉取单个页面详情（Wiki 化） */
 async function fetchBlackboardPageDetail(workspaceId: number, slug: string): Promise<BlackboardPageDetail> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/blackboard/pages/${slug}`);
+  // 对 slug 做 URL 编码，避免空格、/ 或中文字符破坏请求路径
+  const res = await fetch(`/api/workspaces/${workspaceId}/blackboard/pages/${encodeURIComponent(slug)}`);
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}`);
   }
@@ -380,18 +381,15 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       setPagesLoading(true);
       const list = await fetchBlackboardPages(workspaceId);
       setPages(list);
-      // 如果当前选中的页面不存在，默认跳到 index
-      const slugs = list.map(p => p.slug);
-      if (!slugs.includes(currentSlug)) {
-        setCurrentSlug('index');
-      }
+      // 用函数式更新读取最新 currentSlug，避免将其放入依赖数组而每次切页重拉列表
+      setCurrentSlug(prev => (list.some(p => p.slug === prev) ? prev : 'index'));
     } catch (err) {
       console.error('获取页面列表失败:', err);
       message.error('获取页面列表失败');
     } finally {
       setPagesLoading(false);
     }
-  }, [workspaceId, currentSlug]);
+  }, [workspaceId]);
 
   // 拉取当前页面详情
   const fetchCurrentPage = useCallback(async () => {

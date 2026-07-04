@@ -24,17 +24,24 @@ pub const PAGE_TYPE_LOG: &str = "log";
 impl Database {
     /// 获取指定工作空间的所有页面，按 page_type 和 updated_at 排序。
     ///
-    /// 排序规则：index 最前，topic 按 updated_at 倒序，log 最后。
+    /// 排序规则：index 最前 → topic 中间 → log 最后，
+    /// 同类型内按 updated_at 倒序，最新更新的在前。
     /// 返回 Vec<Model>，空 workspace 返回空向量。
     pub async fn list_blackboard_pages(
         &self,
         workspace_id: i64,
     ) -> Result<Vec<blackboard_pages::Model>, sea_orm::DbErr> {
-        // 按 page_type 字母序排列恰好是 index < log < topic，
-        // 但前端需要 topic 在前，所以用 Order::Desc 让最新的在前
+        // 用 CASE WHEN 显式控制 page_type 排序值：index=0, topic=1, log=2
+        // 避免依赖字母序（index < log < topic）导致 log 排在 topic 前面
+        // 同类型页面按 UpdatedAt 降序，最近更新的排在前面
         blackboard_pages::Entity::find()
             .filter(blackboard_pages::Column::WorkspaceId.eq(workspace_id))
-            .order_by(blackboard_pages::Column::PageType, Order::Asc)
+            .order_by(
+                sea_orm::sea_query::Expr::cust(
+                    "CASE page_type WHEN 'index' THEN 0 WHEN 'topic' THEN 1 WHEN 'log' THEN 2 ELSE 3 END"
+                ),
+                Order::Asc,
+            )
             .order_by(blackboard_pages::Column::UpdatedAt, Order::Desc)
             .all(&self.conn)
             .await

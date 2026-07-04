@@ -135,7 +135,7 @@ pub struct Model {
 
 ### 4.2 两次 LLM 调用流程
 
-```
+```text
 触发：debounce 到期，pending_record_ids 非空
 
 ┌─ 第一次调用（分析阶段）─────────────────────────────┐
@@ -274,7 +274,7 @@ ntd todo execution get <id>
 
 从单页滚动改为 **左侧目录 + 右侧内容** 的 Wiki 风格：
 
-```
+```text
 ┌──────────────┬──────────────────────────────────┐
 │ 📑 目录       │ # 认证模块                        │
 │              │                                   │
@@ -311,7 +311,7 @@ ntd todo execution get <id>
 
 ### 7.1 获取所有页面列表
 
-```
+```http
 GET /api/workspaces/{workspace_id}/blackboard/pages
 ```
 
@@ -333,7 +333,7 @@ GET /api/workspaces/{workspace_id}/blackboard/pages
 
 ### 7.2 获取单个页面内容
 
-```
+```http
 GET /api/workspaces/{workspace_id}/blackboard/pages/{slug}
 ```
 
@@ -355,7 +355,7 @@ GET /api/workspaces/{workspace_id}/blackboard/pages/{slug}
 
 ### 7.3 保留现有 API
 
-```
+```text
 GET  /api/workspaces/{workspace_id}/blackboard          → 获取元信息（配置）
 GET  /api/workspaces/{workspace_id}/blackboard/config   → 获取配置
 PATCH /api/workspaces/{workspace_id}/blackboard         → 更新配置
