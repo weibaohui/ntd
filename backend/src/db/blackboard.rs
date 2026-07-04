@@ -56,7 +56,6 @@ impl Database {
             blackboard_debounce_count: ActiveValue::Set(10),
             // 空字符串表示使用内置默认提示词模板
             blackboard_update_prompt: ActiveValue::Set(String::new()),
-            blackboard_refresh_prompt: ActiveValue::Set(String::new()),
             updated_at: ActiveValue::Set(Some(now.clone())),
             created_at: ActiveValue::Set(Some(now)),
             ..Default::default()
@@ -140,7 +139,6 @@ impl Database {
             blackboard_debounce_secs: ActiveValue::Set(600),
             blackboard_debounce_count: ActiveValue::Set(10),
             blackboard_update_prompt: ActiveValue::Set(String::new()),
-            blackboard_refresh_prompt: ActiveValue::Set(String::new()),
             ..Default::default()
         };
         // ON CONFLICT(workspace_id)：命中后只覆盖 content/updated_at，保留 created_at 和配置字段
@@ -244,7 +242,6 @@ impl Database {
             debounce_secs: b.blackboard_debounce_secs,
             debounce_count: b.blackboard_debounce_count,
             update_prompt: b.blackboard_update_prompt,
-            refresh_prompt: b.blackboard_refresh_prompt,
         }))
     }
 
@@ -258,7 +255,6 @@ impl Database {
         debounce_secs: Option<i64>,
         debounce_count: Option<i64>,
         update_prompt: Option<String>,
-        refresh_prompt: Option<String>,
     ) -> Result<(), sea_orm::DbErr> {
         let board = blackboards::Entity::find()
             .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
@@ -286,21 +282,17 @@ impl Database {
         if let Some(v) = update_prompt {
             am.blackboard_update_prompt = ActiveValue::Set(v);
         }
-        if let Some(v) = refresh_prompt {
-            am.blackboard_refresh_prompt = ActiveValue::Set(v);
-        }
         am.update(&self.conn).await?;
         Ok(())
     }
 }
 
-/// 黑板 per-workspace 配置数据结构，对应 blackboards 表的四个配置列。
+/// 黑板 per-workspace 配置数据结构，对应 blackboards 表的三个配置列。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BlackboardConfig {
     pub debounce_secs: i64,
     pub debounce_count: i64,
     pub update_prompt: String,
-    pub refresh_prompt: String,
 }
 
 #[cfg(test)]
@@ -343,7 +335,6 @@ mod tests {
         assert_eq!(board.blackboard_debounce_secs, 600);
         assert_eq!(board.blackboard_debounce_count, 10);
         assert_eq!(board.blackboard_update_prompt, "");
-        assert_eq!(board.blackboard_refresh_prompt, "");
 
         // 验证可通过 get 查到
         let fetched = db.get_blackboard(ws_id).await.unwrap();
@@ -475,7 +466,6 @@ mod tests {
         assert_eq!(cfg.debounce_secs, 600);
         assert_eq!(cfg.debounce_count, 10);
         assert_eq!(cfg.update_prompt, "");
-        assert_eq!(cfg.refresh_prompt, "");
     }
 
     /// 验证 update_blackboard_config 正确更新各字段。
@@ -485,7 +475,7 @@ mod tests {
         let ws_id = create_test_workspace(&db).await;
         db.create_blackboard(ws_id).await.unwrap();
 
-        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("custom".to_string()), Some("refresh".to_string()))
+        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("custom".to_string()))
             .await
             .unwrap();
 
@@ -493,7 +483,6 @@ mod tests {
         assert_eq!(cfg.debounce_secs, 300);
         assert_eq!(cfg.debounce_count, 5);
         assert_eq!(cfg.update_prompt, "custom");
-        assert_eq!(cfg.refresh_prompt, "refresh");
     }
 
     /// 验证 update_blackboard_config 对 None 字段保持原值。
@@ -504,12 +493,12 @@ mod tests {
         db.create_blackboard(ws_id).await.unwrap();
 
         // 先全部更新
-        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("custom".to_string()), Some("refresh".to_string()))
+        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("custom".to_string()))
             .await
             .unwrap();
 
         // 再只更新其中两个
-        db.update_blackboard_config(ws_id, Some(900), None, None, None)
+        db.update_blackboard_config(ws_id, Some(900), None, None)
             .await
             .unwrap();
 
@@ -517,14 +506,13 @@ mod tests {
         assert_eq!(cfg.debounce_secs, 900);
         assert_eq!(cfg.debounce_count, 5, "debounce_count 应保留之前的值");
         assert_eq!(cfg.update_prompt, "custom", "update_prompt 应保留之前的值");
-        assert_eq!(cfg.refresh_prompt, "refresh", "refresh_prompt 应保留之前的值");
     }
 
     /// 验证 update_blackboard_config 在记录不存在时返回 RecordNotFound。
     #[tokio::test]
     async fn test_update_blackboard_config_record_not_found() {
         let db = Database::new(":memory:").await.expect(":memory: must open");
-        let result = db.update_blackboard_config(999, Some(300), None, None, None).await;
+        let result = db.update_blackboard_config(999, Some(300), None, None).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             sea_orm::DbErr::RecordNotFound(_) => {}
@@ -540,14 +528,14 @@ mod tests {
         db.create_blackboard(ws_id).await.unwrap();
 
         // 传入小于最小值的 debounce_secs，应被钳制到 10
-        db.update_blackboard_config(ws_id, Some(3), None, None, None)
+        db.update_blackboard_config(ws_id, Some(3), None, None)
             .await
             .unwrap();
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
         assert_eq!(cfg.debounce_secs, 10);
 
         // 传入小于最小值的 debounce_count，应被钳制到 1
-        db.update_blackboard_config(ws_id, None, Some(0), None, None)
+        db.update_blackboard_config(ws_id, None, Some(0), None)
             .await
             .unwrap();
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();

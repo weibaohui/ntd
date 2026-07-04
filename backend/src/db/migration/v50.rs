@@ -4,10 +4,9 @@
 //! 导致所有工作空间共享同一份配置，无法按工作空间独立定制。
 //!
 //! 新增字段（均有默认值，迁移前已存在的记录自动获得初始值）：
-//! - blackboard_debounce_secs: u64，默认 600
-//! - blackboard_debounce_count: u64，默认 10
+//! - blackboard_debounce_secs: i64，默认 600
+//! - blackboard_debounce_count: i64，默认 10
 //! - blackboard_update_prompt: TEXT，空字符串（表示使用内置默认）
-//! - blackboard_refresh_prompt: TEXT，空字符串（表示使用内置默认）
 //!
 //! 数据兼容性：已有记录这些字段自动获得默认值，不影响现有逻辑。
 
@@ -46,12 +45,6 @@ impl Migration for V50AddBlackboardWorkspaceConfig {
             db.exec("ALTER TABLE blackboards ADD COLUMN blackboard_update_prompt TEXT NOT NULL DEFAULT ''")
                 .await?;
             tracing::info!("V50: blackboards.blackboard_update_prompt 字段已添加");
-        }
-        // 4. blackboard_refresh_prompt: TEXT NOT NULL DEFAULT ''
-        if !super::table_has_column(db, "blackboards", "blackboard_refresh_prompt").await? {
-            db.exec("ALTER TABLE blackboards ADD COLUMN blackboard_refresh_prompt TEXT NOT NULL DEFAULT ''")
-                .await?;
-            tracing::info!("V50: blackboards.blackboard_refresh_prompt 字段已添加");
         }
         Ok(())
     }

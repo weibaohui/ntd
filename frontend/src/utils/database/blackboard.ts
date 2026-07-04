@@ -7,7 +7,6 @@ export async function updateBlackboardConfig(
     blackboard_debounce_secs?: number;
     blackboard_debounce_count?: number;
     blackboard_update_prompt?: string;
-    blackboard_refresh_prompt?: string;
   },
 ): Promise<void> {
   await api.patch(`/api/workspaces/${workspaceId}/blackboard`, config);

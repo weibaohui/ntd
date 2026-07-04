@@ -37,8 +37,6 @@ interface BlackboardData {
   blackboard_debounce_count: number;
   /** 黑板更新提示词模板（空字符串表示使用内置默认）*/
   blackboard_update_prompt: string;
-  /** 黑板刷新提示词模板（空字符串表示使用内置默认）*/
-  blackboard_refresh_prompt: string;
 }
 
 /** ntd://todo/{id} 协议的前缀，用于解析 LLM 注入的内部链接 */

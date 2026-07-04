@@ -28,10 +28,6 @@ pub struct Model {
     /// 空字符串表示使用内置默认模板。
     #[sea_orm(column_type = "Text")]
     pub blackboard_update_prompt: String,
-    /// 黑板刷新提示词模板（仅包含占位符 {{current}}）。
-    /// 空字符串表示使用内置默认模板。
-    #[sea_orm(column_type = "Text")]
-    pub blackboard_refresh_prompt: String,
     pub updated_at: Option<String>,
     pub created_at: Option<String>,
 }

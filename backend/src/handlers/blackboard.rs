@@ -27,8 +27,6 @@ pub struct BlackboardResponse {
     pub blackboard_debounce_count: i64,
     /// 黑板更新提示词模板（空字符串表示使用内置默认）
     pub blackboard_update_prompt: String,
-    /// 黑板刷新提示词模板（空字符串表示使用内置默认）
-    pub blackboard_refresh_prompt: String,
 }
 
 /// 更新黑板配置的请求体（所有字段可选，None 保持原值不变）。
@@ -37,7 +35,6 @@ pub struct UpdateBlackboardConfigRequest {
     pub blackboard_debounce_secs: Option<i64>,
     pub blackboard_debounce_count: Option<i64>,
     pub blackboard_update_prompt: Option<String>,
-    pub blackboard_refresh_prompt: Option<String>,
 }
 
 /// `GET /api/workspaces/{workspace_id}/blackboard`
@@ -61,7 +58,6 @@ pub async fn get_blackboard(
             blackboard_debounce_secs: model.blackboard_debounce_secs,
             blackboard_debounce_count: model.blackboard_debounce_count,
             blackboard_update_prompt: model.blackboard_update_prompt,
-            blackboard_refresh_prompt: model.blackboard_refresh_prompt,
         })),
         None => Ok(ApiResponse::ok(BlackboardResponse {
             id: 0,
@@ -72,7 +68,6 @@ pub async fn get_blackboard(
             blackboard_debounce_secs: 600,
             blackboard_debounce_count: 10,
             blackboard_update_prompt: String::new(),
-            blackboard_refresh_prompt: String::new(),
         })),
     }
 }
@@ -98,7 +93,6 @@ pub async fn get_blackboard_config(
             debounce_secs: 600,
             debounce_count: 10,
             update_prompt: String::new(),
-            refresh_prompt: String::new(),
         })),
     }
 }
@@ -121,7 +115,6 @@ pub async fn update_blackboard_config(
         req.blackboard_debounce_secs,
         req.blackboard_debounce_count,
         req.blackboard_update_prompt,
-        req.blackboard_refresh_prompt,
     ).await.map_err(|e| AppError::Internal(format!("更新黑板配置失败: {}", e)))?;
     let cfg = state.db.get_blackboard_config(workspace_id).await.map_err(|e| {
         AppError::Internal(format!("更新后查询黑板配置失败: {}", e))
@@ -218,7 +211,6 @@ mod tests {
             blackboard_debounce_secs: 600,
             blackboard_debounce_count: 10,
             blackboard_update_prompt: "custom prompt".to_string(),
-            blackboard_refresh_prompt: "refresh prompt".to_string(),
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["id"], 7);
@@ -239,7 +231,6 @@ mod tests {
             blackboard_debounce_secs: 600,
             blackboard_debounce_count: 10,
             blackboard_update_prompt: String::new(),
-            blackboard_refresh_prompt: String::new(),
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["id"], 0);
@@ -296,7 +287,6 @@ mod tests {
             blackboard_debounce_secs: board.blackboard_debounce_secs,
             blackboard_debounce_count: board.blackboard_debounce_count,
             blackboard_update_prompt: board.blackboard_update_prompt,
-            blackboard_refresh_prompt: board.blackboard_refresh_prompt,
         });
         let json = serde_json::to_value(&resp).unwrap();
         // ApiResponse 包装格式：{"data": {...}}
