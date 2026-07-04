@@ -14,11 +14,12 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space } from 'antd';
+import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress } from 'antd';
 import { ReloadOutlined, SettingOutlined } from '@ant-design/icons';
 import { XMarkdown } from '@ant-design/x-markdown';
 import { useTheme } from '@/hooks/useTheme';
 import { useViewState } from '@/hooks/useViewState';
+import type { BlackboardDebounceStatus } from '@/hooks/useExecutionEvents';
 import * as db from '@/utils/database';
 
 const { Title } = Typography;
@@ -141,9 +142,8 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const [debounceSecs, setDebounceSecs] = useState<number>(600);
   const [debounceCount, setDebounceCount] = useState<number>(10);
 
-  // 打开设置弹窗：先拉取最新 config
+  // 打开设置弹窗：先拉取最新 config，等拉完再打开 modal，避免默认值闪烁
   const handleOpenSettings = useCallback(async () => {
-    setSettingsOpen(true);
     try {
       const cfg = await db.getConfig();
       setDebounceSecs(cfg.blackboard_debounce_secs ?? 600);
@@ -152,6 +152,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       setDebounceSecs(600);
       setDebounceCount(10);
     }
+    setSettingsOpen(true);
   }, []);
 
   // 保存设置
@@ -197,6 +198,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         isDark={isDark}
         onRefresh={handleRefresh}
         onOpenSettings={handleOpenSettings}
+        workspaceId={workspaceId}
       />
       <BlackboardBody isDark={isDark} data={data} />
 
@@ -250,9 +252,10 @@ interface BlackboardHeaderProps {
   isDark: boolean;
   onRefresh: () => void;
   onOpenSettings: () => void;
+  workspaceId: number;
 }
 
-/** 顶部标题栏：标题 + 刷新按钮 + 设置按钮 */
+/** 顶部标题栏：标题 + 倒计时进度条 + 刷新按钮 + 设置按钮 */
 function BlackboardHeader(props: BlackboardHeaderProps) {
   return (
     <div
@@ -261,11 +264,14 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
         alignItems: 'center',
         justifyContent: 'space-between',
         marginBottom: 16,
+        gap: 12,
       }}
     >
-      <Title level={4} style={{ margin: 0 }}>
+      <Title level={4} style={{ margin: 0, flexShrink: 0 }}>
         黑板
       </Title>
+      {/* 双进度条倒计时（自动监听 WebSocket 事件） */}
+      <BlackboardDebounceBar workspaceId={props.workspaceId} />
       <Space.Compact>
         <Button
           icon={<SettingOutlined />}
@@ -280,6 +286,126 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
           刷新
         </Button>
       </Space.Compact>
+    </div>
+  );
+}
+
+// ─── 黑板倒计时进度条 ───────────────────────────────────────────
+
+interface BlackboardDebounceBarProps {
+  /** 当前工作空间 ID，用于过滤事件 */
+  workspaceId: number;
+  /** 刷新状态回调（正在刷新时禁用手动刷新按钮） */
+  onRefreshing?: (v: boolean) => void;
+}
+
+/**
+ * 黑板防抖倒计时双进度条组件。
+ *
+ * 监听 blackboardDebounceStatus WebSocket 事件，渲染：
+ * - 时间进度条（蓝色/绿色）
+ * - 条数进度条（蓝色/绿色）
+ * - 点击整体弹出详情，同时显示时间和条数数据
+ */
+function BlackboardDebounceBar({ workspaceId }: BlackboardDebounceBarProps) {
+  const [status, setStatus] = useState<BlackboardDebounceStatus | null>(null);
+  const [showDetail, setShowDetail] = useState(false);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const s = (e as CustomEvent<BlackboardDebounceStatus>).detail;
+      if (s.workspace_id !== workspaceId) return;
+      setStatus(s);
+    };
+    window.addEventListener('blackboardDebounceStatus', handler);
+    return () => window.removeEventListener('blackboardDebounceStatus', handler);
+  }, [workspaceId]);
+
+  if (!status) return null;
+
+  const { pending_count, threshold, debounce_secs, remaining_secs, refreshing } = status;
+  const isThresholdMet = pending_count >= threshold;
+  const hasTimer = remaining_secs >= 0;
+
+  // 时间进度（整数，已过时间正向累加，0% → 100%）
+  const elapsed = hasTimer ? debounce_secs - remaining_secs : 0;
+  const timePercent = hasTimer
+    ? Math.floor(Math.min(100, (elapsed / debounce_secs) * 100))
+    : 0;
+  const timeColor = isThresholdMet || refreshing ? '#52c41a' : '#2080f0';
+
+  // 条数进度（整数）
+  const countPercent = threshold > 0
+    ? Math.floor(Math.min(100, (pending_count / threshold) * 100))
+    : 0;
+  const countColor = isThresholdMet || refreshing ? '#52c41a' : '#2080f0';
+
+  // hasTimer=false 时区分：pending>0 表示数据已入队等待刷新，否则才是真正的等待中
+  const timeLabel = hasTimer
+    ? `${elapsed}s / ${debounce_secs}s`
+    : pending_count > 0
+      ? '等待刷新'
+      : '等待中';
+  const countLabel = `${pending_count} / ${threshold} 条`;
+
+  return (
+    <div style={{ position: 'relative', flex: 1, marginRight: 16 }}>
+      {/* 整个组件可点击，弹出详情 */}
+      <div
+        style={{ cursor: 'pointer' }}
+        onClick={() => setShowDetail(v => !v)}
+      >
+        <div style={{ marginBottom: 6 }}>
+          <Progress
+            percent={timePercent}
+            size="small"
+            strokeColor={timeColor}
+            trailColor="rgba(0,0,0,0.06)"
+            status={refreshing ? 'active' : 'normal'}
+          />
+        </div>
+        <div>
+          <Progress
+            percent={countPercent}
+            size="small"
+            strokeColor={countColor}
+            trailColor="rgba(0,0,0,0.06)"
+            status={refreshing ? 'active' : 'normal'}
+          />
+        </div>
+      </div>
+
+      {/* 点击弹出的详情气泡 */}
+      {showDetail && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '100%',
+            right: 0,
+            marginTop: 4,
+            background: '#fff',
+            border: '1px solid #ddd',
+            borderRadius: 6,
+            padding: '8px 12px',
+            fontSize: 12,
+            color: '#444',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            zIndex: 100,
+            whiteSpace: 'nowrap',
+          }}
+          onClick={() => setShowDetail(false)}
+        >
+          <div style={{ marginBottom: 4 }}>
+            ⏱ 时间: <b>{timeLabel}</b>
+          </div>
+          <div style={{ marginBottom: refreshing ? 4 : 0 }}>
+            📊 条数: <b>{countLabel}</b>
+          </div>
+          {refreshing && (
+            <div style={{ color: '#52c41a' }}>刷新中...</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

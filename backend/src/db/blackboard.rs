@@ -25,6 +25,11 @@ impl Database {
             .await
     }
 
+    /// 返回所有黑板记录（供 flush listener 广播状态用）。
+    pub async fn get_all_blackboards(&self) -> Result<Vec<blackboards::Model>, sea_orm::DbErr> {
+        blackboards::Entity::find().all(&self.conn).await
+    }
+
     /// 为指定工作空间创建一条空的黑板记录。
     ///
     /// 幂等实现：使用 `ON CONFLICT(workspace_id) DO NOTHING` + 重新查询，
@@ -159,9 +164,10 @@ impl Database {
         ids.push(todo_id);
         let ids_json = serde_json::to_string(&ids).unwrap_or_default();
 
-        // 写回
+        // 写回：必须用 Unchanged 设置主键，sea-orm 的 update() 要求主键必须存在
         let now = crate::models::utc_timestamp();
-        let res = blackboards::ActiveModel {
+        let _res = blackboards::ActiveModel {
+            id: ActiveValue::Unchanged(board.id),
             workspace_id: ActiveValue::Unchanged(workspace_id),
             pending_todo_ids: ActiveValue::Set(ids_json),
             updated_at: ActiveValue::Set(Some(now)),
@@ -191,10 +197,11 @@ impl Database {
         let ids: Vec<i64> = serde_json::from_str(&board.pending_todo_ids)
             .unwrap_or_default();
 
-        // 清空队列（非空才写，减少 DB 写入）
+        // 清空队列（非空才写，减少 DB 写入）；主键必须设置
         if !ids.is_empty() {
             let now = crate::models::utc_timestamp();
-            let res = blackboards::ActiveModel {
+            let _res = blackboards::ActiveModel {
+                id: ActiveValue::Unchanged(board.id),
                 workspace_id: ActiveValue::Unchanged(workspace_id),
                 pending_todo_ids: ActiveValue::Set("[]".to_string()),
                 updated_at: ActiveValue::Set(Some(now)),

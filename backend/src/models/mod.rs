@@ -792,6 +792,10 @@ pub struct UpdateConfigRequest {
     /// 黑板刷新提示词模板（仅包含占位符 {{current}}）。
     /// 设置为空字符串可恢复内置默认提示词。
     pub blackboard_refresh_prompt: Option<String>,
+    /// 黑板防抖周期（秒），达到该时间后统一处理 pending 队列。
+    pub blackboard_debounce_secs: Option<u64>,
+    /// 黑板防抖条数阈值，达到该条数后立即触发处理，无需等待周期。
+    pub blackboard_debounce_count: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -427,7 +427,52 @@ pub(crate) async fn finalize_normal_completion(
     }
 }
 
-/// 启动黑板 flush 监听器：监听 debouncer channel，收到消息后执行 update_blackboard
+/// 构建黑板防抖状态事件（用于 WebSocket 推送）。
+/// 从 DB 读取 pending 队列，从 debouncer 读取 timer 状态。
+async fn build_blackboard_status(
+    db: &Database,
+    workspace_id: i64,
+    debounce_secs: u64,
+    debounce_count: u64,
+) -> ExecEvent {
+    let pending_count = db
+        .get_blackboard(workspace_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|b| {
+            serde_json::from_str::<Vec<i64>>(&b.pending_todo_ids)
+                .map(|v| v.len() as u64)
+                .unwrap_or(0)
+        })
+        .unwrap_or(0);
+
+    let remaining_secs = crate::services::blackboard_debouncer::get_timer_state(workspace_id)
+        .await
+        .map(|state| {
+            let elapsed_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64
+                - state.started_at_ms as i64;
+            let remaining = state.debounce_secs as i64 - elapsed_ms / 1000;
+            remaining.max(0) as i64
+        })
+        .unwrap_or(-1);
+
+    ExecEvent::BlackboardDebounceStatus {
+        workspace_id,
+        pending_count,
+        threshold: debounce_count,
+        debounce_secs,
+        remaining_secs,
+        refreshing: false,
+    }
+}
+
+/// 启动黑板 flush 监听器：
+/// - 监听 debouncer channel，收到消息后执行 update_blackboard
+/// - 每秒通过 broadcast::tx 推送一次 BlackboardDebounceStatus 事件
 pub async fn blackboard_flush_listener(
     mut rx: tokio::sync::mpsc::Receiver<crate::services::blackboard_debouncer::BlackboardFlushMsg>,
     db: Arc<Database>,
@@ -436,62 +481,128 @@ pub async fn blackboard_flush_listener(
     task_manager: Arc<TaskManager>,
     config: Arc<std::sync::RwLock<crate::config::Config>>,
 ) {
-    while let Some(msg) = rx.recv().await {
-        tracing::debug!("黑板 flush listener 收到消息: workspace_id={}", msg.workspace_id);
+    // 每秒 ticker 用于推送状态
+    let mut ticker = tokio::time::interval(tokio::time::Duration::from_secs(1));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-        // 从 DB 取出 pending 队列（take_pending_todo_ids 已清空队列）
-        let todo_ids = match db.take_pending_todo_ids(msg.workspace_id).await {
-            Ok(ids) => ids,
-            Err(e) => {
-                tracing::warn!("取 pending 队列失败: workspace_id={}, error={}", msg.workspace_id, e);
-                continue;
-            }
+    // 已知的 workspace_id 列表（首次发送时从 DB 拉取）
+    let mut known_workspaces: Vec<i64> = Vec::new();
+
+    loop {
+        // 从 config 读取当前的 debounce 参数（可能运行时变更）
+        let (debounce_secs, debounce_count) = {
+            let cfg = config.read().unwrap();
+            (cfg.blackboard_debounce_secs, cfg.blackboard_debounce_count)
         };
 
-        if todo_ids.is_empty() {
-            tracing::debug!("黑板 pending 队列为空: workspace_id={}", msg.workspace_id);
-            continue;
-        }
+        tokio::select! {
+            // 每秒 ticker：广播所有已知 workspace 的状态
+            _ = ticker.tick() => {
+                // 确保 known_workspaces 非空（首次）
+                if known_workspaces.is_empty() {
+                    if let Ok(boards) = db.get_all_blackboards().await {
+                        known_workspaces = boards.iter().map(|b| b.workspace_id).collect();
+                    }
+                }
 
-        tracing::info!(
-            "黑板 flush listener 处理: workspace_id={}, todo_ids={:?}",
-            msg.workspace_id, todo_ids
-        );
-
-        // 按顺序查询每条 todo 的最新执行结论
-        let mut conclusions = Vec::with_capacity(todo_ids.len());
-        for todo_id in &todo_ids {
-            if let Ok(Some(record)) = db.get_latest_execution_record_for_todo(*todo_id).await {
-                conclusions.push(format!(
-                    "- 任务 ID: {}\n  结论: {}",
-                    todo_id,
-                    record.result.as_deref().unwrap_or("(无结论)")
-                ));
+                for ws_id in &known_workspaces {
+                    let event = build_blackboard_status(&db, *ws_id, debounce_secs, debounce_count).await;
+                    let _ = tx.send(event);
+                }
             }
-        }
 
-        if conclusions.is_empty() {
-            tracing::debug!("所有 todo 均无执行记录: workspace_id={}", msg.workspace_id);
-            continue;
-        }
+            // flush 消息：执行黑板刷新
+            msg = rx.recv() => {
+                match msg {
+                    Some(msg) => {
+                        tracing::debug!("黑板 flush listener 收到消息: workspace_id={}", msg.workspace_id);
 
-        let conclusion_text = conclusions.join("\n\n");
+                        // 先确保 workspace 在已知列表中
+                        if !known_workspaces.contains(&msg.workspace_id) {
+                            known_workspaces.push(msg.workspace_id);
+                        }
 
-        // 调用 update_blackboard
-        if let Err(e) = crate::services::blackboard::update_blackboard(
-            db.clone(),
-            executor_registry.clone(),
-            tx.clone(),
-            task_manager.clone(),
-            config.clone(),
-            msg.workspace_id,
-            &conclusion_text,
-            todo_ids[0],
-            &format!("批量更新 ({}条)", todo_ids.len()),
-        )
-        .await
-        {
-            tracing::warn!("黑板 update_blackboard 失败: workspace_id={}, error={:?}", msg.workspace_id, e);
+                        // 广播 refreshing=true 状态
+                        let refreshing_event = ExecEvent::BlackboardDebounceStatus {
+                            workspace_id: msg.workspace_id,
+                            pending_count: 0,
+                            threshold: debounce_count,
+                            debounce_secs,
+                            remaining_secs: -1,
+                            refreshing: true,
+                        };
+                        let _ = tx.send(refreshing_event);
+
+                        // 从 DB 取出 pending 队列（take_pending_todo_ids 已清空队列）
+                        let todo_ids = match db.take_pending_todo_ids(msg.workspace_id).await {
+                            Ok(ids) => ids,
+                            Err(e) => {
+                                tracing::warn!("取 pending 队列失败: workspace_id={}, error={}", msg.workspace_id, e);
+                                continue;
+                            }
+                        };
+
+                        if todo_ids.is_empty() {
+                            tracing::debug!("黑板 pending 队列为空: workspace_id={}", msg.workspace_id);
+                            continue;
+                        }
+
+                        tracing::info!(
+                            "黑板 flush listener 处理: workspace_id={}, todo_ids={:?}",
+                            msg.workspace_id, todo_ids
+                        );
+
+                        // 按顺序查询每条 todo 的最新执行结论
+                        let mut conclusions = Vec::with_capacity(todo_ids.len());
+                        for todo_id in &todo_ids {
+                            if let Ok(Some(record)) = db.get_latest_execution_record_for_todo(*todo_id).await {
+                                conclusions.push(format!(
+                                    "- 任务 ID: {}\n  结论: {}",
+                                    todo_id,
+                                    record.result.as_deref().unwrap_or("(无结论)")
+                                ));
+                            }
+                        }
+
+                        if conclusions.is_empty() {
+                            tracing::debug!("所有 todo 均无执行记录: workspace_id={}", msg.workspace_id);
+                            continue;
+                        }
+
+                        let conclusion_text = conclusions.join("\n\n");
+
+                        // 调用 update_blackboard
+                        let update_result = crate::services::blackboard::update_blackboard(
+                            db.clone(),
+                            executor_registry.clone(),
+                            tx.clone(),
+                            task_manager.clone(),
+                            config.clone(),
+                            msg.workspace_id,
+                            &conclusion_text,
+                            todo_ids[0],
+                            &format!("批量更新 ({}条)", todo_ids.len()),
+                        )
+                        .await;
+
+                        // flush 完成，广播 refreshing=false 状态
+                        let done_event = ExecEvent::BlackboardDebounceStatus {
+                            workspace_id: msg.workspace_id,
+                            pending_count: 0,
+                            threshold: debounce_count,
+                            debounce_secs,
+                            remaining_secs: -1,
+                            refreshing: false,
+                        };
+                        let _ = tx.send(done_event);
+
+                        if let Err(e) = update_result {
+                            tracing::warn!("黑板 update_blackboard 失败: workspace_id={}, error={:?}", msg.workspace_id, e);
+                        }
+                    }
+                    None => break, // channel 已关闭
+                }
+            }
         }
     }
 }

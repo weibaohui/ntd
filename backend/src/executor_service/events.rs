@@ -119,4 +119,20 @@ pub enum ExecEvent {
         /// 执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标
         workspace_id: Option<i64>,
     },
+/// 黑板防抖状态事件：定期推送倒计时和 pending 数量，前端据此渲染双进度条。
+/// 由 blackboard_flush_listener 转发 debouncer 的状态到 WebSocket。
+BlackboardDebounceStatus {
+    /// 工作空间 ID
+    workspace_id: i64,
+    /// 当前 pending 队列条数
+    pending_count: u64,
+    /// 触发阈值（条数）
+    threshold: u64,
+    /// 配置的防抖周期（秒）
+    debounce_secs: u64,
+    /// Timer 剩余秒数（-1 表示无 active timer，即等待中）
+    remaining_secs: i64,
+    /// 是否正在刷新（LLM 调用中）
+    refreshing: bool,
+},
 }
