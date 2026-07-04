@@ -153,9 +153,13 @@ pub async fn update_blackboard_config(
         workspace_id,
         req.blackboard_debounce_secs,
         req.blackboard_debounce_count,
-        req.wiki_index_prompt,
-        req.wiki_page_prompt,
+        req.wiki_index_prompt.clone(),
+        req.wiki_page_prompt.clone(),
     ).await.map_err(|e| AppError::Internal(format!("更新黑板配置失败: {}", e)))?;
+
+    // 提示词变更时，同步更新对应 wiki Todo 的 prompt，避免每次 debounce 触发时才更新
+    sync_wiki_todo_prompt(&state.db, workspace_id, "wiki-analyze", req.wiki_index_prompt.as_deref()).await;
+    sync_wiki_todo_prompt(&state.db, workspace_id, "wiki-execute", req.wiki_page_prompt.as_deref()).await;
 
     // debounce_secs 变更时，根据已计时长决定：超则立即触发 flush，未超则继续用新阈值计时
     // 传入钳制后的值，与 DB update_blackboard_config 内部 v.max(10) 保持一致
@@ -172,6 +176,70 @@ pub async fn update_blackboard_config(
         AppError::Internal(format!("更新后查询黑板配置失败: {}", e))
     })?;
     Ok(ApiResponse::ok(cfg.unwrap()))
+}
+
+/// 同步 wiki Todo 的 prompt：当用户在设置页修改提示词后，立刻更新对应 action_key 的 Todo。
+///
+/// - `prompt` 为 None → 用户在设置页未传入该字段，跳过
+/// - `prompt` 为 Some("") → 用户清空了提示词，更新为空字符串（后端会用内置默认）
+/// - `prompt` 为 Some(text) → 用户自定义了提示词，写入 Todo
+///
+/// action_key 拼接规则与 `run_analyze_phase` / `run_execute_phase` 一致：
+/// `"{base}-{workspace_id}"`
+async fn sync_wiki_todo_prompt(
+    db: &crate::db::Database,
+    workspace_id: i64,
+    base_key: &str,
+    prompt: Option<&str>,
+) {
+    // 用户未传入该字段，不作任何操作
+    let prompt = match prompt {
+        Some(p) => p,
+        None => return,
+    };
+    // 拼接 per-workspace action_key
+    let action_key = format!("{}-{}", base_key, workspace_id);
+    // 查找对应 wiki Todo
+    let todo = match db
+        .get_todo_by_action_type_and_key_and_workspace("blackboard", &action_key, workspace_id)
+        .await
+    {
+        Ok(Some(t)) => t,
+        _ => {
+            // Todo 尚未创建，无需同步（会在首次 debounce 触发时由 find_or_create_wiki_todo 创建）
+            return;
+        }
+    };
+    // 只更新 prompt 字段，其他保持不变
+    if let Err(e) = db
+        .update_todo_full(crate::db::TodoUpdate {
+            id: todo.id,
+            title: &todo.title,
+            prompt,
+            status: todo.status,
+            executor: todo.executor.as_deref(),
+            scheduler_enabled: None,
+            scheduler_config: None,
+            scheduler_timezone: None,
+            workspace_id: None,
+            webhook_enabled: None,
+            acceptance_criteria: None,
+            auto_review_enabled: None,
+            action_type: Some("blackboard"),
+            action_key: Some(&action_key),
+        })
+        .await
+    {
+        tracing::warn!(
+            "同步 wiki Todo prompt 失败: workspace_id={}, action_key={}, error={:?}",
+            workspace_id, action_key, e
+        );
+    } else {
+        tracing::info!(
+            "wiki Todo prompt 已同步: workspace_id={}, action_key={}",
+            workspace_id, action_key
+        );
+    }
 }
 
 /// `GET /api/workspaces/{workspace_id}/blackboard/pages`
