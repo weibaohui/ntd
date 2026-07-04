@@ -180,8 +180,8 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   // 设置弹窗状态
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
-  const [debounceSecs, setDebounceSecs] = useState<number>(600);
-  const [debounceCount, setDebounceCount] = useState<number>(10);
+  const [debounceSecs, setDebounceSecs] = useState<number | null>(600);
+  const [debounceCount, setDebounceCount] = useState<number | null>(10);
   const [updatePrompt, setUpdatePrompt] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'debounce' | 'prompt'>('debounce');
 
@@ -209,13 +209,14 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     setSettingsSaving(true);
     try {
       await updateBlackboardConfig(workspaceId, {
-        blackboard_debounce_secs: debounceSecs,
-        blackboard_debounce_count: debounceCount,
+        // 用户清空输入时 null → 用默认值，避免后端意外覆盖
+        blackboard_debounce_secs: debounceSecs ?? 600,
+        blackboard_debounce_count: debounceCount ?? 10,
         blackboard_update_prompt: updatePrompt,
       });
       // 保存成功后同步更新 data，避免下次打开弹窗读到旧值
       if (data) {
-        setData({ ...data, blackboard_debounce_secs: debounceSecs, blackboard_debounce_count: debounceCount, blackboard_update_prompt: updatePrompt });
+        setData({ ...data, blackboard_debounce_secs: debounceSecs ?? 600, blackboard_debounce_count: debounceCount ?? 10, blackboard_update_prompt: updatePrompt });
       }
       message.success('设置已保存');
       setSettingsOpen(false);
@@ -315,10 +316,10 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
 // ─── 设置弹窗子组件（避免 Tabs children 深层嵌套）─────────────────
 
 interface DebounceSettingsTabProps {
-  debounceSecs: number;
-  setDebounceSecs: (v: number) => void;
-  debounceCount: number;
-  setDebounceCount: (v: number) => void;
+  debounceSecs: number | null;
+  setDebounceSecs: (v: number | null) => void;
+  debounceCount: number | null;
+  setDebounceCount: (v: number | null) => void;
 }
 
 /** 防抖设置 Tab：防抖周期 + 触发条数，受父组件状态控制 */
@@ -328,7 +329,9 @@ function DebounceSettingsTab({ debounceSecs, setDebounceSecs, debounceCount, set
       <Form.Item label="防抖周期">
         <InputNumber
           value={debounceSecs}
-          onChange={(v) => setDebounceSecs(v ?? 600)}
+          // 用户清空输入时 value=null，不立即回填默认值，只透传 null 给 state；
+          // 保存时由 handleSaveSettings 用 ?? 兜底，避免删值瞬间被 600 覆盖
+          onChange={(v) => setDebounceSecs(v)}
           min={10}
           max={3600}
           addonAfter="秒"
@@ -338,7 +341,7 @@ function DebounceSettingsTab({ debounceSecs, setDebounceSecs, debounceCount, set
       <Form.Item label="触发条数">
         <InputNumber
           value={debounceCount}
-          onChange={(v) => setDebounceCount(v ?? 10)}
+          onChange={(v) => setDebounceCount(v)}
           min={1}
           max={100}
           addonAfter="条"

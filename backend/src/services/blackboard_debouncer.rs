@@ -50,6 +50,78 @@ pub async fn get_timer_state(workspace_id: i64) -> Option<WorkspaceTimerState> {
     guard.as_ref().and_then(|m| m.get(&workspace_id).cloned())
 }
 
+/// 黑板防抖阈值变更后，调整运行中的计时器：
+/// - 若已计时长 ≥ 新阈值 → 立即触发 flush（已超时不继续等），清除计时器状态
+/// - 若已计时长 < 新阈值 → 更新 TIMER_STATES 的 debounce_secs 为新值，
+///   保持 started_at_ms 不变，让计时器用新阈值继续运行
+///
+/// 全程持 TIMER_STATES 写锁（读→算→改），防止后台 timer 任务在间隙中插入操作。
+pub async fn reconcile_timer_after_config_change(workspace_id: i64, new_debounce_secs: i64) {
+    // 持写锁进行读取-判断-修改，避免与后台 timer 任务产生竞态
+    let should_flush = {
+        let mut states = TIMER_STATES.write().await;
+        let map = states.as_mut();
+        let Some(map) = map else {
+            // TIMER_STATES 尚未初始化（理论上不会发生），跳过
+            return;
+        };
+        let Some(state) = map.get(&workspace_id) else {
+            // 没有活跃 timer，无需处理
+            return;
+        };
+
+        // 计算已计时长（秒）；saturating_sub 防御时钟回拨
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let elapsed_secs = now_ms.saturating_sub(state.started_at_ms) / 1000;
+
+        if elapsed_secs >= new_debounce_secs as u64 {
+            // 已计时长已达到或超过新阈值 → 立即触发 flush
+            tracing::info!(
+                "黑板阈值变更：已计时 {}s ≥ 新阈值 {}s，立即触发 flush: workspace_id={}",
+                elapsed_secs, new_debounce_secs, workspace_id
+            );
+            map.remove(&workspace_id);
+            true // 标记需要发送 flush
+        } else {
+            // 已计时长还未达新阈值 → 更新 debounce_secs，继续计时
+            tracing::info!(
+                "黑板阈值变更：已计时 {}s < 新阈值 {}s，更新 debounce_secs 继续计时: workspace_id={}",
+                elapsed_secs, new_debounce_secs, workspace_id
+            );
+            map.insert(workspace_id, WorkspaceTimerState {
+                started_at_ms: state.started_at_ms,
+                debounce_secs: new_debounce_secs,
+            });
+            false // 不需要发送 flush
+        }
+    }; // TIMER_STATES 写锁在此释放
+
+    if should_flush {
+        // 标记 timer 未运行（与 TIMER_STATES 无锁序依赖，单独持锁）
+        {
+            let timers = ACTIVE_TIMERS.get().expect("ActiveTimers 未初始化");
+            let mut timers = timers.write().await;
+            if let Some(map) = timers.as_mut() {
+                map.insert(workspace_id, false);
+            }
+        }
+        // 发送 flush 消息
+        let tx = {
+            let guard = FLUSH_TX.read().await;
+            guard.as_ref().cloned()
+        };
+        if let Some(tx) = tx {
+            let msg = BlackboardFlushMsg { workspace_id };
+            if let Err(e) = tx.send(msg).await {
+                tracing::warn!("reconcile_timer: 发送 flush 消息失败: workspace_id={}, error={}", workspace_id, e);
+            }
+        }
+    }
+}
+
 /// 全局初始化：启动 channel，注册到全局，在 `build_app_state` 中调用。
 /// 注意：不再在启动时传入默认防抖值——防抖阈值现在从 per-workspace DB 配置读取。
 pub async fn init() -> mpsc::Receiver<BlackboardFlushMsg> {
