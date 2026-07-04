@@ -178,7 +178,11 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const [updatePrompt, setUpdatePrompt] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'debounce' | 'prompt'>('debounce');
 
-  // 打开设置弹窗：先拉取最新 config，等拉完再打开 modal，避免默认值闪烁
+  /**
+   * 打开设置弹窗：先拉取最新 config，等拉完再打开 modal，避免默认值闪烁。
+   * 加载失败时使用空字符串作为 updatePrompt 的兜底——空字符串会触发"使用内置默认"的业务逻辑，
+   * 不使用 DEFAULT_BLACKBOARD_UPDATE_PROMPT 作为兜底，是为了避免把后端常量耦合进前端状态初始化。
+   */
   const handleOpenSettings = useCallback(async () => {
     try {
       const cfg = await db.getConfig();
@@ -209,7 +213,11 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     }
   }, [debounceSecs, debounceCount, updatePrompt]);
 
-  // 恢复默认提示词：把 updatePrompt 设为后端内置的默认提示词内容
+  /**
+   * 恢复默认提示词：把 updatePrompt 设为 DEFAULT_BLACKBOARD_UPDATE_PROMPT（与后端内置一致）。
+   * 写入后端后，backend blackboard_update_prompt 为非空字符串，不再走 build_blackboard_prompt() 内置逻辑。
+   * 区别于"留空"的语义——留空表示后端使用内置默认；填入默认值表示用户显式采用内置模板。
+   */
   const handleRestoreDefaultPrompt = useCallback(() => {
     setUpdatePrompt(DEFAULT_BLACKBOARD_UPDATE_PROMPT);
   }, []);
@@ -265,54 +273,92 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
               key: 'debounce',
               label: '防抖设置',
               children: (
-                <Form layout="vertical" style={{ marginTop: 16 }}>
-                  <Form.Item label="防抖周期">
-                    <InputNumber
-                      value={debounceSecs}
-                      onChange={(v) => setDebounceSecs(v ?? 600)}
-                      min={10}
-                      max={3600}
-                      addonAfter="秒"
-                      style={{ width: 200 }}
-                    />
-                  </Form.Item>
-                  <Form.Item label="触发条数">
-                    <InputNumber
-                      value={debounceCount}
-                      onChange={(v) => setDebounceCount(v ?? 10)}
-                      min={1}
-                      max={100}
-                      addonAfter="条"
-                      style={{ width: 200 }}
-                    />
-                  </Form.Item>
-                  <Form.Item extra="达到条数阈值或周期到期时，统一处理 pending 的 todo，减少频繁的 LLM 调用" />
-                </Form>
+                <DebounceSettingsTab
+                  debounceSecs={debounceSecs}
+                  setDebounceSecs={setDebounceSecs}
+                  debounceCount={debounceCount}
+                  setDebounceCount={setDebounceCount}
+                />
               ),
             },
             {
               key: 'prompt',
               label: '提示词设置',
               children: (
-                <div style={{ marginTop: 16 }}>
-                  <Space style={{ marginBottom: 12 }}>
-                    <Button onClick={handleRestoreDefaultPrompt}>恢复默认</Button>
-                    <span style={{ color: '#888', fontSize: 12 }}>
-                      点击将内置默认提示词填入输入框，可继续编辑
-                    </span>
-                  </Space>
-                  <Input.TextArea
-                    value={updatePrompt}
-                    onChange={(e) => setUpdatePrompt(e.target.value)}
-                    rows={16}
-                    placeholder="留空使用内置默认提示词，如需自定义请直接在此输入"
-                  />
-                </div>
+                <PromptSettingsTab
+                  updatePrompt={updatePrompt}
+                  setUpdatePrompt={setUpdatePrompt}
+                  onRestoreDefault={handleRestoreDefaultPrompt}
+                />
               ),
             },
           ]}
         />
       </Modal>
+    </div>
+  );
+}
+
+// ─── 设置弹窗子组件（避免 Tabs children 深层嵌套）─────────────────
+
+interface DebounceSettingsTabProps {
+  debounceSecs: number;
+  setDebounceSecs: (v: number) => void;
+  debounceCount: number;
+  setDebounceCount: (v: number) => void;
+}
+
+/** 防抖设置 Tab：防抖周期 + 触发条数，受父组件状态控制 */
+function DebounceSettingsTab({ debounceSecs, setDebounceSecs, debounceCount, setDebounceCount }: DebounceSettingsTabProps) {
+  return (
+    <Form layout="vertical" style={{ marginTop: 16 }}>
+      <Form.Item label="防抖周期">
+        <InputNumber
+          value={debounceSecs}
+          onChange={(v) => setDebounceSecs(v ?? 600)}
+          min={10}
+          max={3600}
+          addonAfter="秒"
+          style={{ width: 200 }}
+        />
+      </Form.Item>
+      <Form.Item label="触发条数">
+        <InputNumber
+          value={debounceCount}
+          onChange={(v) => setDebounceCount(v ?? 10)}
+          min={1}
+          max={100}
+          addonAfter="条"
+          style={{ width: 200 }}
+        />
+      </Form.Item>
+      <Form.Item extra="达到条数阈值或周期到期时，统一处理 pending 的 todo，减少频繁的 LLM 调用" />
+    </Form>
+  );
+}
+
+interface PromptSettingsTabProps {
+  updatePrompt: string;
+  setUpdatePrompt: (v: string) => void;
+  onRestoreDefault: () => void;
+}
+
+/** 提示词设置 Tab：TextArea 输入自定义提示词 + 恢复默认按钮 */
+function PromptSettingsTab({ updatePrompt, setUpdatePrompt, onRestoreDefault }: PromptSettingsTabProps) {
+  return (
+    <div style={{ marginTop: 16 }}>
+      <Space style={{ marginBottom: 12 }}>
+        <Button onClick={onRestoreDefault}>恢复默认</Button>
+        <span style={{ color: '#888', fontSize: 12 }}>
+          点击将内置默认提示词填入输入框，可继续编辑
+        </span>
+      </Space>
+      <Input.TextArea
+        value={updatePrompt}
+        onChange={(e) => setUpdatePrompt(e.target.value)}
+        rows={16}
+        placeholder="留空使用内置默认提示词，如需自定义请直接在此输入"
+      />
     </div>
   );
 }

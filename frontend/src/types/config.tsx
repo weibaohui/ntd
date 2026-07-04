@@ -23,8 +23,6 @@ export interface Config {
   blackboard_debounce_count?: number;
   /** 黑板更新提示词模板（包含占位符 {{current}}、{{conclusion}}、{{todo_id}}、{{todo_title}}）*/
   blackboard_update_prompt?: string;
-  /** 黑板刷新提示词模板（仅包含占位符 {{current}}）*/
-  blackboard_refresh_prompt?: string;
 }
 
 export interface ExecutorConfig {
