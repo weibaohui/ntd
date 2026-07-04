@@ -62,8 +62,13 @@ pub async fn init() -> mpsc::Receiver<BlackboardFlushMsg> {
         let mut w = TIMER_STATES.write().await;
         *w = Some(HashMap::new());
     }
-    // OnceLock 保证 init 只会被调用一次（实际也确实只调用一次）
-    ACTIVE_TIMERS.get_or_init(|| Arc::new(RwLock::new(None)));
+    // OnceLock 初始化 RwLock（ RwLock::new(None) 创建时内部 Option 为 None）
+    // 需要额外一步：获取写锁后将内部 Option 填充为 Some(HashMap::new())）
+    let timers = ACTIVE_TIMERS.get_or_init(|| Arc::new(RwLock::new(None)));
+    {
+        let mut w = timers.write().await;
+        *w = Some(HashMap::new());
+    }
     rx
 }
 
