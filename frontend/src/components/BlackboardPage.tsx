@@ -209,9 +209,9 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     }
   }, [debounceSecs, debounceCount, updatePrompt]);
 
-  // 恢复默认提示词：把 updatePrompt 清空（空字符串表示使用后端内置默认）
+  // 恢复默认提示词：把 updatePrompt 设为后端内置的默认提示词内容
   const handleRestoreDefaultPrompt = useCallback(() => {
-    setUpdatePrompt('');
+    setUpdatePrompt(DEFAULT_BLACKBOARD_UPDATE_PROMPT);
   }, []);
 
   // 拉取（受 workspaceId 变化驱动）：useCallback 稳定引用，让 useEffect 只在 id 变时重跑
@@ -298,32 +298,15 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
                   <Space style={{ marginBottom: 12 }}>
                     <Button onClick={handleRestoreDefaultPrompt}>恢复默认</Button>
                     <span style={{ color: '#888', fontSize: 12 }}>
-                      恢复默认后，将使用内置提示词模板
+                      点击将内置默认提示词填入输入框，可继续编辑
                     </span>
                   </Space>
                   <Input.TextArea
                     value={updatePrompt}
                     onChange={(e) => setUpdatePrompt(e.target.value)}
-                    rows={12}
-                    placeholder="当前使用默认提示词（下方展示），如需自定义请在此输入"
+                    rows={16}
+                    placeholder="留空使用内置默认提示词，如需自定义请直接在此输入"
                   />
-                  {/* updatePrompt 为空时，隐性表示"使用默认"，此时在下方展示默认提示词供参照 */}
-                  {!updatePrompt && (
-                    <div
-                      style={{
-                        marginTop: 12,
-                        padding: '12px',
-                        background: '#f5f5f5',
-                        borderRadius: 6,
-                        fontSize: 12,
-                        color: '#666',
-                        whiteSpace: 'pre-wrap',
-                      }}
-                    >
-                      <div style={{ fontWeight: 500, marginBottom: 8, color: '#333' }}>默认提示词（当前生效）：</div>
-                      {DEFAULT_BLACKBOARD_UPDATE_PROMPT}
-                    </div>
-                  )}
                 </div>
               ),
             },
