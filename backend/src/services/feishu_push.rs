@@ -314,6 +314,8 @@ impl FeishuPushService {
                     loop_title, status_icon, *total_steps, *completed_steps, *failed_steps, duration_str, *total_tokens
                 ))
             }
+            // BlackboardDebounceStatus 仅用于前端 WebSocket 推送，不发飞书
+            ExecEvent::BlackboardDebounceStatus { .. } => None,
         }
     }
 }

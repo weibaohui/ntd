@@ -77,7 +77,17 @@ interface ExecEventLoopFinished {
   workspace_id: number | null;
 }
 
-type ExecEvent = ExecEventStarted | ExecEventOutput | ExecEventFinished | ExecEventSync | ExecEventTodoProgress | ExecEventExecutionStats | ExecEventReviewStatusChanged | ExecEventLoopFinished;
+/** 黑板防抖状态：双进度条倒计时数据 */
+export interface BlackboardDebounceStatus {
+  workspace_id: number;
+  pending_count: number;
+  threshold: number;
+  debounce_secs: number;
+  remaining_secs: number; // -1 表示无 active timer
+  refreshing: boolean;
+}
+
+type ExecEvent = ExecEventStarted | ExecEventOutput | ExecEventFinished | ExecEventSync | ExecEventTodoProgress | ExecEventExecutionStats | ExecEventReviewStatusChanged | ExecEventLoopFinished | { type: 'BlackboardDebounceStatus' } & BlackboardDebounceStatus;
 
 // ─── 模块级共享状态 ─────────────────────────────────────────────
 //
@@ -187,6 +197,10 @@ function connectShared(dispatch: ReturnType<typeof useApp>['dispatch']) {
         }
         case 'LoopFinished': {
           window.dispatchEvent(new CustomEvent('loopExecutionFinished', { detail: { loopExecutionId: data.loop_execution_id, loopId: data.loop_id, status: data.status, totalSteps: data.total_steps, completedSteps: data.completed_steps, failedSteps: data.failed_steps, durationSecs: data.duration_secs, totalTokens: data.total_tokens } }));
+          break;
+        }
+        case 'BlackboardDebounceStatus': {
+          window.dispatchEvent(new CustomEvent('blackboardDebounceStatus', { detail: data }));
           break;
         }
       }
