@@ -213,6 +213,10 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         blackboard_debounce_count: debounceCount,
         blackboard_update_prompt: updatePrompt,
       });
+      // 保存成功后同步更新 data，避免下次打开弹窗读到旧值
+      if (data) {
+        setData({ ...data, blackboard_debounce_secs: debounceSecs, blackboard_debounce_count: debounceCount, blackboard_update_prompt: updatePrompt });
+      }
       message.success('设置已保存');
       setSettingsOpen(false);
     } catch (err) {
@@ -220,7 +224,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     } finally {
       setSettingsSaving(false);
     }
-  }, [workspaceId, debounceSecs, debounceCount, updatePrompt]);
+  }, [workspaceId, debounceSecs, debounceCount, updatePrompt, data]);
 
   /**
    * 恢复默认提示词：把 updatePrompt 设为 DEFAULT_BLACKBOARD_UPDATE_PROMPT（与后端内置一致）。
