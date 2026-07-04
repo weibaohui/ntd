@@ -3,7 +3,8 @@
  * 1. 直接导航到黑板页面
  * 2. 点击设置按钮能打开弹窗
  * 3. 防抖周期和触发条数 InputNumber 正常显示和修改
- * 4. 保存后弹窗关闭并提示成功
+ * 4. 切换到提示词设置 Tab，验证 TextArea 和恢复默认按钮
+ * 5. 保存后弹窗关闭并提示成功
  */
 import { test, expect } from '@playwright/test';
 
@@ -22,13 +23,28 @@ test('黑板设置弹窗能正常打开和保存', async ({ page }) => {
   // 弹窗应该出现
   await expect(page.locator('.ant-modal')).toBeVisible({ timeout: 5000 });
 
-  // 防抖输入框应该可见
+  // 防抖输入框应该可见（默认在防抖设置 Tab）
   const input = page.locator('.ant-input-number-input').first();
   await expect(input).toBeVisible();
 
   // 修改防抖时间为 300
   await input.fill('300');
   await input.blur();
+
+  // 切换到提示词设置 Tab
+  await page.click('.ant-tabs-tab:has-text("提示词设置")');
+
+  // 更新提示词 TextArea 应该可见
+  const updatePromptArea = page.locator('textarea').first();
+  await expect(updatePromptArea).toBeVisible();
+
+  // 点击恢复默认按钮
+  const restoreBtn = page.locator('button:has-text("恢复默认")');
+  await expect(restoreBtn).toBeVisible();
+  await restoreBtn.click();
+
+  // 输入框应被填入默认提示词内容
+  await expect(updatePromptArea).not.toHaveValue('');
 
   // 等待一下让表单更新
   await page.waitForTimeout(500);

@@ -21,6 +21,8 @@ export interface Config {
   blackboard_debounce_secs?: number;
   /** 黑板更新防抖条数阈值，达到此条数立即触发 */
   blackboard_debounce_count?: number;
+  /** 黑板更新提示词模板（包含占位符 {{current}}、{{conclusion}}、{{todo_id}}、{{todo_title}}）*/
+  blackboard_update_prompt?: string;
 }
 
 export interface ExecutorConfig {

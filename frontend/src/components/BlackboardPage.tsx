@@ -14,7 +14,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress } from 'antd';
+import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs } from 'antd';
 import { ReloadOutlined, SettingOutlined } from '@ant-design/icons';
 import { XMarkdown } from '@ant-design/x-markdown';
 import { useTheme } from '@/hooks/useTheme';
@@ -40,6 +40,40 @@ const URL_WORKSPACE_PARAM = 'workspace';
 
 /** 默认工作空间 ID（首屏兜底，避免 URL 未带参时无 workspace） */
 const DEFAULT_WORKSPACE_ID = 1;
+
+/**
+ * 黑板更新提示词默认值，与后端 DEFAULT_BLACKBOARD_UPDATE_PROMPT 保持一致。
+ * 用于在 UI 上展示默认提示词内容，以及"恢复默认"时回填。
+ */
+const DEFAULT_BLACKBOARD_UPDATE_PROMPT = `你是一个工作空间知识库的维护者。你的任务是维护一个 Markdown 格式的"黑板"，记录工作空间中所有任务执行的结论和当前进展。
+
+当前黑板内容：
+\`\`\`
+{{current}}
+\`\`\`
+
+新任务结论：
+- 任务 ID: {{todo_id}}
+- 任务标题: {{todo_title}}
+- 执行结论: {{conclusion}}
+
+请更新黑板内容，要求：
+1. 将新结论整合到黑板中
+2. 保持以下结构：
+   - # 工作空间进展
+   - ## 已确认
+   - ## 新发现
+   - ## 待解决问题
+   - ## 矛盾/风险
+   - ## 下一步建议
+3. 每条结论标注来源，格式：(来源: [todo_{{todo_id}}](ntd://todo/{{todo_id}}))
+4. 如果新结论与已有结论矛盾，在"矛盾/风险"中标注
+5. 如果新结论提出了未解决的问题，在"待解决问题"中列出
+6. 更新"下一步建议"
+7. 保持 Markdown 格式，不要添加 HTML
+8. 如果黑板为空，根据新结论创建初始结构
+
+只输出更新后的黑板内容，不要输出任何解释。`;
 
 
 /** Markdown 链接组件 props 形状（XMarkdown ComponentProps 简化版） */
@@ -141,17 +175,26 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [debounceSecs, setDebounceSecs] = useState<number>(600);
   const [debounceCount, setDebounceCount] = useState<number>(10);
+  const [updatePrompt, setUpdatePrompt] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<'debounce' | 'prompt'>('debounce');
 
-  // 打开设置弹窗：先拉取最新 config，等拉完再打开 modal，避免默认值闪烁
+  /**
+   * 打开设置弹窗：先拉取最新 config，等拉完再打开 modal，避免默认值闪烁。
+   * 加载失败时使用空字符串作为 updatePrompt 的兜底——空字符串会触发"使用内置默认"的业务逻辑，
+   * 不使用 DEFAULT_BLACKBOARD_UPDATE_PROMPT 作为兜底，是为了避免把后端常量耦合进前端状态初始化。
+   */
   const handleOpenSettings = useCallback(async () => {
     try {
       const cfg = await db.getConfig();
       setDebounceSecs(cfg.blackboard_debounce_secs ?? 600);
       setDebounceCount(cfg.blackboard_debounce_count ?? 10);
+      setUpdatePrompt(cfg.blackboard_update_prompt ?? '');
     } catch {
       setDebounceSecs(600);
       setDebounceCount(10);
+      setUpdatePrompt('');
     }
+    setActiveTab('debounce');
     setSettingsOpen(true);
   }, []);
 
@@ -160,7 +203,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     setSettingsSaving(true);
     try {
       const current = await db.getConfig();
-      await db.updateConfig({ ...current, blackboard_debounce_secs: debounceSecs, blackboard_debounce_count: debounceCount });
+      await db.updateConfig({ ...current, blackboard_debounce_secs: debounceSecs, blackboard_debounce_count: debounceCount, blackboard_update_prompt: updatePrompt });
       message.success('设置已保存');
       setSettingsOpen(false);
     } catch (err) {
@@ -168,7 +211,16 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     } finally {
       setSettingsSaving(false);
     }
-  }, [debounceSecs, debounceCount]);
+  }, [debounceSecs, debounceCount, updatePrompt]);
+
+  /**
+   * 恢复默认提示词：把 updatePrompt 设为 DEFAULT_BLACKBOARD_UPDATE_PROMPT（与后端内置一致）。
+   * 写入后端后，backend blackboard_update_prompt 为非空字符串，不再走 build_blackboard_prompt() 内置逻辑。
+   * 区别于"留空"的语义——留空表示后端使用内置默认；填入默认值表示用户显式采用内置模板。
+   */
+  const handleRestoreDefaultPrompt = useCallback(() => {
+    setUpdatePrompt(DEFAULT_BLACKBOARD_UPDATE_PROMPT);
+  }, []);
 
   // 拉取（受 workspaceId 变化驱动）：useCallback 稳定引用，让 useEffect 只在 id 变时重跑
   const fetchData = useCallback(async () => {
@@ -202,7 +254,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       />
       <BlackboardBody isDark={isDark} data={data} />
 
-      {/* 黑板设置弹窗 */}
+      {/* 黑板设置弹窗：Tab1 防抖设置，Tab2 提示词设置 */}
       <Modal
         title="黑板设置"
         open={settingsOpen}
@@ -211,31 +263,102 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         okText="保存"
         confirmLoading={settingsSaving}
         destroyOnHidden
+        width={640}
       >
-        <Form layout="vertical">
-          <Form.Item label="防抖周期">
-            <InputNumber
-              value={debounceSecs}
-              onChange={(v) => setDebounceSecs(v ?? 600)}
-              min={10}
-              max={3600}
-              addonAfter="秒"
-              style={{ width: 200 }}
-            />
-          </Form.Item>
-          <Form.Item label="触发条数">
-            <InputNumber
-              value={debounceCount}
-              onChange={(v) => setDebounceCount(v ?? 10)}
-              min={1}
-              max={100}
-              addonAfter="条"
-              style={{ width: 200 }}
-            />
-          </Form.Item>
-          <Form.Item extra="达到条数阈值或周期到期时，统一处理 pending 的 todo，减少频繁的 LLM 调用" />
-        </Form>
+        <Tabs
+          activeKey={activeTab}
+          onChange={(key) => setActiveTab(key as 'debounce' | 'prompt')}
+          items={[
+            {
+              key: 'debounce',
+              label: '防抖设置',
+              children: (
+                <DebounceSettingsTab
+                  debounceSecs={debounceSecs}
+                  setDebounceSecs={setDebounceSecs}
+                  debounceCount={debounceCount}
+                  setDebounceCount={setDebounceCount}
+                />
+              ),
+            },
+            {
+              key: 'prompt',
+              label: '提示词设置',
+              children: (
+                <PromptSettingsTab
+                  updatePrompt={updatePrompt}
+                  setUpdatePrompt={setUpdatePrompt}
+                  onRestoreDefault={handleRestoreDefaultPrompt}
+                />
+              ),
+            },
+          ]}
+        />
       </Modal>
+    </div>
+  );
+}
+
+// ─── 设置弹窗子组件（避免 Tabs children 深层嵌套）─────────────────
+
+interface DebounceSettingsTabProps {
+  debounceSecs: number;
+  setDebounceSecs: (v: number) => void;
+  debounceCount: number;
+  setDebounceCount: (v: number) => void;
+}
+
+/** 防抖设置 Tab：防抖周期 + 触发条数，受父组件状态控制 */
+function DebounceSettingsTab({ debounceSecs, setDebounceSecs, debounceCount, setDebounceCount }: DebounceSettingsTabProps) {
+  return (
+    <Form layout="vertical" style={{ marginTop: 16 }}>
+      <Form.Item label="防抖周期">
+        <InputNumber
+          value={debounceSecs}
+          onChange={(v) => setDebounceSecs(v ?? 600)}
+          min={10}
+          max={3600}
+          addonAfter="秒"
+          style={{ width: 200 }}
+        />
+      </Form.Item>
+      <Form.Item label="触发条数">
+        <InputNumber
+          value={debounceCount}
+          onChange={(v) => setDebounceCount(v ?? 10)}
+          min={1}
+          max={100}
+          addonAfter="条"
+          style={{ width: 200 }}
+        />
+      </Form.Item>
+      <Form.Item extra="达到条数阈值或周期到期时，统一处理 pending 的 todo，减少频繁的 LLM 调用" />
+    </Form>
+  );
+}
+
+interface PromptSettingsTabProps {
+  updatePrompt: string;
+  setUpdatePrompt: (v: string) => void;
+  onRestoreDefault: () => void;
+}
+
+/** 提示词设置 Tab：TextArea 输入自定义提示词 + 恢复默认按钮 */
+function PromptSettingsTab({ updatePrompt, setUpdatePrompt, onRestoreDefault }: PromptSettingsTabProps) {
+  return (
+    <div style={{ marginTop: 16 }}>
+      <Space style={{ marginBottom: 12 }}>
+        <Button onClick={onRestoreDefault}>恢复默认</Button>
+        <span style={{ color: '#888', fontSize: 12 }}>
+          点击将内置默认提示词填入输入框，可继续编辑
+        </span>
+      </Space>
+      <Input.TextArea
+        value={updatePrompt}
+        onChange={(e) => setUpdatePrompt(e.target.value)}
+        rows={16}
+        placeholder="留空使用内置默认提示词，如需自定义请直接在此输入"
+      />
     </div>
   );
 }

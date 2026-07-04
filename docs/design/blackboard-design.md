@@ -149,7 +149,8 @@ POST /api/workspaces/{workspace_id}/blackboard/refresh
 ### 5.1 触发时机
 
 **自动触发**：任务执行完成时（`ExecEvent::Finished`）
-**手动触发**：用户点击黑板页面的"刷新"按钮
+
+> 注：手动刷新功能已移除。用户可通过刷新页面（刷新按钮 → `window.location.reload()`）重新拉取黑板内容，无需 LLM 参与。
 
 ### 5.2 更新逻辑
 
@@ -329,7 +330,7 @@ pub async fn update_blackboard(
 
 ```
 ┌─────────────────────────────────────────────┐
-│ 黑板                              [刷新按钮]  │
+│ 黑板                              [设置按钮]  │
 ├─────────────────────────────────────────────┤
 │                                             │
 │  # 工作空间进展                              │
@@ -429,7 +430,7 @@ async fn maybe_update_blackboard(
 | **Phase 2** | 后端 API | Handler + Service + 路由注册 |
 | **Phase 3** | LLM 更新逻辑 | Prompt + 调用 + Finished 事件 Hook |
 | **Phase 4** | 前端页面 | 菜单 + 页面 + API 调用 + Markdown 渲染 |
-| **Phase 5** | 手动刷新 | 刷新按钮 + 更新状态提示 |
+| **Phase 5** | 手动刷新 | ~~刷新按钮~~ → 页面 reload（无需 LLM） |
 
 ---
 
