@@ -7,7 +7,7 @@
 //! - `POST /api/workspaces/{workspace_id}/blackboard/refresh`：手动触发热刷新
 
 use axum::extract::{Path, State};
-use axum::routing::{get, patch, post};
+use axum::routing::{get, post};
 use axum::Router;
 
 use crate::db::blackboard::BlackboardConfig;
