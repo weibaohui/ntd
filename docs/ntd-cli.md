@@ -745,11 +745,11 @@ ntd daemon status -v
 >
 > 当前内嵌的 skill 是 `ntd-usage`，所有支持的执行器共享同一份内容，安装到各自的 skill 目录下。
 
-#### `ntd skill install`
+#### `ntd skills install`
 安装内嵌的 `ntd-usage` skill 到执行器技能目录。
 
 ```bash
-ntd skill install [OPTIONS]
+ntd skills install [OPTIONS]
 ```
 
 **选项：**
@@ -764,16 +764,16 @@ ntd skill install [OPTIONS]
 **示例：**
 ```bash
 # 安装到所有执行器（首次安装或大版本更新后推荐执行一次）
-ntd skill install
+ntd skills install
 
 # 仅安装到 Claude Code
-ntd skill install --executor claudecode
+ntd skills install --executor claudecode
 
 # 强制重新安装（升级 skill 内容后使用）
-ntd skill install --force
+ntd skills install --force
 
 # 强制重装到指定执行器
-ntd skill install --force --executor claudecode,atomcode
+ntd skills install --force --executor claudecode,atomcode
 ```
 
 > `--executor` 显式传值时遇到未知执行器会报错退出；不传时未知执行器会被跳过并打印警告。
