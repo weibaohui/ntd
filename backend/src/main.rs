@@ -62,7 +62,7 @@ enum Commands {
         action: daemon::DaemonAction,
     },
     /// Manage ntd usage skills for AI executors
-    Skill {
+    Skills {
         #[command(subcommand)]
         action: SkillAction,
     },
@@ -75,6 +75,9 @@ enum SkillAction {
         /// Force reinstall even if already installed
         #[arg(short, long)]
         force: bool,
+        /// Install to all executors including agents (default: all known executors)
+        #[arg(short, long)]
+        all: bool,
         /// Only install for specific executors (comma-separated, e.g. "claudecode,atomcode")
         #[arg(short, long)]
         executor: Option<String>,
@@ -236,8 +239,8 @@ async fn main() {
             daemon::handle_daemon_command(action).await;
             return;
         }
-        Some(Commands::Skill { action: SkillAction::Install { force, executor } }) => {
-            if let Err(e) = handle_skill_install(*force, executor.as_deref()) {
+        Some(Commands::Skills { action: SkillAction::Install { force, all, executor } }) => {
+            if let Err(e) = handle_skill_install(*force, *all, executor.as_deref()) {
                 // Skill install 失败时仍用结构化 JSON 走 stderr（CLI 解析约定），
                 // 同时通过 tracing 记录带 target/level 的日志，便于日志聚合。
                 let payload = serde_json::json!({"error": true, "message": e.to_string()});
@@ -320,18 +323,22 @@ fn executor_skills_dir(et: &str) -> Option<PathBuf> {
     handlers::skills::executor_skills_dir_str(et)
 }
 
-const ALL_EXECUTORS: &[&str] = &[
+// Known executors (不含 agents，agents 是只读 skill 来源，用 --all 单独注入）
+const KNOWN_EXECUTORS: &[&str] = &[
     "claudecode", "hermes", "codex", "codebuddy",
     "opencode", "atomcode", "kimi", "mobilecoder", "codewhale", "pi", "mimo",
     "zhanlu",
 ];
 
 /// Install embedded ntd-usage skill to executor skill directories.
-fn handle_skill_install(force: bool, executor_filter: Option<&str>) -> anyhow::Result<()> {
-    let executors: Vec<&str> = if let Some(filter) = executor_filter {
+fn handle_skill_install(force: bool, all: bool, executor_filter: Option<&str>) -> anyhow::Result<()> {
+    // --all 时追加 agents，实现「所有 skill 来源都装入」语义
+    let executors: Vec<&str> = if all {
+        KNOWN_EXECUTORS.iter().copied().chain(std::iter::once("agents")).collect()
+    } else if let Some(filter) = executor_filter {
         filter.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect()
     } else {
-        ALL_EXECUTORS.to_vec()
+        KNOWN_EXECUTORS.to_vec()
     };
 
     if executors.is_empty() {
@@ -414,7 +421,7 @@ fn handle_skill_install(force: bool, executor_filter: Option<&str>) -> anyhow::R
         anyhow::bail!(
             "Unknown executor(s): {}. Supported executors: {}",
             unknown.join(", "),
-            ALL_EXECUTORS.join(", ")
+            KNOWN_EXECUTORS.join(", ")
         );
     }
     for et in &unknown {

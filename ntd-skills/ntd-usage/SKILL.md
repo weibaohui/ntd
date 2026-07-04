@@ -1,8 +1,8 @@
 ---
 name: ntd-usage
 description: ntd (Nothing Todo) AI Todo 应用 — CLI & API 使用指南
-version: 1.0.1
-executors: [claudecode, atomcode, mobilecoder, hermes, codex, codebuddy, opencode, kimi, pi]
+version: 1.1.0
+executors: [claudecode, atomcode, mobilecoder, hermes, codex, codebuddy, opencode, kimi, pi, agents]
 ---
 
 # ntd (Nothing Todo) 使用指南
@@ -19,10 +19,18 @@ ntd daemon restart        # 重启
 ntd daemon status         # 查看状态
 ```
 
-
 ## CLI 命令参考
 
 所有 CLI 命令通过 `ntd` 二进制执行。
+
+### Skill 管理
+
+```bash
+ntd skills install              # 安装 ntd-usage skill 到所有已知执行器
+ntd skills install --all       # 安装到所有执行器，包括 agents 只读来源
+ntd skills install --force     # 强制重装
+ntd skills install -e claudecode,atomcode  # 仅安装到指定执行器
+```
 
 ### Todo 管理
 
@@ -193,7 +201,7 @@ ntd todo get 1 --output raw
 ntd todo create "分析日志" --executor claudecode --workspace /var/log
 
 # 稍后用详细 prompt 执行
-echo "请分析 /var/log/nginx/access.log 中最近 1 小时的 5xx 错误" | ntd todo execute 1 --stdin
+ntd todo execute 1 --message "请分析 /var/log/nginx/access.log 中最近 1 小时的 5xx 错误"
 
 # 发现需要更多上下文，可以 resume
 ntd execution resume 1 --message "再看看 error.log"

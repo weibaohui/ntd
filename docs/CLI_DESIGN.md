@@ -667,7 +667,7 @@ ntd stats
 | `ntd daemon stop [--system]` | 停止服务 |
 | `ntd daemon restart [--system]` | 重启服务 |
 | `ntd daemon status [--system] [-v]` | 查看状态（`-v` 追加近期日志） |
-| `ntd skill install [-f] [-e EX1,EX2,...]` | 安装 ntd-usage skill 到执行器 skills 目录 |
+| `ntd skills install [-f] [--all] [-e EX1,EX2,...]` | 安装 ntd-usage skill 到执行器 skills 目录 |
 | `ntd todo execution resume <id> [-m MSG]` | 沿用原 `session_id` 继续对话（仅 `claudecode` / `codex` / `hermes` / `kimi` / `atomcode` / `opencode` / `mobilecoder` / `codewhale` / `pi` 支持） |
 
 ---

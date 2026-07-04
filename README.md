@@ -143,12 +143,13 @@ ntd loop results <execution_id>
 
 ### Skill 安装
 
-`ntd skill install` 将内置的 ntd 使用技能安装到各 AI 执行器的 skill 目录（如 `~/.claude/skills/ntd-usage/`），让 AI 执行器在执行任务时能更好地理解和使用 ntd。
+`ntd skills install` 将内置的 ntd 使用技能安装到各 AI 执行器的 skill 目录（如 `~/.claude/skills/ntd-usage/`），让 AI 执行器在执行任务时能更好地理解和使用 ntd。
 
 ```bash
-ntd skill install              # 安装到所有已配置的执行器
-ntd skill install --force       # 强制重新安装（覆盖已有）
-ntd skill install -e claudecode # 仅安装到指定执行器
+ntd skills install              # 安装到所有已知执行器
+ntd skills install --all        # 安装到所有执行器（包括 agents 只读来源）
+ntd skills install --force      # 强制重新安装（覆盖已有）
+ntd skills install -e claudecode # 仅安装到指定执行器
 ```
 
 支持的执行器：Claude Code、CodeBuddy、Opencode、MobileCoder、AtomCode、Hermes、Kimi、Pi、Codex、CodeWhale、MiMo、Zhanlu、Kilo 等（根据你配置的 AI 执行器自动适配）。
