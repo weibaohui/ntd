@@ -46,6 +46,27 @@ async fn find_or_create_wiki_todo(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
     {
+        // 如果 prompt 模板已更新（如链接格式变化），同步更新已存在的 Todo
+        if todo.prompt != prompt_template {
+            db.update_todo_full(crate::db::TodoUpdate {
+                id: todo.id,
+                title: &todo.title,
+                prompt: prompt_template,
+                status: crate::models::TodoStatus::Pending,
+                executor: None,
+                scheduler_enabled: None,
+                scheduler_config: None,
+                scheduler_timezone: None,
+                workspace_id: None,
+                webhook_enabled: None,
+                acceptance_criteria: None,
+                auto_review_enabled: None,
+                action_type: Some("blackboard"),
+                action_key: Some(action_key),
+            })
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        }
         return Ok(todo.id);
     }
 
