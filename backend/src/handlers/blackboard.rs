@@ -1,13 +1,12 @@
 //! 黑板（Blackboard）API Handler。
 //!
-//! 提供四个端点：
+//! 提供三个端点：
 //! - `GET /api/workspaces/{workspace_id}/blackboard`：获取当前黑板内容与配置
 //! - `PATCH /api/workspaces/{workspace_id}/blackboard`：更新黑板配置
 //! - `GET /api/workspaces/{workspace_id}/blackboard/config`：仅获取黑板配置
-//! - `POST /api/workspaces/{workspace_id}/blackboard/refresh`：手动触发热刷新
 
 use axum::extract::{Path, State};
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::Router;
 
 use crate::db::blackboard::BlackboardConfig;
@@ -138,61 +137,7 @@ pub async fn update_blackboard_config(
     Ok(ApiResponse::ok(cfg.unwrap()))
 }
 
-/// 刷新请求体（预留，当前为空）
-#[derive(Debug, serde::Deserialize)]
-pub struct RefreshRequest {}
-
-/// 刷新响应体
-#[derive(Debug, serde::Serialize)]
-pub struct RefreshResponse {
-    pub success: bool,
-    pub message: String,
-}
-
-/// `POST /api/workspaces/{workspace_id}/blackboard/refresh`
-///
-/// 手动触发黑板刷新：重新执行 blackboard update todo，
-/// 让 LLM 根据当前黑板内容重新组织生成。
-///
-/// 这是一个异步操作，请求返回后黑板内容会在几秒到几十秒后更新。
-/// 前端需要间隔轮询或等待 WebSocket 推送来获取最新内容。
-pub async fn refresh_blackboard(
-    State(state): State<AppState>,
-    Path(workspace_id): Path<i64>,
-) -> Result<ApiResponse<RefreshResponse>, AppError> {
-    // 异步触发黑板刷新，不阻塞请求
-    // tokio::spawn 确保刷新任务在后台运行，即使 HTTP 连接已断开
-    let db = state.db.clone();
-    let executor_registry = state.executor_registry.clone();
-    let tx = state.tx.clone();
-    let task_manager = state.task_manager.clone();
-    let config = state.config.clone();
-
-    tokio::spawn(async move {
-        if let Err(e) = crate::services::blackboard::refresh_blackboard(
-            db,
-            executor_registry,
-            tx,
-            task_manager,
-            config,
-            workspace_id,
-        )
-        .await
-        {
-            tracing::warn!("黑板刷新失败: workspace_id={}, error={:?}", workspace_id, e);
-        }
-    });
-
-    Ok(ApiResponse::ok(RefreshResponse {
-        success: true,
-        message: "黑板刷新已触发".to_string(),
-    }))
-}
-
 /// 返回黑板领域路由。
-///
-/// 路由设计遵循 RESTful 风格，以 workspace 为作用域：
-/// - `/api/workspaces/{workspace_id}/blackboard`
 pub fn blackboard_routes() -> Router<AppState> {
     Router::new()
         .route(
@@ -202,10 +147,6 @@ pub fn blackboard_routes() -> Router<AppState> {
         .route(
             "/api/workspaces/{workspace_id}/blackboard/config",
             get(get_blackboard_config),
-        )
-        .route(
-            "/api/workspaces/{workspace_id}/blackboard/refresh",
-            post(refresh_blackboard),
         )
 }
 
@@ -253,29 +194,6 @@ mod tests {
         assert_eq!(json["workspace_id"], 42);
         assert_eq!(json["content"], "");
         assert!(json["updated_at"].is_null());
-    }
-
-    /// 验证 RefreshRequest 接受空 body。
-    /// 刷新端点不要求 body 参数，但 axum 默认要求 Content-Length 与 Content-Type 头；
-    /// 序列化反序列化的空结构体对应 `{}` 或空 body。
-    #[test]
-    fn test_refresh_request_accepts_empty_object() {
-        let req: RefreshRequest = serde_json::from_str("{}").unwrap();
-        // 反序列化无字段：结构体为空，只要类型正确即可
-        let _ = req;
-    }
-
-    /// 验证 RefreshResponse 序列化字段稳定。
-    /// 字段名必须与前端 `RefreshResponse` 接口一致。
-    #[test]
-    fn test_refresh_response_serialization() {
-        let resp = RefreshResponse {
-            success: true,
-            message: "黑板刷新已触发".to_string(),
-        };
-        let json = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["success"], true);
-        assert_eq!(json["message"], "黑板刷新已触发");
     }
 
     /// 集成测试：通过 DB 写入后用 ApiResponse 包装，验证完整 JSON 包络。

@@ -90,9 +90,12 @@ pub async fn find_or_create_blackboard_todo(
 
 /// 构建黑板更新的 Prompt 模板。
 ///
-/// 包含占位符 `{{current}}`、`{{conclusion}}`、`{{todo_id}}`、`{{todo_title}}`，
+/// ⚠️ 注意：此为后端内置默认提示词，前端 `BlackboardPage.tsx` 中也有一份
+/// `DEFAULT_BLACKBOARD_UPDATE_PROMPT` 与之对应，修改时需同步更新两处。
+///
+/// 包含占位符 `{{current}}`、`{{pending_record_ids}}`，
 /// 在执行前由 `replace_placeholders` 替换为实际值。
-/// 模板要求 LLM 按固定 Markdown 结构输出，便于前端直接渲染。
+/// 模板要求 AI 通过 CLI 命令主动查询执行记录，再将结论整合到黑板。
 fn build_blackboard_prompt() -> String {
     r#"你是一个工作空间知识库的维护者。你的任务是维护一个 Markdown 格式的"黑板"，记录工作空间中所有任务执行的结论和当前进展。
 
@@ -101,26 +104,25 @@ fn build_blackboard_prompt() -> String {
 {{current}}
 ```
 
-新任务结论：
-- 任务 ID: {{todo_id}}
-- 任务标题: {{todo_title}}
-- 执行结论: {{conclusion}}
+待分析的执行记录 ID 列表：
+{{pending_record_ids}}
 
-请更新黑板内容，要求：
-1. 将新结论整合到黑板中
-2. 保持以下结构：
+请按以下步骤操作：
+1. 对于列表中的每个 execution_record_id，使用 `ntd todo execution get <id>` 命令获取执行结论
+2. 将各记录的结论整合到黑板中
+3. 保持以下结构：
    - # 工作空间进展
    - ## 已确认
    - ## 新发现
    - ## 待解决问题
    - ## 矛盾/风险
    - ## 下一步建议
-3. 每条结论标注来源，格式：(来源: [todo_{{todo_id}}](ntd://todo/{{todo_id}}))
-4. 如果新结论与已有结论矛盾，在"矛盾/风险"中标注
-5. 如果新结论提出了未解决的问题，在"待解决问题"中列出
-6. 更新"下一步建议"
-7. 保持 Markdown 格式，不要添加 HTML
-8. 如果黑板为空，根据新结论创建初始结构
+4. 每条结论标注来源，格式：(来源: [execution_record_{{id}}](ntd://execution/{{id}}))
+5. 如果结论与已有结论矛盾，在"矛盾/风险"中标注
+6. 如果结论提出了未解决的问题，在"待解决问题"中列出
+7. 更新"下一步建议"
+8. 保持 Markdown 格式，不要添加 HTML
+9. 如果黑板为空，根据新结论创建初始结构
 
 只输出更新后的黑板内容，不要输出任何解释。"#.to_string()
 }
@@ -148,16 +150,13 @@ async fn read_current_content(
 fn assemble_prompt(
     prompt_template: &str,
     current_content: String,
-    conclusion: String,
-    source_todo_id: i64,
-    source_todo_title: &str,
+    pending_record_ids: Vec<i64>,
 ) -> (String, HashMap<String, String>) {
-    // 用与上游一致的 key 命名：current / conclusion / todo_id / todo_title
+    // pending_record_ids 转为易读的列表字符串，如 "[1, 2, 3]"
+    let ids_str = format!("{:?}", pending_record_ids);
     let mut params = HashMap::new();
     params.insert("current".to_string(), current_content);
-    params.insert("conclusion".to_string(), conclusion);
-    params.insert("todo_id".to_string(), source_todo_id.to_string());
-    params.insert("todo_title".to_string(), source_todo_title.to_string());
+    params.insert("pending_record_ids".to_string(), ids_str);
     // models::replace_placeholders 单遍替换 {{key}} -> params[key]
     let message = crate::models::replace_placeholders(prompt_template, &params);
     (message, params)
@@ -181,8 +180,6 @@ async fn run_blackboard_execution(
     todo_id: i64,
     message: String,
     params: HashMap<String, String>,
-    source_todo_id: Option<i64>,
-    source_todo_title: Option<String>,
 ) -> Result<Option<String>, AppError> {
     // 先订阅：broadcast 通道不会重发订阅前的事件，必须在 start 之前
     let mut rx = tx.subscribe();
@@ -200,8 +197,8 @@ async fn run_blackboard_execution(
         params: Some(params),
         resume_session_id: None,
         resume_message: None,
-        source_todo_id,
-        source_todo_title,
+        source_todo_id: None,
+        source_todo_title: None,
         feishu_bot_id: None,
         feishu_receive_id: None,
         loop_step_execution_id: None,
@@ -309,9 +306,7 @@ pub async fn update_blackboard(
     task_manager: Arc<TaskManager>,
     config: Arc<std::sync::RwLock<Config>>,
     workspace_id: i64,
-    conclusion: &str,
-    source_todo_id: i64,
-    source_todo_title: &str,
+    pending_record_ids: Vec<i64>,
 ) -> Result<(), AppError> {
     // 1+2: 读当前内容、找或建 todo；任一失败直接返回
     let current_content = read_current_content(&db, workspace_id).await?;
@@ -327,9 +322,7 @@ pub async fn update_blackboard(
     let (message, params) = assemble_prompt(
         &prompt_template,
         current_content,
-        conclusion.to_string(),
-        source_todo_id,
-        source_todo_title,
+        pending_record_ids,
     );
     // 4: 启动执行 + 等待 Finished
     let new_content = run_blackboard_execution(
@@ -342,63 +335,9 @@ pub async fn update_blackboard(
         todo_id,
         message,
         params,
-        Some(source_todo_id),
-        Some(source_todo_title.to_string()),
     )
     .await?;
     // 5: 写回黑板（带空内容保护 + upsert）
-    save_blackboard(&db, workspace_id, new_content).await
-}
-
-/// 手动刷新黑板：重新执行 blackboard update todo，让 LLM 重新组织现有内容。
-///
-/// 与 `update_blackboard` 的区别：conclusion 是占位文本"无新结论"，
-/// 作用是触发一次"基于现状的重新组织"而不是"基于新结论的合并"。
-/// 因此要求黑板非空：空黑板无内容可"重新组织"，直接返回 BadRequest。
-pub async fn refresh_blackboard(
-    db: Arc<Database>,
-    executor_registry: Arc<ExecutorRegistry>,
-    tx: broadcast::Sender<ExecEvent>,
-    task_manager: Arc<TaskManager>,
-    config: Arc<std::sync::RwLock<Config>>,
-    workspace_id: i64,
-) -> Result<(), AppError> {
-    // 早退：空黑板没有"重新组织"的对象，避免无意义的 LLM 调用
-    let current_content = read_current_content(&db, workspace_id).await?;
-    if current_content.is_empty() {
-        return Err(AppError::BadRequest("黑板暂无内容，无需刷新".to_string()));
-    }
-    // 从 per-workspace 配置中提取更新提示词模板；若为空则使用内置默认。
-    // 注意：手动刷新复用 update_prompt 而非单独的 refresh_prompt。
-    // 旧版 refresh_prompt 曾有独立模板（禁止 ntd://todo/ 链接），但该功能已移除，
-    // 两个场景现共用同一套 prompt 模板，均由用户配置或使用内置默认。
-    let update_prompt_template = {
-        match db.get_blackboard_config(workspace_id).await {
-            Ok(Some(cfg)) if !cfg.update_prompt.is_empty() => cfg.update_prompt,
-            _ => build_blackboard_prompt(),
-        }
-    };
-    // 复用同一 todo + 同一执行/等待/写入流程；source_todo_* 留 None 表示"非任务触发"
-    let (todo_id, _) = find_or_create_blackboard_todo(&db, &update_prompt_template, workspace_id).await?;
-    // 手动刷新使用与更新相同的 prompt 模板（已包含 {{current}} 占位符）
-    let mut params = HashMap::new();
-    params.insert("current".to_string(), current_content);
-    let message = crate::models::replace_placeholders(&update_prompt_template, &params);
-    let new_content = run_blackboard_execution(
-        db.clone(),
-        executor_registry,
-        tx,
-        task_manager,
-        config,
-        workspace_id,
-        todo_id,
-        message,
-        // params 用空 map：手动刷新只用了 {{current}}，无其它占位符
-        HashMap::new(),
-        None,
-        None,
-    )
-    .await?;
     save_blackboard(&db, workspace_id, new_content).await
 }
 
@@ -420,34 +359,27 @@ mod tests {
     fn test_prompt_contains_required_placeholders() {
         let prompt = build_blackboard_prompt();
         assert!(prompt.contains("{{current}}"));
-        assert!(prompt.contains("{{conclusion}}"));
-        assert!(prompt.contains("{{todo_id}}"));
-        assert!(prompt.contains("{{todo_title}}"));
+        assert!(prompt.contains("{{pending_record_ids}}"));
     }
 
-    /// 验证 assemble_prompt 正确替换占位符，且结论字段透传。
-    /// 防止模型 prompt 模板被误改后占位符替换断裂（导致 LLM 收到 "{{conclusion}}" 字面量）。
+    /// 验证 assemble_prompt 正确替换占位符，且 pending_record_ids 透传。
+    /// 防止模型 prompt 模板被误改后占位符替换断裂（导致 LLM 收到 "{{pending_record_ids}}" 字面量）。
     #[test]
     fn test_assemble_prompt_replaces_all_placeholders() {
         let prompt_template = build_blackboard_prompt();
         let (message, params) = assemble_prompt(
             &prompt_template,
             "已有黑板".to_string(),
-            "任务已成功".to_string(),
-            42,
-            "示例 todo",
+            vec![1, 2, 3],
         );
         // 原始占位符应全部被替换
         assert!(!message.contains("{{current}}"));
-        assert!(!message.contains("{{conclusion}}"));
-        assert!(!message.contains("{{todo_id}}"));
-        assert!(!message.contains("{{todo_title}}"));
+        assert!(!message.contains("{{pending_record_ids}}"));
         // 替换值应透传到 message
         assert!(message.contains("已有黑板"));
-        assert!(message.contains("任务已成功"));
+        assert!(message.contains("[1, 2, 3]"));
         // params 也应原样返回，供 start_todo_execution 使用
-        assert_eq!(params.get("todo_id"), Some(&"42".to_string()));
-        assert_eq!(params.get("todo_title"), Some(&"示例 todo".to_string()));
+        assert_eq!(params.get("pending_record_ids"), Some(&"[1, 2, 3]".to_string()));
     }
 
     /// 验证 find_or_create 第二次调用返回 (same_id, false)，避免重复创建。
