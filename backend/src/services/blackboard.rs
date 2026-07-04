@@ -275,18 +275,17 @@ pub fn normalize_blackboard_markdown(content: &str) -> String {
     if trimmed.len() < 5 {
         return content.to_string();
     }
-    // 匹配开头的 fenced code block：```markdown, ```md, 或纯 ```
-    // 用简单的字符串前缀匹配，避免正则开销
-    let start_marker = trimmed
-        .strip_prefix("```markdown")
-        .or_else(|| trimmed.strip_prefix("```md"))
-        .or_else(|| trimmed.strip_prefix("```"));
-    let Some(rest_after_start) = start_marker else {
+    // 匹配开头的 fenced code block：``` 后跟任意语言标识符（markdown / md / code / ...），或纯 ```
+    // 找到第一个换行，将 fence 整行（```xxx）一起剥掉
+    if !trimmed.starts_with("```") {
         // 不是以 ``` 开头，原样返回
         return content.to_string();
+    }
+    let Some(first_newline) = trimmed.find('\n') else {
+        // 如果没有换行说明 fence 不完整（单行内容），原样返回
+        return content.to_string();
     };
-    // rest_after_start 可能是 '\n...' 或直接是内容，跳过开头的换行
-    let inner = rest_after_start.trim_start_matches('\n');
+    let inner = &trimmed[first_newline + 1..];
     // 检查末尾是否有匹配的 ```
     if !inner.ends_with("\n```") && inner != "```" {
         // 末尾没有 ```，说明不是完整的外层包裹，原样返回

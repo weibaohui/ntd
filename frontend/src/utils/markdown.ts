@@ -18,21 +18,18 @@ export function normalizeBlackboardMarkdown(content: string): string {
   if (trimmed.length < 5) {
     return content;
   }
-  // 匹配开头的 fenced code block：```markdown, ```md, 或纯 ```
-  let inner: string | null = null;
-  if (trimmed.startsWith('```markdown')) {
-    inner = trimmed.slice(11);
-  } else if (trimmed.startsWith('```md')) {
-    inner = trimmed.slice(5);
-  } else if (trimmed.startsWith('```')) {
-    inner = trimmed.slice(3);
-  }
-  if (inner === null) {
+  // 匹配开头的 fenced code block：``` 后跟任意语言标识符（markdown / md / code / ...），或纯 ```
+  // 找到第一个换行，将 fence 整行（```xxx）一起剥掉
+  if (!trimmed.startsWith('```')) {
     // 不是以 ``` 开头，原样返回
     return content;
   }
-  // 跳过开头的换行
-  inner = inner.replace(/^\n+/, '');
+  const firstNewline = trimmed.indexOf('\n');
+  // 如果没有换行说明 fence 不完整（单行内容），原样返回
+  if (firstNewline < 0) {
+    return content;
+  }
+  let inner = trimmed.slice(firstNewline + 1);
   // 检查末尾是否有匹配的 ```
   if (!(inner.endsWith('\n```') || inner === '```')) {
     // 末尾没有 ```，说明不是完整的外层包裹，原样返回
