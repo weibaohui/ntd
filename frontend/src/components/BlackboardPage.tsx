@@ -14,7 +14,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input } from 'antd';
+import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs } from 'antd';
 import { ReloadOutlined, SettingOutlined } from '@ant-design/icons';
 import { XMarkdown } from '@ant-design/x-markdown';
 import { useTheme } from '@/hooks/useTheme';
@@ -40,6 +40,40 @@ const URL_WORKSPACE_PARAM = 'workspace';
 
 /** 默认工作空间 ID（首屏兜底，避免 URL 未带参时无 workspace） */
 const DEFAULT_WORKSPACE_ID = 1;
+
+/**
+ * 黑板更新提示词默认值，与后端 DEFAULT_BLACKBOARD_UPDATE_PROMPT 保持一致。
+ * 用于在 UI 上展示默认提示词内容，以及"恢复默认"时回填。
+ */
+const DEFAULT_BLACKBOARD_UPDATE_PROMPT = `你是一个工作空间知识库的维护者。你的任务是维护一个 Markdown 格式的"黑板"，记录工作空间中所有任务执行的结论和当前进展。
+
+当前黑板内容：
+\`\`\`
+{{current}}
+\`\`\`
+
+新任务结论：
+- 任务 ID: {{todo_id}}
+- 任务标题: {{todo_title}}
+- 执行结论: {{conclusion}}
+
+请更新黑板内容，要求：
+1. 将新结论整合到黑板中
+2. 保持以下结构：
+   - # 工作空间进展
+   - ## 已确认
+   - ## 新发现
+   - ## 待解决问题
+   - ## 矛盾/风险
+   - ## 下一步建议
+3. 每条结论标注来源，格式：(来源: [todo_{{todo_id}}](ntd://todo/{{todo_id}}))
+4. 如果新结论与已有结论矛盾，在"矛盾/风险"中标注
+5. 如果新结论提出了未解决的问题，在"待解决问题"中列出
+6. 更新"下一步建议"
+7. 保持 Markdown 格式，不要添加 HTML
+8. 如果黑板为空，根据新结论创建初始结构
+
+只输出更新后的黑板内容，不要输出任何解释。`;
 
 
 /** Markdown 链接组件 props 形状（XMarkdown ComponentProps 简化版） */
@@ -142,7 +176,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const [debounceSecs, setDebounceSecs] = useState<number>(600);
   const [debounceCount, setDebounceCount] = useState<number>(10);
   const [updatePrompt, setUpdatePrompt] = useState<string>('');
-  const [refreshPrompt, setRefreshPrompt] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<'debounce' | 'prompt'>('debounce');
 
   // 打开设置弹窗：先拉取最新 config，等拉完再打开 modal，避免默认值闪烁
   const handleOpenSettings = useCallback(async () => {
@@ -151,13 +185,12 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       setDebounceSecs(cfg.blackboard_debounce_secs ?? 600);
       setDebounceCount(cfg.blackboard_debounce_count ?? 10);
       setUpdatePrompt(cfg.blackboard_update_prompt ?? '');
-      setRefreshPrompt(cfg.blackboard_refresh_prompt ?? '');
     } catch {
       setDebounceSecs(600);
       setDebounceCount(10);
       setUpdatePrompt('');
-      setRefreshPrompt('');
     }
+    setActiveTab('debounce');
     setSettingsOpen(true);
   }, []);
 
@@ -166,7 +199,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     setSettingsSaving(true);
     try {
       const current = await db.getConfig();
-      await db.updateConfig({ ...current, blackboard_debounce_secs: debounceSecs, blackboard_debounce_count: debounceCount, blackboard_update_prompt: updatePrompt, blackboard_refresh_prompt: refreshPrompt });
+      await db.updateConfig({ ...current, blackboard_debounce_secs: debounceSecs, blackboard_debounce_count: debounceCount, blackboard_update_prompt: updatePrompt });
       message.success('设置已保存');
       setSettingsOpen(false);
     } catch (err) {
@@ -174,7 +207,12 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     } finally {
       setSettingsSaving(false);
     }
-  }, [debounceSecs, debounceCount, updatePrompt, refreshPrompt]);
+  }, [debounceSecs, debounceCount, updatePrompt]);
+
+  // 恢复默认提示词：把 updatePrompt 清空（空字符串表示使用后端内置默认）
+  const handleRestoreDefaultPrompt = useCallback(() => {
+    setUpdatePrompt('');
+  }, []);
 
   // 拉取（受 workspaceId 变化驱动）：useCallback 稳定引用，让 useEffect 只在 id 变时重跑
   const fetchData = useCallback(async () => {
@@ -208,7 +246,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       />
       <BlackboardBody isDark={isDark} data={data} />
 
-      {/* 黑板设置弹窗 */}
+      {/* 黑板设置弹窗：Tab1 防抖设置，Tab2 提示词设置 */}
       <Modal
         title="黑板设置"
         open={settingsOpen}
@@ -217,46 +255,80 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         okText="保存"
         confirmLoading={settingsSaving}
         destroyOnHidden
+        width={640}
       >
-        <Form layout="vertical">
-          <Form.Item label="防抖周期">
-            <InputNumber
-              value={debounceSecs}
-              onChange={(v) => setDebounceSecs(v ?? 600)}
-              min={10}
-              max={3600}
-              addonAfter="秒"
-              style={{ width: 200 }}
-            />
-          </Form.Item>
-          <Form.Item label="触发条数">
-            <InputNumber
-              value={debounceCount}
-              onChange={(v) => setDebounceCount(v ?? 10)}
-              min={1}
-              max={100}
-              addonAfter="条"
-              style={{ width: 200 }}
-            />
-          </Form.Item>
-          <Form.Item extra="达到条数阈值或周期到期时，统一处理 pending 的 todo，减少频繁的 LLM 调用" />
-          <Form.Item label="更新提示词">
-            <Input.TextArea
-              value={updatePrompt}
-              onChange={(e) => setUpdatePrompt(e.target.value)}
-              rows={4}
-              placeholder="包含占位符 {{current}}、{{conclusion}}、{{todo_id}}、{{todo_title}}，留空使用内置默认提示词"
-            />
-          </Form.Item>
-          <Form.Item label="刷新提示词">
-            <Input.TextArea
-              value={refreshPrompt}
-              onChange={(e) => setRefreshPrompt(e.target.value)}
-              rows={4}
-              placeholder="包含占位符 {{current}}，留空使用内置默认提示词"
-            />
-          </Form.Item>
-        </Form>
+        <Tabs
+          activeKey={activeTab}
+          onChange={(key) => setActiveTab(key as 'debounce' | 'prompt')}
+          items={[
+            {
+              key: 'debounce',
+              label: '防抖设置',
+              children: (
+                <Form layout="vertical" style={{ marginTop: 16 }}>
+                  <Form.Item label="防抖周期">
+                    <InputNumber
+                      value={debounceSecs}
+                      onChange={(v) => setDebounceSecs(v ?? 600)}
+                      min={10}
+                      max={3600}
+                      addonAfter="秒"
+                      style={{ width: 200 }}
+                    />
+                  </Form.Item>
+                  <Form.Item label="触发条数">
+                    <InputNumber
+                      value={debounceCount}
+                      onChange={(v) => setDebounceCount(v ?? 10)}
+                      min={1}
+                      max={100}
+                      addonAfter="条"
+                      style={{ width: 200 }}
+                    />
+                  </Form.Item>
+                  <Form.Item extra="达到条数阈值或周期到期时，统一处理 pending 的 todo，减少频繁的 LLM 调用" />
+                </Form>
+              ),
+            },
+            {
+              key: 'prompt',
+              label: '提示词设置',
+              children: (
+                <div style={{ marginTop: 16 }}>
+                  <Space style={{ marginBottom: 12 }}>
+                    <Button onClick={handleRestoreDefaultPrompt}>恢复默认</Button>
+                    <span style={{ color: '#888', fontSize: 12 }}>
+                      恢复默认后，将使用内置提示词模板
+                    </span>
+                  </Space>
+                  <Input.TextArea
+                    value={updatePrompt}
+                    onChange={(e) => setUpdatePrompt(e.target.value)}
+                    rows={12}
+                    placeholder="当前使用默认提示词（下方展示），如需自定义请在此输入"
+                  />
+                  {/* updatePrompt 为空时，隐性表示"使用默认"，此时在下方展示默认提示词供参照 */}
+                  {!updatePrompt && (
+                    <div
+                      style={{
+                        marginTop: 12,
+                        padding: '12px',
+                        background: '#f5f5f5',
+                        borderRadius: 6,
+                        fontSize: 12,
+                        color: '#666',
+                        whiteSpace: 'pre-wrap',
+                      }}
+                    >
+                      <div style={{ fontWeight: 500, marginBottom: 8, color: '#333' }}>默认提示词（当前生效）：</div>
+                      {DEFAULT_BLACKBOARD_UPDATE_PROMPT}
+                    </div>
+                  )}
+                </div>
+              ),
+            },
+          ]}
+        />
       </Modal>
     </div>
   );
