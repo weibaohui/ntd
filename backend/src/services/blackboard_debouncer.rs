@@ -259,8 +259,9 @@ pub async fn push_pending_record(workspace_id: i64, record_id: i64, db: &Arc<Dat
     // 启动 timer（per-workspace 防抖时长）
     tokio::spawn(async move {
         // 使用 sleep 而非 interval：interval.tick() 第一次立即返回，不符合"等待周期"的需求
+        tracing::info!("黑板 debounce timer 已启动: workspace_id={}, {}s 后触发", workspace_id, debounce_secs);
         tokio::time::sleep(Duration::from_secs(debounce_secs as u64)).await;
-        tracing::debug!("黑板 debounce timer 触发: workspace_id={}", workspace_id);
+        tracing::info!("黑板 debounce timer 触发: workspace_id={}", workspace_id);
 
         // 清除 timer 状态
         {
