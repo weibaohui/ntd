@@ -127,7 +127,7 @@ interface MarkdownLinkProps extends React.AnchorHTMLAttributes<HTMLAnchorElement
  *   点击时通过 useViewState.selectTodo 导航到事项详情，
  *   阻止浏览器尝试解析 ntd:// 自定义协议导致"找不到应用"提示。
  * - href 以 / 开头（app 内相对路径，如 /?view=items&id=16&panel=post&record=6513）
- *   → 同一标签页内导航，不新开窗口。
+ *   → 新标签页打开，让用户同时保留 wiki 页面和查看源记录。
  * - 其他 href（http/https/mailto 等）→ 新窗口打开 + rel=noopener 防 tabnabbing。
  */
 function TodoLink(props: MarkdownLinkProps): React.ReactElement {
@@ -159,10 +159,10 @@ function TodoLink(props: MarkdownLinkProps): React.ReactElement {
   }
 
   // 内部相对路径（以 / 开头，如 /?view=items&id=16&panel=post&record=6513）
-  // → 同一标签页内导航，不新开 window/tab
+  // → 新标签页打开，让用户同时保留当前 wiki 页面和查看源记录
   if (href.startsWith('/')) {
     return (
-      <a {...props} href={href}>
+      <a {...props} href={href} target="_blank" rel="noopener noreferrer">
         {props.children}
       </a>
     );
