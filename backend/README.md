@@ -122,7 +122,7 @@ make dev
 | `ntd tag ...` | 标签管理 |
 | `ntd stats` | 全局统计 |
 | `ntd daemon install\|uninstall\|start\|stop\|restart\|status` | 服务管理 |
-| `ntd skill install [--force] [--executor claudecode,...]` | 把内置的 `ntd-usage` 技能安装到各执行器技能目录 |
+| `ntd skills install [--force] [--executor claudecode,...]` | 把内置的 `ntd-usage` 技能安装到各执行器技能目录 |
 
 ---
 

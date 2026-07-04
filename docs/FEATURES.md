@@ -254,7 +254,7 @@
 | 跨执行器对比 | 展示各执行器共有 / 独有 Skill |
 | 同步 | 选源 Skill 同步到其他执行器 |
 | 调用追踪 | 记录 Skill 调用历史,可按 Skill/执行器筛选分页 |
-| ntd-usage Skill | 内置 ntd 使用技能,`ntd skill install` 一键安装到执行器 |
+| ntd-usage Skill | 内置 ntd 使用技能,`ntd skills install` 一键安装到执行器 |
 
 ---
 

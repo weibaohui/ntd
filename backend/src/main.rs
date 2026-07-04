@@ -429,7 +429,7 @@ fn handle_skill_install(force: bool, all: bool, executor_filter: Option<&str>) -
     }
 
     if installed == 0 && skipped > 0 {
-        println!("All skills already installed. Use `ntd skill install --force` to reinstall.");
+        println!("All skills already installed. Use `ntd skills install --force` to reinstall.");
     } else {
         println!("Done. Installed for {} executor(s), skipped {} (already present).", installed, skipped);
     }
