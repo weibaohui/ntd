@@ -14,7 +14,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress } from 'antd';
+import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input } from 'antd';
 import { ReloadOutlined, SettingOutlined } from '@ant-design/icons';
 import { XMarkdown } from '@ant-design/x-markdown';
 import { useTheme } from '@/hooks/useTheme';
@@ -141,6 +141,8 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [debounceSecs, setDebounceSecs] = useState<number>(600);
   const [debounceCount, setDebounceCount] = useState<number>(10);
+  const [updatePrompt, setUpdatePrompt] = useState<string>('');
+  const [refreshPrompt, setRefreshPrompt] = useState<string>('');
 
   // 打开设置弹窗：先拉取最新 config，等拉完再打开 modal，避免默认值闪烁
   const handleOpenSettings = useCallback(async () => {
@@ -148,9 +150,13 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       const cfg = await db.getConfig();
       setDebounceSecs(cfg.blackboard_debounce_secs ?? 600);
       setDebounceCount(cfg.blackboard_debounce_count ?? 10);
+      setUpdatePrompt(cfg.blackboard_update_prompt ?? '');
+      setRefreshPrompt(cfg.blackboard_refresh_prompt ?? '');
     } catch {
       setDebounceSecs(600);
       setDebounceCount(10);
+      setUpdatePrompt('');
+      setRefreshPrompt('');
     }
     setSettingsOpen(true);
   }, []);
@@ -160,7 +166,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     setSettingsSaving(true);
     try {
       const current = await db.getConfig();
-      await db.updateConfig({ ...current, blackboard_debounce_secs: debounceSecs, blackboard_debounce_count: debounceCount });
+      await db.updateConfig({ ...current, blackboard_debounce_secs: debounceSecs, blackboard_debounce_count: debounceCount, blackboard_update_prompt: updatePrompt, blackboard_refresh_prompt: refreshPrompt });
       message.success('设置已保存');
       setSettingsOpen(false);
     } catch (err) {
@@ -168,7 +174,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     } finally {
       setSettingsSaving(false);
     }
-  }, [debounceSecs, debounceCount]);
+  }, [debounceSecs, debounceCount, updatePrompt, refreshPrompt]);
 
   // 拉取（受 workspaceId 变化驱动）：useCallback 稳定引用，让 useEffect 只在 id 变时重跑
   const fetchData = useCallback(async () => {
@@ -234,6 +240,22 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
             />
           </Form.Item>
           <Form.Item extra="达到条数阈值或周期到期时，统一处理 pending 的 todo，减少频繁的 LLM 调用" />
+          <Form.Item label="更新提示词">
+            <Input.TextArea
+              value={updatePrompt}
+              onChange={(e) => setUpdatePrompt(e.target.value)}
+              rows={4}
+              placeholder="包含占位符 {{current}}、{{conclusion}}、{{todo_id}}、{{todo_title}}，留空使用内置默认提示词"
+            />
+          </Form.Item>
+          <Form.Item label="刷新提示词">
+            <Input.TextArea
+              value={refreshPrompt}
+              onChange={(e) => setRefreshPrompt(e.target.value)}
+              rows={4}
+              placeholder="包含占位符 {{current}}，留空使用内置默认提示词"
+            />
+          </Form.Item>
         </Form>
       </Modal>
     </div>
