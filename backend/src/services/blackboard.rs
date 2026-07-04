@@ -192,7 +192,8 @@ fn build_blackboard_prompt() -> String {
    - ## 待解决问题
    - ## 矛盾/风险
    - ## 下一步建议
-4. 每条结论标注来源，格式：(来源: [execution_record_{{id}}](ntd://execution/{{id}}))
+4. 每条结论标注来源。使用 `ntd todo execution get <record_id>` 返回结果中的 `todo_id` 和 `id` 字段，
+   生成 app 内链接，格式：(来源: [record_{record_id}](/?view=items&id={todo_id}&panel=post&record={record_id}))
 5. 如果结论与已有结论矛盾，在"矛盾/风险"中标注
 6. 如果结论提出了未解决的问题，在"待解决问题"中列出
 7. 更新"下一步建议"
@@ -294,7 +295,8 @@ fn build_wiki_execute_prompt() -> String {
    - ## 待解决问题
    - ## 矛盾/风险
    - ## 下一步建议
-4. 每条结论标注来源，格式：(来源: [execution_record_{{id}}](ntd://execution/{{id}}))
+4. 每条结论标注来源。使用 `ntd todo execution get <record_id>` 返回结果中的 `todo_id` 和 `id` 字段，
+   生成 app 内链接，格式：(来源: [record_{record_id}](/?view=items&id={todo_id}&panel=post&record={record_id}))
 5. 如果新结论与已有结论矛盾，在"矛盾/风险"中标注
 6. 保持 Markdown 格式，不要添加 HTML
 
