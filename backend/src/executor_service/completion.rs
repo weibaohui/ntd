@@ -417,12 +417,12 @@ pub(crate) async fn finalize_normal_completion(
     task_manager.remove(&task_id).await;
 
     // ===== 黑板更新 (blackboard) =====
-    // 任务执行成功后，将 todo_id 追加到 pending 队列，由 debouncer 周期汇总触发。
+    // 任务执行成功后，将 execution_record_id 追加到 pending 队列，由 debouncer 周期汇总触发。
     // 用 trigger_type 判定"自身"——黑板更新任务的 trigger_type == "blackboard"，
     // 避免无限循环；即使以后新增相同 action_type 的非黑板 todo，也不会被错误地跳过。
     if success && trigger_type != "blackboard" {
         if let Some(ws_id) = workspace_id {
-            crate::services::blackboard_debouncer::push_pending_todo(ws_id, todo_id, &db).await;
+            crate::services::blackboard_debouncer::push_pending_record(ws_id, record_id, &db).await;
         }
     }
 }
@@ -441,7 +441,7 @@ async fn build_blackboard_status(
         .ok()
         .flatten()
         .map(|b| {
-            serde_json::from_str::<Vec<i64>>(&b.pending_todo_ids)
+            serde_json::from_str::<Vec<i64>>(&b.pending_record_ids)
                 .map(|v| v.len() as u64)
                 .unwrap_or(0)
         })
@@ -543,8 +543,8 @@ pub async fn blackboard_flush_listener(
                         };
                         let _ = tx.send(refreshing_event);
 
-                        // 从 DB 取出 pending 队列（take_pending_todo_ids 已清空队列）
-                        let todo_ids = match db.take_pending_todo_ids(msg.workspace_id).await {
+                        // 从 DB 取出 pending 队列（take_pending_record_ids 已清空队列）
+                        let record_ids = match db.take_pending_record_ids(msg.workspace_id).await {
                             Ok(ids) => ids,
                             Err(e) => {
                                 tracing::warn!("取 pending 队列失败: workspace_id={}, error={}", msg.workspace_id, e);
@@ -552,23 +552,28 @@ pub async fn blackboard_flush_listener(
                             }
                         };
 
-                        if todo_ids.is_empty() {
+                        if record_ids.is_empty() {
                             tracing::debug!("黑板 pending 队列为空: workspace_id={}", msg.workspace_id);
                             continue;
                         }
 
                         tracing::info!(
-                            "黑板 flush listener 处理: workspace_id={}, todo_ids={:?}",
-                            msg.workspace_id, todo_ids
+                            "黑板 flush listener 处理: workspace_id={}, record_ids={:?}",
+                            msg.workspace_id, record_ids
                         );
 
-                        // 按顺序查询每条 todo 的最新执行结论
-                        let mut conclusions = Vec::with_capacity(todo_ids.len());
-                        for todo_id in &todo_ids {
-                            if let Ok(Some(record)) = db.get_latest_execution_record_for_todo(*todo_id).await {
+                        // 按顺序查询每条 execution_record 的结论
+                        let mut conclusions = Vec::with_capacity(record_ids.len());
+                        // 取第一条记录的 todo_id 作为 update_blackboard 的 source_todo_id
+                        let mut source_todo_id = 0i64;
+                        for (i, record_id) in record_ids.iter().enumerate() {
+                            if let Ok(Some(record)) = db.get_execution_record(*record_id).await {
+                                if i == 0 {
+                                    source_todo_id = record.todo_id;
+                                }
                                 conclusions.push(format!(
                                     "- 任务 ID: {}\n  结论: {}",
-                                    todo_id,
+                                    record.todo_id,
                                     record.result.as_deref().unwrap_or("(无结论)")
                                 ));
                             }
@@ -590,8 +595,8 @@ pub async fn blackboard_flush_listener(
                             config.clone(),
                             msg.workspace_id,
                             &conclusion_text,
-                            todo_ids[0],
-                            &format!("批量更新 ({}条)", todo_ids.len()),
+                            source_todo_id,
+                            &format!("批量更新 ({}条)", record_ids.len()),
                         )
                         .await;
 

@@ -807,12 +807,12 @@ impl LoopRunner {
                     .map_err(|e| e.to_string())?;
                 *consecutive_retries.get_mut(&step.id).unwrap_or(&mut 0) = 0;
 
-                // 4l. 触发黑板更新：Step 执行成功，将 todo_id 追加到黑板 pending 队列。
+                // 4l. 触发黑板更新：Step 执行成功，将 execution_record_id 追加到黑板 pending 队列。
                 // 与普通 Todo 执行完成后的处理保持一致，让 LLM 将 step 结论整合到黑板。
                 if let Some(ws_id) = loop_.workspace_id.filter(|&id| id != 0) {
-                    crate::services::blackboard_debouncer::push_pending_todo(
+                    crate::services::blackboard_debouncer::push_pending_record(
                         ws_id,
-                        step.todo_id,
+                        record_id,
                         &self.ctx.db,
                     )
                     .await;

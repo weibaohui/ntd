@@ -1,6 +1,6 @@
 //! 黑板（Blackboard）防抖服务。
 //!
-//! 核心思路：不再每次 todo 执行完毕立即触发黑板更新，而是将 todo_id 追加到
+//! 核心思路：不再每次 todo 执行完毕立即触发黑板更新，而是将 execution_record_id 追加到
 //! 黑板的 pending 队列，周期到点后通过 channel 通知监听方执行实际 LLM 调用。
 //!
 //! 职责边界（避免 cycle）：
@@ -144,12 +144,12 @@ pub async fn init() -> mpsc::Receiver<BlackboardFlushMsg> {
     rx
 }
 
-/// 追加一个 todo_id 到 pending 队列；若 timer 未运行则启动。
+/// 追加一个 execution_record_id 到 pending 队列；若 timer 未运行则启动。
 ///
 /// 核心流程：入队 → 检查阈值是否达到立即触发 → 检查 timer 是否在运行 → 启动 timer。
 /// 防抖阈值（debounce_secs、debounce_count）从 per-workspace 黑板配置（blackboards 表）读取，
 /// 实现各工作空间独立的防抖策略。不调用任何 blackboard/executor_service 函数，职责纯粹为"入队 + 启动 timer"。
-pub async fn push_pending_todo(workspace_id: i64, todo_id: i64, db: &Arc<Database>) {
+pub async fn push_pending_record(workspace_id: i64, record_id: i64, db: &Arc<Database>) {
     // 确保黑板记录已存在：首次有 todo 执行完成时，黑板记录还未创建。
     // create_blackboard 是幂等的（ON CONFLICT DO NOTHING），重复调用安全。
     if let Err(e) = db.create_blackboard(workspace_id).await {
@@ -162,20 +162,20 @@ pub async fn push_pending_todo(workspace_id: i64, todo_id: i64, db: &Arc<Databas
     }
 
     tracing::info!(
-        "push_pending_todo called: workspace_id={}, todo_id={}",
-        workspace_id, todo_id
+        "push_pending_record called: workspace_id={}, record_id={}",
+        workspace_id, record_id
     );
 
     // 追加到 DB
-    if let Err(e) = db.append_pending_todo_id(workspace_id, todo_id).await {
+    if let Err(e) = db.append_pending_record_id(workspace_id, record_id).await {
         tracing::warn!(
-            "追加 pending_todo_id 失败: workspace_id={}, todo_id={}, error={}",
-            workspace_id, todo_id, e
+            "追加 pending_record_id 失败: workspace_id={}, record_id={}, error={}",
+            workspace_id, record_id, e
         );
         return;
     }
 
-    tracing::info!("append_pending_todo_id 成功: workspace_id={}, todo_id={}", workspace_id, todo_id);
+    tracing::info!("append_pending_record_id 成功: workspace_id={}, record_id={}", workspace_id, record_id);
 
     // 读取 per-workspace 防抖配置（从 blackboards 表）
     let (debounce_secs, debounce_count) = match db.get_blackboard_config(workspace_id).await {
@@ -189,7 +189,7 @@ pub async fn push_pending_todo(workspace_id: i64, todo_id: i64, db: &Arc<Databas
 
     // 检查队列长度是否达到阈值，达到则立即触发
     if let Ok(Some(board)) = db.get_blackboard(workspace_id).await {
-        let queue_len = serde_json::from_str::<Vec<i64>>(&board.pending_todo_ids)
+        let queue_len = serde_json::from_str::<Vec<i64>>(&board.pending_record_ids)
             .map(|v| v.len())
             .unwrap_or(0);
         tracing::info!(
