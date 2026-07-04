@@ -572,7 +572,7 @@ pub async fn blackboard_flush_listener(
                         let conclusion_text = conclusions.join("\n\n");
 
                         // 调用 update_blackboard
-                        if let Err(e) = crate::services::blackboard::update_blackboard(
+                        let update_result = crate::services::blackboard::update_blackboard(
                             db.clone(),
                             executor_registry.clone(),
                             tx.clone(),
@@ -583,8 +583,20 @@ pub async fn blackboard_flush_listener(
                             todo_ids[0],
                             &format!("批量更新 ({}条)", todo_ids.len()),
                         )
-                        .await
-                        {
+                        .await;
+
+                        // flush 完成，广播 refreshing=false 状态
+                        let done_event = ExecEvent::BlackboardDebounceStatus {
+                            workspace_id: msg.workspace_id,
+                            pending_count: 0,
+                            threshold: debounce_count,
+                            debounce_secs,
+                            remaining_secs: -1,
+                            refreshing: false,
+                        };
+                        let _ = tx.send(done_event);
+
+                        if let Err(e) = update_result {
                             tracing::warn!("黑板 update_blackboard 失败: workspace_id={}, error={:?}", msg.workspace_id, e);
                         }
                     }

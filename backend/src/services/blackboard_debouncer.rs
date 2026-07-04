@@ -174,8 +174,7 @@ pub async fn push_pending_todo(workspace_id: i64, todo_id: i64, db: &Arc<Databas
     drop(timers);
     {
         let mut states = TIMER_STATES.write().await;
-        states.get_or_insert_with(HashMap::new);
-        states.as_mut().unwrap().insert(workspace_id, WorkspaceTimerState {
+        states.get_or_insert_with(HashMap::new).insert(workspace_id, WorkspaceTimerState {
             started_at_ms: now_ms,
             debounce_secs: debouncer.debounce_secs,
         });
