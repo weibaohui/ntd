@@ -16,6 +16,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs } from 'antd';
 import { ReloadOutlined, SettingOutlined } from '@ant-design/icons';
+import { TfiBlackboard } from 'react-icons/tfi';
 import { XMarkdown } from '@ant-design/x-markdown';
 import { useTheme } from '@/hooks/useTheme';
 import { useViewState } from '@/hooks/useViewState';
@@ -390,9 +391,12 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
         gap: 12,
       }}
     >
-      <Title level={4} style={{ margin: 0, flexShrink: 0 }}>
-        黑板
-      </Title>
+      <Space style={{ margin: 0, flexShrink: 0 }}>
+        <TfiBlackboard style={{ fontSize: 20, verticalAlign: 'middle' }} />
+        <Title level={4} style={{ margin: 0 }}>
+          黑板
+        </Title>
+      </Space>
       {/* 双进度条倒计时（自动监听 WebSocket 事件） */}
       <BlackboardDebounceBar workspaceId={props.workspaceId} />
       <Space.Compact>
