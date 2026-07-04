@@ -26,8 +26,10 @@ pub struct BlackboardResponse {
     pub blackboard_debounce_secs: i64,
     /// 黑板更新防抖条数阈值
     pub blackboard_debounce_count: i64,
-    /// 黑板更新提示词模板（空字符串表示使用内置默认）
-    pub blackboard_update_prompt: String,
+    /// Wiki 索引页面维护提示词模板（空字符串表示使用内置默认）
+    pub wiki_index_prompt: String,
+    /// Wiki 主题页面生成提示词模板（空字符串表示使用内置默认）
+    pub wiki_page_prompt: String,
 }
 
 /// 页面列表项：用于 GET /pages 接口，只返回摘要信息不返回完整 content。
@@ -63,7 +65,8 @@ pub struct BlackboardPageDetail {
 pub struct UpdateBlackboardConfigRequest {
     pub blackboard_debounce_secs: Option<i64>,
     pub blackboard_debounce_count: Option<i64>,
-    pub blackboard_update_prompt: Option<String>,
+    pub wiki_index_prompt: Option<String>,
+    pub wiki_page_prompt: Option<String>,
 }
 
 /// `GET /api/workspaces/{workspace_id}/blackboard`
@@ -86,7 +89,8 @@ pub async fn get_blackboard(
             updated_at: model.updated_at,
             blackboard_debounce_secs: model.blackboard_debounce_secs,
             blackboard_debounce_count: model.blackboard_debounce_count,
-            blackboard_update_prompt: model.blackboard_update_prompt,
+            wiki_index_prompt: model.wiki_index_prompt,
+            wiki_page_prompt: model.wiki_page_prompt,
         })),
         None => Ok(ApiResponse::ok(BlackboardResponse {
             id: 0,
@@ -96,7 +100,8 @@ pub async fn get_blackboard(
             // 无记录时返回默认值；配置会在首次 create_blackboard 时写入
             blackboard_debounce_secs: 600,
             blackboard_debounce_count: 10,
-            blackboard_update_prompt: String::new(),
+            wiki_index_prompt: String::new(),
+            wiki_page_prompt: String::new(),
         })),
     }
 }
@@ -121,7 +126,8 @@ pub async fn get_blackboard_config(
         None => Ok(ApiResponse::ok(BlackboardConfig {
             debounce_secs: 600,
             debounce_count: 10,
-            update_prompt: String::new(),
+            wiki_index_prompt: String::new(),
+            wiki_page_prompt: String::new(),
         })),
     }
 }
@@ -147,7 +153,8 @@ pub async fn update_blackboard_config(
         workspace_id,
         req.blackboard_debounce_secs,
         req.blackboard_debounce_count,
-        req.blackboard_update_prompt,
+        req.wiki_index_prompt,
+        req.wiki_page_prompt,
     ).await.map_err(|e| AppError::Internal(format!("更新黑板配置失败: {}", e)))?;
 
     // debounce_secs 变更时，根据已计时长决定：超则立即触发 flush，未超则继续用新阈值计时
@@ -271,7 +278,8 @@ mod tests {
             updated_at: Some("2026-07-03T10:00:00Z".to_string()),
             blackboard_debounce_secs: 600,
             blackboard_debounce_count: 10,
-            blackboard_update_prompt: "custom prompt".to_string(),
+            wiki_index_prompt: "index prompt".to_string(),
+            wiki_page_prompt: "page prompt".to_string(),
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["id"], 7);
@@ -291,7 +299,8 @@ mod tests {
             updated_at: None,
             blackboard_debounce_secs: 600,
             blackboard_debounce_count: 10,
-            blackboard_update_prompt: String::new(),
+            wiki_index_prompt: String::new(),
+            wiki_page_prompt: String::new(),
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["id"], 0);
@@ -324,7 +333,8 @@ mod tests {
             updated_at: board.updated_at,
             blackboard_debounce_secs: board.blackboard_debounce_secs,
             blackboard_debounce_count: board.blackboard_debounce_count,
-            blackboard_update_prompt: board.blackboard_update_prompt,
+            wiki_index_prompt: board.wiki_index_prompt,
+            wiki_page_prompt: board.wiki_page_prompt,
         });
         let json = serde_json::to_value(&resp).unwrap();
         // ApiResponse 包装格式：{"data": {...}}

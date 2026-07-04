@@ -55,7 +55,8 @@ impl Database {
             // 默认防抖条数阈值 10 条
             blackboard_debounce_count: ActiveValue::Set(10),
             // 空字符串表示使用内置默认提示词模板
-            blackboard_update_prompt: ActiveValue::Set(String::new()),
+            wiki_index_prompt: ActiveValue::Set(String::new()),
+            wiki_page_prompt: ActiveValue::Set(String::new()),
             updated_at: ActiveValue::Set(Some(now.clone())),
             created_at: ActiveValue::Set(Some(now)),
             ..Default::default()
@@ -138,7 +139,8 @@ impl Database {
             pending_record_ids: ActiveValue::Set("[]".to_string()),
             blackboard_debounce_secs: ActiveValue::Set(600),
             blackboard_debounce_count: ActiveValue::Set(10),
-            blackboard_update_prompt: ActiveValue::Set(String::new()),
+            wiki_index_prompt: ActiveValue::Set(String::new()),
+            wiki_page_prompt: ActiveValue::Set(String::new()),
             ..Default::default()
         };
         // ON CONFLICT(workspace_id)：命中后只覆盖 content/updated_at，保留 created_at 和配置字段
@@ -229,7 +231,6 @@ impl Database {
     /// 获取指定工作空间的黑板配置（防抖阈值、提示词）。
     ///
     /// 记录不存在时返回 None；调用方应确保黑板记录已通过 create_blackboard 初始化。
-    /// 返回的四个字段均为 per-workspace 配置，来自 blackboards 表的对应列。
     pub async fn get_blackboard_config(
         &self,
         workspace_id: i64,
@@ -241,26 +242,25 @@ impl Database {
         Ok(board.map(|b| BlackboardConfig {
             debounce_secs: b.blackboard_debounce_secs,
             debounce_count: b.blackboard_debounce_count,
-            update_prompt: b.blackboard_update_prompt,
+            wiki_index_prompt: b.wiki_index_prompt,
+            wiki_page_prompt: b.wiki_page_prompt,
         }))
     }
 
     /// 更新指定工作空间的黑板配置。
     ///
-    /// 更新指定工作空间的黑板配置。
-    ///
-    /// 输入：workspace_id + 三个可选字段（debounce_secs、debounce_count、update_prompt）。
+    /// 输入：workspace_id + 四个可选字段（debounce_secs、debounce_count、wiki_index_prompt、wiki_page_prompt）。
     /// 流程：先按 workspace_id 查出黑板记录（不存在则 RecordNotFound）→ 构造 ActiveModel
     /// → 只对传入 Some 的字段写入，传入 None 的保持原值不变 → update。
     /// 防抖阈值有下限保护：debounce_secs >= 10，debounce_count >= 1。
-    /// 记录不存在时返回 RecordNotFound；调用方应确保黑板记录已存在。
-    /// 各字段均为可选，仅更新传入 Some 的字段，None 保持原值不变。
+    /// 记录不存在时返回 RecordNotFound；调用方��确保黑板记录已存在。
     pub async fn update_blackboard_config(
         &self,
         workspace_id: i64,
         debounce_secs: Option<i64>,
         debounce_count: Option<i64>,
-        update_prompt: Option<String>,
+        wiki_index_prompt: Option<String>,
+        wiki_page_prompt: Option<String>,
     ) -> Result<(), sea_orm::DbErr> {
         let board = blackboards::Entity::find()
             .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
@@ -285,20 +285,24 @@ impl Database {
         if let Some(v) = debounce_count {
             am.blackboard_debounce_count = ActiveValue::Set(v.max(1));
         }
-        if let Some(v) = update_prompt {
-            am.blackboard_update_prompt = ActiveValue::Set(v);
+        if let Some(v) = wiki_index_prompt {
+            am.wiki_index_prompt = ActiveValue::Set(v);
+        }
+        if let Some(v) = wiki_page_prompt {
+            am.wiki_page_prompt = ActiveValue::Set(v);
         }
         am.update(&self.conn).await?;
         Ok(())
     }
 }
 
-/// 黑板 per-workspace 配置数据结构，对应 blackboards 表的三个配置列。
+/// 黑板 per-workspace 配置数据结构，对应 blackboards 表的配置列。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BlackboardConfig {
     pub debounce_secs: i64,
     pub debounce_count: i64,
-    pub update_prompt: String,
+    pub wiki_index_prompt: String,
+    pub wiki_page_prompt: String,
 }
 
 #[cfg(test)]
@@ -340,7 +344,8 @@ mod tests {
         // 新增字段：默认值验证
         assert_eq!(board.blackboard_debounce_secs, 600);
         assert_eq!(board.blackboard_debounce_count, 10);
-        assert_eq!(board.blackboard_update_prompt, "");
+        assert_eq!(board.wiki_index_prompt, "");
+        assert_eq!(board.wiki_page_prompt, "");
 
         // 验证可通过 get 查到
         let fetched = db.get_blackboard(ws_id).await.unwrap();
@@ -471,7 +476,8 @@ mod tests {
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
         assert_eq!(cfg.debounce_secs, 600);
         assert_eq!(cfg.debounce_count, 10);
-        assert_eq!(cfg.update_prompt, "");
+        assert_eq!(cfg.wiki_index_prompt, "");
+        assert_eq!(cfg.wiki_page_prompt, "");
     }
 
     /// 验证 update_blackboard_config 正确更新各字段。
@@ -481,14 +487,15 @@ mod tests {
         let ws_id = create_test_workspace(&db).await;
         db.create_blackboard(ws_id).await.unwrap();
 
-        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("custom".to_string()))
+        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("index".to_string()), Some("page".to_string()))
             .await
             .unwrap();
 
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
         assert_eq!(cfg.debounce_secs, 300);
         assert_eq!(cfg.debounce_count, 5);
-        assert_eq!(cfg.update_prompt, "custom");
+        assert_eq!(cfg.wiki_index_prompt, "index");
+        assert_eq!(cfg.wiki_page_prompt, "page");
     }
 
     /// 验证 update_blackboard_config 对 None 字段保持原值。
@@ -499,19 +506,20 @@ mod tests {
         db.create_blackboard(ws_id).await.unwrap();
 
         // 先全部更新
-        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("custom".to_string()))
+        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("index".to_string()), Some("page".to_string()))
             .await
             .unwrap();
 
         // 再只更新其中两个
-        db.update_blackboard_config(ws_id, Some(900), None, None)
+        db.update_blackboard_config(ws_id, Some(900), None, None, None)
             .await
             .unwrap();
 
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
         assert_eq!(cfg.debounce_secs, 900);
         assert_eq!(cfg.debounce_count, 5, "debounce_count 应保留之前的值");
-        assert_eq!(cfg.update_prompt, "custom", "update_prompt 应保留之前的值");
+        assert_eq!(cfg.wiki_index_prompt, "index", "wiki_index_prompt 应保留之前的值");
+        assert_eq!(cfg.wiki_page_prompt, "page", "wiki_page_prompt 应保留之前的值");
     }
 
     /// 验证 update_blackboard_config 在记录不存在时返回 RecordNotFound。

@@ -18,6 +18,7 @@ mod v50;
 mod v51;
 mod v52;
 mod v53;
+mod v54;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -58,6 +59,7 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v51::V51AddBlackboardPendingRecordIds),
         Box::new(v52::V52DropBlackboardPendingTodoIds),
         Box::new(v53::V53CreateBlackboardPagesTable),
+        Box::new(v54::V54SplitBlackboardPrompt),
     ]
 }
 
