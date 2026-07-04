@@ -68,62 +68,6 @@ const DEFAULT_AUTO_USAGE_STATS_CRON: &str = "0 0 1 * * *";
 const DEFAULT_AUTO_UPDATE_HOUR: u32 = 3;
 /// 自动更新默认间隔类型:"day" / "week" / "month"。
 const DEFAULT_AUTO_UPDATE_INTERVAL: &str = "day";
-/// 黑板更新防抖周期（秒），默认 10 分钟。
-const DEFAULT_BLACKBOARD_DEBOUNCE_SECS: u64 = 600;
-/// 黑板更新防抖条数阈值，达到此条数立即触发（不等周期）。
-const DEFAULT_BLACKBOARD_DEBOUNCE_COUNT: u64 = 10;
-/// 默认黑板更新提示词模板（包含占位符 {{current}}、{{conclusion}}、{{todo_id}}、{{todo_title}}）。
-const DEFAULT_BLACKBOARD_UPDATE_PROMPT: &str = r#"你是一个工作空间知识库的维护者。你的任务是维护一个 Markdown 格式的"黑板"，记录工作空间中所有任务执行的结论和当前进展。
-
-当前黑板内容：
-```
-{{current}}
-```
-
-新任务结论：
-- 任务 ID: {{todo_id}}
-- 任务标题: {{todo_title}}
-- 执行结论: {{conclusion}}
-
-请更新黑板内容，要求：
-1. 将新结论整合到黑板中
-2. 保持以下结构：
-   - # 工作空间进展
-   - ## 已确认
-   - ## 新发现
-   - ## 待解决问题
-   - ## 矛盾/风险
-   - ## 下一步建议
-3. 每条结论标注来源，格式：(来源: [todo_{{todo_id}}](ntd://todo/{{todo_id}}))
-4. 如果新结论与已有结论矛盾，在"矛盾/风险"中标注
-5. 如果新结论提出了未解决的问题，在"待解决问题"中列出
-6. 更新"下一步建议"
-7. 保持 Markdown 格式，不要添加 HTML
-8. 如果黑板为空，根据新结论创建初始结构
-
-只输出更新后的黑板内容，不要输出任何解释。"#;
-/// 默认黑板刷新提示词模板（仅包含占位符 {{current}}）。
-const DEFAULT_BLACKBOARD_REFRESH_PROMPT: &str = r#"你是一个工作空间知识库的维护者。重新组织当前黑板内容，使其结构更清晰、信息更准确。
-
-当前黑板内容：
-```
-{{current}}
-```
-
-请重新组织黑板内容，要求：
-1. 保持以下结构：
-   - # 工作空间进展
-   - ## 已确认
-   - ## 新发现
-   - ## 待解决问题
-   - ## 矛盾/风险
-   - ## 下一步建议
-2. 不要添加任何新事实，不要虚构来源 todo；只整理、归并、提炼已有信息
-3. 禁止生成 ntd://todo/ 内部链接（手动刷新没有具体来源 todo）
-4. 合并相似条目；移除空段
-5. 保持 Markdown 格式，不要添加 HTML
-
-只输出重新组织后的黑板内容，不要输出任何解释。"#;
 
 /// 私有 helper:`auto_backup_*` / `auto_todo_backup_*` / `auto_skill_backup_*`
 /// 三组字段共享同一形状 (enabled: bool, cron: String, max_files: usize)。
@@ -232,18 +176,6 @@ pub struct Config {
     pub auto_update_hour: u32,
     /// 自动更新上次检查时间（ISO 8601），None 表示从未检查过
     pub auto_update_last_check_at: Option<String>,
-    /// 黑板更新防抖周期（秒），默认 600 秒（10 分钟）。
-    /// todo 执行完成后不会立即触发黑板更新，而是暂存到 pending 队列，
-    /// 等到此周期到期后统一处理一次 LLM 调用。
-    pub blackboard_debounce_secs: u64,
-    /// 黑板更新防抖条数阈值，达到此条数时立即触发（不等周期）。
-    pub blackboard_debounce_count: u64,
-    /// 黑板更新提示词模板（包含占位符 {{current}}、{{conclusion}}、{{todo_id}}、{{todo_title}}）。
-    /// 为空时使用内置默认提示词。
-    pub blackboard_update_prompt: String,
-    /// 黑板刷新提示词模板（仅包含占位符 {{current}}）。
-    /// 为空时使用内置默认提示词。
-    pub blackboard_refresh_prompt: String,
 }
 
 /// Paths for each supported executor binary.
@@ -352,10 +284,6 @@ impl Default for Config {
             cloud_sync: CloudSyncConfig::default(), cors_allowed_origins: Vec::new(),
             auto_update_enabled: false, auto_update_interval: DEFAULT_AUTO_UPDATE_INTERVAL.to_string(),
             auto_update_hour: DEFAULT_AUTO_UPDATE_HOUR, auto_update_last_check_at: None,
-            blackboard_debounce_secs: DEFAULT_BLACKBOARD_DEBOUNCE_SECS,
-            blackboard_debounce_count: DEFAULT_BLACKBOARD_DEBOUNCE_COUNT,
-            blackboard_update_prompt: DEFAULT_BLACKBOARD_UPDATE_PROMPT.to_string(),
-            blackboard_refresh_prompt: DEFAULT_BLACKBOARD_REFRESH_PROMPT.to_string(),
         }
     }
 }

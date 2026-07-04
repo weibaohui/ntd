@@ -350,12 +350,11 @@ async fn build_app_state(
     spawn_feishu_history_fetcher(ctx.clone(), db.clone(), feishu_listener.clone(), debounce.clone());
     ensure_default_review_template_blocking(&db);
 
-    // 黑板防抖器初始化，启动 flush 监听器（监听 channel，收到消息后执行 LLM 更新黑板）
-    let cfg = config.read().unwrap();
-    let debounce_secs = cfg.blackboard_debounce_secs.max(10);
-    let debounce_count = cfg.blackboard_debounce_count.max(1);
-    drop(cfg);
-    let mut flush_rx = crate::services::blackboard_debouncer::init(debounce_secs, debounce_count).await;
+    // 黑板防抖器初始化，启动 flush 监听器（监听 channel，收到消息后执行 LLM 更新黑板）。
+    // 注意：防抖阈值已迁移到 per-workspace 配置（blackboards 表），此处使用系统级默认值
+    //（600s / 10 条），实际防抖逻辑在 push_pending_todo / take_pending_todo_ids 时
+    // 会从对应工作空间的黑板配置中读取真实值。
+    let flush_rx = crate::services::blackboard_debouncer::init().await;
     tokio::spawn(crate::executor_service::completion::blackboard_flush_listener(
         flush_rx,
         db.clone(),

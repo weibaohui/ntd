@@ -348,13 +348,11 @@ pub async fn update_blackboard(
 ) -> Result<(), AppError> {
     // 1+2: 读当前内容、找或建 todo；任一失败直接返回
     let current_content = read_current_content(&db, workspace_id).await?;
-    // 从 config 中提取提示词模板（避免 guard 跨 await 持有）
+    // 从 per-workspace 配置中提取提示词模板；若为空则使用内置默认
     let prompt_template = {
-        let guard = config.read().unwrap();
-        if guard.blackboard_update_prompt.is_empty() {
-            build_blackboard_prompt()
-        } else {
-            guard.blackboard_update_prompt.clone()
+        match db.get_blackboard_config(workspace_id).await {
+            Ok(Some(cfg)) if !cfg.update_prompt.is_empty() => cfg.update_prompt,
+            _ => build_blackboard_prompt(),
         }
     };
     let (todo_id, _) = find_or_create_blackboard_todo(&db, &prompt_template, workspace_id).await?;
@@ -403,20 +401,27 @@ pub async fn refresh_blackboard(
     if current_content.is_empty() {
         return Err(AppError::BadRequest("黑板暂无内容，无需刷新".to_string()));
     }
-    // 从 config 中提取提示词模板（避免 guard 跨 await 持有）
+    // 从 per-workspace 配置中提取提示词模板；若为空则降级到全局 config
     let (update_prompt_template, refresh_prompt) = {
-        let guard = config.read().unwrap();
-        let update = if guard.blackboard_update_prompt.is_empty() {
-            build_blackboard_prompt()
-        } else {
-            guard.blackboard_update_prompt.clone()
-        };
-        let refresh = if guard.blackboard_refresh_prompt.is_empty() {
-            build_refresh_prompt()
-        } else {
-            guard.blackboard_refresh_prompt.clone()
-        };
-        (update, refresh)
+        match db.get_blackboard_config(workspace_id).await {
+            Ok(Some(cfg)) => {
+                let update = if cfg.update_prompt.is_empty() {
+                    build_blackboard_prompt()
+                } else {
+                    cfg.update_prompt
+                };
+                let refresh = if cfg.refresh_prompt.is_empty() {
+                    build_refresh_prompt()
+                } else {
+                    cfg.refresh_prompt
+                };
+                (update, refresh)
+            }
+            _ => {
+                // 无记录或查库失败时使用内置默认模板
+                (build_blackboard_prompt(), build_refresh_prompt())
+            }
+        }
     };
     // 复用同一 todo + 同一执行/等待/写入流程；source_todo_* 留 None 表示"非任务触发"
     let (todo_id, _) = find_or_create_blackboard_todo(&db, &update_prompt_template, workspace_id).await?;

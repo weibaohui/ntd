@@ -432,8 +432,8 @@ pub(crate) async fn finalize_normal_completion(
 async fn build_blackboard_status(
     db: &Database,
     workspace_id: i64,
-    debounce_secs: u64,
-    debounce_count: u64,
+    debounce_secs: i64,
+    debounce_count: i64,
 ) -> ExecEvent {
     let pending_count = db
         .get_blackboard(workspace_id)
@@ -463,8 +463,8 @@ async fn build_blackboard_status(
     ExecEvent::BlackboardDebounceStatus {
         workspace_id,
         pending_count,
-        threshold: debounce_count,
-        debounce_secs,
+        threshold: debounce_count as u64,
+        debounce_secs: debounce_secs as u64,
         remaining_secs,
         refreshing: false,
     }
@@ -473,6 +473,9 @@ async fn build_blackboard_status(
 /// 启动黑板 flush 监听器：
 /// - 监听 debouncer channel，收到消息后执行 update_blackboard
 /// - 每秒通过 broadcast::tx 推送一次 BlackboardDebounceStatus 事件
+///
+/// 防抖阈值（周期秒数、条数阈值）从 per-workspace 黑板配置（blackboards 表）读取，
+/// 实现工作空间隔离。
 pub async fn blackboard_flush_listener(
     mut rx: tokio::sync::mpsc::Receiver<crate::services::blackboard_debouncer::BlackboardFlushMsg>,
     db: Arc<Database>,
@@ -488,13 +491,15 @@ pub async fn blackboard_flush_listener(
     // 已知的 workspace_id 列表（首次发送时从 DB 拉取）
     let mut known_workspaces: Vec<i64> = Vec::new();
 
-    loop {
-        // 从 config 读取当前的 debounce 参数（可能运行时变更）
-        let (debounce_secs, debounce_count) = {
-            let cfg = config.read().unwrap();
-            (cfg.blackboard_debounce_secs, cfg.blackboard_debounce_count)
-        };
+    // 从 per-workspace 黑板配置中读取防抖参数的 helper
+    async fn get_workspace_debounce(db: &Database, ws_id: i64) -> (i64, i64) {
+        match db.get_blackboard_config(ws_id).await {
+            Ok(Some(cfg)) => (cfg.debounce_secs, cfg.debounce_count),
+            _ => (600, 10), // 回退默认值
+        }
+    }
 
+    loop {
         tokio::select! {
             // 每秒 ticker：广播所有已知 workspace 的状态
             _ = ticker.tick() => {
@@ -506,6 +511,7 @@ pub async fn blackboard_flush_listener(
                 }
 
                 for ws_id in &known_workspaces {
+                    let (debounce_secs, debounce_count) = get_workspace_debounce(&db, *ws_id).await;
                     let event = build_blackboard_status(&db, *ws_id, debounce_secs, debounce_count).await;
                     let _ = tx.send(event);
                 }
@@ -522,12 +528,16 @@ pub async fn blackboard_flush_listener(
                             known_workspaces.push(msg.workspace_id);
                         }
 
+                        // 读取该 workspace 的 per-workspace 防抖配置
+                        let (debounce_secs, debounce_count) =
+                            get_workspace_debounce(&db, msg.workspace_id).await;
+
                         // 广播 refreshing=true 状态
                         let refreshing_event = ExecEvent::BlackboardDebounceStatus {
                             workspace_id: msg.workspace_id,
                             pending_count: 0,
-                            threshold: debounce_count,
-                            debounce_secs,
+                            threshold: debounce_count as u64,
+                            debounce_secs: debounce_secs as u64,
                             remaining_secs: -1,
                             refreshing: true,
                         };
@@ -589,8 +599,8 @@ pub async fn blackboard_flush_listener(
                         let done_event = ExecEvent::BlackboardDebounceStatus {
                             workspace_id: msg.workspace_id,
                             pending_count: 0,
-                            threshold: debounce_count,
-                            debounce_secs,
+                            threshold: debounce_count as u64,
+                            debounce_secs: debounce_secs as u64,
                             remaining_secs: -1,
                             refreshing: false,
                         };

@@ -98,18 +98,6 @@ pub async fn update_config(
             }
             cfg.auto_update_hour = hour;
         }
-        if let Some(blackboard_update_prompt) = req.blackboard_update_prompt {
-            cfg.blackboard_update_prompt = blackboard_update_prompt;
-        }
-        if let Some(blackboard_refresh_prompt) = req.blackboard_refresh_prompt {
-            cfg.blackboard_refresh_prompt = blackboard_refresh_prompt;
-        }
-        if let Some(v) = req.blackboard_debounce_secs {
-            cfg.blackboard_debounce_secs = v.max(10);
-        }
-        if let Some(v) = req.blackboard_debounce_count {
-            cfg.blackboard_debounce_count = v.max(1);
-        }
 
         cfg.normalize_paths();
         cfg.clamp_execution_timeout_secs();
