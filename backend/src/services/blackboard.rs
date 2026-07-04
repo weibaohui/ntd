@@ -90,6 +90,9 @@ pub async fn find_or_create_blackboard_todo(
 
 /// 构建黑板更新的 Prompt 模板。
 ///
+/// ⚠️ 注意：此为后端内置默认提示词，前端 `BlackboardPage.tsx` 中也有一份
+/// `DEFAULT_BLACKBOARD_UPDATE_PROMPT` 与之对应，修改时需同步更新两处。
+///
 /// 包含占位符 `{{current}}`、`{{pending_record_ids}}`，
 /// 在执行前由 `replace_placeholders` 替换为实际值。
 /// 模板要求 AI 通过 CLI 命令主动查询执行记录，再将结论整合到黑板。

@@ -49,7 +49,10 @@ const URL_WORKSPACE_PARAM = 'workspace';
 const DEFAULT_WORKSPACE_ID = 1;
 
 /**
- * 黑板更新提示词默认值，与后端 build_blackboard_prompt() 内置模板保持一致。
+ * 黑板更新提示词默认值，与后端 `build_blackboard_prompt()` 内置模板保持一致。
+ *
+ * ⚠️ 注意：此为前端副本，后端 `backend/src/services/blackboard.rs` 的
+ * `build_blackboard_prompt()` 函数中也有一份，修改时需同步更新两处。
  * 用于在 UI 上展示默认提示词内容，以及"恢复默认"时回填。
  */
 const DEFAULT_BLACKBOARD_UPDATE_PROMPT = `你是一个工作空间知识库的维护者。你的任务是维护一个 Markdown 格式的"黑板"，记录工作空间中所有任务执行的结论和当前进展。
