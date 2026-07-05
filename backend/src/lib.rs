@@ -25,6 +25,8 @@ pub mod services;
 pub mod sys;
 pub mod task_manager;
 pub mod todo_progress;
+/// Wiki 文件管理模块：黑板改为纯文件存储。
+pub mod wiki;
 
 use rust_embed::RustEmbed;
 

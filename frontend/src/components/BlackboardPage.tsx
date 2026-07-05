@@ -18,7 +18,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu, Divider } from 'antd';
+import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu } from 'antd';
 import { ReloadOutlined, SettingOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { TfiBlackboard } from 'react-icons/tfi';
 import { XMarkdown } from '@ant-design/x-markdown';
@@ -30,43 +30,29 @@ import { normalizeBlackboardMarkdown } from '@/utils/markdown';
 
 const { Title } = Typography;
 
-/** 黑板 API 返回的 JSON 形状（与后端 BlackboardResponse 对应） */
+/** 黑板 API 返回的配置形状（与后端 BlackboardResponse 对应，不含内容） */
 interface BlackboardData {
   id: number;
   workspace_id: number;
-  content: string;
   updated_at: string | null;
   /** 黑板更新防抖周期（秒）*/
   blackboard_debounce_secs: number;
   /** 黑板更新防抖条数阈值 */
   blackboard_debounce_count: number;
-  /** Wiki 索引页面维护提示词模板 */
-  wiki_index_prompt: string;
-  /** Wiki 主题页面生成提示词模板 */
-  wiki_page_prompt: string;
+  /** Wiki 更新提示词模板（单阶段） */
+  wiki_prompt: string;
 }
 
-/** 页面列表项（对应后端 BlackboardPageListItem） */
-interface BlackboardPageItem {
-  id: number;
+/** Wiki 文件列表项（对应后端 WikiFileItem） */
+interface WikiFileItem {
   slug: string;
-  title: string;
-  page_type: 'index' | 'topic' | 'log' | string;
-  source_count: number;
-  updated_at: string | null;
+  file_type: 'index' | 'topic' | 'log' | string;
 }
 
-/** 页面详情（对应后端 BlackboardPageDetail） */
-interface BlackboardPageDetail {
-  id: number;
-  workspace_id: number;
+/** Wiki 文件内容（对应后端 WikiFileContent） */
+interface WikiFileContent {
   slug: string;
-  title: string;
-  page_type: string;
   content: string;
-  source_refs: number[];
-  updated_at: string | null;
-  created_at: string | null;
 }
 
 /** ntd://todo/{id} 协议的前缀，用于解析 LLM 注入的内部链接 */
@@ -79,104 +65,39 @@ const URL_WORKSPACE_PARAM = 'workspace';
 const DEFAULT_WORKSPACE_ID = 1;
 
 /**
- * 黑板更新提示词默认值，与后端 `build_blackboard_prompt()` 内置模板保持一致。
+ * Wiki 提示词默认值（单阶段）：与后端 `build_wiki_prompt()` 内置模板保持一致。
  *
  * ⚠️ 注意：此为前端副本，后端 `backend/src/services/blackboard.rs` 的
- * `build_blackboard_prompt()` 函数中也有一份，修改时需同步更新两处。
+ * `build_wiki_prompt()` 函数中也有一份，修改时需同步更新两处。
  * 用于在 UI 上展示默认提示词内容，以及"恢复默认"时回填。
  */
-
-/** Wiki 索引提示词默认值：分析阶段，决定记录归到哪些主题页面。与后端 build_wiki_analyze_prompt 同步。 */
-const DEFAULT_WIKI_INDEX_PROMPT = `你是一个工作空间黑板维护者。你的任务是分析新的执行记录，决定它们应该归到哪些主题页面。
+const DEFAULT_WIKI_PROMPT = `你是一个工作空间黑板维护者。你的任务是分析新的执行记录，更新 Wiki 页面。
 
 你拥有以下工具，可以直接在执行过程中调用：
-- \`ntd todo execution get <id>\`：获取指定执行记录的完整结论（result 字段）。例如：\`ntd todo execution get 42\` 获取第 42 条执行记录的结论。
-
-现有主题页面列表（slug | 标题 | 摘要）：
-\`\`\`
-{{page_summaries}}
-\`\`\`
+- \`ls ~/.ntd/workspace/{{workspace_id}}/wiki/topics/\`：列出现有主题页面
+- \`cat ~/.ntd/workspace/{{workspace_id}}/wiki/topics/<slug>.md\`：读取页面内容
+- \`ntd todo execution get <id>\`：获取指定执行记录的完整结论（result 字段）
 
 待分析的执行记录 ID 列表：
 {{pending_record_ids}}
 
 请按以下步骤操作：
-1. 逐个调用 \`ntd todo execution get <id>\` 获取每条执行记录的完整结论
-2. 仔细分析每条结论涉及哪些主题领域
-3. 根据分析结果决定：是创建新页面还是更新现有页面
-4. 输出严格的 JSON 格式，不要输出任何其他解释
-
-输出格式：
-\`\`\`json
-{
-  "operations": [
-    {
-      "action": "create",
-      "slug": "auth-module",
-      "title": "认证模块",
-      "summary": "关于 JWT 验证、token 刷新、权限控制的结论汇总",
-      "record_ids": [42, 45]
-    },
-    {
-      "action": "update",
-      "slug": "performance",
-      "title": "性能优化",
-      "summary": "数据库查询优化、缓存策略、接口响应时间",
-      "record_ids": [47]
-    }
-  ]
-}
-\`\`\`
-
-要求：
-- slug 使用英文小写，单词间用连字符（如 "auth-module"）
-- 标题使用中文，简洁明了
-- summary 用一句话概括页面内容
-- record_ids 列出涉及的执行记录 ID
-- 如果结论涉及多个主题，可以分配到多个页面
-- 不要创建过于细碎的页面，尽量将相关结论归到同一主题下
-- 只输出 JSON，不要输出其他任何文字`;
-
-/** Wiki 页面提示词默认值：执行阶段，生成具体页面 Markdown 内容。与后端 build_wiki_execute_prompt 同步。 */
-const DEFAULT_WIKI_PAGE_PROMPT = `你是一个工作空间黑板维护者。你的任务是根据分析结果，更新或创建主题页面的 Markdown 内容。
-
-你拥有以下工具，可以直接在执行过程中调用：
-- \`ntd todo execution get <id>\`：获取指定执行记录的完整结论（result 字段）。例如：\`ntd todo execution get 42\` 获取第 42 条执行记录的结论。
-
-操作列表（JSON）：
-\`\`\`json
-{{operations_json}}
-\`\`\`
-
-待更新页面的当前内容（仅列出需要 update 的页面，create 的页面无当前内容）：
-\`\`\`
-{{page_contents}}
-\`\`\`
-
-请按以下要求操作：
-1. 对于 action="create" 的页面：调用 \`ntd todo execution get <id>\` 获取 record_ids 中每条执行记录的结论，根据这些结论创建新的主题页面
-2. 对于 action="update" 的页面：调用 \`ntd todo execution get <id>\` 获取 record_ids 中每条执行记录的结论，将新结论整合到现有页面中，保持已有内容，补充新信息
-3. 每个页面使用以下结构：
-   - # 页面标题
+1. 列出现有主题页面，了解当前 Wiki 结构
+2. 逐个调用 \`ntd todo execution get <id>\` 获取每条执行记录的结论
+3. 分析每条结论涉及哪些主题领域
+4. 对于新主题：创建 \`~/.ntd/workspace/{{workspace_id}}/wiki/topics/<slug>.md\`
+5. 对于已有主题：编辑文件，追加/更新结论（保持已有内容）
+6. 每个页面结构：
+   - # 标题（中文）
    - ## 已确认
    - ## 新发现
    - ## 待解决问题
    - ## 矛盾/风险
    - ## 下一步建议
-4. 每条结论标注来源。使用 \`ntd todo execution get <record_id>\` 返回结果中的 \`todo_id\` 和 \`id\` 字段，
-   生成 app 内链接，格式：(来源: [record_{record_id}](/?view=items&id={todo_id}&panel=post&record={record_id}))
-5. 如果新结论与已有结论矛盾，在"矛盾/风险"中标注
-6. 保持 Markdown 格式，不要添加 HTML
+7. 每条结论标注来源，使用 \`ntd todo execution get <record_id>\` 返回结果中的 \`todo_id\` 和 \`id\` 字段，
+   生成 app 内链接：(来源: [record_{record_id}](/?view=items&id={todo_id}&panel=post&record={record_id}))
 
-输出严格的 JSON 格式，key 为页面 slug，value 为完整的 Markdown 内容：
-\`\`\`json
-{
-  "auth-module": "# 认证模块\\n\\n## 已确认\\n- ...",
-  "performance": "# 性能优化\\n\\n## 已确认\\n- ..."
-}
-\`\`\`
-
-只输出 JSON，不要输出其他任何文字。`;
+完成后输出简短确认即可，无需输出 YAML/JSON。`;
 
 
 /** Markdown 链接组件 props 形状（XMarkdown ComponentProps 简化版） */
@@ -274,29 +195,30 @@ async function fetchBlackboardData(workspaceId: number): Promise<BlackboardData>
   return json.data;
 }
 
-/** 拉取页面列表（Wiki 化） */
-async function fetchBlackboardPages(workspaceId: number): Promise<BlackboardPageItem[]> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/blackboard/pages`);
+/** 拉取单个 Wiki 文件内容 */
+async function fetchWikiFileContent(workspaceId: number, slug: string): Promise<WikiFileContent> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/wiki/files/${encodeURIComponent(slug)}`);
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}`);
   }
-  const json = (await res.json()) as { data?: BlackboardPageItem[] };
-  return json.data ?? [];
-}
-
-/** 拉取单个页面详情（Wiki 化） */
-async function fetchBlackboardPageDetail(workspaceId: number, slug: string): Promise<BlackboardPageDetail> {
-  // 对 slug 做 URL 编码，避免空格、/ 或中文字符破坏请求路径
-  const res = await fetch(`/api/workspaces/${workspaceId}/blackboard/pages/${encodeURIComponent(slug)}`);
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`);
-  }
-  const json = (await res.json()) as { data?: BlackboardPageDetail };
+  const json = (await res.json()) as { data?: WikiFileContent };
   if (!json.data) {
     throw new Error('Empty response body');
   }
   return json.data;
 }
+
+/** 拉取 Wiki 文件列表 */
+async function fetchWikiFiles(workspaceId: number): Promise<WikiFileItem[]> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/wiki/files`);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  const json = (await res.json()) as { data?: WikiFileItem[] };
+  return json.data ?? [];
+}
+
+
 
 
 export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?: number | null }) {
@@ -307,11 +229,11 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const workspaceId = useEffectiveWorkspaceId(propWorkspaceId);
 
   // Wiki 化数据状态
-  const [pages, setPages] = useState<BlackboardPageItem[]>([]);
-  const [currentPage, setCurrentPage] = useState<BlackboardPageDetail | null>(null);
+  const [files, setFiles] = useState<WikiFileItem[]>([]);
+  const [currentFile, setCurrentFile] = useState<WikiFileContent | null>(null);
   const [currentSlug, setCurrentSlug] = useState<string>('index');
-  const [pagesLoading, setPagesLoading] = useState(true);
-  const [pageLoading, setPageLoading] = useState(false);
+  const [filesLoading, setFilesLoading] = useState(true);
+  const [fileLoading, setFileLoading] = useState(false);
   // 旧版数据（配置用）
   const [configData, setConfigData] = useStateBlackboardData();
   // 设置弹窗状态
@@ -319,8 +241,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [debounceSecs, setDebounceSecs] = useState<number | null>(600);
   const [debounceCount, setDebounceCount] = useState<number | null>(10);
-  const [wikiIndexPrompt, setWikiIndexPrompt] = useState<string>('');
-  const [wikiPagePrompt, setWikiPagePrompt] = useState<string>('');
+  const [wikiPrompt, setWikiPrompt] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'debounce' | 'prompt'>('debounce');
 
   /**
@@ -332,13 +253,11 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     if (configData) {
       setDebounceSecs(configData.blackboard_debounce_secs ?? 600);
       setDebounceCount(configData.blackboard_debounce_count ?? 10);
-      setWikiIndexPrompt(configData.wiki_index_prompt ?? '');
-      setWikiPagePrompt(configData.wiki_page_prompt ?? '');
+      setWikiPrompt(configData.wiki_prompt ?? '');
     } else {
       setDebounceSecs(600);
       setDebounceCount(10);
-      setWikiIndexPrompt('');
-      setWikiPagePrompt('');
+      setWikiPrompt('');
     }
     setActiveTab('debounce');
     setSettingsOpen(true);
@@ -352,12 +271,11 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         // 用户清空输入时 null → 用默认值，避免后端意外覆盖
         blackboard_debounce_secs: debounceSecs ?? 600,
         blackboard_debounce_count: debounceCount ?? 10,
-        wiki_index_prompt: wikiIndexPrompt,
-        wiki_page_prompt: wikiPagePrompt,
+        wiki_prompt: wikiPrompt,
       });
       // 保存成功后同步更新 data，避免下次打开弹窗读到旧值
       if (configData) {
-        setConfigData({ ...configData, blackboard_debounce_secs: debounceSecs ?? 600, blackboard_debounce_count: debounceCount ?? 10, wiki_index_prompt: wikiIndexPrompt, wiki_page_prompt: wikiPagePrompt });
+        setConfigData({ ...configData, blackboard_debounce_secs: debounceSecs ?? 600, blackboard_debounce_count: debounceCount ?? 10, wiki_prompt: wikiPrompt });
       }
       message.success('设置已保存');
       setSettingsOpen(false);
@@ -366,44 +284,41 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     } finally {
       setSettingsSaving(false);
     }
-  }, [workspaceId, debounceSecs, debounceCount, wikiIndexPrompt, wikiPagePrompt, configData]);
+  }, [workspaceId, debounceSecs, debounceCount, wikiPrompt, configData]);
 
-  // 恢复默认提示词：把 wikiIndexPrompt / wikiPagePrompt 设为内置默认值。
+  // 恢复默认提示词：把 wikiPrompt 设为内置默认值。
   // 区别于"留空"的语义——留空表示后端使用内置默认；填入默认值表示用户显式采用内置模板。
-  const handleRestoreIndexPrompt = useCallback(() => {
-    setWikiIndexPrompt(DEFAULT_WIKI_INDEX_PROMPT);
-  }, []);
-  const handleRestorePagePrompt = useCallback(() => {
-    setWikiPagePrompt(DEFAULT_WIKI_PAGE_PROMPT);
+  const handleRestorePrompt = useCallback(() => {
+    setWikiPrompt(DEFAULT_WIKI_PROMPT);
   }, []);
 
   // 拉取页面列表
-  const fetchPages = useCallback(async () => {
+  const fetchFiles = useCallback(async () => {
     try {
-      setPagesLoading(true);
-      const list = await fetchBlackboardPages(workspaceId);
-      setPages(list);
+      setFilesLoading(true);
+      const list = await fetchWikiFiles(workspaceId);
+      setFiles(list);
       // 用函数式更新读取最新 currentSlug，避免将其放入依赖数组而每次切页重拉列表
       setCurrentSlug(prev => (list.some(p => p.slug === prev) ? prev : 'index'));
     } catch (err) {
       console.error('获取页面列表失败:', err);
       message.error('获取页面列表失败');
     } finally {
-      setPagesLoading(false);
+      setFilesLoading(false);
     }
   }, [workspaceId]);
 
   // 拉取当前页面详情
-  const fetchCurrentPage = useCallback(async () => {
+  const fetchCurrentFile = useCallback(async () => {
     try {
-      setPageLoading(true);
-      const page = await fetchBlackboardPageDetail(workspaceId, currentSlug);
-      setCurrentPage(page);
+      setFileLoading(true);
+      const file = await fetchWikiFileContent(workspaceId, currentSlug);
+      setCurrentFile(file);
     } catch (err) {
       console.error('获取页面详情失败:', err);
-      setCurrentPage(null);
+      setCurrentFile(null);
     } finally {
-      setPageLoading(false);
+      setFileLoading(false);
     }
   }, [workspaceId, currentSlug]);
 
@@ -419,28 +334,28 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
 
   // workspace 切换时先清空隔离数据，避免加载失败或加载窗口期暴露上一工作空间内容
   useEffect(() => {
-    setPages([]);
-    setCurrentPage(null);
+    setFiles([]);
+    setCurrentFile(null);
     setConfigData(null);
     setCurrentSlug('index');
   }, [workspaceId]);
 
   // 副作用：workspaceId 变化时重拉
   useEffect(() => {
-    fetchPages();
+    fetchFiles();
     fetchConfig();
-  }, [fetchPages, fetchConfig]);
+  }, [fetchFiles, fetchConfig]);
 
   // 副作用：currentSlug 变化时重拉页面详情
   useEffect(() => {
-    fetchCurrentPage();
-  }, [fetchCurrentPage]);
+    fetchCurrentFile();
+  }, [fetchCurrentFile]);
 
   // 刷新：重新拉取列表和当前页面
   const handleRefresh = useCallback(() => {
-    fetchPages();
-    fetchCurrentPage();
-  }, [fetchPages, fetchCurrentPage]);
+    fetchFiles();
+    fetchCurrentFile();
+  }, [fetchFiles, fetchCurrentFile]);
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -454,12 +369,12 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       </div>
       <BlackboardWikiLayout
         isDark={isDark}
-        pages={pages}
-        currentPage={currentPage}
+        files={files}
+        currentFile={currentFile}
         currentSlug={currentSlug}
         onSelectSlug={setCurrentSlug}
-        pagesLoading={pagesLoading}
-        pageLoading={pageLoading}
+        filesLoading={filesLoading}
+        fileLoading={fileLoading}
       />
 
       {/* 黑板设置弹窗：Tab1 防抖设置，Tab2 提示词设置 */}
@@ -494,12 +409,9 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
               label: '提示词设置',
               children: (
                 <PromptSettingsTab
-                  wikiIndexPrompt={wikiIndexPrompt}
-                  setWikiIndexPrompt={setWikiIndexPrompt}
-                  wikiPagePrompt={wikiPagePrompt}
-                  setWikiPagePrompt={setWikiPagePrompt}
-                  onRestoreIndexPrompt={handleRestoreIndexPrompt}
-                  onRestorePagePrompt={handleRestorePagePrompt}
+                  wikiPrompt={wikiPrompt}
+                  setWikiPrompt={setWikiPrompt}
+                  onRestorePrompt={handleRestorePrompt}
                 />
               ),
             },
@@ -551,48 +463,29 @@ function DebounceSettingsTab({ debounceSecs, setDebounceSecs, debounceCount, set
 }
 
 interface PromptSettingsTabProps {
-  wikiIndexPrompt: string;
-  setWikiIndexPrompt: (v: string) => void;
-  wikiPagePrompt: string;
-  setWikiPagePrompt: (v: string) => void;
-  onRestoreIndexPrompt: () => void;
-  onRestorePagePrompt: () => void;
+  wikiPrompt: string;
+  setWikiPrompt: (v: string) => void;
+  onRestorePrompt: () => void;
 }
 
-/** 提示词设置 Tab：包含索引提示词和页面提示词两个子区域 */
+/** 提示词设置 Tab：单阶段 Wiki 提示词 */
 function PromptSettingsTab({
-  wikiIndexPrompt, setWikiIndexPrompt,
-  wikiPagePrompt, setWikiPagePrompt,
-  onRestoreIndexPrompt, onRestorePagePrompt,
+  wikiPrompt, setWikiPrompt,
+  onRestorePrompt,
 }: PromptSettingsTabProps) {
   return (
     <div style={{ marginTop: 16 }}>
       <div style={{ marginBottom: 20 }}>
         <Space style={{ marginBottom: 8 }}>
-          <Button onClick={onRestoreIndexPrompt}>恢复默认</Button>
+          <Button onClick={onRestorePrompt}>恢复默认</Button>
           <span style={{ color: '#888', fontSize: 12 }}>
-            索引提示词（分析阶段：决定记录归到哪些页面）
+            Wiki 提示词（单阶段：分析记录 + 直接编辑文件）
           </span>
         </Space>
         <Input.TextArea
-          value={wikiIndexPrompt}
-          onChange={(e) => setWikiIndexPrompt(e.target.value)}
-          rows={12}
-          placeholder="留空使用内置默认，如需自定义请直接在此输入"
-        />
-      </div>
-      <Divider style={{ margin: '12px 0' }} />
-      <div style={{ marginBottom: 12 }}>
-        <Space style={{ marginBottom: 8 }}>
-          <Button onClick={onRestorePagePrompt}>恢复默认</Button>
-          <span style={{ color: '#888', fontSize: 12 }}>
-            页面提示词（执行阶段：生成具体页面 Markdown 内容）
-          </span>
-        </Space>
-        <Input.TextArea
-          value={wikiPagePrompt}
-          onChange={(e) => setWikiPagePrompt(e.target.value)}
-          rows={12}
+          value={wikiPrompt}
+          onChange={(e) => setWikiPrompt(e.target.value)}
+          rows={16}
           placeholder="留空使用内置默认，如需自定义请直接在此输入"
         />
       </div>
@@ -834,24 +727,24 @@ function BlackboardDebounceBar({ workspaceId }: BlackboardDebounceBarProps) {
 
 interface BlackboardWikiLayoutProps {
   isDark: boolean;
-  pages: BlackboardPageItem[];
-  currentPage: BlackboardPageDetail | null;
+  files: WikiFileItem[];
+  currentFile: WikiFileContent | null;
   currentSlug: string;
   onSelectSlug: (slug: string) => void;
-  pagesLoading: boolean;
-  pageLoading: boolean;
+  filesLoading: boolean;
+  fileLoading: boolean;
 }
 
 /** Wiki 布局：左侧目录树 + 右侧内容区 */
 function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
-  const { isDark, pages, currentPage, currentSlug, onSelectSlug, pagesLoading, pageLoading } = props;
+  const { isDark, files, currentFile, currentSlug, onSelectSlug, filesLoading, fileLoading } = props;
 
-  // 构造 Menu items：index 在前，然后 topic（按更新时间倒序），最后 log
+  // 构造 Menu items：index 在前，然后 topic，最后 log
   const menuItems = [
     // index 页
-    ...pages.filter(p => p.page_type === 'index').map(p => ({
-      key: p.slug,
-      label: p.title,
+    ...files.filter(f => f.file_type === 'index').map(f => ({
+      key: f.slug,
+      label: '目录',
       type: 'item' as const,
     })),
     // 主题页分组
@@ -859,23 +752,16 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
       key: 'topics-group',
       label: <span style={{ fontWeight: 600, fontSize: 12, color: isDark ? '#aaa' : '#666' }}>主题页面</span>,
       type: 'group' as const,
-      children: pages.filter(p => p.page_type === 'topic').map(p => ({
-        key: p.slug,
-        label: (
-          <span title={p.title}>
-            {p.title}
-            <span style={{ color: isDark ? '#666' : '#aaa', fontSize: 12, marginLeft: 6 }}>
-              ({p.source_count})
-            </span>
-          </span>
-        ),
+      children: files.filter(f => f.file_type === 'topic').map(f => ({
+        key: f.slug,
+        label: f.slug,
         type: 'item' as const,
       })),
     },
     // log 页
-    ...pages.filter(p => p.page_type === 'log').map(p => ({
-      key: p.slug,
-      label: p.title,
+    ...files.filter(f => f.file_type === 'log').map(f => ({
+      key: f.slug,
+      label: '执行日志',
       type: 'item' as const,
     })),
   ];
@@ -896,9 +782,9 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
           padding: '8px 0',
         }}
       >
-        {pagesLoading ? (
+        {filesLoading ? (
           <Skeleton active paragraph={{ rows: 6 }} style={{ padding: '0 12px' }} />
-        ) : pages.length === 0 ? (
+        ) : files.length === 0 ? (
           <div style={{ padding: '24px 12px', textAlign: 'center', color: isDark ? '#666' : '#999', fontSize: 12 }}>
             暂无页面
           </div>
@@ -916,12 +802,12 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
 
       {/* 右侧内容区 */}
       <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px', minWidth: 0 }}>
-        {pageLoading ? (
+        {fileLoading ? (
           <Skeleton active paragraph={{ rows: 10 }} />
-        ) : !currentPage || currentPage.content.trim().length === 0 ? (
+        ) : !currentFile || currentFile.content.trim().length === 0 ? (
           <BlackboardEmpty isDark={isDark} />
         ) : (
-          <BlackboardContent isDark={isDark} content={currentPage.content} />
+          <BlackboardContent isDark={isDark} content={currentFile.content} />
         )}
       </div>
     </div>

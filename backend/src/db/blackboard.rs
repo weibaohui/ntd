@@ -84,8 +84,7 @@ impl Database {
             // 默认防抖条数阈值 10 条
             blackboard_debounce_count: ActiveValue::Set(10),
             // 空字符串表示使用内置默认提示词模板
-            wiki_index_prompt: ActiveValue::Set(String::new()),
-            wiki_page_prompt: ActiveValue::Set(String::new()),
+            wiki_prompt: ActiveValue::Set(String::new()),
             updated_at: ActiveValue::Set(Some(now.clone())),
             created_at: ActiveValue::Set(Some(now)),
             ..Default::default()
@@ -168,8 +167,7 @@ impl Database {
             pending_record_ids: ActiveValue::Set("[]".to_string()),
             blackboard_debounce_secs: ActiveValue::Set(600),
             blackboard_debounce_count: ActiveValue::Set(10),
-            wiki_index_prompt: ActiveValue::Set(String::new()),
-            wiki_page_prompt: ActiveValue::Set(String::new()),
+            wiki_prompt: ActiveValue::Set(String::new()),
             ..Default::default()
         };
         // ON CONFLICT(workspace_id)：命中后只覆盖 content/updated_at，保留 created_at 和配置字段
@@ -326,14 +324,13 @@ impl Database {
         Ok(board.map(|b| BlackboardConfig {
             debounce_secs: b.blackboard_debounce_secs,
             debounce_count: b.blackboard_debounce_count,
-            wiki_index_prompt: b.wiki_index_prompt,
-            wiki_page_prompt: b.wiki_page_prompt,
+            wiki_prompt: b.wiki_prompt,
         }))
     }
 
     /// 更新指定工作空间的黑板配置。
     ///
-    /// 输入：workspace_id + 四个可选字段（debounce_secs、debounce_count、wiki_index_prompt、wiki_page_prompt）。
+    /// 输入：workspace_id + 三个可选字段（debounce_secs、debounce_count、wiki_prompt）。
     /// 流程：先按 workspace_id 查出黑板记录（不存在则 RecordNotFound）→ 构造 ActiveModel
     /// → 只对传入 Some 的字段写入，传入 None 的保持原值不变 → update。
     /// 防抖阈值有下限保护：debounce_secs >= 10，debounce_count >= 1。
@@ -343,8 +340,7 @@ impl Database {
         workspace_id: i64,
         debounce_secs: Option<i64>,
         debounce_count: Option<i64>,
-        wiki_index_prompt: Option<String>,
-        wiki_page_prompt: Option<String>,
+        wiki_prompt: Option<String>,
     ) -> Result<(), sea_orm::DbErr> {
         let board = blackboards::Entity::find()
             .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
@@ -369,11 +365,8 @@ impl Database {
         if let Some(v) = debounce_count {
             am.blackboard_debounce_count = ActiveValue::Set(v.max(1));
         }
-        if let Some(v) = wiki_index_prompt {
-            am.wiki_index_prompt = ActiveValue::Set(v);
-        }
-        if let Some(v) = wiki_page_prompt {
-            am.wiki_page_prompt = ActiveValue::Set(v);
+        if let Some(v) = wiki_prompt {
+            am.wiki_prompt = ActiveValue::Set(v);
         }
         am.update(&self.conn).await?;
         Ok(())
@@ -385,8 +378,7 @@ impl Database {
 pub struct BlackboardConfig {
     pub debounce_secs: i64,
     pub debounce_count: i64,
-    pub wiki_index_prompt: String,
-    pub wiki_page_prompt: String,
+    pub wiki_prompt: String,
 }
 
 #[cfg(test)]
@@ -428,8 +420,7 @@ mod tests {
         // 新增字段：默认值验证
         assert_eq!(board.blackboard_debounce_secs, 600);
         assert_eq!(board.blackboard_debounce_count, 10);
-        assert_eq!(board.wiki_index_prompt, "");
-        assert_eq!(board.wiki_page_prompt, "");
+        assert_eq!(board.wiki_prompt, "");
 
         // 验证可通过 get 查到
         let fetched = db.get_blackboard(ws_id).await.unwrap();
@@ -560,8 +551,7 @@ mod tests {
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
         assert_eq!(cfg.debounce_secs, 600);
         assert_eq!(cfg.debounce_count, 10);
-        assert_eq!(cfg.wiki_index_prompt, "");
-        assert_eq!(cfg.wiki_page_prompt, "");
+        assert_eq!(cfg.wiki_prompt, "");
     }
 
     /// 验证 update_blackboard_config 正确更新各字段。
@@ -571,15 +561,14 @@ mod tests {
         let ws_id = create_test_workspace(&db).await;
         db.create_blackboard(ws_id).await.unwrap();
 
-        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("index".to_string()), Some("page".to_string()))
+        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("wiki".to_string()))
             .await
             .unwrap();
 
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
         assert_eq!(cfg.debounce_secs, 300);
         assert_eq!(cfg.debounce_count, 5);
-        assert_eq!(cfg.wiki_index_prompt, "index");
-        assert_eq!(cfg.wiki_page_prompt, "page");
+        assert_eq!(cfg.wiki_prompt, "wiki");
     }
 
     /// 验证 update_blackboard_config 对 None 字段保持原值。
@@ -590,28 +579,27 @@ mod tests {
         db.create_blackboard(ws_id).await.unwrap();
 
         // 先全部更新
-        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("index".to_string()), Some("page".to_string()))
+        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("wiki".to_string()))
             .await
             .unwrap();
 
         // 再只更新其中两个
-        db.update_blackboard_config(ws_id, Some(900), None, None, None)
+        db.update_blackboard_config(ws_id, Some(900), None, None)
             .await
             .unwrap();
 
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
         assert_eq!(cfg.debounce_secs, 900);
         assert_eq!(cfg.debounce_count, 5, "debounce_count 应保留之前的值");
-        assert_eq!(cfg.wiki_index_prompt, "index", "wiki_index_prompt 应保留之前的值");
-        assert_eq!(cfg.wiki_page_prompt, "page", "wiki_page_prompt 应保留之前的值");
+        assert_eq!(cfg.wiki_prompt, "wiki", "wiki_prompt 应保留之前的值");
     }
 
     /// 验证 update_blackboard_config 在记录不存在时返回 RecordNotFound。
     #[tokio::test]
     async fn test_update_blackboard_config_record_not_found() {
         let db = Database::new(":memory:").await.expect(":memory: must open");
-        // 第 5 个参数 wiki_page_prompt 传 None，不参与此次测试验证
-        let result = db.update_blackboard_config(999, Some(300), None, None, None).await;
+        // 第 4 个参数 wiki_prompt 传 None，不参与此次测试验证
+        let result = db.update_blackboard_config(999, Some(300), None, None).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             sea_orm::DbErr::RecordNotFound(_) => {}
@@ -627,14 +615,14 @@ mod tests {
         db.create_blackboard(ws_id).await.unwrap();
 
         // 传入小于最小值的 debounce_secs，应被钳制到 10
-        db.update_blackboard_config(ws_id, Some(3), None, None, None)
+        db.update_blackboard_config(ws_id, Some(3), None, None)
             .await
             .unwrap();
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
         assert_eq!(cfg.debounce_secs, 10);
 
         // 传入小于最小值的 debounce_count，应被钳制到 1
-        db.update_blackboard_config(ws_id, None, Some(0), None, None)
+        db.update_blackboard_config(ws_id, None, Some(0), None)
             .await
             .unwrap();
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();

@@ -1,5 +1,5 @@
 pub mod agent_bots;
-pub mod blackboard_pages;
+
 pub mod blackboards;
 pub mod execution_logs;
 pub mod execution_records;
@@ -33,7 +33,7 @@ pub mod workspace_slash_commands;
 
 pub mod prelude {
     pub use super::agent_bots::Entity as AgentBots;
-    pub use super::blackboard_pages::Entity as BlackboardPages;
+
     pub use super::blackboards::Entity as Blackboards;
     pub use super::execution_logs::Entity as ExecutionLogs;
     pub use super::execution_records::Entity as ExecutionRecords;
