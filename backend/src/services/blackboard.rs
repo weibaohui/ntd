@@ -35,13 +35,16 @@ const TRIGGER_TYPE_BLACKBOARD: &str = "blackboard";
 /// Wiki 模式的 action_key（单阶段，直接编辑文件）。
 const ACTION_KEY_WIKI: &str = "wiki-update";
 
-/// 查找或创建黑板 Wiki Todo。
+/// 查找或创建黑板 Wiki Todo（不更新 prompt）。
 ///
 /// action_type="blackboard", action_key="wiki-update"。
 /// 每个工作空间独立维护自己的 Wiki 更新 Todo。
+///
+/// prompt 的同步由 `apply_wiki_prompt_to_todo` 负责，与本函数解耦：
+/// - 首次创建：用内置默认 prompt 兜底
+/// - 已存在：原样返回 id，不触碰 prompt 字段
 async fn find_or_create_wiki_todo(
     db: &Database,
-    prompt_template: &str,
     workspace_id: i64,
 ) -> Result<i64, AppError> {
     // 按 action_type + action_key + workspace_id 查找已有的 Todo
@@ -50,32 +53,10 @@ async fn find_or_create_wiki_todo(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
     {
-        // 如果 prompt 模板有变化，更新已有的 Todo
-        if todo.prompt != prompt_template {
-            let title = format!("Blackboard Wiki: workspace_{}", workspace_id);
-            db.update_todo_full(crate::db::TodoUpdate {
-                id: todo.id,
-                title: &title,
-                prompt: prompt_template,
-                status: crate::models::TodoStatus::Pending,
-                executor: None,
-                scheduler_enabled: None,
-                scheduler_config: None,
-                scheduler_timezone: None,
-                workspace_id: None,
-                webhook_enabled: None,
-                acceptance_criteria: None,
-                auto_review_enabled: None,
-                action_type: Some("blackboard"),
-                action_key: Some(ACTION_KEY_WIKI),
-            })
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        }
         return Ok(todo.id);
     }
 
-    // 未找到，自动创建
+    // 未找到，自动创建：用内置默认 prompt 兜底，后续由配置同步覆盖
     let dir = db
         .get_project_directory_by_id(workspace_id)
         .await
@@ -83,7 +64,7 @@ async fn find_or_create_wiki_todo(
         .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", workspace_id)))?;
 
     let title = format!("Blackboard Wiki: workspace_{}", workspace_id);
-    let prompt = prompt_template.to_string();
+    let prompt = build_wiki_prompt();
 
     let todo_id = db
         .create_todo_with_extras(
@@ -118,6 +99,82 @@ async fn find_or_create_wiki_todo(
     .map_err(|e| AppError::Internal(e.to_string()))?;
 
     Ok(todo_id)
+}
+
+/// 把数据库中的 wiki_prompt 配置同步到该 workspace 已存在的 Wiki Todo。
+///
+/// 规则：
+/// - 配置非空：用配置值覆盖 todo.prompt
+/// - 配置为空：用内置默认 prompt 覆盖 todo.prompt
+/// - todo 不存在：跳过（执行时再创建）
+///
+/// 由配置保存接口调用，保证用户在前端改完提示词后，下次执行的 todo 就是最新值。
+pub async fn apply_wiki_prompt_to_todo(
+    db: &Database,
+    workspace_id: i64,
+) -> Result<(), AppError> {
+    // 解析当前生效的 prompt：配置非空用配置值，否则用内置默认
+    let prompt_template = resolve_effective_wiki_prompt(db, workspace_id).await?;
+    update_todo_prompt_if_exists(db, &prompt_template, workspace_id).await
+}
+
+/// 解析当前生效的 wiki prompt：数据库非空用配置值，否则用内置默认。
+async fn resolve_effective_wiki_prompt(
+    db: &Database,
+    workspace_id: i64,
+) -> Result<String, AppError> {
+    let prompt = db
+        .get_blackboard_config(workspace_id)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .and_then(|cfg| {
+            if cfg.wiki_prompt.trim().is_empty() {
+                None
+            } else {
+                Some(cfg.wiki_prompt)
+            }
+        });
+    Ok(prompt.unwrap_or_else(build_wiki_prompt))
+}
+
+/// 仅更新已存在 todo 的 prompt，不存在则跳过。
+async fn update_todo_prompt_if_exists(
+    db: &Database,
+    prompt_template: &str,
+    workspace_id: i64,
+) -> Result<(), AppError> {
+    let Some(todo) = db
+        .get_todo_by_action_type_and_key_and_workspace("blackboard", ACTION_KEY_WIKI, workspace_id)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+    else {
+        // todo 尚未创建（用户从未触发过 wiki 更新）：无需同步
+        return Ok(());
+    };
+    // prompt 未变化：跳过无意义写入
+    if todo.prompt == prompt_template {
+        return Ok(());
+    }
+    let title = format!("Blackboard Wiki: workspace_{}", workspace_id);
+    db.update_todo_full(crate::db::TodoUpdate {
+        id: todo.id,
+        title: &title,
+        prompt: prompt_template,
+        status: crate::models::TodoStatus::Pending,
+        executor: None,
+        scheduler_enabled: None,
+        scheduler_config: None,
+        scheduler_timezone: None,
+        workspace_id: None,
+        webhook_enabled: None,
+        acceptance_criteria: None,
+        auto_review_enabled: None,
+        action_type: Some("blackboard"),
+        action_key: Some(ACTION_KEY_WIKI),
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
+    Ok(())
 }
 
 /// 构建 Wiki 更新的 Prompt 模板（单阶段）。
@@ -263,16 +320,23 @@ pub async fn update_blackboard_wiki(
         AppError::Internal(format!("初始化 wiki 目录失败: {:?}", e))
     })?;
 
-    // 2. 构造 prompt
-    let prompt_template = build_wiki_prompt();
+    // 2. 查找或创建 todo（prompt 由配置保存接口同步，执行时不触碰）
+    let todo_id = find_or_create_wiki_todo(&db, workspace_id).await?;
+
+    // 3. 用 todo.prompt 作为执行 message：这是真相源
+    //    - 用户在配置页保存提示词 → apply_wiki_prompt_to_todo 同步到 todo.prompt
+    //    - 未配置 → 创建时已用内置默认兜底
+    let prompt_template = db
+        .get_todo(todo_id)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .map(|t| t.prompt)
+        .unwrap_or_else(build_wiki_prompt);
     let ids_str = format!("{:?}", pending_record_ids);
     let mut params = HashMap::new();
     params.insert("workspace_id".to_string(), workspace_id.to_string());
     params.insert("pending_record_ids".to_string(), ids_str);
     let message = crate::models::replace_placeholders(&prompt_template, &params);
-
-    // 3. 查找或创建 todo
-    let todo_id = find_or_create_wiki_todo(&db, &prompt_template, workspace_id).await?;
 
     // 4. 启动执行
     let _result = run_wiki_execution(

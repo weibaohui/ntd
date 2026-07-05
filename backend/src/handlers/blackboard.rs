@@ -127,6 +127,21 @@ pub async fn update_blackboard_config(
         req.wiki_prompt.clone(),
     ).await.map_err(|e| AppError::Internal(format!("更新黑板配置失败: {}", e)))?;
 
+    // 配置变更后同步到该 workspace 已存在的 Wiki Todo 的 prompt 字段：
+    // - 用户改了提示词 → 立即生效到 todo.prompt，下次执行直接用最新值
+    // - 用户清空提示词 → 用内置默认覆盖 todo.prompt
+    // 失败仅 warn：配置已保存成功，同步 todo 失败不应阻断配置保存流程
+    if let Err(e) = crate::services::blackboard::apply_wiki_prompt_to_todo(
+        &state.db,
+        workspace_id,
+    ).await {
+        tracing::warn!(
+            "apply_wiki_prompt_to_todo 失败: workspace_id={}, error={:?}",
+            workspace_id,
+            e
+        );
+    }
+
     // debounce_secs 变更时，根据已计时长决定：超则立即触发 flush，未超则继续用新阈值计时
     if let Some(new_secs) = req.blackboard_debounce_secs {
         let clamped = new_secs.max(10);
