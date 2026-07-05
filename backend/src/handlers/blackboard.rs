@@ -115,6 +115,7 @@ pub async fn get_blackboard_config(
             debounce_count: 10,
             wiki_prompt: String::new(),
             wiki_chat_executor: None,
+            wiki_chat_sessions: None,
         })),
     }
 }

@@ -329,6 +329,7 @@ impl Database {
             debounce_count: b.blackboard_debounce_count,
             wiki_prompt: b.wiki_prompt,
             wiki_chat_executor: b.wiki_chat_executor,
+            wiki_chat_sessions: b.wiki_chat_sessions,
         }))
     }
 
@@ -383,6 +384,75 @@ impl Database {
         am.update(&self.conn).await?;
         Ok(())
     }
+
+    /// 获取指定工作空间指定执行器的 Wiki Chat session ID。
+    ///
+    /// 返回值：
+    /// - Some(Some(sid))：该执行器有 session
+    /// - Some(None)：该执行器无 session（首次对话或不支持 session）
+    /// - None：黑板记录不存在
+    pub async fn get_wiki_chat_session(
+        &self,
+        workspace_id: i64,
+        executor: &str,
+    ) -> Result<Option<Option<String>>, sea_orm::DbErr> {
+        let board = blackboards::Entity::find()
+            .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
+            .one(&self.conn)
+            .await?;
+
+        let sessions_json = match board {
+            Some(b) => b.wiki_chat_sessions,
+            None => return Ok(None),
+        };
+
+        // 解析 JSON 获取对应执行器的 session
+        let sessions: std::collections::HashMap<String, Option<String>> =
+            serde_json::from_str(sessions_json.as_deref().unwrap_or("{}"))
+            .unwrap_or_default();
+
+        Ok(sessions.get(executor).cloned())
+    }
+
+    /// 更新指定工作空间指定执行器的 Wiki Chat session ID。
+    ///
+    /// 流程：
+    /// 1. 读取现有 sessions JSON
+    /// 2. 更新对应执行器的 session
+    /// 3. 写回数据库
+    pub async fn set_wiki_chat_session(
+        &self,
+        workspace_id: i64,
+        executor: &str,
+        session_id: Option<String>,
+    ) -> Result<(), sea_orm::DbErr> {
+        // 读取现有 sessions
+        let board = blackboards::Entity::find()
+            .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
+            .one(&self.conn)
+            .await?
+            .ok_or_else(|| sea_orm::DbErr::RecordNotFound("blackboard not found".into()))?;
+
+        // 解析现有 JSON
+        let mut sessions: std::collections::HashMap<String, Option<String>> =
+            serde_json::from_str(board.wiki_chat_sessions.as_deref().unwrap_or("{}"))
+            .unwrap_or_default();
+
+        // 更新该执行器的 session
+        sessions.insert(executor.to_string(), session_id);
+
+        // 序列化并写回
+        let now = crate::models::utc_timestamp();
+        let am = blackboards::ActiveModel {
+            id: ActiveValue::Unchanged(board.id),
+            workspace_id: ActiveValue::Unchanged(workspace_id),
+            wiki_chat_sessions: ActiveValue::Set(Some(serde_json::to_string(&sessions).unwrap_or_default())),
+            updated_at: ActiveValue::Set(Some(now)),
+            ..Default::default()
+        };
+        am.update(&self.conn).await?;
+        Ok(())
+    }
 }
 
 /// 黑板 per-workspace 配置数据结构，对应 blackboards 表的配置列。
@@ -393,6 +463,9 @@ pub struct BlackboardConfig {
     pub wiki_prompt: String,
     /// Wiki 对话使用的执行器名称，None 或空表示使用默认值 "claudecode"
     pub wiki_chat_executor: Option<String>,
+    /// Wiki 对话各执行器的 session ID（JSON 对象）。
+    /// 例如：{"claudecode": "uuid-session-1", "hermes": "uuid-session-2"}
+    pub wiki_chat_sessions: Option<String>,
 }
 
 #[cfg(test)]

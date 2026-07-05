@@ -467,7 +467,14 @@ pub async fn chat_with_wiki(
         .await
         .ok_or_else(|| AppError::BadRequest(format!("执行器未安装: {}", exec_name)))?;
 
-    // 4. 确保 wiki 目录存在（首次访问时自动创建）
+    // 4. 获取该执行器的 session（用于保持连续对话）
+    let session_id = db
+        .get_wiki_chat_session(workspace_id, &exec_name)
+        .await
+        .map_err(|e| AppError::Internal(format!("读取 wiki chat session 失败: {}", e)))?
+        .flatten();
+
+    // 5. 确保 wiki 目录存在（首次访问时自动创建）
     init_wiki_dir(workspace_id).map_err(|e| {
         AppError::Internal(format!("初始化 wiki 目录失败: {:?}", e))
     })?;
@@ -475,14 +482,15 @@ pub async fn chat_with_wiki(
         AppError::Internal(format!("获取 wiki 目录失败: {:?}", e))
     })?;
 
-    // 5. 生成任务 ID，先发送 Started 事件（前端可立即显示"执行中"）
+    // 6. 生成任务 ID，先发送 Started 事件（前端可立即显示"执行中"）
     let task_id = format!("wiki-chat-{}", uuid::Uuid::new_v4());
     tracing::info!(
-        "wiki chat: task_id={}, workspace_id={}, executor={}, message_len={}",
+        "wiki chat: task_id={}, workspace_id={}, executor={}, message_len={}, session_id={:?}",
         task_id,
         workspace_id,
         exec_name,
-        message.len()
+        message.len(),
+        session_id
     );
     let _ = tx.send(ExecEvent::WikiChatStarted {
         task_id: task_id.clone(),
@@ -491,7 +499,7 @@ pub async fn chat_with_wiki(
         message: message.to_string(),
     });
 
-    // 6. spawn 执行器子进程，流式读取 stdout，逐行推送 WikiChatOutput 事件
+    // 7. spawn 执行器子进程，流式读取 stdout，逐行推送 WikiChatOutput 事件
     let started_at = std::time::Instant::now();
     let spawn_result = spawn_executor_for_chat_streaming(
         &executor,
@@ -500,6 +508,7 @@ pub async fn chat_with_wiki(
         &task_id,
         workspace_id,
         tx,
+        session_id.clone(),
     )
     .await;
 
@@ -527,6 +536,20 @@ pub async fn chat_with_wiki(
                 duration_secs,
             });
 
+            // 9. 成功时从日志中提取 session_id 并持久化到数据库
+            if success {
+                if let Some(new_session_id) = extract_session_from_logs(&executor, &logs) {
+                    tracing::info!(
+                        "wiki chat: extracted session_id={} for executor={}, saving to DB",
+                        new_session_id,
+                        exec_name
+                    );
+                    if let Err(e) = db.set_wiki_chat_session(workspace_id, &exec_name, Some(new_session_id)).await {
+                        tracing::warn!("保存 wiki chat session 失败: {:?}", e);
+                    }
+                }
+            }
+
             Ok(WikiChatResponse {
                 content: result_text,
                 task_id,
@@ -551,6 +574,27 @@ pub async fn chat_with_wiki(
             Err(e)
         }
     }
+}
+
+/// 从执行日志中提取 session_id。
+///
+/// 不同执行器通过 stdout JSONL 行暴露 session_id：
+/// - Claude Code: `{"type":"system","sub_type":"session_id","session_id":"<sid>"}`
+/// - Hermès: `session_id: <sid>`
+/// - Pi: `{"type":"session","id":"<sid>"}`
+///
+/// 返回 None 表示未找到（执行器不支持 session 或首次执行）。
+fn extract_session_from_logs(
+    executor: &Arc<dyn crate::adapters::CodeExecutor>,
+    logs: &[crate::models::ParsedLogEntry],
+) -> Option<String> {
+    for entry in logs {
+        // 直接用 extract_session_id 解析日志内容
+        if let Some(sid) = executor.extract_session_id(&entry.content) {
+            return Some(sid);
+        }
+    }
+    None
 }
 
 /// 解析本次对话使用的执行器名称。
@@ -603,12 +647,14 @@ async fn spawn_executor_for_chat_streaming(
     task_id: &str,
     workspace_id: i64,
     tx: &tokio::sync::broadcast::Sender<crate::executor_service::events::ExecEvent>,
+    session_id: Option<String>,
 ) -> Result<(Vec<crate::models::ParsedLogEntry>, String, bool), AppError> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use crate::executor_service::events::ExecEvent;
 
     let program = executor.executable_path();
-    let command_args = executor.command_args(message);
+    // 使用带 session 的命令参数（执行器不支持时自动忽略）
+    let command_args = executor.command_args_with_session(message, session_id.as_deref(), session_id.is_some());
 
     tracing::info!(
         "wiki chat spawn: task_id={}, {} {:?} (cwd={:?})",
