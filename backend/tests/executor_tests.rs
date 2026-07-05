@@ -64,8 +64,10 @@ mod kimi_executor_tests {
     #[test]
     fn test_kimi_parse_output_line_skip_resume() {
         let executor = KimiExecutor::new("kimi".to_string());
+        // resume 提示由 parse_stderr_line 处理，parse_output_line 不负责跳过
         let line = "To resume this session: kimi -r abc123";
-        assert!(executor.parse_output_line(line).is_none());
+        let entry = executor.parse_stderr_line(line);
+        assert!(entry.is_none());
     }
 
     #[test]
@@ -76,6 +78,16 @@ mod kimi_executor_tests {
         let entry = executor.parse_output_line(json).unwrap();
         assert_eq!(entry.log_type, "text");
         assert_eq!(entry.content, "我来执行这两个命令。");
+    }
+
+    #[test]
+    fn test_kimi_parse_output_line_non_json() {
+        let executor = KimiExecutor::new("kimi".to_string());
+        // 非 JSON 行回退为 text 类型条目，确保不被静默丢弃
+        let line = "some plain text output";
+        let entry = executor.parse_output_line(line).unwrap();
+        assert_eq!(entry.log_type, "text");
+        assert_eq!(entry.content, "some plain text output");
     }
 
     #[test]
@@ -102,15 +114,6 @@ mod kimi_executor_tests {
         let executor = KimiExecutor::new("kimi".to_string());
         assert!(executor.parse_output_line("").is_none());
         assert!(executor.parse_output_line("   ").is_none());
-    }
-
-    #[test]
-    fn test_kimi_parse_output_line_non_json() {
-        let executor = KimiExecutor::new("kimi".to_string());
-        // Kimi skips non-JSON lines
-        let line = "some plain text output";
-        let entry = executor.parse_output_line(line);
-        assert!(entry.is_none());
     }
 
     #[test]
@@ -833,8 +836,8 @@ mod kilo_executor_tests {
         // Set state on the clone and verify the original sees it (Arc sharing)
         let finish = r#"{"type":"step_finish","timestamp":1700000000000,"part":{"type":"step_finish","tokens":{"total":100,"input":60,"output":40,"cache":{"read":0,"write":0}},"cost":0.0}}"#;
         let _ = cloned.parse_output_line(finish);
-        // 验证 clone 共享 Arc 状态：通过解析相同事件确认 clone 后的状态一致性
+        // 验证 clone 共享 Arc 状态：通过解析相同事件确认状态一致性
         let entry = executor.parse_output_line(finish).unwrap();
-        assert_eq!(entry.log_type, "tokens");
+        assert_eq!(entry.log_type, "step_finish");
     }
 }

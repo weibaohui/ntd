@@ -487,7 +487,16 @@ async fn test_project_directory_list_orders_by_path() {
         .unwrap();
     let list = db.get_project_directories().await.unwrap();
     let paths: Vec<&str> = list.iter().map(|d| d.path.as_str()).collect();
-    assert_eq!(paths, vec!["/tmp/aaa", "/tmp/mmm", "/tmp/zzz"]);
+    // 迁移脚本会 seed 默认工作空间 /tmp，加上我们创建的 3 个，共 4 个
+    assert!(paths.contains(&"/tmp/aaa"));
+    assert!(paths.contains(&"/tmp/mmm"));
+    assert!(paths.contains(&"/tmp/zzz"));
+    // 验证排序：aaa < mmm < zzz
+    let custom: Vec<&str> = paths.iter()
+        .filter(|p| p.starts_with("/tmp/") && **p != "/tmp")
+        .copied()
+        .collect();
+    assert_eq!(custom, vec!["/tmp/aaa", "/tmp/mmm", "/tmp/zzz"]);
 }
 
 // =====================================================================

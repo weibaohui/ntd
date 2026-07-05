@@ -88,24 +88,27 @@ mod prompt_fallback_tests {
             "title": "Test Todo",
             "prompt": "This is the prompt",
             "executor": "kimi",
-            "tag_ids": [1, 2, 3]
+            "tag_ids": [1, 2, 3],
+            "workspace_id": 1
         }"#;
         let req: CreateTodoRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.title, "Test Todo");
         assert_eq!(req.prompt, "This is the prompt");
         assert_eq!(req.executor, Some("kimi".to_string()));
         assert_eq!(req.tag_ids, vec![1, 2, 3]);
+        assert_eq!(req.workspace_id, 1);
     }
 
     #[test]
     fn test_create_todo_request_minimal() {
         use ntd::models::CreateTodoRequest;
-        let json = r#"{"title": "Minimal Todo", "prompt": ""}"#;
+        let json = r#"{"title": "Minimal Todo", "prompt": "", "workspace_id": 1}"#;
         let req: CreateTodoRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.title, "Minimal Todo");
         assert!(req.prompt.is_empty());
         assert!(req.executor.is_none());
         assert!(req.tag_ids.is_empty());
+        assert_eq!(req.workspace_id, 1);
     }
 }
 
