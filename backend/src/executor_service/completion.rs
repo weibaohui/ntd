@@ -533,6 +533,10 @@ fn spawn_flush_worker(
     refreshing_workspaces: Arc<tokio::sync::Mutex<std::collections::HashSet<i64>>>,
 ) {
     tokio::spawn(async move {
+        // 标记本次 worker 是否处理失败：失败时需要重启 timer 让残留队列再次触发，
+        // 否则队列会永久卡住（阈值分支不会启动 timer，timer 自然到期也只会发一次 flush，
+        // 失败后无后续触发源）。
+        let mut had_failure = false;
         // 循环处理，直到队列为空或某次处理失败
         loop {
             // 非破坏性读取 pending 队列（不用 take_pending_record_ids）
@@ -543,6 +547,7 @@ fn spawn_flush_worker(
                 Ok(None) => break,
                 Err(e) => {
                     tracing::warn!("读取 pending 队列失败: workspace_id={}, error={}", ws_id, e);
+                    had_failure = true;
                     break;
                 }
             };
@@ -578,21 +583,45 @@ fn spawn_flush_worker(
                 );
                 // 失败时保留 pending 队列不删除（update_blackboard_wiki 内部
                 // 已改用 remove_specific_pending_record_ids，失败时不调用），
-                // 退出循环避免死循环
+                // 退出循环避免死循环；had_failure=true 触发下方 timer 重启逻辑
+                had_failure = true;
                 break;
             }
             // 成功：继续循环检查是否有新记录在处理期间到达
         }
 
-        // 广播 refreshing=false 状态
+        // 退出前从 DB 重新读取真实 pending_count。
+        // 旧实现写死 pending_count=0，但失败时队列实际仍有残留（update_blackboard_wiki
+        // 失败不调 remove_specific_pending_record_ids），下一秒 ticker 会从 DB 读回真实值，
+        // 造成 UI 在 0 和真实值之间反复跳；这里一次性广播真实值，避免抖动。
+        let final_pending_count = match db.get_blackboard(ws_id).await {
+            Ok(Some(board)) => {
+                serde_json::from_str::<Vec<i64>>(&board.pending_record_ids)
+                    .map(|v| v.len() as u64)
+                    .unwrap_or(0)
+            }
+            _ => 0,
+        };
+
+        // 广播 refreshing=false 状态（携带真实 pending_count）
         let _ = tx.send(ExecEvent::BlackboardDebounceStatus {
             workspace_id: ws_id,
-            pending_count: 0,
+            pending_count: final_pending_count,
             threshold: debounce_count as u64,
             debounce_secs: debounce_secs as u64,
             remaining_secs: -1,
             refreshing: false,
         });
+
+        // 失败且有残留队列时重启防抖 timer，让队列在 debounce_secs 后再次触发 flush，
+        // 避免「等待刷新 / N / 阈值 条」永久卡死的假象。
+        if had_failure && final_pending_count > 0 {
+            tracing::info!(
+                "worker 失败退出，重启防抖 timer 让残留队列重试: workspace_id={}, pending={}",
+                ws_id, final_pending_count
+            );
+            crate::services::blackboard_debouncer::restart_timer(ws_id, &db).await;
+        }
 
         // 释放 per-workspace 互斥锁
         let mut guard = refreshing_workspaces.lock().await;
