@@ -578,23 +578,28 @@ pub async fn chat_with_wiki(
 
 /// 从执行日志中提取 session_id。
 ///
-/// 不同执行器通过 stdout JSONL 行暴露 session_id：
-/// - Claude Code: `{"type":"system","sub_type":"session_id","session_id":"<sid>"}`
-/// - Hermès: `session_id: <sid>`
-/// - Pi: `{"type":"session","id":"<sid>"}`
+/// 流程：
+/// 1. 先尝试从日志内容中提取（parse_output_session_id）
+/// 2. 如果没有，尝试执行器内部缓存的 session_id（get_session_id）
 ///
-/// 返回 None 表示未找到（执行器不支持 session 或首次执行）。
+/// 不同执行器暴露 session_id 的方式不同：
+/// - Claude Code: stdout JSONL 行含 session_id
+/// - Hermès: `session_id: <sid>` 行
+/// - Pi: `{"type":"session","id":"<sid>"}` 行（通过 get_session_id 获取缓存值）
+///
+/// 返回 None 表示执行器不支持 session 或首次执行。
 fn extract_session_from_logs(
     executor: &Arc<dyn crate::adapters::CodeExecutor>,
     logs: &[crate::models::ParsedLogEntry],
 ) -> Option<String> {
+    // 1. 优先从日志内容提取
     for entry in logs {
-        // 直接用 extract_session_id 解析日志内容
         if let Some(sid) = executor.extract_session_id(&entry.content) {
             return Some(sid);
         }
     }
-    None
+    // 2. 回退到执行器内部缓存的 session_id（Pi 等执行器在 parse_output_line 时缓存）
+    executor.get_session_id()
 }
 
 /// 解析本次对话使用的执行器名称。
