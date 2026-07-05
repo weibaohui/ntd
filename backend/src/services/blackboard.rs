@@ -646,42 +646,78 @@ async fn run_execute_phase(
 /// 原样保留，无需转义引号/反斜杠，LLM 输出更稳更短更不易截断。JSON 转义大段
 /// 文本容易出错且 token 占用大，已废弃。旧数据不保留，新 todo 一律输出 YAML。
 fn extract_yaml_from_output(raw: &str) -> Result<serde_json::Value, AppError> {
-    use regex::Regex;
-    use std::sync::OnceLock;
-
-    // 正则编译开销不小，用 OnceLock 缓存编译结果，多次调用复用。
-    // (?s) 让 . 匹配换行；非贪婪 .*? 确保停在第一个闭合 ```。
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r"(?s)```yaml\s*\n(.*?)```").expect("yaml fence regex must compile")
-    });
-
-    // 先尝试从 ```yaml ``` 包裹块提取
-    if let Some(caps) = re.captures(raw) {
-        let inner = caps.get(1).map(|m| m.as_str()).unwrap_or("").trim();
-        if !inner.is_empty() {
-            match serde_yaml::from_str::<serde_json::Value>(inner) {
-                Ok(v) => return Ok(v),
-                Err(e) => {
-                    return Err(AppError::Internal(format!(
-                        "YAML 代码块内容解析失败: {:?}; 内容前 200 字: {:?}",
-                        e,
-                        inner.chars().take(200).collect::<String>()
-                    )));
-                }
+    // 第一步：从 ```yaml ``` 包裹块中提取 YAML 内容（若存在）
+    let trimmed = raw.trim();
+    if let Some(fence_start) = trimmed.find("```yaml") {
+        let after_fence = &trimmed[fence_start + 7..];  // skip "```yaml"
+        // 跳过第一个换行或空白
+        let after_newline = after_fence.trim_start();
+        if let Some(fence_end) = after_newline.find("```") {
+            let inner = after_newline[..fence_end].trim();
+            if !inner.is_empty() {
+                return parse_yaml_to_json(inner);
             }
         }
     }
 
     // 回退：整段当 YAML 直接解析（LLM 偶尔不按格式包裹时兜底）
-    let trimmed = raw.trim();
-    match serde_yaml::from_str::<serde_json::Value>(trimmed) {
-        Ok(v) => Ok(v),
-        Err(e) => Err(AppError::Internal(format!(
+    parse_yaml_to_json(trimmed).map_err(|e| {
+        let preview: String = trimmed.chars().take(200).collect();
+        AppError::Internal(format!(
             "无法从 LLM 输出提取 YAML（未找到 ```yaml ``` 包裹块且整段解析失败）: {:?}; 内容前 200 字: {:?}",
+            e, preview
+        ))
+    })
+}
+
+/// 用 yaml_rust2 解析 YAML 字符串为 serde_json::Value。
+///
+/// serde_yaml 0.9 对 value 中中文引号字符「」有解析 bug（libyaml 绑定限制），
+/// yaml_rust2 是纯 Rust 实现，无此问题。本函数作为 serde_yaml 的替换物。
+fn parse_yaml_to_json(yaml_str: &str) -> Result<serde_json::Value, AppError> {
+    use yaml_rust2::{Yaml, YamlLoader};
+
+    let docs = YamlLoader::load_from_str(yaml_str).map_err(|e| {
+        AppError::Internal(format!(
+            "YAML 解析失败: {:?}; 内容前 200 字: {:?}",
             e,
-            trimmed.chars().take(200).collect::<String>()
-        ))),
+            yaml_str.chars().take(200).collect::<String>()
+        ))
+    })?;
+
+    let doc = docs.into_iter().next().unwrap_or(Yaml::Null);
+    Ok(yaml_to_json_value(&doc))
+}
+
+/// 递归将 yaml_rust2::Yaml 枚举转为 serde_json::Value。
+fn yaml_to_json_value(y: &yaml_rust2::Yaml) -> serde_json::Value {
+    use yaml_rust2::Yaml;
+    match y {
+        Yaml::Null | Yaml::BadValue => serde_json::Value::Null,
+        Yaml::Boolean(b) => serde_json::Value::Bool(*b),
+        Yaml::Integer(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
+        Yaml::Real(s) => {
+            s.parse::<f64>().ok()
+                .and_then(|f| serde_json::Number::from_f64(f))
+                .map(serde_json::Value::Number)
+                .unwrap_or_else(|| serde_json::Value::String(s.clone()))
+        }
+        Yaml::String(s) => serde_json::Value::String(s.clone()),
+        Yaml::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(yaml_to_json_value).collect())
+        }
+        Yaml::Hash(hash) => {
+            let mut map = serde_json::Map::new();
+            for (k, v) in hash {
+                let key = match k {
+                    Yaml::String(s) => s.clone(),
+                    other => format!("{:?}", other),
+                };
+                map.insert(key, yaml_to_json_value(v));
+            }
+            serde_json::Value::Object(map)
+        }
+        Yaml::Alias(i) => serde_json::Value::Number(serde_json::Number::from(*i as i64)),
     }
 }
 
