@@ -17,8 +17,7 @@ export async function updateBlackboardConfig(
   config: {
     blackboard_debounce_secs?: number;
     blackboard_debounce_count?: number;
-    wiki_index_prompt?: string;
-    wiki_page_prompt?: string;
+    wiki_prompt?: string;
   },
 ): Promise<void> {
   await api.patch(`/api/workspaces/${workspaceId}/blackboard`, config);

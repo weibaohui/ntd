@@ -21,10 +21,8 @@ export interface Config {
   blackboard_debounce_secs?: number;
   /** 黑板更新防抖条数阈值，达到此条数立即触发 */
   blackboard_debounce_count?: number;
-    /** Wiki 索引页面维护提示词模板（占位符 {{page_summaries}}、{{pending_record_ids}}）*/
-    wiki_index_prompt?: string;
-    /** Wiki 主题页面生成提示词模板（占位符 {{operations_json}}、{{page_contents}}）*/
-    wiki_page_prompt?: string;
+  /** Wiki 更新提示词模板（单阶段：分析记录 + 直接编辑文件；占位符 {{workspace_id}}、{{pending_record_ids}}）*/
+  wiki_prompt?: string;
 }
 
 export interface ExecutorConfig {

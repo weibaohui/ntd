@@ -1,9 +1,8 @@
-//! 数据库迁移 V47-V53：黑板功能合并迁移（blackboards 表 + todos 索引修复 + blackboard_pages 表）。
+//! 数据库迁移 V47-V48：黑板功能合并迁移（blackboards 表 + todos 索引修复）。
 //!
 //! 合并了以下迁移的完整逻辑：
 //! V47  CreateBlackboardsTable - 创建 blackboards 表（+ pending_record_ids / debounce / wiki 提示词）
 //! V48  ScopeTodosActionKeyByWorkspace - 修复 todos (action_type, action_key) 索引为 workspace 级
-//! V53  CreateBlackboardPagesTable - 创建 blackboard_pages 多页面 Wiki 表
 //!
 //! 幂等设计：
 //! - 所有 CREATE TABLE 带 IF NOT EXISTS / table_exists 前置检查
@@ -62,13 +61,6 @@ impl Migration for V47ConsolidatedBlackboardFeatures {
             .await?;
         tracing::info!("V48: todos (action_type, action_key, workspace_id) 唯一索引已建立");
 
-        // ---- V53: 创建 blackboard_pages 表 ----
-        // 黑板从单文件模式演进为多页面 Wiki 架构
-        if !table_exists(db, "blackboard_pages").await? {
-            db.exec(CREATE_BLACKBOARD_PAGES_SQL).await?;
-            tracing::info!("V53: blackboard_pages 表已创建");
-        }
-
         Ok(())
     }
 }
@@ -82,29 +74,10 @@ CREATE TABLE IF NOT EXISTS blackboards (
     pending_record_ids TEXT NOT NULL DEFAULT '[]',
     blackboard_debounce_secs INTEGER NOT NULL DEFAULT 600,
     blackboard_debounce_count INTEGER NOT NULL DEFAULT 10,
-    wiki_index_prompt TEXT NOT NULL DEFAULT '',
-    wiki_page_prompt TEXT NOT NULL DEFAULT '',
+    wiki_prompt TEXT NOT NULL DEFAULT '',
     updated_at TEXT,
     created_at TEXT,
     FOREIGN KEY (workspace_id) REFERENCES project_directories(id) ON DELETE CASCADE
-);
-"#;
-
-/// blackboard_pages 表 DDL：多页面 Wiki 架构。
-const CREATE_BLACKBOARD_PAGES_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS blackboard_pages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workspace_id INTEGER NOT NULL,
-    page_type TEXT NOT NULL,
-    slug TEXT NOT NULL,
-    title TEXT NOT NULL,
-    summary TEXT NOT NULL DEFAULT '',
-    content TEXT NOT NULL DEFAULT '',
-    source_refs TEXT NOT NULL DEFAULT '[]',
-    updated_at TEXT,
-    created_at TEXT,
-    FOREIGN KEY (workspace_id) REFERENCES project_directories(id) ON DELETE CASCADE,
-    UNIQUE (workspace_id, slug)
 );
 "#;
 
@@ -131,8 +104,7 @@ mod tests {
             "pending_record_ids",
             "blackboard_debounce_secs",
             "blackboard_debounce_count",
-            "wiki_index_prompt",
-            "wiki_page_prompt",
+            "wiki_prompt",
         ] {
             assert!(
                 super::super::table_has_column(&db, "blackboards", col)
@@ -141,20 +113,6 @@ mod tests {
                 "column {col} must exist in blackboards table"
             );
         }
-    }
-
-    /// 验证合并迁移可成功创建 blackboard_pages 表。
-    #[tokio::test]
-    async fn test_v47_creates_blackboard_pages_table() {
-        let db = Database::new(":memory:")
-            .await
-            .expect(":memory: db must open");
-
-        let migration = V47ConsolidatedBlackboardFeatures;
-        migration.up(&db).await.expect("V47 migration must succeed");
-
-        // 验证 blackboard_pages 表已存在（V53 原本的测试）
-        assert!(table_exists(&db, "blackboard_pages").await.unwrap());
     }
 
     /// 验证 V48 索引修复：不同 workspace 可以拥有同 (action_type, action_key) 的 todo。

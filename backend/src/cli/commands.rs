@@ -75,24 +75,24 @@ pub enum Commands {
 /// Blackboard CLI actions: manage wiki pages for a workspace.
 #[derive(Debug, Clone, Subcommand)]
 pub enum BlackboardAction {
-    /// Page management
-    Page {
+    /// Wiki file management
+    Wiki {
         #[command(subcommand)]
-        action: BlackboardPageAction,
+        action: WikiAction,
         /// Working directory ID (project_directories.id)
         #[arg(short = 'w', long = "workspace-id")]
         workspace_id: i64,
     },
 }
 
-/// Blackboard page subcommands.
+/// Wiki file subcommands.
 #[derive(Debug, Clone, Subcommand)]
-pub enum BlackboardPageAction {
-    /// List all blackboard pages (summaries only, no content)
+pub enum WikiAction {
+    /// List all wiki files (index, log, topics)
     List,
-    /// Get a single blackboard page by slug (full content)
+    /// Get a single wiki file content by slug
     Get {
-        /// Page slug (e.g. "auth-module")
+        /// File slug (e.g. "auth-module", "index", "log")
         slug: String,
     },
 }
@@ -744,15 +744,15 @@ async fn handle_blackboard(
     fields: &Option<String>,
 ) -> Result<()> {
     match action {
-        BlackboardAction::Page { action, workspace_id } => {
+        BlackboardAction::Wiki { action, workspace_id } => {
             match action {
-                BlackboardPageAction::List => {
-                    let path = format!("/workspaces/{}/blackboard/pages", workspace_id);
+                WikiAction::List => {
+                    let path = format!("/workspaces/{}/wiki/files", workspace_id);
                     let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
                     print_response(resp, output, fields)?;
                 }
-                BlackboardPageAction::Get { slug } => {
-                    let path = format!("/workspaces/{}/blackboard/pages/{}", workspace_id, slug);
+                WikiAction::Get { slug } => {
+                    let path = format!("/workspaces/{}/wiki/files/{}", workspace_id, slug);
                     let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
                     print_response(resp, output, fields)?;
                 }

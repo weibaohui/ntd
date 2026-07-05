@@ -24,14 +24,10 @@ pub struct Model {
     pub blackboard_debounce_secs: i64,
     /// 黑板更新防抖条数阈值，达到该条数后立即触发，无需等待周期
     pub blackboard_debounce_count: i64,
-    /// Wiki 索引页面维护提示词模板（占位符 {{page_summaries}}、{{pending_record_ids}}）。
-    /// 应用于 Wiki 分析阶段，空字符串表示使用内置默认模板。
+    /// Wiki 维护提示词模板（占位符 {{page_summaries}}、{{pending_record_ids}}、{{operations_json}}、{{page_contents}}）。
+    /// 应用于 Wiki 分析与执行阶段，空字符串表示使用内置默认模板。
     #[sea_orm(column_type = "Text")]
-    pub wiki_index_prompt: String,
-    /// Wiki 主题页面生成提示词模板（占位符 {{operations_json}}、{{page_contents}}）。
-    /// 应用于 Wiki 执行阶段，空字符串表示使用内置默认模板。
-    #[sea_orm(column_type = "Text")]
-    pub wiki_page_prompt: String,
+    pub wiki_prompt: String,
     pub updated_at: Option<String>,
     pub created_at: Option<String>,
 }
