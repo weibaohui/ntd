@@ -424,3 +424,162 @@ pub async fn update_blackboard_wiki(
 
     Ok(())
 }
+
+/// Wiki 对话响应结构（对应 handler 的 WikiChatResponse）。
+#[derive(Debug, serde::Serialize)]
+pub struct WikiChatResponse {
+    pub content: String,
+    pub task_id: String,
+}
+
+/// 执行一次 Wiki 对话：spawn 执行器在 wiki 目录运行，返回解析后的结果文本。
+///
+/// 设计参考：feishu_listener 的「executor 默认响应」模式（message_debounce.rs 的
+/// handle_default_response_executor），把触发源从飞书消息换成 HTTP 请求，
+/// 把 cwd 从 project_directories.path 换成 wiki 目录，把结果回送方式从
+/// ExecEvent::ExecutorDirectResponse 改成直接返回值。
+///
+/// 不创建 Todo、不创建 execution_record、不持久化聊天历史、非流式一次性返回。
+pub async fn chat_with_wiki(
+    db: &Arc<Database>,
+    executor_registry: &Arc<ExecutorRegistry>,
+    workspace_id: i64,
+    message: &str,
+    override_executor: Option<&str>,
+) -> Result<WikiChatResponse, AppError> {
+    // 1. 确定执行器名称：优先用请求里指定的，其次用黑板配置，最后缺省 claudecode
+    let exec_name = resolve_chat_executor(db, workspace_id, override_executor).await?;
+
+    // 2. 解析执行器类型字符串为 ExecutorType 枚举
+    let exec_type = crate::adapters::parse_executor_type(&exec_name)
+        .ok_or_else(|| AppError::BadRequest(format!("未知的执行器类型: {}", exec_name)))?;
+
+    // 3. 从注册中心获取执行器实例
+    let executor = executor_registry
+        .get(exec_type)
+        .await
+        .ok_or_else(|| AppError::BadRequest(format!("执行器未安装: {}", exec_name)))?;
+
+    // 4. 确保 wiki 目录存在（首次访问时自动创建）
+    init_wiki_dir(workspace_id).map_err(|e| {
+        AppError::Internal(format!("初始化 wiki 目录失败: {:?}", e))
+    })?;
+    let wiki_dir = crate::wiki::wiki_dir(workspace_id).map_err(|e| {
+        AppError::Internal(format!("获取 wiki 目录失败: {:?}", e))
+    })?;
+
+    tracing::info!(
+        "wiki chat: workspace_id={}, executor={}, message_len={}",
+        workspace_id,
+        exec_name,
+        message.len()
+    );
+
+    // 5. spawn 执行器子进程
+    let output = spawn_executor_for_chat(&executor, message, &wiki_dir).await?;
+
+    // 6. 解析 stdout → 提取最终结果文本
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let logs: Vec<crate::models::ParsedLogEntry> = stdout
+        .lines()
+        .filter_map(|line| executor.parse_output_line(line))
+        .collect();
+    let result_text = crate::executor_service::completion::get_final_result_from_logs(&logs)
+        .unwrap_or_else(|| stdout.to_string());
+
+    // 7. 返回响应
+    let task_id = format!("wiki-chat-{}", uuid::Uuid::new_v4());
+    Ok(WikiChatResponse {
+        content: result_text,
+        task_id,
+    })
+}
+
+/// 解析本次对话使用的执行器名称。
+///
+/// 优先级：override_executor（请求指定） > 黑板配置 wiki_chat_executor > 默认 "claudecode"。
+/// 空字符串视为未配置，回退到默认值。
+async fn resolve_chat_executor(
+    db: &Arc<Database>,
+    workspace_id: i64,
+    override_executor: Option<&str>,
+) -> Result<String, AppError> {
+    // 请求里明确指定了 → 直接用
+    if let Some(name) = override_executor {
+        if !name.is_empty() {
+            return Ok(name.to_string());
+        }
+    }
+    // 读黑板配置
+    let cfg = db
+        .get_blackboard_config(workspace_id)
+        .await
+        .map_err(|e| AppError::Internal(format!("查询黑板配置失败: {}", e)))?;
+    if let Some(c) = cfg {
+        if let Some(name) = c.wiki_chat_executor {
+            if !name.is_empty() {
+                return Ok(name);
+            }
+        }
+    }
+    // 都没有 → 默认 claudecode
+    Ok("claudecode".to_string())
+}
+
+/// spawn 执行器子进程并等待完成，返回其 stdout/stderr 输出。
+///
+/// 与 handle_default_response_executor 的 spawn 逻辑保持一致：
+/// - stdout 用 piped 收集日志
+/// - stderr 丢弃（避免污染结果解析）
+/// - stdin 用 piped（部分执行器需要预写 payload）
+/// - cwd 设为 wiki 目录
+async fn spawn_executor_for_chat(
+    executor: &std::sync::Arc<dyn crate::adapters::CodeExecutor>,
+    message: &str,
+    cwd: &std::path::Path,
+) -> Result<std::process::Output, AppError> {
+    use tokio::io::AsyncWriteExt;
+
+    let program = executor.executable_path();
+    let command_args = executor.command_args(message);
+
+    tracing::info!(
+        "wiki chat spawn: {} {:?} (cwd={:?})",
+        program,
+        command_args,
+        cwd
+    );
+
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(&command_args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::piped())
+        .current_dir(cwd);
+
+    let mut child = cmd.spawn().map_err(|e| {
+        AppError::Internal(format!("启动执行器失败: {}", e))
+    })?;
+
+    // 部分执行器（如 pi）需要 stdin payload：写入后 flush 并 drop 以关闭 stdin
+    if let Some(payload) = executor.stdin_payload() {
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(payload.as_bytes())
+                .await
+                .map_err(|e| AppError::Internal(format!("写入 stdin payload 失败: {}", e)))?;
+            stdin
+                .flush()
+                .await
+                .map_err(|e| AppError::Internal(format!("flush stdin 失败: {}", e)))?;
+            drop(stdin);
+        }
+    }
+
+    // 阻塞等待执行器退出（非流式，与 MVP 决策一致）
+    let output = child.wait_with_output().await.map_err(|e| {
+        AppError::Internal(format!("等待执行器完成失败: {}", e))
+    })?;
+
+    Ok(output)
+}

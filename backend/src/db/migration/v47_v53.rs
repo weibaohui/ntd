@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS blackboards (
     blackboard_debounce_secs INTEGER NOT NULL DEFAULT 600,
     blackboard_debounce_count INTEGER NOT NULL DEFAULT 10,
     wiki_prompt TEXT NOT NULL DEFAULT '',
+    wiki_chat_executor TEXT,
     updated_at TEXT,
     created_at TEXT,
     FOREIGN KEY (workspace_id) REFERENCES project_directories(id) ON DELETE CASCADE
@@ -105,6 +106,7 @@ mod tests {
             "blackboard_debounce_secs",
             "blackboard_debounce_count",
             "wiki_prompt",
+            "wiki_chat_executor",
         ] {
             assert!(
                 super::super::table_has_column(&db, "blackboards", col)

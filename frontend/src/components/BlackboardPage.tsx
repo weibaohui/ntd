@@ -17,15 +17,15 @@
  *   └──────────┴────────────────────────────────┘
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu } from 'antd';
-import { ReloadOutlined, SettingOutlined, UnorderedListOutlined } from '@ant-design/icons';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu, Select } from 'antd';
+import { ReloadOutlined, SettingOutlined, UnorderedListOutlined, MessageOutlined } from '@ant-design/icons';
 import { TfiBlackboard } from 'react-icons/tfi';
 import { XMarkdown } from '@ant-design/x-markdown';
 import { useTheme } from '@/hooks/useTheme';
 import { useViewState } from '@/hooks/useViewState';
 import type { BlackboardDebounceStatus } from '@/hooks/useExecutionEvents';
-import { updateBlackboardConfig, getBlackboard } from '@/utils/database/blackboard';
+import { updateBlackboardConfig, getBlackboard, chatWithWiki } from '@/utils/database/blackboard';
 import { normalizeBlackboardMarkdown } from '@/utils/markdown';
 
 const { Title } = Typography;
@@ -41,6 +41,8 @@ interface BlackboardData {
   blackboard_debounce_count: number;
   /** Wiki 更新提示词模板（单阶段） */
   wiki_prompt: string;
+  /** Wiki 对话使用的执行器名称，空/undefined 表示使用默认值 claudecode */
+  wiki_chat_executor?: string | null;
 }
 
 /** Wiki 文件列表项（对应后端 WikiFileItem） */
@@ -55,6 +57,18 @@ interface WikiFileContent {
   content: string;
 }
 
+/** 对话消息：用户提问 or 助手回答 */
+interface ChatMessage {
+  /** 消息唯一 ID（前端本地生成，用于 React key） */
+  id: string;
+  /** 角色：user 表示用户，assistant 表示执行器回答 */
+  role: 'user' | 'assistant';
+  /** 消息正文 */
+  content: string;
+  /** 任务 ID（仅 assistant 消息有），用于追踪和排错 */
+  taskId?: string;
+}
+
 /** ntd://todo/{id} 协议的前缀，用于解析 LLM 注入的内部链接 */
 const NTD_TODO_PROTOCOL_PREFIX = 'ntd://todo/';
 
@@ -63,6 +77,17 @@ const URL_WORKSPACE_PARAM = 'workspace';
 
 /** 默认工作空间 ID（首屏兜底，避免 URL 未带参时无 workspace） */
 const DEFAULT_WORKSPACE_ID = 1;
+
+/** Wiki 对话面板默认宽度（展开时） */
+const CHAT_PANEL_WIDTH = 360;
+/** Wiki 对话面板折叠条宽度 */
+const CHAT_PANEL_COLLAPSED_WIDTH = 16;
+
+/** 可选的 Wiki 对话执行器列表（与后端 ExecutorType 枚举对齐） */
+const WIKI_CHAT_EXECUTOR_OPTIONS = [
+  { label: 'Claude Code（默认）', value: 'claudecode' },
+  { label: 'Codex', value: 'codex' },
+];
 
 /**
  * Wiki 提示词默认值（单阶段）：与后端 `build_wiki_prompt()` 内置模板保持一致。
@@ -242,7 +267,15 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const [debounceSecs, setDebounceSecs] = useState<number | null>(600);
   const [debounceCount, setDebounceCount] = useState<number | null>(10);
   const [wikiPrompt, setWikiPrompt] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'debounce' | 'prompt'>('debounce');
+  const [wikiChatExecutor, setWikiChatExecutor] = useState<string>('claudecode');
+  const [activeTab, setActiveTab] = useState<'debounce' | 'prompt' | 'chat'>('debounce');
+
+  // 对话面板状态
+  const [chatPanelCollapsed, setChatPanelCollapsed] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatListRef = useRef<HTMLDivElement>(null);
 
   /**
    * 打开设置弹窗：从已加载的黑板数据中读取 per-workspace 配置。
@@ -254,10 +287,12 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       setDebounceSecs(configData.blackboard_debounce_secs ?? 600);
       setDebounceCount(configData.blackboard_debounce_count ?? 10);
       setWikiPrompt(configData.wiki_prompt ?? '');
+      setWikiChatExecutor(configData.wiki_chat_executor || 'claudecode');
     } else {
       setDebounceSecs(600);
       setDebounceCount(10);
       setWikiPrompt('');
+      setWikiChatExecutor('claudecode');
     }
     setActiveTab('debounce');
     setSettingsOpen(true);
@@ -272,10 +307,17 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         blackboard_debounce_secs: debounceSecs ?? 600,
         blackboard_debounce_count: debounceCount ?? 10,
         wiki_prompt: wikiPrompt,
+        wiki_chat_executor: wikiChatExecutor,
       });
       // 保存成功后同步更新 data，避免下次打开弹窗读到旧值
       if (configData) {
-        setConfigData({ ...configData, blackboard_debounce_secs: debounceSecs ?? 600, blackboard_debounce_count: debounceCount ?? 10, wiki_prompt: wikiPrompt });
+        setConfigData({
+          ...configData,
+          blackboard_debounce_secs: debounceSecs ?? 600,
+          blackboard_debounce_count: debounceCount ?? 10,
+          wiki_prompt: wikiPrompt,
+          wiki_chat_executor: wikiChatExecutor,
+        });
       }
       message.success('设置已保存');
       setSettingsOpen(false);
@@ -284,7 +326,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     } finally {
       setSettingsSaving(false);
     }
-  }, [workspaceId, debounceSecs, debounceCount, wikiPrompt, configData]);
+  }, [workspaceId, debounceSecs, debounceCount, wikiPrompt, wikiChatExecutor, configData]);
 
   // 恢复默认提示词：把 wikiPrompt 设为内置默认值。
   // 区别于"留空"的语义——留空表示后端使用内置默认；填入默认值表示用户显式采用内置模板。
@@ -338,6 +380,8 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     setCurrentFile(null);
     setConfigData(null);
     setCurrentSlug('index');
+    setChatMessages([]);
+    setChatInput('');
   }, [workspaceId]);
 
   // 副作用：workspaceId 变化时重拉
@@ -357,6 +401,45 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     fetchCurrentFile();
   }, [fetchFiles, fetchCurrentFile]);
 
+  // 发送对话消息：调用 chatWithWiki，非流式，等待执行器完成后一次性返回
+  const handleSendChatMessage = useCallback(async () => {
+    const text = chatInput.trim();
+    if (!text || chatLoading) return;
+    // 生成前端本地消息 ID，用于 React key 和乐观渲染
+    const userMsgId = `u-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const userMsg: ChatMessage = { id: userMsgId, role: 'user', content: text };
+    // 先追加用户消息，清空输入框
+    setChatMessages(prev => [...prev, userMsg]);
+    setChatInput('');
+    setChatLoading(true);
+    try {
+      // 确定执行器：优先用黑板配置的 wiki_chat_executor，没有就用默认 claudecode
+      const executor = configData?.wiki_chat_executor || undefined;
+      const resp = await chatWithWiki(workspaceId, text, executor);
+      const assistantMsg: ChatMessage = {
+        id: `a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role: 'assistant',
+        content: resp.content,
+        taskId: resp.task_id,
+      };
+      setChatMessages(prev => [...prev, assistantMsg]);
+      // 对话可能修改了 Wiki 页面，刷新列表和当前页
+      fetchFiles();
+      fetchCurrentFile();
+    } catch (err) {
+      message.error('对话失败: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setChatLoading(false);
+    }
+  }, [chatInput, chatLoading, configData, workspaceId, fetchFiles, fetchCurrentFile]);
+
+  // 对话列表自动滚到底部（新消息到达时）
+  useEffect(() => {
+    if (chatListRef.current) {
+      chatListRef.current.scrollTop = chatListRef.current.scrollHeight;
+    }
+  }, [chatMessages, chatLoading]);
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ padding: '12px 24px', flexShrink: 0 }}>
@@ -367,17 +450,34 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
           workspaceId={workspaceId}
         />
       </div>
-      <BlackboardWikiLayout
-        isDark={isDark}
-        files={files}
-        currentFile={currentFile}
-        currentSlug={currentSlug}
-        onSelectSlug={setCurrentSlug}
-        filesLoading={filesLoading}
-        fileLoading={fileLoading}
-      />
+      {/* 中间主体：Wiki 布局 + 对话面板（可折叠） */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
+        <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
+          <BlackboardWikiLayout
+            isDark={isDark}
+            files={files}
+            currentFile={currentFile}
+            currentSlug={currentSlug}
+            onSelectSlug={setCurrentSlug}
+            filesLoading={filesLoading}
+            fileLoading={fileLoading}
+          />
+        </div>
+        {/* 对话面板：折叠时只有 16px 宽的竖条，点击展开/收起 */}
+        <WikiChatPanel
+          isDark={isDark}
+          collapsed={chatPanelCollapsed}
+          onToggleCollapsed={setChatPanelCollapsed}
+          messages={chatMessages}
+          inputValue={chatInput}
+          onInputChange={setChatInput}
+          onSend={handleSendChatMessage}
+          loading={chatLoading}
+          listRef={chatListRef}
+        />
+      </div>
 
-      {/* 黑板设置弹窗：Tab1 防抖设置，Tab2 提示词设置 */}
+      {/* 黑板设置弹窗：Tab1 防抖设置，Tab2 提示词设置，Tab3 对话设置 */}
       <Modal
         title="黑板设置"
         open={settingsOpen}
@@ -390,7 +490,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       >
         <Tabs
           activeKey={activeTab}
-          onChange={(key) => setActiveTab(key as 'debounce' | 'prompt')}
+          onChange={(key) => setActiveTab(key as 'debounce' | 'prompt' | 'chat')}
           items={[
             {
               key: 'debounce',
@@ -412,6 +512,16 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
                   wikiPrompt={wikiPrompt}
                   setWikiPrompt={setWikiPrompt}
                   onRestorePrompt={handleRestorePrompt}
+                />
+              ),
+            },
+            {
+              key: 'chat',
+              label: '对话设置',
+              children: (
+                <ChatSettingsTab
+                  wikiChatExecutor={wikiChatExecutor}
+                  setWikiChatExecutor={setWikiChatExecutor}
                 />
               ),
             },
@@ -873,6 +983,256 @@ function BlackboardEmpty(props: BlackboardEmptyProps) {
         暂无内容
       </p>
       <p>任务执行后将自动更新黑板内容</p>
+    </div>
+  );
+}
+
+// ─── 对话设置 Tab ────────────────────────────────────────────
+
+interface ChatSettingsTabProps {
+  wikiChatExecutor: string;
+  setWikiChatExecutor: (v: string) => void;
+}
+
+/** 对话设置 Tab：选择 Wiki 对话使用的执行器 */
+function ChatSettingsTab({ wikiChatExecutor, setWikiChatExecutor }: ChatSettingsTabProps) {
+  return (
+    <Form layout="vertical" style={{ marginTop: 16 }}>
+      <Form.Item label="对话执行器" extra="选择用于 Wiki 对话的执行器。不同执行器的能力和响应速度不同。">
+        <Select
+          value={wikiChatExecutor}
+          onChange={(v) => setWikiChatExecutor(v)}
+          options={WIKI_CHAT_EXECUTOR_OPTIONS}
+          style={{ width: 260 }}
+        />
+      </Form.Item>
+    </Form>
+  );
+}
+
+// ─── Wiki 对话面板 ────────────────────────────────────────────
+
+interface WikiChatPanelProps {
+  isDark: boolean;
+  collapsed: boolean;
+  onToggleCollapsed: (v: boolean) => void;
+  messages: ChatMessage[];
+  inputValue: string;
+  onInputChange: (v: string) => void;
+  onSend: () => void;
+  loading: boolean;
+  listRef: React.RefObject<HTMLDivElement | null>;
+}
+
+/**
+ * Wiki 对话面板：右侧可折叠的对话窗口。
+ * 折叠状态：只有 16px 宽的竖条，点击展开。
+ * 展开状态：显示消息列表 + 输入框，宽度 CHAT_PANEL_WIDTH。
+ */
+function WikiChatPanel(props: WikiChatPanelProps) {
+  const {
+    isDark,
+    collapsed,
+    onToggleCollapsed,
+    messages,
+    inputValue,
+    onInputChange,
+    onSend,
+    loading,
+    listRef,
+  } = props;
+
+  const panelBg = isDark ? '#1a1a1a' : '#fafafa';
+  const panelBorder = isDark ? '#333' : '#f0f0f0';
+  const userMsgBg = isDark ? '#1d3950' : '#e6f4ff';
+  const assistantMsgBg = isDark ? '#2a2a2a' : '#fff';
+  const textColor = isDark ? '#e0e0e0' : '#333';
+  const hintColor = isDark ? '#666' : '#999';
+
+  /** 处理 Enter 发送，Shift+Enter 换行 */
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      onSend();
+    }
+  };
+
+  // 折叠态：只渲染一个细竖条，点击展开
+  if (collapsed) {
+    return (
+      <div
+        onClick={() => onToggleCollapsed(false)}
+        title="展开对话面板"
+        style={{
+          width: CHAT_PANEL_COLLAPSED_WIDTH,
+          flexShrink: 0,
+          background: panelBg,
+          borderLeft: `1px solid ${panelBorder}`,
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: hintColor,
+          fontSize: 12,
+          userSelect: 'none',
+          transition: 'background 0.2s',
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLDivElement).style.background = isDark ? '#252525' : '#f0f0f0';
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLDivElement).style.background = panelBg;
+        }}
+      >
+        <div style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', letterSpacing: 2 }}>
+          <MessageOutlined style={{ marginBottom: 8 }} />
+          对话
+        </div>
+      </div>
+    );
+  }
+
+  // 展开态：消息列表 + 输入框
+  return (
+    <div
+      style={{
+        width: CHAT_PANEL_WIDTH,
+        flexShrink: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        background: panelBg,
+        borderLeft: `1px solid ${panelBorder}`,
+        overflow: 'hidden',
+      }}
+    >
+      {/* 头部：标题 + 收起按钮 */}
+      <div
+        style={{
+          padding: '10px 12px',
+          borderBottom: `1px solid ${panelBorder}`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexShrink: 0,
+        }}
+      >
+        <span style={{ fontWeight: 600, fontSize: 14, color: textColor }}>
+          <MessageOutlined style={{ marginRight: 6 }} />
+          Wiki 对话
+        </span>
+        <Button
+          type="text"
+          size="small"
+          onClick={() => onToggleCollapsed(true)}
+          title="收起对话面板"
+          style={{ color: hintColor }}
+        >
+          收起
+        </Button>
+      </div>
+
+      {/* 消息列表 */}
+      <div
+        ref={listRef}
+        style={{
+          flex: 1,
+          overflowY: 'auto',
+          padding: '12px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10,
+          minHeight: 0,
+        }}
+      >
+        {messages.length === 0 && !loading && (
+          <div style={{ textAlign: 'center', color: hintColor, fontSize: 12, padding: '24px 0' }}>
+            还没有对话记录<br />
+            输入问题开始与 Wiki 交互
+          </div>
+        )}
+        {messages.map((msg) => (
+          <div
+            key={msg.id}
+            style={{
+              display: 'flex',
+              justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
+            }}
+          >
+            <div
+              style={{
+                maxWidth: '85%',
+                padding: '8px 12px',
+                borderRadius: 8,
+                background: msg.role === 'user' ? userMsgBg : assistantMsgBg,
+                color: textColor,
+                fontSize: 13,
+                lineHeight: 1.6,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                border: msg.role === 'assistant' ? `1px solid ${panelBorder}` : 'none',
+              }}
+            >
+              {msg.content}
+              {msg.taskId && (
+                <div style={{ marginTop: 4, fontSize: 10, color: hintColor, textAlign: 'right' }}>
+                  task: {msg.taskId.slice(0, 20)}...
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+            <div
+              style={{
+                maxWidth: '85%',
+                padding: '8px 12px',
+                borderRadius: 8,
+                background: assistantMsgBg,
+                color: hintColor,
+                fontSize: 13,
+                border: `1px solid ${panelBorder}`,
+              }}
+            >
+              <Skeleton.Input active size="small" style={{ width: 100 }} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 输入框 */}
+      <div
+        style={{
+          padding: '10px 12px',
+          borderTop: `1px solid ${panelBorder}`,
+          flexShrink: 0,
+        }}
+      >
+        <Input.TextArea
+          value={inputValue}
+          onChange={(e) => onInputChange(e.target.value)}
+          onKeyDown={handleInputKeyDown}
+          placeholder="输入问题，Enter 发送，Shift+Enter 换行"
+          autoSize={{ minRows: 2, maxRows: 5 }}
+          disabled={loading}
+          style={{
+            background: isDark ? '#2a2a2a' : '#fff',
+            color: textColor,
+            resize: 'none',
+          }}
+        />
+        <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
+          <Button
+            type="primary"
+            onClick={onSend}
+            loading={loading}
+            disabled={!inputValue.trim()}
+            size="small"
+          >
+            发送
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

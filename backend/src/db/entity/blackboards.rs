@@ -28,6 +28,10 @@ pub struct Model {
     /// LLM 直接编辑 wiki 目录下的 Markdown 文件，空字符串表示使用内置默认模板。
     #[sea_orm(column_type = "Text")]
     pub wiki_prompt: String,
+    /// Wiki 对话使用的执行器名称（如 "claudecode"、"codex" 等）。
+    /// None 或空字符串表示使用默认值 "claudecode"。
+    /// 该字段为 per-workspace 独立配置，与 workspace_settings.default_response_executor 互不影响。
+    pub wiki_chat_executor: Option<String>,
     pub updated_at: Option<String>,
     pub created_at: Option<String>,
 }
