@@ -44,6 +44,9 @@ export interface WikiChatResponse {
  *
  * 非流式：等待执行器完成后一次性返回结果。
  * 不创建 Todo、不持久化对话历史。
+ *
+ * 超时单独设为 5 分钟：执行器（如 claude code）可能需要较长时间完成，
+ * 远超 axios 默认的 15 秒。
  */
 export async function chatWithWiki(
   workspaceId: number,
@@ -54,6 +57,8 @@ export async function chatWithWiki(
     await api.post(`/api/workspaces/${workspaceId}/wiki/chat`, {
       message,
       executor,
+    }, {
+      timeout: 300000,
     }),
   );
 }

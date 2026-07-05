@@ -533,6 +533,9 @@ async fn resolve_chat_executor(
 /// - stderr 丢弃（避免污染结果解析）
 /// - stdin 用 piped（部分执行器需要预写 payload）
 /// - cwd 设为 wiki 目录
+///
+/// 区别：增加 5 分钟超时保护，避免执行器卡住时 HTTP 请求无限挂起。
+/// 飞书模式是后台异步执行不阻塞请求，而 wiki chat 是同步等待，必须加超时。
 async fn spawn_executor_for_chat(
     executor: &std::sync::Arc<dyn crate::adapters::CodeExecutor>,
     message: &str,
@@ -576,10 +579,56 @@ async fn spawn_executor_for_chat(
         }
     }
 
-    // 阻塞等待执行器退出（非流式，与 MVP 决策一致）
-    let output = child.wait_with_output().await.map_err(|e| {
-        AppError::Internal(format!("等待执行器完成失败: {}", e))
-    })?;
+    // 用 tokio::time::timeout 包裹等待逻辑，5 分钟超时
+    // 超时后 kill 子进程，避免僵尸进程；飞书模式无超时是因为它跑在后台不阻塞请求
+    // 注意：不能用 wait_with_output（消费 child），改用手动 take stdout + child.wait()，
+    // 这样超时分支还能拿到 child 来 kill
+    const EXEC_TIMEOUT_SECS: u64 = 300;
+    let stdout_handle = child.stdout.take();
+    let timeout_result =
+        tokio::time::timeout(std::time::Duration::from_secs(EXEC_TIMEOUT_SECS), async {
+            // 等待子进程退出
+            let status = child.wait().await?;
+            // 读完 stdout
+            let mut stdout_buf = Vec::new();
+            if let Some(mut stdout) = stdout_handle {
+                use tokio::io::AsyncReadExt;
+                stdout.read_to_end(&mut stdout_buf).await?;
+            }
+            Ok::<std::process::Output, std::io::Error>(std::process::Output {
+                status,
+                stdout: stdout_buf,
+                stderr: Vec::new(),
+            })
+        })
+        .await;
 
-    Ok(output)
+    match timeout_result {
+        // 未超时：正常返回输出
+        Ok(Ok(output)) => {
+            tracing::info!(
+                "wiki chat executor finished, exit_code={:?}, stdout_len={}",
+                output.status.code(),
+                output.stdout.len()
+            );
+            Ok(output)
+        }
+        // 未超时但 wait 失败
+        Ok(Err(e)) => Err(AppError::Internal(format!(
+            "等待执行器完成失败: {}",
+            e
+        ))),
+        // 超时：kill 子进程，返回超时错误
+        Err(_) => {
+            tracing::error!(
+                "wiki chat executor timed out after {}s, killing child",
+                EXEC_TIMEOUT_SECS
+            );
+            let _ = child.kill().await;
+            Err(AppError::Internal(format!(
+                "执行器超时（{}秒），请稍后重试或简化问题",
+                EXEC_TIMEOUT_SECS
+            )))
+        }
+    }
 }
