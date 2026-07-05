@@ -436,13 +436,18 @@ html, body {
   border-color: var(--color-primary);
 }
 
+/* 选中态通用样式：精致边框 + 渐变背景 + 柔和外发光，提升选中质感 */
 .todo-item.selected {
-  border-color: var(--color-primary);
-  background: var(--color-primary-bg);
-}
-
-[data-theme="dark"] .todo-item.selected {
+  /* 边框用更浅的主色调（60% 混合），柔和不突兀 */
+  border-color: color-mix(in srgb, var(--color-primary) 60%, var(--color-bg-elevated));
+  /* 渐变背景：从 primary-bg 过渡到 elevated，135度方向营造光泽感 */
   background: linear-gradient(135deg, var(--color-primary-bg) 0%, var(--color-bg-elevated) 100%);
+  /* 外发光 + 内描边双层阴影，营造精致层次感；
+     外层柔光让选中项"浮起来"，内层细描边保持边界清晰 */
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-primary) 30%, transparent),
+    0 2px 8px color-mix(in srgb, var(--color-primary) 15%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--color-primary) 20%, white);
 }
 
 .todo-item-content {

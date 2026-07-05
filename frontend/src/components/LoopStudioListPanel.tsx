@@ -202,15 +202,22 @@ function LoopCard({ loop, selected, onClick, checked, onToggleCheck, projectDirs
       }}
       style={{
         position: 'relative',
+        // 选中态用渐变背景，亮色下从浅青过渡到白色，提升质感
         background: selected
-          ? 'var(--color-primary-bg, #f0f9ff)'
+          ? 'linear-gradient(135deg, var(--color-primary-bg, #f0f9ff) 0%, var(--color-bg-elevated, #ffffff) 100%)'
           : 'var(--color-bg-elevated, #ffffff)',
+        // 边框用更浅的主色调（60% 混合），柔和不突兀
         border: `1px solid ${selected
-          ? 'var(--color-primary, #0891b2)'
+          ? 'color-mix(in srgb, var(--color-primary, #0891b2) 60%, var(--color-bg-elevated, #ffffff))'
           : 'var(--color-border, #e2e8f0)'}`,
-        // 选中态用 inset 阴影代替外发光, 暗色下不刺眼
+        // 选中态双层阴影：外发光 + 顶部高光，营造精致层次感；
+        // 外层柔光让卡片"浮起来"，内层高光增加立体感
         boxShadow: selected
-          ? 'inset 0 0 0 1px var(--color-primary, #0891b2)'
+          ? [
+              '0 0 0 1px color-mix(in srgb, var(--color-primary, #0891b2) 30%, transparent)',
+              '0 2px 8px color-mix(in srgb, var(--color-primary, #0891b2) 15%, transparent)',
+              'inset 0 1px 0 color-mix(in srgb, var(--color-primary, #0891b2) 20%, white)',
+            ].join(', ')
           : '0 1px 2px color-mix(in srgb, var(--color-text, #0f172a) 6%, transparent)',
         borderRadius: 10,
         padding: '12px 12px 14px 16px',
