@@ -30,6 +30,8 @@ pub struct BlackboardResponse {
     pub wiki_index_prompt: String,
     /// Wiki 主题页面生成提示词模板（空字符串表示使用内置默认）
     pub wiki_page_prompt: String,
+    /// 待处理的 execution_record_id 列表（JSON 数组字符串，如 "[12, 34, 56]"）
+    pub pending_record_ids: String,
 }
 
 /// 页面列表项：用于 GET /pages 接口，只返回摘要信息不返回完整 content。
@@ -91,6 +93,7 @@ pub async fn get_blackboard(
             blackboard_debounce_count: model.blackboard_debounce_count,
             wiki_index_prompt: model.wiki_index_prompt,
             wiki_page_prompt: model.wiki_page_prompt,
+            pending_record_ids: model.pending_record_ids,
         })),
         None => Ok(ApiResponse::ok(BlackboardResponse {
             id: 0,
@@ -102,6 +105,7 @@ pub async fn get_blackboard(
             blackboard_debounce_count: 10,
             wiki_index_prompt: String::new(),
             wiki_page_prompt: String::new(),
+            pending_record_ids: String::from("[]"),
         })),
     }
 }
