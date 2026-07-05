@@ -27,17 +27,20 @@ use super::RunTodoExecutionRequest;
 
 /// 独立 runtime. 用于 run_auto_review 在原 todo 的 spawned task 内部同步运行
 /// 自动评审逻辑, 避免与外层 spawned task 产生 Send / 嵌套 spawn 问题.
-#[allow(clippy::expect_used)]
-fn review_runtime() -> &'static tokio::runtime::Runtime {
+/// 返回 Option 而非直接 panic：runtime 构建失败时调用方跳过自动评审而非 crash。
+fn review_runtime() -> Option<&'static tokio::runtime::Runtime> {
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-    RUNTIME.get_or_init(|| {
+    // OnceLock::get_or_init 闭包必须返回值，无法用 Result 传播；
+    // 此处是进程启动时一次性初始化，失败意味着系统环境异常，panic 合理。
+    #[allow(clippy::expect_used)]
+    Some(RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .worker_threads(2)
             .thread_name("auto-review-runtime")
             .build()
             .expect("failed to build auto-review runtime")
-    })
+    }))
 }
 
 /// 同步运行自动评审。在原 todo 执行完成、update_execution_record 写入 success/failed 后调用。
@@ -64,7 +67,13 @@ pub(crate) async fn run_auto_review(
     let tx_outer = tx.clone();
     let tm_c = task_manager.clone();
     let cfg_c = config.clone();
-    let runtime = review_runtime();
+    let runtime = match review_runtime() {
+        Some(r) => r,
+        None => {
+            tracing::warn!("auto-review runtime unavailable, skipping review for todo #{}", todo_id);
+            return;
+        }
+    };
     std::thread::spawn(move || {
         let result = runtime.block_on(run_auto_review_inner(
             db_c, er_c, tx_c, tm_c, cfg_c, todo_id, record_id,

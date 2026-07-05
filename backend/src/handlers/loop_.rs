@@ -1670,12 +1670,13 @@ async fn build_loop_export_yaml(
                     if let Some(rt_id) = todo.review_template_id {
                         if !all_templates.contains_key(&rt_id) {
                             if let Some(tpl) = state.db.get_review_template(rt_id).await? {
-                                review_template_id = Some(generate_pseudo_id("template", all_templates.len() + 1));
+                                // 先计算 pseudo id，再分别赋给 review_template_id 和结构体字段，
+                                // 避免 clone().unwrap() 的生产代码反模式
+                                let pseudo_id = generate_pseudo_id("template", all_templates.len() + 1);
+                                review_template_id = Some(pseudo_id.clone());
                                 review_template_name = Some(tpl.name.clone());
                                 all_templates.insert(rt_id, ReviewTemplateExportItem {
-                                    // review_template_id 在上一行已赋值为 Some(...)，unwrap 安全
-                                    #[allow(clippy::unwrap_used)]
-                                    id: review_template_id.clone().unwrap(),
+                                    id: pseudo_id,
                                     name: tpl.name,
                                     description: tpl.description,
                                     prompt: tpl.prompt,

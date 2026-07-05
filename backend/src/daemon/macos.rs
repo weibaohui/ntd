@@ -147,8 +147,7 @@ fn install(force: bool) -> Result<(), Box<dyn std::error::Error>> {
     let binary = ntd_binary_path();
 
     if !binary.exists() {
-        eprintln!("ntd binary not found at {}. Run `make install` first.", binary.display());
-        std::process::exit(1);
+        return Err(format!("ntd binary not found at {}. Run `make install` first.", binary.display()).into());
     }
 
     // --force 不传时遇到已存在 plist 直接提示退出，避免覆盖用户手改的配置

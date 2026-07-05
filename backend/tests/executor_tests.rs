@@ -1,3 +1,4 @@
+// 测试代码允许 unwrap/expect/panic 等写法以简化断言逻辑，统一放宽以下 clippy 检查
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 use ntd::adapters::CodeExecutor;
 use ntd::adapters::kimi::KimiExecutor;
@@ -63,7 +64,7 @@ mod kimi_executor_tests {
     }
 
     #[test]
-    fn test_kimi_parse_output_line_skip_resume() {
+    fn test_kimi_parse_stderr_line_skip_resume() {
         let executor = KimiExecutor::new("kimi".to_string());
         // resume 提示由 parse_stderr_line 处理，parse_output_line 不负责跳过
         let line = "To resume this session: kimi -r abc123";

@@ -479,9 +479,8 @@ pub async fn resume_execution_handler(
 
     // 检查该 todo 下正在执行的记录数量是否已达并发上限
     // 需要过滤掉孤儿记录：状态为 running 但 task_manager 中没有对应 task
-    // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
-    #[allow(clippy::unwrap_used)]
-    let max_concurrent = state.config.read().unwrap().max_concurrent_todos;
+    // RwLock 中毒恢复：PoisonError 时取内部 guard 继续运行，与 backup.rs 保持一致
+    let max_concurrent = state.config.read().unwrap_or_else(|e| e.into_inner()).max_concurrent_todos;
     let running_tasks = state.task_manager.get_all_task_infos().await;
     let running_records = state.db.get_running_records_by_todo_id(todo_id).await?;
     let running_count_for_todo = running_records
@@ -644,9 +643,8 @@ pub async fn smart_create_handler(
         .ok_or_else(|| AppError::BadRequest(format!("默认响应 Todo #{} 不存在", todo_id)))?;
 
     // 检查并发限制
-    // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
-    #[allow(clippy::unwrap_used)]
-    let max_concurrent = state.config.read().unwrap().max_concurrent_todos;
+    // RwLock 中毒恢复：PoisonError 时取内部 guard 继续运行，与 backup.rs 保持一致
+    let max_concurrent = state.config.read().unwrap_or_else(|e| e.into_inner()).max_concurrent_todos;
     let running_tasks = state.task_manager.get_all_task_infos().await;
     let running_records = state.db.get_running_records_by_todo_id(todo_id).await?;
     let running_count_for_todo = running_records

@@ -104,9 +104,8 @@ pub async fn reconcile_timer_after_config_change(workspace_id: i64, new_debounce
 
     if should_flush {
         // 标记 timer 未运行（与 TIMER_STATES 无锁序依赖，单独持锁）
-        // ACTIVE_TIMERS 在 init() 中初始化；若未初始化则无法操作，静默返回
-        {
-            let Some(timers) = ACTIVE_TIMERS.get() else { return; };
+        // ACTIVE_TIMERS 在 init() 中初始化；若未初始化则跳过标记，但仍继续发送 flush 消息
+        if let Some(timers) = ACTIVE_TIMERS.get() {
             let mut timers = timers.write().await;
             if let Some(map) = timers.as_mut() {
                 map.insert(workspace_id, false);
