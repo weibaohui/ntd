@@ -670,7 +670,17 @@ pub async fn update_blackboard_wiki(
     pending_record_ids: Vec<i64>,
 ) -> Result<(), AppError> {
     // Phase 1: 分析
-    let operations = run_analyze_phase(
+    //
+    // 失败清理约定：本函数有多个失败提前返回点（Phase 1 分析失败、Phase 2 执行失败、
+    // Phase 3-5 落库失败）。旧实现用 `?` 直接返回，跳过 Phase 6 的 remove_specific_pending_record_ids，
+    // 导致这批 record 永远留在 pending 队列。下次 worker 又读到同一批 ID，又调 LLM，又失败……
+    // 形成「失败→不清理→重试同一批→又失败」的死循环。当失败原因是 LLM 输出截断（output_tokens
+    // 上限）时，队列越长 LLM 输出越长越易截断，越易失败越积越多，恶性循环直至无解。
+    //
+    // 修复：任何失败路径都先调 remove_specific_pending_record_ids 清理本批已处理 ID，
+    // 把这批 record 视为「处理失败已放弃」，记 warn 但不重试。代价是这批 record 的结论
+    // 不会写入 wiki，但换来队列能继续往前走、新 record 能正常处理。优于永久卡死。
+    let operations = match run_analyze_phase(
         db.clone(),
         executor_registry.clone(),
         tx.clone(),
@@ -678,9 +688,18 @@ pub async fn update_blackboard_wiki(
         config.clone(),
         workspace_id,
         pending_record_ids.clone(),
-    ).await.map_err(|e| {
-        AppError::Internal(format!("Wiki 分析阶段失败: {:?}", e))
-    })?;
+    ).await {
+        Ok(ops) => ops,
+        Err(e) => {
+            // 分析失败：清理本批 record 避免死循环重试，记录 warn 供排查
+            let err_msg = format!("Wiki 分析阶段失败: {:?}", e);
+            tracing::warn!("黑板分析失败，放弃本批 record: workspace_id={}, pending_count={}, error={}", workspace_id, pending_record_ids.len(), err_msg);
+            if let Err(cleanup_err) = db.remove_specific_pending_record_ids(workspace_id, &pending_record_ids).await {
+                tracing::warn!("分析失败后清理 pending 队列又失败: workspace_id={}, error={:?}", workspace_id, cleanup_err);
+            }
+            return Err(AppError::Internal(err_msg));
+        }
+    };
 
     if operations.is_empty() {
         tracing::info!("Wiki 分析结果为空操作，跳过执行阶段: workspace_id={}", workspace_id);
@@ -697,7 +716,11 @@ pub async fn update_blackboard_wiki(
     }
 
     // Phase 2: 执行
-    let page_contents = run_execute_phase(
+    //
+    // 同 Phase 1 约定：失败时清理本批 record 避免死循环。
+    // 这是最常见的失败点——LLM 输出被 output_tokens 上限截断，JSON 不完整无法解析。
+    // 清理后这批 record 的结论不会写入 wiki，但队列能继续往前走。
+    let page_contents = match run_execute_phase(
         db.clone(),
         executor_registry,
         tx,
@@ -705,9 +728,17 @@ pub async fn update_blackboard_wiki(
         config,
         workspace_id,
         &operations,
-    ).await.map_err(|e| {
-        AppError::Internal(format!("Wiki 执行阶段失败: {:?}", e))
-    })?;
+    ).await {
+        Ok(map) => map,
+        Err(e) => {
+            let err_msg = format!("Wiki 执行阶段失败: {:?}", e);
+            tracing::warn!("黑板执行失败，放弃本批 record: workspace_id={}, pending_count={}, error={}", workspace_id, pending_record_ids.len(), err_msg);
+            if let Err(cleanup_err) = db.remove_specific_pending_record_ids(workspace_id, &pending_record_ids).await {
+                tracing::warn!("执行失败后清理 pending 队列又失败: workspace_id={}, error={:?}", workspace_id, cleanup_err);
+            }
+            return Err(AppError::Internal(err_msg));
+        }
+    };
 
     // Phase 3: 落库 — 逐个 upsert topic 页面
     for op in &operations {

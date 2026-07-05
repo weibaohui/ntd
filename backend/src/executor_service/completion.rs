@@ -537,10 +537,16 @@ fn spawn_flush_worker(
         // 否则队列会永久卡住（阈值分支不会启动 timer，timer 自然到期也只会发一次 flush，
         // 失败后无后续触发源）。
         let mut had_failure = false;
+        // 单批处理的 record 上限。LLM 输出受 output_tokens（通常 4096）限制，
+        // 一次塞太多 record 会让 LLM 整合的 Markdown JSON 过长被截断，extract_json_from_output
+        // 解析失败 → Phase 2 失败 → 队列不清 → 下次更多 → 更易截断，恶性循环。
+        // 分批让单次 LLM 输出量可控，worker 内循环会继续处理后续批次。
+        // 10 条是经验值：每条 record 结论约几百字，10 条整合后约几千字，在 4096 token 内有富余。
+        const MAX_BATCH_SIZE: usize = 10;
         // 循环处理，直到队列为空或某次处理失败
         loop {
             // 非破坏性读取 pending 队列（不用 take_pending_record_ids）
-            let record_ids = match db.get_blackboard(ws_id).await {
+            let all_record_ids = match db.get_blackboard(ws_id).await {
                 Ok(Some(board)) => {
                     serde_json::from_str::<Vec<i64>>(&board.pending_record_ids).unwrap_or_default()
                 }
@@ -551,14 +557,24 @@ fn spawn_flush_worker(
                     break;
                 }
             };
-            if record_ids.is_empty() {
+            if all_record_ids.is_empty() {
                 break;
             }
 
-            // 广播 refreshing=true 状态
+            // 分批：只取前 MAX_BATCH_SIZE 条，剩余留给下一轮循环
+            let batch_len = all_record_ids.len().min(MAX_BATCH_SIZE);
+            let record_ids: Vec<i64> = all_record_ids.iter().take(batch_len).copied().collect();
+            if record_ids.len() < all_record_ids.len() {
+                tracing::info!(
+                    "黑板 worker 分批处理: workspace_id={}, 本批={}/{}",
+                    ws_id, record_ids.len(), all_record_ids.len()
+                );
+            }
+
+            // 广播 refreshing=true 状态（用全队列长度，让 UI 看到真实剩余量）
             let _ = tx.send(ExecEvent::BlackboardDebounceStatus {
                 workspace_id: ws_id,
-                pending_count: record_ids.len() as u64,
+                pending_count: all_record_ids.len() as u64,
                 threshold: debounce_count as u64,
                 debounce_secs: debounce_secs as u64,
                 remaining_secs: -1,
