@@ -135,4 +135,40 @@ BlackboardDebounceStatus {
     /// 是否正在刷新（LLM 调用中）
     refreshing: bool,
 },
+/// Wiki 对话开始事件：用户发起对话、执行器启动时发送。
+/// 用于前端对话面板初始化状态、显示"执行中"指示器。
+WikiChatStarted {
+    /// 对话任务 ID（形如 "wiki-chat-{uuid}"）
+    task_id: String,
+    /// 工作空间 ID
+    workspace_id: i64,
+    /// 使用的执行器名称
+    executor: String,
+    /// 用户输入的原始消息
+    message: String,
+},
+/// Wiki 对话输出事件：执行器 stdout 每解析出一行日志就推送一次。
+/// 前端收到后追加到对话面板的日志列表中，实现流式展示中间过程。
+WikiChatOutput {
+    /// 对话任务 ID
+    task_id: String,
+    /// 工作空间 ID
+    workspace_id: i64,
+    /// 解析后的日志条目（含 type / content / timestamp 等）
+    entry: ParsedLogEntry,
+},
+/// Wiki 对话完成事件：执行器退出时发送，携带最终结果。
+/// 前端收到后标记对话结束、显示最终结果高亮块。
+WikiChatFinished {
+    /// 对话任务 ID
+    task_id: String,
+    /// 工作空间 ID
+    workspace_id: i64,
+    /// 是否成功（退出码为 0）
+    success: bool,
+    /// 最终结果文本（从日志中提取的 result/text/assistant 类型内容）
+    result: Option<String>,
+    /// 执行时长（秒）
+    duration_secs: i64,
+},
 }

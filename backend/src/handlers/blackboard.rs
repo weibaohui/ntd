@@ -267,6 +267,7 @@ pub async fn chat_with_wiki(
     let resp = crate::services::blackboard::chat_with_wiki(
         &state.db,
         &state.executor_registry,
+        &state.tx,
         workspace_id,
         &req.message,
         req.executor.as_deref(),

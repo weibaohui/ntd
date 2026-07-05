@@ -87,7 +87,34 @@ export interface BlackboardDebounceStatus {
   refreshing: boolean;
 }
 
-type ExecEvent = ExecEventStarted | ExecEventOutput | ExecEventFinished | ExecEventSync | ExecEventTodoProgress | ExecEventExecutionStats | ExecEventReviewStatusChanged | ExecEventLoopFinished | { type: 'BlackboardDebounceStatus' } & BlackboardDebounceStatus;
+/** Wiki 对话开始事件：用户发起对话、执行器启动时推送 */
+export interface WikiChatStartedEvent {
+  type: 'WikiChatStarted';
+  task_id: string;
+  workspace_id: number;
+  executor: string;
+  message: string;
+}
+
+/** Wiki 对话输出事件：执行器每解析出一行日志就推送一次 */
+export interface WikiChatOutputEvent {
+  type: 'WikiChatOutput';
+  task_id: string;
+  workspace_id: number;
+  entry: LogEntry;
+}
+
+/** Wiki 对话完成事件：执行器退出时推送，携带最终结果 */
+export interface WikiChatFinishedEvent {
+  type: 'WikiChatFinished';
+  task_id: string;
+  workspace_id: number;
+  success: boolean;
+  result: string | null;
+  duration_secs: number;
+}
+
+type ExecEvent = ExecEventStarted | ExecEventOutput | ExecEventFinished | ExecEventSync | ExecEventTodoProgress | ExecEventExecutionStats | ExecEventReviewStatusChanged | ExecEventLoopFinished | { type: 'BlackboardDebounceStatus' } & BlackboardDebounceStatus | WikiChatStartedEvent | WikiChatOutputEvent | WikiChatFinishedEvent;
 
 // ─── 模块级共享状态 ─────────────────────────────────────────────
 //
@@ -201,6 +228,18 @@ function connectShared(dispatch: ReturnType<typeof useApp>['dispatch']) {
         }
         case 'BlackboardDebounceStatus': {
           window.dispatchEvent(new CustomEvent('blackboardDebounceStatus', { detail: data }));
+          break;
+        }
+        case 'WikiChatStarted': {
+          window.dispatchEvent(new CustomEvent('wikiChatStarted', { detail: data }));
+          break;
+        }
+        case 'WikiChatOutput': {
+          window.dispatchEvent(new CustomEvent('wikiChatOutput', { detail: data }));
+          break;
+        }
+        case 'WikiChatFinished': {
+          window.dispatchEvent(new CustomEvent('wikiChatFinished', { detail: data }));
           break;
         }
       }

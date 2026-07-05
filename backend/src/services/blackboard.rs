@@ -430,6 +430,10 @@ pub async fn update_blackboard_wiki(
 pub struct WikiChatResponse {
     pub content: String,
     pub task_id: String,
+    /// 是否执行成功（退出码为 0）
+    pub success: bool,
+    /// 执行时长（秒）
+    pub duration_secs: i64,
 }
 
 /// 执行一次 Wiki 对话：spawn 执行器在 wiki 目录运行，返回解析后的结果文本。
@@ -443,10 +447,13 @@ pub struct WikiChatResponse {
 pub async fn chat_with_wiki(
     db: &Arc<Database>,
     executor_registry: &Arc<ExecutorRegistry>,
+    tx: &tokio::sync::broadcast::Sender<crate::executor_service::events::ExecEvent>,
     workspace_id: i64,
     message: &str,
     override_executor: Option<&str>,
 ) -> Result<WikiChatResponse, AppError> {
+    use crate::executor_service::events::ExecEvent;
+
     // 1. 确定执行器名称：优先用请求里指定的，其次用黑板配置，最后缺省 claudecode
     let exec_name = resolve_chat_executor(db, workspace_id, override_executor).await?;
 
@@ -468,31 +475,82 @@ pub async fn chat_with_wiki(
         AppError::Internal(format!("获取 wiki 目录失败: {:?}", e))
     })?;
 
+    // 5. 生成任务 ID，先发送 Started 事件（前端可立即显示"执行中"）
+    let task_id = format!("wiki-chat-{}", uuid::Uuid::new_v4());
     tracing::info!(
-        "wiki chat: workspace_id={}, executor={}, message_len={}",
+        "wiki chat: task_id={}, workspace_id={}, executor={}, message_len={}",
+        task_id,
         workspace_id,
         exec_name,
         message.len()
     );
+    let _ = tx.send(ExecEvent::WikiChatStarted {
+        task_id: task_id.clone(),
+        workspace_id,
+        executor: exec_name.clone(),
+        message: message.to_string(),
+    });
 
-    // 5. spawn 执行器子进程
-    let output = spawn_executor_for_chat(&executor, message, &wiki_dir).await?;
+    // 6. spawn 执行器子进程，流式读取 stdout，逐行推送 WikiChatOutput 事件
+    let started_at = std::time::Instant::now();
+    let spawn_result = spawn_executor_for_chat_streaming(
+        &executor,
+        message,
+        &wiki_dir,
+        &task_id,
+        workspace_id,
+        tx,
+    )
+    .await;
 
-    // 6. 解析 stdout → 提取最终结果文本
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let logs: Vec<crate::models::ParsedLogEntry> = stdout
-        .lines()
-        .filter_map(|line| executor.parse_output_line(line))
-        .collect();
-    let result_text = crate::executor_service::completion::get_final_result_from_logs(&logs)
-        .unwrap_or_else(|| stdout.to_string());
+    let duration_secs = started_at.elapsed().as_secs() as i64;
 
-    // 7. 返回响应
-    let task_id = format!("wiki-chat-{}", uuid::Uuid::new_v4());
-    Ok(WikiChatResponse {
-        content: result_text,
-        task_id,
-    })
+    match spawn_result {
+        Ok((logs, stdout_raw, success)) => {
+            // 7. 从日志中提取最终结果文本
+            let result_text =
+                crate::executor_service::completion::get_final_result_from_logs(&logs)
+                    .unwrap_or_else(|| {
+                        if success {
+                            stdout_raw.clone()
+                        } else {
+                            format!("执行失败\n\n输出：\n{}", stdout_raw)
+                        }
+                    });
+
+            // 8. 发送 Finished 事件
+            let _ = tx.send(ExecEvent::WikiChatFinished {
+                task_id: task_id.clone(),
+                workspace_id,
+                success,
+                result: Some(result_text.clone()),
+                duration_secs,
+            });
+
+            Ok(WikiChatResponse {
+                content: result_text,
+                task_id,
+                success,
+                duration_secs,
+            })
+        }
+        Err(e) => {
+            // 出错也发 Finished 事件，让前端知道结束了
+            let err_msg = match &e {
+                AppError::Internal(msg) => msg.clone(),
+                AppError::BadRequest(msg) => msg.clone(),
+                AppError::NotFound => "资源不存在".to_string(),
+            };
+            let _ = tx.send(ExecEvent::WikiChatFinished {
+                task_id: task_id.clone(),
+                workspace_id,
+                success: false,
+                result: Some(err_msg.clone()),
+                duration_secs,
+            });
+            Err(e)
+        }
+    }
 }
 
 /// 解析本次对话使用的执行器名称。
@@ -526,7 +584,7 @@ async fn resolve_chat_executor(
     Ok("claudecode".to_string())
 }
 
-/// spawn 执行器子进程并等待完成，返回其 stdout/stderr 输出。
+/// spawn 执行器子进程，流式读取 stdout，逐行解析并推送 WikiChatOutput 事件。
 ///
 /// 与 handle_default_response_executor 的 spawn 逻辑保持一致：
 /// - stdout 用 piped 收集日志
@@ -534,20 +592,27 @@ async fn resolve_chat_executor(
 /// - stdin 用 piped（部分执行器需要预写 payload）
 /// - cwd 设为 wiki 目录
 ///
-/// 区别：增加 5 分钟超时保护，避免执行器卡住时 HTTP 请求无限挂起。
-/// 飞书模式是后台异步执行不阻塞请求，而 wiki chat 是同步等待，必须加超时。
-async fn spawn_executor_for_chat(
+/// 返回：(解析出的日志条目列表, 原始 stdout 文本, 是否成功退出)
+/// 同时通过 broadcast channel 实时推送每一行日志，前端 WebSocket 可收到。
+///
+/// 超时保护 5 分钟，超时后 kill 子进程并返回错误。
+async fn spawn_executor_for_chat_streaming(
     executor: &std::sync::Arc<dyn crate::adapters::CodeExecutor>,
     message: &str,
     cwd: &std::path::Path,
-) -> Result<std::process::Output, AppError> {
-    use tokio::io::AsyncWriteExt;
+    task_id: &str,
+    workspace_id: i64,
+    tx: &tokio::sync::broadcast::Sender<crate::executor_service::events::ExecEvent>,
+) -> Result<(Vec<crate::models::ParsedLogEntry>, String, bool), AppError> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use crate::executor_service::events::ExecEvent;
 
     let program = executor.executable_path();
     let command_args = executor.command_args(message);
 
     tracing::info!(
-        "wiki chat spawn: {} {:?} (cwd={:?})",
+        "wiki chat spawn: task_id={}, {} {:?} (cwd={:?})",
+        task_id,
         program,
         command_args,
         cwd
@@ -579,56 +644,72 @@ async fn spawn_executor_for_chat(
         }
     }
 
-    // 用 tokio::time::timeout 包裹等待逻辑，5 分钟超时
-    // 超时后 kill 子进程，避免僵尸进程；飞书模式无超时是因为它跑在后台不阻塞请求
-    // 注意：不能用 wait_with_output（消费 child），改用手动 take stdout + child.wait()，
-    // 这样超时分支还能拿到 child 来 kill
-    const EXEC_TIMEOUT_SECS: u64 = 300;
-    let stdout_handle = child.stdout.take();
-    let timeout_result =
-        tokio::time::timeout(std::time::Duration::from_secs(EXEC_TIMEOUT_SECS), async {
-            // 等待子进程退出
-            let status = child.wait().await?;
-            // 读完 stdout
-            let mut stdout_buf = Vec::new();
-            if let Some(mut stdout) = stdout_handle {
-                use tokio::io::AsyncReadExt;
-                stdout.read_to_end(&mut stdout_buf).await?;
-            }
-            Ok::<std::process::Output, std::io::Error>(std::process::Output {
-                status,
-                stdout: stdout_buf,
-                stderr: Vec::new(),
-            })
-        })
-        .await;
+    // 取出 stdout，用 BufReader 逐行读取
+    let stdout = child.stdout.take().ok_or_else(|| {
+        AppError::Internal("无法获取执行器 stdout".to_string())
+    })?;
+    let mut reader = BufReader::new(stdout).lines();
 
-    match timeout_result {
-        // 未超时：正常返回输出
-        Ok(Ok(output)) => {
-            tracing::info!(
-                "wiki chat executor finished, exit_code={:?}, stdout_len={}",
-                output.status.code(),
-                output.stdout.len()
-            );
-            Ok(output)
-        }
-        // 未超时但 wait 失败
-        Ok(Err(e)) => Err(AppError::Internal(format!(
-            "等待执行器完成失败: {}",
-            e
-        ))),
-        // 超时：kill 子进程，返回超时错误
-        Err(_) => {
-            tracing::error!(
-                "wiki chat executor timed out after {}s, killing child",
-                EXEC_TIMEOUT_SECS
-            );
-            let _ = child.kill().await;
-            Err(AppError::Internal(format!(
-                "执行器超时（{}秒），请稍后重试或简化问题",
-                EXEC_TIMEOUT_SECS
-            )))
+    // 收集解析后的日志和原始 stdout
+    let mut parsed_logs: Vec<crate::models::ParsedLogEntry> = Vec::new();
+    let mut raw_lines: Vec<String> = Vec::new();
+
+    // 超时保护：5 分钟
+    const EXEC_TIMEOUT_SECS: u64 = 300;
+    let timeout_fut = tokio::time::sleep(std::time::Duration::from_secs(EXEC_TIMEOUT_SECS));
+    tokio::pin!(timeout_fut);
+
+    loop {
+        tokio::select! {
+            // 读取下一行 stdout
+            line_result = reader.next_line() => {
+                match line_result {
+                    Ok(Some(line)) => {
+                        raw_lines.push(line.clone());
+                        // 解析成 ParsedLogEntry，成功则推送事件
+                        if let Some(entry) = executor.parse_output_line(&line) {
+                            // 推送 WikiChatOutput 事件（前端通过 WebSocket 收到）
+                            let _ = tx.send(ExecEvent::WikiChatOutput {
+                                task_id: task_id.to_string(),
+                                workspace_id,
+                                entry: entry.clone(),
+                            });
+                            parsed_logs.push(entry);
+                        }
+                    }
+                    // stdout 读完了，等待子进程退出并返回结果
+                    Ok(None) => {
+                        let status = child.wait().await.map_err(|e| {
+                            AppError::Internal(format!("等待执行器退出失败: {}", e))
+                        })?;
+                        let stdout_raw = raw_lines.join("\n");
+                        let success = status.success();
+                        tracing::info!(
+                            "wiki chat executor finished: task_id={}, exit_code={:?}, stdout_len={}",
+                            task_id,
+                            status.code(),
+                            stdout_raw.len()
+                        );
+                        return Ok((parsed_logs, stdout_raw, success));
+                    }
+                    Err(e) => {
+                        return Err(AppError::Internal(format!("读取执行器 stdout 失败: {}", e)));
+                    }
+                }
+            }
+            // 超时
+            _ = &mut timeout_fut => {
+                tracing::error!(
+                    "wiki chat executor timed out after {}s, killing child: task_id={}",
+                    EXEC_TIMEOUT_SECS,
+                    task_id
+                );
+                let _ = child.kill().await;
+                return Err(AppError::Internal(format!(
+                    "执行器超时（{}秒），请稍后重试或简化问题",
+                    EXEC_TIMEOUT_SECS
+                )));
+            }
         }
     }
 }

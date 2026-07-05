@@ -28,6 +28,7 @@ import { LeftRail, type LeftRailKey } from './components/shell/LeftRail';
 import { MobileHeader } from './components/shell/MobileHeader';
 import { MobileFAB } from './components/shell/MobileFAB';
 import { QuickCaptureButton } from './components/shell/QuickCaptureButton';
+import { WikiChatFloatingWindow } from './components/WikiChatFloatingWindow';
 
 import { EXECUTION_PANEL, LEFT_RAIL_WIDTH } from './constants';
 import * as db from './utils/database';
@@ -464,6 +465,9 @@ function AppContent() {
       {!isMobile && (
         <QuickCaptureButton onClick={() => setQuickCaptureOpen(true)} />
       )}
+
+      {/* Wiki 对话全局漂浮窗口 */}
+      {!isMobile && <WikiChatFloatingWindow />}
     </Layout>
   );
 }

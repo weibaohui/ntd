@@ -37,6 +37,10 @@ export interface WikiChatResponse {
   content: string;
   /** 本次任务的唯一标识（形如 "wiki-chat-{uuid}"），用于日志追踪 */
   task_id: string;
+  /** 是否执行成功 */
+  success: boolean;
+  /** 执行时长（秒） */
+  duration_secs: number;
 }
 
 /**
