@@ -812,19 +812,19 @@ fn cors_layer() -> CorsLayer {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod app_error_tests {
     //! 覆盖 issue #613 重构后的 `AppError`：
     //! 1. `error_response_parts` —— 三个变体的 (status, code, message) 三件套
     //! 2. `from_db_err` / `from_io_err` / `from_scheduler_error` —— 工厂方法
     //! 3. `IntoResponse` 公开行为 —— status code 与 body JSON 与重构前一致
     //!
-    //! 验证点：拆分前后对调用方完全等价（status / JSON body 字节级一致）。
-    //!
-    //! `panic!` 在测试里是 assertion 失败的合理表现（test 失败机制依赖 panic），
-    //! 这里把模块级 panic/expect_used 抑制掉，避免 clippy `panic` lint 噪音。
-    #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
+     //! 验证点：拆分前后对调用方完全等价（status / JSON body 字节级一致）。
+     //!
+     //! `panic!` 在测试里是 assertion 失败的合理表现（test 失败机制依赖 panic），
+     //! 这里把模块级 panic/expect_used 抑制掉，避免 clippy `panic` lint 噪音。
 
-    use super::AppError;
+     use super::AppError;
     use crate::models::codes;
     use crate::scheduler::SchedulerError;
     use axum::http::StatusCode;
@@ -1016,6 +1016,7 @@ mod app_error_tests {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod app_state_config_helpers_tests {
     //! 覆盖 `AppState` 上 issue #609 新增的三个 config 辅助方法：
     //! 1. `config_snapshot` —— 读锁卫在闭包返回时立即 drop
@@ -1190,6 +1191,7 @@ mod app_state_config_helpers_tests {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod create_app_refactor_tests {
     //! 覆盖 issue #661 重构后拆出的辅助函数。
     //!

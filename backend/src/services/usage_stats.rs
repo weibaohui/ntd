@@ -946,6 +946,7 @@ impl UsageStatsService {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     //! 回归测试：Zhanlu (Issue #673) jsonl 走 `parse_generic_jsonl_line` 必须正确解析
     //! `usage` / `timestamp` / `model` / cache token 字段，与 Opencode 行为一致。

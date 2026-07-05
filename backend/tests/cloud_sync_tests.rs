@@ -9,6 +9,7 @@
 // 这里用一个最朴素的 mock HTTP server（tokio TcpListener）验证：
 // 1) push 在合理时间内返回，不会自我死锁；
 // 2) 拿到的 last_sync_at 在成功 push 后被写入。
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 use std::sync::Arc;
 use std::time::Duration;
 

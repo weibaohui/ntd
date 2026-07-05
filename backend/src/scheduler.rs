@@ -569,7 +569,7 @@ impl TodoScheduler {
 // `.unwrap()` / `.expect()`（test path, panic = fail, 完全合理）。一次性
 // 标注允许,与 lib.rs 文档"测试里使用 unwrap/expect 需加 `#[allow]`"保持一致。
 // 测试 mod 整体允许,避免逐 fn 标注噪声。
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod convert_cron_to_utc_tests {
     //! `convert_cron_to_utc` 是把用户时区的 cron 表达式换成 UTC 的纯函数。
     //! 之所以单独测这个函数:
@@ -757,7 +757,7 @@ mod convert_cron_to_utc_tests {
 #[cfg(test)]
 // 整个 mod 允许 `unwrap_used` / `expect_used`:helper 单测的 panic = 用例失败,
 // 与 lib.rs 顶部"测试里使用 unwrap/expect 需加 `#[allow]]`"约定保持一致。
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod convert_cron_to_utc_helpers_tests {
     //! 覆盖 issue #615 拆分出来的 5 个 helper 函数的单元测试。
     //!
@@ -1071,6 +1071,7 @@ mod convert_cron_to_utc_helpers_tests {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod scheduler_error_tests {
     //! 覆盖 `SchedulerError` 枚举本身（issue #499）：
     //! - `Display` 输出带原始信息
@@ -1298,7 +1299,7 @@ mod scheduler_error_tests {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod format_cron_field_tests {
     //! Tests for `format_cron_field` and the helpers extracted in issue #614.
     //!

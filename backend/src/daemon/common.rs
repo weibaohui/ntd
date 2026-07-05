@@ -60,6 +60,7 @@ pub(crate) fn ntd_bin_dir() -> PathBuf {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     //! 单测覆盖：`ntd_dir()` 在 home_dir 缺失时回退 `/tmp/.ntd`，
     //! 这是 daemon install 流程在 sandbox/CI 等环境下的兜底行为，
@@ -88,7 +89,7 @@ mod tests {
         // 这里只断言"bin_dir 是 bin 的祖先路径之一或回退到 /usr/local/bin"
         if let Some(parent) = bin.parent() {
             assert!(
-                dir == parent || dir == PathBuf::from("/usr/local/bin"),
+                dir == parent || dir == std::path::Path::new("/usr/local/bin"),
                 "bin_dir {:?} should equal parent {:?} or fallback /usr/local/bin",
                 dir,
                 parent

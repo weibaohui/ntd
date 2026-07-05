@@ -13,6 +13,7 @@
 //! 构造参数；最后用 `Cli::command` 走 dispatch 时改走 `Vec<u8>` 缓冲（避免 println!
 //! 散落）然后读出来做断言。
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 use std::sync::Arc;
 use std::time::Duration;
 

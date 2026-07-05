@@ -613,6 +613,7 @@ impl MessageDebounce {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod merge_pending_messages_tests {
     //! 验证 debounce 窗口内多条消息的合并规则。`push` 把消息丢进 bucket,
     //! 定时器到期时再调 `merge_pending_messages` 合并成一段 ——

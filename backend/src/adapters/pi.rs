@@ -386,6 +386,7 @@ impl CodeExecutor for PiExecutor {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
 
@@ -542,8 +543,8 @@ mod tests {
         let line = r#"{"type":"tool_execution_start","toolExecution":{"toolName":"read","args":{}}}"#;
         let entry = executor.parse_output_line(line);
         // 如果 pi 输出格式匹配，应能正常解析
-        if entry.is_some() {
-            assert_eq!(entry.unwrap().log_type, "tool_use");
+        if let Some(e) = entry {
+            assert_eq!(e.log_type, "tool_use");
         }
     }
 

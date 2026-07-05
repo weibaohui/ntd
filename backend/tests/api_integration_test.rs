@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 use std::sync::Arc;
 
 use axum::{
@@ -251,7 +252,7 @@ async fn test_delete_todo() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_delete_todo_not_found() {
-    let (app, ws_id) = create_test_app().await;
+    let (app, _ws_id) = create_test_app().await;
 
     let req = Request::builder()
         .method("DELETE")
@@ -283,7 +284,7 @@ async fn test_force_update_status() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_get_todo_not_found() {
-    let (app, ws_id) = create_test_app().await;
+    let (app, _ws_id) = create_test_app().await;
 
     let req = json_request("PUT", "/api/todos/9999", json!({"title": "Test", "prompt": "Prompt", "status": "pending"}));
     let response = app.oneshot(req).await.unwrap();
@@ -296,7 +297,7 @@ async fn test_get_todo_not_found() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_get_tags() {
-    let (app, ws_id) = create_test_app().await;
+    let (app, _ws_id) = create_test_app().await;
 
     let req = Request::builder()
         .uri("/api/tags")
@@ -312,7 +313,7 @@ async fn test_get_tags() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_create_tag_success() {
-    let (app, ws_id) = create_test_app().await;
+    let (app, _ws_id) = create_test_app().await;
 
     let req = json_request("POST", "/api/tags", json!({"name": "urgent", "color": "#ff0000"}));
     let response = app.oneshot(req).await.unwrap();
@@ -326,7 +327,7 @@ async fn test_create_tag_success() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_create_tag_empty_name() {
-    let (app, ws_id) = create_test_app().await;
+    let (app, _ws_id) = create_test_app().await;
 
     let req = json_request("POST", "/api/tags", json!({"name": "", "color": "#ff0000"}));
     let response = app.oneshot(req).await.unwrap();
@@ -338,7 +339,7 @@ async fn test_create_tag_empty_name() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_delete_tag() {
-    let (app, ws_id) = create_test_app().await;
+    let (app, _ws_id) = create_test_app().await;
 
     let create_req = json_request("POST", "/api/tags", json!({"name": "to-delete", "color": "#ff0000"}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
@@ -421,7 +422,7 @@ async fn test_get_execution_summary() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_stop_execution_not_found() {
-    let (app, ws_id) = create_test_app().await;
+    let (app, _ws_id) = create_test_app().await;
 
     let req = json_request("POST", "/api/execute/stop", json!({"task_id": "nonexistent-task"}));
     let response = app.oneshot(req).await.unwrap();
@@ -548,7 +549,7 @@ async fn test_todo_lifecycle() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_tag_lifecycle() {
-    let (app, ws_id) = create_test_app().await;
+    let (app, _ws_id) = create_test_app().await;
 
     // Create
     let req = json_request("POST", "/api/tags", json!({"name": "lifecycle", "color": "#00ff00"}));
