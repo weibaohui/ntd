@@ -533,10 +533,6 @@ fn spawn_flush_worker(
     refreshing_workspaces: Arc<tokio::sync::Mutex<std::collections::HashSet<i64>>>,
 ) {
     tokio::spawn(async move {
-        // 标记本次 worker 是否处理失败：失败时需要重启 timer 让残留队列再次触发，
-        // 否则队列会永久卡住（阈值分支不会启动 timer，timer 自然到期也只会发一次 flush，
-        // 失败后无后续触发源）。
-        let mut had_failure = false;
         // 单批处理的 record 上限。LLM 输出受 output_tokens（通常 4096）限制，
         // 一次塞太多 record 会让 LLM 整合的 Markdown JSON 过长被截断，extract_json_from_output
         // 解析失败 → Phase 2 失败 → 队列不清 → 下次更多 → 更易截断，恶性循环。
@@ -553,7 +549,6 @@ fn spawn_flush_worker(
                 Ok(None) => break,
                 Err(e) => {
                     tracing::warn!("读取 pending 队列失败: workspace_id={}, error={}", ws_id, e);
-                    had_failure = true;
                     break;
                 }
             };
@@ -598,9 +593,9 @@ fn spawn_flush_worker(
                     ws_id, e
                 );
                 // 失败时保留 pending 队列不删除（update_blackboard_wiki 内部
-                // 已改用 remove_specific_pending_record_ids，失败时不调用），
-                // 退出循环避免死循环；had_failure=true 触发下方 timer 重启逻辑
-                had_failure = true;
+                // 已改用 remove_specific_pending_record_ids，失败时不调用）。
+                // 退出循环避免死循环；
+                // 剩余队列由下方的 restart_timer 统一处理（不再区分失败/成功）。
                 break;
             }
             // 成功：继续循环检查是否有新记录在处理期间到达
@@ -629,12 +624,18 @@ fn spawn_flush_worker(
             refreshing: false,
         });
 
-        // 失败且有残留队列时重启防抖 timer，让队列在 debounce_secs 后再次触发 flush，
-        // 避免「等待刷新 / N / 阈值 条」永久卡死的假象。
-        if had_failure && final_pending_count > 0 {
+        // 有残留队列时重启防抖 timer，让队列在 debounce_secs 后再次触发 flush。
+        // 剩余记录可能来自：
+        // 1. 分批处理后的下一批（worker 内循环已清空，但期间又到达了新的）
+        // 2. 失败后保留的队列（update_blackboard_wiki 失败不清理）
+        // 3. worker 运行期间新到达、但 flush 消息被 per-workspace 互斥丢弃的
+        // 注意：不管 had_failure 真假都要重启——即使成功清空了本批，期间新到达
+        // 的记录也不会触发新一轮 push（阈值只在 append 时检查，没有新 append 就
+        // 不会触发），必须靠 timer 到期发起新的 flush。
+        if final_pending_count > 0 {
             tracing::info!(
-                "worker 失败退出，重启防抖 timer 让残留队列重试: workspace_id={}, pending={}",
-                ws_id, final_pending_count
+                "worker 退出，队列仍有 {} 条残留，重启防抖 timer 触发下一轮: workspace_id={}",
+                final_pending_count, ws_id
             );
             crate::services::blackboard_debouncer::restart_timer(ws_id, &db).await;
         }
