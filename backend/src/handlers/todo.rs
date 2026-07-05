@@ -502,6 +502,11 @@ async fn pause_batch_schedulers(state: &AppState, ids: &[i64]) -> Result<u64, Ap
 /// 单个 todo 注册失败只 warn 不中断，避免一个无效 cron 导致整批回滚。
 async fn resume_batch_schedulers(state: &AppState, ids: &[i64]) -> Result<u64, AppError> {
     let rows = state.db.batch_update_todos_scheduler(ids, true).await?;
+    // DB 写返回 0 行说明 ids 全无效：跳过 cron 重新注册循环，
+    // 避免对不存在的 todo 触发 N 次 get_todo 失败 + warn 噪音。
+    if rows == 0 {
+        return Ok(rows);
+    }
     let ctx = ServiceContext {
         db: state.db.clone(),
         executor_registry: state.executor_registry.clone(),
@@ -510,10 +515,10 @@ async fn resume_batch_schedulers(state: &AppState, ids: &[i64]) -> Result<u64, A
         config: state.config.clone(),
     };
     for id in ids {
-        // 单个恢复失败只记录日志，不中断批量流程；DB 状态已写入，下次重启时
-        // load_from_db 会跳过未注册的项，用户也可手动通过单条接口重试。
+        // 单个 todo 注册失败只 warn 不中断整批：DB 已置 enabled=true，
+        // 进程重启时 load_from_db 会基于 DB 字段再次尝试注册（自愈路径）。
         // AppError 未实现 Display，用 Debug 格式化保留错误上下文。
-        if let Err(e) = try_resume_one_scheduler(&state, &ctx, *id).await {
+        if let Err(e) = try_resume_one_scheduler(state, &ctx, *id).await {
             tracing::warn!("批量恢复调度时 todo {} 注册失败: {:?}", id, e);
         }
     }
@@ -548,9 +553,6 @@ async fn try_resume_one_scheduler(
     state
         .scheduler
         .upsert_task(ctx, id, config, todo.scheduler_timezone.clone())
-        .await
-        .inspect_err(|e| {
-            tracing::error!("批量恢复调度时 upsert_task 失败 todo {}: {}", id, e);
-        })?;
+        .await?;
     Ok(())
 }
