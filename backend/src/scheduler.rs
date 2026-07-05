@@ -547,6 +547,14 @@ impl TodoScheduler {
         }
     }
 
+    /// 查询某个 todo 当前是否在内存中持有已注册的 cron 任务。
+    /// 主要用于测试与诊断：让外部代码无需访问内部 `job_map` 即可判断
+    /// scheduler 的内存状态是否与 DB 的 `scheduler_enabled` 字段一致。
+    /// 只读、无副作用，不会触发调度。
+    pub async fn has_task(&self, todo_id: i64) -> bool {
+        self.job_map.lock().await.contains_key(&todo_id)
+    }
+
     /// 启动调度循环。`JobSchedulerError` 通过 `#[from]` 自动转为 `SchedulerError::SchedulerBackend`。
     pub async fn start(&self) -> Result<(), SchedulerError> {
         self.sched.lock().await.start().await?;
@@ -1418,5 +1426,42 @@ mod format_cron_field_tests {
     fn test_format_cron_field_two_elements_arithmetic() {
         let set: BTreeSet<u32> = BTreeSet::from([3, 5]);
         assert_eq!(format_cron_field(&set), "3-5/2");
+    }
+}
+
+#[cfg(test)]
+// 测试 mod 允许 unwrap/expect：失败即用例红，与 lib.rs 测试约定一致。
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod has_task_tests {
+    //! 覆盖 `TodoScheduler::has_task`：只读查询 job_map 是否含某 todo_id。
+    //! 不走 `upsert_task` 是因为它依赖完整 ServiceContext + DB + 真实 cron 注册，
+    //! 远超 `has_task` 的职责边界；这里直接操作 job_map 模拟注册后状态。
+    use super::TodoScheduler;
+
+    /// 空 scheduler 的 job_map 不含任何 todo_id，has_task 应一律返回 false。
+    #[tokio::test]
+    async fn test_has_task_returns_false_when_job_map_empty() {
+        let scheduler = TodoScheduler::new().await.unwrap();
+        assert!(
+            !scheduler.has_task(42).await,
+            "空 job_map 时 has_task 应返回 false"
+        );
+    }
+
+    /// 手动往 job_map 插入 fake uuid 后，对应 todo_id 应返回 true，
+    /// 其他 todo_id 仍返回 false，验证 contains_key 的精确匹配。
+    #[tokio::test]
+    async fn test_has_task_returns_true_after_manual_insert() {
+        let scheduler = TodoScheduler::new().await.unwrap();
+        scheduler
+            .job_map
+            .lock()
+            .await
+            .insert(7, uuid::Uuid::new_v4());
+        assert!(scheduler.has_task(7).await, "已注册的 todo_id 应返回 true");
+        assert!(
+            !scheduler.has_task(8).await,
+            "未注册的 todo_id 应返回 false"
+        );
     }
 }
