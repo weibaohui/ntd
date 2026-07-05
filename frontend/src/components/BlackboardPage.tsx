@@ -19,13 +19,13 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu, Divider } from 'antd';
-import { ReloadOutlined, SettingOutlined } from '@ant-design/icons';
+import { ReloadOutlined, SettingOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { TfiBlackboard } from 'react-icons/tfi';
 import { XMarkdown } from '@ant-design/x-markdown';
 import { useTheme } from '@/hooks/useTheme';
 import { useViewState } from '@/hooks/useViewState';
 import type { BlackboardDebounceStatus } from '@/hooks/useExecutionEvents';
-import { updateBlackboardConfig } from '@/utils/database/blackboard';
+import { updateBlackboardConfig, getBlackboard } from '@/utils/database/blackboard';
 import { normalizeBlackboardMarkdown } from '@/utils/markdown';
 
 const { Title } = Typography;
@@ -615,8 +615,29 @@ interface BlackboardHeaderProps {
   workspaceId: number;
 }
 
-/** 顶部标题栏：标题 + 倒计时进度条 + 刷新按钮 + 设置按钮 */
+/** 顶部标题栏：标题 + 倒计时进度条 + 刷新按钮 + 设置按钮 + 队列查看按钮 */
 function BlackboardHeader(props: BlackboardHeaderProps) {
+  const [queueModalVisible, setQueueModalVisible] = useState(false);
+  const [queueIds, setQueueIds] = useState<number[]>([]);
+  const [queueLoading, setQueueLoading] = useState(false);
+
+  // 点击队列查看按钮：拉取黑板数据，提取 pending_record_ids
+  const handleShowQueue = useCallback(async () => {
+    setQueueLoading(true);
+    try {
+      const board = await getBlackboard(props.workspaceId);
+      // 解析 pending_record_ids 字符串（如 "[12, 34, 56]"）为数组
+      const ids: number[] = JSON.parse(board.pending_record_ids);
+      setQueueIds(Array.isArray(ids) ? ids : []);
+      setQueueModalVisible(true);
+    } catch {
+      // 静默失败：不弹 Modal，只清空列表
+      setQueueIds([]);
+    } finally {
+      setQueueLoading(false);
+    }
+  }, [props.workspaceId]);
+
   return (
     <div
       style={{
@@ -642,6 +663,12 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
           title="设置"
         />
         <Button
+          icon={<UnorderedListOutlined />}
+          onClick={handleShowQueue}
+          loading={queueLoading}
+          title="查看队列 ID"
+        />
+        <Button
           type="primary"
           icon={<ReloadOutlined />}
           onClick={props.onRefresh}
@@ -649,6 +676,38 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
           刷新
         </Button>
       </Space.Compact>
+
+      {/* 队列 ID 弹窗 */}
+      <Modal
+        title={
+          <span>
+            待处理队列 <span style={{ fontWeight: 400, fontSize: 13, color: '#888' }}>共 {queueIds.length} 条</span>
+          </span>
+        }
+        open={queueModalVisible}
+        onCancel={() => setQueueModalVisible(false)}
+        footer={null}
+        width={400}
+      >
+        {queueIds.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '24px 0', color: '#999' }}>队列为空</div>
+        ) : (
+          <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+            {queueIds.map((id) => (
+              <div
+                key={id}
+                style={{
+                  padding: '6px 12px',
+                  borderBottom: '1px solid #f0f0f0',
+                  fontSize: 14,
+                }}
+              >
+                {id}
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
