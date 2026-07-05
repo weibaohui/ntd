@@ -117,7 +117,8 @@ mod codex_executor_extended_tests {
         let json = r#"{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50,"total_cost_usd":0.002},"duration_ms":1500}"#;
         let entry = executor.parse_output_line(json).unwrap();
         assert_eq!(entry.log_type, "tokens");
-        let usage = executor.get_usage(&[]).unwrap();
+        // usage 直接从 entry.usage 获取，不再依赖已移除的 get_usage 方法
+        let usage = entry.usage.unwrap();
         assert_eq!(usage.input_tokens, 100);
         assert_eq!(usage.total_cost_usd, Some(0.002));
         assert_eq!(usage.duration_ms, Some(1500));
