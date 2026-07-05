@@ -67,9 +67,14 @@ export function TodoItemRow({
       style={{
         cursor: 'pointer',
         position: 'relative',
-        // 选中态用 inset box-shadow 模拟边框，避免 border 撑大尺寸导致 layout 跳动
+        // 选中态双层阴影：外发光 + 顶部高光，营造精致层次感；
+        // 外层柔光让卡片"浮起来"，内层高光增加立体感
         boxShadow: isSelected
-          ? 'inset 0 0 0 1px var(--color-primary, #0891b2)'
+          ? [
+              '0 0 0 1px color-mix(in srgb, var(--color-primary, #0891b2) 30%, transparent)',
+              '0 2px 8px color-mix(in srgb, var(--color-primary, #0891b2) 15%, transparent)',
+              'inset 0 1px 0 color-mix(in srgb, var(--color-primary, #0891b2) 20%, white)',
+            ].join(', ')
           : '0 1px 2px color-mix(in srgb, var(--color-text, #0f172a) 6%, transparent)',
         // 与 LoopCard 一致的过渡动画
         transition: 'background 200ms, border-color 200ms, box-shadow 200ms, transform 200ms',
