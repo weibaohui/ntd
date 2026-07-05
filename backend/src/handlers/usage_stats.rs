@@ -37,20 +37,21 @@ pub async fn get_usage_stats(
 ) -> Result<ApiResponse<UsageStatsResponse>, AppError> {
     let service = UsageStatsService::new(state.db.clone());
 
+    // AppError::Internal 接收 String 参数，闭包 |e| AppError::Internal(e) 可简化为函数引用
     let daily = service
         .get_stats("daily", query.since.as_deref(), query.until.as_deref())
         .await
-        .map_err(|e| AppError::Internal(e))?;
+        .map_err(AppError::Internal)?;
 
     let weekly = service
         .get_stats("weekly", query.since.as_deref(), query.until.as_deref())
         .await
-        .map_err(|e| AppError::Internal(e))?;
+        .map_err(AppError::Internal)?;
 
     let monthly = service
         .get_stats("monthly", query.since.as_deref(), query.until.as_deref())
         .await
-        .map_err(|e| AppError::Internal(e))?;
+        .map_err(AppError::Internal)?;
 
     // Get model breakdowns from database
     let db_breakdowns = state.db
@@ -85,10 +86,11 @@ pub async fn refresh_usage_stats(
 ) -> Result<ApiResponse<UsageStatsResponse>, AppError> {
     let service = UsageStatsService::new(state.db.clone());
 
+    // AppError::Internal 接收 String 参数，闭包 |e| AppError::Internal(e) 可简化为函数引用
     let report = service
         .refresh_all_stats()
         .await
-        .map_err(|e| AppError::Internal(e))?;
+        .map_err(AppError::Internal)?;
 
     Ok(ApiResponse::ok(report.into()))
 }
@@ -102,6 +104,8 @@ pub struct UsageStatsSettings {
 pub async fn get_usage_stats_settings(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<UsageStatsSettings>, AppError> {
+    // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
+    #[allow(clippy::unwrap_used)]
     let cfg = state.config.read().unwrap();
     Ok(ApiResponse::ok(UsageStatsSettings {
         auto_usage_stats_enabled: cfg.auto_usage_stats_enabled,
@@ -129,6 +133,8 @@ pub async fn update_usage_stats_settings(
 
     // 块作用域内 clone 出 owned 值,await 落盘前写锁已 drop。
     let cfg_clone = {
+        // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
+        #[allow(clippy::unwrap_used)]
         let mut cfg = state.config.write().unwrap();
         cfg.auto_usage_stats_enabled = req.enabled;
         cfg.auto_usage_stats_cron = req.cron;

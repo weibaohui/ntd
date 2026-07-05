@@ -144,6 +144,8 @@ pub async fn get_custom_template_status(
 ) -> Result<ApiResponse<CustomTemplateStatus>, AppError> {
     // 块作用域拷出 owned 值,锁卫立即 drop,避免后续 .await 持 std 读锁卫。
     let (auto_sync_enabled, auto_sync_cron) = {
+        // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
+        #[allow(clippy::unwrap_used)]
         let cfg = state.config.read().unwrap();
         (
             cfg.auto_sync_custom_templates_enabled,
@@ -225,8 +227,9 @@ pub async fn subscribe_custom_template(
     state.db.delete_all_custom_templates().await?;
 
     // Insert new templates
+    // AppError::Internal 接收 String 参数，闭包 |e| AppError::Internal(e) 可简化为函数引用
     insert_templates(&state.db, &remote_templates, url).await
-        .map_err(|e| AppError::Internal(e))?;
+        .map_err(AppError::Internal)?;
 
     // Return updated status
     get_custom_template_status(State(state)).await
@@ -257,8 +260,9 @@ pub async fn sync_custom_template(
     state.db.delete_templates_by_source_url(&url).await?;
 
     // Insert new templates
+    // AppError::Internal 接收 String 参数，闭包 |e| AppError::Internal(e) 可简化为函数引用
     insert_templates(&state.db, &remote_templates, &url).await
-        .map_err(|e| AppError::Internal(e))?;
+        .map_err(AppError::Internal)?;
 
     // Return updated status
     get_custom_template_status(State(state)).await
@@ -279,6 +283,8 @@ pub async fn update_auto_sync_config(
 
     // 块作用域内 clone 出 owned 值,await 落盘前写锁已 drop。
     let cfg_clone = {
+        // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
+        #[allow(clippy::unwrap_used)]
         let mut cfg = state.config.write().unwrap();
         cfg.auto_sync_custom_templates_enabled = req.enabled;
         cfg.auto_sync_custom_templates_cron = req.cron;
@@ -296,13 +302,15 @@ pub async fn update_auto_sync_config(
 /// Start custom template auto sync scheduler
 pub fn start_custom_template_auto_sync(
     _cron_expr: &str,
-    db: Arc<Database>,
+    // db 仅用于 clone 进 spawn 闭包，按引用传入避免调用方额外 clone
+    db: &Arc<Database>,
     config: std::sync::Arc<std::sync::RwLock<crate::config::Config>>,
 ) -> Result<(), String> {
     // Validate initial cron expression but will re-read from config in the loop
     let _ = cron::Schedule::from_str(_cron_expr)
         .map_err(|e| format!("Invalid cron: {}", e))?;
 
+    // db 是 Arc，clone 只增加引用计数；move 进 spawn 闭包需要 owned 值
     let db_clone = db.clone();
     tokio::spawn(async move {
         loop {
@@ -310,6 +318,8 @@ pub fn start_custom_template_auto_sync(
             // 把 disabled 分支的 sleep().await 放在 cfg 锁卫作用域外。
             let (enabled, next_delay) = {
                 let enabled = {
+                    // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
+                    #[allow(clippy::unwrap_used)]
                     let cfg = config.read().unwrap();
                     cfg.auto_sync_custom_templates_enabled
                 };
@@ -318,7 +328,11 @@ pub fn start_custom_template_auto_sync(
                     continue;
                 }
                 let (enabled, delay) = {
+                    // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
+                    #[allow(clippy::unwrap_used)]
                     let cfg = config.read().unwrap();
+                    // "0 0 * * *" 是硬编码的合法 cron 表达式，unwrap 安全
+                    #[allow(clippy::unwrap_used)]
                     let schedule = cron::Schedule::from_str(&cfg.auto_sync_custom_templates_cron)
                         .unwrap_or_else(|_| cron::Schedule::from_str("0 0 * * *").unwrap());
                     let next = schedule.upcoming(chrono::Utc).next();

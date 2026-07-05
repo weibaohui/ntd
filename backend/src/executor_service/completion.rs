@@ -455,7 +455,7 @@ async fn build_blackboard_status(
         .map(|state| {
             let elapsed_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_millis() as i64
                 - state.started_at_ms as i64;
             let remaining = state.debounce_secs - elapsed_ms / 1000;

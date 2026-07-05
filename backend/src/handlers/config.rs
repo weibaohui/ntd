@@ -20,6 +20,8 @@ fn validate_execution_timeout_secs(execution_timeout_secs: u64) -> Result<(), Ap
 }
 
 pub async fn get_config(State(state): State<AppState>) -> Result<ApiResponse<Config>, AppError> {
+    // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
+    #[allow(clippy::unwrap_used)]
     let cfg = state.config.read().unwrap().clone();
     Ok(ApiResponse::ok(cfg))
 }
@@ -32,6 +34,8 @@ pub async fn update_config(
     // 锁卫跨 .await 让 future 变成 !Send。原顺序是 modify -> clone -> spawn_blocking().await,
     // 锁卫会一直持有到 await 结束,违反 std 锁的 Send 约束。
     let cfg_to_save = {
+        // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
+        #[allow(clippy::unwrap_used)]
         let mut cfg = state.config.write().unwrap();
 
         if let Some(port) = req.port {
@@ -84,9 +88,10 @@ pub async fn update_config(
         if let Some(interval) = req.auto_update_interval {
             let valid = ["day", "week", "month"];
             if !valid.contains(&interval.as_str()) {
-                return Err(AppError::BadRequest(format!(
-                    "auto_update_interval must be one of: day, week, month"
-                )));
+                // 无变量插值的 format! 等价于 .to_string()，clippy 建议用更直接的写法
+                return Err(AppError::BadRequest(
+                    "auto_update_interval must be one of: day, week, month".to_string()
+                ));
             }
             cfg.auto_update_interval = interval;
         }

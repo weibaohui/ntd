@@ -1,3 +1,7 @@
+// main.rs 是 CLI 二进制入口，println!/eprintln! 是面向用户的输出通道，
+// 不应使用 tracing（日志保留给 stderr）。panic 用于启动时的硬性安全检查。
+#![allow(clippy::print_stdout, clippy::print_stderr, clippy::panic)]
+
 use std::sync::Arc;
 use clap::{CommandFactory, Parser, Subcommand};
 use tokio::sync::broadcast;
@@ -551,7 +555,7 @@ async fn run_server(cli_port: Option<u16>) {
 
         // 注册 Todo 自动备份定时任务
         if cfg.auto_todo_backup_enabled {
-            match handlers::backup::start_todo_auto_backup(db.clone(), config.clone()) {
+            match handlers::backup::start_todo_auto_backup(&db, config.clone()) {
                 Ok(()) => info!("Auto Todo backup enabled, cron: {}", cfg.auto_todo_backup_cron),
                 Err(e) => tracing::warn!("Failed to start Todo auto backup: {}", e),
             }
@@ -567,7 +571,7 @@ async fn run_server(cli_port: Option<u16>) {
 
         // 注册 AI 使用统计自动归档定时任务
         if cfg.auto_usage_stats_enabled {
-            match handlers::backup::start_usage_stats_archival(db.clone(), config.clone()) {
+            match handlers::backup::start_usage_stats_archival(&db, config.clone()) {
                 Ok(()) => info!("Auto usage stats archival enabled, cron: {}", cfg.auto_usage_stats_cron),
                 Err(e) => tracing::warn!("Failed to start usage stats archival: {}", e),
             }
@@ -576,7 +580,7 @@ async fn run_server(cli_port: Option<u16>) {
         // 注册自定义模板自动同步定时任务
         if cfg.auto_sync_custom_templates_enabled {
             let db = Arc::clone(&db);
-            match handlers::custom_template::start_custom_template_auto_sync(&cfg.auto_sync_custom_templates_cron, db, config.clone()) {
+            match handlers::custom_template::start_custom_template_auto_sync(&cfg.auto_sync_custom_templates_cron, &db, config.clone()) {
                 Ok(()) => info!("Auto custom template sync enabled, cron: {}", cfg.auto_sync_custom_templates_cron),
                 Err(e) => tracing::warn!("Failed to start custom template auto sync: {}", e),
             }

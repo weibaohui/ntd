@@ -159,9 +159,10 @@ pub async fn feishu_poll_sse(
     // 使用 channel 在后台轮询任务和 SSE 流之间传递结果
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, std::convert::Infallible>>(1);
 
-    // 将需要 clone 的值提取到闭包外部
+    // 将需要 move 进 tokio::spawn 的值提取出来
     let db = state.db.clone();
-    let listener = state.feishu_listener.clone();
+    // feishu_listener 是 Arc，直接 move 进 async 块，无需 clone
+    let listener = state.feishu_listener;
     let workspace_id = params.workspace_id.unwrap_or(0);
 
     // 启动后台轮询任务：独立于请求处理线程，持续轮询飞书 API
@@ -302,9 +303,12 @@ pub async fn feishu_poll_sse(
                 }
 
                 // 仅当 bot 创建成功时启动 listener（监听飞书消息）
+                // bot_id 在上方 is_ok() 分支中已确定为 Some，直接 unwrap 安全
+                #[allow(clippy::unwrap_used)]
                 let bot_id = bot_id.unwrap();
                 if let Ok(Some(bot)) = db.get_agent_bot(bot_id).await {
                     if bot.enabled {
+                        // listener 是 Arc，loop 中多次 spawn 需要 clone 保留 owned 值
                         let listener_clone = listener.clone();
                         tokio::spawn(async move {
                             if let Err(e) = listener_clone.start_bot(&bot).await {
@@ -690,7 +694,8 @@ pub async fn list_workspace_slash_commands(
     State(state): State<AppState>,
     Path(workspace_id): Path<i64>,
 ) -> Result<impl IntoResponse, AppError> {
-    let commands = crate::db::workspace_slash_command::get_workspace_slash_commands(&*state.db, workspace_id)
+    // auto-deref 会自动将 Arc<Database> 解引用为 &Database，无需手动 *
+    let commands = crate::db::workspace_slash_command::get_workspace_slash_commands(&state.db, workspace_id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(ApiResponse::ok(commands))
@@ -734,7 +739,7 @@ pub async fn create_workspace_slash_command(
     }
 
     let id = crate::db::workspace_slash_command::create_workspace_slash_command(
-        &*state.db,
+        &state.db,
         workspace_id,
         &req.slash_command,
         &req.command_type,
@@ -780,7 +785,7 @@ pub async fn update_workspace_slash_command(
     }
 
     crate::db::workspace_slash_command::update_workspace_slash_command(
-        &*state.db,
+        &state.db,
         cmd_id,
         req.slash_command.as_deref(),
         req.command_type.as_deref(),
@@ -799,7 +804,7 @@ pub async fn delete_workspace_slash_command(
     State(state): State<AppState>,
     Path((_workspace_id, cmd_id)): Path<(i64, i64)>,
 ) -> Result<impl IntoResponse, AppError> {
-    crate::db::workspace_slash_command::delete_workspace_slash_command(&*state.db, cmd_id)
+    crate::db::workspace_slash_command::delete_workspace_slash_command(&state.db, cmd_id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(ApiResponse::ok(serde_json::json!({"success": true})))
@@ -810,7 +815,7 @@ pub async fn get_workspace_settings(
     State(state): State<AppState>,
     Path(workspace_id): Path<i64>,
 ) -> Result<impl IntoResponse, AppError> {
-    let settings = crate::db::workspace_setting::get_workspace_settings(&*state.db, workspace_id)
+    let settings = crate::db::workspace_setting::get_workspace_settings(&state.db, workspace_id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -849,7 +854,7 @@ pub async fn update_workspace_settings(
     Json(req): Json<UpdateWorkspaceSettingsRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     crate::db::workspace_setting::upsert_workspace_settings(
-        &*state.db,
+        &state.db,
         workspace_id,
         req.default_response_type,
         req.default_response_todo_id,

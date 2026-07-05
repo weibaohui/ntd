@@ -11,6 +11,8 @@ use super::{Database, ModelBreakdownWithDate};
 
 impl Database {
     /// Create a new usage daily stat record.
+    /// 数据库列较多，参数数量由 schema 决定，无法进一步合并
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_usage_daily_stat(
         &self,
         date: &str,
@@ -64,6 +66,8 @@ impl Database {
     }
 
     /// Create a model breakdown record.
+    /// 数据库列较多，参数数量由 schema 决定
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_usage_model_breakdown(
         &self,
         daily_stat_id: i64,
@@ -226,6 +230,8 @@ impl Database {
     }
 
     /// Create or update usage executor daily stat record.
+    /// 数据库列较多，参数数量由 schema 决定
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_usage_executor_daily_stat(
         &self,
         date: &str,

@@ -1272,32 +1272,32 @@ pub async fn drop_column_if_exists(
 // 每个合并迁移内部完全幂等：从任意中间状态（V5~V40 任意版本）重启都能正确走完。
 // =============================================================================
 
-/// V41 合并迁移：Loop Studio + 评审 + 环路执行演进
-///
-/// 合并了以下历史迁移的完整逻辑：
-/// V6   TodoKind            - todos.kind 列 + 索引
-/// V7   LoopStudio         - 6 张环路表 + 索引/触发器
-/// V8   LoopWorkspace      - loops.workspace 列
-/// V9   IndependentSteps   - steps 独立表
-/// V10  StepColor          - steps.color 列
-/// V11  LoopFlowControl   - 流程控制字段
-/// V12  LoopStepExecution - execution_records 追踪列
-/// V14  LoopsReviewTemplateId - loops.review_template_id 列
-/// V15  ReviewTemplates    - review_templates 表 + 默认模板
-/// V16  LoopStepExecutionSnapshot - loop_step_executions 快照列
-/// V17  ConsolidateReviewInstanceTodos - 去重评审实例
-/// V18  LoopHumanReview    - 人工评审字段
-/// V19  StepLoopTags       - 标签关联表
-/// V23  DropTodoHooks      - 删除 hooks/source_hook_id 列
-/// V24  RenameLoopStepsStepIdToTodoId - 重建 loop_steps 修正 FK
-/// V26  DisableAutoReview  - 禁用普通事项自动评审
-/// V27  AbnormalHandlerTodo - 异常处理 Todo 字段
-/// V28  DropLoopStepExecutionsStepIdFk - 移除 step_id FK 约束
-/// V29  WebhookEnabled     - webhook_enabled 列
-///
-/// 幂等设计：
-/// - 所有 ADD COLUMN/DROP COLUMN/CREATE TABLE 带 IF NOT EXISTS / 存在性检查
-/// - V24（重建 loop_steps）检查 step_id 列是否存在：旧库（V7 或 V13 后的）存在则重建，否则跳过
+// V41 合并迁移：Loop Studio + 评审 + 环路执行演进
+//
+// 合并了以下历史迁移的完整逻辑：
+// V6   TodoKind            - todos.kind 列 + 索引
+// V7   LoopStudio         - 6 张环路表 + 索引/触发器
+// V8   LoopWorkspace      - loops.workspace 列
+// V9   IndependentSteps   - steps 独立表
+// V10  StepColor          - steps.color 列
+// V11  LoopFlowControl   - 流程控制字段
+// V12  LoopStepExecution - execution_records 追踪列
+// V14  LoopsReviewTemplateId - loops.review_template_id 列
+// V15  ReviewTemplates    - review_templates 表 + 默认模板
+// V16  LoopStepExecutionSnapshot - loop_step_executions 快照列
+// V17  ConsolidateReviewInstanceTodos - 去重评审实例
+// V18  LoopHumanReview    - 人工评审字段
+// V19  StepLoopTags       - 标签关联表
+// V23  DropTodoHooks      - 删除 hooks/source_hook_id 列
+// V24  RenameLoopStepsStepIdToTodoId - 重建 loop_steps 修正 FK
+// V26  DisableAutoReview  - 禁用普通事项自动评审
+// V27  AbnormalHandlerTodo - 异常处理 Todo 字段
+// V28  DropLoopStepExecutionsStepIdFk - 移除 step_id FK 约束
+// V29  WebhookEnabled     - webhook_enabled 列
+//
+// 幂等设计：
+// - 所有 ADD COLUMN/DROP COLUMN/CREATE TABLE 带 IF NOT EXISTS / 存在性检查
+// - V24（重建 loop_steps）检查 step_id 列是否存在：旧库（V7 或 V13 后的）存在则重建，否则跳过
 
 // ---------------------------------------------------------------------------
 // Helper functions used by test modules (v15, v17)

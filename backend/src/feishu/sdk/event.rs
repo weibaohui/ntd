@@ -197,8 +197,8 @@ impl EventDispatcherHandler {
         }
     }
 
-    pub fn do_without_validation(&self, payload: Vec<u8>) -> anyhow::Result<()> {
-        let mut context: EventContext = serde_json::from_slice(&payload)?;
+    pub fn do_without_validation(&self, payload: &[u8]) -> anyhow::Result<()> {
+        let mut context: EventContext = serde_json::from_slice(payload)?;
         let event_type = context
             .header
             .as_ref()
@@ -222,7 +222,7 @@ impl EventDispatcherHandler {
         );
 
         if let Some(handler) = self.processor_map.get(&handler_name) {
-            handler.handle(&payload)
+            handler.handle(payload)
         } else if Self::is_ignorable_event(&handler_name) {
             tracing::debug!("Ignoring Feishu event without processor: {handler_name}");
             Ok(())

@@ -29,6 +29,8 @@ impl Database {
         Ok(models.into_iter().map(map_bot).collect())
     }
 
+    /// 参数数量由 agent_bots 表 schema 决定
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_agent_bot(
         &self,
         bot_type: &str,

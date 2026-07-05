@@ -84,7 +84,8 @@ impl PiExecutor {
 
     /// "message_update" 事件：text_delta / text_end / thinking_delta 三个 sub-type。
     fn handle_message_update(&self, ame: Option<&PiAssistantMessageEvent>) -> Option<ParsedLogEntry> {
-        let Some(ame) = ame else { return None };
+        // 用 ? 替代 let-else return None，更简洁且符合 Rust 惯用法
+        let ame = ame?;
         // 提取 model：顶层优先，partial 兜底；空串视为无
         if let Some(m) = pick_message_update_model(ame) {
             *self.base.model.lock() = Some(m);
@@ -202,12 +203,11 @@ impl PiExecutor {
     fn extract_full_text(&self, msg: &super::pi_event::PiMessage) -> Option<String> {
         let mut parts = Vec::new();
         for block in &msg.content {
-            if let super::pi_event::PiContentBlock::Text { text } = block {
-                if let Some(t) = text {
-                    let cleaned = t.replace('\n', "").trim_end().to_string();
-                    if !cleaned.is_empty() {
-                        parts.push(cleaned);
-                    }
+            // 合并两层 if-let：外层匹配 PiContentBlock::Text，内层解包 Option<String>
+            if let super::pi_event::PiContentBlock::Text { text: Some(t) } = block {
+                let cleaned = t.replace('\n', "").trim_end().to_string();
+                if !cleaned.is_empty() {
+                    parts.push(cleaned);
                 }
             }
         }

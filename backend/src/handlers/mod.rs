@@ -68,6 +68,8 @@ impl AppState {
     {
         // 块作用域收紧 `RwLockReadGuard` 生命周期:闭包返回时 guard 随作用域
         // 结束而 drop,后续 await 一定不会持 std 读锁卫跨 .await。
+        // RwLock 中毒表示曾有线程在持锁时 panic，继续执行无意义——直接 panic 让进程重启。
+        #[allow(clippy::unwrap_used)]
         let cfg = self.config.read().unwrap();
         f(&cfg)
     }
@@ -83,6 +85,8 @@ impl AppState {
     pub fn config_clone(&self) -> Config {
         // 块作用域与 `config_snapshot` 同理:guard 在表达式结束时 drop,
         // 后续 await 不会持读锁卫,future 保持 Send。
+        // RwLock 中毒表示曾有线程在持锁时 panic，继续执行无意义——直接 panic 让进程重启。
+        #[allow(clippy::unwrap_used)]
         self.config.read().unwrap().clone()
     }
 
@@ -108,6 +112,8 @@ impl AppState {
     {
         // 块作用域收紧 `RwLockWriteGuard` 生命周期:闭包返回时 guard 随作用域
         // 结束而 drop,后续 await 一定不会持 std 写锁卫跨 .await。
+        // RwLock 中毒表示曾有线程在持锁时 panic，继续执行无意义——直接 panic 让进程重启。
+        #[allow(clippy::unwrap_used)]
         let mut cfg = self.config.write().unwrap();
         f(&mut cfg)
     }
@@ -327,8 +333,9 @@ async fn build_app_state(
     // ====== Loop Studio 三件套初始化 ======
     // 用 block_in_place + Handle::block_on 走 sync 路径做 async DB 调用；
     // 这三件套是「可选能力」,初始化失败不阻塞 daemon 启动,只把 Option 置 None。
+    // 按引用传入避免多余的 clone；函数内部按需 clone 进 Arc 包装
     let (loop_runner, loop_trigger_dispatcher, loop_scheduler) =
-        init_loop_studio_services(ctx.clone(), tx.clone());
+        init_loop_studio_services(&ctx, &tx);
 
     // MessageDebounce 在 feishu_listener 和 history_fetcher 之间共享（issue #600）
     use crate::services::auto_review::ensure_default_review_template_blocking;
@@ -347,7 +354,8 @@ async fn build_app_state(
     let (push_service, push_mutator) = FeishuPushService::new(db.clone(), feishu_listener.clone());
     push_service.start(tx.subscribe());
 
-    spawn_feishu_history_fetcher(ctx.clone(), db.clone(), feishu_listener.clone(), debounce.clone());
+    // feishu_listener 按引用传入避免 clone 整个 Arc；函数内部只 clone 内部字段
+    spawn_feishu_history_fetcher(ctx.clone(), db.clone(), &feishu_listener, debounce.clone());
     ensure_default_review_template_blocking(&db);
 
     // 黑板防抖器初始化，启动 flush 监听器（监听 channel，收到消息后执行 LLM 更新黑板）。
@@ -365,7 +373,7 @@ async fn build_app_state(
     ));
 
     // 后台监听 todo 执行完成事件，派发给 loop_trigger_dispatcher
-    spawn_todo_completed_listener(tx.clone(), loop_trigger_dispatcher.clone());
+    spawn_todo_completed_listener(&tx, loop_trigger_dispatcher.clone());
 
     AppState {
         db,
@@ -386,9 +394,13 @@ async fn build_app_state(
 ///
 /// 全部失败容忍：返回 `None` 让 AppState 标记为「loop 功能不可用」,handler
 /// 在被调用时返回 503 风格错误。daemon 启动不因 loop 故障而被拖垮。
+// 返回三元组 Option<Arc<...>>，拆分为 type alias 过度抽象，允许 type_complexity
+#[allow(clippy::type_complexity)]
 fn init_loop_studio_services(
-    ctx: ServiceContext,
-    tx: tokio::sync::broadcast::Sender<ExecEvent>,
+    // 按引用传入避免调用方 clone；函数内部按需 clone 进 Arc 包装
+    ctx: &ServiceContext,
+    // 按引用传入，函数内部 clone 进 LoopRunner 和 tokio::spawn 闭包
+    tx: &tokio::sync::broadcast::Sender<ExecEvent>,
 ) -> (
     Option<Arc<crate::services::loop_runner::LoopRunner>>,
     Option<Arc<crate::services::loop_trigger::LoopTriggerDispatcher>>,
@@ -397,15 +409,16 @@ fn init_loop_studio_services(
     use crate::services::loop_runner::{LoopRunner, LoopRunnerCtx};
     use crate::services::loop_trigger::LoopTriggerDispatcher;
     // runner 与 dispatcher 是纯内存构造,无 IO,失败概率低
-    // 创建 LoopRunnerCtx：从 ServiceContext 中取出 LoopRunner 需要的字段
+    // 创建 LoopRunnerCtx：从 ServiceContext 中 clone 出 Arc 字段，零成本共享引用计数
     let loop_runner_ctx = LoopRunnerCtx {
         db: ctx.db.clone(),
         executor_registry: ctx.executor_registry.clone(),
         task_manager: ctx.task_manager.clone(),
         config: ctx.config.clone(),
     };
-    let runner = Arc::new(LoopRunner::new(loop_runner_ctx, tx));
-    // dispatcher 复用 runner 的 ctx.db
+    // clone tx 进 LoopRunner 内部，broadcast::Sender 是 Arc 包装，clone 只增加引用计数
+    let runner = Arc::new(LoopRunner::new(loop_runner_ctx, tx.clone()));
+    // dispatcher 复用 runner 的 ctx.db；ctx clone 同理，ServiceContext 内部字段均为 Arc
     let dispatcher = Arc::new(LoopTriggerDispatcher::new(
         runner.clone(),
         ctx.clone(),
@@ -434,7 +447,8 @@ fn init_loop_studio_services(
 /// 当 todo 执行完成时，触发 loop 的 todo_completed 触发器。
 /// 这是一个 fire-and-forget 任务，失败不影响 daemon 主流程。
 fn spawn_todo_completed_listener(
-    tx: tokio::sync::broadcast::Sender<ExecEvent>,
+    // subscribe() 只需 &self，按引用传入避免 clone
+    tx: &tokio::sync::broadcast::Sender<ExecEvent>,
     dispatcher: Option<Arc<crate::services::loop_trigger::LoopTriggerDispatcher>>,
 ) {
     let Some(dispatcher) = dispatcher else {
@@ -508,7 +522,8 @@ fn spawn_stale_binding_cleanup(db: Arc<Database>) {
 fn spawn_feishu_history_fetcher(
     ctx: ServiceContext,
     db: Arc<Database>,
-    feishu_listener: Arc<FeishuListener>,
+    // feishu_listener 仅用于提取 token_manager 和 bot_credentials，按引用传入后 clone Arc 字段
+    feishu_listener: &Arc<FeishuListener>,
     debounce: Arc<crate::services::message_debounce::MessageDebounce>,
 ) {
     use crate::services::feishu_history_fetcher::FeishuHistoryFetcher;
@@ -524,7 +539,8 @@ fn spawn_feishu_history_fetcher(
         let bots_for_fetcher: Vec<(i64, String, String)> = match db_for_fetcher.get_agent_bots().await {
             Ok(bots) => bots.into_iter()
                 .filter(|b| b.bot_type == "feishu" && b.enabled)
-                .map(|b| (b.id, b.app_id.clone(), b.app_secret.clone()))
+                // into_iter() 已消费 bot，字段可直接 move 进 tuple，无需 clone
+                .map(|b| (b.id, b.app_id, b.app_secret))
                 .collect(),
             Err(e) => {
                 tracing::error!("[feishu-history-fetcher] failed to get agent bots: {}", e);

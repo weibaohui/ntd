@@ -177,7 +177,9 @@ pub fn parse_executor_type(executor: &str) -> Option<ExecutorType> {
 pub fn strip_think_tags(content: &str) -> String {
     use regex::Regex;
     use std::sync::LazyLock;
+    // 正则模式是编译期已知的固定字符串，绝不会失败；用 unwrap 而非 panic 避免静态初始化开销
     static THINK_RE: LazyLock<Regex> = LazyLock::new(|| {
+        #[allow(clippy::unwrap_used)]
         Regex::new(r"<think>[\s\S]*?</think>").unwrap()
     });
     THINK_RE.replace_all(content, "").trim().to_string()

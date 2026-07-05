@@ -185,6 +185,7 @@ pub(crate) async fn reject_create_record_failure(
 /// `start_todo_execution` 失败：发 Output/Finished 事件 + 写 record 为 Failed 状态 +
 /// finish_todo_execution + 移除 task。返回的 `record_id` 仍是 `Some`，
 /// 让调用方可以基于 record_id 后续追查失败记录。
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn reject_start_todo_failure(
     db: &Database,
     tx: &broadcast::Sender<ExecEvent>,
@@ -432,6 +433,7 @@ fn build_command_string(executable_path: &str, command_args: &[String]) -> Strin
 /// DB 记录的 session_id 必须与 request.resume_session_id 保持一致：
 ///   - 首次执行（None）：写 None，真实 sid 由 stdout reader 从 Claude Code 的 system 事件解析后回写。
 ///   - resume（Some(sid)）：写原 sid。
+///
 /// 不能用 selected.session_id_for_executor——首次执行时它是后台合成的 UUID，
 /// 直接写进 DB 会让 feishu_listener::decide_resume_session 拿合成 sid 触发 resume，
 /// 把"Invalid session ID"错误从首次执行搬到第二次。

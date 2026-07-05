@@ -258,16 +258,10 @@ impl EventExtractor for CodexExtractor {
             return None;
         }
 
-        // Codex 特殊处理：stderr 的 error 不一定是 error 类型
-        if trimmed.to_lowercase().contains("error") {
-            Some(ExecutionEvent::Info {
-                message: trimmed.to_string(),
-            })
-        } else {
-            Some(ExecutionEvent::Info {
-                message: trimmed.to_string(),
-            })
-        }
+        // Codex 特殊处理：stderr 的 error 不一定是 error 类型，统一作为 Info 上报
+        Some(ExecutionEvent::Info {
+            message: trimmed.to_string(),
+        })
     }
 
     fn metadata(&self) -> &ExecutionMetadata {

@@ -80,13 +80,14 @@ impl AtomcodeExtractor {
         let mut events = Vec::new();
 
         // 思考块处理：多行 [thinking]/[THINK] 累积为一块
-        if trimmed.starts_with("[thinking]") {
-            let content = trimmed[10..].trim(); // "[thinking]" = 10 chars
+        // 使用 strip_prefix 替代手动索引切片，避免越界并让意图更清晰
+        if let Some(content) = trimmed.strip_prefix("[thinking]") {
+            let content = content.trim();
             self.pending_thinking.push(content.to_string());
             return events;
         }
-        if trimmed.starts_with("[THINK]") {
-            let content = trimmed[7..].trim(); // "[THINK]" = 7 chars
+        if let Some(content) = trimmed.strip_prefix("[THINK]") {
+            let content = content.trim();
             self.pending_thinking.push(content.to_string());
             return events;
         }
@@ -105,13 +106,13 @@ impl AtomcodeExtractor {
             if let Some(pos) = trimmed.find("(model ") {
                 let after = &trimmed[pos + 7..];
                 let model = after.trim_end_matches(')').trim();
-                if !model.is_empty() {
-                    if self.metadata.model.is_none() {
-                        self.metadata.model = Some(model.to_string());
-                        events.push(ExecutionEvent::ModelSwitch {
-                            model: model.to_string(),
-                        });
-                    }
+                if !model.is_empty()
+                    && self.metadata.model.is_none()
+                {
+                    self.metadata.model = Some(model.to_string());
+                    events.push(ExecutionEvent::ModelSwitch {
+                        model: model.to_string(),
+                    });
                 }
             }
             return events;
@@ -527,7 +528,7 @@ mod tests {
 
         let events = ext.extract("任务完成[tokens] prompt=1 completion=1");
         assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Thinking { content } if content == "Done.")));
-        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Result { summary })));
+        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Result { summary: _ })));
         assert!(events.iter().any(|e| matches!(e, ExecutionEvent::Tokens { .. })));
     }
 

@@ -210,6 +210,8 @@ impl Database {
     /// 创建 Todo，带所有可选字段。
     /// 工作空间必填且必须存在：handler 在调用本方法前已经按 id 解析得到 path，
     /// 这里同时写入 workspace_id（筛选键）+ workspace_path（cwd）保证双字段同步。
+    /// 参数数量由业务必填字段决定，无法进一步合并
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_todo_with_extras(
         &self,
         title: &str,
@@ -245,6 +247,8 @@ impl Database {
     }
 
     /// 从环路导入时创建 Todo，支持完整字段（status/scheduler_enabled/auto_review_enabled/review_template_id/kind）。
+    /// 参数数量由导入时需要覆盖的可选字段决定
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_todo_for_import(
         &self,
         title: &str,
@@ -401,9 +405,6 @@ impl Database {
         let rows_affected = self.conn.execute(stmt).await?.rows_affected();
         Ok(rows_affected)
     }
-
-    /// todo hook 已整块移除（见 plan `purring-forging-petal`），`update_todo_hooks` 不再存在：
-    /// todo 的 `hooks` 字段与 `todos.hooks` 列随 V23 迁移一起删掉。
 
     pub async fn update_todo_task_id(
         &self,
@@ -629,7 +630,7 @@ impl Database {
     /// - `parent_todo_id` = 源 todo id (loop 触发时为 0, 因为 loop step 没有单一 source todo)
     /// - `review_template_id` = 使用的评审模板 id
     /// - `auto_review_enabled` = false (评审实例自身不再评审, 防止无限嵌套)
-    /// 评审实例是 transient 的, 不挂 hooks / scheduler.
+    ///   评审实例是 transient 的, 不挂 hooks / scheduler.
     pub async fn create_review_instance_todo(
         &self,
         parent_todo_id: i64,
@@ -986,7 +987,8 @@ impl Database {
         }
         Ok(tags::Entity::find()
             .filter(
-                tags::Column::Name.is_in(names.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
+                // is_in 接受 IntoIterator，无需 collect() 为 Vec
+                tags::Column::Name.is_in(names.iter().map(|s| s.to_string())),
             )
             .all(&self.conn)
             .await?

@@ -672,8 +672,9 @@ pub async fn get_skill_file(
     let result = tokio::task::spawn_blocking(move || -> Result<SkillFileContentResponse, AppError> {
         let content = std::fs::read_to_string(&file_path)
             .map_err(|e| AppError::Internal(format!("Failed to read file: {}", e)))?;
+        // query.path 是 String 类型，进入 spawn_blocking 闭包时 move 即可，无需 clone
         Ok(SkillFileContentResponse {
-            path: query.path.clone(),
+            path: query.path,
             content,
         })
     })
@@ -779,6 +780,8 @@ fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
+        // read_dir 保证条目有效，file_name() 不可能为 None（根路径除外，但这里是子目录遍历）
+        #[allow(clippy::unwrap_used)]
         let name = format!("{}/{}", prefix, path.file_name().unwrap().to_string_lossy());
 
         if path.is_dir() {

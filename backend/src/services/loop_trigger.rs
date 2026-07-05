@@ -41,10 +41,8 @@ impl LoopTriggerDispatcher {
         content_type: Option<&str>,
     ) -> Option<i64> {
         let loop_ = self.ctx.db.get_loop(loop_id).await.ok().flatten();
-        if loop_.is_none() {
-            return None;
-        }
-        let loop_ = loop_.unwrap();
+        // loop_ 为 None 时直接返回 None（? 运算符替代 if + unwrap 模式）
+        let loop_ = loop_.as_ref()?;
         if loop_.status != "enabled" {
             warn!(
                 "loop_trigger: webhook dispatch on loop #{} skipped (status != enabled)",
@@ -266,10 +264,9 @@ impl LoopTriggerDispatcher {
         trigger_meta: serde_json::Value,
     ) -> Option<i64> {
         let loop_ = self.ctx.db.get_loop(loop_id).await.ok().flatten();
-        if loop_.is_none() {
-            return None;
-        }
-        if loop_.unwrap().status != "enabled" {
+        // loop_ 为 None 时直接返回 None（? 运算符替代 if + unwrap 模式）
+        let loop_ = loop_.as_ref()?;
+        if loop_.status != "enabled" {
             warn!(
                 "loop_trigger: manual dispatch on loop #{} skipped (status != enabled)",
                 loop_id
@@ -281,6 +278,7 @@ impl LoopTriggerDispatcher {
     }
 
     /// 共用：调 runner.spawn_run。返回 loop_execution_id,失败返回 -1。
+    #[allow(clippy::too_many_arguments)] // 参数来自上游 handler 的独立数据源，合并为 struct 增加认知负担
     async fn spawn_run(
         &self,
         loop_id: i64,

@@ -143,6 +143,8 @@ pub async fn cloud_sync_status(
     // 关键：先把所有需要从 config 读的值一次性拷出来，然后立刻释放读锁。
     // 之后再去打云端 HTTP，否则在网络抖动期间会一直持读锁，阻塞其他写者。
     let (connected, authenticated, server_url, token, last_sync_at_fallback) = {
+        // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
+        #[allow(clippy::unwrap_used)]
         let cfg = state.config.read().unwrap();
         let server_url = cfg.cloud_sync.server_url.clone();
         let token = cfg.cloud_sync.sync_token.clone();
@@ -216,6 +218,8 @@ pub struct SaveResponse {
 pub async fn cloud_get_config(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<CloudConfigResponse>, AppError> {
+    // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
+    #[allow(clippy::unwrap_used)]
     let cfg = state.config.read().unwrap();
 
     Ok(ApiResponse::ok(CloudConfigResponse {
@@ -231,6 +235,8 @@ pub async fn cloud_save_config(
     State(state): State<AppState>,
     Json(req): Json<CloudConfigRequest>,
 ) -> Result<ApiResponse<SaveResponse>, AppError> {
+    // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
+    #[allow(clippy::unwrap_used)]
     let mut cfg = state.config.write().unwrap();
     if let Some(url) = req.server_url {
         cfg.cloud_sync.server_url = url.trim_end_matches('/').to_string();
@@ -241,7 +247,8 @@ pub async fn cloud_save_config(
     if let Some(mode) = req.default_conflict_mode {
         cfg.cloud_sync.default_conflict_mode = mode;
     }
-    cfg.save().map_err(|e| AppError::Internal(e.to_string()))?;
+    // save() 返回 Result<(), String>，e 已是 String，无需再 to_string()
+    cfg.save().map_err(AppError::Internal)?;
 
     Ok(ApiResponse::ok(SaveResponse { saved: true }))
 }
@@ -271,7 +278,7 @@ pub struct SyncResult {
 /// - overwrite: 覆盖本地同名 todo 的 prompt/status
 /// - skip:      跳过云端这条，保留本地
 /// - rename:    将云端 todo 重命名后插入（追加 "(云端)" 后缀）
-/// 返回成功插入/更新的条数
+///   返回成功插入/更新的条数
 async fn merge_cloud_todos_to_local(
     db: &Database,
     cloud_todos: &[CloudTodoItem],
@@ -428,7 +435,8 @@ async fn resolve_cloud_workspace(
         .ok_or_else(|| "创建 /tmp fallback 失败".to_string())
 }
 
-fn local_todos_to_cloud(todos: Vec<Todo>, tag_map: HashMap<i64, String>) -> CloudSyncData {
+// tag_map 仅用于 .get() 查询，按引用传入避免不必要的 HashMap clone
+fn local_todos_to_cloud(todos: Vec<Todo>, tag_map: &HashMap<i64, String>) -> CloudSyncData {
     let cloud_todos: Vec<CloudTodoItem> = todos
         .into_iter()
         .map(|t| {
@@ -471,6 +479,8 @@ pub async fn cloud_sync_push(
     // 云端早就返回了，本端 HTTP 响应却永远不返回。修法：缩短临界区。
     let dry_run = query.dry_run.unwrap_or(false);
     let (server_url, token, conflict_mode) = {
+        // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
+        #[allow(clippy::unwrap_used)]
         let cfg = state.config.read().unwrap();
         let token = cfg
             .cloud_sync
@@ -497,7 +507,7 @@ pub async fn cloud_sync_push(
     let tag_map: HashMap<i64, String> = tags.into_iter().map(|t| (t.id, t.name)).collect();
 
     // 转换为云端格式
-    let cloud_data = local_todos_to_cloud(todos, tag_map);
+    let cloud_data = local_todos_to_cloud(todos, &tag_map);
     let yaml_content = serde_yaml::to_string(&cloud_data)
         .map_err(|e| AppError::Internal(format!("序列化失败: {}", e)))?;
 
@@ -598,7 +608,9 @@ pub async fn cloud_sync_push(
         .await;
 
     // 更新最后同步时间：现在没有别的读锁阻塞，可以安全取写锁。
+    // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
     if success && !dry_run {
+        #[allow(clippy::unwrap_used)]
         let mut cfg = state.config.write().unwrap();
         cfg.cloud_sync.last_sync_at = Some(chrono::Utc::now().to_rfc3339());
         let _ = cfg.save();
@@ -625,6 +637,8 @@ pub async fn cloud_sync_pull(
     // 详见 cloud_sync_push 的注释。
     let dry_run = query.dry_run.unwrap_or(false);
     let (server_url, token, conflict_mode) = {
+        // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
+        #[allow(clippy::unwrap_used)]
         let cfg = state.config.read().unwrap();
         let token = cfg
             .cloud_sync
@@ -716,7 +730,9 @@ pub async fn cloud_sync_pull(
         .await;
 
     // 更新最后同步时间：现在没有别的读锁阻塞，可以安全取写锁。
+    // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
     if !dry_run {
+        #[allow(clippy::unwrap_used)]
         let mut cfg = state.config.write().unwrap();
         cfg.cloud_sync.last_sync_at = Some(chrono::Utc::now().to_rfc3339());
         let _ = cfg.save();

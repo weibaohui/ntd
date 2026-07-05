@@ -46,7 +46,8 @@ pub async fn detect_executor(
         .map_err(|e| AppError::Internal(e.to_string()))?
         .ok_or(AppError::NotFound)?;
 
-    let path = if ec.path.is_empty() { name.clone() } else { ec.path.clone() };
+    // ec.path 非空时直接 move，无需 clone——后续不再使用 ec.path
+    let path = if ec.path.is_empty() { name.clone() } else { ec.path };
     let (found, resolved) = detect_binary(&path);
 
     Ok(ApiResponse::ok(ExecutorDetectResult {
@@ -236,6 +237,8 @@ pub async fn resolve_executor_path(
         }));
     }
 
+    // found=true 时 resolved 必定为 Some——detect_binary 返回 (true, Some(path))
+    #[allow(clippy::unwrap_used)]
     let resolved = resolved.unwrap();
     let path_updated = ec.path != resolved;
 

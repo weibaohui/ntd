@@ -337,7 +337,11 @@ impl FeishuHistoryFetcher {
 
                         // Check message age: skip processing if too old
                         let max_age_secs = {
-                            let cfg = self.ctx.config.read().unwrap();
+                            // config.read() 可能因线程 panic 导致 PoisonError；回退到获取内部数据而非 panic
+                            let cfg = match self.ctx.config.read() {
+                                Ok(guard) => guard,
+                                Err(poisoned) => poisoned.into_inner(),
+                            };
                             cfg.history_message_max_age_secs
                         };
                         let msg_time = chrono::DateTime::parse_from_rfc3339(&created_at)

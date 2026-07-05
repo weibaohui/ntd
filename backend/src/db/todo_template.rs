@@ -131,7 +131,8 @@ impl Database {
             .order_by_desc(todo_templates::Column::UpdatedAt)
             .one(&self.conn)
             .await?;
-        Ok(model.map(|m| (m.source_url.unwrap(), m.last_sync_at)))
+        // is_not_null 过滤保证 source_url 必定有值
+        Ok(model.and_then(|m| m.source_url.map(|url| (url, m.last_sync_at))))
     }
 
     /// Delete all templates that came from a specific remote URL (for re-sync)

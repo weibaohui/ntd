@@ -453,7 +453,7 @@ impl FeishuListener {
             binding.latest_record_id,
             resume_session_id.is_some(),
             binding.session_id,
-            latest_record.as_ref().map(|r| r.status.clone()),
+            latest_record.as_ref().map(|r| r.status),
         );
         Self::push_binding_execution(
             context.debounce,
@@ -513,11 +513,11 @@ impl FeishuListener {
             return (None, None);
         }
         // 已通过 should_resume 守卫：latest_record 是 Some 且 r.session_id 是 Some，
-        // 用 expect 表达「在 guard 假设下必定成立」。
+        // 用 unwrap_or_default 做防御性兜底（should_resume=true 保证 session_id 存在）
         let real_sid = Some(
             latest_record
                 .and_then(|r| r.session_id.clone())
-                .expect("should_resume=true guarantees latest_record.session_id is Some"),
+                .unwrap_or_default(),
         );
         (real_sid, Some(content.to_string()))
     }
@@ -672,6 +672,7 @@ impl FeishuListener {
     }
 
     /// 阶段 6a-ii：把斜杠命令消息塞进 debounce
+    #[allow(clippy::too_many_arguments)] // 参数来自上游 handler 的独立数据源，合并为 struct 增加认知负担
     fn push_slash_command_message(
         debounce: &Arc<MessageDebounce>,
         bot_id: i64,
@@ -806,6 +807,7 @@ impl FeishuListener {
     }
 
     /// 阶段 6b-i：把默认回复消息塞进 debounce
+    #[allow(clippy::too_many_arguments)] // 参数来自上游 handler 的独立数据源，合并为 struct 增加认知负担
     fn debounce_push_default(
         debounce: &Arc<MessageDebounce>,
         bot_id: i64,

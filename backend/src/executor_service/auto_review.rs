@@ -6,7 +6,7 @@
 //!   - `auto_review_enabled=true`
 //!   - 源 record 进入了 success 或 failed 终态
 //!   - `source_execution_record_id` 尚未被设置（避免重复评审同一条记录）
-//! 才启动评审。
+//!     才启动评审。
 //!
 //! V15 之后评审模板是独立表（`review_templates`），不带 executor 字段。
 //! 评审时新建一个 todo_type=2 的"评审实例" todo, prompt 用 caller 合成好的
@@ -27,6 +27,7 @@ use super::RunTodoExecutionRequest;
 
 /// 独立 runtime. 用于 run_auto_review 在原 todo 的 spawned task 内部同步运行
 /// 自动评审逻辑, 避免与外层 spawned task 产生 Send / 嵌套 spawn 问题.
+#[allow(clippy::expect_used)]
 fn review_runtime() -> &'static tokio::runtime::Runtime {
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {

@@ -180,7 +180,7 @@ pub struct Config {
 
 /// Paths for each supported executor binary.
 /// Key is the executor name (e.g., "claudecode"), value is the binary path.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(default)]
 pub struct ExecutorPaths {
     pub paths: HashMap<String, String>,
@@ -204,14 +204,6 @@ impl<'de> Deserialize<'de> for ExecutorPaths {
             RawExecutorPaths::Legacy(legacy) => legacy,
         };
         Ok(ExecutorPaths { paths })
-    }
-}
-
-impl Default for ExecutorPaths {
-    fn default() -> Self {
-        Self {
-            paths: HashMap::new(),
-        }
     }
 }
 

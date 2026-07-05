@@ -371,6 +371,7 @@ impl WorktreeService {
     ///   选 `>> 96` 而不是 `>> 64` / `>> 80` 是因为后者会切到含 version/variant
     ///   固定字段的区段，反而引入 bit 漂移。
     ///   直接用 `as_u128() >> 96` 抽位，不依赖 `simple()` 的字符串格式。
+    ///
     /// 分支名 = `wt-{todo_id}-{identity}`，目录名 = `{todo_id}-{identity}`。
     fn mint_identity() -> String {
         let now = chrono::Utc::now();

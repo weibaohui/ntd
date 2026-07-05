@@ -182,8 +182,8 @@ impl UsageStatsService {
         entries
     }
 
-    async fn load_claude_jsonl_from_dir(&self, dir: &PathBuf, entries: &mut Vec<RawUsageEntry>) {
-        let mut stack = vec![dir.clone()];
+    async fn load_claude_jsonl_from_dir(&self, dir: &std::path::Path, entries: &mut Vec<RawUsageEntry>) {
+        let mut stack = vec![dir.to_path_buf()];
 
         while let Some(current_dir) = stack.pop() {
             if let Ok(mut dir) = fs::read_dir(&current_dir).await {
@@ -369,8 +369,8 @@ impl UsageStatsService {
         entries
     }
 
-    async fn load_kimi_wire_files(&self, dir: &PathBuf, entries: &mut Vec<RawUsageEntry>) {
-        let mut stack = vec![dir.clone()];
+    async fn load_kimi_wire_files(&self, dir: &std::path::Path, entries: &mut Vec<RawUsageEntry>) {
+        let mut stack = vec![dir.to_path_buf()];
 
         while let Some(current_dir) = stack.pop() {
             if let Ok(mut dir) = fs::read_dir(&current_dir).await {
@@ -466,8 +466,8 @@ impl UsageStatsService {
         })
     }
 
-    async fn load_jsonl_files_from_dir(&self, dir: &PathBuf, _editor_name: &str, entries: &mut Vec<RawUsageEntry>) {
-        let mut stack = vec![dir.clone()];
+    async fn load_jsonl_files_from_dir(&self, dir: &std::path::Path, _editor_name: &str, entries: &mut Vec<RawUsageEntry>) {
+        let mut stack = vec![dir.to_path_buf()];
 
         while let Some(current_dir) = stack.pop() {
             if let Ok(mut dir) = fs::read_dir(&current_dir).await {

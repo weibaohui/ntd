@@ -1343,6 +1343,8 @@ pub async fn get_session_stats(
     let stats = tokio::task::spawn_blocking(move || {
         let sessions = scan_for_executors(&executors);
         let now = chrono::Utc::now();
+        // and_hms_opt(0,0,0) 对任何合法日期都返回 Some——午夜零点永远有效
+        #[allow(clippy::unwrap_used)]
         let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
 
         let mut by_source: HashMap<String, u64> = HashMap::new();

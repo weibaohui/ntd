@@ -9,6 +9,7 @@ use std::path::PathBuf;
 /// Get the path of the currently running ntd binary
 /// Uses args()[0] to get the actual command path (handles sudo correctly)
 /// Falls back to current_exe if args[0] is not an absolute path
+#[allow(clippy::expect_used)]
 pub(crate) fn ntd_binary_path() -> PathBuf {
     std::env::args()
         .next()

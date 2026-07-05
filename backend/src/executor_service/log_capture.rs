@@ -291,16 +291,19 @@ where
 ///   1. 第一次出现 `executor.extract_session_id` 时把 session_id 回写到 execution_records；
 ///   2. 解析 `todo_progress` 时除写库外还要发 `TodoProgress` 事件（前端实时进度条）；
 ///   3. 每 10 行 或 工具调用时扫一遍 buffer 计算 stats，emit `ExecutionStats`。
+///
 /// 这三件事没法再下沉到 LogFlusher（一个是 DB 写，一个是 progress 事件），所以留在这里。
+///
 /// workspace_id：执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标，
 /// 必须贯穿到每个事件发送路径，否则推送服务无法匹配到对应的推送目标。
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_stdout_reader<R>(
     stdout_handle: Option<R>,
-    executor: Arc<dyn CodeExecutor>,
-    db: Arc<Database>,
-    log_flusher: Arc<LogFlusher>,
-    tx: broadcast::Sender<ExecEvent>,
-    task_id: String,
+    executor: &Arc<dyn CodeExecutor>,
+    db: &Arc<Database>,
+    log_flusher: &Arc<LogFlusher>,
+    tx: &broadcast::Sender<ExecEvent>,
+    task_id: &str,
     record_id: i64,
     workspace_id: Option<i64>,
     initial_session_id: Option<String>,
@@ -309,11 +312,12 @@ where
     R: AsyncRead + Unpin + Send + 'static,
 {
     let stdout_reader = stdout_handle?;
+    // 克隆 Arc/Sender 等引用计数类型以移入 async block；clone 开销仅为原子加，不影响性能
     let tx_clone = tx.clone();
     let executor_clone = executor.clone();
     let db_for_todo = db.clone();
     let log_flusher_for_stdout = log_flusher.clone();
-    let tid = task_id;
+    let tid = task_id.to_string();
     let rid = record_id;
     let wid = workspace_id;
 
@@ -477,7 +481,8 @@ async fn maybe_emit_execution_stats(
     workspace_id: Option<i64>,
 ) {
     let is_tool_call = is_tool_call_log_type(&parsed.log_type);
-    if !is_tool_call && !log_count.is_multiple_of(10) {
+    // is_multiple_of 需要 MSRV 1.87.0，用取模运算兼容 1.81.0
+    if !is_tool_call && log_count % 10 != 0 {
         return;
     }
     let stats = compute_execution_stats(log_flusher).await;
@@ -531,6 +536,7 @@ async fn compute_execution_stats(
 /// 和 ChildStderr 是两个不同类型，没法合并成一个 `R`）。
 /// workspace_id：执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标，
 /// 必须贯穿到每个事件发送路径，否则推送服务无法匹配到对应的推送目标。
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn setup_log_capture_pipeline<SO, SE>(
     stdout_handle: Option<SO>,
     stderr_handle: Option<SE>,
@@ -558,23 +564,25 @@ where
         Box::new(crate::log_flusher::DatabaseLogSink::new(db.clone())),
         crate::log_flusher::LogFlusherConfig::for_record(record_id),
     ));
+    // 传递引用避免不必要的 Arc 克隆；函数内部仅在 async block 需要所有权时才 clone
     let stdout_task = spawn_stdout_reader(
         stdout_handle,
-        executor.clone(),
-        db.clone(),
-        log_flusher.clone(),
-        tx.clone(),
-        task_id.clone(),
+        &executor,
+        &db,
+        &log_flusher,
+        &tx,
+        &task_id,
         record_id,
         workspace_id,
         initial_session_id,
     );
+    // tx/task_id 在此调用后不再使用，直接 move 避免多余克隆
     let stderr_task = spawn_stderr_reader(
         stderr_handle,
         executor.clone(),
         log_flusher.clone(),
-        tx.clone(),
-        task_id.clone(),
+        tx,
+        task_id,
         workspace_id,
     );
     // 定时兜底 flush：每 3 秒检查未刷新条目，有则写库。

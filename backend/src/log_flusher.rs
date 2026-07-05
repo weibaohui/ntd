@@ -73,7 +73,7 @@ impl LogSink for DatabaseLogSink {
 }
 
 /// [`LogFlusher`] 配置项。把这些字段抽出来是为了让测试可以传更小的阈值。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct LogFlusherConfig {
     /// 目标执行记录 ID。
     pub record_id: i64,
@@ -245,6 +245,7 @@ impl LogFlusher {
     /// 4. drain `handles`，等所有 spawned flush task 真正退出。
     ///
     /// 调用方必须在 stdout/stderr task 退出后调用本方法，保证没有并发 writer。
+    #[allow(clippy::expect_used)]
     pub async fn finalize(self: Arc<Self>) {
         self.inner.shutdown.store(true, Ordering::Release);
 
@@ -275,7 +276,7 @@ impl LogFlusher {
         // 等所有 spawned flush task 退出。即使 spawn 后 flush 已完成，JoinHandle
         // 仍然需要 await 一次以释放 task 占用的栈等资源。
         let handles: Vec<_> = {
-            let mut h = self.inner.handles.lock().unwrap();
+            let mut h = self.inner.handles.lock().expect("handles Mutex poisoned in shutdown");
             std::mem::take(&mut *h)
         };
         for h in handles {

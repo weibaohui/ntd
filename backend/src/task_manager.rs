@@ -130,6 +130,7 @@ pub struct TaskGuard {
 impl TaskGuard {
     /// 取出内部的 receiver，用于在 select! 中监听取消信号。
     /// 只能调用一次；调用后 guard 仍会保留并负责 cleanup。
+    #[allow(clippy::expect_used)]
     pub fn take_receiver(&mut self) -> mpsc::Receiver<()> {
         self.receiver
             .take()

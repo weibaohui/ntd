@@ -100,8 +100,9 @@ pub(crate) async fn register_task_and_load_todo(
 /// Stage 1 步骤 3：从 config 读 max_concurrent + timeout_secs。
 ///
 /// config lock 释放后两个值就各自独立可用，避免后续代码块带 lock。
+#[allow(clippy::expect_used)]
 pub(crate) fn read_runtime_config(request: &RunTodoExecutionRequest) -> (u32, u64) {
-    let cfg = request.config.read().unwrap();
+    let cfg = request.config.read().expect("config RwLock poisoned in read_runtime_config");
     (cfg.max_concurrent_todos, cfg.execution_timeout_secs)
 }
 

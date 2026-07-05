@@ -119,7 +119,8 @@ impl MessageDebounce {
 
                     let merged_content = merge_pending_messages(&entry.messages);
 
-                    let last = entry.messages.last().unwrap();
+                    // entry.messages 在上面已确认非空（is_empty 检查），last() 必然有值
+                    let Some(last) = entry.messages.last() else { return; };
                     let mut merged_params = last.params.clone().unwrap_or_default();
                     merged_params.insert("content".to_string(), merged_content.clone());
                     merged_params.insert("message".to_string(), merged_content.clone());
@@ -426,8 +427,8 @@ impl MessageDebounce {
             return Err(());
         };
 
-        // spawn_run 需要 Arc<Self>，clone 增加引用计数，方法结束后 Arc 会被 drop
-        let execution_id = runner.clone().spawn_run(
+        // spawn_run 消费 Arc<Self>，runner 后续不再使用，直接 move 而非 clone
+        let execution_id = runner.spawn_run(
             loop_id,
             None, // trigger_id
             "default_response",
@@ -456,6 +457,7 @@ impl MessageDebounce {
 
     /// 处理默认响应类型为 executor 的情况
     /// 直接调用执行器进行交互，不创建执行记录
+    #[allow(clippy::too_many_arguments)] // 参数来自上游 handler 的独立数据源，合并为 struct 增加认知负担
     async fn handle_default_response_executor(
         db: &Arc<Database>,
         executor_registry: &Arc<crate::adapters::ExecutorRegistry>,

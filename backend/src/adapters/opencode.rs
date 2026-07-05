@@ -92,18 +92,17 @@ impl OpencodeExecutor {
         // even on successful execution, so we track success via the event stream.
         *self.has_successful_finish.lock() = true;
         // Store usage info if available
-        let usage = if let Some(part) = &event.part {
-            if let Some(tokens) = &part.tokens {
-                Some(ExecutionUsage {
-                    input_tokens: tokens.input,
-                    output_tokens: tokens.output,
-                    cache_read_input_tokens: if tokens.cache.read > 0 { Some(tokens.cache.read) } else { None },
-                    cache_creation_input_tokens: if tokens.cache.write > 0 { Some(tokens.cache.write) } else { None },
-                    total_cost_usd: part.cost,
-                    duration_ms: None,
-                })
-            } else { None }
-        } else { None };
+        // 用 .as_ref().and_then().map() 替代手动 if-let 嵌套
+        let usage = event.part.as_ref().and_then(|part| {
+            part.tokens.as_ref().map(|tokens| ExecutionUsage {
+                input_tokens: tokens.input,
+                output_tokens: tokens.output,
+                cache_read_input_tokens: if tokens.cache.read > 0 { Some(tokens.cache.read) } else { None },
+                cache_creation_input_tokens: if tokens.cache.write > 0 { Some(tokens.cache.write) } else { None },
+                total_cost_usd: part.cost,
+                duration_ms: None,
+            })
+        });
         Some(helpers::with_timestamp(helpers::entry_with_usage("step_finish", "Step finished", usage), timestamp))
     }
 }

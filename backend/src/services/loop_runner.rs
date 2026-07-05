@@ -152,6 +152,7 @@ impl LoopRunner {
     }
 
     /// Spawn 一条 loop 执行（fire-and-forget）。返回 loop_execution_id 给调用方。
+    #[allow(clippy::too_many_arguments)] // 参数来自上游 handler 的独立数据源，合并为 struct 增加认知负担
     pub fn spawn_run(
         self: Arc<Self>,
         loop_id: i64,
@@ -195,7 +196,8 @@ impl LoopRunner {
         let this2 = self.clone();
         let this2_for_err = self.clone();
         let this2_for_callback = self.clone();
-        let this2_for_event = self.clone();
+        // self 在此之后不再使用，直接 move 而非 clone，避免多余的引用计数操作
+        let this2_for_event = self;
         tokio::spawn(async move {
             let run_result = this2
                 .run_inner(loop_id, loop_execution_id, trigger_type)
@@ -764,17 +766,17 @@ impl LoopRunner {
                     // 返回 Paused 而非 Finished，避免误发 LoopFinished 事件
                     return Ok(LoopRunOutcome::Paused);
                 }
-                // AI 自动评审：原有逻辑
+                // AI 自动评审：min_rating 已在条件分支中确认为 Some，此处用 ok_or 转为 Result
+                let min_rating_val = step.min_rating.ok_or("min_rating was None despite is_some() check")?;
                 self
                     .apply_rating_gate(
                         record_id,
-                        step.min_rating.unwrap(),
+                        min_rating_val,
                         &todo.prompt,
                         todo.acceptance_criteria.as_deref(),
                         loop_.review_template_id,
                     )
-                    .await
-                    .map_err(|e| e.to_string())?
+                    .await?
             } else {
                 (step_status == "success", None, None)
             };
@@ -878,6 +880,7 @@ impl LoopRunner {
 
     /// 启动 step 的执行，使用增强后的 Prompt。
     /// trigger_params 是从 CLI/外部传入的变量，会合并到 params 中供 prompt 占位符替换。
+    #[allow(clippy::too_many_arguments)] // 参数来自上游 handler 的独立数据源，合并为 struct 增加认知负担
     async fn start_step_todo_with_prompt(
         &self,
         todo: &crate::models::Todo,

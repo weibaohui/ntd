@@ -79,7 +79,7 @@ async fn build_test_app() -> (axum::Router, Arc<std::sync::RwLock<Config>>) {
     };
     scheduler.load_from_db(&ctx).await.unwrap();
     scheduler.start().await.unwrap();
-    (create_app(ctx, scheduler), config)
+    (create_app(ctx, scheduler).await, config)
 }
 
 async fn read_json(response: axum::response::Response) -> serde_json::Value {

@@ -146,7 +146,8 @@ impl Database {
         };
 
         let filter = if let Some(h) = query.hours.filter(|&h| h > 0) {
-            let time_expr = sea_orm::sea_query::Expr::cust(&format!(
+            // hours 已验证 > 0，format! 是构建 SQL 字面量的唯一途径
+            let time_expr = sea_orm::sea_query::Expr::cust(format!(
                 "REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= datetime('now', '-{} hours')", h
             ));
             filter.add(time_expr)
@@ -657,7 +658,8 @@ impl Database {
         let hours = hours.unwrap_or(720);
         let time_filter = format!("datetime('now', '-{} hours')", hours);
         // 热力图使用固定时间范围：当年1月1日到12月31日，不受过滤条件影响
-        let heatmap_filter = format!("datetime(strftime('%Y', 'now') || '-01-01 00:00:00')");
+        // 热力图固定用字符串字面量，无需 format! 拼接
+        let heatmap_filter = "datetime(strftime('%Y', 'now') || '-01-01 00:00:00')".to_string();
         crate::db::dashboard::DashboardQueryContext {
             conn: &self.conn,
             backend,
@@ -946,7 +948,7 @@ impl Database {
         }
 
         Ok(Some(Self::build_skills_response(
-            overall,
+            &overall,
             top_skills,
             executor_skills_count,
             daily_invocations,
@@ -1066,8 +1068,9 @@ impl Database {
     }
 
     /// 组装 `SkillsStats` 响应结构体。
+    // 整体统计为小结构体，按值传递语义更清晰且成本极低
     fn build_skills_response(
-        overall: SkillsOverallRow,
+        overall: &SkillsOverallRow,
         top_skills: Vec<crate::models::SkillTop>,
         executor_skills_count: Vec<crate::models::ExecutorSkillCount>,
         daily_invocations: Vec<crate::models::DailySkillInvocation>,
@@ -1191,7 +1194,8 @@ impl Database {
 
                         if let Ok(modified) = metadata.modified() {
                             let modified_str = Self::system_time_to_iso_string(modified);
-                            if last_backup.is_none() || modified_str > *last_backup.as_ref().unwrap() {
+                            // 用 as_ref().map() 避免 unwrap()：last_backup 为 None 时直接替换
+                            if last_backup.as_ref().map_or(true, |latest| modified_str > *latest) {
                                 last_backup = Some(modified_str);
                             }
                         }
@@ -1223,8 +1227,9 @@ impl Database {
                     if metadata.is_file() {
                         let name = entry.file_name().to_string_lossy().to_string();
                         let size = metadata.len() as i64;
+                        // ok() 转换 Option 后直接 map，无需额外闭包包装
                         let created_at = metadata.modified().ok()
-                            .map(|t| Self::system_time_to_iso_string(t))
+                            .map(Self::system_time_to_iso_string)
                             .unwrap_or_default();
 
                         files.push(crate::models::RecentBackup {

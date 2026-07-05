@@ -566,11 +566,12 @@ async fn handle_todo(
 
             // stdin 闭包不能 `?`，这里做统一的 fail-fast：workspace_id=0 表示上游未传
             if req.workspace_id == 0 {
-                return Err(anyhow::anyhow!("workspace_id is required (pass --workspace-id or include in stdin JSON)").into());
+                // anyhow::anyhow! 已经返回 anyhow::Error，.into() 是多余转换
+                return Err(anyhow::anyhow!("workspace_id is required (pass --workspace-id or include in stdin JSON)"));
             }
 
             let resp: ClientResponse<Todo> = client.post("/todos", &req).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         TodoAction::List { status, tag, running, search } => {
             let mut query_params = Vec::new();
@@ -612,11 +613,11 @@ async fn handle_todo(
                 resp
             };
 
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         TodoAction::Get { id } => {
             let resp: ClientResponse<Todo> = client.get(&format!("/todos/{}", id)).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         TodoAction::Update { id, title, prompt, file, stdin, status, executor, workspace_id, tags, schedule } => {
             let mut req = if *stdin {
@@ -641,7 +642,8 @@ async fn handle_todo(
             if let Some(p) = prompt { req["prompt"] = p.clone().into(); }
             if let Some(s) = status { req["status"] = s.clone().into(); }
             if let Some(e) = executor { req["executor"] = e.clone().into(); }
-            if let Some(w) = workspace_id { req["workspace_id"] = Value::from(*w as i64); }
+            // w 已经是 i64 类型，无需再 as i64 转换
+            if let Some(w) = workspace_id { req["workspace_id"] = Value::from(*w); }
             if let Some(t) = tags {
                 let tag_ids: Vec<i64> = t.split(',').filter_map(|s| s.trim().parse().ok()).collect();
                 req["tag_ids"] = tag_ids.into();
@@ -652,11 +654,11 @@ async fn handle_todo(
             }
 
             let resp: ClientResponse<Todo> = client.put(&format!("/todos/{}", id), &req).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         TodoAction::Delete { id } => {
             let resp: ClientResponse<()> = client.delete(&format!("/todos/{}", id)).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         TodoAction::Execute { id, message, executor, params } => {
             let params: Option<std::collections::HashMap<String, String>> = params.as_ref().map(|vec| {
@@ -669,16 +671,16 @@ async fn handle_todo(
                 params,
             };
             let resp: ClientResponse<Value> = client.post("/execute", &req).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         TodoAction::Stop { id } => {
             let req = serde_json::json!({ "todo_id": id });
             let resp: ClientResponse<()> = client.post("/execute/stop", &req).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         TodoAction::Stats { id } => {
             let resp: ClientResponse<ExecutionSummary> = client.get(&format!("/todos/{}/summary", id)).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         TodoAction::Execution { action } => {
             handle_execution(client, action, output, fields).await?;
@@ -703,16 +705,16 @@ async fn handle_execution(
                 status.as_ref().map(|s| format!("&status={}", s)).unwrap_or_default()
             );
             let resp: ClientResponse<ExecutionRecordsPage> = client.get(&path).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         ExecutionAction::Get { id } => {
             let resp: ClientResponse<ExecutionRecord> = client.get(&format!("/execution-records/{}", id)).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         ExecutionAction::Resume { id, message } => {
             let req = serde_json::json!({ "message": message });
             let resp: ClientResponse<Value> = client.post(&format!("/execution-records/{}/resume", id), &req).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
     }
     Ok(())
@@ -729,7 +731,7 @@ async fn handle_tag(
     match action {
         TagAction::List => {
             let resp: ClientResponse<Vec<Tag>> = client.get("/tags").await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         TagAction::Create { name, color } => {
             let req = CreateTagRequest {
@@ -737,11 +739,11 @@ async fn handle_tag(
                 color: color.clone(),
             };
             let resp: ClientResponse<Tag> = client.post("/tags", &req).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         TagAction::Delete { id } => {
             let resp: ClientResponse<()> = client.delete(&format!("/tags/{}", id)).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
     }
     Ok(())
@@ -755,7 +757,7 @@ async fn handle_stats(
     fields: &Option<String>,
 ) -> Result<()> {
     let resp: ClientResponse<DashboardStats> = client.get("/dashboard-stats").await?;
-    print_response(resp, output, fields)?;
+    print_response(&resp, output, fields)?;
     Ok(())
 }
 
@@ -773,14 +775,14 @@ async fn handle_blackboard(
                 WikiAction::List => {
                     let path = format!("/workspaces/{}/wiki/files", workspace_id);
                     let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
-                    print_response(resp, output, fields)?;
+                    print_response(&resp, output, fields)?;
                 }
                 WikiAction::Get { slug } => {
                     // slug 可能包含中文或特殊字符，必须 percent-encode 后才能安全放入 URL 路径
                     let encoded = percent_encode_slug(slug);
                     let path = format!("/workspaces/{}/wiki/files/{}", workspace_id, encoded);
                     let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
-                    print_response(resp, output, fields)?;
+                    print_response(&resp, output, fields)?;
                 }
             }
         }
@@ -804,11 +806,11 @@ async fn handle_loop(
                 "/loops".to_string()
             };
             let resp: ClientResponse<Vec<LoopDto>> = client.get(&path).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         LoopAction::Get { id } => {
             let resp: ClientResponse<LoopDto> = client.get(&format!("/loops/{}", id)).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         LoopAction::Update { id, name, description, status } => {
             // 构建部分更新 JSON，只包含提供的字段
@@ -827,11 +829,11 @@ async fn handle_loop(
                 &format!("/loops/{}", id),
                 &req,
             ).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         LoopAction::Delete { id } => {
             let resp: ClientResponse<()> = client.delete(&format!("/loops/{}", id)).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         LoopAction::Stop { id } => {
             // Pause the loop by disabling all its triggers
@@ -840,7 +842,7 @@ async fn handle_loop(
                 &format!("/loops/{}/status", id),
                 &req,
             ).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         LoopAction::Stats { id, recent } => {
             // Get loop details with recent executions combined into one response
@@ -859,7 +861,7 @@ async fn handle_loop(
                 data: Some(combined),
                 message: execs_resp.message,
             };
-            print_response(final_resp, output, fields)?;
+            print_response(&final_resp, output, fields)?;
         }
         LoopAction::Execute { id, params } => {
             let params_map: std::collections::HashMap<String, String> = params
@@ -871,7 +873,7 @@ async fn handle_loop(
                 &format!("/loops/{}/trigger", id),
                 &req,
             ).await?;
-            print_response(resp, output, fields)?;
+            print_response(&resp, output, fields)?;
         }
         LoopAction::Execution { action } => {
             match action {
@@ -881,7 +883,7 @@ async fn handle_loop(
                         loop_id, page, limit
                     );
                     let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
-                    print_response(resp, output, fields)?;
+                    print_response(&resp, output, fields)?;
                 }
                 LoopExecutionAction::Get { execution_id } => {
                     // Get execution results by execution ID directly
@@ -890,7 +892,7 @@ async fn handle_loop(
                         "/loop-executions/{}",
                         execution_id
                     )).await?;
-                    print_response(resp, output, fields)?;
+                    print_response(&resp, output, fields)?;
                 }
                 LoopExecutionAction::Blackboard { execution_id, human } => {
                     // 复用 get_execution_by_id handler 返回的 LoopExecutionDetail,
@@ -928,8 +930,10 @@ async fn handle_loop(
 
 // ============== Output ==============
 
+// CLI 入口：resp 按引用传入避免所有权转移，仅用于序列化输出
+#[allow(clippy::print_stdout)]
 fn print_response<T: serde::Serialize>(
-    resp: ClientResponse<T>,
+    resp: &ClientResponse<T>,
     output: &OutputFormat,
     fields: &Option<String>,
 ) -> Result<()> {
@@ -942,11 +946,12 @@ fn print_response<T: serde::Serialize>(
 
     match output {
         OutputFormat::Json => {
-            let value = serde_json::to_value(&resp)?;
+            // resp 已经是引用，不需要再取引用
+            let value = serde_json::to_value(resp)?;
             println!("{}", serde_json::to_string(&value)?);
         }
         OutputFormat::Pretty => {
-            let value = serde_json::to_value(&resp)?;
+            let value = serde_json::to_value(resp)?;
             println!("{}", serde_json::to_string_pretty(&value)?);
         }
         OutputFormat::Raw => {

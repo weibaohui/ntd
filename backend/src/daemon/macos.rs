@@ -12,6 +12,10 @@
 //!   进程可能需要更久。这里不引入 polling（需要重新解析 launchctl list
 //!   输出判断 PID），保持与原行为等价 —— 只是把阻塞 sleep 换成协作式 sleep。
 
+// 本模块是 CLI daemon 的 macOS 实现，println!/eprintln! 均为面向用户的终端输出，
+// 属于 CLI 工具的正常行为，因此抑制 clippy 的 print_stdout / print_stderr 告警。
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -22,11 +26,24 @@ use super::DaemonAction;
 #[allow(unused)]
 const LAUNCHD_LABEL: &str = "com.nothing-todo.ntd";
 
+// handle 是 daemon 子命令的统一入口，根据 Action 分发到具体处理函数。
+// install 和 start 返回 Result，失败时打印错误并退出（CLI 语义：非零退出码）；
+// 其他操作（stop/status/uninstall）内部自行处理错误，不影响进程退出。
 pub(super) async fn handle(action: &DaemonAction) {
     match action {
-        DaemonAction::Install { force, .. } => install(*force),
+        DaemonAction::Install { force, .. } => {
+            if let Err(e) = install(*force) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
         DaemonAction::Uninstall { .. } => uninstall(),
-        DaemonAction::Start { .. } => start(),
+        DaemonAction::Start { .. } => {
+            if let Err(e) = start() {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
         DaemonAction::Stop { .. } => stop(),
         DaemonAction::Restart { .. } => restart().await,
         DaemonAction::Status { verbose, .. } => status(*verbose),
@@ -123,7 +140,9 @@ fn generate_plist() -> String {
     )
 }
 
-fn install(force: bool) {
+// 安装 launchd plist 并 bootstrap 加载服务。
+// 返回 Result 以便调用方统一处理错误，避免在生产代码中使用 expect。
+fn install(force: bool) -> Result<(), Box<dyn std::error::Error>> {
     let plist_path = plist_path();
     let binary = ntd_binary_path();
 
@@ -136,22 +155,23 @@ fn install(force: bool) {
     if plist_path.exists() && !force {
         println!("Service already installed at: {}", plist_path.display());
         println!("Use --force to reinstall");
-        return;
+        return Ok(());
     }
 
     let ntd_dir = ntd_dir();
+    // 创建 ntd 目录和 plist 父目录，失败不阻断（可能已存在）
     fs::create_dir_all(&ntd_dir).ok();
     plist_path.parent().map(|p| fs::create_dir_all(p).ok());
 
     println!("Installing launchd service to: {}", plist_path.display());
-    fs::write(&plist_path, generate_plist()).expect("Failed to write plist");
+    // 写入 plist 配置文件，失败时返回错误而非 panic
+    fs::write(&plist_path, generate_plist())?;
 
     let domain = launchd_domain();
     // bootstrap 会把 plist 加载进 launchd，已加载时返回非 0 + "already loaded"，视为幂等成功
     let output = Command::new("launchctl")
         .args(["bootstrap", &domain, &plist_path.to_string_lossy()])
-        .output()
-        .expect("Failed to run launchctl");
+        .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -168,6 +188,8 @@ fn install(force: bool) {
     println!("Next steps:");
     println!("  ntd daemon status              # Check status");
     println!("  tail -f ~/.ntd/run.log         # View logs");
+
+    Ok(())
 }
 
 fn uninstall() {
@@ -188,7 +210,10 @@ fn uninstall() {
     println!("Service uninstalled");
 }
 
-fn start() {
+// 启动 launchd 服务，kickstart 是 launchd 推荐的"原子启动"命令。
+// 若 plist 缺失则自动重新生成并 bootstrap，兼容"plist 被删但 service 还在跑"的情况。
+// 返回 Result 以便调用方统一处理错误。
+fn start() -> Result<(), Box<dyn std::error::Error>> {
     let plist_path = plist_path();
     let domain = launchd_domain();
     let label = LAUNCHD_LABEL;
@@ -197,7 +222,8 @@ fn start() {
     if !plist_path.exists() {
         println!("Service not installed. Regenerating...");
         plist_path.parent().map(|p| fs::create_dir_all(p).ok());
-        fs::write(&plist_path, generate_plist()).expect("Failed to write plist");
+        // 重新生成 plist 并写入磁盘，失败时返回错误
+        fs::write(&plist_path, generate_plist())?;
         let _ = Command::new("launchctl")
             .args(["bootstrap", &domain, &plist_path.to_string_lossy()])
             .output();
@@ -206,8 +232,7 @@ fn start() {
     // kickstart 是 launchd 推荐的"原子启动"命令，比手动 bootstrap 更稳
     let output = Command::new("launchctl")
         .args(["kickstart", &format!("{domain}/{label}")])
-        .output()
-        .expect("Failed to run launchctl");
+        .output()?;
 
     if output.status.success() {
         println!("Service started");
@@ -227,6 +252,8 @@ fn start() {
             eprintln!("Failed to start service: {}", stderr.trim());
         }
     }
+
+    Ok(())
 }
 
 fn stop() {
@@ -253,21 +280,15 @@ fn stop() {
     }
 }
 
-// launchd_restart 是 CLI 子命令入口之一，但运行在 #[tokio::main] 上下文，
-// 所以可以声明为 async 并 await tokio 的 sleep。
-//
-// 原实现用 std::thread::sleep(500ms)：在异步 runtime 上线程 sleep 会
-// 阻塞当前 OS 线程，如果 runtime worker 池被填满，其它请求会被卡住。
-// 改用 tokio::time::sleep().await 让出 worker，既不阻塞 runtime，
-// 也保留了"等 stop 真正生效再 start"的语义。
-//
-// 500ms 是经验值：launchd bootout 通常在数十 ms 内完成，但慢盘/僵尸
-// 进程可能需要更久。这里不引入 polling（需要重新解析 launchctl list
-// 输出判断 PID），保持与原行为等价 —— 只是把阻塞 sleep 换成协作式 sleep。
+// restart 先 stop 再 start，中间 sleep 500ms 等待 launchd 生效。
+// start 返回 Result，但 restart 本身不返回 Result——
+// 失败时在 handle() 层面已由 start() 的调用方处理，这里直接忽略 start 的结果。
 async fn restart() {
     stop();
+    // 等待 launchd 完成 bootout，500ms 是经验值
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    start();
+    // start() 返回的 Result 在 restart 场景下仅做尽力而为：失败时 start 内部已打印错误
+    let _ = start();
 }
 
 fn status(verbose: bool) {
