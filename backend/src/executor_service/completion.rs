@@ -731,6 +731,39 @@ pub async fn blackboard_flush_listener(
     let refreshing_workspaces =
         Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::<i64>::new()));
 
+    // ===== 启动时扫描：为有残留队列的 workspace 重启防抖 timer =====
+    // 实例重启后 TIMER_STATES / ACTIVE_TIMERS 全部丢失，DB 中残留的 pending 记录
+    // 不会再有新的 push 触发阈值检查，也没有 worker 退出时调用 restart_timer，
+    // 导致残留队列永久卡死。启动时统一检查所有 blackboard，若有非空 pending 队列
+    // 则重启 timer，让它们在 debounce_secs 后重新触发 flush。
+    {
+        let rescan_timer = db.clone();
+        tokio::spawn(async move {
+            match rescan_timer.get_all_blackboards().await {
+                Ok(boards) => {
+                    for board in &boards {
+                        let ids: Vec<i64> = serde_json::from_str(&board.pending_record_ids)
+                            .unwrap_or_default();
+                        if !ids.is_empty() {
+                            tracing::info!(
+                                "启动时检测到黑板残留队列，重启 timer: workspace_id={}, pending={}",
+                                board.workspace_id, ids.len()
+                            );
+                            crate::services::blackboard_debouncer::restart_timer(
+                                board.workspace_id,
+                                &rescan_timer,
+                            )
+                            .await;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("启动时扫描黑板残留队列失败: {:?}", e);
+                }
+            }
+        });
+    }
+
     loop {
         tokio::select! {
             // 每秒 ticker：广播所有已知 workspace 的状态
