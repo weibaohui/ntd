@@ -13,6 +13,30 @@ use crate::models::{
 use crate::cli::client::ApiClient;
 use crate::config;
 
+/// 对 slug 进行 percent-encoding，防止特殊字符破坏 URL 路径结构。
+/// 只对非常规字符进行编码，A-Z a-z 0-9 - _ . ~ 保持不变。
+fn percent_encode_slug(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() * 3);
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                result.push(b as char);
+            }
+            _ => {
+                result.push('%');
+                result.push_str(&hex_digit(b >> 4));
+                result.push_str(&hex_digit(b & 0xf));
+            }
+        }
+    }
+    result
+}
+
+fn hex_digit(b: u8) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    format!("{}{}", HEX[(b as usize) >> 4] as char, HEX[(b as usize) & 0xf] as char)
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "ntd")]
 #[command(about = "AI Todo CLI - Manage AI-powered tasks", long_about = None)]
@@ -75,7 +99,8 @@ pub enum Commands {
 /// Blackboard CLI actions: manage wiki pages for a workspace.
 #[derive(Debug, Clone, Subcommand)]
 pub enum BlackboardAction {
-    /// Wiki file management
+    /// Wiki 文件管理（从旧的 Page 语义迁移为 Wiki 文件语义）。
+    /// workspace_id 用于限定文件系统 Wiki 读取范围，确保不同 workspace 数据隔离。
     Wiki {
         #[command(subcommand)]
         action: WikiAction,
@@ -85,14 +110,14 @@ pub enum BlackboardAction {
     },
 }
 
-/// Wiki file subcommands.
+/// Wiki 文件子命令（替代旧的 Page 子命令）。
 #[derive(Debug, Clone, Subcommand)]
 pub enum WikiAction {
-    /// List all wiki files (index, log, topics)
+    /// 列出所有 wiki 文件（index, log, topics）
     List,
-    /// Get a single wiki file content by slug
+    /// 根据 slug 获取单个 wiki 文件内容
     Get {
-        /// File slug (e.g. "auth-module", "index", "log")
+        /// 文件 slug（如 "auth-module", "index", "log"）
         slug: String,
     },
 }
@@ -752,7 +777,9 @@ async fn handle_blackboard(
                     print_response(resp, output, fields)?;
                 }
                 WikiAction::Get { slug } => {
-                    let path = format!("/workspaces/{}/wiki/files/{}", workspace_id, slug);
+                    // slug 可能包含中文或特殊字符，必须 percent-encode 后才能安全放入 URL 路径
+                    let encoded = percent_encode_slug(slug);
+                    let path = format!("/workspaces/{}/wiki/files/{}", workspace_id, encoded);
                     let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
                     print_response(resp, output, fields)?;
                 }

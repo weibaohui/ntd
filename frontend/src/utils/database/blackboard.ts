@@ -17,6 +17,7 @@ export async function updateBlackboardConfig(
   config: {
     blackboard_debounce_secs?: number;
     blackboard_debounce_count?: number;
+    /** 单阶段 Wiki 维护提示词，与后端 UpdateBlackboardConfigRequest.wiki_prompt 对齐 */
     wiki_prompt?: string;
   },
 ): Promise<void> {

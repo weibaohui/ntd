@@ -262,25 +262,60 @@ async fn run_wiki_execution(
 }
 
 /// 等待目标 task_id 对应的 Finished 事件。
+///
+/// 使用 5 分钟超时防止无限等待；仅当 `success=true` 时才认为执行成功并返回结果。
 async fn wait_for_finished(
     rx: &mut tokio::sync::broadcast::Receiver<ExecEvent>,
     task_id: &str,
     workspace_id: i64,
 ) -> Result<Option<String>, AppError> {
+    // 5 分钟超时，防止事件丢失时永久阻塞
+    let timeout_duration = tokio::time::Duration::from_secs(5 * 60);
+    let deadline = tokio::time::Instant::now() + timeout_duration;
+
     loop {
-        match rx.recv().await {
-            Ok(ExecEvent::Finished {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        match tokio::time::timeout(remaining, rx.recv()).await {
+            // 超时：事件未在规定时间内到达
+            Err(_) => {
+                tracing::warn!(
+                    "Wiki 执行超时: workspace_id={}, task_id={}, timeout_secs=300",
+                    workspace_id,
+                    task_id
+                );
+                return Err(AppError::Internal(format!(
+                    "Wiki 执行超时（5 分钟），task_id={}",
+                    task_id
+                )));
+            }
+            Ok(Ok(ExecEvent::Finished {
                 task_id: ref finished_task_id,
                 result: Some(ref new_content),
+                success: true,
                 ..
-            }) if *finished_task_id == task_id => {
+            })) if *finished_task_id == task_id => {
                 return Ok(Some(new_content.clone()));
             }
-            Ok(ExecEvent::Finished {
+            Ok(Ok(ExecEvent::Finished {
+                task_id: ref finished_task_id,
+                result: _,
+                success: false,
+                ..
+            })) if *finished_task_id == task_id => {
+                // 执行失败（LLM 返回了 Finished 但 success=false）
+                tracing::warn!(
+                    "Wiki 执行失败: workspace_id={}, task_id={}",
+                    workspace_id,
+                    task_id
+                );
+                return Ok(None);
+            }
+            Ok(Ok(ExecEvent::Finished {
                 task_id: ref finished_task_id,
                 result: None,
+                success: true,
                 ..
-            }) if *finished_task_id == task_id => {
+            })) if *finished_task_id == task_id => {
                 tracing::warn!(
                     "Wiki 执行未产出结果: workspace_id={}, task_id={}",
                     workspace_id,
@@ -288,11 +323,11 @@ async fn wait_for_finished(
                 );
                 return Ok(None);
             }
-            Ok(_) => {}
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+            Ok(Ok(_)) => {}
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(n))) => {
                 tracing::warn!("Wiki 更新事件通道积压，跳过 {} 个事件", n);
             }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
                 return Err(AppError::Internal("事件通道已关闭".to_string()));
             }
         }
@@ -302,10 +337,11 @@ async fn wait_for_finished(
 /// Wiki 更新入口：单阶段调用，LLM 直接编辑文件。
 ///
 /// 流程：
-/// 1. 确保 wiki 目录存在
-/// 2. 构造 prompt（含 workspace_id 和 record_ids）
-/// 3. 单次 LLM 调用
-/// 4. 后处理：生成 index.md、追加 log.md
+/// 1. 空队列直接返回（无需处理）
+/// 2. 确保 wiki 目录存在
+/// 3. 构造 prompt（含 workspace_id 和 record_ids）
+/// 4. 单次 LLM 调用
+/// 5. 后处理：生成 index.md、追加 log.md
 pub async fn update_blackboard_wiki(
     db: Arc<Database>,
     executor_registry: Arc<ExecutorRegistry>,
@@ -315,15 +351,21 @@ pub async fn update_blackboard_wiki(
     workspace_id: i64,
     pending_record_ids: Vec<i64>,
 ) -> Result<(), AppError> {
-    // 1. 确保 wiki 目录存在
+    // 1. 空队列直接返回，避免无意义地启动 LLM 调用
+    if pending_record_ids.is_empty() {
+        tracing::debug!("Wiki 更新跳过: pending_record_ids 为空, workspace_id={}", workspace_id);
+        return Ok(());
+    }
+
+    // 2. 确保 wiki 目录存在
     init_wiki_dir(workspace_id).map_err(|e| {
         AppError::Internal(format!("初始化 wiki 目录失败: {:?}", e))
     })?;
 
-    // 2. 查找或创建 todo（prompt 由配置保存接口同步，执行时不触碰）
+    // 3. 查找或创建 todo（prompt 由配置保存接口同步，执行时不触碰）
     let todo_id = find_or_create_wiki_todo(&db, workspace_id).await?;
 
-    // 3. 用 todo.prompt 作为执行 message：这是真相源
+    // 4. 用 todo.prompt 作为执行 message：这是真相源
     //    - 用户在配置页保存提示词 → apply_wiki_prompt_to_todo 同步到 todo.prompt
     //    - 未配置 → 创建时已用内置默认兜底
     let prompt_template = db
@@ -338,7 +380,7 @@ pub async fn update_blackboard_wiki(
     params.insert("pending_record_ids".to_string(), ids_str);
     let message = crate::models::replace_placeholders(&prompt_template, &params);
 
-    // 4. 启动执行
+    // 5. 启动执行
     let _result = run_wiki_execution(
         db.clone(),
         executor_registry,
@@ -351,7 +393,7 @@ pub async fn update_blackboard_wiki(
         params,
     ).await?;
 
-    // 5. 后处理：生成 index、追加 log
+    // 6. 后处理：生成 index、追加 log
     // 无论 LLM 是否输出，都尝试生成 index 和 log
     let topics = list_topics(workspace_id).map_err(|e| {
         AppError::Internal(format!("列出 topic 失败: {:?}", e))
