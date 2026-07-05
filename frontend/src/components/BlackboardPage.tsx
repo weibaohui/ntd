@@ -30,11 +30,10 @@ import { normalizeBlackboardMarkdown } from '@/utils/markdown';
 
 const { Title } = Typography;
 
-/** 黑板 API 返回的 JSON 形状（与后端 BlackboardResponse 对应） */
+/** 黑板 API 返回的配置形状（与后端 BlackboardResponse 对应，不含内容） */
 interface BlackboardData {
   id: number;
   workspace_id: number;
-  content: string;
   updated_at: string | null;
   /** 黑板更新防抖周期（秒）*/
   blackboard_debounce_secs: number;
