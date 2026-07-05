@@ -12,6 +12,9 @@ use crate::models::{
     BatchUpdateTodoSchedulerRequest, BatchUpdateTodoWorkspaceRequest, BatchWorkspaceResult,
     CreateTodoRequest, RecentCompletedTodo, Todo, UpdateTagsRequest, UpdateTodoRequest,
 };
+// 批量恢复调度需要在 handler 中构造 ServiceContext 调用 scheduler.upsert_task，
+// 与单个 update_scheduler handler (handlers/scheduler.rs) 的处理路径保持一致。
+use crate::service_context::ServiceContext;
 
 /// Validate cron expression, return helpful error for invalid ones
 fn validate_cron_expression(expr: &str) -> Result<(), String> {
@@ -456,6 +459,13 @@ pub async fn batch_copy_todos_workspace(
 }
 
 /// PUT /api/todos/batch-scheduler — 批量暂停/恢复事项的周期执行
+///
+/// 修复：原实现仅更新 DB 的 `scheduler_enabled` 字段，未同步内存中的 cron 任务，
+/// 导致批量暂停后 cron 仍会触发、批量恢复后 cron 不触发的状态不一致。
+/// 此处在 DB 写入前后同步调用 scheduler，与单个 `update_scheduler` handler
+/// (handlers/scheduler.rs) 的行为保持一致：
+/// - 暂停：先逐个移除 cron，再写 DB（避免撤 cron 前的触发窗口）
+/// - 恢复：先写 DB，再从 DB 读出 config/timezone 重新注册 cron
 pub async fn batch_update_todos_scheduler(
     State(state): State<AppState>,
     ApiJson(req): ApiJson<BatchUpdateTodoSchedulerRequest>,
@@ -463,12 +473,86 @@ pub async fn batch_update_todos_scheduler(
     if req.ids.is_empty() {
         return Err(AppError::BadRequest("ids 不能为空".to_string()));
     }
-    let rows_affected = state
-        .db
-        .batch_update_todos_scheduler(&req.ids, req.scheduler_enabled)
-        .await?;
+    // 根据目标状态分流到对应辅助函数，保持 handler 单一职责、控制函数长度。
+    // 两个分支各自用 `?` 解包 Result，统一得到 rows_affected: u64。
+    let rows_affected = if req.scheduler_enabled {
+        resume_batch_schedulers(&state, &req.ids).await?
+    } else {
+        pause_batch_schedulers(&state, &req.ids).await?
+    };
     Ok(ApiResponse::ok(BatchWorkspaceResult {
         updated_count: rows_affected as i64,
         total: req.ids.len() as i64,
     }))
+}
+
+/// 批量暂停：先逐个移除 cron 任务，再一次写 DB（scheduler_enabled=false）。
+/// 顺序很重要——先撤 cron 可避免"DB 已标记暂停但 cron 仍触发"的短窗口。
+/// 即使某个 id 在 job_map 中不存在，`remove_task_for_todo` 也是 no-op，安全。
+async fn pause_batch_schedulers(state: &AppState, ids: &[i64]) -> Result<u64, AppError> {
+    for id in ids {
+        state.scheduler.remove_task_for_todo(*id).await;
+    }
+    let rows = state.db.batch_update_todos_scheduler(ids, false).await?;
+    Ok(rows)
+}
+
+/// 批量恢复：先写 DB（scheduler_enabled=true），再逐个从 DB 读出 todo 的
+/// scheduler_config 与 scheduler_timezone 重新注册 cron。
+/// 单个 todo 注册失败只 warn 不中断，避免一个无效 cron 导致整批回滚。
+async fn resume_batch_schedulers(state: &AppState, ids: &[i64]) -> Result<u64, AppError> {
+    let rows = state.db.batch_update_todos_scheduler(ids, true).await?;
+    // DB 写返回 0 行说明 ids 全无效：跳过 cron 重新注册循环，
+    // 避免对不存在的 todo 触发 N 次 get_todo 失败 + warn 噪音。
+    if rows == 0 {
+        return Ok(rows);
+    }
+    let ctx = ServiceContext {
+        db: state.db.clone(),
+        executor_registry: state.executor_registry.clone(),
+        tx: state.tx.clone(),
+        task_manager: state.task_manager.clone(),
+        config: state.config.clone(),
+    };
+    for id in ids {
+        // 单个 todo 注册失败只 warn 不中断整批：DB 已置 enabled=true，
+        // 进程重启时 load_from_db 会基于 DB 字段再次尝试注册（自愈路径）。
+        // AppError 未实现 Display，用 Debug 格式化保留错误上下文。
+        if let Err(e) = try_resume_one_scheduler(state, &ctx, *id).await {
+            tracing::warn!("批量恢复调度时 todo {} 注册失败: {:?}", id, e);
+        }
+    }
+    Ok(rows)
+}
+
+/// 单个 todo 的恢复注册：从 DB 读出 scheduler_config 与 scheduler_timezone，
+/// 调用 scheduler.upsert_task。config 为空时仅移除残留 cron（与单个 handler
+/// 中 "enabled 但无 config" 分支一致），避免留下无表达式但标记 enabled 的脏状态。
+async fn try_resume_one_scheduler(
+    state: &AppState,
+    ctx: &ServiceContext,
+    id: i64,
+) -> Result<(), AppError> {
+    let todo = state
+        .db
+        .get_todo(id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest(format!("todo {} 不存在", id)))?;
+    let config = match todo
+        .scheduler_config
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
+        Some(c) => c.to_string(),
+        None => {
+            // 没有 cron 表达式无法注册，确保内存中无残留 cron 后返回。
+            state.scheduler.remove_task_for_todo(id).await;
+            return Ok(());
+        }
+    };
+    state
+        .scheduler
+        .upsert_task(ctx, id, config, todo.scheduler_timezone.clone())
+        .await?;
+    Ok(())
 }
