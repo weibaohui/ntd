@@ -1,9 +1,11 @@
 //! 黑板（Blackboard）API Handler。
 //!
-//! 提供三个端点：
-//! - `GET /api/workspaces/{workspace_id}/blackboard`：获取当前黑板内容与配置
+//! 提供以下端点：
+//! - `GET /api/workspaces/{workspace_id}/blackboard`：获取当前黑板内容与配置（旧版单文件接口，保留兼容）
 //! - `PATCH /api/workspaces/{workspace_id}/blackboard`：更新黑板配置
 //! - `GET /api/workspaces/{workspace_id}/blackboard/config`：仅获取黑板配置
+//! - `GET /api/workspaces/{workspace_id}/blackboard/pages`：获取所有页面列表（Wiki 化后）
+//! - `GET /api/workspaces/{workspace_id}/blackboard/pages/{slug}`：获取单个页面内容（Wiki 化后）
 
 use axum::extract::{Path, State};
 use axum::routing::get;
@@ -24,8 +26,38 @@ pub struct BlackboardResponse {
     pub blackboard_debounce_secs: i64,
     /// 黑板更新防抖条数阈值
     pub blackboard_debounce_count: i64,
-    /// 黑板更新提示词模板（空字符串表示使用内置默认）
-    pub blackboard_update_prompt: String,
+    /// Wiki 索引页面维护提示词模板（空字符串表示使用内置默认）
+    pub wiki_index_prompt: String,
+    /// Wiki 主题页面生成提示词模板（空字符串表示使用内置默认）
+    pub wiki_page_prompt: String,
+}
+
+/// 页面列表项：用于 GET /pages 接口，只返回摘要信息不返回完整 content。
+///
+/// 前端目录树用这个数据渲染，避免一次拉取所有页面的大文本。
+#[derive(Debug, serde::Serialize)]
+pub struct BlackboardPageListItem {
+    pub id: i64,
+    pub slug: String,
+    pub title: String,
+    pub page_type: String,
+    /// 来源记录数量（source_refs 数组长度）
+    pub source_count: usize,
+    pub updated_at: Option<String>,
+}
+
+/// 单页详情：用于 GET /pages/{slug}，返回完整 Markdown 内容。
+#[derive(Debug, serde::Serialize)]
+pub struct BlackboardPageDetail {
+    pub id: i64,
+    pub workspace_id: i64,
+    pub slug: String,
+    pub title: String,
+    pub page_type: String,
+    pub content: String,
+    pub source_refs: Vec<i64>,
+    pub updated_at: Option<String>,
+    pub created_at: Option<String>,
 }
 
 /// 更新黑板配置的请求体（所有字段可选，None 保持原值不变）。
@@ -33,7 +65,8 @@ pub struct BlackboardResponse {
 pub struct UpdateBlackboardConfigRequest {
     pub blackboard_debounce_secs: Option<i64>,
     pub blackboard_debounce_count: Option<i64>,
-    pub blackboard_update_prompt: Option<String>,
+    pub wiki_index_prompt: Option<String>,
+    pub wiki_page_prompt: Option<String>,
 }
 
 /// `GET /api/workspaces/{workspace_id}/blackboard`
@@ -56,7 +89,8 @@ pub async fn get_blackboard(
             updated_at: model.updated_at,
             blackboard_debounce_secs: model.blackboard_debounce_secs,
             blackboard_debounce_count: model.blackboard_debounce_count,
-            blackboard_update_prompt: model.blackboard_update_prompt,
+            wiki_index_prompt: model.wiki_index_prompt,
+            wiki_page_prompt: model.wiki_page_prompt,
         })),
         None => Ok(ApiResponse::ok(BlackboardResponse {
             id: 0,
@@ -66,7 +100,8 @@ pub async fn get_blackboard(
             // 无记录时返回默认值；配置会在首次 create_blackboard 时写入
             blackboard_debounce_secs: 600,
             blackboard_debounce_count: 10,
-            blackboard_update_prompt: String::new(),
+            wiki_index_prompt: String::new(),
+            wiki_page_prompt: String::new(),
         })),
     }
 }
@@ -91,7 +126,8 @@ pub async fn get_blackboard_config(
         None => Ok(ApiResponse::ok(BlackboardConfig {
             debounce_secs: 600,
             debounce_count: 10,
-            update_prompt: String::new(),
+            wiki_index_prompt: String::new(),
+            wiki_page_prompt: String::new(),
         })),
     }
 }
@@ -117,8 +153,13 @@ pub async fn update_blackboard_config(
         workspace_id,
         req.blackboard_debounce_secs,
         req.blackboard_debounce_count,
-        req.blackboard_update_prompt,
+        req.wiki_index_prompt.clone(),
+        req.wiki_page_prompt.clone(),
     ).await.map_err(|e| AppError::Internal(format!("更新黑板配置失败: {}", e)))?;
+
+    // 提示词变更时，同步更新对应 wiki Todo 的 prompt，避免每次 debounce 触发时才更新
+    sync_wiki_todo_prompt(&state.db, workspace_id, "wiki-analyze", req.wiki_index_prompt.as_deref()).await;
+    sync_wiki_todo_prompt(&state.db, workspace_id, "wiki-execute", req.wiki_page_prompt.as_deref()).await;
 
     // debounce_secs 变更时，根据已计时长决定：超则立即触发 flush，未超则继续用新阈值计时
     // 传入钳制后的值，与 DB update_blackboard_config 内部 v.max(10) 保持一致
@@ -137,6 +178,136 @@ pub async fn update_blackboard_config(
     Ok(ApiResponse::ok(cfg.unwrap()))
 }
 
+/// 同步 wiki Todo 的 prompt：当用户在设置页修改提示词后，立刻更新对应 action_key 的 Todo。
+///
+/// - `prompt` 为 None → 用户在设置页未传入该字段，跳过
+/// - `prompt` 为 Some("") → 用户清空了提示词，更新为空字符串（后端会用内置默认）
+/// - `prompt` 为 Some(text) → 用户自定义了提示词，写入 Todo
+///
+/// action_key 拼接规则与 `run_analyze_phase` / `run_execute_phase` 一致：
+/// `"{base}-{workspace_id}"`
+async fn sync_wiki_todo_prompt(
+    db: &crate::db::Database,
+    workspace_id: i64,
+    base_key: &str,
+    prompt: Option<&str>,
+) {
+    // 用户未传入该字段，不作任何操作
+    let prompt = match prompt {
+        Some(p) => p,
+        None => return,
+    };
+    // 拼接 per-workspace action_key
+    let action_key = format!("{}-{}", base_key, workspace_id);
+    // 查找对应 wiki Todo
+    let todo = match db
+        .get_todo_by_action_type_and_key_and_workspace("blackboard", &action_key, workspace_id)
+        .await
+    {
+        Ok(Some(t)) => t,
+        _ => {
+            // Todo 尚未创建，无需同步（会在首次 debounce 触发时由 find_or_create_wiki_todo 创建）
+            return;
+        }
+    };
+    // 只更新 prompt 字段，其他保持不变
+    if let Err(e) = db
+        .update_todo_full(crate::db::TodoUpdate {
+            id: todo.id,
+            title: &todo.title,
+            prompt,
+            status: todo.status,
+            executor: todo.executor.as_deref(),
+            scheduler_enabled: None,
+            scheduler_config: None,
+            scheduler_timezone: None,
+            workspace_id: None,
+            webhook_enabled: None,
+            acceptance_criteria: None,
+            auto_review_enabled: None,
+            action_type: Some("blackboard"),
+            action_key: Some(&action_key),
+        })
+        .await
+    {
+        tracing::warn!(
+            "同步 wiki Todo prompt 失败: workspace_id={}, action_key={}, error={:?}",
+            workspace_id, action_key, e
+        );
+    } else {
+        tracing::info!(
+            "wiki Todo prompt 已同步: workspace_id={}, action_key={}",
+            workspace_id, action_key
+        );
+    }
+}
+
+/// `GET /api/workspaces/{workspace_id}/blackboard/pages`
+///
+/// 获取指定工作空间的所有黑板页面列表（含 index/topic/log）。
+/// 返回摘要信息（不含完整 content），供前端目录树使用。
+/// 按 page_type 分组排序：topic 在前（按 updated_at 倒序），然后 index，然后 log。
+pub async fn list_blackboard_pages(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<i64>,
+) -> Result<ApiResponse<Vec<BlackboardPageListItem>>, AppError> {
+    let pages = state.db.list_blackboard_pages(workspace_id).await.map_err(|e| {
+        AppError::Internal(format!("查询黑板页面列表失败: {}", e))
+    })?;
+
+    // 将 entity model 转成列表项（计算 source_count）
+    let items: Vec<BlackboardPageListItem> = pages
+        .into_iter()
+        .map(|p| {
+            let source_count = serde_json::from_str::<Vec<i64>>(&p.source_refs)
+                .unwrap_or_default()
+                .len();
+            BlackboardPageListItem {
+                id: p.id,
+                slug: p.slug,
+                title: p.title,
+                page_type: p.page_type,
+                source_count,
+                updated_at: p.updated_at,
+            }
+        })
+        .collect();
+
+    Ok(ApiResponse::ok(items))
+}
+
+/// `GET /api/workspaces/{workspace_id}/blackboard/pages/{slug}`
+///
+/// 按 slug 获取单个黑板页面的完整内容。
+/// 页面不存在返回 404。
+pub async fn get_blackboard_page(
+    State(state): State<AppState>,
+    Path((workspace_id, slug)): Path<(i64, String)>,
+) -> Result<ApiResponse<BlackboardPageDetail>, AppError> {
+    let page = state.db.get_blackboard_page(workspace_id, &slug).await.map_err(|e| {
+        AppError::Internal(format!("查询黑板页面失败: {}", e))
+    })?;
+
+    match page {
+        Some(p) => {
+            let source_refs: Vec<i64> = serde_json::from_str(&p.source_refs)
+                .unwrap_or_default();
+            Ok(ApiResponse::ok(BlackboardPageDetail {
+                id: p.id,
+                workspace_id: p.workspace_id,
+                slug: p.slug,
+                title: p.title,
+                page_type: p.page_type,
+                content: p.content,
+                source_refs,
+                updated_at: p.updated_at,
+                created_at: p.created_at,
+            }))
+        }
+        None => Err(AppError::NotFound),
+    }
+}
+
 /// 返回黑板领域路由。
 pub fn blackboard_routes() -> Router<AppState> {
     Router::new()
@@ -147,6 +318,14 @@ pub fn blackboard_routes() -> Router<AppState> {
         .route(
             "/api/workspaces/{workspace_id}/blackboard/config",
             get(get_blackboard_config),
+        )
+        .route(
+            "/api/workspaces/{workspace_id}/blackboard/pages",
+            get(list_blackboard_pages),
+        )
+        .route(
+            "/api/workspaces/{workspace_id}/blackboard/pages/{slug}",
+            get(get_blackboard_page),
         )
 }
 
@@ -167,7 +346,8 @@ mod tests {
             updated_at: Some("2026-07-03T10:00:00Z".to_string()),
             blackboard_debounce_secs: 600,
             blackboard_debounce_count: 10,
-            blackboard_update_prompt: "custom prompt".to_string(),
+            wiki_index_prompt: "index prompt".to_string(),
+            wiki_page_prompt: "page prompt".to_string(),
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["id"], 7);
@@ -187,7 +367,8 @@ mod tests {
             updated_at: None,
             blackboard_debounce_secs: 600,
             blackboard_debounce_count: 10,
-            blackboard_update_prompt: String::new(),
+            wiki_index_prompt: String::new(),
+            wiki_page_prompt: String::new(),
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["id"], 0);
@@ -220,7 +401,8 @@ mod tests {
             updated_at: board.updated_at,
             blackboard_debounce_secs: board.blackboard_debounce_secs,
             blackboard_debounce_count: board.blackboard_debounce_count,
-            blackboard_update_prompt: board.blackboard_update_prompt,
+            wiki_index_prompt: board.wiki_index_prompt,
+            wiki_page_prompt: board.wiki_page_prompt,
         });
         let json = serde_json::to_value(&resp).unwrap();
         // ApiResponse 包装格式：{"data": {...}}

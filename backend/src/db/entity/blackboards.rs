@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 /// 每个 workspace 最多一条记录（workspace_id 为 UNIQUE），
 /// content 字段存储 Markdown 格式的黑板内容。
 /// pending_record_ids 暂存待处理的 execution_record_id，防抖批次处理时使用。
-/// 防抖阈值与提示词模板均为 per-workspace 配置，存储在本表。
+/// 防抖阈值与 Wiki 提示词模板均为 per-workspace 配置，存储在本表。
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "blackboards")]
 pub struct Model {
@@ -24,10 +24,14 @@ pub struct Model {
     pub blackboard_debounce_secs: i64,
     /// 黑板更新防抖条数阈值，达到该条数后立即触发，无需等待周期
     pub blackboard_debounce_count: i64,
-    /// 黑板更新提示词模板（包含占位符 {{current}}、{{conclusion}}、{{todo_id}}、{{todo_title}}）。
-    /// 空字符串表示使用内置默认模板。
+    /// Wiki 索引页面维护提示词模板（占位符 {{page_summaries}}、{{pending_record_ids}}）。
+    /// 应用于 Wiki 分析阶段，空字符串表示使用内置默认模板。
     #[sea_orm(column_type = "Text")]
-    pub blackboard_update_prompt: String,
+    pub wiki_index_prompt: String,
+    /// Wiki 主题页面生成提示词模板（占位符 {{operations_json}}、{{page_contents}}）。
+    /// 应用于 Wiki 执行阶段，空字符串表示使用内置默认模板。
+    #[sea_orm(column_type = "Text")]
+    pub wiki_page_prompt: String,
     pub updated_at: Option<String>,
     pub created_at: Option<String>,
 }

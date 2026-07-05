@@ -65,6 +65,36 @@ pub enum Commands {
     },
     /// Global statistics
     Stats,
+    /// Blackboard (knowledge wiki) management
+    Blackboard {
+        #[command(subcommand)]
+        action: BlackboardAction,
+    },
+}
+
+/// Blackboard CLI actions: manage wiki pages for a workspace.
+#[derive(Debug, Clone, Subcommand)]
+pub enum BlackboardAction {
+    /// Page management
+    Page {
+        #[command(subcommand)]
+        action: BlackboardPageAction,
+        /// Working directory ID (project_directories.id)
+        #[arg(short = 'w', long = "workspace-id")]
+        workspace_id: i64,
+    },
+}
+
+/// Blackboard page subcommands.
+#[derive(Debug, Clone, Subcommand)]
+pub enum BlackboardPageAction {
+    /// List all blackboard pages (summaries only, no content)
+    List,
+    /// Get a single blackboard page by slug (full content)
+    Get {
+        /// Page slug (e.g. "auth-module")
+        slug: String,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -433,6 +463,7 @@ pub async fn run_command(cli: &Cli) -> Result<()> {
         Commands::Loop { action } => handle_loop(&client, action, &cli.output, &cli.fields).await?,
         Commands::Tag { action } => handle_tag(&client, action, &cli.output, &cli.fields).await?,
         Commands::Stats => handle_stats(&client, &cli.output, &cli.fields).await?,
+        Commands::Blackboard { action } => handle_blackboard(&client, action, &cli.output, &cli.fields).await?,
     }
 
     Ok(())
@@ -701,6 +732,33 @@ async fn handle_stats(
 ) -> Result<()> {
     let resp: ClientResponse<DashboardStats> = client.get("/dashboard-stats").await?;
     print_response(resp, output, fields)?;
+    Ok(())
+}
+
+// ============== Blackboard Handlers ==============
+
+async fn handle_blackboard(
+    client: &ApiClient,
+    action: &BlackboardAction,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    match action {
+        BlackboardAction::Page { action, workspace_id } => {
+            match action {
+                BlackboardPageAction::List => {
+                    let path = format!("/workspaces/{}/blackboard/pages", workspace_id);
+                    let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
+                    print_response(resp, output, fields)?;
+                }
+                BlackboardPageAction::Get { slug } => {
+                    let path = format!("/workspaces/{}/blackboard/pages/{}", workspace_id, slug);
+                    let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
+                    print_response(resp, output, fields)?;
+                }
+            }
+        }
+    }
     Ok(())
 }
 

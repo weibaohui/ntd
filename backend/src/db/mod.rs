@@ -275,6 +275,7 @@ impl Database {
 }
 
 pub mod blackboard;
+pub mod blackboard_page;
 mod todo;
 pub use todo::{SchedulerUpdate, TodoUpdate};
 pub mod execution;
