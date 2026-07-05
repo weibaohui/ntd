@@ -1,6 +1,49 @@
 import yaml from 'js-yaml';
 import type { ChatMessage } from '@/types';
 
+/**
+ * 归一化黑板 Markdown 内容：剥掉 LLM 误包的最外层 fenced code block。
+ *
+ * 规则（尽量保守，与后端 normalize_blackboard_markdown 同语义）：
+ * - 仅当整段内容以 ```markdown / ```md / ``` 开头，且以匹配的 ``` 结尾时才剥离
+ * - 内部代码块不受影响
+ * - 剥离后 trim() 一次
+ * - 不满足条件时原样返回
+ *
+ * 这是"双保险"的前端侧：兼容兜底，保证历史脏数据也能正常渲染。
+ */
+export function normalizeBlackboardMarkdown(content: string): string {
+  const trimmed = content.trim();
+  // 快速失败：太短的内容不可能包着 fenced code block
+  if (trimmed.length < 5) {
+    return content;
+  }
+  // 匹配开头的 fenced code block：``` 后跟任意语言标识符（markdown / md / code / ...），或纯 ```
+  // 找到第一个换行，将 fence 整行（```xxx）一起剥掉
+  if (!trimmed.startsWith('```')) {
+    // 不是以 ``` 开头，原样返回
+    return content;
+  }
+  const firstNewline = trimmed.indexOf('\n');
+  // 如果没有换行说明 fence 不完整（单行内容），原样返回
+  if (firstNewline < 0) {
+    return content;
+  }
+  let inner = trimmed.slice(firstNewline + 1);
+  // 检查末尾是否有匹配的 ```
+  if (!(inner.endsWith('\n```') || inner === '```')) {
+    // 末尾没有 ```，说明不是完整的外层包裹，原样返回
+    return content;
+  }
+  // 剥掉外层，trim 后返回
+  const cleaned = inner.replace(/\n*```$/, '').trim();
+  // 剥掉后为空则返回原始内容（保护已有内容不被清空）
+  if (cleaned.length === 0) {
+    return content;
+  }
+  return cleaned;
+}
+
 const STATUS_MAP: Record<string, string> = {
   success: '成功',
   failed: '失败',

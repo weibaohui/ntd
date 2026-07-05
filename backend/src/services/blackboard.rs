@@ -298,9 +298,79 @@ async fn wait_for_finished(
     }
 }
 
+/// 归一化黑板 Markdown 内容：剥掉 LLM 误包的最外层 fenced code block。
+///
+/// 规则（尽量保守）：
+/// - 仅当整段内容以 ````markdown` / ````md` / ```` 开头，且以匹配的 ```` 结尾时才剥离
+/// - 内部代码块不受影响
+/// - 剥离后 trim() 一次
+/// - 不满足条件时原样返回
+///
+/// 这是"双保险"的后端侧：源头修正，防止脏数据入库。
+/// 前端也有一样的归一化逻辑作为兼容兜底。
+pub fn normalize_blackboard_markdown(content: &str) -> String {
+    let trimmed = content.trim();
+    // 快速失败：太短的内容不可能包着 fenced code block
+    if trimmed.len() < 5 {
+        return content.to_string();
+    }
+    // 匹配开头的 fenced code block：``` 后跟任意语言标识符（markdown / md / code / ...），或纯 ```
+    // 找到第一个换行，将 fence 整行（```xxx）一起剥掉
+    if !trimmed.starts_with("```") {
+        // 不是以 ``` 开头，原样返回
+        return content.to_string();
+    }
+    let Some(first_newline) = trimmed.find('\n') else {
+        // 如果没有换行说明 fence 不完整（单行内容），原样返回
+        return content.to_string();
+    };
+    let inner = &trimmed[first_newline + 1..];
+    // 检查末尾是否有匹配的 ```
+    if !inner.ends_with("\n```") && inner != "```" {
+        // 末尾没有 ```，说明不是完整的外层包裹，原样返回
+        return content.to_string();
+    }
+    // 剥掉外层，trim 后返回
+    let cleaned = inner.trim_end_matches("```").trim();
+    // 剥掉后为空则返回原始内容（保护已有内容不被清空）
+    if cleaned.is_empty() {
+        return content.to_string();
+    }
+    cleaned.to_string()
+}
+
 /// 把 LLM 产出写入黑板表，必要时跳过（空内容保护）。
 ///
 /// 策略：
+/// - 产出为空 → 不覆盖现有黑板（LLM 偶发无意义输出时保护已有内容）
+/// - 产出非空 → 先归一化剥掉外层 fenced markdown，再 upsert
+async fn save_blackboard(
+    db: &Database,
+    workspace_id: i64,
+    new_content: Option<String>,
+) -> Result<(), AppError> {
+    // None = 执行未产出结果：没有可写内容，按"无变化"处理
+    let Some(new_content) = new_content else {
+        return Ok(());
+    };
+    // 归一化：剥掉 LLM 误包的 ````markdown ... ```` 外层
+    let normalized = normalize_blackboard_markdown(&new_content);
+    // 空内容保护：避免 LLM 偶发返回 "" 覆盖已有黑板
+    if normalized.trim().is_empty() {
+        tracing::warn!(
+            "黑板更新结果为空，跳过写入: workspace_id={}",
+            workspace_id
+        );
+        return Ok(());
+    }
+    // upsert：记录不存在时创建，已存在时覆盖 content/updated_at，保留 created_at
+    db.upsert_blackboard_content(workspace_id, &normalized)
+        .await
+        .map_err(|e| AppError::Internal(format!("更新黑板失败: {}", e)))?;
+    tracing::info!("黑板更新成功: workspace_id={}", workspace_id);
+    Ok(())
+}
+
 /// 生成 index 页面 Markdown：列出所有 topic 页面的链接和摘要。
 ///
 /// index 页由后端自动生成，保证内容与实际页面列表 100% 一致，
@@ -683,4 +753,76 @@ pub async fn update_blackboard_wiki(
 
     tracing::info!("Wiki 黑板更新完成: workspace_id={}, pages={}", workspace_id, operations.len());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 正常 Markdown 内容不应被误删。
+    #[test]
+    fn test_normalize_preserves_plain_markdown() {
+        let input = "# 工作空间进展\n\n- 已完成 A\n- 进行中 B";
+        assert_eq!(normalize_blackboard_markdown(input), input);
+    }
+
+    /// 剥掉 ````markdown 外层。
+    #[test]
+    fn test_normalize_strips_markdown_fence() {
+        let input = "```markdown\n# 工作空间进展\n\n- 已完成 A\n```";
+        let expected = "# 工作空间进展\n\n- 已完成 A";
+        assert_eq!(normalize_blackboard_markdown(input), expected);
+    }
+
+    /// 剥掉 ````md 外层。
+    #[test]
+    fn test_normalize_strips_md_fence() {
+        let input = "```md\n# 测试\n```";
+        let expected = "# 测试";
+        assert_eq!(normalize_blackboard_markdown(input), expected);
+    }
+
+    /// 剥掉纯 ```` 外层。
+    #[test]
+    fn test_normalize_strips_plain_fence() {
+        let input = "```\n# 测试\n```";
+        let expected = "# 测试";
+        assert_eq!(normalize_blackboard_markdown(input), expected);
+    }
+
+    /// 内部有代码块时不应误删。
+    #[test]
+    fn test_normalize_preserves_inner_code_blocks() {
+        let input = "# 进展\n\n```rust\nfn main() {}\n```";
+        assert_eq!(normalize_blackboard_markdown(input), input);
+    }
+
+    /// 开头有 ``` 但结尾不匹配时不删除。
+    #[test]
+    fn test_normalize_no_match_trailing_backticks() {
+        let input = "```\n# 测试";
+        assert_eq!(normalize_blackboard_markdown(input), input);
+    }
+
+    /// 剥掉外层后 trim 去除多余空白。
+    #[test]
+    fn test_normalize_trims_result() {
+        let input = "```markdown\n\n# 测试\n\n```";
+        let expected = "# 测试";
+        assert_eq!(normalize_blackboard_markdown(input), expected);
+    }
+
+    /// 空内容保护：剥掉外层后为空时返回原始内容。
+    #[test]
+    fn test_normalize_empty_inner_preserves_original() {
+        let input = "```markdown\n\n```";
+        assert_eq!(normalize_blackboard_markdown(input), input);
+    }
+
+    /// 太短的内容直接返回。
+    #[test]
+    fn test_normalize_too_short_returns_original() {
+        let input = "```";
+        assert_eq!(normalize_blackboard_markdown(input), input);
+    }
 }
