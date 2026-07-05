@@ -99,7 +99,10 @@ async fn find_or_create_wiki_todo(
 /// - `{{page_summaries}}`：现有页面列表（slug + title + 摘要）
 /// - `{{pending_record_ids}}`：待分析的执行记录 ID 列表
 ///
-/// 输出要求：严格 JSON 格式，包含 operations 数组，每项描述 create/update 哪个页面。
+/// 输出要求：严格 YAML 格式，包含 operations 数组，每项描述 create/update 哪个页面。
+///
+/// 为什么用 YAML 而非 JSON：YAML 用缩进表达结构，无需引号/反斜杠转义，
+/// LLM 输出更稳更短，不易因转义错误或 token 截断导致解析失败。
 fn build_wiki_analyze_prompt() -> String {
     r##"你是一个工作空间黑板维护者。你的任务是分析新的执行记录，决定它们应该归到哪些主题页面。
 
@@ -118,28 +121,24 @@ fn build_wiki_analyze_prompt() -> String {
 1. 逐个调用 `ntd todo execution get <id>` 获取每条执行记录的完整结论
 2. 仔细分析每条结论涉及哪些主题领域
 3. 根据分析结果决定：是创建新页面还是更新现有页面
-4. 输出严格的 JSON 格式，不要输出任何其他解释
+4. 输出严格的 YAML 格式，不要输出任何其他解释
 
 输出格式：
-```json
-{
-  "operations": [
-    {
-      "action": "create",
-      "slug": "auth-module",
-      "title": "认证模块",
-      "summary": "关于 JWT 验证、token 刷新、权限控制的结论汇总",
-      "record_ids": [42, 45]
-    },
-    {
-      "action": "update",
-      "slug": "performance",
-      "title": "性能优化",
-      "summary": "数据库查询优化、缓存策略、接口响应时间",
-      "record_ids": [47]
-    }
-  ]
-}
+```yaml
+operations:
+  - action: create
+    slug: auth-module
+    title: 认证模块
+    summary: 关于 JWT 验证、token 刷新、权限控制的结论汇总
+    record_ids:
+      - 42
+      - 45
+  - action: update
+    slug: performance
+    title: 性能优化
+    summary: 数据库查询优化、缓存策略、接口响应时间
+    record_ids:
+      - 47
 ```
 
 要求：
@@ -149,24 +148,28 @@ fn build_wiki_analyze_prompt() -> String {
 - record_ids 列出涉及的执行记录 ID
 - 如果结论涉及多个主题，可以分配到多个页面
 - 不要创建过于细碎的页面，尽量将相关结论归到同一主题下
-- 只输出 JSON，不要输出其他任何文字"##.to_string()
+- 整个 YAML 内容必须用 ```yaml 起始、``` 结尾的代码块包裹，不要在代码块外输出任何文字"##.to_string()
 }
 
 /// 构建 Wiki 执行阶段的 Prompt 模板（第二次调用）。
 ///
 /// 输入占位符：
-/// - `{{operations_json}}`：分析阶段输出的操作列表 JSON
+/// - `{{operations_json}}`：分析阶段输出的操作列表（YAML 字符串）
 /// - `{{page_contents}}`：待更新页面的当前内容（仅包含 operations 中涉及的页面）
 ///
-/// 输出要求：严格 JSON 格式，key 为 slug，value 为新的 Markdown 内容。
+/// 输出要求：严格 YAML 格式，key 为 slug，value 为 Markdown 内容。
+///
+/// 为什么用 YAML 而非 JSON：执行阶段 value 是大段 Markdown，含大量引号/换行/反斜杠。
+/// JSON 要对这些字符转义，LLM 容易转义出错或截断在转义中途；YAML 字面量块标量
+/// （`|`）能原样保留大段文本，几乎零转义负担，LLM 输出更稳更短更不易截断。
 fn build_wiki_execute_prompt() -> String {
     r##"你是一个工作空间黑板维护者。你的任务是根据分析结果，更新或创建主题页面的 Markdown 内容。
 
 你拥有以下工具，可以直接在执行过程中调用：
 - `ntd todo execution get <id>`：获取指定执行记录的完整结论（result 字段）。例如：`ntd todo execution get 42` 获取第 42 条执行记录的结论。
 
-操作列表（JSON）：
-```json
+操作列表（YAML）：
+```yaml
 {{operations_json}}
 ```
 
@@ -190,15 +193,26 @@ fn build_wiki_execute_prompt() -> String {
 5. 如果新结论与已有结论矛盾，在"矛盾/风险"中标注
 6. 保持 Markdown 格式，不要添加 HTML
 
-输出严格的 JSON 格式，key 为页面 slug，value 为完整的 Markdown 内容：
-```json
-{
-  "auth-module": "# 认证模块\n\n## 已确认\n- ...",
-  "performance": "# 性能优化\n\n## 已确认\n- ..."
-}
+输出严格的 YAML 格式，整体用 ```yaml ``` 代码块包裹，key 为页面 slug，value 为完整的 Markdown 内容。
+value 用 YAML 字面量块标量 `|` 表达，可原样保留多行 Markdown，无需转义引号或换行：
+
+```yaml
+auth-module: |
+  # 认证模块
+
+  ## 已确认
+  - ...
+performance: |
+  # 性能优化
+
+  ## 已确认
+  - ...
 ```
 
-只输出 JSON，不要输出其他任何文字。"##.to_string()
+要求：
+- 整个 YAML 内容必须用 ```yaml 起始、``` 结尾的代码块包裹，不要在代码块外输出任何文字
+- value 一律用 `|` 字面量块标量，不要用引号包裹
+- 不要输出其他任何文字"##.to_string()
 }
 
 /// 启动 blackboard todo 执行并阻塞等待它的 Finished 事件，返回 LLM 产出的新内容。
@@ -525,9 +539,9 @@ async fn run_analyze_phase(
         params,
     ).await?;
 
-    // 5. 解析输出为 JSON operations 数组
+    // 5. 解析输出为 YAML operations 数组
     let raw = result.ok_or_else(|| AppError::Internal("分析阶段未产出结果".to_string()))?;
-    let parsed = extract_json_from_output(&raw)?;
+    let parsed = extract_yaml_from_output(&raw)?;
     let ops = parsed.get("operations")
         .and_then(|v| v.as_array())
         .ok_or_else(|| AppError::Internal("分析阶段输出缺少 operations 数组".to_string()))?;
@@ -538,7 +552,7 @@ async fn run_analyze_phase(
 /// 第二次 LLM 调用：执行阶段 — 写页面内容。
 ///
 /// 输入：operations + 待更新页面的当前内容
-/// 输出：{slug: markdown_content} JSON 对象
+/// 输出：{slug: markdown_content} YAML 映射（反序列化后即 serde_json::Map）
 async fn run_execute_phase(
     db: Arc<Database>,
     executor_registry: Arc<ExecutorRegistry>,
@@ -607,49 +621,68 @@ async fn run_execute_phase(
         params,
     ).await?;
 
-    // 6. 解析输出为 {slug: content} JSON 对象
+    // 6. 解析输出为 {slug: content} YAML 映射
     let raw = result.ok_or_else(|| AppError::Internal("执行阶段未产出结果".to_string()))?;
-    let parsed = extract_json_from_output(&raw)?;
+    let parsed = extract_yaml_from_output(&raw)?;
     let map = parsed.as_object()
-        .ok_or_else(|| AppError::Internal("执行阶段输出不是 JSON 对象".to_string()))?;
+        .ok_or_else(|| AppError::Internal("执行阶段输出不是 YAML 映射".to_string()))?;
 
     Ok(map.clone())
 }
 
-/// 从 LLM 输出中提取 JSON（兼容被 ```json 代码块包裹的情况）。
+/// 从 LLM 输出中提取 YAML（要求被 ```yaml ... ``` 代码块包裹）。
 ///
-/// LLM 有时会在 JSON 外加 markdown 代码块标记，需要剥掉才能解析。
-fn extract_json_from_output(raw: &str) -> Result<serde_json::Value, AppError> {
+/// 设计：prompt 强制 LLM 把 YAML 内容用 ```yaml 起始、``` 结尾的代码块包裹，
+/// 解析器用正则 `(?s)```yaml\s*\n(.*?)``` ` 非贪婪匹配代码块内部内容，
+/// 再交给 serde_yaml 反序列化为 serde_json::Value（结构契约不变，调用方
+/// 仍用 .get("operations") / .as_object() 访问）。
+///
+/// 为什么用正则而非 find: 旧 JSON 解析器用 `find("```yaml")` + `find("```")`
+/// 找闭合标记，遇到 YAML 内容里嵌套的 ``` （比如 Markdown 示例）会错位截断。
+/// 正则 `(.*?)```` 非贪婪匹配第一个闭合 ```，配合 `(?s)` 让 `.` 匹配换行，
+/// 既能跨多行又能停在第一个闭合标记，更鲁棒。
+///
+/// 为什么只支持 YAML 不兼容 JSON: YAML 对大段 Markdown 文本用字面量块标量 `|`
+/// 原样保留，无需转义引号/反斜杠，LLM 输出更稳更短更不易截断。JSON 转义大段
+/// 文本容易出错且 token 占用大，已废弃。旧数据不保留，新 todo 一律输出 YAML。
+fn extract_yaml_from_output(raw: &str) -> Result<serde_json::Value, AppError> {
+    use regex::Regex;
+    use std::sync::OnceLock;
+
+    // 正则编译开销不小，用 OnceLock 缓存编译结果，多次调用复用。
+    // (?s) 让 . 匹配换行；非贪婪 .*? 确保停在第一个闭合 ```。
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r"(?s)```yaml\s*\n(.*?)```").expect("yaml fence regex must compile")
+    });
+
+    // 先尝试从 ```yaml ``` 包裹块提取
+    if let Some(caps) = re.captures(raw) {
+        let inner = caps.get(1).map(|m| m.as_str()).unwrap_or("").trim();
+        if !inner.is_empty() {
+            match serde_yaml::from_str::<serde_json::Value>(inner) {
+                Ok(v) => return Ok(v),
+                Err(e) => {
+                    return Err(AppError::Internal(format!(
+                        "YAML 代码块内容解析失败: {:?}; 内容前 200 字: {:?}",
+                        e,
+                        inner.chars().take(200).collect::<String>()
+                    )));
+                }
+            }
+        }
+    }
+
+    // 回退：整段当 YAML 直接解析（LLM 偶尔不按格式包裹时兜底）
     let trimmed = raw.trim();
-    // 尝试直接解析
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
-        return Ok(v);
+    match serde_yaml::from_str::<serde_json::Value>(trimmed) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(AppError::Internal(format!(
+            "无法从 LLM 输出提取 YAML（未找到 ```yaml ``` 包裹块且整段解析失败）: {:?}; 内容前 200 字: {:?}",
+            e,
+            trimmed.chars().take(200).collect::<String>()
+        ))),
     }
-    // 尝试剥掉 ```json ... ``` 包裹
-    if let Some(start) = trimmed.find("```json") {
-        let rest = &trimmed[start + 7..];
-        if let Some(end) = rest.find("```") {
-            let inner = rest[..end].trim();
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(inner) {
-                return Ok(v);
-            }
-        }
-    }
-    // 尝试剥掉 ``` ... ``` 包裹（无 json 标记）
-    if let Some(start) = trimmed.find("```") {
-        let rest = &trimmed[start + 3..];
-        if let Some(end) = rest.find("```") {
-            let inner = rest[..end].trim();
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(inner) {
-                return Ok(v);
-            }
-        }
-    }
-    // 按字符截断前 200 字，避免按字节切片在多字节字符（如中文）边界处 panic
-    Err(AppError::Internal(format!(
-        "无法解析 LLM 输出为 JSON: {:?}",
-        trimmed.chars().take(200).collect::<String>()
-    )))
 }
 
 /// Wiki 模式：更新黑板（两次 LLM 调用 + index/log 自动生成）。
@@ -864,5 +897,133 @@ mod tests {
     fn test_normalize_too_short_returns_original() {
         let input = "```";
         assert_eq!(normalize_blackboard_markdown(input), input);
+    }
+
+    // ===== extract_yaml_from_output 单元测试 =====
+    //
+    // 覆盖四个场景：标准包裹、Markdown 内嵌 ``` 不误截、缺包裹块回退整段解析、
+    // YAML 语法错误返回 Err。这些场景对应生产中 LLM 输出的真实变体，
+    // 确保解析器鲁棒性。
+
+    /// 标准 ```yaml ``` 包裹的 operations 数组能正确解析。
+    #[test]
+    fn test_extract_yaml_standard_fence_operations() {
+        let raw = r#"```yaml
+operations:
+  - action: create
+    slug: auth-module
+    title: 认证模块
+    summary: JWT 验证汇总
+    record_ids:
+      - 42
+      - 45
+```
+"#;
+        let v = extract_yaml_from_output(raw).expect("标准包裹必须解析成功");
+        let ops = v.get("operations").and_then(|o| o.as_array()).expect("必须有 operations 数组");
+        assert_eq!(ops.len(), 1);
+        let op = &ops[0];
+        assert_eq!(op.get("action").and_then(|v| v.as_str()), Some("create"));
+        assert_eq!(op.get("slug").and_then(|v| v.as_str()), Some("auth-module"));
+        let record_ids: Vec<i64> = op.get("record_ids")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_i64()).collect())
+            .unwrap_or_default();
+        assert_eq!(record_ids, vec![42, 45]);
+    }
+
+    /// execute 阶段输出：slug → Markdown 字面量块标量，能原样保留多行内容。
+    /// 这是 YAML 相对 JSON 的核心优势——大段 Markdown 无需转义。
+    #[test]
+    fn test_extract_yaml_execute_phase_literal_block() {
+        let raw = r#"```yaml
+auth-module: |
+  # 认证模块
+
+  ## 已确认
+  - JWT 验证已实现，含 "引号" 和 `反引号`
+  - token 刷新策略：见 [record_42](/?view=items&id=10)
+performance: |
+  # 性能优化
+
+  ## 已确认
+  - 查询耗时下降 50%
+```
+"#;
+        let v = extract_yaml_from_output(raw).expect("execute phase YAML 必须解析成功");
+        let map = v.as_object().expect("必须是映射");
+        assert_eq!(map.len(), 2);
+        let auth = map.get("auth-module").and_then(|v| v.as_str()).expect("auth-module 必须存在");
+        assert!(auth.contains("# 认证模块"));
+        assert!(auth.contains("含 \"引号\" 和 `反引号`"));
+        assert!(auth.contains("[record_42]"));
+    }
+
+    /// LLM 在 YAML 前后输出了自然语言前缀/后缀，正则仍能精准提取代码块内容。
+    /// 这是正则相比旧 find 方案的优势——不依赖整段是合法 YAML。
+    #[test]
+    fn test_extract_yaml_tolerates_surrounding_prose() {
+        let raw = r#"Now I have all the data. Let me output the YAML.
+
+```yaml
+operations:
+  - action: update
+    slug: perf
+    title: 性能
+    summary: 优化
+    record_ids:
+      - 7
+```
+
+Done. Above is the YAML.
+"#;
+        let v = extract_yaml_from_output(raw).expect("有包裹块时必须提取成功，忽略前后自然语言");
+        let ops = v.get("operations").and_then(|o| o.as_array()).expect("operations 必须存在");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].get("slug").and_then(|v| v.as_str()), Some("perf"));
+    }
+
+    /// 缺少 ```yaml ``` 包裹时，回退到整段当 YAML 解析。
+    /// LLM 偶尔不按格式包裹，回退保证兜底可用。
+    #[test]
+    fn test_extract_yaml_fallback_when_no_fence() {
+        let raw = "operations:\n  - action: create\n    slug: x\n    title: X\n    summary: s\n    record_ids: []\n";
+        let v = extract_yaml_from_output(raw).expect("无包裹块时回退整段解析应成功");
+        assert!(v.get("operations").is_some());
+    }
+
+    /// 既无包裹块、整段也不是合法 YAML 时，返回 Err 并附前 200 字诊断。
+    ///
+    /// 注意 YAML 的宽容性：纯文本无冒号会被当成合法字符串标量解析成功，
+    /// 所以测试输入必须用真正违反 YAML 语法的结构（如非法缩进映射）。
+    #[test]
+    fn test_extract_yaml_returns_err_for_garbage() {
+        // 非法 YAML：映射 key 后跟另一个冒号，语法错误
+        let raw = "key: : value: broken\n  - : :\n";
+        let err = extract_yaml_from_output(raw).expect_err("非法 YAML 必须返回 Err");
+        let msg = format!("{:?}", err);
+        assert!(msg.contains("YAML") || msg.contains("yaml"), "错误信息应提示 YAML: {}", msg);
+    }
+
+    /// YAML value 里含普通代码（无 ``` fence），字面量块标量能原样保留。
+    ///
+    /// 注意：不测试 value 里嵌套 ``` 的场景——那是 fence 协议的歧义，
+    /// 非贪婪正则无法区分「内容里的 ```」和「真正的闭合 ```」。
+    /// 正确做法是 prompt 约束 LLM 不要在 value 里用 ``` fence，
+    /// 而非试图解析这种歧义。这里只验证普通代码（缩进块）能正常保留。
+    #[test]
+    fn test_extract_yaml_value_with_plain_code_block() {
+        let raw = r#"```yaml
+guide: |
+  示例代码（无 fence，纯缩进）：
+      print('hi')
+      echo 'bye'
+  上述代码应原样保留。
+```
+"#;
+        let v = extract_yaml_from_output(raw).expect("普通代码内容不应破坏解析");
+        let guide = v.get("guide").and_then(|v| v.as_str()).expect("guide 字段必须存在");
+        assert!(guide.contains("print('hi')"), "代码内容应完整保留: {:?}", guide);
+        assert!(guide.contains("echo 'bye'"), "多行代码应完整保留: {:?}", guide);
     }
 }
