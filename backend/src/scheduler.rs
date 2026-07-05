@@ -469,6 +469,13 @@ impl TodoScheduler {
                         };
                         let executor = todo.executor.clone();
                         info!("Scheduled execution triggered for todo {}", todo_id);
+                        // 从 todo 自身回填 workspace_id / workspace_path。
+                        // 早期实现把两者都置 None，导致 cron 触发的任务在执行完成后，
+                        // 黑板更新钩子（completion.rs：仅当 workspace_id 为 Some 时才
+                        // push pending record）被跳过，cron 任务永远进不了黑板分析。
+                        // 这里取自 DB 的 todo 字段，与手动触发路径保持一致。
+                        let workspace_id = todo.workspace_id;
+                        let workspace_path = todo.workspace_path.clone();
                         run_todo_execution(RunTodoExecutionRequest {
                             db,
                             executor_registry: registry,
@@ -488,8 +495,8 @@ impl TodoScheduler {
                             feishu_bot_id: None,
                             step_id: None,
                             feishu_receive_id: None,
-                            workspace_path: None,
-                            workspace_id: None,
+                            workspace_path,
+                            workspace_id,
                         })
                         .await;
                     }
