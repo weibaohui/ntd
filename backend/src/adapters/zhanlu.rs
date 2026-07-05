@@ -13,11 +13,14 @@ use crate::models::utc_timestamp;
 /// Issue #673 明确要求「行为跟 opencode 完全一致，执行命令也一致，返回输出 json 格式也一致」，
 /// 但因为后续 Zhanlu 可能演化出独立行为，所以不复用 `opencode.rs`，而是完整复制一份。
 ///
-/// `has_successful_finish` 与 Opencode 一样承担「非零退出码但有 finish 事件就算成功」的语义。
+/// `has_successful_finish` 与 Opencode 一样承担「非零退出码但有 finish 事件就算成功」的语义，
+/// `session_id` 用于缓存从 JSON 事件中提取的 session_id。
 #[derive(Clone)]
 pub struct ZhanluExecutor {
     base: BaseExecutor,
     has_successful_finish: Arc<Mutex<bool>>,
+    /// 缓存从 JSON 事件中提取的 session_id，支持跨行回退和 resume 时回写 DB。
+    session_id: Arc<Mutex<Option<String>>>,
 }
 
 impl ZhanluExecutor {
@@ -25,6 +28,7 @@ impl ZhanluExecutor {
         Self {
             base: BaseExecutor::new(path),
             has_successful_finish: Arc::new(Mutex::new(false)),
+            session_id: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -152,11 +156,24 @@ impl CodeExecutor for ZhanluExecutor {
 
     fn extract_session_id(&self, line: &str) -> Option<String> {
         let event: ZhanluAgentEvent = serde_json::from_str(line).ok()?;
-        event.session_id.or_else(|| event.part.as_ref()?.session_id.clone())
+        let sid = event.session_id.or_else(|| event.part.as_ref()?.session_id.clone());
+        if let Some(ref s) = sid {
+            *self.session_id.lock() = Some(s.clone());
+        }
+        sid.or_else(|| self.session_id.lock().clone())
+    }
+
+    fn get_session_id(&self) -> Option<String> {
+        self.session_id.lock().clone()
     }
 
     fn parse_output_line(&self, line: &str) -> Option<ParsedLogEntry> {
         let event: ZhanluAgentEvent = serde_json::from_str(line).ok()?;
+        // 缓存 session_id：优先取事件顶层字段，再取 part 内字段
+        let sid = event.session_id.clone().or_else(|| event.part.as_ref()?.session_id.clone());
+        if let Some(ref s) = sid {
+            *self.session_id.lock() = Some(s.clone());
+        }
         let timestamp = Self::resolve_timestamp(event.timestamp);
 
         match event.event_type.as_str() {
@@ -361,6 +378,30 @@ mod tests {
         ];
         let result = executor.get_final_result(&logs);
         assert_eq!(result, Some("Hello, this is a test response".to_string()));
+    }
+
+    #[test]
+    fn test_extract_session_id_caches_result() {
+        let executor = ZhanluExecutor::new("zl".to_string());
+        let line = r#"{"type":"step-start","sessionID":"zl_sess_abc"}"#;
+        let sid = executor.extract_session_id(line);
+        assert_eq!(sid, Some("zl_sess_abc".to_string()));
+        // 再次调用仍能获取缓存值
+        assert_eq!(executor.extract_session_id(r#"{"type":"text"}"#), Some("zl_sess_abc".to_string()));
+    }
+
+    #[test]
+    fn test_get_session_id_returns_cached() {
+        let executor = ZhanluExecutor::new("zl".to_string());
+        let line = r#"{"type":"step-start","sessionID":"zl_session_xyz"}"#;
+        let _ = executor.parse_output_line(line);
+        assert_eq!(executor.get_session_id(), Some("zl_session_xyz".to_string()));
+    }
+
+    #[test]
+    fn test_get_session_id_before_any_event() {
+        let executor = ZhanluExecutor::new("zl".to_string());
+        assert_eq!(executor.get_session_id(), None);
     }
 
     /// 验证 zhanlu 的 executor_type 与 ExecutorType 枚举保持一致，
