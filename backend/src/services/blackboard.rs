@@ -684,6 +684,15 @@ pub async fn update_blackboard_wiki(
 
     if operations.is_empty() {
         tracing::info!("Wiki 分析结果为空操作，跳过执行阶段: workspace_id={}", workspace_id);
+        // 即使 LLM 判定本批 record 无需更新任何页面，也必须从 pending 队列移除已处理的 ID。
+        // 旧实现直接 return Ok() 跳过 Phase 6 的清理，导致这批 record 永远留在队列里：
+        // worker 内循环下一轮 get_blackboard 又读到同样的 ID，再次调用本函数又得到空 operations，
+        // 形成「分析→空→不清理→再分析同一批」的静默死循环，UI 持续显示
+        // 「刷新中 / N / 阈值 条」却永不收敛。空操作是合法的 LLM 判断结果，
+        // 应视为已成功处理。
+        db.remove_specific_pending_record_ids(workspace_id, &pending_record_ids).await.map_err(|e| {
+            AppError::Internal(format!("空操作分支：移除已处理 pending 记录失败: {:?}", e))
+        })?;
         return Ok(());
     }
 
