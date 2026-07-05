@@ -130,6 +130,7 @@ pub struct TaskGuard {
 impl TaskGuard {
     /// 取出内部的 receiver，用于在 select! 中监听取消信号。
     /// 只能调用一次；调用后 guard 仍会保留并负责 cleanup。
+    #[allow(clippy::expect_used)]
     pub fn take_receiver(&mut self) -> mpsc::Receiver<()> {
         self.receiver
             .take()
@@ -174,6 +175,7 @@ impl Drop for TaskGuard {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
 

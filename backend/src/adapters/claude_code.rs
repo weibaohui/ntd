@@ -219,11 +219,10 @@ impl CodeExecutor for ClaudeCodeExecutor {
     fn extract_session_id(&self, line: &str) -> Option<String> {
         // 尝试从当前行解析新的 session_id
         if !line.is_empty() {
-            if let Ok(msg) = serde_json::from_str::<ClaudeMessage>(line) {
-                if let ClaudeMessage::System { session_id: Some(sid), .. } = msg {
-                    *self.session_id.lock() = Some(sid.clone());
-                    return Some(sid);
-                }
+            // 把两层 if-let 合并为一层：外层解析 JSON，内层直接匹配 System { session_id: Some }
+            if let Ok(ClaudeMessage::System { session_id: Some(sid), .. }) = serde_json::from_str::<ClaudeMessage>(line) {
+                *self.session_id.lock() = Some(sid.clone());
+                return Some(sid);
             }
         }
         // 回退：返回之前缓存的 session_id（由 handle_system 写入）
@@ -257,6 +256,7 @@ impl CodeExecutor for ClaudeCodeExecutor {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
     use crate::executor_service::completion::get_usage_from_tokens_logs;

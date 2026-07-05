@@ -9,6 +9,8 @@
 // 这里用一个最朴素的 mock HTTP server（tokio TcpListener）验证：
 // 1) push 在合理时间内返回，不会自我死锁；
 // 2) 拿到的 last_sync_at 在成功 push 后被写入。
+// 测试代码允许 unwrap/expect/panic 等写法以简化断言逻辑，统一放宽以下 clippy 检查
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -79,7 +81,7 @@ async fn build_test_app() -> (axum::Router, Arc<std::sync::RwLock<Config>>) {
     };
     scheduler.load_from_db(&ctx).await.unwrap();
     scheduler.start().await.unwrap();
-    (create_app(ctx, scheduler), config)
+    (create_app(ctx, scheduler).await, config)
 }
 
 async fn read_json(response: axum::response::Response) -> serde_json::Value {

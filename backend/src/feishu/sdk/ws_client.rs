@@ -102,6 +102,7 @@ impl WebSocketStateMachine {
         &self.state
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     pub fn handle_event(&mut self, event: StateMachineEvent) -> Result<(), String> {
         use ConnectionState::*;
         use StateMachineEvent::*;
@@ -197,7 +198,7 @@ impl FrameHandler {
         match msg_type.as_str() {
             "event" => {
                 let start = Instant::now();
-                match event_handler.do_without_validation(payload) {
+                match event_handler.do_without_validation(&payload) {
                     Ok(_) => {
                         let elapsed = start.elapsed().as_millis();
                         let response = NewWsResponse::ok();
@@ -443,7 +444,8 @@ async fn get_conn_url(config: &std::sync::Arc<Config>) -> WsClientResult<EndPoin
     }
 
     let end_point = resp.data.ok_or(WsClientError::UnexpectedResponse)?;
-    if end_point.url.as_ref().is_none_or(|url| url.is_empty()) {
+    // 使用 map_or 替代 is_none_or 以兼容 MSRV 1.81（is_none_or 需要 1.82+）
+    if end_point.url.as_ref().map_or(true, |url| url.is_empty()) {
         return Err(WsClientError::ServerError {
             code: 500,
             message: "No available endpoint".to_string(),

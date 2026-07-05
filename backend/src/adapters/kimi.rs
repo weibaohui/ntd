@@ -27,7 +27,8 @@ impl KimiExecutor {
     /// 提取 assistant.tool_calls[0].function 作为 tool_call 日志。
     fn parse_assistant_tool_call(&self, json: &serde_json::Value) -> Option<ParsedLogEntry> {
         let calls = json.get("tool_calls")?.as_array()?;
-        for call in calls {
+        // 只取第一个 tool call；原始 for 循环会在第一次 return 后结束，等价于取首元素
+        if let Some(call) = calls.first() {
             let func = call.get("function")?;
             let name = func.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
             let args = func.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}");
@@ -75,7 +76,8 @@ impl KimiExecutor {
                 _ => {}
             }
         }
-        text.map(|t| helpers::text_entry(t))
+        // 直接传函数引用替代冗余闭包，clippy::redundant_closure 要求
+        text.map(helpers::text_entry)
             .or_else(|| think.map(|t| helpers::entry("thinking", t)))
     }
 
@@ -145,7 +147,8 @@ impl CodeExecutor for KimiExecutor {
         // 非 JSON 行：kimi 有时会在 NDJSON 之前直接输出纯文本结果
         // （例如命令执行的原样输出：date/whoami/ping 的结果）。
         // 回退到 text 类型条目，确保非 JSON 行不被静默丢弃。
-        helpers::trimmed_non_empty(line).map(|t| helpers::text_entry(t))
+        // 直接传函数引用替代冗余闭包
+        helpers::trimmed_non_empty(line).map(helpers::text_entry)
     }
 
     fn parse_stderr_line(&self, line: &str) -> Option<ParsedLogEntry> {
@@ -186,6 +189,7 @@ impl CodeExecutor for KimiExecutor {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
 

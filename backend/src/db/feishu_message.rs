@@ -311,6 +311,8 @@ impl Database {
         if let Some(model) = result {
             let mut am: feishu_messages::ActiveModel = model.into();
             am.processed = ActiveValue::Set(Some(false));
+            // 清除 processed_id，标记为"未处理"状态
+            am.processed_id = ActiveValue::Set(None);
             am.update(&self.conn).await?;
         }
         Ok(())

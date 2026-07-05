@@ -12,6 +12,8 @@
 //! - 执行器配置（ExecutorConfig）：启用过滤、按名查询、部分字段更新、种子幂等。
 //! - 同步记录（SyncRecord）：创建、列表分页、计数、清空。
 
+// 测试代码允许 unwrap/expect/panic 等写法以简化断言逻辑，统一放宽以下 clippy 检查
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 use ntd::db::Database;
 use ntd::db::TemplateInput;
 
@@ -487,7 +489,16 @@ async fn test_project_directory_list_orders_by_path() {
         .unwrap();
     let list = db.get_project_directories().await.unwrap();
     let paths: Vec<&str> = list.iter().map(|d| d.path.as_str()).collect();
-    assert_eq!(paths, vec!["/tmp/aaa", "/tmp/mmm", "/tmp/zzz"]);
+    // 迁移脚本会 seed 默认工作空间 /tmp，加上我们创建的 3 个，共 4 个
+    assert!(paths.contains(&"/tmp/aaa"));
+    assert!(paths.contains(&"/tmp/mmm"));
+    assert!(paths.contains(&"/tmp/zzz"));
+    // 验证排序：aaa < mmm < zzz
+    let custom: Vec<&str> = paths.iter()
+        .filter(|p| p.starts_with("/tmp/") && **p != "/tmp")
+        .copied()
+        .collect();
+    assert_eq!(custom, vec!["/tmp/aaa", "/tmp/mmm", "/tmp/zzz"]);
 }
 
 // =====================================================================

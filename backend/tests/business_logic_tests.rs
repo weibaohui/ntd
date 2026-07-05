@@ -1,5 +1,7 @@
 //! Business logic tests for prompt fallback behavior and execute handler
 
+// 测试代码允许 unwrap/expect/panic 等写法以简化断言逻辑，统一放宽以下 clippy 检查
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 #[cfg(test)]
 mod prompt_fallback_tests {
     use ntd::models::{ExecuteRequest, UpdateTodoRequest, TodoStatus};
@@ -88,24 +90,27 @@ mod prompt_fallback_tests {
             "title": "Test Todo",
             "prompt": "This is the prompt",
             "executor": "kimi",
-            "tag_ids": [1, 2, 3]
+            "tag_ids": [1, 2, 3],
+            "workspace_id": 1
         }"#;
         let req: CreateTodoRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.title, "Test Todo");
         assert_eq!(req.prompt, "This is the prompt");
         assert_eq!(req.executor, Some("kimi".to_string()));
         assert_eq!(req.tag_ids, vec![1, 2, 3]);
+        assert_eq!(req.workspace_id, 1);
     }
 
     #[test]
     fn test_create_todo_request_minimal() {
         use ntd::models::CreateTodoRequest;
-        let json = r#"{"title": "Minimal Todo", "prompt": ""}"#;
+        let json = r#"{"title": "Minimal Todo", "prompt": "", "workspace_id": 1}"#;
         let req: CreateTodoRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.title, "Minimal Todo");
         assert!(req.prompt.is_empty());
         assert!(req.executor.is_none());
         assert!(req.tag_ids.is_empty());
+        assert_eq!(req.workspace_id, 1);
     }
 }
 

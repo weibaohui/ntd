@@ -100,8 +100,9 @@ pub(crate) async fn register_task_and_load_todo(
 /// Stage 1 步骤 3：从 config 读 max_concurrent + timeout_secs。
 ///
 /// config lock 释放后两个值就各自独立可用，避免后续代码块带 lock。
+#[allow(clippy::expect_used)]
 pub(crate) fn read_runtime_config(request: &RunTodoExecutionRequest) -> (u32, u64) {
-    let cfg = request.config.read().unwrap();
+    let cfg = request.config.read().expect("config RwLock poisoned in read_runtime_config");
     (cfg.max_concurrent_todos, cfg.execution_timeout_secs)
 }
 
@@ -259,6 +260,7 @@ pub(crate) async fn dispatch_spawned_executor_task(spawned: SpawnInputs) -> Exec
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
 

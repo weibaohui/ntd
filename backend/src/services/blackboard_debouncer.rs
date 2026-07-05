@@ -41,7 +41,9 @@ static TIMER_STATES: RwLock<Option<HashMap<i64, WorkspaceTimerState>>> = RwLock:
 
 /// 全局 timer 运行状态：记录哪个 workspace 的 timer 正在运行。
 /// Arc 包装使 static 可跨 tokio::spawn 共享引用。
-static ACTIVE_TIMERS: std::sync::OnceLock<Arc<RwLock<Option<HashMap<i64, bool>>>>> =
+/// 使用类型别名消除 clippy::type_complexity 告警，同时让 static 声明更易读。
+type ActiveTimersMap = Arc<RwLock<Option<HashMap<i64, bool>>>>;
+static ACTIVE_TIMERS: std::sync::OnceLock<ActiveTimersMap> =
     std::sync::OnceLock::new();
 
 /// 查询 workspace 的当前计时器状态，返回 None 表示无 active timer。
@@ -71,10 +73,11 @@ pub async fn reconcile_timer_after_config_change(workspace_id: i64, new_debounce
         };
 
         // 计算已计时长（秒）；saturating_sub 防御时钟回拨
+        // duration_since 在系统时钟早于 UNIX_EPOCH 时返回 Err；as_millis() 超出 u64 范围时回退 0
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
         let elapsed_secs = now_ms.saturating_sub(state.started_at_ms) / 1000;
 
         if elapsed_secs >= new_debounce_secs as u64 {
@@ -101,8 +104,8 @@ pub async fn reconcile_timer_after_config_change(workspace_id: i64, new_debounce
 
     if should_flush {
         // 标记 timer 未运行（与 TIMER_STATES 无锁序依赖，单独持锁）
-        {
-            let timers = ACTIVE_TIMERS.get().expect("ActiveTimers 未初始化");
+        // ACTIVE_TIMERS 在 init() 中初始化；若未初始化则跳过标记，但仍继续发送 flush 消息
+        if let Some(timers) = ACTIVE_TIMERS.get() {
             let mut timers = timers.write().await;
             if let Some(map) = timers.as_mut() {
                 map.insert(workspace_id, false);
@@ -238,10 +241,11 @@ pub async fn push_pending_record(workspace_id: i64, record_id: i64, db: &Arc<Dat
 async fn start_timer(workspace_id: i64, debounce_secs: i64) {
     // 检查并标记 timer 运行中：用 ACTIVE_TIMERS 的 bool 标志做互斥，
     // 避免同一 workspace 重复 spawn 多个 sleep 任务导致重复 flush。
+    // ACTIVE_TIMERS 在 init() 中初始化；若未初始化则无法操作，静默返回
     {
-        let timers = ACTIVE_TIMERS.get().expect("ActiveTimers 未初始化");
+        let Some(timers) = ACTIVE_TIMERS.get() else { return; };
         let mut timers = timers.write().await;
-        let timers_map = timers.as_mut().expect("ActiveTimers 未初始化");
+        let Some(timers_map) = timers.as_mut() else { return; };
         if timers_map.get(&workspace_id).copied().unwrap_or(false) {
             return; // timer 已在运行
         }
@@ -249,10 +253,11 @@ async fn start_timer(workspace_id: i64, debounce_secs: i64) {
     }
 
     // 记录 timer 启动时间，供 flush listener 计算剩余秒数
+    // duration_since 在系统时钟早于 UNIX_EPOCH 时返回 Err；as_millis() 超出 u64 范围时回退 0
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
     {
         let mut states = TIMER_STATES.write().await;
         states.get_or_insert_with(HashMap::new).insert(workspace_id, WorkspaceTimerState {
@@ -268,7 +273,8 @@ async fn start_timer(workspace_id: i64, debounce_secs: i64) {
     };
 
     // 获取 ACTIVE_TIMERS 的 Arc 句柄供 timer task 使用
-    let timers_handle = ACTIVE_TIMERS.get().expect("ActiveTimers 未初始化").clone();
+    // ACTIVE_TIMERS 在 init() 中初始化；若未初始化则无法启动 timer，直接返回
+    let Some(timers_handle) = ACTIVE_TIMERS.get().cloned() else { return };
 
     // 启动 timer（per-workspace 防抖时长）
     tokio::spawn(async move {

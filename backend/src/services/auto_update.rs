@@ -33,7 +33,11 @@ pub fn spawn_auto_update_scheduler(
         loop {
             // 读取当前配置，判断是否启用
             let (enabled, interval, hour) = {
-                let cfg = config.read().unwrap();
+                // config.read() 可能因线程 panic 导致 PoisonError；回退到获取内部数据而非 panic
+                let cfg = match config.read() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
                 (
                     cfg.auto_update_enabled,
                     cfg.auto_update_interval.clone(),
@@ -120,7 +124,9 @@ fn compute_next_check_time(interval: &str, hour: u32) -> chrono::DateTime<chrono
     use chrono::{Datelike, Duration, Local, NaiveTime, Weekday};
 
     let now = Local::now();
-    let time = NaiveTime::from_hms_opt(hour, 0, 0).unwrap_or_else(|| NaiveTime::from_hms_opt(3, 0, 0).unwrap());
+    // hour 超出 0..23 范围时回退到 00:00:00；from_hms_opt(0,0,0) 必定有效
+    let time = NaiveTime::from_hms_opt(hour, 0, 0)
+        .unwrap_or_default();
 
     match interval {
         "week" => {
@@ -336,7 +342,11 @@ fn compare_versions(a: &str, b: &str) -> i32 {
 /// 更新 config 中的 last_check_at 并持久化。
 fn update_last_check_at(config: &Arc<std::sync::RwLock<Config>>) {
     let cfg_to_save = {
-        let mut cfg = config.write().unwrap();
+        // config.write() 可能因线程 panic 导致 PoisonError；回退到获取内部数据而非 panic
+        let mut cfg = match config.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         cfg.auto_update_last_check_at = Some(chrono::Local::now().to_rfc3339());
         cfg.clone()
     };
@@ -349,6 +359,7 @@ fn update_last_check_at(config: &Arc<std::sync::RwLock<Config>>) {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
     use chrono::{Datelike, Timelike};

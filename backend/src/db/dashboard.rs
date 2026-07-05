@@ -121,6 +121,9 @@ pub(super) fn compute_dashboard_derived(raw: &RawDashboardStats) -> DerivedDashb
 ///
 /// 独立成函数的目的：让 `fetch_dashboard_raw_stats` 主函数只剩「并行两轮
 /// → 合并」两步，避免被 30 行的字段搬移撑爆。
+/// dist 按值传入是因为函数内部需要逐字段 move 到 RawDashboardStats，
+/// 引用语义会导致大量 clone，不值得
+#[allow(clippy::needless_pass_by_value)]
 pub(super) fn assemble_raw_dashboard_stats(base: BaseStats, dist: DistributionStats) -> RawDashboardStats {
     let (total_todos, pending_todos, running_todos, completed_todos, failed_todos, scheduled_todos) =
         base.todo_stats;
@@ -905,6 +908,7 @@ pub(super) async fn fetch_tag_todo_counts(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
 

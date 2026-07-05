@@ -180,7 +180,7 @@ pub struct Config {
 
 /// Paths for each supported executor binary.
 /// Key is the executor name (e.g., "claudecode"), value is the binary path.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(default)]
 pub struct ExecutorPaths {
     pub paths: HashMap<String, String>,
@@ -204,14 +204,6 @@ impl<'de> Deserialize<'de> for ExecutorPaths {
             RawExecutorPaths::Legacy(legacy) => legacy,
         };
         Ok(ExecutorPaths { paths })
-    }
-}
-
-impl Default for ExecutorPaths {
-    fn default() -> Self {
-        Self {
-            paths: HashMap::new(),
-        }
     }
 }
 
@@ -491,6 +483,7 @@ impl Config {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
 

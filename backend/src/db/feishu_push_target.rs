@@ -110,7 +110,9 @@ impl Database {
             .all(&self.conn)
             .await?;
 
-        let mut map: HashMap<Option<i64>, Vec<(i64, String, String, String)>> = HashMap::new();
+        // 复杂 tuple 类型提取为 type alias，提升可读性
+        type TargetEntry = (i64, String, String, String);
+        let mut map: HashMap<Option<i64>, Vec<TargetEntry>> = HashMap::new();
 
         for t in targets.into_iter().filter(|t| t.push_level != "disabled") {
             let receive_id = match t.receive_id_type.as_str() {

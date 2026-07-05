@@ -371,6 +371,7 @@ impl WorktreeService {
     ///   选 `>> 96` 而不是 `>> 64` / `>> 80` 是因为后者会切到含 version/variant
     ///   固定字段的区段，反而引入 bit 漂移。
     ///   直接用 `as_u128() >> 96` 抽位，不依赖 `simple()` 的字符串格式。
+    ///
     /// 分支名 = `wt-{todo_id}-{identity}`，目录名 = `{todo_id}-{identity}`。
     fn mint_identity() -> String {
         let now = chrono::Utc::now();
@@ -486,6 +487,7 @@ impl Default for WorktreeService {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
     use std::fs;

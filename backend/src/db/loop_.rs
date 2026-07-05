@@ -33,6 +33,8 @@ impl Database {
         loops::Entity::find_by_id(id).one(&self.conn).await
     }
 
+    /// 参数数量由 loops 表 schema 决定，无法进一步合并
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_loop(
         &self,
         name: &str,
@@ -68,6 +70,8 @@ impl Database {
         am.insert(&self.conn).await
     }
 
+    /// 参数数量由 loops 表 schema 决定
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_loop(
         &self,
         id: i64,
@@ -596,6 +600,8 @@ impl Database {
         loop_steps::Entity::find_by_id(id).one(&self.conn).await
     }
 
+    /// 参数数量由 loop_steps 表 schema 决定
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_loop_step(
         &self,
         loop_id: i64,
@@ -645,6 +651,8 @@ impl Database {
         am.insert(&self.conn).await
     }
 
+    /// 参数数量由 loop_steps 表 schema 决定
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_loop_step(
         &self,
         id: i64,
@@ -727,7 +735,9 @@ impl Database {
                     id, loop_id
                 )));
             }
-            let step = steps.iter().find(|s| s.id == *id).unwrap();
+            // valid 已确认 id 存在，find 必定返回 Some
+            let step = steps.iter().find(|s| s.id == *id)
+                .ok_or_else(|| sea_orm::DbErr::Custom(format!("step {} not found in loop {}", id, loop_id)))?;
             let mut am: loop_steps::ActiveModel = step.clone().into();
             am.order_index = Set(idx as i32);
             am.update(&self.conn).await?;
@@ -790,7 +800,8 @@ impl Database {
             .filter(loop_executions::Column::LoopId.eq(loop_id))
             .order_by_desc(loop_executions::Column::StartedAt);
         if let Some(h) = hours.filter(|&h| h > 0) {
-            let time_expr = sea_orm::sea_query::Expr::cust(&format!(
+            // hours 已验证 > 0，format! 是构建 SQL 字面量的唯一途径
+            let time_expr = sea_orm::sea_query::Expr::cust(format!(
                 "REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= datetime('now', '-{} hours')", h
             ));
             query = query.filter(time_expr);
@@ -916,6 +927,8 @@ impl Database {
 
     // ====== Loop Step Executions ======
 
+    /// 参数数量由 loop_step_executions 表 schema 决定
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_loop_step_execution(
         &self,
         loop_execution_id: i64,

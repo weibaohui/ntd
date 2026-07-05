@@ -962,6 +962,7 @@ fn scan_pi(sessions: &mut Vec<SessionInfo>) {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod pi_scan_tests {
     use super::*;
 
@@ -1098,6 +1099,7 @@ mod pi_scan_tests {
 /// (user / assistant / queue-operation) 与 4 条 negative 分支(无 type / 未知 type /
 /// queue 非 enqueue / 非 JSON),确保字段映射与原 9 元组完全等价。
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod claude_line_meta_tests {
     use super::*;
 
@@ -1343,6 +1345,8 @@ pub async fn get_session_stats(
     let stats = tokio::task::spawn_blocking(move || {
         let sessions = scan_for_executors(&executors);
         let now = chrono::Utc::now();
+        // and_hms_opt(0,0,0) 对任何合法日期都返回 Some——午夜零点永远有效
+        #[allow(clippy::unwrap_used)]
         let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
 
         let mut by_source: HashMap<String, u64> = HashMap::new();
@@ -2055,6 +2059,7 @@ fn build_pi_messages(content: &str) -> (Vec<SessionMessage>, PiSessionSummary) {
 // 因为 SCANNERS 表里的 scan_fn 在 home_dir 不存在时一律早返回。
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod session_scanner_dispatch_tests {
     use super::*;
 
@@ -2246,6 +2251,7 @@ fn get_pi_detail(session_id: &str) -> Option<SessionDetail> {
 //  - get_scanner("unknown") 返回 None,沿用旧 `match _ => None` 行为。
 //  - iter_jsonl_files 在空目录 / 不存在目录 / 混合扩展名 下的边界。
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod session_scanner_tests {
     use super::*;
 
@@ -2359,6 +2365,7 @@ mod session_scanner_tests {
 /// - codex_session_id_from_first_line
 /// 这些都是 issue 抽取出来的纯函数,值得单测覆盖以防回归。
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod refactor_helpers_tests {
     use super::*;
     use serde_json::json;

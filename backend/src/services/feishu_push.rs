@@ -7,6 +7,10 @@ use crate::db::Database;
 use crate::executor_service::ExecEvent;
 use crate::services::feishu_listener::FeishuListener;
 
+/// 推送目标类型：workspace_id → [(bot_id, receive_id, receive_id_type, push_level)]
+/// 使用类型别名消除 clippy::type_complexity 告警
+type PushTargets = std::collections::HashMap<Option<i64>, Vec<(i64, String, String, String)>>;
+
 /// Subscribe to ExecEvent broadcast and push formatted messages to Feishu.
 pub struct FeishuPushService {
     db: Arc<Database>,
@@ -39,7 +43,7 @@ impl FeishuPushService {
         let feishu_listener = self.feishu_listener.clone();
         let mut config_rx = self.mutator.subscribe();
         // workspace_id → [(bot_id, receive_id, receive_id_type, push_level)]
-        let mut targets_cache: std::collections::HashMap<Option<i64>, Vec<(i64, String, String, String)>> = std::collections::HashMap::new();
+        let mut targets_cache: PushTargets = std::collections::HashMap::new();
         let mut last_refresh = Instant::now();
 
         tokio::spawn(async move {
@@ -198,7 +202,7 @@ impl FeishuPushService {
         }
     }
 
-    async fn refresh_targets(db: &Database, targets: &mut std::collections::HashMap<Option<i64>, Vec<(i64, String, String, String)>>) {
+    async fn refresh_targets(db: &Database, targets: &mut PushTargets) {
         targets.clear();
         match db.get_all_push_targets_by_workspace().await {
             Ok(targets_map) => {
@@ -321,6 +325,7 @@ impl FeishuPushService {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod feishu_push_binding_tests {
     //! 验证 binding direct send 场景下的 push_level 检查逻辑。
     //! 

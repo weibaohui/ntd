@@ -155,6 +155,8 @@ pub async fn update_blackboard_config(
     let cfg = state.db.get_blackboard_config(workspace_id).await.map_err(|e| {
         AppError::Internal(format!("更新后查询黑板配置失败: {}", e))
     })?;
+    // update 后立即查询，cfg 必定存在——upsert 保证了行的存在
+    #[allow(clippy::unwrap_used)]
     Ok(ApiResponse::ok(cfg.unwrap()))
 }
 

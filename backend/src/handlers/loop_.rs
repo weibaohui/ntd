@@ -528,18 +528,20 @@ pub async fn approve_step_execution(
 
     // 2. 查询 step_execution 记录
     let step_execs = state.db.list_loop_step_executions(execution_id).await?;
+    // AppError::NotFound 是单元变体，不捕获变量——用 ok_or 直接构造更简洁
     let step_exec = step_execs
         .iter()
         .find(|se| se.id == step_execution_id)
-        .ok_or_else(|| AppError::NotFound)?;
+        .ok_or(AppError::NotFound)?;
 
     // 2.5. 校验 execution 归属于指定 loop_id，防止路径参数伪造
     // 先获取 loop_execution 记录，确认其 loop_id 与 URL 路径中的 _loop_id 一致
+    // AppError::NotFound 是单元变体，不捕获变量——用 ok_or 直接构造更简洁
     let loop_exec = state
         .db
         .get_loop_execution(execution_id)
         .await?
-        .ok_or_else(|| AppError::NotFound)?;
+        .ok_or(AppError::NotFound)?;
     if loop_exec.loop_id != _loop_id {
         return Err(AppError::BadRequest(
             "该 execution 不属于指定的 loop".to_string(),
@@ -864,12 +866,8 @@ pub async fn export_loop(
     let loops = state.db.list_loops_with_counts(None).await?;
     let loop_row = loops.into_iter().find(|l| l.loop_.id == id);
 
-    // 检查环路是否存在
-    if loop_row.is_none() {
-        return Err(AppError::NotFound);
-    }
-
-    let loop_ = loop_row.unwrap().loop_;
+    // 检查环路是否存在，用 ok_or 替代 is_none + unwrap 的两步写法
+    let loop_ = loop_row.ok_or(AppError::NotFound)?.loop_;
     let yaml = build_loop_export_yaml(&state, &[id]).await?;
     let filename = format!("{}-{}.loop.yaml",
         loop_.name.replace(' ', "-"),
@@ -1605,8 +1603,9 @@ async fn build_loop_export_yaml(
     let mut global_step_idx = 0;
 
     for (idx, &loop_id) in loop_ids.iter().enumerate() {
+        // AppError::NotFound 是单元变体，不捕获变量——用 ok_or 直接构造更简洁
         let view = state.db.load_loop_full(loop_id).await?
-            .ok_or_else(|| AppError::NotFound)?;
+            .ok_or(AppError::NotFound)?;
 
         // 收集环路关联的标签
         let loop_tag_ids = state.db.get_loop_tag_ids(loop_id).await?;
@@ -1671,10 +1670,13 @@ async fn build_loop_export_yaml(
                     if let Some(rt_id) = todo.review_template_id {
                         if !all_templates.contains_key(&rt_id) {
                             if let Some(tpl) = state.db.get_review_template(rt_id).await? {
-                                review_template_id = Some(generate_pseudo_id("template", all_templates.len() + 1));
+                                // 先计算 pseudo id，再分别赋给 review_template_id 和结构体字段，
+                                // 避免 clone().unwrap() 的生产代码反模式
+                                let pseudo_id = generate_pseudo_id("template", all_templates.len() + 1);
+                                review_template_id = Some(pseudo_id.clone());
                                 review_template_name = Some(tpl.name.clone());
                                 all_templates.insert(rt_id, ReviewTemplateExportItem {
-                                    id: review_template_id.clone().unwrap(),
+                                    id: pseudo_id,
                                     name: tpl.name,
                                     description: tpl.description,
                                     prompt: tpl.prompt,

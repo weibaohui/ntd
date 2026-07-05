@@ -42,10 +42,11 @@ pub async fn update_template(
     Path(id): Path<i64>,
     ApiJson(req): ApiJson<UpdateTemplateRequest>,
 ) -> Result<Json<ApiResponse<TodoTemplate>>, AppError> {
+    // AppError::NotFound 是单元变体，不捕获变量——用 ok_or 直接构造更简洁
     let existing = state.db
         .get_template_by_id(id)
         .await?
-        .ok_or_else(|| AppError::NotFound)?;
+        .ok_or(AppError::NotFound)?;
 
     // System templates cannot be modified
     if existing.is_system {
@@ -73,10 +74,11 @@ pub async fn delete_template(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
+    // AppError::NotFound 是单元变体，不捕获变量——用 ok_or 直接构造更简洁
     let existing = state.db
         .get_template_by_id(id)
         .await?
-        .ok_or_else(|| AppError::NotFound)?;
+        .ok_or(AppError::NotFound)?;
 
     // System templates cannot be deleted
     if existing.is_system {
@@ -91,10 +93,11 @@ pub async fn copy_template(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<ApiResponse<TodoTemplate>>, AppError> {
+    // AppError::NotFound 是单元变体，不捕获变量——用 ok_or 直接构造更简洁
     let existing = state.db
         .get_template_by_id(id)
         .await?
-        .ok_or_else(|| AppError::NotFound)?;
+        .ok_or(AppError::NotFound)?;
 
     // Create a copy as user template
     let new_title = format!("{} (副本)", existing.title);

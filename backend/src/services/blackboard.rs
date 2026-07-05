@@ -213,6 +213,7 @@ fn build_wiki_prompt() -> String {
 /// 启动 Wiki 更新执行并阻塞等待完成。
 ///
 /// 返回 None 表示执行未产出结果（非错误）。
+#[allow(clippy::too_many_arguments)] // 参数来自调用方的多个独立数据源，强行合并为 struct 会增加认知负担
 async fn run_wiki_execution(
     db: Arc<Database>,
     executor_registry: Arc<ExecutorRegistry>,

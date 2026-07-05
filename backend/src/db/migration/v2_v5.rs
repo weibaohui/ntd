@@ -465,6 +465,7 @@ pub async fn read_applied_versions(
 // 改写不会被无声地回退。
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod needs_fk_migration_tests {
     use super::*;
 
@@ -703,6 +704,7 @@ async fn v5_project_directory_worktree(db: &Database) -> Result<(), sea_orm::DbE
 // - 加 `(kind)` 索引支持按 kind 过滤。
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod v15_review_templates_tests {
     //! V15 迁移的回归测试：
     //! - 在旧库（含 todo_type=1 todo 与指向它的 loops.review_template_id）上跑 V15，
@@ -960,6 +962,7 @@ mod v15_review_templates_tests {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod v16_loop_step_execution_snapshot_columns_tests {
     //! V16 迁移的回归测试：
     //!
@@ -1031,6 +1034,7 @@ mod v16_loop_step_execution_snapshot_columns_tests {
 // deleted_at IS NULL) 上天然 unique。再跑一次只会再软删除同一批已经被标记的
 // 行(条件 deleted_at IS NULL 不命中),不会动已被软删的行。
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod v17_consolidate_review_instance_todos_tests {
     //! V17 迁移的回归测试。
     //!
@@ -1272,32 +1276,32 @@ pub async fn drop_column_if_exists(
 // 每个合并迁移内部完全幂等：从任意中间状态（V5~V40 任意版本）重启都能正确走完。
 // =============================================================================
 
-/// V41 合并迁移：Loop Studio + 评审 + 环路执行演进
-///
-/// 合并了以下历史迁移的完整逻辑：
-/// V6   TodoKind            - todos.kind 列 + 索引
-/// V7   LoopStudio         - 6 张环路表 + 索引/触发器
-/// V8   LoopWorkspace      - loops.workspace 列
-/// V9   IndependentSteps   - steps 独立表
-/// V10  StepColor          - steps.color 列
-/// V11  LoopFlowControl   - 流程控制字段
-/// V12  LoopStepExecution - execution_records 追踪列
-/// V14  LoopsReviewTemplateId - loops.review_template_id 列
-/// V15  ReviewTemplates    - review_templates 表 + 默认模板
-/// V16  LoopStepExecutionSnapshot - loop_step_executions 快照列
-/// V17  ConsolidateReviewInstanceTodos - 去重评审实例
-/// V18  LoopHumanReview    - 人工评审字段
-/// V19  StepLoopTags       - 标签关联表
-/// V23  DropTodoHooks      - 删除 hooks/source_hook_id 列
-/// V24  RenameLoopStepsStepIdToTodoId - 重建 loop_steps 修正 FK
-/// V26  DisableAutoReview  - 禁用普通事项自动评审
-/// V27  AbnormalHandlerTodo - 异常处理 Todo 字段
-/// V28  DropLoopStepExecutionsStepIdFk - 移除 step_id FK 约束
-/// V29  WebhookEnabled     - webhook_enabled 列
-///
-/// 幂等设计：
-/// - 所有 ADD COLUMN/DROP COLUMN/CREATE TABLE 带 IF NOT EXISTS / 存在性检查
-/// - V24（重建 loop_steps）检查 step_id 列是否存在：旧库（V7 或 V13 后的）存在则重建，否则跳过
+// V41 合并迁移：Loop Studio + 评审 + 环路执行演进
+//
+// 合并了以下历史迁移的完整逻辑：
+// V6   TodoKind            - todos.kind 列 + 索引
+// V7   LoopStudio         - 6 张环路表 + 索引/触发器
+// V8   LoopWorkspace      - loops.workspace 列
+// V9   IndependentSteps   - steps 独立表
+// V10  StepColor          - steps.color 列
+// V11  LoopFlowControl   - 流程控制字段
+// V12  LoopStepExecution - execution_records 追踪列
+// V14  LoopsReviewTemplateId - loops.review_template_id 列
+// V15  ReviewTemplates    - review_templates 表 + 默认模板
+// V16  LoopStepExecutionSnapshot - loop_step_executions 快照列
+// V17  ConsolidateReviewInstanceTodos - 去重评审实例
+// V18  LoopHumanReview    - 人工评审字段
+// V19  StepLoopTags       - 标签关联表
+// V23  DropTodoHooks      - 删除 hooks/source_hook_id 列
+// V24  RenameLoopStepsStepIdToTodoId - 重建 loop_steps 修正 FK
+// V26  DisableAutoReview  - 禁用普通事项自动评审
+// V27  AbnormalHandlerTodo - 异常处理 Todo 字段
+// V28  DropLoopStepExecutionsStepIdFk - 移除 step_id FK 约束
+// V29  WebhookEnabled     - webhook_enabled 列
+//
+// 幂等设计：
+// - 所有 ADD COLUMN/DROP COLUMN/CREATE TABLE 带 IF NOT EXISTS / 存在性检查
+// - V24（重建 loop_steps）检查 step_id 列是否存在：旧库（V7 或 V13 后的）存在则重建，否则跳过
 
 // ---------------------------------------------------------------------------
 // Helper functions used by test modules (v15, v17)
@@ -1306,6 +1310,7 @@ pub async fn drop_column_if_exists(
 
 /// v15_review_templates helper - used by v15_review_templates_tests
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 async fn v15_review_templates(db: &Database) -> Result<(), sea_orm::DbErr> {
     db.exec(
         "CREATE TABLE IF NOT EXISTS review_templates (
@@ -1356,6 +1361,7 @@ async fn v15_review_templates(db: &Database) -> Result<(), sea_orm::DbErr> {
 
 /// consolidate_review_instance_todos helper - used by v17_consolidate_review_instance_todos_tests
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 async fn consolidate_review_instance_todos(db: &Database) -> Result<(), sea_orm::DbErr> {
     let now = crate::models::utc_timestamp();
     let sql = r#"

@@ -37,6 +37,17 @@ fn default_zip_options() -> FileOptions<'static, ()> {
         .unix_permissions(0o644)
 }
 
+/// Parse a cron schedule, falling back to a default expression if the primary fails.
+/// Returns `None` only if both expressions are invalid (should never happen with hardcoded fallbacks).
+fn parse_cron_with_fallback(
+    primary: &str,
+    fallback: &str,
+) -> Option<cron::Schedule> {
+    cron::Schedule::from_str(primary)
+        .ok()
+        .or_else(|| cron::Schedule::from_str(fallback).ok())
+}
+
 /// 把单个 entry 写入一个新的 zip 归档，并把 writer 原样返回。
 ///
 /// 适用于「单文件 → 单 entry zip」场景（数据库 / Todo / Skill 备份）。
@@ -268,7 +279,7 @@ pub async fn download_database(
         // 使用同一份 options 与 entry 写入逻辑，跨路径字节级一致。
         let cursor = std::io::Cursor::new(Vec::new());
         let cursor = write_single_entry_zip(cursor, "database.db", &db_data)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            .map_err(std::io::Error::other)?;
         Ok(cursor.into_inner())
     })
     .await
@@ -728,7 +739,7 @@ pub fn start_auto_backup(
 
             // Read current config from in-memory state
             let (db_path, max_files, cleanup_days) = {
-                let cfg = config.read().unwrap();
+                let cfg = config.read().unwrap_or_else(|e| e.into_inner());
                 (cfg.db_path.clone(), cfg.auto_backup_max_files, cfg.auto_cleanup_logs_days)
             };
 
@@ -924,11 +935,12 @@ pub async fn update_todo_auto_backup(
 
 /// Start Todo auto backup scheduler
 pub fn start_todo_auto_backup(
-    db: std::sync::Arc<crate::db::Database>,
+    db: &std::sync::Arc<crate::db::Database>,
     config: std::sync::Arc<std::sync::RwLock<crate::config::Config>>,
 ) -> Result<(), String> {
 
-    let db_clone = db.clone();
+    // Clone Arc from reference to move into the spawned background task
+    let db = db.clone();
     tokio::spawn(async move {
         loop {
             // 关键:std::sync 读锁卫不能跨 .await(否则 future 变 !Send,无法
@@ -938,7 +950,7 @@ pub fn start_todo_auto_backup(
             // 不再持有锁。
             let (enabled, next_delay) = {
                 let enabled = {
-                    let cfg = config.read().unwrap();
+                    let cfg = config.read().unwrap_or_else(|e| e.into_inner());
                     cfg.auto_todo_backup_enabled
                 };
                 if !enabled {
@@ -946,9 +958,11 @@ pub fn start_todo_auto_backup(
                     continue;
                 }
                 let (enabled, delay) = {
-                    let cfg = config.read().unwrap();
-                    let schedule = cron::Schedule::from_str(&cfg.auto_todo_backup_cron)
-                        .unwrap_or_else(|_| cron::Schedule::from_str("0 0 4 * * *").unwrap());
+                    let cfg = config.read().unwrap_or_else(|e| e.into_inner());
+                    let Some(schedule) = parse_cron_with_fallback(&cfg.auto_todo_backup_cron, "0 0 4 * * *") else {
+                        tracing::error!("Both user and fallback cron expressions are invalid, skipping iteration");
+                        continue;
+                    };
                     let next = schedule.upcoming(chrono::Utc).next();
                     let delay = match next {
                         Some(dt) => {
@@ -969,9 +983,9 @@ pub fn start_todo_auto_backup(
                 continue;
             }
 
-            let db = db_clone.clone();
+            let db = db.clone();
             let max_files = {
-                let cfg = config.read().unwrap();
+                let cfg = config.read().unwrap_or_else(|e| e.into_inner());
                 cfg.auto_todo_backup_max_files
             };
 
@@ -1111,11 +1125,9 @@ fn skill_backup_dir() -> PathBuf {
 
 /// 获取所有执行器的 skills 目录
 fn all_executor_skills_dirs() -> Vec<(&'static str, PathBuf)> {
-    let home = dirs::home_dir();
-    if home.is_none() {
+    let Some(home) = dirs::home_dir() else {
         return vec![];
-    }
-    let home = home.unwrap();
+    };
     vec![
         ("claudecode", home.join(".claude").join("skills")),
         ("hermes", home.join(".hermes").join("skills")),
@@ -1385,9 +1397,9 @@ fn add_dir_to_zip_skill<W: std::io::Write + std::io::Seek>(
         let entry = entry?;
         let path = entry.path();
         let name = if prefix.is_empty() {
-            path.file_name().unwrap().to_string_lossy().to_string()
+            path.file_name().map_or(String::new(), |f| f.to_string_lossy().into_owned())
         } else {
-            format!("{}/{}", prefix, path.file_name().unwrap().to_string_lossy())
+            format!("{}/{}", prefix, path.file_name().map_or(String::new(), |f| f.to_string_lossy().into_owned()))
         };
 
         if path.is_dir() {
@@ -1515,7 +1527,7 @@ pub fn start_skill_auto_backup(
             // 把 disabled 分支的 sleep().await 放在 cfg 锁卫作用域外。
             let (_enabled, next_delay) = {
                 let enabled = {
-                    let cfg = config.read().unwrap();
+                    let cfg = config.read().unwrap_or_else(|e| e.into_inner());
                     cfg.auto_skill_backup_enabled
                 };
                 if !enabled {
@@ -1523,9 +1535,11 @@ pub fn start_skill_auto_backup(
                     continue;
                 }
                 let (enabled, delay) = {
-                    let cfg = config.read().unwrap();
-                    let schedule = cron::Schedule::from_str(&cfg.auto_skill_backup_cron)
-                        .unwrap_or_else(|_| cron::Schedule::from_str("0 0 5 * * *").unwrap());
+                    let cfg = config.read().unwrap_or_else(|e| e.into_inner());
+                    let Some(schedule) = parse_cron_with_fallback(&cfg.auto_skill_backup_cron, "0 0 5 * * *") else {
+                        tracing::error!("Both user and fallback cron expressions are invalid, skipping iteration");
+                        continue;
+                    };
                     let next = schedule.upcoming(chrono::Utc).next();
                     let delay = match next {
                         Some(dt) => {
@@ -1543,7 +1557,7 @@ pub fn start_skill_auto_backup(
 
             // Sleep 之后重新检查 enabled 状态，避免使用过期值
             let enabled_now = {
-                let cfg = config.read().unwrap();
+                let cfg = config.read().unwrap_or_else(|e| e.into_inner());
                 cfg.auto_skill_backup_enabled
             };
             if !enabled_now {
@@ -1551,7 +1565,7 @@ pub fn start_skill_auto_backup(
             }
 
             let max_files = {
-                let cfg = config.read().unwrap();
+                let cfg = config.read().unwrap_or_else(|e| e.into_inner());
                 cfg.auto_skill_backup_max_files
             };
 
@@ -1567,17 +1581,18 @@ pub fn start_skill_auto_backup(
 
 /// 启动 AI 使用统计自动归档定时任务
 pub fn start_usage_stats_archival(
-    db: std::sync::Arc<Database>,
+    db: &std::sync::Arc<Database>,
     config: std::sync::Arc<std::sync::RwLock<crate::config::Config>>,
 ) -> Result<(), String> {
-    let db_clone = db.clone();
+    // Clone Arc from reference to move into the spawned background task
+    let db = db.clone();
     tokio::spawn(async move {
         loop {
             // 关键:std::sync 读锁卫不能跨 .await。用显式 if-else + 块作用域
             // 把 disabled 分支的 sleep().await 放在 cfg 锁卫作用域外。
             let (_enabled, next_delay) = {
                 let enabled = {
-                    let cfg = config.read().unwrap();
+                    let cfg = config.read().unwrap_or_else(|e| e.into_inner());
                     cfg.auto_usage_stats_enabled
                 };
                 if !enabled {
@@ -1585,9 +1600,11 @@ pub fn start_usage_stats_archival(
                     continue;
                 }
                 let (enabled, delay) = {
-                    let cfg = config.read().unwrap();
-                    let schedule = cron::Schedule::from_str(&cfg.auto_usage_stats_cron)
-                        .unwrap_or_else(|_| cron::Schedule::from_str("0 0 1 * * *").unwrap());
+                    let cfg = config.read().unwrap_or_else(|e| e.into_inner());
+                    let Some(schedule) = parse_cron_with_fallback(&cfg.auto_usage_stats_cron, "0 0 1 * * *") else {
+                        tracing::error!("Both user and fallback cron expressions are invalid, skipping iteration");
+                        continue;
+                    };
                     let next = schedule.upcoming(chrono::Utc).next();
                     let delay = match next {
                         Some(dt) => {
@@ -1604,14 +1621,14 @@ pub fn start_usage_stats_archival(
             tokio::time::sleep(next_delay).await;
 
             let enabled_now = {
-                let cfg = config.read().unwrap();
+                let cfg = config.read().unwrap_or_else(|e| e.into_inner());
                 cfg.auto_usage_stats_enabled
             };
             if !enabled_now {
                 continue;
             }
 
-            let db = db_clone.clone();
+            let db = db.clone();
             let service = UsageStatsService::new(db.clone());
 
             match archive_yesterday_stats(&service).await {
@@ -1731,6 +1748,7 @@ async fn perform_skill_backup_async(max_files: usize) -> Result<String, String> 
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
     use std::fs;

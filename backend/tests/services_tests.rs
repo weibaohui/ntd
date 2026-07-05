@@ -1,5 +1,7 @@
 //! Tests for services module - feishu_push formatting logic
 
+// 测试代码允许 unwrap/expect/panic 等写法以简化断言逻辑，统一放宽以下 clippy 检查
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 #[cfg(test)]
 mod feishu_push_service_tests {
     use ntd::handlers::ExecEvent;
@@ -393,6 +395,8 @@ mod feishu_push_service_tests {
             // ExecutorDirectResponse 由 FeishuPushService 直接发送，不走 format_event
             ExecEvent::ExecutorDirectResponse { .. } => None,
             // LoopFinished 事件的格式化消息 - 统计摘要（与 feishu_push.rs 生产代码保持一致）
+            // BlackboardDebounceStatus 由内部 debounce 逻辑使用，不走 format_event
+            ExecEvent::BlackboardDebounceStatus { .. } => None,
             ExecEvent::LoopFinished { loop_title, status, total_steps, completed_steps, failed_steps, duration_secs, total_tokens, .. } => {
                 let status_icon = match status.as_str() {
                     "success" => "✅ 成功",

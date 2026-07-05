@@ -5,6 +5,8 @@
 //! 防止以后重构时把 `--user` / `--scope` / `--collect` 顺序或位置
 //! 写错 —— 这正是 PR #482 修的 cgroup-detach 修复的关键。
 
+// 测试代码允许 unwrap/expect/panic 等写法以简化断言逻辑，统一放宽以下 clippy 检查
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 #[cfg(test)]
 #[cfg(target_os = "linux")]
 mod build_redeploy_spec_tests {

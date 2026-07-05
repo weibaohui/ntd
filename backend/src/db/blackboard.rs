@@ -32,7 +32,10 @@ static PENDING_QUEUE_LOCKS: OnceLock<std::sync::Mutex<HashMap<i64, Arc<Mutex<()>
 /// 在 await 之后释放，Arc 让守卫可以跨 await 点持有。
 fn queue_lock(workspace_id: i64) -> Arc<Mutex<()>> {
     let outer = PENDING_QUEUE_LOCKS.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
-    let mut guard = outer.lock().expect("PENDING_QUEUE_LOCKS poisoned");
+    // Mutex poisoning 只在持有者 panic 时发生；这里锁的是空 HashMap，不会 panic
+    let mut guard = outer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     guard
         .entry(workspace_id)
         .or_insert_with(|| Arc::new(Mutex::new(())))
@@ -382,6 +385,7 @@ pub struct BlackboardConfig {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
     use crate::db::Database;

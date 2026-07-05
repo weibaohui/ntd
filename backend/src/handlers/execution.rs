@@ -58,11 +58,14 @@ pub async fn get_execution_records(
     // 当提供了 todo_id 或 step_id 时，workspace_id 是隐含的（由 todo 决定）。
     // 仅在 todo_id/step_id 都为空且 workspace_id 有值时过滤——目前没有调用方
     // 走这个分支，但保持接口一致性，传了就能用。
-    let records = if query.workspace_id.is_some() && query.todo_id.is_none() && query.step_id.is_none() {
-        let wid = query.workspace_id.unwrap();
-        let ws_todos = state.db.get_todos_by_workspace_id(Some(wid)).await.unwrap_or_default();
-        let ws_todo_ids: std::collections::HashSet<i64> = ws_todos.iter().map(|t| t.id).collect();
-        records.into_iter().filter(|r| ws_todo_ids.contains(&r.todo_id)).collect()
+    let records = if let Some(wid) = query.workspace_id {
+        if query.todo_id.is_none() && query.step_id.is_none() {
+            let ws_todos = state.db.get_todos_by_workspace_id(Some(wid)).await.unwrap_or_default();
+            let ws_todo_ids: std::collections::HashSet<i64> = ws_todos.iter().map(|t| t.id).collect();
+            records.into_iter().filter(|r| ws_todo_ids.contains(&r.todo_id)).collect()
+        } else {
+            records
+        }
     } else {
         records
     };
@@ -188,6 +191,8 @@ pub async fn execute_handler(
 
     // 检查该 todo 下正在执行的记录数量是否已达并发上限
     // 需要过滤掉孤儿记录：状态为 running 但 task_manager 中没有对应 task
+    // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
+    #[allow(clippy::unwrap_used)]
     let max_concurrent = state.config.read().unwrap().max_concurrent_todos;
     let running_tasks = state.task_manager.get_all_task_infos().await;
     let running_records = state.db.get_running_records_by_todo_id(req.todo_id).await?;
@@ -474,7 +479,8 @@ pub async fn resume_execution_handler(
 
     // 检查该 todo 下正在执行的记录数量是否已达并发上限
     // 需要过滤掉孤儿记录：状态为 running 但 task_manager 中没有对应 task
-    let max_concurrent = state.config.read().unwrap().max_concurrent_todos;
+    // RwLock 中毒恢复：PoisonError 时取内部 guard 继续运行，与 backup.rs 保持一致
+    let max_concurrent = state.config.read().unwrap_or_else(|e| e.into_inner()).max_concurrent_todos;
     let running_tasks = state.task_manager.get_all_task_infos().await;
     let running_records = state.db.get_running_records_by_todo_id(todo_id).await?;
     let running_count_for_todo = running_records
@@ -622,7 +628,8 @@ pub async fn smart_create_handler(
     }
 
     // 从 workspace 设置读取默认响应 Todo ID
-    let workspace_settings = crate::db::workspace_setting::get_workspace_settings(&*state.db, req.workspace_id).await?
+    // auto-deref 会自动将 Arc<Database> 解引用为 &Database，无需手动 *
+    let workspace_settings = crate::db::workspace_setting::get_workspace_settings(&state.db, req.workspace_id).await?
         .ok_or_else(|| AppError::BadRequest(format!("工作空间 #{} 不存在", req.workspace_id)))?;
 
     let todo_id = workspace_settings.default_response_todo_id
@@ -636,7 +643,8 @@ pub async fn smart_create_handler(
         .ok_or_else(|| AppError::BadRequest(format!("默认响应 Todo #{} 不存在", todo_id)))?;
 
     // 检查并发限制
-    let max_concurrent = state.config.read().unwrap().max_concurrent_todos;
+    // RwLock 中毒恢复：PoisonError 时取内部 guard 继续运行，与 backup.rs 保持一致
+    let max_concurrent = state.config.read().unwrap_or_else(|e| e.into_inner()).max_concurrent_todos;
     let running_tasks = state.task_manager.get_all_task_infos().await;
     let running_records = state.db.get_running_records_by_todo_id(todo_id).await?;
     let running_count_for_todo = running_records
@@ -728,6 +736,7 @@ fn resolve_resume_session_id(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod resume_session_id_tests {
     use super::*;
     use crate::models::{ExecutionRecord, ExecutionStatus};

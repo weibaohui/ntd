@@ -14,6 +14,8 @@
 //! - 用 `Arc<Database>` 在任务间共享同一个连接池，而不是每个任务都 `Database::new`。
 //! - 只调用 `pub` 方法（`create_todo` / `get_todos`），不直接戳 `conn` 字段。
 
+// 测试代码允许 unwrap/expect/panic 等写法以简化断言逻辑，统一放宽以下 clippy 检查
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 use std::sync::Arc;
 use std::time::Instant;
 

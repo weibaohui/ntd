@@ -91,9 +91,10 @@ impl Database {
         // - max=10 既覆盖了默认 max_concurrent_todos=3 的写入争用，又给 reader（WebSocket 广播、
         //   hook 触发、健康检查等）留出充足槽位；继续调大对单文件 SQLite 收益有限。
         // - min=2 让 daemon 启动后立即有两条温连接就绪，避免首批并发请求都要冷启。
+        // parse() 失败表示 URL 格式非法，属于配置硬错误，无法降级恢复
         let sqlite_opts: sqlx::sqlite::SqliteConnectOptions = url
             .parse()
-            .expect("invalid sqlite connection url");
+            .map_err(|e| sea_orm::DbErr::Custom(format!("invalid sqlite connection url: {e}")))?;
 
         let mut pool_opts = sqlx::sqlite::SqlitePoolOptions::new();
         pool_opts = pool_opts.max_connections(10);
@@ -303,6 +304,7 @@ pub mod workspace_setting;
 pub mod workspace_slash_command;
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
     use chrono::{DateTime, Timelike, Utc};

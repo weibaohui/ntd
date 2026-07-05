@@ -25,6 +25,7 @@ pub struct CreateMessageRequestBuilder {
     request: CreateMessageRequest,
 }
 
+#[allow(clippy::needless_pass_by_value)]
 impl CreateMessageRequestBuilder {
     pub fn receive_id_type(mut self, receive_id_type: impl ToString) -> Self {
         self.request
@@ -70,6 +71,7 @@ pub struct CreateMessageRequestBodyBuilder {
     request: CreateMessageRequestBody,
 }
 
+#[allow(clippy::needless_pass_by_value)]
 impl CreateMessageRequestBodyBuilder {
     pub fn receive_id(mut self, receive_id: impl ToString) -> Self {
         self.request.receive_id = receive_id.to_string();

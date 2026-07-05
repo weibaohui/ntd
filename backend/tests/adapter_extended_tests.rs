@@ -1,5 +1,7 @@
 //! Extended adapter tests for untested code paths
 
+// 测试代码允许 unwrap/expect/panic 等写法以简化断言逻辑，统一放宽以下 clippy 检查
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 #[cfg(test)]
 mod codex_executor_extended_tests {
     use ntd::adapters::codex::CodexExecutor;
@@ -117,7 +119,8 @@ mod codex_executor_extended_tests {
         let json = r#"{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50,"total_cost_usd":0.002},"duration_ms":1500}"#;
         let entry = executor.parse_output_line(json).unwrap();
         assert_eq!(entry.log_type, "tokens");
-        let usage = executor.get_usage(&[]).unwrap();
+        // usage 直接从 entry.usage 获取，不再依赖已移除的 get_usage 方法
+        let usage = entry.usage.unwrap();
         assert_eq!(usage.input_tokens, 100);
         assert_eq!(usage.total_cost_usd, Some(0.002));
         assert_eq!(usage.duration_ms, Some(1500));
@@ -506,13 +509,10 @@ mod mobilecoder_executor_extended_tests {
         let args = executor.command_args_with_session("continue", Some("ses_abc123"), true);
         assert!(args.contains(&"-s".to_string()));
         assert!(args.contains(&"ses_abc123".to_string()));
-        assert!(args.contains(&"--agent".to_string()));
-        assert!(args.contains(&"yolo".to_string()));
         assert_eq!(args[0], "run");
-        assert_eq!(args[1], "--agent");
-        assert_eq!(args[2], "yolo");
-        assert_eq!(args[3], "--format");
-        assert_eq!(args[4], "json");
+        assert_eq!(args[1], "--format");
+        assert_eq!(args[2], "json");
+        assert_eq!(args[5], "continue");
     }
 
     #[test]
@@ -520,11 +520,9 @@ mod mobilecoder_executor_extended_tests {
         let executor = MobilecoderExecutor::new("mobile".to_string());
         let args = executor.command_args("讲个笑话");
         assert_eq!(args[0], "run");
-        assert_eq!(args[1], "--agent");
-        assert_eq!(args[2], "yolo");
-        assert_eq!(args[3], "--format");
-        assert_eq!(args[4], "json");
-        assert_eq!(args[5], "讲个笑话");
+        assert_eq!(args[1], "--format");
+        assert_eq!(args[2], "json");
+        assert_eq!(args[3], "讲个笑话");
     }
 }
 

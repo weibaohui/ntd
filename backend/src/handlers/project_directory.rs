@@ -18,7 +18,7 @@ pub struct UpdateProjectDirectoryRequest {
     /// 修改后的名称（可选）。语义与开关字段保持一致：
     /// - `None` / 缺省：跳过名称列（PATCH 风格），便于客户端只更新开关字段。
     /// - `Some("")`：由 handler 拒绝。
-    /// 缺省走 `#[serde(default)]`，兼容老客户端只发开关字段的请求。
+    ///   缺省走 `#[serde(default)]`，兼容老客户端只发开关字段的请求。
     #[serde(default)]
     pub name: Option<String>,
     /// issue #643: 是否在该目录下执行 Todo 时由 ntd 托管 git worktree。
@@ -55,7 +55,8 @@ pub async fn create_project_directory(
     }
     let directory = state
         .db
-        .get_or_create_project_directory(&path, Some(name))
+        // path 已是 &str（trim 返回 &str），auto-deref 会处理，无需额外 &
+        .get_or_create_project_directory(path, Some(name))
         .await?;
     Ok(ApiResponse::ok(directory))
 }

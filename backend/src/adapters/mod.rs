@@ -177,7 +177,9 @@ pub fn parse_executor_type(executor: &str) -> Option<ExecutorType> {
 pub fn strip_think_tags(content: &str) -> String {
     use regex::Regex;
     use std::sync::LazyLock;
+    // 正则模式是编译期已知的固定字符串，绝不会失败；用 unwrap 而非 panic 避免静态初始化开销
     static THINK_RE: LazyLock<Regex> = LazyLock::new(|| {
+        #[allow(clippy::unwrap_used)]
         Regex::new(r"<think>[\s\S]*?</think>").unwrap()
     });
     THINK_RE.replace_all(content, "").trim().to_string()
@@ -488,6 +490,7 @@ impl Default for ExecutorRegistry {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
     use crate::models::ParsedLogEntry;
