@@ -313,7 +313,7 @@ impl Database {
         Ok(())
     }
 
-    /// 获取指定工作空间的黑板配置（防抖阈值、提示词）。
+    /// 获取指定工作空间的黑板配置（防抖阈值、提示词、wiki_chat_executor）。
     ///
     /// 记录不存在时返回 None；调用方应确保黑板记录已通过 create_blackboard 初始化。
     pub async fn get_blackboard_config(

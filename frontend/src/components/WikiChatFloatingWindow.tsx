@@ -575,7 +575,7 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
         open={true}
         onClose={() => setMode('minimized')}
         height="85vh"
-        destroyOnClose
+        destroyOnHidden
         styles={{
           body: {
             padding: 0,

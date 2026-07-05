@@ -374,22 +374,18 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
           workspaceId={workspaceId}
         />
       </div>
-      {/* 中间主体：Wiki 布局 */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
-        <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
-          <BlackboardWikiLayout
-            isDark={isDark}
-            files={files}
-            currentFile={currentFile}
-            currentSlug={currentSlug}
-            onSelectSlug={setCurrentSlug}
-            filesLoading={filesLoading}
-            fileLoading={fileLoading}
-          />
-        </div>
-      </div>
+      {/* 中间主体：Wiki 布局（BlackboardWikiLayout 自身顶层已是 flex:1 容器，无需额外包裹） */}
+      <BlackboardWikiLayout
+        isDark={isDark}
+        files={files}
+        currentFile={currentFile}
+        currentSlug={currentSlug}
+        onSelectSlug={setCurrentSlug}
+        filesLoading={filesLoading}
+        fileLoading={fileLoading}
+      />
 
-      {/* 黑板设置弹窗：Tab1 防抖设置，Tab2 提示词设置，Tab3 对话设置 */}
+      {/* 黑板设置弹窗：Tab1 防抖设置，Tab2 提示词设置 */}
       <Modal
         title="黑板设置"
         open={settingsOpen}
