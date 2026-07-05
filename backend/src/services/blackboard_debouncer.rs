@@ -201,13 +201,16 @@ pub async fn push_pending_record(workspace_id: i64, record_id: i64, db: &Arc<Dat
                 "黑板 pending 队列达到阈值 {} 条，立即触发: workspace_id={}",
                 queue_len, workspace_id
             );
-            // 阈值触发时清除 timer 状态，避免 flush listener 再次等待
-            {
-                let mut states = TIMER_STATES.write().await;
-                if let Some(map) = states.as_mut() {
-                    map.remove(&workspace_id);
-                }
-            }
+            // 注意：此处不再清除 TIMER_STATES。
+            // 旧实现提前删除 timer 状态，会在 worker 真正 spawn 起来、把 workspace
+            // 加入 refreshing_workspaces 之前，制造一个时间窗口：每秒 ticker 调用
+            // build_blackboard_status 时 get_timer_state 返回 None → remaining_secs=-1
+            // → 前端 hasTimer=false 且 pending_count>0 → 渲染为「等待刷新」，与
+            // 「条数已远超阈值」的事实矛盾。
+            // 保留 timer 状态让前端继续显示倒计时；worker 接管后由 refreshing=true
+            // 表达「正在刷新」语义。即使 timer 自然到期再发一次 flush 消息，
+            // handle_flush_msg 的 per-workspace 互斥会安全丢弃重复消息，不会 spawn
+            // 第二个 worker。
             let tx = {
                 let guard = FLUSH_TX.read().await;
                 guard.as_ref().cloned()
@@ -223,7 +226,18 @@ pub async fn push_pending_record(workspace_id: i64, record_id: i64, db: &Arc<Dat
         }
     }
 
-    // 未达阈值，检查并启动 timer
+    // 未达阈值，启动防抖 timer（若尚未运行）
+    start_timer(workspace_id, debounce_secs).await;
+}
+
+/// 启动 per-workspace 防抖 timer（若该 workspace 已有 timer 运行中则不重复启动）。
+///
+/// 抽取自 `push_pending_record` 的后半段，同时供 worker 失败重试调用：
+/// worker 处理失败时 pending 队列保留，需要重新启动 timer 让队列在下一周期再次触发，
+/// 否则队列会永久卡住（阈值分支注释「达到阈值触发后，不等 timer」意味着失败后没人会再触发）。
+async fn start_timer(workspace_id: i64, debounce_secs: i64) {
+    // 检查并标记 timer 运行中：用 ACTIVE_TIMERS 的 bool 标志做互斥，
+    // 避免同一 workspace 重复 spawn 多个 sleep 任务导致重复 flush。
     {
         let timers = ACTIVE_TIMERS.get().expect("ActiveTimers 未初始化");
         let mut timers = timers.write().await;
@@ -286,4 +300,29 @@ pub async fn push_pending_record(workspace_id: i64, record_id: i64, db: &Arc<Dat
             }
         }
     });
+}
+
+/// 重新启动 per-workspace 防抖 timer，用于 worker 处理失败后的恢复。
+///
+/// 场景：`update_blackboard_wiki` 失败时 pending 队列保留（`remove_specific_pending_record_ids`
+/// 未调用），但阈值触发分支不会启动 timer。若不主动恢复，残留队列将永久卡住，UI 持续显示
+/// 「等待刷新 / N / 阈值 条」却永不触发刷新。
+///
+/// 本函数从 DB 重新读取该 workspace 的防抖配置后调用 `start_timer`，
+/// 让队列在 `debounce_secs` 秒后再次触发 flush，给 LLM 一个重试窗口。
+/// 若 DB 读取失败则回退默认防抖值（600s），保证队列最终能再次触发而非永久挂起。
+pub async fn restart_timer(workspace_id: i64, db: &Arc<Database>) {
+    // 复用 push_pending_record 的默认值逻辑：DB 错误时回退默认值保证可用性
+    let debounce_secs = match db.get_blackboard_config(workspace_id).await {
+        Ok(Some(cfg)) => cfg.debounce_secs,
+        Ok(None) => 600,
+        Err(e) => {
+            tracing::warn!(
+                "restart_timer 读取黑板配置失败，使用默认值: workspace_id={}, error={}",
+                workspace_id, e
+            );
+            600
+        }
+    };
+    start_timer(workspace_id, debounce_secs).await;
 }

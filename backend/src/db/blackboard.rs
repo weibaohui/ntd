@@ -2,13 +2,42 @@
 //!
 //! 提供黑板的 CRUD 操作，每个工作空间最多一条黑板记录（由 UNIQUE 约束保证）。
 
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
+
 use sea_orm::{
     sea_query::OnConflict, ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait,
     QueryFilter, UpdateResult,
 };
+use tokio::sync::Mutex;
 
 use super::entity::blackboards;
 use super::Database;
+
+/// per-workspace 互斥锁，串行化 pending 队列的「读-改-写」操作。
+///
+/// 背景：`append_pending_record_id` 与 `remove_specific_pending_record_ids` 都是
+/// 非原子的「读 → 改 → 写」三步。两者并发执行时，后写的会覆盖前写的，
+/// 导致已被 remove 移除的 ID 被 append 的旧快照「复活」，队列永远不收敛——
+/// worker 反复分析同一批 record，UI 持续显示「等待刷新 / N / 阈值 条」。
+///
+/// 用 per-workspace Mutex 把同一工作空间的 append / remove 串行化，
+/// 不同 workspace 之间不互相阻塞。Mutex 懒初始化（首次用到才创建）。
+static PENDING_QUEUE_LOCKS: OnceLock<std::sync::Mutex<HashMap<i64, Arc<Mutex<()>>>>> =
+    OnceLock::new();
+
+/// 取得指定 workspace 的队列互斥锁句柄（不存在则创建）。
+///
+/// 返回 Arc<Mutex> 而非直接守卫，是因为调用方需要在 await 之前获取守卫、
+/// 在 await 之后释放，Arc 让守卫可以跨 await 点持有。
+fn queue_lock(workspace_id: i64) -> Arc<Mutex<()>> {
+    let outer = PENDING_QUEUE_LOCKS.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    let mut guard = outer.lock().expect("PENDING_QUEUE_LOCKS poisoned");
+    guard
+        .entry(workspace_id)
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
 
 impl Database {
     /// 根据 workspace_id 获取黑板内容。
@@ -164,6 +193,13 @@ impl Database {
         workspace_id: i64,
         record_id: i64,
     ) -> Result<(), sea_orm::DbErr> {
+        // 持 per-workspace 互斥锁串行化「读-改-写」，避免与并发的
+        // remove_specific_pending_record_ids 互相覆盖：旧实现里 append 读快照后，
+        // 若期间 remove 写回了新队列，append 仍会用旧快照+push 新 ID 覆盖回去，
+        // 把已被 remove 移除的 ID「复活」，导致队列永不收敛。
+        let lock = queue_lock(workspace_id);
+        let _guard = lock.lock().await;
+
         // 读取当前队列
         let board = blackboards::Entity::find()
             .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
@@ -238,6 +274,14 @@ impl Database {
         workspace_id: i64,
         ids_to_remove: &[i64],
     ) -> Result<(), sea_orm::DbErr> {
+        // 持 per-workspace 互斥锁串行化「读-改-写」，与 append_pending_record_id 互斥。
+        // 旧实现非原子：remove 读快照后若期间 append 写回了新队列（含新 ID），
+        // remove 仍会用旧快照 retain 后的结果覆盖回去，丢失 append 刚写入的新 ID；
+        // 反之 append 读快照后若 remove 写回了精简队列，append 会把已移除的 ID「复活」。
+        // 串行化后任一时刻只有一个操作在改队列，彻底消除覆盖竞态。
+        let lock = queue_lock(workspace_id);
+        let _guard = lock.lock().await;
+
         // 读取当前队列
         let board = blackboards::Entity::find()
             .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
@@ -595,5 +639,101 @@ mod tests {
             .unwrap();
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
         assert_eq!(cfg.debounce_count, 1);
+    }
+
+    /// 并发回归测试：append 与 remove 交错执行时，队列必须正确收敛，
+    /// 不允许 append 的旧快照「复活」已被 remove 移除的 ID。
+    ///
+    /// 场景：先 append [1,2,3]，启动一个并发任务不断 append 新 ID（4..N），
+    /// 主任务同时调 remove_specific_pending_record_ids([1,2,3])。
+    /// 修复前（无互斥锁）：append 与 remove 的读-改-写交错会互相覆盖，
+    ///   要么丢新追加的 ID，要么把已移除的 1/2/3 写回来。
+    /// 修复后（per-workspace Mutex）：操作串行化，最终队列应恰好等于
+    ///   「本次并发追加的所有 ID 减去被 remove 的 [1,2,3]」，无丢失无复活。
+    ///
+    /// 由于 SQLite :memory: 单连接 + tokio 单线程协作式调度，
+    /// 真正的并发竞态需要 yield 点制造交错——append/remove 内部的 await
+    /// 就是天然的 yield 点，多任务并发调用时调度器会在这些点切换。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_append_remove_converges_under_concurrency() {
+        let db = std::sync::Arc::new(
+            Database::new(":memory:").await.expect(":memory: must open"),
+        );
+        let ws_id = create_test_workspace(&db).await;
+        db.create_blackboard(ws_id).await.unwrap();
+
+        // 预填充 [1,2,3]
+        for id in 1..=3 {
+            db.append_pending_record_id(ws_id, id).await.unwrap();
+        }
+
+        // 并发任务：连续 append 4..=100，与主任务的 remove 交错
+        let db_clone = db.clone();
+        let append_handle = tokio::spawn(async move {
+            for id in 4..=100 {
+                // 每次都重新 clone Arc，避免 move 语义影响下一轮
+                db_clone.append_pending_record_id(ws_id, id).await.unwrap();
+            }
+        });
+
+        // 主任务：反复 remove [1,2,3]，确保它们在任何时刻都不会被「复活」
+        // 循环多次以增加与 append 交错的概率
+        for _ in 0..20 {
+            db.remove_specific_pending_record_ids(ws_id, &[1, 2, 3])
+                .await
+                .unwrap();
+        }
+
+        append_handle.await.unwrap();
+
+        // 最终一致性检查：队列应恰好包含 4..=100，不含 1/2/3
+        let board = db.get_blackboard(ws_id).await.unwrap().unwrap();
+        let ids: Vec<i64> = serde_json::from_str(&board.pending_record_ids).unwrap_or_default();
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            sorted, (4..=100).collect::<Vec<_>>(),
+            "队列未收敛：append 与 remove 并发后应恰好是 4..=100，实际 {:?}。\
+             若含 1/2/3 说明 append 旧快照复活了已移除 ID；若缺号说明 remove 覆盖丢失了 append 的新 ID",
+            ids
+        );
+    }
+
+    /// 并发回归测试：多个 append 并发执行不应丢失任何 ID。
+    ///
+    /// 修复前：两个 append 并发读同一快照，各自 push 后写回，后写覆盖前写，
+    ///   丢失一个 ID。修复后：per-workspace Mutex 串行化，所有 append 都落库。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_appends_no_loss() {
+        let db = std::sync::Arc::new(
+            Database::new(":memory:").await.expect(":memory: must open"),
+        );
+        let ws_id = create_test_workspace(&db).await;
+        db.create_blackboard(ws_id).await.unwrap();
+
+        // 启动 10 个并发任务，每个 append 10 个不同 ID（1..=100）
+        let mut handles = Vec::new();
+        for chunk_start in (1..=100).step_by(10) {
+            let db_clone = db.clone();
+            handles.push(tokio::spawn(async move {
+                for id in chunk_start..chunk_start + 10 {
+                    db_clone.append_pending_record_id(ws_id, id).await.unwrap();
+                }
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        // 100 个 ID 必须全部落库，无丢失
+        let board = db.get_blackboard(ws_id).await.unwrap().unwrap();
+        let ids: Vec<i64> = serde_json::from_str(&board.pending_record_ids).unwrap_or_default();
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            sorted, (1..=100).collect::<Vec<_>>(),
+            "并发 append 丢失 ID：期望 1..=100 全部落库，实际 {:?}",
+            ids
+        );
     }
 }
