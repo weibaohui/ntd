@@ -467,7 +467,7 @@ function AppContent() {
       )}
 
       {/* Wiki 对话全局漂浮窗口 */}
-      {!isMobile && <WikiChatFloatingWindow />}
+      <WikiChatFloatingWindow />
     </Layout>
   );
 }

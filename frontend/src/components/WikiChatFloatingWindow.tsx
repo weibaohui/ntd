@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Button, Input, Skeleton, message, Tooltip } from 'antd';
+import { Button, Input, Skeleton, message, Tooltip, Drawer } from 'antd';
 import {
   MessageOutlined,
   MinusOutlined,
@@ -23,8 +23,10 @@ import {
 import { XMarkdown } from '@ant-design/x-markdown';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/hooks/useApp';
-import { LOG_TYPE_COLORS_LIGHT, LOG_TYPE_COLORS_DARK, LOG_TYPE_LABELS } from '@/constants';
-import { chatWithWiki, getBlackboard } from '@/utils/database/blackboard';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import { ExecutorPickerPopover } from '@/components/common/ExecutorPickerPopover';
+import { LOG_TYPE_COLORS_LIGHT, LOG_TYPE_COLORS_DARK, LOG_TYPE_LABELS, getLastExecutor, setLastExecutor } from '@/constants';
+import { chatWithWiki } from '@/utils/database/blackboard';
 import type { LogEntry } from '@/types';
 
 const { TextArea } = Input;
@@ -79,6 +81,7 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
   const { state } = useApp();
   const { themeMode } = useTheme();
   const isDark = themeMode === 'dark';
+  const isMobile = useIsMobile();
 
   // ─── 布局模式状态 ────────────────────────────────────────────
 
@@ -130,31 +133,17 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
-  const [chatExecutor, setChatExecutor] = useState<string>('claudecode');
+  // 默认选中最后一次使用的执行器，与闪念创建界面逻辑一致
+  const [chatExecutor, setChatExecutor] = useState<string>(getLastExecutor);
   const listRef = useRef<HTMLDivElement>(null);
   const currentChatTaskIdRef = useRef<string | null>(null);
   const workspaceId = state.selectedWorkspace;
 
-  // 读取黑板配置（wiki_chat_executor）
-  useEffect(() => {
-    if (workspaceId == null) return;
-    let cancelled = false;
-    getBlackboard(workspaceId)
-      .then((data) => {
-        if (cancelled) return;
-        if (data.wiki_chat_executor && data.wiki_chat_executor.trim().length > 0) {
-          setChatExecutor(data.wiki_chat_executor);
-        } else {
-          setChatExecutor('claudecode');
-        }
-      })
-      .catch(() => {
-        // 读取失败时使用默认值，静默处理（非关键路径）
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceId]);
+  // 选择执行器时记住最后一次使用的执行器
+  const handleExecutorChange = useCallback((value: string) => {
+    setChatExecutor(value);
+    setLastExecutor(value);
+  }, []);
 
   // workspace 切换时清空对话历史（不同 workspace 的 wiki 内容完全隔离）
   useEffect(() => {
@@ -343,24 +332,24 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
 
   // ─── 消息列表（公共渲染） ───────────────────────────────────
 
-  const renderMessageList = () => (
+  const renderMessageList = (mobile = false) => (
     <div
       ref={listRef}
       style={{
         flex: 1,
         overflowY: 'auto',
-        padding: '16px',
+        padding: mobile ? '12px 14px' : '16px',
         display: 'flex',
         flexDirection: 'column',
-        gap: 12,
+        gap: mobile ? 14 : 12,
         minHeight: 0,
       }}
     >
       {messages.length === 0 && !loading && (
-        <div style={{ textAlign: 'center', color: hintColor, fontSize: 13, padding: '32px 0' }}>
-          <MessageOutlined style={{ fontSize: 32, marginBottom: 12, opacity: 0.3 }} />
+        <div style={{ textAlign: 'center', color: hintColor, fontSize: mobile ? 14 : 13, padding: '32px 0' }}>
+          <MessageOutlined style={{ fontSize: 36, marginBottom: 12, opacity: 0.3 }} />
           <div>还没有对话记录</div>
-          <div style={{ marginTop: 4, fontSize: 12 }}>输入问题开始与 Wiki 交互</div>
+          <div style={{ marginTop: 6, fontSize: mobile ? 13 : 12 }}>输入问题开始与 Wiki 交互</div>
         </div>
       )}
       {messages.map((msg) => {
@@ -369,12 +358,12 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
             <div key={msg.id} style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <div
                 style={{
-                  maxWidth: '80%',
-                  padding: '10px 14px',
-                  borderRadius: 10,
+                  maxWidth: mobile ? '85%' : '80%',
+                  padding: mobile ? '12px 16px' : '10px 14px',
+                  borderRadius: 12,
                   background: userMsgBg,
                   color: textColor,
-                  fontSize: 14,
+                  fontSize: mobile ? 16 : 14,
                   lineHeight: 1.6,
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-word',
@@ -393,7 +382,7 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
               <div
                 style={{
                   maxWidth: '100%',
-                  fontSize: 12,
+                  fontSize: mobile ? 13 : 12,
                   lineHeight: 1.6,
                   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                   color: textColor,
@@ -402,7 +391,7 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
                   {msg.entry.timestamp && (
-                    <span style={{ color: hintColor, fontSize: 11 }}>
+                    <span style={{ color: hintColor, fontSize: mobile ? 12 : 11 }}>
                       {formatTime(msg.entry.timestamp)}
                     </span>
                   )}
@@ -410,7 +399,7 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
                     style={{
                       padding: '1px 6px',
                       borderRadius: 3,
-                      fontSize: 10,
+                      fontSize: mobile ? 11 : 10,
                       fontWeight: 600,
                       background: typeColor,
                       color: '#fff',
@@ -432,12 +421,12 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
           <div key={msg.id} style={{ display: 'flex', justifyContent: 'flex-start' }}>
             <div
               style={{
-                maxWidth: '90%',
-                padding: '12px 14px',
-                borderRadius: 10,
+                maxWidth: mobile ? '92%' : '90%',
+                padding: mobile ? '14px 16px' : '12px 14px',
+                borderRadius: 12,
                 background: isDark ? '#2a2a2a' : '#fff',
                 color: textColor,
-                fontSize: 14,
+                fontSize: mobile ? 15 : 14,
                 lineHeight: 1.6,
                 border: `2px solid ${msg.success
                   ? isDark ? '#3d7a3d' : '#52c41a'
@@ -446,7 +435,7 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
               }}
             >
               <XMarkdown>{msg.content}</XMarkdown>
-              <div style={{ marginTop: 8, fontSize: 11, color: hintColor, display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ marginTop: 8, fontSize: mobile ? 12 : 11, color: hintColor, display: 'flex', justifyContent: 'space-between' }}>
                 <span>{msg.success ? '✅ 执行成功' : '❌ 执行失败'}</span>
                 {msg.durationSecs != null && <span>用时 {msg.durationSecs.toFixed(1)}s</span>}
               </div>
@@ -458,13 +447,13 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
         <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
           <div
             style={{
-              padding: '10px 14px',
-              borderRadius: 10,
+              padding: mobile ? '12px 16px' : '10px 14px',
+              borderRadius: 12,
               background: isDark ? '#2a2a2a' : '#fff',
               border: `1px solid ${panelBorder}`,
             }}
           >
-            <Skeleton.Input active size="small" style={{ width: 120 }} />
+            <Skeleton.Input active size={mobile ? 'default' : 'small'} style={{ width: 140 }} />
           </div>
         </div>
       )}
@@ -473,20 +462,24 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
 
   // ─── 输入框（公共渲染） ────────────────────────────────────
 
-  const renderInput = () => (
+  const renderInput = (mobile = false) => (
     <div
       style={{
-        padding: '12px',
+        padding: mobile ? '12px 14px' : '12px',
         borderTop: `1px solid ${panelBorder}`,
         flexShrink: 0,
         background: panelBg,
+        // 移动端适配底部安全区域，避免键盘弹出时输入框被遮挡
+        paddingBottom: mobile
+          ? 'calc(12px + env(safe-area-inset-bottom, 0px))'
+          : '12px',
       }}
     >
       <TextArea
         value={inputValue}
         onChange={(e) => setInputValue(e.target.value)}
         placeholder="向 Wiki 提问..."
-        autoSize={{ minRows: 1, maxRows: 6 }}
+        autoSize={{ minRows: 1, maxRows: mobile ? 4 : 6 }}
         disabled={loading || workspaceId == null}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
@@ -494,14 +487,33 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
             handleSend();
           }
         }}
-        style={{ fontSize: 14 }}
+        style={{ fontSize: mobile ? 16 : 14 }}
       />
-      <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: 11, color: hintColor }}>
-          Enter 发送 · Shift+Enter 换行
-          {workspaceId == null && ' · 请先选择工作空间'}
-        </span>
-        <Button type="primary" size="small" onClick={handleSend} loading={loading} disabled={workspaceId == null}>
+      {/* 执行器选择行：与闪念创建界面保持一致的控件和逻辑 */}
+      <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: mobile ? 13 : 12, color: hintColor }}>执行器</span>
+          <ExecutorPickerPopover
+            value={chatExecutor}
+            onChange={handleExecutorChange}
+          />
+        </div>
+        {!mobile && (
+          <span style={{ fontSize: 11, color: hintColor }}>
+            Enter 发送 · Shift+Enter 换行
+            {workspaceId == null && ' · 请先选择工作空间'}
+          </span>
+        )}
+      </div>
+      <div style={{ marginTop: mobile ? 10 : 8, display: 'flex', justifyContent: 'flex-end' }}>
+        <Button
+          type="primary"
+          size={mobile ? 'middle' : 'small'}
+          onClick={handleSend}
+          loading={loading}
+          disabled={workspaceId == null}
+          style={{ minWidth: mobile ? 80 : 'auto' }}
+        >
           发送
         </Button>
       </div>
@@ -511,16 +523,20 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
   // ─── 最小化模式：悬浮按钮 ──────────────────────────────────
 
   if (mode === 'minimized') {
+    // 移动端：悬浮按钮位置上移，避开底部安全区域，且尺寸略大方便触控
+    const bottomOffset = isMobile
+      ? 'calc(env(safe-area-inset-bottom, 0px) + 80px)'
+      : WIKI_BUTTON_BOTTOM_OFFSET;
     return (
       <Tooltip title="Wiki 对话" placement="left">
         <button
-          onClick={() => setMode('side')}
+          onClick={() => setMode(isMobile ? 'maximized' : 'side')}
           style={{
             position: 'fixed',
-            bottom: WIKI_BUTTON_BOTTOM_OFFSET,
+            bottom: bottomOffset,
             right: FLOATING_MARGIN,
-            width: MINIMIZED_SIZE,
-            height: MINIMIZED_SIZE,
+            width: isMobile ? 52 : MINIMIZED_SIZE,
+            height: isMobile ? 52 : MINIMIZED_SIZE,
             borderRadius: '50%',
             background: 'var(--color-primary)',
             color: '#fff',
@@ -543,9 +559,50 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
           }}
           aria-label="Wiki 对话"
         >
-          <MessageOutlined style={{ fontSize: 22 }} />
+          <MessageOutlined style={{ fontSize: isMobile ? 24 : 22 }} />
         </button>
       </Tooltip>
+    );
+  }
+
+  // ─── 移动端：底部 Drawer ──────────────────────────────────
+
+  if (isMobile) {
+    return (
+      <Drawer
+        title="Wiki 对话"
+        placement="bottom"
+        open={true}
+        onClose={() => setMode('minimized')}
+        height="85vh"
+        destroyOnClose
+        styles={{
+          body: {
+            padding: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            height: 'calc(85vh - 55px)',
+            background: panelBg,
+          },
+          header: {
+            background: headerBg,
+            borderBottom: `1px solid ${panelBorder}`,
+            padding: '12px 16px',
+          },
+        }}
+        extra={
+          <Button
+            type="text"
+            size="small"
+            icon={<CloseOutlined />}
+            onClick={() => setMode('minimized')}
+            style={{ color: hintColor }}
+          />
+        }
+      >
+        {renderMessageList(true)}
+        {renderInput(true)}
+      </Drawer>
     );
   }
 

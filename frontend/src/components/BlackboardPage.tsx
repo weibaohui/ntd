@@ -18,7 +18,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu, Select } from 'antd';
+import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu } from 'antd';
 import { ReloadOutlined, SettingOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { TfiBlackboard } from 'react-icons/tfi';
 import { XMarkdown } from '@ant-design/x-markdown';
@@ -65,12 +65,6 @@ const URL_WORKSPACE_PARAM = 'workspace';
 
 /** 默认工作空间 ID（首屏兜底，避免 URL 未带参时无 workspace） */
 const DEFAULT_WORKSPACE_ID = 1;
-
-/** 可选的 Wiki 对话执行器列表（与后端 ExecutorType 枚举对齐） */
-const WIKI_CHAT_EXECUTOR_OPTIONS = [
-  { label: 'Claude Code（默认）', value: 'claudecode' },
-  { label: 'Codex', value: 'codex' },
-];
 
 /**
  * Wiki 提示词默认值（单阶段）：与后端 `build_wiki_prompt()` 内置模板保持一致。
@@ -250,8 +244,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const [debounceSecs, setDebounceSecs] = useState<number | null>(600);
   const [debounceCount, setDebounceCount] = useState<number | null>(10);
   const [wikiPrompt, setWikiPrompt] = useState<string>('');
-  const [wikiChatExecutor, setWikiChatExecutor] = useState<string>('claudecode');
-  const [activeTab, setActiveTab] = useState<'debounce' | 'prompt' | 'chat'>('debounce');
+  const [activeTab, setActiveTab] = useState<'debounce' | 'prompt'>('debounce');
 
   /**
    * 打开设置弹窗：从已加载的黑板数据中读取 per-workspace 配置。
@@ -263,12 +256,10 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       setDebounceSecs(configData.blackboard_debounce_secs ?? 600);
       setDebounceCount(configData.blackboard_debounce_count ?? 10);
       setWikiPrompt(configData.wiki_prompt ?? '');
-      setWikiChatExecutor(configData.wiki_chat_executor || 'claudecode');
     } else {
       setDebounceSecs(600);
       setDebounceCount(10);
       setWikiPrompt('');
-      setWikiChatExecutor('claudecode');
     }
     setActiveTab('debounce');
     setSettingsOpen(true);
@@ -283,7 +274,6 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         blackboard_debounce_secs: debounceSecs ?? 600,
         blackboard_debounce_count: debounceCount ?? 10,
         wiki_prompt: wikiPrompt,
-        wiki_chat_executor: wikiChatExecutor,
       });
       // 保存成功后同步更新 data，避免下次打开弹窗读到旧值
       if (configData) {
@@ -292,7 +282,6 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
           blackboard_debounce_secs: debounceSecs ?? 600,
           blackboard_debounce_count: debounceCount ?? 10,
           wiki_prompt: wikiPrompt,
-          wiki_chat_executor: wikiChatExecutor,
         });
       }
       message.success('设置已保存');
@@ -302,7 +291,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     } finally {
       setSettingsSaving(false);
     }
-  }, [workspaceId, debounceSecs, debounceCount, wikiPrompt, wikiChatExecutor, configData]);
+  }, [workspaceId, debounceSecs, debounceCount, wikiPrompt, configData]);
 
   // 恢复默认提示词：把 wikiPrompt 设为内置默认值。
   // 区别于"留空"的语义——留空表示后端使用内置默认；填入默认值表示用户显式采用内置模板。
@@ -413,7 +402,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       >
         <Tabs
           activeKey={activeTab}
-          onChange={(key) => setActiveTab(key as 'debounce' | 'prompt' | 'chat')}
+          onChange={(key) => setActiveTab(key as 'debounce' | 'prompt')}
           items={[
             {
               key: 'debounce',
@@ -435,16 +424,6 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
                   wikiPrompt={wikiPrompt}
                   setWikiPrompt={setWikiPrompt}
                   onRestorePrompt={handleRestorePrompt}
-                />
-              ),
-            },
-            {
-              key: 'chat',
-              label: '对话设置',
-              children: (
-                <ChatSettingsTab
-                  wikiChatExecutor={wikiChatExecutor}
-                  setWikiChatExecutor={setWikiChatExecutor}
                 />
               ),
             },
@@ -907,28 +886,5 @@ function BlackboardEmpty(props: BlackboardEmptyProps) {
       </p>
       <p>任务执行后将自动更新黑板内容</p>
     </div>
-  );
-}
-
-// ─── 对话设置 Tab ────────────────────────────────────────────
-
-interface ChatSettingsTabProps {
-  wikiChatExecutor: string;
-  setWikiChatExecutor: (v: string) => void;
-}
-
-/** 对话设置 Tab：选择 Wiki 对话使用的执行器 */
-function ChatSettingsTab({ wikiChatExecutor, setWikiChatExecutor }: ChatSettingsTabProps) {
-  return (
-    <Form layout="vertical" style={{ marginTop: 16 }}>
-      <Form.Item label="对话执行器" extra="选择用于 Wiki 对话的执行器。不同执行器的能力和响应速度不同。">
-        <Select
-          value={wikiChatExecutor}
-          onChange={(v) => setWikiChatExecutor(v)}
-          options={WIKI_CHAT_EXECUTOR_OPTIONS}
-          style={{ width: 260 }}
-        />
-      </Form.Item>
-    </Form>
   );
 }
