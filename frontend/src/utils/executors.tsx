@@ -55,7 +55,7 @@ export const EXECUTOR_COLORS: Record<string, string> = {
 
 // 执行器名称别名映射：数据库中可能存储的历史名称 → EXECUTORS 数组中的规范值。
 // 用于统一 getExecutorOption 和 supportsResume 的查找逻辑，避免 alias 无法匹配。
-export const EXECUTOR_ALIASES: Record<string, string> = {
+const EXECUTOR_ALIASES: Record<string, string> = {
   // 'claude' / 'claude_code' 是早期数据库写入的名称，统一映射到 'claudecode'
   'claude': 'claudecode',
   'claude_code': 'claudecode',
