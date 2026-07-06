@@ -108,11 +108,6 @@ pub enum Commands {
 pub enum WorkspaceAction {
     /// List all registered workspaces
     List,
-    /// Get a single workspace by id
-    Get {
-        /// Workspace id (project_directories.id)
-        id: i64,
-    },
     /// Register a new workspace (project directory)
     Create {
         /// Directory path (absolute or relative; stored verbatim)
@@ -833,7 +828,6 @@ async fn handle_workspace(
 ) -> Result<()> {
     match action {
         WorkspaceAction::List => list_workspaces(client, output, fields).await,
-        WorkspaceAction::Get { id } => get_workspace(client, *id, output, fields).await,
         WorkspaceAction::Create { path, name } => {
             create_workspace(client, path, name, output, fields).await
         }
@@ -847,40 +841,6 @@ async fn list_workspaces(
     fields: &Option<String>,
 ) -> Result<()> {
     let resp: ClientResponse<Vec<ProjectDirectory>> = client.get("/project-directories").await?;
-    print_response(&resp, output, fields)?;
-    Ok(())
-}
-
-/// 调 `GET /api/project-directories/{id}` 查单个工作空间。
-/// 后端没暴露按 id 单查的接口（只有 list 全量），这里复用 list 后客户端过滤——
-/// 避免为 CLI 单查路径新增一个后端 route（YAGNI）。
-async fn get_workspace(
-    client: &ApiClient,
-    id: i64,
-    output: &OutputFormat,
-    fields: &Option<String>,
-) -> Result<()> {
-    let resp: ClientResponse<Vec<ProjectDirectory>> = client.get("/project-directories").await?;
-    // 在客户端按 id 过滤；命中空时显式给一个 code!=0 的伪响应，让用户看清是「无此 id」而不是空表。
-    let matched: Vec<ProjectDirectory> = resp
-        .data
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|d| d.id == id)
-        .collect();
-    let resp = if matched.is_empty() {
-        ClientResponse {
-            code: 404,
-            data: None,
-            message: format!("workspace id {id} not found"),
-        }
-    } else {
-        ClientResponse {
-            code: resp.code,
-            data: Some(matched),
-            message: resp.message,
-        }
-    };
     print_response(&resp, output, fields)?;
     Ok(())
 }
@@ -1485,18 +1445,6 @@ mod tests {
         match cli.command {
             Commands::Workspace { action: WorkspaceAction::List } => {}
             _ => panic!("Expected Workspace::List"),
-        }
-    }
-
-    // workspace get <id>：id 是 i64 positional，校验 parse 后落 Get{id}
-    #[test]
-    fn test_cli_parse_workspace_get() {
-        let cli = Cli::try_parse_from(["ntd", "workspace", "get", "42"]).unwrap();
-        match cli.command {
-            Commands::Workspace { action: WorkspaceAction::Get { id } } => {
-                assert_eq!(id, 42);
-            }
-            _ => panic!("Expected Workspace::Get with id=42"),
         }
     }
 
