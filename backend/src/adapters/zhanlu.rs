@@ -32,6 +32,13 @@ impl ZhanluExecutor {
         }
     }
 
+    /// 更新 session_id 缓存（extract_session_id 和 parse_output_line 共用）。
+    fn update_session_id_cache(&self, sid: Option<String>) {
+        if let Some(ref s) = sid {
+            *self.session_id.lock() = Some(s.clone());
+        }
+    }
+
     /// 把 Zhanlu 时间戳（毫秒）转换为 ISO 字符串；缺失时回退到 utc_timestamp。
     fn resolve_timestamp(ts: Option<u64>) -> String {
         ts.and_then(|ts| chrono::DateTime::from_timestamp_millis(ts as i64))
@@ -157,9 +164,7 @@ impl CodeExecutor for ZhanluExecutor {
     fn extract_session_id(&self, line: &str) -> Option<String> {
         let event: ZhanluAgentEvent = serde_json::from_str(line).ok()?;
         let sid = event.session_id.or_else(|| event.part.as_ref()?.session_id.clone());
-        if let Some(ref s) = sid {
-            *self.session_id.lock() = Some(s.clone());
-        }
+        self.update_session_id_cache(sid.clone());
         sid.or_else(|| self.session_id.lock().clone())
     }
 
@@ -171,9 +176,7 @@ impl CodeExecutor for ZhanluExecutor {
         let event: ZhanluAgentEvent = serde_json::from_str(line).ok()?;
         // 缓存 session_id：优先取事件顶层字段，再取 part 内字段
         let sid = event.session_id.clone().or_else(|| event.part.as_ref()?.session_id.clone());
-        if let Some(ref s) = sid {
-            *self.session_id.lock() = Some(s.clone());
-        }
+        self.update_session_id_cache(sid);
         let timestamp = Self::resolve_timestamp(event.timestamp);
 
         match event.event_type.as_str() {

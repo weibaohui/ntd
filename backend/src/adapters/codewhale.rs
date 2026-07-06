@@ -39,6 +39,13 @@ impl CodewhaleExecutor {
         }
     }
 
+    /// 更新 session_id 缓存（extract_session_id 和 parse_output_line 共用）。
+    fn update_session_id_cache(&self, sid: Option<String>) {
+        if let Some(ref s) = sid {
+            *self.session_id.lock() = Some(s.clone());
+        }
+    }
+
     /// {"type":"tool_use","name":"exec_shell","id":"call_xxx","input":{"command":"ls"}}
     fn parse_tool_use(&self, json: &Value) -> Option<ParsedLogEntry> {
         let name = json.get("name").and_then(Value::as_str).unwrap_or("unknown");
@@ -164,14 +171,11 @@ impl CodeExecutor for CodewhaleExecutor {
         let sid = if json.get("type")?.as_str()? == "session_capture" {
             json.get("content")?.as_str().map(String::from)
         } else if json.get("type")?.as_str()? == "metadata" {
-            // metadata 事件中的 session_id 也缓存（与 Claude Code/Hermès 模式一致）
             json.get("meta")?.get("session_id")?.as_str().map(String::from)
         } else {
             None
         };
-        if let Some(ref s) = sid {
-            *self.session_id.lock() = Some(s.clone());
-        }
+        self.update_session_id_cache(sid.clone());
         sid.or_else(|| self.session_id.lock().clone())
     }
 
@@ -183,10 +187,10 @@ impl CodeExecutor for CodewhaleExecutor {
     fn parse_output_line(&self, line: &str) -> Option<ParsedLogEntry> {
         let json = helpers::parse_json_line(line)?;
         let event_type = json.get("type")?.as_str()?;
-        // 缓存 metadata 事件中的 session_id（与 Claude Code/Hermès 模式一致）
+        // 缓存 metadata 事件中的 session_id
         if event_type == "metadata" {
             if let Some(sid) = json.get("meta")?.get("session_id")?.as_str() {
-                *self.session_id.lock() = Some(sid.to_string());
+                self.update_session_id_cache(Some(sid.to_string()));
             }
         }
         match event_type {

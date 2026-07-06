@@ -25,6 +25,13 @@ impl KimiExecutor {
         }
     }
 
+    /// 更新 session_id 缓存（extract_session_id 和 parse_output_line 共用）。
+    fn update_session_id_cache(&self, sid: Option<String>) {
+        if let Some(ref s) = sid {
+            *self.session_id.lock() = Some(s.clone());
+        }
+    }
+
     /// 解析 assistant 角色：优先 tool_calls（首个匹配即返回），否则 text / thinking。
     fn parse_assistant(&self, json: &serde_json::Value) -> Option<ParsedLogEntry> {
         if let Some(entry) = self.parse_assistant_tool_call(json) {
@@ -143,7 +150,7 @@ impl CodeExecutor for KimiExecutor {
         if let Some(json) = helpers::parse_json_line(line) {
             if json.get("role").and_then(|v| v.as_str()) == Some("meta") {
                 if let Some(sid) = json.get("session_id").and_then(|v| v.as_str()) {
-                    *self.session_id.lock() = Some(sid.to_string());
+                    self.update_session_id_cache(Some(sid.to_string()));
                     return Some(sid.to_string());
                 }
             }
@@ -160,10 +167,9 @@ impl CodeExecutor for KimiExecutor {
         if let Some(json) = helpers::parse_json_line(line) {
             let role = json.get("role").and_then(|v| v.as_str())?;
             // role="meta" 事件中可能携带 session_id，缓存到 executor 状态中
-            // （与 Claude Code/Hermès/Pi 的模式一致：提取后供后续回写 DB）。
             if role == "meta" {
                 if let Some(sid) = json.get("session_id").and_then(|v| v.as_str()) {
-                    *self.session_id.lock() = Some(sid.to_string());
+                    self.update_session_id_cache(Some(sid.to_string()));
                 }
                 return None;
             }
