@@ -8,8 +8,9 @@ export const NODE_HEIGHT = 80;
 export const RANK_SEP = 60;
 export const NODE_SEP = 30;
 
+// 虚拟节点半径：FlowEdge / LoopFlowGraph / FlowVirtualNodes 共用，
+// 集中在一处避免修改时漏改导致尺寸对不上。
 export const VIRTUAL_NODE_RADIUS = 20;
-export const VIRTUAL_NODE_SIZE = VIRTUAL_NODE_RADIUS * 2;
 
 // 回环边弧顶距 dagre 内容顶部的距离。决定 SVG 顶部留白大小，
 // 同时也是 buildEdgePath 中回环控制点的 Y 偏移（绝对值）。

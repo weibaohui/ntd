@@ -180,42 +180,6 @@ export const EXECUTION_PANEL = {
   collapsed: 40,
 } as const;
 
-/** 触摸滑动阈值 */
-export const SWIPE = {
-  /** 滑动距离阈值（px）。50px 是人手指在屏幕上做"滑动删除"手势的合理最小距离，
-   *  低于此值视为误触而不触发滑动操作。 */
-  threshold: 50,
-  /** 滑动最大时间（ms）。300ms 是快速滑动手势的典型时长，超过此值视为
-   *  慢速拖动而非滑动操作。 */
-  maxTime: 300,
-} as const;
-
-/** 定时器间隔 */
-export const TIMER = {
-  /** 执行状态刷新间隔（ms）。1000ms 是轮询的合理平衡：低于此值增加服务端负载
-   *  而无明显 UX 改善（人类感知延迟阈值约 100-200ms 但执行状态变化本身是分钟级的）。 */
-  tickInterval: 1000,
-  /** 完成任务自动移除延迟（ms）。5000ms 给用户足够时间看到"已完成"状态后
-   *  再自动移除，避免突兀消失。 */
-  autoRemoveDelay: 5000,
-} as const;
-
-/** 文本截断长度 */
-export const TEXT_TRUNCATE = {
-  /** Todo 标题截断长度。60 字符约等于一行中文字符宽度，
-   *  在 350px 侧边栏内能完整显示而不换行。 */
-  todoTitle: 60,
-  /** Todo 摘要截断长度。20 字符在卡片中作为副标题预览足够。 */
-  todoSummary: 20,
-  /** 工具输入预览截断长度。50 字符支持显示完整路径或命令。 */
-  toolInput: 50,
-  /** 工具输入字段值截断长度。15 字符适合显示单个参数值。 */
-  toolInputField: 15,
-  /** 日志内容截断长度。2000 字符确保抽屉中日志渲染不阻塞 UI，
-   *  超长日志在后端已分片存储，前端只展示前 2000 字预览。 */
-  logContent: 2000,
-} as const;
-
 /** 导出限制 */
 export const EXPORT = {
   /** 导出时最大获取日志条数。100000 条在 SQLite 单表查询中能在 1-2 秒内完成，
@@ -223,17 +187,14 @@ export const EXPORT = {
   maxLogs: 100000,
 } as const;
 
-/** 复制反馈延迟 */
-export const COPY_FEEDBACK_DELAY = 2000;
-
 // =============================================================================
 // Executor last-choice persistence — single key shared across all components
 // that offer executor selection (ActionButton, TodoDrawer, QuickCaptureModal).
 // When the user picks an executor in one place, the other two remember it too.
 // =============================================================================
 
-/** localStorage key 统一用于跨组件记忆用户上次选择的执行器 */
-export const LAST_EXECUTOR_STORAGE_KEY = 'ntd_last_executor';
+// localStorage key 仅本文件内部用，跨组件记忆用户上次选择的执行器
+const LAST_EXECUTOR_STORAGE_KEY = 'ntd_last_executor';
 
 /** 从 localStorage 读出上次选择的执行器，不存在时回退到 DEFAULT_EXECUTOR */
 export function getLastExecutor(defaultExecutor: string = 'claudecode'): string {
