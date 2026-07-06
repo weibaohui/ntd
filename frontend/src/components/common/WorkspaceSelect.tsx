@@ -17,7 +17,7 @@
 //   监听方按 id 选中而非 path。
 
 import { useState, useEffect, useCallback } from 'react';
-import { Select, Form, Input, Button, Modal, Space, App } from 'antd';
+import { Select, Form, Input, Modal, App } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import { getProjectDirectories, createProjectDirectory } from '@/utils/database/todos';
 
@@ -111,26 +111,41 @@ export function WorkspaceSelect({ value, onChange, required, selectProps }: Work
 
   return (
     <>
-      <Space.Compact style={{ width: '100%' }}>
-        <Select
-          value={value ?? undefined}
-          onChange={onChange}
-          options={options}
-          loading={loading}
-          placeholder="选择工作空间"
-          showSearch
-          allowClear={!required}
-          optionFilterProp="label"
-          style={{ flex: 1 }}
-          {...selectProps}
-        />
-        <Button
-          icon={<PlusOutlined />}
-          onClick={() => setQuickAddOpen(true)}
-          title="新建工作空间"
-          aria-label="新建工作空间"
-        />
-      </Space.Compact>
+      <Select
+        value={value ?? undefined}
+        onChange={onChange}
+        options={options}
+        loading={loading}
+        placeholder="选择工作空间"
+        showSearch={false}
+        allowClear={!required}
+        dropdownRender={(menu) => (
+          <>
+            {menu}
+            <div
+              style={{
+                padding: '4px 8px',
+                borderTop: '1px solid var(--color-border-secondary)',
+                cursor: 'pointer',
+                color: 'var(--color-primary)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                fontSize: 13,
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setQuickAddOpen(true);
+              }}
+            >
+              <PlusOutlined style={{ fontSize: 12 }} />
+              新建工作空间
+            </div>
+          </>
+        )}
+        style={{ minWidth: 160 }}
+        {...selectProps}
+      />
 
       <Modal
         title="新建工作空间"
