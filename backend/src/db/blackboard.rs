@@ -391,11 +391,17 @@ impl Database {
     /// - Some(Some(sid))：该执行器有 session
     /// - Some(None)：该执行器无 session（首次对话或不支持 session）
     /// - None：黑板记录不存在
+    ///
+    /// 并发安全：持 per-workspace 互斥锁，与 set_wiki_chat_session 互斥，
+    /// 防止并发请求读取到过期的 session_id。
     pub async fn get_wiki_chat_session(
         &self,
         workspace_id: i64,
         executor: &str,
     ) -> Result<Option<Option<String>>, sea_orm::DbErr> {
+        let lock = queue_lock(workspace_id);
+        let _guard = lock.lock().await;
+
         let board = blackboards::Entity::find()
             .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
             .one(&self.conn)
@@ -420,12 +426,20 @@ impl Database {
     /// 1. 读取现有 sessions JSON
     /// 2. 更新对应执行器的 session
     /// 3. 写回数据库
+    ///
+    /// 并发安全：持 per-workspace 互斥锁，与 get_wiki_chat_session 互斥，
+    /// 防止并发请求的 session_id 互相覆盖。
     pub async fn set_wiki_chat_session(
         &self,
         workspace_id: i64,
         executor: &str,
         session_id: Option<String>,
     ) -> Result<(), sea_orm::DbErr> {
+        // 持 per-workspace 互斥锁串行化「读-改-写」，与 get_wiki_chat_session 互斥。
+        // 避免并发请求读取到过期的 session_id，或多个请求的 session_id 互相覆盖。
+        let lock = queue_lock(workspace_id);
+        let _guard = lock.lock().await;
+
         // 读取现有 sessions
         let board = blackboards::Entity::find()
             .filter(blackboards::Column::WorkspaceId.eq(workspace_id))

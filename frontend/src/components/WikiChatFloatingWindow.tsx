@@ -513,11 +513,6 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
             value={workspaceId ?? null}
             showAddOption={false}
             onChange={(id) => {
-              // workspace 切换时清空对话历史
-              setMessages([]);
-              setInputValue('');
-              setLoading(false);
-              currentChatTaskIdRef.current = null;
               dispatch({ type: 'SELECT_WORKSPACE', payload: id });
             }}
           />

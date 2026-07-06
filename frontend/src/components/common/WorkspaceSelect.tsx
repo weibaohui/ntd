@@ -136,9 +136,18 @@ export function WorkspaceSelect({ value, onChange, required, showAddOption = tru
                   gap: 4,
                   fontSize: 13,
                 }}
+                role="button"
+                tabIndex={0}
                 onClick={(e) => {
                   e.stopPropagation();
                   setQuickAddOpen(true);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setQuickAddOpen(true);
+                  }
                 }}
               >
                 <PlusOutlined style={{ fontSize: 12 }} />

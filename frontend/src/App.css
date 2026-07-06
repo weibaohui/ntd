@@ -1156,6 +1156,14 @@ html, body {
   transform: scale(0.95);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .fab-collapsed,
+  .fab-collapse-btn,
+  .fab-item-btn {
+    transition: none !important;
+  }
+}
+
 /* 闪念按钮：蓝紫渐变 */
 .fab-smart {
   background: linear-gradient(135deg, #3b82f6, #8b5cf6);
@@ -1316,10 +1324,6 @@ html, body {
 
 [data-theme="dark"] .smart-create-config-info {
   color: #60a5fa;
-}
-
-[data-theme="dark"] .fab-smart {
-  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
 }
 
 [data-theme="dark"] .smart-create-footer .ant-btn-primary {

@@ -26,7 +26,7 @@ import { QuickCaptureModal } from './components/QuickCaptureModal';
 import { LoopFormModal } from './components/LoopFormModal';
 import { LeftRail, type LeftRailKey } from './components/shell/LeftRail';
 import { MobileHeader } from './components/shell/MobileHeader';
-import { FloatingActionButton } from './components/shell/FloatingActionButton';
+import { FloatingActionButton } from '@/components/shell/FloatingActionButton';
 import { WikiChatFloatingWindow, type WikiChatMode } from '@/components/WikiChatFloatingWindow';
 
 import { EXECUTION_PANEL, LEFT_RAIL_WIDTH } from './constants';
