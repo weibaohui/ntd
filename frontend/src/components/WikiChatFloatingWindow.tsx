@@ -59,33 +59,35 @@ export type WikiChatMode = 'minimized' | 'side' | 'maximized';
 interface WikiChatFloatingWindowProps {
   /** 默认布局模式 */
   defaultMode?: WikiChatMode;
+  /**
+   * 强制指定布局模式。
+   * 设为 'minimized' 时组件不渲染任何内容（按钮由外部 FAB 组件提供）。
+   * 传入后组件不再读写 localStorage，完全由父组件控制模式切换。
+   */
+  forceMode?: WikiChatMode;
+  /** 关闭回调（侧边栏/最大化模式下的关闭按钮点击时调用） */
+  onClose?: () => void;
 }
 
 /** 侧边模式下默认宽度（px） */
 const SIDE_MODE_WIDTH = 400;
-/** 最小化模式下悬浮按钮大小（px）—— 与 QuickCaptureButton 保持一致 */
-const MINIMIZED_SIZE = 48;
-/** 悬浮按钮距离右下角的间距（px）—— 与 QuickCaptureButton 保持一致 */
-const FLOATING_MARGIN = 24;
-/** 悬浮按钮之间的垂直间距（px）—— 与闪念按钮错开排列 */
-const FLOATING_BUTTON_GAP = 16;
-/** Wiki 对话按钮距离底部的偏移量（闪念按钮在最下方，Wiki 在它上方） */
-const WIKI_BUTTON_BOTTOM_OFFSET = FLOATING_MARGIN + MINIMIZED_SIZE + FLOATING_BUTTON_GAP;
 
 /**
  * 全局 Wiki 对话漂浮窗口组件。
  *
  * 通过 localStorage 记住用户偏好的布局模式，下次打开自动恢复。
  */
-export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFloatingWindowProps) {
+export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, onClose }: WikiChatFloatingWindowProps) {
   const { state } = useApp();
   const { themeMode } = useTheme();
   const isDark = themeMode === 'dark';
   const isMobile = useIsMobile();
 
   // ─── 布局模式状态 ────────────────────────────────────────────
+  // forceMode 存在时完全由父组件控制，组件内部不读写 localStorage
 
   const [mode, setMode] = useState<WikiChatMode>(() => {
+    if (forceMode !== undefined) return forceMode;
     try {
       const saved = localStorage.getItem('wiki_chat_mode') as WikiChatMode | null;
       if (saved && ['minimized', 'side', 'maximized'].includes(saved)) {
@@ -96,6 +98,13 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
     }
     return defaultMode;
   });
+
+  // forceMode 变化时同步更新内部 mode
+  useEffect(() => {
+    if (forceMode !== undefined) {
+      setMode(forceMode);
+    }
+  }, [forceMode]);
 
   const [sideWidth, setSideWidth] = useState<number>(() => {
     try {
@@ -110,14 +119,15 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
     return SIDE_MODE_WIDTH;
   });
 
-  // 持久化模式偏好
+  // 持久化模式偏好（仅在非 forceMode 时写入 localStorage）
   useEffect(() => {
+    if (forceMode !== undefined) return;
     try {
       localStorage.setItem('wiki_chat_mode', mode);
     } catch {
       // 忽略存储失败
     }
-  }, [mode]);
+  }, [mode, forceMode]);
 
   // 持久化侧边宽度
   useEffect(() => {
@@ -322,7 +332,13 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
             type="text"
             size="small"
             icon={<MinusOutlined />}
-            onClick={() => setMode('minimized')}
+            onClick={() => {
+              if (onClose) {
+                onClose();
+              } else {
+                setMode('minimized');
+              }
+            }}
             style={{ color: hintColor }}
           />
         </Tooltip>
@@ -520,49 +536,11 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
     </div>
   );
 
-  // ─── 最小化模式：悬浮按钮 ──────────────────────────────────
+  // ─── 最小化模式：悬浮按钮（由外部 FAB 提供，组件自身不渲染按钮）──
 
   if (mode === 'minimized') {
-    // 移动端：悬浮按钮位置上移，避开底部安全区域，且尺寸略大方便触控
-    const bottomOffset = isMobile
-      ? 'calc(env(safe-area-inset-bottom, 0px) + 80px)'
-      : WIKI_BUTTON_BOTTOM_OFFSET;
-    return (
-      <Tooltip title="Wiki 对话" placement="left">
-        <button
-          onClick={() => setMode(isMobile ? 'maximized' : 'side')}
-          style={{
-            position: 'fixed',
-            bottom: bottomOffset,
-            right: FLOATING_MARGIN,
-            width: isMobile ? 52 : MINIMIZED_SIZE,
-            height: isMobile ? 52 : MINIMIZED_SIZE,
-            borderRadius: '50%',
-            background: 'var(--color-primary)',
-            color: '#fff',
-            border: 'none',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
-            transition: 'transform 0.2s, box-shadow 0.2s',
-            zIndex: 1000,
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.transform = 'scale(1.1)';
-            e.currentTarget.style.boxShadow = '0 6px 20px rgba(0,0,0,0.3)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.transform = 'scale(1)';
-            e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.2)';
-          }}
-          aria-label="Wiki 对话"
-        >
-          <MessageOutlined style={{ fontSize: isMobile ? 24 : 22 }} />
-        </button>
-      </Tooltip>
-    );
+    // forceMode='minimized' 时由 FAB 组件提供按钮，当前组件不渲染任何内容
+    return null;
   }
 
   // ─── 移动端：底部 Drawer ──────────────────────────────────
@@ -595,7 +573,13 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
             type="text"
             size="small"
             icon={<CloseOutlined />}
-            onClick={() => setMode('minimized')}
+            onClick={() => {
+              if (onClose) {
+                onClose();
+              } else {
+                setMode('minimized');
+              }
+            }}
             style={{ color: hintColor }}
           />
         }
@@ -641,7 +625,20 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
             <MessageOutlined style={{ marginRight: 8 }} />
             Wiki 对话
           </span>
-          <ModeToggleButton />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <ModeToggleButton />
+            {onClose && (
+              <Tooltip title="关闭">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<CloseOutlined />}
+                  onClick={onClose}
+                  style={{ color: hintColor }}
+                />
+              </Tooltip>
+            )}
+          </div>
         </div>
         {/* 消息列表 */}
         {renderMessageList()}
@@ -735,7 +732,13 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized' }: WikiChatFl
                 type="text"
                 size="small"
                 icon={<CloseOutlined />}
-                onClick={() => setMode('side')}
+                onClick={() => {
+                  if (onClose) {
+                    onClose();
+                  } else {
+                    setMode('side');
+                  }
+                }}
                 style={{ color: hintColor }}
               />
             </Tooltip>

@@ -26,9 +26,8 @@ import { QuickCaptureModal } from './components/QuickCaptureModal';
 import { LoopFormModal } from './components/LoopFormModal';
 import { LeftRail, type LeftRailKey } from './components/shell/LeftRail';
 import { MobileHeader } from './components/shell/MobileHeader';
-import { MobileFAB } from './components/shell/MobileFAB';
-import { QuickCaptureButton } from './components/shell/QuickCaptureButton';
-import { WikiChatFloatingWindow } from '@/components/WikiChatFloatingWindow';
+import { FloatingActionButton } from './components/shell/FloatingActionButton';
+import { WikiChatFloatingWindow, type WikiChatMode } from '@/components/WikiChatFloatingWindow';
 
 import { EXECUTION_PANEL, LEFT_RAIL_WIDTH } from './constants';
 import * as db from './utils/database';
@@ -46,7 +45,7 @@ function AppContent() {
   const [todoModalOpen, setTodoModalOpen] = useState(false);
   const [smartCreateOpen, setSmartCreateOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
-  const [fabExpanded, setFabExpanded] = useState(false);
+  const [wikiChatMode, setWikiChatMode] = useState<WikiChatMode>('minimized');
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(() => {
     try {
@@ -72,10 +71,6 @@ function AppContent() {
   const effectiveMobilePanel = isMobile && activeView !== 'items' && activeView !== 'loops'
     ? 'detail'
     : activePanel === 'post' ? 'list' : activePanel;
-
-  useEffect(() => {
-    setFabExpanded(false);
-  }, [effectiveMobilePanel]);
 
   const [panelCollapsed, setPanelCollapsed] = useState(() => {
     try {
@@ -210,15 +205,11 @@ function AppContent() {
         />
       )}
 
-      {/* Mobile FAB */}
-      {isMobile && effectiveMobilePanel === 'list' && (
-        <MobileFAB
-          expanded={fabExpanded}
-          onToggle={() => setFabExpanded(!fabExpanded)}
-          onOpenQuickCapture={() => setQuickCaptureOpen(true)}
-          onOpenCreate={() => setTodoModalOpen(true)}
-        />
-      )}
+      {/* FAB (统一浮动操作按钮) */}
+      <FloatingActionButton
+        onOpenQuickCapture={() => setQuickCaptureOpen(true)}
+        onOpenWikiChat={() => setWikiChatMode(isMobile ? 'maximized' : 'side')}
+      />
 
       {/* Left Rail */}
       {!isMobile && (
@@ -461,13 +452,11 @@ function AppContent() {
         defaultWorkspaceId={state.selectedWorkspace}
       />
 
-      {/* Desktop Quick Capture Button */}
-      {!isMobile && (
-        <QuickCaptureButton onClick={() => setQuickCaptureOpen(true)} />
-      )}
-
       {/* Wiki 对话全局漂浮窗口 */}
-      <WikiChatFloatingWindow />
+      <WikiChatFloatingWindow
+        forceMode={wikiChatMode}
+        onClose={() => setWikiChatMode('minimized')}
+      />
     </Layout>
   );
 }
