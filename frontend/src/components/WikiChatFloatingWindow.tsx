@@ -1,110 +1,60 @@
 /**
- * WikiChatFloatingWindow — 全局 Wiki 对话漂浮窗口。
+ * WikiChatFloatingWindow — 全局 Wiki 对话漂浮窗口主组件。
  *
- * 在所有页面都可以唤出，支持三种布局模式：
- * - 最小化：右下角一个圆形悬浮按钮，点击展开
- * - 侧边：右侧抽屉式面板，宽度可调节
- * - 最大化：全屏模态窗口，沉浸式对话体验
- *
- * 与 BlackboardPage 解耦，通过 state.selectedWorkspace 获取当前工作空间。
- * 使用 WebSocket 流式接收执行器日志，复用执行详情页的日志样式。
+ * 负责状态管理、WebSocket 事件监听、布局模式切换。
+ * 子组件：ChatMessageList、ChatInputPanel、ModeToggleButtons。
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Button, Input, Skeleton, message, Tooltip, Drawer } from 'antd';
-import {
-  MessageOutlined,
-  MinusOutlined,
-  FullscreenOutlined,
-  FullscreenExitOutlined,
-  CloseOutlined,
-  ColumnHeightOutlined,
-} from '@ant-design/icons';
-import { XMarkdown } from '@ant-design/x-markdown';
+import { Button, Tooltip, Drawer, message } from 'antd';
+import { MessageOutlined, CloseOutlined } from '@ant-design/icons';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/hooks/useApp';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import { ExecutorPickerPopover } from '@/components/common/ExecutorPickerPopover';
-import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
-import { LOG_TYPE_COLORS_LIGHT, LOG_TYPE_COLORS_DARK, LOG_TYPE_LABELS, getLastExecutor, setLastExecutor } from '@/constants';
+import { getLastExecutor, setLastExecutor } from '@/constants';
 import { chatWithWiki } from '@/utils/database/blackboard';
-import type { LogEntry } from '@/types';
+import { ChatMessageList } from './wiki-chat/ChatMessageList';
+import { ChatInputPanel } from './wiki-chat/ChatInputPanel';
+import { ModeToggleButtons } from './wiki-chat/ModeToggleButtons';
+import { ChatMessage, getChatColors } from './wiki-chat/ChatMessageItem';
+import type { WikiChatMode } from './wiki-chat/types';
 
-const { TextArea } = Input;
-
-/** 对话消息：支持用户提问、执行器日志（流式）、最终结果三种类型 */
-type ChatMessage =
-  | {
-      id: string;
-      role: 'user';
-      content: string;
-    }
-  | {
-      id: string;
-      role: 'log';
-      entry: LogEntry;
-      taskId: string;
-    }
-  | {
-      id: string;
-      role: 'result';
-      content: string;
-      taskId: string;
-      success: boolean;
-      durationSecs?: number;
-    };
-
-/** 窗口布局模式 */
-export type WikiChatMode = 'minimized' | 'side' | 'maximized';
-
-interface WikiChatFloatingWindowProps {
-  /** 默认布局模式 */
-  defaultMode?: WikiChatMode;
-  /**
-   * 强制指定布局模式。
-   * 设为 'minimized' 时组件不渲染任何内容（按钮由外部 FAB 组件提供）。
-   * 传入后组件不再读写 localStorage，完全由父组件控制模式切换。
-   */
-  forceMode?: WikiChatMode;
-  /** 关闭回调（侧边栏/最大化模式下的关闭按钮点击时调用） */
-  onClose?: () => void;
-}
+// 导出类型供外部使用（如 FloatingActionButton）
+export type { WikiChatMode } from './wiki-chat/types';
 
 /** 侧边模式下默认宽度（px） */
 const SIDE_MODE_WIDTH = 400;
 
-/**
- * 全局 Wiki 对话漂浮窗口组件。
- *
- * 通过 localStorage 记住用户偏好的布局模式，下次打开自动恢复。
- */
+interface WikiChatFloatingWindowProps {
+  /** 默认布局模式 */
+  defaultMode?: WikiChatMode;
+  /** 强制指定布局模式 */
+  forceMode?: WikiChatMode;
+  /** 关闭回调 */
+  onClose?: () => void;
+}
+
+/** 全局 Wiki 对话漂浮窗口主组件 */
 export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, onClose }: WikiChatFloatingWindowProps) {
   const { state, dispatch } = useApp();
   const { themeMode } = useTheme();
   const isDark = themeMode === 'dark';
   const isMobile = useIsMobile();
+  const colors = getChatColors(isDark);
 
   // ─── 布局模式状态 ────────────────────────────────────────────
-  // forceMode 存在时完全由父组件控制，组件内部不读写 localStorage
-
   const [mode, setMode] = useState<WikiChatMode>(() => {
     if (forceMode !== undefined) return forceMode;
     try {
       const saved = localStorage.getItem('wiki_chat_mode') as WikiChatMode | null;
-      if (saved && ['minimized', 'side', 'maximized'].includes(saved)) {
-        return saved;
-      }
-    } catch {
-      // 读取失败使用默认值
-    }
+      if (saved && ['minimized', 'side', 'maximized'].includes(saved)) return saved;
+    } catch {}
     return defaultMode;
   });
 
   // forceMode 变化时同步更新内部 mode
   useEffect(() => {
-    if (forceMode !== undefined) {
-      setMode(forceMode);
-    }
+    if (forceMode !== undefined) setMode(forceMode);
   }, [forceMode]);
 
   const [sideWidth, setSideWidth] = useState<number>(() => {
@@ -114,40 +64,28 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
         const num = parseInt(saved, 10);
         if (!Number.isNaN(num) && num >= 300 && num <= 800) return num;
       }
-    } catch {
-      // 读取失败使用默认值
-    }
+    } catch {}
     return SIDE_MODE_WIDTH;
   });
 
-  // 持久化模式偏好（仅在非 forceMode 时写入 localStorage）
+  // 持久化模式偏好
   useEffect(() => {
     if (forceMode !== undefined) return;
-    try {
-      localStorage.setItem('wiki_chat_mode', mode);
-    } catch {
-      // 忽略存储失败
-    }
+    try { localStorage.setItem('wiki_chat_mode', mode); } catch {}
   }, [mode, forceMode]);
 
   // 持久化侧边宽度
   useEffect(() => {
-    try {
-      localStorage.setItem('wiki_chat_side_width', String(sideWidth));
-    } catch {
-      // 忽略存储失败
-    }
+    try { localStorage.setItem('wiki_chat_side_width', String(sideWidth)); } catch {}
   }, [sideWidth]);
 
   // ─── 对话状态 ───────────────────────────────────────────────
-
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
-  // 默认选中最后一次使用的执行器，与闪念创建界面逻辑一致
   const [chatExecutor, setChatExecutor] = useState<string>(getLastExecutor);
-  const listRef = useRef<HTMLDivElement>(null);
   const currentChatTaskIdRef = useRef<string | null>(null);
+  const wsHandledRef = useRef<boolean>(false);
   const workspaceId = state.selectedWorkspace;
 
   // 选择执行器时记住最后一次使用的执行器
@@ -156,16 +94,16 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
     setLastExecutor(value);
   }, []);
 
-  // workspace 切换时清空对话历史（不同 workspace 的 wiki 内容完全隔离）
+  // workspace 切换时清空对话历史
   useEffect(() => {
     setMessages([]);
     setInputValue('');
     setLoading(false);
     currentChatTaskIdRef.current = null;
+    wsHandledRef.current = false;
   }, [workspaceId]);
 
   // ─── WebSocket 事件监听 ─────────────────────────────────────
-
   useEffect(() => {
     if (workspaceId == null) return;
 
@@ -173,6 +111,7 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
       const detail = (e as CustomEvent).detail;
       if (detail.workspace_id !== workspaceId) return;
       currentChatTaskIdRef.current = detail.task_id;
+      wsHandledRef.current = false;
     };
 
     const handleOutput = (e: Event) => {
@@ -192,6 +131,7 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
       const detail = (e as CustomEvent).detail;
       if (detail.workspace_id !== workspaceId) return;
       if (!currentChatTaskIdRef.current || currentChatTaskIdRef.current !== detail.task_id) return;
+      wsHandledRef.current = true;
       if (detail.result) {
         const resultMsg: ChatMessage = {
           id: `res-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -217,16 +157,7 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
     };
   }, [workspaceId]);
 
-  // ─── 自动滚动到底部 ─────────────────────────────────────────
-
-  useEffect(() => {
-    if (listRef.current) {
-      listRef.current.scrollTop = listRef.current.scrollHeight;
-    }
-  }, [messages, loading]);
-
   // ─── 发送消息 ───────────────────────────────────────────────
-
   const handleSend = useCallback(async () => {
     const text = inputValue.trim();
     if (!text || loading || workspaceId == null) return;
@@ -239,319 +170,46 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
     setMessages(prev => [...prev, userMsg]);
     setInputValue('');
     setLoading(true);
+    wsHandledRef.current = false;
 
     try {
       const resp = await chatWithWiki(workspaceId, text, chatExecutor);
-      // WS 兜底：如果 WS 已经处理完了就不再重复加
-      if (currentChatTaskIdRef.current === resp.task_id) {
-        if (resp.content) {
-          const resultMsg: ChatMessage = {
-            id: `res-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            role: 'result',
-            content: resp.content,
-            taskId: resp.task_id,
-            success: resp.success,
-            durationSecs: resp.duration_secs,
-          };
-          setMessages(prev => [...prev, resultMsg]);
-        }
+      if (wsHandledRef.current) {
         currentChatTaskIdRef.current = null;
-        setLoading(false);
+        return;
       }
+      if (resp.content) {
+        const resultMsg: ChatMessage = {
+          id: `res-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          role: 'result',
+          content: resp.content,
+          taskId: resp.task_id,
+          success: resp.success,
+          durationSecs: resp.duration_secs,
+        };
+        setMessages(prev => [...prev, resultMsg]);
+      }
+      currentChatTaskIdRef.current = null;
+      setLoading(false);
     } catch (err) {
       message.error('对话失败: ' + (err instanceof Error ? err.message : String(err)));
       setLoading(false);
       currentChatTaskIdRef.current = null;
+      wsHandledRef.current = false;
     }
   }, [inputValue, loading, workspaceId, chatExecutor]);
 
-  // ─── 工具函数 ───────────────────────────────────────────────
-
-  const formatTime = (timestamp?: string) => {
-    if (!timestamp) return '';
-    try {
-      const d = new Date(timestamp);
-      if (Number.isNaN(d.getTime())) return '';
-      const pad = (n: number) => String(n).padStart(2, '0');
-      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-    } catch {
-      return '';
+  // ─── 工作空间切换回调 ───────────────────────────────────────
+  const handleWorkspaceChange = useCallback((id: number | null) => {
+    if (id != null) {
+      dispatch({ type: 'SELECT_WORKSPACE', payload: id });
     }
-  };
+  }, [dispatch]);
 
-  const logTypeColors = isDark ? LOG_TYPE_COLORS_DARK : LOG_TYPE_COLORS_LIGHT;
-
-  // ─── 面板颜色变量 ───────────────────────────────────────────
-
-  const panelBg = isDark ? '#1a1a1a' : '#ffffff';
-  const panelBorder = isDark ? '#333' : '#e8e8e8';
-  const userMsgBg = isDark ? '#1d3950' : '#e6f4ff';
-  const textColor = isDark ? '#e0e0e0' : '#333';
-  const hintColor = isDark ? '#666' : '#999';
-  const headerBg = isDark ? '#222' : '#fafafa';
-
-  // ─── 模式切换按钮 ──────────────────────────────────────────
-
-  const ModeToggleButton = () => (
-    <div style={{ display: 'flex', gap: 4 }}>
-      {mode !== 'side' && (
-        <Tooltip title="侧边模式">
-          <Button
-            type="text"
-            size="small"
-            icon={<ColumnHeightOutlined />}
-            onClick={() => setMode('side')}
-            style={{ color: hintColor }}
-          />
-        </Tooltip>
-      )}
-      {mode !== 'maximized' && (
-        <Tooltip title="最大化">
-          <Button
-            type="text"
-            size="small"
-            icon={<FullscreenOutlined />}
-            onClick={() => setMode('maximized')}
-            style={{ color: hintColor }}
-          />
-        </Tooltip>
-      )}
-      {mode === 'maximized' && (
-        <Tooltip title="还原">
-          <Button
-            type="text"
-            size="small"
-            icon={<FullscreenExitOutlined />}
-            onClick={() => setMode('side')}
-            style={{ color: hintColor }}
-          />
-        </Tooltip>
-      )}
-      {mode !== 'minimized' && (
-        <Tooltip title="最小化">
-          <Button
-            type="text"
-            size="small"
-            icon={<MinusOutlined />}
-            onClick={() => {
-              if (onClose) {
-                onClose();
-              } else {
-                setMode('minimized');
-              }
-            }}
-            style={{ color: hintColor }}
-          />
-        </Tooltip>
-      )}
-    </div>
-  );
-
-  // ─── 消息列表（公共渲染） ───────────────────────────────────
-
-  const renderMessageList = (mobile = false) => (
-    <div
-      ref={listRef}
-      style={{
-        flex: 1,
-        overflowY: 'auto',
-        padding: mobile ? '12px 14px' : '16px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: mobile ? 14 : 12,
-        minHeight: 0,
-      }}
-    >
-      {messages.length === 0 && !loading && (
-        <div style={{ textAlign: 'center', color: hintColor, fontSize: mobile ? 14 : 13, padding: '32px 0' }}>
-          <MessageOutlined style={{ fontSize: 36, marginBottom: 12, opacity: 0.3 }} />
-          <div>还没有对话记录</div>
-          <div style={{ marginTop: 6, fontSize: mobile ? 13 : 12 }}>输入问题开始与 Wiki 交互</div>
-        </div>
-      )}
-      {messages.map((msg) => {
-        if (msg.role === 'user') {
-          return (
-            <div key={msg.id} style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <div
-                style={{
-                  maxWidth: mobile ? '85%' : '80%',
-                  padding: mobile ? '12px 16px' : '10px 14px',
-                  borderRadius: 12,
-                  background: userMsgBg,
-                  color: textColor,
-                  fontSize: mobile ? 16 : 14,
-                  lineHeight: 1.6,
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                }}
-              >
-                {msg.content}
-              </div>
-            </div>
-          );
-        }
-        if (msg.role === 'log') {
-          const typeColor = logTypeColors[msg.entry.type] || logTypeColors.info;
-          const typeLabel = LOG_TYPE_LABELS[msg.entry.type] || msg.entry.type;
-          return (
-            <div key={msg.id} style={{ display: 'flex', justifyContent: 'flex-start' }}>
-              <div
-                style={{
-                  maxWidth: '100%',
-                  fontSize: mobile ? 13 : 12,
-                  lineHeight: 1.6,
-                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                  color: textColor,
-                  wordBreak: 'break-word',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                  {msg.entry.timestamp && (
-                    <span style={{ color: hintColor, fontSize: mobile ? 12 : 11 }}>
-                      {formatTime(msg.entry.timestamp)}
-                    </span>
-                  )}
-                  <span
-                    style={{
-                      padding: '1px 6px',
-                      borderRadius: 3,
-                      fontSize: mobile ? 11 : 10,
-                      fontWeight: 600,
-                      background: typeColor,
-                      color: '#fff',
-                      textTransform: 'uppercase',
-                    }}
-                  >
-                    {typeLabel}
-                  </span>
-                </div>
-                <div style={{ whiteSpace: 'pre-wrap', paddingLeft: 4 }}>
-                  {msg.entry.content}
-                </div>
-              </div>
-            </div>
-          );
-        }
-        // result
-        return (
-          <div key={msg.id} style={{ display: 'flex', justifyContent: 'flex-start' }}>
-            <div
-              style={{
-                maxWidth: mobile ? '92%' : '90%',
-                padding: mobile ? '14px 16px' : '12px 14px',
-                borderRadius: 12,
-                background: isDark ? '#2a2a2a' : '#fff',
-                color: textColor,
-                fontSize: mobile ? 15 : 14,
-                lineHeight: 1.6,
-                border: `2px solid ${msg.success
-                  ? isDark ? '#3d7a3d' : '#52c41a'
-                  : isDark ? '#7a3d3d' : '#ff4d4f'}`,
-                wordBreak: 'break-word',
-              }}
-            >
-              <XMarkdown>{msg.content}</XMarkdown>
-              <div style={{ marginTop: 8, fontSize: mobile ? 12 : 11, color: hintColor, display: 'flex', justifyContent: 'space-between' }}>
-                <span>{msg.success ? '✅ 执行成功' : '❌ 执行失败'}</span>
-                {msg.durationSecs != null && <span>用时 {msg.durationSecs.toFixed(1)}s</span>}
-              </div>
-            </div>
-          </div>
-        );
-      })}
-      {loading && (
-        <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-          <div
-            style={{
-              padding: mobile ? '12px 16px' : '10px 14px',
-              borderRadius: 12,
-              background: isDark ? '#2a2a2a' : '#fff',
-              border: `1px solid ${panelBorder}`,
-            }}
-          >
-            <Skeleton.Input active size={mobile ? 'default' : 'small'} style={{ width: 140 }} />
-          </div>
-        </div>
-      )}
-    </div>
-  );
-
-  // ─── 输入框（公共渲染） ────────────────────────────────────
-
-  const renderInput = (mobile = false) => (
-    <div
-      style={{
-        padding: mobile ? '12px 14px' : '12px',
-        borderTop: `1px solid ${panelBorder}`,
-        flexShrink: 0,
-        background: panelBg,
-        // 移动端适配底部安全区域，避免键盘弹出时输入框被遮挡
-        paddingBottom: mobile
-          ? 'calc(12px + env(safe-area-inset-bottom, 0px))'
-          : '12px',
-      }}
-    >
-      <TextArea
-        value={inputValue}
-        onChange={(e) => setInputValue(e.target.value)}
-        placeholder="向 Wiki 提问..."
-        autoSize={{ minRows: 1, maxRows: mobile ? 4 : 6 }}
-        disabled={loading || workspaceId == null}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            handleSend();
-          }
-        }}
-        style={{ fontSize: mobile ? 16 : 14 }}
-      />
-      {/* 执行器选择行 */}
-      <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <WorkspaceSwitcher
-            value={workspaceId ?? null}
-            showAddOption={false}
-            onChange={(id) => {
-              dispatch({ type: 'SELECT_WORKSPACE', payload: id });
-            }}
-          />
-          <ExecutorPickerPopover
-            value={chatExecutor}
-            onChange={handleExecutorChange}
-          />
-        </div>
-        {!mobile && (
-          <span style={{ fontSize: 11, color: hintColor }}>
-            Enter 发送 · Shift+Enter 换行
-            {workspaceId == null && ' · 请先选择工作空间'}
-          </span>
-        )}
-      </div>
-      <div style={{ marginTop: mobile ? 10 : 8, display: 'flex', justifyContent: 'flex-end' }}>
-        <Button
-          type="primary"
-          size={mobile ? 'middle' : 'small'}
-          onClick={handleSend}
-          loading={loading}
-          disabled={workspaceId == null}
-          style={{ minWidth: mobile ? 80 : 'auto' }}
-        >
-          发送
-        </Button>
-      </div>
-    </div>
-  );
-
-  // ─── 最小化模式：悬浮按钮（由外部 FAB 提供，组件自身不渲染按钮）──
-
-  if (mode === 'minimized') {
-    // forceMode='minimized' 时由 FAB 组件提供按钮，当前组件不渲染任何内容
-    return null;
-  }
+  // ─── 最小化模式：不渲染 ──────────────────────────────────────
+  if (mode === 'minimized') return null;
 
   // ─── 移动端：底部 Drawer ──────────────────────────────────
-
   if (isMobile) {
     return (
       <Drawer
@@ -562,106 +220,66 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
         height="85vh"
         destroyOnHidden
         styles={{
-          body: {
-            padding: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            height: 'calc(85vh - 55px)',
-            background: panelBg,
-          },
-          header: {
-            background: headerBg,
-            borderBottom: `1px solid ${panelBorder}`,
-            padding: '12px 16px',
-          },
+          body: { padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(85vh - 55px)', background: colors.panelBg },
+          header: { background: colors.headerBg, borderBottom: `1px solid ${colors.panelBorder}`, padding: '12px 16px' },
         }}
         extra={
-          <Button
-            type="text"
-            size="small"
-            icon={<CloseOutlined />}
-            onClick={() => {
-              if (onClose) {
-                onClose();
-              } else {
-                setMode('minimized');
-              }
-            }}
-            style={{ color: hintColor }}
-          />
+          <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose || (() => setMode('minimized'))} style={{ color: colors.hintColor }} />
         }
       >
-        {renderMessageList(true)}
-        {renderInput(true)}
+        <ChatMessageList messages={messages} loading={loading} mobile isDark={isDark} />
+        <ChatInputPanel
+          inputValue={inputValue}
+          onInputChange={setInputValue}
+          onSend={handleSend}
+          loading={loading}
+          workspaceId={workspaceId}
+          chatExecutor={chatExecutor}
+          onExecutorChange={handleExecutorChange}
+          onWorkspaceChange={handleWorkspaceChange}
+          mobile
+          isDark={isDark}
+        />
       </Drawer>
     );
   }
 
   // ─── 侧边模式：右侧抽屉 ────────────────────────────────────
-
   if (mode === 'side') {
     return (
-      <div
-        style={{
-          position: 'fixed',
-          top: 0,
-          right: 0,
-          width: sideWidth,
-          height: '100vh',
-          background: panelBg,
-          borderLeft: `1px solid ${panelBorder}`,
-          display: 'flex',
-          flexDirection: 'column',
-          zIndex: 999,
-          boxShadow: '-4px 0 20px rgba(0,0,0,0.08)',
-        }}
-      >
+      <div style={{ position: 'fixed', top: 0, right: 0, width: sideWidth, height: '100vh', background: colors.panelBg, borderLeft: `1px solid ${colors.panelBorder}`, display: 'flex', flexDirection: 'column', zIndex: 999, boxShadow: '-4px 0 20px rgba(0,0,0,0.08)' }}>
         {/* 头部 */}
-        <div
-          style={{
-            padding: '12px 16px',
-            borderBottom: `1px solid ${panelBorder}`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexShrink: 0,
-            background: headerBg,
-          }}
-        >
-          <span style={{ fontWeight: 600, fontSize: 15, color: textColor }}>
+        <div style={{ padding: '12px 16px', borderBottom: `1px solid ${colors.panelBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, background: colors.headerBg }}>
+          <span style={{ fontWeight: 600, fontSize: 15, color: colors.textColor }}>
             <MessageOutlined style={{ marginRight: 8 }} />
             Wiki 对话
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <ModeToggleButton />
+            <ModeToggleButtons mode={mode} onModeChange={setMode} onClose={onClose} isDark={isDark} />
             {onClose && (
               <Tooltip title="关闭">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<CloseOutlined />}
-                  onClick={onClose}
-                  style={{ color: hintColor }}
-                />
+                <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose} style={{ color: colors.hintColor }} />
               </Tooltip>
             )}
           </div>
         </div>
         {/* 消息列表 */}
-        {renderMessageList()}
+        <ChatMessageList messages={messages} loading={loading} isDark={isDark} />
         {/* 输入框 */}
-        {renderInput()}
+        <ChatInputPanel
+          inputValue={inputValue}
+          onInputChange={setInputValue}
+          onSend={handleSend}
+          loading={loading}
+          workspaceId={workspaceId}
+          chatExecutor={chatExecutor}
+          onExecutorChange={handleExecutorChange}
+          onWorkspaceChange={handleWorkspaceChange}
+          isDark={isDark}
+        />
         {/* 拖拽调整宽度的手柄 */}
         <div
-          style={{
-            position: 'absolute',
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: 4,
-            cursor: 'ew-resize',
-            zIndex: 1,
-          }}
+          style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 4, cursor: 'ew-resize', zIndex: 1 }}
           onMouseDown={(e) => {
             e.preventDefault();
             const startX = e.clientX;
@@ -684,77 +302,39 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
   }
 
   // ─── 最大化模式：全屏模态 ──────────────────────────────────
-
   return (
     <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: isDark ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 2000,
-      }}
-      onClick={(e) => {
-        // 点击遮罩关闭（回到侧边模式，而不是最小化，更符合用户预期）
-        if (e.target === e.currentTarget) {
-          setMode('side');
-        }
-      }}
+      style={{ position: 'fixed', inset: 0, background: isDark ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}
+      onClick={(e) => { if (e.target === e.currentTarget) setMode('side'); }}
     >
-      <div
-        style={{
-          width: '90vw',
-          maxWidth: 900,
-          height: '85vh',
-          background: panelBg,
-          borderRadius: 12,
-          display: 'flex',
-          flexDirection: 'column',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
-          overflow: 'hidden',
-        }}
-      >
+      <div style={{ width: '90vw', maxWidth: 900, height: '85vh', background: colors.panelBg, borderRadius: 12, display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
         {/* 头部 */}
-        <div
-          style={{
-            padding: '14px 20px',
-            borderBottom: `1px solid ${panelBorder}`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexShrink: 0,
-            background: headerBg,
-          }}
-        >
-          <span style={{ fontWeight: 600, fontSize: 16, color: textColor }}>
+        <div style={{ padding: '14px 20px', borderBottom: `1px solid ${colors.panelBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, background: colors.headerBg }}>
+          <span style={{ fontWeight: 600, fontSize: 16, color: colors.textColor }}>
             <MessageOutlined style={{ marginRight: 10 }} />
             Wiki 对话
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <ModeToggleButton />
+            <ModeToggleButtons mode={mode} onModeChange={setMode} onClose={onClose} isDark={isDark} />
             <Tooltip title="关闭">
-              <Button
-                type="text"
-                size="small"
-                icon={<CloseOutlined />}
-                onClick={() => {
-                  if (onClose) {
-                    onClose();
-                  } else {
-                    setMode('side');
-                  }
-                }}
-                style={{ color: hintColor }}
-              />
+              <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose || (() => setMode('side'))} style={{ color: colors.hintColor }} />
             </Tooltip>
           </div>
         </div>
         {/* 消息列表 */}
-        {renderMessageList()}
+        <ChatMessageList messages={messages} loading={loading} isDark={isDark} />
         {/* 输入框 */}
-        {renderInput()}
+        <ChatInputPanel
+          inputValue={inputValue}
+          onInputChange={setInputValue}
+          onSend={handleSend}
+          loading={loading}
+          workspaceId={workspaceId}
+          chatExecutor={chatExecutor}
+          onExecutorChange={handleExecutorChange}
+          onWorkspaceChange={handleWorkspaceChange}
+          isDark={isDark}
+        />
       </div>
     </div>
   );
