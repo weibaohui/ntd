@@ -1,23 +1,27 @@
 /**
  * useViewState — 统一的 URL-driven 视图导航状态管理。
  *
- * URL 方案：
- *   /?view=items&id=20        事项详情 #20
- *   /?view=items               事项列表（默认，可省略 "?view=items" 以 / 表示）
- *   /?view=loops&id=5         环路详情 #5
- *   /?view=loops               环路列表
- *   /?view=dashboard           仪表盘
- *   /?view=settings&tab=system 设置-系统标签
- *   /?view=memorial            看板
- *   /?view=runtime             运行管理
- *   /?view=skills              Skills
- *   /?view=projectDirectories  工作空间
- *   /?view=sessions            会话
- *   /?view=executors           执行器
+ * Hash 路由方案：
+ *   /#/items?id=20             事项详情 #20
+ *   /#/items                   事项列表（默认）
+ *   /#/loops?id=5              环路详情 #5
+ *   /#/loops                   环路列表
+ *   /#/dashboard               仪表盘
+ *   /#/settings?tab=system     设置-系统标签
+ *   /#/memorial?mode=kanban    看板-看板视图
+ *   /#/memorial?mode=running   看板-运行视图
+ *   /#/memorial?mode=loop_kanban  看板-环路视图
+ *   /#/memorial?mode=memorial  看板-结论视图
+ *   /#/runtime                 运行管理
+ *   /#/skills                  Skills
+ *   /#/projectDirectories      工作空间
+ *   /#/sessions                会话
+ *   /#/executors               执行器
+ *   /#/blackboard              黑板
  *
  * 移动端 panel 参数（用于 list/detail 独立页面）：
- *   /?view=items&panel=list        事项列表（全屏）
- *   /?view=items&panel=detail&id=123  事项详情（全屏）
+ *   /#/items?panel=list        事项列表（全屏）
+ *   /#/items?panel=detail&id=123  事项详情（全屏）
  *
  * 只管理 URL + 派生的 React 状态，不持有 Todo/Loop 的 app 数据。
  */
@@ -39,6 +43,8 @@ export type View =
 
 export type Panel = 'list' | 'detail' | 'post';
 
+export type BoardMode = 'memorial' | 'kanban' | 'running' | 'loop_kanban';
+
 const ALL_VIEWS: View[] = [
   'items', 'loops',
   'dashboard', 'settings', 'memorial',
@@ -46,54 +52,82 @@ const ALL_VIEWS: View[] = [
   'blackboard',
 ];
 
-// ─── URL 解析/构建 ─────────────────────────────────────────
+const ALL_BOARD_MODES: BoardMode[] = ['memorial', 'kanban', 'running', 'loop_kanban'];
 
-function getInitialView(): View {
-  const view = new URLSearchParams(window.location.search).get('view') as View | null;
-  if (view && ALL_VIEWS.includes(view)) return view;
+function getHashPath(): string {
+  const hash = window.location.hash || '';
+  const hashWithoutHash = hash.startsWith('#') ? hash.slice(1) : hash;
+  const [path] = hashWithoutHash.split('?', 2);
+  return path || '';
+}
+
+function getHashSearchParams(): URLSearchParams {
+  const hash = window.location.hash || '';
+  const hashWithoutHash = hash.startsWith('#') ? hash.slice(1) : hash;
+  const [, search] = hashWithoutHash.split('?', 2);
+  return new URLSearchParams(search || '');
+}
+
+function parseViewFromHash(): View {
+  const path = getHashPath();
+  const viewPart = path.startsWith('/') ? path.slice(1) : path;
+  if (viewPart && ALL_VIEWS.includes(viewPart as View)) {
+    return viewPart as View;
+  }
   return 'items';
 }
 
+function getInitialView(): View {
+  return parseViewFromHash();
+}
+
 function getInitialId(): number | null {
-  const id = new URLSearchParams(window.location.search).get('id');
+  const params = getHashSearchParams();
+  const id = params.get('id');
   if (!id) return null;
   const n = Number(id);
   return Number.isFinite(n) ? n : null;
 }
 
 function getInitialTab(): string | null {
-  const tab = new URLSearchParams(window.location.search).get('tab');
+  const params = getHashSearchParams();
+  const tab = params.get('tab');
   return tab || null;
 }
 
 function getInitialPanel(): Panel {
-  // 桌面端使用 panel 参数区分列表/帖子详情页面
-  const panel = new URLSearchParams(window.location.search).get('panel') as Panel | null;
+  const params = getHashSearchParams();
+  const panel = params.get('panel') as Panel | null;
   if (panel === 'detail' || panel === 'post') return panel;
   return 'list';
 }
 
 function getInitialRecordId(): number | null {
-  const record = new URLSearchParams(window.location.search).get('record');
+  const params = getHashSearchParams();
+  const record = params.get('record');
   if (!record) return null;
   const n = Number(record);
   return Number.isFinite(n) ? n : null;
 }
 
-function buildUrl(view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null }): string {
-  const params = new URLSearchParams();
-  params.set('view', view);
-  if (opts?.id != null) params.set('id', String(opts.id));
-  if (typeof opts?.tab === 'string' && opts.tab.trim()) params.set('tab', opts.tab);
-  // panel 参数：detail 用于移动端，post 用于帖子详情页
-  if (opts?.panel === 'detail' || opts?.panel === 'post') params.set('panel', opts.panel);
-  if (opts?.record != null) params.set('record', String(opts.record));
-  const qs = params.toString();
-  return qs ? `/?${qs}` : '/';
+function getInitialBoardMode(): BoardMode {
+  const params = getHashSearchParams();
+  const mode = params.get('mode') as BoardMode | null;
+  if (mode && ALL_BOARD_MODES.includes(mode)) return mode;
+  return 'memorial';
 }
 
-// ─── 左铁路键 ←→ View 映射 ───────────────────────────────
-// useViewState 不依赖 LeftRailKey，但提供映射方便 App.tsx 使用。
+function buildHashUrl(view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode }): string {
+  const path = `/${view}`;
+  const params = new URLSearchParams();
+  if (opts?.id != null) params.set('id', String(opts.id));
+  if (typeof opts?.tab === 'string' && opts.tab.trim()) params.set('tab', opts.tab);
+  if (opts?.panel === 'detail' || opts?.panel === 'post') params.set('panel', opts.panel);
+  if (opts?.record != null) params.set('record', String(opts.record));
+  if (opts?.mode) params.set('mode', opts.mode);
+  const qs = params.toString();
+  return qs ? `#${path}?${qs}` : `#${path}`;
+}
 
 const VIEW_TO_NAV_KEY: Record<View, string> = {
   items: 'items',
@@ -113,82 +147,72 @@ export function viewToNavKey(view: View): string {
   return VIEW_TO_NAV_KEY[view];
 }
 
-// ─── Hook ────────────────────────────────────────────────
-
 export function useViewState() {
   const [activeView, setActiveView] = useState<View>(getInitialView);
   const [selectedId, setSelectedId] = useState<number | null>(getInitialId);
-  // tab 只用于 settings view，暴露给 SettingsPage 使用
   const [activeTab, setActiveTab] = useState<string | null>(getInitialTab);
-  // panel：list=列表，detail=移动端详情，post=帖子详情（桌面端全屏）
   const [activePanel, setActivePanel] = useState<Panel>(getInitialPanel);
-  // record：帖子详情页中选中的执行记录 ID
   const [selectedRecordId, setSelectedRecordId] = useState<number | null>(getInitialRecordId);
+  const [boardMode, setBoardMode] = useState<BoardMode>(getInitialBoardMode);
 
-  // 统一 push URL + React state — 用于视图间导航（首页 → 各视图）
-  const pushUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null }) => {
-    const url = buildUrl(view, opts);
-    window.history.pushState(null, '', url);
+  const pushUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode }) => {
+    const hashUrl = buildHashUrl(view, opts);
+    window.history.pushState(null, '', hashUrl);
     setActiveView(view);
     setSelectedId(opts?.id ?? null);
     setActiveTab(opts?.tab ?? null);
     setActivePanel(opts?.panel ?? 'list');
     setSelectedRecordId(opts?.record ?? null);
+    setBoardMode(opts?.mode ?? 'memorial');
   }, []);
 
-  // replaceUrl — 用于切换不污染浏览器历史
-  const replaceUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null }) => {
-    const url = buildUrl(view, opts);
-    window.history.replaceState(null, '', url);
+  const replaceUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode }) => {
+    const hashUrl = buildHashUrl(view, opts);
+    window.history.replaceState(null, '', hashUrl);
     setActiveView(view);
     setSelectedId(opts?.id ?? null);
     setActiveTab(opts?.tab ?? null);
     setActivePanel(opts?.panel ?? 'list');
     setSelectedRecordId(opts?.record ?? null);
+    setBoardMode(opts?.mode ?? 'memorial');
   }, []);
 
-  // 统一 popstate 处理
   useEffect(() => {
     const onPopState = () => {
-      const params = new URLSearchParams(window.location.search);
-      const view = params.get('view') as View | null;
+      const view = parseViewFromHash();
+      const params = getHashSearchParams();
       const idStr = params.get('id');
       const tab = params.get('tab');
       const panel = params.get('panel') as Panel | null;
       const recordStr = params.get('record');
-      const resolvedView = view && ALL_VIEWS.includes(view) ? view : 'items';
+      const mode = params.get('mode') as BoardMode | null;
       const resolvedId = idStr ? (Number.isFinite(Number(idStr)) ? Number(idStr) : null) : null;
       const resolvedRecord = recordStr ? (Number.isFinite(Number(recordStr)) ? Number(recordStr) : null) : null;
-      setActiveView(resolvedView);
+      const resolvedMode = mode && ALL_BOARD_MODES.includes(mode) ? mode : 'memorial';
+      setActiveView(view);
       setSelectedId(resolvedId);
       setActiveTab(tab || null);
       setActivePanel(panel === 'detail' || panel === 'post' ? panel : 'list');
       setSelectedRecordId(resolvedRecord);
+      setBoardMode(resolvedMode);
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  // showView: 导航到页面型视图（dashboard/settings/memorial），清空 id
   const showView = useCallback((view: View, opts?: { tab?: string | null }) => {
     pushUrl(view, { tab: opts?.tab ?? null });
   }, [pushUrl]);
 
-  // selectTodo: 向后兼容 RunningBoard / RunningRecordDrawer
-  // 导航到 items 视图 + 选中 todo
   const selectTodo = useCallback((todoId: number) => {
     if (!Number.isFinite(todoId)) return;
     pushUrl('items', { id: todoId });
   }, [pushUrl]);
 
-  // backToList: 回到当前视图的概览（清空 id，切到 list panel），用于移动端返回按钮
-  // 使用 replaceUrl 避免污染浏览器历史（list/detail 切换不应产生历史记录）
   const backToList = useCallback(() => {
     replaceUrl(activeView, { panel: 'list' });
   }, [activeView, replaceUrl]);
 
-  // selectedPanel 从 URL 派生：移动端使用 activePanel，桌面端始终为 list+detail 双栏
-  // 桌面端不需要区分 list/detail panel（双栏同时显示），移动端才需要
   const selectedPanel = useMemo<Panel>(() => (selectedId !== null ? 'detail' : 'list'), [selectedId]);
 
   return {
@@ -198,6 +222,7 @@ export function useViewState() {
     activePanel,
     selectedPanel,
     selectedRecordId,
+    boardMode,
     showView,
     selectTodo,
     backToList,
