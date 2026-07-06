@@ -14,20 +14,7 @@ import type { ProjectDirectory } from '@/types';
  * - 组件之间 props 全部传 `id`；path 不再作 props 主键，避免重复传递与不一致。
  * - UI 展示一律用 `name`；调用需要 id 的 API 直接用 id；
  *   拿到 workspace_id 但要展示时统一走 `getWorkspaceDisplayName`。
- * - 需要 cwd 时通过 `getWorkspacePathById` 由 id 反查 path。
  */
-
-/**
- * 从一组目录里根据 id 找到 path；找不到返回 undefined。
- * 仅用于 cwd / worktree 上下文，不作为 props 主键使用。
- */
-export function getWorkspacePathById(
-  dirs: ProjectDirectory[] | null | undefined,
-  id: number | null | undefined,
-): string | undefined {
-  if (!dirs || id == null) return undefined;
-  return dirs.find(d => d.id === id)?.path;
-}
 
 /**
  * 拿到 UI 展示用的「工作空间名称」：传入 id，在目录列表中反查 name；

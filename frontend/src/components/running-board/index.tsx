@@ -1,10 +1,7 @@
 // RunningBoard 组件：展示运行中的任务和执行记录。
-
-// 重新导出子组件
-export { ScheduledTodoCard } from './ScheduledTodoCard';
-export { ExecutionRecordCard } from './ExecutionRecordCard';
-export { RunningBoardColumnView } from './RunningBoardColumnView';
-export { formatNextRunAt, COLUMN_ICONS } from './helpers';
+//
+// 子组件（ScheduledTodoCard / ExecutionRecordCard / RunningBoardColumnView / helpers）
+// 在本目录内自用，不再从此 index 重新导出；外部 caller 走 RunningBoard.tsx。
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Tabs, Skeleton, Card } from 'antd';

@@ -2,34 +2,8 @@ import { api, unwrap } from './client';
 
 // Backup APIs
 
-export async function exportBackup(): Promise<string> {
-  const res = await api.get('/api/backup/export', {
-    headers: { 'Accept': 'application/x-yaml' },
-    responseType: 'text',
-    transformResponse: [(data) => data],
-  });
-  if (typeof res.data === 'string') return res.data;
-  return JSON.stringify(res.data);
-}
-
-export async function importBackup(yamlContent: string): Promise<string> {
-  return unwrap(await api.post('/api/backup/import', yamlContent, {
-    headers: { 'Content-Type': 'application/x-yaml' },
-  }));
-}
-
 export async function mergeBackup(tags: { name: string; color: string }[], todos: { title: string; prompt: string; status: string; executor?: string; scheduler_enabled: boolean; scheduler_config?: string; tag_names: string[]; workspace_path?: string }[]): Promise<string> {
   return unwrap(await api.post('/api/backup/merge', { tags, todos }));
-}
-
-export async function exportSelectedBackup(todoIds: number[]): Promise<string> {
-  const res = await api.post('/api/backup/export-selected', { todo_ids: todoIds }, {
-    headers: { 'Accept': 'application/x-yaml' },
-    responseType: 'text',
-    transformResponse: [(data: unknown) => data],
-  });
-  if (typeof res.data === 'string') return res.data;
-  return JSON.stringify(res.data);
 }
 
 // Database Backup APIs

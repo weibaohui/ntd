@@ -62,10 +62,6 @@ export async function deleteTodo(id: number): Promise<void> {
   await api.delete(`/api/todos/${id}`);
 }
 
-export async function forceUpdateTodoStatus(id: number, status: string): Promise<Todo> {
-  return unwrap(await api.put(`/api/todos/${id}/force-status`, { status }));
-}
-
 export async function updateTodoTags(todoId: number, tagIds: number[]): Promise<void> {
   await api.put(`/api/todos/${todoId}/tags`, { tag_ids: tagIds });
 }
@@ -243,15 +239,3 @@ export async function updateScheduler(
   return unwrap(await api.put(`/api/todos/${id}/scheduler`, { scheduler_enabled, scheduler_config }));
 }
 
-export async function getSchedulerTodos(workspaceId?: number): Promise<Todo[]> {
-  const params: Record<string, string> = {};
-  if (workspaceId !== undefined) {
-    params.workspace_id = String(workspaceId);
-  }
-  const qs = Object.keys(params).length ? `?${new URLSearchParams(params).toString()}` : '';
-  return unwrap(await api.get(`/api/scheduler/todos${qs}`));
-}
-
-export async function getRunningTodos(): Promise<Todo[]> {
-  return unwrap(await api.get('/api/running-todos'));
-}

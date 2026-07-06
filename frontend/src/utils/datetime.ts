@@ -6,7 +6,7 @@
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 
-export function parseUtcDate(timeStr: string | null | undefined): Date | null {
+function parseUtcDate(timeStr: string | null | undefined): Date | null {
   if (!timeStr) return null;
   return new Date(timeStr);
 }

@@ -2,7 +2,7 @@
 
 import { Button, Tag, Tooltip } from 'antd';
 import { ReadOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
-import type { LoopExecutionWithLoopName } from './index';
+import type { LoopExecutionWithLoopName } from './useLoopExecutions';
 import { execStatusView, durationLabel, formatToken } from './helpers';
 
 // 卡片头部：环路名称 + 状态图标 + 状态标签。

@@ -10,7 +10,6 @@ use crate::db::entity::{
     loop_executions, loop_step_executions, loop_steps, loop_triggers, loops,
 };
 use crate::db::loop_::{LoopFullView, LoopListRow};
-use crate::models::TodoStatus;
 
 /// Loop 列表行(左栏一行)。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -588,7 +587,3 @@ pub fn trigger_type_icon(t: &str) -> &'static str {
         _ => "trigger",
     }
 }
-
-// 让 `TodoStatus` 在本模块可直接使用
-#[allow(dead_code)]
-fn _ensure_todo_status_in_scope(_: TodoStatus) {}

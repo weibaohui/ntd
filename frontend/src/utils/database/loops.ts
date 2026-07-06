@@ -26,7 +26,6 @@ import type {
   LoopStepDto,
   LoopTriggerDto,
   LoopTriggerResponse,
-  ReorderLoopStepsRequest,
   UpdateLoopRequest,
   UpdateLoopStatusRequest,
   UpdateLoopStepRequest,
@@ -58,11 +57,6 @@ export async function updateLoop(id: number, req: UpdateLoopRequest): Promise<Lo
   return unwrap(await api.put(`/api/loops/${id}`, req));
 }
 
-/** 更新环路标签（全量替换）。 */
-export async function updateLoopTags(id: number, tagIds: number[]): Promise<LoopListItem> {
-  return unwrap(await api.put(`/api/loops/${id}/tags`, { tag_ids: tagIds }));
-}
-
 /** 删除 loop,级联清子表。 */
 export async function deleteLoop(id: number): Promise<void> {
   await api.delete(`/api/loops/${id}`);
@@ -88,10 +82,6 @@ export async function triggerLoop(id: number): Promise<LoopTriggerResponse> {
 
 // ====== Triggers ======
 
-export async function listTriggers(loopId: number): Promise<LoopTriggerDto[]> {
-  return unwrap(await api.get(`/api/loops/${loopId}/triggers`));
-}
-
 export async function createTrigger(
   loopId: number,
   req: CreateTriggerRequest,
@@ -113,10 +103,6 @@ export async function deleteTrigger(loopId: number, triggerId: number): Promise<
 
 // ====== Steps ======
 
-export async function listLoopSteps(loopId: number): Promise<LoopStepDto[]> {
-  return unwrap(await api.get(`/api/loops/${loopId}/steps`));
-}
-
 export async function createLoopStep(
   loopId: number,
   req: CreateLoopStepRequest,
@@ -134,10 +120,6 @@ export async function updateLoopStep(
 
 export async function deleteLoopStep(loopId: number, stepId: number): Promise<void> {
   await api.delete(`/api/loops/${loopId}/steps/${stepId}`);
-}
-
-export async function reorderLoopSteps(loopId: number, ordered_ids: number[]): Promise<void> {
-  await api.post(`/api/loops/${loopId}/steps/reorder`, { ordered_ids } satisfies ReorderLoopStepsRequest);
 }
 
 // ====== Executions ======
@@ -235,13 +217,3 @@ export async function exportLoop(id: number): Promise<string> {
   return response.text();
 }
 
-/** 批量导出选中的环路 */
-export async function exportLoopsSelected(ids: number[]): Promise<string> {
-  const response = await fetch('/api/loops/export-selected', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/x-yaml' },
-    body: JSON.stringify({ loop_ids: ids }),
-  });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.text();
-}

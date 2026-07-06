@@ -168,18 +168,6 @@ export interface FeishuSenderItem {
   count: number;
 }
 
-export interface CreateFeishuHistoryChatParams {
-  bot_id: number;
-  chat_id: string;
-  chat_name?: string;
-}
-
-export interface UpdateFeishuHistoryChatParams {
-  chat_name?: string;
-  enabled?: boolean;
-  polling_interval_secs?: number;
-}
-
 export interface WhitelistEntry {
   id: number;
   bot_id: number;
@@ -310,18 +298,6 @@ export async function getFeishuHistoryChats(): Promise<import('@/types').FeishuH
   return unwrap(await api.get('/api/feishu/history-chats'));
 }
 
-export async function createFeishuHistoryChat(params: CreateFeishuHistoryChatParams): Promise<import('@/types').FeishuHistoryChat> {
-  return unwrap(await api.post('/api/feishu/history-chats', params));
-}
-
-export async function updateFeishuHistoryChat(id: number, params: UpdateFeishuHistoryChatParams): Promise<void> {
-  await api.put(`/api/feishu/history-chats/${id}`, params);
-}
-
-export async function deleteFeishuHistoryChat(id: number): Promise<void> {
-  await api.delete(`/api/feishu/history-chats/${id}`);
-}
-
 // Group Whitelist APIs
 
 export async function getGroupWhitelist(botId: number): Promise<WhitelistEntry[]> {
@@ -340,60 +316,3 @@ export async function deleteGroupWhitelist(id: number): Promise<void> {
   await api.delete(`/api/agent-bots/feishu/group-whitelist/${id}`);
 }
 
-/** Placeholder chat_id for Web-UI-created bindings before Feishu /bind completes */
-export const PENDING_CHAT_ID = '__pending__';
-
-// Project Binding APIs
-
-export interface FeishuProjectBindingItem {
-  id: number;
-  bot_id: number;
-  chat_id: string;
-  chat_type: string;
-  project_dir_id: number;
-  todo_id: number;
-  session_id: string | null;
-  latest_record_id: number | null;
-  status: string;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-  project_name: string | null;
-  project_path: string | null;
-}
-
-export async function getFeishuBindings(botId?: number): Promise<FeishuProjectBindingItem[]> {
-  const params: Record<string, number> = {};
-  if (botId !== undefined) params.bot_id = botId;
-  return unwrap(await api.get('/api/feishu/bindings', { params }));
-}
-
-/**
- * 创建飞书项目绑定。
- *
- * executor 和 todo_id 为互斥参数：
- * - 传入 executor（支持继续对话的执行器）表示新建 Todo
- * - 传入 todo_id（已有 Todo 的 ID）表示绑定到已有 Todo，复用其历史会话
- *
- * 两者都传时后端返回错误。都不传时后端使用默认 executor 新建 Todo。
- */
-export async function createFeishuBinding(params: {
-  bot_id: number;
-  chat_id: string;
-  chat_type: string;
-  project_dir_id: number;
-  /** 指定执行器（可选，仅在新建 Todo 时使用）。仅支持 claudecode/kimi/opencode/mobilecoder/hermes/codewhale/zhanlu */
-  executor?: string;
-  /** 绑定到已有 Todo（可选）。提供后表示复用该 Todo 的历史会话，与 executor 互斥 */
-  todo_id?: number;
-}): Promise<FeishuProjectBindingItem> {
-  return unwrap(await api.post('/api/feishu/bindings', params));
-}
-
-export async function deleteFeishuBinding(id: number): Promise<void> {
-  await api.delete(`/api/feishu/bindings/${id}`);
-}
-
-export async function updateFeishuBindingEnabled(id: number, enabled: boolean): Promise<FeishuProjectBindingItem> {
-  return unwrap(await api.patch(`/api/feishu/bindings/${id}/enabled`, { enabled }));
-}

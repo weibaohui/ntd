@@ -7,21 +7,6 @@
  * ## 策略接口
  * 每个策略负责识别并处理一种或多种日志类型，返回处理后的消息片段。
  * 上下文 (ParsingContext) 携带累积状态（thinking、tool 等跨日志累积的数据）。
- *
- * ## 使用方式
- * ```typescript
- * const parsers = createLogParsers();
- * const context = new ParsingContext();
- * for (const log of logs) {
- *   for (const parser of parsers) {
- *     if (parser.canHandle(log)) {
- *       parser.parse(log, context);
- *       break;
- *     }
- *   }
- * }
- * return context.messages;
- * ```
  */
 
 import type { LogEntry, ChatMessage } from '@/types';
@@ -29,7 +14,7 @@ import type { LogEntry, ChatMessage } from '@/types';
 /**
  * 解析上下文 — 携带跨日志累积的状态
  */
-export class ParsingContext {
+class ParsingContext {
   messages: ChatMessage[] = [];
   currentThinking: string = '';
   currentToolName: string = '';
@@ -89,7 +74,7 @@ export class ParsingContext {
 /**
  * 日志解析策略接口
  */
-export interface LogParserStrategy {
+interface LogParserStrategy {
   /**
    * 判断此策略是否能处理该日志
    */
@@ -110,7 +95,7 @@ export interface LogParserStrategy {
 /**
  * user 日志解析 — 用户输入
  */
-export const UserLogStrategy: LogParserStrategy = {
+const UserLogStrategy: LogParserStrategy = {
   canHandle: (log) => log.type === 'user',
   parse: (log, ctx) => {
     ctx.flushThinking(log.timestamp);
@@ -122,7 +107,7 @@ export const UserLogStrategy: LogParserStrategy = {
 /**
  * assistant 日志解析 — AI 响应
  */
-export const AssistantLogStrategy: LogParserStrategy = {
+const AssistantLogStrategy: LogParserStrategy = {
   canHandle: (log) => log.type === 'assistant',
   parse: (log, ctx) => {
     // assistant 出现时，先 flush 之前累积的 thinking 和 tool
@@ -135,7 +120,7 @@ export const AssistantLogStrategy: LogParserStrategy = {
 /**
  * thinking 日志解析 — 思考内容（跨多条日志累积）
  */
-export const ThinkingLogStrategy: LogParserStrategy = {
+const ThinkingLogStrategy: LogParserStrategy = {
   canHandle: (log) => log.type === 'thinking',
   parse: (log, ctx) => {
     ctx.currentThinking += log.content + '\n';
@@ -145,7 +130,7 @@ export const ThinkingLogStrategy: LogParserStrategy = {
 /**
  * tool_call 系列日志解析 — 工具调用开始（跨多条日志累积）
  */
-export const ToolCallLogStrategy: LogParserStrategy = {
+const ToolCallLogStrategy: LogParserStrategy = {
   canHandle: (log) => log.type === 'tool' || log.type === 'tool_use' || log.type === 'tool_call',
   parse: (log, ctx) => {
     // tool_call 出现时，先 flush 之前的 thinking 和 tool
@@ -172,7 +157,7 @@ export const ToolCallLogStrategy: LogParserStrategy = {
 /**
  * tool_result 日志解析 — 工具调用结果
  */
-export const ToolResultLogStrategy: LogParserStrategy = {
+const ToolResultLogStrategy: LogParserStrategy = {
   canHandle: (log) => log.type === 'tool_result',
   parse: (log, ctx) => {
     // 在推送 tool_result 消息之前先 flush thinking，
@@ -209,7 +194,7 @@ export const ToolResultLogStrategy: LogParserStrategy = {
 /**
  * result 日志解析 — 最终结果
  */
-export const ResultLogStrategy: LogParserStrategy = {
+const ResultLogStrategy: LogParserStrategy = {
   canHandle: (log) => log.type === 'result',
   parse: (log, ctx) => {
     ctx.flushThinking(log.timestamp);
@@ -221,7 +206,7 @@ export const ResultLogStrategy: LogParserStrategy = {
 /**
  * system 系列日志解析 — 系统消息（info、system、stdout、stderr、error、text、step_start、step_finish、tokens）
  */
-export const SystemLogStrategy: LogParserStrategy = {
+const SystemLogStrategy: LogParserStrategy = {
   canHandle: (log) =>
     ['info', 'system', 'stdout', 'stderr', 'error', 'text', 'step_start', 'step_finish', 'tokens'].includes(
       log.type
@@ -237,11 +222,11 @@ export const SystemLogStrategy: LogParserStrategy = {
  * 所有策略列表 — 按优先级排序
  *
  * 顺序很重要：
- * 1. tool_result 需要在 tool_call 之前处理，因为它可能 завершает 一个 tool 序列
+ * 1. tool_result 需要在 tool_call 之前处理，因为它可能 заверш 一个 tool 序列
  * 2. thinking 需要在其他类型之前累积
  * 3. system 系列放在最后，作为兜底
  */
-export const LOG_PARSER_STRATEGIES: LogParserStrategy[] = [
+const LOG_PARSER_STRATEGIES: LogParserStrategy[] = [
   UserLogStrategy,
   AssistantLogStrategy,
   ThinkingLogStrategy,
@@ -252,23 +237,12 @@ export const LOG_PARSER_STRATEGIES: LogParserStrategy[] = [
 ];
 
 /**
- * 创建解析器列表（可扩展，供外部注册自定义策略）
- */
-export function createLogParsers(): LogParserStrategy[] {
-  return [...LOG_PARSER_STRATEGIES];
-}
-
-/**
  * 使用策略模式解析日志
  *
  * @param logs 日志列表
- * @param parsers 解析器列表（默认使用 LOG_PARSER_STRATEGIES）
  * @returns 解析后的消息列表
  */
-export function parseLogsWithStrategies(
-  logs: LogEntry[],
-  parsers: LogParserStrategy[] = LOG_PARSER_STRATEGIES
-): ChatMessage[] {
+function parseLogsWithStrategies(logs: LogEntry[]): ChatMessage[] {
   const ctx = new ParsingContext();
 
   for (const log of logs) {
@@ -276,7 +250,7 @@ export function parseLogsWithStrategies(
     if (log.content == null) continue;
 
     // 遍历策略列表，找到第一个能处理此日志的策略
-    for (const parser of parsers) {
+    for (const parser of LOG_PARSER_STRATEGIES) {
       if (parser.canHandle(log)) {
         parser.parse(log, ctx);
         break; // 只用第一个匹配的策略
@@ -292,8 +266,7 @@ export function parseLogsWithStrategies(
 }
 
 /**
- * 兼容旧 API — 保留原有的 `parseLogsToMessages` 函数签名
- * 内部委托给策略模式实现
+ * 将日志列表解析为对话消息
  */
 export function parseLogsToMessages(logs: LogEntry[]): ChatMessage[] {
   return parseLogsWithStrategies(logs);

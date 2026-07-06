@@ -28,11 +28,6 @@ export async function listReviewTemplateOptions(workspaceId?: number): Promise<R
   return unwrap(await api.get('/api/review-templates/options', { params }));
 }
 
-/** 取单条模板。 */
-export async function getReviewTemplate(id: number): Promise<ReviewTemplate> {
-  return unwrap(await api.get(`/api/review-templates/${id}`));
-}
-
 /** 创建模板。后端校验 name/prompt 非空。 */
 export async function createReviewTemplate(req: CreateReviewTemplateRequest): Promise<ReviewTemplate> {
   return unwrap(await api.post('/api/review-templates', req));

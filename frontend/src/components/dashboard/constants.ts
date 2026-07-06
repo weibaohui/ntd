@@ -73,5 +73,3 @@ export {
 } from '@/constants';
 
 export const MODEL_COLORS = ['#8b5cf6', '#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#0891b2', '#ec4899', '#6366f1'];
-
-export const ACTIVE_TASKS_MIN_HEIGHT = 148;

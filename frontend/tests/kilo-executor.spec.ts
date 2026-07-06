@@ -25,7 +25,7 @@ test('EXECUTORS contains a kilo entry', async ({ page }) => {
   await page.goto(DEV_URL);
 
   const kiloEntry = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     return mod.EXECUTORS.find((e: { value: string }) => e.value === 'kilo');
   });
 
@@ -36,7 +36,7 @@ test('EXECUTORS kilo entry has correct label', async ({ page }) => {
   await page.goto(DEV_URL);
 
   const label = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     const entry = mod.EXECUTORS.find((e: { value: string }) => e.value === 'kilo');
     return entry?.label;
   });
@@ -48,7 +48,7 @@ test('EXECUTORS kilo entry has correct color #e67700', async ({ page }) => {
   await page.goto(DEV_URL);
 
   const color = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     const entry = mod.EXECUTORS.find((e: { value: string }) => e.value === 'kilo');
     return entry?.color;
   });
@@ -60,7 +60,7 @@ test('EXECUTORS kilo entry has resumable: true', async ({ page }) => {
   await page.goto(DEV_URL);
 
   const resumable = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     const entry = mod.EXECUTORS.find((e: { value: string }) => e.value === 'kilo');
     return entry?.resumable;
   });
@@ -74,7 +74,7 @@ test('EXECUTOR_COLORS has kilo with color #e67700', async ({ page }) => {
   await page.goto(DEV_URL);
 
   const color = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     return mod.EXECUTOR_COLORS['kilo'];
   });
 
@@ -85,7 +85,7 @@ test('EXECUTOR_COLORS kilo color matches EXECUTORS kilo color', async ({ page })
   await page.goto(DEV_URL);
 
   const { executorsColor, colorsMapColor } = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     const entry = mod.EXECUTORS.find((e: { value: string }) => e.value === 'kilo');
     return {
       executorsColor: entry?.color,
@@ -102,7 +102,7 @@ test('RESUMABLE_EXECUTORS contains kilo', async ({ page }) => {
   await page.goto(DEV_URL);
 
   const hasKilo = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     return mod.RESUMABLE_EXECUTORS.has('kilo');
   });
 
@@ -115,7 +115,7 @@ test('EXECUTORS_FOR_PICKER contains kilo (kilo is not agents)', async ({ page })
   await page.goto(DEV_URL);
 
   const hasKilo = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     return mod.EXECUTORS_FOR_PICKER.some((e: { value: string }) => e.value === 'kilo');
   });
 
@@ -126,7 +126,7 @@ test('EXECUTORS_FOR_PICKER does not contain agents', async ({ page }) => {
   await page.goto(DEV_URL);
 
   const hasAgents = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     return mod.EXECUTORS_FOR_PICKER.some((e: { value: string }) => e.value === 'agents');
   });
 
@@ -139,7 +139,7 @@ test('getExecutorColor("kilo") returns #e67700', async ({ page }) => {
   await page.goto(DEV_URL);
 
   const color = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     return mod.getExecutorColor('kilo');
   });
 
@@ -150,7 +150,7 @@ test('getExecutorColor(undefined) returns fallback #999', async ({ page }) => {
   await page.goto(DEV_URL);
 
   const color = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     return mod.getExecutorColor(undefined);
   });
 
@@ -161,7 +161,7 @@ test('getExecutorColor("unknown_executor") returns fallback #999', async ({ page
   await page.goto(DEV_URL);
 
   const color = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     return mod.getExecutorColor('unknown_executor');
   });
 
@@ -174,7 +174,7 @@ test('getExecutorOption("kilo") returns kilo entry', async ({ page }) => {
   await page.goto(DEV_URL);
 
   const option = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     const opt = mod.getExecutorOption('kilo');
     return { value: opt.value, label: opt.label, color: opt.color };
   });
@@ -188,7 +188,7 @@ test('getExecutorOption("KILO") is case-insensitive', async ({ page }) => {
   await page.goto(DEV_URL);
 
   const value = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     return mod.getExecutorOption('KILO').value;
   });
 
@@ -201,7 +201,7 @@ test('supportsResume returns true for kilo record with session_id', async ({ pag
   await page.goto(DEV_URL);
 
   const result = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     const record = {
       id: 1,
       todo_id: 1,
@@ -229,7 +229,7 @@ test('supportsResume returns false for kilo record without session_id', async ({
   await page.goto(DEV_URL);
 
   const result = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     const record = {
       id: 1,
       todo_id: 1,
@@ -257,7 +257,7 @@ test('supportsResume returns false for running kilo record even with session_id'
   await page.goto(DEV_URL);
 
   const result = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     const record = {
       id: 1,
       todo_id: 1,
@@ -287,7 +287,7 @@ test('kilo color does not conflict with zhanlu or agents colors', async ({ page 
   await page.goto(DEV_URL);
 
   const colors = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     return {
       kilo: mod.EXECUTOR_COLORS['kilo'],
       zhanlu: mod.EXECUTOR_COLORS['zhanlu'],
@@ -305,7 +305,7 @@ test('EXECUTORS list does not contain duplicate kilo entries', async ({ page }) 
   await page.goto(DEV_URL);
 
   const kiloCount = await page.evaluate(async () => {
-    const mod = await import('/src/types/execution');
+    const mod = await import('/src/types/execution.tsx');
     return mod.EXECUTORS.filter((e: { value: string }) => e.value === 'kilo').length;
   });
 

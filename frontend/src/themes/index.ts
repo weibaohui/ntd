@@ -81,7 +81,7 @@ const sharedComponents = {
   },
 };
 
-export const lightTheme: ThemeConfig = {
+const lightTheme: ThemeConfig = {
   algorithm: theme.defaultAlgorithm,
   token: {
     ...sharedToken,
@@ -97,7 +97,7 @@ export const lightTheme: ThemeConfig = {
   components: sharedComponents,
 };
 
-export const darkTheme: ThemeConfig = {
+const darkTheme: ThemeConfig = {
   algorithm: theme.darkAlgorithm,
   token: {
     ...sharedToken,
@@ -196,10 +196,6 @@ export const darkTheme: ThemeConfig = {
     },
   },
 };
-
-// Export for use in CSS variables
-export const darkPalette = catppuccinMocha;
-export const darkAccent = cyanAccent;
 
 export type ThemeMode = 'light' | 'dark';
 

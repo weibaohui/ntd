@@ -37,7 +37,7 @@ export interface SessionStats {
   by_project: Record<string, number>;
 }
 
-export interface SessionMessage {
+interface SessionMessage {
   role: string;
   content_preview: string;
   model: string | null;
@@ -47,7 +47,7 @@ export interface SessionMessage {
   stop_reason: string | null;
 }
 
-export interface SubAgentInfo {
+interface SubAgentInfo {
   agent_type: string;
   description: string;
   message_count: number;
