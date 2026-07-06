@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Button, Tooltip, Drawer, message } from 'antd';
+import { Button, Tooltip, Drawer, Modal, message } from 'antd';
 import { MessageOutlined, CloseOutlined } from '@ant-design/icons';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/hooks/useApp';
@@ -303,39 +303,41 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
 
   // ─── 最大化模式：全屏模态 ──────────────────────────────────
   return (
-    <div
-      style={{ position: 'fixed', inset: 0, background: isDark ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}
-      onClick={(e) => { if (e.target === e.currentTarget) setMode('side'); }}
+    <Modal
+      open={true}
+      onCancel={() => setMode('side')}
+      footer={null}
+      width="90vw"
+      styles={{
+        mask: { background: isDark ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.5)' },
+        wrapper: { display: 'flex', alignItems: 'center', justifyContent: 'center' },
+        root: { height: '85vh', background: colors.panelBg, borderRadius: 12, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
+        body: { padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(85vh - 55px)', overflow: 'hidden' },
+        header: { background: colors.headerBg, borderBottom: `1px solid ${colors.panelBorder}`, padding: '14px 20px' },
+      }}
+      title={
+        <span style={{ fontWeight: 600, fontSize: 16, color: colors.textColor }}>
+          <MessageOutlined style={{ marginRight: 10 }} />
+          Wiki 对话
+        </span>
+      }
+      closeIcon={<CloseOutlined style={{ color: colors.hintColor }} />}
+      destroyOnClose
     >
-      <div style={{ width: '90vw', maxWidth: 900, height: '85vh', background: colors.panelBg, borderRadius: 12, display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
-        {/* 头部 */}
-        <div style={{ padding: '14px 20px', borderBottom: `1px solid ${colors.panelBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, background: colors.headerBg }}>
-          <span style={{ fontWeight: 600, fontSize: 16, color: colors.textColor }}>
-            <MessageOutlined style={{ marginRight: 10 }} />
-            Wiki 对话
-          </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <ModeToggleButtons mode={mode} onModeChange={setMode} onClose={onClose} isDark={isDark} />
-            <Tooltip title="关闭">
-              <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose || (() => setMode('side'))} style={{ color: colors.hintColor }} />
-            </Tooltip>
-          </div>
-        </div>
-        {/* 消息列表 */}
-        <ChatMessageList messages={messages} loading={loading} isDark={isDark} />
-        {/* 输入框 */}
-        <ChatInputPanel
-          inputValue={inputValue}
-          onInputChange={setInputValue}
-          onSend={handleSend}
-          loading={loading}
-          workspaceId={workspaceId}
-          chatExecutor={chatExecutor}
-          onExecutorChange={handleExecutorChange}
-          onWorkspaceChange={handleWorkspaceChange}
-          isDark={isDark}
-        />
-      </div>
-    </div>
+      {/* 消息列表 */}
+      <ChatMessageList messages={messages} loading={loading} isDark={isDark} />
+      {/* 输入框 */}
+      <ChatInputPanel
+        inputValue={inputValue}
+        onInputChange={setInputValue}
+        onSend={handleSend}
+        loading={loading}
+        workspaceId={workspaceId}
+        chatExecutor={chatExecutor}
+        onExecutorChange={handleExecutorChange}
+        onWorkspaceChange={handleWorkspaceChange}
+        isDark={isDark}
+      />
+    </Modal>
   );
 }
