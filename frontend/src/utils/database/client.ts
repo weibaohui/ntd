@@ -13,15 +13,6 @@ export const api = axios.create({
   timeout: 15000,
 });
 
-export async function checkBackendHealth(): Promise<boolean> {
-  try {
-    const res = await api.get('/health', { timeout: 3000 });
-    return res.status === 200;
-  } catch {
-    return false;
-  }
-}
-
 /** Retry config: max 3 retries on network errors (no response), not on 4xx/5xx */
 const MAX_RETRIES = 3;
 

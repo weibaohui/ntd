@@ -31,10 +31,6 @@ export async function getSkillInvocations(params?: { page?: number; limit?: numb
   return unwrap(await api.get('/api/skills/invocations', { params }));
 }
 
-export async function recordSkillInvocation(data: { skill_name: string; executor: string; todo_id: number; status: string; duration_ms?: number }): Promise<number> {
-  return unwrap(await api.post('/api/skills/invocations', data));
-}
-
 // Skill content & files
 export interface SkillFileInfo {
   path: string;
@@ -122,22 +118,6 @@ export async function repairExecutor(name: string): Promise<{ binary_found: bool
 
 export async function testExecutor(name: string): Promise<{ test_passed: boolean; output: string | null; error: string | null }> {
   return unwrap(await api.post(`/api/executors/${encodeURIComponent(name)}/test`));
-}
-
-export interface ExecutorBatchDetectResult {
-  results: {
-    name: string;
-    display_name: string;
-    binary_found: boolean;
-    path_resolved: string | null;
-    enabled: boolean;
-  }[];
-  total: number;
-  found_count: number;
-}
-
-export async function detectAllExecutors(): Promise<ExecutorBatchDetectResult> {
-  return unwrap(await api.post('/api/executors/detect-all'));
 }
 
 // Version API
