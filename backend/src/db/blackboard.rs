@@ -346,6 +346,7 @@ impl Database {
     ///   - 外层 None：不修改
     ///   - 外层 Some(None)：设为 NULL（使用默认执行器）
     ///   - 外层 Some(Some(s))：设为指定执行器名
+    ///
     /// 记录不存在时返回 RecordNotFound；调用方须确保黑板记录已存在。
     pub async fn update_blackboard_config(
         &self,

@@ -33,6 +33,7 @@ impl ZhanluExecutor {
     }
 
     /// 更新 session_id 缓存（extract_session_id 和 parse_output_line 共用）。
+    #[allow(clippy::needless_pass_by_value)]
     fn update_session_id_cache(&self, sid: Option<String>) {
         if let Some(ref s) = sid {
             *self.session_id.lock() = Some(s.clone());

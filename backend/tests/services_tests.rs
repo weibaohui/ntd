@@ -397,6 +397,8 @@ mod feishu_push_service_tests {
             // LoopFinished 事件的格式化消息 - 统计摘要（与 feishu_push.rs 生产代码保持一致）
             // BlackboardDebounceStatus 由内部 debounce 逻辑使用，不走 format_event
             ExecEvent::BlackboardDebounceStatus { .. } => None,
+            // WikiChat 事件由飞书 Wiki 对话模块使用，不走 format_event
+            ExecEvent::WikiChatStarted { .. } | ExecEvent::WikiChatOutput { .. } | ExecEvent::WikiChatFinished { .. } => None,
             ExecEvent::LoopFinished { loop_title, status, total_steps, completed_steps, failed_steps, duration_secs, total_tokens, .. } => {
                 let status_icon = match status.as_str() {
                     "success" => "✅ 成功",

@@ -569,7 +569,7 @@ pub async fn chat_with_wiki(
                 task_id: task_id.clone(),
                 workspace_id,
                 success: false,
-                result: Some(err_msg.clone()),
+                result: Some(err_msg),
                 duration_secs,
             });
             Err(e)
