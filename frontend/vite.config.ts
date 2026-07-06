@@ -24,7 +24,7 @@ export default defineConfig({
           'vendor-md-editor': ['@uiw/react-md-editor', '@ant-design/x-markdown'],
 
           'vendor-icons': ['react-icons'],
-          'vendor-misc': ['qrcode', 'react-countup', 'react-js-cron', 'clipboard'],
+          'vendor-misc': ['qrcode', 'react-countup', 'react-js-cron'],
         },
       },
     },
