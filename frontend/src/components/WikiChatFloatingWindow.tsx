@@ -25,6 +25,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/hooks/useApp';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { ExecutorPickerPopover } from '@/components/common/ExecutorPickerPopover';
+import { WorkspaceSelect } from '@/components/common/WorkspaceSelect';
 import { LOG_TYPE_COLORS_LIGHT, LOG_TYPE_COLORS_DARK, LOG_TYPE_LABELS, getLastExecutor, setLastExecutor } from '@/constants';
 import { chatWithWiki } from '@/utils/database/blackboard';
 import type { LogEntry } from '@/types';
@@ -78,7 +79,7 @@ const SIDE_MODE_WIDTH = 400;
  * 通过 localStorage 记住用户偏好的布局模式，下次打开自动恢复。
  */
 export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, onClose }: WikiChatFloatingWindowProps) {
-  const { state } = useApp();
+  const { state, dispatch } = useApp();
   const { themeMode } = useTheme();
   const isDark = themeMode === 'dark';
   const isMobile = useIsMobile();
@@ -505,10 +506,20 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
         }}
         style={{ fontSize: mobile ? 16 : 14 }}
       />
-      {/* 执行器选择行：与闪念创建界面保持一致的控件和逻辑 */}
+      {/* 执行器选择行 */}
       <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: mobile ? 13 : 12, color: hintColor }}>执行器</span>
+          <WorkspaceSelect
+            value={workspaceId}
+            onChange={(v) => {
+              // workspace 切换时清空对话历史
+              setMessages([]);
+              setInputValue('');
+              setLoading(false);
+              currentChatTaskIdRef.current = null;
+              dispatch({ type: 'SELECT_WORKSPACE', payload: v ?? null });
+            }}
+          />
           <ExecutorPickerPopover
             value={chatExecutor}
             onChange={handleExecutorChange}
