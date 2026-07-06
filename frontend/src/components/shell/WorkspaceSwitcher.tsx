@@ -12,7 +12,8 @@ interface WorkspaceSwitcherProps {
   value: number | null;
   /** 选中工作空间后回传 id */
   onChange: (workspaceId: number) => void;
-  onManage: () => void;
+  /** 管理工作空间回调（可选，不提供时隐藏该菜单项） */
+  onManage?: () => void;
   mode?: WorkspaceSwitcherMode;
 }
 
@@ -65,19 +66,23 @@ export function WorkspaceSwitcher({ value, onChange, onManage, mode = 'full' }: 
         label: dir.name,
         icon: <FolderOpenOutlined />,
       })),
-      { type: 'divider' as const },
-      {
-        key: '__manage__',
-        label: '管理工作空间',
-        icon: <SettingOutlined />,
-      },
     ];
+    if (onManage) {
+      items.push(
+        { type: 'divider' as const },
+        {
+          key: '__manage__',
+          label: '管理工作空间',
+          icon: <SettingOutlined />,
+        },
+      );
+    }
     return items;
-  }, [dirs]);
+  }, [dirs, onManage]);
 
   const onMenuClick = useCallback<NonNullable<MenuProps['onClick']>>(({ key }) => {
     if (key === '__manage__') {
-      onManage();
+      onManage?.();
       return;
     }
     // menu key 是 dir.id 字符串化；解析回 number 抛出给上层

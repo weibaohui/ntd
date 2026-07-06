@@ -25,7 +25,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/hooks/useApp';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { ExecutorPickerPopover } from '@/components/common/ExecutorPickerPopover';
-import { WorkspaceSelect } from '@/components/common/WorkspaceSelect';
+import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
 import { LOG_TYPE_COLORS_LIGHT, LOG_TYPE_COLORS_DARK, LOG_TYPE_LABELS, getLastExecutor, setLastExecutor } from '@/constants';
 import { chatWithWiki } from '@/utils/database/blackboard';
 import type { LogEntry } from '@/types';
@@ -509,15 +509,15 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
       {/* 执行器选择行 */}
       <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <WorkspaceSelect
-            value={workspaceId}
-            onChange={(v) => {
+          <WorkspaceSwitcher
+            value={workspaceId ?? null}
+            onChange={(id) => {
               // workspace 切换时清空对话历史
               setMessages([]);
               setInputValue('');
               setLoading(false);
               currentChatTaskIdRef.current = null;
-              dispatch({ type: 'SELECT_WORKSPACE', payload: v ?? null });
+              dispatch({ type: 'SELECT_WORKSPACE', payload: id });
             }}
           />
           <ExecutorPickerPopover
