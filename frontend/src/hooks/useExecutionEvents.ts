@@ -122,7 +122,7 @@ type ExecEvent = ExecEventStarted | ExecEventOutput | ExecEventFinished | ExecEv
 // useExecutionEvents 可能在多个组件中被调用（App.tsx + LoopStudioExecutionsPanel），
 // 如果每个调用方都创建独立的 WebSocket，事件会被重复处理 → 执行日志翻倍。
 // 模块级变量在所有组件实例间共享，确保全局只有一个 WebSocket 连接。
-// （见 issue #720 分析：https://github.com/weibaohui/nothing-todo/issues/720）
+// （见 issue #720 分析：https://github.com/weibaohui/ntd/issues/720）
 
 /** 全局唯一 WebSocket 连接实例 */
 let sharedWs: WebSocket | null = null;

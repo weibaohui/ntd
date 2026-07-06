@@ -1,12 +1,12 @@
 {
   "name": "@weibaohui/ntd",
   "version": "0.1.0",
-  "description": "NothingTodo - Rust CLI for managing your daily tasks",
+  "description": "ntd - Rust CLI for managing your daily tasks",
   "keywords": ["todo", "task", "cli", "rust"],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/weibaohui/nothing-todo"
+    "url": "https://github.com/weibaohui/ntd"
   },
   "scripts": {
     "postinstall": "node install.js"

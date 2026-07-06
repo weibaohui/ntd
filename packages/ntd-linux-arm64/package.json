@@ -1,14 +1,14 @@
 {
   "name": "@weibaohui/ntd-linux-arm64",
   "version": "0.1.0",
-  "description": "NothingTodo binary for Linux ARM64",
-  "keywords": ["nothing-todo", "linux", "arm64", "binary"],
+  "description": "ntd binary for Linux ARM64",
+  "keywords": ["ntd", "linux", "arm64", "binary"],
   "license": "MIT",
   "os": ["linux"],
   "cpu": ["arm64"],
   "repository": {
     "type": "git",
-    "url": "https://github.com/weibaohui/nothing-todo"
+    "url": "https://github.com/weibaohui/ntd"
   },
   "bin": {
     "ntd": "./bin/ntd"

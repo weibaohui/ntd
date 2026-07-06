@@ -11,9 +11,9 @@ const arch = os.arch();
 // 根据系统和架构确定平台包名
 function getPackageName() {
   const platformMap = {
-    'linux': { 'x64': 'nothing-todo-linux-x64', 'arm64': 'nothing-todo-linux-arm64' },
-    'darwin': { 'arm64': 'nothing-todo-darwin-arm64' },
-    'win32': { 'x64': 'nothing-todo-windows-x64' }
+    'linux': { 'x64': 'ntd-linux-x64', 'arm64': 'ntd-linux-arm64' },
+    'darwin': { 'arm64': 'ntd-darwin-arm64' },
+    'win32': { 'x64': 'ntd-windows-x64' }
   };
 
   const p = platformMap[platform];

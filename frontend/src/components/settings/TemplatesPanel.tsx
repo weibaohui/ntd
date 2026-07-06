@@ -364,7 +364,7 @@ export function TemplatesPanel() {
                         <Space direction="vertical" style={{ width: '100%' }}>
                           <Space>
                             <Typography.Text>订阅一个在线模板地址</Typography.Text>
-                            <Tooltip title={<span>填写在线 YAML 地址，格式参考 GitHub <a href="https://raw.githubusercontent.com/weibaohui/nothing-todo/refs/heads/main/templates.example.yaml" target="_blank">示例</a> 或 GitCode <a href="https://raw.gitcode.com/weibaohui/nothing-todo/raw/main/templates.example.yaml" target="_blank">示例</a></span>}>
+                            <Tooltip title={<span>填写在线 YAML 地址，格式参考 GitHub <a href="https://raw.githubusercontent.com/weibaohui/ntd/refs/heads/main/templates.example.yaml" target="_blank">示例</a> 或 GitCode <a href="https://raw.gitcode.com/weibaohui/ntd/raw/main/templates.example.yaml" target="_blank">示例</a></span>}>
                               <span style={{ cursor: 'help' }}><QuestionCircleOutlined /></span>
                             </Tooltip>
                           </Space>

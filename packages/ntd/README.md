@@ -6,9 +6,9 @@ A cross-platform AI task engine built with Rust.
 
 ## Preview
 
-![Dashboard](https://raw.githubusercontent.com/weibaohui/nothing-todo/main/docs/dashboard.png)
+![Dashboard](https://raw.githubusercontent.com/weibaohui/ntd/main/docs/dashboard.png)
 
-![Task Detail](https://raw.githubusercontent.com/weibaohui/nothing-todo/main/docs/detail.png)
+![Task Detail](https://raw.githubusercontent.com/weibaohui/ntd/main/docs/detail.png)
 
 ## Features
 

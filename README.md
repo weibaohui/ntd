@@ -1,6 +1,6 @@
 # ntd — Now Task, Done
 
-[![CI](https://github.com/weibaohui/nothing-todo/actions/workflows/rust.yml/badge.svg)](https://github.com/weibaohui/nothing-todo/actions)
+[![CI](https://github.com/weibaohui/ntd/actions/workflows/rust.yml/badge.svg)](https://github.com/weibaohui/ntd/actions)
 [![npm](https://img.shields.io/npm/v/@weibaohui/ntd.svg)](https://www.npmjs.com/package/@weibaohui/ntd)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 

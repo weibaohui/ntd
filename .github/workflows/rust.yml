@@ -40,28 +40,28 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             use-cross: true
-            pkg: nothing-todo-linux-x64
+            pkg: ntd-linux-x64
             bin: ntd
             name: ntd-linux-x64
 
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             use-cross: true
-            pkg: nothing-todo-linux-arm64
+            pkg: ntd-linux-arm64
             bin: ntd
             name: ntd-linux-arm64
 
           - os: ubuntu-latest
             target: x86_64-pc-windows-gnu
             use-cross: true
-            pkg: nothing-todo-windows-x64
+            pkg: ntd-windows-x64
             bin: ntd.exe
             name: ntd-windows-x64.exe
 
           - os: macos-latest
             target: aarch64-apple-darwin
             use-cross: false
-            pkg: nothing-todo-darwin-arm64
+            pkg: ntd-darwin-arm64
             bin: ntd
             name: ntd-darwin-arm64
 
@@ -126,7 +126,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts/
-          pattern: nothing-todo-*
+          pattern: ntd-*
 
       - name: List artifacts
         run: find artifacts/ -type f | sort
@@ -155,29 +155,29 @@ jobs:
           echo "Publishing version: $VERSION"
 
           # Copy binaries to package bin/ directories
-          mkdir -p packages/nothing-todo-linux-x64/bin
-          mkdir -p packages/nothing-todo-linux-arm64/bin
-          mkdir -p packages/nothing-todo-darwin-arm64/bin
-          mkdir -p packages/nothing-todo-windows-x64/bin
+          mkdir -p packages/ntd-linux-x64/bin
+          mkdir -p packages/ntd-linux-arm64/bin
+          mkdir -p packages/ntd-darwin-arm64/bin
+          mkdir -p packages/ntd-windows-x64/bin
 
-          cp artifacts/nothing-todo-linux-x64/ntd-linux-x64 packages/nothing-todo-linux-x64/bin/ntd
-          cp artifacts/nothing-todo-linux-arm64/ntd-linux-arm64 packages/nothing-todo-linux-arm64/bin/ntd
-          cp artifacts/nothing-todo-darwin-arm64/ntd-darwin-arm64 packages/nothing-todo-darwin-arm64/bin/ntd
-          cp artifacts/nothing-todo-windows-x64/ntd-windows-x64.exe packages/nothing-todo-windows-x64/bin/ntd.exe
+          cp artifacts/ntd-linux-x64/ntd-linux-x64 packages/ntd-linux-x64/bin/ntd
+          cp artifacts/ntd-linux-arm64/ntd-linux-arm64 packages/ntd-linux-arm64/bin/ntd
+          cp artifacts/ntd-darwin-arm64/ntd-darwin-arm64 packages/ntd-darwin-arm64/bin/ntd
+          cp artifacts/ntd-windows-x64/ntd-windows-x64.exe packages/ntd-windows-x64/bin/ntd.exe
 
-          chmod +x packages/nothing-todo-linux-x64/bin/ntd
-          chmod +x packages/nothing-todo-linux-arm64/bin/ntd
-          chmod +x packages/nothing-todo-darwin-arm64/bin/ntd
+          chmod +x packages/ntd-linux-x64/bin/ntd
+          chmod +x packages/ntd-linux-arm64/bin/ntd
+          chmod +x packages/ntd-darwin-arm64/bin/ntd
 
           # Update version in all package.json files
-          for pkg in nothing-todo-linux-x64 nothing-todo-linux-arm64 nothing-todo-darwin-arm64 nothing-todo-windows-x64 nothing-todo; do
+          for pkg in ntd-linux-x64 ntd-linux-arm64 ntd-darwin-arm64 ntd-windows-x64 ntd; do
             node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('packages/$pkg/package.json','utf8')); p.version='$VERSION'; fs.writeFileSync('packages/$pkg/package.json', JSON.stringify(p, null, 2)+'\n');"
             echo "Updated $pkg to $VERSION"
           done
 
       - name: Publish platform packages to npm
         run: |
-          for pkg in nothing-todo-linux-x64 nothing-todo-linux-arm64 nothing-todo-darwin-arm64 nothing-todo-windows-x64; do
+          for pkg in ntd-linux-x64 ntd-linux-arm64 ntd-darwin-arm64 ntd-windows-x64; do
             echo "Publishing @weibaohui/$pkg..."
             cd packages/$pkg
             npm publish --provenance --access public
@@ -188,5 +188,5 @@ jobs:
 
       - name: Publish wrapper package to npm
         run: |
-          cd packages/nothing-todo
+          cd packages/ntd
           npm publish --provenance --access public
