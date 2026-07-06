@@ -171,7 +171,6 @@ ntd 不再接受用路径指定工作空间——同一个目录路径在 `proje
 |----------|--------|
 | 注册一个新工作空间 | `ntd workspace create -p /path/to/project -n "my-project"`（path + name 必填，worktree / auto_cleanup 开关默认关，需要时用前端「项目目录」面板再编辑） |
 | 查看已有工作空间列表 | `ntd workspace list`（配合 `--output raw --fields "id,name,path"` 可直接拿到 id 清单供脚本 parse） |
-| 查单个工作空间详情 | `ntd workspace get <id>`（命中空返回 code=404） |
 | 创建 todo 时指定工作空间 | `ntd todo create "<标题>" --executor <执行器> --workspace-id <N>`（**必填**，漏传会报 `--workspace-id is required`） |
 | 更新 todo 的工作空间 | `ntd todo update <id> --workspace-id <N>` |
 | 按 workspace 过滤 loop | `ntd loop list --workspace-id <N>` |
