@@ -4,26 +4,32 @@
  * Wiki 化后的黑板：左侧页面目录树，右侧 Markdown 内容区。
  * 页面分为 index（目录）、topic（主题）、log（日志）三类。
  *
- * 布局：
+ * 布局（桌面端 ≥768px）：
  *   ┌───────────────────────────────────────────┐
- *   │ 黑板                 [倒计时] [设置] [刷新] │
+ *   │ 黑板         [倒计时进度条]  [设置] [刷新]   │
  *   ├──────────┬────────────────────────────────┤
  *   │ 目录树    │        Markdown 内容区          │
- *   │ - index   │   (index / topic / log 页面)   │
- *   │ - 认证模块 │                                │
- *   │ - 性能优化 │                                │
- *   │ - ...     │                                │
- *   │ - log     │                                │
+ *   │  220px   │          flex: 1               │
  *   └──────────┴────────────────────────────────┘
+ *
+ * 布局（移动端 <768px）：
+ *   ┌──────────────────────────┐
+ *   │ 黑板   [设置] [刷新]     │
+ *   │ [目录按钮]               │  ← 点击打开 Drawer
+ *   ├──────────────────────────┤
+ *   │     Markdown 内容区       │
+ *   │       全宽                │
+ *   └──────────────────────────┘
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu } from 'antd';
-import { ReloadOutlined, SettingOutlined, UnorderedListOutlined } from '@ant-design/icons';
+import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu, Drawer } from 'antd';
+import { ReloadOutlined, SettingOutlined, UnorderedListOutlined, MenuOutlined } from '@ant-design/icons';
 import { TfiBlackboard } from 'react-icons/tfi';
 import { XMarkdown } from '@ant-design/x-markdown';
 import { useTheme } from '@/hooks/useTheme';
 import { useViewState } from '@/hooks/useViewState';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import type { BlackboardDebounceStatus } from '@/hooks/useExecutionEvents';
 import { updateBlackboardConfig, getBlackboard } from '@/utils/database/blackboard';
 import { normalizeBlackboardMarkdown } from '@/utils/markdown';
@@ -222,13 +228,14 @@ async function fetchWikiFiles(workspaceId: number): Promise<WikiFileItem[]> {
 
 
 
-
 export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?: number | null }) {
   // 主题：决定黑板容器背景与文字色
   const { themeMode } = useTheme();
   const isDark = themeMode === 'dark';
   // 派生值（不再 useState）：切换工作空间时自动跟随 prop 变化
   const workspaceId = useEffectiveWorkspaceId(propWorkspaceId);
+  // 移动端检测
+  const isMobile = useIsMobile();
 
   // Wiki 化数据状态
   const [files, setFiles] = useState<WikiFileItem[]>([]);
@@ -245,6 +252,8 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const [debounceCount, setDebounceCount] = useState<number | null>(10);
   const [wikiPrompt, setWikiPrompt] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'debounce' | 'prompt'>('debounce');
+  // 移动端目录 Drawer 开关状态
+  const [menuDrawerOpen, setMenuDrawerOpen] = useState(false);
 
   /**
    * 打开设置弹窗：从已加载的黑板数据中读取 per-workspace 配置。
@@ -364,25 +373,38 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     fetchCurrentFile();
   }, [fetchFiles, fetchCurrentFile]);
 
+  // 移动端选择目录后关闭 Drawer
+  const handleSelectSlug = useCallback((slug: string) => {
+    setCurrentSlug(slug);
+    setMenuDrawerOpen(false);
+  }, []);
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ padding: '12px 24px', flexShrink: 0 }}>
+      {/* 顶部 Header：响应式 padding */}
+      <div style={{ padding: isMobile ? '8px 12px' : '12px 24px', flexShrink: 0 }}>
         <BlackboardHeader
           isDark={isDark}
+          isMobile={isMobile}
           onRefresh={handleRefresh}
           onOpenSettings={handleOpenSettings}
+          onMenuClick={() => setMenuDrawerOpen(true)}
           workspaceId={workspaceId}
         />
       </div>
-      {/* 中间主体：Wiki 布局（BlackboardWikiLayout 自身顶层已是 flex:1 容器，无需额外包裹） */}
+
+      {/* 中间主体：Wiki 布局 */}
       <BlackboardWikiLayout
         isDark={isDark}
+        isMobile={isMobile}
         files={files}
         currentFile={currentFile}
         currentSlug={currentSlug}
-        onSelectSlug={setCurrentSlug}
+        onSelectSlug={handleSelectSlug}
         filesLoading={filesLoading}
         fileLoading={fileLoading}
+        menuDrawerOpen={menuDrawerOpen}
+        onMenuDrawerClose={() => setMenuDrawerOpen(false)}
       />
 
       {/* 黑板设置弹窗：Tab1 防抖设置，Tab2 提示词设置 */}
@@ -394,7 +416,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         okText="保存"
         confirmLoading={settingsSaving}
         destroyOnHidden
-        width={640}
+        width={isMobile ? '90%' : 640}
       >
         <Tabs
           activeKey={activeTab}
@@ -511,12 +533,20 @@ function useStateBlackboardData() {
 
 interface BlackboardHeaderProps {
   isDark: boolean;
+  isMobile: boolean;
   onRefresh: () => void;
   onOpenSettings: () => void;
+  onMenuClick: () => void;
   workspaceId: number;
 }
 
-/** 顶部标题栏：标题 + 倒计时进度条 + 刷新按钮 + 设置按钮 + 队列查看按钮 */
+/**
+ * 顶部标题栏。
+ *
+ * 桌面端：[黑板图标 标题] [双进度条] [设置] [队列] [刷新]
+ * 移动端：[黑板图标 标题] [菜单按钮] [设置] [刷新]
+ *         ↑ 点击菜单按钮打开 Drawer 侧边栏
+ */
 function BlackboardHeader(props: BlackboardHeaderProps) {
   const [queueModalVisible, setQueueModalVisible] = useState(false);
   const [queueIds, setQueueIds] = useState<number[]>([]);
@@ -539,6 +569,34 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
     }
   }, [props.workspaceId]);
 
+  // 移动端顶部栏：紧凑布局，菜单按钮替代进度条
+  if (props.isMobile) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+        }}
+      >
+        <Space style={{ margin: 0, flexShrink: 0 }}>
+          <TfiBlackboard style={{ fontSize: 18, verticalAlign: 'middle' }} />
+          <Title level={4} style={{ margin: 0, fontSize: 16 }}>
+            黑板
+          </Title>
+        </Space>
+        <Space.Compact size="small">
+          {/* 目录 Drawer 触发按钮 */}
+          <Button icon={<MenuOutlined />} onClick={props.onMenuClick} title="目录" />
+          <Button icon={<SettingOutlined />} onClick={props.onOpenSettings} title="设置" />
+          <Button type="primary" icon={<ReloadOutlined />} onClick={props.onRefresh} />
+        </Space.Compact>
+      </div>
+    );
+  }
+
+  // 桌面端完整布局
   return (
     <div
       style={{
@@ -558,22 +616,9 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
       {/* 双进度条倒计时（自动监听 WebSocket 事件） */}
       <BlackboardDebounceBar workspaceId={props.workspaceId} />
       <Space.Compact>
-        <Button
-          icon={<SettingOutlined />}
-          onClick={props.onOpenSettings}
-          title="设置"
-        />
-        <Button
-          icon={<UnorderedListOutlined />}
-          onClick={handleShowQueue}
-          loading={queueLoading}
-          title="查看队列 ID"
-        />
-        <Button
-          type="primary"
-          icon={<ReloadOutlined />}
-          onClick={props.onRefresh}
-        >
+        <Button icon={<SettingOutlined />} onClick={props.onOpenSettings} title="设置" />
+        <Button icon={<UnorderedListOutlined />} onClick={handleShowQueue} loading={queueLoading} title="查看队列 ID" />
+        <Button type="primary" icon={<ReloadOutlined />} onClick={props.onRefresh}>
           刷新
         </Button>
       </Space.Compact>
@@ -618,8 +663,6 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
 interface BlackboardDebounceBarProps {
   /** 当前工作空间 ID，用于过滤事件 */
   workspaceId: number;
-  /** 刷新状态回调（正在刷新时禁用手动刷新按钮） */
-  onRefreshing?: (v: boolean) => void;
 }
 
 /**
@@ -735,17 +778,39 @@ function BlackboardDebounceBar({ workspaceId }: BlackboardDebounceBarProps) {
 
 interface BlackboardWikiLayoutProps {
   isDark: boolean;
+  isMobile: boolean;
   files: WikiFileItem[];
   currentFile: WikiFileContent | null;
   currentSlug: string;
   onSelectSlug: (slug: string) => void;
   filesLoading: boolean;
   fileLoading: boolean;
+  /** 移动端目录 Drawer 是否打开 */
+  menuDrawerOpen: boolean;
+  /** 移动端关闭目录 Drawer 的回调 */
+  onMenuDrawerClose: () => void;
 }
 
-/** Wiki 布局：左侧目录树 + 右侧内容区 */
+/**
+ * Wiki 布局：桌面端左侧固定目录树 + 右侧内容区，移动端侧边栏收入 Drawer。
+ *
+ * 桌面端（≥768px）：
+ *   ┌──────────┬────────────────────────────────┐
+ *   │ 目录树   │         Markdown 内容区         │
+ *   │  220px   │          flex: 1               │
+ *   └──────────┴────────────────────────────────┘
+ *
+ * 移动端（<768px）：
+ *   - 固定侧边栏隐藏，内容区全宽
+ *   - Header 中有"目录"按钮，点击打开 Drawer
+ *   - 选择目录项后自动关闭 Drawer
+ */
 function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
-  const { isDark, files, currentFile, currentSlug, onSelectSlug, filesLoading, fileLoading } = props;
+  const {
+    isDark, isMobile, files, currentFile, currentSlug,
+    onSelectSlug, filesLoading, fileLoading,
+    menuDrawerOpen, onMenuDrawerClose,
+  } = props;
 
   // 构造 Menu items：index 在前，然后 topic，最后 log
   const menuItems = [
@@ -777,6 +842,55 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
   const sidebarBg = isDark ? '#1a1a1a' : '#fafafa';
   const sidebarBorder = isDark ? '#333' : '#f0f0f0';
 
+  // 渲染目录内容（抽出来复用于 Drawer 和固定侧边栏）
+  const sidebarContent = filesLoading ? (
+    <Skeleton active paragraph={{ rows: 6 }} style={{ padding: '0 12px' }} />
+  ) : files.length === 0 ? (
+    <div style={{ padding: '24px 12px', textAlign: 'center', color: isDark ? '#666' : '#999', fontSize: 12 }}>
+      暂无页面
+    </div>
+  ) : (
+    <Menu
+      mode="inline"
+      selectedKeys={[currentSlug]}
+      onClick={({ key }) => onSelectSlug(key as string)}
+      style={{ background: 'transparent', borderRight: 'none' }}
+      theme={isDark ? 'dark' : 'light'}
+      items={menuItems}
+    />
+  );
+
+  // 移动端：内容区全宽，目录通过 Drawer 呈现
+  if (isMobile) {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+        {/* 内容区 */}
+        <div style={{ flex: 1, overflow: 'auto', padding: '12px', minWidth: 0 }}>
+          {fileLoading ? (
+            <Skeleton active paragraph={{ rows: 10 }} />
+          ) : !currentFile || currentFile.content.trim().length === 0 ? (
+            <BlackboardEmpty isDark={isDark} />
+          ) : (
+            <BlackboardContent isDark={isDark} content={currentFile.content} />
+          )}
+        </div>
+
+        {/* 移动端目录 Drawer */}
+        <Drawer
+          title="目录"
+          placement="left"
+          width={280}
+          onClose={onMenuDrawerClose}
+          open={menuDrawerOpen}
+          styles={{ body: { padding: 0, background: sidebarBg } }}
+        >
+          {sidebarContent}
+        </Drawer>
+      </div>
+    );
+  }
+
+  // 桌面端：固定侧边栏 + 内容区
   return (
     <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
       {/* 左侧目录树 */}
@@ -790,22 +904,7 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
           padding: '8px 0',
         }}
       >
-        {filesLoading ? (
-          <Skeleton active paragraph={{ rows: 6 }} style={{ padding: '0 12px' }} />
-        ) : files.length === 0 ? (
-          <div style={{ padding: '24px 12px', textAlign: 'center', color: isDark ? '#666' : '#999', fontSize: 12 }}>
-            暂无页面
-          </div>
-        ) : (
-          <Menu
-            mode="inline"
-            selectedKeys={[currentSlug]}
-            onClick={({ key }) => onSelectSlug(key as string)}
-            style={{ background: 'transparent', borderRight: 'none' }}
-            theme={isDark ? 'dark' : 'light'}
-            items={menuItems}
-          />
-        )}
+        {sidebarContent}
       </div>
 
       {/* 右侧内容区 */}
