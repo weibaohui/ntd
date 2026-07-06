@@ -19,7 +19,7 @@ interface WorkspaceSwitcherProps {
   onChange: (workspaceId: number | null) => void;
   /** 管理工作空间回调（可选，不提供时隐藏该菜单项） */
   onManage?: () => void;
-  /** 是否显示下拉菜单中"新建工作空间"选项，默认 true */
+  /** 是否显示下拉菜单中"新建工作空间"选项，默认 false */
   showAddOption?: boolean;
   mode?: WorkspaceSwitcherMode;
 }

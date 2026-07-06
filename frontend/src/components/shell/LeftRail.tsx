@@ -152,6 +152,7 @@ export function LeftRail({
             value={workspace ?? null}
             onChange={(next) => onWorkspaceChange?.(next)}
             onManage={() => onSelect('settings_projectDirectories')}
+            showAddOption={true}
             mode="full"
           />
         </div>
@@ -164,6 +165,7 @@ export function LeftRail({
           value={workspace ?? null}
           onChange={(next) => onWorkspaceChange?.(next)}
           onManage={() => onSelect('settings_projectDirectories')}
+          showAddOption={true}
           mode="compact"
         />
       </div>
