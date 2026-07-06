@@ -103,7 +103,7 @@ const DEFAULT_WIKI_PROMPT = `你是一个工作空间黑板维护者。你的任
    - ## 矛盾/风险
    - ## 下一步建议
 7. 每条结论标注来源，使用 \`ntd todo execution get <record_id>\` 返回结果中的 \`todo_id\` 和 \`id\` 字段，
-   生成 app 内链接：(来源: [record_{record_id}](/?view=items&id={todo_id}&panel=post&record={record_id}))
+   生成 app 内链接：(来源: [record_{record_id}](/#/items?id={todo_id}&panel=post&record={record_id}))
 
 完成后输出简短确认即可，无需输出 YAML/JSON。`;
 
@@ -175,7 +175,11 @@ function TodoLink(props: MarkdownLinkProps): React.ReactElement {
 /** 从 URL ?workspace=N 解析工作空间 ID；解析失败时返回默认值 */
 function resolveWorkspaceFromUrl(): number {
   // 在浏览器外（如 SSR/测试）调用 window 会炸；外层先保证只在浏览器跑
-  const raw = new URLSearchParams(window.location.search).get(URL_WORKSPACE_PARAM);
+  // 从 hash 路由中解析 workspace 参数（hash 格式：#/view?param=value）
+  const hash = window.location.hash || '';
+  const hashWithoutHash = hash.startsWith('#') ? hash.slice(1) : hash;
+  const [, search] = hashWithoutHash.split('?', 2);
+  const raw = new URLSearchParams(search || '').get(URL_WORKSPACE_PARAM);
   const parsed = raw ? Number(raw) : NaN;
   return Number.isFinite(parsed) ? parsed : DEFAULT_WORKSPACE_ID;
 }

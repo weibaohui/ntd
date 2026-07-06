@@ -20,7 +20,7 @@
 | **JWT** | JSON Web Token，ntd-cloud 用作登录态 |
 | **Device Flow** | 飞书 OAuth 2.0 Device Authorization Grant |
 | **AGI** | (本项目无关) Artificial General Intelligence — 别搞混 |
-| **ntd** | Nothing Todo，本项目名 |
+| **ntd** | Now Task, Done，本项目名 |
 | **NPM** | Node.js 包管理，ntd 通过 npm 全局安装 |
 | **daemon** | ntd 后台服务进程 |
 | **CLA** | (本项目无关) 不要和 Claude Code 缩写混淆 |

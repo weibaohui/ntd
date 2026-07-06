@@ -161,7 +161,7 @@ import { RocketOutlined } from '@ant-design/icons';
 要求：
 1. 保持原意
 2. 更简洁有力
-3. 适合 AI Todo 应用的场景
+3. 适合 ntd 的场景
 
 输出格式：用 RESULT 标记包裹最终标题。
 

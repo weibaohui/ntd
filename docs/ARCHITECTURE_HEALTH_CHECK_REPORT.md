@@ -10,7 +10,7 @@
 
 | 项目 | 值 |
 |------|-----|
-| 项目名称 | ntd (Nothing Todo) |
+| 项目名称 | ntd (Now Task, Done) |
 | 技术栈 | Rust 后端 (Axum 0.8) + React 前端 (Vite 7 / React 19 / Antd 6) |
 | 数据库 | SQLite (via SeaORM 0.12 + libsqlite3-sys bundled) |
 | 后端代码 | **~110 个 Rust 源文件**，分布在 adapters / cli / db / handlers / services / feishu 等模块 |

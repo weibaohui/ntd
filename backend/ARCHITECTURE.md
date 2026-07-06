@@ -443,7 +443,7 @@ loop 评分闸门路径走同一条 `create_review_instance_todo`，但 parent_t
 
 ### 6.3 升级路径
 
-- `ntd upgrade`：当前实现是 `npm install -g @weibaohui/nothing-todo@latest` + 重新部署 daemon。
+- `ntd upgrade`：当前实现是 `npm install -g @weibaohui/ntd@latest` + 重新部署 daemon。
 - 已知耦合问题（issue #517）：硬编码 npm 包名；非 npm 安装（cargo install / deb / 手动下载二进制）走不通。
 
 ---

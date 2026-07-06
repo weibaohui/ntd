@@ -151,7 +151,7 @@ export async function getVersion(): Promise<VersionInfo> {
   return unwrap(await api.get('/api/version'));
 }
 
-/** 从 npm 获取 @weibaohui/nothing-todo 的最新版本号 */
+/** 从 npm 获取 @weibaohui/ntd 的最新版本号 */
 export async function getLatestVersion(): Promise<{ latest: string | null; error?: string }> {
   return unwrap(await api.get('/api/version/latest'));
 }

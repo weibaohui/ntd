@@ -119,7 +119,7 @@ ntd 的**全局运营视图**。一个屏幕看明白：
 
 ### 2.17 活跃任务（ActiveTasksCard）
 
-实时显示当前 running 的 Todo 列表（同「运行管理」面板）。**无任务时显示「nothing todo / but everything is todo」禅意占位 + 一句随机引言**（`SpecialCards.tsx:55-67`）。
+实时显示当前 running 的 Todo 列表（同「运行管理」面板）。**无任务时显示「Task In, Done Out.」禅意占位 + 一句随机引言**（`SpecialCards.tsx:55-67`）。
 
 ### 2.18 Skills 调用统计（SkillsStats）
 
@@ -148,7 +148,7 @@ ntd 的**全局运营视图**。一个屏幕看明白：
 
 ### 2.22 分享卡（ShareCardPanel）
 
-底部「分享给朋友」按钮 → `ShareCard` 组件生成**一键复制 ntd 安装提示词**（`npm install -g @weibaohui/nothing-todo...`），不是图片带 QR 码。
+底部「分享给朋友」按钮 → `ShareCard` 组件生成**一键复制 ntd 安装提示词**（`npm install -g @weibaohui/ntd...`），不是图片带 QR 码。
 
 ## 3. 最近执行记录
 

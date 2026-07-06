@@ -24,7 +24,7 @@
 
 ### 2.1手动检查
 
-点「**检查更新**」按钮 → 后端调 `npm view @weibaohui/nothing-todo version` → 显示远端最新版本号。
+点「**检查更新**」按钮 → 后端调 `npm view @weibaohui/ntd version` → 显示远端最新版本号。
 
 ### 2.2定时检查
 
@@ -58,7 +58,7 @@
 
 点「**一键升级**」→ 后端 `POST /api/version/upgrade`：
 
-1. 后端跑 `npm install -g --prefix={prefix} @weibaohui/nothing-todo@latest`
+1. 后端跑 `npm install -g --prefix={prefix} @weibaohui/ntd@latest`
  - `prefix` 由后端探测 npm 全局目录写权限决定（无写权限时回落到 `~/.npm-global`）
  -拿到 stdout / stderr
  -失败立即返回错误

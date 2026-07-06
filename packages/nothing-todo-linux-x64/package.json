@@ -1,5 +1,5 @@
 {
-  "name": "@weibaohui/nothing-todo-linux-x64",
+  "name": "@weibaohui/ntd-linux-x64",
   "version": "0.1.0",
   "description": "NothingTodo binary for Linux x86_64",
   "keywords": ["nothing-todo", "linux", "binary"],
