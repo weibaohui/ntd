@@ -1087,6 +1087,54 @@ html, body {
   gap: 12px;
 }
 
+/* 收缩状态：极窄竖条贴边 */
+.fab-collapsed {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 56px;
+  border-radius: 3px 0 0 3px;
+  background: var(--color-primary);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-fab);
+  transition: width 0.2s ease;
+}
+
+.fab-collapsed:hover {
+  width: 10px;
+}
+
+/* 展开按钮组中最顶部的收缩触发按钮 */
+.fab-collapse-btn {
+  width: 48px;
+  height: 32px;
+  border-radius: 24px 24px 4px 4px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.15s ease;
+  font-size: 12px;
+}
+
+.fab-collapse-btn:hover {
+  color: var(--color-text);
+}
+
+.fab-collapse-btn:active {
+  transform: scale(0.95);
+}
+
 .fab-item-btn {
   width: 48px;
   height: 48px;
@@ -1128,6 +1176,11 @@ html, body {
 
 [data-theme="dark"] .fab-wiki {
   background: var(--color-primary);
+}
+
+[data-theme="dark"] .fab-collapse-btn {
+  background: #2a2a2a;
+  color: #888;
 }
 
 /* ---------- Smart Create Styles ---------- */
