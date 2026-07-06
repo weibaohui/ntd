@@ -569,7 +569,7 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
     }
   }, [props.workspaceId]);
 
-  // 移动端顶部栏：紧凑布局，菜单按钮替代进度条
+  // 移动端顶部栏：紧凑布局，菜单按钮替代进度条，文字指示器替代进度条
   if (props.isMobile) {
     return (
       <div
@@ -585,6 +585,8 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
           <Title level={4} style={{ margin: 0, fontSize: 16 }}>
             黑板
           </Title>
+          {/* 移动端简化防抖状态文字指示器 */}
+          <MobileDebounceIndicator workspaceId={props.workspaceId} />
         </Space>
         <Space.Compact size="small">
           {/* 目录 Drawer 触发按钮 */}
@@ -656,6 +658,58 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
       </Modal>
     </div>
   );
+}
+
+// ─── 移动端防抖文字指示器 ─────────────────────────────────────
+
+interface MobileDebounceIndicatorProps {
+  workspaceId: number;
+}
+
+/**
+ * 移动端防抖状态文字指示器。
+ *
+ * 监听 blackboardDebounceStatus WebSocket 事件，
+ * 在极小空间内用文字显示当前防抖状态，替代桌面端的双进度条。
+ * - 刷新中：绿色 "刷新中"
+ * - 已触发阈值：绿色 "{pending} 条待刷"
+ * - 等待中：灰色 "倒计时 {remaining}s"
+ * - 无状态：不渲染
+ */
+function MobileDebounceIndicator({ workspaceId }: MobileDebounceIndicatorProps) {
+  const [status, setStatus] = useState<BlackboardDebounceStatus | null>(null);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const s = (e as CustomEvent<BlackboardDebounceStatus>).detail;
+      if (s.workspace_id !== workspaceId) return;
+      setStatus(s);
+    };
+    window.addEventListener('blackboardDebounceStatus', handler);
+    return () => window.removeEventListener('blackboardDebounceStatus', handler);
+  }, [workspaceId]);
+
+  if (!status) return null;
+
+  const { pending_count, threshold, remaining_secs, refreshing } = status;
+
+  // 刷新中
+  if (refreshing) {
+    return <span style={{ fontSize: 11, color: '#52c41a' }}>刷新中</span>;
+  }
+  // 已触发阈值
+  if (pending_count >= threshold) {
+    return <span style={{ fontSize: 11, color: '#52c41a' }}>{pending_count} 条待刷</span>;
+  }
+  // 有待处理但未达阈值
+  if (pending_count > 0) {
+    return <span style={{ fontSize: 11, color: '#888' }}>{pending_count}/{threshold} 条</span>;
+  }
+  // 等待中，有倒计时
+  if (remaining_secs >= 0) {
+    return <span style={{ fontSize: 11, color: '#888' }}>倒计时 {remaining_secs}s</span>;
+  }
+  return null;
 }
 
 // ─── 黑板倒计时进度条 ───────────────────────────────────────────
