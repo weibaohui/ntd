@@ -24,7 +24,7 @@ import type { ReviewTemplateOption } from '@/types/reviewTemplate';
 import type { Todo } from '@/types/todo';
 import { getWorkspaceDisplayName, useProjectDirectories } from '@/utils/workspaceDisplay';
 import { TagCheckCardGroup } from './TagCheckCard';
-import { WorkspaceSelect } from './common/WorkspaceSelect';
+import { WorkspaceSwitcher } from './shell/WorkspaceSwitcher';
 
 // ---------- props ----------
 
@@ -281,15 +281,14 @@ export function LoopFormModal({
               tooltip="此 loop 所属的工作空间，切换后评审模板自动过滤"
               rules={mode === 'create' ? [{ required: true, message: '请选择工作空间' }] : []}
             >
-              <WorkspaceSelect
+              <WorkspaceSwitcher
                 value={workspaceId}
+                showAddOption={false}
                 onChange={(v) => {
                   setWorkspaceId(v);
                   // 切换工作空间时清掉已选模板，避免跨工作空间串模板
                   form.setFieldsValue({ review_template_id: null });
                 }}
-                required={mode === 'create'}
-                showAddOption={false}
               />
             </Form.Item>
             {/* 评审模板（随 workspace 联动过滤） */}

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback, useReducer } from 'r
 import { Drawer, Input, Button, App, Divider, Switch } from 'antd';
 import { FolderOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
-import { WorkspaceSelect } from './common/WorkspaceSelect';
+import { WorkspaceSwitcher } from './shell/WorkspaceSwitcher';
 
 import type { Todo, ExecutorConfig, ExecutorOption, SkillMeta, ExecutorSkills, TodoTemplate } from '@/types';
 import { EXECUTORS, executorConfigToOption, getExecutorColor, DEFAULT_EXECUTOR } from '@/types';
@@ -325,11 +325,10 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
               <FolderOutlined style={{ color: 'var(--color-primary)', marginRight: 6 }} />
               工作空间 <span style={{ color: '#ff4d4f' }}>*</span>
             </div>
-            <WorkspaceSelect
+            <WorkspaceSwitcher
               value={workspaceId}
-              onChange={(v) => setField('workspaceId', v)}
-              required
               showAddOption={false}
+              onChange={(v) => setField('workspaceId', v)}
             />
           </div>
 

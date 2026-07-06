@@ -511,6 +511,7 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <WorkspaceSwitcher
             value={workspaceId ?? null}
+            showAddOption={false}
             onChange={(id) => {
               // workspace 切换时清空对话历史
               setMessages([]);
