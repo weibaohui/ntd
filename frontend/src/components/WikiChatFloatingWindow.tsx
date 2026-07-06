@@ -206,8 +206,40 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
     }
   }, [dispatch]);
 
-  // ─── 最小化模式：不渲染 ──────────────────────────────────────
-  if (mode === 'minimized') return null;
+  // ─── 最小化模式：右侧贴边窄条，点击可展开 ──────────────────
+  if (mode === 'minimized') {
+    return (
+      <Tooltip title="展开 Wiki 对话" placement="left">
+        <div
+          style={{
+            position: 'fixed',
+            top: '50%',
+            right: 0,
+            transform: 'translateY(-50%)',
+            width: 16,
+            height: 80,
+            background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+            borderLeft: `1px solid ${colors.panelBorder}`,
+            borderTopLeftRadius: 6,
+            borderBottomLeftRadius: 6,
+            cursor: 'pointer',
+            zIndex: 998,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            writingMode: 'vertical-rl',
+            color: colors.hintColor,
+            fontSize: 11,
+            letterSpacing: 2,
+            userSelect: 'none',
+          }}
+          onClick={() => setMode('side')}
+        >
+          对话
+        </div>
+      </Tooltip>
+    );
+  }
 
   // ─── 移动端：底部 Drawer ──────────────────────────────────
   if (isMobile) {

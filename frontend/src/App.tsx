@@ -45,7 +45,13 @@ function AppContent() {
   const [todoModalOpen, setTodoModalOpen] = useState(false);
   const [smartCreateOpen, setSmartCreateOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
-  const [wikiChatMode, setWikiChatMode] = useState<WikiChatMode>('minimized');
+  const [wikiChatMode, setWikiChatMode] = useState<WikiChatMode>(() => {
+    try {
+      const saved = localStorage.getItem('wiki_chat_mode') as WikiChatMode | null;
+      if (saved && ['minimized', 'side', 'maximized'].includes(saved)) return saved;
+    } catch {}
+    return 'minimized';
+  });
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(() => {
     try {
