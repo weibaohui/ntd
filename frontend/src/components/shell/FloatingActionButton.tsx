@@ -25,14 +25,23 @@ export function FloatingActionButton({
   onOpenQuickCapture,
   onOpenWikiChat,
 }: FloatingActionButtonProps) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      const saved = localStorage.getItem('fab_collapsed');
+      if (saved === 'true') return true;
+      if (saved === 'false') return false;
+    } catch {}
+    return false;
+  });
 
   const handleExpand = useCallback(() => {
     setCollapsed(false);
+    try { localStorage.setItem('fab_collapsed', 'false'); } catch {}
   }, []);
 
   const handleCollapse = useCallback(() => {
     setCollapsed(true);
+    try { localStorage.setItem('fab_collapsed', 'true'); } catch {}
   }, []);
 
   const handleOpenQuickCapture = useCallback(() => {
