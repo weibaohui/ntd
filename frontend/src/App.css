@@ -1113,8 +1113,8 @@ html, body {
 /* 展开按钮组中最顶部的收缩触发按钮 */
 .fab-collapse-btn {
   width: 48px;
-  height: 32px;
-  border-radius: 24px 24px 4px 4px;
+  height: 48px;
+  border-radius: 50%;
   background: var(--color-bg-elevated);
   color: var(--color-text-secondary);
   border: none;
@@ -1124,7 +1124,6 @@ html, body {
   justify-content: center;
   box-shadow: var(--shadow-sm);
   transition: all 0.15s ease;
-  font-size: 12px;
 }
 
 .fab-collapse-btn:hover {
