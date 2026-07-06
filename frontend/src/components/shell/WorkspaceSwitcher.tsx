@@ -40,7 +40,7 @@ export function WorkspaceSwitcher({
   value,
   onChange,
   onManage,
-  showAddOption = true,
+  showAddOption = false,
   mode = 'full',
 }: WorkspaceSwitcherProps) {
   const { message } = App.useApp();
@@ -140,6 +140,34 @@ export function WorkspaceSwitcher({
     }
   }, [quickAddForm, message, onChange]);
 
+  // 新建工作空间 Modal：compact 与 full 模式共用
+  const quickAddModal = (
+    <Modal
+      title="新建工作空间"
+      open={quickAddOpen}
+      onCancel={() => {
+        if (quickAddSaving) return;
+        quickAddForm.resetFields();
+        setQuickAddOpen(false);
+      }}
+      onOk={handleQuickAdd}
+      confirmLoading={quickAddSaving}
+      okText="保存并使用"
+      cancelText="取消"
+      destroyOnClose
+      maskClosable={!quickAddSaving}
+    >
+      <Form form={quickAddForm} layout="vertical" preserve={false}>
+        <Form.Item label="工作空间名称" name="name" rules={[{ required: true, message: '请输入工作空间名称' }]}>
+          <Input placeholder="例如：ntd 官网" autoFocus />
+        </Form.Item>
+        <Form.Item label="目录路径" name="path" rules={[{ required: true, message: '请输入目录路径' }]}>
+          <Input placeholder="例如：/Users/me/projects/ntd-site" />
+        </Form.Item>
+      </Form>
+    </Modal>
+  );
+
   if (mode === 'compact') {
     return (
       <>
@@ -153,30 +181,7 @@ export function WorkspaceSwitcher({
             data-testid="left-rail-workspace"
           />
         </Dropdown>
-        <Modal
-          title="新建工作空间"
-          open={quickAddOpen}
-          onCancel={() => {
-            if (quickAddSaving) return;
-            quickAddForm.resetFields();
-            setQuickAddOpen(false);
-          }}
-          onOk={handleQuickAdd}
-          confirmLoading={quickAddSaving}
-          okText="保存并使用"
-          cancelText="取消"
-          destroyOnClose
-          maskClosable={!quickAddSaving}
-        >
-          <Form form={quickAddForm} layout="vertical" preserve={false}>
-            <Form.Item label="工作空间名称" name="name" rules={[{ required: true, message: '请输入工作空间名称' }]}>
-              <Input placeholder="例如：ntd 官网" autoFocus />
-            </Form.Item>
-            <Form.Item label="目录路径" name="path" rules={[{ required: true, message: '请输入目录路径' }]}>
-              <Input placeholder="例如：/Users/me/projects/ntd-site" />
-            </Form.Item>
-          </Form>
-        </Modal>
+        {quickAddModal}
       </>
     );
   }
@@ -200,30 +205,7 @@ export function WorkspaceSwitcher({
           </span>
         </Button>
       </Dropdown>
-      <Modal
-        title="新建工作空间"
-        open={quickAddOpen}
-        onCancel={() => {
-          if (quickAddSaving) return;
-          quickAddForm.resetFields();
-          setQuickAddOpen(false);
-        }}
-        onOk={handleQuickAdd}
-        confirmLoading={quickAddSaving}
-        okText="保存并使用"
-        cancelText="取消"
-        destroyOnClose
-        maskClosable={!quickAddSaving}
-      >
-        <Form form={quickAddForm} layout="vertical" preserve={false}>
-          <Form.Item label="工作空间名称" name="name" rules={[{ required: true, message: '请输入工作空间名称' }]}>
-            <Input placeholder="例如：ntd 官网" autoFocus />
-          </Form.Item>
-          <Form.Item label="目录路径" name="path" rules={[{ required: true, message: '请输入目录路径' }]}>
-            <Input placeholder="例如：/Users/me/projects/ntd-site" />
-          </Form.Item>
-        </Form>
-      </Modal>
+      {quickAddModal}
     </>
   );
 }

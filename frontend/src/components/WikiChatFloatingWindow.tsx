@@ -79,6 +79,16 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
     try { localStorage.setItem('wiki_chat_side_width', String(sideWidth)); } catch {}
   }, [sideWidth]);
 
+  // 卸载时清理可能残留的拖拽监听器
+  useEffect(() => {
+    return () => {
+      if (resizeCleanupRef.current) {
+        resizeCleanupRef.current();
+        resizeCleanupRef.current = null;
+      }
+    };
+  }, []);
+
   // ─── 对话状态 ───────────────────────────────────────────────
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
@@ -86,6 +96,8 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
   const [chatExecutor, setChatExecutor] = useState<string>(getLastExecutor);
   const currentChatTaskIdRef = useRef<string | null>(null);
   const wsHandledRef = useRef<boolean>(false);
+  // 用于拖拽调整宽度时，存储清理函数以便组件卸载时移除监听器
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
   const workspaceId = state.selectedWorkspace;
 
   // 选择执行器时记住最后一次使用的执行器
@@ -292,9 +304,11 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
             const handleMouseUp = () => {
               document.removeEventListener('mousemove', handleMouseMove);
               document.removeEventListener('mouseup', handleMouseUp);
+              resizeCleanupRef.current = null;
             };
             document.addEventListener('mousemove', handleMouseMove);
             document.addEventListener('mouseup', handleMouseUp);
+            resizeCleanupRef.current = handleMouseUp;
           }}
         />
       </div>
