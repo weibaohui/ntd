@@ -16,7 +16,7 @@ import * as dbLoops from '@/utils/database/loops';
 import { EXECUTORS_FOR_PICKER } from '@/types/execution';
 import { ExecutorPicker } from '@/components/todo-drawer/ExecutorPicker';
 import { ActionToolbar, type BatchActionItem } from '@/components/common/ActionToolbar';
-import { WorkspaceSelect } from '@/components/common/WorkspaceSelect';
+import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
 import { SkeletonList } from './SkeletonRow';
 import { TodoItemRow } from './TodoItemRow';
 
@@ -587,10 +587,10 @@ export function TodoList(props: TodoListProps) {
           {workspaceBatchMode === 'copy' ? '复制' : '移动'} <strong>{pendingWorkspaceBatchIds.length}</strong> 项到目标工作空间：
         </p>
         <div style={{ marginTop: 12 }}>
-          <WorkspaceSelect
+          <WorkspaceSwitcher
             value={workspaceBatchTarget}
-            onChange={(v: number | null) => setWorkspaceBatchTarget(v ?? null)}
-            required
+            showAddOption={false}
+            onChange={(v) => setWorkspaceBatchTarget(v)}
           />
         </div>
         {workspaceBatchMode === 'copy' && (

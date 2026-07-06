@@ -1,3 +1,6 @@
+use std::sync::Arc;
+use parking_lot::Mutex;
+
 use super::helpers;
 use super::mobilecoder_event::MobilecoderAgentEvent;
 use super::{BaseExecutor, CodeExecutor, ExecutorType, ParsedLogEntry};
@@ -6,15 +9,27 @@ use crate::models::utc_timestamp;
 
 /// MobileCoder executor。
 ///
-// `BaseExecutor` 已经 `#[derive(Clone)]`，组合字段无需手写 Clone impl。
+/// `BaseExecutor` 已经 `#[derive(Clone)]`，`Arc<Mutex<...>>` 也派生 Clone。
 #[derive(Clone)]
 pub struct MobilecoderExecutor {
     base: BaseExecutor,
+    /// 缓存从 JSON 事件中提取的 session_id，支持跨行回退和 resume 时回写 DB。
+    session_id: Arc<Mutex<Option<String>>>,
 }
 
 impl MobilecoderExecutor {
     pub fn new(path: String) -> Self {
-        Self { base: BaseExecutor::new(path) }
+        Self {
+            base: BaseExecutor::new(path),
+            session_id: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// 更新 session_id 缓存（extract_session_id 和 parse_output_line 共用）。
+    fn update_session_id_cache(&self, sid: Option<String>) {
+        if let Some(ref s) = sid {
+            *self.session_id.lock() = Some(s.clone());
+        }
     }
 
     /// 解析 MobileCoder 的 timestamp 字段：优先 ISO 8601，再回退到数字（毫秒/秒），
@@ -151,11 +166,20 @@ impl CodeExecutor for MobilecoderExecutor {
 
     fn extract_session_id(&self, line: &str) -> Option<String> {
         let event: MobilecoderAgentEvent = serde_json::from_str(line).ok()?;
-        event.session_id.or_else(|| event.part.as_ref()?.session_id.clone())
+        let sid = event.session_id.or_else(|| event.part.as_ref()?.session_id.clone());
+        self.update_session_id_cache(sid.clone());
+        sid.or_else(|| self.session_id.lock().clone())
+    }
+
+    fn get_session_id(&self) -> Option<String> {
+        self.session_id.lock().clone()
     }
 
     fn parse_output_line(&self, line: &str) -> Option<ParsedLogEntry> {
         let event: MobilecoderAgentEvent = serde_json::from_str(line).ok()?;
+        // 缓存 session_id：优先取事件顶层字段，再取 part 内字段
+        let sid = event.session_id.clone().or_else(|| event.part.as_ref()?.session_id.clone());
+        self.update_session_id_cache(sid);
         let timestamp = Self::resolve_timestamp(event.timestamp.as_ref());
 
         match event.event_type.as_str() {
@@ -285,6 +309,30 @@ mod tests {
         let entry = executor.parse_output_line(line).unwrap();
         assert_eq!(entry.log_type, "step_start");
         assert!(entry.timestamp.starts_with("2023-"));
+    }
+
+    #[test]
+    fn test_extract_session_id_caches_result() {
+        let executor = MobilecoderExecutor::new("mobile".to_string());
+        let line = r#"{"type":"step_start","timestamp":1700000000000,"sessionID":"mob_sess_abc"}"#;
+        let sid = executor.extract_session_id(line);
+        assert_eq!(sid, Some("mob_sess_abc".to_string()));
+        // 再次调用仍能获取缓存值
+        assert_eq!(executor.extract_session_id(r#"{"type":"text"}"#), Some("mob_sess_abc".to_string()));
+    }
+
+    #[test]
+    fn test_get_session_id_returns_cached() {
+        let executor = MobilecoderExecutor::new("mobile".to_string());
+        let line = r#"{"type":"step_start","sessionID":"mob_session_xyz"}"#;
+        let _ = executor.parse_output_line(line);
+        assert_eq!(executor.get_session_id(), Some("mob_session_xyz".to_string()));
+    }
+
+    #[test]
+    fn test_get_session_id_before_any_event() {
+        let executor = MobilecoderExecutor::new("mobile".to_string());
+        assert_eq!(executor.get_session_id(), None);
     }
 }
 

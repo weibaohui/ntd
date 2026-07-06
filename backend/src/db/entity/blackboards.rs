@@ -28,6 +28,15 @@ pub struct Model {
     /// LLM 直接编辑 wiki 目录下的 Markdown 文件，空字符串表示使用内置默认模板。
     #[sea_orm(column_type = "Text")]
     pub wiki_prompt: String,
+    /// Wiki 对话使用的执行器名称（如 "claudecode"、"codex" 等）。
+    /// None 或空字符串表示使用默认值 "claudecode"。
+    /// 该字段为 per-workspace 独立配置，与 workspace_settings.default_response_executor 互不影响。
+    pub wiki_chat_executor: Option<String>,
+    /// Wiki 对话各执行器的 session ID（JSON 对象，key 为执行器名称，value 为 session_id 或 null）。
+    /// 例如：{"claudecode": "uuid-session-1", "hermes": "uuid-session-2", "opencode": null}
+    /// 切换执行器时不会丢失 session，支持连续对话。
+    #[sea_orm(column_type = "Text")]
+    pub wiki_chat_sessions: Option<String>,
     pub updated_at: Option<String>,
     pub created_at: Option<String>,
 }

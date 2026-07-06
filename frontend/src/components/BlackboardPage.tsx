@@ -41,6 +41,8 @@ interface BlackboardData {
   blackboard_debounce_count: number;
   /** Wiki 更新提示词模板（单阶段） */
   wiki_prompt: string;
+  /** Wiki 对话使用的执行器名称，空/undefined 表示使用默认值 claudecode */
+  wiki_chat_executor?: string | null;
 }
 
 /** Wiki 文件列表项（对应后端 WikiFileItem） */
@@ -275,7 +277,12 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       });
       // 保存成功后同步更新 data，避免下次打开弹窗读到旧值
       if (configData) {
-        setConfigData({ ...configData, blackboard_debounce_secs: debounceSecs ?? 600, blackboard_debounce_count: debounceCount ?? 10, wiki_prompt: wikiPrompt });
+        setConfigData({
+          ...configData,
+          blackboard_debounce_secs: debounceSecs ?? 600,
+          blackboard_debounce_count: debounceCount ?? 10,
+          wiki_prompt: wikiPrompt,
+        });
       }
       message.success('设置已保存');
       setSettingsOpen(false);
@@ -367,6 +374,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
           workspaceId={workspaceId}
         />
       </div>
+      {/* 中间主体：Wiki 布局（BlackboardWikiLayout 自身顶层已是 flex:1 容器，无需额外包裹） */}
       <BlackboardWikiLayout
         isDark={isDark}
         files={files}

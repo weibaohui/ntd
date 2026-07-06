@@ -1075,42 +1075,8 @@ html, body {
   color: var(--color-text);
 }
 
-.mobile-fab {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: var(--color-primary);
-  color: #ffffff;
-  border: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: var(--shadow-md);
-  z-index: var(--z-fab);
-}
-
-.mobile-fab:hover {
-  background: var(--color-primary-hover);
-  transform: translateY(-2px) scale(1.05);
-}
-
-.mobile-fab:active {
-  transform: scale(0.95);
-}
-
-/* ---------- Mobile FAB Group (Speed Dial) ---------- */
-.mobile-fab-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: calc(var(--z-fab) - 1);
-  background: transparent;
-}
-
-.mobile-fab-group {
+/* ---------- Unified FAB (Floating Action Button) ---------- */
+.fab-group {
   position: fixed;
   bottom: 24px;
   right: 24px;
@@ -1121,55 +1087,54 @@ html, body {
   gap: 12px;
 }
 
-.mobile-fab-main {
-  width: 56px;
+/* 收缩状态：极窄竖条贴边 */
+.fab-collapsed {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
   height: 56px;
-  border-radius: 50%;
+  border-radius: 3px 0 0 3px;
   background: var(--color-primary);
-  color: #ffffff;
   border: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: var(--shadow-md);
-  z-index: 1;
-  transition: all 0.2s ease;
+  z-index: var(--z-fab);
+  transition: width 0.2s ease;
 }
 
-.mobile-fab-main:hover {
-  background: var(--color-primary-hover);
+.fab-collapsed:hover {
+  width: 10px;
 }
 
-.mobile-fab-main:active {
+/* 展开按钮组中最顶部的收缩触发按钮 */
+.fab-collapse-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.15s ease;
+}
+
+.fab-collapse-btn:hover {
+  color: var(--color-text);
+}
+
+.fab-collapse-btn:active {
   transform: scale(0.95);
 }
 
-.mobile-fab-main.expanded {
-  transform: rotate(45deg);
-}
-
-.mobile-fab-main.expanded:active {
-  transform: rotate(45deg) scale(0.95);
-}
-
-.mobile-fab-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  animation: fabItemIn 0.2s ease forwards;
-  opacity: 0;
-  transform: translateY(10px);
-}
-
-@keyframes fabItemIn {
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.mobile-fab-item-btn {
+.fab-item-btn {
   width: 48px;
   height: 48px;
   border-radius: 50%;
@@ -1182,29 +1147,47 @@ html, body {
   transition: all 0.15s ease;
 }
 
-.mobile-fab-item-btn:active {
-  transform: scale(0.92);
+.fab-item-btn:hover {
+  transform: scale(1.08);
+  box-shadow: var(--shadow-lg);
 }
 
-.mobile-fab-item-label {
-  padding: 4px 10px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-  background: var(--color-bg-elevated);
-  box-shadow: var(--shadow-sm);
-  color: var(--color-text);
+.fab-item-btn:active {
+  transform: scale(0.95);
 }
 
-.mobile-fab-create {
+@media (prefers-reduced-motion: reduce) {
+  .fab-collapsed,
+  .fab-collapse-btn,
+  .fab-item-btn {
+    transition: none !important;
+  }
+}
+
+/* 闪念按钮：蓝紫渐变 */
+.fab-smart {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  color: #ffffff;
+}
+
+/* Wiki 对话按钮：主色调 */
+.fab-wiki {
   background: var(--color-primary);
   color: #ffffff;
 }
 
-.mobile-fab-smart {
+/* 暗色主题适配 */
+[data-theme="dark"] .fab-smart {
   background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-  color: #ffffff;
+}
+
+[data-theme="dark"] .fab-wiki {
+  background: var(--color-primary);
+}
+
+[data-theme="dark"] .fab-collapse-btn {
+  background: #2a2a2a;
+  color: #888;
 }
 
 /* ---------- Smart Create Styles ---------- */
@@ -1343,10 +1326,6 @@ html, body {
   color: #60a5fa;
 }
 
-[data-theme="dark"] .mobile-fab-smart {
-  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-}
-
 [data-theme="dark"] .smart-create-footer .ant-btn-primary {
   background: linear-gradient(135deg, #3b82f6, #8b5cf6);
   box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35);
@@ -1370,18 +1349,6 @@ html, body {
 
   .smart-create-shortcut {
     display: none;
-  }
-}
-
-/* Reduced motion */
-@media (prefers-reduced-motion: reduce) {
-  .mobile-fab-item {
-    animation: none;
-    opacity: 1;
-    transform: none;
-  }
-  .mobile-fab-main.expanded {
-    transform: none;
   }
 }
 

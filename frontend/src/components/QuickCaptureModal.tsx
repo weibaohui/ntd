@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Modal, Drawer, Button, App } from 'antd';
 import { ThunderboltOutlined, ClockCircleOutlined } from '@ant-design/icons';
-import { WorkspaceSelect } from '@/components/common/WorkspaceSelect';
+import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
 import { ExecutorPickerPopover } from '@/components/common/ExecutorPickerPopover';
 import * as db from '@/utils/database';
 import { DEFAULT_EXECUTOR } from '@/types';
@@ -186,23 +186,12 @@ export function QuickCaptureModal({
         }}
       />
 
-      {/* 工作空间选择 */}
-      <div>
-        <div style={{ marginBottom: 6, fontWeight: 600, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-          工作空间
-        </div>
-        <WorkspaceSelect
+      {/* 工作空间 + 执行器选择：一行排列 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <WorkspaceSwitcher
           value={workspaceId}
-          onChange={(v) => setWorkspaceId(v)}
-          required
+          onChange={(id) => setWorkspaceId(id)}
         />
-      </div>
-
-      {/* 执行器选择（Popover） */}
-      <div>
-        <div style={{ marginBottom: 6, fontWeight: 600, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-          执行器
-        </div>
         <ExecutorPickerPopover
           value={executor}
           onChange={handleExecutorChange}

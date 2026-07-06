@@ -7,7 +7,7 @@
 //! - `PATCH /api/workspaces/{workspace_id}/blackboard/config`：更新配置
 
 use axum::extract::{Path, State};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 
 use crate::db::blackboard::BlackboardConfig;
@@ -27,6 +27,8 @@ pub struct BlackboardResponse {
     pub blackboard_debounce_count: i64,
     /// Wiki 维护提示词模板（空字符串表示使用内置默认）
     pub wiki_prompt: String,
+    /// Wiki 对话使用的执行器名称（None 表示使用默认值 "claudecode"）
+    pub wiki_chat_executor: Option<String>,
     /// 待处理的 execution_record_id 列表（JSON 数组字符串）
     pub pending_record_ids: String,
 }
@@ -46,11 +48,16 @@ pub struct WikiFileContent {
 }
 
 /// 更新黑板配置的请求体（所有字段可选，None 保持原值不变）。
+/// wiki_chat_executor 特殊语义：
+///   - 字段缺失 / 为 null → 不修改
+///   - 为空字符串 "" → 设为 NULL（使用默认执行器）
+///   - 为非空字符串 → 设为指定执行器名
 #[derive(Debug, serde::Deserialize)]
 pub struct UpdateBlackboardConfigRequest {
     pub blackboard_debounce_secs: Option<i64>,
     pub blackboard_debounce_count: Option<i64>,
     pub wiki_prompt: Option<String>,
+    pub wiki_chat_executor: Option<String>,
 }
 
 /// `GET /api/workspaces/{workspace_id}/blackboard`
@@ -72,6 +79,7 @@ pub async fn get_blackboard(
             blackboard_debounce_secs: model.blackboard_debounce_secs,
             blackboard_debounce_count: model.blackboard_debounce_count,
             wiki_prompt: model.wiki_prompt,
+            wiki_chat_executor: model.wiki_chat_executor,
             pending_record_ids: model.pending_record_ids,
         })),
         None => Ok(ApiResponse::ok(BlackboardResponse {
@@ -81,6 +89,7 @@ pub async fn get_blackboard(
             blackboard_debounce_secs: 600,
             blackboard_debounce_count: 10,
             wiki_prompt: String::new(),
+            wiki_chat_executor: None,
             pending_record_ids: String::from("[]"),
         })),
     }
@@ -105,6 +114,8 @@ pub async fn get_blackboard_config(
             debounce_secs: 600,
             debounce_count: 10,
             wiki_prompt: String::new(),
+            wiki_chat_executor: None,
+            wiki_chat_sessions: None,
         })),
     }
 }
@@ -125,6 +136,11 @@ pub async fn update_blackboard_config(
         req.blackboard_debounce_secs,
         req.blackboard_debounce_count,
         req.wiki_prompt.clone(),
+        // wiki_chat_executor: Option<String> → Option<Option<String>>
+        //   - 字段不存在 → None（不修改）
+        //   - 字段为 "" → Some(None)（设为 NULL，用默认执行器）
+        //   - 字段为非空 → Some(Some(s))（设为指定执行器）
+        req.wiki_chat_executor.map(|s| if s.is_empty() { None } else { Some(s) }),
     ).await.map_err(|e| AppError::Internal(format!("更新黑板配置失败: {}", e)))?;
 
     // 配置变更后同步到该 workspace 已存在的 Wiki Todo 的 prompt 字段：
@@ -223,6 +239,46 @@ pub async fn get_wiki_file(
     }
 }
 
+/// Wiki 对话请求体
+#[derive(Debug, serde::Deserialize)]
+pub struct WikiChatRequest {
+    /// 用户发送的消息文本
+    pub message: String,
+    /// 可选：指定执行器；不传则使用黑板配置中的 wiki_chat_executor，再缺省用 "claudecode"
+    pub executor: Option<String>,
+}
+
+/// `POST /api/workspaces/{workspace_id}/wiki/chat`
+///
+/// 用户通过自然语言与 Wiki 交流：后端直接 spawn 执行器在 wiki 目录运行，
+/// 执行结果通过 HTTP 响应一次性返回（非流式、不创建 Todo、不持久化记录）。
+/// 设计参考：feishu_listener 的「executor 默认响应」模式，把触发源从飞书消息换成 HTTP POST。
+pub async fn chat_with_wiki(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<i64>,
+    ApiJson(req): ApiJson<WikiChatRequest>,
+) -> Result<ApiResponse<crate::services::blackboard::WikiChatResponse>, AppError> {
+    // 消息为空直接返回 400，避免 spawn 无意义的执行器进程
+    if req.message.trim().is_empty() {
+        return Err(AppError::BadRequest("消息不能为空".to_string()));
+    }
+    // 确保黑板记录存在（无则创建，保证 wiki_chat_executor 配置可读取）
+    if let Err(e) = state.db.create_blackboard(workspace_id).await {
+        tracing::warn!("chat_with_wiki: create_blackboard 幂等创建失败: {:?}", e);
+    }
+    // 调 service 层执行对话
+    let resp = crate::services::blackboard::chat_with_wiki(
+        &state.db,
+        &state.executor_registry,
+        &state.tx,
+        workspace_id,
+        &req.message,
+        req.executor.as_deref(),
+    )
+    .await?;
+    Ok(ApiResponse::ok(resp))
+}
+
 /// 黑板 API 路由。
 pub fn blackboard_routes() -> Router<AppState> {
     Router::new()
@@ -241,5 +297,9 @@ pub fn blackboard_routes() -> Router<AppState> {
         .route(
             "/api/workspaces/{workspace_id}/wiki/files/{slug}",
             get(get_wiki_file),
+        )
+        .route(
+            "/api/workspaces/{workspace_id}/wiki/chat",
+            post(chat_with_wiki),
         )
 }

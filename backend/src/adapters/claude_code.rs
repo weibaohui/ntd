@@ -229,6 +229,10 @@ impl CodeExecutor for ClaudeCodeExecutor {
         self.session_id.lock().clone()
     }
 
+    fn get_session_id(&self) -> Option<String> {
+        self.session_id.lock().clone()
+    }
+
     fn parse_output_line(&self, line: &str) -> Option<ParsedLogEntry> {
         if line.is_empty() {
             return None;

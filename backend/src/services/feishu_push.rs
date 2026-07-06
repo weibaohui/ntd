@@ -320,6 +320,10 @@ impl FeishuPushService {
             }
             // BlackboardDebounceStatus 仅用于前端 WebSocket 推送，不发飞书
             ExecEvent::BlackboardDebounceStatus { .. } => None,
+            // WikiChat* 系列事件仅用于前端 WebSocket 推送，不发飞书
+            ExecEvent::WikiChatStarted { .. } => None,
+            ExecEvent::WikiChatOutput { .. } => None,
+            ExecEvent::WikiChatFinished { .. } => None,
         }
     }
 }

@@ -49,7 +49,7 @@ interface LeftRailProps {
   onToggleCollapsed?: () => void;
   /** 当前选中的工作空间 ID（project_directories.id，唯一键）。null 表示未选。 */
   workspace?: number | null;
-  onWorkspaceChange?: (workspaceId: number) => void;
+  onWorkspaceChange?: (workspaceId: number | null) => void;
   themeMode: 'light' | 'dark';
   toggleTheme: () => void;
 }
@@ -152,6 +152,7 @@ export function LeftRail({
             value={workspace ?? null}
             onChange={(next) => onWorkspaceChange?.(next)}
             onManage={() => onSelect('settings_projectDirectories')}
+            showAddOption={true}
             mode="full"
           />
         </div>
@@ -164,6 +165,7 @@ export function LeftRail({
           value={workspace ?? null}
           onChange={(next) => onWorkspaceChange?.(next)}
           onManage={() => onSelect('settings_projectDirectories')}
+          showAddOption={true}
           mode="compact"
         />
       </div>

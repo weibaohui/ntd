@@ -132,6 +132,10 @@ impl CodeExecutor for HermesExecutor {
         Self::extract_session_prefix(trimmed).map(str::to_string)
     }
 
+    fn get_session_id(&self) -> Option<String> {
+        self.session_id.lock().clone()
+    }
+
     fn parse_output_line(&self, line: &str) -> Option<ParsedLogEntry> {
         let trimmed = helpers::trimmed_non_empty(line)?;
         // 跳过 banner / box-drawing 行：与原行为一致（不向前端展示）

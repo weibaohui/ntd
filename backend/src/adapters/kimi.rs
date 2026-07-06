@@ -1,19 +1,35 @@
+use std::sync::Arc;
+use parking_lot::Mutex;
+
 use super::helpers;
 use super::{BaseExecutor, CodeExecutor, ExecutorType, ParsedLogEntry};
 
 /// Kimi executor。
 ///
 /// 内部使用 `BaseExecutor` 持有共享状态（path + model），
-/// Kimi 自身不维护额外的执行期状态，因此 `BaseExecutor` 的所有字段默认即可。
-// `BaseExecutor` 已经 `#[derive(Clone)]`，组合字段无需手写 Clone impl。
+/// 额外的 `session_id` 用于缓存从 meta 事件中提取的 session_id，
+/// 供 `extract_session_id` / `get_session_id` 回退使用。
+// `BaseExecutor` 已经 `#[derive(Clone)]`，`Arc<Mutex<...>>` 也派生 Clone。
 #[derive(Clone)]
 pub struct KimiExecutor {
     base: BaseExecutor,
+    /// 缓存从 meta 事件中提取的 session_id，支持跨行回退和 resume 时回写 DB。
+    session_id: Arc<Mutex<Option<String>>>,
 }
 
 impl KimiExecutor {
     pub fn new(path: String) -> Self {
-        Self { base: BaseExecutor::new(path) }
+        Self {
+            base: BaseExecutor::new(path),
+            session_id: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// 更新 session_id 缓存（extract_session_id 和 parse_output_line 共用）。
+    fn update_session_id_cache(&self, sid: Option<String>) {
+        if let Some(ref s) = sid {
+            *self.session_id.lock() = Some(s.clone());
+        }
     }
 
     /// 解析 assistant 角色：优先 tool_calls（首个匹配即返回），否则 text / thinking。
@@ -131,15 +147,37 @@ impl CodeExecutor for KimiExecutor {
         true
     }
 
+    /// 从 meta 事件的 JSON 行中提取 session_id，优先取当前行，否则回退到缓存值。
+    fn extract_session_id(&self, line: &str) -> Option<String> {
+        if let Some(json) = helpers::parse_json_line(line) {
+            if json.get("role").and_then(|v| v.as_str()) == Some("meta") {
+                if let Some(sid) = json.get("session_id").and_then(|v| v.as_str()) {
+                    self.update_session_id_cache(Some(sid.to_string()));
+                    return Some(sid.to_string());
+                }
+            }
+        }
+        self.session_id.lock().clone()
+    }
+
+    fn get_session_id(&self) -> Option<String> {
+        self.session_id.lock().clone()
+    }
+
     fn parse_output_line(&self, line: &str) -> Option<ParsedLogEntry> {
         // 先尝试解析 JSON 行（标准 NDJSON 格式）
         if let Some(json) = helpers::parse_json_line(line) {
             let role = json.get("role").and_then(|v| v.as_str())?;
+            // role="meta" 事件中可能携带 session_id，缓存到 executor 状态中
+            if role == "meta" {
+                if let Some(sid) = json.get("session_id").and_then(|v| v.as_str()) {
+                    self.update_session_id_cache(Some(sid.to_string()));
+                }
+                return None;
+            }
             return match role {
                 "assistant" => self.parse_assistant(&json),
                 "tool" => self.parse_tool_result(&json),
-                // role="meta" 包含 session.resume_hint 等元事件，跳过（resume 提示由 parse_stderr_line 统一处理）
-                "meta" => None,
                 _ => None,
             };
         }
@@ -298,5 +336,44 @@ mod tests {
         assert_eq!(entry.log_type, "tool_call");
         assert!(entry.content.contains("TodoList"));
         assert!(entry.tool_input_json.is_some());
+    }
+
+    #[test]
+    fn test_extract_session_id_from_meta_event() {
+        let executor = KimiExecutor::new("kimi".to_string());
+        let json = r#"{"role":"meta","type":"session.resume_hint","session_id":"kimi_abc123","command":"kimi -r kimi_abc123","content":"To resume this session: kimi -r kimi_abc123"}"#;
+        // 通过 extract_session_id 提取
+        assert_eq!(executor.extract_session_id(json), Some("kimi_abc123".to_string()));
+    }
+
+    #[test]
+    fn test_extract_session_id_falls_back_to_cached() {
+        let executor = KimiExecutor::new("kimi".to_string());
+        let meta = r#"{"role":"meta","type":"session.resume_hint","session_id":"kimi_session_xyz"}"#;
+        // 先通过 parse_output_line 缓存
+        let _ = executor.parse_output_line(meta);
+        // 后续任意行都能回退到缓存值
+        assert_eq!(executor.extract_session_id(r#"{"role":"assistant","content":"hello"}"#), Some("kimi_session_xyz".to_string()));
+    }
+
+    #[test]
+    fn test_extract_session_id_no_session_yet() {
+        let executor = KimiExecutor::new("kimi".to_string());
+        // meta 事件未到达时返回 None
+        assert_eq!(executor.extract_session_id(r#"{"role":"assistant","content":"hello"}"#), None);
+    }
+
+    #[test]
+    fn test_get_session_id_returns_cached() {
+        let executor = KimiExecutor::new("kimi".to_string());
+        let meta = r#"{"role":"meta","session_id":"kimi_cached_sid"}"#;
+        let _ = executor.parse_output_line(meta);
+        assert_eq!(executor.get_session_id(), Some("kimi_cached_sid".to_string()));
+    }
+
+    #[test]
+    fn test_get_session_id_before_meta_returns_none() {
+        let executor = KimiExecutor::new("kimi".to_string());
+        assert_eq!(executor.get_session_id(), None);
     }
 }

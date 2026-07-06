@@ -88,6 +88,8 @@ impl Database {
             blackboard_debounce_count: ActiveValue::Set(10),
             // 空字符串表示使用内置默认提示词模板
             wiki_prompt: ActiveValue::Set(String::new()),
+            // None 表示使用默认执行器 "claudecode"
+            wiki_chat_executor: ActiveValue::Set(None),
             updated_at: ActiveValue::Set(Some(now.clone())),
             created_at: ActiveValue::Set(Some(now)),
             ..Default::default()
@@ -171,6 +173,7 @@ impl Database {
             blackboard_debounce_secs: ActiveValue::Set(600),
             blackboard_debounce_count: ActiveValue::Set(10),
             wiki_prompt: ActiveValue::Set(String::new()),
+            wiki_chat_executor: ActiveValue::Set(None),
             ..Default::default()
         };
         // ON CONFLICT(workspace_id)：命中后只覆盖 content/updated_at，保留 created_at 和配置字段
@@ -313,7 +316,7 @@ impl Database {
         Ok(())
     }
 
-    /// 获取指定工作空间的黑板配置（防抖阈值、提示词）。
+    /// 获取指定工作空间的黑板配置（防抖阈值、提示词、wiki_chat_executor）。
     ///
     /// 记录不存在时返回 None；调用方应确保黑板记录已通过 create_blackboard 初始化。
     pub async fn get_blackboard_config(
@@ -328,22 +331,29 @@ impl Database {
             debounce_secs: b.blackboard_debounce_secs,
             debounce_count: b.blackboard_debounce_count,
             wiki_prompt: b.wiki_prompt,
+            wiki_chat_executor: b.wiki_chat_executor,
+            wiki_chat_sessions: b.wiki_chat_sessions,
         }))
     }
 
     /// 更新指定工作空间的黑板配置。
     ///
-    /// 输入：workspace_id + 三个可选字段（debounce_secs、debounce_count、wiki_prompt）。
+    /// 输入：workspace_id + 四个可选字段（debounce_secs、debounce_count、wiki_prompt、wiki_chat_executor）。
     /// 流程：先按 workspace_id 查出黑板记录（不存在则 RecordNotFound）→ 构造 ActiveModel
     /// → 只对传入 Some 的字段写入，传入 None 的保持原值不变 → update。
     /// 防抖阈值有下限保护：debounce_secs >= 10，debounce_count >= 1。
-    /// 记录不存在时返回 RecordNotFound；调用方��确保黑板记录已存在。
+    /// wiki_chat_executor 使用 Option<Option<String>>：
+    ///   - 外层 None：不修改
+    ///   - 外层 Some(None)：设为 NULL（使用默认执行器）
+    ///   - 外层 Some(Some(s))：设为指定执行器名
+    /// 记录不存在时返回 RecordNotFound；调用方须确保黑板记录已存在。
     pub async fn update_blackboard_config(
         &self,
         workspace_id: i64,
         debounce_secs: Option<i64>,
         debounce_count: Option<i64>,
         wiki_prompt: Option<String>,
+        wiki_chat_executor: Option<Option<String>>,
     ) -> Result<(), sea_orm::DbErr> {
         let board = blackboards::Entity::find()
             .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
@@ -371,6 +381,92 @@ impl Database {
         if let Some(v) = wiki_prompt {
             am.wiki_prompt = ActiveValue::Set(v);
         }
+        if let Some(v) = wiki_chat_executor {
+            am.wiki_chat_executor = ActiveValue::Set(v);
+        }
+        am.update(&self.conn).await?;
+        Ok(())
+    }
+
+    /// 获取指定工作空间指定执行器的 Wiki Chat session ID。
+    ///
+    /// 返回值：
+    /// - Some(Some(sid))：该执行器有 session
+    /// - Some(None)：该执行器无 session（首次对话或不支持 session）
+    /// - None：黑板记录不存在
+    ///
+    /// 并发安全：持 per-workspace 互斥锁，与 set_wiki_chat_session 互斥，
+    /// 防止并发请求读取到过期的 session_id。
+    pub async fn get_wiki_chat_session(
+        &self,
+        workspace_id: i64,
+        executor: &str,
+    ) -> Result<Option<Option<String>>, sea_orm::DbErr> {
+        let lock = queue_lock(workspace_id);
+        let _guard = lock.lock().await;
+
+        let board = blackboards::Entity::find()
+            .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
+            .one(&self.conn)
+            .await?;
+
+        let sessions_json = match board {
+            Some(b) => b.wiki_chat_sessions,
+            None => return Ok(None),
+        };
+
+        // 解析 JSON 获取对应执行器的 session
+        let sessions: std::collections::HashMap<String, Option<String>> =
+            serde_json::from_str(sessions_json.as_deref().unwrap_or("{}"))
+            .unwrap_or_default();
+
+        Ok(sessions.get(executor).cloned())
+    }
+
+    /// 更新指定工作空间指定执行器的 Wiki Chat session ID。
+    ///
+    /// 流程：
+    /// 1. 读取现有 sessions JSON
+    /// 2. 更新对应执行器的 session
+    /// 3. 写回数据库
+    ///
+    /// 并发安全：持 per-workspace 互斥锁，与 get_wiki_chat_session 互斥，
+    /// 防止并发请求的 session_id 互相覆盖。
+    pub async fn set_wiki_chat_session(
+        &self,
+        workspace_id: i64,
+        executor: &str,
+        session_id: Option<String>,
+    ) -> Result<(), sea_orm::DbErr> {
+        // 持 per-workspace 互斥锁串行化「读-改-写」，与 get_wiki_chat_session 互斥。
+        // 避免并发请求读取到过期的 session_id，或多个请求的 session_id 互相覆盖。
+        let lock = queue_lock(workspace_id);
+        let _guard = lock.lock().await;
+
+        // 读取现有 sessions
+        let board = blackboards::Entity::find()
+            .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
+            .one(&self.conn)
+            .await?
+            .ok_or_else(|| sea_orm::DbErr::RecordNotFound("blackboard not found".into()))?;
+
+        // 解析现有 JSON
+        let mut sessions: std::collections::HashMap<String, Option<String>> =
+            serde_json::from_str(board.wiki_chat_sessions.as_deref().unwrap_or("{}"))
+            .unwrap_or_default();
+
+        // 更新该执行器的 session
+        sessions.insert(executor.to_string(), session_id);
+
+        // 序列化并写回
+        let now = crate::models::utc_timestamp();
+        let am = blackboards::ActiveModel {
+            id: ActiveValue::Unchanged(board.id),
+            workspace_id: ActiveValue::Unchanged(workspace_id),
+            wiki_chat_sessions: ActiveValue::Set(Some(serde_json::to_string(&sessions).unwrap_or_default())),
+            updated_at: ActiveValue::Set(Some(now)),
+            ..Default::default()
+        };
         am.update(&self.conn).await?;
         Ok(())
     }
@@ -382,6 +478,11 @@ pub struct BlackboardConfig {
     pub debounce_secs: i64,
     pub debounce_count: i64,
     pub wiki_prompt: String,
+    /// Wiki 对话使用的执行器名称，None 或空表示使用默认值 "claudecode"
+    pub wiki_chat_executor: Option<String>,
+    /// Wiki 对话各执行器的 session ID（JSON 对象）。
+    /// 例如：{"claudecode": "uuid-session-1", "hermes": "uuid-session-2"}
+    pub wiki_chat_sessions: Option<String>,
 }
 
 #[cfg(test)]
@@ -425,6 +526,7 @@ mod tests {
         assert_eq!(board.blackboard_debounce_secs, 600);
         assert_eq!(board.blackboard_debounce_count, 10);
         assert_eq!(board.wiki_prompt, "");
+        assert_eq!(board.wiki_chat_executor, None);
 
         // 验证可通过 get 查到
         let fetched = db.get_blackboard(ws_id).await.unwrap();
@@ -556,6 +658,7 @@ mod tests {
         assert_eq!(cfg.debounce_secs, 600);
         assert_eq!(cfg.debounce_count, 10);
         assert_eq!(cfg.wiki_prompt, "");
+        assert_eq!(cfg.wiki_chat_executor, None);
     }
 
     /// 验证 update_blackboard_config 正确更新各字段。
@@ -565,7 +668,7 @@ mod tests {
         let ws_id = create_test_workspace(&db).await;
         db.create_blackboard(ws_id).await.unwrap();
 
-        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("wiki".to_string()))
+        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("wiki".to_string()), Some(Some("codex".to_string())))
             .await
             .unwrap();
 
@@ -573,6 +676,7 @@ mod tests {
         assert_eq!(cfg.debounce_secs, 300);
         assert_eq!(cfg.debounce_count, 5);
         assert_eq!(cfg.wiki_prompt, "wiki");
+        assert_eq!(cfg.wiki_chat_executor, Some("codex".to_string()));
     }
 
     /// 验证 update_blackboard_config 对 None 字段保持原值。
@@ -583,12 +687,12 @@ mod tests {
         db.create_blackboard(ws_id).await.unwrap();
 
         // 先全部更新
-        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("wiki".to_string()))
+        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("wiki".to_string()), Some(Some("kimi".to_string())))
             .await
             .unwrap();
 
         // 再只更新其中两个
-        db.update_blackboard_config(ws_id, Some(900), None, None)
+        db.update_blackboard_config(ws_id, Some(900), None, None, None)
             .await
             .unwrap();
 
@@ -596,6 +700,7 @@ mod tests {
         assert_eq!(cfg.debounce_secs, 900);
         assert_eq!(cfg.debounce_count, 5, "debounce_count 应保留之前的值");
         assert_eq!(cfg.wiki_prompt, "wiki", "wiki_prompt 应保留之前的值");
+        assert_eq!(cfg.wiki_chat_executor, Some("kimi".to_string()), "wiki_chat_executor 应保留之前的值");
     }
 
     /// 验证 update_blackboard_config 在记录不存在时返回 RecordNotFound。
@@ -603,7 +708,7 @@ mod tests {
     async fn test_update_blackboard_config_record_not_found() {
         let db = Database::new(":memory:").await.expect(":memory: must open");
         // 第 4 个参数 wiki_prompt 传 None，不参与此次测试验证
-        let result = db.update_blackboard_config(999, Some(300), None, None).await;
+        let result = db.update_blackboard_config(999, Some(300), None, None, None).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             sea_orm::DbErr::RecordNotFound(_) => {}
@@ -619,18 +724,40 @@ mod tests {
         db.create_blackboard(ws_id).await.unwrap();
 
         // 传入小于最小值的 debounce_secs，应被钳制到 10
-        db.update_blackboard_config(ws_id, Some(3), None, None)
+        db.update_blackboard_config(ws_id, Some(3), None, None, None)
             .await
             .unwrap();
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
         assert_eq!(cfg.debounce_secs, 10);
 
         // 传入小于最小值的 debounce_count，应被钳制到 1
-        db.update_blackboard_config(ws_id, None, Some(0), None)
+        db.update_blackboard_config(ws_id, None, Some(0), None, None)
             .await
             .unwrap();
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
         assert_eq!(cfg.debounce_count, 1);
+    }
+
+    /// 验证 update_blackboard_config 的 wiki_chat_executor: Some(None) 设为 NULL。
+    #[tokio::test]
+    async fn test_update_blackboard_config_set_executor_to_null() {
+        let db = Database::new(":memory:").await.expect(":memory: must open");
+        let ws_id = create_test_workspace(&db).await;
+        db.create_blackboard(ws_id).await.unwrap();
+
+        // 先设置一个值
+        db.update_blackboard_config(ws_id, None, None, None, Some(Some("codex".to_string())))
+            .await
+            .unwrap();
+        let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
+        assert_eq!(cfg.wiki_chat_executor, Some("codex".to_string()));
+
+        // 再设为 None（清空回退到默认）
+        db.update_blackboard_config(ws_id, None, None, None, Some(None))
+            .await
+            .unwrap();
+        let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
+        assert_eq!(cfg.wiki_chat_executor, None);
     }
 
     /// 并发回归测试：append 与 remove 交错执行时，队列必须正确收敛，

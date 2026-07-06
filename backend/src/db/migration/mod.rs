@@ -12,6 +12,8 @@ mod v1;
 mod v2_v5;
 mod v41_v46;
 mod v47_v53;
+mod v54;
+mod v55;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -46,6 +48,8 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v41_v46::V45AddTodosActionType),
         Box::new(v41_v46::V46AddTodosActionKey),
         Box::new(v47_v53::V47ConsolidatedBlackboardFeatures),
+        Box::new(v54::V54AddWikiChatExecutor),
+        Box::new(v55::V55AddWikiChatSessions),
     ]
 }
 

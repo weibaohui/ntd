@@ -345,6 +345,11 @@ pub trait CodeExecutor: Send + Sync {
         None
     }
 
+    /// 获取执行器内部已提取的 session_id（如 executor 在 parse_output_line 时缓存了 session）
+    fn get_session_id(&self) -> Option<String> {
+        None
+    }
+
     /// 解析输出行，返回解析后的日志条目
     fn parse_output_line(&self, line: &str) -> Option<ParsedLogEntry>;
 
