@@ -329,6 +329,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
               value={workspaceId}
               onChange={(v) => setField('workspaceId', v)}
               required
+              showAddOption={false}
             />
           </div>
 

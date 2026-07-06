@@ -28,6 +28,8 @@ interface WorkspaceSelectProps {
   onChange?: (workspaceId: number | null) => void;
   /** 是否必填（影响 Select 的 allowClear） */
   required?: boolean;
+  /** 是否显示下拉菜单底部"新建工作空间"选项，默认 true */
+  showAddOption?: boolean;
   /** antd Select 原生 props 透传 */
   selectProps?: Record<string, unknown>;
 }
@@ -37,7 +39,7 @@ interface QuickAddFormValues {
   path: string;
 }
 
-export function WorkspaceSelect({ value, onChange, required, selectProps }: WorkspaceSelectProps) {
+export function WorkspaceSelect({ value, onChange, required, showAddOption = true, selectProps }: WorkspaceSelectProps) {
   const { message } = App.useApp();
   // options.value 存 id（number），label 只展示 name，不在 UI 上暴露路径字符串。
   const [options, setOptions] = useState<{ label: string; value: number }[]>([]);
@@ -122,25 +124,27 @@ export function WorkspaceSelect({ value, onChange, required, selectProps }: Work
         dropdownRender={(menu) => (
           <>
             {menu}
-            <div
-              style={{
-                padding: '4px 8px',
-                borderTop: '1px solid var(--color-border-secondary)',
-                cursor: 'pointer',
-                color: 'var(--color-primary)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 4,
-                fontSize: 13,
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                setQuickAddOpen(true);
-              }}
-            >
-              <PlusOutlined style={{ fontSize: 12 }} />
-              新建工作空间
-            </div>
+            {showAddOption && (
+              <div
+                style={{
+                  padding: '4px 8px',
+                  borderTop: '1px solid var(--color-border-secondary)',
+                  cursor: 'pointer',
+                  color: 'var(--color-primary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  fontSize: 13,
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setQuickAddOpen(true);
+                }}
+              >
+                <PlusOutlined style={{ fontSize: 12 }} />
+                新建工作空间
+              </div>
+            )}
           </>
         )}
         style={{ minWidth: 160 }}

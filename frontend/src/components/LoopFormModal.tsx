@@ -289,6 +289,7 @@ export function LoopFormModal({
                   form.setFieldsValue({ review_template_id: null });
                 }}
                 required={mode === 'create'}
+                showAddOption={false}
               />
             </Form.Item>
             {/* 评审模板（随 workspace 联动过滤） */}

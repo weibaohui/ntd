@@ -591,6 +591,7 @@ export function TodoList(props: TodoListProps) {
             value={workspaceBatchTarget}
             onChange={(v: number | null) => setWorkspaceBatchTarget(v ?? null)}
             required
+            showAddOption={false}
           />
         </div>
         {workspaceBatchMode === 'copy' && (
