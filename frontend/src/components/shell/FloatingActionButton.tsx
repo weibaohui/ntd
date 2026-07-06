@@ -68,7 +68,7 @@ export function FloatingActionButton({
           onClick={handleCollapse}
           aria-label="收缩"
         >
-          ▾
+          <RightOutlined style={{ fontSize: 14, color: 'currentColor' }} />
         </button>
       </Tooltip>
 
