@@ -8,13 +8,6 @@ import React, { useMemo, useCallback, useEffect } from 'react';
 import * as db from '@/utils/database';
 import type { Todo } from '@/types';
 
-// Re-export domain hooks and providers (they are defined in separate files)
-export { useTodos, TodoProvider } from './useTodoContext';
-export type { TodoAction } from './useTodoContext';
-export { useExecution, ExecutionProvider } from './useExecutionContext';
-export type { ExecutionAction } from './useExecutionContext';
-export { useUI, UIProvider } from './useUIContext';
-
 // ─── Direct imports (needed within this file) ─────────────────
 
 import { useTodos, useVisibleTodos } from './useTodoContext';
@@ -89,8 +82,6 @@ function DataLoader() {
 }
 
 // ─── Unified useApp hook (backward compatibility) ─────────────
-
-export type AppState = ReturnType<typeof useApp>['state'];
 
 export function useApp() {
   const { state: todoState, dispatch: todoDispatch } = useTodos();
