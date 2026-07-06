@@ -183,7 +183,7 @@ async fn has_running_tasks(db: &Database) -> bool {
 async fn check_npm_latest_version() -> Result<Option<String>, String> {
     let output = tokio::task::spawn_blocking(|| {
         std::process::Command::new("npm")
-            .args(["view", "@weibaohui/nothing-todo", "version"])
+            .args(["view", "@weibaohui/ntd", "version"])
             .output()
     })
     .await
@@ -218,7 +218,7 @@ async fn execute_silent_upgrade() -> Result<(), String> {
                 "install",
                 "-g",
                 &format!("--prefix={}", prefix_for_npm),
-                "@weibaohui/nothing-todo@latest",
+                "@weibaohui/ntd@latest",
             ])
             .output()
     })

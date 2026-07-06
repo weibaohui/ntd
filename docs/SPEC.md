@@ -1,4 +1,4 @@
-# ntd (Nothing Todo) - 需求规格说明书
+# ntd (Now Task, Done) - 需求规格说明书
 
 > **最后核对日期**: 2026-06-08
 > **状态**: 文档为早期版本，实际功能已远超本规格所述（详见 docs/FEATURES.md 和 docs/ARCHITECTURE_HEALTH_CHECK_REPORT.md）。
@@ -7,7 +7,7 @@
 ## 1. 项目概述
 
 ### 项目名称
-**ntd** (Nothing Todo)
+**ntd** (Now Task, Done)
 
 ### 项目类型
 全栈应用 (Rust 后端 + React 前端 + 桌面端 + 飞书 Bot)

@@ -3,7 +3,7 @@ import { ShareAltOutlined } from '@ant-design/icons';
 import { CopyButton } from '@/components/CopyButton';
 
 const getSharePrompt = () => {
-  return `全局安装 ntd：npm install -g @weibaohui/nothing-todo，然后执行 ntd daemon install && ntd daemon start，可选安装 skills：ntd skills install，访问 8088 端口`;
+  return `全局安装 ntd：npm install -g @weibaohui/ntd，然后执行 ntd daemon install && ntd daemon start，可选安装 skills：ntd skills install，访问 8088 端口`;
 };
 
 export function ShareCard() {

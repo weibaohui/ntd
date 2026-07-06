@@ -1,5 +1,5 @@
 {
-  "name": "@weibaohui/nothing-todo-darwin-arm64",
+  "name": "@weibaohui/ntd-darwin-arm64",
   "version": "0.1.0",
   "description": "NothingTodo binary for macOS ARM64 (Apple Silicon)",
   "keywords": ["nothing-todo", "macos", "darwin", "arm64", "apple-silicon", "binary"],

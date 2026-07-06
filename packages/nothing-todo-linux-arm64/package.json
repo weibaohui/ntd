@@ -1,5 +1,5 @@
 {
-  "name": "@weibaohui/nothing-todo-linux-arm64",
+  "name": "@weibaohui/ntd-linux-arm64",
   "version": "0.1.0",
   "description": "NothingTodo binary for Linux ARM64",
   "keywords": ["nothing-todo", "linux", "arm64", "binary"],

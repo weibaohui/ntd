@@ -141,7 +141,7 @@ pub async fn version_handler() -> impl IntoResponse {
 /// 查询 npm 最新版本号，用于前端版本检查提示。
 pub async fn version_latest_handler() -> impl IntoResponse {
     let output = std::process::Command::new("npm")
-        .args(["view", "@weibaohui/nothing-todo", "version"])
+        .args(["view", "@weibaohui/ntd", "version"])
         .output();
 
     match output {
@@ -196,7 +196,7 @@ fn spawn_redeploy_sh_fallback(ntd_cmd: &str, marker_cleanup_path: &str, log_path
 pub async fn version_upgrade_handler() -> impl IntoResponse {
     let prefix = crate::npm_utils::get_npm_global_prefix();
     let npm_result = std::process::Command::new("npm")
-        .args(["install", "-g", &format!("--prefix={}", prefix), "@weibaohui/nothing-todo@latest"])
+        .args(["install", "-g", &format!("--prefix={}", prefix), "@weibaohui/ntd@latest"])
         .output();
 
     match &npm_result {

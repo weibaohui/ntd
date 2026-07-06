@@ -1,6 +1,6 @@
 # ntd Backend
 
-Rust + Axum 后端，为 Nothing Todo (ntd) 提供 HTTP API、Cron 调度、飞书消息桥接、SQLite 持久化等能力。
+Rust + Axum 后端，为 ntd (Now Task, Done) 提供 HTTP API、Cron 调度、飞书消息桥接、SQLite 持久化等能力。
 前端构建产物通过 `rust-embed` 嵌入二进制，分发一个可执行文件即可运行整套应用。
 
 > 配套文档：[ARCHITECTURE.md](./ARCHITECTURE.md) · [SEQUENCE.md](./SEQUENCE.md) · [CONFIG.md](./CONFIG.md)

@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 ## 项目概述
-ntd (Nothing Todo) 是一个 AI Todo 应用，基于 Rust 后端 + React 前端，支持 Claude Code 等执行器。
+ntd (Now Task, Done) 是一个 AI 驱动的任务引擎，基于 Rust 后端 + React 前端，支持 Claude Code 等执行器。
 
 ## 开发流程
 

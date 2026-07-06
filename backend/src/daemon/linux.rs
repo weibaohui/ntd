@@ -22,7 +22,7 @@ use super::DaemonAction;
 #[allow(unused)]
 pub(super) const SERVICE_NAME: &str = "ntd";
 #[allow(unused)]
-pub(super) const SERVICE_DESCRIPTION: &str = "Nothing Todo (ntd) - AI Todo Service";
+pub(super) const SERVICE_DESCRIPTION: &str = "ntd (Now Task, Done) - AI Task Engine Service";
 
 pub(super) fn handle(action: &DaemonAction) {
     match action {

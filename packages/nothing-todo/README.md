@@ -1,8 +1,8 @@
-# NothingTodo
+# ntd — Now Task, Done
 
-A cross-platform CLI tool for managing your daily tasks, built with Rust.
+A cross-platform AI task engine built with Rust.
 
-> "无事可做" — 因为 AI 已经帮你做完了。
+> 创建即执行，执行即完成。
 
 ## Preview
 
@@ -23,7 +23,7 @@ A cross-platform CLI tool for managing your daily tasks, built with Rust.
 ## Installation
 
 ```bash
-npm install -g @weibaohui/nothing-todo
+npm install -g @weibaohui/ntd
 ```
 
 ## Usage

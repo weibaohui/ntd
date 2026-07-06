@@ -39,7 +39,7 @@ fn hex_digit(b: u8) -> String {
 
 #[derive(Parser, Debug)]
 #[command(name = "ntd")]
-#[command(about = "AI Todo CLI - Manage AI-powered tasks", long_about = None)]
+#[command(about = "AI-powered task engine CLI", long_about = None)]
 pub struct Cli {
     /// API server URL (default: from ~/.ntd/config.yaml, or http://localhost:8088)
     #[arg(long)]

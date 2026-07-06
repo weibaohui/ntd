@@ -3,7 +3,7 @@
 ## 一键安装（推荐）
 
 ```bash
-npm install -g @weibaohui/nothing-todo
+npm install -g @weibaohui/ntd
 ntd daemon install   # 注册为系统服务（开机自启）
 ntd daemon start     # 立即启动
 ```
@@ -36,7 +36,7 @@ ntd daemon status     # 查看状态
 
 ```bash
 ntd daemon stop
-npm uninstall -g @weibaohui/nothing-todo
+npm uninstall -g @weibaohui/ntd
 # 数据保留在 ~/.ntd/ 下，想全删：rm -rf ~/.ntd
 ```
 

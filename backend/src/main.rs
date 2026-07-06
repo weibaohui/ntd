@@ -12,9 +12,9 @@ use ntd::service_context::ServiceContext;
 use ntd::{adapters, cli, daemon, db, handlers, scheduler::TodoScheduler, task_manager::TaskManager};
 use ntd::NtdSkills;
 
-/// ntd - Nothing Todo
+/// ntd - Now Task, Done
 #[derive(Parser)]
-#[command(name = "ntd", about = "AI Todo CLI", version)]
+#[command(name = "ntd", about = "AI-powered task engine CLI", version)]
 struct Cli {
     /// API server URL (default: from ~/.ntd/config.yaml, or http://localhost:8088)
     #[arg(long)]
@@ -136,7 +136,7 @@ async fn main() {
                     "install",
                     "-g",
                     &format!("--prefix={}", prefix),
-                    "@weibaohui/nothing-todo@latest",
+                    "@weibaohui/ntd@latest",
                 ])
                 .status()
             {
@@ -604,7 +604,7 @@ async fn run_server(cli_port: Option<u16>) {
     let port = cli_port.unwrap_or(cfg.port);
 
     info!("===========================================");
-    info!("  Nothing Todo (ntd)");
+    info!("  ntd (Now Task, Done)");
     info!("  Open http://localhost:{} in your browser", port);
     info!("===========================================");
 

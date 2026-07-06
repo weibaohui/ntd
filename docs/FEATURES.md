@@ -1,6 +1,6 @@
 # ntd 功能清单
 
-> 本文档是 ntd (Nothing Todo) 的功能总览,按能力域划分,便于使用者快速了解系统能做什么、开发者快速定位代码模块。
+> 本文档是 ntd (Now Task, Done) 的功能总览,按能力域划分,便于使用者快速了解系统能做什么、开发者快速定位代码模块。
 >
 > 前端组件级细节请参考 [frontend-features.md](./frontend-features.md),后端 API 细节请参考 [ntd-api.md](./ntd-api.md),CLI 命令细节请参考 [ntd-cli.md](./ntd-cli.md)。
 
@@ -375,7 +375,7 @@
 |--------|------|
 | 版本展示 | `ntd version` / 设置页显示当前版本与 Git 信息 |
 | 检查更新 | 调用 `npm view` 获取最新版本 |
-| 在线升级 | 一键 `npm install -g @weibaohui/nothing-todo@latest` + daemon restart |
+| 在线升级 | 一键 `npm install -g @weibaohui/ntd@latest` + daemon restart |
 | 升级日志回显 | 升级输出回显到 UI,失败可手动重试 |
 
 ---
@@ -435,10 +435,10 @@ ntd [全局选项] <子命令>
 | Linux | x86_64 / ARM64 | `nothing-todo-linux-x64.tar.gz` / `...-arm64.tar.gz` |
 | macOS | ARM64 (Apple Silicon) | `nothing-todo-darwin-arm64.tar.gz` |
 | Windows | x86_64 | `nothing-todo-windows-x64.zip` |
-| npm | 跨平台 | `@weibaohui/nothing-todo` |
+| npm | 跨平台 | `@weibaohui/ntd` |
 | Cargo | 跨平台 | `crates.io` (源码) |
 
-- **安装方式**:`npm install -g @weibaohui/nothing-todo`(推荐)、手动下载二进制、源码 cargo build
+- **安装方式**:`npm install -g @weibaohui/ntd`(推荐)、手动下载二进制、源码 cargo build
 - **跨平台服务管理**:macOS launchd / Linux systemd / Windows Service
 
 ---

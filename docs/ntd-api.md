@@ -1,6 +1,6 @@
 # ntd API 接口文档
 
-AI Todo 应用后端 API 参考手册。所有接口前缀为 `/api/`（WebSocket 为 `/api/events`）。
+ntd 后端 API 参考手册。所有接口前缀为 `/api/`（WebSocket 为 `/api/events`）。
 
 ---
 
@@ -1618,7 +1618,7 @@ GET /api/version
 GET /api/version/latest
 ```
 
-后端调用 `npm view @weibaohui/nothing-todo version` 获取远程最新版本号，供前端做升级提示。
+后端调用 `npm view @weibaohui/ntd version` 获取远程最新版本号，供前端做升级提示。
 
 **响应示例：**
 ```json
@@ -1637,7 +1637,7 @@ GET /api/version/latest
 POST /api/version/upgrade
 ```
 
-流程：调用 `npm install -g @weibaohui/nothing-todo@latest` → fork 子进程执行 `daemon stop → uninstall → install --force → start`，让当前进程先返回响应后再重启服务。
+流程：调用 `npm install -g @weibaohui/ntd@latest` → fork 子进程执行 `daemon stop → uninstall → install --force → start`，让当前进程先返回响应后再重启服务。
 
 **响应示例：**
 ```json

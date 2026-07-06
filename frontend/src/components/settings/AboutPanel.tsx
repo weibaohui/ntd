@@ -27,7 +27,7 @@ const UPGRADE_RELOAD_DELAY_MS = 5000;
 // 子进程在后台 sleep 3s 后执行 install --force + start。
 // 因此前端看到的步骤简化为两步，弹窗描述更贴近用户感知。
 const UPGRADE_STEPS = [
-  { step: '步骤 1', label: '升级 npm 包', code: 'npm install -g @weibaohui/nothing-todo@latest' },
+  { step: '步骤 1', label: '升级 npm 包', code: 'npm install -g @weibaohui/ntd@latest' },
   { step: '步骤 2', label: '自动重新部署服务', code: 'ntd daemon install --force && ntd daemon start' },
 ];
 
@@ -36,7 +36,7 @@ const UPGRADE_STEPS = [
 // 与 UPGRADE_STEPS 的区别：步骤 2 使用 uninstall + install + restart
 // 便于用户在终端中独立执行，不依赖后端 fork 子进程的自动流程。
 const MANUAL_UPGRADE_STEPS = [
-  { label: '1. 升级 npm 包', code: 'npm install -g @weibaohui/nothing-todo@latest' },
+  { label: '1. 升级 npm 包', code: 'npm install -g @weibaohui/ntd@latest' },
   { label: '2. 重新注册并重启服务', code: 'ntd daemon uninstall && ntd daemon install && ntd daemon restart' },
 ];
 
@@ -523,7 +523,7 @@ export function AboutPanel() {
             </div>
             <div style={{ borderTop: '1px solid var(--color-border-light)', paddingTop: 16 }}>
               <Paragraph type="secondary" style={{ margin: 0 }}>
-                NTD (Nothing Todo) 是一个 AI Todo 应用，支持 Claude Code 和 MobileCoder 等多种执行器。
+                NTD (Now Task, Done) 是一个 AI 驱动的任务引擎，支持 Claude Code 和 MobileCoder 等多种执行器。
               </Paragraph>
             </div>
           </div>

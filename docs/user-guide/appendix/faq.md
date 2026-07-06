@@ -88,7 +88,7 @@ A: 单机生产够用（万级 Todo 没问题）。多节点需要换 PostgreSQL
 A: 配置文件可能有 breaking change，看 release notes。最好先备份再升级。
 
 **Q: 升级失败怎么回滚？**
-A: `npm install -g @weibaohui/nothing-todo@<老版本>`，然后 `ntd daemon restart`。
+A: `npm install -g @weibaohui/ntd@<老版本>`，然后 `ntd daemon restart`。
 
 ## 其他
 

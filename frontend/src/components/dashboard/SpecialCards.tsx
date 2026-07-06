@@ -55,10 +55,10 @@ export function ActiveTasksCard({ runningTasks }: ActiveTasksCardProps) {
         ) : (
           <div style={{ textAlign: 'center', color: 'var(--color-text-secondary)', padding: '20px 0' }}>
             <div style={{ fontSize: 32, fontWeight: 700, marginBottom: 8, color: 'var(--color-text)' }}>
-              nothing todo
+              Task In,
             </div>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12, color: 'var(--color-text)' }}>
-              but everything is todo
+              Done Out.
             </div>
             <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>
               {RANDOM_QUOTE}

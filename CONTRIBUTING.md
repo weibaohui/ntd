@@ -1,4 +1,4 @@
-# Contributing to ntd (Nothing Todo)
+# Contributing to ntd (Now Task, Done)
 
 感谢你愿意贡献！本文档列出本仓库（特别是 `backend/` 目录）当前的 Rust 开发规约。
 如有冲突以本文档为准，并在 PR 描述里说明。

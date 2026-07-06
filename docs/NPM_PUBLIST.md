@@ -2,10 +2,10 @@
 
 ## 架构概述
 
-使用 npm scoped package `@weibaohui/nothing-todo` 分发 Rust 编译的跨平台二进制。
+使用 npm scoped package `@weibaohui/ntd` 分发 Rust 编译的跨平台二进制。
 
-- **主包** `@weibaohui/nothing-todo`：跨平台 wrapper，安装时自动选择对应平台包
-- **平台包** `@weibaohui/nothing-todo-{linux-x64,linux-arm64,darwin-arm64,windows-x64}`：各平台独立包
+- **主包** `@weibaohui/ntd`：跨平台 wrapper，安装时自动选择对应平台包
+- **平台包** `@weibaohui/ntd-{linux-x64,linux-arm64,darwin-arm64,windows-x64}`：各平台独立包
 
 > 注：实际 `script/npm_publish.sh:58-63` 的 `PLATFORMS` 数组只有 4 个元素，**未打包 `darwin-x64`**（Intel macOS 由 `darwin-arm64` Rosetta 兼容）。
 
@@ -140,8 +140,8 @@ cd packages/nothing-todo && npm publish --access public && cd -
 ### 步骤 8: 验证发布
 
 ```bash
-npm view @weibaohui/nothing-todo
-npm install -g @weibaohui/nothing-todo
+npm view @weibaohui/ntd
+npm install -g @weibaohui/ntd
 ntd --help
 ```
 
@@ -157,7 +157,7 @@ ntd --help
 
 ```bash
 # 查看已发布版本
-npm view @weibaohui/nothing-todo
+npm view @weibaohui/ntd
 
 # 重新发布（确保版本号已递增）
 ./script/npm_publish.sh v0.1.3
@@ -171,7 +171,7 @@ npm view @weibaohui/nothing-todo
 
 用户安装 beta 版本：
 ```bash
-npm install -g @weibaohui/nothing-todo@beta
+npm install -g @weibaohui/ntd@beta
 ```
 
 ### Q: npm 发布需要哪些权限？
@@ -186,10 +186,10 @@ npm install -g @weibaohui/nothing-todo@beta
 
 ```bash
 # 全局安装（自动选择对应平台）
-npm install -g @weibaohui/nothing-todo
+npm install -g @weibaohui/ntd
 
 # 或使用 npx（无需安装）
-npx @weibaohui/nothing-todo
+npx @weibaohui/ntd
 ```
 
 ---
@@ -202,7 +202,7 @@ npx @weibaohui/nothing-todo
 - [ ] Git Tag 已创建并推送
 - [ ] npm 已登录（`npm whoami` 确认）
 - [ ] 版本号已正确同步
-- [ ] 发布后验证 `npm view @weibaohui/nothing-todo`
+- [ ] 发布后验证 `npm view @weibaohui/ntd`
 
 ---
 
