@@ -103,7 +103,7 @@ const DEFAULT_WIKI_PROMPT = `你是一个工作空间黑板维护者。你的任
    - ## 矛盾/风险
    - ## 下一步建议
 7. 每条结论标注来源，使用 \`ntd todo execution get <record_id>\` 返回结果中的 \`todo_id\` 和 \`id\` 字段，
-   生成 app 内链接：(来源: [record_{record_id}](/?view=items&id={todo_id}&panel=post&record={record_id}))
+   生成 app 内链接：(来源: [record_{record_id}](/#/items?id={todo_id}&panel=post&record={record_id}))
 
 完成后输出简短确认即可，无需输出 YAML/JSON。`;
 
@@ -121,7 +121,7 @@ interface MarkdownLinkProps extends React.AnchorHTMLAttributes<HTMLAnchorElement
  * - href 以 ntd://todo/ 开头 → 渲染为可点击的"内链"按钮，
  *   点击时通过 useViewState.selectTodo 导航到事项详情，
  *   阻止浏览器尝试解析 ntd:// 自定义协议导致"找不到应用"提示。
- * - href 以 / 开头（app 内相对路径，如 /?view=items&id=16&panel=post&record=6513）
+ * - href 以 / 开头（app 内相对路径，如 /#/items?id=16&panel=post&record=6513）
  *   → 新标签页打开，让用户同时保留 wiki 页面和查看源记录。
  * - 其他 href（http/https/mailto 等）→ 新窗口打开 + rel=noopener 防 tabnabbing。
  */
@@ -153,7 +153,7 @@ function TodoLink(props: MarkdownLinkProps): React.ReactElement {
     );
   }
 
-  // 内部相对路径（以 / 但非 // 开头，如 /?view=items&id=16&panel=post&record=6513）
+  // 内部相对路径（以 / 但非 // 开头，如 /#/items?id=16&panel=post&record=6513）
   // → 新标签页打开，让用户同时保留当前 wiki 页面和查看源记录
   // 排除 // 协议相对 URL，避免把外站链接当作 app 内路径
   if (href.startsWith('/') && !href.startsWith('//')) {
@@ -175,7 +175,11 @@ function TodoLink(props: MarkdownLinkProps): React.ReactElement {
 /** 从 URL ?workspace=N 解析工作空间 ID；解析失败时返回默认值 */
 function resolveWorkspaceFromUrl(): number {
   // 在浏览器外（如 SSR/测试）调用 window 会炸；外层先保证只在浏览器跑
-  const raw = new URLSearchParams(window.location.search).get(URL_WORKSPACE_PARAM);
+  // 从 hash 路由中解析 workspace 参数（hash 格式：#/view?param=value）
+  const hash = window.location.hash || '';
+  const hashWithoutHash = hash.startsWith('#') ? hash.slice(1) : hash;
+  const [, search] = hashWithoutHash.split('?', 2);
+  const raw = new URLSearchParams(search || '').get(URL_WORKSPACE_PARAM);
   const parsed = raw ? Number(raw) : NaN;
   return Number.isFinite(parsed) ? parsed : DEFAULT_WORKSPACE_ID;
 }
@@ -1006,7 +1010,7 @@ function BlackboardContent(props: BlackboardContentProps) {
         // 覆盖 a 标签渲染：让 ntd://todo/{id} 走内部导航
         components={{ a: TodoLink }}
         // DOMPurify 默认会拒绝 ntd:// 等未知协议，会把整条链接剥成纯文本。
-        // 显式允许 ntd 协议 + 以 / 开头的内部相对路径（如 /?view=items&id=16&panel=post&record=6513），
+        // 显式允许 ntd 协议 + 以 / 开头的内部相对路径（如 /#/items?id=16&panel=post&record=6513），
         // 其它未知协议仍被拒绝。
         dompurifyConfig={{
           ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|ntd):|\/)/i,

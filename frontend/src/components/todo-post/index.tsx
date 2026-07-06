@@ -209,9 +209,14 @@ export function TodoPostPage({
   };
 
   const handleSelectRecord = (rId: number) => {
-    const url = new URL(window.location.href);
-    url.searchParams.set("record", String(rId));
-    window.history.replaceState(null, "", url.toString());
+    // hash 路由模式下，从 hash 中解析并更新 record 参数
+    const hash = window.location.hash || '';
+    const hashWithoutHash = hash.startsWith('#') ? hash.slice(1) : hash;
+    const [hashPath, hashSearch] = hashWithoutHash.split('?', 2);
+    const params = new URLSearchParams(hashSearch || '');
+    params.set('record', String(rId));
+    const newHash = '#' + hashPath + '?' + params.toString();
+    window.history.replaceState(null, '', newHash);
   };
 
   const openLogDrawer = (rId: number) => {

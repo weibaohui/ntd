@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { useApp } from '@/hooks/useApp';
+import { useViewState, type BoardMode } from '@/hooks/useViewState';
 import { KanbanBoard } from './KanbanBoard';
 import { RunningBoard } from './RunningBoard';
 // 引入环路视图组件：与 KanbanBoard（todo 看板）、RunningBoard（运行视图）并列，
@@ -28,14 +29,12 @@ const TIME_OPTIONS: { label: string; value: number }[] = [
   { label: '7d', value: 168 },
 ];
 
-// 看板模式类型：支持四种视图切换。
-// 为什么新增 loop_kanban：环路执行历史需要独立视图，与 todo 维度的看板互补。
-// 设计取舍：复用同一个 Segmented 切换，避免多入口导航混乱。
-type BoardMode = 'memorial' | 'kanban' | 'running' | 'loop_kanban';
-
 export function MemorialBoard() {
   const { state, dispatch } = useApp();
-  const [boardMode, setBoardMode] = useState<BoardMode>('memorial');
+  const { boardMode, replaceUrl } = useViewState();
+  const handleBoardModeChange = (mode: BoardMode) => {
+    replaceUrl('memorial', { mode });
+  };
   const [items, setItems] = useState<RecentCompletedTodo[]>([]);
   const [loading, setLoading] = useState(true);
   // 为什么 hours 和 searchText 在 MemorialBoard 层管理：
@@ -350,7 +349,7 @@ export function MemorialBoard() {
           <Segmented
             size="small"
             value={boardMode}
-            onChange={value => setBoardMode(value as BoardMode)}
+            onChange={value => handleBoardModeChange(value as BoardMode)}
             options={[
               { label: <span><AppstoreOutlined /> 看板视图</span>, value: 'kanban' },
               { label: <span><ThunderboltOutlined /> 运行视图</span>, value: 'running' },
