@@ -4396,6 +4396,9 @@ code {
   gap: 8px;
   flex: 1;
   min-width: 0;
+  /* 内容从右侧向左排列：即使 extra 里只有单个按钮也能推到最右侧，
+     而非紧跟在标题后面。进度条等拉伸元素会自然从左到右撑满。 */
+  justify-content: flex-end;
 }
 
 .ntd-page-card-divider {
