@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::db::project_directory::ProjectDirectory;
 use crate::models::{
     ClientResponse, CreateTagRequest, CreateTodoRequest, DashboardStats,
     ExecutionRecord, ExecutionRecordsPage, ExecutionSummary, Tag, Todo, ExecuteRequest, LoopDto,
@@ -92,6 +93,30 @@ pub enum Commands {
     Blackboard {
         #[command(subcommand)]
         action: BlackboardAction,
+    },
+    /// Workspace (project directory) management
+    Workspace {
+        #[command(subcommand)]
+        action: WorkspaceAction,
+    },
+}
+
+/// Workspace CLI actions: 列出 / 查询单个 / 注册一个项目目录。
+/// 后端表 `project_directories` 的唯一键是自增 id，path 不保证唯一，
+/// 故 CLI 一律按 id 消费；create 仍要 path+name 是因为注册动作就是登记这两个字段。
+#[derive(Debug, Clone, Subcommand)]
+pub enum WorkspaceAction {
+    /// List all registered workspaces
+    List,
+    /// Register a new workspace (project directory)
+    Create {
+        /// Directory path (absolute or relative; stored verbatim)
+        #[arg(short, long)]
+        path: String,
+
+        /// Human-readable name (shown in todo picker)
+        #[arg(short, long)]
+        name: String,
     },
 }
 
@@ -488,6 +513,7 @@ pub async fn run_command(cli: &Cli) -> Result<()> {
         Commands::Tag { action } => handle_tag(&client, action, &cli.output, &cli.fields).await?,
         Commands::Stats => handle_stats(&client, &cli.output, &cli.fields).await?,
         Commands::Blackboard { action } => handle_blackboard(&client, action, &cli.output, &cli.fields).await?,
+        Commands::Workspace { action } => handle_workspace(&client, action, &cli.output, &cli.fields).await?,
     }
 
     Ok(())
@@ -787,6 +813,54 @@ async fn handle_blackboard(
             }
         }
     }
+    Ok(())
+}
+
+// ============== Workspace Handlers ==============
+// 三个子命令各拆一个独立函数，避免 handle_workspace 单函数超 30 行；
+// 后端接口路径与 handlers/project_directory.rs::routes 对齐。
+
+async fn handle_workspace(
+    client: &ApiClient,
+    action: &WorkspaceAction,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    match action {
+        WorkspaceAction::List => list_workspaces(client, output, fields).await,
+        WorkspaceAction::Create { path, name } => {
+            create_workspace(client, path, name, output, fields).await
+        }
+    }
+}
+
+/// 调 `GET /api/project-directories` 拉全部已注册工作空间。
+async fn list_workspaces(
+    client: &ApiClient,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    let resp: ClientResponse<Vec<ProjectDirectory>> = client.get("/project-directories").await?;
+    print_response(&resp, output, fields)?;
+    Ok(())
+}
+
+/// 调 `POST /api/project-directories` 注册一个新工作空间。
+/// body 结构与 handlers/project_directory.rs::CreateProjectDirectoryRequest 对齐。
+async fn create_workspace(
+    client: &ApiClient,
+    path: &str,
+    name: &str,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    // 用 serde_json::json 构造 body 而非具名 struct，避免在 models 层再开一个 DTO——
+    // create 接口只有两个字段，cli 侧不会再复用，具名反而是过度设计。
+    let body = serde_json::json!({ "path": path, "name": name });
+    let resp: ClientResponse<ProjectDirectory> = client
+        .post("/project-directories", &body)
+        .await?;
+    print_response(&resp, output, fields)?;
     Ok(())
 }
 
@@ -1361,6 +1435,33 @@ mod tests {
                 assert_eq!(search, Some("bug".to_string()));
             }
             _ => panic!("Expected Todo::List"),
+        }
+    }
+
+    // workspace list：无参数子命令，parse 后应落到 WorkspaceAction::List
+    #[test]
+    fn test_cli_parse_workspace_list() {
+        let cli = Cli::try_parse_from(["ntd", "workspace", "list"]).unwrap();
+        match cli.command {
+            Commands::Workspace { action: WorkspaceAction::List } => {}
+            _ => panic!("Expected Workspace::List"),
+        }
+    }
+
+    // workspace create：-p/--path + -n/--name 两个必填 short flag
+    #[test]
+    fn test_cli_parse_workspace_create() {
+        let cli = Cli::try_parse_from([
+            "ntd", "workspace", "create",
+            "-p", "/tmp/proj-a",
+            "-n", "proj-a",
+        ]).unwrap();
+        match cli.command {
+            Commands::Workspace { action: WorkspaceAction::Create { path, name } } => {
+                assert_eq!(path, "/tmp/proj-a");
+                assert_eq!(name, "proj-a");
+            }
+            _ => panic!("Expected Workspace::Create with path and name"),
         }
     }
 
