@@ -23,8 +23,9 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Button, Typography, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu, Drawer } from 'antd';
+import { Button, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu, Drawer } from 'antd';
 import { ReloadOutlined, SettingOutlined, UnorderedListOutlined, MenuOutlined } from '@ant-design/icons';
+import { PageCard } from '@/components/common/PageCard';
 import { TfiBlackboard } from 'react-icons/tfi';
 import { XMarkdown } from '@ant-design/x-markdown';
 import { useTheme } from '@/hooks/useTheme';
@@ -33,8 +34,6 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import type { BlackboardDebounceStatus } from '@/hooks/useExecutionEvents';
 import { updateBlackboardConfig, getBlackboard } from '@/utils/database/blackboard';
 import { normalizeBlackboardMarkdown } from '@/utils/markdown';
-
-const { Title } = Typography;
 
 /** 黑板 API 返回的配置形状（与后端 BlackboardResponse 对应，不含内容） */
 interface BlackboardData {
@@ -384,20 +383,27 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   }, []);
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* 顶部 Header：响应式 padding */}
-      <div style={{ padding: isMobile ? '8px 12px' : '12px 24px', flexShrink: 0 }}>
-        <BlackboardHeader
-          isDark={isDark}
-          isMobile={isMobile}
-          onRefresh={handleRefresh}
-          onOpenSettings={handleOpenSettings}
-          onMenuClick={() => setMenuDrawerOpen(true)}
-          workspaceId={workspaceId}
-        />
-      </div>
-
-      {/* 中间主体：Wiki 布局 */}
+    <PageCard
+      icon={<TfiBlackboard style={{ fontSize: 18 }} />}
+      title="黑板"
+      titleSuffix={isMobile ? <MobileDebounceIndicator workspaceId={workspaceId} /> : undefined}
+      extra={
+        isMobile ? (
+          <MobileHeaderExtra
+            onMenuClick={() => setMenuDrawerOpen(true)}
+            onOpenSettings={handleOpenSettings}
+            onRefresh={handleRefresh}
+          />
+        ) : (
+          <DesktopHeaderExtra
+            workspaceId={workspaceId}
+            onOpenSettings={handleOpenSettings}
+            onRefresh={handleRefresh}
+          />
+        )
+      }
+      contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+    >
       <BlackboardWikiLayout
         isDark={isDark}
         isMobile={isMobile}
@@ -452,7 +458,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
           ]}
         />
       </Modal>
-    </div>
+    </PageCard>
   );
 }
 
@@ -535,23 +541,20 @@ function useStateBlackboardData() {
   return useState<BlackboardData | null>(null);
 }
 
-interface BlackboardHeaderProps {
-  isDark: boolean;
-  isMobile: boolean;
-  onRefresh: () => void;
-  onOpenSettings: () => void;
-  onMenuClick: () => void;
+// ─── 桌面端 Header Extra（进度条 + 操作按钮 + 队列弹窗）─────────────────
+
+interface DesktopHeaderExtraProps {
   workspaceId: number;
+  onOpenSettings: () => void;
+  onRefresh: () => void;
 }
 
 /**
- * 顶部标题栏。
+ * 桌面端标题栏右侧区域：进度条 + 设置/队列/刷新按钮。
  *
- * 桌面端：[黑板图标 标题] [双进度条] [设置] [队列] [刷新]
- * 移动端：[黑板图标 标题] [菜单按钮] [设置] [刷新]
- *         ↑ 点击菜单按钮打开 Drawer 侧边栏
+ * 由 PageCard 的 extra prop 承接，取代原 BlackboardHeader 的桌面分支。
  */
-function BlackboardHeader(props: BlackboardHeaderProps) {
+function DesktopHeaderExtra({ workspaceId, onOpenSettings, onRefresh }: DesktopHeaderExtraProps) {
   const [queueModalVisible, setQueueModalVisible] = useState(false);
   const [queueIds, setQueueIds] = useState<number[]>([]);
   const [queueLoading, setQueueLoading] = useState(false);
@@ -560,7 +563,7 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
   const handleShowQueue = useCallback(async () => {
     setQueueLoading(true);
     try {
-      const board = await getBlackboard(props.workspaceId);
+      const board = await getBlackboard(workspaceId);
       // 解析 pending_record_ids 字符串（如 "[12, 34, 56]"）为数组
       const ids: number[] = JSON.parse(board.pending_record_ids);
       setQueueIds(Array.isArray(ids) ? ids : []);
@@ -571,60 +574,17 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
     } finally {
       setQueueLoading(false);
     }
-  }, [props.workspaceId]);
+  }, [workspaceId]);
 
-  // 移动端顶部栏：紧凑布局，菜单按钮替代进度条，文字指示器替代进度条
-  if (props.isMobile) {
-    return (
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 8,
-        }}
-      >
-        <Space style={{ margin: 0, flexShrink: 0 }}>
-          <TfiBlackboard style={{ fontSize: 18, verticalAlign: 'middle' }} />
-          <Title level={4} style={{ margin: 0, fontSize: 16 }}>
-            黑板
-          </Title>
-          {/* 移动端简化防抖状态文字指示器 */}
-          <MobileDebounceIndicator workspaceId={props.workspaceId} />
-        </Space>
-        <Space.Compact size="small">
-          {/* 目录 Drawer 触发按钮 */}
-          <Button icon={<MenuOutlined />} onClick={props.onMenuClick} title="目录" />
-          <Button icon={<SettingOutlined />} onClick={props.onOpenSettings} title="设置" />
-          <Button type="primary" icon={<ReloadOutlined />} onClick={props.onRefresh} />
-        </Space.Compact>
-      </div>
-    );
-  }
-
-  // 桌面端完整布局
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: 16,
-        gap: 12,
-      }}
-    >
-      <Space style={{ margin: 0, flexShrink: 0 }}>
-        <TfiBlackboard style={{ fontSize: 20, verticalAlign: 'middle' }} />
-        <Title level={4} style={{ margin: 0 }}>
-          黑板
-        </Title>
-      </Space>
-      {/* 双进度条倒计时（自动监听 WebSocket 事件） */}
-      <BlackboardDebounceBar workspaceId={props.workspaceId} />
+    <>
+      {/* 防抖双进度条，占 flex 空间 */}
+      <BlackboardDebounceBar workspaceId={workspaceId} />
+      {/* 操作按钮组 */}
       <Space.Compact>
-        <Button icon={<SettingOutlined />} onClick={props.onOpenSettings} title="设置" />
+        <Button icon={<SettingOutlined />} onClick={onOpenSettings} title="设置" />
         <Button icon={<UnorderedListOutlined />} onClick={handleShowQueue} loading={queueLoading} title="查看队列 ID" />
-        <Button type="primary" icon={<ReloadOutlined />} onClick={props.onRefresh}>
+        <Button type="primary" icon={<ReloadOutlined />} onClick={onRefresh}>
           刷新
         </Button>
       </Space.Compact>
@@ -660,7 +620,30 @@ function BlackboardHeader(props: BlackboardHeaderProps) {
           </div>
         )}
       </Modal>
-    </div>
+    </>
+  );
+}
+
+// ─── 移动端 Header Extra（目录/设置/刷新按钮）──────────────────────
+
+interface MobileHeaderExtraProps {
+  onMenuClick: () => void;
+  onOpenSettings: () => void;
+  onRefresh: () => void;
+}
+
+/**
+ * 移动端标题栏右侧区域：目录/设置/刷新按钮。
+ *
+ * 由 PageCard 的 extra prop 承接，取代原 BlackboardHeader 的移动端分支。
+ */
+function MobileHeaderExtra({ onMenuClick, onOpenSettings, onRefresh }: MobileHeaderExtraProps) {
+  return (
+    <Space.Compact size="small">
+      <Button icon={<MenuOutlined />} onClick={onMenuClick} title="目录" />
+      <Button icon={<SettingOutlined />} onClick={onOpenSettings} title="设置" />
+      <Button type="primary" icon={<ReloadOutlined />} onClick={onRefresh} />
+    </Space.Compact>
   );
 }
 
