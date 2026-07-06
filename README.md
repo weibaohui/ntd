@@ -10,7 +10,11 @@
 
 ---
 
-## 它能做什么
+![info](docs/info.png)
+
+---
+
+## 什么是 ntd
 
 ntd 让 AI 替你执行**真实的任务**：写代码、查资料、分析数据、生成报告——不是聊天机器人，而是能操作文件、运行命令、调用工具的 CLI 执行器。
 
@@ -314,57 +318,50 @@ npm install -g @weibaohui/ntd@latest
 
 ---
 
-## 配置
+## 支持的 AI 执行器
 
-ntd 采用统一的 YAML 配置文件，首次启动自动生成：
+ntd 支持 13 种 AI CLI 工具，选择你已有的或最喜欢的即可。`RESUMABLE_EXECUTORS` 标记的执行器支持会话续连（`--session-id` / `--resume`）。
 
-| 模式 | 配置文件 | 数据库 | 端口 |
-|------|----------|--------|------|
-| 生产 | `~/.ntd/config.yaml` | `~/.ntd/data.db` | 8088 |
-| 开发 | `~/.ntd/config.dev.yaml` | `~/.ntd/data.dev.db` | 18088 |
+| 执行器 | 内部名 | 二进制名 | Session 续连 | Token 统计 | Worktree | 安装命令 |
+|--------|--------|----------|:------------:|:----------:|:--------:|----------|
+| **Claude Code** | `claudecode` | `claude` | ✅ | ✅ | ✅ | `npm install -g @anthropic-ai/claude-code` |
+| **CodeBuddy** | `codebuddy` | `codebuddy` | ❌ | ✅ | ❌ | 官方渠道 |
+| **OpenCode** | `opencode` | `opencode` | ✅ | ✅ | ❌ | 官方渠道 |
+| **AtomCode** | `atomcode` | `atomcode` | ❌ | ✅ | ❌ | 官方渠道 |
+| **Hermes** | `hermes` | `hermes` | ✅ | ❌ | ✅ | 官方渠道 |
+| **Kimi** | `kimi` | `kimi` | ✅ | ❌ | ❌ | 官方渠道 |
+| **MiMo** | `mimo` | `mimo` | ✅ | ✅ | ❌ | 官方渠道 |
+| **MobileCoder** | `mobilecoder` | `mobile` | ✅ | ✅ | ❌ | 官方渠道 |
+| **Codex** | `codex` | `codex` | ❌ | ✅ | ❌ | 官方渠道 |
+| **CodeWhale** | `codewhale` | `codewhale` | ✅ | ❌ | ❌ | 官方渠道 |
+| **Pi** | `pi` | `pi` | ✅ | ✅ | ❌ | 官方渠道 |
+| **Zhanlu** | `zhanlu` | `zl` | ✅ | ✅ | ❌ | 官方渠道 |
+| **Kilo** | `kilo` | `kilo` | ✅ | ✅ | ❌ | 官方渠道 |
 
-常用配置项：
+> **默认执行器**：`claudecode`。可在 Settings → Executors 页面配置每个执行器的二进制路径与启用状态，ntd 启动时会自动探测 `$PATH` 上的可用执行器。
 
-```yaml
-port: 8088
-host: 0.0.0.0
-log_level: INFO
+### 功能说明
 
-max_concurrent_todos: 3              # 单 Todo 并发上限
-execution_timeout_secs: 3600         # 单次执行超时，0=不限
-
-auto_backup_enabled: false           # 数据库自动备份
-auto_backup_cron: "0 0 3 * * *"
-auto_backup_max_files: 30
-
-cloud_sync:
-  server_url: ""                     # 空 = 不启用云端同步
-```
-
-可在运行时通过 `HTTP PUT /api/config` 修改白名单字段（立即生效）。完整字段说明见 [backend/CONFIG.md](backend/CONFIG.md)。
-
----
-
-## 故障排查
-
-| 症状 | 检查点 |
-|------|--------|
-| 启动报 `Failed to bind to port` | `~/.ntd/config.yaml` 里 `port` 是否被占用；`ntd daemon stop` 清掉残留进程 |
-| DB 报 `database is locked` | SQLite WAL 已强制开启；通常 5 秒 `busy_timeout` 后自愈 |
-| Todo 执行后立刻 Finished 无日志 | 检查执行器二进制是否在 `$PATH`；Settings → Executors 里 `enabled=1` 且 `path` 正确 |
-| WebSocket 连不上 | 浏览器代理可能拦截了 upgrade；检查 `Host` 是否能从外部访问 |
-| 飞书无响应 | `agent_bots` 表里 `app_id/app_secret` 是否填写；`feishu_project_bindings` 是否启用 |
-
-更多运维指南见 [docs/user-guide](docs/user-guide/README.md)。
+- **Session 续连**：支持通过 `--session-id` 或 `--resume` 恢复之前中断的对话，无需从头开始
+- **工具调用展示**：实时显示 AI 执行过程中调用的工具（如 bash、write_file、read_file 等）
+- **思考过程展示**：显示 AI 的推理思考过程（thinking block）
+- **Token 用量统计**：记录 input/output tokens、缓存命中量及执行成本
+- **Worktree**：执行时自动创建 Git worktree，隔离分支操作，适合仓库内多任务并行
+- **后置 Todo 进度提取**：Hermes 特有功能，执行完成后从会话文件中提取内部 Todo 进度
 
 ---
+
 
 ## 截图预览
 
-![info](docs/info.png)
 ![detail](docs/detail.png)
 ![dashboard](docs/dashboard.png)
 ![kanban](docs/kanban.png)
+
+---
+
+
+参与开发请参阅 [DEVELOPMENT.md](DEVELOPMENT.md)。架构总览见 [backend/ARCHITECTURE.md](backend/ARCHITECTURE.md)，关键流程时序图见 [backend/SEQUENCE.md](backend/SEQUENCE.md)，配置项完整说明见 [backend/CONFIG.md](backend/CONFIG.md)。
 
 ---
 
