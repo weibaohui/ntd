@@ -1,6 +1,6 @@
 // LoopKanban 看板列组件。
 
-import type { LoopExecutionWithLoopName } from './index';
+import type { LoopExecutionWithLoopName } from './useLoopExecutions';
 import type { ColumnDef } from './helpers';
 
 // 列头

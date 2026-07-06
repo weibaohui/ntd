@@ -1,12 +1,7 @@
 // LoopKanban 主组件：环路执行看板。
-
-// 重新导出子组件和类型
-export { ExecutionCard } from './ExecutionCard';
-export { KanbanColumn } from './KanbanColumn';
-export { useLoopExecutions } from './useLoopExecutions';
-export type { LoopExecutionWithLoopName } from './useLoopExecutions';
-export { COLUMNS, execStatusView, durationLabel, formatToken } from './helpers';
-export type { ColumnDef } from './helpers';
+//
+// 子组件（ExecutionCard / KanbanColumn / useLoopExecutions / helpers）
+// 在本目录内自用，不再从此 index 重新导出；外部 caller 走 LoopKanban.tsx。
 
 import { useState, useMemo, useCallback } from 'react';
 import { Drawer, Spin, Empty, Divider, App as AntApp } from 'antd';

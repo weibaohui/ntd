@@ -1,6 +1,6 @@
 // RunningBoard 重新导出入口
 //
 // 本文件已重构，所有子组件拆分到 running-board/ 目录。
-// 为保持 API 兼容，继续从此文件重新导出。
+// 外部调用方（MemorialBoard）只消费主组件 RunningBoard，子组件在目录内自用。
 
-export { RunningBoard, ScheduledTodoCard, ExecutionRecordCard, RunningBoardColumnView } from './running-board';
+export { RunningBoard } from './running-board';
