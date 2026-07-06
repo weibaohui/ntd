@@ -539,13 +539,6 @@ fn discover_skills_for(name: &str, label: &str) -> ExecutorSkills {
     }
 }
 
-/// 旧 API 的薄包装：保留供可能的内部调用，新代码请用 `discover_skills_for`
-#[allow(dead_code)]
-fn discover_skills_for_executor(et: ExecutorType) -> ExecutorSkills {
-    // 直接走通用版本，ExecutorType 必然有 label
-    discover_skills_for(et.as_str(), executor_label(et))
-}
-
 // ── API handlers ────────────────────────────────────────────────────────
 
 /// 参与 skill 扫描/对比的所有来源：9 个执行器 + 只读来源 `agents`。
