@@ -235,7 +235,7 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
           }}
           onClick={() => setMode('side')}
         >
-          对话
+          <MessageOutlined style={{ fontSize: 10, transform: 'rotate(-90deg)' }} />
         </div>
       </Tooltip>
     );
