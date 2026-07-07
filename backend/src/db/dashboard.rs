@@ -374,7 +374,8 @@ pub(super) async fn fetch_executor_distribution(
             })
         })
         .collect();
-    distribution.sort_by(|a, b| b.execution_count.cmp(&a.execution_count));
+    // 降序：用 Reverse 包装 key，等价于 b.x.cmp(&a.x)，但避开 unnecessary_sort_by 告警。
+    distribution.sort_by_key(|b| std::cmp::Reverse(b.execution_count));
     Ok(distribution)
 }
 
@@ -428,7 +429,8 @@ pub(super) async fn fetch_model_distribution(
             })
         })
         .collect();
-    distribution.sort_by(|a, b| b.execution_count.cmp(&a.execution_count));
+    // 降序：用 Reverse 包装 key，等价于 b.x.cmp(&a.x)，但避开 unnecessary_sort_by 告警。
+    distribution.sort_by_key(|b| std::cmp::Reverse(b.execution_count));
     Ok(distribution)
 }
 
@@ -465,7 +467,8 @@ pub(super) async fn fetch_trigger_distribution(
             })
         })
         .collect();
-    distribution.sort_by(|a, b| b.count.cmp(&a.count));
+    // 降序：用 Reverse 包装 key，等价于 b.x.cmp(&a.x)，但避开 unnecessary_sort_by 告警。
+    distribution.sort_by_key(|b| std::cmp::Reverse(b.count));
     Ok(distribution)
 }
 
@@ -660,7 +663,8 @@ pub(super) async fn fetch_tag_distribution(
             })
         })
         .collect();
-    distribution.sort_by(|a, b| b.execution_count.cmp(&a.execution_count));
+    // 降序：用 Reverse 包装 key，等价于 b.x.cmp(&a.x)，但避开 unnecessary_sort_by 告警。
+    distribution.sort_by_key(|b| std::cmp::Reverse(b.execution_count));
     Ok(distribution)
 }
 
@@ -858,11 +862,8 @@ pub fn build_leaderboard(model_distribution: &[ModelCount]) -> Vec<LeaderboardIt
 
 /// 计算平均执行时长（毫秒）。`duration_count == 0` 时返回 0，避免除零。
 pub fn compute_avg_duration(total_duration_ms: u64, duration_count: u64) -> u64 {
-    if duration_count > 0 {
-        total_duration_ms / duration_count
-    } else {
-        0
-    }
+    // checked_div 在除零时返回 None，unwrap_or 兜底为 0，比手写 if 更直白且避免 manual_checked_division 告警。
+    total_duration_ms.checked_div(duration_count).unwrap_or(0)
 }
 
 /// 计算峰值每日执行数（success + failed 之和的最大值）。

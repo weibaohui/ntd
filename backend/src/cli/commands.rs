@@ -1067,7 +1067,8 @@ fn status_icon(status: &str) -> &'static str {
 /// 渲染失败（字段缺失或类型错误）时降级输出原始 JSON + 错误提示，
 /// 而不是让 CLI 崩溃——黑板视图是辅助功能，不能阻塞主流程。
 // 保留为单元测试的稳定 stdout 入口；生产 dispatch 已直接走 render_blackboard_to 路径。
-#[allow(dead_code)]
+// cfg(test)：该函数仅被本文件 tests 模块调用，非测试构建不编入二进制，避免 dead_code 告警。
+#[cfg(test)]
 fn render_blackboard(data: Option<&Value>) {
     let mut buf: Vec<u8> = Vec::new();
     render_blackboard_to(data, &mut buf);

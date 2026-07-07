@@ -224,47 +224,6 @@ impl EventPipeline {
     }
 }
 
-/// 测试用的模拟提取器
-#[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
-mod test_extractor {
-    use super::*;
-
-    #[allow(dead_code)]
-    pub struct TestExtractor {
-        metadata: ExecutionMetadata,
-    }
-
-    #[allow(dead_code)]
-    impl TestExtractor {
-        pub fn new() -> Self {
-            Self {
-                metadata: ExecutionMetadata::new("test".to_string()),
-            }
-        }
-    }
-
-    impl EventExtractor for TestExtractor {
-        fn executor_name(&self) -> &str {
-            "test"
-        }
-
-        fn extract(&mut self, line: &str) -> Vec<ExecutionEvent> {
-            vec![ExecutionEvent::Info {
-                message: line.to_string(),
-            }]
-        }
-
-        fn metadata(&self) -> &ExecutionMetadata {
-            &self.metadata
-        }
-
-        fn metadata_mut(&mut self) -> &mut ExecutionMetadata {
-            &mut self.metadata
-        }
-    }
-}
-
 /// 默认提取器实现（从 impls 模块导入）
 use super::impls::DefaultExtractor;
 

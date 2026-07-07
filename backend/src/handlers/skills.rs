@@ -162,10 +162,11 @@ fn executor_label(et: ExecutorType) -> &'static str {
     }
 }
 
-// 保留 ALL_EXECUTORS 供其他可能用到的代码；新代码请用 ALL_SKILL_SOURCES
+// 仅用于本文件 tests 模块的数组完整性自检（元素齐全 / 无重复 / 含 Kilo）；
+// 生产代码请用 ALL_SKILL_SOURCES。cfg(test) 避免该常量在非测试构建中成为 dead_code。
 // 13 = 12 个旧执行器 + 新增的 Kilo
 // 注意：加新执行器必须同时更新下面数组与本注释的计数，否则会出现 H1 同型错位。
-#[allow(dead_code)]
+#[cfg(test)]
 const ALL_EXECUTORS: [ExecutorType; 13] = [
     ExecutorType::Claudecode,
     ExecutorType::Hermes,
@@ -528,7 +529,7 @@ fn discover_skills_for(name: &str, label: &str) -> ExecutorSkills {
 
     // 大小写不敏感排序：UI Tab 内显示顺序稳定，
     // 否则 "Foo" 和 "bar" 会按 ASCII 顺序穿插，跨执行器对比时不一致
-    skills.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    skills.sort_by_key(|a| a.name.to_lowercase());
 
     ExecutorSkills {
         executor: name.to_string(),

@@ -124,7 +124,6 @@ pub fn set_socket_reuseaddr(_fd: std::os::raw::c_int) -> io::Result<()> {
 
 /// Windows 占位实现。
 #[cfg(not(unix))]
-#[allow(dead_code)]
 pub fn current_euid() -> u32 {
     0
 }

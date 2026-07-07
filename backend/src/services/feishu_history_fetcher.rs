@@ -45,7 +45,6 @@ struct MessageItem {
     message_id: String,
     msg_type: String,
     chat_id: String,
-    #[allow(dead_code)]
     chat_type: Option<String>,
     sender: Option<Sender>,
     body: Option<MessageBody>,
@@ -55,12 +54,7 @@ struct MessageItem {
 #[derive(Debug, Deserialize)]
 struct Sender {
     id: Option<String>,
-    #[allow(dead_code)]
-    id_type: Option<String>,
-    #[allow(dead_code)]
     sender_type: Option<String>,
-    #[allow(dead_code)]
-    tenant_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -430,54 +424,6 @@ impl FeishuHistoryFetcher {
     async fn resolve_todo_id(_config: &Arc<RwLock<AppConfig>>, _content: &str) -> Option<i64> {
         // 当前实现已移除，后续需要通过 workspace 设置查询
         None
-    }
-
-    #[allow(dead_code)]
-    /// 发送文本消息
-    async fn send_text(
-        bot_credentials: &Arc<DashMap<i64, (String, String, String)>>,
-        token_manager: &Arc<TokenManager>,
-        bot_id: i64,
-        receive_id: &str,
-        receive_id_type: &str,
-        text: &str,
-    ) {
-        let base_url = Self::base_url(bot_credentials, bot_id);
-        let Some(base_url) = base_url else { return };
-        let token = match Self::get_tenant_token(bot_credentials, token_manager, bot_id).await {
-            Some(t) => t,
-            None => return,
-        };
-
-        let client = reqwest::Client::new();
-        let url = format!(
-            "{}/open-apis/im/v1/messages?receive_id_type={}",
-            base_url, receive_id_type
-        );
-        let body = serde_json::json!({
-            "receive_id": receive_id,
-            "msg_type": "text",
-            "content": serde_json::to_string(&serde_json::json!({ "text": text })).unwrap_or_default()
-        });
-
-        match client
-            .post(&url)
-            .header("Authorization", format!("Bearer {token}"))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
-        {
-            Ok(res) => {
-                let status = res.status();
-                if !status.is_success() {
-                    tracing::error!("[feishu-history] send_text failed: status={}", status);
-                }
-            }
-            Err(e) => {
-                tracing::error!("[feishu-history] send_text request failed: {}", e);
-            }
-        }
     }
 
     fn base_url(

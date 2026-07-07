@@ -23,11 +23,13 @@ use super::RunTodoExecutionRequest;
 ///
 /// 设计取舍：把 `RunTodoExecutionRequest` 整段嵌入 `request` 字段而不是平铺。
 /// 平铺需要 14 个字段二次声明；嵌入只需 1 个字段，添加 request 字段时只动 1 处。
-#[allow(dead_code)]
 pub(crate) struct PreparedExecution {
     /// 入参 request。Stage 2 / Stage 3 仍会读到 todo_id / trigger_type 等。
     pub request: RunTodoExecutionRequest,
     /// RAII guard for task registry；必须 move 进 spawn 子任务，否则 drop 时会误删 sender。
+    // 该字段靠 move/drop 起作用（持有期间保持注册项存活），自身从不被按名读取，
+    // 故 allow(dead_code)——这是 RAII 模式的正常形态，删除会破坏存活期语义。
+    #[allow(dead_code)]
     pub task_guard: crate::task_manager::TaskGuard,
     /// 与 task_manager 的 cancel channel；spawn 子任务在 select! 中 recv 它。
     pub cancel_rx: tokio::sync::mpsc::Receiver<()>,
