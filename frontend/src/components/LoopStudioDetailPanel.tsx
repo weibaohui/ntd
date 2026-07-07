@@ -9,7 +9,7 @@
 //
 // (对齐 LoopDto 的可编辑字段)。
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Skeleton, App as AntApp, Button, Space, Tooltip, Popconfirm, Empty,
   Collapse, Switch,
@@ -99,11 +99,19 @@ export function LoopDetailPanel({
     abnormal_handler_trigger_on: string;
   } | null>(null);
 
+  // 防切换竞态：ref 始终持有最新 loopId。reload 与 executionTotal 的请求 resolve 后
+  // 与 ref 比较，不一致说明期间已切到别的 loop，丢弃 stale 响应避免覆盖新 loop 的数据。
+  const latestLoopIdRef = useRef(loopId);
+  latestLoopIdRef.current = loopId;
+
   // 加载完整 detail, 子面板变更后也要重新拉以保持最新
   const reload = useCallback(() => {
+    // 捕获本次请求所属的 loopId，resolve 后与最新值比较
+    const id = loopId;
     setLoading(true);
-    dbLoops.getLoop(loopId)
+    dbLoops.getLoop(id)
       .then((d) => {
+        if (latestLoopIdRef.current !== id) return; // 已切换到别的 loop，丢弃
         setDetail(d);
         // 解析 limits_config 缓存限制值，传递给子面板做跳转自身时的兜底校验
         try {
@@ -115,18 +123,23 @@ export function LoopDetailPanel({
         }
       })
       .catch(() => {
+        if (latestLoopIdRef.current !== id) return; // 切换后的错误不弹窗
         // 只提示错误，不清空已加载的 detail；保留最后一次成功加载的数据供用户查看
         antMessage.error('加载 loop 详情失败');
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (latestLoopIdRef.current === id) setLoading(false);
+      });
   }, [loopId, antMessage]);
 
   useEffect(() => { reload(); }, [reload]);
 
   // 预加载执行记录总数（用于折叠标签展示，不等用户展开后才显示）
   useEffect(() => {
-    dbLoops.listExecutions(loopId, { page: 1, limit: 1 })
-      .then(res => setExecutionTotal(res.total))
+    // 捕获本次 loopId，resolve 后比较，丢弃切换后的 stale 响应
+    const id = loopId;
+    dbLoops.listExecutions(id, { page: 1, limit: 1 })
+      .then(res => { if (latestLoopIdRef.current === id) setExecutionTotal(res.total); })
       .catch(() => { /* 静默 */ });
   }, [loopId]);
 

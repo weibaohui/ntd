@@ -47,26 +47,36 @@ export function useRunningBoard(workspaceId?: number | null, hours?: number): Ru
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
   const mountedRef = useRef(true);
+  // 防切换竞态：mountedRef 只能挡 unmount（新 effect 会把它重置为 true），
+  // 挡不住 workspaceId/hours 切换——晚返回的旧请求仍会 setRecords 旧工作空间的数据。
+  // 用 latestWs/latestHours 持有最新值，请求 resolve 后比较，不一致即丢弃。
+  const latestWsRef = useRef(workspaceId);
+  latestWsRef.current = workspaceId;
+  const latestHoursRef = useRef(hours);
+  latestHoursRef.current = hours;
 
   const refresh = useCallback(async () => {
+    // 捕获本次请求所属的 workspace/hours，resolve 后与最新值比较
+    const ws = workspaceId;
+    const h = hours;
     try {
       setLoading(true);
       setRecords([]); // 切换 workspace 时先清空，避免旧数据闪烁
       setScheduledTodos([]);
       // 运行看板不分页，拉取最近的一批数据即可
-      const data = await db.getRunningBoardData(undefined, 200, workspaceId ?? undefined, hours);
-      if (mountedRef.current) {
+      const data = await db.getRunningBoardData(undefined, 200, ws ?? undefined, h);
+      if (mountedRef.current && latestWsRef.current === ws && latestHoursRef.current === h) {
         setRecords(data.records);
         setScheduledTodos(data.scheduled_todos);
         setTotal(data.total);
       }
     } catch {
-      if (mountedRef.current) {
+      if (mountedRef.current && latestWsRef.current === ws && latestHoursRef.current === h) {
         setRecords([]);
         setScheduledTodos([]);
       }
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (mountedRef.current && latestWsRef.current === ws && latestHoursRef.current === h) setLoading(false);
     }
   }, [workspaceId, hours]);
 
