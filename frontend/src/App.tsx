@@ -28,6 +28,7 @@ import { LeftRail, type LeftRailKey } from './components/shell/LeftRail';
 import { MobileHeader } from './components/shell/MobileHeader';
 import { FloatingActionButton } from '@/components/shell/FloatingActionButton';
 import { WikiChatFloatingWindow, type WikiChatMode } from '@/components/WikiChatFloatingWindow';
+import { WikiViewPage } from '@/components/WikiViewPage';
 
 import { EXECUTION_PANEL, LEFT_RAIL_WIDTH } from './constants';
 import * as db from './utils/database';
@@ -361,6 +362,8 @@ function AppContent() {
                 <MemorialBoard />
               ) : activeView === 'blackboard' ? (
                 <BlackboardPage workspaceId={state.selectedWorkspace} />
+              ) : activeView === 'wiki' ? (
+                <WikiViewPage />
               ) : (
                 <Dashboard />
               )}
