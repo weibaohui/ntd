@@ -27,7 +27,7 @@ use crate::db::Database;
 use crate::executor_service::{ExecEvent, RunTodoExecutionRequest};
 use crate::handlers::AppError;
 use crate::task_manager::TaskManager;
-use crate::wiki::{init_wiki_dir, list_topics, regenerate_index, append_log_entry};
+use crate::wiki::{init_wiki_dir, list_topics, append_log_entry};
 
 /// 当前实现的固定 trigger_type：在 Finished 钩子中用于识别"自身"避免递归触发。
 const TRIGGER_TYPE_BLACKBOARD: &str = "blackboard";
@@ -393,15 +393,10 @@ pub async fn update_blackboard_wiki(
         params,
     ).await?;
 
-    // 6. 后处理：生成 index、追加 log
-    // 无论 LLM 是否输出，都尝试生成 index 和 log
+    // 6. 后处理：追加 log
+    // 无论 LLM 是否输出，都尝试追加 log
     let topics = list_topics(workspace_id).map_err(|e| {
         AppError::Internal(format!("列出 topic 失败: {:?}", e))
-    })?;
-
-    // 生成 index.md
-    regenerate_index(workspace_id).map_err(|e| {
-        AppError::Internal(format!("生成 index 失败: {:?}", e))
     })?;
 
     // 追加 log.md

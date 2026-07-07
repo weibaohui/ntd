@@ -282,7 +282,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   // Wiki 化数据状态
   const [files, setFiles] = useState<WikiFileItem[]>([]);
   const [currentFile, setCurrentFile] = useState<WikiFileContent | null>(null);
-  const [currentSlug, setCurrentSlug] = useState<string>('index');
+  const [currentSlug, setCurrentSlug] = useState<string>('');
   const [filesLoading, setFilesLoading] = useState(true);
   const [fileLoading, setFileLoading] = useState(false);
   // 旧版数据（配置用）
@@ -356,8 +356,12 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       setFilesLoading(true);
       const list = await fetchWikiFiles(workspaceId);
       setFiles(list);
+      // 计算默认 slug：优先 topic，其次 log，都没有则空
+      const defaultSlug = list.find(f => f.file_type === 'topic')?.slug
+        ?? list.find(f => f.file_type === 'log')?.slug
+        ?? '';
       // 用函数式更新读取最新 currentSlug，避免将其放入依赖数组而每次切页重拉列表
-      setCurrentSlug(prev => (list.some(p => p.slug === prev) ? prev : 'index'));
+      setCurrentSlug(prev => (list.some(p => p.slug === prev) ? prev : defaultSlug));
     } catch (err) {
       console.error('获取页面列表失败:', err);
       message.error('获取页面列表失败');
@@ -395,7 +399,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     setFiles([]);
     setCurrentFile(null);
     setConfigData(null);
-    setCurrentSlug('index');
+    setCurrentSlug('');
   }, [workspaceId]);
 
   // 副作用：workspaceId 变化时重拉
@@ -904,14 +908,8 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
     menuDrawerOpen, onMenuDrawerClose, workspaceId,
   } = props;
 
-  // 构造 Menu items：index 在前，然后 topic，最后 log
+  // 构造 Menu items：topic 分组在前，然后 log
   const menuItems = [
-    // index 页
-    ...files.filter(f => f.file_type === 'index').map(f => ({
-      key: f.slug,
-      label: '目录',
-      type: 'item' as const,
-    })),
     // 主题页分组
     {
       key: 'topics-group',
