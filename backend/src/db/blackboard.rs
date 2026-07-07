@@ -233,46 +233,16 @@ impl Database {
         Ok(())
     }
 
-    /// 取出并清空 pending 队列，返回待处理的 execution_record_id 列表。
-    ///
-    /// 两步非原子，竞态时可能丢失或重复，但 debounce 场景下可接受。
-    pub async fn take_pending_record_ids(
-        &self,
-        workspace_id: i64,
-    ) -> Result<Vec<i64>, sea_orm::DbErr> {
-        // 读取当前队列
-        let board = blackboards::Entity::find()
-            .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
-            .one(&self.conn)
-            .await?
-            .ok_or_else(|| sea_orm::DbErr::RecordNotFound(format!(
-                "blackboard for workspace {} not found",
-                workspace_id
-            )))?;
-
-        let ids: Vec<i64> = serde_json::from_str(&board.pending_record_ids)
-            .unwrap_or_default();
-
-        // 清空队列（非空才写，减少 DB 写入）；主键必须设置
-        if !ids.is_empty() {
-            let now = crate::models::utc_timestamp();
-            let _res = blackboards::ActiveModel {
-                id: ActiveValue::Unchanged(board.id),
-                workspace_id: ActiveValue::Unchanged(workspace_id),
-                pending_record_ids: ActiveValue::Set("[]".to_string()),
-                updated_at: ActiveValue::Set(Some(now)),
-                ..Default::default()
-            }.update(&self.conn).await?;
-        }
-
-        Ok(ids)
-    }
+    // 原 take_pending_record_ids（取出并清空 pending 队列）已删除：
+    // 该方法从未被调用——实际 flush 路径（executor_service/completion.rs）用
+    // get_blackboard 非破坏性读 + remove_specific_pending_record_ids 精准移除，
+    // 不走"全量清空"。且其"读快照→写 []"非原子，若被并发调用会与 append 竞态丢记录；
+    // 删除以消除这一潜在隐患，需要"取并清空"语义时请用带 queue_lock 的原子实现。
 
     /// 从 pending 队列中移除指定的 execution_record_id 列表，保留其余。
     ///
-    /// 与 [`take_pending_record_ids`] 的"全量取出+清空"不同，本方法只删除传入的 ID，
-    /// 用于 flush listener 在 wiki 更新成功后只移除已处理的记录，保留期间新到达的记录。
-    /// 若队列中不存在指定 ID（如已被其他写入覆盖），静默跳过不报错。
+    /// 本方法只删除传入的 ID（而非全量清空），用于 flush listener 在 wiki 更新成功后
+    /// 只移除已处理的记录、保留期间新到达的记录。
     pub async fn remove_specific_pending_record_ids(
         &self,
         workspace_id: i64,
