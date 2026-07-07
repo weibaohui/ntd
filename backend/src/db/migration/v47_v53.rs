@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 use super::super::Database;
-use super::{Migration, table_exists};
+use super::{Migration, table_exists, add_column_if_missing};
 
 pub(super) struct V47ConsolidatedBlackboardFeatures;
 
@@ -31,6 +31,11 @@ impl Migration for V47ConsolidatedBlackboardFeatures {
     ///
     /// 每步通过 IF NOT EXISTS / table_exists 保证幂等性，
     /// 已执行过的步骤自动跳过。
+    ///
+    /// **重要**：建表后的 ALTER TABLE ADD COLUMN 段是兜底保护——早期 V47 的旧表
+    /// 可能只含原初列（content / debounce_secs 等），跑 V47 时若 table_exists 命中
+    /// 会跳过整段 CREATE TABLE，后续演进列（pending_record_ids / wiki_prompt 等）
+    /// 永远不会被追加。这里用 add_column_if_missing 显式补齐，避免依赖下游迁移修复。
     async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
         // ---- V47: 创建 blackboards 表（一次性包含所有字段） ----
         // 每个工作空间维护一条黑板记录，用于 LLM 自动生成的 Markdown 知识库内容
@@ -38,6 +43,25 @@ impl Migration for V47ConsolidatedBlackboardFeatures {
             db.exec(CREATE_BLACKBOARDS_SQL).await?;
             tracing::info!("V47: blackboards 表已创建");
         }
+
+        // ---- V47 兜底：对已存在的旧表补齐演进字段 ----
+        // 早期部署若 V47 建过只含原初列的旧表，上面 table_exists 会跳过 CREATE，
+        // 但新业务字段仍要追加，否则下游代码引用缺失列会启动失败。
+        // add_column_if_missing 内部用 PRAGMA table_info 探测，已存在则跳过，幂等。
+        add_column_if_missing(
+            db,
+            "blackboards",
+            "pending_record_ids",
+            "ALTER TABLE blackboards ADD COLUMN pending_record_ids TEXT NOT NULL DEFAULT '[]'",
+        )
+        .await?;
+        add_column_if_missing(
+            db,
+            "blackboards",
+            "wiki_prompt",
+            "ALTER TABLE blackboards ADD COLUMN wiki_prompt TEXT NOT NULL DEFAULT ''",
+        )
+        .await?;
 
         // ---- V48: 把 todos 上的唯一索引改为 workspace 级 ----
         // V46 创建的 (action_type, action_key) 是全局唯一，多 workspace 下

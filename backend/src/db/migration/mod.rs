@@ -14,6 +14,7 @@ mod v41_v46;
 mod v47_v53;
 mod v54;
 mod v55;
+mod v56;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -50,6 +51,8 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v47_v53::V47ConsolidatedBlackboardFeatures),
         Box::new(v54::V54AddWikiChatExecutor),
         Box::new(v55::V55AddWikiChatSessions),
+        // V56 必须排在 V55 之后：补齐早期 V47 跳过建表演进列的旧部署遗留
+        Box::new(v56::V56AddMissingBlackboardColumns),
     ]
 }
 
