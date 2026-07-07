@@ -8,7 +8,7 @@ use std::io;
 
 use super::fs::{append_log, log_file, read_log, write_log};
 
-/// 追加一条摄入日志。
+/// 追加一条摄入日志（新条目在最上面）。
 ///
 /// 记录时间、涉及的 topic 页面、来源执行记录 ID。
 pub fn append_log_entry(
@@ -36,9 +36,11 @@ pub fn append_log_entry(
         now, records_str, topics_str
     );
 
-    append_log(workspace_id, &entry)?;
+    // 读取现有内容，把新条目插到最前面（倒序）
+    let existing = read_log(workspace_id)?.unwrap_or_default();
+    write_log(workspace_id, &(entry.clone() + &existing))?;
 
-    // 追加后自动清理超过 3 天的旧条目
+    // 写入后自动清理超过 3 天的旧条目
     trim_old_entries(workspace_id)?;
 
     Ok(())
