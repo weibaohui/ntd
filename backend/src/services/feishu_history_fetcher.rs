@@ -24,6 +24,13 @@ pub struct FeishuHistoryFetcher {
     token_manager: Arc<TokenManager>,
     bot_credentials: Arc<DashMap<i64, (String, String, String)>>,
     debounce: Arc<MessageDebounce>,
+    // 复用的 HTTP 客户端：旧实现每条非 user 消息（resolve_bot_open_id）、每页翻页
+    // （list_messages）、每次 token 解析（build_sdk_config）都 reqwest::Client::new()，
+    // 繁忙群聊下 N×新连接池 → 打爆临时端口 / 触发飞书限流。整个 fetcher 生命周期共用一个。
+    http_client: reqwest::Client,
+    // bot open_id 缓存（bot_id → open_id）。open_id 不可变，旧实现每条非 user 消息都
+    // GET /open-apis/bot/v3/info 重解析；缓存后每 bot 仅首次拉取，后续直接命中。
+    bot_open_ids: DashMap<i64, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,6 +87,9 @@ impl FeishuHistoryFetcher {
             token_manager,
             bot_credentials,
             debounce,
+            // 复用单例 Client；与旧代码各处 reqwest::Client::new() 行为一致（infallible 构造）。
+            http_client: reqwest::Client::new(),
+            bot_open_ids: DashMap::new(),
         }
     }
 
@@ -242,7 +252,7 @@ impl FeishuHistoryFetcher {
                 query_params.insert("page_token".to_string(), pt.clone());
             }
 
-            let resp = Self::list_messages(&reqwest::Client::new(), token, &query_params).await?;
+            let resp = Self::list_messages(&self.http_client, token, &query_params).await?;
 
             if resp.code != 0 {
                 return Err(format!("API error: {} ({})", resp.msg, resp.code));
@@ -277,14 +287,9 @@ impl FeishuHistoryFetcher {
 
                     // Skip if sender is OUR registered bot (using OR logic)
                     // This prevents circular triggering: bot sends message -> history fetcher picks it up -> bot processes it again
-                    let is_our_bot = Self::is_our_bot_message(
-                        &sender_id,
-                        sender_type.as_deref(),
-                        &self.bot_credentials,
-                        &self.token_manager,
-                        bot_id,
-                    )
-                    .await;
+                    let is_our_bot = self
+                        .is_our_bot_message(&sender_id, sender_type.as_deref(), bot_id)
+                        .await;
 
                     if is_our_bot {
                         tracing::debug!(
@@ -426,11 +431,8 @@ impl FeishuHistoryFetcher {
         None
     }
 
-    fn base_url(
-        bot_credentials: &Arc<DashMap<i64, (String, String, String)>>,
-        bot_id: i64,
-    ) -> Option<String> {
-        let domain = bot_credentials.get(&bot_id)?.2.clone();
+    fn base_url(&self, bot_id: i64) -> Option<String> {
+        let domain = self.bot_credentials.get(&bot_id)?.2.clone();
         Some(if domain == "lark" {
             "https://open.larksuite.com".to_string()
         } else {
@@ -438,13 +440,9 @@ impl FeishuHistoryFetcher {
         })
     }
 
-    async fn get_tenant_token(
-        bot_credentials: &Arc<DashMap<i64, (String, String, String)>>,
-        token_manager: &Arc<TokenManager>,
-        bot_id: i64,
-    ) -> Option<String> {
-        let sdk_config = Self::build_sdk_config(bot_credentials, bot_id)?;
-        match token_manager.get_tenant_access_token(&sdk_config).await {
+    async fn get_tenant_token(&self, bot_id: i64) -> Option<String> {
+        let sdk_config = self.build_sdk_config(bot_id)?;
+        match self.token_manager.get_tenant_access_token(&sdk_config).await {
             Ok(token) => Some(token),
             Err(err) => {
                 tracing::warn!("[feishu-history] 获取 tenant_access_token 失败: {}", err);
@@ -455,16 +453,19 @@ impl FeishuHistoryFetcher {
 
     /// Resolve the bot's own open_id from the Feishu API.
     /// Used to filter out self-sent messages and prevent circular triggering.
-    async fn resolve_bot_open_id(
-        bot_credentials: &Arc<DashMap<i64, (String, String, String)>>,
-        token_manager: &Arc<TokenManager>,
-        bot_id: i64,
-    ) -> Option<String> {
-        let token = Self::get_tenant_token(bot_credentials, token_manager, bot_id).await?;
-        let base_url = Self::base_url(bot_credentials, bot_id)?;
+    ///
+    /// open_id 不可变，命中 self.bot_open_ids 缓存即返回，避免每条非 user 消息都
+    /// GET /open-apis/bot/v3/info。缓存 miss 时拉取一次并写入缓存。
+    async fn resolve_bot_open_id(&self, bot_id: i64) -> Option<String> {
+        // 命中缓存直接返回，跳过 HTTP 往返与 token 解析。
+        if let Some(v) = self.bot_open_ids.get(&bot_id) {
+            return Some(v.clone());
+        }
+        let token = self.get_tenant_token(bot_id).await?;
+        let base_url = self.base_url(bot_id)?;
 
-        let client = reqwest::Client::new();
-        let res = client
+        let res = self
+            .http_client
             .get(format!("{base_url}/open-apis/bot/v3/info"))
             .header("Authorization", format!("Bearer {token}"))
             .send()
@@ -472,20 +473,25 @@ impl FeishuHistoryFetcher {
             .ok()?;
 
         let body: serde_json::Value = res.json().await.ok()?;
-        body.get("bot")
+        let open_id = body
+            .get("bot")
             .and_then(|b| b.get("open_id"))
             .and_then(|v| v.as_str())
-            .map(String::from)
+            .map(String::from);
+        // 仅在拿到有效 open_id 时缓存，避免把失败结果（None）当缓存挡后续重试。
+        if let Some(ref oid) = open_id {
+            self.bot_open_ids.insert(bot_id, oid.clone());
+        }
+        open_id
     }
 
     /// Check if a message was sent by our own bot using OR logic.
     /// Matches against: app_id OR open_id of the registered bot.
     /// Returns true if sender matches ANY of our bot's identifiers.
     async fn is_our_bot_message(
+        &self,
         sender_id: &str,
         sender_type: Option<&str>,
-        bot_credentials: &Arc<DashMap<i64, (String, String, String)>>,
-        token_manager: &Arc<TokenManager>,
         bot_id: i64,
     ) -> bool {
         if sender_id.is_empty() {
@@ -494,7 +500,7 @@ impl FeishuHistoryFetcher {
 
         // Check 1: If sender_type is "app", sender_id is the app_id - check if it matches our app_id
         if sender_type == Some("app") {
-            if let Some(ref_val) = bot_credentials.get(&bot_id) {
+            if let Some(ref_val) = self.bot_credentials.get(&bot_id) {
                 if sender_id == ref_val.0 {
                     tracing::debug!(
                         "[feishu-history-fetcher] matched our bot by app_id: {}",
@@ -505,10 +511,9 @@ impl FeishuHistoryFetcher {
             }
         }
 
-        // Check 2: Resolve bot's open_id and compare
+        // Check 2: Resolve bot's open_id and compare（命中缓存则无 HTTP 往返）
         if sender_type != Some("user") {
-            let bot_open_id =
-                Self::resolve_bot_open_id(bot_credentials, token_manager, bot_id).await;
+            let bot_open_id = self.resolve_bot_open_id(bot_id).await;
             if let Some(open_id) = bot_open_id {
                 if sender_id == open_id {
                     tracing::debug!(
@@ -523,11 +528,8 @@ impl FeishuHistoryFetcher {
         false
     }
 
-    fn build_sdk_config(
-        bot_credentials: &Arc<DashMap<i64, (String, String, String)>>,
-        bot_id: i64,
-    ) -> Option<FeishuSdkConfig> {
-        let ref_val = bot_credentials.get(&bot_id)?;
+    fn build_sdk_config(&self, bot_id: i64) -> Option<FeishuSdkConfig> {
+        let ref_val = self.bot_credentials.get(&bot_id)?;
         let (app_id, app_secret, domain) =
             (ref_val.0.clone(), ref_val.1.clone(), ref_val.2.clone());
         let base_url = if domain == "lark" {
@@ -542,7 +544,8 @@ impl FeishuHistoryFetcher {
                 .app_secret(app_secret)
                 .base_url(base_url)
                 .enable_token_cache(true)
-                .http_client(reqwest::Client::new())
+                // 复用 fetcher 单例 Client，避免每次解析 token 都新建连接池。
+                .http_client(self.http_client.clone())
                 .build(),
         )
     }
