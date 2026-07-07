@@ -44,8 +44,8 @@ ntd (Now Task, Done) 是一个 AI 驱动的任务引擎，基于 Rust 后端 + R
 - 测试必须覆盖正常路径、边界条件、以及预期的错误处理分支。
 - 测试命名规范：`test_<被测试函数名>_<场景描述>`，让失败时一眼看出哪个场景出问题。
 - 运行方式：
-  - Rust 后端：`cd backend && cargo test`
-  - 如果后端有集成测试：`cd backend && cargo test --test integration_test`
+  - Rust 后端：`cd backend && cargo test`（一次性跑全部单元测试 + 集成测试）
+  - 只跑某个集成测试文件：`cd backend && cargo test --test <文件名去掉 .rs>`，例如 `cargo test --test api_integration_test`。集成测试按文件拆分在 `backend/tests/` 下，无单一的 `integration_test` 目标。
 - **所有测试必须在提交前通过**，不允许提交存在失败的测试。
 
 ### 编译告警清理
