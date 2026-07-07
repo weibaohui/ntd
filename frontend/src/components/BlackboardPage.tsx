@@ -372,6 +372,12 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
 
   // 拉取当前页面详情
   const fetchCurrentFile = useCallback(async () => {
+    // 空 slug 不发起请求：初始态或切换工作空间清空后，slug 为空字符串，
+    // 此时请求会得到 404 或意外数据，应直接跳过。
+    if (!currentSlug) {
+      setFileLoading(false);
+      return;
+    }
     try {
       setFileLoading(true);
       const file = await fetchWikiFileContent(workspaceId, currentSlug);
@@ -395,11 +401,14 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   }, [workspaceId, setConfigData]);
 
   // workspace 切换时先清空隔离数据，避免加载失败或加载窗口期暴露上一工作空间内容
+  // 注意：不设 currentSlug = ''，否则 Menu 收到 selectedKeys={['']} 会崩溃
+  //（Ant Design Menu.js:40 prefixCls → Cannot read properties of null）。
+  // files 已清空 → Menu 不渲染（files.length === 0 显示"暂无页面"），
+  // fetchFiles 异步完成后会自动设回有效 slug。
   useEffect(() => {
     setFiles([]);
     setCurrentFile(null);
     setConfigData(null);
-    setCurrentSlug('');
   }, [workspaceId]);
 
   // 副作用：workspaceId 变化时重拉
@@ -416,6 +425,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   }, [blackboardFile]);
 
   // 副作用：currentSlug 变化时重拉页面详情
+  // 守卫已在 fetchCurrentFile 内部处理空 slug 场景
   useEffect(() => {
     fetchCurrentFile();
   }, [fetchCurrentFile]);
@@ -908,8 +918,8 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
     menuDrawerOpen, onMenuDrawerClose, workspaceId,
   } = props;
 
-  // 构造 Menu items：topic 分组在前，然后 log
-  const menuItems = [
+  // 构造 Menu items（useMemo 防止每次父组件重渲染都重建新数组→触发 Menu 内部 prefixCls null 崩溃）
+  const menuItems = useMemo(() => [
     // 主题页分组
     {
       key: 'topics-group',
@@ -927,28 +937,30 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
       label: '执行日志',
       type: 'item' as const,
     })),
-  ];
+  ], [files, isDark]);
 
   const sidebarBg = isDark ? '#1a1a1a' : '#fafafa';
   const sidebarBorder = isDark ? '#333' : '#f0f0f0';
 
-  // 渲染目录内容（抽出来复用于 Drawer 和固定侧边栏）
-  const sidebarContent = filesLoading ? (
-    <Skeleton active paragraph={{ rows: 6 }} style={{ padding: '0 12px' }} />
-  ) : files.length === 0 ? (
-    <div style={{ padding: '24px 12px', textAlign: 'center', color: isDark ? '#666' : '#999', fontSize: 12 }}>
-      暂无页面
-    </div>
-  ) : (
-    <Menu
-      mode="inline"
-      selectedKeys={[currentSlug]}
-      onClick={({ key }) => onSelectSlug(key as string)}
-      style={{ background: 'transparent', borderRight: 'none' }}
-      theme={isDark ? 'dark' : 'light'}
-      items={menuItems}
-    />
-  );
+  // 渲染目录内容（useMemo 防止 filesLoading/fileLoading/currentFile 等变化时 Menu 被不必要地重渲染）
+  const sidebarContent = useMemo(() => (
+    filesLoading ? (
+      <Skeleton active paragraph={{ rows: 6 }} style={{ padding: '0 12px' }} />
+    ) : files.length === 0 ? (
+      <div style={{ padding: '24px 12px', textAlign: 'center', color: isDark ? '#666' : '#999', fontSize: 12 }}>
+        暂无页面
+      </div>
+    ) : (
+      <Menu
+        mode="inline"
+        selectedKeys={[currentSlug]}
+        onClick={({ key }) => onSelectSlug(key as string)}
+        style={{ background: 'transparent', borderRight: 'none' }}
+        theme={isDark ? 'dark' : 'light'}
+        items={menuItems}
+      />
+    )
+  ), [filesLoading, files, currentSlug, isDark, onSelectSlug, menuItems]);
 
   // 移动端：内容区全宽，目录通过 Drawer 呈现
   if (isMobile) {
@@ -958,7 +970,7 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
         <div style={{ flex: 1, overflow: 'auto', padding: '12px', minWidth: 0 }}>
           {fileLoading ? (
             <Skeleton active paragraph={{ rows: 10 }} />
-          ) : !currentFile || currentFile.content.trim().length === 0 ? (
+          ) : !currentFile || !currentFile.content || currentFile.content.trim().length === 0 ? (
             <BlackboardEmpty isDark={isDark} />
           ) : (
             <BlackboardContent isDark={isDark} content={currentFile.content} workspaceId={workspaceId} />
@@ -1001,7 +1013,7 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
       <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px', minWidth: 0 }}>
         {fileLoading ? (
           <Skeleton active paragraph={{ rows: 10 }} />
-        ) : !currentFile || currentFile.content.trim().length === 0 ? (
+        ) : !currentFile || !currentFile.content || currentFile.content.trim().length === 0 ? (
           <BlackboardEmpty isDark={isDark} />
         ) : (
           <BlackboardContent isDark={isDark} content={currentFile.content} workspaceId={workspaceId} />
