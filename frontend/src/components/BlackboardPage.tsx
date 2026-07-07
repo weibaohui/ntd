@@ -274,6 +274,8 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const workspaceId = useEffectiveWorkspaceId(propWorkspaceId);
   // 移动端检测
   const isMobile = useIsMobile();
+  // 用于同步 URL
+  const { replaceUrl, blackboardFile } = useViewState();
 
   // Wiki 化数据状态
   const [files, setFiles] = useState<WikiFileItem[]>([]);
@@ -400,6 +402,13 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     fetchConfig();
   }, [fetchFiles, fetchConfig]);
 
+  // URL 中的 blackboardFile 变化时，同步到 currentSlug（支持浏览器前进后退）
+  useEffect(() => {
+    if (blackboardFile) {
+      setCurrentSlug(blackboardFile);
+    }
+  }, [blackboardFile]);
+
   // 副作用：currentSlug 变化时重拉页面详情
   useEffect(() => {
     fetchCurrentFile();
@@ -411,11 +420,13 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     fetchCurrentFile();
   }, [fetchFiles, fetchCurrentFile]);
 
-  // 移动端选择目录后关闭 Drawer
+  // 移动端选择目录后关闭 Drawer，同时同步 URL
   const handleSelectSlug = useCallback((slug: string) => {
     setCurrentSlug(slug);
     setMenuDrawerOpen(false);
-  }, []);
+    // 同步 URL：/#/blackboard?file=slug
+    replaceUrl('blackboard', { file: slug });
+  }, [replaceUrl]);
 
   return (
     <PageCard

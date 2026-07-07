@@ -124,7 +124,12 @@ function getInitialWikiSlug(): string | null {
   return params.get('slug');
 }
 
-function buildHashUrl(view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode; workspace?: number | null; slug?: string | null }): string {
+function getInitialBlackboardFile(): string | null {
+  const params = getHashSearchParams();
+  return params.get('file');
+}
+
+function buildHashUrl(view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode; workspace?: number | null; slug?: string | null; file?: string | null }): string {
   const path = `/${view}`;
   const params = new URLSearchParams();
   if (opts?.id != null) params.set('id', String(opts.id));
@@ -136,6 +141,10 @@ function buildHashUrl(view: View, opts?: { id?: number | null; tab?: string | nu
     // wiki 视图需要 workspace 和 slug 来定位文件
     if (opts?.workspace != null) params.set('workspace', String(opts.workspace));
     if (opts?.slug) params.set('slug', opts.slug);
+  }
+  if (view === 'blackboard' && opts?.file) {
+    // blackboard 视图的 file 参数标识当前查看的文件
+    params.set('file', opts.file);
   }
   const qs = params.toString();
   return qs ? `#${path}?${qs}` : `#${path}`;
@@ -168,8 +177,9 @@ export function useViewState() {
   const [selectedRecordId, setSelectedRecordId] = useState<number | null>(getInitialRecordId);
   const [boardMode, setBoardMode] = useState<BoardMode>(getInitialBoardMode);
   const [wikiSlug, setWikiSlug] = useState<string | null>(getInitialWikiSlug);
+  const [blackboardFile, setBlackboardFile] = useState<string | null>(getInitialBlackboardFile);
 
-  const pushUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode; workspace?: number | null; slug?: string | null }) => {
+  const pushUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode; workspace?: number | null; slug?: string | null; file?: string | null }) => {
     const hashUrl = buildHashUrl(view, opts);
     window.history.pushState(null, '', hashUrl);
     setActiveView(view);
@@ -179,9 +189,10 @@ export function useViewState() {
     setSelectedRecordId(opts?.record ?? null);
     setBoardMode(opts?.mode ?? 'memorial');
     setWikiSlug(view === 'wiki' ? (opts?.slug ?? null) : null);
+    setBlackboardFile(view === 'blackboard' ? (opts?.file ?? null) : null);
   }, []);
 
-  const replaceUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode; workspace?: number | null; slug?: string | null }) => {
+  const replaceUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode; workspace?: number | null; slug?: string | null; file?: string | null }) => {
     const hashUrl = buildHashUrl(view, opts);
     window.history.replaceState(null, '', hashUrl);
     setActiveView(view);
@@ -191,6 +202,7 @@ export function useViewState() {
     setSelectedRecordId(opts?.record ?? null);
     setBoardMode(opts?.mode ?? 'memorial');
     setWikiSlug(view === 'wiki' ? (opts?.slug ?? null) : null);
+    setBlackboardFile(view === 'blackboard' ? (opts?.file ?? null) : null);
   }, []);
 
   useEffect(() => {
@@ -203,6 +215,7 @@ export function useViewState() {
       const recordStr = params.get('record');
       const mode = params.get('mode') as BoardMode | null;
       const slug = params.get('slug');
+      const file = params.get('file');
       const resolvedId = idStr ? (Number.isFinite(Number(idStr)) ? Number(idStr) : null) : null;
       const resolvedRecord = recordStr ? (Number.isFinite(Number(recordStr)) ? Number(recordStr) : null) : null;
       const resolvedMode = mode && ALL_BOARD_MODES.includes(mode) ? mode : 'memorial';
@@ -213,6 +226,7 @@ export function useViewState() {
       setSelectedRecordId(resolvedRecord);
       setBoardMode(resolvedMode);
       setWikiSlug(view === 'wiki' ? (slug || null) : null);
+      setBlackboardFile(view === 'blackboard' ? (file || null) : null);
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -246,6 +260,7 @@ export function useViewState() {
     selectedRecordId,
     boardMode,
     wikiSlug,
+    blackboardFile,
     showView,
     selectTodo,
     selectWiki,
