@@ -114,10 +114,12 @@ interface MarkdownLinkProps extends React.AnchorHTMLAttributes<HTMLAnchorElement
 }
 
 /**
- * Wiki 文件相对路径的正则：匹配 ./slug 或 ./topics/slug 或 ./log 等
+ * Wiki 文件相对路径的正则：
+ * - ./slug           — 直接写 slug，如 ./auth-module
+ * - topics/slug.md  — 后端 index 自动生成的格式，如 topics/auth-module.md
  * 用于在 Markdown 内容中点击跳转到对应的 Wiki 页面。
  */
-const WIKI_RELATIVE_PATH_REGEX = /^\.\/(.+)$/;
+const WIKI_RELATIVE_PATH_REGEX = /^(?:\.\/)?(?:topics\/)?(.+?)(?:\.md)?$/;
 
 /**
  * Markdown 链接渲染器：识别内部链接协议与路径。
@@ -126,7 +128,7 @@ const WIKI_RELATIVE_PATH_REGEX = /^\.\/(.+)$/;
  * - href 以 ntd://todo/ 开头 → 渲染为可点击的"内链"按钮，
  *   点击时通过 useViewState.selectTodo 导航到事项详情，
  *   阻止浏览器尝试解析 ntd:// 自定义协议导致"找不到应用"提示。
- * - href 匹配 ./slug 格式（Wiki 相对路径）→ 通过 selectWiki 跳转到 Wiki 视图
+ * - href 匹配 ./slug 或 topics/slug.md 格式（Wiki 相对路径）→ 通过 selectWiki 跳转到 Wiki 视图
  * - href 以 / 开头（app 内相对路径，如 /#/items?id=16&panel=post&record=6513）
  *   → 新标签页打开，让用户同时保留 wiki 页面和查看源记录。
  * - 其他 href（http/https/mailto 等）→ 新窗口打开 + rel=noopener 防 tabnabbing。
