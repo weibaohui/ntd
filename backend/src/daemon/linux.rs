@@ -19,9 +19,7 @@ use std::process::Command;
 use super::common::{ntd_bin_dir, ntd_binary_path};
 use super::DaemonAction;
 
-#[allow(unused)]
 pub(super) const SERVICE_NAME: &str = "ntd";
-#[allow(unused)]
 pub(super) const SERVICE_DESCRIPTION: &str = "ntd (Now Task, Done) - AI Task Engine Service";
 
 pub(super) fn handle(action: &DaemonAction) {

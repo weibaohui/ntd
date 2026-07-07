@@ -44,13 +44,14 @@ pub(crate) fn shell_quote_single(path: &str) -> String {
     format!("'{}'", path)
 }
 
-#[allow(unused)]
 pub(crate) fn ntd_dir() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
     home.join(".ntd")
 }
 
 /// Get the directory containing the ntd binary (for PATH in service definition)
+// 跨平台保留：仅 daemon/linux.rs 在 Linux 构建中调用；macOS/Windows 构建下无调用方，
+// 故 allow(unused) 而非 cfg(target_os)，否则 common.rs 里的单测在非 Linux 平台会编译失败。
 #[allow(unused)]
 pub(crate) fn ntd_bin_dir() -> PathBuf {
     ntd_binary_path()

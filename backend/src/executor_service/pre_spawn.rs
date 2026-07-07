@@ -252,13 +252,16 @@ pub(crate) async fn reject_start_todo_failure(
 ///
 /// 决策顺序：显式 req_executor > todo.executor > registry default。命令构造
 /// 用 `command_args_with_session` 处理 resume / 非 resume 分支。
-#[allow(dead_code)]
 pub(crate) struct SelectedExecutor {
     pub executor: Arc<dyn CodeExecutor>,
     pub command_args: Vec<String>,
     pub executable_path: String,
     pub executor_str: String,
     pub todo_workspace_path: Option<String>,
+    // 仅在构造时赋值（= request.resume_session_id），当前无读取方：create_record_or_reject
+    // 刻意不用它（见该函数注释的 resume 语义说明），保留字段以承载未来 executor 对
+    // resume session 的直接消费，故 allow(dead_code) 而非删除。
+    #[allow(dead_code)]
     pub session_id_for_executor: Option<String>,
 }
 

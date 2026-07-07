@@ -23,7 +23,6 @@ use std::process::Command;
 use super::common::{ntd_binary_path, ntd_dir};
 use super::DaemonAction;
 
-#[allow(unused)]
 const LAUNCHD_LABEL: &str = "com.nothing-todo.ntd";
 
 // handle 是 daemon 子命令的统一入口，根据 Action 分发到具体处理函数。

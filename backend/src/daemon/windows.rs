@@ -16,7 +16,6 @@ use std::process::Command;
 use super::common::{ntd_binary_path, ntd_dir};
 use super::DaemonAction;
 
-#[allow(unused)]
 const TASK_NAME: &str = "ntd";
 
 // handle_task_scheduler 声明为 async 是为了内部 Restart 分支可以 .await

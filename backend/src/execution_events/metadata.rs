@@ -90,11 +90,9 @@ impl ExecutionMetadata {
             ExecutionEvent::Progress { percent, message } => {
                 tracing::debug!("执行进度: {}% - {:?}", percent, message);
             }
-            ExecutionEvent::StepStart { .. } => {
-                // 记录开始时间
-                if self.started_at.is_none() {
-                    self.started_at = Some(crate::models::utc_timestamp());
-                }
+            // 仅在首次 StepStart 时记录开始时间；guard 不满足时落入 `_ => {}`，与原 if 跳过语义一致。
+            ExecutionEvent::StepStart { .. } if self.started_at.is_none() => {
+                self.started_at = Some(crate::models::utc_timestamp());
             }
             _ => {}
         }
