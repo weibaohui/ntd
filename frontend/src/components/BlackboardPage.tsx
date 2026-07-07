@@ -34,6 +34,7 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import type { BlackboardDebounceStatus } from '@/hooks/useExecutionEvents';
 import { updateBlackboardConfig, getBlackboard } from '@/utils/database/blackboard';
 import { normalizeBlackboardMarkdown } from '@/utils/markdown';
+import { ProposalButton } from '@/components/blackboard-proposal/ProposalButton';
 
 /** 黑板 API 返回的配置形状（与后端 BlackboardResponse 对应，不含内容） */
 interface BlackboardData {
@@ -466,6 +467,9 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     replaceUrl('blackboard', { file: slug });
   }, [replaceUrl]);
 
+  // 当前选中页是否为 topic 类型：只有 topic 才允许生成 Todo 建议（log/index 不分析）
+  const isCurrentTopic = files.some(f => f.slug === currentSlug && f.file_type === 'topic');
+
   return (
     <PageCard
       icon={<TfiBlackboard style={{ fontSize: 18 }} />}
@@ -477,12 +481,17 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
             onMenuClick={() => setMenuDrawerOpen(true)}
             onOpenSettings={handleOpenSettings}
             onRefresh={handleRefresh}
+            workspaceId={workspaceId}
+            currentSlug={currentSlug}
+            isTopic={isCurrentTopic}
           />
         ) : (
           <DesktopHeaderExtra
             workspaceId={workspaceId}
             onOpenSettings={handleOpenSettings}
             onRefresh={handleRefresh}
+            currentSlug={currentSlug}
+            isTopic={isCurrentTopic}
           />
         )
       }
@@ -632,6 +641,10 @@ interface DesktopHeaderExtraProps {
   workspaceId: number;
   onOpenSettings: () => void;
   onRefresh: () => void;
+  /** 当前选中的 wiki 页面 slug */
+  currentSlug: string;
+  /** 当前页是否为 topic 类型（非 topic 时禁用「生成建议」按钮） */
+  isTopic: boolean;
 }
 
 /**
@@ -639,7 +652,7 @@ interface DesktopHeaderExtraProps {
  *
  * 由 PageCard 的 extra prop 承接，取代原 BlackboardHeader 的桌面分支。
  */
-function DesktopHeaderExtra({ workspaceId, onOpenSettings, onRefresh }: DesktopHeaderExtraProps) {
+function DesktopHeaderExtra({ workspaceId, onOpenSettings, onRefresh, currentSlug, isTopic }: DesktopHeaderExtraProps) {
   const [queueModalVisible, setQueueModalVisible] = useState(false);
   const [queueIds, setQueueIds] = useState<number[]>([]);
   const [queueLoading, setQueueLoading] = useState(false);
@@ -665,8 +678,9 @@ function DesktopHeaderExtra({ workspaceId, onOpenSettings, onRefresh }: DesktopH
     <>
       {/* 防抖双进度条，占 flex 空间 */}
       <BlackboardDebounceBar workspaceId={workspaceId} />
-      {/* 操作按钮组 */}
+      {/* 操作按钮组：生成建议（主 CTA）+ 设置/队列/刷新 */}
       <Space.Compact>
+        <ProposalButton workspaceId={workspaceId} slug={currentSlug} disabled={!isTopic} />
         <Button icon={<SettingOutlined />} onClick={onOpenSettings} title="设置" />
         <Button icon={<UnorderedListOutlined />} onClick={handleShowQueue} loading={queueLoading} title="查看队列 ID" />
         <Button type="primary" icon={<ReloadOutlined />} onClick={onRefresh}>
@@ -715,6 +729,12 @@ interface MobileHeaderExtraProps {
   onMenuClick: () => void;
   onOpenSettings: () => void;
   onRefresh: () => void;
+  /** 当前工作空间 ID（生成建议需要） */
+  workspaceId: number;
+  /** 当前选中的 wiki 页面 slug */
+  currentSlug: string;
+  /** 当前页是否为 topic 类型（非 topic 时禁用「生成建议」按钮） */
+  isTopic: boolean;
 }
 
 /**
@@ -722,9 +742,10 @@ interface MobileHeaderExtraProps {
  *
  * 由 PageCard 的 extra prop 承接，取代原 BlackboardHeader 的移动端分支。
  */
-function MobileHeaderExtra({ onMenuClick, onOpenSettings, onRefresh }: MobileHeaderExtraProps) {
+function MobileHeaderExtra({ onMenuClick, onOpenSettings, onRefresh, workspaceId, currentSlug, isTopic }: MobileHeaderExtraProps) {
   return (
     <Space.Compact size="small">
+      <ProposalButton workspaceId={workspaceId} slug={currentSlug} disabled={!isTopic} buttonSize="small" showLabel={false} />
       <Button icon={<MenuOutlined />} onClick={onMenuClick} title="目录" />
       <Button icon={<SettingOutlined />} onClick={onOpenSettings} title="设置" />
       <Button type="primary" icon={<ReloadOutlined />} onClick={onRefresh} />
