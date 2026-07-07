@@ -46,6 +46,10 @@ export function TodoPostPage({
   const [records, setRecords] = useState<ExecutionRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [replyLoading, setReplyLoading] = useState(false);
+  // 防切换竞态：ref 持有最新 recordId。loadSessionRecords resolve 后比较，
+  // 不一致说明用户已切到别的 record，丢弃 stale 响应避免覆盖新 record 的列表。
+  const latestRecordIdRef = useRef(recordId);
+  latestRecordIdRef.current = recordId;
 
   // 日志抽屉状态
   const [logDrawerOpen, setLogDrawerOpen] = useState(false);
@@ -57,10 +61,12 @@ export function TodoPostPage({
 
   // 加载 session 记录
   const loadSessionRecords = async () => {
+    // 捕获本次请求所属的 recordId，resolve 后与最新值比较，丢弃切换后的 stale 响应
+    const id = recordId;
     setLoading(true);
     try {
       // 1. 获取目标记录
-      const targetRecord = await db.getExecutionRecord(recordId);
+      const targetRecord = await db.getExecutionRecord(id);
       // 2. 如果有 session_id，拉取同 session 的所有记录
       if (targetRecord.session_id) {
         const sessionRecords = await db.getExecutionRecordsBySession(targetRecord.session_id);
@@ -68,15 +74,16 @@ export function TodoPostPage({
         sessionRecords.sort((a, b) =>
           (a.started_at || "").localeCompare(b.started_at || "")
         );
-        setRecords(sessionRecords);
+        if (latestRecordIdRef.current === id) setRecords(sessionRecords);
       } else {
         // 无 session_id，只显示这一条
-        setRecords([targetRecord]);
+        if (latestRecordIdRef.current === id) setRecords([targetRecord]);
       }
     } catch (error) {
+      if (latestRecordIdRef.current !== id) return; // 切换后的错误不弹窗
       message.error("加载执行记录失败: " + (error instanceof Error ? error.message : String(error)));
     } finally {
-      setLoading(false);
+      if (latestRecordIdRef.current === id) setLoading(false);
     }
   };
 
