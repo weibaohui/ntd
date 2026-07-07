@@ -22,7 +22,7 @@ fn validate_execution_timeout_secs(execution_timeout_secs: u64) -> Result<(), Ap
 pub async fn get_config(State(state): State<AppState>) -> Result<ApiResponse<Config>, AppError> {
     // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
     #[allow(clippy::unwrap_used)]
-    let cfg = state.config.read().unwrap().clone();
+    let cfg = state.config.read().unwrap_or_else(|e| e.into_inner()).clone();
     Ok(ApiResponse::ok(cfg))
 }
 
@@ -36,7 +36,7 @@ pub async fn update_config(
     let cfg_to_save = {
         // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
         #[allow(clippy::unwrap_used)]
-        let mut cfg = state.config.write().unwrap();
+        let mut cfg = state.config.write().unwrap_or_else(|e| e.into_inner());
 
         if let Some(port) = req.port {
             cfg.port = port;

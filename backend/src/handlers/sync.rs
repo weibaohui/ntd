@@ -145,7 +145,7 @@ pub async fn cloud_sync_status(
     let (connected, authenticated, server_url, token, last_sync_at_fallback) = {
         // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
         #[allow(clippy::unwrap_used)]
-        let cfg = state.config.read().unwrap();
+        let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
         let server_url = cfg.cloud_sync.server_url.clone();
         let token = cfg.cloud_sync.sync_token.clone();
         let last_sync_at = cfg.cloud_sync.last_sync_at.clone();
@@ -220,7 +220,7 @@ pub async fn cloud_get_config(
 ) -> Result<ApiResponse<CloudConfigResponse>, AppError> {
     // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
     #[allow(clippy::unwrap_used)]
-    let cfg = state.config.read().unwrap();
+    let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
 
     Ok(ApiResponse::ok(CloudConfigResponse {
         server_url: cfg.cloud_sync.server_url.clone(),
@@ -237,7 +237,7 @@ pub async fn cloud_save_config(
 ) -> Result<ApiResponse<SaveResponse>, AppError> {
     // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
     #[allow(clippy::unwrap_used)]
-    let mut cfg = state.config.write().unwrap();
+    let mut cfg = state.config.write().unwrap_or_else(|e| e.into_inner());
     if let Some(url) = req.server_url {
         cfg.cloud_sync.server_url = url.trim_end_matches('/').to_string();
     }
@@ -481,7 +481,7 @@ pub async fn cloud_sync_push(
     let (server_url, token, conflict_mode) = {
         // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
         #[allow(clippy::unwrap_used)]
-        let cfg = state.config.read().unwrap();
+        let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
         let token = cfg
             .cloud_sync
             .sync_token
@@ -611,7 +611,7 @@ pub async fn cloud_sync_push(
     // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
     if success && !dry_run {
         #[allow(clippy::unwrap_used)]
-        let mut cfg = state.config.write().unwrap();
+        let mut cfg = state.config.write().unwrap_or_else(|e| e.into_inner());
         cfg.cloud_sync.last_sync_at = Some(chrono::Utc::now().to_rfc3339());
         let _ = cfg.save();
     }
@@ -639,7 +639,7 @@ pub async fn cloud_sync_pull(
     let (server_url, token, conflict_mode) = {
         // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
         #[allow(clippy::unwrap_used)]
-        let cfg = state.config.read().unwrap();
+        let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
         let token = cfg
             .cloud_sync
             .sync_token
@@ -733,7 +733,7 @@ pub async fn cloud_sync_pull(
     // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
     if !dry_run {
         #[allow(clippy::unwrap_used)]
-        let mut cfg = state.config.write().unwrap();
+        let mut cfg = state.config.write().unwrap_or_else(|e| e.into_inner());
         cfg.cloud_sync.last_sync_at = Some(chrono::Utc::now().to_rfc3339());
         let _ = cfg.save();
     }
