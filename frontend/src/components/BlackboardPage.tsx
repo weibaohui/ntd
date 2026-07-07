@@ -401,11 +401,14 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   }, [workspaceId, setConfigData]);
 
   // workspace 切换时先清空隔离数据，避免加载失败或加载窗口期暴露上一工作空间内容
+  // 注意：不设 currentSlug = ''，否则 Menu 收到 selectedKeys={['']} 会崩溃
+  //（Ant Design Menu.js:40 prefixCls → Cannot read properties of null）。
+  // files 已清空 → Menu 不渲染（files.length === 0 显示"暂无页面"），
+  // fetchFiles 异步完成后会自动设回有效 slug。
   useEffect(() => {
     setFiles([]);
     setCurrentFile(null);
     setConfigData(null);
-    setCurrentSlug('');
   }, [workspaceId]);
 
   // 副作用：workspaceId 变化时重拉
