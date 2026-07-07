@@ -13,7 +13,7 @@ use axum::Router;
 use crate::db::blackboard::BlackboardConfig;
 use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::ApiResponse;
-use crate::wiki::{list_topics, read_topic, read_index, read_log};
+use crate::wiki::{list_topics, read_topic, read_log};
 
 /// 黑板配置响应体（保留兼容，不含内容）
 #[derive(Debug, serde::Serialize)]
@@ -178,18 +178,12 @@ pub async fn update_blackboard_config(
 
 /// `GET /api/workspaces/{workspace_id}/wiki/files`
 ///
-/// 获取 wiki 文件列表。
+/// 获取 wiki 文件列表（不含 index）。
 pub async fn list_wiki_files(
     State(_state): State<AppState>,
     Path(workspace_id): Path<i64>,
 ) -> Result<ApiResponse<Vec<WikiFileItem>>, AppError> {
     let mut items = Vec::new();
-
-    // index.md
-    items.push(WikiFileItem {
-        slug: "index".to_string(),
-        file_type: "index".to_string(),
-    });
 
     // log.md
     items.push(WikiFileItem {
@@ -219,15 +213,12 @@ pub async fn get_wiki_file(
     State(_state): State<AppState>,
     Path((workspace_id, slug)): Path<(i64, String)>,
 ) -> Result<ApiResponse<WikiFileContent>, AppError> {
-    let content = if slug == "index" {
-        read_index(workspace_id).map_err(|e| {
-            AppError::Internal(format!("读取 index 失败: {:?}", e))
-        })?
-    } else if slug == "log" {
+    let content = if slug == "log" {
         read_log(workspace_id).map_err(|e| {
             AppError::Internal(format!("读取 log 失败: {:?}", e))
         })?
     } else {
+        // topic 文件
         read_topic(workspace_id, &slug).map_err(|e| {
             AppError::Internal(format!("读取 topic 失败: {:?}", e))
         })?

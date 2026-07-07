@@ -114,20 +114,31 @@ interface MarkdownLinkProps extends React.AnchorHTMLAttributes<HTMLAnchorElement
 }
 
 /**
+ * Wiki 文件相对路径的正则：
+ * - ./slug           — 直接写 slug，如 ./auth-module
+ * - topics/slug.md  — 后端 index 自动生成的格式，如 topics/auth-module.md
+ * 用于在 Markdown 内容中点击跳转到对应的 Wiki 页面。
+ */
+const WIKI_RELATIVE_PATH_REGEX = /^(?:\.\/)?(?:topics\/)?(.+?)(?:\.md)?$/;
+
+/**
  * Markdown 链接渲染器：识别内部链接协议与路径。
  *
  * 行为：
  * - href 以 ntd://todo/ 开头 → 渲染为可点击的"内链"按钮，
  *   点击时通过 useViewState.selectTodo 导航到事项详情，
  *   阻止浏览器尝试解析 ntd:// 自定义协议导致"找不到应用"提示。
+ * - href 匹配 ./slug 或 topics/slug.md 格式（Wiki 相对路径）→ 通过 selectWiki 跳转到 Wiki 视图
  * - href 以 / 开头（app 内相对路径，如 /#/items?id=16&panel=post&record=6513）
  *   → 新标签页打开，让用户同时保留 wiki 页面和查看源记录。
  * - 其他 href（http/https/mailto 等）→ 新窗口打开 + rel=noopener 防 tabnabbing。
  */
-function TodoLink(props: MarkdownLinkProps): React.ReactElement {
+function TodoLink(props: MarkdownLinkProps & { workspaceId?: number; selectWiki?: (workspaceId: number, slug: string) => void }): React.ReactElement {
   // 用 hook 不能放在条件分支里：TodoLink 总是组件实例，调用安全
-  const { selectTodo } = useViewState();
-  const href = props.href ?? '';
+  const { selectTodo, selectWiki } = useViewState();
+  const { workspaceId, selectWiki: selectWikiProp, ...restProps } = props;
+  const href = restProps.href ?? '';
+
   // 解析 ntd://todo/{id} → 提取纯数字 id
   const isInternal = href.startsWith(NTD_TODO_PROTOCOL_PREFIX);
   const todoId = isInternal ? Number(href.slice(NTD_TODO_PROTOCOL_PREFIX.length)) : NaN;
@@ -136,7 +147,7 @@ function TodoLink(props: MarkdownLinkProps): React.ReactElement {
   if (isInternal && Number.isFinite(todoId)) {
     return (
       <a
-        {...props}
+        {...restProps}
         href={`#/items?id=${todoId}`}
         // preventDefault：阻止浏览器实际跳到 #/items?id=...，完全交给 selectTodo
         onClick={(e) => {
@@ -147,7 +158,33 @@ function TodoLink(props: MarkdownLinkProps): React.ReactElement {
         }}
         style={{ color: 'var(--color-primary, #1677ff)', textDecoration: 'underline', cursor: 'pointer' }}
       >
-        {props.children}
+        {restProps.children}
+      </a>
+    );
+  }
+
+  // Wiki 相对路径：./slug 或 ./topics/slug
+  const wikiMatch = href.match(WIKI_RELATIVE_PATH_REGEX);
+  if (wikiMatch && workspaceId) {
+    const targetSlug = wikiMatch[1];
+    // 去掉 .md 后缀（如果有的话）
+    const cleanSlug = targetSlug.replace(/\.md$/, '');
+    return (
+      <a
+        {...restProps}
+        href={`#/wiki?workspace=${workspaceId}&slug=${encodeURIComponent(cleanSlug)}`}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          // 优先使用传入的 selectWiki prop，其次使用 hook 的 selectWiki
+          const navigate = selectWikiProp ?? selectWiki;
+          if (navigate) {
+            navigate(workspaceId, cleanSlug);
+          }
+        }}
+        style={{ color: 'var(--color-primary, #1677ff)', textDecoration: 'underline', cursor: 'pointer' }}
+      >
+        {restProps.children}
       </a>
     );
   }
@@ -157,16 +194,16 @@ function TodoLink(props: MarkdownLinkProps): React.ReactElement {
   // 排除 // 协议相对 URL，避免把外站链接当作 app 内路径
   if (href.startsWith('/') && !href.startsWith('//')) {
     return (
-      <a {...props} href={href} target="_blank" rel="noopener noreferrer">
-        {props.children}
+      <a {...restProps} href={href} target="_blank" rel="noopener noreferrer">
+        {restProps.children}
       </a>
     );
   }
 
   // 外部链接：新窗口打开 + rel=noopener 防 tabnabbing
   return (
-    <a {...props} target="_blank" rel="noopener noreferrer">
-      {props.children}
+    <a {...restProps} target="_blank" rel="noopener noreferrer">
+      {restProps.children}
     </a>
   );
 }
@@ -239,11 +276,13 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const workspaceId = useEffectiveWorkspaceId(propWorkspaceId);
   // 移动端检测
   const isMobile = useIsMobile();
+  // 用于同步 URL
+  const { replaceUrl, blackboardFile } = useViewState();
 
   // Wiki 化数据状态
   const [files, setFiles] = useState<WikiFileItem[]>([]);
   const [currentFile, setCurrentFile] = useState<WikiFileContent | null>(null);
-  const [currentSlug, setCurrentSlug] = useState<string>('index');
+  const [currentSlug, setCurrentSlug] = useState<string>('');
   const [filesLoading, setFilesLoading] = useState(true);
   const [fileLoading, setFileLoading] = useState(false);
   // 旧版数据（配置用）
@@ -317,8 +356,12 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       setFilesLoading(true);
       const list = await fetchWikiFiles(workspaceId);
       setFiles(list);
+      // 计算默认 slug：优先 topic，其次 log，都没有则空
+      const defaultSlug = list.find(f => f.file_type === 'topic')?.slug
+        ?? list.find(f => f.file_type === 'log')?.slug
+        ?? '';
       // 用函数式更新读取最新 currentSlug，避免将其放入依赖数组而每次切页重拉列表
-      setCurrentSlug(prev => (list.some(p => p.slug === prev) ? prev : 'index'));
+      setCurrentSlug(prev => (list.some(p => p.slug === prev) ? prev : defaultSlug));
     } catch (err) {
       console.error('获取页面列表失败:', err);
       message.error('获取页面列表失败');
@@ -356,7 +399,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     setFiles([]);
     setCurrentFile(null);
     setConfigData(null);
-    setCurrentSlug('index');
+    setCurrentSlug('');
   }, [workspaceId]);
 
   // 副作用：workspaceId 变化时重拉
@@ -364,6 +407,13 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     fetchFiles();
     fetchConfig();
   }, [fetchFiles, fetchConfig]);
+
+  // URL 中的 blackboardFile 变化时，同步到 currentSlug（支持浏览器前进后退）
+  useEffect(() => {
+    if (blackboardFile) {
+      setCurrentSlug(blackboardFile);
+    }
+  }, [blackboardFile]);
 
   // 副作用：currentSlug 变化时重拉页面详情
   useEffect(() => {
@@ -376,11 +426,13 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     fetchCurrentFile();
   }, [fetchFiles, fetchCurrentFile]);
 
-  // 移动端选择目录后关闭 Drawer
+  // 移动端选择目录后关闭 Drawer，同时同步 URL
   const handleSelectSlug = useCallback((slug: string) => {
     setCurrentSlug(slug);
     setMenuDrawerOpen(false);
-  }, []);
+    // 同步 URL：/#/blackboard?file=slug
+    replaceUrl('blackboard', { file: slug });
+  }, [replaceUrl]);
 
   return (
     <PageCard
@@ -415,6 +467,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         fileLoading={fileLoading}
         menuDrawerOpen={menuDrawerOpen}
         onMenuDrawerClose={() => setMenuDrawerOpen(false)}
+        workspaceId={workspaceId}
       />
 
       {/* 黑板设置弹窗：Tab1 防抖设置，Tab2 提示词设置 */}
@@ -830,6 +883,8 @@ interface BlackboardWikiLayoutProps {
   menuDrawerOpen: boolean;
   /** 移动端关闭目录 Drawer 的回调 */
   onMenuDrawerClose: () => void;
+  /** 当前工作空间 ID，用于 Wiki 相对路径链接 */
+  workspaceId: number;
 }
 
 /**
@@ -850,17 +905,11 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
   const {
     isDark, isMobile, files, currentFile, currentSlug,
     onSelectSlug, filesLoading, fileLoading,
-    menuDrawerOpen, onMenuDrawerClose,
+    menuDrawerOpen, onMenuDrawerClose, workspaceId,
   } = props;
 
-  // 构造 Menu items：index 在前，然后 topic，最后 log
+  // 构造 Menu items：topic 分组在前，然后 log
   const menuItems = [
-    // index 页
-    ...files.filter(f => f.file_type === 'index').map(f => ({
-      key: f.slug,
-      label: '目录',
-      type: 'item' as const,
-    })),
     // 主题页分组
     {
       key: 'topics-group',
@@ -912,7 +961,7 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
           ) : !currentFile || currentFile.content.trim().length === 0 ? (
             <BlackboardEmpty isDark={isDark} />
           ) : (
-            <BlackboardContent isDark={isDark} content={currentFile.content} />
+            <BlackboardContent isDark={isDark} content={currentFile.content} workspaceId={workspaceId} />
           )}
         </div>
 
@@ -955,7 +1004,7 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
         ) : !currentFile || currentFile.content.trim().length === 0 ? (
           <BlackboardEmpty isDark={isDark} />
         ) : (
-          <BlackboardContent isDark={isDark} content={currentFile.content} />
+          <BlackboardContent isDark={isDark} content={currentFile.content} workspaceId={workspaceId} />
         )}
       </div>
     </div>
@@ -965,11 +1014,14 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
 interface BlackboardContentProps {
   isDark: boolean;
   content: string;
+  /** 当前工作空间 ID，用于 Wiki 相对路径链接导航 */
+  workspaceId?: number;
 }
 
 /** 真正渲染 Markdown：XMarkdown 内部走 DOMPurify 防止 XSS */
 function BlackboardContent(props: BlackboardContentProps) {
   const isDark = props.isDark;
+  const { selectWiki } = useViewState();
   // 前端兼容兜底：渲染前再剥一次外层 fenced markdown，保证历史脏数据也能正常显示
   const renderedContent = normalizeBlackboardMarkdown(props.content);
   return (
@@ -990,13 +1042,19 @@ function BlackboardContent(props: BlackboardContentProps) {
         // className 包一层让主题色与外层容器保持一致
         className={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
         content={renderedContent}
-        // 覆盖 a 标签渲染：让 ntd://todo/{id} 走内部导航
-        components={{ a: TodoLink }}
+        // 覆盖 a 标签渲染：让 ntd://todo/{id} 走内部导航，./slug 走 Wiki 导航
+        components={{ a: (linkProps) => (
+          <TodoLink
+            {...linkProps}
+            workspaceId={props.workspaceId}
+            selectWiki={selectWiki}
+          />
+        )}}
         // DOMPurify 默认会拒绝 ntd:// 等未知协议，会把整条链接剥成纯文本。
         // 显式允许 ntd 协议 + 以 / 开头的内部相对路径（如 /#/items?id=16&panel=post&record=6513），
         // 其它未知协议仍被拒绝。
         dompurifyConfig={{
-          ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|ntd):|\/)/i,
+          ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|ntd):|\/|\.\/)/i,
         }}
       />
     </div>

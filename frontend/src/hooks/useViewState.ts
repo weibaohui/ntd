@@ -18,6 +18,7 @@
  *   /#/sessions                会话
  *   /#/executors               执行器
  *   /#/blackboard              黑板
+ *   /#/wiki?workspace=1&slug=auth-module  Wiki 主题页面
  *
  * 移动端 panel 参数（用于 list/detail 独立页面）：
  *   /#/items?panel=list        事项列表（全屏）
@@ -39,7 +40,8 @@ export type View =
   | 'projectDirectories'
   | 'sessions'
   | 'executors'
-  | 'blackboard';
+  | 'blackboard'
+  | 'wiki';
 
 export type Panel = 'list' | 'detail' | 'post';
 
@@ -49,7 +51,7 @@ const ALL_VIEWS: View[] = [
   'items', 'loops',
   'dashboard', 'settings', 'memorial',
   'runtime', 'skills', 'projectDirectories', 'sessions', 'executors',
-  'blackboard',
+  'blackboard', 'wiki',
 ];
 
 const ALL_BOARD_MODES: BoardMode[] = ['memorial', 'kanban', 'running', 'loop_kanban'];
@@ -117,7 +119,17 @@ function getInitialBoardMode(): BoardMode {
   return 'memorial';
 }
 
-function buildHashUrl(view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode }): string {
+function getInitialWikiSlug(): string | null {
+  const params = getHashSearchParams();
+  return params.get('slug');
+}
+
+function getInitialBlackboardFile(): string | null {
+  const params = getHashSearchParams();
+  return params.get('file');
+}
+
+function buildHashUrl(view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode; workspace?: number | null; slug?: string | null; file?: string | null }): string {
   const path = `/${view}`;
   const params = new URLSearchParams();
   if (opts?.id != null) params.set('id', String(opts.id));
@@ -125,6 +137,15 @@ function buildHashUrl(view: View, opts?: { id?: number | null; tab?: string | nu
   if (opts?.panel === 'detail' || opts?.panel === 'post') params.set('panel', opts.panel);
   if (opts?.record != null) params.set('record', String(opts.record));
   if (opts?.mode) params.set('mode', opts.mode);
+  if (view === 'wiki') {
+    // wiki 视图需要 workspace 和 slug 来定位文件
+    if (opts?.workspace != null) params.set('workspace', String(opts.workspace));
+    if (opts?.slug) params.set('slug', opts.slug);
+  }
+  if (view === 'blackboard' && opts?.file) {
+    // blackboard 视图的 file 参数标识当前查看的文件
+    params.set('file', opts.file);
+  }
   const qs = params.toString();
   return qs ? `#${path}?${qs}` : `#${path}`;
 }
@@ -141,6 +162,7 @@ const VIEW_TO_NAV_KEY: Record<View, string> = {
   projectDirectories: 'settings_projectDirectories',
   sessions: 'settings_sessions',
   executors: 'settings_executors',
+  wiki: 'blackboard',
 };
 
 export function viewToNavKey(view: View): string {
@@ -154,8 +176,10 @@ export function useViewState() {
   const [activePanel, setActivePanel] = useState<Panel>(getInitialPanel);
   const [selectedRecordId, setSelectedRecordId] = useState<number | null>(getInitialRecordId);
   const [boardMode, setBoardMode] = useState<BoardMode>(getInitialBoardMode);
+  const [wikiSlug, setWikiSlug] = useState<string | null>(getInitialWikiSlug);
+  const [blackboardFile, setBlackboardFile] = useState<string | null>(getInitialBlackboardFile);
 
-  const pushUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode }) => {
+  const pushUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode; workspace?: number | null; slug?: string | null; file?: string | null }) => {
     const hashUrl = buildHashUrl(view, opts);
     window.history.pushState(null, '', hashUrl);
     setActiveView(view);
@@ -164,9 +188,11 @@ export function useViewState() {
     setActivePanel(opts?.panel ?? 'list');
     setSelectedRecordId(opts?.record ?? null);
     setBoardMode(opts?.mode ?? 'memorial');
+    setWikiSlug(view === 'wiki' ? (opts?.slug ?? null) : null);
+    setBlackboardFile(view === 'blackboard' ? (opts?.file ?? null) : null);
   }, []);
 
-  const replaceUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode }) => {
+  const replaceUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode; workspace?: number | null; slug?: string | null; file?: string | null }) => {
     const hashUrl = buildHashUrl(view, opts);
     window.history.replaceState(null, '', hashUrl);
     setActiveView(view);
@@ -175,6 +201,8 @@ export function useViewState() {
     setActivePanel(opts?.panel ?? 'list');
     setSelectedRecordId(opts?.record ?? null);
     setBoardMode(opts?.mode ?? 'memorial');
+    setWikiSlug(view === 'wiki' ? (opts?.slug ?? null) : null);
+    setBlackboardFile(view === 'blackboard' ? (opts?.file ?? null) : null);
   }, []);
 
   useEffect(() => {
@@ -186,6 +214,8 @@ export function useViewState() {
       const panel = params.get('panel') as Panel | null;
       const recordStr = params.get('record');
       const mode = params.get('mode') as BoardMode | null;
+      const slug = params.get('slug');
+      const file = params.get('file');
       const resolvedId = idStr ? (Number.isFinite(Number(idStr)) ? Number(idStr) : null) : null;
       const resolvedRecord = recordStr ? (Number.isFinite(Number(recordStr)) ? Number(recordStr) : null) : null;
       const resolvedMode = mode && ALL_BOARD_MODES.includes(mode) ? mode : 'memorial';
@@ -195,6 +225,8 @@ export function useViewState() {
       setActivePanel(panel === 'detail' || panel === 'post' ? panel : 'list');
       setSelectedRecordId(resolvedRecord);
       setBoardMode(resolvedMode);
+      setWikiSlug(view === 'wiki' ? (slug || null) : null);
+      setBlackboardFile(view === 'blackboard' ? (file || null) : null);
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -207,6 +239,10 @@ export function useViewState() {
   const selectTodo = useCallback((todoId: number) => {
     if (!Number.isFinite(todoId)) return;
     pushUrl('items', { id: todoId });
+  }, [pushUrl]);
+
+  const selectWiki = useCallback((workspaceId: number, slug: string) => {
+    pushUrl('wiki', { workspace: workspaceId, slug });
   }, [pushUrl]);
 
   const backToList = useCallback(() => {
@@ -223,8 +259,11 @@ export function useViewState() {
     selectedPanel,
     selectedRecordId,
     boardMode,
+    wikiSlug,
+    blackboardFile,
     showView,
     selectTodo,
+    selectWiki,
     backToList,
     pushUrl,
     replaceUrl,
