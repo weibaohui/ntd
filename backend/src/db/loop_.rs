@@ -435,26 +435,55 @@ impl Database {
             .await?;
         }
 
-        // 复制 steps (按原 order 写入,新 order 自动递增)
+        // 复制 steps：两遍走（与 batch_copy_loops_to_workspace 一致）。
+        // 第一遍创建所有 step 并建立 旧id→新id 映射，goto 字段暂置 None；
+        // 第二遍把 success_goto_step_id / fail_goto_step_id 从「源 step id」重映射到「新 step id」。
+        // 旧实现直接写源 step id，新 step 拿到的是全新自增 id，导致副本的 goto 指向源 loop 的
+        // 步骤（悬空或错误），运行到 goto 分支时报 step not found / 跳错分支。
         let steps = self.list_loop_steps_by_loop(source_id).await?;
-        for s in steps {
-            self.create_loop_step(
-                new_loop.id,
-                &s.name,
-                &s.description,
-                s.todo_id,
-                &s.run_mode,
-                s.skip_on_source_failed != 0,
-                s.min_rating,
-                &s.unrated_policy,
-                s.enabled != 0,
-                &s.on_success,
-                s.success_goto_step_id,
-                &s.on_rating_fail,
-                s.fail_goto_step_id,
-                &s.review_type,
-            )
-            .await?;
+        // (old_step_id, new_step_id, old_success_goto, old_fail_goto)
+        let mut step_map: Vec<(i64, i64, Option<i64>, Option<i64>)> = Vec::new();
+        for s in &steps {
+            let new_step = self
+                .create_loop_step(
+                    new_loop.id,
+                    &s.name,
+                    &s.description,
+                    s.todo_id,
+                    &s.run_mode,
+                    s.skip_on_source_failed != 0,
+                    s.min_rating,
+                    &s.unrated_policy,
+                    s.enabled != 0,
+                    &s.on_success,
+                    None, // success_goto 第二遍再补
+                    &s.on_rating_fail,
+                    None, // fail_goto 第二遍再补
+                    &s.review_type,
+                )
+                .await?;
+            step_map.push((s.id, new_step.id, s.success_goto_step_id, s.fail_goto_step_id));
+        }
+
+        // 第二遍：更新有 goto 引用的 step，把旧 step_id 换成新 step_id
+        let old_to_new: std::collections::HashMap<i64, i64> =
+            step_map.iter().map(|(old, new, _, _)| (*old, *new)).collect();
+        for (_old_id, new_id, old_success_goto, old_fail_goto) in &step_map {
+            let new_success_goto = old_success_goto.and_then(|g| old_to_new.get(&g).copied());
+            let new_fail_goto = old_fail_goto.and_then(|g| old_to_new.get(&g).copied());
+            if new_success_goto.is_some() || new_fail_goto.is_some() {
+                let existing = loop_steps::Entity::find_by_id(*new_id).one(&self.conn).await?;
+                if let Some(c) = existing {
+                    let mut am: loop_steps::ActiveModel = c.into();
+                    if let Some(goto) = new_success_goto {
+                        am.success_goto_step_id = ActiveValue::Set(Some(goto));
+                    }
+                    if let Some(goto) = new_fail_goto {
+                        am.fail_goto_step_id = ActiveValue::Set(Some(goto));
+                    }
+                    am.update(&self.conn).await?;
+                }
+            }
         }
 
         Ok(Some(new_loop))
