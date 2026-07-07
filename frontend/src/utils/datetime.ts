@@ -1,6 +1,13 @@
-// 时间格式化工具：用 dayjs 统一处理 ISO 字符串解析、本地时区、相对时间。
-// 之前依赖 date-fns，现整体迁移到 dayjs 与 Dashboard 组件保持一致，
-// 减少一个 ~50KB 的依赖。
+// 时间格式化工具。
+//
+// 历史背景：之前 formatRelativeTime 用 date-fns 的 formatDistanceToNow，
+// 与项目里已有 dayjs 形成 ~50KB 的重复依赖。本文件把相对时间部分迁到 dayjs，
+// 整体只保留 dayjs 一个日期库。
+//
+// 为什么 formatLocalDateTime 继续用原生 Date.toLocaleString：
+// 它的输出依赖宿主环境本地化设置（如「2026/7/7 下午4:18:33」），
+// 迁到 dayjs 后格式会变成固定的 'YYYY-MM-DD HH:mm:ss'，是用户可见的行为变化。
+// 现有页面、截图、用户习惯都已固化在 toLocaleString 输出上，保留更稳。
 
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
@@ -17,13 +24,12 @@ dayjs.locale('zh-cn');
 /**
  * 格式化为本地可读字符串。
  *
- * 后端返回的 ISO 字符串带 Z（UTC），dayjs 解析后按本地时区展示；
- * 用 'YYYY-MM-DD HH:mm:ss' 固定格式，避免 toLocaleString 在不同浏览器
- * 与 Node 环境下输出不一致导致快照/E2E 测试不稳定。
+ * 后端返回的 ISO 字符串带 Z（UTC），Date 构造器自动识别为 UTC 时间，
+ * toLocaleString() 再按本地时区与本地化模板渲染，无需 dayjs 介入。
  */
 export function formatLocalDateTime(timeStr: string | null | undefined): string {
   if (!timeStr) return '';
-  return dayjs(timeStr).format('YYYY-MM-DD HH:mm:ss');
+  return new Date(timeStr).toLocaleString();
 }
 
 /**

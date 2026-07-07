@@ -9,6 +9,11 @@
 //
 // 子组件（CronConfigForm / TodoSelectorForm 等）仅在本目录内自用，
 // 外部 caller 需要时直接 import 对应文件，不再 re-export。
+// 例外：TRIGGER_META 是触发类型元数据（非 UI），LoopStudioDetailPanel 等
+// 上层组件需要它做 label 渲染，作为目录对外 API 在此 re-export。
+
+// 触发类型元数据：供 LoopStudioDetailPanel 渲染触发器标签时查询 label。
+export { TRIGGER_META } from './helpers';
 
 import { useState, useCallback, useMemo } from 'react';
 import {
