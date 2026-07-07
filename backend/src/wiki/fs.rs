@@ -205,3 +205,10 @@ pub fn append_log(workspace_id: i64, entry: &str) -> io::Result<()> {
     file.write_all(entry.as_bytes())?;
     Ok(())
 }
+
+/// 覆盖写入 log.md。
+pub fn write_log(workspace_id: i64, content: &str) -> io::Result<()> {
+    init_wiki_dir(workspace_id)?;
+    let path = log_file(workspace_id)?;
+    fs::write(path, content)
+}
