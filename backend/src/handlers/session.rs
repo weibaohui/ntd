@@ -1286,12 +1286,34 @@ fn scan_for_executors(enabled_executors: &[crate::models::ExecutorConfig]) -> Ve
 
 // ─── Handlers ─────────────────────────────────────────────
 
+/// 对已排序/过滤后的切片做分页，返回 (total, 当前页数据)。
+/// 调用方负责把 page/page_size clamp 到合法范围（page>=1, page_size>=1）；
+/// 本函数只做切片算术，即便传入越界 page 也安全返回空页而非 panic——
+/// 关键防御：`start = (page-1)*page_size` 在 page=0 时会下溢，故调用方必须 .max(1)。
+/// 抽成纯函数是为了让 page=0 / 越界 / 末页不足等边界可被单测直接覆盖。
+fn paginate<T: Clone>(items: &[T], page: u64, page_size: u64) -> (u64, Vec<T>) {
+    let total = items.len() as u64;
+    // page 已保证 >=1，故 (page-1) 不会下溢；page_size 同理 >=1。
+    let start = ((page - 1) * page_size) as usize;
+    let end = start.saturating_add(page_size as usize).min(items.len());
+    let page_data = if start < items.len() {
+        items[start..end].to_vec()
+    } else {
+        // start 越过末尾（如 page 过大）→ 空页，而非 panic。
+        Vec::new()
+    };
+    (total, page_data)
+}
+
 pub async fn list_sessions(
     State(state): State<AppState>,
     Query(query): Query<ListSessionsQuery>,
 ) -> Result<ApiResponse<SessionListResponse>, AppError> {
-    let page = query.page.unwrap_or(1);
-    let page_size = query.page_size.unwrap_or(20);
+    // page=0 会让后面的 (page-1) 在 debug 下下溢 panic、release 下 wrap 成巨数后静默返回空页，
+    // 故对 page 兜底 .max(1)；page_size 同时 clamp 到 [1,100]，避免 0 或极大值导致空页/超大切片。
+    // 与 handlers/execution.rs:35 的分页兜底写法保持一致。
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
 
     let executors = state.db.get_enabled_executors().await.map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -1320,14 +1342,8 @@ pub async fn list_sessions(
             });
         }
 
-        let total = sessions.len() as u64;
-        let start = ((page - 1) * page_size) as usize;
-        let end = (start + page_size as usize).min(sessions.len());
-        let page_data = if start < sessions.len() {
-            sessions[start..end].to_vec()
-        } else {
-            Vec::new()
-        };
+        // 分页算术抽到 paginate 纯函数，便于单测覆盖 page=0 / 越界 / 末页不足等边界。
+        let (total, page_data) = paginate(&sessions, page, page_size);
 
         SessionListResponse { sessions: page_data, total, page, page_size }
     })
@@ -2596,5 +2612,48 @@ mod refactor_helpers_tests {
     fn iter_codex_rollout_files_returns_empty_for_missing_root() {
         let p = std::path::Path::new("/__no_such__/__ntd__/codex_root");
         assert!(iter_codex_rollout_files(p).is_empty());
+    }
+}
+
+// 分页纯函数的边界单测：page=0 由调用方 .max(1) 兜底，这里直接验算术安全性。
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
+mod paginate_tests {
+    use super::*;
+
+    #[test]
+    fn test_paginate_first_page() {
+        // 25 项、page=1 size=10 → 返回前 10，total=25。
+        let items: Vec<u32> = (0..25).collect();
+        let (total, page) = paginate(&items, 1, 10);
+        assert_eq!(total, 25);
+        assert_eq!(page, (0..10).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_paginate_last_page_partial() {
+        // 25 项、page=3 size=10 → 末页只剩 5 项，不越界。
+        let items: Vec<u32> = (0..25).collect();
+        let (total, page) = paginate(&items, 3, 10);
+        assert_eq!(total, 25);
+        assert_eq!(page, (20..25).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_paginate_page_beyond_end_returns_empty() {
+        // page 远超总页数 → 空页而非 panic，total 仍正确。
+        let items: Vec<u32> = (0..5).collect();
+        let (total, page) = paginate(&items, 100, 10);
+        assert_eq!(total, 5);
+        assert!(page.is_empty());
+    }
+
+    #[test]
+    fn test_paginate_empty_input() {
+        // 空切片、任意 page → 空页，total=0。
+        let items: Vec<u32> = Vec::new();
+        let (total, page) = paginate(&items, 1, 10);
+        assert_eq!(total, 0);
+        assert!(page.is_empty());
     }
 }
