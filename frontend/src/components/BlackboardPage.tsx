@@ -918,8 +918,8 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
     menuDrawerOpen, onMenuDrawerClose, workspaceId,
   } = props;
 
-  // 构造 Menu items：topic 分组在前，然后 log
-  const menuItems = [
+  // 构造 Menu items（useMemo 防止每次父组件重渲染都重建新数组→触发 Menu 内部 prefixCls null 崩溃）
+  const menuItems = useMemo(() => [
     // 主题页分组
     {
       key: 'topics-group',
@@ -937,28 +937,30 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
       label: '执行日志',
       type: 'item' as const,
     })),
-  ];
+  ], [files, isDark]);
 
   const sidebarBg = isDark ? '#1a1a1a' : '#fafafa';
   const sidebarBorder = isDark ? '#333' : '#f0f0f0';
 
-  // 渲染目录内容（抽出来复用于 Drawer 和固定侧边栏）
-  const sidebarContent = filesLoading ? (
-    <Skeleton active paragraph={{ rows: 6 }} style={{ padding: '0 12px' }} />
-  ) : files.length === 0 ? (
-    <div style={{ padding: '24px 12px', textAlign: 'center', color: isDark ? '#666' : '#999', fontSize: 12 }}>
-      暂无页面
-    </div>
-  ) : (
-    <Menu
-      mode="inline"
-      selectedKeys={[currentSlug]}
-      onClick={({ key }) => onSelectSlug(key as string)}
-      style={{ background: 'transparent', borderRight: 'none' }}
-      theme={isDark ? 'dark' : 'light'}
-      items={menuItems}
-    />
-  );
+  // 渲染目录内容（useMemo 防止 filesLoading/fileLoading/currentFile 等变化时 Menu 被不必要地重渲染）
+  const sidebarContent = useMemo(() => (
+    filesLoading ? (
+      <Skeleton active paragraph={{ rows: 6 }} style={{ padding: '0 12px' }} />
+    ) : files.length === 0 ? (
+      <div style={{ padding: '24px 12px', textAlign: 'center', color: isDark ? '#666' : '#999', fontSize: 12 }}>
+        暂无页面
+      </div>
+    ) : (
+      <Menu
+        mode="inline"
+        selectedKeys={[currentSlug]}
+        onClick={({ key }) => onSelectSlug(key as string)}
+        style={{ background: 'transparent', borderRight: 'none' }}
+        theme={isDark ? 'dark' : 'light'}
+        items={menuItems}
+      />
+    )
+  ), [filesLoading, files, currentSlug, isDark, onSelectSlug, menuItems]);
 
   // 移动端：内容区全宽，目录通过 Drawer 呈现
   if (isMobile) {
