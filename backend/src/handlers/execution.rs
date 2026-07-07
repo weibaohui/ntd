@@ -376,7 +376,10 @@ pub async fn get_running_board(
     // 需通过 todos 表关联过滤）。一次查出该 workspace 下所有 todo_ids，
     // 构建 Hashset 后在内存中过滤。
     let records = if let Some(wid) = query.workspace_id {
-        let ws_todos = state.db.get_todos_by_workspace_id(Some(wid)).await.unwrap_or_default();
+        // 用 ? 传播 DbErr：旧实现 unwrap_or_default() 会把 DB 读失败（SQLite locked/IO）
+        // 静默当成「空工作空间」，下游 filter 把所有 record 过滤掉、返回 200+0 条，
+        // 调用方无法区分真空还是 DB 挂了。改为传播错误让请求返回 5xx。
+        let ws_todos = state.db.get_todos_by_workspace_id(Some(wid)).await?;
         let ws_todo_ids: std::collections::HashSet<i64> = ws_todos.iter().map(|t| t.id).collect();
         records.into_iter().filter(|r| ws_todo_ids.contains(&r.todo_id)).collect()
     } else {
