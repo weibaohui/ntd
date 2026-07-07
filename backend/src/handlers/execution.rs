@@ -193,9 +193,9 @@ pub async fn execute_handler(
 
     // 检查该 todo 下正在执行的记录数量是否已达并发上限
     // 需要过滤掉孤儿记录：状态为 running 但 task_manager 中没有对应 task
-    // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
-    #[allow(clippy::unwrap_used)]
-    let max_concurrent = state.config.read().unwrap().max_concurrent_todos;
+    // 中毒时用 into_inner 取旧值继续：默认 unwind 下 axum handler panic 不会重启进程，
+    // 若 .unwrap() 会让所有 config 路由级联 500。
+    let max_concurrent = state.config.read().unwrap_or_else(|e| e.into_inner()).max_concurrent_todos;
     let running_tasks = state.task_manager.get_all_task_infos().await;
     let running_records = state.db.get_running_records_by_todo_id(req.todo_id).await?;
     let running_count_for_todo = running_records

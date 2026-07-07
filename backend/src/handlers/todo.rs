@@ -148,7 +148,7 @@ pub async fn create_todo(
     // Get timezone from request, or fall back to system default
     // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
     #[allow(clippy::unwrap_used)]
-    let system_default_tz = state.config.read().unwrap().scheduler_default_timezone.clone();
+    let system_default_tz = state.config.read().unwrap_or_else(|e| e.into_inner()).scheduler_default_timezone.clone();
     let scheduler_timezone = req
         .scheduler_timezone
         .as_ref()
@@ -258,7 +258,7 @@ pub async fn update_todo(
     // Get timezone: req > existing > system default
     // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
     #[allow(clippy::unwrap_used)]
-    let system_default_tz = state.config.read().unwrap().scheduler_default_timezone.clone();
+    let system_default_tz = state.config.read().unwrap_or_else(|e| e.into_inner()).scheduler_default_timezone.clone();
     let existing_tz = current.scheduler_timezone.clone();
     let scheduler_timezone = req
         .scheduler_timezone

@@ -146,7 +146,7 @@ pub async fn get_custom_template_status(
     let (auto_sync_enabled, auto_sync_cron) = {
         // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
         #[allow(clippy::unwrap_used)]
-        let cfg = state.config.read().unwrap();
+        let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
         (
             cfg.auto_sync_custom_templates_enabled,
             cfg.auto_sync_custom_templates_cron.clone(),
@@ -285,7 +285,7 @@ pub async fn update_auto_sync_config(
     let cfg_clone = {
         // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
         #[allow(clippy::unwrap_used)]
-        let mut cfg = state.config.write().unwrap();
+        let mut cfg = state.config.write().unwrap_or_else(|e| e.into_inner());
         cfg.auto_sync_custom_templates_enabled = req.enabled;
         cfg.auto_sync_custom_templates_cron = req.cron;
         cfg.clone()

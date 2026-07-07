@@ -106,7 +106,7 @@ pub async fn get_usage_stats_settings(
 ) -> Result<ApiResponse<UsageStatsSettings>, AppError> {
     // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
     #[allow(clippy::unwrap_used)]
-    let cfg = state.config.read().unwrap();
+    let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
     Ok(ApiResponse::ok(UsageStatsSettings {
         auto_usage_stats_enabled: cfg.auto_usage_stats_enabled,
         auto_usage_stats_cron: cfg.auto_usage_stats_cron.clone(),
@@ -135,7 +135,7 @@ pub async fn update_usage_stats_settings(
     let cfg_clone = {
         // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
         #[allow(clippy::unwrap_used)]
-        let mut cfg = state.config.write().unwrap();
+        let mut cfg = state.config.write().unwrap_or_else(|e| e.into_inner());
         cfg.auto_usage_stats_enabled = req.enabled;
         cfg.auto_usage_stats_cron = req.cron;
         cfg.normalize_paths();

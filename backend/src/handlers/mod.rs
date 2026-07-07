@@ -68,9 +68,9 @@ impl AppState {
     {
         // 块作用域收紧 `RwLockReadGuard` 生命周期:闭包返回时 guard 随作用域
         // 结束而 drop,后续 await 一定不会持 std 读锁卫跨 .await。
-        // RwLock 中毒表示曾有线程在持锁时 panic，继续执行无意义——直接 panic 让进程重启。
-        #[allow(clippy::unwrap_used)]
-        let cfg = self.config.read().unwrap();
+        // 中毒时用 into_inner 取旧值继续：本仓未设 panic=abort，默认 unwind 下
+        // axum handler panic 不会重启进程，若 .unwrap() 会让所有 config 路由级联 500。
+        let cfg = self.config.read().unwrap_or_else(|e| e.into_inner());
         f(&cfg)
     }
 
@@ -85,9 +85,8 @@ impl AppState {
     pub fn config_clone(&self) -> Config {
         // 块作用域与 `config_snapshot` 同理:guard 在表达式结束时 drop,
         // 后续 await 不会持读锁卫,future 保持 Send。
-        // RwLock 中毒表示曾有线程在持锁时 panic，继续执行无意义——直接 panic 让进程重启。
-        #[allow(clippy::unwrap_used)]
-        self.config.read().unwrap().clone()
+        // 中毒时用 into_inner 取旧值继续（见 config_snapshot 注释）。
+        self.config.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// 在闭包中修改 config 并返回 owned `Config`,写锁卫在闭包返回时立即 drop。
@@ -112,9 +111,8 @@ impl AppState {
     {
         // 块作用域收紧 `RwLockWriteGuard` 生命周期:闭包返回时 guard 随作用域
         // 结束而 drop,后续 await 一定不会持 std 写锁卫跨 .await。
-        // RwLock 中毒表示曾有线程在持锁时 panic，继续执行无意义——直接 panic 让进程重启。
-        #[allow(clippy::unwrap_used)]
-        let mut cfg = self.config.write().unwrap();
+        // 中毒时用 into_inner 取旧值继续（见 config_snapshot 注释）。
+        let mut cfg = self.config.write().unwrap_or_else(|e| e.into_inner());
         f(&mut cfg)
     }
 }

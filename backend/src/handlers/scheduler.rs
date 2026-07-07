@@ -19,7 +19,7 @@ pub async fn update_scheduler(
     // Get system default timezone
     // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
     #[allow(clippy::unwrap_used)]
-    let system_default_tz = state.config.read().unwrap().scheduler_default_timezone.clone();
+    let system_default_tz = state.config.read().unwrap_or_else(|e| e.into_inner()).scheduler_default_timezone.clone();
 
     // Determine final timezone: req > existing > system default
     let scheduler_timezone = req
