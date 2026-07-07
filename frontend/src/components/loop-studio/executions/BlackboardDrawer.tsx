@@ -13,7 +13,7 @@ import { Drawer, Descriptions, Tag, Button } from 'antd';
 import { ReadOutlined } from '@ant-design/icons';
 import * as dbExecutions from '@/utils/database/executions';
 import type { LogEntry } from '@/types';
-import { LogDrawer } from '@/components/TodoPostPage';
+import { LogDrawer } from '@/components/todo-post/LogDrawer';
 import { execStatusView } from './helpers';
 
 interface BlackboardDrawerProps {

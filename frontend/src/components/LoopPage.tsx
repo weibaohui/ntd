@@ -1,7 +1,7 @@
 import { RetweetOutlined, PlusOutlined } from '@ant-design/icons';
 import { Button, message } from 'antd';
 import { ListDetailPage } from './ListDetailPage';
-import { TodoList } from './TodoList';
+import { TodoList } from './todo-list';
 import { LoopDetailPanel } from './LoopStudioDetailPanel';
 import * as dbLoops from '@/utils/database/loops';
 

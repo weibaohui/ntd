@@ -6,16 +6,9 @@
 //
 // 定时调度（cron）使用 react-js-cron + CronPresetSelect（和 todo 定时调度一致）。
 // Todos / Tags / Feishu bots 等通过 Select 下拉选取已有数据。
-
-// 重新导出所有子组件
-export { TRIGGER_META } from './helpers';
-export { CronConfigForm } from './CronConfigForm';
-export { TodoSelectorForm } from './TodoSelectorForm';
-export { TagSelectorForm } from './TagSelectorForm';
-export { FeishuMessageConfigForm } from './FeishuMessageConfigForm';
-export { FeishuCommandConfigForm } from './FeishuCommandConfigForm';
-export { TodoStateChangedConfigForm } from './TodoStateChangedConfigForm';
-export { TriggerConfigContent } from './TriggerConfigContent';
+//
+// 子组件（CronConfigForm / TodoSelectorForm 等）仅在本目录内自用，
+// 外部 caller 需要时直接 import 对应文件，不再 re-export。
 
 import { useState, useCallback, useMemo } from 'react';
 import {

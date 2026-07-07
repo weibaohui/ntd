@@ -1,7 +1,7 @@
 import { UnorderedListOutlined, PlusOutlined } from '@ant-design/icons';
 import { Button } from 'antd';
 import { PageCard } from '../common/PageCard';
-import { TodoList } from '../TodoList';
+import { TodoList } from '../todo-list';
 import { TodoDetail } from '../TodoDetail';
 import { EmptyDetailPlaceholder } from '../EmptyDetailPlaceholder';
 import { SIDEBAR_WIDTH } from '@/constants';

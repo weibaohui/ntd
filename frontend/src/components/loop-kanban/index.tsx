@@ -1,7 +1,7 @@
 // LoopKanban 主组件：环路执行看板。
 //
 // 子组件（ExecutionCard / KanbanColumn / useLoopExecutions / helpers）
-// 在本目录内自用，不再从此 index 重新导出；外部 caller 走 LoopKanban.tsx。
+// 在本目录内自用，外部 caller 直接 import 本文件即可。
 
 import { useState, useMemo, useCallback } from 'react';
 import { Drawer, Spin, Empty, Divider, App as AntApp } from 'antd';
@@ -13,7 +13,8 @@ import {
 import * as dbLoops from '@/utils/database/loops';
 import { useApp } from '@/hooks/useApp';
 import type { LoopExecutionDetail, LoopDetail } from '@/types/loop';
-import { StepExecList, BlackboardDrawer } from '@/components/loop-studio/executions';
+import { StepExecList } from '@/components/loop-studio/executions/StepExecList';
+import { BlackboardDrawer } from '@/components/loop-studio/executions/BlackboardDrawer';
 import { LoopFlowGraph } from '@/components/loop-flow/LoopFlowGraph';
 import { KanbanColumn } from './KanbanColumn';
 import { ExecutionCard } from './ExecutionCard';

@@ -1,8 +1,6 @@
 // Todo 列表主组件。
-
-// 重新导出子组件
-export { SkeletonRow, SkeletonList } from './SkeletonRow';
-export { TodoItemRow } from './TodoItemRow';
+// 子组件 SkeletonRow / SkeletonList / TodoItemRow 仅在本目录内部使用，
+// 外部 caller 只 import 主组件 TodoList，不再 re-export。
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useApp } from '@/hooks/useApp';
