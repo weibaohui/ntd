@@ -5,12 +5,9 @@
 // - 点击行展开看 step_executions 明细
 //
 // 分页: page + limit, 简单表格不引入分页器, 改成"加载更多"按钮避免侵入式 UI
-
-// 重新导出所有子组件
-export { TokenSummaryBar } from './TokenSummaryBar';
-export { BlackboardDrawer } from './BlackboardDrawer';
-export { StepExecList } from './StepExecList';
-export { execStatusView, durationLabel, formatToken, formatCost } from './helpers';
+//
+// 子组件 TokenSummaryBar / BlackboardDrawer / StepExecList 仅在本目录内自用，
+// 外部 caller 需要时直接 import 对应文件，不再 re-export。
 
 import { useState, useEffect, useCallback } from 'react';
 import { App as AntApp, Button, Empty, Skeleton, Tag, Tooltip, Pagination } from 'antd';

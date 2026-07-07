@@ -12,10 +12,10 @@ import { PageCard } from '@/components/common/PageCard';
 import { useApp } from '@/hooks/useApp';
 import { useViewState, type BoardMode } from '@/hooks/useViewState';
 import { KanbanBoard } from './KanbanBoard';
-import { RunningBoard } from './RunningBoard';
+import { RunningBoard } from './running-board';
 // 引入环路视图组件：与 KanbanBoard（todo 看板）、RunningBoard（运行视图）并列，
 // 为什么需要：提供环路维度的执行历史聚合视图，补齐 todo 维度之外的监控缺口。
-import { LoopKanban } from './LoopKanban';
+import { LoopKanban } from './loop-kanban';
 import { TodoCard } from './TodoCard';
 import * as db from '@/utils/database';
 import { formatRelativeTime } from '@/utils/datetime';

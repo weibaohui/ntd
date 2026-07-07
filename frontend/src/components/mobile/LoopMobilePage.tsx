@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { RetweetOutlined, PlusOutlined } from '@ant-design/icons';
 import { Button, message } from 'antd';
 import { PageCard } from '../common/PageCard';
-import { TodoList } from '../TodoList';
+import { TodoList } from '../todo-list';
 import { LoopDetailPanel } from '../LoopStudioDetailPanel';
 import { EmptyDetailPlaceholder } from '../EmptyDetailPlaceholder';
 import { SIDEBAR_WIDTH } from '@/constants';

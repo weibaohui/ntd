@@ -1,7 +1,7 @@
 import { UnorderedListOutlined, PlusOutlined } from '@ant-design/icons';
 import { Button } from 'antd';
 import { ListDetailPage } from './ListDetailPage';
-import { TodoList } from './TodoList';
+import { TodoList } from './todo-list';
 import { TodoDetail } from './TodoDetail';
 
 interface TodoPageProps {

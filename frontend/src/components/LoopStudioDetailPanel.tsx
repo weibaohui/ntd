@@ -29,9 +29,10 @@ import type { LoopDetail } from '@/types/loop';
 import { CopyButton } from '@/components/CopyButton';
 import { getWorkspaceDisplayName, useProjectDirectories } from '@/utils/workspaceDisplay';
 import { LoopFormModal } from './LoopFormModal';
-import { LoopTriggersPanel, TRIGGER_META } from './LoopStudioTriggersPanel';
+import { LoopTriggersPanel } from './loop-studio/triggers';
+import { TRIGGER_META } from './loop-studio/triggers/helpers';
 import { LoopStepsPanel } from './LoopStudioStepsPanel';
-import { LoopExecutionsPanel } from './LoopStudioExecutionsPanel';
+import { LoopExecutionsPanel } from './loop-studio/executions';
 
 interface LoopDetailPanelProps {
   loopId: number;

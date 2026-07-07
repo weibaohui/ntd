@@ -8,7 +8,7 @@ import { useExecutionEvents } from './hooks/useExecutionEvents';
 import { useViewState, viewToNavKey, type View } from './hooks/useViewState';
 import { ThemeProvider, useTheme } from './hooks/useTheme';
 import { TodoPage } from './components/TodoPage';
-import { TodoPostPage } from './components/TodoPostPage';
+import { TodoPostPage } from './components/todo-post';
 import { LoopPage } from './components/LoopPage';
 import { TodoMobilePage } from './components/mobile/TodoMobilePage';
 import { LoopMobilePage } from './components/mobile/LoopMobilePage';

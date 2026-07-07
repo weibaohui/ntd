@@ -6,7 +6,7 @@ import { ArrowRightOutlined, ReadOutlined } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import * as dbExecutions from '@/utils/database/executions';
 import type { LogEntry } from '@/types';
-import { LogDrawer } from '@/components/TodoPostPage';
+import { LogDrawer } from '@/components/todo-post/LogDrawer';
 import { execStatusView, durationLabel, formatToken } from './helpers';
 
 interface StepExecListProps {

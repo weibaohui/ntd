@@ -1,15 +1,6 @@
 // 帖子详情页组件：按 session_id 加载同 session 的所有记录。
-
-// 重新导出子组件（供外部使用）
-export { LogDrawer } from './LogDrawer';
-export { CollapsibleCommand } from './CollapsibleCommand';
-export { RatingControl } from './RatingControl';
-export { WorktreePathDisplay } from './WorktreePathDisplay';
-export { ReplyRow } from './ReplyRow';
-export { PostCard } from './PostCard';
-export { ThreadGroup } from './ThreadGroup';
-export { getElapsedSeconds, groupBySession, formatLogTime } from './helpers';
-export type { SessionGroup } from './helpers';
+// 子组件（LogDrawer / CollapsibleCommand / PostCard 等）都在本目录内自用，
+// 外部 caller 需要子组件时直接 import 对应文件，不再统一 re-export。
 
 import { useState, useRef, useEffect, useMemo } from "react";
 import {

@@ -19,7 +19,7 @@ import * as dbLoops from '@/utils/database/loops';
 import type { AgentBot, FeishuPushStatus, WhitelistEntry, FeishuSenderItem, FeishuPushLevel } from '@/utils/database';
 import type { FeishuHistoryMessage, FeishuHistoryChat, ExecutionRecord } from '@/types';
 import { ExecutionRecordDrawer } from '@/components/settings/messages/ExecutionRecordDrawer';
-import { BlackboardDrawer } from '@/components/LoopStudioExecutionsPanel';
+import { BlackboardDrawer } from '@/components/loop-studio/executions/BlackboardDrawer';
 import { BotConfigCard } from './BotConfigCard';
 import { PushStatusCard } from './PushStatusCard';
 import { WhitelistCard } from './WhitelistCard';
