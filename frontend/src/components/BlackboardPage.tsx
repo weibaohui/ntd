@@ -372,6 +372,12 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
 
   // 拉取当前页面详情
   const fetchCurrentFile = useCallback(async () => {
+    // 空 slug 不发起请求：初始态或切换工作空间清空后，slug 为空字符串，
+    // 此时请求会得到 404 或意外数据，应直接跳过。
+    if (!currentSlug) {
+      setFileLoading(false);
+      return;
+    }
     try {
       setFileLoading(true);
       const file = await fetchWikiFileContent(workspaceId, currentSlug);
@@ -416,6 +422,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   }, [blackboardFile]);
 
   // 副作用：currentSlug 变化时重拉页面详情
+  // 守卫已在 fetchCurrentFile 内部处理空 slug 场景
   useEffect(() => {
     fetchCurrentFile();
   }, [fetchCurrentFile]);
@@ -958,7 +965,7 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
         <div style={{ flex: 1, overflow: 'auto', padding: '12px', minWidth: 0 }}>
           {fileLoading ? (
             <Skeleton active paragraph={{ rows: 10 }} />
-          ) : !currentFile || currentFile.content.trim().length === 0 ? (
+          ) : !currentFile || !currentFile.content || currentFile.content.trim().length === 0 ? (
             <BlackboardEmpty isDark={isDark} />
           ) : (
             <BlackboardContent isDark={isDark} content={currentFile.content} workspaceId={workspaceId} />
@@ -1001,7 +1008,7 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
       <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px', minWidth: 0 }}>
         {fileLoading ? (
           <Skeleton active paragraph={{ rows: 10 }} />
-        ) : !currentFile || currentFile.content.trim().length === 0 ? (
+        ) : !currentFile || !currentFile.content || currentFile.content.trim().length === 0 ? (
           <BlackboardEmpty isDark={isDark} />
         ) : (
           <BlackboardContent isDark={isDark} content={currentFile.content} workspaceId={workspaceId} />
