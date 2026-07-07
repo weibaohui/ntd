@@ -14,7 +14,10 @@ use ntd::NtdSkills;
 
 /// ntd - Now Task, Done
 #[derive(Parser)]
-#[command(name = "ntd", about = "AI-powered task engine CLI", version)]
+// 使用编译期注入的 NTD_VERSION（build.rs 从 git describe --tags 动态提取），
+// 而非 Cargo.toml 中硬编码的 CARGO_PKG_VERSION（始终为 0.1.0），
+// 让 ntd --version 输出与 npm 包版本号一致。
+#[command(name = "ntd", about = "AI-powered task engine CLI", version = env!("NTD_VERSION"))]
 struct Cli {
     /// API server URL (default: from ~/.ntd/config.yaml, or http://localhost:8088)
     #[arg(long)]
@@ -114,7 +117,9 @@ async fn main() {
 
     match &cli.command {
         Some(Commands::Version) => {
-            println!("ntd {}", env!("CARGO_PKG_VERSION"));
+            // 使用 build.rs 从 git describe --tags 动态注入的版本号，
+            // 与 npm 包版本保持一致，而非 Cargo.toml 里的固定 0.1.0。
+            println!("ntd {}", env!("NTD_VERSION"));
             println!("git: {}", option_env!("VERGEN_GIT_SHA").unwrap_or("unknown"));
             if let Some(desc) = option_env!("VERGEN_GIT_DESCRIBE") {
                 println!("tag: {}", desc);
