@@ -7,10 +7,8 @@
 //! - `PATCH /api/workspaces/{workspace_id}/blackboard/config`：更新配置
 
 use axum::extract::{Path, State};
-use axum::http::{header, HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::Router;
-use axum::response::{IntoResponse, Response};
 
 use crate::db::blackboard::BlackboardConfig;
 use crate::handlers::{ApiJson, AppError, AppState};
@@ -180,28 +178,23 @@ pub async fn update_blackboard_config(
 
 /// `GET /api/workspaces/{workspace_id}/wiki/files`
 ///
-/// 获取 wiki 文件列表（含直接访问路径）。
+/// 获取 wiki 文件列表。
 pub async fn list_wiki_files(
     State(_state): State<AppState>,
     Path(workspace_id): Path<i64>,
-) -> Result<ApiResponse<Vec<WikiFileItemWithPath>>, AppError> {
+) -> Result<ApiResponse<Vec<WikiFileItem>>, AppError> {
     let mut items = Vec::new();
 
-    // 构建直接访问路径：/api/workspaces/{workspace_id}/wiki/files/{slug}/raw
-    let make_url = |slug: &str| format!("/api/workspaces/{}/wiki/files/{}/raw", workspace_id, slug);
-
     // index.md
-    items.push(WikiFileItemWithPath {
+    items.push(WikiFileItem {
         slug: "index".to_string(),
         file_type: "index".to_string(),
-        direct_url: make_url("index"),
     });
 
     // log.md
-    items.push(WikiFileItemWithPath {
+    items.push(WikiFileItem {
         slug: "log".to_string(),
         file_type: "log".to_string(),
-        direct_url: make_url("log"),
     });
 
     // topics/*.md
@@ -210,55 +203,13 @@ pub async fn list_wiki_files(
     })?;
 
     for slug in topics {
-        items.push(WikiFileItemWithPath {
-            slug: slug.clone(),
+        items.push(WikiFileItem {
+            slug,
             file_type: "topic".to_string(),
-            direct_url: make_url(&slug),
         });
     }
 
     Ok(ApiResponse::ok(items))
-}
-
-/// `GET /api/workspaces/{workspace_id}/wiki/files/{slug}/raw`
-///
-/// 直接访问 wiki 文件原始内容，用于分享或外部引用。
-/// 返回 Content-Type: text/markdown，浏览器可直接预览。
-pub async fn get_wiki_file_raw(
-    State(_state): State<AppState>,
-    Path((workspace_id, slug)): Path<(i64, String)>,
-) -> Result<Response, AppError> {
-    // 读取原始内容（不带 JSON 包装）
-    let content = if slug == "index" {
-        read_index(workspace_id).map_err(|e| {
-            AppError::Internal(format!("读取 index 失败: {:?}", e))
-        })?
-    } else if slug == "log" {
-        read_log(workspace_id).map_err(|e| {
-            AppError::Internal(format!("读取 log 失败: {:?}", e))
-        })?
-    } else {
-        read_topic(workspace_id, &slug).map_err(|e| {
-            AppError::Internal(format!("读取 topic 失败: {:?}", e))
-        })?
-    };
-
-    let content = match content {
-        Some(c) => c,
-        None => return Err(AppError::NotFound),
-    };
-
-    // 构建带 Content-Type 头的原始响应
-    let mut headers = HeaderMap::new();
-    // text/markdown 让浏览器直接渲染 md 内容；charset=utf-8 保证中文正常显示
-    // 静态字符串必定能解析为有效 HeaderValue，直接 unwrap 符合生产代码策略
-    #[allow(clippy::unwrap_used)]
-    {
-        headers.insert(header::CONTENT_TYPE, "text/markdown; charset=utf-8".parse().unwrap());
-        headers.insert(header::CONTENT_DISPOSITION, "inline".parse().unwrap());
-    }
-
-    Ok((StatusCode::OK, headers, content).into_response())
 }
 
 /// `GET /api/workspaces/{workspace_id}/wiki/files/{slug}`
@@ -286,15 +237,6 @@ pub async fn get_wiki_file(
         Some(c) => Ok(ApiResponse::ok(WikiFileContent { slug, content: c })),
         None => Err(AppError::NotFound),
     }
-}
-
-/// Wiki 文件列表项（含直接访问路径）
-#[derive(Debug, serde::Serialize)]
-pub struct WikiFileItemWithPath {
-    pub slug: String,
-    pub file_type: String,
-    /// 直接访问该文件的 URL（浏览器可打开）
-    pub direct_url: String,
 }
 
 /// Wiki 对话请求体
@@ -355,10 +297,6 @@ pub fn blackboard_routes() -> Router<AppState> {
         .route(
             "/api/workspaces/{workspace_id}/wiki/files/{slug}",
             get(get_wiki_file),
-        )
-        .route(
-            "/api/workspaces/{workspace_id}/wiki/files/{slug}/raw",
-            get(get_wiki_file_raw),
         )
         .route(
             "/api/workspaces/{workspace_id}/wiki/chat",

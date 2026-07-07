@@ -23,8 +23,8 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Button, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu, Drawer, Tooltip } from 'antd';
-import { ReloadOutlined, SettingOutlined, UnorderedListOutlined, MenuOutlined, LinkOutlined } from '@ant-design/icons';
+import { Button, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu, Drawer } from 'antd';
+import { ReloadOutlined, SettingOutlined, UnorderedListOutlined, MenuOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { TfiBlackboard } from 'react-icons/tfi';
 import { XMarkdown } from '@ant-design/x-markdown';
@@ -50,12 +50,10 @@ interface BlackboardData {
   wiki_chat_executor?: string | null;
 }
 
-/** Wiki 文件列表项（对应后端 WikiFileItemWithPath） */
+/** Wiki 文件列表项（对应后端 WikiFileItem） */
 interface WikiFileItem {
   slug: string;
   file_type: 'index' | 'topic' | 'log' | string;
-  /** 直接访问该文件的 URL */
-  direct_url?: string;
 }
 
 /** Wiki 文件内容（对应后端 WikiFileContent） */
@@ -894,30 +892,11 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
   } = props;
 
   // 构造 Menu items：index 在前，然后 topic，最后 log
-  // 每个文件都附带直接访问链接，点击图标可新标签页打开源文件
   const menuItems = [
     // index 页
     ...files.filter(f => f.file_type === 'index').map(f => ({
       key: f.slug,
-      label: (
-        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span>目录</span>
-          {f.direct_url && (
-            <Tooltip title="直接访问">
-              <Button
-                type="text"
-                size="small"
-                icon={<LinkOutlined />}
-                href={f.direct_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={e => e.stopPropagation()}
-                style={{ padding: '0 4px', height: 20, lineHeight: 1 }}
-              />
-            </Tooltip>
-          )}
-        </span>
-      ),
+      label: '目录',
       type: 'item' as const,
     })),
     // 主题页分组
@@ -927,50 +906,14 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
       type: 'group' as const,
       children: files.filter(f => f.file_type === 'topic').map(f => ({
         key: f.slug,
-        label: (
-          <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span>{f.slug}</span>
-            {f.direct_url && (
-              <Tooltip title="直接访问">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<LinkOutlined />}
-                  href={f.direct_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={e => e.stopPropagation()}
-                  style={{ padding: '0 4px', height: 20, lineHeight: 1 }}
-                />
-              </Tooltip>
-            )}
-          </span>
-        ),
+        label: f.slug,
         type: 'item' as const,
       })),
     },
     // log 页
     ...files.filter(f => f.file_type === 'log').map(f => ({
       key: f.slug,
-      label: (
-        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span>执行日志</span>
-          {f.direct_url && (
-            <Tooltip title="直接访问">
-              <Button
-                type="text"
-                size="small"
-                icon={<LinkOutlined />}
-                href={f.direct_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={e => e.stopPropagation()}
-                style={{ padding: '0 4px', height: 20, lineHeight: 1 }}
-              />
-            </Tooltip>
-          )}
-        </span>
-      ),
+      label: '执行日志',
       type: 'item' as const,
     })),
   ];
