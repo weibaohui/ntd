@@ -8,6 +8,7 @@ import { SkillBackupTab } from './backup/SkillBackupTab';
 import { DatabaseBackupTab } from './backup/DatabaseBackupTab';
 import { LoopBackupTab } from '@/components/settings/backup/LoopBackupTab';
 import { ImportExportModals, BackupDataYaml, ImportItem } from './backup/ImportExportModals';
+import type { ProjectDirectory } from '@/utils/database/todos';
 
 export function BackupPanel() {
   const { state } = useApp();
@@ -63,23 +64,27 @@ export function BackupPanel() {
   const [wizardTags, setWizardTags] = useState<{ name: string; color: string }[]>([]);
   const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
   // 导入目标工作空间
-  const [workspaces, setWorkspaces] = useState<any[]>([]);
+  const [workspaces, setWorkspaces] = useState<ProjectDirectory[]>([]);
   const [importWorkspaceId, setImportWorkspaceId] = useState<number | null>(null);
 
   // 导入来源工作空间检测（从备份文件中提取，用于预览提示和默认选中）
   const [sourceWorkspaceInfo, setSourceWorkspaceInfo] = useState<{ id: number; path: string } | null>(null);
 
   // 加载工作空间列表，优先匹配备份文件中的原始工作空间
+  // 注意：preferredId 未命中时必须重置回第一个工作空间，否则会残留上一次导入的选中值，
+  // 导致换一个备份文件后默认选中仍是旧值。
   const loadWorkspaces = async (preferredId?: number | null) => {
     try {
       const ws = await db.getProjectDirectories();
       setWorkspaces(ws);
-      if (preferredId != null && ws.some((w: any) => w.id === preferredId)) {
+      if (preferredId != null && ws.some((w) => w.id === preferredId)) {
         // 备份文件中检测到了原始工作空间且当前列表中能找到，默认选中它
         setImportWorkspaceId(preferredId);
-      } else if (ws.length > 0 && !importWorkspaceId) {
-        // 无匹配时退化为选中第一个
+      } else if (ws.length > 0) {
+        // 无匹配时退化为选中第一个（无论之前选过什么，都按当前文件重新默认）
         setImportWorkspaceId(ws[0].id);
+      } else {
+        setImportWorkspaceId(null);
       }
     } catch (e) {
       console.error('Failed to load workspaces', e);

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import * as db from '@/utils/database';
 import { exportLoop, listLoops } from '@/utils/database/loops';
 import { LoopImportPreview } from '@/utils/database/backup';
+import type { ProjectDirectory } from '@/utils/database/todos';
 import yaml from 'js-yaml';
 
 const { Dragger } = Upload;
@@ -20,7 +21,7 @@ export function LoopBackupTab() {
   const [previewData, setPreviewData] = useState<LoopImportPreview | null>(null);
   const [importing, setImporting] = useState(false);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<number | null>(null);
-  const [workspaces, setWorkspaces] = useState<any[]>([]);
+  const [workspaces, setWorkspaces] = useState<ProjectDirectory[]>([]);
   const [loops, setLoops] = useState<any[]>([]);
   // 导入模式：create=新建模式（默认），merge=合并模式
   const [importMode, setImportMode] = useState<ImportMode>('create');
@@ -37,7 +38,7 @@ export function LoopBackupTab() {
     try {
       const ws = await db.getProjectDirectories();
       setWorkspaces(ws);
-      if (preferredId != null && ws.some((w: any) => w.id === preferredId)) {
+      if (preferredId != null && ws.some((w) => w.id === preferredId)) {
         // 导出文件中检测到了原始工作空间且当前列表中能找到，默认选中它
         setSelectedWorkspaceId(preferredId);
       } else if (ws.length > 0 && !selectedWorkspaceId) {
@@ -86,12 +87,17 @@ export function LoopBackupTab() {
 
       // 从 YAML 中提取导出时的工作空间信息，用于预览提示
       // 读取第一个 todo 或 loop 的 workspace_id/workspace_path，让用户知道原始来源
+      // 用局部变量 parsedSourceId 暂存，避免直接读 state：本函数内 setSourceWorkspaceInfo
+      // 触发的重渲染尚未发生，读 sourceWorkspaceInfo 拿到的是上一帧的过期值，会导致首次
+      // 导入时无法自动选中原始工作空间。
+      let parsedSourceId: number | null = null;
       try {
         const parsed: any = yaml.load(text);
         const sourceId = parsed?.todos?.[0]?.workspace_id || parsed?.loops?.[0]?.workspace_id;
         const sourcePath = parsed?.todos?.[0]?.workspace_path || parsed?.loops?.[0]?.workspace_path;
         if (sourceId != null) {
-          setSourceWorkspaceInfo({ id: Number(sourceId), path: sourcePath || '' });
+          parsedSourceId = Number(sourceId);
+          setSourceWorkspaceInfo({ id: parsedSourceId, path: sourcePath || '' });
         } else {
           setSourceWorkspaceInfo(null);
         }
@@ -109,8 +115,7 @@ export function LoopBackupTab() {
       }
       setConflictResolutions(resolutions);
       // 加载工作空间列表时传入检测到的原始 workspace ID，优先匹配
-      const sourceId = sourceWorkspaceInfo?.id;
-      await loadWorkspaces(sourceId);
+      await loadWorkspaces(parsedSourceId);
       setImportModalOpen(true);
     } catch (err: any) {
       message.error('解析文件失败: ' + (err?.message || String(err)));
@@ -212,10 +217,7 @@ export function LoopBackupTab() {
               size="small"
               pagination={false}
               rowKey="id"
-              dataSource={workspaces.map((w: any) => ({
-                ...w,
-                _isOriginal: sourceWorkspaceInfo?.id === w.id,
-              }))}
+              dataSource={workspaces}
               rowSelection={{
                 type: 'radio',
                 selectedRowKeys: selectedWorkspaceId != null ? [selectedWorkspaceId] : [],
@@ -228,13 +230,14 @@ export function LoopBackupTab() {
                   title: '工作空间',
                   dataIndex: 'name',
                   width: '60%',
-                  render: (_: any, r: any) => r.name || r.path || '(未命名)',
+                  render: (_: any, r: ProjectDirectory) => r.name || r.path || '(未命名)',
                 },
                 {
                   title: '来源',
-                  dataIndex: '_isOriginal',
-                  width: 60,
-                  render: (v: boolean) => v ? <Tag color="blue">原始</Tag> : null,
+                  // 直接在 render 里判断是否为原始工作空间，不再往行对象里注入 _isOriginal 字段，
+                  // 避免污染从 API 拿到的 workspace 数据源。
+                  render: (_: any, r: ProjectDirectory) =>
+                    sourceWorkspaceInfo?.id === r.id ? <Tag color="blue">原始</Tag> : null,
                 },
               ]}
               style={{ marginTop: 4 }}
@@ -285,10 +288,7 @@ export function LoopBackupTab() {
                 size="small"
                 pagination={false}
                 rowKey="id"
-                dataSource={workspaces.map((w: any) => ({
-                  ...w,
-                  _isOriginal: sourceWorkspaceInfo?.id === w.id,
-                }))}
+                dataSource={workspaces}
                 rowSelection={{
                   type: 'radio',
                   selectedRowKeys: selectedWorkspaceId != null ? [selectedWorkspaceId] : [],
@@ -300,13 +300,12 @@ export function LoopBackupTab() {
                   {
                     title: '工作空间',
                     dataIndex: 'name',
-                    render: (_: any, r: any) => r.name || r.path || '(未命名)',
+                    render: (_: any, r: ProjectDirectory) => r.name || r.path || '(未命名)',
                   },
                   {
                     title: '来源',
-                    dataIndex: '_isOriginal',
-                    width: 60,
-                    render: (v: boolean) => v ? <Tag color="blue">原始</Tag> : null,
+                    render: (_: any, r: ProjectDirectory) =>
+                      sourceWorkspaceInfo?.id === r.id ? <Tag color="blue">原始</Tag> : null,
                   },
                 ]}
                 style={{ marginTop: 4 }}

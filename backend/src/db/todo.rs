@@ -1119,13 +1119,19 @@ impl Database {
         let mut updated: u64 = 0;
 
         for todo in todos_in {
-            // 按 title + prompt 查找匹配
-            let existing = todos::Entity::find()
+            // 解析本条 todo 最终归属的工作空间：目标工作空间优先，否则沿用备份中的值。
+            // 既用于新建写入，也用于限定「覆盖」匹配范围——只在同一工作空间内按 title+prompt 匹配，
+            // 避免把别的 workspace 里同名 todo 误判为重复并改写其 workspace_id（跨工作空间抢占）。
+            // resolved_workspace_id 为 None（旧备份且未指定目标）时退化为全局匹配，保持旧行为。
+            let resolved_workspace_id = target_workspace_id.or(todo.workspace_id);
+            let mut query = todos::Entity::find()
                 .filter(todos::Column::Title.eq(&todo.title))
                 .filter(todos::Column::Prompt.eq(&todo.prompt))
-                .filter(todos::Column::DeletedAt.is_null())
-                .one(&txn)
-                .await?;
+                .filter(todos::Column::DeletedAt.is_null());
+            if let Some(ws_id) = resolved_workspace_id {
+                query = query.filter(todos::Column::WorkspaceId.eq(ws_id));
+            }
+            let existing = query.one(&txn).await?;
 
             if let Some(model) = existing {
                 // 覆盖：更新字段
@@ -1175,8 +1181,7 @@ impl Database {
                 // 新建
                 let now = crate::models::utc_timestamp();
                 let workspace_path = todo.workspace_path.clone();
-                // workspace_id 优先级：目标工作空间 > 备份数据中的 workspace_id > None
-                let resolved_workspace_id = target_workspace_id.or(todo.workspace_id);
+                // resolved_workspace_id 已在匹配阶段算好（目标工作空间 > 备份值 > None），直接复用
                 let am = todos::ActiveModel {
                     title: ActiveValue::Set(todo.title.clone()),
                     prompt: ActiveValue::Set(Some(todo.prompt.clone())),

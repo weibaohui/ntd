@@ -1,5 +1,6 @@
 import { Modal, Table, Tag as AntTag, Divider, Typography, Alert } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
+import type { ProjectDirectory } from '@/utils/database/todos';
 
 export interface BackupDataYaml {
   version: string;
@@ -57,7 +58,7 @@ export function ImportExportModals({
   setExportTodoKeys: (keys: number[]) => void;
   todos: readonly any[];
   // 导入目标工作空间选择
-  workspaces: any[];
+  workspaces: ProjectDirectory[];
   importWorkspaceId: number | null;
   setImportWorkspaceId: (v: number | null) => void;
   // 原始工作空间提示（从备份文件检测到后展示，帮助用户判断）
@@ -84,7 +85,7 @@ export function ImportExportModals({
 
         {/* 原始工作空间提示：检测到备份文件中的工作空间后，显示给用户参考 */}
         {sourceWorkspaceInfo && (() => {
-          const matched = workspaces.find((w: any) => w.id === sourceWorkspaceInfo.id);
+          const matched = workspaces.find((w) => w.id === sourceWorkspaceInfo.id);
           return (
             <Alert
               message="检测到原始工作空间"
@@ -115,11 +116,7 @@ export function ImportExportModals({
             size="small"
             pagination={false}
             rowKey="id"
-            dataSource={workspaces.map((w: any) => ({
-              ...w,
-              // 标记是否为导出文件中的原始工作空间
-              _isOriginal: sourceWorkspaceInfo?.id === w.id,
-            }))}
+            dataSource={workspaces}
             rowSelection={{
               type: 'radio',
               selectedRowKeys: importWorkspaceId != null ? [importWorkspaceId] : [],
@@ -132,13 +129,14 @@ export function ImportExportModals({
                 title: '工作空间',
                 dataIndex: 'name',
                 width: '60%',
-                render: (_: any, r: any) => r.name || r.path || '(未命名)',
+                render: (_: unknown, r: ProjectDirectory) => r.name || r.path || '(未命名)',
               },
               {
                 title: '来源',
-                dataIndex: '_isOriginal',
-                width: 60,
-                render: (v: boolean) => v ? <AntTag color="blue">原始</AntTag> : null,
+                // 在 render 里直接判断是否为原始工作空间，不再往行对象注入 _isOriginal 字段，
+                // 避免污染从 API 拿到的 workspace 数据源。
+                render: (_: unknown, r: ProjectDirectory) =>
+                  sourceWorkspaceInfo?.id === r.id ? <AntTag color="blue">原始</AntTag> : null,
               },
             ]}
           />
