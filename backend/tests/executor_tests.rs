@@ -246,10 +246,10 @@ mod claude_code_executor_tests {
 
     #[test]
     fn test_claude_parse_output_line_system() {
+        // system 事件不产生日志条目（避免 "Session init" 刷屏），但副作用仍生效：model 被缓存。
         let executor = ClaudeCodeExecutor::new("claude".to_string());
         let json = r#"{"type":"system","model":"claude-3-5-sonnet"}"#;
-        let entry = executor.parse_output_line(json).unwrap();
-        assert_eq!(entry.log_type, "system");
+        assert!(executor.parse_output_line(json).is_none());
         assert!(executor.get_model() == Some("claude-3-5-sonnet".to_string()));
     }
 

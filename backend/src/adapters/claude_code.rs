@@ -30,19 +30,25 @@ impl ClaudeCodeExecutor {
         }
     }
 
-    /// 处理 system 事件：把 model 写入 base.state，session_id 写入 executor 状态，content 显示 session init 摘要。
-    fn handle_system(&self, model: Option<&String>, session_id: Option<&String>, subtype: Option<&String>) -> Option<ParsedLogEntry> {
+    /// 处理 system 事件：仅保留副作用（缓存 model / session_id），不产生日志条目。
+    ///
+    /// Claude Code 在一次执行里会连续吐出多条 system 事件——首条带 session_id/model，
+    /// 后续重复携带相同 session_id。这些 "Session init" 摘要对用户无价值且会刷屏
+    /// （实测一次执行能刷出十几条），因此既不入库也不推前端，只缓存 model / session_id
+    /// 供 usage 统计与 resume 使用。这是 Claude Code 专有的精简策略。
+    ///
+    /// 注意：实时日志流优先走 EventPipeline（已丢弃 System 事件），但重复 system 行
+    /// 在 pipeline 里只产出被丢弃的 System 事件 → results 为空 → 回退到 parse_output_line，
+    /// 因此这里返回 None 是堵住回退路径刷屏的最后一道关。
+    fn handle_system(&self, model: Option<&String>, session_id: Option<&String>) {
+        // 缓存 model：completion 阶段 get_model / get_model_from_logs 会读取。
         if let Some(m) = model {
             *self.base.model.lock() = Some(m.clone());
         }
-        // 保存 session_id，用于后续回写 DB 和 resume 时传递给 Claude Code CLI。
+        // 缓存 session_id：用于后续回写 DB 和 resume 时传递给 Claude Code CLI。
         if let Some(sid) = session_id {
             *self.session_id.lock() = Some(sid.clone());
         }
-        Some(helpers::entry(
-            "system",
-            format!("Session init: {:?}", session_id.or(subtype)),
-        ))
     }
 
     /// 处理 assistant 事件：优先 tool_use → thinking → tool_result → text → redacted 顺序匹配。
@@ -240,8 +246,11 @@ impl CodeExecutor for ClaudeCodeExecutor {
         // Try to parse as Claude NDJSON message
         if let Ok(msg) = serde_json::from_str::<ClaudeMessage>(line) {
             return match msg {
-                ClaudeMessage::System { subtype, session_id, model } => {
-                    self.handle_system(model.as_ref(), session_id.as_ref(), subtype.as_ref())
+                // subtype（如 init）仅 Claude Code 内部使用，无需展示；system 事件整体
+                // 不产生日志条目，避免 "Session init" 刷屏（详见 handle_system 注释）。
+                ClaudeMessage::System { session_id, model, .. } => {
+                    self.handle_system(model.as_ref(), session_id.as_ref());
+                    None
                 }
                 ClaudeMessage::Assistant { message, .. } => self.handle_assistant(&message),
                 ClaudeMessage::User { message, .. } => self.handle_user(&message),
@@ -268,12 +277,24 @@ mod tests {
 
     #[test]
     fn test_parse_output_line_system() {
+        // system 事件不产生日志条目（避免 "Session init" 刷屏），但副作用仍生效：model 被缓存。
         let executor = ClaudeCodeExecutor::new("claude".to_string());
         let line = r#"{"type":"system","model":"claude-3-5-sonnet"}"#;
-        let entry = executor.parse_output_line(line).unwrap();
-        assert_eq!(entry.log_type, "system");
-        assert!(entry.content.contains("Session init"));
+        assert!(executor.parse_output_line(line).is_none());
         assert_eq!(executor.get_model(), Some("claude-3-5-sonnet".to_string()));
+    }
+
+    #[test]
+    fn test_parse_output_line_system_repeated_produces_no_entry() {
+        // Claude Code 会连续吐多条 system 事件：每条都不应产生日志条目，
+        // 验证 "Session init" 不会刷屏，同时 session_id / model 缓存仍生效。
+        let executor = ClaudeCodeExecutor::new("claude".to_string());
+        let sys = r#"{"type":"system","subtype":"init","session_id":"sess_rep","model":"m"}"#;
+        assert!(executor.parse_output_line(sys).is_none());
+        // 重复一次：仍不产生条目，且不破坏已缓存的 session_id / model。
+        assert!(executor.parse_output_line(sys).is_none());
+        assert_eq!(executor.get_session_id(), Some("sess_rep".to_string()));
+        assert_eq!(executor.get_model(), Some("m".to_string()));
     }
 
     #[test]
