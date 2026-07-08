@@ -1,5 +1,5 @@
 import { api, unwrap } from './client';
-import type { Todo, Tag, TodoTemplate, CustomTemplateStatus } from '@/types';
+import type { Todo, Tag, TodoTemplate, CustomTemplateStatus, ComputedBucket, TodoCenterItem } from '@/types';
 
 // Todo APIs
 
@@ -237,5 +237,38 @@ export async function updateScheduler(
   scheduler_config: string | null,
 ): Promise<Todo> {
   return unwrap(await api.put(`/api/todos/${id}/scheduler`, { scheduler_enabled, scheduler_config }));
+}
+
+// ─── 事项中心（Todo Center）API ─────────────────────────────
+
+/**
+ * 拉取事项中心列表（带 computed_bucket / loop 引用计数 / 最近执行聚合）。
+ *
+ * 不传 bucket 时后端返回全部分类，前端按 computed_bucket 自行分桶并展示各 Tab 数量；
+ * 传入 bucket 则服务端按分类过滤（分页前完成分桶，保证数量正确）。
+ */
+export async function getTodoCenter(
+  workspaceId?: number,
+  bucket?: ComputedBucket,
+): Promise<TodoCenterItem[]> {
+  const params: Record<string, string | number> = {};
+  if (workspaceId !== undefined) params.workspace_id = workspaceId;
+  if (bucket !== undefined) params.bucket = bucket;
+  return unwrap(await api.get('/api/todos/center', { params }));
+}
+
+/** 归档事项（仅隐藏，不删数据/不解 Loop 引用）。返回重新计算后的分类项。 */
+export async function archiveTodo(id: number): Promise<TodoCenterItem> {
+  return unwrap(await api.post(`/api/todos/${id}/archive`));
+}
+
+/** 恢复事项（清空 archived_at，分类按真实关系重算）。 */
+export async function restoreTodo(id: number): Promise<TodoCenterItem> {
+  return unwrap(await api.post(`/api/todos/${id}/restore`));
+}
+
+/** 开启/关闭事件驱动（webhook）。与 scheduler 端点对称的扁平具名路由。 */
+export async function updateTodoWebhook(id: number, webhook_enabled: boolean): Promise<TodoCenterItem> {
+  return unwrap(await api.put(`/api/todos/${id}/webhook`, { webhook_enabled }));
 }
 

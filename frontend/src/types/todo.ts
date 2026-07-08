@@ -27,6 +27,28 @@ export interface Todo {
   parent_todo_id?: number | null;
   /** For review instances: the review_template used to generate this instance. */
   review_template_id?: number | null;
+  /** Action 类型标记（如 blackboard/title_optimize），用于卡片来源提示，不影响执行逻辑。 */
+  action_type?: string | null;
+  /** Action 键值，与 action_type 配合唯一标识一个 action 模板 todo。 */
+  action_key?: string | null;
+  /** 归档时间戳（UTC）。null/undefined=未归档；非空=已归档，从日常视图隐藏但数据保留。 */
+  archived_at?: string | null;
+}
+
+// ─── 事项中心（Todo Center）类型 ────────────────────────────
+
+/** 事项中心五类驱动分类（computed_bucket），由后端按事实字段推导，不落库。 */
+export type ComputedBucket = 'manual' | 'time_driven' | 'event_driven' | 'loop_driven' | 'archived';
+
+/** 事项中心列表项：在 Todo 之上附加运行时推导/聚合字段（后端批量补算）。 */
+export interface TodoCenterItem extends Todo {
+  computed_bucket: ComputedBucket;
+  /** 被启用 loop_steps 引用的次数（0=未被任何启用的 Loop 引用）。 */
+  used_by_loop_step_count: number;
+  /** 最近一次执行记录的状态，无记录则 undefined。 */
+  last_execution_status?: string | null;
+  /** 最近一次执行记录的时间（优先 finished_at，回退 started_at）。 */
+  last_execution_at?: string | null;
 }
 
 /** 环节 — 从 todo 提升而来的独立实体，不再寄生在 Todo 上。 */

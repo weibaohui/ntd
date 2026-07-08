@@ -282,7 +282,7 @@ pub use todo::{SchedulerUpdate, TodoUpdate};
 pub mod execution;
 pub(super) mod dashboard;
 mod tag;
-pub use execution::NewExecutionRecord;
+pub use execution::{LatestExecutionSummary, NewExecutionRecord};
 mod agent_bot;
 mod executor_config;
 mod feishu_home;

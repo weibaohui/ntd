@@ -629,6 +629,47 @@ impl Database {
         loop_steps::Entity::find_by_id(id).one(&self.conn).await
     }
 
+    /// 批量统计每个 todo 被启用中的 loop_steps 引用次数（用于事项中心 Loop 驱动分桶）。
+    ///
+    /// 只统计 `enabled=1` 的步骤：禁用步骤不参与 Loop 执行，不计入 Loop 驱动
+    /// （设计文档明确要求）。`GROUP BY todo_id` 一次性聚合，避免列表场景 N+1。
+    /// 返回 `todo_id -> count`，未出现的 todo 视为 0（调用方用 `unwrap_or(0)`）。
+    pub async fn count_enabled_loop_steps_by_todos(
+        &self,
+        todo_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, i64>, sea_orm::DbErr> {
+        // 空切片直接返回空 map，避免生成非法的 `IN ()` SQL
+        if todo_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        // 手写 GROUP BY 聚合：sea_orm 的 find_also_related 不便表达 COUNT(*) GROUP BY，
+        // 用原生 SQL 更直观，且与 list_loops_with_counts 里的子查询风格一致。
+        let values: Vec<sea_orm::Value> = todo_ids.iter().map(|&id| id.into()).collect();
+        // 占位符数量必须与值数量一致：构造 "?,?,?" 串
+        let placeholders = std::iter::repeat("?").take(todo_ids.len()).collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT todo_id, COUNT(*) AS cnt FROM loop_steps \
+             WHERE enabled = 1 AND todo_id IN ({placeholders}) \
+             GROUP BY todo_id"
+        );
+        let rows = self
+            .conn
+            .query_all(sea_orm::Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                sql,
+                values,
+            ))
+            .await?;
+        // 逐行收集到 map；try_get 按 column 名取值，读不到记 0 不致命
+        let mut map = std::collections::HashMap::new();
+        for row in rows {
+            let todo_id: i64 = row.try_get_by("todo_id")?;
+            let cnt: i64 = row.try_get_by("cnt")?;
+            map.insert(todo_id, cnt);
+        }
+        Ok(map)
+    }
+
     /// 参数数量由 loop_steps 表 schema 决定
     #[allow(clippy::too_many_arguments)]
     pub async fn create_loop_step(

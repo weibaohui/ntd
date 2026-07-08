@@ -4,6 +4,7 @@ import { Button, Tooltip } from 'antd';
 import type { ButtonProps } from 'antd';
 import {
   UnorderedListOutlined,
+  AppstoreOutlined,
   RetweetOutlined,
   DashboardOutlined,
   ReadOutlined,
@@ -21,6 +22,7 @@ import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
 export type LeftRailKey =
   | 'items'
+  | 'todoCenter'
   | 'loops'
   | 'dashboard'
   | 'memorial'
@@ -74,6 +76,7 @@ export function LeftRail({
       title: '工作区',
       items: [
         { key: 'items', label: '事项', icon: <UnorderedListOutlined />, ariaLabel: '事项' },
+        { key: 'todoCenter', label: '事项中心', icon: <AppstoreOutlined />, ariaLabel: '事项中心' },
         { key: 'loops', label: '环路', icon: <RetweetOutlined />, ariaLabel: '环路' },
         { key: 'blackboard', label: '黑板', icon: <TfiBlackboard />, ariaLabel: '黑板' },
         { key: 'dashboard', label: '仪表盘', icon: <DashboardOutlined />, ariaLabel: '仪表盘' },

@@ -8,6 +8,25 @@ use crate::db::entity::execution_records;
 use crate::db::Database;
 use crate::models::{ExecutionRecord, ExecutionStatus, ExecutionSummary, ExecutionUsage, ParsedLogEntry};
 
+/// 事项中心批量聚合用：每个 todo 最近一次执行记录的摘要。
+///
+/// 仅取状态与时间两个轻量字段，避免把整条记录载入内存。
+/// `at` 由 handler 取 `finished_at` 回退 `started_at` 作为展示时间。
+pub struct LatestExecutionSummary {
+    pub status: Option<String>,
+    pub finished_at: Option<String>,
+    pub started_at: Option<String>,
+}
+
+impl LatestExecutionSummary {
+    /// 展示时间：优先 finished_at（真正结束），回退 started_at（仍在跑或未写完成时间）。
+    pub fn display_at(&self) -> Option<&str> {
+        self.finished_at
+            .as_deref()
+            .or(self.started_at.as_deref())
+    }
+}
+
 pub struct NewExecutionRecord<'a> {
     pub todo_id: Option<i64>,
     pub command: &'a str,
@@ -216,6 +235,56 @@ impl Database {
             .one(&self.conn)
             .await?;
         Ok(m.map(Into::into))
+    }
+
+    /// 事项中心用：批量取每个 todo 的最近一次执行记录摘要（状态 + 时间）。
+    ///
+    /// 「最近」按 `id` 降序定义（id 单调递增，等价于最新创建的一条），
+    /// 与单条版 `get_latest_execution_record_for_todo` 语义一致。
+    /// 用 `WHERE id IN (SELECT MAX(id) ... GROUP BY todo_id)` 一次性聚合，
+    /// 避免列表场景逐 todo 调用单条版造成 N+1。
+    /// 返回 `todo_id -> 摘要`，未出现的 todo 视为无执行记录。
+    pub async fn get_latest_execution_summaries_for_todos(
+        &self,
+        todo_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, LatestExecutionSummary>, sea_orm::DbErr> {
+        if todo_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        // 构造占位符串与值列表，与 count_enabled_loop_steps_by_todos 同构
+        let values: Vec<sea_orm::Value> = todo_ids.iter().map(|&id| id.into()).collect();
+        let placeholders = std::iter::repeat("?").take(todo_ids.len()).collect::<Vec<_>>().join(",");
+        // 内层子查询取每个 todo 的最大 id（即最近一条），外层按 id 回查状态/时间，
+        // 比窗口函数更兼容老 SQLite。
+        let sql = format!(
+            "SELECT todo_id, status, finished_at, started_at FROM execution_records \
+             WHERE id IN (\
+               SELECT MAX(id) FROM execution_records \
+               WHERE todo_id IS NOT NULL AND todo_id IN ({placeholders}) \
+               GROUP BY todo_id\
+             )"
+        );
+        let rows = self
+            .conn
+            .query_all(Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                values,
+            ))
+            .await?;
+        let mut map = std::collections::HashMap::new();
+        for row in rows {
+            let todo_id: i64 = row.try_get_by("todo_id")?;
+            map.insert(
+                todo_id,
+                LatestExecutionSummary {
+                    status: row.try_get_by("status")?,
+                    finished_at: row.try_get_by("finished_at")?,
+                    started_at: row.try_get_by("started_at")?,
+                },
+            );
+        }
+        Ok(map)
     }
 
     /// 批量根据 task_id 列表获取执行记录（用于 WebSocket 同步等场景）

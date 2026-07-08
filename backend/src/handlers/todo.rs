@@ -10,7 +10,8 @@ use crate::models::{
     utc_timestamp, ApiResponse, BatchCopyTodoWorkspaceRequest,
     BatchUpdateTodoExecutorRequest, BatchUpdateTodoResult,
     BatchUpdateTodoSchedulerRequest, BatchUpdateTodoWorkspaceRequest, BatchWorkspaceResult,
-    CreateTodoRequest, RecentCompletedTodo, Todo, UpdateTagsRequest, UpdateTodoRequest,
+    ComputedBucket, CreateTodoRequest, RecentCompletedTodo, Todo, TodoCenterItem,
+    UpdateTagsRequest, UpdateTodoRequest, UpdateWebhookRequest,
 };
 // 批量恢复调度需要在 handler 中构造 ServiceContext 调用 scheduler.upsert_task，
 // 与单个 update_scheduler handler (handlers/scheduler.rs) 的处理路径保持一致。
@@ -58,6 +59,83 @@ pub async fn get_todos(
         todos
     };
     Ok(ApiResponse::ok(todos))
+}
+
+/// 事项中心查询参数。
+/// `bucket` 为空或非法时返回全部分类（前端可自行按 computed_bucket 分组）。
+#[derive(Debug, serde::Deserialize)]
+pub struct TodoCenterQuery {
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
+    #[serde(default)]
+    pub bucket: Option<String>,
+}
+
+/// `GET /api/todos/center`：事项中心五类驱动视图。
+///
+/// 服务端按事实字段推导 computed_bucket 并（可选）按 bucket 过滤，
+/// 批量补算 loop 引用计数与最近执行记录，避免前端 N+1。
+pub async fn get_todo_center(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<TodoCenterQuery>,
+) -> Result<ApiResponse<Vec<TodoCenterItem>>, AppError> {
+    // 解析 bucket 串为枚举；空/非法 → None = 不过滤
+    let bucket = params.bucket.as_deref().and_then(ComputedBucket::parse_query);
+    let items = state.db.get_todo_center(params.workspace_id, bucket).await?;
+    Ok(ApiResponse::ok(items))
+}
+
+/// `POST /api/todos/{id}/archive`：归档事项（仅隐藏，不删数据/不解引用）。
+/// 返回重新计算后的 TodoCenterItem（computed_bucket=archived）。
+pub async fn archive_todo(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<ApiResponse<TodoCenterItem>, AppError> {
+    // rows_affected=0 说明 todo 不存在或已软删，统一回 404
+    if !state.db.archive_todo(id).await? {
+        return Err(AppError::NotFound);
+    }
+    let item = load_center_item_or_404(&state, id).await?;
+    Ok(ApiResponse::ok(item))
+}
+
+/// `POST /api/todos/{id}/restore`：恢复事项（清空 archived_at，分类按真实关系重算）。
+pub async fn restore_todo(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<ApiResponse<TodoCenterItem>, AppError> {
+    if !state.db.restore_todo(id).await? {
+        return Err(AppError::NotFound);
+    }
+    let item = load_center_item_or_404(&state, id).await?;
+    Ok(ApiResponse::ok(item))
+}
+
+/// `PUT /api/todos/{id}/webhook`：开启/关闭事件驱动。
+/// 与 `PUT /api/todos/{id}/scheduler` 对称的扁平具名路由。
+pub async fn update_webhook(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    ApiJson(req): ApiJson<UpdateWebhookRequest>,
+) -> Result<ApiResponse<TodoCenterItem>, AppError> {
+    if !state.db.update_todo_webhook(id, req.webhook_enabled).await? {
+        return Err(AppError::NotFound);
+    }
+    let item = load_center_item_or_404(&state, id).await?;
+    Ok(ApiResponse::ok(item))
+}
+
+/// 取单个 todo 的 TodoCenterItem；不存在则 404。
+/// 抽出来让 archive/restore/webhook 三个 handler 共用同一条回传路径。
+async fn load_center_item_or_404(
+    state: &AppState,
+    id: i64,
+) -> Result<TodoCenterItem, AppError> {
+    state
+        .db
+        .get_todo_center_item(id)
+        .await?
+        .ok_or(AppError::NotFound)
 }
 
 pub async fn get_todo(
@@ -209,6 +287,8 @@ pub async fn create_todo(
         auto_review_enabled: req.auto_review_enabled.unwrap_or(false),
         action_type: req.action_type.clone(),
         action_key: req.action_key.clone(),
+        // 新建事项未归档
+        archived_at: None,
     }))
 }
 

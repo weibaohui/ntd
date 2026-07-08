@@ -9,6 +9,7 @@ import { useViewState, viewToNavKey, type View } from './hooks/useViewState';
 import { ThemeProvider, useTheme } from '@/hooks/useTheme';
 import { ConsolePanelProvider, useConsolePanel } from '@/hooks/useConsolePanel';
 import { TodoPage } from './components/TodoPage';
+import { TodoCenterPage } from './components/TodoCenterPage';
 import { TodoPostPage } from './components/todo-post';
 import { LoopPage } from './components/LoopPage';
 import { TodoMobilePage } from './components/mobile/TodoMobilePage';
@@ -221,6 +222,7 @@ function AppContent() {
   const handleRailSelect = useCallback((key: LeftRailKey) => {
     setNavDrawerOpen(false);
     if (key === 'items') { showListSection('item'); return; }
+    if (key === 'todoCenter') { handleShowView('todoCenter'); return; }
     if (key === 'loops') { showListSection('loop'); return; }
     if (key === 'dashboard') { handleShowView('dashboard'); return; }
     if (key === 'memorial') { handleShowView('memorial'); return; }
@@ -307,9 +309,16 @@ function AppContent() {
             />
           )}
 
+          {/* 事项中心页面（卡片式五类驱动视图） */}
+          {activeView === 'todoCenter' && (
+            <TodoCenterPage
+              onSelectTodo={handleSelectTodo}
+              onOpenCreateModal={() => setTodoModalOpen(true)}
+            />
+          )}
+
           {/* 事项页面 */}
-          {activeView === 'items' && activePanel !== 'post' && (
-            isMobile ? (
+          {activeView === 'items' && activePanel !== 'post' && (            isMobile ? (
               <TodoMobilePage
                 selectedTodoId={state.selectedTodoId}
                 onOpenCreateModal={() => setTodoModalOpen(true)}

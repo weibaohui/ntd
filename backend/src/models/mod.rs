@@ -141,6 +141,98 @@ pub struct Todo {
     /// 由 /api/actions/execute 用于查找或自动创建 action 模板 todo。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action_key: Option<String>,
+    /// 归档时间戳（UTC 字符串）。None=未归档，参与事项中心日常分类；
+    /// Some=已归档，进入「已归档」分类，从日常视图隐藏但数据保留。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<String>,
+}
+
+/// 事项中心的五类驱动分类（computed_bucket）。
+///
+/// 这是运行时由底层事实字段推导的返回值，不落库。
+/// 推导规则见 `compute_bucket`，优先级：已归档 > Loop 驱动 > 时间驱动 > 事件驱动 > 手动触发。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComputedBucket {
+    /// 手动触发：兜底分类，未归档且无调度/无 Webhook/未被 Loop 引用。
+    Manual,
+    /// 时间驱动：scheduler_config 非空（scheduler_enabled 仅表启停）。
+    TimeDriven,
+    /// 事件驱动：webhook_enabled=true 且无调度配置且未被 Loop 引用。
+    EventDriven,
+    /// Loop 驱动：被启用的 loop_steps 引用（used_by_loop_step_count > 0）。
+    LoopDriven,
+    /// 已归档：archived_at 非空，优先级最高。
+    Archived,
+}
+
+impl ComputedBucket {
+    /// 从查询参数解析分类。None/空字符串=不过滤（返回全部）。
+    /// 不区分大小写，与 serde 的 snake_case 序列化对齐。
+    pub fn parse_query(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "manual" => Some(Self::Manual),
+            "time_driven" => Some(Self::TimeDriven),
+            "event_driven" => Some(Self::EventDriven),
+            "loop_driven" => Some(Self::LoopDriven),
+            "archived" => Some(Self::Archived),
+            _ => None,
+        }
+    }
+}
+
+/// 由底层事实字段推导事项的主分类（computed_bucket）。
+///
+/// 优先级（设计文档）：已归档 > Loop 驱动 > 时间驱动 > 事件驱动 > 手动触发。
+/// 纯函数、无 IO，便于单测覆盖各组合分支。
+///
+/// - `archived_at` 非空 → 已归档（最高优先级，用户明确希望隐藏）
+/// - 否则被 Loop 引用（count>0）→ Loop 驱动（已成流程结构一部分）
+/// - 否则 scheduler_config 非空 → 时间驱动（注意：scheduler_enabled 仅表启停，不决定是否时间驱动）
+/// - 否则 webhook_enabled → 事件驱动
+/// - 否则 → 手动触发（兜底）
+pub fn compute_bucket(
+    archived_at: Option<&str>,
+    used_by_loop_step_count: i64,
+    scheduler_config: Option<&str>,
+    webhook_enabled: bool,
+) -> ComputedBucket {
+    if archived_at.is_some() {
+        return ComputedBucket::Archived;
+    }
+    if used_by_loop_step_count > 0 {
+        return ComputedBucket::LoopDriven;
+    }
+    if scheduler_config.is_some() {
+        return ComputedBucket::TimeDriven;
+    }
+    if webhook_enabled {
+        return ComputedBucket::EventDriven;
+    }
+    ComputedBucket::Manual
+}
+
+/// 事项中心列表项：在 Todo 之上附加运行时推导/聚合字段。
+///
+/// 附加字段由 handler 层批量补算（loop 引用计数、最近一次执行记录），
+/// 普通 `get_todos` 路径不返回这些字段，因此独立成 DTO 而非塞进 Todo。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodoCenterItem {
+    /// 内联 Todo 全部字段，保持响应扁平（设计文档示例即扁平结构）。
+    #[serde(flatten)]
+    pub todo: Todo,
+    /// 运行时推导的主分类，不落库。
+    pub computed_bucket: ComputedBucket,
+    /// 被启用 loop_steps 引用的次数（COUNT ... WHERE enabled=1 GROUP BY todo_id）。
+    /// 0=未被任何启用的 Loop 引用。
+    #[serde(default)]
+    pub used_by_loop_step_count: i64,
+    /// 最近一次执行记录的状态（success/failed/running/...），无记录则 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_execution_status: Option<String>,
+    /// 最近一次执行记录的时间（优先 finished_at，回退 started_at），无记录则 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_execution_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -415,6 +507,15 @@ pub struct UpdateTodoRequest {
 #[derive(Deserialize, Serialize)]
 pub struct UpdateTagsRequest {
     pub tag_ids: Vec<i64>,
+}
+
+/// `PUT /api/todos/{id}/webhook` 请求体：开启/关闭事件驱动。
+///
+/// 扁平具名路由（设计文档），与 `PUT /api/todos/{id}/scheduler` 对称，
+/// 让前端有一个明确的「事件驱动启停」入口，而非塞进通用 update_todo。
+#[derive(Deserialize, Serialize)]
+pub struct UpdateWebhookRequest {
+    pub webhook_enabled: bool,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1329,6 +1430,85 @@ mod tests {
         assert_eq!("failed".parse::<TodoStatus>().unwrap(), TodoStatus::Failed);
         assert_eq!("cancelled".parse::<TodoStatus>().unwrap(), TodoStatus::Cancelled);
         assert!("unknown".parse::<TodoStatus>().is_err());
+    }
+
+    // -------- computed_bucket 推导 --------
+
+    /// 手动触发：兜底分类，无任何驱动事实。
+    #[test]
+    fn test_compute_bucket_manual_when_no_facts() {
+        assert_eq!(
+            compute_bucket(None, 0, None, false),
+            ComputedBucket::Manual
+        );
+    }
+
+    /// 已归档优先级最高：即便同时有调度/事件/Loop 引用，也归已归档。
+    /// 原因：归档代表用户明确希望日常隐藏，盖过一切驱动能力。
+    #[test]
+    fn test_compute_bucket_archived_wins_over_all() {
+        assert_eq!(
+            compute_bucket(Some("2026-07-08T10:00:00Z"), 3, Some("0 9 * * * *"), true),
+            ComputedBucket::Archived
+        );
+    }
+
+    /// Loop 驱动优先于时间/事件驱动：被启用 loop_steps 引用即视为流程结构一部分。
+    #[test]
+    fn test_compute_bucket_loop_driven_beats_time_and_event() {
+        assert_eq!(
+            compute_bucket(None, 1, Some("0 9 * * * *"), true),
+            ComputedBucket::LoopDriven
+        );
+    }
+
+    /// 时间驱动：scheduler_config 非空（scheduler_enabled 不参与判断，仅表启停）。
+    #[test]
+    fn test_compute_bucket_time_driven_when_scheduler_config_present() {
+        assert_eq!(
+            compute_bucket(None, 0, Some("0 9 * * * *"), false),
+            ComputedBucket::TimeDriven
+        );
+    }
+
+    /// 时间驱动优先于事件驱动：同时有调度与 Webhook 时归时间驱动。
+    #[test]
+    fn test_compute_bucket_time_driven_beats_event() {
+        assert_eq!(
+            compute_bucket(None, 0, Some("0 9 * * * *"), true),
+            ComputedBucket::TimeDriven
+        );
+    }
+
+    /// 事件驱动：无调度、未被 Loop 引用、且 webhook_enabled。
+    #[test]
+    fn test_compute_bucket_event_driven_when_webhook_only() {
+        assert_eq!(
+            compute_bucket(None, 0, None, true),
+            ComputedBucket::EventDriven
+        );
+    }
+
+    /// parse_query：合法串（含大小写/下划线）正确解析，非法串返回 None。
+    #[test]
+    fn test_computed_bucket_parse_query() {
+        assert_eq!(ComputedBucket::parse_query("manual"), Some(ComputedBucket::Manual));
+        assert_eq!(ComputedBucket::parse_query("Time_Driven"), Some(ComputedBucket::TimeDriven));
+        assert_eq!(ComputedBucket::parse_query(" loop_driven "), Some(ComputedBucket::LoopDriven));
+        assert_eq!(ComputedBucket::parse_query("archived"), Some(ComputedBucket::Archived));
+        assert_eq!(ComputedBucket::parse_query(""), None);
+        assert_eq!(ComputedBucket::parse_query("bogus"), None);
+    }
+
+    /// serde 序列化为 snake_case，与 parse_query 对齐（前端按此串回传）。
+    #[test]
+    fn test_computed_bucket_serializes_snake_case() {
+        let json = serde_json::to_string(&ComputedBucket::LoopDriven).unwrap();
+        assert_eq!(json, "\"loop_driven\"");
+        assert_eq!(
+            serde_json::to_string(&ComputedBucket::TimeDriven).unwrap(),
+            "\"time_driven\""
+        );
     }
 
     #[test]

@@ -2107,6 +2107,7 @@ mod tests {
             auto_review_enabled: false,
             action_type: None,
             action_key: None,
+            archived_at: None,
         }
     }
 
