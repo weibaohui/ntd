@@ -3,14 +3,15 @@
  * 1. 直接导航到黑板页面
  * 2. 点击设置按钮能打开弹窗
  * 3. 防抖周期和触发条数 InputNumber 正常显示和修改
- * 4. 切换到提示词设置 Tab，验证 TextArea 和恢复默认按钮
- * 5. 保存后弹窗关闭并提示成功
+ * 4. Wiki 执行超时 InputNumber 正常显示和修改（per-workspace 可配）
+ * 5. 切换到提示词设置 Tab，验证 TextArea 和恢复默认按钮
+ * 6. 保存后弹窗关闭并提示成功
  */
 import { test, expect } from '@playwright/test';
 
 test('黑板设置弹窗能正常打开和保存', async ({ page }) => {
-  // 直接导航到黑板页面
-  await page.goto('http://localhost:18088/?view=blackboard&workspace=1');
+  // 直接导航到黑板页面（hash 路由：#/blackboard?workspace=1）
+  await page.goto('http://localhost:18088/#/blackboard?workspace=1');
   // 等待 app 渲染完成
   await page.waitForSelector('#root > *', { timeout: 15000 });
 
@@ -30,6 +31,14 @@ test('黑板设置弹窗能正常打开和保存', async ({ page }) => {
   // 修改防抖时间为 300
   await input.fill('300');
   await input.blur();
+
+  // Wiki 执行超时输入框应在防抖设置 Tab 中可见（防抖周期 / 触发条数 / Wiki 执行超时）
+  // 验证第三个 InputNumber 存在且可修改，确认超时设置已上界面
+  const timeoutInput = page.locator('.ant-input-number-input').nth(2);
+  await expect(timeoutInput).toBeVisible();
+  await timeoutInput.fill('600');
+  await timeoutInput.blur();
+  await expect(timeoutInput).toHaveValue('600');
 
   // 切换到提示词设置 Tab
   await page.click('.ant-tabs-tab:has-text("提示词设置")');

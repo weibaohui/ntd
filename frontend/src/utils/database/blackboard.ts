@@ -9,6 +9,8 @@ export interface BlackboardResponse {
   wiki_prompt: string;
   /** Wiki 对话使用的执行器名称，null/undefined 表示使用默认值 claudecode */
   wiki_chat_executor?: string | null;
+  /** Wiki 执行超时（秒），控制 Wiki 任务与 Wiki 对话的最长存活时间 */
+  wiki_timeout_secs: number;
 }
 
 /** GET /api/workspaces/{workspaceId}/blackboard：获取黑板数据（含 pending_record_ids） */
@@ -26,6 +28,8 @@ export async function updateBlackboardConfig(
     wiki_prompt?: string;
     /** Wiki 对话执行器，空字符串表示清空回退到默认值 */
     wiki_chat_executor?: string;
+    /** Wiki 执行超时（秒），后端会钳制到 [60, 3600] 区间 */
+    wiki_timeout_secs?: number;
   },
 ): Promise<void> {
   await api.patch(`/api/workspaces/${workspaceId}/blackboard`, config);
@@ -68,20 +72,45 @@ export async function deleteWikiFile(workspaceId: number, slug: string): Promise
  * 非流式：等待执行器完成后一次性返回结果。
  * 不创建 Todo、不持久化对话历史。
  *
- * 超时单独设为 5 分钟：执行器（如 claude code）可能需要较长时间完成，
- * 远超 axios 默认的 15 秒。
+ * HTTP 超时随 per-workspace 的 wiki_timeout_secs 动态调整（后端会钳制到 [60,3600]），
+ * 并额外加 10 秒缓冲，避免 HTTP 请求在执行器即将完成时先于后端超时失败。
+ * 取不到配置时回退到 5 分钟（与历史行为一致）。
  */
 export async function chatWithWiki(
   workspaceId: number,
   message: string,
   executor?: string,
 ): Promise<WikiChatResponse> {
+  // 读取 per-workspace 超时配置，推算 HTTP 超时；失败回退默认 300 秒
+  const timeoutMs = await resolveWikiChatHttpTimeoutMs(workspaceId);
   return unwrap(
     await api.post(`/api/workspaces/${workspaceId}/wiki/chat`, {
       message,
       executor,
     }, {
-      timeout: 300000,
+      timeout: timeoutMs,
     }),
   );
+}
+
+/** 默认 Wiki 执行超时（秒），与后端 DEFAULT_WIKI_TIMEOUT_SECS 保持一致。 */
+const DEFAULT_WIKI_TIMEOUT_SECS = 300;
+/** HTTP 超时相对后端执行超时的额外缓冲（毫秒），给后端收尾 + 网络往返留余量。 */
+const WIKI_CHAT_HTTP_BUFFER_MS = 10_000;
+
+/**
+ * 推算 Wiki 对话 HTTP 请求超时（毫秒）。
+ *
+ * 取黑板配置中的 wiki_timeout_secs（后端已钳制到 [60,3600]），换算成毫秒后加缓冲；
+ * 配置缺失/请求失败时回退默认值，保证可用性优先于精确性。
+ */
+async function resolveWikiChatHttpTimeoutMs(workspaceId: number): Promise<number> {
+  try {
+    const board = await getBlackboard(workspaceId);
+    const secs = board.wiki_timeout_secs ?? DEFAULT_WIKI_TIMEOUT_SECS;
+    return secs * 1000 + WIKI_CHAT_HTTP_BUFFER_MS;
+  } catch {
+    // 配置读取失败不阻断对话：回退默认超时，让用户至少能正常用
+    return DEFAULT_WIKI_TIMEOUT_SECS * 1000 + WIKI_CHAT_HTTP_BUFFER_MS;
+  }
 }
