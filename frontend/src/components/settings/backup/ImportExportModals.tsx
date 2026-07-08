@@ -1,4 +1,4 @@
-import { Modal, Table, Tag as AntTag, Select, Divider, Typography, Alert } from 'antd';
+import { Modal, Table, Tag as AntTag, Divider, Typography, Alert } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
 
 export interface BackupDataYaml {
@@ -104,18 +104,42 @@ export function ImportExportModals({
           );
         })()}
 
-        {/* 目标工作空间选择：导入时必需，因为数据库有 workspace_id 字段 */}
+        {/* 目标工作空间选择：表格形式总览，一行一个，点选某个 */}
         <div style={{ marginBottom: 16 }}>
           <Typography.Text strong>目标工作空间</Typography.Text>
           <Typography.Paragraph type="secondary" style={{ margin: '4px 0 8px', fontSize: 12 }}>
             选择导入后 Todo 所属的工作空间，此操作将覆盖备份文件中的原始工作空间信息
           </Typography.Paragraph>
-          <Select
-            placeholder="请选择工作空间"
-            options={workspaces.map((w: any) => ({ label: w.name || w.path, value: w.id }))}
-            value={importWorkspaceId}
-            onChange={setImportWorkspaceId}
-            style={{ width: '100%' }}
+          <Table
+            size="small"
+            pagination={false}
+            rowKey="id"
+            dataSource={workspaces.map((w: any) => ({
+              ...w,
+              // 标记是否为导出文件中的原始工作空间
+              _isOriginal: sourceWorkspaceInfo?.id === w.id,
+            }))}
+            rowSelection={{
+              type: 'radio',
+              selectedRowKeys: importWorkspaceId != null ? [importWorkspaceId] : [],
+              onChange: (keys) => {
+                if (keys.length > 0) setImportWorkspaceId(keys[0] as number);
+              },
+            }}
+            columns={[
+              {
+                title: '工作空间',
+                dataIndex: 'name',
+                width: '60%',
+                render: (_: any, r: any) => r.name || r.path || '(未命名)',
+              },
+              {
+                title: '来源',
+                dataIndex: '_isOriginal',
+                width: 60,
+                render: (v: boolean) => v ? <AntTag color="blue">原始</AntTag> : null,
+              },
+            ]}
           />
         </div>
 

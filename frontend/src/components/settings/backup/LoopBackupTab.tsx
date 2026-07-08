@@ -1,5 +1,5 @@
 import { Card, Button, Typography, Upload, Select, Space, Modal, Tag, Alert, message, Radio, Table, Divider } from 'antd';
-import { DownloadOutlined, InboxOutlined, InfoCircleOutlined } from '@ant-design/icons';
+import { DownloadOutlined, InboxOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import * as db from '@/utils/database';
 import { exportLoop, listLoops } from '@/utils/database/loops';
@@ -205,18 +205,42 @@ export function LoopBackupTab() {
           <Typography.Paragraph type="secondary">
             从 .loop.yaml 文件导入环路，先选择目标工作空间，再上传文件
           </Typography.Paragraph>
-          {/* 目标工作空间选择前置到导入区域——用户必须选择后才能上传 */}
+          {/* 目标工作空间选择：表格形式总览所有工作空间，一行一个，点选某个 */}
           <div>
             <Typography.Text strong style={{ fontSize: 13 }}>目标工作空间</Typography.Text>
-            <Select
-              placeholder="请选择工作空间"
-              options={workspaces.map((w: any) => ({ label: w.name || w.path, value: w.id }))}
-              value={selectedWorkspaceId}
-              onChange={setSelectedWorkspaceId}
-              style={{ width: '100%', marginTop: 4 }}
+            <Table
+              size="small"
+              pagination={false}
+              rowKey="id"
+              dataSource={workspaces.map((w: any) => ({
+                ...w,
+                _isOriginal: sourceWorkspaceInfo?.id === w.id,
+              }))}
+              rowSelection={{
+                type: 'radio',
+                selectedRowKeys: selectedWorkspaceId != null ? [selectedWorkspaceId] : [],
+                onChange: (keys) => {
+                  if (keys.length > 0) setSelectedWorkspaceId(keys[0] as number);
+                },
+              }}
+              columns={[
+                {
+                  title: '工作空间',
+                  dataIndex: 'name',
+                  width: '60%',
+                  render: (_: any, r: any) => r.name || r.path || '(未命名)',
+                },
+                {
+                  title: '来源',
+                  dataIndex: '_isOriginal',
+                  width: 60,
+                  render: (v: boolean) => v ? <Tag color="blue">原始</Tag> : null,
+                },
+              ]}
+              style={{ marginTop: 4 }}
             />
             <Typography.Paragraph type="secondary" style={{ margin: '4px 0 0', fontSize: 11 }}>
-              选择导入后环路和 Todo 所属的工作空间
+              选择导入后环路的 Todo 和 Loop 所属的工作空间
             </Typography.Paragraph>
           </div>
           <Dragger
@@ -254,28 +278,42 @@ export function LoopBackupTab() {
       >
         {previewData && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* 原始工作空间提示：检测到导出文件中的工作空间后，显示给用户参考 */}
-            {sourceWorkspaceInfo && (() => {
-              const matched = workspaces.find((w: any) => w.id === sourceWorkspaceInfo.id);
-              return (
-                <Alert
-                  message="检测到原始工作空间"
-                  description={
-                    matched
-                      ? `该文件中的数据原本来自工作空间「${matched.name || matched.path}」${
-                          selectedWorkspaceId === sourceWorkspaceInfo.id ? '（已自动匹配）' : ''
-                        }`
-                      : `该文件中的数据原本来自工作空间 ID=${sourceWorkspaceInfo.id}${
-                          sourceWorkspaceInfo.path ? ` (${sourceWorkspaceInfo.path})` : ''
-                        }，当前环境未找到匹配的工作空间`
-                  }
-                  type="info"
-                  showIcon
-                  icon={<InfoCircleOutlined />}
-                  style={{ marginBottom: 8 }}
-                />
-              );
-            })()}
+            {/* 目标工作空间选择：表格形式总览，一行一个，点选某个，Tag 标记原始来源 */}
+            <div>
+              <Typography.Text strong>目标工作空间</Typography.Text>
+              <Table
+                size="small"
+                pagination={false}
+                rowKey="id"
+                dataSource={workspaces.map((w: any) => ({
+                  ...w,
+                  _isOriginal: sourceWorkspaceInfo?.id === w.id,
+                }))}
+                rowSelection={{
+                  type: 'radio',
+                  selectedRowKeys: selectedWorkspaceId != null ? [selectedWorkspaceId] : [],
+                  onChange: (keys) => {
+                    if (keys.length > 0) setSelectedWorkspaceId(keys[0] as number);
+                  },
+                }}
+                columns={[
+                  {
+                    title: '工作空间',
+                    dataIndex: 'name',
+                    render: (_: any, r: any) => r.name || r.path || '(未命名)',
+                  },
+                  {
+                    title: '来源',
+                    dataIndex: '_isOriginal',
+                    width: 60,
+                    render: (v: boolean) => v ? <Tag color="blue">原始</Tag> : null,
+                  },
+                ]}
+                style={{ marginTop: 4 }}
+              />
+            </div>
+
+            <Divider style={{ margin: '4px 0' }} />
 
             <Alert
               message="即将导入以下内容"
@@ -307,19 +345,6 @@ export function LoopBackupTab() {
                 showIcon
               />
             )}
-
-            <div>
-              <Typography.Text strong>目标工作空间</Typography.Text>
-              <Select
-                placeholder="选择工作空间"
-                options={workspaces.map((w: any) => ({ label: w.name, value: w.id }))}
-                value={selectedWorkspaceId}
-                onChange={setSelectedWorkspaceId}
-                style={{ width: '100%', marginTop: 8 }}
-              />
-            </div>
-
-            <Divider style={{ margin: '12px 0' }} />
 
             <div>
               <Typography.Text strong>导入模式</Typography.Text>
