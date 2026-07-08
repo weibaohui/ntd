@@ -435,6 +435,43 @@ fn executor_empty_end_message(executor_type: &str) -> String {
     format!("✅ {} 执行完成（无输出）", executor_type)
 }
 
+/// 根据执行结果决定发回飞书的最终内容。
+///
+/// 优先级：解析出的 `result_text` > 成功且有原始 stdout（输出即答案）>
+/// 成功但无输出（空结束标志）> 非零退出（错误消息 + 输出片段）。
+/// 把这段决策从 `handle_default_response_executor` 主体抽成纯函数，是为了能直接单测
+/// 非零退出 + 多字节中文 stdout 的截断行为——原来内联时 `&stdout[..1500]` 按字节切片，
+/// 落在中文中间会 panic，反而把"执行器非零退出"变成 debounce 任务崩溃。
+fn build_executor_end_content(
+    executor_type: &str,
+    status: &std::process::ExitStatus,
+    result_text: Option<String>,
+    stdout: &str,
+) -> String {
+    // 非零退出时 stdout 给用户的预览上限，按 char 计：与开始消息 preview 同语义，
+    // 避免 `&str[..n]` 这种按字节切片切到多字节字符中间触发 panic。
+    const STDOUT_PREVIEW_CHAR_LIMIT: usize = 1500;
+    if let Some(text) = result_text {
+        // 已解析出结构化结果（result/text 日志），直接作为回复，不再附 stdout
+        text
+    } else if status.success() {
+        // 进程退出 0：有原始 stdout 就原样回复，没有就发空结束标志
+        let raw = stdout;
+        if raw.trim().is_empty() {
+            executor_empty_end_message(executor_type)
+        } else {
+            raw.to_string()
+        }
+    } else {
+        // 非零退出：带退出码 + 截断后的 stdout 片段走错误通道，按 char 截断防 panic
+        let stdout_preview: String = stdout.chars().take(STDOUT_PREVIEW_CHAR_LIMIT).collect();
+        executor_error_message(
+            executor_type,
+            &format!("退出码 {:?}\n输出：\n{}", status.code(), stdout_preview),
+        )
+    }
+}
+
 /// `run_executor_with_timeout` 的失败原因。
 ///
 /// 区分"超时"和"wait 本身出错"是因为两者的用户提示不同：超时基本是 provider
@@ -486,6 +523,8 @@ async fn run_executor_with_timeout(
                 // 超时：先 SIGKILL 再 wait 回收，避免 pi 孤儿进程；两步失败都不致命，用 _ 忽略
                 let _ = child.start_kill();
                 let _ = child.wait().await;
+                // 此处故意不 join stdout_task：kill 后子进程管道关闭，read_to_end 收到 EOF
+                // 自行结束，task 变 detached 但不会泄漏；超时路径本就不要输出，buf 随 task 丢弃。
                 return Err(ExecutorRunError::Timeout { secs: t.as_secs() });
             }
         },
@@ -745,21 +784,8 @@ impl MessageDebounce {
 
         // 结束反馈：成功有解析结果就用结果（即回复）；成功无结果但进程退出 0 且有原始 stdout
         // 就用 stdout 兜底；进程非 0 退出走错误通道带退出码+输出片段；都没有则发空结束标志。
-        let content = if let Some(text) = result_text {
-            text
-        } else if status.success() {
-            let raw = stdout.to_string();
-            if raw.trim().is_empty() {
-                executor_empty_end_message(executor_type)
-            } else {
-                raw
-            }
-        } else {
-            executor_error_message(
-                executor_type,
-                &format!("退出码 {:?}\n输出：\n{}", status.code(), &stdout[..stdout.len().min(1500)]),
-            )
-        };
+        // 抽成纯函数 build_executor_end_content 以便单测非零退出+中文 stdout 的截断（防 panic）。
+        let content = build_executor_end_content(executor_type, &status, result_text, &stdout);
 
         tracing::info!(
             "[debounce] executor {} result_text={:?}",
@@ -964,5 +990,64 @@ mod executor_feedback_tests {
     fn test_direct_executor_timeout_positive_is_some() {
         let d = direct_executor_timeout(3600).expect("positive secs must map to Some");
         assert_eq!(d.as_secs(), 3600);
+    }
+
+    /// 有解析结果时优先返回结果，不看 stdout / 退出码：result 即最终回复。
+    #[test]
+    fn test_build_executor_end_content_uses_result_text() {
+        let status = std::process::Command::new("sh")
+            .args(["-c", "true"])
+            .status()
+            .expect("spawn sh true");
+        let content = build_executor_end_content("pi", &status, Some("最终答案".to_string()), "ignored stdout");
+        assert_eq!(content, "最终答案");
+    }
+
+    /// 退出 0 + 无解析结果 + 有原始 stdout：原样回复 stdout（输出即答案）。
+    #[test]
+    fn test_build_executor_end_content_success_returns_stdout() {
+        let status = std::process::Command::new("sh")
+            .args(["-c", "true"])
+            .status()
+            .expect("spawn sh true");
+        let content = build_executor_end_content("pi", &status, None, "hello world");
+        assert_eq!(content, "hello world");
+    }
+
+    /// 退出 0 + 无解析结果 + stdout 为空：发空结束标志，避免用户误以为还在跑。
+    #[test]
+    fn test_build_executor_end_content_success_empty_returns_marker() {
+        let status = std::process::Command::new("sh")
+            .args(["-c", "true"])
+            .status()
+            .expect("spawn sh true");
+        let content = build_executor_end_content("pi", &status, None, "   \n  ");
+        assert_eq!(content, "✅ pi 执行完成（无输出）");
+    }
+
+    /// 非零退出 + 远超上限的多字节中文 stdout：必须按 char 截断前 1500 个，
+    /// 不能用 `&str[..1500]` 按字节切片——那会落在中文中间触发 panic。
+    /// 这是本次修复的核心回归保护：执行器非零退出不能再变成 debounce 任务崩溃。
+    #[test]
+    fn test_build_executor_end_content_nonzero_chinese_no_panic() {
+        // 1600 个全中文字符，确保命中截断分支
+        let chinese = "执行出错".repeat(400);
+        let status = std::process::Command::new("sh")
+            .args(["-c", "exit 1"])
+            .status()
+            .expect("spawn sh exit 1");
+        // 关键断言：这一行不 panic 即说明按 char 截断生效
+        let content = build_executor_end_content("pi", &status, None, &chinese);
+        assert!(
+            content.starts_with("❌ pi 执行失败：退出码 Some(1)"),
+            "should start with error prefix, got: {}",
+            content
+        );
+        // 输出区被裁到 1500 个 char：总长度远小于原文 1600 + 前缀
+        assert!(
+            content.chars().count() < 1600,
+            "stdout preview should be truncated to 1500 chars, got len {}",
+            content.chars().count()
+        );
     }
 }
