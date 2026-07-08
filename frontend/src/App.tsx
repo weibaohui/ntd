@@ -7,6 +7,7 @@ import { useIsMobile } from './hooks/useIsMobile';
 import { useExecutionEvents } from './hooks/useExecutionEvents';
 import { useViewState, viewToNavKey, type View } from './hooks/useViewState';
 import { ThemeProvider, useTheme } from './hooks/useTheme';
+import { ConsolePanelProvider, useConsolePanel } from './hooks/useConsolePanel';
 import { TodoPage } from './components/TodoPage';
 import { TodoPostPage } from './components/todo-post';
 import { LoopPage } from './components/LoopPage';
@@ -42,6 +43,8 @@ function AppContent() {
   const { state, dispatch, clearSelection } = useApp();
   const { activeView, selectedId, activePanel, selectedRecordId, showView, pushUrl, replaceUrl, backToList } = useViewState();
   const { themeMode, toggleTheme } = useTheme();
+  // 底部执行日志面板的显隐开关：来自设置-界面显示，关掉后即使有运行中任务也不渲染面板。
+  const { visible: consolePanelVisible } = useConsolePanel();
 
   const [todoModalOpen, setTodoModalOpen] = useState(false);
   const [smartCreateOpen, setSmartCreateOpen] = useState(false);
@@ -90,7 +93,11 @@ function AppContent() {
   useExecutionEvents();
 
   const hasRunningTasks = Object.keys(state.runningTasks).length > 0;
-  const panelHeight = hasRunningTasks ? (panelCollapsed ? EXECUTION_PANEL.collapsed : EXECUTION_PANEL.expanded) : 0;
+  // 开关关闭时面板高度归零，主内容区不再留出底部避让空间；
+  // 否则按折叠/展开状态给出高度。
+  const panelHeight = consolePanelVisible && hasRunningTasks
+    ? (panelCollapsed ? EXECUTION_PANEL.collapsed : EXECUTION_PANEL.expanded)
+    : 0;
 
   useEffect(() => {
     db.getConfig().then(setAppConfig).catch(() => {
@@ -438,7 +445,10 @@ function AppContent() {
       />
 
       {/* Execution Panel */}
+      {/* 始终挂载以保留其内部「完成后 5s 自动移除任务」的定时器逻辑；
+          通过 hidden 让它在开关关闭或无运行任务时 return null，不占任何空间。 */}
       <ExecutionPanel
+        hidden={!consolePanelVisible}
         collapsed={panelCollapsed}
         onToggleCollapse={() => {
           const next = !panelCollapsed;
@@ -486,7 +496,9 @@ function ThemedApp() {
 function App() {
   return (
     <ThemeProvider>
-      <ThemedApp />
+      <ConsolePanelProvider>
+        <ThemedApp />
+      </ConsolePanelProvider>
     </ThemeProvider>
   );
 }
