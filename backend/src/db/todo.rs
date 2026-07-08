@@ -174,10 +174,11 @@ impl Database {
         }
         let models = query.all(&self.conn).await?;
 
-        // 一次性批量补算 loop 引用计数与最近执行记录，避免逐 todo N+1
+        // 一次性批量补算 loop 引用计数/引用 Loop 摘要与最近执行记录，避免逐 todo N+1
         let ids: Vec<i64> = models.iter().map(|m| m.id).collect();
         let tag_map = self.fetch_tag_ids_for_many(&ids).await?;
         let loop_count_map = self.count_enabled_loop_steps_by_todos(&ids).await?;
+        let referencing_loops_map = self.get_referencing_loops_for_todos(&ids).await?;
         let last_exec_map = self.get_latest_execution_summaries_for_todos(&ids).await?;
 
         // 组装 TodoCenterItem，并按 bucket 过滤
@@ -185,7 +186,12 @@ impl Database {
         for m in models {
             let tag_ids = tag_map.get(&m.id).cloned().unwrap_or_default();
             let todo = Self::model_to_todo(m, tag_ids);
-            let item = Self::build_center_item(todo, &loop_count_map, &last_exec_map);
+            let item = Self::build_center_item(
+                todo,
+                &loop_count_map,
+                &referencing_loops_map,
+                &last_exec_map,
+            );
             // 内存层分桶过滤：分页前完成，保证 Tab 数量正确
             // 用 map_or 而非 is_none_or：后者稳定于 1.82，当前 MSRV 1.81 不支持
             if bucket.map_or(true, |b| b == item.computed_bucket) {
@@ -199,6 +205,7 @@ impl Database {
     fn build_center_item(
         todo: Todo,
         loop_count_map: &std::collections::HashMap<i64, i64>,
+        referencing_loops_map: &std::collections::HashMap<i64, Vec<crate::models::LoopRefSummary>>,
         last_exec_map: &std::collections::HashMap<i64, crate::db::LatestExecutionSummary>,
     ) -> TodoCenterItem {
         // 未出现在聚合 map 中的 todo 计数视为 0（未被任何启用 Loop 引用）
@@ -213,12 +220,18 @@ impl Database {
             .get(&todo.id)
             .map(|s| (s.status.clone(), s.display_at().map(str::to_string)))
             .unwrap_or((None, None));
+        // 引用 Loop 摘要：克隆一份，未被引用时为空 vec
+        let referencing_loops = referencing_loops_map
+            .get(&todo.id)
+            .cloned()
+            .unwrap_or_default();
         TodoCenterItem {
             todo,
             computed_bucket,
             used_by_loop_step_count,
             last_execution_status,
             last_execution_at,
+            referencing_loops,
         }
     }
 
@@ -235,8 +248,14 @@ impl Database {
         };
         let ids = vec![id];
         let loop_count_map = self.count_enabled_loop_steps_by_todos(&ids).await?;
+        let referencing_loops_map = self.get_referencing_loops_for_todos(&ids).await?;
         let last_exec_map = self.get_latest_execution_summaries_for_todos(&ids).await?;
-        Ok(Some(Self::build_center_item(todo, &loop_count_map, &last_exec_map)))
+        Ok(Some(Self::build_center_item(
+            todo,
+            &loop_count_map,
+            &referencing_loops_map,
+            &last_exec_map,
+        )))
     }
 
     /// 归档事项：设置 archived_at = 当前 UTC 时间。
@@ -1733,7 +1752,7 @@ mod todo_center_tests {
                 started_at: Some("2026-07-08T09:59:00Z".into()),
             },
         );
-        let item = Database::build_center_item(todo, &loop_map, &exec_map);
+        let item = Database::build_center_item(todo, &loop_map, &Default::default(), &exec_map);
         assert_eq!(item.used_by_loop_step_count, 2);
         assert_eq!(item.computed_bucket, ComputedBucket::LoopDriven);
         assert_eq!(item.last_execution_status.as_deref(), Some("failed"));
@@ -1755,7 +1774,7 @@ mod todo_center_tests {
                 started_at: Some("2026-07-08T09:00:00Z".into()),
             },
         );
-        let item = Database::build_center_item(todo, &Default::default(), &exec_map);
+        let item = Database::build_center_item(todo, &Default::default(), &Default::default(), &exec_map);
         assert_eq!(item.last_execution_at.as_deref(), Some("2026-07-08T09:00:00Z"));
     }
 
@@ -1763,10 +1782,32 @@ mod todo_center_tests {
     #[test]
     fn test_build_center_item_no_execution() {
         let todo = make_minimal_todo();
-        let item = Database::build_center_item(todo, &Default::default(), &Default::default());
+        let item = Database::build_center_item(todo, &Default::default(), &Default::default(), &Default::default());
         assert!(item.last_execution_status.is_none());
         assert!(item.last_execution_at.is_none());
         assert_eq!(item.computed_bucket, ComputedBucket::Manual);
+    }
+
+    /// build_center_item：引用 Loop 摘要按 todo_id 透传，未被引用时为空 vec。
+    #[test]
+    fn test_build_center_item_references_loops() {
+        let mut todo = make_minimal_todo();
+        todo.id = 42;
+        let mut loop_map = std::collections::HashMap::new();
+        loop_map.insert(42_i64, 1_i64);
+        let mut ref_map = std::collections::HashMap::new();
+        ref_map.insert(
+            42,
+            vec![
+                crate::models::LoopRefSummary { loop_id: 5, loop_name: "L5".into() },
+                crate::models::LoopRefSummary { loop_id: 8, loop_name: "L8".into() },
+            ],
+        );
+        let item = Database::build_center_item(todo, &loop_map, &ref_map, &Default::default());
+        assert_eq!(item.computed_bucket, ComputedBucket::LoopDriven);
+        assert_eq!(item.referencing_loops.len(), 2);
+        assert_eq!(item.referencing_loops[0].loop_id, 5);
+        assert_eq!(item.referencing_loops[1].loop_name, "L8");
     }
 
     /// 构造一个最小合法 Todo 供 build_center_item 纯函数测试复用。

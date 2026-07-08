@@ -27,6 +27,8 @@ const EMPTY_TEXT: Record<ComputedBucket, string> = {
 interface TodoCenterPageProps {
   /** 点击卡片进入现有事项详情页。 */
   onSelectTodo: (id: number) => void;
+  /** Phase 5：点击所属 Loop 跳转 Loop 详情。 */
+  onSelectLoop: (loopId: number) => void;
   /** 新建事项入口（复用全局 TodoDrawer）。 */
   onOpenCreateModal: () => void;
 }
@@ -38,7 +40,7 @@ interface TodoCenterPageProps {
  * 前端按 computed_bucket 分桶并展示各 Tab 数量；切换 Tab 不再发请求，降低交互延迟。
  * 卡片点击进入现有 TodoDetail，详情页不在第一阶段重写。
  */
-export function TodoCenterPage({ onSelectTodo, onOpenCreateModal }: TodoCenterPageProps) {
+export function TodoCenterPage({ onSelectTodo, onSelectLoop, onOpenCreateModal }: TodoCenterPageProps) {
   const { state } = useApp();
   const workspaceId = state.selectedWorkspace ?? undefined;
 
@@ -148,6 +150,7 @@ export function TodoCenterPage({ onSelectTodo, onOpenCreateModal }: TodoCenterPa
                 item={item}
                 onChanged={reload}
                 onSelectTodo={onSelectTodo}
+                onSelectLoop={onSelectLoop}
               />
             ))}
           </div>

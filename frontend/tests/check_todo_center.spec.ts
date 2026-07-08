@@ -96,3 +96,90 @@ test('归档与恢复往返：卡片在 Tab 间移动', async ({ page }) => {
   await page.waitForTimeout(500);
   await expect(page.getByTestId(`todo-center-card-${todoId}`)).toBeVisible();
 });
+
+test('Loop 驱动卡片展示所属 Loop 并可跳转', async ({ page }) => {
+  await page.goto(`${BASE}/#todoCenter`);
+  await page.waitForTimeout(1000);
+
+  // 切到 Loop 驱动 Tab
+  await page.getByTestId('todo-center-tab-loop_driven').click();
+  await page.waitForTimeout(500);
+
+  // 卡片应展示所属 Loop 名（后端 referencing_loops 返回的 loop_name）
+  const loopTag = page.locator('.todo-center-card-tags .ant-tag, .todo-center-card-meta .ant-tag', { hasText: '笑话工厂' }).first();
+  await expect(loopTag).toBeVisible();
+
+  // 点击该 Loop 标签应跳转到 Loop 详情
+  await loopTag.click();
+  await page.waitForTimeout(800);
+  expect(page.url()).toMatch(/#\/loops\?id=\d+/);
+});
+
+test('时间驱动卡片菜单含暂停/编辑/取消', async ({ page }) => {
+  await page.goto(`${BASE}/#todoCenter`);
+  await page.waitForTimeout(1000);
+
+  await page.getByTestId('todo-center-tab-time_driven').click();
+  await page.waitForTimeout(500);
+
+  const card = page.locator('[data-testid^="todo-center-card-"]').first();
+  await expect(card).toBeVisible();
+
+  // 打开更多菜单
+  await card.locator('button[aria-label="更多操作"]').click();
+  await page.waitForTimeout(300);
+
+  // 时间驱动卡片（已启用）应有暂停/编辑/取消三项
+  const menu = page.locator('.ant-dropdown-menu');
+  await expect(menu.getByText('暂停时间驱动')).toBeVisible();
+  await expect(menu.getByText('编辑调度配置')).toBeVisible();
+  await expect(menu.getByText('取消时间驱动')).toBeVisible();
+});
+
+test('归档被 Loop 引用的事项给出引用提示', async ({ page }) => {
+  await page.goto(`${BASE}/#todoCenter`);
+  await page.waitForTimeout(1000);
+
+  // Loop 驱动 Tab 的卡片归档时，弹窗应提示「仍被 N 个启用」
+  await page.getByTestId('todo-center-tab-loop_driven').click();
+  await page.waitForTimeout(500);
+
+  const card = page.locator('[data-testid^="todo-center-card-"]').first();
+  await card.locator('button[aria-label="更多操作"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('.ant-dropdown-menu-item').filter({ hasText: '归档' }).click();
+  await page.waitForTimeout(400);
+
+  // Modal.confirm 内容应包含 Loop 引用提示
+  await expect(page.locator('.ant-modal-confirm-content').getByText(/仍被.*个启用/)).toBeVisible();
+
+  // 取消，不改数据
+  await page.locator('.ant-modal-confirm-btns .ant-btn:not(.ant-btn-primary)').click();
+});
+
+test('删除被 Loop 引用的事项被拒绝', async ({ page }) => {
+  // 取一个 Loop 驱动事项，尝试通过 API 删除应返回 400
+  const resp = await page.request.get(`${BASE}/api/todos/center?bucket=loop_driven`);
+  const body = await resp.json();
+  const loopTodo = (body.data || [])[0];
+  expect(loopTodo).toBeTruthy();
+
+  const del = await page.request.delete(`${BASE}/api/todos/${loopTodo.id}`);
+  expect(del.status()).toBe(400);
+  const delBody = await del.json();
+  expect(delBody.message || '').toContain('Loop');
+});
+
+test('Loop 详情图标记已归档环节', async ({ page }) => {
+  // 归档一个被 Loop 引用的事项（todo #1），Loop 详情图应渲染「已归档」标记
+  await page.request.post(`${BASE}/api/todos/1/archive`);
+  try {
+    await page.goto(`${BASE}/#/loops?id=1&panel=detail`);
+    await page.waitForTimeout(1500);
+    // LoopFlowGraph 在 SVG 中渲染「已归档」文本
+    await expect(page.getByText('已归档', { exact: true }).first()).toBeVisible({ timeout: 8000 });
+  } finally {
+    // 恢复，不留下脏数据
+    await page.request.post(`${BASE}/api/todos/1/restore`);
+  }
+});

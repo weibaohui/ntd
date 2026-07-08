@@ -418,6 +418,16 @@ pub async fn delete_todo(
     // Get todo info before deletion for hooks
     state.db.get_todo(id).await?;
 
+    // 引用校验：被启用 loop_steps 引用的 todo 不允许直接删除。
+    // 软删后 Loop 执行仍会指向该 todo，造成「环节指向已删除事项」的悬空引用
+    // （设计文档风险三指出的现状缺陷）。应先到 Loop 编辑页移除引用再删。
+    let loop_ref_count = state.db.count_enabled_loop_steps_by_todo(id).await?;
+    if loop_ref_count > 0 {
+        return Err(AppError::BadRequest(format!(
+            "该事项被 {loop_ref_count} 个启用的 Loop 环节引用，请先到 Loop 编辑页移除引用后再删除"
+        )));
+    }
+
     // 先清理调度器任务（如果有）
     state.scheduler.remove_task_for_todo(id).await;
 

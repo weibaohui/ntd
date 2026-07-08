@@ -313,6 +313,7 @@ function AppContent() {
           {activeView === 'todoCenter' && (
             <TodoCenterPage
               onSelectTodo={handleSelectTodo}
+              onSelectLoop={handleSelectLoop}
               onOpenCreateModal={() => setTodoModalOpen(true)}
             />
           )}

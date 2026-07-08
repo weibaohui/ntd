@@ -65,11 +65,19 @@ impl From<LoopFullView> for LoopDetail {
         let steps = view
             .steps_meta
             .into_iter()
-            .map(|(s, todo_title, todo_executor): (loop_steps::Model, String, String)| LoopStepDto {
-                step: s.into(),
-                todo_title,
-                todo_executor,
-            })
+            .map(
+                |(s, todo_title, todo_executor, todo_archived_at): (
+                    loop_steps::Model,
+                    String,
+                    String,
+                    Option<String>,
+                )| LoopStepDto {
+                    step: s.into(),
+                    todo_title,
+                    todo_executor,
+                    todo_archived_at,
+                },
+            )
             .collect();
         Self {
             loop_: view.loop_.into(),
@@ -169,6 +177,10 @@ pub struct LoopStepDto {
     /// 修复 JOIN 误用 todos 表后：todo_title/todo_executor 现在都从 steps 表读。
     pub todo_title: String,
     pub todo_executor: String,
+    /// 该环节引用的 todo 是否已归档。非空=已归档，Loop 详情图上标记，
+    /// 提醒用户该环节指向已从日常视图隐藏的事项（归档不解除 Loop 引用）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub todo_archived_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

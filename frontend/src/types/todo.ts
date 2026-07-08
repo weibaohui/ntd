@@ -40,6 +40,12 @@ export interface Todo {
 /** 事项中心五类驱动分类（computed_bucket），由后端按事实字段推导，不落库。 */
 export type ComputedBucket = 'manual' | 'time_driven' | 'event_driven' | 'loop_driven' | 'archived';
 
+/** 引用该事项的 Loop 摘要（事项中心 Loop 驱动卡片「所属 Loop」用）。 */
+export interface LoopRefSummary {
+  loop_id: number;
+  loop_name: string;
+}
+
 /** 事项中心列表项：在 Todo 之上附加运行时推导/聚合字段（后端批量补算）。 */
 export interface TodoCenterItem extends Todo {
   computed_bucket: ComputedBucket;
@@ -49,6 +55,8 @@ export interface TodoCenterItem extends Todo {
   last_execution_status?: string | null;
   /** 最近一次执行记录的时间（优先 finished_at，回退 started_at）。 */
   last_execution_at?: string | null;
+  /** 引用该事项的启用 Loop 摘要。仅 Loop 驱动分类非空，供卡片展示并跳转 Loop 详情。 */
+  referencing_loops?: LoopRefSummary[];
 }
 
 /** 环节 — 从 todo 提升而来的独立实体，不再寄生在 Todo 上。 */

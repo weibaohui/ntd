@@ -7,10 +7,13 @@ import {
   ThunderboltOutlined,
   ClockCircleOutlined,
   RetweetOutlined,
+  LinkOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import * as db from '@/utils/database';
 import { formatRelativeTime } from '@/utils/datetime';
+import { SchedulerSection } from '@/components/todo-drawer/SchedulerSection';
+import { DEFAULT_CRON } from '@/components/todo-drawer/constants';
 import type { TodoCenterItem, ComputedBucket } from '@/types';
 
 /** 各驱动分类的展示标签：中文名 + antd Tag 颜色。集中管理避免散落。 */
@@ -35,10 +38,12 @@ function sourceLabel(actionType?: string | null): string | null {
 
 interface TodoCenterCardProps {
   item: TodoCenterItem;
-  /** 任意变更（执行/归档/恢复/webhook）后回调，让页面重拉列表保持口径一致。 */
+  /** 任意变更（执行/归档/恢复/webhook/调度）后回调，让页面重拉列表保持口径一致。 */
   onChanged: () => void;
   /** 点击卡片主体进入现有事项详情页。 */
   onSelectTodo: (id: number) => void;
+  /** Phase 5：点击所属 Loop 跳转 Loop 详情。 */
+  onSelectLoop: (loopId: number) => void;
 }
 
 /**
@@ -46,25 +51,15 @@ interface TodoCenterCardProps {
  * 设计原则（设计文档风险四）：卡片只放一个主操作，次要操作进「更多」菜单，
  * 避免重蹈当前密集列表「操作按钮挤在行里」的覆辙。
  */
-export function TodoCenterCard({ item, onChanged, onSelectTodo }: TodoCenterCardProps) {
+export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: TodoCenterCardProps) {
   const [busy, setBusy] = useState(false);
+  const [schedOpen, setSchedOpen] = useState(false);
+  // 调度弹窗本地态：打开时由当前 scheduler 字段初始化，确认后才落库
+  const [schedEnabled, setSchedEnabled] = useState(true);
+  const [schedConfig, setSchedConfig] = useState<string>(DEFAULT_CRON);
   const isArchived = item.computed_bucket === 'archived';
 
-  // 执行一次：手动触发一次性执行。归档卡片不提供此操作（归档主操作是「恢复」）。
-  const handleExecute = async () => {
-    setBusy(true);
-    try {
-      await db.executeTodo(item.id);
-      message.success('任务已开始执行');
-      onChanged();
-    } catch (e) {
-      message.error(`执行失败：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // 归档/恢复/webhook 三个轻量操作共用同一套 loading + 错误处理。
+  // 共用 loading + 错误处理的轻量变更包装器。
   const runMutation = async (label: string, fn: () => Promise<unknown>) => {
     setBusy(true);
     try {
@@ -78,9 +73,19 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo }: TodoCenterCard
     }
   };
 
-  const menuItems = buildMenuItems(item, isArchived, runMutation);
+  // 打开调度弹窗：用当前已有配置初始化，没有则用默认 cron。
+  const openSchedulerModal = () => {
+    setSchedEnabled(item.scheduler_enabled ?? true);
+    setSchedConfig(item.scheduler_config || DEFAULT_CRON);
+    setSchedOpen(true);
+  };
 
-  // 主操作按钮随分类切换：归档→恢复，其余→执行一次
+  // 弹窗确认：落库调度配置（设为/恢复时间驱动走同一条 PUT /scheduler）。
+  const saveScheduler = () =>
+    runMutation('保存调度', () => db.updateScheduler(item.id, schedEnabled, schedConfig || null));
+
+  const menuItems = buildMenuItems(item, isArchived, runMutation, openSchedulerModal);
+
   const mainAction = isArchived ? (
     <Button
       size="small"
@@ -101,7 +106,7 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo }: TodoCenterCard
       loading={busy}
       onClick={(e) => {
         e.stopPropagation();
-        handleExecute();
+        runMutation('执行', () => db.executeTodo(item.id));
       }}
     >
       执行一次
@@ -115,7 +120,7 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo }: TodoCenterCard
       // 因此不能只靠按钮 stopPropagation——点菜单项仍会触发卡片跳详情。
       // 这里用 target 检测：点击源自按钮/下拉/弹窗时视为操作意图，不跳详情。
       onClick={(e) => {
-        if ((e.target as HTMLElement).closest('button, .ant-dropdown, .ant-modal')) return;
+        if ((e.target as HTMLElement).closest('button, .ant-dropdown, .ant-modal, .ant-select')) return;
         onSelectTodo(item.id);
       }}
       role="button"
@@ -126,11 +131,7 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo }: TodoCenterCard
           <span className="todo-center-card-id">#{item.id}</span>
           {item.title}
         </span>
-        <Dropdown
-          menu={{ items: menuItems }}
-          trigger={['click']}
-          placement="bottomRight"
-        >
+        <Dropdown menu={{ items: menuItems }} trigger={['click']} placement="bottomRight">
           <Button
             type="text"
             size="small"
@@ -146,9 +147,7 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo }: TodoCenterCard
           {BUCKET_DISPLAY[item.computed_bucket].label}
         </Tag>
         <StatusTag status={item.status} />
-        {sourceLabel(item.action_type) && (
-          <Tag color="gold">{sourceLabel(item.action_type)}</Tag>
-        )}
+        {sourceLabel(item.action_type) && <Tag color="gold">{sourceLabel(item.action_type)}</Tag>}
         {item.webhook_enabled && item.computed_bucket !== 'event_driven' && (
           <Tag color="purple" icon={<ThunderboltOutlined />}>兼事件</Tag>
         )}
@@ -157,7 +156,7 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo }: TodoCenterCard
         )}
       </div>
 
-      <CardMeta item={item} />
+      <CardMeta item={item} onSelectLoop={onSelectLoop} />
 
       <div className="todo-center-card-foot">
         <span className="todo-center-card-time">
@@ -167,6 +166,20 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo }: TodoCenterCard
         </span>
         {mainAction}
       </div>
+
+      <SchedulerModal
+        open={schedOpen}
+        enabled={schedEnabled}
+        config={schedConfig}
+        existingConfig={item.scheduler_config}
+        onEnabledChange={setSchedEnabled}
+        onConfigChange={setSchedConfig}
+        onCancel={() => setSchedOpen(false)}
+        onOk={() => {
+          setSchedOpen(false);
+          saveScheduler();
+        }}
+      />
     </div>
   );
 }
@@ -185,7 +198,13 @@ function StatusTag({ status }: { status?: string }) {
 }
 
 /** 卡片中部元信息：按分类展示该分类用户最关心的字段。 */
-function CardMeta({ item }: { item: TodoCenterItem }) {
+function CardMeta({
+  item,
+  onSelectLoop,
+}: {
+  item: TodoCenterItem;
+  onSelectLoop: (loopId: number) => void;
+}) {
   return (
     <div className="todo-center-card-meta">
       {item.computed_bucket === 'time_driven' && item.scheduler_config && (
@@ -194,8 +213,13 @@ function CardMeta({ item }: { item: TodoCenterItem }) {
       {item.computed_bucket === 'time_driven' && item.scheduler_next_run_at && (
         <MetaLine text={`下次运行 ${formatRelativeTime(item.scheduler_next_run_at)}`} />
       )}
+      {/* 事件驱动卡片展示 Webhook 入口路径，便于复制到外部系统 */}
+      {item.computed_bucket === 'event_driven' && (
+        <MetaLine icon={<LinkOutlined />} text={`/webhook/trigger/todo/${item.id}`} />
+      )}
+      {/* Loop 驱动卡片展示所属 Loop，点击跳转 Loop 详情 */}
       {item.computed_bucket === 'loop_driven' && (
-        <MetaLine icon={<RetweetOutlined />} text={`被 ${item.used_by_loop_step_count} 个启用环节引用`} />
+        <ReferencingLoops item={item} onSelectLoop={onSelectLoop} />
       )}
       {item.last_execution_status && (
         <MetaLine text={`最近执行 ${item.last_execution_status}${item.last_execution_at ? ` · ${formatRelativeTime(item.last_execution_at)}` : ''}`} />
@@ -204,7 +228,39 @@ function CardMeta({ item }: { item: TodoCenterItem }) {
   );
 }
 
-/** 单行元信息：可选图标 + 文本，空则不渲染。 */
+/** 所属 Loop：把 referencing_loops 渲染为可点击的小标签，点击跳 Loop 详情。 */
+function ReferencingLoops({
+  item,
+  onSelectLoop,
+}: {
+  item: TodoCenterItem;
+  onSelectLoop: (loopId: number) => void;
+}) {
+  const loops = item.referencing_loops ?? [];
+  if (loops.length === 0) {
+    return <MetaLine icon={<RetweetOutlined />} text={`被 ${item.used_by_loop_step_count} 个启用环节引用`} />;
+  }
+  return (
+    <div className="todo-center-card-meta-line">
+      <RetweetOutlined />
+      {loops.map((l) => (
+        <Tag
+          key={l.loop_id}
+          color="geekblue"
+          style={{ cursor: 'pointer' }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelectLoop(l.loop_id);
+          }}
+        >
+          {l.loop_name}
+        </Tag>
+      ))}
+    </div>
+  );
+}
+
+/** 单行元信息：可选图标 + 文本。 */
 function MetaLine({ icon, text }: { icon?: React.ReactNode; text: string }) {
   return (
     <div className="todo-center-card-meta-line">
@@ -214,50 +270,145 @@ function MetaLine({ icon, text }: { icon?: React.ReactNode; text: string }) {
   );
 }
 
-/**
- * 构建「更多」菜单项：归档/恢复、事件驱动开关。
- *
- * 归档用 `Modal.confirm` 而非 `Popconfirm`：Popconfirm 嵌在 Dropdown 菜单项里时，
- * Dropdown 会在点击时先关闭并卸载菜单，导致 Popconfirm 弹层来不及展开。
- * `Modal.confirm` 在菜单外独立渲染，规避这个时序问题，也更适合放「Loop 引用不受影响」的较长提示。
- */
+/** 调度配置弹窗：复用 SchedulerSection（react-js-cron 编辑器），设为/编辑时间驱动共用。 */
+function SchedulerModal({
+  open,
+  enabled,
+  config,
+  existingConfig,
+  onEnabledChange,
+  onConfigChange,
+  onCancel,
+  onOk,
+}: {
+  open: boolean;
+  enabled: boolean;
+  config: string;
+  existingConfig?: string | null;
+  onEnabledChange: (v: boolean) => void;
+  onConfigChange: (v: string) => void;
+  onCancel: () => void;
+  onOk: () => void;
+}) {
+  return (
+    <Modal
+      title="时间驱动调度配置"
+      open={open}
+      onOk={onOk}
+      onCancel={onCancel}
+      okText="保存"
+      cancelText="取消"
+      destroyOnClose
+    >
+      <SchedulerSection
+        enabled={enabled}
+        config={config}
+        onEnabledChange={onEnabledChange}
+        onConfigChange={onConfigChange}
+        existingConfig={existingConfig}
+      />
+    </Modal>
+  );
+}
+
+/** 构建「更多」菜单项。按是否归档/是否时间驱动分支，保持单函数简短。 */
 function buildMenuItems(
   item: TodoCenterItem,
   isArchived: boolean,
   runMutation: (label: string, fn: () => Promise<unknown>) => void,
+  openSchedulerModal: () => void,
 ): MenuProps['items'] {
-  const items: NonNullable<MenuProps['items']> = [];
-
   if (isArchived) {
-    items.push({
-      key: 'restore',
-      label: '恢复事项',
-      onClick: () => runMutation('恢复', () => db.restoreTodo(item.id)),
-    });
-  } else {
-    items.push({
-      key: 'archive',
-      label: '归档',
-      onClick: () =>
-        Modal.confirm({
-          title: '确认归档该事项？',
-          content: '归档仅从日常视图隐藏，不删除数据，也不解除 Loop 引用。已归档事项可在「已归档」分类恢复。',
-          okText: '归档',
-          cancelText: '取消',
-          onOk: () => runMutation('归档', () => db.archiveTodo(item.id)),
-        }),
-    });
-    // 事件驱动开关：开启/关闭 webhook，与 scheduler 端点对称
-    items.push({
-      key: 'webhook',
-      label: item.webhook_enabled ? '关闭事件驱动' : '设为事件驱动',
-      onClick: () =>
-        runMutation(
-          item.webhook_enabled ? '关闭事件驱动' : '设为事件驱动',
-          () => db.updateTodoWebhook(item.id, !item.webhook_enabled),
-        ),
-    });
+    return [
+      {
+        key: 'restore',
+        label: '恢复事项',
+        onClick: () => runMutation('恢复', () => db.restoreTodo(item.id)),
+      },
+    ];
   }
+  return [
+    archiveMenuItem(item, runMutation),
+    ...timeDrivenMenuItems(item, runMutation, openSchedulerModal),
+    webhookMenuItem(item, runMutation),
+  ];
+}
 
-  return items;
+/** 归档菜单项：被 Loop 引用时给出更强的归档不解除引用提示（设计文档风险三）。 */
+function archiveMenuItem(
+  item: TodoCenterItem,
+  runMutation: (label: string, fn: () => Promise<unknown>) => void,
+): NonNullable<MenuProps['items']>[number] {
+  const loopHint =
+    item.used_by_loop_step_count > 0
+      ? `该事项仍被 ${item.used_by_loop_step_count} 个启用的 Loop 环节引用，归档不会解除引用。`
+      : '归档不删除数据，也不解除 Loop 引用。';
+  return {
+    key: 'archive',
+    label: '归档',
+    onClick: () =>
+      Modal.confirm({
+        title: '确认归档该事项？',
+        content: `${loopHint}已归档事项可在「已归档」分类恢复。`,
+        okText: '归档',
+        cancelText: '取消',
+        onOk: () => runMutation('归档', () => db.archiveTodo(item.id)),
+      }),
+  };
+}
+
+/** 时间驱动菜单项：设为/暂停/恢复/取消。scheduler_config 为空=尚未时间驱动。 */
+function timeDrivenMenuItems(
+  item: TodoCenterItem,
+  runMutation: (label: string, fn: () => Promise<unknown>) => void,
+  openSchedulerModal: () => void,
+): NonNullable<MenuProps['items']> {
+  if (!item.scheduler_config) {
+    // 未配置调度：仅提供「设为时间驱动」
+    return [
+      { key: 'set_time', label: '设为时间驱动', onClick: openSchedulerModal },
+    ];
+  }
+  // 已有调度：暂停/恢复（切换 enabled）+ 取消（清空 config）
+  const pauseResume = item.scheduler_enabled
+    ? {
+        key: 'pause_time',
+        label: '暂停时间驱动',
+        // 暂停：关 enabled，保留 config（仍属时间驱动，卡片标已暂停）
+        onClick: () => runMutation('暂停时间驱动', () => db.updateScheduler(item.id, false, item.scheduler_config ?? null)),
+      }
+    : {
+        key: 'resume_time',
+        label: '恢复时间驱动',
+        // 恢复：开 enabled，保留 config
+        onClick: () => runMutation('恢复时间驱动', () => db.updateScheduler(item.id, true, item.scheduler_config ?? null)),
+      };
+  const edit = { key: 'edit_time', label: '编辑调度配置', onClick: openSchedulerModal };
+  const cancel = {
+    key: 'cancel_time',
+    label: '取消时间驱动',
+    onClick: () =>
+      Modal.confirm({
+        title: '确认取消时间驱动？',
+        content: '将清空调度配置。若未被 Loop 引用、未启用 Webhook，事项回到手动触发。',
+        okText: '取消时间驱动',
+        cancelText: '保留',
+        // 取消：关 enabled 且清空 config
+        onOk: () => runMutation('取消时间驱动', () => db.updateScheduler(item.id, false, null)),
+      }),
+  };
+  return [pauseResume, edit, cancel];
+}
+
+/** 事件驱动菜单项：开启/关闭 webhook，与 scheduler 端点对称。 */
+function webhookMenuItem(
+  item: TodoCenterItem,
+  runMutation: (label: string, fn: () => Promise<unknown>) => void,
+): NonNullable<MenuProps['items']>[number] {
+  const on = item.webhook_enabled;
+  return {
+    key: 'webhook',
+    label: on ? '关闭事件驱动' : '设为事件驱动',
+    onClick: () => runMutation(on ? '关闭事件驱动' : '设为事件驱动', () => db.updateTodoWebhook(item.id, !on)),
+  };
 }

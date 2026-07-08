@@ -233,6 +233,17 @@ pub struct TodoCenterItem {
     /// 最近一次执行记录的时间（优先 finished_at，回退 started_at），无记录则 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_execution_at: Option<String>,
+    /// 引用该事项的启用 Loop 摘要（loop_id + name）。仅 Loop 驱动分类非空，
+    /// 供卡片展示「所属 Loop」并跳转 Loop 详情。空 vec=未被引用或非 Loop 驱动。
+    #[serde(default)]
+    pub referencing_loops: Vec<LoopRefSummary>,
+}
+
+/// Loop 引用摘要：事项中心 Loop 驱动卡片展示「所属 Loop」用。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopRefSummary {
+    pub loop_id: i64,
+    pub loop_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
