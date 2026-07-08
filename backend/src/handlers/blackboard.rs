@@ -13,7 +13,7 @@ use axum::Router;
 use crate::db::blackboard::BlackboardConfig;
 use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::ApiResponse;
-use crate::wiki::{list_topics, read_topic, read_log};
+use crate::wiki::{delete_topic, list_topics, read_topic, read_log};
 
 /// 黑板配置响应体（保留兼容，不含内容）
 #[derive(Debug, serde::Serialize)]
@@ -45,6 +45,16 @@ pub struct WikiFileItem {
 pub struct WikiFileContent {
     pub slug: String,
     pub content: String,
+}
+
+/// Wiki 文件删除响应
+///
+/// `deleted=false` 表示删除时文件本就不存在（幂等删除，仍算成功），
+/// 前端据此区分「真正删了一篇」与「点了但文件已没了」。
+#[derive(Debug, serde::Serialize)]
+pub struct WikiFileDeleteResult {
+    pub slug: String,
+    pub deleted: bool,
 }
 
 /// 更新黑板配置的请求体（所有字段可选，None 保持原值不变）。
@@ -230,6 +240,25 @@ pub async fn get_wiki_file(
     }
 }
 
+/// `DELETE /api/workspaces/{workspace_id}/wiki/files/{slug}`
+///
+/// 删除指定 topic 文件。仅限 topic：log 由系统维护（禁止删，避免误清执行日志），
+/// index 不在 topics/ 目录下、不可经此接口触及。文件本就不存在时返回 deleted=false（幂等）。
+pub async fn delete_wiki_file(
+    State(_state): State<AppState>,
+    Path((workspace_id, slug)): Path<(i64, String)>,
+) -> Result<ApiResponse<WikiFileDeleteResult>, AppError> {
+    // log 是系统维护的执行日志页，禁止删除；其余 slug 一律按 topic 处理，
+    // 由 delete_topic → topic_file 走 validate_slug 防路径遍历，再定位到 topics/<slug>.md。
+    if slug == "log" {
+        return Err(AppError::BadRequest("不允许删除执行日志".to_string()));
+    }
+    let deleted = delete_topic(workspace_id, &slug).map_err(|e| {
+        AppError::Internal(format!("删除 topic 失败: {:?}", e))
+    })?;
+    Ok(ApiResponse::ok(WikiFileDeleteResult { slug, deleted }))
+}
+
 /// Wiki 对话请求体
 #[derive(Debug, serde::Deserialize)]
 pub struct WikiChatRequest {
@@ -287,7 +316,7 @@ pub fn blackboard_routes() -> Router<AppState> {
         )
         .route(
             "/api/workspaces/{workspace_id}/wiki/files/{slug}",
-            get(get_wiki_file),
+            get(get_wiki_file).delete(delete_wiki_file),
         )
         .route(
             "/api/workspaces/{workspace_id}/wiki/chat",

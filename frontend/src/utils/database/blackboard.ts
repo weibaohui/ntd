@@ -43,6 +43,25 @@ export interface WikiChatResponse {
   duration_secs: number;
 }
 
+/** Wiki 文件删除响应（来自 DELETE /api/workspaces/{workspaceId}/wiki/files/{slug}） */
+export interface WikiFileDeleteResponse {
+  slug: string;
+  /** true=文件存在并已删除；false=文件本就不存在（幂等删除，仍算成功） */
+  deleted: boolean;
+}
+
+/**
+ * DELETE /api/workspaces/{workspaceId}/wiki/files/{slug}：删除指定 topic 文件。
+ *
+ * 仅限 topic：后端会拒绝删除 log（系统维护）。文件本就不存在时返回 deleted=false，
+ * 前端据此区分「真正删了一篇」与「点了但文件已没了」，但两者都视为成功。
+ */
+export async function deleteWikiFile(workspaceId: number, slug: string): Promise<WikiFileDeleteResponse> {
+  return unwrap(
+    await api.delete(`/api/workspaces/${workspaceId}/wiki/files/${encodeURIComponent(slug)}`),
+  );
+}
+
 /**
  * POST /api/workspaces/{workspaceId}/wiki/chat：发起一次 Wiki 对话
  *

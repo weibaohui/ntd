@@ -615,3 +615,57 @@ async fn test_todo_with_tags() {
     let todo = todos.iter().find(|t| t["id"].as_i64().unwrap() == todo_id).unwrap();
     assert_eq!(todo["tag_ids"], json!([tag2_id]));
 }
+
+/// DELETE /api/workspaces/{id}/wiki/files/{slug}：删除已存在 topic，返回 deleted=true。
+/// 用唯一 slug 避免与开发者本地真实 workspace 数据撞车；用例自身即删除该文件，自清理。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_delete_wiki_file_existing() {
+    let (app, ws_id) = create_test_app().await;
+    let slug = "__delete_api_test__";
+    // 种入 topic 文件，作为删除目标
+    ntd::wiki::write_topic(ws_id, slug, "# to be deleted").unwrap();
+
+    let req = Request::builder()
+        .method("DELETE")
+        .uri(format!("/api/workspaces/{}/wiki/files/{}", ws_id, slug))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = read_json_body(response).await;
+    assert_eq!(body["data"]["slug"], slug);
+    assert_eq!(body["data"]["deleted"], true);
+    // 确认磁盘上确已删除，而非仅返回成功
+    assert!(ntd::wiki::read_topic(ws_id, slug).unwrap().is_none());
+}
+
+/// DELETE 对不存在的 topic 返回 deleted=false（幂等），而非 404/500。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_delete_wiki_file_missing_is_idempotent() {
+    let (app, ws_id) = create_test_app().await;
+    let slug = "__delete_api_test_missing__";
+
+    let req = Request::builder()
+        .method("DELETE")
+        .uri(format!("/api/workspaces/{}/wiki/files/{}", ws_id, slug))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = read_json_body(response).await;
+    assert_eq!(body["data"]["deleted"], false);
+}
+
+/// DELETE slug=log 必须被拒绝（执行日志由系统维护），返回 400。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_delete_wiki_file_log_forbidden() {
+    let (app, ws_id) = create_test_app().await;
+
+    let req = Request::builder()
+        .method("DELETE")
+        .uri(format!("/api/workspaces/{}/wiki/files/log", ws_id))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
