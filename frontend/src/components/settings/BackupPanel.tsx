@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Tabs, message } from 'antd';
+import { Tabs, message, Tag } from 'antd';
 import { useApp } from '@/hooks/useApp';
 import * as db from '@/utils/database';
 import yaml from 'js-yaml';
@@ -66,12 +66,19 @@ export function BackupPanel() {
   const [workspaces, setWorkspaces] = useState<any[]>([]);
   const [importWorkspaceId, setImportWorkspaceId] = useState<number | null>(null);
 
-  // 加载工作空间列表
-  const loadWorkspaces = async () => {
+  // 导入来源工作空间检测（从备份文件中提取，用于预览提示和默认选中）
+  const [sourceWorkspaceInfo, setSourceWorkspaceInfo] = useState<{ id: number; path: string } | null>(null);
+
+  // 加载工作空间列表，优先匹配备份文件中的原始工作空间
+  const loadWorkspaces = async (preferredId?: number | null) => {
     try {
       const ws = await db.getProjectDirectories();
       setWorkspaces(ws);
-      if (ws.length > 0 && !importWorkspaceId) {
+      if (preferredId != null && ws.some((w: any) => w.id === preferredId)) {
+        // 备份文件中检测到了原始工作空间且当前列表中能找到，默认选中它
+        setImportWorkspaceId(preferredId);
+      } else if (ws.length > 0 && !importWorkspaceId) {
+        // 无匹配时退化为选中第一个
         setImportWorkspaceId(ws[0].id);
       }
     } catch (e) {
@@ -380,8 +387,18 @@ export function BackupPanel() {
       setWizardTags(data.tags || []);
       setWizardItems(items);
       setSelectedRowKeys(items.map(i => i.key));
-      // 加载工作空间列表，让用户选择导入目标
-      await loadWorkspaces();
+
+      // 从备份文件提取原始工作空间信息，用于预览提示和默认匹配
+      const firstTodoWithWs = data.todos.find((t: any) => t.workspace_id != null);
+      if (firstTodoWithWs?.workspace_id != null) {
+        const srcInfo = { id: Number(firstTodoWithWs.workspace_id), path: firstTodoWithWs.workspace_path || '' };
+        setSourceWorkspaceInfo(srcInfo);
+        // 加载工作空间列表时传入检测到的原始 workspace ID，优先匹配
+        await loadWorkspaces(srcInfo.id);
+      } else {
+        setSourceWorkspaceInfo(null);
+        await loadWorkspaces();
+      }
       setWizardOpen(true);
     } catch (err: any) {
       message.error('解析文件失败: ' + (err?.message || String(err)));
@@ -548,6 +565,8 @@ export function BackupPanel() {
         workspaces={workspaces}
         importWorkspaceId={importWorkspaceId}
         setImportWorkspaceId={setImportWorkspaceId}
+        // 原始工作空间提示
+        sourceWorkspaceInfo={sourceWorkspaceInfo}
       />
     </div>
   );

@@ -1,4 +1,5 @@
-import { Modal, Table, Tag as AntTag, Select, Divider, Typography } from 'antd';
+import { Modal, Table, Tag as AntTag, Select, Divider, Typography, Alert } from 'antd';
+import { InfoCircleOutlined } from '@ant-design/icons';
 
 export interface BackupDataYaml {
   version: string;
@@ -37,6 +38,8 @@ export function ImportExportModals({
   exportingSelected, exportTodoKeys, setExportTodoKeys, todos,
   // 导入目标工作空间选择
   workspaces, importWorkspaceId, setImportWorkspaceId,
+  // 原始工作空间提示（从备份文件检测到后展示，帮助用户判断）
+  sourceWorkspaceInfo,
 }: {
   wizardOpen: boolean;
   setWizardOpen: (v: boolean) => void;
@@ -56,6 +59,8 @@ export function ImportExportModals({
   workspaces: any[];
   importWorkspaceId: number | null;
   setImportWorkspaceId: (v: number | null) => void;
+  // 原始工作空间提示（从备份文件检测到后展示，帮助用户判断）
+  sourceWorkspaceInfo?: { id: number; path: string } | null;
 }) {
   return (
     <>
@@ -75,6 +80,29 @@ export function ImportExportModals({
           <AntTag color="orange">{wizardItems.filter(i => i.action === 'overwrite').length} 个覆盖</AntTag>
           <AntTag color="blue">已选 {selectedRowKeys.length} 项</AntTag>
         </div>
+
+        {/* 原始工作空间提示：检测到备份文件中的工作空间后，显示给用户参考 */}
+        {sourceWorkspaceInfo && (() => {
+          const matched = workspaces.find((w: any) => w.id === sourceWorkspaceInfo.id);
+          return (
+            <Alert
+              message="检测到原始工作空间"
+              description={
+                matched
+                  ? `该文件中的数据原本来自工作空间「${matched.name || matched.path}」${
+                      importWorkspaceId === sourceWorkspaceInfo.id ? '（已自动匹配）' : ''
+                    }`
+                  : `该文件中的数据原本来自工作空间 ID=${sourceWorkspaceInfo.id}${
+                      sourceWorkspaceInfo.path ? ` (${sourceWorkspaceInfo.path})` : ''
+                    }，当前环境未找到匹配的工作空间`
+              }
+              type="info"
+              showIcon
+              icon={<InfoCircleOutlined />}
+              style={{ marginBottom: 16 }}
+            />
+          );
+        })()}
 
         {/* 目标工作空间选择：导入时必需，因为数据库有 workspace_id 字段 */}
         <div style={{ marginBottom: 16 }}>

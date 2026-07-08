@@ -1,9 +1,10 @@
 import { Card, Button, Typography, Upload, Select, Space, Modal, Tag, Alert, message, Radio, Table, Divider } from 'antd';
-import { DownloadOutlined, InboxOutlined } from '@ant-design/icons';
+import { DownloadOutlined, InboxOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import * as db from '@/utils/database';
 import { exportLoop, listLoops } from '@/utils/database/loops';
 import { LoopImportPreview } from '@/utils/database/backup';
+import yaml from 'js-yaml';
 
 const { Dragger } = Upload;
 const { Group: RadioGroup, Button: RadioButton } = Radio;
@@ -31,12 +32,16 @@ export function LoopBackupTab() {
     listLoops().then(setLoops).catch(() => {});
   }, []);
 
-  // 加载工作空间列表
-  const loadWorkspaces = async () => {
+  // 加载工作空间列表，优先匹配导出文件中的原始工作空间
+  const loadWorkspaces = async (preferredId?: number | null) => {
     try {
       const ws = await db.getProjectDirectories();
       setWorkspaces(ws);
-      if (ws.length > 0 && !selectedWorkspaceId) {
+      if (preferredId != null && ws.some((w: any) => w.id === preferredId)) {
+        // 导出文件中检测到了原始工作空间且当前列表中能找到，默认选中它
+        setSelectedWorkspaceId(preferredId);
+      } else if (ws.length > 0 && !selectedWorkspaceId) {
+        // 无匹配时退化为选中第一个
         setSelectedWorkspaceId(ws[0].id);
       }
     } catch (e) {
@@ -68,6 +73,9 @@ export function LoopBackupTab() {
     }
   };
 
+  // 检测到的原始工作空间信息（从导出文件中提取，供预览提示用）
+  const [sourceWorkspaceInfo, setSourceWorkspaceInfo] = useState<{ id: number; path: string } | null>(null);
+
   // 导入文件解析
   const handleImportFile = async (file: File) => {
     try {
@@ -75,6 +83,23 @@ export function LoopBackupTab() {
       const preview = await db.previewLoopImport(text);
       setYamlPreview(text);
       setPreviewData(preview);
+
+      // 从 YAML 中提取导出时的工作空间信息，用于预览提示
+      // 读取第一个 todo 或 loop 的 workspace_id/workspace_path，让用户知道原始来源
+      try {
+        const parsed: any = yaml.load(text);
+        const sourceId = parsed?.todos?.[0]?.workspace_id || parsed?.loops?.[0]?.workspace_id;
+        const sourcePath = parsed?.todos?.[0]?.workspace_path || parsed?.loops?.[0]?.workspace_path;
+        if (sourceId != null) {
+          setSourceWorkspaceInfo({ id: Number(sourceId), path: sourcePath || '' });
+        } else {
+          setSourceWorkspaceInfo(null);
+        }
+      } catch {
+        // YAML 解析失败不影响整体流程，静默忽略
+        setSourceWorkspaceInfo(null);
+      }
+
       // 初始化冲突解决策略：默认重命名
       const resolutions: Record<string, ConflictAction> = {};
       if (preview.conflicts) {
@@ -83,7 +108,9 @@ export function LoopBackupTab() {
         }
       }
       setConflictResolutions(resolutions);
-      await loadWorkspaces();
+      // 加载工作空间列表时传入检测到的原始 workspace ID，优先匹配
+      const sourceId = sourceWorkspaceInfo?.id;
+      await loadWorkspaces(sourceId);
       setImportModalOpen(true);
     } catch (err: any) {
       message.error('解析文件失败: ' + (err?.message || String(err)));
@@ -227,6 +254,29 @@ export function LoopBackupTab() {
       >
         {previewData && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* 原始工作空间提示：检测到导出文件中的工作空间后，显示给用户参考 */}
+            {sourceWorkspaceInfo && (() => {
+              const matched = workspaces.find((w: any) => w.id === sourceWorkspaceInfo.id);
+              return (
+                <Alert
+                  message="检测到原始工作空间"
+                  description={
+                    matched
+                      ? `该文件中的数据原本来自工作空间「${matched.name || matched.path}」${
+                          selectedWorkspaceId === sourceWorkspaceInfo.id ? '（已自动匹配）' : ''
+                        }`
+                      : `该文件中的数据原本来自工作空间 ID=${sourceWorkspaceInfo.id}${
+                          sourceWorkspaceInfo.path ? ` (${sourceWorkspaceInfo.path})` : ''
+                        }，当前环境未找到匹配的工作空间`
+                  }
+                  type="info"
+                  showIcon
+                  icon={<InfoCircleOutlined />}
+                  style={{ marginBottom: 8 }}
+                />
+              );
+            })()}
+
             <Alert
               message="即将导入以下内容"
               description={
