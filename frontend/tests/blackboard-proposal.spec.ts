@@ -64,4 +64,24 @@ test.describe('parseProposals 黑板建议解析', () => {
     expect(proposals).toHaveLength(2);
     expect(proposals.map(p => p.title)).toEqual(['A', 'B']);
   });
+
+  // 与 PROPOSAL_PROMPT 约定的「prompt 必须用字面量块标量（|）书写」配套：
+  // 验证多行 prompt 经块标量输出后，parseProposals 能完整保留全部续行、不被截断。
+  test('block scalar 多行 prompt 应完整保留不截断', () => {
+    const input =
+      '- title: 修复登录超时\n' +
+      '  prompt: |\n' +
+      '    排查登录接口偶发超时的根因。\n' +
+      '    重点关注数据库连接池与第三方鉴权延迟。\n' +
+      '    给出修复方案并落地。';
+    const { proposals } = parseProposals(input);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].title).toBe('修复登录超时');
+    // 块标量原样保留全部三行，仅由 toProposal 的 trim 去掉块标量尾部换行
+    expect(proposals[0].prompt).toBe(
+      '排查登录接口偶发超时的根因。\n' +
+        '重点关注数据库连接池与第三方鉴权延迟。\n' +
+        '给出修复方案并落地。'
+    );
+  });
 });
