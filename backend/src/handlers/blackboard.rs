@@ -29,6 +29,8 @@ pub struct BlackboardResponse {
     pub wiki_prompt: String,
     /// Wiki 对话使用的执行器名称（None 表示使用默认值 "claudecode"）
     pub wiki_chat_executor: Option<String>,
+    /// Wiki 执行超时（秒），控制 Wiki 任务与 Wiki 对话的最长存活时间
+    pub wiki_timeout_secs: i64,
     /// 待处理的 execution_record_id 列表（JSON 数组字符串）
     pub pending_record_ids: String,
 }
@@ -68,6 +70,8 @@ pub struct UpdateBlackboardConfigRequest {
     pub blackboard_debounce_count: Option<i64>,
     pub wiki_prompt: Option<String>,
     pub wiki_chat_executor: Option<String>,
+    /// Wiki 执行超时（秒）。None 不修改，Some(v) 会被后端钳制到合法区间。
+    pub wiki_timeout_secs: Option<i64>,
 }
 
 /// `GET /api/workspaces/{workspace_id}/blackboard`
@@ -90,6 +94,7 @@ pub async fn get_blackboard(
             blackboard_debounce_count: model.blackboard_debounce_count,
             wiki_prompt: model.wiki_prompt,
             wiki_chat_executor: model.wiki_chat_executor,
+            wiki_timeout_secs: model.wiki_timeout_secs,
             pending_record_ids: model.pending_record_ids,
         })),
         None => Ok(ApiResponse::ok(BlackboardResponse {
@@ -100,6 +105,7 @@ pub async fn get_blackboard(
             blackboard_debounce_count: 10,
             wiki_prompt: String::new(),
             wiki_chat_executor: None,
+            wiki_timeout_secs: crate::db::blackboard::DEFAULT_WIKI_TIMEOUT_SECS,
             pending_record_ids: String::from("[]"),
         })),
     }
@@ -126,6 +132,7 @@ pub async fn get_blackboard_config(
             wiki_prompt: String::new(),
             wiki_chat_executor: None,
             wiki_chat_sessions: None,
+            wiki_timeout_secs: crate::db::blackboard::DEFAULT_WIKI_TIMEOUT_SECS,
         })),
     }
 }
@@ -151,6 +158,8 @@ pub async fn update_blackboard_config(
         //   - 字段为 "" → Some(None)（设为 NULL，用默认执行器）
         //   - 字段为非空 → Some(Some(s))（设为指定执行器）
         req.wiki_chat_executor.map(|s| if s.is_empty() { None } else { Some(s) }),
+        // wiki_timeout_secs: None 不修改，Some(v) 由 db 层钳制到合法区间
+        req.wiki_timeout_secs,
     ).await.map_err(|e| AppError::Internal(format!("更新黑板配置失败: {}", e)))?;
 
     // 配置变更后同步到该 workspace 已存在的 Wiki Todo 的 prompt 字段：

@@ -49,6 +49,8 @@ interface BlackboardData {
   wiki_prompt: string;
   /** Wiki 对话使用的执行器名称，空/undefined 表示使用默认值 claudecode */
   wiki_chat_executor?: string | null;
+  /** Wiki 执行超时（秒），控制 Wiki 任务与 Wiki 对话的最长存活时间 */
+  wiki_timeout_secs: number;
 }
 
 /** Wiki 文件列表项（对应后端 WikiFileItem） */
@@ -303,6 +305,8 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const [debounceSecs, setDebounceSecs] = useState<number | null>(600);
   const [debounceCount, setDebounceCount] = useState<number | null>(10);
   const [wikiPrompt, setWikiPrompt] = useState<string>('');
+  // Wiki 执行超时（秒）：与后端 DEFAULT_WIKI_TIMEOUT_SECS=300 一致，清空时回退默认
+  const [wikiTimeoutSecs, setWikiTimeoutSecs] = useState<number | null>(300);
   const [activeTab, setActiveTab] = useState<'debounce' | 'prompt'>('debounce');
   // 移动端目录 Drawer 开关状态
   const [menuDrawerOpen, setMenuDrawerOpen] = useState(false);
@@ -317,10 +321,12 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       setDebounceSecs(configData.blackboard_debounce_secs ?? 600);
       setDebounceCount(configData.blackboard_debounce_count ?? 10);
       setWikiPrompt(configData.wiki_prompt ?? '');
+      setWikiTimeoutSecs(configData.wiki_timeout_secs ?? 300);
     } else {
       setDebounceSecs(600);
       setDebounceCount(10);
       setWikiPrompt('');
+      setWikiTimeoutSecs(300);
     }
     setActiveTab('debounce');
     setSettingsOpen(true);
@@ -335,6 +341,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         blackboard_debounce_secs: debounceSecs ?? 600,
         blackboard_debounce_count: debounceCount ?? 10,
         wiki_prompt: wikiPrompt,
+        wiki_timeout_secs: wikiTimeoutSecs ?? 300,
       });
       // 保存成功后同步更新 data，避免下次打开弹窗读到旧值
       if (configData) {
@@ -343,6 +350,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
           blackboard_debounce_secs: debounceSecs ?? 600,
           blackboard_debounce_count: debounceCount ?? 10,
           wiki_prompt: wikiPrompt,
+          wiki_timeout_secs: wikiTimeoutSecs ?? 300,
         });
       }
       message.success('设置已保存');
@@ -352,7 +360,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     } finally {
       setSettingsSaving(false);
     }
-  }, [workspaceId, debounceSecs, debounceCount, wikiPrompt, configData]);
+  }, [workspaceId, debounceSecs, debounceCount, wikiPrompt, wikiTimeoutSecs, configData]);
 
   // 恢复默认提示词：把 wikiPrompt 设为内置默认值。
   // 区别于"留空"的语义——留空表示后端使用内置默认；填入默认值表示用户显式采用内置模板。
@@ -532,6 +540,8 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
                   setDebounceSecs={setDebounceSecs}
                   debounceCount={debounceCount}
                   setDebounceCount={setDebounceCount}
+                  wikiTimeoutSecs={wikiTimeoutSecs}
+                  setWikiTimeoutSecs={setWikiTimeoutSecs}
                 />
               ),
             },
@@ -560,10 +570,13 @@ interface DebounceSettingsTabProps {
   setDebounceSecs: (v: number | null) => void;
   debounceCount: number | null;
   setDebounceCount: (v: number | null) => void;
+  /** Wiki 执行超时（秒） */
+  wikiTimeoutSecs: number | null;
+  setWikiTimeoutSecs: (v: number | null) => void;
 }
 
-/** 防抖设置 Tab：防抖周期 + 触发条数，受父组件状态控制 */
-function DebounceSettingsTab({ debounceSecs, setDebounceSecs, debounceCount, setDebounceCount }: DebounceSettingsTabProps) {
+/** 防抖设置 Tab：防抖周期 + 触发条数 + Wiki 执行超时，受父组件状态控制 */
+function DebounceSettingsTab({ debounceSecs, setDebounceSecs, debounceCount, setDebounceCount, wikiTimeoutSecs, setWikiTimeoutSecs }: DebounceSettingsTabProps) {
   return (
     <Form layout="vertical" style={{ marginTop: 16 }}>
       <Form.Item label="防抖周期">
@@ -585,6 +598,21 @@ function DebounceSettingsTab({ debounceSecs, setDebounceSecs, debounceCount, set
           min={1}
           max={100}
           addonAfter="条"
+          style={{ width: 200 }}
+        />
+      </Form.Item>
+      <Form.Item
+        label="Wiki 执行超时"
+        // 后端会把输入值钳制到 [60, 3600]，这里同步展示边界提示；
+        // 默认 300 秒（5 分钟），慢模型可调大避免被强制超时
+        extra="Wiki 自动维护与 Wiki 对话的最长执行时长（后端会自动钳制到 60–3600 秒），默认 300 秒"
+      >
+        <InputNumber
+          value={wikiTimeoutSecs}
+          onChange={(v) => setWikiTimeoutSecs(v)}
+          min={60}
+          max={3600}
+          addonAfter="秒"
           style={{ width: 200 }}
         />
       </Form.Item>

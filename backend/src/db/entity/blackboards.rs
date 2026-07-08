@@ -37,6 +37,10 @@ pub struct Model {
     /// 切换执行器时不会丢失 session，支持连续对话。
     #[sea_orm(column_type = "Text")]
     pub wiki_chat_sessions: Option<String>,
+    /// Wiki 执行超时（秒）。控制 `update_blackboard_wiki` 等待 Finished 事件、
+    /// 以及 Wiki 对话子进程的最长存活时间。默认 300（5 分钟），
+    /// 可在黑板设置界面按工作空间调整，避免慢模型被强制超时。
+    pub wiki_timeout_secs: i64,
     pub updated_at: Option<String>,
     pub created_at: Option<String>,
 }

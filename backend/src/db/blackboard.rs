@@ -14,6 +14,22 @@ use tokio::sync::Mutex;
 use super::entity::blackboards;
 use super::Database;
 
+/// Wiki 执行超时的下限（秒）。低于此值的配置会被钳制到此值，
+/// 避免用户误填 0 或极小值导致 Wiki 任务刚启动就超时。
+pub const MIN_WIKI_TIMEOUT_SECS: i64 = 60;
+/// Wiki 执行超时的上限（秒）。超过此值视为异常配置，避免单次任务无限期占用资源。
+pub const MAX_WIKI_TIMEOUT_SECS: i64 = 3600;
+/// Wiki 执行超时的默认值（秒），与历史写死的 5 分钟一致。
+pub const DEFAULT_WIKI_TIMEOUT_SECS: i64 = 300;
+
+/// 将用户输入的 wiki 超时秒数钳制到合法区间。
+///
+/// 设计取舍：超时太小会让 Wiki 任务刚启动就超时；太大则可能让异常任务长期占用资源。
+/// 因此设 [MIN, MAX] 区间，超界值会被静默钳制而非拒收，避免用户反复试错。
+fn clamp_wiki_timeout(secs: i64) -> i64 {
+    secs.clamp(MIN_WIKI_TIMEOUT_SECS, MAX_WIKI_TIMEOUT_SECS)
+}
+
 /// per-workspace 互斥锁，串行化 pending 队列的「读-改-写」操作。
 ///
 /// 背景：`append_pending_record_id` 与 `remove_specific_pending_record_ids` 都是
@@ -90,11 +106,13 @@ impl Database {
             wiki_prompt: ActiveValue::Set(String::new()),
             // None 表示使用默认执行器 "claudecode"
             wiki_chat_executor: ActiveValue::Set(None),
+            // Wiki 执行超时默认 5 分钟，与历史写死值一致
+            wiki_timeout_secs: ActiveValue::Set(DEFAULT_WIKI_TIMEOUT_SECS),
             updated_at: ActiveValue::Set(Some(now.clone())),
             created_at: ActiveValue::Set(Some(now)),
             ..Default::default()
         };
-        // ON CONFLICT(workspace_id) DO NOTHING：若记录已存在则跳过 insert，
+        // ON CONFLICT(workspace_id) DO NOTHING：若记录已存在则跳过 insert,
         // 避免并发竞争下两个并发请求都走 insert 路径时第二个失败。
         // 后续重读以拿到稳定的 Model（含实际的主键 id）。
         blackboards::Entity::insert(model)
@@ -174,6 +192,8 @@ impl Database {
             blackboard_debounce_count: ActiveValue::Set(10),
             wiki_prompt: ActiveValue::Set(String::new()),
             wiki_chat_executor: ActiveValue::Set(None),
+            // 新建行时给 Wiki 超时填默认值；冲突分支不覆盖，保留用户已调过的配置
+            wiki_timeout_secs: ActiveValue::Set(DEFAULT_WIKI_TIMEOUT_SECS),
             ..Default::default()
         };
         // ON CONFLICT(workspace_id)：命中后只覆盖 content/updated_at，保留 created_at 和配置字段
@@ -303,15 +323,18 @@ impl Database {
             wiki_prompt: b.wiki_prompt,
             wiki_chat_executor: b.wiki_chat_executor,
             wiki_chat_sessions: b.wiki_chat_sessions,
+            wiki_timeout_secs: b.wiki_timeout_secs,
         }))
     }
 
     /// 更新指定工作空间的黑板配置。
     ///
-    /// 输入：workspace_id + 四个可选字段（debounce_secs、debounce_count、wiki_prompt、wiki_chat_executor）。
+    /// 输入：workspace_id + 五个可选字段（debounce_secs、debounce_count、wiki_prompt、
+    /// wiki_chat_executor、wiki_timeout_secs）。
     /// 流程：先按 workspace_id 查出黑板记录（不存在则 RecordNotFound）→ 构造 ActiveModel
     /// → 只对传入 Some 的字段写入，传入 None 的保持原值不变 → update。
     /// 防抖阈值有下限保护：debounce_secs >= 10，debounce_count >= 1。
+    /// wiki_timeout_secs 有区间保护：钳制到 [MIN_WIKI_TIMEOUT_SECS, MAX_WIKI_TIMEOUT_SECS]。
     /// wiki_chat_executor 使用 Option<Option<String>>：
     ///   - 外层 None：不修改
     ///   - 外层 Some(None)：设为 NULL（使用默认执行器）
@@ -325,6 +348,7 @@ impl Database {
         debounce_count: Option<i64>,
         wiki_prompt: Option<String>,
         wiki_chat_executor: Option<Option<String>>,
+        wiki_timeout_secs: Option<i64>,
     ) -> Result<(), sea_orm::DbErr> {
         let board = blackboards::Entity::find()
             .filter(blackboards::Column::WorkspaceId.eq(workspace_id))
@@ -354,6 +378,9 @@ impl Database {
         }
         if let Some(v) = wiki_chat_executor {
             am.wiki_chat_executor = ActiveValue::Set(v);
+        }
+        if let Some(v) = wiki_timeout_secs {
+            am.wiki_timeout_secs = ActiveValue::Set(clamp_wiki_timeout(v));
         }
         am.update(&self.conn).await?;
         Ok(())
@@ -454,6 +481,8 @@ pub struct BlackboardConfig {
     /// Wiki 对话各执行器的 session ID（JSON 对象）。
     /// 例如：{"claudecode": "uuid-session-1", "hermes": "uuid-session-2"}
     pub wiki_chat_sessions: Option<String>,
+    /// Wiki 执行超时（秒），控制 update_blackboard_wiki 等待与 Wiki 对话子进程的时长。
+    pub wiki_timeout_secs: i64,
 }
 
 #[cfg(test)]
@@ -498,6 +527,7 @@ mod tests {
         assert_eq!(board.blackboard_debounce_count, 10);
         assert_eq!(board.wiki_prompt, "");
         assert_eq!(board.wiki_chat_executor, None);
+        assert_eq!(board.wiki_timeout_secs, DEFAULT_WIKI_TIMEOUT_SECS);
 
         // 验证可通过 get 查到
         let fetched = db.get_blackboard(ws_id).await.unwrap();
@@ -630,6 +660,7 @@ mod tests {
         assert_eq!(cfg.debounce_count, 10);
         assert_eq!(cfg.wiki_prompt, "");
         assert_eq!(cfg.wiki_chat_executor, None);
+        assert_eq!(cfg.wiki_timeout_secs, DEFAULT_WIKI_TIMEOUT_SECS);
     }
 
     /// 验证 update_blackboard_config 正确更新各字段。
@@ -639,7 +670,7 @@ mod tests {
         let ws_id = create_test_workspace(&db).await;
         db.create_blackboard(ws_id).await.unwrap();
 
-        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("wiki".to_string()), Some(Some("codex".to_string())))
+        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("wiki".to_string()), Some(Some("codex".to_string())), None)
             .await
             .unwrap();
 
@@ -648,6 +679,8 @@ mod tests {
         assert_eq!(cfg.debounce_count, 5);
         assert_eq!(cfg.wiki_prompt, "wiki");
         assert_eq!(cfg.wiki_chat_executor, Some("codex".to_string()));
+        // wiki_timeout_secs 未传 None → 应保留 create_blackboard 写入的默认 300
+        assert_eq!(cfg.wiki_timeout_secs, DEFAULT_WIKI_TIMEOUT_SECS);
     }
 
     /// 验证 update_blackboard_config 对 None 字段保持原值。
@@ -658,12 +691,12 @@ mod tests {
         db.create_blackboard(ws_id).await.unwrap();
 
         // 先全部更新
-        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("wiki".to_string()), Some(Some("kimi".to_string())))
+        db.update_blackboard_config(ws_id, Some(300), Some(5), Some("wiki".to_string()), Some(Some("kimi".to_string())), Some(600))
             .await
             .unwrap();
 
         // 再只更新其中两个
-        db.update_blackboard_config(ws_id, Some(900), None, None, None)
+        db.update_blackboard_config(ws_id, Some(900), None, None, None, None)
             .await
             .unwrap();
 
@@ -672,6 +705,8 @@ mod tests {
         assert_eq!(cfg.debounce_count, 5, "debounce_count 应保留之前的值");
         assert_eq!(cfg.wiki_prompt, "wiki", "wiki_prompt 应保留之前的值");
         assert_eq!(cfg.wiki_chat_executor, Some("kimi".to_string()), "wiki_chat_executor 应保留之前的值");
+        // wiki_timeout_secs 第二次传 None → 应保留第一次写入的 600
+        assert_eq!(cfg.wiki_timeout_secs, 600, "wiki_timeout_secs 应保留之前的值");
     }
 
     /// 验证 update_blackboard_config 在记录不存在时返回 RecordNotFound。
@@ -679,7 +714,7 @@ mod tests {
     async fn test_update_blackboard_config_record_not_found() {
         let db = Database::new(":memory:").await.expect(":memory: must open");
         // 第 4 个参数 wiki_prompt 传 None，不参与此次测试验证
-        let result = db.update_blackboard_config(999, Some(300), None, None, None).await;
+        let result = db.update_blackboard_config(999, Some(300), None, None, None, None).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             sea_orm::DbErr::RecordNotFound(_) => {}
@@ -695,14 +730,14 @@ mod tests {
         db.create_blackboard(ws_id).await.unwrap();
 
         // 传入小于最小值的 debounce_secs，应被钳制到 10
-        db.update_blackboard_config(ws_id, Some(3), None, None, None)
+        db.update_blackboard_config(ws_id, Some(3), None, None, None, None)
             .await
             .unwrap();
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
         assert_eq!(cfg.debounce_secs, 10);
 
         // 传入小于最小值的 debounce_count，应被钳制到 1
-        db.update_blackboard_config(ws_id, None, Some(0), None, None)
+        db.update_blackboard_config(ws_id, None, Some(0), None, None, None)
             .await
             .unwrap();
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
@@ -717,18 +752,49 @@ mod tests {
         db.create_blackboard(ws_id).await.unwrap();
 
         // 先设置一个值
-        db.update_blackboard_config(ws_id, None, None, None, Some(Some("codex".to_string())))
+        db.update_blackboard_config(ws_id, None, None, None, Some(Some("codex".to_string())), None)
             .await
             .unwrap();
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
         assert_eq!(cfg.wiki_chat_executor, Some("codex".to_string()));
 
         // 再设为 None（清空回退到默认）
-        db.update_blackboard_config(ws_id, None, None, None, Some(None))
+        db.update_blackboard_config(ws_id, None, None, None, Some(None), None)
             .await
             .unwrap();
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
         assert_eq!(cfg.wiki_chat_executor, None);
+    }
+
+    /// 验证 update_blackboard_config 对 wiki_timeout_secs 做区间钳制。
+    /// 低于下限应钳到 MIN_WIKI_TIMEOUT_SECS，高于上限应钳到 MAX_WIKI_TIMEOUT_SECS，
+    /// 区间内原样保留。避免用户误填 0 或超大值导致任务刚启动就超时 / 长期占用资源。
+    #[tokio::test]
+    async fn test_update_blackboard_config_wiki_timeout_clamp() {
+        let db = Database::new(":memory:").await.expect(":memory: must open");
+        let ws_id = create_test_workspace(&db).await;
+        db.create_blackboard(ws_id).await.unwrap();
+
+        // 传入低于下限的值（0），应被钳制到 MIN_WIKI_TIMEOUT_SECS
+        db.update_blackboard_config(ws_id, None, None, None, None, Some(0))
+            .await
+            .unwrap();
+        let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
+        assert_eq!(cfg.wiki_timeout_secs, MIN_WIKI_TIMEOUT_SECS);
+
+        // 传入高于上限的值，应被钳制到 MAX_WIKI_TIMEOUT_SECS
+        db.update_blackboard_config(ws_id, None, None, None, None, Some(MAX_WIKI_TIMEOUT_SECS + 1000))
+            .await
+            .unwrap();
+        let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
+        assert_eq!(cfg.wiki_timeout_secs, MAX_WIKI_TIMEOUT_SECS);
+
+        // 区间内的值原样保留
+        db.update_blackboard_config(ws_id, None, None, None, None, Some(600))
+            .await
+            .unwrap();
+        let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
+        assert_eq!(cfg.wiki_timeout_secs, 600);
     }
 
     /// 并发回归测试：append 与 remove 交错执行时，队列必须正确收敛，
