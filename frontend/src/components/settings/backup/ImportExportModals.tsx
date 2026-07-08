@@ -1,4 +1,4 @@
-import { Modal, Table, Tag as AntTag } from 'antd';
+import { Modal, Table, Tag as AntTag, Select, Divider, Typography } from 'antd';
 
 export interface BackupDataYaml {
   version: string;
@@ -35,6 +35,8 @@ export function ImportExportModals({
   selectedRowKeys, setSelectedRowKeys, wizardItems,
   exportModalOpen, setExportModalOpen, handleExportSelected,
   exportingSelected, exportTodoKeys, setExportTodoKeys, todos,
+  // 导入目标工作空间选择
+  workspaces, importWorkspaceId, setImportWorkspaceId,
 }: {
   wizardOpen: boolean;
   setWizardOpen: (v: boolean) => void;
@@ -50,6 +52,10 @@ export function ImportExportModals({
   exportTodoKeys: number[];
   setExportTodoKeys: (keys: number[]) => void;
   todos: readonly any[];
+  // 导入目标工作空间选择
+  workspaces: any[];
+  importWorkspaceId: number | null;
+  setImportWorkspaceId: (v: number | null) => void;
 }) {
   return (
     <>
@@ -62,19 +68,37 @@ export function ImportExportModals({
         cancelText="取消"
         confirmLoading={importing}
         width={800}
-        okButtonProps={{ disabled: selectedRowKeys.length === 0 }}
+        okButtonProps={{ disabled: selectedRowKeys.length === 0 || !importWorkspaceId }}
       >
         <div style={{ marginBottom: 12, display: 'flex', gap: 16 }}>
           <AntTag color="green">{wizardItems.filter(i => i.action === 'new').length} 个新建</AntTag>
           <AntTag color="orange">{wizardItems.filter(i => i.action === 'overwrite').length} 个覆盖</AntTag>
           <AntTag color="blue">已选 {selectedRowKeys.length} 项</AntTag>
         </div>
+
+        {/* 目标工作空间选择：导入时必需，因为数据库有 workspace_id 字段 */}
+        <div style={{ marginBottom: 16 }}>
+          <Typography.Text strong>目标工作空间</Typography.Text>
+          <Typography.Paragraph type="secondary" style={{ margin: '4px 0 8px', fontSize: 12 }}>
+            选择导入后 Todo 所属的工作空间，此操作将覆盖备份文件中的原始工作空间信息
+          </Typography.Paragraph>
+          <Select
+            placeholder="请选择工作空间"
+            options={workspaces.map((w: any) => ({ label: w.name || w.path, value: w.id }))}
+            value={importWorkspaceId}
+            onChange={setImportWorkspaceId}
+            style={{ width: '100%' }}
+          />
+        </div>
+
+        <Divider style={{ margin: '12px 0' }} />
+
         <Table
           dataSource={wizardItems}
           rowKey="key"
           size="small"
           pagination={false}
-          scroll={{ y: 400 }}
+          scroll={{ y: 350 }}
           rowSelection={{
             selectedRowKeys,
             onChange: (keys) => setSelectedRowKeys(keys as number[]),

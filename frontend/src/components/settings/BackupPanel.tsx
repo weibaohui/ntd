@@ -62,6 +62,22 @@ export function BackupPanel() {
   const [wizardItems, setWizardItems] = useState<ImportItem[]>([]);
   const [wizardTags, setWizardTags] = useState<{ name: string; color: string }[]>([]);
   const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
+  // 导入目标工作空间
+  const [workspaces, setWorkspaces] = useState<any[]>([]);
+  const [importWorkspaceId, setImportWorkspaceId] = useState<number | null>(null);
+
+  // 加载工作空间列表
+  const loadWorkspaces = async () => {
+    try {
+      const ws = await db.getProjectDirectories();
+      setWorkspaces(ws);
+      if (ws.length > 0 && !importWorkspaceId) {
+        setImportWorkspaceId(ws[0].id);
+      }
+    } catch (e) {
+      console.error('Failed to load workspaces', e);
+    }
+  };
 
   // Load status
   useEffect(() => {
@@ -364,6 +380,8 @@ export function BackupPanel() {
       setWizardTags(data.tags || []);
       setWizardItems(items);
       setSelectedRowKeys(items.map(i => i.key));
+      // 加载工作空间列表，让用户选择导入目标
+      await loadWorkspaces();
       setWizardOpen(true);
     } catch (err: any) {
       message.error('解析文件失败: ' + (err?.message || String(err)));
@@ -381,7 +399,7 @@ export function BackupPanel() {
       const selectedTodos = wizardItems
         .filter(item => selectedRowKeys.includes(item.key))
         .map(({ key, action, existingTitle, ...todo }) => todo);
-      const msg = await db.mergeBackup(wizardTags, selectedTodos);
+      const msg = await db.mergeBackup(wizardTags, selectedTodos, importWorkspaceId);
       message.success(msg);
       setWizardOpen(false);
       window.location.reload();
@@ -526,6 +544,10 @@ export function BackupPanel() {
         exportTodoKeys={exportTodoKeys}
         setExportTodoKeys={setExportTodoKeys}
         todos={todos}
+        // 导入目标工作空间选择
+        workspaces={workspaces}
+        importWorkspaceId={importWorkspaceId}
+        setImportWorkspaceId={setImportWorkspaceId}
       />
     </div>
   );

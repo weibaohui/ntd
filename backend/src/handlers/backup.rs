@@ -211,6 +211,9 @@ pub async fn import_backup(
 pub struct MergeRequest {
     pub tags: Vec<TagBackup>,
     pub todos: Vec<TodoBackup>,
+    /// 目标工作空间 ID；为空时保持备份文件中的 workspace_id（如有），否则留空
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
 }
 
 /// 智能合并导入（不清空现有数据，按 title+prompt 匹配覆盖或新建）
@@ -222,7 +225,14 @@ pub async fn merge_backup(
         return Err(AppError::BadRequest("No todos to merge".to_string()));
     }
 
-    let (created, updated) = state.db.merge_backup(&req.tags, &req.todos).await
+    // 如果指定了目标工作空间，验证其存在性
+    if let Some(ws_id) = req.workspace_id {
+        if state.db.get_project_directory_by_id(ws_id).await?.is_none() {
+            return Err(AppError::BadRequest(format!("Workspace {} not found", ws_id)));
+        }
+    }
+
+    let (created, updated) = state.db.merge_backup(&req.tags, &req.todos, req.workspace_id).await
         .map_err(|e| AppError::Internal(format!("Merge failed: {}", e)))?;
 
     Ok(ApiResponse::ok(format!("新建 {} 项，覆盖 {} 项", created, updated)))

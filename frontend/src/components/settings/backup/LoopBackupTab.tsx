@@ -176,8 +176,22 @@ export function LoopBackupTab() {
       <Card title="导入环路" size="small" style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <Typography.Paragraph type="secondary">
-            从 .loop.yaml 文件导入环路，支持预览和选择性导入
+            从 .loop.yaml 文件导入环路，先选择目标工作空间，再上传文件
           </Typography.Paragraph>
+          {/* 目标工作空间选择前置到导入区域——用户必须选择后才能上传 */}
+          <div>
+            <Typography.Text strong style={{ fontSize: 13 }}>目标工作空间</Typography.Text>
+            <Select
+              placeholder="请选择工作空间"
+              options={workspaces.map((w: any) => ({ label: w.name || w.path, value: w.id }))}
+              value={selectedWorkspaceId}
+              onChange={setSelectedWorkspaceId}
+              style={{ width: '100%', marginTop: 4 }}
+            />
+            <Typography.Paragraph type="secondary" style={{ margin: '4px 0 0', fontSize: 11 }}>
+              选择导入后环路和 Todo 所属的工作空间
+            </Typography.Paragraph>
+          </div>
           <Dragger
             accept=".yaml,.yml,.loop.yaml"
             beforeUpload={handleImportFile}
@@ -188,7 +202,7 @@ export function LoopBackupTab() {
               <InboxOutlined style={{ color: '#0891b2' }} />
             </p>
             <p className="ant-upload-text">点击或拖拽 .loop.yaml 文件到此处</p>
-            <p className="ant-upload-hint">将解析文件并展示预览，确认后导入到目标工作空间</p>
+            <p className="ant-upload-hint">将解析文件并展示预览，确认后导入到选中的工作空间</p>
           </Dragger>
         </div>
       </Card>

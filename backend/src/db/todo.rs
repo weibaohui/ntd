@@ -919,6 +919,8 @@ impl Database {
                     worktree: None,
                     action_type: m.action_type,
                     action_key: m.action_key,
+                    // 备份时保留工作空间 ID，导入时用于关联到正确的工作空间
+                    workspace_id: m.workspace_id,
                 }
             })
             .collect::<Vec<_>>())
@@ -972,6 +974,8 @@ impl Database {
                     worktree: None,
                     action_type: m.action_type,
                     action_key: m.action_key,
+                    // 备份时保留工作空间 ID，导入时用于关联到正确的工作空间
+                    workspace_id: m.workspace_id,
                 }
             })
             .collect())
@@ -1078,10 +1082,12 @@ impl Database {
     }
 
     /// 智能合并导入：不删除现有数据，按 title+prompt 匹配进行覆盖或新建
+    /// workspace_id：可选目标工作空间 ID，指定后覆盖备份数据中的 workspace_id
     pub async fn merge_backup(
         &self,
         tags_in: &[crate::models::TagBackup],
         todos_in: &[TodoBackup],
+        target_workspace_id: Option<i64>,
     ) -> Result<(u64, u64), sea_orm::DbErr> {
         use sea_orm::TransactionTrait;
 
@@ -1129,6 +1135,12 @@ impl Database {
                 am.scheduler_enabled = ActiveValue::Set(Some(todo.scheduler_enabled));
                 am.scheduler_config = ActiveValue::Set(todo.scheduler_config.clone());
                 am.workspace_path = ActiveValue::Set(todo.workspace_path.clone());
+                // 如果指定了目标工作空间，覆盖原有的 workspace_id；否则用备份数据中的值
+                if let Some(ws_id) = target_workspace_id {
+                    am.workspace_id = ActiveValue::Set(Some(ws_id));
+                } else if let Some(ws_id) = todo.workspace_id {
+                    am.workspace_id = ActiveValue::Set(Some(ws_id));
+                }
                 am.updated_at = ActiveValue::Set(Some(crate::models::utc_timestamp()));
                 am.action_type = ActiveValue::Set(todo.action_type.clone());
                 am.action_key = ActiveValue::Set(todo.action_key.clone());
@@ -1163,6 +1175,8 @@ impl Database {
                 // 新建
                 let now = crate::models::utc_timestamp();
                 let workspace_path = todo.workspace_path.clone();
+                // workspace_id 优先级：目标工作空间 > 备份数据中的 workspace_id > None
+                let resolved_workspace_id = target_workspace_id.or(todo.workspace_id);
                 let am = todos::ActiveModel {
                     title: ActiveValue::Set(todo.title.clone()),
                     prompt: ActiveValue::Set(Some(todo.prompt.clone())),
@@ -1171,6 +1185,7 @@ impl Database {
                     scheduler_enabled: ActiveValue::Set(Some(todo.scheduler_enabled)),
                     scheduler_config: ActiveValue::Set(todo.scheduler_config.clone()),
                     workspace_path: ActiveValue::Set(workspace_path),
+                    workspace_id: ActiveValue::Set(resolved_workspace_id),
                     created_at: ActiveValue::Set(Some(now.clone())),
                     updated_at: ActiveValue::Set(Some(now)),
                     action_type: ActiveValue::Set(todo.action_type.clone()),
