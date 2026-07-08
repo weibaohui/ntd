@@ -36,6 +36,9 @@ export function ActionButton({
   panelTitle = '自动优化标题',
   panelDescription = '检查并确认以下内容后执行',
   executor,
+  buttonSize = 'middle',
+  showLabel = true,
+  completedView,
 }: ActionButtonProps) {
   const [open, setOpen] = useState(false);
   const [editablePrompt, setEditablePrompt] = useState(prompt);
@@ -90,7 +93,8 @@ export function ActionButton({
   };
 
   const handleApply = async () => {
-    if (!result) return;
+    // onApply 仅在走默认完成视图时由调用方提供；提供 completedView 的场景不会走到这里
+    if (!result || !onApply) return;
     try {
       await onApply(result);
       message.success('已应用');
@@ -188,6 +192,10 @@ export function ActionButton({
     }
 
     // completed
+    // 提供自定义完成视图时全权交给插槽（如建议列表）；否则走默认「结果原文」展示
+    if (completedView) {
+      return completedView({ result: result ?? '', close: handleClose, retry: handleRetry });
+    }
     return (
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <Text type="secondary">AI 生成结果：</Text>
@@ -240,6 +248,10 @@ export function ActionButton({
     }
 
     // completed
+    // 自定义完成视图自带操作按钮（sticky 底栏），Drawer footer 置空避免重复
+    if (completedView) {
+      return null;
+    }
     return (
       <Space>
         <Button onClick={handleClose}>拒绝</Button>
@@ -254,11 +266,12 @@ export function ActionButton({
     <>
       <Button
         type={buttonType}
+        size={buttonSize}
         icon={icon || <ThunderboltOutlined />}
         onClick={handleOpen}
         disabled={disabled}
       >
-        {children || '优化标题'}
+        {showLabel && (children || '优化标题')}
       </Button>
 
       <Drawer

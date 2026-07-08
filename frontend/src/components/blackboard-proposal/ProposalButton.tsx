@@ -1,10 +1,7 @@
-import { useEffect, useState } from 'react';
-import { Button, message } from 'antd';
 import { BulbOutlined } from '@ant-design/icons';
-import { useActionExecution } from '@/components/ActionButton/useActionExecution';
+import { ActionButton } from '@/components/ActionButton';
 import { PROPOSAL_ACTION_TYPE, PROPOSAL_ACTION_KEY, PROPOSAL_PROMPT, PROPOSAL_EXECUTOR } from './proposalPrompt';
-import { parseProposals, type ParseResult } from './parseProposals';
-import { ProposalDrawer } from './ProposalDrawer';
+import { ProposalCompleted } from './ProposalCompleted';
 
 interface ProposalButtonProps {
   workspaceId: number;
@@ -26,65 +23,40 @@ function buildTopicFilePath(workspaceId: number, slug: string): string {
 /**
  * 黑板「生成 Todo 建议」触发按钮。
  *
- * 点击后复用通用 action 执行管道（useActionExecution → POST /api/actions/execute），
- * 让 AI 读取当前 topic 文件并输出 YAML 建议列表；执行完成后解析结果并弹出 ProposalDrawer。
+ * 复用通用 ActionButton 承载完整交互：点击 → 弹 Drawer 看 prompt / 选执行器 / 看参数预览 →
+ * 执行 → 完成后由 completedView 插槽渲染 ProposalCompleted（解析 YAML 建议列表 + 批量创建）。
+ * 与 ActionButton 的唯一差异就是完成态：不是「结果原文 + 应用/拒绝」，而是「建议列表 + 批量创建」。
+ *
+ * key=slug：切换主题时整体重建，确保 ActionButton 内部 prompt/执行器/结果状态不串台。
  */
 export function ProposalButton({ workspaceId, slug, disabled, buttonSize = 'middle', showLabel = true }: ProposalButtonProps) {
   const filePath = buildTopicFilePath(workspaceId, slug);
-  // params 随 slug 变化重建；useActionExecution 内部的 execute 闭包会捕获最新 params
-  const { status, result, error, execute, reset } = useActionExecution(
-    PROPOSAL_ACTION_TYPE,
-    PROPOSAL_ACTION_KEY,
-    PROPOSAL_PROMPT,
-    { topic_file_path: filePath },
-    workspaceId,
-  );
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [parseResult, setParseResult] = useState<ParseResult>({ proposals: [], raw: '' });
-
-  // 执行完成 → 解析 AI 输出 → 打开建议 Drawer；失败时 toast 即时反馈（Drawer 不会自动开，否则用户点完无响应）
-  useEffect(() => {
-    if (status === 'completed' && result) {
-      setParseResult(parseProposals(result));
-      setDrawerOpen(true);
-    } else if (status === 'failed') {
-      message.error(error || '生成建议失败，请重试');
-    }
-  }, [status, result, error]);
-
-  // 切换 topic 时清掉上一次的结果与 Drawer，避免不同主题的建议串台
-  useEffect(() => {
-    reset();
-    setDrawerOpen(false);
-  }, [slug, reset]);
-
-  const handleClick = () => {
-    reset();
-    // 显式用 pi 执行器生成建议：本 workspace 日常用 pi，且默认 claudecode 在此环境未配置
-    execute(PROPOSAL_PROMPT, PROPOSAL_EXECUTOR);
-  };
-
   const buttonDisabled = disabled || !slug;
 
   return (
-    <>
-      <Button
-        icon={<BulbOutlined />}
-        onClick={handleClick}
-        loading={status === 'executing'}
-        disabled={buttonDisabled}
-        size={buttonSize}
-        title={buttonDisabled ? '请先选择一个主题页面' : 'AI 分析当前主题，生成可执行 Todo 建议'}
-      >
-        {showLabel && '生成建议'}
-      </Button>
-      <ProposalDrawer
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        parseResult={parseResult}
-        workspaceId={workspaceId}
-        errorMessage={status === 'failed' ? (error ?? undefined) : undefined}
-      />
-    </>
+    <ActionButton
+      key={slug}
+      actionType={PROPOSAL_ACTION_TYPE}
+      actionKey={PROPOSAL_ACTION_KEY}
+      prompt={PROPOSAL_PROMPT}
+      params={{ topic_file_path: filePath }}
+      workspaceId={workspaceId}
+      // 默认执行器 pi：本 workspace 日常用 pi，默认 claudecode 在此环境未配置；
+      // 用户仍可在 Drawer 里临时改执行器
+      executor={PROPOSAL_EXECUTOR}
+      buttonType="default"
+      icon={<BulbOutlined />}
+      buttonSize={buttonSize}
+      showLabel={showLabel}
+      disabled={buttonDisabled}
+      panelTitle="生成 Todo 建议"
+      panelDescription="AI 将读取当前主题，识别待解决问题/风险/下一步建议，拆成可执行 Todo 供勾选批量创建"
+      // 完成态插槽：把 AI 输出交给 ProposalCompleted 解析为建议列表
+      completedView={({ result, close }) => (
+        <ProposalCompleted result={result} workspaceId={workspaceId} onClose={close} />
+      )}
+    >
+      生成建议
+    </ActionButton>
   );
 }

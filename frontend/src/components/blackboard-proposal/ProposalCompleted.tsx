@@ -1,34 +1,38 @@
-import { useEffect, useState } from 'react';
-import { Drawer, List, Checkbox, Button, message, Alert, Typography, Empty } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
+import { List, Checkbox, Button, message, Alert, Typography, Empty } from 'antd';
 import { CheckOutlined } from '@ant-design/icons';
-import { useIsMobile } from '@/hooks/useIsMobile';
 import { createTodo, batchUpdateTodosExecutor } from '@/utils/database';
 import type { ParseResult, Proposal } from './parseProposals';
+import { parseProposals } from './parseProposals';
 import { PROPOSAL_EXECUTOR } from './proposalPrompt';
 
 const { Text, Paragraph } = Typography;
 
-interface ProposalDrawerProps {
-  open: boolean;
-  onClose: () => void;
-  /** parseProposals 的结果：建议列表 + AI 原始输出（兜底透出用） */
-  parseResult: ParseResult;
+interface ProposalCompletedProps {
+  /** AI 输出的原文，由 ActionButton 完成态插槽注入；内部用 parseProposals 解析 */
+  result: string;
+  /** 当前工作空间 ID，批量创建 Todo 时归属 */
   workspaceId: number;
-  /** 执行失败时的错误信息，非空时在顶部告警展示 */
-  errorMessage?: string;
+  /** 关闭宿主 Drawer（ActionButton 的 close），创建成功或用户点「关闭」时调用 */
+  onClose: () => void;
 }
 
 /**
- * Todo 建议列表 Drawer。
+ * 黑板「生成建议」完成态视图：把 AI 输出解析成 Todo 建议列表，用户勾选后批量创建。
  *
- * 展示 parseProposals 解析出的建议，用户勾选后批量创建为 pending Todo，
- * 并统一把执行器设为 pi。未解析出建议时透出 AI 原文，绝不静默失败。
+ * 设计取舍：
+ * - 作为 ActionButton 的 completedView 插槽渲染，不再自带 Drawer 外壳——
+ *   前置 prompt/执行器选择、执行态、失败态都由 ActionButton 统一承载，此处只负责完成态。
+ * - 操作栏用 sticky 底栏，替代原先 Drawer 的 pinned footer，视觉等价且自洽。
+ * - 未解析出建议时透出 AI 原文，绝不静默失败（与 ActionButton 的 failed 态互补：
+ *   后者管「执行失败」，这里管「执行成功但输出无法解析」）。
  */
-export function ProposalDrawer({ open, onClose, parseResult, workspaceId, errorMessage }: ProposalDrawerProps) {
+export function ProposalCompleted({ result, workspaceId, onClose }: ProposalCompletedProps) {
+  // 解析随 result 变化；useMemo 避免每次重渲染都重跑 YAML 解析
+  const parseResult: ParseResult = useMemo(() => parseProposals(result), [result]);
   const { proposals, raw } = parseResult;
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [creating, setCreating] = useState(false);
-  const isMobile = useIsMobile();
 
   // 建议列表变化时默认全选：贴合「批量确认」意图，用户再手动取消不想要的
   useEffect(() => {
@@ -46,26 +50,28 @@ export function ProposalDrawer({ open, onClose, parseResult, workspaceId, errorM
     void createProposedTodos(picked, workspaceId, setCreating, onClose);
   };
 
-  const hasError = !!errorMessage;
-
   return (
-    <Drawer
-      title="Todo 建议"
-      open={open}
-      onClose={onClose}
-      placement={isMobile ? 'bottom' : 'right'}
-      width={isMobile ? '100%' : 560}
-      height={isMobile ? '85vh' : undefined}
-      maskClosable={false}
-      destroyOnHidden
-      footer={renderFooter(proposals.length, selected.size, creating, handleCreate, onClose)}
-    >
-      {renderDrawerBody(proposals, raw, selected, hasError, errorMessage, handleToggle)}
-    </Drawer>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
+      <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+        {renderProposalBody(proposals, raw, selected, handleToggle)}
+      </div>
+      {/* sticky 底栏：替代原 Drawer footer，操作始终可达 */}
+      <div
+        style={{
+          position: 'sticky',
+          bottom: 0,
+          background: 'var(--color-bg-elevated, #fff)',
+          borderTop: '1px solid var(--color-border-secondary, #f0f0f0)',
+          padding: '8px 0',
+        }}
+      >
+        {renderProposalFooter(proposals.length, selected.size, creating, handleCreate, onClose)}
+      </div>
+    </div>
   );
 }
 
-/** 批量创建勾选的建议为 Todo，并统一设置执行器为 pi。失败时弹错并不关闭 Drawer，便于重试。 */
+/** 批量创建勾选的建议为 Todo，并统一设置执行器为 pi。失败时弹错并不关闭，便于重试。 */
 async function createProposedTodos(
   picked: Proposal[],
   workspaceId: number,
@@ -99,54 +105,46 @@ async function createProposedTodos(
   }
 }
 
-/** 渲染 Drawer 主体：有建议渲染列表，否则兜底透出 AI 原文。 */
-function renderDrawerBody(
+/** 渲染建议列表主体：有建议渲染可勾选列表，否则兜底透出 AI 原文。 */
+function renderProposalBody(
   proposals: Proposal[],
   raw: string,
   selected: Set<number>,
-  hasError: boolean,
-  errorMessage: string | undefined,
   onToggle: (index: number) => void,
 ) {
-  return (
-    <>
-      {hasError && errorMessage && (
-        <Alert type="error" message={errorMessage} showIcon style={{ marginBottom: 12 }} />
-      )}
-      {proposals.length > 0 ? (
-        <List
-          dataSource={proposals}
-          renderItem={(item, index) => (
-            <List.Item style={{ alignItems: 'flex-start' }}>
-              <Checkbox
-                checked={selected.has(index)}
-                onChange={() => onToggle(index)}
-                style={{ marginRight: 8, marginTop: 4 }}
-              />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <Text strong>{item.title}</Text>
-                <Paragraph
-                  type="secondary"
-                  style={{ fontSize: 12, marginTop: 4, marginBottom: 0, whiteSpace: 'pre-wrap' }}
-                  ellipsis={{ expandable: true, symbol: '展开' }}
-                >
-                  {item.prompt}
-                </Paragraph>
-              </div>
-            </List.Item>
-          )}
-        />
-      ) : (
-        renderRawFallback(raw)
-      )}
-    </>
-  );
+  if (proposals.length > 0) {
+    return (
+      <List
+        dataSource={proposals}
+        renderItem={(item, index) => (
+          <List.Item style={{ alignItems: 'flex-start' }}>
+            <Checkbox
+              checked={selected.has(index)}
+              onChange={() => onToggle(index)}
+              style={{ marginRight: 8, marginTop: 4 }}
+            />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Text strong>{item.title}</Text>
+              <Paragraph
+                type="secondary"
+                style={{ fontSize: 12, marginTop: 4, marginBottom: 0, whiteSpace: 'pre-wrap' }}
+                ellipsis={{ expandable: true, symbol: '展开' }}
+              >
+                {item.prompt}
+              </Paragraph>
+            </div>
+          </List.Item>
+        )}
+      />
+    );
+  }
+  return renderRawFallback(raw);
 }
 
 /** 兜底区：未解析出建议时透出 AI 原文，让用户看见实际输出。 */
 function renderRawFallback(raw: string) {
   if (!raw) {
-    return <Empty description="暂无建议" />;
+    return <Empty description="暂无建议" style={{ padding: '24px 0' }} />;
   }
   return (
     <>
@@ -164,8 +162,8 @@ function renderRawFallback(raw: string) {
   );
 }
 
-/** 渲染底部：已选计数 + 关闭 / 批量创建按钮。 */
-function renderFooter(
+/** 渲染底栏：已选计数 + 关闭 / 批量创建按钮。 */
+function renderProposalFooter(
   total: number,
   selectedCount: number,
   creating: boolean,
