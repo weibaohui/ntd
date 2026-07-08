@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   RobotOutlined,
   UserOutlined,
@@ -226,6 +226,15 @@ function ChatBubble({ message }: { message: ChatMessage }) {
 
 export function ChatView({ logs, isRunning }: ChatViewProps) {
   const messages = parseLogsToMessages(logs);
+  // 实时执行时自动滚到底部，让最新思考/工具调用始终可见。
+  // 仅 isRunning 期间生效：已结束的记录（如 LogDrawer 查看历史）不打扰用户的滚动位置。
+  // 依赖 messages.length：新日志到达 → messages 重建 → 触发滚动；ref 在容器挂载后才有值。
+  const containerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!isRunning) return;
+    const el = containerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages.length, isRunning]);
 
   if (messages.length === 0) {
     return (
@@ -243,7 +252,7 @@ export function ChatView({ logs, isRunning }: ChatViewProps) {
   }
 
   return (
-    <div className="chat-container">
+    <div className="chat-container" ref={containerRef}>
       <div className="chat-messages">
         {messages.map((msg, idx) => (
           <ChatBubble key={idx} message={msg} />

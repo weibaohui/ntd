@@ -24,7 +24,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Button, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu, Drawer } from 'antd';
-import { ReloadOutlined, SettingOutlined, UnorderedListOutlined, MenuOutlined } from '@ant-design/icons';
+import { ReloadOutlined, SettingOutlined, UnorderedListOutlined, MenuOutlined, DeleteOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { TfiBlackboard } from 'react-icons/tfi';
 import { XMarkdown } from '@ant-design/x-markdown';
@@ -32,8 +32,9 @@ import { useTheme } from '@/hooks/useTheme';
 import { useViewState } from '@/hooks/useViewState';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import type { BlackboardDebounceStatus } from '@/hooks/useExecutionEvents';
-import { updateBlackboardConfig, getBlackboard } from '@/utils/database/blackboard';
+import { updateBlackboardConfig, getBlackboard, deleteWikiFile } from '@/utils/database/blackboard';
 import { normalizeBlackboardMarkdown } from '@/utils/markdown';
+import { ProposalButton } from '@/components/blackboard-proposal/ProposalButton';
 
 /** 黑板 API 返回的配置形状（与后端 BlackboardResponse 对应，不含内容） */
 interface BlackboardData {
@@ -466,6 +467,9 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     replaceUrl('blackboard', { file: slug });
   }, [replaceUrl]);
 
+  // 当前选中页是否为 topic 类型：只有 topic 才允许生成 Todo 建议（log/index 不分析）
+  const isCurrentTopic = files.some(f => f.slug === currentSlug && f.file_type === 'topic');
+
   return (
     <PageCard
       icon={<TfiBlackboard style={{ fontSize: 18 }} />}
@@ -500,6 +504,8 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         menuDrawerOpen={menuDrawerOpen}
         onMenuDrawerClose={() => setMenuDrawerOpen(false)}
         workspaceId={workspaceId}
+        isTopic={isCurrentTopic}
+        onTopicDeleted={fetchFiles}
       />
 
       {/* 黑板设置弹窗：Tab1 防抖设置，Tab2 提示词设置 */}
@@ -638,6 +644,7 @@ interface DesktopHeaderExtraProps {
  * 桌面端标题栏右侧区域：进度条 + 设置/队列/刷新按钮。
  *
  * 由 PageCard 的 extra prop 承接，取代原 BlackboardHeader 的桌面分支。
+ * 「生成建议」等针对单个主题的操作已下放到内容区 TopicToolbar，Header 只保留工作空间级动作。
  */
 function DesktopHeaderExtra({ workspaceId, onOpenSettings, onRefresh }: DesktopHeaderExtraProps) {
   const [queueModalVisible, setQueueModalVisible] = useState(false);
@@ -665,7 +672,7 @@ function DesktopHeaderExtra({ workspaceId, onOpenSettings, onRefresh }: DesktopH
     <>
       {/* 防抖双进度条，占 flex 空间 */}
       <BlackboardDebounceBar workspaceId={workspaceId} />
-      {/* 操作按钮组 */}
+      {/* 操作按钮组：设置/队列/刷新（主题级动作见内容区 TopicToolbar） */}
       <Space.Compact>
         <Button icon={<SettingOutlined />} onClick={onOpenSettings} title="设置" />
         <Button icon={<UnorderedListOutlined />} onClick={handleShowQueue} loading={queueLoading} title="查看队列 ID" />
@@ -721,6 +728,7 @@ interface MobileHeaderExtraProps {
  * 移动端标题栏右侧区域：目录/设置/刷新按钮。
  *
  * 由 PageCard 的 extra prop 承接，取代原 BlackboardHeader 的移动端分支。
+ * 主题级操作（生成建议/删除）见内容区 TopicToolbar，Header 不再重复放置。
  */
 function MobileHeaderExtra({ onMenuClick, onOpenSettings, onRefresh }: MobileHeaderExtraProps) {
   return (
@@ -917,6 +925,10 @@ interface BlackboardWikiLayoutProps {
   onMenuDrawerClose: () => void;
   /** 当前工作空间 ID，用于 Wiki 相对路径链接 */
   workspaceId: number;
+  /** 当前页是否为 topic 类型（仅 topic 渲染主题工具条） */
+  isTopic: boolean;
+  /** 删除当前主题后的回调：重拉文件列表，列表更新会自动把 currentSlug 切到剩余 topic */
+  onTopicDeleted: () => void;
 }
 
 /**
@@ -938,6 +950,7 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
     isDark, isMobile, files, currentFile, currentSlug,
     onSelectSlug, filesLoading, fileLoading,
     menuDrawerOpen, onMenuDrawerClose, workspaceId,
+    isTopic, onTopicDeleted,
   } = props;
 
   // 构造 Menu items（useMemo 防止每次父组件重渲染都重建新数组→触发 Menu 内部 prefixCls null 崩溃）
@@ -990,6 +1003,16 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
         {/* 内容区 */}
         <div style={{ flex: 1, overflow: 'auto', padding: '12px', minWidth: 0 }}>
+          {/* 主题页操作工具条：生成建议 + 删除当前主题（仅 topic 渲染） */}
+          {isTopic && (
+            <TopicToolbar
+              workspaceId={workspaceId}
+              slug={currentSlug}
+              onDeleted={onTopicDeleted}
+              isMobile={isMobile}
+              isDark={isDark}
+            />
+          )}
           {fileLoading ? (
             <Skeleton active paragraph={{ rows: 10 }} />
           ) : !currentFile || !currentFile.content || currentFile.content.trim().length === 0 ? (
@@ -1033,6 +1056,16 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
 
       {/* 右侧内容区 */}
       <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px', minWidth: 0 }}>
+        {/* 主题页操作工具条：生成建议 + 删除当前主题（仅 topic 渲染） */}
+        {isTopic && (
+          <TopicToolbar
+            workspaceId={workspaceId}
+            slug={currentSlug}
+            onDeleted={onTopicDeleted}
+            isMobile={isMobile}
+            isDark={isDark}
+          />
+        )}
         {fileLoading ? (
           <Skeleton active paragraph={{ rows: 10 }} />
         ) : !currentFile || !currentFile.content || currentFile.content.trim().length === 0 ? (
@@ -1043,6 +1076,85 @@ function BlackboardWikiLayout(props: BlackboardWikiLayoutProps) {
       </div>
     </div>
   );
+}
+
+interface TopicToolbarProps {
+  /** 当前工作空间 ID，传给 ProposalButton 拼接 topic 文件路径 */
+  workspaceId: number;
+  /** 当前主题 slug，删除与生成建议都作用于它 */
+  slug: string;
+  /** 删除成功后回调：父组件重拉文件列表，列表更新会自动把 currentSlug 切到剩余 topic */
+  onDeleted: () => void;
+  /** 移动端用 small 尺寸与其他工具按钮对齐 */
+  isMobile: boolean;
+  /** 暗色主题下调整工具条背景与边框色 */
+  isDark: boolean;
+}
+
+/**
+ * 主题页操作工具条：生成建议 + 删除当前主题。
+ *
+ * 取代原先放在黑板 Header 里的「生成建议」按钮——Header 是工作空间级入口，
+ * 而生成建议/删除都针对「当前正在看的主题」，下放到内容区更符合作用域，
+ * 也让每个主题页自带操作入口。删除走二次确认防误删；删除后由父组件重拉列表。
+ */
+function TopicToolbar({ workspaceId, slug, onDeleted, isMobile, isDark }: TopicToolbarProps) {
+  // 确认删除：返回 Promise 让 Modal.confirm 的 OK 按钮自带 loading，无需额外 state
+  const confirmDelete = () => {
+    Modal.confirm({
+      title: '删除主题',
+      content: `确定删除主题「${slug}」？该 Wiki 文件将被永久删除，已创建的 Todo 不受影响。`,
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: () => performDelete(workspaceId, slug, onDeleted),
+    });
+  };
+
+  return (
+    <div
+      style={{
+        // sticky：内容区滚动时工具条常驻顶部，操作始终可达
+        position: 'sticky',
+        top: 0,
+        zIndex: 5,
+        display: 'flex',
+        justifyContent: 'flex-end',
+        gap: 8,
+        // 与下方内容留间隔；背景与边框做成一条可视条，避免 sticky 时与正文粘连
+        marginBottom: 12,
+        padding: '6px 0',
+        background: isDark ? '#1a1a1a' : '#fafafa',
+        borderBottom: `1px solid ${isDark ? '#333' : '#f0f0f0'}`,
+      }}
+    >
+      <ProposalButton
+        workspaceId={workspaceId}
+        slug={slug}
+        buttonSize={isMobile ? 'small' : 'middle'}
+        showLabel={!isMobile}
+      />
+      <Button
+        danger
+        icon={<DeleteOutlined />}
+        onClick={confirmDelete}
+        size={isMobile ? 'small' : 'middle'}
+      >
+        {isMobile ? '' : '删除主题'}
+      </Button>
+    </div>
+  );
+}
+
+/** 执行删除请求：成功提示并触发列表重拉；失败 toast 透出原因，不关闭确认框外层流程。 */
+async function performDelete(workspaceId: number, slug: string, onDeleted: () => void): Promise<void> {
+  try {
+    await deleteWikiFile(workspaceId, slug);
+    message.success(`已删除主题「${slug}」`);
+    onDeleted();
+  } catch (err) {
+    message.error('删除失败: ' + (err instanceof Error ? err.message : String(err)));
+  }
 }
 
 interface BlackboardContentProps {
