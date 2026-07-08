@@ -14,6 +14,7 @@ export interface BackupDataYaml {
     scheduler_config?: string;
     tag_names: string[];
     workspace_path?: string;
+    workspace_id?: number;
   }[];
 }
 
