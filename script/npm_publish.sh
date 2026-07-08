@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# NothingTodo npm 发布脚本
+# ntd npm 发布脚本
 # 用法: ./npm_publish.sh v0.1.2
 #
 # 需要先执行交叉编译: make cross-build
@@ -42,7 +42,7 @@ fi
 VERSION=${VERSION_TAG#v}
 
 info "========================================"
-info "开始发布 NothingTodo"
+info "开始发布 ntd"
 info "版本号: $VERSION_TAG (npm: $VERSION)"
 info "========================================"
 echo ""
@@ -56,10 +56,10 @@ info "步骤 1/7: 检查交叉编译产物..."
 CROSS_DIR="$PROJECT_ROOT/backend/target/cross"
 
 PLATFORMS=(
-    "nothing-todo-linux-x64:linux-x64:linux:x64:ntd-x86_64-unknown-linux-gnu"
-    "nothing-todo-linux-arm64:linux-arm64:linux:arm64:ntd-aarch64-unknown-linux-gnu"
-    "nothing-todo-darwin-arm64:darwin-arm64:darwin:arm64:ntd-aarch64-apple-darwin"
-    "nothing-todo-windows-x64:windows-x64:win32:x64:ntd-x86_64-pc-windows-gnu.exe"
+    "ntd-linux-x64:linux-x64:linux:x64:ntd-x86_64-unknown-linux-gnu"
+    "ntd-linux-arm64:linux-arm64:linux:arm64:ntd-aarch64-unknown-linux-gnu"
+    "ntd-darwin-arm64:darwin-arm64:darwin:arm64:ntd-aarch64-apple-darwin"
+    "ntd-windows-x64:windows-x64:win32:x64:ntd-x86_64-pc-windows-gnu.exe"
 )
 
 # 检查是否需要构建
@@ -120,8 +120,8 @@ for entry in "${PLATFORMS[@]}"; do
 done
 
 # 同步主包
-node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('$PROJECT_ROOT/packages/nothing-todo/package.json','utf8')); p.version='$VERSION'; fs.writeFileSync('$PROJECT_ROOT/packages/nothing-todo/package.json', JSON.stringify(p, null, 2)+'\n');"
-success "  nothing-todo (wrapper): $VERSION"
+node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('$PROJECT_ROOT/packages/ntd/package.json','utf8')); p.version='$VERSION'; fs.writeFileSync('$PROJECT_ROOT/packages/ntd/package.json', JSON.stringify(p, null, 2)+'\n');"
+success "  ntd (wrapper): $VERSION"
 echo ""
 
 # 步骤 5: 提交版本更新
@@ -158,7 +158,7 @@ for entry in "${PLATFORMS[@]}"; do
 done
 
 # 发布主包（wrapper）
-publish_pkg "$PROJECT_ROOT/packages/nothing-todo"
+publish_pkg "$PROJECT_ROOT/packages/ntd"
 
 echo ""
 success "========================================"
