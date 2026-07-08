@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from 'react';
-import { ExpandOutlined, CompressOutlined, InfoCircleOutlined, StopOutlined } from '@ant-design/icons';
-import { Popconfirm, Popover, App } from 'antd';
+import { ExpandOutlined, CompressOutlined, InfoCircleOutlined, StopOutlined, CloseOutlined } from '@ant-design/icons';
+import { Popconfirm, Popover, Dropdown, App } from 'antd';
 import { useApp } from '@/hooks/useApp';
 import { useTheme } from '@/hooks/useTheme';
 import { getExecutorOption } from '@/types';
@@ -14,6 +14,10 @@ interface ExecutionPanelProps {
   // 开关关闭时由父组件传入 true：在此 return null 不渲染面板，但 hooks 已在上文注册，
   // 故「完成后自动移除任务」的定时器仍会运行，避免隐藏期间运行任务列表泄漏。
   hidden?: boolean;
+  // 临时关闭：仅本轮任务期间隐藏，新一轮任务开始或设置重新开启时自动恢复。
+  onTemporaryClose?: () => void;
+  // 永久关闭：等价于把设置里的开关置 false 并落盘，需用户去设置-界面显示重新开启。
+  onPermanentClose?: () => void;
 }
 
 function formatShortTime(iso: string): string {
@@ -30,7 +34,7 @@ function formatShortTime(iso: string): string {
   }
 }
 
-export function ExecutionPanel({ collapsed, onToggleCollapse, hidden }: ExecutionPanelProps) {
+export function ExecutionPanel({ collapsed, onToggleCollapse, hidden, onTemporaryClose, onPermanentClose }: ExecutionPanelProps) {
   const { state, dispatch } = useApp();
   const { themeMode } = useTheme();
   const { runningTasks, activeTaskId, executionRecords } = state;
@@ -210,6 +214,32 @@ export function ExecutionPanel({ collapsed, onToggleCollapse, hidden }: Executio
           >
             {collapsed ? '▲' : '▼'}
           </button>
+          {/* 关闭按钮：下拉两种关闭方式，避免两个相似 X 图标造成歧义。
+              临时关闭=本轮隐藏、下次任务自动恢复；永久关闭=落盘关闭设置。 */}
+          <Dropdown
+            trigger={['click']}
+            placement="topRight"
+            menu={{
+              items: [
+                { key: 'temporary', label: '临时关闭（下次执行自动恢复）' },
+                { key: 'permanent', label: '永久关闭（设置-界面显示中重新开启）' },
+              ],
+              onClick: ({ key }) => {
+                if (key === 'temporary') onTemporaryClose?.();
+                else if (key === 'permanent') onPermanentClose?.();
+              },
+            }}
+          >
+            <button
+              className="panel-toggle-btn"
+              aria-label="关闭"
+              title="关闭"
+              // 阻止冒泡到 tab 的点击切换，避免关闭面板的同时误切任务。
+              onClick={(e) => e.stopPropagation()}
+            >
+              <CloseOutlined />
+            </button>
+          </Dropdown>
         </div>
       </div>
 

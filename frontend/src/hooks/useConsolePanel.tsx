@@ -5,7 +5,6 @@ import { createContext, useContext, useState, useLayoutEffect, type ReactNode } 
 interface ConsolePanelContextValue {
   visible: boolean;
   setVisible: (next: boolean) => void;
-  toggle: () => void;
 }
 
 const ConsolePanelContext = createContext<ConsolePanelContextValue | null>(null);
@@ -19,7 +18,9 @@ function getInitialVisible(): boolean {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved === 'true') return true;
     if (saved === 'false') return false;
-  } catch {}
+  } catch {
+    // localStorage 在隐私模式/禁用 cookie 时可能抛错，忽略后走默认值，不阻断渲染。
+  }
   return true;
 }
 
@@ -30,15 +31,15 @@ export function ConsolePanelProvider({ children }: { children: ReactNode }) {
   useLayoutEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, String(visible));
-    } catch {}
+    } catch {
+      // 同上：写入失败不致命，内存态仍生效，仅本次会话丢失持久化。
+    }
   }, [visible]);
 
   const setVisible = (next: boolean) => setVisibleState(next);
-  // toggle 给快捷切换用，开关本身走 setVisible 即可。
-  const toggle = () => setVisibleState(prev => !prev);
 
   return (
-    <ConsolePanelContext.Provider value={{ visible, setVisible, toggle }}>
+    <ConsolePanelContext.Provider value={{ visible, setVisible }}>
       {children}
     </ConsolePanelContext.Provider>
   );
