@@ -1,12 +1,13 @@
 // 主应用入口组件。
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { ConfigProvider, Layout, App as AntApp, Drawer } from 'antd';
 import { AppProvider, useApp } from './hooks/useApp';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useExecutionEvents } from './hooks/useExecutionEvents';
 import { useViewState, viewToNavKey, type View } from './hooks/useViewState';
-import { ThemeProvider, useTheme } from './hooks/useTheme';
+import { ThemeProvider, useTheme } from '@/hooks/useTheme';
+import { ConsolePanelProvider, useConsolePanel } from '@/hooks/useConsolePanel';
 import { TodoPage } from './components/TodoPage';
 import { TodoPostPage } from './components/todo-post';
 import { LoopPage } from './components/LoopPage';
@@ -42,6 +43,11 @@ function AppContent() {
   const { state, dispatch, clearSelection } = useApp();
   const { activeView, selectedId, activePanel, selectedRecordId, showView, pushUrl, replaceUrl, backToList } = useViewState();
   const { themeMode, toggleTheme } = useTheme();
+  // 底部执行日志面板的显隐开关：来自设置-界面显示，关掉后即使有运行中任务也不渲染面板。
+  const { visible: consolePanelVisible, setVisible: setConsolePanelVisible } = useConsolePanel();
+  // 临时关闭态：面板上的「临时关闭」按钮置位，仅本轮任务期间隐藏，不写 localStorage。
+  // 与 consolePanelVisible 区分：永久关闭=setVisible(false) 落盘；临时关闭=会话内 dismiss。
+  const [consolePanelDismissed, setConsolePanelDismissed] = useState(false);
 
   const [todoModalOpen, setTodoModalOpen] = useState(false);
   const [smartCreateOpen, setSmartCreateOpen] = useState(false);
@@ -90,7 +96,32 @@ function AppContent() {
   useExecutionEvents();
 
   const hasRunningTasks = Object.keys(state.runningTasks).length > 0;
-  const panelHeight = hasRunningTasks ? (panelCollapsed ? EXECUTION_PANEL.collapsed : EXECUTION_PANEL.expanded) : 0;
+
+  // 临时关闭的撤销时机：
+  // 1) 新一轮任务开始（running 从无到有）——让面板随新任务重新出现，符合「临时」语义。
+  const prevHadRunningRef = useRef(false);
+  useEffect(() => {
+    if (!prevHadRunningRef.current && hasRunningTasks) {
+      setConsolePanelDismissed(false);
+    }
+    prevHadRunningRef.current = hasRunningTasks;
+  }, [hasRunningTasks]);
+
+  // 2) 用户在设置里重新开启面板——清除上一轮遗留的临时关闭态，确保开关闭合后立刻可见。
+  const prevVisibleRef = useRef(consolePanelVisible);
+  useEffect(() => {
+    if (!prevVisibleRef.current && consolePanelVisible) {
+      setConsolePanelDismissed(false);
+    }
+    prevVisibleRef.current = consolePanelVisible;
+  }, [consolePanelVisible]);
+
+  // 面板真正隐藏的条件：永久开关关闭，或本轮被临时关闭。两者任一为真都不渲染、不占高度。
+  const consolePanelHidden = !consolePanelVisible || consolePanelDismissed;
+  // 隐藏时面板高度归零，主内容区不再留出底部避让空间；否则按折叠/展开状态给出高度。
+  const panelHeight = !consolePanelHidden && hasRunningTasks
+    ? (panelCollapsed ? EXECUTION_PANEL.collapsed : EXECUTION_PANEL.expanded)
+    : 0;
 
   useEffect(() => {
     db.getConfig().then(setAppConfig).catch(() => {
@@ -438,13 +469,18 @@ function AppContent() {
       />
 
       {/* Execution Panel */}
+      {/* 始终挂载以保留其内部「完成后 5s 自动移除任务」的定时器逻辑；
+          通过 hidden 让它在开关关闭/临时关闭/无运行任务时 return null，不占任何空间。 */}
       <ExecutionPanel
+        hidden={consolePanelHidden}
         collapsed={panelCollapsed}
         onToggleCollapse={() => {
           const next = !panelCollapsed;
           setPanelCollapsed(next);
           try { localStorage.setItem('execution_panel_collapsed', String(next)); } catch {}
         }}
+        onTemporaryClose={() => setConsolePanelDismissed(true)}
+        onPermanentClose={() => setConsolePanelVisible(false)}
       />
 
       {/* Loop Create Modal */}
@@ -486,7 +522,9 @@ function ThemedApp() {
 function App() {
   return (
     <ThemeProvider>
-      <ThemedApp />
+      <ConsolePanelProvider>
+        <ThemedApp />
+      </ConsolePanelProvider>
     </ThemeProvider>
   );
 }
