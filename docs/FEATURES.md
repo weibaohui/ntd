@@ -432,9 +432,9 @@ ntd [全局选项] <子命令>
 
 | 平台 | 架构 | 分发包 |
 |------|------|--------|
-| Linux | x86_64 / ARM64 | `nothing-todo-linux-x64.tar.gz` / `...-arm64.tar.gz` |
-| macOS | ARM64 (Apple Silicon) | `nothing-todo-darwin-arm64.tar.gz` |
-| Windows | x86_64 | `nothing-todo-windows-x64.zip` |
+| Linux | x86_64 / ARM64 | `ntd-linux-x64.tar.gz` / `...-arm64.tar.gz` |
+| macOS | ARM64 (Apple Silicon) | `ntd-darwin-arm64.tar.gz` |
+| Windows | x86_64 | `ntd-windows-x64.zip` |
 | npm | 跨平台 | `@weibaohui/ntd` |
 | Cargo | 跨平台 | `crates.io` (源码) |
 

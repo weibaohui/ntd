@@ -1,4 +1,4 @@
-# NothingTodo npm 发布系统
+# ntd npm 发布系统
 
 ## 架构概述
 
@@ -13,19 +13,19 @@
 
 ```
 packages/
-├── nothing-todo/                    # 主包（wrapper）
+├── ntd/                             # 主包（wrapper）
 │   ├── install.js                  # 跨平台安装脚本
 │   └── package.json
-├── nothing-todo-linux-x64/         # Linux x86_64 平台包
+├── ntd-linux-x64/                   # Linux x86_64 平台包
 │   ├── bin/ntd                     # 二进制
 │   └── package.json
-├── nothing-todo-linux-arm64/       # Linux ARM64 平台包
+├── ntd-linux-arm64/                 # Linux ARM64 平台包
 │   ├── bin/ntd
 │   └── package.json
-├── nothing-todo-darwin-arm64/      # macOS ARM64 平台包
+├── ntd-darwin-arm64/                # macOS ARM64 平台包
 │   ├── bin/ntd
 │   └── package.json
-└── nothing-todo-windows-x64/       # Windows x86_64 平台包
+└── ntd-windows-x64/                 # Windows x86_64 平台包
     ├── bin/ntd.exe
     └── package.json
 ```
@@ -66,16 +66,16 @@ make cross-build
 
 ```bash
 # Linux x64
-cp backend/target/cross/ntd-x86_64-unknown-linux-gnu packages/nothing-todo-linux-x64/bin/ntd
+cp backend/target/cross/ntd-x86_64-unknown-linux-gnu packages/ntd-linux-x64/bin/ntd
 
 # Linux arm64
-cp backend/target/cross/ntd-aarch64-unknown-linux-gnu packages/nothing-todo-linux-arm64/bin/ntd
+cp backend/target/cross/ntd-aarch64-unknown-linux-gnu packages/ntd-linux-arm64/bin/ntd
 
 # macOS arm64
-cp backend/target/cross/ntd-aarch64-apple-darwin packages/nothing-todo-darwin-arm64/bin/ntd
+cp backend/target/cross/ntd-aarch64-apple-darwin packages/ntd-darwin-arm64/bin/ntd
 
 # Windows x64
-cp backend/target/cross/ntd-x86_64-pc-windows-gnu.exe packages/nothing-todo-windows-x64/bin/ntd.exe
+cp backend/target/cross/ntd-x86_64-pc-windows-gnu.exe packages/ntd-windows-x64/bin/ntd.exe
 ```
 
 > **另**：i686（32 位 Windows）二进制当前未打包。`PLATFORMS` 数组仅含 4 个目标（linux x64/arm64、darwin arm64、windows x64）。
@@ -128,13 +128,13 @@ for pkg in packages/*/package.json; do
 done
 
 # 2. 发布平台包（注意：实际只发布 4 个，无 darwin-x64）
-cd packages/nothing-todo-linux-x64 && npm publish --access public && cd -
-cd packages/nothing-todo-linux-arm64 && npm publish --access public && cd -
-cd packages/nothing-todo-darwin-arm64 && npm publish --access public && cd -
-cd packages/nothing-todo-windows-x64 && npm publish --access public && cd -
+cd packages/ntd-linux-x64 && npm publish --access public && cd -
+cd packages/ntd-linux-arm64 && npm publish --access public && cd -
+cd packages/ntd-darwin-arm64 && npm publish --access public && cd -
+cd packages/ntd-windows-x64 && npm publish --access public && cd -
 
 # 3. 发布主包
-cd packages/nothing-todo && npm publish --access public && cd -
+cd packages/ntd && npm publish --access public && cd -
 ```
 
 ### 步骤 8: 验证发布
