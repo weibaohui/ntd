@@ -914,7 +914,8 @@ async fn test_merge_backup_target_workspace_overrides_backup_value() {
     assert_eq!(created, 1);
     assert_eq!(updated, 0);
 
-    // 新建的 todo 应归属目标工作空间 B，而非备份中的 A。
+    // 新建的 todo 应归属目标工作空间 B，而非备份中的 A；且 workspace_path 与 id 成对，
+    // 指向 B 的当前库路径（不沿用备份里可能为空的 path），避免 id/path 错配。
     let todo = db
         .get_todos_by_workspace_id(Some(dir_b))
         .await
@@ -923,6 +924,7 @@ async fn test_merge_backup_target_workspace_overrides_backup_value() {
         .next()
         .expect("应在工作空间 B 下找到导入的 todo");
     assert_eq!(todo.workspace_id, Some(dir_b));
+    assert_eq!(todo.workspace_path.as_deref(), Some("/tmp/ws-b"));
 }
 
 #[tokio::test]
@@ -978,4 +980,34 @@ async fn test_merge_backup_does_not_hijack_cross_workspace_same_title() {
     // A 的原 todo 工作空间未被改动
     let a_todo = db.get_todo(a_todo_id).await.unwrap().unwrap();
     assert_eq!(a_todo.workspace_id, Some(dir_a));
+}
+
+#[tokio::test]
+async fn test_merge_backup_drops_dangling_backup_workspace_id() {
+    // 跨环境导入：备份里的 workspace_id 在当前库不存在时，不应写悬空 id，
+    // 也不应沿用备份里指向不存在目录的 path——降级为「未分配」哨兵 0 + 空 path。
+    // workspace_id 列是 NOT NULL DEFAULT 0，0 表示未分配（与 loop_runner.rs 语义一致）。
+    let db = setup_db().await;
+
+    // 故意用一个当前库不存在的 workspace_id（只创建 A，备份里却写一个不存在的 id）
+    let dir_a = db
+        .create_project_directory("/tmp/ws-a", Some("A"), false, false)
+        .await
+        .unwrap();
+    let dangling_id = dir_a + 999;
+
+    let backup = make_backup("t1", Some(dangling_id));
+    let (created, _) = db.merge_backup(&[], &[backup], None).await.unwrap();
+    assert_eq!(created, 1);
+
+    // workspace_id 降级为未分配哨兵 0，workspace_path 为空
+    let todo = db
+        .get_todos_by_workspace_id(Some(0))
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|t| t.title == "t1")
+        .expect("应找到导入的 todo");
+    assert_eq!(todo.workspace_id, Some(0));
+    assert!(todo.workspace_path.as_deref().unwrap_or("").is_empty());
 }

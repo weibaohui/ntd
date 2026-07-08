@@ -93,8 +93,10 @@ export function LoopBackupTab() {
       let parsedSourceId: number | null = null;
       try {
         const parsed: any = yaml.load(text);
-        const sourceId = parsed?.todos?.[0]?.workspace_id || parsed?.loops?.[0]?.workspace_id;
-        const sourcePath = parsed?.todos?.[0]?.workspace_path || parsed?.loops?.[0]?.workspace_path;
+        // 用 ?? 而非 ||：workspace_id=0 或 workspace_path="" 是合法的 falsy 值，
+        // || 会错误地跳过它们回退到 loops 条目；?? 只在 null/undefined 时回退。
+        const sourceId = parsed?.todos?.[0]?.workspace_id ?? parsed?.loops?.[0]?.workspace_id;
+        const sourcePath = parsed?.todos?.[0]?.workspace_path ?? parsed?.loops?.[0]?.workspace_path;
         if (sourceId != null) {
           parsedSourceId = Number(sourceId);
           setSourceWorkspaceInfo({ id: parsedSourceId, path: sourcePath || '' });
