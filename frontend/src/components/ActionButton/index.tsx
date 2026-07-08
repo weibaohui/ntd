@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Button, Drawer, Spin, Typography, Space, message, Input, Tag } from 'antd';
 import { ThunderboltOutlined, EditOutlined } from '@ant-design/icons';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { ChatView } from '@/components/ChatView';
 import { useActionExecution } from './useActionExecution';
 import { ExecutorPicker } from '@/components/todo-drawer/ExecutorPicker';
 import { EXECUTORS_FOR_PICKER } from '@/types/execution';
@@ -47,7 +48,7 @@ export function ActionButton({
     () => getLastExecutor(executor)
   );
   const isMobile = useIsMobile();
-  const { status, result, error, execute, retry, reset } = useActionExecution(
+  const { status, result, error, logs, execute, retry, reset } = useActionExecution(
     actionType,
     actionKey,
     prompt,
@@ -173,12 +174,16 @@ export function ActionButton({
     }
 
     if (status === 'executing') {
+      // 实时日志流：复用 ChatView 把 WS Output 事件 push 来的 logs 渲染成
+      // 思考/工具/输出气泡，让用户看见 AI 在干什么，而非黑盒转圈。
+      // 容器限定 60vh 高度，ChatView 内部 .chat-container flex:1 自行滚动并自动滚到底。
       return (
-        <div style={{ textAlign: 'center', padding: '40px 0' }}>
-          <Spin size="large" />
-          <div style={{ marginTop: 16 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '60vh' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <Spin size="small" />
             <Text type="secondary">AI 正在处理中...</Text>
           </div>
+          <ChatView logs={logs} isRunning />
         </div>
       );
     }

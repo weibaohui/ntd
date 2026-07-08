@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { getExecutionRecord } from '@/utils/database';
 import { useExecution } from '@/hooks/useExecutionContext';
+import type { LogEntry } from '@/types';
 import type { ActionStatus } from './types';
 import { api, unwrap } from '@/utils/database/client';
 
@@ -9,6 +10,12 @@ interface UseActionExecutionReturn {
   result: string | null;
   error: string | null;
   recordId: number | null;
+  /**
+   * 当前任务的实时日志流（来自 WS Output 事件 push 进 runningTasks 的 logs）。
+   * 执行中用于在 UI 上展示 AI 思考/工具调用过程，避免「黑盒转圈」；
+   * 任务未启动或 WS 未推时为空数组。
+   */
+  logs: LogEntry[];
   execute: (prompt: string, executor?: string) => Promise<void>;
   retry: (prompt: string, executor?: string) => Promise<void>;
   reset: () => void;
@@ -66,6 +73,12 @@ export function useActionExecution(
   const [recordId, setRecordId] = useState<number | null>(null);
   const taskIdRef = useRef<string | null>(null);
   const { state } = useExecution();
+
+  // 从全局 runningTasks 取当前任务的实时日志流。taskIdRef 在 execute() 拿到 task_id 后赋值；
+  // state.runningTasks 由 WS 事件驱动更新，Output 事件会持续 append logs → 本组件随之重渲染。
+  // 直接在渲染期读 ref + state 是安全的：ref 写入发生在 execute 闭包，state 变化由订阅触发。
+  const runningTask = taskIdRef.current ? state.runningTasks[taskIdRef.current] : undefined;
+  const logs: LogEntry[] = runningTask?.logs ?? [];
 
   // 监听 WebSocket 的 FINISH_TASK 事件
   useEffect(() => {
@@ -137,5 +150,5 @@ export function useActionExecution(
     taskIdRef.current = null;
   }, []);
 
-  return { status, result, error, recordId, execute, retry, reset };
+  return { status, result, error, recordId, logs, execute, retry, reset };
 }

@@ -33,4 +33,23 @@ test.describe('生成建议前置 Drawer（与 ActionButton 对齐）', () => {
     // 关闭 Drawer，不执行
     await page.keyboard.press('Escape');
   });
+
+  test('执行中渲染实时日志流（ChatView），而非裸 Spin', async ({ page }) => {
+    await page.goto(BLACKBOARD_URL);
+    await expect(page.locator('.ant-menu-item').first()).toBeVisible({ timeout: 15000 });
+
+    // 点「生成建议」→ 弹 Drawer → 点「执行」触发后端（dev 环境 pi）
+    await page.getByRole('button', { name: '生成建议' }).click();
+    const drawer = page.locator('.ant-drawer-content, .ant-drawer').filter({ hasText: '生成 Todo 建议' });
+    await expect(drawer.first()).toBeVisible({ timeout: 5000 });
+    await drawer.getByRole('button', { name: /执\s*行/ }).click();
+
+    // execute() 同步置 executing → 立刻渲染执行态。执行态用 ChatView 承载实时日志：
+    // 还没收到 WS Output 时是 .chat-empty（等待AI响应），收到日志后变 .chat-container。
+    // 二者出现其一即证明 ChatView 已接入（取代旧的黑盒 Spin）。
+    await expect(drawer.locator('.chat-empty, .chat-container').first()).toBeVisible({ timeout: 10000 });
+    // 执行态头部仍保留「AI 正在处理中...」状态文案
+    await expect(drawer.getByText('AI 正在处理中...')).toBeVisible();
+    // 不等执行完成，直接结束用例（pi 在后台继续跑，dev 环境可接受）
+  });
 });
