@@ -31,7 +31,6 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 
 export type View =
   | 'items'
-  | 'todoCenter'
   | 'loops'
   | 'dashboard'
   | 'settings'
@@ -49,7 +48,7 @@ export type Panel = 'list' | 'detail' | 'post';
 export type BoardMode = 'memorial' | 'kanban' | 'running' | 'loop_kanban';
 
 const ALL_VIEWS: View[] = [
-  'items', 'todoCenter', 'loops',
+  'items', 'loops',
   'dashboard', 'settings', 'memorial',
   'runtime', 'skills', 'projectDirectories', 'sessions', 'executors',
   'blackboard', 'wiki',
@@ -153,7 +152,6 @@ function buildHashUrl(view: View, opts?: { id?: number | null; tab?: string | nu
 
 const VIEW_TO_NAV_KEY: Record<View, string> = {
   items: 'items',
-  todoCenter: 'todoCenter',
   loops: 'loops',
   dashboard: 'dashboard',
   memorial: 'memorial',

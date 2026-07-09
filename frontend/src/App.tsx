@@ -8,8 +8,7 @@ import { useExecutionEvents } from './hooks/useExecutionEvents';
 import { useViewState, viewToNavKey, type View } from './hooks/useViewState';
 import { ThemeProvider, useTheme } from '@/hooks/useTheme';
 import { ConsolePanelProvider, useConsolePanel } from '@/hooks/useConsolePanel';
-import { TodoPage } from './components/TodoPage';
-import { TodoCenterPage } from '@/components/TodoCenterPage';
+import { ItemsPage } from '@/components/ItemsPage';
 import { TodoPostPage } from './components/todo-post';
 import { LoopPage } from './components/LoopPage';
 import { TodoMobilePage } from './components/mobile/TodoMobilePage';
@@ -222,7 +221,6 @@ function AppContent() {
   const handleRailSelect = useCallback((key: LeftRailKey) => {
     setNavDrawerOpen(false);
     if (key === 'items') { showListSection('item'); return; }
-    if (key === 'todoCenter') { handleShowView('todoCenter'); return; }
     if (key === 'loops') { showListSection('loop'); return; }
     if (key === 'dashboard') { handleShowView('dashboard'); return; }
     if (key === 'memorial') { handleShowView('memorial'); return; }
@@ -309,16 +307,7 @@ function AppContent() {
             />
           )}
 
-          {/* 事项中心页面（卡片式五类驱动视图） */}
-          {activeView === 'todoCenter' && (
-            <TodoCenterPage
-              onSelectTodo={handleSelectTodo}
-              onSelectLoop={handleSelectLoop}
-              onOpenCreateModal={() => setTodoModalOpen(true)}
-            />
-          )}
-
-          {/* 事项页面 */}
+          {/* 事项页面（合并：卡片墙 / 列表双栏，由 ItemsPage 切换；移动端仍用 TodoMobilePage） */}
           {activeView === 'items' && activePanel !== 'post' && (
             isMobile ? (
               <TodoMobilePage
@@ -334,13 +323,13 @@ function AppContent() {
                 onOpenPost={handleOpenPost}
               />
             ) : (
-              <TodoPage
+              <ItemsPage
                 selectedTodoId={state.selectedTodoId}
                 onOpenCreateModal={() => setTodoModalOpen(true)}
                 onSelectTodo={handleSelectTodo}
-                loopUpdateCount={loopUpdateCount}
                 onSelectLoop={handleSelectLoop}
                 onCreateLoop={() => setLoopCreateModalOpen(true)}
+                loopUpdateCount={loopUpdateCount}
                 forcedListMode={forcedListMode}
                 onListModeChange={() => setForcedListMode(undefined)}
                 effectiveMobilePanel={effectiveMobilePanel}
@@ -382,8 +371,8 @@ function AppContent() {
             )
           )}
 
-          {/* 非事项/环路/事项中心视图（事项中心单独在上块渲染，不能落到 Dashboard 兜底） */}
-          {activeView !== 'items' && activeView !== 'loops' && activeView !== 'todoCenter' && (
+          {/* 非事项/环路视图（事项页单独在上块渲染，不能落到 Dashboard 兜底） */}
+          {activeView !== 'items' && activeView !== 'loops' && (
             <div
               style={{
                 flex: 1,

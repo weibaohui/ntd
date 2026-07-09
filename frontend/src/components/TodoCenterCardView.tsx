@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Empty, Input, Segmented, Select, Spin, Table, Tag, message } from 'antd';
-import type { ColumnsType } from 'antd/es/table';
+import { Button, Empty, Input, Segmented, Select, Spin, message } from 'antd';
 import { AppstoreOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
 import { PageCard } from '@/components/common/PageCard';
 import { TodoCenterCard } from '@/components/TodoCenterCard';
-import { formatRelativeTime } from '@/utils/datetime';
 import * as db from '@/utils/database';
 import type { ComputedBucket, TodoCenterItem } from '@/types';
 
@@ -26,23 +24,32 @@ const EMPTY_TEXT: Record<ComputedBucket, string> = {
   archived: '暂无已归档事项',
 };
 
-interface TodoCenterPageProps {
-  /** 点击卡片进入现有事项详情页。 */
+interface TodoCenterCardViewProps {
+  /** 点击卡片：由宿主（ItemsPage）包装为「选中并切到列表模式打开详情」。 */
   onSelectTodo: (id: number) => void;
-  /** Phase 5：点击所属 Loop 跳转 Loop 详情。 */
+  /** 点击所属 Loop 跳转 Loop 详情。 */
   onSelectLoop: (loopId: number) => void;
   /** 新建事项入口（复用全局 TodoDrawer）。 */
   onOpenCreateModal: () => void;
+  /** 当前视图模式（卡片/列表），由宿主持有；卡片页只在 header 里展示切换器。 */
+  viewMode: 'card' | 'list';
+  onViewModeChange: (m: 'card' | 'list') => void;
 }
 
 /**
- * 事项中心页面：五类驱动视图（手动/时间/事件/Loop/已归档）。
+ * 事项中心卡片视图：五类驱动（手动/时间/事件/Loop/已归档）的卡片墙。
  *
+ * 它是合并后「事项」页的卡片形态；列表形态由 ItemsPage 切到原 TodoPage（双栏）。
  * 一次拉取全部分类（后端批量补算 computed_bucket / loop 引用计数 / 最近执行），
  * 前端按 computed_bucket 分桶并展示各 Tab 数量；切换 Tab 不再发请求，降低交互延迟。
- * 卡片点击进入现有 TodoDetail，详情页不在第一阶段重写。
  */
-export function TodoCenterPage({ onSelectTodo, onSelectLoop, onOpenCreateModal }: TodoCenterPageProps) {
+export function TodoCenterCardView({
+  onSelectTodo,
+  onSelectLoop,
+  onOpenCreateModal,
+  viewMode,
+  onViewModeChange,
+}: TodoCenterCardViewProps) {
   const { state } = useApp();
   const workspaceId = state.selectedWorkspace ?? undefined;
 
@@ -60,8 +67,6 @@ export function TodoCenterPage({ onSelectTodo, onSelectLoop, onOpenCreateModal }
   const [actionTypeFilter, setActionTypeFilter] = useState<string>('all');
   // 手动触发 Tab 专属：仅看绑定了斜杠命令的可命令触发事项（设计文档 manual 筛选项）
   const [commandOnly, setCommandOnly] = useState(false);
-  // 视图：卡片（默认，信息丰富）或紧凑列表（高密度扫描/批量场景）
-  const [viewMode, setViewMode] = useState<'card' | 'list'>('card');
 
   // 拉取事项中心列表。工作空间变化或手动刷新时触发；
   // 卡片操作（归档/恢复/webhook/执行）完成后也会调它重拉，保持口径一致。
@@ -111,15 +116,12 @@ export function TodoCenterPage({ onSelectTodo, onSelectLoop, onOpenCreateModal }
     return Array.from(set);
   }, [items]);
 
-  // 注：不自动切换 Tab。用户点哪个分类就停在哪个，即便该分类为 0 也保持
-  // （空了展示空状态即可，不能乱跳回第一个分类）。切换工作空间同理保持当前分类。
-
   return (
     <PageCard
       icon={<AppstoreOutlined />}
-      title="事项中心"
+      title="事项"
       // flex:1 让 PageCard 在 Content 的 flex-row 里撑满宽度，
-      // 否则会塌缩成内容宽度（卡片只剩单列、右侧大片留白，像没铺满的仪表盘）
+      // 否则会塌缩成内容宽度（卡片只剩单列、右侧大片留白）
       style={{ flex: 1 }}
       extra={
         <>
@@ -133,13 +135,14 @@ export function TodoCenterPage({ onSelectTodo, onSelectLoop, onOpenCreateModal }
             style={{ width: 200 }}
             data-testid="todo-center-search"
           />
+          {/* 卡片/列表切换：列表形态切到原 TodoPage（双栏），由宿主 ItemsPage 控制 */}
           <Segmented
             size="small"
             value={viewMode}
-            onChange={(v) => setViewMode(v as 'card' | 'list')}
+            onChange={(v) => onViewModeChange(v as 'card' | 'list')}
             options={[
               { value: 'card', icon: <AppstoreOutlined />, title: '卡片视图' },
-              { value: 'list', icon: <UnorderedListOutlined />, title: '紧凑列表' },
+              { value: 'list', icon: <UnorderedListOutlined />, title: '列表（双栏）' },
             ]}
             data-testid="todo-center-view-toggle"
           />
@@ -207,7 +210,7 @@ export function TodoCenterPage({ onSelectTodo, onSelectLoop, onOpenCreateModal }
 
         {visibleItems.length === 0 ? (
           <Empty description={EMPTY_TEXT[activeBucket]} style={{ marginTop: 48 }} />
-        ) : viewMode === 'card' ? (
+        ) : (
           <div className="todo-center-grid">
             {visibleItems.map((item) => (
               <TodoCenterCard
@@ -219,78 +222,8 @@ export function TodoCenterPage({ onSelectTodo, onSelectLoop, onOpenCreateModal }
               />
             ))}
           </div>
-        ) : (
-          <CompactTodoTable items={visibleItems} onSelectTodo={onSelectTodo} />
         )}
       </Spin>
     </PageCard>
-  );
-}
-
-/** 紧凑列表视图：antd Table 展示当前 Tab 的事项，行点击进详情。
- *  设计文档「可选保留紧凑列表视图」——比卡片密度高，便于快速扫描/批量定位。 */
-const BUCKET_LABEL: Record<ComputedBucket, string> = {
-  manual: '手动触发',
-  time_driven: '时间驱动',
-  event_driven: '事件驱动',
-  loop_driven: 'Loop 驱动',
-  archived: '已归档',
-};
-
-const BUCKET_COLOR: Record<ComputedBucket, string> = {
-  manual: 'blue',
-  time_driven: 'cyan',
-  event_driven: 'purple',
-  loop_driven: 'geekblue',
-  archived: 'default',
-};
-
-function CompactTodoTable({
-  items,
-  onSelectTodo,
-}: {
-  items: TodoCenterItem[];
-  onSelectTodo: (id: number) => void;
-}) {
-  const columns: ColumnsType<TodoCenterItem> = [
-    { title: '#', dataIndex: 'id', width: 64, render: (v: number) => `#${v}` },
-    { title: '标题', dataIndex: 'title', ellipsis: true },
-    {
-      title: '分类',
-      dataIndex: 'computed_bucket',
-      width: 110,
-      render: (b: ComputedBucket) => <Tag color={BUCKET_COLOR[b]}>{BUCKET_LABEL[b]}</Tag>,
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      width: 90,
-      render: (s?: string) => (s ? <Tag>{s}</Tag> : null),
-    },
-    {
-      title: '最近执行',
-      width: 200,
-      render: (_: unknown, r: TodoCenterItem) =>
-        r.last_execution_status
-          ? `${r.last_execution_status}${r.last_execution_at ? ` · ${formatRelativeTime(r.last_execution_at)}` : ''}`
-          : '—',
-    },
-    {
-      title: '更新',
-      dataIndex: 'updated_at',
-      width: 120,
-      render: (v: string) => formatRelativeTime(v),
-    },
-  ];
-  return (
-    <Table<TodoCenterItem>
-      rowKey="id"
-      size="small"
-      columns={columns}
-      dataSource={items}
-      pagination={false}
-      onRow={(r) => ({ onClick: () => onSelectTodo(r.id), style: { cursor: 'pointer' } })}
-      data-testid="todo-center-compact-table"
-    />
   );
 }
