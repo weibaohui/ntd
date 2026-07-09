@@ -265,13 +265,27 @@ test('已归档卡片菜单含删除', async ({ page }) => {
   await page.request.post(`${BASE}/api/todos/${idNum}/restore`);
 });
 
-test('移动端渲染原列表页（卡片墙为桌面端专属）', async ({ page }) => {
-  // 移动端视口：事项页走 TodoMobilePage，不渲染桌面端卡片墙
+test('移动端：默认卡片墙单列，可切到列表，再切回卡片', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto(`${BASE}/#items`);
-  await page.waitForTimeout(1000);
-  // 卡片墙不存在（移动端不进 ItemsPage/卡片视图）
+  await page.waitForTimeout(1500);
+
+  // 默认进卡片墙，单列铺排
+  const grid = page.locator('.todo-center-grid');
+  await expect(grid).toBeVisible();
+  const cols = await grid.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').filter(Boolean).length);
+  expect(cols).toBe(1);
+
+  // 切到列表：卡片墙消失，移动端列表（TodoList 的 .todo-item 行）出现
+  await page.getByTestId('todo-center-view-toggle').getByTitle(/列表/).click();
+  await page.waitForTimeout(800);
   await expect(page.locator('.todo-center-grid')).toHaveCount(0);
+  await expect(page.locator('.todo-item').first()).toBeVisible();
+
+  // 切回卡片墙
+  await page.getByTestId('todo-center-view-toggle').getByTitle('卡片视图').click();
+  await page.waitForTimeout(700);
+  await expect(grid).toBeVisible();
 });
 
 test('工具栏含状态与动作类型筛选', async ({ page }) => {

@@ -34,6 +34,8 @@ interface TodoCenterCardViewProps {
   /** 当前视图模式（卡片/列表），由宿主持有；卡片页只在 header 里展示切换器。 */
   viewMode: 'card' | 'list';
   onViewModeChange: (m: 'card' | 'list') => void;
+  /** 移动端：精简 header（隐藏搜索/筛选），保留切换器 + 新建 + Tab + 卡片。 */
+  isMobile?: boolean;
 }
 
 /**
@@ -49,6 +51,7 @@ export function TodoCenterCardView({
   onOpenCreateModal,
   viewMode,
   onViewModeChange,
+  isMobile,
 }: TodoCenterCardViewProps) {
   const { state } = useApp();
   const workspaceId = state.selectedWorkspace ?? undefined;
@@ -125,16 +128,19 @@ export function TodoCenterCardView({
       style={{ flex: 1 }}
       extra={
         <>
-          <Input
-            allowClear
-            size="small"
-            placeholder="搜索标题或 Prompt"
-            prefix={<SearchOutlined />}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ width: 200 }}
-            data-testid="todo-center-search"
-          />
+          {/* 桌面端才放搜索框；移动端 header 精简，避免拥挤 */}
+          {!isMobile && (
+            <Input
+              allowClear
+              size="small"
+              placeholder="搜索标题或 Prompt"
+              prefix={<SearchOutlined />}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ width: 200 }}
+              data-testid="todo-center-search"
+            />
+          )}
           {/* 卡片/列表切换：列表形态切到原 TodoPage（双栏），由宿主 ItemsPage 控制 */}
           <Segmented
             size="small"
@@ -146,9 +152,11 @@ export function TodoCenterCardView({
             ]}
             data-testid="todo-center-view-toggle"
           />
-          <Button size="small" icon={<ReloadOutlined />} onClick={reload} loading={loading} aria-label="刷新">
-            刷新
-          </Button>
+          {!isMobile && (
+            <Button size="small" icon={<ReloadOutlined />} onClick={reload} loading={loading} aria-label="刷新">
+              刷新
+            </Button>
+          )}
           <Button size="small" type="primary" icon={<PlusOutlined />} onClick={onOpenCreateModal}>
             新建
           </Button>
@@ -172,7 +180,9 @@ export function TodoCenterCardView({
           />
         </div>
 
-        {/* 筛选栏（设计文档工具栏：状态筛选 + 动作类型筛选；手动 Tab 额外的「仅看可命令触发」） */}
+        {/* 筛选栏（设计文档工具栏：状态筛选 + 动作类型筛选；手动 Tab 额外的「仅看可命令触发」）。
+            移动端隐藏——空间有限，手机端主要浏览 Tab + 卡片，筛选留到桌面端。 */}
+        {!isMobile && (
         <div className="todo-center-filters">
           <Select
             size="small"
@@ -207,6 +217,7 @@ export function TodoCenterCardView({
             </label>
           )}
         </div>
+        )}
 
         {visibleItems.length === 0 ? (
           <Empty description={EMPTY_TEXT[activeBucket]} style={{ marginTop: 48 }} />

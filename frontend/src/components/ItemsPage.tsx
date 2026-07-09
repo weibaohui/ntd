@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { TodoCenterCardView } from './TodoCenterCardView';
 import { TodoPage } from './TodoPage';
+import { TodoMobilePage } from './mobile/TodoMobilePage';
 
 /** localStorage 键：记住用户上次选的卡片/列表形态。 */
 const VIEW_STORAGE_KEY = 'ntd_items_view';
@@ -30,6 +31,8 @@ interface ItemsPageProps {
   onListModeChange: () => void;
   effectiveMobilePanel: 'list' | 'detail';
   onOpenPost?: (todoId: number, recordId: number) => void;
+  /** 移动端：列表形态切到 TodoMobilePage（双 PageCard），卡片形态走卡片墙单列。 */
+  isMobile?: boolean;
 }
 
 /**
@@ -52,6 +55,7 @@ export function ItemsPage({
   onListModeChange,
   effectiveMobilePanel,
   onOpenPost,
+  isMobile,
 }: ItemsPageProps) {
   // 视图模式持久化：用户切到列表后下次仍记住，默认卡片
   const [viewMode, setViewMode] = useState<'card' | 'list'>(readInitialView);
@@ -78,6 +82,27 @@ export function ItemsPage({
         onSelectTodo={selectTodoAndSwitchToList}
         onSelectLoop={onSelectLoop}
         onOpenCreateModal={onOpenCreateModal}
+        viewMode={viewMode}
+        onViewModeChange={persistView}
+        isMobile={isMobile}
+      />
+    );
+  }
+
+  // 列表形态：移动端走 TodoMobilePage（双 PageCard），桌面端走 TodoPage（双栏）
+  if (isMobile) {
+    return (
+      <TodoMobilePage
+        selectedTodoId={selectedTodoId}
+        onOpenCreateModal={onOpenCreateModal}
+        onSelectTodo={onSelectTodo}
+        loopUpdateCount={loopUpdateCount}
+        onSelectLoop={onSelectLoop}
+        onCreateLoop={onCreateLoop}
+        forcedListMode={forcedListMode}
+        onListModeChange={onListModeChange}
+        effectiveMobilePanel={effectiveMobilePanel}
+        onOpenPost={onOpenPost}
         viewMode={viewMode}
         onViewModeChange={persistView}
       />

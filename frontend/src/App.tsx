@@ -11,7 +11,6 @@ import { ConsolePanelProvider, useConsolePanel } from '@/hooks/useConsolePanel';
 import { ItemsPage } from '@/components/ItemsPage';
 import { TodoPostPage } from './components/todo-post';
 import { LoopPage } from './components/LoopPage';
-import { TodoMobilePage } from './components/mobile/TodoMobilePage';
 import { LoopMobilePage } from './components/mobile/LoopMobilePage';
 import { Dashboard } from './components/Dashboard';
 import { MemorialBoard } from './components/MemorialBoard';
@@ -307,35 +306,21 @@ function AppContent() {
             />
           )}
 
-          {/* 事项页面（合并：卡片墙 / 列表双栏，由 ItemsPage 切换；移动端仍用 TodoMobilePage） */}
+          {/* 事项页面（合并：卡片墙 / 列表，由 ItemsPage 切换；桌面列表=双栏，移动列表=TodoMobilePage） */}
           {activeView === 'items' && activePanel !== 'post' && (
-            isMobile ? (
-              <TodoMobilePage
-                selectedTodoId={state.selectedTodoId}
-                onOpenCreateModal={() => setTodoModalOpen(true)}
-                onSelectTodo={handleSelectTodo}
-                loopUpdateCount={loopUpdateCount}
-                onSelectLoop={handleSelectLoop}
-                onCreateLoop={() => setLoopCreateModalOpen(true)}
-                forcedListMode={forcedListMode}
-                onListModeChange={() => setForcedListMode(undefined)}
-                effectiveMobilePanel={effectiveMobilePanel}
-                onOpenPost={handleOpenPost}
-              />
-            ) : (
-              <ItemsPage
-                selectedTodoId={state.selectedTodoId}
-                onOpenCreateModal={() => setTodoModalOpen(true)}
-                onSelectTodo={handleSelectTodo}
-                onSelectLoop={handleSelectLoop}
-                onCreateLoop={() => setLoopCreateModalOpen(true)}
-                loopUpdateCount={loopUpdateCount}
-                forcedListMode={forcedListMode}
-                onListModeChange={() => setForcedListMode(undefined)}
-                effectiveMobilePanel={effectiveMobilePanel}
-                onOpenPost={handleOpenPost}
-              />
-            )
+            <ItemsPage
+              selectedTodoId={state.selectedTodoId}
+              onOpenCreateModal={() => setTodoModalOpen(true)}
+              onSelectTodo={handleSelectTodo}
+              onSelectLoop={handleSelectLoop}
+              onCreateLoop={() => setLoopCreateModalOpen(true)}
+              loopUpdateCount={loopUpdateCount}
+              forcedListMode={forcedListMode}
+              onListModeChange={() => setForcedListMode(undefined)}
+              effectiveMobilePanel={effectiveMobilePanel}
+              onOpenPost={handleOpenPost}
+              isMobile={isMobile}
+            />
           )}
 
           {/* 环路页面 */}
