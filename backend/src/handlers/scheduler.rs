@@ -3,7 +3,7 @@ use axum::{
 };
 
 use crate::handlers::{ApiJson, AppError, AppState};
-use crate::models::{ApiResponse, Todo, UpdateSchedulerRequest};
+use crate::models::{ApiResponse, Todo, TodoCenterItem, UpdateSchedulerRequest};
 use crate::service_context::ServiceContext;
 
 #[axum::debug_handler]
@@ -11,7 +11,7 @@ pub async fn update_scheduler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     ApiJson(req): ApiJson<UpdateSchedulerRequest>,
-) -> Result<ApiResponse<Todo>, AppError> {
+) -> Result<ApiResponse<TodoCenterItem>, AppError> {
     // Get existing todo to preserve its timezone if not provided
     let existing_todo = state.db.get_todo(id).await?;
     let existing_tz = existing_todo.as_ref().and_then(|t| t.scheduler_timezone.clone());
@@ -82,8 +82,14 @@ pub async fn update_scheduler(
             .await?;
     }
 
-    let todo = state.require_todo(id).await?;
-    Ok(ApiResponse::ok(todo))
+    // 返回 TodoCenterItem（含重新计算的 computed_bucket），符合设计文档：
+    // 暂停/恢复/取消时间驱动应「返回重新计算后的 computed_bucket」。
+    let item = state
+        .db
+        .get_todo_center_item(id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(ApiResponse::ok(item))
 }
 
 #[derive(Debug, serde::Deserialize)]

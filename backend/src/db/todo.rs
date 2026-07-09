@@ -47,6 +47,7 @@ pub struct TodoCenterAggregates {
     pub last_exec_map: std::collections::HashMap<i64, crate::db::LatestExecutionSummary>,
     pub consecutive_fail_map: std::collections::HashMap<i64, i64>,
     pub last_webhook_map: std::collections::HashMap<i64, String>,
+    pub slash_command_map: std::collections::HashMap<i64, String>,
 }
 
 impl Database {
@@ -174,6 +175,7 @@ impl Database {
         &self,
         workspace_id: Option<i64>,
         bucket: Option<ComputedBucket>,
+        search: Option<&str>,
     ) -> Result<Vec<TodoCenterItem>, sea_orm::DbErr> {
         // 不过滤 archived_at：已归档事项也要在「已归档」分类出现
         let mut query = todos::Entity::find()
@@ -187,27 +189,44 @@ impl Database {
         // 一次性批量补算 loop 引用计数/引用 Loop 摘要与执行相关聚合，避免逐 todo N+1
         let ids: Vec<i64> = models.iter().map(|m| m.id).collect();
         let tag_map = self.fetch_tag_ids_for_many(&ids).await?;
-        let aggs = TodoCenterAggregates {
-            loop_count_map: self.count_enabled_loop_steps_by_todos(&ids).await?,
-            referencing_loops_map: self.get_referencing_loops_for_todos(&ids).await?,
-            last_exec_map: self.get_latest_execution_summaries_for_todos(&ids).await?,
-            consecutive_fail_map: self.get_consecutive_failure_counts_for_todos(&ids).await?,
-            last_webhook_map: self.get_last_webhook_trigger_for_todos(&ids).await?,
-        };
+        let aggs = self.build_center_aggregates(&ids).await?;
 
-        // 组装 TodoCenterItem，并按 bucket 过滤
+        // 组装 TodoCenterItem，按 bucket + search 过滤（分页前完成，保证 Tab 数量正确）
+        let kw = search.map(str::to_ascii_lowercase);
         let mut items = Vec::with_capacity(models.len());
         for m in models {
             let tag_ids = tag_map.get(&m.id).cloned().unwrap_or_default();
             let todo = Self::model_to_todo(m, tag_ids);
+            // search 在组装前按 title/prompt 子串过滤（大小写不敏感）
+            if let Some(ref k) = kw {
+                if !todo.title.to_ascii_lowercase().contains(k)
+                    && !todo.prompt.to_ascii_lowercase().contains(k)
+                {
+                    continue;
+                }
+            }
             let item = Self::build_center_item(todo, &aggs);
-            // 内存层分桶过滤：分页前完成，保证 Tab 数量正确
             // 用 map_or 而非 is_none_or：后者稳定于 1.82，当前 MSRV 1.81 不支持
             if bucket.map_or(true, |b| b == item.computed_bucket) {
                 items.push(item);
             }
         }
         Ok(items)
+    }
+
+    /// 批量构造 TodoCenterAggregates（列表与单条路径共用，避免两处重复构造）。
+    async fn build_center_aggregates(
+        &self,
+        ids: &[i64],
+    ) -> Result<TodoCenterAggregates, sea_orm::DbErr> {
+        Ok(TodoCenterAggregates {
+            loop_count_map: self.count_enabled_loop_steps_by_todos(ids).await?,
+            referencing_loops_map: self.get_referencing_loops_for_todos(ids).await?,
+            last_exec_map: self.get_latest_execution_summaries_for_todos(ids).await?,
+            consecutive_fail_map: self.get_consecutive_failure_counts_for_todos(ids).await?,
+            last_webhook_map: self.get_last_webhook_trigger_for_todos(ids).await?,
+            slash_command_map: self.get_bound_slash_commands_for_todos(ids).await?,
+        })
     }
 
     /// 由已载入的 Todo + 批量聚合结果组装单个 TodoCenterItem（纯函数，便于复用与单测）。
@@ -236,6 +255,7 @@ impl Database {
             .copied()
             .unwrap_or(0);
         let last_webhook_trigger_at = aggs.last_webhook_map.get(&todo.id).cloned();
+        let bound_slash_command = aggs.slash_command_map.get(&todo.id).cloned();
         TodoCenterItem {
             todo,
             computed_bucket,
@@ -245,6 +265,7 @@ impl Database {
             referencing_loops,
             consecutive_failure_count,
             last_webhook_trigger_at,
+            bound_slash_command,
         }
     }
 
@@ -260,13 +281,7 @@ impl Database {
             return Ok(None);
         };
         let ids = vec![id];
-        let aggs = TodoCenterAggregates {
-            loop_count_map: self.count_enabled_loop_steps_by_todos(&ids).await?,
-            referencing_loops_map: self.get_referencing_loops_for_todos(&ids).await?,
-            last_exec_map: self.get_latest_execution_summaries_for_todos(&ids).await?,
-            consecutive_fail_map: self.get_consecutive_failure_counts_for_todos(&ids).await?,
-            last_webhook_map: self.get_last_webhook_trigger_for_todos(&ids).await?,
-        };
+        let aggs = self.build_center_aggregates(&ids).await?;
         Ok(Some(Self::build_center_item(todo, &aggs)))
     }
 
@@ -1645,7 +1660,7 @@ mod todo_center_tests {
     /// 日常视图（get_todos_by_workspace_id）不返回已归档事项。
     /// 这是归档「从日常视图隐藏」语义的落地点。
     #[tokio::test]
-    async fn test_daily_list_excludes_archived() {
+    async fn test_get_todos_by_workspace_id_excludes_archived() {
         let db = fresh_db().await;
         let id = seed_todo(&db, "归档项").await;
         let before = db.get_todos_by_workspace_id(None).await.unwrap();
@@ -1701,12 +1716,12 @@ mod todo_center_tests {
         db.archive_todo(archived_id).await.unwrap();
 
         // 不过滤：应同时含两类
-        let all = db.get_todo_center(None, None).await.unwrap();
+        let all = db.get_todo_center(None, None, None).await.unwrap();
         assert_eq!(all.len(), 2, "未过滤应返回全部非软删事项");
 
         // 手动桶
         let manual = db
-            .get_todo_center(None, Some(ComputedBucket::Manual))
+            .get_todo_center(None, Some(ComputedBucket::Manual), None)
             .await
             .unwrap();
         assert_eq!(manual.len(), 1);
@@ -1715,7 +1730,7 @@ mod todo_center_tests {
 
         // 已归档桶
         let archived = db
-            .get_todo_center(None, Some(ComputedBucket::Archived))
+            .get_todo_center(None, Some(ComputedBucket::Archived), None)
             .await
             .unwrap();
         assert_eq!(archived.len(), 1);
@@ -1740,10 +1755,47 @@ mod todo_center_tests {
         .await
         .expect("insert step");
 
-        let items = db.get_todo_center(None, None).await.unwrap();
+        let items = db.get_todo_center(None, None, None).await.unwrap();
         let item = items.iter().find(|i| i.todo.id == id).expect("todo present");
         assert_eq!(item.used_by_loop_step_count, 1, "应聚合到 1 次启用引用");
         assert_eq!(item.computed_bucket, ComputedBucket::LoopDriven);
+    }
+
+    /// get_todo_center search 参数：按 title/prompt 子串过滤（大小写不敏感）。
+    #[tokio::test]
+    async fn test_get_todo_center_search_filters_by_title() {
+        let db = fresh_db().await;
+        seed_todo(&db, "修复登录").await;
+        seed_todo(&db, "优化prompt").await;
+        // 全量应含两条
+        let all = db.get_todo_center(None, None, None).await.unwrap();
+        assert_eq!(all.len(), 2);
+        // search="登录" 只命中第一条
+        let hit = db.get_todo_center(None, None, Some("登录")).await.unwrap();
+        assert_eq!(hit.len(), 1);
+        assert_eq!(hit[0].todo.title, "修复登录");
+        // 大小写不敏感：search="PROMPT" 命中 prompt 子串
+        let hit2 = db.get_todo_center(None, None, Some("PROMPT")).await.unwrap();
+        assert_eq!(hit2.len(), 1);
+        assert_eq!(hit2[0].todo.title, "优化prompt");
+    }
+
+    /// get_todo_center_item：不存在的 id 返回 None（archive/restore/webhook 据此回 404）。
+    #[tokio::test]
+    async fn test_get_todo_center_item_not_found() {
+        let db = fresh_db().await;
+        assert!(db.get_todo_center_item(99999).await.unwrap().is_none());
+    }
+
+    /// get_todo_center_item：单条路径与列表口径一致（manual 分类 + 字段填充）。
+    #[tokio::test]
+    async fn test_get_todo_center_item_assembles_manual() {
+        let db = fresh_db().await;
+        let id = seed_todo(&db, "单查").await;
+        let item = db.get_todo_center_item(id).await.unwrap().expect("应存在");
+        assert_eq!(item.todo.id, id);
+        assert_eq!(item.computed_bucket, ComputedBucket::Manual);
+        assert_eq!(item.used_by_loop_step_count, 0);
     }
 
     /// build_center_item 纯函数：最近执行记录摘要正确映射到 last_execution_* 字段。
@@ -1849,6 +1901,7 @@ mod todo_center_tests {
             last_exec_map: Default::default(),
             consecutive_fail_map: Default::default(),
             last_webhook_map: Default::default(),
+            slash_command_map: Default::default(),
         }
     }
 
@@ -1859,10 +1912,8 @@ mod todo_center_tests {
     ) -> TodoCenterAggregates {
         TodoCenterAggregates {
             loop_count_map,
-            referencing_loops_map: Default::default(),
             last_exec_map,
-            consecutive_fail_map: Default::default(),
-            last_webhook_map: Default::default(),
+            ..empty_aggs()
         }
     }
 

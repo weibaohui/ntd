@@ -245,6 +245,10 @@ pub struct TodoCenterItem {
     /// 仅事件驱动卡片展示「最近触发时间」用；手动「执行一次」不顶替该时间。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_webhook_trigger_at: Option<String>,
+    /// 绑定的工作空间斜杠命令（command_type='todo' 绑定该 todo 的第一条）。
+    /// 卡片展示「绑定命令: /xxx」；手动触发 Tab 可据此筛「仅看可命令触发」。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound_slash_command: Option<String>,
 }
 
 /// Loop 引用摘要：事项中心 Loop 驱动卡片展示「所属 Loop」用。

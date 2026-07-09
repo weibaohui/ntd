@@ -21,6 +21,32 @@ use crate::db::Database;
 
 // ====== Loop 主体 ======
 
+/// 把 `SELECT todo_id, loop_id, loop_name` 的结果行按 todo_id 分组成 LoopRefSummary 列表。
+/// 抽出以让 get_referencing_loops_for_todos 低于 30 行。
+fn group_loop_refs_by_todo(
+    rows: Vec<sea_orm::QueryResult>,
+) -> std::collections::HashMap<i64, Vec<crate::models::LoopRefSummary>> {
+    let mut map: std::collections::HashMap<i64, Vec<crate::models::LoopRefSummary>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        let todo_id: i64 = match row.try_get_by("todo_id") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let loop_id: i64 = match row.try_get_by("loop_id") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if let Ok(loop_name) = row.try_get_by::<String, _>("loop_name") {
+            map.entry(todo_id).or_default().push(crate::models::LoopRefSummary {
+                loop_id,
+                loop_name,
+            });
+        }
+    }
+    map
+}
+
 impl Database {
     pub async fn list_loops(&self) -> Result<Vec<loops::Model>, sea_orm::DbErr> {
         loops::Entity::find()
@@ -695,36 +721,40 @@ impl Database {
         if todo_ids.is_empty() {
             return Ok(std::collections::HashMap::new());
         }
-        let values: Vec<sea_orm::Value> = todo_ids.iter().map(|&id| id.into()).collect();
-        let placeholders = std::iter::repeat("?").take(todo_ids.len()).collect::<Vec<_>>().join(",");
+        let (placeholders, values) = Database::in_clause(todo_ids);
         // JOIN loops 取 name；ORDER BY todo_id, loop_id 保证输出稳定可测
         let sql = format!(
-            "SELECT ls.todo_id, l.id as loop_id, l.name as loop_name \
-             FROM loop_steps ls \
+            "SELECT ls.todo_id, l.id as loop_id, l.name as loop_name FROM loop_steps ls \
              INNER JOIN loops l ON l.id = ls.loop_id \
              WHERE ls.enabled = 1 AND ls.todo_id IN ({placeholders}) \
              ORDER BY ls.todo_id ASC, l.id ASC"
         );
-        let rows = self
+        let rows = self.query_all_sql(sql, values).await?;
+        Ok(group_loop_refs_by_todo(rows))
+    }
+
+    /// 单个 todo 被多少条 loop_steps 引用（**不区分 enabled**）。
+    ///
+    /// 删除校验专用：设计文档风险三要求删除前查 `loop_steps.todo_id` 引用，
+    /// 关注的是数据完整性（避免悬空 FK），而非是否参与执行。被禁用环节引用也算引用——
+    /// 否则删后该 step 被重新启用时会指向已删除事项。
+    pub async fn count_loop_steps_by_todo(
+        &self,
+        todo_id: i64,
+    ) -> Result<i64, sea_orm::DbErr> {
+        let (placeholders, values) = Database::in_clause(&[todo_id]);
+        let sql =
+            format!("SELECT COUNT(*) AS cnt FROM loop_steps WHERE todo_id IN ({placeholders})");
+        let row = self
             .conn
-            .query_all(sea_orm::Statement::from_sql_and_values(
+            .query_one(sea_orm::Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 sql,
                 values,
             ))
-            .await?;
-        let mut map: std::collections::HashMap<i64, Vec<crate::models::LoopRefSummary>> =
-            std::collections::HashMap::new();
-        for row in rows {
-            let todo_id: i64 = row.try_get_by("todo_id")?;
-            let loop_id: i64 = row.try_get_by("loop_id")?;
-            let loop_name: String = row.try_get_by("loop_name")?;
-            map.entry(todo_id).or_default().push(crate::models::LoopRefSummary {
-                loop_id,
-                loop_name,
-            });
-        }
-        Ok(map)
+            .await?
+            .ok_or(sea_orm::DbErr::RecordNotFound("count row missing".into()))?;
+        row.try_get_by("cnt")
     }
 
     /// 参数数量由 loop_steps 表 schema 决定
@@ -1511,7 +1541,7 @@ mod loop_step_count_tests {
     /// 禁用环节不计入：enabled=0 的 step 不参与 Loop 执行，count 应为 0。
     /// 与批量版语义一致（设计文档：只统计 enabled=1）。
     #[tokio::test]
-    async fn test_count_excludes_disabled_steps() {
+    async fn test_count_enabled_loop_steps_by_todo_excludes_disabled_steps() {
         let db = fresh_db().await;
         let todo_id = seed_todo(&db, "仅被禁用环节引用").await;
         let loop_id = seed_loop(&db, "L2").await;
@@ -1524,6 +1554,61 @@ mod loop_step_count_tests {
             db.count_enabled_loop_steps_by_todo(todo_id).await.unwrap(),
             0,
             "禁用环节不应计入"
+        );
+    }
+
+    /// count_enabled_loop_steps_by_todos（批量）：多 todo 一次聚合，禁用不计。
+    #[tokio::test]
+    async fn test_count_enabled_loop_steps_by_todos_batch() {
+        let db = fresh_db().await;
+        let t1 = seed_todo(&db, "T1").await;
+        let t2 = seed_todo(&db, "T2").await;
+        let lp = seed_loop(&db, "L").await;
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) VALUES ({lp}, 'a', {t1}, 1)"
+        ))
+        .await
+        .expect("insert a");
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) VALUES ({lp}, 'b', {t1}, 1)"
+        ))
+        .await
+        .expect("insert b");
+        // t2 仅被禁用环节引用
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) VALUES ({lp}, 'c', {t2}, 0)"
+        ))
+        .await
+        .expect("insert c");
+        let map = db.count_enabled_loop_steps_by_todos(&[t1, t2]).await.unwrap();
+        assert_eq!(map.get(&t1).copied().unwrap_or(0), 2, "t1 应计数 2 条启用");
+        assert_eq!(map.get(&t2).copied().unwrap_or(0), 0, "t2 仅禁用环节");
+    }
+
+    /// count_loop_steps_by_todo（删除校验用，不区分 enabled）：禁用环节也算引用。
+    /// 否则删后该 step 被重新启用会指向已删除事项（设计文档风险三）。
+    #[tokio::test]
+    async fn test_count_loop_steps_by_todo_includes_disabled() {
+        let db = fresh_db().await;
+        let todo_id = seed_todo(&db, "被禁用环节引用").await;
+        let loop_id = seed_loop(&db, "L").await;
+        // 只插一条禁用 step
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) VALUES ({loop_id}, 's', {todo_id}, 0)"
+        ))
+        .await
+        .expect("insert disabled step");
+        // 删除校验口径：禁用也算 → 计数 1（应拒绝删除）
+        assert_eq!(
+            db.count_loop_steps_by_todo(todo_id).await.unwrap(),
+            1,
+            "删除校验应计入禁用环节"
+        );
+        // 对照：enabled 口径为 0
+        assert_eq!(
+            db.count_enabled_loop_steps_by_todo(todo_id).await.unwrap(),
+            0,
+            "分桶口径不计禁用环节"
         );
     }
 

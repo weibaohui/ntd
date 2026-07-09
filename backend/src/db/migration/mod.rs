@@ -17,6 +17,7 @@ mod v55;
 mod v56;
 mod v57;
 mod v58;
+mod v59;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -59,6 +60,8 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v57::V57AddWikiTimeoutSecs),
         // V58 在 V57 之后：todos 新增 archived_at，支撑事项中心「已归档」分类
         Box::new(v58::V58AddTodosArchivedAt),
+        // V59 在 V58 之后：为 archived_at 建索引，加速日常视图的未归档过滤
+        Box::new(v59::V59AddTodosArchivedAtIndex),
     ]
 }
 

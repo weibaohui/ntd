@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Empty, Input, Segmented, Spin, Table, Tag, message } from 'antd';
+import { Button, Empty, Input, Segmented, Select, Spin, Table, Tag, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { AppstoreOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
@@ -46,10 +46,20 @@ export function TodoCenterPage({ onSelectTodo, onSelectLoop, onOpenCreateModal }
   const { state } = useApp();
   const workspaceId = state.selectedWorkspace ?? undefined;
 
+  // 全量事项（后端已按 computed_bucket 分桶补算），前端再做筛选/分组
   const [items, setItems] = useState<TodoCenterItem[]>([]);
+  // 加载态控制 Spin + 刷新按钮 loading
   const [loading, setLoading] = useState(false);
+  // 当前 Tab（五类驱动），默认手动触发
   const [activeBucket, setActiveBucket] = useState<ComputedBucket>('manual');
+  // 搜索词：标题/prompt 子串，前端即时过滤（数据全量在端，无需回服务端）
   const [search, setSearch] = useState('');
+  // 状态筛选（设计文档工具栏「状态筛选」）：'all' 或具体 status
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  // 动作类型筛选（设计文档工具栏「动作类型筛选」）：'all' 或具体 action_type
+  const [actionTypeFilter, setActionTypeFilter] = useState<string>('all');
+  // 手动触发 Tab 专属：仅看绑定了斜杠命令的可命令触发事项（设计文档 manual 筛选项）
+  const [commandOnly, setCommandOnly] = useState(false);
   // 视图：卡片（默认，信息丰富）或紧凑列表（高密度扫描/批量场景）
   const [viewMode, setViewMode] = useState<'card' | 'list'>('card');
 
@@ -80,15 +90,26 @@ export function TodoCenterPage({ onSelectTodo, onSelectLoop, onOpenCreateModal }
     return counts;
   }, [items]);
 
-  // 当前 Tab 的卡片：先按分类，再按搜索词（标题/prompt 子串）过滤
+  // 当前 Tab 的卡片：按分类 + 搜索 + 状态 + 动作类型 + （手动 Tab）命令绑定过滤
   const visibleItems = useMemo(() => {
     const kw = search.trim().toLowerCase();
     return items.filter((it) => {
       if (it.computed_bucket !== activeBucket) return false;
+      if (statusFilter !== 'all' && it.status !== statusFilter) return false;
+      if (actionTypeFilter !== 'all' && (it.action_type ?? 'none') !== actionTypeFilter) return false;
+      // 手动触发 Tab 的「仅看可命令触发」：只留绑定了斜杠命令的事项
+      if (commandOnly && activeBucket === 'manual' && !it.bound_slash_command) return false;
       if (!kw) return true;
       return it.title.toLowerCase().includes(kw) || it.prompt.toLowerCase().includes(kw);
     });
-  }, [items, activeBucket, search]);
+  }, [items, activeBucket, search, statusFilter, actionTypeFilter, commandOnly]);
+
+  // 动作类型筛选项：从当前数据动态去重，避免硬编码漏掉新类型
+  const actionTypeOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const it of items) if (it.action_type) set.add(it.action_type);
+    return Array.from(set);
+  }, [items]);
 
   // 若当前 Tab 因操作后变空（如归档了最后一项），自动切回手动触发，避免停在空 Tab
   useEffect(() => {
@@ -152,6 +173,42 @@ export function TodoCenterPage({ onSelectTodo, onSelectLoop, onOpenCreateModal }
               value: b.value,
             }))}
           />
+        </div>
+
+        {/* 筛选栏（设计文档工具栏：状态筛选 + 动作类型筛选；手动 Tab 额外的「仅看可命令触发」） */}
+        <div className="todo-center-filters">
+          <Select
+            size="small"
+            value={statusFilter}
+            onChange={setStatusFilter}
+            style={{ width: 120 }}
+            options={[
+              { value: 'all', label: '全部状态' },
+              { value: 'pending', label: '待执行' },
+              { value: 'running', label: '运行中' },
+              { value: 'completed', label: '已完成' },
+              { value: 'failed', label: '失败' },
+            ]}
+            data-testid="todo-center-status-filter"
+          />
+          <Select
+            size="small"
+            value={actionTypeFilter}
+            onChange={setActionTypeFilter}
+            style={{ width: 140 }}
+            options={[{ value: 'all', label: '全部来源' }, ...actionTypeOptions.map((t) => ({ value: t, label: t }))]}
+            data-testid="todo-center-action-filter"
+          />
+          {activeBucket === 'manual' && (
+            <label className="todo-center-cmd-only" data-testid="todo-center-command-only">
+              <input
+                type="checkbox"
+                checked={commandOnly}
+                onChange={(e) => setCommandOnly(e.target.checked)}
+              />
+              仅看可命令触发
+            </label>
+          )}
         </div>
 
         {visibleItems.length === 0 ? (

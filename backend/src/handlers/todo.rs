@@ -63,12 +63,15 @@ pub async fn get_todos(
 
 /// 事项中心查询参数。
 /// `bucket` 为空或非法时返回全部分类（前端可自行按 computed_bucket 分组）。
+/// `search` 为标题/prompt 子串过滤（设计文档 API 示例带 search 参数）。
 #[derive(Debug, serde::Deserialize)]
 pub struct TodoCenterQuery {
     #[serde(default)]
     pub workspace_id: Option<i64>,
     #[serde(default)]
     pub bucket: Option<String>,
+    #[serde(default)]
+    pub search: Option<String>,
 }
 
 /// `GET /api/todos/center`：事项中心五类驱动视图。
@@ -81,7 +84,8 @@ pub async fn get_todo_center(
 ) -> Result<ApiResponse<Vec<TodoCenterItem>>, AppError> {
     // 解析 bucket 串为枚举；空/非法 → None = 不过滤
     let bucket = params.bucket.as_deref().and_then(ComputedBucket::parse_query);
-    let items = state.db.get_todo_center(params.workspace_id, bucket).await?;
+    let search = params.search.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let items = state.db.get_todo_center(params.workspace_id, bucket, search).await?;
     Ok(ApiResponse::ok(items))
 }
 
@@ -418,13 +422,13 @@ pub async fn delete_todo(
     // Get todo info before deletion for hooks
     state.db.get_todo(id).await?;
 
-    // 引用校验：被启用 loop_steps 引用的 todo 不允许直接删除。
-    // 软删后 Loop 执行仍会指向该 todo，造成「环节指向已删除事项」的悬空引用
-    // （设计文档风险三指出的现状缺陷）。应先到 Loop 编辑页移除引用再删。
-    let loop_ref_count = state.db.count_enabled_loop_steps_by_todo(id).await?;
+    // 引用校验：被 loop_steps 引用的 todo 不允许直接删除（不区分 enabled）。
+    // 关注数据完整性：禁用环节也算引用，否则删后该 step 被重新启用会指向已删除事项
+    // （设计文档风险三：「loop_steps.todo_id 引用」校验，无 enabled 限定）。
+    let loop_ref_count = state.db.count_loop_steps_by_todo(id).await?;
     if loop_ref_count > 0 {
         return Err(AppError::BadRequest(format!(
-            "该事项被 {loop_ref_count} 个启用的 Loop 环节引用，请先到 Loop 编辑页移除引用后再删除"
+            "该事项被 {loop_ref_count} 个 Loop 环节引用，请先到 Loop 编辑页移除引用后再删除"
         )));
     }
 
