@@ -669,3 +669,126 @@ async fn test_delete_wiki_file_log_forbidden() {
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
+
+// ====== Loop 导入 merge 语义：原名保留 + 同名覆盖（对齐 Todo） ======
+
+/// 构造最小可用的 loop 导出 YAML：一个 loop + 一个 step-todo，workspace_id 指向给定 ws。
+fn loop_merge_yaml(name: &str, ws_id: i64) -> String {
+    format!(
+r#"version: "1.0"
+type: loop
+created_at: "2026-07-09T00:00:00Z"
+source: nothing-todo
+schema_version: 1
+tags: []
+review_templates: []
+todos:
+  - id: "@todo_1"
+    title: "merge-todo"
+    prompt: "p"
+    status: "pending"
+    executor: null
+    scheduler_enabled: false
+    webhook_enabled: false
+    acceptance_criteria: null
+    auto_review_enabled: false
+    review_template_id: null
+    review_template_name: null
+    kind: "0"
+    tag_ids: []
+    tag_names: []
+    is_abnormal_handler: false
+    action_type: null
+    action_key: null
+    workspace_id: {ws}
+    workspace_path: "/tmp/test-api-workspace"
+loops:
+  - id: "@loop_1"
+    name: "{name}"
+    description: ""
+    icon: ""
+    color: ""
+    status: "paused"
+    webhook_enabled: false
+    limits_config: {{}}
+    review_template_id: null
+    review_template_name: null
+    abnormal_handler_todo_id: null
+    abnormal_handler_todo_title: null
+    abnormal_handler_trigger_on: []
+    tag_ids: []
+    tag_names: []
+    triggers: []
+    steps:
+      - id: "@step_1"
+        name: "s1"
+        description: ""
+        todo_id: "@todo_1"
+        todo_title: "merge-todo"
+        order_index: 0
+        run_mode: "auto"
+        skip_on_source_failed: false
+        min_rating: null
+        unrated_policy: "skip"
+        on_success: "continue"
+        success_goto_step_id: null
+        success_goto_step_name: null
+        on_rating_fail: "stop"
+        fail_goto_step_id: null
+        fail_goto_step_name: null
+        review_type: "none"
+        enabled: true
+    workspace_id: {ws}
+    workspace_path: "/tmp/test-api-workspace"
+"#,
+        name = name,
+        ws = ws_id
+    )
+}
+
+/// 取指定工作空间下名为 name 的 loop 数量（通过 list 接口）
+async fn count_loops_named(app: axum::Router, ws_id: i64, name: &str) -> usize {
+    let uri = format!("/api/loops?workspace_id={}", ws_id);
+    let req = Request::builder().uri(&uri).body(Body::empty()).unwrap();
+    let response = app.oneshot(req).await.unwrap();
+    let body: serde_json::Value = read_json_body(response).await;
+    body["data"].as_array().unwrap_or(&vec![]).iter().filter(|l| l["name"] == name).count()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_loop_merge_keeps_original_name() {
+    // 导入后 loop 名应保持原名，不再追加 "-合并" 后缀
+    let (app, ws_id) = create_test_app().await;
+    let yaml = loop_merge_yaml("我的环路", ws_id);
+    let req = json_request("POST", "/api/loops/merge", json!({
+        "yaml": yaml, "workspace_id": null, "workspace_overrides": {}
+    }));
+    let response = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = read_json_body(response).await;
+    assert_eq!(body["code"], 0, "merge 应成功: {:?}", body);
+    // 原名命中 1 个，"-合并" 后缀命中 0 个
+    assert_eq!(count_loops_named(app.clone(), ws_id, "我的环路").await, 1);
+    assert_eq!(count_loops_named(app, ws_id, "我的环路-合并").await, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_loop_merge_same_name_overwrites() {
+    // 同名 loop 二次导入 → 覆盖（删旧重建），不产生重复
+    let (app, ws_id) = create_test_app().await;
+    let yaml = loop_merge_yaml("dup-loop", ws_id);
+    let req = json_request("POST", "/api/loops/merge", json!({
+        "yaml": yaml, "workspace_id": null, "workspace_overrides": {}
+    }));
+    let r1 = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(r1.status(), StatusCode::OK);
+    assert_eq!(count_loops_named(app.clone(), ws_id, "dup-loop").await, 1);
+
+    // 再次导入同名 → 覆盖，仍只 1 个
+    let req2 = json_request("POST", "/api/loops/merge", json!({
+        "yaml": yaml, "workspace_id": null, "workspace_overrides": {}
+    }));
+    let r2 = app.clone().oneshot(req2).await.unwrap();
+    assert_eq!(r2.status(), StatusCode::OK);
+    assert_eq!(count_loops_named(app, ws_id, "dup-loop").await, 1);
+}

@@ -22,6 +22,12 @@ interface WorkspaceSwitcherProps {
   /** 是否显示下拉菜单中"新建工作空间"选项，默认 false */
   showAddOption?: boolean;
   mode?: WorkspaceSwitcherMode;
+  /**
+   * 外部预加载的工作空间列表。传入时直接复用、跳过内部 loadDirs——
+   * 用于表格里 N 行复用同一份列表，避免每行各发一次 getProjectDirectories。
+   * 不传时维持原行为：组件自己加载并监听 projectDirectoryAdded 事件刷新。
+   */
+  dirs?: ProjectDirectory[];
 }
 
 /**
@@ -42,9 +48,12 @@ export function WorkspaceSwitcher({
   onManage,
   showAddOption = false,
   mode = 'full',
+  dirs: externalDirs,
 }: WorkspaceSwitcherProps) {
   const { message } = App.useApp();
-  const [dirs, setDirs] = useState<ProjectDirectory[]>([]);
+  // 内部状态仅在外部未提供 dirs 时使用；提供外部 dirs 时跳过加载，由父组件统一管理列表
+  const [internalDirs, setInternalDirs] = useState<ProjectDirectory[]>([]);
+  const dirs = externalDirs ?? internalDirs;
   const [loading, setLoading] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddSaving, setQuickAddSaving] = useState(false);
@@ -54,22 +63,25 @@ export function WorkspaceSwitcher({
     setLoading(true);
     try {
       const list = await db.getProjectDirectories();
-      setDirs(list);
+      setInternalDirs(list);
     } catch (err) {
       message.error(`加载工作空间失败: ${err instanceof Error ? err.message : '未知错误'}`);
-      setDirs([]);
+      setInternalDirs([]);
     } finally {
       setLoading(false);
     }
   }, [message]);
 
-  useEffect(() => { loadDirs(); }, [loadDirs]);
+  // 外部传入 dirs 时不在组件内加载，避免与父组件重复请求
+  useEffect(() => { if (externalDirs === undefined) loadDirs(); }, [loadDirs, externalDirs]);
 
   useEffect(() => {
+    // 外部传入 dirs 时也不监听事件刷新（由父组件决定何时重载）
+    if (externalDirs !== undefined) return;
     const handler = () => loadDirs();
     window.addEventListener('projectDirectoryAdded', handler);
     return () => window.removeEventListener('projectDirectoryAdded', handler);
-  }, [loadDirs]);
+  }, [loadDirs, externalDirs]);
 
   const selectedLabel = useMemo(() => {
     if (value == null) return '请选择工作空间';
@@ -129,8 +141,9 @@ export function WorkspaceSwitcher({
       message.success('工作空间已创建');
       quickAddForm.resetFields();
       setQuickAddOpen(false);
-      const dirs = await db.getProjectDirectories();
-      setDirs(dirs);
+      // 新建后刷新内部列表（仅 externalDirs 未提供时有效；外部传入时由父组件重载）
+      const list = await db.getProjectDirectories();
+      setInternalDirs(list);
       onChange(created.id);
       window.dispatchEvent(new CustomEvent('projectDirectoryAdded', { detail: { id: created.id } }));
     } catch (e) {

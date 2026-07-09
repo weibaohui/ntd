@@ -1,6 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Tabs, message } from 'antd';
-import { useApp } from '@/hooks/useApp';
 import * as db from '@/utils/database';
 import yaml from 'js-yaml';
 import { TodoBackupTab } from './backup/TodoBackupTab';
@@ -8,10 +7,48 @@ import { SkillBackupTab } from './backup/SkillBackupTab';
 import { DatabaseBackupTab } from './backup/DatabaseBackupTab';
 import { LoopBackupTab } from '@/components/settings/backup/LoopBackupTab';
 import { ImportExportModals, BackupDataYaml, ImportItem } from './backup/ImportExportModals';
+import type { ProjectDirectory } from '@/utils/database/todos';
+
+// 备份子 tab 的合法 key——每个子 tab 对应 URL 里的一个 sub 参数，支持深链直达
+const BACKUP_SUB_KEYS = ['todo', 'skill-backup', 'loop', 'database'] as const;
+type BackupSubKey = (typeof BACKUP_SUB_KEYS)[number];
+
+// 从 hash URL（如 #/settings?tab=backup&sub=loop）解析当前备份子 tab
+function getBackupSubFromHash(): BackupSubKey {
+  const hash = window.location.hash;
+  const qIdx = hash.indexOf('?');
+  if (qIdx < 0) return 'todo';
+  const sub = new URLSearchParams(hash.slice(qIdx + 1)).get('sub');
+  // 只认合法 key，否则回退到「事项备份」
+  return sub && (BACKUP_SUB_KEYS as readonly string[]).includes(sub) ? (sub as BackupSubKey) : 'todo';
+}
+
+// 把当前备份子 tab 写回 hash URL（replaceState 不污染浏览历史，仅更新深链）
+function setBackupSubInHash(sub: BackupSubKey) {
+  const hash = window.location.hash;
+  const qIdx = hash.indexOf('?');
+  const path = qIdx < 0 ? hash : hash.slice(0, qIdx);
+  const params = new URLSearchParams(qIdx < 0 ? '' : hash.slice(qIdx + 1));
+  params.set('sub', sub);
+  window.history.replaceState(null, '', `${path}?${params.toString()}`);
+}
+
 
 export function BackupPanel() {
-  const { state } = useApp();
-  const { todos } = state;
+  // 备份子 tab：初始值来自 URL（深链），切换时同步回 URL
+  const [backupSub, setBackupSub] = useState<BackupSubKey>(getBackupSubFromHash);
+  // 浏览器前进/后退时按 URL 同步子 tab
+  useEffect(() => {
+    const onPop = () => setBackupSub(getBackupSubFromHash());
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  const handleBackupSubChange = useCallback((key: string) => {
+    if (!(BACKUP_SUB_KEYS as readonly string[]).includes(key)) return;
+    setBackupSub(key as BackupSubKey);
+    setBackupSubInHash(key as BackupSubKey);
+  }, []);
+
   // Database backup state
   const [backupStatus, setBackupStatus] = useState<{
     auto_backup_enabled: boolean;
@@ -55,13 +92,51 @@ export function BackupPanel() {
 
   // Import/Export state
   const [importing, setImporting] = useState(false);
-  const [exportModalOpen, setExportModalOpen] = useState(false);
-  const [exportTodoKeys, setExportTodoKeys] = useState<number[]>([]);
-  const [exportingSelected, setExportingSelected] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardItems, setWizardItems] = useState<ImportItem[]>([]);
   const [wizardTags, setWizardTags] = useState<{ name: string; color: string }[]>([]);
   const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
+  // 导入目标工作空间列表（父组件加载一次，下发给每行 WorkspaceSwitcher 复用）
+  const [workspaces, setWorkspaces] = useState<ProjectDirectory[]>([]);
+  // 逐行工作空间选择：ImportItem.key → workspaceId（null=未匹配/待指定）
+  const [rowWorkspaceMap, setRowWorkspaceMap] = useState<Record<number, number | null>>({});
+  // 当前库已有 todo：用于按「目标工作空间 + 标题 + prompt」动态判同名（对齐后端 merge_backup 判重口径）
+  const [existingTodos, setExistingTodos] = useState<{ title: string; prompt: string; workspace_id: number | null }[]>([]);
+  // 用户显式选「覆盖」的同名项 key（未在其中且同名的 = 默认跳过）
+  const [userOverwriteKeys, setUserOverwriteKeys] = useState<Set<number>>(new Set());
+
+  // 导入来源工作空间检测（从备份文件中提取，用于预览提示）
+  const [sourceWorkspaceInfo, setSourceWorkspaceInfo] = useState<{ id: number; path: string } | null>(null);
+
+  // 加载工作空间列表（不再选全局默认——逐行按各自原 id 匹配）
+  const loadWorkspaces = async (): Promise<ProjectDirectory[]> => {
+    try {
+      const ws = await db.getProjectDirectories();
+      setWorkspaces(ws);
+      return ws;
+    } catch (e) {
+      console.error('Failed to load workspaces', e);
+      return [];
+    }
+  };
+
+  // 设置某行的目标工作空间（供 ImportExportModals 逐行回写）
+  const setRowWorkspaceId = (key: number, id: number | null) => {
+    setRowWorkspaceMap((prev) => ({ ...prev, [key]: id }));
+  };
+
+  // 按 wizardItems + 当前工作空间列表，初始化每行默认：原 id 命中→原 id，否则 null（未匹配）
+  const buildDefaultRowWorkspace = (
+    items: ImportItem[],
+    ws: ProjectDirectory[],
+  ): Record<number, number | null> => {
+    const map: Record<number, number | null> = {};
+    for (const it of items) {
+      const matched = it.workspace_id != null && ws.some((w) => w.id === it.workspace_id);
+      map[it.key] = matched ? (it.workspace_id as number) : null;
+    }
+    return map;
+  };
 
   // Load status
   useEffect(() => {
@@ -340,30 +415,45 @@ export function BackupPanel() {
       }
 
       const existingTodos = await db.getAllTodos();
-      const existingSet = new Set(existingTodos.map(t => `${t.title}\n${t.prompt}`));
+      setExistingTodos(existingTodos.map((t) => ({ title: t.title, prompt: t.prompt, workspace_id: t.workspace_id ?? null })));
+      // 用户覆盖选择按导入批次重置
+      setUserOverwriteKeys(new Set());
 
-      const items: ImportItem[] = data.todos.map((todo, idx) => {
-        const key = `${todo.title}\n${todo.prompt}`;
-        const exists = existingSet.has(key);
-        const existing = exists ? existingTodos.find(t => `${t.title}\n${t.prompt}` === key) : undefined;
-        return {
-          key: idx,
-          title: todo.title,
-          prompt: todo.prompt,
-          status: todo.status,
-          executor: todo.executor,
-          scheduler_enabled: todo.scheduler_enabled,
-          scheduler_config: todo.scheduler_config,
-          tag_names: todo.tag_names || [],
-          workspace_path: todo.workspace_path,
-          action: exists ? 'overwrite' as const : 'new' as const,
-          existingTitle: existing?.title,
-        };
-      });
+      // exists/action 不在此时静态判定：它们依赖用户逐行选定的目标工作空间，
+      // 改由下方的 itemsWithAction 动态派生（对齐后端 merge_backup 的判重口径）。
+      const items: ImportItem[] = data.todos.map((todo, idx) => ({
+        key: idx,
+        title: todo.title,
+        prompt: todo.prompt,
+        status: todo.status,
+        executor: todo.executor,
+        scheduler_enabled: todo.scheduler_enabled,
+        scheduler_config: todo.scheduler_config,
+        tag_names: todo.tag_names || [],
+        workspace_path: todo.workspace_path,
+        // 保留原始 workspace_id，供按行默认匹配与「来源」列展示
+        workspace_id: todo.workspace_id ?? null,
+        action: 'new',
+      }));
 
       setWizardTags(data.tags || []);
       setWizardItems(items);
       setSelectedRowKeys(items.map(i => i.key));
+
+      // 加载工作空间列表，并按行初始化默认归属（原 id 命中→原 id，否则 null 待指定）
+      const ws = await loadWorkspaces();
+      setRowWorkspaceMap(buildDefaultRowWorkspace(items, ws));
+
+      // 从备份文件提取原始工作空间信息，仅作预览提示（逐行匹配，不再自动选全局）
+      const firstTodoWithWs = data.todos.find((t) => t.workspace_id != null);
+      if (firstTodoWithWs?.workspace_id != null) {
+        setSourceWorkspaceInfo({
+          id: Number(firstTodoWithWs.workspace_id),
+          path: firstTodoWithWs.workspace_path || '',
+        });
+      } else {
+        setSourceWorkspaceInfo(null);
+      }
       setWizardOpen(true);
     } catch (err: any) {
       message.error('解析文件失败: ' + (err?.message || String(err)));
@@ -371,17 +461,46 @@ export function BackupPanel() {
     return false;
   };
 
+  // 按「目标工作空间 + 标题 + prompt」动态派生每条的 exists/action，对齐后端 merge_backup：
+  // 同一目标工作空间内 title+prompt 命中 → 同名（默认跳过，userOverwriteKeys 里的为覆盖）；否则新建。
+  // 这样用户改某行工作空间后，该行是否同名会随之重算，避免跨工作空间误判同名导致「覆盖」变新建。
+  const itemsWithAction: ImportItem[] = wizardItems.map((it) => {
+    const targetWsId = rowWorkspaceMap[it.key] ?? 0; // null → 0（未分配哨兵，与后端一致）
+    const exists = existingTodos.some(
+      (t) => t.title === it.title && t.prompt === it.prompt && (t.workspace_id ?? 0) === targetWsId,
+    );
+    const action = exists ? (userOverwriteKeys.has(it.key) ? 'overwrite' : 'skip') : 'new';
+    return { ...it, exists, action };
+  });
+
+  // 同名项动作：选「覆盖」记入 userOverwriteKeys，选「跳过」移出（默认即跳过）
+  const setItemsAction = (keys: number[], action: 'overwrite' | 'skip') => {
+    setUserOverwriteKeys((prev) => {
+      const next = new Set(prev);
+      for (const k of keys) {
+        if (action === 'overwrite') next.add(k); else next.delete(k);
+      }
+      return next;
+    });
+  };
+
   const handleWizardConfirm = async () => {
-    if (selectedRowKeys.length === 0) {
-      message.warning('请至少选择一项');
+    // 实际将导入：已勾选 且 action 非 skip（skip 不提交）；action 取动态派生值
+    const willImport = itemsWithAction.filter(
+      (item) => selectedRowKeys.includes(item.key) && item.action !== 'skip',
+    );
+    if (willImport.length === 0) {
+      message.warning('没有可导入的项（选中的均为「跳过」）');
       return;
     }
     setImporting(true);
     try {
-      const selectedTodos = wizardItems
-        .filter(item => selectedRowKeys.includes(item.key))
-        .map(({ key, action, existingTitle, ...todo }) => todo);
-      const msg = await db.mergeBackup(wizardTags, selectedTodos);
+      // 每条 todo 注入用户逐行选定的工作空间；全局 target 传 null，由后端按每条 workspace_id 解析
+      const selectedTodos = willImport.map(({ key, action, existingTitle, exists, ...todo }) => ({
+        ...todo,
+        workspace_id: rowWorkspaceMap[key] ?? null,
+      }));
+      const msg = await db.mergeBackup(wizardTags, selectedTodos, null);
       message.success(msg);
       setWizardOpen(false);
       window.location.reload();
@@ -392,49 +511,15 @@ export function BackupPanel() {
     }
   };
 
-  const handleExportSelected = async () => {
-    if (exportTodoKeys.length === 0) {
-      message.warning('请至少选择一项');
-      return;
-    }
-    setExportingSelected(true);
-    try {
-      const response = await fetch('/api/backup/export-selected', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/x-yaml' },
-        body: JSON.stringify({ todo_ids: exportTodoKeys }),
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      const yamlText = await response.text();
-      const blob = new Blob([yamlText], { type: 'application/x-yaml' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      a.download = `aietodo-backup-selected-${timestamp}.yaml`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      message.success(`已导出 ${exportTodoKeys.length} 项`);
-      setExportModalOpen(false);
-    } catch (err: any) {
-      message.error(err?.message || '导出失败');
-    } finally {
-      setExportingSelected(false);
-    }
-  };
-
   return (
     <div>
       <Tabs
-        defaultActiveKey="todo"
+        activeKey={backupSub}
+        onChange={handleBackupSubChange}
         items={[
           {
             key: 'todo',
-            label: 'Todo备份',
+            label: '事项备份',
             children: (
               <TodoBackupTab
                 todoBackupStatus={todoBackupStatus}
@@ -450,7 +535,6 @@ export function BackupPanel() {
                 onDeleteBackup={handleDeleteTodoBackup}
                 onDownloadBackupFile={handleDownloadTodoBackupFile}
                 onExportBackup={handleExportBackup}
-                onOpenExportModal={() => setExportModalOpen(true)}
                 onImportFile={handleImportFile}
               />
             ),
@@ -518,14 +602,15 @@ export function BackupPanel() {
         importing={importing}
         selectedRowKeys={selectedRowKeys}
         setSelectedRowKeys={setSelectedRowKeys}
-        wizardItems={wizardItems}
-        exportModalOpen={exportModalOpen}
-        setExportModalOpen={setExportModalOpen}
-        handleExportSelected={handleExportSelected}
-        exportingSelected={exportingSelected}
-        exportTodoKeys={exportTodoKeys}
-        setExportTodoKeys={setExportTodoKeys}
-        todos={todos}
+        wizardItems={itemsWithAction}
+        // 同名项动作批量/逐条设置
+        setItemsAction={setItemsAction}
+        // 逐行工作空间选择
+        workspaces={workspaces}
+        rowWorkspaceMap={rowWorkspaceMap}
+        setRowWorkspaceId={setRowWorkspaceId}
+        // 原始工作空间提示
+        sourceWorkspaceInfo={sourceWorkspaceInfo}
       />
     </div>
   );

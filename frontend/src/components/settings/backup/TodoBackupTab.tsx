@@ -20,7 +20,7 @@ export function TodoBackupTab({
   todoBackupStatus, autoTodoBackupEnabled, autoTodoBackupCron, autoTodoBackupMaxFiles, todoBackupLoading,
   setAutoTodoBackupEnabled, setAutoTodoBackupCron, setAutoTodoBackupMaxFiles,
   onTriggerBackup, onSaveAutoBackup, onDeleteBackup, onDownloadBackupFile,
-  onExportBackup, onOpenExportModal, onImportFile,
+  onExportBackup, onImportFile,
 }: {
   todoBackupStatus: BackupFilesInfo | null;
   autoTodoBackupEnabled: boolean;
@@ -35,7 +35,6 @@ export function TodoBackupTab({
   onDeleteBackup: (filename: string) => Promise<void>;
   onDownloadBackupFile: (filename: string) => void;
   onExportBackup: () => Promise<void>;
-  onOpenExportModal: () => void;
   onImportFile: (file: File) => Promise<boolean>;
 }) {
   return (
@@ -43,16 +42,11 @@ export function TodoBackupTab({
       <Card title="导出备份" size="small" style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <Typography.Paragraph type="secondary">
-            将 Todo 和标签导出为 YAML 文件，方便迁移和存档
+            将事项和标签导出为 YAML 文件，方便迁移和存档
           </Typography.Paragraph>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Button type="primary" icon={<DownloadOutlined />} onClick={onExportBackup} style={{ flex: 1 }}>
-              导出全部
-            </Button>
-            <Button icon={<DownloadOutlined />} onClick={onOpenExportModal} style={{ flex: 1 }}>
-              选择性导出
-            </Button>
-          </div>
+          <Button type="primary" icon={<DownloadOutlined />} onClick={onExportBackup}>
+            导出全部
+          </Button>
         </div>
       </Card>
 
@@ -76,10 +70,10 @@ export function TodoBackupTab({
         </div>
       </Card>
 
-      <Card title="Todo自动备份" size="small">
+      <Card title="事项自动备份" size="small">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <Typography.Paragraph type="secondary">
-            将 Todo 和标签打包备份到服务器，支持定时自动备份
+            将事项和标签打包备份到服务器，支持定时自动备份
           </Typography.Paragraph>
           <div style={{ display: 'flex', gap: 8 }}>
             <Button icon={<DatabaseOutlined />} onClick={onTriggerBackup} loading={todoBackupLoading}>

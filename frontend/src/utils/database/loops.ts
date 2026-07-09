@@ -217,3 +217,10 @@ export async function exportLoop(id: number): Promise<string> {
   return response.text();
 }
 
+/** 导出全库所有环路为单个 YAML，对齐 Todo「导出全部」 */
+export async function exportAllLoops(): Promise<string> {
+  const response = await fetch('/api/loops/export');
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.text();
+}
+

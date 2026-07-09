@@ -16,6 +16,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 use ntd::db::Database;
 use ntd::db::TemplateInput;
+use ntd::models::{TodoBackup, TodoStatus};
 
 // 共用的内存数据库初始化函数：与 `db/mod.rs` 内置测试保持一致。
 async fn setup_db() -> Database {
@@ -870,4 +871,143 @@ async fn test_batch_update_todos_scheduler_multiple() {
         let todo = db.get_todo(*id).await.unwrap().unwrap();
         assert_eq!(todo.scheduler_enabled, false, "todo {} should be paused", id);
     }
+}
+
+// =====================================================================
+// merge_backup 工作空间解析测试（issue: Todo/Loop 导入导出字段对齐）
+// 验证 target_workspace_id 优先级与「同工作空间内匹配」语义，避免跨工作空间抢占。
+// =====================================================================
+
+// 构造一份最小可用的 TodoBackup，字段对齐导出/导入 DTO，减少每个用例的样板代码。
+fn make_backup(title: &str, workspace_id: Option<i64>) -> TodoBackup {
+    TodoBackup {
+        title: title.to_string(),
+        prompt: "p".to_string(),
+        status: TodoStatus::Pending,
+        executor: None,
+        scheduler_enabled: false,
+        scheduler_config: None,
+        tag_names: vec![],
+        workspace_path: None,
+        worktree: None,
+        action_type: None,
+        action_key: None,
+        workspace_id,
+    }
+}
+
+#[tokio::test]
+async fn test_merge_backup_target_workspace_overrides_backup_value() {
+    // 备份里 workspace_id=A，导入时指定目标 workspace=B，最终 todo 应落在 B。
+    let db = setup_db().await;
+    let dir_a = db
+        .create_project_directory("/tmp/ws-a", Some("A"), false, false)
+        .await
+        .unwrap();
+    let dir_b = db
+        .create_project_directory("/tmp/ws-b", Some("B"), false, false)
+        .await
+        .unwrap();
+
+    let backup = make_backup("t1", Some(dir_a));
+    let (created, updated) = db.merge_backup(&[], &[backup], Some(dir_b)).await.unwrap();
+    assert_eq!(created, 1);
+    assert_eq!(updated, 0);
+
+    // 新建的 todo 应归属目标工作空间 B，而非备份中的 A；且 workspace_path 与 id 成对，
+    // 指向 B 的当前库路径（不沿用备份里可能为空的 path），避免 id/path 错配。
+    let todo = db
+        .get_todos_by_workspace_id(Some(dir_b))
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("应在工作空间 B 下找到导入的 todo");
+    assert_eq!(todo.workspace_id, Some(dir_b));
+    assert_eq!(todo.workspace_path.as_deref(), Some("/tmp/ws-b"));
+}
+
+#[tokio::test]
+async fn test_merge_backup_none_target_falls_back_to_backup_workspace() {
+    // 未指定目标工作空间时，沿用备份中的 workspace_id，保持「导出再导入回原处」语义。
+    let db = setup_db().await;
+    let dir_a = db
+        .create_project_directory("/tmp/ws-a", Some("A"), false, false)
+        .await
+        .unwrap();
+
+    let backup = make_backup("t1", Some(dir_a));
+    let (created, _) = db.merge_backup(&[], &[backup], None).await.unwrap();
+    assert_eq!(created, 1);
+
+    let todo = db
+        .get_todos_by_workspace_id(Some(dir_a))
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("应在原工作空间 A 下找到导入的 todo");
+    assert_eq!(todo.workspace_id, Some(dir_a));
+}
+
+#[tokio::test]
+async fn test_merge_backup_does_not_hijack_cross_workspace_same_title() {
+    // 工作空间 A 已有同名 todo；导入到工作空间 B 时，匹配被工作空间限定，
+    // 不应覆盖 A 的 todo，也不应把 A 的 todo 迁移到 B。A 的 workspace_id 必须保持不变。
+    let db = setup_db().await;
+    let dir_a = db
+        .create_project_directory("/tmp/ws-a", Some("A"), false, false)
+        .await
+        .unwrap();
+    let dir_b = db
+        .create_project_directory("/tmp/ws-b", Some("B"), false, false)
+        .await
+        .unwrap();
+
+    // A 里先放一个同名 todo
+    let a_todo_id = db
+        .create_todo_with_extras("dup", "p", None, None, false, dir_a, "/tmp/ws-a")
+        .await
+        .unwrap();
+
+    // 导入同名备份到 B
+    let backup = make_backup("dup", Some(dir_b));
+    let (created, updated) = db.merge_backup(&[], &[backup], Some(dir_b)).await.unwrap();
+    // 应在 B 新建，而非覆盖 A 里那条
+    assert_eq!(created, 1);
+    assert_eq!(updated, 0);
+
+    // A 的原 todo 工作空间未被改动
+    let a_todo = db.get_todo(a_todo_id).await.unwrap().unwrap();
+    assert_eq!(a_todo.workspace_id, Some(dir_a));
+}
+
+#[tokio::test]
+async fn test_merge_backup_drops_dangling_backup_workspace_id() {
+    // 跨环境导入：备份里的 workspace_id 在当前库不存在时，不应写悬空 id，
+    // 也不应沿用备份里指向不存在目录的 path——降级为「未分配」哨兵 0 + 空 path。
+    // workspace_id 列是 NOT NULL DEFAULT 0，0 表示未分配（与 loop_runner.rs 语义一致）。
+    let db = setup_db().await;
+
+    // 故意用一个当前库不存在的 workspace_id（只创建 A，备份里却写一个不存在的 id）
+    let dir_a = db
+        .create_project_directory("/tmp/ws-a", Some("A"), false, false)
+        .await
+        .unwrap();
+    let dangling_id = dir_a + 999;
+
+    let backup = make_backup("t1", Some(dangling_id));
+    let (created, _) = db.merge_backup(&[], &[backup], None).await.unwrap();
+    assert_eq!(created, 1);
+
+    // workspace_id 降级为未分配哨兵 0，workspace_path 为空
+    let todo = db
+        .get_todos_by_workspace_id(Some(0))
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|t| t.title == "t1")
+        .expect("应找到导入的 todo");
+    assert_eq!(todo.workspace_id, Some(0));
+    assert!(todo.workspace_path.as_deref().unwrap_or("").is_empty());
 }

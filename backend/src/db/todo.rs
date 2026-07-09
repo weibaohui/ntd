@@ -3,6 +3,7 @@ use sea_orm::{
     QueryOrder, Statement,
 };
 
+use crate::db::entity::project_directories;
 use crate::db::entity::tags;
 use crate::db::entity::{todo_tags, todos};
 use crate::db::Database;
@@ -48,6 +49,20 @@ pub struct TodoCenterAggregates {
     pub consecutive_fail_map: std::collections::HashMap<i64, i64>,
     pub last_webhook_map: std::collections::HashMap<i64, String>,
     pub slash_command_map: std::collections::HashMap<i64, String>,
+}
+
+/// 在事务内按 id 解析工作空间的 `(id, path)` 对。
+/// 返回 `None` 表示该 id 在当前库不存在（跨环境导入时的悬空 id），
+/// 由调用方降级处理——不强行写悬空 id，也不沿用备份里可能不存在的路径。
+async fn resolve_workspace_pair(
+    txn: &sea_orm::DatabaseTransaction,
+    id: i64,
+) -> Result<Option<(i64, String)>, sea_orm::DbErr> {
+    Ok(project_directories::Entity::find_by_id(id)
+        .one(txn)
+        .await?
+        .map(|m| (m.id, m.path)))
+
 }
 
 impl Database {
@@ -1100,6 +1115,8 @@ impl Database {
                     worktree: None,
                     action_type: m.action_type,
                     action_key: m.action_key,
+                    // 备份时保留工作空间 ID，导入时用于关联到正确的工作空间
+                    workspace_id: m.workspace_id,
                 }
             })
             .collect::<Vec<_>>())
@@ -1153,6 +1170,8 @@ impl Database {
                     worktree: None,
                     action_type: m.action_type,
                     action_key: m.action_key,
+                    // 备份时保留工作空间 ID，导入时用于关联到正确的工作空间
+                    workspace_id: m.workspace_id,
                 }
             })
             .collect())
@@ -1259,14 +1278,24 @@ impl Database {
     }
 
     /// 智能合并导入：不删除现有数据，按 title+prompt 匹配进行覆盖或新建
+    /// workspace_id：可选目标工作空间 ID，指定后覆盖备份数据中的 workspace_id
     pub async fn merge_backup(
         &self,
         tags_in: &[crate::models::TagBackup],
         todos_in: &[TodoBackup],
+        target_workspace_id: Option<i64>,
     ) -> Result<(u64, u64), sea_orm::DbErr> {
         use sea_orm::TransactionTrait;
 
         let txn = self.conn.begin().await?;
+
+        // 预解析目标工作空间的 (id, path) 对：handler 已校验存在性，这里在事务内再查一次拿 path，
+        // 保证 workspace_id 与 workspace_path 成对写入，避免「id 指向 B、path 仍是备份源路径」的错配。
+        // 查不到则降级为 None，不强行写悬空 id。
+        let target_ws: Option<(i64, String)> = match target_workspace_id {
+            Some(id) => resolve_workspace_pair(&txn, id).await?,
+            None => None,
+        };
 
         // 确保所有 tag 都存在（不存在则创建），并构建 name -> id 映射
         let mut tag_name_map: std::collections::HashMap<String, i64> = tags::Entity::find()
@@ -1294,11 +1323,29 @@ impl Database {
         let mut updated: u64 = 0;
 
         for todo in todos_in {
-            // 按 title + prompt 查找匹配
+            // 解析本条 todo 最终归属工作空间的 (id, path)，必须成对写入，避免 id/path 错配：
+            // 1) 目标工作空间优先（已预解析，path 来自当前库而非备份，跨环境更可靠）
+            // 2) 否则用备份里的 workspace_id，但必须在当前库重新解析 path——跨环境导入时备份
+            //    id 可能在当前库不存在，此时降级为「未分配」哨兵 (0, None)：workspace_id 列是
+            //    NOT NULL DEFAULT 0，0 表示未分配（与 loop_runner.rs 的语义一致），不写悬空 id。
+            // resolved_id 同时用于限定「覆盖」匹配范围（只在同一工作空间内 title+prompt 匹配，
+            // 避免跨工作空间抢占同名 todo）；为 0 时只匹配其它未分配 todo。
+            let (resolved_id, resolved_path): (i64, Option<String>) = if let Some((id, path)) = &target_ws {
+                (*id, Some(path.clone()))
+            } else {
+                match todo.workspace_id {
+                    Some(id) => match resolve_workspace_pair(&txn, id).await? {
+                        Some((rid, rpath)) => (rid, Some(rpath)),
+                        None => (0, None),
+                    },
+                    None => (0, None),
+                }
+            };
             let existing = todos::Entity::find()
                 .filter(todos::Column::Title.eq(&todo.title))
                 .filter(todos::Column::Prompt.eq(&todo.prompt))
                 .filter(todos::Column::DeletedAt.is_null())
+                .filter(todos::Column::WorkspaceId.eq(resolved_id))
                 .one(&txn)
                 .await?;
 
@@ -1309,7 +1356,9 @@ impl Database {
                 am.executor = ActiveValue::Set(todo.executor.clone());
                 am.scheduler_enabled = ActiveValue::Set(Some(todo.scheduler_enabled));
                 am.scheduler_config = ActiveValue::Set(todo.scheduler_config.clone());
-                am.workspace_path = ActiveValue::Set(todo.workspace_path.clone());
+                // workspace_id 与 workspace_path 成对写入解析出的目标对，避免 id/path 错配
+                am.workspace_id = ActiveValue::Set(Some(resolved_id));
+                am.workspace_path = ActiveValue::Set(resolved_path);
                 am.updated_at = ActiveValue::Set(Some(crate::models::utc_timestamp()));
                 am.action_type = ActiveValue::Set(todo.action_type.clone());
                 am.action_key = ActiveValue::Set(todo.action_key.clone());
@@ -1343,7 +1392,7 @@ impl Database {
             } else {
                 // 新建
                 let now = crate::models::utc_timestamp();
-                let workspace_path = todo.workspace_path.clone();
+                // workspace_id / workspace_path 用上面解析出的成对值（目标 > 当前库校验过的备份值 > 未分配 0）
                 let am = todos::ActiveModel {
                     title: ActiveValue::Set(todo.title.clone()),
                     prompt: ActiveValue::Set(Some(todo.prompt.clone())),
@@ -1351,7 +1400,8 @@ impl Database {
                     executor: ActiveValue::Set(todo.executor.clone()),
                     scheduler_enabled: ActiveValue::Set(Some(todo.scheduler_enabled)),
                     scheduler_config: ActiveValue::Set(todo.scheduler_config.clone()),
-                    workspace_path: ActiveValue::Set(workspace_path),
+                    workspace_path: ActiveValue::Set(resolved_path),
+                    workspace_id: ActiveValue::Set(Some(resolved_id)),
                     created_at: ActiveValue::Set(Some(now.clone())),
                     updated_at: ActiveValue::Set(Some(now)),
                     action_type: ActiveValue::Set(todo.action_type.clone()),
