@@ -237,6 +237,14 @@ pub struct TodoCenterItem {
     /// 供卡片展示「所属 Loop」并跳转 Loop 详情。空 vec=未被引用或非 Loop 驱动。
     #[serde(default)]
     pub referencing_loops: Vec<LoopRefSummary>,
+    /// 连续失败次数：从最近一次执行往前数连续 failed 的条数，遇非 failed 即停。
+    /// 0=最近一次非失败（或无记录）。时间/事件驱动卡片健康展示用。
+    #[serde(default)]
+    pub consecutive_failure_count: i64,
+    /// 最近一次 webhook 触发的时间（trigger_type='webhook' 的最新记录）。
+    /// 仅事件驱动卡片展示「最近触发时间」用；手动「执行一次」不顶替该时间。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_webhook_trigger_at: Option<String>,
 }
 
 /// Loop 引用摘要：事项中心 Loop 驱动卡片展示「所属 Loop」用。

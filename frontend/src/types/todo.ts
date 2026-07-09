@@ -57,6 +57,10 @@ export interface TodoCenterItem extends Todo {
   last_execution_at?: string | null;
   /** 引用该事项的启用 Loop 摘要。仅 Loop 驱动分类非空，供卡片展示并跳转 Loop 详情。 */
   referencing_loops?: LoopRefSummary[];
+  /** 连续失败次数：从最近一次执行往前数连续 failed 的条数。0=最近非失败或无记录。 */
+  consecutive_failure_count?: number;
+  /** 最近一次 webhook 触发的时间（trigger_type='webhook' 的最新记录）。事件驱动卡片「最近触发」用。 */
+  last_webhook_trigger_at?: string | null;
 }
 
 /** 环节 — 从 todo 提升而来的独立实体，不再寄生在 Todo 上。 */

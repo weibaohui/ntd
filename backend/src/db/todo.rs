@@ -39,6 +39,16 @@ pub struct SchedulerUpdate<'a> {
     pub timezone: Option<&'a str>,
 }
 
+/// 事项中心批量聚合结果：把组装 TodoCenterItem 需要的所有聚合 map 收进一个结构体，
+/// 避免 build_center_item 参数膨胀（6+ 个 map 参数会触发 too_many_arguments 且难读）。
+pub struct TodoCenterAggregates {
+    pub loop_count_map: std::collections::HashMap<i64, i64>,
+    pub referencing_loops_map: std::collections::HashMap<i64, Vec<crate::models::LoopRefSummary>>,
+    pub last_exec_map: std::collections::HashMap<i64, crate::db::LatestExecutionSummary>,
+    pub consecutive_fail_map: std::collections::HashMap<i64, i64>,
+    pub last_webhook_map: std::collections::HashMap<i64, String>,
+}
+
 impl Database {
     fn model_to_todo(m: todos::Model, tag_ids: Vec<i64>) -> Todo {
         let scheduler_enabled = m.scheduler_enabled.unwrap_or(false);
@@ -174,24 +184,23 @@ impl Database {
         }
         let models = query.all(&self.conn).await?;
 
-        // 一次性批量补算 loop 引用计数/引用 Loop 摘要与最近执行记录，避免逐 todo N+1
+        // 一次性批量补算 loop 引用计数/引用 Loop 摘要与执行相关聚合，避免逐 todo N+1
         let ids: Vec<i64> = models.iter().map(|m| m.id).collect();
         let tag_map = self.fetch_tag_ids_for_many(&ids).await?;
-        let loop_count_map = self.count_enabled_loop_steps_by_todos(&ids).await?;
-        let referencing_loops_map = self.get_referencing_loops_for_todos(&ids).await?;
-        let last_exec_map = self.get_latest_execution_summaries_for_todos(&ids).await?;
+        let aggs = TodoCenterAggregates {
+            loop_count_map: self.count_enabled_loop_steps_by_todos(&ids).await?,
+            referencing_loops_map: self.get_referencing_loops_for_todos(&ids).await?,
+            last_exec_map: self.get_latest_execution_summaries_for_todos(&ids).await?,
+            consecutive_fail_map: self.get_consecutive_failure_counts_for_todos(&ids).await?,
+            last_webhook_map: self.get_last_webhook_trigger_for_todos(&ids).await?,
+        };
 
         // 组装 TodoCenterItem，并按 bucket 过滤
         let mut items = Vec::with_capacity(models.len());
         for m in models {
             let tag_ids = tag_map.get(&m.id).cloned().unwrap_or_default();
             let todo = Self::model_to_todo(m, tag_ids);
-            let item = Self::build_center_item(
-                todo,
-                &loop_count_map,
-                &referencing_loops_map,
-                &last_exec_map,
-            );
+            let item = Self::build_center_item(todo, &aggs);
             // 内存层分桶过滤：分页前完成，保证 Tab 数量正确
             // 用 map_or 而非 is_none_or：后者稳定于 1.82，当前 MSRV 1.81 不支持
             if bucket.map_or(true, |b| b == item.computed_bucket) {
@@ -202,29 +211,31 @@ impl Database {
     }
 
     /// 由已载入的 Todo + 批量聚合结果组装单个 TodoCenterItem（纯函数，便于复用与单测）。
-    fn build_center_item(
-        todo: Todo,
-        loop_count_map: &std::collections::HashMap<i64, i64>,
-        referencing_loops_map: &std::collections::HashMap<i64, Vec<crate::models::LoopRefSummary>>,
-        last_exec_map: &std::collections::HashMap<i64, crate::db::LatestExecutionSummary>,
-    ) -> TodoCenterItem {
+    fn build_center_item(todo: Todo, aggs: &TodoCenterAggregates) -> TodoCenterItem {
         // 未出现在聚合 map 中的 todo 计数视为 0（未被任何启用 Loop 引用）
-        let used_by_loop_step_count = loop_count_map.get(&todo.id).copied().unwrap_or(0);
+        let used_by_loop_step_count = aggs.loop_count_map.get(&todo.id).copied().unwrap_or(0);
         let computed_bucket = compute_bucket(
             todo.archived_at.as_deref(),
             used_by_loop_step_count,
             todo.scheduler_config.as_deref(),
             todo.webhook_enabled,
         );
-        let (last_execution_status, last_execution_at) = last_exec_map
+        let (last_execution_status, last_execution_at) = aggs
+            .last_exec_map
             .get(&todo.id)
             .map(|s| (s.status.clone(), s.display_at().map(str::to_string)))
             .unwrap_or((None, None));
-        // 引用 Loop 摘要：克隆一份，未被引用时为空 vec
-        let referencing_loops = referencing_loops_map
+        let referencing_loops = aggs
+            .referencing_loops_map
             .get(&todo.id)
             .cloned()
             .unwrap_or_default();
+        let consecutive_failure_count = aggs
+            .consecutive_fail_map
+            .get(&todo.id)
+            .copied()
+            .unwrap_or(0);
+        let last_webhook_trigger_at = aggs.last_webhook_map.get(&todo.id).cloned();
         TodoCenterItem {
             todo,
             computed_bucket,
@@ -232,6 +243,8 @@ impl Database {
             last_execution_status,
             last_execution_at,
             referencing_loops,
+            consecutive_failure_count,
+            last_webhook_trigger_at,
         }
     }
 
@@ -247,15 +260,14 @@ impl Database {
             return Ok(None);
         };
         let ids = vec![id];
-        let loop_count_map = self.count_enabled_loop_steps_by_todos(&ids).await?;
-        let referencing_loops_map = self.get_referencing_loops_for_todos(&ids).await?;
-        let last_exec_map = self.get_latest_execution_summaries_for_todos(&ids).await?;
-        Ok(Some(Self::build_center_item(
-            todo,
-            &loop_count_map,
-            &referencing_loops_map,
-            &last_exec_map,
-        )))
+        let aggs = TodoCenterAggregates {
+            loop_count_map: self.count_enabled_loop_steps_by_todos(&ids).await?,
+            referencing_loops_map: self.get_referencing_loops_for_todos(&ids).await?,
+            last_exec_map: self.get_latest_execution_summaries_for_todos(&ids).await?,
+            consecutive_fail_map: self.get_consecutive_failure_counts_for_todos(&ids).await?,
+            last_webhook_map: self.get_last_webhook_trigger_for_todos(&ids).await?,
+        };
+        Ok(Some(Self::build_center_item(todo, &aggs)))
     }
 
     /// 归档事项：设置 archived_at = 当前 UTC 时间。
@@ -1752,7 +1764,8 @@ mod todo_center_tests {
                 started_at: Some("2026-07-08T09:59:00Z".into()),
             },
         );
-        let item = Database::build_center_item(todo, &loop_map, &Default::default(), &exec_map);
+        let aggs = aggs_with(loop_map, exec_map);
+        let item = Database::build_center_item(todo, &aggs);
         assert_eq!(item.used_by_loop_step_count, 2);
         assert_eq!(item.computed_bucket, ComputedBucket::LoopDriven);
         assert_eq!(item.last_execution_status.as_deref(), Some("failed"));
@@ -1774,18 +1787,20 @@ mod todo_center_tests {
                 started_at: Some("2026-07-08T09:00:00Z".into()),
             },
         );
-        let item = Database::build_center_item(todo, &Default::default(), &Default::default(), &exec_map);
+        let aggs = aggs_with(Default::default(), exec_map);
+        let item = Database::build_center_item(todo, &aggs);
         assert_eq!(item.last_execution_at.as_deref(), Some("2026-07-08T09:00:00Z"));
     }
 
-    /// build_center_item：无执行记录时 last_execution_* 均为 None。
+    /// build_center_item：无执行记录时 last_execution_* 均为 None，连续失败 0。
     #[test]
     fn test_build_center_item_no_execution() {
         let todo = make_minimal_todo();
-        let item = Database::build_center_item(todo, &Default::default(), &Default::default(), &Default::default());
+        let item = Database::build_center_item(todo, &empty_aggs());
         assert!(item.last_execution_status.is_none());
         assert!(item.last_execution_at.is_none());
         assert_eq!(item.computed_bucket, ComputedBucket::Manual);
+        assert_eq!(item.consecutive_failure_count, 0);
     }
 
     /// build_center_item：引用 Loop 摘要按 todo_id 透传，未被引用时为空 vec。
@@ -1803,11 +1818,52 @@ mod todo_center_tests {
                 crate::models::LoopRefSummary { loop_id: 8, loop_name: "L8".into() },
             ],
         );
-        let item = Database::build_center_item(todo, &loop_map, &ref_map, &Default::default());
+        let mut aggs = empty_aggs();
+        aggs.loop_count_map = loop_map;
+        aggs.referencing_loops_map = ref_map;
+        let item = Database::build_center_item(todo, &aggs);
         assert_eq!(item.computed_bucket, ComputedBucket::LoopDriven);
         assert_eq!(item.referencing_loops.len(), 2);
         assert_eq!(item.referencing_loops[0].loop_id, 5);
         assert_eq!(item.referencing_loops[1].loop_name, "L8");
+    }
+
+    /// build_center_item：连续失败次数与 webhook 最近触发时间按 todo_id 透传。
+    #[test]
+    fn test_build_center_item_failure_count_and_webhook() {
+        let mut todo = make_minimal_todo();
+        todo.id = 9;
+        let mut aggs = empty_aggs();
+        aggs.consecutive_fail_map.insert(9, 3);
+        aggs.last_webhook_map.insert(9, "2026-07-08T11:00:00Z".into());
+        let item = Database::build_center_item(todo, &aggs);
+        assert_eq!(item.consecutive_failure_count, 3);
+        assert_eq!(item.last_webhook_trigger_at.as_deref(), Some("2026-07-08T11:00:00Z"));
+    }
+
+    /// 构造全空的聚合结构体，测试里按需覆盖个别字段。
+    fn empty_aggs() -> TodoCenterAggregates {
+        TodoCenterAggregates {
+            loop_count_map: Default::default(),
+            referencing_loops_map: Default::default(),
+            last_exec_map: Default::default(),
+            consecutive_fail_map: Default::default(),
+            last_webhook_map: Default::default(),
+        }
+    }
+
+    /// 由 loop_count_map + last_exec_map 构造聚合（其余空），简化常见用例。
+    fn aggs_with(
+        loop_count_map: std::collections::HashMap<i64, i64>,
+        last_exec_map: std::collections::HashMap<i64, LatestExecutionSummary>,
+    ) -> TodoCenterAggregates {
+        TodoCenterAggregates {
+            loop_count_map,
+            referencing_loops_map: Default::default(),
+            last_exec_map,
+            consecutive_fail_map: Default::default(),
+            last_webhook_map: Default::default(),
+        }
     }
 
     /// 构造一个最小合法 Todo 供 build_center_item 纯函数测试复用。

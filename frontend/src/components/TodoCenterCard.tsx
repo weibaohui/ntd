@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Button, Dropdown, Modal, Tag, message } from 'antd';
+import { useEffect, useState } from 'react';
+import { Button, Dropdown, Modal, Select, Tag, message } from 'antd';
 import {
   PlayCircleOutlined,
   MoreOutlined,
@@ -57,6 +57,8 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: 
   // 调度弹窗本地态：打开时由当前 scheduler 字段初始化，确认后才落库
   const [schedEnabled, setSchedEnabled] = useState(true);
   const [schedConfig, setSchedConfig] = useState<string>(DEFAULT_CRON);
+  // 复制/移动工作空间弹窗：mode=null 表示关闭
+  const [wsMode, setWsMode] = useState<'copy' | 'move' | null>(null);
   const isArchived = item.computed_bucket === 'archived';
 
   // 共用 loading + 错误处理的轻量变更包装器。
@@ -84,7 +86,13 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: 
   const saveScheduler = () =>
     runMutation('保存调度', () => db.updateScheduler(item.id, schedEnabled, schedConfig || null));
 
-  const menuItems = buildMenuItems(item, isArchived, runMutation, openSchedulerModal);
+  const menuItems = buildMenuItems(
+    item,
+    isArchived,
+    runMutation,
+    openSchedulerModal,
+    (mode) => setWsMode(mode),
+  );
 
   const mainAction = isArchived ? (
     <Button
@@ -180,6 +188,14 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: 
           saveScheduler();
         }}
       />
+
+      <WorkspaceMoveCopyModal
+        todoId={item.id}
+        mode={wsMode}
+        currentWorkspaceId={item.workspace_id ?? null}
+        onClose={() => setWsMode(null)}
+        onDone={onChanged}
+      />
     </div>
   );
 }
@@ -205,6 +221,7 @@ function CardMeta({
   item: TodoCenterItem;
   onSelectLoop: (loopId: number) => void;
 }) {
+  const failCount = item.consecutive_failure_count ?? 0;
   return (
     <div className="todo-center-card-meta">
       {item.computed_bucket === 'time_driven' && item.scheduler_config && (
@@ -213,9 +230,12 @@ function CardMeta({
       {item.computed_bucket === 'time_driven' && item.scheduler_next_run_at && (
         <MetaLine text={`下次运行 ${formatRelativeTime(item.scheduler_next_run_at)}`} />
       )}
-      {/* 事件驱动卡片展示 Webhook 入口路径，便于复制到外部系统 */}
+      {/* 事件驱动卡片：Webhook 入口路径 + 最近触发时间（webhook 专属，不受手动执行影响） */}
       {item.computed_bucket === 'event_driven' && (
         <MetaLine icon={<LinkOutlined />} text={`/webhook/trigger/todo/${item.id}`} />
+      )}
+      {item.computed_bucket === 'event_driven' && item.last_webhook_trigger_at && (
+        <MetaLine text={`最近触发 ${formatRelativeTime(item.last_webhook_trigger_at)}`} />
       )}
       {/* Loop 驱动卡片展示所属 Loop，点击跳转 Loop 详情 */}
       {item.computed_bucket === 'loop_driven' && (
@@ -223,6 +243,10 @@ function CardMeta({
       )}
       {item.last_execution_status && (
         <MetaLine text={`最近执行 ${item.last_execution_status}${item.last_execution_at ? ` · ${formatRelativeTime(item.last_execution_at)}` : ''}`} />
+      )}
+      {/* 连续失败次数 > 0 时醒目提示（时间/事件驱动健康度） */}
+      {failCount > 0 && (
+        <MetaLine text={`连续失败 ${failCount} 次`} />
       )}
     </div>
   );
@@ -317,21 +341,56 @@ function buildMenuItems(
   isArchived: boolean,
   runMutation: (label: string, fn: () => Promise<unknown>) => void,
   openSchedulerModal: () => void,
+  openWorkspacePicker: (mode: 'copy' | 'move') => void,
 ): MenuProps['items'] {
   if (isArchived) {
+    // 已归档：恢复 + 删除（删除走确认；被 Loop 引用时后端会拒绝）
     return [
       {
         key: 'restore',
         label: '恢复事项',
         onClick: () => runMutation('恢复', () => db.restoreTodo(item.id)),
       },
+      deleteMenuItem(item, runMutation),
     ];
   }
   return [
     archiveMenuItem(item, runMutation),
     ...timeDrivenMenuItems(item, runMutation, openSchedulerModal),
     webhookMenuItem(item, runMutation),
+    { type: 'divider' as const, key: 'div_ws' },
+    {
+      key: 'copy',
+      label: '复制到工作空间',
+      onClick: () => openWorkspacePicker('copy'),
+    },
+    {
+      key: 'move',
+      label: '移动到工作空间',
+      onClick: () => openWorkspacePicker('move'),
+    },
   ];
+}
+
+/** 删除菜单项：Modal.confirm 二次确认。被 Loop 引用时后端返回 400，runMutation 会提示。 */
+function deleteMenuItem(
+  item: TodoCenterItem,
+  runMutation: (label: string, fn: () => Promise<unknown>) => void,
+): NonNullable<MenuProps['items']>[number] {
+  return {
+    key: 'delete',
+    label: '删除',
+    danger: true,
+    onClick: () =>
+      Modal.confirm({
+        title: '确认删除该事项？',
+        content: '删除为软删除，不可在事项中心恢复。被 Loop 引用时后端会拒绝删除。',
+        okText: '删除',
+        okButtonProps: { danger: true },
+        cancelText: '取消',
+        onOk: () => runMutation('删除', () => db.deleteTodo(item.id)),
+      }),
+  };
 }
 
 /** 归档菜单项：被 Loop 引用时给出更强的归档不解除引用提示（设计文档风险三）。 */
@@ -411,4 +470,83 @@ function webhookMenuItem(
     label: on ? '关闭事件驱动' : '设为事件驱动',
     onClick: () => runMutation(on ? '关闭事件驱动' : '设为事件驱动', () => db.updateTodoWebhook(item.id, !on)),
   };
+}
+
+/**
+ * 复制/移动到工作空间弹窗。
+ * 复用现有的 batchCopyTodosWorkspace / batchMoveTodosWorkspace 接口（单条用 [todoId]）。
+ * 排除当前工作空间：移动到原处无意义；复制到原处会产生重复。
+ */
+function WorkspaceMoveCopyModal({
+  todoId,
+  mode,
+  currentWorkspaceId,
+  onClose,
+  onDone,
+}: {
+  todoId: number;
+  mode: 'copy' | 'move' | null;
+  currentWorkspaceId: number | null;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [workspaces, setWorkspaces] = useState<{ id: number; name: string; path: string }[]>([]);
+  const [targetId, setTargetId] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // 打开时拉取工作空间列表，并默认选第一个非当前工作空间
+  useEffect(() => {
+    if (mode === null) return;
+    db.getProjectDirectories()
+      .then((dirs) => {
+        setWorkspaces(dirs.map((d) => ({ id: d.id, name: d.name || d.path, path: d.path })));
+        const first = dirs.find((d) => d.id !== currentWorkspaceId);
+        setTargetId(first ? first.id : null);
+      })
+      .catch(() => setWorkspaces([]));
+  }, [mode, currentWorkspaceId]);
+
+  const handleOk = async () => {
+    if (targetId == null) return;
+    setLoading(true);
+    try {
+      if (mode === 'copy') {
+        await db.batchCopyTodosWorkspace([todoId], targetId);
+      } else if (mode === 'move') {
+        await db.batchMoveTodosWorkspace([todoId], targetId);
+      }
+      message.success(mode === 'copy' ? '已复制' : '已移动');
+      onDone();
+      onClose();
+    } catch (e) {
+      message.error(`操作失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={mode === 'copy' ? '复制到工作空间' : '移动到工作空间'}
+      open={mode !== null}
+      onOk={handleOk}
+      onCancel={onClose}
+      okText={mode === 'copy' ? '复制' : '移动'}
+      cancelText="取消"
+      confirmLoading={loading}
+      destroyOnClose
+    >
+      <Select
+        style={{ width: '100%' }}
+        placeholder="选择目标工作空间"
+        value={targetId ?? undefined}
+        onChange={setTargetId}
+        options={workspaces.map((w) => ({
+          value: w.id,
+          label: w.name,
+          disabled: w.id === currentWorkspaceId,
+        }))}
+      />
+    </Modal>
+  );
 }

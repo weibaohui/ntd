@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Empty, Input, Segmented, Spin, message } from 'antd';
-import { AppstoreOutlined, PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { Button, Empty, Input, Segmented, Spin, Table, Tag, message } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
+import { AppstoreOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
 import { PageCard } from '@/components/common/PageCard';
 import { TodoCenterCard } from '@/components/TodoCenterCard';
+import { formatRelativeTime } from '@/utils/datetime';
 import * as db from '@/utils/database';
 import type { ComputedBucket, TodoCenterItem } from '@/types';
 
@@ -48,6 +50,8 @@ export function TodoCenterPage({ onSelectTodo, onSelectLoop, onOpenCreateModal }
   const [loading, setLoading] = useState(false);
   const [activeBucket, setActiveBucket] = useState<ComputedBucket>('manual');
   const [search, setSearch] = useState('');
+  // 视图：卡片（默认，信息丰富）或紧凑列表（高密度扫描/批量场景）
+  const [viewMode, setViewMode] = useState<'card' | 'list'>('card');
 
   // 拉取事项中心列表。工作空间变化或手动刷新时触发；
   // 卡片操作（归档/恢复/webhook/执行）完成后也会调它重拉，保持口径一致。
@@ -114,6 +118,16 @@ export function TodoCenterPage({ onSelectTodo, onSelectLoop, onOpenCreateModal }
             style={{ width: 200 }}
             data-testid="todo-center-search"
           />
+          <Segmented
+            size="small"
+            value={viewMode}
+            onChange={(v) => setViewMode(v as 'card' | 'list')}
+            options={[
+              { value: 'card', icon: <AppstoreOutlined />, title: '卡片视图' },
+              { value: 'list', icon: <UnorderedListOutlined />, title: '紧凑列表' },
+            ]}
+            data-testid="todo-center-view-toggle"
+          />
           <Button size="small" icon={<ReloadOutlined />} onClick={reload} loading={loading} aria-label="刷新">
             刷新
           </Button>
@@ -142,7 +156,7 @@ export function TodoCenterPage({ onSelectTodo, onSelectLoop, onOpenCreateModal }
 
         {visibleItems.length === 0 ? (
           <Empty description={EMPTY_TEXT[activeBucket]} style={{ marginTop: 48 }} />
-        ) : (
+        ) : viewMode === 'card' ? (
           <div className="todo-center-grid">
             {visibleItems.map((item) => (
               <TodoCenterCard
@@ -154,8 +168,78 @@ export function TodoCenterPage({ onSelectTodo, onSelectLoop, onOpenCreateModal }
               />
             ))}
           </div>
+        ) : (
+          <CompactTodoTable items={visibleItems} onSelectTodo={onSelectTodo} />
         )}
       </Spin>
     </PageCard>
+  );
+}
+
+/** 紧凑列表视图：antd Table 展示当前 Tab 的事项，行点击进详情。
+ *  设计文档「可选保留紧凑列表视图」——比卡片密度高，便于快速扫描/批量定位。 */
+const BUCKET_LABEL: Record<ComputedBucket, string> = {
+  manual: '手动触发',
+  time_driven: '时间驱动',
+  event_driven: '事件驱动',
+  loop_driven: 'Loop 驱动',
+  archived: '已归档',
+};
+
+const BUCKET_COLOR: Record<ComputedBucket, string> = {
+  manual: 'blue',
+  time_driven: 'cyan',
+  event_driven: 'purple',
+  loop_driven: 'geekblue',
+  archived: 'default',
+};
+
+function CompactTodoTable({
+  items,
+  onSelectTodo,
+}: {
+  items: TodoCenterItem[];
+  onSelectTodo: (id: number) => void;
+}) {
+  const columns: ColumnsType<TodoCenterItem> = [
+    { title: '#', dataIndex: 'id', width: 64, render: (v: number) => `#${v}` },
+    { title: '标题', dataIndex: 'title', ellipsis: true },
+    {
+      title: '分类',
+      dataIndex: 'computed_bucket',
+      width: 110,
+      render: (b: ComputedBucket) => <Tag color={BUCKET_COLOR[b]}>{BUCKET_LABEL[b]}</Tag>,
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: 90,
+      render: (s?: string) => (s ? <Tag>{s}</Tag> : null),
+    },
+    {
+      title: '最近执行',
+      width: 200,
+      render: (_: unknown, r: TodoCenterItem) =>
+        r.last_execution_status
+          ? `${r.last_execution_status}${r.last_execution_at ? ` · ${formatRelativeTime(r.last_execution_at)}` : ''}`
+          : '—',
+    },
+    {
+      title: '更新',
+      dataIndex: 'updated_at',
+      width: 120,
+      render: (v: string) => formatRelativeTime(v),
+    },
+  ];
+  return (
+    <Table<TodoCenterItem>
+      rowKey="id"
+      size="small"
+      columns={columns}
+      dataSource={items}
+      pagination={false}
+      onRow={(r) => ({ onClick: () => onSelectTodo(r.id), style: { cursor: 'pointer' } })}
+      data-testid="todo-center-compact-table"
+    />
   );
 }

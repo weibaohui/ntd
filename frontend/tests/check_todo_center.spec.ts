@@ -183,3 +183,84 @@ test('Loop 详情图标记已归档环节', async ({ page }) => {
     await page.request.post(`${BASE}/api/todos/1/restore`);
   }
 });
+
+test('紧凑列表视图切换', async ({ page }) => {
+  await page.goto(`${BASE}/#todoCenter`);
+  await page.waitForTimeout(1000);
+
+  // 默认卡片视图：有卡片网格，无紧凑表
+  await expect(page.locator('.todo-center-grid')).toBeVisible();
+  await expect(page.getByTestId('todo-center-compact-table')).toHaveCount(0);
+
+  // 切到紧凑列表
+  await page.getByTestId('todo-center-view-toggle').getByTitle('紧凑列表').click();
+  await page.waitForTimeout(500);
+
+  await expect(page.getByTestId('todo-center-compact-table')).toBeVisible();
+  await expect(page.locator('.todo-center-grid')).toHaveCount(0);
+
+  // 点回卡片视图
+  await page.getByTestId('todo-center-view-toggle').getByTitle('卡片视图').click();
+  await page.waitForTimeout(400);
+  await expect(page.locator('.todo-center-grid')).toBeVisible();
+});
+
+test('卡片菜单含复制/移动工作空间', async ({ page }) => {
+  await page.goto(`${BASE}/#todoCenter`);
+  await page.waitForTimeout(1000);
+
+  const card = page.locator('[data-testid^="todo-center-card-"]').first();
+  await card.locator('button[aria-label="更多操作"]').click();
+  await page.waitForTimeout(300);
+
+  const menu = page.locator('.ant-dropdown-menu');
+  await expect(menu.getByText('复制到工作空间')).toBeVisible();
+  await expect(menu.getByText('移动到工作空间')).toBeVisible();
+});
+
+test('已归档卡片菜单含删除', async ({ page }) => {
+  await page.goto(`${BASE}/#todoCenter`);
+  await page.waitForTimeout(1000);
+
+  // 取一个手动事项归档
+  await page.getByTestId('todo-center-tab-manual').click();
+  await page.waitForTimeout(400);
+  const card = page.locator('[data-testid^="todo-center-card-"]').first();
+  const tid = await card.getAttribute('data-testid');
+  await card.locator('button[aria-label="更多操作"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('.ant-dropdown-menu-item').filter({ hasText: '归档' }).click();
+  await page.waitForTimeout(300);
+  await page.locator('.ant-modal-confirm-btns .ant-btn-primary').click();
+  await page.waitForTimeout(1000);
+
+  // 切到已归档，打开菜单，应有「删除」
+  await page.getByTestId('todo-center-tab-archived').click();
+  await page.waitForTimeout(500);
+  const archivedCard = page.getByTestId(tid!);
+  await archivedCard.locator('button[aria-label="更多操作"]').click();
+  await page.waitForTimeout(300);
+  await expect(page.locator('.ant-dropdown-menu').getByText('删除')).toBeVisible();
+
+  // 关菜单并恢复，不留下脏数据
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  const idNum = tid!.replace('todo-center-card-', '');
+  await page.request.post(`${BASE}/api/todos/${idNum}/restore`);
+});
+
+test('移动端单列渲染', async ({ page }) => {
+  // 移动端视口，验证卡片网格退化为单列不溢出
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto(`${BASE}/#todoCenter`);
+  await page.waitForTimeout(1000);
+
+  await page.getByTestId('todo-center-tab-manual').click();
+  await page.waitForTimeout(400);
+
+  const grid = page.locator('.todo-center-grid');
+  await expect(grid).toBeVisible();
+  // 单列时 grid-template-columns 只有一个值；多列时含空格分隔
+  const tmpl = await grid.evaluate((el) => getComputedStyle(el).gridTemplateColumns);
+  expect(tmpl.split(' ').filter(Boolean).length).toBe(1);
+});
