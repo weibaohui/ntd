@@ -36,8 +36,8 @@ interface TodoCenterCardViewProps {
   searchKeyword?: string;
   /** ItemsPage 顶层构建的完整 header extra（搜索框 + 刷新 + Segmented + 新建）。 */
   extra?: ReactNode;
-  /** 刷新计数，App 层点击刷新按钮时递增，触发本组件重载数据。 */
-  loopUpdateCount?: number;
+  /** 刷新信号，ItemsPage 点击刷新按钮时自增，触发本组件重载数据。 */
+  refreshKey?: number;
 }
 
 /**
@@ -53,7 +53,7 @@ export function TodoCenterCardView({
   isMobile,
   searchKeyword = '',
   extra,
-  loopUpdateCount,
+  refreshKey,
 }: TodoCenterCardViewProps) {
   const { state } = useApp();
   const workspaceId = state.selectedWorkspace ?? undefined;
@@ -85,7 +85,7 @@ export function TodoCenterCardView({
 
   useEffect(() => {
     reload();
-  }, [reload, loopUpdateCount]);
+  }, [reload, refreshKey]);
 
   // 按 computed_bucket 分桶，用于 Tab 计数与卡片过滤
   const bucketCount = useMemo(() => {

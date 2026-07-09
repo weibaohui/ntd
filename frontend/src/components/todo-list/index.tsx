@@ -23,6 +23,9 @@ interface TodoListProps {
   onSelectTodo?: (todoId: string | number) => void;
   onSelectLoop?: (loopId: number) => void;
   onCreateLoop?: () => void;
+  /** 刷新信号，每次变化触发一次重新加载（由 ItemsPage 维护）。 */
+  refreshKey?: number;
+  /** 兼容旧调用方（LoopPage 等），保留但不再用于驱动刷新逻辑。 */
   loopUpdateCount?: number;
   forcedListMode?: 'item' | 'loop';
   onListModeChange?: (mode: 'item' | 'loop') => void;
@@ -32,7 +35,7 @@ interface TodoListProps {
 }
 
 export function TodoList(props: TodoListProps) {
-  const { onOpenCreateModal, onSelectTodo, onSelectLoop, onCreateLoop, loopUpdateCount, forcedListMode, onListModeChange, hideCreateButton, searchKeyword: externalSearchKeyword } = props;
+  const { onOpenCreateModal, onSelectTodo, onSelectLoop, onCreateLoop, refreshKey, forcedListMode, onListModeChange, hideCreateButton, searchKeyword: externalSearchKeyword } = props;
   const { state, dispatch } = useApp();
   const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
   const { message } = AntApp.useApp();
@@ -136,7 +139,7 @@ export function TodoList(props: TodoListProps) {
       .then(setLoopList)
       .catch(() => setLoopList([]))
       .finally(() => setLoopLoading(false));
-  }, [listMode, loopUpdateCount, selectedWorkspace, projectDirectories, directoriesReady]);
+  }, [listMode, selectedWorkspace, projectDirectories, directoriesReady]);
 
   // 切换工作空间后按需拉取该工作空间的 todo 列表。
   useEffect(() => {
@@ -149,6 +152,17 @@ export function TodoList(props: TodoListProps) {
       dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: selectedWorkspace, payload: todos });
     });
   }, [selectedWorkspace, directoriesReady, listMode, state.todosByWorkspace, dispatch]);
+
+  // 用户点击刷新按钮时，refreshKey 自增，触发强制重拉（直接调接口，不走缓存）
+  useEffect(() => {
+    if (refreshKey === undefined || refreshKey === 0) return;
+    if (!directoriesReady) return;
+    if (selectedWorkspace == null) return;
+    if (listMode !== 'item') return;
+    db.getAllTodos(selectedWorkspace).then(todos => {
+      dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: selectedWorkspace, payload: todos });
+    });
+  }, [refreshKey, selectedWorkspace, directoriesReady, listMode, dispatch]);
 
   // 持久化列表模式到 localStorage
   useEffect(() => {

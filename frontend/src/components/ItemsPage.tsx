@@ -27,7 +27,6 @@ interface ItemsPageProps {
   onOpenCreateModal: () => void;
   // —— 以下为列表形态（TodoPage）所需 props ——
   selectedTodoId: string | number | null;
-  loopUpdateCount: number;
   onCreateLoop: () => void;
   forcedListMode?: 'item' | 'loop';
   onListModeChange: () => void;
@@ -35,8 +34,6 @@ interface ItemsPageProps {
   onOpenPost?: (todoId: number, recordId: number) => void;
   /** 移动端：列表形态切到 TodoMobilePage（双 PageCard），卡片形态走卡片墙单列。 */
   isMobile?: boolean;
-  /** 刷新回调，由 App 层注入，用于 ItemsPage header 的刷新按钮。 */
-  onReload?: () => void;
 }
 
 /**
@@ -56,19 +53,19 @@ export function ItemsPage({
   onSelectLoop,
   onOpenCreateModal,
   selectedTodoId,
-  loopUpdateCount,
   onCreateLoop,
   forcedListMode,
   onListModeChange,
   effectiveMobilePanel,
   onOpenPost,
   isMobile,
-  onReload,
 }: ItemsPageProps) {
   // 视图模式持久化：用户切到列表后下次仍记住，默认卡片
   const [viewMode, setViewMode] = useState<'card' | 'list'>(readInitialView);
   // 统一搜索词：卡片墙与列表双栏共用同一个搜索框，搜索逻辑由各自子组件在其数据上执行
   const [searchKeyword, setSearchKeyword] = useState('');
+  // 刷新信号：每次点击刷新按钮自增，传递给子组件触发重新加载
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const persistView = (m: 'card' | 'list') => {
     setViewMode(m);
@@ -100,9 +97,9 @@ export function ItemsPage({
     />
   ) : null;
 
-  // 刷新按钮：桌面端统一放在 ItemsPage 顶层，列表模式的子组件 TodoPage 没有自己的刷新按钮
-  const reloadButton = !isMobile && onReload ? (
-    <Button size="small" icon={<ReloadOutlined />} onClick={onReload} aria-label="刷新">
+  // 刷新按钮：桌面端统一放在 ItemsPage 顶层，点击后 refreshKey 自增触发子组件重拉
+  const reloadButton = !isMobile ? (
+    <Button size="small" icon={<ReloadOutlined />} onClick={() => setRefreshKey(k => k + 1)} aria-label="刷新">
       刷新
     </Button>
   ) : null;
@@ -136,7 +133,7 @@ export function ItemsPage({
         isMobile={isMobile}
         searchKeyword={searchKeyword}
         extra={extra}
-        loopUpdateCount={loopUpdateCount}
+        refreshKey={refreshKey}
       />
     );
   }
@@ -148,7 +145,6 @@ export function ItemsPage({
         selectedTodoId={selectedTodoId}
         onOpenCreateModal={onOpenCreateModal}
         onSelectTodo={onSelectTodo}
-        loopUpdateCount={loopUpdateCount}
         onSelectLoop={onSelectLoop}
         onCreateLoop={onCreateLoop}
         forcedListMode={forcedListMode}
@@ -159,6 +155,7 @@ export function ItemsPage({
         onViewModeChange={persistView}
         searchKeyword={searchKeyword}
         extra={extra}
+        refreshKey={refreshKey}
       />
     );
   }
@@ -168,7 +165,6 @@ export function ItemsPage({
       selectedTodoId={selectedTodoId}
       onOpenCreateModal={onOpenCreateModal}
       onSelectTodo={onSelectTodo}
-      loopUpdateCount={loopUpdateCount}
       onSelectLoop={onSelectLoop}
       onCreateLoop={onCreateLoop}
       forcedListMode={forcedListMode}
@@ -176,6 +172,7 @@ export function ItemsPage({
       onOpenPost={onOpenPost}
       searchKeyword={searchKeyword}
       extra={extra}
+      refreshKey={refreshKey}
     />
   );
 }

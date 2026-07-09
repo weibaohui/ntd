@@ -74,7 +74,6 @@ function AppContent() {
   const [selectedLoopId, setSelectedLoopId] = useState<number | null>(null);
   const [loopUpdateCount, setLoopUpdateCount] = useState(0);
   // 刷新回调：触发 loopUpdateCount 递增，各子组件通过 useEffect 监听该值自动重载数据
-  const reload = useCallback(() => setLoopUpdateCount(c => c + 1), []);
   const [forcedListMode, setForcedListMode] = useState<'item' | 'loop' | undefined>(undefined);
 
   const navKey = useMemo<LeftRailKey>(() => {
@@ -316,13 +315,11 @@ function AppContent() {
               onSelectTodo={handleSelectTodo}
               onSelectLoop={handleSelectLoop}
               onCreateLoop={() => setLoopCreateModalOpen(true)}
-              loopUpdateCount={loopUpdateCount}
               forcedListMode={forcedListMode}
               onListModeChange={() => setForcedListMode(undefined)}
               effectiveMobilePanel={effectiveMobilePanel}
               onOpenPost={handleOpenPost}
               isMobile={isMobile}
-              onReload={reload}
             />
           )}
 

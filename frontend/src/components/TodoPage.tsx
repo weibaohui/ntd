@@ -8,7 +8,6 @@ interface TodoPageProps {
   selectedTodoId: string | number | null;
   onOpenCreateModal: () => void;
   onSelectTodo: (todoId: string | number | null) => void;
-  loopUpdateCount: number;
   onSelectLoop: (loopId: number) => void;
   onCreateLoop: () => void;
   forcedListMode?: 'item' | 'loop';
@@ -18,6 +17,8 @@ interface TodoPageProps {
   searchKeyword?: string;
   /** ItemsPage 构建的完整 header extra（搜索框 + 刷新 + Segmented + 新建）。 */
   extra?: ReactNode;
+  /** 刷新信号，来自 ItemsPage，点击刷新按钮时自增。 */
+  refreshKey?: number;
 }
 
 /**
@@ -31,7 +32,6 @@ export function TodoPage({
   selectedTodoId,
   onOpenCreateModal,
   onSelectTodo,
-  loopUpdateCount,
   onSelectLoop,
   onCreateLoop,
   forcedListMode,
@@ -39,18 +39,19 @@ export function TodoPage({
   onOpenPost,
   searchKeyword,
   extra,
+  refreshKey,
 }: TodoPageProps) {
   const listPanel = (
     <TodoList
       onOpenCreateModal={onOpenCreateModal}
       onSelectTodo={onSelectTodo}
-      loopUpdateCount={loopUpdateCount}
       onSelectLoop={onSelectLoop}
       onCreateLoop={onCreateLoop}
       forcedListMode={forcedListMode}
       onListModeChange={onListModeChange}
       hideCreateButton={true}
       searchKeyword={searchKeyword}
+      refreshKey={refreshKey}
     />
   );
 

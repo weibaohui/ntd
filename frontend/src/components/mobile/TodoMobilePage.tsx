@@ -11,7 +11,8 @@ interface TodoMobilePageProps {
   selectedTodoId: string | number | null;
   onOpenCreateModal: () => void;
   onSelectTodo: (todoId: string | number | null) => void;
-  loopUpdateCount: number;
+  /** 刷新信号，点击刷新按钮时自增。 */
+  refreshKey?: number;
   onSelectLoop: (loopId: number) => void;
   onCreateLoop: () => void;
   forcedListMode?: 'item' | 'loop';
@@ -38,7 +39,7 @@ export function TodoMobilePage({
   selectedTodoId,
   onOpenCreateModal,
   onSelectTodo,
-  loopUpdateCount,
+  refreshKey,
   onSelectLoop,
   onCreateLoop,
   forcedListMode,
@@ -85,7 +86,7 @@ export function TodoMobilePage({
       <TodoList
         onOpenCreateModal={onOpenCreateModal}
         onSelectTodo={onSelectTodo}
-        loopUpdateCount={loopUpdateCount}
+        refreshKey={refreshKey}
         onSelectLoop={onSelectLoop}
         onCreateLoop={onCreateLoop}
         forcedListMode={forcedListMode}
