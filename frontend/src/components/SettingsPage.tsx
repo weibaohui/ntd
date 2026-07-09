@@ -8,6 +8,7 @@ import {
   FileTextOutlined,
   InfoCircleOutlined,
   CloudOutlined,
+  DesktopOutlined,
 } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { useApp } from '@/hooks/useApp';
@@ -20,6 +21,7 @@ import { BackupPanel } from './settings/BackupPanel';
 import { TemplatesPanel } from './settings/TemplatesPanel';
 import { AboutPanel } from './settings/AboutPanel';
 import { CloudSyncPanel } from './settings/CloudSyncPanel';
+import { InterfaceDisplayPanel } from './settings/InterfaceDisplayPanel';
 
 import { DEFAULT_EXECUTION_TIMEOUT_SECS } from '@/constants';
 
@@ -105,7 +107,7 @@ export function SettingsPage() {
   };
 
   // Tab 顺序说明：
-  // 1. 系统设置、标签管理 → 基础配置优先
+  // 1. 系统设置、界面显示、标签管理 → 基础配置优先
   // 2. 事项模板 → 项目相关
   // 3. 备份与恢复 → 数据安全
   // 4. 云端同步 → 外部集成
@@ -125,6 +127,11 @@ export function SettingsPage() {
           handleSaveConfig={handleSaveConfig}
         />
       ),
+    },
+    {
+      key: 'interface',
+      label: <span><DesktopOutlined style={{ marginRight: 6 }} />界面显示</span>,
+      children: <InterfaceDisplayPanel />,
     },
     {
       key: 'tags',

@@ -8,6 +8,25 @@ use crate::db::entity::execution_records;
 use crate::db::Database;
 use crate::models::{ExecutionRecord, ExecutionStatus, ExecutionSummary, ExecutionUsage, ParsedLogEntry};
 
+/// 事项中心批量聚合用：每个 todo 最近一次执行记录的摘要。
+///
+/// 仅取状态与时间两个轻量字段，避免把整条记录载入内存。
+/// `at` 由 handler 取 `finished_at` 回退 `started_at` 作为展示时间。
+pub struct LatestExecutionSummary {
+    pub status: Option<String>,
+    pub finished_at: Option<String>,
+    pub started_at: Option<String>,
+}
+
+impl LatestExecutionSummary {
+    /// 展示时间：优先 finished_at（真正结束），回退 started_at（仍在跑或未写完成时间）。
+    pub fn display_at(&self) -> Option<&str> {
+        self.finished_at
+            .as_deref()
+            .or(self.started_at.as_deref())
+    }
+}
+
 pub struct NewExecutionRecord<'a> {
     pub todo_id: Option<i64>,
     pub command: &'a str,
@@ -216,6 +235,149 @@ impl Database {
             .one(&self.conn)
             .await?;
         Ok(m.map(Into::into))
+    }
+
+    /// 事项中心用：批量取每个 todo 的最近一次执行记录摘要（状态 + 时间）。
+    ///
+    /// 「最近」按 `id` 降序定义（id 单调递增，等价于最新创建的一条），
+    /// 与单条版 `get_latest_execution_record_for_todo` 语义一致。
+    /// 用 `WHERE id IN (SELECT MAX(id) ... GROUP BY todo_id)` 一次性聚合，
+    /// 避免列表场景逐 todo 调用单条版造成 N+1。
+    /// 返回 `todo_id -> 摘要`，未出现的 todo 视为无执行记录。
+    pub async fn get_latest_execution_summaries_for_todos(
+        &self,
+        todo_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, LatestExecutionSummary>, sea_orm::DbErr> {
+        if todo_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        // 构造占位符串与值列表，与 count_enabled_loop_steps_by_todos 同构
+        let values: Vec<sea_orm::Value> = todo_ids.iter().map(|&id| id.into()).collect();
+        let placeholders = std::iter::repeat("?").take(todo_ids.len()).collect::<Vec<_>>().join(",");
+        // 内层子查询取每个 todo 的最大 id（即最近一条），外层按 id 回查状态/时间，
+        // 比窗口函数更兼容老 SQLite。
+        let sql = format!(
+            "SELECT todo_id, status, finished_at, started_at FROM execution_records \
+             WHERE id IN (\
+               SELECT MAX(id) FROM execution_records \
+               WHERE todo_id IS NOT NULL AND todo_id IN ({placeholders}) \
+               GROUP BY todo_id\
+             )"
+        );
+        let rows = self
+            .conn
+            .query_all(Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                values,
+            ))
+            .await?;
+        let mut map = std::collections::HashMap::new();
+        for row in rows {
+            let todo_id: i64 = row.try_get_by("todo_id")?;
+            map.insert(
+                todo_id,
+                LatestExecutionSummary {
+                    status: row.try_get_by("status")?,
+                    finished_at: row.try_get_by("finished_at")?,
+                    started_at: row.try_get_by("started_at")?,
+                },
+            );
+        }
+        Ok(map)
+    }
+
+    /// 批量统计每个 todo 的连续失败次数（事项中心时间/事件驱动卡片展示用）。
+    ///
+    /// 「连续失败」= 从最近一条执行记录往前数，连续 status='failed' 的条数；
+    /// 一旦遇到非 failed（success/running/cancelled/NULL）即停。最近一条非 failed 则为 0。
+    ///
+    /// SQL 思路：统计 id 大于「最后一条非 failed 记录 id」的 failed 记录数。
+    /// - 最近一条非 failed → 该 id 即分界，之后的 failed 即尾部连续失败。
+    /// - 全部 failed（无非 failed 记录）→ COALESCE 回 0，所有 failed 计入。
+    /// - 最近一条非 failed（无后续 failed）→ 计数 0。
+    ///
+    /// `status IS NOT 'failed'` 是 NULL-safe：NULL 状态视为非 failed 的断点。
+    pub async fn get_consecutive_failure_counts_for_todos(
+        &self,
+        todo_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, i64>, sea_orm::DbErr> {
+        if todo_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let values: Vec<sea_orm::Value> = todo_ids.iter().map(|&id| id.into()).collect();
+        let placeholders = std::iter::repeat("?").take(todo_ids.len()).collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT e.todo_id, COUNT(*) AS cnt \
+             FROM execution_records e \
+             WHERE e.status = 'failed' \
+               AND e.todo_id IN ({placeholders}) \
+               AND e.id > COALESCE(\
+                 (SELECT MAX(e2.id) FROM execution_records e2 \
+                  WHERE e2.todo_id = e.todo_id AND e2.status IS NOT 'failed'), 0\
+               ) \
+             GROUP BY e.todo_id"
+        );
+        let rows = self
+            .conn
+            .query_all(Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                values,
+            ))
+            .await?;
+        let mut map = std::collections::HashMap::new();
+        for row in rows {
+            let todo_id: i64 = row.try_get_by("todo_id")?;
+            let cnt: i64 = row.try_get_by("cnt")?;
+            map.insert(todo_id, cnt);
+        }
+        Ok(map)
+    }
+
+    /// 批量取每个 todo 最近一次 webhook 触发的时间（事项中心事件驱动卡片「最近触发时间」用）。
+    ///
+    /// 事件驱动卡片需要区分「最近一次触发」（webhook）与「最近一次执行」（任意触发源）：
+    /// 用户手动「执行一次」不应顶掉 webhook 最近触发时间。只看 trigger_type='webhook'。
+    /// 返回 `todo_id -> 时间串`（优先 finished_at 回退 started_at），无 webhook 记录则不在 map 中。
+    pub async fn get_last_webhook_trigger_for_todos(
+        &self,
+        todo_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, String>, sea_orm::DbErr> {
+        if todo_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let values: Vec<sea_orm::Value> = todo_ids.iter().map(|&id| id.into()).collect();
+        let placeholders = std::iter::repeat("?").take(todo_ids.len()).collect::<Vec<_>>().join(",");
+        // COALESCE 取 finished_at 回退 started_at；用相关子查询取每个 todo 的最大 webhook 记录 id，
+        // 避免占位符重复（外层 IN 已限定 todo 范围，内层按 e.todo_id 关联即可，无需再次 IN）。
+        let sql = format!(
+            "SELECT e.todo_id, COALESCE(e.finished_at, e.started_at) AS at \
+             FROM execution_records e \
+             WHERE e.trigger_type = 'webhook' \
+               AND e.todo_id IN ({placeholders}) \
+               AND e.id = (\
+                 SELECT MAX(e2.id) FROM execution_records e2 \
+                 WHERE e2.todo_id = e.todo_id AND e2.trigger_type = 'webhook'\
+               )"
+        );
+        let rows = self
+            .conn
+            .query_all(Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                values,
+            ))
+            .await?;
+        let mut map = std::collections::HashMap::new();
+        for row in rows {
+            let todo_id: i64 = row.try_get_by("todo_id")?;
+            let at: Option<String> = row.try_get_by("at")?;
+            if let Some(t) = at {
+                map.insert(todo_id, t);
+            }
+        }
+        Ok(map)
     }
 
     /// 批量根据 task_id 列表获取执行记录（用于 WebSocket 同步等场景）
@@ -1457,5 +1619,99 @@ mod tests {
         assert!(sql.contains("last_review_status"));
         assert!(sql.contains("$9"));
         assert_eq!(values.len(), 9);
+    }
+}
+
+/// 事项中心聚合查询测试：连续失败次数 + webhook 最近触发时间。
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
+mod center_aggregate_tests {
+    use super::*;
+    use crate::db::Database;
+
+    async fn fresh_db() -> Database {
+        Database::new(":memory:").await.expect("memory db must open")
+    }
+
+    /// 插一条 todo 并返回 id。
+    async fn seed_todo(db: &Database, title: &str) -> i64 {
+        db.exec(&format!(
+            "INSERT INTO todos (title, prompt, status) VALUES ('{title}', 'p', 'pending')"
+        ))
+        .await
+        .expect("insert todo");
+        let row = db
+            .conn
+            .query_one(Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                format!("SELECT id FROM todos WHERE title = '{title}'"),
+            ))
+            .await
+            .expect("query id")
+            .expect("row exists");
+        row.try_get_by_index::<i64>(0).expect("id readable")
+    }
+
+    /// 插一条执行记录（trigger_type / status / todo_id 可指定），id 自增。
+    async fn seed_exec(db: &Database, todo_id: i64, status: &str, trigger: &str) {
+        db.exec(&format!(
+            "INSERT INTO execution_records (todo_id, status, trigger_type, started_at, finished_at) \
+             VALUES ({todo_id}, '{status}', '{trigger}', '2026-07-08T09:00:00Z', '2026-07-08T09:01:00Z')"
+        ))
+        .await
+        .expect("insert exec");
+    }
+
+    /// 连续失败计数：尾部 2 条 failed（前面有 success 断点）→ 计数 2。
+    #[tokio::test]
+    async fn test_consecutive_failure_counts_trailing_failures() {
+        let db = fresh_db().await;
+        let t = seed_todo(&db, "A").await;
+        seed_exec(&db, t, "success", "manual").await;
+        seed_exec(&db, t, "failed", "manual").await;
+        seed_exec(&db, t, "failed", "manual").await;
+        let map = db.get_consecutive_failure_counts_for_todos(&[t]).await.unwrap();
+        assert_eq!(map.get(&t).copied().unwrap_or(0), 2, "尾部连续 2 次 failed");
+    }
+
+    /// 连续失败计数：最近一条非 failed → 计数 0（即使历史有 failed）。
+    #[tokio::test]
+    async fn test_consecutive_failure_counts_zero_when_latest_not_failed() {
+        let db = fresh_db().await;
+        let t = seed_todo(&db, "B").await;
+        seed_exec(&db, t, "failed", "manual").await;
+        seed_exec(&db, t, "success", "manual").await;
+        let map = db.get_consecutive_failure_counts_for_todos(&[t]).await.unwrap();
+        // 计数 0 时 todo 不在 map 中（GROUP BY 不产生 0 行），unwrap_or(0) 表达「无连续失败」
+        assert_eq!(map.get(&t).copied().unwrap_or(0), 0, "最近一条 success 应计数 0");
+    }
+
+    /// 连续失败计数：全部 failed（无非 failed 断点）→ 计数全部。
+    #[tokio::test]
+    async fn test_consecutive_failure_counts_all_failed() {
+        let db = fresh_db().await;
+        let t = seed_todo(&db, "C").await;
+        seed_exec(&db, t, "failed", "manual").await;
+        seed_exec(&db, t, "failed", "manual").await;
+        seed_exec(&db, t, "failed", "manual").await;
+        let map = db.get_consecutive_failure_counts_for_todos(&[t]).await.unwrap();
+        assert_eq!(map.get(&t).copied().unwrap_or(0), 3, "全部 failed 应计数 3");
+    }
+
+    /// webhook 最近触发时间：只取 trigger_type='webhook' 的最新一条，忽略手动执行。
+    #[tokio::test]
+    async fn test_last_webhook_trigger_ignores_manual() {
+        let db = fresh_db().await;
+        let t = seed_todo(&db, "D").await;
+        // 先一条 webhook 触发，再一条手动执行（更晚）
+        seed_exec(&db, t, "success", "webhook").await;
+        seed_exec(&db, t, "success", "manual").await;
+        let map = db.get_last_webhook_trigger_for_todos(&[t]).await.unwrap();
+        assert!(map.contains_key(&t), "应有 webhook 触发记录");
+        // 无 webhook 记录的 todo 不在 map 中
+        let t2 = seed_todo(&db, "E").await;
+        seed_exec(&db, t2, "success", "manual").await;
+        let map2 = db.get_last_webhook_trigger_for_todos(&[t2]).await.unwrap();
+        assert!(!map2.contains_key(&t2), "纯手动执行不应出现在 webhook 触发 map");
     }
 }

@@ -15,6 +15,8 @@ mod v47_v53;
 mod v54;
 mod v55;
 mod v56;
+mod v57;
+mod v58;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -53,6 +55,10 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v55::V55AddWikiChatSessions),
         // V56 必须排在 V55 之后：补齐早期 V47 跳过建表演进列的旧部署遗留
         Box::new(v56::V56AddMissingBlackboardColumns),
+        // V57 在 V56 之后：把写死的 Wiki 执行超时做成 per-workspace 可配置项
+        Box::new(v57::V57AddWikiTimeoutSecs),
+        // V58 在 V57 之后：todos 新增 archived_at，支撑事项中心「已归档」分类
+        Box::new(v58::V58AddTodosArchivedAt),
     ]
 }
 

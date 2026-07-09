@@ -258,20 +258,25 @@ async fn run_wiki_execution(
         AppError::Internal("Wiki 更新任务启动失败".to_string())
     })?;
 
+    // 读取 per-workspace 超时配置：用户在黑板设置界面可调，DB 读失败回退默认 5 分钟
+    let timeout_secs = resolve_wiki_timeout_secs(&db, workspace_id).await;
+
     // 等待 Finished
-    wait_for_finished(&mut rx, &task_id, workspace_id).await
+    wait_for_finished(&mut rx, &task_id, workspace_id, timeout_secs).await
 }
 
 /// 等待目标 task_id 对应的 Finished 事件。
 ///
-/// 使用 5 分钟超时防止无限等待；仅当 `success=true` 时才认为执行成功并返回结果。
+/// 超时时长由调用方传入（来自 per-workspace 黑板配置 wiki_timeout_secs），
+/// 防止事件丢失时永久阻塞；仅当 `success=true` 时才认为执行成功并返回结果。
 async fn wait_for_finished(
     rx: &mut tokio::sync::broadcast::Receiver<ExecEvent>,
     task_id: &str,
     workspace_id: i64,
+    timeout_secs: u64,
 ) -> Result<Option<String>, AppError> {
-    // 5 分钟超时，防止事件丢失时永久阻塞
-    let timeout_duration = tokio::time::Duration::from_secs(5 * 60);
+    // 用配置的超时时长，防止事件丢失时永久阻塞
+    let timeout_duration = tokio::time::Duration::from_secs(timeout_secs);
     let deadline = tokio::time::Instant::now() + timeout_duration;
 
     loop {
@@ -280,12 +285,14 @@ async fn wait_for_finished(
             // 超时：事件未在规定时间内到达
             Err(_) => {
                 tracing::warn!(
-                    "Wiki 执行超时: workspace_id={}, task_id={}, timeout_secs=300",
+                    "Wiki 执行超时: workspace_id={}, task_id={}, timeout_secs={}",
                     workspace_id,
-                    task_id
+                    task_id,
+                    timeout_secs
                 );
                 return Err(AppError::Internal(format!(
-                    "Wiki 执行超时（5 分钟），task_id={}",
+                    "Wiki 执行超时（{}秒），task_id={}",
+                    timeout_secs,
                     task_id
                 )));
             }
@@ -496,6 +503,8 @@ pub async fn chat_with_wiki(
     });
 
     // 7. spawn 执行器子进程，流式读取 stdout，逐行推送 WikiChatOutput 事件
+    //    超时读 per-workspace 配置：用户在黑板设置界面可调，DB 读失败回退默认 5 分钟
+    let timeout_secs = resolve_wiki_timeout_secs(db, workspace_id).await;
     let started_at = std::time::Instant::now();
     let spawn_result = spawn_executor_for_chat_streaming(
         &executor,
@@ -505,6 +514,7 @@ pub async fn chat_with_wiki(
         workspace_id,
         tx,
         session_id.clone(),
+        timeout_secs,
     )
     .await;
 
@@ -629,6 +639,26 @@ async fn resolve_chat_executor(
     Ok("claudecode".to_string())
 }
 
+/// 从 per-workspace 黑板配置读取 Wiki 执行超时秒数。
+///
+/// DB 读取失败或记录缺失时回退默认值（5 分钟），与历史写死行为一致，
+/// 避免配置读取异常影响 Wiki 任务的可用性。返回值已被 db 层钳制到合法区间，
+/// 这里只做防御性兜底：负值/0 视为未配置回退默认。
+async fn resolve_wiki_timeout_secs(db: &Arc<Database>, workspace_id: i64) -> u64 {
+    // 读黑板配置，失败不致命——回退默认值保证 Wiki 任务能继续跑
+    match db.get_blackboard_config(workspace_id).await {
+        Ok(Some(cfg)) if cfg.wiki_timeout_secs > 0 => cfg.wiki_timeout_secs as u64,
+        // 配置缺失/读到 0/负值 → 回退默认 5 分钟
+        _ => {
+            tracing::debug!(
+                "wiki timeout 未配置或非法，回退默认值: workspace_id={}",
+                workspace_id
+            );
+            crate::db::blackboard::DEFAULT_WIKI_TIMEOUT_SECS as u64
+        }
+    }
+}
+
 /// spawn 执行器子进程，流式读取 stdout，逐行解析并推送 WikiChatOutput 事件。
 ///
 /// 与 handle_default_response_executor 的 spawn 逻辑保持一致：
@@ -640,7 +670,12 @@ async fn resolve_chat_executor(
 /// 返回：(解析出的日志条目列表, 原始 stdout 文本, 原始 stderr 文本, 是否成功退出)
 /// 同时通过 broadcast channel 实时推送每一行日志，前端 WebSocket 可收到。
 ///
-/// 超时保护 5 分钟，超时后 kill 子进程并返回错误。
+/// 超时保护由调用方传入（来自 per-workspace 配置 wiki_timeout_secs），
+/// 超时后 kill 子进程并返回错误。
+///
+/// 参数较多但均为生成子进程所必需的上下文，拆 struct 反而割裂调用点可读性，
+/// 故与项目内其他 spawn 类函数一致允许 too_many_arguments。
+#[allow(clippy::too_many_arguments)]
 async fn spawn_executor_for_chat_streaming(
     executor: &std::sync::Arc<dyn crate::adapters::CodeExecutor>,
     message: &str,
@@ -649,6 +684,7 @@ async fn spawn_executor_for_chat_streaming(
     workspace_id: i64,
     tx: &tokio::sync::broadcast::Sender<crate::executor_service::events::ExecEvent>,
     session_id: Option<String>,
+    timeout_secs: u64,
 ) -> Result<(Vec<crate::models::ParsedLogEntry>, String, String, bool), AppError> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use crate::executor_service::events::ExecEvent;
@@ -707,9 +743,8 @@ async fn spawn_executor_for_chat_streaming(
     let mut raw_stdout_lines: Vec<String> = Vec::new();
     let mut raw_stderr_lines: Vec<String> = Vec::new();
 
-    // 超时保护：5 分钟
-    const EXEC_TIMEOUT_SECS: u64 = 300;
-    let timeout_fut = tokio::time::sleep(std::time::Duration::from_secs(EXEC_TIMEOUT_SECS));
+    // 超时保护：用 per-workspace 配置值，超时后 kill 子进程避免僵尸进程
+    let timeout_fut = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs));
     tokio::pin!(timeout_fut);
 
     loop {
@@ -791,14 +826,14 @@ async fn spawn_executor_for_chat_streaming(
             _ = &mut timeout_fut => {
                 tracing::error!(
                     "wiki chat executor timed out after {}s, killing child: task_id={}",
-                    EXEC_TIMEOUT_SECS,
+                    timeout_secs,
                     task_id
                 );
                 let _ = child.kill().await;
                 let stderr_raw = raw_stderr_lines.join("\n");
                 return Err(AppError::Internal(format!(
                     "执行器超时（{}秒），请稍后重试或简化问题\nstderr: {}",
-                    EXEC_TIMEOUT_SECS, stderr_raw
+                    timeout_secs, stderr_raw
                 )));
             }
         }

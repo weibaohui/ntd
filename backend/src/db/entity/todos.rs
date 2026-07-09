@@ -12,6 +12,10 @@ pub struct Model {
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     pub deleted_at: Option<String>,
+    /// 归档时间戳（UTC 字符串）。NULL=未归档，参与事项中心日常分类；
+    /// 非 NULL=已归档，进入「已归档」分类，从日常视图隐藏但数据保留。
+    /// 与 deleted_at 区别：归档仅隐藏，不清理 scheduler/在跑 task、不解除 Loop 引用。
+    pub archived_at: Option<String>,
     pub executor: Option<String>,
     pub scheduler_enabled: Option<bool>,
     pub scheduler_config: Option<String>,

@@ -159,6 +159,8 @@ export interface LoopStepDto {
   todo_title: string;
   /** 关联的 todo executor */
   todo_executor: string;
+  /** 关联的 todo 归档时间。非空=已归档，Loop 详情图上标记，提醒环节指向已隐藏事项。 */
+  todo_archived_at?: string | null;
 }
 
 export interface CreateLoopStepRequest {

@@ -6,7 +6,7 @@ use sea_orm::{
 use crate::db::entity::tags;
 use crate::db::entity::{todo_tags, todos};
 use crate::db::Database;
-use crate::models::{Todo, TodoBackup, TodoStatus};
+use crate::models::{ComputedBucket, Todo, TodoBackup, TodoCenterItem, TodoStatus, compute_bucket};
 
 pub struct TodoUpdate<'a> {
     pub id: i64,
@@ -37,6 +37,16 @@ pub struct SchedulerUpdate<'a> {
     pub enabled: bool,
     pub config: Option<&'a str>,
     pub timezone: Option<&'a str>,
+}
+
+/// 事项中心批量聚合结果：把组装 TodoCenterItem 需要的所有聚合 map 收进一个结构体，
+/// 避免 build_center_item 参数膨胀（6+ 个 map 参数会触发 too_many_arguments 且难读）。
+pub struct TodoCenterAggregates {
+    pub loop_count_map: std::collections::HashMap<i64, i64>,
+    pub referencing_loops_map: std::collections::HashMap<i64, Vec<crate::models::LoopRefSummary>>,
+    pub last_exec_map: std::collections::HashMap<i64, crate::db::LatestExecutionSummary>,
+    pub consecutive_fail_map: std::collections::HashMap<i64, i64>,
+    pub last_webhook_map: std::collections::HashMap<i64, String>,
 }
 
 impl Database {
@@ -83,6 +93,7 @@ impl Database {
             auto_review_enabled: m.auto_review_enabled.unwrap_or(false),
             action_type: m.action_type,
             action_key: m.action_key,
+            archived_at: m.archived_at,
         }
     }
 
@@ -124,10 +135,14 @@ impl Database {
             .collect())
     }
 
-    /// 按工作空间 ID 过滤 Todo
+    /// 按工作空间 ID 过滤 Todo（日常视图）。
+    ///
+    /// 额外过滤 `archived_at IS NULL`：已归档事项从日常视图隐藏，
+    /// 仅在事项中心「已归档」分类可见（见 `get_todo_center`）。
     pub async fn get_todos_by_workspace_id(&self, workspace_id: Option<i64>) -> Result<Vec<Todo>, sea_orm::DbErr> {
         let mut query = todos::Entity::find()
             .filter(todos::Column::DeletedAt.is_null())
+            .filter(todos::Column::ArchivedAt.is_null())
             .order_by_desc(todos::Column::UpdatedAt);
 
         if let Some(id) = workspace_id {
@@ -146,6 +161,157 @@ impl Database {
                 Self::model_to_todo(m, tag_ids)
             })
             .collect())
+    }
+
+    /// 事项中心列表：按工作空间返回带运行时推导字段的 TodoCenterItem 集合。
+    ///
+    /// 与日常视图不同，这里**不**过滤 `archived_at`——已归档事项也需在
+    /// 「已归档」分类可见。可选 `bucket` 在内存中按 `computed_bucket` 过滤
+    /// （分页前完成分桶，避免数量/分页错乱，见设计文档风险二）。
+    /// 第一版数据量有限，采用「全量载入 + 批量聚合 + 内存过滤」的简单正确实现；
+    /// 真正的分页与 SQL 层分桶留待后续按性能需要再加。
+    pub async fn get_todo_center(
+        &self,
+        workspace_id: Option<i64>,
+        bucket: Option<ComputedBucket>,
+    ) -> Result<Vec<TodoCenterItem>, sea_orm::DbErr> {
+        // 不过滤 archived_at：已归档事项也要在「已归档」分类出现
+        let mut query = todos::Entity::find()
+            .filter(todos::Column::DeletedAt.is_null())
+            .order_by_desc(todos::Column::UpdatedAt);
+        if let Some(id) = workspace_id {
+            query = query.filter(todos::Column::WorkspaceId.eq(id));
+        }
+        let models = query.all(&self.conn).await?;
+
+        // 一次性批量补算 loop 引用计数/引用 Loop 摘要与执行相关聚合，避免逐 todo N+1
+        let ids: Vec<i64> = models.iter().map(|m| m.id).collect();
+        let tag_map = self.fetch_tag_ids_for_many(&ids).await?;
+        let aggs = TodoCenterAggregates {
+            loop_count_map: self.count_enabled_loop_steps_by_todos(&ids).await?,
+            referencing_loops_map: self.get_referencing_loops_for_todos(&ids).await?,
+            last_exec_map: self.get_latest_execution_summaries_for_todos(&ids).await?,
+            consecutive_fail_map: self.get_consecutive_failure_counts_for_todos(&ids).await?,
+            last_webhook_map: self.get_last_webhook_trigger_for_todos(&ids).await?,
+        };
+
+        // 组装 TodoCenterItem，并按 bucket 过滤
+        let mut items = Vec::with_capacity(models.len());
+        for m in models {
+            let tag_ids = tag_map.get(&m.id).cloned().unwrap_or_default();
+            let todo = Self::model_to_todo(m, tag_ids);
+            let item = Self::build_center_item(todo, &aggs);
+            // 内存层分桶过滤：分页前完成，保证 Tab 数量正确
+            // 用 map_or 而非 is_none_or：后者稳定于 1.82，当前 MSRV 1.81 不支持
+            if bucket.map_or(true, |b| b == item.computed_bucket) {
+                items.push(item);
+            }
+        }
+        Ok(items)
+    }
+
+    /// 由已载入的 Todo + 批量聚合结果组装单个 TodoCenterItem（纯函数，便于复用与单测）。
+    fn build_center_item(todo: Todo, aggs: &TodoCenterAggregates) -> TodoCenterItem {
+        // 未出现在聚合 map 中的 todo 计数视为 0（未被任何启用 Loop 引用）
+        let used_by_loop_step_count = aggs.loop_count_map.get(&todo.id).copied().unwrap_or(0);
+        let computed_bucket = compute_bucket(
+            todo.archived_at.as_deref(),
+            used_by_loop_step_count,
+            todo.scheduler_config.as_deref(),
+            todo.webhook_enabled,
+        );
+        let (last_execution_status, last_execution_at) = aggs
+            .last_exec_map
+            .get(&todo.id)
+            .map(|s| (s.status.clone(), s.display_at().map(str::to_string)))
+            .unwrap_or((None, None));
+        let referencing_loops = aggs
+            .referencing_loops_map
+            .get(&todo.id)
+            .cloned()
+            .unwrap_or_default();
+        let consecutive_failure_count = aggs
+            .consecutive_fail_map
+            .get(&todo.id)
+            .copied()
+            .unwrap_or(0);
+        let last_webhook_trigger_at = aggs.last_webhook_map.get(&todo.id).cloned();
+        TodoCenterItem {
+            todo,
+            computed_bucket,
+            used_by_loop_step_count,
+            last_execution_status,
+            last_execution_at,
+            referencing_loops,
+            consecutive_failure_count,
+            last_webhook_trigger_at,
+        }
+    }
+
+    /// 取单个 todo 的 TodoCenterItem（archive/restore/webhook 后回传用）。
+    ///
+    /// 单条路径：用与列表同构的批量聚合接口取该 todo 的 loop 引用计数与最近执行，
+    /// 再交给 `build_center_item` 组装，保证单条与列表口径完全一致。
+    pub async fn get_todo_center_item(
+        &self,
+        id: i64,
+    ) -> Result<Option<TodoCenterItem>, sea_orm::DbErr> {
+        let Some(todo) = self.get_todo(id).await? else {
+            return Ok(None);
+        };
+        let ids = vec![id];
+        let aggs = TodoCenterAggregates {
+            loop_count_map: self.count_enabled_loop_steps_by_todos(&ids).await?,
+            referencing_loops_map: self.get_referencing_loops_for_todos(&ids).await?,
+            last_exec_map: self.get_latest_execution_summaries_for_todos(&ids).await?,
+            consecutive_fail_map: self.get_consecutive_failure_counts_for_todos(&ids).await?,
+            last_webhook_map: self.get_last_webhook_trigger_for_todos(&ids).await?,
+        };
+        Ok(Some(Self::build_center_item(todo, &aggs)))
+    }
+
+    /// 归档事项：设置 archived_at = 当前 UTC 时间。
+    ///
+    /// 仅改 archived_at，不动 deleted_at/scheduler_config/webhook_enabled/Loop 引用，
+    /// 保证归档是「纯隐藏」语义，可随时恢复。
+    pub async fn archive_todo(&self, id: i64) -> Result<bool, sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let res = todos::Entity::update_many()
+            .col_expr(todos::Column::ArchivedAt, Some(now).into())
+            .filter(todos::Column::Id.eq(id))
+            .filter(todos::Column::DeletedAt.is_null())
+            .exec(&self.conn)
+            .await?;
+        // 受影响行数=1 表示该 todo 存在且未软删；=0 表示找不到
+        Ok(res.rows_affected == 1)
+    }
+
+    /// 恢复事项：清空 archived_at。
+    ///
+    /// 恢复后分类由当前真实关系重新推导（见 get_todo_center_item 的 computed_bucket）。
+    pub async fn restore_todo(&self, id: i64) -> Result<bool, sea_orm::DbErr> {
+        // None::<String>.into() → Value::Null，显式清空列
+        let res = todos::Entity::update_many()
+            .col_expr(todos::Column::ArchivedAt, None::<String>.into())
+            .filter(todos::Column::Id.eq(id))
+            .filter(todos::Column::DeletedAt.is_null())
+            .exec(&self.conn)
+            .await?;
+        Ok(res.rows_affected == 1)
+    }
+
+    /// 开关事件驱动：设置 webhook_enabled。
+    ///
+    /// 与 `PUT /api/todos/{id}/scheduler` 对称的扁平具名路由后端实现。
+    /// 关闭后若不再有调度/Loop 引用，computed_bucket 自然回到手动触发。
+    pub async fn update_todo_webhook(&self, id: i64, enabled: bool) -> Result<bool, sea_orm::DbErr> {
+        let res = todos::Entity::update_many()
+            .col_expr(todos::Column::WebhookEnabled, enabled.into())
+            .filter(todos::Column::Id.eq(id))
+            .filter(todos::Column::DeletedAt.is_null())
+            .exec(&self.conn)
+            .await?;
+        Ok(res.rows_affected == 1)
     }
 
     /// 按 action_type + action_key + workspace_id 查找 todo。
@@ -1440,5 +1606,293 @@ mod review_instance_reuse_tests {
             .expect("reset");
         let found = db.find_review_instance_by_template(template_id).await.expect("find").unwrap();
         assert!(found.executor.is_none(), "executor must clear to None");
+    }
+}
+
+/// 事项中心（computed_bucket / archive / restore / webhook）DAO 测试。
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark, clippy::too_many_lines)]
+mod todo_center_tests {
+    use super::*;
+    use crate::db::LatestExecutionSummary;
+    use crate::db::Database;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    async fn fresh_db() -> Database {
+        Database::new(":memory:").await.expect("memory db must open")
+    }
+
+    /// 用最小列集插一条 todo，返回其 id。
+    /// 直接 SQL 而非走 create_todo_with_extras，避免拉起 workspace/executor 依赖。
+    async fn seed_todo(db: &Database, title: &str) -> i64 {
+        db.exec(&format!(
+            "INSERT INTO todos (title, prompt, status) VALUES ('{title}', 'p', 'pending')"
+        ))
+        .await
+        .expect("insert todo");
+        let row = db
+            .conn
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                format!("SELECT id FROM todos WHERE title = '{title}'"),
+            ))
+            .await
+            .expect("query id")
+            .expect("row exists");
+        row.try_get_by_index::<i64>(0).expect("id readable")
+    }
+
+    /// 日常视图（get_todos_by_workspace_id）不返回已归档事项。
+    /// 这是归档「从日常视图隐藏」语义的落地点。
+    #[tokio::test]
+    async fn test_daily_list_excludes_archived() {
+        let db = fresh_db().await;
+        let id = seed_todo(&db, "归档项").await;
+        let before = db.get_todos_by_workspace_id(None).await.unwrap();
+        assert_eq!(before.len(), 1, "归档前应在日常视图可见");
+
+        assert!(db.archive_todo(id).await.unwrap(), "archive 应命中一行");
+        let after = db.get_todos_by_workspace_id(None).await.unwrap();
+        assert!(after.is_empty(), "归档后日常视图应隐藏该事项");
+    }
+
+    /// archive / restore 往返：archived_at 从 None → Some → None。
+    #[tokio::test]
+    async fn test_archive_restore_roundtrip() {
+        let db = fresh_db().await;
+        let id = seed_todo(&db, "可恢复").await;
+
+        assert!(db.archive_todo(id).await.unwrap());
+        let archived = db.get_todo(id).await.unwrap().unwrap();
+        assert!(archived.archived_at.is_some(), "归档后 archived_at 应非空");
+
+        assert!(db.restore_todo(id).await.unwrap());
+        let restored = db.get_todo(id).await.unwrap().unwrap();
+        assert!(restored.archived_at.is_none(), "恢复后 archived_at 应清空");
+    }
+
+    /// archive 命中不存在的 id 返回 false（不报错），handler 据此回 404。
+    #[tokio::test]
+    async fn test_archive_missing_id_returns_false() {
+        let db = fresh_db().await;
+        assert!(!db.archive_todo(99999).await.unwrap());
+        assert!(!db.restore_todo(99999).await.unwrap());
+        assert!(!db.update_todo_webhook(99999, true).await.unwrap());
+    }
+
+    /// update_todo_webhook 切换 webhook_enabled，影响事件驱动分桶。
+    #[tokio::test]
+    async fn test_update_todo_webhook_toggles() {
+        let db = fresh_db().await;
+        let id = seed_todo(&db, "事件项").await;
+        assert!(db.update_todo_webhook(id, true).await.unwrap());
+        assert!(db.get_todo(id).await.unwrap().unwrap().webhook_enabled);
+        assert!(db.update_todo_webhook(id, false).await.unwrap());
+        assert!(!db.get_todo(id).await.unwrap().unwrap().webhook_enabled);
+    }
+
+    /// get_todo_center 把普通事项分到 Manual，已归档事项分到 Archived，
+    /// 且 bucket 过滤生效。
+    #[tokio::test]
+    async fn test_get_todo_center_manual_and_archived_buckets() {
+        let db = fresh_db().await;
+        let manual_id = seed_todo(&db, "手动").await;
+        let archived_id = seed_todo(&db, "已归档").await;
+        db.archive_todo(archived_id).await.unwrap();
+
+        // 不过滤：应同时含两类
+        let all = db.get_todo_center(None, None).await.unwrap();
+        assert_eq!(all.len(), 2, "未过滤应返回全部非软删事项");
+
+        // 手动桶
+        let manual = db
+            .get_todo_center(None, Some(ComputedBucket::Manual))
+            .await
+            .unwrap();
+        assert_eq!(manual.len(), 1);
+        assert_eq!(manual[0].todo.id, manual_id);
+        assert_eq!(manual[0].computed_bucket, ComputedBucket::Manual);
+
+        // 已归档桶
+        let archived = db
+            .get_todo_center(None, Some(ComputedBucket::Archived))
+            .await
+            .unwrap();
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].todo.id, archived_id);
+        assert_eq!(archived[0].computed_bucket, ComputedBucket::Archived);
+    }
+
+    /// 插一条启用 loop_step 引用 todo，确认 get_todo_center 分到 LoopDriven。
+    /// 验证 Loop 引用计数聚合与「Loop 驱动优先于时间/事件」优先级在 DB 层落地。
+    #[tokio::test]
+    async fn test_get_todo_center_loop_driven_classification() {
+        let db = fresh_db().await;
+        let id = seed_todo(&db, "被引用").await;
+        // 先建 loop 行（loop_steps.loop_id 有 FK 约束）
+        db.exec("INSERT INTO loops (name) VALUES ('L1')")
+            .await
+            .expect("insert loop");
+        // 插一条启用的 step 引用该 todo；enabled=1 才计入 Loop 驱动
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) VALUES (1, 's1', {id}, 1)"
+        ))
+        .await
+        .expect("insert step");
+
+        let items = db.get_todo_center(None, None).await.unwrap();
+        let item = items.iter().find(|i| i.todo.id == id).expect("todo present");
+        assert_eq!(item.used_by_loop_step_count, 1, "应聚合到 1 次启用引用");
+        assert_eq!(item.computed_bucket, ComputedBucket::LoopDriven);
+    }
+
+    /// build_center_item 纯函数：最近执行记录摘要正确映射到 last_execution_* 字段。
+    /// 优先 finished_at，回退 started_at。
+    #[test]
+    fn test_build_center_item_maps_last_execution() {
+        let mut todo = make_minimal_todo();
+        todo.id = 42;
+        let mut loop_map = std::collections::HashMap::new();
+        // 给一个 Loop 引用计数，确认同时透传
+        loop_map.insert(42_i64, 2_i64);
+        let mut exec_map = std::collections::HashMap::new();
+        exec_map.insert(
+            42,
+            LatestExecutionSummary {
+                status: Some("failed".into()),
+                finished_at: Some("2026-07-08T10:00:00Z".into()),
+                started_at: Some("2026-07-08T09:59:00Z".into()),
+            },
+        );
+        let aggs = aggs_with(loop_map, exec_map);
+        let item = Database::build_center_item(todo, &aggs);
+        assert_eq!(item.used_by_loop_step_count, 2);
+        assert_eq!(item.computed_bucket, ComputedBucket::LoopDriven);
+        assert_eq!(item.last_execution_status.as_deref(), Some("failed"));
+        // 优先 finished_at
+        assert_eq!(item.last_execution_at.as_deref(), Some("2026-07-08T10:00:00Z"));
+    }
+
+    /// build_center_item：无 finished_at 时回退 started_at 作为展示时间。
+    #[test]
+    fn test_build_center_item_falls_back_to_started_at() {
+        let mut todo = make_minimal_todo();
+        todo.id = 7;
+        let mut exec_map = std::collections::HashMap::new();
+        exec_map.insert(
+            7,
+            LatestExecutionSummary {
+                status: Some("running".into()),
+                finished_at: None,
+                started_at: Some("2026-07-08T09:00:00Z".into()),
+            },
+        );
+        let aggs = aggs_with(Default::default(), exec_map);
+        let item = Database::build_center_item(todo, &aggs);
+        assert_eq!(item.last_execution_at.as_deref(), Some("2026-07-08T09:00:00Z"));
+    }
+
+    /// build_center_item：无执行记录时 last_execution_* 均为 None，连续失败 0。
+    #[test]
+    fn test_build_center_item_no_execution() {
+        let todo = make_minimal_todo();
+        let item = Database::build_center_item(todo, &empty_aggs());
+        assert!(item.last_execution_status.is_none());
+        assert!(item.last_execution_at.is_none());
+        assert_eq!(item.computed_bucket, ComputedBucket::Manual);
+        assert_eq!(item.consecutive_failure_count, 0);
+    }
+
+    /// build_center_item：引用 Loop 摘要按 todo_id 透传，未被引用时为空 vec。
+    #[test]
+    fn test_build_center_item_references_loops() {
+        let mut todo = make_minimal_todo();
+        todo.id = 42;
+        let mut loop_map = std::collections::HashMap::new();
+        loop_map.insert(42_i64, 1_i64);
+        let mut ref_map = std::collections::HashMap::new();
+        ref_map.insert(
+            42,
+            vec![
+                crate::models::LoopRefSummary { loop_id: 5, loop_name: "L5".into() },
+                crate::models::LoopRefSummary { loop_id: 8, loop_name: "L8".into() },
+            ],
+        );
+        let mut aggs = empty_aggs();
+        aggs.loop_count_map = loop_map;
+        aggs.referencing_loops_map = ref_map;
+        let item = Database::build_center_item(todo, &aggs);
+        assert_eq!(item.computed_bucket, ComputedBucket::LoopDriven);
+        assert_eq!(item.referencing_loops.len(), 2);
+        assert_eq!(item.referencing_loops[0].loop_id, 5);
+        assert_eq!(item.referencing_loops[1].loop_name, "L8");
+    }
+
+    /// build_center_item：连续失败次数与 webhook 最近触发时间按 todo_id 透传。
+    #[test]
+    fn test_build_center_item_failure_count_and_webhook() {
+        let mut todo = make_minimal_todo();
+        todo.id = 9;
+        let mut aggs = empty_aggs();
+        aggs.consecutive_fail_map.insert(9, 3);
+        aggs.last_webhook_map.insert(9, "2026-07-08T11:00:00Z".into());
+        let item = Database::build_center_item(todo, &aggs);
+        assert_eq!(item.consecutive_failure_count, 3);
+        assert_eq!(item.last_webhook_trigger_at.as_deref(), Some("2026-07-08T11:00:00Z"));
+    }
+
+    /// 构造全空的聚合结构体，测试里按需覆盖个别字段。
+    fn empty_aggs() -> TodoCenterAggregates {
+        TodoCenterAggregates {
+            loop_count_map: Default::default(),
+            referencing_loops_map: Default::default(),
+            last_exec_map: Default::default(),
+            consecutive_fail_map: Default::default(),
+            last_webhook_map: Default::default(),
+        }
+    }
+
+    /// 由 loop_count_map + last_exec_map 构造聚合（其余空），简化常见用例。
+    fn aggs_with(
+        loop_count_map: std::collections::HashMap<i64, i64>,
+        last_exec_map: std::collections::HashMap<i64, LatestExecutionSummary>,
+    ) -> TodoCenterAggregates {
+        TodoCenterAggregates {
+            loop_count_map,
+            referencing_loops_map: Default::default(),
+            last_exec_map,
+            consecutive_fail_map: Default::default(),
+            last_webhook_map: Default::default(),
+        }
+    }
+
+    /// 构造一个最小合法 Todo 供 build_center_item 纯函数测试复用。
+    fn make_minimal_todo() -> Todo {
+        Todo {
+            id: 0,
+            title: "t".into(),
+            prompt: "p".into(),
+            status: TodoStatus::Pending,
+            created_at: String::new(),
+            updated_at: String::new(),
+            tag_ids: vec![],
+            executor: None,
+            scheduler_enabled: false,
+            scheduler_config: None,
+            scheduler_timezone: None,
+            scheduler_next_run_at: None,
+            task_id: None,
+            workspace_path: None,
+            workspace_id: None,
+            webhook_enabled: false,
+            acceptance_criteria: None,
+            todo_type: 0,
+            parent_todo_id: None,
+            review_template_id: None,
+            auto_review_enabled: false,
+            action_type: None,
+            action_key: None,
+            archived_at: None,
+        }
     }
 }

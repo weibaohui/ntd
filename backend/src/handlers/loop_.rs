@@ -374,10 +374,11 @@ pub async fn list_loop_steps(
     let rows = state.db.list_loop_steps_with_todo_meta(loop_id).await?;
     let dtos: Vec<LoopStepDto> = rows
         .into_iter()
-        .map(|(s, todo_title, todo_executor)| LoopStepDto {
+        .map(|(s, todo_title, todo_executor, todo_archived_at)| LoopStepDto {
             step: s.into(),
             todo_title,
             todo_executor,
+            todo_archived_at,
         })
         .collect();
     Ok(ApiResponse::ok(dtos))
@@ -417,12 +418,12 @@ pub async fn create_loop_step(
             &req.review_type,
         )
         .await?;
-    let (_, todo_title, todo_executor) = state
+    let (_, todo_title, todo_executor, todo_archived_at) = state
         .db
         .list_loop_steps_with_todo_meta(loop_id)
         .await?
         .into_iter()
-        .find(|(s, _, _)| s.id == created.id)
+        .find(|(s, _, _, _)| s.id == created.id)
         .ok_or_else(|| AppError::Internal("created step missing".to_string()))?;
     Ok((
         StatusCode::CREATED,
@@ -430,6 +431,7 @@ pub async fn create_loop_step(
             step: created.into(),
             todo_title,
             todo_executor,
+            todo_archived_at,
         }),
     ))
 }
@@ -491,17 +493,18 @@ pub async fn update_loop_step(
             &req.review_type,
         )
         .await?;
-    let (_, todo_title, todo_executor) = state
+    let (_, todo_title, todo_executor, todo_archived_at) = state
         .db
         .list_loop_steps_with_todo_meta(loop_id)
         .await?
         .into_iter()
-        .find(|(s, _, _)| s.id == sid)
+        .find(|(s, _, _, _)| s.id == sid)
         .ok_or_else(|| AppError::Internal("updated step missing".to_string()))?;
     Ok(ApiResponse::ok(LoopStepDto {
         step: state.db.get_loop_step(sid).await?.ok_or(AppError::Internal("step missing".to_string()))?.into(),
         todo_title,
         todo_executor,
+        todo_archived_at,
     }))
 }
 
@@ -1637,7 +1640,7 @@ async fn build_loop_export_yaml(
         }
 
         // 遍历步骤收集 Todo 和标签
-        for (step, _todo_title, _) in &view.steps_meta {
+        for (step, _todo_title, _, _) in &view.steps_meta {
             if !all_todos.contains_key(&step.todo_id) {
                 if let Some(todo) = state.db.get_todo_entity(step.todo_id).await? {
                     // 收集 Todo 的标签
@@ -1775,7 +1778,7 @@ async fn build_loop_export_yaml(
         let mut steps: Vec<LoopStepExportItem> = Vec::new();
         // 本地位置 → 全局 step pseudo-ID 映射（用于解析 goto 引用）
         let mut step_pos_to_global: Vec<i32> = Vec::new();
-        for (step, _todo_title, _) in &view.steps_meta {
+        for (step, _todo_title, _, _) in &view.steps_meta {
             global_step_idx += 1;
             step_pos_to_global.push(global_step_idx);
             let todo_pseudo_id = all_todos.get(&step.todo_id)
