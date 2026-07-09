@@ -36,7 +36,7 @@ use crate::models::{
     LoopExportData, TagExportItem, ReviewTemplateExportItem, TodoExportItem,
     LoopExportItem, LoopTriggerExportItem, LoopStepExportItem,
     generate_pseudo_id, validate_pseudo_id,
-    LoopImportPreviewResponse, LoopImportSummary, LoopImportWarning,
+    LoopImportPreviewResponse, LoopImportPreviewLoop, LoopImportSummary, LoopImportWarning,
     LoopImportResponse, LoopImportCreatedCounts,
 };
 use crate::db::ReviewTemplateInput;
@@ -905,9 +905,219 @@ pub async fn export_selected_loops(
     ))
 }
 
+/// GET /api/loops/export — 导出全库所有环路为单个 YAML，对齐 Todo `GET /api/backup/export`。
+pub async fn export_all_loops(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, AppError> {
+    // list_loops_with_counts(None) 不按工作空间过滤，取全库 loop
+    let loops = state.db.list_loops_with_counts(None).await?;
+    let ids: Vec<i64> = loops.into_iter().map(|l| l.loop_.id).collect();
+    if ids.is_empty() {
+        return Err(AppError::BadRequest("当前没有任何环路可导出".to_string()));
+    }
+    let yaml = build_loop_export_yaml(&state, &ids).await?;
+    let filename = format!("loops-export-{}.loop.yaml",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+    let disposition = format!("attachment; filename=\"{}\"", filename);
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/x-yaml; charset=utf-8".to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        yaml,
+    ))
+}
+
+// ====== 导入工作空间逐 loop 解析 helpers ======
+// 镜像 db/todo.rs 的 merge_backup 解析模式：override > 全局 > 导出 id（重新解析）> 哨兵 0。
+// loop 导入 handler 不在事务内执行，无法复用 db/todo.rs 的事务版 resolve_workspace_pair，
+// 这里走非事务连接（state.db.get_project_directory_by_id）。
+
+/// 单条 loop 解析后的工作空间归属（id + path）；ws_id == 0 表示未匹配（哨兵）。
+struct LoopResolved {
+    name: String,
+    ws_id: i64,
+    ws_path: Option<String>,
+}
+
+/// 按 id 在当前库解析工作空间 (id, path, name)；None = id 不存在或入参为 None。
+async fn resolve_loop_workspace(
+    db: &crate::db::Database,
+    id: Option<i64>,
+) -> Result<Option<(i64, String, Option<String>)>, AppError> {
+    // 入参 None：备份里就没有工作空间信息，直接返回 None
+    let Some(id) = id else { return Ok(None) };
+    let dir = db.get_project_directory_by_id(id).await
+        .map_err(|e| AppError::Internal(format!("lookup workspace {}: {}", id, e)))?;
+    Ok(dir.map(|d| (d.id, d.path, d.name)))
+}
+
+/// 解析单条 loop 的 (id, path)，优先级：override > 全局 > 导出 id > 哨兵 0。
+/// path 与 id 成对写出，避免「id 指向 B、cwd 仍是备份源路径」的错配。
+async fn resolve_loop_ws_pair(
+    db: &crate::db::Database,
+    loop_export: &LoopExportItem,
+    global_ws: Option<&(i64, String)>,
+    override_id: Option<i64>,
+) -> Result<(i64, Option<String>), AppError> {
+    // 1) 用户 per-loop 覆盖优先
+    if let Some((id, path, _)) = resolve_loop_workspace(db, override_id).await? {
+        return Ok((id, Some(path)));
+    }
+    // 2) 全局覆盖（向后兼容，req.workspace_id）
+    if let Some((id, path)) = global_ws {
+        return Ok((*id, Some(path.clone())));
+    }
+    // 3) 导出文件里的 workspace_id 重新解析（跨环境更可靠）
+    if let Some((id, path, _)) = resolve_loop_workspace(db, loop_export.workspace_id).await? {
+        return Ok((id, Some(path)));
+    }
+    // 4) 悬空 → 哨兵 0（workspace_id 列 NOT NULL DEFAULT 0，0=未分配）
+    Ok((0, None))
+}
+
+/// 解析所有 loop 的工作空间，返回每条 (name, id, path)，供 todo 映射与 loop 创建复用。
+async fn resolve_all_loops(
+    db: &crate::db::Database,
+    data: &LoopExportData,
+    global_ws: Option<&(i64, String)>,
+    overrides: &std::collections::HashMap<String, i64>,
+) -> Result<Vec<LoopResolved>, AppError> {
+    let mut out = Vec::with_capacity(data.loops.len());
+    for l in &data.loops {
+        let ov = overrides.get(&l.name).copied();
+        let (id, path) = resolve_loop_ws_pair(db, l, global_ws, ov).await?;
+        out.push(LoopResolved { name: l.name.clone(), ws_id: id, ws_path: path });
+    }
+    Ok(out)
+}
+
+/// gate：任一 loop 解析为 0（未匹配）→ 报错列出未匹配 loop 名，阻止导入。
+fn gate_unmatched_loops(resolved: &[LoopResolved]) -> Result<(), AppError> {
+    let unmatched: Vec<&str> = resolved.iter()
+        .filter(|r| r.ws_id == 0)
+        .map(|r| r.name.as_str())
+        .collect();
+    if unmatched.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(format!(
+            "以下环路未匹配工作空间，请逐个指定: {}", unmatched.join(", ")
+        )))
+    }
+}
+
+/// data.todos 的 pseudo id → title 映射，供共享 todo warning 用。
+fn todo_title_map(data: &LoopExportData) -> std::collections::HashMap<String, String> {
+    data.todos.iter().map(|t| (t.id.clone(), t.title.clone())).collect()
+}
+
+/// todo→工作空间归属的累积器：记录每条 todo 首次归属的 loop，并对跨 loop 共享打 warning。
+struct TodoWsAccumulator {
+    todo_ws: std::collections::HashMap<String, (i64, Option<String>)>,
+    first_loop: std::collections::HashMap<String, String>,
+    warned: std::collections::HashSet<String>,
+}
+
+impl TodoWsAccumulator {
+    fn new() -> Self {
+        Self {
+            todo_ws: std::collections::HashMap::new(),
+            first_loop: std::collections::HashMap::new(),
+            warned: std::collections::HashSet::new(),
+        }
+    }
+
+    /// 记录一条 todo 的归属；返回 true 表示它已被更早的 loop 引用（跨 loop 共享）。
+    fn record(&mut self, todo_id: &str, loop_name: &str, pair: (i64, Option<String>)) -> bool {
+        use std::collections::hash_map::Entry;
+        match self.todo_ws.entry(todo_id.to_string()) {
+            // 空缺：首次归属，记下首个 loop 名
+            Entry::Vacant(e) => {
+                e.insert(pair);
+                self.first_loop.insert(todo_id.to_string(), loop_name.to_string());
+                false
+            }
+            // 已被更早 loop 归属 → 共享，不覆盖原归属
+            Entry::Occupied(_) => true,
+        }
+    }
+
+    /// 对跨 loop 共享的 todo 打一次 warning（同一条 todo 只打一次）。
+    fn warn_shared(
+        &mut self,
+        warnings: &mut Vec<LoopImportWarning>,
+        titles: &std::collections::HashMap<String, String>,
+        todo_id: &str,
+        fallback_title: &str,
+    ) {
+        // warned 只记一次，避免同一共享 todo 被多个后续 loop 重复 warning
+        if self.warned.insert(todo_id.to_string()) {
+            let title = titles.get(todo_id).map(String::as_str).unwrap_or(fallback_title);
+            let first = self.first_loop.get(todo_id).cloned().unwrap_or_default();
+            warnings.push(LoopImportWarning {
+                warning_type: "shared_todo_workspace".to_string(),
+                message: format!("Todo「{}」被多个环路引用，归到首个环路「{}」的工作空间", title, first),
+            });
+        }
+    }
+}
+
+/// 为每条 todo pseudo 决定工作空间 (id, path)：取首个引用它的 loop 的工作空间。
+fn build_todo_workspace_map(
+    data: &LoopExportData,
+    resolved_loops: &[LoopResolved],
+    warnings: &mut Vec<LoopImportWarning>,
+) -> std::collections::HashMap<String, (i64, Option<String>)> {
+    let mut acc = TodoWsAccumulator::new();
+    let titles = todo_title_map(data);
+    for (i, l) in data.loops.iter().enumerate() {
+        // pair 取自该 loop 的解析结果；step-todo 与 abnormal-handler 都跟随所属 loop
+        let pair = (resolved_loops[i].ws_id, resolved_loops[i].ws_path.clone());
+        for step in &l.steps {
+            if acc.record(&step.todo_id, &l.name, pair.clone()) {
+                acc.warn_shared(warnings, &titles, &step.todo_id, &step.todo_title);
+            }
+        }
+        if let Some(hid) = &l.abnormal_handler_todo_id {
+            let title = l.abnormal_handler_todo_title.as_deref().unwrap_or("");
+            if acc.record(hid, &l.name, pair.clone()) {
+                acc.warn_shared(warnings, &titles, hid, title);
+            }
+        }
+    }
+    acc.todo_ws
+}
+
+/// 预览：按导出原 id 解析每条 loop 的默认匹配情况（不接收用户 override）。
+async fn build_preview_loops(
+    db: &crate::db::Database,
+    data: &LoopExportData,
+) -> Result<Vec<LoopImportPreviewLoop>, AppError> {
+    let mut out = Vec::with_capacity(data.loops.len());
+    for l in &data.loops {
+        let resolved = resolve_loop_workspace(db, l.workspace_id).await?;
+        // 先取 matched 再 match 消费 resolved，避免部分移动后无法 is_some()
+        let source_matched = resolved.is_some();
+        let (rid, rname) = match resolved {
+            Some((id, _, name)) => (id, name),
+            None => (0, None),
+        };
+        out.push(LoopImportPreviewLoop {
+            name: l.name.clone(),
+            workspace_id: l.workspace_id,
+            workspace_path: l.workspace_path.clone(),
+            resolved_workspace_id: rid,
+            resolved_workspace_name: rname,
+            source_matched,
+        });
+    }
+    Ok(out)
+}
+
 /// POST /api/loops/import/preview — 预览导入数据
 pub async fn import_preview(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
     let yaml_str = String::from_utf8(body.to_vec())
@@ -1071,12 +1281,15 @@ pub async fn import_preview(
         }
     }
 
+    let loops = build_preview_loops(state.db.as_ref(), &data).await?;
+
     let response = LoopImportPreviewResponse {
         valid,
         pseudo_ids,
         summary,
         conflicts: vec![],  // 新建模式无冲突
         warnings,
+        loops,
     };
 
     Ok(ApiResponse::ok(response))
@@ -1086,7 +1299,12 @@ pub async fn import_preview(
 #[derive(Deserialize)]
 pub struct ImportLoopRequest {
     pub yaml: String,
-    pub workspace_id: i64,
+    /// 全局目标工作空间（向后兼容）；None 时按 per-loop 解析。
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
+    /// per-loop 覆盖：loop name → workspace_id（前端逐条选择）。
+    #[serde(default)]
+    pub workspace_overrides: Option<std::collections::HashMap<String, i64>>,
 }
 
 pub async fn import_loops(
@@ -1102,12 +1320,27 @@ pub async fn import_loops(
         return Err(AppError::BadRequest("No loops in export file".to_string()));
     }
 
-    // 获取目标工作空间
-    let workspace_id = req.workspace_id;
+    // 全局目标工作空间（可选，向后兼容）；None 时按 per-loop 解析
+    let global_ws: Option<(i64, String)> = match req.workspace_id {
+        Some(id) => {
+            let dir = state.db.get_project_directory_by_id(id).await?
+                .ok_or_else(|| AppError::BadRequest(format!("Workspace {} not found", id)))?;
+            Some((dir.id, dir.path))
+        }
+        None => None,
+    };
+    let overrides = req.workspace_overrides.unwrap_or_default();
 
-    // 验证工作空间存在
-    let workspace = state.db.get_project_directory_by_id(workspace_id).await?
-        .ok_or_else(|| AppError::BadRequest(format!("Workspace {} not found", workspace_id)))?;
+    // 逐 loop 解析工作空间，gate 未匹配；建 todo→ws 映射（共享 todo 取首 loop ws）
+    let resolved_loops = resolve_all_loops(state.db.as_ref(), &data, global_ws.as_ref(), &overrides).await?;
+    gate_unmatched_loops(&resolved_loops)?;
+    let mut warnings: Vec<LoopImportWarning> = Vec::new();
+    let todo_ws = build_todo_workspace_map(&data, &resolved_loops, &mut warnings);
+
+    // 评审模板按 name 匹配、跨 loop 复用，统一归到首个 loop 的工作空间（有意简化）
+    let template_ws_id = global_ws.map(|(id, _)| id)
+        .or_else(|| resolved_loops.first().map(|r| r.ws_id))
+        .unwrap_or(0);
 
     // 构建伪ID -> 真实ID 的映射表
     let mut tag_pseudo_to_real: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
@@ -1124,7 +1357,6 @@ pub async fn import_loops(
         triggers: 0,
         steps: 0,
     };
-    let warnings: Vec<LoopImportWarning> = Vec::new();
 
     // 阶段1: 导入标签
     for tag in &data.tags {
@@ -1133,20 +1365,20 @@ pub async fn import_loops(
         created_counts.tags += 1;
     }
 
-    // 阶段2: 导入评审模板（到目标工作空间）
+    // 阶段2: 导入评审模板（统一归到首个 loop 的工作空间，见 template_ws_id）
     for tmpl in &data.review_templates {
         let input = ReviewTemplateInput {
             name: tmpl.name.clone(),
             description: tmpl.description.clone(),
             prompt: tmpl.prompt.clone(),
-            workspace_id: Some(workspace_id),
+            workspace_id: Some(template_ws_id),
         };
         let new_tmpl = state.db.create_review_template(&input).await?;
         template_pseudo_to_real.insert(tmpl.id.clone(), new_tmpl);
         created_counts.review_templates += 1;
     }
 
-    // 阶段3: 导入Todo模板（完整字段导入）
+    // 阶段3: 导入Todo模板（完整字段导入）；workspace 取 todo_ws 映射（跟随所属 loop）
     for todo in &data.todos {
         // 解析 kind 字符串 → i32（导出时存为字符串以便序列化）
         let kind: Option<i32> = todo.kind.parse().ok().or(Some(0));
@@ -1154,14 +1386,16 @@ pub async fn import_loops(
         let real_review_template_id = todo.review_template_id.as_ref()
             .and_then(|tid| template_pseudo_to_real.get(tid))
             .copied();
+        // 该 todo 归属的工作空间 (id, path)；未在映射里（无 step/abnormal 引用）退化为哨兵 0
+        let (todo_ws_id, todo_ws_path) = todo_ws.get(&todo.id).cloned().unwrap_or((0, None));
         let new_todo_id = state.db.create_todo_for_import(
             &todo.title,
             &todo.prompt,
             todo.executor.as_deref(),
             todo.acceptance_criteria.as_deref(),
             todo.webhook_enabled,
-            workspace_id,
-            &workspace.path,
+            todo_ws_id,
+            todo_ws_path.as_deref().unwrap_or(""),
             Some(&todo.status),
             Some(todo.scheduler_enabled),
             Some(todo.auto_review_enabled),
@@ -1182,8 +1416,9 @@ pub async fn import_loops(
         }
     }
 
-    // 阶段4: 导入环路主体
-    for loop_export in &data.loops {
+    // 阶段4: 导入环路主体；workspace 用该 loop 解析出的 (id, path)
+    for (i, loop_export) in data.loops.iter().enumerate() {
+        let resolved = &resolved_loops[i];
         let review_template_id = loop_export.review_template_id.as_ref()
             .and_then(|tid| template_pseudo_to_real.get(tid))
             .copied();
@@ -1203,8 +1438,8 @@ pub async fn import_loops(
         let new_loop = state.db.create_loop(
             &loop_name,
             &loop_export.description,
-            Some(workspace_id),
-            Some(workspace.path.as_str()),
+            Some(resolved.ws_id),
+            resolved.ws_path.as_deref(),
             loop_export.webhook_enabled,
             &loop_export.icon,
             review_template_id,
@@ -1299,8 +1534,14 @@ pub async fn import_loops(
 #[derive(Deserialize)]
 pub struct MergeLoopRequest {
     pub yaml: String,
-    pub workspace_id: i64,
-    /// 冲突解决策略: "overwrite" | "rename" | "skip"
+    /// 全局目标工作空间（向后兼容）；None 时按 per-loop 解析。
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
+    /// per-loop 覆盖：loop name → workspace_id（前端逐条选择）。
+    #[serde(default)]
+    pub workspace_overrides: Option<std::collections::HashMap<String, i64>>,
+    /// 冲突解决策略（已废弃：统一为覆盖语义，对齐 Todo；字段保留向后兼容，不再生效）。
+    #[serde(default)]
     pub conflict_resolution: std::collections::HashMap<String, String>,
 }
 
@@ -1326,9 +1567,27 @@ pub async fn merge_loops(
         return Err(AppError::BadRequest("No loops in export file".to_string()));
     }
 
-    // 验证工作空间存在
-    let workspace = state.db.get_project_directory_by_id(req.workspace_id).await?
-        .ok_or_else(|| AppError::BadRequest(format!("Workspace {} not found", req.workspace_id)))?;
+    // 全局目标工作空间（可选，向后兼容）；None 时按 per-loop 解析
+    let global_ws: Option<(i64, String)> = match req.workspace_id {
+        Some(id) => {
+            let dir = state.db.get_project_directory_by_id(id).await?
+                .ok_or_else(|| AppError::BadRequest(format!("Workspace {} not found", id)))?;
+            Some((dir.id, dir.path))
+        }
+        None => None,
+    };
+    let overrides = req.workspace_overrides.unwrap_or_default();
+
+    // 逐 loop 解析工作空间，gate 未匹配；建 todo→ws 映射（共享 todo 取首 loop ws）
+    let resolved_loops = resolve_all_loops(state.db.as_ref(), &data, global_ws.as_ref(), &overrides).await?;
+    gate_unmatched_loops(&resolved_loops)?;
+    let mut warnings: Vec<LoopImportWarning> = Vec::new();
+    let todo_ws = build_todo_workspace_map(&data, &resolved_loops, &mut warnings);
+
+    // 评审模板按 name 匹配、跨 loop 复用，统一归到首个 loop 的工作空间（有意简化）
+    let template_ws_id = global_ws.map(|(id, _)| id)
+        .or_else(|| resolved_loops.first().map(|r| r.ws_id))
+        .unwrap_or(0);
 
     // 构建伪ID -> 真实ID 的映射表
     let mut tag_pseudo_to_real: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
@@ -1343,8 +1602,8 @@ pub async fn merge_loops(
     let mut updated_counts = LoopImportCreatedCounts {
         loops: 0, todos: 0, review_templates: 0, tags: 0, triggers: 0, steps: 0,
     };
-    let mut skipped: Vec<String> = Vec::new();
-    let warnings: Vec<LoopImportWarning> = Vec::new();
+    // skipped 已废弃（统一覆盖语义，不再跳过）；保留空 vec 兼容响应结构
+    let skipped: Vec<String> = Vec::new();
 
     // 阶段1: 合并标签（按name匹配，同名复用）
     for tag in &data.tags {
@@ -1358,7 +1617,7 @@ pub async fn merge_loops(
         }
     }
 
-    // 阶段2: 合并评审模板（按name匹配，存在则覆盖）
+    // 阶段2: 合并评审模板（按name匹配，存在则覆盖；统一归到首个 loop 的工作空间）
     for tmpl in &data.review_templates {
         if let Some(existing) = state.db.get_review_template_by_name(&tmpl.name).await? {
             // 存在则更新
@@ -1366,7 +1625,7 @@ pub async fn merge_loops(
                 name: tmpl.name.clone(),
                 description: tmpl.description.clone(),
                 prompt: tmpl.prompt.clone(),
-                workspace_id: Some(req.workspace_id),
+                workspace_id: Some(template_ws_id),
             };
             state.db.update_review_template(existing.id, &input).await?;
             template_pseudo_to_real.insert(tmpl.id.clone(), existing.id);
@@ -1376,7 +1635,7 @@ pub async fn merge_loops(
                 name: tmpl.name.clone(),
                 description: tmpl.description.clone(),
                 prompt: tmpl.prompt.clone(),
-                workspace_id: Some(req.workspace_id),
+                workspace_id: Some(template_ws_id),
             };
             let new_id = state.db.create_review_template(&input).await?;
             template_pseudo_to_real.insert(tmpl.id.clone(), new_id);
@@ -1384,10 +1643,12 @@ pub async fn merge_loops(
         }
     }
 
-    // 阶段3: 合并Todo（按title+prompt+workspace匹配）
+    // 阶段3: 合并Todo（按 title+prompt+该 todo 归属 workspace 匹配，避免跨工作空间误覆盖）
     for todo in &data.todos {
-        // 尝试查找完全相同的 Todo（title + prompt + workspace）
-        if let Some(existing_todo) = state.db.get_todo_by_identity(&todo.title, &todo.prompt, req.workspace_id).await? {
+        // 该 todo 归属的工作空间 (id, path)；未在映射里退化为哨兵 0
+        let (todo_ws_id, todo_ws_path) = todo_ws.get(&todo.id).cloned().unwrap_or((0, None));
+        // 尝试查找完全相同的 Todo（title + prompt + 同工作空间）
+        if let Some(existing_todo) = state.db.get_todo_by_identity(&todo.title, &todo.prompt, todo_ws_id).await? {
             // 存在则复用，不重复创建
             todo_pseudo_to_real.insert(todo.id.clone(), existing_todo.id);
         } else {
@@ -1403,8 +1664,8 @@ pub async fn merge_loops(
                 todo.executor.as_deref(),
                 todo.acceptance_criteria.as_deref(),
                 todo.webhook_enabled,
-                req.workspace_id,
-                &workspace.path,
+                todo_ws_id,
+                todo_ws_path.as_deref().unwrap_or(""),
                 Some(&todo.status),
                 Some(todo.scheduler_enabled),
                 Some(todo.auto_review_enabled),
@@ -1416,50 +1677,26 @@ pub async fn merge_loops(
         }
     }
 
-    // 阶段4: 合并环路（按name匹配，检查冲突解决策略）
-    for loop_export in &data.loops {
-        let conflict_action = req.conflict_resolution.get(&loop_export.name)
-            .cloned()
-            .unwrap_or_else(|| "rename".to_string());
+    // 阶段4: 合并环路——单一覆盖语义，对齐 Todo merge_backup：
+    // 同名（在 resolved ws 内）→ 删旧 + 原名重建（覆盖）；不同名 → 原名新建。
+    // 不再有 重命名/跳过 分支；conflict_resolution 字段保留兼容但不再生效。
+    for (i, loop_export) in data.loops.iter().enumerate() {
+        let resolved = &resolved_loops[i];
 
-        // 查找同名环路
-        let existing_loop = state.db.list_loops_with_counts(Some(req.workspace_id)).await?
+        // 查找同名环路（只在该 loop 解析出的工作空间内查，避免跨工作空间误判同名）
+        let existing_loop = state.db.list_loops_with_counts(Some(resolved.ws_id)).await?
             .into_iter()
             .find(|l| l.loop_.name == loop_export.name);
 
-        let (new_loop_id, is_new) = match (existing_loop, conflict_action.as_str()) {
-            // 跳过
-            (Some(_), "skip") => {
-                skipped.push(loop_export.name.clone());
-                continue;
-            }
-            // 覆盖（删除旧环路，用新ID继续创建）
-            (Some(existing), "overwrite") => {
-                state.db.delete_loop(existing.loop_.id).await?;
-                let new_loop_id = create_loop_from_export(
-                    &state, loop_export, req.workspace_id, &workspace.path,
-                    &template_pseudo_to_real, &todo_pseudo_to_real, &tag_pseudo_to_real,
-                ).await?;
-                (new_loop_id, false)
-            }
-            // 重命名（追加后缀后创建新环路）
-            (Some(_), "rename") | (_, "rename") => {
-                let new_loop_id = create_loop_from_export(
-                    &state, loop_export, req.workspace_id, &workspace.path,
-                    &template_pseudo_to_real, &todo_pseudo_to_real, &tag_pseudo_to_real,
-                ).await?;
-                (new_loop_id, true) // rename 创建了新环路
-            }
-            // 默认：同名环路不存在，直接创建全新的
-            (None, _) => {
-                let new_loop_id = create_loop_from_export(
-                    &state, loop_export, req.workspace_id, &workspace.path,
-                    &template_pseudo_to_real, &todo_pseudo_to_real, &tag_pseudo_to_real,
-                ).await?;
-                (new_loop_id, true)
-            }
-            _ => continue,
-        };
+        // 同名存在 → 删除旧环路，随后用原名重建（= 覆盖）；不存在 → 直接原名新建
+        let is_new = existing_loop.is_none();
+        if let Some(existing) = existing_loop {
+            state.db.delete_loop(existing.loop_.id).await?;
+        }
+        let new_loop_id = create_loop_from_export(
+            &state, loop_export, resolved.ws_id, resolved.ws_path.as_deref(),
+            &template_pseudo_to_real, &todo_pseudo_to_real, &tag_pseudo_to_real,
+        ).await?;
 
         loop_pseudo_to_real.insert(loop_export.id.clone(), new_loop_id);
         if is_new {
@@ -1490,7 +1727,7 @@ async fn create_loop_from_export(
     state: &AppState,
     loop_export: &LoopExportItem,
     workspace_id: i64,
-    workspace_path: &str,
+    workspace_path: Option<&str>,
     template_pseudo_to_real: &std::collections::HashMap<String, i64>,
     todo_pseudo_to_real: &std::collections::HashMap<String, i64>,
     tag_pseudo_to_real: &std::collections::HashMap<String, i64>,
@@ -1508,14 +1745,14 @@ async fn create_loop_from_export(
     let abnormal_handler_trigger_on = serde_json::to_string(&loop_export.abnormal_handler_trigger_on)
         .unwrap_or_else(|_| "[]".to_string());
 
-    // 合并模式：同名环路名称追加 "-合并"
-    let loop_name = format!("{}-合并", loop_export.name);
+    // 统一覆盖语义：用原名（同名已在上游删除），不再追加 "-合并" 后缀，对齐 Todo
+    let loop_name = loop_export.name.clone();
 
     let new_loop = state.db.create_loop(
         &loop_name,
         &loop_export.description,
         Some(workspace_id),
-        Some(workspace_path),
+        workspace_path,
         loop_export.webhook_enabled,
         &loop_export.icon,
         review_template_id,
@@ -1901,6 +2138,7 @@ pub fn loop_routes() -> axum::Router<AppState> {
         .route("/api/loops/batch-workspace", put(batch_move_loops_workspace))
         .route("/api/loops/batch-copy-workspace", post(batch_copy_loops_workspace))
         .route("/api/loops/export-selected", post(export_selected_loops))
+        .route("/api/loops/export", get(export_all_loops))
         .route("/api/loops/{id}", get(get_loop).put(update_loop).delete(delete_loop))
         .route("/api/loops/{id}/export", get(export_loop))
         .route("/api/loops/{id}/status", put(update_loop_status))
@@ -1927,4 +2165,244 @@ pub fn loop_routes() -> axum::Router<AppState> {
         .route("/api/loops/import/preview", post(import_preview))
         .route("/api/loops/import", post(import_loops))
         .route("/api/loops/merge", post(merge_loops))
+}
+
+// ====== 导入工作空间逐 loop 解析的单元测试 ======
+// 覆盖 resolve 优先级、gate、共享 todo 归属、preview 匹配。
+// 用 in-memory SQLite，不依赖 AppState/Router，直接测私有 helper。
+#[cfg(test)]
+mod workspace_resolve_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::needless_pass_by_value, clippy::bool_assert_comparison)]
+    use super::*;
+    use crate::db::Database;
+    use crate::models::{LoopExportData, LoopExportItem, LoopStepExportItem, TodoExportItem};
+
+    async fn setup_db() -> Database {
+        Database::new(":memory:").await.unwrap()
+    }
+
+    // 构造一个最小可用 LoopExportItem，只关心 name/workspace_id/abnormal_handler，
+    // 其余字段填零值——测试只验证工作空间解析逻辑，不跑完整导入。
+    fn mk_loop(name: &str, ws_id: Option<i64>, handler_todo_id: Option<String>) -> LoopExportItem {
+        LoopExportItem {
+            id: format!("@loop_{}", name),
+            name: name.to_string(),
+            description: String::new(),
+            icon: String::new(),
+            color: String::new(),
+            status: "paused".to_string(),
+            webhook_enabled: false,
+            limits_config: serde_json::json!({}),
+            review_template_id: None,
+            review_template_name: None,
+            abnormal_handler_todo_id: handler_todo_id,
+            abnormal_handler_todo_title: None,
+            abnormal_handler_trigger_on: vec![],
+            tag_ids: vec![],
+            tag_names: vec![],
+            triggers: vec![],
+            steps: vec![],
+            workspace_id: ws_id,
+            workspace_path: None,
+        }
+    }
+
+    // 带一个 step（引用 todo_id）的 loop，用于共享 todo 归属测试。
+    fn mk_loop_with_step(name: &str, ws_id: Option<i64>, todo_id: &str, todo_title: &str) -> LoopExportItem {
+        let mut l = mk_loop(name, ws_id, None);
+        l.steps.push(LoopStepExportItem {
+            id: format!("@step_{}_{}", name, todo_id),
+            name: format!("step-{}", todo_id),
+            description: String::new(),
+            todo_id: todo_id.to_string(),
+            todo_title: todo_title.to_string(),
+            order_index: 0,
+            run_mode: "auto".to_string(),
+            skip_on_source_failed: false,
+            min_rating: None,
+            unrated_policy: "skip".to_string(),
+            on_success: "continue".to_string(),
+            success_goto_step_id: None,
+            success_goto_step_name: None,
+            on_rating_fail: "stop".to_string(),
+            fail_goto_step_id: None,
+            fail_goto_step_name: None,
+            review_type: "none".to_string(),
+            enabled: true,
+        });
+        l
+    }
+
+    fn mk_todo(id: &str, title: &str) -> TodoExportItem {
+        TodoExportItem {
+            id: id.to_string(),
+            title: title.to_string(),
+            prompt: String::new(),
+            status: "pending".to_string(),
+            executor: None,
+            scheduler_enabled: false,
+            webhook_enabled: false,
+            acceptance_criteria: None,
+            auto_review_enabled: false,
+            review_template_id: None,
+            review_template_name: None,
+            kind: "0".to_string(),
+            tag_ids: vec![],
+            tag_names: vec![],
+            is_abnormal_handler: false,
+            action_type: None,
+            action_key: None,
+            workspace_id: None,
+            workspace_path: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_loop_workspace_found() {
+        // 已登记的 id → 返回 (id, path, name)
+        let db = setup_db().await;
+        let id = db.create_project_directory("/tmp/ws-a", Some("A"), false, false).await.unwrap();
+        let r = resolve_loop_workspace(&db, Some(id)).await.unwrap();
+        let (rid, path, name) = r.expect("已存在的工作空间应能解析");
+        assert_eq!(rid, id);
+        assert_eq!(path, "/tmp/ws-a");
+        assert_eq!(name.as_deref(), Some("A"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_loop_workspace_missing_and_none() {
+        // 不存在的 id → None；入参 None → None
+        let db = setup_db().await;
+        assert!(resolve_loop_workspace(&db, Some(99999)).await.unwrap().is_none());
+        assert!(resolve_loop_workspace(&db, None).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_ws_pair_override_beats_global_and_exported() {
+        // override 优先于全局与导出值
+        let db = setup_db().await;
+        let a = db.create_project_directory("/tmp/ws-a", Some("A"), false, false).await.unwrap();
+        let b = db.create_project_directory("/tmp/ws-b", Some("B"), false, false).await.unwrap();
+        let c = db.create_project_directory("/tmp/ws-c", Some("C"), false, false).await.unwrap();
+        let l = mk_loop("L", Some(c), None);
+        let global = (a, "/tmp/ws-a".to_string());
+        let (id, path) = resolve_loop_ws_pair(&db, &l, Some(&global), Some(b)).await.unwrap();
+        assert_eq!(id, b);
+        assert_eq!(path.as_deref(), Some("/tmp/ws-b"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_ws_pair_global_when_no_override() {
+        // 无 override 时全局覆盖导出值
+        let db = setup_db().await;
+        let a = db.create_project_directory("/tmp/ws-a", Some("A"), false, false).await.unwrap();
+        let c = db.create_project_directory("/tmp/ws-c", Some("C"), false, false).await.unwrap();
+        let l = mk_loop("L", Some(c), None);
+        let global = (a, "/tmp/ws-a".to_string());
+        let (id, _) = resolve_loop_ws_pair(&db, &l, Some(&global), None).await.unwrap();
+        assert_eq!(id, a);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_ws_pair_exported_when_no_global() {
+        // 无 override 无全局 → 用导出 id 重新解析
+        let db = setup_db().await;
+        let c = db.create_project_directory("/tmp/ws-c", Some("C"), false, false).await.unwrap();
+        let l = mk_loop("L", Some(c), None);
+        let (id, path) = resolve_loop_ws_pair(&db, &l, None, None).await.unwrap();
+        assert_eq!(id, c);
+        assert_eq!(path.as_deref(), Some("/tmp/ws-c"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_ws_pair_dangling_sentinel_zero() {
+        // 导出 id 在当前库不存在且无全局无 override → 哨兵 (0, None)
+        let db = setup_db().await;
+        let l = mk_loop("L", Some(99999), None);
+        let (id, path) = resolve_loop_ws_pair(&db, &l, None, None).await.unwrap();
+        assert_eq!(id, 0);
+        assert!(path.is_none());
+    }
+
+    #[test]
+    fn test_gate_unmatched_loops() {
+        // 全部已匹配 → Ok；任一为 0 → 报错列出名字
+        let ok = vec![
+            LoopResolved { name: "L1".into(), ws_id: 1, ws_path: None },
+            LoopResolved { name: "L2".into(), ws_id: 2, ws_path: None },
+        ];
+        assert!(gate_unmatched_loops(&ok).is_ok());
+
+        let bad = vec![
+            LoopResolved { name: "L1".into(), ws_id: 1, ws_path: None },
+            LoopResolved { name: "L2".into(), ws_id: 0, ws_path: None },
+        ];
+        let err = gate_unmatched_loops(&bad).unwrap_err();
+        let msg = match err { AppError::BadRequest(m) => m, _ => String::new() };
+        assert!(msg.contains("L2"), "错误信息应列出未匹配 loop 名，got: {}", msg);
+    }
+
+    #[tokio::test]
+    async fn test_build_todo_workspace_map_shared_todo_first_loop_wins() {
+        // 两个 loop 共享同一条 todo；todo 应归属首个引用它的 loop 的工作空间，并打一次 warning
+        let db = setup_db().await;
+        let a = db.create_project_directory("/tmp/ws-a", Some("A"), false, false).await.unwrap();
+        let b = db.create_project_directory("/tmp/ws-b", Some("B"), false, false).await.unwrap();
+        let l1 = mk_loop_with_step("L1", Some(a), "@todo_x", "TX");
+        let l2 = mk_loop_with_step("L2", Some(b), "@todo_x", "TX");
+        let data = LoopExportData {
+            version: "1.0".into(),
+            export_type: "loop".into(),
+            created_at: String::new(),
+            source: "test".into(),
+            schema_version: 1,
+            tags: vec![],
+            review_templates: vec![],
+            todos: vec![mk_todo("@todo_x", "TX")],
+            loops: vec![l1, l2],
+        };
+        let resolved = vec![
+            LoopResolved { name: "L1".into(), ws_id: a, ws_path: Some("/tmp/ws-a".into()) },
+            LoopResolved { name: "L2".into(), ws_id: b, ws_path: Some("/tmp/ws-b".into()) },
+        ];
+        let mut warnings = Vec::new();
+        let todo_ws = build_todo_workspace_map(&data, &resolved, &mut warnings);
+        // 共享 todo 归首 loop L1 的工作空间 A
+        let (wid, wpath) = todo_ws.get("@todo_x").expect("todo 应被映射");
+        assert_eq!(*wid, a);
+        assert_eq!(wpath.as_deref(), Some("/tmp/ws-a"));
+        // 只打一次共享 warning
+        assert_eq!(warnings.iter().filter(|w| w.warning_type == "shared_todo_workspace").count(), 1);
+        assert!(warnings[0].message.contains("TX"));
+        assert!(warnings[0].message.contains("L1"));
+    }
+
+    #[tokio::test]
+    async fn test_build_preview_loops_matched_and_unmatched() {
+        // 一条 loop 原 id 存在→matched + resolved=id；另一条不存在→unmatched + resolved=0
+        let db = setup_db().await;
+        let a = db.create_project_directory("/tmp/ws-a", Some("A"), false, false).await.unwrap();
+        let data = LoopExportData {
+            version: "1.0".into(),
+            export_type: "loop".into(),
+            created_at: String::new(),
+            source: "test".into(),
+            schema_version: 1,
+            tags: vec![],
+            review_templates: vec![],
+            todos: vec![],
+            loops: vec![
+                mk_loop("L1", Some(a), None),
+                mk_loop("L2", Some(99999), None),
+            ],
+        };
+        let previews = build_preview_loops(&db, &data).await.unwrap();
+        assert_eq!(previews.len(), 2);
+        assert!(previews[0].source_matched);
+        assert_eq!(previews[0].resolved_workspace_id, a);
+        assert_eq!(previews[0].resolved_workspace_name.as_deref(), Some("A"));
+        assert!(!previews[1].source_matched);
+        assert_eq!(previews[1].resolved_workspace_id, 0);
+        assert!(previews[1].resolved_workspace_name.is_none());
+    }
 }

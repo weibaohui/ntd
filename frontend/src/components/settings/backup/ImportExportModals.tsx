@@ -1,6 +1,7 @@
-import { Modal, Table, Tag as AntTag, Divider, Typography, Alert } from 'antd';
+import { Modal, Table, Tag as AntTag, Divider, Alert } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
 import type { ProjectDirectory } from '@/utils/database/todos';
+import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
 
 export interface BackupDataYaml {
   version: string;
@@ -29,17 +30,22 @@ export interface ImportItem {
   scheduler_config?: string;
   tag_names: string[];
   workspace_path?: string;
+  /** 导出文件里的原始工作空间 ID，用于按行默认匹配与「来源」展示 */
+  workspace_id?: number | null;
   action: 'new' | 'overwrite';
   existingTitle?: string;
+}
+
+/** 按行判断原始工作空间是否在当前环境命中 */
+function isSourceMatched(item: ImportItem, workspaces: ProjectDirectory[]): boolean {
+  return item.workspace_id != null && workspaces.some((w) => w.id === item.workspace_id);
 }
 
 export function ImportExportModals({
   wizardOpen, setWizardOpen, handleWizardConfirm, importing,
   selectedRowKeys, setSelectedRowKeys, wizardItems,
-  exportModalOpen, setExportModalOpen, handleExportSelected,
-  exportingSelected, exportTodoKeys, setExportTodoKeys, todos,
-  // 导入目标工作空间选择
-  workspaces, importWorkspaceId, setImportWorkspaceId,
+  // 逐行工作空间选择
+  workspaces, rowWorkspaceMap, setRowWorkspaceId,
   // 原始工作空间提示（从备份文件检测到后展示，帮助用户判断）
   sourceWorkspaceInfo,
 }: {
@@ -50,20 +56,15 @@ export function ImportExportModals({
   selectedRowKeys: number[];
   setSelectedRowKeys: (keys: number[]) => void;
   wizardItems: ImportItem[];
-  exportModalOpen: boolean;
-  setExportModalOpen: (v: boolean) => void;
-  handleExportSelected: () => Promise<void>;
-  exportingSelected: boolean;
-  exportTodoKeys: number[];
-  setExportTodoKeys: (keys: number[]) => void;
-  todos: readonly any[];
-  // 导入目标工作空间选择
+  // 逐行工作空间选择：key → workspaceId（null=未指定，需用户手选）
   workspaces: ProjectDirectory[];
-  importWorkspaceId: number | null;
-  setImportWorkspaceId: (v: number | null) => void;
+  rowWorkspaceMap: Record<number, number | null>;
+  setRowWorkspaceId: (key: number, id: number | null) => void;
   // 原始工作空间提示（从备份文件检测到后展示，帮助用户判断）
   sourceWorkspaceInfo?: { id: number; path: string } | null;
 }) {
+  // OK gate：至少选一项，且每条已选 todo 都已指定工作空间（未匹配的必须手选）
+  const hasUnassigned = selectedRowKeys.some((k) => rowWorkspaceMap[k] == null);
   return (
     <>
       <Modal
@@ -74,8 +75,8 @@ export function ImportExportModals({
         okText={`导入 ${selectedRowKeys.length} 项`}
         cancelText="取消"
         confirmLoading={importing}
-        width={800}
-        okButtonProps={{ disabled: selectedRowKeys.length === 0 || !importWorkspaceId }}
+        width={900}
+        okButtonProps={{ disabled: selectedRowKeys.length === 0 || hasUnassigned }}
       >
         <div style={{ marginBottom: 12, display: 'flex', gap: 16 }}>
           <AntTag color="green">{wizardItems.filter(i => i.action === 'new').length} 个新建</AntTag>
@@ -91,12 +92,10 @@ export function ImportExportModals({
               message="检测到原始工作空间"
               description={
                 matched
-                  ? `该文件中的数据原本来自工作空间「${matched.name || matched.path}」${
-                      importWorkspaceId === sourceWorkspaceInfo.id ? '（已自动匹配）' : ''
-                    }`
+                  ? `该文件中的数据原本来自工作空间「${matched.name || matched.path}」，已按行自动匹配；可逐条点改`
                   : `该文件中的数据原本来自工作空间 ID=${sourceWorkspaceInfo.id}${
                       sourceWorkspaceInfo.path ? ` (${sourceWorkspaceInfo.path})` : ''
-                    }，当前环境未找到匹配的工作空间`
+                    }，当前环境未找到匹配的工作空间，请逐行指定`
               }
               type="info"
               showIcon
@@ -105,42 +104,6 @@ export function ImportExportModals({
             />
           );
         })()}
-
-        {/* 目标工作空间选择：表格形式总览，一行一个，点选某个 */}
-        <div style={{ marginBottom: 16 }}>
-          <Typography.Text strong>目标工作空间</Typography.Text>
-          <Typography.Paragraph type="secondary" style={{ margin: '4px 0 8px', fontSize: 12 }}>
-            选择导入后 Todo 所属的工作空间，此操作将覆盖备份文件中的原始工作空间信息
-          </Typography.Paragraph>
-          <Table
-            size="small"
-            pagination={false}
-            rowKey="id"
-            dataSource={workspaces}
-            rowSelection={{
-              type: 'radio',
-              selectedRowKeys: importWorkspaceId != null ? [importWorkspaceId] : [],
-              onChange: (keys) => {
-                if (keys.length > 0) setImportWorkspaceId(keys[0] as number);
-              },
-            }}
-            columns={[
-              {
-                title: '工作空间',
-                dataIndex: 'name',
-                width: '60%',
-                render: (_: unknown, r: ProjectDirectory) => r.name || r.path || '(未命名)',
-              },
-              {
-                title: '来源',
-                // 在 render 里直接判断是否为原始工作空间，不再往行对象注入 _isOriginal 字段，
-                // 避免污染从 API 拿到的 workspace 数据源。
-                render: (_: unknown, r: ProjectDirectory) =>
-                  sourceWorkspaceInfo?.id === r.id ? <AntTag color="blue">原始</AntTag> : null,
-              },
-            ]}
-          />
-        </div>
 
         <Divider style={{ margin: '12px 0' }} />
 
@@ -159,12 +122,12 @@ export function ImportExportModals({
               title: '标题',
               dataIndex: 'title',
               ellipsis: true,
-              width: '35%',
+              width: '22%',
             },
             {
               title: '状态',
               dataIndex: 'action',
-              width: 80,
+              width: 70,
               render: (action: 'new' | 'overwrite') => (
                 <AntTag color={action === 'new' ? 'green' : 'orange'}>
                   {action === 'new' ? '新建' : '覆盖'}
@@ -172,15 +135,39 @@ export function ImportExportModals({
               ),
             },
             {
+              title: '工作空间',
+              width: 180,
+              // 逐行工作空间选择：默认按原 id 匹配，匹配不上为 null（未匹配），可点改
+              render: (_: unknown, r: ImportItem) => (
+                <WorkspaceSwitcher
+                  dirs={workspaces}
+                  value={rowWorkspaceMap[r.key] ?? null}
+                  showAddOption={false}
+                  onChange={(id) => setRowWorkspaceId(r.key, id)}
+                />
+              ),
+            },
+            {
+              title: '来源',
+              width: 80,
+              // 原始工作空间命中→「原始」；有原 id 但当前库不存在→「未匹配」；无原 id→'-'
+              render: (_: unknown, r: ImportItem) => {
+                if (r.workspace_id == null) return '-';
+                return isSourceMatched(r, workspaces)
+                  ? <AntTag color="blue">原始</AntTag>
+                  : <AntTag color="red">未匹配</AntTag>;
+              },
+            },
+            {
               title: '执行器',
               dataIndex: 'executor',
-              width: 100,
+              width: 90,
               render: (v: string | undefined) => v || '-',
             },
             {
               title: '标签',
               dataIndex: 'tag_names',
-              width: 150,
+              width: 120,
               render: (names: string[]) => names.length > 0
                 ? names.slice(0, 3).map(n => <AntTag key={n}>{n}</AntTag>)
                 : '-',
@@ -189,59 +176,7 @@ export function ImportExportModals({
               title: 'Prompt 摘要',
               dataIndex: 'prompt',
               ellipsis: true,
-              render: (v: string) => v ? v.slice(0, 60) + (v.length > 60 ? '...' : '') : '-',
-            },
-          ]}
-        />
-      </Modal>
-
-      <Modal
-        title="选择性导出"
-        open={exportModalOpen}
-        onCancel={() => setExportModalOpen(false)}
-        onOk={handleExportSelected}
-        okText={`导出 ${exportTodoKeys.length} 项`}
-        cancelText="取消"
-        confirmLoading={exportingSelected}
-        width={700}
-        okButtonProps={{ disabled: exportTodoKeys.length === 0 }}
-      >
-        <Table
-          dataSource={todos}
-          rowKey="id"
-          size="small"
-          pagination={{ pageSize: 50 }}
-          scroll={{ y: 400 }}
-          rowSelection={{
-            selectedRowKeys: exportTodoKeys,
-            onChange: (keys) => setExportTodoKeys(keys as number[]),
-          }}
-          columns={[
-            {
-              title: '标题',
-              dataIndex: 'title',
-              ellipsis: true,
-            },
-            {
-              title: '执行器',
-              dataIndex: 'executor',
-              width: 100,
-              render: (v: string | undefined) => v || '-',
-            },
-            {
-              title: '状态',
-              dataIndex: 'status',
-              width: 80,
-              render: (v: string) => {
-                const map: Record<string, { color: string; label: string }> = {
-                  pending: { color: 'default', label: '待办' },
-                  running: { color: 'processing', label: '进行中' },
-                  completed: { color: 'success', label: '完成' },
-                  failed: { color: 'error', label: '失败' },
-                };
-                const s = map[v] || { color: 'default', label: v };
-                return <AntTag color={s.color}>{s.label}</AntTag>;
-              },
+              render: (v: string) => v ? v.slice(0, 40) + (v.length > 40 ? '...' : '') : '-',
             },
           ]}
         />
