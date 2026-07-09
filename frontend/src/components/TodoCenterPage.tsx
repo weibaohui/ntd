@@ -111,22 +111,16 @@ export function TodoCenterPage({ onSelectTodo, onSelectLoop, onOpenCreateModal }
     return Array.from(set);
   }, [items]);
 
-  // 若当前 Tab 因操作后变空（如归档了最后一项），自动切回手动触发，避免停在空 Tab
-  useEffect(() => {
-    if (bucketCount[activeBucket] === 0 && bucketCount.manual > 0) {
-      setActiveBucket('manual');
-    }
-  }, [bucketCount, activeBucket]);
-
-  // 切换工作空间后重置 Tab 到手动触发，避免停留在上个工作空间可能为空的分类
-  useEffect(() => {
-    setActiveBucket('manual');
-  }, [workspaceId]);
+  // 注：不自动切换 Tab。用户点哪个分类就停在哪个，即便该分类为 0 也保持
+  // （空了展示空状态即可，不能乱跳回第一个分类）。切换工作空间同理保持当前分类。
 
   return (
     <PageCard
       icon={<AppstoreOutlined />}
       title="事项中心"
+      // flex:1 让 PageCard 在 Content 的 flex-row 里撑满宽度，
+      // 否则会塌缩成内容宽度（卡片只剩单列、右侧大片留白，像没铺满的仪表盘）
+      style={{ flex: 1 }}
       extra={
         <>
           <Input

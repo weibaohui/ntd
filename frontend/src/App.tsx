@@ -382,8 +382,8 @@ function AppContent() {
             )
           )}
 
-          {/* 非事项/环路视图 */}
-          {activeView !== 'items' && activeView !== 'loops' && (
+          {/* 非事项/环路/事项中心视图（事项中心单独在上块渲染，不能落到 Dashboard 兜底） */}
+          {activeView !== 'items' && activeView !== 'loops' && activeView !== 'todoCenter' && (
             <div
               style={{
                 flex: 1,

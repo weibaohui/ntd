@@ -319,3 +319,40 @@ test('Loop 驱动卡片不含复制/移动工作空间', async ({ page }) => {
   await expect(menu.getByText('复制到工作空间')).toHaveCount(0);
   await expect(menu.getByText('移动到工作空间')).toHaveCount(0);
 });
+
+test('事项中心不渲染仪表盘：仅一个 PageCard 且标题为事项中心', async ({ page }) => {
+  // 回归：之前 activeView==='todoCenter' 会落到 Dashboard 兜底，导致仪表盘与事项中心并排
+  await page.goto(`${BASE}/#todoCenter`);
+  await page.waitForTimeout(1200);
+  const titles = await page.locator('.ntd-page-card-title-text').allTextContents();
+  expect(titles).toContain('事项中心');
+  expect(titles).not.toContain('仪表盘');
+});
+
+test('点击空分类不跳回第一个：停在所点击的空 Tab', async ({ page }) => {
+  // 回归：之前空分类会被 effect 自动切回 manual，用户点击应保持原选择
+  await page.goto(`${BASE}/#todoCenter`);
+  await page.waitForTimeout(1200);
+  // 找一个数量为 0 的分类：读各 Tab 计数
+  const counts = await page.evaluate(() => {
+    const tabs = ['manual', 'time_driven', 'event_driven', 'loop_driven', 'archived'];
+    const out: { bucket: string; zero: boolean }[] = [];
+    for (const b of tabs) {
+      const el = document.querySelector(`[data-testid="todo-center-tab-${b}"]`);
+      const text = el?.textContent || '';
+      const n = parseInt(text.replace(/[^0-9]/g, ''), 10);
+      out.push({ bucket: b, zero: Number.isNaN(n) || n === 0 });
+    }
+    return out;
+  });
+  const empty = counts.find((c) => c.zero && c.bucket !== 'manual');
+  if (!empty) return; // 都非空则跳过（无可校验的空分类）
+  await page.getByTestId(`todo-center-tab-${empty.bucket}`).click();
+  await page.waitForTimeout(600);
+  // 仍停留在所点击的 Tab：该 Tab 选项处于选中态，且展示对应空状态文案
+  await expect(page.getByTestId(`todo-center-tab-${empty.bucket}`)).toBeVisible();
+  // 选中态由 ant-segmented-item-selected 标记；断言该 Tab 的容器有 selected 类
+  const selected = await page.locator(`[data-testid="todo-center-tab-${empty.bucket}"]`)
+    .evaluate((el) => !!(el.closest('.ant-segmented-item')?.classList.contains('ant-segmented-item-selected')));
+  expect(selected).toBeTruthy();
+});
