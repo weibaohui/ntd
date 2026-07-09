@@ -1,4 +1,4 @@
-import { Card, Button, Typography, Upload, Space, Modal, Tag, Alert, message, Table, Divider } from 'antd';
+import { Card, Button, Typography, Upload, Space, Modal, Tag, Alert, message, Table, Divider, Select } from 'antd';
 import { DownloadOutlined, InboxOutlined } from '@ant-design/icons';
 import { useState } from 'react';
 import * as db from '@/utils/database';
@@ -19,12 +19,28 @@ export function LoopBackupTab() {
   const [workspaces, setWorkspaces] = useState<ProjectDirectory[]>([]);
   // 逐 loop 工作空间选择：loop name → workspaceId（null=未匹配/待指定）
   const [loopWorkspaceMap, setLoopWorkspaceMap] = useState<Record<string, number | null>>({});
-  // 当前库已有 loop 名集合，供「状态」列判断新建/覆盖（对齐 Todo 用已有 todo 判定 action）
+  // 当前库已有 loop 名集合，供「同名处理」列判断新建/同名（对齐 Todo 用已有 todo 判定 action）
   const [existingLoopNames, setExistingLoopNames] = useState<Set<string>>(new Set());
+  // 同名 loop 的导入动作：loop name → 'overwrite' | 'skip'（默认 skip，避免误覆盖）；新建 loop 不入此表
+  const [loopActionMap, setLoopActionMap] = useState<Record<string, 'overwrite' | 'skip'>>({});
 
   // 设置某条 loop 的目标工作空间（供 per-loop 表回写）
   const setLoopWorkspace = (name: string, id: number | null) => {
     setLoopWorkspaceMap((prev) => ({ ...prev, [name]: id }));
+  };
+
+  // 设置某条同名 loop 的导入动作（覆盖/跳过）；setBulkLoopAction 批量作用于全部同名 loop
+  const setLoopAction = (name: string, action: 'overwrite' | 'skip') => {
+    setLoopActionMap((prev) => ({ ...prev, [name]: action }));
+  };
+  const setBulkLoopAction = (action: 'overwrite' | 'skip') => {
+    setLoopActionMap((prev) => {
+      const next = { ...prev };
+      for (const l of previewData?.loops ?? []) {
+        if (existingLoopNames.has(l.name)) next[l.name] = action;
+      }
+      return next;
+    });
   };
 
   // 导出全库所有环路为单个 YAML（对齐 Todo「导出全部」）
@@ -73,6 +89,13 @@ export function LoopBackupTab() {
         wsMap[l.name] = l.source_matched ? l.resolved_workspace_id : null;
       }
       setLoopWorkspaceMap(wsMap);
+      // 同名 loop 默认「跳过」（保守，避免误覆盖）；用户可逐条或批量改为「覆盖」
+      const actionMap: Record<string, 'overwrite' | 'skip'> = {};
+      const existing = new Set(loops.map((l) => l.name));
+      for (const l of preview.loops) {
+        if (existing.has(l.name)) actionMap[l.name] = 'skip';
+      }
+      setLoopActionMap(actionMap);
       setImportModalOpen(true);
     } catch (err) {
       message.error('解析文件失败: ' + (err instanceof Error ? err.message : String(err)));
@@ -80,27 +103,34 @@ export function LoopBackupTab() {
     return false;
   };
 
-  // 执行导入——单一覆盖语义（同名覆盖、否则新建），对齐 Todo
+  // 执行导入——同名按用户动作（覆盖/跳过，默认跳过），否则新建；对齐 Todo
   const handleConfirmImport = async () => {
     if (!yamlPreview || !previewData) {
       return;
     }
-    // gate：每条 loop 都必须已指定工作空间（未匹配的需用户手选）
-    const unassigned = previewData.loops.filter((l) => loopWorkspaceMap[l.name] == null);
+    // 收集「跳过」的同名 loop 名（默认 skip；用户改为 overwrite 的不计入）
+    const skipNames = previewData.loops
+      .filter((l) => existingLoopNames.has(l.name) && (loopActionMap[l.name] ?? 'skip') === 'skip')
+      .map((l) => l.name);
+    const skipSet = new Set(skipNames);
+    // gate：仅对「非跳过」的 loop 要求指定工作空间（跳过的不导入，无需归属）
+    const unassigned = previewData.loops.filter(
+      (l) => !skipSet.has(l.name) && loopWorkspaceMap[l.name] == null,
+    );
     if (unassigned.length > 0) {
       message.warning(`以下环路未指定工作空间: ${unassigned.map((l) => l.name).join(', ')}`);
       return;
     }
-    // 构造 per-loop overrides（仅含已指定的非空项），全局 workspace_id 传 null
+    // 构造 per-loop overrides（仅含非跳过且已指定的项），全局 workspace_id 传 null
     const overrides: Record<string, number> = {};
     for (const [name, id] of Object.entries(loopWorkspaceMap)) {
-      if (id != null) overrides[name] = id;
+      if (id != null && !skipSet.has(name)) overrides[name] = id;
     }
     setImporting(true);
     try {
-      const result = await db.mergeLoops(yamlPreview, null, overrides);
+      const result = await db.mergeLoops(yamlPreview, null, overrides, skipNames);
       message.success(
-        `导入完成：新建 ${result.created.loops} 个，更新 ${result.updated?.loops || 0} 个`
+        `导入完成：新建 ${result.created.loops} 个，更新 ${result.updated?.loops || 0} 个，跳过 ${result.skipped?.length || 0} 个`
       );
       setImportModalOpen(false);
       setYamlPreview(null);
@@ -117,14 +147,25 @@ export function LoopBackupTab() {
   const loopWsColumns = [
     { title: '环路', dataIndex: 'name', key: 'name', width: 120 },
     {
-      title: '状态',
+      title: '同名处理',
       key: 'status',
-      width: 70,
-      // 当前库已有同名 loop → 覆盖，否则新建（对齐 Todo 的 action 判定）
+      width: 104,
+      // 同名 loop 可在「覆盖/跳过」间切换（默认跳过）；纯新建 loop 固定显示「新建」
       render: (_: unknown, r: { name: string }) =>
-        existingLoopNames.has(r.name)
-          ? <Tag color="orange">覆盖</Tag>
-          : <Tag color="green">新建</Tag>,
+        existingLoopNames.has(r.name) ? (
+          <Select
+            size="small"
+            value={loopActionMap[r.name] ?? 'skip'}
+            onChange={(v) => setLoopAction(r.name, v)}
+            style={{ width: 96 }}
+            options={[
+              { value: 'overwrite', label: '覆盖' },
+              { value: 'skip', label: '跳过' },
+            ]}
+          />
+        ) : (
+          <Tag color="green">新建</Tag>
+        ),
     },
     {
       title: '工作空间',
@@ -148,8 +189,17 @@ export function LoopBackupTab() {
     },
   ];
 
-  // OK gate：任一 loop 未指定工作空间则禁用
-  const hasUnassignedLoop = (previewData?.loops ?? []).some((l) => loopWorkspaceMap[l.name] == null);
+  // 派生：同名 loop / 各动作计数 / 将跳过集合——批量按钮与 gate 复用
+  const loops = previewData?.loops ?? [];
+  const sameNameLoops = loops.filter((l) => existingLoopNames.has(l.name));
+  const sameNameLoopNames = sameNameLoops.map((l) => l.name);
+  const isOverwrite = (name: string) => existingLoopNames.has(name) && loopActionMap[name] === 'overwrite';
+  const newCount = loops.length - sameNameLoops.length;
+  const overwriteCount = sameNameLoops.filter((l) => isOverwrite(l.name)).length;
+  const skipCount = sameNameLoops.length - overwriteCount;
+  const skipNameSet = new Set(sameNameLoops.filter((l) => !isOverwrite(l.name)).map((l) => l.name));
+  // OK gate：任一「非跳过」loop 未指定工作空间则禁用
+  const hasUnassignedLoop = loops.some((l) => !skipNameSet.has(l.name) && loopWorkspaceMap[l.name] == null);
 
   return (
     <div style={{ maxWidth: 600 }}>
@@ -210,7 +260,15 @@ export function LoopBackupTab() {
       >
         {previewData && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* per-loop 工作空间指派 + 状态（新建/覆盖）：默认按原 id 匹配，可逐条点改 */}
+            {/* 同名处理统计 + 批量动作 */}
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Tag color="green">{newCount} 新建</Tag>
+              <Tag color="orange">{overwriteCount} 覆盖</Tag>
+              <Tag>{skipCount} 跳过</Tag>
+              <Button size="small" disabled={sameNameLoopNames.length === 0} onClick={() => setBulkLoopAction('overwrite')}>同名全覆盖</Button>
+              <Button size="small" disabled={sameNameLoopNames.length === 0} onClick={() => setBulkLoopAction('skip')}>同名全跳过</Button>
+            </div>
+            {/* per-loop 工作空间指派 + 同名处理（默认跳过）：默认按原 id 匹配，可逐条点改 */}
             <div>
               <Typography.Text strong>环路工作空间（逐条）</Typography.Text>
               <Table

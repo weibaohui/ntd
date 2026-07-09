@@ -1,4 +1,4 @@
-import { Modal, Table, Tag as AntTag, Divider, Alert } from 'antd';
+import { Modal, Table, Tag as AntTag, Divider, Alert, Select, Button } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
 import type { ProjectDirectory } from '@/utils/database/todos';
 import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
@@ -32,7 +32,9 @@ export interface ImportItem {
   workspace_path?: string;
   /** 导出文件里的原始工作空间 ID，用于按行默认匹配与「来源」展示 */
   workspace_id?: number | null;
-  action: 'new' | 'overwrite';
+  /** 同名已存在：true 时该条可在「覆盖/跳过」间切换；false 为纯新建 */
+  exists?: boolean;
+  action: 'new' | 'overwrite' | 'skip';
   existingTitle?: string;
 }
 
@@ -44,6 +46,8 @@ function isSourceMatched(item: ImportItem, workspaces: ProjectDirectory[]): bool
 export function ImportExportModals({
   wizardOpen, setWizardOpen, handleWizardConfirm, importing,
   selectedRowKeys, setSelectedRowKeys, wizardItems,
+  // 同名项动作批量/逐条设置（覆盖/跳过）
+  setItemsAction,
   // 逐行工作空间选择
   workspaces, rowWorkspaceMap, setRowWorkspaceId,
   // 原始工作空间提示（从备份文件检测到后展示，帮助用户判断）
@@ -56,6 +60,8 @@ export function ImportExportModals({
   selectedRowKeys: number[];
   setSelectedRowKeys: (keys: number[]) => void;
   wizardItems: ImportItem[];
+  // 同名项动作批量/逐条设置（覆盖/跳过）
+  setItemsAction: (keys: number[], action: 'overwrite' | 'skip') => void;
   // 逐行工作空间选择：key → workspaceId（null=未指定，需用户手选）
   workspaces: ProjectDirectory[];
   rowWorkspaceMap: Record<number, number | null>;
@@ -63,8 +69,15 @@ export function ImportExportModals({
   // 原始工作空间提示（从备份文件检测到后展示，帮助用户判断）
   sourceWorkspaceInfo?: { id: number; path: string } | null;
 }) {
-  // OK gate：至少选一项，且每条已选 todo 都已指定工作空间（未匹配的必须手选）
-  const hasUnassigned = selectedRowKeys.some((k) => rowWorkspaceMap[k] == null);
+  // 同名项 keys（exists=true）：批量按钮与可编辑「同名处理」列的作用范围
+  const sameNameKeys = wizardItems.filter((i) => i.exists).map((i) => i.key);
+  // 实际将导入的项：已勾选 且 action 非 skip（skip 一律不提交）
+  const willImportItems = wizardItems.filter(
+    (i) => selectedRowKeys.includes(i.key) && i.action !== 'skip',
+  );
+  const willImportCount = willImportItems.length;
+  // OK gate：至少有一项将导入，且每条将导入的 todo 都已指定工作空间
+  const hasUnassigned = willImportItems.some((i) => rowWorkspaceMap[i.key] == null);
   return (
     <>
       <Modal
@@ -72,16 +85,19 @@ export function ImportExportModals({
         open={wizardOpen}
         onCancel={() => setWizardOpen(false)}
         onOk={handleWizardConfirm}
-        okText={`导入 ${selectedRowKeys.length} 项`}
+        okText={`导入 ${willImportCount} 项`}
         cancelText="取消"
         confirmLoading={importing}
         width={900}
-        okButtonProps={{ disabled: selectedRowKeys.length === 0 || hasUnassigned }}
+        okButtonProps={{ disabled: willImportCount === 0 || hasUnassigned }}
       >
-        <div style={{ marginBottom: 12, display: 'flex', gap: 16 }}>
-          <AntTag color="green">{wizardItems.filter(i => i.action === 'new').length} 个新建</AntTag>
-          <AntTag color="orange">{wizardItems.filter(i => i.action === 'overwrite').length} 个覆盖</AntTag>
-          <AntTag color="blue">已选 {selectedRowKeys.length} 项</AntTag>
+        <div style={{ marginBottom: 12, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <AntTag color="green">{wizardItems.filter(i => i.action === 'new').length} 新建</AntTag>
+          <AntTag color="orange">{wizardItems.filter(i => i.action === 'overwrite').length} 覆盖</AntTag>
+          <AntTag>{wizardItems.filter(i => i.action === 'skip').length} 跳过</AntTag>
+          <AntTag color="blue">将导入 {willImportCount} 项</AntTag>
+          <Button size="small" disabled={sameNameKeys.length === 0} onClick={() => setItemsAction(sameNameKeys, 'overwrite')}>同名全覆盖</Button>
+          <Button size="small" disabled={sameNameKeys.length === 0} onClick={() => setItemsAction(sameNameKeys, 'skip')}>同名全跳过</Button>
         </div>
 
         {/* 原始工作空间提示：检测到备份文件中的工作空间后，显示给用户参考 */}
@@ -125,14 +141,24 @@ export function ImportExportModals({
               width: '22%',
             },
             {
-              title: '状态',
-              dataIndex: 'action',
-              width: 70,
-              render: (action: 'new' | 'overwrite') => (
-                <AntTag color={action === 'new' ? 'green' : 'orange'}>
-                  {action === 'new' ? '新建' : '覆盖'}
-                </AntTag>
-              ),
+              title: '同名处理',
+              width: 104,
+              // 同名项(exists)可在「覆盖/跳过」间切换；纯新建项固定显示「新建」
+              render: (_: unknown, r: ImportItem) =>
+                r.exists ? (
+                  <Select
+                    size="small"
+                    value={r.action === 'overwrite' ? 'overwrite' : 'skip'}
+                    onChange={(v) => setItemsAction([r.key], v as 'overwrite' | 'skip')}
+                    style={{ width: 96 }}
+                    options={[
+                      { value: 'overwrite', label: '覆盖' },
+                      { value: 'skip', label: '跳过' },
+                    ]}
+                  />
+                ) : (
+                  <AntTag color="green">新建</AntTag>
+                ),
             },
             {
               title: '工作空间',

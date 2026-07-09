@@ -100,6 +100,10 @@ export function BackupPanel() {
   const [workspaces, setWorkspaces] = useState<ProjectDirectory[]>([]);
   // 逐行工作空间选择：ImportItem.key → workspaceId（null=未匹配/待指定）
   const [rowWorkspaceMap, setRowWorkspaceMap] = useState<Record<number, number | null>>({});
+  // 当前库已有 todo：用于按「目标工作空间 + 标题 + prompt」动态判同名（对齐后端 merge_backup 判重口径）
+  const [existingTodos, setExistingTodos] = useState<{ title: string; prompt: string; workspace_id: number | null }[]>([]);
+  // 用户显式选「覆盖」的同名项 key（未在其中且同名的 = 默认跳过）
+  const [userOverwriteKeys, setUserOverwriteKeys] = useState<Set<number>>(new Set());
 
   // 导入来源工作空间检测（从备份文件中提取，用于预览提示）
   const [sourceWorkspaceInfo, setSourceWorkspaceInfo] = useState<{ id: number; path: string } | null>(null);
@@ -411,28 +415,26 @@ export function BackupPanel() {
       }
 
       const existingTodos = await db.getAllTodos();
-      const existingSet = new Set(existingTodos.map(t => `${t.title}\n${t.prompt}`));
+      setExistingTodos(existingTodos.map((t) => ({ title: t.title, prompt: t.prompt, workspace_id: t.workspace_id ?? null })));
+      // 用户覆盖选择按导入批次重置
+      setUserOverwriteKeys(new Set());
 
-      const items: ImportItem[] = data.todos.map((todo, idx) => {
-        const key = `${todo.title}\n${todo.prompt}`;
-        const exists = existingSet.has(key);
-        const existing = exists ? existingTodos.find(t => `${t.title}\n${t.prompt}` === key) : undefined;
-        return {
-          key: idx,
-          title: todo.title,
-          prompt: todo.prompt,
-          status: todo.status,
-          executor: todo.executor,
-          scheduler_enabled: todo.scheduler_enabled,
-          scheduler_config: todo.scheduler_config,
-          tag_names: todo.tag_names || [],
-          workspace_path: todo.workspace_path,
-          // 保留原始 workspace_id，供按行默认匹配与「来源」列展示
-          workspace_id: todo.workspace_id ?? null,
-          action: exists ? 'overwrite' as const : 'new' as const,
-          existingTitle: existing?.title,
-        };
-      });
+      // exists/action 不在此时静态判定：它们依赖用户逐行选定的目标工作空间，
+      // 改由下方的 itemsWithAction 动态派生（对齐后端 merge_backup 的判重口径）。
+      const items: ImportItem[] = data.todos.map((todo, idx) => ({
+        key: idx,
+        title: todo.title,
+        prompt: todo.prompt,
+        status: todo.status,
+        executor: todo.executor,
+        scheduler_enabled: todo.scheduler_enabled,
+        scheduler_config: todo.scheduler_config,
+        tag_names: todo.tag_names || [],
+        workspace_path: todo.workspace_path,
+        // 保留原始 workspace_id，供按行默认匹配与「来源」列展示
+        workspace_id: todo.workspace_id ?? null,
+        action: 'new',
+      }));
 
       setWizardTags(data.tags || []);
       setWizardItems(items);
@@ -459,20 +461,45 @@ export function BackupPanel() {
     return false;
   };
 
+  // 按「目标工作空间 + 标题 + prompt」动态派生每条的 exists/action，对齐后端 merge_backup：
+  // 同一目标工作空间内 title+prompt 命中 → 同名（默认跳过，userOverwriteKeys 里的为覆盖）；否则新建。
+  // 这样用户改某行工作空间后，该行是否同名会随之重算，避免跨工作空间误判同名导致「覆盖」变新建。
+  const itemsWithAction: ImportItem[] = wizardItems.map((it) => {
+    const targetWsId = rowWorkspaceMap[it.key] ?? 0; // null → 0（未分配哨兵，与后端一致）
+    const exists = existingTodos.some(
+      (t) => t.title === it.title && t.prompt === it.prompt && (t.workspace_id ?? 0) === targetWsId,
+    );
+    const action = exists ? (userOverwriteKeys.has(it.key) ? 'overwrite' : 'skip') : 'new';
+    return { ...it, exists, action };
+  });
+
+  // 同名项动作：选「覆盖」记入 userOverwriteKeys，选「跳过」移出（默认即跳过）
+  const setItemsAction = (keys: number[], action: 'overwrite' | 'skip') => {
+    setUserOverwriteKeys((prev) => {
+      const next = new Set(prev);
+      for (const k of keys) {
+        if (action === 'overwrite') next.add(k); else next.delete(k);
+      }
+      return next;
+    });
+  };
+
   const handleWizardConfirm = async () => {
-    if (selectedRowKeys.length === 0) {
-      message.warning('请至少选择一项');
+    // 实际将导入：已勾选 且 action 非 skip（skip 不提交）；action 取动态派生值
+    const willImport = itemsWithAction.filter(
+      (item) => selectedRowKeys.includes(item.key) && item.action !== 'skip',
+    );
+    if (willImport.length === 0) {
+      message.warning('没有可导入的项（选中的均为「跳过」）');
       return;
     }
     setImporting(true);
     try {
       // 每条 todo 注入用户逐行选定的工作空间；全局 target 传 null，由后端按每条 workspace_id 解析
-      const selectedTodos = wizardItems
-        .filter(item => selectedRowKeys.includes(item.key))
-        .map(({ key, action, existingTitle, ...todo }) => ({
-          ...todo,
-          workspace_id: rowWorkspaceMap[key] ?? null,
-        }));
+      const selectedTodos = willImport.map(({ key, action, existingTitle, exists, ...todo }) => ({
+        ...todo,
+        workspace_id: rowWorkspaceMap[key] ?? null,
+      }));
       const msg = await db.mergeBackup(wizardTags, selectedTodos, null);
       message.success(msg);
       setWizardOpen(false);
@@ -575,7 +602,9 @@ export function BackupPanel() {
         importing={importing}
         selectedRowKeys={selectedRowKeys}
         setSelectedRowKeys={setSelectedRowKeys}
-        wizardItems={wizardItems}
+        wizardItems={itemsWithAction}
+        // 同名项动作批量/逐条设置
+        setItemsAction={setItemsAction}
         // 逐行工作空间选择
         workspaces={workspaces}
         rowWorkspaceMap={rowWorkspaceMap}

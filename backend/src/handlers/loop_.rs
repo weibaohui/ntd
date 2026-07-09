@@ -1540,6 +1540,9 @@ pub struct MergeLoopRequest {
     /// per-loop 覆盖：loop name → workspace_id（前端逐条选择）。
     #[serde(default)]
     pub workspace_overrides: Option<std::collections::HashMap<String, i64>>,
+    /// 用户选择「跳过」的同名环路名集合：这些环路不会被创建/覆盖，同名保留原样。
+    #[serde(default)]
+    pub skip_names: Vec<String>,
     /// 冲突解决策略（已废弃：统一为覆盖语义，对齐 Todo；字段保留向后兼容，不再生效）。
     #[serde(default)]
     pub conflict_resolution: std::collections::HashMap<String, String>,
@@ -1559,7 +1562,7 @@ pub async fn merge_loops(
     Json(req): Json<MergeLoopRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // 解析 YAML
-    let data: LoopExportData = serde_yaml::from_str(&req.yaml)
+    let mut data: LoopExportData = serde_yaml::from_str(&req.yaml)
         .map_err(|e| AppError::BadRequest(format!("Invalid YAML: {}", e)))?;
 
     // 基本校验
@@ -1577,6 +1580,18 @@ pub async fn merge_loops(
         None => None,
     };
     let overrides = req.workspace_overrides.unwrap_or_default();
+
+    // 用户选择「跳过」的同名环路：记录名字后从待处理列表移除——
+    // 不 resolve、不 gate、不创建，同名保留原样。其引用的 todo/模板/标签仍按全局资源合并。
+    let skip_set: std::collections::HashSet<&str> =
+        req.skip_names.iter().map(|s| s.as_str()).collect();
+    let skipped: Vec<String> = data.loops.iter()
+        .filter(|l| skip_set.contains(l.name.as_str()))
+        .map(|l| l.name.clone())
+        .collect();
+    if !skip_set.is_empty() {
+        data.loops.retain(|l| !skip_set.contains(l.name.as_str()));
+    }
 
     // 逐 loop 解析工作空间，gate 未匹配；建 todo→ws 映射（共享 todo 取首 loop ws）
     let resolved_loops = resolve_all_loops(state.db.as_ref(), &data, global_ws.as_ref(), &overrides).await?;
@@ -1602,8 +1617,7 @@ pub async fn merge_loops(
     let mut updated_counts = LoopImportCreatedCounts {
         loops: 0, todos: 0, review_templates: 0, tags: 0, triggers: 0, steps: 0,
     };
-    // skipped 已废弃（统一覆盖语义，不再跳过）；保留空 vec 兼容响应结构
-    let skipped: Vec<String> = Vec::new();
+    // skipped 已在前部按用户选择「跳过」的同名环路名收集（见 skip_names 处理）
 
     // 阶段1: 合并标签（按name匹配，同名复用）
     for tag in &data.tags {
@@ -1679,7 +1693,7 @@ pub async fn merge_loops(
 
     // 阶段4: 合并环路——单一覆盖语义，对齐 Todo merge_backup：
     // 同名（在 resolved ws 内）→ 删旧 + 原名重建（覆盖）；不同名 → 原名新建。
-    // 不再有 重命名/跳过 分支；conflict_resolution 字段保留兼容但不再生效。
+    // 用户选择「跳过」的同名环路已在 resolve 前从 data.loops 移除，不会进入本阶段。
     for (i, loop_export) in data.loops.iter().enumerate() {
         let resolved = &resolved_loops[i];
 
