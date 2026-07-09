@@ -2,8 +2,12 @@ import { api, unwrap } from './client';
 
 // Backup APIs
 
-export async function mergeBackup(tags: { name: string; color: string }[], todos: { title: string; prompt: string; status: string; executor?: string; scheduler_enabled: boolean; scheduler_config?: string; tag_names: string[]; workspace_path?: string }[]): Promise<string> {
-  return unwrap(await api.post('/api/backup/merge', { tags, todos }));
+export async function mergeBackup(
+  tags: { name: string; color: string }[],
+  todos: { title: string; prompt: string; status: string; executor?: string; scheduler_enabled: boolean; scheduler_config?: string; tag_names: string[]; workspace_path?: string }[],
+  workspace_id?: number | null,
+): Promise<string> {
+  return unwrap(await api.post('/api/backup/merge', { tags, todos, workspace_id }));
 }
 
 // Database Backup APIs

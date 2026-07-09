@@ -1063,6 +1063,9 @@ pub struct TodoBackup {
     pub worktree: Option<String>,
     pub action_type: Option<String>,
     pub action_key: Option<String>,
+    /// 备份时的工作空间 ID，为空表示未分配
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
 }
 
 // ============ 环路导入导出 DTO ============
@@ -1127,6 +1130,12 @@ pub struct TodoExportItem {
     /// Action 键值，与 action_type 配合唯一标识一个 action 模板 todo。
     #[serde(default)]
     pub action_key: Option<String>,
+    /// 导出时的工作空间 ID，为空表示未分配
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
+    /// 导出时的工作空间路径，展示用
+    #[serde(default)]
+    pub workspace_path: Option<String>,
 }
 
 /// 环路导出项（伪ID格式）
@@ -1149,6 +1158,12 @@ pub struct LoopExportItem {
     pub tag_names: Vec<String>,                      // 展示用
     pub triggers: Vec<LoopTriggerExportItem>,
     pub steps: Vec<LoopStepExportItem>,
+    /// 导出时的工作空间 ID，为空表示未分配
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
+    /// 导出时的工作空间路径，展示用
+    #[serde(default)]
+    pub workspace_path: Option<String>,
 }
 
 /// 触发器导出项（只包含 manual 和 cron）

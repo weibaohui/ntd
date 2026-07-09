@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import * as db from '@/utils/database';
 import { exportLoop, listLoops } from '@/utils/database/loops';
 import { LoopImportPreview } from '@/utils/database/backup';
+import type { ProjectDirectory } from '@/utils/database/todos';
+import yaml from 'js-yaml';
 
 const { Dragger } = Upload;
 const { Group: RadioGroup, Button: RadioButton } = Radio;
@@ -19,7 +21,7 @@ export function LoopBackupTab() {
   const [previewData, setPreviewData] = useState<LoopImportPreview | null>(null);
   const [importing, setImporting] = useState(false);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<number | null>(null);
-  const [workspaces, setWorkspaces] = useState<any[]>([]);
+  const [workspaces, setWorkspaces] = useState<ProjectDirectory[]>([]);
   const [loops, setLoops] = useState<any[]>([]);
   // 导入模式：create=新建模式（默认），merge=合并模式
   const [importMode, setImportMode] = useState<ImportMode>('create');
@@ -31,12 +33,16 @@ export function LoopBackupTab() {
     listLoops().then(setLoops).catch(() => {});
   }, []);
 
-  // 加载工作空间列表
-  const loadWorkspaces = async () => {
+  // 加载工作空间列表，优先匹配导出文件中的原始工作空间
+  const loadWorkspaces = async (preferredId?: number | null) => {
     try {
       const ws = await db.getProjectDirectories();
       setWorkspaces(ws);
-      if (ws.length > 0 && !selectedWorkspaceId) {
+      if (preferredId != null && ws.some((w) => w.id === preferredId)) {
+        // 导出文件中检测到了原始工作空间且当前列表中能找到，默认选中它
+        setSelectedWorkspaceId(preferredId);
+      } else if (ws.length > 0 && !selectedWorkspaceId) {
+        // 无匹配时退化为选中第一个
         setSelectedWorkspaceId(ws[0].id);
       }
     } catch (e) {
@@ -68,6 +74,9 @@ export function LoopBackupTab() {
     }
   };
 
+  // 检测到的原始工作空间信息（从导出文件中提取，供预览提示用）
+  const [sourceWorkspaceInfo, setSourceWorkspaceInfo] = useState<{ id: number; path: string } | null>(null);
+
   // 导入文件解析
   const handleImportFile = async (file: File) => {
     try {
@@ -75,6 +84,30 @@ export function LoopBackupTab() {
       const preview = await db.previewLoopImport(text);
       setYamlPreview(text);
       setPreviewData(preview);
+
+      // 从 YAML 中提取导出时的工作空间信息，用于预览提示
+      // 读取第一个 todo 或 loop 的 workspace_id/workspace_path，让用户知道原始来源
+      // 用局部变量 parsedSourceId 暂存，避免直接读 state：本函数内 setSourceWorkspaceInfo
+      // 触发的重渲染尚未发生，读 sourceWorkspaceInfo 拿到的是上一帧的过期值，会导致首次
+      // 导入时无法自动选中原始工作空间。
+      let parsedSourceId: number | null = null;
+      try {
+        const parsed: any = yaml.load(text);
+        // 用 ?? 而非 ||：workspace_id=0 或 workspace_path="" 是合法的 falsy 值，
+        // || 会错误地跳过它们回退到 loops 条目；?? 只在 null/undefined 时回退。
+        const sourceId = parsed?.todos?.[0]?.workspace_id ?? parsed?.loops?.[0]?.workspace_id;
+        const sourcePath = parsed?.todos?.[0]?.workspace_path ?? parsed?.loops?.[0]?.workspace_path;
+        if (sourceId != null) {
+          parsedSourceId = Number(sourceId);
+          setSourceWorkspaceInfo({ id: parsedSourceId, path: sourcePath || '' });
+        } else {
+          setSourceWorkspaceInfo(null);
+        }
+      } catch {
+        // YAML 解析失败不影响整体流程，静默忽略
+        setSourceWorkspaceInfo(null);
+      }
+
       // 初始化冲突解决策略：默认重命名
       const resolutions: Record<string, ConflictAction> = {};
       if (preview.conflicts) {
@@ -83,7 +116,8 @@ export function LoopBackupTab() {
         }
       }
       setConflictResolutions(resolutions);
-      await loadWorkspaces();
+      // 加载工作空间列表时传入检测到的原始 workspace ID，优先匹配
+      await loadWorkspaces(parsedSourceId);
       setImportModalOpen(true);
     } catch (err: any) {
       message.error('解析文件失败: ' + (err?.message || String(err)));
@@ -176,8 +210,44 @@ export function LoopBackupTab() {
       <Card title="导入环路" size="small" style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <Typography.Paragraph type="secondary">
-            从 .loop.yaml 文件导入环路，支持预览和选择性导入
+            从 .loop.yaml 文件导入环路，先选择目标工作空间，再上传文件
           </Typography.Paragraph>
+          {/* 目标工作空间选择：表格形式总览所有工作空间，一行一个，点选某个 */}
+          <div>
+            <Typography.Text strong style={{ fontSize: 13 }}>目标工作空间</Typography.Text>
+            <Table
+              size="small"
+              pagination={false}
+              rowKey="id"
+              dataSource={workspaces}
+              rowSelection={{
+                type: 'radio',
+                selectedRowKeys: selectedWorkspaceId != null ? [selectedWorkspaceId] : [],
+                onChange: (keys) => {
+                  if (keys.length > 0) setSelectedWorkspaceId(keys[0] as number);
+                },
+              }}
+              columns={[
+                {
+                  title: '工作空间',
+                  dataIndex: 'name',
+                  width: '60%',
+                  render: (_: any, r: ProjectDirectory) => r.name || r.path || '(未命名)',
+                },
+                {
+                  title: '来源',
+                  // 直接在 render 里判断是否为原始工作空间，不再往行对象里注入 _isOriginal 字段，
+                  // 避免污染从 API 拿到的 workspace 数据源。
+                  render: (_: any, r: ProjectDirectory) =>
+                    sourceWorkspaceInfo?.id === r.id ? <Tag color="blue">原始</Tag> : null,
+                },
+              ]}
+              style={{ marginTop: 4 }}
+            />
+            <Typography.Paragraph type="secondary" style={{ margin: '4px 0 0', fontSize: 11 }}>
+              选择导入后环路的 Todo 和 Loop 所属的工作空间
+            </Typography.Paragraph>
+          </div>
           <Dragger
             accept=".yaml,.yml,.loop.yaml"
             beforeUpload={handleImportFile}
@@ -188,7 +258,7 @@ export function LoopBackupTab() {
               <InboxOutlined style={{ color: '#0891b2' }} />
             </p>
             <p className="ant-upload-text">点击或拖拽 .loop.yaml 文件到此处</p>
-            <p className="ant-upload-hint">将解析文件并展示预览，确认后导入到目标工作空间</p>
+            <p className="ant-upload-hint">将解析文件并展示预览，确认后导入到选中的工作空间</p>
           </Dragger>
         </div>
       </Card>
@@ -213,6 +283,39 @@ export function LoopBackupTab() {
       >
         {previewData && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* 目标工作空间选择：表格形式总览，一行一个，点选某个，Tag 标记原始来源 */}
+            <div>
+              <Typography.Text strong>目标工作空间</Typography.Text>
+              <Table
+                size="small"
+                pagination={false}
+                rowKey="id"
+                dataSource={workspaces}
+                rowSelection={{
+                  type: 'radio',
+                  selectedRowKeys: selectedWorkspaceId != null ? [selectedWorkspaceId] : [],
+                  onChange: (keys) => {
+                    if (keys.length > 0) setSelectedWorkspaceId(keys[0] as number);
+                  },
+                }}
+                columns={[
+                  {
+                    title: '工作空间',
+                    dataIndex: 'name',
+                    render: (_: any, r: ProjectDirectory) => r.name || r.path || '(未命名)',
+                  },
+                  {
+                    title: '来源',
+                    render: (_: any, r: ProjectDirectory) =>
+                      sourceWorkspaceInfo?.id === r.id ? <Tag color="blue">原始</Tag> : null,
+                  },
+                ]}
+                style={{ marginTop: 4 }}
+              />
+            </div>
+
+            <Divider style={{ margin: '4px 0' }} />
+
             <Alert
               message="即将导入以下内容"
               description={
@@ -243,19 +346,6 @@ export function LoopBackupTab() {
                 showIcon
               />
             )}
-
-            <div>
-              <Typography.Text strong>目标工作空间</Typography.Text>
-              <Select
-                placeholder="选择工作空间"
-                options={workspaces.map((w: any) => ({ label: w.name, value: w.id }))}
-                value={selectedWorkspaceId}
-                onChange={setSelectedWorkspaceId}
-                style={{ width: '100%', marginTop: 8 }}
-              />
-            </div>
-
-            <Divider style={{ margin: '12px 0' }} />
 
             <div>
               <Typography.Text strong>导入模式</Typography.Text>

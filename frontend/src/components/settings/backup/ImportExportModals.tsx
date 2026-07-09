@@ -1,4 +1,6 @@
-import { Modal, Table, Tag as AntTag } from 'antd';
+import { Modal, Table, Tag as AntTag, Divider, Typography, Alert } from 'antd';
+import { InfoCircleOutlined } from '@ant-design/icons';
+import type { ProjectDirectory } from '@/utils/database/todos';
 
 export interface BackupDataYaml {
   version: string;
@@ -13,6 +15,7 @@ export interface BackupDataYaml {
     scheduler_config?: string;
     tag_names: string[];
     workspace_path?: string;
+    workspace_id?: number;
   }[];
 }
 
@@ -35,6 +38,10 @@ export function ImportExportModals({
   selectedRowKeys, setSelectedRowKeys, wizardItems,
   exportModalOpen, setExportModalOpen, handleExportSelected,
   exportingSelected, exportTodoKeys, setExportTodoKeys, todos,
+  // 导入目标工作空间选择
+  workspaces, importWorkspaceId, setImportWorkspaceId,
+  // 原始工作空间提示（从备份文件检测到后展示，帮助用户判断）
+  sourceWorkspaceInfo,
 }: {
   wizardOpen: boolean;
   setWizardOpen: (v: boolean) => void;
@@ -50,6 +57,12 @@ export function ImportExportModals({
   exportTodoKeys: number[];
   setExportTodoKeys: (keys: number[]) => void;
   todos: readonly any[];
+  // 导入目标工作空间选择
+  workspaces: ProjectDirectory[];
+  importWorkspaceId: number | null;
+  setImportWorkspaceId: (v: number | null) => void;
+  // 原始工作空间提示（从备份文件检测到后展示，帮助用户判断）
+  sourceWorkspaceInfo?: { id: number; path: string } | null;
 }) {
   return (
     <>
@@ -62,19 +75,81 @@ export function ImportExportModals({
         cancelText="取消"
         confirmLoading={importing}
         width={800}
-        okButtonProps={{ disabled: selectedRowKeys.length === 0 }}
+        okButtonProps={{ disabled: selectedRowKeys.length === 0 || !importWorkspaceId }}
       >
         <div style={{ marginBottom: 12, display: 'flex', gap: 16 }}>
           <AntTag color="green">{wizardItems.filter(i => i.action === 'new').length} 个新建</AntTag>
           <AntTag color="orange">{wizardItems.filter(i => i.action === 'overwrite').length} 个覆盖</AntTag>
           <AntTag color="blue">已选 {selectedRowKeys.length} 项</AntTag>
         </div>
+
+        {/* 原始工作空间提示：检测到备份文件中的工作空间后，显示给用户参考 */}
+        {sourceWorkspaceInfo && (() => {
+          const matched = workspaces.find((w) => w.id === sourceWorkspaceInfo.id);
+          return (
+            <Alert
+              message="检测到原始工作空间"
+              description={
+                matched
+                  ? `该文件中的数据原本来自工作空间「${matched.name || matched.path}」${
+                      importWorkspaceId === sourceWorkspaceInfo.id ? '（已自动匹配）' : ''
+                    }`
+                  : `该文件中的数据原本来自工作空间 ID=${sourceWorkspaceInfo.id}${
+                      sourceWorkspaceInfo.path ? ` (${sourceWorkspaceInfo.path})` : ''
+                    }，当前环境未找到匹配的工作空间`
+              }
+              type="info"
+              showIcon
+              icon={<InfoCircleOutlined />}
+              style={{ marginBottom: 16 }}
+            />
+          );
+        })()}
+
+        {/* 目标工作空间选择：表格形式总览，一行一个，点选某个 */}
+        <div style={{ marginBottom: 16 }}>
+          <Typography.Text strong>目标工作空间</Typography.Text>
+          <Typography.Paragraph type="secondary" style={{ margin: '4px 0 8px', fontSize: 12 }}>
+            选择导入后 Todo 所属的工作空间，此操作将覆盖备份文件中的原始工作空间信息
+          </Typography.Paragraph>
+          <Table
+            size="small"
+            pagination={false}
+            rowKey="id"
+            dataSource={workspaces}
+            rowSelection={{
+              type: 'radio',
+              selectedRowKeys: importWorkspaceId != null ? [importWorkspaceId] : [],
+              onChange: (keys) => {
+                if (keys.length > 0) setImportWorkspaceId(keys[0] as number);
+              },
+            }}
+            columns={[
+              {
+                title: '工作空间',
+                dataIndex: 'name',
+                width: '60%',
+                render: (_: unknown, r: ProjectDirectory) => r.name || r.path || '(未命名)',
+              },
+              {
+                title: '来源',
+                // 在 render 里直接判断是否为原始工作空间，不再往行对象注入 _isOriginal 字段，
+                // 避免污染从 API 拿到的 workspace 数据源。
+                render: (_: unknown, r: ProjectDirectory) =>
+                  sourceWorkspaceInfo?.id === r.id ? <AntTag color="blue">原始</AntTag> : null,
+              },
+            ]}
+          />
+        </div>
+
+        <Divider style={{ margin: '12px 0' }} />
+
         <Table
           dataSource={wizardItems}
           rowKey="key"
           size="small"
           pagination={false}
-          scroll={{ y: 400 }}
+          scroll={{ y: 350 }}
           rowSelection={{
             selectedRowKeys,
             onChange: (keys) => setSelectedRowKeys(keys as number[]),

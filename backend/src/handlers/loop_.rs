@@ -1693,6 +1693,9 @@ async fn build_loop_export_yaml(
 
                     // 实体模型 status 是 Option<String>，需要 unwrap_or_default
                     // kind 是 Option<String>，需要 unwrap_or_default
+                    // 导出时保留工作空间信息，让导入方知道该 todo 原本属于哪个工作空间
+                    let todo_workspace_id = todo.workspace_id;
+                    let todo_workspace_path = todo.workspace_path.clone();
                     all_todos.insert(step.todo_id, TodoExportItem {
                         id: generate_pseudo_id("todo", all_todos.len() + 1),
                         title: todo.title.clone(),
@@ -1711,6 +1714,8 @@ async fn build_loop_export_yaml(
                         is_abnormal_handler: false,
                         action_type: todo.action_type.clone(),
                         action_key: todo.action_key.clone(),
+                        workspace_id: todo_workspace_id,
+                        workspace_path: todo_workspace_path,
                     });
                 }
             }
@@ -1723,6 +1728,9 @@ async fn build_loop_export_yaml(
             if !all_todos.contains_key(&handler_todo_id) {
                 if let Some(todo) = state.db.get_todo_entity(handler_todo_id).await? {
                     // 异常处理 Todo 不导出标签
+                    // 异常处理 Todo 也保留工作空间信息，确保导入后能正确关联
+                    let handler_workspace_id = todo.workspace_id;
+                    let handler_workspace_path = todo.workspace_path.clone();
                     all_todos.insert(handler_todo_id, TodoExportItem {
                         id: generate_pseudo_id("todo", all_todos.len() + 1),
                         title: todo.title.clone(),
@@ -1741,6 +1749,8 @@ async fn build_loop_export_yaml(
                         is_abnormal_handler: true,
                         action_type: todo.action_type.clone(),
                         action_key: todo.action_key.clone(),
+                        workspace_id: handler_workspace_id,
+                        workspace_path: handler_workspace_path,
                     });
                 }
             }
@@ -1841,6 +1851,9 @@ async fn build_loop_export_yaml(
         let abnormal_handler_trigger_on: Vec<String> = serde_json::from_str(&view.loop_.abnormal_handler_trigger_on)
             .unwrap_or_default();
 
+        // 导出时保留环路的工作空间信息，让导入方知道原本属于哪个工作空间
+        let loop_workspace_id = view.loop_.workspace_id;
+        let loop_workspace_path = view.loop_.workspace_path.clone();
         exported_loops.push(LoopExportItem {
             id: generate_pseudo_id("loop", idx + 1),
             name: view.loop_.name.clone(),
@@ -1859,6 +1872,8 @@ async fn build_loop_export_yaml(
             tag_names: loop_tag_names,
             triggers,
             steps,
+            workspace_id: loop_workspace_id,
+            workspace_path: loop_workspace_path,
         });
     }
 
