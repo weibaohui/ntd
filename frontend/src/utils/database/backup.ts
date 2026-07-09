@@ -4,7 +4,8 @@ import { api, unwrap } from './client';
 
 export async function mergeBackup(
   tags: { name: string; color: string }[],
-  todos: { title: string; prompt: string; status: string; executor?: string; scheduler_enabled: boolean; scheduler_config?: string; tag_names: string[]; workspace_path?: string }[],
+  // workspace_id 逐条携带用户选定的工作空间；全局 workspace_id 传 null，由后端按每条解析
+  todos: { title: string; prompt: string; status: string; executor?: string; scheduler_enabled: boolean; scheduler_config?: string; tag_names: string[]; workspace_path?: string; workspace_id?: number | null }[],
   workspace_id?: number | null,
 ): Promise<string> {
   return unwrap(await api.post('/api/backup/merge', { tags, todos, workspace_id }));
@@ -135,6 +136,20 @@ export function downloadSkillBackupFileUrl(filename: string): string {
 
 // Loop Import/Export APIs
 
+export interface LoopImportPreviewLoop {
+  name: string;
+  /** 导出文件里的原始工作空间 ID（可能为空） */
+  workspace_id?: number | null;
+  /** 导出文件里的原始工作空间路径，展示用 */
+  workspace_path?: string | null;
+  /** 解析后的工作空间 ID（0=未匹配，需用户逐条指定） */
+  resolved_workspace_id: number;
+  /** 解析后的工作空间名称（未匹配时为 null） */
+  resolved_workspace_name?: string | null;
+  /** 原始 workspace_id 在当前库是否存在 */
+  source_matched: boolean;
+}
+
 export interface LoopImportPreview {
   valid: boolean;
   pseudo_ids: string[];
@@ -148,6 +163,8 @@ export interface LoopImportPreview {
   };
   conflicts: { type: string; name: string; action: string }[];
   warnings: { type: string; message: string }[];
+  /** 每条 loop 的工作空间匹配情况，供前端逐条渲染/指派 */
+  loops: LoopImportPreviewLoop[];
 }
 
 export async function previewLoopImport(yaml: string): Promise<LoopImportPreview> {
@@ -160,7 +177,12 @@ export async function previewLoopImport(yaml: string): Promise<LoopImportPreview
     const err = await response.json().catch(() => ({ message: response.statusText }));
     throw new Error(err.message || `HTTP ${response.status}`);
   }
-  return response.json();
+  // 后端统一返回 {code, data, message} 包裹体，这里解包出 data
+  const body = await response.json() as { code: number; data: LoopImportPreview | null; message: string };
+  if (body.code !== 0 || !body.data) {
+    throw new Error(body.message || `Error ${body.code}`);
+  }
+  return body.data;
 }
 
 export interface LoopImportResult {
@@ -176,16 +198,16 @@ export interface LoopImportResult {
   warnings: { type: string; message: string }[];
 }
 
-export async function importLoops(yaml: string, workspace_id: number): Promise<LoopImportResult> {
-  return unwrap(await api.post('/api/loops/import', { yaml, workspace_id }));
-}
-
-export type ConflictAction = 'rename' | 'overwrite' | 'skip';
-
+/**
+ * workspace_id 全局传 null（逐条由 workspace_overrides 指定）。
+ * workspace_overrides: loop name → workspace_id（用户逐行选择，仅含已指定的非空项）。
+ * skip_names: 用户选择「跳过」的同名环路名集合，后端不创建/覆盖、同名保留原样。
+ */
 export async function mergeLoops(
   yaml: string,
-  workspace_id: number,
-  conflict_resolution: Record<string, ConflictAction>,
+  workspace_id: number | null,
+  workspace_overrides?: Record<string, number>,
+  skip_names?: string[],
 ): Promise<{ success: boolean; created: LoopImportResult['created']; updated: LoopImportResult['created']; skipped: string[]; warnings: { type: string; message: string }[] }> {
-  return unwrap(await api.post('/api/loops/merge', { yaml, workspace_id, conflict_resolution }));
+  return unwrap(await api.post('/api/loops/merge', { yaml, workspace_id, workspace_overrides, skip_names }));
 }

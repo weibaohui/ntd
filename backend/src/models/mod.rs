@@ -1209,6 +1209,31 @@ pub struct LoopImportPreviewResponse {
     pub summary: LoopImportSummary,
     pub conflicts: Vec<LoopImportConflict>,
     pub warnings: Vec<LoopImportWarning>,
+    /// 每条 loop 的工作空间匹配情况，供前端逐条渲染/指派工作空间。
+    /// 新增字段，旧前端不读不报错（serde 反序列化侧用 #[serde(default)]）。
+    #[serde(default)]
+    pub loops: Vec<LoopImportPreviewLoop>,
+}
+
+/// 预览里单条 loop 的工作空间解析结果。
+/// resolved_workspace_id == 0 表示该 loop 的原工作空间在当前库不存在（未匹配），
+/// 前端需让用户手动指定后再导入。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopImportPreviewLoop {
+    pub name: String,
+    /// 导出文件里的原始工作空间 ID（可能为 None）
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
+    /// 导出文件里的原始工作空间路径，展示用
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+    /// 解析后的工作空间 ID（0=未匹配，需用户手动指派）
+    pub resolved_workspace_id: i64,
+    /// 解析后的工作空间名称（未匹配时为 None）
+    #[serde(default)]
+    pub resolved_workspace_name: Option<String>,
+    /// 原始 workspace_id 在当前库是否存在
+    pub source_matched: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

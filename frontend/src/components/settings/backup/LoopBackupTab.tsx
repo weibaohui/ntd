@@ -1,81 +1,70 @@
-import { Card, Button, Typography, Upload, Select, Space, Modal, Tag, Alert, message, Radio, Table, Divider } from 'antd';
+import { Card, Button, Typography, Upload, Space, Modal, Tag, Alert, message, Table, Divider, Select } from 'antd';
 import { DownloadOutlined, InboxOutlined } from '@ant-design/icons';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import * as db from '@/utils/database';
-import { exportLoop, listLoops } from '@/utils/database/loops';
+import { listLoops, exportAllLoops } from '@/utils/database/loops';
 import { LoopImportPreview } from '@/utils/database/backup';
 import type { ProjectDirectory } from '@/utils/database/todos';
-import yaml from 'js-yaml';
+import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
 
 const { Dragger } = Upload;
-const { Group: RadioGroup, Button: RadioButton } = Radio;
-
-type ImportMode = 'create' | 'merge';
-type ConflictAction = 'rename' | 'overwrite' | 'skip';
 
 export function LoopBackupTab() {
-  const [selectedLoopId, setSelectedLoopId] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [yamlPreview, setYamlPreview] = useState<string | null>(null);
   const [previewData, setPreviewData] = useState<LoopImportPreview | null>(null);
   const [importing, setImporting] = useState(false);
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<number | null>(null);
+  // 工作空间列表（父组件加载一次，下发给每行 WorkspaceSwitcher 复用）
   const [workspaces, setWorkspaces] = useState<ProjectDirectory[]>([]);
-  const [loops, setLoops] = useState<any[]>([]);
-  // 导入模式：create=新建模式（默认），merge=合并模式
-  const [importMode, setImportMode] = useState<ImportMode>('create');
-  // 冲突解决映射：loop_name -> action
-  const [conflictResolutions, setConflictResolutions] = useState<Record<string, ConflictAction>>({});
+  // 逐 loop 工作空间选择：loop name → workspaceId（null=未匹配/待指定）
+  const [loopWorkspaceMap, setLoopWorkspaceMap] = useState<Record<string, number | null>>({});
+  // 当前库已有 loop 名集合，供「同名处理」列判断新建/同名（对齐 Todo 用已有 todo 判定 action）
+  const [existingLoopNames, setExistingLoopNames] = useState<Set<string>>(new Set());
+  // 同名 loop 的导入动作：loop name → 'overwrite' | 'skip'（默认 skip，避免误覆盖）；新建 loop 不入此表
+  const [loopActionMap, setLoopActionMap] = useState<Record<string, 'overwrite' | 'skip'>>({});
 
-  // 加载环路列表
-  useEffect(() => {
-    listLoops().then(setLoops).catch(() => {});
-  }, []);
-
-  // 加载工作空间列表，优先匹配导出文件中的原始工作空间
-  const loadWorkspaces = async (preferredId?: number | null) => {
-    try {
-      const ws = await db.getProjectDirectories();
-      setWorkspaces(ws);
-      if (preferredId != null && ws.some((w) => w.id === preferredId)) {
-        // 导出文件中检测到了原始工作空间且当前列表中能找到，默认选中它
-        setSelectedWorkspaceId(preferredId);
-      } else if (ws.length > 0 && !selectedWorkspaceId) {
-        // 无匹配时退化为选中第一个
-        setSelectedWorkspaceId(ws[0].id);
-      }
-    } catch (e) {
-      console.error('Failed to load workspaces', e);
-    }
+  // 设置某条 loop 的目标工作空间（供 per-loop 表回写）
+  const setLoopWorkspace = (name: string, id: number | null) => {
+    setLoopWorkspaceMap((prev) => ({ ...prev, [name]: id }));
   };
 
-  // 导出单个环路
-  const handleExportLoop = async (loopId: number) => {
+  // 设置某条同名 loop 的导入动作（覆盖/跳过）；setBulkLoopAction 批量作用于全部同名 loop
+  const setLoopAction = (name: string, action: 'overwrite' | 'skip') => {
+    setLoopActionMap((prev) => ({ ...prev, [name]: action }));
+  };
+  const setBulkLoopAction = (action: 'overwrite' | 'skip') => {
+    setLoopActionMap((prev) => {
+      const next = { ...prev };
+      for (const l of previewData?.loops ?? []) {
+        if (existingLoopNames.has(l.name)) next[l.name] = action;
+      }
+      return next;
+    });
+  };
+
+  // 导出全库所有环路为单个 YAML（对齐 Todo「导出全部」）
+  const handleExportAll = async () => {
     setExporting(true);
     try {
-      const yaml = await exportLoop(loopId);
-      const blob = new Blob([yaml], { type: 'application/x-yaml' });
+      const yamlText = await exportAllLoops();
+      const blob = new Blob([yamlText], { type: 'application/x-yaml' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const loop = loops.find((l: any) => l.id === loopId);
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      a.download = `${loop?.name || 'loop'}-${timestamp}.loop.yaml`;
+      a.download = `loops-export-${timestamp}.loop.yaml`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       message.success('环路导出成功');
-    } catch (err: any) {
-      message.error(err?.message || '导出失败');
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '导出失败');
     } finally {
       setExporting(false);
     }
   };
-
-  // 检测到的原始工作空间信息（从导出文件中提取，供预览提示用）
-  const [sourceWorkspaceInfo, setSourceWorkspaceInfo] = useState<{ id: number; path: string } | null>(null);
 
   // 导入文件解析
   const handleImportFile = async (file: File) => {
@@ -85,124 +74,148 @@ export function LoopBackupTab() {
       setYamlPreview(text);
       setPreviewData(preview);
 
-      // 从 YAML 中提取导出时的工作空间信息，用于预览提示
-      // 读取第一个 todo 或 loop 的 workspace_id/workspace_path，让用户知道原始来源
-      // 用局部变量 parsedSourceId 暂存，避免直接读 state：本函数内 setSourceWorkspaceInfo
-      // 触发的重渲染尚未发生，读 sourceWorkspaceInfo 拿到的是上一帧的过期值，会导致首次
-      // 导入时无法自动选中原始工作空间。
-      let parsedSourceId: number | null = null;
-      try {
-        const parsed: any = yaml.load(text);
-        // 用 ?? 而非 ||：workspace_id=0 或 workspace_path="" 是合法的 falsy 值，
-        // || 会错误地跳过它们回退到 loops 条目；?? 只在 null/undefined 时回退。
-        const sourceId = parsed?.todos?.[0]?.workspace_id ?? parsed?.loops?.[0]?.workspace_id;
-        const sourcePath = parsed?.todos?.[0]?.workspace_path ?? parsed?.loops?.[0]?.workspace_path;
-        if (sourceId != null) {
-          parsedSourceId = Number(sourceId);
-          setSourceWorkspaceInfo({ id: parsedSourceId, path: sourcePath || '' });
-        } else {
-          setSourceWorkspaceInfo(null);
-        }
-      } catch {
-        // YAML 解析失败不影响整体流程，静默忽略
-        setSourceWorkspaceInfo(null);
-      }
+      // 并行加载工作空间列表 + 当前库已有 loop 名（后者用于「状态」列）
+      const [ws, loops] = await Promise.all([
+        db.getProjectDirectories(),
+        listLoops(),
+      ]);
+      setWorkspaces(ws);
+      setExistingLoopNames(new Set(loops.map((l) => l.name)));
 
-      // 初始化冲突解决策略：默认重命名
-      const resolutions: Record<string, ConflictAction> = {};
-      if (preview.conflicts) {
-        for (const c of preview.conflicts) {
-          resolutions[c.name] = 'rename';
-        }
+      // 按预览里的 per-loop 匹配情况初始化默认归属：
+      // 原工作空间命中→原 id，否则 null（未匹配，需用户逐条指定）
+      const wsMap: Record<string, number | null> = {};
+      for (const l of preview.loops) {
+        wsMap[l.name] = l.source_matched ? l.resolved_workspace_id : null;
       }
-      setConflictResolutions(resolutions);
-      // 加载工作空间列表时传入检测到的原始 workspace ID，优先匹配
-      await loadWorkspaces(parsedSourceId);
+      setLoopWorkspaceMap(wsMap);
+      // 同名 loop 默认「跳过」（保守，避免误覆盖）；用户可逐条或批量改为「覆盖」
+      const actionMap: Record<string, 'overwrite' | 'skip'> = {};
+      const existing = new Set(loops.map((l) => l.name));
+      for (const l of preview.loops) {
+        if (existing.has(l.name)) actionMap[l.name] = 'skip';
+      }
+      setLoopActionMap(actionMap);
       setImportModalOpen(true);
-    } catch (err: any) {
-      message.error('解析文件失败: ' + (err?.message || String(err)));
+    } catch (err) {
+      message.error('解析文件失败: ' + (err instanceof Error ? err.message : String(err)));
     }
     return false;
   };
 
-  // 更新单个冲突的解决策略
-  const updateConflictResolution = (name: string, action: ConflictAction) => {
-    setConflictResolutions(prev => ({ ...prev, [name]: action }));
-  };
-
-  // 执行导入
+  // 执行导入——同名按用户动作（覆盖/跳过，默认跳过），否则新建；对齐 Todo
   const handleConfirmImport = async () => {
-    if (!yamlPreview || !selectedWorkspaceId) {
-      message.warning('请选择目标工作空间');
+    if (!yamlPreview || !previewData) {
       return;
+    }
+    // 收集「跳过」的同名 loop 名（默认 skip；用户改为 overwrite 的不计入）
+    const skipNames = previewData.loops
+      .filter((l) => existingLoopNames.has(l.name) && (loopActionMap[l.name] ?? 'skip') === 'skip')
+      .map((l) => l.name);
+    const skipSet = new Set(skipNames);
+    // gate：仅对「非跳过」的 loop 要求指定工作空间（跳过的不导入，无需归属）
+    const unassigned = previewData.loops.filter(
+      (l) => !skipSet.has(l.name) && loopWorkspaceMap[l.name] == null,
+    );
+    if (unassigned.length > 0) {
+      message.warning(`以下环路未指定工作空间: ${unassigned.map((l) => l.name).join(', ')}`);
+      return;
+    }
+    // 构造 per-loop overrides（仅含非跳过且已指定的项），全局 workspace_id 传 null
+    const overrides: Record<string, number> = {};
+    for (const [name, id] of Object.entries(loopWorkspaceMap)) {
+      if (id != null && !skipSet.has(name)) overrides[name] = id;
     }
     setImporting(true);
     try {
-      if (importMode === 'merge') {
-        const result = await db.mergeLoops(yamlPreview, selectedWorkspaceId, conflictResolutions);
-        message.success(
-          `导入完成：新建 ${result.created.loops} 个，更新 ${result.updated?.loops || 0} 个，跳过 ${result.skipped?.length || 0} 个`
-        );
-      } else {
-        const result = await db.importLoops(yamlPreview, selectedWorkspaceId);
-        message.success(`导入成功：创建了 ${result.created.loops} 个环路`);
-      }
+      const result = await db.mergeLoops(yamlPreview, null, overrides, skipNames);
+      message.success(
+        `导入完成：新建 ${result.created.loops} 个，更新 ${result.updated?.loops || 0} 个，跳过 ${result.skipped?.length || 0} 个`
+      );
       setImportModalOpen(false);
       setYamlPreview(null);
       setPreviewData(null);
       window.location.reload();
-    } catch (err: any) {
-      message.error(err?.message || '导入失败');
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '导入失败');
     } finally {
       setImporting(false);
     }
   };
 
-  const loopOptions = loops.map((l: any) => ({ label: l.name, value: l.id }));
-
-  const conflictColumns = [
-    { title: '环路名称', dataIndex: 'name', key: 'name' },
+  // per-loop 工作空间表列：环路 | 状态(新建/覆盖) | 工作空间 | 来源
+  const loopWsColumns = [
+    { title: '环路', dataIndex: 'name', key: 'name', width: 120 },
     {
-      title: '解决策略',
-      dataIndex: 'action',
-      render: (_: any, record: any) => (
-        <RadioGroup
-          value={conflictResolutions[record.name] || 'rename'}
-          onChange={e => updateConflictResolution(record.name, e.target.value)}
-          size="small"
-        >
-          <RadioButton value="rename">重命名</RadioButton>
-          <RadioButton value="overwrite">覆盖</RadioButton>
-          <RadioButton value="skip">跳过</RadioButton>
-        </RadioGroup>
+      title: '同名处理',
+      key: 'status',
+      width: 104,
+      // 同名 loop 可在「覆盖/跳过」间切换（默认跳过）；纯新建 loop 固定显示「新建」
+      render: (_: unknown, r: { name: string }) =>
+        existingLoopNames.has(r.name) ? (
+          <Select
+            size="small"
+            value={loopActionMap[r.name] ?? 'skip'}
+            onChange={(v) => setLoopAction(r.name, v)}
+            style={{ width: 96 }}
+            options={[
+              { value: 'overwrite', label: '覆盖' },
+              { value: 'skip', label: '跳过' },
+            ]}
+          />
+        ) : (
+          <Tag color="green">新建</Tag>
+        ),
+    },
+    {
+      title: '工作空间',
+      key: 'ws',
+      width: 200,
+      render: (_: unknown, r: { name: string }) => (
+        <WorkspaceSwitcher
+          dirs={workspaces}
+          value={loopWorkspaceMap[r.name] ?? null}
+          showAddOption={false}
+          onChange={(id) => setLoopWorkspace(r.name, id)}
+        />
       ),
     },
+    {
+      title: '来源',
+      key: 'source',
+      width: 80,
+      render: (_: unknown, r: { source_matched: boolean }) =>
+        r.source_matched ? <Tag color="blue">原始</Tag> : <Tag color="red">未匹配</Tag>,
+    },
   ];
+
+  // 派生：同名 loop / 各动作计数 / 将跳过集合——批量按钮与 gate 复用
+  const loops = previewData?.loops ?? [];
+  const sameNameLoops = loops.filter((l) => existingLoopNames.has(l.name));
+  const sameNameLoopNames = sameNameLoops.map((l) => l.name);
+  const isOverwrite = (name: string) => existingLoopNames.has(name) && loopActionMap[name] === 'overwrite';
+  const newCount = loops.length - sameNameLoops.length;
+  const overwriteCount = sameNameLoops.filter((l) => isOverwrite(l.name)).length;
+  const skipCount = sameNameLoops.length - overwriteCount;
+  const skipNameSet = new Set(sameNameLoops.filter((l) => !isOverwrite(l.name)).map((l) => l.name));
+  // OK gate：任一「非跳过」loop 未指定工作空间则禁用
+  const hasUnassignedLoop = loops.some((l) => !skipNameSet.has(l.name) && loopWorkspaceMap[l.name] == null);
 
   return (
     <div style={{ maxWidth: 600 }}>
       <Card title="导出环路" size="small" style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <Typography.Paragraph type="secondary">
-            将环路导出为 .loop.yaml 文件，方便迁移和分享
+            将全库所有环路导出为 .loop.yaml 文件，方便迁移和分享
           </Typography.Paragraph>
-          <Select
-            placeholder="选择一个环路"
-            options={loopOptions}
-            value={selectedLoopId}
-            onChange={setSelectedLoopId}
-            style={{ width: '100%' }}
-            allowClear
-          />
           <Button
             type="primary"
             icon={<DownloadOutlined />}
-            onClick={() => selectedLoopId && handleExportLoop(selectedLoopId)}
+            onClick={handleExportAll}
             loading={exporting}
-            disabled={!selectedLoopId}
             style={{ width: '100%' }}
           >
-            导出选中环路
+            导出全部环路
           </Button>
         </div>
       </Card>
@@ -210,44 +223,8 @@ export function LoopBackupTab() {
       <Card title="导入环路" size="small" style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <Typography.Paragraph type="secondary">
-            从 .loop.yaml 文件导入环路，先选择目标工作空间，再上传文件
+            从 .loop.yaml 文件导入环路；解析后可逐条 loop 指定目标工作空间
           </Typography.Paragraph>
-          {/* 目标工作空间选择：表格形式总览所有工作空间，一行一个，点选某个 */}
-          <div>
-            <Typography.Text strong style={{ fontSize: 13 }}>目标工作空间</Typography.Text>
-            <Table
-              size="small"
-              pagination={false}
-              rowKey="id"
-              dataSource={workspaces}
-              rowSelection={{
-                type: 'radio',
-                selectedRowKeys: selectedWorkspaceId != null ? [selectedWorkspaceId] : [],
-                onChange: (keys) => {
-                  if (keys.length > 0) setSelectedWorkspaceId(keys[0] as number);
-                },
-              }}
-              columns={[
-                {
-                  title: '工作空间',
-                  dataIndex: 'name',
-                  width: '60%',
-                  render: (_: any, r: ProjectDirectory) => r.name || r.path || '(未命名)',
-                },
-                {
-                  title: '来源',
-                  // 直接在 render 里判断是否为原始工作空间，不再往行对象里注入 _isOriginal 字段，
-                  // 避免污染从 API 拿到的 workspace 数据源。
-                  render: (_: any, r: ProjectDirectory) =>
-                    sourceWorkspaceInfo?.id === r.id ? <Tag color="blue">原始</Tag> : null,
-                },
-              ]}
-              style={{ marginTop: 4 }}
-            />
-            <Typography.Paragraph type="secondary" style={{ margin: '4px 0 0', fontSize: 11 }}>
-              选择导入后环路的 Todo 和 Loop 所属的工作空间
-            </Typography.Paragraph>
-          </div>
           <Dragger
             accept=".yaml,.yml,.loop.yaml"
             beforeUpload={handleImportFile}
@@ -258,7 +235,7 @@ export function LoopBackupTab() {
               <InboxOutlined style={{ color: '#0891b2' }} />
             </p>
             <p className="ant-upload-text">点击或拖拽 .loop.yaml 文件到此处</p>
-            <p className="ant-upload-hint">将解析文件并展示预览，确认后导入到选中的工作空间</p>
+            <p className="ant-upload-hint">将解析文件并展示预览，逐条指派工作空间后导入</p>
           </Dragger>
         </div>
       </Card>
@@ -273,43 +250,33 @@ export function LoopBackupTab() {
             key="import"
             type="primary"
             loading={importing}
-            disabled={!selectedWorkspaceId}
+            disabled={hasUnassignedLoop}
             onClick={handleConfirmImport}
           >
             确认导入
           </Button>,
         ]}
-        width={700}
+        width={780}
       >
         {previewData && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* 目标工作空间选择：表格形式总览，一行一个，点选某个，Tag 标记原始来源 */}
+            {/* 同名处理统计 + 批量动作 */}
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Tag color="green">{newCount} 新建</Tag>
+              <Tag color="orange">{overwriteCount} 覆盖</Tag>
+              <Tag>{skipCount} 跳过</Tag>
+              <Button size="small" disabled={sameNameLoopNames.length === 0} onClick={() => setBulkLoopAction('overwrite')}>同名全覆盖</Button>
+              <Button size="small" disabled={sameNameLoopNames.length === 0} onClick={() => setBulkLoopAction('skip')}>同名全跳过</Button>
+            </div>
+            {/* per-loop 工作空间指派 + 同名处理（默认跳过）：默认按原 id 匹配，可逐条点改 */}
             <div>
-              <Typography.Text strong>目标工作空间</Typography.Text>
+              <Typography.Text strong>环路工作空间（逐条）</Typography.Text>
               <Table
                 size="small"
                 pagination={false}
-                rowKey="id"
-                dataSource={workspaces}
-                rowSelection={{
-                  type: 'radio',
-                  selectedRowKeys: selectedWorkspaceId != null ? [selectedWorkspaceId] : [],
-                  onChange: (keys) => {
-                    if (keys.length > 0) setSelectedWorkspaceId(keys[0] as number);
-                  },
-                }}
-                columns={[
-                  {
-                    title: '工作空间',
-                    dataIndex: 'name',
-                    render: (_: any, r: ProjectDirectory) => r.name || r.path || '(未命名)',
-                  },
-                  {
-                    title: '来源',
-                    render: (_: any, r: ProjectDirectory) =>
-                      sourceWorkspaceInfo?.id === r.id ? <Tag color="blue">原始</Tag> : null,
-                  },
-                ]}
+                rowKey="name"
+                dataSource={previewData.loops}
+                columns={loopWsColumns}
                 style={{ marginTop: 4 }}
               />
             </div>
@@ -337,7 +304,7 @@ export function LoopBackupTab() {
                 message="警告"
                 description={
                   <ul style={{ margin: 0, paddingLeft: 20 }}>
-                    {previewData.warnings.map((w: any, i: number) => (
+                    {previewData.warnings.map((w, i) => (
                       <li key={i}>{w.message}</li>
                     ))}
                   </ul>
@@ -345,44 +312,6 @@ export function LoopBackupTab() {
                 type="warning"
                 showIcon
               />
-            )}
-
-            <div>
-              <Typography.Text strong>导入模式</Typography.Text>
-              <RadioGroup
-                value={importMode}
-                onChange={e => setImportMode(e.target.value)}
-                style={{ marginLeft: 12 }}
-              >
-                <RadioButton value="create">新建模式</RadioButton>
-                <RadioButton value="merge" disabled={!previewData.conflicts?.length}>
-                  合并模式
-                </RadioButton>
-              </RadioGroup>
-              <Typography.Paragraph type="secondary" style={{ marginTop: 4, marginBottom: 0 }}>
-                {importMode === 'create'
-                  ? '所有环路作为全新实体创建，同名自动追加 "-导入" 后缀'
-                  : '同名环路按下方策略处理'}
-              </Typography.Paragraph>
-            </div>
-
-            {importMode === 'merge' && previewData.conflicts && previewData.conflicts.length > 0 && (
-              <>
-                <Divider style={{ margin: '12px 0' }} />
-                <div>
-                  <Typography.Text strong>冲突解决策略</Typography.Text>
-                  <Typography.Paragraph type="secondary">
-                    检测到 {previewData.conflicts.length} 个同名环路，请选择处理方式
-                  </Typography.Paragraph>
-                  <Table
-                    size="small"
-                    dataSource={previewData.conflicts.map((c: any) => ({ key: c.name, ...c }))}
-                    columns={conflictColumns}
-                    pagination={false}
-                    style={{ marginTop: 8 }}
-                  />
-                </div>
-              </>
             )}
           </div>
         )}
