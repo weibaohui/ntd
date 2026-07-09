@@ -52,13 +52,15 @@ interface TodoCenterCardProps {
  * 避免重蹈当前密集列表「操作按钮挤在行里」的覆辙。
  */
 export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: TodoCenterCardProps) {
+  // busy 覆盖所有异步操作（执行/归档/恢复/webhook/调度/复制/移动），防止并发重复点击
   const [busy, setBusy] = useState(false);
   const [schedOpen, setSchedOpen] = useState(false);
-  // 调度弹窗本地态：打开时由当前 scheduler 字段初始化，确认后才落库
+  // 调度弹窗本地态：打开时由当前 scheduler 字段初始化，确认后才落库（避免半成品持久化）
   const [schedEnabled, setSchedEnabled] = useState(true);
   const [schedConfig, setSchedConfig] = useState<string>(DEFAULT_CRON);
-  // 复制/移动工作空间弹窗：mode=null 表示关闭
+  // 复制/移动工作空间弹窗：mode=null 表示关闭，两种模式共用一个弹窗
   const [wsMode, setWsMode] = useState<'copy' | 'move' | null>(null);
+  // 已归档卡片主操作是「恢复」；其余卡片主操作随 status 切换（见 mainAction）
   const isArchived = item.computed_bucket === 'archived';
 
   // 共用 loading + 错误处理的轻量变更包装器。
@@ -94,6 +96,8 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: 
     (mode) => setWsMode(mode),
   );
 
+  // 主操作随状态切换（设计文档卡片主操作规则）：
+  // 已归档→恢复；运行中→查看运行（跳详情）；失败→查看失败（跳详情）；待执行/已完成→执行一次
   const mainAction = isArchived ? (
     <Button
       size="small"
@@ -105,6 +109,17 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: 
       }}
     >
       恢复
+    </Button>
+  ) : item.status === 'running' || item.status === 'failed' ? (
+    <Button
+      size="small"
+      icon={<PlayCircleOutlined />}
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelectTodo(item.id);
+      }}
+    >
+      {item.status === 'running' ? '查看运行' : '查看失败'}
     </Button>
   ) : (
     <Button
@@ -156,6 +171,10 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: 
         </Tag>
         <StatusTag status={item.status} />
         {sourceLabel(item.action_type) && <Tag color="gold">{sourceLabel(item.action_type)}</Tag>}
+        {/* 绑定斜杠命令：手动触发仍属手动分类（命令是执行入口，非持续驱动） */}
+        {item.bound_slash_command && (
+          <Tag color="geekblue">绑定命令 {item.bound_slash_command}</Tag>
+        )}
         {item.webhook_enabled && item.computed_bucket !== 'event_driven' && (
           <Tag color="purple" icon={<ThunderboltOutlined />}>兼事件</Tag>
         )}
@@ -354,21 +373,21 @@ function buildMenuItems(
       deleteMenuItem(item, runMutation),
     ];
   }
+  // Loop 驱动卡片不提供复制/移动（设计文档 Loop 驱动操作列表不含这两项）：
+  // Loop 归属只能由 Loop 配置改变，复制/移动绕过流程结构不合理。
+  const workspaceItems: NonNullable<MenuProps['items']> =
+    item.computed_bucket === 'loop_driven'
+      ? []
+      : [
+          { type: 'divider' as const, key: 'div_ws' },
+          { key: 'copy', label: '复制到工作空间', onClick: () => openWorkspacePicker('copy') },
+          { key: 'move', label: '移动到工作空间', onClick: () => openWorkspacePicker('move') },
+        ];
   return [
     archiveMenuItem(item, runMutation),
     ...timeDrivenMenuItems(item, runMutation, openSchedulerModal),
     webhookMenuItem(item, runMutation),
-    { type: 'divider' as const, key: 'div_ws' },
-    {
-      key: 'copy',
-      label: '复制到工作空间',
-      onClick: () => openWorkspacePicker('copy'),
-    },
-    {
-      key: 'move',
-      label: '移动到工作空间',
-      onClick: () => openWorkspacePicker('move'),
-    },
+    ...workspaceItems,
   ];
 }
 

@@ -264,3 +264,58 @@ test('移动端单列渲染', async ({ page }) => {
   const tmpl = await grid.evaluate((el) => getComputedStyle(el).gridTemplateColumns);
   expect(tmpl.split(' ').filter(Boolean).length).toBe(1);
 });
+
+test('工具栏含状态与动作类型筛选', async ({ page }) => {
+  await page.goto(`${BASE}/#todoCenter`);
+  await page.waitForTimeout(1000);
+
+  // 状态筛选与动作类型筛选下拉均存在
+  await expect(page.getByTestId('todo-center-status-filter')).toBeVisible();
+  await expect(page.getByTestId('todo-center-action-filter')).toBeVisible();
+
+  // 手动触发 Tab 应有「仅看可命令触发」勾选；切到时间驱动 Tab 后应消失
+  await expect(page.getByTestId('todo-center-command-only')).toBeVisible();
+  await page.getByTestId('todo-center-tab-time_driven').click();
+  await page.waitForTimeout(400);
+  await expect(page.getByTestId('todo-center-command-only')).toHaveCount(0);
+});
+
+test('状态筛选生效：选失败后只剩失败事项', async ({ page }) => {
+  await page.goto(`${BASE}/#todoCenter`);
+  await page.waitForTimeout(1000);
+
+  const cards = page.locator('[data-testid^="todo-center-card-"]');
+  const before = await cards.count();
+
+  // 选「失败」状态
+  await page.getByTestId('todo-center-status-filter').click();
+  await page.waitForTimeout(200);
+  await page.locator('.ant-select-item').filter({ hasText: '失败' }).click();
+  await page.waitForTimeout(500);
+
+  const after = await cards.count();
+  // 筛选后数量应 <= 筛选前
+  expect(after).toBeLessThanOrEqual(before);
+  // 若仍有卡片，每张状态都应是 failed
+  for (let i = 0; i < after; i++) {
+    const statusTag = await cards.nth(i).locator('.ant-tag').allTextContents();
+    expect(statusTag.some((t) => t.includes('失败'))).toBeTruthy();
+  }
+});
+
+test('Loop 驱动卡片不含复制/移动工作空间', async ({ page }) => {
+  await page.goto(`${BASE}/#todoCenter`);
+  await page.waitForTimeout(1000);
+
+  await page.getByTestId('todo-center-tab-loop_driven').click();
+  await page.waitForTimeout(500);
+
+  const card = page.locator('[data-testid^="todo-center-card-"]').first();
+  await card.locator('button[aria-label="更多操作"]').click();
+  await page.waitForTimeout(300);
+
+  const menu = page.locator('.ant-dropdown-menu');
+  // Loop 驱动按设计文档不应有复制/移动
+  await expect(menu.getByText('复制到工作空间')).toHaveCount(0);
+  await expect(menu.getByText('移动到工作空间')).toHaveCount(0);
+});

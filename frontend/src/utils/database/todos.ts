@@ -235,7 +235,8 @@ export async function updateScheduler(
   id: number,
   scheduler_enabled: boolean,
   scheduler_config: string | null,
-): Promise<Todo> {
+): Promise<TodoCenterItem> {
+  // 后端返回 TodoCenterItem（含重新计算的 computed_bucket），符合设计文档要求
   return unwrap(await api.put(`/api/todos/${id}/scheduler`, { scheduler_enabled, scheduler_config }));
 }
 

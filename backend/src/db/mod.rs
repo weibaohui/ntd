@@ -155,6 +155,26 @@ impl Database {
             .map(|_| ())
     }
 
+    /// 执行带占位符的查询并返回所有行。事项中心批量聚合的公共出口，
+    /// 让各批量查询函数只关心 SQL 与行映射，不再重复 Statement 构造样板。
+    pub(crate) async fn query_all_sql(
+        &self,
+        sql: String,
+        values: Vec<sea_orm::Value>,
+    ) -> Result<Vec<sea_orm::QueryResult>, sea_orm::DbErr> {
+        self.conn
+            .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
+            .await
+    }
+
+    /// 为 `IN (?, ?, ...)` 子句构造占位符串与绑定值列表。
+    /// 空切片返回空 vec，调用方需自行短路（避免生成非法的 `IN ()`）。
+    pub(crate) fn in_clause(ids: &[i64]) -> (String, Vec<sea_orm::Value>) {
+        let values: Vec<sea_orm::Value> = ids.iter().map(|&id| id.into()).collect();
+        let placeholders = std::iter::repeat("?").take(ids.len()).collect::<Vec<_>>().join(",");
+        (placeholders, values)
+    }
+
     /// 执行返回结果集的 SQL 语句（如 PRAGMA），忽略返回值
     pub(super) async fn query_exec(&self, sql: &str) -> Result<(), sea_orm::DbErr> {
         self.conn

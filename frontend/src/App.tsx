@@ -9,7 +9,7 @@ import { useViewState, viewToNavKey, type View } from './hooks/useViewState';
 import { ThemeProvider, useTheme } from '@/hooks/useTheme';
 import { ConsolePanelProvider, useConsolePanel } from '@/hooks/useConsolePanel';
 import { TodoPage } from './components/TodoPage';
-import { TodoCenterPage } from './components/TodoCenterPage';
+import { TodoCenterPage } from '@/components/TodoCenterPage';
 import { TodoPostPage } from './components/todo-post';
 import { LoopPage } from './components/LoopPage';
 import { TodoMobilePage } from './components/mobile/TodoMobilePage';
@@ -319,7 +319,8 @@ function AppContent() {
           )}
 
           {/* 事项页面 */}
-          {activeView === 'items' && activePanel !== 'post' && (            isMobile ? (
+          {activeView === 'items' && activePanel !== 'post' && (
+            isMobile ? (
               <TodoMobilePage
                 selectedTodoId={state.selectedTodoId}
                 onOpenCreateModal={() => setTodoModalOpen(true)}

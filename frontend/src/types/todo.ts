@@ -61,6 +61,8 @@ export interface TodoCenterItem extends Todo {
   consecutive_failure_count?: number;
   /** 最近一次 webhook 触发的时间（trigger_type='webhook' 的最新记录）。事件驱动卡片「最近触发」用。 */
   last_webhook_trigger_at?: string | null;
+  /** 绑定的工作空间斜杠命令（command_type='todo' 绑定该 todo 的第一条）。卡片展示「绑定命令: /xxx」。 */
+  bound_slash_command?: string | null;
 }
 
 /** 环节 — 从 todo 提升而来的独立实体，不再寄生在 Todo 上。 */

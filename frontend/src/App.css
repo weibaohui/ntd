@@ -4549,3 +4549,26 @@ code {
 [data-theme="dark"] .todo-center-card {
   background: var(--color-bg-elevated);
 }
+
+/* 事项中心筛选栏：状态/动作类型下拉 + 命令触发勾选 */
+.todo-center-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.todo-center-cmd-only {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.todo-center-cmd-only input {
+  cursor: pointer;
+}
