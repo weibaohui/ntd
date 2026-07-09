@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { UnorderedListOutlined, PlusOutlined, AppstoreOutlined } from '@ant-design/icons';
 import { Button, Segmented } from 'antd';
 import { PageCard } from '../common/PageCard';
@@ -20,6 +21,10 @@ interface TodoMobilePageProps {
   /** 当前视图模式（卡片/列表），由宿主 ItemsPage 持有；列表页 header 展示切换器回到卡片。 */
   viewMode: 'card' | 'list';
   onViewModeChange: (m: 'card' | 'list') => void;
+  /** 统一搜索词，来自 ItemsPage 顶层搜索框。 */
+  searchKeyword?: string;
+  /** ItemsPage 构建的完整 header extra（桌面端使用，移动端传 null 由本组件自行构建）。 */
+  extra?: ReactNode;
 }
 
 /**
@@ -42,34 +47,38 @@ export function TodoMobilePage({
   onOpenPost,
   viewMode,
   onViewModeChange,
+  searchKeyword,
+  extra,
 }: TodoMobilePageProps) {
+  // 桌面端由 ItemsPage 传入完整 extra；移动端使用本组件自建的 header
+  const listPageExtra = extra ?? (
+    <>
+      <Segmented
+        size="small"
+        value={viewMode}
+        onChange={(v) => onViewModeChange(v as 'card' | 'list')}
+        options={[
+          { value: 'card', icon: <AppstoreOutlined />, title: '卡片视图' },
+          { value: 'list', icon: <UnorderedListOutlined />, title: '列表' },
+        ]}
+        data-testid="todo-center-view-toggle"
+      />
+      <Button
+        type="primary"
+        size="small"
+        icon={<PlusOutlined />}
+        onClick={onOpenCreateModal}
+      >
+        新建
+      </Button>
+    </>
+  );
+
   const listPage = (
     <PageCard
       icon={<UnorderedListOutlined />}
       title="事项"
-      extra={
-        <>
-          {/* 卡片/列表切换：切回卡片墙，由宿主 ItemsPage 控制 */}
-          <Segmented
-            size="small"
-            value={viewMode}
-            onChange={(v) => onViewModeChange(v as 'card' | 'list')}
-            options={[
-              { value: 'card', icon: <AppstoreOutlined />, title: '卡片视图' },
-              { value: 'list', icon: <UnorderedListOutlined />, title: '列表' },
-            ]}
-            data-testid="todo-center-view-toggle"
-          />
-          <Button
-            type="primary"
-            size="small"
-            icon={<PlusOutlined />}
-            onClick={onOpenCreateModal}
-          >
-            新建
-          </Button>
-        </>
-      }
+      extra={listPageExtra}
       style={{ height: '100%' }}
       contentStyle={{ padding: 0, height: 'calc(100% - 43px)' }}
     >
@@ -82,6 +91,7 @@ export function TodoMobilePage({
         forcedListMode={forcedListMode}
         onListModeChange={onListModeChange}
         hideCreateButton={true}
+        searchKeyword={searchKeyword}
       />
     </PageCard>
   );

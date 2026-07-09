@@ -27,16 +27,21 @@ interface TodoListProps {
   forcedListMode?: 'item' | 'loop';
   onListModeChange?: (mode: 'item' | 'loop') => void;
   hideCreateButton?: boolean;
+  /** 外部传入的搜索词（来自 ItemsPage 顶层搜索框），优先级高于内部 searchKeyword。 */
+  searchKeyword?: string;
 }
 
 export function TodoList(props: TodoListProps) {
-  const { onOpenCreateModal, onSelectTodo, onSelectLoop, onCreateLoop, loopUpdateCount, forcedListMode, onListModeChange, hideCreateButton } = props;
+  const { onOpenCreateModal, onSelectTodo, onSelectLoop, onCreateLoop, loopUpdateCount, forcedListMode, onListModeChange, hideCreateButton, searchKeyword: externalSearchKeyword } = props;
   const { state, dispatch } = useApp();
   const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
   const { message } = AntApp.useApp();
   const [isLoading, setIsLoading] = useState(true);
-  // 搜索关键字状态，用于按标题或提示词过滤 todo 列表
-  const [searchKeyword, setSearchKeyword] = useState('');
+  // 搜索关键字状态，用于按标题或提示词过滤 todo 列表。
+  // 优先使用外部传入的搜索词（ItemsPage 顶层统一搜索框），否则用内部 state。
+  const [internalSearch, setInternalSearch] = useState('');
+  const searchKeyword = externalSearchKeyword ?? internalSearch;
+  const setSearchKeyword = externalSearchKeyword === undefined ? setInternalSearch : () => {};
   // 列表模式：'item' = 事项, 'loop' = 环路
   const [listMode, setListMode] = useState<'item' | 'loop'>(() => {
     const saved = localStorage.getItem('ntd_list_mode');
@@ -445,20 +450,22 @@ export function TodoList(props: TodoListProps) {
 
   return (
     <div className="todo-list-container">
-      {/* 搜索框 */}
-      <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
-        <Input
-          placeholder={
-            listMode === 'item' ? '搜索标题或提示词...'
-            : '搜索环路名称...'
-          }
-          prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
-          value={searchKeyword}
-          onChange={(e) => setSearchKeyword(e.target.value)}
-          allowClear
-          size="small"
-        />
-      </div>
+      {/* 搜索框：外部传入 searchKeyword 时由 ItemsPage 统一提供，本组件内不再重复渲染 */}
+      {externalSearchKeyword === undefined && (
+        <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
+          <Input
+            placeholder={
+              listMode === 'item' ? '搜索标题或提示词...'
+              : '搜索环路名称...'
+            }
+            prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+            value={searchKeyword}
+            onChange={(e) => setSearchKeyword(e.target.value)}
+            allowClear
+            size="small"
+          />
+        </div>
+      )}
 
       {/* 通用操作工具栏 */}
       <ActionToolbar

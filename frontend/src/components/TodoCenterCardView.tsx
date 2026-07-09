@@ -1,9 +1,10 @@
+import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Empty, Input, Segmented, Select, Spin, message } from 'antd';
-import { AppstoreOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, UnorderedListOutlined } from '@ant-design/icons';
+import { Empty, Segmented, Select, Spin, message } from 'antd';
+import { AppstoreOutlined } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
 import { PageCard } from '@/components/common/PageCard';
-import { TodoCenterCard } from '@/components/TodoCenterCard';
+import { TodoCenterCard, sourceLabel } from '@/components/TodoCenterCard';
 import * as db from '@/utils/database';
 import type { ComputedBucket, TodoCenterItem } from '@/types';
 
@@ -29,13 +30,14 @@ interface TodoCenterCardViewProps {
   onSelectTodo: (id: number) => void;
   /** 点击所属 Loop 跳转 Loop 详情。 */
   onSelectLoop: (loopId: number) => void;
-  /** 新建事项入口（复用全局 TodoDrawer）。 */
-  onOpenCreateModal: () => void;
-  /** 当前视图模式（卡片/列表），由宿主持有；卡片页只在 header 里展示切换器。 */
-  viewMode: 'card' | 'list';
-  onViewModeChange: (m: 'card' | 'list') => void;
   /** 移动端：精简 header（隐藏搜索/筛选），保留切换器 + 新建 + Tab + 卡片。 */
   isMobile?: boolean;
+  /** 统一搜索词（来自 ItemsPage 顶层搜索框），由 ItemsPage 负责渲染输入框。 */
+  searchKeyword?: string;
+  /** ItemsPage 顶层构建的完整 header extra（搜索框 + 刷新 + Segmented + 新建）。 */
+  extra?: ReactNode;
+  /** 刷新计数，App 层点击刷新按钮时递增，触发本组件重载数据。 */
+  loopUpdateCount?: number;
 }
 
 /**
@@ -48,10 +50,10 @@ interface TodoCenterCardViewProps {
 export function TodoCenterCardView({
   onSelectTodo,
   onSelectLoop,
-  onOpenCreateModal,
-  viewMode,
-  onViewModeChange,
   isMobile,
+  searchKeyword = '',
+  extra,
+  loopUpdateCount,
 }: TodoCenterCardViewProps) {
   const { state } = useApp();
   const workspaceId = state.selectedWorkspace ?? undefined;
@@ -62,14 +64,10 @@ export function TodoCenterCardView({
   const [loading, setLoading] = useState(false);
   // 当前 Tab（五类驱动），默认手动触发
   const [activeBucket, setActiveBucket] = useState<ComputedBucket>('manual');
-  // 搜索词：标题/prompt 子串，前端即时过滤（数据全量在端，无需回服务端）
-  const [search, setSearch] = useState('');
   // 状态筛选（设计文档工具栏「状态筛选」）：'all' 或具体 status
   const [statusFilter, setStatusFilter] = useState<string>('all');
   // 动作类型筛选（设计文档工具栏「动作类型筛选」）：'all' 或具体 action_type
   const [actionTypeFilter, setActionTypeFilter] = useState<string>('all');
-  // 手动触发 Tab 专属：仅看绑定了斜杠命令的可命令触发事项（设计文档 manual 筛选项）
-  const [commandOnly, setCommandOnly] = useState(false);
 
   // 拉取事项中心列表。工作空间变化或手动刷新时触发；
   // 卡片操作（归档/恢复/webhook/执行）完成后也会调它重拉，保持口径一致。
@@ -87,7 +85,7 @@ export function TodoCenterCardView({
 
   useEffect(() => {
     reload();
-  }, [reload]);
+  }, [reload, loopUpdateCount]);
 
   // 按 computed_bucket 分桶，用于 Tab 计数与卡片过滤
   const bucketCount = useMemo(() => {
@@ -98,19 +96,17 @@ export function TodoCenterCardView({
     return counts;
   }, [items]);
 
-  // 当前 Tab 的卡片：按分类 + 搜索 + 状态 + 动作类型 + （手动 Tab）命令绑定过滤
+  // 当前 Tab 的卡片：按分类 + 搜索 + 状态 + 动作类型过滤
   const visibleItems = useMemo(() => {
-    const kw = search.trim().toLowerCase();
+    const kw = searchKeyword.trim().toLowerCase();
     return items.filter((it) => {
       if (it.computed_bucket !== activeBucket) return false;
       if (statusFilter !== 'all' && it.status !== statusFilter) return false;
       if (actionTypeFilter !== 'all' && (it.action_type ?? 'none') !== actionTypeFilter) return false;
-      // 手动触发 Tab 的「仅看可命令触发」：只留绑定了斜杠命令的事项
-      if (commandOnly && activeBucket === 'manual' && !it.bound_slash_command) return false;
       if (!kw) return true;
       return it.title.toLowerCase().includes(kw) || it.prompt.toLowerCase().includes(kw);
     });
-  }, [items, activeBucket, search, statusFilter, actionTypeFilter, commandOnly]);
+  }, [items, activeBucket, searchKeyword, statusFilter, actionTypeFilter]);
 
   // 动作类型筛选项：从当前数据动态去重，避免硬编码漏掉新类型
   const actionTypeOptions = useMemo(() => {
@@ -126,46 +122,12 @@ export function TodoCenterCardView({
       // flex:1 让 PageCard 在 Content 的 flex-row 里撑满宽度，
       // 否则会塌缩成内容宽度（卡片只剩单列、右侧大片留白）
       style={{ flex: 1 }}
-      extra={
-        <>
-          {/* 桌面端才放搜索框；移动端 header 精简，避免拥挤 */}
-          {!isMobile && (
-            <Input
-              allowClear
-              size="small"
-              placeholder="搜索标题或 Prompt"
-              prefix={<SearchOutlined />}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{ width: 200 }}
-              data-testid="todo-center-search"
-            />
-          )}
-          {/* 卡片/列表切换：列表形态切到原 TodoPage（双栏），由宿主 ItemsPage 控制 */}
-          <Segmented
-            size="small"
-            value={viewMode}
-            onChange={(v) => onViewModeChange(v as 'card' | 'list')}
-            options={[
-              { value: 'card', icon: <AppstoreOutlined />, title: '卡片视图' },
-              { value: 'list', icon: <UnorderedListOutlined />, title: '列表（双栏）' },
-            ]}
-            data-testid="todo-center-view-toggle"
-          />
-          {!isMobile && (
-            <Button size="small" icon={<ReloadOutlined />} onClick={reload} loading={loading} aria-label="刷新">
-              刷新
-            </Button>
-          )}
-          <Button size="small" type="primary" icon={<PlusOutlined />} onClick={onOpenCreateModal}>
-            新建
-          </Button>
-        </>
-      }
+      extra={extra}
       contentClassName="todo-center-page-content"
     >
       <Spin spinning={loading}>
-        <div className="todo-center-tabs">
+        {/* Tab 分段器 + 状态/来源筛选器同行排列，flex-wrap 让其按屏幕宽度自动换行 */}
+        <div className="todo-center-tabs-toolbar">
           <Segmented
             value={activeBucket}
             onChange={(val) => setActiveBucket(val as ComputedBucket)}
@@ -178,46 +140,35 @@ export function TodoCenterCardView({
               value: b.value,
             }))}
           />
-        </div>
 
-        {/* 筛选栏（设计文档工具栏：状态筛选 + 动作类型筛选；手动 Tab 额外的「仅看可命令触发」）。
-            移动端隐藏——空间有限，手机端主要浏览 Tab + 卡片，筛选留到桌面端。 */}
-        {!isMobile && (
-        <div className="todo-center-filters">
-          <Select
-            size="small"
-            value={statusFilter}
-            onChange={setStatusFilter}
-            style={{ width: 120 }}
-            options={[
-              { value: 'all', label: '全部状态' },
-              { value: 'pending', label: '待执行' },
-              { value: 'running', label: '运行中' },
-              { value: 'completed', label: '已完成' },
-              { value: 'failed', label: '失败' },
-            ]}
-            data-testid="todo-center-status-filter"
-          />
-          <Select
-            size="small"
-            value={actionTypeFilter}
-            onChange={setActionTypeFilter}
-            style={{ width: 140 }}
-            options={[{ value: 'all', label: '全部来源' }, ...actionTypeOptions.map((t) => ({ value: t, label: t }))]}
-            data-testid="todo-center-action-filter"
-          />
-          {activeBucket === 'manual' && (
-            <label className="todo-center-cmd-only" data-testid="todo-center-command-only">
-              <input
-                type="checkbox"
-                checked={commandOnly}
-                onChange={(e) => setCommandOnly(e.target.checked)}
+          {/* 移动端隐藏——空间有限，手机端主要浏览 Tab + 卡片，筛选留到桌面端。 */}
+          {!isMobile && (
+            <>
+              <Select
+                size="small"
+                value={statusFilter}
+                onChange={setStatusFilter}
+                style={{ width: 120 }}
+                options={[
+                  { value: 'all', label: '全部状态' },
+                  { value: 'pending', label: '待执行' },
+                  { value: 'running', label: '运行中' },
+                  { value: 'completed', label: '已完成' },
+                  { value: 'failed', label: '失败' },
+                ]}
+                data-testid="todo-center-status-filter"
               />
-              仅看可命令触发
-            </label>
+              <Select
+                size="small"
+                value={actionTypeFilter}
+                onChange={setActionTypeFilter}
+                style={{ width: 140 }}
+                options={[{ value: 'all', label: '全部来源' }, ...actionTypeOptions.map((t) => ({ value: t, label: sourceLabel(t) ?? t }))]}
+                data-testid="todo-center-action-filter"
+              />
+            </>
           )}
         </div>
-        )}
 
         {visibleItems.length === 0 ? (
           <Empty description={EMPTY_TEXT[activeBucket]} style={{ marginTop: 48 }} />

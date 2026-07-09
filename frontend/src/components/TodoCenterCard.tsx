@@ -26,10 +26,11 @@ const BUCKET_DISPLAY: Record<ComputedBucket, { label: string; color: string }> =
 };
 
 /** 来源提示：把 action_type 翻译成可读来源名，未匹配则不展示。 */
-function sourceLabel(actionType?: string | null): string | null {
+export function sourceLabel(actionType?: string | null): string | null {
   if (!actionType) return null;
   const map: Record<string, string> = {
     blackboard: '黑板',
+    blackboard_propose: '黑板推荐',
     title_optimize: '标题优化',
     prompt_optimize: 'Prompt 优化',
   };
