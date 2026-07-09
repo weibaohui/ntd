@@ -309,6 +309,18 @@ export function LoopFlowGraph({
                 >
                   {node.step.todo_executor || '未指派'}
                 </text>
+                {/* 该环节引用的 todo 已归档：归档不解除 Loop 引用，
+                    但要提醒用户环节指向了已从日常视图隐藏的事项（设计文档风险三）。 */}
+                {node.step.todo_archived_at && (
+                  <text
+                    x={node.x + 12} y={node.y + NODE_HEIGHT - 6}
+                    fontSize={9}
+                    fill="#ef4444"
+                    style={{ fontFamily: 'system-ui' }}
+                  >
+                    已归档
+                  </text>
+                )}
                 {node.step.min_rating != null && (
                   <text
                     x={node.x + NODE_WIDTH - 8} y={node.y + NODE_HEIGHT - 6}

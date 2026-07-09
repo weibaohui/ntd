@@ -23,20 +23,28 @@ interface TodoListProps {
   onSelectTodo?: (todoId: string | number) => void;
   onSelectLoop?: (loopId: number) => void;
   onCreateLoop?: () => void;
+  /** 刷新信号，每次变化触发一次重新加载（由 ItemsPage 维护）。 */
+  refreshKey?: number;
+  /** 兼容旧调用方（LoopPage 等），保留但不再用于驱动刷新逻辑。 */
   loopUpdateCount?: number;
   forcedListMode?: 'item' | 'loop';
   onListModeChange?: (mode: 'item' | 'loop') => void;
   hideCreateButton?: boolean;
+  /** 外部传入的搜索词（来自 ItemsPage 顶层搜索框），优先级高于内部 searchKeyword。 */
+  searchKeyword?: string;
 }
 
 export function TodoList(props: TodoListProps) {
-  const { onOpenCreateModal, onSelectTodo, onSelectLoop, onCreateLoop, loopUpdateCount, forcedListMode, onListModeChange, hideCreateButton } = props;
+  const { onOpenCreateModal, onSelectTodo, onSelectLoop, onCreateLoop, refreshKey, forcedListMode, onListModeChange, hideCreateButton, searchKeyword: externalSearchKeyword } = props;
   const { state, dispatch } = useApp();
   const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
   const { message } = AntApp.useApp();
   const [isLoading, setIsLoading] = useState(true);
-  // 搜索关键字状态，用于按标题或提示词过滤 todo 列表
-  const [searchKeyword, setSearchKeyword] = useState('');
+  // 搜索关键字状态，用于按标题或提示词过滤 todo 列表。
+  // 优先使用外部传入的搜索词（ItemsPage 顶层统一搜索框），否则用内部 state。
+  const [internalSearch, setInternalSearch] = useState('');
+  const searchKeyword = externalSearchKeyword ?? internalSearch;
+  const setSearchKeyword = externalSearchKeyword === undefined ? setInternalSearch : () => {};
   // 列表模式：'item' = 事项, 'loop' = 环路
   const [listMode, setListMode] = useState<'item' | 'loop'>(() => {
     const saved = localStorage.getItem('ntd_list_mode');
@@ -131,7 +139,7 @@ export function TodoList(props: TodoListProps) {
       .then(setLoopList)
       .catch(() => setLoopList([]))
       .finally(() => setLoopLoading(false));
-  }, [listMode, loopUpdateCount, selectedWorkspace, projectDirectories, directoriesReady]);
+  }, [listMode, selectedWorkspace, projectDirectories, directoriesReady]);
 
   // 切换工作空间后按需拉取该工作空间的 todo 列表。
   useEffect(() => {
@@ -144,6 +152,17 @@ export function TodoList(props: TodoListProps) {
       dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: selectedWorkspace, payload: todos });
     });
   }, [selectedWorkspace, directoriesReady, listMode, state.todosByWorkspace, dispatch]);
+
+  // 用户点击刷新按钮时，refreshKey 自增，触发强制重拉（直接调接口，不走缓存）
+  useEffect(() => {
+    if (refreshKey === undefined || refreshKey === 0) return;
+    if (!directoriesReady) return;
+    if (selectedWorkspace == null) return;
+    if (listMode !== 'item') return;
+    db.getAllTodos(selectedWorkspace).then(todos => {
+      dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: selectedWorkspace, payload: todos });
+    });
+  }, [refreshKey, selectedWorkspace, directoriesReady, listMode, dispatch]);
 
   // 持久化列表模式到 localStorage
   useEffect(() => {
@@ -445,20 +464,22 @@ export function TodoList(props: TodoListProps) {
 
   return (
     <div className="todo-list-container">
-      {/* 搜索框 */}
-      <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
-        <Input
-          placeholder={
-            listMode === 'item' ? '搜索标题或提示词...'
-            : '搜索环路名称...'
-          }
-          prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
-          value={searchKeyword}
-          onChange={(e) => setSearchKeyword(e.target.value)}
-          allowClear
-          size="small"
-        />
-      </div>
+      {/* 搜索框：外部传入 searchKeyword 时由 ItemsPage 统一提供，本组件内不再重复渲染 */}
+      {externalSearchKeyword === undefined && (
+        <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
+          <Input
+            placeholder={
+              listMode === 'item' ? '搜索标题或提示词...'
+              : '搜索环路名称...'
+            }
+            prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+            value={searchKeyword}
+            onChange={(e) => setSearchKeyword(e.target.value)}
+            allowClear
+            size="small"
+          />
+        </div>
+      )}
 
       {/* 通用操作工具栏 */}
       <ActionToolbar

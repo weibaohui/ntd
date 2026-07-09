@@ -4423,3 +4423,142 @@ code {
 [data-theme="dark"] .ntd-page-card-divider {
   background: var(--color-border);
 }
+
+/* ─── 事项中心（Todo Center）页面与卡片 ──────────────────── */
+
+.todo-center-page-content {
+  /* 顶部 Tab + 卡片网格纵向排列，留出滚动空间 */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  height: 100%;
+  overflow-y: auto;
+}
+
+.todo-center-tabs-toolbar {
+  /* Tab 分段器 + 筛选下拉同行排列，按屏幕宽度自动换行 */
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  align-items: center;
+  flex-shrink: 0;
+  margin-bottom: var(--space-md);
+}
+
+.todo-center-tab-count {
+  margin-left: 4px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 桌面端自适应多列：每张卡片最小 320px，移动端单列 */
+.todo-center-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-md);
+  align-content: start;
+}
+
+.todo-center-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+}
+
+.todo-center-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+  border-color: var(--color-primary);
+}
+
+.todo-center-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.todo-center-card-title {
+  /* 标题：#id 用次要色弱化，主标题截断不换行 */
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todo-center-card-id {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 400;
+  flex-shrink: 0;
+}
+
+.todo-center-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.todo-center-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.todo-center-card-meta-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.todo-center-card-meta-icon {
+  color: var(--color-text-tertiary);
+}
+
+.todo-center-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.todo-center-card-time {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+/* 移动端：卡片网格退化为单列 */
+@media (max-width: 640px) {
+  .todo-center-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 暗色模式：卡片背景与悬停边框适配 */
+[data-theme="dark"] .todo-center-card {
+  background: var(--color-bg-elevated);
+}
+
+/* 事项中心筛选栏：状态/动作类型下拉 + 命令触发勾选 */
+.todo-center-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
