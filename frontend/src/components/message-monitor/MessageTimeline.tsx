@@ -76,18 +76,18 @@ export function MessageTimeline({
           allowClear
           style={{ width: 150 }}
           value={selectedChatId}
-          onChange={v => { onChatChange(v); onPageChange(1, pageSize); }}
+          onChange={v => { onChatChange(v ?? undefined); onPageChange(1, pageSize); }}
           options={chats.map(c => ({ value: c.chat_id, label: c.chat_name || c.chat_id }))}
         />
 
         <Select
           size="small"
           placeholder="消息类型"
-          allowClear
           style={{ width: 120 }}
-          value={isHistory}
-          onChange={v => { onHistoryChange(v); onPageChange(1, pageSize); }}
+          value={isHistory === undefined ? 'all' : isHistory}
+          onChange={(v: string | boolean) => { onHistoryChange(v === 'all' ? undefined : (v as boolean)); onPageChange(1, pageSize); }}
           options={[
+            { value: 'all', label: '全部' },
             { value: true, label: '历史消息' },
             { value: false, label: '实时消息' },
           ]}
