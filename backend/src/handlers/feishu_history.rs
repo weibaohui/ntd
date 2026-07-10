@@ -223,7 +223,7 @@ pub async fn get_message_stats(
     State(state): State<AppState>,
     Query(params): Query<MessageStatsParams>,
 ) -> Result<Json<ApiResponse<FeishuMessageStats>>, AppError> {
-    let stats = state.db.get_feishu_message_stats(params.hours).await?;
+    let stats = state.db.get_feishu_message_stats(params.hours, params.workspace_id).await?;
     Ok(Json(ApiResponse::ok(stats)))
 }
 
@@ -231,4 +231,6 @@ pub async fn get_message_stats(
 pub struct MessageStatsParams {
     #[serde(default)]
     pub hours: Option<u32>,
+    /// 按工作空间筛选统计，不传则返回全部
+    pub workspace_id: Option<i64>,
 }

@@ -324,10 +324,17 @@ impl Database {
         Ok(())
     }
 
-    pub async fn get_feishu_message_stats(&self, hours: Option<u32>) -> Result<crate::models::FeishuMessageStats, sea_orm::DbErr> {
+    pub async fn get_feishu_message_stats(&self, hours: Option<u32>, workspace_id: Option<i64>) -> Result<crate::models::FeishuMessageStats, sea_orm::DbErr> {
         let backend = self.conn.get_database_backend();
         let hours = hours.unwrap_or(720); // default 30 days = 720 hours (matches frontend)
         let time_filter = format!("datetime('now', '-{} hours')", hours);
+
+        // 构建基础 SQL 和可选的 workspace_id 过滤条件
+        let workspace_filter = if let Some(wid) = workspace_id {
+            format!(" AND workspace_id = {}", wid)
+        } else {
+            String::new()
+        };
 
         let stats_sql = format!(
             "SELECT \
@@ -338,7 +345,7 @@ impl Database {
             COUNT(DISTINCT sender_open_id) as unique_senders, \
             COUNT(DISTINCT chat_id) as unique_chats \
             FROM feishu_messages \
-            WHERE datetime(created_at) >= {}", time_filter);
+            WHERE datetime(created_at) >= {}{}", time_filter, workspace_filter);
 
         let mut stats = if let Some(row) = self.conn.query_one(Statement::from_string(backend, stats_sql.to_string())).await? {
             crate::models::FeishuMessageStats {
@@ -362,9 +369,10 @@ impl Database {
             });
         };
 
-        // Last 24h count - try matching ISO datetime or timestamp format
-        let recent_sql = "SELECT COUNT(*) as cnt FROM feishu_messages WHERE \
-            created_at IS NOT NULL AND datetime(created_at) >= datetime('now', '-1 day')";
+        // Last 24h count - 同样需要按 workspace 过滤
+        let recent_sql = format!(
+            "SELECT COUNT(*) as cnt FROM feishu_messages WHERE \
+            created_at IS NOT NULL AND datetime(created_at) >= datetime('now', '-1 day'){}", workspace_filter);
         if let Some(row) = self.conn.query_one(Statement::from_string(backend, recent_sql.to_string())).await? {
             stats.last_24h_messages = row.try_get_by("cnt").unwrap_or(0);
         }

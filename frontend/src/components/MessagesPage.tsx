@@ -45,39 +45,53 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
 
   const [execDetailRecord, setExecDetailRecord] = useState<ExecutionRecord | null>(null);
 
+  // 加载工作空间信息和 Bot 列表
   useEffect(() => {
     if (workspaceId == null) {
       setWorkspace(null);
-      return;
-    }
-    setLoading(true);
-    db.getProjectDirectories()
-      .then((dirs) => {
-        const matched = dirs.find((d) => d.id === workspaceId) ?? null;
-        setWorkspace(matched);
-      })
-      .catch(() => setWorkspace(null))
-      .finally(() => setLoading(false));
-  }, [workspaceId]);
-
-  useEffect(() => {
-    if (!workspaceId) {
       setBots([]);
       return;
     }
-    db.getAgentBots()
-      .then((allBots) => {
+    setLoading(true);
+    Promise.all([
+      db.getProjectDirectories(),
+      db.getAgentBots(),
+    ])
+      .then(([dirs, allBots]) => {
+        const matched = dirs.find((d) => d.id === workspaceId) ?? null;
+        setWorkspace(matched);
+        // 筛选当前工作空间的 Bot
         setBots(allBots.filter(b => b.workspace_id === workspaceId));
       })
-      .catch(() => setBots([]));
+      .catch(() => {
+        setWorkspace(null);
+        setBots([]);
+      })
+      .finally(() => setLoading(false));
   }, [workspaceId]);
+
+  // 加载 chats：按 workspace 下的 bot_id 过滤
+  useEffect(() => {
+    if (!workspaceId || bots.length === 0) {
+      setChats([]);
+      return;
+    }
+    // 获取当前 workspace 下所有 bot 的 chats
+    Promise.all(bots.map(bot => db.getFeishuHistoryChats(bot.id)))
+      .then(results => {
+        // 合并所有 bot 的 chats
+        const allChats = results.flat();
+        setChats(allChats);
+      })
+      .catch(() => setChats([]));
+  }, [workspaceId, bots]);
 
   const loadMessages = useCallback(async () => {
     if (!workspaceId) return;
 
     setMessagesLoading(true);
     try {
-      // 直接通过后端 workspace_id 参数按工作空间筛选，无需前端二次过滤
+      // 直接通过后端 workspace_id 参数按工作空间筛选
       const data = await db.getFeishuHistoryMessages({
         chat_id: selectedChatId,
         is_history: isHistory,
@@ -122,16 +136,15 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
       setStats(null);
       return;
     }
-    db.getFeishuMessageStats().then(setStats).catch(() => setStats(null));
-  }, [workspaceId]);
-
-  useEffect(() => {
-    db.getFeishuHistoryChats().then(setChats).catch(() => setChats([]));
+    // 统计也需要按 workspace 隔离
+    db.getFeishuMessageStats(workspaceId).then(setStats).catch(() => setStats(null));
   }, [workspaceId]);
 
   const handleRefresh = () => {
     loadMessages();
-    db.getFeishuMessageStats().then(setStats).catch(() => {});
+    if (workspaceId) {
+      db.getFeishuMessageStats(workspaceId).then(setStats).catch(() => {});
+    }
   };
 
   const handleViewExecutionRecord = async (recordId: number) => {

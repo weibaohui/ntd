@@ -85,12 +85,23 @@ export function MessageCard({ message, botName, onViewDetail, onViewExecution, o
               type="text"
               size="small"
               icon={<EyeOutlined />}
-              onClick={() => onViewExecution(message.execution_record_id!)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onViewExecution(message.execution_record_id!);
+              }}
             >
               执行记录
             </Button>
           )}
-          <Button type="text" size="small" icon={<CopyOutlined />} onClick={onCopy}>
+          <Button
+            type="text"
+            size="small"
+            icon={<CopyOutlined />}
+            onClick={(e) => {
+              e.stopPropagation();
+              onCopy();
+            }}
+          >
             复制
           </Button>
         </Space>

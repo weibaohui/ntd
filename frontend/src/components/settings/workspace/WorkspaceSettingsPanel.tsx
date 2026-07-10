@@ -4,6 +4,7 @@ import * as db from '@/utils/database';
 import { listLoops } from '@/utils/database/loops';
 import type { Todo } from '@/types';
 import type { LoopListItem } from '@/types/loop';
+import { ExecutorPickerPopover } from '@/components/common/ExecutorPickerPopover';
 
 const { Paragraph } = Typography;
 
@@ -169,25 +170,11 @@ export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSett
           {responseType === 'executor' && (
             <Form.Item
               name="default_response_executor"
-              label="执行器类型"
+              label="执行器"
               initialValue="claudecode"
               tooltip="选择执行器来处理消息"
             >
-              <Select
-                showSearch
-                allowClear
-                placeholder="选择执行器"
-                style={{ width: 200 }}
-                options={[
-                  { value: 'claudecode', label: 'Claude Code' },
-                  { value: 'pi', label: 'PI' },
-                  { value: 'kimi', label: 'Kimi' },
-                  { value: 'opencode', label: 'Opencode' },
-                  { value: 'hermes', label: 'Hermes' },
-                  { value: 'codewhale', label: 'CodeWhale' },
-                  { value: 'zhanlu', label: 'Zhanlu' },
-                ]}
-              />
+              <ExecutorPickerPopover />
             </Form.Item>
           )}
 
