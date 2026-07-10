@@ -593,7 +593,7 @@ impl MessageDebounce {
         // 环路状态不是 enabled（暂停或禁用），返回 loop_paused 错误
         if loop_.status != "enabled" {
             tracing::warn!("[debounce] loop {} is not enabled (status={})", loop_id, loop_.status);
-            return Err(Some("loop_paused".to_string()));
+            return Err(Some("环路未开启".to_string()));
         }
 
         // 构建 trigger_meta
