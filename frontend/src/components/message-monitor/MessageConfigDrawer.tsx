@@ -17,6 +17,7 @@ export function MessageConfigDrawer({ open, workspaceId, onClose, onChanged }: M
       onClose={onClose}
       width={480}
       placement="right"
+      destroyOnClose
     >
       <div style={{ padding: '8px 0' }}>
         <div style={{ marginBottom: 16 }}>

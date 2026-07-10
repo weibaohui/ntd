@@ -73,11 +73,13 @@ export function MessageTimeline({
         <Select
           size="small"
           placeholder="筛选群聊"
-          allowClear
           style={{ width: 150 }}
-          value={selectedChatId}
-          onChange={v => { onChatChange(v ?? undefined); onPageChange(1, pageSize); }}
-          options={chats.map(c => ({ value: c.chat_id, label: c.chat_name || c.chat_id }))}
+          value={selectedChatId ?? 'all'}
+          onChange={(v: string) => { onChatChange(v === 'all' ? undefined : v); onPageChange(1, pageSize); }}
+          options={[
+            { value: 'all', label: '全部群聊' },
+            ...chats.map(c => ({ value: c.chat_id, label: c.chat_name || c.chat_id })),
+          ]}
         />
 
         <Select
