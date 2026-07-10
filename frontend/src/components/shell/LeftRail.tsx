@@ -88,7 +88,7 @@ export function LeftRail({
     {
       title: '配置',
       items: [
-        { key: 'settings_bots', label: '智能体', icon: <RobotOutlined />, ariaLabel: '智能体' },
+        { key: 'settings_bots', label: '智能助手', icon: <RobotOutlined />, ariaLabel: '智能助手' },
         { key: 'settings_executors', label: '执行器', icon: <CodeOutlined />, ariaLabel: '执行器' },
         { key: 'settings_skills', label: 'Skills', icon: <ThunderboltOutlined />, ariaLabel: 'Skills' },
         { key: 'settings_projectDirectories', label: '工作空间', icon: <FolderOutlined />, ariaLabel: '工作空间' },

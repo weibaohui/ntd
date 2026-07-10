@@ -145,18 +145,18 @@ export function BotManagementPage({}: BotManagementPageProps) {
   }, [feishuEventSource]);
 
   return (
-    <PageCard icon={<RobotOutlined />} title="智能体管理中心">
+    <PageCard icon={<RobotOutlined />} title="智能助手中心">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
         <div>
-          <Title level={4} style={{ margin: 0 }}>智能体管理</Title>
+          <Title level={4} style={{ margin: 0 }}>智能助手管理</Title>
           <p style={{ margin: '4px 0 0', color: 'var(--color-text-secondary)', fontSize: 13 }}>
-            统一管理所有智能体，配置推送规则和白名单
+            统一管理所有智能助手，配置推送规则和白名单
           </p>
         </div>
         <Space>
           <Button type="text" size="small" icon={<EyeOutlined />} onClick={handleRefresh}>刷新</Button>
           <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleStartBind}>
-            绑定智能体
+            绑定智能助手
           </Button>
         </Space>
       </div>
@@ -166,7 +166,7 @@ export function BotManagementPage({}: BotManagementPageProps) {
           <Spin />
         </div>
       ) : bots.length === 0 ? (
-        <Empty description="暂无智能体，点击上方按钮绑定" />
+        <Empty description="暂无智能助手，点击上方按钮绑定" />
       ) : isMobile ? (
         <BotListCards
           bots={bots}
@@ -193,9 +193,9 @@ export function BotManagementPage({}: BotManagementPageProps) {
         onChanged={handleConfigChanged}
       />
 
-      {/* 绑定飞书智能体的二维码弹窗 */}
+      {/* 绑定飞书智能助手的二维码弹窗 */}
       <Modal
-        title="绑定飞书智能体"
+        title="绑定飞书智能助手"
         open={bindModalOpen}
         onCancel={() => {
           setBindModalOpen(false);
