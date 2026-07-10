@@ -175,6 +175,9 @@ jobs:
             echo "Updated $pkg to $VERSION"
           done
 
+      - name: Install sigstore for npm provenance
+        run: npm install -g sigstore
+
       - name: Publish platform packages to npm
         run: |
           for pkg in ntd-linux-x64 ntd-linux-arm64 ntd-darwin-arm64 ntd-windows-x64; do
