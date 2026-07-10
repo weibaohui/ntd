@@ -27,6 +27,8 @@ pub struct Model {
     pub processed_type: Option<String>,
     /// 处理结果 ID（executor 类型时为 execution_record_id，todo 类型时为 todo_id）
     pub processed_id: Option<i64>,
+    /// 处理失败原因（如：loop_paused 表示环路暂停）
+    pub error: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

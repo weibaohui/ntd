@@ -18,6 +18,7 @@ mod v56;
 mod v57;
 mod v58;
 mod v59;
+mod v60;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -62,6 +63,8 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v58::V58AddTodosArchivedAt),
         // V59 在 V58 之后：为 archived_at 建索引，加速日常视图的未归档过滤
         Box::new(v59::V59AddTodosArchivedAtIndex),
+        // V60 在 V59 之后：为 feishu_messages 增加 error 字段，记录处理失败原因
+        Box::new(v60::V60AddFeishuMessagesError),
     ]
 }
 

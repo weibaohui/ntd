@@ -70,12 +70,15 @@ export function MessageDetailDrawer({ open, message, onClose }: MessageDetailDra
           </Tag>
         </Descriptions.Item>
         <Descriptions.Item label="处理状态">
-          <Tag color={message.processed ? 'green' : 'orange'}>
-            {message.processed ? '已处理' : '未处理'}
+          <Tag color={message.processed ? 'green' : (message.error ? 'volcano' : 'orange')}>
+            {message.processed ? '已处理' : (message.error === 'loop_paused' ? '环路暂停' : '未处理')}
           </Tag>
         </Descriptions.Item>
         <Descriptions.Item label="处理类型">{processedTypeLabel(message.processed_type)}</Descriptions.Item>
         <Descriptions.Item label="处理ID">{message.processed_id || '-'}</Descriptions.Item>
+        {message.error && (
+          <Descriptions.Item label="错误信息">{message.error}</Descriptions.Item>
+        )}
         <Descriptions.Item label="执行记录ID">{message.execution_record_id || '-'}</Descriptions.Item>
         <Descriptions.Item label="工作空间ID">{message.workspace_id || '-'}</Descriptions.Item>
         <Descriptions.Item label="创建时间">{formatTime(message.created_at)}</Descriptions.Item>

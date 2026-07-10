@@ -161,7 +161,8 @@ impl MessageDebounce {
                     let sid_for_binding = resume_sid.clone();
 
                     // 根据 trigger_type 分发到不同的处理函数
-                    let result: Result<crate::executor_service::ExecutionResult, ()> = match last.trigger_type.as_str() {
+                    // 错误类型为 Option<String>：Some("loop_paused") 表示环路暂停，None 表示其他错误
+                    let result: Result<crate::executor_service::ExecutionResult, Option<String>> = match last.trigger_type.as_str() {
                         "default_response_loop" | "slash_command_loop" => {
                             // 环路默认响应 或 斜杠命令触发环路：直接触发环路执行
                             // 根据 chat_type 决定 receive_id_type：群聊用 chat_id，单聊用 open_id
@@ -334,11 +335,12 @@ impl MessageDebounce {
                                     .update_feishu_project_binding_status(binding_id, crate::models::binding_status::IDLE)
                                     .await;
                             }
-                            // Mark messages as failed (processed=false) so they can be retried
+                            // Mark messages as failed (processed=false) with error reason
+                            // e is Option<String>: Some("loop_paused") for paused loops, None for other errors
                             for msg in &entry.messages {
                                 if let Some(ref msg_id) = msg.message_id {
                                     if let Err(mark_err) = db
-                                        .mark_feishu_message_failed(msg_id)
+                                        .mark_feishu_message_failed(msg_id, e.as_deref())
                                         .await
                                     {
                                         tracing::warn!("[debounce] failed to mark message {} as failed: {:?}", msg_id, mark_err);
@@ -559,23 +561,24 @@ impl MessageDebounce {
         feishu_bot_id: Option<i64>,
         feishu_receive_id: Option<String>,
         feishu_receive_id_type: Option<String>,
-    ) -> Result<crate::executor_service::ExecutionResult, ()> {
+    ) -> Result<crate::executor_service::ExecutionResult, Option<String>> {
         // 检查环路是否存在且状态为 enabled
         let loop_ = match db.get_loop(loop_id).await {
             Ok(Some(l)) => l,
             Ok(None) => {
                 tracing::warn!("[debounce] loop {} not found", loop_id);
-                return Err(());
+                return Err(None);
             }
             Err(e) => {
                 tracing::error!("[debounce] failed to get loop {}: {}", loop_id, e);
-                return Err(());
+                return Err(None);
             }
         };
 
+        // 环路状态不是 enabled（暂停或禁用），返回 loop_paused 错误
         if loop_.status != "enabled" {
             tracing::warn!("[debounce] loop {} is not enabled (status={})", loop_id, loop_.status);
-            return Err(());
+            return Err(Some("loop_paused".to_string()));
         }
 
         // 构建 trigger_meta
@@ -587,7 +590,7 @@ impl MessageDebounce {
         // 通过 LoopRunner 触发环路执行
         let Some(runner) = loop_runner else {
             tracing::error!("[debounce] loop_runner not available");
-            return Err(());
+            return Err(None);
         };
 
         // spawn_run 消费 Arc<Self>，runner 后续不再使用，直接 move 而非 clone
@@ -603,7 +606,7 @@ impl MessageDebounce {
 
         if execution_id < 0 {
             tracing::error!("[debounce] loop_runner.spawn_run failed for loop {}", loop_id);
-            return Err(());
+            return Err(None);
         }
 
         tracing::info!(
@@ -633,7 +636,7 @@ impl MessageDebounce {
         workspace_id: Option<i64>,
         message: &str,
         _resume_session_id: Option<String>,
-    ) -> Result<crate::executor_service::ExecutionResult, ()> {
+    ) -> Result<crate::executor_service::ExecutionResult, Option<String>> {
         let executor_type = executor_type.unwrap_or("claudecode");
 
         // 统一的飞书回复出口：开始/结束/错误三类消息都走 ExecutorDirectResponse，
@@ -656,18 +659,18 @@ impl MessageDebounce {
                 Ok(None) => {
                     tracing::warn!("[debounce] workspace {} not found", wid);
                     send_msg(executor_error_message(executor_type, &format!("工作空间 {} 不存在", wid)));
-                    return Err(());
+                    return Err(None);
                 }
                 Err(e) => {
                     tracing::error!("[debounce] failed to get workspace {}: {}", wid, e);
                     send_msg(executor_error_message(executor_type, &format!("读取工作空间失败：{}", e)));
-                    return Err(());
+                    return Err(None);
                 }
             }
         } else {
             tracing::warn!("[debounce] no workspace_id for executor default response");
             send_msg(executor_error_message(executor_type, "未配置工作空间"));
-            return Err(());
+            return Err(None);
         };
 
         // 获取执行器
@@ -676,7 +679,7 @@ impl MessageDebounce {
             None => {
                 tracing::warn!("[debounce] unknown executor type: {}", executor_type);
                 send_msg(executor_error_message(executor_type, &format!("未知执行器类型：{}", executor_type)));
-                return Err(());
+                return Err(None);
             }
         };
         let executor = match executor_registry.get(exec_type).await {
@@ -684,7 +687,7 @@ impl MessageDebounce {
             None => {
                 tracing::warn!("[debounce] executor {} not found", executor_type);
                 send_msg(executor_error_message(executor_type, "执行器未注册"));
-                return Err(());
+                return Err(None);
             }
         };
 
@@ -714,7 +717,7 @@ impl MessageDebounce {
             Err(e) => {
                 tracing::error!("[debounce] failed to spawn executor {}: {}", executor_type, e);
                 send_msg(executor_error_message(executor_type, &format!("启动进程失败：{}", e)));
-                return Err(());
+                return Err(None);
             }
         };
 
@@ -760,12 +763,12 @@ impl MessageDebounce {
             Err(ExecutorRunError::Timeout { secs }) => {
                 tracing::error!("[debounce] executor {} timed out after {}s", executor_type, secs);
                 send_msg(executor_error_message(executor_type, &format!("执行超时（{}s）", secs)));
-                return Err(());
+                return Err(None);
             }
             Err(ExecutorRunError::WaitFailed(msg)) => {
                 tracing::error!("[debounce] failed to wait for executor {}: {}", executor_type, msg);
                 send_msg(executor_error_message(executor_type, &format!("等待进程失败：{}", msg)));
-                return Err(());
+                return Err(None);
             }
         };
 

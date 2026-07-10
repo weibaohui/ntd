@@ -213,6 +213,7 @@ export interface FeishuHistoryMessage {
   execution_record_id: number | null;
   created_at: string | null;
   workspace_id: number | null;
+  error: string | null;
 }
 
 export interface FeishuHistoryMessagesPage {

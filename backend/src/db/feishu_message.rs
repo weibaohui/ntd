@@ -28,6 +28,7 @@ pub struct FeishuMessageRecord {
     pub workspace_id: Option<i64>,
     pub processed_type: Option<String>,
     pub processed_id: Option<i64>,
+    pub error: Option<String>,
 }
 
 pub struct NewFeishuMessage<'a> {
@@ -148,6 +149,7 @@ impl Database {
                 workspace_id: m.workspace_id,
                 processed_type: m.processed_type,
                 processed_id: m.processed_id,
+                error: m.error,
             })
             .collect())
     }
@@ -219,6 +221,7 @@ impl Database {
                 workspace_id: m.workspace_id,
                 processed_type: m.processed_type,
                 processed_id: m.processed_id,
+                error: m.error,
             })
             .collect();
 
@@ -311,10 +314,11 @@ impl Database {
     }
 
     /// Mark a message as failed (processed=false) when execution fails.
-    /// The message stays in "unprocessed" state so it can be retried or investigated.
+    /// Optionally record error reason (e.g., "loop_paused" for paused loops).
     pub async fn mark_feishu_message_failed(
         &self,
         message_id: &str,
+        error: Option<&str>,
     ) -> Result<(), sea_orm::DbErr> {
         let result = feishu_messages::Entity::find()
             .filter(feishu_messages::Column::MessageId.eq(message_id))
@@ -324,8 +328,9 @@ impl Database {
         if let Some(model) = result {
             let mut am: feishu_messages::ActiveModel = model.into();
             am.processed = ActiveValue::Set(Some(false));
-            // 清除 processed_id，标记为"未处理"状态
             am.processed_id = ActiveValue::Set(None);
+            // 记录失败原因（如环路暂停）
+            am.error = ActiveValue::Set(error.map(|s| s.to_string()));
             am.update(&self.conn).await?;
         }
         Ok(())

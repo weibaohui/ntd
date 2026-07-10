@@ -45,6 +45,7 @@ pub struct HistoryMessageItem {
     pub workspace_id: Option<i64>,
     pub processed_type: Option<String>,
     pub processed_id: Option<i64>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,6 +103,7 @@ pub async fn get_history_messages(
             workspace_id: m.workspace_id,
             processed_type: m.processed_type,
             processed_id: m.processed_id,
+            error: m.error,
         })
         .collect();
 
