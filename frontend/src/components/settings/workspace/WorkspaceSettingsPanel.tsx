@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { Card, Form, Select, Button, Space, message, Radio, InputNumber, Typography } from 'antd';
 import * as db from '@/utils/database';
 import { listLoops } from '@/utils/database/loops';
+import { EXECUTORS_FOR_PICKER } from '@/utils/executors';
+import { ExecutorPicker } from '@/components/todo-drawer/ExecutorPicker';
 import type { Todo } from '@/types';
 import type { LoopListItem } from '@/types/loop';
 
@@ -101,6 +103,7 @@ export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSett
   };
 
   const responseType = Form.useWatch('default_response_type', form);
+  const executorValue = Form.useWatch('default_response_executor', form);
 
   return (
     <>
@@ -170,23 +173,12 @@ export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSett
             <Form.Item
               name="default_response_executor"
               label="执行器类型"
-              initialValue="claudecode"
               tooltip="选择执行器来处理消息"
             >
-              <Select
-                showSearch
-                allowClear
-                placeholder="选择执行器"
-                style={{ width: 200 }}
-                options={[
-                  { value: 'claudecode', label: 'Claude Code' },
-                  { value: 'pi', label: 'PI' },
-                  { value: 'kimi', label: 'Kimi' },
-                  { value: 'opencode', label: 'Opencode' },
-                  { value: 'hermes', label: 'Hermes' },
-                  { value: 'codewhale', label: 'CodeWhale' },
-                  { value: 'zhanlu', label: 'Zhanlu' },
-                ]}
+              <ExecutorPicker
+                executor={executorValue || 'claudecode'}
+                executorOptions={EXECUTORS_FOR_PICKER}
+                onChange={v => form.setFieldValue('default_response_executor', v)}
               />
             </Form.Item>
           )}

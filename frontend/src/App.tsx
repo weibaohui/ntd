@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { ConfigProvider, Layout, App as AntApp, Drawer } from 'antd';
+import { TODO_LIST_REFRESH_EVENT } from './constants';
 import { AppProvider, useApp } from './hooks/useApp';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useExecutionEvents } from './hooks/useExecutionEvents';
@@ -190,6 +191,7 @@ function AppContent() {
     if (wid == null) return;
     db.getAllTodos(wid).then(todos => {
       dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
+      window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
     });
   };
 
@@ -421,6 +423,8 @@ function AppContent() {
           if (wid == null) return;
           db.getAllTodos(wid).then(todos => {
             dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
+            // 通知 ItemsPage 刷新列表（TodoList 用 cache guard，需要主动触发）
+            window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
           });
         }}
         defaultWorkspaceId={state.selectedWorkspace}
@@ -447,6 +451,7 @@ function AppContent() {
           if (wid != null) {
             db.getAllTodos(wid).then(todos => {
               dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
+              window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
             });
           }
         }}

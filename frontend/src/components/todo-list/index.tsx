@@ -3,6 +3,7 @@
 // 外部 caller 只 import 主组件 TodoList，不再 re-export。
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { TODO_LIST_REFRESH_EVENT } from '@/constants';
 import { useApp } from '@/hooks/useApp';
 import { Empty, Input, Skeleton, Modal, App as AntApp } from 'antd';
 import { InboxOutlined, SearchOutlined, SwapOutlined, StopOutlined, CopyOutlined, DragOutlined, PauseCircleOutlined, PlayCircleOutlined } from '@ant-design/icons';
@@ -163,6 +164,18 @@ export function TodoList(props: TodoListProps) {
       dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: selectedWorkspace, payload: todos });
     });
   }, [refreshKey, selectedWorkspace, directoriesReady, listMode, dispatch]);
+
+  // TodoDrawer 新建/保存事项后，通过 custom event 通知列表刷新
+  useEffect(() => {
+    const handler = () => {
+      if (!directoriesReady || selectedWorkspace == null || listMode !== 'item') return;
+      db.getAllTodos(selectedWorkspace).then(todos => {
+        dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: selectedWorkspace, payload: todos });
+      });
+    };
+    window.addEventListener(TODO_LIST_REFRESH_EVENT, handler);
+    return () => window.removeEventListener(TODO_LIST_REFRESH_EVENT, handler);
+  }, [directoriesReady, selectedWorkspace, listMode, dispatch]);
 
   // 持久化列表模式到 localStorage
   useEffect(() => {
