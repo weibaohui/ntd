@@ -77,14 +77,18 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
 
     setMessagesLoading(true);
     try {
+      // 直接通过后端 workspace_id 参数按工作空间筛选，无需前端二次过滤
       const data = await db.getFeishuHistoryMessages({
         chat_id: selectedChatId,
         is_history: isHistory,
+        workspace_id: workspaceId,
         page: messagesPage,
         page_size: messagesPageSize,
       });
 
       let filtered = data.messages;
+
+      // 按 Bot 筛选：通过 chat_id 关联找到该 Bot 下的所有聊天，再过滤消息
       if (activeBotId) {
         const botChatIds = chats
           .filter(c => c.bot_id === activeBotId)
@@ -92,6 +96,7 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
         filtered = filtered.filter(m => botChatIds.includes(m.chat_id));
       }
 
+      // 搜索过滤：在前端做文本搜索（后端不支持全文搜索）
       if (searchText) {
         const lowerSearch = searchText.toLowerCase();
         filtered = filtered.filter(m => {

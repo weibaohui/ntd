@@ -279,6 +279,7 @@ export async function getFeishuHistoryMessages(params?: {
   chat_id?: string;
   sender_open_id?: string;
   is_history?: boolean;
+  workspace_id?: number;
   page?: number;
   page_size?: number;
 }): Promise<import('@/types').FeishuHistoryMessagesPage> {

@@ -157,6 +157,7 @@ impl Database {
         chat_id: Option<&str>,
         sender_open_id: Option<&str>,
         is_history: Option<bool>,
+        workspace_id: Option<i64>,
         page: u64,
         page_size: u64,
     ) -> Result<(Vec<FeishuMessageRecord>, i64), sea_orm::DbErr> {
@@ -173,6 +174,11 @@ impl Database {
 
         if let Some(cid) = chat_id {
             query = query.filter(feishu_messages::Column::ChatId.eq(cid.to_string()));
+        }
+
+        // 按工作空间筛选：只返回该工作空间下的消息
+        if let Some(wid) = workspace_id {
+            query = query.filter(feishu_messages::Column::WorkspaceId.eq(Some(wid)));
         }
 
         let total = query.clone().count(&self.conn).await? as i64;
