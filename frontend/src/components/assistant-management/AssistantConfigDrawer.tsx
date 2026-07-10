@@ -3,7 +3,7 @@ import { Drawer, Form, Input, Select, Switch, Button, Tag, Typography, Divider, 
 import { SaveOutlined, PlusOutlined, DeleteOutlined, MessageOutlined, LockOutlined, SettingOutlined } from '@ant-design/icons';
 import type { AgentBot, ProjectDirectory } from '@/utils/database';
 import * as db from '@/utils/database';
-import type { WhitelistEntry, FeishuPushLevel } from '@/utils/database/bots';
+import type { WhitelistEntry, FeishuPushLevel, FeishuPushStatus } from '@/utils/database/bots';
 
 const { Text, Title } = Typography;
 const { Option } = Select;
@@ -27,6 +27,8 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
     group_require_mention: true,
     echo_reply: true,
   });
+  // 推送状态：包含 /sethome 设置的 p2p_receive_id 和 group_chat_id
+  const [pushStatus, setPushStatus] = useState<FeishuPushStatus | null>(null);
 
   useEffect(() => {
     if (open && bot) {
@@ -42,6 +44,7 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
         db.getGroupWhitelist(bot!.id),
       ]);
       setWhitelist(wl);
+      setPushStatus(push);
       form.setFieldsValue({
         pushLevel: push?.push_level || 'disabled',
         p2pResponseEnabled: push?.p2p_response_enabled || false,
@@ -247,7 +250,28 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
       )}
 
       {activeTab === 'push' && (
-        <Form form={form} layout="vertical">
+        <div>
+          {/* /sethome 设置的推送目标 ID */}
+          {pushStatus && (pushStatus.p2p_receive_id || pushStatus.group_chat_id) && (
+            <div style={{ marginBottom: 16, padding: '8px 12px', background: 'var(--color-fill-secondary)', borderRadius: 6 }}>
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 6 }}>
+                推送目标（由 <code>/sethome</code> 设置）
+              </div>
+              {pushStatus.p2p_receive_id && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, width: 50, color: 'var(--color-text-tertiary)' }}>单聊:</span>
+                  <Text code style={{ fontSize: 11, flex: 1 }}>{pushStatus.p2p_receive_id}</Text>
+                </div>
+              )}
+              {pushStatus.group_chat_id && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ fontSize: 12, width: 50, color: 'var(--color-text-tertiary)' }}>群聊:</span>
+                  <Text code style={{ fontSize: 11, flex: 1 }}>{pushStatus.group_chat_id}</Text>
+                </div>
+              )}
+            </div>
+          )}
+          <Form form={form} layout="vertical">
           <Form.Item
             label="推送级别"
             name="pushLevel"
@@ -276,6 +300,7 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
             <Input type="number" min={0} max={3600} />
           </Form.Item>
         </Form>
+        </div>
       )}
 
       {activeTab === 'whitelist' && (
