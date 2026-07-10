@@ -193,6 +193,14 @@ export const EXPORT = {
 // When the user picks an executor in one place, the other two remember it too.
 // =============================================================================
 
+// =============================================================================
+// Cross-component event names — single source of truth for custom event names
+// used by window.dispatchEvent / addEventListener.
+// =============================================================================
+
+/** TodoDrawer 新建/保存事项后，通知 TodoList 和 TodoCenterCardView 刷新列表 */
+export const TODO_LIST_REFRESH_EVENT = 'todoListRefresh';
+
 // localStorage key 仅本文件内部用，跨组件记忆用户上次选择的执行器
 const LAST_EXECUTOR_STORAGE_KEY = 'ntd_last_executor';
 

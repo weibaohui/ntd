@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Button, Input, Segmented } from 'antd';
 import { AppstoreOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { TodoCenterCardView } from './TodoCenterCardView';
@@ -61,7 +61,10 @@ export function ItemsPage({
   isMobile,
 }: ItemsPageProps) {
   // 视图模式持久化：用户切到列表后下次仍记住，默认卡片
+  // savedViewModeRef 记录用户明确选择（写入 localStorage 的值），
+  // 用于返回时恢复；点击卡片预览详情时 viewMode 临时变列表，但 savedViewMode 不变。
   const [viewMode, setViewMode] = useState<'card' | 'list'>(readInitialView);
+  const savedViewModeRef = useRef<'card' | 'list'>(readInitialView());
   // 统一搜索词：卡片墙与列表双栏共用同一个搜索框，搜索逻辑由各自子组件在其数据上执行
   const [searchKeyword, setSearchKeyword] = useState('');
   // 刷新信号：每次点击刷新按钮自增，传递给子组件触发重新加载
@@ -69,6 +72,7 @@ export function ItemsPage({
 
   const persistView = (m: 'card' | 'list') => {
     setViewMode(m);
+    savedViewModeRef.current = m;
     try {
       localStorage.setItem(VIEW_STORAGE_KEY, m);
     } catch {
@@ -76,12 +80,21 @@ export function ItemsPage({
     }
   };
 
-  // 点卡片：选中事项（右栏详情数据源）+ 切到列表形态让详情显示。
-  // 列表形态点左列表其它事项仍照常联动右栏——卡片只是另一个「选事项」入口。
+  // 点卡片：选中事项 + 临时切换到列表模式让详情显示（不写 localStorage，返回时恢复卡片偏好）。
   const selectTodoAndSwitchToList = (id: number) => {
     onSelectTodo(id);
-    persistView('list');
+    setViewMode('list'); // 临时切换，不更新 savedViewModeRef
   };
+
+  // 返回列表页时（effectiveMobilePanel 回到 'list' 且没有选中事项），恢复用户上次的卡片/列表偏好
+  useEffect(() => {
+    if (effectiveMobilePanel === 'list' && !selectedTodoId) {
+      // 直接从 localStorage 读取，确保组件重挂载后也能正确恢复
+      const saved = readInitialView();
+      setViewMode(saved);
+      savedViewModeRef.current = saved;
+    }
+  }, [effectiveMobilePanel, selectedTodoId]);
 
   // 搜索框：桌面端统一放在 ItemsPage 顶层，移动端由子组件自行决定是否显示
   const searchInput = !isMobile ? (
@@ -104,7 +117,7 @@ export function ItemsPage({
     </Button>
   ) : null;
 
-  // 完整的 header 元素：搜索框 + 刷新 + Segmented 切换 + 新建（桌面端，移动端由子组件自行处理）
+  // 完整的 header 元素：搜索框 + 刷新 + Segmented 切换 + 新建（桌面端）
   const extra = !isMobile ? (
     <>
       {searchInput}
@@ -123,7 +136,19 @@ export function ItemsPage({
         新建
       </Button>
     </>
-  ) : null;
+  ) : (
+    // 移动端：仅 Segmented 切换器（精简 header，避免拥挤）
+    <Segmented
+      size="small"
+      value={viewMode}
+      onChange={(v) => persistView(v as 'card' | 'list')}
+      options={[
+        { value: 'card', icon: <AppstoreOutlined />, title: '卡片' },
+        { value: 'list', icon: <UnorderedListOutlined />, title: '列表' },
+      ]}
+      data-testid="todo-center-view-toggle"
+    />
+  );
 
   if (viewMode === 'card') {
     return (

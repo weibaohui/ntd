@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import { Card, Form, Select, Button, Space, message, Radio, InputNumber, Typography } from 'antd';
 import * as db from '@/utils/database';
 import { listLoops } from '@/utils/database/loops';
+import { EXECUTORS_FOR_PICKER } from '@/utils/executors';
+import { ExecutorPicker } from '@/components/todo-drawer/ExecutorPicker';
 import type { Todo } from '@/types';
 import type { LoopListItem } from '@/types/loop';
-import { ExecutorPickerPopover } from '@/components/common/ExecutorPickerPopover';
 
 const { Paragraph } = Typography;
 
@@ -102,6 +103,7 @@ export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSett
   };
 
   const responseType = Form.useWatch('default_response_type', form);
+  const executorValue = Form.useWatch('default_response_executor', form);
 
   return (
     <>
@@ -170,11 +172,14 @@ export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSett
           {responseType === 'executor' && (
             <Form.Item
               name="default_response_executor"
-              label="执行器"
-              initialValue="claudecode"
+              label="执行器类型"
               tooltip="选择执行器来处理消息"
             >
-              <ExecutorPickerPopover />
+              <ExecutorPicker
+                executor={executorValue || 'claudecode'}
+                executorOptions={EXECUTORS_FOR_PICKER}
+                onChange={v => form.setFieldValue('default_response_executor', v)}
+              />
             </Form.Item>
           )}
 

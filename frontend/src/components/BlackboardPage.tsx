@@ -1127,50 +1127,65 @@ interface TopicToolbarProps {
  * 也让每个主题页自带操作入口。删除走二次确认防误删；删除后由父组件重拉列表。
  */
 function TopicToolbar({ workspaceId, slug, onDeleted, isMobile, isDark }: TopicToolbarProps) {
-  // 确认删除：返回 Promise 让 Modal.confirm 的 OK 按钮自带 loading，无需额外 state
-  const confirmDelete = () => {
-    Modal.confirm({
-      title: '删除主题',
-      content: `确定删除主题「${slug}」？该 Wiki 文件将被永久删除，已创建的 Todo 不受影响。`,
-      okText: '删除',
-      okType: 'danger',
-      cancelText: '取消',
-      onOk: () => performDelete(workspaceId, slug, onDeleted),
-    });
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      await performDelete(workspaceId, slug, onDeleted);
+      setDeleteModalOpen(false);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
-    <div
-      style={{
-        // sticky：内容区滚动时工具条常驻顶部，操作始终可达
-        position: 'sticky',
-        top: 0,
-        zIndex: 5,
-        display: 'flex',
-        justifyContent: 'flex-end',
-        gap: 8,
-        // 与下方内容留间隔；背景与边框做成一条可视条，避免 sticky 时与正文粘连
-        marginBottom: 12,
-        padding: '6px 0',
-        background: isDark ? '#1a1a1a' : '#fafafa',
-        borderBottom: `1px solid ${isDark ? '#333' : '#f0f0f0'}`,
-      }}
-    >
-      <ProposalButton
-        workspaceId={workspaceId}
-        slug={slug}
-        buttonSize={isMobile ? 'small' : 'middle'}
-        showLabel={!isMobile}
-      />
-      <Button
-        danger
-        icon={<DeleteOutlined />}
-        onClick={confirmDelete}
-        size={isMobile ? 'small' : 'middle'}
+    <>
+      <div
+        style={{
+          // sticky：内容区滚动时工具条常驻顶部，操作始终可达
+          position: 'sticky',
+          top: 0,
+          zIndex: 5,
+          display: 'flex',
+          justifyContent: 'flex-end',
+          gap: 8,
+          // 与下方内容留间隔；背景与边框做成一条可视条，避免 sticky 时与正文粘连
+          marginBottom: 12,
+          padding: '6px 0',
+          background: isDark ? '#1a1a1a' : '#fafafa',
+          borderBottom: `1px solid ${isDark ? '#333' : '#f0f0f0'}`,
+        }}
       >
-        {isMobile ? '' : '删除主题'}
-      </Button>
-    </div>
+        <ProposalButton
+          workspaceId={workspaceId}
+          slug={slug}
+          buttonSize={isMobile ? 'small' : 'middle'}
+          showLabel={!isMobile}
+        />
+        <Button
+          danger
+          icon={<DeleteOutlined />}
+          onClick={() => setDeleteModalOpen(true)}
+          size={isMobile ? 'small' : 'middle'}
+        >
+          {isMobile ? '' : '删除主题'}
+        </Button>
+      </div>
+      <Modal
+        title="删除主题"
+        open={deleteModalOpen}
+        onOk={handleDelete}
+        onCancel={() => setDeleteModalOpen(false)}
+        okText="删除"
+        okType="danger"
+        cancelText="取消"
+        confirmLoading={deleting}
+      >
+        <p style={{ margin: 0 }}>确定删除主题「{slug}」？该 Wiki 文件将被永久删除，已创建的 Todo 不受影响。</p>
+      </Modal>
+    </>
   );
 }
 

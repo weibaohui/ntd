@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Empty, Segmented, Select, Spin, message } from 'antd';
 import { AppstoreOutlined } from '@ant-design/icons';
+import { TODO_LIST_REFRESH_EVENT } from '@/constants';
 import { useApp } from '@/hooks/useApp';
 import { PageCard } from '@/components/common/PageCard';
 import { TodoCenterCard, sourceLabel } from '@/components/TodoCenterCard';
@@ -62,8 +63,14 @@ export function TodoCenterCardView({
   const [items, setItems] = useState<TodoCenterItem[]>([]);
   // 加载态控制 Spin + 刷新按钮 loading
   const [loading, setLoading] = useState(false);
-  // 当前 Tab（五类驱动），默认手动触发
-  const [activeBucket, setActiveBucket] = useState<ComputedBucket>('manual');
+  // 当前 Tab（五类驱动），默认手动触发；持久化到 localStorage 记住用户上次选择
+  const [activeBucket, setActiveBucket] = useState<ComputedBucket>(() => {
+    try {
+      return (localStorage.getItem('ntd_items_tab') as ComputedBucket) || 'manual';
+    } catch {
+      return 'manual';
+    }
+  });
   // 状态筛选（设计文档工具栏「状态筛选」）：'all' 或具体 status
   const [statusFilter, setStatusFilter] = useState<string>('all');
   // 动作类型筛选（设计文档工具栏「动作类型筛选」）：'all' 或具体 action_type
@@ -86,6 +93,22 @@ export function TodoCenterCardView({
   useEffect(() => {
     reload();
   }, [reload, refreshKey]);
+
+  // activeBucket 变化时持久化到 localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('ntd_items_tab', activeBucket);
+    } catch {
+      /* localStorage 不可用时静默降级 */
+    }
+  }, [activeBucket]);
+
+  // TodoDrawer 新建/保存事项后，通知卡片墙也刷新
+  useEffect(() => {
+    const handler = () => reload();
+    window.addEventListener(TODO_LIST_REFRESH_EVENT, handler);
+    return () => window.removeEventListener(TODO_LIST_REFRESH_EVENT, handler);
+  }, [reload]);
 
   // 按 computed_bucket 分桶，用于 Tab 计数与卡片过滤
   const bucketCount = useMemo(() => {
