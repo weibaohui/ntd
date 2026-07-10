@@ -219,9 +219,18 @@ impl MessageDebounce {
                                 loop_step_execution_id: None,
                                 step_id: None,
                                 feishu_bot_id: Some(last.bot_id),
-                                // 所有走 debounce 的消息都来自飞书（binding / default response / slash command），
-                                // sender 是用户的 open_id，FeishuPushService 据此把结果直接发回给用户。
-                                feishu_receive_id: Some(last.sender.clone()),
+                                // 根据 chat_type 决定回复目标：群聊回复到群（chat_id），
+                                // 私聊回复到个人（open_id）。
+                                feishu_receive_id: if last.chat_type == "group" {
+                                    Some(last.chat_id.clone())
+                                } else {
+                                    Some(last.sender.clone())
+                                },
+                                feishu_receive_id_type: if last.chat_type == "group" {
+                                    Some("chat_id".to_string())
+                                } else {
+                                    Some("open_id".to_string())
+                                },
                                 workspace_path: None,
                                 workspace_id: last.workspace_id,
                             };

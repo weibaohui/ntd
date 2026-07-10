@@ -70,6 +70,8 @@ pub struct RunTodoExecutionRequest {
     pub feishu_bot_id: Option<i64>,
     /// Feishu receive_id (open_id for p2p, chat_id for group).
     pub feishu_receive_id: Option<String>,
+    /// Feishu receive_id_type: "open_id" for p2p, "chat_id" for group.
+    pub feishu_receive_id_type: Option<String>,
     /// 当本次执行是 loop 环节的一部分时，指向 loop_step_executions 表的 id。
     pub loop_step_execution_id: Option<i64>,
     /// 环节 id（steps 表），环节独立执行时设置

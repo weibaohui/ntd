@@ -226,6 +226,7 @@ pub(crate) async fn handle_cancellation_branch(
     record_id: i64,
     feishu_bot_id: Option<i64>,
     feishu_receive_id: Option<String>,
+    feishu_receive_id_type: Option<String>,
     workspace_id: Option<i64>,
 ) {
     let _ = db
@@ -264,6 +265,7 @@ pub(crate) async fn handle_cancellation_branch(
             result: Some("Task was cancelled by user".to_string()),
             feishu_bot_id,
             feishu_receive_id,
+            feishu_receive_id_type,
             workspace_id,
             duration_secs: 0,
             total_tokens: 0,
@@ -290,6 +292,7 @@ pub(crate) async fn handle_timeout_branch(
     timeout_str: String,
     feishu_bot_id: Option<i64>,
     feishu_receive_id: Option<String>,
+    feishu_receive_id_type: Option<String>,
     workspace_id: Option<i64>,
 ) {
     tracing::warn!(
@@ -328,6 +331,7 @@ pub(crate) async fn handle_timeout_branch(
             result: Some(format!("Execution timeout, exceeded {}", timeout_str)),
             feishu_bot_id,
             feishu_receive_id,
+            feishu_receive_id_type,
             workspace_id,
             duration_secs: 0,
             total_tokens: 0,
@@ -360,6 +364,7 @@ pub(crate) async fn finalize_normal_completion(
     trigger_type: String,
     feishu_bot_id: Option<i64>,
     feishu_receive_id: Option<String>,
+    feishu_receive_id_type: Option<String>,
     workspace_id: Option<i64>,
 ) {
     // ===== 自动评审 (auto-review) =====
@@ -409,6 +414,7 @@ pub(crate) async fn finalize_normal_completion(
         &result_str,
         feishu_bot_id,
         feishu_receive_id,
+        feishu_receive_id_type,
         workspace_id,
         duration_secs,
         total_tokens,
@@ -833,6 +839,7 @@ fn emit_completion_events(
     result_str: &str,
     feishu_bot_id: Option<i64>,
     feishu_receive_id: Option<String>,
+    feishu_receive_id_type: Option<String>,
     workspace_id: Option<i64>,
     duration_secs: i64,
     total_tokens: i64,
@@ -864,6 +871,7 @@ fn emit_completion_events(
             result: Some(result_str.to_string()),
             feishu_bot_id,
             feishu_receive_id,
+            feishu_receive_id_type,
             workspace_id,
             duration_secs,
             total_tokens,

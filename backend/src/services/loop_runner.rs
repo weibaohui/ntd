@@ -915,6 +915,7 @@ impl LoopRunner {
             step_id: None,
             feishu_bot_id: None,
             feishu_receive_id: None,
+            feishu_receive_id_type: None,
             workspace_path,
             workspace_id: None,
         };
@@ -1308,6 +1309,7 @@ impl LoopRunner {
                 step_id: None,
                 feishu_bot_id: None,
                 feishu_receive_id: None,
+            feishu_receive_id_type: None,
                 workspace_path: None,
                 workspace_id: None,
             };
@@ -1531,6 +1533,7 @@ impl LoopRunner {
             step_id: None,
             feishu_bot_id: None,
             feishu_receive_id: None,
+            feishu_receive_id_type: None,
             workspace_path: handler_todo.workspace_path.clone(),
             workspace_id: None,
         };

@@ -246,6 +246,7 @@ async fn run_wiki_execution(
         source_todo_title: None,
         feishu_bot_id: None,
         feishu_receive_id: None,
+            feishu_receive_id_type: None,
         loop_step_execution_id: None,
         step_id: None,
         workspace_path: None,
