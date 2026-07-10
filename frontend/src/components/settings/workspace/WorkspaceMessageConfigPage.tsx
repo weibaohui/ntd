@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button } from 'antd';
+import { Button, Alert } from 'antd';
 import { ArrowLeftOutlined, RobotOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import type { AgentBot, ProjectDirectory } from '@/utils/database';
@@ -78,6 +78,12 @@ export function WorkspaceMessageConfigPage({ workspace, onBack }: WorkspaceMessa
       title={`${workspace.name} - 消息配置`}
     >
       <div className="workspace-message-config-page">
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="全局智能体管理已迁移到左侧菜单「配置 → 智能体」，支持跨工作空间管理"
+        />
         <WorkspaceAgentPanel
           workspaceId={workspace.id}
           onSelectBot={(bot) => setActiveBot(bot)}

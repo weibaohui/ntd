@@ -20,7 +20,6 @@ interface WorkspaceAgentPanelProps {
 
 export function WorkspaceAgentPanel({ workspaceId, onBotChanged, activeBot, onSelectBot, onSelectBotForHistory, onBotBack, autoShowHistory }: WorkspaceAgentPanelProps) {
   const [bots, setBots] = useState<AgentBot[]>([]);
-  const [allBots, setAllBots] = useState<AgentBot[]>([]);
   const [workspaces, setWorkspaces] = useState<ProjectDirectory[]>([]);
   const [loading, setLoading] = useState(false);
   const [moveModalVisible, setMoveModalVisible] = useState(false);
@@ -40,16 +39,17 @@ export function WorkspaceAgentPanel({ workspaceId, onBotChanged, activeBot, onSe
   const [feishuEventSource, setFeishuEventSource] = useState<EventSource | null>(null);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 加载智能体列表，必须在条件返回之前定义，避免 TDZ 错误
+  // 加载当前工作空间的智能体列表，全局Bot管理已迁移到 BotManagementPage
   const loadBots = () => {
     setLoading(true);
+    // 只获取当前工作空间的 Bot 列表（通过前端过滤）
+    // 跨空间管理请使用左侧菜单「配置 → 智能体」入口
     Promise.all([
       db.getAgentBots(),
       db.getProjectDirectories(),
     ])
       .then(([botsData, dirsData]) => {
-        setAllBots(botsData);
-        // 筛选当前 workspace 的 bots
+        // 只保留属于当前工作空间的 Bot
         setBots(botsData.filter(b => b.workspace_id === workspaceId));
         setWorkspaces(dirsData);
       })
@@ -186,11 +186,6 @@ export function WorkspaceAgentPanel({ workspaceId, onBotChanged, activeBot, onSe
     }
   };
 
-  const getWorkspaceName = (wsId: number) => {
-    const ws = workspaces.find(w => w.id === wsId);
-    return ws ? ws.name : `工作空间 #${wsId}`;
-  };
-
   const columns: ColumnsType<AgentBot> = [
     {
       title: '名称',
@@ -263,9 +258,6 @@ export function WorkspaceAgentPanel({ workspaceId, onBotChanged, activeBot, onSe
     },
   ];
 
-  // 其他工作空间的 bots
-  const otherBots = allBots.filter(b => b.workspace_id !== workspaceId);
-
   return (
     <div>
       <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -287,50 +279,6 @@ export function WorkspaceAgentPanel({ workspaceId, onBotChanged, activeBot, onSe
         scroll={{ x: 'max-content' }}
         size="small"
       />
-
-      {otherBots.length > 0 && (
-        <>
-          <div style={{ marginTop: 24, marginBottom: 8, color: '#666' }}>
-            其他工作空间的智能体（可移动到当前工作空间）
-          </div>
-          <Table
-            columns={[
-              { title: '名称', dataIndex: 'bot_name', key: 'bot_name' },
-              { title: '当前工作空间', dataIndex: 'workspace_id', key: 'workspace_id', render: (id: number) => getWorkspaceName(id) },
-              {
-                title: '操作',
-                key: 'actions',
-                render: (_: any, bot: AgentBot) => (
-                  <Popconfirm
-                    title="确定将此智能体移动到当前工作空间？原有绑定将失效"
-                    onConfirm={async () => {
-                      try {
-                        await db.moveBotToWorkspace(bot.id, workspaceId);
-                        message.success('已移动到当前工作空间');
-                        loadBots();
-                        onBotChanged?.();
-                      } catch (err: any) {
-                        message.error('移动失败: ' + (err?.message || String(err)));
-                      }
-                    }}
-                    okText="确认"
-                    cancelText="取消"
-                  >
-                    <Button type="text" size="small" icon={<SwapOutlined />}>
-                      移动到当前
-                    </Button>
-                  </Popconfirm>
-                ),
-              },
-            ]}
-            dataSource={otherBots}
-            rowKey="id"
-            pagination={false}
-            size="small"
-            scroll={{ x: 'max-content' }}
-          />
-        </>
-      )}
 
       <Modal
         title="变更智能体工作空间"
