@@ -4,10 +4,15 @@ import { PlusOutlined, FolderOutlined, RobotOutlined, SettingOutlined, EditOutli
 import { PageCard } from '@/components/common/PageCard';
 import * as db from '@/utils/database';
 import type { ProjectDirectory, AgentBot } from '@/utils/database';
-import { WorkspaceMessageConfigPage } from './workspace/WorkspaceMessageConfigPage';
 import { WorkspaceLoopConfigPage } from './workspace/WorkspaceLoopConfigPage';
 
-export function ProjectDirectoriesPanel() {
+interface ProjectDirectoriesPanelProps {
+  /** 点击某个工作空间的「消息配置」入口时触发，参数为该工作空间 id；
+   *  由父层实现为「切视图到 messages + 切 workspace 到该 id」，实现菜单联动。 */
+  onOpenMessages?: (workspaceId: number) => void;
+}
+
+export function ProjectDirectoriesPanel({ onOpenMessages }: ProjectDirectoriesPanelProps = {}) {
   // 项目目录列表；按 path 升序，保持稳定可读
   const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
   const [projectDirsLoading, setProjectDirsLoading] = useState(false);
@@ -19,9 +24,9 @@ export function ProjectDirectoriesPanel() {
   const [editingDirName, setEditingDirName] = useState('');
   // 智能体列表，用于统计每个工作区的绑定数量
   const [agentBots, setAgentBots] = useState<AgentBot[]>([]);
-  // 选中的工作空间和页面类型
+  // 选中的工作空间和页面类型；消息配置已迁移为独立菜单，这里仅保留环路配置的嵌入入口
   const [selectedWorkspace, setSelectedWorkspace] = useState<ProjectDirectory | null>(null);
-  const [selectedPageType, setSelectedPageType] = useState<'message' | 'loop' | null>(null);
+  const [selectedPageType, setSelectedPageType] = useState<'loop' | null>(null);
 
   // 每次进入页面都重新拉取一次，确保用户在其他地方新增/删除后能立刻看到
   const loadProjectDirectories = () => {
@@ -149,15 +154,7 @@ export function ProjectDirectoriesPanel() {
     }
   };
 
-  // 选中工作空间，显示对应配置页
-  if (selectedWorkspace && selectedPageType === 'message') {
-    return (
-      <WorkspaceMessageConfigPage
-        workspace={selectedWorkspace}
-        onBack={() => { setSelectedWorkspace(null); setSelectedPageType(null); loadAgentBots(); }}
-      />
-    );
-  }
+  // 选中工作空间，显示对应配置页（消息配置已迁移为独立菜单，仅保留环路配置嵌入入口）
   if (selectedWorkspace && selectedPageType === 'loop') {
     return (
       <WorkspaceLoopConfigPage
@@ -265,7 +262,7 @@ export function ProjectDirectoriesPanel() {
                             }}>
                               {dir.name || <span style={{ color: 'var(--color-warning)' }}>未命名</span>}
                             </span>
-                            {/* 绑定消息智能体数量，可点击进入消息配置页 */}
+                            {/* 绑定消息智能体数量，可点击跳转到独立消息页并联动该工作空间 */}
                             <Typography.Link
                               type="secondary"
                               style={{
@@ -277,7 +274,9 @@ export function ProjectDirectoriesPanel() {
                                 background: 'var(--color-bg)',
                                 borderRadius: 4,
                               }}
-                              onClick={() => { setSelectedWorkspace(dir); setSelectedPageType('message'); }}
+                              // 联动跳转：交由父层切视图到 messages 并切 workspace 到该 id，
+                              // 与左上角 WorkspaceSwitcher 联动语义保持一致。
+                              onClick={() => onOpenMessages?.(dir.id)}
                             >
                               <RobotOutlined />
                               {getWorkspaceBotCount(dir.id)}
@@ -300,11 +299,11 @@ export function ProjectDirectoriesPanel() {
 
                     {/* 右侧：操作区域 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                      {/* 快捷配置按钮 */}
+                      {/* 消息配置入口：跳转到独立消息页并联动该工作空间，不再嵌入渲染 */}
                       <Button
                         size="small"
                         icon={<MessageOutlined />}
-                        onClick={() => { setSelectedWorkspace(dir); setSelectedPageType('message'); }}
+                        onClick={() => onOpenMessages?.(dir.id)}
                       >
                         消息配置
                       </Button>

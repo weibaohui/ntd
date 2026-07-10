@@ -41,7 +41,8 @@ export type View =
   | 'sessions'
   | 'executors'
   | 'blackboard'
-  | 'wiki';
+  | 'wiki'
+  | 'messages';
 
 export type Panel = 'list' | 'detail' | 'post';
 
@@ -51,7 +52,7 @@ const ALL_VIEWS: View[] = [
   'items', 'loops',
   'dashboard', 'settings', 'memorial',
   'runtime', 'skills', 'projectDirectories', 'sessions', 'executors',
-  'blackboard', 'wiki',
+  'blackboard', 'wiki', 'messages',
 ];
 
 const ALL_BOARD_MODES: BoardMode[] = ['memorial', 'kanban', 'running', 'loop_kanban'];
@@ -163,6 +164,7 @@ const VIEW_TO_NAV_KEY: Record<View, string> = {
   sessions: 'settings_sessions',
   executors: 'settings_executors',
   wiki: 'blackboard',
+  messages: 'messages',
 };
 
 export function viewToNavKey(view: View): string {

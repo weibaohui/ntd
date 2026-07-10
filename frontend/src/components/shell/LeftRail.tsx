@@ -15,6 +15,7 @@ import {
   DoubleLeftOutlined,
   SunOutlined,
   MoonOutlined,
+  MessageOutlined,
 } from '@ant-design/icons';
 import { TfiBlackboard } from 'react-icons/tfi';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
@@ -22,6 +23,7 @@ import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 export type LeftRailKey =
   | 'items'
   | 'loops'
+  | 'messages'
   | 'dashboard'
   | 'memorial'
   | 'blackboard'
@@ -75,6 +77,7 @@ export function LeftRail({
       items: [
         { key: 'items', label: '事项', icon: <UnorderedListOutlined />, ariaLabel: '事项' },
         { key: 'loops', label: '环路', icon: <RetweetOutlined />, ariaLabel: '环路' },
+        { key: 'messages', label: '消息', icon: <MessageOutlined />, ariaLabel: '消息' },
         { key: 'blackboard', label: '黑板', icon: <TfiBlackboard />, ariaLabel: '黑板' },
         { key: 'dashboard', label: '仪表盘', icon: <DashboardOutlined />, ariaLabel: '仪表盘' },
         { key: 'memorial', label: '看板', icon: <ReadOutlined />, ariaLabel: '看板' },
