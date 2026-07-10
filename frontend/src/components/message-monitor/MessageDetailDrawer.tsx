@@ -5,12 +5,12 @@ const { Text } = Typography;
 
 const processedTypeLabel = (type: string | null): string => {
   const map: Record<string, string> = {
-    'default_response': '默认响应-Todo',
+    'default_response': '默认响应-事项',
     'default_response_executor': '默认响应-执行器',
     'default_response_loop': '默认响应-环路',
-    'slash_command': '斜杠命令',
+    'slash_command': '斜杠命令-事项',
     'slash_command_loop': '斜杠命令-环路',
-    'feishu_project_bind': '项目绑定-Todo',
+    'feishu_project_bind': '项目绑定-事项',
   };
   return map[type || ''] || type || '未分类';
 };
