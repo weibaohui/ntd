@@ -13,8 +13,8 @@ interface WorkspaceMessageConfigPageProps {
 }
 
 /**
- * 工作空间消息配置页：整合智能体管理、斜杠命令、工作空间设置
- * 原 WorkspaceDetailPage 中的「智能体」tab 内容
+ * 工作空间智能助手配置页：整合智能助手管理、斜杠命令、工作空间设置
+ * 原 WorkspaceDetailPage 中的「智能助手」tab 内容
  */
 export function WorkspaceMessageConfigPage({ workspace, onBack }: WorkspaceMessageConfigPageProps) {
   // 选中的 bot（详情页或消息记录），提升到父层统一控制
@@ -49,7 +49,7 @@ export function WorkspaceMessageConfigPage({ workspace, onBack }: WorkspaceMessa
             <RobotOutlined />
           </div>
         }
-        title={`${workspace.name} - 消息配置`}
+        title={`${workspace.name} - 智能助手配置`}
       >
         <WorkspaceAgentPanel
           workspaceId={workspace.id}
@@ -75,14 +75,14 @@ export function WorkspaceMessageConfigPage({ workspace, onBack }: WorkspaceMessa
           <RobotOutlined />
         </div>
       }
-      title={`${workspace.name} - 消息配置`}
+      title={`${workspace.name} - 智能助手配置`}
     >
       <div className="workspace-message-config-page">
         <Alert
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="全局智能体管理已迁移到左侧菜单「配置 → 智能体」，支持跨工作空间管理"
+          message="全局智能助手管理已迁移到左侧菜单「配置 → 智能助手」，支持跨工作空间管理"
         />
         <WorkspaceAgentPanel
           workspaceId={workspace.id}

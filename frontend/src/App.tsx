@@ -374,7 +374,7 @@ function AppContent() {
               {activeView === 'skills' ? (
                 <SkillsPanel />
               ) : activeView === 'projectDirectories' ? (
-                // 工作空间管理页：「消息配置」入口已迁移为独立菜单，
+                // 工作空间管理页：「智能助手配置」入口已迁移为独立菜单，
                 // 这里注入回调：切视图到 messages 并联动 workspace id，实现从管理工作空间下钻到消息页。
                 <ProjectDirectoriesPanel
                   onOpenMessages={(workspaceId) => {

@@ -12,7 +12,7 @@ interface MessageConfigDrawerProps {
 export function MessageConfigDrawer({ open, workspaceId, onClose, onChanged }: MessageConfigDrawerProps) {
   return (
     <Drawer
-      title="消息配置"
+      title="智能助手配置"
       open={open}
       onClose={onClose}
       width={480}

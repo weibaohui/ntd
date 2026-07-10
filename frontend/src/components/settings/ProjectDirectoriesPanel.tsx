@@ -299,13 +299,13 @@ export function ProjectDirectoriesPanel({ onOpenMessages }: ProjectDirectoriesPa
 
                     {/* 右侧：操作区域 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                      {/* 消息配置入口：跳转到独立消息页并联动该工作空间，不再嵌入渲染 */}
+                      {/* 智能助手配置入口：跳转到独立消息页并联动该工作空间，不再嵌入渲染 */}
                       <Button
                         size="small"
                         icon={<MessageOutlined />}
                         onClick={() => onOpenMessages?.(dir.id)}
                       >
-                        消息配置
+                        智能助手配置
                       </Button>
                       <Button
                         size="small"
