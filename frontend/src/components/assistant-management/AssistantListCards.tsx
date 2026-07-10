@@ -1,4 +1,4 @@
-import { Card, Tag, Button, Space, Typography } from 'antd';
+import { Card, Tag, Button, Space, Typography, Popconfirm } from 'antd';
 import { RobotOutlined, SettingOutlined, PoweroffOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { AgentBot, ProjectDirectory } from '@/utils/database';
 
@@ -77,9 +77,11 @@ export function AssistantListCards({ bots, workspaces, onOpenConfig, onToggleEna
               >
                 {bot.enabled ? '停用' : '启用'}
               </Button>
-              <Button type="text" size="small" icon={<DeleteOutlined />} danger onClick={() => onDelete(bot)}>
-                删除
-              </Button>
+              <Popconfirm title="确定删除此智能体？" onConfirm={() => onDelete(bot)} okText="删除" cancelText="取消">
+                <Button type="text" size="small" icon={<DeleteOutlined />} danger>
+                  删除
+                </Button>
+              </Popconfirm>
             </Space>
           </div>
         </Card>

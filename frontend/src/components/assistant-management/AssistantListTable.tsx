@@ -1,4 +1,4 @@
-import { Table, Button, Tag, Space } from 'antd';
+import { Table, Button, Tag, Space, Popconfirm } from 'antd';
 import { SettingOutlined, PoweroffOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { AgentBot, ProjectDirectory } from '@/utils/database';
 
@@ -96,9 +96,11 @@ export function AssistantListTable({ bots, workspaces, onOpenConfig, onToggleEna
           >
             {record.enabled ? '停用' : '启用'}
           </Button>
-          <Button type="text" size="small" icon={<DeleteOutlined />} danger onClick={() => onDelete(record)}>
-            删除
-          </Button>
+          <Popconfirm title="确定删除此智能体？" onConfirm={() => onDelete(record)} okText="删除" cancelText="取消">
+            <Button type="text" size="small" icon={<DeleteOutlined />} danger>
+              删除
+            </Button>
+          </Popconfirm>
         </Space>
       ),
     },
