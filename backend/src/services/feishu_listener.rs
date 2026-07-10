@@ -155,6 +155,10 @@ impl FeishuListener {
         tokio::spawn(async move {
             tracing::info!("[feishu:{}] message receiver loop started", bot_id);
             while let Some(msg) = rx.recv().await {
+                tracing::debug!(
+                    "[feishu:{}] receiver got message: sender={}, channel={}, content_len={}",
+                    bot_id, msg.sender, msg.channel, msg.content.len()
+                );
                 let context = ListenerMessageContext {
                     db: &db,
                     token_manager: &token_manager,
@@ -305,6 +309,12 @@ impl FeishuListener {
     ) -> bool {
         // 闸 1：bot 接收策略（私聊启用 / 群聊启用 + 是否需要 @）
         if !Self::is_message_allowed(prep.chat_type, prep.is_mention, context.bot_config) {
+            tracing::info!(
+                "[feishu:{}] message not allowed: chat_type={}, is_mention={}, group_enabled={}, group_require_mention={}, dm_enabled={}",
+                context.bot_id, prep.chat_type, prep.is_mention,
+                context.bot_config.group_enabled, context.bot_config.group_require_mention,
+                context.bot_config.dm_enabled
+            );
             Self::cleanup_reaction(context, msg, prep.reaction_id.as_deref()).await;
             return true;
         }
@@ -738,6 +748,10 @@ impl FeishuListener {
         msg: &ChannelMessage,
         prep: &MessagePrep<'_>,
     ) {
+        tracing::debug!(
+            "[feishu:{}] dispatch_default_response: content={:?}, chat_type={}",
+            context.bot_id, prep.content, prep.chat_type
+        );
         // 从数据库获取 bot 的 workspace_id，然后查询 workspace 设置
         let workspace_id = match context.db.get_agent_bot_workspace_id(context.bot_id).await {
             Ok(Some(id)) => id,
@@ -757,7 +771,13 @@ impl FeishuListener {
             .ok()
             .flatten();
 
-        let Some(settings) = settings else { return };
+        let Some(settings) = settings else {
+            tracing::info!(
+                "[feishu:{}] no workspace settings found for workspace {}, skipping default response",
+                context.bot_id, workspace_id
+            );
+            return;
+        };
         // 空消息不触发任何响应
         if prep.content.is_empty() {
             return;

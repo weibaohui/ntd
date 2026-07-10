@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Drawer, Form, Input, Select, Switch, Button, Tag, Typography, Divider, Empty, Popconfirm } from 'antd';
-import { SaveOutlined, PlusOutlined, DeleteOutlined, MessageOutlined, LockOutlined } from '@ant-design/icons';
+import { SaveOutlined, PlusOutlined, DeleteOutlined, MessageOutlined, LockOutlined, SettingOutlined } from '@ant-design/icons';
 import type { AgentBot, ProjectDirectory } from '@/utils/database';
 import * as db from '@/utils/database';
 import type { WhitelistEntry, FeishuPushLevel } from '@/utils/database/bots';
@@ -19,7 +19,14 @@ interface AssistantConfigDrawerProps {
 export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChanged }: AssistantConfigDrawerProps) {
   const [form] = Form.useForm();
   const [whitelist, setWhitelist] = useState<WhitelistEntry[]>([]);
-  const [activeTab, setActiveTab] = useState<'push' | 'whitelist'>('push');
+  const [activeTab, setActiveTab] = useState<'push' | 'whitelist' | 'strategy'>('push');
+  // bot 级接收策略开关：存储在 agent_bots.config JSON 中
+  const [botConfig, setBotConfig] = useState<Record<string, boolean>>({
+    dm_enabled: true,
+    group_enabled: true,
+    group_require_mention: true,
+    echo_reply: true,
+  });
 
   useEffect(() => {
     if (open && bot) {
@@ -42,6 +49,14 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
         p2pDebounceSecs: push?.p2p_debounce_secs || 60,
         groupDebounceSecs: push?.group_debounce_secs || 60,
       });
+      // 解析 bot.config JSON，提取接收策略开关；默认全 true
+      const defaults = { dm_enabled: true, group_enabled: true, group_require_mention: true, echo_reply: true };
+      try {
+        const parsed = JSON.parse(bot.config || '{}');
+        setBotConfig({ ...defaults, ...parsed });
+      } catch {
+        setBotConfig(defaults);
+      }
     } catch {}
   };
 
@@ -83,6 +98,15 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
     if (!bot) return;
     try {
       await db.moveBotToWorkspace(bot.id, workspaceId);
+      onChanged();
+    } catch {}
+  };
+
+  // 保存 bot 级接收策略开关到 agent_bots.config JSON
+  const handleSaveBotConfig = async () => {
+    if (!bot) return;
+    try {
+      await db.updateAgentBotConfig(bot.id, JSON.stringify(botConfig));
       onChanged();
     } catch {}
   };
@@ -146,6 +170,13 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
         <Button
+          type={activeTab === 'strategy' ? 'primary' : 'text'}
+          icon={<SettingOutlined />}
+          onClick={() => setActiveTab('strategy')}
+        >
+          接收策略
+        </Button>
+        <Button
           type={activeTab === 'push' ? 'primary' : 'text'}
           icon={<MessageOutlined />}
           onClick={() => setActiveTab('push')}
@@ -160,6 +191,60 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
           群聊白名单
         </Button>
       </div>
+
+      {activeTab === 'strategy' && (
+        <div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <Text style={{ fontSize: 13, fontWeight: 500 }}>接收单聊消息</Text>
+                <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>开启后智能体会处理私聊消息</div>
+              </div>
+              <Switch
+                checked={botConfig.dm_enabled !== false}
+                onChange={v => setBotConfig(prev => ({ ...prev, dm_enabled: v }))}
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <Text style={{ fontSize: 13, fontWeight: 500 }}>接收群聊消息</Text>
+                <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>开启后智能体会处理群聊消息</div>
+              </div>
+              <Switch
+                checked={botConfig.group_enabled !== false}
+                onChange={v => setBotConfig(prev => ({ ...prev, group_enabled: v }))}
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <Text style={{ fontSize: 13, fontWeight: 500 }}>群聊仅处理 @</Text>
+                <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>开启后群聊中只有 @智能体 的消息才会被处理</div>
+              </div>
+              <Switch
+                checked={botConfig.group_require_mention !== false}
+                onChange={v => setBotConfig(prev => ({ ...prev, group_require_mention: v }))}
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <Text style={{ fontSize: 13, fontWeight: 500 }}>Echo 回复</Text>
+                <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>开启后智能体会回复确认消息</div>
+              </div>
+              <Switch
+                checked={botConfig.echo_reply !== false}
+                onChange={v => setBotConfig(prev => ({ ...prev, echo_reply: v }))}
+              />
+            </div>
+          </div>
+          <Button
+            type="primary"
+            style={{ marginTop: 16 }}
+            onClick={handleSaveBotConfig}
+          >
+            保存接收策略
+          </Button>
+        </div>
+      )}
 
       {activeTab === 'push' && (
         <Form form={form} layout="vertical">
