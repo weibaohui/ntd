@@ -1,55 +1,58 @@
-import { useState, useEffect } from 'react';
-import { Spin, Empty } from 'antd';
+import { useState, useEffect, useCallback } from 'react';
+import { Spin, Empty, Space } from 'antd';
 import { MessageOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
-import { WorkspaceMessageConfigPage } from '@/components/settings/workspace/WorkspaceMessageConfigPage';
+import { ExecutionRecordDrawer } from '@/components/settings/messages/ExecutionRecordDrawer';
 import * as db from '@/utils/database';
-import type { ProjectDirectory } from '@/utils/database';
+import type { ProjectDirectory, AgentBot } from '@/utils/database';
+import type { FeishuHistoryMessage, FeishuHistoryChat, FeishuMessageStats, ExecutionRecord } from '@/types';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import { MessageHeader } from '@/components/message-monitor/MessageHeader';
+import { MessageSidebar } from '@/components/message-monitor/MessageSidebar';
+import { MessageTimeline } from '@/components/message-monitor/MessageTimeline';
+import { MessageConfigDrawer } from '@/components/message-monitor/MessageConfigDrawer';
+import { MessageDetailDrawer } from '@/components/message-monitor/MessageDetailDrawer';
 
-/**
- * 消息页面 props。
- * workspaceId：来自左上角 WorkspaceSwitcher 的当前选中工作空间 ID，null 表示未选。
- * onManageWorkspace：未选中工作空间时，引导用户前往工作空间管理页选用其一。
- */
 interface MessagesPageProps {
   workspaceId: number | null;
   onManageWorkspace: () => void;
 }
 
-/**
- * 消息页面（独立菜单项）。
- *
- * 设计意图：把原本嵌入在工作空间管理页内的「消息配置页」提升为左侧菜单的独立页面，
- * 用户点开后直接按左上角所选 workspace id 联动渲染，无需先进入工作空间再下钻。
- *
- * 渲染策略：
- * - 未选中工作空间：给出空态提示，引导前往工作空间管理。
- * - 已选中：按 id 拉取 ProjectDirectory（页面标题需要 workspace.name），交给原
- *   WorkspaceMessageConfigPage 渲染，保持与原嵌入版完全一致的 UI 与交互。
- *   onBack 实现为回到工作空间管理页，与原嵌入入口的返回语义保持一致。
- */
 export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPageProps) {
-  // 当前选中的工作空间对象；仅 workspaceId 有效时加载，避免无谓请求。
+  const isMobile = useIsMobile();
+
   const [workspace, setWorkspace] = useState<ProjectDirectory | null>(null);
-  // 加载态：用于区分「正在拉取」与「拉取完但未选中」两种空态，给用户不同提示。
   const [loading, setLoading] = useState(false);
 
-  /**
-   * 段落总览：workspaceId 变化时重新拉取对应的 ProjectDirectory。
-   * 用 db.getProjectDirectories 取全量再按 id 过滤——后端没有单查接口，
-   * 且工作空间数量通常个位数，全量取再本地查找比逐个加接口更经济。
-   * 拉取失败时清空 workspace，让页面落到「未选中」空态分支，避免殁留旧数据。
-   */
+  const [bots, setBots] = useState<AgentBot[]>([]);
+  const [activeBotId, setActiveBotId] = useState<number | null>(null);
+
+  const [messages, setMessages] = useState<FeishuHistoryMessage[]>([]);
+  const [chats, setChats] = useState<FeishuHistoryChat[]>([]);
+  const [stats, setStats] = useState<FeishuMessageStats | null>(null);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [messagesTotal, setMessagesTotal] = useState(0);
+  const [messagesPage, setMessagesPage] = useState(1);
+  const [messagesPageSize, setMessagesPageSize] = useState(20);
+
+  const [selectedChatId, setSelectedChatId] = useState<string | undefined>(undefined);
+  const [isHistory, setIsHistory] = useState<boolean | undefined>(undefined);
+  const [searchText, setSearchText] = useState('');
+
+  const [configDrawerOpen, setConfigDrawerOpen] = useState(false);
+  const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
+  const [selectedMessage, setSelectedMessage] = useState<FeishuHistoryMessage | null>(null);
+
+  const [execDetailRecord, setExecDetailRecord] = useState<ExecutionRecord | null>(null);
+
   useEffect(() => {
     if (workspaceId == null) {
-      // 未选中工作空间：直接清空，不发请求。
       setWorkspace(null);
       return;
     }
     setLoading(true);
     db.getProjectDirectories()
       .then((dirs) => {
-        // 按 id 在全量列表里找当前选中的；找不到（刚被删除等）也落到空态。
         const matched = dirs.find((d) => d.id === workspaceId) ?? null;
         setWorkspace(matched);
       })
@@ -57,7 +60,88 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
       .finally(() => setLoading(false));
   }, [workspaceId]);
 
-  // 分支 1：正在加载工作空间信息，显示骨架屏避免空态闪烁。
+  useEffect(() => {
+    if (!workspaceId) {
+      setBots([]);
+      return;
+    }
+    db.getAgentBots()
+      .then((allBots) => {
+        setBots(allBots.filter(b => b.workspace_id === workspaceId));
+      })
+      .catch(() => setBots([]));
+  }, [workspaceId]);
+
+  const loadMessages = useCallback(async () => {
+    if (!workspaceId) return;
+
+    setMessagesLoading(true);
+    try {
+      const data = await db.getFeishuHistoryMessages({
+        chat_id: selectedChatId,
+        is_history: isHistory,
+        page: messagesPage,
+        page_size: messagesPageSize,
+      });
+
+      let filtered = data.messages;
+      if (activeBotId) {
+        const botChatIds = chats
+          .filter(c => c.bot_id === activeBotId)
+          .map(c => c.chat_id);
+        filtered = filtered.filter(m => botChatIds.includes(m.chat_id));
+      }
+
+      if (searchText) {
+        const lowerSearch = searchText.toLowerCase();
+        filtered = filtered.filter(m => {
+          const content = m.content ? JSON.parse(m.content).text || m.content : '';
+          return content.toLowerCase().includes(lowerSearch);
+        });
+      }
+
+      setMessages(filtered);
+      setMessagesTotal(data.total);
+    } catch {
+    } finally {
+      setMessagesLoading(false);
+    }
+  }, [workspaceId, selectedChatId, isHistory, messagesPage, messagesPageSize, activeBotId, chats, searchText]);
+
+  useEffect(() => {
+    loadMessages();
+  }, [loadMessages]);
+
+  useEffect(() => {
+    if (!workspaceId) {
+      setStats(null);
+      return;
+    }
+    db.getFeishuMessageStats().then(setStats).catch(() => setStats(null));
+  }, [workspaceId]);
+
+  useEffect(() => {
+    db.getFeishuHistoryChats().then(setChats).catch(() => setChats([]));
+  }, [workspaceId]);
+
+  const handleRefresh = () => {
+    loadMessages();
+    db.getFeishuMessageStats().then(setStats).catch(() => {});
+  };
+
+  const handleViewExecutionRecord = async (recordId: number) => {
+    try {
+      const r = await db.getExecutionRecord(recordId);
+      setExecDetailRecord(r);
+    } catch {
+    }
+  };
+
+  const handleViewDetail = (message: FeishuHistoryMessage) => {
+    setSelectedMessage(message);
+    setDetailDrawerOpen(true);
+  };
+
   if (loading) {
     return (
       <PageCard icon={<MessageOutlined />} title="消息">
@@ -68,7 +152,6 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
     );
   }
 
-  // 分支 2：未选中工作空间（或加载后仍无对应项），引导用户先选用工作空间。
   if (workspace == null) {
     return (
       <PageCard icon={<MessageOutlined />} title="消息">
@@ -76,7 +159,6 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
           description="请先在左上角选择一个工作空间，或前往工作空间管理新建"
           style={{ padding: 48 }}
         >
-          {/* 引导按钮：跳到工作空间管理页，与原嵌入入口的「返回到工作空间列表」语义对齐 */}
           <a onClick={onManageWorkspace} style={{ cursor: 'pointer' }}>
             前往工作空间管理
           </a>
@@ -85,12 +167,142 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
     );
   }
 
-  // 分支 3：已有选中工作空间，原样复用 WorkspaceMessageConfigPage 渲染。
-  // onBack 落到 onManageWorkspace：从消息页「返回」即回到工作空间管理，与原嵌入版一致。
+  if (isMobile) {
+    return (
+      <PageCard icon={<MessageOutlined />} title="消息监控台">
+        <MessageHeader
+          workspaceName={workspace.name || ''}
+          stats={stats}
+          loading={messagesLoading}
+          onRefresh={handleRefresh}
+          onOpenConfig={() => setConfigDrawerOpen(true)}
+        />
+
+        <div style={{ marginBottom: 12 }}>
+          <Space wrap>
+            <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>筛选 Bot：</span>
+            <button
+              onClick={() => setActiveBotId(null)}
+              style={{
+                padding: '4px 12px',
+                borderRadius: 4,
+                border: '1px solid var(--color-border-secondary)',
+                backgroundColor: activeBotId === null ? 'var(--color-primary)' : 'transparent',
+                color: activeBotId === null ? 'white' : 'var(--color-text-primary)',
+                fontSize: 12,
+                cursor: 'pointer',
+              }}
+            >
+              全部
+            </button>
+            {bots.map(bot => (
+              <button
+                key={bot.id}
+                onClick={() => setActiveBotId(bot.id)}
+                style={{
+                  padding: '4px 12px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border-secondary)',
+                  backgroundColor: activeBotId === bot.id ? 'var(--color-primary)' : 'transparent',
+                  color: activeBotId === bot.id ? 'white' : 'var(--color-text-primary)',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                {bot.bot_name}
+              </button>
+            ))}
+          </Space>
+        </div>
+
+        <MessageTimeline
+          messages={messages}
+          chats={chats}
+          bots={bots}
+          loading={messagesLoading}
+          total={messagesTotal}
+          page={messagesPage}
+          pageSize={messagesPageSize}
+          selectedChatId={selectedChatId}
+          isHistory={isHistory}
+          searchText={searchText}
+          onSearchChange={setSearchText}
+          onChatChange={setSelectedChatId}
+          onHistoryChange={setIsHistory}
+          onPageChange={(p, ps) => { setMessagesPage(p); setMessagesPageSize(ps); }}
+          onViewDetail={handleViewDetail}
+          onViewExecution={handleViewExecutionRecord}
+        />
+
+        <MessageConfigDrawer
+          open={configDrawerOpen}
+          workspaceId={workspace.id}
+          onClose={() => setConfigDrawerOpen(false)}
+          onChanged={handleRefresh}
+        />
+
+        <MessageDetailDrawer
+          open={detailDrawerOpen}
+          message={selectedMessage}
+          onClose={() => setDetailDrawerOpen(false)}
+        />
+
+        <ExecutionRecordDrawer record={execDetailRecord} onClose={() => setExecDetailRecord(null)} />
+      </PageCard>
+    );
+  }
+
   return (
-    <WorkspaceMessageConfigPage
-      workspace={workspace}
-      onBack={onManageWorkspace}
-    />
+    <PageCard icon={<MessageOutlined />} title="消息监控台">
+      <MessageHeader
+        workspaceName={workspace.name || ''}
+        stats={stats}
+        loading={messagesLoading}
+        onRefresh={handleRefresh}
+        onOpenConfig={() => setConfigDrawerOpen(true)}
+      />
+
+      <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 200px)' }}>
+        <MessageSidebar
+          bots={bots}
+          activeBotId={activeBotId}
+          onSelectBot={setActiveBotId}
+        />
+
+        <MessageTimeline
+          messages={messages}
+          chats={chats}
+          bots={bots}
+          loading={messagesLoading}
+          total={messagesTotal}
+          page={messagesPage}
+          pageSize={messagesPageSize}
+          selectedChatId={selectedChatId}
+          isHistory={isHistory}
+          searchText={searchText}
+          onSearchChange={setSearchText}
+          onChatChange={setSelectedChatId}
+          onHistoryChange={setIsHistory}
+          onPageChange={(p, ps) => { setMessagesPage(p); setMessagesPageSize(ps); }}
+          onViewDetail={handleViewDetail}
+          onViewExecution={handleViewExecutionRecord}
+        />
+      </div>
+
+      <MessageConfigDrawer
+        open={configDrawerOpen}
+        workspaceId={workspace.id}
+        onClose={() => setConfigDrawerOpen(false)}
+        onChanged={handleRefresh}
+      />
+
+      <MessageDetailDrawer
+        open={detailDrawerOpen}
+        message={selectedMessage}
+        onClose={() => setDetailDrawerOpen(false)}
+      />
+
+      <ExecutionRecordDrawer record={execDetailRecord} onClose={() => setExecDetailRecord(null)} />
+    </PageCard>
   );
 }
