@@ -458,6 +458,7 @@ mod feishu_push_service_tests {
             result,
             feishu_bot_id: None,
             feishu_receive_id: None,
+            feishu_receive_id_type: None,
             workspace_id: None,
             duration_secs: 125,
             total_tokens: 500,

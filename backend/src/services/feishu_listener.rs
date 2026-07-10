@@ -155,6 +155,10 @@ impl FeishuListener {
         tokio::spawn(async move {
             tracing::info!("[feishu:{}] message receiver loop started", bot_id);
             while let Some(msg) = rx.recv().await {
+                tracing::debug!(
+                    "[feishu:{}] receiver got message: sender={}, channel={}, content_len={}",
+                    bot_id, msg.sender, msg.channel, msg.content.len()
+                );
                 let context = ListenerMessageContext {
                     db: &db,
                     token_manager: &token_manager,
@@ -305,6 +309,12 @@ impl FeishuListener {
     ) -> bool {
         // 闸 1：bot 接收策略（私聊启用 / 群聊启用 + 是否需要 @）
         if !Self::is_message_allowed(prep.chat_type, prep.is_mention, context.bot_config) {
+            tracing::info!(
+                "[feishu:{}] message not allowed: chat_type={}, is_mention={}, group_enabled={}, group_require_mention={}, dm_enabled={}",
+                context.bot_id, prep.chat_type, prep.is_mention,
+                context.bot_config.group_enabled, context.bot_config.group_require_mention,
+                context.bot_config.dm_enabled
+            );
             Self::cleanup_reaction(context, msg, prep.reaction_id.as_deref()).await;
             return true;
         }
@@ -465,6 +475,7 @@ impl FeishuListener {
             resume_session_id,
             resume_message,
             None, // binding path uses feishu_bot_id directly in push service
+            prep.is_mention, // @提及跳过 debounce 立即执行
         );
         Self::cleanup_reaction(context, msg, prep.reaction_id.as_deref()).await;
         true
@@ -534,6 +545,7 @@ impl FeishuListener {
         resume_session_id: Option<String>,
         resume_message: Option<String>,
         workspace_id: Option<i64>,
+        immediate: bool,
     ) {
         let pending = Self::build_binding_execution_message(
             msg,
@@ -544,6 +556,7 @@ impl FeishuListener {
             resume_session_id,
             resume_message,
             workspace_id,
+            immediate,
         );
         debounce.push(pending);
     }
@@ -561,6 +574,7 @@ impl FeishuListener {
         resume_session_id: Option<String>,
         resume_message: Option<String>,
         workspace_id: Option<i64>,
+        immediate: bool,
     ) -> PendingMessage {
         let executor = todo.executor.as_deref().unwrap_or("claudecode");
         PendingMessage {
@@ -579,6 +593,7 @@ impl FeishuListener {
             resume_message,
             binding_id: Some(binding.id),
             workspace_id,
+            immediate,
         }
     }
 
@@ -699,6 +714,7 @@ impl FeishuListener {
             resume_message: None,
             binding_id: None,
             workspace_id,
+            immediate: false,
         });
     }
 
@@ -727,6 +743,7 @@ impl FeishuListener {
             resume_session_id: None,
             resume_message: None,
             binding_id: None,
+            immediate: false,
             workspace_id,
         });
     }
@@ -738,6 +755,10 @@ impl FeishuListener {
         msg: &ChannelMessage,
         prep: &MessagePrep<'_>,
     ) {
+        tracing::debug!(
+            "[feishu:{}] dispatch_default_response: content={:?}, chat_type={}",
+            context.bot_id, prep.content, prep.chat_type
+        );
         // 从数据库获取 bot 的 workspace_id，然后查询 workspace 设置
         let workspace_id = match context.db.get_agent_bot_workspace_id(context.bot_id).await {
             Ok(Some(id)) => id,
@@ -757,7 +778,13 @@ impl FeishuListener {
             .ok()
             .flatten();
 
-        let Some(settings) = settings else { return };
+        let Some(settings) = settings else {
+            tracing::info!(
+                "[feishu:{}] no workspace settings found for workspace {}, skipping default response",
+                context.bot_id, workspace_id
+            );
+            return;
+        };
         // 空消息不触发任何响应
         if prep.content.is_empty() {
             return;
@@ -777,6 +804,7 @@ impl FeishuListener {
                     &executor,
                     prep.content,
                     Some(workspace_id),
+                    prep.is_mention,
                 );
             }
             "loop" => {
@@ -790,6 +818,7 @@ impl FeishuListener {
                     loop_id,
                     prep.content,
                     Some(workspace_id),
+                    prep.is_mention,
                 );
             }
             _ => {
@@ -801,6 +830,7 @@ impl FeishuListener {
                 Self::debounce_push_default(
                     context.debounce, context.bot_id, msg, prep.chat_type,
                     todo_id, todo_prompt, prep.content, params, Some(workspace_id),
+                    prep.is_mention,
                 );
             }
         }
@@ -818,6 +848,7 @@ impl FeishuListener {
         content: &str,
         params: std::collections::HashMap<String, String>,
         workspace_id: Option<i64>,
+        immediate: bool,
     ) {
         debounce.push(PendingMessage {
             bot_id,
@@ -833,12 +864,14 @@ impl FeishuListener {
             message_id: Some(msg.id.clone()),
             resume_session_id: None,
             resume_message: None,
+            immediate,
             binding_id: None,
             workspace_id,
         });
     }
 
     /// 阶段 6b-ii：把默认响应为 executor 类型的消息塞进 debounce
+    #[allow(clippy::too_many_arguments)]
     fn debounce_push_executor_default(
         debounce: &Arc<MessageDebounce>,
         bot_id: i64,
@@ -847,6 +880,7 @@ impl FeishuListener {
         executor: &str,
         content: &str,
         workspace_id: Option<i64>,
+        immediate: bool,
     ) {
         debounce.push(PendingMessage {
             bot_id,
@@ -861,6 +895,7 @@ impl FeishuListener {
             params: None,
             message_id: Some(msg.id.clone()),
             resume_session_id: None,
+            immediate,
             resume_message: None,
             binding_id: None,
             workspace_id,
@@ -868,6 +903,7 @@ impl FeishuListener {
     }
 
     /// 阶段 6b-iii：把默认响应为 loop 类型的消息塞进 debounce
+    #[allow(clippy::too_many_arguments)]
     fn debounce_push_loop_default(
         debounce: &Arc<MessageDebounce>,
         bot_id: i64,
@@ -876,6 +912,7 @@ impl FeishuListener {
         loop_id: i64,
         content: &str,
         workspace_id: Option<i64>,
+        immediate: bool,
     ) {
         debounce.push(PendingMessage {
             bot_id,
@@ -889,6 +926,7 @@ impl FeishuListener {
             trigger_type: "default_response_loop".to_string(),
             params: None,
             message_id: Some(msg.id.clone()),
+            immediate,
             resume_session_id: None,
             resume_message: None,
             binding_id: None,
@@ -2041,6 +2079,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         );
         assert_eq!(pending.content, "请帮我修复登录 bug");
         assert!(pending.resume_message.is_none());
@@ -2063,6 +2102,7 @@ mod tests {
             Some("real_sid".into()),
             Some("继续".into()),
             None,
+            false,
         );
         assert_eq!(pending.content, "继续");
         assert_eq!(pending.resume_message.as_deref(), Some("继续"));

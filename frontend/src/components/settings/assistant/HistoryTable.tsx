@@ -25,12 +25,12 @@ interface HistoryTableProps {
 // processed_type 英文 → 中文映射
 const processedTypeLabel = (type: string | null): string => {
   const map: Record<string, string> = {
-    'default_response': '默认响应-Todo',
+    'default_response': '默认响应-事项',
     'default_response_executor': '默认响应-执行器',
     'default_response_loop': '默认响应-环路',
-    'slash_command': '斜杠命令',
+    'slash_command': '斜杠命令-事项',
     'slash_command_loop': '斜杠命令-环路',
-    'feishu_project_bind': '项目绑定-Todo',
+    'feishu_project_bind': '项目绑定-事项',
   };
   return map[type || ''] || type || '-';
 };
@@ -121,10 +121,12 @@ export function HistoryTable({
     {
       title: '处理状态',
       key: 'processed',
-      width: 90,
+      width: 120,
       render: (_, record) => (
         record.processed
-          ? <Tag color="green">已处理</Tag>
+          ? record.error
+            ? <Tag color="volcano">已处理({record.error})</Tag>
+            : <Tag color="green">已处理</Tag>
           : <Tag color="default">未处理</Tag>
       ),
     },

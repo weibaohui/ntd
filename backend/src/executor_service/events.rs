@@ -42,6 +42,8 @@ pub enum ExecEvent {
         feishu_bot_id: Option<i64>,
         /// Feishu receive_id (user open_id for p2p, chat_id for group)
         feishu_receive_id: Option<String>,
+        /// Feishu receive_id_type: "open_id" for p2p, "chat_id" for group
+        feishu_receive_id_type: Option<String>,
         /// 执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标
         workspace_id: Option<i64>,
         /// 执行时长（秒），用于推送统计摘要

@@ -1,6 +1,10 @@
 import React, { createContext, useContext, useReducer, useMemo, ReactNode } from 'react';
 import type { Todo, Tag } from '@/types';
 
+// 模块级空数组常量：useVisibleTodos 在桶不存在时复用此引用，
+// 避免每次渲染都 `?? []` 产生新数组，进而触发依赖 state.todos 的 useEffect 无限循环（issue: React error #185）。
+const EMPTY_TODOS: Todo[] = [];
+
 // ─── Design Overview ──────────────────────────────────────────
 //
 // 分桶改造（2026-06-27）：
@@ -157,9 +161,18 @@ function reducer(state: TodoState, action: TodoAction): TodoState {
       return { ...state, todosByWorkspace: newBuckets };
     }
 
-    case 'SELECT_TODO': return { ...state, selectedTodoId: action.payload };
-    case 'SELECT_TAG': return { ...state, selectedTagId: action.payload };
+    // 选择态：payload 与当前值相等时直接返回原 state，避免产生新引用触发依赖重渲染。
+    // 这是阻断 React error #185 无限循环的第二道防线：即便上层 effect 无条件 dispatch，
+    // reducer 不产生新 state，下游 useMemo（如 useVisibleTodos）也不会重算。
+    case 'SELECT_TODO':
+      if (action.payload === state.selectedTodoId) return state;
+      return { ...state, selectedTodoId: action.payload };
+    case 'SELECT_TAG':
+      if (action.payload === state.selectedTagId) return state;
+      return { ...state, selectedTagId: action.payload };
     case 'SELECT_WORKSPACE': {
+      // workspace 切换相等时跳过 localStorage 写入与 state 更新，保持引用稳定。
+      if (action.payload === state.selectedWorkspace) return state;
       try {
         if (action.payload != null) {
           localStorage.setItem('selected_workspace', String(action.payload));
@@ -219,10 +232,17 @@ export function useTodos() {
 export function useVisibleTodos(): Todo[] {
   const { state } = useTodos();
   const { selectedWorkspace, todosByWorkspace } = state;
-  if (selectedWorkspace != null) {
-    return todosByWorkspace[selectedWorkspace] ?? [];
-  }
-  return Object.values(todosByWorkspace).flat();
+  // useMemo 稳定返回引用：仅当 selectedWorkspace 或 todosByWorkspace 变化时才重新计算。
+  // 之前未 memoize 时，桶不存在会每次渲染返回新 `[]`，导致 App.tsx 中依赖 state.todos 的
+  // useEffect 反复触发 dispatch SELECT_TODO null，而 reducer 不判等又产生新 state，
+  // 形成「渲染 → useEffect → dispatch → 新 state → 渲染」的无限循环（React error #185）。
+  return useMemo(() => {
+    if (selectedWorkspace != null) {
+      // 桶不存在时复用模块级 EMPTY_TODOS，保证相同输入下引用稳定。
+      return todosByWorkspace[selectedWorkspace] ?? EMPTY_TODOS;
+    }
+    return Object.values(todosByWorkspace).flat();
+  }, [selectedWorkspace, todosByWorkspace]);
 }
 
 export type { TodoAction };

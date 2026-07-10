@@ -15,6 +15,8 @@ import {
   DoubleLeftOutlined,
   SunOutlined,
   MoonOutlined,
+  MessageOutlined,
+  RobotOutlined,
 } from '@ant-design/icons';
 import { TfiBlackboard } from 'react-icons/tfi';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
@@ -22,6 +24,7 @@ import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 export type LeftRailKey =
   | 'items'
   | 'loops'
+  | 'messages'
   | 'dashboard'
   | 'memorial'
   | 'blackboard'
@@ -29,7 +32,8 @@ export type LeftRailKey =
   | 'settings_projectDirectories'
   | 'settings_sessions'
   | 'settings_skills'
-  | 'settings_executors';
+  | 'settings_executors'
+  | 'settings_bots';
 
 interface LeftRailItem {
   key: LeftRailKey;
@@ -75,6 +79,7 @@ export function LeftRail({
       items: [
         { key: 'items', label: '事项', icon: <UnorderedListOutlined />, ariaLabel: '事项' },
         { key: 'loops', label: '环路', icon: <RetweetOutlined />, ariaLabel: '环路' },
+        { key: 'messages', label: '消息', icon: <MessageOutlined />, ariaLabel: '消息' },
         { key: 'blackboard', label: '黑板', icon: <TfiBlackboard />, ariaLabel: '黑板' },
         { key: 'dashboard', label: '仪表盘', icon: <DashboardOutlined />, ariaLabel: '仪表盘' },
         { key: 'memorial', label: '看板', icon: <ReadOutlined />, ariaLabel: '看板' },
@@ -83,6 +88,7 @@ export function LeftRail({
     {
       title: '配置',
       items: [
+        { key: 'settings_bots', label: '智能助手', icon: <RobotOutlined />, ariaLabel: '智能助手' },
         { key: 'settings_executors', label: '执行器', icon: <CodeOutlined />, ariaLabel: '执行器' },
         { key: 'settings_skills', label: 'Skills', icon: <ThunderboltOutlined />, ariaLabel: 'Skills' },
         { key: 'settings_projectDirectories', label: '工作空间', icon: <FolderOutlined />, ariaLabel: '工作空间' },

@@ -3,14 +3,15 @@ import { CheckOutlined } from '@ant-design/icons';
 import { EXECUTORS_FOR_PICKER, getExecutorOption } from '@/types';
 
 interface ExecutorPickerPopoverProps {
-  value: string;
-  onChange: (value: string) => void;
+  value?: string;
+  onChange?: (value: string) => void;
 }
 
 // 执行器选择弹出面板
 // 设计：小按钮显示当前执行器，点击弹出选择面板，选择后关闭
+// 支持 Antd Form.Item 自动注入 value/onChange
 export const ExecutorPickerPopover = memo(function ExecutorPickerPopover({
-  value,
+  value = 'claudecode',
   onChange,
 }: ExecutorPickerPopoverProps) {
   const [open, setOpen] = useState(false);
@@ -32,7 +33,7 @@ export const ExecutorPickerPopover = memo(function ExecutorPickerPopover({
   }, [open]);
 
   const handleSelect = useCallback((v: string) => {
-    onChange(v);
+    onChange?.(v);
     setOpen(false);
   }, [onChange]);
 

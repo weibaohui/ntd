@@ -75,7 +75,7 @@ impl FeishuPushService {
                                 // For Finished events with feishu_chat_id (binding chat), send directly
                                 // 但需要先检查该 bot 的 push_level 配置
                                 let mut binding_sent = false;
-                                if let ExecEvent::Finished { feishu_bot_id, feishu_receive_id, .. } = &ev {
+                                if let ExecEvent::Finished { feishu_bot_id, feishu_receive_id, feishu_receive_id_type, .. } = &ev {
                                     if let (Some(bot_id), Some(receive_id)) = (feishu_bot_id, feishu_receive_id) {
                                         // 查询该 bot 的 push_level 配置
                                         let push_level = Self::get_bot_push_level(&db, *bot_id).await;
@@ -83,7 +83,8 @@ impl FeishuPushService {
                                         // 检查 push_level 配置是否允许发送
                                         if Self::should_send(&push_level, &ev) {
                                             let text = Self::format_event(&ev).unwrap_or_default();
-                                            let receive_id_type = "open_id"; // binding chats are p2p
+                                            // 群聊用 chat_id，私聊用 open_id；None 时降级为 open_id
+                                            let receive_id_type = feishu_receive_id_type.as_deref().unwrap_or("open_id");
                                             let res = feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, &text).await;
                                             if let Err(e) = res {
                                                 warn!("[feishu-push] binding direct send failed for bot {}: {}", bot_id, e);
@@ -355,6 +356,7 @@ mod feishu_push_binding_tests {
             result: Some("完成".to_string()),
             feishu_bot_id: Some(1),
             feishu_receive_id: Some("user_open_id".to_string()),
+            feishu_receive_id_type: None,
             workspace_id: Some(1),
             duration_secs: 0,
             total_tokens: 0,
@@ -378,6 +380,7 @@ mod feishu_push_binding_tests {
             result: Some("完成".to_string()),
             feishu_bot_id: Some(1),
             feishu_receive_id: Some("user_open_id".to_string()),
+            feishu_receive_id_type: None,
             workspace_id: Some(1),
             duration_secs: 0,
             total_tokens: 0,
@@ -401,6 +404,7 @@ mod feishu_push_binding_tests {
             result: Some("完成".to_string()),
             feishu_bot_id: Some(1),
             feishu_receive_id: Some("user_open_id".to_string()),
+            feishu_receive_id_type: None,
             workspace_id: Some(1),
             duration_secs: 0,
             total_tokens: 0,

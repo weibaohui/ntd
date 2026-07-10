@@ -279,14 +279,18 @@ export async function getFeishuHistoryMessages(params?: {
   chat_id?: string;
   sender_open_id?: string;
   is_history?: boolean;
+  workspace_id?: number;
+  bot_id?: number;
   page?: number;
   page_size?: number;
 }): Promise<import('@/types').FeishuHistoryMessagesPage> {
   return unwrap(await api.get('/api/feishu/history-messages', { params }));
 }
 
-export async function getFeishuMessageStats(hours?: number): Promise<import('@/types').FeishuMessageStats> {
-  const params = hours !== undefined ? { hours } : undefined;
+export async function getFeishuMessageStats(workspaceId?: number, hours?: number): Promise<import('@/types').FeishuMessageStats> {
+  const params: Record<string, unknown> = {};
+  if (workspaceId !== undefined) params.workspace_id = workspaceId;
+  if (hours !== undefined) params.hours = hours;
   return unwrap(await api.get('/api/feishu/message-stats', { params }));
 }
 
@@ -294,8 +298,8 @@ export async function getFeishuSenders(): Promise<FeishuSenderItem[]> {
   return unwrap(await api.get('/api/feishu/senders'));
 }
 
-export async function getFeishuHistoryChats(): Promise<import('@/types').FeishuHistoryChat[]> {
-  return unwrap(await api.get('/api/feishu/history-chats'));
+export async function getFeishuHistoryChats(botId?: number): Promise<import('@/types').FeishuHistoryChat[]> {
+  return unwrap(await api.get('/api/feishu/history-chats', { params: { bot_id: botId } }));
 }
 
 // Group Whitelist APIs

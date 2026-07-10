@@ -80,6 +80,7 @@ pub(crate) struct SpawnRuntime {
     pub execution_timeout_secs: u64,
     pub feishu_bot_id: Option<i64>,
     pub feishu_receive_id: Option<String>,
+    pub feishu_receive_id_type: Option<String>,
     /// spawn 阶段实际使用的 cwd：worktree 路径优先，回退到 todo.workspace_path。
     /// 修复 issue #660 重构中的回归：原代码在 spawn 闭包内用 effective_workspace_path
     /// 决定子进程 cwd，但拆分到 spawn_executor_child 后误用了 todo_workspace_path，
@@ -109,6 +110,7 @@ pub(crate) struct SpawnContext {
     pub trigger_type: String,
     pub feishu_bot_id: Option<i64>,
     pub feishu_receive_id: Option<String>,
+    pub feishu_receive_id_type: Option<String>,
     /// 工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标
     pub workspace_id: Option<i64>,
 }

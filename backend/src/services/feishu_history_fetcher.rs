@@ -412,6 +412,7 @@ impl FeishuHistoryFetcher {
                                     resume_message: None,
                                     binding_id: None,
                                     workspace_id: None,
+                                    immediate: false,
                                 });
                                 // Debounce timer will mark message as processed with execution_record_id
                             }

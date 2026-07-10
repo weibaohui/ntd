@@ -28,6 +28,7 @@ pub struct FeishuMessageRecord {
     pub workspace_id: Option<i64>,
     pub processed_type: Option<String>,
     pub processed_id: Option<i64>,
+    pub error: Option<String>,
 }
 
 pub struct NewFeishuMessage<'a> {
@@ -148,15 +149,19 @@ impl Database {
                 workspace_id: m.workspace_id,
                 processed_type: m.processed_type,
                 processed_id: m.processed_id,
+                error: m.error,
             })
             .collect())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_feishu_history_messages(
         &self,
         chat_id: Option<&str>,
         sender_open_id: Option<&str>,
         is_history: Option<bool>,
+        workspace_id: Option<i64>,
+        bot_id: Option<i64>,
         page: u64,
         page_size: u64,
     ) -> Result<(Vec<FeishuMessageRecord>, i64), sea_orm::DbErr> {
@@ -173,6 +178,16 @@ impl Database {
 
         if let Some(cid) = chat_id {
             query = query.filter(feishu_messages::Column::ChatId.eq(cid.to_string()));
+        }
+
+        // 按工作空间筛选：只返回该工作空间下的消息
+        if let Some(wid) = workspace_id {
+            query = query.filter(feishu_messages::Column::WorkspaceId.eq(Some(wid)));
+        }
+
+        // 按智能体筛选：只返回该智能体的消息
+        if let Some(bid) = bot_id {
+            query = query.filter(feishu_messages::Column::BotId.eq(bid));
         }
 
         let total = query.clone().count(&self.conn).await? as i64;
@@ -206,6 +221,7 @@ impl Database {
                 workspace_id: m.workspace_id,
                 processed_type: m.processed_type,
                 processed_id: m.processed_id,
+                error: m.error,
             })
             .collect();
 
@@ -298,7 +314,6 @@ impl Database {
     }
 
     /// Mark a message as failed (processed=false) when execution fails.
-    /// The message stays in "unprocessed" state so it can be retried or investigated.
     pub async fn mark_feishu_message_failed(
         &self,
         message_id: &str,
@@ -311,17 +326,48 @@ impl Database {
         if let Some(model) = result {
             let mut am: feishu_messages::ActiveModel = model.into();
             am.processed = ActiveValue::Set(Some(false));
-            // 清除 processed_id，标记为"未处理"状态
             am.processed_id = ActiveValue::Set(None);
             am.update(&self.conn).await?;
         }
         Ok(())
     }
 
-    pub async fn get_feishu_message_stats(&self, hours: Option<u32>) -> Result<crate::models::FeishuMessageStats, sea_orm::DbErr> {
+    /// Mark a message as processed with error (e.g., loop_paused).
+    /// Message is considered processed but with an error condition.
+    pub async fn mark_feishu_message_processed_with_error(
+        &self,
+        message_id: &str,
+        todo_id: i64,
+        processed_type: Option<&str>,
+        error: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        let result = feishu_messages::Entity::find()
+            .filter(feishu_messages::Column::MessageId.eq(message_id))
+            .one(&self.conn)
+            .await?;
+
+        if let Some(model) = result {
+            let mut am: feishu_messages::ActiveModel = model.into();
+            am.processed = ActiveValue::Set(Some(true));
+            am.processed_id = ActiveValue::Set(Some(todo_id));
+            am.processed_type = ActiveValue::Set(processed_type.map(|s| s.to_string()));
+            am.error = ActiveValue::Set(Some(error.to_string()));
+            am.update(&self.conn).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn get_feishu_message_stats(&self, hours: Option<u32>, workspace_id: Option<i64>) -> Result<crate::models::FeishuMessageStats, sea_orm::DbErr> {
         let backend = self.conn.get_database_backend();
         let hours = hours.unwrap_or(720); // default 30 days = 720 hours (matches frontend)
         let time_filter = format!("datetime('now', '-{} hours')", hours);
+
+        // 构建基础 SQL 和可选的 workspace_id 过滤条件
+        let workspace_filter = if let Some(wid) = workspace_id {
+            format!(" AND workspace_id = {}", wid)
+        } else {
+            String::new()
+        };
 
         let stats_sql = format!(
             "SELECT \
@@ -332,7 +378,7 @@ impl Database {
             COUNT(DISTINCT sender_open_id) as unique_senders, \
             COUNT(DISTINCT chat_id) as unique_chats \
             FROM feishu_messages \
-            WHERE datetime(created_at) >= {}", time_filter);
+            WHERE datetime(created_at) >= {}{}", time_filter, workspace_filter);
 
         let mut stats = if let Some(row) = self.conn.query_one(Statement::from_string(backend, stats_sql.to_string())).await? {
             crate::models::FeishuMessageStats {
@@ -356,9 +402,10 @@ impl Database {
             });
         };
 
-        // Last 24h count - try matching ISO datetime or timestamp format
-        let recent_sql = "SELECT COUNT(*) as cnt FROM feishu_messages WHERE \
-            created_at IS NOT NULL AND datetime(created_at) >= datetime('now', '-1 day')";
+        // Last 24h count - 同样需要按 workspace 过滤
+        let recent_sql = format!(
+            "SELECT COUNT(*) as cnt FROM feishu_messages WHERE \
+            created_at IS NOT NULL AND datetime(created_at) >= datetime('now', '-1 day'){}", workspace_filter);
         if let Some(row) = self.conn.query_one(Statement::from_string(backend, recent_sql.to_string())).await? {
             stats.last_24h_messages = row.try_get_by("cnt").unwrap_or(0);
         }

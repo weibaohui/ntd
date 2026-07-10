@@ -20,6 +20,8 @@ import { SkillsPanel } from './components/SkillsPanel';
 import { ProjectDirectoriesPanel } from './components/settings/ProjectDirectoriesPanel';
 import { ExecutorsPanel } from './components/settings/ExecutorsPanel';
 import { BlackboardPage } from './components/BlackboardPage';
+import { MessagesPage } from './components/MessagesPage';
+import { AssistantManagementPage } from './components/assistant-management/AssistantManagementPage';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
@@ -224,6 +226,8 @@ function AppContent() {
     setNavDrawerOpen(false);
     if (key === 'items') { showListSection('item'); return; }
     if (key === 'loops') { showListSection('loop'); return; }
+    // 消息页：作为独立视图挂载，workspace 由左上角 WorkspaceSwitcher 联动传入。
+    if (key === 'messages') { handleShowView('messages'); return; }
     if (key === 'dashboard') { handleShowView('dashboard'); return; }
     if (key === 'memorial') { handleShowView('memorial'); return; }
     if (key === 'blackboard') { handleShowView('blackboard'); return; }
@@ -231,6 +235,7 @@ function AppContent() {
     if (key === 'settings_projectDirectories') { showStandaloneSettingsPanel('projectDirectories'); return; }
     if (key === 'settings_skills') { showStandaloneSettingsPanel('skills'); return; }
     if (key === 'settings_executors') { showStandaloneSettingsPanel('executors'); return; }
+    if (key === 'settings_bots') { showStandaloneSettingsPanel('bots'); return; }
   }, [handleShowView, showListSection, showSettings, showStandaloneSettingsPanel]);
 
   return (
@@ -371,15 +376,31 @@ function AppContent() {
               {activeView === 'skills' ? (
                 <SkillsPanel />
               ) : activeView === 'projectDirectories' ? (
-                <ProjectDirectoriesPanel />
+                // 工作空间管理页：「智能助手配置」入口已迁移为独立菜单，
+                // 这里注入回调：切视图到 messages 并联动 workspace id，实现从管理工作空间下钻到消息页。
+                <ProjectDirectoriesPanel
+                  onOpenMessages={(workspaceId) => {
+                    dispatch({ type: 'SELECT_WORKSPACE', payload: workspaceId });
+                    handleShowView('messages');
+                  }}
+                />
               ) : activeView === 'executors' ? (
                 <ExecutorsPanel />
+              ) : activeView === 'bots' ? (
+                <AssistantManagementPage />
               ) : activeView === 'settings' ? (
                 <SettingsPage />
               ) : activeView === 'memorial' ? (
                 <MemorialBoard />
               ) : activeView === 'blackboard' ? (
                 <BlackboardPage workspaceId={state.selectedWorkspace} />
+              ) : activeView === 'messages' ? (
+                // 消息页：workspaceId 由左上角 WorkspaceSwitcher 联动传入；
+                // 未选中时 MessagesPage 内部给出空态引导，onManageWorkspace 落到工作空间管理页。
+                <MessagesPage
+                  workspaceId={state.selectedWorkspace}
+                  onManageWorkspace={() => showStandaloneSettingsPanel('projectDirectories')}
+                />
               ) : activeView === 'wiki' ? (
                 <WikiViewPage />
               ) : (

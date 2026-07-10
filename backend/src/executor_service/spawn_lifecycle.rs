@@ -94,6 +94,7 @@ pub(crate) async fn try_spawn_executor_child(
                 runtime.executor_spawn.as_ref(),
                 runtime.feishu_bot_id,
                 runtime.feishu_receive_id.clone(),
+                runtime.feishu_receive_id_type.clone(),
                 e,
                 runtime.prepared.request.workspace_id,
             )
@@ -115,6 +116,7 @@ pub(crate) async fn handle_spawn_failure(
     executor: &dyn CodeExecutor,
     feishu_bot_id: Option<i64>,
     feishu_receive_id: Option<String>,
+    feishu_receive_id_type: Option<String>,
     error: std::io::Error,
     workspace_id: Option<i64>,
 ) {
@@ -139,6 +141,7 @@ pub(crate) async fn handle_spawn_failure(
             result: Some(error_msg),
             feishu_bot_id,
             feishu_receive_id,
+            feishu_receive_id_type,
             workspace_id,
             // spawn 阶段尚未产生任何执行时长与 token 消耗，置 0 避免阻塞 Finished 事件下发
             duration_secs: 0,
@@ -292,6 +295,7 @@ pub(crate) fn move_into_runtime(spawned: super::types::SpawnInputs) -> SpawnRunt
         execution_timeout_secs: spawned.execution_timeout_secs,
         feishu_bot_id: prepared.request.feishu_bot_id,
         feishu_receive_id: prepared.request.feishu_receive_id.clone(),
+        feishu_receive_id_type: prepared.request.feishu_receive_id_type.clone(),
         // 关键：把 effective_workspace_path 整字段 move 进 runtime，
         // 避免 spawn_executor_child 误用 todo_workspace_path（worktree 失效）。
         effective_workspace_path: spawned.effective_workspace_path,
@@ -412,6 +416,7 @@ async fn dispatch_cancellation(
         runtime.record_id,
         runtime.feishu_bot_id,
         runtime.feishu_receive_id.clone(),
+        runtime.feishu_receive_id_type.clone(),
         &runtime.worktree_ctx,
         runtime.prepared.request.workspace_id,
     )
@@ -445,6 +450,7 @@ async fn dispatch_timeout(
         runtime.execution_timeout_secs,
         runtime.feishu_bot_id,
         runtime.feishu_receive_id.clone(),
+        runtime.feishu_receive_id_type.clone(),
         &runtime.worktree_ctx,
         runtime.prepared.request.workspace_id,
     )
@@ -483,6 +489,7 @@ async fn dispatch_completed(
             trigger_type: runtime.prepared.request.trigger_type,
             feishu_bot_id: runtime.feishu_bot_id,
             feishu_receive_id: runtime.feishu_receive_id,
+            feishu_receive_id_type: runtime.feishu_receive_id_type,
             workspace_id: runtime.prepared.request.workspace_id,
         },
     )
@@ -507,6 +514,7 @@ pub(crate) async fn run_cancellation_path(
     record_id: i64,
     feishu_bot_id: Option<i64>,
     feishu_receive_id: Option<String>,
+    feishu_receive_id_type: Option<String>,
     worktree_ctx: &WorktreeContext,
     workspace_id: Option<i64>,
 ) {
@@ -523,6 +531,7 @@ pub(crate) async fn run_cancellation_path(
         record_id,
         feishu_bot_id,
         feishu_receive_id,
+        feishu_receive_id_type,
         workspace_id,
     )
     .await;
@@ -548,6 +557,7 @@ pub(crate) async fn run_timeout_path(
     execution_timeout_secs: u64,
     feishu_bot_id: Option<i64>,
     feishu_receive_id: Option<String>,
+    feishu_receive_id_type: Option<String>,
     worktree_ctx: &WorktreeContext,
     workspace_id: Option<i64>,
 ) {
@@ -566,6 +576,7 @@ pub(crate) async fn run_timeout_path(
         super::completion::format_timeout_secs(execution_timeout_secs),
         feishu_bot_id,
         feishu_receive_id,
+        feishu_receive_id_type,
         workspace_id,
     )
     .await;
@@ -652,6 +663,7 @@ pub(crate) async fn persist_and_finalize_completion(
         ctx.trigger_type.clone(),
         ctx.feishu_bot_id,
         ctx.feishu_receive_id.clone(),
+        ctx.feishu_receive_id_type.clone(),
         ctx.workspace_id,
     )
     .await;
