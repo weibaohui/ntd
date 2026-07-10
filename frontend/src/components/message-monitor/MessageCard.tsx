@@ -12,7 +12,6 @@ const processedTypeLabel = (type: string | null): string => {
     'slash_command': '斜杠命令',
     'slash_command_loop': '斜杠命令-环路',
     'feishu_project_bind': '项目绑定-Todo',
-    'loop_paused': '环路暂停',
   };
   return map[type || ''] || type || '未分类';
 };
@@ -25,7 +24,6 @@ const processedTypeColor = (type: string | null): string => {
     'slash_command': 'blue',
     'slash_command_loop': 'orange',
     'feishu_project_bind': 'green',
-    'loop_paused': 'volcano',
   };
   return map[type || ''] || 'default';
 };
