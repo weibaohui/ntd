@@ -464,6 +464,7 @@ fn build_executor_end_content(
     status: &std::process::ExitStatus,
     result_text: Option<String>,
     stdout: &str,
+    stderr: &str,
 ) -> String {
     // 非零退出时 stdout 给用户的预览上限，按 char 计：与开始消息 preview 同语义，
     // 避免 `&str[..n]` 这种按字节切片切到多字节字符中间触发 panic。
@@ -480,12 +481,21 @@ fn build_executor_end_content(
             raw.to_string()
         }
     } else {
-        // 非零退出：带退出码 + 截断后的 stdout 片段走错误通道，按 char 截断防 panic
-        let stdout_preview: String = stdout.chars().take(STDOUT_PREVIEW_CHAR_LIMIT).collect();
-        executor_error_message(
-            executor_type,
-            &format!("退出码 {:?}\n输出：\n{}", status.code(), stdout_preview),
-        )
+        // 非零退出：优先用 stderr（执行器错误信息通常走 stderr），
+        // stderr 为空时才用 stdout；两者都为空则只报退出码。
+        let diagnostic = if !stderr.trim().is_empty() {
+            stderr.chars().take(STDOUT_PREVIEW_CHAR_LIMIT).collect::<String>()
+        } else {
+            stdout.chars().take(STDOUT_PREVIEW_CHAR_LIMIT).collect::<String>()
+        };
+        if diagnostic.is_empty() {
+            executor_error_message(executor_type, &format!("退出码 {:?}", status.code()))
+        } else {
+            executor_error_message(
+                executor_type,
+                &format!("退出码 {:?}\n{}", status.code(), diagnostic),
+            )
+        }
     }
 }
 
@@ -723,7 +733,7 @@ impl MessageDebounce {
         let mut cmd = tokio::process::Command::new(program);
         cmd.args(&command_args)
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .stdin(std::process::Stdio::piped())
             .current_dir(&workspace_path);
 
@@ -735,6 +745,10 @@ impl MessageDebounce {
                 return Err(None);
             }
         };
+
+        // 提取 stderr 句柄：非零退出时把 stderr 内容带进错误消息，
+        // 让用户和日志能看到 pi 到底报了什么错（之前 Stdio::null() 直接丢弃）。
+        let stderr_handle = child.stderr.take();
 
         // spawn 成功立即发"开始处理"标志，让飞书侧知道请求已被接收并在跑，
         // 而不是静默等待——这正是本次修复要消除的"发了消息没反馈"体验。
@@ -787,6 +801,23 @@ impl MessageDebounce {
             }
         };
 
+        // 读取 stderr：非零退出时用于诊断失败原因（pi 等执行器的错误信息走 stderr）。
+        let stderr_text = match stderr_handle {
+            Some(mut reader) => {
+                let mut buf = Vec::new();
+                let _ = reader.read_to_end(&mut buf).await;
+                String::from_utf8_lossy(&buf).to_string()
+            }
+            None => String::new(),
+        };
+        if !stderr_text.is_empty() {
+            tracing::info!(
+                "[debounce] executor {} stderr:\n{}",
+                executor_type,
+                &stderr_text[..stderr_text.len().min(2000)]
+            );
+        }
+
         // 解析执行器输出：按行解析，提取 result/text 类型的日志
         let stdout = String::from_utf8_lossy(&stdout_bytes);
         tracing::info!(
@@ -803,7 +834,7 @@ impl MessageDebounce {
         // 结束反馈：成功有解析结果就用结果（即回复）；成功无结果但进程退出 0 且有原始 stdout
         // 就用 stdout 兜底；进程非 0 退出走错误通道带退出码+输出片段；都没有则发空结束标志。
         // 抽成纯函数 build_executor_end_content 以便单测非零退出+中文 stdout 的截断（防 panic）。
-        let content = build_executor_end_content(executor_type, &status, result_text, &stdout);
+        let content = build_executor_end_content(executor_type, &status, result_text, &stdout, &stderr_text);
 
         tracing::info!(
             "[debounce] executor {} result_text={:?}",
@@ -1017,7 +1048,7 @@ mod executor_feedback_tests {
             .args(["-c", "true"])
             .status()
             .expect("spawn sh true");
-        let content = build_executor_end_content("pi", &status, Some("最终答案".to_string()), "ignored stdout");
+        let content = build_executor_end_content("pi", &status, Some("最终答案".to_string()), "ignored stdout", "");
         assert_eq!(content, "最终答案");
     }
 
@@ -1028,7 +1059,7 @@ mod executor_feedback_tests {
             .args(["-c", "true"])
             .status()
             .expect("spawn sh true");
-        let content = build_executor_end_content("pi", &status, None, "hello world");
+        let content = build_executor_end_content("pi", &status, None, "hello world", "");
         assert_eq!(content, "hello world");
     }
 
@@ -1039,7 +1070,7 @@ mod executor_feedback_tests {
             .args(["-c", "true"])
             .status()
             .expect("spawn sh true");
-        let content = build_executor_end_content("pi", &status, None, "   \n  ");
+        let content = build_executor_end_content("pi", &status, None, "   \n  ", "");
         assert_eq!(content, "✅ pi 执行完成（无输出）");
     }
 
@@ -1055,7 +1086,7 @@ mod executor_feedback_tests {
             .status()
             .expect("spawn sh exit 1");
         // 关键断言：这一行不 panic 即说明按 char 截断生效
-        let content = build_executor_end_content("pi", &status, None, &chinese);
+        let content = build_executor_end_content("pi", &status, None, &chinese, "");
         assert!(
             content.starts_with("❌ pi 执行失败：退出码 Some(1)"),
             "should start with error prefix, got: {}",

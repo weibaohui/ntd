@@ -222,23 +222,16 @@ impl EventDispatcherHandler {
         );
 
         if let Some(handler) = self.processor_map.get(&handler_name) {
+            // 已注册的事件处理器：正常分发
             handler.handle(payload)
-        } else if Self::is_ignorable_event(&handler_name) {
-            tracing::debug!("Ignoring Feishu event without processor: {handler_name}");
-            Ok(())
         } else {
-            tracing::warn!("No event processor found for event: {handler_name}");
-            Err(anyhow::anyhow!("event processor {} not found", handler_name))
+            // 未注册的事件：飞书可能推送任意类型事件（如 bot.added、chat.updated 等），
+            // 不需要全部处理，warn 级别记录后静默跳过，避免 error + backtrace 噪音。
+            tracing::warn!("No event processor found for event, ignoring: {handler_name}");
+            Ok(())
         }
     }
 
-    /// 判断是否为已知但无需处理的事件。
-    fn is_ignorable_event(handler_name: &str) -> bool {
-        matches!(
-            handler_name,
-            "p2.im.message.message_read_v1"
-        )
-    }
 }
 
 pub struct EventDispatcherHandlerBuilder {
