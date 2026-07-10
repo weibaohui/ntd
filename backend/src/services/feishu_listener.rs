@@ -804,6 +804,7 @@ impl FeishuListener {
                     &executor,
                     prep.content,
                     Some(workspace_id),
+                    prep.is_mention,
                 );
             }
             "loop" => {
@@ -817,6 +818,7 @@ impl FeishuListener {
                     loop_id,
                     prep.content,
                     Some(workspace_id),
+                    prep.is_mention,
                 );
             }
             _ => {
@@ -828,6 +830,7 @@ impl FeishuListener {
                 Self::debounce_push_default(
                     context.debounce, context.bot_id, msg, prep.chat_type,
                     todo_id, todo_prompt, prep.content, params, Some(workspace_id),
+                    prep.is_mention,
                 );
             }
         }
@@ -845,6 +848,7 @@ impl FeishuListener {
         content: &str,
         params: std::collections::HashMap<String, String>,
         workspace_id: Option<i64>,
+        immediate: bool,
     ) {
         debounce.push(PendingMessage {
             bot_id,
@@ -860,13 +864,14 @@ impl FeishuListener {
             message_id: Some(msg.id.clone()),
             resume_session_id: None,
             resume_message: None,
-            immediate: false,
+            immediate,
             binding_id: None,
             workspace_id,
         });
     }
 
     /// 阶段 6b-ii：把默认响应为 executor 类型的消息塞进 debounce
+    #[allow(clippy::too_many_arguments)]
     fn debounce_push_executor_default(
         debounce: &Arc<MessageDebounce>,
         bot_id: i64,
@@ -875,6 +880,7 @@ impl FeishuListener {
         executor: &str,
         content: &str,
         workspace_id: Option<i64>,
+        immediate: bool,
     ) {
         debounce.push(PendingMessage {
             bot_id,
@@ -889,7 +895,7 @@ impl FeishuListener {
             params: None,
             message_id: Some(msg.id.clone()),
             resume_session_id: None,
-            immediate: false,
+            immediate,
             resume_message: None,
             binding_id: None,
             workspace_id,
@@ -897,6 +903,7 @@ impl FeishuListener {
     }
 
     /// 阶段 6b-iii：把默认响应为 loop 类型的消息塞进 debounce
+    #[allow(clippy::too_many_arguments)]
     fn debounce_push_loop_default(
         debounce: &Arc<MessageDebounce>,
         bot_id: i64,
@@ -905,6 +912,7 @@ impl FeishuListener {
         loop_id: i64,
         content: &str,
         workspace_id: Option<i64>,
+        immediate: bool,
     ) {
         debounce.push(PendingMessage {
             bot_id,
@@ -918,7 +926,7 @@ impl FeishuListener {
             trigger_type: "default_response_loop".to_string(),
             params: None,
             message_id: Some(msg.id.clone()),
-            immediate: false,
+            immediate,
             resume_session_id: None,
             resume_message: None,
             binding_id: None,
