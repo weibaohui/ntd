@@ -20,6 +20,7 @@ import { ProjectDirectoriesPanel } from './components/settings/ProjectDirectorie
 import { ExecutorsPanel } from './components/settings/ExecutorsPanel';
 import { BlackboardPage } from './components/BlackboardPage';
 import { MessagesPage } from './components/MessagesPage';
+import { BotManagementPage } from './components/bot-management/BotManagementPage';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
@@ -232,6 +233,7 @@ function AppContent() {
     if (key === 'settings_projectDirectories') { showStandaloneSettingsPanel('projectDirectories'); return; }
     if (key === 'settings_skills') { showStandaloneSettingsPanel('skills'); return; }
     if (key === 'settings_executors') { showStandaloneSettingsPanel('executors'); return; }
+    if (key === 'settings_bots') { showStandaloneSettingsPanel('bots'); return; }
   }, [handleShowView, showListSection, showSettings, showStandaloneSettingsPanel]);
 
   return (
@@ -382,6 +384,8 @@ function AppContent() {
                 />
               ) : activeView === 'executors' ? (
                 <ExecutorsPanel />
+              ) : activeView === 'bots' ? (
+                <BotManagementPage />
               ) : activeView === 'settings' ? (
                 <SettingsPage />
               ) : activeView === 'memorial' ? (
