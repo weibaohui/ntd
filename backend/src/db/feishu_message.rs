@@ -311,10 +311,11 @@ impl Database {
     }
 
     /// Mark a message as failed (processed=false) when execution fails.
-    /// The message stays in "unprocessed" state so it can be retried or investigated.
+    /// Optionally set processed_type to distinguish failure reasons (e.g., "loop_paused").
     pub async fn mark_feishu_message_failed(
         &self,
         message_id: &str,
+        processed_type: Option<&str>,
     ) -> Result<(), sea_orm::DbErr> {
         let result = feishu_messages::Entity::find()
             .filter(feishu_messages::Column::MessageId.eq(message_id))
@@ -324,8 +325,9 @@ impl Database {
         if let Some(model) = result {
             let mut am: feishu_messages::ActiveModel = model.into();
             am.processed = ActiveValue::Set(Some(false));
-            // 清除 processed_id，标记为"未处理"状态
             am.processed_id = ActiveValue::Set(None);
+            // 设置处理类型以区分失败原因（如环路暂停 vs 真正未处理）
+            am.processed_type = ActiveValue::Set(processed_type.map(|s| s.to_string()));
             am.update(&self.conn).await?;
         }
         Ok(())
