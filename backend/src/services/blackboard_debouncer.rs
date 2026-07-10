@@ -169,6 +169,21 @@ pub async fn push_pending_record(workspace_id: i64, record_id: i64, db: &Arc<Dat
         workspace_id, record_id
     );
 
+    // 检查黑板功能总开关：关闭时跳过入队，不阻塞主流程
+    match db.get_blackboard_config(workspace_id).await {
+        Ok(Some(cfg)) if !cfg.enabled => {
+            tracing::debug!(
+                "黑板功能已禁用，跳过 push_pending_record: workspace_id={}",
+                workspace_id
+            );
+            return;
+        }
+        Err(e) => {
+            tracing::warn!("读取黑板配置失败（继续入队）: workspace_id={}, error={}", workspace_id, e);
+        }
+        _ => {}
+    }
+
     // 追加到 DB
     if let Err(e) = db.append_pending_record_id(workspace_id, record_id).await {
         tracing::warn!(

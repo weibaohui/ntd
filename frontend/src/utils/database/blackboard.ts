@@ -30,6 +30,8 @@ export async function updateBlackboardConfig(
     wiki_chat_executor?: string;
     /** Wiki 执行超时（秒），后端会钳制到 [60, 3600] 区间 */
     wiki_timeout_secs?: number;
+    /** 黑板功能总开关 */
+    enabled?: boolean;
   },
 ): Promise<void> {
   await api.patch(`/api/workspaces/${workspaceId}/blackboard`, config);

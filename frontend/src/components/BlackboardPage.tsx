@@ -23,7 +23,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Button, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu, Drawer } from 'antd';
+import { Button, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu, Drawer, Switch } from 'antd';
 import { ReloadOutlined, SettingOutlined, UnorderedListOutlined, MenuOutlined, DeleteOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { TfiBlackboard } from 'react-icons/tfi';
@@ -51,6 +51,8 @@ interface BlackboardData {
   wiki_chat_executor?: string | null;
   /** Wiki 执行超时（秒），控制 Wiki 任务与 Wiki 对话的最长存活时间 */
   wiki_timeout_secs: number;
+  /** 黑板功能总开关 */
+  enabled: boolean;
 }
 
 /** Wiki 文件列表项（对应后端 WikiFileItem） */
@@ -307,6 +309,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const [wikiPrompt, setWikiPrompt] = useState<string>('');
   // Wiki 执行超时（秒）：与后端 DEFAULT_WIKI_TIMEOUT_SECS=300 一致，清空时回退默认
   const [wikiTimeoutSecs, setWikiTimeoutSecs] = useState<number | null>(300);
+  const [bbEnabled, setBbEnabled] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<'debounce' | 'prompt'>('debounce');
   // 移动端目录 Drawer 开关状态
   const [menuDrawerOpen, setMenuDrawerOpen] = useState(false);
@@ -322,11 +325,13 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
       setDebounceCount(configData.blackboard_debounce_count ?? 10);
       setWikiPrompt(configData.wiki_prompt ?? '');
       setWikiTimeoutSecs(configData.wiki_timeout_secs ?? 300);
+      setBbEnabled(configData.enabled ?? true);
     } else {
       setDebounceSecs(600);
       setDebounceCount(10);
       setWikiPrompt('');
       setWikiTimeoutSecs(300);
+      setBbEnabled(true);
     }
     setActiveTab('debounce');
     setSettingsOpen(true);
@@ -342,6 +347,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         blackboard_debounce_count: debounceCount ?? 10,
         wiki_prompt: wikiPrompt,
         wiki_timeout_secs: wikiTimeoutSecs ?? 300,
+        enabled: bbEnabled,
       });
       // 保存成功后同步更新 data，避免下次打开弹窗读到旧值
       if (configData) {
@@ -351,6 +357,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
           blackboard_debounce_count: debounceCount ?? 10,
           wiki_prompt: wikiPrompt,
           wiki_timeout_secs: wikiTimeoutSecs ?? 300,
+          enabled: bbEnabled,
         });
       }
       message.success('设置已保存');
@@ -360,7 +367,7 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
     } finally {
       setSettingsSaving(false);
     }
-  }, [workspaceId, debounceSecs, debounceCount, wikiPrompt, wikiTimeoutSecs, configData]);
+  }, [workspaceId, debounceSecs, debounceCount, wikiPrompt, wikiTimeoutSecs, bbEnabled, configData]);
 
   // 恢复默认提示词：把 wikiPrompt 设为内置默认值。
   // 区别于"留空"的语义——留空表示后端使用内置默认；填入默认值表示用户显式采用内置模板。
@@ -527,6 +534,10 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         destroyOnHidden
         width={isMobile ? '90%' : 640}
       >
+        <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 14, fontWeight: 500 }}>启用黑板</span>
+          <Switch checked={bbEnabled} onChange={setBbEnabled} />
+        </div>
         <Tabs
           activeKey={activeTab}
           onChange={(key) => setActiveTab(key as 'debounce' | 'prompt')}
