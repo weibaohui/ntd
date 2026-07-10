@@ -152,12 +152,14 @@ impl Database {
             .collect())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_feishu_history_messages(
         &self,
         chat_id: Option<&str>,
         sender_open_id: Option<&str>,
         is_history: Option<bool>,
         workspace_id: Option<i64>,
+        bot_id: Option<i64>,
         page: u64,
         page_size: u64,
     ) -> Result<(Vec<FeishuMessageRecord>, i64), sea_orm::DbErr> {
@@ -179,6 +181,11 @@ impl Database {
         // 按工作空间筛选：只返回该工作空间下的消息
         if let Some(wid) = workspace_id {
             query = query.filter(feishu_messages::Column::WorkspaceId.eq(Some(wid)));
+        }
+
+        // 按智能体筛选：只返回该智能体的消息
+        if let Some(bid) = bot_id {
+            query = query.filter(feishu_messages::Column::BotId.eq(bid));
         }
 
         let total = query.clone().count(&self.conn).await? as i64;

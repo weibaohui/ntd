@@ -12,6 +12,8 @@ pub struct HistoryMessagesQuery {
     pub is_history: Option<bool>,
     /// 按工作空间筛选消息，不传则返回全部
     pub workspace_id: Option<i64>,
+    /// 按智能体筛选消息，不传则返回全部
+    pub bot_id: Option<i64>,
     pub page: Option<u64>,
     pub page_size: Option<u64>,
 }
@@ -76,6 +78,7 @@ pub async fn get_history_messages(
         query.sender_open_id.as_deref(),
         query.is_history,
         query.workspace_id,
+        query.bot_id,
         page,
         page_size,
     ).await?;
