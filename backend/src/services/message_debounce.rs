@@ -37,6 +37,9 @@ pub struct PendingMessage {
     pub binding_id: Option<i64>,
     /// 工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标
     pub workspace_id: Option<i64>,
+    /// 群聊 @提及的显式请求：跳过 debounce 等待，收到立即执行。
+    /// 非 @mention 的群聊消息仍走 debounce 合并窗口。
+    pub immediate: bool,
 }
 
 struct DebounceEntry {
@@ -78,6 +81,10 @@ impl MessageDebounce {
             .unwrap_or_default();
         all_msgs.push(msg);
 
+        // @提及是显式点名请求，跳过 debounce 等待立即执行；
+        // 在 all_msgs move 进闭包前先计算好。
+        let has_immediate = all_msgs.iter().any(|m| m.immediate);
+
         // Create new timer
         let new_timer = {
             let entries = self.entries.clone();
@@ -98,9 +105,9 @@ impl MessageDebounce {
                 .unwrap_or_default();
 
             tokio::spawn(async move {
-                // 只有群聊需要 debounce 等待窗口，避免多条消息触发多次执行；
-                // 私聊和其他聊天类型不需要等待，收到立即执行。
-                if target_type == "group" {
+                // 群聊需要 debounce 等待窗口，避免多条消息触发多次执行；
+                // 但 @提及是显式点名请求，跳过等待立即执行。
+                if target_type == "group" && !has_immediate {
                     let secs = db
                         .get_debounce_secs(bot_id, &target_type)
                         .await
@@ -888,6 +895,7 @@ mod merge_pending_messages_tests {
             resume_message: None,
             binding_id: None,
             workspace_id: None,
+            immediate: false,
         }
     }
 

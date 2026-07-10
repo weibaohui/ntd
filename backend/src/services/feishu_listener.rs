@@ -475,6 +475,7 @@ impl FeishuListener {
             resume_session_id,
             resume_message,
             None, // binding path uses feishu_bot_id directly in push service
+            prep.is_mention, // @提及跳过 debounce 立即执行
         );
         Self::cleanup_reaction(context, msg, prep.reaction_id.as_deref()).await;
         true
@@ -544,6 +545,7 @@ impl FeishuListener {
         resume_session_id: Option<String>,
         resume_message: Option<String>,
         workspace_id: Option<i64>,
+        immediate: bool,
     ) {
         let pending = Self::build_binding_execution_message(
             msg,
@@ -554,6 +556,7 @@ impl FeishuListener {
             resume_session_id,
             resume_message,
             workspace_id,
+            immediate,
         );
         debounce.push(pending);
     }
@@ -571,6 +574,7 @@ impl FeishuListener {
         resume_session_id: Option<String>,
         resume_message: Option<String>,
         workspace_id: Option<i64>,
+        immediate: bool,
     ) -> PendingMessage {
         let executor = todo.executor.as_deref().unwrap_or("claudecode");
         PendingMessage {
@@ -589,6 +593,7 @@ impl FeishuListener {
             resume_message,
             binding_id: Some(binding.id),
             workspace_id,
+            immediate,
         }
     }
 
@@ -709,6 +714,7 @@ impl FeishuListener {
             resume_message: None,
             binding_id: None,
             workspace_id,
+            immediate: false,
         });
     }
 
@@ -737,6 +743,7 @@ impl FeishuListener {
             resume_session_id: None,
             resume_message: None,
             binding_id: None,
+            immediate: false,
             workspace_id,
         });
     }
@@ -853,6 +860,7 @@ impl FeishuListener {
             message_id: Some(msg.id.clone()),
             resume_session_id: None,
             resume_message: None,
+            immediate: false,
             binding_id: None,
             workspace_id,
         });
@@ -881,6 +889,7 @@ impl FeishuListener {
             params: None,
             message_id: Some(msg.id.clone()),
             resume_session_id: None,
+            immediate: false,
             resume_message: None,
             binding_id: None,
             workspace_id,
@@ -909,6 +918,7 @@ impl FeishuListener {
             trigger_type: "default_response_loop".to_string(),
             params: None,
             message_id: Some(msg.id.clone()),
+            immediate: false,
             resume_session_id: None,
             resume_message: None,
             binding_id: None,
@@ -2061,6 +2071,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         );
         assert_eq!(pending.content, "请帮我修复登录 bug");
         assert!(pending.resume_message.is_none());
@@ -2083,6 +2094,7 @@ mod tests {
             Some("real_sid".into()),
             Some("继续".into()),
             None,
+            false,
         );
         assert_eq!(pending.content, "继续");
         assert_eq!(pending.resume_message.as_deref(), Some("继续"));
