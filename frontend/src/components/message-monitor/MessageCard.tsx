@@ -75,8 +75,8 @@ export function MessageCard({ message, botName, onViewDetail, onViewExecution, o
           <Tag color={processedTypeColor(message.processed_type)} style={{ fontSize: 11 }}>
             {processedTypeLabel(message.processed_type)}
           </Tag>
-          <Tag color={message.processed ? 'green' : (message.error ? 'volcano' : 'orange')} style={{ fontSize: 11 }}>
-            {message.processed ? '已处理' : (message.error === 'loop_paused' ? '环路暂停' : '未处理')}
+          <Tag color={message.processed ? (message.error ? 'volcano' : 'green') : 'orange'} style={{ fontSize: 11 }}>
+            {message.processed ? (message.error ? `已处理(${message.error})` : '已处理') : '未处理'}
           </Tag>
         </Space>
         <Space>

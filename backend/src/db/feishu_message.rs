@@ -314,11 +314,9 @@ impl Database {
     }
 
     /// Mark a message as failed (processed=false) when execution fails.
-    /// Optionally record error reason (e.g., "loop_paused" for paused loops).
     pub async fn mark_feishu_message_failed(
         &self,
         message_id: &str,
-        error: Option<&str>,
     ) -> Result<(), sea_orm::DbErr> {
         let result = feishu_messages::Entity::find()
             .filter(feishu_messages::Column::MessageId.eq(message_id))
@@ -329,8 +327,31 @@ impl Database {
             let mut am: feishu_messages::ActiveModel = model.into();
             am.processed = ActiveValue::Set(Some(false));
             am.processed_id = ActiveValue::Set(None);
-            // 记录失败原因（如环路暂停）
-            am.error = ActiveValue::Set(error.map(|s| s.to_string()));
+            am.update(&self.conn).await?;
+        }
+        Ok(())
+    }
+
+    /// Mark a message as processed with error (e.g., loop_paused).
+    /// Message is considered processed but with an error condition.
+    pub async fn mark_feishu_message_processed_with_error(
+        &self,
+        message_id: &str,
+        todo_id: i64,
+        processed_type: Option<&str>,
+        error: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        let result = feishu_messages::Entity::find()
+            .filter(feishu_messages::Column::MessageId.eq(message_id))
+            .one(&self.conn)
+            .await?;
+
+        if let Some(model) = result {
+            let mut am: feishu_messages::ActiveModel = model.into();
+            am.processed = ActiveValue::Set(Some(true));
+            am.processed_id = ActiveValue::Set(Some(todo_id));
+            am.processed_type = ActiveValue::Set(processed_type.map(|s| s.to_string()));
+            am.error = ActiveValue::Set(Some(error.to_string()));
             am.update(&self.conn).await?;
         }
         Ok(())

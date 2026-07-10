@@ -121,13 +121,13 @@ export function HistoryTable({
     {
       title: '处理状态',
       key: 'processed',
-      width: 100,
+      width: 120,
       render: (_, record) => (
         record.processed
-          ? <Tag color="green">已处理</Tag>
-          : record.error === 'loop_paused'
-            ? <Tag color="volcano">环路暂停</Tag>
-            : <Tag color="default">未处理</Tag>
+          ? record.error
+            ? <Tag color="volcano">已处理({record.error})</Tag>
+            : <Tag color="green">已处理</Tag>
+          : <Tag color="default">未处理</Tag>
       ),
     },
     {

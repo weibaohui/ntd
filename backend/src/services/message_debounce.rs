@@ -335,15 +335,30 @@ impl MessageDebounce {
                                     .update_feishu_project_binding_status(binding_id, crate::models::binding_status::IDLE)
                                     .await;
                             }
-                            // Mark messages as failed (processed=false) with error reason
                             // e is Option<String>: Some("loop_paused") for paused loops, None for other errors
                             for msg in &entry.messages {
                                 if let Some(ref msg_id) = msg.message_id {
-                                    if let Err(mark_err) = db
-                                        .mark_feishu_message_failed(msg_id, e.as_deref())
-                                        .await
-                                    {
-                                        tracing::warn!("[debounce] failed to mark message {} as failed: {:?}", msg_id, mark_err);
+                                    if let Some(ref error_reason) = e {
+                                        // 环路暂停：标记为已处理 + 记录错误
+                                        if let Err(mark_err) = db
+                                            .mark_feishu_message_processed_with_error(
+                                                msg_id,
+                                                msg.todo_id,
+                                                Some(&msg.trigger_type),
+                                                error_reason,
+                                            )
+                                            .await
+                                        {
+                                            tracing::warn!("[debounce] failed to mark message {} as processed_with_error: {:?}", msg_id, mark_err);
+                                        }
+                                    } else {
+                                        // 其他错误：标记为未处理
+                                        if let Err(mark_err) = db
+                                            .mark_feishu_message_failed(msg_id)
+                                            .await
+                                        {
+                                            tracing::warn!("[debounce] failed to mark message {} as failed: {:?}", msg_id, mark_err);
+                                        }
                                     }
                                 }
                             }

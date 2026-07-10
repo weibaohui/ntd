@@ -427,7 +427,7 @@ mod whitelist_and_message_tests {
             .unwrap();
 
         // Then mark as failed
-        db.mark_feishu_message_failed("msg_fail_001", None)
+        db.mark_feishu_message_failed("msg_fail_001")
             .await
             .unwrap();
 
