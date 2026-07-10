@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Empty, Segmented, Select, Spin, message } from 'antd';
 import { AppstoreOutlined } from '@ant-design/icons';
+import { TODO_LIST_REFRESH_EVENT } from '@/constants';
 import { useApp } from '@/hooks/useApp';
 import { PageCard } from '@/components/common/PageCard';
 import { TodoCenterCard, sourceLabel } from '@/components/TodoCenterCard';
@@ -105,8 +106,8 @@ export function TodoCenterCardView({
   // TodoDrawer 新建/保存事项后，通知卡片墙也刷新
   useEffect(() => {
     const handler = () => reload();
-    window.addEventListener('todoListRefresh', handler);
-    return () => window.removeEventListener('todoListRefresh', handler);
+    window.addEventListener(TODO_LIST_REFRESH_EVENT, handler);
+    return () => window.removeEventListener(TODO_LIST_REFRESH_EVENT, handler);
   }, [reload]);
 
   // 按 computed_bucket 分桶，用于 Tab 计数与卡片过滤
