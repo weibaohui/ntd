@@ -1,15 +1,15 @@
-// Bot 基本配置卡片：dm/group/echo 回复开关。
+// Assistant 基本配置卡片：dm/group/echo 回复开关。
 
 import { Switch, Card } from 'antd';
 import type { AgentBot } from '@/utils/database';
 
-interface BotConfigCardProps {
+interface AssistantConfigCardProps {
   bot: AgentBot;
   botConfig: Record<string, boolean>;
   onConfigChange: (key: string, val: boolean) => void;
 }
 
-export function BotConfigCard({ bot, botConfig, onConfigChange }: BotConfigCardProps) {
+export function AssistantConfigCard({ bot, botConfig, onConfigChange }: AssistantConfigCardProps) {
   const isFeishu = bot.bot_type === 'feishu';
 
   return (

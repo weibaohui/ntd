@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 import type { ColumnsType } from 'antd/es/table';
 import * as db from '@/utils/database';
 import type { AgentBot, ProjectDirectory } from '@/utils/database';
-import { BotDetailPage } from '@/components/settings/bot/BotDetailPage';
+import { AssistantDetailPage } from '@/components/settings/assistant/AssistantDetailPage';
 
 interface WorkspaceAgentPanelProps {
   workspaceId: number;
@@ -39,7 +39,7 @@ export function WorkspaceAgentPanel({ workspaceId, onBotChanged, activeBot, onSe
   const [feishuEventSource, setFeishuEventSource] = useState<EventSource | null>(null);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 加载当前工作空间的智能体列表，全局Bot管理已迁移到 BotManagementPage
+  // 加载当前工作空间的智能助手列表，全局Bot管理已迁移到 AssistantManagementPage
   const loadBots = () => {
     setLoading(true);
     // 只获取当前工作空间的 Bot 列表（通过前端过滤）
@@ -53,14 +53,14 @@ export function WorkspaceAgentPanel({ workspaceId, onBotChanged, activeBot, onSe
         setBots(botsData.filter(b => b.workspace_id === workspaceId));
         setWorkspaces(dirsData);
       })
-      .catch((err: any) => message.error('加载智能体失败: ' + (err?.message || String(err))))
+      .catch((err: any) => message.error('加载智能助手失败: ' + (err?.message || String(err))))
       .finally(() => setLoading(false));
   };
 
-  // 外部传入 bot 时直接渲染 BotDetailPage
+  // 外部传入 bot 时直接渲染 AssistantDetailPage
   if (activeBot) {
     return (
-      <BotDetailPage
+      <AssistantDetailPage
         bot={activeBot}
         onBack={onBotBack || (() => { setSelectedBot(null); setSelectedBotForHistory(null); })}
         onRefresh={() => { loadBots(); onBotChanged?.(); }}
@@ -73,7 +73,7 @@ export function WorkspaceAgentPanel({ workspaceId, onBotChanged, activeBot, onSe
   const internalActiveBot = selectedBotForHistory || selectedBot;
   if (internalActiveBot) {
     return (
-      <BotDetailPage
+      <AssistantDetailPage
         bot={internalActiveBot}
         onBack={() => { setSelectedBot(null); setSelectedBotForHistory(null); }}
         onRefresh={() => { loadBots(); onBotChanged?.(); }}

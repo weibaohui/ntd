@@ -2,7 +2,7 @@ import { Table, Button, Tag, Space } from 'antd';
 import { SettingOutlined, PoweroffOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { AgentBot, ProjectDirectory } from '@/utils/database';
 
-interface BotListTableProps {
+interface AssistantListTableProps {
   bots: AgentBot[];
   workspaces: ProjectDirectory[];
   onOpenConfig: (bot: AgentBot) => void;
@@ -10,14 +10,14 @@ interface BotListTableProps {
   onDelete: (bot: AgentBot) => void;
 }
 
-export function BotListTable({ bots, workspaces, onOpenConfig, onToggleEnabled, onDelete }: BotListTableProps) {
+export function AssistantListTable({ bots, workspaces, onOpenConfig, onToggleEnabled, onDelete }: AssistantListTableProps) {
   const getWorkspaceName = (workspaceId: number) => {
     return workspaces.find(w => w.id === workspaceId)?.name || '-';
   };
 
   const columns = [
     {
-      title: '智能体名称',
+      title: '智能助手名称',
       dataIndex: 'bot_name',
       key: 'bot_name',
       width: 180,
@@ -115,7 +115,7 @@ export function BotListTable({ bots, workspaces, onOpenConfig, onToggleEnabled, 
         pageSize: 10,
         showSizeChanger: true,
         showQuickJumper: true,
-        showTotal: (total) => `共 ${total} 个智能体`,
+        showTotal: (total) => `共 ${total} 个智能助手`,
       }}
     />
   );

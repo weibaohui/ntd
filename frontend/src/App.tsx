@@ -20,7 +20,7 @@ import { ProjectDirectoriesPanel } from './components/settings/ProjectDirectorie
 import { ExecutorsPanel } from './components/settings/ExecutorsPanel';
 import { BlackboardPage } from './components/BlackboardPage';
 import { MessagesPage } from './components/MessagesPage';
-import { BotManagementPage } from './components/bot-management/BotManagementPage';
+import { AssistantManagementPage } from './components/assistant-management/AssistantManagementPage';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
@@ -385,7 +385,7 @@ function AppContent() {
               ) : activeView === 'executors' ? (
                 <ExecutorsPanel />
               ) : activeView === 'bots' ? (
-                <BotManagementPage />
+                <AssistantManagementPage />
               ) : activeView === 'settings' ? (
                 <SettingsPage />
               ) : activeView === 'memorial' ? (

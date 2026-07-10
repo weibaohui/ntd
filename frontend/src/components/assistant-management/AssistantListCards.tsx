@@ -4,7 +4,7 @@ import type { AgentBot, ProjectDirectory } from '@/utils/database';
 
 const { Text } = Typography;
 
-interface BotListCardsProps {
+interface AssistantListCardsProps {
   bots: AgentBot[];
   workspaces: ProjectDirectory[];
   onOpenConfig: (bot: AgentBot) => void;
@@ -12,7 +12,7 @@ interface BotListCardsProps {
   onDelete: (bot: AgentBot) => void;
 }
 
-export function BotListCards({ bots, workspaces, onOpenConfig, onToggleEnabled, onDelete }: BotListCardsProps) {
+export function AssistantListCards({ bots, workspaces, onOpenConfig, onToggleEnabled, onDelete }: AssistantListCardsProps) {
   const getWorkspaceName = (workspaceId: number) => {
     return workspaces.find(w => w.id === workspaceId)?.name || '-';
   };

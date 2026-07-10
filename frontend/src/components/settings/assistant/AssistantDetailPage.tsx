@@ -1,11 +1,11 @@
-// Bot 详情页：单页展示 bot 基本配置、推送状态、群聊白名单和消息记录。
+// Assistant 详情页：单页展示 assistant 基本配置、推送状态、群聊白名单和消息记录。
 //
 // 状态说明：
 // - showHistory=true：显示消息记录面板（autoShowHistory 从外部控制）
-// - showHistory=false：显示基本配置区（BotConfigCard + PushStatusCard + WhitelistCard）
+// - showHistory=false：显示基本配置区（AssistantConfigCard + PushStatusCard + WhitelistCard）
 //
 // 子组件划分：
-// - BotConfigCard：基本开关配置
+// - AssistantConfigCard：基本开关配置
 // - PushStatusCard：飞书推送配置
 // - WhitelistCard：群聊白名单管理
 // - HistoryTable：历史消息分页表格
@@ -20,12 +20,12 @@ import type { AgentBot, FeishuPushStatus, WhitelistEntry, FeishuSenderItem, Feis
 import type { FeishuHistoryMessage, FeishuHistoryChat, ExecutionRecord } from '@/types';
 import { ExecutionRecordDrawer } from '@/components/settings/messages/ExecutionRecordDrawer';
 import { BlackboardDrawer } from '@/components/loop-studio/executions/BlackboardDrawer';
-import { BotConfigCard } from './BotConfigCard';
+import { AssistantConfigCard } from './AssistantConfigCard';
 import { PushStatusCard } from './PushStatusCard';
 import { WhitelistCard } from './WhitelistCard';
 import { HistoryTable } from './HistoryTable';
 
-interface BotDetailPageProps {
+interface AssistantDetailPageProps {
   bot: AgentBot;
   onBack: () => void;
   onRefresh: () => void;
@@ -33,7 +33,7 @@ interface BotDetailPageProps {
   autoShowHistory?: boolean;
 }
 
-export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false }: BotDetailPageProps) {
+export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = false }: AssistantDetailPageProps) {
   const [botConfig, setBotConfig] = useState<Record<string, boolean>>({
     dm_enabled: true, group_enabled: true, group_require_mention: true, echo_reply: true,
   });
@@ -242,7 +242,7 @@ export function BotDetailPage({ bot, onBack, onRefresh, autoShowHistory = false 
       {!showHistory && (
         <div style={{ maxWidth: 700 }}>
           {/* Bot 基本信息 */}
-          <BotConfigCard bot={bot} botConfig={botConfig} onConfigChange={handleConfigChange} />
+          <AssistantConfigCard bot={bot} botConfig={botConfig} onConfigChange={handleConfigChange} />
 
           {/* 推送配置（仅飞书） */}
           {isFeishu && pushStatus && (

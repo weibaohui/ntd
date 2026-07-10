@@ -8,7 +8,7 @@ import type { WhitelistEntry, FeishuPushLevel } from '@/utils/database/bots';
 const { Text, Title } = Typography;
 const { Option } = Select;
 
-interface BotConfigDrawerProps {
+interface AssistantConfigDrawerProps {
   open: boolean;
   bot: AgentBot | null;
   workspaces: ProjectDirectory[];
@@ -16,7 +16,7 @@ interface BotConfigDrawerProps {
   onChanged: () => void;
 }
 
-export function BotConfigDrawer({ open, bot, workspaces, onClose, onChanged }: BotConfigDrawerProps) {
+export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChanged }: AssistantConfigDrawerProps) {
   const [form] = Form.useForm();
   const [whitelist, setWhitelist] = useState<WhitelistEntry[]>([]);
   const [activeTab, setActiveTab] = useState<'push' | 'whitelist'>('push');

@@ -6,15 +6,15 @@ import { PageCard } from '@/components/common/PageCard';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import * as db from '@/utils/database';
 import type { AgentBot, ProjectDirectory } from '@/utils/database';
-import { BotConfigDrawer } from './BotConfigDrawer';
-import { BotListTable } from './BotListTable';
-import { BotListCards } from './BotListCards';
+import { AssistantConfigDrawer } from './AssistantConfigDrawer';
+import { AssistantListTable } from './AssistantListTable';
+import { AssistantListCards } from './AssistantListCards';
 
 const { Title } = Typography;
 
-interface BotManagementPageProps {}
+interface AssistantManagementPageProps {}
 
-export function BotManagementPage({}: BotManagementPageProps) {
+export function AssistantManagementPage({}: AssistantManagementPageProps) {
   const isMobile = useIsMobile();
   const [loading, setLoading] = useState(true);
   const [bots, setBots] = useState<AgentBot[]>([]);
@@ -168,7 +168,7 @@ export function BotManagementPage({}: BotManagementPageProps) {
       ) : bots.length === 0 ? (
         <Empty description="暂无智能助手，点击上方按钮绑定" />
       ) : isMobile ? (
-        <BotListCards
+        <AssistantListCards
           bots={bots}
           workspaces={workspaces}
           onOpenConfig={handleOpenConfig}
@@ -176,7 +176,7 @@ export function BotManagementPage({}: BotManagementPageProps) {
           onDelete={handleDelete}
         />
       ) : (
-        <BotListTable
+        <AssistantListTable
           bots={bots}
           workspaces={workspaces}
           onOpenConfig={handleOpenConfig}
@@ -185,7 +185,7 @@ export function BotManagementPage({}: BotManagementPageProps) {
         />
       )}
 
-      <BotConfigDrawer
+      <AssistantConfigDrawer
         open={configDrawerOpen}
         bot={selectedBot}
         workspaces={workspaces}
