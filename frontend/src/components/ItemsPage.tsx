@@ -89,8 +89,10 @@ export function ItemsPage({
   // 返回列表页时（effectiveMobilePanel 回到 'list' 且没有选中事项），恢复用户上次的卡片/列表偏好
   useEffect(() => {
     if (effectiveMobilePanel === 'list' && !selectedTodoId) {
-      const saved = savedViewModeRef.current;
+      // 直接从 localStorage 读取，确保组件重挂载后也能正确恢复
+      const saved = readInitialView();
       setViewMode(saved);
+      savedViewModeRef.current = saved;
     }
   }, [effectiveMobilePanel, selectedTodoId]);
 
