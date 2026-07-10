@@ -172,11 +172,11 @@ impl MessageDebounce {
                     let result: Result<crate::executor_service::ExecutionResult, Option<String>> = match last.trigger_type.as_str() {
                         "default_response_loop" | "slash_command_loop" => {
                             // 环路默认响应 或 斜杠命令触发环路：直接触发环路执行
-                            // 根据 chat_type 决定 receive_id_type：群聊用 chat_id，单聊用 open_id
-                            let receive_id_type = if last.chat_type == "group" {
-                                "chat_id".to_string()
+                            // 群聊回复到群（chat_id），私聊回复到个人（open_id）
+                            let (loop_receive_id, receive_id_type) = if last.chat_type == "group" {
+                                (last.chat_id.clone(), "chat_id".to_string())
                             } else {
-                                "open_id".to_string()
+                                (last.sender.clone(), "open_id".to_string())
                             };
                             Self::handle_default_response_loop(
                                 db.clone(),
@@ -184,13 +184,19 @@ impl MessageDebounce {
                                 last.todo_id, // loop_id
                                 &merged_content,
                                 Some(last.bot_id),
-                                Some(last.sender.clone()),
+                                Some(loop_receive_id),
                                 Some(receive_id_type),
                             )
                             .await
                         }
                         "default_response_executor" => {
                             // 执行器默认响应：直接调用执行器交互（不存储执行记录）
+                            // 群聊回复到群（chat_id），私聊回复到个人（open_id）
+                            let (resp_receive_id, resp_receive_id_type) = if last.chat_type == "group" {
+                                (last.chat_id.clone(), "chat_id".to_string())
+                            } else {
+                                (last.sender.clone(), "open_id".to_string())
+                            };
                             Self::handle_default_response_executor(
                                 &db,
                                 &executor_registry,
@@ -198,7 +204,8 @@ impl MessageDebounce {
                                 &config,
                                 &tx,
                                 last.bot_id,
-                                last.sender.clone(),
+                                resp_receive_id,
+                                &resp_receive_id_type,
                                 last.executor.as_deref(),
                                 last.workspace_id,
                                 &merged_content,
@@ -673,6 +680,7 @@ impl MessageDebounce {
         tx: &broadcast::Sender<ExecEvent>,
         bot_id: i64,
         receive_id: String,
+        receive_id_type: &str,
         executor_type: Option<&str>,
         workspace_id: Option<i64>,
         message: &str,
@@ -688,7 +696,7 @@ impl MessageDebounce {
             let _ = tx.send(ExecEvent::ExecutorDirectResponse {
                 bot_id,
                 receive_id: receive_id.clone(),
-                receive_id_type: "open_id".to_string(),
+                receive_id_type: receive_id_type.to_string(),
                 content,
             });
         };
