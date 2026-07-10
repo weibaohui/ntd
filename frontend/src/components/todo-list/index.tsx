@@ -164,6 +164,18 @@ export function TodoList(props: TodoListProps) {
     });
   }, [refreshKey, selectedWorkspace, directoriesReady, listMode, dispatch]);
 
+  // TodoDrawer 新建/保存事项后，通过 custom event 通知列表刷新
+  useEffect(() => {
+    const handler = () => {
+      if (!directoriesReady || selectedWorkspace == null || listMode !== 'item') return;
+      db.getAllTodos(selectedWorkspace).then(todos => {
+        dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: selectedWorkspace, payload: todos });
+      });
+    };
+    window.addEventListener('todoListRefresh', handler);
+    return () => window.removeEventListener('todoListRefresh', handler);
+  }, [directoriesReady, selectedWorkspace, listMode, dispatch]);
+
   // 持久化列表模式到 localStorage
   useEffect(() => {
     localStorage.setItem('ntd_list_mode', listMode);

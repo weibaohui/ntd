@@ -421,6 +421,8 @@ function AppContent() {
           if (wid == null) return;
           db.getAllTodos(wid).then(todos => {
             dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
+            // 通知 ItemsPage 刷新列表（TodoList 用 cache guard，需要主动触发）
+            window.dispatchEvent(new Event('todoListRefresh'));
           });
         }}
         defaultWorkspaceId={state.selectedWorkspace}
