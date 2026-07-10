@@ -21,6 +21,7 @@ interface MessageTimelineProps {
   onPageChange: (page: number, pageSize: number) => void;
   onViewDetail: (message: FeishuHistoryMessage) => void;
   onViewExecution: (recordId: number) => void;
+  onViewLoopExecution: (message: FeishuHistoryMessage) => void;
 }
 
 export function MessageTimeline({
@@ -40,6 +41,7 @@ export function MessageTimeline({
   onPageChange,
   onViewDetail,
   onViewExecution,
+  onViewLoopExecution,
 }: MessageTimelineProps) {
   const getBotName = (chatId: string) => {
     const chat = chats.find(c => c.chat_id === chatId);
@@ -107,6 +109,7 @@ export function MessageTimeline({
               botName={getBotName(message.chat_id)}
               onViewDetail={() => onViewDetail(message)}
               onViewExecution={onViewExecution}
+              onViewLoopExecution={() => onViewLoopExecution(message)}
               onCopy={() => handleCopy(message.content || '')}
             />
           ))

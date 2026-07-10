@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Spin, Empty, Space } from 'antd';
+import { Spin, Empty, Space, message } from 'antd';
 import { MessageOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { ExecutionRecordDrawer } from '@/components/settings/messages/ExecutionRecordDrawer';
+import { BlackboardDrawer } from '@/components/loop-studio/executions/BlackboardDrawer';
 import * as db from '@/utils/database';
+import * as dbLoops from '@/utils/database/loops';
 import type { ProjectDirectory, AgentBot } from '@/utils/database';
 import type { FeishuHistoryMessage, FeishuHistoryChat, FeishuMessageStats, ExecutionRecord } from '@/types';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -44,6 +46,10 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
   const [selectedMessage, setSelectedMessage] = useState<FeishuHistoryMessage | null>(null);
 
   const [execDetailRecord, setExecDetailRecord] = useState<ExecutionRecord | null>(null);
+
+  // 环路执行详情状态
+  const [blackboardOpen, setBlackboardOpen] = useState(false);
+  const [blackboardExecs, setBlackboardExecs] = useState<Record<string, any>[]>([]);
 
   // 加载工作空间信息和 Bot 列表
   useEffect(() => {
@@ -148,6 +154,18 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
     }
   };
 
+  // 处理环路执行详情点击
+  const handleViewLoopExecution = async (msg: FeishuHistoryMessage) => {
+    if (!msg.processed_id) return;
+    try {
+      const detail = await dbLoops.getExecutionById(msg.processed_id);
+      setBlackboardExecs(detail.step_executions || []);
+      setBlackboardOpen(true);
+    } catch {
+      message.error('加载环路执行详情失败');
+    }
+  };
+
   const handleViewDetail = (message: FeishuHistoryMessage) => {
     setSelectedMessage(message);
     setDetailDrawerOpen(true);
@@ -243,6 +261,7 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
           onPageChange={(p, ps) => { setMessagesPage(p); setMessagesPageSize(ps); }}
           onViewDetail={handleViewDetail}
           onViewExecution={handleViewExecutionRecord}
+          onViewLoopExecution={handleViewLoopExecution}
         />
 
         <MessageConfigDrawer
@@ -297,6 +316,7 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
           onPageChange={(p, ps) => { setMessagesPage(p); setMessagesPageSize(ps); }}
           onViewDetail={handleViewDetail}
           onViewExecution={handleViewExecutionRecord}
+          onViewLoopExecution={handleViewLoopExecution}
         />
       </div>
 
@@ -314,6 +334,12 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
       />
 
       <ExecutionRecordDrawer record={execDetailRecord} onClose={() => setExecDetailRecord(null)} />
+
+      <BlackboardDrawer
+        open={blackboardOpen}
+        stepExecs={blackboardExecs}
+        onClose={() => setBlackboardOpen(false)}
+      />
     </PageCard>
   );
 }

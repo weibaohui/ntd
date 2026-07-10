@@ -33,10 +33,15 @@ interface MessageCardProps {
   botName?: string;
   onViewDetail: () => void;
   onViewExecution: (recordId: number) => void;
+  onViewLoopExecution: () => void;
   onCopy: () => void;
 }
 
-export function MessageCard({ message, botName, onViewDetail, onViewExecution, onCopy }: MessageCardProps) {
+// 判断是否为环路类型
+const isLoopType = (type: string | null): boolean =>
+  type === 'slash_command_loop' || type === 'default_response_loop';
+
+export function MessageCard({ message, botName, onViewDetail, onViewExecution, onViewLoopExecution, onCopy }: MessageCardProps) {
   const formatTime = (dateStr: string | null) => {
     if (!dateStr) return '-';
     const d = new Date(dateStr);
@@ -87,7 +92,12 @@ export function MessageCard({ message, botName, onViewDetail, onViewExecution, o
               icon={<EyeOutlined />}
               onClick={(e) => {
                 e.stopPropagation();
-                onViewExecution(message.execution_record_id!);
+                // 环路类型显示黑板详情，其他类型显示执行记录详情
+                if (isLoopType(message.processed_type) && message.processed_id) {
+                  onViewLoopExecution();
+                } else {
+                  onViewExecution(message.execution_record_id!);
+                }
               }}
             >
               执行记录
