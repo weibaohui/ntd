@@ -169,6 +169,21 @@ pub async fn push_pending_record(workspace_id: i64, record_id: i64, db: &Arc<Dat
         workspace_id, record_id
     );
 
+    // 检查黑板功能总开关：关闭时跳过入队，不阻塞主流程
+    match db.get_blackboard_config(workspace_id).await {
+        Ok(Some(cfg)) if !cfg.enabled => {
+            tracing::debug!(
+                "黑板功能已禁用，跳过 push_pending_record: workspace_id={}",
+                workspace_id
+            );
+            return;
+        }
+        Err(e) => {
+            tracing::warn!("读取黑板配置失败（继续入队）: workspace_id={}, error={}", workspace_id, e);
+        }
+        _ => {}
+    }
+
     // 追加到 DB
     if let Err(e) = db.append_pending_record_id(workspace_id, record_id).await {
         tracing::warn!(
@@ -331,4 +346,38 @@ pub async fn restart_timer(workspace_id: i64, db: &Arc<Database>) {
         }
     };
     start_timer(workspace_id, debounce_secs).await;
+}
+
+/// 停止指定 workspace 的活跃防抖 timer，清理所有相关状态。
+///
+/// 调用场景：用户禁用黑板功能（`enabled = false`）时，需要立即停止已调度的 timer，
+/// 避免 timer 到期后仍触发 wiki 维护任务（违背用户的"关闭黑板"意图）。
+///
+/// 实现说明：tokio::spawn 的后台 timer task 无法被外部直接 abort（需 JoinHandle 才能 abort），
+/// 这里采用"逻辑取消"：清除 TIMER_STATES（让 UI 立即停止显示倒计时），并标记 ACTIVE_TIMERS
+/// 为 false（让 timer task 自然到期时不会重复启动）。timer task 即使继续运行到期并发送 flush
+/// 消息，也会被 handle_flush_msg 的 enabled 检查拦截，不会派生 worker 执行 wiki 维护。
+pub async fn cancel_timer(workspace_id: i64) {
+    // 清除 timer 启动时间状态，让前端 UI 立即停止显示倒计时（remaining_secs=-1）
+    {
+        let mut states = TIMER_STATES.write().await;
+        if let Some(map) = states.as_mut() {
+            map.remove(&workspace_id);
+        }
+    }
+
+    // 标记 timer 未运行，阻止已调度的 timer task 在到期时重复启动新一轮 timer。
+    // 注意：已 spawn 的 timer task（sleep 中）无法被物理取消，只能等其自然到期；
+    // 但 handle_flush_msg 会在入口检查 enabled 标志，拦截到期后的 flush 消息。
+    if let Some(timers) = ACTIVE_TIMERS.get() {
+        let mut timers = timers.write().await;
+        if let Some(map) = timers.as_mut() {
+            map.insert(workspace_id, false);
+        }
+    }
+
+    tracing::info!(
+        "黑板 timer 已取消: workspace_id={} (后台 sleep task 会自然到期，但 flush 消息将被 enabled 检查拦截)",
+        workspace_id
+    );
 }
