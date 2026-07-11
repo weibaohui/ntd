@@ -279,6 +279,10 @@ export async function getFeishuHistoryMessages(params?: {
   chat_id?: string;
   sender_open_id?: string;
   is_history?: boolean;
+  processed?: boolean;
+  chat_type?: string;
+  keyword?: string;
+  processed_type?: string;
   workspace_id?: number;
   bot_id?: number;
   page?: number;

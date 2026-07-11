@@ -14,10 +14,16 @@ interface MessageTimelineProps {
   pageSize: number;
   selectedChatId: string | undefined;
   isHistory: boolean | undefined;
+  processedFilter: boolean | undefined;
+  chatTypeFilter: string | undefined;
+  processedTypeFilter: string | undefined;
   searchText: string;
   onSearchChange: (text: string) => void;
   onChatChange: (chatId: string | undefined) => void;
   onHistoryChange: (isHistory: boolean | undefined) => void;
+  onProcessedChange: (processed: boolean | undefined) => void;
+  onChatTypeChange: (chatType: string | undefined) => void;
+  onProcessedTypeChange: (processedType: string | undefined) => void;
   onPageChange: (page: number, pageSize: number) => void;
   onViewDetail: (message: FeishuHistoryMessage) => void;
   onViewExecution: (recordId: number) => void;
@@ -34,10 +40,16 @@ export function MessageTimeline({
   pageSize,
   selectedChatId,
   isHistory,
+  processedFilter,
+  chatTypeFilter,
+  processedTypeFilter,
   searchText,
   onSearchChange,
   onChatChange,
   onHistoryChange,
+  onProcessedChange,
+  onChatTypeChange,
+  onProcessedTypeChange,
   onPageChange,
   onViewDetail,
   onViewExecution,
@@ -49,17 +61,10 @@ export function MessageTimeline({
     return bots.find(b => b.id === chat.bot_id)?.bot_name;
   };
 
-  const handleCopy = (content: string) => {
-    try {
-      const parsed = JSON.parse(content);
-      navigator.clipboard.writeText(parsed.text || content);
-    } catch {
-      navigator.clipboard.writeText(content);
-    }
-  };
-
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* 筛选区顺序：搜索 → 会话类型 → 消息类型 → 处理状态 → 处理类型 → 具体群聊。
+          按「文本 → 消息维度 → 处理维度 → 具体会话」由宽到窄排列，便于从大类逐步缩小范围。 */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
         <Input
           size="small"
@@ -72,13 +77,14 @@ export function MessageTimeline({
 
         <Select
           size="small"
-          placeholder="筛选群聊"
-          style={{ width: 150 }}
-          value={selectedChatId ?? 'all'}
-          onChange={(v: string) => { onChatChange(v === 'all' ? undefined : v); onPageChange(1, pageSize); }}
+          placeholder="会话类型"
+          style={{ width: 120 }}
+          value={chatTypeFilter ?? 'all'}
+          onChange={(v: string) => { onChatTypeChange(v === 'all' ? undefined : v); onPageChange(1, pageSize); }}
           options={[
-            { value: 'all', label: '全部群聊' },
-            ...chats.map(c => ({ value: c.chat_id, label: c.chat_name || c.chat_id })),
+            { value: 'all', label: '全部会话' },
+            { value: 'group', label: '群聊' },
+            { value: 'p2p', label: '私聊' },
           ]}
         />
 
@@ -92,6 +98,47 @@ export function MessageTimeline({
             { value: 'all', label: '全部' },
             { value: true, label: '历史消息' },
             { value: false, label: '实时消息' },
+          ]}
+        />
+
+        <Select
+          size="small"
+          placeholder="处理状态"
+          style={{ width: 120 }}
+          value={processedFilter === undefined ? 'all' : processedFilter}
+          onChange={(v: string | boolean) => { onProcessedChange(v === 'all' ? undefined : (v as boolean)); onPageChange(1, pageSize); }}
+          options={[
+            { value: 'all', label: '全部状态' },
+            { value: true, label: '已处理' },
+            { value: false, label: '未处理' },
+          ]}
+        />
+
+        {/* 处理类型：value 是语义关键字，后端用 processed_type LIKE '%关键字%' 落到具体类型。
+            slash→斜杠命令(slash_command/slash_command_loop)、executor→执行器、loop→环路(*_loop)。 */}
+        <Select
+          size="small"
+          placeholder="处理类型"
+          style={{ width: 130 }}
+          value={processedTypeFilter ?? 'all'}
+          onChange={(v: string) => { onProcessedTypeChange(v === 'all' ? undefined : v); onPageChange(1, pageSize); }}
+          options={[
+            { value: 'all', label: '全部类型' },
+            { value: 'slash', label: '斜杠命令' },
+            { value: 'executor', label: '执行器' },
+            { value: 'loop', label: '环路' },
+          ]}
+        />
+
+        <Select
+          size="small"
+          placeholder="筛选群聊"
+          style={{ width: 150 }}
+          value={selectedChatId ?? 'all'}
+          onChange={(v: string) => { onChatChange(v === 'all' ? undefined : v); onPageChange(1, pageSize); }}
+          options={[
+            { value: 'all', label: '全部群聊' },
+            ...chats.map(c => ({ value: c.chat_id, label: c.chat_name || c.chat_id })),
           ]}
         />
       </div>
@@ -112,7 +159,6 @@ export function MessageTimeline({
               onViewDetail={() => onViewDetail(message)}
               onViewExecution={onViewExecution}
               onViewLoopExecution={() => onViewLoopExecution(message)}
-              onCopy={() => handleCopy(message.content || '')}
             />
           ))
         )}

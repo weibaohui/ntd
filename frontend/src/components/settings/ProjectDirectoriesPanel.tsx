@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Button, Input, Empty, Spin, Switch, message, Tooltip, Typography, Card, Dropdown } from 'antd';
-import { PlusOutlined, FolderOutlined, RobotOutlined, SettingOutlined, EditOutlined, DeleteOutlined, MessageOutlined, MoreOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOutlined, RobotOutlined, SettingOutlined, EditOutlined, DeleteOutlined, MoreOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import * as db from '@/utils/database';
 import type { ProjectDirectory, AgentBot } from '@/utils/database';
@@ -299,14 +299,6 @@ export function ProjectDirectoriesPanel({ onOpenMessages }: ProjectDirectoriesPa
 
                     {/* 右侧：操作区域 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                      {/* 消息列表入口：跳转到消息监控中心并联动该工作空间 */}
-                      <Button
-                        size="small"
-                        icon={<MessageOutlined />}
-                        onClick={() => onOpenMessages?.(dir.id)}
-                      >
-                        消息列表
-                      </Button>
                       <Button
                         size="small"
                         icon={<SettingOutlined />}
