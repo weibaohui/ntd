@@ -118,13 +118,16 @@ impl PiExtractor {
     }
 
     /// 从 message 中提取 stopReason 并生成对应事件
+    ///
+    /// Pi 的最终结论已由 agent_end 事件通过 Assistant 事件输出，
+    /// stopReason 仅表示会话停止原因，不包含实际结论内容。
+    /// - end_turn/stop：正常结束，不需要额外事件（结论已在 agent_end 中输出）
+    /// - toolUse：工具调用，不需要事件
+    /// - 其他：生成 Info 事件记录异常停止原因
     fn extract_stop_reason(msg: &serde_json::Value) -> Option<ExecutionEvent> {
         let stop_reason = msg.get("stopReason").and_then(|v| v.as_str())?;
         match stop_reason {
-            "end_turn" | "stop" => Some(ExecutionEvent::Result {
-                summary: "Task completed".to_string(),
-            }),
-            "toolUse" => None, // 工具调用不需要额外事件
+            "end_turn" | "stop" | "toolUse" => None,
             _ => Some(ExecutionEvent::Info {
                 message: format!("Stopped: {}", stop_reason),
             }),
@@ -291,8 +294,8 @@ impl PiExtractor {
                 }
             }
             "agent_end" => {
-                // agent 结束事件：提取最终结论（最后一条 assistant 消息的 thinking + text）。
-                // 这是整个 agent 执行的最终输出，内容不同于 turn 内的文本块。
+                // agent 结束事件：文本已由 text_end 实时输出，这里不重复发送。
+                // 仅处理 text_end 无法获取的 thinking（如果有的话）。
                 if let Some(messages) = json.get("messages").and_then(|v| v.as_array()) {
                     for msg in messages.iter().rev() {
                         if msg.get("role").and_then(|v| v.as_str()) != Some("assistant") {
@@ -301,39 +304,30 @@ impl PiExtractor {
 
                         self.extract_model_from_message(msg);
 
-                        // 从 content[] 提取 thinking + text 作为最终结论
-                        let mut conclusion_text = String::new();
-                        let mut conclusion_thinking = None;
                         let message_id = msg.get("responseId")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string());
 
+                        // 仅提取 thinking（text 已由 text_end 输出，避免重复）
+                        let mut conclusion_thinking = None;
                         if let Some(content) = msg.get("content").and_then(|v| v.as_array()) {
                             for block in content {
                                 let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                                match block_type {
-                                    "thinking" => {
-                                        if let Some(t) = block.get("thinking").and_then(|v| v.as_str()) {
-                                            let trimmed = t.trim();
-                                            if !trimmed.is_empty() {
-                                                conclusion_thinking = Some(trimmed.to_string());
-                                            }
+                                if block_type == "thinking" {
+                                    if let Some(t) = block.get("thinking").and_then(|v| v.as_str()) {
+                                        let trimmed = t.trim();
+                                        if !trimmed.is_empty() {
+                                            conclusion_thinking = Some(trimmed.to_string());
                                         }
                                     }
-                                    "text" => {
-                                        if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
-                                            conclusion_text.push_str(t);
-                                        }
-                                    }
-                                    _ => {}
                                 }
                             }
                         }
 
-                        let text_trimmed = conclusion_text.trim();
-                        if !text_trimmed.is_empty() || conclusion_thinking.is_some() {
+                        // 只在有 thinking 时才发送 Assistant 事件（空文本 + thinking）
+                        if conclusion_thinking.is_some() {
                             events.push(ExecutionEvent::Assistant {
-                                content: text_trimmed.to_string(),
+                                content: String::new(),
                                 thinking: conclusion_thinking,
                                 message_id,
                             });
@@ -479,16 +473,16 @@ mod tests {
         }
     }
 
-    /// 测试：message_end 事件仅提取 model + stopReason（content/usage 由 message_update:*_end 负责）
+    /// 测试：message_end 事件仅提取 model（content/usage 由 message_update:*_end 负责），
+    /// stopReason=end_turn 不再生成 Result 事件（结论已由 agent_end 通过 Assistant 输出）
     #[test]
     fn test_message_end() {
         let mut extractor = PiExtractor::new();
         let json = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Let me think..."},{"type":"text","text":"Here is the answer."}],"model":"claude-sonnet-4","usage":{"input":100,"output":50,"cacheRead":10,"cacheWrite":5,"totalTokens":150,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0.003}},"stopReason":"end_turn"}}"#;
         let events = extractor.extract(json);
 
-        // 仅提取 stopReason → Result（不重复 content[] 和 usage）
-        assert_eq!(events.len(), 1);
-        assert!(matches!(&events[0], ExecutionEvent::Result { .. }));
+        // end_turn 不再生成 Result 事件，结论由 agent_end 的 Assistant 事件输出
+        assert!(events.is_empty());
 
         // 验证元数据（model 仍会被更新）
         assert_eq!(extractor.metadata().model.as_deref(), Some("claude-sonnet-4"));
@@ -618,7 +612,7 @@ mod tests {
         assert!(matches!(&events[1], ExecutionEvent::Tokens { input: 0, output: 38, cache_read: Some(10092), cache_write: Some(7), .. }));
     }
 
-    /// 测试：agent_end 提取最终结论（thinking + text + responseId）
+    /// 测试：agent_end 仅提取 thinking（text 已由 text_end 实时输出，避免重复）
     #[test]
     fn test_agent_end_conclusion() {
         let mut extractor = PiExtractor::new();
@@ -628,11 +622,11 @@ mod tests {
         ],"willRetry":false}"#;
         let events = extractor.extract(json);
 
-        // 产生 Conclusion（Assistant 事件），包含 thinking + text + message_id
+        // 仅产生 thinking（text 已由 text_end 输出，不再重复）
         assert_eq!(events.len(), 1);
         match &events[0] {
             ExecutionEvent::Assistant { content, thinking, message_id } => {
-                assert_eq!(content, "Here is the answer.");
+                assert!(content.is_empty());
                 assert_eq!(thinking.as_deref(), Some("Let me think"));
                 assert_eq!(message_id.as_deref(), Some("resp-abc-123"));
             }
