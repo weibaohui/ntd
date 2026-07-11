@@ -67,14 +67,14 @@ impl FeishuPushService {
                                 }
 
                                 // 执行器直接响应：绕过 push_level 过滤和 workspace 隔离，直接发回飞书
-                                if let ExecEvent::ExecutorDirectResponse { bot_id, receive_id, receive_id_type, content } = &ev {
+                                if let ExecEvent::DirectCardMessage { bot_id, receive_id, receive_id_type, content } = &ev {
                                     // 开始消息（含 "开始处理"）时重置该用户的工具调用计数器
                                     // 每次新执行从 #1 开始计数
                                     if content.contains("开始处理") {
                                         tool_call_counters.insert((*bot_id, receive_id.clone()), 0);
                                     }
                                     // 使用卡片形式发送执行器输出
-                                    let card_json = format_executor_direct_card(content);
+                                    let card_json = render_card_message(content);
                                     let res = feishu_listener.send_card_raw(*bot_id, receive_id, receive_id_type, &card_json).await;
                                     if let Err(e) = res {
                                         warn!("[feishu-push] executor direct response (card) failed for bot {}: {}", bot_id, e);
@@ -89,7 +89,7 @@ impl FeishuPushService {
                                 // 前者是执行过程中流式输出的纯文本消息。
                                 // 受 push_level 控制：仅当配置为 "all" 时才发送过程消息，
                                 // "result_only" 和 "disabled" 时不发过程消息。
-                                if let ExecEvent::ExecutorDirectOutput { bot_id, receive_id, receive_id_type, entry } = &ev {
+                                if let ExecEvent::DirectStreamMessage { bot_id, receive_id, receive_id_type, entry } = &ev {
                                     // 先查该 bot 的 push_level 配置
                                     let push_level = Self::get_bot_push_level(&db, *bot_id).await;
                                     if push_level != "all" {
@@ -109,8 +109,8 @@ impl FeishuPushService {
                                         None
                                     };
                                     // 使用无标题卡片样式发送过程消息，支持 markdown 格式（不显示"执行器输出"标题）
-                                    let Some(text) = format_output_event("", entry, tool_idx) else { continue };
-                                    let card_json = format_executor_process_card(&text);
+                                    let Some(text) = render_log_entry("", entry, tool_idx) else { continue };
+                                    let card_json = render_card_message(&text);
                                     let res = feishu_listener.send_card_raw(*bot_id, receive_id, receive_id_type, &card_json).await;
                                     if let Err(e) = res {
                                         warn!("[feishu-push] executor direct output (card) failed for bot {}: {}", bot_id, e);
@@ -229,8 +229,8 @@ impl FeishuPushService {
                                         } else {
                                             None
                                         };
-                                        let Some(msg_text) = format_output_event(task_id, entry, tool_idx) else { continue };
-                                        let card_json = format_executor_process_card(&msg_text);
+                                        let Some(msg_text) = render_log_entry(task_id, entry, tool_idx) else { continue };
+                                        let card_json = render_card_message(&msg_text);
                                         let res = feishu_listener.send_card_raw(*bot_id, receive_id, receive_id_type, &card_json).await;
                                         if let Err(e) = res {
                                             warn!("[feishu-push] output card send failed for bot {}: {}", bot_id, e);
@@ -332,7 +332,7 @@ impl FeishuPushService {
             }
             ExecEvent::Output { task_id, entry, .. } => {
                 // workspace push target 场景暂不做工具调用编号累积，传 None 保持原样
-                format_output_event(task_id, entry, None)
+                render_log_entry(task_id, entry, None)
             }
             ExecEvent::Finished { success, todo_title, executor, duration_secs, total_tokens, .. } => {
                 // 格式化时长（与 LoopFinished 风格一致）
@@ -378,8 +378,8 @@ impl FeishuPushService {
             }
             ExecEvent::Sync { .. } => None,
             ExecEvent::ReviewStatusChanged { .. } => None,
-            // ExecutorDirectResponse 由 FeishuPushService 直接发送，不走 format_event
-            ExecEvent::ExecutorDirectResponse { .. } => None,
+            // DirectCardMessage 由 FeishuPushService 直接发送，不走 format_event
+            ExecEvent::DirectCardMessage { .. } => None,
             // LoopFinished 事件的格式化消息 - 统计摘要
             ExecEvent::LoopFinished { loop_title, status, total_steps, completed_steps, failed_steps, duration_secs, total_tokens, .. } => {
                 let status_icon = match status.as_str() {
@@ -415,9 +415,9 @@ impl FeishuPushService {
             ExecEvent::WikiChatStarted { .. } => None,
             ExecEvent::WikiChatOutput { .. } => None,
             ExecEvent::WikiChatFinished { .. } => None,
-            // ExecutorDirectOutput 由 FeishuPushService 在循环顶部单独处理（直接发送），
+            // DirectStreamMessage 由 FeishuPushService 在循环顶部单独处理（直接发送），
             // 不走 format_event 的通用格式路径，故此处返回 None。
-            ExecEvent::ExecutorDirectOutput { .. } => None,
+            ExecEvent::DirectStreamMessage { .. } => None,
         }
     }
 }
@@ -459,7 +459,7 @@ fn output_event_prefix_and_label(log_type: &str) -> (&'static str, &'static str)
 ///
 /// `tool_call_index` 为工具调用的累积编号（从 1 开始），仅 tool_call 类型使用，
 /// 其他类型传 None 即可。
-fn format_output_event(
+fn render_log_entry(
     _task_id: &str,
     entry: &crate::models::ParsedLogEntry,
     tool_call_index: Option<usize>,
@@ -534,17 +534,11 @@ fn extract_command_from_json(json: &str) -> Option<String> {
     None
 }
 
-/// 将 ExecutorDirectResponse 格式化为卡片 JSON 字符串
-/// 使用统一卡片消息样式显示执行器输出
-fn format_executor_direct_card(content: &str) -> String {
-    // 不使用标题，只显示 markdown 内容（与过程消息卡片风格一致）
-    let card = CardBuilder::new().markdown(content).build();
-    render_card(&card, "")
-}
-
-/// 将执行器过程输出格式化为无标题卡片 JSON 字符串
-/// 用于执行过程中的流式输出，不显示标题，只显示内容（支持 markdown）
-fn format_executor_process_card(content: &str) -> String {
+/// 将文本内容渲染为无标题卡片 JSON 字符串
+///
+/// 统一卡片消息样式：不使用标题，只显示 markdown 内容。
+/// DirectCardMessage 和 DirectStreamMessage 两条私聊直达路径共用此函数。
+fn render_card_message(content: &str) -> String {
     let card = CardBuilder::new().markdown(content).build();
     render_card(&card, "")
 }
@@ -852,7 +846,7 @@ mod feishu_push_binding_tests {
 
     /// 工具调用带编号：传入 Some(N) 时，应显示 "🔧 工具 #N: 工具名"
     #[test]
-    fn test_format_output_event_tool_call_with_index() {
+    fn test_render_log_entry_tool_call_with_index() {
         let entry = crate::models::ParsedLogEntry {
             timestamp: "2024-01-01T00:00:00Z".to_string(),
             log_type: "tool_call".to_string(),
@@ -861,14 +855,14 @@ mod feishu_push_binding_tests {
             tool_name: Some("Bash".to_string()),
             tool_input_json: Some(r#"{"command":"ls -la"}"#.to_string()),
         };
-        let result = format_output_event("", &entry, Some(3)).unwrap();
+        let result = render_log_entry("", &entry, Some(3)).unwrap();
         assert!(result.contains("🔧 工具 #3: Bash"), "should contain tool index #3, got: {}", result);
         assert!(result.contains("ls -la"), "should contain command, got: {}", result);
     }
 
     /// 工具调用无编号：传入 None 时，保持原有格式 "🔧 工具名:"
     #[test]
-    fn test_format_output_event_tool_call_without_index() {
+    fn test_render_log_entry_tool_call_without_index() {
         let entry = crate::models::ParsedLogEntry {
             timestamp: "2024-01-01T00:00:00Z".to_string(),
             log_type: "tool_call".to_string(),
@@ -877,14 +871,14 @@ mod feishu_push_binding_tests {
             tool_name: Some("Bash".to_string()),
             tool_input_json: Some(r#"{"command":"ls -la"}"#.to_string()),
         };
-        let result = format_output_event("", &entry, None).unwrap();
+        let result = render_log_entry("", &entry, None).unwrap();
         assert!(result.contains("🔧 Bash:"), "should contain old format without index, got: {}", result);
         assert!(!result.contains("工具 #"), "should not contain tool index, got: {}", result);
     }
 
     /// 非 tool_call 类型：传入编号也不应该显示工具编号
     #[test]
-    fn test_format_output_event_non_tool_call_ignores_index() {
+    fn test_render_log_entry_non_tool_call_ignores_index() {
         let entry = crate::models::ParsedLogEntry {
             timestamp: "2024-01-01T00:00:00Z".to_string(),
             log_type: "thinking".to_string(),
@@ -893,7 +887,7 @@ mod feishu_push_binding_tests {
             tool_name: None,
             tool_input_json: None,
         };
-        let result = format_output_event("", &entry, Some(5)).unwrap();
+        let result = render_log_entry("", &entry, Some(5)).unwrap();
         assert!(result.starts_with("💭 "), "should keep thinking format, got: {}", result);
         assert!(!result.contains("工具 #"), "should not contain tool index for thinking, got: {}", result);
     }

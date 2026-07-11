@@ -94,7 +94,7 @@ pub(crate) fn create_pipeline_for_executor(executor: &dyn CodeExecutor) -> Optio
 ///
 /// pub(crate) 是为了让 message_debounce.rs 中的 executor 默认响应路径在 finalize
 /// pipeline 时也能复用同一套事件发送逻辑。
-pub(crate) fn emit_execution_event(
+pub(crate) fn emit_broadcast_event(
     event: &ExecutionEvent,
     tx: &broadcast::Sender<ExecEvent>,
     task_id: &str,
@@ -112,7 +112,7 @@ pub(crate) fn emit_execution_event(
     parsed
 }
 
-/// 尝试用 EventPipeline 解析一行，返回所有新事件的 ParsedLogEntry 列表
+/// 尝试用 EventPipeline 解析一行，返回所有新事件的 ParsedLogEntry 列表，并发送群广播事件
 ///
 /// 如果 EventPipeline 没有产生有效事件，返回空 Vec。
 /// workspace_id：执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标，
@@ -120,7 +120,7 @@ pub(crate) fn emit_execution_event(
 ///
 /// pub(crate) 是为了让 message_debounce.rs 中的 executor 默认响应路径复用同一套解析逻辑，
 /// 确保 executor 直连执行与 todo 执行产生完全相同格式的事件。
-pub(crate) fn try_parse_with_pipeline(
+pub(crate) fn parse_and_broadcast(
     pipeline: &mut EventPipeline,
     line: &str,
     tx: &broadcast::Sender<ExecEvent>,
@@ -153,7 +153,7 @@ pub(crate) fn try_parse_with_pipeline(
                     continue;
                 }
                 // 非 JSON 的普通 info 也转发
-                let parsed = emit_execution_event(event, tx, task_id, workspace_id);
+                let parsed = emit_broadcast_event(event, tx, task_id, workspace_id);
                 results.push(parsed);
             }
             ExecutionEvent::Error { .. }
@@ -168,7 +168,7 @@ pub(crate) fn try_parse_with_pipeline(
             | ExecutionEvent::Duration { .. }
             | ExecutionEvent::StepStart { .. }
             | ExecutionEvent::StepFinish { .. } => {
-                let parsed = emit_execution_event(event, tx, task_id, workspace_id);
+                let parsed = emit_broadcast_event(event, tx, task_id, workspace_id);
                 results.push(parsed);
             }
             // SessionEnd 由 pipeline.finalize() 生产，避免重复转发
@@ -176,7 +176,7 @@ pub(crate) fn try_parse_with_pipeline(
             | ExecutionEvent::Progress { .. } => {}
             // ModelSwitch 需转发到 DB，否则 completion 阶段 get_model_from_logs 找不到模型
             ExecutionEvent::ModelSwitch { .. } => {
-                let parsed = emit_execution_event(event, tx, task_id, workspace_id);
+                let parsed = emit_broadcast_event(event, tx, task_id, workspace_id);
                 results.push(parsed);
             }
             // 其他类型不转发
@@ -213,7 +213,7 @@ fn try_parse_stderr_with_pipeline(
 
     pipeline.events()[len_before..]
         .iter()
-        .map(|event| emit_execution_event(event, tx, task_id, workspace_id))
+        .map(|event| emit_broadcast_event(event, tx, task_id, workspace_id))
         .collect()
 }
 
@@ -286,7 +286,7 @@ where
             let len_before = pipeline.len();
             pipeline.finalize();
             for event in &pipeline.events()[len_before..] {
-                let parsed = emit_execution_event(event, &tx, &task_id, workspace_id);
+                let parsed = emit_broadcast_event(event, &tx, &task_id, workspace_id);
                 log_flusher.push(parsed).await;
             }
         })
@@ -344,7 +344,7 @@ where
         while let Ok(Some(line)) = reader.next_line().await {
             // 优先尝试用 EventPipeline 解析
             let parsed_list =
-                try_parse_with_pipeline(&mut pipeline, &line, &tx_clone, &tid, wid);
+                parse_and_broadcast(&mut pipeline, &line, &tx_clone, &tid, wid);
 
             if !parsed_list.is_empty() {
                 for parsed in parsed_list {
@@ -426,7 +426,7 @@ where
         let len_before = pipeline.len();
         pipeline.finalize();
         for event in &pipeline.events()[len_before..] {
-            let parsed = emit_execution_event(event, &tx_clone, &tid, wid);
+            let parsed = emit_broadcast_event(event, &tx_clone, &tid, wid);
             log_flusher_for_stdout.push(parsed).await;
         }
     }))

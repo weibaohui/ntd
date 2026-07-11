@@ -507,7 +507,7 @@ fn extract_session_from_logs(
 /// 根据执行结果决定发回飞书的最终内容。
 ///
 /// 成功时统一返回简洁的结束标志（"✅ <执行器名称> 处理完成"），不再重复输出
-/// result_text 或 stdout（过程消息已通过 ExecutorDirectOutput 实时推送，避免重复）。
+/// result_text 或 stdout（过程消息已通过 DirectStreamMessage 实时推送，避免重复）。
 /// 失败时返回错误消息 + 输出片段，方便诊断问题。
 /// 把这段决策从 `handle_default_response_executor` 主体抽成纯函数，是为了能直接单测
 /// 非零退出 + 多字节中文 stdout 的截断行为——原来内联时 `&stdout[..1500]` 按字节切片，
@@ -659,7 +659,7 @@ struct StdoutStreamResult {
 /// FeishuPushService 按 push_level 推送到飞书（"all" 时推送过程事件）。
 ///
 /// `direct_output_info` 为 Some 时，每条解析出的日志额外发一条
-/// ExecutorDirectOutput 直接推送给触发用户（一对一私聊场景），
+/// DirectStreamMessage 直接推送给触发用户（一对一私聊场景），
 /// 这样即使 push target 未配置该用户，用户也能在聊天中看到执行过程。
 async fn stream_executor_stdout<R: tokio::io::AsyncRead + Unpin + Send>(
     stdout_handle: Option<R>,
@@ -684,7 +684,7 @@ async fn stream_executor_stdout<R: tokio::io::AsyncRead + Unpin + Send>(
             direct_output_info.as_ref(), &mut result,
         );
     }
-    finalize_executor_pipeline(
+    finalize_pipeline_by_path(
         &mut pipeline, tx, task_id, workspace_id,
         direct_output_info.as_ref(), &mut result,
     );
@@ -715,24 +715,24 @@ fn process_executor_stdout_line(
 ) {
     result.raw_stdout.push_str(line);
     result.raw_stdout.push('\n');
-    // 一对一私聊场景：手动解析，只发送 ExecutorDirectOutput，不调用 try_parse_with_pipeline（避免发送 Output 导致重复）
+    // 一对一私聊场景：手动解析，只发送 DirectStreamMessage，不调用 parse_and_broadcast（避免发送 Output 导致重复）
     if let Some(info) = direct_output {
-        let parsed_list = parse_pipeline_manually(pipeline, line);
+        let parsed_list = parse_for_direct_stream(pipeline, line);
         if !parsed_list.is_empty() {
             for entry in &parsed_list {
-                send_executor_direct_output(tx, info, entry.clone());
+                emit_direct_stream(tx, info, entry.clone());
             }
             result.logs.extend(parsed_list);
             return;
         }
         // 回退到 executor 自定义解析
         let Some(parsed) = executor.parse_output_line(line) else { return };
-        send_executor_direct_output(tx, info, parsed.clone());
+        emit_direct_stream(tx, info, parsed.clone());
         result.logs.push(parsed);
         return;
     }
-    // 非私聊场景：走标准流程，调用 try_parse_with_pipeline 发送 Output 事件
-    let parsed_list = log_capture::try_parse_with_pipeline(
+    // 非私聊场景：走标准流程，调用 parse_and_broadcast 发送 Output 事件
+    let parsed_list = log_capture::parse_and_broadcast(
         pipeline, line, tx, task_id, workspace_id,
     );
     if !parsed_list.is_empty() {
@@ -754,9 +754,9 @@ fn process_executor_stdout_line(
 
 /// 手动解析 pipeline：只返回解析结果，不发送 Output 事件（由调用方决定发送方式）
 ///
-/// 与 try_parse_with_pipeline 的区别：后者会发送 ExecEvent::Output，
+/// 与 parse_and_broadcast 的区别：后者会发送 ExecEvent::Output，
 /// 前者只返回 ParsedLogEntry，用于私聊场景避免重复发送。
-fn parse_pipeline_manually(
+fn parse_for_direct_stream(
     pipeline: &mut EventPipeline,
     line: &str,
 ) -> Vec<ParsedLogEntry> {
@@ -772,7 +772,7 @@ fn parse_pipeline_manually(
     }
     let mut results = Vec::new();
     for event in &new_events {
-        // 只处理对用户有价值的事件类型（与 send_executor_direct_output 的过滤规则一致）
+        // 只处理对用户有价值的事件类型（与 emit_direct_stream 的过滤规则一致）
         match event {
             crate::execution_events::ExecutionEvent::Info { message } => {
                 if message.starts_with('{') || message.is_empty() {
@@ -789,7 +789,7 @@ fn parse_pipeline_manually(
                 let parsed = crate::execution_events::DbLogEntry::from_event_to_parsed_log_entry(event);
                 results.push(parsed);
             }
-            // 跳过内部状态事件（与 send_executor_direct_output 的过滤规则一致）
+            // 跳过内部状态事件（与 emit_direct_stream 的过滤规则一致）
             crate::execution_events::ExecutionEvent::SessionStart { .. }
             | crate::execution_events::ExecutionEvent::SessionEnd { .. }
             | crate::execution_events::ExecutionEvent::StepStart { .. }
@@ -808,7 +808,7 @@ fn parse_pipeline_manually(
 }
 
 /// finalize pipeline 并收集剩余事件（SessionEnd 等）
-fn finalize_executor_pipeline(
+fn finalize_pipeline_by_path(
     pipeline: &mut EventPipeline,
     tx: &broadcast::Sender<ExecEvent>,
     task_id: &str,
@@ -819,7 +819,7 @@ fn finalize_executor_pipeline(
     let len_before = pipeline.len();
     pipeline.finalize();
     for event in &pipeline.events()[len_before..] {
-        // 一对一私聊场景：手动转换，只发送 ExecutorDirectOutput
+        // 一对一私聊场景：手动转换，只发送 DirectStreamMessage
         if let Some(info) = direct_output {
             match event {
                 crate::execution_events::ExecutionEvent::Thinking { .. }
@@ -828,7 +828,7 @@ fn finalize_executor_pipeline(
                 | crate::execution_events::ExecutionEvent::Assistant { .. }
                 | crate::execution_events::ExecutionEvent::Result { .. } => {
                     let parsed = crate::execution_events::DbLogEntry::from_event_to_parsed_log_entry(event);
-                    send_executor_direct_output(tx, info, parsed.clone());
+                    emit_direct_stream(tx, info, parsed.clone());
                     result.logs.push(parsed);
                 }
                 _ => {}
@@ -836,12 +836,12 @@ fn finalize_executor_pipeline(
             continue;
         }
         // 非私聊场景：走标准流程，发送 Output 事件
-        let parsed = log_capture::emit_execution_event(event, tx, task_id, workspace_id);
+        let parsed = log_capture::emit_broadcast_event(event, tx, task_id, workspace_id);
         result.logs.push(parsed);
     }
 }
 
-/// 发送 ExecutorDirectOutput 事件：把单条日志直接推送给触发用户
+/// 发送 DirectStreamMessage 事件：把单条日志直接推送给触发用户
 ///
 /// 与 Output 事件的区别：绕过 push target 过滤和 workspace 隔离，
 /// 一对一直接发送，用户在聊天中就能看到执行过程。
@@ -849,7 +849,7 @@ fn finalize_executor_pipeline(
 /// 过滤规则（参考 cc-connect 的简洁风格）：
 /// - 保留：thinking（思考）、tool_call（工具调用）、tool_result（工具结果）、assistant/text（助手回复）、result（最终结果）
 /// - 跳过：session_start/session_end、step_start/step_finish、tokens、model_switch、info、error（内部状态事件不打扰用户）
-fn send_executor_direct_output(
+fn emit_direct_stream(
     tx: &broadcast::Sender<ExecEvent>,
     info: &DirectOutputInfo,
     entry: ParsedLogEntry,
@@ -861,7 +861,7 @@ fn send_executor_direct_output(
         "info" | "error" | "stderr" | "warning" => return,
         _ => {}
     }
-    let _ = tx.send(ExecEvent::ExecutorDirectOutput {
+    let _ = tx.send(ExecEvent::DirectStreamMessage {
         bot_id: info.bot_id,
         receive_id: info.receive_id.clone(),
         receive_id_type: info.receive_id_type.clone(),
@@ -963,12 +963,12 @@ impl MessageDebounce {
     ) -> Result<crate::executor_service::ExecutionResult, Option<String>> {
         let executor_type = executor_type.unwrap_or("claudecode");
 
-        // 统一的飞书回复出口：开始/结束/错误三类消息都走 ExecutorDirectResponse，
+        // 统一的飞书回复出口：开始/结束/错误三类消息都走 DirectCardMessage，
         // FeishuPushService 会绕过 workspace 过滤直接 send_raw 发回用户（feishu_push.rs:65）。
         // 每次 clone receive_id：原来函数末尾一次性 move，改成多次 clone 语义不变，
         // 换来能在多个分支复用同一个发送出口。
         let send_msg = |content: String| {
-            let _ = tx.send(ExecEvent::ExecutorDirectResponse {
+            let _ = tx.send(ExecEvent::DirectCardMessage {
                 bot_id,
                 receive_id: receive_id.clone(),
                 receive_id_type: receive_id_type.to_string(),
