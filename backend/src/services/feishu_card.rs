@@ -584,6 +584,155 @@ pub fn help_groups() -> Vec<HelpGroup> {
     ]
 }
 
+// ============================================================================
+// 统一卡片消息类型 (用于替代纯文本消息)
+// ============================================================================
+
+/// 卡片状态颜色，对应飞书卡片的 header template
+#[derive(Debug, Clone, Copy)]
+pub enum CardMessageStatus {
+    Success,  // green  - 操作成功
+    Error,    // red    - 操作失败
+    Warning,  // orange - 警告
+    Info,     // blue   - 信息
+    Loading,  // grey   - 加载中
+}
+
+/// 统一的消息卡片配置
+pub struct CardMessageConfig {
+    /// 消息状态，决定 header 颜色
+    pub status: CardMessageStatus,
+    /// 消息标题
+    pub title: String,
+    /// 消息内容（支持 Markdown）
+    pub content: String,
+    /// 底部操作按钮（可选）
+    pub actions: Vec<CardButton>,
+    /// 底部提示文本（可选）
+    pub footer: Option<String>,
+}
+
+impl CardMessageConfig {
+    /// 获取状态对应的颜色
+    pub fn status_color(&self) -> &'static str {
+        match self.status {
+            CardMessageStatus::Success => "green",
+            CardMessageStatus::Error => "red",
+            CardMessageStatus::Warning => "orange",
+            CardMessageStatus::Info => "blue",
+            CardMessageStatus::Loading => "grey",
+        }
+    }
+
+    /// 获取状态对应的图标 emoji
+    pub fn status_icon(&self) -> &'static str {
+        match self.status {
+            CardMessageStatus::Success => "✅",
+            CardMessageStatus::Error => "❌",
+            CardMessageStatus::Warning => "⚠️",
+            CardMessageStatus::Info => "ℹ️",
+            CardMessageStatus::Loading => "⏳",
+        }
+    }
+}
+
+/// 统一消息卡片的流畅构建器
+pub struct CardMessageBuilder {
+    config: CardMessageConfig,
+}
+
+impl CardMessageBuilder {
+    /// 创建新的构建器
+    pub fn new(status: CardMessageStatus, title: &str, content: &str) -> Self {
+        Self {
+            config: CardMessageConfig {
+                status,
+                title: title.to_string(),
+                content: content.to_string(),
+                actions: Vec::new(),
+                footer: None,
+            },
+        }
+    }
+
+    /// 添加操作按钮
+    pub fn add_action(mut self, text: &str, action: &str) -> Self {
+        self.config.actions.push(CardButton::default_btn(text, action));
+        self
+    }
+
+    /// 添加主操作按钮（primary 样式）
+    pub fn add_primary_action(mut self, text: &str, action: &str) -> Self {
+        self.config.actions.push(CardButton::primary(text, action));
+        self
+    }
+
+    /// 设置底部提示
+    pub fn set_footer(mut self, footer: &str) -> Self {
+        self.config.footer = Some(footer.to_string());
+        self
+    }
+
+    /// 构建卡片
+    pub fn build(&self) -> Card {
+        let mut builder = CardBuilder::new();
+
+        // 构建标题（带状态图标）
+        let title = format!("{} {}", self.config.status_icon(), self.config.title);
+
+        // 添加 Header
+        builder = builder.title(&title, self.config.status_color());
+
+        // 添加内容（Markdown 格式）
+        builder = builder.markdown(&self.config.content);
+
+        // 添加操作按钮（如果有）
+        if !self.config.actions.is_empty() {
+            builder = builder.divider();
+            builder = builder.buttons(self.config.actions.clone());
+        }
+
+        // 添加底部提示（如果有）
+        if let Some(ref footer) = self.config.footer {
+            builder = builder.note(footer);
+        }
+
+        builder.build()
+    }
+}
+
+/// 构建成功消息卡片
+pub fn build_success_card(title: &str, content: &str) -> Card {
+    CardMessageBuilder::new(CardMessageStatus::Success, title, content).build()
+}
+
+/// 构建错误消息卡片
+pub fn build_error_card(title: &str, content: &str) -> Card {
+    CardMessageBuilder::new(CardMessageStatus::Error, title, content).build()
+}
+
+/// 构建警告消息卡片
+pub fn build_warning_card(title: &str, content: &str) -> Card {
+    CardMessageBuilder::new(CardMessageStatus::Warning, title, content).build()
+}
+
+/// 构建信息消息卡片
+pub fn build_info_card(title: &str, content: &str) -> Card {
+    CardMessageBuilder::new(CardMessageStatus::Info, title, content).build()
+}
+
+/// 构建加载中消息卡片
+pub fn build_loading_card(title: &str, content: &str) -> Card {
+    CardMessageBuilder::new(CardMessageStatus::Loading, title, content).build()
+}
+
+/// 构建带操作的消息卡片
+pub fn build_action_card(title: &str, content: &str, action_text: &str, action: &str) -> Card {
+    CardMessageBuilder::new(CardMessageStatus::Info, title, content)
+        .add_primary_action(action_text, action)
+        .build()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -677,5 +826,73 @@ mod tests {
         assert!(json.contains("\"header\""));
         assert!(json.contains("\"elements\""));
         assert!(json.contains("NTD 帮助"));
+    }
+
+    // ========== 统一卡片消息测试 ==========
+
+    #[test]
+    fn test_build_success_card() {
+        let card = build_success_card("操作成功", "任务已完成");
+        assert!(card.header.is_some());
+        let json = render_card(&card, "");
+        assert!(json.contains("✅"));
+        assert!(json.contains("操作成功"));
+        assert!(json.contains("\"template\":\"green\""));
+    }
+
+    #[test]
+    fn test_build_error_card() {
+        let card = build_error_card("操作失败", "发生了错误");
+        assert!(card.header.is_some());
+        let json = render_card(&card, "");
+        assert!(json.contains("❌"));
+        assert!(json.contains("\"template\":\"red\""));
+    }
+
+    #[test]
+    fn test_build_warning_card() {
+        let card = build_warning_card("警告", "请注意");
+        assert!(card.header.is_some());
+        let json = render_card(&card, "");
+        assert!(json.contains("⚠️"));
+        assert!(json.contains("\"template\":\"orange\""));
+    }
+
+    #[test]
+    fn test_build_info_card() {
+        let card = build_info_card("提示", "信息如下");
+        assert!(card.header.is_some());
+        let json = render_card(&card, "");
+        assert!(json.contains("ℹ️"));
+        assert!(json.contains("\"template\":\"blue\""));
+    }
+
+    #[test]
+    fn test_card_message_builder_with_action() {
+        let card = CardMessageBuilder::new(CardMessageStatus::Info, "标题", "内容")
+            .add_action("取消", "cmd:/cancel")
+            .add_primary_action("确认", "cmd:/confirm")
+            .set_footer("这是一条提示")
+            .build();
+
+        assert!(card.header.is_some());
+        let json = render_card(&card, "");
+        // 验证内容包含按钮
+        assert!(json.contains("取消"));
+        assert!(json.contains("确认"));
+        assert!(json.contains("这是一条提示"));
+    }
+
+    #[test]
+    fn test_card_message_status_icon() {
+        let config = CardMessageConfig {
+            status: CardMessageStatus::Success,
+            title: "Test".to_string(),
+            content: "Content".to_string(),
+            actions: vec![],
+            footer: None,
+        };
+        assert_eq!(config.status_icon(), "✅");
+        assert_eq!(config.status_color(), "green");
     }
 }
