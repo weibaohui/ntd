@@ -1203,7 +1203,8 @@ impl MessageDebounce {
             executor_type,
             content.chars().take(200).collect::<String>()
         );
-        send_msg(content);
+        // 注释掉发送给飞书：最后一条 assistant 消息已经是结论，FeiShu 推送会导致重复
+        // send_msg(content);
 
         // 执行成功时从日志中提取 session_id 并持久化到数据库，
         // 下次私聊时可直接 resume 该 session，实现多轮对话上下文保持。

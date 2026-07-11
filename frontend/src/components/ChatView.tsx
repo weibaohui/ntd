@@ -257,13 +257,6 @@ export function ChatView({ logs, isRunning }: ChatViewProps) {
         {messages.map((msg, idx) => (
           <ChatBubble key={idx} message={msg} />
         ))}
-        {isRunning && (
-          <div className="chat-typing-indicator">
-            <div className="chat-typing-dot" />
-            <div className="chat-typing-dot" />
-            <div className="chat-typing-dot" />
-          </div>
-        )}
       </div>
     </div>
   );
