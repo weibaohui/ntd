@@ -491,7 +491,8 @@ fn extract_command_from_json(json: &str) -> Option<String> {
 /// 将 ExecutorDirectResponse 格式化为卡片 JSON 字符串
 /// 使用统一卡片消息样式显示执行器输出
 fn format_executor_direct_card(content: &str) -> String {
-    let card = build_info_card("执行器输出", content);
+    // 不使用标题，只显示 markdown 内容（与过程消息卡片风格一致）
+    let card = CardBuilder::new().markdown(content).build();
     render_card(&card, "")
 }
 
