@@ -1892,73 +1892,77 @@ impl FeishuListener {
         }
     }
 
-    /// 处理飞书卡片按钮点击回调
-    /// card.callback 消息的 content 包含 action value，如 "nav:/help session"
+    /// 处理飞书卡片按钮点击回调。
+    /// card_callback 消息的 content 是 action value，按前缀分三种处理：
+    /// - `nav:/help <group>`：原地 patch 原卡片，切到对应分组；
+    /// - `cmd:/<command>`：转成命令文本，复用 handle_message 分发链路执行，
+    ///   等价于点击者在会话里发送了 `/<command>`；
+    /// - `act:/<action>`：执行动作（暂未实现，仅记录日志）。
     async fn handle_card_callback(context: ListenerMessageContext<'_>, msg: &ChannelMessage) {
-        let FeishuCommandContext {
-            credentials,
-            token_manager,
-            bot_id,
-            sender,
-            channel: _,
-            message_id,
-            ..
-        } = FeishuCommandContext {
-            db: context.db,
-            credentials: context.credentials,
-            token_manager: context.token_manager,
-            bot_id: context.bot_id,
-            chat_type: "p2p", // 卡片回调默认用 p2p
-            sender: &msg.sender,
-            channel: &msg.channel,
-            message_id: &msg.id,
-            content: &msg.content,
-            reaction_id: None,
-        };
-
         let action = msg.content.trim();
 
-        // nav: 前缀 - 导航到指定 help 页面
+        // nav: 前缀 - 导航到指定 help 页面，原地 patch 原卡片。
+        // 本分支只需 patch_card 的几个入参，直接从 context/msg 取数，不必构造 FeishuCommandContext；
+        // 这样也避免借住 context，让下面的 cmd: 分支能把 context move 给 handle_message。
         if let Some(group) = action.strip_prefix("nav:/help ") {
             let group_key = group.trim().to_lowercase();
             let card = crate::services::feishu_card::build_help_card(
                 &group_key,
                 &crate::services::feishu_card::help_groups(),
             );
-            let session_key = format!("feishu:{}", sender);
+            let session_key = format!("feishu:{}", msg.sender);
             let card_json = crate::services::feishu_card::render_card(&card, &session_key);
 
             // 使用 patch 更新原卡片消息
             if let Err(e) = Self::patch_card(
-                credentials,
-                token_manager,
-                bot_id,
-                message_id,
+                context.credentials,
+                context.token_manager,
+                context.bot_id,
+                &msg.id,
                 &card_json,
             ).await {
-                tracing::error!("[feishu:{}] card callback patch failed: {}", bot_id, e);
+                tracing::error!("[feishu:{}] card callback patch failed: {}", context.bot_id, e);
             } else {
-                tracing::info!("[feishu:{}] card updated for nav:/help {}", bot_id, group_key);
+                tracing::info!("[feishu:{}] card updated for nav:/help {}", context.bot_id, group_key);
             }
             return;
         }
 
-        // cmd: 前缀 - 作为命令处理
-        if let Some(cmd) = action.strip_prefix("cmd:/") {
-            tracing::info!("[feishu:{}] card cmd: /{}", bot_id, cmd);
-            // TODO: 根据命令类型调用对应的处理函数
-            // 目前只是记录日志
+        // cmd: 前缀 - 把卡片点击转成命令执行。
+        // 构造一条虚拟命令消息复用 handle_message 的完整分发链路（内置命令 try_route_builtin_command
+        // + 自定义规则 route_slash_or_default_response），与用户在会话里手动发送该命令效果一致。
+        if let Some(cmd_text) = Self::parse_card_command(action) {
+            tracing::info!(
+                "[feishu:{}] card cmd → redispatch as message: {:?}",
+                context.bot_id, cmd_text
+            );
+            // chat_type 改成 p2p：避免 handle_message 又把这条消息当作 card_callback 递归处理；
+            // sender/channel/id 沿用卡片回调，让命令处理函数的回复落到原会话、指向点击者。
+            let mut cmd_msg = msg.clone();
+            cmd_msg.content = cmd_text;
+            cmd_msg.chat_type = Some("p2p".to_string());
+            // handle_message → handle_card_callback → handle_message 是静态递归，
+            // async fn 递归必须 Box::pin 引入间接层，否则 future 大小无限无法编译。
+            // 运行时 cmd_msg.chat_type 已是 p2p，不会再进 card_callback 分支，实际只递归一层。
+            Box::pin(Self::handle_message(context, &cmd_msg)).await;
             return;
         }
 
-        // act: 前缀 - 执行动作
+        // act: 前缀 - 执行动作（暂未实现，仅记录日志）
         if let Some(act) = action.strip_prefix("act:/") {
-            tracing::info!("[feishu:{}] card action: /{}", bot_id, act);
-            // TODO: 执行动作
+            tracing::info!("[feishu:{}] card action: /{}", context.bot_id, act);
             return;
         }
 
-        tracing::warn!("[feishu:{}] unknown card action: {}", bot_id, action);
+        tracing::warn!("[feishu:{}] unknown card action: {}", context.bot_id, action);
+    }
+
+    /// 解析卡片回调 action 里的命令文本，供 handle_card_callback 的 cmd: 分支使用。
+    /// `cmd:/new` → `Some("/new")`；`cmd:/bind foo` → `Some("/bind foo")`（保留参数）；
+    /// 非 `cmd:/` 前缀（nav:/act:/未知/空）→ None。
+    /// 抽成纯函数便于单测命令文本拼装，也让 handle_card_callback 的 cmd: 分支保持简洁。
+    fn parse_card_command(action: &str) -> Option<String> {
+        action.strip_prefix("cmd:/").map(|cmd| format!("/{}", cmd))
     }
 
     /// Patch an existing interactive card message with new content.
@@ -2471,6 +2475,28 @@ mod tests {
         let parsed = FeishuListener::parse_slash_command("/todo").unwrap();
         assert_eq!(parsed.command, "/todo");
         assert_eq!(parsed.body, "");
+    }
+
+    #[test]
+    fn test_parse_card_command_extracts_command_text() {
+        // 无参命令：cmd:/new → /new
+        assert_eq!(
+            FeishuListener::parse_card_command("cmd:/new"),
+            Some("/new".to_string())
+        );
+        // 带参命令：参数原样保留，交由后续 parse_slash_command 解析
+        assert_eq!(
+            FeishuListener::parse_card_command("cmd:/bind my-project"),
+            Some("/bind my-project".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_card_command_returns_none_for_non_cmd_prefix() {
+        // nav:/act:/未知前缀/空串都不是命令点击，返回 None
+        assert_eq!(FeishuListener::parse_card_command("nav:/help common"), None);
+        assert_eq!(FeishuListener::parse_card_command("act:/delete-mode cancel"), None);
+        assert_eq!(FeishuListener::parse_card_command(""), None);
     }
 
     #[test]

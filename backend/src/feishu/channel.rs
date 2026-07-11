@@ -240,9 +240,11 @@ impl FeishuChannelService {
                             );
 
                             // 将卡片事件转换为 ChannelMessage 格式并发送
+                            // card.action.trigger 的 operator.open_id 是平铺字段（见 CardActionOperator），
+                            // 与 message 事件的 sender_id.open_id 嵌套结构不同，取值路径少一层。
                             let sender = event.event.operator
                                 .as_ref()
-                                .and_then(|op| op.sender_id.open_id.clone())
+                                .and_then(|op| op.open_id.clone())
                                 .unwrap_or_default();
                             let chat_id = event.event.context
                                 .as_ref()

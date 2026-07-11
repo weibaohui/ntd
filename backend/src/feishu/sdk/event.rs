@@ -141,7 +141,24 @@ pub struct P2ImCardActionTriggerV1Data {
     #[serde(default)]
     pub context: Option<CardActionContext>,
     #[serde(default)]
-    pub operator: Option<EventSender>,
+    pub operator: Option<CardActionOperator>,
+}
+
+/// 飞书 card.action.trigger 事件里的 operator（点击卡片的用户）。
+/// 注意：与 message 事件的 EventSender 不同——这里 open_id / user_id / union_id 是**平铺**字段，
+/// 而非嵌套在 sender_id 下。飞书这两类事件的 operator schema 不同，若复用 EventSender 会因缺少
+/// sender_id 字段报 `missing field sender_id`，导致整个事件反序列化失败、卡片点击静默失效。
+/// 字段一律 Option + serde default，保证飞书增删字段也不会让反序列化失败。
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CardActionOperator {
+    #[serde(default)]
+    pub open_id: Option<String>,
+    #[serde(default)]
+    pub user_id: Option<String>,
+    #[serde(default)]
+    pub union_id: Option<String>,
+    #[serde(default)]
+    pub tenant_key: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -337,7 +354,13 @@ impl EventDispatcherHandlerBuilder {
     where
         F: Fn(P2ImCardActionTriggerV1) + 'static + Sync + Send,
     {
-        let key = "p2.im.card.action.trigger_v1".to_string();
+        // 飞书长连接推送「点击卡片按钮」回调时，header.event_type 的实际值是
+        // `card.action.trigger`（不带 `im.` 前缀、也不带 `_v1` 后缀）。
+        // do_without_validation 按 `{schema}.{event_type}` 拼出 handler_name 查表分发，
+        // 因此这里的 key 必须是 `p2.card.action.trigger`，与线上事件对齐；
+        // 早先误写成 `p2.im.card.action.trigger_v1` 会导致事件命中
+        // "No event processor found" 分支被丢弃，表现为点击卡片菜单无任何反应。
+        let key = "p2.card.action.trigger".to_string();
         if self.processor_map.contains_key(&key) {
             return Err(format!("processor already registered, type: {key}"));
         }
@@ -350,5 +373,71 @@ impl EventDispatcherHandlerBuilder {
         EventDispatcherHandler {
             processor_map: self.processor_map,
         }
+    }
+}
+
+#[cfg(test)]
+// 单测里用 .expect() 表达「注册/分发必须成功」是合理的失败模式，故放行 expect_used。
+// 项目整体策略见 Cargo.toml [lints.clippy]：expect_used 默认 warn，CI `-D warnings` 会升级为 deny，
+// 注释虽声明单测除外，但配置未落地，故沿用现有 test 模块的 allow 写法（参考 config.rs）。
+#[allow(clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    /// 复现飞书卡片点击事件的分发链路。
+    /// 飞书长连接推送「点击卡片按钮」时，header.event_type 的实际值是 `card.action.trigger`
+    /// （无 `im.` 前缀、无 `_v1` 后缀）。do_without_validation 按 `{schema}.{event_type}` 拼出
+    /// handler_name 查 processor_map 分发，因此注册 key 必须是 `p2.card.action.trigger`，
+    /// 否则事件被 "No event processor found" 丢弃，表现为点击 /help 菜单卡片无任何反应。
+    /// 本测试用与线上一致的 event_type 构造 payload，断言处理器被真正调用。
+    #[test]
+    fn test_do_without_validation_dispatches_card_action_trigger() {
+        // 用 AtomicBool 捕获处理器是否被调用。
+        // 相比在闭包里直接 assert，它能清晰区分「事件没被分发」与「分发后反序列化失败」两种失败路径。
+        let called = Arc::new(AtomicBool::new(false));
+        let called_clone = called.clone();
+
+        let handler = EventDispatcherHandler::builder()
+            .register_p2_im_card_action_trigger_v1(move |event| {
+                // operator.open_id 必须被正确解析为平铺字段（而非 sender_id 嵌套），
+                // 覆盖生产环境飞书推送的真实结构。
+                assert_eq!(
+                    event
+                        .event
+                        .operator
+                        .as_ref()
+                        .and_then(|op| op.open_id.as_deref()),
+                    Some("ou_test_user"),
+                    "operator.open_id 未正确解析（应为平铺字段）"
+                );
+                called_clone.store(true, Ordering::SeqCst);
+            })
+            .expect("register card action handler must succeed")
+            .build();
+
+        // 构造飞书实际推送的 card.action.trigger 事件 payload，覆盖与 message 事件不同的结构点：
+        // - schema + header.event_type 决定分发 key（`card.action.trigger`，无 `im.`/`_v1`）；
+        // - event.operator.open_id 是**平铺**字段，而非 message 事件的 sender_id.open_id 嵌套结构，
+        //   若复用 EventSender 会报 `missing field sender_id`，故此处必须用平铺 operator 校验。
+        let payload = br#"{
+            "schema": "2.0",
+            "header": { "event_type": "card.action.trigger" },
+            "event": {
+                "action": { "tag": "button", "value": { "action": "nav:/help common" } },
+                "context": { "open_message_id": "om1", "open_chat_id": "oc1" },
+                "operator": { "open_id": "ou_test_user" }
+            }
+        }"#;
+
+        handler
+            .do_without_validation(payload)
+            .expect("dispatch should not error");
+
+        assert!(
+            called.load(Ordering::SeqCst),
+            "card.action.trigger 事件未被分发到处理器（注册 key 与飞书 event_type 不匹配）"
+        );
     }
 }
