@@ -186,6 +186,14 @@ pub async fn update_blackboard_config(
         );
     }
 
+    // enabled 变更为 false 时，取消已调度的防抖 timer，确保黑板彻底停止工作。
+    // 已在队列中的 pending_record_ids 保留不清理（用户重新启用后继续处理）；
+    // timer 逻辑取消（清除状态 + 标记未运行）后，即使 timer task 自然到期发送 flush 消息，
+    // handle_flush_msg 的 enabled 检查也会拦截，不会派生 worker 执行 wiki 维护。
+    if let Some(false) = req.enabled {
+        crate::services::blackboard_debouncer::cancel_timer(workspace_id).await;
+    }
+
     // debounce_secs 变更时，根据已计时长决定：超则立即触发 flush，未超则继续用新阈值计时
     if let Some(new_secs) = req.blackboard_debounce_secs {
         let clamped = new_secs.max(10);

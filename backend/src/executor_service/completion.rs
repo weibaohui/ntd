@@ -669,6 +669,27 @@ async fn handle_flush_msg(
 ) {
     let ws_id = msg.workspace_id;
 
+    // 优先检查黑板功能总开关：关闭时直接返回，不执行任何 wiki 维护操作。
+    // 这是第二道防线（第一道在 push_pending_record 阻止新记录入队）：
+    // 即使 timer 在用户禁用前已调度、在禁用后自然到期发送了 flush 消息，也在此拦截。
+    match db.get_blackboard_config(ws_id).await {
+        Ok(Some(cfg)) if !cfg.enabled => {
+            tracing::debug!(
+                "黑板功能已禁用，跳过 flush 消息处理: workspace_id={}",
+                ws_id
+            );
+            return;
+        }
+        Err(e) => {
+            // DB 错误时 warn 并继续处理（降级策略：假定启用，避免配置读取临时失败导致黑板永久卡死）
+            tracing::warn!(
+                "读取黑板配置失败（继续处理 flush）: workspace_id={}, error={}",
+                ws_id, e
+            );
+        }
+        _ => {}
+    }
+
     // 确保 workspace 在已知列表中
     if !known_workspaces.contains(&ws_id) {
         known_workspaces.push(ws_id);
