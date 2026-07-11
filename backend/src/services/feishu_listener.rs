@@ -288,6 +288,9 @@ impl FeishuListener {
         if prep.content == "/sethome" { Self::handle_sethome(mk_ctx()).await; return true; }
         if prep.content == "/feishupush" { Self::handle_feishupush(mk_ctx()).await; return true; }
         if prep.content == "/list" { Self::handle_list(mk_ctx()).await; return true; }
+        if prep.content == "/help" || prep.content.starts_with("/help ") {
+            Self::handle_help(mk_ctx()).await; return true;
+        }
         // /bind 支持空参数（展示列表）或带参数（绑定指定项目）
         if prep.content == "/bind" || prep.content.starts_with("/bind ") {
             Self::handle_bind(mk_ctx()).await; return true;
@@ -1690,6 +1693,67 @@ impl FeishuListener {
         }
     }
 
+    /// Handle /help — show interactive help card with tabbed navigation.
+    /// 点击 Tab 按钮会触发 card.action.trigger 事件，由飞书平台回调处理。
+    async fn handle_help(context: FeishuCommandContext<'_>) {
+        let FeishuCommandContext {
+            credentials,
+            token_manager,
+            bot_id,
+            chat_type: _,
+            sender,
+            channel: _,
+            message_id,
+            content,
+            reaction_id,
+            ..
+        } = context;
+
+        // 解析当前分组，默认为 "common"
+        let current_group = content
+            .strip_prefix("/help ")
+            .unwrap_or("")
+            .trim()
+            .to_lowercase();
+
+        // 构建 Help 卡片
+        let card = crate::services::feishu_card::build_help_card(
+            &current_group,
+            &crate::services::feishu_card::help_groups(),
+        );
+
+        // 生成 session_key 用于标识本次会话
+        let session_key = format!("feishu:{}", sender);
+
+        // 渲染卡片 JSON
+        let card_json = crate::services::feishu_card::render_card(&card, &session_key);
+
+        // 发送回复消息（使用 reply API）
+        if let Err(e) = Self::reply_card(
+            credentials,
+            token_manager,
+            bot_id,
+            message_id,
+            &card_json,
+        ).await {
+            tracing::error!("[feishu:{}] /help send card failed: {}", bot_id, e);
+            // 降级为纯文本
+            Self::send_text(
+                credentials,
+                token_manager,
+                bot_id,
+                sender,
+                "open_id",
+                "📋 NTD 帮助\n\n发送 /help 查看所有可用命令。",
+            )
+            .await;
+        }
+
+        if let Some(rid) = reaction_id {
+            Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+        }
+    }
+
     /// Send a plain text message to a Feishu recipient.
     async fn send_text(
         credentials: &DashMap<i64, (String, String, String)>,
@@ -1744,6 +1808,105 @@ impl FeishuListener {
                 tracing::error!("[feishu:{}] send_text request failed: {e}", bot_id);
             }
         }
+    }
+
+    /// Send an interactive card message to a Feishu recipient.
+    #[allow(dead_code)]
+    async fn send_card(
+        credentials: &DashMap<i64, (String, String, String)>,
+        token_manager: &Arc<TokenManager>,
+        bot_id: i64,
+        receive_id: &str,
+        receive_id_type: &str,
+        card_json: &str,
+    ) -> anyhow::Result<()> {
+        let base_url = Self::base_url(credentials, bot_id)
+            .ok_or_else(|| anyhow::anyhow!("no base_url for bot {}", bot_id))?;
+        let token = Self::get_tenant_token(credentials, token_manager, bot_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no token for bot {}", bot_id))?;
+
+        let client = reqwest::Client::new();
+        let url = format!(
+            "{}/open-apis/im/v1/messages?receive_id_type={}",
+            base_url, receive_id_type
+        );
+
+        // 飞书 Interactive Card 的 content 直接是 JSON 字符串，不需要额外的嵌套
+        let body = serde_json::json!({
+            "receive_id": receive_id,
+            "msg_type": "interactive",
+            "content": card_json
+        });
+
+        let res = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("send_card request failed: {}", e))?;
+
+        let status = res.status();
+        if !status.is_success() {
+            let body: serde_json::Value = res.json().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("send_card failed: {} {:?}", status, body));
+        }
+
+        tracing::debug!(
+            "[feishu:{}] send_card ok to {} ({})",
+            bot_id, receive_id, receive_id_type
+        );
+        Ok(())
+    }
+
+    /// Reply to a message with an interactive card.
+    async fn reply_card(
+        credentials: &DashMap<i64, (String, String, String)>,
+        token_manager: &Arc<TokenManager>,
+        bot_id: i64,
+        message_id: &str,
+        card_json: &str,
+    ) -> anyhow::Result<()> {
+        let base_url = Self::base_url(credentials, bot_id)
+            .ok_or_else(|| anyhow::anyhow!("no base_url for bot {}", bot_id))?;
+        let token = Self::get_tenant_token(credentials, token_manager, bot_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no token for bot {}", bot_id))?;
+
+        let client = reqwest::Client::new();
+        // 使用 reply API 而不是 create
+        let url = format!(
+            "{}/open-apis/im/v1/messages/{}/reply",
+            base_url, message_id
+        );
+
+        let body = serde_json::json!({
+            "msg_type": "interactive",
+            "content": card_json
+        });
+
+        let res = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("reply_card request failed: {}", e))?;
+
+        let status = res.status();
+        if !status.is_success() {
+            let body: serde_json::Value = res.json().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("reply_card failed: {} {:?}", status, body));
+        }
+
+        tracing::debug!(
+            "[feishu:{}] reply_card ok to message {}",
+            bot_id, message_id
+        );
+        Ok(())
     }
 
     /// Send a message via a specific bot's channel.
