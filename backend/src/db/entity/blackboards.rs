@@ -41,6 +41,9 @@ pub struct Model {
     /// 以及 Wiki 对话子进程的最长存活时间。默认 300（5 分钟），
     /// 可在黑板设置界面按工作空间调整，避免慢模型被强制超时。
     pub wiki_timeout_secs: i64,
+    /// 黑板功能总开关：1=启用，0=禁用。关闭后不执行任何黑板相关逻辑
+    /// （防抖入队、flush 刷新、Wiki 自动维护），节省不需要黑板的工作空间资源。
+    pub enabled: i64,
     pub updated_at: Option<String>,
     pub created_at: Option<String>,
 }

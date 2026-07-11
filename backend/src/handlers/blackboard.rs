@@ -33,6 +33,8 @@ pub struct BlackboardResponse {
     pub wiki_timeout_secs: i64,
     /// 待处理的 execution_record_id 列表（JSON 数组字符串）
     pub pending_record_ids: String,
+    /// 黑板功能总开关
+    pub enabled: bool,
 }
 
 /// Wiki 文件列表项
@@ -72,6 +74,8 @@ pub struct UpdateBlackboardConfigRequest {
     pub wiki_chat_executor: Option<String>,
     /// Wiki 执行超时（秒）。None 不修改，Some(v) 会被后端钳制到合法区间。
     pub wiki_timeout_secs: Option<i64>,
+    /// 黑板功能总开关。None 不修改，Some(true/false) 启用/禁用。
+    pub enabled: Option<bool>,
 }
 
 /// `GET /api/workspaces/{workspace_id}/blackboard`
@@ -96,6 +100,7 @@ pub async fn get_blackboard(
             wiki_chat_executor: model.wiki_chat_executor,
             wiki_timeout_secs: model.wiki_timeout_secs,
             pending_record_ids: model.pending_record_ids,
+            enabled: model.enabled != 0,
         })),
         None => Ok(ApiResponse::ok(BlackboardResponse {
             id: 0,
@@ -107,6 +112,7 @@ pub async fn get_blackboard(
             wiki_chat_executor: None,
             wiki_timeout_secs: crate::db::blackboard::DEFAULT_WIKI_TIMEOUT_SECS,
             pending_record_ids: String::from("[]"),
+            enabled: true,
         })),
     }
 }
@@ -133,6 +139,7 @@ pub async fn get_blackboard_config(
             wiki_chat_executor: None,
             wiki_chat_sessions: None,
             wiki_timeout_secs: crate::db::blackboard::DEFAULT_WIKI_TIMEOUT_SECS,
+            enabled: true,
         })),
     }
 }
@@ -160,6 +167,8 @@ pub async fn update_blackboard_config(
         req.wiki_chat_executor.map(|s| if s.is_empty() { None } else { Some(s) }),
         // wiki_timeout_secs: None 不修改，Some(v) 由 db 层钳制到合法区间
         req.wiki_timeout_secs,
+        // enabled: None 不修改，Some(true/false) 启用/禁用黑板功能
+        req.enabled,
     ).await.map_err(|e| AppError::Internal(format!("更新黑板配置失败: {}", e)))?;
 
     // 配置变更后同步到该 workspace 已存在的 Wiki Todo 的 prompt 字段：
@@ -175,6 +184,14 @@ pub async fn update_blackboard_config(
             workspace_id,
             e
         );
+    }
+
+    // enabled 变更为 false 时，取消已调度的防抖 timer，确保黑板彻底停止工作。
+    // 已在队列中的 pending_record_ids 保留不清理（用户重新启用后继续处理）；
+    // timer 逻辑取消（清除状态 + 标记未运行）后，即使 timer task 自然到期发送 flush 消息，
+    // handle_flush_msg 的 enabled 检查也会拦截，不会派生 worker 执行 wiki 维护。
+    if let Some(false) = req.enabled {
+        crate::services::blackboard_debouncer::cancel_timer(workspace_id).await;
     }
 
     // debounce_secs 变更时，根据已计时长决定：超则立即触发 flush，未超则继续用新阈值计时
