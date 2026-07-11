@@ -80,9 +80,9 @@ pub enum ExecEvent {
         todo_id: i64,
         review_status: String,
     },
-    /// 执行器直接响应：消息经 executor 处理后直接把结果发回飞书，不存储执行记录。
-    /// 用于工作空间默认响应配置中选择"执行器"类型的场景。
-    ExecutorDirectResponse {
+    /// 私聊直达卡片消息：消息经 executor 处理后直接把结果发回飞书，不存储执行记录。
+    /// 用于工作空间默认响应配置中选择"执行器"类型的场景（开始/结束/错误等关键节点）。
+    DirectCardMessage {
         /// Feishu bot_id
         bot_id: i64,
         /// 接收者 ID（open_id 或 chat_id）
@@ -91,6 +91,19 @@ pub enum ExecEvent {
         receive_id_type: String,
         /// 要发送的文本内容
         content: String,
+    },
+    /// 私聊直达流式消息：executor 默认响应场景下，执行过程中每条日志直接推送给触发用户。
+    /// 与 DirectCardMessage 的区别：后者是开始/结束等关键节点的卡片消息，
+    /// 前者是执行过程中流式输出的日志消息（push_level="all" 时发送）。
+    DirectStreamMessage {
+        /// Feishu bot_id
+        bot_id: i64,
+        /// 接收者 ID（open_id 或 chat_id）
+        receive_id: String,
+        /// 接收者类型（open_id / chat_id）
+        receive_id_type: String,
+        /// 解析后的日志条目（含 type / content / tool_name 等）
+        entry: ParsedLogEntry,
     },
     /// Loop 执行完成事件：loop 执行完成后广播此事件，
     /// 用于 FeishuPushService 按 workspace 配置推送执行结果。

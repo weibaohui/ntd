@@ -20,6 +20,10 @@ pub struct Model {
     /// 开关禁用到 `git_worktree_enabled` 之外，确保不会出现"开了清理但没开 worktree"的废组合。
     #[sea_orm(default)]
     pub auto_cleanup: bool,
+    /// 私聊默认响应执行器的 session_id 映射，JSON 对象格式：
+    /// `{ "claudecode": "ses_xxx", "zhanlu": "ses_yyy" }`
+    /// 用于在私聊场景下继续同一会话（resume），实现多轮对话体验。
+    pub executor_sessions: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

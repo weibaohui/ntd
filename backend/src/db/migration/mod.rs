@@ -20,6 +20,7 @@ mod v58;
 mod v59;
 mod v60;
 mod v61;
+mod v62;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -66,8 +67,10 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v59::V59AddTodosArchivedAtIndex),
         // V60 在 V59 之后：为 feishu_messages 增加 error 字段，记录处理失败原因
         Box::new(v60::V60AddFeishuMessagesError),
-        // V61 在 V60 之后：为 blackboards 增加 enabled 总开关
-        Box::new(v61::V61AddBlackboardEnabled),
+        // V61 在 V60 之后：为 project_directories 增加 executor_sessions，存储私聊执行器 session
+        Box::new(v61::V61AddProjectDirectoriesExecutorSessions),
+        // V62 在 V61 之后：为 blackboards 增加 enabled 总开关
+        Box::new(v62::V62AddBlackboardEnabled),
     ]
 }
 

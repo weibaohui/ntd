@@ -126,6 +126,43 @@ pub struct P2ImMessageReactionCreatedV1Data {
     pub create_time: Option<String>,
 }
 
+// --- P2ImCardActionTriggerV1 ---
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct P2ImCardActionTriggerV1 {
+    pub schema: String,
+    pub header: EventHeader,
+    pub event: P2ImCardActionTriggerV1Data,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct P2ImCardActionTriggerV1Data {
+    pub action: CardAction,
+    #[serde(default)]
+    pub context: Option<CardActionContext>,
+    #[serde(default)]
+    pub operator: Option<EventSender>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CardAction {
+    pub tag: String,
+    pub name: Option<String>,
+    pub value: Option<HashMap<String, Value>>,
+    #[serde(default)]
+    pub option: Option<String>,
+    #[serde(default)]
+    pub form_value: Option<HashMap<String, Value>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CardActionContext {
+    #[serde(rename = "open_chat_id")]
+    pub open_chat_id: Option<String>,
+    #[serde(rename = "open_message_id")]
+    pub open_message_id: Option<String>,
+}
+
 // --- Event dispatcher ---
 
 pub trait EventHandler {
@@ -181,6 +218,24 @@ where
 {
     fn handle(&self, payload: &[u8]) -> anyhow::Result<()> {
         let event: P2ImMessageReactionCreatedV1 = serde_json::from_slice(payload)?;
+        (self.f)(event);
+        Ok(())
+    }
+}
+
+struct P2ImCardActionTriggerV1Handler<F>
+where
+    F: Fn(P2ImCardActionTriggerV1) + 'static + Sync + Send,
+{
+    f: F,
+}
+
+impl<F> EventHandler for P2ImCardActionTriggerV1Handler<F>
+where
+    F: Fn(P2ImCardActionTriggerV1) + 'static + Sync + Send,
+{
+    fn handle(&self, payload: &[u8]) -> anyhow::Result<()> {
+        let event: P2ImCardActionTriggerV1 = serde_json::from_slice(payload)?;
         (self.f)(event);
         Ok(())
     }
@@ -274,6 +329,19 @@ impl EventDispatcherHandlerBuilder {
             return Err(format!("processor already registered, type: {key}"));
         }
         let processor = P2ImMessageReactionCreatedV1Handler { f };
+        self.processor_map.insert(key, Box::new(processor));
+        Ok(self)
+    }
+
+    pub fn register_p2_im_card_action_trigger_v1<F>(mut self, f: F) -> Result<Self, String>
+    where
+        F: Fn(P2ImCardActionTriggerV1) + 'static + Sync + Send,
+    {
+        let key = "p2.im.card.action.trigger_v1".to_string();
+        if self.processor_map.contains_key(&key) {
+            return Err(format!("processor already registered, type: {key}"));
+        }
+        let processor = P2ImCardActionTriggerV1Handler { f };
         self.processor_map.insert(key, Box::new(processor));
         Ok(self)
     }

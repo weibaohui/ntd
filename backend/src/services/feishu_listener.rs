@@ -194,7 +194,12 @@ impl FeishuListener {
             "[feishu:{}] handle_message: sender={}, bot_open_id={}, content={:?}, chat_type={:?}",
             context.bot_id, msg.sender, context.bot_open_id, msg.content, msg.chat_type
         );
-        // 阶段 0：跳过机器人自己发的消息（不持久化、不加 reaction）
+        // 阶段 0：卡片回调处理（由飞书卡片按钮点击触发）
+        if msg.chat_type.as_deref() == Some("card_callback") {
+            Self::handle_card_callback(context, msg).await;
+            return;
+        }
+        // 阶段 0a：跳过机器人自己发的消息（不持久化、不加 reaction）
         if msg.sender == context.bot_open_id {
             tracing::info!("[feishu:{}] skipping self-sent message", context.bot_id);
             return;
@@ -288,6 +293,9 @@ impl FeishuListener {
         if prep.content == "/sethome" { Self::handle_sethome(mk_ctx()).await; return true; }
         if prep.content == "/feishupush" { Self::handle_feishupush(mk_ctx()).await; return true; }
         if prep.content == "/list" { Self::handle_list(mk_ctx()).await; return true; }
+        if prep.content == "/help" || prep.content.starts_with("/help ") {
+            Self::handle_help(mk_ctx()).await; return true;
+        }
         // /bind 支持空参数（展示列表）或带参数（绑定指定项目）
         if prep.content == "/bind" || prep.content.starts_with("/bind ") {
             Self::handle_bind(mk_ctx()).await; return true;
@@ -1448,7 +1456,11 @@ impl FeishuListener {
     }
 
     /// Handle /new — start a fresh session without resuming the previous one.
-    /// Unlike normal messages which resume existing sessions, this forces a new session.
+    /// 全局内置斜杠命令，用于清空当前会话的 session，开启全新对话。
+    ///
+    /// 支持两种场景：
+    /// 1. 项目绑定场景：清除绑定的 todo/loop 会话
+    /// 2. 私聊默认响应执行器场景：清除默认执行器的会话
     async fn handle_new(context: FeishuCommandContext<'_>) {
         let FeishuCommandContext {
             db,
@@ -1467,6 +1479,7 @@ impl FeishuListener {
             _ => (channel.to_string(), "chat_id"),
         };
 
+        // 先尝试项目绑定场景
         match db.get_feishu_project_binding(bot_id, channel).await {
             Ok(Some(binding)) => {
                 // 清除 session_id 和 latest_record_id，使下一条消息无法 resume
@@ -1503,17 +1516,14 @@ impl FeishuListener {
                     "🆕 已开启新会话。\n\n发送你的任务，我将使用全新 session 执行，不再resume之前的对话。",
                 )
                 .await;
+
+                if let Some(rid) = reaction_id {
+                    Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+                }
+                return;
             }
             Ok(None) => {
-                Self::send_text(
-                    credentials,
-                    token_manager,
-                    bot_id,
-                    &receive_id,
-                    receive_id_type,
-                    "📭 当前聊天未绑定任何项目，无法使用 /new。\n\n请先使用 /bind <项目名称> 绑定一个项目。",
-                )
-                .await;
+                // 没有绑定项目，尝试私聊默认响应执行器场景
             }
             Err(e) => {
                 tracing::error!("[feishu:{}] /new query binding failed: {e}", bot_id);
@@ -1526,8 +1536,139 @@ impl FeishuListener {
                     "⚠️ 查询绑定失败，请稍后重试。",
                 )
                 .await;
+                if let Some(rid) = reaction_id {
+                    Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+                }
+                return;
             }
         }
+
+        // 私聊默认响应执行器场景：获取 workspace 和默认执行器配置
+        let workspace_id = match db.get_agent_bot_workspace_id(bot_id).await {
+            Ok(Some(wid)) => wid,
+            Ok(None) => {
+                tracing::warn!("[feishu:{}] /new: bot has no workspace", bot_id);
+                Self::send_text(
+                    credentials,
+                    token_manager,
+                    bot_id,
+                    &receive_id,
+                    receive_id_type,
+                    "⚠️ 未找到工作空间，无法使用 /new。",
+                )
+                .await;
+                if let Some(rid) = reaction_id {
+                    Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+                }
+                return;
+            }
+            Err(e) => {
+                tracing::error!("[feishu:{}] /new query workspace failed: {e}", bot_id);
+                Self::send_text(
+                    credentials,
+                    token_manager,
+                    bot_id,
+                    &receive_id,
+                    receive_id_type,
+                    "⚠️ 查询工作空间失败，请稍后重试。",
+                )
+                .await;
+                if let Some(rid) = reaction_id {
+                    Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+                }
+                return;
+            }
+        };
+
+        // 获取 workspace 设置，判断默认响应类型
+        let settings = match crate::db::workspace_setting::get_workspace_settings(db, workspace_id).await {
+            Ok(Some(s)) => s,
+            Ok(None) => {
+                Self::send_text(
+                    credentials,
+                    token_manager,
+                    bot_id,
+                    &receive_id,
+                    receive_id_type,
+                    "📭 当前未配置默认响应，无法使用 /new。",
+                )
+                .await;
+                if let Some(rid) = reaction_id {
+                    Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+                }
+                return;
+            }
+            Err(e) => {
+                tracing::error!("[feishu:{}] /new query workspace settings failed: {e}", bot_id);
+                Self::send_text(
+                    credentials,
+                    token_manager,
+                    bot_id,
+                    &receive_id,
+                    receive_id_type,
+                    "⚠️ 查询工作空间设置失败，请稍后重试。",
+                )
+                .await;
+                if let Some(rid) = reaction_id {
+                    Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+                }
+                return;
+            }
+        };
+
+        // 只处理 executor 类型的默认响应
+        if settings.default_response_type != "executor" {
+            Self::send_text(
+                credentials,
+                token_manager,
+                bot_id,
+                &receive_id,
+                receive_id_type,
+                "📭 当前默认响应类型不是执行器，无法使用 /new 清空会话。",
+            )
+            .await;
+            if let Some(rid) = reaction_id {
+                Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+            }
+            return;
+        }
+
+        let executor_name = settings.default_response_executor
+            .unwrap_or_else(|| "claudecode".to_string());
+
+        // 清空执行器 session：设置为 None
+        if let Err(e) = db.set_executor_session(workspace_id, &executor_name, None).await {
+            tracing::error!("[feishu:{}] /new clear executor session failed: {e}", bot_id);
+            Self::send_text(
+                credentials,
+                token_manager,
+                bot_id,
+                &receive_id,
+                receive_id_type,
+                "⚠️ 清除执行器会话失败，请稍后重试。",
+            )
+            .await;
+            if let Some(rid) = reaction_id {
+                Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+            }
+            return;
+        }
+
+        tracing::info!(
+            "[feishu:{}] /new command: cleared executor session for {}, workspace={}",
+            bot_id,
+            executor_name,
+            workspace_id
+        );
+        Self::send_text(
+            credentials,
+            token_manager,
+            bot_id,
+            &receive_id,
+            receive_id_type,
+            &format!("🆕 已开启新会话。\n\n下次对话将使用全新的 {} 会话，不再接续之前的对话。", executor_name),
+        )
+        .await;
 
         if let Some(rid) = reaction_id {
             Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
@@ -1690,6 +1831,180 @@ impl FeishuListener {
         }
     }
 
+    /// Handle /help — show interactive help card with tabbed navigation.
+    /// 点击 Tab 按钮会触发 card.action.trigger 事件，由飞书平台回调处理。
+    async fn handle_help(context: FeishuCommandContext<'_>) {
+        let FeishuCommandContext {
+            credentials,
+            token_manager,
+            bot_id,
+            chat_type: _,
+            sender,
+            channel: _,
+            message_id,
+            content,
+            reaction_id,
+            ..
+        } = context;
+
+        // 解析当前分组，默认为 "common"
+        let current_group = content
+            .strip_prefix("/help ")
+            .unwrap_or("")
+            .trim()
+            .to_lowercase();
+
+        // 构建 Help 卡片
+        let card = crate::services::feishu_card::build_help_card(
+            &current_group,
+            &crate::services::feishu_card::help_groups(),
+        );
+
+        // 生成 session_key 用于标识本次会话
+        let session_key = format!("feishu:{}", sender);
+
+        // 渲染卡片 JSON
+        let card_json = crate::services::feishu_card::render_card(&card, &session_key);
+
+        // 发送回复消息（使用 reply API）
+        if let Err(e) = Self::reply_card(
+            credentials,
+            token_manager,
+            bot_id,
+            message_id,
+            &card_json,
+        ).await {
+            tracing::error!("[feishu:{}] /help send card failed: {}", bot_id, e);
+            // 降级为纯文本
+            Self::send_text(
+                credentials,
+                token_manager,
+                bot_id,
+                sender,
+                "open_id",
+                "📋 NTD 帮助\n\n发送 /help 查看所有可用命令。",
+            )
+            .await;
+        }
+
+        if let Some(rid) = reaction_id {
+            Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+        }
+    }
+
+    /// 处理飞书卡片按钮点击回调
+    /// card.callback 消息的 content 包含 action value，如 "nav:/help session"
+    async fn handle_card_callback(context: ListenerMessageContext<'_>, msg: &ChannelMessage) {
+        let FeishuCommandContext {
+            credentials,
+            token_manager,
+            bot_id,
+            sender,
+            channel: _,
+            message_id,
+            ..
+        } = FeishuCommandContext {
+            db: context.db,
+            credentials: context.credentials,
+            token_manager: context.token_manager,
+            bot_id: context.bot_id,
+            chat_type: "p2p", // 卡片回调默认用 p2p
+            sender: &msg.sender,
+            channel: &msg.channel,
+            message_id: &msg.id,
+            content: &msg.content,
+            reaction_id: None,
+        };
+
+        let action = msg.content.trim();
+
+        // nav: 前缀 - 导航到指定 help 页面
+        if let Some(group) = action.strip_prefix("nav:/help ") {
+            let group_key = group.trim().to_lowercase();
+            let card = crate::services::feishu_card::build_help_card(
+                &group_key,
+                &crate::services::feishu_card::help_groups(),
+            );
+            let session_key = format!("feishu:{}", sender);
+            let card_json = crate::services::feishu_card::render_card(&card, &session_key);
+
+            // 使用 patch 更新原卡片消息
+            if let Err(e) = Self::patch_card(
+                credentials,
+                token_manager,
+                bot_id,
+                message_id,
+                &card_json,
+            ).await {
+                tracing::error!("[feishu:{}] card callback patch failed: {}", bot_id, e);
+            } else {
+                tracing::info!("[feishu:{}] card updated for nav:/help {}", bot_id, group_key);
+            }
+            return;
+        }
+
+        // cmd: 前缀 - 作为命令处理
+        if let Some(cmd) = action.strip_prefix("cmd:/") {
+            tracing::info!("[feishu:{}] card cmd: /{}", bot_id, cmd);
+            // TODO: 根据命令类型调用对应的处理函数
+            // 目前只是记录日志
+            return;
+        }
+
+        // act: 前缀 - 执行动作
+        if let Some(act) = action.strip_prefix("act:/") {
+            tracing::info!("[feishu:{}] card action: /{}", bot_id, act);
+            // TODO: 执行动作
+            return;
+        }
+
+        tracing::warn!("[feishu:{}] unknown card action: {}", bot_id, action);
+    }
+
+    /// Patch an existing interactive card message with new content.
+    async fn patch_card(
+        credentials: &DashMap<i64, (String, String, String)>,
+        token_manager: &Arc<TokenManager>,
+        bot_id: i64,
+        message_id: &str,
+        card_json: &str,
+    ) -> anyhow::Result<()> {
+        let base_url = Self::base_url(credentials, bot_id)
+            .ok_or_else(|| anyhow::anyhow!("no base_url for bot {}", bot_id))?;
+        let token = Self::get_tenant_token(credentials, token_manager, bot_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no token for bot {}", bot_id))?;
+
+        let client = reqwest::Client::new();
+        let url = format!(
+            "{}/open-apis/im/v1/messages/{}",
+            base_url, message_id
+        );
+
+        let body = serde_json::json!({
+            "msg_type": "interactive",
+            "content": card_json
+        });
+
+        let res = client
+            .patch(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("patch_card request failed: {}", e))?;
+
+        let status = res.status();
+        if !status.is_success() {
+            let body: serde_json::Value = res.json().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("patch_card failed: {} {:?}", status, body));
+        }
+
+        tracing::debug!("[feishu:{}] patch_card ok for message {}", bot_id, message_id);
+        Ok(())
+    }
+
     /// Send a plain text message to a Feishu recipient.
     async fn send_text(
         credentials: &DashMap<i64, (String, String, String)>,
@@ -1746,6 +2061,105 @@ impl FeishuListener {
         }
     }
 
+    /// Send an interactive card message to a Feishu recipient.
+    #[allow(dead_code)]
+    async fn send_card(
+        credentials: &DashMap<i64, (String, String, String)>,
+        token_manager: &Arc<TokenManager>,
+        bot_id: i64,
+        receive_id: &str,
+        receive_id_type: &str,
+        card_json: &str,
+    ) -> anyhow::Result<()> {
+        let base_url = Self::base_url(credentials, bot_id)
+            .ok_or_else(|| anyhow::anyhow!("no base_url for bot {}", bot_id))?;
+        let token = Self::get_tenant_token(credentials, token_manager, bot_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no token for bot {}", bot_id))?;
+
+        let client = reqwest::Client::new();
+        let url = format!(
+            "{}/open-apis/im/v1/messages?receive_id_type={}",
+            base_url, receive_id_type
+        );
+
+        // 飞书 Interactive Card 的 content 直接是 JSON 字符串，不需要额外的嵌套
+        let body = serde_json::json!({
+            "receive_id": receive_id,
+            "msg_type": "interactive",
+            "content": card_json
+        });
+
+        let res = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("send_card request failed: {}", e))?;
+
+        let status = res.status();
+        if !status.is_success() {
+            let body: serde_json::Value = res.json().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("send_card failed: {} {:?}", status, body));
+        }
+
+        tracing::debug!(
+            "[feishu:{}] send_card ok to {} ({})",
+            bot_id, receive_id, receive_id_type
+        );
+        Ok(())
+    }
+
+    /// Reply to a message with an interactive card.
+    async fn reply_card(
+        credentials: &DashMap<i64, (String, String, String)>,
+        token_manager: &Arc<TokenManager>,
+        bot_id: i64,
+        message_id: &str,
+        card_json: &str,
+    ) -> anyhow::Result<()> {
+        let base_url = Self::base_url(credentials, bot_id)
+            .ok_or_else(|| anyhow::anyhow!("no base_url for bot {}", bot_id))?;
+        let token = Self::get_tenant_token(credentials, token_manager, bot_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no token for bot {}", bot_id))?;
+
+        let client = reqwest::Client::new();
+        // 使用 reply API 而不是 create
+        let url = format!(
+            "{}/open-apis/im/v1/messages/{}/reply",
+            base_url, message_id
+        );
+
+        let body = serde_json::json!({
+            "msg_type": "interactive",
+            "content": card_json
+        });
+
+        let res = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("reply_card request failed: {}", e))?;
+
+        let status = res.status();
+        if !status.is_success() {
+            let body: serde_json::Value = res.json().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("reply_card failed: {} {:?}", status, body));
+        }
+
+        tracing::debug!(
+            "[feishu:{}] reply_card ok to message {}",
+            bot_id, message_id
+        );
+        Ok(())
+    }
+
     /// Send a message via a specific bot's channel.
     pub async fn send(&self, bot_id: i64, text: &str, recipient: &str) -> anyhow::Result<()> {
         if let Some(ch) = self.channels.get(&bot_id) {
@@ -1793,6 +2207,50 @@ impl FeishuListener {
         if !status.is_success() {
             let body: serde_json::Value = res.json().await.unwrap_or_default();
             return Err(anyhow::anyhow!("send_raw failed: {} {:?}", status, body));
+        }
+
+        Ok(())
+    }
+
+    /// Send a card message using a specific receive_id_type.
+    pub async fn send_card_raw(
+        &self,
+        bot_id: i64,
+        receive_id: &str,
+        receive_id_type: &str,
+        card_json: &str,
+    ) -> anyhow::Result<()> {
+        let base_url = Self::base_url(&self.bot_credentials, bot_id)
+            .ok_or_else(|| anyhow::anyhow!("no credentials for bot {}", bot_id))?;
+        let token = Self::get_tenant_token(&self.bot_credentials, &self.token_manager, bot_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no token for bot {}", bot_id))?;
+
+        let client = reqwest::Client::new();
+        let url = format!(
+            "{}/open-apis/im/v1/messages?receive_id_type={}",
+            base_url, receive_id_type
+        );
+        // 飞书 API 要求 content 字段是字符串格式的 JSON
+        // json! 宏会自动将 &str 转义为 JSON 字符串值，无需手动处理
+        let body = serde_json::json!({
+            "receive_id": receive_id,
+            "msg_type": "interactive",
+            "content": card_json
+        });
+
+        let res = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = res.status();
+        if !status.is_success() {
+            let body: serde_json::Value = res.json().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("send_card_raw failed: {} {:?}", status, body));
         }
 
         Ok(())

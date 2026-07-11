@@ -392,8 +392,10 @@ mod feishu_push_service_tests {
             }
             ExecEvent::Sync { .. } => None,
             ExecEvent::ReviewStatusChanged { .. } => None,
-            // ExecutorDirectResponse 由 FeishuPushService 直接发送，不走 format_event
-            ExecEvent::ExecutorDirectResponse { .. } => None,
+            // DirectCardMessage 由 FeishuPushService 直接发送，不走 format_event
+            ExecEvent::DirectCardMessage { .. } => None,
+            // DirectStreamMessage 由 FeishuPushService 直接发送，不走 format_event
+            ExecEvent::DirectStreamMessage { .. } => None,
             // LoopFinished 事件的格式化消息 - 统计摘要（与 feishu_push.rs 生产代码保持一致）
             // BlackboardDebounceStatus 由内部 debounce 逻辑使用，不走 format_event
             ExecEvent::BlackboardDebounceStatus { .. } => None,

@@ -445,7 +445,7 @@ pub struct WikiChatResponse {
 /// 设计参考：feishu_listener 的「executor 默认响应」模式（message_debounce.rs 的
 /// handle_default_response_executor），把触发源从飞书消息换成 HTTP 请求，
 /// 把 cwd 从 project_directories.path 换成 wiki 目录，把结果回送方式从
-/// ExecEvent::ExecutorDirectResponse 改成直接返回值。
+/// ExecEvent::DirectCardMessage 改成直接返回值。
 ///
 /// 不创建 Todo、不创建 execution_record、不持久化聊天历史、非流式一次性返回。
 pub async fn chat_with_wiki(

@@ -1093,7 +1093,7 @@ impl LoopRunner {
         self.build_blackboard_text(loop_execution_id).await
     }
 
-    /// 通过 ExecutorDirectResponse 事件把环路执行结果发回飞书
+    /// 通过 DirectCardMessage 事件把环路执行结果发回飞书
     /// receive_id_type: "open_id"（单聊）或 "chat_id"（群聊）
     pub async fn send_result_to_feishu(
         &self,
@@ -1103,7 +1103,7 @@ impl LoopRunner {
         text: &str,
     ) {
         let Some(bot_id) = feishu_bot_id else { return };
-        let _ = self.tx.send(crate::executor_service::ExecEvent::ExecutorDirectResponse {
+        let _ = self.tx.send(crate::executor_service::ExecEvent::DirectCardMessage {
             bot_id,
             receive_id: receive_id.to_string(),
             receive_id_type: receive_id_type.to_string(),

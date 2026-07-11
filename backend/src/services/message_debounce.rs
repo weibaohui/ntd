@@ -2,12 +2,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use crate::adapters::parse_executor_type;
 use crate::db::Database;
+use crate::execution_events::EventPipeline;
+use crate::executor_service::log_capture;
 use crate::executor_service::{
     run_todo_execution, run_todo_execution_with_params, RunTodoExecutionRequest,
 };
@@ -469,49 +471,65 @@ fn executor_error_message(executor_type: &str, reason: &str) -> String {
 
 /// 执行成功但没有任何输出时的结束标志。
 ///
-/// 有输出时直接把输出本身作为回复发回（输出即答案），不加前缀；
-/// 只有"跑完了但没产出文本"时才发这条，避免用户误以为还在跑或又静默了。
+/// 【待清理】已废弃：结束消息统一使用"✅ <执行器名称> 处理完成"，不再区分有无输出。
+/// 保留此函数供参考，确认无用后可删除。
+#[allow(dead_code)]
 fn executor_empty_end_message(executor_type: &str) -> String {
     format!("✅ {} 执行完成（无输出）", executor_type)
 }
 
+/// 从执行日志中提取 session_id。
+///
+/// 流程：
+/// 1. 先尝试从日志内容中提取（extract_session_id）
+/// 2. 如果没有，尝试执行器内部缓存的 session_id（get_session_id）
+///
+/// 不同执行器暴露 session_id 的方式不同：
+/// - Claude Code: stdout JSONL 行含 session_id
+/// - Hermès: `session_id: <sid>` 行
+/// - Pi: `{"type":"session","id":"<sid>"}` 行（通过 get_session_id 获取缓存值）
+///
+/// 返回 None 表示执行器不支持 session 或首次执行。
+fn extract_session_from_logs(
+    executor: &Arc<dyn crate::adapters::CodeExecutor>,
+    logs: &[ParsedLogEntry],
+) -> Option<String> {
+    // 1. 优先从日志内容提取
+    for entry in logs {
+        if let Some(sid) = executor.extract_session_id(&entry.content) {
+            return Some(sid);
+        }
+    }
+    // 2. 回退到执行器内部缓存的 session_id（Pi 等执行器在 parse_output_line 时缓存）
+    executor.get_session_id()
+}
+
 /// 根据执行结果决定发回飞书的最终内容。
 ///
-/// 优先级：解析出的 `result_text` > 成功且有原始 stdout（输出即答案）>
-/// 成功但无输出（空结束标志）> 非零退出（错误消息 + 输出片段）。
+/// 成功时统一返回简洁的结束标志（"✅ <执行器名称> 处理完成"），不再重复输出
+/// result_text 或 stdout（过程消息已通过 DirectStreamMessage 实时推送，避免重复）。
+/// 失败时返回错误消息 + 输出片段，方便诊断问题。
 /// 把这段决策从 `handle_default_response_executor` 主体抽成纯函数，是为了能直接单测
 /// 非零退出 + 多字节中文 stdout 的截断行为——原来内联时 `&stdout[..1500]` 按字节切片，
 /// 落在中文中间会 panic，反而把"执行器非零退出"变成 debounce 任务崩溃。
 fn build_executor_end_content(
     executor_type: &str,
     status: &std::process::ExitStatus,
-    result_text: Option<String>,
-    stdout: &str,
+    _result_text: Option<String>,
+    _stdout: &str,
     stderr: &str,
 ) -> String {
-    // 非零退出时 stdout 给用户的预览上限，按 char 计：与开始消息 preview 同语义，
+    // 非零退出时 stderr 给用户的预览上限，按 char 计：与开始消息 preview 同语义，
     // 避免 `&str[..n]` 这种按字节切片切到多字节字符中间触发 panic。
-    const STDOUT_PREVIEW_CHAR_LIMIT: usize = 1500;
-    if let Some(text) = result_text {
-        // 已解析出结构化结果（result/text 日志），直接作为回复，不再附 stdout
-        text
-    } else if status.success() {
-        // 进程退出 0：有原始 stdout 就原样回复，没有就发空结束标志
-        let raw = stdout;
-        if raw.trim().is_empty() {
-            executor_empty_end_message(executor_type)
-        } else {
-            raw.to_string()
-        }
+    const STDERR_PREVIEW_CHAR_LIMIT: usize = 1500;
+    if status.success() {
+        // 进程退出 0：统一发简洁结束标志，过程内容已实时推送，不再重复输出
+        format!("✅ {} 处理完成", executor_type)
     } else {
-        // 非零退出：优先用 stderr（执行器错误信息通常走 stderr），
-        // stderr 为空时才用 stdout；两者都为空则只报退出码。
-        let diagnostic = if !stderr.trim().is_empty() {
-            stderr.chars().take(STDOUT_PREVIEW_CHAR_LIMIT).collect::<String>()
-        } else {
-            stdout.chars().take(STDOUT_PREVIEW_CHAR_LIMIT).collect::<String>()
-        };
-        if diagnostic.is_empty() {
+        // 非零退出：用 stderr 展示错误信息（执行器错误信息通常走 stderr），
+        // stderr 为空则只报退出码。
+        let diagnostic = stderr.chars().take(STDERR_PREVIEW_CHAR_LIMIT).collect::<String>();
+        if diagnostic.trim().is_empty() {
             executor_error_message(executor_type, &format!("退出码 {:?}", status.code()))
         } else {
             executor_error_message(
@@ -546,6 +564,10 @@ enum ExecutorRunError {
 /// `execution_timeout_secs` 设为 `0`（不限制），此时直接 `child.wait()` 等到进程退出，
 /// 不包 `tokio::time::timeout`、不 kill——语义与 todo pipeline 的
 /// `timeout_enabled = v > 0` 对齐。
+///
+/// 注意：生产代码已改用 `wait_child_with_timeout` + `stream_executor_stdout` 替代此函数，
+/// 保留此函数仅供测试覆盖超时/kill 行为。
+#[allow(dead_code)]
 async fn run_executor_with_timeout(
     mut child: tokio::process::Child,
     timeout: Option<std::time::Duration>,
@@ -592,6 +614,259 @@ async fn run_executor_with_timeout(
         None => Vec::new(),
     };
     Ok((wait_outcome, buf))
+}
+
+/// 仅等待子进程退出（不读 stdout），超时则 kill 回收
+///
+/// 与 run_executor_with_timeout 的区别：不负责读取 stdout，因为 stdout 句柄
+/// 在调用前已被 take() 走用于流式读取。此函数只做 wait + timeout + kill。
+async fn wait_child_with_timeout(
+    mut child: tokio::process::Child,
+    timeout: Option<std::time::Duration>,
+) -> Result<std::process::ExitStatus, ExecutorRunError> {
+    match timeout {
+        // Some → 计时竞赛；None → 无超时等待
+        Some(t) => match tokio::time::timeout(t, child.wait()).await {
+            Ok(Ok(status)) => Ok(status),
+            Ok(Err(e)) => Err(ExecutorRunError::WaitFailed(e.to_string())),
+            Err(_) => {
+                // 超时：SIGKILL + wait 回收，避免孤儿进程
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                Err(ExecutorRunError::Timeout { secs: t.as_secs() })
+            }
+        },
+        None => match child.wait().await {
+            Ok(status) => Ok(status),
+            Err(e) => Err(ExecutorRunError::WaitFailed(e.to_string())),
+        },
+    }
+}
+
+/// 流式读取执行器 stdout 的结果
+///
+/// logs：解析后的日志条目，用于提取最终结果（get_final_result_from_logs）
+/// raw_stdout：原始 stdout 文本，用于错误诊断和兜底回复
+struct StdoutStreamResult {
+    logs: Vec<ParsedLogEntry>,
+    raw_stdout: String,
+}
+
+/// 流式读取执行器 stdout：逐行解析并发送 Output 事件
+///
+/// 复用 log_capture.rs 的 EventPipeline 创建和解析逻辑，确保 executor 直连执行
+/// 与 todo 执行产生完全相同格式的事件。发送的 ExecEvent::Output 会被
+/// FeishuPushService 按 push_level 推送到飞书（"all" 时推送过程事件）。
+///
+/// `direct_output_info` 为 Some 时，每条解析出的日志额外发一条
+/// DirectStreamMessage 直接推送给触发用户（一对一私聊场景），
+/// 这样即使 push target 未配置该用户，用户也能在聊天中看到执行过程。
+async fn stream_executor_stdout<R: tokio::io::AsyncRead + Unpin + Send>(
+    stdout_handle: Option<R>,
+    executor: &Arc<dyn crate::adapters::CodeExecutor>,
+    tx: &broadcast::Sender<ExecEvent>,
+    task_id: &str,
+    workspace_id: Option<i64>,
+    direct_output_info: Option<DirectOutputInfo>,
+) -> StdoutStreamResult {
+    let Some(stdout) = stdout_handle else {
+        return StdoutStreamResult { logs: Vec::new(), raw_stdout: String::new() };
+    };
+    // 复用 log_capture 的 pipeline 创建逻辑，确保与 todo 执行路径一致
+    let mut pipeline = log_capture::create_pipeline_for_executor(executor.as_ref())
+        .unwrap_or_else(|| EventPipeline::new(executor.executor_type().as_str()));
+    let mut reader = BufReader::new(stdout).lines();
+    let mut result = StdoutStreamResult { logs: Vec::new(), raw_stdout: String::new() };
+
+    while let Ok(Some(line)) = reader.next_line().await {
+        process_executor_stdout_line(
+            &line, &mut pipeline, executor, tx, task_id, workspace_id,
+            direct_output_info.as_ref(), &mut result,
+        );
+    }
+    finalize_pipeline_by_path(
+        &mut pipeline, tx, task_id, workspace_id,
+        direct_output_info.as_ref(), &mut result,
+    );
+    result
+}
+
+/// 一对一私聊场景下，过程消息直接推送的目标信息
+struct DirectOutputInfo {
+    bot_id: i64,
+    receive_id: String,
+    receive_id_type: String,
+}
+
+/// 处理单行 stdout：先尝试 pipeline 解析，回退到 executor 自定义解析
+///
+/// 该函数参数较多是因为需要同时处理 pipeline 解析、事件广播、结果收集三个职责，
+/// 拆分成多个函数反而会导致数据结构重复传递，故用 allow 抑制参数数量告警。
+#[allow(clippy::too_many_arguments)]
+fn process_executor_stdout_line(
+    line: &str,
+    pipeline: &mut EventPipeline,
+    executor: &Arc<dyn crate::adapters::CodeExecutor>,
+    tx: &broadcast::Sender<ExecEvent>,
+    task_id: &str,
+    workspace_id: Option<i64>,
+    direct_output: Option<&DirectOutputInfo>,
+    result: &mut StdoutStreamResult,
+) {
+    result.raw_stdout.push_str(line);
+    result.raw_stdout.push('\n');
+    // 一对一私聊场景：手动解析，只发送 DirectStreamMessage，不调用 parse_and_broadcast（避免发送 Output 导致重复）
+    if let Some(info) = direct_output {
+        let parsed_list = parse_for_direct_stream(pipeline, line);
+        if !parsed_list.is_empty() {
+            for entry in &parsed_list {
+                emit_direct_stream(tx, info, entry.clone());
+            }
+            result.logs.extend(parsed_list);
+            return;
+        }
+        // 回退到 executor 自定义解析
+        let Some(parsed) = executor.parse_output_line(line) else { return };
+        emit_direct_stream(tx, info, parsed.clone());
+        result.logs.push(parsed);
+        return;
+    }
+    // 非私聊场景：走标准流程，调用 parse_and_broadcast 发送 Output 事件
+    let parsed_list = log_capture::parse_and_broadcast(
+        pipeline, line, tx, task_id, workspace_id,
+    );
+    if !parsed_list.is_empty() {
+        result.logs.extend(parsed_list);
+        return;
+    }
+    // 回退到 executor 自定义解析（非 JSONL 格式的行）
+    let Some(parsed) = executor.parse_output_line(line) else { return };
+    log_capture::send_event(
+        tx,
+        ExecEvent::Output {
+            task_id: task_id.to_string(),
+            entry: parsed.clone(),
+            workspace_id,
+        },
+    );
+    result.logs.push(parsed);
+}
+
+/// 手动解析 pipeline：只返回解析结果，不发送 Output 事件（由调用方决定发送方式）
+///
+/// 与 parse_and_broadcast 的区别：后者会发送 ExecEvent::Output，
+/// 前者只返回 ParsedLogEntry，用于私聊场景避免重复发送。
+fn parse_for_direct_stream(
+    pipeline: &mut EventPipeline,
+    line: &str,
+) -> Vec<ParsedLogEntry> {
+    let line_trimmed = line.trim();
+    if line_trimmed.is_empty() {
+        return Vec::new();
+    }
+    let len_before = pipeline.len();
+    pipeline.feed(line_trimmed);
+    let new_events: Vec<&crate::execution_events::ExecutionEvent> = pipeline.events()[len_before..].iter().collect();
+    if new_events.is_empty() {
+        return Vec::new();
+    }
+    let mut results = Vec::new();
+    for event in &new_events {
+        // 只处理对用户有价值的事件类型（与 emit_direct_stream 的过滤规则一致）
+        match event {
+            crate::execution_events::ExecutionEvent::Info { message } => {
+                if message.starts_with('{') || message.is_empty() {
+                    continue;
+                }
+                let parsed = crate::execution_events::DbLogEntry::from_event_to_parsed_log_entry(event);
+                results.push(parsed);
+            }
+            crate::execution_events::ExecutionEvent::Thinking { .. }
+            | crate::execution_events::ExecutionEvent::ToolCall { .. }
+            | crate::execution_events::ExecutionEvent::ToolResult { .. }
+            | crate::execution_events::ExecutionEvent::Assistant { .. }
+            | crate::execution_events::ExecutionEvent::Result { .. } => {
+                let parsed = crate::execution_events::DbLogEntry::from_event_to_parsed_log_entry(event);
+                results.push(parsed);
+            }
+            // 跳过内部状态事件（与 emit_direct_stream 的过滤规则一致）
+            crate::execution_events::ExecutionEvent::SessionStart { .. }
+            | crate::execution_events::ExecutionEvent::SessionEnd { .. }
+            | crate::execution_events::ExecutionEvent::StepStart { .. }
+            | crate::execution_events::ExecutionEvent::StepFinish { .. }
+            | crate::execution_events::ExecutionEvent::Tokens { .. }
+            | crate::execution_events::ExecutionEvent::Cost { .. }
+            | crate::execution_events::ExecutionEvent::Duration { .. }
+            | crate::execution_events::ExecutionEvent::ModelSwitch { .. }
+            | crate::execution_events::ExecutionEvent::Error { .. }
+            | crate::execution_events::ExecutionEvent::Progress { .. }
+            | crate::execution_events::ExecutionEvent::User { .. }
+            | crate::execution_events::ExecutionEvent::System { .. } => {}
+        }
+    }
+    results
+}
+
+/// finalize pipeline 并收集剩余事件（SessionEnd 等）
+fn finalize_pipeline_by_path(
+    pipeline: &mut EventPipeline,
+    tx: &broadcast::Sender<ExecEvent>,
+    task_id: &str,
+    workspace_id: Option<i64>,
+    direct_output: Option<&DirectOutputInfo>,
+    result: &mut StdoutStreamResult,
+) {
+    let len_before = pipeline.len();
+    pipeline.finalize();
+    for event in &pipeline.events()[len_before..] {
+        // 一对一私聊场景：手动转换，只发送 DirectStreamMessage
+        if let Some(info) = direct_output {
+            match event {
+                crate::execution_events::ExecutionEvent::Thinking { .. }
+                | crate::execution_events::ExecutionEvent::ToolCall { .. }
+                | crate::execution_events::ExecutionEvent::ToolResult { .. }
+                | crate::execution_events::ExecutionEvent::Assistant { .. }
+                | crate::execution_events::ExecutionEvent::Result { .. } => {
+                    let parsed = crate::execution_events::DbLogEntry::from_event_to_parsed_log_entry(event);
+                    emit_direct_stream(tx, info, parsed.clone());
+                    result.logs.push(parsed);
+                }
+                _ => {}
+            }
+            continue;
+        }
+        // 非私聊场景：走标准流程，发送 Output 事件
+        let parsed = log_capture::emit_broadcast_event(event, tx, task_id, workspace_id);
+        result.logs.push(parsed);
+    }
+}
+
+/// 发送 DirectStreamMessage 事件：把单条日志直接推送给触发用户
+///
+/// 与 Output 事件的区别：绕过 push target 过滤和 workspace 隔离，
+/// 一对一直接发送，用户在聊天中就能看到执行过程。
+///
+/// 过滤规则（参考 cc-connect 的简洁风格）：
+/// - 保留：thinking（思考）、tool_call（工具调用）、tool_result（工具结果）、assistant/text（助手回复）、result（最终结果）
+/// - 跳过：session_start/session_end、step_start/step_finish、tokens、model_switch、info、error（内部状态事件不打扰用户）
+fn emit_direct_stream(
+    tx: &broadcast::Sender<ExecEvent>,
+    info: &DirectOutputInfo,
+    entry: ParsedLogEntry,
+) {
+    // 过滤掉内部状态事件，只保留对用户有价值的思考和工具交互
+    match entry.log_type.as_str() {
+        "session_start" | "session_end" | "step_start" | "step_finish" => return,
+        "tokens" | "model_switch" | "cost" | "duration" => return,
+        "info" | "error" | "stderr" | "warning" => return,
+        _ => {}
+    }
+    let _ = tx.send(ExecEvent::DirectStreamMessage {
+        bot_id: info.bot_id,
+        receive_id: info.receive_id.clone(),
+        receive_id_type: info.receive_id_type.clone(),
+        entry,
+    });
 }
 
 // ============================================================================
@@ -684,16 +959,16 @@ impl MessageDebounce {
         executor_type: Option<&str>,
         workspace_id: Option<i64>,
         message: &str,
-        _resume_session_id: Option<String>,
+        resume_session_id: Option<String>,
     ) -> Result<crate::executor_service::ExecutionResult, Option<String>> {
         let executor_type = executor_type.unwrap_or("claudecode");
 
-        // 统一的飞书回复出口：开始/结束/错误三类消息都走 ExecutorDirectResponse，
+        // 统一的飞书回复出口：开始/结束/错误三类消息都走 DirectCardMessage，
         // FeishuPushService 会绕过 workspace 过滤直接 send_raw 发回用户（feishu_push.rs:65）。
         // 每次 clone receive_id：原来函数末尾一次性 move，改成多次 clone 语义不变，
         // 换来能在多个分支复用同一个发送出口。
         let send_msg = |content: String| {
-            let _ = tx.send(ExecEvent::ExecutorDirectResponse {
+            let _ = tx.send(ExecEvent::DirectCardMessage {
                 bot_id,
                 receive_id: receive_id.clone(),
                 receive_id_type: receive_id_type.to_string(),
@@ -740,15 +1015,45 @@ impl MessageDebounce {
             }
         };
 
+        // 确定本次使用的 session_id：
+        // 1. 优先使用调用方传入的 resume_session_id（如绑定 todo 场景）
+        // 2. 否则从 workspace 的 executor_sessions 中读取（私聊多轮对话场景）
+        let mut session_id = resume_session_id.clone();
+        if session_id.is_none() {
+            if let Some(wid) = workspace_id {
+                match db.get_executor_session(wid, executor_type).await {
+                    Ok(Some(Some(sid))) => {
+                        session_id = Some(sid);
+                        tracing::info!(
+                            "[debounce] resumed executor session for {}: {:?}",
+                            executor_type,
+                            session_id
+                        );
+                    }
+                    Ok(Some(None)) => {
+                        tracing::debug!("[debounce] no saved session for executor {}", executor_type);
+                    }
+                    Ok(None) => {
+                        tracing::debug!("[debounce] workspace not found for session lookup");
+                    }
+                    Err(e) => {
+                        tracing::warn!("[debounce] failed to get executor session: {}", e);
+                    }
+                }
+            }
+        }
+
         tracing::info!(
-            "[debounce] executor {} direct response in workspace {:?}, message len={}",
+            "[debounce] executor {} direct response in workspace {:?}, message len={}, session={:?}",
             executor_type,
             workspace_path,
-            message.len()
+            message.len(),
+            session_id.as_deref().map(|s| s.chars().take(20).collect::<String>())
         );
 
-        // 构建执行器命令
-        let command_args = executor.command_args(message);
+        // 构建执行器命令（带 session_id，支持 resume 多轮对话）
+        let is_resume = session_id.is_some();
+        let command_args = executor.command_args_with_session(message, session_id.as_deref(), is_resume);
         let program = executor.executable_path();
         tracing::info!(
             "[debounce] spawning: {} {:?} (cwd={:?})",
@@ -770,12 +1075,16 @@ impl MessageDebounce {
             }
         };
 
-        // 提取 stderr 句柄：非零退出时把 stderr 内容带进错误消息，
-        // 让用户和日志能看到 pi 到底报了什么错（之前 Stdio::null() 直接丢弃）。
+        // 提取 stdout 句柄用于流式读取：与 todo 执行路径一致，逐行解析并通过
+        // EventPipeline 发送 ExecEvent::Output 事件，让 FeishuPushService 按 push_level 推送。
+        let stdout_handle = child.stdout.take();
+        // 提取 stderr 句柄：非零退出时把 stderr 内容带进错误消息
         let stderr_handle = child.stderr.take();
 
-        // spawn 成功立即发"开始处理"标志，让飞书侧知道请求已被接收并在跑，
-        // 而不是静默等待——这正是本次修复要消除的"发了消息没反馈"体验。
+        // 为流式 Output 事件生成 task_id（提前生成，供 streaming reader 和返回值共用）
+        let task_id = format!("executor-{}-{}", executor_type, uuid::Uuid::new_v4());
+
+        // spawn 成功立即发"开始处理"标志，让飞书侧知道请求已被接收并在跑
         send_msg(executor_start_message(executor_type, message));
 
         // 预写 stdin payload（部分执行器需要，如 pi）：写入后立即 flush 并 drop 以关闭 stdin
@@ -790,12 +1099,40 @@ impl MessageDebounce {
             }
         }
 
-        // 带超时地等待执行器完成。原来用 wait_with_output 无超时等，provider 挂起时
-        // 整条任务永久卡死；现在超时则 kill 子进程并回错误，给用户明确反馈。
-        // 复用全局 execution_timeout_secs：飞书直连执行器与 todo 执行路径共用同一把超时旋钮，
-        // 避免再维护一个独立阈值。0 = 不限制，由 direct_executor_timeout 转成 None 走无超时等待。
+        // 启动流式读取任务：并发读取 stdout 并通过 EventPipeline 发送 Output 事件。
+        // 复用 log_capture 的 pipeline 创建和解析逻辑，确保与 todo 执行产生完全相同格式的事件。
+        // FeishuPushService 按 push_level 配置推送（"all" 时推送过程事件到飞书）。
+        let tx_for_stream = tx.clone();
+        let executor_for_stream = executor.clone();
+        let tid_for_stream = task_id.clone();
+        // 一对一私聊场景：先查一次 push_level，仅当配置为 "all" 时才发送过程消息。
+        // 在发送端判断而非 FeishuPushService 端判断，避免每条日志都查一次 DB。
+        let push_level = match db.get_feishu_push_target(bot_id).await {
+            Ok(Some(target)) => target.push_level,
+            Ok(None) => "result_only".to_string(),
+            Err(e) => {
+                tracing::warn!("[debounce] failed to get push_level for bot {}: {}", bot_id, e);
+                "result_only".to_string()
+            }
+        };
+        let direct_output_info = if push_level == "all" {
+            Some(DirectOutputInfo {
+                bot_id,
+                receive_id: receive_id.clone(),
+                receive_id_type: receive_id_type.to_string(),
+            })
+        } else {
+            None
+        };
+        let stream_task = tokio::spawn(async move {
+            stream_executor_stdout(
+                stdout_handle, &executor_for_stream, &tx_for_stream, &tid_for_stream,
+                workspace_id, direct_output_info,
+            ).await
+        });
+
+        // 带超时地等待子进程退出（stdout 已被流式读取，此处只管 wait + timeout + kill）
         let timeout_secs = {
-            // 与 read_runtime_config 同模式：锁中毒属不可恢复的进程级故障，用 expect 上报
             #[allow(clippy::expect_used)]
             let cfg = config
                 .read()
@@ -803,15 +1140,10 @@ impl MessageDebounce {
             cfg.execution_timeout_secs
         };
         let timeout = direct_executor_timeout(timeout_secs);
-        let (status, stdout_bytes) = match run_executor_with_timeout(child, timeout).await {
-            Ok(pair) => {
-                tracing::info!(
-                    "[debounce] executor {} finished, exit_code={:?}, stdout_len={}",
-                    executor_type,
-                    pair.0.code(),
-                    pair.1.len()
-                );
-                pair
+        let status = match wait_child_with_timeout(child, timeout).await {
+            Ok(s) => {
+                tracing::info!("[debounce] executor {} finished, exit_code={:?}", executor_type, s.code());
+                s
             }
             Err(ExecutorRunError::Timeout { secs }) => {
                 tracing::error!("[debounce] executor {} timed out after {}s", executor_type, secs);
@@ -825,7 +1157,13 @@ impl MessageDebounce {
             }
         };
 
-        // 读取 stderr：非零退出时用于诊断失败原因（pi 等执行器的错误信息走 stderr）。
+        // 等待流式读取任务完成，收集解析结果和原始 stdout
+        let stream_result = stream_task.await.unwrap_or(StdoutStreamResult {
+            logs: Vec::new(),
+            raw_stdout: String::new(),
+        });
+
+        // 读取 stderr：非零退出时用于诊断失败原因
         let stderr_text = match stderr_handle {
             Some(mut reader) => {
                 let mut buf = Vec::new();
@@ -835,44 +1173,57 @@ impl MessageDebounce {
             None => String::new(),
         };
         if !stderr_text.is_empty() {
+            // 按 char 截断日志预览，避免按字节切片切断多字节中文导致 panic
+            let stderr_preview: String = stderr_text.chars().take(2000).collect();
             tracing::info!(
                 "[debounce] executor {} stderr:\n{}",
                 executor_type,
-                &stderr_text[..stderr_text.len().min(2000)]
+                stderr_preview
             );
         }
 
-        // 解析执行器输出：按行解析，提取 result/text 类型的日志
-        let stdout = String::from_utf8_lossy(&stdout_bytes);
+        // 从流式解析收集的日志中提取最终结果（与 todo 执行路径一致）
+        // 按 char 截断日志预览，避免按字节切片切断多字节中文导致 panic
+        let stdout_preview: String = stream_result.raw_stdout.chars().take(2000).collect();
         tracing::info!(
             "[debounce] executor {} stdout:\n{}",
             executor_type,
-            &stdout[..stdout.len().min(2000)]
+            stdout_preview
         );
-        let logs: Vec<ParsedLogEntry> = stdout
-            .lines()
-            .filter_map(|line| executor.parse_output_line(line))
-            .collect();
-        let result_text = crate::executor_service::completion::get_final_result_from_logs(&logs);
+        let result_text = crate::executor_service::completion::get_final_result_from_logs(&stream_result.logs);
 
-        // 结束反馈：成功有解析结果就用结果（即回复）；成功无结果但进程退出 0 且有原始 stdout
-        // 就用 stdout 兜底；进程非 0 退出走错误通道带退出码+输出片段；都没有则发空结束标志。
-        // 抽成纯函数 build_executor_end_content 以便单测非零退出+中文 stdout 的截断（防 panic）。
-        let content = build_executor_end_content(executor_type, &status, result_text, &stdout, &stderr_text);
+        // 构建结束消息：成功有解析结果就用结果；无结果但退出 0 且有 stdout 就用 stdout 兜底；
+        // 非 0 退出走错误通道带退出码+输出片段
+        let content = build_executor_end_content(
+            executor_type, &status, result_text, &stream_result.raw_stdout, &stderr_text,
+        );
 
         tracing::info!(
             "[debounce] executor {} result_text={:?}",
             executor_type,
             content.chars().take(200).collect::<String>()
         );
-        tracing::info!(
-            "[debounce] executor {} result sending to Feishu (receive_id={})",
-            executor_type, receive_id
-        );
         send_msg(content);
 
+        // 执行成功时从日志中提取 session_id 并持久化到数据库，
+        // 下次私聊时可直接 resume 该 session，实现多轮对话上下文保持。
+        if status.success() {
+            if let Some(wid) = workspace_id {
+                if let Some(new_session_id) = extract_session_from_logs(&executor, &stream_result.logs) {
+                    tracing::info!(
+                        "[debounce] extracted session_id={} for executor={}, saving to DB",
+                        new_session_id,
+                        executor_type
+                    );
+                    if let Err(e) = db.set_executor_session(wid, executor_type, Some(new_session_id)).await {
+                        tracing::warn!("[debounce] 保存 executor session 失败: {:?}", e);
+                    }
+                }
+            }
+        }
+
         Ok(crate::executor_service::ExecutionResult {
-            task_id: format!("executor-{}-{}", executor_type, uuid::Uuid::new_v4()),
+            task_id,
             record_id: None, // executor 类型不存储执行记录
         })
     }
@@ -1066,29 +1417,29 @@ mod executor_feedback_tests {
         assert_eq!(d.as_secs(), 3600);
     }
 
-    /// 有解析结果时优先返回结果，不看 stdout / 退出码：result 即最终回复。
+    /// 成功时有解析结果：统一返回简洁结束标志，result_text 已通过过程消息实时推送。
     #[test]
-    fn test_build_executor_end_content_uses_result_text() {
+    fn test_build_executor_end_content_success_with_result_text() {
         let status = std::process::Command::new("sh")
             .args(["-c", "true"])
             .status()
             .expect("spawn sh true");
         let content = build_executor_end_content("pi", &status, Some("最终答案".to_string()), "ignored stdout", "");
-        assert_eq!(content, "最终答案");
+        assert_eq!(content, "✅ pi 处理完成");
     }
 
-    /// 退出 0 + 无解析结果 + 有原始 stdout：原样回复 stdout（输出即答案）。
+    /// 退出 0 + 有原始 stdout：统一返回简洁结束标志，stdout 已通过过程消息实时推送。
     #[test]
-    fn test_build_executor_end_content_success_returns_stdout() {
+    fn test_build_executor_end_content_success_returns_marker() {
         let status = std::process::Command::new("sh")
             .args(["-c", "true"])
             .status()
             .expect("spawn sh true");
         let content = build_executor_end_content("pi", &status, None, "hello world", "");
-        assert_eq!(content, "hello world");
+        assert_eq!(content, "✅ pi 处理完成");
     }
 
-    /// 退出 0 + 无解析结果 + stdout 为空：发空结束标志，避免用户误以为还在跑。
+    /// 退出 0 + stdout 为空：统一返回简洁结束标志，与有输出时保持一致。
     #[test]
     fn test_build_executor_end_content_success_empty_returns_marker() {
         let status = std::process::Command::new("sh")
@@ -1096,10 +1447,10 @@ mod executor_feedback_tests {
             .status()
             .expect("spawn sh true");
         let content = build_executor_end_content("pi", &status, None, "   \n  ", "");
-        assert_eq!(content, "✅ pi 执行完成（无输出）");
+        assert_eq!(content, "✅ pi 处理完成");
     }
 
-    /// 非零退出 + 远超上限的多字节中文 stdout：必须按 char 截断前 1500 个，
+    /// 非零退出 + 远超上限的多字节中文 stderr：必须按 char 截断前 1500 个，
     /// 不能用 `&str[..1500]` 按字节切片——那会落在中文中间触发 panic。
     /// 这是本次修复的核心回归保护：执行器非零退出不能再变成 debounce 任务崩溃。
     #[test]
@@ -1111,7 +1462,7 @@ mod executor_feedback_tests {
             .status()
             .expect("spawn sh exit 1");
         // 关键断言：这一行不 panic 即说明按 char 截断生效
-        let content = build_executor_end_content("pi", &status, None, &chinese, "");
+        let content = build_executor_end_content("pi", &status, None, "", &chinese);
         assert!(
             content.starts_with("❌ pi 执行失败：退出码 Some(1)"),
             "should start with error prefix, got: {}",
@@ -1120,7 +1471,7 @@ mod executor_feedback_tests {
         // 输出区被裁到 1500 个 char：总长度远小于原文 1600 + 前缀
         assert!(
             content.chars().count() < 1600,
-            "stdout preview should be truncated to 1500 chars, got len {}",
+            "stderr preview should be truncated to 1500 chars, got len {}",
             content.chars().count()
         );
     }
