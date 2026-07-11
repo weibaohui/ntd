@@ -387,15 +387,6 @@ impl FeishuPushService {
     }
 }
 
-/// 截断字符串到指定字符数，超出部分用 "..." 表示
-fn truncate_text(s: &str, max_chars: usize) -> String {
-    if s.chars().count() > max_chars {
-        s.chars().take(max_chars).collect::<String>() + "..."
-    } else {
-        s.to_string()
-    }
-}
-
 /// 根据日志类型返回 emoji 前缀和中文标签
 ///
 /// 让飞书侧能一眼区分思考、工具调用、工具结果、助手回复、会话事件等不同类型，
@@ -465,11 +456,11 @@ fn format_output_event(
         "tool_result" => {
             return None;
         }
-        "assistant" | "text" => format!("💬 {}", truncate_text(content, 250)),
-        "result" => format!("✅ {}", truncate_text(content, 250)),
+        "assistant" | "text" => format!("💬 {}", content),
+        "result" => format!("✅ {}", content),
         _ => {
             let (prefix, _label) = output_event_prefix_and_label(&entry.log_type);
-            format!("{} {}", prefix, truncate_text(content, 200))
+            format!("{} {}", prefix, content)
         }
     };
     Some(result)
