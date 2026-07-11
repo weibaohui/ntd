@@ -68,9 +68,9 @@ impl FeishuPushService {
                                     let card_json = format_executor_direct_card(content);
                                     let res = feishu_listener.send_card_raw(*bot_id, receive_id, receive_id_type, &card_json).await;
                                     if let Err(e) = res {
-                                        warn!("[feishu-push] executor direct response failed for bot {}: {}", bot_id, e);
+                                        warn!("[feishu-push] executor direct response (card) failed for bot {}: {}", bot_id, e);
                                     } else {
-                                        debug!("[feishu-push] executor direct response sent to bot {}: {}", bot_id, &content[..content.len().min(60)]);
+                                        info!("[feishu-push] executor direct response (CARD) sent to bot {}", bot_id);
                                     }
                                     continue;
                                 }
