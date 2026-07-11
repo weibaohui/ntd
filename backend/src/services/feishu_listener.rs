@@ -2098,6 +2098,8 @@ impl FeishuListener {
             "{}/open-apis/im/v1/messages?receive_id_type={}",
             base_url, receive_id_type
         );
+        // 飞书 API 要求 content 字段是字符串格式的 JSON
+        // json! 宏会自动将 &str 转义为 JSON 字符串值，无需手动处理
         let body = serde_json::json!({
             "receive_id": receive_id,
             "msg_type": "interactive",

@@ -257,14 +257,16 @@ pub fn render_card(card: &Card, session_key: &str) -> String {
 }
 
 /// 渲染卡片为 serde_json::Value
+/// 使用飞书卡片 JSON 2.0 格式：{schema: "2.0", body: {elements}, header}
 fn render_card_map(card: &Card, session_key: &str) -> Value {
     let mut result = serde_json::json!({
-        "config": {
-            "wide_screen_mode": true
+        "schema": "2.0",
+        "body": {
+            "elements": []
         }
     });
 
-    // Header
+    // Header（JSON 2.0 格式）
     if let Some(ref header) = card.header {
         let color = if header.color.is_empty() { "blue" } else { &header.color };
         result["header"] = serde_json::json!({
@@ -276,12 +278,12 @@ fn render_card_map(card: &Card, session_key: &str) -> Value {
         });
     }
 
-    // Elements
+    // Elements（放在 body.elements 中）
     let elements = render_elements(&card.elements, session_key);
     if elements.is_empty() {
-        result["elements"] = serde_json::json!([{"tag": "markdown", "content": " "}]);
+        result["body"]["elements"] = serde_json::json!([{"tag": "markdown", "content": " "}]);
     } else {
-        result["elements"] = Value::Array(elements);
+        result["body"]["elements"] = Value::Array(elements);
     }
 
     result
@@ -1081,9 +1083,9 @@ mod tests {
         let groups = help_groups();
         let card = build_help_card("common", &groups);
         let json = render_card(&card, "test_session");
-        // 验证基本结构
-        assert!(json.contains("\"config\""));
-        assert!(json.contains("\"wide_screen_mode\""));
+        // 验证基本结构（JSON 2.0 格式）
+        assert!(json.contains("\"schema\":\"2.0\""));
+        assert!(json.contains("\"body\""));
         assert!(json.contains("\"header\""));
         assert!(json.contains("\"elements\""));
         assert!(json.contains("NTD 帮助"));

@@ -171,10 +171,12 @@ impl FeishuChannelService {
                                 })
                                 .unwrap_or_default();
 
+                            // 按 char 截断日志预览，避免按字节切片切断多字节中文导致 panic
+                            let preview: String = content.chars().take(100).collect();
                             info!(
                                 "WebSocket: received message from {} in {} ({}): {:?}",
                                 sender_open_id, msg.message.chat_id, chat_type,
-                                &content[..content.len().min(100)]
+                                preview
                             );
 
                             let channel_msg = ChannelMessage {

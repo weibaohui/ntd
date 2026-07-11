@@ -34,7 +34,10 @@ pub(crate) fn send_event(tx: &broadcast::Sender<ExecEvent>, event: ExecEvent) {
 }
 
 /// 根据执行器类型创建对应的 EventPipeline（含专用提取器）
-fn create_pipeline_for_executor(executor: &dyn CodeExecutor) -> Option<EventPipeline> {
+///
+/// pub(crate) 是为了让 message_debounce.rs 中的 executor 默认响应路径也能复用
+/// 同一套 pipeline 创建逻辑，避免每个调用方各自硬编码 executor 类型 → 提取器映射。
+pub(crate) fn create_pipeline_for_executor(executor: &dyn CodeExecutor) -> Option<EventPipeline> {
     let executor_type = executor.executor_type();
 
     // 根据执行器类型选择合适的提取器
@@ -88,7 +91,10 @@ fn create_pipeline_for_executor(executor: &dyn CodeExecutor) -> Option<EventPipe
 /// 返回转换后的 ParsedLogEntry，供 LogFlusher 使用。
 /// workspace_id：执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标，
 /// 必须贯穿到每个事件发送路径，否则推送服务无法匹配到对应的推送目标。
-fn emit_execution_event(
+///
+/// pub(crate) 是为了让 message_debounce.rs 中的 executor 默认响应路径在 finalize
+/// pipeline 时也能复用同一套事件发送逻辑。
+pub(crate) fn emit_execution_event(
     event: &ExecutionEvent,
     tx: &broadcast::Sender<ExecEvent>,
     task_id: &str,
@@ -111,7 +117,10 @@ fn emit_execution_event(
 /// 如果 EventPipeline 没有产生有效事件，返回空 Vec。
 /// workspace_id：执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标，
 /// 必须贯穿到每个事件发送路径，否则推送服务无法匹配到对应的推送目标。
-fn try_parse_with_pipeline(
+///
+/// pub(crate) 是为了让 message_debounce.rs 中的 executor 默认响应路径复用同一套解析逻辑，
+/// 确保 executor 直连执行与 todo 执行产生完全相同格式的事件。
+pub(crate) fn try_parse_with_pipeline(
     pipeline: &mut EventPipeline,
     line: &str,
     tx: &broadcast::Sender<ExecEvent>,
