@@ -312,11 +312,8 @@ fn render_elements(elements: &[CardElement], session_key: &str) -> Vec<Value> {
             }
             CardElement::Note(note) => {
                 result.push(serde_json::json!({
-                    "tag": "note",
-                    "elements": [{
-                        "tag": "plain_text",
-                        "content": note.text
-                    }]
+                    "tag": "markdown",
+                    "content": note.text
                 }));
             }
             CardElement::Select(select) => {
