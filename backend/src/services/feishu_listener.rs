@@ -2079,6 +2079,48 @@ impl FeishuListener {
         Ok(())
     }
 
+    /// Send a card message using a specific receive_id_type.
+    pub async fn send_card_raw(
+        &self,
+        bot_id: i64,
+        receive_id: &str,
+        receive_id_type: &str,
+        card_json: &str,
+    ) -> anyhow::Result<()> {
+        let base_url = Self::base_url(&self.bot_credentials, bot_id)
+            .ok_or_else(|| anyhow::anyhow!("no credentials for bot {}", bot_id))?;
+        let token = Self::get_tenant_token(&self.bot_credentials, &self.token_manager, bot_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no token for bot {}", bot_id))?;
+
+        let client = reqwest::Client::new();
+        let url = format!(
+            "{}/open-apis/im/v1/messages?receive_id_type={}",
+            base_url, receive_id_type
+        );
+        let body = serde_json::json!({
+            "receive_id": receive_id,
+            "msg_type": "interactive",
+            "content": card_json
+        });
+
+        let res = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = res.status();
+        if !status.is_success() {
+            let body: serde_json::Value = res.json().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("send_card_raw failed: {} {:?}", status, body));
+        }
+
+        Ok(())
+    }
+
     // --- Feishu API helpers ---
 
     fn base_url(

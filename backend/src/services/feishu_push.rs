@@ -5,6 +5,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::db::Database;
 use crate::executor_service::ExecEvent;
+use crate::services::feishu_card::{build_error_card, build_info_card, build_success_card, render_card};
 use crate::services::feishu_listener::FeishuListener;
 
 /// 推送目标类型：workspace_id → [(bot_id, receive_id, receive_id_type, push_level)]
@@ -63,7 +64,9 @@ impl FeishuPushService {
 
                                 // 执行器直接响应：绕过 push_level 过滤和 workspace 隔离，直接发回飞书
                                 if let ExecEvent::ExecutorDirectResponse { bot_id, receive_id, receive_id_type, content } = &ev {
-                                    let res = feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, content).await;
+                                    // 使用卡片形式发送执行器输出
+                                    let card_json = format_executor_direct_card(content);
+                                    let res = feishu_listener.send_card_raw(*bot_id, receive_id, receive_id_type, &card_json).await;
                                     if let Err(e) = res {
                                         warn!("[feishu-push] executor direct response failed for bot {}: {}", bot_id, e);
                                     } else {
@@ -79,17 +82,26 @@ impl FeishuPushService {
                                     if let (Some(bot_id), Some(receive_id)) = (feishu_bot_id, feishu_receive_id) {
                                         // 查询该 bot 的 push_level 配置
                                         let push_level = Self::get_bot_push_level(&db, *bot_id).await;
-                                        
+
                                         // 检查 push_level 配置是否允许发送
                                         if Self::should_send(&push_level, &ev) {
-                                            let text = Self::format_event(&ev).unwrap_or_default();
                                             // 群聊用 chat_id，私聊用 open_id；None 时降级为 open_id
                                             let receive_id_type = feishu_receive_id_type.as_deref().unwrap_or("open_id");
-                                            let res = feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, &text).await;
-                                            if let Err(e) = res {
-                                                warn!("[feishu-push] binding direct send failed for bot {}: {}", bot_id, e);
+                                            // 使用卡片形式发送执行结果
+                                            if let Some(card_json) = format_finished_card(&ev) {
+                                                let res = feishu_listener.send_card_raw(*bot_id, receive_id, receive_id_type, &card_json).await;
+                                                if let Err(e) = res {
+                                                    warn!("[feishu-push] binding card send failed for bot {}: {}", bot_id, e);
+                                                } else {
+                                                    debug!("[feishu-push] binding card sent to bot {}", bot_id);
+                                                }
                                             } else {
-                                                debug!("[feishu-push] binding direct sent to bot {}: {}", bot_id, &text[..text.len().min(60)]);
+                                                // 降级为纯文本
+                                                let text = Self::format_event(&ev).unwrap_or_default();
+                                                let res = feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, &text).await;
+                                                if let Err(e) = res {
+                                                    warn!("[feishu-push] binding direct send failed for bot {}: {}", bot_id, e);
+                                                }
                                             }
                                             binding_sent = true;
                                         } else {
@@ -129,15 +141,29 @@ impl FeishuPushService {
                                     continue;
                                 }
 
-                                let Some(text) = Self::format_event(&ev) else {
-                                    continue;
-                                };
+                                let text = Self::format_event(&ev);
 
                                 for (bot_id, receive_id, receive_id_type, push_level) in targets.iter() {
                                     if !Self::should_send(push_level, &ev) {
                                         continue;
                                     }
-                                    let res = feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, &text).await;
+                                    // 对于 Finished 事件使用卡片形式发送
+                                    if let ExecEvent::Finished { .. } = &ev {
+                                        if let Some(card_json) = format_finished_card(&ev) {
+                                            let res = feishu_listener.send_card_raw(*bot_id, receive_id, receive_id_type, &card_json).await;
+                                            if let Err(e) = res {
+                                                warn!("[feishu-push] card send failed for bot {}: {}", bot_id, e);
+                                            } else {
+                                                debug!("[feishu-push] card sent to bot {}", bot_id);
+                                            }
+                                            continue;
+                                        }
+                                    }
+                                    // 其他事件使用纯文本形式
+                                    let Some(text) = text.as_ref() else {
+                                        continue;
+                                    };
+                                    let res = feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, text).await;
                                     if let Err(e) = res {
                                         warn!("[feishu-push] send failed for bot {}: {}", bot_id, e);
                                     } else {
@@ -326,6 +352,46 @@ impl FeishuPushService {
             ExecEvent::WikiChatOutput { .. } => None,
             ExecEvent::WikiChatFinished { .. } => None,
         }
+    }
+}
+
+/// 将 ExecutorDirectResponse 格式化为卡片 JSON 字符串
+/// 使用统一卡片消息样式显示执行器输出
+fn format_executor_direct_card(content: &str) -> String {
+    let card = build_info_card("执行器输出", content);
+    render_card(&card, "")
+}
+
+/// 将 Finished 事件格式化为卡片 JSON 字符串
+fn format_finished_card(event: &ExecEvent) -> Option<String> {
+    match event {
+        ExecEvent::Finished { success, todo_title, executor, duration_secs, total_tokens, .. } => {
+            // 格式化时长
+            let duration_str = if *duration_secs >= 3600 {
+                let hours = *duration_secs / 3600;
+                let mins = (*duration_secs % 3600) / 60;
+                format!("{}h {}m", hours, mins)
+            } else if *duration_secs >= 60 {
+                let mins = *duration_secs / 60;
+                let secs = *duration_secs % 60;
+                format!("{}m {}s", mins, secs)
+            } else {
+                format!("{}s", duration_secs)
+            };
+
+            let content = format!(
+                "**📋 {}**\n\n⚡ 执行器: `{}`\n⏱️ 用时: {}\n🔤 Token: {}",
+                todo_title, executor, duration_str, total_tokens
+            );
+
+            let card = if *success {
+                build_success_card("执行成功", &content)
+            } else {
+                build_error_card("执行失败", &content)
+            };
+            Some(render_card(&card, ""))
+        }
+        _ => None,
     }
 }
 
