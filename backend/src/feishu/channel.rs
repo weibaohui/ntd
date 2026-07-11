@@ -143,7 +143,8 @@ impl FeishuChannelService {
                 rt.block_on(async move {
                     use crate::feishu::sdk::{EventDispatcherHandler, LarkWsClient};
 
-                    let tx = tx_clone;
+                    let tx = tx_clone.clone(); // 消息处理
+                    let tx_card = tx_clone; // 卡片回调处理
 
                     let builder = EventDispatcherHandler::builder()
                         .register_p2_im_message_receive_v1(move |event| {
@@ -221,6 +222,61 @@ impl FeishuChannelService {
                         }) {
                         Ok(b) => b,
                         Err(e) => return Err(anyhow::anyhow!("Failed to register event handler: {e}")),
+                    };
+
+                    // 注册卡片点击回调事件处理器
+                    // 注意：当前实现通过 tx 发送事件到 FeishuListener 异步处理，
+                    // 而不是同步返回更新后的卡片。后续可优化为使用 patch message API 更新原消息。
+                    let builder = match builder
+                        .register_p2_im_card_action_trigger_v1(move |event| {
+                            tracing::info!(
+                                "WebSocket: card action trigger: name={:?}, value={:?}, chat_id={:?}, message_id={:?}",
+                                event.event.action.name,
+                                event.event.action.value,
+                                event.event.context.as_ref().map(|c| &c.open_chat_id),
+                                event.event.context.as_ref().map(|c| &c.open_message_id)
+                            );
+
+                            // 将卡片事件转换为 ChannelMessage 格式并发送
+                            let sender = event.event.operator
+                                .as_ref()
+                                .and_then(|op| op.sender_id.open_id.clone())
+                                .unwrap_or_default();
+                            let chat_id = event.event.context
+                                .as_ref()
+                                .and_then(|c| c.open_chat_id.clone())
+                                .unwrap_or_default();
+                            let message_id = event.event.context
+                                .as_ref()
+                                .and_then(|c| c.open_message_id.clone())
+                                .unwrap_or_default();
+
+                            // 从 action value 中提取 action 字符串
+                            let action_value = event.event.action.value
+                                .as_ref()
+                                .and_then(|v| v.get("action"))
+                                .and_then(|a| a.as_str())
+                                .unwrap_or("")
+                                .to_string();
+
+                            // 构造一个特殊的 ChannelMessage 来传递卡片回调信息
+                            let card_callback_msg = ChannelMessage {
+                                id: message_id,
+                                sender,
+                                sender_type: Some("card_action".to_string()),
+                                content: action_value, // 这里存放的是 action value，如 "nav:/help session"
+                                channel: chat_id,
+                                timestamp: 0,
+                                chat_type: Some("card_callback".to_string()),
+                                mentioned_open_ids: vec![],
+                            };
+
+                            if let Err(e) = tx_card.try_send(card_callback_msg) {
+                                error!("Failed to forward card action to channel bus: {e}");
+                            }
+                        }) {
+                        Ok(b) => b,
+                        Err(e) => return Err(anyhow::anyhow!("Failed to register card action handler: {e}")),
                     };
 
                     let event_handler = builder.build();

@@ -194,7 +194,12 @@ impl FeishuListener {
             "[feishu:{}] handle_message: sender={}, bot_open_id={}, content={:?}, chat_type={:?}",
             context.bot_id, msg.sender, context.bot_open_id, msg.content, msg.chat_type
         );
-        // 阶段 0：跳过机器人自己发的消息（不持久化、不加 reaction）
+        // 阶段 0：卡片回调处理（由飞书卡片按钮点击触发）
+        if msg.chat_type.as_deref() == Some("card_callback") {
+            Self::handle_card_callback(context, msg).await;
+            return;
+        }
+        // 阶段 0a：跳过机器人自己发的消息（不持久化、不加 reaction）
         if msg.sender == context.bot_open_id {
             tracing::info!("[feishu:{}] skipping self-sent message", context.bot_id);
             return;
@@ -1752,6 +1757,119 @@ impl FeishuListener {
         if let Some(rid) = reaction_id {
             Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
         }
+    }
+
+    /// 处理飞书卡片按钮点击回调
+    /// card.callback 消息的 content 包含 action value，如 "nav:/help session"
+    async fn handle_card_callback(context: ListenerMessageContext<'_>, msg: &ChannelMessage) {
+        let FeishuCommandContext {
+            credentials,
+            token_manager,
+            bot_id,
+            sender,
+            channel: _,
+            message_id,
+            ..
+        } = FeishuCommandContext {
+            db: context.db,
+            credentials: context.credentials,
+            token_manager: context.token_manager,
+            bot_id: context.bot_id,
+            chat_type: "p2p", // 卡片回调默认用 p2p
+            sender: &msg.sender,
+            channel: &msg.channel,
+            message_id: &msg.id,
+            content: &msg.content,
+            reaction_id: None,
+        };
+
+        let action = msg.content.trim();
+
+        // nav: 前缀 - 导航到指定 help 页面
+        if let Some(group) = action.strip_prefix("nav:/help ") {
+            let group_key = group.trim().to_lowercase();
+            let card = crate::services::feishu_card::build_help_card(
+                &group_key,
+                &crate::services::feishu_card::help_groups(),
+            );
+            let session_key = format!("feishu:{}", sender);
+            let card_json = crate::services::feishu_card::render_card(&card, &session_key);
+
+            // 使用 patch 更新原卡片消息
+            if let Err(e) = Self::patch_card(
+                credentials,
+                token_manager,
+                bot_id,
+                message_id,
+                &card_json,
+            ).await {
+                tracing::error!("[feishu:{}] card callback patch failed: {}", bot_id, e);
+            } else {
+                tracing::info!("[feishu:{}] card updated for nav:/help {}", bot_id, group_key);
+            }
+            return;
+        }
+
+        // cmd: 前缀 - 作为命令处理
+        if let Some(cmd) = action.strip_prefix("cmd:/") {
+            tracing::info!("[feishu:{}] card cmd: /{}", bot_id, cmd);
+            // TODO: 根据命令类型调用对应的处理函数
+            // 目前只是记录日志
+            return;
+        }
+
+        // act: 前缀 - 执行动作
+        if let Some(act) = action.strip_prefix("act:/") {
+            tracing::info!("[feishu:{}] card action: /{}", bot_id, act);
+            // TODO: 执行动作
+            return;
+        }
+
+        tracing::warn!("[feishu:{}] unknown card action: {}", bot_id, action);
+    }
+
+    /// Patch an existing interactive card message with new content.
+    async fn patch_card(
+        credentials: &DashMap<i64, (String, String, String)>,
+        token_manager: &Arc<TokenManager>,
+        bot_id: i64,
+        message_id: &str,
+        card_json: &str,
+    ) -> anyhow::Result<()> {
+        let base_url = Self::base_url(credentials, bot_id)
+            .ok_or_else(|| anyhow::anyhow!("no base_url for bot {}", bot_id))?;
+        let token = Self::get_tenant_token(credentials, token_manager, bot_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no token for bot {}", bot_id))?;
+
+        let client = reqwest::Client::new();
+        let url = format!(
+            "{}/open-apis/im/v1/messages/{}",
+            base_url, message_id
+        );
+
+        let body = serde_json::json!({
+            "msg_type": "interactive",
+            "content": card_json
+        });
+
+        let res = client
+            .patch(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("patch_card request failed: {}", e))?;
+
+        let status = res.status();
+        if !status.is_success() {
+            let body: serde_json::Value = res.json().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("patch_card failed: {} {:?}", status, body));
+        }
+
+        tracing::debug!("[feishu:{}] patch_card ok for message {}", bot_id, message_id);
+        Ok(())
     }
 
     /// Send a plain text message to a Feishu recipient.
