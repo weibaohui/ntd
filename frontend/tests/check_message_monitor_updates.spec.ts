@@ -93,3 +93,17 @@ test('消息监控台筛选区含「处理类型」下拉(任务17/18)', async (
   const select = page.locator('.ant-select').filter({ hasText: '全部类型' }).first();
   await expect(select).toBeVisible({ timeout: 10000 });
 });
+
+test('关键字搜索防抖下沉后端、并回到第 1 页', async ({ page }) => {
+  await gotoMessages(page);
+  // 数据充足(7000+ 条)，先翻到第 2 页。
+  const page2 = page.locator('.ant-pagination-item-2');
+  await expect(page2).toBeVisible({ timeout: 10000 });
+  await page2.click();
+  // 输入搜索关键字；防抖 300ms 后才下沉到后端并刷新。
+  await page.getByPlaceholder('搜索消息内容...').fill('几点');
+  await page.waitForTimeout(800); // 等防抖 + 后端请求落地
+  // 页码应回到第 1 项 active(搜索重置页码)；且结果已按关键字过滤(命中很少)。
+  await expect(page.locator('.ant-pagination-item-1')).toHaveClass(/ant-pagination-item-active/);
+  await expect(page.getByText(/共 \d+ 条/)).toBeVisible({ timeout: 5000 });
+});

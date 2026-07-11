@@ -3,9 +3,20 @@ use std::collections::HashMap;
 use crate::db::entity::feishu_messages;
 use crate::db::Database;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Statement,
+    sea_query::{Expr, LikeExpr},
+    ActiveModelTrait, ActiveValue, ColumnTrait, ConnectionTrait, EntityTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement,
 };
+
+// 转义 SQLite LIKE 的通配符(\, %, _)，配合 LikeExpr::escape('\\') 使用，
+// 避免用户输入的 %/_ 被当作通配符导致匹配范围意外扩大。
+// 转义顺序固定：先转义反斜杠本身，再转义 % 和 _，否则后转义的反斜杠会再次转义前者。
+fn escape_like(input: &str) -> String {
+    input
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
 
 #[derive(Debug, Clone)]
 pub struct FeishuMessageRecord {
@@ -192,16 +203,26 @@ impl Database {
 
         // 关键字搜索：在原始 content(含 JSON 包裹)上做 LIKE 子串匹配，
         // 放到后端是为了让分页 total 与结果一致(原先前端搜索只过滤当前页，total 不准)。
+        // 转义 + ESCAPE：用户输入的 %/_ 不被当通配符，仍参数化绑定(无注入风险)。
         if let Some(kw) = keyword {
-            let pattern = format!("%{}%", kw);
-            query = query.filter(feishu_messages::Column::Content.like(pattern));
+            let pattern = format!("%{}%", escape_like(kw));
+            // 用 Expr::col(...).like(LikeExpr) 而非 Column.like()：后者签名只接受 Into<String>，
+            // 无法带 ESCAPE 子句；Expr::col 来自 sea-query，接受 IntoLikeExpr 并支持 escape。
+            query = query.filter(
+                Expr::col((feishu_messages::Entity, feishu_messages::Column::Content))
+                    .like(LikeExpr::new(pattern).escape('\\')),
+            );
         }
 
         // 按处理类型类别筛选：前端传语义关键字(slash/executor/loop)，后端用包含匹配落到具体 processed_type。
         // slash→slash_command(+loop)、executor→default_response_executor、loop→*_loop。
+        // 同样转义防通配符(虽来自固定下拉，保持一致并防御直接调 API 的任意输入)。
         if let Some(pt) = processed_type {
-            let pattern = format!("%{}%", pt);
-            query = query.filter(feishu_messages::Column::ProcessedType.like(pattern));
+            let pattern = format!("%{}%", escape_like(pt));
+            query = query.filter(
+                Expr::col((feishu_messages::Entity, feishu_messages::Column::ProcessedType))
+                    .like(LikeExpr::new(pattern).escape('\\')),
+            );
         }
 
         if let Some(cid) = chat_id {

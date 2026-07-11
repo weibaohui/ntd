@@ -45,7 +45,10 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
   const [chatTypeFilter, setChatTypeFilter] = useState<string | undefined>(undefined);
   // 处理类型筛选：undefined=全部、'slash'=斜杠命令、'executor'=执行器、'loop'=环路，透传后端按 processed_type 模糊匹配。
   const [processedTypeFilter, setProcessedTypeFilter] = useState<string | undefined>(undefined);
+  // searchText 是输入框即时值(每按键更新)；debouncedSearch 是防抖后的值，真正触发后端请求。
+  // 拆开是为了避免每次按键都打后端 + 全表 LIKE 扫描，停顿 300ms 才下沉。
   const [searchText, setSearchText] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
 
   const [configDrawerOpen, setConfigDrawerOpen] = useState(false);
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
@@ -110,7 +113,8 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
         processed: processedFilter,
         chat_type: chatTypeFilter,
         // 关键字搜索下沉到后端：原先前端只过滤当前页导致 total 与结果不一致，改后端 LIKE 后 total 准确。
-        keyword: searchText || undefined,
+        // 用防抖后的 debouncedSearch，避免每次按键打后端。
+        keyword: debouncedSearch || undefined,
         processed_type: processedTypeFilter,
         workspace_id: workspaceId,
         bot_id: activeBotId ?? undefined,
@@ -125,11 +129,22 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
     } finally {
       setMessagesLoading(false);
     }
-  }, [workspaceId, selectedChatId, isHistory, processedFilter, chatTypeFilter, processedTypeFilter, messagesPage, messagesPageSize, activeBotId, searchText]);
+  }, [workspaceId, selectedChatId, isHistory, processedFilter, chatTypeFilter, processedTypeFilter, messagesPage, messagesPageSize, activeBotId, debouncedSearch]);
 
   useEffect(() => {
     loadMessages();
   }, [loadMessages]);
+
+  // 搜索防抖 + 回第 1 页：输入停顿 300ms 后才把关键字下沉到 debouncedSearch。
+  // 同一 tick 内一并重置页码，确保 loadMessages 只发一次「新搜索 + page=1」的请求，
+  // 而非先发一次「新搜索 + 旧页码」的中间请求(旧页码可能超出筛选后的总页数 → 空列表)。
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setDebouncedSearch(searchText);
+      setMessagesPage(1);
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [searchText]);
 
   useEffect(() => {
     if (!workspaceId) {
