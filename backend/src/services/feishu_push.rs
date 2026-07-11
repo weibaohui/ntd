@@ -186,23 +186,58 @@ impl FeishuPushService {
                                     continue;
                                 }
 
+                                let finished_card_json: Option<String> = if let ExecEvent::Finished { .. } = &ev {
+                                    format_finished_card(&ev)
+                                } else {
+                                    None
+                                };
                                 let text = Self::format_event(&ev);
+
+                                // Started 事件：重置所有 target 的工具调用计数器，
+                                // 确保每个新任务的工具调用从 #1 开始
+                                if let ExecEvent::Started { .. } = &ev {
+                                    for (bot_id, receive_id, _, _) in targets.iter() {
+                                        tool_call_counters.insert((*bot_id, receive_id.clone()), 0);
+                                    }
+                                }
 
                                 for (bot_id, receive_id, receive_id_type, push_level) in targets.iter() {
                                     if !Self::should_send(push_level, &ev) {
                                         continue;
                                     }
-                                    // 对于 Finished 事件使用卡片形式发送
-                                    if let ExecEvent::Finished { .. } = &ev {
-                                        if let Some(card_json) = format_finished_card(&ev) {
-                                            let res = feishu_listener.send_card_raw(*bot_id, receive_id, receive_id_type, &card_json).await;
-                                            if let Err(e) = res {
-                                                warn!("[feishu-push] card send failed for bot {}: {}", bot_id, e);
-                                            } else {
-                                                debug!("[feishu-push] card sent to bot {}", bot_id);
-                                            }
-                                            continue;
+                                    // Finished 事件：使用卡片形式发送
+                                    if let Some(card_json) = finished_card_json.as_ref() {
+                                        let res = feishu_listener.send_card_raw(*bot_id, receive_id, receive_id_type, card_json).await;
+                                        if let Err(e) = res {
+                                            warn!("[feishu-push] card send failed for bot {}: {}", bot_id, e);
+                                        } else {
+                                            debug!("[feishu-push] card sent to bot {}", bot_id);
                                         }
+                                        continue;
+                                    }
+                                    // Output 事件：使用卡片形式发送，带工具调用编号累积
+                                    if let ExecEvent::Output { task_id, entry, .. } = &ev {
+                                        // 计算工具调用编号：tool_call 类型递增计数器
+                                        let tool_idx = if entry.log_type == "tool_call"
+                                            || entry.log_type == "tool_use"
+                                            || entry.log_type == "tool"
+                                        {
+                                            let key = (*bot_id, receive_id.clone());
+                                            let counter = tool_call_counters.entry(key).or_insert(0);
+                                            *counter += 1;
+                                            Some(*counter)
+                                        } else {
+                                            None
+                                        };
+                                        let Some(msg_text) = format_output_event(task_id, entry, tool_idx) else { continue };
+                                        let card_json = format_executor_process_card(&msg_text);
+                                        let res = feishu_listener.send_card_raw(*bot_id, receive_id, receive_id_type, &card_json).await;
+                                        if let Err(e) = res {
+                                            warn!("[feishu-push] output card send failed for bot {}: {}", bot_id, e);
+                                        } else {
+                                            debug!("[feishu-push] output card sent to bot {}", bot_id);
+                                        }
+                                        continue;
                                     }
                                     // 其他事件使用纯文本形式
                                     let Some(text) = text.as_ref() else {
@@ -249,7 +284,7 @@ impl FeishuPushService {
         match push_level {
             "disabled" => false,
             "result_only" => matches!(event, ExecEvent::Finished { .. } | ExecEvent::LoopFinished { .. }),
-            "all" => true,
+            "all" => !matches!(event, ExecEvent::TodoProgress { .. } | ExecEvent::ExecutionStats { .. }),
             _ => false,
         }
     }
@@ -458,6 +493,14 @@ fn format_output_event(
         }
         "assistant" | "text" => format!("💬 {}", content),
         "result" => format!("✅ {}", content),
+        "error" | "stderr" => format!("🔴 {}", content),
+        "warning" => format!("⚠️ {}", content),
+        // 噪音类型：不推送
+        "tokens" | "step_start" | "step_finish" | "model_switch"
+            | "cost" | "duration" | "session_start" | "session_end" => {
+            return None;
+        }
+        // info 和其他类型保留，显示通用前缀
         _ => {
             let (prefix, _label) = output_event_prefix_and_label(&entry.log_type);
             format!("{} {}", prefix, content)
