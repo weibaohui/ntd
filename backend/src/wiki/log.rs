@@ -176,8 +176,8 @@ mod tests {
         // 验证 append_log_entry 会先读后写，不会覆盖现有内容；
         // 这里直接测 filter/rebuild 逻辑（append_log_entry 内部即走该路径）。
         let existing = "## [2026-07-06 10:00] 摄入\n\n";
-        let cutoff = cutoff_date();
-        let filtered = filter_entries_by_date(existing, &cutoff);
+        let cutoff = "2026-07-05";
+        let filtered = filter_entries_by_date(existing, cutoff);
         assert_eq!(filtered.len(), 1);
         let result = rebuild_log(filtered);
         assert!(result.contains("2026-07-06"));

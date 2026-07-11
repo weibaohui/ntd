@@ -5,7 +5,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::db::Database;
 use crate::executor_service::ExecEvent;
-use crate::services::feishu_card::{build_error_card, build_info_card, build_success_card, CardBuilder, render_card};
+use crate::services::feishu_card::{build_error_card, build_success_card, CardBuilder, render_card};
 use crate::services::feishu_listener::FeishuListener;
 
 /// 推送目标类型：workspace_id → [(bot_id, receive_id, receive_id_type, push_level)]
