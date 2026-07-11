@@ -1,5 +1,9 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 
 use crate::db::entity::project_directories;
 use crate::db::Database;
@@ -213,6 +217,108 @@ impl Database {
                 }
             }
         }
+    }
+}
+
+/// per-workspace 执行器 session 操作的互斥锁池，避免并发读写 session 导致数据不一致。
+static EXECUTOR_SESSION_LOCKS: std::sync::LazyLock<std::sync::Mutex<HashMap<i64, Arc<Mutex<()>>>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// 取得指定 workspace 的执行器 session 互斥锁句柄（不存在则创建）。
+///
+/// 返回 Arc<Mutex> 而非直接守卫，是因为调用方需要在 await 之前获取守卫、
+/// 在 await 之后释放，Arc 让守卫可以跨 await 点持有。
+fn executor_session_lock(workspace_id: i64) -> Arc<Mutex<()>> {
+    let outer = &*EXECUTOR_SESSION_LOCKS;
+    // Mutex poisoning 只在持有者 panic 时发生；这里锁的是空 HashMap，不会 panic
+    let mut guard = outer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard
+        .entry(workspace_id)
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
+impl Database {
+    /// 获取指定工作空间指定执行器的私聊会话 session_id。
+    ///
+    /// 返回值：
+    /// - `Ok(None)`：工作空间不存在
+    /// - `Ok(Some(None))`：工作空间存在但该执行器没有 session
+    /// - `Ok(Some(Some(sid)))`：工作空间存在且该执行器有 session
+    ///
+    /// 并发安全：持 per-workspace 互斥锁，与 set_executor_session 互斥，
+    /// 防止并发请求读取到过期的 session_id。
+    pub async fn get_executor_session(
+        &self,
+        workspace_id: i64,
+        executor: &str,
+    ) -> Result<Option<Option<String>>, sea_orm::DbErr> {
+        let lock = executor_session_lock(workspace_id);
+        let _guard = lock.lock().await;
+
+        let dir = project_directories::Entity::find_by_id(workspace_id)
+            .one(&self.conn)
+            .await?;
+
+        let sessions_json = match dir {
+            Some(d) => d.executor_sessions,
+            None => return Ok(None),
+        };
+
+        // 解析 JSON 获取对应执行器的 session
+        let sessions: HashMap<String, Option<String>> =
+            serde_json::from_str(sessions_json.as_deref().unwrap_or("{}"))
+            .unwrap_or_default();
+
+        Ok(sessions.get(executor).cloned())
+    }
+
+    /// 更新指定工作空间指定执行器的私聊会话 session_id。
+    ///
+    /// 流程：
+    /// 1. 读取现有 sessions JSON
+    /// 2. 更新对应执行器的 session
+    /// 3. 写回数据库
+    ///
+    /// 并发安全：持 per-workspace 互斥锁，与 get_executor_session 互斥，
+    /// 防止并发请求的 session_id 互相覆盖。
+    pub async fn set_executor_session(
+        &self,
+        workspace_id: i64,
+        executor: &str,
+        session_id: Option<String>,
+    ) -> Result<(), sea_orm::DbErr> {
+        // 持 per-workspace 互斥锁串行化「读-改-写」，与 get_executor_session 互斥。
+        // 避免并发请求读取到过期的 session_id，或多个请求的 session_id 互相覆盖。
+        let lock = executor_session_lock(workspace_id);
+        let _guard = lock.lock().await;
+
+        // 读取现有记录
+        let dir = project_directories::Entity::find_by_id(workspace_id)
+            .one(&self.conn)
+            .await?
+            .ok_or_else(|| sea_orm::DbErr::RecordNotFound("project directory not found".into()))?;
+
+        // 解析现有 JSON
+        let mut sessions: HashMap<String, Option<String>> =
+            serde_json::from_str(dir.executor_sessions.as_deref().unwrap_or("{}"))
+            .unwrap_or_default();
+
+        // 更新该执行器的 session
+        sessions.insert(executor.to_string(), session_id);
+
+        // 序列化并写回
+        let now = crate::models::utc_timestamp();
+        let am = project_directories::ActiveModel {
+            id: ActiveValue::Unchanged(dir.id),
+            executor_sessions: ActiveValue::Set(Some(serde_json::to_string(&sessions).unwrap_or_default())),
+            updated_at: ActiveValue::Set(Some(now)),
+            ..Default::default()
+        };
+        am.update(&self.conn).await?;
+        Ok(())
     }
 }
 

@@ -1456,7 +1456,11 @@ impl FeishuListener {
     }
 
     /// Handle /new — start a fresh session without resuming the previous one.
-    /// Unlike normal messages which resume existing sessions, this forces a new session.
+    /// 全局内置斜杠命令，用于清空当前会话的 session，开启全新对话。
+    ///
+    /// 支持两种场景：
+    /// 1. 项目绑定场景：清除绑定的 todo/loop 会话
+    /// 2. 私聊默认响应执行器场景：清除默认执行器的会话
     async fn handle_new(context: FeishuCommandContext<'_>) {
         let FeishuCommandContext {
             db,
@@ -1475,6 +1479,7 @@ impl FeishuListener {
             _ => (channel.to_string(), "chat_id"),
         };
 
+        // 先尝试项目绑定场景
         match db.get_feishu_project_binding(bot_id, channel).await {
             Ok(Some(binding)) => {
                 // 清除 session_id 和 latest_record_id，使下一条消息无法 resume
@@ -1511,17 +1516,14 @@ impl FeishuListener {
                     "🆕 已开启新会话。\n\n发送你的任务，我将使用全新 session 执行，不再resume之前的对话。",
                 )
                 .await;
+
+                if let Some(rid) = reaction_id {
+                    Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+                }
+                return;
             }
             Ok(None) => {
-                Self::send_text(
-                    credentials,
-                    token_manager,
-                    bot_id,
-                    &receive_id,
-                    receive_id_type,
-                    "📭 当前聊天未绑定任何项目，无法使用 /new。\n\n请先使用 /bind <项目名称> 绑定一个项目。",
-                )
-                .await;
+                // 没有绑定项目，尝试私聊默认响应执行器场景
             }
             Err(e) => {
                 tracing::error!("[feishu:{}] /new query binding failed: {e}", bot_id);
@@ -1534,8 +1536,139 @@ impl FeishuListener {
                     "⚠️ 查询绑定失败，请稍后重试。",
                 )
                 .await;
+                if let Some(rid) = reaction_id {
+                    Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+                }
+                return;
             }
         }
+
+        // 私聊默认响应执行器场景：获取 workspace 和默认执行器配置
+        let workspace_id = match db.get_agent_bot_workspace_id(bot_id).await {
+            Ok(Some(wid)) => wid,
+            Ok(None) => {
+                tracing::warn!("[feishu:{}] /new: bot has no workspace", bot_id);
+                Self::send_text(
+                    credentials,
+                    token_manager,
+                    bot_id,
+                    &receive_id,
+                    receive_id_type,
+                    "⚠️ 未找到工作空间，无法使用 /new。",
+                )
+                .await;
+                if let Some(rid) = reaction_id {
+                    Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+                }
+                return;
+            }
+            Err(e) => {
+                tracing::error!("[feishu:{}] /new query workspace failed: {e}", bot_id);
+                Self::send_text(
+                    credentials,
+                    token_manager,
+                    bot_id,
+                    &receive_id,
+                    receive_id_type,
+                    "⚠️ 查询工作空间失败，请稍后重试。",
+                )
+                .await;
+                if let Some(rid) = reaction_id {
+                    Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+                }
+                return;
+            }
+        };
+
+        // 获取 workspace 设置，判断默认响应类型
+        let settings = match crate::db::workspace_setting::get_workspace_settings(db, workspace_id).await {
+            Ok(Some(s)) => s,
+            Ok(None) => {
+                Self::send_text(
+                    credentials,
+                    token_manager,
+                    bot_id,
+                    &receive_id,
+                    receive_id_type,
+                    "📭 当前未配置默认响应，无法使用 /new。",
+                )
+                .await;
+                if let Some(rid) = reaction_id {
+                    Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+                }
+                return;
+            }
+            Err(e) => {
+                tracing::error!("[feishu:{}] /new query workspace settings failed: {e}", bot_id);
+                Self::send_text(
+                    credentials,
+                    token_manager,
+                    bot_id,
+                    &receive_id,
+                    receive_id_type,
+                    "⚠️ 查询工作空间设置失败，请稍后重试。",
+                )
+                .await;
+                if let Some(rid) = reaction_id {
+                    Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+                }
+                return;
+            }
+        };
+
+        // 只处理 executor 类型的默认响应
+        if settings.default_response_type != "executor" {
+            Self::send_text(
+                credentials,
+                token_manager,
+                bot_id,
+                &receive_id,
+                receive_id_type,
+                "📭 当前默认响应类型不是执行器，无法使用 /new 清空会话。",
+            )
+            .await;
+            if let Some(rid) = reaction_id {
+                Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+            }
+            return;
+        }
+
+        let executor_name = settings.default_response_executor
+            .unwrap_or_else(|| "claudecode".to_string());
+
+        // 清空执行器 session：设置为 None
+        if let Err(e) = db.set_executor_session(workspace_id, &executor_name, None).await {
+            tracing::error!("[feishu:{}] /new clear executor session failed: {e}", bot_id);
+            Self::send_text(
+                credentials,
+                token_manager,
+                bot_id,
+                &receive_id,
+                receive_id_type,
+                "⚠️ 清除执行器会话失败，请稍后重试。",
+            )
+            .await;
+            if let Some(rid) = reaction_id {
+                Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
+            }
+            return;
+        }
+
+        tracing::info!(
+            "[feishu:{}] /new command: cleared executor session for {}, workspace={}",
+            bot_id,
+            executor_name,
+            workspace_id
+        );
+        Self::send_text(
+            credentials,
+            token_manager,
+            bot_id,
+            &receive_id,
+            receive_id_type,
+            &format!("🆕 已开启新会话。\n\n下次对话将使用全新的 {} 会话，不再接续之前的对话。", executor_name),
+        )
+        .await;
 
         if let Some(rid) = reaction_id {
             Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;

@@ -478,6 +478,32 @@ fn executor_empty_end_message(executor_type: &str) -> String {
     format!("✅ {} 执行完成（无输出）", executor_type)
 }
 
+/// 从执行日志中提取 session_id。
+///
+/// 流程：
+/// 1. 先尝试从日志内容中提取（extract_session_id）
+/// 2. 如果没有，尝试执行器内部缓存的 session_id（get_session_id）
+///
+/// 不同执行器暴露 session_id 的方式不同：
+/// - Claude Code: stdout JSONL 行含 session_id
+/// - Hermès: `session_id: <sid>` 行
+/// - Pi: `{"type":"session","id":"<sid>"}` 行（通过 get_session_id 获取缓存值）
+///
+/// 返回 None 表示执行器不支持 session 或首次执行。
+fn extract_session_from_logs(
+    executor: &Arc<dyn crate::adapters::CodeExecutor>,
+    logs: &[ParsedLogEntry],
+) -> Option<String> {
+    // 1. 优先从日志内容提取
+    for entry in logs {
+        if let Some(sid) = executor.extract_session_id(&entry.content) {
+            return Some(sid);
+        }
+    }
+    // 2. 回退到执行器内部缓存的 session_id（Pi 等执行器在 parse_output_line 时缓存）
+    executor.get_session_id()
+}
+
 /// 根据执行结果决定发回飞书的最终内容。
 ///
 /// 成功时统一返回简洁的结束标志（"✅ <执行器名称> 处理完成"），不再重复输出
@@ -933,7 +959,7 @@ impl MessageDebounce {
         executor_type: Option<&str>,
         workspace_id: Option<i64>,
         message: &str,
-        _resume_session_id: Option<String>,
+        resume_session_id: Option<String>,
     ) -> Result<crate::executor_service::ExecutionResult, Option<String>> {
         let executor_type = executor_type.unwrap_or("claudecode");
 
@@ -989,15 +1015,45 @@ impl MessageDebounce {
             }
         };
 
+        // 确定本次使用的 session_id：
+        // 1. 优先使用调用方传入的 resume_session_id（如绑定 todo 场景）
+        // 2. 否则从 workspace 的 executor_sessions 中读取（私聊多轮对话场景）
+        let mut session_id = resume_session_id.clone();
+        if session_id.is_none() {
+            if let Some(wid) = workspace_id {
+                match db.get_executor_session(wid, executor_type).await {
+                    Ok(Some(Some(sid))) => {
+                        session_id = Some(sid);
+                        tracing::info!(
+                            "[debounce] resumed executor session for {}: {:?}",
+                            executor_type,
+                            session_id
+                        );
+                    }
+                    Ok(Some(None)) => {
+                        tracing::debug!("[debounce] no saved session for executor {}", executor_type);
+                    }
+                    Ok(None) => {
+                        tracing::debug!("[debounce] workspace not found for session lookup");
+                    }
+                    Err(e) => {
+                        tracing::warn!("[debounce] failed to get executor session: {}", e);
+                    }
+                }
+            }
+        }
+
         tracing::info!(
-            "[debounce] executor {} direct response in workspace {:?}, message len={}",
+            "[debounce] executor {} direct response in workspace {:?}, message len={}, session={:?}",
             executor_type,
             workspace_path,
-            message.len()
+            message.len(),
+            session_id.as_deref().map(|s| s.chars().take(20).collect::<String>())
         );
 
-        // 构建执行器命令
-        let command_args = executor.command_args(message);
+        // 构建执行器命令（带 session_id，支持 resume 多轮对话）
+        let is_resume = session_id.is_some();
+        let command_args = executor.command_args_with_session(message, session_id.as_deref(), is_resume);
         let program = executor.executable_path();
         tracing::info!(
             "[debounce] spawning: {} {:?} (cwd={:?})",
@@ -1148,6 +1204,23 @@ impl MessageDebounce {
             content.chars().take(200).collect::<String>()
         );
         send_msg(content);
+
+        // 执行成功时从日志中提取 session_id 并持久化到数据库，
+        // 下次私聊时可直接 resume 该 session，实现多轮对话上下文保持。
+        if status.success() {
+            if let Some(wid) = workspace_id {
+                if let Some(new_session_id) = extract_session_from_logs(&executor, &stream_result.logs) {
+                    tracing::info!(
+                        "[debounce] extracted session_id={} for executor={}, saving to DB",
+                        new_session_id,
+                        executor_type
+                    );
+                    if let Err(e) = db.set_executor_session(wid, executor_type, Some(new_session_id)).await {
+                        tracing::warn!("[debounce] 保存 executor session 失败: {:?}", e);
+                    }
+                }
+            }
+        }
 
         Ok(crate::executor_service::ExecutionResult {
             task_id,
