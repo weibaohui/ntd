@@ -83,6 +83,7 @@ impl PiExecutor {
     }
 
     /// "message_update" 事件：text_delta / text_end / thinking_delta 三个 sub-type。
+    #[allow(dead_code)]
     fn handle_message_update(&self, ame: Option<&PiAssistantMessageEvent>) -> Option<ParsedLogEntry> {
         // 用 ? 替代 let-else return None，更简洁且符合 Rust 惯用法
         let ame = ame?;
@@ -151,6 +152,7 @@ impl PiExecutor {
 
     /// 把 text_delta 累加进 pending_text 缓冲；到达自然边界（句末标点 / 200 字符）
     /// 时刷出为 assistant 日志。
+    #[allow(dead_code)]
     fn buffer_text_delta(&self, delta: Option<&str>) -> Option<ParsedLogEntry> {
         let delta = delta?;
         // 去掉 delta 中的换行，避免输出碎片化
@@ -169,6 +171,7 @@ impl PiExecutor {
     }
 
     /// "text_end" 事件：flush 缓冲文本。
+    #[allow(dead_code)]
     fn handle_text_end(&self, _usage: Option<&super::pi_event::PiUsage>) -> Option<ParsedLogEntry> {
         self.flush_pending_text()
     }
@@ -177,6 +180,7 @@ impl PiExecutor {
     ///
     /// thinking 增量内容不再作为独立条目输出，因为 PiExtractor 会在
     /// `thinking_end` 事件中输出完整版本，避免增量片段与完整内容重复出现。
+    #[allow(dead_code)]
     fn handle_thinking_delta(&self, _delta: Option<&str>) -> Option<ParsedLogEntry> {
         self.flush_pending_text()
     }
@@ -221,6 +225,7 @@ impl PiExecutor {
 
     /// 判断缓冲文本是否到达自然边界，可以刷出。
     /// 条件：以句子结束标点结尾，或超过阈值长度。
+    #[allow(dead_code)]
     fn is_text_boundary(buf: &str) -> bool {
         buf.ends_with('.')
             || buf.ends_with('!')
@@ -246,6 +251,7 @@ fn system_label(event_type: &str) -> String {
 
 /// 从 assistant_message_event 顶层 / partial 内部两层取 model；
 /// 空字符串视为无，更上层调用方据此决定是否跳过 model 写入。
+#[allow(dead_code)]
 fn pick_message_update_model(ame: &PiAssistantMessageEvent) -> Option<String> {
     ame.model
         .as_deref()
@@ -338,7 +344,8 @@ impl CodeExecutor for PiExecutor {
             return match event.event_type.as_str() {
                 "session" => self.handle_session(&event),
                 "message_end" => self.handle_message_end(&event),
-                "message_update" => self.handle_message_update(event.assistant_message_event.as_ref()),
+                // message_update 已由 PiExtractor 通过 pipeline 处理，这里跳过避免重复
+                "message_update" => None,
                 "message_start" => self.handle_message_start(),
                 "tool_execution_start" => self.handle_tool_start(event.tool_execution.as_ref()),
                 "tool_execution_end" => self.handle_tool_end(event.tool_execution.as_ref()),
