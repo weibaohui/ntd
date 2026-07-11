@@ -496,11 +496,14 @@ fn format_output_event(
         "error" | "stderr" => format!("🔴 {}", content),
         "warning" => format!("⚠️ {}", content),
         // 噪音类型：不推送
+        // system 包括 Pi 执行器的 agent_start/agent_end/compaction 等无意义状态消息
+        // info 包括 Pi 执行器的 "Stopped: xxx" 等停止状态信息，无实际价值
         "tokens" | "step_start" | "step_finish" | "model_switch"
-            | "cost" | "duration" | "session_start" | "session_end" => {
+            | "cost" | "duration" | "session_start" | "session_end"
+            | "system" | "info" => {
             return None;
         }
-        // info 和其他类型保留，显示通用前缀
+        // 其他类型保留，显示通用前缀
         _ => {
             let (prefix, _label) = output_event_prefix_and_label(&entry.log_type);
             format!("{} {}", prefix, content)
