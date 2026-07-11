@@ -733,6 +733,267 @@ pub fn build_action_card(title: &str, content: &str, action_text: &str, action: 
         .build()
 }
 
+// ============================================================================
+// 富文本卡片 (Rich Card) - 参考 cc-connect 的实现
+// ============================================================================
+
+/// 步骤类型
+#[derive(Debug, Clone, Copy)]
+pub enum StepKind {
+    /// 思考过程
+    Thinking,
+    /// 工具调用
+    Tool,
+}
+
+/// 富文本卡片步骤
+#[derive(Debug, Clone)]
+pub struct RichStep {
+    pub kind: StepKind,
+    pub name: String,      // 步骤名称，如 "Thinking", "Bash", "Edit"
+    pub summary: String,   // 摘要信息
+    pub result: String,    // 执行结果
+    pub status: String,    // 状态: "ok", "failed", "completed"
+    pub exit_code: Option<i32>,
+}
+
+/// 富文本卡片状态
+#[derive(Debug, Clone, Copy)]
+pub enum RichCardStatus {
+    /// 思考中 - 蓝色
+    Thinking,
+    ///工作中 - 蓝色
+    Working,
+    /// 完成 - 绿色
+    Done,
+    /// 错误 - 红色
+    Error,
+}
+
+impl RichCardStatus {
+    pub fn color(&self) -> &'static str {
+        match self {
+            RichCardStatus::Thinking | RichCardStatus::Working => "blue",
+            RichCardStatus::Done => "green",
+            RichCardStatus::Error => "red",
+        }
+    }
+
+    pub fn title_prefix(&self) -> &'static str {
+        match self {
+            RichCardStatus::Thinking => "🤔 思考中",
+            RichCardStatus::Working => "⚡工作中",
+            RichCardStatus::Done => "✅ 完成",
+            RichCardStatus::Error => "❌ 错误",
+        }
+    }
+}
+
+/// 富文本卡片构建器 - 用于显示 AI 执行过程的详细信息
+pub struct RichCardBuilder {
+    status: RichCardStatus,
+    title: String,
+    thinking_steps: Vec<RichStep>,
+    tool_steps: Vec<RichStep>,
+    answer: String,
+    footer: String,
+}
+
+impl RichCardBuilder {
+    pub fn new(status: RichCardStatus, title: &str) -> Self {
+        Self {
+            status,
+            title: title.to_string(),
+            thinking_steps: Vec::new(),
+            tool_steps: Vec::new(),
+            answer: String::new(),
+            footer: String::new(),
+        }
+    }
+
+    /// 添加思考步骤
+    pub fn add_thinking(mut self, content: &str) -> Self {
+        self.thinking_steps.push(RichStep {
+            kind: StepKind::Thinking,
+            name: "Thinking".to_string(),
+            summary: content.to_string(),
+            result: String::new(),
+            status: "ok".to_string(),
+            exit_code: None,
+        });
+        self
+    }
+
+    /// 添加工具调用步骤
+    pub fn add_tool(mut self, name: &str, summary: &str, result: &str, status: &str) -> Self {
+        self.tool_steps.push(RichStep {
+            kind: StepKind::Tool,
+            name: name.to_string(),
+            summary: summary.to_string(),
+            result: result.to_string(),
+            status: status.to_string(),
+            exit_code: None,
+        });
+        self
+    }
+
+    /// 设置最终答案
+    pub fn set_answer(mut self, answer: &str) -> Self {
+        self.answer = answer.to_string();
+        self
+    }
+
+    /// 设置底部状态信息
+    pub fn set_footer(mut self, footer: &str) -> Self {
+        self.footer = footer.to_string();
+        self
+    }
+
+    /// 构建富文本卡片
+    pub fn build(&self) -> Card {
+        let mut elements = Vec::new();
+
+        // 添加思考 Panel（如果有）
+        if !self.thinking_steps.is_empty() {
+            elements.push(self.build_panel("💭 思考", &self.thinking_steps));
+        }
+
+        // 添加工具调用 Panel（如果有）
+        if !self.tool_steps.is_empty() {
+            elements.push(self.build_tool_panel("🔧 工具调用", &self.tool_steps));
+        }
+
+        // 添加答案（如果有）
+        if !self.answer.is_empty() {
+            elements.push(CardElement::Markdown(CardMarkdown {
+                content: self.answer.clone(),
+            }));
+        }
+
+        // 添加底部信息（如果有）
+        if !self.footer.is_empty() {
+            elements.push(CardElement::Divider(CardDivider {}));
+            elements.push(CardElement::Note(CardNote {
+                text: self.footer.clone(),
+            }));
+        }
+
+        Card {
+            header: Some(CardHeader {
+                title: format!("{} {}", self.status.title_prefix(), self.title),
+                color: self.status.color().to_string(),
+            }),
+            elements,
+        }
+    }
+
+    /// 构建思考/工具面板（使用 column_set 模拟 collapsible panel 效果）
+    fn build_panel(&self, title: &str, steps: &[RichStep]) -> CardElement {
+        // 使用 markdown 模拟面板标题
+        let mut content = format!("**{}**\n\n", title);
+        for step in steps.iter().take(10) {
+            content.push_str(&format!("• {}\n", step.summary));
+        }
+        if steps.len() > 10 {
+            content.push_str(&format!("... 共 {} 条\n", steps.len()));
+        }
+        CardElement::Markdown(CardMarkdown { content })
+    }
+
+    /// 构建工具调用面板（带图标和状态）
+    fn build_tool_panel(&self, title: &str, steps: &[RichStep]) -> CardElement {
+        // 使用 markdown 模拟工具面板
+        let mut content = format!("**{}**\n\n", title);
+        for step in steps.iter().take(10) {
+            let icon = match step.status.as_str() {
+                "ok" | "completed" => "✅",
+                "failed" => "❌",
+                _ => "⚡",
+            };
+            content.push_str(&format!("{} **{}**: {}\n", icon, step.name, step.summary));
+            if !step.result.is_empty() {
+                content.push_str(&format!("  └ {}\n", step.result));
+            }
+        }
+        if steps.len() > 10 {
+            content.push_str(&format!("... 共 {} 条\n", steps.len()));
+        }
+        CardElement::Markdown(CardMarkdown { content })
+    }
+}
+
+/// 构建富文本执行卡片
+/// 用于显示 AI 执行过程中的思考、工具调用和最终答案
+pub fn build_rich_card(
+    status: RichCardStatus,
+    title: &str,
+    thinking: &[(&str, &str)],   // (content, result)
+    tools: &[(&str, &str, &str, &str)], // (name, summary, result, status)
+    answer: &str,
+    footer: &str,
+) -> Card {
+    let mut builder = RichCardBuilder::new(status, title);
+
+    for (content, _result) in thinking {
+        builder = builder.add_thinking(content);
+    }
+
+    for (name, summary, result, status) in tools {
+        builder = builder.add_tool(name, summary, result, status);
+    }
+
+    if !answer.is_empty() {
+        builder = builder.set_answer(answer);
+    }
+
+    if !footer.is_empty() {
+        builder = builder.set_footer(footer);
+    }
+
+    builder.build()
+}
+
+#[cfg(test)]
+mod rich_card_tests {
+    use super::*;
+
+    #[test]
+    fn test_rich_card_builder() {
+        let card = RichCardBuilder::new(RichCardStatus::Working, "测试任务")
+            .add_thinking("这是一个思考过程")
+            .add_tool("Bash", "运行 ls 命令", "文件列表", "ok")
+            .set_answer("**最终答案**")
+            .set_footer("用时: 10s | Token: 500")
+            .build();
+
+        assert!(card.header.is_some());
+        if let Some(ref header) = card.header {
+            assert!(header.title.contains("工作中"));
+        }
+        assert!(!card.elements.is_empty());
+    }
+
+    #[test]
+    fn test_build_rich_card() {
+        let thinking = vec![("思考内容", "")];
+        let tools = vec![("Bash", "ls -la", "文件列表", "ok")];
+        let card = build_rich_card(
+            RichCardStatus::Done,
+            "完成的任务",
+            &thinking,
+            &tools,
+            "这是最终答案",
+            "用时: 5s",
+        );
+
+        assert!(card.header.is_some());
+        let json = render_card(&card, "");
+        assert!(json.contains("完成"));
+        assert!(json.contains("思考"));
+        assert!(json.contains("工具调用"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
