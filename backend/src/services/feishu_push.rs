@@ -491,7 +491,7 @@ fn render_log_entry(
         "tool_result" => {
             return None;
         }
-        "assistant" | "text" => format!("💬 {}", content),
+        "assistant" | "text" => content.to_string(),
         "result" => format!("✅ {}", content),
         "error" | "stderr" => format!("🔴 {}", content),
         "warning" => format!("⚠️ {}", content),
