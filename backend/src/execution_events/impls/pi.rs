@@ -119,9 +119,9 @@ impl PiExtractor {
 
     /// 从 message 中提取 stopReason 并生成对应事件
     ///
-    /// Pi 的最终结论已由 agent_end 事件通过 Assistant 事件输出，
+    /// Pi 的最终结论已由 text_end 事件通过 Assistant 事件输出，
     /// stopReason 仅表示会话停止原因，不包含实际结论内容。
-    /// - end_turn/stop：正常结束，不需要额外事件（结论已在 agent_end 中输出）
+    /// - end_turn/stop：正常结束，不需要额外事件（结论已在 text_end 中输出）
     /// - toolUse：工具调用，不需要事件
     /// - 其他：生成 Info 事件记录异常停止原因
     fn extract_stop_reason(msg: &serde_json::Value) -> Option<ExecutionEvent> {
@@ -294,8 +294,9 @@ impl PiExtractor {
                 }
             }
             "agent_end" => {
-                // agent 结束事件：文本已由 text_end 实时输出，这里不重复发送。
-                // 仅处理 text_end 无法获取的 thinking（如果有的话）。
+                // agent 结束事件：文本已由 text_end 实时输出，
+                // thinking 已由 thinking_end 输出，这里不再重复。
+                // 仅提取 model 等元数据。
                 if let Some(messages) = json.get("messages").and_then(|v| v.as_array()) {
                     for msg in messages.iter().rev() {
                         if msg.get("role").and_then(|v| v.as_str()) != Some("assistant") {
@@ -303,35 +304,6 @@ impl PiExtractor {
                         }
 
                         self.extract_model_from_message(msg);
-
-                        let message_id = msg.get("responseId")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-
-                        // 仅提取 thinking（text 已由 text_end 输出，避免重复）
-                        let mut conclusion_thinking = None;
-                        if let Some(content) = msg.get("content").and_then(|v| v.as_array()) {
-                            for block in content {
-                                let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                                if block_type == "thinking" {
-                                    if let Some(t) = block.get("thinking").and_then(|v| v.as_str()) {
-                                        let trimmed = t.trim();
-                                        if !trimmed.is_empty() {
-                                            conclusion_thinking = Some(trimmed.to_string());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // 只在有 thinking 时才发送 Assistant 事件（空文本 + thinking）
-                        if conclusion_thinking.is_some() {
-                            events.push(ExecutionEvent::Assistant {
-                                content: String::new(),
-                                thinking: conclusion_thinking,
-                                message_id,
-                            });
-                        }
                         break;
                     }
                 }
@@ -474,7 +446,7 @@ mod tests {
     }
 
     /// 测试：message_end 事件仅提取 model（content/usage 由 message_update:*_end 负责），
-    /// stopReason=end_turn 不再生成 Result 事件（结论已由 agent_end 通过 Assistant 输出）
+    /// stopReason=end_turn 不再生成 Result 事件（结论已由 text_end 通过 Assistant 输出）
     #[test]
     fn test_message_end() {
         let mut extractor = PiExtractor::new();
@@ -612,7 +584,7 @@ mod tests {
         assert!(matches!(&events[1], ExecutionEvent::Tokens { input: 0, output: 38, cache_read: Some(10092), cache_write: Some(7), .. }));
     }
 
-    /// 测试：agent_end 仅提取 thinking（text 已由 text_end 实时输出，避免重复）
+    /// 测试：agent_end 不提取内容（text 已由 text_end 输出，thinking 已由 thinking_end 输出，避免重复）
     #[test]
     fn test_agent_end_conclusion() {
         let mut extractor = PiExtractor::new();
@@ -622,16 +594,8 @@ mod tests {
         ],"willRetry":false}"#;
         let events = extractor.extract(json);
 
-        // 仅产生 thinking（text 已由 text_end 输出，不再重复）
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            ExecutionEvent::Assistant { content, thinking, message_id } => {
-                assert!(content.is_empty());
-                assert_eq!(thinking.as_deref(), Some("Let me think"));
-                assert_eq!(message_id.as_deref(), Some("resp-abc-123"));
-            }
-            _ => panic!("Expected Assistant event"),
-        }
+        // agent_end 不再产生内容事件，避免与 thinking_end / text_end 重复
+        assert!(events.is_empty());
 
         // Usage/Tokens/Cost 不重复提取
         assert!(!events.iter().any(|e| matches!(e, ExecutionEvent::Tokens { .. })));
@@ -640,7 +604,7 @@ mod tests {
         assert_eq!(extractor.metadata().model.as_deref(), Some("deepseek-v4"));
     }
 
-    /// 测试：agent_end 仅提取 conclusion，缺少 text 时仅含 thinking
+    /// 测试：agent_end 仅提取 model，不提取内容
     #[test]
     fn test_agent_end_thinking_only() {
         let mut extractor = PiExtractor::new();
@@ -650,15 +614,8 @@ mod tests {
         ],"willRetry":false}"#;
         let events = extractor.extract(json);
 
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            ExecutionEvent::Assistant { content, thinking, message_id } => {
-                assert!(content.is_empty());
-                assert_eq!(thinking.as_deref(), Some("I think..."));
-                assert_eq!(message_id.as_deref(), Some("resp-456"));
-            }
-            _ => panic!("Expected Assistant event"),
-        }
+        // agent_end 不再产生内容事件
+        assert!(events.is_empty());
         assert_eq!(extractor.metadata().model.as_deref(), Some("gpt-5"));
     }
 }
