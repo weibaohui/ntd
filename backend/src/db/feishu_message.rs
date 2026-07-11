@@ -160,6 +160,10 @@ impl Database {
         chat_id: Option<&str>,
         sender_open_id: Option<&str>,
         is_history: Option<bool>,
+        processed: Option<bool>,
+        chat_type: Option<&str>,
+        keyword: Option<&str>,
+        processed_type: Option<&str>,
         workspace_id: Option<i64>,
         bot_id: Option<i64>,
         page: u64,
@@ -174,6 +178,30 @@ impl Database {
 
         if let Some(history) = is_history {
             query = query.filter(feishu_messages::Column::IsHistory.eq(Some(history)));
+        }
+
+        // 按处理状态筛选：true=只看已处理，false=只看未处理，None=不限
+        if let Some(p) = processed {
+            query = query.filter(feishu_messages::Column::Processed.eq(Some(p)));
+        }
+
+        // 按会话类型筛选：传入 "group" 只看群聊、"p2p" 只看私聊，None=不限
+        if let Some(ct) = chat_type {
+            query = query.filter(feishu_messages::Column::ChatType.eq(ct.to_string()));
+        }
+
+        // 关键字搜索：在原始 content(含 JSON 包裹)上做 LIKE 子串匹配，
+        // 放到后端是为了让分页 total 与结果一致(原先前端搜索只过滤当前页，total 不准)。
+        if let Some(kw) = keyword {
+            let pattern = format!("%{}%", kw);
+            query = query.filter(feishu_messages::Column::Content.like(pattern));
+        }
+
+        // 按处理类型类别筛选：前端传语义关键字(slash/executor/loop)，后端用包含匹配落到具体 processed_type。
+        // slash→slash_command(+loop)、executor→default_response_executor、loop→*_loop。
+        if let Some(pt) = processed_type {
+            let pattern = format!("%{}%", pt);
+            query = query.filter(feishu_messages::Column::ProcessedType.like(pattern));
         }
 
         if let Some(cid) = chat_id {

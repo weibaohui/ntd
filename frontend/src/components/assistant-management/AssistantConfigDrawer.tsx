@@ -3,7 +3,7 @@ import { Drawer, Form, Input, Select, Switch, Button, Tag, Typography, Divider, 
 import { SaveOutlined, PlusOutlined, DeleteOutlined, MessageOutlined, LockOutlined, SettingOutlined } from '@ant-design/icons';
 import type { AgentBot, ProjectDirectory } from '@/utils/database';
 import * as db from '@/utils/database';
-import type { WhitelistEntry, FeishuPushLevel, FeishuPushStatus } from '@/utils/database/bots';
+import type { WhitelistEntry, FeishuPushLevel } from '@/utils/database/bots';
 
 const { Text, Title } = Typography;
 const { Option } = Select;
@@ -27,8 +27,11 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
     group_require_mention: true,
     echo_reply: true,
   });
-  // 推送状态：包含 /sethome 设置的 p2p_receive_id 和 group_chat_id
-  const [pushStatus, setPushStatus] = useState<FeishuPushStatus | null>(null);
+  // 单聊/群聊接收 ID 用独立 state 管理(不放进与「白名单 tab」共享的 form 实例)：
+  // 共享 form 实例在 tab 切换/抽屉动画挂载时字段绑定不可靠，曾导致输入框不回填已有值，
+  // 用户一旦点「保存配置」就会把空串写回后端、擦掉原有 ID。改用 state：加载即回填、保存读 state。
+  const [p2pReceiveId, setP2pReceiveId] = useState('');
+  const [groupChatId, setGroupChatId] = useState('');
 
   useEffect(() => {
     if (open && bot) {
@@ -44,7 +47,9 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
         db.getGroupWhitelist(bot!.id),
       ]);
       setWhitelist(wl);
-      setPushStatus(push);
+      // 单聊/群聊接收 ID 写入独立 state，确保输入框一定能回填(见上方 state 注释)。
+      setP2pReceiveId(push?.p2p_receive_id || '');
+      setGroupChatId(push?.group_chat_id || '');
       form.setFieldsValue({
         pushLevel: push?.push_level || 'disabled',
         p2pResponseEnabled: push?.p2p_response_enabled || false,
@@ -70,6 +75,9 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
       await db.updateFeishuPush({
         botId: bot.id,
         pushLevel: values.pushLevel as FeishuPushLevel,
+        // 单聊/群聊接收 ID 直接读 state(非 form)，避免共享 form 实例绑定不可靠导致写空。
+        p2pReceiveId,
+        groupChatId,
         p2pResponseEnabled: values.p2pResponseEnabled,
         groupResponseEnabled: values.groupResponseEnabled,
         p2pDebounceSecs: values.p2pDebounceSecs,
@@ -251,27 +259,28 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
 
       {activeTab === 'push' && (
         <div>
-          {/* /sethome 设置的推送目标 ID */}
-          {pushStatus && (pushStatus.p2p_receive_id || pushStatus.group_chat_id) && (
-            <div style={{ marginBottom: 16, padding: '8px 12px', background: 'var(--color-fill-secondary)', borderRadius: 6 }}>
-              <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 6 }}>
-                推送目标（由 <code>/sethome</code> 设置）
-              </div>
-              {pushStatus.p2p_receive_id && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-                  <span style={{ fontSize: 12, width: 50, color: 'var(--color-text-tertiary)' }}>单聊:</span>
-                  <Text code style={{ fontSize: 11, flex: 1 }}>{pushStatus.p2p_receive_id}</Text>
-                </div>
-              )}
-              {pushStatus.group_chat_id && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ fontSize: 12, width: 50, color: 'var(--color-text-tertiary)' }}>群聊:</span>
-                  <Text code style={{ fontSize: 11, flex: 1 }}>{pushStatus.group_chat_id}</Text>
-                </div>
-              )}
-            </div>
-          )}
+          {/* /sethome 提示常驻：即使尚未设置 ID，也让用户知道可在单聊/群聊发 /sethome 自动填，
+              或直接在下方输入框手动粘贴（例如从「消息监控台」复制群聊ID/私聊ID）。 */}
+          <div style={{ marginBottom: 12, padding: '8px 12px', background: 'var(--color-fill-secondary)', borderRadius: 6, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+            💡 在单聊或群聊中发送 <code style={{ padding: '1px 6px', background: 'var(--color-fill)', borderRadius: 4 }}>/sethome</code> 可自动填写下方 ID；也可直接手动粘贴。
+          </div>
           <Form form={form} layout="vertical">
+          {/* 推送目标 ID：受控于独立 state(不绑定 form)，随「保存配置」持久化(对应 /sethome 写入的同一字段)。
+              不设 name，避免进入共享 form 实例的字段注册导致回填/保存不稳定。 */}
+          <Form.Item label="单聊接收 ID" tooltip="私聊场景的接收 open_id，形如 ou_xxxxxxxx">
+            <Input
+              value={p2pReceiveId}
+              onChange={(e) => setP2pReceiveId(e.target.value)}
+              placeholder="ou_xxxxxxxx（可手动粘贴，或发 /sethome 自动填）"
+            />
+          </Form.Item>
+          <Form.Item label="群聊接收 ID" tooltip="群聊场景的接收 chat_id，形如 oc_xxxxxxxx">
+            <Input
+              value={groupChatId}
+              onChange={(e) => setGroupChatId(e.target.value)}
+              placeholder="oc_xxxxxxxx（可手动粘贴，或发 /sethome 自动填）"
+            />
+          </Form.Item>
           <Form.Item
             label="推送级别"
             name="pushLevel"
@@ -305,6 +314,11 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
 
       {activeTab === 'whitelist' && (
         <div>
+          {/* 白名单作用说明：与推送 tab 的 /sethome 提示同款样式，让用户一眼明白
+              「白名单 = 仅处理这些指定人员在群聊里发的消息，其他人发的群消息会被忽略」。 */}
+          <div style={{ marginBottom: 12, padding: '8px 12px', background: 'var(--color-fill-secondary)', borderRadius: 6, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+            💡 仅处理白名单内指定人员在群聊中发送的消息；其他人发送的群消息将被忽略。在下方填入发送者 Open ID 即可加入白名单。
+          </div>
           <Form form={form} layout="inline" style={{ marginBottom: 16 }}>
             <Form.Item name="senderOpenId">
               <Input placeholder="发送者 Open ID" style={{ width: 200 }} />

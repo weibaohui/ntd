@@ -39,6 +39,12 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
 
   const [selectedChatId, setSelectedChatId] = useState<string | undefined>(undefined);
   const [isHistory, setIsHistory] = useState<boolean | undefined>(undefined);
+  // 处理状态筛选：undefined=全部、true=已处理、false=未处理，透传给后端按 processed 过滤。
+  const [processedFilter, setProcessedFilter] = useState<boolean | undefined>(undefined);
+  // 会话类型筛选：undefined=全部、'group'=群聊、'p2p'=私聊，透传给后端按 chat_type 过滤。
+  const [chatTypeFilter, setChatTypeFilter] = useState<string | undefined>(undefined);
+  // 处理类型筛选：undefined=全部、'slash'=斜杠命令、'executor'=执行器、'loop'=环路，透传后端按 processed_type 模糊匹配。
+  const [processedTypeFilter, setProcessedTypeFilter] = useState<string | undefined>(undefined);
   const [searchText, setSearchText] = useState('');
 
   const [configDrawerOpen, setConfigDrawerOpen] = useState(false);
@@ -101,30 +107,25 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
       const data = await db.getFeishuHistoryMessages({
         chat_id: selectedChatId,
         is_history: isHistory,
+        processed: processedFilter,
+        chat_type: chatTypeFilter,
+        // 关键字搜索下沉到后端：原先前端只过滤当前页导致 total 与结果不一致，改后端 LIKE 后 total 准确。
+        keyword: searchText || undefined,
+        processed_type: processedTypeFilter,
         workspace_id: workspaceId,
         bot_id: activeBotId ?? undefined,
         page: messagesPage,
         page_size: messagesPageSize,
       });
 
-      let filtered = data.messages;
-
-      // 搜索过滤：在前端做文本搜索（后端不支持全文搜索）
-      if (searchText) {
-        const lowerSearch = searchText.toLowerCase();
-        filtered = filtered.filter(m => {
-          const content = m.content ? JSON.parse(m.content).text || m.content : '';
-          return content.toLowerCase().includes(lowerSearch);
-        });
-      }
-
-      setMessages(filtered);
+      // 关键字搜索已在后端完成(见 keyword 参数)，前端不再二次过滤。
+      setMessages(data.messages);
       setMessagesTotal(data.total);
     } catch {
     } finally {
       setMessagesLoading(false);
     }
-  }, [workspaceId, selectedChatId, isHistory, messagesPage, messagesPageSize, activeBotId, searchText]);
+  }, [workspaceId, selectedChatId, isHistory, processedFilter, chatTypeFilter, processedTypeFilter, messagesPage, messagesPageSize, activeBotId, searchText]);
 
   useEffect(() => {
     loadMessages();
@@ -254,10 +255,16 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
           pageSize={messagesPageSize}
           selectedChatId={selectedChatId}
           isHistory={isHistory}
+          processedFilter={processedFilter}
+          chatTypeFilter={chatTypeFilter}
+          processedTypeFilter={processedTypeFilter}
           searchText={searchText}
           onSearchChange={setSearchText}
           onChatChange={setSelectedChatId}
           onHistoryChange={setIsHistory}
+          onProcessedChange={setProcessedFilter}
+          onChatTypeChange={setChatTypeFilter}
+          onProcessedTypeChange={setProcessedTypeFilter}
           onPageChange={(p, ps) => { setMessagesPage(p); setMessagesPageSize(ps); }}
           onViewDetail={handleViewDetail}
           onViewExecution={handleViewExecutionRecord}
@@ -309,10 +316,16 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
           pageSize={messagesPageSize}
           selectedChatId={selectedChatId}
           isHistory={isHistory}
+          processedFilter={processedFilter}
+          chatTypeFilter={chatTypeFilter}
+          processedTypeFilter={processedTypeFilter}
           searchText={searchText}
           onSearchChange={setSearchText}
           onChatChange={setSelectedChatId}
           onHistoryChange={setIsHistory}
+          onProcessedChange={setProcessedFilter}
+          onChatTypeChange={setChatTypeFilter}
+          onProcessedTypeChange={setProcessedTypeFilter}
           onPageChange={(p, ps) => { setMessagesPage(p); setMessagesPageSize(ps); }}
           onViewDetail={handleViewDetail}
           onViewExecution={handleViewExecutionRecord}

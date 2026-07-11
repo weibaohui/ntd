@@ -10,6 +10,14 @@ pub struct HistoryMessagesQuery {
     pub chat_id: Option<String>,
     pub sender_open_id: Option<String>,
     pub is_history: Option<bool>,
+    /// 按处理状态筛选：true=已处理，false=未处理，不传则不限
+    pub processed: Option<bool>,
+    /// 按会话类型筛选：group=群聊，p2p=私聊，不传则不限
+    pub chat_type: Option<String>,
+    /// 关键字搜索：在 content 上做子串匹配，不传则不限
+    pub keyword: Option<String>,
+    /// 按处理类型类别筛选：slash/executor/loop 等语义关键字，不传则不限
+    pub processed_type: Option<String>,
     /// 按工作空间筛选消息，不传则返回全部
     pub workspace_id: Option<i64>,
     /// 按智能体筛选消息，不传则返回全部
@@ -78,6 +86,10 @@ pub async fn get_history_messages(
         query.chat_id.as_deref(),
         query.sender_open_id.as_deref(),
         query.is_history,
+        query.processed,
+        query.chat_type.as_deref(),
+        query.keyword.as_deref(),
+        query.processed_type.as_deref(),
         query.workspace_id,
         query.bot_id,
         page,
