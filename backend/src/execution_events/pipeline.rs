@@ -77,43 +77,27 @@ impl EventPipeline {
             }
         }
 
-        // 如果没有 Result 事件，且最后一个非空事件不是 Assistant，则从最后一个非空的 Assistant 事件提取结论
-        // 注意：如果最后一个非空事件已经是 Assistant（如 Pi 执行器的 text_end），则不再生成 Result，避免重复
+        // 如果没有 Result 事件，从最后一个非空的 Assistant 事件提取结论
         let has_result = self
             .events
             .iter()
             .any(|e| matches!(e, ExecutionEvent::Result { .. }));
         if !has_result {
-            // 检查最后一个非空事件是否已经是 Assistant
-            let last_non_empty_is_assistant = self.events.iter().rev().find(|e| {
-                match e {
-                    ExecutionEvent::Assistant { content, .. } => !content.trim().is_empty(),
-                    ExecutionEvent::Result { summary } => !summary.trim().is_empty(),
-                    ExecutionEvent::Thinking { content } => !content.trim().is_empty(),
-                    ExecutionEvent::ToolCall { .. } => true,
-                    ExecutionEvent::ToolResult { .. } => true,
-                    _ => false,
-                }
-            }).map(|e| matches!(e, ExecutionEvent::Assistant { .. })).unwrap_or(false);
-
-            // 只有当最后一个非空事件不是 Assistant 时，才从之前的 Assistant 提取结论
-            if !last_non_empty_is_assistant {
-                // 从后往前找最后一个非空的 Assistant 内容作为 Result
-                if let Some(last_assistant) = self.events.iter().rev().find_map(|e| {
-                    if let ExecutionEvent::Assistant { content, .. } = e {
-                        if !content.trim().is_empty() {
-                            Some(content.clone())
-                        } else {
-                            None
-                        }
+            // 从后往前找最后一个非空的 Assistant 内容作为 Result
+            if let Some(last_assistant) = self.events.iter().rev().find_map(|e| {
+                if let ExecutionEvent::Assistant { content, .. } = e {
+                    if !content.trim().is_empty() {
+                        Some(content.clone())
                     } else {
                         None
                     }
-                }) {
-                    self.events.push(ExecutionEvent::Result {
-                        summary: last_assistant,
-                    });
+                } else {
+                    None
                 }
+            }) {
+                self.events.push(ExecutionEvent::Result {
+                    summary: last_assistant,
+                });
             }
         }
 
