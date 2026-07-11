@@ -85,7 +85,7 @@ impl FeishuPushService {
                                 }
 
                                 // 执行器直接输出：executor 默认响应场景下，过程日志直接推送给触发用户。
-                                // 与 ExecutorDirectResponse 的区别：后者是开始/结束等关键节点的卡片消息，
+                                // 与 DirectCardMessage 的区别：后者是开始/结束等关键节点的卡片消息，
                                 // 前者是执行过程中流式输出的纯文本消息。
                                 // 受 push_level 控制：仅当配置为 "all" 时才发送过程消息，
                                 // "result_only" 和 "disabled" 时不发过程消息。
