@@ -742,8 +742,8 @@ fn build_workspace_page(mut builder: CardBuilder, state: &HelpCardState) -> Card
     if state.available_executors.is_empty() {
         builder = builder.markdown("_暂无已注册执行器_");
     } else {
-        // 按每排最多 4 个按钮分组，避免单排按钮过多在窄屏被飞书截断。
-        for row in state.available_executors.chunks(4) {
+        // 按每排最多 2 个按钮分组：执行器名（如 "claudecode"）较长，每排 4 个在窄屏会被飞书截断显示不全，每排 2 个留足宽度。
+        for row in state.available_executors.chunks(2) {
             let btns: Vec<CardButton> = row.iter().map(|e| {
                 let btn_type = if e.is_current { "primary" } else { "default" };
                 CardButton::new(&e.name, btn_type, &format!("act:/setexecutor {}", e.name))
