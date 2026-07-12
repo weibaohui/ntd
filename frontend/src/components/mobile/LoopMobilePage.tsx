@@ -181,7 +181,8 @@ export function LoopMobilePage({
     </PageCard>
   );
 
-  const detailPage = selectedLoopId !== null ? (
+  // 环路详情面板：有环路选中时显示，无则显示空状态占位
+  const detailPanel = selectedLoopId !== null ? (
     <PageCard
       icon={<RetweetOutlined />}
       title="环路"
@@ -201,18 +202,6 @@ export function LoopMobilePage({
         }}
       />
     </PageCard>
-  ) : showLoopConfig && currentWorkspace ? (
-    <PageCard
-      icon={<RetweetOutlined />}
-      title="环路"
-      style={{ height: '100%', flex: 1, minWidth: 0 }}
-      contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 43px)', overflow: 'hidden' }}
-    >
-      <WorkspaceLoopConfigPage
-        workspace={currentWorkspace}
-        onBack={handleCloseLoopConfig}
-      />
-    </PageCard>
   ) : (
     <PageCard
       icon={<RetweetOutlined />}
@@ -223,6 +212,9 @@ export function LoopMobilePage({
       <EmptyDetailPlaceholder />
     </PageCard>
   );
+
+  // 配置页已移至全屏 overlay 渲染，detailPage 只做普通详情/空状态切换
+  const detailPage = detailPanel;
 
   return (
     <>
@@ -249,6 +241,24 @@ export function LoopMobilePage({
       >
         {detailPage}
       </div>
+      {/* 环路配置是全局页面，不属于任何环路，作为全屏覆盖层独立渲染 */}
+      {showLoopConfig && currentWorkspace && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1000,
+            background: 'var(--ntd-bg-color)',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          <WorkspaceLoopConfigPage
+            workspace={currentWorkspace}
+            onBack={handleCloseLoopConfig}
+          />
+        </div>
+      )}
     </>
   );
 }
