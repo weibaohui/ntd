@@ -632,10 +632,10 @@ fn help_tabs(current: &str) -> Vec<CardButton> {
 /// 状态页（默认）：状态条 + 新会话/停止。
 fn build_status_page(builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
     let ws = state.workspace.as_ref().map(|w| w.name.as_str()).unwrap_or("未设置");
-    let running = if state.is_running { "🟢 运行中" } else { "⚪ 空闲" };
+    let running = if state.is_running { "运行中" } else { "空闲" };
     builder
         .markdown(&format!(
-            "**📌 工作空间** {}\n**▶ 状态** {}\n**🔔 推送** {}",
+            "**工作空间**：{}\n**运行状态**：{}\n**推送级别**：{}",
             ws, running, push_level_label(&state.push_level)
         ))
         .buttons(vec![
