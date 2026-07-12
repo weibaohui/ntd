@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use dashmap::DashMap;
@@ -49,11 +49,18 @@ struct DebounceEntry {
     timer: JoinHandle<()>,
 }
 
+/// 私聊串行队列的维度 key：(bot_id, workspace_id, sender)
+/// 同一个用户在同一个工作空间下对同一个 bot 发的消息串行执行
+type P2pQueueKey = (i64, i64, String);
+
 pub struct MessageDebounce {
     entries: Arc<DashMap<(i64, String), DebounceEntry>>,
     ctx: ServiceContext,
     /// Loop Runner，用于处理 default_response_loop 类型的消息
     loop_runner: Option<Arc<crate::services::loop_runner::LoopRunner>>,
+    /// 私聊串行队列：按 (bot_id, workspace_id, sender) 维度缓存等待执行的消息
+    /// 当某维度已有执行器在运行时，新消息入队而非并行执行
+    p2p_queue: Arc<DashMap<P2pQueueKey, VecDeque<PendingMessage>>>,
 }
 
 impl MessageDebounce {
@@ -70,11 +77,53 @@ impl MessageDebounce {
             entries: Arc::new(DashMap::new()),
             ctx,
             loop_runner,
+            p2p_queue: Arc::new(DashMap::new()),
         }
     }
 
     /// Push a message into the debounce buffer. Resets the timer for this key.
+    /// 对于私聊消息，如果该维度(bot_id, workspace_id, sender)已有执行器在运行，
+    /// 则将消息入队并回复"正在运行中，稍后执行"，而非并行执行。
     pub fn push(&self, msg: PendingMessage) {
+        // 私聊消息串行队列拦截：如果该维度已有执行器在运行，入队并回复提示
+        if msg.chat_type == "p2p" {
+            let workspace_id = msg.workspace_id.unwrap_or(0);
+            let queue_key = (msg.bot_id, workspace_id, msg.sender.clone());
+            // 检查是否有执行器正在运行（p2p_queue 中存在该 key 且 VecDeque 非空，
+            // 或者 entries 中有该 key 的 timer 还在等待/执行中）
+            let is_running = self.entries.contains_key(&(msg.bot_id, msg.chat_id.clone()));
+            if is_running {
+                // 当前有执行器在运行：入队并回复"稍后执行"
+                tracing::info!(
+                    "[p2p-queue] 执行器运行中，消息入队: bot_id={}, workspace_id={}, sender={}, content={:?}",
+                    msg.bot_id, workspace_id, msg.sender, msg.content
+                );
+                // 发送"正在运行中，稍后执行"提示
+                let tx = self.ctx.tx.clone();
+                let bot_id = msg.bot_id;
+                let receive_id = msg.sender.clone();
+                let receive_id_type = "open_id".to_string();
+                let queue_len = self.p2p_queue.entry(queue_key.clone()).or_default().len();
+                let wait_hint = if queue_len == 0 {
+                    "⏳ 正在运行中，稍后执行".to_string()
+                } else {
+                    format!("⏳ 正在运行中，前面还有 {} 条消息排队，稍后执行", queue_len)
+                };
+                let _ = tx.send(ExecEvent::DirectCardMessage {
+                    bot_id,
+                    receive_id,
+                    receive_id_type,
+                    content: wait_hint,
+                });
+                // 消息入队
+                self.p2p_queue
+                    .entry(queue_key)
+                    .or_default()
+                    .push_back(msg);
+                return;
+            }
+        }
+
         let key = (msg.bot_id, msg.chat_id.clone());
 
         // Remove old entry and collect existing messages
@@ -102,14 +151,14 @@ impl MessageDebounce {
             let config = self.ctx.config.clone();
             // loop_runner 需要在 async block 之前 clone，避免 self 生命周期问题
             let loop_runner = self.loop_runner.clone();
-            // todo hook 已整块移除（plan `purring-forging-petal`），debounce 触发的
-            // 执行不再需要透传 hook_service。
             let bot_id = key.0;
             let chat_id = key.1.clone();
             let target_type = all_msgs
                 .first()
                 .map(|m| m.chat_type.clone())
                 .unwrap_or_default();
+            // 私聊串行队列：clone Arc 引用，用于执行完成后检查队列
+            let p2p_queue = self.p2p_queue.clone();
 
             tokio::spawn(async move {
                 // 群聊需要 debounce 等待窗口，避免多条消息触发多次执行；
@@ -222,12 +271,13 @@ impl MessageDebounce {
                         }
                         _ => {
                             // 普通的默认响应（todo 类型）或斜杠命令
+                            // clone Arc 引用，避免 move 后私聊队列循环中无法再次使用
                             let request = RunTodoExecutionRequest {
                                 db: db.clone(),
-                                executor_registry,
-                                tx,
-                                task_manager,
-                                config,
+                                executor_registry: executor_registry.clone(),
+                                tx: tx.clone(),
+                                task_manager: task_manager.clone(),
+                                config: config.clone(),
                                 todo_id: last.todo_id,
                                 message: exec_message,
                                 req_executor: last.executor.clone(),
@@ -392,6 +442,116 @@ impl MessageDebounce {
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    // 私聊串行队列：执行完成后检查队列，有下一条消息则自动执行
+                    // 用 while 循环逐条处理队列中的消息，直到队列清空
+                    if target_type == "p2p" {
+                        let workspace_id = last.workspace_id.unwrap_or(0);
+                        let queue_key = (bot_id, workspace_id, last.sender.clone());
+                        // 循环处理队列中的所有待执行消息
+                        loop {
+                            // 从队列中取出下一条消息
+                            let next_msg = p2p_queue
+                                .get_mut(&queue_key)
+                                .and_then(|mut q| q.pop_front());
+                            // 如果队列已空，清理条目并退出循环
+                            if p2p_queue.get(&queue_key).map_or(true, |q| q.is_empty()) {
+                                p2p_queue.remove(&queue_key);
+                                break;
+                            }
+                            let Some(next) = next_msg else { break; };
+                            tracing::info!(
+                                "[p2p-queue] 执行完成，从队列取出下一条消息: bot_id={}, workspace_id={}, sender={}, content={:?}",
+                                bot_id, workspace_id, next.sender, next.content
+                            );
+                            // 直接在当前任务中执行队列消息，无需 debounce 等待
+                            let next_msgs = vec![next];
+                            let merged = merge_pending_messages(&next_msgs);
+                            let Some(nxt) = next_msgs.last() else { break; };
+                            let mut m_params = nxt.params.clone().unwrap_or_default();
+                            m_params.insert("content".to_string(), merged.clone());
+                            m_params.insert("message".to_string(), merged.clone());
+
+                            let r_msg = nxt.resume_message.clone();
+                            let mut r_sid = nxt.resume_session_id.clone();
+                            if r_sid.is_some() {
+                                if let Some(bid) = nxt.binding_id {
+                                    if let Ok(Some(b)) = db.get_feishu_project_binding_by_id(bid).await {
+                                        if b.todo_id != nxt.todo_id { r_sid = None; }
+                                    }
+                                }
+                            }
+                            let e_msg = if r_sid.is_some() { nxt.todo_prompt.replace("{{message}}", &merged) } else { nxt.todo_prompt.clone() };
+                            let is_r = r_sid.is_some();
+                            let sid_for_b = r_sid.clone();
+
+                            // 分发执行（与 push 闭包逻辑一致）
+                            let r: Result<crate::executor_service::ExecutionResult, Option<String>> = match nxt.trigger_type.as_str() {
+                                "default_response_loop" | "slash_command_loop" => {
+                                    let (rid, rtype) = if nxt.chat_type == "group" { (nxt.chat_id.clone(), "chat_id".to_string()) } else { (nxt.sender.clone(), "open_id".to_string()) };
+                                    Self::handle_default_response_loop(db.clone(), loop_runner.clone(), nxt.todo_id, &merged, Some(nxt.bot_id), Some(rid), Some(rtype)).await
+                                }
+                                "default_response_executor" => {
+                                    let (rid, rtype) = if nxt.chat_type == "group" { (nxt.chat_id.clone(), "chat_id".to_string()) } else { (nxt.sender.clone(), "open_id".to_string()) };
+                                    Self::handle_default_response_executor(&db, &executor_registry, &task_manager, &config, &tx, nxt.bot_id, rid, &rtype, nxt.executor.as_deref(), nxt.workspace_id, &merged, r_sid.clone()).await
+                                }
+                                _ => {
+                                    // clone Arc 引用，避免 move 后循环下一轮无法使用
+                                    let req = RunTodoExecutionRequest {
+                                        db: db.clone(),
+                                        executor_registry: executor_registry.clone(),
+                                        tx: tx.clone(),
+                                        task_manager: task_manager.clone(),
+                                        config: config.clone(),
+                                        todo_id: nxt.todo_id,
+                                        message: e_msg,
+                                        req_executor: nxt.executor.clone(),
+                                        trigger_type: nxt.trigger_type.clone(),
+                                        params: if is_r { None } else { Some(m_params) },
+                                        resume_session_id: r_sid,
+                                        resume_message: r_msg,
+                                        source_todo_id: None,
+                                        source_todo_title: None,
+                                        loop_step_execution_id: None,
+                                        step_id: None,
+                                        feishu_bot_id: Some(nxt.bot_id),
+                                        feishu_receive_id: if nxt.chat_type == "group" { Some(nxt.chat_id.clone()) } else { Some(nxt.sender.clone()) },
+                                        feishu_receive_id_type: if nxt.chat_type == "group" { Some("chat_id".to_string()) } else { Some("open_id".to_string()) },
+                                        workspace_path: None,
+                                        workspace_id: nxt.workspace_id,
+                                    };
+                                    let r = if req.params.is_some() { run_todo_execution_with_params(req).await } else { run_todo_execution(req).await };
+                                    Ok(r)
+                                }
+                            };
+                            // 执行结果处理
+                            match r {
+                                Ok(er) => {
+                                    if let Some(bid) = nxt.binding_id {
+                                        if let Some(rid) = er.record_id {
+                                            if is_r {
+                                                let _ = db.update_feishu_project_binding_session(bid, sid_for_b.as_deref(), rid, crate::models::binding_status::RUNNING).await;
+                                            } else {
+                                                let rs = db.get_execution_record(rid).await.ok().flatten().and_then(|r| r.session_id);
+                                                let _ = db.update_feishu_project_binding_session(bid, rs.as_deref(), rid, crate::models::binding_status::RUNNING).await;
+                                            }
+                                        }
+                                    }
+                                    if let Some(ref mid) = nxt.message_id {
+                                        let _ = db.mark_feishu_message_processed(mid, nxt.todo_id, er.record_id, Some(&nxt.trigger_type)).await;
+                                    }
+                                }
+                                Err(e) => {
+                                    if let Some(bid) = nxt.binding_id { let _ = db.update_feishu_project_binding_status(bid, crate::models::binding_status::IDLE).await; }
+                                    if let Some(ref mid) = nxt.message_id {
+                                        if let Some(ref reason) = e { let _ = db.mark_feishu_message_processed_with_error(mid, nxt.todo_id, Some(&nxt.trigger_type), reason).await; }
+                                        else { let _ = db.mark_feishu_message_failed(mid).await; }
+                                    }
+                                }
+                            }
+                            // 继续循环处理下一条
                         }
                     }
                 }
