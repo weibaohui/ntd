@@ -479,12 +479,11 @@ impl MessageDebounce {
                             let next_msg = p2p_queue
                                 .get_mut(&queue_key)
                                 .and_then(|mut q| q.pop_front());
-                            // 如果队列已空，清理条目并退出循环
-                            if p2p_queue.get(&queue_key).map_or(true, |q| q.is_empty()) {
+                            let Some(next) = next_msg else {
+                                // 队列已空，清理条目并退出循环
                                 p2p_queue.remove(&queue_key);
                                 break;
-                            }
-                            let Some(next) = next_msg else { break; };
+                            };
                             tracing::info!(
                                 "[p2p-queue] 执行完成，从队列取出下一条消息: bot_id={}, workspace_id={}, sender={}, content={:?}",
                                 bot_id, workspace_id, next.sender, next.content
