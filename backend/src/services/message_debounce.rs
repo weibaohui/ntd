@@ -61,6 +61,9 @@ pub struct MessageDebounce {
     /// 私聊串行队列：按 (bot_id, workspace_id, sender) 维度缓存等待执行的消息
     /// 当某维度已有执行器在运行时，新消息入队而非并行执行
     p2p_queue: Arc<DashMap<P2pQueueKey, VecDeque<PendingMessage>>>,
+    /// 私聊运行状态标记：按 (bot_id, workspace_id, sender) 维度记录是否有执行器在运行
+    /// 使用 DashMap 的 insert/remove 原子操作避免竞态条件
+    p2p_running: Arc<DashMap<P2pQueueKey, ()>>,
 }
 
 impl MessageDebounce {
@@ -78,21 +81,24 @@ impl MessageDebounce {
             ctx,
             loop_runner,
             p2p_queue: Arc::new(DashMap::new()),
+            p2p_running: Arc::new(DashMap::new()),
         }
     }
 
     /// Push a message into the debounce buffer. Resets the timer for this key.
     /// 对于私聊消息，如果该维度(bot_id, workspace_id, sender)已有执行器在运行，
     /// 则将消息入队并回复"正在运行中，稍后执行"，而非并行执行。
+    /// 使用 DashMap 的 insert 原子操作避免竞态条件。
     pub fn push(&self, msg: PendingMessage) {
-        // 私聊消息串行队列拦截：如果该维度已有执行器在运行，入队并回复提示
+        // 私聊消息串行队列拦截：使用 p2p_running 的原子 insert 操作判断是否有执行器在运行
         if msg.chat_type == "p2p" {
             let workspace_id = msg.workspace_id.unwrap_or(0);
             let queue_key = (msg.bot_id, workspace_id, msg.sender.clone());
-            // 检查是否有执行器正在运行（p2p_queue 中存在该 key 且 VecDeque 非空，
-            // 或者 entries 中有该 key 的 timer 还在等待/执行中）
-            let is_running = self.entries.contains_key(&(msg.bot_id, msg.chat_id.clone()));
-            if is_running {
+            // 原子操作：insert 返回旧值
+            // - Some(())：之前已在运行，新消息入队
+            // - None：之前没运行，本次 insert 已标记为运行，直接执行
+            let was_running = self.p2p_running.insert(queue_key.clone(), ()).is_some();
+            if was_running {
                 // 当前有执行器在运行：入队并回复"稍后执行"
                 tracing::info!(
                     "[p2p-queue] 执行器运行中，消息入队: bot_id={}, workspace_id={}, sender={}, content={:?}",
@@ -103,11 +109,14 @@ impl MessageDebounce {
                 let bot_id = msg.bot_id;
                 let receive_id = msg.sender.clone();
                 let receive_id_type = "open_id".to_string();
-                let queue_len = self.p2p_queue.entry(queue_key.clone()).or_default().len();
-                let wait_hint = if queue_len == 0 {
+                // 先入队，再根据长度决定提示文案（包含本条消息后的队列长度）
+                let mut queue = self.p2p_queue.entry(queue_key).or_default();
+                queue.push_back(msg);
+                let queue_len = queue.len();
+                let wait_hint = if queue_len <= 1 {
                     "⏳ 正在运行中，稍后执行".to_string()
                 } else {
-                    format!("⏳ 正在运行中，前面还有 {} 条消息排队，稍后执行", queue_len)
+                    format!("⏳ 正在运行中，前面还有 {} 条消息排队，稍后执行", queue_len - 1)
                 };
                 let _ = tx.send(ExecEvent::DirectCardMessage {
                     bot_id,
@@ -115,11 +124,6 @@ impl MessageDebounce {
                     receive_id_type,
                     content: wait_hint,
                 });
-                // 消息入队
-                self.p2p_queue
-                    .entry(queue_key)
-                    .or_default()
-                    .push_back(msg);
                 return;
             }
         }
@@ -159,6 +163,8 @@ impl MessageDebounce {
                 .unwrap_or_default();
             // 私聊串行队列：clone Arc 引用，用于执行完成后检查队列
             let p2p_queue = self.p2p_queue.clone();
+            // 私聊运行状态：clone Arc 引用，用于执行完成后清除运行标记
+            let p2p_running = self.p2p_running.clone();
 
             tokio::spawn(async move {
                 // 群聊需要 debounce 等待窗口，避免多条消息触发多次执行；
@@ -446,10 +452,27 @@ impl MessageDebounce {
                     }
 
                     // 私聊串行队列：执行完成后检查队列，有下一条消息则自动执行
-                    // 用 while 循环逐条处理队列中的消息，直到队列清空
+                    // 用 loop 循环逐条处理队列中的消息，直到队列清空
                     if target_type == "p2p" {
                         let workspace_id = last.workspace_id.unwrap_or(0);
                         let queue_key = (bot_id, workspace_id, last.sender.clone());
+
+                        // Drop guard：确保无论任务成功/失败/panic，退出时都清除运行标记
+                        // 防止因异常导致 p2p_running 永远不被清理，后续消息永远被拦截
+                        struct P2pRunningGuard {
+                            key: P2pQueueKey,
+                            running: Arc<DashMap<P2pQueueKey, ()>>,
+                        }
+                        impl Drop for P2pRunningGuard {
+                            fn drop(&mut self) {
+                                self.running.remove(&self.key);
+                            }
+                        }
+                        let _guard = P2pRunningGuard {
+                            key: queue_key.clone(),
+                            running: p2p_running.clone(),
+                        };
+
                         // 循环处理队列中的所有待执行消息
                         loop {
                             // 从队列中取出下一条消息
