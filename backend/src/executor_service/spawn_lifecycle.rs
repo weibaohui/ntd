@@ -56,7 +56,10 @@ pub(crate) async fn run_spawned_executor_task(spawned: super::types::SpawnInputs
     let Some(mut child) = try_spawn_executor_child(&runtime).await else {
         return;
     };
-    save_child_pid_and_close_stdin(&mut child, runtime.executor_spawn.as_ref(), &runtime.db, runtime.record_id).await;
+    // 仅当 worktree 真正启用（effective_workspace_path 有值）时才让 stdin payload 预写生效，
+    // 避免 pi 在未切目录场景下被多余的 `y` 污染 stdin 输入流。
+    let worktree_active = runtime.worktree_ctx.effective_workspace_path.is_some();
+    save_child_pid_and_close_stdin(&mut child, runtime.executor_spawn.as_ref(), &runtime.db, runtime.record_id, worktree_active).await;
 
     let (log_flusher, stdout_task, stderr_task, flush_timer) =
         setup_log_capture_pipeline_for(&runtime, &mut child).await;
@@ -162,30 +165,39 @@ pub(crate) async fn handle_spawn_failure(
 ///
 /// `executor` 用于查询 `stdin_payload()`：部分执行器（pi 等）需要在关闭 stdin 之前
 /// 预写自动应答，避免子进程卡在交互式 prompt 上；等价于 `echo y | pi -p ...`。
+///
+/// `worktree_active` 仅在本次执行真正启用了 git worktree（即 `WorktreeContext.effective_workspace_path`
+/// 为 `Some`）时传 true。pi 的 stdin 应答只有在这种场景下才需要——pi 切换到 worktree
+/// 目录后会弹"directory changed, continue? [y/N]"的交互式确认；未启用 worktree 时
+/// pi 不会弹该 prompt，预写 `y` 反而会污染 pi 的 stdin 输入流（被 pi 当作用户对
+/// 其问题的应答消费掉），所以 gate 在本参数上精准开关。
 pub(crate) async fn save_child_pid_and_close_stdin(
     child: &mut command_group::AsyncGroupChild,
     executor: &dyn crate::adapters::CodeExecutor,
     db: &Database,
     record_id: i64,
+    worktree_active: bool,
 ) {
-    // 若执行器声明需要预写 stdin（典型场景：pi 启用 Worktree 后会在交互式 prompt
-    // 卡住，等价于 `echo y | pi ...` 的管道输入），先一次性写入再关闭 stdin。
+    // 仅当本次执行启用了 worktree 才预写 stdin payload。pi 的交互式确认 prompt
+    // 只在切到 worktree 目录时出现；其他场景预写只会污染 stdin 输入流。
     // 写入失败不视为致命：关 stdin 本身仍能让子进程正常退出。
-    if let Some(payload) = executor.stdin_payload() {
-        if let Some(stdin) = child.inner().stdin.as_mut() {
-            if let Err(e) = stdin.write_all(payload.as_bytes()).await {
-                tracing::warn!(
-                    "[spawn] 写入执行器 stdin payload 失败: executor={} err={}",
-                    executor.executor_type().as_str(),
-                    e
-                );
-            }
-            if let Err(e) = stdin.flush().await {
-                tracing::warn!(
-                    "[spawn] flush 执行器 stdin 失败: executor={} err={}",
-                    executor.executor_type().as_str(),
-                    e
-                );
+    if worktree_active {
+        if let Some(payload) = executor.stdin_payload() {
+            if let Some(stdin) = child.inner().stdin.as_mut() {
+                if let Err(e) = stdin.write_all(payload.as_bytes()).await {
+                    tracing::warn!(
+                        "[spawn] 写入执行器 stdin payload 失败: executor={} err={}",
+                        executor.executor_type().as_str(),
+                        e
+                    );
+                }
+                if let Err(e) = stdin.flush().await {
+                    tracing::warn!(
+                        "[spawn] flush 执行器 stdin 失败: executor={} err={}",
+                        executor.executor_type().as_str(),
+                        e
+                    );
+                }
             }
         }
     }
@@ -728,5 +740,72 @@ mod tests {
                 rt.prepared.todo_workspace_path.as_ref(),
             )
         }
+    }
+
+    /// issue 回归：pi 的 `echo y` stdin 预写只应在启用 worktree 时生效。
+    /// 用 `cat` 作 mock child（把 stdin 回打到 stdout），分别传 worktree_active=false / true，
+    /// 断言前者 stdout 空（未预写）、后者 stdout 含 payload（预写生效）。
+    #[tokio::test]
+    async fn test_save_child_pid_and_close_stdin_gates_by_worktree_active() {
+        // 用 cat 把 stdin 内容回打到 stdout，作为「子进程是否收到 payload」的可观测代理。
+        // Memory DB 让 update_execution_record_pid 不依赖真实表结构（record_id 不存在时 update no-op）。
+        let db = Database::new(":memory:")
+            .await
+            .expect(":memory: db must open");
+        // 用 pi executor：唯一 override stdin_payload 返回 Some("y\n") 的执行器，
+        // 让 gate 的「不进入 stdin_payload 分支」语义可被 stdout 是否含 y 验证。
+        let executor = crate::adapters::pi::PiExecutor::new("pi".to_string());
+
+        // 未启用 worktree：gate 关闭，不应预写任何 payload，cat 收到空 stdin → stdout 空。
+        let mut child_false = build_executor_command("cat", &[], None)
+            .group_spawn()
+            .expect("cat spawn must succeed");
+        save_child_pid_and_close_stdin(
+            &mut child_false,
+            &executor,
+            &db,
+            0,
+            false,
+        )
+        .await;
+        let stdout_false = {
+            // child 的 stdout 在 spawn 后由 group 持有；take 出来读全部内容直到 EOF。
+            // 用 read_to_end 而非 readline，因为 cat 关 stdin 后会立刻退出。
+            use tokio::io::AsyncReadExt;
+            let mut buf = Vec::new();
+            if let Some(mut out) = child_false.inner().stdout.take() {
+                out.read_to_end(&mut buf).await.expect("cat stdout read ok");
+            }
+            String::from_utf8_lossy(&buf).to_string()
+        };
+        assert_eq!(
+            stdout_false, "",
+            "worktree_active=false 时不应预写 stdin payload，cat stdout 应为空"
+        );
+
+        // 启用 worktree：gate 打开，预写 "y\n"，cat 回打 → stdout 含 "y\n"。
+        let mut child_true = build_executor_command("cat", &[], None)
+            .group_spawn()
+            .expect("cat spawn must succeed");
+        save_child_pid_and_close_stdin(
+            &mut child_true,
+            &executor,
+            &db,
+            0,
+            true,
+        )
+        .await;
+        let stdout_true = {
+            use tokio::io::AsyncReadExt;
+            let mut buf = Vec::new();
+            if let Some(mut out) = child_true.inner().stdout.take() {
+                out.read_to_end(&mut buf).await.expect("cat stdout read ok");
+            }
+            String::from_utf8_lossy(&buf).to_string()
+        };
+        assert_eq!(
+            stdout_true, "y\n",
+            "worktree_active=true 时应预写 pi 的 stdin payload 'y\\n'，cat stdout 应回打该内容"
+        );
     }
 }

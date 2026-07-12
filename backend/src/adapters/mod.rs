@@ -398,6 +398,11 @@ pub trait CodeExecutor: Send + Sync {
     /// 自动应答（例如 pi 在启用 Worktree 切目录后会在交互式 prompt 卡住，
     /// 通过预写 "y" 自动确认目录切换）时可 override 返回 `Some(...)`。
     ///
+    /// 开关边界：本方法只声明「需要预写什么」，是否真的预写由 `save_child_pid_and_close_stdin`
+    /// 的 `worktree_active` 入参 gate——pi 的 y 应答只在切到 worktree 目录时才需要，
+    /// 未启用 worktree 时调用方不会进来，避免多余的输入污染子进程 stdin。因此 override
+    /// 时无需自行判断 worktree 状态，无条件返回需要的 payload 即可。
+    ///
     /// 实现要求：内容应一次性写入并立刻 flush；写入失败由调用方记录 warning 但不视为致命错误，
     /// 因为 stdin 关闭本身仍能保证子进程正常退出。
     fn stdin_payload(&self) -> Option<String> {

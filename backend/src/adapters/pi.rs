@@ -274,8 +274,10 @@ impl CodeExecutor for PiExecutor {
     /// 等价于 `echo y | pi ...`：预写一行 y 后关闭 stdin，pi 读到 y 后继续后续执行，
     /// 不会再向 stdin 请求输入。
     ///
-    /// 仅在 pi 启动时（-p 模式）需要这一次应答；非交互模式（-p 下 pi 也走 stdin 询问）
-    /// 下也安全：多写一个 y 不会让 pi 异常。
+    /// 语义边界：本方法只描述「pi 切目录后需要应答 y」这一恒定事实，是否真的预写由
+    /// `save_child_pid_and_close_stdin` 的 `worktree_active` 入参 gate——未启用 worktree
+    /// 时调用方根本不会进来，避免多余的 y 污染 pi 的 stdin 输入流（被 pi 当作用户对
+    /// 其问题的应答消费掉）。因此这里无条件返回 `Some("y\n")` 是正确的：调用方负责开关。
     fn stdin_payload(&self) -> Option<String> {
         Some("y\n".to_string())
     }
@@ -424,8 +426,10 @@ mod tests {
         assert_eq!(executor.extract_session_id("not json"), None);
     }
 
-    /// stdin_payload 应返回 "y\n" —— 等价于 `echo "y" | pi -p ...`，
+    /// stdin_payload 恒返回 "y\n" —— 等价于 `echo "y" | pi -p ...`，
     /// 用来自动应答 pi 启用 Worktree 切目录后的交互式确认 prompt。
+    /// 注意：方法本身不判断 worktree 是否启用，开关由 `save_child_pid_and_close_stdin`
+    /// 的 `worktree_active` 入参 gate；这里只验证「需要预写时给出的内容是 y」。
     #[test]
     fn test_stdin_payload_returns_y() {
         let executor = PiExecutor::new("pi".to_string());
