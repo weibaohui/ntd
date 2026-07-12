@@ -1396,7 +1396,9 @@ impl FeishuListener {
 
                     // workspace_id 必填；handler 层按 dir.id + dir.path 双字段下传，
                     // DAO 一次写入 workspace_id + workspace_path 保持两列同步。
-                    match db.create_todo_with_extras(&todo_title, &todo_prompt, None, None, false, dir.id, &dir.path).await {
+                    // 执行器用 workspace 默认（如 pi），不传 None 回退到 DEFAULT_EXECUTOR(claudecode)
+                    let bind_executor = Self::workspace_default_executor(db, bot_id).await;
+                    match db.create_todo_with_extras(&todo_title, &todo_prompt, bind_executor.as_deref(), None, false, dir.id, &dir.path).await {
                         Ok(todo_id) => {
                             match db.create_feishu_project_binding(bot_id, channel, chat_type, dir.id, todo_id).await {
                                 Ok(binding_id) => {
@@ -2001,6 +2003,14 @@ impl FeishuListener {
         db.get_feishu_project_binding(bot_id, chat_id).await.ok().flatten()
     }
 
+    /// 取 bot 所属 workspace 的默认执行器（如 dev 环境配的 pi）。
+    /// 绑定项目时给新建 todo 设执行器用，避免回退到 adapters::DEFAULT_EXECUTOR(claudecode)。
+    async fn workspace_default_executor(db: &Database, bot_id: i64) -> Option<String> {
+        let wid = db.get_agent_bot_workspace_id(bot_id).await.ok().flatten()?;
+        let settings = crate::db::workspace_setting::get_workspace_settings(db, wid).await.ok()?;
+        settings.default_response_executor
+    }
+
     /// 设置推送级别（直接设值，不走 /feishupush 循环）。
     async fn act_push(context: &ListenerMessageContext<'_>, level: &str) -> ActionOutcome {
         match context.db.update_feishu_push_level(context.bot_id, level).await {
@@ -2094,7 +2104,9 @@ impl FeishuListener {
             "你是飞书Bot的AI助手，正在项目「{}」({})中工作。\n用户通过飞书与你交流，请根据用户需求在项目目录中完成开发任务。\n\n用户诉求：{{message}}\n项目目录：{}",
             dir.name.as_deref().unwrap_or("unknown"), path, path,
         );
-        let Ok(todo_id) = context.db.create_todo_with_extras(&title, &prompt, None, None, false, dir.id, &path).await else {
+        // 执行器用 workspace 默认（如 pi），不传 None 回退到 DEFAULT_EXECUTOR(claudecode)
+        let executor = Self::workspace_default_executor(context.db, context.bot_id).await;
+        let Ok(todo_id) = context.db.create_todo_with_extras(&title, &prompt, executor.as_deref(), None, false, dir.id, &path).await else {
             return ActionOutcome { success: false, message: "创建任务失败".to_string() };
         };
         match context.db.create_feishu_project_binding(context.bot_id, &msg.channel, "p2p", dir.id, todo_id).await {
