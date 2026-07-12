@@ -5,7 +5,8 @@ import * as db from '@/utils/database';
 import { WorkspaceSwitcher } from './shell/WorkspaceSwitcher';
 
 import type { Todo, ExecutorConfig, ExecutorOption, SkillMeta, ExecutorSkills, TodoTemplate } from '@/types';
-import { EXECUTORS, executorConfigToOption, getExecutorColor, DEFAULT_EXECUTOR } from '@/types';
+import { EXECUTORS, executorConfigToOption, getExecutorColor } from '@/types';
+import { getDefaultExecutor } from '@/utils/executors';
 import { getLastExecutor, setLastExecutor } from '@/constants';
 import { TagCheckCardGroup } from './TagCheckCard';
 import { ExecutorPicker } from './todo-drawer/ExecutorPicker';
@@ -15,7 +16,7 @@ import { SchedulerSection } from './todo-drawer/SchedulerSection';
 import { TemplateModal } from './todo-drawer/TemplateModal';
 import {
   todoFormReducer,
-  initialFormState,
+  createInitialFormState,
   type TodoFormState,
   type TodoFormAction,
 } from './todo-drawer/reducer';
@@ -35,7 +36,8 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
   const isEditMode = todo !== null;
 
   // 使用 useReducer 替代多个 useState，集中管理表单状态
-  const [formState, dispatch] = useReducer(todoFormReducer, initialFormState);
+  // 使用工厂函数初始化，确保使用最新的系统默认执行器
+  const [formState, dispatch] = useReducer(todoFormReducer, undefined, createInitialFormState);
 
   // UI 相关的状态（不属于表单数据）
   const [executorOptions, setExecutorOptions] = useState<ExecutorOption[]>(EXECUTORS);
@@ -137,7 +139,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
   }, [open, todo]);
 
   // 创建模式下，RESET_FORM 之后从 localStorage 恢复上次选择的执行器，
-  // 而不是每次都回退到 DEFAULT_EXECUTOR。编辑模式保持 todo 自带的 executor。
+  // 而不是每次都回退到系统默认执行器。编辑模式保持 todo 自带的 executor。
   useEffect(() => {
     if (open && !todo) {
       setField('executor', getLastExecutor());
@@ -225,7 +227,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
           webhookEnabled,
         );
 
-        if (workspaceToSave != null || schedulerEnabled || executor !== DEFAULT_EXECUTOR || webhookEnabled) {
+        if (workspaceToSave != null || schedulerEnabled || executor !== getDefaultExecutor() || webhookEnabled) {
           await db.updateTodo(
             newTodo.id, newTodo.title, newTodo.prompt, newTodo.status,
             executor, schedulerEnabled, schedulerConfig || null,

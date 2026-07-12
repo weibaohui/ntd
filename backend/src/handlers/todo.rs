@@ -164,10 +164,7 @@ pub async fn create_todo(
     } else {
         req.prompt.trim().to_string()
     };
-    let executor = req
-        .executor
-        .clone()
-        .unwrap_or_else(|| "claudecode".to_string());
+    let executor_input = req.executor.as_deref();
 
     // 工作空间 id 必填且必须存在：handler 按 id 解析出 path 后再下传，
     // DAO 一次写入 workspace_id + workspace_path 两列保证双字段同步。
@@ -179,7 +176,7 @@ pub async fn create_todo(
     let id = state.db.create_todo_with_extras(
         title,
         &prompt,
-        Some(&executor),
+        executor_input,
         req.acceptance_criteria.as_deref(),
         req.webhook_enabled.unwrap_or(false),
         req.workspace_id,
@@ -265,6 +262,14 @@ pub async fn create_todo(
         }
     }
 
+    // 计算最终的执行器名称，用于返回给前端
+    // 与 create_todo_with_extras 内部逻辑一致：有值用值，空值用数据库默认
+    let executor_name = match executor_input.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => s.to_string(),
+        None => state.db.get_default_executor_name().await
+            .map_err(|e| AppError::Internal(e.to_string()))?,
+    };
+
     Ok(ApiResponse::ok(Todo {
         id,
         title: title.to_string(),
@@ -273,7 +278,7 @@ pub async fn create_todo(
         created_at: now.clone(),
         updated_at: now,
         tag_ids: req.tag_ids.clone(),
-        executor: Some(executor),
+        executor: Some(executor_name),
         scheduler_enabled,
         scheduler_config: scheduler_config.clone(),
         scheduler_timezone: scheduler_timezone.clone(),

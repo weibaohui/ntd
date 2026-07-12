@@ -32,6 +32,8 @@ export interface ExecutorConfig {
   enabled: boolean;
   display_name: string;
   session_dir: string;
+  /** 是否为系统默认执行器 */
+  is_default: boolean;
   created_at: string | null;
   updated_at: string | null;
 }

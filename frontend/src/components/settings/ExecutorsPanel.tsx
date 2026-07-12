@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Button, Card, Input, Switch, Spin, Tooltip, Modal, message, Typography, InputNumber, Form, Table, Space, Empty, Tabs, Popconfirm } from 'antd';
-import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined, BugOutlined, CodeOutlined, InfoCircleOutlined, SaveOutlined, StopOutlined, ReloadOutlined } from '@ant-design/icons';
+import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined, BugOutlined, CodeOutlined, InfoCircleOutlined, SaveOutlined, StopOutlined, ReloadOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
 import { Cron } from 'react-js-cron';
 import 'react-js-cron/dist/styles.css';
 import { CronPresetSelect } from '@/components/CronPresetSelect';
@@ -12,6 +12,7 @@ import { useApp } from '@/hooks/useApp';
 import { SessionManager } from '@/components/SessionManager';
 
 import { DEFAULT_EXECUTION_TIMEOUT_SECS, MAX_EXECUTION_TIMEOUT_MINUTES } from '@/constants';
+import { setDefaultExecutorCache } from '@/utils/executors';
 
 const { Paragraph } = Typography;
 
@@ -26,6 +27,7 @@ export function ExecutorsPanel() {
   const [testModalVisible, setTestModalVisible] = useState(false);
   const [testModalData, setTestModalData] = useState<{ name: string; result: { test_passed: boolean; output: string | null; error: string | null } } | null>(null);
   const [savingExecutor, setSavingExecutor] = useState<string | null>(null);
+  const [settingDefaultExecutor, setSettingDefaultExecutor] = useState<string | null>(null);
 
   // 运行配置：并发数、超时等
   const [configForm] = Form.useForm();
@@ -297,9 +299,16 @@ export function ExecutorsPanel() {
               title: '执行器',
               dataIndex: 'display_name',
               key: 'display_name',
-              width: 110,
+              width: 130,
               render: (name: string, record: ExecutorConfig) => (
-                <span style={{ fontWeight: 500, opacity: record.enabled ? 1 : 0.5 }}>{name}</span>
+                <span style={{ fontWeight: 500, opacity: record.enabled ? 1 : 0.5, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  {name}
+                  {record.is_default && (
+                    <Tooltip title="默认执行器">
+                      <StarFilled style={{ color: '#faad14', fontSize: 12 }} />
+                    </Tooltip>
+                  )}
+                </span>
               ),
             },
             {
@@ -392,13 +401,45 @@ export function ExecutorsPanel() {
             {
               title: '操作',
               key: 'action',
-              width: 180,
+              width: 240,
               render: (_: unknown, record: ExecutorConfig) => {
                 const detectResult = detectResults[record.name];
                 const isDetecting = detectingExecutor === record.name;
                 const isTesting = testingExecutor === record.name;
+                const isSettingDefault = settingDefaultExecutor === record.name;
                 return (
                   <Space size={4}>
+                    <Tooltip title={record.is_default ? '当前为默认执行器' : '设为默认执行器'}>
+                      <Button
+                        size="small"
+                        type={record.is_default ? 'primary' : 'default'}
+                        icon={record.is_default ? <StarFilled /> : <StarOutlined />}
+                        loading={isSettingDefault}
+                        disabled={record.is_default}
+                        onClick={async () => {
+                          if (record.is_default) return;
+                          setSettingDefaultExecutor(record.name);
+                          try {
+                            const updated = await db.setDefaultExecutor(record.name);
+                            // 更新前端缓存，使新的默认值立即生效
+                            setDefaultExecutorCache(updated.name);
+                            setExecutors((prev) =>
+                              prev.map((e) => ({
+                                ...e,
+                                is_default: e.name === updated.name,
+                              }))
+                            );
+                            message.success(`${record.display_name} 已设为默认执行器`);
+                          } catch (err: any) {
+                            message.error('设置失败: ' + (err?.message || String(err)));
+                          } finally {
+                            setSettingDefaultExecutor(null);
+                          }
+                        }}
+                      >
+                        {record.is_default ? '默认' : '设为默认'}
+                      </Button>
+                    </Tooltip>
                     <Button
                       size="small"
                       icon={<SearchOutlined />}

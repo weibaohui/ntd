@@ -35,6 +35,7 @@ import { WikiViewPage } from '@/components/WikiViewPage';
 
 import { EXECUTION_PANEL, LEFT_RAIL_WIDTH } from './constants';
 import * as db from './utils/database';
+import { loadDefaultExecutor } from '@/utils/executors';
 import type { Config } from './types';
 import zhCN from 'antd/locale/zh_CN';
 import './App.css';
@@ -129,6 +130,10 @@ function AppContent() {
   useEffect(() => {
     db.getConfig().then(setAppConfig).catch(() => {
       // 配置加载失败时使用默认值，非关键路径不阻塞主流程
+    });
+    // 启动时加载默认执行器配置，供创建 todo、快速捕获等场景使用
+    loadDefaultExecutor().catch(() => {
+      // 加载失败时内部会回退到常量值，这里静默处理
     });
   }, []);
 

@@ -262,3 +262,25 @@ pub async fn resolve_executor_path(
         new_path: Some(resolved),
     }))
 }
+
+/// 获取系统默认执行器。
+/// 如果没有设置默认执行器，返回 null（前端可回退到 claudecode）。
+pub async fn get_default_executor(
+    State(state): State<AppState>,
+) -> Result<ApiResponse<Option<ExecutorConfig>>, AppError> {
+    let executor = state.db.get_default_executor().await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    Ok(ApiResponse::ok(executor))
+}
+
+/// 设置指定执行器为系统默认执行器。
+/// 会自动清除其他执行器的默认标记，确保只有一个默认执行器。
+pub async fn set_default_executor(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<ApiResponse<ExecutorConfig>, AppError> {
+    let executor = state.db.set_default_executor(&name).await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .ok_or(AppError::NotFound)?;
+    Ok(ApiResponse::ok(executor))
+}

@@ -18,6 +18,9 @@ export {
   RESUMABLE_EXECUTOR_OPTIONS,
   supportsResume,
   executorConfigToOption,
+  loadDefaultExecutor,
+  getDefaultExecutor,
+  setDefaultExecutorCache,
 } from '@/utils/executors';
 
 export interface LogEntry {

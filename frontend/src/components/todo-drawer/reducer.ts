@@ -10,7 +10,7 @@
  */
 
 import type { Todo } from '@/types';
-import { DEFAULT_EXECUTOR } from '@/types/execution';
+import { getDefaultExecutor } from '@/utils/executors';
 
 /** 表单数据状态 */
 export interface TodoFormState {
@@ -42,18 +42,27 @@ export type TodoFormAction =
   | { type: 'RESET_FORM'; todo?: Todo | null }
   | { type: 'RESET_CREATE_MODE' };
 
-/** 初始状态（创建模式） */
-export const initialFormState: TodoFormState = {
-  title: '',
-  prompt: '',
-  selectedTags: [],
-  executor: DEFAULT_EXECUTOR,
-  workspaceId: null,
-  webhookEnabled: false,
-  schedulerEnabled: false,
-  schedulerConfig: '',
-  acceptanceCriteria: '',
-};
+/** 初始状态（创建模式）。
+ *  使用工厂函数以便动态获取系统默认执行器，而非硬编码常量。
+ */
+export function createInitialFormState(): TodoFormState {
+  return {
+    title: '',
+    prompt: '',
+    selectedTags: [],
+    executor: getDefaultExecutor(),
+    workspaceId: null,
+    webhookEnabled: false,
+    schedulerEnabled: false,
+    schedulerConfig: '',
+    acceptanceCriteria: '',
+  };
+}
+
+/** 兼容旧代码：保留 initialFormState 导出，值为工厂函数首次调用结果。
+ *  新代码应直接使用 createInitialFormState() 以获取最新默认执行器。
+ */
+export const initialFormState: TodoFormState = createInitialFormState();
 
 /** 表单 reducer */
 export function todoFormReducer(state: TodoFormState, action: TodoFormAction): TodoFormState {
@@ -75,7 +84,7 @@ export function todoFormReducer(state: TodoFormState, action: TodoFormAction): T
           title: action.todo.title || '',
           prompt: action.todo.prompt || '',
           selectedTags: action.todo.tag_ids || [],
-          executor: action.todo.executor || DEFAULT_EXECUTOR,
+          executor: action.todo.executor || getDefaultExecutor(),
           workspaceId: action.todo.workspace_id ?? null,
           webhookEnabled: action.todo.webhook_enabled || false,
           schedulerEnabled: action.todo.scheduler_enabled || false,
@@ -83,10 +92,10 @@ export function todoFormReducer(state: TodoFormState, action: TodoFormAction): T
           acceptanceCriteria: action.todo.acceptance_criteria ?? '',
         };
       }
-      return initialFormState;
+      return createInitialFormState();
 
     case 'RESET_CREATE_MODE':
-      return initialFormState;
+      return createInitialFormState();
 
     default:
       return state;

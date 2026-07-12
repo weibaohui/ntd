@@ -4,7 +4,7 @@ import { ThunderboltOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
 import { ExecutorPickerPopover } from '@/components/common/ExecutorPickerPopover';
 import * as db from '@/utils/database';
-import { DEFAULT_EXECUTOR } from '@/types';
+import { getDefaultExecutor } from '@/utils/executors';
 import { getLastExecutor, setLastExecutor } from '@/constants';
 
 interface QuickCaptureModalProps {
@@ -87,8 +87,9 @@ export function QuickCaptureModal({
         workspaceId,
       );
 
-      // 更新执行器
-      if (executor !== DEFAULT_EXECUTOR) {
+      // 更新执行器（仅当用户选择的执行器与系统默认不同时更新，
+      // 避免后端已设为默认值后又重复更新的冗余操作）
+      if (executor !== getDefaultExecutor()) {
         await db.updateTodo(
           todo.id,
           title,
@@ -130,8 +131,9 @@ export function QuickCaptureModal({
         workspaceId,
       );
 
-      // 更新执行器
-      if (executor !== DEFAULT_EXECUTOR) {
+      // 更新执行器（仅当用户选择的执行器与系统默认不同时更新，
+      // 避免后端已设为默认值后又重复更新的冗余操作）
+      if (executor !== getDefaultExecutor()) {
         await db.updateTodo(
           todo.id,
           title,

@@ -120,6 +120,16 @@ export async function testExecutor(name: string): Promise<{ test_passed: boolean
   return unwrap(await api.post(`/api/executors/${encodeURIComponent(name)}/test`));
 }
 
+/** 获取系统默认执行器 */
+export async function getDefaultExecutor(): Promise<import('@/types').ExecutorConfig | null> {
+  return unwrap(await api.get('/api/executors/default'));
+}
+
+/** 设置指定执行器为系统默认执行器 */
+export async function setDefaultExecutor(name: string): Promise<import('@/types').ExecutorConfig> {
+  return unwrap(await api.put(`/api/executors/${encodeURIComponent(name)}/default`));
+}
+
 // Version API
 export interface VersionInfo {
   version: string;

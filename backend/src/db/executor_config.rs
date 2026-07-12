@@ -13,6 +13,7 @@ fn map_executor(m: executors::Model) -> ExecutorConfig {
         enabled: m.enabled,
         display_name: m.display_name,
         session_dir: m.session_dir,
+        is_default: m.is_default,
         created_at: m.created_at,
         updated_at: m.updated_at,
     }
@@ -104,7 +105,10 @@ impl Database {
 
         let now = crate::models::utc_timestamp();
 
-        for exec in EXECUTORS {
+        for (i, exec) in EXECUTORS.iter().enumerate() {
+            // 第一个执行器设为默认（通常是 claudecode），
+            // 保持与历史行为一致：默认执行器就是列表第一个。
+            let is_default = i == 0;
             // Try primary name first, then aliases (for backward compatibility with legacy config keys)
             let path = cfg_executors.paths.get(exec.name)
                 .or_else(|| {
@@ -119,6 +123,7 @@ impl Database {
                 enabled: ActiveValue::Set(true),
                 display_name: ActiveValue::Set(exec.display_name.to_string()),
                 session_dir: ActiveValue::Set(exec.session_dir.to_string()),
+                is_default: ActiveValue::Set(is_default),
                 created_at: ActiveValue::Set(Some(now.clone())),
                 updated_at: ActiveValue::Set(Some(now.clone())),
                 ..Default::default()
@@ -131,6 +136,7 @@ impl Database {
     }
 
     /// Seed default executors if table is empty (fresh install).
+    /// 全新安装时，第一个执行器（claudecode）会被设为默认执行器。
     pub async fn seed_default_executors(&self) -> Result<(), sea_orm::DbErr> {
         let count = executors::Entity::find().count(&self.conn).await?;
         if count > 0 {
@@ -138,13 +144,17 @@ impl Database {
         }
 
         let now = crate::models::utc_timestamp();
-        for exec in EXECUTORS {
+        for (i, exec) in EXECUTORS.iter().enumerate() {
+            // 第一个执行器设为默认（通常是 claudecode），
+            // 保持与历史行为一致：默认执行器就是列表第一个。
+            let is_default = i == 0;
             let am = executors::ActiveModel {
                 name: ActiveValue::Set(exec.name.to_string()),
                 path: ActiveValue::Set(exec.default_path.to_string()),
                 enabled: ActiveValue::Set(true),
                 display_name: ActiveValue::Set(exec.display_name.to_string()),
                 session_dir: ActiveValue::Set(exec.session_dir.to_string()),
+                is_default: ActiveValue::Set(is_default),
                 created_at: ActiveValue::Set(Some(now.clone())),
                 updated_at: ActiveValue::Set(Some(now.clone())),
                 ..Default::default()
@@ -214,5 +224,58 @@ impl Database {
         }
 
         Ok(())
+    }
+
+    /// 获取系统默认执行器。
+    /// 如果没有标记为默认的执行器，返回 None；
+    /// 调用方应自行决定回退策略（如使用 claudecode 常量）。
+    pub async fn get_default_executor(&self) -> Result<Option<ExecutorConfig>, sea_orm::DbErr> {
+        let model = executors::Entity::find()
+            .filter(executors::Column::IsDefault.eq(true))
+            .one(&self.conn)
+            .await?;
+        Ok(model.map(map_executor))
+    }
+
+    /// 获取默认执行器的名称，便捷方法。
+    /// 优先从数据库读取 is_default=true 的执行器，
+    /// 如果没有则回退到 `DEFAULT_EXECUTOR` 常量（claudecode）。
+    /// 用于创建 todo 等需要默认执行器名的场景。
+    pub async fn get_default_executor_name(&self) -> Result<String, sea_orm::DbErr> {
+        let default = self.get_default_executor().await?;
+        Ok(default
+            .map(|e| e.name)
+            .unwrap_or_else(|| crate::adapters::DEFAULT_EXECUTOR.to_string()))
+    }
+
+    /// 设置指定执行器为系统默认执行器。
+    /// 会先清除所有执行器的默认标记，再将指定执行器设为默认，
+    /// 确保同一时间只有一个默认执行器。
+    /// 返回更新后的执行器配置。
+    pub async fn set_default_executor(&self, name: &str) -> Result<Option<ExecutorConfig>, sea_orm::DbErr> {
+        // 先确认目标执行器存在，不存在则返回 None
+        let target = executors::Entity::find()
+            .filter(executors::Column::Name.eq(name))
+            .one(&self.conn)
+            .await?;
+        let Some(target) = target else {
+            return Ok(None);
+        };
+
+        let now = crate::models::utc_timestamp();
+
+        // 清除所有执行器的默认标记
+        executors::Entity::update_many()
+            .col_expr(executors::Column::IsDefault, sea_orm::sea_query::Expr::value(false))
+            .exec(&self.conn)
+            .await?;
+
+        // 将目标执行器设为默认
+        let mut am: executors::ActiveModel = target.clone().into();
+        am.is_default = ActiveValue::Set(true);
+        am.updated_at = ActiveValue::Set(Some(now));
+        let updated = am.update(&self.conn).await?;
+
+        Ok(Some(map_executor(updated)))
     }
 }
