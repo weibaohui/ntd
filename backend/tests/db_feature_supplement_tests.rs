@@ -1011,3 +1011,36 @@ async fn test_merge_backup_drops_dangling_backup_workspace_id() {
     assert_eq!(todo.workspace_id, Some(0));
     assert!(todo.workspace_path.as_deref().unwrap_or("").is_empty());
 }
+
+// =====================================================================
+// 飞书卡片「最近任务」查询 get_recent_execution_records_for_chat
+// 它是 get_feishu_project_binding → get_execution_records 的两跳组合 + 短路。
+// 这里聚焦本函数特有的短路逻辑；「有记录」的正常路径由底层 get_execution_records 的测试覆盖。
+// =====================================================================
+
+/// 会话未绑定项目（卡片「最近任务」最常见的初始状态）：第一跳无 binding，应直接返回空 Vec。
+#[tokio::test]
+async fn test_get_recent_execution_records_for_chat_unbound_returns_empty() {
+    let db = setup_db().await;
+    let records = db
+        .get_recent_execution_records_for_chat(1, "oc_unbound_chat", 5)
+        .await
+        .unwrap();
+    assert!(records.is_empty(), "未绑定的 chat 应返回空 Vec");
+}
+
+/// 已绑定项目但还没跑过任务：第二跳按 todo_id 查不到记录，同样返回空 Vec。
+#[tokio::test]
+async fn test_get_recent_execution_records_for_chat_bound_no_records_returns_empty() {
+    let db = setup_db().await;
+    // in-memory DB 默认不开外键约束，project_dir_id/todo_id 可伪造，
+    // 这里只验证「有 binding 但无记录」的短路行为，不关心项目/todo 的真实性。
+    db.create_feishu_project_binding(1, "oc_bound_chat", "p2p", 999, 42)
+        .await
+        .unwrap();
+    let records = db
+        .get_recent_execution_records_for_chat(1, "oc_bound_chat", 5)
+        .await
+        .unwrap();
+    assert!(records.is_empty(), "已绑定但无记录应返回空 Vec");
+}

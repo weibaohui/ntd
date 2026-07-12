@@ -255,11 +255,14 @@ impl FeishuChannelService {
                                 .and_then(|c| c.open_message_id.clone())
                                 .unwrap_or_default();
 
-                            // 从 action value 中提取 action 字符串
+                            // 提取回调字符串：按钮点击在 value.action；
+                            // select_static 选中时具体值在 action.option（选中项 value），故 fallback 到 option。
                             let action_value = event.event.action.value
                                 .as_ref()
                                 .and_then(|v| v.get("action"))
                                 .and_then(|a| a.as_str())
+                                .filter(|s| !s.is_empty())
+                                .or_else(|| event.event.action.option.as_deref().filter(|s| !s.is_empty()))
                                 .unwrap_or("")
                                 .to_string();
 
