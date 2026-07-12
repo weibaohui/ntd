@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use dashmap::DashMap;
@@ -49,11 +49,87 @@ struct DebounceEntry {
     timer: JoinHandle<()>,
 }
 
+/// 私聊串行队列的维度 key：(bot_id, workspace_id, sender)
+/// 同一个用户在同一个工作空间下对同一个 bot 发的消息串行执行
+type P2pQueueKey = (i64, i64, String);
+
+/// workspace_id 缺失时的哨兵值。
+/// 真实 workspace 自增 id 从 1 开始，用 -1 表示「无 workspace」既不会与真实值冲突，
+/// 也比 0 更明确地表达「未设置」语义——0 容易被当成默认值，掩盖配置缺失。
+const NO_WORKSPACE: i64 = -1;
+
+/// p2p 串行队列单维度上限：防止恶意刷屏或误操作导致内存无限增长。
+/// 超出则丢弃新消息并提示用户，正在执行的任务不受影响。50 足够缓冲正常多轮对话，
+/// 又能兜住异常突发；可按需调整。
+const MAX_P2P_QUEUE_LEN: usize = 50;
+
+/// p2p 运行标记的 Drop guard。
+///
+/// 无论 p2p 处理是成功、返回 Err 还是 panic，guard 被 drop 时都会移除对应的
+/// running 标记，防止异常退出导致该 (bot_id, workspace_id, sender) 维度被
+/// 永久拦截（后续消息永远入队、永不执行，形成死锁）。
+///
+/// 关键约束：必须在「首次执行之前」创建，才能覆盖首次执行本身。若在首次执行
+/// 之后才创建，首次执行 panic 时 guard 尚不存在，running 标记永远不会被清除，
+/// 该维度就此死锁——这正是原实现把 guard 放在 drain 循环前的 bug。
+struct P2pRunningGuard {
+    key: P2pQueueKey,
+    running: Arc<DashMap<P2pQueueKey, ()>>,
+}
+
+impl Drop for P2pRunningGuard {
+    fn drop(&mut self) {
+        self.running.remove(&self.key);
+    }
+}
+
+/// 单条消息执行前的解析结果。
+///
+/// 把 resume session 的 TOCTOU 检查、exec_message/params 构建聚合在一起，
+/// 让主路径（debounce batch）和 p2p 队列 drain 路径共用同一份解析逻辑，
+/// 避免两份拷贝分叉——原实现就因分叉导致 drain 路径静默吞错、行为不一致。
+struct ResolvedExecution {
+    /// 替换好 {{message}} 的最终 prompt（resume 时含系统提示，否则原样 todo_prompt）
+    exec_message: String,
+    /// 执行参数；resume 时为 None（走 run_todo_execution），否则 Some（走 with_params）
+    params: Option<HashMap<String, String>>,
+    /// resume 用的 session_id；TOCTOU 检查后可能被降级为 None
+    resume_session_id: Option<String>,
+    /// resume_message 透传
+    resume_message: Option<String>,
+    /// 是否为 resume 执行（resume_session_id.is_some()）
+    is_resume: bool,
+    /// 给 binding 更新用的 session_id 快照（与 resume_session_id 同值，独立 clone 避免 move 后无法使用）
+    sid_for_binding: Option<String>,
+}
+
+/// 从 p2p 队列取出下一条消息的结果。
+///
+/// 抽成枚举而非 Option<Option<PendingMessage>>，是为了让 drain 循环的三种状态
+/// （取到消息 / 队列空已清理 / 并发插入需重试）各自有名分支，可读且便于单测。
+#[derive(Debug)]
+enum QueuePop {
+    /// 取到下一条消息，继续执行
+    /// 用 Box 装 PendingMessage：PendingMessage 含多个 String/HashMap 让 enum 体积达 344 字节，
+    /// clippy large_enum_variant 要求大变体走堆；drain 循环里短暂持有，Box 的间接寻址可忽略。
+    Message(Box<PendingMessage>),
+    /// 队列已空并已清理条目，drain 循环应退出
+    Drained,
+    /// 并发 push 在 pop 之后插入了消息但本次未取到，需重新循环
+    Retry,
+}
+
 pub struct MessageDebounce {
     entries: Arc<DashMap<(i64, String), DebounceEntry>>,
     ctx: ServiceContext,
     /// Loop Runner，用于处理 default_response_loop 类型的消息
     loop_runner: Option<Arc<crate::services::loop_runner::LoopRunner>>,
+    /// 私聊串行队列：按 (bot_id, workspace_id, sender) 维度缓存等待执行的消息
+    /// 当某维度已有执行器在运行时，新消息入队而非并行执行
+    p2p_queue: Arc<DashMap<P2pQueueKey, VecDeque<PendingMessage>>>,
+    /// 私聊运行状态标记：按 (bot_id, workspace_id, sender) 维度记录是否有执行器在运行
+    /// 使用 DashMap 的 insert/remove 原子操作避免竞态条件
+    p2p_running: Arc<DashMap<P2pQueueKey, ()>>,
 }
 
 impl MessageDebounce {
@@ -70,11 +146,69 @@ impl MessageDebounce {
             entries: Arc::new(DashMap::new()),
             ctx,
             loop_runner,
+            p2p_queue: Arc::new(DashMap::new()),
+            p2p_running: Arc::new(DashMap::new()),
         }
     }
 
     /// Push a message into the debounce buffer. Resets the timer for this key.
+    /// 对于私聊消息，如果该维度(bot_id, workspace_id, sender)已有执行器在运行，
+    /// 则将消息入队并回复"正在运行中，稍后执行"，而非并行执行。
+    /// 使用 DashMap 的 insert 原子操作避免竞态条件。
     pub fn push(&self, msg: PendingMessage) {
+        // 私聊消息串行队列拦截：使用 p2p_running 的原子 insert 操作判断是否有执行器在运行
+        if msg.chat_type == "p2p" {
+            let workspace_id = msg.workspace_id.unwrap_or(NO_WORKSPACE);
+            let queue_key = (msg.bot_id, workspace_id, msg.sender.clone());
+            // 原子操作：insert 返回旧值
+            // - Some(())：之前已在运行，新消息入队
+            // - None：之前没运行，本次 insert 已标记为运行，直接执行
+            let was_running = self.p2p_running.insert(queue_key.clone(), ()).is_some();
+            if was_running {
+                // 当前有执行器在运行：入队并回复"稍后执行"
+                tracing::info!(
+                    "[p2p-queue] 执行器运行中，消息入队: bot_id={}, workspace_id={}, sender={}, content_preview={:?}",
+                    msg.bot_id, workspace_id, msg.sender, msg.content.chars().take(50).collect::<String>()
+                );
+                // 发送"正在运行中，稍后执行"提示
+                let tx = self.ctx.tx.clone();
+                let bot_id = msg.bot_id;
+                let receive_id = msg.sender.clone();
+                let receive_id_type = "open_id".to_string();
+                // 先入队，再根据长度决定提示文案（包含本条消息后的队列长度）
+                let mut queue = self.p2p_queue.entry(queue_key).or_default();
+                // 队列上限保护：满则丢弃本条并提示，避免恶意刷屏导致内存无限增长。
+                // 持有写锁期间只读 len；tx.send 走 broadcast 通道，不回调 DashMap，不会死锁。
+                if queue.len() >= MAX_P2P_QUEUE_LEN {
+                    let content = format!(
+                        "⚠️ 排队消息过多（上限 {} 条），本条已丢弃，请稍后再试",
+                        MAX_P2P_QUEUE_LEN
+                    );
+                    let _ = tx.send(ExecEvent::DirectCardMessage {
+                        bot_id,
+                        receive_id,
+                        receive_id_type,
+                        content,
+                    });
+                    return;
+                }
+                queue.push_back(msg);
+                let queue_len = queue.len();
+                let wait_hint = if queue_len <= 1 {
+                    "⏳ 正在运行中，稍后执行".to_string()
+                } else {
+                    format!("⏳ 正在运行中，前面还有 {} 条消息排队，稍后执行", queue_len - 1)
+                };
+                let _ = tx.send(ExecEvent::DirectCardMessage {
+                    bot_id,
+                    receive_id,
+                    receive_id_type,
+                    content: wait_hint,
+                });
+                return;
+            }
+        }
+
         let key = (msg.bot_id, msg.chat_id.clone());
 
         // Remove old entry and collect existing messages
@@ -102,14 +236,16 @@ impl MessageDebounce {
             let config = self.ctx.config.clone();
             // loop_runner 需要在 async block 之前 clone，避免 self 生命周期问题
             let loop_runner = self.loop_runner.clone();
-            // todo hook 已整块移除（plan `purring-forging-petal`），debounce 触发的
-            // 执行不再需要透传 hook_service。
             let bot_id = key.0;
             let chat_id = key.1.clone();
             let target_type = all_msgs
                 .first()
                 .map(|m| m.chat_type.clone())
                 .unwrap_or_default();
+            // 私聊串行队列：clone Arc 引用，用于执行完成后检查队列
+            let p2p_queue = self.p2p_queue.clone();
+            // 私聊运行状态：clone Arc 引用，用于执行完成后清除运行标记
+            let p2p_running = self.p2p_running.clone();
 
             tokio::spawn(async move {
                 // 群聊需要 debounce 等待窗口，避免多条消息触发多次执行；
@@ -135,263 +271,86 @@ impl MessageDebounce {
 
                     // entry.messages 在上面已确认非空（is_empty 检查），last() 必然有值
                     let Some(last) = entry.messages.last() else { return; };
-                    let mut merged_params = last.params.clone().unwrap_or_default();
-                    merged_params.insert("content".to_string(), merged_content.clone());
-                    merged_params.insert("message".to_string(), merged_content.clone());
 
-                    // For resume sessions: use the user's content as the message to resume with
-                    let resume_msg = last.resume_message.clone();
-                    let mut resume_sid = last.resume_session_id.clone();
+                    // p2p 运行标记 guard：必须在「首次执行之前」创建，覆盖「首次执行 + 队列 drain」
+                    // 全过程。guard drop 时清除 running 标记——即使首次执行 panic，drop 也会执行，
+                    // 保证该维度不被永久死锁。group 消息不进串行队列，guard 为 None。
+                    let _p2p_guard = if target_type == "p2p" {
+                        let qk = (bot_id, last.workspace_id.unwrap_or(NO_WORKSPACE), last.sender.clone());
+                        Some(P2pRunningGuard { key: qk, running: p2p_running.clone() })
+                    } else {
+                        None
+                    };
 
-                    // 防御 TOCTOU：debounce 等待期间 binding 可能被重新绑定到不同项目（todo_id 变了）
-                    // todo_id 变了才降级；只要有 session_id 就应该继续多轮对话
-                    if resume_sid.is_some() {
-                        if let Some(binding_id) = last.binding_id {
-                            if let Ok(Some(binding)) = db.get_feishu_project_binding_by_id(binding_id).await {
-                                let todo_changed = binding.todo_id != last.todo_id;
-                                if todo_changed {
-                                    tracing::warn!(
-                                        "[debounce] binding {} todo_id changed ({} → {}), dropping resume",
-                                        binding_id, last.todo_id, binding.todo_id
-                                    );
-                                    // Todo 变了，降级为新执行
-                                    resume_sid = None;
-                                }
-                            }
-                        }
+                    // 解析 resume/参数（TOCTOU 检查 + exec_message/params 构建），主路径与 drain 共用
+                    let resolved = Self::resolve_execution(last, &merged_content, &db).await;
+
+                    // 分发执行（trigger_type 路由），主路径与 drain 共用
+                    let result = Self::dispatch_execution(
+                        last, &merged_content, &resolved,
+                        &db, &executor_registry, &task_manager, &config, &tx, &loop_runner,
+                    )
+                    .await;
+
+                    let record_id = result.as_ref().ok().and_then(|r| r.record_id);
+                    tracing::debug!(
+                        "[debounce] timer fired for bot_id={}, chat_id={}, msg_count={}, record_id={:?}",
+                        bot_id, key.1, entry.messages.len(), record_id
+                    );
+                    if let Err(e) = &result {
+                        tracing::warn!("[debounce] failed to execute todo {}: {:?}", last.todo_id, e);
+                    }
+                    // binding 状态更新（成功设 RUNNING+session_id，失败重置 IDLE），主路径与 drain 共用
+                    Self::update_binding(
+                        last.binding_id, &result, resolved.is_resume,
+                        resolved.sid_for_binding.as_deref(), &db,
+                    )
+                    .await;
+                    // 批量标记整批消息（合并执行，整批都算已处理）
+                    for msg in &entry.messages {
+                        Self::mark_message(msg, &result, &db).await;
                     }
 
-                    let exec_message = if resume_sid.is_some() {
-                        // resume: include system prompt with user content so Claude retains project context
-                        last.todo_prompt.replace("{{message}}", &merged_content)
-                    } else {
-                        // new execution: send todo_prompt with params (replace_placeholders will substitute {{message}})
-                        last.todo_prompt.clone()
-                    };
+                    // 私聊串行队列：执行完成后检查队列，有下一条消息则自动执行
+                    // 用 loop 循环逐条处理队列中的消息，直到队列清空
+                    if target_type == "p2p" {
+                        let workspace_id = last.workspace_id.unwrap_or(NO_WORKSPACE);
+                        let queue_key = (bot_id, workspace_id, last.sender.clone());
 
-                    // Clone before move: resume_sid is consumed by the request below,
-                    // but we still need it for the TOCTOU-correct binding update after.
-                    let is_resume = resume_sid.is_some();
-                    let sid_for_binding = resume_sid.clone();
-
-                    // 根据 trigger_type 分发到不同的处理函数
-                    // 错误类型为 Option<String>：Some("loop_paused") 表示环路暂停，None 表示其他错误
-                    let result: Result<crate::executor_service::ExecutionResult, Option<String>> = match last.trigger_type.as_str() {
-                        "default_response_loop" | "slash_command_loop" => {
-                            // 环路默认响应 或 斜杠命令触发环路：直接触发环路执行
-                            // 群聊回复到群（chat_id），私聊回复到个人（open_id）
-                            let (loop_receive_id, receive_id_type) = if last.chat_type == "group" {
-                                (last.chat_id.clone(), "chat_id".to_string())
-                            } else {
-                                (last.sender.clone(), "open_id".to_string())
+                        // guard 已在首次执行前创建（见上方 _p2p_guard），此处仅做队列 drain。
+                        // queue_key 与 guard 内的 key 同源；drain 完成、当前块结束后 guard drop，
+                        // 自动清除 running 标记。
+                        // 循环处理队列中的所有待执行消息
+                        loop {
+                            // 取出下一条消息（空则原子清理条目，避免与并发 push 竞态丢消息）
+                            let next = match Self::pop_or_drain_queue(&p2p_queue, &queue_key) {
+                                QueuePop::Message(m) => m,
+                                QueuePop::Drained => break,
+                                QueuePop::Retry => continue,
                             };
-                            Self::handle_default_response_loop(
-                                db.clone(),
-                                loop_runner.clone(),
-                                last.todo_id, // loop_id
-                                &merged_content,
-                                Some(last.bot_id),
-                                Some(loop_receive_id),
-                                Some(receive_id_type),
-                            )
-                            .await
-                        }
-                        "default_response_executor" => {
-                            // 执行器默认响应：直接调用执行器交互（不存储执行记录）
-                            // 群聊回复到群（chat_id），私聊回复到个人（open_id）
-                            let (resp_receive_id, resp_receive_id_type) = if last.chat_type == "group" {
-                                (last.chat_id.clone(), "chat_id".to_string())
-                            } else {
-                                (last.sender.clone(), "open_id".to_string())
-                            };
-                            Self::handle_default_response_executor(
-                                &db,
-                                &executor_registry,
-                                &task_manager,
-                                &config,
-                                &tx,
-                                last.bot_id,
-                                resp_receive_id,
-                                &resp_receive_id_type,
-                                last.executor.as_deref(),
-                                last.workspace_id,
-                                &merged_content,
-                                resume_sid.clone(),
-                            )
-                            .await
-                        }
-                        _ => {
-                            // 普通的默认响应（todo 类型）或斜杠命令
-                            let request = RunTodoExecutionRequest {
-                                db: db.clone(),
-                                executor_registry,
-                                tx,
-                                task_manager,
-                                config,
-                                todo_id: last.todo_id,
-                                message: exec_message,
-                                req_executor: last.executor.clone(),
-                                trigger_type: last.trigger_type.clone(),
-                                params: if is_resume { None } else { Some(merged_params) },
-                                resume_session_id: resume_sid,
-                                resume_message: resume_msg,
-                                source_todo_id: None,
-                                source_todo_title: None,
-                                loop_step_execution_id: None,
-                                step_id: None,
-                                feishu_bot_id: Some(last.bot_id),
-                                // 根据 chat_type 决定回复目标：群聊回复到群（chat_id），
-                                // 私聊回复到个人（open_id）。
-                                feishu_receive_id: if last.chat_type == "group" {
-                                    Some(last.chat_id.clone())
-                                } else {
-                                    Some(last.sender.clone())
-                                },
-                                feishu_receive_id_type: if last.chat_type == "group" {
-                                    Some("chat_id".to_string())
-                                } else {
-                                    Some("open_id".to_string())
-                                },
-                                workspace_path: None,
-                                workspace_id: last.workspace_id,
-                            };
-                            let result = if request.params.is_some() {
-                                run_todo_execution_with_params(request).await
-                            } else {
-                                run_todo_execution(request).await
-                            };
-                            Ok(result)
-                        }
-                    };
-
-                    let record_id = match &result {
-                        Ok(r) => Some(r.record_id),
-                        Err(_) => None,
-                    };
-                    tracing::debug!("[debounce] timer fired for bot_id={}, chat_id={}, msg_count={}, record_id={:?}", bot_id, key.1, entry.messages.len(), record_id);
-                    // 执行结果处理：
-                    // - 成功：更新 binding 状态为 running，记录 session_id + latest_record_id
-                    // - 失败：重置 binding 状态为 idle（让下次消息尝试开新 session）
-                    // session_id 策略（重要）：
-                    //   - 首次执行（resume_session_id=None）：不设 session_id！task_id 是随机 UUID，
-                    //     Claude Code 的真实 session_id 来自 stdout JSONL 的 system 消息，
-                    //     保存在 execution_records.session_id 中。listener 的 resume 决策从那里读取。
-                    //   - resume 执行（resume_session_id=Some）：保持原 session_id 不变（同一个 Claude Code 会话）
-                    match result {
-                        Ok(exec_result) => {
-                            // If this message came from a project-bound chat, update binding state
-                            if let Some(binding_id) = last.binding_id {
-                                if let Some(rid) = exec_result.record_id {
-                                    if is_resume {
-                                        // Resume: preserve session_id (from sid_for_binding), update latest_record_id + status
-                                        // is_resume is post-TOCTOU, so if todo_id changed it will be false
-                                        if let Err(e) = db
-                                            .update_feishu_project_binding_session(
-                                                binding_id,
-                                                sid_for_binding.as_deref(),
-                                                rid,
-                                                crate::models::binding_status::RUNNING,
-                                            )
-                                            .await
-                                        {
-                                            tracing::warn!(
-                                                "[debounce] failed to update binding {} session on resume: {:?}",
-                                                binding_id, e
-                                            );
-                                        }
-                                    } else {
-                                        // First execution: save real session_id from execution record
-                                        // so subsequent messages can resume this session.
-                                        let real_sid = db.get_execution_record(rid).await
-                                            .ok()
-                                            .flatten()
-                                            .and_then(|r| r.session_id);
-                                        if let Err(e) = db
-                                            .update_feishu_project_binding_session(
-                                                binding_id,
-                                                real_sid.as_deref(),
-                                                rid,
-                                                crate::models::binding_status::RUNNING,
-                                            )
-                                            .await
-                                        {
-                                            tracing::warn!(
-                                                "[debounce] failed to update binding {} session on first exec: {:?}",
-                                                binding_id, e
-                                            );
-                                        }
-                                    }
-                                } else {
-                                    // Record ID missing: still update status
-                                    if let Err(e) = db
-                                        .update_feishu_project_binding_status(binding_id, crate::models::binding_status::RUNNING)
-                                        .await
-                                    {
-                                        tracing::warn!(
-                                            "[debounce] failed to update binding {} status: {:?}",
-                                            binding_id, e
-                                        );
-                                    }
-                                }
-                            }
-
-                            // Update all pending messages with todo_id and execution_record_id
-                            let record_id = exec_result.record_id;
-                            for msg in &entry.messages {
-                                if let Some(ref msg_id) = msg.message_id {
-                                    if let Err(e) = db
-                                        .mark_feishu_message_processed(
-                                            msg_id,
-                                            msg.todo_id,
-                                            record_id,
-                                            Some(&msg.trigger_type),
-                                        )
-                                        .await
-                                    {
-                                        tracing::warn!("[debounce] failed to mark message {} as processed: {:?}", msg_id, e);
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "[debounce] failed to execute todo {}: {:?}",
-                                last.todo_id,
-                                e
+                            tracing::info!(
+                                "[p2p-queue] 执行完成，从队列取出下一条消息: bot_id={}, workspace_id={}, sender={}, content_preview={:?}",
+                                bot_id, workspace_id, next.sender, next.content.chars().take(50).collect::<String>()
                             );
-                            // Reset binding status to idle on failure
-                            if let Some(binding_id) = last.binding_id {
-                                let _ = db
-                                    .update_feishu_project_binding_status(binding_id, crate::models::binding_status::IDLE)
-                                    .await;
-                            }
-                            // e is Option<String>: Some("loop_paused") for paused loops, None for other errors
-                            for msg in &entry.messages {
-                                if let Some(ref msg_id) = msg.message_id {
-                                    if let Some(ref error_reason) = e {
-                                        // 环路暂停：标记为已处理 + 记录错误
-                                        if let Err(mark_err) = db
-                                            .mark_feishu_message_processed_with_error(
-                                                msg_id,
-                                                msg.todo_id,
-                                                Some(&msg.trigger_type),
-                                                error_reason,
-                                            )
-                                            .await
-                                        {
-                                            tracing::warn!("[debounce] failed to mark message {} as processed_with_error: {:?}", msg_id, mark_err);
-                                        }
-                                    } else {
-                                        // 其他错误：标记为未处理
-                                        if let Err(mark_err) = db
-                                            .mark_feishu_message_failed(msg_id)
-                                            .await
-                                        {
-                                            tracing::warn!("[debounce] failed to mark message {} as failed: {:?}", msg_id, mark_err);
-                                        }
-                                    }
-                                }
-                            }
+                            // 直接在当前任务中执行队列消息，无需 debounce 等待
+                            // 单条消息直接用其 content，无需走 batch 合并：
+                            // merge_pending_messages 对单条等价于 content 本身，省一次 Vec 分配。
+                            // 解析 + 分发执行 + binding 更新 + 单条标记，全部走与主路径相同的 helper，
+                            // 消除原先与主路径重复的 ~80 行拷贝（并修掉 drain 静默吞错、缺 record_id 分支的分叉）
+                            let merged = next.content.clone();
+                            let resolved = Self::resolve_execution(&next, &merged, &db).await;
+                            let r = Self::dispatch_execution(
+                                &next, &merged, &resolved,
+                                &db, &executor_registry, &task_manager, &config, &tx, &loop_runner,
+                            )
+                            .await;
+                            Self::update_binding(
+                                next.binding_id, &r, resolved.is_resume,
+                                resolved.sid_for_binding.as_deref(), &db,
+                            )
+                            .await;
+                            Self::mark_message(&next, &r, &db).await;
+                            // 继续循环处理下一条
                         }
                     }
                 }
@@ -409,6 +368,336 @@ impl MessageDebounce {
 
     pub fn pending_count(&self) -> usize {
         self.entries.iter().map(|e| e.messages.len()).sum()
+    }
+
+    // ========================================================================
+    // 单条消息执行链路：resume 检查 → 分发执行 → binding 更新 → 消息标记
+    //
+    // 这组 helper 把主路径（debounce batch，标记整批）和 p2p 队列 drain 路径
+    // （单条标记）共用的逻辑抽出来，消除原先两份近乎相同的拷贝。两份拷贝已经
+    // 出现分叉（drain 静默吞错、缺 record_id 分支），统一到此处后行为一致。
+    // ========================================================================
+
+    /// resume session 的 TOCTOU 检查。
+    ///
+    /// debounce/drain 期间 binding 可能被重新绑定到不同 todo_id；todo_id 变了才
+    /// 降级为新执行（返回 None），只要 session_id 还在且 todo_id 未变就继续多轮对话。
+    async fn check_resume_session(msg: &PendingMessage, db: &Arc<Database>) -> Option<String> {
+        let mut resume_sid = msg.resume_session_id.clone();
+        if resume_sid.is_some() {
+            if let Some(binding_id) = msg.binding_id {
+                if let Ok(Some(binding)) = db.get_feishu_project_binding_by_id(binding_id).await {
+                    if binding.todo_id != msg.todo_id {
+                        tracing::warn!(
+                            "[debounce] binding {} todo_id changed ({} → {}), dropping resume",
+                            binding_id, msg.todo_id, binding.todo_id
+                        );
+                        resume_sid = None;
+                    }
+                }
+            }
+        }
+        resume_sid
+    }
+
+    /// 解析单条消息的执行参数：resume 检查 + exec_message/params 构建。
+    ///
+    /// 主路径与 drain 路径共用，确保两处的 resume 降级、prompt 替换、params 构造
+    /// 完全一致，不会因分叉产生微妙差异。
+    async fn resolve_execution(
+        msg: &PendingMessage,
+        merged_content: &str,
+        db: &Arc<Database>,
+    ) -> ResolvedExecution {
+        let resume_message = msg.resume_message.clone();
+        let resume_sid = Self::check_resume_session(msg, db).await;
+        // resume：把用户内容拼进系统 prompt（保留项目上下文）；
+        // 新执行：原样 todo_prompt，由 replace_placeholders 在执行时替换 {{message}}。
+        let exec_message = if resume_sid.is_some() {
+            msg.todo_prompt.replace("{{message}}", merged_content)
+        } else {
+            msg.todo_prompt.clone()
+        };
+        let mut params = msg.params.clone().unwrap_or_default();
+        params.insert("content".to_string(), merged_content.to_string());
+        params.insert("message".to_string(), merged_content.to_string());
+        let is_resume = resume_sid.is_some();
+        let sid_for_binding = resume_sid.clone();
+        ResolvedExecution {
+            exec_message,
+            params: if is_resume { None } else { Some(params) },
+            resume_session_id: resume_sid,
+            resume_message,
+            is_resume,
+            sid_for_binding,
+        }
+    }
+
+    /// 按消息来源决定飞书回复目标：群聊回群（chat_id），私聊回个人（open_id）。
+    fn feishu_reply_target(msg: &PendingMessage) -> (String, String) {
+        if msg.chat_type == "group" {
+            (msg.chat_id.clone(), "chat_id".to_string())
+        } else {
+            (msg.sender.clone(), "open_id".to_string())
+        }
+    }
+
+    /// 构造 todo 执行请求（_ 分支：普通默认响应或斜杠命令）。
+    ///
+    /// 抽出来让 dispatch_execution 的 _ 分支保持简短；clone Arc 引用是因为
+    /// RunTodoExecutionRequest 需要 owned，而同一批依赖在 drain 循环里要复用。
+    #[allow(clippy::too_many_arguments)]
+    fn build_run_todo_request(
+        msg: &PendingMessage,
+        resolved: &ResolvedExecution,
+        db: &Arc<Database>,
+        executor_registry: &Arc<crate::adapters::ExecutorRegistry>,
+        tx: &broadcast::Sender<ExecEvent>,
+        task_manager: &Arc<TaskManager>,
+        config: &Arc<std::sync::RwLock<crate::config::Config>>,
+    ) -> RunTodoExecutionRequest {
+        let (receive_id, receive_id_type) = Self::feishu_reply_target(msg);
+        RunTodoExecutionRequest {
+            db: db.clone(),
+            executor_registry: executor_registry.clone(),
+            tx: tx.clone(),
+            task_manager: task_manager.clone(),
+            config: config.clone(),
+            todo_id: msg.todo_id,
+            message: resolved.exec_message.clone(),
+            req_executor: msg.executor.clone(),
+            trigger_type: msg.trigger_type.clone(),
+            params: resolved.params.clone(),
+            resume_session_id: resolved.resume_session_id.clone(),
+            resume_message: resolved.resume_message.clone(),
+            source_todo_id: None,
+            source_todo_title: None,
+            loop_step_execution_id: None,
+            step_id: None,
+            feishu_bot_id: Some(msg.bot_id),
+            feishu_receive_id: Some(receive_id),
+            feishu_receive_id_type: Some(receive_id_type),
+            workspace_path: None,
+            workspace_id: msg.workspace_id,
+        }
+    }
+
+    /// 按 trigger_type 分发执行单条消息。
+    ///
+    /// 三条分支：环路（loop）/ 执行器直连（executor）/ 普通 todo 执行。
+    /// 主路径与 drain 路径共用，保证分发逻辑一致。
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch_execution(
+        msg: &PendingMessage,
+        merged_content: &str,
+        resolved: &ResolvedExecution,
+        db: &Arc<Database>,
+        executor_registry: &Arc<crate::adapters::ExecutorRegistry>,
+        task_manager: &Arc<TaskManager>,
+        config: &Arc<std::sync::RwLock<crate::config::Config>>,
+        tx: &broadcast::Sender<ExecEvent>,
+        loop_runner: &Option<Arc<crate::services::loop_runner::LoopRunner>>,
+    ) -> Result<crate::executor_service::ExecutionResult, Option<String>> {
+        match msg.trigger_type.as_str() {
+            "default_response_loop" | "slash_command_loop" => {
+                let (rid, rtype) = Self::feishu_reply_target(msg);
+                Self::handle_default_response_loop(
+                    db.clone(),
+                    loop_runner.clone(),
+                    msg.todo_id,
+                    merged_content,
+                    Some(msg.bot_id),
+                    Some(rid),
+                    Some(rtype),
+                )
+                .await
+            }
+            "default_response_executor" => {
+                let (rid, rtype) = Self::feishu_reply_target(msg);
+                Self::handle_default_response_executor(
+                    db,
+                    executor_registry,
+                    task_manager,
+                    config,
+                    tx,
+                    msg.bot_id,
+                    rid,
+                    &rtype,
+                    msg.executor.as_deref(),
+                    msg.workspace_id,
+                    merged_content,
+                    resolved.resume_session_id.clone(),
+                )
+                .await
+            }
+            _ => {
+                let request = Self::build_run_todo_request(
+                    msg, resolved, db, executor_registry, tx, task_manager, config,
+                );
+                let result = if request.params.is_some() {
+                    run_todo_execution_with_params(request).await
+                } else {
+                    run_todo_execution(request).await
+                };
+                Ok(result)
+            }
+        }
+    }
+
+    /// 执行后更新 binding 状态。
+    ///
+    /// 成功：设 RUNNING + session_id（resume 用原 sid，首次执行从执行记录读真实 sid）；
+    /// record_id 缺失时仍更新 status。失败：重置 IDLE，让下次消息尝试新 session。
+    /// 主路径与 drain 共用，统一了原 drain 路径静默吞错（let _ =）的问题——现在都 warn!。
+    async fn update_binding(
+        binding_id: Option<i64>,
+        result: &Result<crate::executor_service::ExecutionResult, Option<String>>,
+        is_resume: bool,
+        sid_for_binding: Option<&str>,
+        db: &Arc<Database>,
+    ) {
+        let Some(binding_id) = binding_id else { return };
+        match result {
+            Ok(exec_result) => match exec_result.record_id {
+                Some(rid) => {
+                    let sid = if is_resume {
+                        sid_for_binding.map(str::to_string)
+                    } else {
+                        // 首次执行：从执行记录读真实 session_id，供后续消息 resume
+                        db.get_execution_record(rid)
+                            .await
+                            .ok()
+                            .flatten()
+                            .and_then(|r| r.session_id)
+                    };
+                    if let Err(e) = db
+                        .update_feishu_project_binding_session(
+                            binding_id,
+                            sid.as_deref(),
+                            rid,
+                            crate::models::binding_status::RUNNING,
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            "[debounce] failed to update binding {} session: {:?}",
+                            binding_id, e
+                        );
+                    }
+                }
+                None => {
+                    // record_id 缺失：仍更新 status 为 RUNNING
+                    if let Err(e) = db
+                        .update_feishu_project_binding_status(
+                            binding_id,
+                            crate::models::binding_status::RUNNING,
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            "[debounce] failed to update binding {} status: {:?}",
+                            binding_id, e
+                        );
+                    }
+                }
+            },
+            Err(_) => {
+                // 失败：重置 IDLE，让下次消息尝试新 session
+                if let Err(e) = db
+                    .update_feishu_project_binding_status(
+                        binding_id,
+                        crate::models::binding_status::IDLE,
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        "[debounce] failed to reset binding {} to idle: {:?}",
+                        binding_id, e
+                    );
+                }
+            }
+        }
+    }
+
+    /// 按执行结果标记单条消息。
+    ///
+    /// 成功 → processed；环路暂停等（Some 原因）→ processed_with_error；
+    /// 其他错误（None）→ failed。主路径对 batch 每条消息调用（合并执行，整批都算
+    /// 已处理），drain 路径对单条调用。统一了原 drain 路径静默吞错的问题。
+    async fn mark_message(
+        msg: &PendingMessage,
+        result: &Result<crate::executor_service::ExecutionResult, Option<String>>,
+        db: &Arc<Database>,
+    ) {
+        let Some(msg_id) = msg.message_id.as_ref() else { return };
+        match result {
+            Ok(exec_result) => {
+                if let Err(e) = db
+                    .mark_feishu_message_processed(
+                        msg_id,
+                        msg.todo_id,
+                        exec_result.record_id,
+                        Some(&msg.trigger_type),
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        "[debounce] failed to mark message {} as processed: {:?}",
+                        msg_id, e
+                    );
+                }
+            }
+            Err(e) => match e {
+                Some(reason) => {
+                    // 环路暂停等：标记已处理 + 记录错误原因
+                    if let Err(mark_err) = db
+                        .mark_feishu_message_processed_with_error(
+                            msg_id,
+                            msg.todo_id,
+                            Some(&msg.trigger_type),
+                            reason,
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            "[debounce] failed to mark message {} as processed_with_error: {:?}",
+                            msg_id, mark_err
+                        );
+                    }
+                }
+                None => {
+                    // 其他错误：标记为未处理，待重试
+                    if let Err(mark_err) = db.mark_feishu_message_failed(msg_id).await {
+                        tracing::warn!(
+                            "[debounce] failed to mark message {} as failed: {:?}",
+                            msg_id, mark_err
+                        );
+                    }
+                }
+            },
+        }
+    }
+
+    /// 从 p2p 队列取出下一条消息；队列空时原子清理条目。
+    ///
+    /// 取到消息 → Message；队列空且已清理 → Drained；并发 push 让队列非空但
+    /// 本次 pop 没取到 → Retry。抽出来便于单测 remove_if 的竞态修复逻辑
+    /// （旧实现用单独 remove() 会丢失 pop 与 remove 之间插入的消息）。
+    fn pop_or_drain_queue(
+        queue: &DashMap<P2pQueueKey, VecDeque<PendingMessage>>,
+        key: &P2pQueueKey,
+    ) -> QueuePop {
+        // 先尝试 pop；get_mut 持有的写锁在 pop_front 后即释放，不跨 await
+        if let Some(next) = queue.get_mut(key).and_then(|mut q| q.pop_front()) {
+            return QueuePop::Message(Box::new(next));
+        }
+        // 队列为空：用 remove_if 原子地「仅当为空时才删除」，避免与并发 push 竞态丢消息
+        let drained = queue.remove_if(key, |_k, q| q.is_empty()).is_some();
+        if drained || !queue.contains_key(key) {
+            QueuePop::Drained
+        } else {
+            QueuePop::Retry
+        }
     }
 }
 
@@ -1475,5 +1764,217 @@ mod executor_feedback_tests {
             "stderr preview should be truncated to 1500 chars, got len {}",
             content.chars().count()
         );
+    }
+}
+
+/// p2p 串行队列相关纯逻辑测试。
+///
+/// 覆盖三块关键修复：
+/// - feishu_reply_target：群聊/私聊回复目标路由（Task 4 抽取的 helper）
+/// - P2pRunningGuard：Drop 时清除 running 标记（Task 1 修复的核心，防 panic 死锁）
+/// - pop_or_drain_queue：取出/空清理/重试三态（Task 2 修复的核心，防 remove 竞态丢消息）
+///
+/// 这三块都是纯逻辑/纯函数，不依赖 DB，可独立验证。push 的整体入队/drain 流程
+/// 涉及 ServiceContext + Database + executor，属集成测试范畴，不在此覆盖。
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
+mod p2p_queue_tests {
+    use super::*;
+    use dashmap::DashMap;
+    use std::collections::VecDeque;
+    use std::sync::Arc;
+
+    /// 构造私聊消息：chat_type=p2p，回复目标应为 sender。
+    fn p2p_msg(content: &str, sender: &str) -> PendingMessage {
+        PendingMessage {
+            bot_id: 1,
+            chat_id: format!("chat-{sender}"),
+            chat_type: "p2p".to_string(),
+            sender: sender.to_string(),
+            content: content.to_string(),
+            todo_id: 42,
+            todo_prompt: "stub".to_string(),
+            executor: Some("claudecode".to_string()),
+            trigger_type: "feishu".to_string(),
+            params: None,
+            message_id: None,
+            resume_session_id: None,
+            resume_message: None,
+            binding_id: None,
+            workspace_id: Some(1),
+            immediate: false,
+        }
+    }
+
+    /// 构造群聊消息：chat_type=group，回复目标应为 chat_id。
+    fn group_msg(content: &str, chat_id: &str) -> PendingMessage {
+        PendingMessage {
+            bot_id: 1,
+            chat_id: chat_id.to_string(),
+            chat_type: "group".to_string(),
+            sender: "user-1".to_string(),
+            content: content.to_string(),
+            todo_id: 42,
+            todo_prompt: "stub".to_string(),
+            executor: Some("claudecode".to_string()),
+            trigger_type: "feishu".to_string(),
+            params: None,
+            message_id: None,
+            resume_session_id: None,
+            resume_message: None,
+            binding_id: None,
+            workspace_id: Some(1),
+            immediate: false,
+        }
+    }
+
+    // ---- feishu_reply_target：回复目标路由 ----
+
+    /// 群聊消息回复到群：返回 (chat_id, "chat_id")。
+    /// 私聊与群聊的回复通道不同，路由错了消息会发到错误会话。
+    #[test]
+    fn test_feishu_reply_target_group_returns_chat_id() {
+        let msg = group_msg("hi", "oc_abc");
+        let (rid, rtype) = MessageDebounce::feishu_reply_target(&msg);
+        assert_eq!(rid, "oc_abc");
+        assert_eq!(rtype, "chat_id");
+    }
+
+    /// 私聊消息回复到个人：返回 (sender open_id, "open_id")。
+    #[test]
+    fn test_feishu_reply_target_p2p_returns_open_id() {
+        let msg = p2p_msg("hi", "ou_sender");
+        let (rid, rtype) = MessageDebounce::feishu_reply_target(&msg);
+        assert_eq!(rid, "ou_sender");
+        assert_eq!(rtype, "open_id");
+    }
+
+    // ---- P2pRunningGuard：Drop 清理 running 标记 ----
+
+    /// guard drop 后清除 running 标记。
+    /// 这是 Task 1 修复的核心：guard 必须在首次执行前创建、覆盖整个处理过程，
+    /// 这样即使 panic，drop 也会执行、清除标记，避免该维度永久死锁。
+    /// 此处直接验证 drop 的清理行为（panic 安全性的基础）。
+    #[test]
+    fn test_p2p_running_guard_drop_clears_marker() {
+        let running: Arc<DashMap<P2pQueueKey, ()>> = Arc::new(DashMap::new());
+        let key: P2pQueueKey = (1, 1, "ou_sender".to_string());
+        // 模拟 push 设置 running 标记（push 用 insert 原子标记）
+        running.insert(key.clone(), ());
+        assert!(running.contains_key(&key), "running 标记应已设置");
+
+        // guard 存活期间标记保留；drop 后标记清除
+        {
+            let _guard = P2pRunningGuard { key: key.clone(), running: running.clone() };
+            assert!(running.contains_key(&key), "guard 存活期间标记应保留");
+        } // guard 在此 drop
+
+        assert!(
+            !running.contains_key(&key),
+            "guard drop 后标记必须清除，否则 panic 时该维度会永久死锁"
+        );
+    }
+
+    /// guard 只清自己的 key，不误清其他维度的标记。
+    /// 不同 sender/workspace 是独立队列，清理不能串。
+    #[test]
+    fn test_p2p_running_guard_only_clears_own_key() {
+        let running: Arc<DashMap<P2pQueueKey, ()>> = Arc::new(DashMap::new());
+        let key_a: P2pQueueKey = (1, 1, "a".to_string());
+        let key_b: P2pQueueKey = (1, 1, "b".to_string());
+        running.insert(key_a.clone(), ());
+        running.insert(key_b.clone(), ());
+
+        {
+            let _guard = P2pRunningGuard { key: key_a.clone(), running: running.clone() };
+        }
+
+        assert!(!running.contains_key(&key_a), "key_a 应被清理");
+        assert!(running.contains_key(&key_b), "key_b 不应受影响");
+    }
+
+    // ---- pop_or_drain_queue：取出 / 空清理 / 重试三态 ----
+
+    /// 队列有消息时返回 Message 并移除队首（FIFO）。
+    #[test]
+    fn test_pop_or_drain_queue_returns_message_when_nonempty() {
+        let queue: DashMap<P2pQueueKey, VecDeque<PendingMessage>> = DashMap::new();
+        let key: P2pQueueKey = (1, 1, "ou".to_string());
+        {
+            let mut q = queue.entry(key.clone()).or_default();
+            q.push_back(p2p_msg("first", "ou"));
+            q.push_back(p2p_msg("second", "ou"));
+        }
+
+        match MessageDebounce::pop_or_drain_queue(&queue, &key) {
+            QueuePop::Message(m) => assert_eq!(m.content, "first"),
+            other => panic!("期望 Message，得到 {:?}", other),
+        }
+        // 取出一条后队列应剩 1 条
+        assert_eq!(queue.get(&key).map(|q| q.len()), Some(1));
+    }
+
+    /// 队列为空时返回 Drained 并清理条目。
+    /// 空条目若不清理会残留，长期运行下 active 用户的空 VecDeque 累积成内存泄漏。
+    #[test]
+    fn test_pop_or_drain_queue_drains_and_removes_empty_entry() {
+        let queue: DashMap<P2pQueueKey, VecDeque<PendingMessage>> = DashMap::new();
+        let key: P2pQueueKey = (1, 1, "ou".to_string());
+        // 插入空队列（模拟 push 后消息被 pop 光的中间态）
+        queue.entry(key.clone()).or_default();
+
+        match MessageDebounce::pop_or_drain_queue(&queue, &key) {
+            QueuePop::Drained => {}
+            other => panic!("期望 Drained，得到 {:?}", other),
+        }
+        assert!(!queue.contains_key(&key), "空队列条目应被清理");
+    }
+
+    /// key 不存在时返回 Drained（防御，不 panic）。
+    /// 正常流程不会发生（push 会 or_default 创建），但 drain 逻辑必须对缺失 key 健壮。
+    #[test]
+    fn test_pop_or_drain_queue_drains_when_key_absent() {
+        let queue: DashMap<P2pQueueKey, VecDeque<PendingMessage>> = DashMap::new();
+        let key: P2pQueueKey = (1, 1, "ou".to_string());
+
+        match MessageDebounce::pop_or_drain_queue(&queue, &key) {
+            QueuePop::Drained => {}
+            other => panic!("key 不存在时应 Drained，得到 {:?}", other),
+        }
+    }
+
+    /// 逐条 pop 直到 Drained：验证 FIFO 顺序 + 最终清理。
+    #[test]
+    fn test_pop_or_drain_queue_drains_in_fifo_order() {
+        let queue: DashMap<P2pQueueKey, VecDeque<PendingMessage>> = DashMap::new();
+        let key: P2pQueueKey = (1, 1, "ou".to_string());
+        {
+            let mut q = queue.entry(key.clone()).or_default();
+            q.push_back(p2p_msg("first", "ou"));
+            q.push_back(p2p_msg("second", "ou"));
+            q.push_back(p2p_msg("third", "ou"));
+        }
+
+        // 按入队顺序取出
+        let first = match MessageDebounce::pop_or_drain_queue(&queue, &key) {
+            QueuePop::Message(m) => m.content,
+            other => panic!("期望 Message，得到 {:?}", other),
+        };
+        let second = match MessageDebounce::pop_or_drain_queue(&queue, &key) {
+            QueuePop::Message(m) => m.content,
+            other => panic!("期望 Message，得到 {:?}", other),
+        };
+        let third = match MessageDebounce::pop_or_drain_queue(&queue, &key) {
+            QueuePop::Message(m) => m.content,
+            other => panic!("期望 Message，得到 {:?}", other),
+        };
+        assert_eq!((first.as_str(), second.as_str(), third.as_str()), ("first", "second", "third"));
+
+        // 全部取完后应 Drained 且条目已清理
+        match MessageDebounce::pop_or_drain_queue(&queue, &key) {
+            QueuePop::Drained => {}
+            other => panic!("取完后应 Drained，得到 {:?}", other),
+        }
+        assert!(!queue.contains_key(&key), "全部 drain 后条目应被清理");
     }
 }
