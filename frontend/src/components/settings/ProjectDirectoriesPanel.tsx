@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Button, Input, Empty, Spin, Switch, message, Tooltip, Typography, Card, Dropdown } from 'antd';
-import { PlusOutlined, FolderOutlined, RobotOutlined, SettingOutlined, EditOutlined, DeleteOutlined, MoreOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOutlined, RobotOutlined, EditOutlined, DeleteOutlined, MoreOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import * as db from '@/utils/database';
 import type { ProjectDirectory, AgentBot } from '@/utils/database';
-import { WorkspaceLoopConfigPage } from './workspace/WorkspaceLoopConfigPage';
 
 interface ProjectDirectoriesPanelProps {
   /** 点击某个工作空间的「消息配置」入口时触发，参数为该工作空间 id；
@@ -24,9 +23,6 @@ export function ProjectDirectoriesPanel({ onOpenMessages }: ProjectDirectoriesPa
   const [editingDirName, setEditingDirName] = useState('');
   // 智能体列表，用于统计每个工作区的绑定数量
   const [agentBots, setAgentBots] = useState<AgentBot[]>([]);
-  // 选中的工作空间和页面类型；消息配置已迁移为独立菜单，这里仅保留环路配置的嵌入入口
-  const [selectedWorkspace, setSelectedWorkspace] = useState<ProjectDirectory | null>(null);
-  const [selectedPageType, setSelectedPageType] = useState<'loop' | null>(null);
 
   // 每次进入页面都重新拉取一次，确保用户在其他地方新增/删除后能立刻看到
   const loadProjectDirectories = () => {
@@ -153,16 +149,6 @@ export function ProjectDirectoriesPanel({ onOpenMessages }: ProjectDirectoriesPa
       message.error('删除失败: ' + (err?.message || String(err)));
     }
   };
-
-  // 选中工作空间，显示对应配置页（消息配置已迁移为独立菜单，仅保留环路配置嵌入入口）
-  if (selectedWorkspace && selectedPageType === 'loop') {
-    return (
-      <WorkspaceLoopConfigPage
-        workspace={selectedWorkspace}
-        onBack={() => { setSelectedWorkspace(null); setSelectedPageType(null); }}
-      />
-    );
-  }
 
   return (
     <PageCard icon={<FolderOutlined />} title="工作空间">
@@ -299,13 +285,6 @@ export function ProjectDirectoriesPanel({ onOpenMessages }: ProjectDirectoriesPa
 
                     {/* 右侧：操作区域 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                      <Button
-                        size="small"
-                        icon={<SettingOutlined />}
-                        onClick={() => { setSelectedWorkspace(dir); setSelectedPageType('loop'); }}
-                      >
-                        环路配置
-                      </Button>
                       {/* 更多操作菜单 */}
                       <Dropdown
                         menu={{

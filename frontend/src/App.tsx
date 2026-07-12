@@ -345,6 +345,7 @@ function AppContent() {
                 onListModeChange={() => setForcedListMode(undefined)}
                 onLoopChanged={() => setLoopUpdateCount(c => c + 1)}
                 effectiveMobilePanel={effectiveMobilePanel}
+                workspaceId={state.selectedWorkspace}
               />
             ) : (
               <LoopPage
@@ -359,6 +360,7 @@ function AppContent() {
                 onListModeChange={() => setForcedListMode(undefined)}
                 onLoopChanged={() => setLoopUpdateCount(c => c + 1)}
                 effectiveMobilePanel={effectiveMobilePanel}
+                workspaceId={state.selectedWorkspace}
               />
             )
           )}
