@@ -687,7 +687,7 @@ async fn spawn_executor_for_chat_streaming(
     session_id: Option<String>,
     timeout_secs: u64,
 ) -> Result<(Vec<crate::models::ParsedLogEntry>, String, String, bool), AppError> {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncBufReadExt, BufReader};
     use crate::executor_service::events::ExecEvent;
 
     let program = executor.executable_path();
@@ -713,20 +713,11 @@ async fn spawn_executor_for_chat_streaming(
         AppError::Internal(format!("启动执行器失败: {}", e))
     })?;
 
-    // 处理 stdin：无论是否有 payload，都需要 take() 并 drop 以确保 stdin 关闭，
-    // 避免 CLI 进程挂起等待 EOF。
-    if let Some(mut stdin) = child.stdin.take() {
-        if let Some(payload) = executor.stdin_payload() {
-            stdin
-                .write_all(payload.as_bytes())
-                .await
-                .map_err(|e| AppError::Internal(format!("写入 stdin payload 失败: {}", e)))?;
-            stdin
-                .flush()
-                .await
-                .map_err(|e| AppError::Internal(format!("flush stdin 失败: {}", e)))?;
-        }
-        drop(stdin);
+    // stdin 处理：take() 并 drop 关闭 stdin，避免 CLI 进程挂起等待 EOF。
+    // 注意：这里不写 stdin payload——blackboard wiki chat 不是 worktree 场景，
+    // pi 的 "y" 应答只在切换 worktree 目录时才有意义，乱写会污染 stdin。
+    if child.stdin.take().is_some() {
+        tracing::debug!("[blackboard] stdin 已关闭");
     }
 
     // 取出 stdout 和 stderr，用 BufReader 逐行读取
