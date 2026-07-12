@@ -1282,7 +1282,9 @@ mod tests {
         );
     }
 
-    /// 状态页（默认）：工作空间/状态/推送 + 新会话/停止 + 最近任务 + 历史入口。
+    /// 状态页（默认）：工作空间/状态/推送 + 新会话/停止。
+    /// 注意：状态页精简后只展示状态条与控制按钮，最近任务与历史入口已移除
+    /// （想看记录需要切到「事项 / 环路」或调用历史子页）。
     #[test]
     fn test_build_help_console_card_status_page() {
         let state = HelpCardState {
@@ -1302,22 +1304,27 @@ mod tests {
             ..Default::default()
         };
         let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
+        // 状态条核心三要素
         assert!(json.contains("my-app"), "应显示当前工作空间名");
         assert!(json.contains("运行中"), "应显示运行状态");
         assert!(json.contains("仅结果"), "应显示推送级别");
+        // 控制按钮：新会话 / 停止
         assert!(json.contains("act:/new") && json.contains("act:/stop"), "应有新会话/停止按钮");
-        assert!(json.contains("修复登录bug"), "应有最近任务");
-        assert!(json.contains("nav:/history"), "有记录时应有查看历史入口");
+        // 状态页精简后不再展示最近任务 / 历史入口，避免与生产实现不一致
+        assert!(!json.contains("修复登录bug"), "状态页不应再渲染最近任务条目");
+        assert!(!json.contains("nav:/history"), "状态页不应再有历史入口");
     }
 
-    /// 状态页空状态：无工作空间 + 无记录占位。
+    /// 状态页空状态：无工作空间 + 空闲 + 关闭推送。
     #[test]
     fn test_build_help_console_card_status_page_empty() {
+        // 默认状态下 push_level 为空字符串 → push_level_label 走 "_" 分支返回「关闭」，
+        // 此时状态页只展示「工作空间：未设置 / 运行状态：空闲 / 推送级别：关闭」三条文本。
         let state = HelpCardState { current_group: "status".to_string(), ..Default::default() };
         let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
         assert!(json.contains("未设置"), "无工作空间时应显示未设置");
         assert!(json.contains("空闲"), "应显示空闲");
-        assert!(json.contains("暂无最近任务"), "无记录时应显示占位");
+        assert!(json.contains("关闭"), "默认/关闭推送级别时应显示关闭");
     }
 
     /// 工作空间页：当前工作空间 + 列表[切换] + 推送 3 按钮 + 设为推送目标。
