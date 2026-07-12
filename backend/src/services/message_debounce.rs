@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
@@ -1092,16 +1092,11 @@ impl MessageDebounce {
         // spawn 成功立即发"开始处理"标志，让飞书侧知道请求已被接收并在跑
         send_msg(executor_start_message(executor_type, message));
 
-        // 预写 stdin payload（部分执行器需要，如 pi）：写入后立即 flush 并 drop 以关闭 stdin
-        if let Some(payload) = executor.stdin_payload() {
-            if let Some(mut stdin) = child.stdin.take() {
-                if let Err(e) = stdin.write_all(payload.as_bytes()).await {
-                    tracing::warn!("[debounce] failed to write stdin payload for {}: {}", executor_type, e);
-                } else if let Err(e) = stdin.flush().await {
-                    tracing::warn!("[debounce] failed to flush stdin for {}: {}", executor_type, e);
-                }
-                drop(stdin);
-            }
+        // stdin 处理：take() 并 drop 关闭 stdin，避免 CLI 进程挂起等待 EOF。
+        // 注意：这里不写 stdin payload——debounce 流式路径不是 worktree 场景，
+        // pi 的 "y" 应答只在切换 worktree 目录时才有意义，乱写会污染 stdin。
+        if child.stdin.take().is_some() {
+            tracing::debug!("[debounce] stdin 已关闭");
         }
 
         // 启动流式读取任务：并发读取 stdout 并通过 EventPipeline 发送 Output 事件。
