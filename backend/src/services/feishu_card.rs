@@ -529,46 +529,66 @@ fn render_select(select: &CardSelect, session_key: &str) -> Value {
 // 直接渲染进卡片，点按钮原地操作（act 执行后 patch 刷新）。
 // ============================================================================
 
-/// /help 卡片的运行时状态。listener 查 DB 组装后传给卡片层渲染；
-/// 卡片层只读不查库，便于纯函数单测。
+/// /help 卡片运行时状态。listener 按 agent_bot.workspace_id 查 DB（该 workspace 的
+/// todos/loops/records + 推送级别 + 所有 workspace）组装，卡片层只读渲染。
 #[derive(Debug, Clone, Default)]
 pub struct HelpCardState {
-    /// 当前 Tab：task / project / push
+    /// 当前 Tab：status(默认) / todo / loop / workspace
     pub current_group: String,
-    /// 当前会话的项目绑定（未绑定则 None）
-    pub binding: Option<BindingSummary>,
-    /// 当前是否有运行中任务（DB + task_manager 双校验后的结果）
+    /// 当前工作空间（agent_bot.workspace_id）
+    pub workspace: Option<WorkspaceSummary>,
+    /// 是否有运行中任务
     pub is_running: bool,
-    /// 推送级别：disabled / result_only / all
+    /// 推送级别 disabled / result_only / all
     pub push_level: String,
-    /// 最近任务（任务页列表）
+    /// 最近任务（状态页）
     pub recent_records: Vec<RecentTaskItem>,
-    /// 所有可选项目（项目页列表）
-    pub projects: Vec<ProjectSummary>,
+    /// 事项列表（事项页，按 workspace）
+    pub todos: Vec<TodoItem>,
+    /// 环路列表（环路页，按 workspace）
+    pub loops: Vec<LoopItem>,
+    /// 所有工作空间（工作空间页切换用）
+    pub workspaces: Vec<WorkspaceItem>,
 }
 
-/// 当前绑定的摘要信息。
+/// 当前工作空间摘要（状态页/工作空间页顶部展示）。
 #[derive(Debug, Clone)]
-pub struct BindingSummary {
-    pub project_name: String,
-    pub project_path: String,
+pub struct WorkspaceSummary {
+    pub id: i64,
+    pub name: String,
     pub executor: String,
 }
 
-/// 最近任务列表项。
+/// 工作空间列表项（工作空间页切换）。
 #[derive(Debug, Clone)]
-pub struct RecentTaskItem {
-    pub status_icon: String, // ✅/⏳/❌
-    pub title: String,
-    pub time_desc: String,
+pub struct WorkspaceItem {
+    pub id: i64,
+    pub name: String,
+    pub is_current: bool,
 }
 
-/// 项目列表项（项目页）。
+/// 事项列表项（事项页）。
 #[derive(Debug, Clone)]
-pub struct ProjectSummary {
+pub struct TodoItem {
+    pub id: i64,
+    pub title: String,
+    pub status_icon: String,
+}
+
+/// 环路列表项（环路页）。
+#[derive(Debug, Clone)]
+pub struct LoopItem {
+    pub id: i64,
     pub name: String,
-    pub path: String,
-    pub is_current: bool,
+    pub status: String,
+}
+
+/// 最近任务列表项（状态页）。
+#[derive(Debug, Clone)]
+pub struct RecentTaskItem {
+    pub status_icon: String,
+    pub title: String,
+    pub time_desc: String,
 }
 
 /// 历史记录列表项（历史子页）。
@@ -580,28 +600,27 @@ pub struct HistoryItem {
     pub time_desc: String,
 }
 
-/// 构建状态感知的 /help 任务控制台卡片。
-/// 顶部 3 个 Tab（任务/项目/推送），按 state.current_group 分派到对应页面。
+/// 构建 /help 任务控制台卡片。4 个 Tab（事项/环路/工作空间/状态），默认「状态」。
 pub fn build_help_console_card(state: &HelpCardState) -> Card {
-    let current = if state.current_group.is_empty() { "task" } else { state.current_group.as_str() };
+    let current = if state.current_group.is_empty() { "status" } else { state.current_group.as_str() };
     let mut builder = CardBuilder::new().title("NTD 控制台", "blue");
-    // Tab 行：每 2 个一行（buttons_equal 渲染成等宽列）。
     let tabs = help_tabs(current);
     for row in tabs.chunks(2).map(|c| c.to_vec()) {
         builder = builder.buttons_equal(row);
     }
     builder = builder.divider();
     builder = match current {
-        "project" => build_project_page(builder, state),
-        "push" => build_push_page(builder, state),
-        _ => build_task_page(builder, state),
+        "todo" => build_todo_page(builder, state),
+        "loop" => build_loop_page(builder, state),
+        "workspace" => build_workspace_page(builder, state),
+        _ => build_status_page(builder, state),
     };
     builder.note("💡 直接发消息即可让 AI 执行任务 | 点按钮原地操作").build()
 }
 
-/// 3 个 Tab 按钮，当前 Tab 高亮 primary，点击 nav:/help <key> 原地切页。
+/// 4 个 Tab 按钮，当前 Tab 高亮 primary。
 fn help_tabs(current: &str) -> Vec<CardButton> {
-    [("task", "任务"), ("project", "项目"), ("push", "推送")]
+    [("status", "状态"), ("todo", "事项"), ("loop", "环路"), ("workspace", "工作空间")]
         .iter()
         .map(|(key, title)| {
             let btn_type = if *key == current { "primary" } else { "default" };
@@ -610,22 +629,81 @@ fn help_tabs(current: &str) -> Vec<CardButton> {
         .collect()
 }
 
-/// 任务页：状态条 + 新会话/停止按钮 + 最近任务列表。
-fn build_task_page(builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
-    let project = state.binding.as_ref().map(|b| b.project_name.as_str()).unwrap_or("未绑定");
+/// 状态页（默认）：状态条 + 新会话/停止 + 最近任务 + 历史入口。
+fn build_status_page(builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
+    let ws = state.workspace.as_ref().map(|w| w.name.as_str()).unwrap_or("未设置");
     let running = if state.is_running { "🟢 运行中" } else { "⚪ 空闲" };
     let b = builder.markdown(&format!(
-        "**📌 项目** {}\n**▶ 状态** {}\n**🔔 推送** {}",
-        project, running, push_level_label(&state.push_level)
+        "**📌 工作空间** {}\n**▶ 状态** {}\n**🔔 推送** {}",
+        ws, running, push_level_label(&state.push_level)
     ));
     let b = b.buttons(vec![
         CardButton::primary("🆕 新会话", "act:/new"),
         CardButton::default_btn("⏹ 停止", "act:/stop"),
     ]);
-    append_recent_records(b, &state.recent_records)
+    let b = append_recent_records(b, &state.recent_records);
+    b.buttons(vec![CardButton::default_btn("查看全部历史 →", "nav:/history")])
 }
 
-/// 把最近任务列表追加到 builder；空列表给占位提示，非空则逐条 +「查看历史」入口。
+/// 事项页：当前 workspace 的事项列表，每项点 [执行] 触发该 todo。
+fn build_todo_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
+    if state.todos.is_empty() {
+        return builder.markdown("_当前工作空间暂无事项_");
+    }
+    for t in &state.todos {
+        builder = builder.list_item_btn(
+            &format!("{} **{}**", t.status_icon, t.title),
+            "执行", "default",
+            &format!("act:/runtodo {}", t.id),
+        );
+    }
+    builder
+}
+
+/// 环路页：当前 workspace 的环路列表，每项点 [执行] 触发该 loop。
+fn build_loop_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
+    if state.loops.is_empty() {
+        return builder.markdown("_当前工作空间暂无环路_");
+    }
+    for l in &state.loops {
+        // enabled 可执行；paused 标「已暂停」
+        let btn_text = if l.status == "enabled" { "执行" } else { "已暂停" };
+        builder = builder.list_item_btn(
+            &format!("**{}**", l.name),
+            btn_text, "default",
+            &format!("act:/runloop {}", l.id),
+        );
+    }
+    builder
+}
+
+/// 工作空间页：当前工作空间 + 列表[切换] + 推送 3 按钮（当前高亮）+ 设为推送目标。
+fn build_workspace_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
+    builder = builder.markdown(&match &state.workspace {
+        Some(w) => format!("**当前工作空间** {}（执行器 {}）", w.name, w.executor),
+        None => "_未设置工作空间_".to_string(),
+    });
+    builder = builder.divider();
+    for w in &state.workspaces {
+        let (btn_text, btn_type) = if w.is_current { ("当前", "primary") } else { ("切换", "default") };
+        builder = builder.list_item_btn(
+            &format!("**{}**", w.name),
+            btn_text, btn_type,
+            &format!("act:/bind {}", w.id),
+        );
+    }
+    builder = builder.divider();
+    // 推送级别 3 按钮，当前级别 primary 高亮
+    let level = state.push_level.as_str();
+    builder = builder.buttons(vec![
+        CardButton::new("关闭推送", if level == "disabled" { "primary" } else { "default" }, "act:/push disabled"),
+        CardButton::new("仅结论", if level == "result_only" { "primary" } else { "default" }, "act:/push result_only"),
+        CardButton::new("全部", if level == "all" { "primary" } else { "default" }, "act:/push all"),
+    ]);
+    builder.buttons(vec![CardButton::default_btn("📍 设为推送目标", "act:/sethome")])
+}
+
+/// 最近任务列表追加到 builder；空列表给占位。
 fn append_recent_records(mut b: CardBuilder, records: &[RecentTaskItem]) -> CardBuilder {
     if records.is_empty() {
         return b.markdown("_暂无最近任务_");
@@ -633,53 +711,7 @@ fn append_recent_records(mut b: CardBuilder, records: &[RecentTaskItem]) -> Card
     for r in records {
         b = b.markdown(&format!("{} **{}** · {}", r.status_icon, r.title, r.time_desc));
     }
-    b.buttons(vec![CardButton::default_btn("查看全部历史 →", "nav:/history")])
-}
-
-/// 项目页：当前绑定详情 + 项目列表（带切换按钮）+ 解绑。
-fn build_project_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
-    builder = append_binding_detail(builder, &state.binding);
-    builder = builder.divider();
-    for p in &state.projects {
-        // 当前绑定的项目标「当前」并 primary 高亮，其余给「切换」按钮。
-        let (btn_text, btn_type) = if p.is_current { ("当前", "primary") } else { ("切换", "default") };
-        builder = builder.list_item_btn(
-            &format!("**{}**\n{}", p.name, p.path),
-            btn_text, btn_type,
-            &format!("act:/bind {}", p.name),
-        );
-    }
-    builder.buttons(vec![CardButton::danger("解除绑定", "act:/unbind")])
-}
-
-/// 渲染当前绑定摘要（项目名/路径/执行器），未绑定时给提示。
-fn append_binding_detail(b: CardBuilder, binding: &Option<BindingSummary>) -> CardBuilder {
-    match binding {
-        Some(bd) => b.markdown(&format!(
-            "**当前绑定** {} · {}\n**执行器** {}",
-            bd.project_name, bd.project_path, bd.executor
-        )),
-        None => b.markdown("_当前会话未绑定项目_"),
-    }
-}
-
-/// 推送页：推送级别三选一下拉 + 设为推送目标按钮。
-fn build_push_page(builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
-    // 每个 option.value 是完整 act 动作（含级别），选中时飞书回传 option，
-    // channel.rs fallback 取它路由到 act:/push <level>。
-    let b = builder.select(CardSelect {
-        placeholder: "选择推送级别".to_string(),
-        options: vec![
-            CardSelectOption { text: "关闭推送".to_string(), value: "act:/push disabled".to_string() },
-            CardSelectOption { text: "仅结果".to_string(), value: "act:/push result_only".to_string() },
-            CardSelectOption { text: "全部过程".to_string(), value: "act:/push all".to_string() },
-        ],
-        // init_value 匹配当前级别对应的 option value，回显选中项。
-        init_value: format!("act:/push {}", state.push_level),
-        action: String::new(),
-    });
-    let b = b.buttons(vec![CardButton::default_btn("📍 设为推送目标", "act:/sethome")]);
-    b.markdown(&format!("当前：{}", push_level_label(&state.push_level)))
+    b
 }
 
 /// 推送级别 → 中文标签。
@@ -1236,15 +1268,15 @@ mod tests {
         );
     }
 
-    /// 任务页有数据：状态条 + 新会话/停止 + 最近任务 + 查看历史入口都应渲染。
+    /// 状态页（默认）：工作空间/状态/推送 + 新会话/停止 + 最近任务 + 历史入口。
     #[test]
-    fn test_build_help_console_card_task_page_with_data() {
+    fn test_build_help_console_card_status_page() {
         let state = HelpCardState {
-            current_group: "task".to_string(),
-            binding: Some(BindingSummary {
-                project_name: "my-app".to_string(),
-                project_path: "/path/to/app".to_string(),
-                executor: "claudecode".to_string(),
+            current_group: "status".to_string(),
+            workspace: Some(WorkspaceSummary {
+                id: 1,
+                name: "my-app".to_string(),
+                executor: "pi".to_string(),
             }),
             is_running: true,
             push_level: "result_only".to_string(),
@@ -1253,10 +1285,10 @@ mod tests {
                 title: "修复登录bug".to_string(),
                 time_desc: "2分钟前".to_string(),
             }],
-            projects: vec![],
+            ..Default::default()
         };
         let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
-        assert!(json.contains("my-app"), "应显示当前项目名");
+        assert!(json.contains("my-app"), "应显示当前工作空间名");
         assert!(json.contains("运行中"), "应显示运行状态");
         assert!(json.contains("仅结果"), "应显示推送级别");
         assert!(json.contains("act:/new") && json.contains("act:/stop"), "应有新会话/停止按钮");
@@ -1264,52 +1296,60 @@ mod tests {
         assert!(json.contains("nav:/history"), "有记录时应有查看历史入口");
     }
 
-    /// 任务页空状态：未绑定 + 无记录的占位提示，且不出现历史入口。
+    /// 状态页空状态：无工作空间 + 无记录占位。
     #[test]
-    fn test_build_help_console_card_task_page_empty() {
-        let state = HelpCardState { current_group: "task".to_string(), ..Default::default() };
+    fn test_build_help_console_card_status_page_empty() {
+        let state = HelpCardState { current_group: "status".to_string(), ..Default::default() };
         let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
-        assert!(json.contains("未绑定"), "未绑定时应显示未绑定");
+        assert!(json.contains("未设置"), "无工作空间时应显示未设置");
         assert!(json.contains("空闲"), "应显示空闲");
         assert!(json.contains("暂无最近任务"), "无记录时应显示占位");
-        assert!(!json.contains("nav:/history"), "无记录时不应有查看历史入口");
     }
 
-    /// 项目页：非当前项目有切换按钮，底部有解绑。
+    /// 工作空间页：当前工作空间 + 列表[切换] + 推送 3 按钮 + 设为推送目标。
     #[test]
-    fn test_build_help_console_card_project_page() {
+    fn test_build_help_console_card_workspace_page() {
         let state = HelpCardState {
-            current_group: "project".to_string(),
-            binding: Some(BindingSummary {
-                project_name: "my-app".to_string(),
-                project_path: "/p".to_string(),
-                executor: "pi".to_string(),
-            }),
-            projects: vec![
-                ProjectSummary { name: "my-app".to_string(), path: "/p".to_string(), is_current: true },
-                ProjectSummary { name: "backend".to_string(), path: "/b".to_string(), is_current: false },
+            current_group: "workspace".to_string(),
+            workspace: Some(WorkspaceSummary { id: 1, name: "my-app".to_string(), executor: "pi".to_string() }),
+            workspaces: vec![
+                WorkspaceItem { id: 1, name: "my-app".to_string(), is_current: true },
+                WorkspaceItem { id: 2, name: "backend".to_string(), is_current: false },
             ],
-            ..Default::default()
-        };
-        let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
-        assert!(json.contains("act:/bind backend"), "非当前项目应有切换按钮");
-        assert!(json.contains("act:/unbind"), "应有解绑按钮");
-        assert!(json.contains("pi"), "应显示执行器");
-    }
-
-    /// 推送页：含三选一下拉 + 设为推送目标 + 回显当前选中项。
-    #[test]
-    fn test_build_help_console_card_push_page() {
-        let state = HelpCardState {
-            current_group: "push".to_string(),
             push_level: "result_only".to_string(),
             ..Default::default()
         };
         let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
-        assert!(json.contains("select_static"), "推送页应含下拉选择器");
-        assert!(json.contains("act:/push result_only"), "应含各推送级别选项");
-        assert!(json.contains("act:/sethome"), "应含设为推送目标按钮");
-        assert!(json.contains("initial_options"), "应回显当前选中项");
+        assert!(json.contains("act:/bind 2"), "非当前工作空间应有切换按钮（按 id）");
+        assert!(json.contains("act:/push result_only"), "应含推送级别按钮");
+        assert!(json.contains("act:/sethome"), "应含设为推送目标");
+        assert!(json.contains("pi"), "应显示执行器");
+    }
+
+    /// 事项页：当前 workspace 的事项列表 + [执行] 按钮。
+    #[test]
+    fn test_build_help_console_card_todo_page() {
+        let state = HelpCardState {
+            current_group: "todo".to_string(),
+            todos: vec![TodoItem { id: 10, title: "整理文档".to_string(), status_icon: "⏸️".to_string() }],
+            ..Default::default()
+        };
+        let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
+        assert!(json.contains("整理文档"), "应显示事项标题");
+        assert!(json.contains("act:/runtodo 10"), "应有执行按钮（按 id）");
+    }
+
+    /// 环路页：当前 workspace 的环路列表 + [执行] 按钮。
+    #[test]
+    fn test_build_help_console_card_loop_page() {
+        let state = HelpCardState {
+            current_group: "loop".to_string(),
+            loops: vec![LoopItem { id: 20, name: "每日巡检".to_string(), status: "enabled".to_string() }],
+            ..Default::default()
+        };
+        let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
+        assert!(json.contains("每日巡检"), "应显示环路名");
+        assert!(json.contains("act:/runloop 20"), "应有执行按钮（按 id）");
     }
 
     /// 历史子页：分页按钮 + 页码 + 上一页/下一页跳转。

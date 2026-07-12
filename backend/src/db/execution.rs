@@ -5,6 +5,7 @@ use sea_orm::{
 
 use crate::db::entity::execution_logs;
 use crate::db::entity::execution_records;
+use crate::db::entity::todos;
 use crate::db::Database;
 use crate::models::{ExecutionRecord, ExecutionStatus, ExecutionSummary, ExecutionUsage, ParsedLogEntry};
 
@@ -225,6 +226,48 @@ impl Database {
             .try_into()
             .unwrap_or(i64::MAX);
 
+        Ok((records, count))
+    }
+
+    /// 按 workspace 查执行记录（最近任务 + 历史子页用）。
+    /// execution_records 无 workspace_id，经 todos 间接关联：先取该 workspace 的 todo_id，
+    /// 再按 todo_id IN 查记录。倒序 + 分页，返回 (records, total)。
+    pub async fn get_execution_records_by_workspace(
+        &self,
+        workspace_id: i64,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<ExecutionRecord>, i64), sea_orm::DbErr> {
+        // 第一步：workspace 的所有 todo_id（execution_records 经 todos 关联到 workspace）
+        let todo_ids: Vec<i64> = todos::Entity::find()
+            .filter(todos::Column::WorkspaceId.eq(workspace_id))
+            .all(&self.conn)
+            .await?
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        if todo_ids.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+        let limit_u = if limit < 0 { 0 } else { limit as u64 };
+        let offset_u = if offset < 0 { 0 } else { offset as u64 };
+        // 第二步：按 todo_id IN 查记录，倒序 + 分页
+        let records: Vec<ExecutionRecord> = execution_records::Entity::find()
+            .filter(execution_records::Column::TodoId.is_in(todo_ids.clone()))
+            .order_by_desc(execution_records::Column::StartedAt)
+            .limit(limit_u)
+            .offset(offset_u)
+            .all(&self.conn)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        let count: i64 = execution_records::Entity::find()
+            .filter(execution_records::Column::TodoId.is_in(todo_ids))
+            .count(&self.conn)
+            .await?
+            .try_into()
+            .unwrap_or(i64::MAX);
         Ok((records, count))
     }
 

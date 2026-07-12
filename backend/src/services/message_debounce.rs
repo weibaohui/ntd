@@ -57,6 +57,11 @@ pub struct MessageDebounce {
 }
 
 impl MessageDebounce {
+    /// 暴露 LoopRunner 给飞书卡片 act:/runloop 触发环路执行用。
+    pub fn loop_runner(&self) -> Option<&Arc<crate::services::loop_runner::LoopRunner>> {
+        self.loop_runner.as_ref()
+    }
+
     pub fn new(
         ctx: ServiceContext,
         loop_runner: Option<Arc<crate::services::loop_runner::LoopRunner>>,

@@ -1044,3 +1044,42 @@ async fn test_get_recent_execution_records_for_chat_bound_no_records_returns_emp
         .unwrap();
     assert!(records.is_empty(), "已绑定但无记录应返回空 Vec");
 }
+
+/// 按 workspace 查执行记录：经 todos join。建 project(workspace)+ todo + record,
+/// 验证能按 workspace 查到、且不串到别的 workspace。
+#[tokio::test]
+async fn test_get_execution_records_by_workspace_joins_todos() {
+    use ntd::db::NewExecutionRecord;
+    let db = setup_db().await;
+    let pid = db
+        .create_project_directory("/tmp/ws-x", Some("WS-X"), false, false)
+        .await
+        .unwrap();
+    let todo_id = db
+        .create_todo_with_extras("t1", "prompt", None, None, false, pid, "/tmp/ws-x")
+        .await
+        .unwrap();
+    db.create_execution_record(NewExecutionRecord {
+        todo_id: Some(todo_id),
+        command: "cmd",
+        executor: "pi",
+        trigger_type: "manual",
+        task_id: "tk1",
+        session_id: None,
+        resume_message: None,
+        source_todo_id: None,
+        source_todo_title: None,
+        loop_step_execution_id: None,
+        step_id: None,
+    })
+    .await
+    .unwrap();
+    // 该 workspace 能查到
+    let (records, total) = db.get_execution_records_by_workspace(pid, 5, 0).await.unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(records.len(), 1);
+    // 别的 workspace 不串
+    let (r2, t2) = db.get_execution_records_by_workspace(pid + 999, 5, 0).await.unwrap();
+    assert!(r2.is_empty());
+    assert_eq!(t2, 0);
+}
