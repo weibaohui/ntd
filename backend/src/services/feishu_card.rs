@@ -629,20 +629,19 @@ fn help_tabs(current: &str) -> Vec<CardButton> {
         .collect()
 }
 
-/// 状态页（默认）：状态条 + 新会话/停止 + 最近任务 + 历史入口。
+/// 状态页（默认）：状态条 + 新会话/停止。
 fn build_status_page(builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
     let ws = state.workspace.as_ref().map(|w| w.name.as_str()).unwrap_or("未设置");
     let running = if state.is_running { "🟢 运行中" } else { "⚪ 空闲" };
-    let b = builder.markdown(&format!(
-        "**📌 工作空间** {}\n**▶ 状态** {}\n**🔔 推送** {}",
-        ws, running, push_level_label(&state.push_level)
-    ));
-    let b = b.buttons(vec![
-        CardButton::primary("🆕 新会话", "act:/new"),
-        CardButton::default_btn("⏹ 停止", "act:/stop"),
-    ]);
-    let b = append_recent_records(b, &state.recent_records);
-    b.buttons(vec![CardButton::default_btn("查看全部历史 →", "nav:/history")])
+    builder
+        .markdown(&format!(
+            "**📌 工作空间** {}\n**▶ 状态** {}\n**🔔 推送** {}",
+            ws, running, push_level_label(&state.push_level)
+        ))
+        .buttons(vec![
+            CardButton::primary("🆕 新会话", "act:/new"),
+            CardButton::default_btn("⏹ 停止", "act:/stop"),
+        ])
 }
 
 /// 事项页：当前 workspace 的事项列表，每项点 [执行] 触发该 todo。
@@ -701,17 +700,6 @@ fn build_workspace_page(mut builder: CardBuilder, state: &HelpCardState) -> Card
         CardButton::new("全部", if level == "all" { "primary" } else { "default" }, "act:/push all"),
     ]);
     builder.buttons(vec![CardButton::default_btn("📍 设为推送目标", "act:/sethome")])
-}
-
-/// 最近任务列表追加到 builder；空列表给占位。
-fn append_recent_records(mut b: CardBuilder, records: &[RecentTaskItem]) -> CardBuilder {
-    if records.is_empty() {
-        return b.markdown("_暂无最近任务_");
-    }
-    for r in records {
-        b = b.markdown(&format!("{} **{}** · {}", r.status_icon, r.title, r.time_desc));
-    }
-    b
 }
 
 /// 推送级别 → 中文标签。
