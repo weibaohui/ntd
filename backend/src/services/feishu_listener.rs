@@ -2007,7 +2007,7 @@ impl FeishuListener {
     /// 绑定项目时给新建 todo 设执行器用，避免回退到 adapters::DEFAULT_EXECUTOR(claudecode)。
     async fn workspace_default_executor(db: &Database, bot_id: i64) -> Option<String> {
         let wid = db.get_agent_bot_workspace_id(bot_id).await.ok().flatten()?;
-        let settings = crate::db::workspace_setting::get_workspace_settings(db, wid).await.ok()?;
+        let settings = crate::db::workspace_setting::get_workspace_settings(db, wid).await.ok().flatten()?;
         settings.default_response_executor
     }
 
