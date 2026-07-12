@@ -1011,3 +1011,126 @@ async fn test_merge_backup_drops_dangling_backup_workspace_id() {
     assert_eq!(todo.workspace_id, Some(0));
     assert!(todo.workspace_path.as_deref().unwrap_or("").is_empty());
 }
+
+// =====================================================================
+// 飞书卡片「最近任务」查询 get_recent_execution_records_for_chat
+// 它是 get_feishu_project_binding → get_execution_records 的两跳组合 + 短路。
+// 这里聚焦本函数特有的短路逻辑；「有记录」的正常路径由底层 get_execution_records 的测试覆盖。
+// =====================================================================
+
+/// 会话未绑定项目（卡片「最近任务」最常见的初始状态）：第一跳无 binding，应直接返回空 Vec。
+#[tokio::test]
+async fn test_get_recent_execution_records_for_chat_unbound_returns_empty() {
+    let db = setup_db().await;
+    let records = db
+        .get_recent_execution_records_for_chat(1, "oc_unbound_chat", 5)
+        .await
+        .unwrap();
+    assert!(records.is_empty(), "未绑定的 chat 应返回空 Vec");
+}
+
+/// 已绑定项目但还没跑过任务：第二跳按 todo_id 查不到记录，同样返回空 Vec。
+#[tokio::test]
+async fn test_get_recent_execution_records_for_chat_bound_no_records_returns_empty() {
+    let db = setup_db().await;
+    // in-memory DB 默认不开外键约束，project_dir_id/todo_id 可伪造，
+    // 这里只验证「有 binding 但无记录」的短路行为，不关心项目/todo 的真实性。
+    db.create_feishu_project_binding(1, "oc_bound_chat", "p2p", 999, 42)
+        .await
+        .unwrap();
+    let records = db
+        .get_recent_execution_records_for_chat(1, "oc_bound_chat", 5)
+        .await
+        .unwrap();
+    assert!(records.is_empty(), "已绑定但无记录应返回空 Vec");
+}
+
+/// 按 workspace 查执行记录：经 todos join。建 project(workspace)+ todo + record,
+/// 验证双向隔离、分页正确。
+#[tokio::test]
+async fn test_get_execution_records_by_workspace_joins_todos() {
+    use ntd::db::NewExecutionRecord;
+    let db = setup_db().await;
+
+    // 工作空间 1：创建 2 个 todo 各一条记录（共 2 条）
+    let ws1 = db
+        .create_project_directory("/tmp/ws1", Some("WS-1"), false, false)
+        .await
+        .unwrap();
+    let t1_id = db
+        .create_todo_with_extras("t1", "prompt", None, None, false, ws1, "/tmp/ws1")
+        .await
+        .unwrap();
+    let t2_id = db
+        .create_todo_with_extras("t2", "prompt2", None, None, false, ws1, "/tmp/ws1")
+        .await
+        .unwrap();
+    for (todo_id, task_id) in &[(t1_id, "tk1"), (t2_id, "tk2")] {
+        db.create_execution_record(NewExecutionRecord {
+            todo_id: Some(*todo_id),
+            command: "cmd",
+            executor: "pi",
+            trigger_type: "manual",
+            task_id,
+            session_id: None,
+            resume_message: None,
+            source_todo_id: None,
+            source_todo_title: None,
+            loop_step_execution_id: None,
+            step_id: None,
+        })
+        .await
+        .unwrap();
+    }
+
+    // 工作空间 2：创建 1 个 todo + 1 条记录（与 ws1 完全隔离）
+    let ws2 = db
+        .create_project_directory("/tmp/ws2", Some("WS-2"), false, false)
+        .await
+        .unwrap();
+    let t3_id = db
+        .create_todo_with_extras("t3", "prompt3", None, None, false, ws2, "/tmp/ws2")
+        .await
+        .unwrap();
+    db.create_execution_record(NewExecutionRecord {
+        todo_id: Some(t3_id),
+        command: "cmd",
+        executor: "pi",
+        trigger_type: "manual",
+        task_id: "tk3",
+        session_id: None,
+        resume_message: None,
+        source_todo_id: None,
+        source_todo_title: None,
+        loop_step_execution_id: None,
+        step_id: None,
+    })
+    .await
+    .unwrap();
+
+    // ws1 能查到 2 条，分页 limit=1 offset=0 只返回第 1 条，total=2
+    let (page1, total1) = db.get_execution_records_by_workspace(ws1, 1, 0).await.unwrap();
+    assert_eq!(total1, 2, "ws1 总计 2 条");
+    assert_eq!(page1.len(), 1, "limit=1 只返回 1 条");
+    // 第 2 页：limit=1 offset=1 返回第 2 条
+    let (page2, total2) = db.get_execution_records_by_workspace(ws1, 1, 1).await.unwrap();
+    assert_eq!(total2, 2, "第二页 total 仍为 2");
+    assert_eq!(page2.len(), 1, "第二页返回 1 条");
+    // ws1 完整查询 2 条
+    let (all, total_all) = db.get_execution_records_by_workspace(ws1, 10, 0).await.unwrap();
+    assert_eq!(total_all, 2);
+    assert_eq!(all.len(), 2);
+    // 题目 id 各不相同
+    let ids: Vec<i64> = all.iter().map(|r| r.id).collect();
+    assert_ne!(ids[0], ids[1], "两条记录 id 应不同");
+
+    // ws2 查到 1 条，不与 ws1 串
+    let (r2, t2) = db.get_execution_records_by_workspace(ws2, 5, 0).await.unwrap();
+    assert_eq!(t2, 1, "ws2 总计 1 条");
+    assert_eq!(r2.len(), 1, "ws2 返回 1 条");
+
+    // 不存在的 workspace 返回空
+    let (r3, t3) = db.get_execution_records_by_workspace(999999, 5, 0).await.unwrap();
+    assert!(r3.is_empty());
+    assert_eq!(t3, 0, "不存在的 workspace 返回 0");
+}

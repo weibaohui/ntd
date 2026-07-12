@@ -3,7 +3,7 @@ use axum::{
     extract::{Request, State, WebSocketUpgrade},
     http::{Method, header},
     response::Response,
-    routing::{delete, get, patch, post, put},
+    routing::{delete, get, post, put},
 };
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{CorsLayer, Any};
@@ -138,7 +138,6 @@ mod config;
 pub mod skills;
 pub mod agent_bot;
 pub mod executor_config;
-mod feishu_binding;
 mod feishu_history;
 mod session;
 pub mod project_directory;
@@ -341,9 +340,8 @@ async fn build_app_state(
     let debounce = Arc::new(MessageDebounce::new(ctx.clone(), loop_runner.clone()));
     let feishu_listener = Arc::new(FeishuListener::new(ctx.clone(), debounce.clone()));
 
-    // 启动后台任务：bot 自启、stale binding 周期清理、history fetcher、reviewer template 初始化
+    // 启动后台任务：bot 自启、history fetcher、reviewer template 初始化
     spawn_feishu_bot_starter(feishu_listener.clone(), db.clone());
-    spawn_stale_binding_cleanup(db.clone());
     // 自动版本更新调度器：按配置的间隔周期性检查 npm 新版本
     crate::services::auto_update::spawn_auto_update_scheduler(config.clone(), db.clone());
 
@@ -499,20 +497,6 @@ fn spawn_feishu_bot_starter(feishu_listener: Arc<FeishuListener>, db: Arc<Databa
     });
 }
 
-/// 后台周期任务：30s 重置一次卡在 "running" 的 binding。处理 executor 崩溃 / daemon 重启
-/// 等导致 binding 状态被永久卡住的边缘场景。首个 tick 跳过以避开启动期抖动。
-fn spawn_stale_binding_cleanup(db: Arc<Database>) {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
-        interval.tick().await;
-        loop {
-            interval.tick().await;
-            if let Err(e) = db.cleanup_stale_running_bindings().await {
-                tracing::warn!("background cleanup_stale_running_bindings failed: {e}");
-            }
-        }
-    });
-}
 
 /// 后台任务：拉取飞书聊天历史。`ServiceContext` 在此被 move 进 fetcher（之后不再需要）。
 /// `db` 由调用方传入——`FeishuListener` 不直接持有 `db` 字段，需要走 `ctx.db`，
@@ -685,10 +669,6 @@ fn feishu_routes() -> Router<AppState> {
         .route("/api/feishu/senders", get(feishu_history::get_distinct_senders))
         .route("/api/feishu/history-chats", get(feishu_history::get_history_chats).post(feishu_history::create_history_chat))
         .route("/api/feishu/history-chats/{id}", delete(feishu_history::delete_history_chat).put(feishu_history::update_history_chat))
-        .route("/api/feishu/bindings", get(feishu_binding::list_bindings).post(feishu_binding::create_binding))
-        .route("/api/feishu/bindings/by-chat", delete(feishu_binding::delete_binding_by_chat))
-        .route("/api/feishu/bindings/{id}", delete(feishu_binding::delete_binding))
-        .route("/api/feishu/bindings/{id}/enabled", patch(feishu_binding::update_binding_enabled))
 }
 
 /// Webhook 路由：外部触发端点（无 /api 前缀）+ Webhook 管理 API + 调用记录。

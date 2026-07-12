@@ -240,9 +240,11 @@ impl FeishuChannelService {
                             );
 
                             // 将卡片事件转换为 ChannelMessage 格式并发送
+                            // card.action.trigger 的 operator.open_id 是平铺字段（见 CardActionOperator），
+                            // 与 message 事件的 sender_id.open_id 嵌套结构不同，取值路径少一层。
                             let sender = event.event.operator
                                 .as_ref()
-                                .and_then(|op| op.sender_id.open_id.clone())
+                                .and_then(|op| op.open_id.clone())
                                 .unwrap_or_default();
                             let chat_id = event.event.context
                                 .as_ref()
@@ -253,13 +255,26 @@ impl FeishuChannelService {
                                 .and_then(|c| c.open_message_id.clone())
                                 .unwrap_or_default();
 
-                            // 从 action value 中提取 action 字符串
-                            let action_value = event.event.action.value
-                                .as_ref()
-                                .and_then(|v| v.get("action"))
-                                .and_then(|a| a.as_str())
-                                .unwrap_or("")
-                                .to_string();
+                            // 提取回调字符串：按钮点击在 value.action；
+                            // select_static 选中时 value.action 是动作前缀，option 是选中项值，
+                            // 两者都存在时拼接为完整 action（如 "act:/push result_only"），
+                            // 让 parse_card_action 能正确解析参数。
+                            let action_value = {
+                                let action_prefix = event.event.action.value
+                                    .as_ref()
+                                    .and_then(|v| v.get("action"))
+                                    .and_then(|a| a.as_str())
+                                    .filter(|s| !s.is_empty());
+                                let option_val = event.event.action.option
+                                    .as_deref()
+                                    .filter(|s| !s.is_empty());
+                                match (action_prefix, option_val) {
+                                    (Some(prefix), Some(opt)) => format!("{} {}", prefix, opt),
+                                    (Some(prefix), None) => prefix.to_string(),
+                                    (None, Some(opt)) => opt.to_string(),
+                                    (None, None) => String::new(),
+                                }
+                            };
 
                             // 构造一个特殊的 ChannelMessage 来传递卡片回调信息
                             let card_callback_msg = ChannelMessage {

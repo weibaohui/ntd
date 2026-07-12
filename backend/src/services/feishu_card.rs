@@ -77,6 +77,9 @@ pub struct CardSelect {
     pub placeholder: String,
     pub options: Vec<CardSelectOption>,
     pub init_value: String,
+    /// 选中后随事件回传的 action value（路由用），如 "act:/push result_only"。
+    /// select_static 的 value 字段会原样回传，handle_card_callback 据此按 act:/ 前缀分发。
+    pub action: String,
 }
 
 /// 底部备注
@@ -203,6 +206,13 @@ impl CardBuilder {
         self
     }
 
+    /// 添加下拉选择器（如推送级别三选一）。
+    /// select.action 是选中回调的路由值；select_static 的 value 会原样回传给 handle_card_callback。
+    pub fn select(mut self, select: CardSelect) -> Self {
+        self.card.elements.push(CardElement::Select(select));
+        self
+    }
+
     /// 构建卡片
     pub fn build(self) -> Card {
         self.card
@@ -312,11 +322,8 @@ fn render_elements(elements: &[CardElement], session_key: &str) -> Vec<Value> {
             }
             CardElement::Note(note) => {
                 result.push(serde_json::json!({
-                    "tag": "note",
-                    "elements": [{
-                        "tag": "plain_text",
-                        "content": note.text
-                    }]
+                    "tag": "markdown",
+                    "content": note.text
                 }));
             }
             CardElement::Select(select) => {
@@ -332,46 +339,53 @@ fn render_actions(actions: &CardActions, session_key: &str) -> Vec<Value> {
     if actions.buttons.is_empty() {
         return Vec::new();
     }
-
     match actions.layout {
-        CardActionLayout::EqualColumns => {
-            // 等宽列布局：每个按钮一个 column，2个按钮时用 bisect
-            let mut columns = Vec::new();
-            for btn in &actions.buttons {
-                columns.push(serde_json::json!({
-                    "tag": "column",
-                    "width": "weighted",
-                    "weight": 1,
-                    "vertical_align": "center",
-                    "horizontal_align": "center",
-                    "elements": [render_button(btn, session_key, true)]
-                }));
-            }
-
-            let mut column_set = serde_json::json!({
-                "tag": "column_set",
-                "columns": columns
-            });
-
-            // 2个按钮时使用 bisect 布局
-            if actions.buttons.len() == 2 {
-                column_set["flex_mode"] = serde_json::json!("bisect");
-            }
-
-            vec![column_set]
-        }
-        CardActionLayout::Row => {
-            // 普通行布局
-            let mut btn_values = Vec::new();
-            for btn in &actions.buttons {
-                btn_values.push(render_button(btn, session_key, false));
-            }
-            vec![serde_json::json!({
-                "tag": "action",
-                "actions": btn_values
-            })]
-        }
+        CardActionLayout::EqualColumns => render_equal_columns(&actions.buttons, session_key),
+        CardActionLayout::Row => render_row_buttons(&actions.buttons, session_key),
     }
+}
+
+/// 等宽列布局：每个按钮一个 column，2个按钮时用 bisect。
+fn render_equal_columns(buttons: &[CardButton], session_key: &str) -> Vec<Value> {
+    let mut columns = Vec::new();
+    for btn in buttons {
+        columns.push(serde_json::json!({
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "vertical_align": "center",
+            "horizontal_align": "center",
+            "elements": [render_button(btn, session_key, true)]
+        }));
+    }
+    let mut column_set = serde_json::json!({
+        "tag": "column_set",
+        "columns": columns
+    });
+    // 2个按钮时使用 bisect 布局
+    if buttons.len() == 2 {
+        column_set["flex_mode"] = serde_json::json!("bisect");
+    }
+    vec![column_set]
+}
+
+/// 行布局：按钮行用 column_set（每个按钮一列、等宽），不强制居中对齐。
+fn render_row_buttons(buttons: &[CardButton], session_key: &str) -> Vec<Value> {
+    // 飞书卡片 schema V2 不支持 tag:action，按钮行改用 column_set
+    let columns: Vec<Value> = buttons
+        .iter()
+        .map(|btn| serde_json::json!({
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [render_button(btn, session_key, false)]
+        }))
+        .collect();
+    vec![serde_json::json!({
+        "tag": "column_set",
+        "flex_mode": "none",
+        "columns": columns,
+    })]
 }
 
 /// 渲染单个按钮
@@ -459,16 +473,8 @@ fn render_list_item(item: &CardListItem, session_key: &str) -> Value {
 
 /// 渲染下拉选择器
 fn render_select(select: &CardSelect, session_key: &str) -> Value {
-    let options: Vec<Value> = select.options.iter().map(|opt| {
-        serde_json::json!({
-            "text": {
-                "tag": "plain_text",
-                "content": opt.text
-            },
-            "value": opt.value
-        })
-    }).collect();
-
+    // 生成飞书 option 对象列表
+    let options = build_select_options(&select.options);
     let mut elem = serde_json::json!({
         "tag": "select_static",
         "placeholder": {
@@ -477,113 +483,325 @@ fn render_select(select: &CardSelect, session_key: &str) -> Value {
         },
         "options": options
     });
-
-    if !session_key.is_empty() {
-        elem["value"] = serde_json::json!({
-            "session_key": session_key
-        });
-    }
-
-    if !select.init_value.is_empty() {
-        elem["initial_option"] = serde_json::json!(select.init_value);
-    }
-
+    // 把 action（路由用）和 session_key 塞进 value，选中事件回传后能按 act:/ 前缀分发
+    set_select_value(&mut elem, &select.action, session_key);
+    // 初始选中值回显（如推送级别）
+    set_initial_option(&mut elem, &select.options, &select.init_value);
     serde_json::json!({
         "tag": "action",
         "actions": [elem]
     })
 }
 
-// ============================================================================
-// 辅助函数：构建 Help 卡片
-// ============================================================================
-
-/// Help 卡片分组定义
-pub struct HelpGroup {
-    pub key: &'static str,
-    pub title: &'static str,
-    pub items: Vec<HelpItem>,
+/// 把 CardSelectOption 列表转为飞书 option 对象数组。
+fn build_select_options(options: &[CardSelectOption]) -> Vec<Value> {
+    options.iter().map(|opt| {
+        serde_json::json!({
+            "text": {"tag": "plain_text", "content": opt.text},
+            "value": opt.value
+        })
+    }).collect()
 }
 
-/// Help 卡片项
-pub struct HelpItem {
-    pub command: &'static str,
-    pub action: &'static str,
-    pub description: &'static str,
-}
-
-/// 构建 Help 卡片
-pub fn build_help_card(current_group: &str, groups: &[HelpGroup]) -> Card {
-    // 找到当前分组
-    let current = groups.iter()
-        .find(|g| g.key == current_group)
-        .unwrap_or(&groups[0]);
-
-    // 构建 Tab 按钮
-    let mut tabs = Vec::new();
-    for group in groups {
-        let btn_type = if group.key == current.key { "primary" } else { "default" };
-        tabs.push(CardButton::new(group.title, btn_type, &format!("nav:/help {}", group.key)));
+/// 向 select_static 的 value 中注入 action + session_key，供回调时路由分发用。
+fn set_select_value(elem: &mut Value, action: &str, session_key: &str) {
+    let mut select_value = serde_json::Map::new();
+    if !action.is_empty() {
+        select_value.insert("action".to_string(), serde_json::json!(action));
     }
+    if !session_key.is_empty() {
+        select_value.insert("session_key".to_string(), serde_json::json!(session_key));
+    }
+    if !select_value.is_empty() {
+        elem["value"] = Value::Object(select_value);
+    }
+}
 
-    // 将 Tab 按钮每2个一行
-    let tab_rows: Vec<Vec<CardButton>> = tabs.chunks(2).map(|chunk| chunk.to_vec()).collect();
+/// 设置 select_static 的初始选中项（initial_option），与 init_value 匹配。
+fn set_initial_option(elem: &mut Value, options: &[CardSelectOption], init_value: &str) {
+    // 飞书 select_static 的初始选中用 initial_option（单个 option 对象），不是数组。
+    if !init_value.is_empty() {
+        if let Some(opt) = options.iter().find(|o| o.value == init_value) {
+            elem["initial_option"] = serde_json::json!({
+                "text": {"tag": "plain_text", "content": opt.text},
+                "value": opt.value
+            });
+        }
+    }
+}
 
-    // 使用 Builder 构建卡片
-    let mut builder = CardBuilder::new()
-        .title("NTD 帮助", "blue");
+// ============================================================================
+// 状态感知的任务控制台卡片（/help 重设计）
+// 接收 listener 查出的 HelpCardState，把「当前项目/运行状态/推送级别/最近任务」
+// 直接渲染进卡片，点按钮原地操作（act 执行后 patch 刷新）。
+// ============================================================================
 
-    // 添加 Tab 按钮行
-    for row in tab_rows {
+/// /help 卡片运行时状态。listener 按 agent_bot.workspace_id 查 DB（该 workspace 的
+/// todos/loops/records + 推送级别 + 所有 workspace）组装，卡片层只读渲染。
+#[derive(Debug, Clone, Default)]
+pub struct HelpCardState {
+    /// 当前 Tab：status(默认) / todo / loop / workspace
+    pub current_group: String,
+    /// 当前工作空间（agent_bot.workspace_id）
+    pub workspace: Option<WorkspaceSummary>,
+    /// 是否有运行中任务
+    pub is_running: bool,
+    /// 推送级别 disabled / result_only / all
+    pub push_level: String,
+    /// 最近任务（状态页）
+    pub recent_records: Vec<RecentTaskItem>,
+    /// 事项列表（事项页，按 workspace）
+    pub todos: Vec<TodoItem>,
+    /// 环路列表（环路页，按 workspace）
+    pub loops: Vec<LoopItem>,
+    /// 事项/环路分页页码（从 1 开始；Default 0 时 build 兜底为 1）
+    pub page: usize,
+    /// 所有工作空间（工作空间页切换用）
+    pub workspaces: Vec<WorkspaceItem>,
+    /// 已注册的可用执行器列表（工作空间页切换默认执行器用）。
+    /// listener 从 executor_registry.list_executors() 拉出，卡片层只读渲染成按钮排。
+    pub available_executors: Vec<ExecutorOption>,
+}
+
+/// 可选执行器项（工作空间页「默认执行器」按钮排）。
+#[derive(Debug, Clone)]
+pub struct ExecutorOption {
+    /// 执行器名（ExecutorType::as_str，如 "pi" / "claudecode"）
+    pub name: String,
+    /// 是否为当前工作空间已配的默认执行器（primary 高亮）
+    pub is_current: bool,
+}
+
+/// 当前工作空间摘要（状态页/工作空间页顶部展示）。
+#[derive(Debug, Clone)]
+pub struct WorkspaceSummary {
+    pub id: i64,
+    pub name: String,
+    pub executor: String,
+}
+
+/// 工作空间列表项（工作空间页切换）。
+#[derive(Debug, Clone)]
+pub struct WorkspaceItem {
+    pub id: i64,
+    pub name: String,
+    pub is_current: bool,
+}
+
+/// 事项列表项（事项页）。
+#[derive(Debug, Clone)]
+pub struct TodoItem {
+    pub id: i64,
+    pub title: String,
+    pub status_icon: String,
+}
+
+/// 环路列表项（环路页）。
+#[derive(Debug, Clone)]
+pub struct LoopItem {
+    pub id: i64,
+    pub name: String,
+    pub status: String,
+}
+
+/// 最近任务列表项（状态页）。
+#[derive(Debug, Clone)]
+pub struct RecentTaskItem {
+    pub status_icon: String,
+    pub title: String,
+    pub time_desc: String,
+}
+
+/// 历史记录列表项（历史子页）。
+#[derive(Debug, Clone)]
+pub struct HistoryItem {
+    pub status_icon: String,
+    pub title: String,
+    pub trigger: String,
+    pub time_desc: String,
+}
+
+/// 构建 /help 任务控制台卡片。4 个 Tab（事项/环路/工作空间/状态），默认「状态」。
+pub fn build_help_console_card(state: &HelpCardState) -> Card {
+    let current = if state.current_group.is_empty() { "status" } else { state.current_group.as_str() };
+    let mut builder = CardBuilder::new().title("NTD 控制台", "blue");
+    let tabs = help_tabs(current);
+    for row in tabs.chunks(2).map(|c| c.to_vec()) {
         builder = builder.buttons_equal(row);
     }
-
-    // 添加分隔线
     builder = builder.divider();
-
-    // 添加当前分组的项
-    for item in &current.items {
-        let text = format!("**{}**  {}", item.command, item.description);
-        builder = builder.list_item(&text, "▶", item.action);
-    }
-
-    // 添加提示
-    builder = builder.note("💡 点击按钮可快速执行操作 | 发送 /help 查看所有命令");
-
-    builder.build()
+    builder = match current {
+        "todo" => build_todo_page(builder, state),
+        "loop" => build_loop_page(builder, state),
+        "workspace" => build_workspace_page(builder, state),
+        _ => build_status_page(builder, state),
+    };
+    builder.note("💡 直接发消息即可让 AI 执行任务 | 点按钮原地操作").build()
 }
 
-/// NTD 飞书 Bot Help 分组定义
-/// 参考 cc-connect 的 helpCardGroups 设计，按功能分为多个 Tab 分组
-pub fn help_groups() -> Vec<HelpGroup> {
-    vec![
-        HelpGroup {
-            key: "common",
-            title: "常用",
-            items: vec![
-                HelpItem { command: "/help", action: "nav:/help common", description: "显示帮助信息" },
-                HelpItem { command: "/list", action: "cmd:/list", description: "查看已绑定项目" },
-                HelpItem { command: "/new", action: "cmd:/new", description: "开启新会话" },
-                HelpItem { command: "/stop", action: "cmd:/stop", description: "停止当前任务" },
-            ],
-        },
-        HelpGroup {
-            key: "binding",
-            title: "绑定",
-            items: vec![
-                HelpItem { command: "/bind", action: "cmd:/bind", description: "绑定项目到当前聊天" },
-                HelpItem { command: "/unbind", action: "cmd:/unbind", description: "解绑当前项目" },
-                HelpItem { command: "/sethome", action: "cmd:/sethome", description: "设置推送目标" },
-            ],
-        },
-        HelpGroup {
-            key: "push",
-            title: "推送",
-            items: vec![
-                HelpItem { command: "/feishupush", action: "cmd:/feishupush", description: "切换推送模式" },
-            ],
-        },
-    ]
+/// 4 个 Tab 按钮，当前 Tab 高亮 primary。
+fn help_tabs(current: &str) -> Vec<CardButton> {
+    [("status", "状态"), ("todo", "事项"), ("loop", "环路"), ("workspace", "工作空间")]
+        .iter()
+        .map(|(key, title)| {
+            let btn_type = if *key == current { "primary" } else { "default" };
+            CardButton::new(title, btn_type, &format!("nav:/help {}", key))
+        })
+        .collect()
+}
+
+/// 状态页（默认）：状态条 + 新会话/停止。
+fn build_status_page(builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
+    let ws = state.workspace.as_ref().map(|w| w.name.as_str()).unwrap_or("未设置");
+    let running = if state.is_running { "运行中" } else { "空闲" };
+    builder
+        .markdown(&format!(
+            "**工作空间**：{}\n**运行状态**：{}\n**推送级别**：{}",
+            ws, running, push_level_label(&state.push_level)
+        ))
+        .buttons(vec![
+            CardButton::primary("🆕 新会话", "act:/new"),
+            CardButton::default_btn("⏹ 停止", "act:/stop"),
+        ])
+}
+
+/// 事项页：当前 workspace 的事项列表，每页 10 个，每项点 [执行] 触发该 todo。
+fn build_todo_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
+    if state.todos.is_empty() {
+        return builder.markdown("_当前工作空间暂无事项_");
+    }
+    const PER_PAGE: usize = 10;
+    let total_pages = state.todos.len().div_ceil(PER_PAGE);
+    let page = state.page.clamp(1, total_pages);
+    let start = (page - 1) * PER_PAGE;
+    let end = (start + PER_PAGE).min(state.todos.len());
+    for t in &state.todos[start..end] {
+        builder = builder.list_item_btn(
+            &format!("{} **{}**", t.status_icon, t.title),
+            "执行", "default",
+            &format!("act:/runtodo {}", t.id),
+        );
+    }
+    builder = builder.divider();
+    builder.buttons(pagination_buttons("todos", page, total_pages))
+}
+
+/// 环路页：当前 workspace 的环路列表，每页 10 个，每项点 [执行] 触发该 loop。
+fn build_loop_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
+    if state.loops.is_empty() {
+        return builder.markdown("_当前工作空间暂无环路_");
+    }
+    const PER_PAGE: usize = 10;
+    let total_pages = state.loops.len().div_ceil(PER_PAGE);
+    let page = state.page.clamp(1, total_pages);
+    let start = (page - 1) * PER_PAGE;
+    let end = (start + PER_PAGE).min(state.loops.len());
+    for l in &state.loops[start..end] {
+        let btn_text = if l.status == "enabled" { "执行" } else { "已暂停" };
+        builder = builder.list_item_btn(
+            &format!("**{}**", l.name),
+            btn_text, "default",
+            &format!("act:/runloop {}", l.id),
+        );
+    }
+    builder = builder.divider();
+    builder.buttons(pagination_buttons("loops", page, total_pages))
+}
+
+/// 分页按钮（首页无「上一页」，末页无「下一页」）+ 返回状态。kind 为 "todos"/"loops"。
+fn pagination_buttons(kind: &str, page: usize, total_pages: usize) -> Vec<CardButton> {
+    let mut nav_btns = Vec::new();
+    if page > 1 {
+        nav_btns.push(CardButton::default_btn("← 上一页", &format!("nav:/{kind} {}", page - 1)));
+    }
+    nav_btns.push(CardButton::default_btn("返回状态", "nav:/help status"));
+    if page < total_pages {
+        nav_btns.push(CardButton::default_btn("下一页 →", &format!("nav:/{kind} {}", page + 1)));
+    }
+    nav_btns
+}
+
+/// 工作空间页：当前工作空间 + 列表[切换] + 默认执行器按钮排 + 推送 3 按钮 + 设为推送目标。
+fn build_workspace_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
+    builder = builder.markdown(&match &state.workspace {
+        Some(w) => format!("**当前工作空间** {}（执行器 {}）", w.name, w.executor),
+        None => "_未设置工作空间_".to_string(),
+    });
+    builder = builder.divider();
+    for w in &state.workspaces {
+        let (btn_text, btn_type) = if w.is_current { ("当前", "primary") } else { ("切换", "default") };
+        builder = builder.list_item_btn(
+            &format!("**{}**", w.name),
+            btn_text, btn_type,
+            &format!("act:/bind {}", w.id),
+        );
+    }
+    builder = builder.divider();
+    // 默认执行器选择：换行列出所有已注册执行器，当前配的 primary 高亮，点击即设为该 workspace 的默认执行器。
+    builder = builder.markdown("**默认执行器**");
+    if state.available_executors.is_empty() {
+        builder = builder.markdown("_暂无已注册执行器_");
+    } else {
+        // 按每排最多 2 个按钮分组：执行器名（如 "claudecode"）较长，每排 4 个在窄屏会被飞书截断显示不全，每排 2 个留足宽度。
+        for row in state.available_executors.chunks(2) {
+            let btns: Vec<CardButton> = row.iter().map(|e| {
+                let btn_type = if e.is_current { "primary" } else { "default" };
+                CardButton::new(&e.name, btn_type, &format!("act:/setexecutor {}", e.name))
+            }).collect();
+            builder = builder.buttons(btns);
+        }
+    }
+    builder = builder.divider();
+    // 推送级别 3 按钮，当前级别 primary 高亮
+    let level = state.push_level.as_str();
+    builder = builder.buttons(vec![
+        CardButton::new("关闭推送", if level == "disabled" { "primary" } else { "default" }, "act:/push disabled"),
+        CardButton::new("仅结论", if level == "result_only" { "primary" } else { "default" }, "act:/push result_only"),
+        CardButton::new("全部", if level == "all" { "primary" } else { "default" }, "act:/push all"),
+    ]);
+    builder.buttons(vec![CardButton::default_btn("📍 设为推送目标", "act:/sethome")])
+}
+
+/// 推送级别 → 中文标签。
+fn push_level_label(level: &str) -> &'static str {
+    match level {
+        "result_only" => "仅结果",
+        "all" => "全部过程",
+        _ => "关闭",
+    }
+}
+
+/// 历史子页：分页列出执行记录 + 上一页/下一页/返回控制台。
+pub fn build_history_card(items: &[HistoryItem], page: usize, total_pages: usize) -> Card {
+    let mut builder = CardBuilder::new().title("执行历史", "blue");
+    builder = append_history_items(builder, items);
+    builder = builder.divider();
+    builder = append_history_nav(builder, page, total_pages);
+    builder.note(&format!("第 {} / {} 页", page, total_pages.max(1))).build()
+}
+
+/// 追加历史记录条目；空列表给占位。
+fn append_history_items(mut b: CardBuilder, items: &[HistoryItem]) -> CardBuilder {
+    if items.is_empty() {
+        return b.markdown("_暂无执行记录_");
+    }
+    for it in items {
+        b = b.markdown(&format!("{} **{}** · {} · {}", it.status_icon, it.title, it.trigger, it.time_desc));
+    }
+    b
+}
+
+/// 历史子页的分页导航按钮（首页无「上一页」，末页无「下一页」）。
+fn append_history_nav(builder: CardBuilder, page: usize, total_pages: usize) -> CardBuilder {
+    let mut nav_btns = Vec::new();
+    if page > 1 {
+        nav_btns.push(CardButton::default_btn("← 上一页", &format!("nav:/history {}", page - 1)));
+    }
+    nav_btns.push(CardButton::default_btn("返回控制台", "nav:/help task"));
+    if page < total_pages {
+        nav_btns.push(CardButton::default_btn("下一页 →", &format!("nav:/history {}", page + 1)));
+    }
+    builder.buttons(nav_btns)
 }
 
 // ============================================================================
@@ -1021,6 +1239,189 @@ mod tests {
         assert_eq!(card.elements.len(), 4); // markdown, divider, actions, note
     }
 
+    /// select.action 非空时，它被写进 select_static 的 value 随选中事件回传；
+    /// init_value 匹配的 option 渲染成 initial_option 单个对象（飞书标准格式，非数组）。
+    #[test]
+    #[allow(clippy::expect_used, clippy::unwrap_used)]
+    fn test_render_select_action_and_initial_options() {
+        let card = CardBuilder::new()
+            .select(CardSelect {
+                placeholder: "选择推送级别".to_string(),
+                options: vec![
+                    CardSelectOption { text: "关闭".to_string(), value: "act:/push disabled".to_string() },
+                    CardSelectOption { text: "仅结果".to_string(), value: "act:/push result_only".to_string() },
+                    CardSelectOption { text: "全部".to_string(), value: "act:/push all".to_string() },
+                ],
+                init_value: "act:/push result_only".to_string(),
+                action: "act:/push".to_string(),
+            })
+            .build();
+
+        let v = render_card_map(&card, "feishu:user1");
+        // render_card_map 产物：{schema, body:{elements:[...]}, header}；select 渲染为 {tag:"action", actions:[select_static]}
+        let select_static = v["body"]["elements"]
+            .as_array()
+            .expect("elements 数组")
+            .iter()
+            .find(|e| e["tag"] == "action")
+            .expect("找到 action 元素")
+            .get("actions")
+            .and_then(|a| a.as_array())
+            .and_then(|a| a.first())
+            .expect("select_static");
+        assert_eq!(select_static["tag"], "select_static");
+        // value 含 action（路由用）和 session_key
+        assert_eq!(select_static["value"]["action"], "act:/push");
+        assert_eq!(select_static["value"]["session_key"], "feishu:user1");
+        // initial_option 是单个 option 对象，回显当前 result_only
+        assert_eq!(select_static["initial_option"]["value"], "act:/push result_only");
+    }
+
+    /// select.action 为空（选项 2 设计：具体值在 option.value）时，value 不含 action 字段；
+    /// init_value 为空时不渲染 initial_option。channel.rs 取不到 value["action"] 会 fallback 到 option。
+    #[test]
+    #[allow(clippy::expect_used, clippy::unwrap_used)]
+    fn test_render_select_empty_action_omits_action_field() {
+        let card = CardBuilder::new()
+            .select(CardSelect {
+                placeholder: "选择".to_string(),
+                options: vec![CardSelectOption {
+                    text: "仅结果".to_string(),
+                    value: "act:/push result_only".to_string(),
+                }],
+                init_value: String::new(),
+                action: String::new(),
+            })
+            .build();
+
+        let v = render_card_map(&card, "sk1");
+        let select_static = &v["body"]["elements"]
+            .as_array()
+            .expect("elements 数组")
+            .iter()
+            .find(|e| e["tag"] == "action")
+            .expect("找到 action 元素")["actions"][0];
+        assert_eq!(select_static["value"]["session_key"], "sk1");
+        // action 为空 → value 不含 action 键
+        assert!(
+            select_static["value"].get("action").is_none(),
+            "action 为空时 value 不应有 action 字段"
+        );
+        // init_value 为空 → 不渲染 initial_option
+        assert!(
+            select_static.get("initial_option").is_none(),
+            "init_value 为空时不应渲染 initial_option"
+        );
+    }
+
+    /// 状态页（默认）：工作空间/状态/推送 + 新会话/停止。
+    /// 注意：状态页精简后只展示状态条与控制按钮，最近任务与历史入口已移除
+    /// （想看记录需要切到「事项 / 环路」或调用历史子页）。
+    #[test]
+    fn test_build_help_console_card_status_page() {
+        let state = HelpCardState {
+            current_group: "status".to_string(),
+            workspace: Some(WorkspaceSummary {
+                id: 1,
+                name: "my-app".to_string(),
+                executor: "pi".to_string(),
+            }),
+            is_running: true,
+            push_level: "result_only".to_string(),
+            recent_records: vec![RecentTaskItem {
+                status_icon: "✅".to_string(),
+                title: "修复登录bug".to_string(),
+                time_desc: "2分钟前".to_string(),
+            }],
+            ..Default::default()
+        };
+        let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
+        // 状态条核心三要素
+        assert!(json.contains("my-app"), "应显示当前工作空间名");
+        assert!(json.contains("运行中"), "应显示运行状态");
+        assert!(json.contains("仅结果"), "应显示推送级别");
+        // 控制按钮：新会话 / 停止
+        assert!(json.contains("act:/new") && json.contains("act:/stop"), "应有新会话/停止按钮");
+        // 状态页精简后不再展示最近任务 / 历史入口，避免与生产实现不一致
+        assert!(!json.contains("修复登录bug"), "状态页不应再渲染最近任务条目");
+        assert!(!json.contains("nav:/history"), "状态页不应再有历史入口");
+    }
+
+    /// 状态页空状态：无工作空间 + 空闲 + 关闭推送。
+    #[test]
+    fn test_build_help_console_card_status_page_empty() {
+        // 默认状态下 push_level 为空字符串 → push_level_label 走 "_" 分支返回「关闭」，
+        // 此时状态页只展示「工作空间：未设置 / 运行状态：空闲 / 推送级别：关闭」三条文本。
+        let state = HelpCardState { current_group: "status".to_string(), ..Default::default() };
+        let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
+        assert!(json.contains("未设置"), "无工作空间时应显示未设置");
+        assert!(json.contains("空闲"), "应显示空闲");
+        assert!(json.contains("关闭"), "默认/关闭推送级别时应显示关闭");
+    }
+
+    /// 工作空间页：当前工作空间 + 列表[切换] + 推送 3 按钮 + 设为推送目标。
+    #[test]
+    fn test_build_help_console_card_workspace_page() {
+        let state = HelpCardState {
+            current_group: "workspace".to_string(),
+            workspace: Some(WorkspaceSummary { id: 1, name: "my-app".to_string(), executor: "pi".to_string() }),
+            workspaces: vec![
+                WorkspaceItem { id: 1, name: "my-app".to_string(), is_current: true },
+                WorkspaceItem { id: 2, name: "backend".to_string(), is_current: false },
+            ],
+            push_level: "result_only".to_string(),
+            ..Default::default()
+        };
+        let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
+        assert!(json.contains("act:/bind 2"), "非当前工作空间应有切换按钮（按 id）");
+        assert!(json.contains("act:/push result_only"), "应含推送级别按钮");
+        assert!(json.contains("act:/sethome"), "应含设为推送目标");
+        assert!(json.contains("pi"), "应显示执行器");
+    }
+
+    /// 事项页：当前 workspace 的事项列表 + [执行] 按钮。
+    #[test]
+    fn test_build_help_console_card_todo_page() {
+        let state = HelpCardState {
+            current_group: "todo".to_string(),
+            todos: vec![TodoItem { id: 10, title: "整理文档".to_string(), status_icon: "⏸️".to_string() }],
+            ..Default::default()
+        };
+        let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
+        assert!(json.contains("整理文档"), "应显示事项标题");
+        assert!(json.contains("act:/runtodo 10"), "应有执行按钮（按 id）");
+    }
+
+    /// 环路页：当前 workspace 的环路列表 + [执行] 按钮。
+    #[test]
+    fn test_build_help_console_card_loop_page() {
+        let state = HelpCardState {
+            current_group: "loop".to_string(),
+            loops: vec![LoopItem { id: 20, name: "每日巡检".to_string(), status: "enabled".to_string() }],
+            ..Default::default()
+        };
+        let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
+        assert!(json.contains("每日巡检"), "应显示环路名");
+        assert!(json.contains("act:/runloop 20"), "应有执行按钮（按 id）");
+    }
+
+    /// 历史子页：分页按钮 + 页码 + 上一页/下一页跳转。
+    #[test]
+    fn test_build_history_card_pagination() {
+        let items = vec![HistoryItem {
+            status_icon: "✅".to_string(),
+            title: "任务A".to_string(),
+            trigger: "manual".to_string(),
+            time_desc: "刚刚".to_string(),
+        }];
+        let json = render_card_map(&build_history_card(&items, 2, 3), "sk").to_string();
+        assert!(json.contains("任务A"));
+        assert!(json.contains("上一页"), "非首页应有上一页");
+        assert!(json.contains("下一页"), "非末页应有下一页");
+        assert!(json.contains("nav:/history 1"), "上一页应跳到 page 1");
+        assert!(json.contains("nav:/help task"), "应能返回控制台");
+    }
+
     #[test]
     fn test_render_card_basic() {
         let card = CardBuilder::new()
@@ -1058,37 +1459,6 @@ mod tests {
         assert!(json.contains("\"tag\":\"column_set\""));
         assert!(json.contains("Start a new session"));
         assert!(json.contains("\"action\":\"act:/new\""));
-    }
-
-    #[test]
-    fn test_help_card_groups() {
-        let groups = help_groups();
-        let card = build_help_card("common", &groups);
-        assert!(card.header.is_some());
-        // Tab buttons (EqualColumns) + Divider + ListItem = 3 element groups
-        assert!(!card.elements.is_empty());
-    }
-
-    #[test]
-    fn test_help_card_unknown_group_defaults_to_first() {
-        let groups = help_groups();
-        let card = build_help_card("nonexistent", &groups);
-        assert!(card.header.is_some());
-        // 应该默认显示第一个分组 (common)
-        assert!(!card.elements.is_empty());
-    }
-
-    #[test]
-    fn test_help_card_json_rendering() {
-        let groups = help_groups();
-        let card = build_help_card("common", &groups);
-        let json = render_card(&card, "test_session");
-        // 验证基本结构（JSON 2.0 格式）
-        assert!(json.contains("\"schema\":\"2.0\""));
-        assert!(json.contains("\"body\""));
-        assert!(json.contains("\"header\""));
-        assert!(json.contains("\"elements\""));
-        assert!(json.contains("NTD 帮助"));
     }
 
     // ========== 统一卡片消息测试 ==========

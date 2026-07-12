@@ -1,6 +1,8 @@
 use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Statement};
 use crate::db::Database;
 use crate::db::entity::feishu_project_bindings;
+use crate::db::execution::ExecutionRecordQuery;
+use crate::models::ExecutionRecord;
 
 /// A binding between a Feishu chat and a project directory.
 #[derive(Debug, Clone)]
@@ -57,9 +59,8 @@ impl Database {
         Ok(inserted.id)
     }
 
-    /// Get binding by bot_id + chat_id.
-    /// Read-only — does NOT correct stale status. Callers should use
-    /// `cleanup_stale_running_bindings` periodically or inline when routing.
+    /// Get active binding by bot_id + chat_id（仅返回 enabled=true 的绑定）。
+    /// 禁用绑定不参与路由，避免 /new /stop 等命令在 workspace 切换后仍命中旧绑定。
     pub async fn get_feishu_project_binding(
         &self,
         bot_id: i64,
@@ -68,6 +69,7 @@ impl Database {
         let model = feishu_project_bindings::Entity::find()
             .filter(feishu_project_bindings::Column::BotId.eq(bot_id))
             .filter(feishu_project_bindings::Column::ChatId.eq(chat_id))
+            .filter(feishu_project_bindings::Column::Enabled.eq(true))
             .one(&self.conn)
             .await?;
         Ok(model.map(Self::binding_from_model))
@@ -104,6 +106,38 @@ impl Database {
             .all(&self.conn)
             .await?;
         Ok(models.into_iter().map(Self::binding_from_model).collect())
+    }
+
+    /// 按 bot_id + chat_id 查最近 N 条执行记录（飞书卡片「最近任务」用）。
+    /// 走两跳：先查当前会话绑定，再按 binding.todo_id 取记录。
+    /// 没有绑定、或绑定未关联 todo（todo_id<=0）时短路返回空 Vec，不当作错误——
+    /// 这是正常的「新会话还没跑过任务」状态，卡片直接展示空列表即可。
+    pub async fn get_recent_execution_records_for_chat(
+        &self,
+        bot_id: i64,
+        chat_id: &str,
+        limit: i64,
+    ) -> Result<Vec<ExecutionRecord>, sea_orm::DbErr> {
+        // 第一跳：按 bot+chat 取绑定；无绑定直接返回空。
+        let Some(binding) = self.get_feishu_project_binding(bot_id, chat_id).await? else {
+            return Ok(Vec::new());
+        };
+        // 绑定未关联 todo（尚未建任务）时也没有记录可查。
+        if binding.todo_id <= 0 {
+            return Ok(Vec::new());
+        }
+        // 第二跳：按 todo_id 倒序取最近 N 条（get_execution_records 内部已 order_by_desc StartedAt）。
+        let (records, _total) = self
+            .get_execution_records(ExecutionRecordQuery {
+                todo_id: Some(binding.todo_id),
+                step_id: None,
+                limit,
+                offset: 0,
+                status: None,
+                hours: None,
+            })
+            .await?;
+        Ok(records)
     }
 
     /// Update session_id (when Some), latest_record_id and status after starting an execution.

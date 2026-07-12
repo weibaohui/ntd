@@ -12,6 +12,11 @@ use crate::feishu::{
 use crate::service_context::ServiceContext;
 use crate::task_manager::TaskManager;
 use crate::db::{Database, NewFeishuMessage};
+use crate::services::feishu_card::{
+    Card, CardElement, CardMarkdown, ExecutorOption, HelpCardState, HistoryItem, LoopItem, RecentTaskItem,
+    TodoItem, WorkspaceItem, WorkspaceSummary, build_help_console_card, build_history_card,
+    render_card,
+};
 use crate::models::{AgentBot, BotConfig, build_trigger_params};
 use crate::services::message_debounce::{MessageDebounce, PendingMessage};
 
@@ -35,12 +40,16 @@ pub(crate) struct ListenerMessageContext<'a> {
     pub(crate) bot_id: i64,
     pub(crate) bot_open_id: &'a str,
     pub(crate) bot_config: &'a BotConfig,
+    /// ServiceContext：供 act:/runtodo 构造 RunTodoExecutionRequest（需 executor_registry/tx/config）。
+    pub(crate) ctx: &'a ServiceContext,
 }
 
 struct FeishuCommandContext<'a> {
     db: &'a Arc<Database>,
     credentials: &'a DashMap<i64, (String, String, String)>,
     token_manager: &'a Arc<TokenManager>,
+    /// ServiceContext：供 handle_help 查可用执行器列表（assemble_help_card_state 需要）。
+    ctx: &'a ServiceContext,
     bot_id: i64,
     chat_type: &'a str,
     sender: &'a str,
@@ -48,6 +57,37 @@ struct FeishuCommandContext<'a> {
     message_id: &'a str,
     content: &'a str,
     reaction_id: Option<&'a str>,
+}
+
+/// 卡片 act:/ 动作（点击按钮要执行的副作用）。
+/// parse_card_action 把 "act:/xxx" 解析成它，handle_card_callback 的 act 分支按它分发。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum CardAction {
+    Stop,
+    New,
+    SetHome,
+    /// 切换工作空间，参数为 workspace_id
+    Bind(i64),
+    /// 触发事项，参数为 todo_id
+    RunTodo(i64),
+    /// 触发环路，参数为 loop_id
+    RunLoop(i64),
+    /// 设置推送级别，参数为 disabled/result_only/all
+    Push(String),
+    /// 设置默认执行器，参数为执行器名（ExecutorType::as_str）
+    SetExecutor(String),
+}
+
+/// 把 started_at（ISO，如 "2026-07-11T14:04:37Z"）格式化成可读时间：取前 16 位 + T 换空格。
+/// 不引入 chrono 依赖，精度足够卡片展示。
+fn format_record_time(started_at: &str) -> String {
+    started_at.get(..16).unwrap_or(started_at).replace('T', " ")
+}
+
+/// 卡片 act 动作的执行结果（供 patch_after_action 渲染顶部提示）。
+struct ActionOutcome {
+    success: bool,
+    message: String,
 }
 
 /// 编排器专用：handle_message 阶段函数之间传递的"消息预处理结果"。
@@ -152,6 +192,7 @@ impl FeishuListener {
         let token_manager = self.token_manager.clone();
         let debounce = self.debounce.clone();
         let task_manager = self.ctx.task_manager.clone();
+        let ctx_clone = self.ctx.clone();
         tokio::spawn(async move {
             tracing::info!("[feishu:{}] message receiver loop started", bot_id);
             while let Some(msg) = rx.recv().await {
@@ -168,6 +209,7 @@ impl FeishuListener {
                     bot_id,
                     bot_open_id: &bot_open_id,
                     bot_config: &bot_config_clone,
+                    ctx: &ctx_clone,
                 };
                 Self::handle_message(context, &msg).await;
             }
@@ -209,8 +251,8 @@ impl FeishuListener {
         // 阶段 2~7：每个阶段 bool 返回 true → 编排器直接 return
         if Self::try_route_builtin_command(&context, msg, &prep).await { return; }
         if Self::should_skip_for_message_filters(&context, msg, &prep).await { return; }
-        Self::try_promote_pending_binding(&context, msg, &prep).await;
-        if Self::try_route_project_binding(&context, msg, &prep).await { return; }
+        // 阶段4/5（pending binding 晋升 / project binding 路由）已废弃：
+        // 一个 bot 一个工作空间，chat 消息全走 default_response（阶段6）。
         Self::route_slash_or_default_response(&context, msg, &prep).await;
         Self::log_echo_reply(context.bot_id, msg, prep.chat_type, context.bot_config);
         Self::cleanup_reaction(&context, msg, prep.reaction_id.as_deref()).await;
@@ -282,6 +324,7 @@ impl FeishuListener {
             db: context.db,
             credentials: context.credentials,
             token_manager: context.token_manager,
+            ctx: context.ctx,
             bot_id: context.bot_id,
             chat_type: prep.chat_type,
             sender: &msg.sender,
@@ -296,11 +339,6 @@ impl FeishuListener {
         if prep.content == "/help" || prep.content.starts_with("/help ") {
             Self::handle_help(mk_ctx()).await; return true;
         }
-        // /bind 支持空参数（展示列表）或带参数（绑定指定项目）
-        if prep.content == "/bind" || prep.content.starts_with("/bind ") {
-            Self::handle_bind(mk_ctx()).await; return true;
-        }
-        if prep.content == "/unbind" { Self::handle_unbind(mk_ctx()).await; return true; }
         if prep.content == "/new" { Self::handle_new(mk_ctx()).await; return true; }
         if prep.content == "/stop" {
             Self::handle_stop(context.task_manager, mk_ctx()).await; return true;
@@ -380,229 +418,6 @@ impl FeishuListener {
         Self::delete_reaction(
             context.credentials, context.token_manager, context.bot_id, &message.id, rid,
         ).await;
-    }
-
-    /// 阶段 4：把页面创建的 __pending__ binding 关联到当前真实 chat
-    /// 页面"新建绑定"时 chat_id 未知，先写 __pending__ 占位；todo 不存在则放弃晋升
-    pub(crate) async fn try_promote_pending_binding(
-        context: &ListenerMessageContext<'_>,
-        msg: &ChannelMessage,
-        prep: &MessagePrep<'_>,
-    ) {
-        // 守卫 1：当前 chat 已存在 binding（无论是 pending 还是已关联）就不再晋升；
-        // 避免把 pending binding 错误覆盖到已关联的真实 binding 上
-        // （也避免 unique 约束冲突：chat_id 在 (bot_id, chat_id) 上唯一）
-        if context.db
-            .get_feishu_project_binding(context.bot_id, &msg.channel)
-            .await
-            .ok()
-            .flatten()
-            .is_some()
-        {
-            return;
-        }
-        // 单行查询代替之前 `get_feishu_project_bindings(bot)` 全表扫；
-        // PENDING_CHAT_ID 是约定的占位 chat_id，直接命中 unique 索引
-        let pending = match context.db
-            .get_feishu_project_binding(context.bot_id, crate::models::PENDING_CHAT_ID)
-            .await
-        {
-            Ok(Some(p)) => p,
-            Ok(None) => return,
-            Err(e) => {
-                tracing::warn!("[feishu:{}] failed to query pending binding: {}", context.bot_id, e);
-                return;
-            }
-        };
-        // 防御：页面可能已经删了 todo 但 binding 残留，没 todo 就别关联过去
-        if context.db.get_todo(pending.todo_id).await.ok().flatten().is_none() {
-            return;
-        }
-        match context.db
-            .attach_feishu_project_binding(pending.id, &msg.channel, prep.chat_type)
-            .await
-        {
-            Ok(_) => tracing::info!(
-                "[feishu:{}] promoted pending binding {} (project_dir_id={}) to chat {}",
-                context.bot_id, pending.id, pending.project_dir_id, msg.channel
-            ),
-            Err(e) => tracing::warn!(
-                "[feishu:{}] failed to promote pending binding: {}",
-                context.bot_id, e
-            ),
-        }
-    }
-
-    /// 阶段 5：项目绑定执行路径
-    /// - 无绑定 / 绑定 todo 不存在 → 返回 false，让控制流落到斜杠命令/默认回复
-    /// - 绑定 enabled=false → **直接返回 false**，让控制流落到斜杠命令/默认回复
-    ///   ⚠ 这是相对 pre-refactor 的**有意行为变化**：pre-refactor 的 disabled
-    ///   分支只清 reaction 后继续走 todo/debounce；重构后 disabled 不再触发项目
-    ///   执行，与 enabled 路径完全分离。reaction 清理统一由编排器末尾
-    ///   （handle_message 收尾）兜底，本分支不再重复 `cleanup_reaction`。
-    /// - 绑定 enabled 且 todo 在 → 决定 resume 还是新 session，push 到 debounce 后返回 true
-    pub(crate) async fn try_route_project_binding(
-        context: &ListenerMessageContext<'_>,
-        msg: &ChannelMessage,
-        prep: &MessagePrep<'_>,
-    ) -> bool {
-        let Some(binding) = Self::resolve_project_binding(context.db, context.bot_id, &msg.channel).await else {
-            return false; // 无绑定 / DB 错误 → 让控制流落到兜底
-        };
-        // enabled=false 的绑定不参与路由：直接让控制流落到兜底；
-        // reaction 清理交给 handle_message 末尾统一收尾（见 docstring）
-        if !binding.enabled {
-            tracing::info!("[feishu:{}] binding {} disabled, fall through", context.bot_id, binding.id);
-            return false;
-        }
-        let Some(todo) = context.db.get_todo(binding.todo_id).await.ok().flatten() else {
-            tracing::warn!("[feishu:{}] bound todo #{} missing for chat {}", context.bot_id, binding.todo_id, msg.channel);
-            return false;
-        };
-        let latest_record = Self::fetch_latest_record(context.db, binding.latest_record_id).await;
-        let (resume_session_id, resume_message) =
-            Self::decide_resume_session(latest_record.as_ref(), prep.content);
-        // 日志保留 binding.session_id 与 latest_record.status：排查「为什么 session 没 resume /
-        // 串了」的关键线索（详见 PR #665 review #3 CANDIDATE #3）。
-        tracing::info!(
-            "[feishu:{}] binding check: todo_id={}, latest_record_id={:?}, should_resume={}, binding.session_id={:?}, latest_record_status={:?}",
-            context.bot_id,
-            binding.todo_id,
-            binding.latest_record_id,
-            resume_session_id.is_some(),
-            binding.session_id,
-            latest_record.as_ref().map(|r| r.status),
-        );
-        Self::push_binding_execution(
-            context.debounce,
-            msg,
-            prep.chat_type,
-            prep.content,
-            &binding,
-            &todo,
-            resume_session_id,
-            resume_message,
-            None, // binding path uses feishu_bot_id directly in push service
-            prep.is_mention, // @提及跳过 debounce 立即执行
-        );
-        Self::cleanup_reaction(context, msg, prep.reaction_id.as_deref()).await;
-        true
-    }
-
-    /// 阶段 5a-i：取最近一条 execution record（按 binding 引用）
-    async fn fetch_latest_record(
-        db: &Arc<Database>,
-        latest_record_id: Option<i64>,
-    ) -> Option<crate::models::ExecutionRecord> {
-        match latest_record_id {
-            Some(rid) => db.get_execution_record(rid).await.ok().flatten(),
-            None => None,
-        }
-    }
-
-    /// 阶段 5a：取 chat 当前的项目绑定；DB 错误按 None 处理（不阻塞主流程）
-    async fn resolve_project_binding(
-        db: &Arc<Database>,
-        bot_id: i64,
-        channel: &str,
-    ) -> Option<crate::db::feishu_project_binding::FeishuProjectBinding> {
-        match db.get_feishu_project_binding(bot_id, channel).await {
-            Ok(Some(b)) => Some(b),
-            Ok(None) => None,
-            Err(e) => {
-                tracing::error!("[feishu:{}] query binding failed: {e}", bot_id);
-                None
-            }
-        }
-    }
-
-    /// 阶段 5b：决定 resume 还是新开 session
-    /// 从 latest_record 读 session_id：record 没有就开新 session
-    /// （早期版本曾尝试用 `binding.session_id` 兜底，但首次执行时 binding.session_id
-    /// 被设成 task_id 占位，fallback 永远不触发，已删除。）
-    fn decide_resume_session(
-        latest_record: Option<&crate::models::ExecutionRecord>,
-        content: &str,
-    ) -> (Option<String>, Option<String>) {
-        // resume 三条件：record 有 session_id、记录不是 running（running 时 stdout JSONL 还在写）
-        let should_resume = latest_record
-            .map(|r| r.session_id.is_some() && r.status != crate::models::ExecutionStatus::Running)
-            .unwrap_or(false);
-        if !should_resume {
-            return (None, None);
-        }
-        // 已通过 should_resume 守卫：latest_record 是 Some 且 r.session_id 是 Some，
-        // 用 unwrap_or_default 做防御性兜底（should_resume=true 保证 session_id 存在）
-        let real_sid = Some(
-            latest_record
-                .and_then(|r| r.session_id.clone())
-                .unwrap_or_default(),
-        );
-        (real_sid, Some(content.to_string()))
-    }
-
-    /// 阶段 5c：把项目绑定执行任务塞进 debounce
-    #[allow(clippy::too_many_arguments)]
-    fn push_binding_execution(
-        debounce: &Arc<MessageDebounce>,
-        msg: &ChannelMessage,
-        chat_type: &str,
-        content: &str,
-        binding: &crate::db::feishu_project_binding::FeishuProjectBinding,
-        todo: &crate::models::Todo,
-        resume_session_id: Option<String>,
-        resume_message: Option<String>,
-        workspace_id: Option<i64>,
-        immediate: bool,
-    ) {
-        let pending = Self::build_binding_execution_message(
-            msg,
-            chat_type,
-            content,
-            binding,
-            todo,
-            resume_session_id,
-            resume_message,
-            workspace_id,
-            immediate,
-        );
-        debounce.push(pending);
-    }
-
-    /// 阶段 5c 纯函数：从上下文构造 PendingMessage，与 debounce 副作用解耦以便单测。
-    /// `content` 必须是 trimmed 后的原始消息（区别于 resume 上下文的 `resume_message`），
-    /// 避免 `should_resume=false` 时 executor 收到空 content（PR #665 review #3 #2 修复）。
-    #[allow(clippy::too_many_arguments)]
-    fn build_binding_execution_message(
-        msg: &ChannelMessage,
-        chat_type: &str,
-        content: &str,
-        binding: &crate::db::feishu_project_binding::FeishuProjectBinding,
-        todo: &crate::models::Todo,
-        resume_session_id: Option<String>,
-        resume_message: Option<String>,
-        workspace_id: Option<i64>,
-        immediate: bool,
-    ) -> PendingMessage {
-        let executor = todo.executor.as_deref().unwrap_or("claudecode");
-        PendingMessage {
-            bot_id: binding.bot_id,
-            chat_id: msg.channel.clone(),
-            chat_type: chat_type.to_string(),
-            sender: msg.sender.clone(),
-            content: content.to_string(),
-            todo_id: binding.todo_id,
-            todo_prompt: todo.prompt.clone(),
-            executor: Some(executor.to_string()),
-            trigger_type: "feishu_project_bind".to_string(),
-            params: None,
-            message_id: Some(msg.id.clone()),
-            resume_session_id,
-            resume_message,
-            binding_id: Some(binding.id),
-            workspace_id,
-            immediate,
-        }
     }
 
     /// 阶段 6：兜底路由（自定义斜杠命令规则 或 默认回复 todo）
@@ -1214,247 +1029,6 @@ impl FeishuListener {
         }
     }
 
-    /// Handle /bind — show current binding, or /bind <name> to bind to a project.
-    async fn handle_bind(context: FeishuCommandContext<'_>) {
-        let FeishuCommandContext {
-            db,
-            credentials,
-            token_manager,
-            bot_id,
-            chat_type,
-            sender,
-            channel,
-            message_id,
-            content,
-            reaction_id,
-        } = context;
-        let (receive_id, receive_id_type) = match chat_type {
-            "p2p" => (sender.to_string(), "open_id"),
-            _ => (channel.to_string(), "chat_id"),
-        };
-
-        // /bind with no args → show current binding status
-        if content == "/bind" {
-            match db.get_feishu_project_binding(bot_id, channel).await {
-                Ok(Some(binding)) => {
-                    let dir = db.get_project_directory_by_id(binding.project_dir_id).await.ok().flatten();
-                    let dir_name = dir.as_ref().and_then(|d| d.name.as_deref()).unwrap_or("(unknown)");
-                    let dir_path = dir.as_ref().map(|d| d.path.as_str()).unwrap_or("(unknown)");
-                    let status_icon = if binding.status == crate::models::binding_status::RUNNING { "🟢" } else { "⏸️" };
-                    let msg = format!(
-                        "📎 当前绑定详情：\n项目：{dir_name}\n目录：{dir_path}\nTodo：#{binding_id}\n状态：{status_icon} {binding_status}\nSession：{session}\n\n💡 使用 /unbind 解绑",
-                        binding_id = binding.todo_id,
-                        binding_status = binding.status,
-                        session = binding.session_id.as_deref().unwrap_or("(无)"),
-                    );
-                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, &msg).await;
-                }
-                Ok(None) => {
-                    Self::send_text(
-                        credentials, token_manager, bot_id, &receive_id, receive_id_type,
-                        "📭 当前聊天未绑定任何项目。\n\n使用 /bind <项目名称> 绑定一个项目。\n使用 /list 查看可用项目。",
-                    )
-                    .await;
-                }
-                Err(e) => {
-                    tracing::error!("[feishu:{}] /bind query failed: {e}", bot_id);
-                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 查询绑定失败，请稍后重试").await;
-                }
-            }
-            if let Some(rid) = reaction_id {
-                Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
-            }
-            return;
-        }
-
-        // /bind <name> — bind to a project by name
-        let project_name = content.strip_prefix("/bind ").unwrap_or("").trim();
-        if project_name.is_empty() {
-            Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 请输入项目名称，例如：/bind my-app").await;
-            if let Some(rid) = reaction_id {
-                Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
-            }
-            return;
-        }
-
-        // 按项目名称查找：先精确匹配，再前缀匹配
-        // ⚠️ 前缀匹配时若有多个候选（如 my-app / my-application 都匹配 "my"），
-        //    返回歧义提示让用户精确输入。
-        let directories = db.get_project_directories().await.unwrap_or_default();
-        // 精确匹配 — 唯一正确
-        let dir = directories.iter().find(|d| d.name.as_deref() == Some(project_name)).cloned();
-        let dir = match dir {
-            Some(d) => Some(d),
-            None => {
-                // 前缀匹配 — 检查是否有多选歧义
-                let candidates: Vec<_> = directories.iter()
-                    .filter(|d| d.name.as_deref().map(|n| n.starts_with(project_name)).unwrap_or(false))
-                    .collect();
-                if candidates.is_empty() {
-                    None
-                } else if candidates.len() == 1 {
-                    Some(candidates[0].clone())
-                } else {
-                    // 多个候选，返回歧义提示
-                    let names: Vec<String> = candidates.iter()
-                        .filter_map(|d| d.name.as_deref())
-                        .map(|n| format!("• {}", n))
-                        .collect();
-                    let msg = format!(
-                        "⚠️ 「{}」匹配到多个项目：\n{}\n\n请使用完整名称，例如：/bind {}",
-                        project_name,
-                        names.join("\n"),
-                        candidates[0].name.as_deref().unwrap_or(""),
-                    );
-                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, &msg).await;
-                    if let Some(rid) = reaction_id {
-                        Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
-                    }
-                    return;
-                }
-            }
-        };
-
-        match dir {
-            Some(dir) => {
-                // Check if already bound
-                if let Ok(Some(existing)) = db.get_feishu_project_binding(bot_id, channel).await {
-                    if let Err(e) = db.delete_feishu_project_binding(existing.id).await {
-                        tracing::warn!("[feishu:{}] failed to delete existing binding {} before rebind: {}", bot_id, existing.id, e);
-                    }
-                }
-
-                // Try to find a pending binding created via Web UI (chat_id=PENDING_CHAT_ID)
-                let pending_bindings = db.get_feishu_project_bindings(bot_id).await.unwrap_or_default();
-                let pending = pending_bindings.iter()
-                    .find(|b| b.project_dir_id == dir.id && b.chat_id == crate::models::PENDING_CHAT_ID)
-                    .cloned();
-
-                if let Some(pending_binding) = pending {
-                    // Reuse the pending binding and its todo — just update chat_id/chat_type
-                    match db.attach_feishu_project_binding(pending_binding.id, channel, chat_type).await {
-                        Ok(_) => {
-                            let dir_name = dir.name.as_deref().unwrap_or("unknown");
-                            let msg = format!(
-                                "✅ 已绑定到项目「{dir_name}」\n项目目录：{path}\nTodo：#{todo_id}\n\n现在可以直接向我发送任务了。",
-                                path = dir.path,
-                                todo_id = pending_binding.todo_id,
-                            );
-                            Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, &msg).await;
-                        }
-                        Err(e) => {
-                            tracing::error!("[feishu:{}] update pending binding failed: {e}", bot_id);
-                            Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 绑定更新失败，请稍后重试").await;
-                        }
-                    }
-                } else {
-                    // No pending binding — create a new Todo + binding
-                    let todo_title = format!("飞书-{}", dir.name.as_deref().unwrap_or(&dir.path));
-                    let todo_prompt = format!(
-                        "你是飞书Bot的AI助手，正在项目「{name}」({path})中工作。\n\
-                         用户通过飞书与你交流，请根据用户的需求在项目目录中完成开发任务。\n\
-                         你可以读取、修改项目文件，运行命令等。\n\n\
-                         用户诉求：{{message}}\n\
-                         项目目录：{path}",
-                        name = dir.name.as_deref().unwrap_or("unknown"),
-                        path = dir.path,
-                    );
-
-                    // workspace_id 必填；handler 层按 dir.id + dir.path 双字段下传，
-                    // DAO 一次写入 workspace_id + workspace_path 保持两列同步。
-                    match db.create_todo_with_extras(&todo_title, &todo_prompt, None, None, false, dir.id, &dir.path).await {
-                        Ok(todo_id) => {
-                            match db.create_feishu_project_binding(bot_id, channel, chat_type, dir.id, todo_id).await {
-                                Ok(binding_id) => {
-                                    let dir_name = dir.name.as_deref().unwrap_or("unknown");
-                                    let msg = format!(
-                                        "✅ 已绑定到项目「{dir_name}」\n项目目录：{path}\nTodo：#{todo_id}\n\n现在可以直接向我发送任务了。",
-                                        path = dir.path,
-                                    );
-                                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, &msg).await;
-                                    tracing::info!("[feishu:{}] bound chat {} to project {} (binding={}, todo={})", bot_id, channel, dir.path, binding_id, todo_id);
-                                }
-                                Err(e) => {
-                                    tracing::error!("[feishu:{}] create binding failed: {e}", bot_id);
-                                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 创建绑定失败，请稍后重试").await;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("[feishu:{}] create todo failed: {e}", bot_id);
-                            Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 创建 Todo 失败，请稍后重试").await;
-                        }
-                    }
-                }
-            }
-            None => {
-                let msg = format!(
-                    "⚠️ 未找到名为「{name}」的项目。\n\n使用 /list 查看所有可用项目。",
-                    name = project_name
-                );
-                Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, &msg).await;
-            }
-        }
-
-        if let Some(rid) = reaction_id {
-            Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
-        }
-    }
-
-    /// Handle /unbind — unbind current chat from its project.
-    async fn handle_unbind(context: FeishuCommandContext<'_>) {
-        let FeishuCommandContext {
-            db,
-            credentials,
-            token_manager,
-            bot_id,
-            chat_type,
-            sender,
-            channel,
-            message_id,
-            reaction_id,
-            ..
-        } = context;
-        let (receive_id, receive_id_type) = match chat_type {
-            "p2p" => (sender.to_string(), "open_id"),
-            _ => (channel.to_string(), "chat_id"),
-        };
-
-        match db.get_feishu_project_binding(bot_id, channel).await {
-            Ok(Some(binding)) => {
-                // 任务运行时拒绝解绑，避免 session 链丢失。
-                // 用户必须先通过 Web UI 停止运行中的任务，才能解绑。
-                if binding.status == crate::models::binding_status::RUNNING {
-                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type,
-                        "⚠️ 当前有任务正在执行（session 链会被丢弃）。\n请先通过 Web 界面「运行管理」停止任务，再发送 /unbind 解绑。")
-                        .await;
-                    if let Some(rid) = reaction_id {
-                        Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
-                    }
-                    return;
-                }
-
-                if let Err(e) = db.delete_feishu_project_binding(binding.id).await {
-                    tracing::error!("[feishu:{}] /unbind failed: {e}", bot_id);
-                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 解绑失败，请稍后重试").await;
-                } else {
-                    Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "✅ 已解绑。使用 /bind <名称> 重新绑定到其他项目。").await;
-                }
-            }
-            Ok(None) => {
-                Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "📭 当前聊天未绑定任何项目，无需解绑。").await;
-            }
-            Err(e) => {
-                tracing::error!("[feishu:{}] /unbind query failed: {e}", bot_id);
-                Self::send_text(credentials, token_manager, bot_id, &receive_id, receive_id_type, "⚠️ 查询绑定失败，请稍后重试").await;
-            }
-        }
-
-        if let Some(rid) = reaction_id {
-            Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
-        }
-    }
-
     /// Handle /new — start a fresh session without resuming the previous one.
     /// 全局内置斜杠命令，用于清空当前会话的 session，开启全新对话。
     ///
@@ -1835,56 +1409,32 @@ impl FeishuListener {
     /// 点击 Tab 按钮会触发 card.action.trigger 事件，由飞书平台回调处理。
     async fn handle_help(context: FeishuCommandContext<'_>) {
         let FeishuCommandContext {
+            db,
             credentials,
             token_manager,
+            ctx,
             bot_id,
             chat_type: _,
             sender,
-            channel: _,
             message_id,
             content,
             reaction_id,
             ..
         } = context;
 
-        // 解析当前分组，默认为 "common"
-        let current_group = content
-            .strip_prefix("/help ")
-            .unwrap_or("")
-            .trim()
-            .to_lowercase();
+        // 解析当前分组，默认 "status"（状态页是控制台首页）
+        let parsed = content.strip_prefix("/help ").unwrap_or("").trim().to_lowercase();
+        let group = if parsed.is_empty() { "status".to_string() } else { parsed };
 
-        // 构建 Help 卡片
-        let card = crate::services::feishu_card::build_help_card(
-            &current_group,
-            &crate::services::feishu_card::help_groups(),
-        );
+        // 状态感知控制台：查当前绑定/运行状态/推送级别/最近任务后渲染
+        let state = Self::assemble_help_card_state(ctx, db, bot_id, &group, 1).await;
+        let card = build_help_console_card(&state);
+        let card_json = render_card(&card, &format!("feishu:{}", sender));
 
-        // 生成 session_key 用于标识本次会话
-        let session_key = format!("feishu:{}", sender);
-
-        // 渲染卡片 JSON
-        let card_json = crate::services::feishu_card::render_card(&card, &session_key);
-
-        // 发送回复消息（使用 reply API）
-        if let Err(e) = Self::reply_card(
-            credentials,
-            token_manager,
-            bot_id,
-            message_id,
-            &card_json,
-        ).await {
+        // 发送卡片（reply API），失败降级纯文本
+        if let Err(e) = Self::reply_card(credentials, token_manager, bot_id, message_id, &card_json).await {
             tracing::error!("[feishu:{}] /help send card failed: {}", bot_id, e);
-            // 降级为纯文本
-            Self::send_text(
-                credentials,
-                token_manager,
-                bot_id,
-                sender,
-                "open_id",
-                "📋 NTD 帮助\n\n发送 /help 查看所有可用命令。",
-            )
-            .await;
+            Self::send_text(credentials, token_manager, bot_id, sender, "open_id", "📋 NTD 控制台\n\n发送 /help 打开任务控制台。").await;
         }
 
         if let Some(rid) = reaction_id {
@@ -1892,73 +1442,591 @@ impl FeishuListener {
         }
     }
 
-    /// 处理飞书卡片按钮点击回调
-    /// card.callback 消息的 content 包含 action value，如 "nav:/help session"
+    /// 处理飞书卡片按钮点击回调。
+    /// card_callback 消息的 content 是 action value，按前缀分三种处理：
+    /// - `nav:/help <group>`：原地 patch 原卡片，切到对应分组；
+    /// - `cmd:/<command>`：转成命令文本，复用 handle_message 分发链路执行，
+    ///   等价于点击者在会话里发送了 `/<command>`；
+    /// - `act:/<action>`：执行动作 + patch 刷新控制台。
     async fn handle_card_callback(context: ListenerMessageContext<'_>, msg: &ChannelMessage) {
-        let FeishuCommandContext {
-            credentials,
-            token_manager,
-            bot_id,
-            sender,
-            channel: _,
-            message_id,
-            ..
-        } = FeishuCommandContext {
-            db: context.db,
-            credentials: context.credentials,
-            token_manager: context.token_manager,
-            bot_id: context.bot_id,
-            chat_type: "p2p", // 卡片回调默认用 p2p
-            sender: &msg.sender,
-            channel: &msg.channel,
-            message_id: &msg.id,
-            content: &msg.content,
-            reaction_id: None,
-        };
-
         let action = msg.content.trim();
 
-        // nav: 前缀 - 导航到指定 help 页面
+        // nav: 前缀 - 原地 patch 刷新控制台/历史页，拦截后直接返回。
+        if Self::handle_nav_action(&context, msg, action).await {
+            return;
+        }
+
+        // cmd: 前缀 - 把卡片点击转成命令执行。
+        // 构造一条虚拟命令消息复用 handle_message 的完整分发链路（内置命令 try_route_builtin_command
+        // + 自定义规则 route_slash_or_default_response），与用户在会话里手动发送该命令效果一致。
+        if let Some(cmd_text) = Self::parse_card_command(action) {
+            tracing::info!(
+                "[feishu:{}] card cmd → redispatch as message: {:?}",
+                context.bot_id, cmd_text
+            );
+            // chat_type 改成 p2p：避免 handle_message 又把这条消息当作 card_callback 递归处理；
+            // sender/channel/id 沿用卡片回调，让命令处理函数的回复落到原会话、指向点击者。
+            let mut cmd_msg = msg.clone();
+            cmd_msg.content = cmd_text;
+            cmd_msg.chat_type = Some("p2p".to_string());
+            // handle_message → handle_card_callback → handle_message 是静态递归，
+            // async fn 递归必须 Box::pin 引入间接层，否则 future 大小无限无法编译。
+            // 运行时 cmd_msg.chat_type 已是 p2p，不会再进 card_callback 分支，实际只递归一层。
+            Box::pin(Self::handle_message(context, &cmd_msg)).await;
+            return;
+        }
+
+        // act: 前缀 - 执行动作（新会话/停止/设推送/切绑定/解绑）+ patch 刷新控制台。
+        // 解析失败（未知 verb）落到下面的 unknown warn。
+        if let Some(parsed) = Self::parse_card_action(action) {
+            Self::execute_card_action(context, msg, parsed).await;
+            return;
+        }
+
+        tracing::warn!("[feishu:{}] unknown card action: {}", context.bot_id, action);
+    }
+
+    /// 处理 nav: 前缀的卡片动作，返回 true 表示已处理。
+    /// nav 动作是只读 patch 刷新，不产生副作用。
+    async fn handle_nav_action(context: &ListenerMessageContext<'_>, msg: &ChannelMessage, action: &str) -> bool {
+        // nav:/help <group> 重查最新状态后刷控制台（运行状态可能已变）。
         if let Some(group) = action.strip_prefix("nav:/help ") {
             let group_key = group.trim().to_lowercase();
-            let card = crate::services::feishu_card::build_help_card(
-                &group_key,
-                &crate::services::feishu_card::help_groups(),
-            );
-            let session_key = format!("feishu:{}", sender);
-            let card_json = crate::services::feishu_card::render_card(&card, &session_key);
+            let state = Self::assemble_help_card_state(context.ctx, context.db, context.bot_id, &group_key, 1).await;
+            let card = build_help_console_card(&state);
+            Self::patch_rendered_card(context, msg, &card).await;
+            return true;
+        }
+        // nav:/history [page] - 分页查看执行历史。
+        if let Some(page_arg) = action.strip_prefix("nav:/history") {
+            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
+            Self::patch_history_page(context, msg, page).await;
+            return true;
+        }
+        // nav:/todos <page> - 事项分页（每页 10）。
+        if let Some(page_arg) = action.strip_prefix("nav:/todos") {
+            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
+            let state = Self::assemble_help_card_state(context.ctx, context.db, context.bot_id, "todo", page).await;
+            let card = build_help_console_card(&state);
+            Self::patch_rendered_card(context, msg, &card).await;
+            return true;
+        }
+        // nav:/loops <page> - 环路分页（每页 10）。
+        if let Some(page_arg) = action.strip_prefix("nav:/loops") {
+            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
+            let state = Self::assemble_help_card_state(context.ctx, context.db, context.bot_id, "loop", page).await;
+            let card = build_help_console_card(&state);
+            Self::patch_rendered_card(context, msg, &card).await;
+            return true;
+        }
+        false
+    }
 
-            // 使用 patch 更新原卡片消息
-            if let Err(e) = Self::patch_card(
-                credentials,
-                token_manager,
-                bot_id,
-                message_id,
-                &card_json,
-            ).await {
-                tracing::error!("[feishu:{}] card callback patch failed: {}", bot_id, e);
-            } else {
-                tracing::info!("[feishu:{}] card updated for nav:/help {}", bot_id, group_key);
+    /// 执行卡片 act 动作，执行后 patch 刷新控制台。
+    async fn execute_card_action(context: ListenerMessageContext<'_>, msg: &ChannelMessage, action: CardAction) {
+        let outcome = Self::run_card_action(&context, msg, &action).await;
+        let group = Self::action_target_group(&action);
+        Self::patch_after_action(&context, msg, group, &outcome).await;
+    }
+
+    /// 按 CardAction 分发到具体执行函数。
+    async fn run_card_action(
+        context: &ListenerMessageContext<'_>,
+        msg: &ChannelMessage,
+        action: &CardAction,
+    ) -> ActionOutcome {
+        match action {
+            CardAction::Push(level) => Self::act_push(context, level).await,
+            CardAction::New => Self::act_new(context).await,
+            CardAction::Stop => Self::act_stop(context).await,
+            CardAction::SetHome => Self::act_sethome(context, msg).await,
+            CardAction::Bind(workspace_id) => Self::act_bind(context, *workspace_id).await,
+            CardAction::RunTodo(todo_id) => Self::act_run_todo(context, msg, *todo_id).await,
+            CardAction::RunLoop(loop_id) => Self::act_run_loop(context, msg, *loop_id).await,
+            CardAction::SetExecutor(name) => Self::act_set_executor(context, name).await,
+        }
+    }
+
+    /// act 动作执行后刷新到的目标 Tab。
+    fn action_target_group(action: &CardAction) -> &'static str {
+        match action {
+            CardAction::Bind(_) | CardAction::Push(_) | CardAction::SetExecutor(_) => "workspace",
+            CardAction::RunTodo(_) => "todo",
+            CardAction::RunLoop(_) => "loop",
+            _ => "status",
+        }
+    }
+
+    /// bot 所属 workspace 的默认执行器（如 dev 的 pi）。
+    async fn workspace_default_executor(db: &Database, bot_id: i64) -> Option<String> {
+        let wid = db.get_agent_bot_workspace_id(bot_id).await.ok().flatten()?;
+        let settings = crate::db::workspace_setting::get_workspace_settings(db, wid).await.ok().flatten()?;
+        settings.default_response_executor
+    }
+
+    /// auto-seed：确保 workspace 的 default_response_type=executor。
+    /// 移除 binding 路径后 chat 全走 default_response，只 executor 分支可靠回复；切换 workspace 时兜底。
+    async fn ensure_default_response_executor(db: &Database, workspace_id: i64) {
+        let existing = crate::db::workspace_setting::get_workspace_settings(db, workspace_id).await.ok().flatten();
+        let need_seed = existing.as_ref().map(|s| s.default_response_type != "executor").unwrap_or(true);
+        if need_seed {
+            // executor 用该 workspace 已配的（若有），否则 None（dispatch 时兜底 claudecode）
+            let executor = existing.and_then(|s| s.default_response_executor);
+            let _ = crate::db::workspace_setting::upsert_workspace_settings(
+                db,
+                workspace_id,
+                Some("executor".to_string()),
+                None,
+                None,
+                executor,
+            )
+            .await;
+        }
+    }
+
+    /// 设置推送级别（直接设值，不走 /feishupush 循环）。
+    async fn act_push(context: &ListenerMessageContext<'_>, level: &str) -> ActionOutcome {
+        match context.db.update_feishu_push_level(context.bot_id, level).await {
+            Ok(_) => ActionOutcome { success: true, message: format!("推送级别已更新为 {level}") },
+            Err(e) => ActionOutcome { success: false, message: format!("设置失败：{e}") },
+        }
+    }
+
+    /// 开启新会话：清当前 workspace 默认执行器的 session。
+    async fn act_new(context: &ListenerMessageContext<'_>) -> ActionOutcome {
+        let Some(wid) = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten() else {
+            return ActionOutcome { success: false, message: "未设置工作空间".to_string() };
+        };
+        let executor = Self::workspace_default_executor(context.db, context.bot_id)
+            .await
+            .unwrap_or_else(|| "claudecode".to_string());
+        match context.db.set_executor_session(wid, &executor, None).await {
+            Ok(_) => ActionOutcome { success: true, message: "已开启新会话".to_string() },
+            Err(e) => ActionOutcome { success: false, message: format!("失败：{e}") },
+        }
+    }
+
+    /// 停止当前 workspace 的运行任务（by workspace + ExecutionStatus::Running 直接查）。
+    async fn act_stop(context: &ListenerMessageContext<'_>) -> ActionOutcome {
+        let Some(wid) = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten() else {
+            return ActionOutcome { success: false, message: "未设置工作空间".to_string() };
+        };
+        // 直接按 workspace 查运行中的记录，不依赖最近 N 条（避免旧记录淹没了 running 记录）
+        let Ok(records) = context.db.get_running_records_by_workspace(wid).await else {
+            return ActionOutcome { success: false, message: "查询失败".to_string() };
+        };
+        let Some(running) = records.into_iter().next() else {
+            return ActionOutcome { success: false, message: "没有运行中的任务".to_string() };
+        };
+        let Some(task_id) = running.task_id.as_deref() else {
+            return ActionOutcome { success: false, message: "任务缺少 task_id".to_string() };
+        };
+        if context.task_manager.cancel(task_id).await {
+            ActionOutcome { success: true, message: "已发送停止信号，任务即将终止".to_string() }
+        } else {
+            let _ = context.db.force_fail_execution_record(running.id).await;
+            ActionOutcome { success: true, message: "任务未在运行，已强制标记结束".to_string() }
+        }
+    }
+
+    /// 设当前会话为推送目标（写 feishu_home + push target 字段 + 开启该 chat_type 响应）。
+    async fn act_sethome(context: &ListenerMessageContext<'_>, msg: &ChannelMessage) -> ActionOutcome {
+        let (receive_id, receive_id_type) = Self::resolve_receive_target(msg);
+        let chat_id: Option<&str> = if receive_id_type == "chat_id" { Some(&msg.channel) } else { None };
+        if context.db.set_feishu_home(context.bot_id, &msg.sender, chat_id, receive_id, receive_id_type).await.is_err() {
+            return ActionOutcome { success: false, message: "设置推送目标失败".to_string() };
+        }
+        if receive_id_type == "chat_id" {
+            let _ = context.db.set_group_chat_id(context.bot_id, &msg.channel).await;
+        } else {
+            let _ = context.db.set_p2p_receive_id(context.bot_id, receive_id).await;
+        }
+        let target_type = if receive_id_type == "chat_id" { "group" } else { "p2p" };
+        let _ = context.db.set_feishu_response_enabled(context.bot_id, target_type, true).await;
+        ActionOutcome { success: true, message: "已设为推送目标".to_string() }
+    }
+
+    /// 切换工作空间：级联清旧 binding + 改 agent_bot.workspace_id + auto-seed default_response。
+    async fn act_bind(context: &ListenerMessageContext<'_>, workspace_id: i64) -> ActionOutcome {
+        let bot_id = context.bot_id;
+        // 级联（对齐 move_bot_to_workspace）：删 pending binding / disable 旧 binding
+        if let Ok(bindings) = context.db.get_feishu_project_bindings(bot_id).await {
+            for b in bindings {
+                if b.chat_id == crate::models::PENDING_CHAT_ID {
+                    let _ = context.db.delete_feishu_project_binding(b.id).await;
+                } else {
+                    let _ = context.db.update_feishu_project_binding_enabled(b.id, false).await;
+                }
             }
-            return;
         }
-
-        // cmd: 前缀 - 作为命令处理
-        if let Some(cmd) = action.strip_prefix("cmd:/") {
-            tracing::info!("[feishu:{}] card cmd: /{}", bot_id, cmd);
-            // TODO: 根据命令类型调用对应的处理函数
-            // 目前只是记录日志
-            return;
+        if let Err(e) = context.db.update_agent_bot_workspace_id(bot_id, workspace_id).await {
+            return ActionOutcome { success: false, message: format!("切换工作空间失败：{e}") };
         }
+        // auto-seed default_response_type=executor，确保切完后 chat 消息有回复
+        Self::ensure_default_response_executor(context.db, workspace_id).await;
+        let name = context
+            .db
+            .get_workspace_name_by_id(workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| format!("#{workspace_id}"));
+        ActionOutcome { success: true, message: format!("已切换到工作空间「{name}」") }
+    }
 
-        // act: 前缀 - 执行动作
-        if let Some(act) = action.strip_prefix("act:/") {
-            tracing::info!("[feishu:{}] card action: /{}", bot_id, act);
-            // TODO: 执行动作
-            return;
+    /// 触发事项：后台跑该 todo，结果通过 ExecEvent::Finished → FeishuPushService 推回当前 chat。
+    async fn act_run_todo(context: &ListenerMessageContext<'_>, msg: &ChannelMessage, todo_id: i64) -> ActionOutcome {
+        use crate::executor_service::{run_todo_execution, RunTodoExecutionRequest};
+        let (receive_id, receive_id_type) = Self::resolve_receive_target(msg);
+        let workspace_id = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten();
+        let todo = match context.db.get_todo(todo_id).await {
+            Ok(Some(t)) => t,
+            _ => return ActionOutcome { success: false, message: format!("事项 #{todo_id} 不存在") },
+        };
+        // 校验 todo 的 workspace_id 与 bot 当前 workspace 一致，防止旧卡片跨 workspace 执行
+        if todo.workspace_id != workspace_id {
+            return ActionOutcome {
+                success: false,
+                message: format!("事项 #{todo_id} 不属于当前工作空间，无法执行"),
+            };
         }
+        let title = todo.title.clone();
+        let req = RunTodoExecutionRequest {
+            db: context.db.clone(),
+            executor_registry: context.ctx.executor_registry.clone(),
+            tx: context.ctx.tx.clone(),
+            task_manager: context.task_manager.clone(),
+            config: context.ctx.config.clone(),
+            todo_id,
+            message: todo.prompt,
+            req_executor: todo.executor,
+            trigger_type: "feishu_card".to_string(),
+            params: None,
+            resume_session_id: None,
+            resume_message: None,
+            source_todo_id: None,
+            source_todo_title: None,
+            loop_step_execution_id: None,
+            step_id: None,
+            feishu_bot_id: Some(context.bot_id),
+            feishu_receive_id: Some(receive_id.to_string()),
+            feishu_receive_id_type: Some(receive_id_type.to_string()),
+            workspace_path: None,
+            workspace_id,
+        };
+        // fire-and-forget：后台执行不阻塞卡片 patch；结果由推送通道发回 chat
+        tokio::spawn(async move {
+            let _ = run_todo_execution(req).await;
+        });
+        ActionOutcome { success: true, message: format!("已触发事项「{title}」") }
+    }
 
-        tracing::warn!("[feishu:{}] unknown card action: {}", bot_id, action);
+    /// 触发环路：LoopRunner::spawn_run 后台执行，整环结束推回 chat。
+    async fn act_run_loop(context: &ListenerMessageContext<'_>, msg: &ChannelMessage, loop_id: i64) -> ActionOutcome {
+        let Some(runner) = context.debounce.loop_runner() else {
+            return ActionOutcome { success: false, message: "环路执行器未就绪".to_string() };
+        };
+        let (receive_id, receive_id_type) = Self::resolve_receive_target(msg);
+        let loop_ = match context.db.get_loop(loop_id).await {
+            Ok(Some(l)) => l,
+            _ => return ActionOutcome { success: false, message: format!("环路 #{loop_id} 不存在") },
+        };
+        // 校验 loop 的 workspace_id 与 bot 当前 workspace 一致，防止旧卡片跨 workspace 执行
+        let workspace_id = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten();
+        if loop_.workspace_id != workspace_id {
+            return ActionOutcome {
+                success: false,
+                message: format!("环路 #{loop_id} 不属于当前工作空间，无法执行"),
+            };
+        }
+        let name = loop_.name;
+        runner.clone().spawn_run(
+            loop_id,
+            None,
+            "feishu_card",
+            serde_json::json!({}),
+            Some(context.bot_id),
+            Some(receive_id.to_string()),
+            Some(receive_id_type.to_string()),
+        );
+        ActionOutcome { success: true, message: format!("已触发环路「{name}」") }
+    }
+
+    /// 设当前 workspace 的默认执行器：写 workspace_settings.default_response_executor。
+    /// executor 名必须是已注册的（ExecutorType::as_str），否则视为无效拒绝写入。
+    async fn act_set_executor(context: &ListenerMessageContext<'_>, executor_name: &str) -> ActionOutcome {
+        let Some(wid) = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten() else {
+            return ActionOutcome { success: false, message: "未设置工作空间".to_string() };
+        };
+        // 校验 executor 已注册，避免把无效名写进 settings 让下次 dispatch 失败
+        let registered: Vec<String> = context
+            .ctx
+            .executor_registry
+            .list_executors()
+            .await
+            .into_iter()
+            .map(|t| t.as_str().to_string())
+            .collect();
+        if !registered.iter().any(|s| s == executor_name) {
+            return ActionOutcome {
+                success: false,
+                message: format!("执行器 {executor_name} 未注册（可用：{}）", registered.join(", ")),
+            };
+        }
+        match crate::db::workspace_setting::upsert_workspace_settings(
+            context.db,
+            wid,
+            None,
+            None,
+            None,
+            Some(executor_name.to_string()),
+        )
+        .await
+        {
+            Ok(_) => ActionOutcome { success: true, message: format!("默认执行器已设为 {executor_name}") },
+            Err(e) => ActionOutcome { success: false, message: format!("设置失败：{e}") },
+        }
+    }
+
+    /// act 执行后 patch 刷新控制台：assemble 最新状态 + 顶部插入操作结果提示。
+    async fn patch_after_action(
+        context: &ListenerMessageContext<'_>,
+        msg: &ChannelMessage,
+        group: &str,
+        outcome: &ActionOutcome,
+    ) {
+        let state = Self::assemble_help_card_state(context.ctx, context.db, context.bot_id, group, 1).await;
+        let mut card = build_help_console_card(&state);
+        let icon = if outcome.success { "✅" } else { "⚠️" };
+        let tip = CardElement::Markdown(CardMarkdown { content: format!("{icon} {}", outcome.message) });
+        card.elements.insert(0, tip);
+        Self::patch_rendered_card(context, msg, &card).await;
+    }
+
+    /// 渲染卡片并 patch 到原消息（nav/act 刷新共用）。
+    async fn patch_rendered_card(context: &ListenerMessageContext<'_>, msg: &ChannelMessage, card: &Card) {
+        let session_key = format!("feishu:{}", msg.sender);
+        let card_json = render_card(card, &session_key);
+        if let Err(e) = Self::patch_card(context.credentials, context.token_manager, context.bot_id, &msg.id, &card_json).await {
+            tracing::warn!("[feishu:{}] patch card failed: {e}", context.bot_id);
+        }
+    }
+
+    /// 历史子页：按当前 workspace 分页查执行记录后 patch。
+    async fn patch_history_page(context: &ListenerMessageContext<'_>, msg: &ChannelMessage, page: usize) {
+        const PER_PAGE: i64 = 10;
+        let offset = page.saturating_sub(1) as i64 * PER_PAGE;
+        let (items, total) = Self::query_history(context.db, context.bot_id, PER_PAGE, offset).await;
+        let total_pages = (total.max(0) as usize).div_ceil(PER_PAGE as usize);
+        let card = build_history_card(&items, page, total_pages.max(1));
+        Self::patch_rendered_card(context, msg, &card).await;
+    }
+
+    /// 按 bot 的 workspace 分页查执行记录 → HistoryItem + 总数。
+    async fn query_history(db: &Database, bot_id: i64, limit: i64, offset: i64) -> (Vec<HistoryItem>, i64) {
+        let Some(wid) = db.get_agent_bot_workspace_id(bot_id).await.ok().flatten() else {
+            return (vec![], 0);
+        };
+        match db.get_execution_records_by_workspace(wid, limit, offset).await {
+            Ok((records, total)) => (records.into_iter().map(Self::record_to_history_item).collect(), total),
+            Err(_) => (vec![], 0),
+        }
+    }
+
+    /// ExecutionRecord → 历史子页列表项（状态 emoji + 标题 + 触发类型 + 时间）。
+    fn record_to_history_item(r: crate::models::ExecutionRecord) -> HistoryItem {
+        use crate::models::ExecutionStatus;
+        let status_icon = match r.status {
+            ExecutionStatus::Success => "✅",
+            ExecutionStatus::Running => "⏳",
+            ExecutionStatus::Failed => "❌",
+        };
+        HistoryItem {
+            status_icon: status_icon.to_string(),
+            title: r.source_todo_title.clone().unwrap_or_else(|| r.command.clone()),
+            trigger: r.trigger_type,
+            time_desc: format_record_time(&r.started_at),
+        }
+    }
+
+    /// 解析卡片回调 action 里的命令文本，供 handle_card_callback 的 cmd: 分支使用。
+    /// `cmd:/new` → `Some("/new")`；`cmd:/bind foo` → `Some("/bind foo")`（保留参数）；
+    /// 非 `cmd:/` 前缀（nav:/act:/未知/空）→ None。
+    /// 抽成纯函数便于单测命令文本拼装，也让 handle_card_callback 的 cmd: 分支保持简洁。
+    fn parse_card_command(action: &str) -> Option<String> {
+        action.strip_prefix("cmd:/").map(|cmd| format!("/{}", cmd))
+    }
+
+    /// 解析卡片 act:/ 动作字符串为 CardAction。
+    /// "act:/stop"→Stop；"act:/bind myapp"→Bind("myapp")；"act:/push result_only"→Push("result_only")。
+    /// bind/push 需要参数，缺参数返回 None；未知 verb 返回 None。纯函数便于单测。
+    fn parse_card_action(action: &str) -> Option<CardAction> {
+        let rest = action.strip_prefix("act:/")?;
+        // splitn(2) 让参数部分可含空格（虽然当前不会，但留余地），verb 与 arg 用首个空白分隔。
+        let mut parts = rest.splitn(2, char::is_whitespace);
+        let verb = parts.next()?.trim();
+        let arg = parts.next().map(|s| s.trim()).filter(|s| !s.is_empty());
+        Some(match verb {
+            "stop" => CardAction::Stop,
+            "new" => CardAction::New,
+            "sethome" => CardAction::SetHome,
+            "push" => CardAction::Push(arg?.to_string()),
+            "setexecutor" => CardAction::SetExecutor(arg?.to_string()),
+            "bind" => CardAction::Bind(arg?.parse().ok()?),
+            "runtodo" => CardAction::RunTodo(arg?.parse().ok()?),
+            "runloop" => CardAction::RunLoop(arg?.parse().ok()?),
+            _ => return None,
+        })
+    }
+
+    /// 把卡片回调消息解析成推送接收者 (receive_id, receive_id_type)。
+    /// card_callback 的 chat_type 不是 p2p/group：msg.channel(chat_id)非空 → 群聊用 chat_id；
+    /// 否则回退到点击者 open_id（私聊）。供 act:/sethome 等写推送目标的动作复用。
+    fn resolve_receive_target(msg: &ChannelMessage) -> (&str, &str) {
+        if !msg.channel.is_empty() {
+            (msg.channel.as_str(), "chat_id")
+        } else {
+            (msg.sender.as_str(), "open_id")
+        }
+    }
+
+    /// 组装 /help 卡片状态：按 agent_bot.workspace_id 查该 workspace 的摘要/事项/环路/最近任务 + 所有工作空间。
+    /// handle_help、nav 切页、act 执行后刷新都复用它（只读 db，运行状态取最近记录里的 running）。
+    /// ctx 用于查询已注册的执行器列表（工作空间页渲染按钮排用）。
+    async fn assemble_help_card_state(
+        ctx: &ServiceContext,
+        db: &Database,
+        bot_id: i64,
+        current_group: &str,
+        page: usize,
+    ) -> HelpCardState {
+        let wid = db.get_agent_bot_workspace_id(bot_id).await.ok().flatten();
+        let workspace = match wid {
+            Some(id) => Self::build_workspace_summary(db, id).await,
+            None => None,
+        };
+        let push_level = db
+            .get_feishu_push_target(bot_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|t| t.push_level)
+            .unwrap_or_else(|| "result_only".to_string());
+        // 最近任务 + 运行状态都来自该 workspace 的最近执行记录
+        let (recent_records, is_running) = Self::recent_records_and_running(db, wid).await;
+        let todos = match wid {
+            Some(id) => db
+                .get_todos_by_workspace_id(Some(id))
+                .await
+                .ok()
+                .map(|ts| ts.into_iter().map(Self::todo_to_item).collect())
+                .unwrap_or_default(),
+            None => vec![],
+        };
+        let loops = match wid {
+            Some(id) => db
+                .list_loops_with_counts(Some(id))
+                .await
+                .ok()
+                .map(|ls| ls.into_iter().map(Self::loop_to_item).collect())
+                .unwrap_or_default(),
+            None => vec![],
+        };
+        let workspaces = db
+            .get_project_directories()
+            .await
+            .ok()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|d| WorkspaceItem {
+                name: d.name.clone().unwrap_or_else(|| d.path.clone()),
+                id: d.id,
+                is_current: wid == Some(d.id),
+            })
+            .collect();
+        // 已注册执行器列表 + 标记当前 workspace 配的默认执行器，供工作空间页渲染按钮排
+        let current_executor = workspace.as_ref().map(|w| w.executor.as_str()).unwrap_or("");
+        let available_executors = ctx
+            .executor_registry
+            .list_executors()
+            .await
+            .into_iter()
+            .map(|t| {
+                let name = t.as_str().to_string();
+                let is_current = name == current_executor;
+                ExecutorOption { name, is_current }
+            })
+            .collect();
+        HelpCardState {
+            current_group: current_group.to_string(),
+            workspace,
+            is_running,
+            push_level,
+            recent_records,
+            todos,
+            loops,
+            workspaces,
+            page,
+            available_executors,
+        }
+    }
+
+    /// 当前 workspace 摘要（名 + 默认执行器）。
+    async fn build_workspace_summary(db: &Database, workspace_id: i64) -> Option<WorkspaceSummary> {
+        let name = db.get_workspace_name_by_id(workspace_id).await.ok().flatten()?;
+        let executor = crate::db::workspace_setting::get_workspace_settings(db, workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|s| s.default_response_executor)
+            .unwrap_or_else(|| "claudecode".to_string());
+        Some(WorkspaceSummary { id: workspace_id, name, executor })
+    }
+
+    /// 该 workspace 最近 5 条执行记录 → RecentTaskItem；顺带判断是否有 running。
+    async fn recent_records_and_running(db: &Database, wid: Option<i64>) -> (Vec<RecentTaskItem>, bool) {
+        let Some(id) = wid else {
+            return (vec![], false);
+        };
+        let Ok((records, _)) = db.get_execution_records_by_workspace(id, 5, 0).await else {
+            return (vec![], false);
+        };
+        let is_running = records.iter().any(|r| r.status == crate::models::ExecutionStatus::Running);
+        let items = records.into_iter().map(|r| Self::record_to_recent_item(&r)).collect();
+        (items, is_running)
+    }
+
+    /// Todo → 事项页列表项。
+    fn todo_to_item(t: crate::models::Todo) -> TodoItem {
+        use crate::models::TodoStatus;
+        let status_icon = match t.status {
+            TodoStatus::Completed => "✅",
+            TodoStatus::Running | TodoStatus::InProgress => "▶️",
+            _ => "⏸️",
+        };
+        TodoItem { id: t.id, title: t.title, status_icon: status_icon.to_string() }
+    }
+
+    /// LoopListRow → 环路页列表项。
+    fn loop_to_item(l: crate::db::loop_::LoopListRow) -> LoopItem {
+        LoopItem { id: l.loop_.id, name: l.loop_.name, status: l.loop_.status }
+    }
+
+    /// ExecutionRecord → 卡片「最近任务」项（状态 emoji + 标题 + 时间）。
+    fn record_to_recent_item(r: &crate::models::ExecutionRecord) -> RecentTaskItem {
+        use crate::models::ExecutionStatus;
+        let status_icon = match r.status {
+            ExecutionStatus::Success => "✅",
+            ExecutionStatus::Running => "⏳",
+            ExecutionStatus::Failed => "❌",
+        };
+        // 标题优先用触发源标题，其次结果文本，最后命令
+        let title = r.source_todo_title.clone().or(r.result.clone()).unwrap_or_else(|| r.command.clone());
+        RecentTaskItem {
+            status_icon: status_icon.to_string(),
+            title,
+            time_desc: format_record_time(&r.started_at),
+        }
     }
 
     /// Patch an existing interactive card message with new content.
@@ -2456,8 +2524,7 @@ pub(crate) struct SlashCommandMatch<'a> {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::FeishuListener;
-    use crate::models::{BotConfig, ExecutionRecord, ExecutionStatus};
-    use crate::db::feishu_project_binding::FeishuProjectBinding;
+    use crate::models::BotConfig;
 
     #[test]
     fn test_parse_slash_command_exact_first_token() {
@@ -2474,6 +2541,73 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_card_command_extracts_command_text() {
+        // 无参命令：cmd:/new → /new
+        assert_eq!(
+            FeishuListener::parse_card_command("cmd:/new"),
+            Some("/new".to_string())
+        );
+        // 带参命令：参数原样保留，交由后续 parse_slash_command 解析
+        assert_eq!(
+            FeishuListener::parse_card_command("cmd:/bind my-project"),
+            Some("/bind my-project".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_card_command_returns_none_for_non_cmd_prefix() {
+        // nav:/act:/未知前缀/空串都不是命令点击，返回 None
+        assert_eq!(FeishuListener::parse_card_command("nav:/help common"), None);
+        assert_eq!(FeishuListener::parse_card_command("act:/delete-mode cancel"), None);
+        assert_eq!(FeishuListener::parse_card_command(""), None);
+    }
+
+    #[test]
+    fn test_parse_card_action_variants() {
+        use super::CardAction;
+        // 各 verb 正常解析（bind/runtodo/runloop 参数是 i64）
+        assert_eq!(FeishuListener::parse_card_action("act:/stop"), Some(CardAction::Stop));
+        assert_eq!(FeishuListener::parse_card_action("act:/new"), Some(CardAction::New));
+        assert_eq!(FeishuListener::parse_card_action("act:/sethome"), Some(CardAction::SetHome));
+        assert_eq!(FeishuListener::parse_card_action("act:/bind 5"), Some(CardAction::Bind(5)));
+        assert_eq!(FeishuListener::parse_card_action("act:/runtodo 10"), Some(CardAction::RunTodo(10)));
+        assert_eq!(FeishuListener::parse_card_action("act:/runloop 20"), Some(CardAction::RunLoop(20)));
+        assert_eq!(
+            FeishuListener::parse_card_action("act:/push result_only"),
+            Some(CardAction::Push("result_only".to_string()))
+        );
+        // 缺参数 → None
+        assert_eq!(FeishuListener::parse_card_action("act:/bind"), None);
+        assert_eq!(FeishuListener::parse_card_action("act:/runtodo"), None);
+        assert_eq!(FeishuListener::parse_card_action("act:/push"), None);
+        // 非 i64 参数 / 未知 verb / 非 act 前缀 → None
+        assert_eq!(FeishuListener::parse_card_action("act:/bind abc"), None);
+        assert_eq!(FeishuListener::parse_card_action("act:/unknown"), None);
+        assert_eq!(FeishuListener::parse_card_action("nav:/help task"), None);
+        assert_eq!(FeishuListener::parse_card_action("cmd:/new"), None);
+    }
+
+    #[test]
+    fn test_resolve_receive_target_group_vs_private() {
+        use crate::feishu::ChannelMessage;
+        // 群聊：channel(chat_id)非空 → 用 chat_id 作为推送目标
+        let group_msg = ChannelMessage {
+            id: "om1".to_string(),
+            sender: "ou_user".to_string(),
+            sender_type: None,
+            content: "act:/stop".to_string(),
+            channel: "oc_group".to_string(),
+            timestamp: 0,
+            chat_type: Some("card_callback".to_string()),
+            mentioned_open_ids: vec![],
+        };
+        assert_eq!(FeishuListener::resolve_receive_target(&group_msg), ("oc_group", "chat_id"));
+        // 私聊：channel 空 → 回退到点击者 open_id
+        let private_msg = ChannelMessage { channel: String::new(), ..group_msg.clone() };
+        assert_eq!(FeishuListener::resolve_receive_target(&private_msg), ("ou_user", "open_id"));
+    }
+
+    #[test]
     fn test_group_message_requires_mention_when_enabled() {
         let cfg = BotConfig {
             group_enabled: true,
@@ -2484,176 +2618,4 @@ mod tests {
         assert!(FeishuListener::is_message_allowed("group", true, &cfg));
     }
 
-    #[test]
-    fn test_decide_resume_session_no_record_returns_none() {
-        // 没 record → 不 resume，返回 (None, None)
-        let (sid, msg) = FeishuListener::decide_resume_session(None, "hello");
-        assert!(sid.is_none());
-        assert!(msg.is_none());
-    }
-
-    #[test]
-    fn test_decide_resume_session_running_record_skips_resume() {
-        // record.status == Running → 不 resume（避免和正在写 stdout JSONL 的进程抢文件）
-        let record = dummy_record(ExecutionStatus::Running, Some("real_sid"));
-        let (sid, msg) = FeishuListener::decide_resume_session(Some(&record), "hi");
-        assert!(sid.is_none(), "running record should not resume");
-        assert!(msg.is_none());
-    }
-
-    #[test]
-    fn test_decide_resume_session_finished_record_uses_record_sid() {
-        // record 已结束 + 有 session_id → 用 record 里的 sid
-        let record = dummy_record(ExecutionStatus::Success, Some("real_claude_sid"));
-        let (sid, msg) = FeishuListener::decide_resume_session(Some(&record), "继续");
-        assert_eq!(sid.as_deref(), Some("real_claude_sid"));
-        assert_eq!(msg.as_deref(), Some("继续"));
-    }
-
-    #[test]
-    fn test_decide_resume_session_finished_no_sid_skips_resume() {
-        // record 已结束但没有 session_id → 不满足 should_resume 条件（需要 sid），
-        // 保持原行为：返回 (None, None)，由 caller 决定下一步
-        let record = dummy_record(ExecutionStatus::Success, None);
-        let (sid, msg) = FeishuListener::decide_resume_session(Some(&record), "msg");
-        assert!(sid.is_none());
-        assert!(msg.is_none());
-    }
-
-
-    #[test]
-    fn test_build_binding_execution_message_preserves_content_on_no_resume() {
-        // PR #665 review #3 CANDIDATE #2 回归测试：resume_message=None 时 content
-        // 仍必须是原始 trimmed 消息，绝不能吞成空串。
-        let msg = dummy_msg("请帮我修复登录 bug");
-        let binding = dummy_binding();
-        let todo = dummy_todo();
-        let pending = FeishuListener::build_binding_execution_message(
-            &msg,
-            "p2p",
-            "请帮我修复登录 bug",
-            &binding,
-            &todo,
-            None,
-            None,
-            None,
-            false,
-        );
-        assert_eq!(pending.content, "请帮我修复登录 bug");
-        assert!(pending.resume_message.is_none());
-        assert!(pending.resume_session_id.is_none());
-    }
-
-    #[test]
-    fn test_build_binding_execution_message_content_independent_of_resume_message() {
-        // resume 场景下，content 仍是当前用户消息，resume_message 单独保留。
-        // 防止以后误把 resume_message 当成 content 写。
-        let msg = dummy_msg("继续");
-        let binding = dummy_binding();
-        let todo = dummy_todo();
-        let pending = FeishuListener::build_binding_execution_message(
-            &msg,
-            "p2p",
-            "继续",
-            &binding,
-            &todo,
-            Some("real_sid".into()),
-            Some("继续".into()),
-            None,
-            false,
-        );
-        assert_eq!(pending.content, "继续");
-        assert_eq!(pending.resume_message.as_deref(), Some("继续"));
-        assert_eq!(pending.resume_session_id.as_deref(), Some("real_sid"));
-    }
-
-    fn dummy_msg(content: &str) -> crate::feishu::message::ChannelMessage {
-        crate::feishu::message::ChannelMessage {
-            id: "m1".into(),
-            sender: "user1".into(),
-            sender_type: Some("user".into()),
-            content: content.into(),
-            channel: "c1".into(),
-            timestamp: 0,
-            chat_type: Some("p2p".into()),
-            mentioned_open_ids: vec![],
-        }
-    }
-
-    fn dummy_todo() -> crate::models::Todo {
-        crate::models::Todo {
-            id: 7,
-            title: "飞书-bot".into(),
-            prompt: "system prompt".into(),
-            status: crate::models::TodoStatus::Pending,
-            created_at: "2026-01-01T00:00:00Z".into(),
-            updated_at: "2026-01-01T00:00:00Z".into(),
-            tag_ids: vec![],
-            executor: Some("claudecode".into()),
-            scheduler_enabled: false,
-            scheduler_config: None,
-            scheduler_timezone: None,
-            scheduler_next_run_at: None,
-            task_id: None,
-            workspace_path: None,
-            workspace_id: None,
-            webhook_enabled: false,
-            acceptance_criteria: None,
-            todo_type: 0,
-            parent_todo_id: None,
-            review_template_id: None,
-            auto_review_enabled: false,
-            action_type: None,
-            action_key: None,
-            archived_at: None,
-        }
-    }
-
-    fn dummy_binding() -> FeishuProjectBinding {
-        FeishuProjectBinding {
-            id: 1,
-            bot_id: 1,
-            todo_id: 1,
-            chat_id: "c1".into(),
-            chat_type: "p2p".into(),
-            status: "idle".into(),
-            session_id: Some("s1".into()),
-            latest_record_id: Some(42),
-            project_dir_id: 1,
-            enabled: true,
-            created_at: "2026-01-01T00:00:00Z".into(),
-            updated_at: "2026-01-01T00:00:00Z".into(),
-        }
-    }
-
-    fn dummy_record(status: ExecutionStatus, sid: Option<&str>) -> ExecutionRecord {
-        ExecutionRecord {
-            id: 42,
-            todo_id: 1,
-            status,
-            command: String::new(),
-            stdout: String::new(),
-            stderr: String::new(),
-            result: None,
-            started_at: String::new(),
-            finished_at: None,
-            usage: None,
-            executor: None,
-            model: None,
-            trigger_type: String::new(),
-            pid: None,
-            task_id: None,
-            session_id: sid.map(|s| s.to_string()),
-            todo_progress: None,
-            execution_stats: None,
-            resume_message: None,
-            source_todo_id: None,
-            source_todo_title: None,
-            loop_step_execution_id: None,            rating: None,
-            step_id: None,            source_execution_record_id: None,
-            last_review_status: None,
-            last_reviewed_at: None,
-            worktree_path: None,
-        }
-    }
 }
