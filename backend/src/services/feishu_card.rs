@@ -339,53 +339,53 @@ fn render_actions(actions: &CardActions, session_key: &str) -> Vec<Value> {
     if actions.buttons.is_empty() {
         return Vec::new();
     }
-
     match actions.layout {
-        CardActionLayout::EqualColumns => {
-            // 等宽列布局：每个按钮一个 column，2个按钮时用 bisect
-            let mut columns = Vec::new();
-            for btn in &actions.buttons {
-                columns.push(serde_json::json!({
-                    "tag": "column",
-                    "width": "weighted",
-                    "weight": 1,
-                    "vertical_align": "center",
-                    "horizontal_align": "center",
-                    "elements": [render_button(btn, session_key, true)]
-                }));
-            }
-
-            let mut column_set = serde_json::json!({
-                "tag": "column_set",
-                "columns": columns
-            });
-
-            // 2个按钮时使用 bisect 布局
-            if actions.buttons.len() == 2 {
-                column_set["flex_mode"] = serde_json::json!("bisect");
-            }
-
-            vec![column_set]
-        }
-        CardActionLayout::Row => {
-            // 飞书卡片 schema V2 不支持 tag:action，按钮行改用 column_set
-            //（每个按钮一列、等宽 stretch），与 EqualColumns 的区别是不强制居中对齐。
-            let columns: Vec<Value> = actions.buttons
-                .iter()
-                .map(|btn| serde_json::json!({
-                    "tag": "column",
-                    "width": "Weighted",
-                    "weight": 1,
-                    "elements": [render_button(btn, session_key, false)]
-                }))
-                .collect();
-            vec![serde_json::json!({
-                "tag": "column_set",
-                "flex_mode": "stretch",
-                "columns": columns,
-            })]
-        }
+        CardActionLayout::EqualColumns => render_equal_columns(&actions.buttons, session_key),
+        CardActionLayout::Row => render_row_buttons(&actions.buttons, session_key),
     }
+}
+
+/// 等宽列布局：每个按钮一个 column，2个按钮时用 bisect。
+fn render_equal_columns(buttons: &[CardButton], session_key: &str) -> Vec<Value> {
+    let mut columns = Vec::new();
+    for btn in buttons {
+        columns.push(serde_json::json!({
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "vertical_align": "center",
+            "horizontal_align": "center",
+            "elements": [render_button(btn, session_key, true)]
+        }));
+    }
+    let mut column_set = serde_json::json!({
+        "tag": "column_set",
+        "columns": columns
+    });
+    // 2个按钮时使用 bisect 布局
+    if buttons.len() == 2 {
+        column_set["flex_mode"] = serde_json::json!("bisect");
+    }
+    vec![column_set]
+}
+
+/// 行布局：按钮行用 column_set（每个按钮一列、等宽），不强制居中对齐。
+fn render_row_buttons(buttons: &[CardButton], session_key: &str) -> Vec<Value> {
+    // 飞书卡片 schema V2 不支持 tag:action，按钮行改用 column_set
+    let columns: Vec<Value> = buttons
+        .iter()
+        .map(|btn| serde_json::json!({
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [render_button(btn, session_key, false)]
+        }))
+        .collect();
+    vec![serde_json::json!({
+        "tag": "column_set",
+        "flex_mode": "none",
+        "columns": columns,
+    })]
 }
 
 /// 渲染单个按钮
@@ -473,17 +473,8 @@ fn render_list_item(item: &CardListItem, session_key: &str) -> Value {
 
 /// 渲染下拉选择器
 fn render_select(select: &CardSelect, session_key: &str) -> Value {
-    // 每个选项渲染成飞书 option 对象（text + value）。
-    let options: Vec<Value> = select.options.iter().map(|opt| {
-        serde_json::json!({
-            "text": {
-                "tag": "plain_text",
-                "content": opt.text
-            },
-            "value": opt.value
-        })
-    }).collect();
-
+    // 生成飞书 option 对象列表
+    let options = build_select_options(&select.options);
     let mut elem = serde_json::json!({
         "tag": "select_static",
         "placeholder": {
@@ -492,12 +483,31 @@ fn render_select(select: &CardSelect, session_key: &str) -> Value {
         },
         "options": options
     });
+    // 把 action（路由用）和 session_key 塞进 value，选中事件回传后能按 act:/ 前缀分发
+    set_select_value(&mut elem, &select.action, session_key);
+    // 初始选中值回显（如推送级别）
+    set_initial_option(&mut elem, &select.options, &select.init_value);
+    serde_json::json!({
+        "tag": "action",
+        "actions": [elem]
+    })
+}
 
-    // select_static 的 value 字段会随选中事件原样回传，把 action（路由用）和 session_key 都塞进去，
-    // 让 handle_card_callback 能像处理按钮点击一样按 act:/ 前缀分发（选中即触发 act 动作）。
+/// 把 CardSelectOption 列表转为飞书 option 对象数组。
+fn build_select_options(options: &[CardSelectOption]) -> Vec<Value> {
+    options.iter().map(|opt| {
+        serde_json::json!({
+            "text": {"tag": "plain_text", "content": opt.text},
+            "value": opt.value
+        })
+    }).collect()
+}
+
+/// 向 select_static 的 value 中注入 action + session_key，供回调时路由分发用。
+fn set_select_value(elem: &mut Value, action: &str, session_key: &str) {
     let mut select_value = serde_json::Map::new();
-    if !select.action.is_empty() {
-        select_value.insert("action".to_string(), serde_json::json!(select.action));
+    if !action.is_empty() {
+        select_value.insert("action".to_string(), serde_json::json!(action));
     }
     if !session_key.is_empty() {
         select_value.insert("session_key".to_string(), serde_json::json!(session_key));
@@ -505,22 +515,19 @@ fn render_select(select: &CardSelect, session_key: &str) -> Value {
     if !select_value.is_empty() {
         elem["value"] = Value::Object(select_value);
     }
+}
 
-    // 飞书 select_static 的初始选中用 initial_options（option 对象数组），不是裸字符串。
-    // 找到 init_value 对应的 option，渲染成完整 option 对象回显当前值（如推送级别）。
-    if !select.init_value.is_empty() {
-        if let Some(opt) = select.options.iter().find(|o| o.value == select.init_value) {
-            elem["initial_options"] = serde_json::json!([{
+/// 设置 select_static 的初始选中项（initial_option），与 init_value 匹配。
+fn set_initial_option(elem: &mut Value, options: &[CardSelectOption], init_value: &str) {
+    // 飞书 select_static 的初始选中用 initial_option（单个 option 对象），不是数组。
+    if !init_value.is_empty() {
+        if let Some(opt) = options.iter().find(|o| o.value == init_value) {
+            elem["initial_option"] = serde_json::json!({
                 "text": {"tag": "plain_text", "content": opt.text},
                 "value": opt.value
-            }]);
+            });
         }
     }
-
-    serde_json::json!({
-        "tag": "action",
-        "actions": [elem]
-    })
 }
 
 // ============================================================================
@@ -551,6 +558,18 @@ pub struct HelpCardState {
     pub page: usize,
     /// 所有工作空间（工作空间页切换用）
     pub workspaces: Vec<WorkspaceItem>,
+    /// 已注册的可用执行器列表（工作空间页切换默认执行器用）。
+    /// listener 从 executor_registry.list_executors() 拉出，卡片层只读渲染成按钮排。
+    pub available_executors: Vec<ExecutorOption>,
+}
+
+/// 可选执行器项（工作空间页「默认执行器」按钮排）。
+#[derive(Debug, Clone)]
+pub struct ExecutorOption {
+    /// 执行器名（ExecutorType::as_str，如 "pi" / "claudecode"）
+    pub name: String,
+    /// 是否为当前工作空间已配的默认执行器（primary 高亮）
+    pub is_current: bool,
 }
 
 /// 当前工作空间摘要（状态页/工作空间页顶部展示）。
@@ -702,7 +721,7 @@ fn pagination_buttons(kind: &str, page: usize, total_pages: usize) -> Vec<CardBu
     nav_btns
 }
 
-/// 工作空间页：当前工作空间 + 列表[切换] + 推送 3 按钮（当前高亮）+ 设为推送目标。
+/// 工作空间页：当前工作空间 + 列表[切换] + 默认执行器按钮排 + 推送 3 按钮 + 设为推送目标。
 fn build_workspace_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
     builder = builder.markdown(&match &state.workspace {
         Some(w) => format!("**当前工作空间** {}（执行器 {}）", w.name, w.executor),
@@ -716,6 +735,21 @@ fn build_workspace_page(mut builder: CardBuilder, state: &HelpCardState) -> Card
             btn_text, btn_type,
             &format!("act:/bind {}", w.id),
         );
+    }
+    builder = builder.divider();
+    // 默认执行器选择：换行列出所有已注册执行器，当前配的 primary 高亮，点击即设为该 workspace 的默认执行器。
+    builder = builder.markdown("**默认执行器**");
+    if state.available_executors.is_empty() {
+        builder = builder.markdown("_暂无已注册执行器_");
+    } else {
+        // 按每排最多 4 个按钮分组，避免单排按钮过多在窄屏被飞书截断。
+        for row in state.available_executors.chunks(4) {
+            let btns: Vec<CardButton> = row.iter().map(|e| {
+                let btn_type = if e.is_current { "primary" } else { "default" };
+                CardButton::new(&e.name, btn_type, &format!("act:/setexecutor {}", e.name))
+            }).collect();
+            builder = builder.buttons(btns);
+        }
     }
     builder = builder.divider();
     // 推送级别 3 按钮，当前级别 primary 高亮
@@ -1206,7 +1240,7 @@ mod tests {
     }
 
     /// select.action 非空时，它被写进 select_static 的 value 随选中事件回传；
-    /// init_value 匹配的 option 渲染成 initial_options 数组（飞书标准格式，非裸字符串）。
+    /// init_value 匹配的 option 渲染成 initial_option 单个对象（飞书标准格式，非数组）。
     #[test]
     #[allow(clippy::expect_used, clippy::unwrap_used)]
     fn test_render_select_action_and_initial_options() {
@@ -1239,14 +1273,12 @@ mod tests {
         // value 含 action（路由用）和 session_key
         assert_eq!(select_static["value"]["action"], "act:/push");
         assert_eq!(select_static["value"]["session_key"], "feishu:user1");
-        // initial_options 是 option 对象数组，回显当前 result_only
-        let init = select_static["initial_options"].as_array().expect("initial_options 数组");
-        assert_eq!(init.len(), 1);
-        assert_eq!(init[0]["value"], "act:/push result_only");
+        // initial_option 是单个 option 对象，回显当前 result_only
+        assert_eq!(select_static["initial_option"]["value"], "act:/push result_only");
     }
 
     /// select.action 为空（选项 2 设计：具体值在 option.value）时，value 不含 action 字段；
-    /// init_value 为空时不渲染 initial_options。channel.rs 取不到 value["action"] 会 fallback 到 option。
+    /// init_value 为空时不渲染 initial_option。channel.rs 取不到 value["action"] 会 fallback 到 option。
     #[test]
     #[allow(clippy::expect_used, clippy::unwrap_used)]
     fn test_render_select_empty_action_omits_action_field() {
@@ -1275,10 +1307,10 @@ mod tests {
             select_static["value"].get("action").is_none(),
             "action 为空时 value 不应有 action 字段"
         );
-        // init_value 为空 → 不渲染 initial_options
+        // init_value 为空 → 不渲染 initial_option
         assert!(
-            select_static.get("initial_options").is_none(),
-            "init_value 为空时不应渲染 initial_options"
+            select_static.get("initial_option").is_none(),
+            "init_value 为空时不应渲染 initial_option"
         );
     }
 

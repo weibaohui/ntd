@@ -59,9 +59,8 @@ impl Database {
         Ok(inserted.id)
     }
 
-    /// Get binding by bot_id + chat_id.
-    /// Read-only — does NOT correct stale status. Callers should use
-    /// `cleanup_stale_running_bindings` periodically or inline when routing.
+    /// Get active binding by bot_id + chat_id（仅返回 enabled=true 的绑定）。
+    /// 禁用绑定不参与路由，避免 /new /stop 等命令在 workspace 切换后仍命中旧绑定。
     pub async fn get_feishu_project_binding(
         &self,
         bot_id: i64,
@@ -70,6 +69,7 @@ impl Database {
         let model = feishu_project_bindings::Entity::find()
             .filter(feishu_project_bindings::Column::BotId.eq(bot_id))
             .filter(feishu_project_bindings::Column::ChatId.eq(chat_id))
+            .filter(feishu_project_bindings::Column::Enabled.eq(true))
             .one(&self.conn)
             .await?;
         Ok(model.map(Self::binding_from_model))

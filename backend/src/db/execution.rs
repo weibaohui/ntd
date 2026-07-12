@@ -1071,6 +1071,32 @@ impl Database {
         Ok(models.into_iter().map(Into::into).collect())
     }
 
+    /// 按 workspace 查运行中的执行记录（act:/stop 停止用）。
+    /// execution_records 无 workspace_id，经 todos 间接关联：先取该 workspace 的 todo_id，
+    /// 再按 todo_id IN + status=running 过滤。返回第一条运行中的记录。
+    pub async fn get_running_records_by_workspace(
+        &self,
+        workspace_id: i64,
+    ) -> Result<Vec<ExecutionRecord>, sea_orm::DbErr> {
+        let todo_ids: Vec<i64> = todos::Entity::find()
+            .filter(todos::Column::WorkspaceId.eq(workspace_id))
+            .all(&self.conn)
+            .await?
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        if todo_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let models = execution_records::Entity::find()
+            .filter(execution_records::Column::TodoId.is_in(todo_ids))
+            .filter(execution_records::Column::Status.eq("running"))
+            .order_by_desc(execution_records::Column::StartedAt)
+            .all(&self.conn)
+            .await?;
+        Ok(models.into_iter().map(Into::into).collect())
+    }
+
     /// 强制将一条执行记录标记为失败（用于僵尸记录清理）
     pub async fn force_fail_execution_record(&self, id: i64) -> Result<(), sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();

@@ -340,7 +340,7 @@ async fn build_app_state(
     let debounce = Arc::new(MessageDebounce::new(ctx.clone(), loop_runner.clone()));
     let feishu_listener = Arc::new(FeishuListener::new(ctx.clone(), debounce.clone()));
 
-    // 启动后台任务：bot 自启、stale binding 周期清理、history fetcher、reviewer template 初始化
+    // 启动后台任务：bot 自启、history fetcher、reviewer template 初始化
     spawn_feishu_bot_starter(feishu_listener.clone(), db.clone());
     // 自动版本更新调度器：按配置的间隔周期性检查 npm 新版本
     crate::services::auto_update::spawn_auto_update_scheduler(config.clone(), db.clone());

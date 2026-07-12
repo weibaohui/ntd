@@ -13,7 +13,7 @@ use crate::service_context::ServiceContext;
 use crate::task_manager::TaskManager;
 use crate::db::{Database, NewFeishuMessage};
 use crate::services::feishu_card::{
-    Card, CardElement, CardMarkdown, HelpCardState, HistoryItem, LoopItem, RecentTaskItem,
+    Card, CardElement, CardMarkdown, ExecutorOption, HelpCardState, HistoryItem, LoopItem, RecentTaskItem,
     TodoItem, WorkspaceItem, WorkspaceSummary, build_help_console_card, build_history_card,
     render_card,
 };
@@ -48,6 +48,8 @@ struct FeishuCommandContext<'a> {
     db: &'a Arc<Database>,
     credentials: &'a DashMap<i64, (String, String, String)>,
     token_manager: &'a Arc<TokenManager>,
+    /// ServiceContext：供 handle_help 查可用执行器列表（assemble_help_card_state 需要）。
+    ctx: &'a ServiceContext,
     bot_id: i64,
     chat_type: &'a str,
     sender: &'a str,
@@ -72,6 +74,8 @@ pub(crate) enum CardAction {
     RunLoop(i64),
     /// 设置推送级别，参数为 disabled/result_only/all
     Push(String),
+    /// 设置默认执行器，参数为执行器名（ExecutorType::as_str）
+    SetExecutor(String),
 }
 
 /// 把 started_at（ISO，如 "2026-07-11T14:04:37Z"）格式化成可读时间：取前 16 位 + T 换空格。
@@ -320,6 +324,7 @@ impl FeishuListener {
             db: context.db,
             credentials: context.credentials,
             token_manager: context.token_manager,
+            ctx: context.ctx,
             bot_id: context.bot_id,
             chat_type: prep.chat_type,
             sender: &msg.sender,
@@ -1407,6 +1412,7 @@ impl FeishuListener {
             db,
             credentials,
             token_manager,
+            ctx,
             bot_id,
             chat_type: _,
             sender,
@@ -1416,12 +1422,12 @@ impl FeishuListener {
             ..
         } = context;
 
-        // 解析当前分组，默认 "task"（任务页是控制台首页）
+        // 解析当前分组，默认 "status"（状态页是控制台首页）
         let parsed = content.strip_prefix("/help ").unwrap_or("").trim().to_lowercase();
-        let group = if parsed.is_empty() { "task".to_string() } else { parsed };
+        let group = if parsed.is_empty() { "status".to_string() } else { parsed };
 
         // 状态感知控制台：查当前绑定/运行状态/推送级别/最近任务后渲染
-        let state = Self::assemble_help_card_state(db, bot_id, &group, 1).await;
+        let state = Self::assemble_help_card_state(ctx, db, bot_id, &group, 1).await;
         let card = build_help_console_card(&state);
         let card_json = render_card(&card, &format!("feishu:{}", sender));
 
@@ -1441,39 +1447,12 @@ impl FeishuListener {
     /// - `nav:/help <group>`：原地 patch 原卡片，切到对应分组；
     /// - `cmd:/<command>`：转成命令文本，复用 handle_message 分发链路执行，
     ///   等价于点击者在会话里发送了 `/<command>`；
-    /// - `act:/<action>`：执行动作（暂未实现，仅记录日志）。
+    /// - `act:/<action>`：执行动作 + patch 刷新控制台。
     async fn handle_card_callback(context: ListenerMessageContext<'_>, msg: &ChannelMessage) {
         let action = msg.content.trim();
 
-        // nav: 前缀 - 原地 patch 刷新控制台/历史页。
-        // nav:/help <group> 重查最新状态后刷控制台（运行状态可能已变）。
-        if let Some(group) = action.strip_prefix("nav:/help ") {
-            let group_key = group.trim().to_lowercase();
-            let state = Self::assemble_help_card_state(context.db, context.bot_id, &group_key, 1).await;
-            let card = build_help_console_card(&state);
-            Self::patch_rendered_card(&context, msg, &card).await;
-            return;
-        }
-        // nav:/history [page] - 分页查看执行历史。
-        if let Some(page_arg) = action.strip_prefix("nav:/history") {
-            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
-            Self::patch_history_page(&context, msg, page).await;
-            return;
-        }
-        // nav:/todos <page> - 事项分页（每页 10）。
-        if let Some(page_arg) = action.strip_prefix("nav:/todos") {
-            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
-            let state = Self::assemble_help_card_state(context.db, context.bot_id, "todo", page).await;
-            let card = build_help_console_card(&state);
-            Self::patch_rendered_card(&context, msg, &card).await;
-            return;
-        }
-        // nav:/loops <page> - 环路分页（每页 10）。
-        if let Some(page_arg) = action.strip_prefix("nav:/loops") {
-            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
-            let state = Self::assemble_help_card_state(context.db, context.bot_id, "loop", page).await;
-            let card = build_help_console_card(&state);
-            Self::patch_rendered_card(&context, msg, &card).await;
+        // nav: 前缀 - 原地 patch 刷新控制台/历史页，拦截后直接返回。
+        if Self::handle_nav_action(&context, msg, action).await {
             return;
         }
 
@@ -1507,6 +1486,42 @@ impl FeishuListener {
         tracing::warn!("[feishu:{}] unknown card action: {}", context.bot_id, action);
     }
 
+    /// 处理 nav: 前缀的卡片动作，返回 true 表示已处理。
+    /// nav 动作是只读 patch 刷新，不产生副作用。
+    async fn handle_nav_action(context: &ListenerMessageContext<'_>, msg: &ChannelMessage, action: &str) -> bool {
+        // nav:/help <group> 重查最新状态后刷控制台（运行状态可能已变）。
+        if let Some(group) = action.strip_prefix("nav:/help ") {
+            let group_key = group.trim().to_lowercase();
+            let state = Self::assemble_help_card_state(context.ctx, context.db, context.bot_id, &group_key, 1).await;
+            let card = build_help_console_card(&state);
+            Self::patch_rendered_card(context, msg, &card).await;
+            return true;
+        }
+        // nav:/history [page] - 分页查看执行历史。
+        if let Some(page_arg) = action.strip_prefix("nav:/history") {
+            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
+            Self::patch_history_page(context, msg, page).await;
+            return true;
+        }
+        // nav:/todos <page> - 事项分页（每页 10）。
+        if let Some(page_arg) = action.strip_prefix("nav:/todos") {
+            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
+            let state = Self::assemble_help_card_state(context.ctx, context.db, context.bot_id, "todo", page).await;
+            let card = build_help_console_card(&state);
+            Self::patch_rendered_card(context, msg, &card).await;
+            return true;
+        }
+        // nav:/loops <page> - 环路分页（每页 10）。
+        if let Some(page_arg) = action.strip_prefix("nav:/loops") {
+            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
+            let state = Self::assemble_help_card_state(context.ctx, context.db, context.bot_id, "loop", page).await;
+            let card = build_help_console_card(&state);
+            Self::patch_rendered_card(context, msg, &card).await;
+            return true;
+        }
+        false
+    }
+
     /// 执行卡片 act 动作，执行后 patch 刷新控制台。
     async fn execute_card_action(context: ListenerMessageContext<'_>, msg: &ChannelMessage, action: CardAction) {
         let outcome = Self::run_card_action(&context, msg, &action).await;
@@ -1528,13 +1543,14 @@ impl FeishuListener {
             CardAction::Bind(workspace_id) => Self::act_bind(context, *workspace_id).await,
             CardAction::RunTodo(todo_id) => Self::act_run_todo(context, msg, *todo_id).await,
             CardAction::RunLoop(loop_id) => Self::act_run_loop(context, msg, *loop_id).await,
+            CardAction::SetExecutor(name) => Self::act_set_executor(context, name).await,
         }
     }
 
     /// act 动作执行后刷新到的目标 Tab。
     fn action_target_group(action: &CardAction) -> &'static str {
         match action {
-            CardAction::Bind(_) | CardAction::Push(_) => "workspace",
+            CardAction::Bind(_) | CardAction::Push(_) | CardAction::SetExecutor(_) => "workspace",
             CardAction::RunTodo(_) => "todo",
             CardAction::RunLoop(_) => "loop",
             _ => "status",
@@ -1590,15 +1606,16 @@ impl FeishuListener {
         }
     }
 
-    /// 停止当前 workspace 的运行任务（running record by workspace + task_manager cancel）。
+    /// 停止当前 workspace 的运行任务（by workspace + ExecutionStatus::Running 直接查）。
     async fn act_stop(context: &ListenerMessageContext<'_>) -> ActionOutcome {
         let Some(wid) = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten() else {
             return ActionOutcome { success: false, message: "未设置工作空间".to_string() };
         };
-        let Ok((records, _)) = context.db.get_execution_records_by_workspace(wid, 10, 0).await else {
+        // 直接按 workspace 查运行中的记录，不依赖最近 N 条（避免旧记录淹没了 running 记录）
+        let Ok(records) = context.db.get_running_records_by_workspace(wid).await else {
             return ActionOutcome { success: false, message: "查询失败".to_string() };
         };
-        let Some(running) = records.into_iter().find(|r| r.status == crate::models::ExecutionStatus::Running) else {
+        let Some(running) = records.into_iter().next() else {
             return ActionOutcome { success: false, message: "没有运行中的任务".to_string() };
         };
         let Some(task_id) = running.task_id.as_deref() else {
@@ -1666,6 +1683,13 @@ impl FeishuListener {
             Ok(Some(t)) => t,
             _ => return ActionOutcome { success: false, message: format!("事项 #{todo_id} 不存在") },
         };
+        // 校验 todo 的 workspace_id 与 bot 当前 workspace 一致，防止旧卡片跨 workspace 执行
+        if todo.workspace_id != workspace_id {
+            return ActionOutcome {
+                success: false,
+                message: format!("事项 #{todo_id} 不属于当前工作空间，无法执行"),
+            };
+        }
         let title = todo.title.clone();
         let req = RunTodoExecutionRequest {
             db: context.db.clone(),
@@ -1707,6 +1731,14 @@ impl FeishuListener {
             Ok(Some(l)) => l,
             _ => return ActionOutcome { success: false, message: format!("环路 #{loop_id} 不存在") },
         };
+        // 校验 loop 的 workspace_id 与 bot 当前 workspace 一致，防止旧卡片跨 workspace 执行
+        let workspace_id = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten();
+        if loop_.workspace_id != workspace_id {
+            return ActionOutcome {
+                success: false,
+                message: format!("环路 #{loop_id} 不属于当前工作空间，无法执行"),
+            };
+        }
         let name = loop_.name;
         runner.clone().spawn_run(
             loop_id,
@@ -1720,6 +1752,42 @@ impl FeishuListener {
         ActionOutcome { success: true, message: format!("已触发环路「{name}」") }
     }
 
+    /// 设当前 workspace 的默认执行器：写 workspace_settings.default_response_executor。
+    /// executor 名必须是已注册的（ExecutorType::as_str），否则视为无效拒绝写入。
+    async fn act_set_executor(context: &ListenerMessageContext<'_>, executor_name: &str) -> ActionOutcome {
+        let Some(wid) = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten() else {
+            return ActionOutcome { success: false, message: "未设置工作空间".to_string() };
+        };
+        // 校验 executor 已注册，避免把无效名写进 settings 让下次 dispatch 失败
+        let registered: Vec<String> = context
+            .ctx
+            .executor_registry
+            .list_executors()
+            .await
+            .into_iter()
+            .map(|t| t.as_str().to_string())
+            .collect();
+        if !registered.iter().any(|s| s == executor_name) {
+            return ActionOutcome {
+                success: false,
+                message: format!("执行器 {executor_name} 未注册（可用：{}）", registered.join(", ")),
+            };
+        }
+        match crate::db::workspace_setting::upsert_workspace_settings(
+            context.db,
+            wid,
+            None,
+            None,
+            None,
+            Some(executor_name.to_string()),
+        )
+        .await
+        {
+            Ok(_) => ActionOutcome { success: true, message: format!("默认执行器已设为 {executor_name}") },
+            Err(e) => ActionOutcome { success: false, message: format!("设置失败：{e}") },
+        }
+    }
+
     /// act 执行后 patch 刷新控制台：assemble 最新状态 + 顶部插入操作结果提示。
     async fn patch_after_action(
         context: &ListenerMessageContext<'_>,
@@ -1727,7 +1795,7 @@ impl FeishuListener {
         group: &str,
         outcome: &ActionOutcome,
     ) {
-        let state = Self::assemble_help_card_state(context.db, context.bot_id, group, 1).await;
+        let state = Self::assemble_help_card_state(context.ctx, context.db, context.bot_id, group, 1).await;
         let mut card = build_help_console_card(&state);
         let icon = if outcome.success { "✅" } else { "⚠️" };
         let tip = CardElement::Markdown(CardMarkdown { content: format!("{icon} {}", outcome.message) });
@@ -1803,6 +1871,7 @@ impl FeishuListener {
             "new" => CardAction::New,
             "sethome" => CardAction::SetHome,
             "push" => CardAction::Push(arg?.to_string()),
+            "setexecutor" => CardAction::SetExecutor(arg?.to_string()),
             "bind" => CardAction::Bind(arg?.parse().ok()?),
             "runtodo" => CardAction::RunTodo(arg?.parse().ok()?),
             "runloop" => CardAction::RunLoop(arg?.parse().ok()?),
@@ -1823,7 +1892,14 @@ impl FeishuListener {
 
     /// 组装 /help 卡片状态：按 agent_bot.workspace_id 查该 workspace 的摘要/事项/环路/最近任务 + 所有工作空间。
     /// handle_help、nav 切页、act 执行后刷新都复用它（只读 db，运行状态取最近记录里的 running）。
-    async fn assemble_help_card_state(db: &Database, bot_id: i64, current_group: &str, page: usize) -> HelpCardState {
+    /// ctx 用于查询已注册的执行器列表（工作空间页渲染按钮排用）。
+    async fn assemble_help_card_state(
+        ctx: &ServiceContext,
+        db: &Database,
+        bot_id: i64,
+        current_group: &str,
+        page: usize,
+    ) -> HelpCardState {
         let wid = db.get_agent_bot_workspace_id(bot_id).await.ok().flatten();
         let workspace = match wid {
             Some(id) => Self::build_workspace_summary(db, id).await,
@@ -1868,6 +1944,19 @@ impl FeishuListener {
                 is_current: wid == Some(d.id),
             })
             .collect();
+        // 已注册执行器列表 + 标记当前 workspace 配的默认执行器，供工作空间页渲染按钮排
+        let current_executor = workspace.as_ref().map(|w| w.executor.as_str()).unwrap_or("");
+        let available_executors = ctx
+            .executor_registry
+            .list_executors()
+            .await
+            .into_iter()
+            .map(|t| {
+                let name = t.as_str().to_string();
+                let is_current = name == current_executor;
+                ExecutorOption { name, is_current }
+            })
+            .collect();
         HelpCardState {
             current_group: current_group.to_string(),
             workspace,
@@ -1878,6 +1967,7 @@ impl FeishuListener {
             loops,
             workspaces,
             page,
+            available_executors,
         }
     }
 
