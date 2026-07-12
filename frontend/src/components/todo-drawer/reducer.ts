@@ -59,11 +59,6 @@ export function createInitialFormState(): TodoFormState {
   };
 }
 
-/** 兼容旧代码：保留 initialFormState 导出，值为工厂函数首次调用结果。
- *  新代码应直接使用 createInitialFormState() 以获取最新默认执行器。
- */
-export const initialFormState: TodoFormState = createInitialFormState();
-
 /** 表单 reducer */
 export function todoFormReducer(state: TodoFormState, action: TodoFormAction): TodoFormState {
   switch (action.type) {

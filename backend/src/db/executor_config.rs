@@ -199,6 +199,9 @@ impl Database {
                     enabled: ActiveValue::Set(true),
                     display_name: ActiveValue::Set(exec.display_name.to_string()),
                     session_dir: ActiveValue::Set(exec.session_dir.to_string()),
+                    // 后补进来的执行器默认不是系统默认；显式写 false 与 seed/migrate 两处
+                    // 插入逻辑保持一致，避免依赖隐式 DB 默认值造成阅读歧义。
+                    is_default: ActiveValue::Set(false),
                     created_at: ActiveValue::Set(Some(now.clone())),
                     updated_at: ActiveValue::Set(Some(now.clone())),
                     ..Default::default()
@@ -251,14 +254,20 @@ impl Database {
     /// 设置指定执行器为系统默认执行器。
     /// 会先清除所有执行器的默认标记，再将指定执行器设为默认，
     /// 确保同一时间只有一个默认执行器。
-    /// 返回更新后的执行器配置。
+    /// 返回更新后的执行器配置；目标不存在时返回 None。
     pub async fn set_default_executor(&self, name: &str) -> Result<Option<ExecutorConfig>, sea_orm::DbErr> {
-        // 先确认目标执行器存在，不存在则返回 None
+        use sea_orm::TransactionTrait;
+        // 「清除全部默认」+「设置目标为默认」是两步相关写入，
+        // 包在同一事务里提交，避免中途崩溃出现「全部被清但目标未设」的临时无默认态。
+        let txn = self.conn.begin().await?;
+
+        // 先确认目标执行器存在，不存在则回滚（无写入）并返回 None。
         let target = executors::Entity::find()
             .filter(executors::Column::Name.eq(name))
-            .one(&self.conn)
+            .one(&txn)
             .await?;
         let Some(target) = target else {
+            txn.rollback().await?;
             return Ok(None);
         };
 
@@ -267,15 +276,16 @@ impl Database {
         // 清除所有执行器的默认标记
         executors::Entity::update_many()
             .col_expr(executors::Column::IsDefault, sea_orm::sea_query::Expr::value(false))
-            .exec(&self.conn)
+            .exec(&txn)
             .await?;
 
-        // 将目标执行器设为默认
-        let mut am: executors::ActiveModel = target.clone().into();
+        // 将目标执行器设为默认。target 此后不再使用，直接消费掉即可，无需 clone。
+        let mut am: executors::ActiveModel = target.into();
         am.is_default = ActiveValue::Set(true);
         am.updated_at = ActiveValue::Set(Some(now));
-        let updated = am.update(&self.conn).await?;
+        let updated = am.update(&txn).await?;
 
+        txn.commit().await?;
         Ok(Some(map_executor(updated)))
     }
 }

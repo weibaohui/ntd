@@ -613,6 +613,105 @@ async fn test_executor_backfill_session_dir_fills_empty() {
     assert!(after.iter().any(|e| !e.session_dir.is_empty()));
 }
 
+#[tokio::test]
+async fn test_executor_get_default_none_and_fallback_when_unset() {
+    // 全新内存库（未 seed）：没有任何 is_default=true 的行，
+    // get_default_executor 返回 None；get_default_executor_name 回退到 DEFAULT_EXECUTOR 常量。
+    let db = setup_db().await;
+    let none = db.get_default_executor().await.unwrap();
+    assert!(none.is_none(), "未配置默认执行器时应返回 None");
+    let name = db.get_default_executor_name().await.unwrap();
+    assert_eq!(
+        name, "claudecode",
+        "无默认执行器时名称应回退到 DEFAULT_EXECUTOR 常量"
+    );
+}
+
+#[tokio::test]
+async fn test_executor_get_default_after_seed() {
+    // seed_default_executors 会把 EXECUTORS[0]（claudecode）标记为默认，
+    // 随后 get_default_executor / get_default_executor_name 都应命中它。
+    let db = setup_db().await;
+    db.seed_default_executors().await.unwrap();
+    let default = db
+        .get_default_executor()
+        .await
+        .unwrap()
+        .expect("seed 后应存在默认执行器");
+    assert_eq!(default.name, "claudecode");
+    assert!(default.is_default, "默认执行器的 is_default 必须为 true");
+    assert_eq!(
+        db.get_default_executor_name().await.unwrap(),
+        "claudecode"
+    );
+}
+
+#[tokio::test]
+async fn test_executor_set_default_switches_and_clears_others() {
+    // set_default_executor 切换默认到另一个执行器：新目标置 true，旧默认被清成 false，
+    // 全表有且仅有一个 is_default=true。重复设置同一目标也应保持唯一。
+    let db = setup_db().await;
+    db.seed_default_executors().await.unwrap();
+    let all = db.get_executors().await.unwrap();
+    // 选一个非 claudecode 的执行器作为新默认；若执行器列表只有一项则跳过本断言。
+    let target = all
+        .iter()
+        .find(|e| e.name != "claudecode")
+        .expect("种子执行器应至少包含两个，用于切换默认");
+
+    let updated = db
+        .set_default_executor(&target.name)
+        .await
+        .unwrap()
+        .expect("已存在的执行器应能被设为默认");
+    assert_eq!(updated.name, target.name);
+    assert!(updated.is_default);
+
+    // 旧的默认执行器（claudecode）必须被清成非默认
+    let claude = db
+        .get_executor_by_name("claudecode")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!claude.is_default, "切换默认后旧默认必须被清除");
+
+    // 全表只能有一个默认执行器
+    let defaults = db
+        .get_executors()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.is_default)
+        .collect::<Vec<_>>();
+    assert_eq!(defaults.len(), 1, "同一时间只能有一个默认执行器");
+    assert_eq!(defaults[0].name, target.name);
+
+    // 重复设置同一目标：仍应保持唯一默认，不产生多个 is_default=true
+    db.set_default_executor(&target.name).await.unwrap();
+    let default_count2 = db
+        .get_executors()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.is_default)
+        .count();
+    assert_eq!(default_count2, 1, "重复设置同一目标不应新增默认标记");
+}
+
+#[tokio::test]
+async fn test_executor_set_default_unknown_returns_none() {
+    // 设置一个不存在的执行器为默认：返回 None，且不改变现有默认状态。
+    let db = setup_db().await;
+    db.seed_default_executors().await.unwrap();
+    let result = db.set_default_executor("not-a-real-executor").await.unwrap();
+    assert!(result.is_none(), "不存在的执行器应返回 None");
+    // 原默认 claudecode 不受影响
+    assert_eq!(
+        db.get_default_executor_name().await.unwrap(),
+        "claudecode"
+    );
+}
+
 // =====================================================================
 // 同步记录相关测试
 // =====================================================================

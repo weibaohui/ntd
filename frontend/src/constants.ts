@@ -212,16 +212,11 @@ export function getLastExecutor(defaultExecutor?: string): string {
     const saved = localStorage.getItem(LAST_EXECUTOR_STORAGE_KEY);
     if (saved) return saved;
     // 没有保存值时，优先使用调用方传入的默认值，否则使用系统默认执行器
-    return defaultExecutor || getSystemDefaultExecutor();
+    return defaultExecutor || getDefaultExecutor();
   } catch {
     // 隐私模式 / 配额满：静默吞掉，返回系统默认
-    return defaultExecutor || getSystemDefaultExecutor();
+    return defaultExecutor || getDefaultExecutor();
   }
-}
-
-/** 获取系统默认执行器（从缓存读取，回退到 claudecode） */
-function getSystemDefaultExecutor(): string {
-  return getDefaultExecutor();
 }
 
 /** 将用户选择的执行器写入 localStorage */
