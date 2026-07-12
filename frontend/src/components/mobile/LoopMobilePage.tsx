@@ -1,13 +1,16 @@
 import { useEffect, useState, useCallback } from 'react';
-import { RetweetOutlined, PlusOutlined } from '@ant-design/icons';
+import { RetweetOutlined, PlusOutlined, SettingOutlined } from '@ant-design/icons';
 import { Button, message } from 'antd';
 import { PageCard } from '../common/PageCard';
 import { TodoList } from '../todo-list';
 import { LoopDetailPanel } from '../LoopStudioDetailPanel';
 import { EmptyDetailPlaceholder } from '../EmptyDetailPlaceholder';
+import { WorkspaceLoopConfigPage } from '../settings/workspace/WorkspaceLoopConfigPage';
 import { SIDEBAR_WIDTH } from '@/constants';
+import * as db from '@/utils/database';
 import * as dbLoops from '@/utils/database/loops';
 import type { LoopDetail } from '@/types/loop';
+import type { ProjectDirectory } from '@/types';
 
 interface LoopMobilePageProps {
   selectedLoopId: number | null;
@@ -21,6 +24,7 @@ interface LoopMobilePageProps {
   onListModeChange: () => void;
   onLoopChanged: () => void;
   effectiveMobilePanel: 'list' | 'detail';
+  workspaceId?: number | null;
 }
 
 /**
@@ -40,8 +44,41 @@ export function LoopMobilePage({
   onListModeChange,
   onLoopChanged,
   effectiveMobilePanel,
+  workspaceId,
 }: LoopMobilePageProps) {
   const [loopDetail, setLoopDetail] = useState<LoopDetail | null>(null);
+  // 状态：是否显示环路配置页面（替代默认的环路详情页）
+  const [showLoopConfig, setShowLoopConfig] = useState(false);
+  // 当前选中的工作空间对象，用于传递给 WorkspaceLoopConfigPage
+  const [currentWorkspace, setCurrentWorkspace] = useState<ProjectDirectory | null>(null);
+
+  // 当 workspaceId 变化时，重新加载工作空间信息
+  useEffect(() => {
+    if (workspaceId == null) {
+      setCurrentWorkspace(null);
+      return;
+    }
+    db.getProjectDirectories().then(dirs => {
+      const dir = dirs.find(d => d.id === workspaceId);
+      if (dir) setCurrentWorkspace(dir);
+    }).catch(() => {
+      // 加载失败时静默处理，不影响主流程
+    });
+  }, [workspaceId]);
+
+  // 打开环路配置页面的处理函数
+  const handleOpenLoopConfig = useCallback(() => {
+    if (workspaceId == null) {
+      message.warning('请先选择工作空间');
+      return;
+    }
+    setShowLoopConfig(true);
+  }, [workspaceId]);
+
+  // 关闭环路配置页面，回到环路列表+详情视图
+  const handleCloseLoopConfig = useCallback(() => {
+    setShowLoopConfig(false);
+  }, []);
 
   const loadLoopDetail = useCallback(() => {
     if (selectedLoopId === null) {
@@ -107,14 +144,26 @@ export function LoopMobilePage({
       icon={<RetweetOutlined />}
       title="环路"
       extra={
-        <Button
-          type="primary"
-          size="small"
-          icon={<PlusOutlined />}
-          onClick={onCreateLoop}
-        >
-          新建
-        </Button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {/* 环路配置按钮：放在新建按钮左边 */}
+          <Button
+            size="small"
+            icon={<SettingOutlined />}
+            onClick={handleOpenLoopConfig}
+            disabled={workspaceId == null}
+          >
+            配置
+          </Button>
+          {/* 新建环路按钮 */}
+          <Button
+            type="primary"
+            size="small"
+            icon={<PlusOutlined />}
+            onClick={onCreateLoop}
+          >
+            新建
+          </Button>
+        </div>
       }
       style={{ height: '100%' }}
       contentStyle={{ padding: 0, height: 'calc(100% - 43px)' }}
@@ -150,6 +199,18 @@ export function LoopMobilePage({
           loadLoopDetail();
           onLoopChanged();
         }}
+      />
+    </PageCard>
+  ) : showLoopConfig && currentWorkspace ? (
+    <PageCard
+      icon={<RetweetOutlined />}
+      title="环路"
+      style={{ height: '100%', flex: 1, minWidth: 0 }}
+      contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 43px)', overflow: 'hidden' }}
+    >
+      <WorkspaceLoopConfigPage
+        workspace={currentWorkspace}
+        onBack={handleCloseLoopConfig}
       />
     </PageCard>
   ) : (
