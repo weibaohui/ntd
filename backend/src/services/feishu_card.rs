@@ -547,6 +547,8 @@ pub struct HelpCardState {
     pub todos: Vec<TodoItem>,
     /// 环路列表（环路页，按 workspace）
     pub loops: Vec<LoopItem>,
+    /// 事项/环路分页页码（从 1 开始；Default 0 时 build 兜底为 1）
+    pub page: usize,
     /// 所有工作空间（工作空间页切换用）
     pub workspaces: Vec<WorkspaceItem>,
 }
@@ -644,28 +646,38 @@ fn build_status_page(builder: CardBuilder, state: &HelpCardState) -> CardBuilder
         ])
 }
 
-/// 事项页：当前 workspace 的事项列表，每项点 [执行] 触发该 todo。
+/// 事项页：当前 workspace 的事项列表，每页 10 个，每项点 [执行] 触发该 todo。
 fn build_todo_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
     if state.todos.is_empty() {
         return builder.markdown("_当前工作空间暂无事项_");
     }
-    for t in &state.todos {
+    const PER_PAGE: usize = 10;
+    let total_pages = state.todos.len().div_ceil(PER_PAGE);
+    let page = state.page.clamp(1, total_pages);
+    let start = (page - 1) * PER_PAGE;
+    let end = (start + PER_PAGE).min(state.todos.len());
+    for t in &state.todos[start..end] {
         builder = builder.list_item_btn(
             &format!("{} **{}**", t.status_icon, t.title),
             "执行", "default",
             &format!("act:/runtodo {}", t.id),
         );
     }
-    builder
+    builder = builder.divider();
+    builder.buttons(pagination_buttons("todos", page, total_pages))
 }
 
-/// 环路页：当前 workspace 的环路列表，每项点 [执行] 触发该 loop。
+/// 环路页：当前 workspace 的环路列表，每页 10 个，每项点 [执行] 触发该 loop。
 fn build_loop_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
     if state.loops.is_empty() {
         return builder.markdown("_当前工作空间暂无环路_");
     }
-    for l in &state.loops {
-        // enabled 可执行；paused 标「已暂停」
+    const PER_PAGE: usize = 10;
+    let total_pages = state.loops.len().div_ceil(PER_PAGE);
+    let page = state.page.clamp(1, total_pages);
+    let start = (page - 1) * PER_PAGE;
+    let end = (start + PER_PAGE).min(state.loops.len());
+    for l in &state.loops[start..end] {
         let btn_text = if l.status == "enabled" { "执行" } else { "已暂停" };
         builder = builder.list_item_btn(
             &format!("**{}**", l.name),
@@ -673,7 +685,21 @@ fn build_loop_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuild
             &format!("act:/runloop {}", l.id),
         );
     }
-    builder
+    builder = builder.divider();
+    builder.buttons(pagination_buttons("loops", page, total_pages))
+}
+
+/// 分页按钮（首页无「上一页」，末页无「下一页」）+ 返回状态。kind 为 "todos"/"loops"。
+fn pagination_buttons(kind: &str, page: usize, total_pages: usize) -> Vec<CardButton> {
+    let mut nav_btns = Vec::new();
+    if page > 1 {
+        nav_btns.push(CardButton::default_btn("← 上一页", &format!("nav:/{kind} {}", page - 1)));
+    }
+    nav_btns.push(CardButton::default_btn("返回状态", "nav:/help status"));
+    if page < total_pages {
+        nav_btns.push(CardButton::default_btn("下一页 →", &format!("nav:/{kind} {}", page + 1)));
+    }
+    nav_btns
 }
 
 /// 工作空间页：当前工作空间 + 列表[切换] + 推送 3 按钮（当前高亮）+ 设为推送目标。

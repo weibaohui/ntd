@@ -1421,7 +1421,7 @@ impl FeishuListener {
         let group = if parsed.is_empty() { "task".to_string() } else { parsed };
 
         // 状态感知控制台：查当前绑定/运行状态/推送级别/最近任务后渲染
-        let state = Self::assemble_help_card_state(db, bot_id, &group).await;
+        let state = Self::assemble_help_card_state(db, bot_id, &group, 1).await;
         let card = build_help_console_card(&state);
         let card_json = render_card(&card, &format!("feishu:{}", sender));
 
@@ -1449,7 +1449,7 @@ impl FeishuListener {
         // nav:/help <group> 重查最新状态后刷控制台（运行状态可能已变）。
         if let Some(group) = action.strip_prefix("nav:/help ") {
             let group_key = group.trim().to_lowercase();
-            let state = Self::assemble_help_card_state(context.db, context.bot_id, &group_key).await;
+            let state = Self::assemble_help_card_state(context.db, context.bot_id, &group_key, 1).await;
             let card = build_help_console_card(&state);
             Self::patch_rendered_card(&context, msg, &card).await;
             return;
@@ -1458,6 +1458,22 @@ impl FeishuListener {
         if let Some(page_arg) = action.strip_prefix("nav:/history") {
             let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
             Self::patch_history_page(&context, msg, page).await;
+            return;
+        }
+        // nav:/todos <page> - 事项分页（每页 10）。
+        if let Some(page_arg) = action.strip_prefix("nav:/todos") {
+            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
+            let state = Self::assemble_help_card_state(context.db, context.bot_id, "todo", page).await;
+            let card = build_help_console_card(&state);
+            Self::patch_rendered_card(&context, msg, &card).await;
+            return;
+        }
+        // nav:/loops <page> - 环路分页（每页 10）。
+        if let Some(page_arg) = action.strip_prefix("nav:/loops") {
+            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
+            let state = Self::assemble_help_card_state(context.db, context.bot_id, "loop", page).await;
+            let card = build_help_console_card(&state);
+            Self::patch_rendered_card(&context, msg, &card).await;
             return;
         }
 
@@ -1711,7 +1727,7 @@ impl FeishuListener {
         group: &str,
         outcome: &ActionOutcome,
     ) {
-        let state = Self::assemble_help_card_state(context.db, context.bot_id, group).await;
+        let state = Self::assemble_help_card_state(context.db, context.bot_id, group, 1).await;
         let mut card = build_help_console_card(&state);
         let icon = if outcome.success { "✅" } else { "⚠️" };
         let tip = CardElement::Markdown(CardMarkdown { content: format!("{icon} {}", outcome.message) });
@@ -1807,7 +1823,7 @@ impl FeishuListener {
 
     /// 组装 /help 卡片状态：按 agent_bot.workspace_id 查该 workspace 的摘要/事项/环路/最近任务 + 所有工作空间。
     /// handle_help、nav 切页、act 执行后刷新都复用它（只读 db，运行状态取最近记录里的 running）。
-    async fn assemble_help_card_state(db: &Database, bot_id: i64, current_group: &str) -> HelpCardState {
+    async fn assemble_help_card_state(db: &Database, bot_id: i64, current_group: &str, page: usize) -> HelpCardState {
         let wid = db.get_agent_bot_workspace_id(bot_id).await.ok().flatten();
         let workspace = match wid {
             Some(id) => Self::build_workspace_summary(db, id).await,
@@ -1861,6 +1877,7 @@ impl FeishuListener {
             todos,
             loops,
             workspaces,
+            page,
         }
     }
 
