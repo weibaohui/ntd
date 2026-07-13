@@ -12,7 +12,7 @@
 // - ExecutionRecordDrawer / BlackboardDrawer：执行详情弹窗/抽屉（外部引入）
 
 import { useState, useEffect } from 'react';
-import { Button, Tag, Modal, message, Card, Input } from 'antd';
+import { Button, Tag, Modal, message } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import * as dbLoops from '@/utils/database/loops';
@@ -23,6 +23,7 @@ import { BlackboardDrawer } from '@/components/loop-studio/executions/Blackboard
 import { AssistantConfigCard } from './AssistantConfigCard';
 import { PushStatusCard } from './PushStatusCard';
 import { WhitelistCard } from './WhitelistCard';
+import { HistoryChatsCard } from './HistoryChatsCard';
 import { HistoryTable } from './HistoryTable';
 
 interface AssistantDetailPageProps {
@@ -292,28 +293,17 @@ export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = 
             />
           )}
 
-          {/* 历史消息拉取群（仅飞书）：用户填写要拉取历史的群 chat_id，替代旧 /sethome 隐式写入 */}
+          {/* 历史消息拉取群（仅飞书）：填写群 chat_id，替代旧 /sethome 隐式写入；组件与配置抽屉共用 */}
           {isFeishu && (
-            <Card title="历史消息拉取群" size="small" style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 12 }}>
-                填写需要定期拉取历史消息的群 chat_id（形如 oc_xxxxxxxx）
-              </div>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                <Input size="small" placeholder="群 chat_id（oc_xxxxxxxx）" style={{ flex: 1 }} value={histChatId} onChange={e => setHistChatId(e.target.value)} />
-                <Input size="small" placeholder="群名称备注" style={{ width: 120 }} value={histChatName} onChange={e => setHistChatName(e.target.value)} />
-                <Button size="small" onClick={handleAddHistChat}>添加</Button>
-              </div>
-              {botHistChats.map(c => (
-                <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, marginBottom: 4 }}>
-                  <span style={{ flex: 1 }}>{c.chat_name || c.chat_id}</span>
-                  <span style={{ color: 'var(--color-text-tertiary)', fontSize: 11 }}>{c.chat_id.slice(0, 12)}...</span>
-                  <Button size="small" danger type="link" style={{ fontSize: 11, padding: 0 }} onClick={() => handleDeleteHistChat(c.id)}>删除</Button>
-                </div>
-              ))}
-              {botHistChats.length === 0 && (
-                <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>暂无拉取群</div>
-              )}
-            </Card>
+            <HistoryChatsCard
+              chats={botHistChats}
+              chatId={histChatId}
+              chatName={histChatName}
+              onChatIdChange={setHistChatId}
+              onChatNameChange={setHistChatName}
+              onAdd={handleAddHistChat}
+              onDelete={handleDeleteHistChat}
+            />
           )}
         </div>
       )}

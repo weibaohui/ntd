@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Drawer, Form, Input, Select, Switch, Button, Tag, Typography, Divider, Empty, Popconfirm } from 'antd';
+import { Drawer, Form, Input, Select, Switch, Button, Tag, Typography, Divider, Empty, Popconfirm, message } from 'antd';
 import { SaveOutlined, PlusOutlined, DeleteOutlined, MessageOutlined, LockOutlined, SettingOutlined } from '@ant-design/icons';
 import type { AgentBot, ProjectDirectory } from '@/utils/database';
 import * as db from '@/utils/database';
 import type { WhitelistEntry, FeishuPushLevel } from '@/utils/database/bots';
+import type { FeishuHistoryChat } from '@/types';
+import { HistoryChatsCard } from '@/components/settings/assistant/HistoryChatsCard';
 
 const { Text, Title } = Typography;
 const { Option } = Select;
@@ -20,6 +22,10 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
   const [form] = Form.useForm();
   const [whitelist, setWhitelist] = useState<WhitelistEntry[]>([]);
   const [activeTab, setActiveTab] = useState<'push' | 'whitelist' | 'strategy'>('push');
+  // 历史拉取群：chat_id + 备注 表单，以及当前 bot 已配置列表
+  const [histChatId, setHistChatId] = useState('');
+  const [histChatName, setHistChatName] = useState('');
+  const [historyChats, setHistoryChats] = useState<FeishuHistoryChat[]>([]);
   // bot 级接收策略开关：存储在 agent_bots.config JSON 中
   const [botConfig, setBotConfig] = useState<Record<string, boolean>>({
     dm_enabled: true,
@@ -36,11 +42,14 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
   const loadConfig = async () => {
     if (!bot) return;
     try {
-      const [push, wl] = await Promise.all([
+      const [push, wl, histChats] = await Promise.all([
         db.getFeishuPush().then(list => list.find(p => p.bot_id === bot!.id) || null),
         db.getGroupWhitelist(bot!.id),
+        db.getFeishuHistoryChats(),
       ]);
       setWhitelist(wl);
+      // 历史拉取群全局加载，按当前 bot 过滤展示
+      setHistoryChats(histChats.filter(c => c.bot_id === bot!.id));
       form.setFieldsValue({
         pushLevel: push?.push_level || 'disabled',
         p2pResponseEnabled: push?.p2p_response_enabled || false,
@@ -92,6 +101,32 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
       await db.deleteGroupWhitelist(id);
       loadConfig();
     } catch {}
+  };
+
+  // 历史拉取群管理：用户在前端填写群 chat_id，替代旧 /sethome 隐式写入 group_chat_id
+  const reloadHistoryChats = () => {
+    if (!bot) return;
+    db.getFeishuHistoryChats().then(all => setHistoryChats(all.filter(c => c.bot_id === bot.id))).catch(() => {});
+  };
+  const handleAddHistChat = async () => {
+    // chat_id 必填、备注可选；空 chat_id 直接忽略，避免误创建空记录
+    if (!bot || !histChatId.trim()) return;
+    try {
+      await db.createFeishuHistoryChat(bot.id, histChatId.trim(), histChatName.trim() || undefined);
+      setHistChatId('');
+      setHistChatName('');
+      reloadHistoryChats();
+    } catch (e: any) {
+      message.error('添加拉取群失败: ' + (e.message || '未知错误'));
+    }
+  };
+  const handleDeleteHistChat = async (id: number) => {
+    try {
+      await db.deleteFeishuHistoryChat(id);
+      reloadHistoryChats();
+    } catch (e: any) {
+      message.error('删除拉取群失败: ' + (e.message || '未知错误'));
+    }
   };
 
   const handleMoveWorkspace = async (workspaceId: number) => {
@@ -281,6 +316,17 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
             <Input type="number" min={0} max={3600} />
           </Form.Item>
         </Form>
+
+        {/* 历史消息拉取群：填写群 chat_id，机器人定期拉取这些群的历史消息 */}
+        <HistoryChatsCard
+          chats={historyChats}
+          chatId={histChatId}
+          chatName={histChatName}
+          onChatIdChange={setHistChatId}
+          onChatNameChange={setHistChatName}
+          onAdd={handleAddHistChat}
+          onDelete={handleDeleteHistChat}
+        />
         </div>
       )}
 
