@@ -558,17 +558,17 @@ pub struct HelpCardState {
     pub page: usize,
     /// 所有工作空间（工作空间页切换用）
     pub workspaces: Vec<WorkspaceItem>,
-    /// 已注册的可用执行器列表（工作空间页切换默认执行器用）。
+    /// 已注册的可用执行器列表（工作空间页切换默认响应执行器用）。
     /// listener 从 executor_registry.list_executors() 拉出，卡片层只读渲染成按钮排。
     pub available_executors: Vec<ExecutorOption>,
 }
 
-/// 可选执行器项（工作空间页「默认执行器」按钮排）。
+/// 可选执行器项（工作空间页「默认响应执行器」按钮排）。
 #[derive(Debug, Clone)]
 pub struct ExecutorOption {
     /// 执行器名（ExecutorType::as_str，如 "pi" / "claudecode"）
     pub name: String,
-    /// 是否为当前工作空间已配的默认执行器（primary 高亮）
+    /// 是否为当前工作空间已配的默认响应执行器（primary 高亮）
     pub is_current: bool,
 }
 
@@ -636,7 +636,7 @@ pub fn build_help_console_card(state: &HelpCardState) -> Card {
         "workspace" => build_workspace_page(builder, state),
         _ => build_status_page(builder, state),
     };
-    builder.note("💡 直接发消息即可让 AI 执行任务 | 点按钮原地操作").build()
+    builder.build()
 }
 
 /// 4 个 Tab 按钮，当前 Tab 高亮 primary。
@@ -721,7 +721,7 @@ fn pagination_buttons(kind: &str, page: usize, total_pages: usize) -> Vec<CardBu
     nav_btns
 }
 
-/// 工作空间页：当前工作空间 + 列表[切换] + 默认执行器按钮排 + 推送 3 按钮 + 设为推送目标。
+/// 工作空间页：当前工作空间 + 列表[切换] + 默认响应执行器按钮排 + 推送 3 按钮 + 设为推送目标。
 fn build_workspace_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
     builder = builder.markdown(&match &state.workspace {
         Some(w) => format!("**当前工作空间** {}（执行器 {}）", w.name, w.executor),
@@ -737,8 +737,10 @@ fn build_workspace_page(mut builder: CardBuilder, state: &HelpCardState) -> Card
         );
     }
     builder = builder.divider();
-    // 默认执行器选择：换行列出所有已注册执行器，当前配的 primary 高亮，点击即设为该 workspace 的默认执行器。
-    builder = builder.markdown("**默认执行器**");
+    // 默认响应执行器选择：换行列出所有已注册执行器，当前配的 primary 高亮，点击即设为该 workspace 的默认响应执行器。
+    // 文案叫「默认响应执行器」而非「默认执行器」——按钮点的不只是配 executor 字段，连 default_response_type 也一并切到 executor，
+    // 让 dispatch_default_response 真走执行器分支，文案和实际行为对齐，避免用户误以为只配了个名字。
+    builder = builder.markdown("**默认响应执行器**");
     if state.available_executors.is_empty() {
         builder = builder.markdown("_暂无已注册执行器_");
     } else {
@@ -1377,6 +1379,46 @@ mod tests {
         assert!(json.contains("act:/push result_only"), "应含推送级别按钮");
         assert!(json.contains("act:/sethome"), "应含设为推送目标");
         assert!(json.contains("pi"), "应显示执行器");
+    }
+
+    /// 工作空间页「默认响应执行器」按钮排：文案改名后不应再出现旧词「默认执行器」单独成段，
+    /// available_executors 非空时每个执行器渲染成 act:/setexecutor 按钮，当前配的 primary 高亮。
+    /// 底部 note「💡 直接发消息即可让 AI 执行任务」已删除，断言其不出现在任何页。
+    #[test]
+    fn test_build_help_console_card_workspace_default_response_executor_label() {
+        let state = HelpCardState {
+            current_group: "workspace".to_string(),
+            workspace: Some(WorkspaceSummary { id: 1, name: "my-app".to_string(), executor: "pi".to_string() }),
+            available_executors: vec![
+                ExecutorOption { name: "pi".to_string(), is_current: true },
+                ExecutorOption { name: "claudecode".to_string(), is_current: false },
+            ],
+            ..Default::default()
+        };
+        let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
+        // 新文案落地
+        assert!(json.contains("默认响应执行器"), "应使用新文案「默认响应执行器」");
+        // 旧文案不应残留——"默认执行器**" 严格匹配段落标题，改名后必须消失
+        assert!(!json.contains("**默认执行器**"), "旧文案「默认执行器」段落标题应已移除");
+        // 每个执行器按钮 value
+        assert!(json.contains("act:/setexecutor pi"), "pi 为当前执行器，应渲染按钮");
+        assert!(json.contains("act:/setexecutor claudecode"), "claudecode 亦应渲染为按钮");
+        // 底部 note 已删
+        assert!(!json.contains("直接发消息即可让"), "底部 note 已删除，不应再出现");
+        assert!(!json.contains("点按钮原地操作"), "底部 note 已删除，不应再出现");
+    }
+
+    /// 底部 note 删除对所有 Tab 生效：状态页也不应再出现旧 note 文案。
+    #[test]
+    fn test_build_help_console_card_status_page_note_removed() {
+        let state = HelpCardState {
+            current_group: "status".to_string(),
+            workspace: Some(WorkspaceSummary { id: 1, name: "my-app".to_string(), executor: "pi".to_string() }),
+            push_level: "all".to_string(),
+            ..Default::default()
+        };
+        let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
+        assert!(!json.contains("直接发消息即可让"), "状态页也不应出现已删除的底部 note");
     }
 
     /// 事项页：当前 workspace 的事项列表 + [执行] 按钮。
