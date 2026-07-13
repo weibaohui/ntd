@@ -228,11 +228,6 @@ export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = 
     }
   };
 
-  // ─── 复制成功回调 ───
-  const handleCopySuccess = (label: string) => {
-    message.success(`${label} 已复制`);
-  };
-
   const isFeishu = bot.bot_type === 'feishu';
   // historyChats 全局加载（含所有 bot），渲染时按当前 bot 过滤
   const botHistChats = historyChats.filter(c => c.bot_id === bot.id);
@@ -280,7 +275,6 @@ export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = 
               pushStatus={pushStatus}
               onPushLevelChange={handlePushLevelChange}
               onResponseEnabledChange={handleResponseEnabledChange}
-              onCopySuccess={handleCopySuccess}
             />
           )}
 

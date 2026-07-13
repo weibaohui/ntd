@@ -49,8 +49,15 @@ export function AssistantListTable({ bots, workspaces, onOpenConfig, onToggleEna
       dataIndex: 'app_id',
       key: 'app_id',
       width: 200,
-      render: (text: string) => (
-        <code style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{text}</code>
+      render: (text: string, record: AgentBot) => (
+        <div>
+          <code style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{text}</code>
+          {record.owner_open_id && (
+            <div>
+              <code style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }} title="所有者 open_id（推送目标，自动捕获）">{record.owner_open_id}</code>
+            </div>
+          )}
+        </div>
       ),
     },
     {

@@ -7,6 +7,8 @@ export interface AgentBot {
   bot_name: string;
   app_id: string;
   bot_open_id?: string;
+  /** 所有者 open_id（推送目标），扫码/首次私聊自动捕获；仅列表页展示 */
+  owner_open_id?: string;
   domain?: string;
   enabled: boolean;
   config: string;

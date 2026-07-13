@@ -27,10 +27,6 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
     group_require_mention: true,
     echo_reply: true,
   });
-  // 推送目标（所有者 open_id）只读展示用：由后端扫码创建/首次私聊自动捕获，
-  // 前端不再手动编辑，故无需纳入 form 保存——这里仅加载回填用于展示。
-  const [ownerOpenId, setOwnerOpenId] = useState('');
-
   useEffect(() => {
     if (open && bot) {
       loadConfig();
@@ -45,8 +41,6 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
         db.getGroupWhitelist(bot!.id),
       ]);
       setWhitelist(wl);
-      // 推送目标（所有者）只读回填展示
-      setOwnerOpenId(push?.owner_open_id || '');
       form.setFieldsValue({
         pushLevel: push?.push_level || 'disabled',
         p2pResponseEnabled: push?.p2p_response_enabled || false,
@@ -256,18 +250,9 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
         <div>
           {/* 推送目标说明：改为机器人所有者，扫码创建/首次私聊自动设置，无需手动填 ID。 */}
           <div style={{ marginBottom: 12, padding: '8px 12px', background: 'var(--color-fill-secondary)', borderRadius: 6, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-            💡 推送目标为机器人所有者，扫码创建或首次私聊时自动设置，无需手动填写。发送 <code style={{ padding: '1px 6px', background: 'var(--color-fill)', borderRadius: 4 }}>/sethome</code> 可查看当前推送目标。
+            💡 推送目标为机器人所有者，扫码创建或首次私聊时自动设置，无需手动填写；所有者 open_id 可在智能体列表页查看。
           </div>
           <Form form={form} layout="vertical">
-          {/* 推送目标（所有者 open_id）：自动捕获，只读展示，不参与保存。
-              用 state 回填而非 form 字段，避免共享 form 实例的回填不稳定问题。 */}
-          <Form.Item label="推送目标（所有者）" tooltip="机器人所有者 open_id，扫码创建或首次私聊时自动捕获">
-            <Input
-              value={ownerOpenId || '尚未设置（与机器人私聊一次即可自动捕获）'}
-              readOnly
-              placeholder="ou_xxxxxxxx"
-            />
-          </Form.Item>
           <Form.Item
             label="推送级别"
             name="pushLevel"
