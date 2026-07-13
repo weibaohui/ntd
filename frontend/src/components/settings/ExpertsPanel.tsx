@@ -3,8 +3,9 @@
 // 数据来源：后端 /api/experts 系列接口（utils/database/experts.ts 已封装）。
 // 布局参考 SkillsPanel，使用 PageCard 包装；详情使用 Drawer 弹出，避免跳转打断列表浏览。
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Button, Input, Empty, Spin, Drawer, Tag, Tooltip, Typography, App } from 'antd';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { Button, Input, Empty, Spin, Drawer, Tag, Tooltip, Typography, App, Modal, Dropdown } from 'antd';
+import type { MenuProps } from 'antd';
 import {
   TeamOutlined,
   UserOutlined,
@@ -12,6 +13,9 @@ import {
   SearchOutlined,
   FileTextOutlined,
   ThunderboltOutlined,
+  DownloadOutlined,
+  UploadOutlined,
+  FolderOpenOutlined,
 } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import * as db from '@/utils/database';
@@ -231,6 +235,8 @@ function ExpertDetailDrawer({ open, expertName, onClose }: {
   const [agentMd, setAgentMd] = useState<string>('');
   const [skills, setSkills] = useState<SkillMetadata[]>([]);
   const [loading, setLoading] = useState(false);
+  // 导出按钮 loading 态：与详情加载区分
+  const [exporting, setExporting] = useState(false);
 
   /** 按 expertName 并发加载详情、Agent MD、技能三组数据 */
   const loadDetail = useCallback(async (name: string) => {
@@ -266,6 +272,33 @@ function ExpertDetailDrawer({ open, expertName, onClose }: {
     }
   }, [open, expertName, loadDetail]);
 
+  /**
+   * 导出专家为 zip 文件。
+   * 调用后端导出接口，拿到 Blob 后创建临时 a 标签触发浏览器下载。
+   */
+  const handleExport = useCallback(async () => {
+    if (!expert) return;
+    setExporting(true);
+    try {
+      const blob = await db.exportExpert(expert.name);
+      // 创建临时 URL 并触发下载，文件名使用专家名称
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${expert.name}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      // 下载完成后清理临时 DOM 和 URL，避免内存泄漏
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      message.success('导出成功');
+    } catch (err: any) {
+      message.error('导出失败: ' + (err?.message || String(err)));
+    } finally {
+      setExporting(false);
+    }
+  }, [expert, message]);
+
   return (
     <Drawer
       title={expert ? getExpertDisplayName(expert) : '专家详情'}
@@ -273,6 +306,20 @@ function ExpertDetailDrawer({ open, expertName, onClose }: {
       onClose={onClose}
       width={640}
       styles={{ body: { padding: 16 } }}
+      extra={
+        expert && (
+          <Tooltip title="导出为 zip 包">
+            <Button
+              type="text"
+              icon={<DownloadOutlined />}
+              onClick={handleExport}
+              loading={exporting}
+            >
+              导出
+            </Button>
+          </Tooltip>
+        )
+      }
     >
       <Spin spinning={loading}>
         {expert && (
@@ -325,6 +372,12 @@ export function ExpertsPanel() {
   const [searchText, setSearchText] = useState('');
   // 当前选中的专家名称，用于控制详情抽屉的显隐与内容
   const [selectedExpertName, setSelectedExpertName] = useState<string | null>(null);
+  // 导入相关：隐藏的 file input ref
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+  // 目录导入弹窗状态
+  const [dirImportModalOpen, setDirImportModalOpen] = useState(false);
+  const [dirImportPath, setDirImportPath] = useState('');
 
   /** 从后端拉取专家列表并写入 state */
   const loadExperts = useCallback(async () => {
@@ -365,6 +418,74 @@ export function ExpertsPanel() {
     }
   }, [loadExperts, message]);
 
+  /**
+   * 处理 zip 文件上传导入。
+   * 从隐藏的 file input 读取文件，调用后端导入接口，完成后刷新列表。
+   */
+  const handleFileImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // 重置 input value，允许重复选择同一文件
+    e.target.value = '';
+    if (!file) return;
+    setImporting(true);
+    try {
+      const result = await db.importExpert(file);
+      if (result.errors.length > 0) {
+        message.warning(`导入完成：${result.errors.length} 条警告`);
+      } else {
+        message.success('导入成功');
+      }
+      await loadExperts();
+    } catch (err: any) {
+      message.error('导入失败: ' + (err?.message || String(err)));
+    } finally {
+      setImporting(false);
+    }
+  }, [loadExperts, message]);
+
+  /**
+   * 处理从本地目录导入。
+   * 打开弹窗让用户输入目录路径，提交后调用后端导入接口。
+   */
+  const handleDirImport = useCallback(async () => {
+    if (!dirImportPath.trim()) {
+      message.warning('请输入目录路径');
+      return;
+    }
+    setImporting(true);
+    try {
+      const result = await db.importExpertFromDirectory(dirImportPath.trim());
+      if (result.errors.length > 0) {
+        message.warning(`导入完成：${result.errors.length} 条警告`);
+      } else {
+        message.success('导入成功');
+      }
+      setDirImportModalOpen(false);
+      setDirImportPath('');
+      await loadExperts();
+    } catch (err: any) {
+      message.error('导入失败: ' + (err?.message || String(err)));
+    } finally {
+      setImporting(false);
+    }
+  }, [dirImportPath, loadExperts, message]);
+
+  // 导入下拉菜单：zip 上传 / 从目录导入
+  const importMenuItems: MenuProps['items'] = [
+    {
+      key: 'zip',
+      label: '上传 zip 包',
+      icon: <UploadOutlined />,
+      onClick: () => fileInputRef.current?.click(),
+    },
+    {
+      key: 'dir',
+      label: '从本地目录导入',
+      icon: <FolderOpenOutlined />,
+      onClick: () => setDirImportModalOpen(true),
+    },
+  ];
+
   // 按关键字过滤：名称、职业、描述任一命中即保留；空关键字时返回全量
   const filteredExperts = useMemo(() => {
     if (!searchText.trim()) return experts;
@@ -382,17 +503,31 @@ export function ExpertsPanel() {
       icon={<TeamOutlined />}
       title="专家"
       extra={
-        // 重新加载按钮：使用 type="text" 无边框样式，与 LeftRail 按钮风格一致
-        <Tooltip title="重新扫描 ~/.ntd/experts/ 目录">
-          <Button
-            type="text"
-            icon={<ReloadOutlined spin={reloading} />}
-            onClick={handleReload}
-            disabled={reloading}
-          >
-            重新加载
-          </Button>
-        </Tooltip>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {/* 导入下拉按钮：支持 zip 上传和从目录导入两种方式 */}
+          <Dropdown menu={{ items: importMenuItems }} placement="bottomRight">
+            <Tooltip title="导入专家">
+              <Button
+                type="text"
+                icon={<UploadOutlined />}
+                loading={importing}
+              >
+                导入
+              </Button>
+            </Tooltip>
+          </Dropdown>
+          {/* 重新加载按钮：使用 type="text" 无边框样式，与 LeftRail 按钮风格一致 */}
+          <Tooltip title="重新扫描 ~/.ntd/experts/ 目录">
+            <Button
+              type="text"
+              icon={<ReloadOutlined spin={reloading} />}
+              onClick={handleReload}
+              disabled={reloading}
+            >
+              重新加载
+            </Button>
+          </Tooltip>
+        </div>
       }
     >
       {/* 顶部搜索栏 + 统计 */}
@@ -432,6 +567,37 @@ export function ExpertsPanel() {
         expertName={selectedExpertName}
         onClose={() => setSelectedExpertName(null)}
       />
+      {/* 隐藏的 zip 上传：由 下拉菜单触发点击 */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".zip"
+        style={{ display: 'none' }}
+        onChange={handleFileImport}
+      />
+      {/* 目录导入弹窗：让用户输入本地目录路径，从 WorkBuddy 等位置导入 */}
+      <Modal
+        title="从本地目录导入专家"
+        open={dirImportModalOpen}
+        onOk={handleDirImport}
+        onCancel={() => { setDirImportModalOpen(false); setDirImportPath(''); }}
+        okText="导入"
+        cancelText="取消"
+        confirmLoading={importing}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
+            请输入专家定义目录的绝对路径，例如 WorkBuddy 插件目录。
+            <br />
+            目录下需包含 <code>.codebuddy-plugin/plugin.json</code> 文件。
+          </div>
+          <Input
+            placeholder="/path/to/expert-directory"
+            value={dirImportPath}
+            onChange={e => setDirImportPath(e.target.value)}
+          />
+        </div>
+      </Modal>
     </PageCard>
   );
 }

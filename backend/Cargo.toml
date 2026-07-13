@@ -8,7 +8,7 @@ rust-version = "1.81"
 license = "MIT"
 
 [dependencies]
-axum = { version = "0.8", features = ["ws", "macros"] }
+axum = { version = "0.8", features = ["ws", "macros", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 rust-embed = "8"
 serde = { version = "1", features = ["derive"] }
@@ -32,6 +32,7 @@ tower-http = { version = "0.6", features = ["trace", "cors", "timeout", "compres
 parking_lot = "0.12"
 command-group = { version = "5", features = ["with-tokio"] }
 zip = "2"
+tempfile = "3"
 prost = "0.13"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 quick_cache = "0.6"

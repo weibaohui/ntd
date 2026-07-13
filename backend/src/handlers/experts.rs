@@ -1,15 +1,20 @@
 //! 专家 API 路由处理函数
 //!
-//! 提供专家列表查询、详情查询、Agent MD 内容获取、头像资源访问等接口。
+//! 提供专家列表查询、详情查询、Agent MD 内容获取、头像资源访问、导入导出等接口。
 
-use axum::extract::{Path, State};
-use axum::http::{header, StatusCode};
+use axum::extract::{Multipart, Path as AxumPath, State};
+use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::IntoResponse;
 use axum::Router;
+use serde::{Deserialize, Serialize};
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use zip::write::FileOptions;
+use zip::ZipArchive;
 
-use crate::handlers::{AppError, AppState};
+use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::ApiResponse;
-use crate::expert::ExpertMetadata;
+use crate::expert::{ExpertMetadata, experts_dir, parse_plugin_json};
 
 /// `GET /api/experts`：获取所有专家列表
 ///
@@ -26,7 +31,7 @@ pub async fn get_experts(
 /// 返回指定名称的专家完整元数据。
 pub async fn get_expert(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    AxumPath(name): AxumPath<String>,
 ) -> Result<ApiResponse<ExpertMetadata>, AppError> {
     let expert = state
         .expert_manager
@@ -44,7 +49,7 @@ pub async fn get_expert(
 /// 返回完整的 MD 文件内容，用于执行时注入 prompt。
 pub async fn get_expert_agent_md(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    AxumPath(name): AxumPath<String>,
 ) -> Result<ApiResponse<String>, AppError> {
     let expert = state
         .expert_manager
@@ -71,7 +76,7 @@ pub async fn get_expert_agent_md(
 /// 返回专家绑定的技能列表，用于前端展示可用技能。
 pub async fn get_expert_skills(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    AxumPath(name): AxumPath<String>,
 ) -> Result<ApiResponse<Vec<crate::expert::SkillMetadata>>, AppError> {
     let _ = state
         .expert_manager
@@ -88,7 +93,7 @@ pub async fn get_expert_skills(
 /// 如果头像不存在，返回 404。
 pub async fn get_expert_avatar(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    AxumPath(name): AxumPath<String>,
 ) -> Result<impl IntoResponse, AppError> {
     let expert = state
         .expert_manager
@@ -142,6 +147,512 @@ pub async fn reload_experts(
     }
 }
 
+// ── 导入导出相关类型 ──────────────────────────────────────────────────
+
+/// 专家导入结果
+#[derive(Debug, Serialize)]
+pub struct ExpertImportResult {
+    /// 导入的专家名称
+    pub expert_name: String,
+    /// 导入的专家元数据（成功时返回）
+    pub expert: Option<ExpertMetadata>,
+    /// 错误列表
+    pub errors: Vec<String>,
+}
+
+/// 从目录导入请求
+#[derive(Debug, Deserialize)]
+pub struct ImportFromDirectoryRequest {
+    /// 专家目录的绝对路径
+    pub path: String,
+}
+
+// ── 导出 API ──────────────────────────────────────────────────────────
+
+/// `GET /api/experts/:name/export`：导出专家为 zip 文件
+///
+/// 将指定专家的整个目录打包为 zip 文件下载。
+/// 流式传输，不一次性加载整个 zip 到内存。
+pub async fn export_expert(
+    State(state): State<AppState>,
+    AxumPath(name): AxumPath<String>,
+) -> Result<impl IntoResponse, AppError> {
+    // 查找专家，获取其定义目录
+    let expert = state
+        .expert_manager
+        .get_expert_by_name(&name)
+        .ok_or(AppError::NotFound)?;
+
+    let expert_dir = PathBuf::from(&expert.definition_dir);
+
+    // 校验目录存在
+    if !expert_dir.exists() || !expert_dir.is_dir() {
+        return Err(AppError::NotFound);
+    }
+
+    let expert_name = expert.name.clone();
+    let expert_name_for_zip = expert_name.clone();
+
+    // 在 spawn_blocking 中构建 zip，避免阻塞 tokio worker
+    let zip_data = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, AppError> {
+        build_expert_zip(&expert_dir, &expert_name_for_zip)
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))??;
+
+    // 设置响应头
+    let filename = format!("{}.zip", expert_name);
+    let disposition = format!("attachment; filename=\"{}\"", filename);
+    let content_disposition = HeaderValue::from_str(&disposition)
+        .map_err(|e| AppError::Internal(format!("构造 Content-Disposition 失败: {}", e)))?;
+
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static("application/zip")),
+            (header::CONTENT_DISPOSITION, content_disposition),
+        ],
+        zip_data,
+    ))
+}
+
+/// 构建专家目录的 zip 归档
+///
+/// 递归遍历专家目录，将所有文件添加到 zip 中。
+/// zip 内的文件路径以专家名称作为顶层目录。
+fn build_expert_zip(expert_dir: &Path, expert_name: &str) -> Result<Vec<u8>, AppError> {
+    let mut zip_data = Vec::new();
+    {
+        let mut zip_writer = zip::ZipWriter::new(std::io::Cursor::new(&mut zip_data));
+        let options = FileOptions::<()>::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .unix_permissions(0o644);
+
+        add_dir_to_zip(&mut zip_writer, expert_dir, expert_name, &options)
+            .map_err(|e| AppError::Internal(format!("创建 zip 归档失败: {}", e)))?;
+
+        zip_writer
+            .finish()
+            .map_err(|e| AppError::Internal(format!("完成 zip 归档失败: {}", e)))?;
+    }
+    Ok(zip_data)
+}
+
+/// 递归将目录添加到 zip 归档
+///
+/// 遍历源目录的所有条目，文件直接写入，子目录递归处理。
+fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
+    zip_writer: &mut zip::ZipWriter<W>,
+    dir: &Path,
+    prefix: &str,
+    options: &FileOptions<()>,
+) -> std::io::Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        // read_dir 保证条目有效，file_name() 不可能为 None（根路径除外，但这里是子目录遍历）
+        #[allow(clippy::unwrap_used)]
+        let name = format!("{}/{}", prefix, path.file_name().unwrap().to_string_lossy());
+
+        if path.is_dir() {
+            add_dir_to_zip(zip_writer, &path, &name, options)?;
+        } else {
+            zip_writer.start_file(name, *options)?;
+            let mut file = std::fs::File::open(&path)?;
+            std::io::copy(&mut file, zip_writer)?;
+        }
+    }
+
+    Ok(())
+}
+
+// ── 导入 API ──────────────────────────────────────────────────────────
+
+/// `POST /api/experts/import`：从 zip 文件导入专家
+///
+/// 接收 multipart/form-data 上传的 zip 文件，解压并导入为新专家。
+/// 如果专家已存在则返回错误，不覆盖。
+pub async fn import_expert(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<ApiResponse<ExpertImportResult>, AppError> {
+    // 从 multipart 中提取 zip 文件数据
+    let mut zip_bytes: Option<Vec<u8>> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("解析 multipart 请求失败: {}", e)))?
+    {
+        let name = field.name().unwrap_or("").to_string();
+        if name == "file" {
+            zip_bytes = Some(
+                field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("读取上传文件失败: {}", e)))?
+                    .to_vec(),
+            );
+            break;
+        }
+    }
+
+    let zip_bytes = zip_bytes.ok_or_else(|| AppError::BadRequest("未找到上传的文件字段 'file'".to_string()))?;
+
+    let experts_dir_path = experts_dir().ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?;
+    let expert_manager = state.expert_manager.clone();
+
+    // 在 spawn_blocking 中执行解压和导入逻辑
+    let result = tokio::task::spawn_blocking(move || -> Result<ExpertImportResult, AppError> {
+        import_expert_from_zip_bytes(&zip_bytes, &experts_dir_path, &expert_manager)
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))??;
+
+    Ok(ApiResponse::ok(result))
+}
+
+/// 从 zip 字节数据导入专家
+///
+/// 解压到临时目录 → 校验结构 → 读取 name → 移动到目标目录 → 重新加载索引
+fn import_expert_from_zip_bytes(
+    zip_bytes: &[u8],
+    experts_dir: &Path,
+    expert_manager: &crate::expert::ExpertIndexManager,
+) -> Result<ExpertImportResult, AppError> {
+    // 确保专家根目录存在
+    std::fs::create_dir_all(experts_dir)
+        .map_err(|e| AppError::Internal(format!("创建专家目录失败: {}", e)))?;
+
+    // 创建临时目录用于解压
+    let temp_dir = tempfile::Builder::new()
+        .prefix("ntd-expert-import-")
+        .tempdir()
+        .map_err(|e| AppError::Internal(format!("创建临时目录失败: {}", e)))?;
+
+    // 解压 zip 到临时目录
+    let cursor = std::io::Cursor::new(zip_bytes);
+    let mut archive = ZipArchive::new(cursor)
+        .map_err(|e| AppError::BadRequest(format!("无效的 zip 文件: {}", e)))?;
+
+    extract_zip_to_dir(&mut archive, temp_dir.path())?;
+
+    // 查找包含 .codebuddy-plugin/plugin.json 的目录
+    let expert_src_dir = find_expert_root_dir(temp_dir.path())?;
+
+    // 解析 plugin.json 获取专家名称
+    let plugin_json_path = expert_src_dir.join(".codebuddy-plugin/plugin.json");
+    let plugin = parse_plugin_json(&plugin_json_path)
+        .map_err(|e| AppError::BadRequest(format!("解析 plugin.json 失败: {}", e)))?;
+
+    let expert_name = plugin.name;
+
+    // 校验专家名称安全性
+    if !is_safe_expert_name(&expert_name) {
+        return Err(AppError::BadRequest(format!("无效的专家名称: {}", expert_name)));
+    }
+
+    // 检查目标目录是否已存在
+    let target_dir = experts_dir.join(&expert_name);
+    if target_dir.exists() {
+        return Err(AppError::BadRequest(format!("专家 '{}' 已存在，不能覆盖", expert_name)));
+    }
+
+    // 移动目录到目标位置
+    move_directory(&expert_src_dir, &target_dir)
+        .map_err(|e| AppError::Internal(format!("移动专家目录失败: {}", e)))?;
+
+    // 重新加载该专家到索引
+    let load_result = expert_manager.reload_expert(&target_dir);
+    let mut errors = Vec::new();
+    if let Err(e) = load_result {
+        errors.push(format!("加载专家索引失败: {}", e));
+    }
+
+    // 获取导入后的专家元数据
+    let expert = expert_manager.get_expert_by_name(&expert_name);
+
+    Ok(ExpertImportResult {
+        expert_name,
+        expert,
+        errors,
+    })
+}
+
+/// 解压 zip 到指定目录
+///
+/// 包含路径遍历防护和解压炸弹保护。
+fn extract_zip_to_dir<R: std::io::Read + std::io::Seek>(
+    archive: &mut ZipArchive<R>,
+    target_dir: &Path,
+) -> Result<(), AppError> {
+    const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
+    const MAX_TOTAL_SIZE: u64 = 500 * 1024 * 1024;
+    let mut total_extracted: u64 = 0;
+
+    let target_canonical = target_dir
+        .canonicalize()
+        .map_err(|e| AppError::Internal(format!("解析目标目录失败: {}", e)))?;
+
+    for i in 0..archive.len() {
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| AppError::Internal(format!("读取 zip 条目失败: {}", e)))?;
+
+        let outpath = file.mangled_name();
+
+        // 拒绝绝对路径和包含父级引用的路径
+        if outpath.is_absolute() || outpath.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            return Err(AppError::BadRequest(format!(
+                "zip 中包含不安全的路径: {}",
+                outpath.display()
+            )));
+        }
+
+        let dest_path = target_dir.join(&outpath);
+
+        // 校验目标路径仍在目标目录内
+        if let Ok(dest_canonical) = dest_path.canonicalize() {
+            if !dest_canonical.starts_with(&target_canonical) {
+                return Err(AppError::BadRequest(format!(
+                    "zip 条目路径逃逸目标目录: {}",
+                    outpath.display()
+                )));
+            }
+        }
+
+        if file.is_dir() {
+            std::fs::create_dir_all(&dest_path)
+                .map_err(|e| AppError::Internal(format!("创建目录失败: {}", e)))?;
+        } else {
+            // 检查声明大小
+            if file.size() > MAX_FILE_SIZE {
+                return Err(AppError::BadRequest(format!(
+                    "zip 中文件过大: {} ({} bytes)",
+                    outpath.display(),
+                    file.size()
+                )));
+            }
+
+            if let Some(parent) = dest_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| AppError::Internal(format!("创建目录失败: {}", e)))?;
+            }
+
+            let mut outfile = std::fs::File::create(&dest_path)
+                .map_err(|e| AppError::Internal(format!("创建文件失败: {}", e)))?;
+
+            // 使用 take 限制单文件大小，防止解压炸弹
+            let mut reader = file.by_ref().take(MAX_FILE_SIZE + 1);
+            let written = std::io::copy(&mut reader, &mut outfile)?;
+            if written > MAX_FILE_SIZE {
+                std::fs::remove_file(&dest_path).ok();
+                return Err(AppError::BadRequest(format!(
+                    "解压时文件超过大小限制: {} ({} bytes)",
+                    outpath.display(),
+                    written
+                )));
+            }
+            total_extracted += written;
+            if total_extracted > MAX_TOTAL_SIZE {
+                return Err(AppError::BadRequest(format!(
+                    "解压总大小超过限制 ({} bytes)",
+                    MAX_TOTAL_SIZE
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// 在解压后的目录中查找专家根目录
+///
+/// 递归查找包含 .codebuddy-plugin/plugin.json 的目录。
+/// 如果根目录直接包含，则返回根目录；否则返回第一个找到的子目录。
+fn find_expert_root_dir(base_dir: &Path) -> Result<PathBuf, AppError> {
+    // 先检查根目录本身
+    let plugin_json = base_dir.join(".codebuddy-plugin/plugin.json");
+    if plugin_json.exists() && plugin_json.is_file() {
+        return Ok(base_dir.to_path_buf());
+    }
+
+    // 遍历一级子目录
+    let entries = std::fs::read_dir(base_dir)
+        .map_err(|e| AppError::Internal(format!("读取目录失败: {}", e)))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| AppError::Internal(format!("读取目录条目失败: {}", e)))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let plugin_json = path.join(".codebuddy-plugin/plugin.json");
+        if plugin_json.exists() && plugin_json.is_file() {
+            return Ok(path);
+        }
+
+        // 递归查找更深层级（zip 可能有多层包装）
+        if let Ok(found) = find_expert_root_dir(&path) {
+            return Ok(found);
+        }
+    }
+
+    Err(AppError::BadRequest(
+        "未找到有效的专家目录（缺少 .codebuddy-plugin/plugin.json）".to_string(),
+    ))
+}
+
+/// 校验专家名称是否安全
+///
+/// 防止路径遍历攻击：不允许路径分隔符、父级引用、控制字符等。
+fn is_safe_expert_name(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    // 不允许路径分隔符和父级引用
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return false;
+    }
+    // 不允许控制字符
+    if name.chars().any(|c| c.is_control()) {
+        return false;
+    }
+    true
+}
+
+/// 移动目录（跨文件系统时使用复制+删除）
+///
+/// 优先使用 rename（原子操作），如果跨设备失败则回退到复制+删除。
+fn move_directory(src: &Path, dst: &Path) -> std::io::Result<()> {
+    match std::fs::rename(src, dst) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            // EXDEV 表示跨文件系统，回退到复制+删除
+            if e.raw_os_error() == Some(18) {
+                copy_dir_all(src, dst)?;
+                std::fs::remove_dir_all(src)?;
+                Ok(())
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
+/// 递归复制目录
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+// ── 从目录导入 API ──────────────────────────────────────────────────
+
+/// `POST /api/experts/import-from-directory`：从本地目录导入专家
+///
+/// 接收 JSON body 指定的绝对路径，校验后复制到专家目录。
+/// 如果专家已存在则返回错误，不覆盖。
+pub async fn import_expert_from_directory(
+    State(state): State<AppState>,
+    ApiJson(req): ApiJson<ImportFromDirectoryRequest>,
+) -> Result<ApiResponse<ExpertImportResult>, AppError> {
+    let src_dir = PathBuf::from(&req.path);
+
+    // 校验源目录存在
+    if !src_dir.exists() || !src_dir.is_dir() {
+        return Err(AppError::BadRequest(format!(
+            "源目录不存在或不是目录: {}",
+            req.path
+        )));
+    }
+
+    let experts_dir_path = experts_dir().ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?;
+    let expert_manager = state.expert_manager.clone();
+
+    // 在 spawn_blocking 中执行复制和导入逻辑
+    let result = tokio::task::spawn_blocking(move || -> Result<ExpertImportResult, AppError> {
+        import_expert_from_dir(&src_dir, &experts_dir_path, &expert_manager)
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))??;
+
+    Ok(ApiResponse::ok(result))
+}
+
+/// 从本地目录导入专家
+///
+/// 校验结构 → 读取 name → 复制到目标目录 → 重新加载索引
+fn import_expert_from_dir(
+    src_dir: &Path,
+    experts_dir: &Path,
+    expert_manager: &crate::expert::ExpertIndexManager,
+) -> Result<ExpertImportResult, AppError> {
+    // 校验源目录包含 plugin.json
+    let plugin_json_path = src_dir.join(".codebuddy-plugin/plugin.json");
+    if !plugin_json_path.exists() || !plugin_json_path.is_file() {
+        return Err(AppError::BadRequest(
+            "源目录中未找到 .codebuddy-plugin/plugin.json".to_string(),
+        ));
+    }
+
+    // 解析 plugin.json 获取专家名称
+    let plugin = parse_plugin_json(&plugin_json_path)
+        .map_err(|e| AppError::BadRequest(format!("解析 plugin.json 失败: {}", e)))?;
+
+    let expert_name = plugin.name;
+
+    // 校验专家名称安全性
+    if !is_safe_expert_name(&expert_name) {
+        return Err(AppError::BadRequest(format!("无效的专家名称: {}", expert_name)));
+    }
+
+    // 确保专家根目录存在
+    std::fs::create_dir_all(experts_dir)
+        .map_err(|e| AppError::Internal(format!("创建专家目录失败: {}", e)))?;
+
+    // 检查目标目录是否已存在
+    let target_dir = experts_dir.join(&expert_name);
+    if target_dir.exists() {
+        return Err(AppError::BadRequest(format!("专家 '{}' 已存在，不能覆盖", expert_name)));
+    }
+
+    // 复制目录到目标位置
+    copy_dir_all(src_dir, &target_dir)
+        .map_err(|e| AppError::Internal(format!("复制专家目录失败: {}", e)))?;
+
+    // 重新加载该专家到索引
+    let load_result = expert_manager.reload_expert(&target_dir);
+    let mut errors = Vec::new();
+    if let Err(e) = load_result {
+        errors.push(format!("加载专家索引失败: {}", e));
+    }
+
+    // 获取导入后的专家元数据
+    let expert = expert_manager.get_expert_by_name(&expert_name);
+
+    Ok(ExpertImportResult {
+        expert_name,
+        expert,
+        errors,
+    })
+}
+
 /// 专家 API 路由定义
 pub fn expert_routes() -> axum::Router<AppState> {
     use axum::routing::{get, post};
@@ -152,5 +663,11 @@ pub fn expert_routes() -> axum::Router<AppState> {
         .route("/api/experts/{name}/agent-md", get(get_expert_agent_md))
         .route("/api/experts/{name}/skills", get(get_expert_skills))
         .route("/api/experts/{name}/avatar", get(get_expert_avatar))
+        .route("/api/experts/{name}/export", get(export_expert))
         .route("/api/experts/reload", post(reload_experts))
+        .route("/api/experts/import", post(import_expert))
+        .route(
+            "/api/experts/import-from-directory",
+            post(import_expert_from_directory),
+        )
 }

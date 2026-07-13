@@ -10,6 +10,8 @@ import {
 } from '@ant-design/icons';
 import XMarkdown from '@ant-design/x-markdown';
 import { ExecutorBadge } from './ExecutorBadge';
+// 导入专家徽章组件，用于展示 Todo 关联的专家/团队信息
+import { ExpertBadge } from './ExpertBadge';
 import { formatTokens, formatDuration } from '@/utils/format';
 import { CopyButton } from '@/components/CopyButton';
 
@@ -28,6 +30,8 @@ export interface TodoCardProps {
 
   /** Meta */
   executor?: string | null;
+  /** 关联的专家/团队名称（WorkBuddy 专家系统），存在时显示专家徽章 */
+  expert_name?: string | null;
   time: string; // already formatted relative time
   model?: string | null;
 
@@ -97,6 +101,7 @@ export const TodoCard = memo(function TodoCard({
   isSuccess,
   showResultSection,
   executor,
+  expert_name,
   time,
   model,
   projectName,
@@ -139,6 +144,8 @@ export const TodoCard = memo(function TodoCard({
         {/* Meta Row */}
         <div className="kanban-card-meta-row">
           {executor && <ExecutorBadge executor={executor} />}
+          {/* 专家徽章：仅当 expert_name 存在时显示，与 ExecutorBadge 保持一致的视觉风格 */}
+          {expert_name && <ExpertBadge expertName={expert_name} />}
           {projectName && (
             <Tag className="kanban-tag-badge" style={{ backgroundColor: '#e6f4ff', borderColor: '#91caff', color: '#1677ff' }}>
               {projectName}

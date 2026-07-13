@@ -1,10 +1,17 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Modal, Drawer, Button, App } from 'antd';
-import { ThunderboltOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { ThunderboltOutlined, ClockCircleOutlined, DownOutlined, UpOutlined } from '@ant-design/icons';
+// 导入工作空间切换器，用于选择任务所属工作空间
 import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
+// 导入执行器选择器，用于选择任务执行器
 import { ExecutorPickerPopover } from '@/components/common/ExecutorPickerPopover';
+// 导入专家选择器，用于在高级选项中选择执行专家
+import { ExpertPicker } from '@/components/todo-drawer/ExpertPicker';
+// 导入数据库操作工具，用于创建任务等 API 调用
 import * as db from '@/utils/database';
+// 导入默认执行器获取函数，用于判断是否需要额外更新执行器
 import { getDefaultExecutor } from '@/utils/executors';
+// 导入执行器记忆相关常量，用于持久化用户选择
 import { getLastExecutor, setLastExecutor } from '@/constants';
 
 interface QuickCaptureModalProps {
@@ -31,11 +38,21 @@ export function QuickCaptureModal({
   onCreated,
   onExecuted,
 }: QuickCaptureModalProps) {
+  // 获取全局 message 提示，用于操作反馈
   const { message } = App.useApp();
+  // 任务内容输入框的状态
   const [content, setContent] = useState('');
+  // 选中的工作空间 ID
   const [workspaceId, setWorkspaceId] = useState<number | null>(defaultWorkspaceId ?? null);
+  // 选中的执行器名称
   const [executor, setExecutor] = useState<string>(getLastExecutor);
+  // 选中的专家名称，null 表示未选择
+  const [expertName, setExpertName] = useState<string | null>(null);
+  // 高级选项区域是否展开，默认折叠以保持快速创建入口简洁
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  // 加载状态，用于按钮禁用和 loading 效果
   const [loading, setLoading] = useState(false);
+  // 文本输入框的 ref，用于自动聚焦
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // 打开时自动聚焦
@@ -52,10 +69,17 @@ export function QuickCaptureModal({
     }
   }, [open, defaultWorkspaceId]);
 
-  // 关闭时清空
+  // 关闭时清空所有状态，确保下次打开是干净的初始状态
   const handleClose = useCallback(() => {
+    // 清空输入内容
     setContent('');
+    // 重置加载状态
     setLoading(false);
+    // 重置专家选择，避免上次选择残留
+    setExpertName(null);
+    // 折叠高级选项，保持默认简洁状态
+    setShowAdvancedOptions(false);
+    // 调用父组件的关闭回调
     onClose();
   }, [onClose]);
 
@@ -67,24 +91,34 @@ export function QuickCaptureModal({
 
   // 创建任务（稍后执行）
   const handleCreateLater = useCallback(async () => {
+    // 去除首尾空白后再校验，避免纯空格的无效输入
     const trimmed = content.trim();
+    // 内容为空时给出提示，阻止创建
     if (!trimmed) {
       message.warning('请输入内容');
       return;
     }
+    // 未选择工作空间时给出提示，阻止创建
     if (!workspaceId) {
       message.warning('请选择工作空间');
       return;
     }
 
+    // 开始加载，禁用按钮防止重复提交
     setLoading(true);
     try {
+      // 从内容中提取简洁标题，用于列表展示
       const title = extractTitle(trimmed);
+      // 创建任务，传递 expertName（若有选择）以关联专家
       const todo = await db.createTodo(
         title,
         trimmed,
         [],
         workspaceId,
+        undefined,
+        undefined,
+        undefined,
+        expertName ?? undefined,
       );
 
       // 更新执行器（仅当用户选择的执行器与系统默认不同时更新，
@@ -99,36 +133,51 @@ export function QuickCaptureModal({
         );
       }
 
+      // 成功提示
       message.success('已创建任务');
+      // 通知父组件任务已创建
       onCreated?.(todo.id);
+      // 关闭弹窗
       handleClose();
     } catch (err: any) {
+      // 失败时展示错误信息
       message.error(err?.message || '创建失败');
     } finally {
+      // 无论成功失败都重置加载状态
       setLoading(false);
     }
-  }, [content, workspaceId, executor, message, onCreated, handleClose]);
+  }, [content, workspaceId, executor, expertName, message, onCreated, handleClose]);
 
   // 立即执行
   const handleExecuteNow = useCallback(async () => {
+    // 去除首尾空白后再校验，避免纯空格的无效输入
     const trimmed = content.trim();
+    // 内容为空时给出提示，阻止创建
     if (!trimmed) {
       message.warning('请输入内容');
       return;
     }
+    // 未选择工作空间时给出提示，阻止创建
     if (!workspaceId) {
       message.warning('请选择工作空间');
       return;
     }
 
+    // 开始加载，禁用按钮防止重复提交
     setLoading(true);
     try {
+      // 从内容中提取简洁标题，用于列表展示
       const title = extractTitle(trimmed);
+      // 创建任务，传递 expertName（若有选择）以关联专家
       const todo = await db.createTodo(
         title,
         trimmed,
         [],
         workspaceId,
+        undefined,
+        undefined,
+        undefined,
+        expertName ?? undefined,
       );
 
       // 更新执行器（仅当用户选择的执行器与系统默认不同时更新，
@@ -143,17 +192,22 @@ export function QuickCaptureModal({
         );
       }
 
-      // 立即执行
+      // 立即执行任务
       const result = await db.executeTodo(todo.id, executor);
+      // 成功提示
       message.success('已创建并开始执行');
+      // 通知父组件任务已执行
       onExecuted?.(result.task_id, result.record_id);
+      // 关闭弹窗
       handleClose();
     } catch (err: any) {
+      // 失败时展示错误信息
       message.error(err?.message || '执行失败');
     } finally {
+      // 无论成功失败都重置加载状态
       setLoading(false);
     }
-  }, [content, workspaceId, executor, message, onExecuted, handleClose]);
+  }, [content, workspaceId, executor, expertName, message, onExecuted, handleClose]);
 
   // Ctrl+Enter 快捷提交
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -188,12 +242,57 @@ export function QuickCaptureModal({
         }}
       />
 
-      {/* 工作空间 + 执行器选择：一行排列 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      {/* 工作空间选择器 */}
+      <div>
         <WorkspaceSwitcher
           value={workspaceId}
           onChange={(id) => setWorkspaceId(id)}
         />
+      </div>
+
+      {/* 高级选项：可折叠区域，默认折叠以保持快速创建入口简洁 */}
+      <div>
+        {/* 高级选项展开/折叠按钮，无边框样式符合用户偏好 */}
+        <button
+          type="button"
+          onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+            padding: 0,
+            border: 'none',
+            background: 'none',
+            color: 'var(--color-text-secondary)',
+            fontSize: 13,
+            cursor: 'pointer',
+          }}
+        >
+          {/* 根据展开状态显示不同的箭头图标 */}
+          {showAdvancedOptions ? (
+            <UpOutlined style={{ fontSize: 10 }} />
+          ) : (
+            <DownOutlined style={{ fontSize: 10 }} />
+          )}
+          {/* 展示当前选中的专家名称，未选择时显示"高级选项" */}
+          <span>
+            {expertName ? `专家：${expertName}` : '高级选项'}
+          </span>
+        </button>
+
+        {/* 展开时显示专家选择器 */}
+        {showAdvancedOptions && (
+          <div style={{ marginTop: 12 }}>
+            <ExpertPicker
+              value={expertName}
+              onChange={setExpertName}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* 执行器选择器 */}
+      <div>
         <ExecutorPickerPopover
           value={executor}
           onChange={handleExecutorChange}

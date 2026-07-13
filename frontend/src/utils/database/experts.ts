@@ -50,3 +50,40 @@ export async function getExpertSkills(name: string): Promise<SkillMetadata[]> {
 export async function reloadExperts(): Promise<LoadResult> {
   return unwrap(await api.post('/api/experts/reload'));
 }
+
+/**
+ * 导出专家为 zip 文件
+ *
+ * 将指定专家的整个目录打包为 zip 文件下载。
+ * 返回 Blob 类型的二进制数据，前端通过 a 标签触发下载。
+ */
+export async function exportExpert(name: string): Promise<Blob> {
+  const response = await api.get(`/api/experts/${encodeURIComponent(name)}/export`, {
+    responseType: 'blob',
+  });
+  return response.data;
+}
+
+/**
+ * 导入专家 zip 包
+ *
+ * 接收 multipart/form-data 上传的 zip 文件，解压并导入到 ~/.ntd/experts/ 目录。
+ * 返回导入结果（成功的专家信息 + 错误列表）。
+ */
+export async function importExpert(file: File): Promise<{ expert: ExpertMetadata; errors: string[] }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return unwrap(await api.post('/api/experts/import', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }));
+}
+
+/**
+ * 从本地目录导入专家
+ *
+ * 指定一个本地目录路径，将其复制到 ~/.ntd/experts/ 目录。
+ * 用于从 WorkBuddy 插件目录批量导入专家。
+ */
+export async function importExpertFromDirectory(path: string): Promise<{ expert: ExpertMetadata; errors: string[] }> {
+  return unwrap(await api.post('/api/experts/import-from-directory', { path }));
+}
