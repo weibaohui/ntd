@@ -12,7 +12,7 @@
 // - ExecutionRecordDrawer / BlackboardDrawer：执行详情弹窗/抽屉（外部引入）
 
 import { useState, useEffect } from 'react';
-import { Button, Tag, Modal, message } from 'antd';
+import { Button, Tag, Modal, message, Card, Input } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import * as dbLoops from '@/utils/database/loops';
@@ -41,6 +41,9 @@ export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = 
   const [groupWhitelist, setGroupWhitelist] = useState<WhitelistEntry[]>([]);
   const [whitelistOpenId, setWhitelistOpenId] = useState('');
   const [whitelistName, setWhitelistName] = useState('');
+  // 历史拉取群添加表单（chat_id + 备注），替代旧的 /sethome 隐式写入
+  const [histChatId, setHistChatId] = useState('');
+  const [histChatName, setHistChatName] = useState('');
   const [historySenders, setHistorySenders] = useState<FeishuSenderItem[]>([]);
 
   // 消息记录分页状态
@@ -200,12 +203,39 @@ export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = 
     }
   };
 
+  // ─── 历史拉取群管理：用户在前端填写群 chat_id，替代旧 /sethome 隐式写入 group_chat_id ───
+  const reloadHistoryChats = () => {
+    db.getFeishuHistoryChats().then(setHistoryChats).catch(() => {});
+  };
+  const handleAddHistChat = async () => {
+    // chat_id 必填、备注可选；空 chat_id 直接忽略，避免误创建空记录
+    if (!histChatId.trim()) return;
+    try {
+      await db.createFeishuHistoryChat(bot.id, histChatId.trim(), histChatName.trim() || undefined);
+      setHistChatId('');
+      setHistChatName('');
+      reloadHistoryChats();
+    } catch (e: any) {
+      message.error('添加拉取群失败: ' + (e.message || '未知错误'));
+    }
+  };
+  const handleDeleteHistChat = async (id: number) => {
+    try {
+      await db.deleteFeishuHistoryChat(id);
+      reloadHistoryChats();
+    } catch (e: any) {
+      message.error('删除拉取群失败: ' + (e.message || '未知错误'));
+    }
+  };
+
   // ─── 复制成功回调 ───
   const handleCopySuccess = (label: string) => {
     message.success(`${label} 已复制`);
   };
 
   const isFeishu = bot.bot_type === 'feishu';
+  // historyChats 全局加载（含所有 bot），渲染时按当前 bot 过滤
+  const botHistChats = historyChats.filter(c => c.bot_id === bot.id);
 
   return (
     <div className="bot-detail-page">
@@ -266,6 +296,30 @@ export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = 
               onAdd={handleAddWhitelist}
               onDelete={handleDeleteWhitelist}
             />
+          )}
+
+          {/* 历史消息拉取群（仅飞书）：用户填写要拉取历史的群 chat_id，替代旧 /sethome 隐式写入 */}
+          {isFeishu && (
+            <Card title="历史消息拉取群" size="small" style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 12 }}>
+                填写需要定期拉取历史消息的群 chat_id（形如 oc_xxxxxxxx）
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <Input size="small" placeholder="群 chat_id（oc_xxxxxxxx）" style={{ flex: 1 }} value={histChatId} onChange={e => setHistChatId(e.target.value)} />
+                <Input size="small" placeholder="群名称备注" style={{ width: 120 }} value={histChatName} onChange={e => setHistChatName(e.target.value)} />
+                <Button size="small" onClick={handleAddHistChat}>添加</Button>
+              </div>
+              {botHistChats.map(c => (
+                <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, marginBottom: 4 }}>
+                  <span style={{ flex: 1 }}>{c.chat_name || c.chat_id}</span>
+                  <span style={{ color: 'var(--color-text-tertiary)', fontSize: 11 }}>{c.chat_id.slice(0, 12)}...</span>
+                  <Button size="small" danger type="link" style={{ fontSize: 11, padding: 0 }} onClick={() => handleDeleteHistChat(c.id)}>删除</Button>
+                </div>
+              ))}
+              {botHistChats.length === 0 && (
+                <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>暂无拉取群</div>
+              )}
+            </Card>
           )}
         </div>
       )}

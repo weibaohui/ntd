@@ -1,4 +1,4 @@
-// 飞书推送配置卡片：推送级别、单聊/群聊响应开关、ID 展示。
+// 飞书推送配置卡片：推送级别、推送目标（所有者）展示、单聊/群聊响应开关。
 
 import { Card, Select, Switch, Input } from 'antd';
 import type { FeishuPushStatus } from '@/utils/database';
@@ -31,21 +31,16 @@ export function PushStatusCard({ pushStatus, onPushLevelChange, onResponseEnable
         />
         <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', display: 'flex', alignItems: 'center', gap: 4 }}>
           <span style={{ color: 'var(--color-info)' }}>💡</span>
-          在单聊或群聊中发送 <code style={{ padding: '1px 6px', background: 'var(--color-fill-secondary)', borderRadius: 4, fontSize: 11 }}>/sethome</code> 自动填写 ID
+          推送目标为所有者，首次私聊自动设置
         </span>
       </div>
 
-      {/* ID 展示行 */}
+      {/* 推送目标展示行：所有者 open_id，自动捕获，只读 */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ fontSize: 12, width: 60, color: 'var(--color-text-tertiary)' }}>单聊ID:</span>
-          <Input size="small" value={pushStatus.p2p_receive_id} style={{ flex: 1, fontSize: 12 }} />
-          <CopyButton type="text" size="small" text={pushStatus.p2p_receive_id} onCopy={() => onCopySuccess?.('p2p_receive_id')} />
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ fontSize: 12, width: 60, color: 'var(--color-text-tertiary)' }}>群ID:</span>
-          <Input size="small" value={pushStatus.group_chat_id || ''} style={{ flex: 1, fontSize: 12 }} />
-          <CopyButton type="text" size="small" text={pushStatus.group_chat_id || ''} onCopy={() => onCopySuccess?.('group_chat_id')} />
+          <span style={{ fontSize: 12, width: 60, color: 'var(--color-text-tertiary)' }}>推送目标:</span>
+          <Input size="small" value={pushStatus.owner_open_id || '未设置'} style={{ flex: 1, fontSize: 12 }} readOnly />
+          <CopyButton type="text" size="small" text={pushStatus.owner_open_id || ''} onCopy={() => onCopySuccess?.('owner_open_id')} />
         </div>
       </div>
 
