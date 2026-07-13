@@ -201,8 +201,8 @@ pub async fn create_todo(
         }
     }
 
-    // 落库 action_type/action_key（create_todo_with_extras 不支持这两个字段）
-    if req.action_type.is_some() || req.action_key.is_some() {
+    // 落库 action_type/action_key/expert_name（create_todo_with_extras 不支持这些字段）
+    if req.action_type.is_some() || req.action_key.is_some() || req.expert_name.is_some() {
         if let Err(e) = state.db.update_todo_full(crate::db::TodoUpdate {
             id,
             title,
@@ -218,8 +218,9 @@ pub async fn create_todo(
             auto_review_enabled: None,
             action_type: req.action_type.as_deref(),
             action_key: req.action_key.as_deref(),
+            expert_name: req.expert_name.as_deref(),
         }).await {
-            tracing::warn!("Failed to set action_type/action_key for todo {}: {}", id, e);
+            tracing::warn!("Failed to set action_type/action_key/expert_name for todo {}: {}", id, e);
         }
     }
 
@@ -383,6 +384,7 @@ pub async fn update_todo(
             auto_review_enabled: req.auto_review_enabled,
             action_type: req.action_type.as_deref(),
             action_key: req.action_key.as_deref(),
+            expert_name: req.expert_name.as_deref(),
         })
         .await
         .map_err(AppError::from)?;

@@ -293,6 +293,7 @@ fn mount_domain_routes() -> Router<AppState> {
         .merge(events_routes())
         .merge(blackboard::blackboard_routes())
         .merge(loop_::loop_routes())
+        .merge(experts::expert_routes())
 }
 
 /// 给 TraceLayer 用的 span 工厂：把 `request_id` / `method` / `uri` 直接挂在 span 字段上，

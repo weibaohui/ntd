@@ -31,6 +31,9 @@ pub struct TodoUpdate<'a> {
     /// Action 键值，与 action_type 配合唯一标识一个 action 模板 todo。
     /// 由 /api/actions/execute 用于查找或自动创建 action 模板 todo。
     pub action_key: Option<&'a str>,
+    /// 专家/团队名称（WorkBuddy plugin.json 中的 name 字段）。
+    /// 执行时自动加载对应的 Agent MD 和 Skills 注入 prompt。
+    pub expert_name: Option<&'a str>,
 }
 
 pub struct SchedulerUpdate<'a> {
@@ -539,6 +542,13 @@ impl Database {
         }
         if let Some(ak) = update.action_key {
             am.action_key = ActiveValue::Set(Some(ak.to_string()));
+        }
+        if let Some(en) = update.expert_name {
+            if en.is_empty() {
+                am.expert_name = ActiveValue::Set(None);
+            } else {
+                am.expert_name = ActiveValue::Set(Some(en.to_string()));
+            }
         }
         self.exec_update(am).await
     }
