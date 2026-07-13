@@ -721,7 +721,7 @@ fn pagination_buttons(kind: &str, page: usize, total_pages: usize) -> Vec<CardBu
     nav_btns
 }
 
-/// 工作空间页：当前工作空间 + 列表[切换] + 默认执行器按钮排 + 推送 3 按钮 + 设为推送目标。
+/// 工作空间页：当前工作空间 + 列表[切换] + 默认执行器按钮排 + 推送级别 3 按钮。
 fn build_workspace_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
     builder = builder.markdown(&match &state.workspace {
         Some(w) => format!("**当前工作空间** {}（执行器 {}）", w.name, w.executor),
@@ -754,13 +754,13 @@ fn build_workspace_page(mut builder: CardBuilder, state: &HelpCardState) -> Card
     builder = builder.divider();
     // 推送级别 3 按钮，当前级别 primary 高亮
     let level = state.push_level.as_str();
-    builder = builder.buttons(vec![
+    // 推送目标由系统自动捕获所有者 open_id，无需用户操作；回显 ou_xxx 对用户无意义，
+    // 故不再放「查看推送目标」按钮，工作空间页以推送级别 3 按钮收尾。
+    builder.buttons(vec![
         CardButton::new("关闭推送", if level == "disabled" { "primary" } else { "default" }, "act:/push disabled"),
         CardButton::new("仅结论", if level == "result_only" { "primary" } else { "default" }, "act:/push result_only"),
         CardButton::new("全部", if level == "all" { "primary" } else { "default" }, "act:/push all"),
-    ]);
-    // 推送目标已改为自动捕获所有者 open_id，按钮退化为只读查看（act:/sethome 回显当前所有者）
-    builder.buttons(vec![CardButton::default_btn("📍 查看推送目标", "act:/sethome")])
+    ])
 }
 
 /// 推送级别 → 中文标签。
@@ -1360,7 +1360,7 @@ mod tests {
         assert!(json.contains("关闭"), "默认/关闭推送级别时应显示关闭");
     }
 
-    /// 工作空间页：当前工作空间 + 列表[切换] + 推送 3 按钮 + 设为推送目标。
+    /// 工作空间页：当前工作空间 + 列表[切换] + 推送级别 3 按钮。
     #[test]
     fn test_build_help_console_card_workspace_page() {
         let state = HelpCardState {
@@ -1376,7 +1376,6 @@ mod tests {
         let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
         assert!(json.contains("act:/bind 2"), "非当前工作空间应有切换按钮（按 id）");
         assert!(json.contains("act:/push result_only"), "应含推送级别按钮");
-        assert!(json.contains("act:/sethome"), "应含设为推送目标");
         assert!(json.contains("pi"), "应显示执行器");
     }
 
