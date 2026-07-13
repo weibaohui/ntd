@@ -31,22 +31,6 @@ impl Database {
         })
     }
 
-    /// 遗留：p2p_receive_id 列在推送链路已不再读取（推送目标改用 owner_open_id）。
-    /// 本函数仅保留供级联删除测试造数据，待后续 PR 连同 feishu_push_targets 冗余列清理。
-    #[allow(dead_code)]
-    pub async fn set_p2p_receive_id(
-        &self,
-        bot_id: i64,
-        p2p_receive_id: &str,
-    ) -> Result<(), sea_orm::DbErr> {
-        let now = crate::models::utc_timestamp();
-        let mut am = self.get_or_create_push_target(bot_id).await?;
-        am.p2p_receive_id = ActiveValue::Set(p2p_receive_id.to_string());
-        am.updated_at = ActiveValue::Set(Some(now));
-        am.save(&self.conn).await?;
-        Ok(())
-    }
-
     /// Update push level for a bot.
     pub async fn update_feishu_push_level(
         &self,

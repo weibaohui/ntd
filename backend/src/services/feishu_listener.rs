@@ -2533,4 +2533,43 @@ mod tests {
         assert!(FeishuListener::is_message_allowed("group", true, &cfg));
     }
 
+    #[tokio::test]
+    async fn test_capture_owner_if_p2p_writes_only_for_p2p() {
+        // 私聊消息：sender 被捕获为 owner；群聊消息不覆盖已锁定的 owner
+        use crate::db::Database;
+        use crate::feishu::ChannelMessage;
+        use std::sync::Arc;
+        let db = Arc::new(Database::new(":memory:").await.unwrap());
+        let bot_id = db
+            .create_agent_bot("feishu", "t", "app", "secret", None, None, 1)
+            .await
+            .unwrap();
+        let p2p_msg = ChannelMessage {
+            id: "om1".to_string(),
+            sender: "ou_owner".to_string(),
+            sender_type: None,
+            content: "hi".to_string(),
+            channel: String::new(),
+            timestamp: 0,
+            chat_type: Some("p2p".to_string()),
+            mentioned_open_ids: vec![],
+        };
+        FeishuListener::capture_owner_if_p2p(&db, bot_id, &p2p_msg, "p2p").await;
+        assert_eq!(
+            db.get_owner_open_id(bot_id).await.unwrap(),
+            Some("ou_owner".to_string())
+        );
+        // 群聊：不捕获，防群里他人覆盖已锁定的所有者
+        let group_msg = ChannelMessage {
+            sender: "ou_other".to_string(),
+            channel: "oc_group".to_string(),
+            ..p2p_msg
+        };
+        FeishuListener::capture_owner_if_p2p(&db, bot_id, &group_msg, "group").await;
+        assert_eq!(
+            db.get_owner_open_id(bot_id).await.unwrap(),
+            Some("ou_owner".to_string())
+        );
+    }
+
 }

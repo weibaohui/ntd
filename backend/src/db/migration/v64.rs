@@ -49,6 +49,9 @@ impl Migration for V64AddAgentBotOwnerOpenId {
         // 仅灌 owner_open_id 仍为空、且对应 p2p_receive_id 非空的 bot，
         // 避免覆盖已通过扫码/首次私聊写入的值。
         Self::backfill_owner_open_id_from_push_targets(db).await?;
+        // 兜底：扫码创建但未跑过 /sethome 的 bot，其 owner open_id 错位存在 bot_open_id，
+        // 这里补灌，避免升级后定时推送静默丢失（否则要等 owner 私聊一次才捕获）。
+        Self::backfill_owner_open_id_from_bot_open_id(db).await?;
 
         Ok(())
     }
@@ -88,5 +91,71 @@ impl V64AddAgentBotOwnerOpenId {
             tracing::info!("V64: 无需迁移的存量推送目标");
         }
         Ok(())
+    }
+
+    /// 兜底回填：从 agent_bots.bot_open_id 灌入 owner_open_id。
+    /// bot_open_id 对扫码创建的 bot 存的是扫码人 open_id（即所有者；历史字段语义错位为「bot 自己」）。
+    /// 仅灌 ou_ 开头的值，避免误灌空串或非 open_id 内容；owner_open_id 已有值则不覆盖。
+    async fn backfill_owner_open_id_from_bot_open_id(
+        db: &Database,
+    ) -> Result<(), sea_orm::DbErr> {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        // LIKE 'ou_%' 过滤：只有扫码人 open_id（ou_ 前缀）才灌，空串/异常值跳过
+        let result = db
+            .conn
+            .execute(Statement::from_string(
+                DbBackend::Sqlite,
+                "UPDATE agent_bots
+                 SET owner_open_id = bot_open_id
+                 WHERE owner_open_id IS NULL
+                   AND bot_open_id LIKE 'ou_%'",
+            ))
+            .await?;
+        if result.rows_affected() > 0 {
+            tracing::info!(
+                "V64: 已把 {} 个 bot 的 bot_open_id 兜底迁移到 owner_open_id",
+                result.rows_affected()
+            );
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod v64_tests {
+    use super::*;
+    use crate::db::Database;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    async fn fresh_db() -> Database {
+        Database::new(":memory:").await.expect(":memory: db must open")
+    }
+
+    #[tokio::test]
+    async fn test_backfill_p2p_first_then_bot_open_id() {
+        // 双源 backfill：p2p_receive_id 优先，bot_open_id 兜底
+        let db = fresh_db().await;
+        // bot A：扫码(bot_open_id) + 跑过 /sethome(p2p_receive_id)
+        let a = db.create_agent_bot("feishu", "a", "app", "secret", Some("ou_scan_a".to_string()), None, 1).await.unwrap();
+        // bot B：只扫码(bot_open_id)，没 /sethome
+        let b = db.create_agent_bot("feishu", "b", "app2", "secret", Some("ou_scan_b".to_string()), None, 1).await.unwrap();
+        // create_agent_bot 新逻辑会把 bot_open_id 同步写进 owner_open_id，清空以模拟升级前
+        db.conn.execute(Statement::from_string(DbBackend::Sqlite, "UPDATE agent_bots SET owner_open_id = NULL")).await.unwrap();
+        // 给 bot A 造 p2p_receive_id（update_feishu_push_level 建行 + 补字段）
+        db.update_feishu_push_level(a, "result_only").await.unwrap();
+        db.conn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE feishu_push_targets SET p2p_receive_id = 'ou_sethome_a' WHERE bot_id = ?",
+            [a.into()],
+        )).await.unwrap();
+
+        V64AddAgentBotOwnerOpenId::backfill_owner_open_id_from_push_targets(&db).await.unwrap();
+        V64AddAgentBotOwnerOpenId::backfill_owner_open_id_from_bot_open_id(&db).await.unwrap();
+
+        // A：p2p_receive_id 优先灌入，兜底不再覆盖
+        assert_eq!(db.get_owner_open_id(a).await.unwrap(), Some("ou_sethome_a".to_string()));
+        // B：无 p2p_receive_id，兜底从 bot_open_id 灌入
+        assert_eq!(db.get_owner_open_id(b).await.unwrap(), Some("ou_scan_b".to_string()));
     }
 }

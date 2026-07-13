@@ -231,4 +231,25 @@ mod owner_open_id_tests {
         let db = fresh_db().await;
         assert_eq!(db.get_owner_open_id(9999).await.unwrap(), None);
     }
+
+    #[tokio::test]
+    async fn test_get_owner_open_id_treats_empty_string_as_unset() {
+        // owner_open_id 为空串（脏数据）应与 NULL 同等视为未设置，返回 None
+        let db = fresh_db().await;
+        let bot_id = db
+            .create_agent_bot("feishu", "t", "app", "secret", None, None, 1)
+            .await
+            .unwrap();
+        // create_agent_bot 对非扫码 bot 写 NULL；手动置空串模拟脏数据
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        db.conn
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE agent_bots SET owner_open_id = '' WHERE id = ?",
+                [bot_id.into()],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(db.get_owner_open_id(bot_id).await.unwrap(), None);
+    }
 }
