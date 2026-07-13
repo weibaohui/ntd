@@ -31,7 +31,9 @@ impl Database {
         })
     }
 
-    /// Set the p2p (single chat) receive ID for a bot. Only touches p2p_receive_id.
+    /// 遗留：p2p_receive_id 列在推送链路已不再读取（推送目标改用 owner_open_id）。
+    /// 本函数仅保留供级联删除测试造数据，待后续 PR 连同 feishu_push_targets 冗余列清理。
+    #[allow(dead_code)]
     pub async fn set_p2p_receive_id(
         &self,
         bot_id: i64,
@@ -40,20 +42,6 @@ impl Database {
         let now = crate::models::utc_timestamp();
         let mut am = self.get_or_create_push_target(bot_id).await?;
         am.p2p_receive_id = ActiveValue::Set(p2p_receive_id.to_string());
-        am.updated_at = ActiveValue::Set(Some(now));
-        am.save(&self.conn).await?;
-        Ok(())
-    }
-
-    /// Set the group chat ID for a bot. Only touches group_chat_id.
-    pub async fn set_group_chat_id(
-        &self,
-        bot_id: i64,
-        group_chat_id: &str,
-    ) -> Result<(), sea_orm::DbErr> {
-        let now = crate::models::utc_timestamp();
-        let mut am = self.get_or_create_push_target(bot_id).await?;
-        am.group_chat_id = ActiveValue::Set(group_chat_id.to_string());
         am.updated_at = ActiveValue::Set(Some(now));
         am.save(&self.conn).await?;
         Ok(())
@@ -68,20 +56,6 @@ impl Database {
         let now = crate::models::utc_timestamp();
         let mut am = self.get_or_create_push_target(bot_id).await?;
         am.push_level = ActiveValue::Set(push_level.to_string());
-        am.updated_at = ActiveValue::Set(Some(now));
-        am.save(&self.conn).await?;
-        Ok(())
-    }
-
-    /// Update receive_id_type (send type) for a bot.
-    pub async fn update_receive_id_type(
-        &self,
-        bot_id: i64,
-        receive_id_type: &str,
-    ) -> Result<(), sea_orm::DbErr> {
-        let now = crate::models::utc_timestamp();
-        let mut am = self.get_or_create_push_target(bot_id).await?;
-        am.receive_id_type = ActiveValue::Set(receive_id_type.to_string());
         am.updated_at = ActiveValue::Set(Some(now));
         am.save(&self.conn).await?;
         Ok(())
@@ -115,37 +89,27 @@ impl Database {
         let mut map: HashMap<Option<i64>, Vec<TargetEntry>> = HashMap::new();
 
         for t in targets.into_iter().filter(|t| t.push_level != "disabled") {
-            let receive_id = match t.receive_id_type.as_str() {
-                "chat_id" => t.group_chat_id.clone(),
-                _ => t.p2p_receive_id.clone(),
-            };
-            if receive_id.is_empty() {
+            // 推送目标恒为 bot 所有者私聊（owner_open_id），不再走群聊/私聊二选一分支。
+            // receive_id_type 固定为 open_id，从根本上消除了旧的 receive_id_type 开关 bug。
+            let Some(owner) = self.get_owner_open_id(t.bot_id).await? else {
+                // owner_open_id 未设置：定时/Web 触发的任务无处可推，记 warn 跳过（决策点5）。
+                // 提示与 bot 私聊一次以触发兜底捕获，而非静默丢失。
+                tracing::warn!(
+                    "[feishu-push] bot {} 的 owner_open_id 未设置，跳过推送（请先与 bot 私聊一次）",
+                    t.bot_id
+                );
                 continue;
-            }
-
-            // Get bot's workspace_id directly from agent_bots table
+            };
+            // workspace_id 直接取自 agent_bots 表
             let workspace_id = self.get_agent_bot_workspace_id(t.bot_id).await?;
-
-            let entry = map.entry(workspace_id).or_default();
-            entry.push((t.bot_id, receive_id, t.receive_id_type.clone(), t.push_level.clone()));
+            map.entry(workspace_id).or_default().push((
+                t.bot_id,
+                owner,
+                "open_id".to_string(),
+                t.push_level.clone(),
+            ));
         }
 
         Ok(map)
-    }
-
-
-
-    /// Get all (bot_id, group_chat_id) pairs where group_chat_id is set.
-    pub async fn get_group_chat_ids(
-        &self,
-    ) -> Result<Vec<(i64, String)>, sea_orm::DbErr> {
-        let targets = feishu_push_targets::Entity::find()
-            .all(&self.conn)
-            .await?;
-        Ok(targets
-            .into_iter()
-            .filter(|t| !t.group_chat_id.is_empty())
-            .map(|t| (t.bot_id, t.group_chat_id))
-            .collect())
     }
 }

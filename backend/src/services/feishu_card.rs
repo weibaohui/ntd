@@ -759,7 +759,8 @@ fn build_workspace_page(mut builder: CardBuilder, state: &HelpCardState) -> Card
         CardButton::new("仅结论", if level == "result_only" { "primary" } else { "default" }, "act:/push result_only"),
         CardButton::new("全部", if level == "all" { "primary" } else { "default" }, "act:/push all"),
     ]);
-    builder.buttons(vec![CardButton::default_btn("📍 设为推送目标", "act:/sethome")])
+    // 推送目标已改为自动捕获所有者 open_id，按钮退化为只读查看（act:/sethome 回显当前所有者）
+    builder.buttons(vec![CardButton::default_btn("📍 查看推送目标", "act:/sethome")])
 }
 
 /// 推送级别 → 中文标签。

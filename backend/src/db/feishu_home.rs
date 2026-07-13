@@ -3,6 +3,10 @@ use crate::db::Database;
 use crate::db::entity::feishu_homes;
 
 impl Database {
+    /// 遗留：feishu_homes 表原为 /sethome 记录推送目标而设。
+    /// 推送目标已改用 agent_bots.owner_open_id，sethome 退役后本函数仅测试使用，
+    /// 保留供级联删除测试造数据，待后续 PR 连同 feishu_homes 表一并清理。
+    #[allow(dead_code)]
     pub async fn set_feishu_home(
         &self,
         bot_id: i64,
@@ -46,6 +50,8 @@ impl Database {
         }
     }
 
+    /// 遗留：同 set_feishu_home，仅测试使用（级联删除验证）。待后续 PR 清理。
+    #[allow(dead_code)]
     pub async fn get_feishu_home(
         &self,
         bot_id: i64,

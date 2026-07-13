@@ -513,6 +513,9 @@ pub async fn update_agent_bot_config(
 pub struct FeishuPushStatus {
     pub bot_id: i64,
     pub push_level: String,
+    /// 推送目标（机器人所有者 open_id）：扫码创建或首次私聊时自动捕获，
+    /// 是推送的权威来源。前端据此只读展示当前推送目标。
+    pub owner_open_id: Option<String>,
     pub p2p_receive_id: String,
     pub group_chat_id: String,
     pub receive_id_type: String,
@@ -526,9 +529,7 @@ pub struct FeishuPushStatus {
 pub struct UpdateFeishuPushRequest {
     pub bot_id: i64,
     pub push_level: Option<String>,
-    pub p2p_receive_id: Option<String>,
-    pub group_chat_id: Option<String>,
-    pub receive_id_type: Option<String>,
+    // 推送目标（owner_open_id）由系统自动捕获，不再接受前端手动填单聊/群聊 ID 与 receive_id_type
     pub p2p_response_enabled: Option<bool>,
     pub group_response_enabled: Option<bool>,
     pub p2p_debounce_secs: Option<i64>,
@@ -552,6 +553,8 @@ pub async fn get_feishu_push(
         statuses.push(FeishuPushStatus {
             bot_id: bot.id,
             push_level: target.as_ref().map(|t| t.push_level.clone()).unwrap_or_else(|| "disabled".to_string()),
+            // 推送目标改读 owner_open_id（自动捕获），不再依赖 p2p_receive_id
+            owner_open_id: bot.owner_open_id.clone(),
             p2p_receive_id: target.as_ref().map(|t| t.p2p_receive_id.clone()).unwrap_or_default(),
             group_chat_id: target.as_ref().map(|t| t.group_chat_id.clone()).unwrap_or_default(),
             receive_id_type: target.as_ref().map(|t| t.receive_id_type.clone()).unwrap_or_else(|| "open_id".to_string()),
@@ -572,15 +575,7 @@ pub async fn update_feishu_push(
     if let Some(level) = &req.push_level {
         state.db.update_feishu_push_level(req.bot_id, level).await.map_err(|e| AppError::Internal(e.to_string()))?;
     }
-    if let Some(p2p_id) = &req.p2p_receive_id {
-        state.db.set_p2p_receive_id(req.bot_id, p2p_id).await.map_err(|e| AppError::Internal(e.to_string()))?;
-    }
-    if let Some(group_id) = &req.group_chat_id {
-        state.db.set_group_chat_id(req.bot_id, group_id).await.map_err(|e| AppError::Internal(e.to_string()))?;
-    }
-    if let Some(rid_type) = &req.receive_id_type {
-        state.db.update_receive_id_type(req.bot_id, rid_type).await.map_err(|e| AppError::Internal(e.to_string()))?;
-    }
+    // 推送目标不再由此接口手动设置（改由 owner_open_id 自动捕获），故无 p2p/group/receive_id_type 分支
 
     if let Some(p2p_enabled) = req.p2p_response_enabled {
         state.db.set_feishu_response_enabled(req.bot_id, "p2p", p2p_enabled).await.map_err(|e| AppError::Internal(e.to_string()))?;
@@ -602,10 +597,13 @@ pub async fn update_feishu_push(
     let group_enabled = state.db.get_feishu_response_enabled(req.bot_id, "group").await.unwrap_or(false);
     let p2p_debounce = state.db.get_debounce_secs(req.bot_id, "p2p").await.unwrap_or(20);
     let group_debounce = state.db.get_debounce_secs(req.bot_id, "group").await.unwrap_or(20);
+    // 推送目标（所有者）回读，供前端展示
+    let owner_open_id = state.db.get_owner_open_id(req.bot_id).await.ok().flatten();
 
     Ok(ApiResponse::ok(FeishuPushStatus {
         bot_id: req.bot_id,
         push_level: updated.as_ref().map(|t| t.push_level.clone()).unwrap_or_default(),
+        owner_open_id,
         p2p_receive_id: updated.as_ref().map(|t| t.p2p_receive_id.clone()).unwrap_or_default(),
         group_chat_id: updated.as_ref().map(|t| t.group_chat_id.clone()).unwrap_or_default(),
         receive_id_type: updated.as_ref().map(|t| t.receive_id_type.clone()).unwrap_or_else(|| "open_id".to_string()),

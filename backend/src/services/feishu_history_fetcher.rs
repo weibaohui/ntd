@@ -106,10 +106,10 @@ impl FeishuHistoryFetcher {
             loop {
                 ticker.tick().await;
 
-                // Collect all chats to fetch from both sources
+                // 收集要拉取历史的群：仅来自 feishu_history_chats（前端「历史消息」显式配置）。
+                // 不再复用 feishu_push_targets.group_chat_id——推送目标已改为 owner_open_id 自动捕获、
+                // sethome 退役，群历史拉取的群 ID 统一由前端 HistoryTable 填写，职责单一。
                 let mut chats_to_fetch: Vec<ChatToFetch> = Vec::new();
-
-                // 1. Get chats from feishu_history_chats table
                 for (bot_id, _, _) in &bots {
                     if let Ok(history_chats) = self.ctx.db.get_enabled_feishu_history_chats(*bot_id).await {
                         for chat in history_chats {
@@ -117,19 +117,6 @@ impl FeishuHistoryFetcher {
                                 bot_id: *bot_id,
                                 chat_id: chat.chat_id,
                             });
-                        }
-                    }
-                }
-
-                // 2. Get chats from feishu_push_targets table (group chat only)
-                if let Ok(push_targets) = self.ctx.db.get_group_chat_ids().await {
-                    for (bot_id, chat_id) in push_targets {
-                        // Avoid duplicates
-                        if !chats_to_fetch
-                            .iter()
-                            .any(|c| c.bot_id == bot_id && c.chat_id == chat_id)
-                        {
-                            chats_to_fetch.push(ChatToFetch { bot_id, chat_id });
                         }
                     }
                 }
