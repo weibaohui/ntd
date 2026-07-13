@@ -295,7 +295,7 @@ pub enum ExpertError {
 }
 
 /// 加载结果
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct LoadResult {
     /// 成功加载的专家数量
     pub loaded_count: usize,

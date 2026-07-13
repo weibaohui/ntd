@@ -5,8 +5,9 @@
 use axum::extract::{Path, State};
 use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
+use axum::Router;
 
-use crate::handlers::{ApiJson, AppError, AppState};
+use crate::handlers::{AppError, AppState};
 use crate::models::ApiResponse;
 use crate::expert::ExpertMetadata;
 
@@ -59,7 +60,7 @@ pub async fn get_expert_agent_md(
         .get_agent_md_content(&agent_name)
         .map_err(|e| match e {
             crate::expert::ExpertError::AgentNotFound(_) => AppError::NotFound,
-            _ => AppError::InternalServerError,
+            _ => AppError::Internal("加载 Agent MD 内容失败".to_string()),
         })?;
 
     Ok(ApiResponse::ok(md_content))
@@ -101,7 +102,7 @@ pub async fn get_expert_avatar(
         return Err(AppError::NotFound);
     }
 
-    let content = std::fs::read(&full_path).map_err(|_| AppError::InternalServerError)?;
+    let content = std::fs::read(&full_path).map_err(|e| AppError::Internal(format!("读取头像文件失败: {}", e)))?;
 
     // 根据文件扩展名推断 MIME 类型
     let ext = full_path.extension().and_then(|e| e.to_str()).unwrap_or("png");
@@ -147,9 +148,9 @@ pub fn expert_routes() -> axum::Router<AppState> {
 
     Router::new()
         .route("/api/experts", get(get_experts))
-        .route("/api/experts/:name", get(get_expert))
-        .route("/api/experts/:name/agent-md", get(get_expert_agent_md))
-        .route("/api/experts/:name/skills", get(get_expert_skills))
-        .route("/api/experts/:name/avatar", get(get_expert_avatar))
+        .route("/api/experts/{name}", get(get_expert))
+        .route("/api/experts/{name}/agent-md", get(get_expert_agent_md))
+        .route("/api/experts/{name}/skills", get(get_expert_skills))
+        .route("/api/experts/{name}/avatar", get(get_expert_avatar))
         .route("/api/experts/reload", post(reload_experts))
 }

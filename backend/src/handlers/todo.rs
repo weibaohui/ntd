@@ -282,9 +282,8 @@ pub async fn create_todo(
         created_at: now.clone(),
         updated_at: now,
         tag_ids: req.tag_ids.clone(),
-        // executor_name 在创建前已解析（见函数前段），这里直接复用，
-        // 与写入 DB 的值是同一个，确保返回值与落库值一致。
         executor: Some(executor_name),
+        expert_name: req.expert_name.clone(),
         scheduler_enabled,
         scheduler_config: scheduler_config.clone(),
         scheduler_timezone: scheduler_timezone.clone(),

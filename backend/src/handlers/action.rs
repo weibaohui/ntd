@@ -163,6 +163,7 @@ async fn find_or_create_todo(
             prompt: &req.prompt,
             status: crate::models::TodoStatus::Pending,
             executor: None,
+            expert_name: None,
             scheduler_enabled: None,
             scheduler_config: None,
             scheduler_timezone: None,
