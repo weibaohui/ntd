@@ -274,29 +274,40 @@ export function QuickCaptureModal({
           ) : (
             <DownOutlined style={{ fontSize: 10 }} />
           )}
-          {/* 展示当前选中的专家名称，未选择时显示"高级选项" */}
+          {/* 展示当前选中的执行器和专家信息，未选择时显示"高级选项" */}
           <span>
-            {expertName ? `专家：${expertName}` : '高级选项'}
+            {expertName
+              ? `执行器 + 专家`
+              : '高级选项'}
           </span>
         </button>
 
-        {/* 展开时显示专家选择器 */}
+        {/* 展开时显示执行器和专家选择器 */}
         {showAdvancedOptions && (
-          <div style={{ marginTop: 12 }}>
-            <ExpertPicker
-              value={expertName}
-              onChange={setExpertName}
-            />
+          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {/* 执行器选择器 */}
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 6 }}>
+                执行器
+              </div>
+              <ExecutorPickerPopover
+                value={executor}
+                onChange={handleExecutorChange}
+              />
+            </div>
+
+            {/* 专家选择器 */}
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 6 }}>
+                专家/团队
+              </div>
+              <ExpertPicker
+                value={expertName}
+                onChange={setExpertName}
+              />
+            </div>
           </div>
         )}
-      </div>
-
-      {/* 执行器选择器 */}
-      <div>
-        <ExecutorPickerPopover
-          value={executor}
-          onChange={handleExecutorChange}
-        />
       </div>
 
       {/* 操作按钮 */}
