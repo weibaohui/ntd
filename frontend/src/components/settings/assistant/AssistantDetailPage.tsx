@@ -23,7 +23,6 @@ import { BlackboardDrawer } from '@/components/loop-studio/executions/Blackboard
 import { AssistantConfigCard } from './AssistantConfigCard';
 import { PushStatusCard } from './PushStatusCard';
 import { WhitelistCard } from './WhitelistCard';
-import { HistoryChatsCard } from './HistoryChatsCard';
 import { HistoryTable } from './HistoryTable';
 
 interface AssistantDetailPageProps {
@@ -42,9 +41,6 @@ export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = 
   const [groupWhitelist, setGroupWhitelist] = useState<WhitelistEntry[]>([]);
   const [whitelistOpenId, setWhitelistOpenId] = useState('');
   const [whitelistName, setWhitelistName] = useState('');
-  // 历史拉取群添加表单（chat_id + 备注），替代旧的 /sethome 隐式写入
-  const [histChatId, setHistChatId] = useState('');
-  const [histChatName, setHistChatName] = useState('');
   const [historySenders, setHistorySenders] = useState<FeishuSenderItem[]>([]);
 
   // 消息记录分页状态
@@ -204,34 +200,7 @@ export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = 
     }
   };
 
-  // ─── 历史拉取群管理：用户在前端填写群 chat_id，替代旧 /sethome 隐式写入 group_chat_id ───
-  const reloadHistoryChats = () => {
-    db.getFeishuHistoryChats().then(setHistoryChats).catch(() => {});
-  };
-  const handleAddHistChat = async () => {
-    // chat_id 必填、备注可选；空 chat_id 直接忽略，避免误创建空记录
-    if (!histChatId.trim()) return;
-    try {
-      await db.createFeishuHistoryChat(bot.id, histChatId.trim(), histChatName.trim() || undefined);
-      setHistChatId('');
-      setHistChatName('');
-      reloadHistoryChats();
-    } catch (e: any) {
-      message.error('添加拉取群失败: ' + (e.message || '未知错误'));
-    }
-  };
-  const handleDeleteHistChat = async (id: number) => {
-    try {
-      await db.deleteFeishuHistoryChat(id);
-      reloadHistoryChats();
-    } catch (e: any) {
-      message.error('删除拉取群失败: ' + (e.message || '未知错误'));
-    }
-  };
-
   const isFeishu = bot.bot_type === 'feishu';
-  // historyChats 全局加载（含所有 bot），渲染时按当前 bot 过滤
-  const botHistChats = historyChats.filter(c => c.bot_id === bot.id);
 
   return (
     <div className="bot-detail-page">
@@ -293,18 +262,6 @@ export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = 
             />
           )}
 
-          {/* 历史消息拉取群（仅飞书）：填写群 chat_id，替代旧 /sethome 隐式写入；组件与配置抽屉共用 */}
-          {isFeishu && (
-            <HistoryChatsCard
-              chats={botHistChats}
-              chatId={histChatId}
-              chatName={histChatName}
-              onChatIdChange={setHistChatId}
-              onChatNameChange={setHistChatName}
-              onAdd={handleAddHistChat}
-              onDelete={handleDeleteHistChat}
-            />
-          )}
         </div>
       )}
 
