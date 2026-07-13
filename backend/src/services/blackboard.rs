@@ -455,10 +455,12 @@ pub struct WikiChatResponse {
 pub async fn chat_with_wiki(
     db: &Arc<Database>,
     executor_registry: &Arc<ExecutorRegistry>,
+    expert_manager: &Arc<crate::expert::ExpertIndexManager>,
     tx: &tokio::sync::broadcast::Sender<crate::executor_service::events::ExecEvent>,
     workspace_id: i64,
     message: &str,
     override_executor: Option<&str>,
+    expert_name: Option<&str>,
 ) -> Result<WikiChatResponse, AppError> {
     use crate::executor_service::events::ExecEvent;
 
@@ -500,11 +502,15 @@ pub async fn chat_with_wiki(
         message.len(),
         session_id
     );
+    // 6.5 注入专家上下文：如果指定了专家名称，将专家角色定义和技能信息拼到 message 前面。
+    //     失败时静默使用原 message，不阻断对话——专家注入是增强项而非必需项。
+    let final_message = inject_wiki_expert_context(expert_manager, expert_name, message);
+
     let _ = tx.send(ExecEvent::WikiChatStarted {
         task_id: task_id.clone(),
         workspace_id,
         executor: exec_name.clone(),
-        message: message.to_string(),
+        message: final_message.clone(),
     });
 
     // 7. spawn 执行器子进程，流式读取 stdout，逐行推送 WikiChatOutput 事件
@@ -513,7 +519,7 @@ pub async fn chat_with_wiki(
     let started_at = std::time::Instant::now();
     let spawn_result = spawn_executor_for_chat_streaming(
         &executor,
-        message,
+        &final_message,
         &wiki_dir,
         &task_id,
         workspace_id,
@@ -611,6 +617,57 @@ fn extract_session_from_logs(
     }
     // 2. 回退到执行器内部缓存的 session_id（Pi 等执行器在 parse_output_line 时缓存）
     executor.get_session_id()
+}
+
+/// 为 Wiki 对话注入专家上下文。
+///
+/// 如果指定了专家名称且能在索引中找到对应的 Agent MD，则将专家角色定义
+/// 和技能信息拼到用户消息前面；否则原样返回消息。
+/// 逻辑与 executor_service::pre_spawn::inject_expert_context 一致，但独立实现
+/// 避免 wiki chat 路径依赖 todo 执行管线的内部函数。
+fn inject_wiki_expert_context(
+    expert_manager: &Arc<crate::expert::ExpertIndexManager>,
+    expert_name: Option<&str>,
+    message: &str,
+) -> String {
+    // 未指定专家名称时直接返回原消息
+    let name = match expert_name {
+        Some(n) if !n.is_empty() => n,
+        _ => return message.to_string(),
+    };
+    // 查找专家元数据，找不到则静默回退
+    let metadata = match expert_manager.get_expert_by_name(name) {
+        Some(m) => m,
+        None => {
+            tracing::warn!("wiki chat: 未找到专家 '{}'，跳过专家上下文注入", name);
+            return message.to_string();
+        }
+    };
+    // 获取 Agent MD 内容（team 类型用 lead_agent 的 MD，agent 类型用 agent_name）
+    let agent_name = metadata
+        .agent_name
+        .as_deref()
+        .or(metadata.lead_agent.as_deref());
+    let agent_md = match agent_name.and_then(|n| expert_manager.get_agent_md_content(n).ok()) {
+        Some(content) => content,
+        None => {
+            tracing::warn!("wiki chat: 未找到专家 '{}' 的 Agent MD 内容，跳过注入", name);
+            return message.to_string();
+        }
+    };
+    // 拼接技能列表（复用 loader 的 build_skills_context，中文优先）
+    let skills_text = crate::expert::build_skills_context(
+        &expert_manager.get_expert_skills(name),
+    );
+    // 三段式 prompt：角色定义 → 技能列表 → 用户消息
+    if skills_text.is_empty() {
+        format!("# 专家角色定义\n{}\n\n# 任务\n{}", agent_md, message)
+    } else {
+        format!(
+            "# 专家角色定义\n{}\n\n{}\n\n# 任务\n{}",
+            agent_md, skills_text, message
+        )
+    }
 }
 
 /// 解析本次对话使用的执行器名称。

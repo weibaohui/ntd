@@ -82,6 +82,7 @@ export async function chatWithWiki(
   workspaceId: number,
   message: string,
   executor?: string,
+  expertName?: string,
 ): Promise<WikiChatResponse> {
   // 读取 per-workspace 超时配置，推算 HTTP 超时；失败回退默认 300 秒
   const timeoutMs = await resolveWikiChatHttpTimeoutMs(workspaceId);
@@ -89,6 +90,7 @@ export async function chatWithWiki(
     await api.post(`/api/workspaces/${workspaceId}/wiki/chat`, {
       message,
       executor,
+      expert_name: expertName,
     }, {
       timeout: timeoutMs,
     }),

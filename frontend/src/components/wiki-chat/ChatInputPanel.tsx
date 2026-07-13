@@ -1,11 +1,13 @@
 /**
  * ChatInputPanel — Wiki 对话输入面板组件。
  *
- * 包含输入框、执行器选择、工作空间切换、发送按钮。
+ * 包含输入框、执行器选择、专家选择、工作空间切换、发送按钮。
  */
 
 import { Button, Input } from 'antd';
 import { ExecutorPickerPopover } from '@/components/common/ExecutorPickerPopover';
+// 导入专家选择器组件，用于选择专家/专家团来注入专家上下文
+import { ExpertPicker } from '@/components/todo-drawer/ExpertPicker';
 import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
 import { getChatColors } from './ChatMessageItem';
 
@@ -26,6 +28,10 @@ interface ChatInputPanelProps {
   chatExecutor: string;
   /** 执行器变化回调 */
   onExecutorChange: (value: string) => void;
+  /** 当前选中的专家名称，null/undefined 表示未选择 */
+  expertName?: string | null;
+  /** 专家变化回调 */
+  onExpertChange: (expertName: string | null) => void;
   /** 工作空间切换回调 */
   onWorkspaceChange: (id: number | null) => void;
   /** 是否移动端布局 */
@@ -34,7 +40,7 @@ interface ChatInputPanelProps {
   isDark: boolean;
 }
 
-/** 输入面板组件：TextArea + 执行器选择 + 发送按钮 */
+/** 输入面板组件：TextArea + 执行器选择 + 专家选择 + 发送按钮 */
 export function ChatInputPanel({
   inputValue,
   onInputChange,
@@ -43,6 +49,8 @@ export function ChatInputPanel({
   workspaceId,
   chatExecutor,
   onExecutorChange,
+  expertName,
+  onExpertChange,
   onWorkspaceChange,
   mobile = false,
   isDark,
@@ -79,9 +87,9 @@ export function ChatInputPanel({
         onKeyDown={handleKeyDown}
         style={{ fontSize: mobile ? 16 : 14 }}
       />
-      {/* 执行器选择行 */}
+      {/* 执行器 + 专家选择行 */}
       <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <WorkspaceSwitcher
             value={workspaceId ?? null}
             showAddOption={false}
@@ -98,6 +106,13 @@ export function ChatInputPanel({
             {workspaceId == null && ' · 请先选择工作空间'}
           </span>
         )}
+      </div>
+      {/* 专家选择器：与执行器同一列下方，紧凑布局 */}
+      <div style={{ marginTop: 8 }}>
+        <ExpertPicker
+          value={expertName}
+          onChange={onExpertChange}
+        />
       </div>
       {/* 发送按钮 */}
       <div style={{ marginTop: mobile ? 10 : 8, display: 'flex', justifyContent: 'flex-end' }}>
