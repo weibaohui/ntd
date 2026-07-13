@@ -554,35 +554,30 @@ pub(crate) async fn inject_expert_context(
     build_expert_prompt(&agent_md, &skills_text, message)
 }
 
-/// 拼接专家技能列表文本：每行一个 "skill_name: description"。
+/// 拼接专家技能列表文本：复用 loader 模块的 build_skills_context，支持中文描述优先。
 ///
 /// 抽出来单独成函数是为了让 `inject_expert_context` 保持在 30 行内。
 fn build_expert_skills_text(
     expert_manager: &crate::expert::ExpertIndexManager,
     expert_name: &str,
 ) -> String {
-    // 拿到专家关联的 SkillMetadata 列表，把 skill_name + yaml_description 拼成单行。
-    expert_manager
-        .get_expert_skills(expert_name)
-        .iter()
-        .map(|skill| {
-            // description 取 yaml_description；为空时回退到空串，避免 Option 拼接复杂度。
-            let desc = skill.yaml_description.as_deref().unwrap_or("");
-            format!("{}: {}", skill.skill_name, desc)
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    // 复用 loader::build_skills_context，它已实现中文优先回退逻辑。
+    crate::expert::build_skills_context(&expert_manager.get_expert_skills(expert_name))
 }
 
 /// 把 Agent MD、技能列表、原 message 拼成最终 prompt。
 ///
-/// 三段式结构：专家角色定义 → 可用技能 → 任务。即使 skills_text 为空也保留
-/// "# 可用技能" 标题，让 LLM 清楚地看到当前专家没有可用技能。
+/// 三段式结构：专家角色定义 → 可用技能（由 build_skills_context 生成） → 任务。
+/// skills_text 为空时不添加技能段落，避免无谓标题。
 fn build_expert_prompt(agent_md: &str, skills_text: &str, original_message: &str) -> String {
-    format!(
-        "# 专家角色定义\n{}\n\n# 可用技能\n{}\n\n# 任务\n{}",
-        agent_md, skills_text, original_message
-    )
+    if skills_text.is_empty() {
+        format!("# 专家角色定义\n{}\n\n# 任务\n{}", agent_md, original_message)
+    } else {
+        format!(
+            "# 专家角色定义\n{}\n\n{}\n\n# 任务\n{}",
+            agent_md, skills_text, original_message
+        )
+    }
 }
 
 /// Stage 1 步骤 4a：如果 todo 已存在，校验并发限制。todo 为 None 时跳过。
@@ -659,30 +654,31 @@ mod tests {
     }
 
     /// `build_expert_prompt` 把 Agent MD、技能列表、原 message 拼成三段式 prompt。
-    /// 即使技能列表为空，也要保留 "# 可用技能" 标题，让 LLM 看到结构。
+    /// 有技能时保留技能段落（由 build_skills_context 生成，含标题行）。
     #[test]
     fn test_build_expert_prompt_three_sections() {
         let agent_md = "你是一个 Rust 专家";
-        let skills = "code-review: 代码评审技能\ntest-gen: 测试生成技能";
+        let skills = "## 可用技能\n你可以使用以下技能来辅助完成任务：\n- **code-review**: 代码评审技能\n";
         let original = "请帮我写一个函数";
         let result = build_expert_prompt(agent_md, skills, original);
         // 三段标题按顺序出现，且原 message 在末尾
         assert!(result.contains("# 专家角色定义\n你是一个 Rust 专家"));
-        assert!(result.contains("# 可用技能\ncode-review"));
+        assert!(result.contains("## 可用技能"));
         assert!(result.contains("# 任务\n请帮我写一个函数"));
     }
 
-    /// `build_expert_prompt` 技能列表为空时仍保留标题。
+    /// `build_expert_prompt` 技能列表为空时省略技能段落。
     #[test]
-    fn test_build_expert_prompt_empty_skills_keeps_header() {
+    fn test_build_expert_prompt_empty_skills_omits_section() {
         let result = build_expert_prompt("agent", "", "do something");
-        // 空技能也要有标题，让 LLM 看到完整结构
-        assert!(result.contains("# 可用技能\n\n"));
+        // 空技能时不出现技能段落，直接从角色定义跳到任务
+        assert!(!result.contains("可用技能"));
+        assert!(result.contains("# 专家角色定义\nagent"));
         assert!(result.contains("# 任务\ndo something"));
     }
 
-    /// `build_expert_skills_text` 把 SkillMetadata 列表拼成多行文本。
-    /// 没有技能时返回空串；有技能时每行一个 "name: description"。
+    /// `build_expert_skills_text` 复用 loader::build_skills_context，
+    /// 返回 Markdown 格式的技能列表（含标题行和项目符号）。
     #[test]
     fn test_build_expert_skills_text_formats_each_skill() {
         use crate::expert::{ExpertIndexManager, SkillMetadata};
@@ -706,7 +702,7 @@ mod tests {
                 skill_dir: "/tmp/skills/test-gen".to_string(),
                 skill_md_path: "/tmp/skills/test-gen/SKILL.md".to_string(),
                 yaml_name: None,
-                // 故意留 None，验证回退到空串
+                // description 为 None 时回退到 "(无描述)"
                 yaml_description: None,
                 yaml_description_zh: None,
                 yaml_description_en: None,
@@ -719,8 +715,10 @@ mod tests {
         let expert = make_minimal_expert_metadata("test-expert", Some("test-agent"));
         manager.update_index(&expert, &[], &skills);
         let text = build_expert_skills_text(&manager, "test-expert");
-        // 两个 skill 各占一行；description 为 None 时回退空串
-        assert_eq!(text, "code-review: 代码评审\ntest-gen: ");
+        // build_skills_context 输出 Markdown 格式：标题 + 项目符号列表
+        assert!(text.contains("## 可用技能"));
+        assert!(text.contains("- **code-review**: 代码评审"));
+        assert!(text.contains("- **test-gen**: (无描述)"));
     }
 
     /// `build_expert_skills_text` 查询不存在的专家时返回空串（get_expert_skills 容错）。
@@ -846,10 +844,11 @@ mod tests {
         let todo = make_todo_with_expert(Some("rust-expert"));
         let original = "请帮我写代码";
         let result = inject_expert_context(&request, &Some(todo), original).await;
-        // 验证三段式结构都存在
+        // 验证三段式结构都存在（build_skills_context 生成 Markdown 格式技能列表）
         assert!(result.starts_with("# 专家角色定义\n"));
         assert!(result.contains("你是一个 Rust 专家"));
-        assert!(result.contains("# 可用技能\ncode-review: 代码评审"));
+        assert!(result.contains("## 可用技能"));
+        assert!(result.contains("- **code-review**: 代码评审"));
         assert!(result.contains("# 任务\n请帮我写代码"));
         // 清理临时文件
         let _ = std::fs::remove_file(&md_path);
