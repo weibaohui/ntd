@@ -65,7 +65,6 @@ struct FeishuCommandContext<'a> {
 pub(crate) enum CardAction {
     Stop,
     New,
-    SetHome,
     /// 切换工作空间，参数为 workspace_id
     Bind(i64),
     /// 触发事项，参数为 todo_id
@@ -271,6 +270,9 @@ impl FeishuListener {
         // workspace_id 在消息接收时确定，记录该 bot 所属的工作空间
         let workspace_id = context.db.get_agent_bot_workspace_id(context.bot_id).await.unwrap_or(None);
         Self::persist_inbound_message(context.db, context.bot_id, msg, chat_type, is_mention, workspace_id).await;
+        // 非扫码创建的 bot 没有 owner_open_id，私聊时兜底捕获说话人作为所有者（推送目标）。
+        // 放在阶段1：无论后续是否被过滤，只要是私聊就捕获一次，覆盖"首次私聊"语义。
+        Self::capture_owner_if_p2p(context.db, context.bot_id, msg, chat_type).await;
         let reaction_id = Self::add_processing_reaction(
             context.credentials, context.token_manager, context.bot_id, &msg.id,
         ).await;
@@ -300,6 +302,28 @@ impl FeishuListener {
         })
         .await
         .ok();
+    }
+
+    /// 阶段 1c：私聊场景兜底捕获 owner_open_id。
+    ///
+    /// 扫码创建的 bot 在建表时已写入 owner_open_id；非扫码创建（手动填 app_id）的 bot
+    /// 该字段为空，这里靠"首次私聊"补上。群聊不捕获——群消息 sender 是群里某个人，
+    /// 并非 bot 所有者。实际写入由 set_owner_open_id_if_empty 的「为空才写」护栏决定，
+    /// 因此后到的私聊用户不会覆盖已锁定的所有者。
+    async fn capture_owner_if_p2p(
+        db: &Arc<Database>,
+        bot_id: i64,
+        msg: &ChannelMessage,
+        chat_type: &str,
+    ) {
+        if chat_type != "p2p" {
+            return;
+        }
+        match db.set_owner_open_id_if_empty(bot_id, &msg.sender).await {
+            Ok(true) => tracing::info!("[feishu] bot {} owner_open_id 兜底设置为 {}", bot_id, &msg.sender),
+            Ok(false) => tracing::debug!("[feishu] bot {} owner_open_id 已存在，跳过兜底", bot_id),
+            Err(e) => tracing::warn!("[feishu] bot {} 兜底 owner_open_id 失败: {}", bot_id, e),
+        }
     }
 
     /// 阶段 1b：加 THUMBSUP reaction 表示"处理中"
@@ -333,7 +357,6 @@ impl FeishuListener {
             content: prep.content,
             reaction_id: prep.reaction_id.as_deref(),
         };
-        if prep.content == "/sethome" { Self::handle_sethome(mk_ctx()).await; return true; }
         if prep.content == "/feishupush" { Self::handle_feishupush(mk_ctx()).await; return true; }
         if prep.content == "/list" { Self::handle_list(mk_ctx()).await; return true; }
         if prep.content == "/help" || prep.content.starts_with("/help ") {
@@ -809,94 +832,6 @@ impl FeishuListener {
         let command = parts.next()?.trim();
         let body = parts.next().unwrap_or("").trim();
         Some(SlashCommandMatch { command, body })
-    }
-
-    async fn handle_sethome(context: FeishuCommandContext<'_>) {
-        let FeishuCommandContext {
-            db,
-            credentials,
-            token_manager,
-            bot_id,
-            chat_type,
-            sender,
-            channel,
-            message_id,
-            reaction_id,
-            ..
-        } = context;
-        let target_type = if chat_type == "p2p" { "p2p" } else { "group" };
-        let (receive_id, receive_id_type, chat_id) = match chat_type {
-            "p2p" => (sender.to_string(), "open_id", None),
-            _ => (channel.to_string(), "chat_id", Some(channel.to_string())),
-        };
-
-        // Update feishu_home
-        match db
-            .set_feishu_home(
-                bot_id,
-                sender,
-                chat_id.as_deref(),
-                &receive_id,
-                receive_id_type,
-            )
-            .await
-        {
-            Ok(_) => {
-                tracing::info!(
-                    "[feishu:{}] /sethome by {} → {} ({})",
-                    bot_id,
-                    sender,
-                    receive_id,
-                    receive_id_type
-                );
-            }
-            Err(e) => {
-                tracing::error!("[feishu:{}] /sethome failed: {e}", bot_id);
-            }
-        }
-
-        // Update only the relevant push target field
-        if chat_type == "p2p" {
-            if let Err(e) = db.set_p2p_receive_id(bot_id, &receive_id).await {
-                tracing::error!("[feishu:{}] set p2p push target failed: {e}", bot_id);
-            }
-        } else if let Err(e) = db.set_group_chat_id(bot_id, channel).await {
-            tracing::error!("[feishu:{}] set group push target failed: {e}", bot_id);
-        }
-
-        // Enable message response for this chat type
-        if let Err(e) = db
-            .set_feishu_response_enabled(bot_id, target_type, true)
-            .await
-        {
-            tracing::error!("[feishu:{}] enable response failed: {e}", bot_id);
-        }
-
-        // Send confirmation
-        let chat_type_label = if chat_type == "p2p" {
-            "私聊"
-        } else {
-            "群聊"
-        };
-        let target_desc = if chat_type == "p2p" {
-            "此私聊"
-        } else {
-            channel
-        };
-        let confirm = format!("✅ 已设置推送目标为此 {chat_type_label} ({target_desc})，执行过程将实时推送。\n\n如需关闭推送，请发送 /feishupush");
-        Self::send_text(
-            credentials,
-            token_manager,
-            bot_id,
-            &receive_id,
-            receive_id_type,
-            &confirm,
-        )
-        .await;
-
-        if let Some(rid) = reaction_id {
-            Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
-        }
     }
 
     /// Handle /feishupush - cycle push level: disabled -> result_only -> all -> disabled.
@@ -1539,7 +1474,6 @@ impl FeishuListener {
             CardAction::Push(level) => Self::act_push(context, level).await,
             CardAction::New => Self::act_new(context).await,
             CardAction::Stop => Self::act_stop(context).await,
-            CardAction::SetHome => Self::act_sethome(context, msg).await,
             CardAction::Bind(workspace_id) => Self::act_bind(context, *workspace_id).await,
             CardAction::RunTodo(todo_id) => Self::act_run_todo(context, msg, *todo_id).await,
             CardAction::RunLoop(loop_id) => Self::act_run_loop(context, msg, *loop_id).await,
@@ -1627,23 +1561,6 @@ impl FeishuListener {
             let _ = context.db.force_fail_execution_record(running.id).await;
             ActionOutcome { success: true, message: "任务未在运行，已强制标记结束".to_string() }
         }
-    }
-
-    /// 设当前会话为推送目标（写 feishu_home + push target 字段 + 开启该 chat_type 响应）。
-    async fn act_sethome(context: &ListenerMessageContext<'_>, msg: &ChannelMessage) -> ActionOutcome {
-        let (receive_id, receive_id_type) = Self::resolve_receive_target(msg);
-        let chat_id: Option<&str> = if receive_id_type == "chat_id" { Some(&msg.channel) } else { None };
-        if context.db.set_feishu_home(context.bot_id, &msg.sender, chat_id, receive_id, receive_id_type).await.is_err() {
-            return ActionOutcome { success: false, message: "设置推送目标失败".to_string() };
-        }
-        if receive_id_type == "chat_id" {
-            let _ = context.db.set_group_chat_id(context.bot_id, &msg.channel).await;
-        } else {
-            let _ = context.db.set_p2p_receive_id(context.bot_id, receive_id).await;
-        }
-        let target_type = if receive_id_type == "chat_id" { "group" } else { "p2p" };
-        let _ = context.db.set_feishu_response_enabled(context.bot_id, target_type, true).await;
-        ActionOutcome { success: true, message: "已设为推送目标".to_string() }
     }
 
     /// 切换工作空间：级联清旧 binding + 改 agent_bot.workspace_id + auto-seed default_response。
@@ -1880,7 +1797,6 @@ impl FeishuListener {
         Some(match verb {
             "stop" => CardAction::Stop,
             "new" => CardAction::New,
-            "sethome" => CardAction::SetHome,
             "push" => CardAction::Push(arg?.to_string()),
             "setexecutor" => CardAction::SetExecutor(arg?.to_string()),
             "bind" => CardAction::Bind(arg?.parse().ok()?),
@@ -1890,9 +1806,9 @@ impl FeishuListener {
         })
     }
 
-    /// 把卡片回调消息解析成推送接收者 (receive_id, receive_id_type)。
+    /// 把卡片回调消息解析成回信接收者 (receive_id, receive_id_type)。
     /// card_callback 的 chat_type 不是 p2p/group：msg.channel(chat_id)非空 → 群聊用 chat_id；
-    /// 否则回退到点击者 open_id（私聊）。供 act:/sethome 等写推送目标的动作复用。
+    /// 否则回退到点击者 open_id（私聊）。供 act:/runtodo、act:/runloop 等「回信给点击者」的动作复用。
     fn resolve_receive_target(msg: &ChannelMessage) -> (&str, &str) {
         if !msg.channel.is_empty() {
             (msg.channel.as_str(), "chat_id")
@@ -2579,7 +2495,6 @@ mod tests {
         // 各 verb 正常解析（bind/runtodo/runloop 参数是 i64）
         assert_eq!(FeishuListener::parse_card_action("act:/stop"), Some(CardAction::Stop));
         assert_eq!(FeishuListener::parse_card_action("act:/new"), Some(CardAction::New));
-        assert_eq!(FeishuListener::parse_card_action("act:/sethome"), Some(CardAction::SetHome));
         assert_eq!(FeishuListener::parse_card_action("act:/bind 5"), Some(CardAction::Bind(5)));
         assert_eq!(FeishuListener::parse_card_action("act:/runtodo 10"), Some(CardAction::RunTodo(10)));
         assert_eq!(FeishuListener::parse_card_action("act:/runloop 20"), Some(CardAction::RunLoop(20)));
@@ -2627,6 +2542,45 @@ mod tests {
         };
         assert!(!FeishuListener::is_message_allowed("group", false, &cfg));
         assert!(FeishuListener::is_message_allowed("group", true, &cfg));
+    }
+
+    #[tokio::test]
+    async fn test_capture_owner_if_p2p_writes_only_for_p2p() {
+        // 私聊消息：sender 被捕获为 owner；群聊消息不覆盖已锁定的 owner
+        use crate::db::Database;
+        use crate::feishu::ChannelMessage;
+        use std::sync::Arc;
+        let db = Arc::new(Database::new(":memory:").await.unwrap());
+        let bot_id = db
+            .create_agent_bot("feishu", "t", "app", "secret", None, None, 1)
+            .await
+            .unwrap();
+        let p2p_msg = ChannelMessage {
+            id: "om1".to_string(),
+            sender: "ou_owner".to_string(),
+            sender_type: None,
+            content: "hi".to_string(),
+            channel: String::new(),
+            timestamp: 0,
+            chat_type: Some("p2p".to_string()),
+            mentioned_open_ids: vec![],
+        };
+        FeishuListener::capture_owner_if_p2p(&db, bot_id, &p2p_msg, "p2p").await;
+        assert_eq!(
+            db.get_owner_open_id(bot_id).await.unwrap(),
+            Some("ou_owner".to_string())
+        );
+        // 群聊：不捕获，防群里他人覆盖已锁定的所有者
+        let group_msg = ChannelMessage {
+            sender: "ou_other".to_string(),
+            channel: "oc_group".to_string(),
+            ..p2p_msg
+        };
+        FeishuListener::capture_owner_if_p2p(&db, bot_id, &group_msg, "group").await;
+        assert_eq!(
+            db.get_owner_open_id(bot_id).await.unwrap(),
+            Some("ou_owner".to_string())
+        );
     }
 
 }

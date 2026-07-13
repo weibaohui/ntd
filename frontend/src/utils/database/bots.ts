@@ -7,6 +7,8 @@ export interface AgentBot {
   bot_name: string;
   app_id: string;
   bot_open_id?: string;
+  /** 所有者 open_id（推送目标），扫码/首次私聊自动捕获；仅列表页展示 */
+  owner_open_id?: string;
   domain?: string;
   enabled: boolean;
   config: string;
@@ -140,6 +142,8 @@ export type FeishuPushLevel = 'disabled' | 'result_only' | 'all';
 export interface FeishuPushStatus {
   bot_id: number;
   push_level: FeishuPushLevel;
+  /** 推送目标（所有者 open_id），扫码/首次私聊自动捕获；前端只读展示 */
+  owner_open_id?: string;
   p2p_receive_id: string;
   group_chat_id: string;
   receive_id_type: string;
@@ -152,9 +156,7 @@ export interface FeishuPushStatus {
 export interface UpdateFeishuPushParams {
   botId: number;
   pushLevel?: FeishuPushLevel;
-  p2pReceiveId?: string;
-  groupChatId?: string;
-  receiveIdType?: string;
+  // 推送目标（owner_open_id）由系统自动捕获，前端不再手动编辑单聊/群聊接收 ID
   p2pResponseEnabled?: boolean;
   groupResponseEnabled?: boolean;
   p2pDebounceSecs?: number;
@@ -263,9 +265,6 @@ export async function updateFeishuPush(params: UpdateFeishuPushParams): Promise<
   return unwrap(await api.put('/api/agent-bots/feishu/push', {
     bot_id: params.botId,
     push_level: params.pushLevel,
-    p2p_receive_id: params.p2pReceiveId,
-    group_chat_id: params.groupChatId,
-    receive_id_type: params.receiveIdType,
     p2p_response_enabled: params.p2pResponseEnabled,
     group_response_enabled: params.groupResponseEnabled,
     p2p_debounce_secs: params.p2pDebounceSecs,
@@ -304,6 +303,16 @@ export async function getFeishuSenders(): Promise<FeishuSenderItem[]> {
 
 export async function getFeishuHistoryChats(botId?: number): Promise<import('@/types').FeishuHistoryChat[]> {
   return unwrap(await api.get('/api/feishu/history-chats', { params: { bot_id: botId } }));
+}
+
+/** 新增历史拉取群：用户在前端填写群 chat_id（替代旧的 /sethome 隐式写入 group_chat_id） */
+export async function createFeishuHistoryChat(botId: number, chatId: string, chatName?: string): Promise<import('@/types').FeishuHistoryChat> {
+  return unwrap(await api.post('/api/feishu/history-chats', { bot_id: botId, chat_id: chatId, chat_name: chatName }));
+}
+
+/** 删除历史拉取群 */
+export async function deleteFeishuHistoryChat(id: number): Promise<void> {
+  await api.delete(`/api/feishu/history-chats/${id}`);
 }
 
 // Group Whitelist APIs

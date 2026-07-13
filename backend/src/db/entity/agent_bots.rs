@@ -16,6 +16,11 @@ pub struct Model {
     pub app_id: String,
     pub app_secret: String,
     pub bot_open_id: Option<String>,
+    /// 所有者（创建者/默认接收人）的 open_id：推送目标的权威来源。
+    /// 扫码创建时写入；非扫码创建的 bot 由首次私聊兜底写入（仅当为空）。
+    /// 与 bot_open_id 的区别：后者是历史字段，扫码时被错位写入了扫码人 open_id，
+    /// 本次重构不改动它，新增本字段做语义正名。
+    pub owner_open_id: Option<String>,
     pub domain: Option<String>,
     /// Bot 所属的工作空间 ID（不可为 NULL）
     pub workspace_id: i64,

@@ -6,6 +6,9 @@ import { EXECUTORS_FOR_PICKER } from '@/utils/executors';
 import { ExecutorPicker } from '@/components/todo-drawer/ExecutorPicker';
 import type { Todo } from '@/types';
 import type { LoopListItem } from '@/types/loop';
+import type { AgentBot } from '@/utils/database';
+import type { FeishuHistoryChat } from '@/types';
+import { HistoryChatsCard } from '@/components/settings/assistant/HistoryChatsCard';
 
 const { Paragraph } = Typography;
 
@@ -23,6 +26,11 @@ export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSett
   const [historySaving, setHistorySaving] = useState(false);
   const [form] = Form.useForm();
   const [historyForm] = Form.useForm();
+  // 当前工作空间的飞书 bot，及其历史拉取群配置（per-bot）
+  const [bot, setBot] = useState<AgentBot | null>(null);
+  const [historyChats, setHistoryChats] = useState<FeishuHistoryChat[]>([]);
+  const [histChatId, setHistChatId] = useState('');
+  const [histChatName, setHistChatName] = useState('');
 
   useEffect(() => {
     loadSettings();
@@ -31,6 +39,12 @@ export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSett
     db.getAllTodos(workspaceId).then(setTodos).catch(() => {});
     // 加载当前工作空间的环路列表
     listLoops(workspaceId).then(setLoops).catch(() => {});
+    // 加载当前工作空间的飞书 bot（一个工作空间一个 bot），用于历史拉取群配置
+    db.getAgentBots().then(bots => {
+      const b = bots.find(x => x.workspace_id === workspaceId && x.bot_type === 'feishu') || null;
+      setBot(b);
+      if (b) reloadHistoryChats(b.id);
+    }).catch(() => {});
   }, [workspaceId]);
 
   const loadSettings = () => {
@@ -99,6 +113,32 @@ export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSett
       }
     } finally {
       setHistorySaving(false);
+    }
+  };
+
+  // 历史拉取群管理（per-bot）：用户填写群 chat_id，机器人定期拉取这些群的历史消息
+  const reloadHistoryChats = (botId: number) => {
+    db.getFeishuHistoryChats().then(all => setHistoryChats(all.filter(c => c.bot_id === botId))).catch(() => {});
+  };
+  const handleAddHistChat = async () => {
+    // chat_id 必填、备注可选；空 chat_id 直接忽略
+    if (!bot || !histChatId.trim()) return;
+    try {
+      await db.createFeishuHistoryChat(bot.id, histChatId.trim(), histChatName.trim() || undefined);
+      setHistChatId('');
+      setHistChatName('');
+      reloadHistoryChats(bot.id);
+    } catch (e: any) {
+      message.error('添加拉取群失败: ' + (e.message || '未知错误'));
+    }
+  };
+  const handleDeleteHistChat = async (id: number) => {
+    if (!bot) return;
+    try {
+      await db.deleteFeishuHistoryChat(id);
+      reloadHistoryChats(bot.id);
+    } catch (e: any) {
+      message.error('删除拉取群失败: ' + (e.message || '未知错误'));
     }
   };
 
@@ -214,6 +254,19 @@ export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSett
           </Form.Item>
         </Form>
       </Card>
+
+      {/* 历史消息拉取群（per-bot）：填写要定期拉取历史消息的群 chat_id */}
+      {bot && (
+        <HistoryChatsCard
+          chats={historyChats}
+          chatId={histChatId}
+          chatName={histChatName}
+          onChatIdChange={setHistChatId}
+          onChatNameChange={setHistChatName}
+          onAdd={handleAddHistChat}
+          onDelete={handleDeleteHistChat}
+        />
+      )}
     </>
   );
 }

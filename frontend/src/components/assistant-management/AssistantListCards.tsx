@@ -58,6 +58,12 @@ export function AssistantListCards({ bots, workspaces, onOpenConfig, onToggleEna
           <div style={{ marginBottom: 12, padding: 8, backgroundColor: 'var(--color-bg-secondary)', borderRadius: 4 }}>
             <Text style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>App ID：</Text>
             <code style={{ fontSize: 11, color: 'var(--color-text-primary)' }}>{bot.app_id}</code>
+            {bot.owner_open_id && (
+              <div style={{ marginTop: 4 }}>
+                <Text style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>所有者：</Text>
+                <code style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }} title="所有者 open_id（推送目标，自动捕获）">{bot.owner_open_id}</code>
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

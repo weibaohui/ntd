@@ -27,12 +27,6 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
     group_require_mention: true,
     echo_reply: true,
   });
-  // 单聊/群聊接收 ID 用独立 state 管理(不放进与「白名单 tab」共享的 form 实例)：
-  // 共享 form 实例在 tab 切换/抽屉动画挂载时字段绑定不可靠，曾导致输入框不回填已有值，
-  // 用户一旦点「保存配置」就会把空串写回后端、擦掉原有 ID。改用 state：加载即回填、保存读 state。
-  const [p2pReceiveId, setP2pReceiveId] = useState('');
-  const [groupChatId, setGroupChatId] = useState('');
-
   useEffect(() => {
     if (open && bot) {
       loadConfig();
@@ -47,9 +41,6 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
         db.getGroupWhitelist(bot!.id),
       ]);
       setWhitelist(wl);
-      // 单聊/群聊接收 ID 写入独立 state，确保输入框一定能回填(见上方 state 注释)。
-      setP2pReceiveId(push?.p2p_receive_id || '');
-      setGroupChatId(push?.group_chat_id || '');
       form.setFieldsValue({
         pushLevel: push?.push_level || 'disabled',
         p2pResponseEnabled: push?.p2p_response_enabled || false,
@@ -75,9 +66,7 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
       await db.updateFeishuPush({
         botId: bot.id,
         pushLevel: values.pushLevel as FeishuPushLevel,
-        // 单聊/群聊接收 ID 直接读 state(非 form)，避免共享 form 实例绑定不可靠导致写空。
-        p2pReceiveId,
-        groupChatId,
+        // 推送目标（owner_open_id）由系统自动捕获，这里不再提交单聊/群聊接收 ID
         p2pResponseEnabled: values.p2pResponseEnabled,
         groupResponseEnabled: values.groupResponseEnabled,
         p2pDebounceSecs: values.p2pDebounceSecs,
@@ -259,28 +248,11 @@ export function AssistantConfigDrawer({ open, bot, workspaces, onClose, onChange
 
       {activeTab === 'push' && (
         <div>
-          {/* /sethome 提示常驻：即使尚未设置 ID，也让用户知道可在单聊/群聊发 /sethome 自动填，
-              或直接在下方输入框手动粘贴（例如从「消息监控台」复制群聊ID/私聊ID）。 */}
+          {/* 推送目标说明：改为机器人所有者，扫码创建/首次私聊自动设置，无需手动填 ID。 */}
           <div style={{ marginBottom: 12, padding: '8px 12px', background: 'var(--color-fill-secondary)', borderRadius: 6, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-            💡 在单聊或群聊中发送 <code style={{ padding: '1px 6px', background: 'var(--color-fill)', borderRadius: 4 }}>/sethome</code> 可自动填写下方 ID；也可直接手动粘贴。
+            💡 推送目标为机器人所有者，扫码创建或首次私聊时自动设置，无需手动填写；所有者 open_id 可在智能体列表页查看。
           </div>
           <Form form={form} layout="vertical">
-          {/* 推送目标 ID：受控于独立 state(不绑定 form)，随「保存配置」持久化(对应 /sethome 写入的同一字段)。
-              不设 name，避免进入共享 form 实例的字段注册导致回填/保存不稳定。 */}
-          <Form.Item label="单聊接收 ID" tooltip="私聊场景的接收 open_id，形如 ou_xxxxxxxx">
-            <Input
-              value={p2pReceiveId}
-              onChange={(e) => setP2pReceiveId(e.target.value)}
-              placeholder="ou_xxxxxxxx（可手动粘贴，或发 /sethome 自动填）"
-            />
-          </Form.Item>
-          <Form.Item label="群聊接收 ID" tooltip="群聊场景的接收 chat_id，形如 oc_xxxxxxxx">
-            <Input
-              value={groupChatId}
-              onChange={(e) => setGroupChatId(e.target.value)}
-              placeholder="oc_xxxxxxxx（可手动粘贴，或发 /sethome 自动填）"
-            />
-          </Form.Item>
           <Form.Item
             label="推送级别"
             name="pushLevel"

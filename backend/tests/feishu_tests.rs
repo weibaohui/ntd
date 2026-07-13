@@ -275,10 +275,6 @@ mod cascade_delete_tests {
             .unwrap();
 
         // 2. Insert a row into each feishu child table
-        db.set_feishu_home(bot_id, "ou_user1", Some("oc_chat1"), "rid1", "open_id")
-            .await
-            .unwrap();
-
         db.save_feishu_message(ntd::db::NewFeishuMessage {
             bot_id,
             message_id: "msg_001",
@@ -302,13 +298,12 @@ mod cascade_delete_tests {
             .await
             .unwrap();
 
-        // Create push target row
-        db.set_p2p_receive_id(bot_id, "ou_p2p_rid")
+        // Create push target row（用 update_feishu_push_level 造一行，验证级联清理）
+        db.update_feishu_push_level(bot_id, "result_only")
             .await
             .unwrap();
 
         // 3. Verify child data exists before delete
-        assert!(db.get_feishu_home(bot_id, "ou_user1").await.unwrap().is_some());
         assert!(db.get_feishu_messages(bot_id, 100).await.unwrap().len() > 0);
         assert!(db.get_feishu_history_chats(bot_id).await.unwrap().len() > 0);
         assert!(db.get_feishu_push_target(bot_id).await.unwrap().is_some());
@@ -322,8 +317,6 @@ mod cascade_delete_tests {
         assert!(db.get_agent_bot(bot_id).await.unwrap().is_none());
 
         // 6. Verify child data is gone (cascade worked)
-        assert!(db.get_feishu_home(bot_id, "ou_user1").await.unwrap().is_none(),
-            "feishu_homes should be empty after cascade");
         assert!(db.get_feishu_messages(bot_id, 100).await.unwrap().is_empty(),
             "feishu_messages should be empty after cascade");
         assert!(db.get_feishu_history_chats(bot_id).await.unwrap().is_empty(),
