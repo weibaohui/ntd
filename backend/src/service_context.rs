@@ -4,6 +4,7 @@ use tokio::sync::broadcast;
 use crate::adapters::ExecutorRegistry;
 use crate::config::Config;
 use crate::db::Database;
+use crate::expert::ExpertIndexManager;
 use crate::executor_service::ExecEvent;
 use crate::task_manager::TaskManager;
 
@@ -28,4 +29,6 @@ pub struct ServiceContext {
     pub tx: broadcast::Sender<ExecEvent>,
     pub task_manager: Arc<TaskManager>,
     pub config: Arc<std::sync::RwLock<Config>>,
+    /// 专家索引管理器（内存缓存，启动时从 ~/.ntd/experts/ 加载）
+    pub expert_manager: Arc<ExpertIndexManager>,
 }

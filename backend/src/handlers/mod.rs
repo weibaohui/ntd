@@ -16,6 +16,7 @@ use crate::service_context::ServiceContext;
 use crate::adapters::ExecutorRegistry;
 use crate::config::Config;
 use crate::db::Database;
+use crate::expert::ExpertIndexManager;
 use crate::models::ApiResponse;
 use crate::scheduler::TodoScheduler;
 use crate::services::feishu_listener::FeishuListener;
@@ -43,6 +44,8 @@ pub struct AppState {
     pub loop_trigger_dispatcher: Option<Arc<crate::services::loop_trigger::LoopTriggerDispatcher>>,
     /// Loop Studio: loop runner（手动触发 / dispatcher / cron 都通过它启动执行）
     pub loop_runner: Option<Arc<crate::services::loop_runner::LoopRunner>>,
+    /// 专家索引管理器（内存缓存，启动时从 ~/.ntd/experts/ 加载）
+    pub expert_manager: Arc<ExpertIndexManager>,
 }
 
 impl AppState {
@@ -383,6 +386,7 @@ async fn build_app_state(
         loop_scheduler,
         loop_trigger_dispatcher,
         loop_runner,
+        expert_manager: ctx.expert_manager.clone(),
     }
 }
 
@@ -1038,6 +1042,7 @@ mod app_state_config_helpers_tests {
             tx,
             task_manager: Arc::new(TaskManager::default()),
             config: Arc::new(RwLock::new(Config::default())),
+            expert_manager: Arc::new(crate::expert::ExpertIndexManager::new()),
         };
 
         // TodoScheduler::new 是 async 的；其内部 `JobScheduler` 需要 tokio runtime。
@@ -1068,6 +1073,7 @@ mod app_state_config_helpers_tests {
             loop_scheduler: None,
             loop_trigger_dispatcher: None,
             loop_runner: None,
+            expert_manager: ctx.expert_manager.clone(),
         }
     }
 

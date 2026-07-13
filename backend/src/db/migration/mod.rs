@@ -22,6 +22,7 @@ mod v60;
 mod v61;
 mod v62;
 mod v63;
+mod v64;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -74,6 +75,8 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v62::V62AddBlackboardEnabled),
         // V63 在 V62 之后：为 executors 增加 is_default 字段，支持设置默认执行器
         Box::new(v63::V63AddExecutorIsDefault),
+        // V64 在 V63 之后：为 todos 增加 expert_name 字段，支持配置专家/团队
+        Box::new(v64::V64AddTodoExpertName),
     ]
 }
 

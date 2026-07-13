@@ -616,12 +616,13 @@ async fn resume_batch_schedulers(state: &AppState, ids: &[i64]) -> Result<u64, A
         return Ok(rows);
     }
     let ctx = ServiceContext {
-        db: state.db.clone(),
-        executor_registry: state.executor_registry.clone(),
-        tx: state.tx.clone(),
-        task_manager: state.task_manager.clone(),
-        config: state.config.clone(),
-    };
+                db: state.db.clone(),
+                executor_registry: state.executor_registry.clone(),
+                tx: state.tx.clone(),
+                task_manager: state.task_manager.clone(),
+                config: state.config.clone(),
+                expert_manager: state.expert_manager.clone(),
+            };
     for id in ids {
         // 单个 todo 注册失败只 warn 不中断整批：DB 已置 enabled=true，
         // 进程重启时 load_from_db 会基于 DB 字段再次尝试注册（自愈路径）。

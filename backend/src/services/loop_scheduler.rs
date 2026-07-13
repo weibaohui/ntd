@@ -59,6 +59,8 @@ impl LoopScheduler {
                 tx: runner.tx().clone(),
                 task_manager: runner.ctx_ref().task_manager.clone(),
                 config: runner.ctx_ref().config.clone(),
+                // loop 的 dispatcher 不直接使用 expert_manager，使用空实例占位
+                expert_manager: std::sync::Arc::new(crate::expert::ExpertIndexManager::new()),
             },
         ));
         let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);

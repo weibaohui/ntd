@@ -27,6 +27,11 @@ pub mod task_manager;
 pub mod todo_progress;
 /// Wiki 文件管理模块：黑板改为纯文件存储。
 pub mod wiki;
+/// WorkBuddy 专家系统集成模块
+///
+/// 完全兼容 WorkBuddy 的 plugin.json + MD 文件格式。
+/// 采用纯文件存储 + 内存索引架构。
+pub mod expert;
 
 use rust_embed::RustEmbed;
 

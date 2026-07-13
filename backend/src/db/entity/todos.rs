@@ -49,6 +49,9 @@ pub struct Model {
     /// Action 键值，与 action_type 配合唯一标识一个 action 模板 todo。
     /// 由 /api/actions/execute 用于查找或自动创建 action 模板 todo。
     pub action_key: Option<String>,
+    /// 专家/团队名称（WorkBuddy plugin.json 中的 name 字段）。
+    /// 执行时自动加载对应的 Agent MD 和 Skills 注入 prompt。
+    pub expert_name: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
