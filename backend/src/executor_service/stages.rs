@@ -22,8 +22,8 @@ use crate::models::Todo;
 
 use super::pre_spawn::{
     create_run_execution_record, enforce_concurrency_limit,
-    reject_start_todo_failure, select_executor_and_build_command,
-    substitute_message_placeholders,
+    inject_expert_context, reject_start_todo_failure,
+    select_executor_and_build_command, substitute_message_placeholders,
 };
 use super::spawn_lifecycle::run_spawned_executor_task;
 use super::types::{PreparedExecution, SpawnInputs};
@@ -56,9 +56,14 @@ pub(crate) async fn prepare_execution_state(
     let todo =
         enforce_concurrency_limit(&request, initial_todo, max_concurrent, &task_state.task_id)
             .await?;
-    // 5) 选定 executor 并构造 command_args。
-    let selected = select_executor_and_build_command(&request, &todo, &substituted.message).await?;
-    // 6) 创建 execution record 并把 stage 1 产物聚合成 PreparedExecution。
+    // 5) 注入专家上下文：如果 todo 关联了 expert_name，把 Agent MD 和技能信息
+    //    拼到 message 前面。失败时静默回退到原 message，不阻断执行。
+    let expert_message =
+        inject_expert_context(&request, &todo, &substituted.message).await;
+    // 6) 选定 executor 并构造 command_args（传入注入后的 message）。
+    let selected =
+        select_executor_and_build_command(&request, &todo, &expert_message).await?;
+    // 7) 创建 execution record 并把 stage 1 产物聚合成 PreparedExecution。
     create_run_execution_record(request, task_state, todo, timeout_secs, selected).await
 }
 

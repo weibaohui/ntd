@@ -493,6 +493,98 @@ pub(crate) fn substitute_message_placeholders(
     super::types::SubstitutedContext { message }
 }
 
+/// 注入专家上下文：如果 todo 关联了专家，将专家角色定义和技能信息拼接到 message 前面。
+///
+/// 失败时静默返回原 message，不阻断执行——专家 prompt 注入是增强项，
+/// 不应该让专家索引读取失败导致整个 todo 执行失败。
+///
+/// 注入格式：
+/// ```text
+/// # 专家角色定义
+/// {agent_md_content}
+///
+/// # 可用技能
+/// {skill_name}: {skill_description}
+/// ...
+///
+/// # 任务
+/// {original_message}
+/// ```
+pub(crate) async fn inject_expert_context(
+    request: &super::RunTodoExecutionRequest,
+    todo: &Option<crate::models::Todo>,
+    message: &str,
+) -> String {
+    // 先尝试拿到专家名称和 expert_manager 引用，任一缺失都直接返回原 message。
+    let expert_name = match todo.as_ref().and_then(|t| t.expert_name.as_deref()) {
+        Some(name) => name,
+        None => return message.to_string(),
+    };
+    let expert_manager = match &request.expert_manager {
+        Some(em) => em,
+        None => return message.to_string(),
+    };
+    // 拿到专家元数据和 Agent MD 内容；任一失败都静默回退到原 message。
+    let metadata = match expert_manager.get_expert_by_name(expert_name) {
+        Some(m) => m,
+        None => {
+            tracing::warn!(
+                "未找到专家 '{}'，跳过专家上下文注入",
+                expert_name
+            );
+            return message.to_string();
+        }
+    };
+    let agent_md = match metadata
+        .agent_name
+        .as_deref()
+        .and_then(|name| expert_manager.get_agent_md_content(name).ok())
+    {
+        Some(content) => content,
+        None => {
+            tracing::warn!(
+                "未找到专家 '{}' 的 Agent MD 内容，跳过专家上下文注入",
+                expert_name
+            );
+            return message.to_string();
+        }
+    };
+    // 拼接专家 prompt（角色定义 + 技能列表 + 原 message）。
+    let skills_text = build_expert_skills_text(expert_manager, expert_name);
+    build_expert_prompt(&agent_md, &skills_text, message)
+}
+
+/// 拼接专家技能列表文本：每行一个 "skill_name: description"。
+///
+/// 抽出来单独成函数是为了让 `inject_expert_context` 保持在 30 行内。
+fn build_expert_skills_text(
+    expert_manager: &crate::expert::ExpertIndexManager,
+    expert_name: &str,
+) -> String {
+    // 拿到专家关联的 SkillMetadata 列表，把 skill_name + yaml_description 拼成单行。
+    expert_manager
+        .get_expert_skills(expert_name)
+        .iter()
+        .map(|skill| {
+            // description 取 yaml_description；为空时回退到空串，避免 Option 拼接复杂度。
+            let desc = skill.yaml_description.as_deref().unwrap_or("");
+            format!("{}: {}", skill.skill_name, desc)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 把 Agent MD、技能列表、原 message 拼成最终 prompt。
+///
+/// 三段式结构：专家角色定义 → 可用技能 → 任务。即使 skills_text 为空也保留
+/// "# 可用技能" 标题，让 LLM 清楚地看到当前专家没有可用技能。
+fn build_expert_prompt(agent_md: &str, skills_text: &str, original_message: &str) -> String {
+    format!(
+        "# 专家角色定义\n{}\n\n# 可用技能\n{}\n\n# 任务\n{}",
+        agent_md, skills_text, original_message
+    )
+}
+
 /// Stage 1 步骤 4a：如果 todo 已存在，校验并发限制。todo 为 None 时跳过。
 pub(crate) async fn enforce_concurrency_limit(
     request: &super::RunTodoExecutionRequest,
@@ -564,5 +656,307 @@ mod tests {
             resolve_executor_type(Some("kimi"), None),
             ExecutorType::Kimi
         );
+    }
+
+    /// `build_expert_prompt` 把 Agent MD、技能列表、原 message 拼成三段式 prompt。
+    /// 即使技能列表为空，也要保留 "# 可用技能" 标题，让 LLM 看到结构。
+    #[test]
+    fn test_build_expert_prompt_three_sections() {
+        let agent_md = "你是一个 Rust 专家";
+        let skills = "code-review: 代码评审技能\ntest-gen: 测试生成技能";
+        let original = "请帮我写一个函数";
+        let result = build_expert_prompt(agent_md, skills, original);
+        // 三段标题按顺序出现，且原 message 在末尾
+        assert!(result.contains("# 专家角色定义\n你是一个 Rust 专家"));
+        assert!(result.contains("# 可用技能\ncode-review"));
+        assert!(result.contains("# 任务\n请帮我写一个函数"));
+    }
+
+    /// `build_expert_prompt` 技能列表为空时仍保留标题。
+    #[test]
+    fn test_build_expert_prompt_empty_skills_keeps_header() {
+        let result = build_expert_prompt("agent", "", "do something");
+        // 空技能也要有标题，让 LLM 看到完整结构
+        assert!(result.contains("# 可用技能\n\n"));
+        assert!(result.contains("# 任务\ndo something"));
+    }
+
+    /// `build_expert_skills_text` 把 SkillMetadata 列表拼成多行文本。
+    /// 没有技能时返回空串；有技能时每行一个 "name: description"。
+    #[test]
+    fn test_build_expert_skills_text_formats_each_skill() {
+        use crate::expert::{ExpertIndexManager, SkillMetadata};
+        let manager = ExpertIndexManager::new();
+        // 准备两个 skill 的元数据并更新到索引
+        let skills = vec![
+            SkillMetadata {
+                skill_name: "code-review".to_string(),
+                skill_dir: "/tmp/skills/code-review".to_string(),
+                skill_md_path: "/tmp/skills/code-review/SKILL.md".to_string(),
+                yaml_name: None,
+                yaml_description: Some("代码评审".to_string()),
+                yaml_description_zh: None,
+                yaml_description_en: None,
+                yaml_version: None,
+                yaml_allowed_tools: vec![],
+                yaml_emoji: None,
+            },
+            SkillMetadata {
+                skill_name: "test-gen".to_string(),
+                skill_dir: "/tmp/skills/test-gen".to_string(),
+                skill_md_path: "/tmp/skills/test-gen/SKILL.md".to_string(),
+                yaml_name: None,
+                // 故意留 None，验证回退到空串
+                yaml_description: None,
+                yaml_description_zh: None,
+                yaml_description_en: None,
+                yaml_version: None,
+                yaml_allowed_tools: vec![],
+                yaml_emoji: None,
+            },
+        ];
+        // 借用一个最小 ExpertMetadata 把 skill 绑到 "test-expert"
+        let expert = make_minimal_expert_metadata("test-expert", Some("test-agent"));
+        manager.update_index(&expert, &[], &skills);
+        let text = build_expert_skills_text(&manager, "test-expert");
+        // 两个 skill 各占一行；description 为 None 时回退空串
+        assert_eq!(text, "code-review: 代码评审\ntest-gen: ");
+    }
+
+    /// `build_expert_skills_text` 查询不存在的专家时返回空串（get_expert_skills 容错）。
+    #[test]
+    fn test_build_expert_skills_text_unknown_expert_returns_empty() {
+        use crate::expert::ExpertIndexManager;
+        let manager = ExpertIndexManager::new();
+        let text = build_expert_skills_text(&manager, "non-existent-expert");
+        assert!(text.is_empty());
+    }
+
+    /// `inject_expert_context` 在 todo 为 None 时直接返回原 message。
+    #[tokio::test]
+    async fn test_inject_expert_context_no_todo_returns_original() {
+        let request = make_test_request(None).await;
+        let original = "请帮我写代码";
+        let result = inject_expert_context(&request, &None, original).await;
+        assert_eq!(result, original);
+    }
+
+    /// `inject_expert_context` 在 todo 有 expert_name 但 request.expert_manager
+    /// 为 None 时（系统内部 todo 路径）返回原 message。
+    #[tokio::test]
+    async fn test_inject_expert_context_no_manager_returns_original() {
+        let request = make_test_request(None).await;
+        let todo = make_todo_with_expert(Some("rust-expert"));
+        let original = "请帮我写代码";
+        let result = inject_expert_context(&request, &Some(todo), original).await;
+        assert_eq!(result, original);
+    }
+
+    /// `inject_expert_context` 在 todo 没有 expert_name 时返回原 message。
+    #[tokio::test]
+    async fn test_inject_expert_context_no_expert_name_returns_original() {
+        let manager = Arc::new(crate::expert::ExpertIndexManager::new());
+        let request = make_test_request(Some(manager)).await;
+        let todo = make_todo_with_expert(None);
+        let original = "请帮我写代码";
+        let result = inject_expert_context(&request, &Some(todo), original).await;
+        assert_eq!(result, original);
+    }
+
+    /// `inject_expert_context` 在 expert_manager 中找不到对应专家时返回原 message。
+    #[tokio::test]
+    async fn test_inject_expert_context_unknown_expert_returns_original() {
+        let manager = Arc::new(crate::expert::ExpertIndexManager::new());
+        let request = make_test_request(Some(manager)).await;
+        let todo = make_todo_with_expert(Some("non-existent"));
+        let original = "请帮我写代码";
+        let result = inject_expert_context(&request, &Some(todo), original).await;
+        assert_eq!(result, original);
+    }
+
+    /// `inject_expert_context` 在专家存在但 Agent MD 文件无法读取时返回原 message。
+    /// 通过指向不存在的 md_file_path 模拟读取失败。
+    #[tokio::test]
+    async fn test_inject_expert_context_agent_md_unreadable_returns_original() {
+        let manager = Arc::new(crate::expert::ExpertIndexManager::new());
+        // 注册一个 agent，但 md_file_path 指向不存在的文件
+        let agent_file = crate::expert::AgentFileMetadata {
+            agent_name: "test-agent".to_string(),
+            md_file_path: "/non/existent/path/agent.md".to_string(),
+            yaml_name: None,
+            yaml_description: None,
+            yaml_color: None,
+            yaml_emoji: None,
+            yaml_vibe: None,
+        };
+        let expert = make_minimal_expert_metadata("test-expert", Some("test-agent"));
+        manager.update_index(&expert, &[agent_file], &[]);
+        let request = make_test_request(Some(manager)).await;
+        let todo = make_todo_with_expert(Some("test-expert"));
+        let original = "请帮我写代码";
+        let result = inject_expert_context(&request, &Some(todo), original).await;
+        assert_eq!(result, original);
+    }
+
+    /// `inject_expert_context` 正常路径：专家存在 + Agent MD 可读 + 有技能
+    /// → 返回带三段式结构的 prompt，原 message 被拼到末尾。
+    #[tokio::test]
+    async fn test_inject_expert_context_happy_path_injects_prompt() {
+        use std::io::Write;
+        // 准备临时 Agent MD 文件
+        let mut tmp_path = std::env::temp_dir();
+        tmp_path.push(format!(
+            "ntd_test_agent_md_{}.md",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut f = std::fs::File::create(&tmp_path).unwrap();
+        // 写入角色定义内容
+        writeln!(f, "你是一个 Rust 专家").unwrap();
+        let md_path = tmp_path.to_string_lossy().to_string();
+
+        let manager = Arc::new(crate::expert::ExpertIndexManager::new());
+        let agent_file = crate::expert::AgentFileMetadata {
+            agent_name: "rust-agent".to_string(),
+            md_file_path: md_path.clone(),
+            yaml_name: None,
+            yaml_description: None,
+            yaml_color: None,
+            yaml_emoji: None,
+            yaml_vibe: None,
+        };
+        let skill = crate::expert::SkillMetadata {
+            skill_name: "code-review".to_string(),
+            skill_dir: "/tmp".to_string(),
+            skill_md_path: "/tmp/SKILL.md".to_string(),
+            yaml_name: None,
+            yaml_description: Some("代码评审".to_string()),
+            yaml_description_zh: None,
+            yaml_description_en: None,
+            yaml_version: None,
+            yaml_allowed_tools: vec![],
+            yaml_emoji: None,
+        };
+        let expert = make_minimal_expert_metadata("rust-expert", Some("rust-agent"));
+        manager.update_index(&expert, &[agent_file], &[skill]);
+
+        let request = make_test_request(Some(manager)).await;
+        let todo = make_todo_with_expert(Some("rust-expert"));
+        let original = "请帮我写代码";
+        let result = inject_expert_context(&request, &Some(todo), original).await;
+        // 验证三段式结构都存在
+        assert!(result.starts_with("# 专家角色定义\n"));
+        assert!(result.contains("你是一个 Rust 专家"));
+        assert!(result.contains("# 可用技能\ncode-review: 代码评审"));
+        assert!(result.contains("# 任务\n请帮我写代码"));
+        // 清理临时文件
+        let _ = std::fs::remove_file(&md_path);
+    }
+
+    /// 构造最小可用的 ExpertMetadata 供测试使用。
+    /// 只填必要字段，其余用空值/None，避免每个测试都重复 22 个字段。
+    fn make_minimal_expert_metadata(
+        name: &str,
+        agent_name: Option<&str>,
+    ) -> crate::expert::ExpertMetadata {
+        use crate::expert::{ExpertMetadata, ExpertType};
+        ExpertMetadata {
+            name: name.to_string(),
+            expert_type: ExpertType::Agent,
+            version: "0.0.1-test".to_string(),
+            display_name_zh: None,
+            display_name_en: None,
+            profession_zh: None,
+            profession_en: None,
+            description_zh: None,
+            description_en: None,
+            avatar_path: None,
+            category_id: None,
+            definition_dir: "/tmp".to_string(),
+            plugin_json_path: "/tmp/plugin.json".to_string(),
+            agent_name: agent_name.map(|s| s.to_string()),
+            lead_agent: None,
+            member_agents: vec![],
+            members: vec![],
+            skills: vec![],
+            default_init_prompt_zh: None,
+            default_init_prompt_en: None,
+            tags: vec![],
+            loaded_at: "test".to_string(),
+            is_active: true,
+        }
+    }
+
+    /// 构造一个带 expert_name 的 Todo（仅填必要字段）。
+    fn make_todo_with_expert(expert_name: Option<&str>) -> crate::models::Todo {
+        use crate::models::{Todo, TodoStatus};
+        Todo {
+            id: 1,
+            title: "测试 todo".to_string(),
+            prompt: "test".to_string(),
+            status: TodoStatus::Pending,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            updated_at: "2024-01-01T00:00:00Z".to_string(),
+            tag_ids: vec![],
+            executor: None,
+            scheduler_enabled: false,
+            scheduler_config: None,
+            scheduler_timezone: None,
+            scheduler_next_run_at: None,
+            task_id: None,
+            workspace_path: None,
+            workspace_id: None,
+            webhook_enabled: false,
+            acceptance_criteria: None,
+            todo_type: 0,
+            parent_todo_id: None,
+            review_template_id: None,
+            auto_review_enabled: false,
+            action_type: None,
+            action_key: None,
+            archived_at: None,
+            expert_name: expert_name.map(|s| s.to_string()),
+        }
+    }
+
+    /// 构造一个测试用的 RunTodoExecutionRequest，expert_manager 可选。
+    /// 其他字段用最小占位值——inject_expert_context 只关心 expert_manager 字段。
+    /// 注意：调用方必须在 tokio runtime 上下文中（用 #[tokio::test]）。
+    async fn make_test_request(
+        expert_manager: Option<Arc<crate::expert::ExpertIndexManager>>,
+    ) -> RunTodoExecutionRequest {
+        use crate::adapters::ExecutorRegistry;
+        use crate::config::Config;
+        use crate::db::Database;
+        use crate::task_manager::TaskManager;
+        use std::sync::RwLock;
+        // 用内存 DB 占位——inject_expert_context 不会触碰 DB，但 struct 字段必须 owned
+        let db = Arc::new(Database::new(":memory:").await.unwrap());
+        RunTodoExecutionRequest {
+            db,
+            executor_registry: Arc::new(ExecutorRegistry::default()),
+            tx: broadcast::channel(1).0,
+            task_manager: Arc::new(TaskManager::default()),
+            config: Arc::new(RwLock::new(Config::default())),
+            todo_id: 0,
+            message: String::new(),
+            req_executor: None,
+            trigger_type: "test".to_string(),
+            params: None,
+            resume_session_id: None,
+            resume_message: None,
+            source_todo_id: None,
+            source_todo_title: None,
+            feishu_bot_id: None,
+            feishu_receive_id: None,
+            feishu_receive_id_type: None,
+            loop_step_execution_id: None,
+            step_id: None,
+            workspace_path: None,
+            workspace_id: None,
+            expert_manager,
+        }
     }
 }

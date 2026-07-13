@@ -253,6 +253,8 @@ async fn run_wiki_execution(
         step_id: None,
         workspace_path: None,
         workspace_id: Some(workspace_id),
+        // wiki todo 是系统内部 todo，不绑定专家，传 None 跳过专家上下文注入
+        expert_manager: None,
     })
     .await?;
 

@@ -11,8 +11,11 @@ import { getLastExecutor, setLastExecutor } from '@/constants';
 import { TagCheckCardGroup } from './TagCheckCard';
 import { ExecutorPicker } from './todo-drawer/ExecutorPicker';
 import { ExpertPicker } from './todo-drawer/ExpertPicker';
+import { ExpertSkillSelector } from './todo-drawer/ExpertSkillSelector';
 import { PromptEditor } from './todo-drawer/PromptEditor';
 import { SkillSelector } from './todo-drawer/SkillSelector';
+// 导入专家技能类型，用于专家技能点击回调的类型标注
+import type { SkillMetadata } from '@/types/expert';
 import { SchedulerSection } from './todo-drawer/SchedulerSection';
 import { TemplateModal } from './todo-drawer/TemplateModal';
 import {
@@ -159,6 +162,12 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
     insertTextAtCursor(`/${skill.name}`);
   }, [insertTextAtCursor]);
 
+  // 专家技能点击回调：与执行器技能逻辑一致（插入 /skill_name 到光标处），
+  // 但 SkillMetadata 的字段名是 skill_name 而非 name，因此单独定义。
+  const handleExpertSkillClick = useCallback((skill: SkillMetadata) => {
+    insertTextAtCursor(`/${skill.skill_name}`);
+  }, [insertTextAtCursor]);
+
   const loadTemplates = useCallback(() => {
     setTemplatesLoading(true);
     db.getTodoTemplates()
@@ -297,6 +306,12 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
           <ExpertPicker
             value={expertName}
             onChange={(v) => setField('expertName', v)}
+          />
+
+          {/* 专家技能展示（选中专家后显示，组件内部自行管理加载与折叠状态） */}
+          <ExpertSkillSelector
+            expertName={expertName}
+            onSkillClick={handleExpertSkillClick}
           />
 
           <Divider style={{ margin: '8px 0 16px' }} />

@@ -19,6 +19,7 @@ import { SettingsPage } from './components/SettingsPage';
 import { SkillsPanel } from './components/SkillsPanel';
 import { ProjectDirectoriesPanel } from './components/settings/ProjectDirectoriesPanel';
 import { ExecutorsPanel } from './components/settings/ExecutorsPanel';
+import { ExpertsPanel } from './components/settings/ExpertsPanel';
 import { BlackboardPage } from './components/BlackboardPage';
 import { MessagesPage } from './components/MessagesPage';
 import { AssistantManagementPage } from './components/assistant-management/AssistantManagementPage';
@@ -240,6 +241,7 @@ function AppContent() {
     if (key === 'settings_projectDirectories') { showStandaloneSettingsPanel('projectDirectories'); return; }
     if (key === 'settings_skills') { showStandaloneSettingsPanel('skills'); return; }
     if (key === 'settings_executors') { showStandaloneSettingsPanel('executors'); return; }
+    if (key === 'settings_experts') { showStandaloneSettingsPanel('experts'); return; }
     if (key === 'settings_bots') { showStandaloneSettingsPanel('bots'); return; }
   }, [handleShowView, showListSection, showSettings, showStandaloneSettingsPanel]);
 
@@ -393,6 +395,8 @@ function AppContent() {
                 />
               ) : activeView === 'executors' ? (
                 <ExecutorsPanel />
+              ) : activeView === 'experts' ? (
+                <ExpertsPanel />
               ) : activeView === 'bots' ? (
                 <AssistantManagementPage />
               ) : activeView === 'settings' ? (

@@ -417,6 +417,7 @@ fn init_loop_studio_services(
         executor_registry: ctx.executor_registry.clone(),
         task_manager: ctx.task_manager.clone(),
         config: ctx.config.clone(),
+        expert_manager: ctx.expert_manager.clone(),
     };
     // clone tx 进 LoopRunner 内部，broadcast::Sender 是 Arc 包装，clone 只增加引用计数
     let runner = Arc::new(LoopRunner::new(loop_runner_ctx, tx.clone()));

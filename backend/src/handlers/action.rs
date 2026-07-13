@@ -83,6 +83,8 @@ pub async fn execute_action(
             feishu_receive_id_type: None,
             workspace_path: None,
             workspace_id: None,
+            // action 触发路径：注入专家上下文，让 action todo 也能加载专家 prompt
+            expert_manager: Some(state.expert_manager.clone()),
         },
     )
     .await?;

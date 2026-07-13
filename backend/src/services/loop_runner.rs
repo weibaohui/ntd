@@ -52,6 +52,9 @@ pub struct LoopRunnerCtx {
     pub executor_registry: Arc<ExecutorRegistry>,
     pub task_manager: Arc<TaskManager>,
     pub config: Arc<std::sync::RwLock<crate::config::Config>>,
+    /// 专家索引管理器：loop 环节执行时也需注入专家上下文，
+    /// 让 loop 触发的 todo 尊重其绑定的 expert_name
+    pub expert_manager: Arc<crate::expert::ExpertIndexManager>,
 }
 
 pub struct LoopRunner {
@@ -918,6 +921,8 @@ impl LoopRunner {
             feishu_receive_id_type: None,
             workspace_path,
             workspace_id: None,
+            // loop 环节执行路径：注入专家上下文，让 loop 内 todo 也尊重 expert_name 绑定
+            expert_manager: Some(self.ctx.expert_manager.clone()),
         };
         let result = run_todo_execution_with_params(request).await;
         result
@@ -1312,6 +1317,8 @@ impl LoopRunner {
             feishu_receive_id_type: None,
                 workspace_path: None,
                 workspace_id: None,
+                // loop 内的评审执行：注入专家上下文，让评审 todo 也尊重其 expert_name 绑定
+                expert_manager: Some(self.ctx.expert_manager.clone()),
             };
             let exec_result = crate::executor_service::run_todo_execution(request).await;
             let review_record_id = match exec_result.record_id {
@@ -1536,6 +1543,8 @@ impl LoopRunner {
             feishu_receive_id_type: None,
             workspace_path: handler_todo.workspace_path.clone(),
             workspace_id: None,
+            // loop 异常处理执行路径：注入专家上下文，让 handler todo 也尊重其 expert_name 绑定
+            expert_manager: Some(self.ctx.expert_manager.clone()),
         };
 
         // 9. 等待 handler 执行完成（复用的 wait_for_step_finish，最长 24h）
@@ -1790,6 +1799,7 @@ mod tests {
     async fn make_test_runner() -> (LoopRunner, Arc<crate::db::Database>) {
         use crate::adapters::ExecutorRegistry;
         use crate::config::Config;
+        use crate::expert::ExpertIndexManager;
         use crate::task_manager::TaskManager;
         use std::sync::RwLock;
         use tokio::sync::broadcast;
@@ -1800,6 +1810,8 @@ mod tests {
             executor_registry: Arc::new(ExecutorRegistry::default()),
             task_manager: Arc::new(TaskManager::default()),
             config: Arc::new(RwLock::new(Config::default())),
+            // 测试场景下用空专家索引，触发 inject_expert_context 时会因找不到专家而静默回退
+            expert_manager: Arc::new(ExpertIndexManager::new()),
         };
         let runner = LoopRunner::new(ctx, broadcast::channel(1).0);
         (runner, db)

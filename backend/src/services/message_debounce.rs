@@ -234,6 +234,8 @@ impl MessageDebounce {
             let tx = self.ctx.tx.clone();
             let task_manager = self.ctx.task_manager.clone();
             let config = self.ctx.config.clone();
+            // 专家管理器 clone 进 timer 闭包，让 debounce 触发的执行也能注入专家上下文
+            let expert_manager = self.ctx.expert_manager.clone();
             // loop_runner 需要在 async block 之前 clone，避免 self 生命周期问题
             let loop_runner = self.loop_runner.clone();
             let bot_id = key.0;
@@ -289,6 +291,7 @@ impl MessageDebounce {
                     let result = Self::dispatch_execution(
                         last, &merged_content, &resolved,
                         &db, &executor_registry, &task_manager, &config, &tx, &loop_runner,
+                        &expert_manager,
                     )
                     .await;
 
@@ -342,6 +345,7 @@ impl MessageDebounce {
                             let r = Self::dispatch_execution(
                                 &next, &merged, &resolved,
                                 &db, &executor_registry, &task_manager, &config, &tx, &loop_runner,
+                                &expert_manager,
                             )
                             .await;
                             Self::update_binding(
@@ -455,6 +459,7 @@ impl MessageDebounce {
         tx: &broadcast::Sender<ExecEvent>,
         task_manager: &Arc<TaskManager>,
         config: &Arc<std::sync::RwLock<crate::config::Config>>,
+        expert_manager: &Arc<crate::expert::ExpertIndexManager>,
     ) -> RunTodoExecutionRequest {
         let (receive_id, receive_id_type) = Self::feishu_reply_target(msg);
         RunTodoExecutionRequest {
@@ -479,6 +484,8 @@ impl MessageDebounce {
             feishu_receive_id_type: Some(receive_id_type),
             workspace_path: None,
             workspace_id: msg.workspace_id,
+            // 飞书消息触发路径：注入专家上下文，让飞书消息触发的 todo 也加载专家 prompt
+            expert_manager: Some(expert_manager.clone()),
         }
     }
 
@@ -497,6 +504,7 @@ impl MessageDebounce {
         config: &Arc<std::sync::RwLock<crate::config::Config>>,
         tx: &broadcast::Sender<ExecEvent>,
         loop_runner: &Option<Arc<crate::services::loop_runner::LoopRunner>>,
+        expert_manager: &Arc<crate::expert::ExpertIndexManager>,
     ) -> Result<crate::executor_service::ExecutionResult, Option<String>> {
         match msg.trigger_type.as_str() {
             "default_response_loop" | "slash_command_loop" => {
@@ -532,7 +540,7 @@ impl MessageDebounce {
             }
             _ => {
                 let request = Self::build_run_todo_request(
-                    msg, resolved, db, executor_registry, tx, task_manager, config,
+                    msg, resolved, db, executor_registry, tx, task_manager, config, expert_manager,
                 );
                 let result = if request.params.is_some() {
                     run_todo_execution_with_params(request).await
