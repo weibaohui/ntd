@@ -65,7 +65,6 @@ struct FeishuCommandContext<'a> {
 pub(crate) enum CardAction {
     Stop,
     New,
-    SetHome,
     /// 切换工作空间，参数为 workspace_id
     Bind(i64),
     /// 触发事项，参数为 todo_id
@@ -358,7 +357,6 @@ impl FeishuListener {
             content: prep.content,
             reaction_id: prep.reaction_id.as_deref(),
         };
-        if prep.content == "/sethome" { Self::handle_sethome(mk_ctx()).await; return true; }
         if prep.content == "/feishupush" { Self::handle_feishupush(mk_ctx()).await; return true; }
         if prep.content == "/list" { Self::handle_list(mk_ctx()).await; return true; }
         if prep.content == "/help" || prep.content.starts_with("/help ") {
@@ -834,58 +832,6 @@ impl FeishuListener {
         let command = parts.next()?.trim();
         let body = parts.next().unwrap_or("").trim();
         Some(SlashCommandMatch { command, body })
-    }
-
-    /// /sethome：推送目标已改为自动捕获所有者 open_id（扫码创建/首次私聊），
-    /// 故本命令退化为只读查询——回显当前推送目标是谁，不再写任何 push target 字段。
-    async fn handle_sethome(context: FeishuCommandContext<'_>) {
-        let FeishuCommandContext {
-            db,
-            credentials,
-            token_manager,
-            bot_id,
-            chat_type,
-            sender,
-            channel,
-            message_id,
-            reaction_id,
-            ..
-        } = context;
-        let text = Self::owner_push_status_text(db, bot_id, sender).await;
-        // 回信目标：私聊回个人、群聊回群，仅用于把查询结果展示给当前说话人
-        let (reply_id, reply_type) = if chat_type == "group" {
-            (channel.to_string(), "chat_id")
-        } else {
-            (sender.to_string(), "open_id")
-        };
-        Self::send_text(credentials, token_manager, bot_id, &reply_id, reply_type, &text).await;
-        if let Some(rid) = reaction_id {
-            Self::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
-        }
-    }
-
-    /// 构造推送目标状态文案：已设置则回显所有者（脱敏），未设置则提示去私聊触发自动捕获。
-    async fn owner_push_status_text(db: &Arc<Database>, bot_id: i64, sender: &str) -> String {
-        match db.get_owner_open_id(bot_id).await {
-            Ok(Some(owner)) => format!(
-                "ℹ️ 当前推送目标：机器人所有者私聊 {}\n推送目标在首次私聊时自动设置，无需手动指定。\n如需调整推送级别，发送 /feishupush",
-                Self::mask_open_id(&owner)
-            ),
-            Ok(None) => format!(
-                "ℹ️ 尚未设置推送目标。请与机器人在私聊发一条消息，系统会自动捕获为推送目标。\n当前发送者：{}",
-                Self::mask_open_id(sender)
-            ),
-            Err(e) => format!("查询推送目标失败：{e}"),
-        }
-    }
-
-    /// 脱敏 open_id：保留 ou_ 前缀与末 4 位，中间省略，用于卡片/日志展示，避免泄露完整 ID。
-    fn mask_open_id(open_id: &str) -> String {
-        // open_id 形如 ou_xxxxxxxx，全 ASCII，按字节切片安全
-        if open_id.len() <= 8 {
-            return "***".to_string();
-        }
-        format!("{}...{}", &open_id[..4], &open_id[open_id.len() - 4..])
     }
 
     /// Handle /feishupush - cycle push level: disabled -> result_only -> all -> disabled.
@@ -1528,7 +1474,6 @@ impl FeishuListener {
             CardAction::Push(level) => Self::act_push(context, level).await,
             CardAction::New => Self::act_new(context).await,
             CardAction::Stop => Self::act_stop(context).await,
-            CardAction::SetHome => Self::act_sethome(context, msg).await,
             CardAction::Bind(workspace_id) => Self::act_bind(context, *workspace_id).await,
             CardAction::RunTodo(todo_id) => Self::act_run_todo(context, msg, *todo_id).await,
             CardAction::RunLoop(loop_id) => Self::act_run_loop(context, msg, *loop_id).await,
@@ -1616,17 +1561,6 @@ impl FeishuListener {
             let _ = context.db.force_fail_execution_record(running.id).await;
             ActionOutcome { success: true, message: "任务未在运行，已强制标记结束".to_string() }
         }
-    }
-
-    /// act:/sethome：推送目标已自动捕获所有者 open_id，按钮退化为只读查询当前推送目标。
-    async fn act_sethome(context: &ListenerMessageContext<'_>, _msg: &ChannelMessage) -> ActionOutcome {
-        // 不再写 push target：所有者由扫码/首次私聊自动捕获。这里只回显，便于用户确认。
-        let message = match context.db.get_owner_open_id(context.bot_id).await {
-            Ok(Some(owner)) => format!("当前推送目标：所有者私聊 {}", Self::mask_open_id(&owner)),
-            Ok(None) => "尚未设置推送目标，请与机器人私聊一次以自动捕获".to_string(),
-            Err(e) => format!("查询失败：{e}"),
-        };
-        ActionOutcome { success: true, message }
     }
 
     /// 切换工作空间：级联清旧 binding + 改 agent_bot.workspace_id + auto-seed default_response。
@@ -1852,7 +1786,6 @@ impl FeishuListener {
         Some(match verb {
             "stop" => CardAction::Stop,
             "new" => CardAction::New,
-            "sethome" => CardAction::SetHome,
             "push" => CardAction::Push(arg?.to_string()),
             "setexecutor" => CardAction::SetExecutor(arg?.to_string()),
             "bind" => CardAction::Bind(arg?.parse().ok()?),
@@ -1865,7 +1798,6 @@ impl FeishuListener {
     /// 把卡片回调消息解析成回信接收者 (receive_id, receive_id_type)。
     /// card_callback 的 chat_type 不是 p2p/group：msg.channel(chat_id)非空 → 群聊用 chat_id；
     /// 否则回退到点击者 open_id（私聊）。供 act:/runtodo、act:/runloop 等「回信给点击者」的动作复用。
-    /// 注意：推送目标已改用 owner_open_id，sethome 不再调用本函数。
     fn resolve_receive_target(msg: &ChannelMessage) -> (&str, &str) {
         if !msg.channel.is_empty() {
             (msg.channel.as_str(), "chat_id")
@@ -2552,7 +2484,6 @@ mod tests {
         // 各 verb 正常解析（bind/runtodo/runloop 参数是 i64）
         assert_eq!(FeishuListener::parse_card_action("act:/stop"), Some(CardAction::Stop));
         assert_eq!(FeishuListener::parse_card_action("act:/new"), Some(CardAction::New));
-        assert_eq!(FeishuListener::parse_card_action("act:/sethome"), Some(CardAction::SetHome));
         assert_eq!(FeishuListener::parse_card_action("act:/bind 5"), Some(CardAction::Bind(5)));
         assert_eq!(FeishuListener::parse_card_action("act:/runtodo 10"), Some(CardAction::RunTodo(10)));
         assert_eq!(FeishuListener::parse_card_action("act:/runloop 20"), Some(CardAction::RunLoop(20)));
