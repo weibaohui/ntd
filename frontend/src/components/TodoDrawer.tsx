@@ -10,6 +10,7 @@ import { getDefaultExecutor } from '@/utils/executors';
 import { getLastExecutor, setLastExecutor } from '@/constants';
 import { TagCheckCardGroup } from './TagCheckCard';
 import { ExecutorPicker } from './todo-drawer/ExecutorPicker';
+import { ExpertPicker } from './todo-drawer/ExpertPicker';
 import { PromptEditor } from './todo-drawer/PromptEditor';
 import { SkillSelector } from './todo-drawer/SkillSelector';
 import { SchedulerSection } from './todo-drawer/SchedulerSection';
@@ -51,7 +52,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
 
   // 从 formState 中解构出常用的字段
   const {
-    title, prompt, selectedTags, executor, workspaceId,
+    title, prompt, selectedTags, executor, expertName, workspaceId,
     webhookEnabled, schedulerEnabled, schedulerConfig, acceptanceCriteria,
   } = formState;
 
@@ -212,6 +213,8 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
           workspaceToSave,
           webhookEnabled,
           acceptanceCriteria || null,
+          undefined,
+          expertName,
         );
         await db.updateScheduler(todo.id, schedulerEnabled, schedulerConfig || null);
         await db.updateTodoTags(todo.id, selectedTags);
@@ -225,15 +228,18 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
           acceptanceCriteria || undefined,
           undefined,
           webhookEnabled,
+          expertName || undefined,
         );
 
-        if (workspaceToSave != null || schedulerEnabled || executor !== getDefaultExecutor() || webhookEnabled) {
+        if (workspaceToSave != null || schedulerEnabled || executor !== getDefaultExecutor() || webhookEnabled || expertName) {
           await db.updateTodo(
             newTodo.id, newTodo.title, newTodo.prompt, newTodo.status,
             executor, schedulerEnabled, schedulerConfig || null,
             workspaceToSave,
             webhookEnabled,
             acceptanceCriteria || null,
+            undefined,
+            expertName,
           );
           await db.updateScheduler(newTodo.id, schedulerEnabled, schedulerConfig || null);
         }
@@ -284,6 +290,14 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
             // 只在创建模式下记忆——编辑模式用户只是临时调整，不应覆盖记忆
             if (!todo) setLastExecutor(v);
           }} />
+
+          <Divider style={{ margin: '8px 0 16px' }} />
+
+          {/* 专家/团队选择（WorkBuddy 专家系统） */}
+          <ExpertPicker
+            value={expertName}
+            onChange={(v) => setField('expertName', v)}
+          />
 
           <Divider style={{ margin: '8px 0 16px' }} />
 
