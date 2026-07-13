@@ -378,6 +378,8 @@ export function ExpertsPanel() {
   // 目录导入弹窗状态
   const [dirImportModalOpen, setDirImportModalOpen] = useState(false);
   const [dirImportPath, setDirImportPath] = useState('');
+  // 从 WorkBuddy 导入的 loading 态
+  const [workbuddyImporting, setWorkbuddyImporting] = useState(false);
 
   /** 从后端拉取专家列表并写入 state */
   const loadExperts = useCallback(async () => {
@@ -470,13 +472,50 @@ export function ExpertsPanel() {
     }
   }, [dirImportPath, loadExperts, message]);
 
-  // 导入下拉菜单：zip 上传 / 从目录导入
+  /**
+   * 从 WorkBuddy 批量导入专家。
+   * 调用后端接口扫描 ~/.workbuddy/plugins/marketplaces/experts/plugins/ 目录，
+   * 将所有未导入的专家/专家团队批量复制到 ~/.ntd/experts/ 目录。
+   */
+  const handleWorkbuddyImport = useCallback(async () => {
+    setWorkbuddyImporting(true);
+    try {
+      const result = await db.importFromWorkbuddy();
+      // 根据导入结果组合提示信息
+      const parts: string[] = [];
+      if (result.imported_count > 0) parts.push(`新增 ${result.imported_count} 个`);
+      if (result.skipped_count > 0) parts.push(`跳过 ${result.skipped_count} 个（已存在）`);
+      if (result.errors.length > 0) parts.push(`${result.errors.length} 个失败`);
+
+      if (parts.length === 0) {
+        message.info('WorkBuddy 目录中未找到可导入的专家');
+      } else if (result.errors.length > 0) {
+        message.warning(`WorkBuddy 导入：${parts.join('，')}`);
+      } else {
+        message.success(`WorkBuddy 导入：${parts.join('，')}`);
+      }
+      await loadExperts();
+    } catch (err: any) {
+      message.error('WorkBuddy 导入失败: ' + (err?.message || String(err)));
+    } finally {
+      setWorkbuddyImporting(false);
+    }
+  }, [loadExperts, message]);
+
+  // 导入下拉菜单：zip 上传 / 从 WorkBuddy 导入 / 从目录导入
   const importMenuItems: MenuProps['items'] = [
     {
       key: 'zip',
       label: '上传 zip 包',
       icon: <UploadOutlined />,
       onClick: () => fileInputRef.current?.click(),
+    },
+    {
+      key: 'workbuddy',
+      label: '从 WorkBuddy 导入',
+      icon: <TeamOutlined />,
+      onClick: handleWorkbuddyImport,
+      disabled: workbuddyImporting,
     },
     {
       key: 'dir',
@@ -592,7 +631,7 @@ export function ExpertsPanel() {
             目录下需包含 <code>.codebuddy-plugin/plugin.json</code> 文件。
           </div>
           <Input
-            placeholder="/path/to/expert-directory"
+            placeholder="~/.workbuddy/plugins/marketplaces/experts/plugins/senior-developer"
             value={dirImportPath}
             onChange={e => setDirImportPath(e.target.value)}
           />

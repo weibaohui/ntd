@@ -87,3 +87,28 @@ export async function importExpert(file: File): Promise<{ expert: ExpertMetadata
 export async function importExpertFromDirectory(path: string): Promise<{ expert: ExpertMetadata; errors: string[] }> {
   return unwrap(await api.post('/api/experts/import-from-directory', { path }));
 }
+
+/**
+ * 从 WorkBuddy 批量导入专家
+ *
+ * 扫描 ~/.workbuddy/plugins/marketplaces/experts/plugins/ 目录，
+ * 将所有未导入的专家/专家团队批量复制到 ~/.ntd/experts/ 目录。
+ * 已存在的专家会被跳过，不会覆盖。
+ */
+export async function importFromWorkbuddy(): Promise<WorkbuddyImportResult> {
+  return unwrap(await api.post('/api/experts/import-from-workbuddy'));
+}
+
+/** 从 WorkBuddy 批量导入的结果 */
+export interface WorkbuddyImportResult {
+  /** 成功导入的专家数量 */
+  imported_count: number;
+  /** 跳过的专家（已存在）数量 */
+  skipped_count: number;
+  /** 成功导入的专家名称列表 */
+  imported: string[];
+  /** 跳过的专家名称列表 */
+  skipped: string[];
+  /** 错误列表 */
+  errors: string[];
+}

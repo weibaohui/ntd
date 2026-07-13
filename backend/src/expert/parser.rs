@@ -42,12 +42,39 @@ pub fn build_expert_metadata(
         name: plugin.name.clone(),
         expert_type: plugin.expert_type.clone(),
         version: plugin.version.clone(),
-        display_name_zh: plugin.display_name.as_ref().and_then(|d| d.zh.clone()),
-        display_name_en: plugin.display_name.as_ref().and_then(|d| d.en.clone()),
-        profession_zh: plugin.profession.as_ref().and_then(|d| d.zh.clone()),
-        profession_en: plugin.profession.as_ref().and_then(|d| d.en.clone()),
-        description_zh: plugin.display_description.as_ref().and_then(|d| d.zh.clone()),
-        description_en: plugin.display_description.as_ref().and_then(|d| d.en.clone()),
+        // 显示名称：优先 displayName.zh → displayName.en → description 兜底 → name 兜底
+        display_name_zh: plugin
+            .display_name
+            .as_ref()
+            .and_then(|d| d.zh.clone())
+            .or_else(|| plugin.description.clone()),
+        display_name_en: plugin
+            .display_name
+            .as_ref()
+            .and_then(|d| d.en.clone())
+            .or_else(|| plugin.description.clone()),
+        // 职业：优先 profession → team 类型用 lead 成员职业兜底
+        profession_zh: plugin
+            .profession
+            .as_ref()
+            .and_then(|d| d.zh.clone())
+            .or_else(|| fallback_profession_from_members(plugin, "zh")),
+        profession_en: plugin
+            .profession
+            .as_ref()
+            .and_then(|d| d.en.clone())
+            .or_else(|| fallback_profession_from_members(plugin, "en")),
+        // 描述：优先 displayDescription → description 兜底
+        description_zh: plugin
+            .display_description
+            .as_ref()
+            .and_then(|d| d.zh.clone())
+            .or_else(|| plugin.description.clone()),
+        description_en: plugin
+            .display_description
+            .as_ref()
+            .and_then(|d| d.en.clone())
+            .or_else(|| plugin.description.clone()),
         avatar_path: plugin.avatar.clone(),
         category_id: plugin.category_id.clone(),
         definition_dir: expert_dir.to_string_lossy().to_string(),
@@ -99,6 +126,38 @@ fn localized_text_to_tag(t: &LocalizedText) -> ExpertTag {
     ExpertTag {
         zh: t.zh.clone().unwrap_or_default(),
         en: t.en.clone().unwrap_or_default(),
+    }
+}
+
+/// 从成员列表中提取 lead 成员的职业作为 team 类型的职业兜底
+///
+/// 当 plugin.json 没有 profession 字段时，用 lead 成员的职业来描述整个团队。
+/// 例如 software-company 的 lead 是「交付总监」，就用这个作为团队职业。
+///
+/// # 参数
+/// - `plugin`: 解析后的 PluginJson
+/// - `lang`: 语言标识，"zh" 或 "en"
+///
+/// # 返回
+/// lead 成员职业文本，如果找不到则返回 None
+fn fallback_profession_from_members(plugin: &PluginJson, lang: &str) -> Option<String> {
+    // 仅 team 类型适用
+    if plugin.expert_type != ExpertType::Team {
+        return None;
+    }
+
+    // 先确定 lead 的 ID
+    let lead_id = plugin.team_info.as_ref().map(|t| &t.lead_agent)?;
+    let members = plugin.members.as_ref()?;
+
+    // 在 members 中查找 lead 成员
+    let lead_member = members.iter().find(|m| m.id == *lead_id)?;
+
+    // 根据语言返回职业
+    match lang {
+        "zh" => lead_member.profession.as_ref().and_then(|p| p.zh.clone()),
+        "en" => lead_member.profession.as_ref().and_then(|p| p.en.clone()),
+        _ => None,
     }
 }
 

@@ -48,7 +48,10 @@ pub struct PluginJson {
     pub quick_prompts: Option<Vec<LocalizedText>>,
 
     /// Agent 定义文件相对路径列表
-    pub agents: Vec<String>,
+    /// 
+    /// 某些旧版本的 team 类型专家可能没有此字段，
+    /// 此时会从 agents 目录扫描所有 .md 文件作为 fallback
+    pub agents: Option<Vec<String>>,
     /// 当前激活的 agent name
     #[serde(rename = "agentName")]
     pub agent_name: Option<String>,

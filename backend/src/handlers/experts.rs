@@ -167,6 +167,21 @@ pub struct ImportFromDirectoryRequest {
     pub path: String,
 }
 
+/// 从 WorkBuddy 批量导入结果
+#[derive(Debug, Serialize)]
+pub struct WorkbuddyImportResult {
+    /// 成功导入的专家数量
+    pub imported_count: usize,
+    /// 跳过的专家（已存在）数量
+    pub skipped_count: usize,
+    /// 成功导入的专家名称列表
+    pub imported: Vec<String>,
+    /// 跳过的专家名称列表
+    pub skipped: Vec<String>,
+    /// 错误列表
+    pub errors: Vec<String>,
+}
+
 // ── 导出 API ──────────────────────────────────────────────────────────
 
 /// `GET /api/experts/:name/export`：导出专家为 zip 文件
@@ -670,4 +685,167 @@ pub fn expert_routes() -> axum::Router<AppState> {
             "/api/experts/import-from-directory",
             post(import_expert_from_directory),
         )
+        .route(
+            "/api/experts/import-from-workbuddy",
+            post(import_from_workbuddy),
+        )
+}
+
+// ── 从 WorkBuddy 导入 API ──────────────────────────────────────────────
+
+/// WorkBuddy 专家目录的默认相对路径
+///
+/// WorkBuddy 的专家存放在 ~/.workbuddy/plugins/marketplaces/experts/plugins/ 下，
+/// 每个子目录代表一个专家或专家团队。
+const WORKBUDDY_EXPERTS_RELATIVE_PATH: &str =
+    ".workbuddy/plugins/marketplaces/experts/plugins";
+
+/// `POST /api/experts/import-from-workbuddy`：从 WorkBuddy 目录批量导入专家
+///
+/// 扫描 WorkBuddy 默认目录下的所有专家子目录，逐个导入到 NTD 专家目录。
+/// 已存在的专家会被跳过，不会覆盖。
+pub async fn import_from_workbuddy(
+    State(state): State<AppState>,
+) -> Result<ApiResponse<WorkbuddyImportResult>, AppError> {
+    // 定位 WorkBuddy 专家目录
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?;
+    let workbuddy_dir = home_dir.join(WORKBUDDY_EXPERTS_RELATIVE_PATH);
+
+    // 校验目录存在
+    if !workbuddy_dir.exists() || !workbuddy_dir.is_dir() {
+        return Err(AppError::BadRequest(format!(
+            "WorkBuddy 专家目录不存在: {}",
+            workbuddy_dir.display()
+        )));
+    }
+
+    let experts_dir_path = experts_dir().ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?;
+    let expert_manager = state.expert_manager.clone();
+
+    // 在 spawn_blocking 中执行批量导入
+    let result = tokio::task::spawn_blocking(move || -> WorkbuddyImportResult {
+        batch_import_from_workbuddy(&workbuddy_dir, &experts_dir_path, &expert_manager)
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))?;
+
+    Ok(ApiResponse::ok(result))
+}
+
+/// 批量导入 WorkBuddy 专家目录
+///
+/// 遍历 WorkBuddy 目录下的所有子目录，逐个尝试导入。
+/// 已存在的跳过，失败的记录到 errors。
+///
+/// # 参数
+/// - `workbuddy_dir`: WorkBuddy 专家目录路径
+/// - `experts_dir`: NTD 专家目标目录路径
+/// - `expert_manager`: 专家索引管理器
+///
+/// # 返回
+/// 批量导入结果
+fn batch_import_from_workbuddy(
+    workbuddy_dir: &Path,
+    experts_dir: &Path,
+    expert_manager: &crate::expert::ExpertIndexManager,
+) -> WorkbuddyImportResult {
+    let mut imported = Vec::new();
+    let mut skipped = Vec::new();
+    let mut errors = Vec::new();
+
+    // 读取 WorkBuddy 目录下的所有子目录
+    let entries = match std::fs::read_dir(workbuddy_dir) {
+        Ok(e) => e,
+        Err(e) => {
+            errors.push(format!("无法读取 WorkBuddy 目录: {}", e));
+            return WorkbuddyImportResult {
+                imported_count: 0,
+                skipped_count: 0,
+                imported,
+                skipped,
+                errors,
+            };
+        }
+    };
+
+    // 确保专家根目录存在
+    if let Err(e) = std::fs::create_dir_all(experts_dir) {
+        errors.push(format!("创建专家目录失败: {}", e));
+        return WorkbuddyImportResult {
+            imported_count: 0,
+            skipped_count: 0,
+            imported,
+            skipped,
+            errors,
+        };
+    }
+
+    for entry in entries.flatten() {
+        let src_dir = entry.path();
+        // 只处理目录
+        if !src_dir.is_dir() {
+            continue;
+        }
+
+        // 检查是否包含 plugin.json
+        let plugin_json_path = src_dir.join(".codebuddy-plugin/plugin.json");
+        if !plugin_json_path.exists() {
+            continue;
+        }
+
+        // 解析 plugin.json 获取专家名称
+        let plugin = match parse_plugin_json(&plugin_json_path) {
+            Ok(p) => p,
+            Err(e) => {
+                // 解析失败的记录错误但继续处理其他专家
+                errors.push(format!(
+                    "解析 {} 失败: {}",
+                    src_dir.display(),
+                    e
+                ));
+                continue;
+            }
+        };
+
+        let expert_name = plugin.name;
+
+        // 校验名称安全性
+        if !is_safe_expert_name(&expert_name) {
+            errors.push(format!("无效的专家名称: {}", expert_name));
+            continue;
+        }
+
+        // 检查是否已存在
+        let target_dir = experts_dir.join(&expert_name);
+        if target_dir.exists() {
+            skipped.push(expert_name);
+            continue;
+        }
+
+        // 复制目录到目标位置
+        if let Err(e) = copy_dir_all(&src_dir, &target_dir) {
+            errors.push(format!("复制 {} 失败: {}", expert_name, e));
+            continue;
+        }
+
+        // 重新加载该专家到索引
+        if let Err(e) = expert_manager.reload_expert(&target_dir) {
+            errors.push(format!("加载 {} 索引失败: {}", expert_name, e));
+            continue;
+        }
+
+        imported.push(expert_name);
+    }
+
+    let imported_count = imported.len();
+    let skipped_count = skipped.len();
+
+    WorkbuddyImportResult {
+        imported_count,
+        skipped_count,
+        imported,
+        skipped,
+        errors,
+    }
 }
