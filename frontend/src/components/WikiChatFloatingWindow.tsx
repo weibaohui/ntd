@@ -218,26 +218,24 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
     }
   }, [dispatch]);
 
-  // ─── 最小化模式：不渲染 ──────────────────────────────────────
-  if (mode === 'minimized') return null;
-
   // ─── 移动端：底部 Drawer ──────────────────────────────────
+  // 使用 forceMode 判断显隐（TypeScript 无法 narrow 来自 props 的值，避免 mode !== 'minimized' 编译错误）
   if (isMobile) {
     return (
       <Drawer
         title="Wiki 对话"
         placement="bottom"
-        open={true}
-        onClose={() => setMode('minimized')}
+        open={forceMode !== 'minimized'}
+        onClose={() => {
+          setMode('minimized');
+          onClose?.();
+        }}
         height="85vh"
         destroyOnHidden
         styles={{
           body: { padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(85vh - 55px)', background: colors.panelBg },
           header: { background: colors.headerBg, borderBottom: `1px solid ${colors.panelBorder}`, padding: '12px 16px' },
         }}
-        extra={
-          <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose || (() => setMode('minimized'))} style={{ color: colors.hintColor }} />
-        }
       >
         <ChatMessageList messages={messages} loading={loading} mobile isDark={isDark} />
         <ChatInputPanel
@@ -318,8 +316,11 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
   // ─── 最大化模式：全屏模态 ──────────────────────────────────
   return (
     <Modal
-      open={true}
-      onCancel={() => setMode('side')}
+      open={forceMode === 'maximized'}
+      onCancel={() => {
+        setMode('side');
+        onClose?.();
+      }}
       footer={null}
       width="90vw"
       styles={{

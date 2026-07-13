@@ -4,6 +4,8 @@
 // backend/src/config.rs::DEFAULT_EXECUTION_TIMEOUT_SECS.
 // =============================================================================
 
+import { getDefaultExecutor } from '@/utils/executors';
+
 /** Default execution timeout in seconds (1 hour). Used as fallback when no config is set. */
 export const DEFAULT_EXECUTION_TIMEOUT_SECS = 3600;
 
@@ -204,13 +206,16 @@ export const TODO_LIST_REFRESH_EVENT = 'todoListRefresh';
 // localStorage key 仅本文件内部用，跨组件记忆用户上次选择的执行器
 const LAST_EXECUTOR_STORAGE_KEY = 'ntd_last_executor';
 
-/** 从 localStorage 读出上次选择的执行器，不存在时回退到 DEFAULT_EXECUTOR */
-export function getLastExecutor(defaultExecutor: string = 'claudecode'): string {
+/** 从 localStorage 读出上次选择的执行器，不存在时回退到系统默认执行器 */
+export function getLastExecutor(defaultExecutor?: string): string {
   try {
-    return localStorage.getItem(LAST_EXECUTOR_STORAGE_KEY) || defaultExecutor;
+    const saved = localStorage.getItem(LAST_EXECUTOR_STORAGE_KEY);
+    if (saved) return saved;
+    // 没有保存值时，优先使用调用方传入的默认值，否则使用系统默认执行器
+    return defaultExecutor || getDefaultExecutor();
   } catch {
-    // 隐私模式 / 配额满：静默吞掉
-    return defaultExecutor;
+    // 隐私模式 / 配额满：静默吞掉，返回系统默认
+    return defaultExecutor || getDefaultExecutor();
   }
 }
 

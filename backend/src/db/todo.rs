@@ -390,11 +390,14 @@ impl Database {
     }
 
     pub async fn create_todo(&self, title: &str, prompt: &str) -> Result<i64, sea_orm::DbErr> {
-        self.create_todo_with_executor(title, prompt, Some(crate::adapters::DEFAULT_EXECUTOR)).await
+        // 从数据库读取默认执行器，不再使用硬编码常量；
+        // 若数据库未配置默认执行器，get_default_executor_name 内部会回退到 claudecode。
+        let default_executor = self.get_default_executor_name().await?;
+        self.create_todo_with_executor(title, prompt, Some(&default_executor)).await
     }
 
     /// 创建 Todo，可指定执行器。
-    /// executor 为 None、空串或仅空白时默认为 claudecode（防止空/空白字符串污染 DB）。
+    /// executor 为 None、空串或仅空白时使用数据库配置的默认执行器（防止空/空白字符串污染 DB）。
     ///
     /// 注意：本方法保留 path-only 语义作为「最简 helper」专用入口——调用方（feishu_listener /
     /// sync.rs 等）已经决定好了 workspace，没有工作空间语义可推导时不应使用本方法。
@@ -419,17 +422,19 @@ impl Database {
         workspace_path: &str,
     ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
-        let executor_str = executor
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(crate::adapters::DEFAULT_EXECUTOR);
+        // 先尝试使用调用方传入的 executor；为空则从数据库读取默认执行器。
+        // get_default_executor_name 内部会回退到 DEFAULT_EXECUTOR 常量，确保不会为空。
+        let executor_str = match executor.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(s) => s.to_string(),
+            None => self.get_default_executor_name().await?,
+        };
         let am = todos::ActiveModel {
             title: ActiveValue::Set(title.to_string()),
             prompt: ActiveValue::Set(Some(prompt.to_string())),
             status: ActiveValue::Set(Some(TodoStatus::Pending.to_string())),
             created_at: ActiveValue::Set(Some(now.clone())),
             updated_at: ActiveValue::Set(Some(now)),
-            executor: ActiveValue::Set(Some(executor_str.to_string())),
+            executor: ActiveValue::Set(Some(executor_str)),
             acceptance_criteria: ActiveValue::Set(acceptance_criteria.map(|s| s.to_string())),
             webhook_enabled: ActiveValue::Set(Some(webhook_enabled)),
             auto_review_enabled: ActiveValue::Set(Some(false)),
@@ -461,17 +466,19 @@ impl Database {
         kind: Option<i32>,
     ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
-        let executor_str = executor
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(crate::adapters::DEFAULT_EXECUTOR);
+        // 先尝试使用调用方传入的 executor；为空则从数据库读取默认执行器。
+        // get_default_executor_name 内部会回退到 DEFAULT_EXECUTOR 常量，确保不会为空。
+        let executor_str = match executor.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(s) => s.to_string(),
+            None => self.get_default_executor_name().await?,
+        };
         let am = todos::ActiveModel {
             title: ActiveValue::Set(title.to_string()),
             prompt: ActiveValue::Set(Some(prompt.to_string())),
             status: ActiveValue::Set(Some(status.unwrap_or("pending").to_string())),
             created_at: ActiveValue::Set(Some(now.clone())),
             updated_at: ActiveValue::Set(Some(now)),
-            executor: ActiveValue::Set(Some(executor_str.to_string())),
+            executor: ActiveValue::Set(Some(executor_str)),
             acceptance_criteria: ActiveValue::Set(acceptance_criteria.map(|s| s.to_string())),
             webhook_enabled: ActiveValue::Set(Some(webhook_enabled)),
             auto_review_enabled: ActiveValue::Set(auto_review_enabled),

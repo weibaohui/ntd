@@ -5,6 +5,48 @@
 
 import { FaSquare } from 'react-icons/fa';
 import type { ExecutorOption, ExecutionRecord } from '@/types/execution';
+import * as db from '@/utils/database';
+
+// ─── 全局默认执行器缓存 ──────────────────────────────────────
+//
+// 模块级缓存：应用启动时从后端加载 is_default=true 的执行器，
+// 后续通过 getDefaultExecutor() 同步读取，避免每次都发请求。
+// 若加载失败或尚未加载，回退到 DEFAULT_EXECUTOR 常量（claudecode）。
+
+let cachedDefaultExecutor: string | null = null;
+let defaultExecutorLoading: Promise<void> | null = null;
+
+/** 从后端加载默认执行器并缓存。应用启动时调用一次即可。 */
+export async function loadDefaultExecutor(): Promise<void> {
+  // 防止重复请求：已在加载中则复用同一个 Promise
+  if (defaultExecutorLoading) return defaultExecutorLoading;
+
+  defaultExecutorLoading = (async () => {
+    try {
+      const result = await db.getDefaultExecutor();
+      if (result?.name) {
+        cachedDefaultExecutor = result.name;
+      }
+    } catch (err) {
+      // 加载失败时静默使用常量回退，不阻塞应用启动
+      console.warn('加载默认执行器失败，使用回退值:', err);
+    }
+  })();
+
+  return defaultExecutorLoading;
+}
+
+/** 获取当前默认执行器名称（同步读取缓存）。
+ *  优先返回从后端加载的缓存值，未加载或加载失败时回退到 DEFAULT_EXECUTOR 常量。
+ */
+export function getDefaultExecutor(): string {
+  return cachedDefaultExecutor || DEFAULT_EXECUTOR;
+}
+
+/** 设置默认执行器缓存（在前端修改默认执行器后调用，同步更新本地缓存）。 */
+export function setDefaultExecutorCache(name: string): void {
+  cachedDefaultExecutor = name;
+}
 
 // ─── Executor 摘要映射 ──────────────────────────────────────
 
