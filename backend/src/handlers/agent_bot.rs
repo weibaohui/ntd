@@ -414,6 +414,8 @@ pub struct AgentBotResponse {
     pub bot_name: String,
     pub app_id: String,
     pub bot_open_id: Option<String>,
+    /// 所有者 open_id（推送目标），扫码/首次私聊自动捕获；前端列表页展示
+    pub owner_open_id: Option<String>,
     pub domain: Option<String>,
     pub enabled: bool,
     pub config: String,
@@ -435,6 +437,7 @@ pub async fn list_agent_bots(
             bot_name: b.bot_name,
             app_id: b.app_id,
             bot_open_id: b.bot_open_id,
+            owner_open_id: b.owner_open_id,
             domain: b.domain,
             enabled: b.enabled,
             config: b.config,
