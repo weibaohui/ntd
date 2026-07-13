@@ -2,7 +2,7 @@
 // 受控组件：state/handler 由父组件持有，本组件只负责展示与事件回调。
 // 被智能体配置抽屉（AssistantConfigDrawer）与详情页（AssistantDetailPage）共用。
 
-import { Card, Input, Button } from 'antd';
+import { Card, Input, Button, Popconfirm } from 'antd';
 import type { FeishuHistoryChat } from '@/types';
 
 interface HistoryChatsCardProps {
@@ -57,9 +57,11 @@ export function HistoryChatsCard({
         <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, marginBottom: 4 }}>
           <span style={{ flex: 1 }}>{c.chat_name || c.chat_id}</span>
           <span style={{ color: 'var(--color-text-tertiary)', fontSize: 11 }}>{c.chat_id.slice(0, 12)}...</span>
-          <Button size="small" danger type="link" style={{ fontSize: 11, padding: 0 }} onClick={() => onDelete(c.id)}>
-            删除
-          </Button>
+          <Popconfirm title="确定删除该拉取群？" onConfirm={() => onDelete(c.id)}>
+            <Button size="small" danger type="link" style={{ fontSize: 11, padding: 0 }}>
+              删除
+            </Button>
+          </Popconfirm>
         </div>
       ))}
       {chats.length === 0 && (

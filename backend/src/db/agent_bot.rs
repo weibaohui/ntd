@@ -149,19 +149,20 @@ impl Database {
         bot_id: i64,
         open_id: &str,
     ) -> Result<bool, sea_orm::DbErr> {
-        let bot = agent_bots::Entity::find_by_id(bot_id).one(&self.conn).await?;
-        let Some(bot) = bot else {
-            // bot 不存在：静默 no-op，与 update_agent_bot_config 的幽灵 id 契约一致
-            return Ok(false);
-        };
-        // 已有非空值则锁定，拒绝覆盖
-        if bot.owner_open_id.as_deref().is_some_and(|s| !s.is_empty()) {
-            return Ok(false);
-        }
-        let mut am: agent_bots::ActiveModel = bot.into();
-        am.owner_open_id = ActiveValue::Set(Some(open_id.to_string()));
-        am.update(&self.conn).await?;
-        Ok(true)
+        // 单条条件 UPDATE：只有 owner_open_id 为空/NULL 时才写，靠 rows_affected 判断是否命中。
+        // 用原子 UPDATE 而非「读-改-写」：并发首次私聊时两个用户可能都读到空值，读-改-写会让
+        // 后写者覆盖先写者、把推送目标劫持成自己（owner_open_id 是推送目标权威来源）。
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let result = self
+            .conn
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE agent_bots SET owner_open_id = ? WHERE id = ? AND (owner_open_id IS NULL OR owner_open_id = '')",
+                [open_id.to_string().into(), bot_id.into()],
+            ))
+            .await?;
+        // rows_affected == 1：命中空值并写入；0：bot 不存在或 owner_open_id 已有值（含幽灵 id no-op 语义）
+        Ok(result.rows_affected() == 1)
     }
 
     /// 获取 bot 的 owner_open_id（推送目标权威来源）。
