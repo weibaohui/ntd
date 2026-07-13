@@ -42,17 +42,18 @@ pub fn build_expert_metadata(
         name: plugin.name.clone(),
         expert_type: plugin.expert_type.clone(),
         version: plugin.version.clone(),
-        // 显示名称：优先 displayName.zh → displayName.en → description 兜底 → name 兜底
+        // 显示名称：优先 displayName.zh → displayName.en → name（ID 兜底，总比 description 好）
         display_name_zh: plugin
             .display_name
             .as_ref()
             .and_then(|d| d.zh.clone())
-            .or_else(|| plugin.description.clone()),
+            .or_else(|| plugin.display_name.as_ref().and_then(|d| d.en.clone()))
+            .or_else(|| Some(plugin.name.clone())),
         display_name_en: plugin
             .display_name
             .as_ref()
             .and_then(|d| d.en.clone())
-            .or_else(|| plugin.description.clone()),
+            .or_else(|| Some(plugin.name.clone())),
         // 职业：优先 profession → team 类型用 lead 成员职业兜底
         profession_zh: plugin
             .profession
@@ -64,11 +65,12 @@ pub fn build_expert_metadata(
             .as_ref()
             .and_then(|d| d.en.clone())
             .or_else(|| fallback_profession_from_members(plugin, "en")),
-        // 描述：优先 displayDescription → description 兜底
+        // 描述：优先 displayDescription.zh → description_zh（旧格式）→ description（英文兜底）
         description_zh: plugin
             .display_description
             .as_ref()
             .and_then(|d| d.zh.clone())
+            .or_else(|| plugin.description_zh.clone())
             .or_else(|| plugin.description.clone()),
         description_en: plugin
             .display_description

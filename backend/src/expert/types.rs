@@ -18,6 +18,8 @@ pub struct PluginJson {
     pub version: String,
     /// 英文描述
     pub description: Option<String>,
+    /// 中文描述（旧格式 plugin.json 可能直接有这个字段）
+    pub description_zh: Option<String>,
     /// 类型：agent 或 team
     #[serde(rename = "expertType")]
     pub expert_type: ExpertType,

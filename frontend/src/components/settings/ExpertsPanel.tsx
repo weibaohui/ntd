@@ -438,7 +438,7 @@ function ExpertDetailModal({
       open={open}
       onCancel={onClose}
       footer={null}
-      width={720}
+      width={Math.min(720, typeof window !== 'undefined' ? window.innerWidth - 32 : 720)}
       centered
       style={{ borderRadius: 'var(--radius-lg)' }}
     >
@@ -457,27 +457,28 @@ function ExpertDetailModal({
           borderBottom: '1px solid var(--color-border-light)',
         }}>
           {/* 头部：头像 + 名称 + 操作 */}
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyItems: 'space-between' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, flex: 1, minWidth: 0 }}>
               {showAvatar ? (
                 <img
                   src={avatarUrl}
                   alt={displayName}
                   onError={() => setAvatarError(true)}
                   style={{
-                    width: 72,
-                    height: 72,
-                    borderRadius: 16,
+                    width: 56,
+                    height: 56,
+                    borderRadius: 14,
                     objectFit: 'cover',
                     border: '3px solid var(--color-bg-elevated)',
                     boxShadow: 'var(--shadow-md)',
+                    flexShrink: 0,
                   }}
                 />
               ) : (
                 <div style={{
-                  width: 72,
-                  height: 72,
-                  borderRadius: 16,
+                  width: 56,
+                  height: 56,
+                  borderRadius: 14,
                   background: isTeam
                     ? 'linear-gradient(135deg, var(--color-warning-bg-1), var(--color-error-bg))'
                     : 'linear-gradient(135deg, var(--color-info-bg-1), var(--color-primary-bg))',
@@ -486,29 +487,30 @@ function ExpertDetailModal({
                   justifyContent: 'center',
                   border: '3px solid var(--color-bg-elevated)',
                   boxShadow: 'var(--shadow-md)',
+                  flexShrink: 0,
                 }}>
                   {isTeam ? (
-                    <TeamOutlined style={{ color: 'var(--color-warning)', fontSize: 32 }} />
+                    <TeamOutlined style={{ color: 'var(--color-warning)', fontSize: 26 }} />
                   ) : (
-                    <UserOutlined style={{ color: 'var(--color-info)', fontSize: 32 }} />
+                    <UserOutlined style={{ color: 'var(--color-info)', fontSize: 26 }} />
                   )}
                 </div>
               )}
 
-              <div style={{ flex: 1 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <Text strong style={{ fontSize: 20, color: 'var(--color-text)' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+                  <Text strong style={{ fontSize: 18, color: 'var(--color-text)', wordBreak: 'break-word' }}>
                     {displayName}
                   </Text>
-                  <Tag color={isTeam ? 'orange' : 'blue'} style={{ fontSize: 11 }}>
+                  <Tag color={isTeam ? 'orange' : 'blue'} style={{ fontSize: 11, margin: 0 }}>
                     {isTeam ? '专家团队' : '单个专家'}
                   </Tag>
-                  <Tag style={{ fontSize: 11, background: 'var(--color-bg-tertiary)' }}>
+                  <Tag style={{ fontSize: 11, background: 'var(--color-bg-tertiary)', margin: 0 }}>
                     v{expert.version}
                   </Tag>
                 </div>
                 {profession && (
-                  <div style={{ fontSize: 14, color: 'var(--color-text-secondary)', marginBottom: 8 }}>
+                  <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 8 }}>
                     {profession}
                   </div>
                 )}
@@ -521,7 +523,7 @@ function ExpertDetailModal({
             </div>
 
             {/* 操作按钮 */}
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
               <Tooltip title="导出为 zip 包">
                 <Button
                   type="text"
