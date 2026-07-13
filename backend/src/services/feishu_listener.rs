@@ -1752,40 +1752,51 @@ impl FeishuListener {
         ActionOutcome { success: true, message: format!("已触发环路「{name}」") }
     }
 
-    /// 设当前 workspace 的默认执行器：写 workspace_settings.default_response_executor。
+    /// 把当前 workspace 的「默认响应执行器」设为指定 executor：
+    /// 既写 workspace_settings.default_response_executor，又把 default_response_type 改为 "executor"。
+    /// 只写 executor 字段而不改 type 是有 bug 的——dispatch_default_response 按 default_response_type
+    /// 分发，type 仍是 todo/loop 时点了「默认响应执行器」按钮也不会真的切到执行器，所以两字段必须同改。
     /// executor 名必须是已注册的（ExecutorType::as_str），否则视为无效拒绝写入。
     async fn act_set_executor(context: &ListenerMessageContext<'_>, executor_name: &str) -> ActionOutcome {
         let Some(wid) = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten() else {
             return ActionOutcome { success: false, message: "未设置工作空间".to_string() };
         };
         // 校验 executor 已注册，避免把无效名写进 settings 让下次 dispatch 失败
-        let registered: Vec<String> = context
-            .ctx
-            .executor_registry
-            .list_executors()
-            .await
-            .into_iter()
-            .map(|t| t.as_str().to_string())
-            .collect();
+        let registered: Vec<String> = Self::registered_executor_names(context).await;
         if !registered.iter().any(|s| s == executor_name) {
             return ActionOutcome {
                 success: false,
                 message: format!("执行器 {executor_name} 未注册（可用：{}）", registered.join(", ")),
             };
         }
+        // type 与 executor 同改：type=executor 让 dispatch 走执行器分支，executor 字段指定具体执行器。
+        // todo_id/loop_id 传 None 表示不动旧值——切回 todo/loop 时这些旧值还有用，不在这里清。
         match crate::db::workspace_setting::upsert_workspace_settings(
             context.db,
             wid,
-            None,
+            Some("executor".to_string()),
             None,
             None,
             Some(executor_name.to_string()),
         )
         .await
         {
-            Ok(_) => ActionOutcome { success: true, message: format!("默认执行器已设为 {executor_name}") },
+            Ok(_) => ActionOutcome { success: true, message: format!("默认响应执行器已设为 {executor_name}") },
             Err(e) => ActionOutcome { success: false, message: format!("设置失败：{e}") },
         }
+    }
+
+    /// 从 executor_registry 拉出所有已注册执行器名（ExecutorType::as_str），返回 Vec<String>。
+    /// 抽出来一是让 act_set_executor 更短，二是注册名查询本身也是可复用的小步骤。
+    async fn registered_executor_names(context: &ListenerMessageContext<'_>) -> Vec<String> {
+        context
+            .ctx
+            .executor_registry
+            .list_executors()
+            .await
+            .into_iter()
+            .map(|t| t.as_str().to_string())
+            .collect()
     }
 
     /// act 执行后 patch 刷新控制台：assemble 最新状态 + 顶部插入操作结果提示。
