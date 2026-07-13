@@ -140,7 +140,10 @@ pub fn load_single_expert(
     })
 }
 
-/// 构建 Skills 上下文：名称 + 简要描述（prompt 注入用）
+/// 构建 Skills 上下文：名称（markdown 链接到 SKILL.md）+ 简要描述（prompt 注入用）
+///
+/// 把 SKILL.md 的绝对路径做成 markdown 链接，大模型在需要使用技能时
+/// 可以直接知道去哪个文件读取完整的技能定义，而不是只知道名称。
 ///
 /// # 参数
 /// - `skills`: Skill 元数据列表
@@ -154,7 +157,7 @@ pub fn build_skills_context(skills: &[SkillMetadata]) -> String {
 
     let mut parts = Vec::new();
     parts.push("## 可用技能\n".to_string());
-    parts.push("你可以使用以下技能来辅助完成任务：\n".to_string());
+    parts.push("你可以使用以下技能来辅助完成任务。技能名称是 markdown 链接，指向技能定义文件，如需了解技能详细用法可查看该文件：\n".to_string());
 
     for skill in skills {
         let desc = skill
@@ -165,7 +168,12 @@ pub fn build_skills_context(skills: &[SkillMetadata]) -> String {
             .cloned()
             .unwrap_or_else(|| "(无描述)".to_string());
 
-        parts.push(format!("- **{}**: {}\n", skill.skill_name, desc));
+        // 技能名称做成 markdown 链接，指向 SKILL.md 绝对路径，
+        // 让大模型知道去哪里找技能的完整定义。
+        parts.push(format!(
+            "- **[{}]({})**: {}\n",
+            skill.skill_name, skill.skill_md_path, desc
+        ));
     }
 
     parts.push("\n请根据需要自行调用上述技能。".to_string());
