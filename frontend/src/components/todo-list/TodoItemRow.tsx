@@ -142,11 +142,9 @@ export function TodoItemRow({
             </div>
             {/* ExecutorBadge 放在标题右侧，类似 LoopCard 的 status Tag */}
             <ExecutorBadge executor={todo.executor || 'claudecode'} />
-            {/* 专家徽章：仅当 todo.expert_name 存在时显示，风格与 ExecutorBadge 保持一致 */}
-            {todo.expert_name && <ExpertBadge expertName={todo.expert_name} />}
           </div>
 
-          {/* meta 行：标签 + 调度器图标 + 评审徽章 + 相对时间（紧凑、对齐 LoopCard meta 行） */}
+          {/* meta 行：标签 + 调度器图标 + 专家徽章 + 评审徽章 + 相对时间（紧凑、对齐 LoopCard meta 行） */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
             {todoTags.map(t => (
               <span
@@ -169,6 +167,8 @@ export function TodoItemRow({
                 }}
               />
             )}
+            {/* 专家徽章：仅当 todo.expert_name 存在时显示，放在定时图标右边 */}
+            {todo.expert_name && <ExpertBadge expertName={todo.expert_name} />}
             {todo.todo_type === 2 && (
               <span
                 className="todo-tag-badge"
