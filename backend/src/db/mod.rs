@@ -40,6 +40,8 @@ fn compute_next_run(cron_expr: &str, timezone: Option<&str>) -> Option<String> {
     let cron = croner::Cron::new(cron_expr).with_seconds_required().parse().ok()?;
 
     // 时区缺省 / 无效 / 空串均按 UTC 处理,与原实现一致。
+    // 这里用 unwrap_or 而非 ? ,因为无效时区是用户输入错误,应降级为 UTC 而非崩溃;
+    // 且 None 已在 .and_then 链中处理,此分支只有"解析失败"一种情况,不会产生 None。
     let tz: chrono_tz::Tz = timezone
         .and_then(|tz| tz.parse::<chrono_tz::Tz>().ok())
         .unwrap_or(chrono_tz::UTC);

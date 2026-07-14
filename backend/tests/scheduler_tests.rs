@@ -56,7 +56,7 @@ mod cron_validation_tests {
 
         // Out of range values
         assert!(croner::Cron::new("60 * * * * *").with_seconds_required().parse().is_err()); // second > 59
-        assert!(croner::Cron::new("* 60 * * * *").with_seconds_required().with_seconds_required().parse().is_err()); // minute > 59
+        assert!(croner::Cron::new("* 60 * * * *").with_seconds_required().parse().is_err()); // minute > 59
         assert!(croner::Cron::new("* * 25 * * *").with_seconds_required().parse().is_err()); // hour > 23
     }
 
