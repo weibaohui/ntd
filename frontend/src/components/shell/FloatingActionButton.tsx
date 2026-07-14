@@ -92,12 +92,12 @@ export function FloatingActionButton({
         </button>
       </Tooltip>
 
-      {/* Wiki 对话按钮 */}
-      <Tooltip title="Wiki 对话" placement="left">
+      {/* 对话按钮 */}
+      <Tooltip title="对话" placement="left">
         <button
           className="fab-item-btn fab-wiki"
           onClick={handleOpenWikiChat}
-          aria-label="Wiki 对话"
+          aria-label="对话"
         >
           <MessageOutlined style={{ fontSize: 20, color: '#fff' }} />
         </button>

@@ -225,7 +225,7 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
   if (isMobile) {
     return (
       <Drawer
-        title="Wiki 对话"
+        title="对话"
         placement="bottom"
         open={forceMode !== 'minimized'}
         onClose={() => {
@@ -266,7 +266,7 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
         <div style={{ padding: '12px 16px', borderBottom: `1px solid ${colors.panelBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, background: colors.headerBg }}>
           <span style={{ fontWeight: 600, fontSize: 15, color: colors.textColor }}>
             <MessageOutlined style={{ marginRight: 8 }} />
-            Wiki 对话
+            对话
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <ModeToggleButtons mode={mode} onModeChange={setMode} onClose={onClose} isDark={isDark} />
@@ -339,7 +339,7 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
       title={
         <span style={{ fontWeight: 600, fontSize: 16, color: colors.textColor }}>
           <MessageOutlined style={{ marginRight: 10 }} />
-          Wiki 对话
+          对话
         </span>
       }
       closeIcon={<CloseOutlined style={{ color: colors.hintColor }} />}
