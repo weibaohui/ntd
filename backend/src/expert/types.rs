@@ -329,12 +329,13 @@ use parking_lot::RwLock;
 pub struct ExpertIndexManager {
     /// name -> ExpertMetadata
     pub(crate) experts: RwLock<HashMap<String, ExpertMetadata>>,
-    /// agent_name -> AgentFileMetadata
-    pub(crate) agent_files: RwLock<HashMap<String, AgentFileMetadata>>,
-    /// skill_name -> SkillMetadata
-    pub(crate) skills: RwLock<HashMap<String, SkillMetadata>>,
-    /// expert_name -> [skill_name, ...]
-    pub(crate) expert_skills: RwLock<HashMap<String, Vec<String>>>,
+    /// expert_name -> agent_name -> AgentFileMetadata。
+    /// 按专家嵌套隔离而非全局 HashMap：避免不同专家同名 agent 互相覆盖，
+    /// 也避免 remove_expert 误删其他专家的同名资源。
+    pub(crate) agent_files: RwLock<HashMap<String, HashMap<String, AgentFileMetadata>>>,
+    /// expert_name -> skill_name -> SkillMetadata。
+    /// 嵌套隔离原因同 agent_files：防止同名资源跨专家冲突。
+    pub(crate) skills: RwLock<HashMap<String, HashMap<String, SkillMetadata>>>,
     /// category_id -> [expert_name, ...]
     pub(crate) category_index: RwLock<HashMap<String, Vec<String>>>,
 }

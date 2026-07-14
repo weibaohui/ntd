@@ -62,6 +62,10 @@ export function ExpertDetailModal({
   onDelete: () => void;
   deleting: boolean;
 }) {
+  // Hooks 必须在任何条件 return 之前调用：否则 expert 从 null→对象时 Hook 数量
+  // 从 0 变 2，违反 Hooks 顺序规则，首次打开详情会崩溃。
+  const [avatarError, setAvatarError] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   if (!expert) return null;
 
   const displayName = getExpertDisplayName(expert);
@@ -69,10 +73,7 @@ export function ExpertDetailModal({
   const description = getExpertDescription(expert);
   const avatarUrl = getExpertAvatarUrl(expert);
   const isTeam = expert.expert_type === 'team';
-  const [avatarError, setAvatarError] = useState(false);
   const showAvatar = avatarUrl && !avatarError;
-  // 删除确认对话框状态
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   // 打开删除确认
   const handleDeleteClick = () => {

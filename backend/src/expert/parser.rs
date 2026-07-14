@@ -175,23 +175,24 @@ fn fallback_profession_from_members(plugin: &PluginJson, lang: &str) -> Option<S
 /// # 返回
 /// YAML 字符串（不含分隔符），如果没有 frontmatter 则返回空字符串
 pub fn extract_yaml_frontmatter(content: &str) -> Result<String, ExpertError> {
-    let trimmed = content.trim_start();
-
-    // 必须以 --- 开头
-    if !trimmed.starts_with("---") {
-        return Ok(String::new());
+    // 逐行扫描，仅当独立行（trim 后等于 "---"）才算分隔符。
+    // 之前用 find("---") 会把 YAML 值里的 foo---bar 误判为结束符，截断合法 frontmatter。
+    let mut lines = content.lines();
+    // 首行必须是独立的 --- 开始标记
+    match lines.next() {
+        Some(line) if line.trim() == "---" => {}
+        _ => return Ok(String::new()),
     }
-
-    // 找到第二个 ---
-    let after_first = &trimmed[3..];
-    let Some(second_idx) = after_first.find("---") else {
-        return Err(ExpertError::FrontmatterError(
-            "找不到 frontmatter 结束标记 ---".to_string(),
-        ));
-    };
-
-    let yaml_str = after_first[..second_idx].trim();
-    Ok(yaml_str.to_string())
+    let mut yaml_lines = Vec::new();
+    for line in lines {
+        if line.trim() == "---" {
+            return Ok(yaml_lines.join("\n").trim().to_string());
+        }
+        yaml_lines.push(line);
+    }
+    Err(ExpertError::FrontmatterError(
+        "找不到 frontmatter 结束标记 ---".to_string(),
+    ))
 }
 
 /// 解析 YAML frontmatter 为通用结构

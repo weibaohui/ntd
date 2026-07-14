@@ -2,7 +2,7 @@
 //!
 //! 扫描 ~/.ntd/experts/ 目录，加载所有专家定义。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::parser::*;
 use super::types::*;
@@ -115,22 +115,24 @@ pub fn load_single_expert(
     // 获取 agent 路径列表：优先用 plugin.agents，否则从 agents/ 目录扫描
     let agent_paths = get_agent_paths(&plugin, expert_dir);
     for agent_path in &agent_paths {
-        let md_path = expert_dir.join(agent_path);
-        if md_path.exists() {
-            let metadata = parse_agent_md_metadata(&md_path)?;
-            agent_files.push(metadata);
-        }
+        // 路径逃逸防护：plugin.json 里的 agents 可能含 .. 或绝对路径，
+        // canonicalize 后校验是否仍在 expert_dir 内，防止越界读取本地文件。
+        // 不存在或越界都跳过，越界会 warn。
+        let Some(md_path) = resolve_within(expert_dir, agent_path) else { continue };
+        let metadata = parse_agent_md_metadata(&md_path)?;
+        agent_files.push(metadata);
     }
 
     // 4. 加载专家关联的所有 Skills
     let mut skills = Vec::new();
     for skill_rel_path in &expert_meta.skills {
-        let skill_dir = expert_dir.join(skill_rel_path);
+        let Some(skill_dir) = resolve_within(expert_dir, skill_rel_path) else { continue };
         let skill_md_path = skill_dir.join("SKILL.md");
-        if skill_md_path.exists() {
-            let skill_meta = parse_skill_metadata(&skill_dir, &skill_md_path)?;
-            skills.push(skill_meta);
+        if !skill_md_path.exists() {
+            continue;
         }
+        let skill_meta = parse_skill_metadata(&skill_dir, &skill_md_path)?;
+        skills.push(skill_meta);
     }
 
     Ok(ExpertLoadResult {
@@ -221,4 +223,24 @@ fn get_agent_paths(plugin: &PluginJson, expert_dir: &Path) -> Vec<String> {
     // 按文件名排序，保证加载顺序稳定
     result.sort();
     result
+}
+
+/// 解析相对路径并校验结果仍位于 base_dir 内，防止 plugin.json / avatar 路径里的
+/// `..`、绝对路径或符号链接让恶意导入逃逸目录读取本地文件。
+///
+/// 返回 canonicalize 后的绝对路径；不存在（canonicalize 失败）或越界（不以前缀开头）
+/// 都返回 None。越界时会打 warn 日志以便审计。
+pub fn resolve_within(base_dir: &Path, rel: &str) -> Option<PathBuf> {
+    let base_canon = base_dir.canonicalize().ok()?;
+    let target_canon = base_dir.join(rel).canonicalize().ok()?;
+    if target_canon.starts_with(&base_canon) {
+        Some(target_canon)
+    } else {
+        tracing::warn!(
+            "专家资源路径逃逸目录，已拒绝: base={}, rel={}",
+            base_dir.display(),
+            rel
+        );
+        None
+    }
 }

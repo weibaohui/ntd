@@ -515,42 +515,34 @@ pub(crate) async fn inject_expert_context(
     todo: &Option<crate::models::Todo>,
     message: &str,
 ) -> String {
-    // 先尝试拿到专家名称和 expert_manager 引用，任一缺失都直接返回原 message。
-    let expert_name = match todo.as_ref().and_then(|t| t.expert_name.as_deref()) {
-        Some(name) => name,
-        None => return message.to_string(),
+    // 任一前置条件缺失都静默回退到原 message——专家注入是增强项，不应阻断执行。
+    let Some(expert_name) = todo.as_ref().and_then(|t| t.expert_name.as_deref()) else {
+        return message.to_string();
     };
-    let expert_manager = match &request.expert_manager {
-        Some(em) => em,
-        None => return message.to_string(),
+    let Some(expert_manager) = &request.expert_manager else {
+        return message.to_string();
     };
-    // 拿到专家元数据和 Agent MD 内容；任一失败都静默回退到原 message。
-    let metadata = match expert_manager.get_expert_by_name(expert_name) {
-        Some(m) => m,
-        None => {
-            tracing::warn!(
-                "未找到专家 '{}'，跳过专家上下文注入",
-                expert_name
-            );
-            return message.to_string();
-        }
+    let Some(metadata) = expert_manager.get_expert_by_name(expert_name) else {
+        tracing::warn!("未找到专家 '{}'，跳过专家上下文注入", expert_name);
+        return message.to_string();
     };
-    // 解析主理 agent：team 用 lead_agent、agent 用 agent_name（统一走 resolve_agent_name，
-    // 避免漏掉 lead_agent 导致 team 类型专家执行时不注入）。
-    let agent_md = match metadata
-        .resolve_agent_name()
-        .and_then(|name| expert_manager.get_agent_md_content(name).ok())
-    {
-        Some(content) => content,
-        None => {
-            tracing::warn!(
-                "未找到专家 '{}' 的 Agent MD 内容，跳过专家上下文注入",
-                expert_name
-            );
-            return message.to_string();
-        }
+    // 解析主理 agent：team 用 lead_agent、agent 用 agent_name（resolve_agent_name 统一），
+    // 并按 (expert_name, agent_name) 复合键查找，避免不同专家同名 agent 互窜。
+    let Some(agent_name) = metadata.resolve_agent_name() else {
+        tracing::warn!(
+            "专家 '{}' 没有可用 agent（agent_name/lead_agent 都为空）",
+            expert_name
+        );
+        return message.to_string();
     };
-    // 拼接专家 prompt（角色定义 + 技能列表 + 原 message）。
+    let Ok(agent_md) = expert_manager.get_agent_md_content(expert_name, agent_name) else {
+        tracing::warn!(
+            "未找到专家 '{}' 的 Agent '{}' MD 内容，跳过注入",
+            expert_name,
+            agent_name
+        );
+        return message.to_string();
+    };
     let skills_text = build_expert_skills_text(expert_manager, expert_name);
     build_expert_prompt(&agent_md, &skills_text, message)
 }

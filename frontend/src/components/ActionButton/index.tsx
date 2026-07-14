@@ -83,23 +83,9 @@ export function ActionButton({
     executor,
   );
 
-  // 打开 Drawer 时：
-  // - 重置 editablePrompt 为最新的 prompt 默认值
-  // - 重置参数值为 params 默认值
-  // - 从 localStorage 恢复上次选的执行器（覆盖 prop 传入的默认值）
-  //   这样用户每次打开都是自己上次的选择，而不是每次回到默认。
-  useEffect(() => {
-    if (open) {
-      // 打开即展示参数替换后的 prompt（而非裸模板），并同步 lastGeneratedRef，
-      // 让后续参数变化能正确识别「用户是否手动编辑」。
-      const generated = substituteParams(prompt, params);
-      setEditablePrompt(generated);
-      lastGeneratedRef.current = generated;
-      setParamValues(params);
-      const saved = getLastExecutor(executor);
-      setSelectedExecutor(saved);
-    }
-  }, [open, prompt, executor, actionType, actionKey, params]);
+  // 打开 Drawer 的初始化放在 handleOpen（点击瞬间执行），而非 useEffect：
+  // effect 若依赖 params/prompt 引用，调用方传对象字面量时父组件每次重渲染都会
+  // 产生新引用、反复触发 effect，覆盖用户正在编辑的 prompt。
 
   // 参数值变化时，实时把占位符替换进 prompt。
   // 仅当用户未手动编辑（当前值仍等于上次自动生成值）时才覆盖 editablePrompt，
@@ -119,8 +105,15 @@ export function ActionButton({
     setLastExecutor(value);
   }, []);
 
+  // 打开瞬间一次性初始化：prompt（参数替换后）、参数值、执行器（localStorage 恢复）。
+  // 普通函数每次渲染捕获最新 props，点击时用的是当前 prompt/params/executor。
   const handleOpen = () => {
     reset();
+    const generated = substituteParams(prompt, params);
+    setEditablePrompt(generated);
+    lastGeneratedRef.current = generated;
+    setParamValues(params);
+    setSelectedExecutor(getLastExecutor(executor));
     setOpen(true);
   };
 

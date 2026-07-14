@@ -145,9 +145,9 @@ export async function exportExpert(name: string): Promise<Blob> {
 export async function importExpert(file: File): Promise<{ expert: ExpertMetadata | null; errors: string[] }> {
   const formData = new FormData();
   formData.append('file', file);
-  return unwrap(await api.post('/api/experts/import', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  }));
+  // 不手动设 Content-Type：交给 axios/浏览器自动生成带 boundary 的 multipart 头，
+  // 手动设 multipart/form-data 会缺少 boundary 导致后端无法解析请求体。
+  return unwrap(await api.post('/api/experts/import', formData));
 }
 
 /**

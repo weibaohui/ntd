@@ -25,12 +25,14 @@ impl ExpertIndexManager {
             experts: parking_lot::RwLock::new(HashMap::new()),
             agent_files: parking_lot::RwLock::new(HashMap::new()),
             skills: parking_lot::RwLock::new(HashMap::new()),
-            expert_skills: parking_lot::RwLock::new(HashMap::new()),
             category_index: parking_lot::RwLock::new(HashMap::new()),
         }
     }
 
     /// 更新索引（新增或替换），同时维护专家-Agent-Skill 关联关系
+    ///
+    /// agent_files 和 skills 按 expert_name 嵌套插入，确保不同专家的同名资源
+    /// 完全隔离（修复前全局 HashMap 会互相覆盖、remove_expert 会误删共享资源）。
     ///
     /// # 参数
     /// - `expert`: 专家元数据
@@ -45,34 +47,31 @@ impl ExpertIndexManager {
         // 更新专家列表
         self.experts.write().insert(expert.name.clone(), expert.clone());
 
-        // 更新 Agent 文件索引
+        // 更新 Agent 文件索引（按专家嵌套）
         {
-            let mut agents = self.agent_files.write();
+            let mut map = self.agent_files.write();
+            let inner = map.entry(expert.name.clone()).or_default();
             for agent_file in agent_files {
-                agents.insert(agent_file.agent_name.clone(), agent_file.clone());
+                inner.insert(agent_file.agent_name.clone(), agent_file.clone());
             }
         }
 
-        // 更新 Skills 索引 + 专家与 Skill 的绑定关系
+        // 更新 Skills 索引（按专家嵌套）
         {
-            let mut skill_map = self.skills.write();
-            let mut skill_names = Vec::new();
+            let mut map = self.skills.write();
+            let inner = map.entry(expert.name.clone()).or_default();
             for skill in skills {
-                skill_map.insert(skill.skill_name.clone(), skill.clone());
-                skill_names.push(skill.skill_name.clone());
+                inner.insert(skill.skill_name.clone(), skill.clone());
             }
-            self.expert_skills
-                .write()
-                .insert(expert.name.clone(), skill_names);
         }
 
-        // 更新分类索引
+        // 更新分类索引（去重，避免 update_index 不清旧条目导致重复）
         if let Some(category) = &expert.category_id {
-            self.category_index
-                .write()
-                .entry(category.clone())
-                .or_default()
-                .push(expert.name.clone());
+            let mut cat = self.category_index.write();
+            let list = cat.entry(category.clone()).or_default();
+            if !list.iter().any(|n| n == &expert.name) {
+                list.push(expert.name.clone());
+            }
         }
     }
 
@@ -101,41 +100,45 @@ impl ExpertIndexManager {
             .collect()
     }
 
-    /// 获取 Agent MD 文件内容（按需加载）
-    pub fn get_agent_md_content(&self, agent_name: &str) -> Result<String, ExpertError> {
+    /// 获取指定专家的 Agent MD 文件内容（按需加载）
+    ///
+    /// 按 `(expert_name, agent_name)` 复合键查找，避免不同专家同名 agent 互窜。
+    pub fn get_agent_md_content(
+        &self,
+        expert_name: &str,
+        agent_name: &str,
+    ) -> Result<String, ExpertError> {
         let agent_file = self
             .agent_files
             .read()
-            .get(agent_name)
-            .cloned()
+            .get(expert_name)
+            .and_then(|m| m.get(agent_name).cloned())
             .ok_or_else(|| ExpertError::AgentNotFound(agent_name.to_string()))?;
 
         std::fs::read_to_string(&agent_file.md_file_path)
             .map_err(|e| ExpertError::FileReadError(agent_file.md_file_path.clone(), e))
     }
 
-    /// 获取专家关联的所有 Skill 元数据
+    /// 获取指定专家关联的所有 Skill 元数据
     pub fn get_expert_skills(&self, expert_name: &str) -> Vec<SkillMetadata> {
-        let names = self
-            .expert_skills
+        self.skills
             .read()
             .get(expert_name)
-            .cloned()
-            .unwrap_or_default();
-        let skills = self.skills.read();
-        names
-            .iter()
-            .filter_map(|name| skills.get(name).cloned())
-            .collect()
+            .map(|m| m.values().cloned().collect())
+            .unwrap_or_default()
     }
 
-    /// 获取 Skill 的 SKILL.md 完整内容（按需加载）
-    pub fn get_skill_md_content(&self, skill_name: &str) -> Result<String, ExpertError> {
+    /// 获取指定专家的 Skill 的 SKILL.md 完整内容（按需加载）
+    pub fn get_skill_md_content(
+        &self,
+        expert_name: &str,
+        skill_name: &str,
+    ) -> Result<String, ExpertError> {
         let skill = self
             .skills
             .read()
-            .get(skill_name)
-            .cloned()
+            .get(expert_name)
+            .and_then(|m| m.get(skill_name).cloned())
             .ok_or_else(|| ExpertError::SkillNotFound(skill_name.to_string()))?;
         std::fs::read_to_string(&skill.skill_md_path)
             .map_err(|e| ExpertError::FileReadError(skill.skill_md_path.clone(), e))
@@ -156,37 +159,21 @@ impl ExpertIndexManager {
         self.experts.write().clear();
         self.agent_files.write().clear();
         self.skills.write().clear();
-        self.expert_skills.write().clear();
         self.category_index.write().clear();
     }
 
     /// 移除指定专家及其所有关联索引
     ///
-    /// 删除该专家在 experts、agent_files、skills、expert_skills、category_index
-    /// 中的所有数据。注意：此方法不删除磁盘上的文件目录，仅清理内存索引。
-    /// 调用方需要自行处理文件删除。
-    ///
-    /// # 参数
-    /// - `expert_name`: 专家名称
-    ///
-    /// # 返回
-    /// - 删除的专家元数据（如果存在），否则返回 None
+    /// 按专家名嵌套删除：agent_files/skills 只移除该专家的子映射，
+    /// 不会影响其他专家同名资源。注意：此方法不删磁盘文件。
     pub fn remove_expert(&self, expert_name: &str) -> Option<ExpertMetadata> {
         let removed = self.experts.write().remove(expert_name);
 
-        // 删除该专家关联的 agent_files
-        if let Some(expert) = &removed {
-            for agent_name in expert.agent_name.iter().chain(expert.member_agents.iter()) {
-                self.agent_files.write().remove(agent_name);
-            }
-        }
+        // 只移除该专家的 agent_files 子映射（不再迭代 agent_name 误删全局）
+        self.agent_files.write().remove(expert_name);
 
-        // 删除该专家关联的 skills 和 expert_skills
-        if let Some(skill_names) = self.expert_skills.write().remove(expert_name) {
-            for skill_name in skill_names {
-                self.skills.write().remove(&skill_name);
-            }
-        }
+        // 只移除该专家的 skills 子映射
+        self.skills.write().remove(expert_name);
 
         // 从分类索引中移除
         if let Some(expert) = &removed {

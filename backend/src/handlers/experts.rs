@@ -14,7 +14,10 @@ use zip::ZipArchive;
 
 use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::ApiResponse;
-use crate::expert::{ExpertMetadata, ExpertType, PluginJson, experts_dir, parse_plugin_json};
+use crate::expert::{
+    ExpertMetadata, ExpertType, PluginJson, experts_dir, parse_plugin_json,
+};
+use crate::expert::loader::resolve_within;
 
 /// `GET /api/experts`：获取所有专家列表
 ///
@@ -62,7 +65,7 @@ pub async fn get_expert_agent_md(
 
     let md_content = state
         .expert_manager
-        .get_agent_md_content(agent_name)
+        .get_agent_md_content(&expert.name, agent_name)
         .map_err(|e| match e {
             crate::expert::ExpertError::AgentNotFound(_) => AppError::NotFound,
             _ => AppError::Internal("加载 Agent MD 内容失败".to_string()),
@@ -100,12 +103,14 @@ pub async fn get_expert_avatar(
         .get_expert_by_name(&name)
         .ok_or(AppError::NotFound)?;
 
-    let avatar_path = expert.avatar_path.ok_or(AppError::NotFound)?;
-    let full_path = std::path::Path::new(&expert.definition_dir).join(avatar_path);
-
-    if !full_path.exists() {
-        return Err(AppError::NotFound);
-    }
+    let avatar_rel = expert.avatar_path.as_deref().ok_or(AppError::NotFound)?;
+    // 头像路径同样经 resolve_within 校验，防止 plugin.json 里 .. 越界读取。
+    // resolve_within 返回 canonicalize 后的路径，且不存在时返回 None → 404。
+    let full_path = resolve_within(
+        std::path::Path::new(&expert.definition_dir),
+        avatar_rel,
+    )
+    .ok_or(AppError::NotFound)?;
 
     let content = std::fs::read(&full_path).map_err(|e| AppError::Internal(format!("读取头像文件失败: {}", e)))?;
 
@@ -179,13 +184,14 @@ pub async fn get_expert_member_avatar(
         .ok_or(AppError::NotFound)?;
 
     // 成员未配置头像字段时直接 404，让前端走兜底图标
-    let avatar_rel = member.avatar_path.as_ref().ok_or(AppError::NotFound)?;
+    let avatar_rel = member.avatar_path.as_deref().ok_or(AppError::NotFound)?;
 
-    // 拼接绝对路径：definition_dir 是专家定义目录的绝对路径
-    let full_path = std::path::Path::new(&expert.definition_dir).join(avatar_rel);
-    if !full_path.exists() {
-        return Err(AppError::NotFound);
-    }
+    // 同主头像校验：限制在 definition_dir 内，越界或不存在走 404
+    let full_path = resolve_within(
+        std::path::Path::new(&expert.definition_dir),
+        avatar_rel,
+    )
+    .ok_or(AppError::NotFound)?;
 
     // 读取文件内容，失败统一转 Internal 错误
     let content = std::fs::read(&full_path)
