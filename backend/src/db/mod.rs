@@ -4,7 +4,6 @@
 //! - Built-in SQLite (libsqlite3-sys/bundled), no system dependencies
 //! - All public methods are async
 
-use std::str::FromStr;
 use std::time::Duration;
 
 use sea_orm::{
@@ -31,25 +30,35 @@ pub struct ModelBreakdownWithDate {
     pub cost: f64,
 }
 
+/// 根据 cron 表达式和时区计算下一次执行时间(UTC 字符串)。
+///
+/// 统一用 croner(标准 Unix cron, 0=Sun … 6=Sat) 与 tokio-cron-scheduler 0.13
+/// 内部使用的解析器保持一致,避免之前 cron 0.15 (1=Sun … 7=Sat) 与调度器
+/// 约定错位、导致显示的"下次"和实际触发时间对不上的 bug。
 fn compute_next_run(cron_expr: &str, timezone: Option<&str>) -> Option<String> {
-    let schedule = cron::Schedule::from_str(cron_expr).ok()?;
+    // croner::Cron::parse 才会真正校验表达式;new 只是构造壳。
+    let cron = croner::Cron::new(cron_expr).with_seconds_required().parse().ok()?;
 
-    // Parse timezone, default to UTC if not specified, invalid, or empty string.
-    // An empty timezone string is treated as UTC (use UTC time).
+    // 时区缺省 / 无效 / 空串均按 UTC 处理,与原实现一致。
+    // 这里用 unwrap_or 而非 ? ,因为无效时区是用户输入错误,应降级为 UTC 而非崩溃;
+    // 且 None 已在 .and_then 链中处理,此分支只有"解析失败"一种情况,不会产生 None。
     let tz: chrono_tz::Tz = timezone
         .and_then(|tz| tz.parse::<chrono_tz::Tz>().ok())
         .unwrap_or(chrono_tz::UTC);
 
-    // Get next occurrence in the specified timezone
-    schedule
-        .upcoming(tz)
-        .next()
-        .map(|dt| {
-            // Convert to UTC for storage and display
-            dt.with_timezone(&chrono::Utc)
-                .format("%Y-%m-%dT%H:%M:%S%.3fZ")
-                .to_string()
-        })
+    // 用"当前时刻"作为起点查找下一次触发。
+    // find_next_occurrence 第二参 inclusive=false, 即从下一秒起算,
+    // 与原 cron::Schedule::upcoming(tz).next() 语义一致(严格大于)。
+    let now = chrono::Utc::now().with_timezone(&tz);
+    let next_local = cron.find_next_occurrence(&now, false).ok()?;
+
+    // 转回 UTC 存储,前端按 ISO 8601 渲染。
+    Some(
+        next_local
+            .with_timezone(&chrono::Utc)
+            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string(),
+    )
 }
 
 pub struct Database {

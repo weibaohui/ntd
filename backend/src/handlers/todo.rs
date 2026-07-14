@@ -1,7 +1,5 @@
 use axum::extract::{Path, Query, State};
-use cron::Schedule;
 use serde::Deserialize;
-use std::str::FromStr;
 
 use crate::db::TodoUpdate;
 use crate::handlers::{ApiJson, AppError, AppState};
@@ -19,7 +17,8 @@ use crate::service_context::ServiceContext;
 
 /// Validate cron expression, return helpful error for invalid ones
 fn validate_cron_expression(expr: &str) -> Result<(), String> {
-    Schedule::from_str(expr)
+    croner::Cron::new(expr)
+        .with_seconds_required().parse()
         .map(|_| ())
         .map_err(|_| {
             format!(

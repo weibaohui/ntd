@@ -12,7 +12,6 @@
 //! - handlers/loop.rs: 增删改 cron trigger 时调 `upsert_cron_trigger/remove_cron_trigger`
 
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -27,7 +26,9 @@ use crate::services::loop_trigger::LoopTriggerDispatcher;
 struct CronEntry {
     _trigger_id: i64,
     loop_id: i64,
-    schedule: cron::Schedule,
+    /// croner::Cron 采用标准 Unix cron 约定(0=Sun … 6=Sat),
+    /// 与 tokio-cron-scheduler 0.13 内部解析器一致。
+    schedule: croner::Cron,
     /// 已经在内存中记下的「下次触发时间」,轮询时只 fire 那些已到期的。
     next_run_at: chrono::DateTime<chrono::Utc>,
 }
@@ -139,26 +140,31 @@ impl LoopScheduler {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing cron field".to_string())?;
         let tz_str = cfg.get("timezone").and_then(|v| v.as_str());
-        let schedule = cron::Schedule::from_str(cron_expr)
+        let schedule = croner::Cron::new(cron_expr)
+            .with_seconds_required().parse()
             .map_err(|e| format!("invalid cron '{}': {}", cron_expr, e))?;
         // 计算下次触发时间
         let next_run_at = if let Some(tz_str) = tz_str {
             match tz_str.parse::<chrono_tz::Tz>() {
-                Ok(tz) => schedule
-                    .upcoming(tz)
-                    .next()
-                    .map(|dt| dt.with_timezone(&chrono::Utc))
-                    .ok_or_else(|| "no upcoming occurrence".to_string())?,
-                Err(_) => schedule
-                    .upcoming(chrono::Utc)
-                    .next()
-                    .ok_or_else(|| "no upcoming occurrence".to_string())?,
+                Ok(tz) => {
+                    let now = chrono::Utc::now().with_timezone(&tz);
+                    schedule
+                        .find_next_occurrence(&now, false)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .map_err(|_| "no upcoming occurrence".to_string())?
+                }
+                Err(_) => {
+                    let now = chrono::Utc::now();
+                    schedule
+                        .find_next_occurrence(&now, false)
+                        .map_err(|_| "no upcoming occurrence".to_string())?
+                }
             }
         } else {
+            let now = chrono::Utc::now();
             schedule
-                .upcoming(chrono::Utc)
-                .next()
-                .ok_or_else(|| "no upcoming occurrence".to_string())?
+                .find_next_occurrence(&now, false)
+                .map_err(|_| "no upcoming occurrence".to_string())?
         };
         entries.insert(
             t.id,
@@ -194,7 +200,7 @@ impl LoopScheduler {
                 if e.next_run_at <= now {
                     due.push((*tid, e.loop_id));
                     // 推进到下一次;若 schedule 已无未来 occurrence,保持现状
-                    if let Some(next) = e.schedule.upcoming(chrono::Utc).next() {
+                    if let Ok(next) = e.schedule.find_next_occurrence(&now, false) {
                         e.next_run_at = next.with_timezone(&chrono::Utc);
                     }
                 }

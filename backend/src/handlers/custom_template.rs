@@ -1,6 +1,5 @@
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::db::Database;
@@ -275,10 +274,13 @@ pub async fn update_auto_sync_config(
 ) -> Result<ApiResponse<String>, AppError> {
     // Validate cron expression (accepts 5 or 6 field format)
     if req.enabled {
-        let schedule = cron::Schedule::from_str(&req.cron)
+        let cron = croner::Cron::new(&req.cron)
+            .with_seconds_required().parse()
             .map_err(|e| AppError::BadRequest(format!("Invalid cron expression: {}", e)))?;
-        schedule.upcoming(chrono::Utc).next()
-            .ok_or_else(|| AppError::BadRequest("Cron expression has no future executions".to_string()))?;
+        // 用当前时刻作为起点查找下一次触发,确认表达式能产生未来执行。
+        let now = chrono::Utc::now();
+        cron.find_next_occurrence(&now, false)
+            .map_err(|_| AppError::BadRequest("Cron expression has no future executions".to_string()))?;
     }
 
     // 块作用域内 clone 出 owned 值,await 落盘前写锁已 drop。
@@ -307,7 +309,8 @@ pub fn start_custom_template_auto_sync(
     config: std::sync::Arc<std::sync::RwLock<crate::config::Config>>,
 ) -> Result<(), String> {
     // Validate initial cron expression but will re-read from config in the loop
-    let _ = cron::Schedule::from_str(_cron_expr)
+    let _ = croner::Cron::new(_cron_expr)
+        .with_seconds_required().parse()
         .map_err(|e| format!("Invalid cron: {}", e))?;
 
     // db 是 Arc，clone 只增加引用计数；move 进 spawn 闭包需要 owned 值
@@ -331,17 +334,16 @@ pub fn start_custom_template_auto_sync(
                     // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
                     #[allow(clippy::unwrap_used)]
                     let cfg = config.read().unwrap();
-                    // "0 0 * * *" 是硬编码的合法 cron 表达式，unwrap 安全
+                    // croner::Cron::parse 扫会真正校验表达式;
+                    // "0 0 * * *" 是硬编码的合法 cron 表达式,unwrap 安全。
                     #[allow(clippy::unwrap_used)]
-                    let schedule = cron::Schedule::from_str(&cfg.auto_sync_custom_templates_cron)
-                        .unwrap_or_else(|_| cron::Schedule::from_str("0 0 * * *").unwrap());
-                    let next = schedule.upcoming(chrono::Utc).next();
-                    let delay = match next {
-                        Some(dt) => {
-                            let now = chrono::Utc::now();
-                            (dt - now).to_std().unwrap_or(std::time::Duration::from_secs(60))
-                        }
-                        None => std::time::Duration::from_secs(3600),
+                    let cron = croner::Cron::new(&cfg.auto_sync_custom_templates_cron)
+                        .with_seconds_required().parse()
+                        .unwrap_or_else(|_| croner::Cron::new("0 0 * * *").with_seconds_required().parse().unwrap());
+                    let now = chrono::Utc::now();
+                    let delay = match cron.find_next_occurrence(&now, false) {
+                        Ok(dt) => (dt - now).to_std().unwrap_or(std::time::Duration::from_secs(60)),
+                        Err(_) => std::time::Duration::from_secs(3600),
                     };
                     (cfg.auto_sync_custom_templates_enabled, delay)
                 };
