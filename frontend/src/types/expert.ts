@@ -6,7 +6,7 @@
 /** 专家类型：单个专家 或 专家团队 */
 export type ExpertType = 'agent' | 'team';
 
-/** 成员角色：主理人 或 成员 */
+/** 成员角色：负责人 或 成员 */
 export type MemberRole = 'lead' | 'member';
 
 /** 专家标签（多语言） */
@@ -75,7 +75,7 @@ export interface ExpertMetadata {
   /** 单个专家的 agent_name */
   agent_name?: string;
 
-  /** 团队主理人 ID（仅 team 类型） */
+  /** 团队负责人 ID（仅 team 类型） */
   lead_agent?: string;
   /** 团队成员 ID 列表（仅 team 类型） */
   member_agents: string[];

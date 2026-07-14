@@ -218,7 +218,7 @@ function ExpertCard({ expert, onClick }: {
 /**
  * 专家团队卡片组件
  *
- * 展示团队头像、名称、主理人、成员数、描述、标签等信息。
+ * 展示团队头像、名称、负责人、成员数、描述、标签等信息。
  * 团队卡片使用橙色系配色，与单个专家区分。
  */
 function TeamCard({ expert, onClick }: {
@@ -333,7 +333,7 @@ function TeamCard({ expert, onClick }: {
         </div>
       )}
 
-      {/* 团队信息：主理人 + 成员数 */}
+      {/* 团队信息：负责人 + 成员数 */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -345,7 +345,7 @@ function TeamCard({ expert, onClick }: {
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <StarOutlined style={{ fontSize: 12, color: 'var(--color-warning)' }} />
           <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-            主理人：{leadMember ? (leadMember.name_zh || leadMember.name_en || '未知') : '无'}
+            负责人：{leadMember ? (leadMember.name_zh || leadMember.name_en || '未知') : '无'}
           </span>
         </div>
         <div style={{ width: 1, height: 12, background: 'var(--color-border)' }} />
@@ -696,7 +696,7 @@ function ExpertDetailModal({
  * 团队成员项组件
  *
  * 展示单个成员的头像、名称、职业、角色。
- * 主理人使用 Badge.Ribbon 右上角绶带标记，避免在窄屏挤压名称导致布局变形。
+ * 负责人使用 Badge.Ribbon 右上角绶带标记，避免在窄屏挤压名称导致布局变形。
  */
 function MemberItem({ member, isLead }: { member: ExpertMember; isLead: boolean }) {
   // 成员卡片内容：头像 + 名称 + 职业
@@ -756,10 +756,10 @@ function MemberItem({ member, isLead }: { member: ExpertMember; isLead: boolean 
     </div>
   );
 
-  // 主理人用 Badge.Ribbon 右上角绶带标记，非主理人直接返回卡片
+  // 负责人用 Badge.Ribbon 右上角绶带标记，非负责人直接返回卡片
   if (isLead) {
     return (
-      <Badge.Ribbon text="主理人" color="orange">
+      <Badge.Ribbon text="负责人" color="orange">
         {cardContent}
       </Badge.Ribbon>
     );

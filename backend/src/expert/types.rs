@@ -90,7 +90,7 @@ pub struct LocalizedText {
 /// 团队信息（来自 plugin.json）
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TeamInfoJson {
-    /// 主理人 ID
+    /// 负责人 ID
     #[serde(rename = "leadAgent")]
     pub lead_agent: String,
     /// 成员 ID 列表
@@ -155,7 +155,7 @@ pub struct ExpertMetadata {
     pub agent_name: Option<String>,
 
     // 团队信息（仅 team 类型）
-    /// 主理人 ID
+    /// 负责人 ID
     pub lead_agent: Option<String>,
     /// 成员 ID 列表
     pub member_agents: Vec<String>,
@@ -202,7 +202,7 @@ pub struct ExpertMember {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum MemberRole {
-    /// 主理人
+    /// 负责人
     Lead,
     /// 成员
     Member,
