@@ -450,6 +450,8 @@ impl TodoScheduler {
         let tx_clone = ctx.tx.clone();
         let tm_clone = ctx.task_manager.clone();
         let config_clone = ctx.config.clone();
+        // 专家管理器 Arc clone 进闭包，让 cron 触发的执行也能注入专家上下文
+        let expert_manager_clone = Some(ctx.expert_manager.clone());
 
         info!("Creating job for todo {} with cron: {} (original: {:?})", todo_id, cron_expr_utc, timezone);
         let job = Job::new_async(&cron_expr_utc, move |_uuid, _l| {
@@ -458,6 +460,8 @@ impl TodoScheduler {
             let tx = tx_clone.clone();
             let tm = tm_clone.clone();
             let cfg = config_clone.clone();
+            // 专家管理器在闭包内 move 进 async block，让 cron 触发路径也能拿到专家索引
+            let expert_manager = expert_manager_clone.clone();
 
             Box::pin(async move {
                 match db.get_todo(todo_id).await {
@@ -498,6 +502,8 @@ impl TodoScheduler {
             feishu_receive_id_type: None,
                             workspace_path,
                             workspace_id,
+                            // cron 触发路径：注入专家上下文，定时任务同样需尊重 todo 的专家绑定
+                            expert_manager,
                         })
                         .await;
                     }

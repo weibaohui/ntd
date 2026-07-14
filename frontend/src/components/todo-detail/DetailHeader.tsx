@@ -2,6 +2,8 @@ import { Button, Tag, Badge, Popconfirm, App, Tooltip } from 'antd';
 import { PlayCircleOutlined, ThunderboltOutlined, EditOutlined, DeleteOutlined, RocketOutlined } from '@ant-design/icons';
 import { StatusPicker } from '@/components/StatusPicker';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
+// 引入 ExpertBadge：在执行器徽章后展示关联的专家/团队信息。
+import { ExpertBadge } from '@/components/ExpertBadge';
 import { PromptDisplay } from './PromptDisplay';
 import { InlineTokenStats } from './InlineTokenStats';
 import { ProgressWidget } from './ProgressWidget';
@@ -85,6 +87,10 @@ RESULT`}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <ExecutorBadge executor={executor} />
+            {/* 当 Todo 关联了专家时，在执行器徽章后展示专家徽章；未关联则不渲染。 */}
+            {selectedTodo.expert_name && (
+              <ExpertBadge expertName={selectedTodo.expert_name} />
+            )}
             {selectedTodo.scheduler_enabled ? (
               <Tag color="var(--color-primary)" style={{ fontWeight: 600, fontSize: 11 }}>
                 调度: {selectedTodo.scheduler_config}

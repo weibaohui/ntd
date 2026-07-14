@@ -292,6 +292,8 @@ pub struct WikiChatRequest {
     pub message: String,
     /// 可选：指定执行器；不传则使用黑板配置中的 wiki_chat_executor，再缺省用 "claudecode"
     pub executor: Option<String>,
+    /// 可选：指定专家/专家团名称，用于注入专家角色定义到 prompt 前面
+    pub expert_name: Option<String>,
 }
 
 /// `POST /api/workspaces/{workspace_id}/wiki/chat`
@@ -312,14 +314,16 @@ pub async fn chat_with_wiki(
     if let Err(e) = state.db.create_blackboard(workspace_id).await {
         tracing::warn!("chat_with_wiki: create_blackboard 幂等创建失败: {:?}", e);
     }
-    // 调 service 层执行对话
+    // 调 service 层执行对话，传入专家名称用于上下文注入
     let resp = crate::services::blackboard::chat_with_wiki(
         &state.db,
         &state.executor_registry,
+        &state.expert_manager,
         &state.tx,
         workspace_id,
         &req.message,
         req.executor.as_deref(),
+        req.expert_name.as_deref(),
     )
     .await?;
     Ok(ApiResponse::ok(resp))

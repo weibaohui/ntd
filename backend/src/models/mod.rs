@@ -145,6 +145,10 @@ pub struct Todo {
     /// Some=已归档，进入「已归档」分类，从日常视图隐藏但数据保留。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archived_at: Option<String>,
+    /// 专家/团队名称（WorkBuddy plugin.json 中的 name 字段）。
+    /// 执行时自动加载对应的 Agent MD 和 Skills 注入 prompt。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expert_name: Option<String>,
 }
 
 /// 事项中心的五类驱动分类（computed_bucket）。
@@ -490,6 +494,10 @@ pub struct CreateTodoRequest {
     /// Action 键值，与 action_type 配合唯一标识一个 action 模板 todo。
     #[serde(default)]
     pub action_key: Option<String>,
+    /// 专家/团队名称（WorkBuddy plugin.json 中的 name 字段）。
+    /// 执行时自动加载对应的 Agent MD 和 Skills 注入 prompt。
+    #[serde(default)]
+    pub expert_name: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -527,6 +535,9 @@ pub struct UpdateTodoRequest {
     /// Action 键值，与 action_type 配合唯一标识一个 action 模板 todo。
     #[serde(default)]
     pub action_key: Option<String>,
+    /// 专家/团队名称（WorkBuddy plugin.json 中的 name 字段）。
+    #[serde(default)]
+    pub expert_name: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]

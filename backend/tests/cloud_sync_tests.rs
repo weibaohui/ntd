@@ -78,6 +78,7 @@ async fn build_test_app() -> (axum::Router, Arc<std::sync::RwLock<Config>>) {
         tx: tx.clone(),
         task_manager: task_manager.clone(),
         config: config.clone(),
+        expert_manager: Arc::new(ntd::expert::ExpertIndexManager::new()),
     };
     scheduler.load_from_db(&ctx).await.unwrap();
     scheduler.start().await.unwrap();

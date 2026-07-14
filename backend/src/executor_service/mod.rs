@@ -84,6 +84,10 @@ pub struct RunTodoExecutionRequest {
     /// 与 workspace 字段（路径）分开存储：workspace 用于 worktree 创建，
     /// workspace_id 用于 Feishu 推送隔离。
     pub workspace_id: Option<i64>,
+    /// 专家索引管理器引用，用于执行时注入专家角色定义和技能信息。
+    /// None 表示该执行路径无法访问专家索引（如系统内部 wiki todo），
+    /// 此时即便 todo 关联了 expert_name 也不会注入专家 prompt。
+    pub expert_manager: Option<Arc<crate::expert::ExpertIndexManager>>,
 }
 
 /// Run a todo execution. Priority: explicit executor > todo stored executor > default.

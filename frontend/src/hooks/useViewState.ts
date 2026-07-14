@@ -17,6 +17,7 @@
  *   /#/projectDirectories      工作空间
  *   /#/sessions                会话
  *   /#/executors               执行器
+ *   /#/experts                 专家管理面板
  *   /#/blackboard              黑板
  *   /#/wiki?workspace=1&slug=auth-module  Wiki 主题页面
  *
@@ -40,6 +41,7 @@ export type View =
   | 'projectDirectories'
   | 'sessions'
   | 'executors'
+  | 'experts'
   | 'blackboard'
   | 'wiki'
   | 'messages'
@@ -52,7 +54,7 @@ export type BoardMode = 'memorial' | 'kanban' | 'running' | 'loop_kanban';
 const ALL_VIEWS: View[] = [
   'items', 'loops',
   'dashboard', 'settings', 'memorial',
-  'runtime', 'skills', 'projectDirectories', 'sessions', 'executors',
+  'runtime', 'skills', 'projectDirectories', 'sessions', 'executors', 'experts',
   'blackboard', 'wiki', 'messages', 'bots',
 ];
 
@@ -164,6 +166,7 @@ const VIEW_TO_NAV_KEY: Record<View, string> = {
   projectDirectories: 'settings_projectDirectories',
   sessions: 'settings_sessions',
   executors: 'settings_executors',
+  experts: 'settings_experts',
   wiki: 'blackboard',
   messages: 'messages',
   bots: 'settings_bots',

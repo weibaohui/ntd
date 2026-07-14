@@ -1630,6 +1630,8 @@ impl FeishuListener {
             feishu_receive_id_type: Some(receive_id_type.to_string()),
             workspace_path: None,
             workspace_id,
+            // 飞书卡片触发路径：注入专家上下文，卡片触发也需尊重 todo 的专家绑定
+            expert_manager: Some(context.ctx.expert_manager.clone()),
         };
         // fire-and-forget：后台执行不阻塞卡片 patch；结果由推送通道发回 chat
         tokio::spawn(async move {

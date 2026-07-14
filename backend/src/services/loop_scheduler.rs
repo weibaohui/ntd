@@ -47,19 +47,11 @@ impl LoopScheduler {
         db: Arc<Database>,
         runner: Arc<LoopRunner>,
     ) -> Result<Arc<Self>, String> {
-        // Dispatcher 复用 runner 的 ctx,而不是再造一个 ServiceContext,
-        // 避免 db/registry/tx 等 Arc 被多份持有导致状态不一致。
+        // dispatcher 只需要 db（查 loop/trigger 元数据），实际执行交给 runner 自带的 ctx，
+        // 因此只传 db，不再伪造含空 expert_manager 的 ServiceContext。
         let dispatcher = Arc::new(LoopTriggerDispatcher::new(
             runner.clone(),
-            // 第二参数 (ctx) 实际上没被 dispatcher 自身使用,只是签名要求。
-            // 留一个空 ServiceContext 不会出错,因为所有 db 操作走 runner.ctx_ref().db。
-            crate::service_context::ServiceContext {
-                db: db.clone(),
-                executor_registry: runner.ctx_ref().executor_registry.clone(),
-                tx: runner.tx().clone(),
-                task_manager: runner.ctx_ref().task_manager.clone(),
-                config: runner.ctx_ref().config.clone(),
-            },
+            db.clone(),
         ));
         let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
 

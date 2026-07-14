@@ -10,8 +10,12 @@ import { getDefaultExecutor } from '@/utils/executors';
 import { getLastExecutor, setLastExecutor } from '@/constants';
 import { TagCheckCardGroup } from './TagCheckCard';
 import { ExecutorPicker } from './todo-drawer/ExecutorPicker';
+import { ExpertPicker } from './todo-drawer/ExpertPicker';
+import { ExpertSkillSelector } from './todo-drawer/ExpertSkillSelector';
 import { PromptEditor } from './todo-drawer/PromptEditor';
 import { SkillSelector } from './todo-drawer/SkillSelector';
+// 导入专家技能类型，用于专家技能点击回调的类型标注
+import type { SkillMetadata } from '@/types/expert';
 import { SchedulerSection } from './todo-drawer/SchedulerSection';
 import { TemplateModal } from './todo-drawer/TemplateModal';
 import {
@@ -51,7 +55,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
 
   // 从 formState 中解构出常用的字段
   const {
-    title, prompt, selectedTags, executor, workspaceId,
+    title, prompt, selectedTags, executor, expertName, workspaceId,
     webhookEnabled, schedulerEnabled, schedulerConfig, acceptanceCriteria,
   } = formState;
 
@@ -158,6 +162,12 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
     insertTextAtCursor(`/${skill.name}`);
   }, [insertTextAtCursor]);
 
+  // 专家技能点击回调：与执行器技能逻辑一致（插入 /skill_name 到光标处），
+  // 但 SkillMetadata 的字段名是 skill_name 而非 name，因此单独定义。
+  const handleExpertSkillClick = useCallback((skill: SkillMetadata) => {
+    insertTextAtCursor(`/${skill.skill_name}`);
+  }, [insertTextAtCursor]);
+
   const loadTemplates = useCallback(() => {
     setTemplatesLoading(true);
     db.getTodoTemplates()
@@ -212,6 +222,8 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
           workspaceToSave,
           webhookEnabled,
           acceptanceCriteria || null,
+          undefined,
+          expertName,
         );
         await db.updateScheduler(todo.id, schedulerEnabled, schedulerConfig || null);
         await db.updateTodoTags(todo.id, selectedTags);
@@ -225,15 +237,18 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
           acceptanceCriteria || undefined,
           undefined,
           webhookEnabled,
+          expertName || undefined,
         );
 
-        if (workspaceToSave != null || schedulerEnabled || executor !== getDefaultExecutor() || webhookEnabled) {
+        if (workspaceToSave != null || schedulerEnabled || executor !== getDefaultExecutor() || webhookEnabled || expertName) {
           await db.updateTodo(
             newTodo.id, newTodo.title, newTodo.prompt, newTodo.status,
             executor, schedulerEnabled, schedulerConfig || null,
             workspaceToSave,
             webhookEnabled,
             acceptanceCriteria || null,
+            undefined,
+            expertName,
           );
           await db.updateScheduler(newTodo.id, schedulerEnabled, schedulerConfig || null);
         }
@@ -284,6 +299,22 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
             // 只在创建模式下记忆——编辑模式用户只是临时调整，不应覆盖记忆
             if (!todo) setLastExecutor(v);
           }} />
+
+          <Divider style={{ margin: '8px 0 16px' }} />
+
+          {/* 专家/团队选择（WorkBuddy 专家系统） */}
+          <div style={{ marginBottom: 12 }}>
+            <ExpertPicker
+              value={expertName}
+              onChange={(v) => setField('expertName', v)}
+            />
+          </div>
+
+          {/* 专家技能展示（选中专家后显示，组件内部自行管理加载与折叠状态） */}
+          <ExpertSkillSelector
+            expertName={expertName}
+            onSkillClick={handleExpertSkillClick}
+          />
 
           <Divider style={{ margin: '8px 0 16px' }} />
 

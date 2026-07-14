@@ -23,6 +23,7 @@ mod v61;
 mod v62;
 mod v63;
 mod v64;
+mod v65;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -78,6 +79,8 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // V64 在 V63 之后：agent_bots 新增 owner_open_id，作为推送目标权威来源；
         // 并把存量 p2p_receive_id 迁移过来，废弃 /sethome 手动填 ID 机制
         Box::new(v64::V64AddAgentBotOwnerOpenId),
+        // V65 在 V64 之后：为 todos 增加 expert_name 字段，支持配置专家/团队
+        Box::new(v65::V65AddTodoExpertName),
     ]
 }
 

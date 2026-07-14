@@ -541,14 +541,13 @@ async fn handle_todo(
                             .map(|arr| arr.iter().filter_map(|v| v.as_i64()).collect())
                             .unwrap_or_default(),
                         executor: value.get("executor").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                        expert_name: value.get("expert_name").and_then(|v| v.as_str()).map(|s| s.to_string()),
                         scheduler_enabled: None,
                         scheduler_config: None,
                         scheduler_timezone: None,
                         acceptance_criteria: value.get("acceptance_criteria").and_then(|v| v.as_str()).map(|s| s.to_string()),
                         auto_review_enabled: value.get("auto_review_enabled").and_then(|v| v.as_bool()),
                         webhook_enabled: None,
-                        // stdin 路径下 workspace_id 由 JSON body 提供；若 body 没传则 fallback 到 CLI 参数；
-                        // 闭包内部不能 `?`，因此取不到时填 0，由下面 outer 检查 fail-fast。
                         workspace_id: value.get("workspace_id").and_then(|v| v.as_i64())
                             .or(*workspace_id)
                             .unwrap_or(0),
@@ -569,13 +568,13 @@ async fn handle_todo(
                     prompt: prompt_content,
                     tag_ids: parse_tags(tags),
                     executor: executor.clone(),
+                    expert_name: None,
                     scheduler_enabled: None,
                     scheduler_config: None,
                     scheduler_timezone: None,
                     acceptance_criteria: None,
                     webhook_enabled: None,
                     auto_review_enabled: None,
-                    // 非 stdin 模式下 workspace_id 必填：CLI 唯一标识符是 id 而非 path
                     workspace_id: workspace_id.ok_or_else(|| anyhow::anyhow!("--workspace-id is required"))?,
                     action_type: None,
                     action_key: None,

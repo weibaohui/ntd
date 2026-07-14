@@ -515,6 +515,22 @@ async fn run_server(cli_port: Option<u16>) {
     let executors = executor_registry.list_executors().await;
     info!("Available executors: {:?}", executors);
 
+    // 加载 WorkBuddy 专家定义（~/.ntd/experts/）
+    let expert_manager = Arc::new(ntd::expert::ExpertIndexManager::new());
+    if let Some(experts_dir) = ntd::expert::experts_dir() {
+        if experts_dir.exists() {
+            let load_result = ntd::expert::load_experts_from_directory(&experts_dir, &expert_manager);
+            info!("加载了 {} 个专家定义", load_result.loaded_count);
+            if !load_result.errors.is_empty() {
+                tracing::warn!("专家定义加载错误: {:?}", load_result.errors);
+            }
+        } else {
+            tracing::info!("专家定义目录不存在: {}，跳过加载", experts_dir.display());
+        }
+    } else {
+        tracing::info!("无法获取 home 目录，跳过专家加载");
+    }
+
     // WebSocket 事件 broadcast channel 容量从配置读取，避免硬编码 100 在高频输出场景下
     // 因 ring buffer 覆盖而丢失 Finished 等关键事件。Config::load 已经做过最小值 clamp。
     // Safety guard: values > 100_000_000 would request >100GB for ring buffer;
@@ -542,6 +558,7 @@ async fn run_server(cli_port: Option<u16>) {
             tx: tx.clone(),
             task_manager: task_manager.clone(),
             config: config.clone(),
+            expert_manager: expert_manager.clone(),
         };
         if let Err(e) = sched.load_from_db(&ctx).await {
             tracing::warn!("Failed to load scheduled tasks: {}", e);
@@ -601,6 +618,7 @@ async fn run_server(cli_port: Option<u16>) {
             tx: tx.clone(),
             task_manager: task_manager.clone(),
             config: config.clone(),
+            expert_manager: expert_manager.clone(),
         },
         scheduler,
     )

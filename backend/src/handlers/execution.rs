@@ -251,6 +251,8 @@ pub async fn execute_handler(
         workspace_path: None,
         // 从 todo 中提取 workspace_id，用于 FeishuPushService 按 workspace 隔离推送
         workspace_id: todo.workspace_id,
+        // 手动执行路径：注入专家上下文，让关联了 expert_name 的 todo 加载专家 prompt
+        expert_manager: Some(state.expert_manager.clone()),
     })
     .await;
     let result = result?;
@@ -552,6 +554,8 @@ pub async fn resume_execution_handler(
         workspace_path: None,
         // 从 todo 中提取 workspace_id，用于 FeishuPushService 按 workspace 隔离推送
         workspace_id: todo.workspace_id,
+        // resume 路径同样需要专家上下文：用户可能基于上一次专家输出继续追问
+        expert_manager: Some(state.expert_manager.clone()),
     })
     .await?;
     let record_id = result.record_id
@@ -713,6 +717,8 @@ pub async fn smart_create_handler(
         workspace_path: None,
         // 从 todo 中提取 workspace_id，用于 FeishuPushService 按 workspace 隔离推送
         workspace_id: todo.workspace_id,
+        // smart_create 路径：同样注入专家上下文，新建 todo 可能带 expert_name
+        expert_manager: Some(state.expert_manager.clone()),
     })
     .await?;
 

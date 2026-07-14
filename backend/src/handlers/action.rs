@@ -53,13 +53,25 @@ pub async fn execute_action(
         return Err(AppError::BadRequest("prompt 不能为空".to_string()));
     }
 
-    // 1. 查找或创建 todo
-    let (todo_id, todo_created) = find_or_create_todo(&state, &req).await?;
+    // 1. 查找或创建 todo（同时拿到 workspace_id）
+    let (todo_id, todo_created, workspace_id) = find_or_create_todo(&state, &req).await?;
 
     // 2. 构造 message：将 prompt 中的占位符替换为 params 中的值
     let message = replace_placeholders(&req.prompt, &req.params);
 
-    // 3. 执行 todo，使用请求中指定的执行器（覆盖 todo 默认的 executor）
+    // 3. 根据 workspace_id 查询对应的路径，传给执行器作为 cwd
+    let workspace_path = if workspace_id > 0 {
+        state
+            .db
+            .get_project_directory_by_id(workspace_id)
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?
+            .map(|d| d.path)
+    } else {
+        None
+    };
+
+    // 4. 执行 todo，使用请求中指定的执行器（覆盖 todo 默认的 executor）
     let result = crate::handlers::execution::start_todo_execution(
         crate::executor_service::RunTodoExecutionRequest {
             db: state.db.clone(),
@@ -81,8 +93,10 @@ pub async fn execute_action(
             feishu_bot_id: None,
             feishu_receive_id: None,
             feishu_receive_id_type: None,
-            workspace_path: None,
-            workspace_id: None,
+            workspace_path,
+            workspace_id: Some(workspace_id),
+            // action 触发路径：注入专家上下文，让 action todo 也能加载专家 prompt
+            expert_manager: Some(state.expert_manager.clone()),
         },
     )
     .await?;
@@ -101,23 +115,13 @@ pub async fn execute_action(
 
 /// 查找或创建 action 模板 todo。
 ///
-/// 返回 (todo_id, todo_created)。
+/// 按 action_type + action_key + workspace_id 查找，每个 workspace 独立拥有自己的 action todo。
+/// 返回 (todo_id, todo_created, workspace_id)。
 async fn find_or_create_todo(
     state: &AppState,
     req: &ExecuteActionRequest,
-) -> Result<(i64, bool), AppError> {
-    // 1. 尝试查找已有的 todo（按 action_type + action_key 精确查询）
-    if let Some(todo) = state
-        .db
-        .get_todo_by_action_type_and_key(&req.action_type, &req.action_key)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?
-    {
-        return Ok((todo.id, false));
-    }
-
-    // 2. 未找到，自动创建
-    // 动态查找默认工作空间：优先使用请求中的 workspace_id，否则取第一个可用的工作空间
+) -> Result<(i64, bool, i64), AppError> {
+    // 动态确定 workspace_id：优先使用请求中的，否则取第一个可用的工作空间
     let workspace_id = match req.workspace_id {
         Some(id) => id,
         None => {
@@ -131,6 +135,19 @@ async fn find_or_create_todo(
                 .ok_or_else(|| AppError::BadRequest("没有可用的工作空间".to_string()))?
         }
     };
+
+    // 1. 按 action_type + action_key + workspace_id 查找已有的 todo
+    // 每个 workspace 独立拥有自己的 action todo，不会跨 workspace 复用
+    if let Some(todo) = state
+        .db
+        .get_todo_by_action_type_and_key_and_workspace(&req.action_type, &req.action_key, workspace_id)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+    {
+        return Ok((todo.id, false, workspace_id));
+    }
+
+    // 2. 未找到，创建新的 action todo
     let dir = state
         .db
         .get_project_directory_by_id(workspace_id)
@@ -163,6 +180,7 @@ async fn find_or_create_todo(
             prompt: &req.prompt,
             status: crate::models::TodoStatus::Pending,
             executor: None,
+            expert_name: None,
             scheduler_enabled: None,
             scheduler_config: None,
             scheduler_timezone: None,
@@ -176,7 +194,7 @@ async fn find_or_create_todo(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    Ok((todo_id, true))
+    Ok((todo_id, true, workspace_id))
 }
 
 /// 将 prompt 模板中的占位符替换为 params 中的值。

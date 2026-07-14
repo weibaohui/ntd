@@ -25,11 +25,13 @@ export async function createTodo(
   acceptanceCriteria?: string,
   autoReviewEnabled?: boolean,
   webhookEnabled?: boolean,
+  expertName?: string,
 ): Promise<Todo> {
   const body: Record<string, unknown> = { title, prompt, tag_ids: tagIds, workspace_id: workspaceId };
   if (acceptanceCriteria !== undefined) body.acceptance_criteria = acceptanceCriteria;
   if (autoReviewEnabled !== undefined) body.auto_review_enabled = autoReviewEnabled;
   if (webhookEnabled !== undefined) body.webhook_enabled = webhookEnabled;
+  if (expertName !== undefined) body.expert_name = expertName;
   return unwrap(await api.post('/api/todos', body));
 }
 
@@ -45,6 +47,7 @@ export async function updateTodo(
   webhook_enabled?: boolean,
   acceptance_criteria?: string | null,
   auto_review_enabled?: boolean,
+  expert_name?: string | null,
 ): Promise<Todo> {
   const body: Record<string, unknown> = { title, prompt, status };
   if (executor !== undefined) body.executor = executor;
@@ -54,6 +57,7 @@ export async function updateTodo(
   if (webhook_enabled !== undefined) body.webhook_enabled = webhook_enabled;
   if (acceptance_criteria !== undefined) body.acceptance_criteria = acceptance_criteria;
   if (auto_review_enabled !== undefined) body.auto_review_enabled = auto_review_enabled;
+  if (expert_name !== undefined) body.expert_name = expert_name;
 
   return unwrap(await api.put(`/api/todos/${id}`, body));
 }

@@ -16,6 +16,7 @@ use crate::service_context::ServiceContext;
 use crate::adapters::ExecutorRegistry;
 use crate::config::Config;
 use crate::db::Database;
+use crate::expert::ExpertIndexManager;
 use crate::models::ApiResponse;
 use crate::scheduler::TodoScheduler;
 use crate::services::feishu_listener::FeishuListener;
@@ -43,6 +44,8 @@ pub struct AppState {
     pub loop_trigger_dispatcher: Option<Arc<crate::services::loop_trigger::LoopTriggerDispatcher>>,
     /// Loop Studio: loop runner（手动触发 / dispatcher / cron 都通过它启动执行）
     pub loop_runner: Option<Arc<crate::services::loop_runner::LoopRunner>>,
+    /// 专家索引管理器（内存缓存，启动时从 ~/.ntd/experts/ 加载）
+    pub expert_manager: Arc<ExpertIndexManager>,
 }
 
 impl AppState {
@@ -151,6 +154,7 @@ pub mod sub_states; // 由 #604 引入，当前无内容占位
 pub mod loop_;
 pub mod action;
 pub mod blackboard;
+pub mod experts;
 
 // WebSocket handler
 pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
@@ -290,6 +294,7 @@ fn mount_domain_routes() -> Router<AppState> {
         .merge(events_routes())
         .merge(blackboard::blackboard_routes())
         .merge(loop_::loop_routes())
+        .merge(experts::expert_routes())
 }
 
 /// 给 TraceLayer 用的 span 工厂：把 `request_id` / `method` / `uri` 直接挂在 span 字段上，
@@ -383,6 +388,7 @@ async fn build_app_state(
         loop_scheduler,
         loop_trigger_dispatcher,
         loop_runner,
+        expert_manager: ctx.expert_manager.clone(),
     }
 }
 
@@ -411,13 +417,14 @@ fn init_loop_studio_services(
         executor_registry: ctx.executor_registry.clone(),
         task_manager: ctx.task_manager.clone(),
         config: ctx.config.clone(),
+        expert_manager: ctx.expert_manager.clone(),
     };
     // clone tx 进 LoopRunner 内部，broadcast::Sender 是 Arc 包装，clone 只增加引用计数
     let runner = Arc::new(LoopRunner::new(loop_runner_ctx, tx.clone()));
-    // dispatcher 复用 runner 的 ctx.db；ctx clone 同理，ServiceContext 内部字段均为 Arc
+    // dispatcher 只需要 db（查 loop/trigger 元数据），执行交给 runner 自带的 ctx
     let dispatcher = Arc::new(LoopTriggerDispatcher::new(
         runner.clone(),
-        ctx.clone(),
+        ctx.db.clone(),
     ));
     // scheduler 启动时需要 DB 读 + 启动后台 task,这里 block_in_place
     let scheduler_res = tokio::task::block_in_place(|| {
@@ -1038,6 +1045,7 @@ mod app_state_config_helpers_tests {
             tx,
             task_manager: Arc::new(TaskManager::default()),
             config: Arc::new(RwLock::new(Config::default())),
+            expert_manager: Arc::new(crate::expert::ExpertIndexManager::new()),
         };
 
         // TodoScheduler::new 是 async 的；其内部 `JobScheduler` 需要 tokio runtime。
@@ -1068,6 +1076,7 @@ mod app_state_config_helpers_tests {
             loop_scheduler: None,
             loop_trigger_dispatcher: None,
             loop_runner: None,
+            expert_manager: ctx.expert_manager.clone(),
         }
     }
 

@@ -17,6 +17,7 @@ import {
   MoonOutlined,
   MessageOutlined,
   RobotOutlined,
+  TeamOutlined,
 } from '@ant-design/icons';
 import { TfiBlackboard } from 'react-icons/tfi';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
@@ -33,6 +34,7 @@ export type LeftRailKey =
   | 'settings_sessions'
   | 'settings_skills'
   | 'settings_executors'
+  | 'settings_experts'
   | 'settings_bots';
 
 interface LeftRailItem {
@@ -91,6 +93,7 @@ export function LeftRail({
         { key: 'settings_bots', label: '智能助手', icon: <RobotOutlined />, ariaLabel: '智能助手' },
         { key: 'settings_executors', label: '执行器', icon: <CodeOutlined />, ariaLabel: '执行器' },
         { key: 'settings_skills', label: 'Skills', icon: <ThunderboltOutlined />, ariaLabel: 'Skills' },
+        { key: 'settings_experts', label: '专家', icon: <TeamOutlined />, ariaLabel: '专家' },
         { key: 'settings_projectDirectories', label: '工作空间', icon: <FolderOutlined />, ariaLabel: '工作空间' },
         { key: 'settings', label: '设置', icon: <SettingOutlined />, ariaLabel: '设置' },
       ] satisfies LeftRailItem[],

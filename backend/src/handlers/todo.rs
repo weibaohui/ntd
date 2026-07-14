@@ -201,8 +201,8 @@ pub async fn create_todo(
         }
     }
 
-    // 落库 action_type/action_key（create_todo_with_extras 不支持这两个字段）
-    if req.action_type.is_some() || req.action_key.is_some() {
+    // 落库 action_type/action_key/expert_name（create_todo_with_extras 不支持这些字段）
+    if req.action_type.is_some() || req.action_key.is_some() || req.expert_name.is_some() {
         if let Err(e) = state.db.update_todo_full(crate::db::TodoUpdate {
             id,
             title,
@@ -218,8 +218,9 @@ pub async fn create_todo(
             auto_review_enabled: None,
             action_type: req.action_type.as_deref(),
             action_key: req.action_key.as_deref(),
+            expert_name: req.expert_name.as_deref(),
         }).await {
-            tracing::warn!("Failed to set action_type/action_key for todo {}: {}", id, e);
+            tracing::warn!("Failed to set action_type/action_key/expert_name for todo {}: {}", id, e);
         }
     }
 
@@ -281,9 +282,8 @@ pub async fn create_todo(
         created_at: now.clone(),
         updated_at: now,
         tag_ids: req.tag_ids.clone(),
-        // executor_name 在创建前已解析（见函数前段），这里直接复用，
-        // 与写入 DB 的值是同一个，确保返回值与落库值一致。
         executor: Some(executor_name),
+        expert_name: req.expert_name.clone(),
         scheduler_enabled,
         scheduler_config: scheduler_config.clone(),
         scheduler_timezone: scheduler_timezone.clone(),
@@ -383,6 +383,7 @@ pub async fn update_todo(
             auto_review_enabled: req.auto_review_enabled,
             action_type: req.action_type.as_deref(),
             action_key: req.action_key.as_deref(),
+            expert_name: req.expert_name.as_deref(),
         })
         .await
         .map_err(AppError::from)?;
@@ -616,12 +617,13 @@ async fn resume_batch_schedulers(state: &AppState, ids: &[i64]) -> Result<u64, A
         return Ok(rows);
     }
     let ctx = ServiceContext {
-        db: state.db.clone(),
-        executor_registry: state.executor_registry.clone(),
-        tx: state.tx.clone(),
-        task_manager: state.task_manager.clone(),
-        config: state.config.clone(),
-    };
+                db: state.db.clone(),
+                executor_registry: state.executor_registry.clone(),
+                tx: state.tx.clone(),
+                task_manager: state.task_manager.clone(),
+                config: state.config.clone(),
+                expert_manager: state.expert_manager.clone(),
+            };
     for id in ids {
         // 单个 todo 注册失败只 warn 不中断整批：DB 已置 enabled=true，
         // 进程重启时 load_from_db 会基于 DB 字段再次尝试注册（自愈路径）。

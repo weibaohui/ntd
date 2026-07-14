@@ -10,6 +10,8 @@
 import { Checkbox } from 'antd';
 import type { Todo, Tag } from '@/types';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
+// 导入专家徽章组件，用于展示 Todo 关联的专家/团队信息
+import { ExpertBadge } from '@/components/ExpertBadge';
 import { formatRelativeTime } from '@/utils/datetime';
 import { ClockCircleOutlined } from '@ant-design/icons';
 
@@ -142,7 +144,7 @@ export function TodoItemRow({
             <ExecutorBadge executor={todo.executor || 'claudecode'} />
           </div>
 
-          {/* meta 行：标签 + 调度器图标 + 评审徽章 + 相对时间（紧凑、对齐 LoopCard meta 行） */}
+          {/* meta 行：标签 + 调度器图标 + 专家徽章 + 评审徽章 + 相对时间（紧凑、对齐 LoopCard meta 行） */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
             {todoTags.map(t => (
               <span
@@ -165,6 +167,8 @@ export function TodoItemRow({
                 }}
               />
             )}
+            {/* 专家徽章：仅当 todo.expert_name 存在时显示，放在定时图标右边 */}
+            {todo.expert_name && <ExpertBadge expertName={todo.expert_name} />}
             {todo.todo_type === 2 && (
               <span
                 className="todo-tag-badge"

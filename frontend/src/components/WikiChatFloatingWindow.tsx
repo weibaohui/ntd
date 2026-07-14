@@ -94,6 +94,8 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [chatExecutor, setChatExecutor] = useState<string>(getLastExecutor);
+  // 选中的专家名称，null 表示未选择专家，对话时不注入专家上下文
+  const [chatExpertName, setChatExpertName] = useState<string | null>(null);
   const currentChatTaskIdRef = useRef<string | null>(null);
   const wsHandledRef = useRef<boolean>(false);
   // 用于拖拽调整宽度时，存储清理函数以便组件卸载时移除监听器
@@ -185,7 +187,7 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
     wsHandledRef.current = false;
 
     try {
-      const resp = await chatWithWiki(workspaceId, text, chatExecutor);
+      const resp = await chatWithWiki(workspaceId, text, chatExecutor, chatExpertName ?? undefined);
       if (wsHandledRef.current) {
         currentChatTaskIdRef.current = null;
         return;
@@ -209,7 +211,7 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
       currentChatTaskIdRef.current = null;
       wsHandledRef.current = false;
     }
-  }, [inputValue, loading, workspaceId, chatExecutor]);
+  }, [inputValue, loading, workspaceId, chatExecutor, chatExpertName]);
 
   // ─── 工作空间切换回调 ───────────────────────────────────────
   const handleWorkspaceChange = useCallback((id: number | null) => {
@@ -246,6 +248,8 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
           workspaceId={workspaceId}
           chatExecutor={chatExecutor}
           onExecutorChange={handleExecutorChange}
+          expertName={chatExpertName}
+          onExpertChange={setChatExpertName}
           onWorkspaceChange={handleWorkspaceChange}
           mobile
           isDark={isDark}
@@ -284,6 +288,8 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
           workspaceId={workspaceId}
           chatExecutor={chatExecutor}
           onExecutorChange={handleExecutorChange}
+          expertName={chatExpertName}
+          onExpertChange={setChatExpertName}
           onWorkspaceChange={handleWorkspaceChange}
           isDark={isDark}
         />
@@ -350,6 +356,8 @@ export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, o
         workspaceId={workspaceId}
         chatExecutor={chatExecutor}
         onExecutorChange={handleExecutorChange}
+        expertName={chatExpertName}
+        onExpertChange={setChatExpertName}
         onWorkspaceChange={handleWorkspaceChange}
         isDark={isDark}
       />

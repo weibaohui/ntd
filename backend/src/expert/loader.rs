@@ -1,0 +1,246 @@
+//! 目录扫描加载器
+//!
+//! 扫描 ~/.ntd/experts/ 目录，加载所有专家定义。
+
+use std::path::{Path, PathBuf};
+
+use super::parser::*;
+use super::types::*;
+
+/// 专家定义根目录名称
+const EXPERTS_DIR_NAME: &str = "experts";
+
+/// 获取专家定义根目录路径（~/.ntd/experts/）
+///
+/// # 返回
+/// 专家定义根目录的绝对路径，如果无法获取 home 目录则返回 None
+pub fn experts_dir() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|home| home.join(".ntd").join(EXPERTS_DIR_NAME))
+}
+
+/// 从指定目录加载所有专家定义
+///
+/// # 参数
+/// - `experts_dir`: 专家定义根目录
+/// - `manager`: 专家索引管理器
+///
+/// # 返回
+/// 加载结果（成功数量和错误列表）
+pub fn load_experts_from_directory(
+    experts_dir: &Path,
+    manager: &ExpertIndexManager,
+) -> LoadResult {
+    let mut loaded_count = 0;
+    let mut errors = Vec::new();
+
+    // 遍历专家目录
+    let entries = match std::fs::read_dir(experts_dir) {
+        Ok(e) => e,
+        Err(e) => {
+            errors.push(format!(
+                "无法读取专家目录 {}: {}",
+                experts_dir.display(),
+                e
+            ));
+            return LoadResult {
+                loaded_count,
+                errors,
+            };
+        }
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                errors.push(format!("目录项读取错误: {}", e));
+                continue;
+            }
+        };
+
+        let expert_dir = entry.path();
+        if !expert_dir.is_dir() {
+            continue;
+        }
+
+        let plugin_json_path = expert_dir.join(".codebuddy-plugin/plugin.json");
+
+        // 检查 plugin.json 是否存在
+        if !plugin_json_path.exists() {
+            continue;
+        }
+
+        // 解析并加载单个专家
+        match load_single_expert(&expert_dir, &plugin_json_path) {
+            Ok(load_result) => {
+                manager.update_index(
+                    &load_result.expert,
+                    &load_result.agent_files,
+                    &load_result.skills,
+                );
+                loaded_count += 1;
+            }
+            Err(e) => {
+                errors.push(format!("{}: {}", expert_dir.display(), e));
+            }
+        }
+    }
+
+    LoadResult {
+        loaded_count,
+        errors,
+    }
+}
+
+/// 加载单个专家定义（含 Agent MD 和 Skills）
+///
+/// # 参数
+/// - `expert_dir`: 专家定义目录
+/// - `plugin_json_path`: plugin.json 路径
+///
+/// # 返回
+/// 专家加载结果
+pub fn load_single_expert(
+    expert_dir: &Path,
+    plugin_json_path: &Path,
+) -> Result<ExpertLoadResult, ExpertError> {
+    // 1. 解析 plugin.json
+    let plugin = parse_plugin_json(plugin_json_path)?;
+
+    // 2. 构建 ExpertMetadata
+    let expert_meta = build_expert_metadata(&plugin, expert_dir, plugin_json_path);
+
+    // 3. 加载所有 Agent MD 文件元数据（只解析 YAML frontmatter）
+    let mut agent_files = Vec::new();
+    // 获取 agent 路径列表：优先用 plugin.agents，否则从 agents/ 目录扫描
+    let agent_paths = get_agent_paths(&plugin, expert_dir);
+    for agent_path in &agent_paths {
+        // 路径逃逸防护：plugin.json 里的 agents 可能含 .. 或绝对路径，
+        // canonicalize 后校验是否仍在 expert_dir 内，防止越界读取本地文件。
+        // 不存在或越界都跳过，越界会 warn。
+        let Some(md_path) = resolve_within(expert_dir, agent_path) else { continue };
+        let metadata = parse_agent_md_metadata(&md_path)?;
+        agent_files.push(metadata);
+    }
+
+    // 4. 加载专家关联的所有 Skills
+    let mut skills = Vec::new();
+    for skill_rel_path in &expert_meta.skills {
+        let Some(skill_dir) = resolve_within(expert_dir, skill_rel_path) else { continue };
+        let skill_md_path = skill_dir.join("SKILL.md");
+        if !skill_md_path.exists() {
+            continue;
+        }
+        let skill_meta = parse_skill_metadata(&skill_dir, &skill_md_path)?;
+        skills.push(skill_meta);
+    }
+
+    Ok(ExpertLoadResult {
+        expert: expert_meta,
+        agent_files,
+        skills,
+    })
+}
+
+/// 构建 Skills 上下文：名称（markdown 链接到 SKILL.md）+ 简要描述（prompt 注入用）
+///
+/// 把 SKILL.md 的绝对路径做成 markdown 链接，大模型在需要使用技能时
+/// 可以直接知道去哪个文件读取完整的技能定义，而不是只知道名称。
+///
+/// # 参数
+/// - `skills`: Skill 元数据列表
+///
+/// # 返回
+/// 拼装好的 Skills 描述文本
+pub fn build_skills_context(skills: &[SkillMetadata]) -> String {
+    if skills.is_empty() {
+        return String::new();
+    }
+
+    let mut parts = Vec::new();
+    parts.push("## 可用技能\n".to_string());
+    parts.push("你可以使用以下技能来辅助完成任务。技能名称是 markdown 链接，指向技能定义文件，如需了解技能详细用法可查看该文件：\n".to_string());
+
+    for skill in skills {
+        let desc = skill
+            .yaml_description_zh
+            .as_ref()
+            .or(skill.yaml_description_en.as_ref())
+            .or(skill.yaml_description.as_ref())
+            .cloned()
+            .unwrap_or_else(|| "(无描述)".to_string());
+
+        // 技能名称做成 markdown 链接，指向 SKILL.md 绝对路径，
+        // 让大模型知道去哪里找技能的完整定义。
+        parts.push(format!(
+            "- **[{}]({})**: {}\n",
+            skill.skill_name, skill.skill_md_path, desc
+        ));
+    }
+
+    parts.push("\n请根据需要自行调用上述技能。".to_string());
+    parts.join("")
+}
+
+/// 获取 agent 路径列表
+///
+/// 优先使用 plugin.agents 字段，若不存在则扫描 agents/ 目录下所有 .md 文件作为 fallback。
+/// 这是为了兼容部分旧版本的 team 类型专家，它们的 plugin.json 中没有 agents 字段，
+/// 但成员信息存储在 members 和 teamInfo 中，实际的 MD 文件放在 agents/ 目录下。
+///
+/// # 参数
+/// - `plugin`: 解析后的 PluginJson
+/// - `expert_dir`: 专家定义目录
+///
+/// # 返回
+/// agent 相对路径列表
+fn get_agent_paths(plugin: &PluginJson, expert_dir: &Path) -> Vec<String> {
+    // 优先使用 plugin.agents
+    if let Some(agents) = &plugin.agents {
+        return agents.clone();
+    }
+
+    // fallback: 扫描 agents/ 目录下所有 .md 文件
+    let agents_dir = expert_dir.join("agents");
+    let mut result = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "md" {
+                        // 构造相对路径，如 "agents/xxx.md"
+                        if let Ok(rel_path) = path.strip_prefix(expert_dir) {
+                            result.push(rel_path.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 按文件名排序，保证加载顺序稳定
+    result.sort();
+    result
+}
+
+/// 解析相对路径并校验结果仍位于 base_dir 内，防止 plugin.json / avatar 路径里的
+/// `..`、绝对路径或符号链接让恶意导入逃逸目录读取本地文件。
+///
+/// 返回 canonicalize 后的绝对路径；不存在（canonicalize 失败）或越界（不以前缀开头）
+/// 都返回 None。越界时会打 warn 日志以便审计。
+pub fn resolve_within(base_dir: &Path, rel: &str) -> Option<PathBuf> {
+    let base_canon = base_dir.canonicalize().ok()?;
+    let target_canon = base_dir.join(rel).canonicalize().ok()?;
+    if target_canon.starts_with(&base_canon) {
+        Some(target_canon)
+    } else {
+        tracing::warn!(
+            "专家资源路径逃逸目录，已拒绝: base={}, rel={}",
+            base_dir.display(),
+            rel
+        );
+        None
+    }
+}

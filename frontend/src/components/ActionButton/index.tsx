@@ -1,16 +1,29 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button, Drawer, Spin, Typography, Space, message, Input, Tag } from 'antd';
 import { ThunderboltOutlined, EditOutlined } from '@ant-design/icons';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { ChatView } from '@/components/ChatView';
 import { useActionExecution } from './useActionExecution';
-import { ExecutorPicker } from '@/components/todo-drawer/ExecutorPicker';
-import { EXECUTORS_FOR_PICKER } from '@/types/execution';
+import { ExecutorPickerPopover } from '@/components/common/ExecutorPickerPopover';
+import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
 import { getLastExecutor, setLastExecutor } from '@/constants';
 import type { ActionButtonProps } from './types';
 
 const { Text, Paragraph } = Typography;
 const { TextArea } = Input;
+
+/**
+ * 把模板里的 {{key}} 占位符替换为参数值。
+ * 用 split/join 而非 RegExp/replaceAll：无需正则转义、不依赖 ES2021 target，
+ * 天然规避 key/value 含元字符（如 . * +）时的误匹配。
+ */
+function substituteParams(template: string, params: Record<string, string>): string {
+  let result = template;
+  for (const [key, value] of Object.entries(params)) {
+    result = result.split(`{{${key}}}`).join(value);
+  }
+  return result;
+}
 
 /**
  * 可复用的一键 AI 执行组件。
@@ -43,9 +56,22 @@ export function ActionButton({
 }: ActionButtonProps) {
   const [open, setOpen] = useState(false);
   const [editablePrompt, setEditablePrompt] = useState(prompt);
+  // editablePrompt 的 ref 镜像：effect 里要读最新值，避免闭包捕获到旧的 state
+  const editablePromptRef = useRef(editablePrompt);
+  editablePromptRef.current = editablePrompt;
+  // 记录「上次自动生成的 prompt」，用于判断用户是否手动编辑过：
+  // 当前 editablePrompt 仍等于上次生成值 → 视为未手改，参数变化可安全覆盖；
+  // 一旦不等（用户改过 textarea）→ 后续参数变化不再覆盖，保留手动编辑。
+  const lastGeneratedRef = useRef(editablePrompt);
+  // 模板参数值：存储用户输入的参数，初始化时使用 params 的默认值
+  const [paramValues, setParamValues] = useState<Record<string, string>>(params);
   // 初始化 selectedExecutor：优先从 localStorage 恢复上次选择，不存在时回退到 prop executor
   const [selectedExecutor, setSelectedExecutor] = useState<string | undefined>(
     () => getLastExecutor(executor)
+  );
+  // 工作空间 ID：初始值来自 prop，用户可在 Drawer 内切换
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<number | null | undefined>(
+    workspaceId ?? undefined
   );
   const isMobile = useIsMobile();
   const { status, result, error, logs, execute, retry, reset } = useActionExecution(
@@ -53,21 +79,24 @@ export function ActionButton({
     actionKey,
     prompt,
     params,
-    workspaceId,
+    selectedWorkspaceId ?? undefined,
     executor,
   );
 
-  // 打开 Drawer 时：
-  // - 重置 editablePrompt 为最新的 prompt 默认值
-  // - 从 localStorage 恢复上次选的执行器（覆盖 prop 传入的默认值）
-  //   这样用户每次打开都是自己上次的选择，而不是每次回到默认。
+  // 打开 Drawer 的初始化放在 handleOpen（点击瞬间执行），而非 useEffect：
+  // effect 若依赖 params/prompt 引用，调用方传对象字面量时父组件每次重渲染都会
+  // 产生新引用、反复触发 effect，覆盖用户正在编辑的 prompt。
+
+  // 参数值变化时，实时把占位符替换进 prompt。
+  // 仅当用户未手动编辑（当前值仍等于上次自动生成值）时才覆盖 editablePrompt，
+  // 否则保留用户的手动修改；始终刷新 lastGeneratedRef 以便下次比较。
   useEffect(() => {
-    if (open) {
-      setEditablePrompt(prompt);
-      const saved = getLastExecutor(executor);
-      setSelectedExecutor(saved);
+    const generated = substituteParams(prompt, paramValues);
+    if (editablePromptRef.current === lastGeneratedRef.current) {
+      setEditablePrompt(generated);
     }
-  }, [open, prompt, executor, actionType, actionKey]);
+    lastGeneratedRef.current = generated;
+  }, [paramValues, prompt]);
 
   // 用户切换执行器时同时保存选择到 localStorage，
   // 确保本次关闭后下次打开 Drawer 能恢复成这个值。
@@ -76,8 +105,15 @@ export function ActionButton({
     setLastExecutor(value);
   }, []);
 
+  // 打开瞬间一次性初始化：prompt（参数替换后）、参数值、执行器（localStorage 恢复）。
+  // 普通函数每次渲染捕获最新 props，点击时用的是当前 prompt/params/executor。
   const handleOpen = () => {
     reset();
+    const generated = substituteParams(prompt, params);
+    setEditablePrompt(generated);
+    lastGeneratedRef.current = generated;
+    setParamValues(params);
+    setSelectedExecutor(getLastExecutor(executor));
     setOpen(true);
   };
 
@@ -130,45 +166,53 @@ export function ActionButton({
             />
           </div>
 
-          {/* 执行器选择（选择后自动记住到 localStorage，下次打开同理恢复） */}
-          <ExecutorPicker
-            executor={selectedExecutor || 'claudecode'}
-            executorOptions={EXECUTORS_FOR_PICKER}
-            onChange={handleExecutorChange}
-          />
-
-          {/* 参数预览 */}
+          {/* 参数输入区（移至工作空间上方） */}
           {paramsPreview.length > 0 && (
             <div>
               <Text strong style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>
                 模板参数
               </Text>
-              <div
-                style={{
-                  padding: 10,
-                  background: 'var(--color-bg-elevated)',
-                  border: '1px solid var(--color-border-secondary)',
-                  borderRadius: 6,
-                  maxHeight: 150,
-                  overflow: 'auto',
-                }}
-              >
-                {paramsPreview.map(({ key, value }) => (
-                  <div key={key} style={{ marginBottom: 8 }}>
-                    <Tag color="blue" style={{ marginBottom: 4 }}>{`{{${key}}}`}</Tag>
-                    <div style={{
-                      fontSize: 12,
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-word',
-                      color: 'var(--color-text-secondary)',
-                    }}>
-                      {value}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+                {paramsPreview.map(({ key }) => (
+                  <div key={key} style={{ flex: '1 1 200px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                      <Tag color="blue" style={{ fontSize: 12 }}>{`{{${key}}}`}</Tag>
                     </div>
+                    <Input
+                      value={paramValues[key] ?? ''}
+                      onChange={(e) => setParamValues((prev) => ({ ...prev, [key]: e.target.value }))}
+                      placeholder={`请输入 ${key}`}
+                      size="small"
+                    />
                   </div>
                 ))}
               </div>
             </div>
           )}
+
+          {/* 工作空间 + 执行器 横排布局：左工作空间、右执行器 */}
+          <div style={{ display: 'flex', gap: 16 }}>
+            {/* 工作空间 */}
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 6 }}>
+                工作空间
+              </div>
+              <WorkspaceSwitcher
+                value={selectedWorkspaceId ?? null}
+                onChange={setSelectedWorkspaceId}
+              />
+            </div>
+            {/* 执行器 */}
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 6 }}>
+                执行器
+              </div>
+              <ExecutorPickerPopover
+                value={selectedExecutor}
+                onChange={handleExecutorChange}
+              />
+            </div>
+          </div>
         </Space>
       );
     }

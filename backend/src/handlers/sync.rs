@@ -332,6 +332,7 @@ async fn merge_cloud_todos_to_local(
                         prompt: &item.prompt,
                         status,
                         executor,
+                        expert_name: None,
                         scheduler_enabled: None,
                         scheduler_config: None,
                         scheduler_timezone: None,
