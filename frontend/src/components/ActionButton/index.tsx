@@ -43,6 +43,8 @@ export function ActionButton({
 }: ActionButtonProps) {
   const [open, setOpen] = useState(false);
   const [editablePrompt, setEditablePrompt] = useState(prompt);
+  // 模板参数值：存储用户输入的参数，初始化时使用 params 的默认值
+  const [paramValues, setParamValues] = useState<Record<string, string>>(params);
   // 初始化 selectedExecutor：优先从 localStorage 恢复上次选择，不存在时回退到 prop executor
   const [selectedExecutor, setSelectedExecutor] = useState<string | undefined>(
     () => getLastExecutor(executor)
@@ -63,15 +65,26 @@ export function ActionButton({
 
   // 打开 Drawer 时：
   // - 重置 editablePrompt 为最新的 prompt 默认值
+  // - 重置参数值为 params 默认值
   // - 从 localStorage 恢复上次选的执行器（覆盖 prop 传入的默认值）
   //   这样用户每次打开都是自己上次的选择，而不是每次回到默认。
   useEffect(() => {
     if (open) {
       setEditablePrompt(prompt);
+      setParamValues(params);
       const saved = getLastExecutor(executor);
       setSelectedExecutor(saved);
     }
-  }, [open, prompt, executor, actionType, actionKey]);
+  }, [open, prompt, executor, actionType, actionKey, params]);
+
+  // 参数值变化时，实时替换 editablePrompt 中的占位符
+  useEffect(() => {
+    let updatedPrompt = prompt;
+    Object.entries(paramValues).forEach(([key, value]) => {
+      updatedPrompt = updatedPrompt.replace(new RegExp(`{{${key}}}`, 'g'), value);
+    });
+    setEditablePrompt(updatedPrompt);
+  }, [paramValues, prompt]);
 
   // 用户切换执行器时同时保存选择到 localStorage，
   // 确保本次关闭后下次打开 Drawer 能恢复成这个值。
@@ -134,6 +147,30 @@ export function ActionButton({
             />
           </div>
 
+          {/* 参数输入区（移至工作空间上方） */}
+          {paramsPreview.length > 0 && (
+            <div>
+              <Text strong style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>
+                模板参数
+              </Text>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+                {paramsPreview.map(({ key }) => (
+                  <div key={key} style={{ flex: '1 1 200px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                      <Tag color="blue" style={{ fontSize: 12 }}>{`{{${key}}}`}</Tag>
+                    </div>
+                    <Input
+                      value={paramValues[key] ?? ''}
+                      onChange={(e) => setParamValues((prev) => ({ ...prev, [key]: e.target.value }))}
+                      placeholder={`请输入 ${key}`}
+                      size="small"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* 工作空间 + 执行器 横排布局：左工作空间、右执行器 */}
           <div style={{ display: 'flex', gap: 16 }}>
             {/* 工作空间 */}
@@ -157,39 +194,6 @@ export function ActionButton({
               />
             </div>
           </div>
-
-          {/* 参数预览 */}
-          {paramsPreview.length > 0 && (
-            <div>
-              <Text strong style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>
-                模板参数
-              </Text>
-              <div
-                style={{
-                  padding: 10,
-                  background: 'var(--color-bg-elevated)',
-                  border: '1px solid var(--color-border-secondary)',
-                  borderRadius: 6,
-                  maxHeight: 150,
-                  overflow: 'auto',
-                }}
-              >
-                {paramsPreview.map(({ key, value }) => (
-                  <div key={key} style={{ marginBottom: 8 }}>
-                    <Tag color="blue" style={{ marginBottom: 4 }}>{`{{${key}}}`}</Tag>
-                    <div style={{
-                      fontSize: 12,
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-word',
-                      color: 'var(--color-text-secondary)',
-                    }}>
-                      {value}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </Space>
       );
     }

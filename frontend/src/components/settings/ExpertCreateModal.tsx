@@ -48,7 +48,7 @@ export function ExpertCreateModal({ onCreated }: ExpertCreateModalProps) {
       buttonSize="small"
       icon={<ThunderboltOutlined />}
       panelTitle="AI 创建专家"
-      panelDescription="在 Prompt 模板中找到 {{description}}，替换为你的专家描述后执行。AI 会自动生成完整的 plugin.json 和 agent.md"
+      panelDescription="在下方填写模板参数，AI 会自动生成完整的 plugin.json 和 agent.md"
       completedView={({ result, close }) => (
         <ExpertCreateCompleted
           result={result}
