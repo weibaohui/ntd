@@ -305,7 +305,6 @@ mod tag;
 pub use execution::{LatestExecutionSummary, NewExecutionRecord};
 mod agent_bot;
 mod executor_config;
-mod feishu_home;
 mod feishu_message;
 mod skills;
 pub use feishu_message::{NewFeishuHistoryMessage, NewFeishuMessage};

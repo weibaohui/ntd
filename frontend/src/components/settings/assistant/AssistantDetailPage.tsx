@@ -200,11 +200,6 @@ export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = 
     }
   };
 
-  // ─── 复制成功回调 ───
-  const handleCopySuccess = (label: string) => {
-    message.success(`${label} 已复制`);
-  };
-
   const isFeishu = bot.bot_type === 'feishu';
 
   return (
@@ -250,7 +245,6 @@ export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = 
               pushStatus={pushStatus}
               onPushLevelChange={handlePushLevelChange}
               onResponseEnabledChange={handleResponseEnabledChange}
-              onCopySuccess={handleCopySuccess}
             />
           )}
 
@@ -267,6 +261,7 @@ export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = 
               onDelete={handleDeleteWhitelist}
             />
           )}
+
         </div>
       )}
 

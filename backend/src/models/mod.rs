@@ -279,6 +279,8 @@ pub struct AgentBot {
     #[serde(skip_serializing)]
     pub app_secret: String,
     pub bot_open_id: Option<String>,
+    /// 所有者 open_id（推送目标权威来源）；区别于语义错位的历史字段 bot_open_id
+    pub owner_open_id: Option<String>,
     pub domain: Option<String>,
     pub enabled: bool,
     pub config: String,
