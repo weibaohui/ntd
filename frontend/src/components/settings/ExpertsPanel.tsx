@@ -8,7 +8,7 @@
 // - 完整支持亮暗色主题，使用 CSS 变量确保主题适配
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Button, Input, Empty, Spin, Modal, Dropdown, Tabs, Tag, Tooltip, Typography, App } from 'antd';
+import { Badge, Button, Input, Empty, Spin, Modal, Dropdown, Tabs, Tag, Tooltip, Typography, App } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   TeamOutlined,
@@ -696,9 +696,11 @@ function ExpertDetailModal({
  * 团队成员项组件
  *
  * 展示单个成员的头像、名称、职业、角色。
+ * 主理人使用 Badge.Ribbon 右上角绶带标记，避免在窄屏挤压名称导致布局变形。
  */
 function MemberItem({ member, isLead }: { member: ExpertMember; isLead: boolean }) {
-  return (
+  // 成员卡片内容：头像 + 名称 + 职业
+  const cardContent = (
     <div style={{
       display: 'flex',
       alignItems: 'center',
@@ -707,6 +709,8 @@ function MemberItem({ member, isLead }: { member: ExpertMember; isLead: boolean 
       borderRadius: 10,
       background: isLead ? 'var(--color-warning-bg-1)' : 'var(--color-bg-tertiary)',
       border: '1px solid var(--color-border-light)',
+      // Ribbon 需要父元素 overflow hidden 才能裁切绶带折角
+      overflow: 'hidden',
     }}>
       {member.avatar_path ? (
         <img
@@ -740,16 +744,9 @@ function MemberItem({ member, isLead }: { member: ExpertMember; isLead: boolean 
         </div>
       )}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Text style={{ fontSize: 13, fontWeight: isLead ? 600 : 500, color: 'var(--color-text)' }}>
-            {member.name_zh || member.name_en || member.id}
-          </Text>
-          {isLead && (
-            <Tag color="orange" style={{ margin: 0, fontSize: 9, padding: '0 4px' }}>
-              主理人
-            </Tag>
-          )}
-        </div>
+        <Text style={{ fontSize: 13, fontWeight: isLead ? 600 : 500, color: 'var(--color-text)' }}>
+          {member.name_zh || member.name_en || member.id}
+        </Text>
         {(member.profession_zh || member.profession_en) && (
           <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 2 }}>
             {member.profession_zh || member.profession_en}
@@ -758,6 +755,16 @@ function MemberItem({ member, isLead }: { member: ExpertMember; isLead: boolean 
       </div>
     </div>
   );
+
+  // 主理人用 Badge.Ribbon 右上角绶带标记，非主理人直接返回卡片
+  if (isLead) {
+    return (
+      <Badge.Ribbon text="主理人" color="orange">
+        {cardContent}
+      </Badge.Ribbon>
+    );
+  }
+  return cardContent;
 }
 
 /**
