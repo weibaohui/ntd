@@ -6,7 +6,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::str::FromStr;
 use zip::write::FileOptions;
 use zip::ZipWriter;
 use std::io::Seek;
@@ -39,13 +38,17 @@ fn default_zip_options() -> FileOptions<'static, ()> {
 
 /// Parse a cron schedule, falling back to a default expression if the primary fails.
 /// Returns `None` only if both expressions are invalid (should never happen with hardcoded fallbacks).
+///
+/// 用 croner(标准 Unix cron, 0=Sun … 6=Sat)替代之前 cron 0.15
+/// (1=Sun … 7=Sat),与 tokio-cron-scheduler 0.13 内部解析器约定一致。
 fn parse_cron_with_fallback(
     primary: &str,
     fallback: &str,
-) -> Option<cron::Schedule> {
-    cron::Schedule::from_str(primary)
+) -> Option<croner::Cron> {
+    croner::Cron::new(primary)
+        .with_seconds_required().parse()
         .ok()
-        .or_else(|| cron::Schedule::from_str(fallback).ok())
+        .or_else(|| croner::Cron::new(fallback).with_seconds_required().parse().ok())
 }
 
 /// 把单个 entry 写入一个新的 zip 归档，并把 writer 原样返回。
@@ -486,11 +489,13 @@ pub async fn update_auto_backup(
 ) -> Result<ApiResponse<String>, AppError> {
     // 验证 cron 表达式
     if req.enabled {
-        let schedule = cron::Schedule::from_str(&req.cron)
+        let cron = croner::Cron::new(&req.cron)
+            .with_seconds_required().parse()
             .map_err(|e| AppError::BadRequest(format!("Invalid cron expression: {}", e)))?;
         // 验证能产生下一次执行时间
-        schedule.upcoming(chrono::Utc).next()
-            .ok_or_else(|| AppError::BadRequest("Cron expression has no future executions".to_string()))?;
+        let now = chrono::Utc::now();
+        cron.find_next_occurrence(&now, false)
+            .map_err(|_| AppError::BadRequest("Cron expression has no future executions".to_string()))?;
     }
 
     // `config_write_clone` 在闭包返回时立即 drop 写锁卫,
@@ -732,18 +737,19 @@ pub fn start_auto_backup(
     db: std::sync::Arc<Database>,
     config: std::sync::Arc<std::sync::RwLock<crate::config::Config>>,
 ) -> Result<(), String> {
-    let schedule = cron::Schedule::from_str(cron_expr)
+    let cron = croner::Cron::new(cron_expr)
+        .with_seconds_required().parse()
         .map_err(|e| format!("Invalid cron: {}", e))?;
 
     tokio::spawn(async move {
         loop {
-            let next = schedule.upcoming(chrono::Utc).next();
-            let delay = match next {
-                Some(dt) => {
+            let now = chrono::Utc::now();
+            let delay = match cron.find_next_occurrence(&now, false) {
+                Ok(dt) => {
                     let now = chrono::Utc::now();
                     (dt - now).to_std().unwrap_or(std::time::Duration::from_secs(60))
                 }
-                None => std::time::Duration::from_secs(3600),
+                Err(_) => std::time::Duration::from_secs(3600),
             };
             tokio::time::sleep(delay).await;
 
@@ -912,11 +918,13 @@ pub async fn update_todo_auto_backup(
 ) -> Result<ApiResponse<String>, AppError> {
     // 验证 cron 表达式
     if req.enabled {
-        let schedule = cron::Schedule::from_str(&req.cron)
+        let cron = croner::Cron::new(&req.cron)
+            .with_seconds_required().parse()
             .map_err(|e| AppError::BadRequest(format!("Invalid cron expression: {}", e)))?;
         // 验证能产生下一次执行时间
-        schedule.upcoming(chrono::Utc).next()
-            .ok_or_else(|| AppError::BadRequest("Cron expression has no future executions".to_string()))?;
+        let now = chrono::Utc::now();
+        cron.find_next_occurrence(&now, false)
+            .map_err(|_| AppError::BadRequest("Cron expression has no future executions".to_string()))?;
     }
 
     // `config_write_clone` 在闭包返回时立即 drop 写锁卫,
@@ -969,17 +977,17 @@ pub fn start_todo_auto_backup(
                 }
                 let (enabled, delay) = {
                     let cfg = config.read().unwrap_or_else(|e| e.into_inner());
-                    let Some(schedule) = parse_cron_with_fallback(&cfg.auto_todo_backup_cron, "0 0 4 * * *") else {
+                    let Some(cron) = parse_cron_with_fallback(&cfg.auto_todo_backup_cron, "0 0 4 * * *") else {
                         tracing::error!("Both user and fallback cron expressions are invalid, skipping iteration");
                         continue;
                     };
-                    let next = schedule.upcoming(chrono::Utc).next();
-                    let delay = match next {
-                        Some(dt) => {
+                    let now = chrono::Utc::now();
+                    let delay = match cron.find_next_occurrence(&now, false) {
+                        Ok(dt) => {
                             let now = chrono::Utc::now();
                             (dt - now).to_std().unwrap_or(std::time::Duration::from_secs(60))
                         }
-                        None => std::time::Duration::from_secs(3600),
+                        Err(_) => std::time::Duration::from_secs(3600),
                     };
                     (cfg.auto_todo_backup_enabled, delay)
                 };
@@ -1438,10 +1446,12 @@ pub async fn update_skill_auto_backup(
 ) -> Result<ApiResponse<String>, AppError> {
     // 验证 cron 表达式
     if req.enabled {
-        let schedule = cron::Schedule::from_str(&req.cron)
+        let cron = croner::Cron::new(&req.cron)
+            .with_seconds_required().parse()
             .map_err(|e| AppError::BadRequest(format!("Invalid cron expression: {}", e)))?;
-        schedule.upcoming(chrono::Utc).next()
-            .ok_or_else(|| AppError::BadRequest("Cron expression has no future executions".to_string()))?;
+        let now = chrono::Utc::now();
+        cron.find_next_occurrence(&now, false)
+            .map_err(|_| AppError::BadRequest("Cron expression has no future executions".to_string()))?;
     }
 
     // `config_write_clone` 在闭包返回时立即 drop 写锁卫,
@@ -1546,17 +1556,17 @@ pub fn start_skill_auto_backup(
                 }
                 let (enabled, delay) = {
                     let cfg = config.read().unwrap_or_else(|e| e.into_inner());
-                    let Some(schedule) = parse_cron_with_fallback(&cfg.auto_skill_backup_cron, "0 0 5 * * *") else {
+                    let Some(cron) = parse_cron_with_fallback(&cfg.auto_skill_backup_cron, "0 0 5 * * *") else {
                         tracing::error!("Both user and fallback cron expressions are invalid, skipping iteration");
                         continue;
                     };
-                    let next = schedule.upcoming(chrono::Utc).next();
-                    let delay = match next {
-                        Some(dt) => {
+                    let now = chrono::Utc::now();
+                    let delay = match cron.find_next_occurrence(&now, false) {
+                        Ok(dt) => {
                             let now = chrono::Utc::now();
                             (dt - now).to_std().unwrap_or(std::time::Duration::from_secs(60))
                         }
-                        None => std::time::Duration::from_secs(3600),
+                        Err(_) => std::time::Duration::from_secs(3600),
                     };
                     (cfg.auto_skill_backup_enabled, delay)
                 };
@@ -1611,17 +1621,17 @@ pub fn start_usage_stats_archival(
                 }
                 let (enabled, delay) = {
                     let cfg = config.read().unwrap_or_else(|e| e.into_inner());
-                    let Some(schedule) = parse_cron_with_fallback(&cfg.auto_usage_stats_cron, "0 0 1 * * *") else {
+                    let Some(cron) = parse_cron_with_fallback(&cfg.auto_usage_stats_cron, "0 0 1 * * *") else {
                         tracing::error!("Both user and fallback cron expressions are invalid, skipping iteration");
                         continue;
                     };
-                    let next = schedule.upcoming(chrono::Utc).next();
-                    let delay = match next {
-                        Some(dt) => {
+                    let now = chrono::Utc::now();
+                    let delay = match cron.find_next_occurrence(&now, false) {
+                        Ok(dt) => {
                             let now = chrono::Utc::now();
                             (dt - now).to_std().unwrap_or(std::time::Duration::from_secs(60))
                         }
-                        None => std::time::Duration::from_secs(3600),
+                        Err(_) => std::time::Duration::from_secs(3600),
                     };
                     (cfg.auto_usage_stats_enabled, delay)
                 };

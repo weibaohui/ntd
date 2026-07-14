@@ -1,6 +1,5 @@
 use axum::extract::{Query, State};
 use serde::Deserialize;
-use std::str::FromStr;
 
 use super::{AppError, AppState};
 use crate::models::ApiResponse;
@@ -125,10 +124,13 @@ pub async fn update_usage_stats_settings(
 ) -> Result<ApiResponse<String>, AppError> {
     // Validate cron expression
     if req.enabled {
-        let schedule = cron::Schedule::from_str(&req.cron)
+        let cron = croner::Cron::new(&req.cron)
+            .with_seconds_required().parse()
             .map_err(|e| AppError::BadRequest(format!("Invalid cron expression: {}", e)))?;
-        schedule.upcoming(chrono::Utc).next()
-            .ok_or_else(|| AppError::BadRequest("Cron expression has no future executions".to_string()))?;
+        // 用当前时刻作为起点查找下一次触发,确认表达式能产生未来执行。
+        let now = chrono::Utc::now();
+        cron.find_next_occurrence(&now, false)
+            .map_err(|_| AppError::BadRequest("Cron expression has no future executions".to_string()))?;
     }
 
     // 块作用域内 clone 出 owned 值,await 落盘前写锁已 drop。

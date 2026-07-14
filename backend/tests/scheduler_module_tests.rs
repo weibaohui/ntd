@@ -5,7 +5,6 @@
 #[cfg(test)]
 mod scheduler_cron_validation_tests {
     use chrono::{Datelike, Timelike};
-    use std::str::FromStr;
 
     #[test]
     fn test_valid_cron_expressions_for_scheduler() {
@@ -44,7 +43,7 @@ mod scheduler_cron_validation_tests {
         ];
 
         for expr in expressions {
-            let result = cron::Schedule::from_str(expr);
+            let result = croner::Cron::new(expr).with_seconds_required().parse();
             assert!(result.is_ok(), "Cron '{}' should be valid but got: {:?}", expr, result.err());
         }
     }
@@ -71,25 +70,25 @@ mod scheduler_cron_validation_tests {
             "* * * 32 * *",
             // Invalid month (>12)
             "* * * * 13 *",
-            // Invalid day of week (>6) - note: some cron impls allow 7 for Sunday, but cron crate doesn't
+            // Invalid day of week (>6) - note: croner allows 7 for Sunday (same as 0)
             // Completely invalid
             "every day at 9am",
             "not a cron",
         ];
 
         for expr in invalid_expressions {
-            let result = cron::Schedule::from_str(expr);
+            let result = croner::Cron::new(expr).with_seconds_required().parse();
             assert!(result.is_err(), "Cron '{}' should be invalid", expr);
         }
     }
 
     #[test]
     fn test_cron_schedule_next_run_calculation() {
-        let schedule = cron::Schedule::from_str("*/10 * * * * *").unwrap();
+        let cron = croner::Cron::new("*/10 * * * * *").with_seconds_required().parse().unwrap();
         let now = chrono::Utc::now();
-        let next = schedule.upcoming(chrono::Utc).next();
+        let next = cron.find_next_occurrence(&now, false);
 
-        assert!(next.is_some(), "Should have a next scheduled time");
+        assert!(next.is_ok(), "Should have a next scheduled time");
         let next_time = next.unwrap();
 
         // Next run should be in the future (within 10 seconds)
@@ -101,10 +100,11 @@ mod scheduler_cron_validation_tests {
 
     #[test]
     fn test_cron_schedule_multiple_upcoming() {
-        let schedule = cron::Schedule::from_str("0 */5 * * * *").unwrap();
+        let cron = croner::Cron::new("0 */5 * * * *").with_seconds_required().parse().unwrap();
         let now = chrono::Utc::now();
 
-        let upcoming: Vec<_> = schedule.upcoming(chrono::Utc).take(5).collect();
+        // 用 iter_from 迭代多次
+        let upcoming: Vec<_> = cron.clone().iter_from(now).take(5).collect();
 
         assert_eq!(upcoming.len(), 5, "Should have 5 upcoming runs");
 
@@ -122,9 +122,9 @@ mod scheduler_cron_validation_tests {
 
     #[test]
     fn test_cron_daily_schedule() {
-        let schedule = cron::Schedule::from_str("0 0 9 * * *").unwrap();
+        let cron = croner::Cron::new("0 0 9 * * *").with_seconds_required().parse().unwrap();
         let now = chrono::Utc::now();
-        let next = schedule.upcoming(chrono::Utc).next().unwrap();
+        let next = cron.find_next_occurrence(&now, false).unwrap();
 
         // Next run should be at 9am
         assert_eq!(next.hour(), 9);
@@ -138,8 +138,10 @@ mod scheduler_cron_validation_tests {
     #[test]
     fn test_cron_weekday_schedule() {
         // Every weekday at 9am - use MON-FRI alias which is explicitly Monday-Friday
-        let schedule = cron::Schedule::from_str("0 0 9 * * MON-FRI").unwrap();
-        let next = schedule.upcoming(chrono::Utc).next().unwrap();
+        // Note: croner handles MON-FRI as 1-5 (Monday=1 in standard Unix cron where 0=Sun)
+        let cron = croner::Cron::new("0 0 9 * * MON-FRI").with_seconds_required().parse().unwrap();
+        let now = chrono::Utc::now();
+        let next = cron.find_next_occurrence(&now, false).unwrap();
 
         // Verify it's not a weekend day (Saturday=6 or Sunday=0 in num_days_from_sunday)
         let weekday = next.weekday().num_days_from_sunday();
@@ -149,18 +151,14 @@ mod scheduler_cron_validation_tests {
 
 #[cfg(test)]
 mod compute_next_run_tests {
-    use std::str::FromStr;
     use chrono::Utc;
 
     fn compute_next_run(cron_expr: &str) -> Option<String> {
-        cron::Schedule::from_str(cron_expr)
+        let cron = croner::Cron::new(cron_expr).with_seconds_required().parse().ok()?;
+        let now = Utc::now();
+        cron.find_next_occurrence(&now, false)
             .ok()
-            .and_then(|schedule| {
-                schedule
-                    .upcoming(Utc)
-                    .next()
-                    .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
-            })
+            .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
     }
 
     #[test]

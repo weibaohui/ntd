@@ -25,7 +25,11 @@ async-trait = "0.1"
 regex = "1"
 dirs = "5"
 tokio-cron-scheduler = "0.13"
-cron = "0.15"
+# 统一用 croner 做表达式校验和"下次执行时间"计算。
+# croner 采用标准 Unix cron 约定 (0=Sun … 6=Sat)，与 tokio-cron-scheduler
+# 0.13 内部使用的 croner 一致，避免之前 cron 0.15 (1=Sun … 7=Sat) 与
+# 调度器约定错位、导致显示的"下次"和实际触发时间对不上的 bug。
+croner = "2.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tower-http = { version = "0.6", features = ["trace", "cors", "timeout", "compression-gzip"] }

@@ -447,7 +447,6 @@ mod fields_tests {
 
 #[cfg(test)]
 mod cron_validation_tests {
-    use std::str::FromStr;
 
     #[test]
     fn test_valid_cron_expressions() {
@@ -460,7 +459,7 @@ mod cron_validation_tests {
         ];
 
         for expr in expressions {
-            let result = cron::Schedule::from_str(expr);
+            let result = croner::Cron::new(expr).with_seconds_required().parse();
             assert!(result.is_ok(), "Cron expression '{}' should be valid", expr);
         }
     }
@@ -472,7 +471,7 @@ mod cron_validation_tests {
         ];
 
         for expr in expressions {
-            let result = cron::Schedule::from_str(expr);
+            let result = croner::Cron::new(expr).with_seconds_required().parse();
             assert!(
                 result.is_err(),
                 "Cron expression '{}' should be invalid",

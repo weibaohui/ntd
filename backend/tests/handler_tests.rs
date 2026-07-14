@@ -5,9 +5,7 @@
 #[cfg(test)]
 mod cron_validation_tests {
     // These tests verify the validate_cron_expression behavior from handlers/todo.rs
-    // We test the cron crate directly since validate_cron_expression is not public
-
-    use std::str::FromStr;
+    // We test the croner crate directly since validate_cron_expression is not public
 
     #[test]
     fn test_valid_cron_expressions() {
@@ -22,7 +20,7 @@ mod cron_validation_tests {
         ];
 
         for expr in expressions {
-            let result = cron::Schedule::from_str(expr);
+            let result = croner::Cron::new(expr).with_seconds_required().parse();
             assert!(result.is_ok(), "Cron '{}' should be valid", expr);
         }
     }
@@ -36,7 +34,7 @@ mod cron_validation_tests {
         ];
 
         for expr in expressions {
-            let result = cron::Schedule::from_str(expr);
+            let result = croner::Cron::new(expr).with_seconds_required().parse();
             assert!(result.is_err(), "Cron '{}' should be invalid", expr);
         }
     }

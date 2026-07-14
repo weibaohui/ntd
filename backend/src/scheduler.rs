@@ -1,5 +1,4 @@
 use std::collections::{BTreeSet, HashMap};
-use std::str::FromStr;
 use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio_cron_scheduler::{Job, JobScheduler, JobSchedulerError};
@@ -172,20 +171,21 @@ fn ensure_six_fields(cron_expr: &str, todo_id: i64) -> Result<(), SchedulerError
     Ok(())
 }
 
-/// 用 `cron::Schedule` 在 1 年内枚举所有 occurrence,逐个转 UTC,
+/// 用 `croner::Cron` 在 1 年内枚举所有 occurrence,逐个转 UTC,
 /// 返回每个 occurrence 的 `(hour, minute, second)` 元组。
 ///
 /// 关键点(对应 issue #502 的几个 DST bug):
 /// - 用固定参考点 `2025-01-01 00:00:00 local`(而非 `Utc::now()`),
 ///   测试稳定 + 不依赖系统时间。
-/// - 1 年窗口足够覆盖北/南半球所有 DST 切换日;`Schedule::after` 返回
-///   `DateTime<Tz>`,chrono 内部按 `local_dt` 那一刻的实际 offset 算
-///   UTC,无需我们手算 offset,也就避免了 DST 切换日的脏数据。
+/// - 1 年窗口足够覆盖北/南半球所有 DST 切换日;croner 的
+///   `find_next_occurrence` 返回 `DateTime<Tz>`,chrono 内部按
+///   `local_dt` 那一刻的实际 offset 算 UTC,无需我们手算 offset,
+///   也就避免了 DST 切换日的脏数据。
 ///
 /// 返回 `Vec` 而非 `HashMap`,是因为后续 `summarize_field_set` 只关心
 /// 集合去重,不需要计数;DST pair 的 dominant 选择在调用方 `detect_dst_dominant`
 /// 里再做。
-fn enumerate_utc_times(schedule: &cron::Schedule, tz: &chrono_tz::Tz) -> Vec<(u32, u32, u32)> {
+fn enumerate_utc_times(schedule: &croner::Cron, tz: &chrono_tz::Tz) -> Vec<(u32, u32, u32)> {
     // 用 fixed 起点 (2025-01-01 00:00:00 local) 枚举,覆盖完整 1 年,
     // 确保 DST 切换日的 occurrence 都在样本内。
     let reference = match tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0) {
@@ -198,7 +198,8 @@ fn enumerate_utc_times(schedule: &cron::Schedule, tz: &chrono_tz::Tz) -> Vec<(u3
     };
 
     let mut times = Vec::new();
-    for local_dt in schedule.after(&reference).take_while(|dt| *dt < end) {
+    // croner::Cron::iter_from 从 start_from(inclusive)开始迭代。
+    for local_dt in schedule.clone().iter_from(reference).take_while(|dt| *dt < end) {
         let utc = local_dt.with_timezone(&chrono::Utc);
         times.push((utc.hour(), utc.minute(), utc.second()));
     }
@@ -303,12 +304,14 @@ fn convert_cron_to_utc(
     let tz = parse_tz(timezone)?;
 
     // 2) 解析 cron 字符串 + 校验 6 字段
-    let schedule = cron::Schedule::from_str(cron_expr).map_err(|_| {
-        SchedulerError::InvalidCron {
+    // croner::Cron::new 只构造壳,parse 才真正校验表达式。
+    let schedule = croner::Cron::new(cron_expr)
+        .with_seconds_required()
+        .parse()
+        .map_err(|_| SchedulerError::InvalidCron {
             expr: cron_expr.to_string(),
             todo_id,
-        }
-    })?;
+        })?;
     ensure_six_fields(cron_expr, todo_id)?;
 
     // 3) 提取 dom / month / dow 字段(原样保留),h/m/s 由枚举结果生成
@@ -409,7 +412,9 @@ impl TodoScheduler {
         timezone: Option<String>,
     ) -> Result<uuid::Uuid, SchedulerError> {
         // Validate cron expression
-        if cron::Schedule::from_str(&cron_expr).is_err() {
+        // croner::Cron::new + parse 做严格校验,失败时返回 InvalidCron
+        // 让 handler 映射为 400 BadRequest。
+        if croner::Cron::new(&cron_expr).with_seconds_required().parse().is_err() {
             warn!(
                 "Invalid cron expression '{}' for todo {}. \
                 AI must convert natural language to valid cron format with 6 fields (seconds + 5 standard). \
@@ -769,7 +774,6 @@ mod convert_cron_to_utc_helpers_tests {
         parse_tz, summarize_field_set,
     };
     use crate::scheduler::SchedulerError;
-    use std::str::FromStr;
 
     // ===== parse_tz =====
     // 时区解析是后续 phase 的输入,错了会污染整个枚举 / DST 检测,所以必须独立测。
@@ -858,7 +862,7 @@ mod convert_cron_to_utc_helpers_tests {
     /// 上海不参与 DST,2025 年每一天 9 点本地对应 UTC 1 点。
     #[test]
     fn test_enumerate_utc_times_daily_9am_shanghai_365_occurrences() {
-        let schedule = cron::Schedule::from_str("0 0 9 * * *").unwrap();
+        let schedule = croner::Cron::new("0 0 9 * * *").with_seconds_required().parse().unwrap();
         let tz = parse_tz("Asia/Shanghai").unwrap();
         let times = enumerate_utc_times(&schedule, &tz);
         // 2025 年非闰年: 365 天
@@ -870,17 +874,17 @@ mod convert_cron_to_utc_helpers_tests {
         }
     }
 
-    /// `0 0 0/3 * * *`(每 3 小时一次)在 1 年窗口内应枚举出 364*8 + 7 = 2919 次。
-    /// 边界:参考时间 `2025-01-01 00:00:00` 本身在 `Schedule::after` 语义里
-    /// 是**不计入**的(after 是严格大于),所以 2025-01-01 当天只有 7 次
-    /// 触发(03, 06, ..., 21),后续 364 天每天 8 次,2026-01-01 00:00
+    /// `0 0 0/3 * * *`(每 3 小时一次)在 1 年窗口内应枚举出 2920 次。
+    /// 边界:参考时间 `2025-01-01 00:00:00` 本身在 croner::Cron::iter_from
+    /// 语义里是**计入**的(inclusive),所以 2025-01-01 当天有 8 次
+    /// 触发(00, 03, 06, ..., 21),后续 364 天每天 8 次,2026-01-01 00:00
     /// 也不计入(被 `take_while(*dt < end)` 排除)。这是窗口边界,不是 bug。
     #[test]
     fn test_enumerate_utc_times_every_3_hours_year_window() {
-        let schedule = cron::Schedule::from_str("0 0 0/3 * * *").unwrap();
+        let schedule = croner::Cron::new("0 0 0/3 * * *").with_seconds_required().parse().unwrap();
         let tz = parse_tz("UTC").unwrap();
         let times = enumerate_utc_times(&schedule, &tz);
-        assert_eq!(times.len(), 364 * 8 + 7, "got {} times", times.len());
+        assert_eq!(times.len(), 364 * 8 + 8, "got {} times", times.len());
     }
 
     /// DST 时区(`America/New_York`)在 1 年内应该枚举出 2 个 distinct UTC 小时
@@ -888,7 +892,7 @@ mod convert_cron_to_utc_helpers_tests {
     /// 这是 issue #502 修复的核心场景。
     #[test]
     fn test_enumerate_utc_times_dst_produces_two_distinct_hours() {
-        let schedule = cron::Schedule::from_str("0 0 9 * * *").unwrap();
+        let schedule = croner::Cron::new("0 0 9 * * *").with_seconds_required().parse().unwrap();
         let tz = parse_tz("America/New_York").unwrap();
         let times = enumerate_utc_times(&schedule, &tz);
         let mut hours: Vec<u32> = times.iter().map(|t| t.0).collect();
@@ -907,7 +911,7 @@ mod convert_cron_to_utc_helpers_tests {
     /// 但 helper 自身的鲁棒性值得保证。)
     #[test]
     fn test_enumerate_utc_times_handles_utc_zone() {
-        let schedule = cron::Schedule::from_str("0 0 0 * * *").unwrap();
+        let schedule = croner::Cron::new("0 0 0 * * *").with_seconds_required().parse().unwrap();
         let tz = parse_tz("UTC").unwrap();
         let times = enumerate_utc_times(&schedule, &tz);
         assert!(!times.is_empty());
