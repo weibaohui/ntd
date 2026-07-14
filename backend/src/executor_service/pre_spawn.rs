@@ -535,9 +535,10 @@ pub(crate) async fn inject_expert_context(
             return message.to_string();
         }
     };
+    // 解析主理 agent：team 用 lead_agent、agent 用 agent_name（统一走 resolve_agent_name，
+    // 避免漏掉 lead_agent 导致 team 类型专家执行时不注入）。
     let agent_md = match metadata
-        .agent_name
-        .as_deref()
+        .resolve_agent_name()
         .and_then(|name| expert_manager.get_agent_md_content(name).ok())
     {
         Some(content) => content,
@@ -712,7 +713,7 @@ mod tests {
             },
         ];
         // 借用一个最小 ExpertMetadata 把 skill 绑到 "test-expert"
-        let expert = make_minimal_expert_metadata("test-expert", Some("test-agent"));
+        let expert = make_minimal_expert_metadata("test-expert", Some("test-agent"), None);
         manager.update_index(&expert, &[], &skills);
         let text = build_expert_skills_text(&manager, "test-expert");
         // build_skills_context 输出 Markdown 格式：标题 + 项目符号列表
@@ -790,7 +791,7 @@ mod tests {
             yaml_emoji: None,
             yaml_vibe: None,
         };
-        let expert = make_minimal_expert_metadata("test-expert", Some("test-agent"));
+        let expert = make_minimal_expert_metadata("test-expert", Some("test-agent"), None);
         manager.update_index(&expert, &[agent_file], &[]);
         let request = make_test_request(Some(manager)).await;
         let todo = make_todo_with_expert(Some("test-expert"));
@@ -840,7 +841,7 @@ mod tests {
             yaml_allowed_tools: vec![],
             yaml_emoji: None,
         };
-        let expert = make_minimal_expert_metadata("rust-expert", Some("rust-agent"));
+        let expert = make_minimal_expert_metadata("rust-expert", Some("rust-agent"), None);
         manager.update_index(&expert, &[agent_file], &[skill]);
 
         let request = make_test_request(Some(manager)).await;
@@ -859,11 +860,63 @@ mod tests {
         let _ = std::fs::remove_file(&md_path);
     }
 
+    /// `inject_expert_context` 对 team 类型专家（lead_agent 有值、agent_name 为 None）也能注入。
+    /// 回归测试：修复前 inject 只读 agent_name，team 专家因 agent_name 为 None 被静默跳过。
+    /// 注意：inject 只依据 resolve_agent_name（lead_agent 优先）解析主理 agent，不检查 expert_type，
+    /// 因此这里用默认的 Agent 类型即可复现 team 的字段分布（agent_name=None + lead_agent=Some）。
+    #[tokio::test]
+    async fn test_inject_expert_context_team_expert_uses_lead_agent() {
+        use std::io::Write;
+        // 准备 lead agent 的 MD 文件：team 的主理 agent 是 lead_agent，不是 agent_name
+        let mut tmp_path = std::env::temp_dir();
+        tmp_path.push(format!(
+            "ntd_test_team_lead_md_{}.md",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut f = std::fs::File::create(&tmp_path).unwrap();
+        writeln!(f, "你是团队负责人").unwrap();
+        let md_path = tmp_path.to_string_lossy().to_string();
+
+        let manager = Arc::new(crate::expert::ExpertIndexManager::new());
+        // 把 lead agent 注册到索引（agent_name 字段作为 key 指向 lead 的 MD 文件）
+        let agent_file = crate::expert::AgentFileMetadata {
+            agent_name: "team-lead".to_string(),
+            md_file_path: md_path.clone(),
+            yaml_name: None,
+            yaml_description: None,
+            yaml_color: None,
+            yaml_emoji: None,
+            yaml_vibe: None,
+        };
+        // team 字段分布：agent_name=None、lead_agent=Some —— 修复前的失败场景
+        let expert = make_minimal_expert_metadata("my-team", None, Some("team-lead"));
+        manager.update_index(&expert, &[agent_file], &[]);
+
+        let request = make_test_request(Some(manager)).await;
+        let todo = make_todo_with_expert(Some("my-team"));
+        let original = "请帮我写代码";
+        let result = inject_expert_context(&request, &Some(todo), original).await;
+        // 修复后应注入 lead_agent 的角色定义，而非静默返回原 message
+        assert!(
+            result.starts_with("# 专家角色定义\n"),
+            "team 专家应注入 lead_agent 的 MD，实际结果: {}",
+            result
+        );
+        assert!(result.contains("你是团队负责人"));
+        assert!(result.contains("# 任务\n请帮我写代码"));
+        // 清理临时文件
+        let _ = std::fs::remove_file(&md_path);
+    }
+
     /// 构造最小可用的 ExpertMetadata 供测试使用。
     /// 只填必要字段，其余用空值/None，避免每个测试都重复 22 个字段。
     fn make_minimal_expert_metadata(
         name: &str,
         agent_name: Option<&str>,
+        lead_agent: Option<&str>,
     ) -> crate::expert::ExpertMetadata {
         use crate::expert::{ExpertMetadata, ExpertType};
         ExpertMetadata {
@@ -881,7 +934,7 @@ mod tests {
             definition_dir: "/tmp".to_string(),
             plugin_json_path: "/tmp/plugin.json".to_string(),
             agent_name: agent_name.map(|s| s.to_string()),
-            lead_agent: None,
+            lead_agent: lead_agent.map(|s| s.to_string()),
             member_agents: vec![],
             members: vec![],
             skills: vec![],

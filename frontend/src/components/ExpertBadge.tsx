@@ -2,7 +2,8 @@
 //
 // 在 Todo 详情头部展示当前 Todo 关联的专家/团队信息：
 // - 视觉风格与 ExecutorBadge 对齐（小号色块 + 主色文字）。
-// - 通过 getExpertByName 按名拉取，避免拉全列表造成的额外开销。
+// - 通过 getExpertByNameCached 按名拉取（带模块级缓存）：列表中多个徽章共享同一
+//   专家时复用缓存、只请求一次，避免 N 次重复请求。
 // - 加载失败/未找到时静默不渲染，保持头部整洁。
 // - 用 Tooltip 暴露职业与描述，避免头部信息密度过高。
 
@@ -66,8 +67,8 @@ function useExpertLoader(expertName: string) {
   useEffect(() => {
     // 闭包内的取消标志：组件卸载或 expertName 变化时置为 true，丢弃过期结果。
     let cancelled = false;
-    // 通过 getExpertByName 拉单条记录，比 getAllExperts 更省流量。
-    db.getExpertByName(expertName)
+    // 走带缓存的 getExpertByNameCached：列表中多个徽章共享同一专家时只请求一次。
+    db.getExpertByNameCached(expertName)
       .then((data) => {
         // 仅在未取消时写入，避免竞态。
         if (!cancelled) setExpert(data);

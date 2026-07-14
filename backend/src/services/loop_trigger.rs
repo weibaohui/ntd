@@ -24,12 +24,13 @@ use crate::services::loop_runner::LoopRunner;
 
 pub struct LoopTriggerDispatcher {
     runner: Arc<LoopRunner>,
-    ctx: crate::service_context::ServiceContext,
+    db: Arc<crate::db::Database>,
 }
 
 impl LoopTriggerDispatcher {
-    pub fn new(runner: Arc<LoopRunner>, ctx: crate::service_context::ServiceContext) -> Self {
-        Self { runner, ctx }
+    /// 只需 db：dispatcher 仅查 loop/trigger 元数据，实际执行交给 runner 自带的 ctx。
+    pub fn new(runner: Arc<LoopRunner>, db: Arc<crate::db::Database>) -> Self {
+        Self { runner, db }
     }
 
     pub async fn dispatch_loop_webhook(
@@ -40,7 +41,7 @@ impl LoopTriggerDispatcher {
         body: Option<&str>,
         content_type: Option<&str>,
     ) -> Option<i64> {
-        let loop_ = self.ctx.db.get_loop(loop_id).await.ok().flatten();
+        let loop_ = self.db.get_loop(loop_id).await.ok().flatten();
         // loop_ 为 None 时直接返回 None（? 运算符替代 if + unwrap 模式）
         let loop_ = loop_.as_ref()?;
         if loop_.status != "enabled" {
@@ -77,7 +78,6 @@ impl LoopTriggerDispatcher {
         content: &str,
     ) -> Vec<i64> {
         let triggers = match self
-            .ctx
             .db
             .list_enabled_triggers_by_type("feishu_message")
             .await
@@ -135,7 +135,6 @@ impl LoopTriggerDispatcher {
         command: &str,
     ) -> Vec<i64> {
         let triggers = match self
-            .ctx
             .db
             .list_enabled_triggers_by_type("feishu_command")
             .await
@@ -178,7 +177,6 @@ impl LoopTriggerDispatcher {
         record_id: Option<i64>,
     ) -> Vec<i64> {
         let triggers = match self
-            .ctx
             .db
             .list_triggers_by_todo(todo_id)
             .await
@@ -212,7 +210,6 @@ impl LoopTriggerDispatcher {
         todo_id: i64,
     ) -> Vec<i64> {
         let triggers = match self
-            .ctx
             .db
             .list_enabled_triggers_by_type("tag_added")
             .await
@@ -263,7 +260,7 @@ impl LoopTriggerDispatcher {
         loop_id: i64,
         trigger_meta: serde_json::Value,
     ) -> Option<i64> {
-        let loop_ = self.ctx.db.get_loop(loop_id).await.ok().flatten();
+        let loop_ = self.db.get_loop(loop_id).await.ok().flatten();
         // loop_ 为 None 时直接返回 None（? 运算符替代 if + unwrap 模式）
         let loop_ = loop_.as_ref()?;
         if loop_.status != "enabled" {

@@ -6,6 +6,18 @@ use std::collections::HashMap;
 
 use super::types::*;
 
+impl ExpertMetadata {
+    /// 解析专家的主理 agent 名称：team 类型用 lead_agent，agent 类型用 agent_name。
+    ///
+    /// 统一这层是因为三处调用（执行注入 / wiki 注入 / API 查 MD）各写各的曾导致
+    /// team 类型在执行路径漏注入——team 的 agent_name 通常为 None，必须用 lead_agent。
+    /// lead_agent 优先：team 负责人是最权威的 agent；agent 类型 lead_agent 为 None，
+    /// 自然回退到 agent_name。
+    pub fn resolve_agent_name(&self) -> Option<&str> {
+        self.lead_agent.as_deref().or(self.agent_name.as_deref())
+    }
+}
+
 impl ExpertIndexManager {
     /// 创建新的索引管理器
     pub fn new() -> Self {

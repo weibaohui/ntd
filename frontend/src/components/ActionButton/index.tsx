@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button, Drawer, Spin, Typography, Space, message, Input, Tag } from 'antd';
 import { ThunderboltOutlined, EditOutlined } from '@ant-design/icons';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -11,6 +11,19 @@ import type { ActionButtonProps } from './types';
 
 const { Text, Paragraph } = Typography;
 const { TextArea } = Input;
+
+/**
+ * 把模板里的 {{key}} 占位符替换为参数值。
+ * 用 split/join 而非 RegExp/replaceAll：无需正则转义、不依赖 ES2021 target，
+ * 天然规避 key/value 含元字符（如 . * +）时的误匹配。
+ */
+function substituteParams(template: string, params: Record<string, string>): string {
+  let result = template;
+  for (const [key, value] of Object.entries(params)) {
+    result = result.split(`{{${key}}}`).join(value);
+  }
+  return result;
+}
 
 /**
  * 可复用的一键 AI 执行组件。
@@ -43,6 +56,13 @@ export function ActionButton({
 }: ActionButtonProps) {
   const [open, setOpen] = useState(false);
   const [editablePrompt, setEditablePrompt] = useState(prompt);
+  // editablePrompt 的 ref 镜像：effect 里要读最新值，避免闭包捕获到旧的 state
+  const editablePromptRef = useRef(editablePrompt);
+  editablePromptRef.current = editablePrompt;
+  // 记录「上次自动生成的 prompt」，用于判断用户是否手动编辑过：
+  // 当前 editablePrompt 仍等于上次生成值 → 视为未手改，参数变化可安全覆盖；
+  // 一旦不等（用户改过 textarea）→ 后续参数变化不再覆盖，保留手动编辑。
+  const lastGeneratedRef = useRef(editablePrompt);
   // 模板参数值：存储用户输入的参数，初始化时使用 params 的默认值
   const [paramValues, setParamValues] = useState<Record<string, string>>(params);
   // 初始化 selectedExecutor：优先从 localStorage 恢复上次选择，不存在时回退到 prop executor
@@ -70,20 +90,26 @@ export function ActionButton({
   //   这样用户每次打开都是自己上次的选择，而不是每次回到默认。
   useEffect(() => {
     if (open) {
-      setEditablePrompt(prompt);
+      // 打开即展示参数替换后的 prompt（而非裸模板），并同步 lastGeneratedRef，
+      // 让后续参数变化能正确识别「用户是否手动编辑」。
+      const generated = substituteParams(prompt, params);
+      setEditablePrompt(generated);
+      lastGeneratedRef.current = generated;
       setParamValues(params);
       const saved = getLastExecutor(executor);
       setSelectedExecutor(saved);
     }
   }, [open, prompt, executor, actionType, actionKey, params]);
 
-  // 参数值变化时，实时替换 editablePrompt 中的占位符
+  // 参数值变化时，实时把占位符替换进 prompt。
+  // 仅当用户未手动编辑（当前值仍等于上次自动生成值）时才覆盖 editablePrompt，
+  // 否则保留用户的手动修改；始终刷新 lastGeneratedRef 以便下次比较。
   useEffect(() => {
-    let updatedPrompt = prompt;
-    Object.entries(paramValues).forEach(([key, value]) => {
-      updatedPrompt = updatedPrompt.replace(new RegExp(`{{${key}}}`, 'g'), value);
-    });
-    setEditablePrompt(updatedPrompt);
+    const generated = substituteParams(prompt, paramValues);
+    if (editablePromptRef.current === lastGeneratedRef.current) {
+      setEditablePrompt(generated);
+    }
+    lastGeneratedRef.current = generated;
   }, [paramValues, prompt]);
 
   // 用户切换执行器时同时保存选择到 localStorage，

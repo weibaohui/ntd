@@ -137,3 +137,19 @@ export function getExpertAvatarUrl(expert: ExpertMetadata): string {
 export function getMemberAvatarUrl(expertName: string, memberId: string): string {
   return `/api/experts/${encodeURIComponent(expertName)}/members/${encodeURIComponent(memberId)}/avatar`;
 }
+
+/**
+ * 获取分类名称映射。
+ *
+ * 根据 plugin.json 中的 categoryId 字段返回中文分类名称。
+ * 分类 ID 格式如 "02-Engineering"、"08-FinanceInvestment"；未命中映射时回退到
+ * 去掉前缀编号后的原始片段，保证未知分类也有可读文本而非裸 ID。
+ */
+export function getCategoryName(categoryId?: string): string {
+  if (!categoryId) return '';
+  const map: Record<string, string> = {
+    '02-Engineering': '工程技术',
+    '08-FinanceInvestment': '金融投资',
+  };
+  return map[categoryId] || categoryId.split('-').slice(1).join(' ');
+}

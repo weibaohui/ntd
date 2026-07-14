@@ -421,10 +421,10 @@ fn init_loop_studio_services(
     };
     // clone tx 进 LoopRunner 内部，broadcast::Sender 是 Arc 包装，clone 只增加引用计数
     let runner = Arc::new(LoopRunner::new(loop_runner_ctx, tx.clone()));
-    // dispatcher 复用 runner 的 ctx.db；ctx clone 同理，ServiceContext 内部字段均为 Arc
+    // dispatcher 只需要 db（查 loop/trigger 元数据），执行交给 runner 自带的 ctx
     let dispatcher = Arc::new(LoopTriggerDispatcher::new(
         runner.clone(),
-        ctx.clone(),
+        ctx.db.clone(),
     ));
     // scheduler 启动时需要 DB 读 + 启动后台 task,这里 block_in_place
     let scheduler_res = tokio::task::block_in_place(|| {

@@ -646,12 +646,12 @@ fn inject_wiki_expert_context(
             return message.to_string();
         }
     };
-    // 获取 Agent MD 内容（team 类型用 lead_agent 的 MD，agent 类型用 agent_name）
-    let agent_name = metadata
-        .agent_name
-        .as_deref()
-        .or(metadata.lead_agent.as_deref());
-    let agent_md = match agent_name.and_then(|n| expert_manager.get_agent_md_content(n).ok()) {
+    // 获取 Agent MD 内容：team 用 lead_agent、agent 用 agent_name（统一走 resolve_agent_name，
+    // 与执行注入路径保持一致的优先级）。
+    let agent_md = match metadata
+        .resolve_agent_name()
+        .and_then(|n| expert_manager.get_agent_md_content(n).ok())
+    {
         Some(content) => content,
         None => {
             tracing::warn!("wiki chat: 未找到专家 '{}' 的 Agent MD 内容，跳过注入", name);

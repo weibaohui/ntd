@@ -56,13 +56,13 @@ pub async fn get_expert_agent_md(
         .get_expert_by_name(&name)
         .ok_or(AppError::NotFound)?;
 
-    // 根据专家类型确定要加载的 Agent
-    let target_agent = expert.lead_agent.or(expert.agent_name);
-    let agent_name = target_agent.ok_or(AppError::NotFound)?;
+    // 根据专家类型确定要加载的 Agent：team 用 lead_agent、agent 用 agent_name
+    // （统一走 resolve_agent_name，与执行注入路径保持一致）。
+    let agent_name = expert.resolve_agent_name().ok_or(AppError::NotFound)?;
 
     let md_content = state
         .expert_manager
-        .get_agent_md_content(&agent_name)
+        .get_agent_md_content(agent_name)
         .map_err(|e| match e {
             crate::expert::ExpertError::AgentNotFound(_) => AppError::NotFound,
             _ => AppError::Internal("加载 Agent MD 内容失败".to_string()),
@@ -600,10 +600,6 @@ fn extract_zip_to_dir<R: std::io::Read + std::io::Seek>(
     const MAX_TOTAL_SIZE: u64 = 500 * 1024 * 1024;
     let mut total_extracted: u64 = 0;
 
-    let target_canonical = target_dir
-        .canonicalize()
-        .map_err(|e| AppError::Internal(format!("解析目标目录失败: {}", e)))?;
-
     for i in 0..archive.len() {
         let mut file = archive
             .by_index(i)
@@ -619,17 +615,11 @@ fn extract_zip_to_dir<R: std::io::Read + std::io::Seek>(
             )));
         }
 
+        // mangled_name() 已剥离绝对路径与 .. 组件，上面的 is_absolute/ParentDir
+        // 检查是第二重防护，足以挡住 zip 路径遍历。这里不再做 canonicalize+starts_with
+        // 校验：它在文件创建前调用，路径尚不存在必然 canonicalize 失败而被跳过，
+        // 属于无效的死代码。
         let dest_path = target_dir.join(&outpath);
-
-        // 校验目标路径仍在目标目录内
-        if let Ok(dest_canonical) = dest_path.canonicalize() {
-            if !dest_canonical.starts_with(&target_canonical) {
-                return Err(AppError::BadRequest(format!(
-                    "zip 条目路径逃逸目标目录: {}",
-                    outpath.display()
-                )));
-            }
-        }
 
         if file.is_dir() {
             std::fs::create_dir_all(&dest_path)

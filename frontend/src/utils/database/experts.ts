@@ -1,6 +1,12 @@
 import { api, unwrap } from './client';
 import type { ExpertMetadata, SkillMetadata, LoadResult } from '@/types/expert';
 
+// 模块级专家元数据缓存：专家数据几乎不变（仅在导入/删除/重载时变化），
+// 列表中大量 ExpertBadge 共享同一专家时复用缓存，避免 N 次重复请求。
+// inflightMap 合并同名并发请求，防止首屏瞬时并发雪崩。
+const expertCache = new Map<string, ExpertMetadata>();
+const inflightMap = new Map<string, Promise<ExpertMetadata>>();
+
 /**
  * 获取所有专家列表
  *
@@ -17,6 +23,49 @@ export async function getAllExperts(): Promise<ExpertMetadata[]> {
  */
 export async function getExpertByName(name: string): Promise<ExpertMetadata> {
   return unwrap(await api.get(`/api/experts/${encodeURIComponent(name)}`));
+}
+
+/**
+ * 获取单个专家详情（带内存缓存 + 请求合并）。
+ *
+ * 列表中大量 ExpertBadge 会按名重复拉取同一专家，直接走 getExpertByName 会产生 N 次请求。
+ * 这里：命中缓存直接返回；已有 in-flight 请求则复用同一 Promise；否则发请求，成功后写缓存。
+ * 失败不写缓存，让下次重试。专家增删改后由 invalidateExpertCache 失效。
+ */
+export async function getExpertByNameCached(name: string): Promise<ExpertMetadata> {
+  const cached = expertCache.get(name);
+  if (cached) return cached;
+  const inflight = inflightMap.get(name);
+  if (inflight) return inflight;
+  const promise = getExpertByName(name)
+    .then((meta) => {
+      expertCache.set(name, meta);
+      inflightMap.delete(name);
+      return meta;
+    })
+    .catch((err) => {
+      // 失败时移除 in-flight 标记，让下次调用可以重试，不缓存错误结果。
+      inflightMap.delete(name);
+      throw err;
+    });
+  inflightMap.set(name, promise);
+  return promise;
+}
+
+/**
+ * 失效专家缓存。
+ *
+ * 专家删除/导入/重载后调用，保证 ExpertBadge 不展示陈旧数据。
+ * 传 name 只清单个专家；不传则全量清空（用于 reload / 批量导入等可能影响多个专家的场景）。
+ */
+export function invalidateExpertCache(name?: string): void {
+  if (name) {
+    expertCache.delete(name);
+    inflightMap.delete(name);
+  } else {
+    expertCache.clear();
+    inflightMap.clear();
+  }
 }
 
 /**
@@ -93,7 +142,7 @@ export async function exportExpert(name: string): Promise<Blob> {
  * 接收 multipart/form-data 上传的 zip 文件，解压并导入到 ~/.ntd/experts/ 目录。
  * 返回导入结果（成功的专家信息 + 错误列表）。
  */
-export async function importExpert(file: File): Promise<{ expert: ExpertMetadata; errors: string[] }> {
+export async function importExpert(file: File): Promise<{ expert: ExpertMetadata | null; errors: string[] }> {
   const formData = new FormData();
   formData.append('file', file);
   return unwrap(await api.post('/api/experts/import', formData, {
@@ -107,7 +156,7 @@ export async function importExpert(file: File): Promise<{ expert: ExpertMetadata
  * 指定一个本地目录路径，将其复制到 ~/.ntd/experts/ 目录。
  * 用于从 WorkBuddy 插件目录批量导入专家。
  */
-export async function importExpertFromDirectory(path: string): Promise<{ expert: ExpertMetadata; errors: string[] }> {
+export async function importExpertFromDirectory(path: string): Promise<{ expert: ExpertMetadata | null; errors: string[] }> {
   return unwrap(await api.post('/api/experts/import-from-directory', { path }));
 }
 
