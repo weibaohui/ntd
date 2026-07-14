@@ -116,7 +116,7 @@ export const ExpertPicker = memo(function ExpertPicker({
   }, [experts, value]);
 
   return (
-    <div style={{ marginBottom: 16 }}>
+    <div>
       {/* 触发按钮：显示当前选中的专家或"选择专家" */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <div
@@ -139,14 +139,16 @@ export const ExpertPicker = memo(function ExpertPicker({
             border: '1px solid var(--color-border-secondary)',
             background: 'var(--color-bg-elevated)',
             cursor: 'pointer',
-            transition: 'border-color 0.2s',
+            transition: 'all 0.2s',
             minHeight: 36,
           }}
           onMouseEnter={(e) => {
             (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--color-primary-hover)';
+            (e.currentTarget as HTMLDivElement).style.background = 'var(--color-bg-hover)';
           }}
           onMouseLeave={(e) => {
             (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--color-border-secondary)';
+            (e.currentTarget as HTMLDivElement).style.background = 'var(--color-bg-elevated)';
           }}
         >
           {selectedExpert ? (
@@ -157,29 +159,83 @@ export const ExpertPicker = memo(function ExpertPicker({
               ) : (
                 <UserOutlined style={{ color: 'var(--color-info)', fontSize: 14 }} />
               )}
-              <span style={{ fontSize: 14, color: 'var(--color-text)' }}>
+              <span
+                style={{
+                  fontSize: 14,
+                  color: 'var(--color-text)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
                 {getExpertDisplayName(selectedExpert)}
               </span>
               {getExpertProfession(selectedExpert) && (
-                <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                <span
+                  style={{
+                    fontSize: 12,
+                    color: 'var(--color-text-secondary)',
+                    flexShrink: 0,
+                  }}
+                >
                   {getExpertProfession(selectedExpert)}
                 </span>
               )}
             </>
           ) : (
-            <span style={{ fontSize: 14, color: 'var(--color-text-tertiary)' }}>
-              选择专家/团队
-            </span>
+            <>
+              <SearchOutlined style={{ fontSize: 14, color: 'var(--color-text-tertiary)' }} />
+              <span style={{ fontSize: 14, color: 'var(--color-text-tertiary)' }}>
+                选择专家/团队
+              </span>
+            </>
           )}
         </div>
 
-        {/* 清除按钮：已有选择时显示 */}
+        {/* 清除按钮：已有选择时显示，圆形背景更醒目 */}
         {selectedExpert && (
-          <Tooltip title="清除专家选择">
-            <CloseOutlined
-              style={{ fontSize: 12, color: 'var(--color-text-tertiary)', cursor: 'pointer' }}
-              onClick={handleClear}
-            />
+          <Tooltip title="清除选择">
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                handleClear();
+              }}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleClear();
+                }
+              }}
+              style={{
+                width: 24,
+                height: 24,
+                borderRadius: '50%',
+                background: 'var(--color-bg-hover)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                flexShrink: 0,
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLDivElement).style.background = 'var(--color-error-bg-1)';
+                (e.currentTarget as HTMLDivElement).querySelectorAll('svg').forEach((el) => {
+                  (el as SVGElement).style.color = 'var(--color-error)';
+                });
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLDivElement).style.background = 'var(--color-bg-hover)';
+                (e.currentTarget as HTMLDivElement).querySelectorAll('svg').forEach((el) => {
+                  (el as SVGElement).style.color = '';
+                });
+              }}
+            >
+              <CloseOutlined style={{ fontSize: 12, color: 'var(--color-text-secondary)' }} />
+            </div>
           </Tooltip>
         )}
       </div>

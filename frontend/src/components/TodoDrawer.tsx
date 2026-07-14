@@ -303,10 +303,12 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
           <Divider style={{ margin: '8px 0 16px' }} />
 
           {/* 专家/团队选择（WorkBuddy 专家系统） */}
-          <ExpertPicker
-            value={expertName}
-            onChange={(v) => setField('expertName', v)}
-          />
+          <div style={{ marginBottom: 12 }}>
+            <ExpertPicker
+              value={expertName}
+              onChange={(v) => setField('expertName', v)}
+            />
+          </div>
 
           {/* 专家技能展示（选中专家后显示，组件内部自行管理加载与折叠状态） */}
           <ExpertSkillSelector
