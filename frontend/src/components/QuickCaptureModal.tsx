@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Modal, Drawer, Button, App } from 'antd';
-import { ThunderboltOutlined, ClockCircleOutlined, DownOutlined, UpOutlined } from '@ant-design/icons';
+import { ThunderboltOutlined, ClockCircleOutlined } from '@ant-design/icons';
 // 导入工作空间切换器，用于选择任务所属工作空间
 import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
 // 导入执行器选择器，用于选择任务执行器
 import { ExecutorPickerPopover } from '@/components/common/ExecutorPickerPopover';
-// 导入专家选择器，用于在高级选项中选择执行专家
+// 导入专家选择器，用于选择执行专家
 import { ExpertPicker } from '@/components/todo-drawer/ExpertPicker';
 // 导入数据库操作工具，用于创建任务等 API 调用
 import * as db from '@/utils/database';
@@ -48,8 +48,6 @@ export function QuickCaptureModal({
   const [executor, setExecutor] = useState<string>(getLastExecutor);
   // 选中的专家名称，null 表示未选择
   const [expertName, setExpertName] = useState<string | null>(null);
-  // 高级选项区域是否展开，默认折叠以保持快速创建入口简洁
-  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   // 加载状态，用于按钮禁用和 loading 效果
   const [loading, setLoading] = useState(false);
   // 文本输入框的 ref，用于自动聚焦
@@ -77,8 +75,6 @@ export function QuickCaptureModal({
     setLoading(false);
     // 重置专家选择，避免上次选择残留
     setExpertName(null);
-    // 折叠高级选项，保持默认简洁状态
-    setShowAdvancedOptions(false);
     // 调用父组件的关闭回调
     onClose();
   }, [onClose]);
@@ -242,72 +238,39 @@ export function QuickCaptureModal({
         }}
       />
 
-      {/* 工作空间选择器 */}
-      <div>
-        <WorkspaceSwitcher
-          value={workspaceId}
-          onChange={(id) => setWorkspaceId(id)}
-        />
+      {/* 工作空间 + 执行器 横排布局：左工作空间、右执行器 */}
+      <div style={{ display: 'flex', gap: 16 }}>
+        {/* 工作空间 */}
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 6 }}>
+            工作空间
+          </div>
+          <WorkspaceSwitcher
+            value={workspaceId}
+            onChange={(id) => setWorkspaceId(id)}
+          />
+        </div>
+        {/* 执行器 */}
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 6 }}>
+            执行器
+          </div>
+          <ExecutorPickerPopover
+            value={executor}
+            onChange={handleExecutorChange}
+          />
+        </div>
       </div>
 
-      {/* 高级选项：可折叠区域，默认折叠以保持快速创建入口简洁 */}
+      {/* 专家选择器 */}
       <div>
-        {/* 高级选项展开/折叠按钮，无边框样式符合用户偏好 */}
-        <button
-          type="button"
-          onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 4,
-            padding: 0,
-            border: 'none',
-            background: 'none',
-            color: 'var(--color-text-secondary)',
-            fontSize: 13,
-            cursor: 'pointer',
-          }}
-        >
-          {/* 根据展开状态显示不同的箭头图标 */}
-          {showAdvancedOptions ? (
-            <UpOutlined style={{ fontSize: 10 }} />
-          ) : (
-            <DownOutlined style={{ fontSize: 10 }} />
-          )}
-          {/* 展示当前选中的执行器和专家信息，未选择时显示"高级选项" */}
-          <span>
-            {expertName
-              ? `执行器 + 专家`
-              : '高级选项'}
-          </span>
-        </button>
-
-        {/* 展开时显示执行器和专家选择器 */}
-        {showAdvancedOptions && (
-          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {/* 执行器选择器 */}
-            <div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 6 }}>
-                执行器
-              </div>
-              <ExecutorPickerPopover
-                value={executor}
-                onChange={handleExecutorChange}
-              />
-            </div>
-
-            {/* 专家选择器 */}
-            <div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 6 }}>
-                专家/团队
-              </div>
-              <ExpertPicker
-                value={expertName}
-                onChange={setExpertName}
-              />
-            </div>
-          </div>
-        )}
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 6 }}>
+          专家/团队
+        </div>
+        <ExpertPicker
+          value={expertName}
+          onChange={setExpertName}
+        />
       </div>
 
       {/* 操作按钮 */}

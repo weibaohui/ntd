@@ -96,27 +96,32 @@ export function ChatInputPanel({
         </div>
       )}
 
-      {/* 工作空间选择器 */}
-      <div style={{ marginTop: mobile ? 8 : 10 }}>
-        <WorkspaceSwitcher
-          value={workspaceId ?? null}
-          showAddOption={false}
-          onChange={onWorkspaceChange}
-        />
-      </div>
-
-      {/* 执行器选择器：带标签，与闪念创建对话框一致 */}
-      <div style={{ marginTop: 12 }}>
-        <div style={{ fontSize: 12, color: colors.hintColor, marginBottom: 6 }}>
-          执行器
+      {/* 工作空间 + 执行器 横排布局：左工作空间、右执行器 */}
+      <div style={{ marginTop: mobile ? 8 : 10, display: 'flex', gap: 16 }}>
+        {/* 工作空间 */}
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 12, color: colors.hintColor, marginBottom: 6 }}>
+            工作空间
+          </div>
+          <WorkspaceSwitcher
+            value={workspaceId ?? null}
+            showAddOption={false}
+            onChange={onWorkspaceChange}
+          />
         </div>
-        <ExecutorPickerPopover
-          value={chatExecutor}
-          onChange={onExecutorChange}
-        />
+        {/* 执行器 */}
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 12, color: colors.hintColor, marginBottom: 6 }}>
+            执行器
+          </div>
+          <ExecutorPickerPopover
+            value={chatExecutor}
+            onChange={onExecutorChange}
+          />
+        </div>
       </div>
 
-      {/* 专家选择器：带标签，与闪念创建对话框一致 */}
+      {/* 专家选择器 */}
       <div style={{ marginTop: 12 }}>
         <div style={{ fontSize: 12, color: colors.hintColor, marginBottom: 6 }}>
           专家/团队

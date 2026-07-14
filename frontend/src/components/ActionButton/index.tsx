@@ -4,9 +4,8 @@ import { ThunderboltOutlined, EditOutlined } from '@ant-design/icons';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { ChatView } from '@/components/ChatView';
 import { useActionExecution } from './useActionExecution';
-import { ExecutorPicker } from '@/components/todo-drawer/ExecutorPicker';
+import { ExecutorPickerPopover } from '@/components/common/ExecutorPickerPopover';
 import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
-import { EXECUTORS_FOR_PICKER } from '@/types/execution';
 import { getLastExecutor, setLastExecutor } from '@/constants';
 import type { ActionButtonProps } from './types';
 
@@ -121,17 +120,6 @@ export function ActionButton({
           {/* 描述 */}
           <Text type="secondary">{panelDescription}</Text>
 
-          {/* 工作空间选择：默认取页面当前工作空间，用户可自行切换 */}
-          <div>
-            <Text strong style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>
-              工作空间
-            </Text>
-            <WorkspaceSwitcher
-              value={selectedWorkspaceId ?? null}
-              onChange={setSelectedWorkspaceId}
-            />
-          </div>
-
           {/* Prompt 编辑区 */}
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
@@ -146,12 +134,29 @@ export function ActionButton({
             />
           </div>
 
-          {/* 执行器选择（选择后自动记住到 localStorage，下次打开同理恢复） */}
-          <ExecutorPicker
-            executor={selectedExecutor || 'claudecode'}
-            executorOptions={EXECUTORS_FOR_PICKER}
-            onChange={handleExecutorChange}
-          />
+          {/* 工作空间 + 执行器 横排布局：左工作空间、右执行器 */}
+          <div style={{ display: 'flex', gap: 16 }}>
+            {/* 工作空间 */}
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 6 }}>
+                工作空间
+              </div>
+              <WorkspaceSwitcher
+                value={selectedWorkspaceId ?? null}
+                onChange={setSelectedWorkspaceId}
+              />
+            </div>
+            {/* 执行器 */}
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 6 }}>
+                执行器
+              </div>
+              <ExecutorPickerPopover
+                value={selectedExecutor}
+                onChange={handleExecutorChange}
+              />
+            </div>
+          </div>
 
           {/* 参数预览 */}
           {paramsPreview.length > 0 && (
