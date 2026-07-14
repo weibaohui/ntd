@@ -52,6 +52,29 @@ export async function reloadExperts(): Promise<LoadResult> {
 }
 
 /**
+ * 删除专家
+ *
+ * 删除指定专家及其磁盘上的定义目录。删除后该专家不再出现在列表中，
+ * 也无法被选择使用。此操作不可逆，请谨慎操作。
+ */
+export async function deleteExpert(name: string): Promise<void> {
+  await api.delete(`/api/experts/${encodeURIComponent(name)}`);
+}
+
+/**
+ * 通过 AI 创建专家
+ *
+ * 根据 AI 生成的 plugin_json 和 agent_md 内容创建新专家。
+ * 后端会自动创建目录结构并加载到索引中。
+ */
+export async function createExpertFromAi(pluginJson: string, agentMd: string): Promise<void> {
+  await api.post('/api/experts/create', {
+    plugin_json: pluginJson,
+    agent_md: agentMd,
+  });
+}
+
+/**
  * 导出专家为 zip 文件
  *
  * 将指定专家的整个目录打包为 zip 文件下载。

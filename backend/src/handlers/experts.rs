@@ -2,7 +2,7 @@
 //!
 //! 提供专家列表查询、详情查询、Agent MD 内容获取、头像资源访问、导入导出等接口。
 
-use axum::extract::{Multipart, Path as AxumPath, State};
+use axum::extract::{Json, Multipart, Path as AxumPath, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::IntoResponse;
 use axum::Router;
@@ -14,7 +14,7 @@ use zip::ZipArchive;
 
 use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::ApiResponse;
-use crate::expert::{ExpertMetadata, experts_dir, parse_plugin_json};
+use crate::expert::{ExpertMetadata, ExpertType, PluginJson, experts_dir, parse_plugin_json};
 
 /// `GET /api/experts`：获取所有专家列表
 ///
@@ -125,6 +125,197 @@ pub async fn get_expert_avatar(
         [(header::CONTENT_TYPE, mime_type)],
         content,
     ))
+}
+
+/// `DELETE /api/experts/:name`：删除专家
+///
+/// 删除指定专家：
+/// 1. 从内存索引中移除专家及其所有关联数据（agent_files、skills 等）
+/// 2. 删除磁盘上的专家定义目录（~/.ntd/experts/{name}/）
+///
+/// 删除后该专家不再出现在列表中，也无法被选择使用。
+pub async fn delete_expert(
+    State(state): State<AppState>,
+    AxumPath(name): AxumPath<String>,
+) -> Result<ApiResponse<String>, AppError> {
+    // 先从索引中移除，获取专家元数据（包含定义目录路径）
+    let expert = state
+        .expert_manager
+        .remove_expert(&name)
+        .ok_or(AppError::NotFound)?;
+
+    // 删除磁盘上的专家目录
+    let expert_dir = std::path::Path::new(&expert.definition_dir);
+    if expert_dir.exists() {
+        std::fs::remove_dir_all(expert_dir)
+            .map_err(|e| AppError::Internal(format!("删除专家目录失败: {}", e)))?;
+    }
+
+    tracing::info!("专家已删除: name={}, dir={}", name, expert.definition_dir);
+    Ok(ApiResponse::ok(format!("专家 \"{}\" 已删除", name)))
+}
+
+/// `GET /api/experts/:name/members/:member_id/avatar`：获取团队成员头像
+///
+/// 团队成员的头像路径存储在成员的 avatar_path 字段中（相对专家定义目录）。
+/// 通过 expert_name 定位专家，再在 members 中按 member_id 查找对应成员，
+/// 拼接 definition_dir + member.avatar_path 读取头像文件。
+/// 这样避免前端直接传相对路径造成的越权风险，所有路径都经后端校验。
+pub async fn get_expert_member_avatar(
+    State(state): State<AppState>,
+    AxumPath((name, member_id)): AxumPath<(String, String)>,
+) -> Result<impl IntoResponse, AppError> {
+    // 先按专家名取出专家元数据，拿不到说明专家不存在
+    let expert = state
+        .expert_manager
+        .get_expert_by_name(&name)
+        .ok_or(AppError::NotFound)?;
+
+    // 在 members 中按 id 精确匹配成员，避免任意路径访问
+    let member = expert
+        .members
+        .iter()
+        .find(|m| m.id == member_id)
+        .ok_or(AppError::NotFound)?;
+
+    // 成员未配置头像字段时直接 404，让前端走兜底图标
+    let avatar_rel = member.avatar_path.as_ref().ok_or(AppError::NotFound)?;
+
+    // 拼接绝对路径：definition_dir 是专家定义目录的绝对路径
+    let full_path = std::path::Path::new(&expert.definition_dir).join(avatar_rel);
+    if !full_path.exists() {
+        return Err(AppError::NotFound);
+    }
+
+    // 读取文件内容，失败统一转 Internal 错误
+    let content = std::fs::read(&full_path)
+        .map_err(|e| AppError::Internal(format!("读取成员头像文件失败: {}", e)))?;
+
+    // 根据扩展名推断 MIME 类型
+    let mime_type = infer_image_mime(&full_path);
+
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, mime_type)],
+        content,
+    ))
+}
+
+/// 根据文件扩展名推断图片 MIME 类型
+///
+/// 默认返回 `application/octet-stream`，保证未知扩展名时浏览器仍能兜底渲染。
+fn infer_image_mime(path: &Path) -> &'static str {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("png");
+    match ext.to_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "svg" => "image/svg+xml",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "application/octet-stream",
+    }
+}
+
+/// `POST /api/experts/create`：创建新专家
+///
+/// 根据传入的 plugin_json 和 agent_md 内容创建新专家。
+/// 流程：
+/// 1. 校验 plugin_json 必须包含 name 和 expertType 字段
+/// 2. 创建专家目录结构：~/.ntd/experts/{name}/.codebuddy-plugin/plugin.json
+/// 3. 创建 agents 目录并写入 agent.md 文件
+/// 4. 重新加载专家索引，使新专家立即生效
+///
+/// 创建成功后，该专家会自动出现在列表中，可立即使用。
+#[derive(Debug, Deserialize)]
+pub struct CreateExpertRequest {
+    /// plugin.json 内容（JSON 字符串）
+    plugin_json: String,
+    /// agent.md 内容（Markdown 字符串）
+    agent_md: String,
+}
+
+pub async fn create_expert(
+    State(state): State<AppState>,
+    Json(req): Json<CreateExpertRequest>,
+) -> Result<ApiResponse<String>, AppError> {
+    // 解析 plugin_json 获取专家基本信息
+    let plugin: PluginJson = serde_json::from_str(&req.plugin_json)
+        .map_err(|e| AppError::BadRequest(format!("plugin_json 解析失败: {}", e)))?;
+
+    // 保存专家名称供后续使用（避免 move 后无法访问）
+    let expert_name = plugin.name.clone();
+
+    // 校验必填字段
+    if expert_name.is_empty() {
+        return Err(AppError::BadRequest("专家名称不能为空".to_string()));
+    }
+    if !matches!(plugin.expert_type, ExpertType::Agent | ExpertType::Team) {
+        return Err(AppError::BadRequest("expertType 必须为 agent 或 team".to_string()));
+    }
+
+    // 获取专家根目录
+    let experts_dir = experts_dir()
+        .ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?;
+    std::fs::create_dir_all(&experts_dir)
+        .map_err(|e| AppError::Internal(format!("创建专家目录失败: {}", e)))?;
+
+    // 创建专家目录
+    let expert_dir = experts_dir.join(&expert_name);
+    if expert_dir.exists() {
+        return Err(AppError::BadRequest(format!(
+            "专家 \"{}\" 已存在",
+            expert_name
+        )));
+    }
+    std::fs::create_dir_all(&expert_dir)
+        .map_err(|e| AppError::Internal(format!("创建专家目录失败: {}", e)))?;
+
+    // 创建 .codebuddy-plugin 目录并写入 plugin.json
+    let plugin_dir = expert_dir.join(".codebuddy-plugin");
+    std::fs::create_dir_all(&plugin_dir)
+        .map_err(|e| AppError::Internal(format!("创建 plugin 目录失败: {}", e)))?;
+    let plugin_json_path = plugin_dir.join("plugin.json");
+    std::fs::write(&plugin_json_path, &req.plugin_json)
+        .map_err(|e| AppError::Internal(format!("写入 plugin.json 失败: {}", e)))?;
+
+    // 创建 agents 目录并写入 agent.md
+    if !req.agent_md.is_empty() {
+        let agents_dir = expert_dir.join("agents");
+        std::fs::create_dir_all(&agents_dir)
+            .map_err(|e| AppError::Internal(format!("创建 agents 目录失败: {}", e)))?;
+
+        // 从 plugin 中获取 agent_name，若无则用专家 name 兜底
+        let agent_name = plugin.agent_name.clone().unwrap_or_else(|| expert_name.clone());
+        let agent_md_path = agents_dir.join(format!("{}.md", agent_name));
+        std::fs::write(&agent_md_path, &req.agent_md)
+            .map_err(|e| AppError::Internal(format!("写入 agent.md 失败: {}", e)))?;
+
+        // 如果 plugin 中没有 agents 字段，需要补全
+        if plugin.agents.is_none() {
+            let mut plugin_mut = plugin;
+            plugin_mut.agents = Some(vec![format!("./agents/{}.md", agent_name)]);
+            let updated_json = serde_json::to_string_pretty(&plugin_mut)
+                .map_err(|e| AppError::Internal(format!("更新 plugin.json 失败: {}", e)))?;
+            std::fs::write(&plugin_json_path, updated_json)
+                .map_err(|e| AppError::Internal(format!("写入 plugin.json 失败: {}", e)))?;
+        }
+    }
+
+    // 重新加载该专家到索引
+    match state.expert_manager.reload_expert(&expert_dir) {
+        Ok(_) => {
+            tracing::info!("专家创建成功: name={}", expert_name);
+            Ok(ApiResponse::ok(format!("专家 \"{}\" 创建成功", expert_name)))
+        }
+        Err(e) => {
+            // 创建失败时清理已创建的目录
+            let _ = std::fs::remove_dir_all(&expert_dir);
+            Err(AppError::Internal(format!(
+                "加载新专家失败: {}",
+                e
+            )))
+        }
+    }
 }
 
 /// `POST /api/experts/reload`：重新加载所有专家定义
@@ -670,15 +861,21 @@ fn import_expert_from_dir(
 
 /// 专家 API 路由定义
 pub fn expert_routes() -> axum::Router<AppState> {
-    use axum::routing::{get, post};
+    use axum::routing::{delete, get, post};
 
     Router::new()
         .route("/api/experts", get(get_experts))
+        .route("/api/experts/create", post(create_expert))
         .route("/api/experts/{name}", get(get_expert))
         .route("/api/experts/{name}/agent-md", get(get_expert_agent_md))
         .route("/api/experts/{name}/skills", get(get_expert_skills))
         .route("/api/experts/{name}/avatar", get(get_expert_avatar))
+        .route(
+            "/api/experts/{name}/members/{member_id}/avatar",
+            get(get_expert_member_avatar),
+        )
         .route("/api/experts/{name}/export", get(export_expert))
+        .route("/api/experts/{name}", delete(delete_expert))
         .route("/api/experts/reload", post(reload_experts))
         .route("/api/experts/import", post(import_expert))
         .route(

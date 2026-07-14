@@ -717,8 +717,11 @@ mod tests {
         let text = build_expert_skills_text(&manager, "test-expert");
         // build_skills_context 输出 Markdown 格式：标题 + 项目符号列表
         assert!(text.contains("## 可用技能"));
-        assert!(text.contains("- **code-review**: 代码评审"));
-        assert!(text.contains("- **test-gen**: (无描述)"));
+        // build_skills_context 将技能名渲染为 Markdown 链接指向 SKILL.md 路径
+        assert!(text.contains("- **[code-review]("));
+        assert!(text.contains("**: 代码评审"));
+        assert!(text.contains("- **[test-gen]("));
+        assert!(text.contains("**: (无描述)"));
     }
 
     /// `build_expert_skills_text` 查询不存在的专家时返回空串（get_expert_skills 容错）。
@@ -848,7 +851,9 @@ mod tests {
         assert!(result.starts_with("# 专家角色定义\n"));
         assert!(result.contains("你是一个 Rust 专家"));
         assert!(result.contains("## 可用技能"));
-        assert!(result.contains("- **code-review**: 代码评审"));
+        // build_skills_context 将技能名渲染为 Markdown 链接指向 SKILL.md 路径
+        assert!(result.contains("- **[code-review]("));
+        assert!(result.contains("**: 代码评审"));
         assert!(result.contains("# 任务\n请帮我写代码"));
         // 清理临时文件
         let _ = std::fs::remove_file(&md_path);

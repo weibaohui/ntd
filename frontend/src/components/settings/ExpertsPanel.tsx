@@ -22,6 +22,7 @@ import {
   FolderOpenOutlined,
   StarOutlined,
   RightOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import * as db from '@/utils/database';
@@ -31,7 +32,9 @@ import {
   getExpertDescription,
   getExpertProfession,
   getExpertAvatarUrl,
+  getMemberAvatarUrl,
 } from '@/types/expert';
+import { ExpertCreateModal } from './ExpertCreateModal';
 
 const { Paragraph, Text } = Typography;
 
@@ -414,6 +417,8 @@ function ExpertDetailModal({
   onClose,
   onExport,
   exporting,
+  onDelete,
+  deleting,
 }: {
   open: boolean;
   expert: ExpertMetadata | null;
@@ -422,6 +427,8 @@ function ExpertDetailModal({
   onClose: () => void;
   onExport: () => void;
   exporting: boolean;
+  onDelete: () => void;
+  deleting: boolean;
 }) {
   if (!expert) return null;
 
@@ -432,16 +439,30 @@ function ExpertDetailModal({
   const isTeam = expert.expert_type === 'team';
   const [avatarError, setAvatarError] = useState(false);
   const showAvatar = avatarUrl && !avatarError;
+  // 删除确认对话框状态
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+
+  // 打开删除确认
+  const handleDeleteClick = () => {
+    setDeleteConfirmOpen(true);
+  };
+
+  // 确认删除
+  const handleConfirmDelete = () => {
+    setDeleteConfirmOpen(false);
+    onDelete();
+  };
 
   return (
-    <Modal
-      open={open}
-      onCancel={onClose}
-      footer={null}
-      width={Math.min(720, typeof window !== 'undefined' ? window.innerWidth - 32 : 720)}
-      centered
-      style={{ borderRadius: 'var(--radius-lg)' }}
-    >
+    <>
+      <Modal
+        open={open}
+        onCancel={onClose}
+        footer={null}
+        width={Math.min(720, typeof window !== 'undefined' ? window.innerWidth - 32 : 720)}
+        centered
+        style={{ borderRadius: 'var(--radius-lg)' }}
+      >
       <div style={{
         maxHeight: '80vh',
         overflowY: 'auto',
@@ -535,6 +556,17 @@ function ExpertDetailModal({
                   导出
                 </Button>
               </Tooltip>
+              <Tooltip title="删除专家">
+                <Button
+                  type="text"
+                  icon={<DeleteOutlined />}
+                  onClick={handleDeleteClick}
+                  loading={deleting}
+                  style={{ color: 'var(--color-text-secondary)' }}
+                >
+                  删除
+                </Button>
+              </Tooltip>
             </div>
           </div>
 
@@ -598,7 +630,12 @@ function ExpertDetailModal({
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
                 {expert.members.map((member) => (
-                  <MemberItem key={member.id} member={member} isLead={member.role === 'lead'} />
+                  <MemberItem
+                    key={member.id}
+                    member={member}
+                    isLead={member.role === 'lead'}
+                    expertName={expert.name}
+                  />
                 ))}
               </div>
             </div>
@@ -689,6 +726,58 @@ function ExpertDetailModal({
         </div>
       </div>
     </Modal>
+
+    {/* 删除确认对话框 */}
+    <Modal
+      open={deleteConfirmOpen}
+      onCancel={() => setDeleteConfirmOpen(false)}
+      footer={null}
+      width={Math.min(480, typeof window !== 'undefined' ? window.innerWidth - 32 : 480)}
+      centered
+    >
+      <div style={{ padding: '20px 0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <div style={{
+            width: 48,
+            height: 48,
+            borderRadius: '50%',
+            background: 'var(--color-error-bg-1)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <DeleteOutlined style={{ color: 'var(--color-error)', fontSize: 24 }} />
+          </div>
+          <div>
+            <Text strong style={{ fontSize: 16, color: 'var(--color-text)' }}>
+              确认删除
+            </Text>
+          </div>
+        </div>
+        <Paragraph style={{ fontSize: 14, lineHeight: 1.6, marginBottom: 20 }}>
+          确定要删除「{displayName}」吗？此操作将永久删除该专家及其所有关联数据，<br />
+          <Text strong style={{ color: 'var(--color-error)' }}>删除后无法恢复。</Text>
+        </Paragraph>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <Button
+            onClick={() => setDeleteConfirmOpen(false)}
+            style={{ minWidth: 80 }}
+          >
+            取消
+          </Button>
+          <Button
+            type="primary"
+            danger
+            onClick={handleConfirmDelete}
+            loading={deleting}
+            style={{ minWidth: 80 }}
+          >
+            确认删除
+          </Button>
+        </div>
+      </div>
+    </Modal>
+    </>
   );
 }
 
@@ -697,8 +786,24 @@ function ExpertDetailModal({
  *
  * 展示单个成员的头像、名称、职业、角色。
  * 负责人使用 Badge.Ribbon 右上角绶带标记，避免在窄屏挤压名称导致布局变形。
+ *
+ * 头像加载：成员的 avatar_path 是相对路径，需通过后端接口获取二进制。
+ * 头像加载失败时回退到默认图标，保证布局不塌陷。
  */
-function MemberItem({ member, isLead }: { member: ExpertMember; isLead: boolean }) {
+function MemberItem({
+  member,
+  isLead,
+  expertName,
+}: {
+  member: ExpertMember;
+  isLead: boolean;
+  expertName: string;
+}) {
+  // 头像加载失败状态：true 表示走兜底图标
+  const [avatarError, setAvatarError] = useState(false);
+  // 仅当成员配置了 avatar_path 且未发生加载失败时才尝试展示图片
+  const showAvatar = !!member.avatar_path && !avatarError;
+
   // 成员卡片内容：头像 + 名称 + 职业
   const cardContent = (
     <div style={{
@@ -712,11 +817,12 @@ function MemberItem({ member, isLead }: { member: ExpertMember; isLead: boolean 
       // Ribbon 需要父元素 overflow hidden 才能裁切绶带折角
       overflow: 'hidden',
     }}>
-      {member.avatar_path ? (
+      {showAvatar ? (
         <img
-          src={member.avatar_path}
+          src={getMemberAvatarUrl(expertName, member.id)}
           alt={member.name_zh || member.name_en || member.id}
-          onError={() => {}}
+          // 头像加载失败时切换到兜底图标，避免出现破图
+          onError={() => setAvatarError(true)}
           style={{
             width: 36,
             height: 36,
@@ -789,6 +895,8 @@ export function ExpertsPanel() {
   const [agentMd, setAgentMd] = useState('');
   const [skills, setSkills] = useState<SkillMetadata[]>([]);
   const [exporting, setExporting] = useState(false);
+  // 删除相关状态
+  const [deleting, setDeleting] = useState(false);
   // 导入相关状态
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
@@ -882,6 +990,22 @@ export function ExpertsPanel() {
     }
   }, [selectedExpert, message]);
 
+  // 删除专家
+  const handleDelete = useCallback(async () => {
+    if (!selectedExpert) return;
+    setDeleting(true);
+    try {
+      await db.deleteExpert(selectedExpert.name);
+      message.success('删除成功');
+      handleCloseDetail();
+      await loadExperts();
+    } catch (err: any) {
+      message.error('删除失败: ' + (err?.message || String(err)));
+    } finally {
+      setDeleting(false);
+    }
+  }, [selectedExpert, message, handleCloseDetail, loadExperts]);
+
   // 文件上传导入
   const handleFileImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -964,15 +1088,25 @@ export function ExpertsPanel() {
     });
   }, [experts, searchText]);
 
-  // 按类型分组
-  const individualExperts = useMemo(
-    () => filteredExperts.filter(e => e.expert_type === 'agent'),
-    [filteredExperts],
-  );
-  const teamExperts = useMemo(
-    () => filteredExperts.filter(e => e.expert_type === 'team'),
-    [filteredExperts],
-  );
+  // 按类型分组并按名称排序（稳定排序，避免刷新时顺序跳动）
+  const individualExperts = useMemo(() => {
+    return filteredExperts
+      .filter(e => e.expert_type === 'agent')
+      .sort((a, b) => {
+        const nameA = getExpertDisplayName(a).toLowerCase();
+        const nameB = getExpertDisplayName(b).toLowerCase();
+        return nameA.localeCompare(nameB, 'zh-CN');
+      });
+  }, [filteredExperts]);
+  const teamExperts = useMemo(() => {
+    return filteredExperts
+      .filter(e => e.expert_type === 'team')
+      .sort((a, b) => {
+        const nameA = getExpertDisplayName(a).toLowerCase();
+        const nameB = getExpertDisplayName(b).toLowerCase();
+        return nameA.localeCompare(nameB, 'zh-CN');
+      });
+  }, [filteredExperts]);
 
   // 导入下拉菜单
   const importMenuItems: MenuProps['items'] = [
@@ -1027,7 +1161,7 @@ export function ExpertsPanel() {
         </div>
       }
     >
-      {/* 搜索栏 */}
+      {/* 搜索栏 + AI 创建专家按钮 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         <Input
           allowClear
@@ -1037,6 +1171,9 @@ export function ExpertsPanel() {
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           style={{ width: 280 }}
+        />
+        <ExpertCreateModal
+          onCreated={loadExperts}
         />
         <span style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>
           共 {filteredExperts.length} 个（专家 {individualExperts.length} / 团队 {teamExperts.length}）
@@ -1127,6 +1264,8 @@ export function ExpertsPanel() {
         onClose={handleCloseDetail}
         onExport={handleExport}
         exporting={exporting}
+        onDelete={handleDelete}
+        deleting={deleting}
       />
 
       {/* 隐藏的文件上传 */}

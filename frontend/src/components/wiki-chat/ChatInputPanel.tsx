@@ -87,33 +87,46 @@ export function ChatInputPanel({
         onKeyDown={handleKeyDown}
         style={{ fontSize: mobile ? 16 : 14 }}
       />
-      {/* 执行器 + 专家选择行 */}
-      <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <WorkspaceSwitcher
-            value={workspaceId ?? null}
-            showAddOption={false}
-            onChange={onWorkspaceChange}
-          />
-          <ExecutorPickerPopover
-            value={chatExecutor}
-            onChange={onExecutorChange}
-          />
+
+      {/* 快捷键提示：输入框下方单独一行小字 */}
+      {!mobile && (
+        <div style={{ textAlign: 'center', fontSize: 11, color: colors.hintColor, marginTop: 6 }}>
+          Enter 发送 · Shift+Enter 换行
+          {workspaceId == null && ' · 请先选择工作空间'}
         </div>
-        {!mobile && (
-          <span style={{ fontSize: 11, color: colors.hintColor }}>
-            Enter 发送 · Shift+Enter 换行
-            {workspaceId == null && ' · 请先选择工作空间'}
-          </span>
-        )}
+      )}
+
+      {/* 工作空间选择器 */}
+      <div style={{ marginTop: mobile ? 8 : 10 }}>
+        <WorkspaceSwitcher
+          value={workspaceId ?? null}
+          showAddOption={false}
+          onChange={onWorkspaceChange}
+        />
       </div>
-      {/* 专家选择器：与执行器同一列下方，紧凑布局 */}
-      <div style={{ marginTop: 8 }}>
+
+      {/* 执行器选择器：带标签，与闪念创建对话框一致 */}
+      <div style={{ marginTop: 12 }}>
+        <div style={{ fontSize: 12, color: colors.hintColor, marginBottom: 6 }}>
+          执行器
+        </div>
+        <ExecutorPickerPopover
+          value={chatExecutor}
+          onChange={onExecutorChange}
+        />
+      </div>
+
+      {/* 专家选择器：带标签，与闪念创建对话框一致 */}
+      <div style={{ marginTop: 12 }}>
+        <div style={{ fontSize: 12, color: colors.hintColor, marginBottom: 6 }}>
+          专家/团队
+        </div>
         <ExpertPicker
           value={expertName}
           onChange={onExpertChange}
         />
       </div>
+
       {/* 发送按钮 */}
       <div style={{ marginTop: mobile ? 10 : 8, display: 'flex', justifyContent: 'flex-end' }}>
         <Button

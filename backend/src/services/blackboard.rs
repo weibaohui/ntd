@@ -452,6 +452,9 @@ pub struct WikiChatResponse {
 /// ExecEvent::DirectCardMessage 改成直接返回值。
 ///
 /// 不创建 Todo、不创建 execution_record、不持久化聊天历史、非流式一次性返回。
+// 参数较多是因为需要同时注入 db、执行器注册中心、专家管理器、事件通道等依赖，
+// 这些都是对话流程的必需依赖，无法进一步合并。
+#[allow(clippy::too_many_arguments)]
 pub async fn chat_with_wiki(
     db: &Arc<Database>,
     executor_registry: &Arc<ExecutorRegistry>,

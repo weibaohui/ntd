@@ -147,6 +147,46 @@ impl ExpertIndexManager {
         self.expert_skills.write().clear();
         self.category_index.write().clear();
     }
+
+    /// 移除指定专家及其所有关联索引
+    ///
+    /// 删除该专家在 experts、agent_files、skills、expert_skills、category_index
+    /// 中的所有数据。注意：此方法不删除磁盘上的文件目录，仅清理内存索引。
+    /// 调用方需要自行处理文件删除。
+    ///
+    /// # 参数
+    /// - `expert_name`: 专家名称
+    ///
+    /// # 返回
+    /// - 删除的专家元数据（如果存在），否则返回 None
+    pub fn remove_expert(&self, expert_name: &str) -> Option<ExpertMetadata> {
+        let removed = self.experts.write().remove(expert_name);
+
+        // 删除该专家关联的 agent_files
+        if let Some(expert) = &removed {
+            for agent_name in expert.agent_name.iter().chain(expert.member_agents.iter()) {
+                self.agent_files.write().remove(agent_name);
+            }
+        }
+
+        // 删除该专家关联的 skills 和 expert_skills
+        if let Some(skill_names) = self.expert_skills.write().remove(expert_name) {
+            for skill_name in skill_names {
+                self.skills.write().remove(&skill_name);
+            }
+        }
+
+        // 从分类索引中移除
+        if let Some(expert) = &removed {
+            if let Some(category) = &expert.category_id {
+                if let Some(names) = self.category_index.write().get_mut(category) {
+                    names.retain(|n| n != expert_name);
+                }
+            }
+        }
+
+        removed
+    }
 }
 
 impl Default for ExpertIndexManager {

@@ -5,6 +5,7 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import { ChatView } from '@/components/ChatView';
 import { useActionExecution } from './useActionExecution';
 import { ExecutorPicker } from '@/components/todo-drawer/ExecutorPicker';
+import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
 import { EXECUTORS_FOR_PICKER } from '@/types/execution';
 import { getLastExecutor, setLastExecutor } from '@/constants';
 import type { ActionButtonProps } from './types';
@@ -47,13 +48,17 @@ export function ActionButton({
   const [selectedExecutor, setSelectedExecutor] = useState<string | undefined>(
     () => getLastExecutor(executor)
   );
+  // 工作空间 ID：初始值来自 prop，用户可在 Drawer 内切换
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<number | null | undefined>(
+    workspaceId ?? undefined
+  );
   const isMobile = useIsMobile();
   const { status, result, error, logs, execute, retry, reset } = useActionExecution(
     actionType,
     actionKey,
     prompt,
     params,
-    workspaceId,
+    selectedWorkspaceId ?? undefined,
     executor,
   );
 
@@ -115,6 +120,17 @@ export function ActionButton({
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           {/* 描述 */}
           <Text type="secondary">{panelDescription}</Text>
+
+          {/* 工作空间选择：默认取页面当前工作空间，用户可自行切换 */}
+          <div>
+            <Text strong style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>
+              工作空间
+            </Text>
+            <WorkspaceSwitcher
+              value={selectedWorkspaceId ?? null}
+              onChange={setSelectedWorkspaceId}
+            />
+          </div>
 
           {/* Prompt 编辑区 */}
           <div>

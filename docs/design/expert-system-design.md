@@ -97,7 +97,7 @@
 ├── .codebuddy-plugin/
 │   └── plugin.json        ← 入口定义，含 leadAgent + members
 ├── agents/
-│   ├── ceo.md             ← 主理人（lead）
+│   ├── ceo.md             ← 负责人（lead）
 │   ├── cto.md             ← 成员
 │   └── pm.md              ← 成员
 └── skills/
@@ -331,7 +331,7 @@ allowedTools:
 2. **不支持专家在线安装**：用户需手动放置专家定义文件
 3. **QuickCaptureModal 不支持专家选择**：快速创建入口空间有限
 4. **Todo 列表项不显示专家信息**：仅详情页展示
-5. **专家间无协调机制**：团队类型仅注入主理人的定义
+5. **专家间无协调机制**：团队类型仅注入负责人的定义
 6. **Skill 注入仅写名称**：不调整启动命令的 `--allowedTools`
 
 ### 7.2 后续规划
