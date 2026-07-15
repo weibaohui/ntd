@@ -137,17 +137,25 @@ export function ItemsPage({
       </Button>
     </>
   ) : (
-    // 移动端：仅 Segmented 切换器（精简 header，避免拥挤）
-    <Segmented
-      size="small"
-      value={viewMode}
-      onChange={(v) => persistView(v as 'card' | 'list')}
-      options={[
-        { value: 'card', icon: <AppstoreOutlined />, title: '卡片' },
-        { value: 'list', icon: <UnorderedListOutlined />, title: '列表' },
-      ]}
-      data-testid="todo-center-view-toggle"
-    />
+    // 移动端：精简 header（去掉搜索/刷新），保留 Segmented 切换器 + 新建按钮。
+    // 新建必须在此提供——本 extra 会同时下发到 TodoCenterCardView（卡片视图）与
+    // TodoMobilePage（列表视图），两者都没有自备新建按钮；若只给 Segmented，
+    // 手机端事项页就找不到创建入口（环路页 LoopMobilePage 自带新建，故不受影响）。
+    <>
+      <Segmented
+        size="small"
+        value={viewMode}
+        onChange={(v) => persistView(v as 'card' | 'list')}
+        options={[
+          { value: 'card', icon: <AppstoreOutlined />, title: '卡片' },
+          { value: 'list', icon: <UnorderedListOutlined />, title: '列表' },
+        ]}
+        data-testid="todo-center-view-toggle"
+      />
+      <Button size="small" type="primary" icon={<PlusOutlined />} onClick={onOpenCreateModal}>
+        新建
+      </Button>
+    </>
   );
 
   if (viewMode === 'card') {
