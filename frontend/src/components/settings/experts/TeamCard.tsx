@@ -63,6 +63,9 @@ export function TeamCard({ expert, onClick }: {
         transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
         height: '100%',
         overflow: 'hidden',
+        // 常态即给一层极浅阴影，让卡片与同色的父容器（同为 --color-bg-elevated）拉开层次；
+        // 仅靠边框时，浅色模式下白底卡贴在白底容器上仍看不出边界，这层阴影补上「浮起」感。
+        boxShadow: 'var(--shadow-sm)',
       }}
       onMouseEnter={(e) => {
         (e.currentTarget as HTMLDivElement).style.transform = 'translateY(-4px)';
@@ -72,7 +75,8 @@ export function TeamCard({ expert, onClick }: {
       onMouseLeave={(e) => {
         (e.currentTarget as HTMLDivElement).style.transform = 'translateY(0)';
         (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--color-border-secondary)';
-        (e.currentTarget as HTMLDivElement).style.boxShadow = 'none';
+        // 离开时回到常态的浅阴影而非 'none'，否则鼠标移开后卡片重新贴平、边界再次消失。
+        (e.currentTarget as HTMLDivElement).style.boxShadow = 'var(--shadow-sm)';
       }}
     >
       {/* 头部：团队头像 + 名称 + 类型标签 */}

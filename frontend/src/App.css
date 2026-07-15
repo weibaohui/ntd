@@ -21,6 +21,13 @@
   --color-info: #3b82f6;
   --color-info-bg: #eff6ff;
 
+  /* 状态色的「强调态」浅底：用作头像渐变起点、高亮信息块底色。
+     与上面偏淡的 *-bg 配对——*-bg 做大面积填充，*-bg-1 略深做渐变起色与强调。
+     历史上被 ExpertCard/TeamCard/ExpertDetailModal 等引用却从未定义，
+     导致团队信息块底色失效、头像渐变起色缺失。*/
+  --color-info-bg-1: #dbeafe;
+  --color-warning-bg-1: #fef3c7;
+
   /* Neutrals */
   --color-bg: #f8fafc;
   --color-bg-layout: #f8fafc;
@@ -28,6 +35,11 @@
   --color-bg-hover: #f1f5f9;
   --color-border: #e2e8f0;
   --color-border-light: #f1f5f9;
+  /* 次级边框：比 --color-border 略深的 slate-300，用于卡片描边，
+     确保在白色 elevated 背景上仍能看清边界。
+     历史上被 14 处组件（含 ExpertCard/TeamCard）引用却从未定义，
+     导致整条 border 声明失效——卡片在深浅色模式下都没有描边。*/
+  --color-border-secondary: #cbd5e1;
 
   /* 卡片及三级背景 */
   --color-bg-card: #f8fafc;
@@ -106,6 +118,11 @@
   --color-error-bg: #450a0a;
   --color-info-bg: #172554;
 
+  /* 状态色强调态浅底（暗色）：比 *-bg 略亮，用作渐变起点与信息块底色，
+     保证暗底下仍能看出色相，而非一片死黑。*/
+  --color-info-bg-1: #1b2d52;
+  --color-warning-bg-1: #4d2e07;
+
   /* Base surfaces - Catppuccin Mocha */
   --color-bg: #1e1e2e;
   --color-bg-layout: #1e1e2e;
@@ -127,6 +144,10 @@
   /* Borders */
   --color-border: #313244;
   --color-border-light: #262637;
+  /* 次级边框（暗色）：取 Catppuccin surface1 (#45475a)，比 --color-border 更亮，
+     在 #1e1e2e 底色上才能显出卡片描边；同时与 antd 的 colorBorderSecondary 取值一致，
+     让自定义 CSS 变量与 antd token 视觉统一。*/
+  --color-border-secondary: #45475a;
 
   /* Text */
   --color-text: #cdd6f4;
