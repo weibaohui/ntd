@@ -713,10 +713,7 @@ async fn init_bundled_resources(cfg: &ntd::config::Config) -> Result<(), String>
 
     if !repo_path.exists() {
         tracing::info!("内置资源目录不存在，首次克隆: {}", repo_path.display());
-        std::fs::create_dir_all(&repo_path).map_err(|e| {
-            format!("创建目录失败: {}", e)
-        })?;
-
+        // 不手动 create_dir_all，由 clone_repo 内部负责创建所需父目录。
         let result = ntd::git_sync::clone_repo(
             &bundled_config.url,
             &repo_path,

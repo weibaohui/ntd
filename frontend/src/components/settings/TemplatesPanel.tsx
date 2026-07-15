@@ -96,7 +96,7 @@ export function TemplatesPanel() {
     setSyncing(true);
     const hide = antMessage.loading(`正在同步${subdirLabel(subdir)}...`, 0);
     try {
-      const res = await bundledApi.sync({ subdir, strategy: 'keep_local' });
+      const res = await bundledApi.sync({ subdir, strategy: 'overwrite' });
       if (res?.success) {
         message.success(`同步成功: ${res.message}`);
         await loadStatus();

@@ -67,8 +67,16 @@ async fn perform_sync(url: &str, branch: &str, local_path: &str) {
         }
     };
 
-    let result = if !repo_path.exists() {
-        tracing::info!("[bundled-sync] 本地目录不存在，执行首次克隆");
+    // 验证 repo_path 是否为合法的 Git 工作区（存在 .git 目录）。
+    // 仅有空目录或损坏的 checkout 时执行强制克隆覆盖。
+    let is_valid_repo = repo_path.join(".git").is_dir();
+
+    let result = if !repo_path.exists() || !is_valid_repo {
+        if !is_valid_repo && repo_path.exists() {
+            tracing::warn!("[bundled-sync] 本地目录存在但非有效 Git 仓库，执行强制克隆覆盖");
+        } else {
+            tracing::info!("[bundled-sync] 本地目录不存在，执行首次克隆");
+        }
         git_sync::clone_repo(url, &repo_path, branch).await
     } else {
         tracing::info!("[bundled-sync] 执行同步更新");

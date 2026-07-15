@@ -138,15 +138,17 @@ export function TodoTemplatesTab() {
                 width: 200,
                 render: (_, record: TodoTemplate) => (
                   <Space>
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<EditOutlined />}
-                      onClick={() => {
-                        setEditing(record);
-                        setModalOpen(true);
-                      }}
-                    />
+                    {!record.is_system && (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<EditOutlined />}
+                        onClick={() => {
+                          setEditing(record);
+                          setModalOpen(true);
+                        }}
+                      />
+                    )}
                     <Button
                       type="text"
                       size="small"

@@ -187,6 +187,25 @@ pub struct UpdateExpertRequest {
     pub agent_md: String,
 }
 
+/// 校验 agent_name 不含路径遍历成分，仅允许字母、数字、下划线、连字符。
+/// 防止 "agents/../../../etc/passwd" 这类路径逃离专家目录。
+fn validate_agent_name(name: &str) -> Result<(), AppError> {
+    if name.is_empty()
+        || name.contains("..")
+        || name.contains('/')
+        || name.contains('\\')
+        || name.starts_with('.')
+        || name.contains("~")
+        || name.contains(':')
+    {
+        return Err(AppError::BadRequest(format!(
+            "agent_name 非法: 不允许路径遍历字符或空白，当前值: {}",
+            name
+        )));
+    }
+    Ok(())
+}
+
 /// `PUT /api/experts/:name`：更新专家
 ///
 /// 更新指定专家的 plugin.json 和 agent.md 内容。
@@ -224,6 +243,7 @@ pub async fn update_expert(
             .map_err(|e| AppError::Internal(format!("创建 agents 目录失败: {}", e)))?;
 
         let agent_name = plugin.agent_name.clone().unwrap_or_else(|| name.clone());
+        validate_agent_name(&agent_name)?;
         let agent_md_path = agents_dir.join(format!("{}.md", agent_name));
         std::fs::write(&agent_md_path, &req.agent_md)
             .map_err(|e| AppError::Internal(format!("写入 agent.md 失败: {}", e)))?;
