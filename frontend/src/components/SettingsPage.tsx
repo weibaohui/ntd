@@ -140,7 +140,7 @@ export function SettingsPage() {
     },
     {
       key: 'templates',
-      label: <span><FileTextOutlined style={{ marginRight: 6 }} />事项模板</span>,
+      label: <span><FileTextOutlined style={{ marginRight: 6 }} />模板管理</span>,
       children: <TemplatesPanel />,
     },
     {

@@ -155,6 +155,7 @@ pub mod loop_;
 pub mod action;
 pub mod blackboard;
 pub mod experts;
+pub mod bundled;
 
 // WebSocket handler
 pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
@@ -295,6 +296,7 @@ fn mount_domain_routes() -> Router<AppState> {
         .merge(blackboard::blackboard_routes())
         .merge(loop_::loop_routes())
         .merge(experts::expert_routes())
+        .merge(bundled::bundled_routes())
 }
 
 /// 给 TraceLayer 用的 span 工厂：把 `request_id` / `method` / `uri` 直接挂在 span 字段上，
@@ -349,6 +351,8 @@ async fn build_app_state(
     spawn_feishu_bot_starter(feishu_listener.clone(), db.clone());
     // 自动版本更新调度器：按配置的间隔周期性检查 npm 新版本
     crate::services::auto_update::spawn_auto_update_scheduler(config.clone(), db.clone());
+    // 内置资源自动同步调度器：按 cron 表达式周期性同步远程 Git 仓库
+    crate::services::bundled_sync::spawn_bundled_sync_scheduler(config.clone());
 
     // PushService 在 AppState 之前构造，因为它要订阅事件 tx。
     use crate::services::feishu_push::FeishuPushService;

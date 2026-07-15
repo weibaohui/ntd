@@ -12,13 +12,13 @@ pub mod parser;
 pub mod types;
 
 pub use types::ExpertIndexManager;
-pub use loader::{build_skills_context, experts_dir, load_experts_from_directory};
+pub use loader::{build_skills_context, bundled_experts_dir, experts_dir, load_experts_from_directory};
 pub use parser::{
     build_expert_metadata, extract_yaml_frontmatter, parse_agent_md_metadata,
     parse_plugin_json, parse_skill_metadata,
 };
 pub use types::{
-    AgentFileMetadata, ExpertError, ExpertLoadResult, ExpertMember, ExpertMetadata, ExpertTag,
-    ExpertType, LoadResult, LocalizedText, MemberJson, MemberRole, PluginJson, SkillMetadata,
-    TeamInfoJson,
+    AgentFileMetadata, ExpertError, ExpertLoadResult, ExpertMember, ExpertMetadata, ExpertSource,
+    ExpertTag, ExpertType, LoadResult, LocalizedText, MemberJson, MemberRole, PluginJson,
+    SkillMetadata, TeamInfoJson,
 };

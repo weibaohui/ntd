@@ -32,6 +32,10 @@ pub mod wiki;
 /// 完全兼容 WorkBuddy 的 plugin.json + MD 文件格式。
 /// 采用纯文件存储 + 内存索引架构。
 pub mod expert;
+/// Git 同步模块
+///
+/// 提供从远程 Git 仓库同步内置资源（专家、模板、Skills）的能力。
+pub mod git_sync;
 
 use rust_embed::RustEmbed;
 

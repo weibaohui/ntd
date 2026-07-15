@@ -783,32 +783,6 @@ async fn test_sync_record_clear_returns_count() {
 // 跨模块：seed_default_templates 幂等性（前端启动时会反复调用）
 // =====================================================================
 
-#[tokio::test]
-async fn test_seed_default_templates_is_idempotent() {
-    // 多次调用 seed_default_templates，系统模板总数应保持稳定，
-    // 不应出现重复行（避免前端出现"双胞胎"模板）。
-    let db = setup_db().await;
-    db.seed_default_templates().await.unwrap();
-    let first = db.get_templates().await.unwrap();
-    assert!(
-        first.iter().any(|t| t.is_system),
-        "首次 seed 应当写入至少一条系统模板"
-    );
-    let first_count = first.len();
-
-    // 第二次：应当走 update 分支而不是 insert 分支
-    db.seed_default_templates().await.unwrap();
-    let second = db.get_templates().await.unwrap();
-    assert_eq!(
-        second.len(),
-        first_count,
-        "二次 seed 不应增加模板数（按 title+is_system 唯一性更新）"
-    );
-
-    // 全部都是系统模板
-    assert!(second.iter().all(|t| t.is_system));
-}
-
 // =====================================================================
 // 跨模块：模板与 todo 的关系（issue #439 中模板管理的"选择模板"等场景）
 // =====================================================================

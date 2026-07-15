@@ -1,5 +1,6 @@
 pub mod auto_review;
 pub mod auto_update;
+pub mod bundled_sync;
 pub mod blackboard;
 pub mod blackboard_debouncer;
 pub mod feishu_card;

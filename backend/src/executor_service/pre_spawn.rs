@@ -910,11 +910,12 @@ mod tests {
         agent_name: Option<&str>,
         lead_agent: Option<&str>,
     ) -> crate::expert::ExpertMetadata {
-        use crate::expert::{ExpertMetadata, ExpertType};
+        use crate::expert::{ExpertMetadata, ExpertSource, ExpertType};
         ExpertMetadata {
             name: name.to_string(),
             expert_type: ExpertType::Agent,
             version: "0.0.1-test".to_string(),
+            source: ExpertSource::System,
             display_name_zh: None,
             display_name_en: None,
             profession_zh: None,

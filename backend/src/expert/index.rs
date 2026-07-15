@@ -145,13 +145,30 @@ impl ExpertIndexManager {
     }
 
     /// 重新加载指定专家
+    ///
+    /// 根据专家目录自动判断来源（bundled 目录下为系统专家，否则为用户专家）。
     pub fn reload_expert(&self, expert_dir: &std::path::Path) -> Result<(), ExpertError> {
         use super::loader::load_single_expert;
 
+        let source = Self::detect_source(expert_dir);
         let plugin_json_path = expert_dir.join(".codebuddy-plugin/plugin.json");
-        let load_result = load_single_expert(expert_dir, &plugin_json_path)?;
+        let load_result = load_single_expert(expert_dir, &plugin_json_path, source)?;
         self.update_index(&load_result.expert, &load_result.agent_files, &load_result.skills);
         Ok(())
+    }
+
+    /// 根据专家目录路径判断来源
+    ///
+    /// 位于 ~/.ntd/bundled/experts/ 下的为系统专家，其余为用户专家。
+    fn detect_source(expert_dir: &std::path::Path) -> ExpertSource {
+        use crate::expert::loader::bundled_experts_dir;
+
+        if let Some(bundled_dir) = bundled_experts_dir() {
+            if expert_dir.starts_with(&bundled_dir) {
+                return ExpertSource::System;
+            }
+        }
+        ExpertSource::User
     }
 
     /// 清空所有索引（用于完全重新加载）

@@ -117,6 +117,16 @@ pub struct MemberJson {
 // 内存索引结构
 // ---------------------------------------------------------------------------
 
+/// 专家来源
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExpertSource {
+    /// 系统内置（来自 bundled/experts，从远程 Git 同步）
+    System,
+    /// 用户自定义（来自 ~/.ntd/experts/）
+    User,
+}
+
 /// 专家元数据（内存索引，从 plugin.json 解析）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExpertMetadata {
@@ -126,6 +136,8 @@ pub struct ExpertMetadata {
     pub expert_type: ExpertType,
     /// 版本号
     pub version: String,
+    /// 来源：系统内置 或 用户自定义
+    pub source: ExpertSource,
 
     // 显示信息（中文优先）
     /// 中文名
