@@ -75,7 +75,8 @@ export function TodoTemplatesTab() {
   };
 
   return (
-    <div>
+    // className 用于 Playwright 精确定位事项模板表格，避开嵌套 Tabs 中其它隐藏表格的干扰。
+    <div className="todo-templates-tab">
       <Space style={{ marginBottom: 16 }} wrap>
         <Button
           type="primary"
@@ -93,6 +94,9 @@ export function TodoTemplatesTab() {
       </Space>
 
       <Spin spinning={loading}>
+        {/* 表格 scroll={{ x: 'max-content' }}：列宽总和超过容器时启用横向滚动，
+            避免窄屏下被压缩导致表头与单元格错位(对齐兄弟组件 ExpertsTemplatesTab 的写法，
+            此前这里漏配是表格「列对不上」的根因)。 */}
         {templates.length === 0 ? (
           <Empty description="暂无事项模板" />
         ) : (
@@ -100,6 +104,7 @@ export function TodoTemplatesTab() {
             rowKey="id"
             dataSource={templates}
             pagination={false}
+            scroll={{ x: 'max-content' }}
             columns={[
               {
                 title: '标题',
