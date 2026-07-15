@@ -174,7 +174,11 @@ export function SettingsPage() {
     <PageCard
       icon={<SettingOutlined />}
       title="设置"
+      className="settings-page-root"
     >
+      {/* className="settings-page-root"：让 App.css 里既有的设置页表格美化
+          (边框/表头背景/hover)与移动端规则生效——这段样式此前因渲染类名(ntd-page-card)
+          不匹配而成了死代码，补上后顺带统一设置页所有表格外观。 */}
       <Tabs
         className="settings-tabs"
         items={tabItems}

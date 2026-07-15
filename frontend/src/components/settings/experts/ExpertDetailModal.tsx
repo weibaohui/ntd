@@ -3,6 +3,8 @@
 // 从 ExpertsPanel 拆出。
 
 import { useState } from 'react';
+// 复用既有断点 hook(阈值 768px)，避免在本组件重复实现手机端判定。
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { Badge, Button, Modal, Tag, Tooltip, Typography } from 'antd';
 import {
   TeamOutlined,
@@ -66,6 +68,9 @@ export function ExpertDetailModal({
   // 从 0 变 2，违反 Hooks 顺序规则，首次打开详情会崩溃。
   const [avatarError, setAvatarError] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  // 手机端判定：决定 header 是横排(桌面)还是纵向堆叠(手机)。
+  // 必须在下面的条件 return 之前调用，否则 expert 从 null→对象时 Hook 数量变化会崩溃。
+  const isMobile = useIsMobile();
   if (!expert) return null;
 
   const displayName = getExpertDisplayName(expert);
@@ -110,8 +115,21 @@ export function ExpertDetailModal({
             : 'linear-gradient(135deg, var(--color-info-bg-1) 0%, var(--color-bg-elevated) 100%)',
           borderBottom: '1px solid var(--color-border-light)',
         }}>
-          {/* 头部：头像 + 名称 + 操作 */}
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          {/* 头部：头像 + 名称 + 操作。
+              桌面横排(头像文字在左、按钮在右)；手机端纵向堆叠，让操作按钮整行下移，
+              避免与文字列抢宽度、把 profession 挤到几像素宽而逐字换行成竖排。 */}
+          <div style={{
+            display: 'flex',
+            // 桌面头像顶部对齐；手机端纵向时改 stretch，让左侧文字块水平占满 modal 宽度，
+            // 否则 flex-start 会让文字块只取内容宽，文字列仍被压缩、profession 重新变窄。
+            alignItems: isMobile ? 'stretch' : 'flex-start',
+            // 手机端改纵向：主轴变垂直，操作按钮自然落到文字块下方。
+            flexDirection: isMobile ? 'column' : 'row',
+            // 桌面两端对齐；手机端纵向时改左对齐——space-between 在内容自适应高度下会撑出多余垂直间距。
+            justifyContent: isMobile ? 'flex-start' : 'space-between',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, flex: 1, minWidth: 0 }}>
               {showAvatar ? (
                 <img
@@ -164,7 +182,18 @@ export function ExpertDetailModal({
                   </Tag>
                 </div>
                 {profession && (
-                  <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 8 }}>
+                  // profession 可能是较长串(如「Git工作流专家」)，加 wordBreak/overflowWrap
+                  // 防止极端窄宽下逐字换行成竖排；正常宽度下无副作用，双保险。
+                  // data-testid 供 Playwright 定位，断言手机端 profession 横向不竖排。
+                  <div
+                    data-testid="expert-profession"
+                    style={{
+                      fontSize: 13,
+                      color: 'var(--color-text-secondary)',
+                      marginBottom: 8,
+                      wordBreak: 'break-word',
+                      overflowWrap: 'break-word',
+                    }}>
                     {profession}
                   </div>
                 )}
@@ -176,8 +205,14 @@ export function ExpertDetailModal({
               </div>
             </div>
 
-            {/* 操作按钮 */}
-            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            {/* 操作按钮：flexShrink:0 保证不被压缩。
+                手机端 header 改纵向后，用 alignSelf 贴右，与上方文字块在视觉上右对齐。 */}
+            <div style={{
+              display: 'flex',
+              gap: 8,
+              flexShrink: 0,
+              alignSelf: isMobile ? 'flex-end' : 'auto',
+            }}>
               <Tooltip title="导出为 zip 包">
                 <Button
                   type="text"
