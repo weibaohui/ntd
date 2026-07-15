@@ -6,6 +6,9 @@
 /** 专家类型：单个专家 或 专家团队 */
 export type ExpertType = 'agent' | 'team';
 
+/** 专家来源：系统内置 或 用户自定义 */
+export type ExpertSource = 'system' | 'user';
+
 /** 成员角色：负责人 或 成员 */
 export type MemberRole = 'lead' | 'member';
 
@@ -97,6 +100,8 @@ export interface ExpertMetadata {
   loaded_at: string;
   /** 是否激活 */
   is_active: boolean;
+  /** 专家来源（系统内置 / 用户自定义） */
+  source: ExpertSource;
 }
 
 /** 加载结果 */

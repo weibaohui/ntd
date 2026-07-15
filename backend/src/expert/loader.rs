@@ -1,21 +1,33 @@
 //! 目录扫描加载器
 //!
-//! 扫描 ~/.ntd/experts/ 目录，加载所有专家定义。
+//! 扫描 ~/.ntd/bundled/experts/ 目录，加载所有专家定义。
+//! 优先加载内置专家，支持用户在 ~/.ntd/experts/ 添加自定义专家。
 
 use std::path::{Path, PathBuf};
 
 use super::parser::*;
 use super::types::*;
 
-/// 专家定义根目录名称
-const EXPERTS_DIR_NAME: &str = "experts";
+/// 内置专家定义根目录名称（从 bundled 同步）
+const BUNDLED_EXPERTS_DIR_NAME: &str = "bundled/experts";
 
-/// 获取专家定义根目录路径（~/.ntd/experts/）
+/// 用户自定义专家目录名称
+const USER_EXPERTS_DIR_NAME: &str = "experts";
+
+/// 获取内置专家定义根目录路径（~/.ntd/bundled/experts/）
 ///
 /// # 返回
-/// 专家定义根目录的绝对路径，如果无法获取 home 目录则返回 None
+/// 内置专家定义根目录的绝对路径，如果无法获取 home 目录则返回 None
+pub fn bundled_experts_dir() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|home| home.join(".ntd").join(BUNDLED_EXPERTS_DIR_NAME))
+}
+
+/// 获取用户自定义专家目录路径（~/.ntd/experts/）
+///
+/// # 返回
+/// 用户专家目录的绝对路径，如果无法获取 home 目录则返回 None
 pub fn experts_dir() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|home| home.join(".ntd").join(EXPERTS_DIR_NAME))
+    dirs::home_dir().map(|home| home.join(".ntd").join(USER_EXPERTS_DIR_NAME))
 }
 
 /// 从指定目录加载所有专家定义
@@ -23,12 +35,14 @@ pub fn experts_dir() -> Option<std::path::PathBuf> {
 /// # 参数
 /// - `experts_dir`: 专家定义根目录
 /// - `manager`: 专家索引管理器
+/// - `source`: 专家来源（系统内置 / 用户自定义）
 ///
 /// # 返回
 /// 加载结果（成功数量和错误列表）
 pub fn load_experts_from_directory(
     experts_dir: &Path,
     manager: &ExpertIndexManager,
+    source: ExpertSource,
 ) -> LoadResult {
     let mut loaded_count = 0;
     let mut errors = Vec::new();
@@ -71,7 +85,7 @@ pub fn load_experts_from_directory(
         }
 
         // 解析并加载单个专家
-        match load_single_expert(&expert_dir, &plugin_json_path) {
+        match load_single_expert(&expert_dir, &plugin_json_path, source) {
             Ok(load_result) => {
                 manager.update_index(
                     &load_result.expert,
@@ -97,18 +111,20 @@ pub fn load_experts_from_directory(
 /// # 参数
 /// - `expert_dir`: 专家定义目录
 /// - `plugin_json_path`: plugin.json 路径
+/// - `source`: 专家来源
 ///
 /// # 返回
 /// 专家加载结果
 pub fn load_single_expert(
     expert_dir: &Path,
     plugin_json_path: &Path,
+    source: ExpertSource,
 ) -> Result<ExpertLoadResult, ExpertError> {
     // 1. 解析 plugin.json
     let plugin = parse_plugin_json(plugin_json_path)?;
 
     // 2. 构建 ExpertMetadata
-    let expert_meta = build_expert_metadata(&plugin, expert_dir, plugin_json_path);
+    let expert_meta = build_expert_metadata(&plugin, expert_dir, plugin_json_path, source);
 
     // 3. 加载所有 Agent MD 文件元数据（只解析 YAML frontmatter）
     let mut agent_files = Vec::new();

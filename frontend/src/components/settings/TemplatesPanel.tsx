@@ -1,437 +1,424 @@
-import { useState, useEffect } from 'react';
-import { Tabs, Spin, Button, Card, List, Empty, Modal, Input, AutoComplete, Space, Popconfirm, Switch, Tooltip, Typography, message } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined, ReloadOutlined, ClockCircleOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+// 模板管理面板
+//
+// 合并两类模板管理：
+// 1. 专家模板 - 从专家管理页面复用
+// 2. 事项模板 - 从原「事项模板」管理复用
+//
+// 在 Tab 之间切换。
+// 顶部「远程仓库」配置区统一管理：
+// - 远程仓库地址
+// - 同步策略
+// - 自动同步
+// - 子目录同步（全部/专家/事项）
+
+import { useState, useEffect, useCallback } from 'react';
+import {
+  App,
+  Button,
+  Empty,
+  Form,
+  Input,
+  Modal,
+  Space,
+  Switch,
+  Tabs,
+  Tag,
+  Tooltip,
+  Descriptions,
+  message as antMessage,
+} from 'antd';
+import {
+  CloudDownloadOutlined,
+  ReloadOutlined,
+  SettingOutlined,
+  CheckCircleOutlined,
+  ExclamationCircleOutlined,
+  GithubOutlined,
+} from '@ant-design/icons';
 import { Cron } from 'react-js-cron';
 import 'react-js-cron/dist/styles.css';
 import { CronPresetSelect } from '@/components/CronPresetSelect';
 import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '@/utils/cron';
-import * as db from '@/utils/database';
-import type { TodoTemplate, CustomTemplateStatus } from '@/types';
+import { ExpertsTemplatesTab } from './templates/ExpertsTemplatesTab';
+import { TodoTemplatesTab } from './templates/TodoTemplatesTab';
+import { bundledApi } from '@/api/bundled';
 
-
+/**
+ * 模板管理面板入口
+ *
+ * 功能：
+ * - Tab 1：专家模板 - 复用 ExpertsPanel
+ * - Tab 2：事项模板 - TodoTemplatesTab
+ * - 顶部：远程仓库配置（共用一个 git 仓库地址）
+ */
 export function TemplatesPanel() {
-  const [templates, setTemplates] = useState<TodoTemplate[]>([]);
-  const [templatesLoading, setTemplatesLoading] = useState(false);
-  const [templateEditing, setTemplateEditing] = useState<TodoTemplate | null>(null);
-  const [templateFormOpen, setTemplateFormOpen] = useState(false);
-  const [templateFormTitle, setTemplateFormTitle] = useState('');
-  const [templateFormPrompt, setTemplateFormPrompt] = useState('');
-  const [templateFormCategory, setTemplateFormCategory] = useState('');
-  const [templateFormSaving, setTemplateFormSaving] = useState(false);
+  const { message } = App.useApp();
+  const [activeTab, setActiveTab] = useState<'experts' | 'todos'>('experts');
+  const [configModalOpen, setConfigModalOpen] = useState(false);
+  const [statusModalOpen, setStatusModalOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [status, setStatus] = useState<any>(null);
+  const [config, setConfig] = useState<any>(null);
 
-  const [customTemplateStatus, setCustomTemplateStatus] = useState<CustomTemplateStatus | null>(null);
-  const [customTemplateLoading, setCustomTemplateLoading] = useState(false);
-  const [customTemplateSubscribing, setCustomTemplateSubscribing] = useState(false);
-  const [customTemplateUrl, setCustomTemplateUrl] = useState('');
-  const [customTemplateAutoSyncEnabled, setCustomTemplateAutoSyncEnabled] = useState(false);
-  const [customTemplateAutoSyncCron, setCustomTemplateAutoSyncCron] = useState('0 0 4 * * *');
-
-  // Load todo templates
-  useEffect(() => {
-    setTemplatesLoading(true);
-    db.getTodoTemplates()
-      .then((list) => {
-        setTemplates(list);
-      })
-      .catch((err) => {
-        message.error('加载模板失败: ' + (err?.message || String(err)));
-      })
-      .finally(() => setTemplatesLoading(false));
-  }, []);
-
-  const loadCustomTemplateStatus = () => {
-    setCustomTemplateLoading(true);
-    db.getCustomTemplateStatus()
-      .then((status) => {
-        setCustomTemplateStatus(status);
-        setCustomTemplateAutoSyncEnabled(status.auto_sync_enabled);
-        setCustomTemplateAutoSyncCron(status.auto_sync_cron);
-      })
-      .catch((err) => {
-        console.error('加载自定义模板状态失败:', err);
-      })
-      .finally(() => setCustomTemplateLoading(false));
-  };
-
-  useEffect(() => {
-    loadCustomTemplateStatus();
-  }, []);
-
-  const openTemplateForm = (template?: TodoTemplate) => {
-    if (template) {
-      setTemplateEditing(template);
-      setTemplateFormTitle(template.title);
-      setTemplateFormPrompt(template.prompt || '');
-      setTemplateFormCategory(template.category);
-    } else {
-      setTemplateEditing(null);
-      setTemplateFormTitle('');
-      setTemplateFormPrompt('');
-      setTemplateFormCategory('');
-    }
-    setTemplateFormOpen(true);
-  };
-
-  const closeTemplateForm = () => {
-    setTemplateFormOpen(false);
-    setTemplateEditing(null);
-  };
-
-  const handleSaveTemplate = async () => {
-    const title = templateFormTitle.trim();
-    const prompt = templateFormPrompt.trim();
-    const category = templateFormCategory.trim();
-    if (!title) {
-      message.error('请输入模板标题');
-      return;
-    }
-    if (!category) {
-      message.error('请输入模板分类');
-      return;
-    }
-    setTemplateFormSaving(true);
+  /**
+   * 加载同步状态
+   */
+  const loadStatus = useCallback(async () => {
     try {
-      if (templateEditing) {
-        await db.updateTodoTemplate(templateEditing.id, title, prompt || null, category);
-        setTemplates(prev => prev.map(t => t.id === templateEditing.id ? { ...t, title, prompt: prompt || null, category } : t));
-        message.success('模板已更新');
+      const res = await bundledApi.getStatus('all');
+      setStatus(res);
+    } catch {
+      // 静默失败
+    }
+  }, []);
+
+  /**
+   * 加载配置
+   */
+  const loadConfig = useCallback(async () => {
+    try {
+      const res = await bundledApi.getConfig();
+      setConfig(res);
+    } catch {
+      // 静默失败
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStatus();
+    loadConfig();
+  }, [loadStatus, loadConfig]);
+
+  /**
+   * 触发同步
+   */
+  const handleSync = async (subdir: 'all' | 'experts' | 'todos') => {
+    setSyncing(true);
+    const hide = antMessage.loading(`正在同步${subdirLabel(subdir)}...`, 0);
+    try {
+      const res = await bundledApi.sync({ subdir, strategy: 'overwrite' });
+      if (res?.success) {
+        message.success(`同步成功: ${res.message}`);
+        await loadStatus();
       } else {
-        const newTemplate = await db.createTodoTemplate(title, prompt || null, category);
-        setTemplates(prev => [...prev, newTemplate]);
-        message.success('模板已创建');
+        message.warning(res?.message || '同步未完成');
       }
-      closeTemplateForm();
-    } catch (err: any) {
-      message.error('保存失败: ' + (err?.message || String(err)));
+    } catch (e: any) {
+      message.error(`同步失败: ${e.message || e}`);
     } finally {
-      setTemplateFormSaving(false);
-    }
-  };
-
-  const handleDeleteTemplate = async (templateId: number) => {
-    try {
-      await db.deleteTodoTemplate(templateId);
-      setTemplates(prev => prev.filter(t => t.id !== templateId));
-      message.success('模板已删除');
-    } catch (err: any) {
-      message.error('删除失败: ' + (err?.message || String(err)));
-    }
-  };
-
-  const handleCopyTemplate = async (templateId: number) => {
-    try {
-      const newTemplate = await db.copyTodoTemplate(templateId);
-      setTemplates(prev => [...prev, newTemplate]);
-      message.success('模板已复制');
-    } catch (err: any) {
-      message.error('复制失败: ' + (err?.message || String(err)));
-    }
-  };
-
-  const handleSubscribeCustomTemplate = async () => {
-    if (!customTemplateUrl.trim()) {
-      message.error('请输入模板地址');
-      return;
-    }
-    setCustomTemplateSubscribing(true);
-    try {
-      const status = await db.subscribeCustomTemplate(customTemplateUrl.trim());
-      setCustomTemplateStatus(status);
-      const list = await db.getTodoTemplates();
-      setTemplates(list);
-      message.success('订阅成功');
-    } catch (err: any) {
-      message.error('订阅失败: ' + (err?.message || String(err)));
-    } finally {
-      setCustomTemplateSubscribing(false);
-    }
-  };
-
-  const handleUnsubscribeCustomTemplate = async () => {
-    try {
-      await db.unsubscribeCustomTemplate();
-      setCustomTemplateStatus(null);
-      setCustomTemplateUrl('');
-      const list = await db.getTodoTemplates();
-      setTemplates(list);
-      message.success('已取消订阅');
-    } catch (err: any) {
-      message.error('取消订阅失败: ' + (err?.message || String(err)));
-    }
-  };
-
-  const handleSyncCustomTemplate = async () => {
-    setCustomTemplateLoading(true);
-    try {
-      const status = await db.syncCustomTemplate();
-      setCustomTemplateStatus(status);
-      const list = await db.getTodoTemplates();
-      setTemplates(list);
-      message.success('同步成功');
-    } catch (err: any) {
-      message.error('同步失败: ' + (err?.message || String(err)));
-    } finally {
-      setCustomTemplateLoading(false);
-    }
-  };
-
-  const handleUpdateCustomTemplateAutoSync = async () => {
-    try {
-      await db.updateCustomTemplateAutoSync(customTemplateAutoSyncEnabled, customTemplateAutoSyncCron);
-      message.success('自动同步配置已更新');
-    } catch (err: any) {
-      message.error('更新失败: ' + (err?.message || String(err)));
+      hide();
+      setSyncing(false);
     }
   };
 
   return (
-    <div style={{ maxWidth: 700 }}>
-      <Spin spinning={templatesLoading}>
-        <Tabs
-          defaultActiveKey="user"
-          items={[
-            {
-              key: 'user',
-              label: '我的模板',
-              children: (
-                <div>
-                  <div style={{ marginBottom: 16 }}>
-                    <Button type="primary" icon={<PlusOutlined />} onClick={() => openTemplateForm()}>
-                      新建模板
-                    </Button>
-                  </div>
-                  {templates.filter(t => !t.is_system && !t.source_url).length === 0 ? (
-                    <Empty description="暂无用户模板" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                  ) : (
-                    Array.from(new Set(templates.filter(t => !t.is_system && !t.source_url).map(t => t.category))).sort().map(category => (
-                      <Card key={category} title={category || '未分类'} size="small" style={{ marginBottom: 12 }}>
-                        <List
-                          dataSource={templates.filter(t => !t.is_system && !t.source_url && t.category === category)}
-                          renderItem={(template) => (
-                            <List.Item
-                              style={{ padding: '8px 0' }}
-                              actions={[
-                                <Button key="edit" type="text" icon={<EditOutlined />} size="small" onClick={() => openTemplateForm(template)} />,
-                                <Popconfirm key="delete" title="删除模板" description={`确定要删除模板 "${template.title}" 吗？`} onConfirm={() => handleDeleteTemplate(template.id)}>
-                                  <Button type="text" icon={<DeleteOutlined />} size="small" />
-                                </Popconfirm>,
-                              ]}
-                            >
-                              <List.Item.Meta
-                                title={template.title}
-                                description={template.prompt || '(无内容)'}
-                              />
-                            </List.Item>
-                          )}
-                        />
-                      </Card>
-                    ))
-                  )}
-                </div>
-              ),
-            },
-            {
-              key: 'system',
-              label: '内置模板',
-              children: (
-                <div>
-                  {templates.filter(t => t.is_system).length === 0 ? (
-                    <Empty description="暂无内置模板" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                  ) : (
-                    Array.from(new Set(templates.filter(t => t.is_system).map(t => t.category))).sort().map(category => (
-                      <Card key={category} title={category || '未分类'} size="small" style={{ marginBottom: 12 }}>
-                        <List
-                          dataSource={templates.filter(t => t.is_system && t.category === category)}
-                          renderItem={(template) => (
-                            <List.Item
-                              style={{ padding: '8px 0' }}
-                              actions={[
-                                <Button key="copy" type="text" icon={<CopyOutlined />} size="small" onClick={() => handleCopyTemplate(template.id)}>
-                                  复制
-                                </Button>,
-                              ]}
-                            >
-                              <List.Item.Meta
-                                title={template.title}
-                                description={template.prompt || '(无内容)'}
-                              />
-                            </List.Item>
-                          )}
-                        />
-                      </Card>
-                    ))
-                  )}
-                </div>
-              ),
-            },
-            {
-              key: 'custom',
-              label: '在线模板',
-              children: (
-                <div>
-                  <Spin spinning={customTemplateLoading}>
-                    {customTemplateStatus?.subscribed ? (
-                      <div>
-                        <Card size="small" style={{ marginBottom: 12 }}>
-                          <Space direction="vertical" style={{ width: '100%' }}>
-                            <div>
-                              <Typography.Text type="secondary">订阅地址：</Typography.Text>
-                              <Typography.Text copyable>{customTemplateStatus.source_url}</Typography.Text>
-                            </div>
-                            {customTemplateStatus.last_sync_at && (
-                              <div>
-                                <Typography.Text type="secondary">最后同步：</Typography.Text>
-                                <Typography.Text>{new Date(customTemplateStatus.last_sync_at).toLocaleString()}</Typography.Text>
-                              </div>
-                            )}
-                            <Space>
-                              <Button icon={<ReloadOutlined />} onClick={handleSyncCustomTemplate}>
-                                立即同步
-                              </Button>
-                              <Popconfirm
-                                title="取消订阅"
-                                description="确定要取消订阅吗？订阅的模板将被删除。"
-                                onConfirm={handleUnsubscribeCustomTemplate}
-                              >
-                                <Button danger>取消订阅</Button>
-                              </Popconfirm>
-                            </Space>
-                          </Space>
-                        </Card>
+    <div className="ntd-templates-panel">
+      <Space style={{ marginBottom: 16 }}>
+        <Tooltip title="查看同步状态">
+          <Button
+            icon={<CloudDownloadOutlined />}
+            onClick={() => setStatusModalOpen(true)}
+          >
+            同步状态
+          </Button>
+        </Tooltip>
+        <Tooltip title="远程仓库配置">
+          <Button
+            icon={<SettingOutlined />}
+            onClick={async () => {
+              await loadConfig();
+              setConfigModalOpen(true);
+            }}
+          >
+            仓库配置
+          </Button>
+        </Tooltip>
+        <Tooltip title="立即同步全部资源">
+          <Button
+            type="primary"
+            icon={<ReloadOutlined spin={syncing} />}
+            loading={syncing}
+            onClick={() => handleSync('all')}
+          >
+            立即同步
+          </Button>
+        </Tooltip>
+      </Space>
 
-                        <div style={{ borderTop: '1px solid var(--color-border-light)', paddingTop: 12, marginTop: 4 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                            <span style={{ fontWeight: 600 }}><ClockCircleOutlined style={{ marginRight: 6 }} />自动同步</span>
-                            <Switch checked={customTemplateAutoSyncEnabled} onChange={setCustomTemplateAutoSyncEnabled} />
-                          </div>
-                          {customTemplateAutoSyncEnabled && (
-                            <CronPresetSelect
-                              value={customTemplateAutoSyncCron}
-                              onChange={(val) => setCustomTemplateAutoSyncCron(val)}
-                            />
-                          )}
-                          {customTemplateAutoSyncEnabled && (
-                            <Cron
-                              value={cronTo5(customTemplateAutoSyncCron)}
-                              setValue={(val: string) => setCustomTemplateAutoSyncCron(cronTo6(val))}
-                              locale={CRON_ZH_LOCALE}
-                              defaultPeriod="day"
-                              humanizeLabels
-                              allowClear={false}
-                            />
-                          )}
-                          {customTemplateAutoSyncEnabled && (
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
-                              <Button size="small" type="primary" onClick={handleUpdateCustomTemplateAutoSync}>
-                                保存
-                              </Button>
-                            </div>
-                          )}
-                        </div>
+      <Tabs
+        activeKey={activeTab}
+        onChange={(k) => setActiveTab(k as 'experts' | 'todos')}
+        items={[
+          {
+            key: 'experts',
+            label: (
+              <Space>
+                <span>专家模板</span>
+                <SyncBadge
+                  fileCount={status?.subdir === 'experts' ? status?.subdir_file_count : undefined}
+                  needsUpdate={status?.subdir === 'experts' ? status?.needs_update : undefined}
+                />
+              </Space>
+            ),
+            children: (
+              <ExpertsTabContent />
+            ),
+          },
+          {
+            key: 'todos',
+            label: (
+              <Space>
+                <span>事项模板</span>
+                <SyncBadge
+                  fileCount={status?.subdir === 'todos' ? status?.subdir_file_count : undefined}
+                  needsUpdate={status?.subdir === 'todos' ? status?.needs_update : undefined}
+                />
+              </Space>
+            ),
+            children: (
+              <TodoTemplatesTab />
+            ),
+          },
+        ]}
+      />
 
-                        <div style={{ marginBottom: 8 }}>
-                          <Typography.Text strong>模板列表</Typography.Text>
-                        </div>
-                        {customTemplateStatus.templates.length === 0 ? (
-                          <Empty description="暂无在线模板" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                        ) : (
-                          Array.from(new Set(customTemplateStatus.templates.map(t => t.category))).sort().map(category => (
-                            <Card key={category} title={category || '未分类'} size="small" style={{ marginBottom: 12 }}>
-                              <List
-                                dataSource={customTemplateStatus.templates.filter(t => t.category === category)}
-                                renderItem={(template) => (
-                                  <List.Item
-                                    style={{ padding: '8px 0' }}
-                                    actions={[
-                                      <Button key="copy" type="text" icon={<CopyOutlined />} size="small" onClick={() => handleCopyTemplate(template.id)}>
-                                        复制
-                                      </Button>,
-                                    ]}
-                                  >
-                                    <List.Item.Meta
-                                      title={template.title}
-                                      description={template.prompt || '(无内容)'}
-                                    />
-                                  </List.Item>
-                                )}
-                              />
-                            </Card>
-                          ))
-                        )}
-                      </div>
-                    ) : (
-                      <Card size="small">
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                          <Space>
-                            <Typography.Text>订阅一个在线模板地址</Typography.Text>
-                            <Tooltip title={<span>填写在线 YAML 地址，格式参考 GitHub <a href="https://raw.githubusercontent.com/weibaohui/ntd/refs/heads/main/templates.example.yaml" target="_blank">示例</a> 或 GitCode <a href="https://raw.gitcode.com/weibaohui/ntd/raw/main/templates.example.yaml" target="_blank">示例</a></span>}>
-                              <span style={{ cursor: 'help' }}><QuestionCircleOutlined /></span>
-                            </Tooltip>
-                          </Space>
-                          <Input
-                            placeholder="输入模板地址"
-                            value={customTemplateUrl}
-                            onChange={(e) => setCustomTemplateUrl(e.target.value)}
-                            onPressEnter={handleSubscribeCustomTemplate}
-                          />
-                          <Button
-                            type="primary"
-                            loading={customTemplateSubscribing}
-                            onClick={handleSubscribeCustomTemplate}
-                          >
-                            订阅
-                          </Button>
-                        </Space>
-                      </Card>
-                    )}
-                  </Spin>
-                </div>
-              ),
-            },
-          ]}
-        />
-      </Spin>
-      <Modal
-        title={templateEditing ? '编辑模板' : '新建模板'}
-        open={templateFormOpen}
-        onOk={handleSaveTemplate}
-        onCancel={closeTemplateForm}
-        confirmLoading={templateFormSaving}
-        width={500}
-      >
-        <Space direction="vertical" style={{ width: '100%' }}>
-          <div>
-            <div style={{ marginBottom: 4, fontWeight: 500 }}>标题</div>
-            <Input
-              value={templateFormTitle}
-              onChange={e => setTemplateFormTitle(e.target.value)}
-              placeholder="输入模板标题"
-            />
-          </div>
-          <div>
-            <div style={{ marginBottom: 4, fontWeight: 500 }}>分类</div>
-            <AutoComplete
-              placeholder="输入或选择分类"
-              value={templateFormCategory}
-              onChange={(value) => setTemplateFormCategory(value)}
-              options={Array.from(new Set(templates.map(t => t.category))).filter(c => c).map(c => ({ label: c, value: c }))}
-              style={{ width: '100%' }}
-              filterOption={(input, option) =>
-                (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-              }
-            />
-          </div>
-          <div>
-            <div style={{ marginBottom: 4, fontWeight: 500 }}>Prompt 内容</div>
-            <Input.TextArea
-              value={templateFormPrompt}
-              onChange={e => setTemplateFormPrompt(e.target.value)}
-              placeholder="输入模板的 prompt 内容（可选）"
-              rows={6}
-            />
-          </div>
-        </Space>
-      </Modal>
+      <ConfigModal
+        open={configModalOpen}
+        config={config}
+        onClose={() => setConfigModalOpen(false)}
+        onSaved={async () => {
+          setConfigModalOpen(false);
+          await loadConfig();
+          await loadStatus();
+          message.success('配置已保存');
+        }}
+      />
+
+      <StatusModal
+        open={statusModalOpen}
+        status={status}
+        onClose={() => setStatusModalOpen(false)}
+        onSync={async (subdir) => {
+          setStatusModalOpen(false);
+          await handleSync(subdir);
+        }}
+        onRefresh={loadStatus}
+      />
     </div>
+  );
+}
+
+function subdirLabel(s: string): string {
+  switch (s) {
+    case 'experts':
+      return '专家模板';
+    case 'todos':
+      return '事项模板';
+    default:
+      return '全部资源';
+  }
+}
+
+/**
+ * 同步状态徽标
+ */
+function SyncBadge({
+  fileCount,
+  needsUpdate,
+}: {
+  fileCount?: number;
+  needsUpdate?: boolean;
+}) {
+  if (fileCount === undefined) return null;
+  return (
+    <Tag color={needsUpdate ? 'orange' : 'green'} style={{ marginLeft: 4 }}>
+      {fileCount}
+    </Tag>
+  );
+}
+
+/**
+ * 专家 Tab 内容
+ */
+function ExpertsTabContent() {
+  return <ExpertsTemplatesTab />;
+}
+
+/**
+ * 配置弹窗
+ */
+function ConfigModal({
+  open,
+  config,
+  onClose,
+  onSaved,
+}: {
+  open: boolean;
+  config: any;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form] = Form.useForm();
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open && config) {
+      form.setFieldsValue({
+          url: config.url,
+          branch: config.branch,
+          auto_sync_enabled: config.auto_sync_enabled,
+          auto_sync_cron: config.auto_sync_cron,
+        });
+    }
+  }, [open, config, form]);
+
+  const handleSave = async () => {
+    try {
+      const values = await form.validateFields();
+      setSaving(true);
+      await bundledApi.updateConfig(values);
+      onSaved();
+    } catch (e: any) {
+      antMessage.error(`保存失败: ${e.message || e}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="远程仓库配置"
+      open={open}
+      onCancel={onClose}
+      onOk={handleSave}
+      confirmLoading={saving}
+      width={600}
+    >
+      <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
+        <Form.Item
+          name="url"
+          label="远程仓库地址"
+          rules={[{ required: true, message: '请输入远程仓库地址' }]}
+        >
+          <Input prefix={<GithubOutlined />} placeholder="https://gitcode.com/..." />
+        </Form.Item>
+        <Form.Item name="branch" label="目标分支">
+          <Input placeholder="main" />
+        </Form.Item>
+        <Form.Item name="auto_sync_enabled" label="启用自动同步" valuePropName="checked">
+          <Switch />
+        </Form.Item>
+        <Form.Item
+          noStyle
+          shouldUpdate={(prevValues, curValues) => prevValues.auto_sync_enabled !== curValues.auto_sync_enabled}
+        >
+          {({ getFieldValue }) => {
+            const enabled = getFieldValue('auto_sync_enabled');
+            if (!enabled) return null;
+            return (
+              <Form.Item name="auto_sync_cron" label="自动同步周期">
+                <CronPresetSelect
+                  value={form.getFieldValue('auto_sync_cron') || ''}
+                  onChange={(val) => form.setFieldValue('auto_sync_cron', val)}
+                />
+                <div style={{ marginTop: 12 }}>
+                  <Cron
+                    value={cronTo5(form.getFieldValue('auto_sync_cron') || '0 4 * * *')}
+                    setValue={(val: string) => form.setFieldValue('auto_sync_cron', cronTo6(val))}
+                    locale={CRON_ZH_LOCALE}
+                    defaultPeriod="hour"
+                    humanizeLabels
+                    allowClear={false}
+                  />
+                </div>
+              </Form.Item>
+            );
+          }}
+        </Form.Item>
+      </Form>
+    </Modal>
+  );
+}
+
+/**
+ * 状态弹窗
+ */
+function StatusModal({
+  open,
+  status,
+  onClose,
+  onSync,
+  onRefresh,
+}: {
+  open: boolean;
+  status: any;
+  onClose: () => void;
+  onSync: (subdir: 'all' | 'experts' | 'todos') => void;
+  onRefresh: () => void;
+}) {
+  return (
+    <Modal
+      title="同步状态"
+      open={open}
+      onCancel={onClose}
+      footer={[
+        <Button key="refresh" icon={<ReloadOutlined />} onClick={onRefresh}>
+          刷新
+        </Button>,
+        <Button key="experts" onClick={() => onSync('experts')}>
+          同步专家
+        </Button>,
+        <Button key="todos" onClick={() => onSync('todos')}>
+          同步事项模板
+        </Button>,
+        <Button key="all" type="primary" onClick={() => onSync('all')}>
+          同步全部
+        </Button>,
+      ]}
+      width={600}
+    >
+      {status ? (
+        <Descriptions column={1} bordered size="small">
+          <Descriptions.Item label="远程仓库">{status.remote_url}</Descriptions.Item>
+          <Descriptions.Item label="分支">{status.branch}</Descriptions.Item>
+          <Descriptions.Item label="本地路径">{status.local_path}</Descriptions.Item>
+          <Descriptions.Item label="同步策略">{status.sync_strategy}</Descriptions.Item>
+          <Descriptions.Item label="自动同步">
+            {status.auto_sync_enabled ? '已启用' : '未启用'}
+          </Descriptions.Item>
+          <Descriptions.Item label="本地仓库">
+            {status.local_exists ? (
+              <Tag color="green" icon={<CheckCircleOutlined />}>
+                已就绪
+              </Tag>
+            ) : (
+              <Tag color="orange" icon={<ExclamationCircleOutlined />}>
+                未初始化
+              </Tag>
+            )}
+          </Descriptions.Item>
+          <Descriptions.Item label="本地 Commit">
+            {status.local_commit ? status.local_commit.substring(0, 8) : '-'}
+          </Descriptions.Item>
+          <Descriptions.Item label="远程 Commit">
+            {status.remote_commit ? status.remote_commit.substring(0, 8) : '-'}
+          </Descriptions.Item>
+          <Descriptions.Item label="是否需要更新">
+            {status.needs_update ? (
+              <Tag color="orange">有更新</Tag>
+            ) : status.needs_update === false ? (
+              <Tag color="green">最新</Tag>
+            ) : (
+              '-'
+            )}
+          </Descriptions.Item>
+          <Descriptions.Item label="上次同步时间">
+            {status.last_sync_at || '从未同步'}
+          </Descriptions.Item>
+        </Descriptions>
+      ) : (
+        <Empty description="加载状态失败" />
+      )}
+    </Modal>
   );
 }

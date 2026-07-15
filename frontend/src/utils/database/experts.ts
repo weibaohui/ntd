@@ -124,6 +124,28 @@ export async function createExpertFromAi(pluginJson: string, agentMd: string): P
 }
 
 /**
+ * 获取专家的原始 plugin.json 内容
+ *
+ * 返回 plugin.json 文件的原始文本内容，用于前端编辑。
+ */
+export async function getExpertPluginJson(name: string): Promise<string> {
+  return unwrap(await api.get(`/api/experts/${encodeURIComponent(name)}/plugin-json`));
+}
+
+/**
+ * 更新专家
+ *
+ * 更新指定专家的 plugin.json 和 agent.md 内容。
+ * 专家名称不可修改，如需改名请删除后重新创建。
+ */
+export async function updateExpert(name: string, pluginJson: string, agentMd: string): Promise<void> {
+  await api.put(`/api/experts/${encodeURIComponent(name)}`, {
+    plugin_json: pluginJson,
+    agent_md: agentMd,
+  });
+}
+
+/**
  * 导出专家为 zip 文件
  *
  * 将指定专家的整个目录打包为 zip 文件下载。

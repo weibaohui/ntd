@@ -515,20 +515,45 @@ async fn run_server(cli_port: Option<u16>) {
     let executors = executor_registry.list_executors().await;
     info!("Available executors: {:?}", executors);
 
-    // 加载 WorkBuddy 专家定义（~/.ntd/experts/）
+    // 初始化内置资源：首次启动自动克隆远程仓库，后续启动检查更新
+    if let Err(e) = init_bundled_resources(&cfg).await {
+        tracing::warn!("内置资源初始化失败: {}", e);
+    }
+
+    // 加载 WorkBuddy 专家定义
+    // 优先加载内置专家（~/.ntd/bundled/experts/），再加载用户自定义专家（~/.ntd/experts/）
     let expert_manager = Arc::new(ntd::expert::ExpertIndexManager::new());
-    if let Some(experts_dir) = ntd::expert::experts_dir() {
-        if experts_dir.exists() {
-            let load_result = ntd::expert::load_experts_from_directory(&experts_dir, &expert_manager);
-            info!("加载了 {} 个专家定义", load_result.loaded_count);
+    
+    // 1. 加载内置专家
+    if let Some(bundled_dir) = ntd::expert::bundled_experts_dir() {
+        if bundled_dir.exists() {
+            let load_result = ntd::expert::load_experts_from_directory(
+                &bundled_dir,
+                &expert_manager,
+                ntd::expert::ExpertSource::System,
+            );
+            info!("从内置资源加载了 {} 个专家定义", load_result.loaded_count);
             if !load_result.errors.is_empty() {
-                tracing::warn!("专家定义加载错误: {:?}", load_result.errors);
+                tracing::warn!("内置专家定义加载错误: {:?}", load_result.errors);
             }
         } else {
-            tracing::info!("专家定义目录不存在: {}，跳过加载", experts_dir.display());
+            tracing::info!("内置专家目录不存在: {}，跳过加载", bundled_dir.display());
         }
-    } else {
-        tracing::info!("无法获取 home 目录，跳过专家加载");
+    }
+    
+    // 2. 加载用户自定义专家（可覆盖内置专家）
+    if let Some(user_dir) = ntd::expert::experts_dir() {
+        if user_dir.exists() {
+            let load_result = ntd::expert::load_experts_from_directory(
+                &user_dir,
+                &expert_manager,
+                ntd::expert::ExpertSource::User,
+            );
+            info!("从用户目录加载了 {} 个专家定义", load_result.loaded_count);
+            if !load_result.errors.is_empty() {
+                tracing::warn!("用户专家定义加载错误: {:?}", load_result.errors);
+            }
+        }
     }
 
     // WebSocket 事件 broadcast channel 容量从配置读取，避免硬编码 100 在高频输出场景下
@@ -671,5 +696,42 @@ async fn run_server(cli_port: Option<u16>) {
 
     if let Err(e) = axum::serve(listener, app).await {
         tracing::error!("Server error: {}", e);
+    }
+}
+
+/// 初始化内置资源
+///
+/// 首次启动时如果本地目录不存在，自动从远程仓库克隆。
+/// 后续启动时检查是否有更新（可选）。
+async fn init_bundled_resources(cfg: &ntd::config::Config) -> Result<(), String> {
+    let bundled_config = &cfg.bundled_source;
+
+    let repo_path = match ntd::git_sync::bundled_dir(&bundled_config.local_path) {
+        Some(p) => p,
+        None => return Err("无法获取 home 目录".to_string()),
+    };
+
+    if !repo_path.exists() {
+        tracing::info!("内置资源目录不存在，首次克隆: {}", repo_path.display());
+        // 不手动 create_dir_all，由 clone_repo 内部负责创建所需父目录。
+        let result = ntd::git_sync::clone_repo(
+            &bundled_config.url,
+            &repo_path,
+            &bundled_config.branch,
+        ).await;
+
+        match result {
+            Ok(r) => {
+                tracing::info!("内置资源克隆成功: {}", r.message);
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!("内置资源克隆失败: {}，跳过（可手动同步）", e);
+                Ok(())
+            }
+        }
+    } else {
+        tracing::info!("内置资源目录已存在: {}", repo_path.display());
+        Ok(())
     }
 }

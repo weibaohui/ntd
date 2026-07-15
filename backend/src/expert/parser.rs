@@ -28,6 +28,7 @@ pub fn parse_plugin_json(plugin_json_path: &Path) -> Result<PluginJson, ExpertEr
 /// - `plugin`: 解析后的 PluginJson
 /// - `expert_dir`: 专家定义目录的绝对路径
 /// - `plugin_json_path`: plugin.json 的绝对路径
+/// - `source`: 专家来源（系统内置 / 用户自定义）
 ///
 /// # 返回
 /// 构建好的 ExpertMetadata
@@ -35,6 +36,7 @@ pub fn build_expert_metadata(
     plugin: &PluginJson,
     expert_dir: &Path,
     plugin_json_path: &Path,
+    source: ExpertSource,
 ) -> ExpertMetadata {
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -103,6 +105,7 @@ pub fn build_expert_metadata(
             .unwrap_or_default(),
         loaded_at: now,
         is_active: true,
+        source,
     }
 }
 

@@ -163,6 +163,8 @@ pub struct Config {
     pub broadcast_channel_capacity: usize,
     /// 云端同步配置
     pub cloud_sync: CloudSyncConfig,
+    /// 内置资源同步配置（专家、模板、Skills 等）
+    pub bundled_source: BundledSourceConfig,
     /// CORS 允许的来源域名白名单（仅生产模式生效）。
     /// 空列表 = 仅同源请求（不发送 Access-Control-Allow-Origin header）。
     /// 可配置多个域名，如 ["https://app.example.com", "https://admin.example.com"]。
@@ -250,6 +252,40 @@ impl Default for CloudSyncConfig {
     }
 }
 
+/// 内置资源同步配置
+///
+/// 支持从远程 Git 仓库同步专家、模板、Skills 等资源。
+/// 首次启动自动 clone，后续通过 pull + merge 更新。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BundledSourceConfig {
+    /// 远程仓库地址
+    pub url: String,
+    /// 目标分支（默认 main）
+    pub branch: String,
+    /// 本地存储目录（相对于 ~/.ntd/）
+    pub local_path: String,
+    /// 是否启用自动同步
+    pub auto_sync_enabled: bool,
+    /// 自动同步 cron 表达式（6 字段，含秒）
+    pub auto_sync_cron: String,
+    /// 上次同步时间
+    pub last_sync_at: Option<String>,
+}
+
+impl Default for BundledSourceConfig {
+    fn default() -> Self {
+        Self {
+            url: "https://gitcode.com/weibaohui/ntd-resource.git".to_string(),
+            branch: "main".to_string(),
+            local_path: "bundled".to_string(),
+            auto_sync_enabled: false,
+            auto_sync_cron: "0 0 4 * * *".to_string(),
+            last_sync_at: None,
+        }
+    }
+}
+
 impl Default for Config {
     /// 构建 Config 的默认值。
     ///
@@ -273,7 +309,8 @@ impl Default for Config {
             auto_cleanup_logs_days: DEFAULT_AUTO_CLEANUP_LOGS_DAYS, scheduler_default_timezone: None,
             auto_usage_stats_enabled: usage_stats.enabled, auto_usage_stats_cron: usage_stats.cron,
             broadcast_channel_capacity: DEFAULT_BROADCAST_CHANNEL_CAPACITY,
-            cloud_sync: CloudSyncConfig::default(), cors_allowed_origins: Vec::new(),
+            cloud_sync: CloudSyncConfig::default(), bundled_source: BundledSourceConfig::default(),
+            cors_allowed_origins: Vec::new(),
             auto_update_enabled: false, auto_update_interval: DEFAULT_AUTO_UPDATE_INTERVAL.to_string(),
             auto_update_hour: DEFAULT_AUTO_UPDATE_HOUR, auto_update_last_check_at: None,
         }

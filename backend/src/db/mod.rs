@@ -153,7 +153,6 @@ impl Database {
         }
 
         db.init_tables().await?;
-        db.seed_default_templates().await?;
         Ok(db)
     }
 

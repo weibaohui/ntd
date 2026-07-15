@@ -167,6 +167,7 @@ const VIEW_TO_NAV_KEY: Record<View, string> = {
   sessions: 'settings_sessions',
   executors: 'settings_executors',
   experts: 'settings_experts',
+
   wiki: 'blackboard',
   messages: 'messages',
   bots: 'settings_bots',
