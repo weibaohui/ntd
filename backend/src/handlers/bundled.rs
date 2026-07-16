@@ -12,6 +12,11 @@ use crate::config::BundledSourceConfig;
 use crate::handlers::{AppError, AppState};
 use crate::models::ApiResponse;
 use crate::git_sync;
+// 复用 skills 模块的工具：
+// - SkillFileContentResponse：{ path, content } 响应结构，避免在本文件重复定义同构类型
+// - resolve_skill_path_for_read：对 skill name 做字符串层安全校验，与 get_skill_file 同源，
+//   拦截 `..`/绝对路径等，防止 name 经 URL 编码逃出 skills 根目录（详见 read_bundled_skill_file）
+use crate::handlers::skills::{resolve_skill_path_for_read, SkillFileContentResponse};
 
 /// 子目录类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -486,6 +491,8 @@ pub fn bundled_routes() -> Router<AppState> {
         // 技能市场 API
         .route("/api/bundled/skills", axum::routing::get(list_bundled_skills))
         .route("/api/bundled/skills/{name}/content", axum::routing::get(get_bundled_skill_content))
+        // 读单文件内容：与 content 同命名空间，让市场页文件浏览器能预览 SKILL.md 以外的文件
+        .route("/api/bundled/skills/{name}/file", axum::routing::get(get_bundled_skill_file))
         .route("/api/bundled/skills/install", axum::routing::post(install_bundled_skill))
 }
 
@@ -865,6 +872,114 @@ pub async fn get_bundled_skill_content(
     .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))??;
 
     Ok(ApiResponse::ok(result))
+}
+
+/// 单文件内容读取的 query 参数
+#[derive(Debug, Deserialize)]
+pub struct BundledSkillFileQuery {
+    /// 目标文件相对技能目录的路径，如 `references/guide.md`；含子目录用 `/` 分隔
+    pub path: String,
+}
+
+/// GET /api/bundled/skills/{name}/file - 读取 bundled 技能内某个文件的内容
+///
+/// 市场页文件浏览器预览非 SKILL.md 文件时调用。磁盘 IO 下放到 `read_bundled_skill_file`
+/// 并整体塞进 `spawn_blocking`，避免 read_to_string 阻塞 tokio reactor worker。
+pub async fn get_bundled_skill_file(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(query): Query<BundledSkillFileQuery>,
+) -> Result<ApiResponse<SkillFileContentResponse>, AppError> {
+    // 快照 local_path 后立刻释放读锁，再 move 进阻塞任务，保证 future 为 Send
+    let local_path = state.config_snapshot(|c| c.bundled_source.local_path.clone());
+    // name 含 `/`（如 src1/lark-doc），由前端 encodeURIComponent 编码、axum Path 解码，
+    // 与 get_bundled_skill_content 同一处理方式，这里无需二次解码
+    let result = tokio::task::spawn_blocking(move || read_bundled_skill_file(&local_path, &name, &query.path))
+        .await
+        .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))??;
+    Ok(ApiResponse::ok(result))
+}
+
+/// 在阻塞任务中读取 bundled 技能的单个文件内容。
+///
+/// skill_dir 的定位与 content 接口同源（`{local_path}/skills/{name}`），
+/// 文件路径经 `resolve_file_under_skill` 做安全校验，防止 `..`/符号链接逃逸出技能目录。
+fn read_bundled_skill_file(
+    local_path: &str,
+    name: &str,
+    rel_path: &str,
+) -> Result<SkillFileContentResponse, AppError> {
+    // skills 根目录取自配置，与扫描/安装同源；自定义 local_path 时才能定位到正确目录
+    let skills_root = git_sync::bundled_dir(local_path)
+        .ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?
+        .join("skills");
+
+    // name 必须先校验再 join：axum 会对 URL 路径段内的 %2F 解码，攻击者能把 `..%2F..` 编码进
+    // {name} 段、绕过路由层的 `..` 折叠。复用 get_skill_file 同款校验（字符串层拒绝空/绝对路径/
+    // `..`/Windows 盘符），否则下方 resolve_file_under_skill 的前缀检查会和「已逃逸的 skill_dir」
+    // 比较而彻底失效——配合干净的 rel_path 即可读取系统任意文件。
+    // 校验器内部约定：不合法返回 BadRequest；技能不存在返回 NotFound（与 get_skill_file 一致）
+    let skill_dir = resolve_skill_path_for_read(&skills_root, name)?;
+
+    // resolve_skill_path_for_read 只判存在不判类型，补一道目录校验：
+    // name 命中普通文件时（理论上 bundled skills 不会出现）也一并拦下
+    if !skill_dir.is_dir() {
+        return Err(AppError::NotFound);
+    }
+
+    // 安全校验返回 canonicalize 后的绝对路径；文件不存在时内部已转 NotFound
+    let file_path = resolve_file_under_skill(&skill_dir, rel_path)?;
+    // canonicalize 对目录也会成功，这里补一道 is_file，拦截「请求了一个目录」的情况
+    if !file_path.is_file() {
+        return Err(AppError::NotFound);
+    }
+
+    // skill 资源均为文本（md/json/js/ts 等），用 read_to_string 即可，与 get_skill_file 一致；
+    // 真遇到二进制会因无效 UTF-8 报错，统一转 500，由前端预览区显示「无法加载」占位
+    let content = std::fs::read_to_string(&file_path)
+        .map_err(|e| AppError::Internal(format!("读取文件失败: {}", e)))?;
+
+    Ok(SkillFileContentResponse {
+        path: rel_path.to_string(),
+        content,
+    })
+}
+
+/// 校验 rel_path 位于 skill_dir 之内，返回 canonicalize 后的绝对文件路径。
+///
+/// 双重防护缺一不可：
+/// - 字符串层先拒绝空/绝对路径/`..`，把绝大多数恶意输入挡在文件系统访问之前；
+/// - canonicalize 后再做前缀检查，兜住「合法相对路径 + 符号链接」绕出到目录外的情形。
+fn resolve_file_under_skill(
+    skill_dir: &std::path::Path,
+    rel_path: &str,
+) -> Result<std::path::PathBuf, AppError> {
+    let rel = std::path::Path::new(rel_path);
+    // 空路径会让 join 退化为 skill_dir 本身，必须先拦
+    if rel.as_os_str().is_empty() {
+        return Err(AppError::BadRequest("文件路径不能为空".to_string()));
+    }
+    // 绝对路径会无视 skill_dir 直接指向任意位置，禁止
+    if rel.is_absolute() {
+        return Err(AppError::BadRequest("不允许使用绝对路径".to_string()));
+    }
+    // 拒绝 `..`（父级遍历）与 Windows 盘符前缀，二者都能逃出技能目录
+    if rel.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::Prefix(_))) {
+        return Err(AppError::BadRequest("不允许的文件路径".to_string()));
+    }
+
+    let file_path = skill_dir.join(rel);
+    // canonicalize 会解析符号链接并要求文件真实存在；不存在归 404，让前端走「文件没了」分支
+    let file_canon = file_path.canonicalize().map_err(|_| AppError::NotFound)?;
+    let dir_canon = skill_dir
+        .canonicalize()
+        .map_err(|e| AppError::Internal(format!("解析技能目录失败: {}", e)))?;
+    // 最终保险：解析后的绝对路径必须仍落在技能目录之内（拦符号链接逃逸）
+    if !file_canon.starts_with(&dir_canon) {
+        return Err(AppError::BadRequest("文件路径超出技能目录".to_string()));
+    }
+
+    Ok(file_canon)
 }
 
 /// 收集所有来源目录的 metadata.json
@@ -1293,5 +1408,105 @@ mod tests {
         let mut skills = Vec::new();
         collect_bundled_skills_recursive(base.path(), base.path(), &mut skills);
         assert!(skills.is_empty(), "没有任何 SKILL.md 时结果应为空");
+    }
+
+    // ---- resolve_file_under_skill：文件路径安全校验（字符串层 + canonicalize 前缀层）----
+
+    /// 技能目录内的合法文件应返回 canonicalize 后的绝对路径。
+    #[test]
+    fn test_resolve_file_under_skill_normal() {
+        let dir = tempfile::tempdir().expect("创建 tempdir 失败");
+        let skill_md = write_rel(dir.path(), "SKILL.md", "x");
+        let skill_dir = skill_md.parent().expect("SKILL.md 应有父目录");
+
+        let resolved = resolve_file_under_skill(skill_dir, "SKILL.md")
+            .expect("技能目录内的合法文件应通过校验");
+        // 返回值就是 canonical 路径，再 canonicalize 应幂等
+        assert_eq!(resolved.canonicalize().unwrap(), resolved);
+        assert!(resolved.ends_with("SKILL.md"));
+    }
+
+    /// 含子目录的相对路径（如 references/guide.md）也属合法，应放行。
+    #[test]
+    fn test_resolve_file_under_skill_allows_nested() {
+        let dir = tempfile::tempdir().expect("创建 tempdir 失败");
+        let nested = write_rel(dir.path(), "refs/guide.md", "y");
+
+        let resolved = resolve_file_under_skill(dir.path(), "refs/guide.md")
+            .expect("子目录内的文件应通过校验");
+        assert_eq!(resolved, nested.canonicalize().unwrap());
+    }
+
+    /// 空路径会让 join 退化为读技能目录本身，必须在字符串层拒绝。
+    #[test]
+    fn test_resolve_file_under_skill_rejects_empty() {
+        let dir = tempfile::tempdir().expect("创建 tempdir 失败");
+        assert!(resolve_file_under_skill(dir.path(), "").is_err(), "空路径应被拒绝");
+    }
+
+    /// `..` 父级引用直接被字符串层拦下，根本不会触达文件系统。
+    #[test]
+    fn test_resolve_file_under_skill_rejects_parent_traversal() {
+        let dir = tempfile::tempdir().expect("创建 tempdir 失败");
+        assert!(resolve_file_under_skill(dir.path(), "../escape.md").is_err(), "含 .. 的路径应被拒绝");
+    }
+
+    /// `sub/../../escape` 这类先下钻再绕回上级的写法同样含 `..`，应被拒。
+    #[test]
+    fn test_resolve_file_under_skill_rejects_subdir_traversal() {
+        let dir = tempfile::tempdir().expect("创建 tempdir 失败");
+        write_rel(dir.path(), "sub/keep.md", "z");
+        assert!(
+            resolve_file_under_skill(dir.path(), "sub/../../escape.md").is_err(),
+            "绕回上级的路径应被拒绝"
+        );
+    }
+
+    /// 绝对路径无视 skill_dir，必须拒绝，防止读到任意系统文件。
+    #[test]
+    fn test_resolve_file_under_skill_rejects_absolute() {
+        let dir = tempfile::tempdir().expect("创建 tempdir 失败");
+        assert!(
+            resolve_file_under_skill(dir.path(), "/etc/passwd").is_err(),
+            "绝对路径应被拒绝"
+        );
+    }
+
+    /// 技能目录内的符号链接指向外部文件：字符串层放行（无 `..`），但 canonicalize 解析后
+    /// 落到技能目录之外，必须被前缀层拦截——这是字符串层兜不住的唯一逃逸路径。
+    #[test]
+    fn test_resolve_file_under_skill_rejects_symlink_escape() {
+        let skill_root = tempfile::tempdir().expect("创建 skill tempdir 失败");
+        let outside = tempfile::tempdir().expect("创建 outside tempdir 失败");
+        let target = write_rel(outside.path(), "secret.md", "top secret");
+
+        // 仅 unix 支持无权限创建符号链接，Windows 上该用例整体跳过
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&target, skill_root.path().join("link.md"))
+                .expect("创建符号链接失败");
+            assert!(
+                resolve_file_under_skill(skill_root.path(), "link.md").is_err(),
+                "指向外部的符号链接应被前缀检查拦截"
+            );
+        }
+    }
+
+    /// name 含 `..` 时必须在 join 之前被字符串层校验拦下——这是 bundled file 接口的核心安全契约。
+    /// 若 name 能逃出 skills 根目录，攻击者可配合干净的 rel_path 读取系统任意文件
+    /// （详见 read_bundled_skill_file 注释）。name 校验委托给 resolve_skill_path_for_read，
+    /// 其字符串层拒绝已在 skills 模块独立单测覆盖；这里验证「本接口确实接入了该校验」。
+    #[test]
+    fn test_read_bundled_skill_file_rejects_traversal_in_name() {
+        // local_path 取任意值即可：name 的字符串层校验发生在任何文件系统访问之前，
+        // 不依赖该目录是否真实存在，因此本用例在任意环境（含 CI）都稳定
+        let err = read_bundled_skill_file("any/local", "../escape", "passwd")
+            .expect_err("含 .. 的 name 必须被拒绝，不得触达文件读取");
+        // 校验失败统一为 BadRequest，与 get_skill_file 的 name 校验语义一致
+        assert!(
+            matches!(err, AppError::BadRequest(_)),
+            "期望 BadRequest，实际: {:?}",
+            err
+        );
     }
 }

@@ -998,8 +998,8 @@ export function SkillMarketplace() {
       </Modal>
 
       {/* 文件浏览 Modal：复用与已安装技能一致的 SkillFileBrowserModal。
-          对 bundled 技能而言，SKILL.md 用已缓存的 content（presetContent），
-          其他文件 loadContent 报错 → 预览区显示「无法加载」占位文案。 */}
+          SKILL.md 走已缓存的 content（presetContent，省一次请求），
+          其他文件调 bundledApi.getSkillFileContent 实时读取后端文件内容。 */}
       <SkillFileBrowserModal
         open={fileBrowserOpen}
         onClose={() => setFileBrowserOpen(false)}
@@ -1010,11 +1010,19 @@ export function SkillMarketplace() {
         presetContent={content}
         presetPath="SKILL.md"
         loadContent={async (file) => {
+          // SKILL.md 命中预设缓存，直接返回，避免重复请求
           if (file.path === 'SKILL.md') {
             return content;
           }
-          // bundled API 没提供单文件内容接口 → 让预览区显示「无法加载」占位
-          throw new Error('市场暂不支持预览此文件');
+          // 没有选中技能时不发请求：name 为空时后端会把 skill_dir 解析成 skills 根目录，
+          // 即便服务端已校验 name，前端也应在源头短路，避免发出无意义/异常的请求
+          const skillName = selectedSkill?.name;
+          if (!skillName) {
+            throw new Error('未选中技能，无法读取文件');
+          }
+          // 其他文件由后端按技能名 + 相对路径读取
+          const res = await bundledApi.getSkillFileContent(skillName, file.path);
+          return res.content;
         }}
       />
     </div>
@@ -1033,9 +1041,9 @@ function formatStars(n: number): string {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 文件浏览：复用 SkillFileBrowserModal。
-// bundled API 只返回 SKILL.md 的 content + 文件元信息（path+size），
-// 其他文件没有读取接口，所以 loadContent 对 SKILL.md 走缓存，其他文件抛出错误。
-// SkillFilePreview 会捕获错误并展示"无法加载"占位。
+// bundled 的 content 接口返回 SKILL.md 文本 + 全量文件元信息（path+size）；
+// 单文件内容由 GET /api/bundled/skills/{name}/file 按需读取，
+// 所以 loadContent 对 SKILL.md 走缓存，其他文件调 getSkillFileContent。
 // ─────────────────────────────────────────────────────────────────────────────
 function toSkillFileInfos(files: BundledSkillFile[]): SkillFileInfo[] {
   // 转类型补齐 SkillFileInfo 字段（modified_at 改为可选，这里用空串占位）
