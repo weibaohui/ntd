@@ -12,8 +12,11 @@ use crate::config::BundledSourceConfig;
 use crate::handlers::{AppError, AppState};
 use crate::models::ApiResponse;
 use crate::git_sync;
-// 复用 skills 模块的 { path, content } 文件内容响应结构，避免在本文件重复定义同构类型
-use crate::handlers::skills::SkillFileContentResponse;
+// 复用 skills 模块的工具：
+// - SkillFileContentResponse：{ path, content } 响应结构，避免在本文件重复定义同构类型
+// - resolve_skill_path_for_read：对 skill name 做字符串层安全校验，与 get_skill_file 同源，
+//   拦截 `..`/绝对路径等，防止 name 经 URL 编码逃出 skills 根目录（详见 read_bundled_skill_file）
+use crate::handlers::skills::{resolve_skill_path_for_read, SkillFileContentResponse};
 
 /// 子目录类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -906,15 +909,22 @@ fn read_bundled_skill_file(
     name: &str,
     rel_path: &str,
 ) -> Result<SkillFileContentResponse, AppError> {
-    // 定位技能目录；local_path 取自配置，与扫描/安装同源，否则自定义路径时永远找不到
-    let skill_dir = git_sync::bundled_dir(local_path)
+    // skills 根目录取自配置，与扫描/安装同源；自定义 local_path 时才能定位到正确目录
+    let skills_root = git_sync::bundled_dir(local_path)
         .ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?
-        .join("skills")
-        .join(name);
+        .join("skills");
 
-    // 技能不存在给 400 而非 404：与 content 接口一致，便于前端区分「技能没了」与「文件没了」
-    if !skill_dir.exists() || !skill_dir.is_dir() {
-        return Err(AppError::BadRequest(format!("技能 '{}' 不存在", name)));
+    // name 必须先校验再 join：axum 会对 URL 路径段内的 %2F 解码，攻击者能把 `..%2F..` 编码进
+    // {name} 段、绕过路由层的 `..` 折叠。复用 get_skill_file 同款校验（字符串层拒绝空/绝对路径/
+    // `..`/Windows 盘符），否则下方 resolve_file_under_skill 的前缀检查会和「已逃逸的 skill_dir」
+    // 比较而彻底失效——配合干净的 rel_path 即可读取系统任意文件。
+    // 校验器内部约定：不合法返回 BadRequest；技能不存在返回 NotFound（与 get_skill_file 一致）
+    let skill_dir = resolve_skill_path_for_read(&skills_root, name)?;
+
+    // resolve_skill_path_for_read 只判存在不判类型，补一道目录校验：
+    // name 命中普通文件时（理论上 bundled skills 不会出现）也一并拦下
+    if !skill_dir.is_dir() {
+        return Err(AppError::NotFound);
     }
 
     // 安全校验返回 canonicalize 后的绝对路径；文件不存在时内部已转 NotFound
@@ -1480,5 +1490,23 @@ mod tests {
                 "指向外部的符号链接应被前缀检查拦截"
             );
         }
+    }
+
+    /// name 含 `..` 时必须在 join 之前被字符串层校验拦下——这是 bundled file 接口的核心安全契约。
+    /// 若 name 能逃出 skills 根目录，攻击者可配合干净的 rel_path 读取系统任意文件
+    /// （详见 read_bundled_skill_file 注释）。name 校验委托给 resolve_skill_path_for_read，
+    /// 其字符串层拒绝已在 skills 模块独立单测覆盖；这里验证「本接口确实接入了该校验」。
+    #[test]
+    fn test_read_bundled_skill_file_rejects_traversal_in_name() {
+        // local_path 取任意值即可：name 的字符串层校验发生在任何文件系统访问之前，
+        // 不依赖该目录是否真实存在，因此本用例在任意环境（含 CI）都稳定
+        let err = read_bundled_skill_file("any/local", "../escape", "passwd")
+            .expect_err("含 .. 的 name 必须被拒绝，不得触达文件读取");
+        // 校验失败统一为 BadRequest，与 get_skill_file 的 name 校验语义一致
+        assert!(
+            matches!(err, AppError::BadRequest(_)),
+            "期望 BadRequest，实际: {:?}",
+            err
+        );
     }
 }

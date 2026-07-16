@@ -1014,8 +1014,14 @@ export function SkillMarketplace() {
           if (file.path === 'SKILL.md') {
             return content;
           }
-          // 其他文件由后端按技能名 + 相对路径读取；selectedSkill 为组件 state，闭包可达
-          const res = await bundledApi.getSkillFileContent(selectedSkill?.name ?? '', file.path);
+          // 没有选中技能时不发请求：name 为空时后端会把 skill_dir 解析成 skills 根目录，
+          // 即便服务端已校验 name，前端也应在源头短路，避免发出无意义/异常的请求
+          const skillName = selectedSkill?.name;
+          if (!skillName) {
+            throw new Error('未选中技能，无法读取文件');
+          }
+          // 其他文件由后端按技能名 + 相对路径读取
+          const res = await bundledApi.getSkillFileContent(skillName, file.path);
           return res.content;
         }}
       />
