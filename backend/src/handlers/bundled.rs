@@ -149,7 +149,8 @@ pub(crate) async fn run_bundled_sync(
 
     // todos / all：把 bundled/todos 下的模板导入数据库（失败不阻断，仅记日志）
     if subdir == Subdir::Todos || subdir == Subdir::All {
-        if let Err(e) = import_todo_templates_from_bundled(state).await {
+        // local_path 来自上层快照的 bundled 配置，保证「克隆落点」与「读取来源」一致
+        if let Err(e) = import_todo_templates_from_bundled(state, &bundled_config.local_path).await {
             tracing::error!("从 bundled 导入事项模板失败: {}", e);
         }
     }
@@ -163,7 +164,9 @@ pub(crate) async fn run_bundled_sync(
 
     // skills / all：扫描 bundled/skills 目录并记录日志（无需导入数据库，前端按需扫描）
     if subdir == Subdir::Skills || subdir == Subdir::All {
-        let skills_dir = git_sync::bundled_dir("bundled")
+        // 与上方克隆路径同源：skills 子目录在配置的 local_path 下，而不是硬编码 ~/.ntd/bundled，
+        // 否则用户改了 local_path 后，这里会去错误目录数子目录。
+        let skills_dir = git_sync::bundled_dir(&bundled_config.local_path)
             .map(|p| p.join("skills"));
         if let Some(dir) = &skills_dir {
             if dir.exists() {
@@ -294,8 +297,10 @@ fn count_files_in_dir(path: &std::path::Path) -> usize {
 /// 扫描 bundled/todos/ 目录下的所有 yaml/json 文件，
 /// 解析为事项模板并 upsert 到数据库（is_system = true）。
 /// 文件名即为模板 ID。
-async fn import_todo_templates_from_bundled(state: &AppState) -> Result<(), String> {
-    let bundled_todos_dir = crate::git_sync::bundled_dir("bundled")
+async fn import_todo_templates_from_bundled(state: &AppState, local_path: &str) -> Result<(), String> {
+    // todos 目录与 skills 同源：都在配置的 local_path 下（默认 "bundled"），而非硬编码，
+    // 否则用户改了 local_path 后，git 克隆落到别处、这里却仍去 ~/.ntd/bundled/todos 读不到。
+    let bundled_todos_dir = crate::git_sync::bundled_dir(local_path)
         .ok_or_else(|| "无法获取 home 目录".to_string())?
         .join("todos");
 
@@ -601,12 +606,15 @@ pub struct InstallSkillResponse {
 /// 扫描 ~/.ntd/bundled/skills/ 目录，返回所有可安装的技能。
 /// 支持嵌套目录结构（如 awesome-skills-zh/lark-doc/SKILL.md）。
 pub async fn list_bundled_skills(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
 ) -> Result<ApiResponse<BundledSkillsResponse>, AppError> {
+    // 先快照出 skills 根目录的相对路径（取自配置 bundled_source.local_path，默认 "bundled"），
+    // 让扫描与 git 克隆落点保持一致；快照后立即释放读锁，再把 owned String move 进阻塞任务。
+    let local_path = state.config_snapshot(|c| c.bundled_source.local_path.clone());
     // 在 spawn_blocking 中执行磁盘扫描，避免阻塞 tokio worker
     let result = tokio::task::spawn_blocking(move || {
-        // 获取 bundled/skills 目录路径（仓库同步到 ~/.ntd/bundled/，skills 子目录在其中）
-        let skills_dir = match git_sync::bundled_dir("bundled") {
+        // 获取 skills 目录路径（仓库同步到 ~/.ntd/{local_path}/，skills 子目录在其中）
+        let skills_dir = match git_sync::bundled_dir(&local_path) {
             Some(p) => p.join("skills"),
             None => {
                 // 目录不存在时返回空列表而非错误，让前端能正常渲染
@@ -631,8 +639,8 @@ pub async fn list_bundled_skills(
         let mut skills = Vec::new();
         collect_bundled_skills_recursive(&skills_dir, &skills_dir, &mut skills);
 
-        // 按名称排序，保证输出顺序稳定
-        skills.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        // 按名称排序，保证输出顺序稳定；sort_by_key 等价于按小写名升序，clippy 偏好此写法
+        skills.sort_by_key(|a| a.name.to_lowercase());
 
         // 读取每个来源目录的 metadata.json
         let sources = collect_skill_sources(&skills_dir);
@@ -816,16 +824,19 @@ fn count_files_and_size(dir: &std::path::Path) -> (u32, u64) {
 /// 读取 bundled/skills/{name}/SKILL.md 的文本内容，
 /// 并列出目录下所有文件，用于前端详情 Drawer 展示。
 pub async fn get_bundled_skill_content(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<ApiResponse<BundledSkillContentResponse>, AppError> {
     // skill 名称中的 / 在 URL 路径中会被自动解析，无需额外解码
     // axum 的 Path 提取器会正确处理编码后的路径段
     let decoded_name = name;
+    // 与 list_bundled_skills 同源：skills 根目录取自配置而非硬编码，
+    // 保证「扫描出来的列表」与「能读到内容的目录」是同一个。
+    let local_path = state.config_snapshot(|c| c.bundled_source.local_path.clone());
 
     let result = tokio::task::spawn_blocking(move || {
-        // 定位 bundled/skills/{name}/SKILL.md
-        let skill_dir = git_sync::bundled_dir("bundled")
+        // 定位 {local_path}/skills/{name}/SKILL.md
+        let skill_dir = git_sync::bundled_dir(&local_path)
             .ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?
             .join("skills")
             .join(&decoded_name);
@@ -922,7 +933,7 @@ fn collect_files_list(base_dir: &std::path::Path, current_dir: &std::path::Path)
 /// 将 bundled/skills/{skill_name} 目录复制到目标执行器的 skills 目录。
 /// 如果目标已存在同名技能，返回冲突提示（不自动覆盖）。
 pub async fn install_bundled_skill(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(req): Json<InstallSkillRequest>,
 ) -> Result<ApiResponse<InstallSkillResponse>, AppError> {
     // 校验参数
@@ -933,8 +944,11 @@ pub async fn install_bundled_skill(
         return Err(AppError::BadRequest("executor 不能为空".to_string()));
     }
 
-    // 获取源目录路径（仓库同步到 ~/.ntd/bundled/，skills 子目录在其中）
-    let source_dir = git_sync::bundled_dir("bundled")
+    // skills 根目录取自配置 bundled_source.local_path，与扫描/读取同源；
+    // 否则自定义 local_path 时会从不存在的 ~/.ntd/bundled 安装，源目录永远找不到。
+    let local_path = state.config_snapshot(|c| c.bundled_source.local_path.clone());
+    // 获取源目录路径（仓库同步到 ~/.ntd/{local_path}/，skills 子目录在其中）
+    let source_dir = git_sync::bundled_dir(&local_path)
         .ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?
         .join("skills")
         .join(&req.skill_name);
@@ -1001,4 +1015,283 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result
         }
     }
     Ok(())
+}
+
+// ===========================================================================
+// 单元测试
+// ---------------------------------------------------------------------------
+// 三个公开 handler（list/get_content/install）是 spawn_blocking + 磁盘扫描的薄封装，
+// 真正的逻辑都落在上面这些私有辅助函数里。这里按 CLAUDE.md「私有辅助函数如逻辑复杂
+// 也建议测试」的要求，逐个覆盖辅助函数的正常/边界/错误路径。handler 本身依赖
+// git_sync::bundled_dir（读取真实 ~/.ntd），属于集成测试范畴，不在本模块内重放。
+// ===========================================================================
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
+mod tests {
+    use super::*;
+
+    /// 把文本写入 dir 下的相对路径 rel（自动补齐父目录），省去每个用例重复 mkdir+write。
+    /// 返回写入后的绝对路径，便于调用方继续断言。
+    fn write_rel(dir: &std::path::Path, rel: &str, content: &str) -> std::path::PathBuf {
+        let p = dir.join(rel);
+        // 相对路径可能带多级目录，先确保父目录存在再写文件
+        if let Some(parent) = p.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&p, content).expect("写入测试文件失败");
+        p
+    }
+
+    // ---- extract_yaml_frontmatter：frontmatter 提取的边界全在这里 ----
+
+    /// 标准结构：首行 `---` + 若干 yaml + 闭合 `---`，应只返回中间 yaml 段。
+    #[test]
+    fn test_extract_yaml_frontmatter_normal() {
+        let content = "---\nname: demo\ndescription: hi\n---\n# body\n";
+        assert_eq!(extract_yaml_frontmatter(content).as_deref(), Some("name: demo\ndescription: hi"));
+    }
+
+    /// 首行不是 `---` 视为没有 frontmatter，返回 None——区分「无 frontmatter 的纯 Markdown」。
+    #[test]
+    fn test_extract_yaml_frontmatter_missing_open_delimiter() {
+        assert!(extract_yaml_frontmatter("# just a title\n").is_none());
+    }
+
+    /// 空字符串没有首行，first()? 提前返回 None。
+    #[test]
+    fn test_extract_yaml_frontmatter_empty_content() {
+        assert!(extract_yaml_frontmatter("").is_none());
+    }
+
+    /// 只有起始 `---`、没有闭合行时不会死循环，把后续行原样返回（锁定当前契约）。
+    #[test]
+    fn test_extract_yaml_frontmatter_no_closing_delimiter() {
+        assert_eq!(extract_yaml_frontmatter("---\nk: v\n").as_deref(), Some("k: v"));
+    }
+
+    // ---- parse_yaml_value：空/合法/非法三态 ----
+
+    /// 空串走兜底分支，返回空 Mapping（而非 None），让后续 .get() 安全返回 None。
+    #[test]
+    fn test_parse_yaml_value_empty_returns_mapping() {
+        let v = parse_yaml_value("");
+        assert!(v.is_mapping(), "空输入应回退为空 Mapping");
+        assert!(v.as_mapping().map(|m| m.is_empty()).unwrap_or(false));
+    }
+
+    /// 合法 yaml 能被正常解析成可索引的 mapping。
+    #[test]
+    fn test_parse_yaml_value_valid() {
+        let v = parse_yaml_value("k: v");
+        assert_eq!(v.get("k").and_then(|x| x.as_str()), Some("v"));
+    }
+
+    /// 非法 yaml（这里用 tab 缩进，YAML 规范明令禁止）走兜底，返回空 Mapping 而非 panic。
+    #[test]
+    fn test_parse_yaml_value_invalid_returns_empty_mapping() {
+        let v = parse_yaml_value("a:\n\tb: c\n");
+        assert!(v.as_mapping().map(|m| m.is_empty()).unwrap_or(false), "非法 yaml 应回退空 Mapping");
+    }
+
+    // ---- count_files_and_size：递归统计 ----
+
+    /// 空目录计数为 0、大小为 0。
+    #[test]
+    fn test_count_files_and_size_empty_dir() {
+        let dir = tempfile::tempdir().expect("创建 tempdir 失败");
+        assert_eq!(count_files_and_size(dir.path()), (0, 0));
+    }
+
+    /// 递归累加文件数与字节数；嵌套子目录里的文件也要算进去。
+    #[test]
+    fn test_count_files_and_size_counts_recursively() {
+        let dir = tempfile::tempdir().expect("创建 tempdir 失败");
+        // 两个顶层文件 + 一个子目录里的文件，共 3 个文件
+        write_rel(dir.path(), "a.txt", "aaaa");
+        write_rel(dir.path(), "b.txt", "bb");
+        write_rel(dir.path(), "sub/c.txt", "cccccc");
+
+        let (count, size) = count_files_and_size(dir.path());
+        assert_eq!(count, 3, "应递归统计到 3 个文件");
+        assert_eq!(size, 4 + 2 + 6, "大小应为各文件字节数之和");
+    }
+
+    /// 不存在的目录 read_dir 失败，返回 (0,0) 而非报错——支撑 status 接口的容忍语义。
+    #[test]
+    fn test_count_files_and_size_nonexistent_returns_zero() {
+        let dir = tempfile::tempdir().expect("创建 tempdir 失败");
+        let missing = dir.path().join("no-such-dir");
+        assert_eq!(count_files_and_size(&missing), (0, 0));
+    }
+
+    // ---- collect_files_list：相对路径文件清单 ----
+
+    /// 扁平文件以相对 base_dir 的路径收集。
+    #[test]
+    fn test_collect_files_list_flat() {
+        let dir = tempfile::tempdir().expect("创建 tempdir 失败");
+        write_rel(dir.path(), "SKILL.md", "x");
+        write_rel(dir.path(), "a.md", "yy");
+
+        let mut paths: Vec<String> = collect_files_list(dir.path(), dir.path())
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+        paths.sort();
+        assert_eq!(paths, vec!["SKILL.md".to_string(), "a.md".to_string()]);
+    }
+
+    /// 嵌套目录下的文件路径要保留中间层级（如 sub/inner.md），不能被压平。
+    #[test]
+    fn test_collect_files_list_nested() {
+        let dir = tempfile::tempdir().expect("创建 tempdir 失败");
+        write_rel(dir.path(), "sub/inner.md", "z");
+
+        let files = collect_files_list(dir.path(), dir.path());
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "sub/inner.md");
+        assert_eq!(files[0].size, 1);
+    }
+
+    // ---- copy_dir_all：整目录复制 ----
+
+    /// 复制后结构一致、文件内容不丢；这是 install 接口的核心动作，必须可信赖。
+    #[test]
+    fn test_copy_dir_all_preserves_structure_and_content() {
+        let src = tempfile::tempdir().expect("创建 src tempdir 失败");
+        let dst = tempfile::tempdir().expect("创建 dst tempdir 失败");
+        write_rel(src.path(), "SKILL.md", "body");
+        write_rel(src.path(), "refs/note.md", "nested");
+
+        let target = dst.path().join("copied");
+        copy_dir_all(src.path(), &target).expect("复制应成功");
+
+        // 校验结构：两处文件都在，内容与源一致
+        assert_eq!(std::fs::read_to_string(target.join("SKILL.md")).unwrap(), "body");
+        assert_eq!(std::fs::read_to_string(target.join("refs/note.md")).unwrap(), "nested");
+    }
+
+    // ---- collect_skill_sources：来源 metadata.json 解析 ----
+
+    /// 写一份完整 metadata.json，应被解析进 map，且 name 被目录名覆盖（防手误）。
+    #[test]
+    fn test_collect_skill_sources_reads_metadata_and_overrides_name() {
+        let dir = tempfile::tempdir().expect("创建 tempdir 失败");
+        // json 里 name 故意写错，期望被目录名 src1 覆盖
+        let json = r#"{
+            "name": "wrong",
+            "display_name": "Src One",
+            "description": "d",
+            "github_url": "https://example.com/x",
+            "stars": 10,
+            "license": "MIT",
+            "author": "someone"
+        }"#;
+        write_rel(dir.path(), "src1/metadata.json", json);
+
+        let sources = collect_skill_sources(dir.path());
+        let meta = sources.get("src1").expect("应以目录名 src1 为 key");
+        assert_eq!(meta.name, "src1", "name 应被目录名覆盖");
+        assert_eq!(meta.display_name, "Src One");
+        assert_eq!(meta.stars, 10);
+    }
+
+    /// 没有 metadata.json 的来源目录应被跳过，不出现在 map 里。
+    #[test]
+    fn test_collect_skill_sources_skips_dir_without_metadata() {
+        let dir = tempfile::tempdir().expect("创建 tempdir 失败");
+        write_rel(dir.path(), "src1/SKILL.md", "x");
+        let sources = collect_skill_sources(dir.path());
+        assert!(sources.is_empty(), "缺少 metadata.json 的目录不应进 sources");
+    }
+
+    /// skills_dir 下的普通文件（非目录）必须被忽略，避免误当来源解析。
+    #[test]
+    fn test_collect_skill_sources_ignores_plain_files() {
+        let dir = tempfile::tempdir().expect("创建 tempdir 失败");
+        write_rel(dir.path(), "README.md", "not a source");
+        let sources = collect_skill_sources(dir.path());
+        assert!(sources.is_empty(), "普通文件不应被当作来源");
+    }
+
+    // ---- parse_bundled_skill_meta：从 SKILL.md 抽元数据 ----
+
+    /// 带完整 frontmatter 的技能：description_zh 优先填入 description，其余字段对齐解析。
+    #[test]
+    fn test_parse_bundled_skill_meta_parses_all_fields() {
+        let base = tempfile::tempdir().expect("创建 base tempdir 失败");
+        let skill_dir = write_rel(base.path(), "src1/lark-doc/SKILL.md", "---\nname: lark\ndescription: en\ndescription_zh: 中文描述\nversion: 1.2.0\nauthor: me\nlicense: MIT\n---\n# body\n");
+        let meta = parse_bundled_skill_meta(skill_dir.parent().unwrap(), &skill_dir, base.path())
+            .expect("合法 SKILL.md 应解析出 meta");
+
+        // description_zh 存在时优先用作 description，让前端默认展示中文
+        assert_eq!(meta.description, "中文描述");
+        assert_eq!(meta.description_zh.as_deref(), Some("中文描述"));
+        assert_eq!(meta.version.as_deref(), Some("1.2.0"));
+        assert_eq!(meta.author.as_deref(), Some("me"));
+        assert_eq!(meta.license.as_deref(), Some("MIT"));
+        // 路径切分：source 取首段、short_name 取末段
+        assert_eq!(meta.source, "src1");
+        assert_eq!(meta.short_name, "lark-doc");
+        assert_eq!(meta.name, "src1/lark-doc");
+        // 刚写入的文件至少有 SKILL.md 一个文件、mtime 可读
+        assert_eq!(meta.file_count, 1);
+        assert!(meta.modified_at.is_some());
+        // source_meta 在递归阶段恒为 None，由 handler 后续关联
+        assert!(meta.source_meta.is_none());
+    }
+
+    /// 只有 description（无 description_zh）：回退用 description，description_zh 字段留 None。
+    #[test]
+    fn test_parse_bundled_skill_meta_description_fallback() {
+        let base = tempfile::tempdir().expect("创建 base tempdir 失败");
+        let skill_dir = write_rel(base.path(), "src1/a/SKILL.md", "---\ndescription: only-en\n---\n");
+        let meta = parse_bundled_skill_meta(skill_dir.parent().unwrap(), &skill_dir, base.path())
+            .expect("应解析出 meta");
+        assert_eq!(meta.description, "only-en");
+        assert!(meta.description_zh.is_none());
+    }
+
+    /// SKILL.md 没有 frontmatter（首行非 `---`）→ 返回 None，调用方据此跳过该目录。
+    #[test]
+    fn test_parse_bundled_skill_meta_no_frontmatter_returns_none() {
+        let base = tempfile::tempdir().expect("创建 base tempdir 失败");
+        let skill_dir = write_rel(base.path(), "src1/a/SKILL.md", "# just a title\nno frontmatter\n");
+        let meta = parse_bundled_skill_meta(skill_dir.parent().unwrap(), &skill_dir, base.path());
+        assert!(meta.is_none(), "无 frontmatter 应返回 None");
+    }
+
+    // ---- collect_bundled_skills_recursive：递归发现 skill ----
+
+    /// 同时存在「来源下的 skill」和「来源/分类/下的 skill」两种嵌套，都应被发现。
+    #[test]
+    fn test_collect_bundled_skills_recursive_finds_nested_skills() {
+        let base = tempfile::tempdir().expect("创建 base tempdir 失败");
+        // src1 下直接挂一个 skill，再在 category 子目录里挂一个——覆盖两层结构
+        write_rel(base.path(), "src1/skillA/SKILL.md", "---\nname: a\n---\n");
+        write_rel(base.path(), "src1/category/skillB/SKILL.md", "---\nname: b\n---\n");
+
+        let mut skills = Vec::new();
+        collect_bundled_skills_recursive(base.path(), base.path(), &mut skills);
+
+        // 文件系统遍历顺序不保证，排序后比对，避免用例在 CI 上随机失败
+        let mut names: Vec<String> = skills.into_iter().map(|m| m.name).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["src1/category/skillB".to_string(), "src1/skillA".to_string()]
+        );
+    }
+
+    /// 整棵树都没有 SKILL.md 时返回空——递归终点的正确性。
+    #[test]
+    fn test_collect_bundled_skills_recursive_empty_when_no_skill_md() {
+        let base = tempfile::tempdir().expect("创建 base tempdir 失败");
+        write_rel(base.path(), "src1/metadata.json", "{}");
+        write_rel(base.path(), "src1/notes.md", "not a skill");
+
+        let mut skills = Vec::new();
+        collect_bundled_skills_recursive(base.path(), base.path(), &mut skills);
+        assert!(skills.is_empty(), "没有任何 SKILL.md 时结果应为空");
+    }
 }
