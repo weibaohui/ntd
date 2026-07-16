@@ -209,6 +209,17 @@ export const bundledApi = {
   },
 
   /**
+   * 读取 bundled 技能内单个文件的内容
+   * 用于市场页文件浏览器预览 SKILL.md 以外的文件
+   */
+  async getSkillFileContent(skillName: string, path: string): Promise<{ path: string; content: string }> {
+    // path 作为 query 参数透传，axios 会自动 encode；skillName 含 `/` 需手动 encode 进路径段
+    return unwrap(await api.get(`/api/bundled/skills/${encodeURIComponent(skillName)}/file`, {
+      params: { path },
+    }));
+  },
+
+  /**
    * 安装技能到指定执行器
    * 将 bundled/skills/{skill_name} 复制到目标执行器的 skills 目录
    */
