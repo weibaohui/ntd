@@ -138,7 +138,7 @@ export function TemplatesPanel() {
           type="error"
           style={{ marginBottom: 16 }}
           message="未检测到 Git"
-          description="远程仓库同步依赖系统 Git，当前环境未检测到。请先安装 Git，安装后即可同步专家 / 事项 / Skill 模板。"
+          description="远程仓库同步依赖系统 Git，当前环境未检测到。点右侧「安装 Git」一键安装；装完在弹窗里点「应用」即可重新检测。若已装好仍显示未安装，说明后端进程的 PATH 是启动时固定的、未刷新，重启本应用后即恢复。"
           action={<InstallGitButton onInstalled={loadStatus} buttonType="primary" showLabel />}
         />
       )}
