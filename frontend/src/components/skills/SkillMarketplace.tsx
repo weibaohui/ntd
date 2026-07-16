@@ -28,6 +28,7 @@ import { formatSize, formatTime } from './helpers';
 import * as db from '@/utils/database';
 import type { SkillFileInfo } from '@/utils/database/skills';
 import { SkillFileBrowserModal } from './SkillFileBrowserModal';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import './SkillMarketplace.css';
 
 const { Text, Paragraph } = Typography;
@@ -311,6 +312,8 @@ export function SkillMarketplace() {
   // App.css 的 [data-theme="dark"] 会自动切换浅/深色变量取值。
 
   // ── 数据状态 ──
+  // 移动端判定：来源筛选下拉在窄屏改成单列、宽度贴齐视口（见 dropdownContent）。
+  const isMobile = useIsMobile();
   const [skills, setSkills] = useState<BundledSkillMeta[]>([]);
   const [sources, setSources] = useState<Record<string, SkillSourceMeta>>({});
   const [loading, setLoading] = useState(false);
@@ -505,7 +508,8 @@ export function SkillMarketplace() {
   const dropdownContent = (
     // 用 CSS 变量做背景，主题切换时跟着变；去掉硬编码 rgba 阴影，改用项目 shadow token
     <div style={{
-      width: 520,
+      // 移动端：弹层贴近视口宽度，避免 520px 固定宽在窄屏溢出；桌面端保持 520px。
+      width: isMobile ? 'calc(100vw - 32px)' : 520,
       maxHeight: 400,
       overflowY: 'auto',
       padding: 12,
@@ -516,7 +520,8 @@ export function SkillMarketplace() {
     }}>
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(2, 1fr)',
+        // 移动端单列「一行一个来源」；桌面端两列。垂直滚动由外层 maxHeight + overflowY 提供。
+        gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)',
         gap: 10,
       }}>
         {/* 全部来源选项：

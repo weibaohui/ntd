@@ -120,6 +120,9 @@ export function SkillTemplatesTab() {
           columns={columns}
           rowKey="name"
           size="small"
+          // 移动端适配：6 列在窄屏会挤压错位，启用横向滚动（与「事项模板」表一致），
+          // 列宽按内容撑开，超出容器可横滑而不压缩。
+          scroll={{ x: 'max-content' }}
           pagination={{ pageSize: 20 }}
           locale={{
             emptyText: (
