@@ -13,8 +13,10 @@ export function formatSize(bytes: number): string {
 
 export { formatDateTime as formatTime };
 
-// 根据文件扩展名返回对应图标颜色，减少重复定义
-export function getFileColor(filename: string, isDark = false): string {
+// 根据文件扩展名返回对应图标颜色。
+// 不再收 isDark：所有色值都是各语法生态的标准色（品牌色），在亮/暗底上都够鲜艳。
+// 这样调用方不用关心主题，且去掉一处 hardcoded 分支判断。
+export function getFileColor(filename: string): string {
   const ext = filename.split('.').pop()?.toLowerCase();
   const colorMap: Record<string, string> = {
     md: '#0891b2',
@@ -26,11 +28,11 @@ export function getFileColor(filename: string, isDark = false): string {
     yaml: '#e11d48',
     yml: '#e11d48',
     toml: '#9333ea',
-    txt: isDark ? '#94a3b8' : '#64748b',
+    txt: '#94a3b8',
     css: '#06b6d4',
     html: '#ea580c',
   };
-  return colorMap[ext || ''] || (isDark ? '#94a3b8' : '#64748b');
+  return colorMap[ext || ''] || '#94a3b8';
 }
 
 export function normalizeExecutor(name: string): string {

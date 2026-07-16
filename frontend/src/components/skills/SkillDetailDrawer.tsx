@@ -13,7 +13,6 @@ import type { SkillMeta } from '@/types';
 import type { SkillFileInfo } from '@/utils/database/skills';
 import { SkillFileBrowserModal } from './SkillFileBrowserModal';
 import { getSkillContent as dbGetSkillContent, getSkillFileContent as dbGetSkillFileContent } from '@/utils/database/skills';
-import { useTheme } from '@/hooks/useTheme';
 
 const { Text } = Typography;
 
@@ -28,8 +27,6 @@ interface SkillDetailDrawerProps {
 }
 
 export function SkillDetailDrawer({ skill, executor, executorLabel, open, onClose, onSyncSuccess, onDeleteSuccess }: SkillDetailDrawerProps) {
-  const { themeMode } = useTheme();
-  const isDark = themeMode === 'dark';
 
   const [content, setContent] = useState<string>('');
   const [files, setFiles] = useState<SkillFileInfo[]>([]);
@@ -149,9 +146,9 @@ export function SkillDetailDrawer({ skill, executor, executorLabel, open, onClos
               flexWrap: 'wrap',
               marginBottom: 16,
               padding: '12px',
-              background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)',
-              borderRadius: 8,
-              border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+              background: 'var(--color-bg-card)',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--color-border-light)',
             }}>
               <Button
                 type="primary"
@@ -211,18 +208,18 @@ export function SkillDetailDrawer({ skill, executor, executorLabel, open, onClos
 
             <h3 style={{
               margin: '16px 0 8px',
-              color: isDark ? '#e2e8f0' : '#595959',
+              color: 'var(--color-text)',
             }}>内容预览</h3>
             <XMarkdown
               content={content}
               escapeRawHtml={true}
               style={{
-                fontFamily: 'Fira Code, monospace',
+                fontFamily: 'var(--font-mono)',
                 fontSize: 13,
-                background: isDark ? '#1a1a2e' : '#1e1e1e',
-                color: '#d4d4d4',
+                background: 'var(--color-bg)',
+                color: 'var(--color-text)',
                 padding: '12px',
-                borderRadius: '8px',
+                borderRadius: 'var(--radius-sm)',
               }}
             />
           </div>
@@ -230,8 +227,8 @@ export function SkillDetailDrawer({ skill, executor, executorLabel, open, onClos
         <Modal
           title={
             <Space>
-              <SwapOutlined style={{ color: '#7C3AED' }} />
-              <span>同步 Skill 到其他执行器</span>
+              <SwapOutlined style={{ color: 'var(--color-primary)' }} />
+              <span style={{ color: 'var(--color-text)' }}>同步 Skill 到其他执行器</span>
             </Space>
           }
           open={syncModalOpen}

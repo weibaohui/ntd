@@ -13,9 +13,9 @@ interface SkillFileBrowserProps {
   loading?: boolean;
   onFileSelect?: (file: SkillFileInfo) => void;
   selectedFile?: SkillFileInfo | null;
-  isDark?: boolean;
 }
 
+// 文件树节点
 interface FileTreeNode {
   name: string;
   path: string;
@@ -98,6 +98,9 @@ function filterFileTree(node: FileTreeNode, searchText: string): FileTreeNode | 
 
 // 递归渲染文件树节点，支持展开/折叠目录、选中文件、键盘操作。
 // 使用普通 div 而非 ul/li 结构以简化样式控制，同时通过 role="treeitem" 保留无障碍语义。
+//
+// 颜色全部走 CSS 变量：原本按 isDark 分两份硬编码（亮色深字/暗色深字都有不可见问题），
+// 改用变量后：[data-theme] 切换时整体自动跟随，亮/暗对比度都达标。
 function FileTreeNodeItem({
   node,
   level,
@@ -105,7 +108,6 @@ function FileTreeNodeItem({
   selectedFile,
   expandedDirs,
   onToggleDir,
-  isDark,
 }: {
   node: FileTreeNode;
   level: number;
@@ -113,7 +115,6 @@ function FileTreeNodeItem({
   selectedFile?: SkillFileInfo | null;
   expandedDirs: Set<string>;
   onToggleDir: (path: string) => void;
-  isDark?: boolean;
 }) {
   const isExpanded = expandedDirs.has(node.path);
   const isSelected = selectedFile !== null && node.file !== undefined && selectedFile?.path === node.file?.path;
@@ -125,12 +126,6 @@ function FileTreeNodeItem({
       onFileSelect(node.file);
     }
   };
-
-  // 主题相关颜色
-  const hoverBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
-  const selectedBg = isDark ? 'rgba(59, 130, 246, 0.2)' : 'rgba(37, 99, 235, 0.1)';
-  const textColor = isDark ? '#e2e8f0' : '#1e293b';
-  const secondaryColor = isDark ? '#94a3b8' : '#64748b';
 
   return (
     <div>
@@ -144,6 +139,8 @@ function FileTreeNodeItem({
             handleClick();
           }
         }}
+        // 选中态用主色边框 + 极淡主色底；hover 用 bg-hover；非选中时背景透明
+        className={`skill-tree-item ${isSelected ? 'skill-tree-item--selected' : ''}`}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -152,13 +149,16 @@ function FileTreeNodeItem({
           paddingLeft: `${level * 16 + 8}px`,
           cursor: 'pointer',
           borderRadius: 4,
-          background: isSelected ? selectedBg : 'transparent',
-          borderLeft: isSelected ? '2px solid #3b82f6' : '2px solid transparent',
-          transition: 'all 0.15s',
+          background: isSelected ? 'var(--color-primary-bg)' : 'transparent',
+          borderLeft: isSelected
+            ? '2px solid var(--color-primary)'
+            : '2px solid transparent',
+          transition: 'all var(--transition-fast)',
         }}
         onMouseEnter={e => {
+          // hover 用 bg-hover 而不是硬编码 rgba，亮/暗双主题都对
           if (!isSelected) {
-            e.currentTarget.style.background = hoverBg;
+            e.currentTarget.style.background = 'var(--color-bg-hover)';
           }
         }}
         onMouseLeave={e => {
@@ -167,27 +167,27 @@ function FileTreeNodeItem({
           }
         }}
       >
-        {/* 展开/折叠图标 */}
+        {/* 展开/折叠图标：次级文字色 */}
         {node.isDir ? (
-          <span style={{ fontSize: 10, color: secondaryColor, width: 12 }}>
+          <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', width: 12 }}>
             {isExpanded ? '▼' : '▶'}
           </span>
         ) : (
           <span style={{ width: 12 }} />
         )}
 
-        {/* 文件/文件夹图标 */}
+        {/* 文件/文件夹图标：folder 用 warning-1（柔和黄），文件 icon 用扩展名色 */}
         {node.isDir ? (
           isExpanded ? (
-            <FolderOpenOutlined style={{ color: '#f59e0b', fontSize: 14 }} />
+            <FolderOpenOutlined style={{ color: 'var(--color-warning)', fontSize: 14 }} />
           ) : (
-            <FolderOutlined style={{ color: '#f59e0b', fontSize: 14 }} />
+            <FolderOutlined style={{ color: 'var(--color-warning)', fontSize: 14 }} />
           )
         ) : (
-          <FileOutlined style={{ color: getFileColor(node.name, isDark), fontSize: 14 }} />
+          <FileOutlined style={{ color: getFileColor(node.name), fontSize: 14 }} />
         )}
 
-        {/* 文件名 */}
+        {/* 文件名：选中态用主色，否则用正文色 —— 两套都有足够对比度 */}
         <Text
           style={{
             fontSize: 13,
@@ -195,17 +195,17 @@ function FileTreeNodeItem({
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
-            color: isSelected ? '#3b82f6' : textColor,
+            color: isSelected ? 'var(--color-primary)' : 'var(--color-text)',
             fontWeight: isSelected ? 500 : 400,
           }}
         >
           {node.name}
         </Text>
 
-        {/* 文件大小 */}
+        {/* 文件大小：次级文字色 */}
         {node.file && (
           <Text
-            style={{ fontSize: 11, flexShrink: 0, color: secondaryColor }}
+            style={{ fontSize: 11, flexShrink: 0, color: 'var(--color-text-tertiary)' }}
           >
             {formatSize(node.file.size)}
           </Text>
@@ -222,7 +222,6 @@ function FileTreeNodeItem({
           selectedFile={selectedFile}
           expandedDirs={expandedDirs}
           onToggleDir={onToggleDir}
-          isDark={isDark}
         />
       ))}
     </div>
@@ -232,7 +231,9 @@ function FileTreeNodeItem({
 // SkillFileBrowser：文件树浏览组件。
 // 接收文件列表，构建树结构后递归渲染；支持搜索过滤、目录展开/折叠、文件选中高亮。
 // 内部状态：searchText（搜索词）、expandedDirs（已展开目录集合）。
-export function SkillFileBrowser({ files, loading, onFileSelect, selectedFile, isDark }: SkillFileBrowserProps) {
+//
+// 颜色一律 CSS 变量——不再接收 isDark prop，避免父组件忘记传导致主题丢失。
+export function SkillFileBrowser({ files, loading, onFileSelect, selectedFile }: SkillFileBrowserProps) {
   const [searchText, setSearchText] = useState('');
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set(['']));
 
@@ -272,10 +273,6 @@ export function SkillFileBrowser({ files, loading, onFileSelect, selectedFile, i
     }
   };
 
-  // 主题相关颜色
-  const borderColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
-  const secondaryColor = isDark ? '#94a3b8' : '#64748b';
-
   if (loading) {
     return (
       <div style={{ textAlign: 'center', padding: 40 }}>
@@ -290,7 +287,7 @@ export function SkillFileBrowser({ files, loading, onFileSelect, selectedFile, i
       <div style={{ padding: '12px 12px 8px' }}>
         <Input
           placeholder="搜索文件..."
-          prefix={<SearchOutlined style={{ color: secondaryColor }} />}
+          prefix={<SearchOutlined style={{ color: 'var(--color-text-tertiary)' }} />}
           value={searchText}
           onChange={e => handleSearch(e.target.value)}
           allowClear
@@ -299,12 +296,12 @@ export function SkillFileBrowser({ files, loading, onFileSelect, selectedFile, i
         />
       </div>
 
-      {/* 文件统计 */}
+      {/* 文件统计：次级文字色 + 底部 1px 边框 */}
       <div style={{
         fontSize: 12,
-        color: secondaryColor,
+        color: 'var(--color-text-tertiary)',
         padding: '0 12px 8px',
-        borderBottom: `1px solid ${borderColor}`,
+        borderBottom: '1px solid var(--color-border-light)',
       }}>
         共 {files.length} 个文件
       </div>
@@ -325,7 +322,6 @@ export function SkillFileBrowser({ files, loading, onFileSelect, selectedFile, i
               selectedFile={selectedFile}
               expandedDirs={expandedDirs}
               onToggleDir={handleToggleDir}
-              isDark={isDark}
             />
           ))
         ) : (

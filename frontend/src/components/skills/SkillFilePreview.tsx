@@ -21,7 +21,6 @@ interface SkillFilePreviewProps {
   presetContent?: string;
   presetPath?: string;
   loading?: boolean;
-  isDark?: boolean;
 }
 
 export function SkillFilePreview({
@@ -30,7 +29,6 @@ export function SkillFilePreview({
   presetContent,
   presetPath,
   loading,
-  isDark,
 }: SkillFilePreviewProps) {
   const [content, setContent] = useState<string>('');
   const [contentLoading, setContentLoading] = useState(false);
@@ -110,7 +108,7 @@ export function SkillFilePreview({
         borderBottom: `1px solid ${borderColor}`,
       }}>
         <Space size={8}>
-          <FileOutlined style={{ color: getFileColor(file.path, isDark) }} />
+          <FileOutlined style={{ color: getFileColor(file.path) }} />
           <Text strong style={{ fontSize: 13, color: 'var(--color-text)' }}>{file.path}</Text>
           <Tag color="default" style={{ fontSize: 11, lineHeight: '16px', padding: '0 6px' }}>
             {formatSize(file.size)}
