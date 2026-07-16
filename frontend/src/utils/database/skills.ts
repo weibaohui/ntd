@@ -1,5 +1,5 @@
 import { api, unwrap } from './client';
-import type { ExecutorSkills, SkillComparison, SkillVersionUpdate, PaginatedInvocations } from '@/types';
+import type { ExecutorSkills, SkillComparison, SkillVersionUpdate } from '@/types';
 
 export async function getSkillsList(): Promise<ExecutorSkills[]> {
   return unwrap(await api.get('/api/skills'));
@@ -27,9 +27,10 @@ export async function deleteSkill(executor: string, skillName: string): Promise<
   }));
 }
 
-export async function getSkillInvocations(params?: { page?: number; limit?: number; skill_name?: string; executor?: string }): Promise<PaginatedInvocations> {
-  return unwrap(await api.get('/api/skills/invocations', { params }));
-}
+// 注：「调用追踪」tab 已移除，因此原 getSkillInvocations 随之删除。
+// Dashboard 上的「技能调用次数」「成功率」走 db/dashboard.rs 聚合统计，
+// 与本页分页接口两条独立路径，POST /api/skills/invocations 仍保留
+// 给执行器调用上报用。
 
 // Skill content & files
 export interface SkillFileInfo {

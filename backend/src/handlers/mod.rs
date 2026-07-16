@@ -653,7 +653,10 @@ fn skills_routes() -> Router<AppState> {
         .route("/api/skills/compare", get(skills::compare_skills))
         .route("/api/skills/version-update", get(skills::version_update_list))
         .route("/api/skills/sync", post(skills::sync_skill))
-        .route("/api/skills/invocations", get(skills::list_invocations).post(skills::record_invocation))
+        // 「调用追踪」tab 已移除，列表接口 (list_invocations) 整体删除。
+        // 仅保留 POST 上报，仍给执行器调用记录使用——Dashboard 聚合统计
+        // 走 db/dashboard.rs 单独通道。
+        .route("/api/skills/invocations", post(skills::record_invocation))
         .route("/api/skills/content", get(skills::get_skill_content))
         .route("/api/skills/file", get(skills::get_skill_file))
         .route("/api/skills/export", get(skills::export_skill))

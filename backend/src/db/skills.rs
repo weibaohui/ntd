@@ -1,121 +1,12 @@
-use sea_orm::{ConnectionTrait, Statement, Value};
+use sea_orm::{ConnectionTrait, Statement};
 
 use crate::db::Database;
-use crate::handlers::skills::SkillInvocation;
 
 impl Database {
-    pub async fn get_skill_invocations(
-        &self,
-        offset: i64,
-        limit: i64,
-        skill_name: Option<&str>,
-        executor: Option<&str>,
-    ) -> Result<Vec<SkillInvocation>, sea_orm::DbErr> {
-        let backend = self.conn.get_database_backend();
-
-        let (sql, params): (String, Vec<Value>) = match (skill_name, executor) {
-            (Some(name), Some(ex)) => (
-                "SELECT si.id, si.skill_name, si.executor, si.todo_id, t.title as todo_title, \
-                 si.status, si.duration_ms, si.invoked_at \
-                 FROM skill_invocations si \
-                 LEFT JOIN todos t ON t.id = si.todo_id \
-                 WHERE si.skill_name = $1 AND si.executor = $2 \
-                 ORDER BY si.invoked_at DESC \
-                 LIMIT $3 OFFSET $4".to_string(),
-                vec![name.into(), ex.into(), limit.into(), offset.into()],
-            ),
-            (Some(name), None) => (
-                "SELECT si.id, si.skill_name, si.executor, si.todo_id, t.title as todo_title, \
-                 si.status, si.duration_ms, si.invoked_at \
-                 FROM skill_invocations si \
-                 LEFT JOIN todos t ON t.id = si.todo_id \
-                 WHERE si.skill_name = $1 \
-                 ORDER BY si.invoked_at DESC \
-                 LIMIT $2 OFFSET $3".to_string(),
-                vec![name.into(), limit.into(), offset.into()],
-            ),
-            (None, Some(ex)) => (
-                "SELECT si.id, si.skill_name, si.executor, si.todo_id, t.title as todo_title, \
-                 si.status, si.duration_ms, si.invoked_at \
-                 FROM skill_invocations si \
-                 LEFT JOIN todos t ON t.id = si.todo_id \
-                 WHERE si.executor = $1 \
-                 ORDER BY si.invoked_at DESC \
-                 LIMIT $2 OFFSET $3".to_string(),
-                vec![ex.into(), limit.into(), offset.into()],
-            ),
-            (None, None) => (
-                "SELECT si.id, si.skill_name, si.executor, si.todo_id, t.title as todo_title, \
-                 si.status, si.duration_ms, si.invoked_at \
-                 FROM skill_invocations si \
-                 LEFT JOIN todos t ON t.id = si.todo_id \
-                 ORDER BY si.invoked_at DESC \
-                 LIMIT $1 OFFSET $2".to_string(),
-                vec![limit.into(), offset.into()],
-            ),
-        };
-
-        let statement = Statement::from_sql_and_values(backend, sql, params);
-        let rows = self.conn.query_all(statement).await?;
-
-        let mut invocations = Vec::new();
-        for row in rows {
-            let id: i64 = row.try_get_by_index(0)?;
-            let skill_name: String = row.try_get_by_index(1)?;
-            let executor: String = row.try_get_by_index(2)?;
-            let todo_id: i64 = row.try_get_by_index(3).unwrap_or(0);
-            let todo_title: Option<String> = row.try_get_by_index(4).ok();
-            let status: String = row.try_get_by_index(5)?;
-            let duration_ms: Option<i64> = row.try_get_by_index(6).ok();
-            let invoked_at: String = row.try_get_by_index(7)?;
-
-            invocations.push(SkillInvocation {
-                id,
-                skill_name,
-                executor,
-                todo_id,
-                todo_title,
-                invoked_at,
-                status,
-                duration_ms,
-            });
-        }
-        Ok(invocations)
-    }
-
-    pub async fn get_skill_invocations_count(
-        &self,
-        skill_name: Option<&str>,
-        executor: Option<&str>,
-    ) -> Result<i64, sea_orm::DbErr> {
-        let backend = self.conn.get_database_backend();
-
-        let (sql, params): (String, Vec<Value>) = match (skill_name, executor) {
-            (Some(name), Some(ex)) => (
-                "SELECT COUNT(*) FROM skill_invocations WHERE skill_name = $1 AND executor = $2".to_string(),
-                vec![name.into(), ex.into()],
-            ),
-            (Some(name), None) => (
-                "SELECT COUNT(*) FROM skill_invocations WHERE skill_name = $1".to_string(),
-                vec![name.into()],
-            ),
-            (None, Some(ex)) => (
-                "SELECT COUNT(*) FROM skill_invocations WHERE executor = $1".to_string(),
-                vec![ex.into()],
-            ),
-            (None, None) => (
-                "SELECT COUNT(*) FROM skill_invocations".to_string(),
-                vec![],
-            ),
-        };
-
-        let statement = Statement::from_sql_and_values(backend, sql, params);
-        let row = self.conn.query_one(statement).await?;
-
-        row.and_then(|r| r.try_get_by_index(0).ok())
-            .flatten()
-            .ok_or_else(|| sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("Failed to get count".to_string())))
-    }
+    // 「调用追踪」tab 已移除，原 get_skill_invocations / get_skill_invocations_count
+    // 仅服务于该 tab 的列表接口，整体删除。
+    // Dashboard 上的「调用次数 / 成功率」走 db/dashboard.rs 独立聚合路径。
+    // 保留：record_skill_invocation（POST /api/skills/invocations 写入），仍被执行器调用上报。
 
     pub async fn record_skill_invocation(
         &self,
