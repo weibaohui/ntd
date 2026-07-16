@@ -176,23 +176,9 @@ export interface SkillVersionUpdate {
   has_update: boolean;
 }
 
-export interface SkillInvocation {
-  id: number;
-  skill_name: string;
-  executor: string;
-  todo_id: number;
-  todo_title: string | null;
-  invoked_at: string;
-  status: string;
-  duration_ms: number | null;
-}
-
-export interface PaginatedInvocations {
-  items: SkillInvocation[];
-  total: number;
-  page: number;
-  limit: number;
-}
+// SkillInvocation / PaginatedInvocations 类型已被删除——它们仅服务于
+// 已移除的「调用追踪」tab；Dashboard 走 SkillsStats（聚合统计）这条独立路径。
+// 保留：DailySkillInvocation、SkillsStats（dashboard 仍用）。
 
 // ─── Feishu types ────────────────────────────────────────────
 

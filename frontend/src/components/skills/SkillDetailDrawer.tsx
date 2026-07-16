@@ -4,7 +4,6 @@ import Typography from 'antd/es/typography';
 import {
   FileTextOutlined, DownloadOutlined, InfoCircleOutlined,
   SwapOutlined, DeleteOutlined, FolderOutlined,
-  ArrowLeftOutlined, EyeOutlined,
 } from '@ant-design/icons';
 import XMarkdown from '@ant-design/x-markdown';
 import * as db from '@/utils/database';
@@ -12,9 +11,8 @@ import { formatSize, formatTime, EXECUTOR_COLORS } from './helpers';
 import { EXECUTORS, type ExecutorSkills } from '@/types';
 import type { SkillMeta } from '@/types';
 import type { SkillFileInfo } from '@/utils/database/skills';
-import { SkillFileBrowser } from './SkillFileBrowser';
-import { SkillFilePreview } from './SkillFilePreview';
-import { useTheme } from '@/hooks/useTheme';
+import { SkillFileBrowserModal } from './SkillFileBrowserModal';
+import { getSkillContent as dbGetSkillContent, getSkillFileContent as dbGetSkillFileContent } from '@/utils/database/skills';
 
 const { Text } = Typography;
 
@@ -29,8 +27,6 @@ interface SkillDetailDrawerProps {
 }
 
 export function SkillDetailDrawer({ skill, executor, executorLabel, open, onClose, onSyncSuccess, onDeleteSuccess }: SkillDetailDrawerProps) {
-  const { themeMode } = useTheme();
-  const isDark = themeMode === 'dark';
 
   const [content, setContent] = useState<string>('');
   const [files, setFiles] = useState<SkillFileInfo[]>([]);
@@ -39,7 +35,7 @@ export function SkillDetailDrawer({ skill, executor, executorLabel, open, onClos
   const [targetExecutors, setTargetExecutors] = useState<string[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [executorsData, setExecutorsData] = useState<ExecutorSkills[]>([]);
-  const [selectedFile, setSelectedFile] = useState<SkillFileInfo | null>(null);
+  // selectedFile 由 SkillFileBrowserModal 内部管理，无需在此持有
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
 
   useEffect(() => {
@@ -50,9 +46,7 @@ export function SkillDetailDrawer({ skill, executor, executorLabel, open, onClos
           const meta = `# ${data.skill_name}\n\n## 元信息\n- 文件数: ${data.files.length}\n- 大小: ${formatSize(skill.total_size)}\n- 更新时间: ${formatTime(skill.modified_at)}\n\n---\n\n${data.content}`;
           setContent(meta);
           setFiles(data.files);
-          // 默认选中 SKILL.md 文件
-          const skillMd = data.files.find(f => f.path === 'SKILL.md');
-          setSelectedFile(skillMd || data.files[0] || null);
+          // 默认选中由 SkillFileBrowserModal 内部做（找 SKILL.md）
         })
         .catch(() => {
           setContent(`# ${skill.name}\n\n${skill.description || '暂无描述'}\n\n## 元信息\n- 版本: ${skill.version || '未指定'}\n- 作者: ${skill.author || '未知'}\n- 许可证: ${skill.license || '未指定'}\n- 文件数: ${skill.file_count}\n- 大小: ${formatSize(skill.total_size)}\n- 更新时间: ${formatTime(skill.modified_at)}`);
@@ -152,9 +146,9 @@ export function SkillDetailDrawer({ skill, executor, executorLabel, open, onClos
               flexWrap: 'wrap',
               marginBottom: 16,
               padding: '12px',
-              background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)',
-              borderRadius: 8,
-              border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+              background: 'var(--color-bg-card)',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--color-border-light)',
             }}>
               <Button
                 type="primary"
@@ -214,18 +208,18 @@ export function SkillDetailDrawer({ skill, executor, executorLabel, open, onClos
 
             <h3 style={{
               margin: '16px 0 8px',
-              color: isDark ? '#e2e8f0' : '#595959',
+              color: 'var(--color-text)',
             }}>内容预览</h3>
             <XMarkdown
               content={content}
               escapeRawHtml={true}
               style={{
-                fontFamily: 'Fira Code, monospace',
+                fontFamily: 'var(--font-mono)',
                 fontSize: 13,
-                background: isDark ? '#1a1a2e' : '#1e1e1e',
-                color: '#d4d4d4',
+                background: 'var(--color-bg)',
+                color: 'var(--color-text)',
                 padding: '12px',
-                borderRadius: '8px',
+                borderRadius: 'var(--radius-sm)',
               }}
             />
           </div>
@@ -233,8 +227,8 @@ export function SkillDetailDrawer({ skill, executor, executorLabel, open, onClos
         <Modal
           title={
             <Space>
-              <SwapOutlined style={{ color: '#7C3AED' }} />
-              <span>同步 Skill 到其他执行器</span>
+              <SwapOutlined style={{ color: 'var(--color-primary)' }} />
+              <span style={{ color: 'var(--color-text)' }}>同步 Skill 到其他执行器</span>
             </Space>
           }
           open={syncModalOpen}
@@ -283,192 +277,25 @@ export function SkillDetailDrawer({ skill, executor, executorLabel, open, onClos
         </Modal>
       </Drawer>
 
-      {/* 全屏文件浏览器模态框 */}
-      <Modal
-        title={
-          <Space>
-            <FolderOutlined style={{ color: EXECUTOR_COLORS[executor] || '#7C3AED' }} />
-            <span>{skill?.name} - 文件浏览</span>
-            <Tag color={EXECUTOR_COLORS[executor]}>{executorLabel}</Tag>
-            <Tag color="default">{files.length} 个文件</Tag>
-          </Space>
-        }
+      {/* 全屏文件浏览器模态框：复用共享的 SkillFileBrowserModal，
+          loadContent 由本组件提供，按 executor + skillName 调 db 接口读文件内容 */}
+      <SkillFileBrowserModal
         open={fileBrowserOpen}
-        onCancel={() => setFileBrowserOpen(false)}
-        footer={null}
-        width="90vw"
-        style={{ top: 20 }}
-        styles={{
-          body: {
-            height: 'calc(100vh - 100px)',
-            padding: 0,
-            display: 'flex',
-            flexDirection: 'column',
-          },
+        onClose={() => setFileBrowserOpen(false)}
+        title={skill?.name || ''}
+        badgeLabel={executorLabel}
+        files={files}
+        loading={contentLoading}
+        loadContent={async (file) => {
+          // SKILL.md 走主内容接口，其他文件调单文件内容接口
+          if (file.path === 'SKILL.md') {
+            const data = await dbGetSkillContent(executor, skill?.name || '');
+            return data.content;
+          }
+          const data = await dbGetSkillFileContent(executor, skill?.name || '', file.path);
+          return data.content;
         }}
-      >
-        <FileBrowserFullscreen
-          files={files}
-          contentLoading={contentLoading}
-          selectedFile={selectedFile}
-          onFileSelect={setSelectedFile}
-          executor={executor}
-          skillName={skill?.name || ''}
-          isDark={isDark}
-        />
-      </Modal>
+      />
     </>
-  );
-}
-
-// 文件浏览器全屏模态框内容组件，响应式支持手机端切换视图
-function FileBrowserFullscreen({
-  files,
-  contentLoading,
-  selectedFile,
-  onFileSelect,
-  executor,
-  skillName,
-  isDark,
-}: {
-  files: SkillFileInfo[];
-  contentLoading: boolean;
-  selectedFile: SkillFileInfo | null;
-  onFileSelect: (file: SkillFileInfo) => void;
-  executor: string;
-  skillName: string;
-  isDark: boolean;
-}) {
-  // 手机端使用独立状态控制视图模式，避免受 PC 端行为影响
-  const [isMobilePreviewMode, setIsMobilePreviewMode] = useState(false);
-
-  // 切换到文件列表视图时重置预览模式
-  const handleFileSelect = (file: SkillFileInfo) => {
-    onFileSelect(file);
-    // 手机端选中文件后自动进入预览模式
-    setIsMobilePreviewMode(true);
-  };
-
-  // 响应式布局：PC 端保持左右布局，手机端切换为单视图模式
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
-
-  // PC 端或未选中文件时显示左右分栏布局
-  if (!isMobile && !isMobilePreviewMode) {
-    return (
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* 左侧：文件树 */}
-        <div style={{
-          flex: '0 0 280px',
-          borderRight: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
-          overflow: 'auto',
-          background: isDark ? '#1a1a2e' : '#fff',
-        }}>
-          <SkillFileBrowser
-            files={files}
-            loading={contentLoading}
-            onFileSelect={onFileSelect}
-            selectedFile={selectedFile}
-            isDark={isDark}
-          />
-        </div>
-        {/* 右侧：文件预览 */}
-        <div style={{
-          flex: 1,
-          overflow: 'auto',
-          background: isDark ? '#1a1a2e' : '#fff',
-        }}>
-          <SkillFilePreview
-            file={selectedFile}
-            executor={executor}
-            skillName={skillName}
-            isDark={isDark}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  // 手机端：显示文件列表视图或预览视图（通过按钮切换）
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* 手机端顶部切换按钮栏 */}
-      {isMobile && (
-        <div style={{
-          display: 'flex',
-          gap: 8,
-          padding: '8px 12px',
-          borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
-          background: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
-        }}>
-          <Button
-            size="small"
-            icon={<FolderOutlined />}
-            type={!isMobilePreviewMode ? 'primary' : 'default'}
-            onClick={() => setIsMobilePreviewMode(false)}
-          >
-            文件列表
-          </Button>
-          <Button
-            size="small"
-            icon={<EyeOutlined />}
-            type={isMobilePreviewMode ? 'primary' : 'default'}
-            onClick={() => setIsMobilePreviewMode(true)}
-            disabled={!selectedFile}
-          >
-            预览
-          </Button>
-        </div>
-      )}
-
-      {/* 内容区域 */}
-      <div style={{ flex: 1, overflow: 'hidden' }}>
-        {isMobilePreviewMode ? (
-          // 预览视图
-          <div style={{ height: '100%', overflow: 'auto' }}>
-            {/* 手机端预览顶部导航栏 */}
-            {isMobile && (
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '8px 12px',
-                borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
-                background: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
-              }}>
-                <Button
-                  size="small"
-                  icon={<ArrowLeftOutlined />}
-                  onClick={() => setIsMobilePreviewMode(false)}
-                >
-                  返回列表
-                </Button>
-                {selectedFile && (
-                  <Text style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {selectedFile.path}
-                  </Text>
-                )}
-              </div>
-            )}
-            <SkillFilePreview
-              file={selectedFile}
-              executor={executor}
-              skillName={skillName}
-              isDark={isDark}
-            />
-          </div>
-        ) : (
-          // 文件列表视图
-          <div style={{ height: '100%', overflow: 'auto' }}>
-            <SkillFileBrowser
-              files={files}
-              loading={contentLoading}
-              onFileSelect={handleFileSelect}
-              selectedFile={selectedFile}
-              isDark={isDark}
-            />
-          </div>
-        )}
-      </div>
-    </div>
   );
 }

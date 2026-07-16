@@ -240,39 +240,20 @@ pub struct SkillVersionUpdate {
     pub has_update: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillInvocation {
-    pub id: i64,
-    pub skill_name: String,
-    pub executor: String,
-    pub todo_id: i64,
-    pub todo_title: Option<String>,
-    pub invoked_at: String,
-    pub status: String,
-    pub duration_ms: Option<i64>,
-}
+// 注：原 SkillInvocation / PaginatedInvocations / InvocationQuery 仅服务于
+// 前端「调用追踪」tab 的列表接口（GET /api/skills/invocations）。
+// 该 tab 已移除，故删：
+//   - SkillInvocation: 仅 PaginationInvocations.items 引用，删了 Paginated 后也死
+//   - PaginatedInvocations: 列表接口返回值
+//   - InvocationQuery: 列表接口 query 参数
+// 保留：POST /api/skills/invocations（record_invocation）+ record_skill_invocation
+// DB 方法——Dashboard 的「调用次数 / 成功率」走 db/dashboard.rs 聚合统计。
 
 #[derive(Debug, Deserialize)]
 pub struct SyncRequest {
     pub source_executor: String,
     pub skill_name: String,
     pub target_executors: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct InvocationQuery {
-    pub page: Option<i64>,
-    pub limit: Option<i64>,
-    pub skill_name: Option<String>,
-    pub executor: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PaginatedInvocations {
-    pub items: Vec<SkillInvocation>,
-    pub total: i64,
-    pub page: i64,
-    pub limit: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1429,36 +1410,10 @@ fn copy_dir_recursive_flat(src: &std::path::Path, dst: &std::path::Path, flatten
 }
 
 
-/// GET /api/skills/invocations - List skill invocation records
-pub async fn list_invocations(
-    State(state): State<AppState>,
-    Query(query): Query<InvocationQuery>,
-) -> Result<ApiResponse<PaginatedInvocations>, AppError> {
-    let page = query.page.unwrap_or(1).max(1);
-    let limit = query.limit.unwrap_or(20).clamp(1, 100);
-    let offset = ((page - 1).max(0)) * limit;
-
-    let invocations = state.db.get_skill_invocations(
-        offset,
-        limit,
-        query.skill_name.as_deref(),
-        query.executor.as_deref(),
-    ).await.map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let total = state.db.get_skill_invocations_count(
-        query.skill_name.as_deref(),
-        query.executor.as_deref(),
-    ).await.map_err(|e| AppError::Internal(e.to_string()))?;
-
-    Ok(ApiResponse::ok(PaginatedInvocations {
-        items: invocations,
-        total,
-        page,
-        limit,
-    }))
-}
-
 /// POST /api/skills/invocations - Record a skill invocation
+/// （原 GET 列表接口已删除——前端「调用追踪」tab 移除，没有读取方。
+///  Dashboard 的「调用次数/成功率」走 db/dashboard.rs 聚合统计，
+///  与此列表接口是不同的代码路径。）
 pub async fn record_invocation(
     State(state): State<AppState>,
     ApiJson(req): ApiJson<RecordInvocationRequest>,

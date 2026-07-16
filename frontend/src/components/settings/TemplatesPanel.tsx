@@ -1,15 +1,16 @@
 // 模板管理面板
 //
-// 合并两类模板管理：
+// 合并三类模板管理：
 // 1. 专家模板 - 从专家管理页面复用
 // 2. 事项模板 - 从原「事项模板」管理复用
+// 3. Skill 模板 - 从 bundled/skills 目录扫描加载
 //
 // 在 Tab 之间切换。
 // 顶部「远程仓库」配置区统一管理：
 // - 远程仓库地址
 // - 同步策略
 // - 自动同步
-// - 子目录同步（全部/专家/事项）
+// - 同步全部（experts + todos + skills）
 
 import { useState, useEffect, useCallback } from 'react';
 import {
@@ -41,6 +42,7 @@ import { CronPresetSelect } from '@/components/CronPresetSelect';
 import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '@/utils/cron';
 import { ExpertsTemplatesTab } from './templates/ExpertsTemplatesTab';
 import { TodoTemplatesTab } from './templates/TodoTemplatesTab';
+import { SkillTemplatesTab } from './templates/SkillTemplatesTab';
 import { bundledApi } from '@/api/bundled';
 
 /**
@@ -53,10 +55,12 @@ import { bundledApi } from '@/api/bundled';
  */
 export function TemplatesPanel() {
   const { message } = App.useApp();
-  const [activeTab, setActiveTab] = useState<'experts' | 'todos'>('experts');
+  const [activeTab, setActiveTab] = useState<'experts' | 'todos' | 'skills'>('experts');
   const [configModalOpen, setConfigModalOpen] = useState(false);
   const [statusModalOpen, setStatusModalOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  // 同步成功后递增，作为传给 SkillTemplatesTab 的刷新信号；tab 自行据此重拉列表，避免列表陈旧。
+  const [skillRefreshTick, setSkillRefreshTick] = useState(0);
   const [status, setStatus] = useState<any>(null);
   const [config, setConfig] = useState<any>(null);
 
@@ -90,16 +94,18 @@ export function TemplatesPanel() {
   }, [loadStatus, loadConfig]);
 
   /**
-   * 触发同步
+   * 触发同步（同步全部资源：experts + todos + skills）
    */
-  const handleSync = async (subdir: 'all' | 'experts' | 'todos') => {
+  const handleSync = async () => {
     setSyncing(true);
-    const hide = antMessage.loading(`正在同步${subdirLabel(subdir)}...`, 0);
+    const hide = antMessage.loading('正在同步全部资源...', 0);
     try {
-      const res = await bundledApi.sync({ subdir, strategy: 'overwrite' });
+      const res = await bundledApi.sync({ subdir: 'all', strategy: 'overwrite' });
       if (res?.success) {
         message.success(`同步成功: ${res.message}`);
         await loadStatus();
+        // skills 也被 subdir 'all' 一起同步了，递增 tick 让 Skill 模板 Tab 重拉，避免列表陈旧。
+        setSkillRefreshTick((t) => t + 1);
       } else {
         message.warning(res?.message || '同步未完成');
       }
@@ -138,7 +144,7 @@ export function TemplatesPanel() {
             type="primary"
             icon={<ReloadOutlined spin={syncing} />}
             loading={syncing}
-            onClick={() => handleSync('all')}
+            onClick={handleSync}
           >
             立即同步
           </Button>
@@ -147,7 +153,7 @@ export function TemplatesPanel() {
 
       <Tabs
         activeKey={activeTab}
-        onChange={(k) => setActiveTab(k as 'experts' | 'todos')}
+        onChange={(k) => setActiveTab(k as 'experts' | 'todos' | 'skills')}
         items={[
           {
             key: 'experts',
@@ -179,6 +185,21 @@ export function TemplatesPanel() {
               <TodoTemplatesTab />
             ),
           },
+          {
+            key: 'skills',
+            label: (
+              <Space>
+                <span>Skill 模板</span>
+                <SyncBadge
+                  fileCount={status?.subdir === 'skills' ? status?.subdir_file_count : undefined}
+                  needsUpdate={status?.subdir === 'skills' ? status?.needs_update : undefined}
+                />
+              </Space>
+            ),
+            children: (
+              <SkillTemplatesTab refreshTick={skillRefreshTick} />
+            ),
+          },
         ]}
       />
 
@@ -198,25 +219,14 @@ export function TemplatesPanel() {
         open={statusModalOpen}
         status={status}
         onClose={() => setStatusModalOpen(false)}
-        onSync={async (subdir) => {
+        onSync={async () => {
           setStatusModalOpen(false);
-          await handleSync(subdir);
+          await handleSync();
         }}
         onRefresh={loadStatus}
       />
     </div>
   );
-}
-
-function subdirLabel(s: string): string {
-  switch (s) {
-    case 'experts':
-      return '专家模板';
-    case 'todos':
-      return '事项模板';
-    default:
-      return '全部资源';
-  }
 }
 
 /**
@@ -353,7 +363,7 @@ function StatusModal({
   open: boolean;
   status: any;
   onClose: () => void;
-  onSync: (subdir: 'all' | 'experts' | 'todos') => void;
+  onSync: () => void;
   onRefresh: () => void;
 }) {
   return (
@@ -365,13 +375,7 @@ function StatusModal({
         <Button key="refresh" icon={<ReloadOutlined />} onClick={onRefresh}>
           刷新
         </Button>,
-        <Button key="experts" onClick={() => onSync('experts')}>
-          同步专家
-        </Button>,
-        <Button key="todos" onClick={() => onSync('todos')}>
-          同步事项模板
-        </Button>,
-        <Button key="all" type="primary" onClick={() => onSync('all')}>
+        <Button key="all" type="primary" onClick={onSync}>
           同步全部
         </Button>,
       ]}

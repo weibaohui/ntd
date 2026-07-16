@@ -49,6 +49,109 @@ export interface SyncResult {
 }
 
 /**
+ * 技能来源元数据
+ * 从 skills/{source}/metadata.json 读取的信息
+ */
+export interface SkillSourceMeta {
+  /** 来源标识（与目录名一致） */
+  name: string;
+  /** 展示名称 */
+  display_name: string;
+  /** 来源描述 */
+  description: string;
+  /** GitHub 地址 */
+  github_url: string;
+  /** Star 数量 */
+  stars: number;
+  /** 许可证 */
+  license?: string;
+  /** 作者/组织 */
+  author?: string;
+}
+
+/**
+ * Bundled Skill 元数据
+ * 从 ~/.ntd/bundled/skills/ 目录扫描得到的技能信息
+ */
+export interface BundledSkillMeta {
+  /** 完整路径名（如 awesome-skills-zh/lark-doc） */
+  name: string;
+  /** 短名称（最后一段，如 lark-doc） */
+  short_name: string;
+  /** 来源（第一段目录名，如 awesome-skills-zh） */
+  source: string;
+  /** 来源元数据 */
+  source_meta?: SkillSourceMeta;
+  /** 描述 */
+  description: string;
+  /** 中文描述 */
+  description_zh?: string;
+  /** 版本号 */
+  version?: string;
+  /** 作者 */
+  author?: string;
+  /** 许可证 */
+  license?: string;
+  /** 文件数 */
+  file_count: number;
+  /** 总大小（字节） */
+  total_size: number;
+  /** 最后修改时间 */
+  modified_at?: string;
+}
+
+/**
+ * Bundled Skills 列表响应
+ */
+export interface BundledSkillsResponse {
+  skills: BundledSkillMeta[];
+  /** 来源分类信息（key 为 source 名称） */
+  sources: Record<string, SkillSourceMeta>;
+  total: number;
+}
+
+/**
+ * Bundled Skill 文件信息
+ */
+export interface BundledSkillFile {
+  /** 相对路径 */
+  path: string;
+  /** 文件大小（字节） */
+  size: number;
+}
+
+/**
+ * Bundled Skill 内容响应
+ */
+export interface BundledSkillContentResponse {
+  /** 技能名称 */
+  skill_name: string;
+  /** SKILL.md 文本内容 */
+  content: string;
+  /** 文件列表 */
+  files: BundledSkillFile[];
+}
+
+/**
+ * 安装技能请求
+ */
+export interface InstallSkillRequest {
+  /** 技能完整路径名 */
+  skill_name: string;
+  /** 目标执行器 */
+  executor: string;
+}
+
+/**
+ * 安装技能响应
+ */
+export interface InstallSkillResponse {
+  success: boolean;
+  message: string;
+  target_path: string;
+}
+
+/**
  * 内置资源同步 API
  */
 export const bundledApi = {
@@ -83,6 +186,37 @@ export const bundledApi = {
    */
   async updateConfig(config: Partial<BundledConfig>): Promise<BundledConfig> {
     return unwrap(await api.put('/api/bundled/config', config));
+  },
+
+  // ---------------------------------------------------------------------------
+  // 技能市场 API
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 获取技能市场中的所有技能
+   * 扫描 ~/.ntd/bundled/skills/ 目录，返回可安装的技能列表
+   */
+  async getSkills(): Promise<BundledSkillsResponse> {
+    return unwrap(await api.get('/api/bundled/skills'));
+  },
+
+  /**
+   * 获取技能的 SKILL.md 内容和文件列表
+   * 用于详情 Drawer 展示
+   */
+  async getSkillContent(skillName: string): Promise<BundledSkillContentResponse> {
+    return unwrap(await api.get(`/api/bundled/skills/${encodeURIComponent(skillName)}/content`));
+  },
+
+  /**
+   * 安装技能到指定执行器
+   * 将 bundled/skills/{skill_name} 复制到目标执行器的 skills 目录
+   */
+  async installSkill(skillName: string, executor: string): Promise<InstallSkillResponse> {
+    return unwrap(await api.post('/api/bundled/skills/install', {
+      skill_name: skillName,
+      executor,
+    }));
   },
 };
 
