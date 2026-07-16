@@ -110,31 +110,29 @@ pub struct StatusResponse {
     pub subdir_file_count: usize,
 }
 
-/// 手动触发同步
+/// 执行一次完整的内置资源同步：git clone/pull +（按 subdir）导入事项模板 + 重载专家 + 写 last_sync_at。
 ///
-/// POST /api/bundled/sync
-pub async fn sync_bundled(
-    State(state): State<AppState>,
-    Json(req): Json<SyncRequest>,
-) -> Result<ApiResponse<SyncResponse>, AppError> {
-    let cfg = state.config_clone();
-    let bundled_config = &cfg.bundled_source;
+/// 抽自 sync_bundled handler，供 HTTP 接口与启动检查任务共用，避免逻辑分叉。
+/// 返回 git 层 SyncResult，调用方据此组装 HTTP 响应或日志。
+pub(crate) async fn run_bundled_sync(
+    state: &AppState,
+    subdir: Subdir,
+    strategy: git_sync::SyncStrategy,
+) -> Result<git_sync::SyncResult, String> {
+    // 先快照出 owned bundled 配置并立即释放读锁卫，后续 .await 不持锁、future 保持 Send
+    let bundled_config = state.config_snapshot(|c| c.bundled_source.clone());
 
-    let repo_path = match git_sync::bundled_dir(&bundled_config.local_path) {
-        Some(p) => p,
-        None => return Err(AppError::BadRequest("无法获取 home 目录".to_string())),
-    };
+    let repo_path = git_sync::bundled_dir(&bundled_config.local_path)
+        .ok_or_else(|| "无法获取 home 目录".to_string())?;
 
-    let strategy = git_sync::SyncStrategy::from(req.strategy.as_str());
-    let subdir = req.subdir;
-
+    // 本地缺失或非合法 git 仓库 → 克隆；已存在 → 按策略同步更新
     let result = if !repo_path.exists() || !repo_path.join(".git").exists() {
         if repo_path.exists() {
+            // 目录存在但不是 git 仓库，清理后重新克隆，避免脏目录卡住 sync
             tracing::info!("本地目录存在但不是 git 仓库，清理后重新克隆");
-            if let Err(e) = tokio::fs::remove_dir_all(&repo_path).await {
-                tracing::error!("清理旧目录失败: {}", e);
-                return Err(AppError::Internal(format!("清理旧目录失败: {}", e)));
-            }
+            tokio::fs::remove_dir_all(&repo_path)
+                .await
+                .map_err(|e| format!("清理旧目录失败: {}", e))?;
         } else {
             tracing::info!("本地目录不存在，执行首次克隆");
         }
@@ -144,33 +142,48 @@ pub async fn sync_bundled(
         git_sync::sync_repo(&repo_path, "origin", &bundled_config.branch, strategy).await
     };
 
-    match result {
-        Ok(r) => {
-            update_last_sync_time(&state).await;
-            
-            // 同步完成后，如果子目录是 todos，触发数据库导入
-            if subdir == Subdir::Todos || subdir == Subdir::All {
-                if let Err(e) = import_todo_templates_from_bundled(&state).await {
-                    tracing::error!("从 bundled 导入事项模板失败: {}", e);
-                }
-            }
-            
-            // 同步完成后，如果子目录是 experts，触发专家重新加载
-            if subdir == Subdir::Experts || subdir == Subdir::All {
-                if let Err(e) = reload_experts_from_bundled(&state).await {
-                    tracing::error!("从 bundled 重新加载专家失败: {}", e);
-                }
-            }
-            
-            Ok(ApiResponse::ok(SyncResponse {
-                success: r.success,
-                message: r.message,
-                is_first_clone: r.is_first_clone,
-                has_updates: r.has_updates,
-                changed_files: r.changed_files,
-                subdir: subdir.as_str().to_string(),
-            }))
+    let r = result.map_err(|e| e.to_string())?;
+
+    // 刷新 last_sync_at：供启动检查的冷却判断使用
+    update_last_sync_time(state).await;
+
+    // todos / all：把 bundled/todos 下的模板导入数据库（失败不阻断，仅记日志）
+    if subdir == Subdir::Todos || subdir == Subdir::All {
+        if let Err(e) = import_todo_templates_from_bundled(state).await {
+            tracing::error!("从 bundled 导入事项模板失败: {}", e);
         }
+    }
+
+    // experts / all：重载专家索引（bundled 系统 + 用户自定义）
+    if subdir == Subdir::Experts || subdir == Subdir::All {
+        if let Err(e) = reload_experts_from_bundled(state).await {
+            tracing::error!("从 bundled 重新加载专家失败: {}", e);
+        }
+    }
+
+    Ok(r)
+}
+
+/// 手动触发同步
+///
+/// POST /api/bundled/sync
+pub async fn sync_bundled(
+    State(state): State<AppState>,
+    Json(req): Json<SyncRequest>,
+) -> Result<ApiResponse<SyncResponse>, AppError> {
+    let subdir = req.subdir;
+    let strategy = git_sync::SyncStrategy::from(req.strategy.as_str());
+
+    // 实际同步逻辑抽到 run_bundled_sync，handler 只负责参数解析与响应组装
+    match run_bundled_sync(&state, subdir, strategy).await {
+        Ok(r) => Ok(ApiResponse::ok(SyncResponse {
+            success: r.success,
+            message: r.message,
+            is_first_clone: r.is_first_clone,
+            has_updates: r.has_updates,
+            changed_files: r.changed_files,
+            subdir: subdir.as_str().to_string(),
+        })),
         Err(e) => {
             tracing::error!("同步失败: {}", e);
             Err(AppError::Internal(format!("同步失败: {}", e)))

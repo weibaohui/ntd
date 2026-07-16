@@ -68,6 +68,8 @@ const DEFAULT_AUTO_USAGE_STATS_CRON: &str = "0 0 1 * * *";
 const DEFAULT_AUTO_UPDATE_HOUR: u32 = 3;
 /// 自动更新默认间隔类型:"day" / "week" / "month"。
 const DEFAULT_AUTO_UPDATE_INTERVAL: &str = "day";
+/// 启动时是否同步内置资源（专家/事项模板）。默认开启：每次启动拉取最新 bundled 资源。
+const DEFAULT_SYNC_ON_STARTUP: bool = true;
 
 /// 私有 helper:`auto_backup_*` / `auto_todo_backup_*` / `auto_skill_backup_*`
 /// 三组字段共享同一形状 (enabled: bool, cron: String, max_files: usize)。
@@ -269,6 +271,8 @@ pub struct BundledSourceConfig {
     pub auto_sync_enabled: bool,
     /// 自动同步 cron 表达式（6 字段，含秒）
     pub auto_sync_cron: String,
+    /// 启动时是否同步内置资源（每次启动异步拉取最新专家/事项模板）
+    pub sync_on_startup: bool,
     /// 上次同步时间
     pub last_sync_at: Option<String>,
 }
@@ -281,6 +285,7 @@ impl Default for BundledSourceConfig {
             local_path: "bundled".to_string(),
             auto_sync_enabled: false,
             auto_sync_cron: "0 0 4 * * *".to_string(),
+            sync_on_startup: DEFAULT_SYNC_ON_STARTUP,
             last_sync_at: None,
         }
     }

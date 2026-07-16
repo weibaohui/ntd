@@ -380,7 +380,7 @@ async fn build_app_state(
     // 后台监听 todo 执行完成事件，派发给 loop_trigger_dispatcher
     spawn_todo_completed_listener(&tx, loop_trigger_dispatcher.clone());
 
-    AppState {
+    let state = AppState {
         db,
         executor_registry,
         tx: tx.clone(),
@@ -393,7 +393,13 @@ async fn build_app_state(
         loop_trigger_dispatcher,
         loop_runner,
         expert_manager: ctx.expert_manager.clone(),
-    }
+    };
+
+    // 启动检查（一次性异步任务）：按配置同步内置资源（专家/事项模板），全程非阻塞。
+    // 放在 AppState 构造之后，使该任务能复用与 handler 同一套 run_bundled_sync 逻辑。
+    crate::services::startup_check::spawn_startup_check(state.clone());
+
+    state
 }
 
 /// 初始化 Loop Studio 三件套：runner / dispatcher / scheduler。
