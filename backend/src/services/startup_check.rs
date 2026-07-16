@@ -42,6 +42,15 @@ async fn sync_resources(state: &AppState) {
         return;
     }
 
+    // 没装 git 时同步必然失败：提前探测给出明确提示并跳过，避免被笼统记成「同步失败」。
+    // 非阻塞——只 warn，不 panic、不影响主进程。
+    if !crate::git_sync::is_git_available() {
+        tracing::warn!(
+            "[startup-check] 未检测到 git，跳过内置资源同步。请安装 git 后重启，以拉取最新专家/事项模板。"
+        );
+        return;
+    }
+
     tracing::info!("[startup-check] 开始同步内置资源（专家 + 事项模板）");
     // Overwrite：bundled 是系统资源，远程为准；用户自定义在独立目录，不受影响。
     match run_bundled_sync(state, Subdir::All, SyncStrategy::Overwrite).await {

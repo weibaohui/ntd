@@ -395,7 +395,7 @@ async fn build_app_state(
         expert_manager: ctx.expert_manager.clone(),
     };
 
-    // 启动检查（一次性异步任务）：查新版本（仅提示）+ 按配置同步内置资源，全程非阻塞。
+    // 启动检查（一次性异步任务）：按配置同步内置资源（专家/事项模板），全程非阻塞。
     // 放在 AppState 构造之后，使该任务能复用与 handler 同一套 run_bundled_sync 逻辑。
     crate::services::startup_check::spawn_startup_check(state.clone());
 

@@ -79,6 +79,15 @@ impl GitSyncError {
     }
 }
 
+/// 环境中是否可用 git。
+///
+/// 供启动检查等场景在同步前探测：未安装 git 时给出明确提示并跳过同步，
+/// 而不是让 git_sync 抛错后被笼统记成「同步失败」、更不会 panic 主进程。
+/// 与 `run_git_command` 用同一套 `which::which("git")` 探测，保持单一事实来源。
+pub fn is_git_available() -> bool {
+    which::which("git").is_ok()
+}
+
 /// 执行 git 命令
 ///
 /// # 参数
@@ -368,5 +377,12 @@ mod tests {
     fn test_count_changed_files() {
         let output = "Updating abc123..def456\nFast-forward\n create mode 100644 experts/test.md\n delete mode 100644 experts/old.md";
         assert_eq!(count_changed_files(output), 3);
+    }
+
+    #[test]
+    fn test_is_git_available_when_git_present() {
+        // 开发/CI 环境通常装了 git；此处验证探测函数在 git 存在时返回 true 且不 panic。
+        // （git 缺失的分支无法在装了 git 的环境里测试，属可接受限制。）
+        assert!(is_git_available());
     }
 }
