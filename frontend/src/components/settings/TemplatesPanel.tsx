@@ -14,6 +14,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
+  Alert,
   App,
   Button,
   Empty,
@@ -44,6 +45,7 @@ import { ExpertsTemplatesTab } from './templates/ExpertsTemplatesTab';
 import { TodoTemplatesTab } from './templates/TodoTemplatesTab';
 import { SkillTemplatesTab } from './templates/SkillTemplatesTab';
 import { bundledApi } from '@/api/bundled';
+import { InstallGitButton } from './InstallGitButton';
 
 /**
  * 模板管理面板入口
@@ -97,6 +99,14 @@ export function TemplatesPanel() {
    * 触发同步（同步全部资源：experts + todos + skills）
    */
   const handleSync = async () => {
+    // 前置依赖检查：git 没装时同步注定失败（后端靠系统 git CLI 拉仓库），
+    // 干脆别发那个注定 500 的请求，直接引导用户去装 git，体验远好于事后看一条笼统错误。
+    if (status && !status.git_available) {
+      message.warning('未检测到 Git，请先安装 Git 后再同步');
+      // 弹出状态面板：里面「Git 运行环境」那行带「安装 Git」按钮，指给用户一条明路
+      setStatusModalOpen(true);
+      return;
+    }
     setSyncing(true);
     const hide = antMessage.loading('正在同步全部资源...', 0);
     try {
@@ -119,6 +129,19 @@ export function TemplatesPanel() {
 
   return (
     <div className="ntd-templates-panel">
+      {/* git 是 bundled 资源同步的硬前置依赖：缺失时在面板顶部强提示 + 内联一键安装入口，
+          而不是等用户点了「立即同步」再去吃一个笼统的 500。装完 onInstalled 触发 loadStatus 重探，
+          status.git_available 变 true 后本横幅自动消失。 */}
+      {status && !status.git_available && (
+        <Alert
+          showIcon
+          type="error"
+          style={{ marginBottom: 16 }}
+          message="未检测到 Git"
+          description="远程仓库同步依赖系统 Git，当前环境未检测到。请先安装 Git，安装后即可同步专家 / 事项 / Skill 模板。"
+          action={<InstallGitButton onInstalled={loadStatus} buttonType="primary" showLabel />}
+        />
+      )}
       <Space style={{ marginBottom: 16 }}>
         <Tooltip title="查看同步状态">
           <Button
@@ -383,6 +406,22 @@ function StatusModal({
     >
       {status ? (
         <Descriptions column={1} bordered size="small">
+          {/* Git 运行环境放第一行：这是同步能否进行的最关键前置条件，
+              缺失时直接在行内给「安装 Git」按钮（onRefresh 重探后标签转绿）。 */}
+          <Descriptions.Item label="Git 运行环境">
+            {status.git_available ? (
+              <Tag color="green" icon={<CheckCircleOutlined />}>
+                已安装
+              </Tag>
+            ) : (
+              <Space>
+                <Tag color="red" icon={<ExclamationCircleOutlined />}>
+                  未安装
+                </Tag>
+                <InstallGitButton onInstalled={onRefresh} buttonSize="small" />
+              </Space>
+            )}
+          </Descriptions.Item>
           <Descriptions.Item label="远程仓库">{status.remote_url}</Descriptions.Item>
           <Descriptions.Item label="分支">{status.branch}</Descriptions.Item>
           <Descriptions.Item label="本地路径">{status.local_path}</Descriptions.Item>
