@@ -28,7 +28,7 @@ const { Text } = Typography;
  * - 刷新列表（重新扫描 bundled/skills 目录）
  * - 查看技能名称、来源、描述、版本等信息
  */
-export function SkillTemplatesTab() {
+export function SkillTemplatesTab({ refreshTick }: { refreshTick?: number }) {
   const { message } = App.useApp();
   const [skills, setSkills] = useState<BundledSkillMeta[]>([]);
   const [loading, setLoading] = useState(false);
@@ -48,9 +48,10 @@ export function SkillTemplatesTab() {
     }
   }, [message]);
 
+  // mount 时加载一次；父组件同步成功后会递增 refreshTick，这里据此重拉，保证列表不陈旧。
   useEffect(() => {
     loadSkills();
-  }, [loadSkills]);
+  }, [loadSkills, refreshTick]);
 
   const columns = [
     {

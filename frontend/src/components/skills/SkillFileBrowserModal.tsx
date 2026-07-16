@@ -10,7 +10,7 @@
  * 内部仍复用 SkillFileBrowser（左侧/手机端文件树）+ SkillFilePreview（预览）。
  * Mobile 端通过顶部「文件列表/预览」按钮切换视图。
  */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Modal, Button, Space, Tag, Typography } from 'antd';
 import { FolderOutlined, EyeOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { SkillFileBrowser } from './SkillFileBrowser';
@@ -54,6 +54,12 @@ export function SkillFileBrowserModal({
   // 响应式判断：构造时取一次窗口宽度即可（不需要 resize 监听——drawer/modal 本身会
   // 处理宽高变化，这种 file browser 在小窗下用户体验差异不大）
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+
+  // files 变化（切到另一个技能的文件列表）时重置选中：否则会串显上一个技能残留的 selectedFile，
+  // 出现「标题是 B 技能、内容却是 A 技能文件」的错位。默认仍优先选 SKILL.md，与初始化一致。
+  useEffect(() => {
+    setSelectedFile(files.find(f => f.path === 'SKILL.md') || files[0] || null);
+  }, [files]);
 
   const handleFileSelect = (file: SkillFileInfo) => {
     setSelectedFile(file);

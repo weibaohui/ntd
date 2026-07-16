@@ -59,6 +59,8 @@ export function TemplatesPanel() {
   const [configModalOpen, setConfigModalOpen] = useState(false);
   const [statusModalOpen, setStatusModalOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  // 同步成功后递增，作为传给 SkillTemplatesTab 的刷新信号；tab 自行据此重拉列表，避免列表陈旧。
+  const [skillRefreshTick, setSkillRefreshTick] = useState(0);
   const [status, setStatus] = useState<any>(null);
   const [config, setConfig] = useState<any>(null);
 
@@ -102,6 +104,8 @@ export function TemplatesPanel() {
       if (res?.success) {
         message.success(`同步成功: ${res.message}`);
         await loadStatus();
+        // skills 也被 subdir 'all' 一起同步了，递增 tick 让 Skill 模板 Tab 重拉，避免列表陈旧。
+        setSkillRefreshTick((t) => t + 1);
       } else {
         message.warning(res?.message || '同步未完成');
       }
@@ -193,7 +197,7 @@ export function TemplatesPanel() {
               </Space>
             ),
             children: (
-              <SkillTemplatesTab />
+              <SkillTemplatesTab refreshTick={skillRefreshTick} />
             ),
           },
         ]}

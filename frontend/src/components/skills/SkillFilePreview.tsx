@@ -37,12 +37,17 @@ export function SkillFilePreview({
   useEffect(() => {
     if (!file) {
       setContent('');
+      // 兜底关 loading：从「正在异步加载的文件」切回未选时，旧请求的 finally 因 cancelled
+      // 不会重置 contentLoading，这里显式关掉，避免 spinner 残留卡死。
+      setContentLoading(false);
       return;
     }
 
     // 预设命中：路径一致且有缓存，直接用，避免重复请求
     if (presetPath && presetContent && file.path === presetPath) {
       setContent(presetContent);
+      // 同上：从异步加载切到 preset 命中时，旧请求不会清 loading，这里兜底关掉，避免卡 spinner。
+      setContentLoading(false);
       return;
     }
 

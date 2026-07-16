@@ -8,7 +8,7 @@
  * 交互逻辑与「总览」一致：
  * - 点击技能卡片 → Drawer 详情 → 安装 → 选择执行器
  */
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Card, Tag, Input, Empty, Spin, App,
   Drawer, Descriptions, Button, Space, Modal, Checkbox, Row, Col,
@@ -63,7 +63,14 @@ function SourceCard({
     // 但 CSS 选择器需要它才能 hover 抬升/换描边
     <div className="market-source-card" role="button" tabIndex={0}
       onClick={onClick}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+      onKeyDown={(e) => {
+        // 仅当焦点落在卡片本身（而非内部可聚焦子元素，如 GitHub 链接）时才触发；
+        // 否则 Enter 会从子链接冒泡上来被 preventDefault，导致链接反而打不开。
+        if (e.currentTarget === e.target && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          onClick();
+        }
+      }}
     >
     <Card
       size="small"
@@ -197,7 +204,14 @@ function MarketSkillCard({ skill, installedExecutors, onClick }: {
     <div className="market-skill-card" role="button" tabIndex={0}
       aria-label={skill.short_name}
       onClick={onClick}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+      onKeyDown={(e) => {
+        // 仅当焦点落在卡片本身（而非内部可聚焦子元素，如 GitHub 链接）时才触发；
+        // 否则 Enter 会从子链接冒泡上来被 preventDefault，导致链接反而打不开。
+        if (e.currentTarget === e.target && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          onClick();
+        }
+      }}
     >
     <Card
       size="small"
@@ -333,6 +347,10 @@ export function SkillMarketplace() {
   const [files, setFiles] = useState<BundledSkillFile[]>([]);
   const [contentLoading, setContentLoading] = useState(false);
 
+  // 详情请求竞态守卫：每次点击自增并记下本次序号；晚返回的旧请求若发现序号已变就丢弃结果，
+  // 避免快速连点 A→B 时 A 的内容把 B 的详情覆盖掉（旧请求的 finally 也不会误关 B 的 loading）。
+  const detailReqIdRef = useRef(0);
+
   // ── 安装 Modal 状态 ──
   const [installModalOpen, setInstallModalOpen] = useState(false);
   const [targetExecutors, setTargetExecutors] = useState<string[]>([]);
@@ -439,6 +457,9 @@ export function SkillMarketplace() {
 
   // ── 点击技能卡片 ──
   const handleCardClick = async (skill: BundledSkillMeta) => {
+    // 先占坑：立即清空旧内容并打开 Drawer，让用户感到响应即时；
+    // 真正的内容等异步返回、且确认仍是最新请求后才写入。
+    const reqId = ++detailReqIdRef.current;
     setSelectedSkill(skill);
     setDrawerOpen(true);
     setContent('');
@@ -446,12 +467,16 @@ export function SkillMarketplace() {
     setContentLoading(true);
     try {
       const res = await bundledApi.getSkillContent(skill.name);
+      // 序号已变 → 等待期间用户又点了别的技能，丢弃这次过期结果，不覆盖新选中技能。
+      if (reqId !== detailReqIdRef.current) return;
       setContent(res.content);
       setFiles(res.files);
     } catch {
+      if (reqId !== detailReqIdRef.current) return;
       setContent('加载内容失败');
     } finally {
-      setContentLoading(false);
+      // 只关「最新那次」请求的 loading；过期请求的 loading 由接管它的新请求自己管理。
+      if (reqId === detailReqIdRef.current) setContentLoading(false);
     }
   };
 
