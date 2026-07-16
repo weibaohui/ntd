@@ -113,6 +113,10 @@ pub struct StatusResponse {
     pub subdir_exists: bool,
     /// 子目录下文件数
     pub subdir_file_count: usize,
+    /// 环境中是否安装了 git —— bundled 资源同步的前置依赖（同步靠系统 git CLI 完成）。
+    /// 单独暴露给前端：让前端在「模板管理」页就展示「未检测到 Git + 一键安装」入口，
+    /// 而不是等到用户点「立即同步」、收到一个笼统的 500 错误之后才知道根因。
+    pub git_available: bool,
 }
 
 /// 执行一次完整的内置资源同步：git clone/pull +（按 subdir）导入事项模板 + 重载专家 + 写 last_sync_at。
@@ -277,6 +281,10 @@ pub async fn get_bundled_status(
         subdir: subdir_name.to_string(),
         subdir_exists,
         subdir_file_count,
+        // 直接同步调用 is_git_available：which::which("git") 只做一次 PATH 目录扫描，
+        // 耗时在微秒级，不值得为此 spawn_blocking 占一个阻塞线程池槽位。
+        // 与启动检查（services/startup_check.rs）用的是同一个探测函数，单一事实来源。
+        git_available: git_sync::is_git_available(),
     }))
 }
 

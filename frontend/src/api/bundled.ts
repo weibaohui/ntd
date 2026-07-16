@@ -28,6 +28,8 @@ export interface BundledStatus {
   subdir: string;
   subdir_exists: boolean;
   subdir_file_count: number;
+  /** 环境中是否安装了 git（同步的前置依赖）；false 时前端展示「一键安装 Git」入口 */
+  git_available: boolean;
 }
 
 export interface BundledConfig {
