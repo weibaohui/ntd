@@ -5,53 +5,73 @@ import {
 } from '@ant-design/icons';
 import XMarkdown from '@ant-design/x-markdown';
 import type { SkillFileInfo } from '@/utils/database/skills';
-import { getSkillContent, getSkillFileContent } from '@/utils/database/skills';
 import { formatSize, formatTime, getFileColor } from './helpers';
 
 const { Text } = Typography;
 
 interface SkillFilePreviewProps {
   file: SkillFileInfo | null;
-  executor: string;
-  skillName: string;
+  /**
+   * 加载文件内容：父组件决定怎么取——
+   * - 已安装技能：调 db.getSkillFileContent(executor, skillName, file.path)
+   * - 市场 bundled 技能：path === 'SKILL.md' 时返回缓存内容，其他文件返回不支持
+   */
+  loadContent: (file: SkillFileInfo) => Promise<string>;
+  /** 父组件已缓存的 SKILL.md 等文件类型，用于"主内容"路径——比如 SKILL.md 直接读这个，省一次 API */
+  presetContent?: string;
+  presetPath?: string;
   loading?: boolean;
   isDark?: boolean;
 }
 
-export function SkillFilePreview({ file, executor, skillName, loading, isDark }: SkillFilePreviewProps) {
+export function SkillFilePreview({
+  file,
+  loadContent,
+  presetContent,
+  presetPath,
+  loading,
+  isDark,
+}: SkillFilePreviewProps) {
   const [content, setContent] = useState<string>('');
   const [contentLoading, setContentLoading] = useState(false);
 
-  // 加载文件内容
+  // 加载文件内容——优先用 presetContent（父组件已知的内容），否则调 loadContent
   useEffect(() => {
     if (!file) {
       setContent('');
       return;
     }
 
-    // 对于 SKILL.md 文件，使用主内容
-    if (file.path === 'SKILL.md') {
-      setContentLoading(true);
-      getSkillContent(executor, skillName)
-        .then(data => setContent(data.content))
-        .catch(() => setContent('无法加载文件内容'))
-        .finally(() => setContentLoading(false));
+    // 预设命中：路径一致且有缓存，直接用，避免重复请求
+    if (presetPath && presetContent && file.path === presetPath) {
+      setContent(presetContent);
       return;
     }
 
-    // 对于其他文件，通过 API 获取单文件内容
+    let cancelled = false;
     setContentLoading(true);
-    getSkillFileContent(executor, skillName, file.path)
-      .then(data => setContent(data.content))
-      .catch(() => setContent(`# ${file.path}\n\n文件信息：\n- 大小: ${formatSize(file.size)}\n- 修改时间: ${formatTime(file.modified_at)}\n\n---\n\n[无法加载文件内容]`))
-      .finally(() => setContentLoading(false));
-  }, [file, executor, skillName]);
+    loadContent(file)
+      .then(data => {
+        if (!cancelled) setContent(data);
+      })
+      .catch(err => {
+        if (!cancelled) {
+          setContent(
+            `# ${file.path}\n\n文件信息：\n- 大小: ${formatSize(file.size)}\n- 修改时间: ${formatTime(file.modified_at ?? null)}\n\n---\n\n[无法加载文件内容: ${err?.message || String(err)}]`
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setContentLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [file, loadContent, presetContent, presetPath]);
 
-  // 主题相关颜色
-  const bgColor = isDark ? '#1a1a2e' : '#1e1e1e';
-  const headerBg = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)';
-  const borderColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
-  const secondaryColor = isDark ? '#94a3b8' : '#64748b';
+  // 主题相关颜色（用 CSS 变量，亮/暗双主题自动跟随）
+  const bgColor = 'var(--color-bg)';
+  const headerBg = 'var(--color-bg-card)';
+  const borderColor = 'var(--color-border-light)';
+  const secondaryColor = 'var(--color-text-tertiary)';
 
   if (!file) {
     return (
@@ -91,7 +111,7 @@ export function SkillFilePreview({ file, executor, skillName, loading, isDark }:
       }}>
         <Space size={8}>
           <FileOutlined style={{ color: getFileColor(file.path, isDark) }} />
-          <Text strong style={{ fontSize: 13 }}>{file.path}</Text>
+          <Text strong style={{ fontSize: 13, color: 'var(--color-text)' }}>{file.path}</Text>
           <Tag color="default" style={{ fontSize: 11, lineHeight: '16px', padding: '0 6px' }}>
             {formatSize(file.size)}
           </Tag>
@@ -130,23 +150,24 @@ export function SkillFilePreview({ file, executor, skillName, loading, isDark }:
         overflow: 'auto',
         background: bgColor,
         borderRadius: '0 0 8px 8px',
+        color: 'var(--color-text)',
       }}>
         {file.path.endsWith('.md') ? (
           <XMarkdown
             content={content}
             escapeRawHtml={true}
             style={{
-              fontFamily: 'Fira Code, monospace',
+              fontFamily: 'var(--font-mono)',
               fontSize: 13,
-              color: '#d4d4d4',
+              color: 'var(--color-text)',
               padding: '12px',
             }}
           />
         ) : (
           <pre style={{
-            fontFamily: 'Fira Code, monospace',
+            fontFamily: 'var(--font-mono)',
             fontSize: 13,
-            color: '#d4d4d4',
+            color: 'var(--color-text)',
             padding: '12px',
             margin: 0,
             whiteSpace: 'pre-wrap',

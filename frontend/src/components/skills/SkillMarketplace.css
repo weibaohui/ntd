@@ -1,0 +1,52 @@
+/* SkillMarketplace 样式
+ * 仅保留 hover/transition 动效，颜色一律由 App.css 的 CSS 变量承担，
+ * 这样亮色/暗色主题切换不需要任何额外分支判断。
+ */
+
+/* 来源卡 / 技能卡外层包裹：与 ExpertCard 一致的浮起 + 描边变主色 */
+.market-source-card,
+.market-skill-card {
+  transition: transform var(--transition-base),
+    box-shadow var(--transition-base);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  /* 网格条目本身已由父 grid 拉到同行最高，但内部 Ant Card 需要铺满，
+     否则卡片高度还是跟着内容变。把整张卡填满 wrapper。 */
+  display: flex;
+}
+
+.market-source-card > .ant-card,
+.market-skill-card > .ant-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Card body 内部用 flex column，让 footer（github/license/计数）总是贴底；
+   描述区用 min-height 兜底，避免内容很短时整张卡塌成矮条 */
+.market-source-card > .ant-card .ant-card-body,
+.market-skill-card > .ant-card .ant-card-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.market-source-card:hover > .ant-card,
+.market-skill-card:hover > .ant-card {
+  /* 内部 Ant Card 用主色描边 + 中等阴影，模拟"按下/聚焦"的层次 */
+  border-color: var(--color-primary) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+.market-source-card:hover,
+.market-skill-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 4px 12px rgba(8, 145, 178, 0.18);
+}
+
+/* 键盘聚焦：保留可见焦点环，无障碍要求 */
+.market-source-card:focus-visible,
+.market-skill-card:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}

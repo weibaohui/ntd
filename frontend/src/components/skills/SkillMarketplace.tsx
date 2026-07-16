@@ -25,8 +25,10 @@ import { bundledApi, type BundledSkillMeta, type BundledSkillFile, type SkillSou
 import type { ExecutorSkills } from '@/types';
 import { EXECUTORS } from '@/types';
 import { formatSize, formatTime } from './helpers';
-import { useTheme } from '@/hooks/useTheme';
 import * as db from '@/utils/database';
+import type { SkillFileInfo } from '@/utils/database/skills';
+import { SkillFileBrowserModal } from './SkillFileBrowserModal';
+import './SkillMarketplace.css';
 
 const { Text, Paragraph } = Typography;
 
@@ -53,16 +55,25 @@ function SourceCard({
 }) {
   const name = meta?.display_name || sourceKey;
 
+  // 用透明度叠加的实色变量构造悬停/常态边框，避免 hardcoded rgba；
+  // 主题切换时整张卡会一起继承，亮/暗色都不需要再判断 isDark。
   return (
+    // 用 div 承载 .market-source-card 类——Ant Card 不转发 className，
+    // 但 CSS 选择器需要它才能 hover 抬升/换描边
+    <div className="market-source-card" role="button" tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+    >
     <Card
       size="small"
       hoverable
-      onClick={onClick}
       style={{
-        borderRadius: 12,
+        borderRadius: 'var(--radius-md)',
         cursor: 'pointer',
-        transition: 'all 0.2s',
-        borderColor: 'var(--color-border, #e2e8f0)',
+        transition: 'all var(--transition-base)',
+        background: 'var(--color-bg-elevated)',
+        borderColor: 'var(--color-border-secondary)',
+        boxShadow: 'var(--shadow-sm)',
       }}
       styles={{ body: { padding: compact ? 12 : 16 } }}
     >
@@ -71,7 +82,7 @@ function SourceCard({
         <span style={{
           fontSize: compact ? 13 : 15,
           fontWeight: 600,
-          color: 'var(--color-text, #0f172a)',
+          color: 'var(--color-text)',
           flex: 1,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
@@ -80,33 +91,48 @@ function SourceCard({
           {name}
         </span>
         {(meta?.stars ?? 0) > 0 && (
-          <Tag color="warning" style={{ margin: 0, fontSize: 11 }}>
+          // GitHub 星标徽章：自配背景/边框/文字用项目 --color-warning token——
+          // 直接用 ant color="warning" 的文本色（暗色 catppuccin 浅黄）在亮色背景上对比度差，
+          // 改成显式指定 warning-bg 作底 + warning 作字，亮/暗双主题都清晰
+          <Tag style={{
+            margin: 0,
+            fontSize: 11,
+            padding: '0 6px',
+            background: 'var(--color-warning-bg)',
+            color: 'var(--color-warning)',
+            border: '1px solid color-mix(in srgb, var(--color-warning) 40%, transparent)',
+          }}>
             <StarOutlined style={{ fontSize: 10 }} /> {formatStars(meta!.stars)}
           </Tag>
         )}
       </div>
 
-      {/* 描述 */}
+      {/* 描述：min-height 兜底——描述即使只有 1 行也撑出与最长同行一致的视觉空间，
+         让同行的所有卡片底边对齐 */}
       {meta?.description && (
         <Paragraph
           ellipsis={{ rows: compact ? 2 : 3 }}
           style={{
             fontSize: 12,
-            color: 'var(--color-text-secondary, #475569)',
+            color: 'var(--color-text-secondary)',
             marginBottom: 8,
             lineHeight: 1.5,
+            minHeight: compact ? 36 : 54,
           }}
         >
           {meta.description}
         </Paragraph>
       )}
 
-      {/* GitHub + License + 技能数 */}
+      {/* GitHub + License + 技能数：GitHub 链接改用主色，与设置/Experts 等页面保持一致；
+         margin-top:auto 让 footer 靠底，对齐到同行卡片底部——即使描述行数不同，卡片高度一致 */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
         gap: 8,
         flexWrap: 'wrap',
+        marginTop: 'auto',
+        paddingTop: 8,
       }}>
         {meta?.github_url && (
           <a
@@ -116,7 +142,7 @@ function SourceCard({
             onClick={(e) => e.stopPropagation()}
             style={{
               fontSize: 11,
-              color: '#7C3AED',
+              color: 'var(--color-primary)',
               display: 'inline-flex',
               alignItems: 'center',
               gap: 4,
@@ -126,19 +152,30 @@ function SourceCard({
           </a>
         )}
         {meta?.license && (
-          <Tag style={{ margin: 0, fontSize: 10, lineHeight: '16px' }}>
+          // License 标签：统一走 --color-bg-tertiary 底色 + --color-text 文字，
+          // 暗色下与正文层次区分，读得清
+          <Tag style={{
+            margin: 0,
+            fontSize: 10,
+            lineHeight: '16px',
+            padding: '0 6px',
+            background: 'var(--color-bg-tertiary)',
+            color: 'var(--color-text-secondary)',
+            border: 'none',
+          }}>
             {meta.license}
           </Tag>
         )}
         <span style={{
           marginLeft: 'auto',
           fontSize: 11,
-          color: 'var(--color-text-quaternary, #94a3b8)',
+          color: 'var(--color-text-tertiary)',
         }}>
           {skillCount} 个技能
         </span>
       </div>
     </Card>
+    </div>
   );
 }
 
@@ -150,39 +187,39 @@ function MarketSkillCard({ skill, installedExecutors, onClick }: {
   installedExecutors: string[];
   onClick: () => void;
 }) {
-  const color = '#7C3AED';
+  // 颜色全部走 CSS 变量；不再用硬编码 purple，与项目 cyan 主色一致
   const isInstalled = installedExecutors.length > 0;
 
   return (
+    // 用 div 承载 .market-skill-card 类——Ant Card 不转发 className，
+    // 但 CSS 选择器需要它才能应用 hover 抬升和换主色描边
+    <div className="market-skill-card" role="button" tabIndex={0}
+      aria-label={skill.short_name}
+      onClick={onClick}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+    >
     <Card
       size="small"
       hoverable
-      onClick={onClick}
-      tabIndex={0}
-      role="button"
-      aria-label={skill.short_name}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onClick();
-        }
-      }}
       style={{
-        borderRadius: 12,
+        // 与 ExpertCard / TeamCard 同款：常态有 --shadow-sm，避免白底卡贴白底容器看不出边界
+        borderRadius: 'var(--radius-md)',
         cursor: 'pointer',
-        transition: 'all 0.2s',
+        transition: 'all var(--transition-base)',
         position: 'relative',
         overflow: 'hidden',
-        borderColor: 'var(--color-border, #e2e8f0)',
+        background: 'var(--color-bg-elevated)',
+        borderColor: 'var(--color-border-secondary)',
+        boxShadow: 'var(--shadow-sm)',
       }}
       styles={{ body: { padding: 16 } }}
     >
-      {/* 顶部装饰线 */}
+      {/* 顶部装饰线：用主色渐变，与 Overview 卡片顶部色带呼应；不再用 purple */}
       <div style={{
         position: 'absolute',
         top: 0, left: 0, right: 0,
         height: 2,
-        background: `linear-gradient(90deg, ${color}, ${color}60)`,
+        background: 'linear-gradient(90deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 60%, transparent))',
         opacity: 0.6,
       }} />
 
@@ -190,23 +227,25 @@ function MarketSkillCard({ skill, installedExecutors, onClick }: {
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         <div style={{
           width: 36, height: 36, borderRadius: 10,
-          background: `${color}15`,
+          background: 'var(--color-primary-bg)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          color, fontSize: 15, fontWeight: 600, flexShrink: 0,
+          color: 'var(--color-primary)',
+          fontSize: 15, fontWeight: 600, flexShrink: 0,
+          border: '1px solid var(--color-primary-light)',
         }}>
           {skill.short_name.charAt(0).toUpperCase()}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{
             fontSize: 14, fontWeight: 500,
-            color: 'var(--color-text, #0f172a)',
+            color: 'var(--color-text)',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
             {skill.short_name}
           </div>
           <div style={{
             fontSize: 11,
-            color: 'var(--color-text-tertiary, #94a3b8)',
+            color: 'var(--color-text-tertiary)',
             marginTop: 2,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
@@ -218,11 +257,11 @@ function MarketSkillCard({ skill, installedExecutors, onClick }: {
         )}
       </div>
 
-      {/* 描述 */}
+      {/* 描述：min-height 让短描述的卡也撑出统一高度，对齐同行的卡底 */}
       {(skill.description_zh || skill.description) && (
         <div style={{
           fontSize: 12,
-          color: 'var(--color-text-secondary, #475569)',
+          color: 'var(--color-text-secondary)',
           lineHeight: 1.5,
           display: '-webkit-box',
           WebkitLineClamp: 2,
@@ -235,15 +274,17 @@ function MarketSkillCard({ skill, installedExecutors, onClick }: {
         </div>
       )}
 
-      {/* 底部标签 */}
+      {/* 底部标签：margin-top:auto 让它贴底，跟同行卡片底部对齐 */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 6,
-        marginTop: 12, flexWrap: 'wrap',
+        marginTop: 'auto', paddingTop: 12, flexWrap: 'wrap',
       }}>
         {skill.version && (
+          // 版本徽章统一走主色背景，与头像色调一致
           <Tag style={{
             margin: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px',
-            borderRadius: 4, background: `${color}15`, border: 'none', color,
+            borderRadius: 4, background: 'var(--color-primary-bg)',
+            border: 'none', color: 'var(--color-primary)',
           }}>
             v{skill.version}
           </Tag>
@@ -251,12 +292,13 @@ function MarketSkillCard({ skill, installedExecutors, onClick }: {
         <span style={{
           marginLeft: 'auto',
           fontSize: 11,
-          color: 'var(--color-text-quaternary, #94a3b8)',
+          color: 'var(--color-text-tertiary)',
         }}>
           {formatSize(skill.total_size)}
         </span>
       </div>
     </Card>
+    </div>
   );
 }
 
@@ -265,8 +307,8 @@ function MarketSkillCard({ skill, installedExecutors, onClick }: {
 // ─────────────────────────────────────────────────────────────────────────────
 export function SkillMarketplace() {
   const { message } = App.useApp();
-  const { themeMode } = useTheme();
-  const isDark = themeMode === 'dark';
+  // 主题色统一走 CSS 变量（var(--color-*)），组件不再判断 isDark；
+  // App.css 的 [data-theme="dark"] 会自动切换浅/深色变量取值。
 
   // ── 数据状态 ──
   const [skills, setSkills] = useState<BundledSkillMeta[]>([]);
@@ -292,6 +334,9 @@ export function SkillMarketplace() {
   const [installModalOpen, setInstallModalOpen] = useState(false);
   const [targetExecutors, setTargetExecutors] = useState<string[]>([]);
   const [installing, setInstalling] = useState(false);
+
+  // ── 文件浏览 Modal 状态 ──
+  const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
 
   // ── 已安装技能数据 ──
   const [installedData, setInstalledData] = useState<ExecutorSkills[]>([]);
@@ -458,34 +503,48 @@ export function SkillMarketplace() {
 
   // ── 下拉筛选内容 ──
   const dropdownContent = (
+    // 用 CSS 变量做背景，主题切换时跟着变；去掉硬编码 rgba 阴影，改用项目 shadow token
     <div style={{
       width: 520,
       maxHeight: 400,
       overflowY: 'auto',
       padding: 12,
-      background: isDark ? '#1f1f2e' : '#fff',
-      borderRadius: 12,
-      boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
+      background: 'var(--color-bg-elevated)',
+      borderRadius: 'var(--radius-md)',
+      boxShadow: 'var(--shadow-lg)',
+      border: '1px solid var(--color-border-light)',
     }}>
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(2, 1fr)',
         gap: 10,
       }}>
-        {/* 全部来源选项 */}
+        {/* 全部来源选项：
+           激活态用更粗主色边框 + 加粗主色标题来标识——
+           不动底色，避免在暗色主题下与周边卡产生"陷下去"或"凸出来"的层差。
+           边框宽度 2px 配合主色，亮/暗色都清晰可辨。
+        */}
         <Card
           size="small"
           hoverable
           onClick={() => { setFilterSource('all'); }}
           style={{
-            borderRadius: 10,
+            borderRadius: 'var(--radius-sm)',
             cursor: 'pointer',
-            borderColor: filterSource === 'all' ? '#0891b2' : 'var(--color-border, #e2e8f0)',
-            background: filterSource === 'all' ? 'rgba(8,145,178,0.08)' : undefined,
+            borderColor: filterSource === 'all'
+              ? 'var(--color-primary)'
+              : 'var(--color-border-secondary)',
+            borderWidth: filterSource === 'all' ? 2 : 1,
+            borderStyle: 'solid',
+            background: 'var(--color-bg-elevated)',
           }}
           styles={{ body: { padding: 12 } }}
         >
-          <div style={{ fontSize: 14, fontWeight: 500 }}>全部来源</div>
+          <div style={{
+            fontSize: 14,
+            fontWeight: filterSource === 'all' ? 600 : 500,
+            color: filterSource === 'all' ? 'var(--color-primary)' : 'var(--color-text)',
+          }}>全部来源</div>
           <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
             {skills.length} 个技能
           </div>
@@ -534,13 +593,13 @@ export function SkillMarketplace() {
 
       <Divider type="vertical" style={{ height: 24 }} />
 
-      {/* 搜索框 */}
+      {/* 搜索框：圆角半径用 radius-xl 与项目其他搜索框保持一致 */}
       <Input
         placeholder="搜索技能..."
-        prefix={<SearchOutlined style={{ color: 'var(--color-text-quaternary, #94a3b8)' }} />}
+        prefix={<SearchOutlined style={{ color: 'var(--color-text-tertiary)' }} />}
         value={searchText}
         onChange={e => setSearchText(e.target.value)}
-        style={{ width: 220, borderRadius: 20 }}
+        style={{ width: 220, borderRadius: 'var(--radius-xl)' }}
         allowClear
       />
 
@@ -620,26 +679,45 @@ export function SkillMarketplace() {
       const sourceMeta = sources[activeSource];
       return (
         <div>
-          {/* 来源信息头 */}
+          {/* 来源信息头：背景与边框统一走 CSS 变量，与 Settings/Experts 等页面信息块风格一致 */}
           <div style={{
             marginBottom: 16,
             padding: '12px 16px',
-            background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)',
-            borderRadius: 10,
-            border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+            background: 'var(--color-bg-card)',
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--color-border-light)',
           }}>
             <Space wrap>
-              <Text strong style={{ fontSize: 15 }}>
+              <Text strong style={{ fontSize: 15, color: 'var(--color-text)' }}>
                 {sourceMeta?.display_name || activeSource}
               </Text>
               {(sourceMeta?.stars ?? 0) > 0 && (
-                <Tag color="warning">
+                // 详情头部星标：同 SourceCard 内的 tag，自配 --color-warning 文字与底色
+                <Tag style={{
+                  background: 'var(--color-warning-bg)',
+                  color: 'var(--color-warning)',
+                  border: '1px solid color-mix(in srgb, var(--color-warning) 40%, transparent)',
+                  fontWeight: 500,
+                }}>
                   <StarOutlined /> {formatStars(sourceMeta!.stars)}
                 </Tag>
               )}
-              {sourceMeta?.license && <Tag>{sourceMeta.license}</Tag>}
+              {sourceMeta?.license && (
+                <Tag style={{
+                  background: 'var(--color-bg-tertiary)',
+                  color: 'var(--color-text-secondary)',
+                  border: 'none',
+                }}>
+                  {sourceMeta.license}
+                </Tag>
+              )}
               {sourceMeta?.github_url && (
-                <a href={sourceMeta.github_url} target="_blank" rel="noopener noreferrer">
+                <a
+                  href={sourceMeta.github_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: 'var(--color-primary)' }}
+                >
                   <LinkOutlined /> GitHub
                 </a>
               )}
@@ -647,7 +725,7 @@ export function SkillMarketplace() {
             {sourceMeta?.description && (
               <div style={{
                 fontSize: 12,
-                color: 'var(--color-text-secondary, #475569)',
+                color: 'var(--color-text-secondary)',
                 marginTop: 6,
                 lineHeight: 1.5,
               }}>
@@ -717,14 +795,14 @@ export function SkillMarketplace() {
       {toolbar}
       {contentArea}
 
-      {/* 详情 Drawer */}
+      {/* 详情 Drawer：主色图标/标题色全部走 CSS 变量，与项目其他 Drawer 视觉一致 */}
       <Drawer
         title={
           <Space>
-            <FileTextOutlined style={{ color: '#7C3AED' }} />
-            <span>{selectedSkill?.short_name || '技能详情'}</span>
+            <FileTextOutlined style={{ color: 'var(--color-primary)' }} />
+            <span style={{ color: 'var(--color-text)' }}>{selectedSkill?.short_name || '技能详情'}</span>
             {selectedSkill && (
-              <Tag color="purple">{selectedSkill.source_meta?.display_name || selectedSkill.source}</Tag>
+              <Tag color="cyan">{selectedSkill.source_meta?.display_name || selectedSkill.source}</Tag>
             )}
           </Space>
         }
@@ -750,16 +828,16 @@ export function SkillMarketplace() {
               />
             )}
 
-            {/* 操作按钮 */}
+            {/* 操作按钮容器：背景/边框统一走变量，去掉 hardcoded rgba */}
             <div style={{
               display: 'flex',
               gap: 8,
               flexWrap: 'wrap',
               marginBottom: 16,
               padding: '12px',
-              background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)',
-              borderRadius: 8,
-              border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+              background: 'var(--color-bg-card)',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--color-border-light)',
             }}>
               <Button
                 type="primary"
@@ -771,6 +849,7 @@ export function SkillMarketplace() {
               <Button
                 icon={<FolderOutlined />}
                 disabled={files.length === 0}
+                onClick={() => setFileBrowserOpen(true)}
               >
                 文件 ({files.length})
               </Button>
@@ -782,7 +861,7 @@ export function SkillMarketplace() {
                 {selectedSkill?.name}
               </Descriptions.Item>
               <Descriptions.Item label="来源">
-                <Tag color="purple">{selectedSkill?.source_meta?.display_name || selectedSkill?.source}</Tag>
+                <Tag color="cyan">{selectedSkill?.source_meta?.display_name || selectedSkill?.source}</Tag>
               </Descriptions.Item>
               <Descriptions.Item label="版本">
                 {selectedSkill?.version || <Text type="secondary">未指定</Text>}
@@ -805,7 +884,11 @@ export function SkillMarketplace() {
                 {getInstalledExecutors(selectedSkill).map(exec => {
                   const opt = EXECUTORS.find(e => e.value === exec);
                   return (
-                    <Tag key={exec} color={opt?.color || '#7C3AED'} style={{ marginTop: 4 }}>
+                    <Tag
+                      key={exec}
+                      color={opt?.color || 'cyan'}
+                      style={{ marginTop: 4 }}
+                    >
                       {opt?.label || exec}
                     </Tag>
                   );
@@ -813,33 +896,34 @@ export function SkillMarketplace() {
               </div>
             )}
 
-            {/* SKILL.md 内容预览 */}
+            {/* SKILL.md 内容预览：背景/文字走变量，让暗色主题下也能正常阅读 */}
             <h3 style={{
               margin: '16px 0 8px',
-              color: isDark ? '#e2e8f0' : '#595959',
+              color: 'var(--color-text)',
             }}>SKILL.md 预览</h3>
             <XMarkdown
               content={content}
               escapeRawHtml={true}
               style={{
-                fontFamily: 'Fira Code, monospace',
+                fontFamily: 'var(--font-mono)',
                 fontSize: 13,
-                background: isDark ? '#1a1a2e' : '#1e1e1e',
-                color: '#d4d4d4',
+                background: 'var(--color-bg)',
+                color: 'var(--color-text)',
                 padding: '12px',
-                borderRadius: '8px',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--color-border)',
               }}
             />
           </div>
         )}
       </Drawer>
 
-      {/* 安装 Modal */}
+      {/* 安装 Modal：图标主色走变量，背景交给 Modal 主题 */}
       <Modal
         title={
           <Space>
-            <DownloadOutlined style={{ color: '#7C3AED' }} />
-            <span>安装技能到执行器</span>
+            <DownloadOutlined style={{ color: 'var(--color-primary)' }} />
+            <span style={{ color: 'var(--color-text)' }}>安装技能到执行器</span>
           </Space>
         }
         open={installModalOpen}
@@ -882,6 +966,27 @@ export function SkillMarketplace() {
           </Row>
         </Checkbox.Group>
       </Modal>
+
+      {/* 文件浏览 Modal：复用与已安装技能一致的 SkillFileBrowserModal。
+          对 bundled 技能而言，SKILL.md 用已缓存的 content（presetContent），
+          其他文件 loadContent 报错 → 预览区显示「无法加载」占位文案。 */}
+      <SkillFileBrowserModal
+        open={fileBrowserOpen}
+        onClose={() => setFileBrowserOpen(false)}
+        title={selectedSkill?.name || ''}
+        badgeLabel={selectedSkill?.source_meta?.display_name || selectedSkill?.source}
+        files={toSkillFileInfos(files)}
+        loading={contentLoading}
+        presetContent={content}
+        presetPath="SKILL.md"
+        loadContent={async (file) => {
+          if (file.path === 'SKILL.md') {
+            return content;
+          }
+          // bundled API 没提供单文件内容接口 → 让预览区显示「无法加载」占位
+          throw new Error('市场暂不支持预览此文件');
+        }}
+      />
     </div>
   );
 }
@@ -894,4 +999,19 @@ function formatStars(n: number): string {
     return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
   }
   return n.toLocaleString();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 文件浏览：复用 SkillFileBrowserModal。
+// bundled API 只返回 SKILL.md 的 content + 文件元信息（path+size），
+// 其他文件没有读取接口，所以 loadContent 对 SKILL.md 走缓存，其他文件抛出错误。
+// SkillFilePreview 会捕获错误并展示"无法加载"占位。
+// ─────────────────────────────────────────────────────────────────────────────
+function toSkillFileInfos(files: BundledSkillFile[]): SkillFileInfo[] {
+  // 转类型补齐 SkillFileInfo 字段（modified_at 改为可选，这里用空串占位）
+  return files.map(f => ({
+    path: f.path,
+    size: f.size,
+    modified_at: '',
+  }));
 }

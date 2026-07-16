@@ -35,7 +35,8 @@ export async function getSkillInvocations(params?: { page?: number; limit?: numb
 export interface SkillFileInfo {
   path: string;
   size: number;
-  modified_at: string;
+  /** 可选——marketplace 的 bundled 技能文件元信息不包含此字段 */
+  modified_at?: string;
 }
 
 export interface SkillContent {
