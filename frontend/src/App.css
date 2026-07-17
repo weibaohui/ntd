@@ -4278,6 +4278,20 @@ code {
   color: var(--color-text) !important;
 }
 
+/* 配置按钮 — 与主题切换按钮同款样式，放在底部操作区 */
+.ntd-left-rail-config-toggle {
+  width: 44px !important;
+  height: 44px !important;
+  border-radius: 14px !important;
+  color: var(--color-text-tertiary) !important;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.ntd-left-rail-config-toggle:hover {
+  background: var(--color-bg-hover) !important;
+  color: var(--color-text) !important;
+}
+
 .ntd-left-rail-drawer {
   width: 100%;
   height: 100%;
@@ -4316,6 +4330,71 @@ code {
 .ntd-left-rail-drawer-label {
   font-weight: 600;
   font-size: 14px;
+}
+
+/* ---------- 配置弹出菜单 ---------- */
+/* 覆盖 antd Popover 默认内边距，让菜单面板更紧凑 */
+.ntd-config-menu-popover .ant-popover-inner {
+  padding: 0 !important;
+}
+
+.ntd-config-menu {
+  min-width: 180px;
+}
+
+.ntd-config-menu-title {
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.ntd-config-menu-body {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+}
+
+.ntd-config-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  text-align: left;
+  width: 100%;
+}
+
+.ntd-config-menu-item:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.ntd-config-menu-item.active {
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+}
+
+.ntd-config-menu-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  width: 20px;
+  flex-shrink: 0;
+}
+
+.ntd-config-menu-item-label {
+  font-weight: 500;
 }
 
 .ntd-logo-button {
