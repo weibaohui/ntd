@@ -150,17 +150,20 @@ export function TeamCard({ expert, onClick }: {
         gap: 8,
         padding: 8,
         borderRadius: 8,
-        background: 'var(--color-warning-bg-1)',
+        // 使用中性灰背景替代高饱和度警告色，避免视觉干扰；
+        // 亮色模式下为浅灰 (#f1f5f9)，暗色模式下为深灰 (#313244)，与整体风格一致。
+        background: 'var(--color-bg-tertiary)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <StarOutlined style={{ fontSize: 12, color: 'var(--color-warning)' }} />
+          {/* 图标使用三级文本色，与背景形成柔和对比，不再突出 */}
+          <StarOutlined style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }} />
           <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
             负责人：{leadMember ? (leadMember.name_zh || leadMember.name_en || '未知') : '无'}
           </span>
         </div>
         <div style={{ width: 1, height: 12, background: 'var(--color-border)' }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <UserOutlined style={{ fontSize: 12, color: 'var(--color-warning)' }} />
+            <UserOutlined style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }} />
             <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
               {memberCount} 人团队
             </span>
