@@ -156,6 +156,7 @@ pub mod action;
 pub mod blackboard;
 pub mod experts;
 pub mod bundled;
+pub mod quick_button;
 
 // WebSocket handler
 pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
@@ -282,6 +283,7 @@ fn mount_domain_routes() -> Router<AppState> {
         .merge(config_routes())
         .merge(skills_routes())
         .merge(agent_bot_routes())
+        .merge(quick_button_routes())
         .merge(feishu_routes())
         .merge(webhook_routes())
         .merge(session_routes())
@@ -681,6 +683,13 @@ fn agent_bot_routes() -> Router<AppState> {
         .route("/api/workspace/{workspace_id}/slash-commands/{cmd_id}", put(agent_bot::update_workspace_slash_command).delete(agent_bot::delete_workspace_slash_command))
         // Workspace 设置管理
         .route("/api/workspace/{workspace_id}/settings", get(agent_bot::get_workspace_settings).put(agent_bot::update_workspace_settings))
+}
+
+/// 快捷话术按钮管理（全局，无 workspace 维度）。
+fn quick_button_routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/quick-buttons", get(quick_button::list_quick_buttons).post(quick_button::create_quick_button))
+        .route("/api/quick-buttons/{id}", put(quick_button::update_quick_button).delete(quick_button::delete_quick_button))
 }
 
 /// 飞书相关路由：历史消息查询 + 绑定管理。
@@ -1279,9 +1288,10 @@ mod create_app_refactor_tests {
             cloud_routes(),
             events_routes(),
             blackboard::blackboard_routes(),
+            quick_button_routes(),
         ];
-        // 20 个领域子路由函数（blackboard_routes 为黑板功能新增）
-        assert_eq!(routers.len(), 20, "领域子路由函数数量应与拆分清单一致");
+        // 21 个领域子路由函数（quick_button_routes 为快捷话术按钮新增）
+        assert_eq!(routers.len(), 21, "领域子路由函数数量应与拆分清单一致");
         // `Router` 在 axum 0.8 中没有公开的 route_count，这里只能断言"全部成功构造"
     }
 

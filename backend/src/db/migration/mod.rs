@@ -24,6 +24,7 @@ mod v62;
 mod v63;
 mod v64;
 mod v65;
+mod v66;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -81,6 +82,8 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v64::V64AddAgentBotOwnerOpenId),
         // V65 在 V64 之后：为 todos 增加 expert_name 字段，支持配置专家/团队
         Box::new(v65::V65AddTodoExpertName),
+        // V66 在 V65 之后：新建 quick_buttons 表，支撑回复框自定义快捷话术按钮
+        Box::new(v66::V66AddQuickButtonsTable),
     ]
 }
 
