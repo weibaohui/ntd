@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Button, Tooltip } from 'antd';
+import { Button, Tooltip, Popover } from 'antd';
 import type { ButtonProps } from 'antd';
 import {
   UnorderedListOutlined,
@@ -18,6 +18,7 @@ import {
   MessageOutlined,
   RobotOutlined,
   TeamOutlined,
+  AppstoreOutlined,
 } from '@ant-design/icons';
 import { TfiBlackboard } from 'react-icons/tfi';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
@@ -87,18 +88,19 @@ export function LeftRail({
         { key: 'memorial', label: '看板', icon: <ReadOutlined />, ariaLabel: '看板' },
       ] satisfies LeftRailItem[],
     },
-    {
-      title: '配置',
-      items: [
-        { key: 'settings_bots', label: '智能助手', icon: <RobotOutlined />, ariaLabel: '智能助手' },
-        { key: 'settings_executors', label: '执行器', icon: <CodeOutlined />, ariaLabel: '执行器' },
-        { key: 'settings_skills', label: 'Skills', icon: <ThunderboltOutlined />, ariaLabel: 'Skills' },
-        { key: 'settings_experts', label: '专家', icon: <TeamOutlined />, ariaLabel: '专家' },
-        { key: 'settings_projectDirectories', label: '工作空间', icon: <FolderOutlined />, ariaLabel: '工作空间' },
-        { key: 'settings', label: '设置', icon: <SettingOutlined />, ariaLabel: '设置' },
-      ] satisfies LeftRailItem[],
-    },
   ]), []);
+
+  // 配置项菜单 — 从侧边栏主体收拢到底部弹出菜单，减少主导航的视觉噪音
+  const configItems = useMemo(() => ([
+    { key: 'settings_bots', label: '智能助手', icon: <RobotOutlined />, ariaLabel: '智能助手' },
+    { key: 'settings_executors', label: '执行器', icon: <CodeOutlined />, ariaLabel: '执行器' },
+    { key: 'settings_skills', label: 'Skills', icon: <ThunderboltOutlined />, ariaLabel: 'Skills' },
+    { key: 'settings_experts', label: '专家', icon: <TeamOutlined />, ariaLabel: '专家' },
+    { key: 'settings_projectDirectories', label: '工作空间', icon: <FolderOutlined />, ariaLabel: '工作空间' },
+    { key: 'settings', label: '设置', icon: <SettingOutlined />, ariaLabel: '设置' },
+  ] satisfies LeftRailItem[]), []);
+
+  const [openConfigPopover, setOpenConfigPopover] = useState(false);
 
   const isDrawer = variant === 'drawer';
   const shouldShowLabels = isDrawer || !collapsed;
@@ -153,6 +155,36 @@ export function LeftRail({
     );
   };
 
+  /**
+   * 渲染配置弹出菜单的内容面板。
+   * 将原来侧边栏里的配置 section 收拢为一个可点击展开的菜单，保持功能完整的同时减少主导航视觉噪音。
+   */
+  const renderConfigMenu = () => (
+    <div className="ntd-config-menu">
+      <div className="ntd-config-menu-title">配置</div>
+      <div className="ntd-config-menu-body">
+        {configItems.map((item) => {
+          const isActive = item.key === activeKey;
+          return (
+            <button
+              key={item.key}
+              className={`ntd-config-menu-item ${isActive ? 'active' : ''}`}
+              onClick={() => {
+                onSelect(item.key);
+                setOpenConfigPopover(false);
+              }}
+              aria-label={item.ariaLabel}
+              data-testid={`config-menu-${item.key}`}
+            >
+              <span className="ntd-config-menu-item-icon">{item.icon}</span>
+              <span className="ntd-config-menu-item-label">{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
   const renderWorkspaceArea = () => {
     if (isDrawer || shouldShowLabels) {
       return (
@@ -205,7 +237,25 @@ export function LeftRail({
 
       {isDrawer && (
         <div className="ntd-left-rail-drawer-bottom">
-          {/* 移动端抽屉底部：亮/暗色主题切换按钮 */}
+          {/* 移动端抽屉底部：配置菜单 + 亮/暗色主题切换按钮 */}
+          <Popover
+            content={renderConfigMenu()}
+            open={openConfigPopover}
+            onOpenChange={setOpenConfigPopover}
+            placement="topLeft"
+            trigger="click"
+            overlayClassName="ntd-config-menu-popover"
+          >
+            <Button
+              type="text"
+              block
+              icon={<AppstoreOutlined />}
+              className="ntd-left-rail-drawer-btn"
+              data-testid="left-rail-config-toggle"
+            >
+              <span className="ntd-left-rail-drawer-label">配置</span>
+            </Button>
+          </Popover>
           <Button
             type="text"
             block
@@ -223,6 +273,25 @@ export function LeftRail({
 
       {!isDrawer && (
         <div className="ntd-left-rail-bottom">
+          {/* 配置按钮 — 点击弹出收拢的配置菜单，替代原来侧边栏里的配置 section */}
+          <Tooltip title="配置" placement="right">
+            <Popover
+              content={renderConfigMenu()}
+              open={openConfigPopover}
+              onOpenChange={setOpenConfigPopover}
+              placement="top"
+              trigger="click"
+              overlayClassName="ntd-config-menu-popover"
+            >
+              <Button
+                type="text"
+                className="ntd-left-rail-config-toggle"
+                icon={<AppstoreOutlined />}
+                aria-label="配置"
+                data-testid="left-rail-config-toggle"
+              />
+            </Popover>
+          </Tooltip>
           {/* 亮/暗色主题切换按钮 — 当前为亮色显示太阳，暗色显示月亮，点击切换 */}
           <Tooltip title={themeMode === 'light' ? '切换暗色' : '切换亮色'} placement="right">
             <Button
