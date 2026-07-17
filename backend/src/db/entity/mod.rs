@@ -30,6 +30,7 @@ pub mod usage_stats;
 pub mod usage_executor_daily;
 pub mod workspace_settings;
 pub mod workspace_slash_commands;
+pub mod quick_buttons;
 
 pub mod prelude {
     pub use super::agent_bots::Entity as AgentBots;
@@ -63,4 +64,5 @@ pub mod prelude {
     pub use super::usage_executor_daily::Entity as UsageExecutorDaily;
     pub use super::workspace_settings::Entity as WorkspaceSettings;
     pub use super::workspace_slash_commands::Entity as WorkspaceSlashCommands;
+    pub use super::quick_buttons::Entity as QuickButtons;
 }
