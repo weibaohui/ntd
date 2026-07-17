@@ -4500,6 +4500,23 @@ code {
   border-color: var(--color-primary);
 }
 
+/* 时间驱动且调度活跃时：左侧青色强调条 + 轻微背景色，
+   让活跃卡片在视觉上更突出，与暂停卡片形成明显区分。 */
+.todo-center-card--time-active {
+  border-left: 3px solid var(--color-primary);
+  background: linear-gradient(
+    to right,
+    var(--color-primary-bg) 0%,
+    var(--color-primary-bg) 6px,
+    var(--color-bg-elevated) 6px,
+    var(--color-bg-elevated) 100%
+  );
+}
+
+.todo-center-card--time-active:hover {
+  border-left-color: var(--color-primary-hover);
+}
+
 .todo-center-card-head {
   display: flex;
   align-items: flex-start;
@@ -4550,6 +4567,27 @@ code {
   color: var(--color-text-tertiary);
 }
 
+/* 弱化态：暂停/非活跃的元信息行，降低视觉权重 */
+.todo-center-card-meta-line--muted {
+  color: var(--color-text-tertiary);
+  opacity: 0.7;
+}
+
+.todo-center-card-meta-line--muted .todo-center-card-meta-icon {
+  color: var(--color-text-tertiary);
+  opacity: 0.8;
+}
+
+/* 高亮态：重要信息（如下次运行时间），用主色 + 字重突出 */
+.todo-center-card-meta-line--highlight-primary {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.todo-center-card-meta-line--highlight-primary .todo-center-card-meta-icon {
+  color: var(--color-primary);
+}
+
 .todo-center-card-foot {
   display: flex;
   align-items: center;
@@ -4573,6 +4611,17 @@ code {
 /* 暗色模式：卡片背景与悬停边框适配 */
 [data-theme="dark"] .todo-center-card {
   background: var(--color-bg-elevated);
+}
+
+/* 暗色模式：时间驱动活跃卡片的渐变背景适配 */
+[data-theme="dark"] .todo-center-card--time-active {
+  background: linear-gradient(
+    to right,
+    var(--color-primary-bg) 0%,
+    var(--color-primary-bg) 6px,
+    var(--color-bg-elevated) 6px,
+    var(--color-bg-elevated) 100%
+  );
 }
 
 /* 事项中心筛选栏：状态/动作类型下拉 + 命令触发勾选 */
