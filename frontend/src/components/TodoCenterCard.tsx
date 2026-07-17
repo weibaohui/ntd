@@ -137,9 +137,12 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: 
     </Button>
   );
 
+  // 时间驱动卡片的调度活跃状态：用于控制左侧强调条、标签颜色等视觉区分
+  const isTimeDrivenActive = item.computed_bucket === 'time_driven' && item.scheduler_enabled;
+
   return (
     <div
-      className="todo-center-card"
+      className={`todo-center-card ${isTimeDrivenActive ? 'todo-center-card--time-active' : ''}`}
       // React Portal 会把 Dropdown 菜单的合成事件冒泡回卡片（即便菜单 DOM 在 body），
       // 因此不能只靠按钮 stopPropagation——点菜单项仍会触发卡片跳详情。
       // 这里用 target 检测：点击源自按钮/下拉/弹窗时视为操作意图，不跳详情。
@@ -167,9 +170,17 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: 
       </div>
 
       <div className="todo-center-card-tags">
-        <Tag color={BUCKET_DISPLAY[item.computed_bucket].color}>
-          {BUCKET_DISPLAY[item.computed_bucket].label}
-        </Tag>
+        {/* 时间驱动且已暂停时，标签置灰以弱化视觉权重；活跃时用原青色强调 */}
+        {item.computed_bucket === 'time_driven' && !item.scheduler_enabled ? (
+          <>
+            <Tag color="default">{BUCKET_DISPLAY[item.computed_bucket].label}</Tag>
+            <Tag color="default">已暂停</Tag>
+          </>
+        ) : (
+          <Tag color={BUCKET_DISPLAY[item.computed_bucket].color}>
+            {BUCKET_DISPLAY[item.computed_bucket].label}
+          </Tag>
+        )}
         <StatusTag status={item.status} />
         {sourceLabel(item.action_type) && <Tag color="gold">{sourceLabel(item.action_type)}</Tag>}
         {/* 绑定斜杠命令：手动触发仍属手动分类（命令是执行入口，非持续驱动） */}
@@ -242,13 +253,25 @@ function CardMeta({
   onSelectLoop: (loopId: number) => void;
 }) {
   const failCount = item.consecutive_failure_count ?? 0;
+  // 时间驱动且调度已启用：视为活跃状态，视觉上高亮下次运行时间
+  const isTimeActive = item.computed_bucket === 'time_driven' && item.scheduler_enabled;
+  // 时间驱动但调度已暂停：弱化调度表达式显示，降低视觉权重
+  const isTimePaused = item.computed_bucket === 'time_driven' && !item.scheduler_enabled;
+
   return (
     <div className="todo-center-card-meta">
       {item.computed_bucket === 'time_driven' && item.scheduler_config && (
-        <MetaLine icon={<ClockCircleOutlined />} text={`调度 ${item.scheduler_config}`} />
+        <MetaLine
+          icon={<ClockCircleOutlined />}
+          text={`调度 ${item.scheduler_config}`}
+          muted={isTimePaused}
+        />
       )}
-      {item.computed_bucket === 'time_driven' && item.scheduler_next_run_at && (
-        <MetaLine text={`下次运行 ${formatRelativeTime(item.scheduler_next_run_at)}`} />
+      {isTimeActive && item.scheduler_next_run_at && (
+        <MetaLine
+          text={`下次运行 ${formatRelativeTime(item.scheduler_next_run_at)}`}
+          highlight="primary"
+        />
       )}
       {/* 事件驱动卡片：Webhook 入口路径 + 最近触发时间（webhook 专属，不受手动执行影响） */}
       {item.computed_bucket === 'event_driven' && (
@@ -304,10 +327,29 @@ function ReferencingLoops({
   );
 }
 
-/** 单行元信息：可选图标 + 文本。 */
-function MetaLine({ icon, text }: { icon?: React.ReactNode; text: string }) {
+/**
+ * 单行元信息：可选图标 + 文本。
+ * - muted：弱化显示（暂停/非活跃状态用）
+ * - highlight：高亮显示（活跃/重要信息用，primary = 主色强调）
+ */
+function MetaLine({
+  icon,
+  text,
+  muted,
+  highlight,
+}: {
+  icon?: React.ReactNode;
+  text: string;
+  muted?: boolean;
+  highlight?: 'primary';
+}) {
+  const className = [
+    'todo-center-card-meta-line',
+    muted ? 'todo-center-card-meta-line--muted' : '',
+    highlight === 'primary' ? 'todo-center-card-meta-line--highlight-primary' : '',
+  ].filter(Boolean).join(' ');
   return (
-    <div className="todo-center-card-meta-line">
+    <div className={className}>
       {icon && <span className="todo-center-card-meta-icon">{icon}</span>}
       <span>{text}</span>
     </div>
