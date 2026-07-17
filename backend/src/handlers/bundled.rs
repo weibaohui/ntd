@@ -70,8 +70,6 @@ pub struct SkillsMarketCache {
     sources: RwLock<HashMap<String, SkillSourceMeta>>,
     /// 缓存是否已初始化
     initialized: RwLock<bool>,
-    /// 最后更新时间
-    last_updated: RwLock<Option<String>>,
 }
 
 impl SkillsMarketCache {
@@ -95,12 +93,10 @@ impl SkillsMarketCache {
         let mut skills_guard = self.skills.write();
         let mut sources_guard = self.sources.write();
         let mut initialized_guard = self.initialized.write();
-        let mut last_updated_guard = self.last_updated.write();
 
         *skills_guard = skills;
         *sources_guard = sources;
         *initialized_guard = true;
-        *last_updated_guard = Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
     }
 
     /// 标记缓存为未初始化（强制重新扫描）
