@@ -2,7 +2,7 @@
 import { Statistic, Row, Col } from 'antd';
 import { TeamOutlined } from '@ant-design/icons';
 import { getAllExperts } from '@/utils/database/experts';
-import { useCardData } from '../useCardData';
+import { useCardData } from '@/components/dashboard/useCardData';
 import { CardShell } from './CardShell';
 
 export function ExpertsCard() {

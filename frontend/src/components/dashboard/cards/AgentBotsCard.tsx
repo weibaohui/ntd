@@ -2,7 +2,7 @@
 import { Statistic, Row, Col } from 'antd';
 import { RobotOutlined } from '@ant-design/icons';
 import { getAgentBots } from '@/utils/database/bots';
-import { useCardData } from '../useCardData';
+import { useCardData } from '@/components/dashboard/useCardData';
 import { CardShell } from './CardShell';
 
 export function AgentBotsCard() {

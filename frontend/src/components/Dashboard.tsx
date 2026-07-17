@@ -62,8 +62,13 @@ export function Dashboard() {
     stats && stats.total_executions > 0 ? (stats.success_executions / stats.total_executions) * 100 : 0;
   const processingRate =
     msgStats && msgStats.total_messages > 0 ? (msgStats.processed / msgStats.total_messages) * 100 : 0;
-  // 当前时间范围换算成小时数,供自动化 Tab 的 Loop 聚合按窗口过滤;custom 时 undefined=全时段。
-  const currentHours = typeof timeRange === 'number' ? timeRange : undefined;
+  // 当前时间范围换算成小时数,供自动化 Tab 的 Loop 聚合按窗口过滤。
+  // custom 模式用区间跨度小时数,与 loadStats 的换算保持一致(Loop 卡与 dashboard 看同一窗口)。
+  // 注:后端 get_dashboard_stats / get_loop_stats 目前只接受 hours(往前 N 小时),
+  // 历史区间的精确 since/until 查询需后端改造——属存量限制,计划单独 PR 处理(见 PR 说明)。
+  const currentHours = typeof timeRange === 'number'
+    ? timeRange
+    : (customRange ? Math.round(customRange[1].diff(customRange[0], 'hour', true)) : undefined);
 
   const loadStats = async (hours?: number) => {
     try {

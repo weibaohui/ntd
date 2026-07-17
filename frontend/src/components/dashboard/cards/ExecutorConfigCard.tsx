@@ -2,7 +2,7 @@
 import { Tag } from 'antd';
 import { ThunderboltOutlined } from '@ant-design/icons';
 import { getExecutors } from '@/utils/database/skills';
-import { useCardData } from '../useCardData';
+import { useCardData } from '@/components/dashboard/useCardData';
 import { CardShell } from './CardShell';
 
 export function ExecutorConfigCard() {

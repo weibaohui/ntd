@@ -4,7 +4,7 @@
 import { Statistic, Row, Col } from 'antd';
 import { MessageOutlined } from '@ant-design/icons';
 import { getSessionStats } from '@/utils/database/sessions';
-import { useCardData } from '../useCardData';
+import { useCardData } from '@/components/dashboard/useCardData';
 import { CardShell } from './CardShell';
 
 export function SessionsStatsCard() {

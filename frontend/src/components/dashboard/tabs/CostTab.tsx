@@ -3,12 +3,12 @@
 // 汇总所有 token/费用/模型维度卡片,外加 ccusage 通道的会话统计。
 // UsageStatsCard 自取 /api/usage-stats,只需 since/until,与其他卡片数据通道解耦。
 import type { DashboardStats } from '@/types';
-import { InferenceStatsCard } from '../StatsGridCards';
-import { ModelTaskChartCard, ModelTokenChartCard, ModelCacheCard } from '../DistributionCards';
-import { TokenChartCard, TokenTrendChartCard } from '../ChartCards';
-import { LeaderboardCard } from '../SpecialCards';
-import { UsageStatsCard } from '../UsageStatsCard';
-import { SessionsStatsCard } from '../cards/SessionsStatsCard';
+import { InferenceStatsCard } from '@/components/dashboard/StatsGridCards';
+import { ModelTaskChartCard, ModelTokenChartCard, ModelCacheCard } from '@/components/dashboard/DistributionCards';
+import { TokenChartCard, TokenTrendChartCard } from '@/components/dashboard/ChartCards';
+import { LeaderboardCard } from '@/components/dashboard/SpecialCards';
+import { UsageStatsCard } from '@/components/dashboard/UsageStatsCard';
+import { SessionsStatsCard } from '@/components/dashboard/cards/SessionsStatsCard';
 import { TabMasonry, type PanelItem } from './TabMasonry';
 
 interface CostTabProps {

@@ -4,15 +4,15 @@
 // (版本/云同步/内置资源同步)。每张卡自取数据,失败时降级为空状态。
 // 分享卡已移至总览 Tab,不再混入运维配置。
 import type { DashboardStats } from '@/types';
-import { BackupStatsCard } from '../StatsGridCards';
-import { SkillsStatsCard } from '../DistributionCards';
-import { VersionCard } from '../cards/VersionCard';
-import { CloudSyncCard } from '../cards/CloudSyncCard';
-import { BundledSyncCard } from '../cards/BundledSyncCard';
-import { ExpertsCard } from '../cards/ExpertsCard';
-import { AgentBotsCard } from '../cards/AgentBotsCard';
-import { WorkspaceCard } from '../cards/WorkspaceCard';
-import { ExecutorConfigCard } from '../cards/ExecutorConfigCard';
+import { BackupStatsCard } from '@/components/dashboard/StatsGridCards';
+import { SkillsStatsCard } from '@/components/dashboard/DistributionCards';
+import { VersionCard } from '@/components/dashboard/cards/VersionCard';
+import { CloudSyncCard } from '@/components/dashboard/cards/CloudSyncCard';
+import { BundledSyncCard } from '@/components/dashboard/cards/BundledSyncCard';
+import { ExpertsCard } from '@/components/dashboard/cards/ExpertsCard';
+import { AgentBotsCard } from '@/components/dashboard/cards/AgentBotsCard';
+import { WorkspaceCard } from '@/components/dashboard/cards/WorkspaceCard';
+import { ExecutorConfigCard } from '@/components/dashboard/cards/ExecutorConfigCard';
 import { TabMasonry, type PanelItem } from './TabMasonry';
 
 interface ResourcesTabProps {

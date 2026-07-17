@@ -3,7 +3,7 @@ import { Tag, Statistic } from 'antd';
 import { CloudOutlined } from '@ant-design/icons';
 import { getCloudSyncStatus } from '@/utils/database/sync';
 import { formatRelativeTime } from '@/utils/datetime';
-import { useCardData } from '../useCardData';
+import { useCardData } from '@/components/dashboard/useCardData';
 import { CardShell } from './CardShell';
 
 export function CloudSyncCard() {

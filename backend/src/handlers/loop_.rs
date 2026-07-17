@@ -70,14 +70,22 @@ pub async fn list_loops(
     Ok(ApiResponse::ok(results))
 }
 
+/// /api/loops/stats 的查询参数:hours 缺省(None)= 全时段。
+/// 用强类型 Option<u32> 而非 HashMap<String,String>:axum/serde 反序列化时,
+/// 非法值(abc/负数/溢出)会自动 400,而非静默降级为全时段——隐藏输入错误比报错更危险。
+// pub:handler 是 pub,签名暴露的类型必须至少同等可见,否则 clippy 报「私有类型暴露在公开接口」。
+#[derive(Deserialize)]
+pub struct LoopStatsQuery {
+    pub hours: Option<u32>,
+}
+
 /// GET /api/loops/stats?hours=N — 全 loop 聚合统计(dashboard「自动化」Tab)。
-/// hours 缺省或 0 表示全时段。一次返回 loop 规模/成功率/触发器分布/Token。
+/// hours 缺省表示全时段。一次返回 loop 规模/成功率/触发器分布/Token。
 pub async fn get_loop_stats(
     State(state): State<AppState>,
-    Query(params): Query<std::collections::HashMap<String, String>>,
+    Query(params): Query<LoopStatsQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    let hours: Option<u32> = params.get("hours").and_then(|s| s.parse().ok());
-    let stats = state.db.get_loop_stats(hours).await?;
+    let stats = state.db.get_loop_stats(params.hours).await?;
     Ok(ApiResponse::ok(stats))
 }
 

@@ -5,7 +5,7 @@ import { Statistic, Row, Col } from 'antd';
 import { EyeOutlined } from '@ant-design/icons';
 import { getFeishuHistoryChats } from '@/utils/database/bots';
 import { formatRelativeTime } from '@/utils/datetime';
-import { useCardData } from '../useCardData';
+import { useCardData } from '@/components/dashboard/useCardData';
 import { CardShell } from './CardShell';
 
 // 取所有 chat 里最新的 last_fetch_time(字符串字典序即时间序)。

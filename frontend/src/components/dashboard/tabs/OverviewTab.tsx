@@ -4,10 +4,10 @@
 // 包含:核心 KPI、运行中任务、执行趋势、贡献热力图、活跃/连续打卡、最近执行记录表,
 // 末尾放分享卡(安装引导)——看完核心数据后的自然推广位。
 import type { DashboardStats, RunningTask, Todo } from '@/types';
-import { KeyMetricsCard, OverviewCard } from '../StatsGridCards';
-import { ActiveTasksCard, ShareCardPanel } from '../SpecialCards';
-import { TrendChartCard, ContributionHeatmapCard } from '../ChartCards';
-import { RecentExecutionsTable } from '../RecentExecutionsTable';
+import { KeyMetricsCard, OverviewCard } from '@/components/dashboard/StatsGridCards';
+import { ActiveTasksCard, ShareCardPanel } from '@/components/dashboard/SpecialCards';
+import { TrendChartCard, ContributionHeatmapCard } from '@/components/dashboard/ChartCards';
+import { RecentExecutionsTable } from '@/components/dashboard/RecentExecutionsTable';
 import { TabMasonry, type PanelItem } from './TabMasonry';
 
 interface OverviewTabProps {

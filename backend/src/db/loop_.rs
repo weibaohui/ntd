@@ -1919,7 +1919,13 @@ mod loop_stats_tests {
         assert_eq!(stats.total_output_tokens, 200);
         assert_eq!(stats.total_cost_usd, 0.5);
 
-        // 触发器分布:cron 共 2(1 成功+1 失败)、manual 1(成功)
+        // 触发器分布断言抽到独立函数,让本测试体保持在 30 行以内(CLAUDE.md 函数长度限制)。
+        assert_trigger_distribution(&stats);
+    }
+
+    /// 校验 trigger_type_distribution:cron 2 次(1 成功+1 失败)、manual 1 次(成功)。
+    /// 从主测试抽出以控制函数行数;断言逻辑与主测试共享同一份 stats 结果。
+    fn assert_trigger_distribution(stats: &crate::models::LoopStats) {
         let cron = stats
             .trigger_type_distribution
             .iter()

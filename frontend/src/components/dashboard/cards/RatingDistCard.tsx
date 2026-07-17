@@ -3,7 +3,7 @@
 import { Progress } from 'antd';
 import { StarOutlined } from '@ant-design/icons';
 import { getRecentCompletedTodos } from '@/utils/database/executions';
-import { useCardData } from '../useCardData';
+import { useCardData } from '@/components/dashboard/useCardData';
 import { CardShell } from './CardShell';
 
 interface RatingBuckets {

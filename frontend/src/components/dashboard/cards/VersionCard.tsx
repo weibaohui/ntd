@@ -2,7 +2,7 @@
 import { Tag } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
 import { getVersion, getLatestVersion } from '@/utils/database/skills';
-import { useCardData } from '../useCardData';
+import { useCardData } from '@/components/dashboard/useCardData';
 import { CardShell } from './CardShell';
 
 interface VersionSnapshot {

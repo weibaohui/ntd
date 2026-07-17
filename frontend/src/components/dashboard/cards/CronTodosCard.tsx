@@ -4,7 +4,7 @@ import { Tag, Tooltip } from 'antd';
 import { ClockCircleOutlined } from '@ant-design/icons';
 import { getSchedulerTodos } from '@/utils/database/todos';
 import { formatRelativeTime } from '@/utils/datetime';
-import { useCardData } from '../useCardData';
+import { useCardData } from '@/components/dashboard/useCardData';
 import { CardShell } from './CardShell';
 
 // 下次触发时间渲染成相对时间(如「2 小时后」);缺失则该 todo 未真正排程。

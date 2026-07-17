@@ -2,7 +2,7 @@
 import { Statistic } from 'antd';
 import { FolderOutlined } from '@ant-design/icons';
 import { getProjectDirectories } from '@/utils/database/todos';
-import { useCardData } from '../useCardData';
+import { useCardData } from '@/components/dashboard/useCardData';
 import { CardShell } from './CardShell';
 
 export function WorkspaceCard() {

@@ -3,9 +3,9 @@
 // 这里汇集所有「执行结果维度」的卡片:状态/执行器/时长/触发来源,
 // 让用户诊断「任务跑得好不好、哪个执行器慢、谁触发的」。
 import type { DashboardStats } from '@/types';
-import { HighlightStatsCard, ExecStatsCard } from '../StatsGridCards';
-import { ExecutorChartCard, ExecutorDurationCard } from '../DistributionCards';
-import { StatusChartCard, TriggerSourceCard } from '../ChartCards';
+import { HighlightStatsCard, ExecStatsCard } from '@/components/dashboard/StatsGridCards';
+import { ExecutorChartCard, ExecutorDurationCard } from '@/components/dashboard/DistributionCards';
+import { StatusChartCard, TriggerSourceCard } from '@/components/dashboard/ChartCards';
 import { TabMasonry, type PanelItem } from './TabMasonry';
 
 interface ExecutionsTabProps {

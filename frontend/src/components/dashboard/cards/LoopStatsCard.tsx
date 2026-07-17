@@ -4,7 +4,7 @@
 import { Statistic, Row, Col, Tag } from 'antd';
 import { RetweetOutlined } from '@ant-design/icons';
 import { getLoopStats } from '@/utils/database/loops';
-import { useCardData } from '../useCardData';
+import { useCardData } from '@/components/dashboard/useCardData';
 import { CardShell } from './CardShell';
 
 // trigger_type 枚举值 → 中文,提升可读性;未知值原样回退。

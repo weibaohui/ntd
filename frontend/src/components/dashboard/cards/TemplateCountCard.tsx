@@ -4,7 +4,7 @@ import { Statistic, Row, Col } from 'antd';
 import { FileTextOutlined } from '@ant-design/icons';
 import { getTodoTemplates } from '@/utils/database/todos';
 import { listReviewTemplates } from '@/utils/database/reviewTemplates';
-import { useCardData } from '../useCardData';
+import { useCardData } from '@/components/dashboard/useCardData';
 import { CardShell } from './CardShell';
 
 interface TemplateCounts {

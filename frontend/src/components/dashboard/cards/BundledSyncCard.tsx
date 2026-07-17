@@ -4,7 +4,7 @@ import { Tag } from 'antd';
 import { SyncOutlined } from '@ant-design/icons';
 import { bundledApi } from '@/api/bundled';
 import { formatRelativeTime } from '@/utils/datetime';
-import { useCardData } from '../useCardData';
+import { useCardData } from '@/components/dashboard/useCardData';
 import { CardShell } from './CardShell';
 
 export function BundledSyncCard() {

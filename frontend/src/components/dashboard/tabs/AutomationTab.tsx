@@ -2,9 +2,9 @@
 //
 // Loop 聚合用全局 hours 过滤;飞书消息吞吐(MessageStatsCard)与监听健康(FeishuMonitorCard)互补。
 import type { FeishuMessageStats } from '@/types';
-import { MessageStatsCard } from '../StatsGridCards';
-import { LoopStatsCard } from '../cards/LoopStatsCard';
-import { FeishuMonitorCard } from '../cards/FeishuMonitorCard';
+import { MessageStatsCard } from '@/components/dashboard/StatsGridCards';
+import { LoopStatsCard } from '@/components/dashboard/cards/LoopStatsCard';
+import { FeishuMonitorCard } from '@/components/dashboard/cards/FeishuMonitorCard';
 import { TabMasonry, type PanelItem } from './TabMasonry';
 
 interface AutomationTabProps {
