@@ -6,7 +6,10 @@
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use axum::Router;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
 use crate::config::BundledSourceConfig;
 
 use crate::handlers::{AppError, AppState};
@@ -42,6 +45,130 @@ impl Subdir {
             Subdir::Skills => "skills",
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Skills 市场内存缓存
+// ---------------------------------------------------------------------------
+
+/// Skills 市场元数据缓存（启动时扫描一次，后续直接读内存）
+///
+/// 每次请求 `/api/bundled/skills` 都重新扫描磁盘会导致 10-20 秒延迟，
+/// 用户体验很差。缓存后在内存中直接返回，延迟降到毫秒级。
+///
+/// 缓存在以下时机失效/刷新：
+/// - `run_bundled_sync` 执行 git pull 后
+/// - `install_bundled_skill` 安装新技能后
+///
+/// 使用 `parking_lot::RwLock` 而非 `tokio::sync::RwLock`：
+/// 读多写少场景下 RwLock性能更好，且缓存更新发生在同步任务中（不在 async 上下文中）。
+#[derive(Default)]
+pub struct SkillsMarketCache {
+    /// 缓存的技能列表（按名称排序）
+    skills: RwLock<Vec<BundledSkillMeta>>,
+    /// 缓存的来源分类信息
+    sources: RwLock<HashMap<String, SkillSourceMeta>>,
+    /// 缓存是否已初始化
+    initialized: RwLock<bool>,
+}
+
+impl SkillsMarketCache {
+    /// 从缓存读取，如果未初始化则返回 None（调用方应触发异步预热）
+    pub fn get(&self) -> Option<BundledSkillsResponse> {
+        if !*self.initialized.read() {
+            return None;
+        }
+        let skills = self.skills.read().clone();
+        let sources = self.sources.read().clone();
+        let total = skills.len();
+        Some(BundledSkillsResponse { skills, sources, total })
+    }
+
+    /// 更新缓存内容
+    ///
+    /// # 参数
+    /// - `skills`: 技能列表（应已按名称排序）
+    /// - `sources`: 来源分类信息
+    pub fn update(&self, skills: Vec<BundledSkillMeta>, sources: HashMap<String, SkillSourceMeta>) {
+        let mut skills_guard = self.skills.write();
+        let mut sources_guard = self.sources.write();
+        let mut initialized_guard = self.initialized.write();
+
+        *skills_guard = skills;
+        *sources_guard = sources;
+        *initialized_guard = true;
+    }
+
+    /// 标记缓存为未初始化（强制重新扫描）
+    pub fn invalidate(&self) {
+        let mut initialized = self.initialized.write();
+        *initialized = false;
+    }
+
+    /// 检查缓存是否已初始化
+    pub fn is_initialized(&self) -> bool {
+        *self.initialized.read()
+    }
+}
+
+/// 异步预热缓存（在后台线程扫描磁盘）
+///
+/// 在 `spawn_blocking` 中执行磁盘 IO，避免阻塞 tokio worker 线程。
+pub async fn warm_up_skills_cache(local_path: String) {
+    let result = tokio::task::spawn_blocking(move || -> Option<(Vec<BundledSkillMeta>, HashMap<String, SkillSourceMeta>)> {
+        // 获取 skills 目录路径
+        let skills_dir = match git_sync::bundled_dir(&local_path) {
+            Some(p) => p.join("skills"),
+            None => return None,
+        };
+
+        if !skills_dir.exists() {
+            return None;
+        }
+
+        // 递归扫描所有包含 SKILL.md 的目录
+        let mut skills = Vec::new();
+        collect_bundled_skills_recursive(&skills_dir, &skills_dir, &mut skills);
+
+        // 按名称排序，保证输出顺序稳定
+        skills.sort_by_key(|a| a.name.to_lowercase());
+
+        // 读取每个来源目录的 metadata.json
+        let sources = collect_skill_sources(&skills_dir);
+
+        // 为每个 skill 关联来源元数据
+        for skill in &mut skills {
+            if let Some(meta) = sources.get(&skill.source) {
+                skill.source_meta = Some(meta.clone());
+            }
+        }
+
+        Some((skills, sources))
+    })
+    .await;
+
+    if let Ok(Some((skills, sources))) = result {
+        // 获取全局缓存实例并更新
+        if let Some(cache) = get_global_skills_cache() {
+            cache.update(skills, sources);
+            tracing::debug!("Skills market cache warmed up successfully");
+        }
+    }
+}
+
+// 全局缓存实例（通过 Arc::new 共享到 AppState）
+// 使用 Option<Arc<SkillsMarketCache>> 延迟初始化，避免循环初始化问题
+use std::sync::OnceLock;
+static GLOBAL_SKILLS_CACHE: OnceLock<Arc<SkillsMarketCache>> = OnceLock::new();
+
+/// 获取全局 Skills 缓存实例
+fn get_global_skills_cache() -> Option<&'static Arc<SkillsMarketCache>> {
+    GLOBAL_SKILLS_CACHE.get()
+}
+
+/// 注册全局 Skills 缓存实例（在 AppState 构造时调用）
+pub fn register_skills_cache(cache: Arc<SkillsMarketCache>) {
+    let _ = GLOBAL_SKILLS_CACHE.set(cache);
 }
 
 /// 同步请求参数
@@ -171,7 +298,7 @@ pub(crate) async fn run_bundled_sync(
         }
     }
 
-    // skills / all：扫描 bundled/skills 目录并记录日志（无需导入数据库，前端按需扫描）
+    // skills / all：扫描 bundled/skills 目录并刷新缓存
     if subdir == Subdir::Skills || subdir == Subdir::All {
         // 与上方克隆路径同源：skills 子目录在配置的 local_path 下，而不是硬编码 ~/.ntd/bundled，
         // 否则用户改了 local_path 后，这里会去错误目录数子目录。
@@ -187,6 +314,9 @@ pub(crate) async fn run_bundled_sync(
                 tracing::info!("bundled/skills 目录不存在，跳过");
             }
         }
+
+        // 同步后刷新 Skills 缓存，确保用户下次访问时拿到最新数据
+        warm_up_skills_cache(bundled_config.local_path.clone()).await;
     }
 
     Ok(r)
@@ -618,18 +748,36 @@ pub struct InstallSkillResponse {
 
 /// GET /api/bundled/skills - 列出技能市场中的所有技能
 ///
-/// 扫描 ~/.ntd/bundled/skills/ 目录，返回所有可安装的技能。
+/// 优先从内存缓存返回（毫秒级），缓存未初始化时触发异步预热并等待结果。
 /// 支持嵌套目录结构（如 awesome-skills-zh/lark-doc/SKILL.md）。
 pub async fn list_bundled_skills(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<BundledSkillsResponse>, AppError> {
-    // 先快照出 skills 根目录的相对路径（取自配置 bundled_source.local_path，默认 "bundled"），
-    // 让扫描与 git 克隆落点保持一致；快照后立即释放读锁，再把 owned String move 进阻塞任务。
+    // 先尝试从缓存读取（毫秒级响应）
+    if let Some(cache) = get_global_skills_cache() {
+        if let Some(response) = cache.get() {
+            return Ok(ApiResponse::ok(response));
+        }
+    }
+
+    // 缓存未命中：快照 local_path 并触发异步预热
     let local_path = state.config_snapshot(|c| c.bundled_source.local_path.clone());
-    // 在 spawn_blocking 中执行磁盘扫描，避免阻塞 tokio worker
+
+    // 预热缓存（后台线程扫描），完成后缓存自动更新
+    warm_up_skills_cache(local_path.clone()).await;
+
+    // 再次尝试从缓存读取
+    if let Some(cache) = get_global_skills_cache() {
+        if let Some(response) = cache.get() {
+            return Ok(ApiResponse::ok(response));
+        }
+    }
+
+    // 兜底：同步扫描磁盘（极少发生，仅在缓存预热尚未完成时）
+    let local_path_owned = local_path;
     let result = tokio::task::spawn_blocking(move || {
         // 获取 skills 目录路径（仓库同步到 ~/.ntd/{local_path}/，skills 子目录在其中）
-        let skills_dir = match git_sync::bundled_dir(&local_path) {
+        let skills_dir = match git_sync::bundled_dir(&local_path_owned) {
             Some(p) => p.join("skills"),
             None => {
                 // 目录不存在时返回空列表而非错误，让前端能正常渲染
@@ -1119,6 +1267,9 @@ pub async fn install_bundled_skill(
     })
     .await
     .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))??;
+
+    // 安装成功后刷新 Skills 缓存（确保下次访问时列表是最新的）
+    warm_up_skills_cache(local_path).await;
 
     Ok(ApiResponse::ok(result))
 }
