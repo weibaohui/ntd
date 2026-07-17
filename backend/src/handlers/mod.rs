@@ -380,6 +380,15 @@ async fn build_app_state(
     // 后台监听 todo 执行完成事件，派发给 loop_trigger_dispatcher
     spawn_todo_completed_listener(&tx, loop_trigger_dispatcher.clone());
 
+    // Skills 市场缓存初始化：启动时预热，避免用户首次访问时等待 10-20 秒
+    let skills_cache = Arc::new(crate::handlers::bundled::SkillsMarketCache::default());
+    crate::handlers::bundled::register_skills_cache(skills_cache);
+    // 后台异步预热缓存（不阻塞启动）
+    let cache_local_path = config.read().unwrap_or_else(|e| e.into_inner()).bundled_source.local_path.clone();
+    tokio::spawn(async move {
+        crate::handlers::bundled::warm_up_skills_cache(cache_local_path).await;
+    });
+
     let state = AppState {
         db,
         executor_registry,
