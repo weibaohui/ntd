@@ -138,7 +138,8 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: 
   );
 
   // 时间驱动卡片的调度活跃状态：用于控制左侧强调条、标签颜色等视觉区分
-  const isTimeDrivenActive = item.computed_bucket === 'time_driven' && item.scheduler_enabled;
+  // scheduler_enabled 未定义时默认视为开启，与调度弹窗初始化逻辑（line 83）保持一致
+  const isTimeDrivenActive = item.computed_bucket === 'time_driven' && item.scheduler_enabled !== false;
 
   return (
     <div
@@ -171,7 +172,8 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: 
 
       <div className="todo-center-card-tags">
         {/* 时间驱动且已暂停时，标签置灰以弱化视觉权重；活跃时用原青色强调 */}
-        {item.computed_bucket === 'time_driven' && !item.scheduler_enabled ? (
+        {/* scheduler_enabled 未定义时默认视为开启，只有显式 false 才视为已暂停 */}
+        {item.computed_bucket === 'time_driven' && item.scheduler_enabled === false ? (
           <>
             <Tag color="default">{BUCKET_DISPLAY[item.computed_bucket].label}</Tag>
             <Tag color="default">已暂停</Tag>
@@ -254,9 +256,11 @@ function CardMeta({
 }) {
   const failCount = item.consecutive_failure_count ?? 0;
   // 时间驱动且调度已启用：视为活跃状态，视觉上高亮下次运行时间
-  const isTimeActive = item.computed_bucket === 'time_driven' && item.scheduler_enabled;
+  // scheduler_enabled 未定义时默认视为开启，与调度弹窗初始化逻辑保持一致
+  const isTimeActive = item.computed_bucket === 'time_driven' && item.scheduler_enabled !== false;
   // 时间驱动但调度已暂停：弱化调度表达式显示，降低视觉权重
-  const isTimePaused = item.computed_bucket === 'time_driven' && !item.scheduler_enabled;
+  // 只有显式 false 才视为已暂停
+  const isTimePaused = item.computed_bucket === 'time_driven' && item.scheduler_enabled === false;
 
   return (
     <div className="todo-center-card-meta">
@@ -491,7 +495,8 @@ function timeDrivenMenuItems(
     ];
   }
   // 已有调度：暂停/恢复（切换 enabled）+ 取消（清空 config）
-  const pauseResume = item.scheduler_enabled
+  // scheduler_enabled 未定义时默认视为开启，只有显式 false 才视为已暂停状态
+  const pauseResume = item.scheduler_enabled !== false
     ? {
         key: 'pause_time',
         label: '暂停时间驱动',
