@@ -70,6 +70,17 @@ pub async fn list_loops(
     Ok(ApiResponse::ok(results))
 }
 
+/// GET /api/loops/stats?hours=N — 全 loop 聚合统计(dashboard「自动化」Tab)。
+/// hours 缺省或 0 表示全时段。一次返回 loop 规模/成功率/触发器分布/Token。
+pub async fn get_loop_stats(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<impl IntoResponse, AppError> {
+    let hours: Option<u32> = params.get("hours").and_then(|s| s.parse().ok());
+    let stats = state.db.get_loop_stats(hours).await?;
+    Ok(ApiResponse::ok(stats))
+}
+
 /// POST /api/loops — 新建 loop,status 强制为 paused
 pub async fn create_loop(
     State(state): State<AppState>,
@@ -2156,6 +2167,8 @@ pub fn loop_routes() -> axum::Router<AppState> {
         .route("/api/loops/batch-copy-workspace", post(batch_copy_loops_workspace))
         .route("/api/loops/export-selected", post(export_selected_loops))
         .route("/api/loops/export", get(export_all_loops))
+        // stats 必须在 {id} 之前注册:axum 字面量路由优先匹配,否则 "stats" 会被当成 loop id。
+        .route("/api/loops/stats", get(get_loop_stats))
         .route("/api/loops/{id}", get(get_loop).put(update_loop).delete(delete_loop))
         .route("/api/loops/{id}/export", get(export_loop))
         .route("/api/loops/{id}/status", put(update_loop_status))

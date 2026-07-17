@@ -48,6 +48,34 @@ impl LoopListItem {
     }
 }
 
+/// Loop 全局聚合统计(供 dashboard「自动化」Tab 用)。
+///
+/// 一次聚合所有 loop 的规模/成功率/触发器分布/Token,避免前端逐 loop 拉取造成的 N+1。
+/// total_loops/active_loops 来自 loops 配置表(不受时间窗影响);
+/// 其余执行类指标来自 loop_executions,按 hours 过滤 started_at。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopStats {
+    pub total_loops: i64,
+    pub active_loops: i64,
+    pub total_executions: i64,
+    pub success_executions: i64,
+    pub failed_executions: i64,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_cost_usd: f64,
+    /// 触发类型分布(按 loop_executions.trigger_type GROUP BY)。
+    pub trigger_type_distribution: Vec<LoopTriggerTypeCount>,
+}
+
+/// Loop 触发类型分布项。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopTriggerTypeCount {
+    pub trigger_type: String,
+    pub count: i64,
+    pub success_count: i64,
+    pub failed_count: i64,
+}
+
 /// Loop 详情(基本+子项完整数据),LoopStudio 详情页一次拿到。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoopDetail {
