@@ -85,6 +85,12 @@ impl CodexExtractor {
                                 summary: text.to_string(),
                             });
                         }
+                    } else if item_type == "collab_tool_call" {
+                        // codex 派生子 agent 走 collab_tool_call(spawn_agent)；
+                        // 归一成 ToolCall，让 agent_progress 能识别（item.completed 才带 prompt + receiver）。
+                        if let Some(ev) = collab_spawn_agent_tool_call(item) {
+                            events.push(ev);
+                        }
                     }
                 }
             }
@@ -223,6 +229,25 @@ impl CodexExtractor {
 
         events
     }
+}
+
+/// codex 的 collab_tool_call(tool=spawn_agent) → ToolCall，让多 agent 提取器识别派生的子 agent。
+///
+/// 仅 item.completed 调用（此时才带 prompt 与 receiver_thread_ids）；tool 非 spawn_agent 返回 None。
+fn collab_spawn_agent_tool_call(item: &serde_json::Value) -> Option<ExecutionEvent> {
+    let tool = item.get("tool").and_then(|v| v.as_str()).unwrap_or("");
+    if tool != "spawn_agent" {
+        return None;
+    }
+    let input = serde_json::json!({
+        "prompt": item.get("prompt").and_then(|v| v.as_str()).unwrap_or(""),
+        "receiver_thread_ids": item.get("receiver_thread_ids").cloned().unwrap_or(serde_json::json!([])),
+    });
+    Some(ExecutionEvent::ToolCall {
+        id: item.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        name: "spawn_agent".to_string(),
+        input,
+    })
 }
 
 impl EventExtractor for CodexExtractor {

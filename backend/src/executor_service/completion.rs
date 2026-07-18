@@ -151,6 +151,16 @@ pub(crate) async fn persist_completion_record(
             .update_execution_record_stats(record_id, &stats_json)
             .await;
     }
+    // 多 Agent 协作：完成态一次性扫描日志，提取派生过的子 agent 元数据写入 agent_runs。
+    // 与 todo_progress 平行，但 todo_progress 是实时写、这里是完成时写（用户选 2b）。
+    let agent_runs = crate::agent_progress::extract_agent_runs(all_logs);
+    if !agent_runs.is_empty() {
+        if let Ok(agent_runs_json) = serde_json::to_string(&agent_runs) {
+            let _ = db
+                .update_execution_record_agent_runs(record_id, &agent_runs_json)
+                .await;
+        }
+    }
     let final_status = if success {
         crate::models::ExecutionStatus::Success.as_str()
     } else {

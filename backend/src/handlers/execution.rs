@@ -775,6 +775,7 @@ mod resume_session_id_tests {
             task_id: task_id.map(|s| s.to_string()),
             session_id: session_id.map(|s| s.to_string()),
             todo_progress: None,
+            agent_runs: None,
             execution_stats: None,
             resume_message: None,
             source_todo_id: None,

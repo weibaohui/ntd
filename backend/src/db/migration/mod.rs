@@ -25,6 +25,7 @@ mod v63;
 mod v64;
 mod v65;
 mod v66;
+mod v67;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -84,6 +85,8 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v65::V65AddTodoExpertName),
         // V66 在 V65 之后：新建 quick_buttons 表，支撑回复框自定义快捷话术按钮
         Box::new(v66::V66AddQuickButtonsTable),
+        // V67 在 V66 之后：execution_records 新增 agent_runs，存储多 Agent 协作的子 agent 元数据（JSON）
+        Box::new(v67::V67AddExecutionRecordsAgentRuns),
     ]
 }
 

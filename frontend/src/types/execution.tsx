@@ -82,6 +82,19 @@ export interface ExecutionStats {
   thinking_count: number;
 }
 
+/**
+ * 多 Agent 协作中单个子 agent 的元数据。
+ * 与后端 backend/src/agent_progress.rs::AgentRun 一一对应。
+ * **只含元数据**（名称/角色/状态/启动时间），不含 prompt/result 原文——
+ * 原文在 execution_logs 里，LogDrawer 的 Agent Tab 按 tool_name 扫日志展示。
+ */
+export interface AgentRun {
+  name: string;
+  role?: string;
+  status: string;
+  started_at?: string;
+}
+
 export interface ExecutionRecord {
   id: number;
   todo_id: number;
@@ -100,6 +113,8 @@ export interface ExecutionRecord {
   task_id?: string | null;
   session_id?: string | null;
   todo_progress?: string | null;
+  /** 多 Agent 协作的子 agent 元数据（JSON 字符串，AgentRun[]）。后端完成态写入，前端自行 parse。 */
+  agent_runs?: string | null;
   execution_stats?: ExecutionStats | null;
   resume_message?: string | null;
   source_todo_id?: number | null;

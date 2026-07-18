@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Drawer, Button, Empty } from 'antd';
 import { ChatView } from '@/components/ChatView';
 import { CommandPanel } from '@/components/CommandPanel';
+import { AgentPanel } from '@/components/AgentPanel';
 import { RefreshBtn } from '../todo-detail/LogViewHeader';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { formatLogTime } from './helpers';
@@ -31,7 +32,7 @@ export function LogDrawer({
   onClose,
   runningTasks,
 }: LogDrawerProps) {
-  const [viewMode, setViewMode] = useState<"chat" | "command" | "log">("chat");
+  const [viewMode, setViewMode] = useState<"chat" | "command" | "agent" | "log">("chat");
 
   const liveLogs = (() => {
     if (!record) return null;
@@ -65,6 +66,9 @@ export function LogDrawer({
         <Button type={viewMode === "command" ? "primary" : "default"} size="small" onClick={() => setViewMode("command")}>
           命令
         </Button>
+        <Button type={viewMode === "agent" ? "primary" : "default"} size="small" onClick={() => setViewMode("agent")}>
+          Agent
+        </Button>
         <Button type={viewMode === "log" ? "primary" : "default"} size="small" onClick={() => setViewMode("log")}>
           日志
         </Button>
@@ -83,6 +87,8 @@ export function LogDrawer({
           <ChatView logs={displayLogs} isRunning={false} />
         ) : viewMode === "command" ? (
           <CommandPanel logs={displayLogs} executor={undefined} />
+        ) : viewMode === "agent" ? (
+          <AgentPanel logs={displayLogs} />
         ) : (
           <div
             style={{

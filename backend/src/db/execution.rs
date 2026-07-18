@@ -161,6 +161,8 @@ impl From<execution_records::Model> for ExecutionRecord {
             task_id: m.task_id,
             session_id: m.session_id,
             todo_progress: m.todo_progress,
+            // agent_runs 是纯 JSON 字符串透传（前端 parse），无需像 usage/stats 那样反序列化。
+            agent_runs: m.agent_runs,
             execution_stats,
             resume_message: m.resume_message,
             source_todo_id: m.source_todo_id,
@@ -608,6 +610,23 @@ impl Database {
         let am = execution_records::ActiveModel {
             id: ActiveValue::Unchanged(id),
             todo_progress: ActiveValue::Set(Some(todo_progress_json.to_string())),
+            ..Default::default()
+        };
+        self.exec_update(am).await
+    }
+
+    /// 更新执行记录的 agent_runs（多 Agent 协作的子 agent 元数据 JSON）。
+    ///
+    /// 与 todo_progress 同构：调用方序列化 `Vec<AgentRun>` 为 JSON 字符串后传入。
+    /// 完成态（persist_completion_record）一次性写入，不做实时增量。
+    pub async fn update_execution_record_agent_runs(
+        &self,
+        id: i64,
+        agent_runs_json: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        let am = execution_records::ActiveModel {
+            id: ActiveValue::Unchanged(id),
+            agent_runs: ActiveValue::Set(Some(agent_runs_json.to_string())),
             ..Default::default()
         };
         self.exec_update(am).await
