@@ -1,0 +1,6 @@
+# 执行器在样本目录运行时产生的本地状态/缓存目录，不属于样本内容
+.codewhale/
+.deepseek/
+.codex/
+.opencode/
+.cache/

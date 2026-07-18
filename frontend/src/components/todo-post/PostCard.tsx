@@ -12,6 +12,7 @@ import type { ExecutionRecord } from '@/types';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { CollapsibleConclusion } from '../todo-detail/CollapsibleConclusion';
 import { CollapsibleCommand } from './CollapsibleCommand';
+import { AgentRunsSection, TodoProgressSection } from './ExecutionSections';
 import { WorktreePathDisplay } from './WorktreePathDisplay';
 import { RatingControl } from './RatingControl';
 import { formatLocalDateTime, formatDurationSec } from '@/utils/datetime';
@@ -155,6 +156,10 @@ export function PostCard({
       {record.command && (
         <CollapsibleCommand command={record.command} title="命令" />
       )}
+
+      {/* 多 Agent 协作 + 待办进度：此前只采集不展示，这里补齐（数据非空才渲染） */}
+      <TodoProgressSection record={record} />
+      <AgentRunsSection record={record} />
 
       {/* 元信息 + 操作：记录ID、执行器、时间、触发类型、评分、导出、统计 */}
       <div style={{

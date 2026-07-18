@@ -1,0 +1,10 @@
+# Opencode 多 Agent 协作真实输出样本
+# 采集时间: 2026-07-18T03:53:28Z
+# 任务: 刘会计派生张三丰(8+8) + 李雷(10*10) 并汇总
+# 执行命令: opencode run --format json --dangerously-skip-permissions <prompt>
+# 退出码: 0
+
+## stdout
+```
+```
+

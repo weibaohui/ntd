@@ -151,6 +151,8 @@ pub(crate) async fn persist_completion_record(
             .update_execution_record_stats(record_id, &stats_json)
             .await;
     }
+    // 多 Agent 协作：完成态一次性扫描日志写入 agent_runs（抽到 helper 控制本函数行数 ≤30）。
+    persist_agent_runs(db, record_id, all_logs, success).await;
     let final_status = if success {
         crate::models::ExecutionStatus::Success.as_str()
     } else {
@@ -175,6 +177,27 @@ pub(crate) async fn persist_completion_record(
             review_meta: None,
         })
         .await;
+}
+
+/// 完成态把多 Agent 子 agent 元数据写入 `execution_records.agent_runs`。
+///
+/// 与 todo_progress 平行，但 todo_progress 是实时写、这里是完成时一次性写（用户选 2b）。
+/// `success` 透传：成功记录子 agent 标 completed，失败标 unknown。空结果不写。
+async fn persist_agent_runs(
+    db: &Database,
+    record_id: i64,
+    all_logs: &[ParsedLogEntry],
+    success: bool,
+) {
+    let agent_runs = crate::agent_progress::extract_agent_runs(all_logs, success);
+    if agent_runs.is_empty() {
+        return;
+    }
+    if let Ok(agent_runs_json) = serde_json::to_string(&agent_runs) {
+        let _ = db
+            .update_execution_record_agent_runs(record_id, &agent_runs_json)
+            .await;
+    }
 }
 
 /// executor 后置 todo_progress 钩子：把 executor 内部 state 推出的进度写库 + 发事件。

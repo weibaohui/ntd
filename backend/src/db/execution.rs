@@ -161,6 +161,8 @@ impl From<execution_records::Model> for ExecutionRecord {
             task_id: m.task_id,
             session_id: m.session_id,
             todo_progress: m.todo_progress,
+            // agent_runs 是纯 JSON 字符串透传（前端 parse），无需像 usage/stats 那样反序列化。
+            agent_runs: m.agent_runs,
             execution_stats,
             resume_message: m.resume_message,
             source_todo_id: m.source_todo_id,
@@ -608,6 +610,23 @@ impl Database {
         let am = execution_records::ActiveModel {
             id: ActiveValue::Unchanged(id),
             todo_progress: ActiveValue::Set(Some(todo_progress_json.to_string())),
+            ..Default::default()
+        };
+        self.exec_update(am).await
+    }
+
+    /// 更新执行记录的 agent_runs（多 Agent 协作的子 agent 元数据 JSON）。
+    ///
+    /// 与 todo_progress 同构：调用方序列化 `Vec<AgentRun>` 为 JSON 字符串后传入。
+    /// 完成态（persist_completion_record）一次性写入，不做实时增量。
+    pub async fn update_execution_record_agent_runs(
+        &self,
+        id: i64,
+        agent_runs_json: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        let am = execution_records::ActiveModel {
+            id: ActiveValue::Unchanged(id),
+            agent_runs: ActiveValue::Set(Some(agent_runs_json.to_string())),
             ..Default::default()
         };
         self.exec_update(am).await
@@ -1724,6 +1743,48 @@ mod center_aggregate_tests {
         assert_eq!(s1.status.as_deref(), Some("failed"), "应取最近一条");
         // t2 无记录 → 不在 map 中
         assert!(!map.contains_key(&t2));
+    }
+
+    /// update_execution_record_agent_runs：写入 agent_runs JSON 后能按 id 原样读回（CodeRabbit）。
+    #[tokio::test]
+    async fn test_update_execution_record_agent_runs_roundtrip() {
+        let db = fresh_db().await;
+        let todo_id = seed_todo(&db, "T").await;
+        // 插一条执行记录并取自增 id（update 方法按 id 定位）。
+        db.exec(&format!(
+            "INSERT INTO execution_records (todo_id, status, trigger_type, started_at) \
+             VALUES ({todo_id}, 'success', 'manual', '2026-07-18T03:48:20Z')"
+        ))
+        .await
+        .expect("insert exec");
+        let row = db
+            .conn
+            .query_one(Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT id FROM execution_records ORDER BY id DESC LIMIT 1".to_string(),
+            ))
+            .await
+            .expect("query id")
+            .expect("row exists");
+        let id: i64 = row.try_get_by_index(0).expect("id readable");
+
+        let json = r#"[{"name":"张三丰","role":"general","status":"completed"}]"#;
+        db.update_execution_record_agent_runs(id, json)
+            .await
+            .expect("update agent_runs");
+
+        // 直接读列验证（不依赖 API 反序列化路径），确保落库内容与写入完全一致。
+        let row = db
+            .conn
+            .query_one(Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                format!("SELECT agent_runs FROM execution_records WHERE id = {id}"),
+            ))
+            .await
+            .expect("query agent_runs")
+            .expect("row exists");
+        let stored: Option<String> = row.try_get_by_index(0).expect("col readable");
+        assert_eq!(stored.as_deref(), Some(json));
     }
 
     /// LatestExecutionSummary::display_at：优先 finished_at，回退 started_at，均无则 None。

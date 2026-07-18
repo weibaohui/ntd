@@ -23,6 +23,11 @@ pub struct Model {
     pub session_id: Option<String>,
     pub todo_progress: Option<String>,
     pub execution_stats: Option<String>,
+    /// 多 Agent 协作的子 agent 元数据（JSON 字符串，`Vec<AgentRun>` 序列化）。
+    /// 与 todo_progress 平行：执行完成时一次性扫描日志提取。
+    /// **只存元数据**（名称/角色/状态/启动时间），不存输入输出原文——原文在 execution_logs，
+    /// 前端按 tool_name 扫日志展示。NULL = 未涉及子 agent。
+    pub agent_runs: Option<String>,
     pub resume_message: Option<String>,
     /// When `trigger_type` is `hook:*`, the id of the source todo whose hook
     /// fired this execution. NULL for manual / cron / webhook / feishu

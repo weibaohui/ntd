@@ -25,6 +25,8 @@ pub mod services;
 pub mod sys;
 pub mod task_manager;
 pub mod todo_progress;
+/// 多 Agent 协作提取器：识别执行过程中派生的子 agent，写入 execution_records.agent_runs。
+pub mod agent_progress;
 /// Wiki 文件管理模块：黑板改为纯文件存储。
 pub mod wiki;
 /// WorkBuddy 专家系统集成模块

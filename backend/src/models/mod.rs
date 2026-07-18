@@ -342,6 +342,10 @@ pub struct ExecutionRecord {
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub todo_progress: Option<String>,
+    /// 多 Agent 协作的子 agent 元数据（JSON 字符串 `Vec<AgentRun>`）。
+    /// 透传 entity 的 agent_runs 列，前端自行 parse。与 todo_progress 一样不在此处反序列化。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_runs: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_stats: Option<ExecutionStats>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
