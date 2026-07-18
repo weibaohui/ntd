@@ -15,7 +15,6 @@ set -euo pipefail
 # 与 collect_samples.sh 保持一致的目录定位方式
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SAMPLES_DIR="$SCRIPT_DIR"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TIMEOUT_SEC=300  # 多 Agent 流程比单任务慢，超时放宽
 
 # 任务 prompt：明确要求多 Agent 协作，便于横向比较各执行器的实现差异
@@ -42,8 +41,8 @@ EXECUTORS=(
   "codex|Codex|codex exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check|no"
   "codebuddy|Codebuddy|codebuddy -p --output-format stream-json --verbose|no"
   "codewhale|Codewhale|codewhale exec --auto --output-format stream-json|no"
-  "hermes|Hermes|hermes chat -q --yolo|no"
-  "kimi|Kimi|kimi --print --output-format stream-json -p|no"
+  "hermes|Hermes|hermes chat --yolo -q|no"
+  "kimi|Kimi|kimi --output-format stream-json -p|no"
   "mimo|Mimo|mimo run --format json --dangerously-skip-permissions|no"
   "zhanlu|Zhanlu|zl run --format json --dangerously-skip-permissions|no"
 )
@@ -135,7 +134,8 @@ for entry in "${EXECUTORS[@]}"; do
     echo "# $display_name 多 Agent 协作真实输出样本"
     echo "# 采集时间: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
     echo "# 任务: 刘会计派生张三丰(8+8) + 李雷(10*10) 并汇总"
-    echo "# 执行命令: $exec_path ${cmd_parts[@]:1} <prompt>"
+    # 用 * 而非 @：双引号内数组切片需合并为单个字符串（ShellCheck SC2145）。
+    echo "# 执行命令: $exec_path ${cmd_parts[*]:1} <prompt>"
     echo "# 退出码: $exit_code"
     echo ""
     echo "## stdout"

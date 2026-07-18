@@ -9,7 +9,7 @@
 ]9;4;1]0;🐳 CodeWhale]0;🐋 CodeWhale]0;🐳 CodeWhale]0;🐋 CodeWhale]0;🐳 CodeWhale]0;🐋 CodeWhale]0;🐳 CodeWhale]0;🐋 CodeWhale{"type":"tool_use","name":"exec_shell","id":"call_00_zrs7xbBOYZ3zNBzICwOy3455","input":{"command":"date"}}
 {"type":"tool_use","name":"exec_shell","id":"call_01_67iLb2Inv8rUwe0Tn4Lw4657","input":{"command":"whoami"}}
 {"type":"tool_result","id":"call_00_zrs7xbBOYZ3zNBzICwOy3455","output":"Mon Jun 29 23:21:04 CST 2026\n","status":"success"}
-{"type":"tool_result","id":"call_01_67iLb2Inv8rUwe0Tn4Lw4657","output":"weibh\n","status":"success"}
+{"type":"tool_result","id":"call_01_67iLb2Inv8rUwe0Tn4Lw4657","output":"user\n","status":"success"}
 ]0;🐳 CodeWhale]0;🐋 CodeWhale{"type":"content","content":"-"}
 {"type":"content","content":" **"}
 {"type":"content","content":"date"}
@@ -58,7 +58,7 @@
 {"type":"content","content":"输出"}
 {"type":"content","content":"。"}
 {"type":"session_capture","content":"f378a24d-3302-413a-bc58-999dee3febc9"}
-{"type":"metadata","meta":{"model":"deepseek-v4-pro","input_tokens":143660,"output_tokens":183,"session_id":"f378a24d-3302-413a-bc58-999dee3febc9","resume_command":"codewhale exec --resume f378a24d-3302-413a-bc58-999dee3febc9","workspace":"/Users/weibh/projects/rust/nothing-todo","message_count":7,"status":"completed"}}
+{"type":"metadata","meta":{"model":"deepseek-v4-pro","input_tokens":143660,"output_tokens":183,"session_id":"f378a24d-3302-413a-bc58-999dee3febc9","resume_command":"codewhale exec --resume f378a24d-3302-413a-bc58-999dee3febc9","workspace":"/Users/user/projects/rust/nothing-todo","message_count":7,"status":"completed"}}
 {"type":"done"}
 ```
 

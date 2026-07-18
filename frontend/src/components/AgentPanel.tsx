@@ -4,9 +4,10 @@
 // execution_logs 里的原文——因为 execution_records.agent_runs 按用户要求「3不存」只存元数据，
 // prompt/result 原文留在日志里，由本组件就近展示。
 //
-// 输出配对说明：用「向后最近的 tool_result」做尽力配对。对 mimo 族（task/actor 工具的
-// tool_use 事件自带 output，结果紧随）准确；对 claudecode（子 agent 内部工具调用穿插在主流）
-// 仅近似——故输出块标注「参考」，用户可去对话视图核对。
+// 输出配对说明：仅当 spawn 的 tool_call 紧跟一条 tool_result 时才配对输出。这对 mimo 族
+// 准确（其 tool_use 事件会紧邻发出 result）；对 claudecode（子 agent 内部工具调用穿插在
+// 主流）则不显示输出——不显示比把内部结果误当成 agent 输出更诚实（review 反馈），
+// 需要完整输出请看「对话」视图。
 
 import { Tag, Empty } from 'antd';
 import type { LogEntry } from '@/types';
@@ -58,27 +59,25 @@ function collectAgents(logs: LogEntry[]): AgentInfo[] {
   logs.forEach((log, idx) => {
     if (log.type !== 'tool_call' || !isAgentTool(log.toolName ?? log.content)) return;
     const meta = parseAgentMeta(log.toolInputJson);
-    if (!meta.name) return; // 拿不到名字的不算一个可展示的 agent
+    // 拿不到结构化名字时给兜底名，避免 codex（名字在纯文本 prompt）等条目整条从面板消失（CodeRabbit）。
+    const name = meta.name || `Agent (未命名 #${idx})`;
     agents.push({
-      key: `${idx}-${meta.name}`,
-      name: meta.name,
+      key: `${idx}-${name}`,
+      name,
       role: meta.role,
       input: meta.input,
-      output: findNearestOutput(logs, idx),
+      output: findAdjacentOutput(logs, idx),
       timestamp: log.timestamp,
     });
   });
   return agents;
 }
 
-/** 向后找最近的 tool_result 作为该 agent 的输出；遇到下一个 agent spawn 即停。 */
-function findNearestOutput(logs: LogEntry[], from: number): string | undefined {
-  for (let j = from + 1; j < logs.length; j++) {
-    const l = logs[j];
-    if (l.type === 'tool_result') return l.content;
-    if (l.type === 'tool_call' && isAgentTool(l.toolName ?? l.content)) break;
-  }
-  return undefined;
+/** 仅当 spawn 的 tool_call 紧跟一条 tool_result 时，把后者作为该 agent 的输出返回。
+ *  见模块文档：不向后扫描，避免把 claudecode 子 agent 的内部工具结果误配成本 agent 输出。 */
+function findAdjacentOutput(logs: LogEntry[], from: number): string | undefined {
+  const next = logs[from + 1];
+  return next?.type === 'tool_result' ? next.content : undefined;
 }
 
 export function AgentPanel({ logs }: { logs: LogEntry[] }) {
@@ -102,7 +101,7 @@ export function AgentPanel({ logs }: { logs: LogEntry[] }) {
             )}
           </div>
           {a.input && <PreBlock label="输入" text={a.input} />}
-          {a.output && <PreBlock label="输出（邻近结果·参考）" text={a.output} />}
+          {a.output && <PreBlock label="输出" text={a.output} />}
         </div>
       ))}
     </div>

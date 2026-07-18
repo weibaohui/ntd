@@ -5,9 +5,9 @@
 //! mimo 族的 task/actor 工具）目前没有结构化记录，前端无法展示"派生了哪些子 agent"。
 //! 新增 agent_runs 列，与 todo_progress 平行：
 //!   - 执行完成时一次性扫描 execution_logs，提取每个子 agent 的「元数据」
-//!     （名称/角色/状态/模型/耗时/token），序列化为 JSON 存入本列；
+//!     （名称/角色/状态/启动时间），序列化为 JSON 存入本列；
 //!   - **不存输入输出原文**——prompt 与 result 的完整文本已在 execution_logs 里，
-//!     前端按 agent_runs.call_id 关联日志按需展示，避免重复存储撑爆字段（pi 单条数百 KB）。
+//!     前端按 tool_name 扫日志按需展示，避免重复存储撑爆字段（pi 单条数百 KB）。
 //!
 //! ## 幂等
 //! `add_column_if_missing` 探测列存在性，缺则 ALTER ADD，已存在则静默跳过，任意中间状态可重入。

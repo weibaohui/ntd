@@ -41,22 +41,37 @@ fn is_agent_tool_name(name: &str) -> bool {
 
 /// 扫描全量日志，提取子 agent 列表。在执行完成（`persist_completion_record`）时调用。
 ///
+/// `success` 透传记录的最终成败：成功则子 agent 标 `completed`；失败时无法逐个判定，
+/// 统一标 `unknown`，避免在失败记录上误显 completed（review 反馈）。
+///
 /// 优先走结构化路径（tool_call 行）；结构化为空时（如 atomcode 纯文本）退回文本兜底。
-pub fn extract_agent_runs(logs: &[ParsedLogEntry]) -> Vec<AgentRun> {
-    let structured = collect_structured_agent_runs(logs);
+pub fn extract_agent_runs(logs: &[ParsedLogEntry], success: bool) -> Vec<AgentRun> {
+    let status = status_label(success);
+    let structured = collect_structured_agent_runs(logs, status);
     if !structured.is_empty() {
         return structured;
     }
-    collect_text_agent_runs(logs)
+    collect_text_agent_runs(logs, status)
+}
+
+/// 完成态子 agent 状态标签：记录成功→completed；失败→unknown（不逐个猜）。
+fn status_label(success: bool) -> &'static str {
+    if success {
+        "completed"
+    } else {
+        "unknown"
+    }
 }
 
 /// 结构化路径：遍历所有 tool_call 日志，挑出 spawn 类工具调用并解析成 AgentRun。
-fn collect_structured_agent_runs(logs: &[ParsedLogEntry]) -> Vec<AgentRun> {
-    logs.iter().filter_map(parse_agent_run_from_entry).collect()
+fn collect_structured_agent_runs(logs: &[ParsedLogEntry], status: &'static str) -> Vec<AgentRun> {
+    logs.iter()
+        .filter_map(|e| parse_agent_run_from_entry(e, status))
+        .collect()
 }
 
 /// 从单条 tool_call 日志解析出一个 AgentRun；非 agent 工具或拿不到名字则返回 None。
-fn parse_agent_run_from_entry(entry: &ParsedLogEntry) -> Option<AgentRun> {
+fn parse_agent_run_from_entry(entry: &ParsedLogEntry, status: &'static str) -> Option<AgentRun> {
     if entry.log_type != "tool_call" {
         return None;
     }
@@ -81,22 +96,25 @@ fn parse_agent_run_from_entry(entry: &ParsedLogEntry) -> Option<AgentRun> {
     Some(AgentRun {
         name,
         role: pick_str(src, &["subagent_type", "agent_type", "type", "role"]),
-        status: "completed".to_string(),
+        status: status.to_string(),
         started_at: Some(entry.timestamp.clone()),
     })
 }
 
-/// 在 JSON 对象里按候选 key 顺序取第一个非空字符串。
+/// 在 JSON 对象里按候选 key 顺序取第一个非空白字符串。
+/// 跳过空串/纯空白：否则 `description:""` 会命中并阻断后续 prompt 兜底，导致 agent 被误丢弃。
 fn pick_str(v: &serde_json::Value, keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .find_map(|k| v.get(*k).and_then(|x| x.as_str()).map(|s| s.to_string()))
+    keys.iter().find_map(|k| {
+        let s = v.get(*k)?.as_str()?.trim();
+        (!s.is_empty()).then(|| s.to_string())
+    })
 }
 
 /// 纯文本兜底：仅 atomcode 等无结构化 tool_call 的执行器会走到这里。
 ///
 /// 启发式扫描「名字叫X / 名叫X / 名字是X」并去重。极度依赖输出措辞，不保证准确，
 /// 仅为了让纯文本执行器也能在界面上体现"派生了子 agent"。
-fn collect_text_agent_runs(logs: &[ParsedLogEntry]) -> Vec<AgentRun> {
+fn collect_text_agent_runs(logs: &[ParsedLogEntry], status: &'static str) -> Vec<AgentRun> {
     let mut seen = std::collections::HashSet::new();
     let mut runs = Vec::new();
     for entry in logs {
@@ -106,7 +124,7 @@ fn collect_text_agent_runs(logs: &[ParsedLogEntry]) -> Vec<AgentRun> {
                 runs.push(AgentRun {
                     name,
                     role: None,
-                    status: "completed".to_string(),
+                    status: status.to_string(),
                     started_at: Some(entry.timestamp.clone()),
                 });
             }
@@ -144,6 +162,11 @@ fn extract_named_agents(text: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    // 测试默认按「记录成功」走提取（status→completed）；失败场景另测。
+    fn extract_test(logs: &[ParsedLogEntry]) -> Vec<AgentRun> {
+        extract_agent_runs(logs, true)
+    }
+
     fn tool_call(name: &str, input: &serde_json::Value) -> ParsedLogEntry {
         ParsedLogEntry {
             timestamp: "2026-07-18T03:48:20Z".to_string(),
@@ -174,7 +197,7 @@ mod tests {
             "subagent_type": "general-purpose",
             "prompt": "计算 8+8"
         });
-        let runs = extract_agent_runs(&[tool_call("Agent", &input)]);
+        let runs = extract_test(&[tool_call("Agent", &input)]);
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].name, "张三丰加法计算");
         assert_eq!(runs[0].role.as_deref(), Some("general-purpose"));
@@ -192,7 +215,7 @@ mod tests {
                 "prompt": "你是张三丰..."
             }
         });
-        let runs = extract_agent_runs(&[tool_call("task", &input)]);
+        let runs = extract_test(&[tool_call("task", &input)]);
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].name, "张三丰：加法计算 8+8");
         assert_eq!(runs[0].role.as_deref(), Some("general"));
@@ -207,7 +230,7 @@ mod tests {
             "type": "general",
             "prompt": "你是张三丰..."
         });
-        let runs = extract_agent_runs(&[tool_call("agent", &input)]);
+        let runs = extract_test(&[tool_call("agent", &input)]);
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].name, "zhangsanfeng");
         assert_eq!(runs[0].role.as_deref(), Some("general"));
@@ -218,7 +241,7 @@ mod tests {
         // 两个 agent 并行 spawn，顺序应保持（先张三丰后李雷）。
         let a = serde_json::json!({"description": "张三丰", "subagent_type": "general"});
         let b = serde_json::json!({"description": "李雷", "subagent_type": "general"});
-        let runs = extract_agent_runs(&[tool_call("Agent", &a), tool_call("Agent", &b)]);
+        let runs = extract_test(&[tool_call("Agent", &a), tool_call("Agent", &b)]);
         assert_eq!(runs.iter().map(|r| r.name.clone()).collect::<Vec<_>>(), vec!["张三丰", "李雷"]);
     }
 
@@ -229,7 +252,7 @@ mod tests {
             "prompt": "你的名字叫张三丰。你的角色是加法计算专家。请只计算 8+8。",
             "receiver_thread_ids": ["019f735d-2365"]
         });
-        let runs = extract_agent_runs(&[tool_call("spawn_agent", &input)]);
+        let runs = extract_test(&[tool_call("spawn_agent", &input)]);
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].name, "张三丰");
     }
@@ -238,26 +261,35 @@ mod tests {
     fn test_non_agent_tool_ignored() {
         // 普通工具调用（bash/read/todowrite）不应被误识别为子 agent。
         let input = serde_json::json!({"command": "ls -la"});
-        assert!(extract_agent_runs(&[tool_call("bash", &input)]).is_empty());
+        assert!(extract_test(&[tool_call("bash", &input)]).is_empty());
     }
 
     #[test]
     fn test_empty_logs() {
-        assert!(extract_agent_runs(&[]).is_empty());
+        assert!(extract_test(&[]).is_empty());
+    }
+
+    #[test]
+    fn test_failed_record_marks_agents_unknown() {
+        // 记录失败时无法逐个判定子 agent 成败，统一标 unknown，避免误显 completed（review 反馈）。
+        let input = serde_json::json!({"description": "张三丰", "subagent_type": "general"});
+        let runs = extract_agent_runs(&[tool_call("Agent", &input)], false);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, "unknown");
     }
 
     #[test]
     fn test_agent_without_name_dropped() {
         // 拿不到名字（description/name 都缺）的 spawn 不算一个可展示的 agent。
         let input = serde_json::json!({"prompt": "做点事"});
-        assert!(extract_agent_runs(&[tool_call("Agent", &input)]).is_empty());
+        assert!(extract_test(&[tool_call("Agent", &input)]).is_empty());
     }
 
     #[test]
     fn test_atomcode_text_fallback() {
         // 纯文本执行器（atomcode）：结构化为空时走文本兜底，抓「名字叫X」。
         let text = "Agent 1 名字叫张三丰，是加法专家；Agent 2 名字叫李雷。";
-        let runs = extract_agent_runs(&[text_entry(text)]);
+        let runs = extract_test(&[text_entry(text)]);
         assert_eq!(runs.len(), 2);
         assert_eq!(runs[0].name, "张三丰");
         assert_eq!(runs[1].name, "李雷");
@@ -268,7 +300,7 @@ mod tests {
         // 有结构化 agent 时不走文本兜底，避免把正文里提到的名字误当 agent。
         let input = serde_json::json!({"description": "张三丰"});
         let text = "正文里提到名字叫李雷，但这是普通文本。";
-        let runs = extract_agent_runs(&[tool_call("Agent", &input), text_entry(text)]);
+        let runs = extract_test(&[tool_call("Agent", &input), text_entry(text)]);
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].name, "张三丰");
     }

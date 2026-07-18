@@ -11,7 +11,7 @@
 | 命令 | 输出 |
 |------|------|
 | `date` | Mon Jun 29 23:17:55 CST 2026 |
-| `whoami` | weibh |
+| `whoami` | user |
 ```
 
 ## stderr
@@ -64,12 +64,12 @@
 [tokens] prompt=6569 completion=178 cached=2048 (31% hit)
 [tool-batch] 2 calls in parallel
 [tool→ bash args={"command": "date && whoami"}]
-[tool← bash OK 10ms] Tue Jun 30 14:45:43 CST 2026 weibh
+[tool← bash OK 10ms] Tue Jun 30 14:45:43 CST 2026 user
 [tool→ todo args={"action": "add", "content": "演示任务：每秒更新状态"}]
 [tool← todo OK 0ms] Added task #1: 演示任务：每秒更新状态 [ ] 1. 演示任务：每秒更新状态
 [tool-batch] completed 2/2 ok in 13ms
 [thinking] The `date` command shows: Tue Jun 30 14:45:43 CST 2026
-[thinking] The `whoami` command shows: weibh
+[thinking] The `whoami` command shows: user
 
 [thinking] Now I need to update the todo task to "completed" every second. Let me do:
 [thinking] 1. Task #1 → completed (first update)
@@ -378,7 +378,7 @@
 | 命令 | 输出 |
 |------|------|
 | `date` | Tue Jun 30 14:45:43 CST 2026 |
-| `whoami` | weibh |
+| `whoami` | user |
 
 **Todo 任务每秒更新过程：**
 
