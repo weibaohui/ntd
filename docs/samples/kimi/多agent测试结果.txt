@@ -1,0 +1,15 @@
+# Kimi 多 Agent 协作真实输出样本
+# 采集时间: 2026-07-18T03:56:31Z
+# 任务: 刘会计派生张三丰(8+8) + 李雷(10*10) 并汇总
+# 执行命令: kimi --print --output-format stream-json -p <prompt>
+# 退出码: 1
+
+## stdout
+```
+```
+
+## stderr
+```
+error: unknown option '--print'
+(Did you mean --prompt?)
+```
