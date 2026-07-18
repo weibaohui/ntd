@@ -88,16 +88,26 @@ export function LeftRail({
         { key: 'memorial', label: '看板', icon: <ReadOutlined />, ariaLabel: '看板' },
       ] satisfies LeftRailItem[],
     },
+    // 「配置」区放在主「工作区」下方：
+    // 技能/专家原本藏在底部弹出菜单里，层级过深，提升为常驻入口更易触达。
+    // key 复用 settings_skills / settings_experts，路由与 active 高亮无需额外改动。
+    {
+      title: '配置',
+      items: [
+        { key: 'settings_skills', label: '技能', icon: <ThunderboltOutlined />, ariaLabel: '技能' },
+        { key: 'settings_experts', label: '专家', icon: <TeamOutlined />, ariaLabel: '专家' },
+      ] satisfies LeftRailItem[],
+    },
   ]), []);
 
-  // 配置项菜单 — 从侧边栏主体收拢到底部弹出菜单，减少主导航的视觉噪音
+  // 配置项菜单 — 从侧边栏主体收拢到底部弹出菜单，减少主导航的视觉噪音。
+  // 技能/专家已提升为工作空间下方的常驻「配置」区，这里只保留次要配置入口；
+  // 「设置」改名「更多设置」，强调它是技能/专家之外的其余配置入口。
   const configItems = useMemo(() => ([
     { key: 'settings_bots', label: '智能助手', icon: <RobotOutlined />, ariaLabel: '智能助手' },
     { key: 'settings_executors', label: '执行器', icon: <CodeOutlined />, ariaLabel: '执行器' },
-    { key: 'settings_skills', label: 'Skills', icon: <ThunderboltOutlined />, ariaLabel: 'Skills' },
-    { key: 'settings_experts', label: '专家', icon: <TeamOutlined />, ariaLabel: '专家' },
     { key: 'settings_projectDirectories', label: '工作空间', icon: <FolderOutlined />, ariaLabel: '工作空间' },
-    { key: 'settings', label: '设置', icon: <SettingOutlined />, ariaLabel: '设置' },
+    { key: 'settings', label: '更多设置', icon: <SettingOutlined />, ariaLabel: '更多设置' },
   ] satisfies LeftRailItem[]), []);
 
   const [openConfigPopover, setOpenConfigPopover] = useState(false);
