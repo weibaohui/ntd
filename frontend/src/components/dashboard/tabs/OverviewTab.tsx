@@ -25,13 +25,15 @@ export function OverviewTab({ stats, loading, successRate, runningTasks, todos }
     { key: 'key-metrics', render: () => <KeyMetricsCard stats={stats} loading={loading} successRate={successRate} /> },
     { key: 'active-tasks', render: () => <ActiveTasksCard runningTasks={runningTasks} /> },
     { key: 'trend-chart', render: () => <TrendChartCard stats={stats} /> },
-    { key: 'contribution-heatmap', render: () => <ContributionHeatmapCard stats={stats} /> },
     { key: 'overview-card', render: () => <OverviewCard stats={stats} successRate={successRate} /> },
   ];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <TabMasonry panels={panels} />
+      {/* 活动热力图单独全宽:一年 53 周横向跨度大,塞进瀑布流单列时格子被压到 ~7px 几乎不可见;
+          全宽渲染后格子随宽度放大到 ~18px,可读性显著提升。故从 panels 移出独占一行。 */}
+      <ContributionHeatmapCard stats={stats} />
       {/* 最近执行记录是表格而非卡片,与瀑布流视觉节奏不同,单独成块置于下方更清晰。 */}
       <RecentExecutionsTable executions={stats?.recent_executions ?? []} todos={todos} />
       {/* 分享卡置于总览底部:安装引导属于推广位,原先在资源 tab(配置/健康度)语义不符。 */}
