@@ -42,6 +42,36 @@ export async function listLoops(workspace_id?: number | null): Promise<LoopListI
   return unwrap(await api.get(`/api/loops${qs}`));
 }
 
+// ====== Loop 聚合统计(dashboard「自动化」Tab)======
+
+/** Loop 聚合统计,与后端 models::LoopStats 对齐。 */
+export interface LoopStats {
+  total_loops: number;
+  active_loops: number;
+  total_executions: number;
+  success_executions: number;
+  failed_executions: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost_usd: number;
+  /** 触发类型分布(按 loop_executions.trigger_type GROUP BY)。 */
+  trigger_type_distribution: LoopTriggerTypeCount[];
+}
+
+/** Loop 触发类型分布项。 */
+export interface LoopTriggerTypeCount {
+  trigger_type: string;
+  count: number;
+  success_count: number;
+  failed_count: number;
+}
+
+/** GET /api/loops/stats?hours=N:全 loop 聚合统计。hours 缺省或 0 表示全时段。 */
+export async function getLoopStats(hours?: number): Promise<LoopStats> {
+  const qs = hours && hours > 0 ? `?hours=${hours}` : '';
+  return unwrap(await api.get(`/api/loops/stats${qs}`));
+}
+
 /** 单个 loop 详情,含 triggers/steps/hooks/todo_map。 */
 export async function getLoop(id: number): Promise<LoopDetail> {
   return unwrap(await api.get(`/api/loops/${id}`));

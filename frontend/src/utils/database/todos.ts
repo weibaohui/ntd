@@ -200,6 +200,11 @@ export async function getProjectDirectories(): Promise<ProjectDirectory[]> {
   return unwrap(await api.get('/api/project-directories'));
 }
 
+/** GET /api/scheduler/todos:列出所有启用 cron 调度的 todo(含下次触发时间 scheduler_next_run_at)。 */
+export async function getSchedulerTodos(): Promise<Todo[]> {
+  return unwrap(await api.get('/api/scheduler/todos'));
+}
+
 // 创建项目目录：后端要求 name 必填，调用方需保证传入非空字符串。
 // 返回完整 ProjectDirectory 对象（含 id），供调用方更新本地状态。
 // issue #643 修复：create 接口在后端并不消费 gitWorktreeEnabled / autoCleanup 字段，

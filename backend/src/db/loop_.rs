@@ -1412,6 +1412,159 @@ impl Database {
         Ok(out)
     }
 
+    // ====== Loop 聚合统计(dashboard「自动化」Tab)======
+    // 设计参照 db/dashboard.rs:原生 SQL + json_extract(usage) + SUM,
+    // 4 条独立查询用 tokio::try_join! 并行后组装 LoopStats。
+    // token 在 execution_records.usage JSON 里,必须经 loop_step_executions JOIN,
+    // 前端若聚合会是 N²+N(逐 loop 拉 executions 再逐条取 token),故下沉到后端一条 SQL。
+
+    /// GET /api/loops/stats 的数据来源:聚合所有 loop 的规模/执行/触发器/Token。
+    /// hours=None 或 0 表示全时段;否则按 loop_executions.started_at 过滤执行类指标。
+    pub async fn get_loop_stats(
+        &self,
+        hours: Option<u32>,
+    ) -> Result<crate::models::LoopStats, sea_orm::DbErr> {
+        // 4 条查询互不依赖,并行执行;counts 查 loops 表(无时间窗),其余按 hours 过滤。
+        let (counts, exec_summary, trigger_dist, token_totals) = tokio::try_join!(
+            self.fetch_loop_counts(),
+            self.fetch_loop_execution_summary(hours),
+            self.fetch_loop_trigger_distribution(hours),
+            self.fetch_loop_token_totals(hours),
+        )?;
+        Ok(crate::models::LoopStats {
+            total_loops: counts.0,
+            active_loops: counts.1,
+            total_executions: exec_summary.0,
+            success_executions: exec_summary.1,
+            failed_executions: exec_summary.2,
+            total_input_tokens: token_totals.0,
+            total_output_tokens: token_totals.1,
+            total_cost_usd: token_totals.2,
+            trigger_type_distribution: trigger_dist,
+        })
+    }
+
+    /// loop 总数与活跃数(来自 loops 配置表,不受时间窗影响)。active = status='enabled'。
+    async fn fetch_loop_counts(&self) -> Result<(i64, i64), sea_orm::DbErr> {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let sql = "SELECT \
+            COUNT(*) AS total, \
+            COALESCE(SUM(CASE WHEN status='enabled' THEN 1 ELSE 0 END), 0) AS active \
+            FROM loops";
+        let row = self
+            .conn
+            .query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await?
+            .ok_or_else(|| sea_orm::DbErr::RecordNotFound("loop counts returned no rows".into()))?;
+        Ok((
+            row.try_get_by::<i64, _>("total").unwrap_or(0),
+            row.try_get_by::<i64, _>("active").unwrap_or(0),
+        ))
+    }
+
+    /// loop_executions 的总数/成功/失败(按 hours 过滤 started_at)。
+    async fn fetch_loop_execution_summary(
+        &self,
+        hours: Option<u32>,
+    ) -> Result<(i64, i64, i64), sea_orm::DbErr> {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let sql = format!(
+            "SELECT \
+            COUNT(*) AS total, \
+            COALESCE(SUM(CASE WHEN status='success' THEN 1 ELSE 0 END), 0) AS success, \
+            COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END), 0) AS failed \
+            FROM loop_executions \
+            WHERE {}",
+            Self::loop_exec_time_filter(hours, "started_at")
+        );
+        let row = self
+            .conn
+            .query_one(Statement::from_string(DbBackend::Sqlite, sql))
+            .await?
+            .ok_or_else(|| sea_orm::DbErr::RecordNotFound("loop exec summary returned no rows".into()))?;
+        Ok((
+            row.try_get_by::<i64, _>("total").unwrap_or(0),
+            row.try_get_by::<i64, _>("success").unwrap_or(0),
+            row.try_get_by::<i64, _>("failed").unwrap_or(0),
+        ))
+    }
+
+    /// 触发类型分布(按 loop_executions.trigger_type GROUP BY)。
+    async fn fetch_loop_trigger_distribution(
+        &self,
+        hours: Option<u32>,
+    ) -> Result<Vec<crate::models::LoopTriggerTypeCount>, sea_orm::DbErr> {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let sql = format!(
+            "SELECT \
+            COALESCE(trigger_type, 'manual') AS trigger_type, \
+            COUNT(*) AS count, \
+            COALESCE(SUM(CASE WHEN status='success' THEN 1 ELSE 0 END), 0) AS success_count, \
+            COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END), 0) AS failed_count \
+            FROM loop_executions \
+            WHERE {} \
+            GROUP BY COALESCE(trigger_type, 'manual') \
+            ORDER BY count DESC",
+            Self::loop_exec_time_filter(hours, "started_at")
+        );
+        let rows = self
+            .conn
+            .query_all(Statement::from_string(DbBackend::Sqlite, sql))
+            .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            out.push(crate::models::LoopTriggerTypeCount {
+                trigger_type: row
+                    .try_get_by::<String, _>("trigger_type")
+                    .unwrap_or_else(|_| "manual".to_string()),
+                count: row.try_get_by::<i64, _>("count").unwrap_or(0),
+                success_count: row.try_get_by::<i64, _>("success_count").unwrap_or(0),
+                failed_count: row.try_get_by::<i64, _>("failed_count").unwrap_or(0),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Token 总量(经 loop_step_executions JOIN execution_records,SUM usage JSON)。
+    async fn fetch_loop_token_totals(&self, hours: Option<u32>) -> Result<(u64, u64, f64), sea_orm::DbErr> {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        // le.started_at 用于时间过滤;LEFT JOIN 保证无 step/record 的 execution 行不丢失,
+        // 其 token 经 COALESCE 兜底为 0。
+        let sql = format!(
+            "SELECT \
+            COALESCE(SUM(COALESCE(json_extract(er.usage, '$.input_tokens'), 0)), 0) AS input_tokens, \
+            COALESCE(SUM(COALESCE(json_extract(er.usage, '$.output_tokens'), 0)), 0) AS output_tokens, \
+            COALESCE(SUM(COALESCE(json_extract(er.usage, '$.total_cost_usd'), 0.0)), 0.0) AS cost \
+            FROM loop_executions le \
+            LEFT JOIN loop_step_executions lse ON lse.loop_execution_id = le.id \
+            LEFT JOIN execution_records er ON er.id = lse.execution_record_id \
+            WHERE {}",
+            Self::loop_exec_time_filter(hours, "le.started_at")
+        );
+        let row = self
+            .conn
+            .query_one(Statement::from_string(DbBackend::Sqlite, sql))
+            .await?
+            .ok_or_else(|| sea_orm::DbErr::RecordNotFound("loop token totals returned no rows".into()))?;
+        // 用 i64 中转再 as u64:token 量级远低于 i64 上限,SQLite 整数返回 i64 最稳妥。
+        let input: i64 = row.try_get_by::<i64, _>("input_tokens").unwrap_or(0);
+        let output: i64 = row.try_get_by::<i64, _>("output_tokens").unwrap_or(0);
+        let cost: f64 = row.try_get_by::<f64, _>("cost").unwrap_or(0.0);
+        Ok((input as u64, output as u64, cost))
+    }
+
+    /// 构建 loop_executions 时间过滤 SQL 片段(impl 关联函数,无 self)。
+    /// hours=None/0 → 全时段("1=1");否则按 started_at 文本列回退 N 小时。
+    /// col 允许传别名前缀(如 "le.started_at"),适配 JOIN 查询的表别名。
+    fn loop_exec_time_filter(hours: Option<u32>, col: &str) -> String {
+        match hours.filter(|&h| h > 0) {
+            Some(h) => format!(
+                "REPLACE(REPLACE({col}, 'T', ' '), 'Z', '') >= datetime('now', '-{h} hours')"
+            ),
+            None => "1=1".to_string(),
+        }
+    }
+
     /// 加载 loop 详情(基本+所有子项)给前端 LoopStudio 详情面板用。
     /// 单次返回所有必要数据,前端无需多次请求。
     ///
@@ -1642,5 +1795,181 @@ mod loop_step_count_tests {
         assert_eq!(refs_a[0].loop_name, "Loop1");
         // B 未引用 → 不在 map 中（调用方按 unwrap_or_default 取空 vec）
         assert!(!map.contains_key(&todo_b));
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
+mod loop_stats_tests {
+    use crate::db::Database;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    async fn fresh_db() -> Database {
+        Database::new(":memory:").await.expect("memory db must open")
+    }
+
+    /// 取某表当前最大 id。测试单线程顺序插入,等价于「刚插入那行的 id」;
+    /// 用 MAX 而非 last_insert_rowid,因为连接池不保证两次查询落在同一连接。
+    async fn max_id(db: &Database, table: &str) -> i64 {
+        let sql = format!("SELECT MAX(id) AS m FROM {table}");
+        let row = db
+            .conn
+            .query_one(Statement::from_string(DbBackend::Sqlite, sql))
+            .await
+            .expect("query max id")
+            .expect("max id row exists");
+        row.try_get_by::<i64, _>("m").unwrap_or(0)
+    }
+
+    async fn seed_todo(db: &Database, title: &str) -> i64 {
+        db.exec(&format!(
+            "INSERT INTO todos (title, prompt, status) VALUES ('{title}', 'p', 'pending')"
+        ))
+        .await
+        .expect("insert todo");
+        max_id(db, "todos").await
+    }
+
+    /// 插 loop 并显式指定 status(enabled/paused),供 active_loops 统计测试。
+    async fn seed_loop_status(db: &Database, name: &str, status: &str) -> i64 {
+        db.exec(&format!(
+            "INSERT INTO loops (name, status) VALUES ('{name}', '{status}')"
+        ))
+        .await
+        .expect("insert loop");
+        max_id(db, "loops").await
+    }
+
+    async fn seed_loop_step(db: &Database, loop_id: i64, todo_id: i64, name: &str) -> i64 {
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) VALUES ({loop_id}, '{name}', {todo_id}, 1)"
+        ))
+        .await
+        .expect("insert step");
+        max_id(db, "loop_steps").await
+    }
+
+    /// 插一条 loop 执行记录。time_expr 是受控的 SQL 时间字面量(如 datetime('now','-100 days')),
+    /// 非用户输入,直接拼接无注入风险。
+    async fn seed_loop_execution(
+        db: &Database,
+        loop_id: i64,
+        trigger_type: &str,
+        status: &str,
+        time_expr: &str,
+    ) -> i64 {
+        db.exec(&format!(
+            "INSERT INTO loop_executions (loop_id, trigger_type, status, started_at) \
+             VALUES ({loop_id}, '{trigger_type}', '{status}', {time_expr})"
+        ))
+        .await
+        .expect("insert loop_execution");
+        max_id(db, "loop_executions").await
+    }
+
+    /// 插一条 execution_record,usage 为 JSON 文本(含 token/cost 字段)。
+    async fn seed_execution_record(db: &Database, usage: &str) -> i64 {
+        db.exec(&format!("INSERT INTO execution_records (usage) VALUES ('{usage}')"))
+            .await
+            .expect("insert execution_record");
+        max_id(db, "execution_records").await
+    }
+
+    /// 关联 loop_step_executions 到 execution_record,建立 token 聚合的 JOIN 桥梁。
+    async fn link_step_execution(
+        db: &Database,
+        loop_execution_id: i64,
+        step_id: i64,
+        todo_id: i64,
+        execution_record_id: i64,
+    ) {
+        db.exec(&format!(
+            "INSERT INTO loop_step_executions (loop_execution_id, step_id, todo_id, execution_record_id, status) \
+             VALUES ({loop_execution_id}, {step_id}, {todo_id}, {execution_record_id}, 'success')"
+        ))
+        .await
+        .expect("insert step_execution");
+    }
+
+    /// 全时段聚合:loop 规模、执行成功/失败、触发器分布、Token 都应正确汇总。
+    #[tokio::test]
+    async fn test_get_loop_stats_aggregates_all_fields() {
+        let db = fresh_db().await;
+        let todo = seed_todo(&db, "T").await;
+        let l_active = seed_loop_status(&db, "active", "enabled").await;
+        let _l_paused = seed_loop_status(&db, "paused", "paused").await;
+        let step = seed_loop_step(&db, l_active, todo, "s1").await;
+
+        // 3 次执行:2 success(cron + manual)、1 failed(cron)
+        let le_success_cron = seed_loop_execution(&db, l_active, "cron", "success", "datetime('now')").await;
+        let _le_success_manual = seed_loop_execution(&db, l_active, "manual", "success", "datetime('now')").await;
+        let _le_failed_cron = seed_loop_execution(&db, l_active, "cron", "failed", "datetime('now')").await;
+
+        // 给其中一次成功执行挂一个带 token 的 execution_record
+        let er = seed_execution_record(&db, r#"{"input_tokens":100,"output_tokens":200,"total_cost_usd":0.5}"#).await;
+        link_step_execution(&db, le_success_cron, step, todo, er).await;
+
+        let stats = db.get_loop_stats(None).await.expect("stats");
+        assert_eq!(stats.total_loops, 2, "共 2 个 loop");
+        assert_eq!(stats.active_loops, 1, "仅 1 个 enabled");
+        assert_eq!(stats.total_executions, 3);
+        assert_eq!(stats.success_executions, 2);
+        assert_eq!(stats.failed_executions, 1);
+        assert_eq!(stats.total_input_tokens, 100);
+        assert_eq!(stats.total_output_tokens, 200);
+        assert_eq!(stats.total_cost_usd, 0.5);
+
+        // 触发器分布断言抽到独立函数,让本测试体保持在 30 行以内(CLAUDE.md 函数长度限制)。
+        assert_trigger_distribution(&stats);
+    }
+
+    /// 校验 trigger_type_distribution:cron 2 次(1 成功+1 失败)、manual 1 次(成功)。
+    /// 从主测试抽出以控制函数行数;断言逻辑与主测试共享同一份 stats 结果。
+    fn assert_trigger_distribution(stats: &crate::models::LoopStats) {
+        let cron = stats
+            .trigger_type_distribution
+            .iter()
+            .find(|t| t.trigger_type == "cron")
+            .expect("cron 行");
+        assert_eq!(cron.count, 2);
+        assert_eq!(cron.success_count, 1);
+        assert_eq!(cron.failed_count, 1);
+        let manual = stats
+            .trigger_type_distribution
+            .iter()
+            .find(|t| t.trigger_type == "manual")
+            .expect("manual 行");
+        assert_eq!(manual.count, 1);
+        assert_eq!(manual.success_count, 1);
+    }
+
+    /// hours 过滤:窗口外的执行不计入执行类指标,但 total_loops 不受影响。
+    #[tokio::test]
+    async fn test_get_loop_stats_hours_filter_excludes_old() {
+        let db = fresh_db().await;
+        let lp = seed_loop_status(&db, "L", "enabled").await;
+        // 近期(成功)+ 100 天前(失败)
+        let _le_recent = seed_loop_execution(&db, lp, "cron", "success", "datetime('now')").await;
+        let _le_old = seed_loop_execution(&db, lp, "cron", "failed", "datetime('now','-100 days')").await;
+
+        let stats = db.get_loop_stats(Some(720)).await.expect("stats");
+        // 720h = 30 天,100 天前的失败不计入
+        assert_eq!(stats.total_executions, 1, "窗口外的不计入");
+        assert_eq!(stats.success_executions, 1);
+        assert_eq!(stats.failed_executions, 0);
+        // total_loops 来自 loops 表,不受时间窗影响
+        assert_eq!(stats.total_loops, 1);
+        assert_eq!(stats.active_loops, 1);
+    }
+
+    /// 空库:所有计数为 0、触发器分布为空、不报错(防 NULL/空集 panic)。
+    #[tokio::test]
+    async fn test_get_loop_stats_empty_db() {
+        let db = fresh_db().await;
+        let stats = db.get_loop_stats(None).await.expect("stats");
+        assert_eq!(stats.total_loops, 0);
+        assert_eq!(stats.total_executions, 0);
+        assert!(stats.trigger_type_distribution.is_empty());
+        assert_eq!(stats.total_input_tokens, 0);
     }
 }

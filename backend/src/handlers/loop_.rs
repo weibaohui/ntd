@@ -70,6 +70,25 @@ pub async fn list_loops(
     Ok(ApiResponse::ok(results))
 }
 
+/// /api/loops/stats 的查询参数:hours 缺省(None)= 全时段。
+/// 用强类型 Option<u32> 而非 HashMap<String,String>:axum/serde 反序列化时,
+/// 非法值(abc/负数/溢出)会自动 400,而非静默降级为全时段——隐藏输入错误比报错更危险。
+// pub:handler 是 pub,签名暴露的类型必须至少同等可见,否则 clippy 报「私有类型暴露在公开接口」。
+#[derive(Deserialize)]
+pub struct LoopStatsQuery {
+    pub hours: Option<u32>,
+}
+
+/// GET /api/loops/stats?hours=N — 全 loop 聚合统计(dashboard「自动化」Tab)。
+/// hours 缺省表示全时段。一次返回 loop 规模/成功率/触发器分布/Token。
+pub async fn get_loop_stats(
+    State(state): State<AppState>,
+    Query(params): Query<LoopStatsQuery>,
+) -> Result<impl IntoResponse, AppError> {
+    let stats = state.db.get_loop_stats(params.hours).await?;
+    Ok(ApiResponse::ok(stats))
+}
+
 /// POST /api/loops — 新建 loop,status 强制为 paused
 pub async fn create_loop(
     State(state): State<AppState>,
@@ -2156,6 +2175,8 @@ pub fn loop_routes() -> axum::Router<AppState> {
         .route("/api/loops/batch-copy-workspace", post(batch_copy_loops_workspace))
         .route("/api/loops/export-selected", post(export_selected_loops))
         .route("/api/loops/export", get(export_all_loops))
+        // stats 必须在 {id} 之前注册:axum 字面量路由优先匹配,否则 "stats" 会被当成 loop id。
+        .route("/api/loops/stats", get(get_loop_stats))
         .route("/api/loops/{id}", get(get_loop).put(update_loop).delete(delete_loop))
         .route("/api/loops/{id}/export", get(export_loop))
         .route("/api/loops/{id}/status", put(update_loop_status))
