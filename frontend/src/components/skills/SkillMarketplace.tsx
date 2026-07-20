@@ -86,12 +86,16 @@ function SourceCard({
       styles={{ body: { padding: compact ? 12 : 16 } }}
     >
       {/* 名称 + Stars */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, minWidth: 0 }}>
         <span style={{
           fontSize: compact ? 13 : 15,
           fontWeight: 600,
           color: 'var(--color-text)',
           flex: 1,
+          // minWidth:0 是关键：flex 子项默认 min-width:auto，
+          // 长标题（如「Claude Skills Collection (BbgnsurfTec)」）会撑破列宽，
+          // 把它降到 0 后 overflow+ellipsis 才能真正生效
+          minWidth: 0,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
