@@ -105,19 +105,20 @@ export interface BundledSkillMeta {
 /**
  * Bundled Skills 列表响应
  *
- * 后端支持 `?page=&page_size=` 分页；不带分页参数时仍返回全量，保持向后兼容。
- * 分页字段只在请求带了 page / page_size 时才会有值。
+ * 后端强制分页：page / page_size 始终有值，不会返回全量数据。
+ * skills 是「当前页」的过滤后切片；total 是「过滤后」的计数，
+ * 前端 Pagination 据此渲染页码。注意 total 与 skills.length 不一定相等。
  */
 export interface BundledSkillsResponse {
   skills: BundledSkillMeta[];
   /** 来源分类信息（key 为 source 名称） */
   sources: Record<string, SkillSourceMeta>;
-  /** 总数：分页时是「过滤前」的全量技能数，前端据此渲染分页器 */
+  /** 总数：「过滤后」的技能数（先按 source/keyword 过滤，再分页），前端据此渲染分页器 */
   total: number;
-  /** 当前页码（从 1 开始）；不分页时为 undefined */
-  page?: number;
-  /** 每页大小；不分页时为 undefined */
-  page_size?: number;
+  /** 当前页码（从 1 开始） */
+  page: number;
+  /** 每页大小 */
+  page_size: number;
 }
 
 /**
@@ -139,11 +140,15 @@ export interface SkillSourceWithCount {
  * 与 BundledSkillsResponse 职责分离：
  * - BundledSkillsResponse 按「技能」切片，用于「全部技能」模式
  * - BundledSkillSourcesResponse 按「来源」切片，用于「按来源浏览」来源网格
+ *
+ * 注意：total 是「过滤后」的来源数（先按 keyword 过滤，再分页），
+ * 而每个 source 内的 skill_count 仍是「过滤前」的真实技能数——
+ * 两者语义故意不同：total 决定分页器，skill_count 展示「该来源下有多少技能」。
  */
 export interface BundledSkillSourcesResponse {
   /** 当前页的来源列表（已分页切片） */
   sources: SkillSourceWithCount[];
-  /** 来源总数（过滤前），前端 Pagination 据此渲染页码 */
+  /** 来源总数：「过滤后」的来源数，前端 Pagination 据此渲染页码 */
   total: number;
   /** 当前页码（从 1 开始） */
   page: number;

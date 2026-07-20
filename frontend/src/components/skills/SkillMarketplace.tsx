@@ -347,7 +347,7 @@ export function SkillMarketplace() {
   const [browseSkillsPage, setBrowseSkillsPage] = useState(1);
   // all-skills 模式的页码
   const [allPage, setAllPage] = useState(1);
-  // total 始终是「过滤前」的全量计数，后端在分页切片前就已写入；
+  // total 是「过滤后」的技能数（后端先按 source/keyword 过滤再分页），
   // 前端据此渲染 Pagination 组件，而不是直接看当前页的 skills.length。
   const [total, setTotal] = useState(0);
   // 来源分页响应：来源网格专用，与技能分页彻底分离
@@ -373,6 +373,13 @@ export function SkillMarketplace() {
   // 避免快速连点 A→B 时 A 的内容把 B 的详情覆盖掉（旧请求的 finally 也不会误关 B 的 loading）。
   const detailReqIdRef = useRef(0);
 
+  // 列表请求竞态守卫（loadSkills / loadSources 共用）：
+  // 翻页 / 切视图 / 改搜索词时旧请求可能晚于新请求返回，
+  // 用序号识别「最新」请求，过期的 setState 全部静默丢弃；
+  // setLoading(false) 也仅由最新请求触发，避免中途失败的旧请求
+  // 把 loading 提前关掉造成 spinner 闪烁。
+  const reqGenRef = useRef(0);
+
   // ── 安装 Modal 状态 ──
   const [installModalOpen, setInstallModalOpen] = useState(false);
   const [targetExecutors, setTargetExecutors] = useState<string[]>([]);
@@ -390,12 +397,17 @@ export function SkillMarketplace() {
    * 设计取舍（强制分页）：
    * - 两种视图模式都走后端分页，绝不返回全量数据，避免一次把上千张
    *   技能卡片塞进 DOM 把首屏渲染拖垮。
-   * - 「按来源浏览」模式下，sourceNames / skillsBySource / activeSourceSkills
-   *   都基于「当前页」数据派生：来源网格只显示当前页出现的来源，
-   *   翻页时换一组来源卡片，与「全部技能」翻页换一批技能语义一致。
-   * - total 是「过滤前」的全量计数，前端 Pagination 据此渲染页码。
+   * - 来源网格按「来源」独立翻页（loadSources），与技能分页职责分离。
+   * - total 是「过滤后」的技能数，前端 Pagination 据此渲染页码。
+   *
+   * 竞态保护：快速翻页 / 切换视图时，旧的请求可能晚于新请求返回，
+   * 若直接 setState 会用旧数据覆盖新数据。这里用 reqGenRef 给每次请求
+   * 打序号，仅最新请求的结果（成功 / 失败）能落到 state，
+   * 过期请求静默丢弃；setLoading(false) 也只由最新请求触发，
+   * 避免「A 失败先把 loading 关掉，但 B 还在路上」的闪烁。
    */
   const loadSkills = useCallback(async () => {
+    const myGen = ++reqGenRef.current;
     setLoading(true);
     try {
       // 当前视图模式对应的页码：切换模式时各自独立的 page 互不干扰
@@ -414,13 +426,17 @@ export function SkillMarketplace() {
         source,
         keyword,
       });
+      // 过期请求：在我之后又发起了新请求，新数据才是用户当前想看的，旧结果直接丢弃
+      if (myGen !== reqGenRef.current) return;
       setSkills(res.skills);
       setSources(res.sources);
       setTotal(res.total);
     } catch (e: any) {
+      if (myGen !== reqGenRef.current) return;
       message.error('加载技能列表失败: ' + (e?.message || e));
     } finally {
-      setLoading(false);
+      // 仅最新请求负责关 loading，否则中途失败的过期请求会把 loading 提前关掉
+      if (myGen === reqGenRef.current) setLoading(false);
     }
   }, [message, viewMode, allPage, browseSkillsPage, filterSource, activeSource, searchText, ALL_SKILLS_PAGE_SIZE]);
 
@@ -430,8 +446,11 @@ export function SkillMarketplace() {
    * 来源网格专用：按「来源」本身翻页，与技能分页彻底分离。
    * 来源网格的每个 SourceCard 显示 skill_count（过滤前计数），
    * sourcesTotal 是过滤后的来源总数，前端 Pagination 据此渲染。
+   *
+   * 竞态保护同 loadSkills：复用 reqGenRef，唯一序号、过期丢弃。
    */
   const loadSources = useCallback(async () => {
+    const myGen = ++reqGenRef.current;
     setLoading(true);
     try {
       const keyword = searchText.trim() || undefined;
@@ -440,12 +459,15 @@ export function SkillMarketplace() {
         page_size: ALL_SKILLS_PAGE_SIZE,
         keyword,
       });
+      // 过期请求直接丢弃，不写 sourcesList / sourcesTotal
+      if (myGen !== reqGenRef.current) return;
       setSourcesList(res.sources);
       setSourcesTotal(res.total);
     } catch (e: any) {
+      if (myGen !== reqGenRef.current) return;
       message.error('加载来源列表失败: ' + (e?.message || e));
     } finally {
-      setLoading(false);
+      if (myGen === reqGenRef.current) setLoading(false);
     }
   }, [message, browseSourcesPage, searchText, ALL_SKILLS_PAGE_SIZE]);
 
@@ -472,10 +494,8 @@ export function SkillMarketplace() {
   }, [viewMode, activeSource, loadSkills, loadSources, loadInstalled]);
 
   // 过滤已下沉到后端（loadSkills 下发 source / keyword）：
-  // 后端先过滤再分页，返回的 skills 就是当前页的过滤结果。
-  // 这里不再做本地二次过滤，避免与后端切片叠加导致分页错位。
-  const filteredSkills = skills;
-  const activeSourceSkills = skills;
+  // 后端先过滤再分页，返回的 skills 就是当前页的过滤后切片，
+  // 这里直接用 skills，不再做本地二次过滤，避免与后端切片叠加导致分页错位。
 
   // ── 判断已安装 ──
   const getInstalledExecutors = (skill: BundledSkillMeta): string[] => {
@@ -671,7 +691,7 @@ export function SkillMarketplace() {
         value={searchText}
         onChange={e => {
           setSearchText(e.target.value);
-          // 搜索会改变 filteredSkills 的内容，重置回第 1 页避免停留在空页
+          // 搜索会改变后端过滤结果，重置回第 1 页避免停留在空页
           if (viewMode === 'all-skills') setAllPage(1);
         }}
         style={{ width: 220, borderRadius: 'var(--radius-xl)' }}
@@ -705,7 +725,7 @@ export function SkillMarketplace() {
       <Text type="secondary" style={{ marginLeft: 'auto', fontSize: 13 }}>
         {viewMode === 'browse-sources' && !activeSource
           ? `${sourcesTotal} 个来源`
-          : `${viewMode === 'browse-sources' ? activeSourceSkills.length : filteredSkills.length} 个技能`
+          : `${viewMode === 'browse-sources' ? skills.length : skills.length} 个技能`
         }
       </Text>
     </div>
@@ -772,7 +792,8 @@ export function SkillMarketplace() {
 
     // 按来源浏览 → 某个来源的技能列表
     if (viewMode === 'browse-sources' && activeSource) {
-      const sourceSkills = activeSourceSkills;
+      // skills 已经是 loadSkills 按 activeSource 过滤后当前页的切片
+      const sourceSkills = skills;
       const sourceMeta = sources[activeSource];
       return (
         <div>
@@ -878,10 +899,10 @@ export function SkillMarketplace() {
     // 全部技能模式
     // 该模式走后端分页：loadSkills 只拉当前页的 ALL_SKILLS_PAGE_SIZE 条，
     // 底部 Pagination 翻页时通过 page 状态触发 loadSkills 重跑。
-    // 注意 total 是「过滤前」的全量计数，前端据此渲染页码而不是看当前页 length。
+    // 注意 total 是「过滤后」的技能数，前端据此渲染页码而不是看当前页 length。
     return (
       <Spin spinning={loading}>
-        {filteredSkills.length === 0 ? (
+        {skills.length === 0 ? (
           <div style={{
             textAlign: 'center',
             padding: '60px 20px',
@@ -895,7 +916,7 @@ export function SkillMarketplace() {
             gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
             gap: 12,
           }}>
-            {filteredSkills.map(skill => (
+            {skills.map(skill => (
               <MarketSkillCard
                 key={skill.name}
                 skill={skill}
