@@ -595,7 +595,11 @@ export function SkillMarketplace() {
   };
 
   const enterSource = (sourceKey: string) => {
+    // 进入新来源时强制把页码重置回第 1 页：
+    // 不同来源的技能数差异很大（旧来源可能翻到第 10 页，新来源总共只有 2 页），
+    // 若不重置，用户会卡在「当前页超出新来源总页数 → 显示空白 + Pagination 翻不动」的鬼畜状态。
     setActiveSource(sourceKey);
+    setBrowseSkillsPage(1);
     setSearchText('');
   };
 
@@ -737,7 +741,14 @@ export function SkillMarketplace() {
       {viewMode === 'browse-sources' && activeSource && (
         <Button
           icon={<ArrowLeftOutlined />}
-          onClick={() => setActiveSource(null)}
+          onClick={() => {
+            // 返回来源列表时把两个分页状态都重置：
+            // - browseSkillsPage 是「某来源内的技能列表」页码，回到来源网格后这个状态不再有意义
+            // - browseSourcesPage 也重置，避免「来源网格 page=3」和「点回刚看的来源 page=1」语义错乱
+            setActiveSource(null);
+            setBrowseSkillsPage(1);
+            setBrowseSourcesPage(1);
+          }}
         >
           返回来源列表
         </Button>
