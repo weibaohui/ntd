@@ -25,6 +25,11 @@
   flex: 1;
   display: flex;
   flex-direction: column;
+  /* min-width:0 切断 flex 子项默认 min-width:auto，
+     否则长标题会沿 flex 链路一路撑破到 .ant-card 这层，
+     ellipsis 即使设了也无效——必须把每一层 flex 容器都降到 0 */
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* Card body 内部用 flex column，让 footer（github/license/计数）总是贴底；
@@ -34,6 +39,10 @@
   display: flex;
   flex-direction: column;
   flex: 1;
+  /* 同样补 min-width:0 + overflow:hidden，
+     把「内容可收缩」的链路打通到最内层 span */
+  min-width: 0;
+  overflow: hidden;
 }
 
 .market-source-card:hover > .ant-card,
