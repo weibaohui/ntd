@@ -104,12 +104,51 @@ export interface BundledSkillMeta {
 
 /**
  * Bundled Skills 列表响应
+ *
+ * 后端支持 `?page=&page_size=` 分页；不带分页参数时仍返回全量，保持向后兼容。
+ * 分页字段只在请求带了 page / page_size 时才会有值。
  */
 export interface BundledSkillsResponse {
   skills: BundledSkillMeta[];
   /** 来源分类信息（key 为 source 名称） */
   sources: Record<string, SkillSourceMeta>;
+  /** 总数：分页时是「过滤前」的全量技能数，前端据此渲染分页器 */
   total: number;
+  /** 当前页码（从 1 开始）；不分页时为 undefined */
+  page?: number;
+  /** 每页大小；不分页时为 undefined */
+  page_size?: number;
+}
+
+/**
+ * 带技能计数的来源视图
+ *
+ * 来源分页接口专用：在 SkillSourceMeta 基础上附加 `skill_count`，
+ * 让前端来源网格能直接显示「该来源下有多少技能」。
+ */
+export interface SkillSourceWithCount {
+  /** 来源元数据 */
+  meta: SkillSourceMeta;
+  /** 该来源下的技能数（过滤前计数） */
+  skill_count: number;
+}
+
+/**
+ * 来源分页列表响应
+ *
+ * 与 BundledSkillsResponse 职责分离：
+ * - BundledSkillsResponse 按「技能」切片，用于「全部技能」模式
+ * - BundledSkillSourcesResponse 按「来源」切片，用于「按来源浏览」来源网格
+ */
+export interface BundledSkillSourcesResponse {
+  /** 当前页的来源列表（已分页切片） */
+  sources: SkillSourceWithCount[];
+  /** 来源总数（过滤前），前端 Pagination 据此渲染页码 */
+  total: number;
+  /** 当前页码（从 1 开始） */
+  page: number;
+  /** 每页大小 */
+  page_size: number;
 }
 
 /**
@@ -197,9 +236,40 @@ export const bundledApi = {
   /**
    * 获取技能市场中的所有技能
    * 扫描 ~/.ntd/bundled/skills/ 目录，返回可安装的技能列表
+   *
+   * 强制分页：page / page_size 必传，后端只返回该页切片。
+   * 过滤参数 source / keyword 下沉到后端：先按它们过滤，再分页，
+   * 这样 total 就是「过滤后」的计数，前端 Pagination 与实际可见技能一一对应。
+   * 绝不会返回全量数据。
    */
-  async getSkills(): Promise<BundledSkillsResponse> {
-    return unwrap(await api.get('/api/bundled/skills'));
+  async getSkills(params: {
+    page: number;
+    page_size: number;
+    /** 来源筛选：传具体 source 名只返回该来源的技能 */
+    source?: string;
+    /** 关键字筛选：不区分大小写匹配 name / short_name / description / description_zh */
+    keyword?: string;
+  }): Promise<BundledSkillsResponse> {
+    // axios 会自动忽略 undefined 字段，所以前端只下发「显式传了」的过滤参数
+    return unwrap(await api.get('/api/bundled/skills', { params }));
+  },
+
+  /**
+   * 获取技能来源分页列表
+   *
+   * 与 getSkills 职责分离：
+   * - getSkills 按「技能」切片，用于「全部技能」模式
+   * - getSkillSources 按「来源」切片，用于「按来源浏览」来源网格
+   *
+   * 每个来源附 skill_count（过滤前计数），前端来源卡片据此显示数量。
+   */
+  async getSkillSources(params: {
+    page: number;
+    page_size: number;
+    /** 来源关键字筛选：不区分大小写匹配 name / display_name / description */
+    keyword?: string;
+  }): Promise<BundledSkillSourcesResponse> {
+    return unwrap(await api.get('/api/bundled/skill-sources', { params }));
   },
 
   /**

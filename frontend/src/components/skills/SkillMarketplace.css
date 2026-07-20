@@ -13,6 +13,11 @@
   /* 网格条目本身已由父 grid 拉到同行最高，但内部 Ant Card 需要铺满，
      否则卡片高度还是跟着内容变。把整张卡填满 wrapper。 */
   display: flex;
+  /* grid auto-fill 列宽是「可用宽度 / minmax」算出来的固定值；
+     不加 width:100%，外层 div 会按内容收缩，导致同行第三列被前两列挤出视口。
+     min-width:0 让 flex 子项可以收缩到内容以下，彻底切断「内容撑破列」的链路。 */
+  width: 100%;
+  min-width: 0;
 }
 
 .market-source-card > .ant-card,

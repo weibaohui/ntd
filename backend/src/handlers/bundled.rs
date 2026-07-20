@@ -81,7 +81,15 @@ impl SkillsMarketCache {
         let skills = self.skills.read().clone();
         let sources = self.sources.read().clone();
         let total = skills.len();
-        Some(BundledSkillsResponse { skills, sources, total })
+        // 缓存层返回全量快照，page/page_size 用占位值；
+        // 真正的分页切片由 list_bundled_skills 里的 apply_pagination 完成。
+        Some(BundledSkillsResponse {
+            skills,
+            sources,
+            total,
+            page: 1,
+            page_size: 20,
+        })
     }
 
     /// 更新缓存内容
@@ -628,6 +636,9 @@ pub fn bundled_routes() -> Router<AppState> {
         .route("/api/bundled/config", axum::routing::put(update_bundled_config))
         // 技能市场 API
         .route("/api/bundled/skills", axum::routing::get(list_bundled_skills))
+        // 来源分页：与技能分页职责分离，按「来源」本身切片，
+        // 来源网格据此渲染，避免按技能切片后派生来源导致每页来源数量稀少
+        .route("/api/bundled/skill-sources", axum::routing::get(list_bundled_skill_sources))
         .route("/api/bundled/skills/{name}/content", axum::routing::get(get_bundled_skill_content))
         // 读单文件内容：与 content 同命名空间，让市场页文件浏览器能预览 SKILL.md 以外的文件
         .route("/api/bundled/skills/{name}/file", axum::routing::get(get_bundled_skill_file))
@@ -658,6 +669,36 @@ pub struct SkillSourceMeta {
     pub license: Option<String>,
     /// 作者/组织
     pub author: Option<String>,
+}
+
+/// 带技能计数的来源视图
+///
+/// 来源分页接口专用：在 SkillSourceMeta 基础上附加 `skill_count`，
+/// 让前端来源网格能直接显示「该来源下有多少技能」，
+/// 而不必先拉全部技能再在前端按 source 分组计数。
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillSourceWithCount {
+    /// 来源元数据
+    pub meta: SkillSourceMeta,
+    /// 该来源下的技能数（过滤前计数，与来源网格展示语义一致）
+    pub skill_count: usize,
+}
+
+/// 来源分页列表响应
+///
+/// 与 BundledSkillsResponse 职责分离：
+/// - BundledSkillsResponse 按「技能」切片，用于「全部技能」模式
+/// - BundledSkillSourcesResponse 按「来源」切片，用于「按来源浏览」来源网格
+#[derive(Debug, Serialize)]
+pub struct BundledSkillSourcesResponse {
+    /// 当前页的来源列表（已分页切片）
+    pub sources: Vec<SkillSourceWithCount>,
+    /// 来源总数（过滤前），前端 Pagination 据此渲染页码
+    pub total: usize,
+    /// 当前页码（从 1 开始）
+    pub page: u32,
+    /// 每页大小
+    pub page_size: u32,
 }
 
 /// Bundled Skill 元数据
@@ -693,14 +734,21 @@ pub struct BundledSkillMeta {
 }
 
 /// Bundled Skills 列表响应
+///
+/// 强制分页：page / page_size 始终有值，skills 是该页切片，
+/// total 是「过滤前」的全量计数。
 #[derive(Debug, Serialize)]
 pub struct BundledSkillsResponse {
-    /// Skills 列表
+    /// Skills 列表（已应用分页切片）
     pub skills: Vec<BundledSkillMeta>,
     /// 来源分类信息（key 为 source 名称）
     pub sources: std::collections::HashMap<String, SkillSourceMeta>,
-    /// 总数
+    /// 总数：始终是「过滤前」的全量技能数，前端据此渲染分页器
     pub total: usize,
+    /// 当前页码（从 1 开始）
+    pub page: u32,
+    /// 每页大小
+    pub page_size: u32,
 }
 
 /// 安装技能请求
@@ -746,17 +794,57 @@ pub struct InstallSkillResponse {
     pub target_path: String,
 }
 
+/// 技能列表分页查询参数
+///
+/// 强制分页：page / page_size 都缺省时也按默认值（page=1, page_size=20）切片，
+/// 绝不返回全量数据，避免一次把上千张技能卡片塞进响应。
+///
+/// 过滤参数（source / keyword）下沉到后端：先按它们过滤，再分页。
+/// 这样 total 就是「过滤后」的计数，前端 Pagination 与实际可见技能一一对应。
+#[derive(Debug, Deserialize)]
+pub struct ListSkillsQuery {
+    /// 页码，从 1 开始；缺省默认 1
+    #[serde(default = "default_page")]
+    pub page: u32,
+    /// 每页数量，缺省默认 20；上限 200，避免恶意大请求把内存打爆
+    #[serde(default = "default_page_size")]
+    pub page_size: u32,
+    /// 来源筛选：传具体 source 名时只返回该来源的技能；
+    /// 缺省（None）表示不按来源过滤
+    #[serde(default)]
+    pub source: Option<String>,
+    /// 关键字筛选：不区分大小写匹配 name / short_name / description / description_zh；
+    /// 缺省（None）表示不按关键字过滤
+    #[serde(default)]
+    pub keyword: Option<String>,
+}
+
+/// 默认页码：第 1 页
+fn default_page() -> u32 {
+    1
+}
+
+/// 默认每页数量：20 条
+fn default_page_size() -> u32 {
+    20
+}
+
 /// GET /api/bundled/skills - 列出技能市场中的所有技能
 ///
 /// 优先从内存缓存返回（毫秒级），缓存未初始化时触发异步预热并等待结果。
 /// 支持嵌套目录结构（如 awesome-skills-zh/lark-doc/SKILL.md）。
+///
+/// 强制分页：`?page=&page_size=` 缺省时按 `page=1, page_size=20` 返回；
+/// 任何情况下都不会返回全量数据。
 pub async fn list_bundled_skills(
     State(state): State<AppState>,
+    Query(query): Query<ListSkillsQuery>,
 ) -> Result<ApiResponse<BundledSkillsResponse>, AppError> {
     // 先尝试从缓存读取（毫秒级响应）
     if let Some(cache) = get_global_skills_cache() {
         if let Some(response) = cache.get() {
-            return Ok(ApiResponse::ok(response));
+            // 缓存返回的是全量数据，按 query 强制切片
+            return Ok(ApiResponse::ok(apply_pagination(response, &query)));
         }
     }
 
@@ -769,7 +857,7 @@ pub async fn list_bundled_skills(
     // 再次尝试从缓存读取
     if let Some(cache) = get_global_skills_cache() {
         if let Some(response) = cache.get() {
-            return Ok(ApiResponse::ok(response));
+            return Ok(ApiResponse::ok(apply_pagination(response, &query)));
         }
     }
 
@@ -785,6 +873,8 @@ pub async fn list_bundled_skills(
                     skills: Vec::new(),
                     sources: std::collections::HashMap::new(),
                     total: 0,
+                    page: 1,
+                    page_size: 20,
                 };
             }
         };
@@ -795,6 +885,8 @@ pub async fn list_bundled_skills(
                 skills: Vec::new(),
                 sources: std::collections::HashMap::new(),
                 total: 0,
+                page: 1,
+                page_size: 20,
             };
         }
 
@@ -816,12 +908,228 @@ pub async fn list_bundled_skills(
         }
 
         let total = skills.len();
-        BundledSkillsResponse { skills, sources, total }
+        BundledSkillsResponse {
+            skills,
+            sources,
+            total,
+            page: 1,
+            page_size: 20,
+        }
     })
     .await
     .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))?;
 
-    Ok(ApiResponse::ok(result))
+    // 同样对兜底结果应用分页，再交给调用方
+    Ok(ApiResponse::ok(apply_pagination(result, &query)))
+}
+
+/// 分页切片上限：超过该值的 page_size 会被强制压回，避免一次拉太多拖慢响应
+const MAX_PAGE_SIZE: u32 = 200;
+
+/// 在全量响应之上应用过滤 + 分页参数
+///
+/// 处理顺序（关键）：先按 source / keyword 过滤，再分页。
+/// 只有这样 `total` 才是「过滤后」的计数，前端 Pagination 才能正确渲染页码。
+///
+/// 设计取舍：
+/// - 缓存里存的是全量技能，过滤 + 分页都在内存里完成，避免每次都重新扫磁盘。
+/// - 始终切片，不再有「不分页」分支；page_size 钳到 [1, MAX_PAGE_SIZE]。
+/// - page 为 0 视为非法，统一回退到 1。
+/// - page 超出范围时返回空列表而非报错，前端 Pagination 组件能正确处理 total。
+fn apply_pagination(
+    mut response: BundledSkillsResponse,
+    query: &ListSkillsQuery,
+) -> BundledSkillsResponse {
+    // 1) 先过滤：把 source / keyword 不匹配的技能剔除
+    apply_filter(&mut response, query);
+
+    // 2) 再分页：page_size 钳到 [1, MAX_PAGE_SIZE]；page 为 0 视为非法，统一回退到 1
+    let page_size = query.page_size.clamp(1, MAX_PAGE_SIZE);
+    let page = if query.page == 0 { 1 } else { query.page };
+
+    // total 是「过滤后」的计数，前端据此渲染分页器
+    let total = response.skills.len();
+    let start = (page as usize).saturating_sub(1) * page_size as usize;
+    // start 越界时 drain 返回空，正好对应「翻到末页之后」的语义
+    let end = start.saturating_add(page_size as usize).min(total);
+
+    let paged: Vec<BundledSkillMeta> = response.skills.drain(start..end).collect();
+    response.skills = paged;
+    response.total = total;
+    response.page = page;
+    response.page_size = page_size;
+    response
+}
+
+/// 按 source / keyword 过滤技能列表（原地修改）
+///
+/// - source：精确匹配 skill.source；None 表示不按来源过滤
+/// - keyword：不区分大小写匹配 name / short_name / description / description_zh；
+///   None 或空串表示不按关键字过滤
+///
+/// 过滤后 response.total 由调用方（apply_pagination）重算，
+/// 这里只负责把 skills 收窄到「过滤后」的子集。
+fn apply_filter(response: &mut BundledSkillsResponse, query: &ListSkillsQuery) {
+    // 关键字预处理：trim 后转小写，空串视为不过滤
+    let keyword = query
+        .keyword
+        .as_ref()
+        .map(|k| k.trim().to_lowercase())
+        .filter(|k| !k.is_empty());
+
+    // 用 retain 原地过滤，避免中间 Vec 分配；
+    // 两个条件都满足才保留，缺省的条件视为「通过」
+    response.skills.retain(|skill| {
+        // 来源过滤：query.source 缺省或匹配 skill.source 时通过
+        let source_pass = query
+            .source
+            .as_ref()
+            .map_or(true, |s| s == &skill.source);
+
+        // 关键字过滤：query.keyword 缺省或匹配任一文本字段时通过
+        let keyword_pass = keyword.as_ref().map_or(true, |kw| {
+            skill.name.to_lowercase().contains(kw)
+                || skill.short_name.to_lowercase().contains(kw)
+                || skill.description.to_lowercase().contains(kw)
+                || skill
+                    .description_zh
+                    .as_ref()
+                    .is_some_and(|d| d.to_lowercase().contains(kw))
+        });
+
+        source_pass && keyword_pass
+    });
+}
+
+/// 来源分页查询参数
+///
+/// 来源网格按「来源」翻页；keyword 用于「来源内搜索」场景，
+/// 不传则返回全部来源（再分页）。
+#[derive(Debug, Deserialize)]
+pub struct ListSkillSourcesQuery {
+    /// 页码，从 1 开始；缺省默认 1
+    #[serde(default = "default_page")]
+    pub page: u32,
+    /// 每页数量，缺省默认 20；上限 200
+    #[serde(default = "default_page_size")]
+    pub page_size: u32,
+    /// 来源关键字筛选：不区分大小写匹配 name / display_name / description；
+    /// 缺省（None）表示不按关键字过滤
+    #[serde(default)]
+    pub keyword: Option<String>,
+}
+
+/// GET /api/bundled/skill-sources - 列出技能来源（分页）
+///
+/// 与 `/api/bundled/skills` 职责分离：
+/// - `/skills` 按「技能」切片，用于「全部技能」模式
+/// - `/skill-sources` 按「来源」切片，用于「按来源浏览」来源网格
+///
+/// 返回每个来源的 `skill_count`（过滤前计数），前端来源卡片据此显示数量。
+pub async fn list_bundled_skill_sources(
+    State(state): State<AppState>,
+    Query(query): Query<ListSkillSourcesQuery>,
+) -> Result<ApiResponse<BundledSkillSourcesResponse>, AppError> {
+    // 先尝试从缓存读取全量技能（缓存里 skills 已是全量）
+    let cached: Option<BundledSkillsResponse> = if let Some(cache) = get_global_skills_cache() {
+        cache.get()
+    } else {
+        None
+    };
+
+    // 缓存未命中：触发预热后再读一次
+    let cached = match cached {
+        Some(c) => Some(c),
+        None => {
+            let local_path = state.config_snapshot(|c| c.bundled_source.local_path.clone());
+            warm_up_skills_cache(local_path.clone()).await;
+            if let Some(cache) = get_global_skills_cache() {
+                cache.get()
+            } else {
+                None
+            }
+        }
+    };
+
+    // 基于全量技能构造来源列表（含每个来源的技能数），再分页
+    let response = match cached {
+        Some(full) => build_sources_response(full, &query),
+        // 缓存彻底不可用：返回空响应，让前端走「暂无技能来源」分支
+        None => BundledSkillSourcesResponse {
+            sources: Vec::new(),
+            total: 0,
+            page: 1,
+            page_size: 20,
+        },
+    };
+
+    Ok(ApiResponse::ok(response))
+}
+
+/// 基于全量技能响应构造来源分页响应
+///
+/// 步骤：
+/// 1. 按 keyword 过滤来源（匹配 name / display_name / description）
+/// 2. 按 source 字母序排序，保证分页顺序稳定
+/// 3. 按页切片
+///
+/// `skill_count` 是「过滤前」每个来源的真实技能数，
+/// 与来源网格展示「该来源下有多少技能」的语义一致。
+fn build_sources_response(
+    full: BundledSkillsResponse,
+    query: &ListSkillSourcesQuery,
+) -> BundledSkillSourcesResponse {
+    // 关键字预处理：trim 后转小写，空串视为不过滤
+    let keyword = query
+        .keyword
+        .as_ref()
+        .map(|k| k.trim().to_lowercase())
+        .filter(|k| !k.is_empty());
+
+    // 先统计每个来源的技能数（用全量 skills，不被 keyword 影响）
+    let mut count_by_source: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for skill in &full.skills {
+        *count_by_source.entry(skill.source.clone()).or_insert(0) += 1;
+    }
+
+    // 把 sources HashMap 转成 Vec<SkillSourceWithCount>，并按 keyword 过滤
+    let mut all_sources: Vec<SkillSourceWithCount> = full
+        .sources
+        .into_values()
+        .map(|meta| {
+            let skill_count = count_by_source.get(&meta.name).copied().unwrap_or(0);
+            SkillSourceWithCount { meta, skill_count }
+        })
+        .filter(|src| {
+            // keyword 缺省时全部保留
+            keyword.as_ref().map_or(true, |kw| {
+                src.meta.name.to_lowercase().contains(kw)
+                    || src.meta.display_name.to_lowercase().contains(kw)
+                    || src.meta.description.to_lowercase().contains(kw)
+            })
+        })
+        .collect();
+
+    // 按来源名排序，保证分页顺序稳定
+    all_sources.sort_by(|a, b| a.meta.name.cmp(&b.meta.name));
+
+    // total 是「过滤后」的来源数，前端 Pagination 据此渲染
+    let total = all_sources.len();
+
+    // 分页切片
+    let page_size = query.page_size.clamp(1, MAX_PAGE_SIZE);
+    let page = if query.page == 0 { 1 } else { query.page };
+    let start = (page as usize).saturating_sub(1) * page_size as usize;
+    let end = start.saturating_add(page_size as usize).min(total);
+    let paged: Vec<SkillSourceWithCount> = all_sources.drain(start..end).collect();
+
+    BundledSkillSourcesResponse {
+        sources: paged,
+        total,
+        page,
+        page_size,
+    }
 }
 
 /// 递归收集 bundled skills
