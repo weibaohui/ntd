@@ -407,7 +407,9 @@ export function SkillMarketplace() {
    * 避免「A 失败先把 loading 关掉，但 B 还在路上」的闪烁。
    */
   const loadSkills = useCallback(async () => {
+    // 抢占本次序号：先 ++ 再读，这样即使同步重入也能保证唯一且递增
     const myGen = ++reqGenRef.current;
+    // 进入 loading 状态要早于 await，否则用户在「点完到转圈」之间会有几十毫秒空窗
     setLoading(true);
     try {
       // 当前视图模式对应的页码：切换模式时各自独立的 page 互不干扰
@@ -419,6 +421,7 @@ export function SkillMarketplace() {
       const source = viewMode === 'all-skills'
         ? (filterSource === 'all' ? undefined : filterSource)
         : (activeSource ?? undefined);
+      // keyword 必须 trim：用户粘贴的 "Claude " 和 "Claude" 应当等价，否则搜索结果莫名其妙地变少
       const keyword = searchText.trim() || undefined;
       const res = await bundledApi.getSkills({
         page: currentPage,
@@ -428,10 +431,13 @@ export function SkillMarketplace() {
       });
       // 过期请求：在我之后又发起了新请求，新数据才是用户当前想看的，旧结果直接丢弃
       if (myGen !== reqGenRef.current) return;
+      // 三个 setter 顺序固定为「列表 → 分类 → 总数」，方便阅读；
+      // 不打 batch 是因为这些都是原始 useState，独立更新没有性能问题
       setSkills(res.skills);
       setSources(res.sources);
       setTotal(res.total);
     } catch (e: any) {
+      // 过期请求的错误信息也不展示：用户看到的是「上一次」的错误，已经不准确
       if (myGen !== reqGenRef.current) return;
       message.error('加载技能列表失败: ' + (e?.message || e));
     } finally {
@@ -450,6 +456,9 @@ export function SkillMarketplace() {
    * 竞态保护同 loadSkills：复用 reqGenRef，唯一序号、过期丢弃。
    */
   const loadSources = useCallback(async () => {
+    // 与 loadSkills 共用 reqGenRef：保证两类请求的「最新」语义统一，
+    // 即用户在「全部技能」模式和「来源网格」模式之间快速切换时，
+    // 也只有最新一次请求的结果能落到 state
     const myGen = ++reqGenRef.current;
     setLoading(true);
     try {
@@ -461,6 +470,8 @@ export function SkillMarketplace() {
       });
       // 过期请求直接丢弃，不写 sourcesList / sourcesTotal
       if (myGen !== reqGenRef.current) return;
+      // 来源网格只更新这两个 state；skills / sources / total 不会被本次调用影响，
+      // 避免「来源网格数据」误覆盖「技能列表」数据
       setSourcesList(res.sources);
       setSourcesTotal(res.total);
     } catch (e: any) {
@@ -690,9 +701,19 @@ export function SkillMarketplace() {
         prefix={<SearchOutlined style={{ color: 'var(--color-text-tertiary)' }} />}
         value={searchText}
         onChange={e => {
+          // 先把输入值落到 state，再按当前模式把页码重置回第 1 页；
+          // 搜索会改变后端过滤结果，过滤后总页数可能减少，
+          // 若停留在 page>1 会卡在空白页。
           setSearchText(e.target.value);
-          // 搜索会改变后端过滤结果，重置回第 1 页避免停留在空页
-          if (viewMode === 'all-skills') setAllPage(1);
+          if (viewMode === 'all-skills') {
+            // 全部技能模式：只有一个页码状态
+            setAllPage(1);
+          } else if (viewMode === 'browse-sources') {
+            // 来源网格模式：按 activeSource 是否已选决定重置「来源网格页码」
+            // 还是「进入某来源后的技能列表页码」
+            if (!activeSource) setBrowseSourcesPage(1);
+            else setBrowseSkillsPage(1);
+          }
         }}
         style={{ width: 220, borderRadius: 'var(--radius-xl)' }}
         allowClear
@@ -723,10 +744,12 @@ export function SkillMarketplace() {
       )}
 
       <Text type="secondary" style={{ marginLeft: 'auto', fontSize: 13 }}>
+        {/* 工具栏右侧的「总数量」展示：分页后 skills.length 仅代表当前页切片长度（最多 30），
+            必须用后端返回的过滤后 total / sourcesTotal，才能反映「实际匹配到的总量」，
+            与来源网格卡片上的 skill_count 含义区分清楚。 */}
         {viewMode === 'browse-sources' && !activeSource
           ? `${sourcesTotal} 个来源`
-          : `${viewMode === 'browse-sources' ? skills.length : skills.length} 个技能`
-        }
+          : `${total} 个技能`}
       </Text>
     </div>
   );
