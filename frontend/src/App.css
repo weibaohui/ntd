@@ -68,10 +68,16 @@
   --space-lg: 16px;
   --space-xl: 20px;
 
-  /* Transitions */
-  --transition-fast: 150ms ease;
-  --transition-base: 200ms ease;
-  --transition-slow: 300ms ease;
+  /* Custom easing curves — stronger than browser defaults for intentional, snappy feel */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);        /* UI interactions: fast start, gentle settle */
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);    /* Symmetric motion: both ends smooth */
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);     /* Drawer/sheet: iOS-like smoothness */
+  --ease-linear: linear;
+
+  /* Transitions — shorter durations + custom easing for perceived responsiveness */
+  --transition-fast: 120ms var(--ease-out);
+  --transition-base: 200ms var(--ease-out);
+  --transition-slow: 300ms var(--ease-out);
 
   /* Fonts */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
@@ -199,6 +205,8 @@ html, body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background: var(--color-bg);
+  /* 全局字间距微调：正文轻微紧缩，提高阅读效率 */
+  letter-spacing: -0.01em;
 }
 
 /* Ant Design overrides */
@@ -261,6 +269,45 @@ html, body {
 :focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+}
+
+/* ============================================================
+   Global Press Feedback — 所有可按压元素的即时响应
+   原则：按压反馈必须在 pointer-down 时立即生效，不能等到 click。
+   为什么：用户在按下瞬间就需要确认界面听到了自己。
+   ============================================================ */
+
+/* Ant Design 按钮按压反馈 */
+.ant-btn:not(.ant-btn-disabled):active,
+.ant-btn:not([disabled]):active {
+  transform: scale(0.97);
+  transition: transform 120ms var(--ease-out);
+}
+
+/* 主按钮（primary）可以压得更深一点，因为颜色更重 */
+.ant-btn-primary:not(.ant-btn-disabled):active,
+.ant-btn-primary:not([disabled]):active {
+  transform: scale(0.95);
+}
+
+/* 危险按钮 */
+.ant-btn-dangerous:not(.ant-btn-disabled):active,
+.ant-btn-dangerous:not([disabled]):active {
+  transform: scale(0.95);
+}
+
+/* 纯 button 元素（非 antd） */
+button:not(:disabled):active {
+  transform: scale(0.97);
+  transition: transform 120ms var(--ease-out);
+}
+
+/* 链接/文本按钮不需要缩放，否则文字会模糊；改为背景色变化 */
+.ant-btn-link:active,
+.ant-btn-text:active {
+  transform: none;
+  opacity: 0.7;
+  transition: opacity 120ms var(--ease-out);
 }
 
 /* ---------- Todo List ---------- */
@@ -330,7 +377,7 @@ html, body {
   height: 34px;
   border-radius: 999px !important;
   color: var(--color-text-secondary) !important;
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
 }
 
 .header-nav-btn:hover,
@@ -352,7 +399,7 @@ html, body {
   border-radius: 14px !important;
   border: 1px solid transparent !important;
   box-shadow: var(--shadow-sm);
-  transition: all var(--transition-base, 0.2s ease);
+  transition: background var(--transition-base), color var(--transition-base), border-color var(--transition-base), transform var(--transition-base), box-shadow var(--transition-base);
 }
 
 .header-primary-action-smart {
@@ -404,7 +451,7 @@ html, body {
   color: var(--color-text-secondary);
   border: 1px solid var(--color-border);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .tag-chip.active {
@@ -1144,7 +1191,7 @@ html, body {
   align-items: center;
   justify-content: center;
   box-shadow: var(--shadow-sm);
-  transition: all 0.15s ease;
+  transition: color 120ms var(--ease-out), transform 120ms var(--ease-out), background 120ms var(--ease-out);
 }
 
 .fab-collapse-btn:hover {
@@ -1165,7 +1212,7 @@ html, body {
   align-items: center;
   justify-content: center;
   box-shadow: var(--shadow-md);
-  transition: all 0.15s ease;
+  transition: transform 120ms var(--ease-out), box-shadow 120ms var(--ease-out), background 120ms var(--ease-out);
 }
 
 .fab-item-btn:hover {
@@ -1544,7 +1591,7 @@ html, body {
   border: 1px solid var(--color-border-light);
   margin-bottom: 6px;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .history-item-compact:hover {
@@ -1573,7 +1620,7 @@ html, body {
   border-radius: var(--radius-sm);
   padding: 12px 16px;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1664,12 +1711,15 @@ code {
   box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
   display: flex;
   flex-direction: column;
-  transition: height 0.3s ease;
+  /* 使用弹性缓动曲线，展开时先快后慢，折叠时更平滑 */
+  transition: height 280ms var(--ease-in-out), box-shadow 200ms var(--ease-out);
   height: 280px;
 }
 
 .execution-panel.collapsed {
   height: 40px;
+  /* 折叠时阴影变淡，减少视觉干扰 */
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);
 }
 
 .execution-panel.fullscreen {
@@ -1734,7 +1784,7 @@ code {
   border: none;
   border-bottom: 2px solid transparent;
   white-space: nowrap;
-  transition: all 0.2s ease;
+  transition: background 200ms var(--ease-out), color 200ms var(--ease-out), border-bottom-color 200ms var(--ease-out);
   position: relative;
 }
 
@@ -1813,7 +1863,7 @@ code {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
+  transition: background 200ms var(--ease-out), color 200ms var(--ease-out);
 }
 
 .panel-toggle-btn:hover {
@@ -2454,7 +2504,7 @@ code {
   border-color: var(--color-border-light);
   background: var(--color-bg-elevated);
   color: var(--color-text-secondary);
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .settings-tabs.ant-tabs-card > .ant-tabs-nav .ant-tabs-tab:hover {
@@ -3378,7 +3428,7 @@ code {
   background: transparent !important;
   border: 1px solid var(--color-border) !important;
   color: var(--color-text-tertiary) !important;
-  transition: all 0.15s;
+  transition: border-color 120ms var(--ease-out), color 120ms var(--ease-out), background 120ms var(--ease-out);
 }
 
 .kanban-run-tag:hover {
@@ -3808,7 +3858,7 @@ code {
   padding: var(--space-sm) var(--space-md);
   margin-bottom: var(--space-xs);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: border-color 120ms var(--ease-out), box-shadow 120ms var(--ease-out), transform 120ms var(--ease-out);
 }
 
 .running-card:hover {
@@ -4024,7 +4074,7 @@ code {
   flex-direction: column;
   align-items: center;
   padding: 10px 8px;
-  background: color-mix(in srgb, var(--color-bg-elevated) 92%, var(--color-bg) 8%);
+  background: var(--color-bg-elevated);
   border-right: 1px solid var(--color-border-light);
 }
 
@@ -4202,6 +4252,11 @@ code {
   box-shadow: var(--shadow-sm);
 }
 
+.ntd-left-rail-btn:active {
+  transform: scale(0.95);
+  transition: transform 120ms var(--ease-out);
+}
+
 .ntd-left-rail-expanded-btn {
   height: 44px !important;
   border-radius: 14px !important;
@@ -4217,6 +4272,11 @@ code {
 .ntd-left-rail-expanded-btn:hover {
   background: var(--color-bg-hover) !important;
   color: var(--color-text) !important;
+}
+
+.ntd-left-rail-expanded-btn:active {
+  transform: scale(0.98);
+  transition: transform 120ms var(--ease-out);
 }
 
 .ntd-left-rail-expanded-btn.active {
@@ -4333,6 +4393,17 @@ code {
 }
 
 /* ---------- 配置弹出菜单 ---------- */
+/* 修复桌面端「点击配置按钮后菜单弹不出来」：
+   antd 6 / @rc-component/trigger 3.9.0 的 useAlign：对齐时先把 popup 的 left/top reset 到 0，
+   再用 getBoundingClientRect 测量。但此时 popup 仍挂着 motion 的 transition（property 含 left/top），
+   读到的是隐藏态坐标 -1000vw（vw=1280 时即 -12800px），于是算出的水平偏移落到屏幕外，
+   rc-trigger 随即判定「不可见」又把 popup 推回 -1000vw——DOM 已渲染但用户看不到。
+   禁用该浮层自身的 transition，让测量读到 reset 后的真实坐标即可正常定位。
+   代价：配置菜单无入场缩放动画（功能优先于动画，可接受）。 */
+.ntd-config-menu-popover {
+  transition: none !important;
+}
+
 /* 覆盖 antd Popover 默认内边距，让菜单面板更紧凑 */
 .ntd-config-menu-popover .ant-popover-inner {
   padding: 0 !important;
@@ -4570,13 +4641,20 @@ code {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
   cursor: pointer;
-  transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+  transition: box-shadow 180ms var(--ease-out), transform 180ms var(--ease-out), border-color 180ms var(--ease-out);
 }
 
 .todo-center-card:hover {
   box-shadow: var(--shadow-md);
   transform: translateY(-1px);
   border-color: var(--color-primary);
+}
+
+.todo-center-card:active {
+  /* 按下时轻微下沉，模拟物理按压 */
+  transform: translateY(0) scale(0.99);
+  transition: transform 120ms var(--ease-out), box-shadow 120ms var(--ease-out);
+  box-shadow: var(--shadow-sm);
 }
 
 /* 时间驱动且调度活跃时：左侧青色强调条 + 轻微背景色，
@@ -4710,4 +4788,49 @@ code {
   gap: var(--space-sm);
   flex-shrink: 0;
   flex-wrap: wrap;
+}
+
+
+
+/* ========== 全局 prefers-reduced-motion 支持 ========== */
+/* 用户启用「减少动画」系统设置时，禁用所有动画和过渡效果 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .fab-collapsed,
+  .fab-collapse-btn,
+  .fab-item-btn {
+    transition: none !important;
+  }
+
+  .ntd-logo,
+  .ntd-logo::before,
+  .ntd-logo::after {
+    animation: none !important;
+  }
+
+  .todo-center-card,
+  .todo-center-card:hover,
+  .todo-center-card:active {
+    transition: none !important;
+    transform: none !important;
+  }
+
+  .ntd-left-rail-btn,
+  .ntd-left-rail-expanded-btn {
+    transition: none !important;
+    transform: none !important;
+  }
+
+  .ant-btn:active {
+    transform: none !important;
+    transition: none !important;
+  }
 }
