@@ -284,24 +284,27 @@ export function LeftRail({
       {!isDrawer && (
         <div className="ntd-left-rail-bottom">
           {/* 配置按钮 — 点击弹出收拢的配置菜单，替代原来侧边栏里的配置 section */}
-          <Tooltip title="配置" placement="right">
-            <Popover
-              content={renderConfigMenu()}
-              open={openConfigPopover}
-              onOpenChange={setOpenConfigPopover}
-              placement="top"
-              trigger="click"
-              overlayClassName="ntd-config-menu-popover"
-            >
-              <Button
-                type="text"
-                className="ntd-left-rail-config-toggle"
-                icon={<AppstoreOutlined />}
-                aria-label="配置"
-                data-testid="left-rail-config-toggle"
-              />
-            </Popover>
-          </Tooltip>
+          {/* 桌面端「点了弹不出来」的根因与修复见 App.css 的 .ntd-config-menu-popover 注释
+              （rc-trigger 在 transition 中误测坐标，用 transition:none 修复）。
+              这里两点配合：placement 用 topLeft（左对齐按钮、最自然，与 Drawer 内同款一致）；
+              getPopupContainer 指向 body，避免挂进 AntD <App> 的 height:0 容器。 */}
+          <Popover
+            content={renderConfigMenu()}
+            open={openConfigPopover}
+            onOpenChange={setOpenConfigPopover}
+            placement="topLeft"
+            trigger="click"
+            getPopupContainer={() => document.body}
+            overlayClassName="ntd-config-menu-popover"
+          >
+            <Button
+              type="text"
+              className="ntd-left-rail-config-toggle"
+              icon={<AppstoreOutlined />}
+              aria-label="配置"
+              data-testid="left-rail-config-toggle"
+            />
+          </Popover>
           {/* 亮/暗色主题切换按钮 — 当前为亮色显示太阳，暗色显示月亮，点击切换 */}
           <Tooltip title={themeMode === 'light' ? '切换暗色' : '切换亮色'} placement="right">
             <Button
