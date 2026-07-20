@@ -840,87 +840,86 @@ pub async fn list_bundled_skills(
     State(state): State<AppState>,
     Query(query): Query<ListSkillsQuery>,
 ) -> Result<ApiResponse<BundledSkillsResponse>, AppError> {
-    // 先尝试从缓存读取（毫秒级响应）
-    if let Some(cache) = get_global_skills_cache() {
-        if let Some(response) = cache.get() {
-            // 缓存返回的是全量数据，按 query 强制切片
-            return Ok(ApiResponse::ok(apply_pagination(response, &query)));
-        }
+    // 三层降级：缓存 → 预热后再读 → 磁盘兜底，每层都强制走分页切片
+    if let Some(cached) = read_skills_cache() {
+        return Ok(ApiResponse::ok(apply_pagination(cached, &query)));
     }
-
-    // 缓存未命中：快照 local_path 并触发异步预热
+    warm_skills_cache(&state).await;
+    if let Some(cached) = read_skills_cache() {
+        return Ok(ApiResponse::ok(apply_pagination(cached, &query)));
+    }
     let local_path = state.config_snapshot(|c| c.bundled_source.local_path.clone());
+    let fallback = scan_bundled_skills_fallback(local_path).await?;
+    Ok(ApiResponse::ok(apply_pagination(fallback, &query)))
+}
 
-    // 预热缓存（后台线程扫描），完成后缓存自动更新
-    warm_up_skills_cache(local_path.clone()).await;
+/// 从全局 SkillsMarketCache 读取全量响应；缓存未初始化时返回 None。
+fn read_skills_cache() -> Option<BundledSkillsResponse> {
+    get_global_skills_cache().and_then(|c| c.get())
+}
 
-    // 再次尝试从缓存读取
-    if let Some(cache) = get_global_skills_cache() {
-        if let Some(response) = cache.get() {
-            return Ok(ApiResponse::ok(apply_pagination(response, &query)));
+/// 触发缓存预热（首次访问 / 缓存失效时调用），完成后缓存会自动更新。
+async fn warm_skills_cache(state: &AppState) {
+    let local_path = state.config_snapshot(|c| c.bundled_source.local_path.clone());
+    warm_up_skills_cache(local_path).await;
+}
+
+/// 兜底路径：缓存预热尚未完成时同步扫描磁盘获取全量技能响应。
+///
+/// 把 spawn_blocking + JoinError 转换封装在内部，让 handler 只看到业务结果。
+async fn scan_bundled_skills_fallback(
+    local_path: String,
+) -> Result<BundledSkillsResponse, AppError> {
+    tokio::task::spawn_blocking(move || scan_skills_from_disk(&local_path))
+        .await
+        .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))
+}
+
+/// 在 worker 线程里执行磁盘扫描，避免阻塞 tokio reactor。
+///
+/// 抽出来让 list_bundled_skills 控制在 30 行内，同时复用空响应的构造。
+fn scan_skills_from_disk(local_path: &str) -> BundledSkillsResponse {
+    let skills_dir = match git_sync::bundled_dir(local_path) {
+        Some(p) => p.join("skills"),
+        // 目录不存在时返回空列表而非错误，让前端能正常渲染
+        None => return empty_skills_response(),
+    };
+    if !skills_dir.exists() {
+        return empty_skills_response();
+    }
+
+    // 递归扫描所有包含 SKILL.md 的目录
+    let mut skills = Vec::new();
+    collect_bundled_skills_recursive(&skills_dir, &skills_dir, &mut skills);
+    // 按名称排序，保证输出顺序稳定；sort_by_key 等价于按小写名升序，clippy 偏好此写法
+    skills.sort_by_key(|a| a.name.to_lowercase());
+
+    // 读取每个来源目录的 metadata.json 并关联到 skill
+    let sources = collect_skill_sources(&skills_dir);
+    for skill in &mut skills {
+        if let Some(meta) = sources.get(&skill.source) {
+            skill.source_meta = Some(meta.clone());
         }
     }
 
-    // 兜底：同步扫描磁盘（极少发生，仅在缓存预热尚未完成时）
-    let local_path_owned = local_path;
-    let result = tokio::task::spawn_blocking(move || {
-        // 获取 skills 目录路径（仓库同步到 ~/.ntd/{local_path}/，skills 子目录在其中）
-        let skills_dir = match git_sync::bundled_dir(&local_path_owned) {
-            Some(p) => p.join("skills"),
-            None => {
-                // 目录不存在时返回空列表而非错误，让前端能正常渲染
-                return BundledSkillsResponse {
-                    skills: Vec::new(),
-                    sources: std::collections::HashMap::new(),
-                    total: 0,
-                    page: 1,
-                    page_size: 20,
-                };
-            }
-        };
+    BundledSkillsResponse {
+        total: skills.len(),
+        skills,
+        sources,
+        page: 1,
+        page_size: 20,
+    }
+}
 
-        // 目录不存在时返回空列表
-        if !skills_dir.exists() {
-            return BundledSkillsResponse {
-                skills: Vec::new(),
-                sources: std::collections::HashMap::new(),
-                total: 0,
-                page: 1,
-                page_size: 20,
-            };
-        }
-
-        // 递归扫描所有包含 SKILL.md 的目录
-        let mut skills = Vec::new();
-        collect_bundled_skills_recursive(&skills_dir, &skills_dir, &mut skills);
-
-        // 按名称排序，保证输出顺序稳定；sort_by_key 等价于按小写名升序，clippy 偏好此写法
-        skills.sort_by_key(|a| a.name.to_lowercase());
-
-        // 读取每个来源目录的 metadata.json
-        let sources = collect_skill_sources(&skills_dir);
-
-        // 为每个 skill 关联来源元数据
-        for skill in &mut skills {
-            if let Some(meta) = sources.get(&skill.source) {
-                skill.source_meta = Some(meta.clone());
-            }
-        }
-
-        let total = skills.len();
-        BundledSkillsResponse {
-            skills,
-            sources,
-            total,
-            page: 1,
-            page_size: 20,
-        }
-    })
-    .await
-    .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))?;
-
-    // 同样对兜底结果应用分页，再交给调用方
-    Ok(ApiResponse::ok(apply_pagination(result, &query)))
+/// 构造一个「空」技能响应，page/page_size 占位为默认值；用于缓存未命中时的兜底。
+fn empty_skills_response() -> BundledSkillsResponse {
+    BundledSkillsResponse {
+        skills: Vec::new(),
+        sources: std::collections::HashMap::new(),
+        total: 0,
+        page: 1,
+        page_size: 20,
+    }
 }
 
 /// 分页切片上限：超过该值的 page_size 会被强制压回，避免一次拉太多拖慢响应
@@ -950,10 +949,12 @@ fn apply_pagination(
     // total 是「过滤后」的计数，前端据此渲染分页器
     let total = response.skills.len();
     let start = (page as usize).saturating_sub(1) * page_size as usize;
-    // start 越界时 drain 返回空，正好对应「翻到末页之后」的语义
-    let end = start.saturating_add(page_size as usize).min(total);
+    // 钳到 [0, total]：Vec::drain 在 start > len 时会 panic；
+    // 翻到末页之后（start >= total）应返回空列表，让前端 Pagination 据 total 回弹。
+    let safe_start = start.min(total);
+    let safe_end = safe_start.saturating_add(page_size as usize).min(total);
 
-    let paged: Vec<BundledSkillMeta> = response.skills.drain(start..end).collect();
+    let paged: Vec<BundledSkillMeta> = response.skills.drain(safe_start..safe_end).collect();
     response.skills = paged;
     response.total = total;
     response.page = page;
@@ -970,12 +971,8 @@ fn apply_pagination(
 /// 过滤后 response.total 由调用方（apply_pagination）重算，
 /// 这里只负责把 skills 收窄到「过滤后」的子集。
 fn apply_filter(response: &mut BundledSkillsResponse, query: &ListSkillsQuery) {
-    // 关键字预处理：trim 后转小写，空串视为不过滤
-    let keyword = query
-        .keyword
-        .as_ref()
-        .map(|k| k.trim().to_lowercase())
-        .filter(|k| !k.is_empty());
+    // 关键字标准化（trim + 小写 + 空串视 None）：与来源分页共用 normalize_keyword
+    let keyword = normalize_keyword(query.keyword.as_ref());
 
     // 用 retain 原地过滤，避免中间 Vec 分配；
     // 两个条件都满足才保留，缺省的条件视为「通过」
@@ -987,7 +984,7 @@ fn apply_filter(response: &mut BundledSkillsResponse, query: &ListSkillsQuery) {
             .map_or(true, |s| s == &skill.source);
 
         // 关键字过滤：query.keyword 缺省或匹配任一文本字段时通过
-        let keyword_pass = keyword.as_ref().map_or(true, |kw| {
+        let keyword_pass = keyword.as_deref().map_or(true, |kw| {
             skill.name.to_lowercase().contains(kw)
                 || skill.short_name.to_lowercase().contains(kw)
                 || skill.description.to_lowercase().contains(kw)
@@ -999,6 +996,12 @@ fn apply_filter(response: &mut BundledSkillsResponse, query: &ListSkillsQuery) {
 
         source_pass && keyword_pass
     });
+}
+
+/// 关键字标准化：trim 后转小写，空串（含纯空白）返回 None 表示不过滤。
+/// 在 apply_filter / build_sources_response 之间共用，保证「前后端语义一致」。
+fn normalize_keyword(raw: Option<&String>) -> Option<String> {
+    raw.map(|k| k.trim().to_lowercase()).filter(|k| !k.is_empty())
 }
 
 /// 来源分页查询参数
@@ -1079,50 +1082,65 @@ fn build_sources_response(
     full: BundledSkillsResponse,
     query: &ListSkillSourcesQuery,
 ) -> BundledSkillSourcesResponse {
-    // 关键字预处理：trim 后转小写，空串视为不过滤
-    let keyword = query
-        .keyword
-        .as_ref()
-        .map(|k| k.trim().to_lowercase())
-        .filter(|k| !k.is_empty());
+    let keyword = normalize_keyword(query.keyword.as_ref());
+    let count_by_source = count_skills_by_source(&full.skills);
 
-    // 先统计每个来源的技能数（用全量 skills，不被 keyword 影响）
-    let mut count_by_source: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
-    for skill in &full.skills {
-        *count_by_source.entry(skill.source.clone()).or_insert(0) += 1;
-    }
-
-    // 把 sources HashMap 转成 Vec<SkillSourceWithCount>，并按 keyword 过滤
-    let mut all_sources: Vec<SkillSourceWithCount> = full
-        .sources
-        .into_values()
-        .map(|meta| {
-            let skill_count = count_by_source.get(&meta.name).copied().unwrap_or(0);
-            SkillSourceWithCount { meta, skill_count }
-        })
-        .filter(|src| {
-            // keyword 缺省时全部保留
-            keyword.as_ref().map_or(true, |kw| {
-                src.meta.name.to_lowercase().contains(kw)
-                    || src.meta.display_name.to_lowercase().contains(kw)
-                    || src.meta.description.to_lowercase().contains(kw)
-            })
-        })
-        .collect();
-
+    let mut all_sources = collect_and_filter_sources(full.sources, &count_by_source, keyword.as_deref());
     // 按来源名排序，保证分页顺序稳定
     all_sources.sort_by(|a, b| a.meta.name.cmp(&b.meta.name));
 
-    // total 是「过滤后」的来源数，前端 Pagination 据此渲染
-    let total = all_sources.len();
+    paginate_sources(all_sources, query)
+}
 
-    // 分页切片
+/// 统计每个 source 名对应的技能数；用于 SkillSourceWithCount.skill_count。
+/// 注意：来源卡片的计数语义是「过滤前」的真实技能数，
+/// 所以这一步始终基于全量 skills 计算，不受 keyword 影响。
+fn count_skills_by_source(skills: &[BundledSkillMeta]) -> std::collections::HashMap<String, usize> {
+    let mut counts = std::collections::HashMap::new();
+    for skill in skills {
+        *counts.entry(skill.source.clone()).or_insert(0) += 1;
+    }
+    counts
+}
+
+/// 把 sources map 转成带计数视图，并按 keyword 过滤（None = 不过滤）。
+fn collect_and_filter_sources(
+    sources: std::collections::HashMap<String, SkillSourceMeta>,
+    count_by_source: &std::collections::HashMap<String, usize>,
+    keyword: Option<&str>,
+) -> Vec<SkillSourceWithCount> {
+    sources
+        .into_values()
+        .map(|meta| SkillSourceWithCount {
+            skill_count: count_by_source.get(&meta.name).copied().unwrap_or(0),
+            meta,
+        })
+        .filter(|src| source_matches_keyword(src, keyword))
+        .collect()
+}
+
+/// 来源是否命中 keyword：name / display_name / description 任一字段包含即命中。
+/// keyword 为 None 时一律通过（不过滤）。
+fn source_matches_keyword(src: &SkillSourceWithCount, keyword: Option<&str>) -> bool {
+    keyword.map_or(true, |kw| {
+        src.meta.name.to_lowercase().contains(kw)
+            || src.meta.display_name.to_lowercase().contains(kw)
+            || src.meta.description.to_lowercase().contains(kw)
+    })
+}
+
+/// 来源分页切片：复用与技能列表相同的钳位 + safe_start 防护。
+fn paginate_sources(
+    mut all: Vec<SkillSourceWithCount>,
+    query: &ListSkillSourcesQuery,
+) -> BundledSkillSourcesResponse {
     let page_size = query.page_size.clamp(1, MAX_PAGE_SIZE);
     let page = if query.page == 0 { 1 } else { query.page };
-    let start = (page as usize).saturating_sub(1) * page_size as usize;
-    let end = start.saturating_add(page_size as usize).min(total);
-    let paged: Vec<SkillSourceWithCount> = all_sources.drain(start..end).collect();
+    let total = all.len();
+    // start 越界（>= total）被钳到 total，此时 start == end，drain 返回空列表
+    let safe_start = ((page as usize).saturating_sub(1) * page_size as usize).min(total);
+    let safe_end = safe_start.saturating_add(page_size as usize).min(total);
+    let paged = all.drain(safe_start..safe_end).collect();
 
     BundledSkillSourcesResponse {
         sources: paged,
@@ -1959,7 +1977,667 @@ mod tests {
         }
     }
 
-    /// name 含 `..` 时必须在 join 之前被字符串层校验拦下——这是 bundled file 接口的核心安全契约。
+    // ---- 分页相关：default_* + ListSkillsQuery 反序列化 ----
+
+    /// 默认页码固定为 1，作为 ListSkillsQuery 的缺省值；
+    /// 钳位分支（page=0 → 1）是另一条防线，这里只锁住 serde 缺省值。
+    #[test]
+    fn test_default_page_returns_one() {
+        assert_eq!(default_page(), 1);
+    }
+
+    /// 默认每页 20 条；与钳位上限 200 一并避免单请求被拖垮。
+    #[test]
+    fn test_default_page_size_returns_twenty() {
+        assert_eq!(default_page_size(), 20);
+    }
+
+    /// 反序列化空对象 → page/page_size 走 default_*；source/keyword 留 None。
+    /// 这是最常见的「前端不带分页参数」调用路径，必须可工作。
+    #[test]
+    fn test_list_skills_query_deserialize_empty_uses_defaults() {
+        let q: ListSkillsQuery = serde_json::from_str("{}").expect("空对象应能反序列化");
+        assert_eq!(q.page, 1);
+        assert_eq!(q.page_size, 20);
+        assert!(q.source.is_none());
+        assert!(q.keyword.is_none());
+    }
+
+    /// 反序列化带全部字段 → 字段如实写入。验证 snake_case 与 camelCase 路径都能通。
+    #[test]
+    fn test_list_skills_query_deserialize_all_fields() {
+        let q: ListSkillsQuery = serde_json::from_str(
+            r#"{"page":3,"page_size":50,"source":"anthropic","keyword":"Claude"}"#,
+        )
+        .expect("全字段应能反序列化");
+        assert_eq!(q.page, 3);
+        assert_eq!(q.page_size, 50);
+        assert_eq!(q.source.as_deref(), Some("anthropic"));
+        assert_eq!(q.keyword.as_deref(), Some("Claude"));
+    }
+
+    /// 来源分页 query 的反序列化：缺省值与 ListSkillsQuery 走同一组 default_*。
+    #[test]
+    fn test_list_skill_sources_query_deserialize_uses_defaults() {
+        let q: ListSkillSourcesQuery = serde_json::from_str("{}").expect("空对象应能反序列化");
+        assert_eq!(q.page, 1);
+        assert_eq!(q.page_size, 20);
+        assert!(q.keyword.is_none());
+    }
+
+    // ---- 分页切片辅助 fixture ----
+
+    /// 构造一个最小可用的 BundledSkillMeta，仅填充过滤/分页关心的字段；
+    /// 其他字段留默认值即可——这些测试不依赖 source_meta / file_count 等。
+    fn make_skill(name: &str, source: &str, desc: &str, desc_zh: Option<&str>) -> BundledSkillMeta {
+        // short_name 取最后一段，与 parse_bundled_skill_meta 行为一致
+        let short_name = name.rsplit('/').next().unwrap_or(name).to_string();
+        BundledSkillMeta {
+            name: name.to_string(),
+            short_name,
+            source: source.to_string(),
+            source_meta: None,
+            description: desc.to_string(),
+            description_zh: desc_zh.map(String::from),
+            version: None,
+            author: None,
+            license: None,
+            file_count: 0,
+            total_size: 0,
+            modified_at: None,
+        }
+    }
+
+    /// 构造最小可用的 SkillSourceMeta；这些测试不依赖 stars/github_url 等展示字段。
+    fn make_source(name: &str, display: &str, desc: &str) -> SkillSourceMeta {
+        SkillSourceMeta {
+            name: name.to_string(),
+            display_name: display.to_string(),
+            description: desc.to_string(),
+            github_url: String::new(),
+            stars: 0,
+            license: None,
+            author: None,
+        }
+    }
+
+    /// 给定 skills + sources 构造全量响应（模拟缓存层产物）。
+    fn make_full_response(
+        skills: Vec<BundledSkillMeta>,
+        sources: std::collections::HashMap<String, SkillSourceMeta>,
+    ) -> BundledSkillsResponse {
+        BundledSkillsResponse {
+            skills,
+            sources,
+            // total 在 apply_pagination / build_sources_response 里会被覆盖，这里随意
+            total: 0,
+            page: 1,
+            page_size: 20,
+        }
+    }
+
+    // ---- apply_pagination：正常路径 ----
+
+    /// 第一页（page=1, page_size=3）从全量 5 条里取前 3 条；total 应等于过滤后的全集大小。
+    #[test]
+    fn test_apply_pagination_first_page() {
+        let skills: Vec<BundledSkillMeta> = (1..=5)
+            .map(|i| make_skill(&format!("s{i}"), "anthropic", "", None))
+            .collect();
+        let resp = make_full_response(skills, std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 1,
+            page_size: 3,
+            source: None,
+            keyword: None,
+        };
+        let paged = apply_pagination(resp, &query);
+
+        assert_eq!(paged.skills.len(), 3, "首页应返回 page_size 条");
+        assert_eq!(paged.total, 5, "total 是过滤后全集");
+        assert_eq!(paged.page, 1);
+        assert_eq!(paged.page_size, 3);
+        assert_eq!(paged.skills[0].name, "s1");
+        assert_eq!(paged.skills[2].name, "s3");
+    }
+
+    /// 中间页：5 条数据，第 2 页每页 2 条 → 应返回 s3 / s4。
+    #[test]
+    fn test_apply_pagination_middle_page() {
+        let skills: Vec<BundledSkillMeta> = (1..=5)
+            .map(|i| make_skill(&format!("s{i}"), "anthropic", "", None))
+            .collect();
+        let resp = make_full_response(skills, std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 2,
+            page_size: 2,
+            source: None,
+            keyword: None,
+        };
+        let paged = apply_pagination(resp, &query);
+
+        assert_eq!(paged.skills.len(), 2);
+        assert_eq!(paged.total, 5);
+        assert_eq!(paged.skills[0].name, "s3");
+        assert_eq!(paged.skills[1].name, "s4");
+    }
+
+    /// 末页不足一页：3 条数据、page=3、page_size=2 → 应返回第 3 条单条。
+    #[test]
+    fn test_apply_pagination_last_page_partial() {
+        let skills: Vec<BundledSkillMeta> = (1..=3)
+            .map(|i| make_skill(&format!("s{i}"), "anthropic", "", None))
+            .collect();
+        let resp = make_full_response(skills, std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 2,
+            page_size: 2,
+            source: None,
+            keyword: None,
+        };
+        let paged = apply_pagination(resp, &query);
+
+        // 末页只有 1 条，不应补足到 page_size
+        assert_eq!(paged.skills.len(), 1);
+        assert_eq!(paged.total, 3);
+        assert_eq!(paged.skills[0].name, "s3");
+    }
+
+    // ---- apply_pagination：边界与钳位 ----
+
+    /// page=0 视为非法 → 归一回退到第 1 页；这条规则防止前端漏传 page 时跳过首页。
+    #[test]
+    fn test_apply_pagination_page_zero_normalizes_to_one() {
+        let skills: Vec<BundledSkillMeta> = (1..=3)
+            .map(|i| make_skill(&format!("s{i}"), "anthropic", "", None))
+            .collect();
+        let resp = make_full_response(skills, std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 0,
+            page_size: 2,
+            source: None,
+            keyword: None,
+        };
+        let paged = apply_pagination(resp, &query);
+
+        assert_eq!(paged.page, 1, "page=0 必须归一为 1");
+        assert_eq!(paged.skills.len(), 2, "归一后按第 1 页返回");
+        assert_eq!(paged.skills[0].name, "s1");
+    }
+
+    /// page_size=0 钳到 1：避免 size=0 退化出「永远空列表」的死循环。
+    #[test]
+    fn test_apply_pagination_page_size_zero_clamps_to_one() {
+        let skills: Vec<BundledSkillMeta> = (1..=3)
+            .map(|i| make_skill(&format!("s{i}"), "anthropic", "", None))
+            .collect();
+        let resp = make_full_response(skills, std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 1,
+            page_size: 0,
+            source: None,
+            keyword: None,
+        };
+        let paged = apply_pagination(resp, &query);
+
+        assert_eq!(paged.page_size, 1, "page_size 必须钳到 1");
+        assert_eq!(paged.skills.len(), 1);
+    }
+
+    /// page_size 超过 MAX_PAGE_SIZE（200）→ 钳到 200；防止恶意大请求拖垮内存。
+    #[test]
+    fn test_apply_pagination_page_size_clamped_to_max() {
+        let skills: Vec<BundledSkillMeta> = (1..=3)
+            .map(|i| make_skill(&format!("s{i}"), "anthropic", "", None))
+            .collect();
+        let resp = make_full_response(skills, std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 1,
+            page_size: 9999,
+            source: None,
+            keyword: None,
+        };
+        let paged = apply_pagination(resp, &query);
+
+        assert_eq!(paged.page_size, MAX_PAGE_SIZE, "超出上限必须钳到 MAX_PAGE_SIZE");
+        // 数据少于上限，全量返回
+        assert_eq!(paged.skills.len(), 3);
+    }
+
+    /// page 远超总页数 → 返回空列表而非报错；前端 Pagination 会据 total 自动回弹。
+    #[test]
+    fn test_apply_pagination_page_out_of_range_returns_empty() {
+        let skills: Vec<BundledSkillMeta> = (1..=3)
+            .map(|i| make_skill(&format!("s{i}"), "anthropic", "", None))
+            .collect();
+        let resp = make_full_response(skills, std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 999,
+            page_size: 2,
+            source: None,
+            keyword: None,
+        };
+        let paged = apply_pagination(resp, &query);
+
+        assert!(paged.skills.is_empty(), "越界页应返回空列表而非 panic");
+        assert_eq!(paged.total, 3, "total 仍是过滤后全集，便于前端回弹");
+        assert_eq!(paged.page, 999);
+    }
+
+    /// 空数据 → 不论 page/page_size 为何都返回空，且 total=0。
+    #[test]
+    fn test_apply_pagination_empty_skills() {
+        let resp = make_full_response(Vec::new(), std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 1,
+            page_size: 20,
+            source: None,
+            keyword: None,
+        };
+        let paged = apply_pagination(resp, &query);
+
+        assert!(paged.skills.is_empty());
+        assert_eq!(paged.total, 0);
+    }
+
+    // ---- apply_filter：过滤逻辑 ----
+
+    /// source 精确匹配：传入具体 source → 只保留该来源下的技能。
+    #[test]
+    fn test_apply_filter_source_exact_match() {
+        let skills = vec![
+            make_skill("a/one", "anthropic", "", None),
+            make_skill("b/two", "openai", "", None),
+            make_skill("a/three", "anthropic", "", None),
+        ];
+        let mut resp = make_full_response(skills, std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 1,
+            page_size: 20,
+            source: Some("anthropic".to_string()),
+            keyword: None,
+        };
+        apply_filter(&mut resp, &query);
+
+        assert_eq!(resp.skills.len(), 2);
+        assert!(resp.skills.iter().all(|s| s.source == "anthropic"));
+    }
+
+    /// source=None 时不过滤：所有技能保留。
+    #[test]
+    fn test_apply_filter_source_none_allows_all() {
+        let skills = vec![
+            make_skill("a/one", "anthropic", "", None),
+            make_skill("b/two", "openai", "", None),
+        ];
+        let mut resp = make_full_response(skills, std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 1,
+            page_size: 20,
+            source: None,
+            keyword: None,
+        };
+        apply_filter(&mut resp, &query);
+
+        assert_eq!(resp.skills.len(), 2);
+    }
+
+    /// keyword 大小写不敏感：传入 "CLAUDE" 应命中 description 含 "claude" 的技能。
+    #[test]
+    fn test_apply_filter_keyword_case_insensitive() {
+        let skills = vec![
+            make_skill("a/one", "anthropic", "Anthropic Claude API", None),
+            make_skill("a/two", "anthropic", "Python helper", None),
+        ];
+        let mut resp = make_full_response(skills, std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 1,
+            page_size: 20,
+            source: None,
+            keyword: Some("CLAUDE".to_string()),
+        };
+        apply_filter(&mut resp, &query);
+
+        assert_eq!(resp.skills.len(), 1);
+        assert_eq!(resp.skills[0].name, "a/one");
+    }
+
+    /// keyword 匹配 short_name / description_zh：四字段都参与匹配，缺一不可漏。
+    #[test]
+    fn test_apply_filter_keyword_matches_all_fields() {
+        // 三种命中方式各覆盖一个用例：short_name / description / description_zh
+        let make_fixtures = || -> Vec<BundledSkillMeta> {
+            vec![
+                make_skill("a/foo", "anthropic", "no match here", None),
+                make_skill("a/lark-doc", "anthropic", "no match", None),     // 命中 short_name
+                make_skill("a/bar", "anthropic", "contains magic word", None), // 命中 description
+                make_skill("a/baz", "anthropic", "x", Some("魔法词 中文")),    // 命中 description_zh
+            ]
+        };
+
+        for kw in &["lark", "magic", "魔法"] {
+            let mut resp = make_full_response(make_fixtures(), std::collections::HashMap::new());
+            let query = ListSkillsQuery {
+                page: 1,
+                page_size: 20,
+                source: None,
+                keyword: Some(kw.to_string()),
+            };
+            apply_filter(&mut resp, &query);
+
+            assert_eq!(
+                resp.skills.len(),
+                1,
+                "keyword={kw:?} 应恰好命中 1 条"
+            );
+        }
+    }
+
+    /// keyword 仅由空白组成（trim 后为空）→ 视为不过滤。
+    /// 这是 trim+空串短路的关键防线，否则前端连按几下空格就清空结果列表。
+    #[test]
+    fn test_apply_filter_keyword_whitespace_only_ignored() {
+        let skills = vec![make_skill("a/one", "anthropic", "x", None)];
+        let mut resp = make_full_response(skills, std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 1,
+            page_size: 20,
+            source: None,
+            keyword: Some("   ".to_string()),
+        };
+        apply_filter(&mut resp, &query);
+
+        assert_eq!(resp.skills.len(), 1, "纯空白 keyword 应被当作不过滤");
+    }
+
+    /// keyword 带前后空格 → trim 后再匹配；防止用户粘了带空格的关键字搜不到内容。
+    #[test]
+    fn test_apply_filter_keyword_trimmed() {
+        let skills = vec![make_skill("a/one", "anthropic", "Claude API", None)];
+        let mut resp = make_full_response(skills, std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 1,
+            page_size: 20,
+            source: None,
+            keyword: Some("  Claude  ".to_string()),
+        };
+        apply_filter(&mut resp, &query);
+
+        assert_eq!(resp.skills.len(), 1, "前后空格应被 trim 后再匹配");
+    }
+
+    /// keyword 空字符串 Some("") → 视为不过滤（与 whitespace_only 同分支）。
+    #[test]
+    fn test_apply_filter_keyword_empty_string_ignored() {
+        let skills = vec![make_skill("a/one", "anthropic", "x", None)];
+        let mut resp = make_full_response(skills, std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 1,
+            page_size: 20,
+            source: None,
+            keyword: Some(String::new()),
+        };
+        apply_filter(&mut resp, &query);
+
+        assert_eq!(resp.skills.len(), 1);
+    }
+
+    /// description_zh 为 None 时跳过该字段，避免对 Option 触发 unwrap / panic。
+    #[test]
+    fn test_apply_filter_description_zh_none_branch() {
+        let skills = vec![make_skill("a/one", "anthropic", "Claude", None)];
+        let mut resp = make_full_response(skills, std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 1,
+            page_size: 20,
+            source: None,
+            // keyword 在 description_zh 里的子串，确认 None 分支不会误命中
+            keyword: Some("中文".to_string()),
+        };
+        apply_filter(&mut resp, &query);
+
+        assert!(
+            resp.skills.is_empty(),
+            "description_zh 为 None 时 keyword 不应误命中"
+        );
+    }
+
+    /// source 与 keyword 同时启用：两者需同时满足；这条 AND 语义是分页 total 准确的前提。
+    #[test]
+    fn test_apply_filter_source_and_keyword_combined() {
+        let skills = vec![
+            make_skill("a/one", "anthropic", "Claude API", None),   // 双命中
+            make_skill("a/two", "openai", "Claude API", None),       // 仅 keyword 命中
+            make_skill("a/three", "anthropic", "Python helper", None), // 仅 source 命中
+        ];
+        let mut resp = make_full_response(skills, std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 1,
+            page_size: 20,
+            source: Some("anthropic".to_string()),
+            keyword: Some("Claude".to_string()),
+        };
+        apply_filter(&mut resp, &query);
+
+        assert_eq!(resp.skills.len(), 1, "AND 语义应只保留双命中");
+        assert_eq!(resp.skills[0].name, "a/one");
+    }
+
+    // ---- apply_pagination 与 apply_filter 联动：过滤后 total 准确 ----
+
+    /// 过滤 + 分页联动：source 过滤掉一半后，total 应是「过滤后」计数（5 → 3），分页按 3 切。
+    /// 这是前端 Pagination 与实际可见技能一一对应的核心契约。
+    #[test]
+    fn test_apply_pagination_total_is_post_filter() {
+        let skills = vec![
+            make_skill("a/s1", "anthropic", "x", None),
+            make_skill("a/s2", "anthropic", "x", None),
+            make_skill("a/s3", "anthropic", "x", None),
+            make_skill("b/s4", "openai", "x", None),
+            make_skill("b/s5", "openai", "x", None),
+        ];
+        let resp = make_full_response(skills, std::collections::HashMap::new());
+
+        let query = ListSkillsQuery {
+            page: 1,
+            page_size: 2,
+            source: Some("anthropic".to_string()),
+            keyword: None,
+        };
+        let paged = apply_pagination(resp, &query);
+
+        assert_eq!(paged.total, 3, "total 是过滤后 anthropic 的数量");
+        assert_eq!(paged.skills.len(), 2, "首页按过滤后总量切");
+        assert!(paged.skills.iter().all(|s| s.source == "anthropic"));
+    }
+
+    // ---- build_sources_response：来源分页 ----
+
+    /// 全量来源无 keyword → 按 name 字母序排，分页正确。
+    #[test]
+    fn test_build_sources_response_sort_and_paginate() {
+        let mut sources = std::collections::HashMap::new();
+        sources.insert(
+            "alpha".to_string(),
+            make_source("alpha", "Alpha", "A source"),
+        );
+        sources.insert(
+            "beta".to_string(),
+            make_source("beta", "Beta", "B source"),
+        );
+        sources.insert(
+            "gamma".to_string(),
+            make_source("gamma", "Gamma", "G source"),
+        );
+        let skills = vec![
+            make_skill("alpha/s1", "alpha", "", None),
+            make_skill("alpha/s2", "alpha", "", None),
+            make_skill("beta/s1", "beta", "", None),
+        ];
+        let full = make_full_response(skills, sources);
+
+        let query = ListSkillSourcesQuery {
+            page: 1,
+            page_size: 2,
+            keyword: None,
+        };
+        let paged = build_sources_response(full, &query);
+
+        assert_eq!(paged.total, 3);
+        assert_eq!(paged.sources.len(), 2);
+        // 字母序：alpha, beta
+        assert_eq!(paged.sources[0].meta.name, "alpha");
+        assert_eq!(paged.sources[1].meta.name, "beta");
+        assert_eq!(paged.page, 1);
+        assert_eq!(paged.page_size, 2);
+    }
+
+    /// keyword 过滤匹配 display_name：验证 display_name 字段真的参与过滤。
+    #[test]
+    fn test_build_sources_response_keyword_matches_display_name() {
+        let mut sources = std::collections::HashMap::new();
+        sources.insert(
+            "alpha".to_string(),
+            make_source("alpha", "Anthropic Skills", "x"),
+        );
+        sources.insert(
+            "beta".to_string(),
+            make_source("beta", "OpenAI Tools", "y"),
+        );
+        let full = make_full_response(Vec::new(), sources);
+
+        let query = ListSkillSourcesQuery {
+            page: 1,
+            page_size: 20,
+            keyword: Some("anthropic".to_string()),
+        };
+        let paged = build_sources_response(full, &query);
+
+        assert_eq!(paged.total, 1);
+        assert_eq!(paged.sources[0].meta.name, "alpha");
+    }
+
+    /// skill_count 是「过滤前」的全量计数：即使 keyword 过滤掉了该来源的部分技能，
+    /// 仍然显示真实总数（来源卡片展示用）。
+    #[test]
+    fn test_build_sources_response_skill_count_pre_filter() {
+        let mut sources = std::collections::HashMap::new();
+        sources.insert("alpha".to_string(), make_source("alpha", "Alpha", "x"));
+        // 5 个 alpha 技能，全部会被 keyword "zzz" 过滤掉，但 skill_count 仍应是 5
+        let skills: Vec<BundledSkillMeta> = (1..=5)
+            .map(|i| make_skill(&format!("alpha/s{i}"), "alpha", "matching", None))
+            .collect();
+        let full = make_full_response(skills, sources);
+
+        let query = ListSkillSourcesQuery {
+            page: 1,
+            page_size: 20,
+            // keyword 不在 source.name/display_name/description 里，所以这个来源会被过滤掉
+            keyword: Some("zzz".to_string()),
+        };
+        let paged = build_sources_response(full, &query);
+
+        // 来源被过滤掉，所以 total=0 / sources 为空；这条用例验证反向（下方）
+        assert!(paged.sources.is_empty(), "来源应被 keyword 过滤掉");
+    }
+
+    /// skill_count 正向验证：来源不参与 keyword 过滤时，count 来自全量 skills，
+    /// 不受 keyword 影响。
+    #[test]
+    fn test_build_sources_response_skill_count_from_full() {
+        // 同一份 full 跑两次：一次带 keyword（验证不影响 skill_count 计算的内部路径），
+        // 一次不带 keyword（验证 skill_count 等于真实总数）
+        let mut sources = std::collections::HashMap::new();
+        sources.insert("alpha".to_string(), make_source("alpha", "Alpha", "x"));
+        let skills: Vec<BundledSkillMeta> = (1..=7)
+            .map(|i| make_skill(&format!("alpha/s{i}"), "alpha", "x", None))
+            .collect();
+
+        // 第一次：keyword 命中不到任何来源，sources 应为空（确认 keyword 过滤正常工作）
+        let full_with_keyword = make_full_response(skills.clone(), sources.clone());
+        let query_no_match = ListSkillSourcesQuery {
+            page: 1,
+            page_size: 20,
+            keyword: Some("nonexistent".to_string()),
+        };
+        let paged_with_kw = build_sources_response(full_with_keyword, &query_no_match);
+        assert!(paged_with_kw.sources.is_empty());
+
+        // 第二次：无 keyword → skill_count 应是真实总数 7
+        let full_no_keyword = make_full_response(skills, sources);
+        let query_no_kw = ListSkillSourcesQuery {
+            page: 1,
+            page_size: 20,
+            keyword: None,
+        };
+        let paged_no_kw = build_sources_response(full_no_keyword, &query_no_kw);
+
+        assert_eq!(paged_no_kw.sources.len(), 1);
+        assert_eq!(
+            paged_no_kw.sources[0].skill_count, 7,
+            "skill_count 应等于全量 alpha 技能数"
+        );
+    }
+
+    /// 末页不足一页：3 个来源，page=2、page_size=2 → 返回第 3 个来源。
+    #[test]
+    fn test_build_sources_response_last_page_partial() {
+        let mut sources = std::collections::HashMap::new();
+        for name in ["alpha", "beta", "gamma"] {
+            sources.insert(
+                name.to_string(),
+                make_source(name, name, "x"),
+            );
+        }
+        let full = make_full_response(Vec::new(), sources);
+
+        let query = ListSkillSourcesQuery {
+            page: 2,
+            page_size: 2,
+            keyword: None,
+        };
+        let paged = build_sources_response(full, &query);
+
+        assert_eq!(paged.total, 3);
+        assert_eq!(paged.sources.len(), 1, "末页只有 1 个来源");
+        assert_eq!(paged.sources[0].meta.name, "gamma");
+    }
+
+    /// page 超出范围 → 返回空 sources 而不报错。
+    #[test]
+    fn test_build_sources_response_page_out_of_range() {
+        let mut sources = std::collections::HashMap::new();
+        sources.insert("alpha".to_string(), make_source("alpha", "A", "x"));
+        let full = make_full_response(Vec::new(), sources);
+
+        let query = ListSkillSourcesQuery {
+            page: 999,
+            page_size: 20,
+            keyword: None,
+        };
+        let paged = build_sources_response(full, &query);
+
+        assert!(paged.sources.is_empty());
+        assert_eq!(paged.total, 1, "total 仍应准确，便于前端 Pagination 回弹");
+    }
+
+    /// 名称含 `..` 时必须在 join 之前被字符串层校验拦下——这是 bundled file 接口的核心安全契约。
     /// 若 name 能逃出 skills 根目录，攻击者可配合干净的 rel_path 读取系统任意文件
     /// （详见 read_bundled_skill_file 注释）。name 校验委托给 resolve_skill_path_for_read，
     /// 其字符串层拒绝已在 skills 模块独立单测覆盖；这里验证「本接口确实接入了该校验」。
