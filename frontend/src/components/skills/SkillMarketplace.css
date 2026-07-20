@@ -13,6 +13,11 @@
   /* 网格条目本身已由父 grid 拉到同行最高，但内部 Ant Card 需要铺满，
      否则卡片高度还是跟着内容变。把整张卡填满 wrapper。 */
   display: flex;
+  /* grid auto-fill 列宽是「可用宽度 / minmax」算出来的固定值；
+     不加 width:100%，外层 div 会按内容收缩，导致同行第三列被前两列挤出视口。
+     min-width:0 让 flex 子项可以收缩到内容以下，彻底切断「内容撑破列」的链路。 */
+  width: 100%;
+  min-width: 0;
 }
 
 .market-source-card > .ant-card,
@@ -20,6 +25,11 @@
   flex: 1;
   display: flex;
   flex-direction: column;
+  /* min-width:0 切断 flex 子项默认 min-width:auto，
+     否则长标题会沿 flex 链路一路撑破到 .ant-card 这层，
+     ellipsis 即使设了也无效——必须把每一层 flex 容器都降到 0 */
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* Card body 内部用 flex column，让 footer（github/license/计数）总是贴底；
@@ -29,6 +39,10 @@
   display: flex;
   flex-direction: column;
   flex: 1;
+  /* 同样补 min-width:0 + overflow:hidden，
+     把「内容可收缩」的链路打通到最内层 span */
+  min-width: 0;
+  overflow: hidden;
 }
 
 .market-source-card:hover > .ant-card,

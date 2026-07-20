@@ -39,7 +39,9 @@ export function SkillTemplatesTab({ refreshTick }: { refreshTick?: number }) {
   const loadSkills = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await bundledApi.getSkills();
+      // 强制分页：page=1, page_size=200 取接近全量的首页切片，
+      // 模板配置场景需要一次性看到所有技能
+      const res = await bundledApi.getSkills({ page: 1, page_size: 200 });
       setSkills(res.skills);
     } catch (e: any) {
       message.error('加载技能列表失败: ' + (e?.message || e));
