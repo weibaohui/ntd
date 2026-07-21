@@ -195,6 +195,11 @@ impl CodeExecutor for MimoExecutor {
             "--format".to_string(),
             "json".to_string(),
         ];
+        // 注入模型（mimo 接受 -m provider/model）。
+        if let Some(m) = self.base.model.lock().clone() {
+            args.push("-m".to_string());
+            args.push(m);
+        }
         if is_resume {
             // 恢复模式：优先用 -s 精确恢复指定 session，否则用 -c 续接最近 session
             if let Some(sid) = session_id {
@@ -212,6 +217,11 @@ impl CodeExecutor for MimoExecutor {
 
     fn supports_resume(&self) -> bool {
         true
+    }
+
+    /// 执行前注入期望模型，写入 base.model，供 command_args_with_session 拼 -m。
+    fn set_exec_model(&self, model: Option<String>) {
+        *self.base.model.lock() = model;
     }
 
     /// 从 step_start 事件中提取 session_id，提取后缓存到 executor 状态。
@@ -270,6 +280,19 @@ impl CodeExecutor for MimoExecutor {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
+
+    /// set_exec_model 注入模型后，command_args_with_session 应拼出 `-m <value>`
+    /// （mimo 接受 -m provider/model）。同模式覆盖 opencode/kilo/zhanlu/codex 的 -m 注入。
+    #[test]
+    fn test_command_args_injects_model_when_set() {
+        let exec = MimoExecutor::new("mimo".to_string());
+        let args_none = exec.command_args_with_session("hello", None, false);
+        assert!(!args_none.iter().any(|a| a == "-m"));
+        exec.set_exec_model(Some("xiaomi/mimo-v2.5-pro".to_string()));
+        let args = exec.command_args_with_session("hello", None, false);
+        let model_value = args.windows(2).find(|w| w[0] == "-m").map(|w| w[1].clone());
+        assert_eq!(model_value.as_deref(), Some("xiaomi/mimo-v2.5-pro"));
+    }
 
     #[test]
     fn test_parse_output_line_step_start() {

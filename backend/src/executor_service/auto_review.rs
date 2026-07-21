@@ -345,6 +345,7 @@ async fn execute_review_instance(
         todo_id: review_todo_id,
         message: composed_prompt,
         req_executor: original.executor.clone(),
+        req_model: None,
         trigger_type: "auto_review".to_string(),
         params: None,
         resume_session_id: None,

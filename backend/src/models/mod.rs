@@ -149,6 +149,10 @@ pub struct Todo {
     /// 执行时自动加载对应的 Agent MD 和 Skills 注入 prompt。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expert_name: Option<String>,
+    /// 任务级指定的执行模型（覆盖 executor.default_model）。
+    /// None = 未指定，执行时回退到执行器默认模型；执行器也未指定则不传 --model。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// 事项中心的五类驱动分类（computed_bucket）。
@@ -502,6 +506,9 @@ pub struct CreateTodoRequest {
     /// 执行时自动加载对应的 Agent MD 和 Skills 注入 prompt。
     #[serde(default)]
     pub expert_name: Option<String>,
+    /// 任务级执行模型（覆盖执行器默认）。None = 用执行器默认模型。
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -542,6 +549,9 @@ pub struct UpdateTodoRequest {
     /// 专家/团队名称（WorkBuddy plugin.json 中的 name 字段）。
     #[serde(default)]
     pub expert_name: Option<String>,
+    /// 任务级执行模型（覆盖执行器默认）。None = 不修改；Some("") = 清除；Some(v) = 设置。
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -569,6 +579,9 @@ pub struct ExecuteRequest {
     pub todo_id: i64,
     pub message: Option<String>,
     pub executor: Option<String>,
+    /// 手动执行时临时指定模型（优先级最高，覆盖 todo.model / executor.default_model）。
+    #[serde(default)]
+    pub model: Option<String>,
     #[serde(default)]
     pub params: Option<std::collections::HashMap<String, String>>,
 }
@@ -959,6 +972,9 @@ pub struct ExecutorConfig {
     pub session_dir: String,
     /// 是否为系统默认执行器
     pub is_default: bool,
+    /// 执行器级默认模型。None = 未指定，执行时不传 --model，由执行器配置文件决定。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -969,6 +985,9 @@ pub struct UpdateExecutorRequest {
     pub enabled: Option<bool>,
     pub display_name: Option<String>,
     pub session_dir: Option<String>,
+    /// 执行器默认模型。空串 = 清除默认模型；None = 不修改。
+    #[serde(default)]
+    pub default_model: Option<String>,
 }
 
 #[derive(Serialize)]

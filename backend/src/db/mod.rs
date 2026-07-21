@@ -529,6 +529,7 @@ mod tests {
             auto_review_enabled: None,
             action_type: None,
             action_key: None,
+            model: None,
         })
         .await
         .unwrap();
@@ -697,6 +698,7 @@ mod tests {
             auto_review_enabled: None,
             action_type: None,
             action_key: None,
+            model: None,
         })
         .await
         .unwrap();
@@ -1383,7 +1385,7 @@ mod tests {
         db.seed_default_executors().await.unwrap();
 
         // User disables claudecode
-        db.update_executor("claudecode", None, Some(false), None, None)
+        db.update_executor("claudecode", None, Some(false), None, None, None)
             .await
             .unwrap();
 

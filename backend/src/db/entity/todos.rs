@@ -52,6 +52,9 @@ pub struct Model {
     /// 专家/团队名称（WorkBuddy plugin.json 中的 name 字段）。
     /// 执行时自动加载对应的 Agent MD 和 Skills 注入 prompt。
     pub expert_name: Option<String>,
+    /// 任务级指定的执行模型（覆盖 executor.default_model）。
+    /// NULL = 未指定，回退到执行器默认模型；执行器也未指定则不传 --model。
+    pub model: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -281,6 +281,10 @@ pub(crate) async fn select_executor_and_build_command(
         resolve_executor_type(request.req_executor.as_deref(), todo_executor.as_deref());
     let executor =
         resolve_executor_instance(request, todo, executor_type).await?;
+    // 解析执行模型并注入：req_model > todo.model > executor.default_model > None。
+    // 必须在 resolve_executor_instance 之后——该函数在路径变更时会重建 executor
+    // （刷新 registry），会丢弃此前注入的状态；放在其后才能保证注入生效。
+    inject_exec_model(request, todo, executor_type, &executor).await;
     let executable_path = executor.executable_path().to_string();
     let command_args =
         build_executor_command_args(&executor, message, request.resume_session_id.as_deref());
@@ -384,6 +388,49 @@ fn build_executor_command_args(
         resume_session_id,
         resume_session_id.is_some(),
     )
+}
+
+/// 三层优先级解析最终使用的模型：
+/// `req_model`(显式指定) > `todo_model`(任务级) > `executor_default_model`(执行器级) > None。
+/// 空串视为未指定并过滤，避免把空字符串当模型名传给执行器。
+/// None 表示不传 --model，由执行器配置文件决定（保持升级前行为）。
+fn resolve_exec_model(
+    req_model: Option<&str>,
+    todo_model: Option<&str>,
+    executor_default_model: Option<&str>,
+) -> Option<String> {
+    // 每层先过滤空串（空串视为未指定），再 or_else 回退到下一层。
+    // 不能先 or 再统一 filter——Some("") 是 Some，会阻断 or 链，让空串无法回退到下一层。
+    req_model
+        .filter(|s| !s.is_empty())
+        .or_else(|| todo_model.filter(|s| !s.is_empty()))
+        .or_else(|| executor_default_model.filter(|s| !s.is_empty()))
+        .map(|s| s.to_string())
+}
+
+/// 解析三层优先级模型并注入到 executor 实例，供后续 command_args 拼 --model flag。
+/// 拆出独立函数保持 `select_executor_and_build_command` 在 30 行以内。
+async fn inject_exec_model(
+    request: &RunTodoExecutionRequest,
+    todo: &Option<crate::models::Todo>,
+    executor_type: ExecutorType,
+    executor: &Arc<dyn CodeExecutor>,
+) {
+    let todo_model = todo.as_ref().and_then(|t| t.model.clone());
+    // 读取执行器级默认模型；查询失败按 None 处理，不阻断执行（模型指定是增强，非硬依赖）。
+    let executor_default_model = request
+        .db
+        .get_executor_by_name(executor_type.as_str())
+        .await
+        .ok()
+        .flatten()
+        .and_then(|ec| ec.default_model);
+    let model = resolve_exec_model(
+        request.req_model.as_deref(),
+        todo_model.as_deref(),
+        executor_default_model.as_deref(),
+    );
+    executor.set_exec_model(model);
 }
 
 /// Update todo's executor to the one being used. 失败仅记日志，不阻断执行。
@@ -644,6 +691,49 @@ mod tests {
             resolve_executor_type(Some("kimi"), None),
             ExecutorType::Kimi
         );
+    }
+
+    /// 三层优先级：req_model > todo_model > executor_default_model。
+    #[test]
+    fn test_resolve_exec_model_prefers_req_model() {
+        assert_eq!(
+            resolve_exec_model(Some("opus"), Some("sonnet"), Some("haiku")),
+            Some("opus".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_exec_model_falls_back_to_todo_model() {
+        assert_eq!(
+            resolve_exec_model(None, Some("sonnet"), Some("haiku")),
+            Some("sonnet".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_exec_model_falls_back_to_executor_default() {
+        assert_eq!(
+            resolve_exec_model(None, None, Some("haiku")),
+            Some("haiku".to_string())
+        );
+    }
+
+    /// 三层全空 → None（不传 --model，向后兼容）。
+    #[test]
+    fn test_resolve_exec_model_none_when_all_absent() {
+        assert_eq!(resolve_exec_model(None, None, None), None);
+    }
+
+    /// 空串视为未指定，继续向下一层回退；避免把空字符串当模型名传给执行器。
+    #[test]
+    fn test_resolve_exec_model_treats_empty_string_as_absent() {
+        // req 为空串 → 回退到 todo_model。
+        assert_eq!(
+            resolve_exec_model(Some(""), Some("sonnet"), None),
+            Some("sonnet".to_string())
+        );
+        // 三层全为空串 → None。
+        assert_eq!(resolve_exec_model(Some(""), Some(""), Some("")), None);
     }
 
     /// `build_expert_prompt` 把 Agent MD、技能列表、原 message 拼成三段式 prompt。
@@ -951,6 +1041,7 @@ mod tests {
             updated_at: "2024-01-01T00:00:00Z".to_string(),
             tag_ids: vec![],
             executor: None,
+            model: None,
             scheduler_enabled: false,
             scheduler_config: None,
             scheduler_timezone: None,
@@ -993,6 +1084,7 @@ mod tests {
             todo_id: 0,
             message: String::new(),
             req_executor: None,
+            req_model: None,
             trigger_type: "test".to_string(),
             params: None,
             resume_session_id: None,

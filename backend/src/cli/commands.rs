@@ -553,6 +553,7 @@ async fn handle_todo(
                             .unwrap_or(0),
                         action_type: None,
                         action_key: None,
+                        model: None,
                     });
                     req
             } else {
@@ -578,6 +579,7 @@ async fn handle_todo(
                     workspace_id: workspace_id.ok_or_else(|| anyhow::anyhow!("--workspace-id is required"))?,
                     action_type: None,
                     action_key: None,
+                    model: None,
                 }
             };
 
@@ -693,6 +695,7 @@ async fn handle_todo(
                 todo_id: *id,
                 message: message.clone(),
                 executor: executor.clone(),
+                model: None,
                 params,
             };
             let resp: ClientResponse<Value> = client.post("/execute", &req).await?;

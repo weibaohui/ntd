@@ -238,13 +238,22 @@ impl CodeExecutor for CodexExecutor {
     }
 
     fn command_args(&self, message: &str) -> Vec<String> {
-        vec![
-            "exec".to_string(),
-            "--json".to_string(),
-            "--dangerously-bypass-approvals-and-sandbox".to_string(),
-            "--skip-git-repo-check".to_string(),
-            message.to_string(),
-        ]
+        let mut args = vec!["exec".to_string()];
+        // 注入模型（codex 接受 -m <id>，如 o3）。
+        if let Some(m) = self.base.model.lock().clone() {
+            args.push("-m".to_string());
+            args.push(m);
+        }
+        args.push("--json".to_string());
+        args.push("--dangerously-bypass-approvals-and-sandbox".to_string());
+        args.push("--skip-git-repo-check".to_string());
+        args.push(message.to_string());
+        args
+    }
+
+    /// 执行前注入期望模型，写入 base.model，供 command_args 拼 -m。
+    fn set_exec_model(&self, model: Option<String>) {
+        *self.base.model.lock() = model;
     }
 
     fn command_args_with_session(&self, message: &str, _session_id: Option<&str>, _is_resume: bool) -> Vec<String> {

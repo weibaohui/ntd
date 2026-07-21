@@ -21,6 +21,7 @@ pub async fn update_executor(
         req.enabled,
         req.display_name.as_deref(),
         req.session_dir.as_deref(),
+        req.default_model.as_deref(),
     ).await.map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Re-read updated executor
@@ -153,7 +154,7 @@ pub async fn detect_all_executors(
         if ec.path.is_empty() {
             if ec.enabled {
                 // Was enabled but path is empty - disable it
-                state.db.update_executor(&ec.name, None, Some(false), None, None)
+                state.db.update_executor(&ec.name, None, Some(false), None, None, None)
                     .await
                     .map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -179,7 +180,7 @@ pub async fn detect_all_executors(
         // Update executor enabled state based on detection result
         let new_enabled = found;
         if ec.enabled != new_enabled {
-            state.db.update_executor(&ec.name, None, Some(new_enabled), None, None)
+            state.db.update_executor(&ec.name, None, Some(new_enabled), None, None, None)
                 .await
                 .map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -244,7 +245,7 @@ pub async fn resolve_executor_path(
 
     // 如果路径有变化，更新数据库
     if path_updated {
-        state.db.update_executor(&name, Some(&resolved), None, None, None)
+        state.db.update_executor(&name, Some(&resolved), None, None, None, None)
             .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
 

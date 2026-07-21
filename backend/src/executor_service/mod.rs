@@ -55,6 +55,9 @@ pub struct RunTodoExecutionRequest {
     pub todo_id: i64,
     pub message: String,
     pub req_executor: Option<String>,
+    /// 显式指定的执行模型（手动触发执行时可临时指定，优先级最高）。
+    /// None = 未指定，按 todo.model > executor.default_model > 不传 --model 回退。
+    pub req_model: Option<String>,
     pub trigger_type: String,
     pub params: Option<std::collections::HashMap<String, String>>,
     pub resume_session_id: Option<String>,
