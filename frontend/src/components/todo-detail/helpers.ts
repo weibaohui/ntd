@@ -33,9 +33,7 @@ export function groupBySession(records: ExecutionRecord[]): SessionGroup[] {
   return groups;
 }
 
-export function hasLogsStatic(record: ExecutionRecord): boolean {
-  return record.status !== 'running' && !!record.finished_at;
-}
+
 
 // logTypeColors 和 logTypeLabels 已迁移到 @/constants
 // 保留 getElapsedSeconds / groupBySession / hasLogsStatic 等工具函数

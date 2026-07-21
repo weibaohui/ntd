@@ -97,7 +97,7 @@ function getEdgeAnchor(
   };
 }
 
-export function buildEdgePath(
+function buildEdgePath(
   edge: LayoutEdge, nodes: LayoutNode[],
   startX: number, startY: number, endX: number, endY: number,
 ): string {
@@ -142,7 +142,7 @@ export function buildEdgePath(
   return `M ${from.x} ${from.y} C ${cx1} ${from.y}, ${cx2} ${to.y}, ${to.x} ${to.y}`;
 }
 
-export function getEdgeMidX(
+function getEdgeMidX(
   edge: LayoutEdge, nodes: LayoutNode[],
   startX: number, endX: number,
 ): number {
@@ -164,7 +164,7 @@ export function getEdgeMidX(
   return (from.x + to.x) / 2;
 }
 
-export function getEdgeMidY(
+function getEdgeMidY(
   edge: LayoutEdge, nodes: LayoutNode[],
   startY: number, endY: number,
 ): number {

@@ -74,14 +74,6 @@ export interface ModelCacheStat {
   cache_hit_rate: number;
 }
 
-export interface LeaderboardItem {
-  rank: number;
-  name: string;
-  tokens: number;
-  sessions: number;
-  change?: number;
-}
-
 export interface DashboardStats {
   total_todos: number;
   pending_todos: number;
@@ -118,7 +110,13 @@ export interface DashboardStats {
   peak_daily_executions?: number;
   top_model?: string;
   top_model_tokens?: number;
-  leaderboard?: LeaderboardItem[];
+  leaderboard?: Array<{
+    rank: number;
+    name: string;
+    tokens: number;
+    sessions: number;
+    change?: number;
+  }>;
   skills_stats?: SkillsStats;
   backup_stats?: BackupStats;
 }

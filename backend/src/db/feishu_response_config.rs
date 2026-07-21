@@ -53,18 +53,6 @@ impl Database {
         Ok(())
     }
 
-    /// Get all response configs for a bot.
-    pub async fn get_feishu_response_configs(
-        &self,
-        bot_id: i64,
-    ) -> Result<Vec<feishu_response_config::Model>, sea_orm::DbErr> {
-        let configs = feishu_response_config::Entity::find()
-            .filter(feishu_response_config::Column::BotId.eq(bot_id))
-            .all(&self.conn)
-            .await?;
-        Ok(configs)
-    }
-
     /// Get debounce seconds for a specific bot and target type. Default 20.
     pub async fn get_debounce_secs(
         &self,

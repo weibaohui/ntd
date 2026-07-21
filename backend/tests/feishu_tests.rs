@@ -260,6 +260,8 @@ mod pending_message_tests {
 #[cfg(test)]
 mod cascade_delete_tests {
     use ntd::db::Database;
+    use ntd::db::entity::feishu_response_config;
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     /// Regression test: deleting an agent_bot should cascade-delete all
     /// related rows in feishu child tables (ON DELETE CASCADE).
@@ -308,7 +310,15 @@ mod cascade_delete_tests {
         assert!(db.get_feishu_history_chats(bot_id).await.unwrap().len() > 0);
         assert!(db.get_feishu_push_target(bot_id).await.unwrap().is_some());
         assert!(db.get_group_whitelist(bot_id).await.unwrap().len() > 0);
-        assert!(db.get_feishu_response_configs(bot_id).await.unwrap().len() > 0);
+        assert!(
+            feishu_response_config::Entity::find()
+                .filter(feishu_response_config::Column::BotId.eq(bot_id))
+                .all(db._conn_raw())
+                .await
+                .unwrap()
+                .len()
+                > 0
+        );
 
         // 4. Delete the bot — should NOT error due to FK constraint
         db.delete_agent_bot(bot_id).await.unwrap();
@@ -325,8 +335,15 @@ mod cascade_delete_tests {
             "feishu_push_targets should be empty after cascade");
         assert!(db.get_group_whitelist(bot_id).await.unwrap().is_empty(),
             "feishu_group_whitelist should be empty after cascade");
-        assert!(db.get_feishu_response_configs(bot_id).await.unwrap().is_empty(),
-            "feishu_response_config should be empty after cascade");
+        assert!(
+            feishu_response_config::Entity::find()
+                .filter(feishu_response_config::Column::BotId.eq(bot_id))
+                .all(db._conn_raw())
+                .await
+                .unwrap()
+                .is_empty(),
+            "feishu_response_config should be empty after cascade"
+        );
     }
 }
 

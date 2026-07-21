@@ -57,9 +57,7 @@ pub mod prelude {
     pub use super::todo_templates::Entity as TodoTemplates;
     pub use super::review_templates::Entity as ReviewTemplates;
     pub use super::todos::Entity as Todos;
-    pub use super::usage_model_breakdown::Entity as UsageModelBreakdowns;
     pub use super::usage_stats::Entity as UsageStats;
-    pub use super::usage_executor_daily::Entity as UsageExecutorDaily;
     pub use super::workspace_settings::Entity as WorkspaceSettings;
     pub use super::workspace_slash_commands::Entity as WorkspaceSlashCommands;
     pub use super::quick_buttons::Entity as QuickButtons;
