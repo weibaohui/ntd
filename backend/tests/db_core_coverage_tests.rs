@@ -21,7 +21,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 use ntd::config::ExecutorPaths;
 use ntd::db::Database;
-use ntd::db::entity::{executors, tags, todo_tags};
+use ntd::db::entity::{executors, feishu_response_config, tags, todo_tags};
 use sea_orm::{ActiveValue, ColumnTrait, EntityTrait, QueryFilter};
 use std::collections::{HashMap, HashSet};
 
@@ -347,8 +347,12 @@ mod agent_bot_tests {
         assert_eq!(bot.bot_type, "feishu");
         assert_eq!(bot.bot_open_id.as_deref(), Some("ou_test_open_id"));
 
-        // 用 db 提供的方法验证 p2p + group 两份 response_config 都建好了
-        let configs = db.get_feishu_response_configs(bot_id).await.unwrap();
+        // 用 entity 直接查询验证 p2p + group 两份 response_config 都建好了
+        let configs = feishu_response_config::Entity::find()
+            .filter(feishu_response_config::Column::BotId.eq(bot_id))
+            .all(db._conn_raw())
+            .await
+            .unwrap();
         assert_eq!(configs.len(), 2, "feishu bot 必须自动建 p2p + group 两份 config");
 
         let target_types: Vec<&str> = configs.iter().map(|c| c.target_type.as_str()).collect();
@@ -394,7 +398,11 @@ mod agent_bot_tests {
             .await
             .unwrap();
 
-        let configs = db.get_feishu_response_configs(bot_id).await.unwrap();
+        let configs = feishu_response_config::Entity::find()
+            .filter(feishu_response_config::Column::BotId.eq(bot_id))
+            .all(db._conn_raw())
+            .await
+            .unwrap();
         assert!(
             configs.is_empty(),
             "非 feishu bot 不应自动建 response_config"

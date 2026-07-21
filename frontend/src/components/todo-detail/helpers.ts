@@ -33,12 +33,8 @@ export function groupBySession(records: ExecutionRecord[]): SessionGroup[] {
   return groups;
 }
 
-export function hasLogsStatic(record: ExecutionRecord): boolean {
-  return record.status !== 'running' && !!record.finished_at;
-}
-
 // logTypeColors 和 logTypeLabels 已迁移到 @/constants
-// 保留 getElapsedSeconds / groupBySession / hasLogsStatic 等工具函数
+// 保留 getElapsedSeconds / groupBySession 等工具函数
 
 /**
  * 格式化时间戳为短时间格式 (HH:mm:ss)

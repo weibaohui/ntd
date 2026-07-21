@@ -15,7 +15,6 @@ export {
   EXECUTORS_FOR_PICKER,
   RESUMABLE_EXECUTORS,
   DEFAULT_EXECUTOR,
-  RESUMABLE_EXECUTOR_OPTIONS,
   supportsResume,
   executorConfigToOption,
   loadDefaultExecutor,
