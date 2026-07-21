@@ -4,7 +4,6 @@ pub mod blackboards;
 pub mod execution_logs;
 pub mod execution_records;
 pub mod executors;
-pub mod feishu_homes;
 pub mod feishu_history_chats;
 pub mod feishu_messages;
 pub mod feishu_push_targets;
@@ -39,7 +38,6 @@ pub mod prelude {
     pub use super::execution_logs::Entity as ExecutionLogs;
     pub use super::execution_records::Entity as ExecutionRecords;
     pub use super::executors::Entity as Executors;
-    pub use super::feishu_homes::Entity as FeishuHomes;
     pub use super::feishu_history_chats::Entity as FeishuHistoryChats;
     pub use super::feishu_messages::Entity as FeishuMessages;
     pub use super::feishu_push_targets::Entity as FeishuPushTargets;

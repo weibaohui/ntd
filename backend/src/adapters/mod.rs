@@ -299,7 +299,6 @@ pub mod helpers;
 pub mod mobilecoder;
 pub mod mobilecoder_event;
 pub mod claude_protocol;
-pub mod agent_event;
 pub mod claude_code;
 pub mod codebuddy;
 pub mod opencode;
