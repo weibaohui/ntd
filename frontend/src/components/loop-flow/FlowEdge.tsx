@@ -97,6 +97,7 @@ function getEdgeAnchor(
   };
 }
 
+// 构建 loop 图边的 SVG path；仅供 FlowEdge 内部渲染使用，故未 export。
 function buildEdgePath(
   edge: LayoutEdge, nodes: LayoutNode[],
   startX: number, startY: number, endX: number, endY: number,
@@ -142,6 +143,7 @@ function buildEdgePath(
   return `M ${from.x} ${from.y} C ${cx1} ${from.y}, ${cx2} ${to.y}, ${to.x} ${to.y}`;
 }
 
+// 计算边标签的 X 中点；仅供 FlowEdge 内部布局使用，故未 export。
 function getEdgeMidX(
   edge: LayoutEdge, nodes: LayoutNode[],
   startX: number, endX: number,
@@ -164,6 +166,7 @@ function getEdgeMidX(
   return (from.x + to.x) / 2;
 }
 
+// 计算边标签的 Y 中点；仅供 FlowEdge 内部布局使用，故未 export。
 function getEdgeMidY(
   edge: LayoutEdge, nodes: LayoutNode[],
   startY: number, endY: number,

@@ -110,6 +110,7 @@ export interface DashboardStats {
   peak_daily_executions?: number;
   top_model?: string;
   top_model_tokens?: number;
+  // 排行榜条目：DashboardStats 的局部响应结构，直接内联而非单独导出 LeaderboardItem（仅此处消费）
   leaderboard?: Array<{
     rank: number;
     name: string;
