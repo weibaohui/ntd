@@ -4404,6 +4404,30 @@ code {
   transition: none !important;
 }
 
+/* 全局浮层修复：antd 6 / @rc-component/trigger 3.9.0 的 useAlign bug 影响所有 antd 浮层组件
+   (Dropdown/Select/Popover/Tooltip/DatePicker/Cascader...)。症状：点击触发器后浮层 DOM 已渲染
+   (菜单项齐全)却被锁在 -1000vw(=-12800px) 屏幕外，用户看不到——工作空间、执行器、推送级别等
+   下拉框全部「点击弹不出来」。
+   根因：useAlign 重新对齐时先把 popup 的 left/top reset 到 0，再用 getBoundingClientRect 测量以
+   计算偏移；但 popup 自带 `transition: all 1e-05s` 定位过渡，reset 后测量读到的仍是隐藏态坐标
+   -1000vw(=-12800px)，算出屏幕外偏移被判定不可见，popup 被推回 -12800px。
+   修复：给所有 antd 浮层只保留 opacity 过渡，移除 left/top/transform 过渡——
+     · left/top 不过渡 → useAlign reset 后立即读到真实坐标，定位准确；
+     · transform 不过渡 → getBoundingClientRect 读真实尺寸(保留它会干扰首次对齐算偏、菜单被裁)；
+     · 保留 opacity 过渡 → rc-motion 入场动画的 transitionend 才会触发，opacity 从 0 渐变到 1。
+   ⚠️ 不能用 transition:none：rc-motion 收不到 transitionend 会卡在初始 opacity:0 同样不可见
+      (PR #914 配置菜单对 Popover 用 transition:none 侥幸没暴露此问题，这里用更稳的 opacity 方案统一覆盖)。
+   代价：所有浮层仅 0.2s 淡入(无缩放/滑动)，换来精准定位与正常显示。 */
+.ant-dropdown,
+.ant-select-dropdown,
+.ant-popover,
+.ant-tooltip,
+.ant-picker-dropdown,
+.ant-cascader-menus,
+.ant-transfer-popup {
+  transition: opacity 0.2s ease !important;
+}
+
 /* 覆盖 antd Popover 默认内边距，让菜单面板更紧凑 */
 .ntd-config-menu-popover .ant-popover-inner {
   padding: 0 !important;
