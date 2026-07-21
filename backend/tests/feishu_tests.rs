@@ -310,6 +310,7 @@ mod cascade_delete_tests {
         assert!(db.get_feishu_history_chats(bot_id).await.unwrap().len() > 0);
         assert!(db.get_feishu_push_target(bot_id).await.unwrap().is_some());
         assert!(db.get_group_whitelist(bot_id).await.unwrap().len() > 0);
+        // 用 entity 直接查询验证删除前 response_config 有数据（db helper 已作死代码删除）
         assert!(
             feishu_response_config::Entity::find()
                 .filter(feishu_response_config::Column::BotId.eq(bot_id))
@@ -335,6 +336,7 @@ mod cascade_delete_tests {
             "feishu_push_targets should be empty after cascade");
         assert!(db.get_group_whitelist(bot_id).await.unwrap().is_empty(),
             "feishu_group_whitelist should be empty after cascade");
+        // 用 entity 直接查询验证级联删除后 response_config 已清空
         assert!(
             feishu_response_config::Entity::find()
                 .filter(feishu_response_config::Column::BotId.eq(bot_id))
