@@ -529,8 +529,7 @@ async fn test_executor_get_enabled_filters_disabled() {
     db.seed_default_executors().await.unwrap();
     let all = db.get_executors().await.unwrap();
     let target = all.first().expect("至少一条种子执行器");
-    db.update_executor(&target.name, None, Some(false), None, None)
-        .await
+    db.update_executor(&target.name, None, Some(false), None, None, None)        .await
         .unwrap();
     let enabled = db.get_enabled_executors().await.unwrap();
     assert!(enabled.iter().all(|e| e.enabled));
@@ -560,6 +559,7 @@ async fn test_executor_get_by_name_and_update_partial() {
         Some(false),
         Some("Claude Code (新)"),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -585,8 +585,7 @@ async fn test_executor_sync_new_executors_adds_missing_only() {
     let existing = db.get_executors().await.unwrap();
     for e in &existing {
         // 直接走更新：name 是主键之外的可识别列；这里仅依赖 update 不影响后续断言。
-        db.update_executor(&e.name, None, Some(true), None, None)
-            .await
+        db.update_executor(&e.name, None, Some(true), None, None, None)            .await
             .unwrap();
     }
     let before = db.get_executors().await.unwrap().len();

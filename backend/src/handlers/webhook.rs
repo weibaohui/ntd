@@ -115,6 +115,7 @@ async fn trigger_todo_webhook_internal(
             todo_id,
             message: todo.prompt.clone(),
             req_executor: todo.executor.clone(),
+            req_model: None,
             trigger_type: "webhook".to_string(),
             params: Some({
                 let mut p = query_params.clone();

@@ -374,6 +374,39 @@ export function ExecutorsPanel() {
               ),
             },
             {
+              // 默认模型：执行器级默认，所有未单独指定模型的 todo 用该执行器时默认传此模型。
+              // 留空 = 不传 --model，由执行器配置文件决定（向后兼容）。
+              title: '默认模型',
+              dataIndex: 'default_model',
+              key: 'default_model',
+              width: 160,
+              render: (defaultModel: string | null | undefined, record: ExecutorConfig) => (
+                <Input
+                  size="small"
+                  placeholder="留空用执行器自带配置"
+                  defaultValue={defaultModel ?? ''}
+                  onBlur={async (e) => {
+                    const newModel = e.target.value.trim();
+                    // 与原值相同则不触发保存，避免失焦时无意义请求。
+                    if (newModel === (defaultModel ?? '')) return;
+                    setSavingExecutor(record.name);
+                    try {
+                      // 空串 = 清除默认模型（后端 update_executor 按 Some("") 清除）。
+                      const updated = await db.updateExecutor(record.name, { default_model: newModel });
+                      setExecutors((prev) => prev.map((ex) => ex.name === record.name ? updated : ex));
+                    } catch (err: any) {
+                      message.error('保存失败: ' + (err?.message || String(err)));
+                    } finally {
+                      setSavingExecutor(null);
+                    }
+                  }}
+                  onPressEnter={(e) => {
+                    (e.target as HTMLInputElement).blur();
+                  }}
+                />
+              ),
+            },
+            {
               title: '检测状态',
               key: 'detect_status',
               width: 90,

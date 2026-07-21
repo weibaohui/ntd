@@ -188,6 +188,7 @@ mod tests {
             auto_review_enabled: None,
             action_type: Some("blackboard"),
             action_key: Some("update"),
+            model: None,
         })
         .await
         .unwrap();
@@ -208,6 +209,7 @@ mod tests {
             auto_review_enabled: None,
             action_type: Some("blackboard"),
             action_key: Some("update"),
+            model: None,
         })
         .await
         .expect("per-workspace action template should be allowed after V47");

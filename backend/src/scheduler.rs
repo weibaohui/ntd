@@ -494,6 +494,7 @@ impl TodoScheduler {
                             todo_id,
                             message,
                             req_executor: executor,
+                            req_model: None,
                             trigger_type: "cron".to_string(),
                             params: None,
                             resume_session_id: None,

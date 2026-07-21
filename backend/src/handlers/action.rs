@@ -82,6 +82,7 @@ pub async fn execute_action(
             todo_id,
             message,
             req_executor: req.executor.clone(), // 使用请求中指定的执行器
+            req_model: None,
             trigger_type: "action".to_string(),
             params: Some(req.params.clone()),
             resume_session_id: None,
@@ -181,6 +182,7 @@ async fn find_or_create_todo(
             status: crate::models::TodoStatus::Pending,
             executor: None,
             expert_name: None,
+            model: None,
             scheduler_enabled: None,
             scheduler_config: None,
             scheduler_timezone: None,

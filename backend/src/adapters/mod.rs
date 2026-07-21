@@ -381,6 +381,17 @@ pub trait CodeExecutor: Send + Sync {
 
     fn get_model(&self) -> Option<String>;
 
+    /// 执行前注入「期望使用的模型」,供 `command_args_with_session` 拼 `--model` flag。
+    ///
+    /// 默认 no-op:未 override 的执行器不支持指定模型,保持原行为(不传 --model)。
+    /// 这让「指定模型」能力按执行器渐进铺开——已适配的(claude/pi)注入 flag,
+    /// 未适配的优雅降级,不破坏现有行为。
+    ///
+    /// 时序(复用 BaseExecutor.model 字段,语义天然成立):
+    /// 执行前注入 → command_args 读取拼 flag → 执行中输出事件覆盖为真实 model
+    /// → get_model() 返回真实值,天然用于校验「指定 vs 实际」是否一致。
+    fn set_exec_model(&self, _model: Option<String>) {}
+
     /// 执行完成后从外部数据源提取 todo 进度（用于无法从 stdout 获取工具调用的执行器）
     fn post_execution_todo_progress(&self) -> Option<Vec<TodoItem>> {
         None

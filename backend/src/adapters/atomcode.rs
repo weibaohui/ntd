@@ -37,13 +37,22 @@ impl CodeExecutor for AtomcodeExecutor {
     }
 
     fn command_args(&self, message: &str) -> Vec<String> {
-        vec![
-            "-v".to_string(),
-            // headless/自动化模式下跳过交互式权限确认，与 ClaudeCodeExecutor 保持一致
-            "--dangerously-skip-permissions".to_string(),
-            "-p".to_string(),
-            message.to_string(),
-        ]
+        let mut args = vec!["-v".to_string()];
+        // atomcode 的「模型」是 provider 名（如 AtomGit-GLM-5.2），用 --provider 指定。
+        if let Some(p) = self.base.model.lock().clone() {
+            args.push("--provider".to_string());
+            args.push(p);
+        }
+        // headless/自动化模式下跳过交互式权限确认，与 ClaudeCodeExecutor 保持一致
+        args.push("--dangerously-skip-permissions".to_string());
+        args.push("-p".to_string());
+        args.push(message.to_string());
+        args
+    }
+
+    /// 执行前注入期望模型，写入 base.model，供 command_args 拼 --provider。
+    fn set_exec_model(&self, model: Option<String>) {
+        *self.base.model.lock() = model;
     }
 
     fn parse_output_line(&self, line: &str) -> Option<ParsedLogEntry> {
@@ -206,6 +215,19 @@ fn parse_atomcode_tool_call(line: &str) -> (Option<String>, Option<String>) {
 mod tests {
     use super::*;
     use crate::models::ParsedLogEntry;
+
+    /// set_exec_model 注入模型后，command_args 应拼出 `--provider <value>`
+    /// （atomcode 的「模型」是 provider 名，如 AtomGit-GLM-5.2）。
+    #[test]
+    fn test_command_args_injects_provider_when_set() {
+        let exec = AtomcodeExecutor::new("atomcode".to_string());
+        let args_none = exec.command_args("hello");
+        assert!(!args_none.iter().any(|a| a == "--provider"));
+        exec.set_exec_model(Some("AtomGit-GLM-5.2".to_string()));
+        let args = exec.command_args("hello");
+        let provider_value = args.windows(2).find(|w| w[0] == "--provider").map(|w| w[1].clone());
+        assert_eq!(provider_value.as_deref(), Some("AtomGit-GLM-5.2"));
+    }
 
     #[test]
     fn test_parse_output_line_text() {

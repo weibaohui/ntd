@@ -26,12 +26,15 @@ export async function createTodo(
   autoReviewEnabled?: boolean,
   webhookEnabled?: boolean,
   expertName?: string,
+  model?: string | null,
 ): Promise<Todo> {
   const body: Record<string, unknown> = { title, prompt, tag_ids: tagIds, workspace_id: workspaceId };
   if (acceptanceCriteria !== undefined) body.acceptance_criteria = acceptanceCriteria;
   if (autoReviewEnabled !== undefined) body.auto_review_enabled = autoReviewEnabled;
   if (webhookEnabled !== undefined) body.webhook_enabled = webhookEnabled;
   if (expertName !== undefined) body.expert_name = expertName;
+  // model：undefined=不传（创建时不指定，沿用执行器默认）；null/空串=显式清除。
+  if (model !== undefined) body.model = model;
   return unwrap(await api.post('/api/todos', body));
 }
 
@@ -48,6 +51,7 @@ export async function updateTodo(
   acceptance_criteria?: string | null,
   auto_review_enabled?: boolean,
   expert_name?: string | null,
+  model?: string | null,
 ): Promise<Todo> {
   const body: Record<string, unknown> = { title, prompt, status };
   if (executor !== undefined) body.executor = executor;
@@ -58,6 +62,8 @@ export async function updateTodo(
   if (acceptance_criteria !== undefined) body.acceptance_criteria = acceptance_criteria;
   if (auto_review_enabled !== undefined) body.auto_review_enabled = auto_review_enabled;
   if (expert_name !== undefined) body.expert_name = expert_name;
+  // model：undefined=不修改；null/空串=清除任务级模型（回退到执行器默认）。
+  if (model !== undefined) body.model = model;
 
   return unwrap(await api.put(`/api/todos/${id}`, body));
 }

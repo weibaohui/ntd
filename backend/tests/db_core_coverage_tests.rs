@@ -425,8 +425,7 @@ mod executor_config_tests {
 
         // 禁用一个,验证 enabled 列表少一条
         let target = &total[0];
-        db.update_executor(&target.name, None, Some(false), None, None)
-            .await
+        db.update_executor(&target.name, None, Some(false), None, None, None)            .await
             .unwrap();
         let enabled_after = db.get_enabled_executors().await.unwrap();
         assert_eq!(enabled_after.len(), total.len() - 1);
@@ -449,8 +448,7 @@ mod executor_config_tests {
         let original_display_name = target.display_name.clone();
 
         // 只改 enabled,其他字段维持不变
-        db.update_executor(&target.name, None, Some(false), None, None)
-            .await
+        db.update_executor(&target.name, None, Some(false), None, None, None)            .await
             .unwrap();
         let after = db.get_executor_by_name(&target.name).await.unwrap().unwrap();
         assert!(!after.enabled);
@@ -461,8 +459,7 @@ mod executor_config_tests {
         );
 
         // 改 path 时不应动 enabled(已 disabled 应保持 disabled)
-        db.update_executor(&target.name, Some("/usr/bin/cc-new"), None, None, None)
-            .await
+        db.update_executor(&target.name, Some("/usr/bin/cc-new"), None, None, None, None)            .await
             .unwrap();
         let after2 = db.get_executor_by_name(&target.name).await.unwrap().unwrap();
         assert_eq!(after2.path, "/usr/bin/cc-new");
@@ -474,8 +471,7 @@ mod executor_config_tests {
         // 2) 不能凭空插入幽灵行(get_executor_by_name 仍返回 None)
         // 3) 不能影响已有行(原 target.name 的 path 仍是上一步写入的 /usr/bin/cc-new)
         let before_ghost = db.get_executors().await.unwrap().len();
-        db.update_executor("totally-ghost-executor", Some("/x"), None, None, None)
-            .await
+        db.update_executor("totally-ghost-executor", Some("/x"), None, None, None, None)            .await
             .unwrap();
         assert!(
             db.get_executor_by_name("totally-ghost-executor")

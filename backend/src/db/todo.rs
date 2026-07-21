@@ -34,6 +34,8 @@ pub struct TodoUpdate<'a> {
     /// 专家/团队名称（WorkBuddy plugin.json 中的 name 字段）。
     /// 执行时自动加载对应的 Agent MD 和 Skills 注入 prompt。
     pub expert_name: Option<&'a str>,
+    /// 任务级执行模型。Some(非空)=设置，Some("")=清除，None=不修改。
+    pub model: Option<&'a str>,
 }
 
 pub struct SchedulerUpdate<'a> {
@@ -96,6 +98,7 @@ impl Database {
             tag_ids,
             executor: m.executor,
             expert_name: m.expert_name,
+            model: m.model,
             scheduler_enabled,
             scheduler_config,
             scheduler_timezone,
@@ -509,6 +512,14 @@ impl Database {
         };
         if let Some(exec) = update.executor {
             am.executor = ActiveValue::Set(Some(exec.to_string()));
+        }
+        // model：Some(非空)=写入任务级模型，Some("")=清除，None=不改（与 executor 语义对齐）。
+        if let Some(model) = update.model {
+            am.model = ActiveValue::Set(if model.is_empty() {
+                None
+            } else {
+                Some(model.to_string())
+            });
         }
         if let Some(enabled) = update.scheduler_enabled {
             am.scheduler_enabled = ActiveValue::Set(Some(enabled));
@@ -1997,6 +2008,7 @@ mod todo_center_tests {
             tag_ids: vec![],
             executor: None,
             expert_name: None,
+            model: None,
             scheduler_enabled: false,
             scheduler_config: None,
             scheduler_timezone: None,

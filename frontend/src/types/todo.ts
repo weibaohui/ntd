@@ -12,6 +12,8 @@ export interface Todo {
   executor?: string;
   /** 关联的专家/团队名称（WorkBuddy 专家系统） */
   expert_name?: string | null;
+  /** 任务级执行模型（覆盖执行器默认）。null = 用执行器默认模型。 */
+  model?: string | null;
   scheduler_enabled?: boolean;
   scheduler_config?: string | null;
   scheduler_timezone?: string | null;

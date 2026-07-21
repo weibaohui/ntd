@@ -144,6 +144,11 @@ impl CodeExecutor for OpencodeExecutor {
             "--format".to_string(),
             "json".to_string(),
         ];
+        // 注入模型（opencode 接受 -m provider/model）。
+        if let Some(m) = self.base.model.lock().clone() {
+            args.push("-m".to_string());
+            args.push(m);
+        }
         // Resume mode: use -s to specify existing session
         if is_resume {
             if let Some(sid) = session_id {
@@ -158,6 +163,11 @@ impl CodeExecutor for OpencodeExecutor {
 
     fn supports_resume(&self) -> bool {
         true
+    }
+
+    /// 执行前注入期望模型，写入 base.model，供 command_args_with_session 拼 -m。
+    fn set_exec_model(&self, model: Option<String>) {
+        *self.base.model.lock() = model;
     }
 
     fn extract_session_id(&self, line: &str) -> Option<String> {

@@ -24,6 +24,8 @@ export interface TodoFormState {
   executor: string;
   /** 关联的专家/团队名称（WorkBuddy 专家系统），null 表示未选择 */
   expertName: string | null;
+  /** 任务级执行模型（覆盖执行器默认）。null = 用执行器默认模型。 */
+  model: string | null;
   /** 工作空间 ID（project_directories.id）。组件间统一以 id 传递，path 仅后端 cwd 内部使用。 */
   workspaceId: number | null;
   /** 是否启用 Webhook 触发 */
@@ -54,6 +56,7 @@ export function createInitialFormState(): TodoFormState {
     selectedTags: [],
     executor: getDefaultExecutor(),
     expertName: null,
+    model: null,
     workspaceId: null,
     webhookEnabled: false,
     schedulerEnabled: false,
@@ -84,6 +87,7 @@ export function todoFormReducer(state: TodoFormState, action: TodoFormAction): T
           selectedTags: action.todo.tag_ids || [],
           executor: action.todo.executor || getDefaultExecutor(),
           expertName: action.todo.expert_name ?? null,
+          model: action.todo.model ?? null,
           workspaceId: action.todo.workspace_id ?? null,
           webhookEnabled: action.todo.webhook_enabled || false,
           schedulerEnabled: action.todo.scheduler_enabled || false,
