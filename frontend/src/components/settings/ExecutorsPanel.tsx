@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Button, Card, Input, AutoComplete, Switch, Spin, Tooltip, Modal, message, Typography, InputNumber, Form, Table, Space, Empty, Tabs, Popconfirm } from 'antd';
-import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined, BugOutlined, CodeOutlined, InfoCircleOutlined, SaveOutlined, StopOutlined, ReloadOutlined, StarOutlined, StarFilled, DownOutlined } from '@ant-design/icons';
+import { Button, Card, Input, Select, Switch, Spin, Tooltip, Modal, message, Typography, InputNumber, Form, Table, Space, Empty, Tabs, Popconfirm } from 'antd';
+import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined, BugOutlined, CodeOutlined, InfoCircleOutlined, SaveOutlined, StopOutlined, ReloadOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
 import { Cron } from 'react-js-cron';
 import 'react-js-cron/dist/styles.css';
 import { CronPresetSelect } from '@/components/CronPresetSelect';
@@ -398,16 +398,37 @@ export function ExecutorsPanel() {
               dataIndex: 'default_model',
               key: 'default_model',
               width: 160,
-              render: (defaultModel: string | null | undefined, record: ExecutorConfig) => (
-                <>
-                  <AutoComplete
-                    size="small"
-                    defaultValue={defaultModel ?? ''}
-                    options={(executorModels[record.name] || []).map((m) => ({ value: m }))}
-                    suffixIcon={<DownOutlined style={{ fontSize: 12 }} />}
-                    placeholder="留空用执行器自带配置"
-                    onBlur={(e: React.FocusEvent<HTMLInputElement>) => {
-                      const newModel = e.target.value.trim();
+              render: (defaultModel: string | null | undefined, record: ExecutorConfig) => {
+                const models = executorModels[record.name] || [];
+                if (models.length === 0) {
+                  return (
+                    <Input size="small" placeholder="留空用执行器自带配置" defaultValue={defaultModel ?? ''}
+                      onBlur={(e: React.FocusEvent<HTMLInputElement>) => {
+                        const newModel = e.target.value.trim();
+                        if (newModel === (defaultModel ?? '')) return;
+                        setSavingExecutor(record.name);
+                        db.updateExecutor(record.name, { default_model: newModel })
+                          .then((updated) => setExecutors((prev) => prev.map((ex) => ex.name === record.name ? updated : ex)))
+                          .catch((err: any) => message.error('保存失败: ' + (err?.message || String(err))))
+                          .finally(() => setSavingExecutor(null));
+                      }}
+                      onPressEnter={(e: React.KeyboardEvent<HTMLInputElement>) => (e.target as HTMLInputElement).blur()} />
+                  );
+                }
+                const groups: Record<string, { label: string; value: string }[]> = {};
+                models.forEach((full) => {
+                  const slash = full.indexOf('/');
+                  const provider = slash > 0 ? full.slice(0, slash) : '其他';
+                  const mn = slash > 0 ? full.slice(slash + 1) : full;
+                  if (!groups[provider]) groups[provider] = [];
+                  groups[provider].push({ label: mn, value: full });
+                });
+                return (
+                  <Select size="small" value={defaultModel || undefined} placeholder="留空用执行器自带配置" allowClear showSearch
+                    filterOption={(input: string, option?: { label: string; value: string }) =>
+                      (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+                    onChange={(v: unknown) => {
+                      const newModel = (v as string)?.trim() || '';
                       if (newModel === (defaultModel ?? '')) return;
                       setSavingExecutor(record.name);
                       db.updateExecutor(record.name, { default_model: newModel })
@@ -415,10 +436,17 @@ export function ExecutorsPanel() {
                         .catch((err: any) => message.error('保存失败: ' + (err?.message || String(err))))
                         .finally(() => setSavingExecutor(null));
                     }}
-                    style={{ width: '100%' }}
-                  />
-                </>
-              ),
+                    style={{ width: '100%' }}>
+                    {Object.entries(groups).map(([provider, items]) => (
+                      <Select.OptGroup key={provider} label={provider}>
+                        {items.map((item) => (
+                          <Select.Option key={item.value} value={item.value}>{item.label}</Select.Option>
+                        ))}
+                      </Select.OptGroup>
+                    ))}
+                  </Select>
+                );
+              },
             },
             {
               title: '检测状态',
