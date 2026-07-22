@@ -292,7 +292,6 @@ export function ExecutorsPanel() {
               title: '状态',
               dataIndex: 'enabled',
               key: 'enabled',
-              width: 70,
               align: 'center',
               render: (enabled: boolean, record: ExecutorConfig) => (
                 <Switch
@@ -317,7 +316,6 @@ export function ExecutorsPanel() {
               title: '执行器',
               dataIndex: 'display_name',
               key: 'display_name',
-              width: 130,
               render: (name: string, record: ExecutorConfig) => (
                 <span style={{ fontWeight: 500, opacity: record.enabled ? 1 : 0.5, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                   {name}
@@ -366,7 +364,6 @@ export function ExecutorsPanel() {
               title: 'Session 目录',
               dataIndex: 'session_dir',
               key: 'session_dir',
-              width: 220,
               render: (sessionDir: string, record: ExecutorConfig) => (
                 <Input
                   size="small"
@@ -397,7 +394,6 @@ export function ExecutorsPanel() {
               title: '默认模型',
               dataIndex: 'default_model',
               key: 'default_model',
-              width: 160,
               render: (defaultModel: string | null | undefined, record: ExecutorConfig) => {
                 const models = executorModels[record.name] || [];
                 if (models.length === 0) {
@@ -451,7 +447,6 @@ export function ExecutorsPanel() {
             {
               title: '检测状态',
               key: 'detect_status',
-              width: 90,
               align: 'center',
               render: (_: unknown, record: ExecutorConfig) => {
                 const detectResult = detectResults[record.name];
