@@ -296,6 +296,8 @@ impl BaseExecutor {
 
 /// 适配器层共享的解析与构造 helper（trim/JSON/Entry 构造）。
 pub mod helpers;
+/// 执行器模型列表：调 models 子命令拉取可选模型（执行器页下拉用）。
+pub mod models;
 pub mod mobilecoder;
 pub mod mobilecoder_event;
 pub mod claude_protocol;

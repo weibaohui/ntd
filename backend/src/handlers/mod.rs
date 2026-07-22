@@ -654,6 +654,7 @@ fn config_routes() -> Router<AppState> {
         .route("/api/executors/{name}/resolve", post(executor_config::resolve_executor_path))
         .route("/api/executors/default", get(executor_config::get_default_executor))
         .route("/api/executors/{name}/default", put(executor_config::set_default_executor))
+        .route("/api/executors/{name}/models", get(executor_config::list_executor_models))
 }
 
 /// Skills 管理（列出/同步/导入导出/调用记录）。

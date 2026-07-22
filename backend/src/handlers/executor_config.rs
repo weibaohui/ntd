@@ -285,3 +285,26 @@ pub async fn set_default_executor(
         .ok_or(AppError::NotFound)?;
     Ok(ApiResponse::ok(executor))
 }
+
+/// 列出执行器支持的模型（调其 models 子命令）。
+///
+/// 用于执行器页「默认模型」下拉。目前 pi 走 `pi --list-models` 解析；
+/// 不支持 models 子命令的执行器返回空数组，前端降级为手填输入。
+pub async fn list_executor_models(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<ApiResponse<Vec<String>>, AppError> {
+    let ec = state.db.get_executor_by_name(&name).await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .ok_or(AppError::NotFound)?;
+    // 只对已知且实现了 models 子命令的执行器拉取；解析不出的名字直接返回空。
+    let Some(et) = crate::adapters::parse_executor_type(&ec.name) else {
+        return Ok(ApiResponse::ok(vec![]));
+    };
+    // 展开 path（~/bare command）→ 实际可执行路径；找不到二进制时返回空（前端手填）。
+    let path = if ec.path.is_empty() { ec.name.clone() } else { ec.path.clone() };
+    let (_found, resolved) = detect_binary(&path);
+    let exec_path = resolved.unwrap_or(path);
+    let models = crate::adapters::models::list_models(et, &exec_path).await;
+    Ok(ApiResponse::ok(models))
+}

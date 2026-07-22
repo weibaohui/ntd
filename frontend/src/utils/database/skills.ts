@@ -110,6 +110,11 @@ export async function updateExecutor(name: string, data: { path?: string; enable
   return unwrap(await api.put(`/api/executors/${encodeURIComponent(name)}`, data));
 }
 
+/** 拉取执行器支持的模型列表（调其 models 子命令，用作默认模型下拉选项）。 */
+export async function getExecutorModels(name: string): Promise<string[]> {
+  return unwrap(await api.get(`/api/executors/${encodeURIComponent(name)}/models`));
+}
+
 export async function detectExecutor(name: string): Promise<{ binary_found: boolean; path_resolved: string | null }> {
   return unwrap(await api.post(`/api/executors/${encodeURIComponent(name)}/detect`));
 }
