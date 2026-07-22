@@ -235,7 +235,7 @@ export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = 
 
       {/* 基本配置区（消息面板展开时隐藏） */}
       {!showHistory && (
-        <div style={{ maxWidth: 700 }}>
+        <div style={{ width: '100%' }}>
           {/* Bot 基本信息 */}
           <AssistantConfigCard bot={bot} botConfig={botConfig} onConfigChange={handleConfigChange} />
 

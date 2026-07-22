@@ -127,7 +127,7 @@ export function ReviewTemplatesPanel({ workspaceId }: ReviewTemplatesPanelProps)
   };
 
   return (
-    <div style={{ maxWidth: 1000 }}>
+    <div style={{ width: '100%' }}>
       <Space style={{ marginBottom: 16 }} wrap>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => openForm()}>
           新建模板
