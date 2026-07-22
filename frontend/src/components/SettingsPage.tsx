@@ -9,6 +9,7 @@ import {
   InfoCircleOutlined,
   CloudOutlined,
   DesktopOutlined,
+  KeyOutlined,
 } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { useApp } from '@/hooks/useApp';
@@ -22,6 +23,7 @@ import { TemplatesPanel } from './settings/TemplatesPanel';
 import { AboutPanel } from './settings/AboutPanel';
 import { CloudSyncPanel } from './settings/CloudSyncPanel';
 import { InterfaceDisplayPanel } from './settings/InterfaceDisplayPanel';
+import { ProfilesPanel } from './settings/ProfilesPanel';
 
 import { DEFAULT_EXECUTION_TIMEOUT_SECS } from '@/constants';
 
@@ -152,6 +154,11 @@ export function SettingsPage() {
       key: 'cloudSync',
       label: <span><CloudOutlined style={{ marginRight: 6 }} />云端同步</span>,
       children: <CloudSyncPanel />,
+    },
+    {
+      key: 'profiles',
+      label: <span><KeyOutlined style={{ marginRight: 6 }} />API Key</span>,
+      children: <ProfilesPanel />,
     },
     {
       key: 'about',
