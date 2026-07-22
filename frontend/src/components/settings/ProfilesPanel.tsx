@@ -9,8 +9,8 @@
 //! - 应用（切换）Profile → 写入各执行器配置文件
 //! - 显示当前激活的 Profile
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { Button, Card, Empty, Form, Input, List, message, Modal, Select, Space, Spin, Table, Tag, Tooltip, Typography, Popconfirm, Descriptions, Alert } from 'antd';
+import { useState, useEffect, useCallback } from 'react';
+import { Button, Card, Empty, Form, Input, message, Modal, Space, Spin, Table, Tag, Typography, Popconfirm, Descriptions, Alert } from 'antd';
 import {
   PlusOutlined,
   KeyOutlined,
@@ -18,12 +18,10 @@ import {
   SwapOutlined,
   DeleteOutlined,
   EditOutlined,
-  ExclamationCircleOutlined,
-  StarOutlined,
 } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 
-const { Text, Title, Paragraph } = Typography;
+const { Text, Paragraph } = Typography;
 
 /** Profile API 路径前缀 */
 const PROFILES_API = '/api/v1/profiles';
@@ -41,7 +39,7 @@ interface ProfileSummary {
   is_current: boolean;
 }
 
-/** Profile 详情（含执行器配置） */
+/** Profile 详情（编辑弹窗中展示当前执行器配置用） */
 interface ProfileDetail {
   name: string;
   display_name: string;
@@ -74,13 +72,6 @@ async function fetchProfiles(): Promise<ProfileSummary[]> {
   const resp = await fetch(PROFILES_API);
   const json = await resp.json();
   return json.data || [];
-}
-
-async function fetchCurrentProfile(): Promise<ProfileDetail | null> {
-  const resp = await fetch(`${PROFILES_API}/current`);
-  if (!resp.ok) return null;
-  const json = await resp.json();
-  return json.data || null;
 }
 
 async function createProfile(req: { name: string; display_name: string; description?: string; executors?: Record<string, any> }): Promise<void> {
@@ -128,22 +119,6 @@ async function applyProfile(name: string): Promise<ApplyProfileResult> {
   const json = await resp.json();
   return json.data;
 }
-
-// ============================================================================
-// 支持的执行器列表（与后端 ExecutorType.as_str() 和 adapters/mod.rs 对齐）
-// ============================================================================
-
-const SUPPORTED_EXECUTORS = [
-  { name: 'claudecode', label: 'Claude Code', icon: '🤖' },
-  { name: 'pi', label: 'PI', icon: '⚡' },
-  { name: 'atomcode', label: 'AtomCode', icon: '⚛️' },
-  { name: 'kilo', label: 'Kilo', icon: '🔧' },
-  { name: 'codebuddy', label: 'CodeBuddy', icon: '💼' },
-  { name: 'opencode', label: 'Opencode', icon: '🔓' },
-  { name: 'kimi', label: 'Kimi', icon: '🌙' },
-  { name: 'mimo', label: 'MiMo', icon: '🎯' },
-  { name: 'zhanlu', label: 'Zhanlu', icon: '🗡️' },
-];
 
 // ============================================================================
 // 组件
