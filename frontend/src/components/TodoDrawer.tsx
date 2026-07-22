@@ -314,7 +314,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
           }} />
 
           {/* 任务级模型：留空用执行器默认，填值则覆盖。联动展示当前执行器的默认模型。 */}
-          <ModelPicker model={model} defaultModel={currentDefaultModel} onChange={(v) => setField('model', v)} />
+          <ModelPicker model={model} executor={executor} defaultModel={currentDefaultModel} onChange={(v) => setField('model', v)} />
 
           <Divider style={{ margin: '8px 0 16px' }} />
 
