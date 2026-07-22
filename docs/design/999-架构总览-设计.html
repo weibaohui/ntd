@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ntd (Now Task, Done) — 技术架构</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0e1a;--bg2:#111827;--bg3:#1a2035;--card:#151d30;
+  --border:#1e2a45;--text:#c8d6e5;--text2:#8899aa;--accent:#6c5ce7;
+  --accent2:#a29bfe;--green:#00cec9;--orange:#fdcb6e;--red:#ff7675;
+  --blue:#74b9ff;--pink:#fd79a8;--cyan:#81ecec;
+  --mono:'JetBrains Mono',monospace;--sans:'Inter',system-ui,sans-serif;
+}
+html{scroll-behavior:smooth;font-size:15px}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.7;min-height:100vh}
+body::before{content:'';position:fixed;inset:0;z-index:-1;
+  background:radial-gradient(ellipse at 20% 50%,rgba(108,92,231,.08) 0%,transparent 50%),
+             radial-gradient(ellipse at 80% 20%,rgba(0,206,201,.06) 0%,transparent 50%),
+             radial-gradient(ellipse at 50% 90%,rgba(253,203,110,.04) 0%,transparent 50%)}
+body::after{content:'';position:fixed;inset:0;z-index:-1;opacity:.03;
+  background-image:linear-gradient(var(--accent) 1px,transparent 1px),linear-gradient(90deg,var(--accent) 1px,transparent 1px);
+  background-size:60px 60px}
+nav{position:fixed;top:0;left:0;right:0;z-index:100;
+  background:rgba(10,14,26,.85);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:0 2rem;height:56px;display:flex;align-items:center;justify-content:space-between}
+nav .logo{font-weight:900;font-size:1.1rem;color:var(--accent2);letter-spacing:-.5px}
+nav .logo span{color:var(--green)}
+nav ul{list-style:none;display:flex;gap:1.5rem;flex-wrap:wrap}
+nav a{color:var(--text2);text-decoration:none;font-size:.82rem;font-weight:600;transition:.2s}
+nav a:hover{color:var(--accent2)}
+main{max-width:1200px;margin:0 auto;padding:80px 2rem 4rem}
+section{margin-bottom:4rem;scroll-margin-top:70px}
+h1{font-size:2.8rem;font-weight:900;line-height:1.15;margin-bottom:.5rem;
+  background:linear-gradient(135deg,var(--accent2),var(--green),var(--orange));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+h1 .sub{display:block;font-size:.45em;font-weight:600;-webkit-text-fill-color:var(--text2);margin-top:.3rem;letter-spacing:.5px}
+h2{font-size:1.6rem;font-weight:700;margin-bottom:1.2rem;color:#e2e8f0;
+  padding-left:1rem;border-left:4px solid var(--accent)}
+h3{font-size:1.15rem;font-weight:700;margin:1.5rem 0 .6rem;color:var(--accent2)}
+h4{font-size:1rem;font-weight:600;margin:1rem 0 .4rem;color:var(--cyan)}
+p{margin-bottom:.8rem}
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.2rem;margin:1.5rem 0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.4rem;transition:.3s;position:relative;overflow:hidden}
+.card:hover{border-color:var(--accent);transform:translateY(-3px);box-shadow:0 8px 30px rgba(108,92,231,.15)}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,var(--accent),var(--green));opacity:0;transition:.3s}
+.card:hover::before{opacity:1}
+.card h4{margin:0 0 .5rem;color:var(--accent2)}
+.card p,.card li{font-size:.88rem;color:var(--text2)}
+.card ul{list-style:none;padding:0}
+.card li{padding:.2rem 0;padding-left:1.2rem;position:relative}
+.card li::before{content:'›';position:absolute;left:0;color:var(--accent)}
+.badge{display:inline-block;padding:.15rem .6rem;border-radius:20px;font-size:.72rem;font-weight:700;
+  font-family:var(--mono);margin:.15rem}
+.badge-rust{background:rgba(222,190,122,.15);color:#dec07a}
+.badge-react{background:rgba(97,218,251,.12);color:#61dafb}
+.badge-axum{background:rgba(108,92,231,.15);color:var(--accent2)}
+.badge-sqlite{background:rgba(0,206,201,.12);color:var(--green)}
+.badge-vite{background:rgba(253,203,110,.12);color:var(--orange)}
+.badge-antd{background:rgba(255,118,117,.12);color:var(--red)}
+table{width:100%;border-collapse:collapse;margin:1rem 0;font-size:.88rem}
+th{text-align:left;padding:.7rem 1rem;background:var(--bg3);color:var(--accent2);font-weight:700;border-bottom:2px solid var(--accent)}
+td{padding:.6rem 1rem;border-bottom:1px solid var(--border);color:var(--text)}
+tr:hover td{background:rgba(108,92,231,.04)}
+.flow{display:flex;flex-direction:column;align-items:center;gap:.5rem;margin:1.5rem 0}
+.flow-row{display:flex;align-items:center;gap:.8rem;flex-wrap:wrap;justify-content:center}
+.flow-step{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:.7rem 1.2rem;text-align:center;min-width:140px;transition:.3s}
+.flow-step:hover{border-color:var(--green);box-shadow:0 0 20px rgba(0,206,201,.1)}
+.flow-step .step-num{font-family:var(--mono);font-size:.7rem;color:var(--green);font-weight:700;display:block;margin-bottom:.2rem}
+.flow-step .step-label{font-weight:600;font-size:.85rem}
+.flow-arrow{color:var(--accent);font-size:1.2rem;font-weight:900}
+.ascii{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:1.2rem;
+  font-family:var(--mono);font-size:.72rem;line-height:1.5;overflow-x:auto;color:var(--text2);margin:1rem 0;white-space:pre}
+.pattern{background:var(--card);border-left:3px solid var(--accent);border-radius:0 10px 10px 0;
+  padding:1.2rem 1.5rem;margin:1rem 0}
+.pattern h4{color:var(--orange);margin-top:0}
+.pattern code{background:var(--bg3);padding:.15rem .5rem;border-radius:4px;font-family:var(--mono);font-size:.82rem;color:var(--cyan)}
+.module-list{columns:2;column-gap:2rem}
+.module-list li{break-inside:avoid;margin-bottom:.4rem;font-size:.88rem;color:var(--text2)}
+.module-list li strong{color:var(--accent2)}
+footer{text-align:center;padding:3rem 0 1rem;color:var(--text2);font-size:.78rem;border-top:1px solid var(--border);margin-top:3rem}
+footer a{color:var(--accent2)}
+@media(max-width:768px){
+  h1{font-size:2rem}
+  nav ul{display:none}
+  .module-list{columns:1}
+  .card-grid{grid-template-columns:1fr}
+  .flow-row{flex-direction:column}
+  .flow-arrow{transform:rotate(90deg)}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="logo">ntd<span>.</span>arch</div>
+  <ul>
+    <li><a href="#stack">技术栈</a></li>
+    <li><a href="#backend">后端</a></li>
+    <li><a href="#frontend">前端</a></li>
+    <li><a href="#dataflow">数据流</a></li>
+    <li><a href="#patterns">设计模式</a></li>
+    <li><a href="#database">数据库</a></li>
+    <li><a href="#build">构建与部署</a></li>
+  </ul>
+</nav>
+
+<main>
+<h1>ntd (Now Task, Done) 技术架构<span class="sub">全栈 AI 任务自动化平台 · 技术参考文档</span></h1>
+
+<p><strong>ntd（Now Task, Done）</strong> 是一个全栈应用程序，允许用户创建 AI 驱动的待办事项，将其分配给各种代码执行 AI 代理（Claude Code、Codex、Pi 等），并通过 WebSocket 实时监控执行过程。该平台支持定时循环任务、飞书集成和云端同步。</p>
+
+<div style="margin:1rem 0">
+  <span class="badge badge-rust">Rust 1.81+</span>
+  <span class="badge badge-axum">Axum 0.8</span>
+  <span class="badge badge-react">React 19</span>
+  <span class="badge badge-vite">Vite 7</span>
+  <span class="badge badge-antd">Ant Design 6</span>
+  <span class="badge badge-sqlite">SQLite</span>
+  <span class="badge badge-rust">Tokio</span>
+  <span class="badge badge-rust">SeaORM 1</span>
+  <span class="badge badge-react">TypeScript 5.8</span>
+  <span class="badge badge-rust">rustls</span>
+</div>
+
+<!-- ===== TECH STACK OVERVIEW ===== -->
+<section id="stack">
+<h2>📦 技术栈总览</h2>
+<div class="card-grid">
+  <div class="card">
+    <h4>🔧 后端</h4>
+    <ul>
+      <li><strong>Rust 2021</strong>（MSRV 1.81）</li>
+      <li><strong>Axum 0.8</strong> — HTTP/WebSocket 服务器</li>
+      <li><strong>Tokio</strong> — 异步运行时（full features）</li>
+      <li><strong>SeaORM 1</strong> + SQLx 0.7 — ORM 层</li>
+      <li><strong>Rusqlite</strong> — 内置 SQLite 驱动</li>
+      <li><strong>tracing</strong> + tracing-subscriber — 结构化日志</li>
+      <li><strong>clap 4</strong> — CLI 框架</li>
+      <li><strong>command-group 5</strong> — 层级子命令</li>
+      <li><strong>tower-http</strong> — 中间件（CORS、trace、压缩）</li>
+      <li><strong>tokio-cron-scheduler</strong> — 定时调度</li>
+      <li><strong>rust-embed 8</strong> — 嵌入前端资源</li>
+      <li><strong>proptest</strong> — 属性驱动测试</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>🎨 前端</h4>
+    <ul>
+      <li><strong>React 19</strong> + TypeScript 5.8</li>
+      <li><strong>Vite 7</strong> — 构建工具（HMR 热更新）</li>
+      <li><strong>Ant Design 6</strong> — UI 组件库</li>
+      <li><strong>@xyflow/react</strong> — 流程图/关系图可视化</li>
+      <li><strong>@uiw/react-md-editor</strong> — Markdown 编辑器</li>
+      <li><strong>dagre</strong> — DAG 布局引擎</li>
+      <li><strong>date-fns 4</strong> — 日期工具库</li>
+      <li><strong>axios</strong> — HTTP 客户端</li>
+      <li><strong>react-countup</strong> — 数字动画</li>
+      <li><strong>react-js-cron</strong> — Cron 表达式构建器</li>
+      <li><strong>Playwright</strong> — E2E 端到端测试</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>🤖 AI 执行器</h4>
+    <ul>
+      <li>Claude Code、Codex、CodeBuddy、Opencode</li>
+      <li>AtomCode、Hermes、Kimi、MobileCoder</li>
+      <li>CodeWhale、Pi、Mimo、ZhanLu</li>
+      <li>每种执行器均通过适配器模式 + 事件流接入</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>💾 数据层</h4>
+    <ul>
+      <li>SQLite（内置，无需系统依赖）</li>
+      <li>约 35 个实体，覆盖 8 个业务域</li>
+      <li>SeaORM 迁移系统</li>
+      <li>自动备份（数据库、待办、技能、用量统计）</li>
+    </ul>
+  </div>
+</div>
+</section>
+
+<!-- ===== BACKEND ARCHITECTURE ===== -->
+<section id="backend">
+<h2>🏗️ 后端架构</h2>
+
+<h3>五层架构</h3>
+<div class="ascii">┌─────────────────────────────────────────────────────────────┐
+│  CLI 层（clap 4）                                           │
+│  ─────────────────────────────────────────────────────────  │
+│  ntd server | ntd todo | ntd loop | ntd tag | ntd daemon    │
+│  ntd skills install | ntd upgrade | ntd stats | ntd version   │
+└────────────────────────┬────────────────────────────────────┘
+                         │ HTTP / WebSocket / CLI 分发
+┌────────────────────────▼────────────────────────────────────┐
+│  处理器层（Axum 0.8）                                       │
+│  ─────────────────────────────────────────────────────────  │
+│  todo | loop | tag | scheduler | execution | feishu_binding  │
+│  feishu_history | project_directory | review_template         │
+│  custom_template | agent_bot | session | skills | sync       │
+│  usage_stats | config | webhook | backup                     │
+└────────────────────────┬────────────────────────────────────┘
+                         │ ServiceContext（db、registry、tx、tm、cfg）
+┌────────────────────────▼────────────────────────────────────┐
+│  服务层                                                    │
+│  ─────────────────────────────────────────────────────────  │
+│  loop_runner | loop_scheduler | loop_trigger                │
+│  feishu_listener | feishu_push | feishu_history_fetcher     │
+│  auto_review | usage_stats | worktree | message_debounce     │
+└────────────────────────┬────────────────────────────────────┘
+                         │ ExecutorRegistry + TaskManager
+┌────────────────────────▼────────────────────────────────────┐
+│  执行器服务（编排器）                                       │
+│  ─────────────────────────────────────────────────────────  │
+│  stages::prepare_execution_state()                          │
+│  stages::start_todo_and_prepare_spawn()                     │
+│  stages::dispatch_spawned_executor_task()                   │
+│  ├── pre_spawn  （并发门控、执行器选择）                      │
+│  ├── worktree   （git worktree 创建/清理）                    │
+│  ├── log_capture  （stdout/stderr 读取 + LogFlusher）         │
+│  ├── auto_review （独立运行时 + std::thread 执行评审）         │
+│  └── completion （终态处理、钩子、事件广播）                  │
+└────────────────────────┬────────────────────────────────────┘
+                         │ 适配器 trait
+┌────────────────────────▼────────────────────────────────────┐
+│  适配器层（12+ 执行器）                                     │
+│  ─────────────────────────────────────────────────────────  │
+│  ClaudeCodeAdapter | CodexAdapter | CodeBuddyAdapter        │
+│  OpencodeAdapter | AtomCodeAdapter | HermesAdapter          │
+│  KimiAdapter | MobileCoderAdapter | CodeWhaleAdapter        │
+│  PiAdapter | MimoAdapter | ZhanLuAdapter                    │
+│  + *_event 变体（流式事件协议）                              │
+└────────────────────────┬────────────────────────────────────┘
+                         │ 进程启动 + IPC
+┌────────────────────────▼────────────────────────────────────┐
+│  数据库（SQLite / SeaORM）                                  │
+│  ─────────────────────────────────────────────────────────  │
+│  todos | tags | loops | loop_steps | loop_executions        │
+│  execution_records | execution_logs | executors             │
+│  feishu_* | agent_bots | sync_records | usage_stats         │
+│  workspace_settings | review_templates | skills             │
+└─────────────────────────────────────────────────────────────┘</div>
+
+<h3>核心模块（16 个）</h3>
+<ul class="module-list">
+  <li><strong>main.rs</strong> — 程序入口、CLI 解析、服务器启动、升级流程</li>
+  <li><strong>lib.rs</strong> — 模块声明，<code>Assets</code> + <code>NtdSkills</code> 嵌入（rust-embed）</li>
+  <li><strong>service_context.rs</strong> — 共享依赖容器（db、registry、tx、task_mgr、config）</li>
+  <li><strong>config.rs</strong> — YAML 配置（<code>~/.ntd/config.yaml</code>）、校验、默认值、安全限制</li>
+  <li><strong>handlers/</strong> — HTTP 路由处理器（Axum 提取器 + AppState）</li>
+  <li><strong>services/</strong> — 业务逻辑（loop_runner、feishu_listener、message_debounce 等）</li>
+  <li><strong>executor_service/</strong> — 执行编排（pre-spawn → stages → completion）</li>
+  <li><strong>adapters/</strong> — AI 执行器接入（<code>CodeExecutor</code> trait，12+ 适配器）</li>
+  <li><strong>db/</strong> — 数据访问层（实体、迁移、查询构建器、辅助函数）</li>
+  <li><strong>scheduler.rs</strong> — Cron 定时任务调度（<code>tokio-cron-scheduler</code>）</li>
+  <li><strong>task_manager.rs</strong> — 运行中任务注册表 + 取消控制（RAII 守卫）</li>
+  <li><strong>cli/</strong> — CLI 客户端库（供 <code>ntd</code> npm 包消费者调用）</li>
+  <li><strong>daemon/</strong> — 系统服务管理（launchd/systemd/TaskScheduler）</li>
+  <li><strong>feishu/</strong> — 飞书/Lark 集成（SDK、WebSocket、消息编解码）</li>
+  <li><strong>log_flusher.rs</strong> — 异步日志刷盘（定期写入磁盘）</li>
+  <li><strong>sys.rs</strong> — FFI 边界层（<code>SO_REUSEADDR</code>、Unix 专属 libc 调用）</li>
+</ul>
+</section>
+
+<!-- ===== FRONTEND ARCHITECTURE ===== -->
+<section id="frontend">
+<h2>🎨 前端架构</h2>
+
+<h3>技术概览</h3>
+<div class="card-grid">
+  <div class="card">
+    <h4>框架与工具</h4>
+    <p>React 19 + TypeScript 5.8 + Vite 7</p>
+    <p>ESM 模块，路径别名 <code>@</code> → <code>src/</code></p>
+    <p>Rollup manual chunks 分包策略</p>
+    <p>开发代理：<code>/api</code> → <code>localhost:8088</code></p>
+  </div>
+  <div class="card">
+    <h4>UI 组件</h4>
+    <p>Ant Design 6（Table、Drawer、Modal、Tree 等）</p>
+    <p><code>@ant-design/icons</code> 6</p>
+    <p><code>@uiw/react-md-editor</code>（提示词编辑）</p>
+    <p><code>ErrorBoundary</code>（JSX 错误捕获）</p>
+  </div>
+  <div class="card">
+    <h4>可视化</h4>
+    <p><code>@xyflow/react</code> + dagre — Loop Studio 流程图</p>
+    <p>RelationMap — 实体关系图</p>
+    <p>PieChart — 用量统计图表</p>
+    <p>AnimatedNumber / CountUp — 指标动画</p>
+  </div>
+  <div class="card">
+    <h4>状态管理</h4>
+    <p>React Hooks（useState、useReducer、useContext）</p>
+    <p>自定义 Hooks：<code>useApp</code>、<code>useTodoContext</code>、<code>useExecutionEvents</code></p>
+    <p>看板执行缓存（<code>useKanbanExecutionCache</code>）</p>
+  </div>
+  <div class="card">
+    <h4>本地存储</h4>
+    <p>IndexedDB 通过 <code>utils/database/client.ts</code></p>
+    <p>会话持久化、待办缓存、技能同步</p>
+    <p>数据库备份/恢复工具</p>
+  </div>
+  <div class="card">
+    <h4>测试</h4>
+    <p>Playwright E2E 端到端测试</p>
+    <p>组件级快照测试</p>
+    <p>Mock API 响应的集成测试</p>
+  </div>
+</div>
+
+<h3>核心组件树</h3>
+<div class="ascii">App.tsx
+├── Dashboard（统计、图表、紧凑行）
+│   ├── ChartCards / StatsGridCards / DistributionCards
+│   ├── MiniStat / SpecialCards / UsageStatsCard
+│   └── EnhancedCards
+├── KanbanBoard（拖拽待办看板）
+├── RunningBoard（活跃执行概览）
+├── TodoList + TodoCard + TodoDrawer
+│   └── TodoDetail（历史记录、日志、续执行）
+├── LoopStudio
+│   ├── LoopKanban / LoopFormModal
+│   ├── LoopStudioListPanel
+│   ├── LoopStudioStepsPanel
+│   ├── LoopStudioTriggersPanel
+│   ├── LoopStudioExecutionsPanel
+│   ├── LoopStudioDetailPanel
+│   └── LoopFlowGraph（xyflow + dagre）
+├── SessionManager + sessions/*
+├── SkillsPanel + skills/*
+├── SettingsPage
+│   ├── RuntimePanel / ExecutorsPanel
+│   ├── TemplatesPanel / ReviewTemplatesPanel
+│   ├── TagsPanel / MessagesPanel
+│   ├── ProjectDirectoriesPanel
+│   ├── CloudSyncPanel / BackupPanel
+│   ├── AboutPanel / SystemSettingsPanel
+│   └── messages/ 与 backup/ 子标签页
+├── CommandPanel + CommandCard
+├── MemorialBoard
+├── ShareCard
+└── ChatView + ExecutionPanel</div>
+</section>
+
+<!-- ===== DATA FLOW ===== -->
+<section id="dataflow">
+<h2>🔄 数据流</h2>
+
+<h3>待办执行流水线</h3>
+<div class="flow">
+  <div class="flow-row">
+    <div class="flow-step"><span class="step-num">第一步</span><span class="step-label">用户创建待办</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-step"><span class="step-num">第二步</span><span class="step-label">API → 处理器</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-step"><span class="step-num">第三步</span><span class="step-label">定时调度 / 手动触发</span></div>
+  </div>
+  <div class="flow-row">
+    <span class="flow-arrow">↓</span>
+  </div>
+  <div class="flow-row">
+    <div class="flow-step"><span class="step-num">第四步</span><span class="step-label">ExecutorService::run_todo_execution()</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-step"><span class="step-num">第五步</span><span class="step-label">预启动 → Worktree → 进程启动</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-step"><span class="step-num">第六步</span><span class="step-label">日志捕获 + 广播（WebSocket）</span></div>
+  </div>
+  <div class="flow-row">
+    <span class="flow-arrow">↓</span>
+  </div>
+  <div class="flow-row">
+    <div class="flow-step"><span class="step-num">第七步</span><span class="step-label">自动评审（如已启用）</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-step"><span class="step-num">第八步</span><span class="step-label">完成钩子 → 数据库记录</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-step"><span class="step-num">第九步</span><span class="step-label">前端实时更新</span></div>
+  </div>
+</div>
+
+<h3>WebSocket 事件流</h3>
+<div class="ascii">┌──────────┐   broadcast::Sender   ┌──────────────┐
+│ 执行器    │ ───────────────────►  │  TaskManager  │
+│ 适配器    │   ExecEvent           │  + WebSocket   │
+└──────────┘                       └──────┬───────┘
+                                          │
+                                    ┌─────▼─────┐
+                                    │  前端       │
+                                    │  ChatView   │
+                                    │  (SSE/WSS)  │
+                                    └─────────────┘</div>
+
+<h3>Loop Studio 流程</h3>
+<div class="ascii">LoopTrigger（定时/Webhook/手动）
+    │
+    ▼
+LoopScheduler（Cron 循环管理）
+    │
+    ▼
+LoopTriggerDispatcher → LoopRunner
+    │
+    ├──► 加载循环步骤
+    ├──► 执行每个步骤（通过 ExecutorService）
+    ├──► 自动评审步骤结果
+    └──► 持久化 LoopExecutions + LoopStepExecutions</div>
+</section>
+
+<!-- ===== DESIGN PATTERNS ===== -->
+<section id="patterns">
+<h2>🧩 设计模式</h2>
+
+<div class="pattern">
+  <h4>1. 适配器模式 — AI 执行器接入</h4>
+  <p>统一的 <code>CodeExecutor</code> trait 抽象了 12+ 种不同的 AI 编程代理。每种适配器实现相同的接口，无论底层协议是 stdio、事件流还是自定义协议。</p>
+  <p><code>adapters/mod.rs</code> 定义了 <code>EXECUTORS</code> 静态数组，包含 <code>ExecutorDef</code> 元数据。<code>ExecutorRegistry</code> 通过名称/路径动态注册和解析执行器。</p>
+</div>
+
+<div class="pattern">
+  <h4>2. 广播频道 — 实时事件分发</h4>
+  <p><code>tokio::sync::broadcast</code> 容量可配（默认 10,000），将执行事件广播给所有连接的 WebSocket 客户端。环形缓冲区防止突发流量下的消息丢失。</p>
+  <p>通过 <code>config.yaml</code> 配置，带有安全限制：最小 100，软上限 1M，超过 100M 时崩溃拒绝。</p>
+</div>
+
+<div class="pattern">
+  <h4>3. 进程组管理 — 守护进程服务</h4>
+  <p>跨平台守护进程管理：<code>launchd</code>（macOS）、<code>systemd</code>（Linux）、<code>Task Scheduler</code>（Windows）。共享路径解析在 <code>daemon/common.rs</code>，平台特定实现在子模块中。</p>
+  <p>Linux 支持分离式重新部署，实现零停机升级。</p>
+</div>
+
+<div class="pattern">
+  <h4>4. 日志刷写器 — 异步持久化</h4>
+  <p><code>log_flusher.rs</code> 实现定期的异步日志刷盘，将写入 I/O 与热执行路径解耦。使用 <code>quick_cache</code> 进行内存缓冲。</p>
+</div>
+
+<div class="pattern">
+  <h4>5. 服务上下文 — 依赖注入</h4>
+  <p><code>ServiceContext</code> 将 5 个 <code>Arc&lt;T&gt;</code> 依赖聚合为一个可克隆的结构体，贯穿整个应用，减少样板代码并确保一致的依赖共享。</p>
+  <p>字段：<code>db</code>、<code>executor_registry</code>、<code>tx</code>（广播）、<code>task_manager</code>、<code>config</code>（RwLock）。</p>
+</div>
+
+<div class="pattern">
+  <h4>6. 嵌入式资源 — RustEmbed</h4>
+  <p>前端构建产物和 ntd-usage 技能文件通过 <code>rust-embed</code> 编译进二进制文件。实现单二进制分发，无需外部资源依赖。</p>
+  <p><code>Assets</code> 结构体嵌入 <code>../frontend/dist/</code>；<code>NtdSkills</code> 嵌入 <code>../ntd-skills/</code>。</p>
+</div>
+</section>
+
+<!-- ===== DATABASE DESIGN ===== -->
+<section id="database">
+<h2>🗄️ 数据库设计</h2>
+
+<h3>核心实体（约 35 张表，SeaORM 管理）</h3>
+<table>
+<thead><tr><th>业务域</th><th>实体</th><th>用途</th></tr></thead>
+<tbody>
+<tr><td><strong>待办</strong></td><td><code>todos</code>、<code>tags</code>、<code>todo_tags</code>、<code>todo_templates</code></td><td>核心任务项、标签、模板</td></tr>
+<tr><td><strong>执行</strong></td><td><code>execution_records</code>、<code>execution_logs</code>、<code>executors</code></td><td>执行历史、日志行、执行器配置</td></tr>
+<tr><td><strong>Loop Studio</strong></td><td><code>loops</code>、<code>loop_steps</code>、<code>loop_step_executions</code>、<code>loop_executions</code>、<code>loop_triggers</code>、<code>loop_tags</code></td><td>自动化多步 AI 工作流</td></tr>
+<tr><td><strong>飞书</strong></td><td><code>feishu_homes</code>、<code>feishu_messages</code>、<code>feishu_history_chats</code>、<code>feishu_push_targets</code>、<code>feishu_response_config</code>、<code>feishu_project_bindings</code>、<code>feishu_group_whitelist</code></td><td>飞书机器人集成与消息推送</td></tr>
+<tr><td><strong>用量统计</strong></td><td><code>usage_stats</code>、<code>usage_model_breakdown</code>、<code>usage_executor_daily</code></td><td>AI 模型用量分析与计费</td></tr>
+<tr><td><strong>设置</strong></td><td><code>workspace_settings</code>、<code>workspace_slash_commands</code>、<code>agent_bots</code>、<code>project_directories</code>、<code>review_templates</code></td><td>配置、斜杠命令、机器人</td></tr>
+<tr><td><strong>同步</strong></td><td><code>sync_records</code></td><td>云端同步状态跟踪</td></tr>
+<tr><td><strong>技能</strong></td><td><code>skills</code>（处理器级）</td><td>AI 执行器技能定义</td></tr>
+</tbody>
+</table>
+
+<h3>核心关系</h3>
+<div class="ascii">todos ──┬── todo_tags ── tags
+        ├── execution_records（触发）
+        ├── todo_templates（引用）
+        └── loop_step_executions（来源）
+
+executors ──► CodeExecutor 适配器（注册表）
+
+loops ──► loop_steps ──► loop_step_executions
+    ├── loop_triggers（定时触发）
+    └── loop_executions（总体运行）
+
+feishu_messages ──► feishu_history_chats
+    ──► feishu_push_targets（路由）
+    ──► feishu_response_config（自动回复）</div>
+</section>
+
+<!-- ===== BUILD & DEPLOY ===== -->
+<section id="build">
+<h2>🚀 构建与部署</h2>
+
+<div class="card-grid">
+  <div class="card">
+    <h4>开发模式</h4>
+    <p><code>npm run dev</code> — Vite HMR 监听 :5173，代理 /api → localhost:8088</p>
+    <p><code>cargo run</code> — 后端服务器，端口可配（默认 8088）</p>
+    <p><code>NTD_MODE=dev</code> — 加载 <code>config.dev.yaml</code></p>
+  </div>
+  <div class="card">
+    <h4>生产构建</h4>
+    <p><code>npm run build</code> — TypeScript + Vite 压缩打包</p>
+    <p><code>cargo build --release</code> — LTO、单 codegen 单元、剥离符号</p>
+    <p>前端资源通过 rust-embed 嵌入二进制</p>
+  </div>
+  <div class="card">
+    <h4>交叉编译</h4>
+    <p>musl 目标用于 Linux 静态构建</p>
+    <p>平台专属守护进程安装器（launchd/systemd/TaskScheduler）</p>
+    <p>条件编译：<code>#[cfg(unix)]</code>、<code>#[cfg(windows)]</code></p>
+  </div>
+  <div class="card">
+    <h4>NPM 分发</h4>
+    <p>发布为 <code>@weibaohui/ntd</code></p>
+    <p>包含 CLI 二进制 + npm_utils 路径解析</p>
+    <p><code>ntd upgrade</code> — 通过 npm + 守护进程重新部署自我升级</p>
+  </div>
+  <div class="card">
+    <h4>守护进程服务</h4>
+    <p><code>ntd daemon install/start/stop/restart/status/uninstall</code></p>
+    <p>macOS：~/Library/LaunchAgents 中的 launchd plist</p>
+    <p>Linux：systemd 服务单元</p>
+    <p>Windows：任务计划程序注册</p>
+  </div>
+  <div class="card">
+    <h4>自动升级</h4>
+    <p><code>ntd upgrade</code>：npm install → 查找二进制 → daemon stop → uninstall → install --force → start</p>
+    <p>每次服务器启动时运行数据库迁移</p>
+    <p>执行器路径从 config.yaml 迁移至数据库</p>
+  </div>
+</div>
+
+<h3>发布配置与优化</h3>
+<div class="ascii">[profile.release]
+  lto = true              # 链接时优化（显著减小体积并提升性能）
+  codegen-units = 1       # 单一 codegen 单元以获得更好优化
+  strip = true            # 剥离二进制调试符号
+
+[lints.clippy]
+  unwrap_used = "warn"    # 渐进式减少 panic（issue #495）
+  expect_used = "warn"
+  panic = "warn"
+  too_many_arguments = "warn"
+  needless_collect = "warn"
+
+[lints.rust]
+  unsafe_code = "deny"    # 仅 sys.rs 可通过 #![allow(unsafe_code)] 放行</div>
+</section>
+
+<footer>
+  <p>ntd (Now Task, Done) 技术架构文档 — 生成于 2026-06-26</p>
+  <p>后端：Rust 1.81+ · Axum 0.8 · SeaORM 1 · SQLite &nbsp;|&nbsp; 前端：React 19 · Vite 7 · Ant Design 6</p>
+  <p>12+ AI 执行器适配器 · WebSocket 实时流式传输 · 基于 Cron 的定时调度 · 飞书集成</p>
+</footer>
+
+</main>
+</body>
+</html>

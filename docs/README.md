@@ -76,31 +76,30 @@ AI 在执行某个功能时（编号 X），必须按以下顺序读取文档：
 
 ## 已有文档清单
 
-### docs/design/（21 份）
+### docs/design/（20 份 + 1 HTML）
 
 | 编号 | 文件 | 原名 |
 |------|------|------|
-| 001 | API路由重构-设计.md | api-routing-redesign.md |
-| 002 | 黑板系统-设计.md | blackboard-design.md |
-| 003 | 黑板Wiki集成-设计.md | blackboard-wiki-design.md |
-| 004 | 黑板开发计划-设计.md | blackboard-dev-plan.md |
-| 005 | 专家系统-设计.md | expert-system-design.md |
-| 006 | TODO中心-设计.md | todo-center-design.md |
-| 007 | 操作按钮组件-设计.md | action-button-component.md |
-| 008 | CLI设计-设计.md | CLI_DESIGN.md |
-| 009 | 双事件解析器分析-设计.md | dual-event-parser-analysis.md |
-| 010 | 执行事件统一设计-设计.md | execution-events-unified-design.md |
-| 011 | HelpCard重构-设计.md | help-card-redesign.md |
-| 012 | Hook系统-设计.md | hook-system-design.md |
-| 013 | Loop异常处理-设计.md | loop-abnormal-handler-todo.md |
-| 014 | Loop黑板CLI-设计.md | loop-blackboard-cli.md |
-| 015 | Loop流程控制-设计.md | loop-flow-control-design.md |
-| 016 | NTDConnect-设计.md | ntd-connect-design.md |
-| 017 | NTDConnect试运行迁移-设计.md | ntd-connect-dry-run-migration.md |
-| 018 | 飞书消息通知-设计.md | plan-feishu-messaging.md |
-| 019 | 会话管理-设计.md | session-management-design.md |
-| 020 | Webhook实体分析-设计.md | webhook-per-entity-analysis.md |
-| 021 | 工作空间重构-设计.md | WORKSPACE_REFACTOR_ANALYSIS.md |
+| 001 | 黑板系统-设计.md | blackboard-design.md |
+| 002 | 黑板Wiki集成-设计.md | blackboard-wiki-design.md |
+| 003 | 黑板开发计划-设计.md | blackboard-dev-plan.md |
+| 004 | 专家系统-设计.md | expert-system-design.md |
+| 005 | TODO中心-设计.md | todo-center-design.md |
+| 006 | 操作按钮组件-设计.md | action-button-component.md |
+| 007 | CLI设计-设计.md | CLI_DESIGN.md |
+| 008 | 双事件解析器分析-设计.md | dual-event-parser-analysis.md |
+| 009 | 执行事件统一设计-设计.md | execution-events-unified-design.md |
+| 010 | HelpCard重构-设计.md | help-card-redesign.md |
+| 011 | Hook系统-设计.md | hook-system-design.md |
+| 012 | Loop异常处理-设计.md | loop-abnormal-handler-todo.md |
+| 013 | Loop黑板CLI-设计.md | loop-blackboard-cli.md |
+| 014 | Loop流程控制-设计.md | loop-flow-control-design.md |
+| 015 | NTDConnect-设计.md | ntd-connect-design.md |
+| 016 | NTDConnect试运行迁移-设计.md | ntd-connect-dry-run-migration.md |
+| 017 | 飞书消息通知-设计.md | plan-feishu-messaging.md |
+| 018 | 会话管理-设计.md | session-management-design.md |
+| 019 | Webhook实体分析-设计.md | webhook-per-entity-analysis.md |
+| 020 | 工作空间重构-设计.md | WORKSPACE_REFACTOR_ANALYSIS.md |
 | 999 | 架构总览-设计.html | architecture.html |
 
 ### docs/requirements/（3 份）
