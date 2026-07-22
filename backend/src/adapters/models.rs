@@ -16,6 +16,7 @@ pub async fn list_models(et: ExecutorType, exec_path: &str) -> Vec<String> {
     // 每个执行器的 models 子命令 args；未列入的返回空。
     let args: &[&str] = match et {
         ExecutorType::Pi => &["--list-models"],
+        ExecutorType::Mimo | ExecutorType::Opencode | ExecutorType::Kilo => &["models"],
         _ => return vec![],
     };
     // models 子命令可能查网络，设 15s 超时避免卡住前端请求。
@@ -28,7 +29,13 @@ pub async fn list_models(et: ExecutorType, exec_path: &str) -> Vec<String> {
     let Ok(Ok(out)) = output else {
         return vec![];
     };
-    parse_pi_models(&String::from_utf8_lossy(&out.stdout))
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // pi 输出是表格需特殊解析；mimo/opencode/kilo 每行一个模型。
+    match et {
+        ExecutorType::Pi => parse_pi_models(&stdout),
+        ExecutorType::Mimo | ExecutorType::Opencode | ExecutorType::Kilo => parse_simple_lines(&stdout),
+        _ => vec![],
+    }
 }
 
 /// 解析 `pi --list-models` 的空格对齐表格：跳过表头，取每行组合 `provider/model`。
@@ -57,6 +64,19 @@ fn parse_pi_models(output: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .collect()
 }
+/// 解析每行一个模型的输出（mimo/opencode/kilo 的 `models` 子命令）。
+///
+/// 这些执行器的 `models` 子命令直接输出每行一个 `provider/model` 标识符，
+/// 没有表头或其他元信息。过滤空行、trim 后返回。
+fn parse_simple_lines(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,6 +106,29 @@ mod tests {
         assert_eq!(
             parse_pi_models(out),
             vec!["minimax-anthropic/MiniMax-M3", "agnes-ai/agnes-2.0-flash"]
+        );
+    }
+
+    #[test]
+    fn parse_simple_lines_each_line_is_a_model() {
+        let out = "mimo/mimo-auto\nxiaomi/mimo-v2.5-pro\nzai/glm-5";
+        assert_eq!(
+            parse_simple_lines(out),
+            vec!["mimo/mimo-auto", "xiaomi/mimo-v2.5-pro", "zai/glm-5"]
+        );
+    }
+
+    #[test]
+    fn parse_simple_lines_empty_when_no_output() {
+        assert!(parse_simple_lines("").is_empty());
+    }
+
+    #[test]
+    fn parse_simple_lines_skips_blank_lines() {
+        let out = "mimo/mimo-auto\n\nzai/glm-5\n\nxiaomi/mimo-v2.5";
+        assert_eq!(
+            parse_simple_lines(out),
+            vec!["mimo/mimo-auto", "zai/glm-5", "xiaomi/mimo-v2.5"]
         );
     }
 }
