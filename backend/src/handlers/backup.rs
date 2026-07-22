@@ -1,8 +1,10 @@
 use axum::{
+    Router,
     extract::{State, Query},
     body::Bytes,
     response::IntoResponse,
     http::header,
+    routing::{get, post, put},
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -1765,6 +1767,33 @@ async fn perform_skill_backup_async(max_files: usize) -> Result<String, String> 
     .map_err(|e| format!("Task join error: {}", e))?;
 
     Ok(format!("Auto Skill backup: {}", backup_path_for_display))
+}
+
+/// v1 API 路由：所有路径使用完整的 `/api/v1/backup/...` 前缀，
+/// 不与外层 router 嵌套（flat 结构）。
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/v1/backup/export", get(export_backup))
+        .route("/api/v1/backup/export-selected", post(export_selected))
+        .route("/api/v1/backup/import", post(import_backup))
+        .route("/api/v1/backup/merge", post(merge_backup))
+        .route("/api/v1/backup/database/download", get(download_database))
+        .route("/api/v1/backup/database/status", get(get_database_backup_status))
+        .route("/api/v1/backup/database/trigger", post(trigger_local_backup))
+        .route("/api/v1/backup/database/auto", put(update_auto_backup))
+        .route("/api/v1/backup/database/optimize", post(database_optimize))
+        .route("/api/v1/backup/database/file", get(download_backup_file).delete(delete_backup_file))
+        .route("/api/v1/backup/todo/status", get(get_todo_backup_status))
+        .route("/api/v1/backup/todo/trigger", post(trigger_todo_backup))
+        .route("/api/v1/backup/todo/auto", put(update_todo_auto_backup))
+        .route("/api/v1/backup/todo/file", get(download_todo_backup_file).delete(delete_todo_backup_file))
+        .route("/api/v1/backup/log-cleanup/status", get(get_log_cleanup_status))
+        .route("/api/v1/backup/log-cleanup", put(update_log_cleanup))
+        .route("/api/v1/backup/log-cleanup/trigger", post(trigger_log_cleanup))
+        .route("/api/v1/backup/skills/status", get(get_skill_backup_status))
+        .route("/api/v1/backup/skills/trigger", post(trigger_skill_backup))
+        .route("/api/v1/backup/skills/auto", put(update_skill_auto_backup))
+        .route("/api/v1/backup/skills/file", get(download_skill_backup_file).delete(delete_skill_backup_file))
 }
 
 #[cfg(test)]

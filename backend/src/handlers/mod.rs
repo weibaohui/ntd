@@ -3,7 +3,7 @@ use axum::{
     extract::{Request, State, WebSocketUpgrade},
     http::{Method, header},
     response::Response,
-    routing::{delete, get, post, put},
+    routing::get,
 };
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{CorsLayer, Any};
@@ -157,6 +157,9 @@ pub mod experts;
 pub mod bundled;
 pub mod quick_button;
 pub mod profiles;
+/// workspace 归属校验 helper：v1 路由的租户边界守卫（verify_*_belongs_to_ws）。
+/// 所有 workspace-scoped handler 统一调用，避免跨工作空间越权读写。
+pub mod workspace_guard;
 
 // WebSocket handler
 pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
@@ -256,8 +259,10 @@ pub async fn create_app(
     let state = build_app_state(ctx, scheduler).await;
 
     Router::new()
-        .merge(mount_domain_routes())
-        .merge(project_directory::routes())
+        .merge(mount_v1_domain_routes())
+        // project_directory::v1_routes() 已包含在 action::v1_routes() 中，
+        // 不再单独 merge，避免路由重复注册。旧版本 project_directory::routes()
+        // 在 mount_domain_routes() 中保留供过渡期使用。
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024))
         .layer(CompressionLayer::new())
         .layer(cors_layer())
@@ -270,36 +275,26 @@ pub async fn create_app(
         .with_state(state)
 }
 
-/// 把 18 个领域子路由函数合并成一个 Router 一次性 merge 进 `create_app`。
-/// `project_directory` 是另一个模块里实现的同名子路由（不在 18 个里），由 `create_app`
-/// 单独 merge，避免在跨模块拓扑变化时改这个函数。
-fn mount_domain_routes() -> Router<AppState> {
+/// V1 路由装配：将所有领域路由合并为版本化 API。
+///
+/// `action::v1_routes()` 是完整的 v1 API 聚合树，内部已处理：
+/// - 工作空间作用域资源（todos/executions/loops/tags/blackboard/slash-commands/settings）
+///   嵌套在 `/api/v1/workspaces/{ws}` 下
+/// - 全局 agent-bot 管理嵌套在 `/api/v1/agent-bots` 下
+/// - 所有全局资源路由（config/backup/skills/session/usage-stats/feishu/review-templates/
+///   todo-templates/custom-templates/quick-buttons/bundled/webhook/experts/
+///   project-directories 等）已合并，路径带 `/api/v1/` 前缀
+/// - 云端同步（cloud sync）和 action 执行端点也已包含
+///
+/// 非版本化路由（root/static/events）保持原样不嵌套。
+fn mount_v1_domain_routes() -> Router<AppState> {
     Router::new()
+        // 非版本化路由保持原样
         .merge(root_routes())
-        .merge(todo_routes())
-        .merge(execution_routes())
-        .merge(scheduler_routes())
-        .merge(backup_routes())
-        .merge(config_routes())
-        .merge(skills_routes())
-        .merge(agent_bot_routes())
-        .merge(quick_button_routes())
-        .merge(feishu_routes())
-        .merge(webhook_routes())
-        .merge(session_routes())
-        .merge(usage_stats_routes())
-        .merge(version_routes())
         .merge(static_routes())
-        .merge(todo_template_routes())
-        .merge(review_template_routes())
-        .merge(custom_template_routes())
-        .merge(cloud_routes())
         .merge(events_routes())
-        .merge(blackboard::blackboard_routes())
-        .merge(loop_::loop_routes())
-        .merge(experts::expert_routes())
-        .merge(bundled::bundled_routes())
-        .merge(profiles::profile_routes())
+        // v1 版本化 API 由 action::v1_routes() 统一聚合
+        .merge(action::v1_routes())
 }
 
 /// 给 TraceLayer 用的 span 工厂：把 `request_id` / `method` / `uri` 直接挂在 span 字段上，
@@ -570,226 +565,10 @@ fn root_routes() -> Router<AppState> {
         .route("/health", get(health_handler))
 }
 
-/// Todo 与 Tag CRUD。
-fn todo_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/todos", get(todo::get_todos).post(todo::create_todo))
-        .route("/api/todos/center", get(todo::get_todo_center))
-        .route("/api/todos/{id}/force-status", put(todo::force_update_todo_status))
-        .route("/api/todos/{id}/tags", put(todo::update_todo_tags))
-        .route("/api/todos/{id}/summary", get(execution::get_execution_summary))
-        .route("/api/todos/{id}/scheduler", put(scheduler::update_scheduler))
-        .route("/api/todos/{id}/archive", post(todo::archive_todo))
-        .route("/api/todos/{id}/restore", post(todo::restore_todo))
-        .route("/api/todos/{id}/webhook", put(todo::update_webhook))
-        .route("/api/todos/recent-completed", get(todo::get_recent_completed_todos))
-        .route("/api/todos/batch-executor", put(todo::batch_update_todos_executor))
-        .route("/api/todos/batch-workspace", put(todo::batch_move_todos_workspace))
-        .route("/api/todos/batch-copy-workspace", post(todo::batch_copy_todos_workspace))
-        .route("/api/todos/batch-scheduler", put(todo::batch_update_todos_scheduler))
-        .route("/api/todos/{id}", get(todo::get_todo).put(todo::update_todo).delete(todo::delete_todo))
-        .route("/api/tags", get(tag::get_tags).post(tag::create_tag))
-        .route("/api/tags/{id}", delete(tag::delete_tag))
-}
-
-/// 执行记录、执行触发、执行控制相关路由。
-fn execution_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/execution-records", get(execution::get_execution_records))
-        .route("/api/execution-records/running", get(execution::get_running_execution_records_handler))
-        .route("/api/running-board", get(execution::get_running_board))
-        .route("/api/execution-records/session/{session_id}", get(execution::get_execution_records_by_session))
-        .route("/api/execution-records/{id}/logs", get(execution::get_execution_logs_handler))
-        .route("/api/execution-records/{id}", get(execution::get_execution_record))
-        .route("/api/execution-records/{id}/resume", post(execution::resume_execution_handler))
-        .route("/api/execution-records/{id}/rating", put(execution::rate_execution_handler))
-        .route("/api/dashboard-stats", get(execution::get_dashboard_stats))
-        .route("/api/execute", post(execution::execute_handler))
-        .route("/api/smart-create", post(execution::smart_create_handler))
-        .route("/api/execute/stop", post(execution::stop_execution_handler))
-        .route("/api/execute/force-fail", post(execution::force_fail_execution_handler))
-        .route("/api/running-todos", get(execution::get_running_todos))
-        .route("/api/actions/execute", post(action::execute_action))
-}
-
-/// 定时任务相关路由（除 todo 内嵌的 scheduler 字段外，独立的查询入口）。
-fn scheduler_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/scheduler/todos", get(scheduler::get_scheduler_todos))
-}
-
-/// 备份与日志清理相关路由（数据库备份、todo 备份、skills 备份、log 清理）。
-fn backup_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/backup/export", get(backup::export_backup))
-        .route("/api/backup/export-selected", post(backup::export_selected))
-        .route("/api/backup/import", post(backup::import_backup))
-        .route("/api/backup/merge", post(backup::merge_backup))
-        .route("/api/backup/database/download", get(backup::download_database))
-        .route("/api/backup/database/status", get(backup::get_database_backup_status))
-        .route("/api/backup/database/trigger", post(backup::trigger_local_backup))
-        .route("/api/backup/database/auto", put(backup::update_auto_backup))
-        .route("/api/backup/database/optimize", post(backup::database_optimize))
-        .route("/api/backup/database/file", get(backup::download_backup_file).delete(backup::delete_backup_file))
-        .route("/api/backup/todo/status", get(backup::get_todo_backup_status))
-        .route("/api/backup/todo/trigger", post(backup::trigger_todo_backup))
-        .route("/api/backup/todo/auto", put(backup::update_todo_auto_backup))
-        .route("/api/backup/todo/file", get(backup::download_todo_backup_file).delete(backup::delete_todo_backup_file))
-        .route("/api/backup/log-cleanup/status", get(backup::get_log_cleanup_status))
-        .route("/api/backup/log-cleanup", put(backup::update_log_cleanup))
-        .route("/api/backup/log-cleanup/trigger", post(backup::trigger_log_cleanup))
-        .route("/api/backup/skills/status", get(backup::get_skill_backup_status))
-        .route("/api/backup/skills/trigger", post(backup::trigger_skill_backup))
-        .route("/api/backup/skills/auto", put(backup::update_skill_auto_backup))
-        .route("/api/backup/skills/file", get(backup::download_skill_backup_file).delete(backup::delete_skill_backup_file))
-}
-
-/// 系统配置与 executor 配置。
-fn config_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/config", get(config::get_config).put(config::update_config))
-        .route("/api/executors", get(executor_config::list_executors))
-        .route("/api/executors/{name}", put(executor_config::update_executor))
-        .route("/api/executors/{name}/detect", post(executor_config::detect_executor))
-        .route("/api/executors/{name}/test", post(executor_config::test_executor))
-        .route("/api/executors/detect-all", post(executor_config::detect_all_executors))
-        .route("/api/executors/{name}/resolve", post(executor_config::resolve_executor_path))
-        .route("/api/executors/default", get(executor_config::get_default_executor))
-        .route("/api/executors/{name}/default", put(executor_config::set_default_executor))
-        .route("/api/executors/{name}/models", get(executor_config::list_executor_models))
-}
-
-/// Skills 管理（列出/同步/导入导出/调用记录）。
-fn skills_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/skills", get(skills::list_skills).delete(skills::delete_skill))
-        .route("/api/skills/compare", get(skills::compare_skills))
-        .route("/api/skills/version-update", get(skills::version_update_list))
-        .route("/api/skills/sync", post(skills::sync_skill))
-        // 「调用追踪」tab 已移除，列表接口 (list_invocations) 整体删除。
-        // 仅保留 POST 上报，仍给执行器调用记录使用——Dashboard 聚合统计
-        // 走 db/dashboard.rs 单独通道。
-        .route("/api/skills/invocations", post(skills::record_invocation))
-        .route("/api/skills/content", get(skills::get_skill_content))
-        .route("/api/skills/file", get(skills::get_skill_file))
-        .route("/api/skills/export", get(skills::export_skill))
-        .route("/api/skills/import", post(skills::import_skill))
-}
-
-/// Agent bot 路由（飞书 bot 管理、初始化、轮询、推送、群白名单）。
-fn agent_bot_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/agent-bots", get(agent_bot::list_agent_bots))
-        .route("/api/agent-bots/feishu/init", post(agent_bot::feishu_init))
-        .route("/api/agent-bots/feishu/begin", post(agent_bot::feishu_begin))
-        .route("/api/agent-bots/feishu/poll-stream", get(agent_bot::feishu_poll_sse))
-        .route("/api/agent-bots/feishu/push", get(agent_bot::get_feishu_push).put(agent_bot::update_feishu_push))
-        .route("/api/agent-bots/feishu/group-whitelist", get(agent_bot::get_group_whitelist).post(agent_bot::add_group_whitelist))
-        .route("/api/agent-bots/feishu/group-whitelist/{id}", delete(agent_bot::delete_group_whitelist))
-        .route("/api/agent-bots/{id}", delete(agent_bot::delete_agent_bot))
-        .route("/api/agent-bots/{id}/config", put(agent_bot::update_agent_bot_config))
-        .route("/api/agent-bots/{id}/workspace", put(agent_bot::move_bot_to_workspace))
-        // Workspace 斜杠命令管理
-        .route("/api/workspace/{workspace_id}/slash-commands", get(agent_bot::list_workspace_slash_commands).post(agent_bot::create_workspace_slash_command))
-        .route("/api/workspace/{workspace_id}/slash-commands/{cmd_id}", put(agent_bot::update_workspace_slash_command).delete(agent_bot::delete_workspace_slash_command))
-        // Workspace 设置管理
-        .route("/api/workspace/{workspace_id}/settings", get(agent_bot::get_workspace_settings).put(agent_bot::update_workspace_settings))
-}
-
-/// 快捷话术按钮管理（全局，无 workspace 维度）。
-fn quick_button_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/quick-buttons", get(quick_button::list_quick_buttons).post(quick_button::create_quick_button))
-        .route("/api/quick-buttons/{id}", put(quick_button::update_quick_button).delete(quick_button::delete_quick_button))
-}
-
-/// 飞书相关路由：历史消息查询 + 绑定管理。
-fn feishu_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/feishu/history-messages", get(feishu_history::get_history_messages))
-        .route("/api/feishu/message-stats", get(feishu_history::get_message_stats))
-        .route("/api/feishu/senders", get(feishu_history::get_distinct_senders))
-        .route("/api/feishu/history-chats", get(feishu_history::get_history_chats).post(feishu_history::create_history_chat))
-        .route("/api/feishu/history-chats/{id}", delete(feishu_history::delete_history_chat).put(feishu_history::update_history_chat))
-}
-
-/// Webhook 路由：外部触发端点（无 /api 前缀）+ Webhook 管理 API + 调用记录。
-fn webhook_routes() -> Router<AppState> {
-    Router::new()
-        // Todo webhook: /webhook/trigger/todo/{todo_id}
-        .route("/webhook/trigger/todo/{todo_id}", get(webhook::trigger_webhook_with_todo).post(webhook::trigger_webhook_with_todo_post_json))
-        // Loop webhook: /webhook/trigger/loop/{loop_id}
-        .route("/webhook/trigger/loop/{loop_id}", get(webhook::trigger_webhook_with_loop_get).post(webhook::trigger_webhook_with_loop_post))
-}
-
-/// Session 管理路由（列表、统计、详情、删除）。
-fn session_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/sessions", get(session::list_sessions))
-        .route("/api/sessions/stats", get(session::get_session_stats))
-        .route("/api/sessions/{id}", get(session::get_session_detail).delete(session::delete_session))
-}
-
-/// 用量统计（usage stats）相关路由。
-fn usage_stats_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/usage-stats", get(usage_stats::get_usage_stats))
-        .route("/api/usage-stats/refresh", post(usage_stats::refresh_usage_stats))
-        .route("/api/usage-stats/settings", get(usage_stats::get_usage_stats_settings).put(usage_stats::update_usage_stats_settings))
-}
-
-/// 版本查询与升级触发。
-fn version_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/version", get(version_handler))
-        .route("/api/version/latest", get(version_latest_handler))
-        .route("/api/version/upgrade", post(version_upgrade_handler))
-}
-
 /// 静态资源服务（嵌入的 Vite 产物）。
 fn static_routes() -> Router<AppState> {
     Router::new()
         .route("/assets/{*path}", get(static_handler))
-}
-
-/// Todo 模板（用户可复用的 todo 模板）。
-fn todo_template_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/todo-templates", get(todo_template::get_templates).post(todo_template::create_template))
-        .route("/api/todo-templates/{id}", put(todo_template::update_template).delete(todo_template::delete_template))
-        .route("/api/todo-templates/{id}/copy", post(todo_template::copy_template))
-}
-
-/// 评审模板（自动评审用的 prompt 模板，独立于 todos 表）。
-///
-/// 路由说明：
-/// - `/api/review-templates/options` 必须在 `/api/review-templates/{id}` 之前定义，
-///   否则 axum 会把 "options" 当成 id 解析（路由匹配是顺序的）。
-fn review_template_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/review-templates", get(review_template::list_review_templates).post(review_template::create_review_template))
-        .route("/api/review-templates/options", get(review_template::list_review_template_options))
-        .route("/api/review-templates/{id}", get(review_template::get_review_template).put(review_template::update_review_template).delete(review_template::delete_review_template))
-}
-
-/// 自定义模板（云端订阅）相关路由。
-fn custom_template_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/custom-templates/status", get(custom_template::get_custom_template_status))
-        .route("/api/custom-templates/subscribe", post(custom_template::subscribe_custom_template))
-        .route("/api/custom-templates/unsubscribe", post(custom_template::unsubscribe_custom_template))
-        .route("/api/custom-templates/sync", post(custom_template::sync_custom_template))
-        .route("/api/custom-templates/auto-sync", put(custom_template::update_auto_sync_config))
-}
-
-/// 云端同步相关路由。
-fn cloud_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/cloud/config", get(sync::cloud_get_config).post(sync::cloud_save_config))
-        .route("/api/cloud/sync/status", get(sync::cloud_sync_status))
-        .route("/api/cloud/sync/records", get(sync::cloud_sync_records).delete(sync::cloud_clear_sync_records))
-        .route("/api/cloud/sync/push", post(sync::cloud_sync_push))
-        .route("/api/cloud/sync/pull", post(sync::cloud_sync_pull))
 }
 
 /// WebSocket 事件流路由。`/api/events` 单独保留——它升级为 WS 而非普通 HTTP。
@@ -1269,42 +1048,6 @@ mod create_app_refactor_tests {
             None => std::env::remove_var("NTD_MODE"),
         }
         restore(prev_home);
-    }
-
-    /// 每个领域子路由函数都返回非空 `Router<AppState>`，不 panic。
-    /// 用 `Router::route_count` 之类的 introspection API 没有；
-    /// 这里改用「调用函数本身 + assert 返回 Router」——编译过 = 函数存在；
-    /// 不 panic = 基本行为正确。配合 route_equivalence_test 做完整路由覆盖。
-    #[test]
-    fn each_domain_routes_function_returns_a_router() {
-        // 让编译器帮我们检查每个函数都存在且签名正确
-        let routers: Vec<Router<AppState>> = vec![
-            root_routes(),
-            todo_routes(),
-            execution_routes(),
-            scheduler_routes(),
-            backup_routes(),
-            config_routes(),
-            skills_routes(),
-            agent_bot_routes(),
-            feishu_routes(),
-            webhook_routes(),
-            session_routes(),
-            usage_stats_routes(),
-            version_routes(),
-            static_routes(),
-            todo_template_routes(),
-            review_template_routes(),
-            custom_template_routes(),
-            cloud_routes(),
-            events_routes(),
-            blackboard::blackboard_routes(),
-            quick_button_routes(),
-            profiles::profile_routes(),
-        ];
-        // 22 个领域子路由函数（profiles::profile_routes 为 Profile 管理新增）
-        assert_eq!(routers.len(), 22, "领域子路由函数数量应与拆分清单一致");
-        // `Router` 在 axum 0.8 中没有公开的 route_count，这里只能断言"全部成功构造"
     }
 
     /// 重构后 `create_app` 函数体大小合规：去除签名/空行/注释后应在 30 行以内

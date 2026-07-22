@@ -353,3 +353,16 @@ pub fn blackboard_routes() -> Router<AppState> {
             post(chat_with_wiki),
         )
 }
+
+/// V1 黑板 API 路由（相对路径版本）。
+///
+/// 这些路由使用相对路径，期望被嵌套在 `/api/v1/workspaces/{ws}/blackboard` 下。
+/// 所有 handler 复用现有函数签名 —— Path 提取器从嵌套路由的路径参数中获取 workspace_id。
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        .route("/", get(get_blackboard).patch(update_blackboard_config))
+        .route("/config", get(get_blackboard_config))
+        .route("/wiki/files", get(list_wiki_files))
+        .route("/wiki/files/{slug}", get(get_wiki_file).delete(delete_wiki_file))
+        .route("/wiki/chat", post(chat_with_wiki))
+}

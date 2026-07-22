@@ -1,5 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
+    routing::get,
+    Router,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -1451,6 +1453,17 @@ pub async fn delete_session(
     .map_err(|e| AppError::Internal(e.to_string()))?;
 
     Ok(ApiResponse::ok(()))
+}
+
+// ─── V1 routes ────────────────────────────────────────────
+
+/// V1 路由:所有路径以 `/api/v1/sessions` 开头,不再嵌套到模块级 Router 下。
+/// 全局资源保持平铺路径,仅增加版本号前缀 `/api/v1`。
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/v1/sessions", get(list_sessions))
+        .route("/api/v1/sessions/stats", get(get_session_stats))
+        .route("/api/v1/sessions/{id}", get(get_session_detail).delete(delete_session))
 }
 
 // ─── Detail getters per source ────────────────────────────

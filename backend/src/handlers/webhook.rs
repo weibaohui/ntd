@@ -1,8 +1,10 @@
 use axum::{
+    Router,
     extract::State,
     extract::Path,
     http::StatusCode,
     response::IntoResponse,
+    routing::get,
     Json,
 };
 use std::collections::HashMap;
@@ -196,4 +198,21 @@ fn build_message_content(
     };
 
     (message, raw)
+}
+
+/// API v1 路由：webhook 触发端点。
+///
+/// 新路径将参数段重命名为 `{id}`（不再使用 `{todo_id}` / `{loop_id}`），
+/// 遵循 RESTful 风格：/api/v1/webhooks/todo/{id}/trigger。
+/// 保持与旧函数相同的 handler 函数，仅路由路径不同。
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/api/v1/webhooks/todo/{id}/trigger",
+            get(trigger_webhook_with_todo).post(trigger_webhook_with_todo_post_json),
+        )
+        .route(
+            "/api/v1/webhooks/loop/{id}/trigger",
+            get(trigger_webhook_with_loop_get).post(trigger_webhook_with_loop_post),
+        )
 }

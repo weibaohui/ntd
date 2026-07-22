@@ -4,8 +4,10 @@
 //! 真正发送走原有 resume 链路，本模块不涉及执行逻辑。
 
 use axum::{
+    Router,
     extract::{Path, State},
     response::IntoResponse,
+    routing::{get, put},
     Json,
 };
 use serde::Deserialize;
@@ -117,6 +119,22 @@ pub async fn delete_quick_button(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(ApiResponse::ok(serde_json::json!({"success": true})))
+}
+
+/// V1 API 路由：为快捷按钮注册 GET/POST/PUT/DELETE 端点，
+/// 路径前缀 /api/v1/quick-buttons（全局资源扁平化，不嵌套 workspace）。
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        // 集合操作：列出全部按钮 / 创建新按钮
+        .route(
+            "/api/v1/quick-buttons",
+            get(list_quick_buttons).post(create_quick_button),
+        )
+        // 单资源操作：按 id 更新 / 删除
+        .route(
+            "/api/v1/quick-buttons/{id}",
+            put(update_quick_button).delete(delete_quick_button),
+        )
 }
 
 #[cfg(test)]
