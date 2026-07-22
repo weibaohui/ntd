@@ -3,11 +3,14 @@ import { Select, Input, Tooltip } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
 
+// 已知能通过 models 子命令动态列模型的执行器，和后端 list_models match 分支保持一致。
+const EXECUTORS_WITH_MODELS = ['pi', 'mimo', 'opencode', 'kilo'];
+
 /**
  * 任务级执行模型选择器。
  *
- * - 有可用模型（pi/mimo/opencode/kilo）→ Select(分组按 provider,只选不填)
- * - 无可用模型（claudecode 等）→ Input(手填兜底)
+ * - 能列模型的执行器（pi/mimo/opencode/kilo）→ Select(分组按 provider,只选不填)
+ * - 不能列模型的执行器（claudecode 等）→ Input(手填兜底)
  * - 模型列表在首次展开下拉时异步加载(懒加载,只拉一次)。
  */
 export const ModelPicker = memo(function ModelPicker({ model, executor, defaultModel, onChange }: {
@@ -17,7 +20,6 @@ export const ModelPicker = memo(function ModelPicker({ model, executor, defaultM
   onChange: (v: string | null) => void;
 }) {
   const [models, setModels] = useState<string[]>([]);
-  // 首次展开下拉时拉取模型列表，后续复用缓存。
   const fetchedRef = useRef(false);
   const fetchModels = async () => {
     if (!executor || fetchedRef.current) return;
@@ -29,19 +31,19 @@ export const ModelPicker = memo(function ModelPicker({ model, executor, defaultM
     }
   };
 
+  const supportsModels = EXECUTORS_WITH_MODELS.includes(executor);
   const placeholder = defaultModel ? `留空用默认：${defaultModel}` : '留空用执行器自带配置';
   const label = (
     <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
       执行模型
-      <Tooltip title="指定本任务使用的模型，透传给对应执行器（如 claude --model、pi --model）。留空则用执行器默认模型。">
+      <Tooltip title="指定本任务使用的模型，透传给对应执行器。留空则用执行器默认模型；执行器也没配则不传 --model。">
         <InfoCircleOutlined style={{ color: 'var(--color-text-secondary)', fontSize: 12 }} />
       </Tooltip>
     </div>
   );
 
-  // 无可用模型 → 普通输入框
-  if (models.length === 0 && fetchedRef.current) {
-    // 已尝试拉取但无结果 → 手填
+  // 不能列模型的执行器 → 普通输入框(手填)
+  if (!supportsModels) {
     return (
       <div style={{ marginBottom: 16 }}>
         {label}
@@ -51,7 +53,7 @@ export const ModelPicker = memo(function ModelPicker({ model, executor, defaultM
     );
   }
 
-  // 按 provider 分组
+  // 能列模型的执行器 → Select(自带箭头,展开时懒加载)
   const groups: Record<string, { label: string; value: string }[]> = {};
   models.forEach((full) => {
     const i = full.indexOf('/');
@@ -69,7 +71,7 @@ export const ModelPicker = memo(function ModelPicker({ model, executor, defaultM
         placeholder={placeholder}
         allowClear
         showSearch
-        notFoundContent={!fetchedRef.current ? '点击展开加载模型列表...' : undefined}
+        notFoundContent={fetchedRef.current && models.length === 0 ? '暂无可选模型' : !fetchedRef.current ? '点击展开加载模型列表...' : undefined}
         onDropdownVisibleChange={(open) => { if (open) fetchModels(); }}
         filterOption={(input: string, option?: { label: string; value: string }) =>
           (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}

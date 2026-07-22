@@ -396,8 +396,9 @@ export function ExecutorsPanel() {
               dataIndex: 'default_model',
               key: 'default_model',
               render: (defaultModel: string | null | undefined, record: ExecutorConfig) => {
-                const models = executorModels[record.name] || [];
-                if (models.length === 0) {
+                // 已知能列模型的执行器（需和后端 list_models match 分支保持一致）。
+                const EXECUTORS_WITH_MODELS = ['pi', 'mimo', 'opencode', 'kilo'];
+                if (!EXECUTORS_WITH_MODELS.includes(record.name)) {
                   return (
                     <Input size="small" placeholder="留空用执行器自带配置" defaultValue={defaultModel ?? ''}
                       onBlur={(e: React.FocusEvent<HTMLInputElement>) => {
@@ -412,6 +413,7 @@ export function ExecutorsPanel() {
                       onPressEnter={(e: React.KeyboardEvent<HTMLInputElement>) => (e.target as HTMLInputElement).blur()} />
                   );
                 }
+                const models = executorModels[record.name] || [];
                 const groups: Record<string, { label: string; value: string }[]> = {};
                 models.forEach((full) => {
                   const slash = full.indexOf('/');
@@ -422,7 +424,13 @@ export function ExecutorsPanel() {
                 });
                 return (
                   <Select size="small" value={defaultModel || undefined} placeholder="留空用执行器自带配置" allowClear showSearch
-                    onDropdownVisibleChange={(open) => { if (open && !fetchedModelsRef.current[record.name]) { fetchedModelsRef.current[record.name] = true; fetchExecutorModels(record.name); } }}
+                    notFoundContent={models.length === 0 ? '点击展开加载模型列表...' : undefined}
+                    onDropdownVisibleChange={(open) => {
+                      if (open && !fetchedModelsRef.current[record.name]) {
+                        fetchedModelsRef.current[record.name] = true;
+                        fetchExecutorModels(record.name);
+                      }
+                    }}
                     filterOption={(input: string, option?: { label: string; value: string }) =>
                       (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
                     onChange={(v: unknown) => {
