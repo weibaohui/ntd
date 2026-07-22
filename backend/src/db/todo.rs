@@ -737,6 +737,8 @@ impl Database {
                     parent_todo_id: ActiveValue::Set(model.parent_todo_id),
                     review_template_id: ActiveValue::Set(model.review_template_id),
                     kind: ActiveValue::Set(model.kind),
+                    // 跨工作空间复制时同步保留源事项的 model 字段（任务级模型覆盖）。
+                    model: ActiveValue::Set(model.model),
                     ..Default::default()
                 };
                 let inserted = am.insert(&self.conn).await?;
@@ -1144,6 +1146,8 @@ impl Database {
                     worktree: None,
                     action_type: m.action_type,
                     action_key: m.action_key,
+                    // 备份时保留任务级模型，导入时恢复。
+                    model: m.model.clone(),
                     // 备份时保留工作空间 ID，导入时用于关联到正确的工作空间
                     workspace_id: m.workspace_id,
                 }
@@ -1199,6 +1203,7 @@ impl Database {
                     worktree: None,
                     action_type: m.action_type,
                     action_key: m.action_key,
+                    model: m.model.clone(),
                     // 备份时保留工作空间 ID，导入时用于关联到正确的工作空间
                     workspace_id: m.workspace_id,
                 }
@@ -1271,6 +1276,7 @@ impl Database {
                 updated_at: ActiveValue::Set(Some(now)),
                 action_type: ActiveValue::Set(todo.action_type.clone()),
                 action_key: ActiveValue::Set(todo.action_key.clone()),
+                model: ActiveValue::Set(todo.model.clone()),
                 ..Default::default()
             };
             let inserted = am.insert(&txn).await?;
@@ -1391,6 +1397,7 @@ impl Database {
                 am.updated_at = ActiveValue::Set(Some(crate::models::utc_timestamp()));
                 am.action_type = ActiveValue::Set(todo.action_type.clone());
                 am.action_key = ActiveValue::Set(todo.action_key.clone());
+                am.model = ActiveValue::Set(todo.model.clone());
                 let saved = am.update(&txn).await?;
 
                 // 重建 tag 关联
@@ -1435,6 +1442,7 @@ impl Database {
                     updated_at: ActiveValue::Set(Some(now)),
                     action_type: ActiveValue::Set(todo.action_type.clone()),
                     action_key: ActiveValue::Set(todo.action_key.clone()),
+                    model: ActiveValue::Set(todo.model.clone()),
                     ..Default::default()
                 };
                 let inserted = am.insert(&txn).await?;

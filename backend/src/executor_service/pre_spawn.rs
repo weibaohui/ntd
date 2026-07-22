@@ -329,7 +329,9 @@ async fn resolve_executor_instance(
     executor_type: ExecutorType,
 ) -> Result<(Arc<dyn CodeExecutor>, Option<crate::models::ExecutorConfig>), ExecutionResult> {
     // 每次执行前从 DB 重新读取 executor 配置，确保路径变更立即生效。
-    // config 一并返回给调用方（读取 default_model 用），避免紧随其后的 model 解析再次查询。
+    // config 仅当 enabled 且 registry 返回 executor 时一并返回给调用方，
+    // 用于读取 default_model，避免紧随其后的 model 解析再次查询。
+    // disabled 的执行器不返回 config，其 default_model 不应影响后续回退路径的模型选择。
     let mut config: Option<crate::models::ExecutorConfig> = None;
     if let Ok(Some(cfg)) = request.db.get_executor_by_name(executor_type.as_str()).await {
         if cfg.enabled {
@@ -351,9 +353,10 @@ async fn resolve_executor_instance(
                     .register_by_name(executor_type.as_str(), &expanded_path)
                     .await;
             }
+            // 配置仅在 enabled 且成功获取 executor 后返回。
+            // disabled 时不设 config，让调用方的 model 解析只看到 default fallback 的配置。
+            config = Some(cfg);
         }
-        // 无论 enabled 与否都保留 config，调用方可读 default_model（disabled 时 resolve 会 fallback default）
-        config = Some(cfg);
     }
 
     if let Some(exec) = request.executor_registry.get(executor_type).await {
@@ -403,19 +406,22 @@ fn build_executor_command_args(
 
 /// 三层优先级解析最终使用的模型：
 /// `req_model`(显式指定) > `todo_model`(任务级) > `executor_default_model`(执行器级) > None。
-/// 空串视为未指定并过滤，避免把空字符串当模型名传给执行器。
+/// 空串或全空格视为未指定并继续回退，避免把空白字符串当模型名传给执行器。
+/// 非空模型值也会 trim 前后空格，容忍用户误输入。
 /// None 表示不传 --model，由执行器配置文件决定（保持升级前行为）。
 fn resolve_exec_model(
     req_model: Option<&str>,
     todo_model: Option<&str>,
     executor_default_model: Option<&str>,
 ) -> Option<String> {
-    // 每层先过滤空串（空串视为未指定），再 or_else 回退到下一层。
+    // 每层先 map trim 去掉前后空格，再过滤空串、回退到下一层。
     // 不能先 or 再统一 filter——Some("") 是 Some，会阻断 or 链，让空串无法回退到下一层。
+    // trim 在 filter 之前：既要过滤 "   " 这样的纯空格输入，也要把 "  gpt-4  " 归一化为 "gpt-4"。
     req_model
+        .map(str::trim)
         .filter(|s| !s.is_empty())
-        .or_else(|| todo_model.filter(|s| !s.is_empty()))
-        .or_else(|| executor_default_model.filter(|s| !s.is_empty()))
+        .or_else(|| todo_model.map(str::trim).filter(|s| !s.is_empty()))
+        .or_else(|| executor_default_model.map(str::trim).filter(|s| !s.is_empty()))
         .map(|s| s.to_string())
 }
 
@@ -720,6 +726,26 @@ mod tests {
         );
         // 三层全为空串 → None。
         assert_eq!(resolve_exec_model(Some(""), Some(""), Some("")), None);
+    }
+
+    /// 全空格视为未指定，trim 后回退；同时验证 "  gpt-4  " 会被 trim 为 "gpt-4"。
+    #[test]
+    fn test_resolve_exec_model_trims_whitespace_only() {
+        // req 为全空格 → 回退到 todo_model。
+        assert_eq!(
+            resolve_exec_model(Some("   "), Some("sonnet"), None),
+            Some("sonnet".to_string())
+        );
+        // 三层全空格 → None。
+        assert_eq!(
+            resolve_exec_model(Some("  "), Some(" "), Some("   ")),
+            None
+        );
+        // req 为 "  gpt-4  "  → trim 后保留 "gpt-4"，不向 todo 回退。
+        assert_eq!(
+            resolve_exec_model(Some("  gpt-4  "), Some("sonnet"), None),
+            Some("gpt-4".to_string())
+        );
     }
 
     /// `build_expert_prompt` 把 Agent MD、技能列表、原 message 拼成三段式 prompt。

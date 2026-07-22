@@ -21,17 +21,28 @@ export const ModelPicker = memo(function ModelPicker({ model, executor, supports
 }) {
   const [models, setModels] = useState<string[]>([]);
   const fetchedRef = useRef(false);
+  // 跟踪当前活跃的执行器名称，在异步请求完成后检查是否已过期。
+  // 防止执行器快速切换时旧请求的响应覆盖新模型列表。
+  const activeExecutorRef = useRef(executor);
   // executor 变化时重置状态，下次展开下拉重新拉取对应执行器的模型列表。
   useEffect(() => {
     setModels([]);
     fetchedRef.current = false;
+    activeExecutorRef.current = executor;
   }, [executor]);
   const fetchModels = async () => {
     if (!executor || fetchedRef.current) return;
     fetchedRef.current = true;
+    // 在 await 前捕获当前执行器，之后用 activeExecutorRef（跟随最新 render）对比而非闭包内的 executor。
+    // 闭包 executor 不会随 re-render 更新，用 ref 才能获取到最新值。
+    const requestedFor = executor;
     try {
-      setModels(await db.getExecutorModels(executor));
+      const result = await db.getExecutorModels(executor);
+      // 请求完成时检查执行器是否已切换：若当前活跃执行器已不是发起请求的那个，丢弃结果。
+      if (activeExecutorRef.current !== requestedFor) return;
+      setModels(result);
     } catch {
+      if (activeExecutorRef.current !== requestedFor) return;
       setModels([]);
     }
   };

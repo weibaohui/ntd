@@ -10,7 +10,7 @@ import { getDefaultExecutor } from '@/utils/executors';
 import { getLastExecutor, setLastExecutor } from '@/constants';
 import { TagCheckCardGroup } from './TagCheckCard';
 import { ExecutorPicker } from './todo-drawer/ExecutorPicker';
-import { ModelPicker } from './todo-drawer/ModelPicker';
+import { ModelPicker } from '@/components/todo-drawer/ModelPicker';
 import { ExpertPicker } from './todo-drawer/ExpertPicker';
 import { ExpertSkillSelector } from './todo-drawer/ExpertSkillSelector';
 import { PromptEditor } from './todo-drawer/PromptEditor';
@@ -114,10 +114,11 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
     if (open) {
       db.getExecutors().then((executorConfigs) => {
         const enabled = (executorConfigs as ExecutorConfig[]).filter((ec) => ec.enabled);
+        // 无论是否有启用执行器，都要同步 executorConfigs（set 空数组或有效数组），
+        // 避免再次打开抽屉时「无启用执行器」的情况仍保留上次的陈旧 default_model。
+        setExecutorConfigs(enabled);
         if (enabled.length > 0) {
           setExecutorOptions(enabled.map(executorConfigToOption));
-          // 保留含 default_model 的原始配置，供 ModelPicker 展示当前执行器默认模型。
-          setExecutorConfigs(enabled);
         }
       }).catch(() => {});
 

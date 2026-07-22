@@ -1231,6 +1231,9 @@ pub struct TodoBackup {
     /// 备份时的工作空间 ID，为空表示未分配
     #[serde(default)]
     pub workspace_id: Option<i64>,
+    /// 任务级指定的执行模型（备份恢复后保留，不影响老备份导入）。
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 // ============ 环路导入导出 DTO ============

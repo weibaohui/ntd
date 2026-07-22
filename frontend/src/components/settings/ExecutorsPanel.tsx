@@ -29,19 +29,29 @@ export function ExecutorsPanel() {
   const [savingExecutor, setSavingExecutor] = useState<string | null>(null);
   const [settingDefaultExecutor, setSettingDefaultExecutor] = useState<string | null>(null);
   // 各执行器可选模型（调 models 子命令拉取），用于默认模型列下拉建议，按 name 缓存。
+  // 空数组（[]）也缓存，避免 supports_models 执行器每次展开都请求——空结果意味着该执行器不支持动态列举。
   const [executorModels, setExecutorModels] = useState<Record<string, string[]>>({});
-  // 记录已拉取过的执行器（首次展开下拉时懒加载，避免重复请求）。
+  // 各执行器模型加载状态：true = 请求进行中，false/undefined = 空闲。
+  // 与 executorModels 分开维护，避免空结果被误判为"正在加载"。
+  const [modelsLoading, setModelsLoading] = useState<Record<string, boolean>>({});
+  // 记录已拉取过的执行器（ref 是同步的，在异步请求前就标记，避免并发重复请求）。
   const fetchedModelsRef = useRef<Record<string, boolean>>({});
   // 懒加载：首次展开下拉时拉取该执行器支持的模型，按 name 缓存。
   const fetchExecutorModels = async (name: string) => {
-    if (!name) return;
+    // 空名或已请求过（含空结果）→ 跳过。
+    if (!name || fetchedModelsRef.current[name]) return;
+    // 在 await 前标记已请求，避免并发重入。
+    fetchedModelsRef.current[name] = true;
+    setModelsLoading((prev) => ({ ...prev, [name]: true }));
     try {
       const models = await db.getExecutorModels(name);
-      if (models.length > 0) {
-        setExecutorModels((prev) => ({ ...prev, [name]: models }));
-      }
+      // 无论结果是否为空都缓存，让 fetchedModelsRef 拦截后续请求。
+      setExecutorModels((prev) => ({ ...prev, [name]: models }));
     } catch {
-      // 忽略：手填兜底。
+      // 请求失败也写空数组，避免「一直加载中、出不来结果」的 stuck 状态。
+      setExecutorModels((prev) => ({ ...prev, [name]: [] }));
+    } finally {
+      setModelsLoading((prev) => ({ ...prev, [name]: false }));
     }
   };
 
@@ -423,7 +433,7 @@ export function ExecutorsPanel() {
                 });
                 return (
                   <Select size="small" value={defaultModel || undefined} placeholder="留空用执行器自带配置" allowClear showSearch
-                    notFoundContent={models.length === 0 ? '加载中，请稍后...' : undefined}
+                    notFoundContent={modelsLoading[record.name] ? '加载中，请稍后...' : models.length === 0 ? '暂无可选模型' : undefined}
                     onDropdownVisibleChange={(open) => {
                       if (open && !fetchedModelsRef.current[record.name]) {
                         fetchedModelsRef.current[record.name] = true;

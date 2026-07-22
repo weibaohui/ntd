@@ -201,6 +201,9 @@ pub async fn create_todo(
     }
 
     // 落库 action_type/action_key/expert_name（create_todo_with_extras 不支持这些字段）
+    // model 需要过滤空串：Some("") 在 DB 层会被转 NULL，而响应应反映持久化的值而非请求值，
+    // 因此提前过滤掉空串，让 DB 写入和响应构造使用同一份值（model_val），避免不一致。
+    let model_val = req.model.as_deref().filter(|m| !m.is_empty());
     if req.action_type.is_some() || req.action_key.is_some() || req.expert_name.is_some() || req.model.is_some() {
         if let Err(e) = state.db.update_todo_full(crate::db::TodoUpdate {
             id,
@@ -218,7 +221,7 @@ pub async fn create_todo(
             action_type: req.action_type.as_deref(),
             action_key: req.action_key.as_deref(),
             expert_name: req.expert_name.as_deref(),
-            model: req.model.as_deref(),
+            model: model_val,
         }).await {
             tracing::warn!("Failed to set action_type/action_key/expert_name/model for todo {}: {}", id, e);
         }
@@ -284,7 +287,7 @@ pub async fn create_todo(
         tag_ids: req.tag_ids.clone(),
         executor: Some(executor_name),
         expert_name: req.expert_name.clone(),
-        model: req.model.clone(),
+        model: model_val.map(|m| m.to_string()),
         scheduler_enabled,
         scheduler_config: scheduler_config.clone(),
         scheduler_timezone: scheduler_timezone.clone(),

@@ -56,10 +56,15 @@ pub async fn list_models(et: ExecutorType, exec_path: &str) -> Vec<String> {
         tokio::process::Command::new(exec_path).args(args).output(),
     )
     .await;
-    // 超时或 spawn 失败都视作「拉不到」，返回空。
+    // 超时、spawn 失败或非零退出都视作「拉不到」，返回空。
+    // 检查 out.status.success() 而非仅依赖 spawn 成功，避免执行器存在但子命令报错时
+    // 把 stderr 内容当模型列表解析（例如 pi --list-models 因配置问题退出码 1）。
     let Ok(Ok(out)) = output else {
         return vec![];
     };
+    if !out.status.success() {
+        return vec![];
+    }
     let stdout = String::from_utf8_lossy(&out.stdout);
     // pi 输出是表格需特殊解析；mimo/opencode/kilo 每行一个模型。
     let models = match et {
@@ -126,6 +131,29 @@ fn parse_simple_lines(output: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn list_models_unsupported_executor_returns_empty() {
+        // 不支持的执行器直接返回空，不应 spawn 任何命令。
+        let models = list_models(ExecutorType::Claudecode, "/bin/sh").await;
+        assert!(models.is_empty(), "不支持的执行器应返回空列表");
+    }
+
+    #[tokio::test]
+    async fn list_models_non_existent_binary_returns_empty() {
+        // 路径不存在时 spawn 失败，应返回空且不 panic。
+        let models = list_models(ExecutorType::Pi, "/nonexistent/pi").await;
+        assert!(models.is_empty(), "不存在的路径应返回空");
+    }
+
+    #[tokio::test]
+    async fn list_models_non_zero_exit_returns_empty() {
+        // 非零退出码应视为「拉不到」，返回空（避免把 stderr 当模型列表解析）。
+        // 用 /bin/sh -c "exit 1" 模拟。
+        let models = list_models(ExecutorType::Pi, "/bin/sh").await;
+        // /bin/sh 不支持 --list-models 参数，退出码非 0，结果应为空。
+        assert!(models.is_empty(), "非零退出的子命令应返回空");
+    }
 
     #[test]
     fn supports_models_only_for_known_executors() {
