@@ -229,7 +229,7 @@ export function ExecutorsPanel() {
             label: '执行器',
             children: (
               <Spin spinning={executorsLoading}>
-                <div style={{ maxWidth: 1000 }}>
+                <div>
         <Paragraph type="secondary" style={{ marginBottom: 16 }}>
           管理执行器的路径、开关状态，并检测二进制是否可用。关闭开关的执行器不会出现在 Todo 的执行器选择列表中。
         </Paragraph>
