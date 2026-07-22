@@ -71,7 +71,7 @@ export const ModelPicker = memo(function ModelPicker({ model, executor, defaultM
         placeholder={placeholder}
         allowClear
         showSearch
-        notFoundContent={fetchedRef.current && models.length === 0 ? '暂无可选模型' : !fetchedRef.current ? '点击展开加载模型列表...' : undefined}
+        notFoundContent={fetchedRef.current && models.length === 0 ? '暂无可选模型' : !fetchedRef.current ? '加载中，请稍后...' : undefined}
         onDropdownVisibleChange={(open) => { if (open) fetchModels(); }}
         filterOption={(input: string, option?: { label: string; value: string }) =>
           (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}

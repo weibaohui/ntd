@@ -424,7 +424,7 @@ export function ExecutorsPanel() {
                 });
                 return (
                   <Select size="small" value={defaultModel || undefined} placeholder="留空用执行器自带配置" allowClear showSearch
-                    notFoundContent={models.length === 0 ? '点击展开加载模型列表...' : undefined}
+                    notFoundContent={models.length === 0 ? '加载中，请稍后...' : undefined}
                     onDropdownVisibleChange={(open) => {
                       if (open && !fetchedModelsRef.current[record.name]) {
                         fetchedModelsRef.current[record.name] = true;
