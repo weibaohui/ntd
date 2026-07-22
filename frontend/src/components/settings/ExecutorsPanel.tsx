@@ -397,8 +397,7 @@ export function ExecutorsPanel() {
               key: 'default_model',
               render: (defaultModel: string | null | undefined, record: ExecutorConfig) => {
                 // 已知能列模型的执行器（需和后端 list_models match 分支保持一致）。
-                const EXECUTORS_WITH_MODELS = ['pi', 'mimo', 'opencode', 'kilo'];
-                if (!EXECUTORS_WITH_MODELS.includes(record.name)) {
+                if (!record.supports_models) {
                   return (
                     <Input size="small" placeholder="留空用执行器自带配置" defaultValue={defaultModel ?? ''}
                       onBlur={(e: React.FocusEvent<HTMLInputElement>) => {

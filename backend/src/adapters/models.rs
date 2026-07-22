@@ -1,19 +1,50 @@
 //! 执行器模型列表：调各执行器的 `models` 子命令，解析可选模型。
 //!
-//! 用于执行器页「默认模型」字段的下拉选项。MVP 支持 pi（`pi --list-models` 表格）；
-//! 其余执行器返回空，前端降级为手填。后续按执行器在 `list_models` 的 match 里追加。
+//! 用于执行器页「默认模型」字段的下拉选项。支持 pi（`pi --list-models` 表格）、
+//! mimo/opencode/kilo（`models` 子命令，每行一个）。其余执行器不支持，前端手填。
+//! 结果带 TTL 缓存，避免每次展开下拉都 spawn 子命令。
 
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
+use parking_lot::RwLock;
 
 use crate::models::ExecutorType;
 
+/// 模型列表缓存 TTL：5 分钟。执行器升级后最多 5 分钟自动失效；
+/// 执行器路径变更时 cache key 含 path，会立即失效。
+const MODELS_CACHE_TTL: Duration = Duration::from_secs(300);
+
+/// 该执行器是否支持通过 models 子命令列模型。
+///
+/// 和 `list_models` 的 match 分支同源，是前端「Select(有选项) vs Input(手填)」的
+/// 单一事实来源——避免前端再硬编码一份执行器名单导致漂移。
+pub fn supports_models(et: ExecutorType) -> bool {
+    matches!(
+        et,
+        ExecutorType::Pi | ExecutorType::Mimo | ExecutorType::Opencode | ExecutorType::Kilo
+    )
+}
+
 /// 按执行器类型调 models 子命令并解析返回可选模型列表。
 ///
-/// - 不支持的类型返回空 vec（前端手填兜底）；
+/// - 不支持的类型（supports_models=false）返回空 vec（前端手填兜底）；
 /// - 失败（二进制缺失 / 超时 / 解析失败）静默返回空，不阻断前端——
-///   模型列表是「增强」，拉不到就退回手填，不应让整个执行器页报错。
+///   模型列表是「增强」，拉不到就退回手填，不应让整个执行器页报错；
+/// - 结果带 TTL 缓存（key 含 path），避免反复 spawn 子命令。
 pub async fn list_models(et: ExecutorType, exec_path: &str) -> Vec<String> {
-    // 每个执行器的 models 子命令 args；未列入的返回空。
+    if !supports_models(et) {
+        return vec![];
+    }
+    let key = (et, exec_path.to_string());
+    // 先查缓存：未过期直接返回，避免每次展开下拉都 spawn 子命令（可能查网络）。
+    if let Some((at, models)) = models_cache().read().get(&key) {
+        if at.elapsed() < MODELS_CACHE_TTL {
+            return models.clone();
+        }
+    }
+    // 每个执行器的 models 子命令 args。
     let args: &[&str] = match et {
         ExecutorType::Pi => &["--list-models"],
         ExecutorType::Mimo | ExecutorType::Opencode | ExecutorType::Kilo => &["models"],
@@ -31,25 +62,39 @@ pub async fn list_models(et: ExecutorType, exec_path: &str) -> Vec<String> {
     };
     let stdout = String::from_utf8_lossy(&out.stdout);
     // pi 输出是表格需特殊解析；mimo/opencode/kilo 每行一个模型。
-    match et {
+    let models = match et {
         ExecutorType::Pi => parse_pi_models(&stdout),
         ExecutorType::Mimo | ExecutorType::Opencode | ExecutorType::Kilo => parse_simple_lines(&stdout),
         _ => vec![],
-    }
+    };
+    // 写缓存（即使空也缓存，避免反复跑失败的子命令；TTL 后失效）。
+    models_cache()
+        .write()
+        .insert(key, (Instant::now(), models.clone()));
+    models
+}
+
+/// 模型列表缓存条目：(拉取时刻, 模型列表)。抽成 type alias 避免 clippy::type_complexity。
+type ModelsCacheMap = HashMap<(ExecutorType, String), (Instant, Vec<String>)>;
+
+/// 进程级模型列表缓存（TTL 见 `MODELS_CACHE_TTL`）。OnceLock 保证懒初始化。
+fn models_cache() -> &'static RwLock<ModelsCacheMap> {
+    static CACHE: OnceLock<RwLock<ModelsCacheMap>> = OnceLock::new();
+    CACHE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
 /// 解析 `pi --list-models` 的空格对齐表格：跳过表头，取每行组合 `provider/model`。
 ///
 /// pi 输出形如：
 /// ```text
-/// provider           model                              context  ...
-/// agnes-ai           agnes-2.0-flash                    512K     ...
-/// minimax-anthropic  MiniMax-M3                         1M       ...
-/// jiutian            deepseek/deepseek-v4-flash         128K     ...
+/// provider           model                              context
+/// agnes-ai           agnes-2.0-flash                    512K
+/// minimax-anthropic  MiniMax-M3                         1M
+/// jiutian            deepseek/deepseek-v4-flash         128K
 /// ```
-/// pi 的 `--model` 参数接受 `provider/model` 格式（如 `pi --model minimax-anthropic/MiniMax-M3`），
-/// 因此返回 `{provider}/{model}`。model 列本身也可能含 `/`（如 `deepseek/deepseek-v4-flash`），
-/// 此时组合为 `jiutian/deepseek/deepseek-v4-flash`，用户可据此判断是否需要手填调整。
+/// pi 的 `--model` 参数接受 `provider/model` 格式，因此返回 `{provider}/{model}`。
+/// model 列本身可能含 `/`（如 `deepseek/deepseek-v4-flash`），组合为
+/// `jiutian/deepseek/deepseek-v4-flash`——pi 实测接受此完整格式。
 fn parse_pi_models(output: &str) -> Vec<String> {
     output
         .lines()
@@ -64,6 +109,7 @@ fn parse_pi_models(output: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .collect()
 }
+
 /// 解析每行一个模型的输出（mimo/opencode/kilo 的 `models` 子命令）。
 ///
 /// 这些执行器的 `models` 子命令直接输出每行一个 `provider/model` 标识符，
@@ -80,6 +126,18 @@ fn parse_simple_lines(output: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn supports_models_only_for_known_executors() {
+        // 已适配 models 子命令的执行器
+        assert!(supports_models(ExecutorType::Pi));
+        assert!(supports_models(ExecutorType::Mimo));
+        assert!(supports_models(ExecutorType::Opencode));
+        assert!(supports_models(ExecutorType::Kilo));
+        // 未适配的执行器
+        assert!(!supports_models(ExecutorType::Claudecode));
+        assert!(!supports_models(ExecutorType::Codex));
+    }
 
     #[test]
     fn parse_pi_models_combines_provider_and_model() {

@@ -279,6 +279,8 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
   const executorColor = getExecutorColor(executor);
   // 当前执行器配置的默认模型，作为 ModelPicker 的提示；执行器未配则 undefined。
   const currentDefaultModel = executorConfigs.find((ec) => ec.name === executor)?.default_model;
+  // 当前执行器是否支持动态列模型（后端 supports_models），决定 ModelPicker 用 Select 还是 Input。
+  const currentSupportsModels = executorConfigs.find((ec) => ec.name === executor)?.supports_models ?? false;
 
   return (
     <Drawer
@@ -314,7 +316,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
           }} />
 
           {/* 任务级模型：留空用执行器默认，填值则覆盖。联动展示当前执行器的默认模型。 */}
-          <ModelPicker model={model} executor={executor} defaultModel={currentDefaultModel} onChange={(v) => setField('model', v)} />
+          <ModelPicker model={model} executor={executor} supportsModels={currentSupportsModels} defaultModel={currentDefaultModel} onChange={(v) => setField('model', v)} />
 
           <Divider style={{ margin: '8px 0 16px' }} />
 

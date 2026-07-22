@@ -15,6 +15,8 @@ fn map_executor(m: executors::Model) -> ExecutorConfig {
         session_dir: m.session_dir,
         is_default: m.is_default,
         default_model: m.default_model,
+        // 占位 false，真实值由 list_executors handler 按 name 计算填充（DB 不持久化此字段）。
+        supports_models: false,
         created_at: m.created_at,
         updated_at: m.updated_at,
     }

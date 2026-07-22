@@ -6,7 +6,14 @@ use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::{ApiResponse, ExecutorConfig, ExecutorDetectResult, ExecutorTestResult, UpdateExecutorRequest, ExecutorBatchDetectResult, ExecutorDetectInfo, ExecutorPathResolveResult};
 
 pub async fn list_executors(State(state): State<AppState>) -> Result<ApiResponse<Vec<ExecutorConfig>>, AppError> {
-    let executors = state.db.get_executors().await.map_err(|e| AppError::Internal(e.to_string()))?;
+    let mut executors = state.db.get_executors().await.map_err(|e| AppError::Internal(e.to_string()))?;
+    // 填充 supports_models（computed，不落库）：按 executor name 解析类型，判断是否支持 models 子命令。
+    // 这是前端「Select/Input」的单一事实来源，避免前端再硬编码一份执行器名单。
+    for ec in &mut executors {
+        ec.supports_models = crate::adapters::parse_executor_type(&ec.name)
+            .map(crate::adapters::models::supports_models)
+            .unwrap_or(false);
+    }
     Ok(ApiResponse::ok(executors))
 }
 

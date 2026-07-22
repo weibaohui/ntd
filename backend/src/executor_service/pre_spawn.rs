@@ -279,12 +279,21 @@ pub(crate) async fn select_executor_and_build_command(
     let (todo_workspace_path, todo_executor) = extract_todo_executor_fields(todo);
     let executor_type =
         resolve_executor_type(request.req_executor.as_deref(), todo_executor.as_deref());
-    let executor =
+    let (executor, executor_config) =
         resolve_executor_instance(request, todo, executor_type).await?;
-    // 解析执行模型并注入：req_model > todo.model > executor.default_model > None。
-    // 必须在 resolve_executor_instance 之后——该函数在路径变更时会重建 executor
-    // （刷新 registry），会丢弃此前注入的状态；放在其后才能保证注入生效。
-    inject_exec_model(request, todo, executor_type, &executor).await;
+    // 解析三层优先级模型并同步注入：req_model > todo.model > executor.default_model > None。
+    // 关键：set_exec_model 与紧随的 build_executor_command_args 之间不能有 .await——
+    // registry 的 executor 实例是 per-type 单例（Arc 共享），若两个 todo 并发用同一执行器，
+    // 中途 await 会让另一执行的 set_exec_model 覆盖本执行的 model。同步注入+构建保证原子。
+    // executor_config 复用 resolve_executor_instance 已查到的配置（含 default_model），避免二次查询。
+    let todo_model = todo.as_ref().and_then(|t| t.model.clone());
+    let default_model = executor_config.and_then(|c| c.default_model);
+    let model = resolve_exec_model(
+        request.req_model.as_deref(),
+        todo_model.as_deref(),
+        default_model.as_deref(),
+    );
+    executor.set_exec_model(model);
     let executable_path = executor.executable_path().to_string();
     let command_args =
         build_executor_command_args(&executor, message, request.resume_session_id.as_deref());
@@ -318,24 +327,24 @@ async fn resolve_executor_instance(
     request: &RunTodoExecutionRequest,
     todo: &Option<crate::models::Todo>,
     executor_type: ExecutorType,
-) -> Result<Arc<dyn CodeExecutor>, ExecutionResult> {
-    // 每次执行前从 DB 重新读取 executor 配置，确保路径变更立即生效
-    if let Ok(Some(config)) = request.db.get_executor_by_name(executor_type.as_str()).await {
-        if config.enabled {
-            let db_path = if config.path.is_empty() {
+) -> Result<(Arc<dyn CodeExecutor>, Option<crate::models::ExecutorConfig>), ExecutionResult> {
+    // 每次执行前从 DB 重新读取 executor 配置，确保路径变更立即生效。
+    // config 一并返回给调用方（读取 default_model 用），避免紧随其后的 model 解析再次查询。
+    let mut config: Option<crate::models::ExecutorConfig> = None;
+    if let Ok(Some(cfg)) = request.db.get_executor_by_name(executor_type.as_str()).await {
+        if cfg.enabled {
+            let db_path = if cfg.path.is_empty() {
                 executor_type.as_str()
             } else {
-                &config.path
+                &cfg.path
             };
             // 展开 ~ 为 home 目录，避免 tokio::process::Command 找不到文件
             let expanded_path = expand_tilde(db_path);
-
             // 检查缓存中的 executor 路径是否一致
             let need_refresh = match request.executor_registry.get(executor_type).await {
                 Some(exec) => exec.executable_path() != expanded_path,
                 None => true,
             };
-
             if need_refresh {
                 request
                     .executor_registry
@@ -343,13 +352,15 @@ async fn resolve_executor_instance(
                     .await;
             }
         }
+        // 无论 enabled 与否都保留 config，调用方可读 default_model（disabled 时 resolve 会 fallback default）
+        config = Some(cfg);
     }
 
     if let Some(exec) = request.executor_registry.get(executor_type).await {
-        return Ok(exec);
+        return Ok((exec, config));
     }
     if let Some(exec) = request.executor_registry.get_default().await {
-        return Ok(exec);
+        return Ok((exec, config));
     }
     Err(reject_no_executor(
         &request.db,
@@ -406,31 +417,6 @@ fn resolve_exec_model(
         .or_else(|| todo_model.filter(|s| !s.is_empty()))
         .or_else(|| executor_default_model.filter(|s| !s.is_empty()))
         .map(|s| s.to_string())
-}
-
-/// 解析三层优先级模型并注入到 executor 实例，供后续 command_args 拼 --model flag。
-/// 拆出独立函数保持 `select_executor_and_build_command` 在 30 行以内。
-async fn inject_exec_model(
-    request: &RunTodoExecutionRequest,
-    todo: &Option<crate::models::Todo>,
-    executor_type: ExecutorType,
-    executor: &Arc<dyn CodeExecutor>,
-) {
-    let todo_model = todo.as_ref().and_then(|t| t.model.clone());
-    // 读取执行器级默认模型；查询失败按 None 处理，不阻断执行（模型指定是增强，非硬依赖）。
-    let executor_default_model = request
-        .db
-        .get_executor_by_name(executor_type.as_str())
-        .await
-        .ok()
-        .flatten()
-        .and_then(|ec| ec.default_model);
-    let model = resolve_exec_model(
-        request.req_model.as_deref(),
-        todo_model.as_deref(),
-        executor_default_model.as_deref(),
-    );
-    executor.set_exec_model(model);
 }
 
 /// Update todo's executor to the one being used. 失败仅记日志，不阻断执行。

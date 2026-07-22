@@ -975,6 +975,9 @@ pub struct ExecutorConfig {
     /// 执行器级默认模型。None = 未指定，执行时不传 --model，由执行器配置文件决定。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+    /// 是否支持动态列模型（computed，不落库）。前端据此决定 Select(有选项)/Input(手填)。
+    #[serde(default)]
+    pub supports_models: bool,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }

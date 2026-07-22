@@ -3,19 +3,19 @@ import { Select, Input, Tooltip } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
 
-// 已知能通过 models 子命令动态列模型的执行器，和后端 list_models match 分支保持一致。
-const EXECUTORS_WITH_MODELS = ['pi', 'mimo', 'opencode', 'kilo'];
-
 /**
  * 任务级执行模型选择器。
  *
- * - 能列模型的执行器（pi/mimo/opencode/kilo）→ Select(分组按 provider,只选不填)
- * - 不能列模型的执行器（claudecode 等）→ Input(手填兜底)
- * - 模型列表在首次展开下拉时异步加载(懒加载,只拉一次)。
+ * - supportsModels=true（pi/mimo/opencode/kilo）→ Select(分组按 provider,只选不填)
+ * - supportsModels=false（claudecode 等）→ Input(手填兜底)
+ * - 模型列表在首次展开下拉时异步加载(懒加载,只拉一次);executor 变化时重置。
+ * - supportsModels 来自后端 ExecutorConfig.supports_models（单一事实来源，不再前端硬编码）。
  */
-export const ModelPicker = memo(function ModelPicker({ model, executor, defaultModel, onChange }: {
+export const ModelPicker = memo(function ModelPicker({ model, executor, supportsModels, defaultModel, onChange }: {
   model: string | null;
   executor: string;
+  /** 当前执行器是否支持动态列模型（来自后端 supports_models）。 */
+  supportsModels: boolean;
   defaultModel: string | null | undefined;
   onChange: (v: string | null) => void;
 }) {
@@ -26,7 +26,6 @@ export const ModelPicker = memo(function ModelPicker({ model, executor, defaultM
     setModels([]);
     fetchedRef.current = false;
   }, [executor]);
-
   const fetchModels = async () => {
     if (!executor || fetchedRef.current) return;
     fetchedRef.current = true;
@@ -37,7 +36,6 @@ export const ModelPicker = memo(function ModelPicker({ model, executor, defaultM
     }
   };
 
-  const supportsModels = EXECUTORS_WITH_MODELS.includes(executor);
   const placeholder = defaultModel ? `留空用默认：${defaultModel}` : '留空用执行器自带配置';
   const label = (
     <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -48,7 +46,7 @@ export const ModelPicker = memo(function ModelPicker({ model, executor, defaultM
     </div>
   );
 
-  // 不能列模型的执行器 → 普通输入框(手填)
+  // 不支持动态列模型 → 普通输入框（手填）
   if (!supportsModels) {
     return (
       <div style={{ marginBottom: 16 }}>
@@ -59,7 +57,7 @@ export const ModelPicker = memo(function ModelPicker({ model, executor, defaultM
     );
   }
 
-  // 能列模型的执行器 → Select(自带箭头,展开时懒加载)
+  // 支持动态列模型 → Select（展开时懒加载）
   const groups: Record<string, { label: string; value: string }[]> = {};
   models.forEach((full) => {
     const i = full.indexOf('/');
