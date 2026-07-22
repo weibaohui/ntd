@@ -1,66 +1,68 @@
-import { memo, useState } from 'react';
-import { Input, Tooltip } from 'antd';
-import { InfoCircleOutlined } from '@ant-design/icons';
+import { memo, useState, useEffect } from 'react';
+import { AutoComplete, Tooltip } from 'antd';
+import { InfoCircleOutlined, DownOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
 
 /**
  * 任务级执行模型选择器。
  *
- * MVP 形态：手填模型名 + 原生 datalist 下拉建议。
- * - 留空 → 用执行器默认模型（executor.default_model）；都没有则不传 --model（向后兼容）。
- * - 填值 → 任务级覆盖，优先级高于执行器默认。
- * - 下拉：focus 时按当前执行器懒加载可选模型（调其 models 子命令），
- *   能列模型的执行器（如 pi）给下拉建议，不能的退化为纯手填。
- *
- * 联动：展示当前执行器的默认模型作为 placeholder 提示，让用户知道"不填会用什么"。
+ * Ant Design AutoComplete = 可输入+可选,没有下拉数据时就是普通输入框(手填兜底)。
+ * - executor 变化时预拉可选模型,避免 focus 时才等 API。
+ * - 留空 → 用执行器默认模型(executor.default_model);都没有则不传 --model(向后兼容)。
+ * - 填值 → 任务级覆盖,优先级高于执行器默认。
+ * - 联动:placeholder 展示当前执行器的默认模型。
  */
 export const ModelPicker = memo(function ModelPicker({ model, executor, defaultModel, onChange }: {
   model: string | null;
-  /** 当前选中的执行器名，用于按执行器拉取可选模型。 */
+  /** 当前选中的执行器名,用于按执行器拉取可选模型。 */
   executor: string;
-  /** 当前执行器配置的默认模型，用作提示；无则提示"用执行器自带配置"。 */
+  /** 当前执行器配置的默认模型,用作提示;无则提示"用执行器自带配置"。 */
   defaultModel: string | null | undefined;
   onChange: (v: string | null) => void;
 }) {
-  // 当前执行器可选模型（focus 时懒加载）。不能列模型的执行器返回空，退化为纯手填。
+  // 当前执行器可选模型。executor 变化时预拉;不能列模型的执行器返回空,退化为纯手填。
   const [models, setModels] = useState<string[]>([]);
+  useEffect(() => {
+    if (!executor) return;
+    fetchModels(executor);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [executor]);
+
   const fetchModels = async (name: string) => {
-    if (!name) return;
     try {
       setModels(await db.getExecutorModels(name));
     } catch {
-      // 拉取失败静默：手填兜底，不影响其它字段。
+      setModels([]);
     }
   };
 
-  // 空输入归一为 null：让 reducer/后端按"未指定/清除任务级覆盖"处理。
-  const handle = (v: string) => onChange(v.trim() || null);
-  // placeholder：执行器配了默认模型就显示具体值，否则说明由执行器配置文件决定。
   const placeholder = defaultModel ? `留空用默认：${defaultModel}` : '留空用执行器自带配置';
-
   return (
     <div style={{ marginBottom: 16 }}>
       <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
         执行模型
-        <Tooltip title="指定本任务使用的模型，会透传给执行器（如 claude --model、pi --model）。留空则用执行器默认模型；执行器也没配则不传 --model。">
+        <Tooltip title="指定本任务使用的模型，会透传给对应执行器（如 claude --model、pi --model）。留空则用执行器默认模型；执行器也没配则不传 --model。">
           <InfoCircleOutlined style={{ color: 'var(--color-text-secondary)', fontSize: 12 }} />
         </Tooltip>
       </div>
-      {/* 能列模型的执行器（如 pi）给 datalist 下拉建议，不能的就是普通输入框。 */}
-      <Input
+      <AutoComplete
         value={model ?? ''}
+        options={models.map((m) => ({ value: m }))}
         placeholder={placeholder}
-        list="todo-executor-models"
-        onFocus={() => fetchModels(executor)}
-        onChange={(e) => handle(e.target.value)}
+        onChange={(v: unknown) => {
+          // AutoComplete 的 onChange 传的是选中的 value(string),不是 event。
+          onChange((v as string)?.trim() || null);
+        }}
         allowClear
+        suffixIcon={<DownOutlined />}
+        style={{ width: '100%' }}
       />
-      {/* options 来自当前执行器的 models 子命令；空时不显示建议（退化为纯手填）。 */}
-      <datalist id="todo-executor-models">
-        {models.map((m) => (
-          <option key={m} value={m} />
-        ))}
-      </datalist>
+      {/* 当不填模型且执行器有默认模型时,提示用户会用什么。 */}
+      {defaultModel && !model && (
+        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4 }}>
+          将使用执行器默认模型：<b>{defaultModel}</b>
+        </div>
+      )}
     </div>
   );
 });

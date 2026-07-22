@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { Button, Card, Input, Switch, Spin, Tooltip, Modal, message, Typography, InputNumber, Form, Table, Space, Empty, Tabs, Popconfirm } from 'antd';
-import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined, BugOutlined, CodeOutlined, InfoCircleOutlined, SaveOutlined, StopOutlined, ReloadOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Button, Card, Input, AutoComplete, Switch, Spin, Tooltip, Modal, message, Typography, InputNumber, Form, Table, Space, Empty, Tabs, Popconfirm } from 'antd';
+import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined, BugOutlined, CodeOutlined, InfoCircleOutlined, SaveOutlined, StopOutlined, ReloadOutlined, StarOutlined, StarFilled, DownOutlined } from '@ant-design/icons';
 import { Cron } from 'react-js-cron';
 import 'react-js-cron/dist/styles.css';
 import { CronPresetSelect } from '@/components/CronPresetSelect';
@@ -31,17 +31,21 @@ export function ExecutorsPanel() {
   // 各执行器可选模型（调 models 子命令拉取），用于默认模型列下拉建议，按 name 缓存。
   const [executorModels, setExecutorModels] = useState<Record<string, string[]>>({});
 
-  // 懒加载：首次 focus 默认模型输入时拉取该执行器支持的模型，按 name 缓存。
-  // 拉取失败静默——退化为纯手填，不影响其它字段。
-  const fetchExecutorModels = async (name: string) => {
-    if (executorModels[name]) return;
-    try {
-      const models = await db.getExecutorModels(name);
-      setExecutorModels((prev) => ({ ...prev, [name]: models }));
-    } catch {
-      // 忽略：手填兜底。
-    }
-  };
+  // 执行器列表加载后预拉各执行器可选模型，避免 focus 时才等 API（体验提升）。
+  // 对有 models 子命令的执行器（如 pi）有效，不能的返回空（退化为手填）。
+  useEffect(() => {
+    if (executors.length === 0) return;
+    executors.forEach((ec) => {
+      if (executorModels[ec.name]) return;
+      db.getExecutorModels(ec.name).then((models) => {
+        if (models.length > 0) {
+          setExecutorModels((prev) => ({ ...prev, [ec.name]: models }));
+        }
+      }).catch(() => {});
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [executors]);
+
 
   // 运行配置：并发数、超时等
   const [configForm] = Form.useForm();
@@ -396,38 +400,23 @@ export function ExecutorsPanel() {
               width: 160,
               render: (defaultModel: string | null | undefined, record: ExecutorConfig) => (
                 <>
-                  {/* 能列模型的执行器（如 pi）给 datalist 下拉建议，不能的就是普通输入框。 */}
-                  <Input
+                  <AutoComplete
                     size="small"
-                    placeholder="留空用执行器自带配置"
                     defaultValue={defaultModel ?? ''}
-                    list={`executor-models-${record.name}`}
-                    onFocus={() => fetchExecutorModels(record.name)}
-                    onBlur={async (e) => {
+                    options={(executorModels[record.name] || []).map((m) => ({ value: m }))}
+                    suffixIcon={<DownOutlined style={{ fontSize: 12 }} />}
+                    placeholder="留空用执行器自带配置"
+                    onBlur={(e: React.FocusEvent<HTMLInputElement>) => {
                       const newModel = e.target.value.trim();
-                      // 与原值相同则不触发保存，避免失焦时无意义请求。
                       if (newModel === (defaultModel ?? '')) return;
                       setSavingExecutor(record.name);
-                      try {
-                        // 空串 = 清除默认模型（后端 update_executor 按 Some("") 清除）。
-                        const updated = await db.updateExecutor(record.name, { default_model: newModel });
-                        setExecutors((prev) => prev.map((ex) => ex.name === record.name ? updated : ex));
-                      } catch (err: any) {
-                        message.error('保存失败: ' + (err?.message || String(err)));
-                      } finally {
-                        setSavingExecutor(null);
-                      }
+                      db.updateExecutor(record.name, { default_model: newModel })
+                        .then((updated) => setExecutors((prev) => prev.map((ex) => ex.name === record.name ? updated : ex)))
+                        .catch((err: any) => message.error('保存失败: ' + (err?.message || String(err))))
+                        .finally(() => setSavingExecutor(null));
                     }}
-                    onPressEnter={(e) => {
-                      (e.target as HTMLInputElement).blur();
-                    }}
+                    style={{ width: '100%' }}
                   />
-                  {/* options 来自 models 子命令；空时不显示建议（退化为纯手填）。 */}
-                  <datalist id={`executor-models-${record.name}`}>
-                    {(executorModels[record.name] || []).map((m) => (
-                      <option key={m} value={m} />
-                    ))}
-                  </datalist>
                 </>
               ),
             },

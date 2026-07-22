@@ -31,51 +31,61 @@ pub async fn list_models(et: ExecutorType, exec_path: &str) -> Vec<String> {
     parse_pi_models(&String::from_utf8_lossy(&out.stdout))
 }
 
-/// 解析 `pi --list-models` 的空格对齐表格：跳过表头，取每行第 2 列（model）。
+/// 解析 `pi --list-models` 的空格对齐表格：跳过表头，取每行组合 `provider/model`。
 ///
 /// pi 输出形如：
 /// ```text
 /// provider           model                              context  ...
 /// agnes-ai           agnes-2.0-flash                    512K     ...
 /// minimax-anthropic  MiniMax-M3                         1M       ...
+/// jiutian            deepseek/deepseek-v4-flash         128K     ...
 /// ```
-/// 第 2 列即 model 标识（可能含 `/`，如 `deepseek/deepseek-v4-flash`）。
+/// pi 的 `--model` 参数接受 `provider/model` 格式（如 `pi --model minimax-anthropic/MiniMax-M3`），
+/// 因此返回 `{provider}/{model}`。model 列本身也可能含 `/`（如 `deepseek/deepseek-v4-flash`），
+/// 此时组合为 `jiutian/deepseek/deepseek-v4-flash`，用户可据此判断是否需要手填调整。
 fn parse_pi_models(output: &str) -> Vec<String> {
     output
         .lines()
         .skip(1) // 跳表头
-        .filter_map(|line| line.split_whitespace().nth(1).map(str::to_string))
+        .filter_map(|line| {
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            // 每行至少要有 provider 和 model 两列
+            let provider = cols.first()?;
+            let model = cols.get(1)?;
+            Some(format!("{}/{}", provider, model))
+        })
         .filter(|s| !s.is_empty())
         .collect()
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn parse_pi_models_extracts_model_column() {
-        let out = "provider           model                              context\n\
-                   agnes-ai           agnes-2.0-flash                    512K\n\
-                   minimax-anthropic  MiniMax-M3                         1M\n\
-                   jiutian            deepseek/deepseek-v4-flash         128K";
+    fn parse_pi_models_combines_provider_and_model() {
+        let out = "provider           model                              context\nagnes-ai           agnes-2.0-flash                    512K\nminimax-anthropic  MiniMax-M3                         1M\njiutian            deepseek/deepseek-v4-flash         128K";
         assert_eq!(
             parse_pi_models(out),
-            vec!["agnes-2.0-flash", "MiniMax-M3", "deepseek/deepseek-v4-flash"]
+            vec![
+                "agnes-ai/agnes-2.0-flash",
+                "minimax-anthropic/MiniMax-M3",
+                "jiutian/deepseek/deepseek-v4-flash"
+            ]
         );
     }
 
-    /// 只有表头或空输入时返回空（不 panic、不含表头残留）。
     #[test]
     fn parse_pi_models_empty_when_no_data_rows() {
         assert!(parse_pi_models("provider model context").is_empty());
         assert!(parse_pi_models("").is_empty());
     }
 
-    /// 跳过空行，避免表格里的空行产生空字符串项。
     #[test]
     fn parse_pi_models_skips_blank_lines() {
         let out = "provider model\nminimax-anthropic MiniMax-M3\n\nagnes-ai agnes-2.0-flash";
-        assert_eq!(parse_pi_models(out), vec!["MiniMax-M3", "agnes-2.0-flash"]);
+        assert_eq!(
+            parse_pi_models(out),
+            vec!["minimax-anthropic/MiniMax-M3", "agnes-ai/agnes-2.0-flash"]
+        );
     }
 }
