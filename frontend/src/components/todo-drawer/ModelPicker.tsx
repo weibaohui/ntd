@@ -1,4 +1,4 @@
-import { memo, useState, useRef } from 'react';
+import { memo, useState, useRef, useEffect } from 'react';
 import { Select, Input, Tooltip } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
@@ -21,6 +21,12 @@ export const ModelPicker = memo(function ModelPicker({ model, executor, defaultM
 }) {
   const [models, setModels] = useState<string[]>([]);
   const fetchedRef = useRef(false);
+  // executor 变化时重置状态，下次展开下拉重新拉取对应执行器的模型列表。
+  useEffect(() => {
+    setModels([]);
+    fetchedRef.current = false;
+  }, [executor]);
+
   const fetchModels = async () => {
     if (!executor || fetchedRef.current) return;
     fetchedRef.current = true;
