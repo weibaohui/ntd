@@ -1,4 +1,4 @@
-import { memo, useState, useEffect } from 'react';
+import { memo, useState, useRef } from 'react';
 import { Select, Input, Tooltip } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
@@ -6,11 +6,9 @@ import * as db from '@/utils/database';
 /**
  * 任务级执行模型选择器。
  *
- * 有可用模型（pi 的情况）→ Select(自带箭头,分组按 provider,只选不填)
- * 无可用模型（claudecode 等） → Input(手填兜底)
- *
- * - executor 变化时预拉可选模型。
- * - 留空 → 用执行器默认模型(executor.default_model);都没有则不传 --model。
+ * - 有可用模型（pi/mimo/opencode/kilo）→ Select(分组按 provider,只选不填)
+ * - 无可用模型（claudecode 等）→ Input(手填兜底)
+ * - 模型列表在首次展开下拉时异步加载(懒加载,只拉一次)。
  */
 export const ModelPicker = memo(function ModelPicker({ model, executor, defaultModel, onChange }: {
   model: string | null;
@@ -19,23 +17,31 @@ export const ModelPicker = memo(function ModelPicker({ model, executor, defaultM
   onChange: (v: string | null) => void;
 }) {
   const [models, setModels] = useState<string[]>([]);
-  useEffect(() => {
-    if (!executor) return;
-    db.getExecutorModels(executor).then(setModels).catch(() => setModels([]));
-  }, [executor]);
+  // 首次展开下拉时拉取模型列表，后续复用缓存。
+  const fetchedRef = useRef(false);
+  const fetchModels = async () => {
+    if (!executor || fetchedRef.current) return;
+    fetchedRef.current = true;
+    try {
+      setModels(await db.getExecutorModels(executor));
+    } catch {
+      setModels([]);
+    }
+  };
 
   const placeholder = defaultModel ? `留空用默认：${defaultModel}` : '留空用执行器自带配置';
   const label = (
     <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
       执行模型
-      <Tooltip title="指定本任务使用的模型，透传给对应执行器（如 claude --model、pi --model）。留空则用执行器默认模型；执行器也没配则不传 --model。">
+      <Tooltip title="指定本任务使用的模型，透传给对应执行器（如 claude --model、pi --model）。留空则用执行器默认模型。">
         <InfoCircleOutlined style={{ color: 'var(--color-text-secondary)', fontSize: 12 }} />
       </Tooltip>
     </div>
   );
 
-  // 无可用模型 → 普通输入框(手填)
-  if (models.length === 0) {
+  // 无可用模型 → 普通输入框
+  if (models.length === 0 && fetchedRef.current) {
+    // 已尝试拉取但无结果 → 手填
     return (
       <div style={{ marginBottom: 16 }}>
         {label}
@@ -45,8 +51,7 @@ export const ModelPicker = memo(function ModelPicker({ model, executor, defaultM
     );
   }
 
-  // 有可用模型 → Select(自带+箭头+分组)
-  // 按 provider 分组展示（如 minimax-anthropic / MiniMax-M3）
+  // 按 provider 分组
   const groups: Record<string, { label: string; value: string }[]> = {};
   models.forEach((full) => {
     const i = full.indexOf('/');
@@ -64,6 +69,8 @@ export const ModelPicker = memo(function ModelPicker({ model, executor, defaultM
         placeholder={placeholder}
         allowClear
         showSearch
+        notFoundContent={!fetchedRef.current ? '点击展开加载模型列表...' : undefined}
+        onDropdownVisibleChange={(open) => { if (open) fetchModels(); }}
         filterOption={(input: string, option?: { label: string; value: string }) =>
           (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
         onChange={(v: unknown) => onChange((v as string) || null)}

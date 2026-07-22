@@ -30,21 +30,22 @@ export function ExecutorsPanel() {
   const [settingDefaultExecutor, setSettingDefaultExecutor] = useState<string | null>(null);
   // 各执行器可选模型（调 models 子命令拉取），用于默认模型列下拉建议，按 name 缓存。
   const [executorModels, setExecutorModels] = useState<Record<string, string[]>>({});
+  // 记录已拉取过的执行器（首次展开下拉时懒加载，避免重复请求）。
+  const fetchedModelsRef = useRef<Record<string, boolean>>({});
+  // 懒加载：首次展开下拉时拉取该执行器支持的模型，按 name 缓存。
+  const fetchExecutorModels = async (name: string) => {
+    if (!name) return;
+    try {
+      const models = await db.getExecutorModels(name);
+      if (models.length > 0) {
+        setExecutorModels((prev) => ({ ...prev, [name]: models }));
+      }
+    } catch {
+      // 忽略：手填兜底。
+    }
+  };
 
-  // 执行器列表加载后预拉各执行器可选模型，避免 focus 时才等 API（体验提升）。
-  // 对有 models 子命令的执行器（如 pi）有效，不能的返回空（退化为手填）。
-  useEffect(() => {
-    if (executors.length === 0) return;
-    executors.forEach((ec) => {
-      if (executorModels[ec.name]) return;
-      db.getExecutorModels(ec.name).then((models) => {
-        if (models.length > 0) {
-          setExecutorModels((prev) => ({ ...prev, [ec.name]: models }));
-        }
-      }).catch(() => {});
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [executors]);
+
 
 
   // 运行配置：并发数、超时等
@@ -421,6 +422,7 @@ export function ExecutorsPanel() {
                 });
                 return (
                   <Select size="small" value={defaultModel || undefined} placeholder="留空用执行器自带配置" allowClear showSearch
+                    onDropdownVisibleChange={(open) => { if (open && !fetchedModelsRef.current[record.name]) { fetchedModelsRef.current[record.name] = true; fetchExecutorModels(record.name); } }}
                     filterOption={(input: string, option?: { label: string; value: string }) =>
                       (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
                     onChange={(v: unknown) => {
