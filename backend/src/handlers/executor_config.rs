@@ -6,7 +6,14 @@ use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::{ApiResponse, ExecutorConfig, ExecutorDetectResult, ExecutorTestResult, UpdateExecutorRequest, ExecutorBatchDetectResult, ExecutorDetectInfo, ExecutorPathResolveResult};
 
 pub async fn list_executors(State(state): State<AppState>) -> Result<ApiResponse<Vec<ExecutorConfig>>, AppError> {
-    let executors = state.db.get_executors().await.map_err(|e| AppError::Internal(e.to_string()))?;
+    let mut executors = state.db.get_executors().await.map_err(|e| AppError::Internal(e.to_string()))?;
+    // 填充 supports_models（computed，不落库）：按 executor name 解析类型，判断是否支持 models 子命令。
+    // 这是前端「Select/Input」的单一事实来源，避免前端再硬编码一份执行器名单。
+    for ec in &mut executors {
+        ec.supports_models = crate::adapters::parse_executor_type(&ec.name)
+            .map(crate::adapters::models::supports_models)
+            .unwrap_or(false);
+    }
     Ok(ApiResponse::ok(executors))
 }
 
@@ -21,6 +28,7 @@ pub async fn update_executor(
         req.enabled,
         req.display_name.as_deref(),
         req.session_dir.as_deref(),
+        req.default_model.as_deref(),
     ).await.map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Re-read updated executor
@@ -153,7 +161,7 @@ pub async fn detect_all_executors(
         if ec.path.is_empty() {
             if ec.enabled {
                 // Was enabled but path is empty - disable it
-                state.db.update_executor(&ec.name, None, Some(false), None, None)
+                state.db.update_executor(&ec.name, None, Some(false), None, None, None)
                     .await
                     .map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -179,7 +187,7 @@ pub async fn detect_all_executors(
         // Update executor enabled state based on detection result
         let new_enabled = found;
         if ec.enabled != new_enabled {
-            state.db.update_executor(&ec.name, None, Some(new_enabled), None, None)
+            state.db.update_executor(&ec.name, None, Some(new_enabled), None, None, None)
                 .await
                 .map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -244,7 +252,7 @@ pub async fn resolve_executor_path(
 
     // 如果路径有变化，更新数据库
     if path_updated {
-        state.db.update_executor(&name, Some(&resolved), None, None, None)
+        state.db.update_executor(&name, Some(&resolved), None, None, None, None)
             .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -283,4 +291,27 @@ pub async fn set_default_executor(
         .map_err(|e| AppError::Internal(e.to_string()))?
         .ok_or(AppError::NotFound)?;
     Ok(ApiResponse::ok(executor))
+}
+
+/// 列出执行器支持的模型（调其 models 子命令）。
+///
+/// 用于执行器页「默认模型」下拉。目前 pi 走 `pi --list-models` 解析；
+/// 不支持 models 子命令的执行器返回空数组，前端降级为手填输入。
+pub async fn list_executor_models(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<ApiResponse<Vec<String>>, AppError> {
+    let ec = state.db.get_executor_by_name(&name).await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .ok_or(AppError::NotFound)?;
+    // 只对已知且实现了 models 子命令的执行器拉取；解析不出的名字直接返回空。
+    let Some(et) = crate::adapters::parse_executor_type(&ec.name) else {
+        return Ok(ApiResponse::ok(vec![]));
+    };
+    // 展开 path（~/bare command）→ 实际可执行路径；找不到二进制时返回空（前端手填）。
+    let path = if ec.path.is_empty() { ec.name.clone() } else { ec.path.clone() };
+    let (_found, resolved) = detect_binary(&path);
+    let exec_path = resolved.unwrap_or(path);
+    let models = crate::adapters::models::list_models(et, &exec_path).await;
+    Ok(ApiResponse::ok(models))
 }

@@ -333,6 +333,7 @@ async fn merge_cloud_todos_to_local(
                         status,
                         executor,
                         expert_name: None,
+                        model: None,
                         scheduler_enabled: None,
                         scheduler_config: None,
                         scheduler_timezone: None,

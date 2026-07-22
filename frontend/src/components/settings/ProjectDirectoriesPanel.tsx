@@ -152,7 +152,7 @@ export function ProjectDirectoriesPanel({ onOpenMessages }: ProjectDirectoriesPa
 
   return (
     <PageCard icon={<FolderOutlined />} title="工作空间">
-      <div style={{ maxWidth: 800 }}>
+      <div style={{ width: '100%' }}>
         <Spin spinning={projectDirsLoading}>
           {/* 新建工作空间区域 */}
           <Card size="small" style={{ marginBottom: 24, borderRadius: 12 }}>

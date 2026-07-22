@@ -34,6 +34,10 @@ export interface ExecutorConfig {
   session_dir: string;
   /** 是否为系统默认执行器 */
   is_default: boolean;
+  /** 执行器级默认模型（如 "glm-5.2"）。null = 未指定，执行时不传 --model。 */
+  default_model?: string | null;
+  /** 是否支持动态列模型（后端 computed）。true=Select(有选项)，false=Input(手填)。 */
+  supports_models?: boolean;
   created_at: string | null;
   updated_at: string | null;
 }

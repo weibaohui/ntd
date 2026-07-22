@@ -204,7 +204,7 @@ export function CloudSyncPanel() {
   ];
 
   return (
-    <div className="cloud-sync-panel" style={{ maxWidth: 600 }}>
+    <div className="cloud-sync-panel" style={{ width: '100%' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 16 }}>
           <CloudOutlined />

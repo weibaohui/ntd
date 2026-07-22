@@ -40,7 +40,7 @@ export function SkillBackupTab({
   onDownloadBackupFile: (filename: string) => void;
 }) {
   return (
-    <div style={{ maxWidth: 600 }}>
+    <div style={{ width: '100%' }}>
       <Card title="Skill备份" size="small">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <Typography.Paragraph type="secondary">

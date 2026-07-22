@@ -1617,6 +1617,7 @@ impl FeishuListener {
             todo_id,
             message: todo.prompt,
             req_executor: todo.executor,
+            req_model: None,
             trigger_type: "feishu_card".to_string(),
             params: None,
             resume_session_id: None,

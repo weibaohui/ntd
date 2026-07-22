@@ -14,6 +14,9 @@ pub struct Model {
     pub session_dir: String,
     /// 是否为系统默认执行器。同一时间只能有一个默认执行器。
     pub is_default: bool,
+    /// 执行器级默认模型（如 "glm-5.2"）。NULL = 未指定，执行时不传 --model，
+    /// 由执行器自己的配置文件决定模型（保持升级前行为）。
+    pub default_model: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }

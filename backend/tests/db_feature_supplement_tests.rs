@@ -529,8 +529,7 @@ async fn test_executor_get_enabled_filters_disabled() {
     db.seed_default_executors().await.unwrap();
     let all = db.get_executors().await.unwrap();
     let target = all.first().expect("至少一条种子执行器");
-    db.update_executor(&target.name, None, Some(false), None, None)
-        .await
+    db.update_executor(&target.name, None, Some(false), None, None, None)        .await
         .unwrap();
     let enabled = db.get_enabled_executors().await.unwrap();
     assert!(enabled.iter().all(|e| e.enabled));
@@ -560,6 +559,7 @@ async fn test_executor_get_by_name_and_update_partial() {
         Some(false),
         Some("Claude Code (新)"),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -577,6 +577,65 @@ async fn test_executor_get_by_name_and_update_partial() {
     );
 }
 
+/// 验证 default_model 的 设置/清空/清除 三种持久化场景。
+/// 设置"llama3" → 应持久化为 "llama3"；
+/// 清空为 "" → 应持久化为 None/空（与数据库 NULL 语义一致）；
+/// 不传 default_model（None）→ 应保持当前值不变。
+#[tokio::test]
+async fn test_executor_update_default_model_persistence() {
+    let db = setup_db().await;
+    db.seed_default_executors().await.unwrap();
+
+    // 1. 设为 "llama3"
+    db.update_executor("claudecode", None, None, None, None, Some("llama3"))
+        .await
+        .unwrap();
+    let after_set = db
+        .get_executor_by_name("claudecode")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        after_set.default_model.as_deref(),
+        Some("llama3"),
+        "default_model 设为 llama3 后应持久化"
+    );
+
+    // 2. 清空为 "" → 期望变为 None（空串在 DB 层被转 NULL）
+    db.update_executor("claudecode", None, None, None, None, Some(""))
+        .await
+        .unwrap();
+    let after_clear = db
+        .get_executor_by_name("claudecode")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        after_clear.default_model.as_deref(),
+        None,
+        "default_model 清空后应转为 None（DB NULL）"
+    );
+
+    // 3. 不传 default_model（Some("llama3") 应为残留值，写 None 测试保持不变语义）
+    // 先将 default_model 设回 "llama3"，然后传 None 调用 update
+    db.update_executor("claudecode", None, None, None, None, Some("llama3"))
+        .await
+        .unwrap();
+    db.update_executor("claudecode", None, None, None, None, None)
+        .await
+        .unwrap();
+    let after_none = db
+        .get_executor_by_name("claudecode")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        after_none.default_model.as_deref(),
+        Some("llama3"),
+        "不传 default_model（None）应保持当前值不变"
+    );
+}
+
 #[tokio::test]
 async fn test_executor_sync_new_executors_adds_missing_only() {
     // sync_new_executors 把 EXECUTORS 静态数组中尚未在 db 中的项补齐，已存在的不会重复插入。
@@ -585,8 +644,7 @@ async fn test_executor_sync_new_executors_adds_missing_only() {
     let existing = db.get_executors().await.unwrap();
     for e in &existing {
         // 直接走更新：name 是主键之外的可识别列；这里仅依赖 update 不影响后续断言。
-        db.update_executor(&e.name, None, Some(true), None, None)
-            .await
+        db.update_executor(&e.name, None, Some(true), None, None, None)            .await
             .unwrap();
     }
     let before = db.get_executors().await.unwrap().len();
@@ -966,6 +1024,7 @@ fn make_backup(title: &str, workspace_id: Option<i64>) -> TodoBackup {
         action_type: None,
         action_key: None,
         workspace_id,
+        model: None,
     }
 }
 

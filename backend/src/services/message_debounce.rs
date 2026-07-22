@@ -471,6 +471,7 @@ impl MessageDebounce {
             todo_id: msg.todo_id,
             message: resolved.exec_message.clone(),
             req_executor: msg.executor.clone(),
+            req_model: None,
             trigger_type: msg.trigger_type.clone(),
             params: resolved.params.clone(),
             resume_session_id: resolved.resume_session_id.clone(),

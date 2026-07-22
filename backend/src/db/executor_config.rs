@@ -14,6 +14,9 @@ fn map_executor(m: executors::Model) -> ExecutorConfig {
         display_name: m.display_name,
         session_dir: m.session_dir,
         is_default: m.is_default,
+        default_model: m.default_model,
+        // 占位 false，真实值由 list_executors handler 按 name 计算填充（DB 不持久化此字段）。
+        supports_models: false,
         created_at: m.created_at,
         updated_at: m.updated_at,
     }
@@ -52,6 +55,7 @@ impl Database {
         enabled: Option<bool>,
         display_name: Option<&str>,
         session_dir: Option<&str>,
+        default_model: Option<&str>,
     ) -> Result<(), sea_orm::DbErr> {
         let model = executors::Entity::find()
             .filter(executors::Column::Name.eq(name))
@@ -79,6 +83,15 @@ impl Database {
         }
         if let Some(sd) = session_dir {
             am.session_dir = ActiveValue::Set(sd.to_string());
+        }
+        // default_model：Some(非空) = 写入默认模型，Some("") = 清除默认，None = 不改。
+        // 用空串而非 Option 嵌套表达「清除」，与 path/enabled 等字段的更新语义一致。
+        if let Some(dm) = default_model {
+            am.default_model = ActiveValue::Set(if dm.is_empty() {
+                None
+            } else {
+                Some(dm.to_string())
+            });
         }
         am.updated_at = ActiveValue::Set(Some(now));
         am.update(&self.conn).await?;

@@ -279,8 +279,21 @@ pub(crate) async fn select_executor_and_build_command(
     let (todo_workspace_path, todo_executor) = extract_todo_executor_fields(todo);
     let executor_type =
         resolve_executor_type(request.req_executor.as_deref(), todo_executor.as_deref());
-    let executor =
+    let (executor, executor_config) =
         resolve_executor_instance(request, todo, executor_type).await?;
+    // 解析三层优先级模型并同步注入：req_model > todo.model > executor.default_model > None。
+    // 关键：set_exec_model 与紧随的 build_executor_command_args 之间不能有 .await——
+    // registry 的 executor 实例是 per-type 单例（Arc 共享），若两个 todo 并发用同一执行器，
+    // 中途 await 会让另一执行的 set_exec_model 覆盖本执行的 model。同步注入+构建保证原子。
+    // executor_config 复用 resolve_executor_instance 已查到的配置（含 default_model），避免二次查询。
+    let todo_model = todo.as_ref().and_then(|t| t.model.clone());
+    let default_model = executor_config.and_then(|c| c.default_model);
+    let model = resolve_exec_model(
+        request.req_model.as_deref(),
+        todo_model.as_deref(),
+        default_model.as_deref(),
+    );
+    executor.set_exec_model(model);
     let executable_path = executor.executable_path().to_string();
     let command_args =
         build_executor_command_args(&executor, message, request.resume_session_id.as_deref());
@@ -314,38 +327,43 @@ async fn resolve_executor_instance(
     request: &RunTodoExecutionRequest,
     todo: &Option<crate::models::Todo>,
     executor_type: ExecutorType,
-) -> Result<Arc<dyn CodeExecutor>, ExecutionResult> {
-    // 每次执行前从 DB 重新读取 executor 配置，确保路径变更立即生效
-    if let Ok(Some(config)) = request.db.get_executor_by_name(executor_type.as_str()).await {
-        if config.enabled {
-            let db_path = if config.path.is_empty() {
+) -> Result<(Arc<dyn CodeExecutor>, Option<crate::models::ExecutorConfig>), ExecutionResult> {
+    // 每次执行前从 DB 重新读取 executor 配置，确保路径变更立即生效。
+    // config 仅当 enabled 且 registry 返回 executor 时一并返回给调用方，
+    // 用于读取 default_model，避免紧随其后的 model 解析再次查询。
+    // disabled 的执行器不返回 config，其 default_model 不应影响后续回退路径的模型选择。
+    let mut config: Option<crate::models::ExecutorConfig> = None;
+    if let Ok(Some(cfg)) = request.db.get_executor_by_name(executor_type.as_str()).await {
+        if cfg.enabled {
+            let db_path = if cfg.path.is_empty() {
                 executor_type.as_str()
             } else {
-                &config.path
+                &cfg.path
             };
             // 展开 ~ 为 home 目录，避免 tokio::process::Command 找不到文件
             let expanded_path = expand_tilde(db_path);
-
             // 检查缓存中的 executor 路径是否一致
             let need_refresh = match request.executor_registry.get(executor_type).await {
                 Some(exec) => exec.executable_path() != expanded_path,
                 None => true,
             };
-
             if need_refresh {
                 request
                     .executor_registry
                     .register_by_name(executor_type.as_str(), &expanded_path)
                     .await;
             }
+            // 配置仅在 enabled 且成功获取 executor 后返回。
+            // disabled 时不设 config，让调用方的 model 解析只看到 default fallback 的配置。
+            config = Some(cfg);
         }
     }
 
     if let Some(exec) = request.executor_registry.get(executor_type).await {
-        return Ok(exec);
+        return Ok((exec, config));
     }
     if let Some(exec) = request.executor_registry.get_default().await {
-        return Ok(exec);
+        return Ok((exec, config));
     }
     Err(reject_no_executor(
         &request.db,
@@ -384,6 +402,27 @@ fn build_executor_command_args(
         resume_session_id,
         resume_session_id.is_some(),
     )
+}
+
+/// 三层优先级解析最终使用的模型：
+/// `req_model`(显式指定) > `todo_model`(任务级) > `executor_default_model`(执行器级) > None。
+/// 空串或全空格视为未指定并继续回退，避免把空白字符串当模型名传给执行器。
+/// 非空模型值也会 trim 前后空格，容忍用户误输入。
+/// None 表示不传 --model，由执行器配置文件决定（保持升级前行为）。
+fn resolve_exec_model(
+    req_model: Option<&str>,
+    todo_model: Option<&str>,
+    executor_default_model: Option<&str>,
+) -> Option<String> {
+    // 每层先 map trim 去掉前后空格，再过滤空串、回退到下一层。
+    // 不能先 or 再统一 filter——Some("") 是 Some，会阻断 or 链，让空串无法回退到下一层。
+    // trim 在 filter 之前：既要过滤 "   " 这样的纯空格输入，也要把 "  gpt-4  " 归一化为 "gpt-4"。
+    req_model
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| todo_model.map(str::trim).filter(|s| !s.is_empty()))
+        .or_else(|| executor_default_model.map(str::trim).filter(|s| !s.is_empty()))
+        .map(|s| s.to_string())
 }
 
 /// Update todo's executor to the one being used. 失败仅记日志，不阻断执行。
@@ -643,6 +682,69 @@ mod tests {
         assert_eq!(
             resolve_executor_type(Some("kimi"), None),
             ExecutorType::Kimi
+        );
+    }
+
+    /// 三层优先级：req_model > todo_model > executor_default_model。
+    #[test]
+    fn test_resolve_exec_model_prefers_req_model() {
+        assert_eq!(
+            resolve_exec_model(Some("opus"), Some("sonnet"), Some("haiku")),
+            Some("opus".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_exec_model_falls_back_to_todo_model() {
+        assert_eq!(
+            resolve_exec_model(None, Some("sonnet"), Some("haiku")),
+            Some("sonnet".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_exec_model_falls_back_to_executor_default() {
+        assert_eq!(
+            resolve_exec_model(None, None, Some("haiku")),
+            Some("haiku".to_string())
+        );
+    }
+
+    /// 三层全空 → None（不传 --model，向后兼容）。
+    #[test]
+    fn test_resolve_exec_model_none_when_all_absent() {
+        assert_eq!(resolve_exec_model(None, None, None), None);
+    }
+
+    /// 空串视为未指定，继续向下一层回退；避免把空字符串当模型名传给执行器。
+    #[test]
+    fn test_resolve_exec_model_treats_empty_string_as_absent() {
+        // req 为空串 → 回退到 todo_model。
+        assert_eq!(
+            resolve_exec_model(Some(""), Some("sonnet"), None),
+            Some("sonnet".to_string())
+        );
+        // 三层全为空串 → None。
+        assert_eq!(resolve_exec_model(Some(""), Some(""), Some("")), None);
+    }
+
+    /// 全空格视为未指定，trim 后回退；同时验证 "  gpt-4  " 会被 trim 为 "gpt-4"。
+    #[test]
+    fn test_resolve_exec_model_trims_whitespace_only() {
+        // req 为全空格 → 回退到 todo_model。
+        assert_eq!(
+            resolve_exec_model(Some("   "), Some("sonnet"), None),
+            Some("sonnet".to_string())
+        );
+        // 三层全空格 → None。
+        assert_eq!(
+            resolve_exec_model(Some("  "), Some(" "), Some("   ")),
+            None
+        );
+        // req 为 "  gpt-4  "  → trim 后保留 "gpt-4"，不向 todo 回退。
+        assert_eq!(
+            resolve_exec_model(Some("  gpt-4  "), Some("sonnet"), None),
+            Some("gpt-4".to_string())
         );
     }
 
@@ -951,6 +1053,7 @@ mod tests {
             updated_at: "2024-01-01T00:00:00Z".to_string(),
             tag_ids: vec![],
             executor: None,
+            model: None,
             scheduler_enabled: false,
             scheduler_config: None,
             scheduler_timezone: None,
@@ -993,6 +1096,7 @@ mod tests {
             todo_id: 0,
             message: String::new(),
             req_executor: None,
+            req_model: None,
             trigger_type: "test".to_string(),
             params: None,
             resume_session_id: None,

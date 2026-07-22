@@ -41,7 +41,7 @@ export function TagsPanel({ tags, dispatch }: { tags: Tag[]; dispatch: any }) {
   };
 
   return (
-    <div style={{ maxWidth: 600 }}>
+    <div style={{ width: '100%' }}>
       <div style={{ marginBottom: 12, fontWeight: 600 }}>创建新标签</div>
       <div style={{ marginBottom: 24, display: 'flex', gap: 12, flexDirection: 'column' }}>
         <Input

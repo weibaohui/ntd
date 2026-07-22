@@ -34,6 +34,8 @@ pub struct TodoUpdate<'a> {
     /// 专家/团队名称（WorkBuddy plugin.json 中的 name 字段）。
     /// 执行时自动加载对应的 Agent MD 和 Skills 注入 prompt。
     pub expert_name: Option<&'a str>,
+    /// 任务级执行模型。Some(非空)=设置，Some("")=清除，None=不修改。
+    pub model: Option<&'a str>,
 }
 
 pub struct SchedulerUpdate<'a> {
@@ -96,6 +98,7 @@ impl Database {
             tag_ids,
             executor: m.executor,
             expert_name: m.expert_name,
+            model: m.model,
             scheduler_enabled,
             scheduler_config,
             scheduler_timezone,
@@ -510,6 +513,14 @@ impl Database {
         if let Some(exec) = update.executor {
             am.executor = ActiveValue::Set(Some(exec.to_string()));
         }
+        // model：Some(非空)=写入任务级模型，Some("")=清除，None=不改（与 executor 语义对齐）。
+        if let Some(model) = update.model {
+            am.model = ActiveValue::Set(if model.is_empty() {
+                None
+            } else {
+                Some(model.to_string())
+            });
+        }
         if let Some(enabled) = update.scheduler_enabled {
             am.scheduler_enabled = ActiveValue::Set(Some(enabled));
         }
@@ -726,6 +737,8 @@ impl Database {
                     parent_todo_id: ActiveValue::Set(model.parent_todo_id),
                     review_template_id: ActiveValue::Set(model.review_template_id),
                     kind: ActiveValue::Set(model.kind),
+                    // 跨工作空间复制时同步保留源事项的 model 字段（任务级模型覆盖）。
+                    model: ActiveValue::Set(model.model),
                     ..Default::default()
                 };
                 let inserted = am.insert(&self.conn).await?;
@@ -1133,6 +1146,8 @@ impl Database {
                     worktree: None,
                     action_type: m.action_type,
                     action_key: m.action_key,
+                    // 备份时保留任务级模型，导入时恢复。
+                    model: m.model.clone(),
                     // 备份时保留工作空间 ID，导入时用于关联到正确的工作空间
                     workspace_id: m.workspace_id,
                 }
@@ -1188,6 +1203,7 @@ impl Database {
                     worktree: None,
                     action_type: m.action_type,
                     action_key: m.action_key,
+                    model: m.model.clone(),
                     // 备份时保留工作空间 ID，导入时用于关联到正确的工作空间
                     workspace_id: m.workspace_id,
                 }
@@ -1260,6 +1276,7 @@ impl Database {
                 updated_at: ActiveValue::Set(Some(now)),
                 action_type: ActiveValue::Set(todo.action_type.clone()),
                 action_key: ActiveValue::Set(todo.action_key.clone()),
+                model: ActiveValue::Set(todo.model.clone()),
                 ..Default::default()
             };
             let inserted = am.insert(&txn).await?;
@@ -1380,6 +1397,7 @@ impl Database {
                 am.updated_at = ActiveValue::Set(Some(crate::models::utc_timestamp()));
                 am.action_type = ActiveValue::Set(todo.action_type.clone());
                 am.action_key = ActiveValue::Set(todo.action_key.clone());
+                am.model = ActiveValue::Set(todo.model.clone());
                 let saved = am.update(&txn).await?;
 
                 // 重建 tag 关联
@@ -1424,6 +1442,7 @@ impl Database {
                     updated_at: ActiveValue::Set(Some(now)),
                     action_type: ActiveValue::Set(todo.action_type.clone()),
                     action_key: ActiveValue::Set(todo.action_key.clone()),
+                    model: ActiveValue::Set(todo.model.clone()),
                     ..Default::default()
                 };
                 let inserted = am.insert(&txn).await?;
@@ -1997,6 +2016,7 @@ mod todo_center_tests {
             tag_ids: vec![],
             executor: None,
             expert_name: None,
+            model: None,
             scheduler_enabled: false,
             scheduler_config: None,
             scheduler_timezone: None,

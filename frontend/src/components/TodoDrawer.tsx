@@ -10,6 +10,7 @@ import { getDefaultExecutor } from '@/utils/executors';
 import { getLastExecutor, setLastExecutor } from '@/constants';
 import { TagCheckCardGroup } from './TagCheckCard';
 import { ExecutorPicker } from './todo-drawer/ExecutorPicker';
+import { ModelPicker } from '@/components/todo-drawer/ModelPicker';
 import { ExpertPicker } from './todo-drawer/ExpertPicker';
 import { ExpertSkillSelector } from './todo-drawer/ExpertSkillSelector';
 import { PromptEditor } from './todo-drawer/PromptEditor';
@@ -45,6 +46,8 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
 
   // UI 相关的状态（不属于表单数据）
   const [executorOptions, setExecutorOptions] = useState<ExecutorOption[]>(EXECUTORS);
+  // 保留原始 ExecutorConfig（含 default_model），供 ModelPicker 展示当前执行器的默认模型。
+  const [executorConfigs, setExecutorConfigs] = useState<ExecutorConfig[]>([]);
   const [allExecutorSkills, setAllExecutorSkills] = useState<ExecutorSkills[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [skillsExpanded, setSkillsExpanded] = useState(false);
@@ -55,7 +58,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
 
   // 从 formState 中解构出常用的字段
   const {
-    title, prompt, selectedTags, executor, expertName, workspaceId,
+    title, prompt, selectedTags, executor, expertName, model, workspaceId,
     webhookEnabled, schedulerEnabled, schedulerConfig, acceptanceCriteria,
   } = formState;
 
@@ -111,6 +114,9 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
     if (open) {
       db.getExecutors().then((executorConfigs) => {
         const enabled = (executorConfigs as ExecutorConfig[]).filter((ec) => ec.enabled);
+        // 无论是否有启用执行器，都要同步 executorConfigs（set 空数组或有效数组），
+        // 避免再次打开抽屉时「无启用执行器」的情况仍保留上次的陈旧 default_model。
+        setExecutorConfigs(enabled);
         if (enabled.length > 0) {
           setExecutorOptions(enabled.map(executorConfigToOption));
         }
@@ -224,6 +230,8 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
           acceptanceCriteria || null,
           undefined,
           expertName,
+          // 编辑保存：null → '' 清除任务级模型，非空 → 设置；与表单值同步。
+          model ?? '',
         );
         await db.updateScheduler(todo.id, schedulerEnabled, schedulerConfig || null);
         await db.updateTodoTags(todo.id, selectedTags);
@@ -238,6 +246,8 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
           undefined,
           webhookEnabled,
           expertName || undefined,
+          // 创建时传 model：null → 后端不设（用执行器默认），非空 → 写入任务级模型。
+          model,
         );
 
         if (workspaceToSave != null || schedulerEnabled || executor !== getDefaultExecutor() || webhookEnabled || expertName) {
@@ -249,6 +259,8 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
             acceptanceCriteria || null,
             undefined,
             expertName,
+            // 创建后同步：与编辑一致，null → '' 清除，非空 → 设置。
+            model ?? '',
           );
           await db.updateScheduler(newTodo.id, schedulerEnabled, schedulerConfig || null);
         }
@@ -266,6 +278,10 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
   };
 
   const executorColor = getExecutorColor(executor);
+  // 当前执行器配置的默认模型，作为 ModelPicker 的提示；执行器未配则 undefined。
+  const currentDefaultModel = executorConfigs.find((ec) => ec.name === executor)?.default_model;
+  // 当前执行器是否支持动态列模型（后端 supports_models），决定 ModelPicker 用 Select 还是 Input。
+  const currentSupportsModels = executorConfigs.find((ec) => ec.name === executor)?.supports_models ?? false;
 
   return (
     <Drawer
@@ -299,6 +315,9 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
             // 只在创建模式下记忆——编辑模式用户只是临时调整，不应覆盖记忆
             if (!todo) setLastExecutor(v);
           }} />
+
+          {/* 任务级模型：留空用执行器默认，填值则覆盖。联动展示当前执行器的默认模型。 */}
+          <ModelPicker model={model} executor={executor} supportsModels={currentSupportsModels} defaultModel={currentDefaultModel} onChange={(v) => setField('model', v)} />
 
           <Divider style={{ margin: '8px 0 16px' }} />
 

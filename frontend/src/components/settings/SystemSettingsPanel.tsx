@@ -33,7 +33,7 @@ export function SystemSettingsPanel({ configForm, configSaving, configLoading, h
       <Form
         form={configForm}
         layout="vertical"
-        style={{ maxWidth: 600 }}
+        style={{ width: '100%' }}
         initialValues={{
           port: 8088,
           host: '0.0.0.0',

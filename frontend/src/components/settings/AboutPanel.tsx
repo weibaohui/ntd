@@ -261,7 +261,7 @@ export function AboutPanel() {
 
   return (
     <Spin spinning={versionLoading}>
-      <div style={{ maxWidth: 600 }}>
+      <div style={{ width: '100%' }}>
         <div style={{ fontWeight: 600, marginBottom: 16, fontSize: 16 }}>NTD 版本信息</div>
         {versionInfo ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

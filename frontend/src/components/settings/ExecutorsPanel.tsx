@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { Button, Card, Input, Switch, Spin, Tooltip, Modal, message, Typography, InputNumber, Form, Table, Space, Empty, Tabs, Popconfirm } from 'antd';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Button, Card, Input, Select, Switch, Spin, Tooltip, Modal, message, Typography, InputNumber, Form, Table, Space, Empty, Tabs, Popconfirm } from 'antd';
 import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined, BugOutlined, CodeOutlined, InfoCircleOutlined, SaveOutlined, StopOutlined, ReloadOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
 import { Cron } from 'react-js-cron';
 import 'react-js-cron/dist/styles.css';
@@ -28,6 +28,35 @@ export function ExecutorsPanel() {
   const [testModalData, setTestModalData] = useState<{ name: string; result: { test_passed: boolean; output: string | null; error: string | null } } | null>(null);
   const [savingExecutor, setSavingExecutor] = useState<string | null>(null);
   const [settingDefaultExecutor, setSettingDefaultExecutor] = useState<string | null>(null);
+  // 各执行器可选模型（调 models 子命令拉取），用于默认模型列下拉建议，按 name 缓存。
+  // 空数组（[]）也缓存，避免 supports_models 执行器每次展开都请求——空结果意味着该执行器不支持动态列举。
+  const [executorModels, setExecutorModels] = useState<Record<string, string[]>>({});
+  // 各执行器模型加载状态：true = 请求进行中，false/undefined = 空闲。
+  // 与 executorModels 分开维护，避免空结果被误判为"正在加载"。
+  const [modelsLoading, setModelsLoading] = useState<Record<string, boolean>>({});
+  // 记录已拉取过的执行器（ref 是同步的，在异步请求前就标记，避免并发重复请求）。
+  const fetchedModelsRef = useRef<Record<string, boolean>>({});
+  // 懒加载：首次展开下拉时拉取该执行器支持的模型，按 name 缓存。
+  const fetchExecutorModels = async (name: string) => {
+    // 空名或已请求过（含空结果）→ 跳过。
+    if (!name || fetchedModelsRef.current[name]) return;
+    // 在 await 前标记已请求，避免并发重入。
+    fetchedModelsRef.current[name] = true;
+    setModelsLoading((prev) => ({ ...prev, [name]: true }));
+    try {
+      const models = await db.getExecutorModels(name);
+      // 无论结果是否为空都缓存，让 fetchedModelsRef 拦截后续请求。
+      setExecutorModels((prev) => ({ ...prev, [name]: models }));
+    } catch {
+      // 请求失败也写空数组，避免「一直加载中、出不来结果」的 stuck 状态。
+      setExecutorModels((prev) => ({ ...prev, [name]: [] }));
+    } finally {
+      setModelsLoading((prev) => ({ ...prev, [name]: false }));
+    }
+  };
+
+
+
 
   // 运行配置：并发数、超时等
   const [configForm] = Form.useForm();
@@ -211,7 +240,7 @@ export function ExecutorsPanel() {
             label: '执行器',
             children: (
               <Spin spinning={executorsLoading}>
-                <div style={{ maxWidth: 1000 }}>
+                <div>
         <Paragraph type="secondary" style={{ marginBottom: 16 }}>
           管理执行器的路径、开关状态，并检测二进制是否可用。关闭开关的执行器不会出现在 Todo 的执行器选择列表中。
         </Paragraph>
@@ -274,7 +303,6 @@ export function ExecutorsPanel() {
               title: '状态',
               dataIndex: 'enabled',
               key: 'enabled',
-              width: 70,
               align: 'center',
               render: (enabled: boolean, record: ExecutorConfig) => (
                 <Switch
@@ -299,7 +327,6 @@ export function ExecutorsPanel() {
               title: '执行器',
               dataIndex: 'display_name',
               key: 'display_name',
-              width: 130,
               render: (name: string, record: ExecutorConfig) => (
                 <span style={{ fontWeight: 500, opacity: record.enabled ? 1 : 0.5, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                   {name}
@@ -348,7 +375,6 @@ export function ExecutorsPanel() {
               title: 'Session 目录',
               dataIndex: 'session_dir',
               key: 'session_dir',
-              width: 220,
               render: (sessionDir: string, record: ExecutorConfig) => (
                 <Input
                   size="small"
@@ -374,9 +400,72 @@ export function ExecutorsPanel() {
               ),
             },
             {
+              // 默认模型：执行器级默认，所有未单独指定模型的 todo 用该执行器时默认传此模型。
+              // 留空 = 不传 --model，由执行器配置文件决定（向后兼容）。
+              title: '默认模型',
+              dataIndex: 'default_model',
+              key: 'default_model',
+              render: (defaultModel: string | null | undefined, record: ExecutorConfig) => {
+                // 已知能列模型的执行器（需和后端 list_models match 分支保持一致）。
+                if (!record.supports_models) {
+                  return (
+                    <Input size="small" placeholder="留空用执行器自带配置" defaultValue={defaultModel ?? ''}
+                      onBlur={(e: React.FocusEvent<HTMLInputElement>) => {
+                        const newModel = e.target.value.trim();
+                        if (newModel === (defaultModel ?? '')) return;
+                        setSavingExecutor(record.name);
+                        db.updateExecutor(record.name, { default_model: newModel })
+                          .then((updated) => setExecutors((prev) => prev.map((ex) => ex.name === record.name ? updated : ex)))
+                          .catch((err: any) => message.error('保存失败: ' + (err?.message || String(err))))
+                          .finally(() => setSavingExecutor(null));
+                      }}
+                      onPressEnter={(e: React.KeyboardEvent<HTMLInputElement>) => (e.target as HTMLInputElement).blur()} />
+                  );
+                }
+                const models = executorModels[record.name] || [];
+                const groups: Record<string, { label: string; value: string }[]> = {};
+                models.forEach((full) => {
+                  const slash = full.indexOf('/');
+                  const provider = slash > 0 ? full.slice(0, slash) : '其他';
+                  const mn = slash > 0 ? full.slice(slash + 1) : full;
+                  if (!groups[provider]) groups[provider] = [];
+                  groups[provider].push({ label: mn, value: full });
+                });
+                return (
+                  <Select size="small" value={defaultModel || undefined} placeholder="留空用执行器自带配置" allowClear showSearch
+                    notFoundContent={modelsLoading[record.name] ? '加载中，请稍后...' : models.length === 0 ? '暂无可选模型' : undefined}
+                    onDropdownVisibleChange={(open) => {
+                      if (open && !fetchedModelsRef.current[record.name]) {
+                        fetchedModelsRef.current[record.name] = true;
+                        fetchExecutorModels(record.name);
+                      }
+                    }}
+                    filterOption={(input: string, option?: { label: string; value: string }) =>
+                      (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+                    onChange={(v: unknown) => {
+                      const newModel = (v as string)?.trim() || '';
+                      if (newModel === (defaultModel ?? '')) return;
+                      setSavingExecutor(record.name);
+                      db.updateExecutor(record.name, { default_model: newModel })
+                        .then((updated) => setExecutors((prev) => prev.map((ex) => ex.name === record.name ? updated : ex)))
+                        .catch((err: any) => message.error('保存失败: ' + (err?.message || String(err))))
+                        .finally(() => setSavingExecutor(null));
+                    }}
+                    style={{ width: '100%' }}>
+                    {Object.entries(groups).map(([provider, items]) => (
+                      <Select.OptGroup key={provider} label={provider}>
+                        {items.map((item) => (
+                          <Select.Option key={item.value} value={item.value}>{item.label}</Select.Option>
+                        ))}
+                      </Select.OptGroup>
+                    ))}
+                  </Select>
+                );
+              },
+            },
+            {
               title: '检测状态',
               key: 'detect_status',
-              width: 90,
               align: 'center',
               render: (_: unknown, record: ExecutorConfig) => {
                 const detectResult = detectResults[record.name];

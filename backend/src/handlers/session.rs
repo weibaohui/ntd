@@ -2361,6 +2361,8 @@ mod session_scanner_tests {
             display_name: "x".into(),
             session_dir: d.into(),
             is_default: false,
+            default_model: None,
+            supports_models: false,
             created_at: None,
             updated_at: None,
         };

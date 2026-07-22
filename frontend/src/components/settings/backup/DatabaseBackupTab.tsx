@@ -42,7 +42,7 @@ export function DatabaseBackupTab({
   onTriggerLogCleanup: () => Promise<void>;
 }) {
   return (
-    <div style={{ maxWidth: 600 }}>
+    <div style={{ width: '100%' }}>
       <Card title="数据库备份" size="small">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <Typography.Paragraph type="secondary">

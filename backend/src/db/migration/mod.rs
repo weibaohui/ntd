@@ -26,6 +26,7 @@ mod v64;
 mod v65;
 mod v66;
 mod v67;
+mod v68;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -87,6 +88,8 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v66::V66AddQuickButtonsTable),
         // V67 在 V66 之后：execution_records 新增 agent_runs，存储多 Agent 协作的子 agent 元数据（JSON）
         Box::new(v67::V67AddExecutionRecordsAgentRuns),
+        // V68 在 V67 之后：executors 加 default_model、todos 加 model，支撑「执行器/todo 级别指定执行模型」
+        Box::new(v68::V68AddModelColumns),
     ]
 }
 

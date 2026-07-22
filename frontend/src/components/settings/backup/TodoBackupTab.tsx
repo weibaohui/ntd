@@ -38,7 +38,7 @@ export function TodoBackupTab({
   onImportFile: (file: File) => Promise<boolean>;
 }) {
   return (
-    <div style={{ maxWidth: 600 }}>
+    <div style={{ width: '100%' }}>
       <Card title="导出备份" size="small" style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <Typography.Paragraph type="secondary">

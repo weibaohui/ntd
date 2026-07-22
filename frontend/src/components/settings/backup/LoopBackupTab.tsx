@@ -202,7 +202,7 @@ export function LoopBackupTab() {
   const hasUnassignedLoop = loops.some((l) => !skipNameSet.has(l.name) && loopWorkspaceMap[l.name] == null);
 
   return (
-    <div style={{ maxWidth: 600 }}>
+    <div style={{ width: '100%' }}>
       <Card title="导出环路" size="small" style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <Typography.Paragraph type="secondary">

@@ -194,12 +194,16 @@ impl CodeExecutor for ClaudeCodeExecutor {
     }
 
     fn command_args_with_session(&self, message: &str, session_id: Option<&str>, is_resume: bool) -> Vec<String> {
-        let mut args = vec![
-            "--dangerously-skip-permissions".to_string(),
-            "-p".to_string(),
-            "--output-format".to_string(),
-            "stream-json".to_string(),
-        ];
+        let mut args = vec!["--dangerously-skip-permissions".to_string()];
+        // 执行前若注入了期望模型（来自 todo.model / executor.default_model），插 --model。
+        // 紧跟首个 flag 之后、-p 之前：--model 是全局 flag，位置不影响解析，靠前更清晰。
+        if let Some(m) = self.base.model.lock().clone() {
+            args.push("--model".to_string());
+            args.push(m);
+        }
+        args.push("-p".to_string());
+        args.push("--output-format".to_string());
+        args.push("stream-json".to_string());
         // 首次执行时不传 --session-id，让 Claude Code 自己生成 session_id，
         // 然后从 system 事件中提取真实 session_id 回写 DB。
         // resume 时传 --resume <session_id>，恢复之前的会话。
@@ -216,6 +220,12 @@ impl CodeExecutor for ClaudeCodeExecutor {
 
     fn supports_resume(&self) -> bool {
         true
+    }
+
+    /// 执行前注入期望模型，写入 base.model，供 command_args_with_session 拼 --model。
+    /// 与 get_model 共用 base.model 字段：注入的是「期望值」，执行中会被输出事件覆盖为「真实值」。
+    fn set_exec_model(&self, model: Option<String>) {
+        *self.base.model.lock() = model;
     }
 
     /// 从 stdout 中提取 session_id。
@@ -274,6 +284,21 @@ mod tests {
     use super::*;
     use crate::executor_service::completion::get_usage_from_tokens_logs;
     use crate::models::{ExecutionUsage, ParsedLogEntry};
+
+    /// set_exec_model 注入模型后，command_args_with_session 应拼出 `--model <value>`；
+    /// 未注入时不含 --model（保持升级前行为，向后兼容）。
+    #[test]
+    fn test_command_args_injects_model_when_set() {
+        let exec = ClaudeCodeExecutor::new("claude".to_string());
+        // 未注入模型：argv 不应含 --model。
+        let args_none = exec.command_args_with_session("hello", None, false);
+        assert!(!args_none.iter().any(|a| a == "--model"));
+        // 注入后：argv 含 "--model" 紧跟模型名。
+        exec.set_exec_model(Some("glm-5.2".to_string()));
+        let args = exec.command_args_with_session("hello", None, false);
+        let model_value = args.windows(2).find(|w| w[0] == "--model").map(|w| w[1].clone());
+        assert_eq!(model_value.as_deref(), Some("glm-5.2"));
+    }
 
     #[test]
     fn test_parse_output_line_system() {

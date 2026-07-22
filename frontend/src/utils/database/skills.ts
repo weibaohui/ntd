@@ -106,8 +106,13 @@ export async function getExecutors(): Promise<import('@/types').ExecutorConfig[]
   return unwrap(await api.get('/api/executors'));
 }
 
-export async function updateExecutor(name: string, data: { path?: string; enabled?: boolean; display_name?: string; session_dir?: string }): Promise<import('@/types').ExecutorConfig> {
+export async function updateExecutor(name: string, data: { path?: string; enabled?: boolean; display_name?: string; session_dir?: string; default_model?: string }): Promise<import('@/types').ExecutorConfig> {
   return unwrap(await api.put(`/api/executors/${encodeURIComponent(name)}`, data));
+}
+
+/** 拉取执行器支持的模型列表（调其 models 子命令，用作默认模型下拉选项）。 */
+export async function getExecutorModels(name: string): Promise<string[]> {
+  return unwrap(await api.get(`/api/executors/${encodeURIComponent(name)}/models`));
 }
 
 export async function detectExecutor(name: string): Promise<{ binary_found: boolean; path_resolved: string | null }> {

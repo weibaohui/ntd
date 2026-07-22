@@ -294,11 +294,16 @@ impl CodeExecutor for PiExecutor {
     /// 支持 session 的命令参数
     /// pi 使用 --session <session_id> 恢复会话
     fn command_args_with_session(&self, message: &str, session_id: Option<&str>, is_resume: bool) -> Vec<String> {
-        let mut args = vec![
-            "-p".to_string(),
-            "--mode".to_string(),
-            "json".to_string(),
-        ];
+        let mut args: Vec<String> = vec![];
+        // 执行前若注入了期望模型，插 --model（pi 接受 --model provider/id 形式）。
+        // 放在最前：pi 的全局 flag，位置不影响解析。
+        if let Some(m) = self.base.model.lock().clone() {
+            args.push("--model".to_string());
+            args.push(m);
+        }
+        args.push("-p".to_string());
+        args.push("--mode".to_string());
+        args.push("json".to_string());
         if is_resume {
             if let Some(sid) = session_id {
                 args.push("--session".to_string());
@@ -311,6 +316,11 @@ impl CodeExecutor for PiExecutor {
 
     fn supports_resume(&self) -> bool {
         true
+    }
+
+    /// 执行前注入期望模型，写入 base.model，供 command_args_with_session 拼 --model。
+    fn set_exec_model(&self, model: Option<String>) {
+        *self.base.model.lock() = model;
     }
 
     /// 从 session 事件中提取 session id
@@ -402,6 +412,19 @@ impl CodeExecutor for PiExecutor {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
+
+    /// set_exec_model 注入模型后，command_args_with_session 应拼出 `--model <value>`
+    /// （pi 接受 provider/id 形式，如 minimax-anthropic/MiniMax-M3）。
+    #[test]
+    fn test_command_args_injects_model_when_set() {
+        let exec = PiExecutor::new("pi".to_string());
+        let args_none = exec.command_args_with_session("hello", None, false);
+        assert!(!args_none.iter().any(|a| a == "--model"));
+        exec.set_exec_model(Some("minimax-anthropic/MiniMax-M3".to_string()));
+        let args = exec.command_args_with_session("hello", None, false);
+        let model_value = args.windows(2).find(|w| w[0] == "--model").map(|w| w[1].clone());
+        assert_eq!(model_value.as_deref(), Some("minimax-anthropic/MiniMax-M3"));
+    }
 
     #[test]
     fn test_extract_session_id() {
