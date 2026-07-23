@@ -7,6 +7,7 @@ import { Button, Card, Checkbox, Empty, Form, Input, message, Modal, Space, Spin
 import { PlusOutlined, SwapOutlined, DeleteOutlined, EditOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { useTheme } from '@/hooks/useTheme';
 
 const { Text, Paragraph } = Typography;
 
@@ -59,6 +60,8 @@ export function ProfilesPanel() {
   const [previewEntries, setPreviewEntries] = useState<{ executor: string; path: string; content: string }[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [modelList, setModelList] = useState<ProviderModel[]>([]);
+  const { themeMode } = useTheme();
+  const isDark = themeMode === 'dark';
   const [form] = Form.useForm();
 
   const load = useCallback(async () => {
@@ -431,7 +434,8 @@ export function ProfilesPanel() {
                         写入路径：{entry.path || '（未知）'}
                       </Text>
                       <pre style={{
-                        background: '#f5f5f5',
+                        background: isDark ? '#1a1a2e' : '#f5f5f5',
+                        color: isDark ? '#e0e0e0' : '#333',
                         padding: 12,
                         borderRadius: 6,
                         fontSize: 12,
@@ -441,6 +445,7 @@ export function ProfilesPanel() {
                         whiteSpace: 'pre-wrap',
                         wordBreak: 'break-all',
                         margin: 0,
+                        border: isDark ? '1px solid #2a2a4a' : 'none',
                       }}>{entry.content}</pre>
                     </div>
                   ),
