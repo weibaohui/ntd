@@ -2730,6 +2730,11 @@ pub fn v1_routes() -> axum::Router<AppState> {
     use axum::routing::{get, post, put};
     axum::Router::new()
         .route("/", get(list_loops_v1).post(create_loop_v1))
+        // merge 必须注册在 /{id} 之前：axum 字面量路由优先匹配，否则 "merge" 会被当 loop id。
+        // merge_loops / import_loops / import_preview handler 内部已按 workspace 隔离解析。
+        .route("/merge", post(merge_loops))
+        .route("/import-preview", post(import_preview))
+        .route("/import", post(import_loops))
         .route("/{id}", get(get_loop_v1).put(update_loop_v1).delete(delete_loop_v1))
         .route("/{id}/status", put(update_loop_status_v1))
         .route("/{id}/tags", put(update_loop_tags_v1))

@@ -94,6 +94,7 @@ export function LoopFormModal({
   const { dirs: projectDirs } = useProjectDirectories();
 
   // 打开时 + 工作空间变化时重新加载评审模板选项（按 workspace_id 过滤）
+  // review-templates 为全局路由（interceptor 加 v1 前缀），workspaceId 仍作 query param
   useEffect(() => {
     if (!open) return;
     dbReviewTemplates.listReviewTemplateOptions(workspaceId ?? undefined)
@@ -105,7 +106,9 @@ export function LoopFormModal({
   // 必须按当前 loop 的 workspace_id 过滤——异常处理 handler 跨工作空间串进来会触发错乱执行。
   useEffect(() => {
     if (!open) return;
-    dbTodos.getAllTodos(workspaceId ?? undefined)
+    // workspaceId 必须有值才能查 todos（v1 纯 workspace-scoped）
+    if (workspaceId == null) return;
+    dbTodos.getAllTodos(workspaceId)
       .then(setAbnormalHandlerTodoOptions)
       .catch(() => { /* 静默 */ });
   }, [open, workspaceId]);
@@ -214,7 +217,7 @@ export function LoopFormModal({
       };
 
       if (mode === 'create') {
-        const res = await dbLoops.createLoop({
+        const res = await dbLoops.createLoop(basePayload.workspace_id ?? 0, {
           name: basePayload.name,
           description: basePayload.description,
           workspace_id: basePayload.workspace_id,
@@ -231,7 +234,7 @@ export function LoopFormModal({
       } else {
         // 编辑模式
         if (!loopId) return;
-        await dbLoops.updateLoop(loopId, basePayload);
+        await dbLoops.updateLoop(basePayload.workspace_id ?? 0, loopId, basePayload);
         message.success('已保存');
         onSaved();
       }

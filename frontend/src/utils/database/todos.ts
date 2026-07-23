@@ -1,20 +1,19 @@
 import { api, unwrap } from './client';
 import type { Todo, Tag, TodoTemplate, CustomTemplateStatus, ComputedBucket, TodoCenterItem } from '@/types';
 
-// Todo APIs
+// Todo APIs — 所有 todo 端点嵌套在 /api/v1/workspaces/{ws}/todos 下（后端 ADR-7 纯 workspace 隔离）。
+// workspaceId 从 query/body 提升到 URL 路径段，调用方必须显式传入。
 
 /**
- * 列出 todos，可按工作空间 ID 过滤。
+ * 列出指定工作空间下的 todos。
+ * workspaceId 提升到路径段（v1 纯 workspace-scoped，不再支持跨空间列表）。
  */
-export async function getAllTodos(workspaceId?: number, hours?: number): Promise<Todo[]> {
+export async function getAllTodos(workspaceId: number, hours?: number): Promise<Todo[]> {
   const params: Record<string, number> = {};
-  if (workspaceId !== undefined) {
-    params.workspace_id = workspaceId;
-  }
   if (hours !== undefined) {
     params.hours = hours;
   }
-  return unwrap(await api.get('/api/todos', { params }));
+  return unwrap(await api.get(`/api/workspaces/${workspaceId}/todos`, { params }));
 }
 
 export async function createTodo(
@@ -28,17 +27,19 @@ export async function createTodo(
   expertName?: string,
   model?: string | null,
 ): Promise<Todo> {
-  const body: Record<string, unknown> = { title, prompt, tag_ids: tagIds, workspace_id: workspaceId };
+  // workspace_id 从 body 提升到 URL 路径段；body 只保留字段语义
+  const body: Record<string, unknown> = { title, prompt, tag_ids: tagIds };
   if (acceptanceCriteria !== undefined) body.acceptance_criteria = acceptanceCriteria;
   if (autoReviewEnabled !== undefined) body.auto_review_enabled = autoReviewEnabled;
   if (webhookEnabled !== undefined) body.webhook_enabled = webhookEnabled;
   if (expertName !== undefined) body.expert_name = expertName;
   // model：undefined=不传（创建时不指定，沿用执行器默认）；null/空串=显式清除。
   if (model !== undefined) body.model = model;
-  return unwrap(await api.post('/api/todos', body));
+  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos`, body));
 }
 
 export async function updateTodo(
+  workspaceId: number,
   id: number,
   title: string,
   prompt: string,
@@ -65,24 +66,25 @@ export async function updateTodo(
   // model：undefined=不修改；null/空串=清除任务级模型（回退到执行器默认）。
   if (model !== undefined) body.model = model;
 
-  return unwrap(await api.put(`/api/todos/${id}`, body));
+  return unwrap(await api.put(`/api/workspaces/${workspaceId}/todos/${id}`, body));
 }
 
-export async function deleteTodo(id: number): Promise<void> {
-  await api.delete(`/api/todos/${id}`);
+export async function deleteTodo(workspaceId: number, id: number): Promise<void> {
+  await api.delete(`/api/workspaces/${workspaceId}/todos/${id}`);
 }
 
-export async function updateTodoTags(todoId: number, tagIds: number[]): Promise<void> {
-  await api.put(`/api/todos/${todoId}/tags`, { tag_ids: tagIds });
+export async function updateTodoTags(workspaceId: number, todoId: number, tagIds: number[]): Promise<void> {
+  await api.put(`/api/workspaces/${workspaceId}/todos/${todoId}/tags`, { tag_ids: tagIds });
 }
 
 /** 批量更新事项执行器。后端提供专用接口，单次 SQL 完成。 */
 export async function batchUpdateTodosExecutor(
+  workspaceId: number,
   ids: number[],
   executor: string,
 ): Promise<{ updated: number[]; failed: number[] }> {
   try {
-    const result = await unwrap(await api.put('/api/todos/batch-executor', { ids, executor }));
+    const result = await unwrap(await api.put(`/api/workspaces/${workspaceId}/todos/batch-executor`, { ids, executor }));
     const body = result as { updated_count: number; total: number };
     return { updated: ids.slice(0, body.updated_count), failed: ids.slice(body.updated_count) };
   } catch {
@@ -92,39 +94,43 @@ export async function batchUpdateTodosExecutor(
 
 /** 批量暂停周期执行。将所选事项的 scheduler_enabled 设为 false，但不改变 scheduler_config。 */
 export async function batchPauseScheduler(
+  workspaceId: number,
   ids: number[],
 ): Promise<{ updated_count: number; total: number }> {
-  return unwrap(await api.put('/api/todos/batch-scheduler', { ids, scheduler_enabled: false }));
+  return unwrap(await api.put(`/api/workspaces/${workspaceId}/todos/batch-scheduler`, { ids, scheduler_enabled: false }));
 }
 
 /** 批量恢复周期执行。将所选事项的 scheduler_enabled 设为 true，使用原有的 scheduler_config。 */
 export async function batchResumeScheduler(
+  workspaceId: number,
   ids: number[],
 ): Promise<{ updated_count: number; total: number }> {
-  return unwrap(await api.put('/api/todos/batch-scheduler', { ids, scheduler_enabled: true }));
+  return unwrap(await api.put(`/api/workspaces/${workspaceId}/todos/batch-scheduler`, { ids, scheduler_enabled: true }));
 }
 
-/** 批量移动事项到其他工作空间。 */
+/** 批量移动事项到其他工作空间。workspaceId 为源空间（URL 路径段），workspace_id 为目标空间（body）。 */
 export async function batchMoveTodosWorkspace(
+  workspaceId: number,
   ids: number[],
   workspace_id: number,
 ): Promise<{ updated_count: number; total: number }> {
-  return unwrap(await api.put('/api/todos/batch-workspace', { ids, workspace_id }));
+  return unwrap(await api.put(`/api/workspaces/${workspaceId}/todos/batch-workspace`, { ids, workspace_id }));
 }
 
-/** 批量复制事项到其他工作空间。 */
+/** 批量复制事项到其他工作空间。workspaceId 为源空间（URL 路径段），workspace_id 为目标空间（body）。 */
 export async function batchCopyTodosWorkspace(
+  workspaceId: number,
   ids: number[],
   workspace_id: number,
 ): Promise<{ updated_count: number; total: number }> {
-  return unwrap(await api.post('/api/todos/batch-copy-workspace', { ids, workspace_id }));
+  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/batch-copy-workspace`, { ids, workspace_id }));
 }
 
-// Tag APIs
+// Tag APIs — 全局资源，不嵌套 workspace（tags 表无 workspace_id 列）
 
 /** 单个 todo 详情（用于批量操作前取 title/prompt 等不可变字段）。 */
-export async function getTodo(id: number): Promise<Todo> {
-  return unwrap(await api.get(`/api/todos/${id}`));
+export async function getTodo(workspaceId: number, id: number): Promise<Todo> {
+  return unwrap(await api.get(`/api/workspaces/${workspaceId}/todos/${id}`));
 }
 
 export async function getAllTags(): Promise<Tag[]> {
@@ -206,9 +212,9 @@ export async function getProjectDirectories(): Promise<ProjectDirectory[]> {
   return unwrap(await api.get('/api/project-directories'));
 }
 
-/** GET /api/scheduler/todos:列出所有启用 cron 调度的 todo(含下次触发时间 scheduler_next_run_at)。 */
-export async function getSchedulerTodos(): Promise<Todo[]> {
-  return unwrap(await api.get('/api/scheduler/todos'));
+/** GET /api/v1/workspaces/{ws}/scheduler/todos:列出指定空间下启用 cron 调度的 todo(含下次触发时间)。 */
+export async function getSchedulerTodos(workspaceId: number): Promise<Todo[]> {
+  return unwrap(await api.get(`/api/workspaces/${workspaceId}/scheduler/todos`));
 }
 
 // 创建项目目录：后端要求 name 必填，调用方需保证传入非空字符串。
@@ -244,15 +250,16 @@ export async function deleteProjectDirectory(id: number): Promise<void> {
   await api.delete(`/api/project-directories/${id}`);
 }
 
-// Scheduler APIs
+// Scheduler APIs — /{id}/scheduler 嵌套在 workspace todos 下
 
 export async function updateScheduler(
+  workspaceId: number,
   id: number,
   scheduler_enabled: boolean,
   scheduler_config: string | null,
 ): Promise<TodoCenterItem> {
   // 后端返回 TodoCenterItem（含重新计算的 computed_bucket），符合设计文档要求
-  return unwrap(await api.put(`/api/todos/${id}/scheduler`, { scheduler_enabled, scheduler_config }));
+  return unwrap(await api.put(`/api/workspaces/${workspaceId}/todos/${id}/scheduler`, { scheduler_enabled, scheduler_config }));
 }
 
 // ─── 事项中心（Todo Center）API ─────────────────────────────
@@ -260,31 +267,31 @@ export async function updateScheduler(
 /**
  * 拉取事项中心列表（带 computed_bucket / loop 引用计数 / 最近执行聚合）。
  *
+ * workspaceId 提升到路径段（v1 纯 workspace-scoped）。
  * 不传 bucket 时后端返回全部分类，前端按 computed_bucket 自行分桶并展示各 Tab 数量；
  * 传入 bucket 则服务端按分类过滤（分页前完成分桶，保证数量正确）。
  */
 export async function getTodoCenter(
-  workspaceId?: number,
+  workspaceId: number,
   bucket?: ComputedBucket,
 ): Promise<TodoCenterItem[]> {
   const params: Record<string, string | number> = {};
-  if (workspaceId !== undefined) params.workspace_id = workspaceId;
   if (bucket !== undefined) params.bucket = bucket;
-  return unwrap(await api.get('/api/todos/center', { params }));
+  return unwrap(await api.get(`/api/workspaces/${workspaceId}/todos/center`, { params }));
 }
 
 /** 归档事项（仅隐藏，不删数据/不解 Loop 引用）。返回重新计算后的分类项。 */
-export async function archiveTodo(id: number): Promise<TodoCenterItem> {
-  return unwrap(await api.post(`/api/todos/${id}/archive`));
+export async function archiveTodo(workspaceId: number, id: number): Promise<TodoCenterItem> {
+  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/${id}/archive`));
 }
 
 /** 恢复事项（清空 archived_at，分类按真实关系重算）。 */
-export async function restoreTodo(id: number): Promise<TodoCenterItem> {
-  return unwrap(await api.post(`/api/todos/${id}/restore`));
+export async function restoreTodo(workspaceId: number, id: number): Promise<TodoCenterItem> {
+  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/${id}/restore`));
 }
 
 /** 开启/关闭事件驱动（webhook）。与 scheduler 端点对称的扁平具名路由。 */
-export async function updateTodoWebhook(id: number, webhook_enabled: boolean): Promise<TodoCenterItem> {
-  return unwrap(await api.put(`/api/todos/${id}/webhook`, { webhook_enabled }));
+export async function updateTodoWebhook(workspaceId: number, id: number, webhook_enabled: boolean): Promise<TodoCenterItem> {
+  return unwrap(await api.put(`/api/workspaces/${workspaceId}/todos/${id}/webhook`, { webhook_enabled }));
 }
 

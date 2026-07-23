@@ -223,6 +223,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
       if (isEditMode && todo) {
         // WorkspaceSelect 只允许从下拉列表选择，无需二次校验
         await db.updateTodo(
+          workspaceToSave!,
           todo.id, title.trim(), prompt.trim(), todo.status,
           executor, schedulerEnabled, schedulerConfig || null,
           workspaceToSave,
@@ -233,8 +234,8 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
           // 编辑保存：null → '' 清除任务级模型，非空 → 设置；与表单值同步。
           model ?? '',
         );
-        await db.updateScheduler(todo.id, schedulerEnabled, schedulerConfig || null);
-        await db.updateTodoTags(todo.id, selectedTags);
+        await db.updateScheduler(workspaceToSave!, todo.id, schedulerEnabled, schedulerConfig || null);
+        await db.updateTodoTags(workspaceToSave!, todo.id, selectedTags);
         message.success('任务已更新');
       } else {
         const newTodo = await db.createTodo(
@@ -252,7 +253,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
 
         if (workspaceToSave != null || schedulerEnabled || executor !== getDefaultExecutor() || webhookEnabled || expertName) {
           await db.updateTodo(
-            newTodo.id, newTodo.title, newTodo.prompt, newTodo.status,
+            workspaceToSave!, newTodo.id, newTodo.title, newTodo.prompt, newTodo.status,
             executor, schedulerEnabled, schedulerConfig || null,
             workspaceToSave,
             webhookEnabled,
@@ -262,7 +263,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
             // 创建后同步：与编辑一致，null → '' 清除，非空 → 设置。
             model ?? '',
           );
-          await db.updateScheduler(newTodo.id, schedulerEnabled, schedulerConfig || null);
+          await db.updateScheduler(workspaceToSave!, newTodo.id, schedulerEnabled, schedulerConfig || null);
         }
 
         message.success('任务创建成功');

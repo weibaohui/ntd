@@ -102,7 +102,7 @@ export function useActionExecution(
   const fetchResultFromRecord = useCallback(async () => {
     if (!recordId) return;
     try {
-      const record = await getExecutionRecord(recordId);
+      const record = await getExecutionRecord(workspaceId ?? 0, recordId);
       if (record.result) {
         setResult(record.result);
         setStatus('completed');

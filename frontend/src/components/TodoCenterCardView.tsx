@@ -57,7 +57,8 @@ export function TodoCenterCardView({
   refreshKey,
 }: TodoCenterCardViewProps) {
   const { state } = useApp();
-  const workspaceId = state.selectedWorkspace ?? undefined;
+  // v1 纯 workspace-scoped：selectedWorkspace 必须有值才能拉 todos/center
+  const workspaceId = state.selectedWorkspace ?? 0;
 
   // 全量事项（后端已按 computed_bucket 分桶补算），前端再做筛选/分组
   const [items, setItems] = useState<TodoCenterItem[]>([]);

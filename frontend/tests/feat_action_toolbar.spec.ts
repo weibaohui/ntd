@@ -26,7 +26,7 @@ let loopId = 0;
 test.beforeAll(async ({ request }) => {
   // 事项
   for (let i = 1; i <= 3; i++) {
-    const r = await request.post(`${DEV_URL}/api/todos`, {
+    const r = await request.post(`${DEV_URL}/api/v1/workspaces/1/todos`, {
       data: { title: `toolbar-todo-${i}`, prompt: `seed ${i}` },
     });
     expect(r.ok()).toBeTruthy();
@@ -37,17 +37,17 @@ test.beforeAll(async ({ request }) => {
   }
 
   // 环节（通过 promote 创建）
-  const stepRes = await request.post(`${DEV_URL}/api/todos`, {
+  const stepRes = await request.post(`${DEV_URL}/api/v1/workspaces/1/todos`, {
     data: { title: 'toolbar-step-1', prompt: 'step seed' },
   });
   const { data: stepTodo } = await stepRes.json();
   stepSourceTodoId = stepTodo.id;
-  const promoteRes = await request.post(`${DEV_URL}/api/todos/${stepSourceTodoId}/promote`);
+  const promoteRes = await request.post(`${DEV_URL}/api/v1/workspaces/1/todos/${stepSourceTodoId}/promote`);
   const { data: promoted } = await promoteRes.json();
   stepId = promoted.id;
 
   // 环路
-  const loopRes = await request.post(`${DEV_URL}/api/loops`, {
+  const loopRes = await request.post(`${DEV_URL}/api/v1/workspaces/1/loops`, {
     data: { name: 'toolbar-loop-1' },
   });
   const { data: loop } = await loopRes.json();
@@ -55,10 +55,10 @@ test.beforeAll(async ({ request }) => {
 });
 
 test.afterAll(async ({ request }) => {
-  await request.delete(`${DEV_URL}/api/loops/${loopId}`);
-  await request.delete(`${DEV_URL}/api/todos/${stepSourceTodoId}`);
+  await request.delete(`${DEV_URL}/api/v1/workspaces/1/loops/${loopId}`);
+  await request.delete(`${DEV_URL}/api/v1/workspaces/1/todos/${stepSourceTodoId}`);
   for (const id of [todoId1, todoId2, todoId3]) {
-    if (id) await request.delete(`${DEV_URL}/api/todos/${id}`);
+    if (id) await request.delete(`${DEV_URL}/api/v1/workspaces/1/todos/${id}`);
   }
 });
 

@@ -25,7 +25,7 @@ test.describe('环节/环路标签功能', () => {
 
     try {
       // 创建标签：传入名称和颜色，后端返回包含 id 的标签对象
-      const createRes = await page.request.post(`${BACKEND_URL}/api/tags`, {
+      const createRes = await page.request.post(`${BACKEND_URL}/api/v1/tags`, {
         data: { name: tagName, color: '#ff6600' },
       });
       expect(createRes.ok()).toBeTruthy();
@@ -35,21 +35,21 @@ test.describe('环节/环路标签功能', () => {
       expect(createdTagId).toBeGreaterThan(0);
 
       // 列表接口应该包含刚创建的标签 id，验证 C 和 R 链路通
-      const listRes = await page.request.get(`${BACKEND_URL}/api/tags`);
+      const listRes = await page.request.get(`${BACKEND_URL}/api/v1/tags`);
       expect(listRes.ok()).toBeTruthy();
       const tags = await listRes.json();
       const ids = tags.data.map((t: any) => t.id);
       expect(ids).toContain(createdTagId);
 
       // 删除标签
-      const delRes = await page.request.delete(`${BACKEND_URL}/api/tags/${createdTagId}`);
+      const delRes = await page.request.delete(`${BACKEND_URL}/api/v1/tags/${createdTagId}`);
       expect(delRes.ok()).toBeTruthy();
       // 删除后 createdTagId 标记已清理，阻止 finally 块重复删除
       createdTagId = undefined;
     } finally {
       // 如果中途失败导致 createdTagId 未被清理，在 finally 中兜底释放资源
       if (createdTagId) {
-        await page.request.delete(`${BACKEND_URL}/api/tags/${createdTagId}`);
+        await page.request.delete(`${BACKEND_URL}/api/v1/tags/${createdTagId}`);
       }
     }
   });
@@ -61,7 +61,7 @@ test.describe('环节/环路标签功能', () => {
 
     try {
       // 创建标签：用唯一名称防止测试间冲突
-      const tagRes = await page.request.post(`${BACKEND_URL}/api/tags`, {
+      const tagRes = await page.request.post(`${BACKEND_URL}/api/v1/tags`, {
         data: { name: uniqueTagName('环节标签'), color: '#1890ff' },
       });
       expect(tagRes.ok()).toBeTruthy();
@@ -88,7 +88,7 @@ test.describe('环节/环路标签功能', () => {
       expect(updated.data.tag_ids).toContain(createdTagId);
     } finally {
       // 资源清理：无论测试成功与否都释放标签和环节
-      if (createdTagId) await page.request.delete(`${BACKEND_URL}/api/tags/${createdTagId}`);
+      if (createdTagId) await page.request.delete(`${BACKEND_URL}/api/v1/tags/${createdTagId}`);
       if (createdStepId) await page.request.delete(`${BACKEND_URL}/api/steps/${createdStepId}`);
     }
   });
@@ -100,7 +100,7 @@ test.describe('环节/环路标签功能', () => {
 
     try {
       // 创建标签
-      const tagRes = await page.request.post(`${BACKEND_URL}/api/tags`, {
+      const tagRes = await page.request.post(`${BACKEND_URL}/api/v1/tags`, {
         data: { name: uniqueTagName('环路标签'), color: '#52c41a' },
       });
       expect(tagRes.ok()).toBeTruthy();
@@ -108,7 +108,7 @@ test.describe('环节/环路标签功能', () => {
       createdTagId = tag.data.id;
 
       // 创建环路，新环路初始 tag_ids 应为空
-      const loopRes = await page.request.post(`${BACKEND_URL}/api/loops`, {
+      const loopRes = await page.request.post(`${BACKEND_URL}/api/v1/workspaces/1/loops`, {
         data: { name: uniqueTagName('测试环路') },
       });
       expect(loopRes.ok()).toBeTruthy();
@@ -116,23 +116,23 @@ test.describe('环节/环路标签功能', () => {
       createdLoopId = loop.data.id;
       expect(loop.data.tag_ids).toEqual([]);
 
-      // 通过 PUT /api/loops/{id}/tags 关联标签
-      const updateTagsRes = await page.request.put(`${BACKEND_URL}/api/loops/${createdLoopId}/tags`, {
+      // 通过 PUT /api/v1/workspaces/1/loops/{id}/tags 关联标签
+      const updateTagsRes = await page.request.put(`${BACKEND_URL}/api/v1/workspaces/1/loops/${createdLoopId}/tags`, {
         data: { tag_ids: [createdTagId] },
       });
       expect(updateTagsRes.ok()).toBeTruthy();
       const updated = await updateTagsRes.json();
       expect(updated.data.tag_ids).toContain(createdTagId);
 
-      // 验证环路详情 GET /api/loops/{id} 也返回标签，确保详情与列表数据源一致
-      const detailRes = await page.request.get(`${BACKEND_URL}/api/loops/${createdLoopId}`);
+      // 验证环路详情 GET /api/v1/workspaces/1/loops/{id} 也返回标签，确保详情与列表数据源一致
+      const detailRes = await page.request.get(`${BACKEND_URL}/api/v1/workspaces/1/loops/${createdLoopId}`);
       expect(detailRes.ok()).toBeTruthy();
       const detail = await detailRes.json();
       expect(detail.data.tag_ids).toContain(createdTagId);
     } finally {
       // 资源清理：先删标签再删环路，避免外键约束问题
-      if (createdTagId) await page.request.delete(`${BACKEND_URL}/api/tags/${createdTagId}`);
-      if (createdLoopId) await page.request.delete(`${BACKEND_URL}/api/loops/${createdLoopId}`);
+      if (createdTagId) await page.request.delete(`${BACKEND_URL}/api/v1/tags/${createdTagId}`);
+      if (createdLoopId) await page.request.delete(`${BACKEND_URL}/api/v1/workspaces/1/loops/${createdLoopId}`);
     }
   });
 
@@ -143,7 +143,7 @@ test.describe('环节/环路标签功能', () => {
 
     try {
       // 创建标签
-      const tagRes = await page.request.post(`${BACKEND_URL}/api/tags`, {
+      const tagRes = await page.request.post(`${BACKEND_URL}/api/v1/tags`, {
         data: { name: uniqueTagName('列表标签'), color: '#722ed1' },
       });
       expect(tagRes.ok()).toBeTruthy();
@@ -151,7 +151,7 @@ test.describe('环节/环路标签功能', () => {
       createdTagId = tag.data.id;
 
       // 创建环路
-      const loopRes = await page.request.post(`${BACKEND_URL}/api/loops`, {
+      const loopRes = await page.request.post(`${BACKEND_URL}/api/v1/workspaces/1/loops`, {
         data: { name: uniqueTagName('列表测试环路') },
       });
       expect(loopRes.ok()).toBeTruthy();
@@ -159,13 +159,13 @@ test.describe('环节/环路标签功能', () => {
       createdLoopId = loop.data.id;
 
       // 关联标签
-      const updateTagsRes = await page.request.put(`${BACKEND_URL}/api/loops/${createdLoopId}/tags`, {
+      const updateTagsRes = await page.request.put(`${BACKEND_URL}/api/v1/workspaces/1/loops/${createdLoopId}/tags`, {
         data: { tag_ids: [createdTagId] },
       });
       expect(updateTagsRes.ok()).toBeTruthy();
 
-      // 列表接口 GET /api/loops 应包含该环路的标签信息
-      const listRes = await page.request.get(`${BACKEND_URL}/api/loops`);
+      // 列表接口 GET /api/v1/workspaces/1/loops 应包含该环路的标签信息
+      const listRes = await page.request.get(`${BACKEND_URL}/api/v1/workspaces/1/loops`);
       expect(listRes.ok()).toBeTruthy();
       const list = await listRes.json();
       const target = list.data.find((l: any) => l.id === createdLoopId);
@@ -174,8 +174,8 @@ test.describe('环节/环路标签功能', () => {
       expect(target.tag_ids).toContain(createdTagId);
     } finally {
       // 资源清理
-      if (createdTagId) await page.request.delete(`${BACKEND_URL}/api/tags/${createdTagId}`);
-      if (createdLoopId) await page.request.delete(`${BACKEND_URL}/api/loops/${createdLoopId}`);
+      if (createdTagId) await page.request.delete(`${BACKEND_URL}/api/v1/tags/${createdTagId}`);
+      if (createdLoopId) await page.request.delete(`${BACKEND_URL}/api/v1/workspaces/1/loops/${createdLoopId}`);
     }
   });
 });

@@ -3,7 +3,7 @@ use axum::{Router, routing::{get, post, put}};
 use serde::Deserialize;
 
 use crate::db::TodoUpdate;
-use crate::handlers::{ApiJson, AppError, AppState};
+use crate::handlers::{workspace_guard, ApiJson, AppError, AppState};
 // todo hook 已整块移除（plan `purring-forging-petal`），HookContext 不再导入。
 use crate::models::{
     utc_timestamp, ApiResponse, BatchCopyTodoWorkspaceRequest,
@@ -35,8 +35,10 @@ fn validate_cron_expression(expr: &str) -> Result<(), String> {
 /// 返回重新计算后的 TodoCenterItem（computed_bucket=archived）。
 pub async fn archive_todo(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
 ) -> Result<ApiResponse<TodoCenterItem>, AppError> {
+    // V1 隔离：校验 todo 归属路径 workspace，防止跨 ws 归档他人事项
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     // rows_affected=0 说明 todo 不存在或已软删，统一回 404
     if !state.db.archive_todo(id).await? {
         return Err(AppError::NotFound);
@@ -48,8 +50,10 @@ pub async fn archive_todo(
 /// `POST /api/todos/{id}/restore`：恢复事项（清空 archived_at，分类按真实关系重算）。
 pub async fn restore_todo(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
 ) -> Result<ApiResponse<TodoCenterItem>, AppError> {
+    // V1 隔离：校验 todo 归属路径 workspace
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     if !state.db.restore_todo(id).await? {
         return Err(AppError::NotFound);
     }
@@ -61,9 +65,11 @@ pub async fn restore_todo(
 /// 与 `PUT /api/todos/{id}/scheduler` 对称的扁平具名路由。
 pub async fn update_webhook(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
     ApiJson(req): ApiJson<UpdateWebhookRequest>,
 ) -> Result<ApiResponse<TodoCenterItem>, AppError> {
+    // V1 隔离：校验 todo 归属路径 workspace
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     if !state.db.update_todo_webhook(id, req.webhook_enabled).await? {
         return Err(AppError::NotFound);
     }
@@ -86,8 +92,10 @@ async fn load_center_item_or_404(
 
 pub async fn get_todo(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
 ) -> Result<ApiResponse<Todo>, AppError> {
+    // V1 隔离：todo id 全局唯一不等于跨 ws 可见，校验归属路径 workspace
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     let todo = state.require_todo(id).await?;
     Ok(ApiResponse::ok(todo))
 }
@@ -255,9 +263,11 @@ pub async fn create_todo(
 
 pub async fn update_todo(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
     ApiJson(req): ApiJson<UpdateTodoRequest>,
 ) -> Result<ApiResponse<Todo>, AppError> {
+    // V1 隔离：校验 todo 归属路径 workspace
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     // 获取当前值用于填充
     let current = state.require_todo(id).await?;
 
@@ -356,9 +366,11 @@ pub async fn update_todo(
 
 pub async fn update_todo_tags(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
     ApiJson(req): ApiJson<UpdateTagsRequest>,
 ) -> Result<ApiResponse<()>, AppError> {
+    // V1 隔离：校验 todo 归属路径 workspace
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     // 先查询之前关联的 tag（用于计算新增的 tag）
     let old_tag_ids: std::collections::HashSet<i64> = state.db.get_todo_tag_ids(id).await.unwrap_or_default().into_iter().collect();
     state.db.set_todo_tags(id, &req.tag_ids).await?;
@@ -376,8 +388,10 @@ pub async fn update_todo_tags(
 
 pub async fn delete_todo(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
 ) -> Result<ApiResponse<()>, AppError> {
+    // V1 隔离：校验 todo 归属路径 workspace，防止跨 ws 删除他人事项
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     // Get todo info before deletion for hooks
     state.db.get_todo(id).await?;
 
@@ -408,9 +422,11 @@ pub async fn delete_todo(
 
 pub async fn force_update_todo_status(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
     ApiJson(req): ApiJson<UpdateTodoRequest>,
 ) -> Result<ApiResponse<Todo>, AppError> {
+    // V1 隔离：校验 todo 归属路径 workspace
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     if let Some(new_status) = req.status {
         state
             .db

@@ -89,7 +89,7 @@ async function createProposedTodos(
     // 因此必须检查返回值，否则执行器设置失败时会误报成功
     let executorFailed = 0;
     if (ids.length > 0) {
-      const result = await batchUpdateTodosExecutor(ids, PROPOSAL_EXECUTOR);
+      const result = await batchUpdateTodosExecutor(workspaceId, ids, PROPOSAL_EXECUTOR);
       executorFailed = result.failed.length;
     }
     if (executorFailed > 0) {

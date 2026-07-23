@@ -125,22 +125,23 @@ export function getExpertProfession(expert: ExpertMetadata): string {
   return expert.profession_zh || expert.profession_en || '';
 }
 
-/** 获取头像 URL */
+/** 获取头像 URL（<img src> 直接用，不经 axios 拦截器，手动写 v1 前缀） */
 export function getExpertAvatarUrl(expert: ExpertMetadata): string {
   if (!expert.avatar_path) return '';
-  return `/api/experts/${encodeURIComponent(expert.name)}/avatar`;
+  return `/api/v1/experts/${encodeURIComponent(expert.name)}/avatar`;
 }
 
 /**
  * 获取团队成员头像 URL
  *
  * 成员的 avatar_path 是相对路径（如 avatars/xxx.jpg），浏览器无法直接访问，
- * 需要通过后端接口 /api/experts/:name/members/:member_id/avatar 获取。
+ * 需要通过后端接口 /api/v1/experts/:name/members/:member_id/avatar 获取。
  * 后端会根据 expert_name 定位专家目录，再在 members 中按 member_id 查找成员，
  * 拼接 definition_dir + member.avatar_path 读取头像文件。
+ * <img src> 直接用，不经 axios 拦截器，手动写 v1 前缀。
  */
 export function getMemberAvatarUrl(expertName: string, memberId: string): string {
-  return `/api/experts/${encodeURIComponent(expertName)}/members/${encodeURIComponent(memberId)}/avatar`;
+  return `/api/v1/experts/${encodeURIComponent(expertName)}/members/${encodeURIComponent(memberId)}/avatar`;
 }
 
 /**

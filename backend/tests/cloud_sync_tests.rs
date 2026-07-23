@@ -110,7 +110,8 @@ async fn cloud_sync_push_does_not_deadlock_with_config_write() {
 
     let req = Request::builder()
         .method("POST")
-        .uri("/api/cloud/sync/push?conflict_mode=overwrite&dry_run=false")
+        // v1: cloud sync 也加 v1 前缀（路径与 handlers/action.rs::v1_routes 对齐）
+        .uri("/api/v1/cloud/sync/push?conflict_mode=overwrite&dry_run=false")
         .body(Body::empty())
         .unwrap();
 
@@ -140,7 +141,7 @@ async fn cloud_sync_push_does_not_deadlock_with_config_write() {
 async fn cloud_sync_pull_does_not_deadlock_with_config_write() {
     let (app, config) = build_test_app().await;
 
-    // pull 调的是 GET /api/v1/sync/pull，mock 对所有请求都回 success: true。
+    // pull 调的是 POST /api/v1/cloud/sync/pull，mock 对所有请求都回 success: true。
     let cloud_url = spawn_mock_cloud().await;
     {
         let mut cfg = config.write().unwrap();
@@ -153,8 +154,8 @@ async fn cloud_sync_pull_does_not_deadlock_with_config_write() {
     }
 
     let req = Request::builder()
-        .method("POST") // 路由是 POST（见 handlers/mod.rs）
-        .uri("/api/cloud/sync/pull?conflict_mode=overwrite&dry_run=false")
+        .method("POST") // 路由是 POST（见 handlers/action.rs::v1_routes）
+        .uri("/api/v1/cloud/sync/pull?conflict_mode=overwrite&dry_run=false")
         .body(Body::empty())
         .unwrap();
 
@@ -187,7 +188,8 @@ async fn cloud_sync_push_missing_token_returns_bad_request() {
 
     let req = Request::builder()
         .method("POST")
-        .uri("/api/cloud/sync/push")
+        // v1: 同上，cloud sync 加 v1 前缀
+        .uri("/api/v1/cloud/sync/push")
         .body(Body::empty())
         .unwrap();
 

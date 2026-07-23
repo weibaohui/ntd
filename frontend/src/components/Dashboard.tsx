@@ -73,7 +73,8 @@ export function Dashboard() {
   const loadStats = async (hours?: number) => {
     try {
       setLoading(true);
-      const data = await db.getDashboardStats(hours);
+      // v1 纯 workspace-scoped：dashboard stats 按 workspace 隔离
+      const data = await db.getDashboardStats(state.selectedWorkspace ?? 0, hours);
       setStats(data);
     } catch {
       message.error('加载统计数据失败');

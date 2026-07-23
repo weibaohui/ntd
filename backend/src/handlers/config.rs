@@ -169,6 +169,11 @@ pub fn v1_routes() -> Router<AppState> {
             "/api/v1/executors/{name}/default",
             put(executor_config::set_default_executor),
         )
+        // 列出执行器支持的模型（executor-model：模型动态下拉）
+        .route(
+            "/api/v1/executors/{name}/models",
+            get(executor_config::list_executor_models),
+        )
 }
 
 #[cfg(test)]

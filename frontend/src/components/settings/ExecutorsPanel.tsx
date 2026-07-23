@@ -108,7 +108,7 @@ export function ExecutorsPanel() {
   // 正在运行 tab：加载运行中记录
   const loadRunningRecords = async () => {
     try {
-      const records = await db.getRunningExecutionRecords();
+      const records = await db.getRunningExecutionRecords(state.selectedWorkspace ?? 0);
       setRunningRecords(records);
     } catch (err) {
       console.error('加载运行中任务失败:', err);
@@ -129,7 +129,7 @@ export function ExecutorsPanel() {
     setStoppingRecords(true);
     const results = await Promise.allSettled(
       selectedRecordIds.map(async (recordId) => {
-        await db.forceFailExecution(recordId);
+        await db.forceFailExecution(state.selectedWorkspace ?? 0, recordId);
       })
     );
     const successCount = results.filter(r => r.status === 'fulfilled').length;
@@ -850,7 +850,7 @@ export function ExecutorsPanel() {
                     render: (_: unknown, record: ExecutionRecord) => (
                       <Popconfirm title="确认停止此任务？" onConfirm={async () => {
                         try {
-                          await db.forceFailExecution(record.id);
+                          await db.forceFailExecution(state.selectedWorkspace ?? 0, record.id);
                           message.success('已停止');
                           loadRunningRecords();
                         } catch (err) { message.error(`停止失败: ${err instanceof Error ? err.message : String(err)}`); }

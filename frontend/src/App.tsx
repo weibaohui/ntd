@@ -468,6 +468,7 @@ function AppContent() {
         onClose={() => setSmartCreateOpen(false)}
         isMobile={isMobile}
         config={appConfig}
+        workspaceId={state.selectedWorkspace}
         onGoToSettings={() => handleShowView('settings')}
         onSubmitted={handleSmartCreateSubmitted}
       />

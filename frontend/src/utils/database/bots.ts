@@ -70,12 +70,13 @@ export interface UpdateWorkspaceSettingsParams {
 }
 
 // ============================================================================
-// Workspace API 函数（阶段8）
+// Workspace API 函数 — slash-commands/settings 嵌套在 /api/v1/workspaces/{ws} 下。
+// 后端 v1 用复数 workspaces（v0 用过单数 workspace），URL 写复数让拦截器加 v1 前缀。
 // ============================================================================
 
 /** 获取工作空间的斜杠命令列表 */
 export async function getWorkspaceSlashCommands(workspaceId: number): Promise<WorkspaceSlashCommand[]> {
-  return unwrap(await api.get(`/api/workspace/${workspaceId}/slash-commands`));
+  return unwrap(await api.get(`/api/workspaces/${workspaceId}/slash-commands`));
 }
 
 /** 创建工作空间的斜杠命令 */
@@ -83,7 +84,7 @@ export async function createWorkspaceSlashCommand(
   workspaceId: number,
   params: CreateWorkspaceSlashCommandParams,
 ): Promise<{ id: number }> {
-  return unwrap(await api.post(`/api/workspace/${workspaceId}/slash-commands`, params));
+  return unwrap(await api.post(`/api/workspaces/${workspaceId}/slash-commands`, params));
 }
 
 /** 更新工作空间的斜杠命令 */
@@ -92,17 +93,17 @@ export async function updateWorkspaceSlashCommand(
   cmdId: number,
   params: UpdateWorkspaceSlashCommandParams,
 ): Promise<void> {
-  await api.put(`/api/workspace/${workspaceId}/slash-commands/${cmdId}`, params);
+  await api.put(`/api/workspaces/${workspaceId}/slash-commands/${cmdId}`, params);
 }
 
 /** 删除工作空间的斜杠命令 */
 export async function deleteWorkspaceSlashCommand(workspaceId: number, cmdId: number): Promise<void> {
-  await api.delete(`/api/workspace/${workspaceId}/slash-commands/${cmdId}`);
+  await api.delete(`/api/workspaces/${workspaceId}/slash-commands/${cmdId}`);
 }
 
 /** 获取工作空间的设置 */
 export async function getWorkspaceSettings(workspaceId: number): Promise<WorkspaceSettings> {
-  return unwrap(await api.get(`/api/workspace/${workspaceId}/settings`));
+  return unwrap(await api.get(`/api/workspaces/${workspaceId}/settings`));
 }
 
 /** 更新工作空间的设置 */
@@ -110,10 +111,10 @@ export async function updateWorkspaceSettings(
   workspaceId: number,
   params: UpdateWorkspaceSettingsParams,
 ): Promise<void> {
-  await api.put(`/api/workspace/${workspaceId}/settings`, params);
+  await api.put(`/api/workspaces/${workspaceId}/settings`, params);
 }
 
-/** 将 Bot 移动到另一个工作空间（阶段6级联） */
+/** 将 Bot 移动到另一个工作空间（agent-bots 为全局路由，拦截器加 v1 前缀） */
 export async function moveBotToWorkspace(botId: number, workspaceId: number): Promise<void> {
   await api.put(`/api/agent-bots/${botId}/workspace`, { workspace_id: workspaceId });
 }
@@ -224,7 +225,8 @@ export function feishuPollSSE(
   if (workspaceId !== undefined) {
     params.set('workspace_id', String(workspaceId));
   }
-  const url = `/api/agent-bots/feishu/poll-stream?${params.toString()}`;
+  // EventSource 走浏览器原生 fetch，不经 axios 拦截器，手动写 v1 前缀
+  const url = `/api/v1/agent-bots/feishu/poll-stream?${params.toString()}`;
   const eventSource = new EventSource(url);
 
   eventSource.addEventListener('result', (event) => {

@@ -7,7 +7,7 @@ const DEV_URL = 'http://localhost:18088';
 
 test('展开执行历史不应影响流程图渲染', async ({ page }) => {
   // 找一个至少有 1 个 step 的 loop（通过 API 直接筛选）
-  const listRes = await page.request.get(`${BACKEND_URL}/api/loops?page=1&limit=50`);
+  const listRes = await page.request.get(`${BACKEND_URL}/api/v1/workspaces/1/loops?page=1&limit=50`);
   const listJson = await listRes.json();
   const loops: Array<{ id: number; step_count: number }> = listJson?.data ?? [];
   const candidate = loops.find((l) => l.step_count > 0);

@@ -64,7 +64,8 @@ export function useRunningBoard(workspaceId?: number | null, hours?: number): Ru
       setRecords([]); // 切换 workspace 时先清空，避免旧数据闪烁
       setScheduledTodos([]);
       // 运行看板不分页，拉取最近的一批数据即可
-      const data = await db.getRunningBoardData(undefined, 200, ws ?? undefined, h);
+      // v1 纯 workspace-scoped：workspaceId 提升为必传路径段
+      const data = await db.getRunningBoardData(ws ?? 0, undefined, 200, h);
       if (mountedRef.current && latestWsRef.current === ws && latestHoursRef.current === h) {
         setRecords(data.records);
         setScheduledTodos(data.scheduled_todos);

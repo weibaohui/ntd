@@ -62,7 +62,11 @@ enum Commands {
         action: cli::TagAction,
     },
     /// Global statistics
-    Stats,
+    Stats {
+        /// Workspace ID (project_directories.id). v1 路由把 dashboard 嵌入 workspace URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+    },
     /// Manage ntd daemon service (install/uninstall/start/stop/restart/status)
     Daemon {
         #[command(subcommand)]
@@ -237,8 +241,9 @@ async fn main() {
             dispatch_subcommand(&cli, cli::Commands::Tag { action: action.clone() }).await;
             return;
         }
-        Some(Commands::Stats) => {
-            dispatch_subcommand(&cli, cli::Commands::Stats).await;
+        Some(Commands::Stats { workspace_id }) => {
+            // v1: Stats 现在带 workspace_id（dashboard 嵌入 workspace URL）
+            dispatch_subcommand(&cli, cli::Commands::Stats { workspace_id: *workspace_id }).await;
             return;
         }
         Some(Commands::Daemon { action }) => {

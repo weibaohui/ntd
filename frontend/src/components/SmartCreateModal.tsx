@@ -10,11 +10,13 @@ interface SmartCreateModalProps {
   onClose: () => void;
   isMobile: boolean;
   config: Config | null;
+  /** 当前工作空间 ID（v1 路由 workspace-scoped，smart-create 必需） */
+  workspaceId: number | null;
   onGoToSettings?: () => void;
   onSubmitted?: () => void;
 }
 
-export function SmartCreateModal({ open, onClose, isMobile, config, onGoToSettings, onSubmitted }: SmartCreateModalProps) {
+export function SmartCreateModal({ open, onClose, isMobile, config, workspaceId, onGoToSettings, onSubmitted }: SmartCreateModalProps) {
   const [content, setContent] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const textAreaRef = useRef<InputRef>(null);
@@ -40,7 +42,7 @@ export function SmartCreateModal({ open, onClose, isMobile, config, onGoToSettin
 
     setSubmitting(true);
     try {
-      const result = await smartCreate(trimmed);
+      const result = await smartCreate(workspaceId ?? 0, trimmed);
       const title = result.todo_title.length > 20
         ? result.todo_title.slice(0, 20) + '...'
         : result.todo_title;

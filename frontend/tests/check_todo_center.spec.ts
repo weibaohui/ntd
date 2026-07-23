@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 // 验证事项中心页面（/#items）：五类驱动 Tab、卡片渲染、Tab 切换、搜索过滤。
-// 后端 GET /api/todos/center 返回 computed_bucket，前端按桶分组并展示各 Tab 数量。
+// 后端 GET /api/v1/workspaces/1/todos/center 返回 computed_bucket，前端按桶分组并展示各 Tab 数量。
 
 const BASE = 'http://localhost:18088';
 
@@ -159,12 +159,12 @@ test('归档被 Loop 引用的事项给出引用提示', async ({ page }) => {
 
 test('删除被 Loop 引用的事项被拒绝', async ({ page }) => {
   // 取一个 Loop 驱动事项，尝试通过 API 删除应返回 400
-  const resp = await page.request.get(`${BASE}/api/todos/center?bucket=loop_driven`);
+  const resp = await page.request.get(`${BASE}/api/v1/workspaces/1/todos/center?bucket=loop_driven`);
   const body = await resp.json();
   const loopTodo = (body.data || [])[0];
   expect(loopTodo).toBeTruthy();
 
-  const del = await page.request.delete(`${BASE}/api/todos/${loopTodo.id}`);
+  const del = await page.request.delete(`${BASE}/api/v1/workspaces/1/todos/${loopTodo.id}`);
   expect(del.status()).toBe(400);
   const delBody = await del.json();
   expect(delBody.message || '').toContain('Loop');
@@ -172,7 +172,7 @@ test('删除被 Loop 引用的事项被拒绝', async ({ page }) => {
 
 test('Loop 详情图标记已归档环节', async ({ page }) => {
   // 归档一个被 Loop 引用的事项（todo #1），Loop 详情图应渲染「已归档」标记
-  await page.request.post(`${BASE}/api/todos/1/archive`);
+  await page.request.post(`${BASE}/api/v1/workspaces/1/todos/1/archive`);
   try {
     await page.goto(`${BASE}/#/loops?id=1&panel=detail`);
     await page.waitForTimeout(1500);
@@ -180,7 +180,7 @@ test('Loop 详情图标记已归档环节', async ({ page }) => {
     await expect(page.getByText('已归档', { exact: true }).first()).toBeVisible({ timeout: 8000 });
   } finally {
     // 恢复，不留下脏数据
-    await page.request.post(`${BASE}/api/todos/1/restore`);
+    await page.request.post(`${BASE}/api/v1/workspaces/1/todos/1/restore`);
   }
 });
 
@@ -262,7 +262,7 @@ test('已归档卡片菜单含删除', async ({ page }) => {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(200);
   const idNum = tid!.replace('todo-center-card-', '');
-  await page.request.post(`${BASE}/api/todos/${idNum}/restore`);
+  await page.request.post(`${BASE}/api/v1/workspaces/1/todos/${idNum}/restore`);
 });
 
 test('移动端：默认卡片墙单列，可切到列表，再切回卡片', async ({ page }) => {

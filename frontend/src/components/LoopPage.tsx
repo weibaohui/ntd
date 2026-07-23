@@ -94,10 +94,11 @@ export function LoopPage({
   const detailPanel = selectedLoopId !== null ? (
     <LoopDetailPanel
       loopId={selectedLoopId}
+      workspaceId={workspaceId ?? null}
       tags={tags}
       onTrigger={async () => {
         try {
-          const res = await dbLoops.triggerLoop(selectedLoopId);
+          const res = await dbLoops.triggerLoop(workspaceId ?? 0, selectedLoopId);
           message.success(`已触发 (execution #${res.execution_id})`);
         } catch (err) {
           message.error(`触发失败: ${err instanceof Error ? err.message : '未知错误'}`);
@@ -105,7 +106,7 @@ export function LoopPage({
       }}
       onDuplicate={async () => {
         try {
-          await dbLoops.duplicateLoop(selectedLoopId);
+          await dbLoops.duplicateLoop(workspaceId ?? 0, selectedLoopId);
           message.success('已复制');
         } catch (err) {
           message.error(`复制失败: ${err instanceof Error ? err.message : '未知错误'}`);
@@ -113,7 +114,7 @@ export function LoopPage({
       }}
       onDelete={async () => {
         try {
-          await dbLoops.deleteLoop(selectedLoopId);
+          await dbLoops.deleteLoop(workspaceId ?? 0, selectedLoopId);
           message.success('已删除');
           onLoopChanged();
         } catch {
@@ -122,11 +123,11 @@ export function LoopPage({
       }}
       onToggleStatus={async () => {
         try {
-          const loops = await dbLoops.listLoops();
+          const loops = await dbLoops.listLoops(workspaceId ?? null);
           const loop = loops.find(l => l.id === selectedLoopId);
           if (!loop) return;
           const next = loop.status === 'enabled' ? 'paused' : 'enabled';
-          await dbLoops.updateLoopStatus(selectedLoopId, { status: next } as any);
+          await dbLoops.updateLoopStatus(workspaceId ?? 0, selectedLoopId, { status: next } as any);
           message.success(`已${next === 'enabled' ? '启用' : '暂停'}`);
         } catch (err) {
           message.error(`状态切换失败: ${err instanceof Error ? err.message : '未知错误'}`);

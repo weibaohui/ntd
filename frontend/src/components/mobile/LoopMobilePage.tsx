@@ -85,10 +85,10 @@ export function LoopMobilePage({
       setLoopDetail(null);
       return;
     }
-    dbLoops.getLoop(selectedLoopId)
+    dbLoops.getLoop(workspaceId ?? 0, selectedLoopId)
       .then(d => setLoopDetail(d))
       .catch(() => setLoopDetail(null));
-  }, [selectedLoopId]);
+  }, [selectedLoopId, workspaceId]);
 
   useEffect(() => {
     loadLoopDetail();
@@ -97,40 +97,40 @@ export function LoopMobilePage({
   const handleTrigger = useCallback(async () => {
     if (selectedLoopId === null) return;
     try {
-      const res = await dbLoops.triggerLoop(selectedLoopId);
+      const res = await dbLoops.triggerLoop(workspaceId ?? 0, selectedLoopId);
       message.success(`已触发 (execution #${res.execution_id})`);
     } catch (err) {
       message.error(`触发失败: ${err instanceof Error ? err.message : '未知错误'}`);
     }
-  }, [selectedLoopId]);
+  }, [selectedLoopId, workspaceId]);
 
   const handleDuplicate = useCallback(async () => {
     if (selectedLoopId === null) return;
     try {
-      await dbLoops.duplicateLoop(selectedLoopId);
+      await dbLoops.duplicateLoop(workspaceId ?? 0, selectedLoopId);
       message.success('已复制');
       onLoopChanged();
     } catch (err) {
       message.error(`复制失败: ${err instanceof Error ? err.message : '未知错误'}`);
     }
-  }, [selectedLoopId, onLoopChanged]);
+  }, [selectedLoopId, workspaceId, onLoopChanged]);
 
   const handleDelete = useCallback(async () => {
     if (selectedLoopId === null) return;
     try {
-      await dbLoops.deleteLoop(selectedLoopId);
+      await dbLoops.deleteLoop(workspaceId ?? 0, selectedLoopId);
       message.success('已删除');
       onLoopChanged();
     } catch {
       message.error('删除失败，环路可能正在被引用');
     }
-  }, [selectedLoopId, onLoopChanged]);
+  }, [selectedLoopId, workspaceId, onLoopChanged]);
 
   const handleToggleStatus = useCallback(async () => {
     if (selectedLoopId === null || !loopDetail) return;
     try {
       const next = loopDetail.status === 'enabled' ? 'paused' : 'enabled';
-      await dbLoops.updateLoopStatus(selectedLoopId, { status: next } as any);
+      await dbLoops.updateLoopStatus(workspaceId ?? 0, selectedLoopId, { status: next } as any);
       message.success(`已${next === 'enabled' ? '启用' : '暂停'}`);
       loadLoopDetail();
       onLoopChanged();
@@ -191,6 +191,7 @@ export function LoopMobilePage({
     >
       <LoopDetailPanel
         loopId={selectedLoopId}
+        workspaceId={workspaceId ?? null}
         tags={tags}
         onTrigger={handleTrigger}
         onDuplicate={handleDuplicate}

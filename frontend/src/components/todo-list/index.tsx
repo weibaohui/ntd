@@ -278,17 +278,19 @@ export function TodoList(props: TodoListProps) {
       const context = workspaceBatchContext;
       let result: { updated_count: number; total: number };
 
+      // selectedWorkspace 为源空间（URL 路径段），target 为目标空间（body）
+      const srcWs = selectedWorkspace ?? 0;
       if (context === 'item') {
         if (mode === 'copy') {
-          result = await db.batchCopyTodosWorkspace(ids, target);
+          result = await db.batchCopyTodosWorkspace(srcWs, ids, target);
         } else {
-          result = await db.batchMoveTodosWorkspace(ids, target);
+          result = await db.batchMoveTodosWorkspace(srcWs, ids, target);
         }
       } else {
         if (mode === 'copy') {
-          result = await dbLoops.batchCopyLoopsWorkspace(ids, target);
+          result = await dbLoops.batchCopyLoopsWorkspace(srcWs, ids, target);
         } else {
-          result = await dbLoops.batchMoveLoopsWorkspace(ids, target);
+          result = await dbLoops.batchMoveLoopsWorkspace(srcWs, ids, target);
         }
       }
 
@@ -328,7 +330,7 @@ export function TodoList(props: TodoListProps) {
     setExecutorModalOpen(false);
     setPendingExecutorChangeIds([]);
     try {
-      const result = await db.batchUpdateTodosExecutor(ids, executor);
+      const result = await db.batchUpdateTodosExecutor(selectedWorkspace ?? 0, ids, executor);
       if (result.failed.length === 0) {
         message.success(`已为 ${result.updated.length} 项更换执行器为「${executor}」`);
       } else {
@@ -387,8 +389,8 @@ export function TodoList(props: TodoListProps) {
     try {
       const isPause = schedulerBatchMode === 'pause';
       const result = isPause
-        ? await db.batchPauseScheduler(ids)
-        : await db.batchResumeScheduler(ids);
+        ? await db.batchPauseScheduler(selectedWorkspace ?? 0, ids)
+        : await db.batchResumeScheduler(selectedWorkspace ?? 0, ids);
       const actionLabel = isPause ? '暂停' : '恢复';
       if (result.updated_count === result.total) {
         message.success(`已${actionLabel} ${result.updated_count} 项的周期执行`);

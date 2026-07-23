@@ -26,6 +26,8 @@ import { StepExecList } from './StepExecList';
 
 interface Props {
   loopId: number;
+  /** 当前工作空间 ID（v1 路由 workspace-scoped） */
+  workspaceId: number | null;
   loopName: string;
   onTotalChange?: (total: number) => void;
   onExecutionTrace?: (tracedStepIds: number[], sequenceMap: Record<number, number>) => void;
@@ -33,7 +35,7 @@ interface Props {
 
 const DEFAULT_PAGE_LIMIT = 5;
 
-export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange, onExecutionTrace }: Props) {
+export function LoopExecutionsPanel({ loopId, workspaceId, loopName: _loopName, onTotalChange, onExecutionTrace }: Props) {
   const { message } = AntApp.useApp();
   const [items, setItems] = useState<LoopExecutionDto[]>([]);
   const [total, setTotal] = useState(0);
@@ -59,17 +61,17 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
   const handleOpenBlackboardForExec = useCallback(async (ev: React.MouseEvent, execId: number) => {
     ev.stopPropagation();
     try {
-      const detail = await dbLoops.getExecution(loopId, execId);
+      const detail = await dbLoops.getExecution(workspaceId ?? 0, loopId, execId);
       handleOpenBlackboard(detail.step_executions);
     } catch {
       message.error('加载黑板数据失败');
     }
-  }, [loopId, handleOpenBlackboard, message]);
+  }, [loopId, workspaceId, handleOpenBlackboard, message]);
 
   // 加载一页执行记录
   const loadPage = useCallback((p: number) => {
     setLoading(true);
-    dbLoops.listExecutions(loopId, { page: p, limit: DEFAULT_PAGE_LIMIT })
+    dbLoops.listExecutions(workspaceId ?? 0, loopId, { page: p, limit: DEFAULT_PAGE_LIMIT })
       .then((res) => {
         setItems(res.items);
         setTotal(res.total);
@@ -80,19 +82,19 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
         setItems([]);
       })
       .finally(() => setLoading(false));
-  }, [loopId]);
+  }, [loopId, workspaceId]);
 
   useEffect(() => { loadPage(1); }, [loadPage]);
 
   // 实际的刷新逻辑：拉取列表 + 展开详情
   const doRefresh = useCallback(() => {
-    dbLoops.listExecutions(loopId, { page, limit: DEFAULT_PAGE_LIMIT })
+    dbLoops.listExecutions(workspaceId ?? 0, loopId, { page, limit: DEFAULT_PAGE_LIMIT })
       .then((res) => {
         setItems(res.items);
         setTotal(res.total);
         onTotalChange?.(res.total);
         if (expandedId !== null) {
-          return dbLoops.getExecution(loopId, expandedId);
+          return dbLoops.getExecution(workspaceId ?? 0, loopId, expandedId);
         }
         return null;
       })
@@ -102,7 +104,7 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
         }
       })
       .catch(() => {});
-  }, [page, loopId, expandedId]);
+  }, [page, loopId, workspaceId, expandedId]);
 
   // WebSocket 事件触发刷新（后端写入完成后才发事件，无需延迟）
   useExecutionEvents(useCallback(() => {
@@ -120,7 +122,7 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
     setExpandedId(execId);
     setExpandedLoading(true);
     try {
-      const detail = await dbLoops.getExecution(loopId, execId);
+      const detail = await dbLoops.getExecution(workspaceId ?? 0, loopId, execId);
       setExpandedDetail(detail);
       // 提取轨迹：按 sequence_index 排序的 loop_step_id 列表
       const sorted = [...detail.step_executions].sort(
@@ -236,7 +238,7 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
                         {expandedDetail.token_summary && (
                           <TokenSummaryBar summary={expandedDetail.token_summary} />
                         )}
-                        <StepExecList stepExecs={expandedDetail.step_executions} loopId={loopId} executionId={expandedDetail.id} onApproved={() => loadPage(page)} />
+                        <StepExecList stepExecs={expandedDetail.step_executions} loopId={loopId} workspaceId={workspaceId ?? 0} executionId={expandedDetail.id} onApproved={() => loadPage(page)} />
                       </>
                     ) : null}
                   </div>
@@ -265,6 +267,7 @@ export function LoopExecutionsPanel({ loopId, loopName: _loopName, onTotalChange
       <BlackboardDrawer
         open={blackboardOpen}
         stepExecs={blackboardExecs}
+        workspaceId={workspaceId ?? 0}
         onClose={() => setBlackboardOpen(false)}
       />
     </div>

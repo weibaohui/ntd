@@ -965,6 +965,7 @@ pub async fn v1_smart_create_handler(
         todo_id,
         message,
         req_executor: None,
+        req_model: None,
         trigger_type: "smart_create".to_string(),
         params: Some(params),
         resume_session_id: None,

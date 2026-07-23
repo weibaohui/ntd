@@ -43,8 +43,9 @@ export async function deleteBackupFile(filename: string): Promise<string> {
   return unwrap(await api.delete('/api/backup/database/file', { data: { filename } }));
 }
 
+// URL builder 返回给 <a href> / window.open，不经 axios 拦截器，手动写 v1 前缀
 export function downloadBackupFileUrl(filename: string): string {
-  return `/api/backup/database/file?filename=${encodeURIComponent(filename)}`;
+  return `/api/v1/backup/database/file?filename=${encodeURIComponent(filename)}`;
 }
 
 // Log Cleanup APIs
@@ -92,7 +93,7 @@ export async function deleteTodoBackupFile(filename: string): Promise<string> {
 }
 
 export function downloadTodoBackupFileUrl(filename: string): string {
-  return `/api/backup/todo/file?filename=${encodeURIComponent(filename)}`;
+  return `/api/v1/backup/todo/file?filename=${encodeURIComponent(filename)}`;
 }
 
 // Skill Backup APIs
@@ -131,7 +132,7 @@ export async function deleteSkillBackupFile(filename: string): Promise<string> {
 }
 
 export function downloadSkillBackupFileUrl(filename: string): string {
-  return `/api/backup/skills/file?filename=${encodeURIComponent(filename)}`;
+  return `/api/v1/backup/skills/file?filename=${encodeURIComponent(filename)}`;
 }
 
 // Loop Import/Export APIs
@@ -167,8 +168,12 @@ export interface LoopImportPreview {
   loops: LoopImportPreviewLoop[];
 }
 
-export async function previewLoopImport(yaml: string): Promise<LoopImportPreview> {
-  const response = await fetch('/api/loops/import/preview', {
+/**
+ * 预览 loop 导入数据（原生 fetch，不经 axios 拦截器，手动写 v1 路径）。
+ * workspaceId 为导入目标空间的上下文（v1 workspace-scoped）。
+ */
+export async function previewLoopImport(workspaceId: number, yaml: string): Promise<LoopImportPreview> {
+  const response = await fetch(`/api/v1/workspaces/${workspaceId}/loops/import/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-yaml' },
     body: yaml,
@@ -199,15 +204,18 @@ export interface LoopImportResult {
 }
 
 /**
+ * 合并导入 loops。
+ * workspaceId 为 URL 路径段（v1 workspace-scoped 上下文空间）。
  * workspace_id 全局传 null（逐条由 workspace_overrides 指定）。
  * workspace_overrides: loop name → workspace_id（用户逐行选择，仅含已指定的非空项）。
  * skip_names: 用户选择「跳过」的同名环路名集合，后端不创建/覆盖、同名保留原样。
  */
 export async function mergeLoops(
+  workspaceId: number,
   yaml: string,
   workspace_id: number | null,
   workspace_overrides?: Record<string, number>,
   skip_names?: string[],
 ): Promise<{ success: boolean; created: LoopImportResult['created']; updated: LoopImportResult['created']; skipped: string[]; warnings: { type: string; message: string }[] }> {
-  return unwrap(await api.post('/api/loops/merge', { yaml, workspace_id, workspace_overrides, skip_names }));
+  return unwrap(await api.post(`/api/workspaces/${workspaceId}/loops/merge`, { yaml, workspace_id, workspace_overrides, skip_names }));
 }

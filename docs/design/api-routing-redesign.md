@@ -104,7 +104,6 @@ POST /api/experts/create       # → 与 /experts/{name} 路由冲突
 | 资源 | 新路径前缀 | 说明 |
 |------|-----------|------|
 | todos | `.../workspaces/{ws}/todos` | 核心任务 |
-| tags | `.../workspaces/{ws}/tags` | 标签（按项目隔离） |
 | loops | `.../workspaces/{ws}/loops` | Loop Studio |
 | executions | `.../workspaces/{ws}/executions` | 执行记录 |
 | blackboard | `.../workspaces/{ws}/blackboard` | 黑板（已有，加版本号） |
@@ -119,6 +118,7 @@ POST /api/experts/create       # → 与 /experts/{name} 路由冲突
 
 | 资源 | 新路径前缀 | 说明 |
 |------|-----------|------|
+| tags | `.../tags` | 标签（全局：tags 表无 workspace_id 列，不嵌套 workspace） |
 | config | `.../config` | 系统配置 |
 | executors | `.../executors` | 执行器配置 |
 | skills | `.../skills` | 技能管理 |
@@ -164,9 +164,9 @@ POST /api/experts/create       # → 与 /experts/{name} 路由冲突
 | POST | `/api/todos/{id}/restore`{--} | `/api/v1/workspaces/{ws}/todos/{id}/restore`{++} |
 | PUT | `/api/todos/{id}/webhook`{--} | `/api/v1/workspaces/{ws}/todos/{id}/webhook`{++} |
 | GET | `/api/todos/{id}/summary`{--} | `/api/v1/workspaces/{ws}/todos/{id}/summary`{++} |
-| GET | `/api/tags`{--} | `/api/v1/workspaces/{ws}/tags`{++} |
-| POST | `/api/tags`{--} | `/api/v1/workspaces/{ws}/tags`{++} |
-| DELETE | `/api/tags/{id}`{--} | `/api/v1/workspaces/{ws}/tags/{id}`{++} |
+| GET | `/api/tags`{--} | `/api/v1/tags`{++} |
+| POST | `/api/tags`{--} | `/api/v1/tags`{++} |
+| DELETE | `/api/tags/{id}`{--} | `/api/v1/tags/{id}`{++} |
 
 #### 批量操作收敛（方案 B：子资源）
 
@@ -608,10 +608,11 @@ async fn list_todos(
 - 选择：`POST .../batch/executor`、`POST .../batch/workspace`
 - 理由：方案 A（`POST .../batch` + body.action）虽然更 REST，但 body.action 的枚举值会影响路由/权限的可见性；子资源方式让每个批量操作有明确的 URL，便于日志和监控
 
-### ADR-4：为什么 tags 归入 workspace
+### ADR-4：为什么 tags 保持全局（不嵌套 workspace）
 
-- 业务语义：标签是项目维度的分类，不同项目有不同的标签体系
-- 如果将来需要全局标签，可以在 `/api/v1/tags` 提供只读聚合，但写操作走 workspace 域
+- 数据现状：`tags` 表无 `workspace_id` 列，标签天然是全局资源
+- 选择：`/api/v1/tags`（全局），不嵌套 `/workspaces/{ws}/`
+- 理由：避免为迁就「纯 scoped」而给 tags 表强加 workspace_id 列 + migration；todo↔tag 的归属仍由 `todo_tags` 关联表隐含（todo 自带 workspace_id，故 tag 经 todo 间接属于某 ws）
 
 ### ADR-5：为什么 webhook 加 `/api/` 前缀并重新组织
 
@@ -628,6 +629,12 @@ async fn list_todos(
 
 - 选择：新旧路由不共存。测试验证通过后，旧路由代码直接删除
 - 理由：两套路由的维护成本（双 handler、双测试、双文档）会持续累加，且本项目无外部 API 消费者（社区插件等），迁移是可控的原子操作。前后端 + CLI 在同一 PR 中完成切换即可
+
+### ADR-8：为什么放弃「跨空间列表」，采用纯 scoped
+
+- 选择：每个 workspace-scoped 请求**必带** ws_id（路径 `/workspaces/{ws}/...`），后端**不提供**「列出全部 workspace 资源」的全局端点
+- 理由：纯 scoped 让租户边界在 URL 层强制可见，隔离校验（`verify_*_belongs_to_ws`）无遗漏分支；「跨空间视图」由前端在 `selectedWorkspace=null` 时默认选第一个 workspace 实现，而非后端聚合
+- 权衡：牺牲了「一次请求看全部空间」的便利，换取隔离的强保证（无 `?workspace_id=` 缺省即全量的越权风险）
 
 ---
 

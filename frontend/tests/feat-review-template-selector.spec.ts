@@ -11,7 +11,7 @@ const DEV_URL = 'http://localhost:18088';
 
 test('Loop 编辑器评审模板 Select 选项可加载 + inline 新建可工作', async ({ page }) => {
   // 找一个 loop（任意一条都行，因为我们只关心 Select 是否拿到选项）
-  const listRes = await page.request.get(`${BACKEND_URL}/api/loops?page=1&limit=50`);
+  const listRes = await page.request.get(`${BACKEND_URL}/api/v1/workspaces/1/loops?page=1&limit=50`);
   const listJson = await listRes.json();
   const loops: Array<{ id: number; name: string }> = listJson?.data ?? [];
   test.skip(loops.length === 0, '没有任何 loop 可测试，跳过');

@@ -65,11 +65,13 @@ export function TodoPostPage({
     const id = recordId;
     setLoading(true);
     try {
+      // v1 纯 workspace-scoped：execution 查询需 workspaceId
+      const wsId = state.selectedWorkspace ?? 0;
       // 1. 获取目标记录
-      const targetRecord = await db.getExecutionRecord(id);
+      const targetRecord = await db.getExecutionRecord(wsId, id);
       // 2. 如果有 session_id，拉取同 session 的所有记录
       if (targetRecord.session_id) {
-        const sessionRecords = await db.getExecutionRecordsBySession(targetRecord.session_id);
+        const sessionRecords = await db.getExecutionRecordsBySession(wsId, targetRecord.session_id);
         // 按 started_at 排序
         sessionRecords.sort((a, b) =>
           (a.started_at || "").localeCompare(b.started_at || "")
@@ -95,7 +97,7 @@ export function TodoPostPage({
   const loadLogsForRecord = async (rId: number, page: number) => {
     setIsLoadingLogs(true);
     try {
-      const result = await db.getExecutionLogs(rId, page, logsPerPage);
+      const result = await db.getExecutionLogs(state.selectedWorkspace ?? 0, rId, page, logsPerPage);
       setPaginatedLogs(result.logs);
       setLogsPage(page);
     } catch {
@@ -144,7 +146,7 @@ export function TodoPostPage({
 
   const handleStopExecution = async (rId: number) => {
     try {
-      await db.stopExecution(rId);
+      await db.stopExecution(state.selectedWorkspace ?? 0, rId);
       message.info("已发送停止指令");
       await loadSessionRecords();
     } catch (error) {
@@ -156,7 +158,7 @@ export function TodoPostPage({
     if (!replyMessage.trim()) return;
     setReplyLoading(true);
     try {
-      await db.resumeExecutionRecord(r.id, replyMessage);
+      await db.resumeExecutionRecord(state.selectedWorkspace ?? 0, r.id, replyMessage);
       message.success("回复成功，开始执行");
       await loadSessionRecords();
     } catch (error) {
@@ -168,9 +170,10 @@ export function TodoPostPage({
 
   const handleRateExecution = async (rId: number, rating: number | null) => {
     try {
-      await db.rateExecutionRecord(rId, rating);
+      const wsId = state.selectedWorkspace ?? 0;
+      await db.rateExecutionRecord(wsId, rId, rating);
       // 刷新当前记录
-      const updated = await db.getExecutionRecord(rId);
+      const updated = await db.getExecutionRecord(wsId, rId);
       setRecords(prev => prev.map(r => (r.id === rId ? updated : r)));
       message.success(rating == null ? "已清除评分" : `已评分 ${rating}`);
     } catch (error) {
@@ -181,7 +184,7 @@ export function TodoPostPage({
   const handleExportMarkdown = async (r: ExecutionRecord) => {
     let logs: LogEntry[] = [];
     try {
-      const result = await db.getExecutionLogs(r.id, 1, EXPORT.maxLogs);
+      const result = await db.getExecutionLogs(state.selectedWorkspace ?? 0, r.id, 1, EXPORT.maxLogs);
       logs = result.logs;
     } catch { /* ignore */ }
     const msgs = parseLogsToMessages(logs);

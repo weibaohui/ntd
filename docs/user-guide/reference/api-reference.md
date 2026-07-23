@@ -1,6 +1,6 @@
 # ntd API 接口文档
 
-ntd 后端 API 参考手册。所有接口前缀为 `/api/`（WebSocket 为 `/api/events`）。
+ntd 后端 API 参考手册。所有业务接口前缀为 `/api/v1/`：workspace 作用域资源嵌套在 `/api/v1/workspaces/{ws}/` 下（如 todos、executions、loops），全局资源直接挂在 `/api/v1/` 下（如 tags、config、experts）。WebSocket 事件流 `/api/events` 为升级端点，后端不版本化，保持原路径。
 
 ---
 
@@ -36,7 +36,7 @@ ntd 后端 API 参考手册。所有接口前缀为 `/api/`（WebSocket 为 `/ap
 
 ### 获取 Todo 列表
 ```
-GET /api/todos
+GET /api/v1/workspaces/{ws}/todos
 ```
 
 查询参数：
@@ -48,7 +48,7 @@ GET /api/todos
 | `running` | boolean | 仅显示运行中的 Todo（`true`） |
 | `search` | string | 搜索关键词（标题或 prompt 包含匹配，由前端/CLI 在内存中过滤） |
 
-注意：后端 `GET /api/todos` 本身不支持 `page`/`limit` 分页参数；如需分页请在客户端做。
+注意：后端 `GET /api/v1/workspaces/{ws}/todos` 本身不支持 `page`/`limit` 分页参数；如需分页请在客户端做。
 
 **响应示例：**
 ```json
@@ -71,7 +71,7 @@ GET /api/todos
 
 ### 创建 Todo
 ```
-POST /api/todos
+POST /api/v1/workspaces/{ws}/todos
 ```
 
 **请求体：**
@@ -103,14 +103,14 @@ POST /api/todos
 
 ### 获取 Todo 详情
 ```
-GET /api/todos/{id}
+GET /api/v1/workspaces/{ws}/todos/{id}
 ```
 
 ---
 
 ### 更新 Todo
 ```
-PUT /api/todos/{id}
+PUT /api/v1/workspaces/{ws}/todos/{id}
 ```
 
 **请求体：**
@@ -146,14 +146,14 @@ PUT /api/todos/{id}
 
 ### 删除 Todo
 ```
-DELETE /api/todos/{id}
+DELETE /api/v1/workspaces/{ws}/todos/{id}
 ```
 
 ---
 
 ### 强制更新 Todo 状态
 ```
-PUT /api/todos/{id}/force-status
+PUT /api/v1/workspaces/{ws}/todos/{id}/force-status
 ```
 
 **请求体：**
@@ -167,7 +167,7 @@ PUT /api/todos/{id}/force-status
 
 ### 更新 Todo 标签
 ```
-PUT /api/todos/{id}/tags
+PUT /api/v1/workspaces/{ws}/todos/{id}/tags
 ```
 
 **请求体：**
@@ -181,14 +181,14 @@ PUT /api/todos/{id}/tags
 
 ### 获取 Todo 执行摘要
 ```
-GET /api/todos/{id}/summary
+GET /api/v1/workspaces/{ws}/todos/{id}/summary
 ```
 
 ---
 
 ### 获取最近完成的 Todo
 ```
-GET /api/todos/recent-completed
+GET /api/v1/workspaces/{ws}/todos/recent-completed
 ```
 
 查询参数：
@@ -201,7 +201,7 @@ GET /api/todos/recent-completed
 
 ### 批量修改执行器
 ```
-PUT /api/todos/batch-executor
+PUT /api/v1/workspaces/{ws}/todos/batch-executor
 ```
 
 **请求体：**
@@ -216,7 +216,7 @@ PUT /api/todos/batch-executor
 
 ### 批量移动工作目录
 ```
-PUT /api/todos/batch-workspace
+PUT /api/v1/workspaces/{ws}/todos/batch-workspace
 ```
 
 **请求体：**
@@ -231,7 +231,7 @@ PUT /api/todos/batch-workspace
 
 ### 批量复制工作目录
 ```
-POST /api/todos/batch-copy-workspace
+POST /api/v1/workspaces/{ws}/todos/batch-copy-workspace
 ```
 
 **请求体：**
@@ -249,7 +249,7 @@ POST /api/todos/batch-copy-workspace
 
 ### 获取标签列表
 ```
-GET /api/tags
+GET /api/v1/tags
 ```
 
 **响应示例：**
@@ -269,7 +269,7 @@ GET /api/tags
 
 ### 创建标签
 ```
-POST /api/tags
+POST /api/v1/tags
 ```
 
 **请求体：**
@@ -284,7 +284,7 @@ POST /api/tags
 
 ### 删除标签
 ```
-DELETE /api/tags/{id}
+DELETE /api/v1/tags/{id}
 ```
 
 ---
@@ -293,7 +293,7 @@ DELETE /api/tags/{id}
 
 ### 获取执行记录列表
 ```
-GET /api/execution-records
+GET /api/v1/workspaces/{ws}/executions
 ```
 
 查询参数：
@@ -309,28 +309,28 @@ GET /api/execution-records
 
 ### 获取运行中的执行记录
 ```
-GET /api/execution-records/running
+GET /api/v1/workspaces/{ws}/executions/running
 ```
 
 ---
 
 ### 按会话 ID 获取执行记录
 ```
-GET /api/execution-records/session/{session_id}
+GET /api/v1/workspaces/{ws}/executions/session/{session_id}
 ```
 
 ---
 
 ### 获取执行记录详情
 ```
-GET /api/execution-records/{id}
+GET /api/v1/workspaces/{ws}/executions/{id}
 ```
 
 ---
 
 ### 获取执行记录日志
 ```
-GET /api/execution-records/{id}/logs
+GET /api/v1/workspaces/{ws}/executions/{id}/logs
 ```
 
 查询参数：
@@ -344,7 +344,7 @@ GET /api/execution-records/{id}/logs
 
 ### 恢复执行
 ```
-POST /api/execution-records/{id}/resume
+POST /api/v1/workspaces/{ws}/executions/{id}/resume
 ```
 
 **请求体：**
@@ -358,7 +358,7 @@ POST /api/execution-records/{id}/resume
 
 ### 评分执行记录
 ```
-PUT /api/execution-records/{id}/rating
+PUT /api/v1/workspaces/{ws}/executions/{id}/rating
 ```
 
 **请求体：**
@@ -376,7 +376,7 @@ PUT /api/execution-records/{id}/rating
 
 ### 获取 Running Board
 ```
-GET /api/running-board
+GET /api/v1/workspaces/{ws}/executions/running-board
 ```
 
 返回按状态分组的执行记录看板视图，包含 scheduled/running/completed/reviewing/review_passed/failed 六列。
@@ -387,7 +387,7 @@ GET /api/running-board
 
 ### 执行 Todo
 ```
-POST /api/execute
+POST /api/v1/workspaces/{ws}/executions
 ```
 
 **请求体：**
@@ -414,7 +414,7 @@ POST /api/execute
 
 ### 智能创建
 ```
-POST /api/smart-create
+POST /api/v1/workspaces/{ws}/todos/smart
 ```
 
 **请求体：**
@@ -441,7 +441,7 @@ POST /api/smart-create
 
 ### 停止执行
 ```
-POST /api/execute/stop
+POST /api/v1/workspaces/{ws}/executions/{id}/stop
 ```
 
 **请求体：**
@@ -455,7 +455,7 @@ POST /api/execute/stop
 
 ### 强制失败
 ```
-POST /api/execute/force-fail
+POST /api/v1/workspaces/{ws}/executions/{id}/force-fail
 ```
 
 **请求体：**
@@ -467,21 +467,21 @@ POST /api/execute/force-fail
 
 ### 获取运行中的 Todo
 ```
-GET /api/running-todos
+GET /api/v1/workspaces/{ws}/executions/running-todos
 ```
 
 ---
 
 ### 获取仪表盘统计
 ```
-GET /api/dashboard-stats
+GET /api/v1/workspaces/{ws}/stats/dashboard
 ```
 
 ---
 
 ### 执行 Action
 ```
-POST /api/actions/execute
+POST /api/v1/actions/execute
 ```
 
 **请求体：**
@@ -503,14 +503,14 @@ POST /api/actions/execute
 
 ### 获取定时 Todo 列表
 ```
-GET /api/scheduler/todos
+GET /api/v1/workspaces/{ws}/scheduler/todos
 ```
 
 ---
 
 ### 更新 Todo 调度配置
 ```
-PUT /api/todos/{id}/scheduler
+PUT /api/v1/workspaces/{ws}/todos/{id}/scheduler
 ```
 
 **请求体：**
@@ -528,7 +528,7 @@ PUT /api/todos/{id}/scheduler
 
 ### 导出全部数据
 ```
-GET /api/backup/export
+GET /api/v1/backup/export
 ```
 
 返回 YAML 格式的完整备份。
@@ -537,7 +537,7 @@ GET /api/backup/export
 
 ### 导出选定的 Todo
 ```
-POST /api/backup/export-selected
+POST /api/v1/backup/export-selected
 ```
 
 **请求体：**
@@ -551,7 +551,7 @@ POST /api/backup/export-selected
 
 ### 导入备份（完整替换）
 ```
-POST /api/backup/import
+POST /api/v1/backup/import
 ```
 
 Content-Type: `multipart/form-data`
@@ -564,7 +564,7 @@ Content-Type: `multipart/form-data`
 
 ### 合并导入
 ```
-POST /api/backup/merge
+POST /api/v1/backup/merge
 ```
 
 Content-Type: `multipart/form-data`
@@ -577,28 +577,28 @@ Content-Type: `multipart/form-data`
 
 ### 下载数据库
 ```
-GET /api/backup/database/download
+GET /api/v1/backup/database/download
 ```
 
 ---
 
 ### 获取数据库备份状态
 ```
-GET /api/backup/database/status
+GET /api/v1/backup/database/status
 ```
 
 ---
 
 ### 触发立即备份
 ```
-POST /api/backup/database/trigger
+POST /api/v1/backup/database/trigger
 ```
 
 ---
 
 ### 更新自动备份配置
 ```
-PUT /api/backup/database/auto
+PUT /api/v1/backup/database/auto
 ```
 
 **请求体：**
@@ -620,7 +620,7 @@ PUT /api/backup/database/auto
 
 ### 优化数据库
 ```
-POST /api/backup/database/optimize
+POST /api/v1/backup/database/optimize
 ```
 
 执行 SQLite `VACUUM`，回收已删除记录占用的磁盘空间。
@@ -631,7 +631,7 @@ POST /api/backup/database/optimize
 
 ### 下载备份文件
 ```
-GET /api/backup/database/file
+GET /api/v1/backup/database/file
 ```
 
 查询参数：
@@ -644,7 +644,7 @@ GET /api/backup/database/file
 
 ### 删除备份文件
 ```
-DELETE /api/backup/database/file
+DELETE /api/v1/backup/database/file
 ```
 
 查询参数：
@@ -659,11 +659,11 @@ DELETE /api/backup/database/file
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET`  | `/api/backup/todo/status`  | 获取 Todo 备份状态与文件列表 |
-| `POST` | `/api/backup/todo/trigger` | 立即触发一次 Todo 备份 |
-| `PUT`  | `/api/backup/todo/auto`    | 更新 Todo 自动备份配置 |
-| `GET`  | `/api/backup/todo/file`    | 下载指定 Todo 备份文件（query `filename`） |
-| `DELETE` | `/api/backup/todo/file`  | 删除指定 Todo 备份文件（query `filename`） |
+| `GET`  | `/api/v1/backup/todo/status`  | 获取 Todo 备份状态与文件列表 |
+| `POST` | `/api/v1/backup/todo/trigger` | 立即触发一次 Todo 备份 |
+| `PUT`  | `/api/v1/backup/todo/auto`    | 更新 Todo 自动备份配置 |
+| `GET`  | `/api/v1/backup/todo/file`    | 下载指定 Todo 备份文件（query `filename`） |
+| `DELETE` | `/api/v1/backup/todo/file`  | 删除指定 Todo 备份文件（query `filename`） |
 
 ---
 
@@ -671,11 +671,11 @@ DELETE /api/backup/database/file
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET`  | `/api/backup/skills/status`  | 获取 Skill 备份状态与文件列表 |
-| `POST` | `/api/backup/skills/trigger` | 立即触发一次 Skill 备份 |
-| `PUT`  | `/api/backup/skills/auto`    | 更新 Skill 自动备份配置 |
-| `GET`  | `/api/backup/skills/file`    | 下载指定 Skill 备份文件（query `filename`） |
-| `DELETE` | `/api/backup/skills/file`  | 删除指定 Skill 备份文件（query `filename`） |
+| `GET`  | `/api/v1/backup/skills/status`  | 获取 Skill 备份状态与文件列表 |
+| `POST` | `/api/v1/backup/skills/trigger` | 立即触发一次 Skill 备份 |
+| `PUT`  | `/api/v1/backup/skills/auto`    | 更新 Skill 自动备份配置 |
+| `GET`  | `/api/v1/backup/skills/file`    | 下载指定 Skill 备份文件（query `filename`） |
+| `DELETE` | `/api/v1/backup/skills/file`  | 删除指定 Skill 备份文件（query `filename`） |
 
 ---
 
@@ -683,9 +683,9 @@ DELETE /api/backup/database/file
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET`  | `/api/backup/log-cleanup/status`  | 获取日志清理策略与上次执行时间 |
-| `PUT`  | `/api/backup/log-cleanup`         | 更新日志清理策略 |
-| `POST` | `/api/backup/log-cleanup/trigger` | 立即触发一次日志清理 |
+| `GET`  | `/api/v1/backup/log-cleanup/status`  | 获取日志清理策略与上次执行时间 |
+| `PUT`  | `/api/v1/backup/log-cleanup`         | 更新日志清理策略 |
+| `POST` | `/api/v1/backup/log-cleanup/trigger` | 立即触发一次日志清理 |
 
 ---
 
@@ -693,7 +693,7 @@ DELETE /api/backup/database/file
 
 ### 获取配置
 ```
-GET /api/config
+GET /api/v1/config
 ```
 
 **响应示例：**
@@ -720,7 +720,7 @@ GET /api/config
 
 ### 更新配置
 ```
-PUT /api/config
+PUT /api/v1/config
 ```
 
 **请求体：**
@@ -737,14 +737,14 @@ PUT /api/config
 
 ### 列出执行器
 ```
-GET /api/executors
+GET /api/v1/executors
 ```
 
 ---
 
 ### 更新执行器配置
 ```
-PUT /api/executors/{name}
+PUT /api/v1/executors/{name}
 ```
 
 **请求体：**
@@ -768,7 +768,7 @@ PUT /api/executors/{name}
 
 ### 检测执行器
 ```
-POST /api/executors/{name}/detect
+POST /api/v1/executors/{name}/detect
 ```
 
 检测执行器二进制文件是否存在。
@@ -777,7 +777,7 @@ POST /api/executors/{name}/detect
 
 ### 批量检测所有执行器
 ```
-POST /api/executors/detect-all
+POST /api/v1/executors/detect-all
 ```
 
 遍历所有已知执行器，报告每个执行器的探测结果，便于一次刷新 UI 状态。
@@ -800,7 +800,7 @@ POST /api/executors/detect-all
 
 ### 测试执行器
 ```
-POST /api/executors/{name}/test
+POST /api/v1/executors/{name}/test
 ```
 
 运行 `executor --version` 测试配置是否正确。
@@ -811,7 +811,7 @@ POST /api/executors/{name}/test
 
 ### 列出技能
 ```
-GET /api/skills
+GET /api/v1/skills
 ```
 
 按执行器分组列出所有技能。
@@ -820,7 +820,7 @@ GET /api/skills
 
 ### 比较技能
 ```
-GET /api/skills/compare
+GET /api/v1/skills/compare
 ```
 
 跨执行器的技能对比矩阵。
@@ -829,7 +829,7 @@ GET /api/skills/compare
 
 ### 同步技能
 ```
-POST /api/skills/sync
+POST /api/v1/skills/sync
 ```
 
 **请求体：**
@@ -845,14 +845,14 @@ POST /api/skills/sync
 
 ### 获取技能调用记录
 ```
-GET /api/skills/invocations
+GET /api/v1/skills/invocations
 ```
 
 ---
 
 ### 记录技能调用
 ```
-POST /api/skills/invocations
+POST /api/v1/skills/invocations
 ```
 
 **请求体：**
@@ -869,7 +869,7 @@ POST /api/skills/invocations
 
 ### 获取技能内容
 ```
-GET /api/skills/content
+GET /api/v1/skills/content
 ```
 
 查询参数：
@@ -883,7 +883,7 @@ GET /api/skills/content
 
 ### 导出技能
 ```
-GET /api/skills/export
+GET /api/v1/skills/export
 ```
 
 查询参数：
@@ -899,7 +899,7 @@ GET /api/skills/export
 
 ### 导入技能
 ```
-POST /api/skills/import
+POST /api/v1/skills/import
 ```
 
 Content-Type: `multipart/form-data`
@@ -914,21 +914,21 @@ Content-Type: `multipart/form-data`
 
 ### 列出 Agent Bot
 ```
-GET /api/agent-bots
+GET /api/v1/agent-bots
 ```
 
 ---
 
 ### 删除 Agent Bot
 ```
-DELETE /api/agent-bots/{id}
+DELETE /api/v1/agent-bots/{id}
 ```
 
 ---
 
 ### 更新 Agent Bot 配置
 ```
-PUT /api/agent-bots/{id}/config
+PUT /api/v1/agent-bots/{id}/config
 ```
 
 **请求体：**
@@ -950,21 +950,21 @@ PUT /api/agent-bots/{id}/config
 
 ### 初始化飞书 OAuth
 ```
-POST /api/agent-bots/feishu/init
+POST /api/v1/agent-bots/feishu/init
 ```
 
 ---
 
 ### 开始飞书 OAuth
 ```
-POST /api/agent-bots/feishu/begin
+POST /api/v1/agent-bots/feishu/begin
 ```
 
 ---
 
 ### 轮询飞书 OAuth 状态（SSE 事件流）
 ```
-GET /api/agent-bots/feishu/poll-stream
+GET /api/v1/agent-bots/feishu/poll-stream
 ```
 
 Server-Sent Events 端点。建立连接后，后台会持续向飞书 OAuth 端点轮询授权状态，结果以事件形式推回前端，避免前端轮询时序问题。
@@ -1001,7 +1001,7 @@ Server-Sent Events 端点。建立连接后，后台会持续向飞书 OAuth 端
 
 ### 获取飞书推送配置
 ```
-GET /api/agent-bots/feishu/push
+GET /api/v1/agent-bots/feishu/push
 ```
 
 返回所有飞书 bot 的推送状态数组，每条记录字段：
@@ -1022,7 +1022,7 @@ GET /api/agent-bots/feishu/push
 
 ### 更新飞书推送配置
 ```
-PUT /api/agent-bots/feishu/push
+PUT /api/v1/agent-bots/feishu/push
 ```
 
 **请求体：**
@@ -1056,7 +1056,7 @@ PUT /api/agent-bots/feishu/push
 
 ### 获取群组白名单
 ```
-GET /api/agent-bots/feishu/group-whitelist
+GET /api/v1/agent-bots/feishu/group-whitelist
 ```
 
 查询参数：
@@ -1069,7 +1069,7 @@ GET /api/agent-bots/feishu/group-whitelist
 
 ### 添加群组到白名单
 ```
-POST /api/agent-bots/feishu/group-whitelist
+POST /api/v1/agent-bots/feishu/group-whitelist
 ```
 
 **请求体：**
@@ -1091,7 +1091,7 @@ POST /api/agent-bots/feishu/group-whitelist
 
 ### 从白名单移除
 ```
-DELETE /api/agent-bots/feishu/group-whitelist/{id}
+DELETE /api/v1/agent-bots/feishu/group-whitelist/{id}
 ```
 
 ---
@@ -1100,7 +1100,7 @@ DELETE /api/agent-bots/feishu/group-whitelist/{id}
 
 ### 获取历史消息
 ```
-GET /api/feishu/history-messages
+GET /api/v1/feishu/history-messages
 ```
 
 查询参数：
@@ -1117,28 +1117,28 @@ GET /api/feishu/history-messages
 
 ### 获取消息统计
 ```
-GET /api/feishu/message-stats
+GET /api/v1/feishu/message-stats
 ```
 
 ---
 
 ### 获取消息发送者列表
 ```
-GET /api/feishu/senders
+GET /api/v1/feishu/senders
 ```
 
 ---
 
 ### 获取历史聊天室列表
 ```
-GET /api/feishu/history-chats
+GET /api/v1/feishu/history-chats
 ```
 
 ---
 
 ### 创建历史聊天室
 ```
-POST /api/feishu/history-chats
+POST /api/v1/feishu/history-chats
 ```
 
 **请求体：**
@@ -1153,14 +1153,14 @@ POST /api/feishu/history-chats
 
 ### 删除历史聊天室
 ```
-DELETE /api/feishu/history-chats/{id}
+DELETE /api/v1/feishu/history-chats/{id}
 ```
 
 ---
 
 ### 更新历史聊天室
 ```
-PUT /api/feishu/history-chats/{id}
+PUT /api/v1/feishu/history-chats/{id}
 ```
 
 **请求体：**
@@ -1177,7 +1177,7 @@ PUT /api/feishu/history-chats/{id}
 
 ### 列出会话
 ```
-GET /api/sessions
+GET /api/v1/sessions
 ```
 
 查询参数：
@@ -1191,14 +1191,14 @@ GET /api/sessions
 
 ### 获取会话统计
 ```
-GET /api/sessions/stats
+GET /api/v1/sessions/stats
 ```
 
 ---
 
 ### 获取会话详情
 ```
-GET /api/sessions/{id}
+GET /api/v1/sessions/{id}
 ```
 
 包含会话消息和子代理信息。
@@ -1207,7 +1207,7 @@ GET /api/sessions/{id}
 
 ### 删除会话
 ```
-DELETE /api/sessions/{id}
+DELETE /api/v1/sessions/{id}
 ```
 
 ---
@@ -1216,14 +1216,14 @@ DELETE /api/sessions/{id}
 
 ### 列出项目目录
 ```
-GET /api/project-directories
+GET /api/v1/project-directories
 ```
 
 ---
 
 ### 创建项目目录
 ```
-POST /api/project-directories
+POST /api/v1/project-directories
 ```
 
 **请求体：**
@@ -1238,7 +1238,7 @@ POST /api/project-directories
 
 ### 更新项目目录
 ```
-PUT /api/project-directories/{id}
+PUT /api/v1/project-directories/{id}
 ```
 
 **请求体：**
@@ -1252,7 +1252,7 @@ PUT /api/project-directories/{id}
 
 ### 删除项目目录
 ```
-DELETE /api/project-directories/{id}
+DELETE /api/v1/project-directories/{id}
 ```
 
 ---
@@ -1261,14 +1261,14 @@ DELETE /api/project-directories/{id}
 
 ### 获取模板列表
 ```
-GET /api/todo-templates
+GET /api/v1/todo-templates
 ```
 
 ---
 
 ### 创建模板
 ```
-POST /api/todo-templates
+POST /api/v1/todo-templates
 ```
 
 **请求体：**
@@ -1292,21 +1292,21 @@ POST /api/todo-templates
 
 ### 更新模板
 ```
-PUT /api/todo-templates/{id}
+PUT /api/v1/todo-templates/{id}
 ```
 
 ---
 
 ### 删除模板
 ```
-DELETE /api/todo-templates/{id}
+DELETE /api/v1/todo-templates/{id}
 ```
 
 ---
 
 ### 复制模板
 ```
-POST /api/todo-templates/{id}/copy
+POST /api/v1/todo-templates/{id}/copy
 ```
 
 ---
@@ -1315,14 +1315,14 @@ POST /api/todo-templates/{id}/copy
 
 ### 获取评审模板列表
 ```
-GET /api/review-templates
+GET /api/v1/review-templates
 ```
 
 ---
 
 ### 创建评审模板
 ```
-POST /api/review-templates
+POST /api/v1/review-templates
 ```
 
 **请求体：**
@@ -1338,21 +1338,21 @@ POST /api/review-templates
 
 ### 更新评审模板
 ```
-PUT /api/review-templates/{id}
+PUT /api/v1/review-templates/{id}
 ```
 
 ---
 
 ### 删除评审模板
 ```
-DELETE /api/review-templates/{id}
+DELETE /api/v1/review-templates/{id}
 ```
 
 ---
 
 ### 获取评审模板选项
 ```
-GET /api/review-templates/options
+GET /api/v1/review-templates/options
 ```
 
 返回所有评审模板的 id + name 列表，用于前端下拉选择。
@@ -1363,14 +1363,14 @@ GET /api/review-templates/options
 
 ### 获取 Loop 列表
 ```
-GET /api/loops
+GET /api/v1/workspaces/{ws}/loops
 ```
 
 ---
 
 ### 创建 Loop
 ```
-POST /api/loops
+POST /api/v1/workspaces/{ws}/loops
 ```
 
 **请求体：**
@@ -1386,35 +1386,35 @@ POST /api/loops
 
 ### 获取 Loop 详情
 ```
-GET /api/loops/{id}
+GET /api/v1/workspaces/{ws}/loops/{id}
 ```
 
 ---
 
 ### 更新 Loop
 ```
-PUT /api/loops/{id}
+PUT /api/v1/workspaces/{ws}/loops/{id}
 ```
 
 ---
 
 ### 删除 Loop
 ```
-DELETE /api/loops/{id}
+DELETE /api/v1/workspaces/{ws}/loops/{id}
 ```
 
 ---
 
 ### 获取 Loop 步骤列表
 ```
-GET /api/loops/{id}/steps
+GET /api/v1/workspaces/{ws}/loops/{id}/steps
 ```
 
 ---
 
 ### 创建 Loop 步骤
 ```
-POST /api/loops/{id}/steps
+POST /api/v1/workspaces/{ws}/loops/{id}/steps
 ```
 
 **请求体：**
@@ -1431,28 +1431,28 @@ POST /api/loops/{id}/steps
 
 ### 更新 Loop 步骤
 ```
-PUT /api/loops/{loop_id}/steps/{step_id}
+PUT /api/v1/workspaces/{ws}/loops/{loop_id}/steps/{step_id}
 ```
 
 ---
 
 ### 删除 Loop 步骤
 ```
-DELETE /api/loops/{loop_id}/steps/{step_id}
+DELETE /api/v1/workspaces/{ws}/loops/{loop_id}/steps/{step_id}
 ```
 
 ---
 
 ### 获取 Loop 触发器列表
 ```
-GET /api/loops/{id}/triggers
+GET /api/v1/workspaces/{ws}/loops/{id}/triggers
 ```
 
 ---
 
 ### 创建 Loop 触发器
 ```
-POST /api/loops/{id}/triggers
+POST /api/v1/workspaces/{ws}/loops/{id}/triggers
 ```
 
 **请求体：**
@@ -1470,21 +1470,21 @@ POST /api/loops/{id}/triggers
 
 ### 更新 Loop 触发器
 ```
-PUT /api/loops/{loop_id}/triggers/{trigger_id}
+PUT /api/v1/workspaces/{ws}/loops/{loop_id}/triggers/{trigger_id}
 ```
 
 ---
 
 ### 删除 Loop 触发器
 ```
-DELETE /api/loops/{loop_id}/triggers/{trigger_id}
+DELETE /api/v1/workspaces/{ws}/loops/{loop_id}/triggers/{trigger_id}
 ```
 
 ---
 
 ### 执行 Loop
 ```
-POST /api/loops/{id}/execute
+POST /api/v1/workspaces/{ws}/loops/{id}/execute
 ```
 
 **请求体：**
@@ -1498,28 +1498,28 @@ POST /api/loops/{id}/execute
 
 ### 停止 Loop 执行
 ```
-POST /api/loops/{id}/stop
+POST /api/v1/workspaces/{ws}/loops/{id}/stop
 ```
 
 ---
 
 ### 获取 Loop 执行记录
 ```
-GET /api/loops/{id}/executions
+GET /api/v1/workspaces/{ws}/loops/{id}/executions
 ```
 
 ---
 
 ### 获取 Loop 执行详情
 ```
-GET /api/loops/executions/{execution_id}
+GET /api/v1/workspaces/{ws}/loops/executions/{execution_id}
 ```
 
 ---
 
 ### 获取 Loop 步骤执行记录
 ```
-GET /api/loops/executions/{execution_id}/steps
+GET /api/v1/workspaces/{ws}/loops/executions/{execution_id}/steps
 ```
 
 ---
@@ -1528,14 +1528,14 @@ GET /api/loops/executions/{execution_id}/steps
 
 ### 获取订阅状态
 ```
-GET /api/custom-templates/status
+GET /api/v1/custom-templates/status
 ```
 
 ---
 
 ### 订阅远程模板
 ```
-POST /api/custom-templates/subscribe
+POST /api/v1/custom-templates/subscribe
 ```
 
 **请求体：**
@@ -1549,7 +1549,7 @@ POST /api/custom-templates/subscribe
 
 ### 取消订阅
 ```
-POST /api/custom-templates/unsubscribe
+POST /api/v1/custom-templates/unsubscribe
 ```
 
 **请求体：**
@@ -1563,14 +1563,14 @@ POST /api/custom-templates/unsubscribe
 
 ### 手动同步
 ```
-POST /api/custom-templates/sync
+POST /api/v1/custom-templates/sync
 ```
 
 ---
 
 ### 更新自动同步配置
 ```
-PUT /api/custom-templates/auto-sync
+PUT /api/v1/custom-templates/auto-sync
 ```
 
 **请求体：**
@@ -1596,7 +1596,7 @@ GET /health
 
 ### 获取版本信息
 ```
-GET /api/version
+GET /api/v1/version
 ```
 
 **响应示例：**
@@ -1615,7 +1615,7 @@ GET /api/version
 
 ### 查询 npm 最新版本
 ```
-GET /api/version/latest
+GET /api/v1/version/latest
 ```
 
 后端调用 `npm view @weibaohui/ntd version` 获取远程最新版本号，供前端做升级提示。
@@ -1634,7 +1634,7 @@ GET /api/version/latest
 
 ### 触发远程升级
 ```
-POST /api/version/upgrade
+POST /api/v1/version/upgrade
 ```
 
 流程：调用 `npm install -g @weibaohui/ntd@latest` → fork 子进程执行 `daemon stop → uninstall → install --force → start`，让当前进程先返回响应后再重启服务。
@@ -1701,17 +1701,17 @@ Webhook 不再作为“设置中心里的独立资源”管理，而是 Todo / L
 
 ### 外部触发 Todo
 ```
-GET  /webhook/trigger/todo/{todo_id}
-POST /webhook/trigger/todo/{todo_id}
+GET  /api/v1/webhooks/todo/{id}/trigger
+POST /api/v1/webhooks/todo/{id}/trigger
 ```
 
 ### 外部触发 Loop
 ```
-GET  /webhook/trigger/loop/{loop_id}
-POST /webhook/trigger/loop/{loop_id}
+GET  /api/v1/webhooks/loop/{id}/trigger
+POST /api/v1/webhooks/loop/{id}/trigger
 ```
 
-注意：路径**没有** `/api/` 前缀，作用是系统集成（如外部调度系统）。当目标 Todo/Loop 未启用 webhook 时会返回 400。
+注意：路径带 `/api/v1/webhooks` 前缀，触发动作作为子资源放在末尾（`{resource}/{id}/trigger`），更符合 REST 的「资源 → 子资源」层级感。当目标 Todo/Loop 未启用 webhook 时会返回 400。
 
 ---
 
@@ -1719,10 +1719,10 @@ POST /webhook/trigger/loop/{loop_id}
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET`  | `/api/usage-stats`            | 获取当前使用统计快照 |
-| `POST` | `/api/usage-stats/refresh`    | 主动触发一次使用统计刷新 |
-| `GET`  | `/api/usage-stats/settings`   | 获取统计采集配置 |
-| `PUT`  | `/api/usage-stats/settings`   | 更新统计采集配置 |
+| `GET`  | `/api/v1/usage-stats`            | 获取当前使用统计快照 |
+| `POST` | `/api/v1/usage-stats/refresh`    | 主动触发一次使用统计刷新 |
+| `GET`  | `/api/v1/usage-stats/settings`   | 获取统计采集配置 |
+| `PUT`  | `/api/v1/usage-stats/settings`   | 更新统计采集配置 |
 
 ---
 
@@ -1730,13 +1730,13 @@ POST /webhook/trigger/loop/{loop_id}
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET`  | `/api/cloud/config`         | 获取云端同步配置 |
-| `POST` | `/api/cloud/config`         | 保存云端同步配置 |
-| `GET`  | `/api/cloud/sync/status`    | 获取最近一次同步状态（成功/失败/时间戳） |
-| `GET`  | `/api/cloud/sync/records`   | 列出已同步到云端的记录 |
-| `DELETE` | `/api/cloud/sync/records` | 清空云端同步记录 |
-| `POST` | `/api/cloud/sync/push`      | 推送本地变更到云端 |
-| `POST` | `/api/cloud/sync/pull`      | 从云端拉取变更到本地 |
+| `GET`  | `/api/v1/cloud/config`         | 获取云端同步配置 |
+| `POST` | `/api/v1/cloud/config`         | 保存云端同步配置 |
+| `GET`  | `/api/v1/cloud/sync/status`    | 获取最近一次同步状态（成功/失败/时间戳） |
+| `GET`  | `/api/v1/cloud/sync/records`   | 列出已同步到云端的记录 |
+| `DELETE` | `/api/v1/cloud/sync/records` | 清空云端同步记录 |
+| `POST` | `/api/v1/cloud/sync/push`      | 推送本地变更到云端 |
+| `POST` | `/api/v1/cloud/sync/pull`      | 从云端拉取变更到本地 |
 
 ---
 

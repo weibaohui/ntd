@@ -9,8 +9,9 @@ mod todo_create_command_tests {
 
     #[test]
     fn test_todo_create_parsing() {
+        // v1: --workspace-id 必填
         let cli = Cli::try_parse_from([
-            "ntd", "todo", "create", "My Task", "-p", "prompt", "-e", "kimi",
+            "ntd", "todo", "create", "-w", "1", "My Task", "-p", "prompt", "-e", "kimi",
         ])
         .unwrap();
         match cli.command {
@@ -33,10 +34,13 @@ mod todo_create_command_tests {
 
     #[test]
     fn test_todo_create_with_schedule() {
+        // v1: --workspace-id 必填
         let cli = Cli::try_parse_from([
             "ntd",
             "todo",
             "create",
+            "-w",
+            "1",
             "Task",
             "--schedule",
             "*/30 * * * *",
@@ -54,8 +58,9 @@ mod todo_create_command_tests {
 
     #[test]
     fn test_todo_create_with_tags() {
+        // v1: --workspace-id 必填
         let cli =
-            Cli::try_parse_from(["ntd", "todo", "create", "Task", "--tags", "1,2,3"]).unwrap();
+            Cli::try_parse_from(["ntd", "todo", "create", "-w", "1", "Task", "--tags", "1,2,3"]).unwrap();
         match cli.command {
             Commands::Todo {
                 action: TodoAction::Create { tags, .. },
@@ -68,13 +73,14 @@ mod todo_create_command_tests {
 
     #[test]
     fn test_todo_create_with_workspace() {
+        // v1: --workspace-id 必填（不再是可选 filter）
         let cli =
             Cli::try_parse_from(["ntd", "todo", "create", "Task", "-w", "42"]).unwrap();
         match cli.command {
             Commands::Todo {
                 action: TodoAction::Create { workspace_id, .. },
             } => {
-                assert_eq!(workspace_id, Some(42));
+                assert_eq!(workspace_id, 42);
             }
             _ => panic!("Expected Todo::Create with workspace"),
         }
@@ -82,7 +88,8 @@ mod todo_create_command_tests {
 
     #[test]
     fn test_todo_create_with_stdin() {
-        let cli = Cli::try_parse_from(["ntd", "todo", "create", "--stdin"]).unwrap();
+        // v1: --workspace-id 必填
+        let cli = Cli::try_parse_from(["ntd", "todo", "create", "-w", "1", "--stdin"]).unwrap();
         match cli.command {
             Commands::Todo {
                 action: TodoAction::Create { stdin, title, .. },
@@ -96,7 +103,8 @@ mod todo_create_command_tests {
 
     #[test]
     fn test_todo_create_with_file_prompt() {
-        let cli = Cli::try_parse_from(["ntd", "todo", "create", "Task", "-f", "/tmp/prompt.txt"])
+        // v1: --workspace-id 必填
+        let cli = Cli::try_parse_from(["ntd", "todo", "create", "-w", "1", "Task", "-f", "/tmp/prompt.txt"])
             .unwrap();
         match cli.command {
             Commands::Todo {
@@ -173,17 +181,20 @@ mod todo_list_command_tests {
 
     #[test]
     fn test_todo_list_parsing() {
-        let cli = Cli::try_parse_from(["ntd", "todo", "list"]).unwrap();
+        // v1: --workspace-id 必填
+        let cli = Cli::try_parse_from(["ntd", "todo", "list", "--workspace-id", "1"]).unwrap();
         match cli.command {
             Commands::Todo {
                 action:
                     TodoAction::List {
+                        workspace_id,
                         status,
                         tag,
                         running,
                         search,
                     },
             } => {
+                assert_eq!(workspace_id, 1);
                 assert!(status.is_none());
                 assert!(tag.is_none());
                 assert!(!running);
@@ -195,7 +206,8 @@ mod todo_list_command_tests {
 
     #[test]
     fn test_todo_list_with_status_filter() {
-        let cli = Cli::try_parse_from(["ntd", "todo", "list", "--status", "completed"]).unwrap();
+        // v1: --workspace-id 必填
+        let cli = Cli::try_parse_from(["ntd", "todo", "list", "--workspace-id", "1", "--status", "completed"]).unwrap();
         match cli.command {
             Commands::Todo {
                 action: TodoAction::List { status, .. },
@@ -208,7 +220,8 @@ mod todo_list_command_tests {
 
     #[test]
     fn test_todo_list_with_tag_filter() {
-        let cli = Cli::try_parse_from(["ntd", "todo", "list", "--tag", "3"]).unwrap();
+        // v1: --workspace-id 必填
+        let cli = Cli::try_parse_from(["ntd", "todo", "list", "--workspace-id", "1", "--tag", "3"]).unwrap();
         match cli.command {
             Commands::Todo {
                 action: TodoAction::List { tag, .. },
@@ -221,7 +234,8 @@ mod todo_list_command_tests {
 
     #[test]
     fn test_todo_list_with_running_filter() {
-        let cli = Cli::try_parse_from(["ntd", "todo", "list", "--running"]).unwrap();
+        // v1: --workspace-id 必填
+        let cli = Cli::try_parse_from(["ntd", "todo", "list", "--workspace-id", "1", "--running"]).unwrap();
         match cli.command {
             Commands::Todo {
                 action: TodoAction::List { running, .. },
@@ -234,7 +248,8 @@ mod todo_list_command_tests {
 
     #[test]
     fn test_todo_list_with_search() {
-        let cli = Cli::try_parse_from(["ntd", "todo", "list", "-s", "rust"]).unwrap();
+        // v1: --workspace-id 必填
+        let cli = Cli::try_parse_from(["ntd", "todo", "list", "--workspace-id", "1", "-s", "rust"]).unwrap();
         match cli.command {
             Commands::Todo {
                 action: TodoAction::List { search, .. },
@@ -247,10 +262,13 @@ mod todo_list_command_tests {
 
     #[test]
     fn test_todo_list_combined_filters() {
+        // v1: --workspace-id 必填
         let cli = Cli::try_parse_from([
             "ntd",
             "todo",
             "list",
+            "--workspace-id",
+            "1",
             "--status",
             "pending",
             "--tag",
@@ -268,6 +286,7 @@ mod todo_list_command_tests {
                         tag,
                         running,
                         search,
+                        ..
                     },
             } => {
                 assert_eq!(status, Some("pending".to_string()));
@@ -281,10 +300,11 @@ mod todo_list_command_tests {
 
     #[test]
     fn test_todo_get_parsing() {
-        let cli = Cli::try_parse_from(["ntd", "todo", "get", "123"]).unwrap();
+        // v1: --workspace-id 必填
+        let cli = Cli::try_parse_from(["ntd", "todo", "get", "--workspace-id", "1", "123"]).unwrap();
         match cli.command {
             Commands::Todo {
-                action: TodoAction::Get { id },
+                action: TodoAction::Get { id, .. },
             } => {
                 assert_eq!(id, 123);
             }
@@ -300,10 +320,13 @@ mod todo_update_command_tests {
 
     #[test]
     fn test_todo_update_parsing() {
+        // v1: --workspace-id 必填
         let cli = Cli::try_parse_from([
             "ntd",
             "todo",
             "update",
+            "--workspace-id",
+            "1",
             "1",
             "--title",
             "New Title",
@@ -335,7 +358,8 @@ mod todo_update_command_tests {
 
     #[test]
     fn test_todo_update_with_stdin() {
-        let cli = Cli::try_parse_from(["ntd", "todo", "update", "1", "--stdin"]).unwrap();
+        // v1: --workspace-id 必填
+        let cli = Cli::try_parse_from(["ntd", "todo", "update", "--workspace-id", "1", "1", "--stdin"]).unwrap();
         match cli.command {
             Commands::Todo {
                 action: TodoAction::Update { id, stdin, .. },
@@ -406,25 +430,29 @@ mod output_format_tests {
 
     #[test]
     fn test_output_format_json() {
-        let cli = Cli::try_parse_from(["ntd", "-o", "json", "todo", "list"]).unwrap();
+        // v1: todo list 需要 --workspace-id
+        let cli = Cli::try_parse_from(["ntd", "-o", "json", "todo", "list", "--workspace-id", "1"]).unwrap();
         assert_eq!(cli.output, OutputFormat::Json);
     }
 
     #[test]
     fn test_output_format_pretty() {
-        let cli = Cli::try_parse_from(["ntd", "-o", "pretty", "todo", "list"]).unwrap();
+        // v1: todo list 需要 --workspace-id
+        let cli = Cli::try_parse_from(["ntd", "-o", "pretty", "todo", "list", "--workspace-id", "1"]).unwrap();
         assert_eq!(cli.output, OutputFormat::Pretty);
     }
 
     #[test]
     fn test_output_format_raw() {
-        let cli = Cli::try_parse_from(["ntd", "-o", "raw", "todo", "list"]).unwrap();
+        // v1: todo list 需要 --workspace-id
+        let cli = Cli::try_parse_from(["ntd", "-o", "raw", "todo", "list", "--workspace-id", "1"]).unwrap();
         assert_eq!(cli.output, OutputFormat::Raw);
     }
 
     #[test]
     fn test_output_format_default_is_json() {
-        let cli = Cli::try_parse_from(["ntd", "todo", "list"]).unwrap();
+        // v1: todo list 需要 --workspace-id
+        let cli = Cli::try_parse_from(["ntd", "todo", "list", "--workspace-id", "1"]).unwrap();
         assert_eq!(cli.output, OutputFormat::Json);
     }
 }
@@ -436,13 +464,15 @@ mod fields_tests {
 
     #[test]
     fn test_fields_parsing() {
-        let cli = Cli::try_parse_from(["ntd", "-f", "id,title,status", "todo", "list"]).unwrap();
+        // v1: todo list 需要 --workspace-id
+        let cli = Cli::try_parse_from(["ntd", "-f", "id,title,status", "todo", "list", "--workspace-id", "1"]).unwrap();
         assert_eq!(cli.fields, Some("id,title,status".to_string()));
     }
 
     #[test]
     fn test_fields_empty() {
-        let cli = Cli::try_parse_from(["ntd", "todo", "list"]).unwrap();
+        // v1: todo list 需要 --workspace-id
+        let cli = Cli::try_parse_from(["ntd", "todo", "list", "--workspace-id", "1"]).unwrap();
         assert_eq!(cli.fields, None);
     }
 }
@@ -549,6 +579,7 @@ mod combined_options_tests {
     #[test]
     fn test_full_ai_workflow_list() {
         // AI-friendly command: list todos with raw output, filtered fields, and search
+        // v1: --workspace-id 必填
         let cli = Cli::try_parse_from([
             "ntd",
             "--server",
@@ -559,6 +590,8 @@ mod combined_options_tests {
             "id,title,status,executor",
             "todo",
             "list",
+            "--workspace-id",
+            "1",
             "--status",
             "pending",
             "--search",
@@ -583,8 +616,11 @@ mod combined_options_tests {
 
     #[test]
     fn test_raw_fields_combination() {
-        let cli =
-            Cli::try_parse_from(["ntd", "-o", "raw", "-f", "id", "todo", "get", "42"]).unwrap();
+        // v1: get 子命令需要 --workspace-id
+        let cli = Cli::try_parse_from([
+            "ntd", "-o", "raw", "-f", "id", "todo", "get", "--workspace-id", "1", "42",
+        ])
+        .unwrap();
         assert_eq!(cli.output, OutputFormat::Raw);
         assert_eq!(cli.fields, Some("id".to_string()));
     }

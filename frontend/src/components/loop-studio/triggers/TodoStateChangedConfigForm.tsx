@@ -32,8 +32,13 @@ export function TodoStateChangedConfigForm({ value, onChange, workspaceId }: Tod
   const [toStatus, setToStatus] = useState(parsed.to_status);
 
   useEffect(() => {
+    if (workspaceId == null) {
+      setTodos([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
-    db.getAllTodos(workspaceId ?? undefined)
+    db.getAllTodos(workspaceId)
       .then((list) => setTodos(list))
       .catch(() => { /* 静默 */ })
       .finally(() => setLoading(false));

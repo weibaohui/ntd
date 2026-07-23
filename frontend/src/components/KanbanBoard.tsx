@@ -161,6 +161,7 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
 
     try {
       const updated = await db.updateTodo(
+        todo.workspace_id!,
         todoId,
         todo.title,
         todo.prompt || '',

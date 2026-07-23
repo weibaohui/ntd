@@ -2,11 +2,11 @@
 //
 // 验证目标:
 //  1. ProjectDirectoriesPanel 中每个目录行展示两个 Switch（启用 Git Worktree / 自动清理）
-//  2. 切换 Switch 会调用 PUT /api/project-directories/{id} 并带上新字段
+//  2. 切换 Switch 会调用 PUT /api/v1/project-directories/{id} 并带上新字段
 //  3. "自动清理" Switch 在 "启用 Git Worktree" 关闭时为 disabled
 //  4. 乐观更新生效: API 返回前 Switch 状态先翻转
 //
-// 写法说明: 不依赖 dev 服务真实运行, 用 page.route() 拦截 /api/project-directories
+// 写法说明: 不依赖 dev 服务真实运行, 用 page.route() 拦截 /api/v1/project-directories
 // 系列请求并返回固定 fixture, 让 UI 逻辑可独立验证.
 import { test, expect, Page } from '@playwright/test';
 
@@ -31,7 +31,7 @@ function defaultFixtureDirs() {
 
 async function mockProjectDirApis(page: Page, fixtureDirs: ReturnType<typeof defaultFixtureDirs>) {
   // GET 列表
-  await page.route('**/api/project-directories', async (route) => {
+  await page.route('**/api/v1/project-directories', async (route) => {
     if (route.request().method() === 'GET') {
       await route.fulfill({
         status: 200,
@@ -43,7 +43,7 @@ async function mockProjectDirApis(page: Page, fixtureDirs: ReturnType<typeof def
     }
   });
   // PUT 更新
-  await page.route('**/api/project-directories/1', async (route) => {
+  await page.route('**/api/v1/project-directories/1', async (route) => {
     if (route.request().method() === 'PUT') {
       const body = route.request().postDataJSON();
       // 把后端 echo 的"已合并"对象返回
@@ -98,7 +98,7 @@ test('project directory: worktree 开关渲染 + 行为', async ({ page }) => {
 
   // 简化为"读 fixture 后断言 Switch 存在并能交互"。
   const apiState = await page.evaluate(async () => {
-    const resp = await fetch('/api/project-directories');
+    const resp = await fetch('/api/v1/project-directories');
     const data = await resp.json();
     return data;
   });
@@ -114,7 +114,7 @@ test('project directory: API 接受新字段并回显', async ({ page }) => {
   await page.goto(BASE);
   // 1) PUT 开启 worktree
   const putResult = await page.evaluate(async () => {
-    const resp = await fetch('/api/project-directories/1', {
+    const resp = await fetch('/api/v1/project-directories/1', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'proj-a', git_worktree_enabled: true }),
@@ -126,7 +126,7 @@ test('project directory: API 接受新字段并回显', async ({ page }) => {
 
   // 2) GET 拿回新状态
   const list = await page.evaluate(async () => {
-    const r = await fetch('/api/project-directories');
+    const r = await fetch('/api/v1/project-directories');
     const j = await r.json();
     return j.data[0];
   });
@@ -134,7 +134,7 @@ test('project directory: API 接受新字段并回显', async ({ page }) => {
 
   // 3) PUT 开启 auto_cleanup
   const put2 = await page.evaluate(async () => {
-    const r = await fetch('/api/project-directories/1', {
+    const r = await fetch('/api/v1/project-directories/1', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'proj-a', git_worktree_enabled: true, auto_cleanup: true }),
@@ -144,7 +144,7 @@ test('project directory: API 接受新字段并回显', async ({ page }) => {
   expect(put2.status).toBe(200);
 
   const list2 = await page.evaluate(async () => {
-    const r = await fetch('/api/project-directories');
+    const r = await fetch('/api/v1/project-directories');
     const j = await r.json();
     return j.data[0];
   });

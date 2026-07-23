@@ -43,6 +43,7 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
     handleHistoryPageChange,
   } = useExecutionHistory({
     selectedTodoId,
+    workspaceId: state.selectedWorkspace,
     storeRecords: selectedTodoId ? executionRecords[selectedTodoId] : [],
     dispatch,
   });
@@ -95,6 +96,7 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
     if (!selectedTodo) return;
     try {
       const result = await db.executeTodo(
+        selectedTodo.workspace_id!,
         selectedTodo.id,
         selectedTodo.executor || undefined,
         undefined
@@ -102,7 +104,7 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
       message.success('任务已开始执行');
       // 获取新创建的执行记录并立即添加到状态中
       try {
-        const newRecord = await db.getExecutionRecord(result.record_id);
+        const newRecord = await db.getExecutionRecord(selectedTodo.workspace_id!, result.record_id);
         dispatch({
           type: 'ADD_EXECUTION_RECORD',
           payload: { todoId: selectedTodo.id, record: newRecord }
@@ -133,6 +135,7 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
     try {
       const params = executeArgs.trim() ? { message: executeArgs.trim() } : undefined;
       const result = await db.executeTodo(
+        selectedTodo.workspace_id!,
         selectedTodo.id,
         selectedTodo.executor || undefined,
         params
@@ -142,7 +145,7 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
       setExecuteArgs('');
       // 获取新创建的执行记录并立即添加到状态中
       try {
-        const newRecord = await db.getExecutionRecord(result.record_id);
+        const newRecord = await db.getExecutionRecord(selectedTodo.workspace_id!, result.record_id);
         dispatch({
           type: 'ADD_EXECUTION_RECORD',
           payload: { todoId: selectedTodo.id, record: newRecord }
@@ -165,7 +168,7 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
   const handleStatusChange = useCallback(async (newStatus: string) => {
     if (!selectedTodo) return;
     try {
-      const updated = await db.updateTodo(selectedTodo.id, selectedTodo.title, selectedTodo.prompt || '', newStatus);
+      const updated = await db.updateTodo(selectedTodo.workspace_id!, selectedTodo.id, selectedTodo.title, selectedTodo.prompt || '', newStatus);
       dispatch({ type: 'UPDATE_TODO', payload: updated });
       message.success('状态已更新');
     } catch {
@@ -181,6 +184,7 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
       throw new Error('无法从 AI 结果中提取标题');
     }
     const updated = await db.updateTodo(
+      selectedTodo.workspace_id!,
       selectedTodo.id,
       newTitle,
       selectedTodo.prompt || '',
@@ -201,7 +205,7 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
   const handleDelete = async () => {
     if (!selectedTodo) return;
     try {
-      await db.deleteTodo(selectedTodo.id);
+      await db.deleteTodo(selectedTodo.workspace_id!, selectedTodo.id);
       dispatch({ type: 'DELETE_TODO', payload: selectedTodo.id });
       dispatch({ type: 'SELECT_TODO', payload: null });
       message.success('删除成功');

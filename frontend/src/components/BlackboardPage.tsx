@@ -235,9 +235,10 @@ function useEffectiveWorkspaceId(propWorkspaceId: number | null | undefined): nu
   }, [propWorkspaceId]);
 }
 
-/** 拉取黑板内容的纯函数，便于测试与复用（旧版单文件接口，保留兼容） */
+/** 拉取黑板内容的纯函数，便于测试与复用。
+ *  原生 fetch 不经 axios 拦截器，手动写 v1 路径。 */
 async function fetchBlackboardData(workspaceId: number): Promise<BlackboardData> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/blackboard`);
+  const res = await fetch(`/api/v1/workspaces/${workspaceId}/blackboard`);
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}`);
   }
@@ -248,9 +249,9 @@ async function fetchBlackboardData(workspaceId: number): Promise<BlackboardData>
   return json.data;
 }
 
-/** 拉取单个 Wiki 文件内容 */
+/** 拉取单个 Wiki 文件内容（原生 fetch，手动写 v1 路径） */
 async function fetchWikiFileContent(workspaceId: number, slug: string): Promise<WikiFileContent> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/wiki/files/${encodeURIComponent(slug)}`);
+  const res = await fetch(`/api/v1/workspaces/${workspaceId}/wiki/files/${encodeURIComponent(slug)}`);
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}`);
   }
@@ -261,9 +262,9 @@ async function fetchWikiFileContent(workspaceId: number, slug: string): Promise<
   return json.data;
 }
 
-/** 拉取 Wiki 文件列表 */
+/** 拉取 Wiki 文件列表（原生 fetch，手动写 v1 路径） */
 async function fetchWikiFiles(workspaceId: number): Promise<WikiFileItem[]> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/wiki/files`);
+  const res = await fetch(`/api/v1/workspaces/${workspaceId}/wiki/files`);
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}`);
   }
