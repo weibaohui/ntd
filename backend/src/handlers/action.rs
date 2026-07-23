@@ -248,6 +248,8 @@ pub fn v1_routes() -> Router<AppState> {
         .merge(super::custom_template::v1_routes())
         .merge(super::bundled::v1_routes())
         .merge(super::project_directory::v1_routes())
+        // executor-profiles（API Key 管理）：providers + profiles，路径已为 /api/v1/
+        .merge(super::profiles::profile_routes())
         // ── 工作空间作用域资源（嵌套子路由） ───────────────────────
         .nest("/api/v1/workspaces/{ws}/todos", super::todo::v1_routes())
         .nest("/api/v1/workspaces/{ws}/executions", super::execution::v1_routes())
