@@ -59,7 +59,6 @@ async fn list_providers(
         display_name: p.name,
         base_url: p.base_url,
         protocol: p.protocol,
-        supports_1m_context: p.supports_1m_context,
         model_count: p.models.len(),
     }).collect();
     Ok(ApiResponse::ok(summaries))
@@ -74,15 +73,13 @@ async fn create_provider(
     if cfg.providers.contains_key(&req.name) {
         return Err(AppError::BadRequest(format!("Provider '{}' already exists", req.name)));
     }
-    let base_url = req.base_url.clone();
     let protocol = req.protocol;
-    let supports_1m = req.supports_1m_context;
+    let base_url = req.base_url.clone();
     let provider = Provider {
         name: req.display_name,
         api_key: req.api_key,
         base_url: req.base_url,
         protocol,
-        supports_1m_context: supports_1m,
         models: req.models,
     };
     let model_count = provider.models.len();
@@ -95,7 +92,6 @@ async fn create_provider(
         display_name,
         base_url,
         protocol,
-        supports_1m_context: supports_1m,
         model_count,
     }))
 }
@@ -111,7 +107,6 @@ async fn update_provider(
     if let Some(k) = req.api_key { provider.api_key = k; }
     if let Some(u) = req.base_url { provider.base_url = u; }
     if let Some(p) = req.protocol { provider.protocol = p; }
-    if let Some(sc) = req.supports_1m_context { provider.supports_1m_context = sc; }
     if let Some(m) = req.models { provider.models = m; }
     let model_count = provider.models.len();
     let summary = ProviderSummary {
@@ -119,7 +114,6 @@ async fn update_provider(
         display_name: provider.name.clone(),
         base_url: provider.base_url.clone(),
         protocol: provider.protocol,
-        supports_1m_context: provider.supports_1m_context,
         model_count,
     };
     save(&cfg)?;

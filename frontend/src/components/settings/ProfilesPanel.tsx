@@ -173,7 +173,7 @@ function ProviderManager({ isMobile }: { isMobile: boolean }) {
     try {
       const v = await form.validateFields();
       const models = modelList.filter(m => m.name.trim());
-      const body = { ...v, models, supports_1m_context: v.supports_1m_context || false, protocol: v.protocol || 'openai' };
+      const body = { ...v, models, protocol: v.protocol || 'openai' };
       if (editing) {
         await updateProvider(editing, body);
         message.success('供应商已更新');
@@ -267,7 +267,6 @@ function ProviderManager({ isMobile }: { isMobile: boolean }) {
                       <Flex align="center" gap={4} wrap="wrap">
                         <Text strong>{r.display_name}</Text>
                         <Tag color={r.protocol === 'anthropic' ? 'purple' : 'blue'} style={{ fontSize: 11 }}>{r.protocol}</Tag>
-                        {r.supports_1m_context && <Tag color="orange" style={{ fontSize: 11 }}>1M</Tag>}
                       </Flex>
                       <Text type="secondary" style={{ fontSize: 12, wordBreak: 'break-all' }}>{r.base_url}</Text>
                       <Text type="secondary" style={{ fontSize: 12 }}>{r.model_count} 个模型</Text>
@@ -324,9 +323,6 @@ function ProviderManager({ isMobile }: { isMobile: boolean }) {
                 { value: 'anthropic', label: 'Anthropic 原生' },
               ]} />
             </Form.Item>
-            <Form.Item name="supports_1m_context" label="1M 上下文" valuePropName="checked" initialValue={false}>
-              <Switch />
-            </Form.Item>
           </Flex>
 
           {/* 模型列表 */}
@@ -339,9 +335,13 @@ function ProviderManager({ isMobile }: { isMobile: boolean }) {
               <Text type="secondary">暂无模型，点击「添加模型」添加</Text>
             )}
             {modelList.map((m, i) => (
-              <Flex key={i} gap={8} align="center" style={{ marginBottom: 8 }}>
-                <Input size="small" placeholder="模型标识" value={m.name} onChange={e => updateModel(i, 'name', e.target.value)} style={{ flex: 1 }} />
-                <Input size="small" placeholder="显示名称（可选）" value={m.display_name || ''} onChange={e => updateModel(i, 'display_name', e.target.value)} style={{ flex: 1 }} />
+              <Flex key={i} gap={8} align="center" style={{ marginBottom: 8 }} wrap="wrap">
+                <Input size="small" placeholder="模型标识" value={m.name} onChange={e => updateModel(i, 'name', e.target.value)} style={{ flex: 1, minWidth: 120 }} />
+                <Input size="small" placeholder="显示名称（可选）" value={m.display_name || ''} onChange={e => updateModel(i, 'display_name', e.target.value)} style={{ flex: 1, minWidth: 120 }} />
+                <Space>
+                  <Switch size="small" checked={!!(m as any).supports_1m_context} onChange={v => updateModel(i, 'supports_1m_context' as any, v)} />
+                  <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>1M ctx</Text>
+                </Space>
                 <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeModel(i)} />
               </Flex>
             ))}

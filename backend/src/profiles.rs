@@ -42,6 +42,9 @@ pub struct ProviderModel {
     /// 显示名称（可选，如 "DeepSeek v4 Flash"）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// 是否支持 1M 上下文（某些模型有 1M context window，某些没有）
+    #[serde(default)]
+    pub supports_1m_context: bool,
 }
 
 /// 单个供应商（API 服务商）。
@@ -56,9 +59,6 @@ pub struct Provider {
     /// 协议格式
     #[serde(default)]
     pub protocol: Protocol,
-    /// 是否支持 1M 上下文
-    #[serde(default)]
-    pub supports_1m_context: bool,
     /// 可用模型列表
     #[serde(default)]
     pub models: Vec<ProviderModel>,
@@ -132,17 +132,6 @@ impl Default for ProfilesConfig {
 // API DTOs
 // ============================================================================
 
-/// Provider 摘要（返回给前端列表，不包含 api_key）。
-#[derive(Debug, Clone, Serialize)]
-pub struct ProviderSummary {
-    pub name: String,
-    pub display_name: String,
-    pub base_url: String,
-    pub protocol: Protocol,
-    pub supports_1m_context: bool,
-    pub model_count: usize,
-}
-
 /// 创建 Provider 的请求体。
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateProviderRequest {
@@ -153,9 +142,17 @@ pub struct CreateProviderRequest {
     #[serde(default)]
     pub protocol: Protocol,
     #[serde(default)]
-    pub supports_1m_context: bool,
-    #[serde(default)]
     pub models: Vec<ProviderModel>,
+}
+
+/// Provider 摘要（返回给前端列表，不包含 api_key）。
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderSummary {
+    pub name: String,
+    pub display_name: String,
+    pub base_url: String,
+    pub protocol: Protocol,
+    pub model_count: usize,
 }
 
 /// 更新 Provider 的请求体。
@@ -169,8 +166,6 @@ pub struct UpdateProviderRequest {
     pub base_url: Option<String>,
     #[serde(default)]
     pub protocol: Option<Protocol>,
-    #[serde(default)]
-    pub supports_1m_context: Option<bool>,
     /// None = 不修改，Some(None) = 清空模型，Some(Some(list)) = 替换
     #[serde(default)]
     pub models: Option<Vec<ProviderModel>>,
@@ -300,10 +295,9 @@ mod tests {
             api_key: "sk-xxx".to_string(),
             base_url: "https://api.test.com".to_string(),
             protocol: Protocol::Openai,
-            supports_1m_context: true,
             models: vec![
-                ProviderModel { name: "gpt-4".to_string(), display_name: Some("GPT-4".to_string()) },
-                ProviderModel { name: "gpt-4o".to_string(), display_name: None },
+                ProviderModel { name: "gpt-4".to_string(), display_name: Some("GPT-4".to_string()), supports_1m_context: false },
+                ProviderModel { name: "gpt-4o".to_string(), display_name: None, supports_1m_context: false },
             ],
         };
         let json = serde_json::to_string(&provider).unwrap();
@@ -321,9 +315,8 @@ mod tests {
             api_key: "sk-xxx".to_string(),
             base_url: "https://api.test.com".to_string(),
             protocol: Protocol::Anthropic,
-            supports_1m_context: false,
             models: vec![
-                ProviderModel { name: "claude-3".to_string(), display_name: None },
+                ProviderModel { name: "claude-3".to_string(), display_name: None, supports_1m_context: false },
             ],
         });
 

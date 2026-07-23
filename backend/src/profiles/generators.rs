@@ -176,7 +176,9 @@ impl ProfileGenerator for ClaudeCodeGenerator {
             env_map.insert("API_TIMEOUT_MS".to_string(), serde_json::Value::String("3000000".to_string()));
             env_map.insert("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_string(), serde_json::Value::String("1".to_string()));
 
-            if provider.supports_1m_context {
+            // 1M 上下文是模型级别的属性：检查当前选中的模型是否支持
+            let model_supports_1m = provider.models.iter().any(|m| m.name == exec_ref.model && m.supports_1m_context);
+            if model_supports_1m {
                 // 1M 上下文模型用 [1M] 后缀标记，让 Claude Code 知道扩展上下文能力
                 env_map.insert("ANTHROPIC_DEFAULT_SONNET_MODEL".to_string(), serde_json::Value::String(format!("{}[1M]", exec_ref.model)));
                 env_map.insert("ANTHROPIC_DEFAULT_FABLE_MODEL".to_string(), serde_json::Value::String(format!("{}[1M]", exec_ref.model)));
@@ -348,9 +350,8 @@ mod tests {
             api_key: "sk-test".to_string(),
             base_url: "https://api.test.com/v1".to_string(),
             protocol: Protocol::Openai,
-            supports_1m_context: true,
             models: vec![
-                super::super::ProviderModel { name: "gpt-4o".to_string(), display_name: Some("GPT-4o".to_string()) },
+                super::super::ProviderModel { name: "gpt-4o".to_string(), display_name: Some("GPT-4o".to_string()), supports_1m_context: true },
             ],
         }
     }
