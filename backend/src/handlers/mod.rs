@@ -156,6 +156,7 @@ pub mod blackboard;
 pub mod experts;
 pub mod bundled;
 pub mod quick_button;
+pub mod profiles;
 
 // WebSocket handler
 pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
@@ -298,6 +299,7 @@ fn mount_domain_routes() -> Router<AppState> {
         .merge(loop_::loop_routes())
         .merge(experts::expert_routes())
         .merge(bundled::bundled_routes())
+        .merge(profiles::profile_routes())
 }
 
 /// 给 TraceLayer 用的 span 工厂：把 `request_id` / `method` / `uri` 直接挂在 span 字段上，
@@ -1298,9 +1300,10 @@ mod create_app_refactor_tests {
             events_routes(),
             blackboard::blackboard_routes(),
             quick_button_routes(),
+            profiles::profile_routes(),
         ];
-        // 21 个领域子路由函数（quick_button_routes 为快捷话术按钮新增）
-        assert_eq!(routers.len(), 21, "领域子路由函数数量应与拆分清单一致");
+        // 22 个领域子路由函数（profiles::profile_routes 为 Profile 管理新增）
+        assert_eq!(routers.len(), 22, "领域子路由函数数量应与拆分清单一致");
         // `Router` 在 axum 0.8 中没有公开的 route_count，这里只能断言"全部成功构造"
     }
 

@@ -6,6 +6,7 @@ import 'react-js-cron/dist/styles.css';
 import { CronPresetSelect } from '@/components/CronPresetSelect';
 import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '@/utils/cron';
 import { PageCard } from '@/components/common/PageCard';
+import { ProfilesPanel } from '@/components/settings/ProfilesPanel';
 import * as db from '@/utils/database';
 import type { ExecutorConfig, ExecutionRecord } from '@/types';
 import { useApp } from '@/hooks/useApp';
@@ -761,6 +762,13 @@ export function ExecutorsPanel() {
             </Modal>
               </div>
             </Spin>
+          ),
+        },
+        {
+          key: 'api-key',
+          label: 'API Key',
+          children: (
+            <ProfilesPanel />
           ),
         },
         {
