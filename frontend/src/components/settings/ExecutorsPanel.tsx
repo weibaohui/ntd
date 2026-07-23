@@ -6,7 +6,8 @@ import 'react-js-cron/dist/styles.css';
 import { CronPresetSelect } from '@/components/CronPresetSelect';
 import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '@/utils/cron';
 import { PageCard } from '@/components/common/PageCard';
-import { ProfilesPanel } from '@/components/settings/ProfilesPanel';
+import { InstallExecutorButton } from '@/components/settings/InstallExecutorButton';
+import { getExecutorInstallPrompt } from '@/components/settings/executorInstallPrompts';
 import * as db from '@/utils/database';
 import type { ExecutorConfig, ExecutionRecord } from '@/types';
 import { useApp } from '@/hooks/useApp';
@@ -580,6 +581,38 @@ export function ExecutorsPanel() {
                         修复
                       </Button>
                     )}
+                    {detectResult && !detectResult.found && getExecutorInstallPrompt(record.name) && (
+                      <InstallExecutorButton
+                        executorName={record.name}
+                        displayName={record.display_name}
+                        prompt={getExecutorInstallPrompt(record.name)!.prompt}
+                        buttonSize="small"
+                        showLabel={false}
+                        onInstalled={async () => {
+                          try {
+                            const detect = await db.detectExecutor(record.name);
+                            setDetectResults((prev) => ({
+                              ...prev,
+                              [record.name]: { found: detect.binary_found, resolved: detect.path_resolved },
+                            }));
+                            if (detect.binary_found) {
+                              const repair = await db.repairExecutor(record.name);
+                              const updatedPath = repair.path_resolved || detect.path_resolved || record.path;
+                              const updated = await db.updateExecutor(record.name, {
+                                path: updatedPath,
+                                enabled: true,
+                              });
+                              setExecutors((prev) => prev.map((e) => (e.name === record.name ? updated : e)));
+                              message.success(`${record.display_name} 安装/修复完成：${updatedPath}`);
+                            } else {
+                              message.warning(`${record.display_name} 安装后仍未检测到，请检查安装日志或手动填写路径`);
+                            }
+                          } catch (err: any) {
+                            message.error('刷新执行器状态失败: ' + (err?.message || String(err)));
+                          }
+                        }}
+                      />
+                    )}
                     <Button
                       size="small"
                       type="primary"
@@ -762,13 +795,6 @@ export function ExecutorsPanel() {
             </Modal>
               </div>
             </Spin>
-          ),
-        },
-        {
-          key: 'api-key',
-          label: 'API Key',
-          children: (
-            <ProfilesPanel />
           ),
         },
         {
