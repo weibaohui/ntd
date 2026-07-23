@@ -256,8 +256,13 @@ export function ProfilesPanel() {
         <Form.Item name="base_url" label="Base URL" rules={[{ required: true }]}>
           <Input placeholder="https://api.example.com/v1" />
         </Form.Item>
-        <Form.Item name="protocol" label="协议格式" initialValue="openai" style={{ maxWidth: 200 }}>
-          <Input placeholder="openai / anthropic" />
+        <Form.Item name="protocol" label="协议格式" initialValue="openai" style={{ maxWidth: 200 }} rules={[{ required: true, message: '必选' }]}>
+          <Select
+            options={[
+              { value: 'openai', label: 'OpenAI 兼容' },
+              { value: 'anthropic', label: 'Anthropic 原生' },
+            ]}
+          />
         </Form.Item>
 
         <div style={{ marginTop: 16 }}>
