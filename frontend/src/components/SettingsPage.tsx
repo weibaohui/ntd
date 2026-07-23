@@ -23,7 +23,7 @@ import { TemplatesPanel } from './settings/TemplatesPanel';
 import { AboutPanel } from './settings/AboutPanel';
 import { CloudSyncPanel } from './settings/CloudSyncPanel';
 import { InterfaceDisplayPanel } from './settings/InterfaceDisplayPanel';
-import { ProfilesPanel } from './settings/ProfilesPanel';
+import { ProfilesPanel } from '@/components/settings/ProfilesPanel';
 
 import { DEFAULT_EXECUTION_TIMEOUT_SECS } from '@/constants';
 
