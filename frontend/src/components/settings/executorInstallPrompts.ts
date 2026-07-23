@@ -166,7 +166,9 @@ export const INSTALL_MOBILECODER_PROMPT = buildInstallPrompt({
   displayName: 'MobileCoder',
   binaryName: 'mobile',
   verifyArgs: '--version',
-  macos: '优先按 MobileCoder 官网安装脚本执行；或尝试 \`npm install -g mobilecoder-cli\`（如官方提供 npm 包）；Homebrew 作为备选。',
+  // 官网: 未找到公开 CLI 安装文档，可能为内部/已更名项目
+  // 安装: 按官方文档执行
+  macos: '前往 MobileCoder 官网查看最新安装方式；或尝试 \`npm install -g mobilecoder-cli\`（如官方提供 npm 包）。',
   linux: '优先按 MobileCoder 官网安装脚本执行；或尝试 \`npm install -g mobilecoder-cli\`（如官方提供 npm 包）。',
   windows: '优先按 MobileCoder 官网安装脚本/PowerShell 执行；或从官网下载安装包。',
 });
@@ -176,6 +178,9 @@ export const INSTALL_CODEWHALE_PROMPT = buildInstallPrompt({
   displayName: 'CodeWhale',
   binaryName: 'codewhale',
   verifyArgs: '--version',
+  // 官方: https://github.com/Hmbown/CodeWhale（原 DeepSeek-TUI）
+  // npm: codewhale（下载预编译 Rust 二进制，无需 Node.js 运行时依赖）
+  // Homebrew: brew tap Hmbown/deepseek-tui && brew install deepseek-tui
   macos: '先用 npm 全局安装（下载预编译 Rust 二进制）：\`npm install -g codewhale\`；Homebrew 作为备选：\`brew tap Hmbown/deepseek-tui && brew install deepseek-tui\`。',
   linux: '优先用 npm 全局安装（下载预编译 Rust 二进制）：\`npm install -g codewhale\`；或按 GitHub 官方脚本安装。',
   windows: '优先用 npm 全局安装（下载预编译 Rust 二进制）：\`npm install -g codewhale\`；或从官方 GitHub Releases 下载 exe。',
@@ -186,6 +191,9 @@ export const INSTALL_PI_PROMPT = buildInstallPrompt({
   displayName: 'Pi',
   binaryName: 'pi',
   verifyArgs: '--version',
+  // 官方: https://pi.dev
+  // 安装脚本: curl -fsSL https://pi.dev/install.sh | sh
+  // npm: @mariozechner/pi-coding-agent
   macos: 'macOS 优先执行官方安装脚本：\`curl -fsSL https://pi.dev/install.sh | sh\`，或直接用 npm 全局安装：\`npm install -g @mariozechner/pi-coding-agent\`；安装时建议加上 \`--ignore-scripts\` 跳过生命周期脚本。',
   linux: '优先执行官方安装脚本：\`curl -fsSL https://pi.dev/install.sh | sh\`，或直接用 npm 全局安装：\`npm install -g @mariozechner/pi-coding-agent\`。',
   windows: '优先用 npm 全局安装：\`npm install -g @mariozechner/pi-coding-agent\`；或执行官方 PowerShell 安装脚本。',
@@ -196,6 +204,9 @@ export const INSTALL_MIMO_PROMPT = buildInstallPrompt({
   displayName: 'MiMo',
   binaryName: 'mimo',
   verifyArgs: '--version',
+  // 官方: https://github.com/XiaomiMiMo/MiMo-Code
+  // 安装脚本: curl -fsSL https://mimo.xiaomi.com/install | bash
+  // npm: @mimo-ai/cli
   macos: 'macOS/Linux 优先执行官方一键安装脚本：\`curl -fsSL https://mimo.xiaomi.com/install | bash\`；或用 npm 全局安装：\`npm install -g @mimo-ai/cli\`。',
   linux: '优先执行官方一键安装脚本：\`curl -fsSL https://mimo.xiaomi.com/install | bash\`；或用 npm 全局安装：\`npm install -g @mimo-ai/cli\`。',
   windows: '优先执行官方 PowerShell 安装脚本：\`powershell -ep Bypass -c "irm https://mimo.xiaomi.com/install.ps1 | iex"\`；或用 npm 全局安装：\`npm install -g @mimo-ai/cli\`。',
@@ -206,7 +217,9 @@ export const INSTALL_ZHANLU_PROMPT = buildInstallPrompt({
   displayName: 'Zhanlu',
   binaryName: 'zl',
   verifyArgs: '--version',
-  macos: '优先按 Zhanlu 官网安装脚本执行；或尝试 \`npm install -g zhanlu\`（如官方提供）。',
+  // 官网: 未找到公开 CLI 安装文档，可能为企业内部项目
+  // 安装: 按官方文档执行
+  macos: '前往 Zhanlu 官网查看最新安装方式；或尝试 \`npm install -g zhanlu\`（如官方提供）。',
   linux: '优先按 Zhanlu 官网安装脚本执行；或尝试 \`npm install -g zhanlu\`（如官方提供）。',
   windows: '优先按 Zhanlu 官网安装脚本/PowerShell 执行；或尝试 \`npm install -g zhanlu\`。',
 });
