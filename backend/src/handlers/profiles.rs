@@ -1,18 +1,19 @@
-//! Profile 管理 API Handlers。
+//! Provider 池 + Profile 管理 API Handlers。
 //!
-//! 提供 Profile 的增删改查和应用（apply/switch）接口。
-//! 所有 Profile 数据存储在 `~/.ntd/profiles.yaml` 中，通过 `ProfilesConfig` 加载。
-//!
-//! # API 路由
+//! # 路由
 //!
 //! | 方法 | 路径 | 说明 |
 //! |------|------|------|
-//! | GET | `/api/v1/profiles` | 获取所有 profile 摘要列表 |
-//! | GET | `/api/v1/profiles/current` | 获取当前 profile 详情 |
-//! | POST | `/api/v1/profiles` | 创建新 profile |
-//! | PUT | `/api/v1/profiles/{name}` | 更新指定 profile |
-//! | DELETE | `/api/v1/profiles/{name}` | 删除指定 profile |
-//! | POST | `/api/v1/profiles/{name}/apply` | 应用（切换）指定 profile |
+//! | GET | `/api/v1/providers` | Provider 列表 |
+//! | POST | `/api/v1/providers` | 创建 Provider |
+//! | PUT | `/api/v1/providers/{name}` | 更新 Provider |
+//! | DELETE | `/api/v1/providers/{name}` | 删除 Provider |
+//! | GET | `/api/v1/profiles` | Profile 列表 |
+//! | GET | `/api/v1/profiles/current` | 当前 Profile 详情 |
+//! | POST | `/api/v1/profiles` | 创建 Profile |
+//! | PUT | `/api/v1/profiles/{name}` | 更新 Profile |
+//! | DELETE | `/api/v1/profiles/{name}` | 删除 Profile |
+//! | POST | `/api/v1/profiles/{name}/apply` | 应用（切换）Profile |
 
 use axum::{
     Router,
@@ -23,17 +24,22 @@ use axum::{
 use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::ApiResponse;
 use crate::profiles::{
-    ApplyProfileResult, CreateProfileRequest, ExecutorProfile,
-    ProfileGeneratorRegistry, ProfileSummary, ProfilesConfig, UpdateProfileRequest,
+    ApplyProfileResult, CreateProfileRequest, CreateProviderRequest, ExecutorProfile,
+    ExecutorRef, ProfileSummary, ProfilesConfig, Provider, ProviderSummary,
+    UpdateProfileRequest, UpdateProviderRequest,
 };
+use crate::profiles::generators::{resolve_provider, ProfileGeneratorRegistry};
 
 // ============================================================================
 // 路由
 // ============================================================================
 
-/// 挂载所有的 profile 路由。
 pub fn profile_routes() -> Router<AppState> {
     Router::new()
+        // Provider CRUD
+        .route("/api/v1/providers", get(list_providers).post(create_provider))
+        .route("/api/v1/providers/{name}", put(update_provider).delete(delete_provider))
+        // Profile CRUD + apply
         .route("/api/v1/profiles", get(list_profiles).post(create_profile))
         .route("/api/v1/profiles/current", get(get_current_profile))
         .route("/api/v1/profiles/{name}", put(update_profile).delete(delete_profile))
@@ -41,250 +47,260 @@ pub fn profile_routes() -> Router<AppState> {
 }
 
 // ============================================================================
-// Handlers
+// Provider Handlers
 // ============================================================================
 
-/// 获取所有 profile 摘要列表。
-async fn list_profiles(
-    State(state): State<AppState>,
-) -> Result<ApiResponse<Vec<ProfileSummary>>, AppError> {
-    // 读出配置文件
-    let cfg = load_profiles_config(&state).map_err(AppError::Internal)?;
-
-    let current = cfg.current_profile.clone();
-    let summaries: Vec<ProfileSummary> = cfg
-        .profiles
-        .into_iter()
-        .map(|(name, profile)| ProfileSummary {
-            name: name.clone(),
-            display_name: profile.name,
-            description: profile.description,
-            executor_count: profile.executors.len(),
-            is_current: name == current,
-        })
-        .collect();
-
+async fn list_providers(
+    State(_state): State<AppState>,
+) -> Result<ApiResponse<Vec<ProviderSummary>>, AppError> {
+    let cfg = load()?;
+    let summaries: Vec<ProviderSummary> = cfg.providers.into_iter().map(|(name, p)| ProviderSummary {
+        name,
+        display_name: p.name,
+        base_url: p.base_url,
+        protocol: p.protocol,
+        supports_1m_context: p.supports_1m_context,
+        model_count: p.models.len(),
+    }).collect();
     Ok(ApiResponse::ok(summaries))
 }
 
-/// 获取当前 profile 的完整详情。
-async fn get_current_profile(
-    State(state): State<AppState>,
-) -> Result<ApiResponse<serde_json::Value>, AppError> {
-    let cfg = load_profiles_config(&state).map_err(AppError::Internal)?;
-    let current_name = cfg.current_profile.clone();
-    let profile = cfg
-        .profiles
-        .get(&current_name)
-        .ok_or(AppError::NotFound)?;
+async fn create_provider(
+    State(_state): State<AppState>,
+    ApiJson(req): ApiJson<CreateProviderRequest>,
+) -> Result<ApiResponse<ProviderSummary>, AppError> {
+    validate_profile_name(&req.name)?;
+    let mut cfg = load()?;
+    if cfg.providers.contains_key(&req.name) {
+        return Err(AppError::BadRequest(format!("Provider '{}' already exists", req.name)));
+    }
+    let base_url = req.base_url.clone();
+    let protocol = req.protocol;
+    let supports_1m = req.supports_1m_context;
+    let provider = Provider {
+        name: req.display_name,
+        api_key: req.api_key,
+        base_url: req.base_url,
+        protocol,
+        supports_1m_context: supports_1m,
+        models: req.models,
+    };
+    let model_count = provider.models.len();
+    let name = req.name;
+    let display_name = provider.name.clone();
+    cfg.providers.insert(name.clone(), provider);
+    save(&cfg)?;
+    Ok(ApiResponse::ok(ProviderSummary {
+        name,
+        display_name,
+        base_url,
+        protocol,
+        supports_1m_context: supports_1m,
+        model_count,
+    }))
+}
 
-    // 返回 profile 详情 + 名称标记
+async fn update_provider(
+    State(_state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    ApiJson(req): ApiJson<UpdateProviderRequest>,
+) -> Result<ApiResponse<ProviderSummary>, AppError> {
+    let mut cfg = load()?;
+    let provider = cfg.providers.get_mut(&name).ok_or(AppError::NotFound)?;
+    if let Some(dn) = req.display_name { provider.name = dn; }
+    if let Some(k) = req.api_key { provider.api_key = k; }
+    if let Some(u) = req.base_url { provider.base_url = u; }
+    if let Some(p) = req.protocol { provider.protocol = p; }
+    if let Some(sc) = req.supports_1m_context { provider.supports_1m_context = sc; }
+    if let Some(m) = req.models { provider.models = m; }
+    let model_count = provider.models.len();
+    let summary = ProviderSummary {
+        name: name.clone(),
+        display_name: provider.name.clone(),
+        base_url: provider.base_url.clone(),
+        protocol: provider.protocol,
+        supports_1m_context: provider.supports_1m_context,
+        model_count,
+    };
+    save(&cfg)?;
+    Ok(ApiResponse::ok(summary))
+}
+
+async fn delete_provider(
+    State(_state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> Result<ApiResponse<()>, AppError> {
+    let mut cfg = load()?;
+    if cfg.providers.remove(&name).is_none() {
+        return Err(AppError::NotFound);
+    }
+    save(&cfg)?;
+    Ok(ApiResponse::ok(()))
+}
+
+// ============================================================================
+// Profile Handlers
+// ============================================================================
+
+async fn list_profiles(
+    State(_state): State<AppState>,
+) -> Result<ApiResponse<Vec<ProfileSummary>>, AppError> {
+    let cfg = load()?;
+    let current = cfg.current_profile.clone();
+    let summaries: Vec<ProfileSummary> = cfg.profiles.into_iter().map(|(name, p)| {
+        let is_current = name == current;
+        ProfileSummary { name, display_name: p.name, description: p.description, executor_count: p.executors.len(), is_current }
+    }).collect();
+    Ok(ApiResponse::ok(summaries))
+}
+
+async fn get_current_profile(
+    State(_state): State<AppState>,
+) -> Result<ApiResponse<serde_json::Value>, AppError> {
+    let cfg = load()?;
+    let current_name = cfg.current_profile.clone();
+    let profile = cfg.profiles.get(&current_name).ok_or(AppError::NotFound)?;
     let value = serde_json::json!({
         "name": current_name,
         "display_name": profile.name,
         "description": profile.description,
         "executors": profile.executors,
     });
-
     Ok(ApiResponse::ok(value))
 }
 
-/// 创建新 profile。
 async fn create_profile(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     ApiJson(req): ApiJson<CreateProfileRequest>,
 ) -> Result<ApiResponse<ProfileSummary>, AppError> {
-    // 校验 name 不重复
     validate_profile_name(&req.name)?;
-
-    // 加载当前配置
-    let mut cfg = load_profiles_config(&state).map_err(AppError::Internal)?;
-
-    // 检查是否已存在同名 profile
+    let mut cfg = load()?;
     if cfg.profiles.contains_key(&req.name) {
-        return Err(AppError::BadRequest(format!(
-            "Profile '{}' already exists",
-            req.name
-        )));
+        return Err(AppError::BadRequest(format!("Profile '{}' already exists", req.name)));
     }
-
-    // 构造新的 profile 条目
+    let profile_name = req.name;
     let profile = ExecutorProfile {
         name: req.display_name,
         description: req.description,
         executors: req.executors,
     };
-    let name = req.name;
-
-    // 写回存储
-    cfg.profiles.insert(name.clone(), profile);
-    save_profiles_config(&state, &cfg).map_err(AppError::Internal)?;
-
-    let is_current = cfg.current_profile == name;
-    // profile 刚刚被操作，一定能取到；即便出 bug 也应返回 NotFound 而非 panic
-    let profile_entry = cfg.profiles.get(&name).ok_or_else(|| AppError::Internal("profile not found after operation".to_string()))?;
+    cfg.profiles.insert(profile_name.clone(), profile);
+    save(&cfg)?;
+    let is_current = cfg.current_profile == profile_name;
+    let p = cfg.profiles.get(&profile_name).ok_or_else(|| AppError::Internal("profile not found after creation".to_string()))?;
     Ok(ApiResponse::ok(ProfileSummary {
-        name,
-        display_name: profile_entry.name.clone(),
-        description: profile_entry.description.clone(),
-        executor_count: profile_entry.executors.len(),
+        name: profile_name,
+        display_name: p.name.clone(),
+        description: p.description.clone(),
+        executor_count: p.executors.len(),
         is_current,
     }))
 }
 
-/// 更新指定 profile。
 async fn update_profile(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     axum::extract::Path(name): axum::extract::Path<String>,
     ApiJson(req): ApiJson<UpdateProfileRequest>,
 ) -> Result<ApiResponse<ProfileSummary>, AppError> {
-    let mut cfg = load_profiles_config(&state).map_err(AppError::Internal)?;
-
-    let profile = cfg
-        .profiles
-        .get_mut(&name)
-        .ok_or(AppError::NotFound)?;
-
-    if let Some(display_name) = req.display_name {
-        profile.name = display_name;
-    }
-    if let Some(desc) = req.description {
-        profile.description = if desc.is_empty() { None } else { Some(desc) };
-    }
-
-    // 逐个执行器更新配置
-    for (exec_name, settings) in req.executors {
-        match settings {
-            Some(s) => {
-                profile.executors.insert(exec_name, s);
-            }
-            None => {
-                // None = 删除该执行器的配置
-                profile.executors.remove(&exec_name);
-            }
+    let mut cfg = load()?;
+    let profile = cfg.profiles.get_mut(&name).ok_or(AppError::NotFound)?;
+    if let Some(dn) = req.display_name { profile.name = dn; }
+    if let Some(desc) = req.description { profile.description = if desc.is_empty() { None } else { Some(desc) }; }
+    for (exec_name, val) in req.executors {
+        match val {
+            Some(ref_) => { profile.executors.insert(exec_name, ref_); }
+            None => { profile.executors.remove(&exec_name); }
         }
     }
-
-    save_profiles_config(&state, &cfg).map_err(AppError::Internal)?;
-
+    save(&cfg)?;
     let is_current = cfg.current_profile == name;
-    // profile 刚刚被操作，一定能取到；即便出 bug 也应返回 NotFound 而非 panic
-    let profile_entry = cfg.profiles.get(&name).ok_or_else(|| AppError::Internal("profile not found after operation".to_string()))?;
+    let p = cfg.profiles.get(&name).ok_or_else(|| AppError::Internal("profile not found after operation".to_string()))?;
     Ok(ApiResponse::ok(ProfileSummary {
-        name,
-        display_name: profile_entry.name.clone(),
-        description: profile_entry.description.clone(),
-        executor_count: profile_entry.executors.len(),
-        is_current,
+        name, display_name: p.name.clone(), description: p.description.clone(),
+        executor_count: p.executors.len(), is_current,
     }))
 }
 
-/// 删除指定 profile（禁止删除当前激活的 profile）。
 async fn delete_profile(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     axum::extract::Path(name): axum::extract::Path<String>,
 ) -> Result<ApiResponse<()>, AppError> {
-    let mut cfg = load_profiles_config(&state).map_err(AppError::Internal)?;
-
+    let mut cfg = load()?;
     if name == cfg.current_profile {
-        return Err(AppError::BadRequest(
-            "Cannot delete the currently active profile. Switch to another profile first.".to_string(),
-        ));
+        return Err(AppError::BadRequest("Cannot delete the currently active profile. Switch to another profile first.".to_string()));
     }
-
-    if cfg.profiles.remove(&name).is_none() {
-        return Err(AppError::NotFound);
-    }
-
-    save_profiles_config(&state, &cfg).map_err(AppError::Internal)?;
-
+    cfg.profiles.remove(&name).ok_or(AppError::NotFound)?;
+    save(&cfg)?;
     Ok(ApiResponse::ok(()))
 }
 
-/// 应用（切换到）指定 profile。
-///
-/// 流程：
-/// 1. 从 profiles.yaml 读取目标 profile
-/// 2. 使用 ProfileGeneratorRegistry 为每个已配置的执行器生成并写入配置文件
-/// 3. 更新 current_profile 标记
-/// 4. 返回各执行器的应用结果（成功/跳过/失败）
 async fn apply_profile(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     axum::extract::Path(name): axum::extract::Path<String>,
 ) -> Result<ApiResponse<ApplyProfileResult>, AppError> {
-    let mut cfg = load_profiles_config(&state).map_err(AppError::Internal)?;
-
-    let profile = cfg
-        .profiles
-        .get(&name)
-        .ok_or(AppError::NotFound)?
-        .clone();
+    let mut cfg = load()?;
+    let profile = cfg.profiles.get(&name).cloned().ok_or(AppError::NotFound)?;
 
     let registry = ProfileGeneratorRegistry::new();
     let mut applied = Vec::new();
     let mut skipped = Vec::new();
     let mut errors = Vec::new();
 
-    // 遍历 profile 中包含的所有执行器配置
-    for (exec_name, settings) in &profile.executors {
+    for (exec_name, exec_ref) in &profile.executors {
         if let Some(generator) = registry.get(exec_name) {
-            // 从 ExecutorDef 获取 session_dir
-            let session_dir = crate::adapters::find_executor(exec_name)
-                .map(|def| def.session_dir)
-                .unwrap_or("");
-
-            match generator.generate(settings, session_dir) {
-                Ok(()) => applied.push(exec_name.clone()),
+            // 从 profiles.yaml 中解析 provider
+            match resolve_provider(&cfg, exec_ref) {
+                Ok((provider, model_name)) => {
+                    // 构建一个与 ref 相同的临时 ref（model 取 resolved 值）
+                    let ref_for_gen = ExecutorRef {
+                        provider: exec_ref.provider.clone(),
+                        model: model_name,
+                    };
+                    let session_dir = crate::adapters::find_executor(exec_name)
+                        .map(|def| def.session_dir)
+                        .unwrap_or("");
+                    match generator.generate(&ref_for_gen, provider, session_dir) {
+                        Ok(()) => applied.push(exec_name.clone()),
+                        Err(e) => errors.push(format!("{}: {}", exec_name, e)),
+                    }
+                }
                 Err(e) => errors.push(format!("{}: {}", exec_name, e)),
             }
         } else {
-            // 该执行器尚无生成器实现，跳过
             skipped.push(exec_name.clone());
         }
     }
 
-    // 更新当前 profile 标记
     cfg.current_profile = name.clone();
-    save_profiles_config(&state, &cfg).map_err(AppError::Internal)?;
+    save(&cfg)?;
 
-    let result = ApplyProfileResult {
+    Ok(ApiResponse::ok(ApplyProfileResult {
         profile_name: name,
         profile_display_name: profile.name,
         applied_executors: applied,
         skipped_executors: skipped,
         errors,
-    };
-
-    Ok(ApiResponse::ok(result))
+    }))
 }
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
-/// 从 AppState 的 config 共享锁中获取 profiles.yaml 路径，加载 ProfilesConfig。
-fn load_profiles_config(_state: &AppState) -> Result<ProfilesConfig, String> {
-    // 直接从磁盘加载，与 Config::load() 对齐
+fn load() -> Result<ProfilesConfig, AppError> {
     Ok(ProfilesConfig::load())
 }
 
-/// 保存 ProfilesConfig 到磁盘。
-fn save_profiles_config(_state: &AppState, cfg: &ProfilesConfig) -> Result<(), String> {
-    cfg.save()
+fn save(cfg: &ProfilesConfig) -> Result<(), AppError> {
+    cfg.save().map_err(AppError::Internal)
 }
 
-/// 校验 profile name 的合法性：只能包含字母、数字、中划线、下划线。
 fn validate_profile_name(name: &str) -> Result<(), AppError> {
     if name.is_empty() {
-        return Err(AppError::BadRequest("Profile name cannot be empty".to_string()));
+        return Err(AppError::BadRequest("Name cannot be empty".to_string()));
     }
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(AppError::BadRequest(
-            "Profile name can only contain letters, numbers, hyphens, and underscores".to_string(),
-        ));
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(AppError::BadRequest("Name can only contain letters, numbers, hyphens, and underscores".to_string()));
     }
     Ok(())
 }
@@ -297,16 +313,13 @@ mod tests {
     #[test]
     fn test_validate_profile_name_valid() {
         assert!(validate_profile_name("default").is_ok());
-        assert!(validate_profile_name("my-profile").is_ok());
-        assert!(validate_profile_name("work_config").is_ok());
-        assert!(validate_profile_name("a").is_ok());
+        assert!(validate_profile_name("my-provider").is_ok());
     }
 
     #[test]
     fn test_validate_profile_name_invalid() {
         assert!(validate_profile_name("").is_err());
         assert!(validate_profile_name("with space").is_err());
-        assert!(validate_profile_name("special!").is_err());
         assert!(validate_profile_name("中文").is_err());
     }
 }

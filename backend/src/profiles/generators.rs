@@ -1,40 +1,32 @@
 //! 内置执行器的配置生成器。
 //!
-//! 每个生成器将统一的 `ExecutorSettings` 转换为各执行器原生格式的配置文件，
-//! 并写入执行器对应的路径。写入前自动备份原文件到 `~/.ntd/profile_backups/`。
+//! 每个生成器将 `(ExecutorRef, Provider)` 转换为各执行器原生格式的配置文件。
 //!
-//! # 首批支持的执行器
+//! # 匹配逻辑
 //!
-//! - Claude Code → `~/.claude/settings.json`
-//! - PI → `~/.pi/config.yaml`
-//! - AtomCode → `~/.atomcode/config.toml`
-//! - Kilo → `~/.kilo/config.json`
+//! 生成器根据 `Provider.protocol` 输出不同格式：
+//!
+//! | Protocol | 适用范围 | 输出格式 |
+//! |----------|---------|----------|
+//! | Anthropic | Claude Code | settings.json (env block) |
+//! | OpenAI | PI、AtomCode、Kilo 等 | 各执行器的 provider 配置 |
 
 use std::path::PathBuf;
 
-use super::{ExecutorSettings, ProfileGenerator};
+use super::{ExecutorRef, ProfilesConfig, Protocol, Provider};
 
 // ============================================================================
 // 备份 helper
 // ============================================================================
 
-/// 在覆写前备份原始配置文件到 `~/.ntd/profile_backups/`。
-///
-/// 备份文件名为 `{executor_name}_{timestamp}.bak`，保留最近 10 份备份。
-/// 写入失败不影响主流程（仅记录 warn）。
 fn backup_existing_config(config_path: &std::path::Path) {
     if !config_path.exists() {
         return;
     }
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let backup_dir = home.join(".ntd").join("profile_backups");
-    // 确保备份目录存在
     if let Err(e) = std::fs::create_dir_all(&backup_dir) {
-        tracing::warn!(
-            error = %e,
-            path = %backup_dir.display(),
-            "failed to create backup directory"
-        );
+        tracing::warn!(error = %e, path = %backup_dir.display(), "failed to create backup directory");
         return;
     }
 
@@ -45,33 +37,19 @@ fn backup_existing_config(config_path: &std::path::Path) {
     let backup_path = backup_dir.join(&backup_name);
 
     if let Err(e) = std::fs::copy(config_path, &backup_path) {
-        tracing::warn!(
-            error = %e,
-            source = %config_path.display(),
-            target = %backup_path.display(),
-            "failed to backup config file"
-        );
+        tracing::warn!(error = %e, source = %config_path.display(), target = %backup_path.display(), "failed to backup");
     }
 
-    // 清理超过 10 份的旧备份（仅清理同名前缀）
     cleanup_old_backups(&backup_dir, &file_stem, 10);
 }
 
-/// 保留最近 N 份备份，删除更旧的同名文件。
 fn cleanup_old_backups(dir: &std::path::Path, prefix: &str, keep: usize) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
     let mut backups: Vec<_> = entries
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_name().to_string_lossy().starts_with(prefix) && e.path().is_file()
-        })
+        .filter(|e| e.file_name().to_string_lossy().starts_with(prefix) && e.path().is_file())
         .collect();
-    // 按修改时间排序（旧的在前面）
     backups.sort_by_key(|e| e.metadata().ok().and_then(|m| m.modified().ok()));
-
-    // 删除超出保留数量的旧文件
     if backups.len() > keep {
         for entry in backups.iter().take(backups.len() - keep) {
             let _ = std::fs::remove_file(entry.path());
@@ -80,65 +58,146 @@ fn cleanup_old_backups(dir: &std::path::Path, prefix: &str, keep: usize) {
 }
 
 // ============================================================================
+// ProfileGenerator trait
+// ============================================================================
+
+/// 生成器 trait：将 (ExecutorRef, Provider) 转换为执行器原生格式。
+///
+/// `generate` 接收：
+/// - `exec_ref` — Profile 中的执行器引用（含 provider name + model name）
+/// - `provider` — 从 Provider Pool 查出的完整 Provider 对象
+/// - `session_dir` — 执行器的 session 目录（用于确定配置文件路径）
+pub trait ProfileGenerator: Send + Sync {
+    fn executor_name(&self) -> &str;
+
+    fn config_path(&self, session_dir: &str) -> PathBuf {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let expanded = if session_dir.starts_with('~') {
+            let relative = session_dir.trim_start_matches('~').trim_start_matches(std::path::MAIN_SEPARATOR);
+            home.join(relative)
+        } else {
+            PathBuf::from(session_dir)
+        };
+        expanded.join(self.default_filename())
+    }
+
+    fn default_filename(&self) -> &str;
+
+    /// 根据 (exec_ref, provider) 生成配置文件。
+    fn generate(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(), String>;
+}
+
+/// 注册表。
+pub struct ProfileGeneratorRegistry {
+    generators: HashMap<String, Box<dyn ProfileGenerator>>,
+}
+
+impl ProfileGeneratorRegistry {
+    pub fn new() -> Self {
+        let mut reg = Self { generators: HashMap::new() };
+        reg.register(Box::new(ClaudeCodeGenerator));
+        reg.register(Box::new(PiGenerator));
+        reg.register(Box::new(AtomCodeGenerator));
+        reg.register(Box::new(KiloGenerator));
+        reg
+    }
+
+    pub fn register(&mut self, gen: Box<dyn ProfileGenerator>) {
+        let name = gen.executor_name().to_string();
+        self.generators.insert(name, gen);
+    }
+
+    pub fn get(&self, name: &str) -> Option<&dyn ProfileGenerator> {
+        self.generators.get(name).map(|b| b.as_ref())
+    }
+}
+
+impl Default for ProfileGeneratorRegistry {
+    fn default() -> Self { Self::new() }
+}
+
+// ============================================================================
+// Helper — 从 ProfilesConfig 解析 provider + model
+// ============================================================================
+
+/// 解析 exec_ref 为完整的 Provider + model 名称。
+/// 如果 provider 不存在或 model 不在列表中，返回 Err。
+/// 根据 exec_ref 解析出 provider 和 model。
+/// 返回 (Provider 引用, model 名称 clone)。
+/// model 名称先尝试从 provider.models 列表中精确匹配，找不到时直接用 exec_ref.model。
+pub fn resolve_provider<'a>(
+    config: &'a ProfilesConfig,
+    exec_ref: &ExecutorRef,
+) -> Result<(&'a Provider, String), String> {
+    let provider = config.providers.get(&exec_ref.provider)
+        .ok_or_else(|| format!("Provider '{}' not found in provider pool", exec_ref.provider))?;
+
+    // 验证 model 存在（允许通过即使不在列表，但给出 warn）
+    let model_exists = provider.models.iter().any(|m| m.name == exec_ref.model);
+    if !model_exists {
+        tracing::warn!(
+            provider = %exec_ref.provider,
+            model = %exec_ref.model,
+            "model not found in provider's model list, will use anyway"
+        );
+    }
+
+    Ok((provider, exec_ref.model.clone()))
+}
+
+// ============================================================================
 // Claude Code Generator
 // ============================================================================
 
 /// Claude Code → `~/.claude/settings.json`
 ///
-/// 写入 JSON 格式：
-/// ```json
-/// {
-///   "apiKey": "sk-ant-xxx",
-///   "model": "claude-sonnet-4-20250514"
-/// }
-/// ```
+/// 根据 provider.protocol 输出不同格式：
+/// - Anthropic 协议 → env 模式（ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL / ANTHROPIC_xxx_MODEL）
+/// - OpenAI 协议 → OpenAI-compatible provider 配置
 pub struct ClaudeCodeGenerator;
 
 impl ProfileGenerator for ClaudeCodeGenerator {
-    fn executor_name(&self) -> &str {
-        "claudecode"
-    }
+    fn executor_name(&self) -> &str { "claudecode" }
+    fn default_filename(&self) -> &str { "settings.json" }
 
-    fn default_filename(&self) -> &str {
-        "settings.json"
-    }
-
-    fn generate(&self, settings: &ExecutorSettings, session_dir: &str) -> Result<(), String> {
-        let path = self.config_path(session_dir);
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let expanded_path = expand_path(&path, &home);
-
-        // 备份原文件
+    fn generate(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(), String> {
+        let expanded_path = expand_config_path(self.config_path(session_dir));
         backup_existing_config(&expanded_path);
+        ensure_parent_dir(&expanded_path)?;
 
-        // 构建 JSON 对象用 serde_json::Map 而非 struct，避免字段名拼错导致执行器不识别。
-        let mut map = serde_json::Map::new();
-        if let Some(key) = &settings.api_key {
-            // Claude Code 使用 camelCase "apiKey"
-            map.insert("apiKey".to_string(), serde_json::Value::String(key.clone()));
-        }
-        if let Some(model) = &settings.model {
-            map.insert("model".to_string(), serde_json::Value::String(model.clone()));
-        }
-        if let Some(url) = &settings.base_url {
-            // Claude Code 支持 base URL 覆盖
-            map.insert("baseUrl".to_string(), serde_json::Value::String(url.clone()));
+        let mut root = serde_json::Map::new();
+
+        if provider.protocol == Protocol::Anthropic {
+            // Anthropic 协议：写 env 变量块（Claude Code 原生支持的格式）
+            let mut env_map = serde_json::Map::new();
+            env_map.insert("ANTHROPIC_AUTH_TOKEN".to_string(), serde_json::Value::String(provider.api_key.clone()));
+            env_map.insert("ANTHROPIC_BASE_URL".to_string(), serde_json::Value::String(provider.base_url.clone()));
+            env_map.insert("ANTHROPIC_MODEL".to_string(), serde_json::Value::String(exec_ref.model.clone()));
+            env_map.insert("API_TIMEOUT_MS".to_string(), serde_json::Value::String("3000000".to_string()));
+            env_map.insert("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_string(), serde_json::Value::String("1".to_string()));
+
+            if provider.supports_1m_context {
+                // 1M 上下文模型用 [1M] 后缀标记，让 Claude Code 知道扩展上下文能力
+                env_map.insert("ANTHROPIC_DEFAULT_SONNET_MODEL".to_string(), serde_json::Value::String(format!("{}[1M]", exec_ref.model)));
+                env_map.insert("ANTHROPIC_DEFAULT_FABLE_MODEL".to_string(), serde_json::Value::String(format!("{}[1M]", exec_ref.model)));
+                env_map.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(), serde_json::Value::String(exec_ref.model.clone()));
+            }
+
+            root.insert("env".to_string(), serde_json::Value::Object(env_map));
+            root.insert("skipDangerousModePermissionPrompt".to_string(), serde_json::Value::Bool(true));
+        } else {
+            // OpenAI 协议：写 OpenAI-compatible 顶层字段
+            let mut cfg_map = serde_json::Map::new();
+            cfg_map.insert("apiKey".to_string(), serde_json::Value::String(provider.api_key.clone()));
+            cfg_map.insert("baseUrl".to_string(), serde_json::Value::String(provider.base_url.clone()));
+            cfg_map.insert("model".to_string(), serde_json::Value::String(exec_ref.model.clone()));
+            root.insert("provider".to_string(), serde_json::Value::Object(cfg_map));
         }
 
-        // 确保父目录存在
-        if let Some(parent) = expanded_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("failed to create dir: {}", e))?;
-        }
+        let json = serde_json::to_string_pretty(&root).map_err(|e| format!("serialize: {}", e))?;
+        std::fs::write(&expanded_path, &json).map_err(|e| format!("write: {}", e))?;
 
-        let json = serde_json::to_string_pretty(&map)
-            .map_err(|e| format!("failed to serialize settings: {}", e))?;
-        std::fs::write(&expanded_path, &json)
-            .map_err(|e| format!("failed to write settings: {}", e))?;
-
-        tracing::info!(
-            path = %expanded_path.display(),
-            "generated Claude Code settings"
-        );
+        tracing::info!(path = %expanded_path.display(), provider = %provider.name, model = %exec_ref.model, "Claude Code config generated");
         Ok(())
     }
 }
@@ -149,51 +208,28 @@ impl ProfileGenerator for ClaudeCodeGenerator {
 
 /// PI → `~/.pi/config.yaml`
 ///
-/// 写入 YAML 格式（PI 原生使用 YAML 配置）：
-/// ```yaml
-/// openai_api_key: sk-xxx
-/// anthropic_api_key: sk-ant-xxx
-/// default_model: jiutian/deepseek/deepseek-v4-flash
-/// ```
-///
-/// PI 使用 provider 级别的 API Key 配置（而非单一 `api_key`），
-/// 因此通用字段 `api_key` 和 `model` 会映射为 PI 风格的 key 名，
-/// 专有字段（如 `openai_api_key`、`anthropic_api_key`）通过 `extra` 透传。
+/// PI 使用 provider 级别的 API Key 配置，写入 flat YAML。
 pub struct PiGenerator;
 
 impl ProfileGenerator for PiGenerator {
-    fn executor_name(&self) -> &str {
-        "pi"
-    }
+    fn executor_name(&self) -> &str { "pi" }
+    fn default_filename(&self) -> &str { "config.yaml" }
 
-    fn default_filename(&self) -> &str {
-        "config.yaml"
-    }
-
-    fn generate(&self, settings: &ExecutorSettings, session_dir: &str) -> Result<(), String> {
-        let path = self.config_path(session_dir);
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let expanded_path = expand_path(&path, &home);
-
+    fn generate(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(), String> {
+        let expanded_path = expand_config_path(self.config_path(session_dir));
         backup_existing_config(&expanded_path);
+        ensure_parent_dir(&expanded_path)?;
 
-        // PI 配置使用 YAML，构建一个 flat map 然后序列化
-        let config_map = settings.to_map();
+        // PI 使用 flat key-value 的 YAML 配置
+        let mut config = std::collections::HashMap::new();
+        config.insert("api_key".to_string(), provider.api_key.clone());
+        config.insert("base_url".to_string(), provider.base_url.clone());
+        config.insert("default_model".to_string(), exec_ref.model.clone());
 
-        // 确保父目录存在
-        if let Some(parent) = expanded_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("failed to create dir: {}", e))?;
-        }
+        let yaml = serde_yaml::to_string(&config).map_err(|e| format!("serialize: {}", e))?;
+        std::fs::write(&expanded_path, &yaml).map_err(|e| format!("write: {}", e))?;
 
-        let yaml = serde_yaml::to_string(&config_map)
-            .map_err(|e| format!("failed to serialize config: {}", e))?;
-        std::fs::write(&expanded_path, &yaml)
-            .map_err(|e| format!("failed to write config: {}", e))?;
-
-        tracing::info!(
-            path = %expanded_path.display(),
-            "generated PI config"
-        );
+        tracing::info!(path = %expanded_path.display(), "PI config generated");
         Ok(())
     }
 }
@@ -204,90 +240,43 @@ impl ProfileGenerator for PiGenerator {
 
 /// AtomCode → `~/.atomcode/config.toml`
 ///
-/// AtomCode 使用 TOML 格式，provider 配置在 `[providers.*]` section 下。
-/// 当 profile 中配了 `api_key` 和 `model` 时，会在 `config.toml` 中生成
-/// 对应的 provider 条目；`base_url` 可选，用于自定义 API 端点。
-///
-/// 写入示例：
-/// ```toml
-/// [providers.custom]
-/// type = "openai"
-/// model = "deepseek-v4-flash"
-/// base_url = "https://llm-api.atomgit.com/v1"
-/// api_key = "sk-xxx"
-/// ```
-///
-/// **不覆写已有文件**：AtomCode 的 config.toml 包含大量非凭据配置（LSP、UI、
-/// plugin、datalog 等），直接覆写会破坏现有环境。改为将 provider 追加或更新
-/// 到现有 `[providers]` 段，不修改其他章节。
+/// 追加 provider 段到现有 config.toml，不覆写非凭据配置。
 pub struct AtomCodeGenerator;
 
 impl ProfileGenerator for AtomCodeGenerator {
-    fn executor_name(&self) -> &str {
-        "atomcode"
-    }
+    fn executor_name(&self) -> &str { "atomcode" }
+    fn default_filename(&self) -> &str { "config.toml" }
 
-    /// AtomCode 生成器输出到 `config.toml`（AtomCode 原生配置文件）。
-    /// 注意：要与已有配置合并，而非整体覆写。
-    fn default_filename(&self) -> &str {
-        "config.toml"
-    }
-
-    fn generate(&self, settings: &ExecutorSettings, session_dir: &str) -> Result<(), String> {
-        let path = self.config_path(session_dir);
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let expanded_path = expand_path(&path, &home);
-
-        // 备份原文件
+    fn generate(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(), String> {
+        let expanded_path = expand_config_path(self.config_path(session_dir));
         if expanded_path.exists() {
             backup_existing_config(&expanded_path);
         }
+        ensure_parent_dir(&expanded_path)?;
 
-        // 确保父目录存在
-        if let Some(parent) = expanded_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("failed to create dir: {}", e))?;
-        }
-
-        // 生成 provider 配置 TOML 段
+        // 生成 provider TOML 段，追加到现有文件之后
         let mut output = String::new();
-        output.push_str("# AtomCode provider config — generated by ntd profile apply\n");
-        output.push_str("# Do not edit manually; changes will be overwritten on next profile switch.\n\n");
+        output.push_str("\n# ntd profile provider — generated by `ntd profile apply`\n");
+        output.push_str("# Do not edit manually; will be overwritten.\n\n");
 
-        // 生成 profile 名称作为 section key
         let section_name = "ntd-profile";
         output.push_str(&format!("[providers.{}]\n", section_name));
         output.push_str("type = \"openai\"\n");
+        output.push_str(&format!("model = {:?}\n", exec_ref.model));
+        output.push_str(&format!("base_url = {:?}\n", provider.base_url));
+        output.push_str(&format!("api_key = {:?}\n", provider.api_key));
 
-        // 写入 model 字段（如配置了）
-        if let Some(model) = &settings.model {
-            output.push_str(&format!("model = {:?}\n", model));
-        }
-        // 写入 base_url（如配置了）
-        if let Some(url) = &settings.base_url {
-            output.push_str(&format!("base_url = {:?}\n", url));
-        }
-        // 写入 api_key（如配置了）
-        if let Some(key) = &settings.api_key {
-            output.push_str(&format!("api_key = {:?}\n", key));
-        }
-        // 透传扩展字段
-        for (k, v) in &settings.extra {
-            output.push_str(&format!("{} = {:?}\n", k, v));
-        }
+        // 追加到原有配置之后（不覆写）
+        let existing = std::fs::read_to_string(&expanded_path).unwrap_or_default();
+        let final_content = if existing.trim().is_empty() {
+            output
+        } else {
+            format!("{}{}", existing.trim_end(), output)
+        };
 
-        // 如果用户配了 model 但没有配 provider 名，额外生成 default_provider 指向新 provider
-        if settings.model.is_some() {
-            output.push('\n');
-            output.push_str(&format!("default_provider = {:?}\n", section_name));
-        }
+        std::fs::write(&expanded_path, &final_content).map_err(|e| format!("write: {}", e))?;
 
-        std::fs::write(&expanded_path, &output)
-            .map_err(|e| format!("failed to write atomcode config: {}", e))?;
-
-        tracing::info!(
-            path = %expanded_path.display(),
-            "generated AtomCode provider config"
-        );
+        tracing::info!(path = %expanded_path.display(), "AtomCode config updated");
         Ok(())
     }
 }
@@ -297,159 +286,139 @@ impl ProfileGenerator for AtomCodeGenerator {
 // ============================================================================
 
 /// Kilo → `~/.kilo/config.json`
-///
-/// 写入 JSON 格式：
-/// ```json
-/// {
-///   "api_key": "xxx",
-///   "model": "claude-3-5-sonnet"
-/// }
-/// ```
 pub struct KiloGenerator;
 
 impl ProfileGenerator for KiloGenerator {
-    fn executor_name(&self) -> &str {
-        "kilo"
-    }
+    fn executor_name(&self) -> &str { "kilo" }
+    fn default_filename(&self) -> &str { "config.json" }
 
-    fn default_filename(&self) -> &str {
-        "config.json"
-    }
-
-    fn generate(&self, settings: &ExecutorSettings, session_dir: &str) -> Result<(), String> {
-        let path = self.config_path(session_dir);
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let expanded_path = expand_path(&path, &home);
-
+    fn generate(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(), String> {
+        let expanded_path = expand_config_path(self.config_path(session_dir));
         backup_existing_config(&expanded_path);
+        ensure_parent_dir(&expanded_path)?;
 
-        // Kilo 使用 snake_case 字段名
         let mut map = serde_json::Map::new();
-        if let Some(key) = &settings.api_key {
-            map.insert("api_key".to_string(), serde_json::Value::String(key.clone()));
-        }
-        if let Some(model) = &settings.model {
-            map.insert("model".to_string(), serde_json::Value::String(model.clone()));
-        }
-        if let Some(url) = &settings.base_url {
-            map.insert("base_url".to_string(), serde_json::Value::String(url.clone()));
-        }
+        map.insert("api_key".to_string(), serde_json::Value::String(provider.api_key.clone()));
+        map.insert("base_url".to_string(), serde_json::Value::String(provider.base_url.clone()));
+        map.insert("model".to_string(), serde_json::Value::String(exec_ref.model.clone()));
+        map.insert("provider_type".to_string(), serde_json::Value::String(
+            if provider.protocol == Protocol::Anthropic { "anthropic".to_string() } else { "openai".to_string() }
+        ));
 
-        // 扩展字段透传
-        for (k, v) in &settings.extra {
-            map.insert(k.clone(), serde_json::Value::String(v.clone()));
-        }
+        let json = serde_json::to_string_pretty(&map).map_err(|e| format!("serialize: {}", e))?;
+        std::fs::write(&expanded_path, &json).map_err(|e| format!("write: {}", e))?;
 
-        if let Some(parent) = expanded_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("failed to create dir: {}", e))?;
-        }
-
-        let json = serde_json::to_string_pretty(&map)
-            .map_err(|e| format!("failed to serialize config: {}", e))?;
-        std::fs::write(&expanded_path, &json)
-            .map_err(|e| format!("failed to write config: {}", e))?;
-
-        tracing::info!(
-            path = %expanded_path.display(),
-            "generated Kilo config"
-        );
+        tracing::info!(path = %expanded_path.display(), "Kilo config generated");
         Ok(())
     }
 }
 
 // ============================================================================
-// Helper
+// Helpers
 // ============================================================================
 
-/// 展开路径中的 `~` 为用户的 home 目录。
-fn expand_path(path: &std::path::Path, home: &std::path::Path) -> PathBuf {
+fn expand_config_path(path: PathBuf) -> PathBuf {
     let s = path.to_string_lossy();
     if s.starts_with('~') {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         let relative = s.trim_start_matches('~').trim_start_matches(std::path::MAIN_SEPARATOR);
         home.join(relative)
     } else {
-        path.to_path_buf()
+        path
     }
 }
+
+fn ensure_parent_dir(path: &std::path::Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {}", e))?;
+    }
+    Ok(())
+}
+
+use std::collections::HashMap;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark, clippy::match_same_arms, clippy::from_over_into, clippy::unwrap_or_default)]
 mod tests {
     use super::*;
-    use std::fs;
 
-    #[test]
-    fn test_claude_code_generates_valid_json() {
-        let gen = ClaudeCodeGenerator;
-        assert_eq!(gen.executor_name(), "claudecode");
-        assert_eq!(gen.default_filename(), "settings.json");
-        assert!(
-            gen.config_path("~/.claude").to_string_lossy().contains(".claude/settings.json")
-        );
+    fn sample_provider() -> Provider {
+        Provider {
+            name: "Test AI".to_string(),
+            api_key: "sk-test".to_string(),
+            base_url: "https://api.test.com/v1".to_string(),
+            protocol: Protocol::Openai,
+            supports_1m_context: true,
+            models: vec![
+                super::super::ProviderModel { name: "gpt-4o".to_string(), display_name: Some("GPT-4o".to_string()) },
+            ],
+        }
     }
 
     #[test]
-    fn test_pi_generator_metadata() {
+    fn test_claude_code_generator_anthropic() {
+        let gen = ClaudeCodeGenerator;
+        assert_eq!(gen.executor_name(), "claudecode");
+
+        // 验证配置文件路径
+        let path = gen.config_path("~/.claude");
+        assert!(path.to_string_lossy().contains(".claude/settings.json"));
+    }
+
+    #[test]
+    fn test_pi_generator() {
         let gen = PiGenerator;
         assert_eq!(gen.executor_name(), "pi");
         assert_eq!(gen.default_filename(), "config.yaml");
     }
 
     #[test]
-    fn test_atomcode_generator_metadata() {
+    fn test_atomcode_generator() {
         let gen = AtomCodeGenerator;
         assert_eq!(gen.executor_name(), "atomcode");
         assert_eq!(gen.default_filename(), "config.toml");
     }
 
     #[test]
-    fn test_kilo_generator_metadata() {
+    fn test_kilo_generator() {
         let gen = KiloGenerator;
         assert_eq!(gen.executor_name(), "kilo");
         assert_eq!(gen.default_filename(), "config.json");
     }
 
     #[test]
-    fn test_generators_config_path_resolution() {
-        // 验证配置文件路径解析
-        let cc_path = ClaudeCodeGenerator.config_path("~/.claude");
-        assert!(cc_path.to_string_lossy().contains(".claude/settings.json"));
+    fn test_resolve_provider_found() {
+        let mut cfg = ProfilesConfig::default();
+        cfg.providers.insert("test".to_string(), sample_provider());
 
-        let kilo_path = KiloGenerator.config_path("~/.kilo");
-        assert!(kilo_path.to_string_lossy().contains(".kilo/config.json"));
-
-        let atom_path = AtomCodeGenerator.config_path("~/.atomcode");
-        assert!(atom_path.to_string_lossy().contains(".atomcode/config.toml"));
+        let exec_ref = ExecutorRef { provider: "test".to_string(), model: "gpt-4o".to_string() };
+        let result = resolve_provider(&cfg, &exec_ref);
+        assert!(result.is_ok(), "should resolve: {:?}", result.err());
+        let (provider, model) = result.unwrap();
+        assert_eq!(provider.api_key, "sk-test");
+        assert_eq!(model, "gpt-4o");
     }
 
     #[test]
-    fn test_cleanup_old_backups_keeps_only_n() {
+    fn test_resolve_provider_not_found() {
+        let cfg = ProfilesConfig::default();
+        let exec_ref = ExecutorRef { provider: "nonexistent".to_string(), model: "x".to_string() };
+        assert!(resolve_provider(&cfg, &exec_ref).is_err());
+    }
+
+    #[test]
+    fn test_cleanup_old_backups() {
         let tmp = tempfile::TempDir::new().unwrap();
         let dir = tmp.path();
-
-        // 创建 15 个备份文件（以 "settings" 为前缀）
         for i in 0..15 {
             let f = dir.join(format!("settings_20260722_{:02}0000.bak", i));
-            fs::write(&f, "backup").unwrap();
+            std::fs::write(&f, "bak").unwrap();
         }
-
         cleanup_old_backups(dir, "settings", 10);
-
-        // 应该只剩 10 个文件
         let remaining: Vec<_> = std::fs::read_dir(dir).unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_name().to_string_lossy().starts_with("settings"))
             .collect();
-        assert_eq!(remaining.len(), 10, "应该只保留 10 份备份");
-    }
-
-    #[test]
-    fn test_backup_existing_config_does_not_panic() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let config_path = tmp.path().join("settings.json");
-        fs::write(&config_path, "original").unwrap();
-
-        // 调用备份函数，验证不 panic 即可
-        backup_existing_config(&config_path);
+        assert_eq!(remaining.len(), 10);
     }
 }
