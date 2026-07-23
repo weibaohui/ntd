@@ -214,38 +214,159 @@ impl ClaudeCodeGenerator {
 // PI Generator
 // ============================================================================
 
-/// PI → `~/.pi/config.yaml`
+/// PI → `~/.pi/agent/models.json` + `~/.pi/agent/settings.json`
 ///
-/// PI 使用 provider 级别的 API Key 配置，写入 flat YAML。
+/// PI 使用 `~/.pi/agent/models.json` 管理 provider 定义（含多模型），
+/// `~/.pi/agent/settings.json` 选择默认 provider 和 model。
+/// 生成器会追加/更新一个 provider 条目到 models.json，
+/// 同时更新 settings.json 的 defaultProvider/defaultModel。
+///
+/// 协议映射：
+/// - Protocol::Anthropic → `"api": "anthropic-messages"`
+/// - Protocol::Openai → `"api": "openai-completions"`
 pub struct PiGenerator;
 
 impl PiGenerator {
-    fn render_yaml(exec_ref: &ExecutorRef, provider: &Provider) -> Result<String, String> {
-        let mut config = std::collections::HashMap::new();
-        config.insert("api_key".to_string(), provider.api_key.clone());
-        config.insert("base_url".to_string(), provider.base_url.clone());
-        config.insert("default_model".to_string(), exec_ref.model.clone());
-        serde_yaml::to_string(&config).map_err(|e| format!("serialize: {}", e))
+    /// 渲染 models.json 的新 provider 条目（不写盘）。
+    fn render_provider_entry(provider: &Provider) -> serde_json::Value {
+        let api_type = if provider.protocol == Protocol::Anthropic {
+            "anthropic-messages"
+        } else {
+            "openai-completions"
+        };
+        let models: Vec<serde_json::Value> = provider.models.iter().map(|m| {
+            let mut model = serde_json::Map::new();
+            model.insert("id".to_string(), serde_json::Value::String(m.name.clone()));
+            if let Some(ref dn) = m.display_name {
+                model.insert("name".to_string(), serde_json::Value::String(dn.clone()));
+            }
+            model.insert("input".to_string(), serde_json::Value::Array(vec![
+                serde_json::Value::String("text".to_string()),
+            ]));
+            // 将 supports_1m_context (bool) 转为 contextWindow 数值
+            model.insert("contextWindow".to_string(), serde_json::Value::Number(
+                serde_json::Number::from(if m.supports_1m_context { 1000000u64 } else { 128000u64 })
+            ));
+            serde_json::Value::Object(model)
+        }).collect();
+
+        let mut entry = serde_json::Map::new();
+        entry.insert("baseUrl".to_string(), serde_json::Value::String(provider.base_url.clone()));
+        entry.insert("api".to_string(), serde_json::Value::String(api_type.to_string()));
+        entry.insert("apiKey".to_string(), serde_json::Value::String(provider.api_key.clone()));
+        entry.insert("models".to_string(), serde_json::Value::Array(models));
+        serde_json::Value::Object(entry)
     }
 }
 
 impl ProfileGenerator for PiGenerator {
     fn executor_name(&self) -> &str { "pi" }
-    fn default_filename(&self) -> &str { "config.yaml" }
 
-    fn preview(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(String, String), String> {
-        let path = expand_config_path(self.config_path(session_dir));
-        let content = Self::render_yaml(exec_ref, provider)?;
-        Ok((path.to_string_lossy().to_string(), content))
+    /// PI 的模型配置在 `agent/models.json`，非 `config.yaml`。
+    /// 同时生成后会更新 `agent/settings.json` 的默认值。
+    fn default_filename(&self) -> &str { "models.json" }
+
+    /// 覆盖 config_path：PI 的模型定义在 ~/.pi/agent/models.json
+    fn config_path(&self, session_dir: &str) -> std::path::PathBuf {
+        // 使用 session_dir (通常是 ~/.pi) 拼接 agent/models.json
+        let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+        let expanded = if session_dir.starts_with('~') {
+            let relative = session_dir.trim_start_matches('~').trim_start_matches(std::path::MAIN_SEPARATOR);
+            home.join(relative)
+        } else {
+            std::path::PathBuf::from(session_dir)
+        };
+        expanded.join("agent").join("models.json")
     }
 
-    fn generate(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(), String> {
-        let (path_str, content) = self.preview(exec_ref, provider, session_dir)?;
-        let expanded_path = std::path::PathBuf::from(&path_str);
-        backup_existing_config(&expanded_path);
-        ensure_parent_dir(&expanded_path)?;
-        std::fs::write(&expanded_path, &content).map_err(|e| format!("write: {}", e))?;
-        tracing::info!(path = %path_str, "PI config generated");
+    fn preview(&self, exec_ref: &ExecutorRef, provider: &Provider, _session_dir: &str) -> Result<(String, String), String> {
+        // models.json 路径
+        let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+        let models_path = home.join(".pi").join("agent").join("models.json");
+        let settings_path = home.join(".pi").join("agent").join("settings.json");
+
+        // 生成 provider 条目
+        let provider_entry = Self::render_provider_entry(provider);
+        let provider_name = exec_ref.provider.clone();
+
+        // 读现有 models.json 或创建新结构
+        let mut root: serde_json::Value = std::fs::read_to_string(&models_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_else(|| serde_json::json!({"providers": {}}));
+
+        if let Some(providers) = root.get_mut("providers").and_then(|p| p.as_object_mut()) {
+            providers.insert(provider_name.clone(), provider_entry);
+        }
+
+        // 构建设置更新
+        let mut settings_update = serde_json::Map::new();
+        settings_update.insert("defaultProvider".to_string(), serde_json::Value::String(provider_name));
+        settings_update.insert("defaultModel".to_string(), serde_json::Value::String(exec_ref.model.clone()));
+
+        let models_content = serde_json::to_string_pretty(&root).map_err(|e| format!("serialize models: {}", e))?;
+        let settings_content = serde_json::to_string_pretty(&settings_update).map_err(|e| format!("serialize settings: {}", e))?;
+
+        // 预览：显示 models.json 主要变更 + settings.json 变更
+        let preview = format!(
+            "=== {} ===\n{}\n\n=== {} ===\n{}",
+            models_path.display(),
+            models_content,
+            settings_path.display(),
+            settings_content,
+        );
+
+        Ok((models_path.to_string_lossy().to_string(), preview))
+    }
+
+    fn generate(&self, exec_ref: &ExecutorRef, provider: &Provider, _session_dir: &str) -> Result<(), String> {
+        let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+        let models_path = home.join(".pi").join("agent").join("models.json");
+        let settings_path = home.join(".pi").join("agent").join("settings.json");
+
+        // 备份
+        if models_path.exists() { backup_existing_config(&models_path); }
+        if settings_path.exists() { backup_existing_config(&settings_path); }
+
+        // 确保 agent 目录存在
+        if let Some(parent) = models_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {}", e))?;
+        }
+        if let Some(parent) = settings_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {}", e))?;
+        }
+
+        // 读取或创建 models.json
+        let mut root: serde_json::Value = std::fs::read_to_string(&models_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_else(|| serde_json::json!({"providers": {}}));
+
+        let provider_entry = Self::render_provider_entry(provider);
+        let provider_name = exec_ref.provider.clone();
+
+        if let Some(providers) = root.get_mut("providers").and_then(|p| p.as_object_mut()) {
+            providers.insert(provider_name.clone(), provider_entry);
+        }
+
+        let models_json = serde_json::to_string_pretty(&root).map_err(|e| format!("serialize models: {}", e))?;
+        std::fs::write(&models_path, &models_json).map_err(|e| format!("write models: {}", e))?;
+
+        // 更新 settings.json 的默认值（保留原有其他字段）
+        let mut settings: serde_json::Value = std::fs::read_to_string(&settings_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+
+        if let Some(obj) = settings.as_object_mut() {
+            obj.insert("defaultProvider".to_string(), serde_json::Value::String(provider_name));
+            obj.insert("defaultModel".to_string(), serde_json::Value::String(exec_ref.model.clone()));
+        }
+
+        let settings_json = serde_json::to_string_pretty(&settings).map_err(|e| format!("serialize settings: {}", e))?;
+        std::fs::write(&settings_path, &settings_json).map_err(|e| format!("write settings: {}", e))?;
+
+        tracing::info!(models = %models_path.display(), settings = %settings_path.display(), "PI config generated");
         Ok(())
     }
 }
