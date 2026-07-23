@@ -237,19 +237,17 @@ async fn test_delete_todo() {
         .uri(format!("/api/v1/workspaces/{}/todos/{}", ws_id, id))
         .body(Body::empty())
         .unwrap();
-    let response = app.oneshot(req).await.unwrap();
+    let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
-    // Verify it's gone
+    // 在同一 app/DB 验证删除生效，而非新建空库（用 app.clone 避免 move）。
     let get_req = Request::builder()
-        .uri(format!("/api/v1/workspaces/{}/todos", ws_id))
+        .uri(format!("/api/v1/workspaces/{}/todos/{}", ws_id, id))
         .body(Body::empty())
         .unwrap();
-    let (app, _ws_id) = create_test_app().await;
-    let get_resp = app.oneshot(get_req).await.unwrap();
-    let get_body: serde_json::Value = read_json_body(get_resp).await;
-    let todos = get_body["data"].as_array().unwrap();
-    assert!(todos.iter().all(|t| t["id"].as_i64().unwrap() != id));
+    let get_resp = app.clone().oneshot(get_req).await.unwrap();
+    // 已删除的 todo 通过 get_todo 返回 NotFound
+    assert_eq!(get_resp.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -800,4 +798,162 @@ async fn test_loop_merge_same_name_overwrites() {
     let r2 = app.clone().oneshot(req2).await.unwrap();
     assert_eq!(r2.status(), StatusCode::OK);
     assert_eq!(count_loops_named(app, ws_id, "dup-loop").await, 1);
+}
+
+// ====== Workspace 隔离：跨 ws 越权访问应被拒绝 ======
+
+/// 建一个额外 workspace 返回其 id，用于跨 ws 越权测试。
+#[allow(dead_code)]
+async fn create_second_workspace(db: &Database) -> i64 {
+    db.create_project_directory("/tmp/test-api-workspace-B", Some("test-B"), false, false)
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_cross_workspace_todo_rejected() {
+    // 在 ws_a 创建 todo，用 ws_b 的 URL 访问 → 应 400（不属于工作空间）
+    let (app, ws_a) = create_test_app().await;
+    // 创建 todo 在 ws_a
+    let create_req = json_request(
+        "POST",
+        &format!("/api/v1/workspaces/{}/todos", ws_a),
+        json!({"title": "隔离测试", "prompt": "test", "workspace_id": ws_a}),
+    );
+    let create_resp = app.clone().oneshot(create_req).await.unwrap();
+    let body: serde_json::Value = read_json_body(create_resp).await;
+    let todo_id = body["data"]["id"].as_i64().unwrap();
+
+    // 用 ws_b 访问 → 应返回 BadRequest
+    let ws_b = 99999; // 不存在的 ws，handler 会先查 todo 存在性，再查归属
+    let get_req = Request::builder()
+        .uri(format!("/api/v1/workspaces/{}/todos/{}", ws_b, todo_id))
+        .body(Body::empty())
+        .unwrap();
+    let get_resp = app.oneshot(get_req).await.unwrap();
+    // todo_id 真正存在但属于 ws_a → verify_todo_belongs_to_ws 返回 BadRequest
+    assert_eq!(get_resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_cross_workspace_todo_other_ws_rejected() {
+    // 在两个真实 workspace 间验证越权拒绝
+    let db = Arc::new(Database::new(":memory:").await.unwrap());
+    let ws_a = db
+        .create_project_directory("/tmp/test-ws-a", Some("A"), false, false)
+        .await
+        .unwrap();
+    let ws_b = db
+        .create_project_directory("/tmp/test-ws-b", Some("B"), false, false)
+        .await
+        .unwrap();
+
+    let todo_id = db
+        .create_todo_with_extras("隔离测试", "test", None, None, false, ws_a, "/tmp/test-ws-a")
+        .await
+        .unwrap();
+
+    let executor_registry = Arc::new(ExecutorRegistry::new());
+    executor_registry.register(ClaudeCodeExecutor::new("claude".to_string())).await;
+    let (tx, _rx) = broadcast::channel(100);
+    let task_manager = Arc::new(TaskManager::new());
+    let config = Arc::new(std::sync::RwLock::new(Config::default()));
+    let scheduler = Arc::new(TodoScheduler::new().await.unwrap());
+    let ctx = ntd::service_context::ServiceContext {
+        db: db.clone(),
+        executor_registry: executor_registry.clone(),
+        tx: tx.clone(),
+        task_manager: task_manager.clone(),
+        config: config.clone(),
+        expert_manager: Arc::new(ntd::expert::ExpertIndexManager::new()),
+    };
+    scheduler.load_from_db(&ctx).await.unwrap();
+    scheduler.start().await.unwrap();
+    let app = create_app(ctx, scheduler).await;
+
+    // 用 ws_b 访问 ws_a 的 todo → BadRequest
+    let get_req = Request::builder()
+        .uri(format!("/api/v1/workspaces/{}/todos/{}", ws_b, todo_id))
+        .body(Body::empty())
+        .unwrap();
+    let get_resp = app.oneshot(get_req).await.unwrap();
+    assert_eq!(get_resp.status(), StatusCode::BAD_REQUEST);
+}
+
+// ====== 旧路由 404 验证 ======
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_old_api_routes_return_404() {
+    let (app, _ws_id) = create_test_app().await;
+
+    // 内核路由仍返回 OK（首页、健康检查）
+    let health_req = Request::builder().uri("/health").body(Body::empty()).unwrap();
+    assert_eq!(app.clone().oneshot(health_req).await.unwrap().status(), StatusCode::OK);
+
+    let root_req = Request::builder().uri("/").body(Body::empty()).unwrap();
+    assert_eq!(app.clone().oneshot(root_req).await.unwrap().status(), StatusCode::OK);
+
+    // 旧版本化路由应 404
+    let old_routes = vec![
+        "/api/todos",
+        "/api/loops",
+        "/api/executions",
+        "/api/execution-records",
+        "/api/dashboard-stats",
+        "/api/running-board",
+        "/api/running-todos",
+        "/api/execute",
+    ];
+    for uri in old_routes {
+        let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "旧路由 {} 应返回 404",
+            uri
+        );
+    }
+}
+
+// ====== 修复 test_delete_todo 验证逻辑 ======
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_delete_todo_verified_with_same_app() {
+    // 删除 todo 后在同一 app/DB 验证删除生效，而非重新建立空库。
+    let (app, ws_id) = create_test_app().await;
+
+    let create_req = json_request(
+        "POST",
+        &format!("/api/v1/workspaces/{}/todos", ws_id),
+        json!({"title": "待删除", "prompt": "将被删除", "workspace_id": ws_id}),
+    );
+    let create_resp = app.clone().oneshot(create_req).await.unwrap();
+    let body: serde_json::Value = read_json_body(create_resp).await;
+    let todo_id = body["data"]["id"].as_i64().unwrap();
+
+    // 确认存在
+    let get_req = Request::builder()
+        .uri(format!("/api/v1/workspaces/{}/todos/{}", ws_id, todo_id))
+        .body(Body::empty())
+        .unwrap();
+    let get_resp = app.clone().oneshot(get_req).await.unwrap();
+    assert_eq!(get_resp.status(), StatusCode::OK);
+
+    // 删除
+    let del_req = Request::builder()
+        .method("DELETE")
+        .uri(format!("/api/v1/workspaces/{}/todos/{}", ws_id, todo_id))
+        .body(Body::empty())
+        .unwrap();
+    let del_resp = app.clone().oneshot(del_req).await.unwrap();
+    assert_eq!(del_resp.status(), StatusCode::OK);
+
+    // 在同 app 验证删除
+    let get_req2 = Request::builder()
+        .uri(format!("/api/v1/workspaces/{}/todos/{}", ws_id, todo_id))
+        .body(Body::empty())
+        .unwrap();
+    let get_resp2 = app.oneshot(get_req2).await.unwrap();
+    assert_eq!(get_resp2.status(), StatusCode::NOT_FOUND);
 }
