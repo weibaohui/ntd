@@ -170,14 +170,13 @@ async fn preview_provider_to_executors(
     let registry = ProfileGeneratorRegistry::new();
     let mut entries = Vec::new();
 
-    for exec_name in &req.executors {
+    for (exec_name, model_name) in &req.executor_models {
         if let Some(generator) = registry.get(exec_name) {
-            let default_model = provider.models.first().map(|m| m.name.clone()).unwrap_or_else(|| "default".to_string());
-            let exec_ref = crate::profiles::ExecutorRef { provider: name.clone(), model: default_model };
+            let exec_ref = crate::profiles::ExecutorRef { provider: name.clone(), model: model_name.clone() };
             let session_dir = crate::adapters::find_executor(exec_name).map(|def| def.session_dir).unwrap_or("");
             match generator.preview(&exec_ref, provider, session_dir) {
-                Ok((path, content)) => entries.push(PreviewEntry { executor: exec_name.clone(), path, content }),
-                Err(e) => entries.push(PreviewEntry { executor: exec_name.clone(), path: String::new(), content: format!("Error: {}", e) }),
+                Ok((path, content)) => entries.push(PreviewEntry { executor: exec_name.clone(), model: model_name.clone(), path, content }),
+                Err(e) => entries.push(PreviewEntry { executor: exec_name.clone(), model: model_name.clone(), path: String::new(), content: format!("Error: {}", e) }),
             }
         }
     }
@@ -185,10 +184,11 @@ async fn preview_provider_to_executors(
     Ok(ApiResponse::ok(entries))
 }
 
-/// 预览条目。
+/// 预览条目（含选中的模型）。
 #[derive(Debug, Clone, Serialize)]
 struct PreviewEntry {
     executor: String,
+    model: String,
     path: String,
     content: String,
 }
@@ -205,19 +205,17 @@ async fn apply_provider_to_executors(
     let mut applied = Vec::new();
     let mut errors = Vec::new();
 
-    for exec_name in &req.executors {
+    for (exec_name, model_name) in &req.executor_models {
         if let Some(generator) = registry.get(exec_name) {
-            // 用第一个模型作为默认模型
-            let default_model = provider.models.first().map(|m| m.name.clone()).unwrap_or_else(|| "default".to_string());
             let exec_ref = crate::profiles::ExecutorRef {
                 provider: name.clone(),
-                model: default_model,
+                model: model_name.clone(),
             };
             let session_dir = crate::adapters::find_executor(exec_name)
                 .map(|def| def.session_dir)
                 .unwrap_or("");
             match generator.generate(&exec_ref, provider, session_dir) {
-                Ok(()) => applied.push(exec_name.clone()),
+                Ok(()) => applied.push(format!("{} ({})", exec_name, model_name)),
                 Err(e) => errors.push(format!("{}: {}", exec_name, e)),
             }
         } else {
@@ -236,9 +234,11 @@ struct ApplyProviderResult {
 }
 
 /// 应用 Provider 到执行器的请求体。
+/// `executor_models` 的 key 为执行器名，value 为要使用的模型名。
 #[derive(Debug, Clone, Deserialize)]
 struct ApplyProviderRequest {
-    executors: Vec<String>,
+    #[serde(default)]
+    executor_models: std::collections::HashMap<String, String>,
 }
 
 // ============================================================================

@@ -55,9 +55,11 @@ export function ProfilesPanel() {
   const [applyStep, setApplyStep] = useState(APPLY_STEP_SELECT);
   const [applyProvider, setApplyProvider] = useState<ProviderDetail | null>(null);
   const [selectedExecutors, setSelectedExecutors] = useState<string[]>([]);
+  // 每个执行器选中的模型: { executor_name: model_name }
+  const [executorModels, setExecutorModels] = useState<Record<string, string>>({});
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
-  const [previewEntries, setPreviewEntries] = useState<{ executor: string; path: string; content: string }[]>([]);
+  const [previewEntries, setPreviewEntries] = useState<{ executor: string; model: string; path: string; content: string }[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [executorDefs, setExecutorDefs] = useState<{ name: string; display_name: string; config_path: string; has_generator: boolean }[]>([]);
   const [modelList, setModelList] = useState<ProviderModel[]>([]);
@@ -170,11 +172,22 @@ export function ProfilesPanel() {
   const openApply = useCallback((p: ProviderDetail) => {
     setApplyProvider(p);
     setSelectedExecutors([]);
+    setExecutorModels({});
     setApplyResult(null);
     setPreviewEntries([]);
     setApplyStep(APPLY_STEP_SELECT);
     setApplyVisible(true);
   }, []);
+
+  // 切换执行器选择时，同步初始化模型选择
+  const toggleExecutor = useCallback((name: string, checked: boolean) => {
+    setSelectedExecutors(prev => checked ? [...prev, name] : prev.filter(e => e !== name));
+    if (checked && applyProvider && !executorModels[name]) {
+      // 默认选第一个模型
+      const firstModel = applyProvider.models[0]?.name;
+      if (firstModel) setExecutorModels(prev => ({ ...prev, [name]: firstModel }));
+    }
+  }, [applyProvider, executorModels]);
 
   // 下一步：获取预览
   const goToPreview = useCallback(async () => {
@@ -184,7 +197,7 @@ export function ProfilesPanel() {
       const r = await fetch(`${PROVIDERS_API}/${encodeURIComponent(applyProvider.name)}/preview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ executors: selectedExecutors }),
+        body: JSON.stringify({ executor_models: executorModels }),
       });
       const j = await r.json();
       setPreviewEntries(j.data || []);
@@ -194,17 +207,17 @@ export function ProfilesPanel() {
     } finally {
       setPreviewLoading(false);
     }
-  }, [applyProvider, selectedExecutors]);
+  }, [applyProvider, executorModels, selectedExecutors]);
 
   // 执行应用
   const handleApply = useCallback(async () => {
-    if (!applyProvider || selectedExecutors.length === 0) return;
+    if (!applyProvider || Object.keys(executorModels).length === 0) return;
     setApplying(true);
     try {
       const r = await fetch(`${PROVIDERS_API}/${encodeURIComponent(applyProvider.name)}/apply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ executors: selectedExecutors }),
+        body: JSON.stringify({ executor_models: executorModels }),
       });
       const j = await r.json();
       setApplyResult(j.data);
@@ -213,7 +226,7 @@ export function ProfilesPanel() {
     } finally {
       setApplying(false);
     }
-  }, [applyProvider, selectedExecutors]);
+  }, [applyProvider, executorModels]);
 
   // 模型列表操作
   const addModel = () => setModelList(prev => [...prev, { name: '', display_name: '' }]);
@@ -404,15 +417,50 @@ export function ProfilesPanel() {
                 <Checkbox.Group value={selectedExecutors} onChange={setSelectedExecutors as any}
                   style={{ width: '100%' }}>
                   <Row>
-                    {/* 从后端 API 获取的执行器定义 */}
-                    {executorDefs.filter(d => d.has_generator).map(def => (
-                      <Col span={24} key={def.name} style={{ marginBottom: 4 }}>
-                        <Checkbox value={def.name}>
-                          <Text>{def.display_name}</Text>
-                          <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>{def.config_path}</Text>
-                        </Checkbox>
-                      </Col>
-                    ))}
+                    {/* 从后端 API 获取的执行器定义，带模型选择 */}
+                    {executorDefs.filter(d => d.has_generator).map(def => {
+                      const checked = selectedExecutors.includes(def.name);
+                      const models = applyProvider?.models || [];
+                      return (
+                        <Col span={24} key={def.name} style={{ marginBottom: 8, padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
+                          <Flex align="center" gap={8} wrap="wrap">
+                            <Checkbox checked={checked} onChange={e => toggleExecutor(def.name, e.target.checked)} style={{ minWidth: 120 }}>
+                              <Text strong>{def.display_name}</Text>
+                            </Checkbox>
+                            {checked && models.length > 0 && (
+                              <>
+                                <Text type="secondary" style={{ fontSize: 12 }}>模型：</Text>
+                                <select
+                                  value={executorModels[def.name] || models[0]?.name || ''}
+                                  onChange={e => setExecutorModels(prev => ({ ...prev, [def.name]: e.target.value }))}
+                                  style={{
+                                    padding: '2px 8px',
+                                    borderRadius: 4,
+                                    border: '1px solid #d9d9d9',
+                                    fontSize: 13,
+                                    background: 'transparent',
+                                    color: 'inherit',
+                                    maxWidth: 200,
+                                  }}
+                                >
+                                  {models.map(m => (
+                                    <option key={m.name} value={m.name}>
+                                      {m.display_name || m.name}{m.supports_1m_context ? ' [1M]' : ''}
+                                    </option>
+                                  ))}
+                                </select>
+                                <Text type="secondary" style={{ fontSize: 11 }}>（默认）</Text>
+                              </>
+                            )}
+                          </Flex>
+                          {checked && (
+                            <Text type="secondary" style={{ fontSize: 11, marginLeft: 28, display: 'block' }}>
+                              写入路径：{def.config_path}
+                            </Text>
+                          )}
+                        </Col>
+                      );
+                    })}
                   </Row>
                 </Checkbox.Group>
               </div>
@@ -427,7 +475,7 @@ export function ProfilesPanel() {
                 size="small"
                 items={previewEntries.map(entry => ({
                   key: entry.executor,
-                  label: entry.executor,
+                  label: `${entry.executor} — ${entry.model}`,
                   children: (
                     <div>
                       <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
