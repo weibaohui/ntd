@@ -20,6 +20,8 @@ import * as db from '@/utils/database';
 
 interface UseExecutionHistoryOptions {
   selectedTodoId: number | null;
+  /** 当前工作空间 ID（v1 路由 workspace-scoped，执行记录查询必需） */
+  workspaceId: number | null;
   /** 按环节 id 查询（环节独立执行记录） */
   stepId?: number | null;
   /** Records already in the global store for this todo */
@@ -63,6 +65,7 @@ interface UseExecutionHistoryResult {
 
 export function useExecutionHistory({
   selectedTodoId,
+  workspaceId,
   stepId,
   storeRecords,
   dispatch,
@@ -96,7 +99,7 @@ export function useExecutionHistory({
     try {
       const statusFilter = historyStatusFilter === 'all' ? undefined : historyStatusFilter;
       const pageData = await db.getExecutionRecords(
-        selectedTodoId ?? undefined, page, limit, statusFilter, stepId ?? undefined
+        workspaceId ?? 0, selectedTodoId ?? undefined, page, limit, statusFilter, stepId ?? undefined
       );
       if (selectedTodoId) {
         dispatch({
@@ -112,12 +115,12 @@ export function useExecutionHistory({
     } catch {
       // ignore: interceptor already shows error toast
     }
-  }, [selectedTodoId, stepId, historyLimit, historyStatusFilter, dispatch]);
+  }, [selectedTodoId, workspaceId, stepId, historyLimit, historyStatusFilter, dispatch]);
 
   const refreshSingleRecord = useCallback(async (recordId: number) => {
     if (!selectedTodoId) return;
     try {
-      const record = await db.getExecutionRecord(recordId);
+      const record = await db.getExecutionRecord(workspaceId ?? 0, recordId);
       dispatch({ type: 'UPDATE_EXECUTION_RECORD', payload: { todoId: selectedTodoId, record } });
       // 同步更新详情面板使用的本地 detail state，避免评分等同步更新后
       // 详情面板仍展示旧值（详情面板优先使用 selectedHistoryRecordDetail，
@@ -126,14 +129,14 @@ export function useExecutionHistory({
         setSelectedHistoryRecordDetail(record);
       }
     } catch { /* ignore */ }
-  }, [selectedTodoId, dispatch]);
+  }, [selectedTodoId, workspaceId, dispatch]);
 
   // ─── Load logs ─────────────────────────────────────────────
 
   const loadLogs = useCallback(async (recordId: number, page: number) => {
     setIsLoadingLogs(true);
     try {
-      const result = await db.getExecutionLogs(recordId, page, logsPerPage);
+      const result = await db.getExecutionLogs(workspaceId ?? 0, recordId, page, logsPerPage);
       if (activeRecordIdRef.current !== recordId) return;
       setPaginatedLogs(result.logs);
       setLogsTotal(result.total);
@@ -143,7 +146,7 @@ export function useExecutionHistory({
     } finally {
       if (activeRecordIdRef.current === recordId) setIsLoadingLogs(false);
     }
-  }, [logsPerPage]);
+  }, [workspaceId, logsPerPage]);
 
   // ─── Auto-select first record in wide mode ────────────────
 
@@ -161,7 +164,7 @@ export function useExecutionHistory({
       setHistoryPage(1);
       const statusFilter = historyStatusFilter === 'all' ? undefined : historyStatusFilter;
       db.getExecutionRecords(
-        selectedTodoId ?? undefined, 1, historyLimit, statusFilter, stepId ?? undefined
+        workspaceId ?? 0, selectedTodoId ?? undefined, 1, historyLimit, statusFilter, stepId ?? undefined
       ).then(pageData => {
         if (cancelledRef.current) return;
         if (selectedTodoId) {
@@ -176,7 +179,7 @@ export function useExecutionHistory({
       });
 
       if (selectedTodoId) {
-        db.getExecutionSummary(selectedTodoId).then(sum => {
+        db.getExecutionSummary(workspaceId ?? 0, selectedTodoId).then(sum => {
           if (!cancelledRef.current) setSummary(sum);
         }).catch(() => {
           // 汇总加载失败时保持 null，非关键路径
@@ -186,7 +189,7 @@ export function useExecutionHistory({
       setSummary(null);
     }
     return () => { cancelledRef.current = true; };
-  }, [selectedTodoId, stepId, historyLimit, historyStatusFilter, dispatch]);
+  }, [selectedTodoId, workspaceId, stepId, historyLimit, historyStatusFilter, dispatch]);
 
   // ─── Load detail + logs when selected record changes ─────────
 
@@ -204,7 +207,7 @@ export function useExecutionHistory({
     const basicRecord = storeRecords.find(r => r.id === requestId);
 
     setIsLoadingDetail(true);
-    db.getExecutionRecord(requestId)
+    db.getExecutionRecord(workspaceId ?? 0, requestId)
       .then(detail => {
         if (activeRecordIdRef.current !== requestId) return;
         setSelectedHistoryRecordDetail(detail);

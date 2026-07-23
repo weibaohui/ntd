@@ -3,7 +3,11 @@
 //! Discovers skills from executor directories, provides comparison, sync,
 //! and execution tracking APIs.
 
-use axum::extract::{Query, State};
+use axum::{
+    Router,
+    extract::{Query, State},
+    routing::{get, post},
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
@@ -1427,6 +1431,23 @@ pub async fn record_invocation(
     ).await.map_err(|e| AppError::Internal(e.to_string()))?;
 
     Ok(ApiResponse::ok(id))
+}
+
+/// v1 API 路由：所有路径使用完整的 `/api/v1/skills/...` 前缀，
+/// 不与外层 router 嵌套（flat 结构）。
+///
+/// 映射规则：保持与 skills_routes() 相同的 handler 函数，仅路径前缀改为 /api/v1/skills。
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/v1/skills", get(list_skills).delete(delete_skill))
+        .route("/api/v1/skills/compare", get(compare_skills))
+        .route("/api/v1/skills/version-update", get(version_update_list))
+        .route("/api/v1/skills/sync", post(sync_skill))
+        .route("/api/v1/skills/invocations", post(record_invocation))
+        .route("/api/v1/skills/content", get(get_skill_content))
+        .route("/api/v1/skills/file", get(get_skill_file))
+        .route("/api/v1/skills/export", get(export_skill))
+        .route("/api/v1/skills/import", post(import_skill))
 }
 
 #[cfg(test)]

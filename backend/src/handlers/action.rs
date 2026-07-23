@@ -1,4 +1,6 @@
+use axum::Router;
 use axum::extract::State;
+use axum::routing::{get, post};
 use serde::Deserialize;
 
 use crate::handlers::{ApiJson, AppError, AppState};
@@ -210,6 +212,66 @@ fn replace_placeholders(
         result = result.replace(&placeholder, value);
     }
     result
+}
+
+/// V1 全域路由聚合函数。
+///
+/// 将所有领域的 v1 路由通过 merge/nest 聚合到一个 Router 中。
+/// 全局资源（skills、config、backup、experts 等）使用模块级 v1_routes() 合并；
+/// 工作空间作用域资源（todos、executions、loops、blackboard 等）使用嵌套子路由。
+/// Action 路由直接定义在此函数中。
+///
+/// 此函数与旧 mount_domain_routes() 共存，过渡期后替换之。
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        // POST /api/v1/actions/execute：执行 action 模板
+        //（按 action_type+action_key 查找或创建 todo，然后用 prompt+params 执行）
+        .route("/api/v1/actions/execute", post(execute_action))
+        // 版本查询/升级（全局，原 /api/version）
+        .route("/api/v1/version", get(super::version_handler))
+        .route("/api/v1/version/latest", get(super::version_latest_handler))
+        .route("/api/v1/version/upgrade", post(super::version_upgrade_handler))
+        // ── 云端同步 /api/v1/cloud/... ──────────────────────────────
+        .route("/api/v1/cloud/config", get(super::sync::cloud_get_config).post(super::sync::cloud_save_config))
+        .route("/api/v1/cloud/sync/status", get(super::sync::cloud_sync_status))
+        .route("/api/v1/cloud/sync/records", get(super::sync::cloud_sync_records).delete(super::sync::cloud_clear_sync_records))
+        .route("/api/v1/cloud/sync/push", post(super::sync::cloud_sync_push))
+        .route("/api/v1/cloud/sync/pull", post(super::sync::cloud_sync_pull))
+        // ── 全局资源（由各模块 v1_routes 合并） ────────────────────
+        .merge(super::webhook::v1_routes())
+        .merge(super::backup::v1_routes())
+        .merge(super::experts::v1_routes())
+        .merge(super::config::v1_routes())
+        .merge(super::skills::v1_routes())
+        .merge(super::session::v1_routes())
+        .merge(super::feishu_history::v1_routes())
+        .merge(super::review_template::v1_routes())
+        .merge(super::todo_template::v1_routes())
+        .merge(super::usage_stats::v1_routes())
+        .merge(super::custom_template::v1_routes())
+        .merge(super::bundled::v1_routes())
+        .merge(super::project_directory::v1_routes())
+        // executor-profiles（API Key 管理）：providers + profiles，路径已为 /api/v1/
+        .merge(super::profiles::profile_routes())
+        // ── 工作空间作用域资源（嵌套子路由） ───────────────────────
+        .nest("/api/v1/workspaces/{ws}/todos", super::todo::v1_routes())
+        .nest("/api/v1/workspaces/{ws}/executions", super::execution::v1_routes())
+        // dashboard 统计归 stats 域（独立于 executions），直接注册避免单独建 stats 模块
+        .route("/api/v1/workspaces/{ws}/stats/dashboard", get(super::execution::get_dashboard_stats))
+        // 定时 todo 查询按 workspace 隔离（update_scheduler 已在 todo 域 /{id}/scheduler）
+        .route("/api/v1/workspaces/{ws}/scheduler/todos", get(super::scheduler::get_scheduler_todos))
+        .nest("/api/v1/workspaces/{ws}/loops", super::loop_::v1_routes())
+        .nest("/api/v1/workspaces/{ws}/quick-buttons", super::quick_button::v1_routes())
+        .nest("/api/v1/workspaces/{ws}/blackboard", super::blackboard::v1_routes())
+        // wiki 独立于 blackboard（设计文档 4.4 + 旧路由 + 前端均为 /workspaces/{ws}/wiki/*，
+        // 不能挂在 /blackboard 下，否则前端 /workspaces/{ws}/wiki/files 会 404）
+        .route("/api/v1/workspaces/{ws}/wiki/files", get(super::blackboard::list_wiki_files))
+        .route("/api/v1/workspaces/{ws}/wiki/files/{slug}", get(super::blackboard::get_wiki_file).delete(super::blackboard::delete_wiki_file))
+        .route("/api/v1/workspaces/{ws}/wiki/chat", post(super::blackboard::chat_with_wiki))
+        .nest("/api/v1/agent-bots", super::agent_bot::v1_bot_routes())
+        .nest("/api/v1/workspaces/{ws}", super::agent_bot::v1_workspace_routes())
+        // tag 为全局资源（无 workspace_id 列），不嵌套 workspace，直接挂 /api/v1/tags
+        .nest("/api/v1/tags", super::tag::v1_routes())
 }
 
 #[cfg(test)]

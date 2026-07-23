@@ -23,7 +23,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::handlers::{AppError, AppState};
+use crate::handlers::{workspace_guard, AppError, AppState};
 use crate::models::{
     self,
     ApiResponse, BatchCopyLoopWorkspaceRequest, BatchUpdateLoopWorkspaceRequest,
@@ -2203,6 +2203,729 @@ pub fn loop_routes() -> axum::Router<AppState> {
         .route("/api/loops/import/preview", post(import_preview))
         .route("/api/loops/import", post(import_loops))
         .route("/api/loops/merge", post(merge_loops))
+}
+
+// ====== V1 API handlers (workspace-scoped paths, nested under /api/v1/workspaces/{ws}/loops) ======
+// V1 handlers differ from the originals only in how they extract ws_id:
+// - routes without ws_id in v0 (list, create) receive it via Path(ws_id)
+// - routes with other Path params (id, loop_id, etc.) get ws_id prepended as a tuple prefix
+// This file keeps both v0 and v1 code until the migration is complete.
+
+/// GET / (nested) — list loops filtered by workspace from path
+pub async fn list_loops_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+) -> Result<impl IntoResponse, AppError> {
+    // V1: workspace_id 从路径参数取，不再依赖查询参数中的 workspace_id
+    let rows = state.db.list_loops_with_counts(Some(ws_id)).await?;
+    let items: Vec<LoopListItem> = rows.into_iter().map(Into::into).collect();
+    let loop_ids: Vec<i64> = items.iter().map(|item| item.loop_.id).collect();
+    let tag_map = state.db.get_loop_tag_ids_batch(&loop_ids).await?;
+    let results: Vec<LoopListItem> = items
+        .into_iter()
+        .map(|item| {
+            let tag_ids = tag_map.get(&item.loop_.id).cloned().unwrap_or_default();
+            item.with_tags(tag_ids)
+        })
+        .collect();
+    Ok(ApiResponse::ok(results))
+}
+
+/// POST / (nested) — create loop, force workspace_id from path
+pub async fn create_loop_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Json(mut req): Json<CreateLoopRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    // V1: workspace_id 强制从路径取，覆盖请求体中的值，避免路径与 body 不一致
+    req.workspace_id = ws_id;
+    if req.name.trim().is_empty() {
+        return Err(AppError::BadRequest("name 不能为空".to_string()));
+    }
+    let workspace = state
+        .db
+        .get_project_directory_by_id(req.workspace_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id)))?;
+    if req.tag_ids.len() > 1 {
+        return Err(AppError::BadRequest("环路只能选择一个标签".to_string()));
+    }
+    let created = state
+        .db
+        .create_loop(
+            req.name.trim(),
+            &req.description,
+            Some(req.workspace_id),
+            Some(workspace.path.as_str()),
+            req.webhook_enabled,
+            &req.icon,
+            req.review_template_id,
+            req.limits_config.as_deref(),
+            req.abnormal_handler_todo_id,
+            &req.abnormal_handler_trigger_on,
+        )
+        .await?;
+    if !req.tag_ids.is_empty() {
+        state.db.set_loop_tags(created.id, &req.tag_ids).await?;
+    }
+    let tag_ids = state.db.get_loop_tag_ids(created.id).await?;
+    Ok((StatusCode::CREATED, ApiResponse::ok(LoopDto::from(created).with_tags(tag_ids))))
+}
+
+/// GET /{id} (nested) — loop detail, 先校验 loop 属于路径 workspace 再取详情
+pub async fn get_loop_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, id)): Path<(i64, i64)>,
+) -> Result<impl IntoResponse, AppError> {
+    // V1 隔离：loop id 全局唯一不等于「跨 ws 可见」，必须校验归属路径中的 workspace
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, id, _ws_id).await?;
+    let view = state.db.load_loop_full(id).await?
+        .ok_or(AppError::NotFound)?;
+    let tag_ids = state.db.get_loop_tag_ids(id).await?;
+    let mut detail = LoopDetail::from(view);
+    detail.loop_ = detail.loop_.with_tags(tag_ids);
+    Ok(ApiResponse::ok(detail))
+}
+
+/// PUT /{id} (nested) — full update, 先校验 loop 归属路径 workspace
+pub async fn update_loop_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, id)): Path<(i64, i64)>,
+    Json(req): Json<UpdateLoopRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    if req.name.trim().is_empty() {
+        return Err(AppError::BadRequest("name 不能为空".to_string()));
+    }
+    // V1 隔离：校验 loop 当前属于路径 workspace，防止越权改别人的 loop。
+    // verify 已含存在性校验（NotFound），不再单独 get_loop 探测存在。
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, id, _ws_id).await?;
+    // 若 body 指定 workspace_id（迁移到新 workspace），解析其 path 做双字段同步写入；
+    // None 表示保持当前 workspace 不变。原 take()/重读 req 的死逻辑已移除。
+    let workspace_path: Option<String> = if let Some(wid) = req.workspace_id {
+        Some(state.db.get_project_directory_by_id(wid).await?
+            .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", wid)))?.path)
+    } else {
+        None
+    };
+    state.db.update_loop(
+        id, req.name.trim(), &req.description,
+        req.workspace_id, workspace_path.as_deref(),
+        req.webhook_enabled, &req.icon, req.review_template_id,
+        req.limits_config.as_deref(), req.abnormal_handler_todo_id,
+        &req.abnormal_handler_trigger_on,
+    ).await?;
+    if let Some(ref tag_ids) = req.tag_ids {
+        if tag_ids.len() > 1 {
+            return Err(AppError::BadRequest("环路只能选择一个标签".to_string()));
+        }
+        state.db.set_loop_tags(id, tag_ids).await?;
+    }
+    let updated = state.db.get_loop(id).await?.ok_or(AppError::NotFound)?;
+    let tag_ids = state.db.get_loop_tag_ids(id).await?;
+    Ok(ApiResponse::ok(LoopDto::from(updated).with_tags(tag_ids)))
+}
+
+/// DELETE /{id} (nested) — delete loop, 先校验归属再删
+pub async fn delete_loop_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, id)): Path<(i64, i64)>,
+) -> Result<impl IntoResponse, AppError> {
+    // V1 隔离：校验 loop 属于路径 workspace（verify 已含存在性校验，替换原 get_loop 探测）
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, id, _ws_id).await?;
+    let triggers = state.db.list_triggers_by_loop(id).await?;
+    for t in triggers.iter().filter(|t| t.trigger_type == "cron") {
+        if let Some(sched) = state.loop_scheduler.as_ref() {
+            sched.remove_cron_trigger(t.id).await;
+        }
+    }
+    state.db.delete_loop(id).await?;
+    Ok(ApiResponse::ok(()))
+}
+
+/// PUT /{id}/status (nested) — toggle enabled/paused
+pub async fn update_loop_status_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, id)): Path<(i64, i64)>,
+    Json(req): Json<UpdateLoopStatusRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    models::validate_loop_status(&req.status)
+        .map_err(AppError::BadRequest)?;
+    // V1 隔离：校验 loop 属于路径 workspace（verify 已含存在性校验）
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, id, _ws_id).await?;
+    state.db.update_loop_status(id, &req.status).await?;
+    if let Some(sched) = state.loop_scheduler.as_ref() {
+        let _ = sched.reload_all().await;
+    }
+    let updated = state.db.get_loop(id).await?.ok_or(AppError::NotFound)?;
+    let tag_ids = state.db.get_loop_tag_ids(id).await?;
+    Ok(ApiResponse::ok(LoopDto::from(updated).with_tags(tag_ids)))
+}
+
+/// PUT /{id}/tags (nested) — replace tags
+pub async fn update_loop_tags_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, id)): Path<(i64, i64)>,
+    Json(req): Json<UpdateTagsRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    // V1 隔离：校验 loop 属于路径 workspace（verify 已含存在性校验）
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, id, _ws_id).await?;
+    if req.tag_ids.len() > 1 {
+        return Err(AppError::BadRequest("环路只能选择一个标签".to_string()));
+    }
+    state.db.set_loop_tags(id, &req.tag_ids).await?;
+    let updated = state.db.get_loop(id).await?.ok_or(AppError::NotFound)?;
+    let tag_ids = state.db.get_loop_tag_ids(id).await?;
+    Ok(ApiResponse::ok(LoopDto::from(updated).with_tags(tag_ids)))
+}
+
+/// POST /{id}/duplicate (nested) — duplicate loop
+pub async fn duplicate_loop_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, id)): Path<(i64, i64)>,
+) -> Result<impl IntoResponse, AppError> {
+    // V1 隔离：校验源 loop 属于路径 workspace，复制产物继承同一 workspace
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, id, _ws_id).await?;
+    let new_loop = state.db.duplicate_loop(id).await?
+        .ok_or(AppError::NotFound)?;
+    if let Some(sched) = state.loop_scheduler.as_ref() {
+        let _ = sched.reload_all().await;
+    }
+    Ok((StatusCode::CREATED, ApiResponse::ok(LoopDto::from(new_loop).with_tags(vec![]))))
+}
+
+/// POST /{id}/trigger (nested) — manual trigger
+pub async fn trigger_loop_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, id)): Path<(i64, i64)>,
+    Json(req): Json<TriggerLoopRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    // V1 隔离：校验 loop 属于路径 workspace，防止越权触发别人的 loop
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, id, _ws_id).await?;
+    let dispatcher = state.loop_trigger_dispatcher.as_ref()
+        .ok_or_else(|| AppError::Internal("loop dispatcher not ready".to_string()))?;
+    let trigger_meta = serde_json::json!({
+        "source": "manual",
+        "params": req.params,
+    });
+    match dispatcher.dispatch_manual_with_meta(id, trigger_meta).await {
+        Some(exec_id) => Ok(ApiResponse::ok(serde_json::json!({
+            "execution_id": exec_id,
+        }))),
+        None => Err(AppError::BadRequest("loop 不存在或未启用".to_string())),
+    }
+}
+
+// ====== V1 Triggers ======
+
+/// GET /{id}/triggers (nested) — list triggers
+pub async fn list_triggers_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, loop_id)): Path<(i64, i64)>,
+) -> Result<impl IntoResponse, AppError> {
+    // V1 隔离：校验父 loop 属于路径 workspace，再列其子资源
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, loop_id, _ws_id).await?;
+    let triggers = state.db.list_triggers_by_loop(loop_id).await?;
+    let dtos: Vec<LoopTriggerDto> = triggers.into_iter().map(Into::into).collect();
+    Ok(ApiResponse::ok(dtos))
+}
+
+/// POST /{id}/triggers (nested) — create trigger
+pub async fn create_trigger_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, loop_id)): Path<(i64, i64)>,
+    Json(req): Json<CreateTriggerRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    models::validate_trigger_type(&req.trigger_type)
+        .map_err(AppError::BadRequest)?;
+    // V1 隔离：校验父 loop 属于路径 workspace（verify 已含存在性校验）
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, loop_id, _ws_id).await?;
+    let created = state.db.create_trigger(
+        loop_id, &req.trigger_type, &req.config, req.enabled, req.priority,
+    ).await?;
+    if created.trigger_type == "cron" && created.enabled == 1 {
+        if let Some(sched) = state.loop_scheduler.as_ref() {
+            let _ = sched.upsert_cron_trigger(created.id).await;
+        }
+    }
+    Ok((StatusCode::CREATED, ApiResponse::ok(LoopTriggerDto::from(created))))
+}
+
+/// PUT /{id}/triggers/{tid} (nested) — update trigger
+pub async fn update_trigger_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, loop_id, tid)): Path<(i64, i64, i64)>,
+    Json(req): Json<UpdateTriggerRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    models::validate_trigger_type(&req.trigger_type)
+        .map_err(AppError::BadRequest)?;
+    // V1 隔离：校验父 loop 属于路径 workspace（后续 updated.loop_id != loop_id 校验子资源归属）
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, loop_id, _ws_id).await?;
+    state.db.get_trigger(tid).await?.ok_or(AppError::NotFound)?;
+    state.db.update_trigger(tid, &req.trigger_type, &req.config, req.enabled, req.priority).await?;
+    if let Some(sched) = state.loop_scheduler.as_ref() {
+        let _ = sched.upsert_cron_trigger(tid).await;
+    }
+    let updated = state.db.get_trigger(tid).await?
+        .ok_or(AppError::NotFound)?;
+    if updated.loop_id != loop_id {
+        return Err(AppError::BadRequest("trigger 不属于该 loop".to_string()));
+    }
+    Ok(ApiResponse::ok(LoopTriggerDto::from(updated)))
+}
+
+/// DELETE /{id}/triggers/{tid} (nested) — delete trigger
+pub async fn delete_trigger_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, _loop_id, tid)): Path<(i64, i64, i64)>,
+) -> Result<impl IntoResponse, AppError> {
+    // V1 隔离：校验父 loop 属于路径 workspace，再按 tid 删 trigger
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, _loop_id, _ws_id).await?;
+    state.db.get_trigger(tid).await?.ok_or(AppError::NotFound)?;
+    if let Some(sched) = state.loop_scheduler.as_ref() {
+        sched.remove_cron_trigger(tid).await;
+    }
+    state.db.delete_trigger(tid).await?;
+    Ok(ApiResponse::ok(()))
+}
+
+// ====== V1 Steps ======
+
+/// GET /{id}/steps (nested) — list steps
+pub async fn list_loop_steps_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, loop_id)): Path<(i64, i64)>,
+) -> Result<impl IntoResponse, AppError> {
+    // V1 隔离：校验父 loop 属于路径 workspace，再列其 steps
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, loop_id, _ws_id).await?;
+    let rows = state.db.list_loop_steps_with_todo_meta(loop_id).await?;
+    let dtos: Vec<LoopStepDto> = rows.into_iter()
+        .map(|(s, todo_title, todo_executor, todo_archived_at)| LoopStepDto {
+            step: s.into(), todo_title, todo_executor, todo_archived_at,
+        })
+        .collect();
+    Ok(ApiResponse::ok(dtos))
+}
+
+/// POST /{id}/steps (nested) — create step
+pub async fn create_loop_step_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, loop_id)): Path<(i64, i64)>,
+    Json(req): Json<CreateLoopStepRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    if req.name.trim().is_empty() {
+        return Err(AppError::BadRequest("name 不能为空".to_string()));
+    }
+    // V1 隔离：校验父 loop 属于路径 workspace（verify 已含存在性校验）
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, loop_id, _ws_id).await?;
+    state.db.get_todo(req.todo_id).await?
+        .ok_or_else(|| AppError::BadRequest(format!("todo #{} 不存在", req.todo_id)))?;
+    let created = state.db.create_loop_step(
+        loop_id, req.name.trim(), &req.description, req.todo_id,
+        &req.run_mode, req.skip_on_source_failed, req.min_rating,
+        &req.unrated_policy, req.enabled, &req.on_success,
+        req.success_goto_step_id, &req.on_rating_fail,
+        req.fail_goto_step_id, &req.review_type,
+    ).await?;
+    let (_, todo_title, todo_executor, todo_archived_at) = state.db
+        .list_loop_steps_with_todo_meta(loop_id).await?
+        .into_iter()
+        .find(|(s, _, _, _)| s.id == created.id)
+        .ok_or_else(|| AppError::Internal("created step missing".to_string()))?;
+    Ok((StatusCode::CREATED, ApiResponse::ok(LoopStepDto {
+        step: created.into(), todo_title, todo_executor, todo_archived_at,
+    })))
+}
+
+/// PUT /{id}/steps/{sid} (nested) — update step
+pub async fn update_loop_step_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, loop_id, sid)): Path<(i64, i64, i64)>,
+    Json(req): Json<UpdateLoopStepRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    if req.name.trim().is_empty() {
+        return Err(AppError::BadRequest("name 不能为空".to_string()));
+    }
+    // V1 隔离：校验父 loop 属于路径 workspace（后续 step.loop_id != loop_id 校验子资源归属）
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, loop_id, _ws_id).await?;
+    let step = state.db.get_loop_step(sid).await?.ok_or(AppError::NotFound)?;
+    if step.loop_id != loop_id {
+        return Err(AppError::BadRequest("step 不属于该 loop".to_string()));
+    }
+    if req.todo_id != step.todo_id {
+        state.db.get_todo(req.todo_id).await?
+            .ok_or_else(|| AppError::BadRequest(format!("todo #{} 不存在", req.todo_id)))?;
+    }
+    if req.on_rating_fail == "goto" && req.fail_goto_step_id == Some(sid) {
+        let loop_ = state.db.get_loop(loop_id).await?.ok_or(AppError::NotFound)?;
+        #[derive(serde::Deserialize, Default)]
+        struct LimitsConfig {
+            max_step_executions: Option<i32>,
+            max_total_tokens: Option<i64>,
+        }
+        let limits: LimitsConfig = serde_json::from_str(&loop_.limits_config).unwrap_or_default();
+        if limits.max_step_executions.is_none() && limits.max_total_tokens.is_none() {
+            return Err(AppError::BadRequest(
+                "评分不通过时跳转到自身需要配置「最大执行步数」或「最大 Token 数」兜底".to_string(),
+            ));
+        }
+    }
+    state.db.update_loop_step(
+        sid, req.name.trim(), &req.description, req.todo_id,
+        &req.run_mode, req.skip_on_source_failed, req.min_rating,
+        &req.unrated_policy, req.enabled, &req.on_success,
+        req.success_goto_step_id, &req.on_rating_fail,
+        req.fail_goto_step_id, &req.review_type,
+    ).await?;
+    let (_, todo_title, todo_executor, todo_archived_at) = state.db
+        .list_loop_steps_with_todo_meta(loop_id).await?
+        .into_iter()
+        .find(|(s, _, _, _)| s.id == sid)
+        .ok_or_else(|| AppError::Internal("updated step missing".to_string()))?;
+    Ok(ApiResponse::ok(LoopStepDto {
+        step: state.db.get_loop_step(sid).await?.ok_or(AppError::Internal("step missing".to_string()))?.into(),
+        todo_title, todo_executor, todo_archived_at,
+    }))
+}
+
+/// DELETE /{id}/steps/{sid} (nested) — delete step
+pub async fn delete_loop_step_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, _loop_id, sid)): Path<(i64, i64, i64)>,
+) -> Result<impl IntoResponse, AppError> {
+    // V1 隔离：校验父 loop 属于路径 workspace，再按 sid 删 step
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, _loop_id, _ws_id).await?;
+    state.db.get_loop_step(sid).await?.ok_or(AppError::NotFound)?;
+    state.db.delete_loop_step(sid).await?;
+    Ok(ApiResponse::ok(()))
+}
+
+/// POST /{id}/steps/reorder (nested) — batch reorder steps
+pub async fn reorder_loop_steps_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, loop_id)): Path<(i64, i64)>,
+    Json(req): Json<ReorderLoopStepsRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    // V1 隔离：校验父 loop 属于路径 workspace（verify 已含存在性校验）
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, loop_id, _ws_id).await?;
+    state.db.reorder_loop_steps(loop_id, &req.ordered_ids).await?;
+    Ok(ApiResponse::ok(()))
+}
+
+// ====== V1 Executions ======
+
+/// GET /{id}/executions (nested) — paginated execution history
+pub async fn list_executions_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, loop_id)): Path<(i64, i64)>,
+    Query(q): Query<ExecutionPageQuery>,
+) -> Result<impl IntoResponse, AppError> {
+    // V1 隔离：校验父 loop 属于路径 workspace，再列其执行历史
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, loop_id, _ws_id).await?;
+    let limit = q.limit.unwrap_or(DEFAULT_PAGE_LIMIT).min(MAX_PAGE_LIMIT);
+    let page = q.page.unwrap_or(1).max(1);
+    let offset = (page - 1) * limit;
+    let records = state.db.list_loop_executions(loop_id, limit, offset, q.hours).await?;
+    let total = state.db.count_loop_executions(loop_id).await?;
+    let exec_ids: Vec<i64> = records.iter().map(|r| r.id).collect();
+    let pending_counts = state.db.count_pending_approvals_by_execution_ids(&exec_ids).await?;
+    let mut items: Vec<LoopExecutionDto> = records.into_iter().map(Into::into).collect();
+    for item in &mut items {
+        item.pending_approval_count = pending_counts.get(&item.id).copied().unwrap_or(0);
+        let step_execs = state.db.list_loop_step_executions(item.id).await?;
+        let mut enriched: Vec<LoopStepExecutionDto> = step_execs.into_iter().map(|se| se.into()).collect();
+        for dto in &mut enriched {
+            enrich_step_execution_with_usage(&state.db, dto).await;
+        }
+        item.token_summary = Some(aggregate_tokens_from_step_dtos(&enriched));
+    }
+    Ok(ApiResponse::ok(serde_json::json!({
+        "items": items, "total": total, "page": page, "limit": limit,
+    })))
+}
+
+/// GET /{id}/executions/{eid} (nested) — single execution detail
+pub async fn get_execution_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, loop_id, eid)): Path<(i64, i64, i64)>,
+) -> Result<impl IntoResponse, AppError> {
+    // V1 隔离：校验父 loop 属于路径 workspace（后续 exec.loop_id != loop_id 校验子资源归属）
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, loop_id, _ws_id).await?;
+    let exec = state.db.get_loop_execution(eid).await?
+        .ok_or(AppError::NotFound)?;
+    if exec.loop_id != loop_id {
+        return Err(AppError::BadRequest("execution 不属于该 loop".to_string()));
+    }
+    let step_execs = state.db.list_loop_step_executions(eid).await?;
+    let loop_name = state.db.get_loop(loop_id).await?
+        .map(|l| l.name).unwrap_or_default();
+    let mut enriched: Vec<LoopStepExecutionDto> = vec![];
+    for se in step_execs {
+        let mut dto: LoopStepExecutionDto = se.into();
+        if dto.step_id == -1 {
+            if let Ok(Some(todo)) = state.db.get_todo(dto.todo_id).await {
+                dto.step_name = Some(format!("[异常处理] {}", todo.title));
+            }
+        } else if let Ok(Some(ls)) = state.db.get_loop_step(dto.step_id).await {
+            dto.step_name = Some(ls.name);
+        }
+        enrich_step_execution_with_usage(&state.db, &mut dto).await;
+        enriched.push(dto);
+    }
+    let token_summary = aggregate_tokens_from_step_dtos(&enriched);
+    Ok(ApiResponse::ok(LoopExecutionDetail {
+        execution: exec.into(), step_executions: enriched,
+        loop_name, token_summary,
+    }))
+}
+
+/// POST /{id}/executions/{eid}/steps/{seid}/approve (nested) — approve step execution
+pub async fn approve_step_execution_v1(
+    State(state): State<AppState>,
+    Path((_ws_id, _loop_id, execution_id, step_execution_id)): Path<(i64, i64, i64, i64)>,
+    Json(req): Json<ApproveStepExecutionRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    // V1 隔离：校验父 loop 属于路径 workspace（后续 loop_exec.loop_id != _loop_id 校验归属）
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, _loop_id, _ws_id).await?;
+    if req.rating < 0 || req.rating > 100 {
+        return Err(AppError::BadRequest("评分必须在 0-100 之间".to_string()));
+    }
+    let step_execs = state.db.list_loop_step_executions(execution_id).await?;
+    let step_exec = step_execs.iter()
+        .find(|se| se.id == step_execution_id)
+        .ok_or(AppError::NotFound)?;
+    let loop_exec = state.db.get_loop_execution(execution_id).await?
+        .ok_or(AppError::NotFound)?;
+    if loop_exec.loop_id != _loop_id {
+        return Err(AppError::BadRequest("该 execution 不属于指定的 loop".to_string()));
+    }
+    if step_exec.status != "pending_approval" {
+        return Err(AppError::BadRequest("该环节当前不需要审批".to_string()));
+    }
+    let min_rating = step_exec.min_rating.unwrap_or(0);
+    let final_status = if req.rating >= min_rating { "success" } else { "failed" };
+    state.db.approve_step_execution(
+        step_execution_id, req.rating, final_status, req.comment.as_deref(),
+    ).await?;
+    let _ = state.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
+        record_id: step_exec.execution_record_id.unwrap_or(0),
+        todo_id: step_exec.todo_id,
+        review_status: final_status.to_string(),
+    });
+    let runner = state.loop_runner.as_ref()
+        .ok_or_else(|| AppError::Internal("loop runner not ready".to_string()))?;
+    runner.resume_loop_execution(execution_id).await;
+    Ok(ApiResponse::ok(serde_json::json!({
+        "step_execution_id": step_execution_id,
+        "rating": req.rating,
+        "status": final_status,
+    })))
+}
+
+/// GET /stats — 当前 workspace 的 loop 聚合统计。
+pub async fn get_loop_stats_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Query(params): Query<LoopStatsQuery>,
+) -> Result<impl IntoResponse, AppError> {
+    let stats = state.db.get_loop_stats_for_workspace(Some(ws_id), params.hours).await?;
+    Ok(ApiResponse::ok(stats))
+}
+
+/// POST /batch/workspace — 批量移动 loop 到其他 workspace。
+pub async fn batch_move_loops_workspace_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Json(req): Json<BatchUpdateLoopWorkspaceRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    if req.ids.is_empty() {
+        return Err(AppError::BadRequest("ids 不能为空".to_string()));
+    }
+    workspace_guard::verify_loops_belong_to_ws(&state.db, &req.ids, ws_id).await?;
+    let dir = state
+        .db
+        .get_project_directory_by_id(req.workspace_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id)))?;
+    let rows_affected = state
+        .db
+        .batch_update_loops_workspace(&req.ids, req.workspace_id, &dir.path)
+        .await?;
+    Ok(ApiResponse::ok(BatchWorkspaceResult {
+        updated_count: rows_affected as i64,
+        total: req.ids.len() as i64,
+    }))
+}
+
+/// POST /batch/copy-workspace — 批量复制 loop 到其他 workspace。
+pub async fn batch_copy_loops_workspace_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Json(req): Json<BatchCopyLoopWorkspaceRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    if req.ids.is_empty() {
+        return Err(AppError::BadRequest("ids 不能为空".to_string()));
+    }
+    workspace_guard::verify_loops_belong_to_ws(&state.db, &req.ids, ws_id).await?;
+    let dir = state
+        .db
+        .get_project_directory_by_id(req.workspace_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id)))?;
+    let created_ids = state
+        .db
+        .batch_copy_loops_to_workspace(&req.ids, req.workspace_id, &dir.path)
+        .await?;
+    Ok(ApiResponse::ok(BatchWorkspaceResult {
+        updated_count: created_ids.len() as i64,
+        total: req.ids.len() as i64,
+    }))
+}
+
+/// GET /{id}/export — 导出单个 loop（workspace 隔离）。
+pub async fn export_loop_v1(
+    State(state): State<AppState>,
+    Path((ws_id, id)): Path<(i64, i64)>,
+) -> Result<impl IntoResponse, AppError> {
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, id, ws_id).await?;
+    let loops = state.db.list_loops_with_counts(Some(ws_id)).await?;
+    let loop_row = loops.into_iter().find(|l| l.loop_.id == id);
+    let loop_ = loop_row.ok_or(AppError::NotFound)?.loop_;
+    let yaml = build_loop_export_yaml(&state, &[id]).await?;
+    let filename = format!(
+        "{}-{}.loop.yaml",
+        loop_.name.replace(' ', "-"),
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    );
+    let disposition = format!("attachment; filename=\"{}\"", filename);
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/x-yaml; charset=utf-8".to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        yaml,
+    ))
+}
+
+/// POST /export-selected — 批量导出选中的 loop（workspace 隔离）。
+pub async fn export_selected_loops_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Json(req): Json<ExportLoopSelectedRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    if req.loop_ids.is_empty() {
+        return Err(AppError::BadRequest("loop_ids 不能为空".to_string()));
+    }
+    workspace_guard::verify_loops_belong_to_ws(&state.db, &req.loop_ids, ws_id).await?;
+    let yaml = build_loop_export_yaml(&state, &req.loop_ids).await?;
+    let filename = format!(
+        "loops-export-{}.loop.yaml",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    );
+    let disposition = format!("attachment; filename=\"{}\"", filename);
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/x-yaml; charset=utf-8".to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        yaml,
+    ))
+}
+
+/// POST /import-preview (nested) — 预览导入内容，强制 scoping 到 workspace。
+pub async fn import_preview_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    body: Bytes,
+) -> Result<impl IntoResponse, AppError> {
+    // v1 隔离：验证目标 workspace 存在。
+    state.db.get_project_directory_by_id(ws_id).await?
+        .ok_or_else(|| AppError::BadRequest(format!("工作空间 #{} 不存在", ws_id)))?;
+    // 委托原 handler；import_preview 只读不写，不接收 workspace_id 参数。
+    import_preview(State(state), body).await
+}
+
+/// POST /import (nested) — 导入 loop 到指定 workspace，强制 scoping。
+pub async fn import_loops_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Json(mut req): Json<ImportLoopRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    // v1 隔离：路径中的 workspace 覆盖请求体中的 workspace_id 字段，
+    // 确保导入的目标工作空间与 URL 一致，防止跨 workspace 导入。
+    req.workspace_id = Some(ws_id);
+    import_loops(State(state), Json(req)).await
+}
+
+/// POST /merge (nested) — 合并导入 loop 到指定 workspace，强制 scoping。
+pub async fn merge_loops_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Json(mut req): Json<MergeLoopRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    // v1 隔离：同 import，覆盖 workspace_id 确保与路径一致。
+    req.workspace_id = Some(ws_id);
+    merge_loops(State(state), Json(req)).await
+}
+
+/// GET /export — 导出当前 workspace 全部 loop。
+pub async fn export_all_loops_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+) -> Result<impl IntoResponse, AppError> {
+    let loops = state.db.list_loops_with_counts(Some(ws_id)).await?;
+    let ids: Vec<i64> = loops.into_iter().map(|l| l.loop_.id).collect();
+    if ids.is_empty() {
+        return Err(AppError::BadRequest("当前工作空间没有任何环路可导出".to_string()));
+    }
+    let yaml = build_loop_export_yaml(&state, &ids).await?;
+    let filename = format!(
+        "loops-export-{}.loop.yaml",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    );
+    let disposition = format!("attachment; filename=\"{}\"", filename);
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/x-yaml; charset=utf-8".to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        yaml,
+    ))
+}
+
+// ====== V1 路由表 ======
+// 所有路径为相对路径，外层已剥离 /api/v1/workspaces/{ws}/loops 前缀。
+// 外层 nesting 时 axum 会将 {ws} 路径参数传递到本路由器的各 handler。
+
+/// 返回 v1 路由表（相对路径），由外层嵌套在 /api/v1/workspaces/{ws}/loops 下。
+pub fn v1_routes() -> axum::Router<AppState> {
+    use axum::routing::{get, post, put};
+    axum::Router::new()
+        .route("/", get(list_loops_v1).post(create_loop_v1))
+        // 字面量路由必须注册在 /{id} 之前，避免被当作 loop id 捕获。
+        .route("/stats", get(get_loop_stats_v1))
+        .route("/batch/workspace", post(batch_move_loops_workspace_v1))
+        .route("/batch/copy-workspace", post(batch_copy_loops_workspace_v1))
+        .route("/export", get(export_all_loops_v1))
+        .route("/export-selected", post(export_selected_loops_v1))
+        // merge/import 同样必须在 /{id} 之前。
+        // v1 包装器强制 workspace 隔离：覆盖请求体中的 workspace_id 为路径参数值。
+        .route("/merge", post(merge_loops_v1))
+        .route("/import-preview", post(import_preview_v1))
+        .route("/import", post(import_loops_v1))
+        .route("/{id}", get(get_loop_v1).put(update_loop_v1).delete(delete_loop_v1))
+        .route("/{id}/status", put(update_loop_status_v1))
+        .route("/{id}/tags", put(update_loop_tags_v1))
+        .route("/{id}/duplicate", post(duplicate_loop_v1))
+        .route("/{id}/export", get(export_loop_v1))
+        .route("/{id}/trigger", post(trigger_loop_v1))
+        .route("/{id}/triggers", get(list_triggers_v1).post(create_trigger_v1))
+        .route("/{id}/triggers/{tid}", put(update_trigger_v1).delete(delete_trigger_v1))
+        .route("/{id}/steps", get(list_loop_steps_v1).post(create_loop_step_v1))
+        .route("/{id}/steps/reorder", post(reorder_loop_steps_v1))
+        .route("/{id}/steps/{sid}", put(update_loop_step_v1).delete(delete_loop_step_v1))
+        .route("/{id}/executions", get(list_executions_v1))
+        .route("/{id}/executions/{eid}", get(get_execution_v1))
+        .route("/{id}/executions/{eid}/steps/{seid}/approve", post(approve_step_execution_v1))
 }
 
 // ====== 导入工作空间逐 loop 解析的单元测试 ======

@@ -16,7 +16,7 @@ test.describe('执行记录详情页', () => {
 
     // 1. 检查 API 返回的状态
     const apiResponse = await page.evaluate((recordId) => {
-      return fetch(`/api/execution-records/${recordId}`)
+      return fetch(`/api/v1/workspaces/1/executions/${recordId}`)
         .then(r => r.json())
         .then(data => data.data);
     }, RECORD_ID);

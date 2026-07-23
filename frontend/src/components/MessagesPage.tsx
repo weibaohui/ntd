@@ -164,7 +164,7 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
 
   const handleViewExecutionRecord = async (recordId: number) => {
     try {
-      const r = await db.getExecutionRecord(recordId);
+      const r = await db.getExecutionRecord(workspaceId ?? 0, recordId);
       setExecDetailRecord(r);
     } catch {
     }
@@ -174,7 +174,7 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
   const handleViewLoopExecution = async (msg: FeishuHistoryMessage) => {
     if (!msg.processed_id) return;
     try {
-      const detail = await dbLoops.getExecutionById(msg.processed_id);
+      const detail = await dbLoops.getExecutionById(workspaceId ?? 0, msg.processed_id);
       setBlackboardExecs(detail.step_executions || []);
       setBlackboardOpen(true);
     } catch {
@@ -366,6 +366,7 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
       <BlackboardDrawer
         open={blackboardOpen}
         stepExecs={blackboardExecs}
+        workspaceId={workspaceId ?? 0}
         onClose={() => setBlackboardOpen(false)}
       />
     </PageCard>

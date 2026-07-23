@@ -207,7 +207,8 @@ export function BackupPanel() {
 
   const handleDownloadDatabase = async () => {
     try {
-      const response = await fetch('/api/backup/database/download');
+      // 原生 fetch 下载二进制流，不经 axios 拦截器，手动写 v1 路径
+      const response = await fetch('/api/v1/backup/database/download');
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
@@ -382,7 +383,8 @@ export function BackupPanel() {
   // Export handlers
   const handleExportBackup = async () => {
     try {
-      const response = await fetch('/api/backup/export', {
+      // 原生 fetch 导出 YAML，不经 axios 拦截器，手动写 v1 路径
+      const response = await fetch('/api/v1/backup/export', {
         headers: { Accept: 'application/x-yaml' },
       });
       if (!response.ok) {
@@ -414,7 +416,12 @@ export function BackupPanel() {
         return false;
       }
 
-      const existingTodos = await db.getAllTodos();
+      // v1 纯 workspace-scoped：getAllTodos 需逐空间拉取后合并，
+      // 用于备份导入去重时跨空间检查同名 todo
+      const allExisting = await Promise.all(
+        workspaces.map(ws => db.getAllTodos(ws.id).catch(() => []))
+      );
+      const existingTodos = allExisting.flat();
       setExistingTodos(existingTodos.map((t) => ({ title: t.title, prompt: t.prompt, workspace_id: t.workspace_id ?? null })));
       // 用户覆盖选择按导入批次重置
       setUserOverwriteKeys(new Set());

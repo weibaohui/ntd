@@ -13,7 +13,7 @@ interface QuickButton {
 
 // 后端响应是 ApiResponse 包裹的 { code, data, message }；这里只取 data
 async function listButtons(request: APIRequestContext): Promise<QuickButton[]> {
-  const res = await request.get(`${BASE}/api/quick-buttons`);
+  const res = await request.get(`${BASE}/api/v1/quick-buttons`);
   expect(res.ok()).toBeTruthy();
   return (await res.json()).data as QuickButton[];
 }
@@ -22,7 +22,7 @@ async function listButtons(request: APIRequestContext): Promise<QuickButton[]> {
 async function deleteByName(request: APIRequestContext, name: string) {
   for (const b of await listButtons(request)) {
     if (b.button_name === name) {
-      await request.delete(`${BASE}/api/quick-buttons/${b.id}`);
+      await request.delete(`${BASE}/api/v1/quick-buttons/${b.id}`);
     }
   }
 }
@@ -42,7 +42,7 @@ test.describe('快捷话术按钮 API 全链路', () => {
   });
 
   test('创建 → 列出 → 改名改话术 → 删除', async ({ request }) => {
-    const createRes = await request.post(`${BASE}/api/quick-buttons`, {
+    const createRes = await request.post(`${BASE}/api/v1/quick-buttons`, {
       data: { button_name: NAME, prompt_text: '原始话术' },
     });
     expect(createRes.status()).toBe(200);
@@ -51,7 +51,7 @@ test.describe('快捷话术按钮 API 全链路', () => {
 
     expect((await listButtons(request)).find((b) => b.id === id)?.button_name).toBe(NAME);
 
-    const updRes = await request.put(`${BASE}/api/quick-buttons/${id}`, {
+    const updRes = await request.put(`${BASE}/api/v1/quick-buttons/${id}`, {
       data: { button_name: NAME_RENAMED, prompt_text: '新话术' },
     });
     expect(updRes.ok()).toBeTruthy();
@@ -60,26 +60,26 @@ test.describe('快捷话术按钮 API 全链路', () => {
     expect(updated?.button_name).toBe(NAME_RENAMED);
     expect(updated?.prompt_text).toBe('新话术');
 
-    expect((await request.delete(`${BASE}/api/quick-buttons/${id}`)).ok()).toBeTruthy();
+    expect((await request.delete(`${BASE}/api/v1/quick-buttons/${id}`)).ok()).toBeTruthy();
     expect((await listButtons(request)).find((b) => b.id === id)).toBeUndefined();
   });
 
   test('重名创建被拒（400）', async ({ request }) => {
     expect(
       (
-        await request.post(`${BASE}/api/quick-buttons`, {
+        await request.post(`${BASE}/api/v1/quick-buttons`, {
           data: { button_name: NAME, prompt_text: 'x' },
         })
       ).status(),
     ).toBe(200);
-    const dup = await request.post(`${BASE}/api/quick-buttons`, {
+    const dup = await request.post(`${BASE}/api/v1/quick-buttons`, {
       data: { button_name: NAME, prompt_text: 'y' },
     });
     expect(dup.status()).toBe(400);
   });
 
   test('空名称被拒（400）', async ({ request }) => {
-    const res = await request.post(`${BASE}/api/quick-buttons`, {
+    const res = await request.post(`${BASE}/api/v1/quick-buttons`, {
       data: { button_name: '   ', prompt_text: 'x' },
     });
     expect(res.status()).toBe(400);

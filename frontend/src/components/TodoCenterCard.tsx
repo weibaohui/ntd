@@ -53,6 +53,8 @@ interface TodoCenterCardProps {
  * 避免重蹈当前密集列表「操作按钮挤在行里」的覆辙。
  */
 export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: TodoCenterCardProps) {
+  // workspaceId 从 item 提取：TodoCenter 列表来自 workspace-scoped 查询，workspace_id 必有
+  const wsId = item.workspace_id!;
   // busy 覆盖所有异步操作（执行/归档/恢复/webhook/调度/复制/移动），防止并发重复点击
   const [busy, setBusy] = useState(false);
   const [schedOpen, setSchedOpen] = useState(false);
@@ -87,10 +89,11 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: 
 
   // 弹窗确认：落库调度配置（设为/恢复时间驱动走同一条 PUT /scheduler）。
   const saveScheduler = () =>
-    runMutation('保存调度', () => db.updateScheduler(item.id, schedEnabled, schedConfig || null));
+    runMutation('保存调度', () => db.updateScheduler(wsId, item.id, schedEnabled, schedConfig || null));
 
   const menuItems = buildMenuItems(
     item,
+    wsId,
     isArchived,
     runMutation,
     openSchedulerModal,
@@ -106,7 +109,7 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: 
       loading={busy}
       onClick={(e) => {
         e.stopPropagation();
-        runMutation('恢复', () => db.restoreTodo(item.id));
+        runMutation('恢复', () => db.restoreTodo(wsId, item.id));
       }}
     >
       恢复
@@ -130,7 +133,7 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: 
       loading={busy}
       onClick={(e) => {
         e.stopPropagation();
-        runMutation('执行', () => db.executeTodo(item.id));
+        runMutation('执行', () => db.executeTodo(wsId, item.id));
       }}
     >
       执行一次
@@ -404,6 +407,7 @@ function SchedulerModal({
 /** 构建「更多」菜单项。按是否归档/是否时间驱动分支，保持单函数简短。 */
 function buildMenuItems(
   item: TodoCenterItem,
+  wsId: number,
   isArchived: boolean,
   runMutation: (label: string, fn: () => Promise<unknown>) => void,
   openSchedulerModal: () => void,
@@ -415,9 +419,9 @@ function buildMenuItems(
       {
         key: 'restore',
         label: '恢复事项',
-        onClick: () => runMutation('恢复', () => db.restoreTodo(item.id)),
+        onClick: () => runMutation('恢复', () => db.restoreTodo(wsId, item.id)),
       },
-      deleteMenuItem(item, runMutation),
+      deleteMenuItem(item, wsId, runMutation),
     ];
   }
   // Loop 驱动卡片不提供复制/移动（设计文档 Loop 驱动操作列表不含这两项）：
@@ -431,9 +435,9 @@ function buildMenuItems(
           { key: 'move', label: '移动到工作空间', onClick: () => openWorkspacePicker('move') },
         ];
   return [
-    archiveMenuItem(item, runMutation),
-    ...timeDrivenMenuItems(item, runMutation, openSchedulerModal),
-    webhookMenuItem(item, runMutation),
+    archiveMenuItem(item, wsId, runMutation),
+    ...timeDrivenMenuItems(item, wsId, runMutation, openSchedulerModal),
+    webhookMenuItem(item, wsId, runMutation),
     ...workspaceItems,
   ];
 }
@@ -441,6 +445,7 @@ function buildMenuItems(
 /** 删除菜单项：Modal.confirm 二次确认。被 Loop 引用时后端返回 400，runMutation 会提示。 */
 function deleteMenuItem(
   item: TodoCenterItem,
+  wsId: number,
   runMutation: (label: string, fn: () => Promise<unknown>) => void,
 ): NonNullable<MenuProps['items']>[number] {
   return {
@@ -454,7 +459,7 @@ function deleteMenuItem(
         okText: '删除',
         okButtonProps: { danger: true },
         cancelText: '取消',
-        onOk: () => runMutation('删除', () => db.deleteTodo(item.id)),
+        onOk: () => runMutation('删除', () => db.deleteTodo(wsId, item.id)),
       }),
   };
 }
@@ -462,6 +467,7 @@ function deleteMenuItem(
 /** 归档菜单项：被 Loop 引用时给出更强的归档不解除引用提示（设计文档风险三）。 */
 function archiveMenuItem(
   item: TodoCenterItem,
+  wsId: number,
   runMutation: (label: string, fn: () => Promise<unknown>) => void,
 ): NonNullable<MenuProps['items']>[number] {
   const loopHint =
@@ -477,7 +483,7 @@ function archiveMenuItem(
         content: `${loopHint}已归档事项可在「已归档」分类恢复。`,
         okText: '归档',
         cancelText: '取消',
-        onOk: () => runMutation('归档', () => db.archiveTodo(item.id)),
+        onOk: () => runMutation('归档', () => db.archiveTodo(wsId, item.id)),
       }),
   };
 }
@@ -485,6 +491,7 @@ function archiveMenuItem(
 /** 时间驱动菜单项：设为/暂停/恢复/取消。scheduler_config 为空=尚未时间驱动。 */
 function timeDrivenMenuItems(
   item: TodoCenterItem,
+  wsId: number,
   runMutation: (label: string, fn: () => Promise<unknown>) => void,
   openSchedulerModal: () => void,
 ): NonNullable<MenuProps['items']> {
@@ -501,13 +508,13 @@ function timeDrivenMenuItems(
         key: 'pause_time',
         label: '暂停时间驱动',
         // 暂停：关 enabled，保留 config（仍属时间驱动，卡片标已暂停）
-        onClick: () => runMutation('暂停时间驱动', () => db.updateScheduler(item.id, false, item.scheduler_config ?? null)),
+        onClick: () => runMutation('暂停时间驱动', () => db.updateScheduler(wsId, item.id, false, item.scheduler_config ?? null)),
       }
     : {
         key: 'resume_time',
         label: '恢复时间驱动',
         // 恢复：开 enabled，保留 config
-        onClick: () => runMutation('恢复时间驱动', () => db.updateScheduler(item.id, true, item.scheduler_config ?? null)),
+        onClick: () => runMutation('恢复时间驱动', () => db.updateScheduler(wsId, item.id, true, item.scheduler_config ?? null)),
       };
   const edit = { key: 'edit_time', label: '编辑调度配置', onClick: openSchedulerModal };
   const cancel = {
@@ -520,7 +527,7 @@ function timeDrivenMenuItems(
         okText: '取消时间驱动',
         cancelText: '保留',
         // 取消：关 enabled 且清空 config
-        onOk: () => runMutation('取消时间驱动', () => db.updateScheduler(item.id, false, null)),
+        onOk: () => runMutation('取消时间驱动', () => db.updateScheduler(wsId, item.id, false, null)),
       }),
   };
   return [pauseResume, edit, cancel];
@@ -529,13 +536,14 @@ function timeDrivenMenuItems(
 /** 事件驱动菜单项：开启/关闭 webhook，与 scheduler 端点对称。 */
 function webhookMenuItem(
   item: TodoCenterItem,
+  wsId: number,
   runMutation: (label: string, fn: () => Promise<unknown>) => void,
 ): NonNullable<MenuProps['items']>[number] {
   const on = item.webhook_enabled;
   return {
     key: 'webhook',
     label: on ? '关闭事件驱动' : '设为事件驱动',
-    onClick: () => runMutation(on ? '关闭事件驱动' : '设为事件驱动', () => db.updateTodoWebhook(item.id, !on)),
+    onClick: () => runMutation(on ? '关闭事件驱动' : '设为事件驱动', () => db.updateTodoWebhook(wsId, item.id, !on)),
   };
 }
 
@@ -577,10 +585,12 @@ function WorkspaceMoveCopyModal({
     if (targetId == null) return;
     setLoading(true);
     try {
+      // currentWorkspaceId 作为 URL 路径段（源空间），targetId 为目标空间（body）
+      const srcWs = currentWorkspaceId ?? 0;
       if (mode === 'copy') {
-        await db.batchCopyTodosWorkspace([todoId], targetId);
+        await db.batchCopyTodosWorkspace(srcWs, [todoId], targetId);
       } else if (mode === 'move') {
-        await db.batchMoveTodosWorkspace([todoId], targetId);
+        await db.batchMoveTodosWorkspace(srcWs, [todoId], targetId);
       }
       message.success(mode === 'copy' ? '已复制' : '已移动');
       onDone();

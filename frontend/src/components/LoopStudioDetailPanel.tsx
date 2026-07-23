@@ -35,6 +35,8 @@ import { LoopExecutionsPanel } from './loop-studio/executions';
 
 interface LoopDetailPanelProps {
   loopId: number;
+  /** 当前工作空间 ID（v1 路由 workspace-scoped，loop 查询必需） */
+  workspaceId: number | null;
   /** 可用标签列表（复用 Todo 的标签体系） */
   tags: Array<{ id: number; name: string; color: string }>;
   onTrigger: () => void;
@@ -47,6 +49,7 @@ interface LoopDetailPanelProps {
 
 export function LoopDetailPanel({
   loopId,
+  workspaceId,
   tags,
   onTrigger,
   onDuplicate,
@@ -66,7 +69,7 @@ export function LoopDetailPanel({
   // 导出环路
   const handleExport = async () => {
     try {
-      const yaml = await dbLoops.exportLoop(loopId);
+      const yaml = await dbLoops.exportLoop(workspaceId ?? 0, loopId);
       const blob = new Blob([yaml], { type: 'application/x-yaml' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -109,7 +112,7 @@ export function LoopDetailPanel({
     // 捕获本次请求所属的 loopId，resolve 后与最新值比较
     const id = loopId;
     setLoading(true);
-    dbLoops.getLoop(id)
+    dbLoops.getLoop(workspaceId ?? 0, id)
       .then((d) => {
         if (latestLoopIdRef.current !== id) return; // 已切换到别的 loop，丢弃
         setDetail(d);
@@ -130,7 +133,7 @@ export function LoopDetailPanel({
       .finally(() => {
         if (latestLoopIdRef.current === id) setLoading(false);
       });
-  }, [loopId, antMessage]);
+  }, [loopId, workspaceId, antMessage]);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -138,7 +141,7 @@ export function LoopDetailPanel({
   useEffect(() => {
     // 捕获本次 loopId，resolve 后比较，丢弃切换后的 stale 响应
     const id = loopId;
-    dbLoops.listExecutions(id, { page: 1, limit: 1 })
+    dbLoops.listExecutions(workspaceId ?? 0, id, { page: 1, limit: 1 })
       .then(res => { if (latestLoopIdRef.current === id) setExecutionTotal(res.total); })
       .catch(() => { /* 静默 */ });
   }, [loopId]);
@@ -454,7 +457,7 @@ export function LoopDetailPanel({
               ),
               children: (
                 <div style={{ paddingTop: 4 }}>
-                  <LoopExecutionsPanel loopId={loopId} loopName={detail.name} onTotalChange={setExecutionTotal} />
+                  <LoopExecutionsPanel loopId={loopId} workspaceId={detail.workspace_id} loopName={detail.name} onTotalChange={setExecutionTotal} />
                 </div>
               ),
             },

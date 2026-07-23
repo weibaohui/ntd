@@ -27,10 +27,15 @@ export function TodoSelectorForm({ value, onChange, workspaceId }: TodoSelectorF
 
   const [selectedId, setSelectedId] = useState<number | null>(parsed.todo_id);
 
-  // 加载 todo 列表：按 loop 所属工作空间过滤（如果 workspaceId 可用）
+  // 加载 todo 列表：按 loop 所属工作空间过滤（v1 纯 workspace-scoped，workspaceId 必须有值）
   useEffect(() => {
+    if (workspaceId == null) {
+      setTodos([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
-    db.getAllTodos(workspaceId ?? undefined)
+    db.getAllTodos(workspaceId)
       .then((list) => setTodos(list))
       .catch(() => { /* 静默 */ })
       .finally(() => setLoading(false));

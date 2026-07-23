@@ -44,10 +44,18 @@ export function LoopBackupTab() {
   };
 
   // 导出全库所有环路为单个 YAML（对齐 Todo「导出全部」）
+  // v1 workspace-scoped：逐空间导出后拼接
   const handleExportAll = async () => {
     setExporting(true);
     try {
-      const yamlText = await exportAllLoops();
+      // 先确保工作空间列表已加载
+      const ws = workspaces.length > 0 ? workspaces : await db.getProjectDirectories();
+      if (workspaces.length === 0) setWorkspaces(ws);
+      // 逐空间导出后拼接（v1 不支持跨空间批量端点）
+      const yamlTexts = await Promise.all(
+        ws.map(w => exportAllLoops(w.id).catch(() => ''))
+      );
+      const yamlText = yamlTexts.filter(Boolean).join('\n---\n');
       const blob = new Blob([yamlText], { type: 'application/x-yaml' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -70,15 +78,19 @@ export function LoopBackupTab() {
   const handleImportFile = async (file: File) => {
     try {
       const text = await file.text();
-      const preview = await db.previewLoopImport(text);
+      // v1 workspace-scoped：先加载工作空间列表，取第一个作为 URL 上下文空间
+      const ws = workspaces.length > 0 ? workspaces : await db.getProjectDirectories();
+      if (workspaces.length === 0) setWorkspaces(ws);
+      const ctxWs = ws[0]?.id ?? 0;
+      const preview = await db.previewLoopImport(ctxWs, text);
       setYamlPreview(text);
       setPreviewData(preview);
 
-      // 并行加载工作空间列表 + 当前库已有 loop 名（后者用于「状态」列）
-      const [ws, loops] = await Promise.all([
-        db.getProjectDirectories(),
-        listLoops(),
-      ]);
+      // 并行加载当前库已有 loop 名（逐空间拉取后合并，用于「状态」列同名检查）
+      const allLoops = await Promise.all(
+        ws.map(w => listLoops(w.id).catch(() => []))
+      );
+      const loops = allLoops.flat();
       setWorkspaces(ws);
       setExistingLoopNames(new Set(loops.map((l) => l.name)));
 
@@ -128,7 +140,9 @@ export function LoopBackupTab() {
     }
     setImporting(true);
     try {
-      const result = await db.mergeLoops(yamlPreview, null, overrides, skipNames);
+      // v1 workspace-scoped：用第一个工作空间作为 URL 上下文，逐 loop 的目标由 overrides 指定
+      const ctxWs = workspaces[0]?.id ?? 0;
+      const result = await db.mergeLoops(ctxWs, yamlPreview, null, overrides, skipNames);
       message.success(
         `导入完成：新建 ${result.created.loops} 个，更新 ${result.updated?.loops || 0} 个，跳过 ${result.skipped?.length || 0} 个`
       );

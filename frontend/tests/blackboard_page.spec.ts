@@ -58,7 +58,7 @@ function makeResponse(workspaceId: number, content: string): BlackboardResponse 
 /** 安装 mock：根据 query 中的 workspace 返回不同内容 */
 async function installBlackboardMocks(page: Page) {
   // 拦截 GET blackboard：返回当前 workspace 对应的内容
-  await page.route('**/api/workspaces/*/blackboard', async (route) => {
+  await page.route('**/api/v1/workspaces/*/blackboard', async (route) => {
     const url = new URL(route.request().url());
     // 解析 workspace id：取 path 中数字段
     const m = url.pathname.match(/\/api\/workspaces\/(\d+)\/blackboard/);
@@ -72,7 +72,7 @@ async function installBlackboardMocks(page: Page) {
     });
   });
   // 拦截 POST refresh：返回成功
-  await page.route('**/api/workspaces/*/blackboard/refresh', async (route) => {
+  await page.route('**/api/v1/workspaces/*/blackboard/refresh', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -123,7 +123,7 @@ test('点击刷新按钮触发 POST /api/.../blackboard/refresh', async ({ page 
 
   // 记录 refresh 请求次数
   let refreshCalls = 0;
-  await page.route('**/api/workspaces/*/blackboard/refresh', async (route) => {
+  await page.route('**/api/v1/workspaces/*/blackboard/refresh', async (route) => {
     refreshCalls += 1;
     await route.fulfill({
       status: 200,
@@ -169,7 +169,7 @@ test('切换 workspace 后页面重新拉取并渲染新内容（修复 useState
 
 test('空内容时显示空状态文案', async ({ page }) => {
   // 覆盖 mock 返回空内容
-  await page.route('**/api/workspaces/*/blackboard', async (route) => {
+  await page.route('**/api/v1/workspaces/*/blackboard', async (route) => {
     const m = new URL(route.request().url()).pathname.match(/\/api\/workspaces\/(\d+)\//);
     const wsId = m ? Number(m[1]) : 0;
     await route.fulfill({

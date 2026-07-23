@@ -26,19 +26,19 @@ interface ResumeRecord {
 }
 
 async function listButtons(request: APIRequestContext): Promise<QB[]> {
-  return ((await (await request.get(`${BASE}/api/quick-buttons`)).json()).data) as QB[];
+  return ((await (await request.get(`${BASE}/api/v1/quick-buttons`)).json()).data) as QB[];
 }
 
 async function deleteByName(request: APIRequestContext, name: string) {
   for (const b of await listButtons(request)) {
-    if (b.button_name === name) await request.delete(`${BASE}/api/quick-buttons/${b.id}`);
+    if (b.button_name === name) await request.delete(`${BASE}/api/v1/quick-buttons/${b.id}`);
   }
 }
 
 // 动态找一个可 resume 的执行记录，拼出帖子页 URL；找不到返回 null（调用方 test.skip）。
 // 不写死 todo/record ID——干净库或数据变动时优雅跳过，而非在 goto 处硬失败。
 async function findResumablePostUrl(request: APIRequestContext): Promise<string | null> {
-  const res = await request.get(`${BASE}/api/execution-records`, {
+  const res = await request.get(`${BASE}/api/v1/workspaces/1/executions`, {
     params: { status: 'success', limit: 50 },
   });
   if (!res.ok()) return null;

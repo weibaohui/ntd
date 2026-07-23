@@ -101,3 +101,15 @@ pub fn routes() -> Router<AppState> {
         .route("/api/project-directories/{id}", put(update_project_directory))
         .route("/api/project-directories/{id}", delete(delete_project_directory))
 }
+
+/// API v1 路由：项目目录相关端点。
+///
+/// 将 /api 前缀替换为 /api/v1，参数模式与旧路由保持一致。
+/// 全路径注册，不与外层 router 嵌套（flat 结构）。
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/v1/project-directories", get(list_project_directories))
+        .route("/api/v1/project-directories", post(create_project_directory))
+        .route("/api/v1/project-directories/{id}", put(update_project_directory))
+        .route("/api/v1/project-directories/{id}", delete(delete_project_directory))
+}

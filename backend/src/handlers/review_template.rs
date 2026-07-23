@@ -11,6 +11,8 @@
 //! 路由构建函数 `review_template_routes()` 在 `handlers/mod.rs` 内组装。
 
 use axum::extract::{Path, Query, State};
+use axum::routing::get;
+use axum::Router;
 use axum::Json;
 use serde::Deserialize;
 
@@ -125,4 +127,29 @@ pub async fn delete_review_template(
         return Err(AppError::NotFound);
     }
     Ok(Json(ApiResponse::ok(true)))
+}
+
+/// v1 API 路由（/api/v1/review-templates/*）。
+///
+/// 与 `review_template_routes()`（mod.rs）并行，前缀全部改为 `/api/v1/`。
+/// 等旧路由废弃后，`mount_domain_routes` 里从 `mod.rs` 的 `review_template_routes` 切到这个函数。
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        // 列表（含 prompt过滤） + 创建
+        .route(
+            "/api/v1/review-templates",
+            get(list_review_templates).post(create_review_template),
+        )
+        // 选项列表（轻量，不含 prompt，必须在 {id} 之前注册以免被当成 id 捕获）
+        .route(
+            "/api/v1/review-templates/options",
+            get(list_review_template_options),
+        )
+        // 按 id 取/更新/删除单条
+        .route(
+            "/api/v1/review-templates/{id}",
+            get(get_review_template)
+                .put(update_review_template)
+                .delete(delete_review_template),
+        )
 }

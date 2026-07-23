@@ -1,5 +1,9 @@
-use axum::extract::{Path, State};
-use axum::Json;
+use axum::{
+    Router,
+    extract::{Path, State},
+    routing::{delete, get, post, put},
+    Json,
+};
 
 use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::{ApiResponse, CreateTemplateRequest, TodoTemplate, UpdateTemplateRequest};
@@ -111,4 +115,20 @@ pub async fn copy_template(
         .ok_or_else(|| AppError::Internal("Failed to get copied template".to_string()))?;
 
     Ok(Json(ApiResponse::ok(template)))
+}
+
+/// API v1 routes for todo-template resource.
+/// All paths are full absolute paths with /api/v1 prefix.
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        // GET /api/v1/todo-templates — list all templates
+        .route("/api/v1/todo-templates", get(get_templates))
+        // POST /api/v1/todo-templates — create a new template
+        .route("/api/v1/todo-templates", post(create_template))
+        // PUT /api/v1/todo-templates/{id} — update a template
+        .route("/api/v1/todo-templates/{id}", put(update_template))
+        // DELETE /api/v1/todo-templates/{id} — delete a template
+        .route("/api/v1/todo-templates/{id}", delete(delete_template))
+        // POST /api/v1/todo-templates/{id}/copy — duplicate a template
+        .route("/api/v1/todo-templates/{id}/copy", post(copy_template))
 }

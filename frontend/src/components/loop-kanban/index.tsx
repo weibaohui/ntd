@@ -37,7 +37,8 @@ export function LoopKanban({ searchText: externalSearch, hours: externalHours, o
   const { message } = AntApp.useApp();
   const { state } = useApp();
 
-  const { executions, loading } = useLoopExecutions(state.selectedWorkspace, hours);
+  const { executions, loading } = useLoopExecutions(state.selectedWorkspace ?? null, hours);
+  const wsId = state.selectedWorkspace ?? 0;
 
   // ── 轨迹侧边栏状态 ────────────────────────────────────
   const [selectedExec, setSelectedExec] = useState<LoopExecutionWithLoopName | null>(null);
@@ -54,8 +55,8 @@ export function LoopKanban({ searchText: externalSearch, hours: externalHours, o
     setLoopDetail(null);
     try {
       const [detail, loop] = await Promise.all([
-        dbLoops.getExecution(exec.loop_id, exec.id),
-        dbLoops.getLoop(exec.loop_id),
+        dbLoops.getExecution(wsId, exec.loop_id, exec.id),
+        dbLoops.getLoop(wsId, exec.loop_id),
       ]);
       setExecDetail(detail);
       setLoopDetail(loop);
@@ -72,7 +73,7 @@ export function LoopKanban({ searchText: externalSearch, hours: externalHours, o
 
   const handleOpenBlackboard = useCallback(async (exec: LoopExecutionWithLoopName) => {
     try {
-      const detail = await dbLoops.getExecution(exec.loop_id, exec.id);
+      const detail = await dbLoops.getExecution(wsId, exec.loop_id, exec.id);
       setBlackboardExecs(detail.step_executions);
       setBlackboardOpen(true);
     } catch {
@@ -216,9 +217,10 @@ export function LoopKanban({ searchText: externalSearch, hours: externalHours, o
               <StepExecList
                 stepExecs={execDetail.step_executions}
                 loopId={execDetail.loop_id}
+                workspaceId={wsId}
                 executionId={execDetail.id}
                 onApproved={() => {
-                  dbLoops.getExecution(selectedExec.loop_id, selectedExec.id)
+                  dbLoops.getExecution(wsId, selectedExec.loop_id, selectedExec.id)
                     .then(setExecDetail)
                     .catch(() => {});
                 }}
@@ -234,6 +236,7 @@ export function LoopKanban({ searchText: externalSearch, hours: externalHours, o
       <BlackboardDrawer
         open={blackboardOpen}
         stepExecs={blackboardExecs}
+        workspaceId={wsId}
         onClose={() => setBlackboardOpen(false)}
       />
     </div>

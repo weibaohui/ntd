@@ -19,10 +19,12 @@ import { execStatusView } from './helpers';
 interface BlackboardDrawerProps {
   open: boolean;
   stepExecs: Record<string, any>[];
+  /** 当前工作空间 ID（v1 路由 workspace-scoped） */
+  workspaceId: number;
   onClose: () => void;
 }
 
-export function BlackboardDrawer({ open, stepExecs, onClose }: BlackboardDrawerProps) {
+export function BlackboardDrawer({ open, stepExecs, workspaceId, onClose }: BlackboardDrawerProps) {
   // ── 执行记录详情 Drawer 状态 ────────────────────────────
   const [detailRecord, setDetailRecord] = useState<any | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -31,7 +33,7 @@ export function BlackboardDrawer({ open, stepExecs, onClose }: BlackboardDrawerP
   const handleOpenDetail = useCallback(async (executionRecordId: number) => {
     setDetailLoading(true);
     try {
-      const record = await dbExecutions.getExecutionRecord(executionRecordId);
+      const record = await dbExecutions.getExecutionRecord(workspaceId, executionRecordId);
       setDetailRecord(record);
     } catch {
       // 加载失败不弹窗
@@ -49,7 +51,7 @@ export function BlackboardDrawer({ open, stepExecs, onClose }: BlackboardDrawerP
   const handleOpenLogView = useCallback(async (record: any) => {
     setLogDrawerRecord(record);
     try {
-      const result = await dbExecutions.getExecutionLogs(record.id, 1, 500);
+      const result = await dbExecutions.getExecutionLogs(workspaceId, record.id, 1, 500);
       setLogDrawerLogs(result.logs || []);
     } catch {
       setLogDrawerLogs([]);
@@ -233,7 +235,7 @@ export function BlackboardDrawer({ open, stepExecs, onClose }: BlackboardDrawerP
         isLoadingLogs={false}
         onLoadLogs={async (id, page) => {
           try {
-            const result = await dbExecutions.getExecutionLogs(id, page, 500);
+            const result = await dbExecutions.getExecutionLogs(workspaceId, id, page, 500);
             setLogDrawerLogs(result.logs || []);
           } catch {
             // 加载失败时保持现有日志

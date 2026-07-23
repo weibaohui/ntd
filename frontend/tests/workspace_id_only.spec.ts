@@ -2,7 +2,7 @@
 //
 // 验证目标：
 // 1. WorkspaceSelect 的 antd Select option value 是数字（id），不是路径字符串。
-// 2. 触发 LoopFormModal 保存时，POST /api/loops 请求体里包含 workspace_id（number），
+// 2. 触发 LoopFormModal 保存时，POST /api/v1/workspaces/${workspace_id}/loops 请求体里包含 workspace_id（number），
 //    不再带 workspace_path 字段。
 // 3. Loop 详情页 / 编辑 modal 拿到的 LoopDto 里 workspace_id 是 number。
 //
@@ -16,10 +16,10 @@ const BASE = 'http://localhost:18088';
 // 通过 API 拿到已存在的 workspace id 与一个示例 loop（用于编辑模式断言）
 async function fetchSeed(api: Awaited<ReturnType<typeof request.newContext>>) {
   // 拉取 project_directories
-  const dirsResp = await api.get(`${BASE}/api/project-directories`);
+  const dirsResp = await api.get(`${BASE}/api/v1/project-directories`);
   const dirs = (await dirsResp.json()).data as Array<{ id: number; path: string; name: string | null }>;
   // 拉取 loops
-  const loopsResp = await api.get(`${BASE}/api/loops`);
+  const loopsResp = await api.get(`${BASE}/api/v1/workspaces/${workspace_id}/loops`);
   const loops = (await loopsResp.json()).data as Array<{ id: number; workspace_id: number | null }>;
   return { dirs, loops };
 }
@@ -40,7 +40,7 @@ test.describe('workspace_id 破坏式改造验证', () => {
     await page.goto(BASE);
     await page.waitForLoadState('networkidle');
     // 等待 project_directories 加载
-    await page.waitForResponse(r => r.url().includes('/api/project-directories') && r.status() === 200, { timeout: 5000 }).catch(() => {});
+    await page.waitForResponse(r => r.url().includes('/api/v1/project-directories') && r.status() === 200, { timeout: 5000 }).catch(() => {});
 
     // 打开任意 WorkspaceSelect —— TodoDrawer 的新建按钮 / 左侧 WorkspaceSwitcher / LoopFormModal 都用同一组件
     // 通过 WorkspaceSwitcher dropdown 触发最稳，因为它总是渲染
@@ -79,9 +79,9 @@ test.describe('workspace_id 破坏式改造验证', () => {
     if (dirs.length === 0) test.skip(true, 'dev server 上没有 project_directory，跳过');
     const targetDir = dirs[0];
 
-    // 拦截 POST /api/loops 以捕获请求体
+    // 拦截 POST /api/v1/workspaces/${workspace_id}/loops 以捕获请求体
     const createReq = page.waitForRequest(
-      r => r.url().endsWith('/api/loops') && r.method() === 'POST',
+      r => r.url().endsWith('/api/v1/workspaces/${workspace_id}/loops') && r.method() === 'POST',
       { timeout: 15000 },
     );
 
@@ -116,7 +116,7 @@ test.describe('workspace_id 破坏式改造验证', () => {
 
     // 断言请求体
     const req = await createReq.catch(() => null);
-    if (!req) test.skip(true, '未拦截到 POST /api/loops 请求，跳过');
+    if (!req) test.skip(true, '未拦截到 POST /api/v1/workspaces/${workspace_id}/loops 请求，跳过');
     const body = req!.postDataJSON() as Record<string, unknown>;
     expect(body).toHaveProperty('workspace_id');
     expect(typeof body.workspace_id).toBe('number');

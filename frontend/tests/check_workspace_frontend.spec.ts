@@ -32,7 +32,7 @@ test.describe('Workspace Frontend Panels (阶段7-11)', () => {
 
   test('workspace slash commands CRUD via API', async ({ page }) => {
     // 1. 创建一个 todo
-    const todoResp = await page.request.post(`${BASE}/api/todos`, {
+    const todoResp = await page.request.post(`${BASE}/api/v1/workspaces/${workspaceId}/todos`, {
       data: { title: '测试 Slash 命令', prompt: '测试' },
     });
     expect(todoResp.ok()).toBeTruthy();
@@ -41,14 +41,14 @@ test.describe('Workspace Frontend Panels (阶段7-11)', () => {
     const workspaceId = 1;
 
     // 2. 创建 slash command
-    const createResp = await page.request.post(`${BASE}/api/workspace/${workspaceId}/slash-commands`, {
+    const createResp = await page.request.post(`${BASE}/api/v1/workspaces/${workspaceId}/slash-commands`, {
       data: { slash_command: '/测试', todo_id: todoId, enabled: true },
     });
     expect(createResp.ok()).toBeTruthy();
     const cmdId = (await createResp.json()).data.id;
 
     // 3. 获取列表验证
-    const listResp = await page.request.get(`${BASE}/api/workspace/${workspaceId}/slash-commands`);
+    const listResp = await page.request.get(`${BASE}/api/v1/workspaces/${workspaceId}/slash-commands`);
     expect(listResp.ok()).toBeTruthy();
     const commands = (await listResp.json()).data;
     const cmd = commands.find((c: any) => c.id === cmdId);
@@ -57,12 +57,12 @@ test.describe('Workspace Frontend Panels (阶段7-11)', () => {
     console.log('WorkspaceSlashCommandsPanel 数据验证成功');
 
     // 4. 清理
-    await page.request.delete(`${BASE}/api/workspace/${workspaceId}/slash-commands/${cmdId}`);
+    await page.request.delete(`${BASE}/api/v1/workspaces/${workspaceId}/slash-commands/${cmdId}`);
   });
 
   test('workspace settings panel', async ({ page }) => {
     // 1. 创建 todo
-    const todoResp = await page.request.post(`${BASE}/api/todos`, {
+    const todoResp = await page.request.post(`${BASE}/api/v1/workspaces/${workspaceId}/todos`, {
       data: { title: '默认响应 Todo', prompt: '测试' },
     });
     expect(todoResp.ok()).toBeTruthy();
@@ -71,13 +71,13 @@ test.describe('Workspace Frontend Panels (阶段7-11)', () => {
     const workspaceId = 1;
 
     // 2. 更新 workspace settings
-    const updateResp = await page.request.put(`${BASE}/api/workspace/${workspaceId}/settings`, {
+    const updateResp = await page.request.put(`${BASE}/api/v1/workspaces/${workspaceId}/settings`, {
       data: { default_response_todo_id: todoId },
     });
     expect(updateResp.ok()).toBeTruthy();
 
     // 3. 验证更新
-    const getResp = await page.request.get(`${BASE}/api/workspace/${workspaceId}/settings`);
+    const getResp = await page.request.get(`${BASE}/api/v1/workspaces/${workspaceId}/settings`);
     expect(getResp.ok()).toBeTruthy();
     const settings = (await getResp.json()).data;
     expect(settings.default_response_todo_id).toBe(todoId);
@@ -86,7 +86,7 @@ test.describe('Workspace Frontend Panels (阶段7-11)', () => {
 
   test('bot workspace_id in agent list', async ({ page }) => {
     // 验证 AgentBot 包含 workspace_id 字段
-    const botsResp = await page.request.get(`${BASE}/api/agent-bots`);
+    const botsResp = await page.request.get(`${BASE}/api/v1/agent-bots`);
     expect(botsResp.ok()).toBeTruthy();
     const bots = (await botsResp.json()).data;
 

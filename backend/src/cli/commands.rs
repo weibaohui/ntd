@@ -88,7 +88,11 @@ pub enum Commands {
         action: TagAction,
     },
     /// Global statistics
-    Stats,
+    Stats {
+        /// Workspace ID (project_directories.id). v1 路由把 dashboard 嵌入 workspace URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+    },
     /// Blackboard (knowledge wiki) management
     Blackboard {
         #[command(subcommand)]
@@ -134,6 +138,12 @@ pub enum BlackboardAction {
     },
 }
 
+/// 把 workspace_id 拼成 v1 路径前缀 `/workspaces/{ws}`。
+/// 单独抽出来避免在每个分支里手写 format!，确保所有 workspace-scoped 命令路径一致。
+fn ws_prefix(workspace_id: i64) -> String {
+    format!("/workspaces/{}", workspace_id)
+}
+
 /// Wiki 文件子命令（替代旧的 Page 子命令）。
 #[derive(Debug, Clone, Subcommand)]
 pub enum WikiAction {
@@ -169,9 +179,10 @@ pub enum TodoAction {
         #[arg(short, long)]
         executor: Option<String>,
 
-        /// Working directory ID (project_directories.id). 唯一键，CLI 不再支持 path。
+        /// Working directory ID (project_directories.id). v1 路由必填（嵌入 URL）。
+        /// 唯一键，CLI 不再支持 path；stdin 模式下也必须传，body 字段会被本参数覆盖。
         #[arg(short = 'w', long = "workspace-id")]
-        workspace_id: Option<i64>,
+        workspace_id: i64,
 
         /// Tag IDs (comma-separated)
         #[arg(long)]
@@ -183,6 +194,10 @@ pub enum TodoAction {
     },
     /// List todos
     List {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
         /// Filter by status
         #[arg(long)]
         status: Option<String>,
@@ -201,6 +216,10 @@ pub enum TodoAction {
     },
     /// Get todo details
     Get {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
         /// Todo ID
         id: i64,
     },
@@ -208,6 +227,11 @@ pub enum TodoAction {
     Update {
         /// Todo ID
         id: i64,
+
+        /// Workspace ID (project_directories.id) the todo currently belongs to.
+        /// v1 路由把 workspace 嵌入 URL；要切换 workspace 请用 --stdin 传 body.workspace_id。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
 
         /// New title
         #[arg(long)]
@@ -233,10 +257,6 @@ pub enum TodoAction {
         #[arg(long)]
         executor: Option<String>,
 
-        /// New working directory ID (project_directories.id)
-        #[arg(long = "workspace-id")]
-        workspace_id: Option<i64>,
-
         /// New tag IDs (comma-separated)
         #[arg(long)]
         tags: Option<String>,
@@ -247,11 +267,19 @@ pub enum TodoAction {
     },
     /// Delete todo
     Delete {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
         /// Todo ID
         id: i64,
     },
     /// Execute todo
     Execute {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
         /// Todo ID
         id: i64,
 
@@ -270,11 +298,19 @@ pub enum TodoAction {
     },
     /// Stop todo execution
     Stop {
-        /// Todo ID
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
+        /// Execution record ID（v1 路由把 record_id 嵌入 URL，旧版的 todo_id body 字段已废弃）
         id: i64,
     },
     /// Get todo execution stats
     Stats {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
         /// Todo ID
         id: i64,
     },
@@ -289,6 +325,10 @@ pub enum TodoAction {
 pub enum ExecutionAction {
     /// List execution records for a todo
     List {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
         /// Todo ID
         todo_id: i64,
 
@@ -306,11 +346,19 @@ pub enum ExecutionAction {
     },
     /// Get execution record details
     Get {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
         /// Execution record ID
         id: i64,
     },
     /// Resume a conversation from an execution record
     Resume {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
         /// Execution record ID
         id: i64,
 
@@ -347,18 +395,26 @@ pub enum TagAction {
 pub enum LoopAction {
     /// List all loops
     List {
-        /// Filter by workspace ID (unique key; use --workspace-id instead of path
-        /// since path is not unique across project_directories).
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL；
+        /// 不再是可选 filter，而是必填 URL 段（旧版跨 workspace 列表能力已下线）。
         #[arg(long = "workspace-id")]
-        workspace_id: Option<i64>,
+        workspace_id: i64,
     },
     /// Get loop details
     Get {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
         /// Loop ID
         id: i64,
     },
     /// Update loop
     Update {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
         /// Loop ID
         id: i64,
 
@@ -376,16 +432,28 @@ pub enum LoopAction {
     },
     /// Delete loop
     Delete {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
         /// Loop ID
         id: i64,
     },
     /// Stop a loop (pause all cron triggers)
     Stop {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
         /// Loop ID
         id: i64,
     },
     /// Get loop execution stats
     Stats {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
         /// Loop ID
         id: i64,
 
@@ -395,6 +463,10 @@ pub enum LoopAction {
     },
     /// Execute loop
     Execute {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
         /// Loop ID
         id: i64,
 
@@ -416,6 +488,10 @@ pub enum LoopAction {
 pub enum LoopExecutionAction {
     /// List execution records for a loop
     List {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
         /// Loop ID
         loop_id: i64,
 
@@ -429,12 +505,28 @@ pub enum LoopExecutionAction {
     },
     /// Get execution details
     Get {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
+        /// Loop ID（v1 路径 /workspaces/{ws}/loops/{loop_id}/executions/{eid} 必填）
+        #[arg(long = "loop-id")]
+        loop_id: i64,
+
         /// Execution ID
         execution_id: i64,
     },
     /// Show the blackboard (accumulated step conclusions) for a loop execution.
     /// 默认输出 JSON（AI/脚本友好）；加 --human 输出黑板视图（人眼友好）。
     Blackboard {
+        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+
+        /// Loop ID（v1 路径 /workspaces/{ws}/loops/{loop_id}/executions/{eid} 必填）
+        #[arg(long = "loop-id")]
+        loop_id: i64,
+
         /// Execution ID
         execution_id: i64,
 
@@ -511,7 +603,7 @@ pub async fn run_command(cli: &Cli) -> Result<()> {
         Commands::Todo { action } => handle_todo(&client, action, &cli.output, &cli.fields).await?,
         Commands::Loop { action } => handle_loop(&client, action, &cli.output, &cli.fields).await?,
         Commands::Tag { action } => handle_tag(&client, action, &cli.output, &cli.fields).await?,
-        Commands::Stats => handle_stats(&client, &cli.output, &cli.fields).await?,
+        Commands::Stats { workspace_id } => handle_stats(&client, *workspace_id, &cli.output, &cli.fields).await?,
         Commands::Blackboard { action } => handle_blackboard(&client, action, &cli.output, &cli.fields).await?,
         Commands::Workspace { action } => handle_workspace(&client, action, &cli.output, &cli.fields).await?,
     }
@@ -529,6 +621,9 @@ async fn handle_todo(
 ) -> Result<()> {
     match action {
         TodoAction::Create { title, prompt, file, stdin, executor, workspace_id, tags, schedule } => {
+            // workspace_id 现在是必填（i64，不再 Option），从 clap 直接拿；
+            // stdin 模式下若 JSON 也带 workspace_id，以命令行参数为准（更显式）。
+            let ws_id = *workspace_id;
             let mut req = if *stdin {
                 // Read from stdin
                 let value = read_stdin_json()?;
@@ -548,9 +643,8 @@ async fn handle_todo(
                         acceptance_criteria: value.get("acceptance_criteria").and_then(|v| v.as_str()).map(|s| s.to_string()),
                         auto_review_enabled: value.get("auto_review_enabled").and_then(|v| v.as_bool()),
                         webhook_enabled: None,
-                        workspace_id: value.get("workspace_id").and_then(|v| v.as_i64())
-                            .or(*workspace_id)
-                            .unwrap_or(0),
+                        // URL 已经带 workspace，body 字段以 CLI 参数为准
+                        workspace_id: ws_id,
                         action_type: None,
                         action_key: None,
                         model: None,
@@ -576,7 +670,7 @@ async fn handle_todo(
                     acceptance_criteria: None,
                     webhook_enabled: None,
                     auto_review_enabled: None,
-                    workspace_id: workspace_id.ok_or_else(|| anyhow::anyhow!("--workspace-id is required"))?,
+                    workspace_id: ws_id,
                     action_type: None,
                     action_key: None,
                     model: None,
@@ -591,16 +685,13 @@ async fn handle_todo(
                 }
             }
 
-            // stdin 闭包不能 `?`，这里做统一的 fail-fast：workspace_id=0 表示上游未传
-            if req.workspace_id == 0 {
-                // anyhow::anyhow! 已经返回 anyhow::Error，.into() 是多余转换
-                return Err(anyhow::anyhow!("workspace_id is required (pass --workspace-id or include in stdin JSON)"));
-            }
-
-            let resp: ClientResponse<Todo> = client.post("/todos", &req).await?;
+            // v1: workspace 嵌入 URL 路径段，body 的 workspace_id 仅作冗余字段。
+            // body 仍保留是为了兼容后端 CreateTodoRequest 解析（handler 也读 body.workspace_id）。
+            let path = format!("{}/todos", ws_prefix(ws_id));
+            let resp: ClientResponse<Todo> = client.post(&path, &req).await?;
             print_response(&resp, output, fields)?;
         }
-        TodoAction::List { status, tag, running, search } => {
+        TodoAction::List { workspace_id, status, tag, running, search } => {
             let mut query_params = Vec::new();
 
             if let Some(s) = status {
@@ -613,10 +704,11 @@ async fn handle_todo(
                 query_params.push("running=true".to_string());
             }
 
+            // v1: 列表也按 workspace 隔离，URL 前缀带 ws。
             let path = if query_params.is_empty() {
-                "/todos".to_string()
+                format!("{}/todos", ws_prefix(*workspace_id))
             } else {
-                format!("/todos?{}", query_params.join("&"))
+                format!("{}/todos?{}", ws_prefix(*workspace_id), query_params.join("&"))
             };
 
             let resp: ClientResponse<Vec<Todo>> = client.get(&path).await?;
@@ -642,11 +734,13 @@ async fn handle_todo(
 
             print_response(&resp, output, fields)?;
         }
-        TodoAction::Get { id } => {
-            let resp: ClientResponse<Todo> = client.get(&format!("/todos/{}", id)).await?;
+        TodoAction::Get { workspace_id, id } => {
+            // v1: GET /workspaces/{ws}/todos/{id}
+            let path = format!("{}/todos/{}", ws_prefix(*workspace_id), id);
+            let resp: ClientResponse<Todo> = client.get(&path).await?;
             print_response(&resp, output, fields)?;
         }
-        TodoAction::Update { id, title, prompt, file, stdin, status, executor, workspace_id, tags, schedule } => {
+        TodoAction::Update { id, workspace_id, title, prompt, file, stdin, status, executor, tags, schedule } => {
             let mut req = if *stdin {
                 read_stdin_json()?
             } else {
@@ -660,7 +754,6 @@ async fn handle_todo(
                     "prompt": prompt_content,
                     "status": status,
                     "executor": executor,
-                    "workspace_id": workspace_id,
                 })
             };
 
@@ -669,8 +762,6 @@ async fn handle_todo(
             if let Some(p) = prompt { req["prompt"] = p.clone().into(); }
             if let Some(s) = status { req["status"] = s.clone().into(); }
             if let Some(e) = executor { req["executor"] = e.clone().into(); }
-            // w 已经是 i64 类型，无需再 as i64 转换
-            if let Some(w) = workspace_id { req["workspace_id"] = Value::from(*w); }
             if let Some(t) = tags {
                 let tag_ids: Vec<i64> = t.split(',').filter_map(|s| s.trim().parse().ok()).collect();
                 req["tag_ids"] = tag_ids.into();
@@ -680,14 +771,19 @@ async fn handle_todo(
                 req["scheduler_config"] = if s.is_empty() { Value::Null } else { s.clone().into() };
             }
 
-            let resp: ClientResponse<Todo> = client.put(&format!("/todos/{}", id), &req).await?;
+            // v1: PUT /workspaces/{ws}/todos/{id}。workspace_id 不再放进 body（移除 --workspace-id 作为 body move 的语义）；
+            // 如需切换 workspace，请用 --stdin 在 body 中带 workspace_id 字段。
+            let path = format!("{}/todos/{}", ws_prefix(*workspace_id), id);
+            let resp: ClientResponse<Todo> = client.put(&path, &req).await?;
             print_response(&resp, output, fields)?;
         }
-        TodoAction::Delete { id } => {
-            let resp: ClientResponse<()> = client.delete(&format!("/todos/{}", id)).await?;
+        TodoAction::Delete { workspace_id, id } => {
+            // v1: DELETE /workspaces/{ws}/todos/{id}
+            let path = format!("{}/todos/{}", ws_prefix(*workspace_id), id);
+            let resp: ClientResponse<()> = client.delete(&path).await?;
             print_response(&resp, output, fields)?;
         }
-        TodoAction::Execute { id, message, executor, params } => {
+        TodoAction::Execute { workspace_id, id, message, executor, params } => {
             let params: Option<std::collections::HashMap<String, String>> = params.as_ref().map(|vec| {
                 vec.iter().cloned().collect()
             });
@@ -698,16 +794,22 @@ async fn handle_todo(
                 model: None,
                 params,
             };
-            let resp: ClientResponse<Value> = client.post("/execute", &req).await?;
+            // v1: 触发执行改走 executions 域，POST /workspaces/{ws}/executions
+            let path = format!("{}/executions", ws_prefix(*workspace_id));
+            let resp: ClientResponse<Value> = client.post(&path, &req).await?;
             print_response(&resp, output, fields)?;
         }
-        TodoAction::Stop { id } => {
-            let req = serde_json::json!({ "todo_id": id });
-            let resp: ClientResponse<()> = client.post("/execute/stop", &req).await?;
+        TodoAction::Stop { workspace_id, id } => {
+            // v1: stop 改用 record_id 路径参数（原 body todo_id 已废弃），
+            // 路径为 POST /workspaces/{ws}/executions/{record_id}/stop。
+            let path = format!("{}/executions/{}/stop", ws_prefix(*workspace_id), id);
+            let resp: ClientResponse<()> = client.post(&path, &serde_json::Value::Null).await?;
             print_response(&resp, output, fields)?;
         }
-        TodoAction::Stats { id } => {
-            let resp: ClientResponse<ExecutionSummary> = client.get(&format!("/todos/{}/summary", id)).await?;
+        TodoAction::Stats { workspace_id, id } => {
+            // v1: GET /workspaces/{ws}/todos/{id}/summary
+            let path = format!("{}/todos/{}/summary", ws_prefix(*workspace_id), id);
+            let resp: ClientResponse<ExecutionSummary> = client.get(&path).await?;
             print_response(&resp, output, fields)?;
         }
         TodoAction::Execution { action } => {
@@ -724,9 +826,11 @@ async fn handle_execution(
     fields: &Option<String>,
 ) -> Result<()> {
     match action {
-        ExecutionAction::List { todo_id, status, page, limit } => {
+        ExecutionAction::List { workspace_id, todo_id, status, page, limit } => {
+            // v1: GET /workspaces/{ws}/executions?todo_id=...（旧 /execution-records 路径已废）
             let path = format!(
-                "/execution-records?todo_id={}&page={}&limit={}{}",
+                "{}/executions?todo_id={}&page={}&limit={}{}",
+                ws_prefix(*workspace_id),
                 todo_id,
                 page,
                 limit,
@@ -735,13 +839,17 @@ async fn handle_execution(
             let resp: ClientResponse<ExecutionRecordsPage> = client.get(&path).await?;
             print_response(&resp, output, fields)?;
         }
-        ExecutionAction::Get { id } => {
-            let resp: ClientResponse<ExecutionRecord> = client.get(&format!("/execution-records/{}", id)).await?;
+        ExecutionAction::Get { workspace_id, id } => {
+            // v1: GET /workspaces/{ws}/executions/{id}
+            let path = format!("{}/executions/{}", ws_prefix(*workspace_id), id);
+            let resp: ClientResponse<ExecutionRecord> = client.get(&path).await?;
             print_response(&resp, output, fields)?;
         }
-        ExecutionAction::Resume { id, message } => {
+        ExecutionAction::Resume { workspace_id, id, message } => {
             let req = serde_json::json!({ "message": message });
-            let resp: ClientResponse<Value> = client.post(&format!("/execution-records/{}/resume", id), &req).await?;
+            // v1: POST /workspaces/{ws}/executions/{id}/resume
+            let path = format!("{}/executions/{}/resume", ws_prefix(*workspace_id), id);
+            let resp: ClientResponse<Value> = client.post(&path, &req).await?;
             print_response(&resp, output, fields)?;
         }
     }
@@ -749,6 +857,8 @@ async fn handle_execution(
 }
 
 // ============== Tag Handlers ==============
+// Tag 是全局资源（无 workspace_id 列），v1 路由直接挂 /api/v1/tags，
+// 不嵌 workspace 前缀；client.rs 会自动补 /api/v1。
 
 async fn handle_tag(
     client: &ApiClient,
@@ -758,6 +868,8 @@ async fn handle_tag(
 ) -> Result<()> {
     match action {
         TagAction::List => {
+            // v1: GET /tags（axum 在 nest("/api/v1/tags") + .route("/") 下，
+            // 无尾斜杠的 /api/v1/tags 也能命中根路由）
             let resp: ClientResponse<Vec<Tag>> = client.get("/tags").await?;
             print_response(&resp, output, fields)?;
         }
@@ -766,10 +878,12 @@ async fn handle_tag(
                 name: name.clone(),
                 color: color.clone(),
             };
+            // v1: POST /tags（全局资源）
             let resp: ClientResponse<Tag> = client.post("/tags", &req).await?;
             print_response(&resp, output, fields)?;
         }
         TagAction::Delete { id } => {
+            // v1: DELETE /tags/{id}
             let resp: ClientResponse<()> = client.delete(&format!("/tags/{}", id)).await?;
             print_response(&resp, output, fields)?;
         }
@@ -781,10 +895,13 @@ async fn handle_tag(
 
 async fn handle_stats(
     client: &ApiClient,
+    workspace_id: i64,
     output: &OutputFormat,
     fields: &Option<String>,
 ) -> Result<()> {
-    let resp: ClientResponse<DashboardStats> = client.get("/dashboard-stats").await?;
+    // v1: dashboard 改为 workspace-scoped，GET /workspaces/{ws}/stats/dashboard。
+    let path = format!("{}/stats/dashboard", ws_prefix(workspace_id));
+    let resp: ClientResponse<DashboardStats> = client.get(&path).await?;
     print_response(&resp, output, fields)?;
     Ok(())
 }
@@ -801,14 +918,16 @@ async fn handle_blackboard(
         BlackboardAction::Wiki { action, workspace_id } => {
             match action {
                 WikiAction::List => {
-                    let path = format!("/workspaces/{}/wiki/files", workspace_id);
+                    // v1: wiki 独立于 blackboard 域，GET /workspaces/{ws}/wiki/files
+                    let path = format!("{}/wiki/files", ws_prefix(*workspace_id));
                     let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
                     print_response(&resp, output, fields)?;
                 }
                 WikiAction::Get { slug } => {
                     // slug 可能包含中文或特殊字符，必须 percent-encode 后才能安全放入 URL 路径
                     let encoded = percent_encode_slug(slug);
-                    let path = format!("/workspaces/{}/wiki/files/{}", workspace_id, encoded);
+                    // v1: wiki 独立域，不与 blackboard 嵌套
+                    let path = format!("{}/wiki/files/{}", ws_prefix(*workspace_id), encoded);
                     let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
                     print_response(&resp, output, fields)?;
                 }
@@ -836,7 +955,8 @@ async fn handle_workspace(
     }
 }
 
-/// 调 `GET /api/project-directories` 拉全部已注册工作空间。
+/// 调 `GET /api/v1/project-directories` 拉全部已注册工作空间。
+/// 全局资源，路径不嵌 workspace。
 async fn list_workspaces(
     client: &ApiClient,
     output: &OutputFormat,
@@ -847,8 +967,9 @@ async fn list_workspaces(
     Ok(())
 }
 
-/// 调 `POST /api/project-directories` 注册一个新工作空间。
+/// 调 `POST /api/v1/project-directories` 注册一个新工作空间。
 /// body 结构与 handlers/project_directory.rs::CreateProjectDirectoryRequest 对齐。
+/// 全局资源，路径不嵌 workspace。
 async fn create_workspace(
     client: &ApiClient,
     path: &str,
@@ -876,19 +997,18 @@ async fn handle_loop(
 ) -> Result<()> {
     match action {
         LoopAction::List { workspace_id } => {
-            let path = if let Some(wid) = workspace_id {
-                format!("/loops?workspace_id={}", wid)
-            } else {
-                "/loops".to_string()
-            };
+            // v1: List 必带 workspace 嵌入 URL（旧的可选 workspace_id 过滤已废弃）。
+            let path = format!("{}/loops", ws_prefix(*workspace_id));
             let resp: ClientResponse<Vec<LoopDto>> = client.get(&path).await?;
             print_response(&resp, output, fields)?;
         }
-        LoopAction::Get { id } => {
-            let resp: ClientResponse<LoopDto> = client.get(&format!("/loops/{}", id)).await?;
+        LoopAction::Get { workspace_id, id } => {
+            // v1: GET /workspaces/{ws}/loops/{id}
+            let path = format!("{}/loops/{}", ws_prefix(*workspace_id), id);
+            let resp: ClientResponse<LoopDto> = client.get(&path).await?;
             print_response(&resp, output, fields)?;
         }
-        LoopAction::Update { id, name, description, status } => {
+        LoopAction::Update { workspace_id, id, name, description, status } => {
             // 构建部分更新 JSON，只包含提供的字段
             let mut obj = serde_json::Map::new();
             if let Some(n) = name {
@@ -901,31 +1021,33 @@ async fn handle_loop(
                 obj.insert("status".to_string(), serde_json::Value::String(s.to_string()));
             }
             let req = serde_json::Value::Object(obj);
-            let resp: ClientResponse<LoopDto> = client.put(
-                &format!("/loops/{}", id),
-                &req,
-            ).await?;
+            // v1: PUT /workspaces/{ws}/loops/{id}
+            let path = format!("{}/loops/{}", ws_prefix(*workspace_id), id);
+            let resp: ClientResponse<LoopDto> = client.put(&path, &req).await?;
             print_response(&resp, output, fields)?;
         }
-        LoopAction::Delete { id } => {
-            let resp: ClientResponse<()> = client.delete(&format!("/loops/{}", id)).await?;
+        LoopAction::Delete { workspace_id, id } => {
+            // v1: DELETE /workspaces/{ws}/loops/{id}
+            let path = format!("{}/loops/{}", ws_prefix(*workspace_id), id);
+            let resp: ClientResponse<()> = client.delete(&path).await?;
             print_response(&resp, output, fields)?;
         }
-        LoopAction::Stop { id } => {
+        LoopAction::Stop { workspace_id, id } => {
             // Pause the loop by disabling all its triggers
             let req = serde_json::json!({ "status": "paused" });
-            let resp: ClientResponse<LoopDto> = client.put(
-                &format!("/loops/{}/status", id),
-                &req,
-            ).await?;
+            // v1: PUT /workspaces/{ws}/loops/{id}/status
+            let path = format!("{}/loops/{}/status", ws_prefix(*workspace_id), id);
+            let resp: ClientResponse<LoopDto> = client.put(&path, &req).await?;
             print_response(&resp, output, fields)?;
         }
-        LoopAction::Stats { id, recent } => {
+        LoopAction::Stats { workspace_id, id, recent } => {
             // Get loop details with recent executions combined into one response
-            let resp: ClientResponse<LoopDto> = client.get(&format!("/loops/{}", id)).await?;
+            // v1: 两次请求都走 /workspaces/{ws}/loops/...
+            let base = format!("{}/loops/{}", ws_prefix(*workspace_id), id);
+            let resp: ClientResponse<LoopDto> = client.get(&base).await?;
             let execs_resp: ClientResponse<serde_json::Value> = client.get(&format!(
-                "/loops/{}/executions?page=1&limit={}",
-                id, recent
+                "{}/executions?page=1&limit={}",
+                base, recent
             )).await?;
             // Combine loop info and recent executions into a single JSON object
             let combined = serde_json::json!({
@@ -939,45 +1061,47 @@ async fn handle_loop(
             };
             print_response(&final_resp, output, fields)?;
         }
-        LoopAction::Execute { id, params } => {
+        LoopAction::Execute { workspace_id, id, params } => {
             let params_map: std::collections::HashMap<String, String> = params
                 .as_ref()
                 .map(|vec| vec.iter().cloned().collect())
                 .unwrap_or_default();
             let req = TriggerLoopRequest { params: params_map };
-            let resp: ClientResponse<serde_json::Value> = client.post(
-                &format!("/loops/{}/trigger", id),
-                &req,
-            ).await?;
+            // v1: POST /workspaces/{ws}/loops/{id}/trigger
+            let path = format!("{}/loops/{}/trigger", ws_prefix(*workspace_id), id);
+            let resp: ClientResponse<serde_json::Value> = client.post(&path, &req).await?;
             print_response(&resp, output, fields)?;
         }
         LoopAction::Execution { action } => {
             match action {
-                LoopExecutionAction::List { loop_id, page, limit } => {
+                LoopExecutionAction::List { workspace_id, loop_id, page, limit } => {
+                    // v1: GET /workspaces/{ws}/loops/{loop_id}/executions
                     let path = format!(
-                        "/loops/{}/executions?page={}&limit={}",
-                        loop_id, page, limit
+                        "{}/loops/{}/executions?page={}&limit={}",
+                        ws_prefix(*workspace_id), loop_id, page, limit
                     );
                     let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
                     print_response(&resp, output, fields)?;
                 }
-                LoopExecutionAction::Get { execution_id } => {
-                    // Get execution results by execution ID directly
-                    // 注意: ApiClient 已经自动添加 /api 前缀，所以路径不要带 /api
-                    let resp: ClientResponse<serde_json::Value> = client.get(&format!(
-                        "/loop-executions/{}",
-                        execution_id
-                    )).await?;
+                LoopExecutionAction::Get { workspace_id, loop_id, execution_id } => {
+                    // v1 后端没有 /loop-executions/{eid} 顶层路由，
+                    // 必须按 /workspaces/{ws}/loops/{loop_id}/executions/{eid} 访问。
+                    let path = format!(
+                        "{}/loops/{}/executions/{}",
+                        ws_prefix(*workspace_id), loop_id, execution_id
+                    );
+                    let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
                     print_response(&resp, output, fields)?;
                 }
-                LoopExecutionAction::Blackboard { execution_id, human } => {
-                    // 复用 get_execution_by_id handler 返回的 LoopExecutionDetail,
+                LoopExecutionAction::Blackboard { workspace_id, loop_id, execution_id, human } => {
+                    // 复用 v1 get_execution_v1 handler 返回的 LoopExecutionDetail,
                     // 它已经按 sequence_index 升序返回 step_executions。
                     // 不新增 API 端点 — 黑板视图本质就是 step_executions 的渲染。
-                    let resp: ClientResponse<serde_json::Value> = client.get(&format!(
-                        "/loop-executions/{}",
-                        execution_id
-                    )).await?;
+                    let path = format!(
+                        "{}/loops/{}/executions/{}",
+                        ws_prefix(*workspace_id), loop_id, execution_id
+                    );
+                    let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
                     if resp.code != 0 {
                         // 与 print_response 一致:错误码非 0 时抛 anyhow
                         return Err(anyhow::anyhow!("API error {}: {}", resp.code, resp.message));
@@ -1366,19 +1490,22 @@ mod tests {
 
     #[test]
     fn test_cli_parse_raw_output() {
-        let cli = Cli::try_parse_from(["ntd", "-o", "raw", "todo", "list"]).unwrap();
+        // v1: list 需要 --workspace-id（workspace 嵌入 URL）
+        let cli = Cli::try_parse_from(["ntd", "-o", "raw", "todo", "list", "--workspace-id", "1"]).unwrap();
         assert_eq!(cli.output, OutputFormat::Raw);
     }
 
     #[test]
     fn test_cli_parse_fields() {
-        let cli = Cli::try_parse_from(["ntd", "-f", "id,title", "todo", "list"]).unwrap();
+        // v1: list 需要 --workspace-id
+        let cli = Cli::try_parse_from(["ntd", "-f", "id,title", "todo", "list", "--workspace-id", "1"]).unwrap();
         assert_eq!(cli.fields, Some("id,title".to_string()));
     }
 
     #[test]
     fn test_cli_parse_search() {
-        let cli = Cli::try_parse_from(["ntd", "todo", "list", "-s", "rust"]).unwrap();
+        // v1: list 需要 --workspace-id
+        let cli = Cli::try_parse_from(["ntd", "todo", "list", "--workspace-id", "1", "-s", "rust"]).unwrap();
         match cli.command {
             Commands::Todo { action: TodoAction::List { search, .. } } => {
                 assert_eq!(search, Some("rust".to_string()));
@@ -1389,7 +1516,8 @@ mod tests {
 
     #[test]
     fn test_cli_parse_stdin_create() {
-        let cli = Cli::try_parse_from(["ntd", "todo", "create", "--stdin"]).unwrap();
+        // v1: --workspace-id 必填
+        let cli = Cli::try_parse_from(["ntd", "todo", "create", "--workspace-id", "1", "--stdin"]).unwrap();
         match cli.command {
             Commands::Todo { action: TodoAction::Create { stdin, .. } } => {
                 assert!(stdin);
@@ -1400,7 +1528,8 @@ mod tests {
 
     #[test]
     fn test_cli_parse_stdin_update() {
-        let cli = Cli::try_parse_from(["ntd", "todo", "update", "1", "--stdin"]).unwrap();
+        // v1: --workspace-id 必填
+        let cli = Cli::try_parse_from(["ntd", "todo", "update", "--workspace-id", "1", "1", "--stdin"]).unwrap();
         match cli.command {
             Commands::Todo { action: TodoAction::Update { stdin, .. } } => {
                 assert!(stdin);
@@ -1412,7 +1541,8 @@ mod tests {
     #[test]
     fn test_cli_parse_create_without_title_requires_stdin() {
         // Creating without title and without --stdin should still parse (validation is at runtime)
-        let cli = Cli::try_parse_from(["ntd", "todo", "create"]).unwrap();
+        // v1: --workspace-id 必填（CLI 解析阶段强制）
+        let cli = Cli::try_parse_from(["ntd", "todo", "create", "--workspace-id", "1"]).unwrap();
         match cli.command {
             Commands::Todo { action: TodoAction::Create { title, stdin, .. } } => {
                 assert!(title.is_none());
@@ -1427,6 +1557,7 @@ mod tests {
         let cli = Cli::try_parse_from([
             "ntd", "-o", "raw", "-f", "id,title,status",
             "todo", "list",
+            "--workspace-id", "1",
             "--status", "pending",
             "--search", "bug",
         ]).unwrap();
@@ -1470,9 +1601,10 @@ mod tests {
 
     #[test]
     fn test_cli_parse_execution_resume() {
-        let cli = Cli::try_parse_from(["ntd", "todo", "execution", "resume", "42"]).unwrap();
+        // v1: resume 路径嵌入 workspace，必填 --workspace-id
+        let cli = Cli::try_parse_from(["ntd", "todo", "execution", "resume", "--workspace-id", "1", "42"]).unwrap();
         match cli.command {
-            Commands::Todo { action: TodoAction::Execution { action: ExecutionAction::Resume { id, message } } } => {
+            Commands::Todo { action: TodoAction::Execution { action: ExecutionAction::Resume { id, message, .. } } } => {
                 assert_eq!(id, 42);
                 assert!(message.is_none());
             }
@@ -1482,9 +1614,10 @@ mod tests {
 
     #[test]
     fn test_cli_parse_execution_resume_with_message() {
-        let cli = Cli::try_parse_from(["ntd", "todo", "execution", "resume", "42", "-m", "fix the bug"]).unwrap();
+        // v1: 同上，--workspace-id 必填
+        let cli = Cli::try_parse_from(["ntd", "todo", "execution", "resume", "--workspace-id", "1", "42", "-m", "fix the bug"]).unwrap();
         match cli.command {
-            Commands::Todo { action: TodoAction::Execution { action: ExecutionAction::Resume { id, message } } } => {
+            Commands::Todo { action: TodoAction::Execution { action: ExecutionAction::Resume { id, message, .. } } } => {
                 assert_eq!(id, 42);
                 assert_eq!(message, Some("fix the bug".to_string()));
             }
@@ -1498,9 +1631,13 @@ mod tests {
     fn test_cli_parse_loop_execution_blackboard() {
         // 校验命令行解析：ntd loop execution blackboard 42
         // 默认行为: JSON 输出 (human=false)
-        let cli = Cli::try_parse_from(["ntd", "loop", "execution", "blackboard", "42"]).unwrap();
+        // v1: --workspace-id 和 --loop-id 必填（v1 路径 /workspaces/{ws}/loops/{loop_id}/executions/{eid}）
+        let cli = Cli::try_parse_from([
+            "ntd", "loop", "execution", "blackboard",
+            "--workspace-id", "1", "--loop-id", "2", "42",
+        ]).unwrap();
         match cli.command {
-            Commands::Loop { action: LoopAction::Execution { action: LoopExecutionAction::Blackboard { execution_id, human } } } => {
+            Commands::Loop { action: LoopAction::Execution { action: LoopExecutionAction::Blackboard { execution_id, human, .. } } } => {
                 assert_eq!(execution_id, 42);
                 assert!(!human, "默认应输出 JSON，human=false");
             }
@@ -1511,9 +1648,13 @@ mod tests {
     #[test]
     fn test_cli_parse_loop_execution_blackboard_human() {
         // --human 开关: 启用人类可读黑板视图
-        let cli = Cli::try_parse_from(["ntd", "loop", "execution", "blackboard", "42", "--human"]).unwrap();
+        // v1: 同上，必填 --workspace-id + --loop-id
+        let cli = Cli::try_parse_from([
+            "ntd", "loop", "execution", "blackboard",
+            "--workspace-id", "1", "--loop-id", "2", "42", "--human",
+        ]).unwrap();
         match cli.command {
-            Commands::Loop { action: LoopAction::Execution { action: LoopExecutionAction::Blackboard { execution_id, human } } } => {
+            Commands::Loop { action: LoopAction::Execution { action: LoopExecutionAction::Blackboard { execution_id, human, .. } } } => {
                 assert_eq!(execution_id, 42);
                 assert!(human, "--human 应启用人类视图");
             }

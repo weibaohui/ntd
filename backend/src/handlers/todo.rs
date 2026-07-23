@@ -1,8 +1,9 @@
 use axum::extract::{Path, Query, State};
+use axum::{Router, routing::{get, post, put}};
 use serde::Deserialize;
 
 use crate::db::TodoUpdate;
-use crate::handlers::{ApiJson, AppError, AppState};
+use crate::handlers::{workspace_guard, ApiJson, AppError, AppState};
 // todo hook 已整块移除（plan `purring-forging-petal`），HookContext 不再导入。
 use crate::models::{
     utc_timestamp, ApiResponse, BatchCopyTodoWorkspaceRequest,
@@ -30,70 +31,14 @@ fn validate_cron_expression(expr: &str) -> Result<(), String> {
         })
 }
 
-#[derive(Debug, serde::Deserialize)]
-pub struct TodoListQuery {
-    /// 按工作空间 ID 过滤 Todo（对应 todos.workspace_id 字段）
-    #[serde(default)]
-    pub workspace_id: Option<i64>,
-    /// 按最近 N 小时过滤（对 updated_at 生效，completed/failed 状态的 todo
-    /// 按 finished_at 过滤）；不传或 0 表示不过滤。
-    #[serde(default)]
-    pub hours: Option<u32>,
-}
-
-pub async fn get_todos(
-    State(state): State<AppState>,
-    axum::extract::Query(params): axum::extract::Query<TodoListQuery>,
-) -> Result<ApiResponse<Vec<Todo>>, AppError> {
-    let todos = state.db.get_todos_by_workspace_id(params.workspace_id).await?;
-    // 按 hours 过滤：只保留在最近 N 小时内更新过的 todo
-    let todos = if let Some(h) = params.hours.filter(|&h| h > 0) {
-        let cutoff = chrono::Utc::now() - chrono::Duration::hours(h as i64);
-        let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%S").to_string();
-        todos.into_iter().filter(|t| {
-            // 按 updated_at 过滤（finished_at 字段未在模型上实现，暂统一用 updated_at）
-            t.updated_at >= cutoff_str
-        }).collect()
-    } else {
-        todos
-    };
-    Ok(ApiResponse::ok(todos))
-}
-
-/// 事项中心查询参数。
-/// `bucket` 为空或非法时返回全部分类（前端可自行按 computed_bucket 分组）。
-/// `search` 为标题/prompt 子串过滤（设计文档 API 示例带 search 参数）。
-#[derive(Debug, serde::Deserialize)]
-pub struct TodoCenterQuery {
-    #[serde(default)]
-    pub workspace_id: Option<i64>,
-    #[serde(default)]
-    pub bucket: Option<String>,
-    #[serde(default)]
-    pub search: Option<String>,
-}
-
-/// `GET /api/todos/center`：事项中心五类驱动视图。
-///
-/// 服务端按事实字段推导 computed_bucket 并（可选）按 bucket 过滤，
-/// 批量补算 loop 引用计数与最近执行记录，避免前端 N+1。
-pub async fn get_todo_center(
-    State(state): State<AppState>,
-    axum::extract::Query(params): axum::extract::Query<TodoCenterQuery>,
-) -> Result<ApiResponse<Vec<TodoCenterItem>>, AppError> {
-    // 解析 bucket 串为枚举；空/非法 → None = 不过滤
-    let bucket = params.bucket.as_deref().and_then(ComputedBucket::parse_query);
-    let search = params.search.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let items = state.db.get_todo_center(params.workspace_id, bucket, search).await?;
-    Ok(ApiResponse::ok(items))
-}
-
 /// `POST /api/todos/{id}/archive`：归档事项（仅隐藏，不删数据/不解引用）。
 /// 返回重新计算后的 TodoCenterItem（computed_bucket=archived）。
 pub async fn archive_todo(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
 ) -> Result<ApiResponse<TodoCenterItem>, AppError> {
+    // V1 隔离：校验 todo 归属路径 workspace，防止跨 ws 归档他人事项
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     // rows_affected=0 说明 todo 不存在或已软删，统一回 404
     if !state.db.archive_todo(id).await? {
         return Err(AppError::NotFound);
@@ -105,8 +50,10 @@ pub async fn archive_todo(
 /// `POST /api/todos/{id}/restore`：恢复事项（清空 archived_at，分类按真实关系重算）。
 pub async fn restore_todo(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
 ) -> Result<ApiResponse<TodoCenterItem>, AppError> {
+    // V1 隔离：校验 todo 归属路径 workspace
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     if !state.db.restore_todo(id).await? {
         return Err(AppError::NotFound);
     }
@@ -118,9 +65,11 @@ pub async fn restore_todo(
 /// 与 `PUT /api/todos/{id}/scheduler` 对称的扁平具名路由。
 pub async fn update_webhook(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
     ApiJson(req): ApiJson<UpdateWebhookRequest>,
 ) -> Result<ApiResponse<TodoCenterItem>, AppError> {
+    // V1 隔离：校验 todo 归属路径 workspace
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     if !state.db.update_todo_webhook(id, req.webhook_enabled).await? {
         return Err(AppError::NotFound);
     }
@@ -143,8 +92,10 @@ async fn load_center_item_or_404(
 
 pub async fn get_todo(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
 ) -> Result<ApiResponse<Todo>, AppError> {
+    // V1 隔离：todo id 全局唯一不等于跨 ws 可见，校验归属路径 workspace
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     let todo = state.require_todo(id).await?;
     Ok(ApiResponse::ok(todo))
 }
@@ -312,9 +263,11 @@ pub async fn create_todo(
 
 pub async fn update_todo(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
     ApiJson(req): ApiJson<UpdateTodoRequest>,
 ) -> Result<ApiResponse<Todo>, AppError> {
+    // V1 隔离：校验 todo 归属路径 workspace
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     // 获取当前值用于填充
     let current = state.require_todo(id).await?;
 
@@ -413,9 +366,11 @@ pub async fn update_todo(
 
 pub async fn update_todo_tags(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
     ApiJson(req): ApiJson<UpdateTagsRequest>,
 ) -> Result<ApiResponse<()>, AppError> {
+    // V1 隔离：校验 todo 归属路径 workspace
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     // 先查询之前关联的 tag（用于计算新增的 tag）
     let old_tag_ids: std::collections::HashSet<i64> = state.db.get_todo_tag_ids(id).await.unwrap_or_default().into_iter().collect();
     state.db.set_todo_tags(id, &req.tag_ids).await?;
@@ -433,8 +388,10 @@ pub async fn update_todo_tags(
 
 pub async fn delete_todo(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
 ) -> Result<ApiResponse<()>, AppError> {
+    // V1 隔离：校验 todo 归属路径 workspace，防止跨 ws 删除他人事项
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     // Get todo info before deletion for hooks
     state.db.get_todo(id).await?;
 
@@ -465,9 +422,11 @@ pub async fn delete_todo(
 
 pub async fn force_update_todo_status(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
     ApiJson(req): ApiJson<UpdateTodoRequest>,
 ) -> Result<ApiResponse<Todo>, AppError> {
+    // V1 隔离：校验 todo 归属路径 workspace
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     if let Some(new_status) = req.status {
         state
             .db
@@ -482,6 +441,7 @@ pub async fn force_update_todo_status(
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct RecentCompletedParams {
     #[serde(default = "default_recent_hours")]
     pub hours: u32,
@@ -493,7 +453,7 @@ pub struct RecentCompletedParams {
 fn default_recent_hours() -> u32 {
     24
 }
-
+#[allow(dead_code)]
 pub async fn get_recent_completed_todos(
     State(state): State<AppState>,
     Query(params): Query<RecentCompletedParams>,
@@ -504,9 +464,10 @@ pub async fn get_recent_completed_todos(
     ))
 }
 
-/// PUT /api/todos/batch-executor — 批量更新事项执行器
+/// POST /api/v1/workspaces/{ws}/todos/batch/executor — 批量更新事项执行器
 pub async fn batch_update_todos_executor(
     State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
     ApiJson(req): ApiJson<BatchUpdateTodoExecutorRequest>,
 ) -> Result<ApiResponse<BatchUpdateTodoResult>, AppError> {
     if req.ids.is_empty() {
@@ -515,6 +476,8 @@ pub async fn batch_update_todos_executor(
     if req.executor.trim().is_empty() {
         return Err(AppError::BadRequest("executor 不能为空".to_string()));
     }
+    // v1 隔离：批量操作前校验所有目标 todo 属于当前 workspace。
+    workspace_guard::verify_todos_belong_to_ws(&state.db, &req.ids, ws_id).await?;
     let rows_affected = state
         .db
         .batch_update_todos_executor(&req.ids, req.executor.trim())
@@ -525,14 +488,19 @@ pub async fn batch_update_todos_executor(
     }))
 }
 
-/// PUT /api/todos/batch-workspace — 批量移动事项到其他工作空间
+/// POST /api/v1/workspaces/{ws}/todos/batch/workspace — 批量移动事项到其他工作空间
+///
+/// `req.workspace_id` 是目标 workspace；URL 中的 `ws_id` 是源 workspace（待移动 todo 必须属于它）。
 pub async fn batch_move_todos_workspace(
     State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
     ApiJson(req): ApiJson<BatchUpdateTodoWorkspaceRequest>,
 ) -> Result<ApiResponse<BatchWorkspaceResult>, AppError> {
     if req.ids.is_empty() {
         return Err(AppError::BadRequest("ids 不能为空".to_string()));
     }
+    // v1 隔离：源 workspace 下的 todo 才能被移动。
+    workspace_guard::verify_todos_belong_to_ws(&state.db, &req.ids, ws_id).await?;
     // handler 把 id 解析为 path 后下传 DAO；DAO 一次写入 workspace_id + workspace_path。
     let dir = state
         .db
@@ -549,14 +517,19 @@ pub async fn batch_move_todos_workspace(
     }))
 }
 
-/// POST /api/todos/batch-copy-workspace — 批量复制事项到其他工作空间
+/// POST /api/v1/workspaces/{ws}/todos/batch/copy-workspace — 批量复制事项到其他工作空间
+///
+/// `req.workspace_id` 是目标 workspace；URL 中的 `ws_id` 是源 workspace（被复制 todo 必须属于它）。
 pub async fn batch_copy_todos_workspace(
     State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
     ApiJson(req): ApiJson<BatchCopyTodoWorkspaceRequest>,
 ) -> Result<ApiResponse<BatchWorkspaceResult>, AppError> {
     if req.ids.is_empty() {
         return Err(AppError::BadRequest("ids 不能为空".to_string()));
     }
+    // v1 隔离：源 workspace 下的 todo 才能被复制。
+    workspace_guard::verify_todos_belong_to_ws(&state.db, &req.ids, ws_id).await?;
     let dir = state
         .db
         .get_project_directory_by_id(req.workspace_id)
@@ -572,7 +545,7 @@ pub async fn batch_copy_todos_workspace(
     }))
 }
 
-/// PUT /api/todos/batch-scheduler — 批量暂停/恢复事项的周期执行
+/// POST /api/v1/workspaces/{ws}/todos/batch/scheduler — 批量暂停/恢复事项的周期执行
 ///
 /// 修复：原实现仅更新 DB 的 `scheduler_enabled` 字段，未同步内存中的 cron 任务，
 /// 导致批量暂停后 cron 仍会触发、批量恢复后 cron 不触发的状态不一致。
@@ -582,11 +555,14 @@ pub async fn batch_copy_todos_workspace(
 /// - 恢复：先写 DB，再从 DB 读出 config/timezone 重新注册 cron
 pub async fn batch_update_todos_scheduler(
     State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
     ApiJson(req): ApiJson<BatchUpdateTodoSchedulerRequest>,
 ) -> Result<ApiResponse<BatchWorkspaceResult>, AppError> {
     if req.ids.is_empty() {
         return Err(AppError::BadRequest("ids 不能为空".to_string()));
     }
+    // v1 隔离：批量操作前校验所有目标 todo 属于当前 workspace。
+    workspace_guard::verify_todos_belong_to_ws(&state.db, &req.ids, ws_id).await?;
     // 根据目标状态分流到对应辅助函数，保持 handler 单一职责、控制函数长度。
     // 两个分支各自用 `?` 解包 Result，统一得到 rows_affected: u64。
     let rows_affected = if req.scheduler_enabled {
@@ -598,6 +574,102 @@ pub async fn batch_update_todos_scheduler(
         updated_count: rows_affected as i64,
         total: req.ids.len() as i64,
     }))
+}
+
+// ======================================================================
+// V1 专用查询参数（workspace_id 改为从路径参数中提取）
+// ======================================================================
+
+/// V1 事项列表查询参数（workspace_id 来自路径而非查询参数）
+#[derive(Debug, serde::Deserialize)]
+pub struct TodoListQueryV1 {
+    /// 按最近 N 小时过滤（对 updated_at 生效）；不传或 0 表示不过滤
+    #[serde(default)]
+    pub hours: Option<u32>,
+}
+
+/// V1 事项中心查询参数（workspace_id 来自路径而非查询参数）。
+/// bucket 为空或非法时返回全部分类；search 为标题/prompt 子串过滤。
+#[derive(Debug, serde::Deserialize)]
+pub struct TodoCenterQueryV1 {
+    #[serde(default)]
+    pub bucket: Option<String>,
+    #[serde(default)]
+    pub search: Option<String>,
+}
+
+/// V1 最近已完成事项查询参数（workspace_id 来自路径而非查询参数）
+#[derive(Deserialize)]
+pub struct RecentCompletedParamsV1 {
+    #[serde(default = "default_recent_hours")]
+    pub hours: u32,
+}
+
+// ======================================================================
+// V1 handler 变体：从 Path(ws_id) 获取 workspace_id
+// ======================================================================
+
+/// V1: 从路径参数获取 workspace_id 后查询事项列表。
+/// 与 `get_todos` 的区别在于 workspace_id 来自 Path 而非 Query。
+pub async fn get_todos_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    axum::extract::Query(params): axum::extract::Query<TodoListQueryV1>,
+) -> Result<ApiResponse<Vec<Todo>>, AppError> {
+    // 工作空间由路径参数确定，无需再从查询参数中提取
+    let todos = state.db.get_todos_by_workspace_id(Some(ws_id)).await?;
+    // 按 hours 过滤：只保留在最近 N 小时内更新过的 todo
+    let todos = if let Some(h) = params.hours.filter(|&h| h > 0) {
+        let cutoff = chrono::Utc::now() - chrono::Duration::hours(h as i64);
+        let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%S").to_string();
+        todos.into_iter().filter(|t| t.updated_at >= cutoff_str).collect()
+    } else {
+        todos
+    };
+    Ok(ApiResponse::ok(todos))
+}
+
+/// V1: 从路径参数获取 workspace_id 后查询事项中心。
+/// 与 `get_todo_center` 的区别在于 workspace_id 来自 Path 而非 Query。
+pub async fn get_todo_center_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    axum::extract::Query(params): axum::extract::Query<TodoCenterQueryV1>,
+) -> Result<ApiResponse<Vec<TodoCenterItem>>, AppError> {
+    // 解析 bucket 串为枚举；空/非法 → None = 不过滤
+    let bucket = params.bucket.as_deref().and_then(ComputedBucket::parse_query);
+    let search = params.search.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    // 工作空间由路径参数提供，替代原来的 params.workspace_id
+    let items = state.db.get_todo_center(Some(ws_id), bucket, search).await?;
+    Ok(ApiResponse::ok(items))
+}
+
+/// V1: 从路径参数获取 workspace_id 后创建事项。
+/// 覆盖请求体中的 workspace_id 为路径参数值，复用 `create_todo` 的完整逻辑。
+pub async fn create_todo_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    ApiJson(mut req): ApiJson<CreateTodoRequest>,
+) -> Result<ApiResponse<Todo>, AppError> {
+    // v1 路径中工作空间 ID 由路径参数提供，覆盖请求体中的值以保证一致性，
+    // 避免用户传入与路径参数不一致的 ID 导致歧义
+    req.workspace_id = ws_id;
+    let state_val = State(state);
+    let req_val = ApiJson(req);
+    create_todo(state_val, req_val).await
+}
+
+/// V1: 从路径参数获取 workspace_id 后查询最近已完成事项。
+/// 与 `get_recent_completed_todos` 的区别在于 workspace_id 来自 Path 而非 Query。
+pub async fn get_recent_completed_todos_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Query(params): Query<RecentCompletedParamsV1>,
+) -> Result<ApiResponse<Vec<RecentCompletedTodo>>, AppError> {
+    let hours = params.hours.clamp(1, 720);
+    Ok(ApiResponse::ok(
+        state.db.get_recent_completed_todos(hours, Some(ws_id)).await?,
+    ))
 }
 
 /// 批量暂停：先逐个移除 cron 任务，再一次写 DB（scheduler_enabled=false）。
@@ -670,4 +742,45 @@ async fn try_resume_one_scheduler(
         .upsert_task(ctx, id, config, todo.scheduler_timezone.clone())
         .await?;
     Ok(())
+}
+
+// ======================================================================
+// V1 路由：/api/v1/workspaces/{ws}/todos 子路由（相对路径，由外层 mod.rs 嵌套提供前缀）
+// ======================================================================
+
+/// /api/v1/workspaces/{ws}/todos 下的子路由。
+///
+/// 所有路径均为相对路径（如 `"/"`、`"/{id}"`），前缀由 `mount_domain_routes` 或
+/// 外部作用域通过 `.nest("/api/v1/workspaces/{ws}/todos", v1_routes())` 提供。
+///
+/// 获取 workspace_id 的 handler 使用 Path(ws_id) 变体（如 get_todos_v1），
+/// 不依赖 workspace_id 的 handler 直接复用旧签名（如 get_todo, archive_todo）。
+///
+/// 固定路由（如 `/{id}/archive`）必须注册在 `/{id}` 之前，避免 axum 把
+/// "archive" 当作 id 捕获。
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        // 列表 + 创建：工作空间维度
+        .route("/", get(get_todos_v1).post(create_todo_v1))
+        // 智能创建（AI 辅助新建并执行，复用 execution 域的 smart-create handler）
+        .route("/smart", post(super::execution::v1_smart_create_handler))
+        // 事项中心（驱动视图五分类）
+        .route("/center", get(get_todo_center_v1))
+        // 最近已完成事项
+        .route("/recent-completed", get(get_recent_completed_todos_v1))
+        // 按 id 的子路由（必须在 /{id} 之前注册，避免 axum 把子路径如 "archive" 当作 id 捕获）
+        .route("/{id}/force-status", put(force_update_todo_status))
+        .route("/{id}/tags", put(update_todo_tags))
+        .route("/{id}/scheduler", put(super::scheduler::update_scheduler))
+        .route("/{id}/archive", post(archive_todo))
+        .route("/{id}/restore", post(restore_todo))
+        .route("/{id}/webhook", put(update_webhook))
+        .route("/{id}/summary", get(super::execution::get_execution_summary))
+        .route("/{id}", get(get_todo).put(update_todo).delete(delete_todo))
+        // 批量操作（workspace 作用域，不依赖单个 id）
+        // batch/* 必须注册在 /{id} 之前，避免 axum 把 "batch" 当作 todo id 捕获。
+        .route("/batch/executor", post(batch_update_todos_executor))
+        .route("/batch/workspace", post(batch_move_todos_workspace))
+        .route("/batch/copy-workspace", post(batch_copy_todos_workspace))
+        .route("/batch/scheduler", post(batch_update_todos_scheduler))
 }

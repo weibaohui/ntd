@@ -57,7 +57,7 @@ test.describe('多 Agent 执行展示', () => {
 
     // 确认后端 ExecutionRecord 透出了 agent_runs（JSON 字符串），前端可 parse。
     const rec = await page.evaluate((rid) => {
-      return fetch(`/api/execution-records/${rid}`).then((r) => r.json()).then((d) => d.data);
+      return fetch(`/api/v1/workspaces/1/executions/${rid}`).then((r) => r.json()).then((d) => d.data);
     }, RECORD_ID);
 
     expect(typeof rec.agent_runs).toBe('string');

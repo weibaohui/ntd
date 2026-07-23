@@ -90,14 +90,14 @@ function ReviewStatusBadge({ status }: { status?: string | null }) {
 
 /* ─── Log View ─── */
 
-function LogView({ record }: { record: ExecutionRecord }) {
+function LogView({ record, workspaceId }: { record: ExecutionRecord; workspaceId: number }) {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (record.status === 'running') return;
     setLoading(true);
-    db.getExecutionLogs(record.id, 1, 500)
+    db.getExecutionLogs(workspaceId, record.id, 1, 500)
       .then(r => setLogs(r.logs))
       .catch(() => setLogs([]))
       .finally(() => setLoading(false));
@@ -146,21 +146,23 @@ export function RunningRecordDrawer({ record, open, onClose, onRefresh }: Runnin
     }
   }, [record, selectTodo, onClose]);
 
+  const wsId = state.selectedWorkspace ?? 0;
+
   const handleStop = useCallback(async () => {
     if (!record) return;
     setStopping(true);
     try {
-      await db.stopExecution(record.id);
+      await db.stopExecution(wsId, record.id);
       onRefresh?.();
     } catch {} finally {
       setStopping(false);
     }
-  }, [record, onRefresh]);
+  }, [record, wsId, onRefresh]);
 
   const handleRate = useCallback(async (id: number, rating: number | null) => {
-    await db.rateExecutionRecord(id, rating);
+    await db.rateExecutionRecord(wsId, id, rating);
     onRefresh?.();
-  }, [onRefresh]);
+  }, [wsId, onRefresh]);
 
   if (!record) return null;
 
@@ -313,7 +315,7 @@ export function RunningRecordDrawer({ record, open, onClose, onRefresh }: Runnin
         items={[{
           key: 'logs',
           label: '执行日志',
-          children: <LogView record={record} />,
+          children: <LogView record={record} workspaceId={wsId} />,
         }]}
       />
     </Drawer>

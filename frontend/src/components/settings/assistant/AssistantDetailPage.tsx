@@ -100,7 +100,8 @@ export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = 
   // ─── 加载执行记录详情 ───
   const handleViewExecutionRecord = async (recordId: number) => {
     try {
-      const r = await db.getExecutionRecord(recordId);
+      // v1 纯 workspace-scoped：用 bot 所属 workspace
+      const r = await db.getExecutionRecord(bot.workspace_id, recordId);
       setExecDetailRecord(r);
     } catch {
       message.error('加载执行记录失败');
@@ -111,7 +112,7 @@ export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = 
   const handleProcessedTypeClick = async (record: FeishuHistoryMessage) => {
     if (record.processed_type !== 'slash_command_loop' || !record.processed_id) return;
     try {
-      const detail = await dbLoops.getExecutionById(record.processed_id);
+      const detail = await dbLoops.getExecutionById(bot.workspace_id, record.processed_id);
       setBlackboardExecs(detail.step_executions || []);
       setBlackboardOpen(true);
     } catch {
@@ -288,6 +289,7 @@ export function AssistantDetailPage({ bot, onBack, onRefresh, autoShowHistory = 
       <BlackboardDrawer
         open={blackboardOpen}
         stepExecs={blackboardExecs}
+        workspaceId={bot.workspace_id}
         onClose={() => setBlackboardOpen(false)}
       />
     </div>

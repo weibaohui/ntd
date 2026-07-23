@@ -645,6 +645,30 @@ pub fn bundled_routes() -> Router<AppState> {
         .route("/api/bundled/skills/install", axum::routing::post(install_bundled_skill))
 }
 
+/// V1 路由定义：内置资源同步相关 API（API 重构过渡期）
+///
+/// 与 `bundled_routes()` 共存，路由前缀改为 /api/v1/bundled，全路径注册。
+/// 新旧路由在顶层通过不同的 Router merge 组装，此处不走嵌套前缀。
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        // 手动触发 git 同步（post /api/v1/bundled/sync）
+        .route("/api/v1/bundled/sync", axum::routing::post(sync_bundled))
+        // 同步状态查询（get /api/v1/bundled/status）
+        .route("/api/v1/bundled/status", axum::routing::get(get_bundled_status))
+        // 同步源配置读/写
+        .route("/api/v1/bundled/config", axum::routing::get(get_bundled_config))
+        .route("/api/v1/bundled/config", axum::routing::put(update_bundled_config))
+        // 技能市场：列表（GET）与来源分页
+        .route("/api/v1/bundled/skills", axum::routing::get(list_bundled_skills))
+        .route("/api/v1/bundled/skill-sources", axum::routing::get(list_bundled_skill_sources))
+        // 技能详情：SKILL.md 内容 + 目录文件列表
+        .route("/api/v1/bundled/skills/{name}/content", axum::routing::get(get_bundled_skill_content))
+        // 技能内单个文件预览
+        .route("/api/v1/bundled/skills/{name}/file", axum::routing::get(get_bundled_skill_file))
+        // 安装技能到执行器
+        .route("/api/v1/bundled/skills/install", axum::routing::post(install_bundled_skill))
+}
+
 // ---------------------------------------------------------------------------
 // 技能市场 API
 // ---------------------------------------------------------------------------

@@ -28,7 +28,7 @@ export function useLoopExecutions(workspaceId?: number | null, hours?: number) {
     setAllLoops([]);
     setExecutions([]);
     setLoading(true);
-    dbLoops.listLoops(workspaceId ?? undefined)
+    dbLoops.listLoops(workspaceId ?? null)
       .then(data => { if (!ignore) setAllLoops(data); })
       .catch(() => { if (!ignore) setAllLoops([]); })
       .finally(() => { if (!ignore) setLoading(false); });
@@ -46,7 +46,7 @@ export function useLoopExecutions(workspaceId?: number | null, hours?: number) {
 
     Promise.all(
       allLoops.map(loop =>
-        dbLoops.listExecutions(loop.id, { page: 1, limit: 20, hours: hours ?? undefined })
+        dbLoops.listExecutions(workspaceId ?? 0, loop.id, { page: 1, limit: 20, hours: hours ?? undefined })
           .then(res => res.items.map(e => ({ ...e, loop_name: loop.name })))
           .catch(() => [])
       )

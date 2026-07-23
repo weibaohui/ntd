@@ -1,5 +1,9 @@
-use axum::extract::{Path, Query, State};
-use axum::Json;
+use axum::{
+    Router,
+    extract::{Path, Query, State},
+    routing::{delete, get},
+    Json,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::handlers::{AppError, AppState};
@@ -250,4 +254,26 @@ pub struct MessageStatsParams {
     pub hours: Option<u32>,
     /// 按工作空间筛选统计，不传则返回全部
     pub workspace_id: Option<i64>,
+}
+
+/// v1 API 路由：全局 /api/v1 前缀下，飞书历史消息查询 + 绑定管理。
+///
+/// 路径使用完整路径（不以 /api/v1 嵌套），与 existing `backup::v1_routes` 风格一致。
+/// 这些资源是全局的（不绑定 workspace），保留原有 handler 签名不变。
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/api/v1/feishu/history-messages",
+            get(get_history_messages),
+        )
+        .route("/api/v1/feishu/message-stats", get(get_message_stats))
+        .route("/api/v1/feishu/senders", get(get_distinct_senders))
+        .route(
+            "/api/v1/feishu/history-chats",
+            get(get_history_chats).post(create_history_chat),
+        )
+        .route(
+            "/api/v1/feishu/history-chats/{id}",
+            delete(delete_history_chat).put(update_history_chat),
+        )
 }

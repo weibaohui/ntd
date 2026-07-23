@@ -30,7 +30,7 @@ test.describe('Todo #15 执行记录详情', () => {
 
     // 4. 检查 API 返回的最新执行记录
     const records = await page.evaluate(async (todoId) => {
-      const resp = await fetch(`/api/execution-records?todo_id=${todoId}&page=1&limit=5`);
+      const resp = await fetch(`/api/v1/workspaces/1/executions?todo_id=${todoId}&page=1&limit=5`);
       const data = await resp.json();
       return data.data?.records || [];
     }, TODO_ID);

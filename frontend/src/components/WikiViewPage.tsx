@@ -19,9 +19,9 @@ interface WikiFileContent {
   content: string;
 }
 
-/** 拉取单个 Wiki 文件内容 */
+/** 拉取单个 Wiki 文件内容（原生 fetch，手动写 v1 路径） */
 async function fetchWikiFileContent(workspaceId: number, slug: string): Promise<WikiFileContent> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/wiki/files/${encodeURIComponent(slug)}`);
+  const res = await fetch(`/api/v1/workspaces/${workspaceId}/wiki/files/${encodeURIComponent(slug)}`);
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}`);
   }

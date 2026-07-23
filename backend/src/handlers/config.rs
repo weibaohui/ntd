@@ -1,6 +1,9 @@
 use axum::extract::State;
+use axum::routing::{get, post, put};
+use axum::Router;
 
 use crate::config::Config;
+use crate::handlers::executor_config;
 use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::{ApiResponse, UpdateConfigRequest};
 
@@ -117,6 +120,60 @@ pub async fn update_config(
         .map_err(|e| AppError::Internal(format!("Failed to save config: {}", e)))?;
 
     Ok(ApiResponse::ok(cfg_to_return))
+}
+
+/// v1 API 路由：配置 + 执行器配置的路由集合。
+/// 所有路径使用完整的 `/api/v1/...` 前缀，不与外层 router 嵌套（flat 结构）。
+///
+/// 映射规则：
+/// - `/api/config` → `/api/v1/config`
+/// - `/api/executors/...` → `/api/v1/executors/...`
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        // 全局配置：GET 查询当前配置，PUT 更新配置项
+        .route("/api/v1/config", get(get_config).put(update_config))
+        // 执行器列表
+        .route("/api/v1/executors", get(executor_config::list_executors))
+        // 更新指定执行器配置
+        .route(
+            "/api/v1/executors/{name}",
+            put(executor_config::update_executor),
+        )
+        // 检测指定执行器
+        .route(
+            "/api/v1/executors/{name}/detect",
+            post(executor_config::detect_executor),
+        )
+        // 测试指定执行器连通性
+        .route(
+            "/api/v1/executors/{name}/test",
+            post(executor_config::test_executor),
+        )
+        // 全量检测所有执行器
+        .route(
+            "/api/v1/executors/detect-all",
+            post(executor_config::detect_all_executors),
+        )
+        // 解析执行器路径
+        .route(
+            "/api/v1/executors/{name}/resolve",
+            post(executor_config::resolve_executor_path),
+        )
+        // 获取默认执行器
+        .route(
+            "/api/v1/executors/default",
+            get(executor_config::get_default_executor),
+        )
+        // 设置默认执行器
+        .route(
+            "/api/v1/executors/{name}/default",
+            put(executor_config::set_default_executor),
+        )
+        // 列出执行器支持的模型（executor-model：模型动态下拉）
+        .route(
+            "/api/v1/executors/{name}/models",
+            get(executor_config::list_executor_models),
+        )
 }
 
 #[cfg(test)]

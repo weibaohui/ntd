@@ -1,4 +1,6 @@
 use axum::extract::State;
+use axum::Router;
+use axum::routing::{get, post, put};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -387,4 +389,22 @@ async fn perform_sync(db: &Arc<Database>) -> Result<String, String> {
     insert_templates(db, &remote_templates, &url).await?;
 
     Ok(format!("Auto custom template sync completed: {} templates imported", remote_templates.len()))
+}
+
+/// v1 API 路由（/api/v1/custom-templates/*）。
+///
+/// 与 `custom_template_routes()`（mod.rs）使用相同的处理器，仅路径前缀改为 `/api/v1/`。
+/// 旧路由废弃后 `mod.rs` 中从 `custom_template_routes()` 切到这个函数。
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        // GET /api/v1/custom-templates/status — 查询订阅状态及同步配置
+        .route("/api/v1/custom-templates/status", get(get_custom_template_status))
+        // POST /api/v1/custom-templates/subscribe — 订阅并立即同步远程模板
+        .route("/api/v1/custom-templates/subscribe", post(subscribe_custom_template))
+        // POST /api/v1/custom-templates/unsubscribe — 取消订阅并删除所有自定义模板
+        .route("/api/v1/custom-templates/unsubscribe", post(unsubscribe_custom_template))
+        // POST /api/v1/custom-templates/sync — 手动重新同步已订阅的远程模板
+        .route("/api/v1/custom-templates/sync", post(sync_custom_template))
+        // PUT /api/v1/custom-templates/auto-sync — 更新自动同步 cron 配置
+        .route("/api/v1/custom-templates/auto-sync", put(update_auto_sync_config))
 }

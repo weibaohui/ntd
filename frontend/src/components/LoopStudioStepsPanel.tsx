@@ -92,13 +92,18 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
    */
   const loadCandidatesForCurrentLoop = useCallback(async (stepForEdit: LoopStepDto | null) => {
     try {
-      const list = await db.getAllTodos(workspaceId ?? undefined);
+      // workspaceId 必须有值才能查 todos（v1 纯 workspace-scoped）
+      if (workspaceId == null) {
+        setCandidates([]);
+        return;
+      }
+      const list = await db.getAllTodos(workspaceId);
       // 编辑模式下若已绑定的 todo 不在过滤结果里，附加一次单条查询补回选项，
       // 确保用户依然能在下拉里看到/选中当前关联的 todo。
       // 不附加 workspaceId 过滤，因为这条记录可能原本属于其他工作空间。
       if (stepForEdit && !list.some(t => t.id === stepForEdit.todo_id)) {
         try {
-          const current = await db.getTodo(stepForEdit.todo_id);
+          const current = await db.getTodo(workspaceId, stepForEdit.todo_id);
           if (current) setCandidates([...list, current]);
           else setCandidates(list);
         } catch {
@@ -129,7 +134,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
     setSaving(true);
     try {
       if (editingStep) {
-        await dbLoops.updateLoopStep(loopId, editingStep.id, {
+        await dbLoops.updateLoopStep(workspaceId ?? 0, loopId, editingStep.id, {
           name: values.name.trim(),
           description: values.description ?? '',
           todo_id: values.todo_id,
@@ -146,7 +151,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
         });
         message.success('环节已更新');
       } else {
-        await dbLoops.createLoopStep(loopId, {
+        await dbLoops.createLoopStep(workspaceId ?? 0, loopId, {
           name: values.name.trim(),
           description: values.description ?? '',
           todo_id: values.todo_id,
@@ -175,7 +180,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
   // 删除环节
   const handleDelete = useCallback(async (stepId: number) => {
     try {
-      await dbLoops.deleteLoopStep(loopId, stepId);
+      await dbLoops.deleteLoopStep(workspaceId ?? 0, loopId, stepId);
       message.success('环节已删除');
       onChanged();
     } catch {

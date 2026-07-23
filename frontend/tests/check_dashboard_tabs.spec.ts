@@ -73,7 +73,7 @@ test.describe('Dashboard Tab 化重构', () => {
     await page.getByRole('tab', { name: '成本与模型' }).click();
     await expect(page.getByText('AI 会话')).toBeVisible({ timeout: 10000 });
 
-    // 自动化 Tab:环路统计 + 飞书监听(消费后端 /api/loops/stats)
+    // 自动化 Tab:环路统计 + 飞书监听(消费后端 /api/v1/workspaces/1/loops/stats)
     await page.getByRole('tab', { name: '自动化' }).click();
     await expect(page.getByText('环路')).toBeVisible({ timeout: 10000 });
     await expect(page.getByText('飞书监听')).toBeVisible({ timeout: 10000 });

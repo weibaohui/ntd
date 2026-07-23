@@ -20,14 +20,14 @@ function normalizeFormValues(values: FormValues): FormValues {
  * 封装快捷按钮的列表加载 + 增删改 + 编辑态。把数据逻辑从渲染层剥离，
  * 主组件只管布局。弹窗每次打开重拉最新列表，CRUD 后本地刷新并通知外层同步按钮条。
  */
-function useQuickButtonCrud(open: boolean, onChanged: () => void) {
+function useQuickButtonCrud(open: boolean, workspaceId: number, onChanged: () => void) {
   const [buttons, setButtons] = useState<QuickButton[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form] = Form.useForm<FormValues>();
 
   const refresh = () =>
     db
-      .getQuickButtons()
+      .getQuickButtons(workspaceId)
       .then(setButtons)
       .catch((e: unknown) => message.error('加载快捷按钮失败: ' + String(e)));
 
@@ -57,10 +57,10 @@ function useQuickButtonCrud(open: boolean, onChanged: () => void) {
     try {
       const values = normalizeFormValues(await form.validateFields());
       if (editingId) {
-        await db.updateQuickButton(editingId, values);
+        await db.updateQuickButton(workspaceId, editingId, values);
         message.success('更新成功');
       } else {
-        await db.createQuickButton(values);
+        await db.createQuickButton(workspaceId, values);
         message.success('创建成功');
       }
       cancelEdit();
@@ -76,7 +76,7 @@ function useQuickButtonCrud(open: boolean, onChanged: () => void) {
 
   const remove = async (id: number) => {
     try {
-      await db.deleteQuickButton(id);
+      await db.deleteQuickButton(workspaceId, id);
       message.success('删除成功');
       refresh();
       onChanged();
@@ -135,15 +135,18 @@ function ExistingButtonList({
  */
 export function QuickButtonManageModal({
   open,
+  workspaceId,
   onClose,
   onChanged,
 }: {
   open: boolean;
+  workspaceId: number;
   onClose: () => void;
   onChanged: () => void;
 }) {
   const { buttons, editingId, form, submit, remove, beginEdit, cancelEdit } = useQuickButtonCrud(
     open,
+    workspaceId,
     onChanged,
   );
   // 移动端窄屏：Modal 走接近全宽，避免固定 520 溢出视口

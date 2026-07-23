@@ -1,11 +1,13 @@
+use axum::Router;
 use axum::extract::{Path, Query, State};
+use axum::routing::{get, post, put};
 use serde::Deserialize;
 
 use crate::adapters::parse_executor_type;
 use crate::executor_service::{
     run_todo_execution, run_todo_execution_with_params, ExecutionResult, RunTodoExecutionRequest,
 };
-use crate::handlers::{ApiJson, AppError, AppState};
+use crate::handlers::{workspace_guard, ApiJson, AppError, AppState};
 use crate::models::{
     ApiResponse, DashboardStats, ExecuteRequest, ExecutionLogsPage, ExecutionRecordsPage,
     ExecutionStatus, ExecutionSummary, SmartCreateRequest, TodoIdQuery,
@@ -28,6 +30,7 @@ pub async fn start_todo_execution(
     Ok(result)
 }
 
+#[allow(dead_code)]
 pub async fn get_execution_records(
     State(state): State<AppState>,
     Query(query): Query<TodoIdQuery>,
@@ -82,8 +85,10 @@ pub async fn get_execution_records(
 
 pub async fn get_execution_record(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
 ) -> Result<ApiResponse<crate::models::ExecutionRecord>, AppError> {
+    // V1 隔离：record 经 todo 间接关联 workspace，校验归属防止跨 ws 读他人执行记录
+    workspace_guard::verify_execution_belongs_to_ws(&state.db, id, ws_id).await?;
     let record = state
         .db
         .get_execution_record(id)
@@ -102,9 +107,11 @@ pub struct RateExecutionRequest {
 
 pub async fn rate_execution_handler(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
     ApiJson(req): ApiJson<RateExecutionRequest>,
 ) -> Result<ApiResponse<crate::models::ExecutionRecord>, AppError> {
+    // V1 隔离：评分前校验 record 归属 workspace
+    workspace_guard::verify_execution_belongs_to_ws(&state.db, id, ws_id).await?;
     if let Some(r) = req.rating {
         if !(0..=100).contains(&r) {
             return Err(AppError::BadRequest(format!(
@@ -152,9 +159,11 @@ fn default_per_page() -> i64 { 200 }
 
 pub async fn get_execution_logs_handler(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
     Query(query): Query<ExecutionLogsQuery>,
 ) -> Result<ApiResponse<ExecutionLogsPage>, AppError> {
+    // V1 隔离：取日志前校验 record 归属 workspace
+    workspace_guard::verify_execution_belongs_to_ws(&state.db, id, ws_id).await?;
     let page = query.page.max(1);
     let per_page = query.per_page.clamp(10, 1000);
     let (logs, total) = state
@@ -171,19 +180,30 @@ pub async fn get_execution_logs_handler(
 
 pub async fn get_execution_records_by_session(
     State(state): State<AppState>,
-    Path(session_id): Path<String>,
+    Path((ws_id, session_id)): Path<(i64, String)>,
 ) -> Result<ApiResponse<Vec<crate::models::ExecutionRecord>>, AppError> {
     let records = state
         .db
         .get_execution_records_by_session(&session_id)
         .await?;
+    // V1 隔离：同一 session 可能含跨 ws 的记录，按 workspace 过滤只保留本 ws 的
+    let ws_todos = state.db.get_todos_by_workspace_id(Some(ws_id)).await?;
+    let ws_todo_ids: std::collections::HashSet<i64> =
+        ws_todos.iter().map(|t| t.id).collect();
+    let records: Vec<_> = records
+        .into_iter()
+        .filter(|r| ws_todo_ids.contains(&r.todo_id))
+        .collect();
     Ok(ApiResponse::ok(records))
 }
 
 pub async fn execute_handler(
     State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
     ApiJson(req): ApiJson<ExecuteRequest>,
 ) -> Result<ApiResponse<serde_json::Value>, AppError> {
+    // V1 隔离：启动执行前校验目标 todo 属于路径 workspace
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, req.todo_id, ws_id).await?;
     // Get the todo to use its prompt as fallback when message is not provided
     let todo = state
         .db
@@ -265,21 +285,18 @@ pub async fn execute_handler(
     ))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct StopExecutionRequest {
-    pub record_id: i64,
-}
-
 pub async fn stop_execution_handler(
     State(state): State<AppState>,
-    ApiJson(req): ApiJson<StopExecutionRequest>,
+    Path((ws_id, record_id)): Path<(i64, i64)>,
 ) -> Result<ApiResponse<()>, AppError> {
-    tracing::info!("Stopping execution record: {}", req.record_id);
+    // V1 隔离：停止前校验 record 归属 workspace（路径 {id} 即 record_id）
+    workspace_guard::verify_execution_belongs_to_ws(&state.db, record_id, ws_id).await?;
+    tracing::info!("Stopping execution record: {}", record_id);
 
     let record =
         state
             .db
-            .get_execution_record(req.record_id)
+            .get_execution_record(record_id)
             .await?
             .ok_or(AppError::BadRequest(
                 "Execution record not found".to_string(),
@@ -294,7 +311,7 @@ pub async fn stop_execution_handler(
     if let Some(task_id) = &record.task_id {
         tracing::info!(
             "Stopping execution record {} with task_id: {}",
-            req.record_id,
+            record_id,
             task_id
         );
         let cancelled = state.task_manager.cancel(task_id).await;
@@ -303,7 +320,7 @@ pub async fn stop_execution_handler(
             // 重新查询 DB 确认当前状态，避免与正常完成的任务产生竞态
             let current_record = state
                 .db
-                .get_execution_record(req.record_id)
+                .get_execution_record(record_id)
                 .await?
                 .ok_or(AppError::BadRequest(
                     "Execution record not found".to_string(),
@@ -315,7 +332,7 @@ pub async fn stop_execution_handler(
                 );
                 state
                     .db
-                    .force_fail_execution_record(req.record_id)
+                    .force_fail_execution_record(record_id)
                     .await
                     .map_err(|e| AppError::Internal(e.to_string()))?;
             } else {
@@ -328,7 +345,7 @@ pub async fn stop_execution_handler(
         }
         // 取消成功时，由任务内部的 cancel 分支处理 DB 更新，
         // 避免与 stop handler 同时写入造成竞态条件
-        tracing::info!("Successfully stopped execution record {}", req.record_id);
+        tracing::info!("Successfully stopped execution record {}", record_id);
         Ok(ApiResponse::ok(()))
     } else {
         Err(AppError::BadRequest(
@@ -339,8 +356,16 @@ pub async fn stop_execution_handler(
 
 pub async fn get_running_execution_records_handler(
     State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
 ) -> Result<ApiResponse<Vec<crate::models::ExecutionRecord>>, AppError> {
+    // V1 隔离：按 workspace 过滤正在运行的执行记录（经 todo 间接关联）
     let records = state.db.get_running_execution_records().await?;
+    let ws_todos = state.db.get_todos_by_workspace_id(Some(ws_id)).await?;
+    let ws_todo_ids: std::collections::HashSet<i64> = ws_todos.iter().map(|t| t.id).collect();
+    let records: Vec<_> = records
+        .into_iter()
+        .filter(|r| ws_todo_ids.contains(&r.todo_id))
+        .collect();
     Ok(ApiResponse::ok(records))
 }
 
@@ -352,12 +377,14 @@ pub struct RunningBoardQuery {
     pub limit: Option<i64>,
     /// 按工作空间 ID 过滤；不传返回全部。
     #[serde(default)]
+    #[allow(dead_code)]
     pub workspace_id: Option<i64>,
     /// 按最近 N 小时过滤（对 execution records 生效）；不传或 0 表示不过滤。
     #[serde(default)]
     pub hours: Option<u32>,
 }
 
+#[allow(dead_code)]
 pub async fn get_running_board(
     State(state): State<AppState>,
     Query(query): Query<RunningBoardQuery>,
@@ -403,19 +430,16 @@ pub async fn get_running_board(
     }))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ForceFailRequest {
-    pub record_id: i64,
-}
-
 pub async fn force_fail_execution_handler(
     State(state): State<AppState>,
-    ApiJson(req): ApiJson<ForceFailRequest>,
+    Path((ws_id, record_id)): Path<(i64, i64)>,
 ) -> Result<ApiResponse<()>, AppError> {
+    // V1 隔离：强制失败前校验 record 归属 workspace
+    workspace_guard::verify_execution_belongs_to_ws(&state.db, record_id, ws_id).await?;
     let record =
         state
             .db
-            .get_execution_record(req.record_id)
+            .get_execution_record(record_id)
             .await?
             .ok_or(AppError::BadRequest(
                 "Execution record not found".to_string(),
@@ -434,7 +458,7 @@ pub async fn force_fail_execution_handler(
 
     state
         .db
-        .force_fail_execution_record(req.record_id)
+        .force_fail_execution_record(record_id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(ApiResponse::ok(()))
@@ -447,9 +471,11 @@ pub struct ResumeExecutionRequest {
 
 pub async fn resume_execution_handler(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
     ApiJson(req): ApiJson<ResumeExecutionRequest>,
 ) -> Result<ApiResponse<serde_json::Value>, AppError> {
+    // V1 隔离：恢复执行前校验 record 归属 workspace
+    workspace_guard::verify_execution_belongs_to_ws(&state.db, id, ws_id).await?;
     let record = state
         .db
         .get_execution_record(id)
@@ -570,8 +596,11 @@ pub async fn resume_execution_handler(
 
 pub async fn get_execution_summary(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
 ) -> Result<ApiResponse<ExecutionSummary>, AppError> {
+    // V1 隔离：db.get_execution_summary 按 todo_id 聚合，故校验 todo 归属 workspace。
+    // 此 handler 由 todo 域 /todos/{id}/summary 引用（execution 域无 summary 端点）。
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     Ok(ApiResponse::ok(state.db.get_execution_summary(id).await?))
 }
 
@@ -586,29 +615,35 @@ struct DashboardCacheEntry {
     expires_at: StdInstant,
 }
 
-static DASHBOARD_CACHE: LazyLock<RwLock<HashMap<u32, DashboardCacheEntry>>> =
+static DASHBOARD_CACHE: LazyLock<RwLock<HashMap<(i64, u32), DashboardCacheEntry>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
 pub async fn get_dashboard_stats(
     State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
     Query(params): Query<DashboardStatsParams>,
 ) -> Result<ApiResponse<DashboardStats>, AppError> {
     let hours_key = params.hours.unwrap_or(24 * 7); // default: 7 days
+    // 缓存键带 ws_id：不同 workspace 的看板数据独立缓存，避免互相串数据
+    let cache_key = (ws_id, hours_key);
 
     {
         let cache = DASHBOARD_CACHE.read().await;
-        if let Some(entry) = cache.get(&hours_key) {
+        if let Some(entry) = cache.get(&cache_key) {
             if entry.expires_at > StdInstant::now() {
                 return Ok(ApiResponse::ok(entry.stats.clone()));
             }
         }
     }
 
+    // TODO(ws-isolation): db.get_dashboard_stats 当前全库聚合，未按 workspace 过滤。
+    // 真正的 ws 隔离需 db/dashboard.rs 的 fetch_* SQL 下沉 WHERE todo_id IN (本 ws todos)，
+    // 作为独立任务跟进。当前接受统计暂为全库聚合（数字级聚合，非具体资源越权）。
     let stats = state.db.get_dashboard_stats(params.hours).await?;
 
     {
         let mut cache = DASHBOARD_CACHE.write().await;
-        cache.insert(hours_key, DashboardCacheEntry {
+        cache.insert(cache_key, DashboardCacheEntry {
             stats: stats.clone(),
             expires_at: StdInstant::now() + Duration::from_secs(30),
         });
@@ -625,12 +660,19 @@ pub struct DashboardStatsParams {
 
 pub async fn get_running_todos(
     State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
 ) -> Result<ApiResponse<Vec<crate::models::Todo>>, AppError> {
+    // V1 隔离：按 workspace 过滤正在运行的 todo（db 层无 ws 参数，内存过滤）
     let running_todos = state.db.get_running_todos().await?;
-    Ok(ApiResponse::ok(running_todos))
+    let filtered: Vec<_> = running_todos
+        .into_iter()
+        .filter(|t| t.workspace_id == Some(ws_id))
+        .collect();
+    Ok(ApiResponse::ok(filtered))
 }
 
 /// 智能新建：用户提交自然语言描述，通过默认响应 Todo 自动执行
+#[allow(dead_code)]
 pub async fn smart_create_handler(
     State(state): State<AppState>,
     ApiJson(req): ApiJson<SmartCreateRequest>,
@@ -750,6 +792,241 @@ fn resolve_resume_session_id(
     record.session_id.clone().ok_or_else(|| {
         AppError::BadRequest("No session_id available for resume".to_string())
     })
+}
+
+// =========================================================================
+// v1 API 路由及处理器变体（K8s 风格路径）
+// -------------------------------------------------------------------------
+// 所有 v1 路由通过 `v1_routes()` 暴露，在 `mod.rs` 中嵌套到
+// /api/v1/workspaces/{ws}/executions 下，因此 v1_routes 中的路径都是相对路径。
+// workspace_id 从 URL Path 中提取，不再依赖 Query 参数或请求体。
+// =========================================================================
+
+/// v1 变体：从 Path 获取 workspace_id，始终按工作空间过滤执行记录。
+pub async fn v1_get_execution_records(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Query(query): Query<TodoIdQuery>,
+) -> Result<ApiResponse<ExecutionRecordsPage>, AppError> {
+    let page = query.page.unwrap_or(1).max(1);
+    let limit = query.limit.unwrap_or(10).clamp(1, 100);
+    let offset = (page - 1) * limit;
+    let status = match query.status.as_deref() {
+        Some("all") | None => None,
+        Some(s) => Some(
+            s.parse::<ExecutionStatus>()
+                .map(|v| v.as_str())
+                .map_err(AppError::BadRequest)?
+        ),
+    };
+    let (records, total) = state
+        .db
+        .get_execution_records(crate::db::execution::ExecutionRecordQuery {
+            todo_id: query.todo_id,
+            step_id: query.step_id,
+            limit,
+            offset,
+            status,
+            hours: query.hours,
+        })
+        .await?;
+
+    // V1 隔离：workspace_id 来自 URL Path。即使带 todo_id 也要校验其归属本 ws，
+    // 否则 ?todo_id=<他人 todo> 可越权读他人执行记录。返回结果一律按 ws 过滤。
+    if let Some(todo_id) = query.todo_id {
+        workspace_guard::verify_todo_belongs_to_ws(&state.db, todo_id, ws_id).await?;
+    }
+    let ws_todos = state.db.get_todos_by_workspace_id(Some(ws_id)).await?;
+    let ws_todo_ids: std::collections::HashSet<i64> = ws_todos.iter().map(|t| t.id).collect();
+    let records: Vec<_> = records
+        .into_iter()
+        .filter(|r| ws_todo_ids.contains(&r.todo_id))
+        .collect();
+
+    Ok(ApiResponse::ok(ExecutionRecordsPage {
+        records,
+        total,
+        page,
+        limit,
+    }))
+}
+
+/// v1 变体：从 Path 获取 workspace_id，始终按工作空间返回 running board。
+pub async fn v1_get_running_board(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Query(query): Query<RunningBoardQuery>,
+) -> Result<ApiResponse<crate::models::RunningBoardResponse>, AppError> {
+    let page = query.page.unwrap_or(1).max(1);
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
+    let offset = (page - 1) * limit;
+
+    let (records, total) = state
+        .db
+        .get_execution_records(crate::db::execution::ExecutionRecordQuery {
+            todo_id: None,
+            step_id: None,
+            limit,
+            offset,
+            status: None,
+            hours: query.hours,
+        })
+        .await?;
+
+    // v1 路径下 workspace_id 始终来自 Path，强制按工作空间过滤
+    let ws_todos = state.db.get_todos_by_workspace_id(Some(ws_id)).await?;
+    let ws_todo_ids: std::collections::HashSet<i64> = ws_todos.iter().map(|t| t.id).collect();
+    let records = records.into_iter().filter(|r| ws_todo_ids.contains(&r.todo_id)).collect();
+
+    // v1 路径下使用 Path 中的 workspace_id 查询定时任务
+    let scheduled_todos = state.db.get_scheduler_todos(Some(ws_id)).await?;
+
+    Ok(ApiResponse::ok(crate::models::RunningBoardResponse {
+        records,
+        scheduled_todos,
+        total,
+        page,
+        limit,
+    }))
+}
+
+/// v1 变体：从 Path 获取 workspace_id，不再依赖请求体中的 workspace_id 字段。
+pub async fn v1_smart_create_handler(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    ApiJson(req): ApiJson<SmartCreateRequest>,
+) -> Result<ApiResponse<serde_json::Value>, AppError> {
+    let content = req.content.trim();
+    if content.is_empty() {
+        return Err(AppError::BadRequest("内容不能为空".to_string()));
+    }
+
+    // v1 使用 Path 中的 workspace_id 而非请求体内的 workspace_id 字段
+    let workspace_settings = crate::db::workspace_setting::get_workspace_settings(&state.db, ws_id).await?
+        .ok_or_else(|| AppError::BadRequest(format!("工作空间 #{} 不存在", ws_id)))?;
+
+    let todo_id = workspace_settings.default_response_todo_id
+        .ok_or_else(|| AppError::BadRequest("尚未配置默认响应 Todo，请先在工作空间设置中配置".to_string()))?;
+
+    // 验证 Todo 存在且属于当前 workspace：settings 表本身没有外键约束保证
+    // default_response_todo_id 与 workspace_id 一致，必须显式校验防止跨空间执行。
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, todo_id, ws_id).await?;
+    let todo = state
+        .db
+        .get_todo(todo_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest(format!("默认响应 Todo #{} 不存在", todo_id)))?;
+
+    // 检查并发限制
+    // RwLock 中毒恢复：PoisonError 时取内部 guard 继续运行，与 backup.rs 保持一致
+    let max_concurrent = state.config.read().unwrap_or_else(|e| e.into_inner()).max_concurrent_todos;
+    let running_tasks = state.task_manager.get_all_task_infos().await;
+    let running_records = state.db.get_running_records_by_todo_id(todo_id).await?;
+    let running_count_for_todo = running_records
+        .iter()
+        .filter(|r| {
+            if let Some(task_id) = &r.task_id {
+                running_tasks.iter().any(|t| t.task_id == *task_id)
+            } else {
+                false
+            }
+        })
+        .count();
+    if running_count_for_todo >= max_concurrent as usize {
+        return Err(AppError::BadRequest(format!(
+            "默认响应 Todo #{} 已有 {} 个执行在运行中（上限 {}），请稍后再试",
+            todo_id, running_count_for_todo, max_concurrent
+        )));
+    }
+
+    // 构建模板参数
+    let mut params = std::collections::HashMap::new();
+    params.insert("content".to_string(), content.to_string());
+    params.insert("message".to_string(), content.to_string());
+    params.insert("raw_message".to_string(), content.to_string());
+
+    let mut message = todo.prompt.clone();
+
+    // 如果 prompt 模板中没有任何占位符，将用户内容追加到 message 末尾，
+    // 确保用户提交的内容一定能传递到执行器
+    let has_placeholder = params.keys().any(|key| message.contains(&format!("{{{{{}}}}}", key)));
+    if !has_placeholder {
+        if message.is_empty() {
+            message = content.to_string();
+        } else {
+            message = format!("{}\n\n{}", message, content);
+        }
+    }
+
+    let result = start_todo_execution(RunTodoExecutionRequest {
+        db: state.db.clone(),
+        executor_registry: state.executor_registry.clone(),
+        tx: state.tx.clone(),
+        task_manager: state.task_manager.clone(),
+        config: state.config.clone(),
+        todo_id,
+        message,
+        req_executor: None,
+        req_model: None,
+        trigger_type: "smart_create".to_string(),
+        params: Some(params),
+        resume_session_id: None,
+        resume_message: None,
+        source_todo_id: None,
+        source_todo_title: None,
+        loop_step_execution_id: None,
+        step_id: None,
+        feishu_bot_id: None,
+        feishu_receive_id: None,
+            feishu_receive_id_type: None,
+        workspace_path: None,
+        // 从 todo 中提取 workspace_id，用于 FeishuPushService 按 workspace 隔离推送
+        workspace_id: todo.workspace_id,
+        // smart_create 路径：同样注入专家上下文，新建 todo 可能带 expert_name
+        expert_manager: Some(state.expert_manager.clone()),
+    })
+    .await?;
+
+    let record_id = result.record_id
+        .ok_or_else(|| AppError::Internal("执行启动失败：未获取到执行记录 ID".to_string()))?;
+
+    Ok(ApiResponse::ok(serde_json::json!({
+        "task_id": result.task_id,
+        "record_id": record_id,
+        "todo_id": todo_id,
+        "todo_title": todo.title,
+    })))
+}
+
+/// v1 路由集合：所有路径相对于 /api/v1/workspaces/{ws}/executions。
+/// 在 `mod.rs` 中通过 `.nest("/api/v1/workspaces/{ws}/executions", execution::v1_routes())`
+/// 挂载，路径中的 {ws} 自动传递给每个处理器。
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        // GET / — 列出工作空间下的执行记录
+        .route("/", get(v1_get_execution_records))
+        // POST / — 启动一个 todo 执行
+        .route("/", post(execute_handler))
+        // GET /{id} — 获取单条执行记录详情
+        .route("/{id}", get(get_execution_record))
+        // PUT /{id}/rating — 评分子执行记录
+        .route("/{id}/rating", put(rate_execution_handler))
+        // GET /{id}/logs — 获取执行日志
+        .route("/{id}/logs", get(get_execution_logs_handler))
+        // POST /{id}/resume — 恢复已完成的执行
+        .route("/{id}/resume", post(resume_execution_handler))
+        // POST /{id}/stop — 停止执行（路径指定 record_id，已做 ws 归属校验）
+        .route("/{id}/stop", post(stop_execution_handler))
+        // POST /{id}/force-fail — 强制标记执行为失败
+        .route("/{id}/force-fail", post(force_fail_execution_handler))
+        // GET /running — 本工作空间正在运行的执行记录
+        .route("/running", get(get_running_execution_records_handler))
+        // GET /running-board — 工作空间运行看板
+        .route("/running-board", get(v1_get_running_board))
+        // GET /running-todos — 本工作空间正在运行的事项
+        .route("/running-todos", get(get_running_todos))
+        // GET /session/{session_id} — 按会话 ID 查执行记录
+        .route("/session/{session_id}", get(get_execution_records_by_session))
 }
 
 #[cfg(test)]

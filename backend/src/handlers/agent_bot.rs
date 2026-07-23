@@ -1,7 +1,8 @@
 use axum::{
     extract::{Path, Query, State},
     response::{sse::{Event, Sse}, IntoResponse},
-    Json,
+    routing::{delete, get, post, put},
+    Json, Router,
 };
 use futures_util::stream::Stream;
 use reqwest::Client;
@@ -10,7 +11,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::sleep;
 
-use crate::handlers::{AppError, AppState};
+use crate::handlers::{workspace_guard, AppError, AppState};
 use crate::models::ApiResponse;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -849,11 +850,21 @@ pub struct UpdateWorkspaceSettingsRequest {
 }
 
 /// 更新工作空间的设置
+///
+/// 若请求指定了默认响应 todo/loop，先校验其确实属于当前 workspace，防止通过设置
+/// 间接引用其他 workspace 的资源（与 smart_create 的 workspace 隔离保持一致）。
 pub async fn update_workspace_settings(
     State(state): State<AppState>,
     Path(workspace_id): Path<i64>,
     Json(req): Json<UpdateWorkspaceSettingsRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    if let Some(todo_id) = req.default_response_todo_id {
+        workspace_guard::verify_todo_belongs_to_ws(&state.db, todo_id, workspace_id).await?;
+    }
+    if let Some(loop_id) = req.default_response_loop_id {
+        workspace_guard::verify_loop_belongs_to_ws(&state.db, loop_id, workspace_id).await?;
+    }
+
     crate::db::workspace_setting::upsert_workspace_settings(
         &state.db,
         workspace_id,
@@ -931,4 +942,81 @@ pub async fn move_bot_to_workspace(
         "success": true,
         "message": format!("Bot moved to workspace {}, all existing bindings have been disabled", req.workspace_id)
     })))
+}
+
+// ============================================================================
+// V1 路由：Bot 管理（非 workspace 作用域）
+// ============================================================================
+
+/// V1 变体：群白名单列表，bot_id 来自 Query 参数。
+///
+/// 与旧版保持一致：前端调用 `/api/v1/agent-bots/feishu/group-whitelist?bot_id=X`，
+/// 路由注册在 `/feishu/group-whitelist`（无 `{bot_id}` 路径段），因此用 Query 提取。
+pub async fn v1_get_group_whitelist(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
+) -> Result<impl IntoResponse, AppError> {
+    let bot_id: i64 = params.get("bot_id")
+        .ok_or(AppError::BadRequest("bot_id required".into()))?
+        .parse()
+        .map_err(|_| AppError::BadRequest("invalid bot_id".into()))?;
+    let list = state.db.get_group_whitelist(bot_id).await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let entries: Vec<WhitelistEntry> = list.into_iter().map(|w| WhitelistEntry {
+        id: w.id,
+        bot_id: w.bot_id,
+        sender_open_id: w.sender_open_id,
+        sender_name: w.sender_name,
+        created_at: w.created_at,
+    }).collect();
+
+    Ok(ApiResponse::ok(entries))
+}
+
+/// V1 Bot 管理路由（非 workspace 作用域）。
+///
+/// 这些路由使用相对路径，期望被嵌套在 `/api/v1/agent-bots` 下。
+/// Bot 管理路由不依赖 workspace 作用域，所有 handler 复用现有函数签名。
+pub fn v1_bot_routes() -> Router<AppState> {
+    Router::new()
+        // GET / — 列出所有 agent bot
+        .route("/", get(list_agent_bots))
+        // DELETE /{id} — 删除指定 bot
+        .route("/{id}", delete(delete_agent_bot))
+        // PUT /{id}/config — 更新 bot 配置
+        .route("/{id}/config", put(update_agent_bot_config))
+        // PUT /{id}/workspace — 移动 bot 到另一个工作空间
+        .route("/{id}/workspace", put(move_bot_to_workspace))
+        // POST /feishu/init — 初始化飞书授权流程
+        .route("/feishu/init", post(feishu_init))
+        // POST /feishu/begin — 开始飞书设备授权
+        .route("/feishu/begin", post(feishu_begin))
+        // GET /feishu/poll-stream — SSE 轮询飞书授权结果
+        .route("/feishu/poll-stream", get(feishu_poll_sse))
+        // GET|PUT /feishu/push — 查询/更新推送配置
+        .route("/feishu/push", get(get_feishu_push).put(update_feishu_push))
+        // GET|POST /feishu/group-whitelist — 群白名单列表/添加（bot_id 来自 Query/body）
+        .route("/feishu/group-whitelist", get(v1_get_group_whitelist).post(add_group_whitelist))
+        // DELETE /feishu/group-whitelist/{id} — 删除群白名单条目
+        .route("/feishu/group-whitelist/{id}", delete(delete_group_whitelist))
+}
+
+// ============================================================================
+// V1 路由：Workspace 作用域（斜杠命令 + 设置）
+// ============================================================================
+
+/// V1 Workspace 路由（斜杠命令 + 设置），使用相对路径。
+///
+/// 这些路由期望被嵌套在 `/api/v1/workspaces/{ws}` 下，因此路径中不包含
+/// workspace 前缀。所有 handler 已在签名中使用 `Path(workspace_id): Path<i64>`，
+/// 嵌套后 axum 会自动将 `{ws}` 提取为 workspace_id 传给 handler。
+pub fn v1_workspace_routes() -> Router<AppState> {
+    Router::new()
+        // GET|POST /slash-commands — 列出/创建斜杠命令
+        .route("/slash-commands", get(list_workspace_slash_commands).post(create_workspace_slash_command))
+        // PUT|DELETE /slash-commands/{cmd_id} — 更新/删除斜杠命令
+        .route("/slash-commands/{cmd_id}", put(update_workspace_slash_command).delete(delete_workspace_slash_command))
+        // GET|PUT /settings — 查询/更新工作空间设置
+        .route("/settings", get(get_workspace_settings).put(update_workspace_settings))
 }

@@ -121,6 +121,7 @@ export function QuickCaptureModal({
       // 避免后端已设为默认值后又重复更新的冗余操作）
       if (executor !== getDefaultExecutor()) {
         await db.updateTodo(
+          workspaceId,
           todo.id,
           title,
           trimmed,
@@ -180,6 +181,7 @@ export function QuickCaptureModal({
       // 避免后端已设为默认值后又重复更新的冗余操作）
       if (executor !== getDefaultExecutor()) {
         await db.updateTodo(
+          workspaceId,
           todo.id,
           title,
           trimmed,
@@ -189,7 +191,7 @@ export function QuickCaptureModal({
       }
 
       // 立即执行任务
-      const result = await db.executeTodo(todo.id, executor);
+      const result = await db.executeTodo(workspaceId, todo.id, executor);
       // 成功提示
       message.success('已创建并开始执行');
       // 通知父组件任务已执行

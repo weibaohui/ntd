@@ -29,7 +29,7 @@ test.describe('执行历史列状态', () => {
 
     // 直接检查 API 返回的记录状态
     const records = await page.evaluate(async () => {
-      const resp = await fetch('/api/execution-records?todo_id=15&page=1&limit=5');
+      const resp = await fetch('/api/v1/workspaces/1/executions?todo_id=15&page=1&limit=5');
       const data = await resp.json();
       return (data.data?.records || []).map(r => ({
         id: r.id,

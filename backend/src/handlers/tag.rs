@@ -1,5 +1,7 @@
 use axum::{
+    Router,
     extract::{Path, State},
+    routing::{delete, get},
 };
 
 use crate::handlers::{ApiJson, AppError, AppState};
@@ -35,4 +37,13 @@ pub async fn delete_tag(
 ) -> Result<ApiResponse<()>, AppError> {
     state.db.delete_tag(id).await?;
     Ok(ApiResponse::ok(()))
+}
+
+/// v1 API 路由：标签为全局资源（tags 表无 workspace_id 列），嵌套在 `/api/v1/tags` 下。
+/// 所有路径都是相对路径（`/`、`/{id}`），由 action.rs 的 `.nest("/api/v1/tags", v1_routes())` 提供前缀。
+/// handler 不提取 workspace_id（全局资源）。
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        .route("/", get(get_tags).post(create_tag))
+        .route("/{id}", delete(delete_tag))
 }

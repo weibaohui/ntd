@@ -66,7 +66,7 @@ export function LoopTriggersPanel({ loopId, triggers, onChanged, workspaceId }: 
   // 切换 enabled 状态（用户点 toggle 的非「新增」路径）
   const handleToggleEnabled = useCallback(async (t: LoopTriggerDto, enabled: boolean) => {
     try {
-      await dbLoops.updateTrigger(loopId, t.id, {
+      await dbLoops.updateTrigger(workspaceId ?? 0, loopId, t.id, {
         trigger_type: t.trigger_type,
         config: t.config,
         enabled,
@@ -100,7 +100,7 @@ export function LoopTriggersPanel({ loopId, triggers, onChanged, workspaceId }: 
     setSaving(true);
     try {
       if (configuring.existing) {
-        await dbLoops.updateTrigger(loopId, configuring.existing.id, {
+        await dbLoops.updateTrigger(workspaceId ?? 0, loopId, configuring.existing.id, {
           trigger_type: configuring.type,
           config: configJson || '{}',
           enabled: configuring.existing.enabled,
@@ -108,7 +108,7 @@ export function LoopTriggersPanel({ loopId, triggers, onChanged, workspaceId }: 
         } as UpdateTriggerRequest);
         message.success('已更新');
       } else {
-        await dbLoops.createTrigger(loopId, {
+        await dbLoops.createTrigger(workspaceId ?? 0, loopId, {
           trigger_type: configuring.type,
           config: configJson || '{}',
           enabled: true,
@@ -128,7 +128,7 @@ export function LoopTriggersPanel({ loopId, triggers, onChanged, workspaceId }: 
   // 删除已有 trigger
   const handleDelete = useCallback(async (id: number) => {
     try {
-      await dbLoops.deleteTrigger(loopId, id);
+      await dbLoops.deleteTrigger(workspaceId ?? 0, loopId, id);
       message.success('已删除');
       onChanged();
       if (configuring?.existing?.id === id) closeConfig();
@@ -205,7 +205,7 @@ export function LoopTriggersPanel({ loopId, triggers, onChanged, workspaceId }: 
               onClick={() => {
                 if (meta.noConfig) {
                   // manual 等无需配置的类型，直接启用（发送空配置）
-                  dbLoops.createTrigger(loopId, {
+                  dbLoops.createTrigger(workspaceId ?? 0, loopId, {
                     trigger_type: type,
                     config: '{}',
                     enabled: true,

@@ -5,6 +5,7 @@ import { ClockCircleOutlined } from '@ant-design/icons';
 import { getSchedulerTodos } from '@/utils/database/todos';
 import { formatRelativeTime } from '@/utils/datetime';
 import { useCardData } from '@/components/dashboard/useCardData';
+import { useApp } from '@/hooks/useApp';
 import { CardShell } from './CardShell';
 
 // 下次触发时间渲染成相对时间(如「2 小时后」);缺失则该 todo 未真正排程。
@@ -18,7 +19,10 @@ function NextRunTag({ next }: { next: string | null | undefined }) {
 }
 
 export function CronTodosCard() {
-  const { data, loading, error } = useCardData(getSchedulerTodos);
+  const { state } = useApp();
+  const wsId = state.selectedWorkspace ?? 0;
+  // v1 纯 workspace-scoped：scheduler todos 按 workspace 隔离
+  const { data, loading, error } = useCardData(() => getSchedulerTodos(wsId), [wsId]);
   const todos = data ?? [];
   return (
     <CardShell icon={<ClockCircleOutlined />} title={`时间驱动 todo(${todos.length})`} loading={loading} error={error}>

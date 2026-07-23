@@ -1424,12 +1424,22 @@ impl Database {
         &self,
         hours: Option<u32>,
     ) -> Result<crate::models::LoopStats, sea_orm::DbErr> {
+        self.get_loop_stats_for_workspace(None, hours).await
+    }
+
+    /// GET /api/v1/workspaces/{ws}/loops/stats 的数据来源:按 workspace 聚合 loop 统计。
+    /// workspace_id=None 时退化为全库聚合,与 `get_loop_stats` 等价。
+    pub async fn get_loop_stats_for_workspace(
+        &self,
+        workspace_id: Option<i64>,
+        hours: Option<u32>,
+    ) -> Result<crate::models::LoopStats, sea_orm::DbErr> {
         // 4 条查询互不依赖,并行执行;counts 查 loops 表(无时间窗),其余按 hours 过滤。
         let (counts, exec_summary, trigger_dist, token_totals) = tokio::try_join!(
-            self.fetch_loop_counts(),
-            self.fetch_loop_execution_summary(hours),
-            self.fetch_loop_trigger_distribution(hours),
-            self.fetch_loop_token_totals(hours),
+            self.fetch_loop_counts(workspace_id),
+            self.fetch_loop_execution_summary(workspace_id, hours),
+            self.fetch_loop_trigger_distribution(workspace_id, hours),
+            self.fetch_loop_token_totals(workspace_id, hours),
         )?;
         Ok(crate::models::LoopStats {
             total_loops: counts.0,
@@ -1445,15 +1455,24 @@ impl Database {
     }
 
     /// loop 总数与活跃数(来自 loops 配置表,不受时间窗影响)。active = status='enabled'。
-    async fn fetch_loop_counts(&self) -> Result<(i64, i64), sea_orm::DbErr> {
+    async fn fetch_loop_counts(
+        &self,
+        workspace_id: Option<i64>,
+    ) -> Result<(i64, i64), sea_orm::DbErr> {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
-        let sql = "SELECT \
+        let ws_filter = workspace_id
+            .map(|id| format!("WHERE workspace_id = {}", id))
+            .unwrap_or_default();
+        let sql = format!(
+            "SELECT \
             COUNT(*) AS total, \
             COALESCE(SUM(CASE WHEN status='enabled' THEN 1 ELSE 0 END), 0) AS active \
-            FROM loops";
+            FROM loops {}",
+            ws_filter
+        );
         let row = self
             .conn
-            .query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .query_one(Statement::from_string(DbBackend::Sqlite, sql))
             .await?
             .ok_or_else(|| sea_orm::DbErr::RecordNotFound("loop counts returned no rows".into()))?;
         Ok((
@@ -1465,17 +1484,23 @@ impl Database {
     /// loop_executions 的总数/成功/失败(按 hours 过滤 started_at)。
     async fn fetch_loop_execution_summary(
         &self,
+        workspace_id: Option<i64>,
         hours: Option<u32>,
     ) -> Result<(i64, i64, i64), sea_orm::DbErr> {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let ws_filter = workspace_id
+            .map(|id| format!("AND l.workspace_id = {}", id))
+            .unwrap_or_default();
         let sql = format!(
             "SELECT \
             COUNT(*) AS total, \
-            COALESCE(SUM(CASE WHEN status='success' THEN 1 ELSE 0 END), 0) AS success, \
-            COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END), 0) AS failed \
-            FROM loop_executions \
-            WHERE {}",
-            Self::loop_exec_time_filter(hours, "started_at")
+            COALESCE(SUM(CASE WHEN le.status='success' THEN 1 ELSE 0 END), 0) AS success, \
+            COALESCE(SUM(CASE WHEN le.status='failed' THEN 1 ELSE 0 END), 0) AS failed \
+            FROM loop_executions le \
+            JOIN loops l ON l.id = le.loop_id \
+            WHERE {} {}",
+            Self::loop_exec_time_filter(hours, "le.started_at"),
+            ws_filter
         );
         let row = self
             .conn
@@ -1492,20 +1517,26 @@ impl Database {
     /// 触发类型分布(按 loop_executions.trigger_type GROUP BY)。
     async fn fetch_loop_trigger_distribution(
         &self,
+        workspace_id: Option<i64>,
         hours: Option<u32>,
     ) -> Result<Vec<crate::models::LoopTriggerTypeCount>, sea_orm::DbErr> {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let ws_filter = workspace_id
+            .map(|id| format!("AND l.workspace_id = {}", id))
+            .unwrap_or_default();
         let sql = format!(
             "SELECT \
-            COALESCE(trigger_type, 'manual') AS trigger_type, \
+            COALESCE(le.trigger_type, 'manual') AS trigger_type, \
             COUNT(*) AS count, \
-            COALESCE(SUM(CASE WHEN status='success' THEN 1 ELSE 0 END), 0) AS success_count, \
-            COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END), 0) AS failed_count \
-            FROM loop_executions \
-            WHERE {} \
-            GROUP BY COALESCE(trigger_type, 'manual') \
+            COALESCE(SUM(CASE WHEN le.status='success' THEN 1 ELSE 0 END), 0) AS success_count, \
+            COALESCE(SUM(CASE WHEN le.status='failed' THEN 1 ELSE 0 END), 0) AS failed_count \
+            FROM loop_executions le \
+            JOIN loops l ON l.id = le.loop_id \
+            WHERE {} {} \
+            GROUP BY COALESCE(le.trigger_type, 'manual') \
             ORDER BY count DESC",
-            Self::loop_exec_time_filter(hours, "started_at")
+            Self::loop_exec_time_filter(hours, "le.started_at"),
+            ws_filter
         );
         let rows = self
             .conn
@@ -1526,20 +1557,29 @@ impl Database {
     }
 
     /// Token 总量(经 loop_step_executions JOIN execution_records,SUM usage JSON)。
-    async fn fetch_loop_token_totals(&self, hours: Option<u32>) -> Result<(u64, u64, f64), sea_orm::DbErr> {
+    async fn fetch_loop_token_totals(
+        &self,
+        workspace_id: Option<i64>,
+        hours: Option<u32>,
+    ) -> Result<(u64, u64, f64), sea_orm::DbErr> {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         // le.started_at 用于时间过滤;LEFT JOIN 保证无 step/record 的 execution 行不丢失,
         // 其 token 经 COALESCE 兜底为 0。
+        let ws_filter = workspace_id
+            .map(|id| format!("AND l.workspace_id = {}", id))
+            .unwrap_or_default();
         let sql = format!(
             "SELECT \
             COALESCE(SUM(COALESCE(json_extract(er.usage, '$.input_tokens'), 0)), 0) AS input_tokens, \
             COALESCE(SUM(COALESCE(json_extract(er.usage, '$.output_tokens'), 0)), 0) AS output_tokens, \
             COALESCE(SUM(COALESCE(json_extract(er.usage, '$.total_cost_usd'), 0.0)), 0.0) AS cost \
             FROM loop_executions le \
+            JOIN loops l ON l.id = le.loop_id \
             LEFT JOIN loop_step_executions lse ON lse.loop_execution_id = le.id \
             LEFT JOIN execution_records er ON er.id = lse.execution_record_id \
-            WHERE {}",
-            Self::loop_exec_time_filter(hours, "le.started_at")
+            WHERE {} {}",
+            Self::loop_exec_time_filter(hours, "le.started_at"),
+            ws_filter
         );
         let row = self
             .conn

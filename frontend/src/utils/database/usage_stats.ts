@@ -5,11 +5,11 @@ export async function getUsageStats(since?: string, until?: string): Promise<Usa
   const params: Record<string, unknown> = {};
   if (since !== undefined) params.since = since;
   if (until !== undefined) params.until = until;
-  return unwrap(await api.get('/api/usage-stats', { params }));
+  return unwrap(await api.get('/api/v1/usage-stats', { params }));
 }
 
 export async function refreshUsageStats(): Promise<UsageStatsResponse> {
-  return unwrap(await api.post('/api/usage-stats/refresh'));
+  return unwrap(await api.post('/api/v1/usage-stats/refresh'));
 }
 
 export interface UsageStatsSettings {
@@ -18,9 +18,9 @@ export interface UsageStatsSettings {
 }
 
 export async function getUsageStatsSettings(): Promise<UsageStatsSettings> {
-  return unwrap(await api.get('/api/usage-stats/settings'));
+  return unwrap(await api.get('/api/v1/usage-stats/settings'));
 }
 
 export async function updateUsageStatsSettings(enabled: boolean, cron: string): Promise<string> {
-  return unwrap(await api.put('/api/usage-stats/settings', { enabled, cron }));
+  return unwrap(await api.put('/api/v1/usage-stats/settings', { enabled, cron }));
 }

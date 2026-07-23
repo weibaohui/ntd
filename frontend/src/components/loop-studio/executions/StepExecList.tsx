@@ -12,11 +12,13 @@ import { execStatusView, durationLabel, formatToken } from './helpers';
 interface StepExecListProps {
   stepExecs: Record<string, any>[];
   loopId: number;
+  /** 当前工作空间 ID（v1 路由 workspace-scoped） */
+  workspaceId: number;
   executionId: number;
   onApproved: () => void;
 }
 
-export function StepExecList({ stepExecs, loopId, executionId, onApproved }: StepExecListProps) {
+export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onApproved }: StepExecListProps) {
   const { message } = AntApp.useApp();
   const [drawerRecord, setDrawerRecord] = useState<any | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
@@ -28,7 +30,7 @@ export function StepExecList({ stepExecs, loopId, executionId, onApproved }: Ste
   const handleOpenLogView = useCallback(async (record: any) => {
     setLogDrawerRecord(record);
     try {
-      const result = await dbExecutions.getExecutionLogs(record.id, 1, 500);
+      const result = await dbExecutions.getExecutionLogs(workspaceId, record.id, 1, 500);
       setLogDrawerLogs(result.logs || []);
     } catch {
       setLogDrawerLogs([]);
@@ -45,7 +47,7 @@ export function StepExecList({ stepExecs, loopId, executionId, onApproved }: Ste
     setDrawerLoading(true);
     try {
       const { getExecutionRecord } = dbExecutions;
-      const rec = await getExecutionRecord(s.execution_record_id);
+      const rec = await getExecutionRecord(workspaceId, s.execution_record_id);
       setDrawerRecord(rec);
     } catch {
       // ignore
@@ -59,7 +61,7 @@ export function StepExecList({ stepExecs, loopId, executionId, onApproved }: Ste
     setApprovingId(stepExecutionId);
     try {
       const { approveStepExecution } = dbLoops;
-      await approveStepExecution(loopId, executionId, stepExecutionId, approveRating, approveComment || undefined);
+      await approveStepExecution(workspaceId, loopId, executionId, stepExecutionId, approveRating, approveComment || undefined);
       message.success('审批已提交');
       // 重置审批表单状态为初始值，防止下一张待审卡片复用上次的评分与备注；
       // 70 分是默认通过评分，空字符串确保备注框干净。

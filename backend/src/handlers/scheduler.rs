@@ -1,7 +1,6 @@
-use axum::{
-    extract::{Path, State},
-};
+use axum::extract::{Path, State};
 
+use crate::handlers::workspace_guard;
 use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::{ApiResponse, Todo, TodoCenterItem, UpdateSchedulerRequest};
 use crate::service_context::ServiceContext;
@@ -9,9 +8,11 @@ use crate::service_context::ServiceContext;
 #[axum::debug_handler]
 pub async fn update_scheduler(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
     ApiJson(req): ApiJson<UpdateSchedulerRequest>,
 ) -> Result<ApiResponse<TodoCenterItem>, AppError> {
+    // V1 隔离：定时配置作用于 todo，校验 todo 归属 workspace
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
     // Get existing todo to preserve its timezone if not provided
     let existing_todo = state.db.get_todo(id).await?;
     let existing_tz = existing_todo.as_ref().and_then(|t| t.scheduler_timezone.clone());
@@ -93,15 +94,10 @@ pub async fn update_scheduler(
     Ok(ApiResponse::ok(item))
 }
 
-#[derive(Debug, serde::Deserialize)]
-pub struct SchedulerTodosQuery {
-    #[serde(default)]
-    pub workspace_id: Option<i64>,
-}
-
 pub async fn get_scheduler_todos(
     State(state): State<AppState>,
-    axum::extract::Query(params): axum::extract::Query<SchedulerTodosQuery>,
+    Path(ws_id): Path<i64>,
 ) -> Result<ApiResponse<Vec<Todo>>, AppError> {
-    Ok(ApiResponse::ok(state.db.get_scheduler_todos(params.workspace_id).await?))
+    // V1：workspace_id 来自路径，查该工作空间下的定时 todo
+    Ok(ApiResponse::ok(state.db.get_scheduler_todos(Some(ws_id)).await?))
 }

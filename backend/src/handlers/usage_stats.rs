@@ -1,4 +1,8 @@
-use axum::extract::{Query, State};
+use axum::{
+    Router,
+    extract::{Query, State},
+    routing::{get, post},
+};
 use serde::Deserialize;
 
 use super::{AppError, AppState};
@@ -151,4 +155,21 @@ pub async fn update_usage_stats_settings(
         .map_err(|e| AppError::Internal(format!("Failed to save config: {}", e)))?;
 
     Ok(ApiResponse::ok("AI 使用统计配置已更新".to_string()))
+}
+
+/// v1 API 路由：使用完整路径前缀 `/api/v1/...`，不嵌套装配。
+///
+/// 与旧版 `usage_stats_routes()` 并存，待旧路由全部迁移后替换。
+/// - GET  /api/v1/usage-stats          → 查询统计
+/// - POST /api/v1/usage-stats/refresh   → 刷新统计
+/// - GET  /api/v1/usage-stats/settings  → 查询设置
+/// - PUT  /api/v1/usage-stats/settings  → 更新设置
+pub fn v1_routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/v1/usage-stats", get(get_usage_stats))
+        .route("/api/v1/usage-stats/refresh", post(refresh_usage_stats))
+        .route(
+            "/api/v1/usage-stats/settings",
+            get(get_usage_stats_settings).put(update_usage_stats_settings),
+        )
 }

@@ -21,7 +21,7 @@ test.describe('Todo #15 执行记录列表', () => {
 
     // 检查 API 返回的执行记录列表
     const records = await page.evaluate(async (todoId) => {
-      const resp = await fetch(`/api/execution-records?todo_id=${todoId}&page=1&limit=10`);
+      const resp = await fetch(`/api/v1/workspaces/1/executions?todo_id=${todoId}&page=1&limit=10`);
       const data = await resp.json();
       return data.data?.records || [];
     }, TODO_ID);

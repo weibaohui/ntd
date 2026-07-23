@@ -102,7 +102,8 @@ export function ExecutionPanel({ collapsed, onToggleCollapse, hidden, onTemporar
       return;
     }
     try {
-      await stopExecution(record.id);
+      // v1 纯 workspace-scoped：stopExecution 需 workspaceId
+      await stopExecution(state.selectedWorkspace ?? 0, record.id);
       message.success('已停止执行');
     } catch (err) {
       message.error(`停止失败: ${err}`);

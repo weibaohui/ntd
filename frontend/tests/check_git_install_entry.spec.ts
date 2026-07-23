@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 // 模板管理面板的「Git 检测 + 一键安装」入口。
 // git 是 bundled 资源同步的硬前置依赖。本机装了 git，正常请求 git_available=true、不显示缺失横幅；
-// 因此用 page.route 拦截 /api/bundled/status 强制返回 git_available:false，才能验证「缺失态」UI。
+// 因此用 page.route 拦截 /api/v1/bundled/status 强制返回 git_available:false，才能验证「缺失态」UI。
 // 成功信封为 { code:0, data, message }（见 utils/database/client.ts 的 unwrap）。
 
 const BASE = 'http://localhost:18088';
@@ -34,7 +34,7 @@ function statusPayload(gitAvailable: boolean) {
 /** 拦截 status 接口 + 进入模板管理 tab 的公共前置。 */
 async function openTemplatesPanel(page: import('@playwright/test').Page, gitAvailable: boolean) {
   // 路由必须在 goto 之前注册，才能命中面板挂载时的首次 status 请求
-  await page.route('**/api/bundled/status**', (route) =>
+  await page.route('**/api/v1/bundled/status**', (route) =>
     route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify(statusPayload(gitAvailable)),

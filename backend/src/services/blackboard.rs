@@ -585,6 +585,7 @@ pub async fn chat_with_wiki(
             let err_msg = match &e {
                 AppError::Internal(msg) => msg.clone(),
                 AppError::BadRequest(msg) => msg.clone(),
+                AppError::Forbidden(msg) => msg.clone(),
                 AppError::NotFound => "资源不存在".to_string(),
             };
             let _ = tx.send(ExecEvent::WikiChatFinished {

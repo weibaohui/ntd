@@ -2,13 +2,13 @@
 //!
 //! 覆盖范围（之前单元测试只测了 `render_blackboard` 渲染函数本身）：
 //! 1. CLI 参数解析：blackboard / --human / 错误 ID
-//! 2. HTTP dispatch：ApiClient 正确请求 `/loop-executions/{id}` 并解析 ApiResponse
+//! 2. HTTP dispatch：ApiClient 正确请求 v1 路径 `/workspaces/{ws}/loops/{loop_id}/executions/{eid}` 并解析 ApiResponse
 //! 3. 默认输出 JSON：dispatch 路径下输出是合法 JSON，包含 step_executions 完整结构
 //! 4. `--human` 输出：dispatch 路径下输出是黑板文本，包含循环名 + 状态图标 + exec id
 //! 5. 错误传播：HTTP 404 → anyhow error + 错误 schema 打印
 //! 6. 中文/多字节场景：JSON 多行结论 / `\n` 正确保留
 //!
-//! 测试策略：mock 一个本地 TCP server 拦截 `GET /api/loop-executions/{id}`，
+//! 测试策略：mock 一个本地 TCP server 拦截 `GET /api/v1/workspaces/{ws}/loops/{loop_id}/executions/{eid}`，
 //! 返回固定的 ApiResponse JSON；用 `ApiClient` 真实发请求；用 `Cli::try_parse_from`
 //! 构造参数；最后用 `Cli::command` 走 dispatch 时改走 `Vec<u8>` 缓冲（避免 println!
 //! 散落）然后读出来做断言。
@@ -64,7 +64,7 @@ async fn spawn_mock_loop_server(initial_body: String, content_type: &'static str
 }
 
 /// 构造完整的 ApiResponse 包装的 LoopExecutionDetail JSON 字符串，
-/// 模拟真实后端 `/api/loop-executions/{id}` 的响应。
+/// 模拟真实后端 v1 路径 `/api/v1/workspaces/{ws}/loops/{loop_id}/executions/{eid}` 的响应。
 fn make_loop_execution_response(id: i64, step_count: usize) -> String {
     let steps: Vec<Value> = (1..=step_count)
         .map(|i| {
@@ -133,12 +133,16 @@ fn make_loop_execution_response(id: i64, step_count: usize) -> String {
 #[test]
 fn test_cli_parse_blackboard_default() {
     // `ntd loop execution blackboard 42` 应解析为 Blackboard(execution_id=42, human=false)
-    let cli = Cli::try_parse_from(["ntd", "loop", "execution", "blackboard", "42"]).unwrap();
+    // v1: --workspace-id + --loop-id 必填（路径 /workspaces/{ws}/loops/{loop_id}/executions/{eid}）
+    let cli = Cli::try_parse_from([
+        "ntd", "loop", "execution", "blackboard",
+        "--workspace-id", "1", "--loop-id", "2", "42",
+    ]).unwrap();
     match cli.command {
         Commands::Loop {
             action:
                 LoopAction::Execution {
-                    action: LoopExecutionAction::Blackboard { execution_id, human },
+                    action: LoopExecutionAction::Blackboard { execution_id, human, .. },
                 },
         } => {
             assert_eq!(execution_id, 42);
@@ -151,13 +155,16 @@ fn test_cli_parse_blackboard_default() {
 #[test]
 fn test_cli_parse_blackboard_human_flag() {
     // `--human` 应切换为人类视图
-    let cli =
-        Cli::try_parse_from(["ntd", "loop", "execution", "blackboard", "42", "--human"]).unwrap();
+    // v1: --workspace-id + --loop-id 必填
+    let cli = Cli::try_parse_from([
+        "ntd", "loop", "execution", "blackboard",
+        "--workspace-id", "1", "--loop-id", "2", "42", "--human",
+    ]).unwrap();
     match cli.command {
         Commands::Loop {
             action:
                 LoopAction::Execution {
-                    action: LoopExecutionAction::Blackboard { execution_id, human },
+                    action: LoopExecutionAction::Blackboard { execution_id, human, .. },
                 },
         } => {
             assert_eq!(execution_id, 42);
@@ -170,6 +177,7 @@ fn test_cli_parse_blackboard_human_flag() {
 #[test]
 fn test_cli_parse_blackboard_combined_with_output() {
     // 全局 --output pretty 与 --human 不冲突; blackboard 走自己的逻辑
+    // v1: --workspace-id + --loop-id 必填
     let cli = Cli::try_parse_from([
         "ntd",
         "-o",
@@ -177,6 +185,10 @@ fn test_cli_parse_blackboard_combined_with_output() {
         "loop",
         "execution",
         "blackboard",
+        "--workspace-id",
+        "1",
+        "--loop-id",
+        "2",
         "99",
         "--human",
     ])
@@ -186,7 +198,7 @@ fn test_cli_parse_blackboard_combined_with_output() {
         Commands::Loop {
             action:
                 LoopAction::Execution {
-                    action: LoopExecutionAction::Blackboard { execution_id, human },
+                    action: LoopExecutionAction::Blackboard { execution_id, human, .. },
                 },
         } => {
             assert_eq!(execution_id, 99);
@@ -217,7 +229,7 @@ async fn test_apiclient_parses_loop_execution_response() {
     let (url, _body_slot) = spawn_mock_loop_server(body, "application/json").await;
     let client = ApiClient::new(&url);
 
-    let resp: ntd::models::ClientResponse<Value> = client.get("/loop-executions/1105").await.unwrap();
+    let resp: ntd::models::ClientResponse<Value> = client.get("/workspaces/1/loops/2/executions/1105").await.unwrap();
 
     assert_eq!(resp.code, 0, "ApiResponse code 应为 0: {:?}", resp);
     assert_eq!(resp.message, "ok");
@@ -250,7 +262,7 @@ async fn test_apiclient_handles_404_like_error_response() {
     let (url, _) = spawn_mock_loop_server(err_body, "application/json").await;
     let client = ApiClient::new(&url);
 
-    let resp: ntd::models::ClientResponse<Value> = client.get("/loop-executions/99999").await.unwrap();
+    let resp: ntd::models::ClientResponse<Value> = client.get("/workspaces/1/loops/2/executions/99999").await.unwrap();
 
     assert_eq!(resp.code, 40001, "应传播错误码");
     assert!(resp.data.is_none(), "错误响应 data 应为 None");
@@ -269,7 +281,7 @@ async fn test_blackboard_e2e_json_mode_payload() {
     let (url, _) = spawn_mock_loop_server(body, "application/json").await;
     let client = ApiClient::new(&url);
 
-    let resp: ntd::models::ClientResponse<Value> = client.get("/loop-executions/42").await.unwrap();
+    let resp: ntd::models::ClientResponse<Value> = client.get("/workspaces/1/loops/2/executions/42").await.unwrap();
 
     // 模拟 dispatch 路径: 走 render_blackboard_to 之前先 to_string_pretty
     let mut buf: Vec<u8> = Vec::new();
@@ -293,7 +305,7 @@ async fn test_blackboard_e2e_human_mode_contains_key_fragments() {
     let (url, _) = spawn_mock_loop_server(body, "application/json").await;
     let client = ApiClient::new(&url);
 
-    let resp: ntd::models::ClientResponse<Value> = client.get("/loop-executions/1105").await.unwrap();
+    let resp: ntd::models::ClientResponse<Value> = client.get("/workspaces/1/loops/2/executions/1105").await.unwrap();
 
     // 模拟 dispatch 路径: render_blackboard_to
     let mut buf: Vec<u8> = Vec::new();
@@ -350,7 +362,7 @@ async fn test_blackboard_e2e_human_mode_cjk_alignment() {
     let api_resp = json!({"code": 0, "data": detail, "message": "ok"}).to_string();
     let (url, _) = spawn_mock_loop_server(api_resp, "application/json").await;
     let client = ApiClient::new(&url);
-    let resp: ntd::models::ClientResponse<Value> = client.get("/loop-executions/100").await.unwrap();
+    let resp: ntd::models::ClientResponse<Value> = client.get("/workspaces/1/loops/2/executions/100").await.unwrap();
 
     let mut buf: Vec<u8> = Vec::new();
     ntd::cli::commands::render_blackboard_to(resp.data.as_ref(), &mut buf);
@@ -385,7 +397,7 @@ async fn test_blackboard_e2e_empty_step_executions() {
     let api_resp = json!({"code": 0, "data": detail, "message": "ok"}).to_string();
     let (url, _) = spawn_mock_loop_server(api_resp, "application/json").await;
     let client = ApiClient::new(&url);
-    let resp: ntd::models::ClientResponse<Value> = client.get("/loop-executions/200").await.unwrap();
+    let resp: ntd::models::ClientResponse<Value> = client.get("/workspaces/1/loops/2/executions/200").await.unwrap();
 
     let mut buf: Vec<u8> = Vec::new();
     ntd::cli::commands::render_blackboard_to(resp.data.as_ref(), &mut buf);
@@ -415,7 +427,7 @@ async fn test_blackboard_e2e_multiline_conclusion_preserved() {
     let api_resp = json!({"code": 0, "data": detail, "message": "ok"}).to_string();
     let (url, _) = spawn_mock_loop_server(api_resp, "application/json").await;
     let client = ApiClient::new(&url);
-    let resp: ntd::models::ClientResponse<Value> = client.get("/loop-executions/300").await.unwrap();
+    let resp: ntd::models::ClientResponse<Value> = client.get("/workspaces/1/loops/2/executions/300").await.unwrap();
 
     // JSON 模式: \n 应作为字面字符串保留 (jq 输出原样)
     let data = resp.data.as_ref().unwrap();
@@ -444,7 +456,7 @@ async fn test_blackboard_dispatch_propagates_error_code() {
 
     // 直接复现 dispatch 的错误处理逻辑 (它不再走 println, 而是 anyhow::Error)
     let client = ApiClient::new(&url);
-    let resp: ntd::models::ClientResponse<Value> = client.get("/loop-executions/1").await.unwrap();
+    let resp: ntd::models::ClientResponse<Value> = client.get("/workspaces/1/loops/2/executions/1").await.unwrap();
     assert_eq!(resp.code, 500);
 
     // 模拟 dispatch 的错误传播: 应当生成与 print_response 一致的 anyhow 错误
@@ -471,7 +483,7 @@ async fn test_blackboard_many_concurrent_requests_dont_deadlock() {
         let c = client.clone();
         handles.push(tokio::spawn(async move {
             let _resp: ntd::models::ClientResponse<Value> =
-                tokio::time::timeout(Duration::from_secs(5), c.get("/loop-executions/999"))
+                tokio::time::timeout(Duration::from_secs(5), c.get("/workspaces/1/loops/2/executions/999"))
                     .await
                     .expect("并发请求挂起")
                     .expect("HTTP 错误");

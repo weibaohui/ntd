@@ -1020,6 +1020,50 @@ pub fn expert_routes() -> axum::Router<AppState> {
         )
 }
 
+/// V1 专家 API 路由定义（API 重构过渡期）
+///
+/// 与 `expert_routes()` 共存，路由前缀改为 /api/v1/experts，全路径注册。
+/// 新旧路由在顶层通过不同的 Router merge 组装，此处不走嵌套前缀。
+pub fn v1_routes() -> axum::Router<AppState> {
+    use axum::routing::{get, post};
+
+    // V1 路由约定：
+    // - POST /api/v1/experts 替代旧的 POST /api/experts/create，遵循 REST 集合语义。
+    // - POST /api/v1/experts/reload 保持路径风格（无冒号），与旧路由一致。
+    // - 其余路径将 /api 替换为 /api/v1，参数模式不变。
+    // - delete/put 作为 MethodRouter 方法链使用，无需 routing::delete/put 导入。
+    Router::new()
+        // GET + POST 共享 /api/v1/experts（POST 创建，取代旧的 /api/experts/create）
+        .route(
+            "/api/v1/experts",
+            get(get_experts).post(create_expert),
+        )
+        // GET + PUT + DELETE 共享 /api/v1/experts/{name}
+        .route(
+            "/api/v1/experts/{name}",
+            get(get_expert).put(update_expert).delete(delete_expert),
+        )
+        .route("/api/v1/experts/{name}/plugin-json", get(get_expert_plugin_json))
+        .route("/api/v1/experts/{name}/agent-md", get(get_expert_agent_md))
+        .route("/api/v1/experts/{name}/skills", get(get_expert_skills))
+        .route("/api/v1/experts/{name}/avatar", get(get_expert_avatar))
+        .route(
+            "/api/v1/experts/{name}/members/{member_id}/avatar",
+            get(get_expert_member_avatar),
+        )
+        .route("/api/v1/experts/{name}/export", get(export_expert))
+        .route("/api/v1/experts/reload", post(reload_experts))
+        .route("/api/v1/experts/import", post(import_expert))
+        .route(
+            "/api/v1/experts/import-from-directory",
+            post(import_expert_from_directory),
+        )
+        .route(
+            "/api/v1/experts/import-from-workbuddy",
+            post(import_from_workbuddy),
+        )
+}
+
 // ── 从 WorkBuddy 导入 API ──────────────────────────────────────────────
 
 /// WorkBuddy 专家目录的默认相对路径
