@@ -160,17 +160,31 @@ mod todo_execute_command_tests {
 }
 
 #[cfg(test)]
-mod stop_execution_request_tests {
-    #[test]
-    fn test_stop_request_deserialization() {
-        #[derive(serde::Deserialize)]
-        struct StopRequest {
-            record_id: i64,
-        }
+mod todo_stop_command_tests {
+    use clap::Parser;
+    use ntd::cli::{Cli, Commands, TodoAction};
 
-        let json = r#"{"record_id": 42}"#;
-        let req: StopRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.record_id, 42);
+    #[test]
+    fn test_todo_stop_parsing() {
+        // v1: todo stop 接收 workspace-id + record_id，生成
+        // POST /api/v1/workspaces/{ws}/executions/{record_id}/stop。
+        let cli = Cli::parse_from(["ntd", "todo", "stop", "--workspace-id", "3", "42"]);
+        match cli.command {
+            Commands::Todo {
+                action: TodoAction::Stop { workspace_id, id },
+            } => {
+                assert_eq!(workspace_id, 3);
+                assert_eq!(id, 42);
+            }
+            _ => panic!("expected Todo Stop"),
+        }
+    }
+
+    #[test]
+    fn test_todo_stop_requires_workspace_id() {
+        // todo stop 需要 --workspace-id
+        let result = Cli::try_parse_from(["ntd", "todo", "stop", "42"]);
+        assert!(result.is_err(), "缺少 --workspace-id 应解析失败");
     }
 }
 
