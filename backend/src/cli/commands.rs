@@ -918,16 +918,16 @@ async fn handle_blackboard(
         BlackboardAction::Wiki { action, workspace_id } => {
             match action {
                 WikiAction::List => {
-                    // v1: wiki 收敛到 blackboard 域，GET /workspaces/{ws}/blackboard/wiki/files
-                    let path = format!("{}/blackboard/wiki/files", ws_prefix(*workspace_id));
+                    // v1: wiki 独立于 blackboard 域，GET /workspaces/{ws}/wiki/files
+                    let path = format!("{}/wiki/files", ws_prefix(*workspace_id));
                     let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
                     print_response(&resp, output, fields)?;
                 }
                 WikiAction::Get { slug } => {
                     // slug 可能包含中文或特殊字符，必须 percent-encode 后才能安全放入 URL 路径
                     let encoded = percent_encode_slug(slug);
-                    // v1: 同样嵌在 blackboard 域下
-                    let path = format!("{}/blackboard/wiki/files/{}", ws_prefix(*workspace_id), encoded);
+                    // v1: wiki 独立域，不与 blackboard 嵌套
+                    let path = format!("{}/wiki/files/{}", ws_prefix(*workspace_id), encoded);
                     let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
                     print_response(&resp, output, fields)?;
                 }

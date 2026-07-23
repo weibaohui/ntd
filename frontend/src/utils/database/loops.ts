@@ -217,7 +217,7 @@ export async function batchMoveLoopsWorkspace(
   ids: number[],
   workspace_id: number,
 ): Promise<{ updated_count: number; total: number }> {
-  return unwrap(await api.put(`/api/workspaces/${workspaceId}/loops/batch-workspace`, { ids, workspace_id }));
+  return unwrap(await api.post(`/api/workspaces/${workspaceId}/loops/batch/workspace`, { ids, workspace_id }));
 }
 
 /** 批量复制环路到其他工作空间。workspaceId 为源空间，workspace_id 为目标空间。 */
@@ -226,7 +226,7 @@ export async function batchCopyLoopsWorkspace(
   ids: number[],
   workspace_id: number,
 ): Promise<{ updated_count: number; total: number }> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/loops/batch-copy-workspace`, { ids, workspace_id }));
+  return unwrap(await api.post(`/api/workspaces/${workspaceId}/loops/batch/copy-workspace`, { ids, workspace_id }));
 }
 
 

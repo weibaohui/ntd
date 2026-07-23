@@ -624,7 +624,7 @@ async fn test_todo_with_tags() {
     assert_eq!(todo["tag_ids"], json!([tag2_id]));
 }
 
-/// DELETE /api/v1/workspaces/{id}/blackboard/wiki/files/{slug}：删除已存在 topic，返回 deleted=true。
+/// DELETE /api/v1/workspaces/{id}/wiki/files/{slug}：删除已存在 topic，返回 deleted=true。
 /// 用唯一 slug 避免与开发者本地真实 workspace 数据撞车；用例自身即删除该文件，自清理。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_delete_wiki_file_existing() {
@@ -635,7 +635,7 @@ async fn test_delete_wiki_file_existing() {
 
     let req = Request::builder()
         .method("DELETE")
-        .uri(format!("/api/v1/workspaces/{}/blackboard/wiki/files/{}", ws_id, slug))
+        .uri(format!("/api/v1/workspaces/{}/wiki/files/{}", ws_id, slug))
         .body(Body::empty())
         .unwrap();
     let response = app.oneshot(req).await.unwrap();
@@ -655,7 +655,7 @@ async fn test_delete_wiki_file_missing_is_idempotent() {
 
     let req = Request::builder()
         .method("DELETE")
-        .uri(format!("/api/v1/workspaces/{}/blackboard/wiki/files/{}", ws_id, slug))
+        .uri(format!("/api/v1/workspaces/{}/wiki/files/{}", ws_id, slug))
         .body(Body::empty())
         .unwrap();
     let response = app.oneshot(req).await.unwrap();
@@ -671,7 +671,7 @@ async fn test_delete_wiki_file_log_forbidden() {
 
     let req = Request::builder()
         .method("DELETE")
-        .uri(format!("/api/v1/workspaces/{}/blackboard/wiki/files/log", ws_id))
+        .uri(format!("/api/v1/workspaces/{}/wiki/files/log", ws_id))
         .body(Body::empty())
         .unwrap();
     let response = app.oneshot(req).await.unwrap();

@@ -3,6 +3,7 @@ import { Input, Button } from 'antd';
 import type { InputRef } from 'antd';
 import { SendOutlined } from '@ant-design/icons';
 import type { ExecutionRecord } from '@/types';
+import { useTodos } from '@/hooks/useTodoContext';
 import { getQuickButtons } from '@/utils/database';
 import type { QuickButton } from '@/utils/database';
 import { QuickButtonBar } from './QuickButtonBar';
@@ -27,15 +28,20 @@ export function ReplyInput({
   // 填入话术后自动聚焦输入框，方便用户立刻接着编辑
   const inputRef = useRef<InputRef>(null);
 
-  // 每个会话线程各有一个 ReplyInput，各自拉一次全局按钮列表；
+  const { state } = useTodos();
+  const workspaceId = state.selectedWorkspace ?? 0;
+
+  // 每个会话线程各有一个 ReplyInput，各自拉一次当前 workspace 的按钮列表；
   // 列表只读且数据量小，不做跨组件缓存（YAGNI）。
   useEffect(() => {
-    getQuickButtons().then(setButtons).catch(() => {});
-  }, []);
+    if (!workspaceId) return;
+    getQuickButtons(workspaceId).then(setButtons).catch(() => {});
+  }, [workspaceId]);
 
-  // 弹窗内增删改后重拉，保持按钮条与全局数据同步
+  // 弹窗内增删改后重拉，保持按钮条与 workspace 数据同步
   const reloadButtons = () => {
-    getQuickButtons().then(setButtons).catch(() => {});
+    if (!workspaceId) return;
+    getQuickButtons(workspaceId).then(setButtons).catch(() => {});
   };
 
   // 点快捷按钮：覆盖填入话术（Q10 决策）+ 聚焦输入框
@@ -85,7 +91,7 @@ export function ReplyInput({
           回复
         </Button>
       </div>
-      <QuickButtonManageModal open={manageOpen} onClose={() => setManageOpen(false)} onChanged={reloadButtons} />
+      <QuickButtonManageModal open={manageOpen} workspaceId={workspaceId} onClose={() => setManageOpen(false)} onChanged={reloadButtons} />
     </div>
   );
 }

@@ -48,6 +48,20 @@ pub async fn verify_loop_belongs_to_ws(
     }
 }
 
+/// 批量校验一组 loop 是否都属于指定 workspace。
+///
+/// 任一 id 跨 ws → 返回 BadRequest；任一 id 不存在 → 返回 NotFound。
+pub async fn verify_loops_belong_to_ws(
+    db: &Database,
+    ids: &[i64],
+    ws_id: i64,
+) -> Result<(), AppError> {
+    for &id in ids {
+        verify_loop_belongs_to_ws(db, id, ws_id).await?;
+    }
+    Ok(())
+}
+
 /// 校验 todo 属于指定 workspace。todo 模型含 `workspace_id`，直接比对。
 pub async fn verify_todo_belongs_to_ws(
     db: &Database,
@@ -63,6 +77,21 @@ pub async fn verify_todo_belongs_to_ws(
             todo_id, ws_id
         )))
     }
+}
+
+/// 批量校验一组 todo 是否都属于指定 workspace。
+///
+/// 任一 id 跨 ws → 返回 BadRequest；任一 id 不存在 → 返回 NotFound。
+/// 当前逐条查询，batch size 通常较小；如后续性能吃紧，可改为单次 IN 查询。
+pub async fn verify_todos_belong_to_ws(
+    db: &Database,
+    ids: &[i64],
+    ws_id: i64,
+) -> Result<(), AppError> {
+    for &id in ids {
+        verify_todo_belongs_to_ws(db, id, ws_id).await?;
+    }
+    Ok(())
 }
 
 /// 校验 execution record 属于指定 workspace。

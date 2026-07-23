@@ -245,7 +245,6 @@ pub fn v1_routes() -> Router<AppState> {
         .merge(super::skills::v1_routes())
         .merge(super::session::v1_routes())
         .merge(super::feishu_history::v1_routes())
-        .merge(super::quick_button::v1_routes())
         .merge(super::review_template::v1_routes())
         .merge(super::todo_template::v1_routes())
         .merge(super::usage_stats::v1_routes())
@@ -262,6 +261,7 @@ pub fn v1_routes() -> Router<AppState> {
         // 定时 todo 查询按 workspace 隔离（update_scheduler 已在 todo 域 /{id}/scheduler）
         .route("/api/v1/workspaces/{ws}/scheduler/todos", get(super::scheduler::get_scheduler_todos))
         .nest("/api/v1/workspaces/{ws}/loops", super::loop_::v1_routes())
+        .nest("/api/v1/workspaces/{ws}/quick-buttons", super::quick_button::v1_routes())
         .nest("/api/v1/workspaces/{ws}/blackboard", super::blackboard::v1_routes())
         // wiki 独立于 blackboard（设计文档 4.4 + 旧路由 + 前端均为 /workspaces/{ws}/wiki/*，
         // 不能挂在 /blackboard 下，否则前端 /workspaces/{ws}/wiki/files 会 404）

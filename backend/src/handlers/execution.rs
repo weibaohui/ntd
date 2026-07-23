@@ -908,7 +908,9 @@ pub async fn v1_smart_create_handler(
     let todo_id = workspace_settings.default_response_todo_id
         .ok_or_else(|| AppError::BadRequest("尚未配置默认响应 Todo，请先在工作空间设置中配置".to_string()))?;
 
-    // 验证 Todo 存在
+    // 验证 Todo 存在且属于当前 workspace：settings 表本身没有外键约束保证
+    // default_response_todo_id 与 workspace_id 一致，必须显式校验防止跨空间执行。
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, todo_id, ws_id).await?;
     let todo = state
         .db
         .get_todo(todo_id)

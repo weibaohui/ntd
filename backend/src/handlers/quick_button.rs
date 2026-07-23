@@ -1,7 +1,11 @@
-//! 快捷话术按钮的 HTTP handler（全局 CRUD，无 workspace 维度）。
+//! 快捷话术按钮的 HTTP handler（按 workspace 隔离的 CRUD）。
 //!
-//! 对应路由 `/api/quick-buttons`。点按钮只在前端填入回复输入框，
+//! 对应路由 `/api/v1/workspaces/{ws}/quick-buttons`。点按钮只在前端填入回复输入框，
 //! 真正发送走原有 resume 链路，本模块不涉及执行逻辑。
+//!
+//! 注意：当前 button_name 仍保持全局 UNIQUE（由 V66 迁移决定），因此不同 workspace
+//! 不能出现同名按钮；后续如需放宽，需重建 quick_buttons 表改为 (workspace_id, button_name)
+//! 联合唯一。
 
 use axum::{
     Router,
@@ -15,11 +19,12 @@ use serde::Deserialize;
 use crate::handlers::{AppError, AppState};
 use crate::models::ApiResponse;
 
-/// 列出全部快捷按钮（按创建时间升序，先加的排前面）。
+/// 列出当前 workspace 的全部快捷按钮（按创建时间升序，先加的排前面）。
 pub async fn list_quick_buttons(
     State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
 ) -> Result<impl IntoResponse, AppError> {
-    let buttons = crate::db::quick_button::get_quick_buttons(&state.db)
+    let buttons = crate::db::quick_button::get_quick_buttons(&state.db, ws_id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(ApiResponse::ok(buttons))
@@ -34,6 +39,7 @@ pub struct CreateQuickButtonRequest {
 /// 创建快捷按钮：校验非空 + 重名预检（给前端友好 400，而非靠 DB 约束冒泡成 500）。
 pub async fn create_quick_button(
     State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
     Json(req): Json<CreateQuickButtonRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let name = req.button_name.trim();
@@ -41,8 +47,9 @@ pub async fn create_quick_button(
     if name.is_empty() || prompt.is_empty() {
         return Err(AppError::BadRequest("按钮名称和话术不能为空".to_string()));
     }
-    // 重名预检：DB 虽有 UNIQUE 兜底，但提前拦截能返回 400 而非 500
-    if crate::db::quick_button::get_quick_button_by_name(&state.db, name)
+    // 重名预检：DB 虽有 UNIQUE 兜底，但提前拦截能返回 400 而非 500。
+    // 当前 UNIQUE 仍是全局的，因此预检也按全局处理。
+    if crate::db::quick_button::get_quick_button_by_name(&state.db, ws_id, name)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
         .is_some()
@@ -50,7 +57,7 @@ pub async fn create_quick_button(
         return Err(AppError::BadRequest("按钮名称已存在".to_string()));
     }
 
-    let id = crate::db::quick_button::create_quick_button(&state.db, name, prompt)
+    let id = crate::db::quick_button::create_quick_button(&state.db, ws_id, name, prompt)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(ApiResponse::ok(serde_json::json!({ "id": id })))
@@ -65,12 +72,13 @@ pub struct UpdateQuickButtonRequest {
 /// 更新快捷按钮：非空校验 + 改名时排除自身的重名检查，再落库。
 pub async fn update_quick_button(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
     Json(req): Json<UpdateQuickButtonRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    validate_quick_button_update(&state.db, id, &req).await?;
+    validate_quick_button_update(&state.db, ws_id, id, &req).await?;
     crate::db::quick_button::update_quick_button(
         &state.db,
+        ws_id,
         id,
         req.button_name.as_deref().map(str::trim),
         req.prompt_text.as_deref().map(str::trim),
@@ -84,6 +92,7 @@ pub async fn update_quick_button(
 /// 校验更新请求：提供字段需非空；改名时检查是否与其他按钮重名（排除自身 id）。
 async fn validate_quick_button_update(
     db: &crate::db::Database,
+    ws_id: i64,
     id: i64,
     req: &UpdateQuickButtonRequest,
 ) -> Result<(), AppError> {
@@ -92,8 +101,9 @@ async fn validate_quick_button_update(
         if name.is_empty() {
             return Err(AppError::BadRequest("按钮名称不能为空".to_string()));
         }
-        // 改名冲突判定：同名记录存在且不是自己，才报错
-        if let Some(existing) = crate::db::quick_button::get_quick_button_by_name(db, name)
+        // 改名冲突判定：同名记录存在且不是自己，才报错。
+        // 当前 UNIQUE 仍是全局的，因此冲突检查也按全局处理。
+        if let Some(existing) = crate::db::quick_button::get_quick_button_by_name(db, ws_id, name)
             .await
             .map_err(|e| AppError::Internal(e.to_string()))?
         {
@@ -110,31 +120,25 @@ async fn validate_quick_button_update(
     Ok(())
 }
 
-/// 删除快捷按钮。
+/// 删除快捷按钮（仅在指定 workspace 内）。
 pub async fn delete_quick_button(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((ws_id, id)): Path<(i64, i64)>,
 ) -> Result<impl IntoResponse, AppError> {
-    crate::db::quick_button::delete_quick_button(&state.db, id)
+    crate::db::quick_button::delete_quick_button(&state.db, ws_id, id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(ApiResponse::ok(serde_json::json!({"success": true})))
 }
 
 /// V1 API 路由：为快捷按钮注册 GET/POST/PUT/DELETE 端点，
-/// 路径前缀 /api/v1/quick-buttons（全局资源扁平化，不嵌套 workspace）。
+/// 路径嵌套在 `/api/v1/workspaces/{ws}/quick-buttons` 下。
 pub fn v1_routes() -> Router<AppState> {
     Router::new()
-        // 集合操作：列出全部按钮 / 创建新按钮
-        .route(
-            "/api/v1/quick-buttons",
-            get(list_quick_buttons).post(create_quick_button),
-        )
+        // 集合操作：列出当前 workspace 按钮 / 创建新按钮
+        .route("/", get(list_quick_buttons).post(create_quick_button))
         // 单资源操作：按 id 更新 / 删除
-        .route(
-            "/api/v1/quick-buttons/{id}",
-            put(update_quick_button).delete(delete_quick_button),
-        )
+        .route("/{id}", put(update_quick_button).delete(delete_quick_button))
 }
 
 #[cfg(test)]
@@ -159,10 +163,10 @@ mod quick_button_handler_tests {
     #[tokio::test]
     async fn test_validate_quick_button_update_rejects_duplicate_name() {
         let db = fresh_db().await;
-        let a = crate::db::quick_button::create_quick_button(&db, "A", "a").await.unwrap();
-        let _b = crate::db::quick_button::create_quick_button(&db, "B", "b").await.unwrap();
+        let a = crate::db::quick_button::create_quick_button(&db, 1, "A", "a").await.unwrap();
+        let _b = crate::db::quick_button::create_quick_button(&db, 1, "B", "b").await.unwrap();
         // 把 A 改名为已被 B 占用的 "B" → 应报错
-        let err = validate_quick_button_update(&db, a, &update_req(Some("B"), None)).await;
+        let err = validate_quick_button_update(&db, 1,a, &update_req(Some("B"), None)).await;
         assert!(err.is_err(), "改成他人已用名应 BadRequest");
     }
 
@@ -170,8 +174,8 @@ mod quick_button_handler_tests {
     #[tokio::test]
     async fn test_validate_quick_button_update_allows_own_name() {
         let db = fresh_db().await;
-        let a = crate::db::quick_button::create_quick_button(&db, "A", "a").await.unwrap();
-        let res = validate_quick_button_update(&db, a, &update_req(Some("A"), None)).await;
+        let a = crate::db::quick_button::create_quick_button(&db, 1, "A", "a").await.unwrap();
+        let res = validate_quick_button_update(&db, 1,a, &update_req(Some("A"), None)).await;
         assert!(res.is_ok(), "改成自己的原名不应报错");
     }
 
@@ -179,7 +183,7 @@ mod quick_button_handler_tests {
     #[tokio::test]
     async fn test_validate_quick_button_update_rejects_empty_name() {
         let db = fresh_db().await;
-        let res = validate_quick_button_update(&db, 1, &update_req(Some("   "), None)).await;
+        let res = validate_quick_button_update(&db, 1,1, &update_req(Some("   "), None)).await;
         assert!(res.is_err(), "空白名称应 BadRequest");
     }
 
@@ -187,7 +191,7 @@ mod quick_button_handler_tests {
     #[tokio::test]
     async fn test_validate_quick_button_update_rejects_empty_prompt() {
         let db = fresh_db().await;
-        let res = validate_quick_button_update(&db, 1, &update_req(None, Some("  "))).await;
+        let res = validate_quick_button_update(&db, 1,1, &update_req(None, Some("  "))).await;
         assert!(res.is_err(), "空白话术应 BadRequest");
     }
 }

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::sleep;
 
-use crate::handlers::{AppError, AppState};
+use crate::handlers::{workspace_guard, AppError, AppState};
 use crate::models::ApiResponse;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -850,11 +850,21 @@ pub struct UpdateWorkspaceSettingsRequest {
 }
 
 /// 更新工作空间的设置
+///
+/// 若请求指定了默认响应 todo/loop，先校验其确实属于当前 workspace，防止通过设置
+/// 间接引用其他 workspace 的资源（与 smart_create 的 workspace 隔离保持一致）。
 pub async fn update_workspace_settings(
     State(state): State<AppState>,
     Path(workspace_id): Path<i64>,
     Json(req): Json<UpdateWorkspaceSettingsRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    if let Some(todo_id) = req.default_response_todo_id {
+        workspace_guard::verify_todo_belongs_to_ws(&state.db, todo_id, workspace_id).await?;
+    }
+    if let Some(loop_id) = req.default_response_loop_id {
+        workspace_guard::verify_loop_belongs_to_ws(&state.db, loop_id, workspace_id).await?;
+    }
+
     crate::db::workspace_setting::upsert_workspace_settings(
         &state.db,
         workspace_id,
@@ -938,15 +948,18 @@ pub async fn move_bot_to_workspace(
 // V1 路由：Bot 管理（非 workspace 作用域）
 // ============================================================================
 
-/// V1 变体：群白名单列表，bot_id 来自 Path 而非 Query 参数。
+/// V1 变体：群白名单列表，bot_id 来自 Query 参数。
 ///
-/// 与 `get_group_whitelist` 的区别仅在于 bot_id 的提取方式：v1 使用 Path 提取器
-/// 从 URL 路径中获取（如 `/api/v1/agent-bots/{bot_id}/feishu/group-whitelist`），
-/// 避免将 bot_id 作为 Query 参数传递。
+/// 与旧版保持一致：前端调用 `/api/v1/agent-bots/feishu/group-whitelist?bot_id=X`，
+/// 路由注册在 `/feishu/group-whitelist`（无 `{bot_id}` 路径段），因此用 Query 提取。
 pub async fn v1_get_group_whitelist(
     State(state): State<AppState>,
-    Path(bot_id): Path<i64>,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, AppError> {
+    let bot_id: i64 = params.get("bot_id")
+        .ok_or(AppError::BadRequest("bot_id required".into()))?
+        .parse()
+        .map_err(|_| AppError::BadRequest("invalid bot_id".into()))?;
     let list = state.db.get_group_whitelist(bot_id).await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -983,7 +996,7 @@ pub fn v1_bot_routes() -> Router<AppState> {
         .route("/feishu/poll-stream", get(feishu_poll_sse))
         // GET|PUT /feishu/push — 查询/更新推送配置
         .route("/feishu/push", get(get_feishu_push).put(update_feishu_push))
-        // GET|POST /feishu/group-whitelist — 群白名单列表/添加（v1 使用 Path 提取 bot_id）
+        // GET|POST /feishu/group-whitelist — 群白名单列表/添加（bot_id 来自 Query/body）
         .route("/feishu/group-whitelist", get(v1_get_group_whitelist).post(add_group_whitelist))
         // DELETE /feishu/group-whitelist/{id} — 删除群白名单条目
         .route("/feishu/group-whitelist/{id}", delete(delete_group_whitelist))

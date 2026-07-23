@@ -84,7 +84,7 @@ export async function batchUpdateTodosExecutor(
   executor: string,
 ): Promise<{ updated: number[]; failed: number[] }> {
   try {
-    const result = await unwrap(await api.put(`/api/workspaces/${workspaceId}/todos/batch-executor`, { ids, executor }));
+    const result = await unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/batch/executor`, { ids, executor }));
     const body = result as { updated_count: number; total: number };
     return { updated: ids.slice(0, body.updated_count), failed: ids.slice(body.updated_count) };
   } catch {
@@ -97,7 +97,7 @@ export async function batchPauseScheduler(
   workspaceId: number,
   ids: number[],
 ): Promise<{ updated_count: number; total: number }> {
-  return unwrap(await api.put(`/api/workspaces/${workspaceId}/todos/batch-scheduler`, { ids, scheduler_enabled: false }));
+  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/batch/scheduler`, { ids, scheduler_enabled: false }));
 }
 
 /** 批量恢复周期执行。将所选事项的 scheduler_enabled 设为 true，使用原有的 scheduler_config。 */
@@ -105,7 +105,7 @@ export async function batchResumeScheduler(
   workspaceId: number,
   ids: number[],
 ): Promise<{ updated_count: number; total: number }> {
-  return unwrap(await api.put(`/api/workspaces/${workspaceId}/todos/batch-scheduler`, { ids, scheduler_enabled: true }));
+  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/batch/scheduler`, { ids, scheduler_enabled: true }));
 }
 
 /** 批量移动事项到其他工作空间。workspaceId 为源空间（URL 路径段），workspace_id 为目标空间（body）。 */
@@ -114,7 +114,7 @@ export async function batchMoveTodosWorkspace(
   ids: number[],
   workspace_id: number,
 ): Promise<{ updated_count: number; total: number }> {
-  return unwrap(await api.put(`/api/workspaces/${workspaceId}/todos/batch-workspace`, { ids, workspace_id }));
+  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/batch/workspace`, { ids, workspace_id }));
 }
 
 /** 批量复制事项到其他工作空间。workspaceId 为源空间（URL 路径段），workspace_id 为目标空间（body）。 */
@@ -123,7 +123,7 @@ export async function batchCopyTodosWorkspace(
   ids: number[],
   workspace_id: number,
 ): Promise<{ updated_count: number; total: number }> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/batch-copy-workspace`, { ids, workspace_id }));
+  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/batch/copy-workspace`, { ids, workspace_id }));
 }
 
 // Tag APIs — 全局资源，不嵌套 workspace（tags 表无 workspace_id 列）
