@@ -259,6 +259,11 @@ pub fn v1_routes() -> Router<AppState> {
         .route("/api/v1/workspaces/{ws}/scheduler/todos", get(super::scheduler::get_scheduler_todos))
         .nest("/api/v1/workspaces/{ws}/loops", super::loop_::v1_routes())
         .nest("/api/v1/workspaces/{ws}/blackboard", super::blackboard::v1_routes())
+        // wiki 独立于 blackboard（设计文档 4.4 + 旧路由 + 前端均为 /workspaces/{ws}/wiki/*，
+        // 不能挂在 /blackboard 下，否则前端 /workspaces/{ws}/wiki/files 会 404）
+        .route("/api/v1/workspaces/{ws}/wiki/files", get(super::blackboard::list_wiki_files))
+        .route("/api/v1/workspaces/{ws}/wiki/files/{slug}", get(super::blackboard::get_wiki_file).delete(super::blackboard::delete_wiki_file))
+        .route("/api/v1/workspaces/{ws}/wiki/chat", post(super::blackboard::chat_with_wiki))
         .nest("/api/v1/agent-bots", super::agent_bot::v1_bot_routes())
         .nest("/api/v1/workspaces/{ws}", super::agent_bot::v1_workspace_routes())
         // tag 为全局资源（无 workspace_id 列），不嵌套 workspace，直接挂 /api/v1/tags

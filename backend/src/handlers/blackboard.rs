@@ -362,7 +362,4 @@ pub fn v1_routes() -> Router<AppState> {
     Router::new()
         .route("/", get(get_blackboard).patch(update_blackboard_config))
         .route("/config", get(get_blackboard_config))
-        .route("/wiki/files", get(list_wiki_files))
-        .route("/wiki/files/{slug}", get(get_wiki_file).delete(delete_wiki_file))
-        .route("/wiki/chat", post(chat_with_wiki))
 }
