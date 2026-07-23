@@ -500,7 +500,7 @@ pub fn all_executor_configs() -> Vec<ExecutorConfigDef> {
 /// 从 TOML 文本中删除指定 section（如 `[providers.ntd-profile]` 整个块）。
 /// 找到匹配的 section header 并连同其下属的所有非 section 行一起删除。
 fn remove_toml_section(content: &str, table: &str, key: &str) -> String {
-    let section_header = format!("[{},{}]", table, key);
+    let section_header = format!("[{}.{}]", table, key);
     let mut result = String::new();
     let mut in_target_section = false;
     for line in content.lines() {
@@ -632,5 +632,52 @@ mod tests {
             "应有 settings.json.bak-<timestamp>, 实际: {:?}", entries);
         // 原文件保留
         assert!(entries.iter().any(|n| n == "settings.json"));
+    }
+
+    #[test]
+    fn test_remove_toml_section_uses_dot_delimiter() {
+        // 回归测试：section 头部格式必须是 `[a.b]`，不是 `[a,b]`
+        let input = r#"
+[lsp]
+enabled = true
+
+[providers.ntd-profile]
+type = "openai"
+model = "old"
+
+[ui]
+theme = "dark"
+"#;
+        let cleaned = remove_toml_section(input, "providers", "ntd-profile");
+        // 旧 ntd-profile 段应被删除
+        assert!(!cleaned.contains("[providers.ntd-profile]"),
+            "ntd-profile 段应被删除: {}", cleaned);
+        assert!(!cleaned.contains("model = \"old\""),
+            "段内内容应被删除: {}", cleaned);
+        // 其他段应保留
+        assert!(cleaned.contains("[lsp]"), "lsp 段应保留");
+        assert!(cleaned.contains("[ui]"), "ui 段应保留");
+        assert!(cleaned.contains("theme = \"dark\""), "ui 段内容应保留");
+    }
+
+    #[test]
+    fn test_remove_toml_section_idempotent() {
+        // 第一次写入：file 包含旧段
+        let first = r#"
+[providers.ntd-profile]
+type = "openai"
+api_key = "old"
+"#;
+        let after_first = remove_toml_section(first, "providers", "ntd-profile");
+        // 应仅剩空内容
+        assert!(!after_first.contains("ntd-profile"));
+        // 第二次写入：再次调用不应产生问题
+        let second = r#"
+[providers.ntd-profile]
+type = "openai"
+api_key = "second"
+"#;
+        let after_second = remove_toml_section(second, "providers", "ntd-profile");
+        assert!(!after_second.contains("ntd-profile"));
     }
 }

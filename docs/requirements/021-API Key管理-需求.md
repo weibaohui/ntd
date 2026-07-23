@@ -103,7 +103,7 @@
 - [x] `DELETE /api/v1/providers/{name}` — 删除
 - [x] `POST /api/v1/providers/{name}/preview` — 预览（请求体：`executor_models: {exec: model}`）
 - [x] `POST /api/v1/providers/{name}/apply` — 应用（请求体：同上）
-- [x] `POST /api/v1/providers/export` — 导出所有 Provider 为 YAML 文本（Content-Disposition: attachment）
+- [x] `GET /api/v1/providers/export` — 导出所有 Provider 为 YAML 文本（Content-Disposition: attachment）
 - [x] `POST /api/v1/providers/import` — 导入（请求体：`{yaml, strategy}`；strategy = merge/replace）
 
 ## 5.5 后端：执行器配置定义

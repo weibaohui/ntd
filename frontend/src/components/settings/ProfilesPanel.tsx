@@ -205,6 +205,22 @@ export function ProfilesPanel() {
       message.warning('请选择 YAML 文件或粘贴内容');
       return;
     }
+    // replace 策略：强制二次确认（清空所有现有 provider，不可逆）
+    if (importStrategy === 'replace') {
+      Modal.confirm({
+        title: '确认替换？',
+        content: 'replace 策略会先清空所有现有 Provider，再导入新内容。此操作不可恢复。',
+        okText: '确认替换',
+        cancelText: '取消',
+        okButtonProps: { danger: true },
+        onOk: () => doImport(),
+      });
+    } else {
+      doImport();
+    }
+  }, [importText, importStrategy, load]);
+
+  const doImport = useCallback(async () => {
     setImporting(true);
     try {
       const r = await fetch(`${PROVIDERS_API}/import`, {
