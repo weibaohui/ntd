@@ -400,7 +400,15 @@ export interface UpdateWorkspaceSettingsParams {
 
 # 13. 非目标（重申）
 
-- 不修改 Loop 执行路径的 prompt 注入
 - 不做 prompt 模板变量替换 / 多版本管理 / 加密存储
 - 不引入新表，复用 workspace_settings 新增列
 - 不修改 `command_args_with_session` / `command_args` 函数签名
+
+## 13.1 Loop 路径覆盖说明（任务 10 增补）
+
+本期 PR 在任务 10 增补了 Loop 执行路径的 prompt 注入，与最初稿不同：
+
+- **Loop 正常 step 路径**：`loop_runner.rs::run_inner_from` 第 4d-bis 步注入 `inject_workspace_prompt`，workspace 共识拼到 `enhanced_prompt` 最外层
+- **Loop 异常 handler 路径**：`loop_runner.rs::trigger_abnormal_handler` 第 5 步同样注入 `inject_workspace_prompt`，异常处理 todo 也共享 workspace 共识（P2 修复）
+- 两条路径均使用 `loop_.workspace_id.filter(|&id| id != 0)` 作 workspace_id 参数，与同文件第 127/817 行的过滤逻辑保持一致
+- `workspace_id = None/0`、DB 查询失败、prompt 为空时 `inject_workspace_prompt` 静默回退原 prompt

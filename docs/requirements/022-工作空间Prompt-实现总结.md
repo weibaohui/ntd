@@ -122,9 +122,14 @@ workspace 共识 prompt       ← 本期新增，最外层
 
 按需求澄清第 5 项 A 选择，prompt 中允许明文写认证信息，由用户自己负责。前端加 ⚠️ 警示语缓解。后续若安全审计要求，可新增 `system_prompt_encrypted` 列做 AES 加密存储。
 
-### 5.2 Loop 执行路径未注入
+### 5.2 Loop 执行路径已覆盖（任务 10 增补）
 
-本期仅覆盖 todo 执行路径（`prepare_execution_state`）。Loop 执行路径（`loop_runner.rs` 等）有自己的 blackboard 上下文机制，未注入 workspace prompt。若未来 Loop 场景也需要共识 prompt，可在 Loop 执行入口同样调用 `inject_workspace_prompt`。
+本期 PR 在任务 10 增补了 Loop 执行路径的注入，与最初稿不同：
+
+- **正常 step 路径**：`loop_runner.rs::run_inner_from` 第 4d-bis 步调用 `inject_workspace_prompt`
+- **异常 handler 路径**：`loop_runner.rs::trigger_abnormal_handler` 第 5 步同样注入（P2 修复补齐）
+
+两条路径均使用 `loop_.workspace_id.filter(|&id| id != 0)` 作 workspace_id 参数，降级逻辑与 todo 路径一致（`workspace_id = None/0`、DB 查询失败、prompt 为空均静默回退）。
 
 ### 5.3 长度上限软限制
 

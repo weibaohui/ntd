@@ -1508,7 +1508,10 @@ impl LoopRunner {
         context_params.insert("total_tokens_used".to_string(), total_tokens_used.to_string());
 
         // 5. 构建增强 prompt，注入异常上下文
-        let enhanced_prompt = format!(
+        //    workspace 共识 prompt 拼到最外层（需求 022），与正常 step 路径保持一致：
+        //    workspace 共识 → 异常上下文 → handler todo 原 prompt。
+        //    loop_.workspace_id = 0/None 时 inject_workspace_prompt 静默回退原 prompt。
+        let enhanced_prompt_raw = format!(
             "{}\n\n## 异常上下文\n- Loop 名称: {}\n- Loop 执行 ID: {}\n- 异常状态: {}\n- 已执行步数: {}\n- 已消耗 Token: {}",
             handler_todo.prompt,
             loop_.name,
@@ -1517,6 +1520,12 @@ impl LoopRunner {
             total_executed_steps,
             total_tokens_used,
         );
+        let enhanced_prompt = crate::executor_service::pre_spawn::inject_workspace_prompt(
+            &self.ctx.db,
+            loop_.workspace_id.filter(|&id| id != 0),
+            &enhanced_prompt_raw,
+        )
+        .await;
 
         // 6. 创建异常处理步骤记录（step_id=-1 标识异常处理步骤）
         // 注意：使用专用方法绕过 FK 约束，因为 step_id=-1 在 loop_steps 表中不存在
