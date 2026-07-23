@@ -31,7 +31,6 @@ use crate::profiles::{
     UpdateProfileRequest, UpdateProviderRequest,
 };
 use crate::profiles::generators::{resolve_provider, ProfileGeneratorRegistry};
-
 // ============================================================================
 // 路由
 // ============================================================================
@@ -41,6 +40,7 @@ pub fn profile_routes() -> Router<AppState> {
         // Provider CRUD
         .route("/api/v1/providers", get(list_providers).post(create_provider))
         .route("/api/v1/providers/{name}", get(get_provider).put(update_provider).delete(delete_provider))
+        .route("/api/v1/providers/{name}/preview", post(preview_provider_to_executors))
         .route("/api/v1/providers/{name}/apply", post(apply_provider_to_executors))
         // Profile CRUD + apply
         .route("/api/v1/profiles", get(list_profiles).post(create_profile))
@@ -149,6 +149,40 @@ async fn delete_provider(
     }
     save(&cfg)?;
     Ok(ApiResponse::ok(()))
+}
+
+/// 预览 Provider 应用到指定执行器的效果（不写盘）。
+async fn preview_provider_to_executors(
+    State(_state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    ApiJson(req): ApiJson<ApplyProviderRequest>,
+) -> Result<ApiResponse<Vec<PreviewEntry>>, AppError> {
+    let cfg = load()?;
+    let provider = cfg.providers.get(&name).ok_or(AppError::NotFound)?;
+    let registry = ProfileGeneratorRegistry::new();
+    let mut entries = Vec::new();
+
+    for exec_name in &req.executors {
+        if let Some(generator) = registry.get(exec_name) {
+            let default_model = provider.models.first().map(|m| m.name.clone()).unwrap_or_else(|| "default".to_string());
+            let exec_ref = crate::profiles::ExecutorRef { provider: name.clone(), model: default_model };
+            let session_dir = crate::adapters::find_executor(exec_name).map(|def| def.session_dir).unwrap_or("");
+            match generator.preview(&exec_ref, provider, session_dir) {
+                Ok((path, content)) => entries.push(PreviewEntry { executor: exec_name.clone(), path, content }),
+                Err(e) => entries.push(PreviewEntry { executor: exec_name.clone(), path: String::new(), content: format!("Error: {}", e) }),
+            }
+        }
+    }
+
+    Ok(ApiResponse::ok(entries))
+}
+
+/// 预览条目。
+#[derive(Debug, Clone, Serialize)]
+struct PreviewEntry {
+    executor: String,
+    path: String,
+    content: String,
 }
 
 /// 应用 Provider 到指定执行器。

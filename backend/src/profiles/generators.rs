@@ -83,18 +83,22 @@ pub trait ProfileGenerator: Send + Sync {
 
     fn default_filename(&self) -> &str;
 
-    /// 根据 (exec_ref, provider) 生成配置文件。
+    /// 根据 (exec_ref, provider) 生成配置文件的预览内容（不写盘）。
+    /// 返回 (目标文件路径, 文件内容)。
+    fn preview(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(String, String), String>;
+
+    /// 根据 (exec_ref, provider) 生成配置文件并写入磁盘。
     fn generate(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(), String>;
 }
 
 /// 注册表。
 pub struct ProfileGeneratorRegistry {
-    generators: HashMap<String, Box<dyn ProfileGenerator>>,
+    generators: std::collections::HashMap<String, Box<dyn ProfileGenerator>>,
 }
 
 impl ProfileGeneratorRegistry {
     pub fn new() -> Self {
-        let mut reg = Self { generators: HashMap::new() };
+        let mut reg = Self { generators: std::collections::HashMap::new() };
         reg.register(Box::new(ClaudeCodeGenerator));
         reg.register(Box::new(PiGenerator));
         reg.register(Box::new(AtomCodeGenerator));
@@ -160,47 +164,49 @@ impl ProfileGenerator for ClaudeCodeGenerator {
     fn executor_name(&self) -> &str { "claudecode" }
     fn default_filename(&self) -> &str { "settings.json" }
 
-    fn generate(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(), String> {
+    fn preview(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(String, String), String> {
         let expanded_path = expand_config_path(self.config_path(session_dir));
+        let content = Self::render_json(exec_ref, provider)?;
+        Ok((expanded_path.to_string_lossy().to_string(), content))
+    }
+
+    fn generate(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(), String> {
+        let (path_str, content) = self.preview(exec_ref, provider, session_dir)?;
+        let expanded_path = std::path::PathBuf::from(&path_str);
         backup_existing_config(&expanded_path);
         ensure_parent_dir(&expanded_path)?;
+        std::fs::write(&expanded_path, &content).map_err(|e| format!("write: {}", e))?;
+        tracing::info!(path = %path_str, "Claude Code config generated");
+        Ok(())
+    }
+}
 
+impl ClaudeCodeGenerator {
+    fn render_json(exec_ref: &ExecutorRef, provider: &Provider) -> Result<String, String> {
         let mut root = serde_json::Map::new();
-
         if provider.protocol == Protocol::Anthropic {
-            // Anthropic 协议：写 env 变量块（Claude Code 原生支持的格式）
             let mut env_map = serde_json::Map::new();
             env_map.insert("ANTHROPIC_AUTH_TOKEN".to_string(), serde_json::Value::String(provider.api_key.clone()));
             env_map.insert("ANTHROPIC_BASE_URL".to_string(), serde_json::Value::String(provider.base_url.clone()));
             env_map.insert("ANTHROPIC_MODEL".to_string(), serde_json::Value::String(exec_ref.model.clone()));
             env_map.insert("API_TIMEOUT_MS".to_string(), serde_json::Value::String("3000000".to_string()));
             env_map.insert("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_string(), serde_json::Value::String("1".to_string()));
-
-            // 1M 上下文是模型级别的属性：检查当前选中的模型是否支持
             let model_supports_1m = provider.models.iter().any(|m| m.name == exec_ref.model && m.supports_1m_context);
             if model_supports_1m {
-                // 1M 上下文模型用 [1M] 后缀标记，让 Claude Code 知道扩展上下文能力
                 env_map.insert("ANTHROPIC_DEFAULT_SONNET_MODEL".to_string(), serde_json::Value::String(format!("{}[1M]", exec_ref.model)));
                 env_map.insert("ANTHROPIC_DEFAULT_FABLE_MODEL".to_string(), serde_json::Value::String(format!("{}[1M]", exec_ref.model)));
                 env_map.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(), serde_json::Value::String(exec_ref.model.clone()));
             }
-
             root.insert("env".to_string(), serde_json::Value::Object(env_map));
             root.insert("skipDangerousModePermissionPrompt".to_string(), serde_json::Value::Bool(true));
         } else {
-            // OpenAI 协议：写 OpenAI-compatible 顶层字段
             let mut cfg_map = serde_json::Map::new();
             cfg_map.insert("apiKey".to_string(), serde_json::Value::String(provider.api_key.clone()));
             cfg_map.insert("baseUrl".to_string(), serde_json::Value::String(provider.base_url.clone()));
             cfg_map.insert("model".to_string(), serde_json::Value::String(exec_ref.model.clone()));
             root.insert("provider".to_string(), serde_json::Value::Object(cfg_map));
         }
-
-        let json = serde_json::to_string_pretty(&root).map_err(|e| format!("serialize: {}", e))?;
-        std::fs::write(&expanded_path, &json).map_err(|e| format!("write: {}", e))?;
-
-        tracing::info!(path = %expanded_path.display(), provider = %provider.name, model = %exec_ref.model, "Claude Code config generated");
-        Ok(())
+        serde_json::to_string_pretty(&root).map_err(|e| format!("serialize: {}", e))
     }
 }
 
@@ -213,25 +219,33 @@ impl ProfileGenerator for ClaudeCodeGenerator {
 /// PI 使用 provider 级别的 API Key 配置，写入 flat YAML。
 pub struct PiGenerator;
 
-impl ProfileGenerator for PiGenerator {
-    fn executor_name(&self) -> &str { "pi" }
-    fn default_filename(&self) -> &str { "config.yaml" }
-
-    fn generate(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(), String> {
-        let expanded_path = expand_config_path(self.config_path(session_dir));
-        backup_existing_config(&expanded_path);
-        ensure_parent_dir(&expanded_path)?;
-
-        // PI 使用 flat key-value 的 YAML 配置
+impl PiGenerator {
+    fn render_yaml(exec_ref: &ExecutorRef, provider: &Provider) -> Result<String, String> {
         let mut config = std::collections::HashMap::new();
         config.insert("api_key".to_string(), provider.api_key.clone());
         config.insert("base_url".to_string(), provider.base_url.clone());
         config.insert("default_model".to_string(), exec_ref.model.clone());
+        serde_yaml::to_string(&config).map_err(|e| format!("serialize: {}", e))
+    }
+}
 
-        let yaml = serde_yaml::to_string(&config).map_err(|e| format!("serialize: {}", e))?;
-        std::fs::write(&expanded_path, &yaml).map_err(|e| format!("write: {}", e))?;
+impl ProfileGenerator for PiGenerator {
+    fn executor_name(&self) -> &str { "pi" }
+    fn default_filename(&self) -> &str { "config.yaml" }
 
-        tracing::info!(path = %expanded_path.display(), "PI config generated");
+    fn preview(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(String, String), String> {
+        let path = expand_config_path(self.config_path(session_dir));
+        let content = Self::render_yaml(exec_ref, provider)?;
+        Ok((path.to_string_lossy().to_string(), content))
+    }
+
+    fn generate(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(), String> {
+        let (path_str, content) = self.preview(exec_ref, provider, session_dir)?;
+        let expanded_path = std::path::PathBuf::from(&path_str);
+        backup_existing_config(&expanded_path);
+        ensure_parent_dir(&expanded_path)?;
+        std::fs::write(&expanded_path, &content).map_err(|e| format!("write: {}", e))?;
+        tracing::info!(path = %path_str, "PI config generated");
         Ok(())
     }
 }
@@ -245,40 +259,43 @@ impl ProfileGenerator for PiGenerator {
 /// 追加 provider 段到现有 config.toml，不覆写非凭据配置。
 pub struct AtomCodeGenerator;
 
-impl ProfileGenerator for AtomCodeGenerator {
-    fn executor_name(&self) -> &str { "atomcode" }
-    fn default_filename(&self) -> &str { "config.toml" }
-
-    fn generate(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(), String> {
-        let expanded_path = expand_config_path(self.config_path(session_dir));
-        if expanded_path.exists() {
-            backup_existing_config(&expanded_path);
-        }
-        ensure_parent_dir(&expanded_path)?;
-
-        // 生成 provider TOML 段，追加到现有文件之后
+impl AtomCodeGenerator {
+    fn render_toml(exec_ref: &ExecutorRef, provider: &Provider) -> String {
         let mut output = String::new();
-        output.push_str("\n# ntd profile provider — generated by `ntd profile apply`\n");
+        output.push_str("\n# ntd profile provider — generated by profile apply\n");
         output.push_str("# Do not edit manually; will be overwritten.\n\n");
-
         let section_name = "ntd-profile";
         output.push_str(&format!("[providers.{}]\n", section_name));
         output.push_str("type = \"openai\"\n");
         output.push_str(&format!("model = {:?}\n", exec_ref.model));
         output.push_str(&format!("base_url = {:?}\n", provider.base_url));
         output.push_str(&format!("api_key = {:?}\n", provider.api_key));
+        output
+    }
+}
 
-        // 追加到原有配置之后（不覆写）
+impl ProfileGenerator for AtomCodeGenerator {
+    fn executor_name(&self) -> &str { "atomcode" }
+    fn default_filename(&self) -> &str { "config.toml" }
+
+    fn preview(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(String, String), String> {
+        let path = expand_config_path(self.config_path(session_dir));
+        let content = Self::render_toml(exec_ref, provider);
+        Ok((path.to_string_lossy().to_string(), content))
+    }
+
+    fn generate(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(), String> {
+        let (path_str, content) = self.preview(exec_ref, provider, session_dir)?;
+        let expanded_path = std::path::PathBuf::from(&path_str);
+        if expanded_path.exists() {
+            backup_existing_config(&expanded_path);
+        }
+        ensure_parent_dir(&expanded_path)?;
+        // 追加到现有配置之后
         let existing = std::fs::read_to_string(&expanded_path).unwrap_or_default();
-        let final_content = if existing.trim().is_empty() {
-            output
-        } else {
-            format!("{}{}", existing.trim_end(), output)
-        };
-
+        let final_content = if existing.trim().is_empty() { content } else { format!("{}{}", existing.trim_end(), content) };
         std::fs::write(&expanded_path, &final_content).map_err(|e| format!("write: {}", e))?;
-
-        tracing::info!(path = %expanded_path.display(), "AtomCode config updated");
+        tracing::info!(path = %path_str, "AtomCode config updated");
         Ok(())
     }
 }
@@ -290,29 +307,43 @@ impl ProfileGenerator for AtomCodeGenerator {
 /// Kilo → `~/.kilo/config.json`
 pub struct KiloGenerator;
 
-impl ProfileGenerator for KiloGenerator {
-    fn executor_name(&self) -> &str { "kilo" }
-    fn default_filename(&self) -> &str { "config.json" }
-
-    fn generate(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(), String> {
-        let expanded_path = expand_config_path(self.config_path(session_dir));
-        backup_existing_config(&expanded_path);
-        ensure_parent_dir(&expanded_path)?;
-
+impl KiloGenerator {
+    fn render_json(exec_ref: &ExecutorRef, provider: &Provider) -> Result<String, String> {
         let mut map = serde_json::Map::new();
         map.insert("api_key".to_string(), serde_json::Value::String(provider.api_key.clone()));
         map.insert("base_url".to_string(), serde_json::Value::String(provider.base_url.clone()));
         map.insert("model".to_string(), serde_json::Value::String(exec_ref.model.clone()));
         map.insert("provider_type".to_string(), serde_json::Value::String(
-            if provider.protocol == Protocol::Anthropic { "anthropic".to_string() } else { "openai".to_string() }
+            if provider.protocol == Protocol::Anthropic { "anthropic" } else { "openai" }.to_string()
         ));
+        serde_json::to_string_pretty(&map).map_err(|e| format!("serialize: {}", e))
+    }
+}
 
-        let json = serde_json::to_string_pretty(&map).map_err(|e| format!("serialize: {}", e))?;
-        std::fs::write(&expanded_path, &json).map_err(|e| format!("write: {}", e))?;
+impl ProfileGenerator for KiloGenerator {
+    fn executor_name(&self) -> &str { "kilo" }
+    fn default_filename(&self) -> &str { "config.json" }
 
-        tracing::info!(path = %expanded_path.display(), "Kilo config generated");
+    fn preview(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(String, String), String> {
+        let path = expand_config_path(self.config_path(session_dir));
+        let content = Self::render_json(exec_ref, provider)?;
+        Ok((path.to_string_lossy().to_string(), content))
+    }
+
+    fn generate(&self, exec_ref: &ExecutorRef, provider: &Provider, session_dir: &str) -> Result<(), String> {
+        let (path_str, content) = self.preview(exec_ref, provider, session_dir)?;
+        let expanded_path = std::path::PathBuf::from(&path_str);
+        backup_existing_config(&expanded_path);
+        ensure_parent_dir(&expanded_path)?;
+        std::fs::write(&expanded_path, &content).map_err(|e| format!("write: {}", e))?;
+        tracing::info!(path = %path_str, "Kilo config generated");
         Ok(())
     }
+}
+
+/// 返回有生成器的执行器名称列表。
+pub fn supported_executors() -> Vec<&'static str> {
+    vec!["claudecode", "pi", "atomcode", "kilo"]
 }
 
 // ============================================================================
@@ -336,8 +367,6 @@ fn ensure_parent_dir(path: &std::path::Path) -> Result<(), String> {
     }
     Ok(())
 }
-
-use std::collections::HashMap;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark, clippy::match_same_arms, clippy::from_over_into, clippy::unwrap_or_default)]

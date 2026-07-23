@@ -1,14 +1,14 @@
-//! 供应商管理面板。
+//! API Key 管理面板。
 //!
-//! 每个 API Key 一张卡片，点击「应用」选择执行器，按执行器格式写入配置文件。
+//! 每个 API Key 一张卡片，点击「应用」选择执行器 → 预览内容 → 确认写入。
 
 import { useState, useEffect, useCallback } from 'react';
-import { Button, Card, Checkbox, Empty, Form, Input, List, message, Modal, Space, Spin, Tag, Typography, Flex, Alert, Divider, Row, Col } from 'antd';
-import { PlusOutlined, SwapOutlined, DeleteOutlined, EditOutlined, DatabaseOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
+import { Button, Card, Checkbox, Empty, Form, Input, message, Modal, Space, Spin, Steps, Tag, Typography, Flex, Alert, Row, Col, Tabs } from 'antd';
+import { PlusOutlined, SwapOutlined, DeleteOutlined, EditOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { useIsMobile } from '@/hooks/useIsMobile';
 
-const { Text, Paragraph, Title } = Typography;
+const { Text, Paragraph } = Typography;
 
 const PROVIDERS_API = '/api/v1/providers';
 
@@ -36,23 +36,6 @@ interface ApplyResult {
   errors: string[];
 }
 
-// 所有执行器列表
-const ALL_EXECUTORS = [
-  { value: 'claudecode', label: 'Claude Code' },
-  { value: 'pi', label: 'PI' },
-  { value: 'atomcode', label: 'AtomCode' },
-  { value: 'kilo', label: 'Kilo' },
-  { value: 'codebuddy', label: 'CodeBuddy' },
-  { value: 'opencode', label: 'Opencode' },
-  { value: 'kimi', label: 'Kimi' },
-  { value: 'mimo', label: 'MiMo' },
-  { value: 'zhanlu', label: 'Zhanlu' },
-  { value: 'hermes', label: 'Hermes' },
-  { value: 'codewhale', label: 'CodeWhale' },
-  { value: 'codex', label: 'Codex' },
-  { value: 'mobilecoder', label: 'MobileCoder' },
-];
-
 // ============================================================================
 // Component
 // ============================================================================
@@ -64,11 +47,17 @@ export function ProfilesPanel() {
   const [createVisible, setCreateVisible] = useState(false);
   const [editVisible, setEditVisible] = useState(false);
   const [editingName, setEditingName] = useState<string | null>(null);
+  // 应用两步弹窗状态
+  const APPLY_STEP_SELECT = 1;
+  const APPLY_STEP_PREVIEW = 2;
   const [applyVisible, setApplyVisible] = useState(false);
+  const [applyStep, setApplyStep] = useState(APPLY_STEP_SELECT);
   const [applyProvider, setApplyProvider] = useState<ProviderDetail | null>(null);
   const [selectedExecutors, setSelectedExecutors] = useState<string[]>([]);
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
+  const [previewEntries, setPreviewEntries] = useState<{ executor: string; path: string; content: string }[]>([]);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [modelList, setModelList] = useState<ProviderModel[]>([]);
   const [form] = Form.useForm();
 
@@ -174,8 +163,30 @@ export function ProfilesPanel() {
     setApplyProvider(p);
     setSelectedExecutors([]);
     setApplyResult(null);
+    setPreviewEntries([]);
+    setApplyStep(APPLY_STEP_SELECT);
     setApplyVisible(true);
   }, []);
+
+  // 下一步：获取预览
+  const goToPreview = useCallback(async () => {
+    if (!applyProvider || selectedExecutors.length === 0) return;
+    setPreviewLoading(true);
+    try {
+      const r = await fetch(`${PROVIDERS_API}/${encodeURIComponent(applyProvider.name)}/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ executors: selectedExecutors }),
+      });
+      const j = await r.json();
+      setPreviewEntries(j.data || []);
+      setApplyStep(APPLY_STEP_PREVIEW);
+    } catch (err: any) {
+      message.error('获取预览失败: ' + (err?.message || String(err)));
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [applyProvider, selectedExecutors]);
 
   // 执行应用
   const handleApply = useCallback(async () => {
@@ -337,41 +348,108 @@ export function ProfilesPanel() {
         editingName ? '编辑 API Key' : '新增 API Key'
       )}
 
-      {/* 应用弹窗 */}
+      {/* 应用弹窗 - 两步流程 */}
       <Modal title={`应用 ${applyProvider?.display_name || ''}`}
         open={applyVisible}
         onCancel={() => { setApplyVisible(false); setApplyResult(null); }}
-        footer={applyResult ? (
-          <Button type="primary" onClick={() => { setApplyVisible(false); setApplyResult(null); }}>确定</Button>
-        ) : (
-          <Space>
-            <Button onClick={() => { setApplyVisible(false); setApplyResult(null); }}>取消</Button>
-            <Button type="primary" loading={applying} disabled={selectedExecutors.length === 0}
-              onClick={handleApply}>应用</Button>
-          </Space>
-        )}
-        width={isMobile ? '100%' : 560}
+        footer={
+          applyResult ? (
+            // 步骤3：结果
+            <Button type="primary" onClick={() => { setApplyVisible(false); setApplyResult(null); }}>确定</Button>
+          ) : applyStep === APPLY_STEP_SELECT ? (
+            // 步骤1：选择执行器
+            <Space>
+              <Button onClick={() => { setApplyVisible(false); setApplyResult(null); }}>取消</Button>
+              <Button type="primary" loading={previewLoading} disabled={selectedExecutors.length === 0}
+                onClick={goToPreview}>下一步</Button>
+            </Space>
+          ) : (
+            // 步骤2：预览
+            <Space>
+              <Button onClick={() => { setApplyStep(APPLY_STEP_SELECT); setApplyResult(null); }}>返回</Button>
+              <Button type="primary" loading={applying} onClick={handleApply}>确认写入</Button>
+            </Space>
+          )
+        }
+        width={isMobile ? '100%' : 640}
         style={isMobile ? { top: 0, maxWidth: '100%', margin: 0 } : undefined}
       >
+        {/* 步骤条 */}
+        <Steps
+          current={applyStep === APPLY_STEP_SELECT ? 0 : applyResult ? 2 : 1}
+          size="small"
+          items={[
+            { title: '选择执行器' },
+            { title: '预览配置' },
+            { title: '完成' },
+          ]}
+          style={{ marginBottom: 20 }}
+        />
+
         {!applyResult ? (
-          <>
-            <Paragraph type="secondary">
-              选择要应用此 API Key 的执行器，系统将按各执行器的格式写入配置文件。
-            </Paragraph>
-            <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-              <Checkbox.Group value={selectedExecutors} onChange={setSelectedExecutors as any}
-                style={{ width: '100%' }}>
-                <Row>
-                  {ALL_EXECUTORS.map(exe => (
-                    <Col span={12} key={exe.value} style={{ marginBottom: 8 }}>
-                      <Checkbox value={exe.value}>{exe.label}</Checkbox>
-                    </Col>
-                  ))}
-                </Row>
-              </Checkbox.Group>
-            </div>
-          </>
+          applyStep === APPLY_STEP_SELECT ? (
+            <>
+              <Paragraph type="secondary">
+                选择要应用此 API Key 的执行器。支持的执行器：
+              </Paragraph>
+              <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+                <Checkbox.Group value={selectedExecutors} onChange={setSelectedExecutors as any}
+                  style={{ width: '100%' }}>
+                  <Row>
+                    {/** 只显示有生成器的 4 个执行器 */}
+                    {[
+                      { value: 'claudecode', label: 'Claude Code', path: '~/.claude/settings.json' },
+                      { value: 'pi', label: 'PI', path: '~/.pi/config.yaml' },
+                      { value: 'atomcode', label: 'AtomCode', path: '~/.atomcode/config.toml' },
+                      { value: 'kilo', label: 'Kilo', path: '~/.kilo/config.json' },
+                    ].map(exe => (
+                      <Col span={24} key={exe.value} style={{ marginBottom: 4 }}>
+                        <Checkbox value={exe.value}>
+                          <Text>{exe.label}</Text>
+                          <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>{exe.path}</Text>
+                        </Checkbox>
+                      </Col>
+                    ))}
+                  </Row>
+                </Checkbox.Group>
+              </div>
+            </>
+          ) : (
+            // 步骤2：预览 — 每个执行器一个 Tab
+            <>
+              <Paragraph type="secondary">
+                确认以下文件内容，然后点击「确认写入」。如有问题可返回重新选择。
+              </Paragraph>
+              <Tabs
+                size="small"
+                items={previewEntries.map(entry => ({
+                  key: entry.executor,
+                  label: entry.executor,
+                  children: (
+                    <div>
+                      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                        写入路径：{entry.path || '（未知）'}
+                      </Text>
+                      <pre style={{
+                        background: '#f5f5f5',
+                        padding: 12,
+                        borderRadius: 6,
+                        fontSize: 12,
+                        lineHeight: 1.5,
+                        overflow: 'auto',
+                        maxHeight: 400,
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                        margin: 0,
+                      }}>{entry.content}</pre>
+                    </div>
+                  ),
+                }))}
+              />
+            </>
+          )
         ) : (
+          // 步骤3：结果
           <div>
             <Alert type={applyResult.errors.length > 0 ? 'warning' : 'success'}
               message={`已应用到 ${applyResult.applied.length} 个执行器`}
@@ -382,7 +460,7 @@ export function ProfilesPanel() {
               <div style={{ marginBottom: 8 }}>
                 <Text strong>成功：</Text>
                 <div style={{ marginTop: 4 }}>
-                  {applyResult.applied.map(n => <Tag key={n} color="success">{n}</Tag>)}
+                  {applyResult.applied.map((n: string) => <Tag key={n} color="success">{n}</Tag>)}
                 </div>
               </div>
             )}
@@ -390,7 +468,7 @@ export function ProfilesPanel() {
               <div>
                 <Text strong type="danger">失败：</Text>
                 <ul style={{ marginTop: 4, paddingLeft: 20 }}>
-                  {applyResult.errors.map((e, i) => <li key={i}><Text type="danger">{e}</Text></li>)}
+                  {applyResult.errors.map((e: string, i: number) => <li key={i}><Text type="danger">{e}</Text></li>)}
                 </ul>
               </div>
             )}
