@@ -416,9 +416,10 @@ impl ProfileGenerator for AtomCodeGenerator {
             backup_existing_config(&expanded_path);
         }
         ensure_parent_dir(&expanded_path)?;
-        // 追加到现有配置之后
+        // 读取已有配置，删除旧的 `[providers.ntd-profile]` 段（保证可重复 apply 不重复写入）
         let existing = std::fs::read_to_string(&expanded_path).unwrap_or_default();
-        let final_content = if existing.trim().is_empty() { content } else { format!("{}{}", existing.trim_end(), content) };
+        let cleaned = remove_toml_section(&existing, "providers", "ntd-profile");
+        let final_content = if cleaned.trim().is_empty() { content } else { format!("{}{}", cleaned.trim_end(), content) };
         std::fs::write(&expanded_path, &final_content).map_err(|e| format!("write: {}", e))?;
         tracing::info!(path = %path_str, "AtomCode config updated");
         Ok(())
@@ -494,6 +495,36 @@ pub fn all_executor_configs() -> Vec<ExecutorConfigDef> {
             has_generator: registry.get(def.name).is_some(),
         }
     }).collect()
+}
+
+/// 从 TOML 文本中删除指定 section（如 `[providers.ntd-profile]` 整个块）。
+/// 找到匹配的 section header 并连同其下属的所有非 section 行一起删除。
+fn remove_toml_section(content: &str, table: &str, key: &str) -> String {
+    let section_header = format!("[{},{}]", table, key);
+    let mut result = String::new();
+    let mut in_target_section = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        // 检测是否是新的 section header
+        let is_section_header = trimmed.starts_with('[') && trimmed.ends_with(']');
+        if is_section_header {
+            if trimmed == section_header {
+                in_target_section = true;
+                continue; // 跳过目标 section 起始
+            } else if in_target_section {
+                // 遇到下一个 section，结束目标 section 的删除
+                in_target_section = false;
+                // 不带尾部空行的写入会丢失，本行单独处理
+            }
+        }
+        if in_target_section {
+            // 跳过目标 section 的所有行（包括空行）
+            continue;
+        }
+        result.push_str(line);
+        result.push('\n');
+    }
+    result
 }
 
 // ============================================================================
