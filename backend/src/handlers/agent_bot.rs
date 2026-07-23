@@ -828,6 +828,7 @@ pub async fn get_workspace_settings(
             "default_response_todo_id": s.default_response_todo_id,
             "default_response_loop_id": s.default_response_loop_id,
             "default_response_executor": s.default_response_executor,
+            "system_prompt": s.system_prompt,
             "updated_at": s.updated_at,
         }))),
         None => Ok(ApiResponse::ok(serde_json::json!({
@@ -836,6 +837,7 @@ pub async fn get_workspace_settings(
             "default_response_todo_id": null,
             "default_response_loop_id": null,
             "default_response_executor": null,
+            "system_prompt": null,
             "updated_at": null,
         }))),
     }
@@ -847,6 +849,9 @@ pub struct UpdateWorkspaceSettingsRequest {
     pub default_response_todo_id: Option<i64>,
     pub default_response_loop_id: Option<i64>,
     pub default_response_executor: Option<String>,
+    /// 工作空间级共识 prompt（需求 022）。
+    /// Some(含空串) 覆写；None 不动。用户清空时前端传空串。
+    pub system_prompt: Option<String>,
 }
 
 /// 更新工作空间的设置
@@ -872,6 +877,7 @@ pub async fn update_workspace_settings(
         req.default_response_todo_id,
         req.default_response_loop_id,
         req.default_response_executor,
+        req.system_prompt,
     )
     .await
     .map_err(|e| AppError::Internal(e.to_string()))?;

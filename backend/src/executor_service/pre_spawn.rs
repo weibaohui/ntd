@@ -532,6 +532,53 @@ pub(crate) fn substitute_message_placeholders(
     super::types::SubstitutedContext { message }
 }
 
+/// 注入工作空间级共识 prompt（需求 022）。
+///
+/// 读取 `workspace_settings.system_prompt`，若非空则拼接到 message 最前面，
+/// 用 Markdown 水平分割线 `\n---\n` 与原 message 分隔。这样 workspace 下的
+/// 所有 todo 执行时都共享同一份前置上下文（产物目录、认证信息、基本文件路径
+/// 等），达成 workspace 维度的共享、遵守、共识。
+///
+/// 降级策略（任一命中即静默返回原 message，不阻断 todo 执行）：
+/// - `workspace_id` 为 None
+/// - `get_workspace_settings` DB 查询失败
+/// - workspace_settings 行不存在
+/// - system_prompt 为 None 或空串
+///
+/// 安全：本函数不在日志中打印 prompt 内容（可能含认证信息），仅在 DB 查询
+/// 失败时 warn 一句不含 prompt 的消息。
+pub(crate) async fn inject_workspace_prompt(
+    db: &Database,
+    workspace_id: Option<i64>,
+    message: &str,
+) -> String {
+    // workspace_id 缺失（如独立环节执行）→ 跳过注入
+    let Some(wid) = workspace_id else {
+        return message.to_string();
+    };
+    // 读取失败静默回退，不让 workspace settings 故障阻断 todo 执行
+    let settings = match crate::db::workspace_setting::get_workspace_settings(db, wid).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(
+                "读取 workspace {} settings 失败，跳过 prompt 注入: {}",
+                wid,
+                e
+            );
+            return message.to_string();
+        }
+    };
+    // 行不存在 / system_prompt 为 None 或空串 → 原样返回
+    let Some(prompt) = settings.and_then(|s| s.system_prompt) else {
+        return message.to_string();
+    };
+    if prompt.is_empty() {
+        return message.to_string();
+    }
+    // 拼接：workspace 共识 + 分隔线 + 原任务
+    format!("{}\n---\n{}", prompt, message)
+}
+
 /// 注入专家上下文：如果 todo 关联了专家，将专家角色定义和技能信息拼接到 message 前面。
 ///
 /// 失败时静默返回原 message，不阻断执行——专家 prompt 注入是增强项，
@@ -1112,5 +1159,64 @@ mod tests {
             workspace_id: None,
             expert_manager,
         }
+    }
+
+    /// 注入函数：workspace_id 为 None 时原样返回（独立环节执行场景）。
+    #[tokio::test]
+    async fn test_inject_workspace_prompt_none_workspace_id() {
+        let db = Arc::new(Database::new(":memory:").await.unwrap());
+        let result = inject_workspace_prompt(&db, None, "做某事").await;
+        assert_eq!(result, "做某事");
+    }
+
+    /// 注入函数：workspace_settings 行不存在时原样返回。
+    #[tokio::test]
+    async fn test_inject_workspace_prompt_no_settings() {
+        let db = Arc::new(Database::new(":memory:").await.unwrap());
+        // workspace 999 未配置 settings
+        let result = inject_workspace_prompt(&db, Some(999), "做某事").await;
+        assert_eq!(result, "做某事");
+    }
+
+    /// 注入函数：system_prompt 为空串时跳过拼接。
+    #[tokio::test]
+    async fn test_inject_workspace_prompt_empty_prompt() {
+        let db = Arc::new(Database::new(":memory:").await.unwrap());
+        // 写入空 prompt
+        crate::db::workspace_setting::upsert_workspace_settings(
+            &db, 1, None, None, None, None, Some(String::new()),
+        )
+        .await
+        .unwrap();
+        let result = inject_workspace_prompt(&db, Some(1), "做某事").await;
+        assert_eq!(result, "做某事");
+    }
+
+    /// 注入函数：system_prompt 为 None 时跳过拼接。
+    #[tokio::test]
+    async fn test_inject_workspace_prompt_null_prompt() {
+        let db = Arc::new(Database::new(":memory:").await.unwrap());
+        // 创建时显式传 None → system_prompt 列为 NULL
+        crate::db::workspace_setting::upsert_workspace_settings(
+            &db, 1, Some("todo".to_string()), None, None, None, None,
+        )
+        .await
+        .unwrap();
+        let result = inject_workspace_prompt(&db, Some(1), "做某事").await;
+        assert_eq!(result, "做某事");
+    }
+
+    /// 注入函数：正常场景，workspace 共识 prompt 拼到 message 前。
+    #[tokio::test]
+    async fn test_inject_workspace_prompt_normal_inject() {
+        let db = Arc::new(Database::new(":memory:").await.unwrap());
+        let prompt = "## 工作空间共识\n- 产物目录：./target";
+        crate::db::workspace_setting::upsert_workspace_settings(
+            &db, 1, None, None, None, None, Some(prompt.to_string()),
+        )
+        .await
+        .unwrap();
+        let result = inject_workspace_prompt(&db, Some(1), "做某事").await;
+        assert_eq!(result, format!("{}\n---\n做某事", prompt));
     }
 }

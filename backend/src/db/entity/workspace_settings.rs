@@ -19,6 +19,11 @@ pub struct Model {
     pub default_response_loop_id: Option<i64>,
     /// 默认响应执行器类型（type='executor' 时使用）
     pub default_response_executor: Option<String>,
+    /// 工作空间级共识 prompt（需求 022）。
+    /// 该 workspace 下任意 todo 执行时，适配层把这段 prompt 拼到 message 最前面，
+    /// 内容包括产物目录、认证信息、基本文件路径等共识信息。
+    /// None 表示未配置（读取时跳过拼接）；空串 "" 表示显式清空。
+    pub system_prompt: Option<String>,
     pub updated_at: Option<String>,
 }
 

@@ -675,7 +675,7 @@ impl LoopRunner {
             let last_output_text = last_output.as_deref().unwrap_or("");
             let last_conclusion_text = last_conclusion.as_deref().unwrap_or("");
             let last_step_name_text = last_step_name.as_deref().unwrap_or("");
-            let enhanced_prompt = todo.prompt
+            let enhanced_prompt_raw = todo.prompt
                 .replace("{{blackboard}}", &blackboard_text)
                 .replace("{{last_output}}", last_output_text)
                 .replace("{{last_conclusion}}", last_conclusion_text)
@@ -683,6 +683,15 @@ impl LoopRunner {
                 .replace("{{message}}", last_output_text)
                 .replace("{{loop_execution_id}}", &loop_execution_id.to_string())
                 .replace("{{loop_name}}", &loop_.name);
+            // 4d-bis. 注入工作空间级共识 prompt（需求 022）。
+            // Loop 与 todo 走各自路径，此处补齐 Loop 注入使 workspace 共识全路径生效。
+            // loop_.workspace_id = 0/None 时 inject_workspace_prompt 静默回退原 prompt。
+            let enhanced_prompt = crate::executor_service::pre_spawn::inject_workspace_prompt(
+                &self.ctx.db,
+                loop_.workspace_id.filter(|&id| id != 0),
+                &enhanced_prompt_raw,
+            )
+            .await;
 
             // 4e. 创建 step execution 记录
             let step_exec = self

@@ -59,6 +59,9 @@ export interface WorkspaceSettings {
   default_response_todo_id: number | null;
   default_response_loop_id: number | null;
   default_response_executor: string | null;
+  // 工作空间级共识 prompt（需求 022）：该 workspace 下所有 todo 执行时作为前置 prompt 注入。
+  // null 表示未配置；空串 "" 表示显式清空。
+  system_prompt: string | null;
   updated_at: string | null;
 }
 
@@ -67,6 +70,9 @@ export interface UpdateWorkspaceSettingsParams {
   default_response_todo_id?: number;
   default_response_loop_id?: number;
   default_response_executor?: string;
+  // 工作空间级共识 prompt：传入则覆写，不传则保持原值。
+  // 用户清空时前端传空串 ""。
+  system_prompt?: string;
 }
 
 // ============================================================================

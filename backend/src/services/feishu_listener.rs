@@ -1513,6 +1513,8 @@ impl FeishuListener {
                 None,
                 None,
                 executor,
+                // 飞书 listener 仅切 default_response，不动 workspace 共识 prompt
+                None,
             )
             .await;
         }
@@ -1698,6 +1700,8 @@ impl FeishuListener {
             None,
             None,
             Some(executor_name.to_string()),
+            // 仅切默认执行器，不动 workspace 共识 prompt
+            None,
         )
         .await
         {

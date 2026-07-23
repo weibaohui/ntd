@@ -28,6 +28,7 @@ mod v66;
 mod v67;
 mod v68;
 mod v69;
+mod v70;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -93,6 +94,9 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v68::V68AddModelColumns),
         // V69 在 V68 之后：quick_buttons 增加 workspace_id，实现 workspace 隔离
         Box::new(v69::V69AddQuickButtonsWorkspaceId),
+        // V70 在 V69 之后：workspace_settings 增加 system_prompt 列，
+        // 支撑需求 022「工作空间 Prompt」——每个 workspace 一份共享前置 prompt
+        Box::new(v70::V70AddWorkspaceSettingsSystemPrompt),
     ]
 }
 
