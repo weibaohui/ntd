@@ -2831,6 +2831,42 @@ pub async fn export_selected_loops_v1(
     ))
 }
 
+/// POST /import-preview (nested) — 预览导入内容，强制 scoping 到 workspace。
+pub async fn import_preview_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    body: Bytes,
+) -> Result<impl IntoResponse, AppError> {
+    // v1 隔离：验证目标 workspace 存在。
+    state.db.get_project_directory_by_id(ws_id).await?
+        .ok_or_else(|| AppError::BadRequest(format!("工作空间 #{} 不存在", ws_id)))?;
+    // 委托原 handler；import_preview 只读不写，不接收 workspace_id 参数。
+    import_preview(State(state), body).await
+}
+
+/// POST /import (nested) — 导入 loop 到指定 workspace，强制 scoping。
+pub async fn import_loops_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Json(mut req): Json<ImportLoopRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    // v1 隔离：路径中的 workspace 覆盖请求体中的 workspace_id 字段，
+    // 确保导入的目标工作空间与 URL 一致，防止跨 workspace 导入。
+    req.workspace_id = Some(ws_id);
+    import_loops(State(state), Json(req)).await
+}
+
+/// POST /merge (nested) — 合并导入 loop 到指定 workspace，强制 scoping。
+pub async fn merge_loops_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Json(mut req): Json<MergeLoopRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    // v1 隔离：同 import，覆盖 workspace_id 确保与路径一致。
+    req.workspace_id = Some(ws_id);
+    merge_loops(State(state), Json(req)).await
+}
+
 /// GET /export — 导出当前 workspace 全部 loop。
 pub async fn export_all_loops_v1(
     State(state): State<AppState>,
@@ -2872,10 +2908,10 @@ pub fn v1_routes() -> axum::Router<AppState> {
         .route("/export", get(export_all_loops_v1))
         .route("/export-selected", post(export_selected_loops_v1))
         // merge/import 同样必须在 /{id} 之前。
-        // merge_loops / import_loops / import_preview handler 内部已按 workspace 隔离解析。
-        .route("/merge", post(merge_loops))
-        .route("/import-preview", post(import_preview))
-        .route("/import", post(import_loops))
+        // v1 包装器强制 workspace 隔离：覆盖请求体中的 workspace_id 为路径参数值。
+        .route("/merge", post(merge_loops_v1))
+        .route("/import-preview", post(import_preview_v1))
+        .route("/import", post(import_loops_v1))
         .route("/{id}", get(get_loop_v1).put(update_loop_v1).delete(delete_loop_v1))
         .route("/{id}/status", put(update_loop_status_v1))
         .route("/{id}/tags", put(update_loop_tags_v1))
