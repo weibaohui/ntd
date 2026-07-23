@@ -413,56 +413,74 @@ export function ProfilesPanel() {
               <Paragraph type="secondary">
                 选择要应用此 API Key 的执行器。支持的执行器：
               </Paragraph>
-              <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-                <Checkbox.Group value={selectedExecutors} onChange={setSelectedExecutors as any}
-                  style={{ width: '100%' }}>
-                  <Row>
-                    {/* 从后端 API 获取的执行器定义，带模型选择 */}
-                    {executorDefs.filter(d => d.has_generator).map(def => {
-                      const checked = selectedExecutors.includes(def.name);
-                      const models = applyProvider?.models || [];
-                      return (
-                        <Col span={24} key={def.name} style={{ marginBottom: 8, padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
-                          <Flex align="center" gap={8} wrap="wrap">
-                            <Checkbox checked={checked} onChange={e => toggleExecutor(def.name, e.target.checked)} style={{ minWidth: 120 }}>
-                              <Text strong>{def.display_name}</Text>
-                            </Checkbox>
-                            {checked && models.length > 0 && (
-                              <>
-                                <Text type="secondary" style={{ fontSize: 12 }}>模型：</Text>
-                                <select
-                                  value={executorModels[def.name] || models[0]?.name || ''}
-                                  onChange={e => setExecutorModels(prev => ({ ...prev, [def.name]: e.target.value }))}
-                                  style={{
-                                    padding: '2px 8px',
-                                    borderRadius: 4,
-                                    border: '1px solid #d9d9d9',
-                                    fontSize: 13,
-                                    background: 'transparent',
-                                    color: 'inherit',
-                                    maxWidth: 200,
-                                  }}
-                                >
-                                  {models.map(m => (
-                                    <option key={m.name} value={m.name}>
-                                      {m.display_name || m.name}{m.supports_1m_context ? ' [1M]' : ''}
-                                    </option>
-                                  ))}
-                                </select>
-                                <Text type="secondary" style={{ fontSize: 11 }}>（默认）</Text>
-                              </>
-                            )}
-                          </Flex>
-                          {checked && (
-                            <Text type="secondary" style={{ fontSize: 11, marginLeft: 28, display: 'block' }}>
-                              写入路径：{def.config_path}
-                            </Text>
+              <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+                {executorDefs.filter(d => d.has_generator).map(def => {
+                  const checked = selectedExecutors.includes(def.name);
+                  const models = applyProvider?.models || [];
+                  return (
+                    <div key={def.name}
+                      onClick={() => {
+                        if (!checked) {
+                          // 选中时：添加到 selectedExecutors + 设置默认模型
+                          setSelectedExecutors(prev => [...prev, def.name]);
+                          if (!executorModels[def.name] && models.length > 0) {
+                            setExecutorModels(prev => ({ ...prev, [def.name]: models[0].name }));
+                          }
+                        } else {
+                          setSelectedExecutors(prev => prev.filter(e => e !== def.name));
+                        }
+                      }}
+                      style={{
+                        padding: '10px 12px',
+                        marginBottom: 6,
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                        border: checked ? '1px solid #1677ff' : '1px solid #f0f0f0',
+                        background: checked ? 'rgba(22,119,255,0.04)' : 'transparent',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <input type="checkbox" checked={checked} readOnly
+                          style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#1677ff' }} />
+                        <Text strong style={{ fontSize: 14 }}>{def.display_name}</Text>
+                      </div>
+
+                      {checked && (
+                        <div style={{ marginTop: 8, marginLeft: 24 }}>
+                          {models.length > 0 && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                              <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>模型：</Text>
+                              <select
+                                value={executorModels[def.name] || models[0]?.name || ''}
+                                onChange={e => setExecutorModels(prev => ({ ...prev, [def.name]: e.target.value }))}
+                                onClick={e => e.stopPropagation()}
+                                style={{
+                                  padding: '3px 8px',
+                                  borderRadius: 4,
+                                  border: '1px solid #d9d9d9',
+                                  fontSize: 13,
+                                  background: 'inherit',
+                                  color: 'inherit',
+                                  maxWidth: 200,
+                                }}
+                              >
+                                {models.map(m => (
+                                  <option key={m.name} value={m.name}>
+                                    {m.display_name || m.name}{m.supports_1m_context ? ' [1M]' : ''}
+                                  </option>
+                                ))}
+                              </select>
+                              <Text type="secondary" style={{ fontSize: 11 }}>（默认）</Text>
+                            </div>
                           )}
-                        </Col>
-                      );
-                    })}
-                  </Row>
-                </Checkbox.Group>
+                          <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+                            写入路径：{def.config_path}
+                          </Text>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </>
           ) : (
