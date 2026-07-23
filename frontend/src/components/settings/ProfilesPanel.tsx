@@ -59,6 +59,7 @@ export function ProfilesPanel() {
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
   const [previewEntries, setPreviewEntries] = useState<{ executor: string; path: string; content: string }[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [executorDefs, setExecutorDefs] = useState<{ name: string; display_name: string; config_path: string; has_generator: boolean }[]>([]);
   const [modelList, setModelList] = useState<ProviderModel[]>([]);
   const { themeMode } = useTheme();
   const isDark = themeMode === 'dark';
@@ -67,10 +68,14 @@ export function ProfilesPanel() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(PROVIDERS_API);
-      const j = await r.json();
-      const list: any[] = j.data || [];
-      // 加载每个 provider 的详情（含 api_key）
+      const [provRes, execRes] = await Promise.all([
+        fetch(PROVIDERS_API),
+        fetch(`${PROVIDERS_API}/supported-executors`),
+      ]);
+      const provJson = await provRes.json();
+      const execJson = await execRes.json();
+      const list: any[] = provJson.data || [];
+      setExecutorDefs(execJson.data || []);
       const details = await Promise.all(
         list.map(async (s) => {
           try {
@@ -399,17 +404,12 @@ export function ProfilesPanel() {
                 <Checkbox.Group value={selectedExecutors} onChange={setSelectedExecutors as any}
                   style={{ width: '100%' }}>
                   <Row>
-                    {/** 只显示有生成器的 4 个执行器 */}
-                    {[
-                      { value: 'claudecode', label: 'Claude Code', path: '~/.claude/settings.json' },
-                      { value: 'pi', label: 'PI', path: '~/.pi/config.yaml' },
-                      { value: 'atomcode', label: 'AtomCode', path: '~/.atomcode/config.toml' },
-                      { value: 'kilo', label: 'Kilo', path: '~/.kilo/config.json' },
-                    ].map(exe => (
-                      <Col span={24} key={exe.value} style={{ marginBottom: 4 }}>
-                        <Checkbox value={exe.value}>
-                          <Text>{exe.label}</Text>
-                          <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>{exe.path}</Text>
+                    {/* 从后端 API 获取的执行器定义 */}
+                    {executorDefs.filter(d => d.has_generator).map(def => (
+                      <Col span={24} key={def.name} style={{ marginBottom: 4 }}>
+                        <Checkbox value={def.name}>
+                          <Text>{def.display_name}</Text>
+                          <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>{def.config_path}</Text>
                         </Checkbox>
                       </Col>
                     ))}

@@ -30,7 +30,7 @@ use crate::profiles::{
     ExecutorRef, ProfileSummary, ProfilesConfig, Provider, ProviderDetail, ProviderSummary,
     UpdateProfileRequest, UpdateProviderRequest,
 };
-use crate::profiles::generators::{resolve_provider, ProfileGeneratorRegistry};
+use crate::profiles::generators::{ExecutorConfigDef, resolve_provider, ProfileGeneratorRegistry, all_executor_configs};
 // ============================================================================
 // 路由
 // ============================================================================
@@ -39,6 +39,7 @@ pub fn profile_routes() -> Router<AppState> {
     Router::new()
         // Provider CRUD
         .route("/api/v1/providers", get(list_providers).post(create_provider))
+        .route("/api/v1/providers/supported-executors", get(list_executor_configs))
         .route("/api/v1/providers/{name}", get(get_provider).put(update_provider).delete(delete_provider))
         .route("/api/v1/providers/{name}/preview", post(preview_provider_to_executors))
         .route("/api/v1/providers/{name}/apply", post(apply_provider_to_executors))
@@ -97,6 +98,13 @@ async fn create_provider(
         protocol,
         model_count,
     }))
+}
+
+/// 获取所有执行器的配置定义（配置文件路径、是否有生成器）。
+async fn list_executor_configs(
+    State(_state): State<AppState>,
+) -> Result<ApiResponse<Vec<ExecutorConfigDef>>, AppError> {
+    Ok(ApiResponse::ok(all_executor_configs()))
 }
 
 async fn get_provider(

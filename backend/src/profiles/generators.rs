@@ -12,6 +12,7 @@
 //! | OpenAI | PI、AtomCode、Kilo 等 | 各执行器的 provider 配置 |
 
 use std::path::PathBuf;
+use serde::Serialize;
 
 use super::{ExecutorRef, ProfilesConfig, Protocol, Provider};
 
@@ -462,9 +463,34 @@ impl ProfileGenerator for KiloGenerator {
     }
 }
 
-/// 返回有生成器的执行器名称列表。
-pub fn supported_executors() -> Vec<&'static str> {
-    vec!["claudecode", "pi", "atomcode", "kilo"]
+/// 执行器配置定义：名称、显示名、配置文件路径、是否有生成器。
+#[derive(Debug, Clone, Serialize)]
+pub struct ExecutorConfigDef {
+    pub name: String,
+    pub display_name: String,
+    pub config_path: String,
+    pub has_generator: bool,
+}
+
+/// 返回所有执行器的配置定义列表（含不支持生成器的执行器）。
+/// 信息来自 adapters/mod.rs 的 EXECUTORS 静态数组 + ProfileGeneratorRegistry。
+pub fn all_executor_configs() -> Vec<ExecutorConfigDef> {
+    let registry = ProfileGeneratorRegistry::new();
+    crate::adapters::EXECUTORS.iter().map(|def| {
+        // 构建配置文件路径：session_dir + 生成器的 default_filename（如有）
+        let config_path = if let Some(gen) = registry.get(def.name) {
+            gen.config_path(def.session_dir).to_string_lossy().to_string()
+        } else {
+            // 无生成器时，从 session_dir 推测常见配置文件名
+            format!("{}/config.json", def.session_dir.trim_end_matches('/'))
+        };
+        ExecutorConfigDef {
+            name: def.name.to_string(),
+            display_name: def.display_name.to_string(),
+            config_path,
+            has_generator: registry.get(def.name).is_some(),
+        }
+    }).collect()
 }
 
 // ============================================================================
