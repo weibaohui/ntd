@@ -69,10 +69,14 @@ export const INSTALL_CLAUCODE_PROMPT = buildInstallPrompt({
   displayName: 'Claude Code',
   binaryName: 'claude',
   verifyArgs: '--version',
-  macos: '优先用 npm 全局安装：\`npm install -g @anthropic-ai/claude-code\`；若 npm 不可用，先通过 Homebrew 安装 Node.js（\`brew install node\`），或用官方安装脚本：\`curl -fsSL https://anthropic.com/claude-code/install | bash\`。',
-  linux: '优先用 npm 全局安装：\`npm install -g @anthropic-ai/claude-code\`；若未安装 npm，先执行 \`sudo apt-get update && sudo apt-get install -y nodejs npm\`。',
-  windows: '优先用 npm 全局安装：\`npm install -g @anthropic-ai/claude-code\`；若 npm 不可用，通过 winget 安装 Node.js（\`winget install OpenJS.NodeJS\`），再重试 npm 安装。',
-  notes: 'Claude Code 安装后首次运行可能需要登录 Anthropic 账号，请明确告知用户这一步需要手动完成。',
+  // 官方推荐：https://code.claude.com/docs/en/quickstart
+  // macOS/Linux: curl -fsSL https://claude.ai/install.sh | bash
+  // Windows: irm https://claude.ai/install.ps1 | iex
+  // 备选: npm install -g @anthropic-ai/claude-code
+  macos: '优先用官方原生安装脚本：\`curl -fsSL https://claude.ai/install.sh | bash\`（自动更新，推荐）；或 npm 全局安装：\`npm install -g @anthropic-ai/claude-code\`（需 Node.js 18+）。',
+  linux: '优先用官方安装脚本：\`curl -fsSL https://claude.ai/install.sh | bash\`（自动更新，推荐）；或 npm 全局安装：\`npm install -g @anthropic-ai/claude-code\`。',
+  windows: '优先用官方 PowerShell 安装：\`irm https://claude.ai/install.ps1 | iex\`（自动更新，推荐）；或 npm 全局安装：\`npm install -g @anthropic-ai/claude-code\`。',
+  notes: 'Claude Code 安装后首次运行需要登录 Anthropic 账号，请明确告知用户这一步需要手动完成。',
 });
 
 export const INSTALL_CODEBUDDY_ACTION_KEY = 'codebuddy';
@@ -80,9 +84,12 @@ export const INSTALL_CODEBUDDY_PROMPT = buildInstallPrompt({
   displayName: 'CodeBuddy',
   binaryName: 'codebuddy',
   verifyArgs: '--version',
-  macos: '优先用 npm 全局安装：\`npm install -g codebuddy\`；若官方提供 shell 脚本，也可按脚本方式安装；Homebrew 作为备选。',
-  linux: '优先用 npm 全局安装：\`npm install -g codebuddy\`；若官方提供 shell 脚本，也可按脚本方式安装。',
-  windows: '优先用 npm 全局安装：\`npm install -g codebuddy\`；或从 CodeBuddy 官网下载 Windows 安装包。',
+  // 官方文档：https://www.codebuddy.ai/docs/cli/installation
+  // npm: @tencent-ai/codebuddy-code
+  // 脚本: https://copilot.tencent.com/cli/install.sh
+  macos: '优先用官方安装脚本：\`curl -fsSL https://copilot.tencent.com/cli/install.sh | bash\`（不必预装 Node.js）；或 npm 全局安装：\`npm install -g @tencent-ai/codebuddy-code\`（需 Node.js 18.20+）。',
+  linux: '优先用官方安装脚本：\`curl -fsSL https://copilot.tencent.com/cli/install.sh | bash\`；或 npm 全局安装：\`npm install -g @tencent-ai/codebuddy-code\`。',
+  windows: '优先用官方 PowerShell 安装：\`irm https://copilot.tencent.com/cli/install.ps1 | iex\`；或 npm 全局安装：\`npm install -g @tencent-ai/codebuddy-code\`。',
 });
 
 export const INSTALL_OPENCODE_ACTION_KEY = 'opencode';
@@ -90,10 +97,14 @@ export const INSTALL_OPENCODE_PROMPT = buildInstallPrompt({
   displayName: 'Opencode',
   binaryName: 'opencode',
   verifyArgs: '--version',
-  macos: '优先用 npm 全局安装旧版：\`npm install -g opencode-ai\`；新版为 Go 二进制，可从官方 GitHub releases 下载对应 darwin 版本放到 PATH。',
-  linux: '优先用 npm 全局安装旧版：\`npm install -g opencode-ai\`；新版为 Go 二进制，可从官方 GitHub releases 下载对应 linux 版本放到 PATH。',
-  windows: '优先用 npm 全局安装旧版：\`npm install -g opencode-ai\`；新版为 Go 二进制，可从官方 GitHub releases 下载对应 windows 版本放到 PATH。',
-  notes: 'Opencode 新旧版本命令参数不同，安装后请确认 \`opencode --version\` 能正常输出。',
+  // 官方安装：https://opencode.ai/install
+  // npm: opencode-ai（旧版），新版为 Go 二进制
+  // brew: brew install opencode
+  // scoop: scoop install opencode
+  macos: '优先用官方安装脚本：\`curl -fsSL https://opencode.ai/install | bash\`（推荐）；或用 npm 全局安装：\`npm install -g opencode-ai\`（旧版 npm 包）；也可用 Homebrew：\`brew install opencode\`。',
+  linux: '优先用官方安装脚本：\`curl -fsSL https://opencode.ai/install | bash\`（推荐）；或用 npm 全局安装：\`npm install -g opencode-ai\`。',
+  windows: '优先用官方安装脚本：\`curl -fsSL https://opencode.ai/install | bash\`（WSL 下可用）；或 scoop：\`scoop install opencode\`；也可用 npm：\`npm install -g opencode-ai\`。',
+  notes: 'Opencode 有新旧两个版本，新版为 Go 自包含二进制，旧版为 npm 包（opencode-ai），命令参数不同，安装后请确认 \`opencode --version\` 能正常输出。',
 });
 
 export const INSTALL_ATOMCODE_ACTION_KEY = 'atomcode';
@@ -101,9 +112,13 @@ export const INSTALL_ATOMCODE_PROMPT = buildInstallPrompt({
   displayName: 'AtomCode',
   binaryName: 'atomcode',
   verifyArgs: '--version',
-  macos: '优先按 AtomCode 官网安装脚本执行；或尝试 \`npm install -g atomcode\`（如官方提供 npm 包）；Homebrew 作为备选。',
-  linux: '优先按 AtomCode 官网安装脚本执行；或尝试 \`npm install -g atomcode\`（如官方提供 npm 包）。',
-  windows: '优先按 AtomCode 官网安装脚本/PowerShell 执行；或从官网下载安装包。',
+  // 官网：https://atomcode.atomgit.com/
+  // 安装脚本：https://atomcode.atomgit.com/install.sh
+  // cargo: cargo install atomcode（需 Rust 1.80+）
+  // Homebrew cask: brew install --cask atomcode
+  macos: '优先用官方安装脚本：\`curl -fsSL https://atomcode.atomgit.com/install.sh | sh\`（推荐，单文件二进制，无需 Node.js）；或用 cargo 安装：\`cargo install atomcode\`（需 Rust 1.80+）。',
+  linux: '优先用官方安装脚本：\`curl -fsSL https://atomcode.atomgit.com/install.sh | sh\`（推荐，安装到 /usr/local/bin）；或直接下载二进制：\`sudo curl -L -o /usr/local/bin/atomcode https://release.atomgit.com/atomcode/latest/linux-x86_64/atomcode && sudo chmod +x /usr/local/bin/atomcode\`。',
+  windows: '优先用官方 PowerShell 安装：\`irm https://atomcode.atomgit.com/install.ps1 | iex\`；或从官网下载安装包。',
 });
 
 export const INSTALL_HERMES_ACTION_KEY = 'hermes';
@@ -111,9 +126,11 @@ export const INSTALL_HERMES_PROMPT = buildInstallPrompt({
   displayName: 'Hermes',
   binaryName: 'hermes',
   verifyArgs: '--version',
-  macos: '优先用 npm 全局安装：\`npm install -g @chatdev/hermes\`（或官方指定的包名）；若失败则按官网脚本安装；Homebrew 作为备选。',
-  linux: '优先用 npm 全局安装：\`npm install -g @chatdev/hermes\`（或官方指定的包名）；若失败则按官网脚本安装。',
-  windows: '优先用 npm 全局安装：\`npm install -g @chatdev/hermes\`（或官方指定的包名）；若失败则按官网脚本/PowerShell 安装。',
+  // 官方: https://hermes-agent.nousresearch.com
+  // npm 包名可能为 hermes-git 或其他；官方推荐 curl 安装
+  macos: '优先用官方安装脚本：\`curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash\`；或用 npm 全局安装：\`npm install -g hermes-git\`（Hermes Git CLI，需 Node.js 18+）。',
+  linux: '优先用官方安装脚本：\`curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash\`；或用 npm 全局安装：\`npm install -g hermes-git\`。',
+  windows: '优先用官方 PowerShell 安装脚本；或用 npm 全局安装：\`npm install -g hermes-git\`。',
 });
 
 export const INSTALL_KIMI_ACTION_KEY = 'kimi';
@@ -121,10 +138,27 @@ export const INSTALL_KIMI_PROMPT = buildInstallPrompt({
   displayName: 'Kimi',
   binaryName: 'kimi',
   verifyArgs: '--version',
-  macos: '优先执行官方安装脚本：\`curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash\`；或用 npm 全局安装：\`npm install -g @moonshot-ai/kimi-code\`；Homebrew 作为备选（\`brew install kimi-code\`）。',
+  // 官方: https://code.kimi.com
+  // 安装脚本: curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash
+  // npm: @moonshot-ai/kimi-code
+  macos: '优先执行官方安装脚本：\`curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash\`（推荐）；或用 npm 全局安装：\`npm install -g @moonshot-ai/kimi-code\`。',
   linux: '优先执行官方安装脚本：\`curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash\`；或用 npm 全局安装：\`npm install -g @moonshot-ai/kimi-code\`。',
   windows: '优先执行 PowerShell 安装脚本：\`irm https://code.kimi.com/kimi-code/install.ps1 | iex\`；或用 npm 全局安装：\`npm install -g @moonshot-ai/kimi-code\`。',
   notes: 'Kimi CLI 安装后通常需要配置 API Key，请明确告知用户在安装完成后按官方文档配置。',
+});
+
+export const INSTALL_CODEX_ACTION_KEY = 'codex';
+export const INSTALL_CODEX_PROMPT = buildInstallPrompt({
+  displayName: 'Codex',
+  binaryName: 'codex',
+  verifyArgs: '--version',
+  // 官方: https://github.com/openai/codex
+  // npm: @openai/codex
+  // brew cask: brew install --cask codex
+  macos: '优先用 npm 全局安装：\`npm install -g @openai/codex\`（官方推荐，需 Node.js 18+）；也可用 Homebrew cask：\`brew install --cask codex\`。',
+  linux: '优先用 npm 全局安装：\`npm install -g @openai/codex\`（需 Node.js 18+）。',
+  windows: '优先用 npm 全局安装：\`npm install -g @openai/codex\`（需 Node.js 18+）。',
+  notes: 'Codex CLI 安装后首次运行需要登录 OpenAI 账号（\`codex login\`），请明确告知用户这一步必须手动完成。',
 });
 
 export const INSTALL_MOBILECODER_ACTION_KEY = 'mobilecoder';
@@ -135,17 +169,6 @@ export const INSTALL_MOBILECODER_PROMPT = buildInstallPrompt({
   macos: '优先按 MobileCoder 官网安装脚本执行；或尝试 \`npm install -g mobilecoder-cli\`（如官方提供 npm 包）；Homebrew 作为备选。',
   linux: '优先按 MobileCoder 官网安装脚本执行；或尝试 \`npm install -g mobilecoder-cli\`（如官方提供 npm 包）。',
   windows: '优先按 MobileCoder 官网安装脚本/PowerShell 执行；或从官网下载安装包。',
-});
-
-export const INSTALL_CODEX_ACTION_KEY = 'codex';
-export const INSTALL_CODEX_PROMPT = buildInstallPrompt({
-  displayName: 'Codex',
-  binaryName: 'codex',
-  verifyArgs: '--version',
-  macos: '优先用 npm 全局安装：\`npm install -g @openai/codex\`；若 npm 不可用，先通过 Homebrew 安装 Node.js（\`brew install node\`），再重试 npm 安装。',
-  linux: '优先用 npm 全局安装：\`npm install -g @openai/codex\`；若未安装 npm，先安装 Node.js LTS。',
-  windows: '优先用 npm 全局安装：\`npm install -g @openai/codex\`；若 npm 不可用，通过 winget 安装 Node.js（\`winget install OpenJS.NodeJS\`），再重试 npm 安装。',
-  notes: 'Codex CLI 安装后首次运行需要登录 OpenAI 账号（\`codex login\`），请明确告知用户这一步必须手动完成。',
 });
 
 export const INSTALL_CODEWHALE_ACTION_KEY = 'codewhale';
@@ -193,9 +216,13 @@ export const INSTALL_KILO_PROMPT = buildInstallPrompt({
   displayName: 'Kilo',
   binaryName: 'kilo',
   verifyArgs: '--version',
-  macos: '优先用 npm 全局安装：\`npm install -g @kilocode/cli\`；或执行官方安装脚本：\`curl -fsSL https://kilo.ai/cli/install | bash\`；Homebrew 作为备选：\`brew install Kilo-Org/tap/kilo\`。',
+  // 官方: https://kilo.ai/cli
+  // npm: @kilocode/cli
+  // brew: Kilo-Org/tap/kilo
+  // curl: https://kilo.ai/cli/install | bash
+  macos: '优先用 npm 全局安装：\`npm install -g @kilocode/cli\`；或执行官方安装脚本：\`curl -fsSL https://kilo.ai/cli/install | bash\`。',
   linux: '优先用 npm 全局安装：\`npm install -g @kilocode/cli\`；或执行官方安装脚本：\`curl -fsSL https://kilo.ai/cli/install | bash\`；Arch Linux：\`paru -S kilo-bin\`。',
-  windows: '优先用 npm 全局安装：\`npm install -g @kilocode/cli\`；或从 kilo.ai 官网下载安装包。',
+  windows: '优先用 npm 全局安装：\`npm install -g @kilocode/cli\`；或从 https://kilo.ai/cli 下载安装包。',
 });
 
 /**
