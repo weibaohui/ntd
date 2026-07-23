@@ -1508,8 +1508,10 @@ impl LoopRunner {
         context_params.insert("total_tokens_used".to_string(), total_tokens_used.to_string());
 
         // 5. 构建增强 prompt，注入异常上下文
-        //    workspace 共识 prompt 拼到最外层（需求 022），与正常 step 路径保持一致：
-        //    workspace 共识 → 异常上下文 → handler todo 原 prompt。
+        //    workspace 共识 prompt 前置注入（需求 022），与正常 step 路径保持一致。
+        //    format! 拼 enhanced_prompt_raw 的实际顺序是「原 prompt → 异常上下文」，
+        //    inject_workspace_prompt 在最前面追加 workspace 共识，最终顺序：
+        //    workspace 共识 → handler todo 原 prompt → 异常上下文。
         //    loop_.workspace_id = 0/None 时 inject_workspace_prompt 静默回退原 prompt。
         let enhanced_prompt_raw = format!(
             "{}\n\n## 异常上下文\n- Loop 名称: {}\n- Loop 执行 ID: {}\n- 异常状态: {}\n- 已执行步数: {}\n- 已消耗 Token: {}",
