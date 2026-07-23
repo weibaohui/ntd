@@ -177,7 +177,7 @@ export function ProfilesPanel() {
   // 导出：调后端 export 接口，触发文件下载
   const handleExport = useCallback(async () => {
     try {
-      const r = await fetch(`${PROVIDERS_API}/export`, { method: 'POST' });
+      const r = await fetch(`${PROVIDERS_API}/export`, { method: 'GET' });
       if (!r.ok) {
         message.error('导出失败: HTTP ' + r.status);
         return;

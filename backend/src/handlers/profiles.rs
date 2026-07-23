@@ -44,7 +44,7 @@ pub fn profile_routes() -> Router<AppState> {
         .route("/api/v1/providers/{name}/preview", post(preview_provider_to_executors))
         .route("/api/v1/providers/{name}/apply", post(apply_provider_to_executors))
         // Provider 导入/导出
-        .route("/api/v1/providers/export", post(export_providers))
+        .route("/api/v1/providers/export", get(export_providers))
         .route("/api/v1/providers/import", post(import_providers))
         // Profile CRUD + apply
         .route("/api/v1/profiles", get(list_profiles).post(create_profile))
@@ -244,13 +244,9 @@ struct ApplyProviderRequest {
     executor_models: std::collections::HashMap<String, String>,
 }
 
-/// 导出 Provider 的请求体（现阶段只支持 yaml）。
-#[derive(Debug, Clone, Deserialize, Default)]
-struct ExportProvidersRequest {
-    /// 预留扩展字段。当前仅支持 yaml。
-    #[serde(default, rename = "format")]
-    _format: Option<String>,
-}
+/// 导出 Provider 的请求体（无 body，端点本身不需要请求参数，保留结构以备扩展）。
+/// 实际 export_providers handler 不使用 ApiJson 提取器，避免强制 Content-Type。
+struct _ExportProvidersRequest {}
 
 /// 导入 Provider 的请求体。
 #[derive(Debug, Clone, Deserialize)]
@@ -270,9 +266,10 @@ struct ImportProvidersResponse {
 }
 
 /// 导出 Provider 为 YAML 文本。
+/// 注意：此端点必须允许任意 Content-Type（含无 body 的 GET 请求）。
+/// 不使用 ApiJson 提取器，避免强制 application/json 校验。
 async fn export_providers(
     State(_state): State<AppState>,
-    ApiJson(_req): ApiJson<ExportProvidersRequest>,
 ) -> Result<axum::response::Response, AppError> {
     let cfg = load()?;
     let yaml = cfg.export_providers_to_yaml();
