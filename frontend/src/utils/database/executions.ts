@@ -66,7 +66,10 @@ export async function getRecentCompletedTodos(workspaceId: number, hours?: numbe
 
 /** GET /api/v1/stats/dashboard — 仪表盘聚合统计，全局视图，不随 workspace 变化。 */
 export async function getDashboardStats(hours?: number): Promise<import('@/types').DashboardStats> {
+  // 仅当调用方显式传入 hours 时才带上查询参数；
+  // undefined 表示使用后端默认时间窗（当前为 7 天），避免传空对象导致 URL 出现多余 `?`。
   const p = hours !== undefined ? { hours } : undefined;
+  // Dashboard 为全局视图，URL 中不再包含 workspaceId，确保切换工作区不会过滤统计。
   return unwrap(await api.get('/api/v1/stats/dashboard', { params: p }));
 }
 

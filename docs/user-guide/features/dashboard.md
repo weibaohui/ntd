@@ -174,10 +174,10 @@ ntd 的**全局运营视图**。数据聚合所有工作区，不随当前 works
 
 - 历史不够所选时间窗口
 - `usage_stats` 定时没跑（看后端日志）
-- 手动触发：`POST /api/usage-stats/refresh`
+- 手动触发：`POST /api/v1/usage-stats/refresh`
 
 ### 5.3 飞书统计没数据
 
 - 没绑飞书 Bot
 - 绑了但最近没消息
-- 调 `GET /api/feishu/message-stats?range=7d` 看原始数据
+- 调 `GET /api/v1/feishu/message-stats?hours=168` 看原始数据
