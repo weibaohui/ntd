@@ -13,29 +13,6 @@ export const api = axios.create({
   timeout: 15000,
 });
 
-// ─── v1 路径重写拦截器 ─────────────────────────────────────────
-//
-// 后端已完成 K8s 风格的 v1 路由迁移（ADR-7），所有业务端点统一挂在 /api/v1/ 下。
-// 为避免逐处手改约 144 个全局调用 + blackboard/wiki 嵌套路径，这里在请求拦截器中
-// 统一把 /api/ 前缀重写为 /api/v1/。
-//
-// 排除项：
-// - /api/events：WebSocket 升级端点，后端不版本化，保持原路径。
-// - /api/v1/...：已是 v1 路径（手动迁移的 workspace-scoped 调用），跳过避免双前缀。
-api.interceptors.request.use((config) => {
-  const url = config.url;
-  if (!url || typeof url !== 'string') return config;
-  // WebSocket 升级端点不走版本化，原样放行
-  if (url === '/api/events' || url.startsWith('/api/events?')) return config;
-  // 已是 v1 路径，不重复重写（workspace-scoped 调用手写的 /api/v1/workspaces/...）
-  if (url.startsWith('/api/v1/')) return config;
-  // /api/ → /api/v1/，覆盖全部全局资源 + 已 path-nested 的 blackboard/wiki
-  if (url.startsWith('/api/')) {
-    config.url = '/api/v1/' + url.slice('/api/'.length);
-  }
-  return config;
-});
-
 /** Retry config: max 3 retries on network errors (no response), not on 4xx/5xx */
 const MAX_RETRIES = 3;
 

@@ -29,7 +29,7 @@ export interface UpdateQuickButtonParams {
 
 /** 列出当前 workspace 下的全部快捷按钮（后端按创建时间升序返回） */
 export async function getQuickButtons(workspaceId: number): Promise<QuickButton[]> {
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/quick-buttons`));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/quick-buttons`));
 }
 
 /** 创建快捷按钮。重名由后端返回 400，调用方 catch 后提示即可 */
@@ -37,7 +37,7 @@ export async function createQuickButton(
   workspaceId: number,
   params: CreateQuickButtonParams,
 ): Promise<{ id: number }> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/quick-buttons`, params));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/quick-buttons`, params));
 }
 
 /** 更新快捷按钮（只传需要改的字段） */
@@ -46,10 +46,10 @@ export async function updateQuickButton(
   id: number,
   params: UpdateQuickButtonParams,
 ): Promise<void> {
-  await api.put(`/api/workspaces/${workspaceId}/quick-buttons/${id}`, params);
+  await api.put(`/api/v1/workspaces/${workspaceId}/quick-buttons/${id}`, params);
 }
 
 /** 删除快捷按钮 */
 export async function deleteQuickButton(workspaceId: number, id: number): Promise<void> {
-  await api.delete(`/api/workspaces/${workspaceId}/quick-buttons/${id}`);
+  await api.delete(`/api/v1/workspaces/${workspaceId}/quick-buttons/${id}`);
 }

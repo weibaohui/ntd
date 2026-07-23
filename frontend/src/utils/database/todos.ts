@@ -13,7 +13,7 @@ export async function getAllTodos(workspaceId: number, hours?: number): Promise<
   if (hours !== undefined) {
     params.hours = hours;
   }
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/todos`, { params }));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/todos`, { params }));
 }
 
 export async function createTodo(
@@ -35,7 +35,7 @@ export async function createTodo(
   if (expertName !== undefined) body.expert_name = expertName;
   // model：undefined=不传（创建时不指定，沿用执行器默认）；null/空串=显式清除。
   if (model !== undefined) body.model = model;
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos`, body));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/todos`, body));
 }
 
 export async function updateTodo(
@@ -66,15 +66,15 @@ export async function updateTodo(
   // model：undefined=不修改；null/空串=清除任务级模型（回退到执行器默认）。
   if (model !== undefined) body.model = model;
 
-  return unwrap(await api.put(`/api/workspaces/${workspaceId}/todos/${id}`, body));
+  return unwrap(await api.put(`/api/v1/workspaces/${workspaceId}/todos/${id}`, body));
 }
 
 export async function deleteTodo(workspaceId: number, id: number): Promise<void> {
-  await api.delete(`/api/workspaces/${workspaceId}/todos/${id}`);
+  await api.delete(`/api/v1/workspaces/${workspaceId}/todos/${id}`);
 }
 
 export async function updateTodoTags(workspaceId: number, todoId: number, tagIds: number[]): Promise<void> {
-  await api.put(`/api/workspaces/${workspaceId}/todos/${todoId}/tags`, { tag_ids: tagIds });
+  await api.put(`/api/v1/workspaces/${workspaceId}/todos/${todoId}/tags`, { tag_ids: tagIds });
 }
 
 /** 批量更新事项执行器。后端提供专用接口，单次 SQL 完成。 */
@@ -84,7 +84,7 @@ export async function batchUpdateTodosExecutor(
   executor: string,
 ): Promise<{ updated: number[]; failed: number[] }> {
   try {
-    const result = await unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/batch/executor`, { ids, executor }));
+    const result = await unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/todos/batch/executor`, { ids, executor }));
     const body = result as { updated_count: number; total: number };
     return { updated: ids.slice(0, body.updated_count), failed: ids.slice(body.updated_count) };
   } catch {
@@ -97,7 +97,7 @@ export async function batchPauseScheduler(
   workspaceId: number,
   ids: number[],
 ): Promise<{ updated_count: number; total: number }> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/batch/scheduler`, { ids, scheduler_enabled: false }));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/todos/batch/scheduler`, { ids, scheduler_enabled: false }));
 }
 
 /** 批量恢复周期执行。将所选事项的 scheduler_enabled 设为 true，使用原有的 scheduler_config。 */
@@ -105,7 +105,7 @@ export async function batchResumeScheduler(
   workspaceId: number,
   ids: number[],
 ): Promise<{ updated_count: number; total: number }> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/batch/scheduler`, { ids, scheduler_enabled: true }));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/todos/batch/scheduler`, { ids, scheduler_enabled: true }));
 }
 
 /** 批量移动事项到其他工作空间。workspaceId 为源空间（URL 路径段），workspace_id 为目标空间（body）。 */
@@ -114,7 +114,7 @@ export async function batchMoveTodosWorkspace(
   ids: number[],
   workspace_id: number,
 ): Promise<{ updated_count: number; total: number }> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/batch/workspace`, { ids, workspace_id }));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/todos/batch/workspace`, { ids, workspace_id }));
 }
 
 /** 批量复制事项到其他工作空间。workspaceId 为源空间（URL 路径段），workspace_id 为目标空间（body）。 */
@@ -123,36 +123,36 @@ export async function batchCopyTodosWorkspace(
   ids: number[],
   workspace_id: number,
 ): Promise<{ updated_count: number; total: number }> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/batch/copy-workspace`, { ids, workspace_id }));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/todos/batch/copy-workspace`, { ids, workspace_id }));
 }
 
 // Tag APIs — 全局资源，不嵌套 workspace（tags 表无 workspace_id 列）
 
 /** 单个 todo 详情（用于批量操作前取 title/prompt 等不可变字段）。 */
 export async function getTodo(workspaceId: number, id: number): Promise<Todo> {
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/todos/${id}`));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/todos/${id}`));
 }
 
 export async function getAllTags(): Promise<Tag[]> {
-  return unwrap(await api.get('/api/tags'));
+  return unwrap(await api.get('/api/v1/tags'));
 }
 
 export async function createTag(name: string, color: string): Promise<Tag> {
-  return unwrap(await api.post('/api/tags', { name, color }));
+  return unwrap(await api.post('/api/v1/tags', { name, color }));
 }
 
 export async function deleteTag(id: number): Promise<void> {
-  await api.delete(`/api/tags/${id}`);
+  await api.delete(`/api/v1/tags/${id}`);
 }
 
 // Todo Template APIs
 
 export async function getTodoTemplates(): Promise<TodoTemplate[]> {
-  return unwrap(await api.get('/api/todo-templates'));
+  return unwrap(await api.get('/api/v1/todo-templates'));
 }
 
 export async function createTodoTemplate(title: string, prompt: string | null, category: string, sort_order?: number): Promise<TodoTemplate> {
-  return unwrap(await api.post('/api/todo-templates', { title, prompt, category, sort_order }));
+  return unwrap(await api.post('/api/v1/todo-templates', { title, prompt, category, sort_order }));
 }
 
 export async function updateTodoTemplate(id: number, title?: string, prompt?: string | null, category?: string, sort_order?: number): Promise<TodoTemplate> {
@@ -161,37 +161,37 @@ export async function updateTodoTemplate(id: number, title?: string, prompt?: st
   if (prompt !== undefined) body.prompt = prompt;
   if (category !== undefined) body.category = category;
   if (sort_order !== undefined) body.sort_order = sort_order;
-  return unwrap(await api.put(`/api/todo-templates/${id}`, body));
+  return unwrap(await api.put(`/api/v1/todo-templates/${id}`, body));
 }
 
 export async function deleteTodoTemplate(id: number): Promise<void> {
-  await api.delete(`/api/todo-templates/${id}`);
+  await api.delete(`/api/v1/todo-templates/${id}`);
 }
 
 export async function copyTodoTemplate(id: number): Promise<TodoTemplate> {
-  return unwrap(await api.post(`/api/todo-templates/${id}/copy`, {}));
+  return unwrap(await api.post(`/api/v1/todo-templates/${id}/copy`, {}));
 }
 
 // Custom Template APIs (remote URL subscription)
 
 export async function getCustomTemplateStatus(): Promise<CustomTemplateStatus> {
-  return unwrap(await api.get('/api/custom-templates/status'));
+  return unwrap(await api.get('/api/v1/custom-templates/status'));
 }
 
 export async function subscribeCustomTemplate(url: string): Promise<CustomTemplateStatus> {
-  return unwrap(await api.post('/api/custom-templates/subscribe', { url }));
+  return unwrap(await api.post('/api/v1/custom-templates/subscribe', { url }));
 }
 
 export async function unsubscribeCustomTemplate(): Promise<void> {
-  await api.post('/api/custom-templates/unsubscribe', {});
+  await api.post('/api/v1/custom-templates/unsubscribe', {});
 }
 
 export async function syncCustomTemplate(): Promise<CustomTemplateStatus> {
-  return unwrap(await api.post('/api/custom-templates/sync', {}));
+  return unwrap(await api.post('/api/v1/custom-templates/sync', {}));
 }
 
 export async function updateCustomTemplateAutoSync(enabled: boolean, cron: string): Promise<void> {
-  await api.put('/api/custom-templates/auto-sync', { enabled, cron });
+  await api.put('/api/v1/custom-templates/auto-sync', { enabled, cron });
 }
 
 // Project Directory APIs
@@ -209,12 +209,12 @@ export interface ProjectDirectory {
 }
 
 export async function getProjectDirectories(): Promise<ProjectDirectory[]> {
-  return unwrap(await api.get('/api/project-directories'));
+  return unwrap(await api.get('/api/v1/project-directories'));
 }
 
 /** GET /api/v1/workspaces/{ws}/scheduler/todos:列出指定空间下启用 cron 调度的 todo(含下次触发时间)。 */
 export async function getSchedulerTodos(workspaceId: number): Promise<Todo[]> {
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/scheduler/todos`));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/scheduler/todos`));
 }
 
 // 创建项目目录：后端要求 name 必填，调用方需保证传入非空字符串。
@@ -226,7 +226,7 @@ export async function createProjectDirectory(
   path: string,
   name: string,
 ): Promise<ProjectDirectory> {
-  return unwrap(await api.post('/api/project-directories', { path, name }));
+  return unwrap(await api.post('/api/v1/project-directories', { path, name }));
 }
 
 // 更新项目目录。`name` 必填；worktree 开关可选（不传=保持现状）。
@@ -243,11 +243,11 @@ export async function updateProjectDirectory(
   if (options?.autoCleanup !== undefined) {
     body.auto_cleanup = options.autoCleanup;
   }
-  await api.put(`/api/project-directories/${id}`, body);
+  await api.put(`/api/v1/project-directories/${id}`, body);
 }
 
 export async function deleteProjectDirectory(id: number): Promise<void> {
-  await api.delete(`/api/project-directories/${id}`);
+  await api.delete(`/api/v1/project-directories/${id}`);
 }
 
 // Scheduler APIs — /{id}/scheduler 嵌套在 workspace todos 下
@@ -259,7 +259,7 @@ export async function updateScheduler(
   scheduler_config: string | null,
 ): Promise<TodoCenterItem> {
   // 后端返回 TodoCenterItem（含重新计算的 computed_bucket），符合设计文档要求
-  return unwrap(await api.put(`/api/workspaces/${workspaceId}/todos/${id}/scheduler`, { scheduler_enabled, scheduler_config }));
+  return unwrap(await api.put(`/api/v1/workspaces/${workspaceId}/todos/${id}/scheduler`, { scheduler_enabled, scheduler_config }));
 }
 
 // ─── 事项中心（Todo Center）API ─────────────────────────────
@@ -277,21 +277,21 @@ export async function getTodoCenter(
 ): Promise<TodoCenterItem[]> {
   const params: Record<string, string | number> = {};
   if (bucket !== undefined) params.bucket = bucket;
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/todos/center`, { params }));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/todos/center`, { params }));
 }
 
 /** 归档事项（仅隐藏，不删数据/不解 Loop 引用）。返回重新计算后的分类项。 */
 export async function archiveTodo(workspaceId: number, id: number): Promise<TodoCenterItem> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/${id}/archive`));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/todos/${id}/archive`));
 }
 
 /** 恢复事项（清空 archived_at，分类按真实关系重算）。 */
 export async function restoreTodo(workspaceId: number, id: number): Promise<TodoCenterItem> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/${id}/restore`));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/todos/${id}/restore`));
 }
 
 /** 开启/关闭事件驱动（webhook）。与 scheduler 端点对称的扁平具名路由。 */
 export async function updateTodoWebhook(workspaceId: number, id: number, webhook_enabled: boolean): Promise<TodoCenterItem> {
-  return unwrap(await api.put(`/api/workspaces/${workspaceId}/todos/${id}/webhook`, { webhook_enabled }));
+  return unwrap(await api.put(`/api/v1/workspaces/${workspaceId}/todos/${id}/webhook`, { webhook_enabled }));
 }
 
