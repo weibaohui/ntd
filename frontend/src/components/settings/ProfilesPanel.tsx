@@ -5,12 +5,12 @@
 //! - Profile：从供应商选模型，配置各执行器
 
 import { useState, useEffect, useCallback } from 'react';
-import { Button, Card, Empty, Form, Input, List, message, Modal, Space, Spin, Table, Tag, Tabs, Typography, Popconfirm, Select, Switch, Flex, Alert, Tooltip } from 'antd';
-import { PlusOutlined, KeyOutlined, SwapOutlined, DeleteOutlined, EditOutlined, DatabaseOutlined, ProfileOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { Button, Card, Empty, Form, Input, List, message, Modal, Space, Spin, Table, Tag, Tabs, Typography, Popconfirm, Select, Switch, Flex, Alert } from 'antd';
+import { PlusOutlined, SwapOutlined, DeleteOutlined, EditOutlined, DatabaseOutlined, ProfileOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { useIsMobile } from '@/hooks/useIsMobile';
 
-const { Text, Paragraph, Title } = Typography;
+const { Text, Paragraph } = Typography;
 
 // ============================================================================
 // API 路径
@@ -34,16 +34,6 @@ interface ProviderSummary {
 interface ProviderModel {
   name: string;
   display_name?: string;
-}
-
-interface ProviderDetail {
-  name: string;
-  display_name: string;
-  api_key: string;
-  base_url: string;
-  protocol: 'openai' | 'anthropic';
-  supports_1m_context: boolean;
-  models: ProviderModel[];
 }
 
 interface ExecutorRef {
@@ -75,17 +65,6 @@ async function fetchProviders(): Promise<ProviderSummary[]> {
   const r = await fetch(PROVIDERS_API);
   const j = await r.json();
   return j.data || [];
-}
-
-async function fetchProviderDetail(name: string): Promise<ProviderDetail | null> {
-  try {
-    // Get current profile to extract provider detail until we have GET /api/v1/providers/{name}
-    // Actually let's use the profiles endpoint to look up provider info
-    const r = await fetch(`${PROVIDERS_API}`);
-    const j = await r.json();
-    const providers: ProviderDetail[] = j.data || [];
-    return providers.find((p: any) => p.name === name) || null;
-  } catch { return null; }
 }
 
 async function createProvider(req: { name: string; display_name: string; api_key: string; base_url: string; protocol: string; supports_1m_context: boolean; models: ProviderModel[] }): Promise<void> {
@@ -401,8 +380,8 @@ function ProfileManager({ isMobile }: { isMobile: boolean }) {
       // Fetch model lists for each provider
       pvs.forEach(pv => {
         fetch(PROVIDERS_API).then(r => r.json()).then(j => {
-          const all: any[] = j.data || [];
-          const detail = all.find((d: any) => d.name === pv.name);
+          const providerList: any[] = j.data || [];
+          const detail = providerList.find((d: any) => d.name === pv.name);
           if (detail?.models) {
             setProviderOptions(prev => prev.map(po =>
               po.name === pv.name ? { ...po, models: detail.models.map((m: any) => m.name) } : po
