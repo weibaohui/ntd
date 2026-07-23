@@ -227,6 +227,10 @@ pub fn v1_routes() -> Router<AppState> {
         // POST /api/v1/actions/execute：执行 action 模板
         //（按 action_type+action_key 查找或创建 todo，然后用 prompt+params 执行）
         .route("/api/v1/actions/execute", post(execute_action))
+        // 版本查询/升级（全局，原 /api/version）
+        .route("/api/v1/version", get(super::version_handler))
+        .route("/api/v1/version/latest", get(super::version_latest_handler))
+        .route("/api/v1/version/upgrade", post(super::version_upgrade_handler))
         // ── 云端同步 /api/v1/cloud/... ──────────────────────────────
         .route("/api/v1/cloud/config", get(super::sync::cloud_get_config).post(super::sync::cloud_save_config))
         .route("/api/v1/cloud/sync/status", get(super::sync::cloud_sync_status))
