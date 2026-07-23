@@ -155,6 +155,17 @@ pub struct ProviderSummary {
     pub model_count: usize,
 }
 
+/// Provider 详情（含 api_key，用于编辑弹窗回填）。
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderDetail {
+    pub name: String,
+    pub display_name: String,
+    pub api_key: String,
+    pub base_url: String,
+    pub protocol: Protocol,
+    pub models: Vec<ProviderModel>,
+}
+
 /// 更新 Provider 的请求体。
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateProviderRequest {

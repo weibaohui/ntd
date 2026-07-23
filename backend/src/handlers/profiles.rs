@@ -5,6 +5,7 @@
 //! | 方法 | 路径 | 说明 |
 //! |------|------|------|
 //! | GET | `/api/v1/providers` | Provider 列表 |
+//! | GET | `/api/v1/providers/{name}` | Provider 详情（含 api_key） |
 //! | POST | `/api/v1/providers` | 创建 Provider |
 //! | PUT | `/api/v1/providers/{name}` | 更新 Provider |
 //! | DELETE | `/api/v1/providers/{name}` | 删除 Provider |
@@ -25,7 +26,7 @@ use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::ApiResponse;
 use crate::profiles::{
     ApplyProfileResult, CreateProfileRequest, CreateProviderRequest, ExecutorProfile,
-    ExecutorRef, ProfileSummary, ProfilesConfig, Provider, ProviderSummary,
+    ExecutorRef, ProfileSummary, ProfilesConfig, Provider, ProviderDetail, ProviderSummary,
     UpdateProfileRequest, UpdateProviderRequest,
 };
 use crate::profiles::generators::{resolve_provider, ProfileGeneratorRegistry};
@@ -38,7 +39,7 @@ pub fn profile_routes() -> Router<AppState> {
     Router::new()
         // Provider CRUD
         .route("/api/v1/providers", get(list_providers).post(create_provider))
-        .route("/api/v1/providers/{name}", put(update_provider).delete(delete_provider))
+        .route("/api/v1/providers/{name}", get(get_provider).put(update_provider).delete(delete_provider))
         // Profile CRUD + apply
         .route("/api/v1/profiles", get(list_profiles).post(create_profile))
         .route("/api/v1/profiles/current", get(get_current_profile))
@@ -93,6 +94,22 @@ async fn create_provider(
         base_url,
         protocol,
         model_count,
+    }))
+}
+
+async fn get_provider(
+    State(_state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> Result<ApiResponse<ProviderDetail>, AppError> {
+    let cfg = load()?;
+    let p = cfg.providers.get(&name).ok_or(AppError::NotFound)?;
+    Ok(ApiResponse::ok(ProviderDetail {
+        name: name.clone(),
+        display_name: p.name.clone(),
+        api_key: p.api_key.clone(),
+        base_url: p.base_url.clone(),
+        protocol: p.protocol,
+        models: p.models.clone(),
     }))
 }
 

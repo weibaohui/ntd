@@ -158,14 +158,23 @@ function ProviderManager({ isMobile }: { isMobile: boolean }) {
     form.resetFields();
     setModelList([]);
     try {
-      const r = await fetch(`${PROVIDERS_API}`);
+      const r = await fetch(`${PROVIDERS_API}/${encodeURIComponent(name)}`);
+      if (!r.ok) { message.error('获取供应商详情失败'); setModalVisible(true); return; }
       const j = await r.json();
-      const all: any[] = j.data || [];
-      // Get provider detail by re-fetching... For now use list data
-      // We need GET /api/v1/providers/{name} but not yet implemented
-      // Use a workaround: show detail in a separate view
-      message.info('Provider 详情编辑功能待完善');
-    } catch { /* ignore */ }
+      const detail = j.data;
+      if (detail) {
+        form.setFieldsValue({
+          name: detail.name,
+          display_name: detail.display_name,
+          api_key: detail.api_key,
+          base_url: detail.base_url,
+          protocol: detail.protocol,
+        });
+        setModelList(detail.models || []);
+      }
+    } catch (err: any) {
+      message.error('加载失败: ' + (err?.message || String(err)));
+    }
     setModalVisible(true);
   }, [form]);
 
