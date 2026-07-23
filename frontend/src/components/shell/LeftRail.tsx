@@ -84,8 +84,15 @@ export function LeftRail({
         { key: 'loops', label: '环路', icon: <RetweetOutlined />, ariaLabel: '环路' },
         { key: 'messages', label: '消息', icon: <MessageOutlined />, ariaLabel: '消息' },
         { key: 'blackboard', label: '黑板', icon: <TfiBlackboard />, ariaLabel: '黑板' },
-        { key: 'dashboard', label: '仪表盘', icon: <DashboardOutlined />, ariaLabel: '仪表盘' },
         { key: 'memorial', label: '看板', icon: <ReadOutlined />, ariaLabel: '看板' },
+      ] satisfies LeftRailItem[],
+    },
+    // 「全局视图」独立于「工作区」：
+    // Dashboard 数据为全库聚合，不随 workspace 切换变化，单独分组可避免用户误以为它受 workspace 过滤。
+    {
+      title: '全局视图',
+      items: [
+        { key: 'dashboard', label: '仪表盘', icon: <DashboardOutlined />, ariaLabel: '仪表盘' },
       ] satisfies LeftRailItem[],
     },
     // 「配置」区放在主「工作区」下方：

@@ -1,10 +1,10 @@
 # 仪表盘
 
-> **位置**：主界面左侧栏 → 「仪表盘」
+> **位置**：主界面左侧栏 → 「全局视图」→「仪表盘」
 > **前端**：`frontend/src/components/Dashboard.tsx` + `frontend/src/components/dashboard/*`
-> **后端**：`backend/src/handlers/mod.rs`（dashboard-stats）+ `usage_stats.rs`
+> **后端**：`backend/src/handlers/execution.rs` + `backend/src/db/dashboard.rs`
 
-ntd 的**全局运营视图**。一个屏幕看明白：
+ntd 的**全局运营视图**。数据聚合所有工作区，不随当前 workspace 切换变化。一个屏幕看明白：
 - 任务运行状况
 - 跑了多少 token
 - 飞书消息量
@@ -23,7 +23,7 @@ ntd 的**全局运营视图**。一个屏幕看明白：
 | 30 天 | 30d（默认 720h） |
 | 自定义 | RangePicker 自选起止 |
 
-切换时间范围会重拉 `dashboard-stats`、`feishu/message-stats`、`usage-stats` 三组数据。**没有自动 setInterval 刷新**——只有切换时间范围或主动点「刷新」才更新数据。
+切换时间范围会重拉 `stats/dashboard`、`feishu/message-stats`、`usage-stats` 三组数据。**没有自动 setInterval 刷新**——只有切换时间范围或主动点「刷新」才更新数据。
 
 ## 2. 卡片清单
 
@@ -158,10 +158,10 @@ ntd 的**全局运营视图**。一个屏幕看明白：
 
 | Method | Path |
 |--------|------|
-| GET | `/api/dashboard-stats?hours=<n>` |
-| GET | `/api/usage-stats?since=&until=` |
-| POST | `/api/usage-stats/refresh` |
-| GET | `/api/feishu/message-stats?hours=<n>` |
+| GET | `/api/v1/stats/dashboard?hours=<n>` |
+| GET | `/api/v1/usage-stats?since=&until=` |
+| POST | `/api/v1/usage-stats/refresh` |
+| GET | `/api/v1/feishu/message-stats?hours=<n>` |
 
 ## 5. 故障排查
 

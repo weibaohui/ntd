@@ -64,10 +64,10 @@ export async function getRecentCompletedTodos(workspaceId: number, hours?: numbe
   return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/todos/recent-completed`, { params: Object.keys(p).length > 0 ? p : undefined }));
 }
 
-/** GET /api/v1/workspaces/{ws}/stats/dashboard — 仪表盘聚合统计，workspace 隔离。 */
-export async function getDashboardStats(workspaceId: number, hours?: number): Promise<import('@/types').DashboardStats> {
+/** GET /api/v1/stats/dashboard — 仪表盘聚合统计，全局视图，不随 workspace 变化。 */
+export async function getDashboardStats(hours?: number): Promise<import('@/types').DashboardStats> {
   const p = hours !== undefined ? { hours } : undefined;
-  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/stats/dashboard`, { params: p }));
+  return unwrap(await api.get('/api/v1/stats/dashboard', { params: p }));
 }
 
 export async function stopExecution(workspaceId: number, recordId: number): Promise<void> {
