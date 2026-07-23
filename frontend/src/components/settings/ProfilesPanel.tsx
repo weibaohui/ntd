@@ -409,7 +409,16 @@ export function ProfilesPanel() {
                   extra={
                     <Space size={4}>
                       <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(p.name)} />
-                      <Button type="link" size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(p.name)} />
+                      <Popconfirm
+                        title="确认删除？"
+                        description={`将删除 API Key "${p.display_name}"，此操作不可恢复。`}
+                        okText="删除"
+                        cancelText="取消"
+                        okButtonProps={{ danger: true }}
+                        onConfirm={() => handleDelete(p.name)}
+                      >
+                        <Button type="link" size="small" danger icon={<DeleteOutlined />} />
+                      </Popconfirm>
                     </Space>
                   }
                   style={{ borderRadius: 8, height: '100%' }}
