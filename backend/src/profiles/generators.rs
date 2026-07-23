@@ -20,40 +20,43 @@ use super::{ExecutorRef, ProfilesConfig, Protocol, Provider};
 // 备份 helper
 // ============================================================================
 
+/// 备份原始配置文件：在同目录创建 `{原文件名}.bak-{时间戳}`。
+/// 保留最近 5 份备份，超过的自动清理最旧的。
 fn backup_existing_config(config_path: &std::path::Path) {
     if !config_path.exists() {
         return;
     }
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    let backup_dir = home.join(".ntd").join("profile_backups");
-    if let Err(e) = std::fs::create_dir_all(&backup_dir) {
-        tracing::warn!(error = %e, path = %backup_dir.display(), "failed to create backup directory");
-        return;
-    }
-
-    let file_stem = config_path.file_stem().unwrap_or_default().to_string_lossy();
-    let ext = config_path.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-    let backup_name = format!("{}_{}{}", file_stem, timestamp, ext);
-    let backup_path = backup_dir.join(&backup_name);
+    let backup_path = config_path.with_extension(format!(
+        "{}.bak-{}",
+        config_path.extension().map(|e| e.to_string_lossy()).unwrap_or_default(),
+        timestamp
+    ));
 
     if let Err(e) = std::fs::copy(config_path, &backup_path) {
         tracing::warn!(error = %e, source = %config_path.display(), target = %backup_path.display(), "failed to backup");
     }
 
-    cleanup_old_backups(&backup_dir, &file_stem, 10);
-}
-
-fn cleanup_old_backups(dir: &std::path::Path, prefix: &str, keep: usize) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    let mut backups: Vec<_> = entries
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with(prefix) && e.path().is_file())
-        .collect();
-    backups.sort_by_key(|e| e.metadata().ok().and_then(|m| m.modified().ok()));
-    if backups.len() > keep {
-        for entry in backups.iter().take(backups.len() - keep) {
-            let _ = std::fs::remove_file(entry.path());
+    // 清理同一目录下同模式的旧备份，保留最近 5 份
+    if let Some(dir) = config_path.parent() {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let mut backups: Vec<_> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let name_os = e.file_name();
+                let name = name_os.to_string_lossy();
+                let file_name_os = config_path.file_name().unwrap_or_default();
+                let file_name = file_name_os.to_string_lossy();
+                name.starts_with(file_name.as_ref())
+                    && name.contains(".bak-")
+                    && e.path().is_file()
+            })
+            .collect();
+        backups.sort_by_key(|e| e.metadata().ok().and_then(|m| m.modified().ok()));
+        if backups.len() > 5 {
+            for entry in backups.iter().take(backups.len() - 5) {
+                let _ = std::fs::remove_file(entry.path());
+            }
         }
     }
 }
@@ -546,7 +549,7 @@ mod tests {
     fn test_pi_generator() {
         let gen = PiGenerator;
         assert_eq!(gen.executor_name(), "pi");
-        assert_eq!(gen.default_filename(), "config.yaml");
+        assert_eq!(gen.default_filename(), "models.json");
     }
 
     #[test]
@@ -584,18 +587,19 @@ mod tests {
     }
 
     #[test]
-    fn test_cleanup_old_backups() {
+    fn test_backup_creates_bak_file() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let dir = tmp.path();
-        for i in 0..15 {
-            let f = dir.join(format!("settings_20260722_{:02}0000.bak", i));
-            std::fs::write(&f, "bak").unwrap();
-        }
-        cleanup_old_backups(dir, "settings", 10);
-        let remaining: Vec<_> = std::fs::read_dir(dir).unwrap()
+        let config_path = tmp.path().join("settings.json");
+        std::fs::write(&config_path, "original content").unwrap();
+        backup_existing_config(&config_path);
+        // 确认备份文件存在（匹配 `settings.json.bak-*`）
+        let entries: Vec<_> = std::fs::read_dir(tmp.path()).unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().starts_with("settings"))
+            .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
-        assert_eq!(remaining.len(), 10);
+        assert!(entries.iter().any(|n| n.starts_with("settings.json.bak-")),
+            "应有 settings.json.bak-<timestamp>, 实际: {:?}", entries);
+        // 原文件保留
+        assert!(entries.iter().any(|n| n == "settings.json"));
     }
 }
