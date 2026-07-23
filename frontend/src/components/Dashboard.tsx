@@ -75,7 +75,7 @@ export function Dashboard() {
   const loadStats = async (hours?: number) => {
     try {
       setLoading(true);
-      // Dashboard 为全局视图，调用全局 stats 接口，不再传入 workspaceId
+      // Dashboard 为概览，调用全局 stats 接口，不再传入 workspaceId
       const data = await db.getDashboardStats(hours);
       setStats(data);
     } catch {

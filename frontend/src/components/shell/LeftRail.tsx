@@ -87,10 +87,10 @@ export function LeftRail({
         { key: 'memorial', label: '看板', icon: <ReadOutlined />, ariaLabel: '看板' },
       ] satisfies LeftRailItem[],
     },
-    // 「全局视图」独立于「工作区」：
+    // 「概览」独立于「工作区」：
     // Dashboard 数据为全库聚合，不随 workspace 切换变化，单独分组可避免用户误以为它受 workspace 过滤。
     {
-      title: '全局视图',
+      title: '概览',
       items: [
         { key: 'dashboard', label: '仪表盘', icon: <DashboardOutlined />, ariaLabel: '仪表盘' },
       ] satisfies LeftRailItem[],
