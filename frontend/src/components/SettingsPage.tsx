@@ -157,7 +157,7 @@ export function SettingsPage() {
     },
     {
       key: 'profiles',
-      label: <span><KeyOutlined style={{ marginRight: 6 }} />供应商 & Profile</span>,
+      label: <span><KeyOutlined style={{ marginRight: 6 }} />API Key</span>,
       children: <ProfilesPanel />,
     },
     {

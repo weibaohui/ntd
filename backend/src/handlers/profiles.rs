@@ -21,6 +21,7 @@ use axum::{
     extract::State,
     routing::{get, post, put},
 };
+use serde::{Deserialize, Serialize};
 
 use crate::handlers::{ApiJson, AppError, AppState};
 use crate::models::ApiResponse;
@@ -40,6 +41,7 @@ pub fn profile_routes() -> Router<AppState> {
         // Provider CRUD
         .route("/api/v1/providers", get(list_providers).post(create_provider))
         .route("/api/v1/providers/{name}", get(get_provider).put(update_provider).delete(delete_provider))
+        .route("/api/v1/providers/{name}/apply", post(apply_provider_to_executors))
         // Profile CRUD + apply
         .route("/api/v1/profiles", get(list_profiles).post(create_profile))
         .route("/api/v1/profiles/current", get(get_current_profile))
@@ -147,6 +149,54 @@ async fn delete_provider(
     }
     save(&cfg)?;
     Ok(ApiResponse::ok(()))
+}
+
+/// 应用 Provider 到指定执行器。
+async fn apply_provider_to_executors(
+    State(_state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    ApiJson(req): ApiJson<ApplyProviderRequest>,
+) -> Result<ApiResponse<ApplyProviderResult>, AppError> {
+    let cfg = load()?;
+    let provider = cfg.providers.get(&name).ok_or(AppError::NotFound)?;
+    let registry = crate::profiles::generators::ProfileGeneratorRegistry::new();
+    let mut applied = Vec::new();
+    let mut errors = Vec::new();
+
+    for exec_name in &req.executors {
+        if let Some(generator) = registry.get(exec_name) {
+            // 用第一个模型作为默认模型
+            let default_model = provider.models.first().map(|m| m.name.clone()).unwrap_or_else(|| "default".to_string());
+            let exec_ref = crate::profiles::ExecutorRef {
+                provider: name.clone(),
+                model: default_model,
+            };
+            let session_dir = crate::adapters::find_executor(exec_name)
+                .map(|def| def.session_dir)
+                .unwrap_or("");
+            match generator.generate(&exec_ref, provider, session_dir) {
+                Ok(()) => applied.push(exec_name.clone()),
+                Err(e) => errors.push(format!("{}: {}", exec_name, e)),
+            }
+        } else {
+            errors.push(format!("{}: no config generator available", exec_name));
+        }
+    }
+
+    Ok(ApiResponse::ok(ApplyProviderResult { applied, errors }))
+}
+
+/// 应用 Provider 到指定执行器的响应。
+#[derive(Debug, Clone, Serialize)]
+struct ApplyProviderResult {
+    applied: Vec<String>,
+    errors: Vec<String>,
+}
+
+/// 应用 Provider 到执行器的请求体。
+#[derive(Debug, Clone, Deserialize)]
+struct ApplyProviderRequest {
+    executors: Vec<String>,
 }
 
 // ============================================================================
