@@ -43,6 +43,9 @@ pub fn profile_routes() -> Router<AppState> {
         .route("/api/v1/providers/{name}", get(get_provider).put(update_provider).delete(delete_provider))
         .route("/api/v1/providers/{name}/preview", post(preview_provider_to_executors))
         .route("/api/v1/providers/{name}/apply", post(apply_provider_to_executors))
+        // Provider 导入/导出
+        .route("/api/v1/providers/export", post(export_providers))
+        .route("/api/v1/providers/import", post(import_providers))
         // Profile CRUD + apply
         .route("/api/v1/profiles", get(list_profiles).post(create_profile))
         .route("/api/v1/profiles/current", get(get_current_profile))
@@ -239,6 +242,73 @@ struct ApplyProviderResult {
 struct ApplyProviderRequest {
     #[serde(default)]
     executor_models: std::collections::HashMap<String, String>,
+}
+
+/// 导出 Provider 的请求体（现阶段只支持 yaml）。
+#[derive(Debug, Clone, Deserialize, Default)]
+struct ExportProvidersRequest {
+    /// 预留扩展字段。当前仅支持 yaml。
+    #[serde(default, rename = "format")]
+    _format: Option<String>,
+}
+
+/// 导入 Provider 的请求体。
+#[derive(Debug, Clone, Deserialize)]
+struct ImportProvidersRequest {
+    yaml: String,
+    /// "merge" 或 "replace"。其他值按 merge 兜底。
+    #[serde(default)]
+    strategy: Option<String>,
+}
+
+/// 导入 Provider 的响应。
+#[derive(Debug, Clone, Serialize)]
+struct ImportProvidersResponse {
+    imported: Vec<String>,
+    skipped: Vec<String>,
+    errors: Vec<String>,
+}
+
+/// 导出 Provider 为 YAML 文本。
+async fn export_providers(
+    State(_state): State<AppState>,
+    ApiJson(_req): ApiJson<ExportProvidersRequest>,
+) -> Result<axum::response::Response, AppError> {
+    let cfg = load()?;
+    let yaml = cfg.export_providers_to_yaml();
+    let filename = format!(
+        "ntd-providers-{}.yaml",
+        chrono::Utc::now().format("%Y%m%d")
+    );
+    let resp = axum::response::Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "text/yaml; charset=utf-8")
+        .header(
+            axum::http::header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{}\"", filename),
+        )
+        .body(axum::body::Body::from(yaml))
+        .map_err(|e| AppError::Internal(format!("response build: {}", e)))?;
+    Ok(resp)
+}
+
+/// 导入 Provider。当前策略：merge（已存在则覆盖）或 replace（先清空）。
+async fn import_providers(
+    State(_state): State<AppState>,
+    ApiJson(req): ApiJson<ImportProvidersRequest>,
+) -> Result<ApiResponse<ImportProvidersResponse>, AppError> {
+    let strategy = req.strategy.as_deref().unwrap_or("merge");
+    let replace = strategy == "replace";
+
+    // 加载 → 改 → 存。这个 read-modify-write 是简单的；并发场景下会丢更新。
+    // 当前为单进程 daemon（数据库 sqlite + 进程内 tokio 互斥），实际并发窗口很小。
+    let mut cfg = load()?;
+    let (imported, skipped, errors) = cfg.import_providers_from_yaml(&req.yaml, replace)
+        .map_err(AppError::BadRequest)?;
+    save(&cfg)?;
+    Ok(ApiResponse::ok(ImportProvidersResponse {
+        imported, skipped, errors,
+    }))
 }
 
 // ============================================================================

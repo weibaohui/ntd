@@ -281,6 +281,73 @@ impl ProfilesConfig {
         std::fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to rename profiles: {}", e))?;
         Ok(())
     }
+
+    /// 仅导出 `providers` 段为 YAML（不含 current_profile / profiles）。
+    /// YAML 顶部带注释说明。
+    pub fn export_providers_to_yaml(&self) -> String {
+        // 用 serde_yaml::to_value 把 self 序列化为 Value，挑出 providers 字段再重新格式化为 YAML
+        let v = serde_yaml::to_value(self).unwrap_or(serde_yaml::Value::Null);
+        // 重新组装只含 providers 段的 YAML
+        #[derive(Serialize)]
+        struct Wrapper<'a> {
+            providers: &'a std::collections::HashMap<String, Provider>,
+        }
+        let wrapper = Wrapper { providers: &self.providers };
+        let mut out = String::new();
+        out.push_str("# ntd API Key export\n");
+        out.push_str("# 包含所有 Provider（API Key、Base URL、协议、模型列表）\n");
+        out.push_str("# 导入：POST /api/v1/providers/import body={\"yaml\":\"<此处内容>\",\"strategy\":\"merge\"}\n\n");
+        if let Ok(yaml) = serde_yaml::to_string(&wrapper) {
+            out.push_str(&yaml);
+        }
+        let _ = v; // 抑制 unused 警告（保留 for 调试）
+        out
+    }
+
+    /// 从 YAML 导入 providers 到当前配置。
+    /// `replace=false` 即 merge：已存在则覆盖；不存在则新增。
+    /// `replace=true`：先清空 providers，再导入。
+    /// 返回 (imported_names, skipped_names, error_messages)。
+    #[allow(clippy::type_complexity)]
+    pub fn import_providers_from_yaml(
+        &mut self,
+        yaml: &str,
+        replace: bool,
+    ) -> Result<(Vec<String>, Vec<String>, Vec<String>), String> {
+        // 先解析为通用 Value，校验顶层结构
+        let v: serde_yaml::Value = serde_yaml::from_str(yaml)
+            .map_err(|e| format!("YAML 解析失败: {}", e))?;
+        let mapping = v.as_mapping()
+            .ok_or_else(|| "YAML 顶层必须是 mapping".to_string())?;
+        let providers_value = mapping.get(serde_yaml::Value::String("providers".to_string()))
+            .ok_or_else(|| "YAML 缺少 providers 段".to_string())?;
+        let providers_mapping = providers_value.as_mapping()
+            .ok_or_else(|| "providers 段必须是 mapping".to_string())?;
+
+        if replace {
+            self.providers.clear();
+        }
+
+        let mut imported = Vec::new();
+        let skipped: Vec<String> = Vec::new();
+        let mut errors = Vec::new();
+
+        for (k, v) in providers_mapping.iter() {
+            let name = match k.as_str() {
+                Some(s) => s.to_string(),
+                None => { errors.push("provider name 必须是字符串".to_string()); continue; }
+            };
+            if name.is_empty() { continue; }
+            match serde_yaml::from_value::<Provider>(v.clone()) {
+                Ok(provider) => {
+                    self.providers.insert(name.clone(), provider);
+                    imported.push(name);
+                }
+                Err(e) => errors.push(format!("provider {} 解析失败: {}", name, e)),
+            }
+        }
+        Ok((imported, skipped, errors))
+    }
 }
 
 /// 内联 generators 模块。
@@ -297,6 +364,94 @@ mod tests {
         assert_eq!(cfg.current_profile, "default");
         assert!(cfg.profiles.contains_key("default"));
         assert!(cfg.providers.is_empty(), "默认不应有 provider");
+    }
+
+    fn sample_provider(name: &str) -> Provider {
+        Provider {
+            name: format!("{}_display", name),
+            api_key: format!("sk-{}", name),
+            base_url: format!("https://api.{}.com/v1", name),
+            protocol: Protocol::Openai,
+            models: vec![ProviderModel {
+                name: format!("{}-model", name),
+                display_name: Some("Test Model".to_string()),
+                supports_1m_context: false,
+            }],
+        }
+    }
+
+    #[test]
+    fn test_export_providers_to_yaml_round_trip() {
+        let mut cfg = ProfilesConfig::default();
+        cfg.providers.insert("a".to_string(), sample_provider("a"));
+        cfg.providers.insert("b".to_string(), sample_provider("b"));
+        let yaml = cfg.export_providers_to_yaml();
+        let mut parsed = cfg.clone();
+        let (imported, skipped, errors) = parsed
+            .import_providers_from_yaml(&yaml, false)
+            .expect("导入应当成功");
+        assert_eq!(imported.len(), 2, "应导入 2 个");
+        assert!(skipped.is_empty());
+        assert!(errors.is_empty());
+        assert_eq!(parsed.providers.get("a").unwrap().api_key, "sk-a");
+    }
+
+    #[test]
+    fn test_import_merge_strategy_overwrites_existing() {
+        let mut cfg = ProfilesConfig::default();
+        cfg.providers.insert("a".to_string(), sample_provider("a"));
+        let yaml = r#"
+providers:
+  a:
+    name: A updated
+    api_key: sk-a-NEW
+    base_url: https://api.a.com/v1
+    protocol: openai
+    models:
+      - name: a-model
+        display_name: New
+        supports_1m_context: true
+  b:
+    name: B display
+    api_key: sk-b
+    base_url: https://api.b.com/v1
+    protocol: anthropic
+    models: []
+"#;
+        let (imported, _, errors) = cfg.import_providers_from_yaml(yaml, false).unwrap();
+        assert_eq!(imported.len(), 2);
+        assert!(errors.is_empty());
+        assert_eq!(cfg.providers.get("a").unwrap().api_key, "sk-a-NEW");
+        assert_eq!(cfg.providers.get("b").unwrap().protocol, Protocol::Anthropic);
+    }
+
+    #[test]
+    fn test_import_replace_strategy_clears_existing() {
+        let mut cfg = ProfilesConfig::default();
+        cfg.providers.insert("a".to_string(), sample_provider("a"));
+        cfg.providers.insert("b".to_string(), sample_provider("b"));
+        let yaml = r#"providers:
+  c:
+    name: C
+    api_key: sk-c
+    base_url: https://api.c.com/v1
+    protocol: openai
+    models: []
+"#;
+        let (imported, _, errors) = cfg.import_providers_from_yaml(yaml, true).unwrap();
+        assert_eq!(imported, vec!["c".to_string()]);
+        assert!(errors.is_empty());
+        assert!(!cfg.providers.contains_key("a"));
+        assert!(!cfg.providers.contains_key("b"));
+        assert!(cfg.providers.contains_key("c"));
+    }
+
+    #[test]
+    fn test_import_missing_providers_field_errors() {
+        let mut cfg = ProfilesConfig::default();
+        let yaml = "not_providers_key:\n  foo: bar\n";
+        let r = cfg.import_providers_from_yaml(yaml, false);
+        assert!(r.is_err(), "缺少 providers 段应报错");
     }
 
     #[test]

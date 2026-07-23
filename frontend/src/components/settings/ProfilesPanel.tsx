@@ -4,7 +4,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Button, Card, Checkbox, Empty, Form, Input, message, Modal, Select, Space, Spin, Steps, Tag, Typography, Flex, Alert, Row, Col, Tabs } from 'antd';
-import { PlusOutlined, SwapOutlined, DeleteOutlined, EditOutlined, DatabaseOutlined } from '@ant-design/icons';
+import { PlusOutlined, SwapOutlined, DeleteOutlined, EditOutlined, DatabaseOutlined, DownloadOutlined, UploadOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useTheme } from '@/hooks/useTheme';
@@ -63,6 +63,12 @@ export function ProfilesPanel() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [executorDefs, setExecutorDefs] = useState<{ name: string; display_name: string; config_path: string; has_generator: boolean }[]>([]);
   const [modelList, setModelList] = useState<ProviderModel[]>([]);
+  // 导入弹窗
+  const [importModalVisible, setImportModalVisible] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importFileName, setImportFileName] = useState('');
+  const [importStrategy, setImportStrategy] = useState<'merge' | 'replace'>('merge');
+  const [importing, setImporting] = useState(false);
   const { themeMode } = useTheme();
   const isDark = themeMode === 'dark';
   const [form] = Form.useForm();
@@ -167,6 +173,76 @@ export function ProfilesPanel() {
       message.error('删除失败: ' + (err?.message || String(err)));
     }
   }, [load]);
+
+  // 导出：调后端 export 接口，触发文件下载
+  const handleExport = useCallback(async () => {
+    try {
+      const r = await fetch(`${PROVIDERS_API}/export`, { method: 'POST' });
+      if (!r.ok) {
+        message.error('导出失败: HTTP ' + r.status);
+        return;
+      }
+      const yaml = await r.text();
+      const filename = `ntd-providers-${new Date().toISOString().slice(0, 10)}.yaml`;
+      const blob = new Blob([yaml], { type: 'text/yaml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      message.success(`已导出 ${filename}`);
+    } catch (err: any) {
+      message.error('导出失败: ' + (err?.message || String(err)));
+    }
+  }, []);
+
+  // 导入：用户选文件或粘贴文本，调后端 import 接口
+  const handleImport = useCallback(async () => {
+    if (!importText.trim()) {
+      message.warning('请选择 YAML 文件或粘贴内容');
+      return;
+    }
+    setImporting(true);
+    try {
+      const r = await fetch(`${PROVIDERS_API}/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ yaml: importText, strategy: importStrategy }),
+      });
+      const j = await r.json();
+      if (j.code !== 0) {
+        message.error('导入失败: ' + (j.message || '未知错误'));
+        return;
+      }
+      const { imported = [], errors = [] } = j.data || {};
+      if (errors.length > 0) {
+        message.warning(`导入完成，${imported.length} 个成功，${errors.length} 个错误`);
+      } else {
+        message.success(`成功导入 ${imported.length} 个 Provider`);
+      }
+      setImportModalVisible(false);
+      setImportText('');
+      setImportFileName('');
+      load();
+    } catch (err: any) {
+      message.error('导入失败: ' + (err?.message || String(err)));
+    } finally {
+      setImporting(false);
+    }
+  }, [importText, importStrategy, load]);
+
+  // 读取上传文件内容
+  const handleImportFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => setImportText(String(reader.result || ''));
+    reader.readAsText(file);
+  }, []);
 
   // 打开应用弹窗
   const openApply = useCallback((p: ProviderDetail) => {
@@ -290,13 +366,17 @@ export function ProfilesPanel() {
         title="API Key 管理"
         extra={
           isMobile ? (
-            <Flex gap={8}>
+            <Flex gap={8} wrap="wrap">
               <Button type="primary" size="small" icon={<PlusOutlined />} onClick={openCreate}>新增</Button>
+              <Button size="small" icon={<DownloadOutlined />} onClick={handleExport}>导出</Button>
+              <Button size="small" icon={<UploadOutlined />} onClick={() => setImportModalVisible(true)}>导入</Button>
               <Button size="small" onClick={load} loading={loading}>刷新</Button>
             </Flex>
           ) : (
             <Space>
               <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增 API Key</Button>
+              <Button icon={<DownloadOutlined />} onClick={handleExport}>导出</Button>
+              <Button icon={<UploadOutlined />} onClick={() => setImportModalVisible(true)}>导入</Button>
               <Button onClick={load} loading={loading}>刷新</Button>
             </Space>
           )
@@ -542,6 +622,66 @@ export function ProfilesPanel() {
             )}
           </div>
         )}
+      </Modal>
+
+      {/* 导入弹窗 */}
+      <Modal
+        title="导入 API Key"
+        open={importModalVisible}
+        onCancel={() => { setImportModalVisible(false); setImportText(''); setImportFileName(''); }}
+        footer={
+          <Space>
+            <Button onClick={() => { setImportModalVisible(false); setImportText(''); setImportFileName(''); }}>取消</Button>
+            <Button type="primary" loading={importing} onClick={handleImport}>
+              确认导入
+            </Button>
+          </Space>
+        }
+        width={isMobile ? '100%' : 640}
+        style={isMobile ? { top: 0, maxWidth: '100%', margin: 0 } : undefined}
+      >
+        <Paragraph type="secondary">
+          选 YAML 文件上传，或直接粘贴内容。导入仅修改 <code>providers</code> 段，不影响 <code>profiles</code> 和 <code>current_profile</code>。
+        </Paragraph>
+        <div style={{ marginBottom: 12 }}>
+          <label
+            style={{
+              display: 'inline-block',
+              padding: '6px 14px',
+              border: '1px dashed #d9d9d9',
+              borderRadius: 6,
+              cursor: 'pointer',
+            }}
+          >
+            选择文件: {importFileName || '未选择'}
+            <input type="file" accept=".yaml,.yml" style={{ display: 'none' }} onChange={handleImportFile} />
+          </label>
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            或直接粘贴 YAML：
+          </Text>
+        </div>
+        <Input.TextArea
+          rows={10}
+          value={importText}
+          onChange={e => setImportText(e.target.value)}
+          placeholder="providers:\n  deepseek-anthropic:\n    api_key: sk-xxx\n    ..."
+          style={{ fontFamily: 'monospace', fontSize: 12 }}
+        />
+        <div style={{ marginTop: 12 }}>
+          <Text type="secondary" style={{ marginRight: 8 }}>冲突策略：</Text>
+          <label style={{ marginRight: 12 }}>
+            <input type="radio" checked={importStrategy === 'merge'}
+              onChange={() => setImportStrategy('merge')} />
+            <span style={{ marginLeft: 4 }}>合并（已存在则覆盖）</span>
+          </label>
+          <label>
+            <input type="radio" checked={importStrategy === 'replace'}
+              onChange={() => setImportStrategy('replace')} />
+            <span style={{ marginLeft: 4 }}>替换（先清空所有）</span>
+          </label>
+        </div>
       </Modal>
     </>
   );

@@ -140,6 +140,8 @@ pub trait ProfileGenerator: Send + Sync {
 | DELETE | `/api/v1/providers/{name}` | — | — |
 | POST | `/api/v1/providers/{name}/preview` | `{ executor_models: {exec→model} }` | `[{executor, model, path, content}]` |
 | POST | `/api/v1/providers/{name}/apply` | `{ executor_models: {exec→model} }` | `{ applied: [...], errors: [...] }` |
+| POST | `/api/v1/providers/export` | `{}` | `text/yaml`（含 Content-Disposition 附件下载） |
+| POST | `/api/v1/providers/import` | `{ yaml, strategy }` | `{ imported, skipped, errors }` |
 
 ## 6. 备份策略
 
@@ -157,6 +159,34 @@ pub trait ProfileGenerator: Send + Sync {
 ~/.atomcode/config.toml.bak-20260722_190000  ← 较早备份
 ... (最多保留 5 份)
 ```
+
+## 6.5 导入/导出
+
+**目的**：跨机器迁移、团队共享、版本备份。
+
+**导出流程**（`POST /api/v1/providers/export`）：
+1. 后端调用 `ProfilesConfig::export_providers_to_yaml()`
+2. 使用 serde_yaml 序列化 `providers` map，构造只含该段的 YAML
+3. 加注释说明导出时间和导入方式
+4. 返回 `Content-Disposition: attachment; filename="ntd-providers-YYYYMMDD.yaml"`
+5. 前端用 Blob + a.click() 触发下载
+
+**导入流程**（`POST /api/v1/providers/import`）：
+1. 前端弹窗收集 YAML 文本（文件上传或粘贴）
+2. 用户选策略：merge（默认） / replace
+3. 后端先用 `serde_yaml::Value` 解析，校验顶层有 `providers:` 段
+4. 逐个 provider 用 `Provider` 反序列化（错误只影响该项）
+5. 内存态 `profiles.yaml` 直接覆盖 `providers` map（merge 策略下只 inset 覆盖）
+6. 原子写回磁盘
+
+**冲突策略**：
+- `merge`（默认）：按 provider name 覆盖已存在的；不存在的则新增
+- `replace`：先 `providers.clear()`，再用导入内容填充（UI 需二次确认）
+
+**风险控制**：
+- 导入仅触动 `providers` 段，不修改 `current_profile` 和 `profiles`，避免误改其他设置
+- YAML 体经 serde_yaml 安全反序列化（无代码执行风险）
+- 单个 provider 解析失败不影响其他（错误列表返回）
 
 ## 7. 移动端适配
 

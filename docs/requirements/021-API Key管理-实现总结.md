@@ -41,6 +41,7 @@
 | 协议下拉框 | ✅ | OpenAI 兼容 / Anthropic 原生 二选一（必填） |
 | 1300+ 单元测试通过 | ✅ | cargo test 全绿 |
 | 编译零告警 | ✅ | cargo clippy -- -D warnings |
+| API Key 导入/导出 | ✅ | YAML 格式导出文件，merge/replace 策略导入 |
 
 ## 3.2 未完成（按设计意图不在本期）
 

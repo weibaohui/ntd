@@ -36,6 +36,10 @@
 | `test_resolve_provider_found` | resolve_provider 成功路径 | 返回 Provider + Model |
 | `test_resolve_provider_not_found` | resolve_provider 异常 | Provider 不存在返回错误 |
 | `test_backup_creates_bak_file` | 备份逻辑 | 写入 config.json 后产生 `settings.json.bak-*` 文件 |
+| `test_export_providers_to_yaml_round_trip` | 导出 → 导入往返 | 配置 2 个 provider，导出后再导入，验证完整一致 |
+| `test_import_merge_strategy_overwrites_existing` | merge 策略 | 现有 A + 导入含 A 和 B 的 YAML，A 被覆盖 B 新增 |
+| `test_import_replace_strategy_clears_existing` | replace 策略 | 现有 A,B + 导入只有 C，A,B 删除 C 新增 |
+| `test_import_missing_providers_field_errors` | 异常路径 | 没有 `providers:` 段时返回错误 |
 
 ## handlers/profiles.rs — API 校验
 
@@ -105,6 +109,22 @@ curl -s -X POST http://localhost:18088/api/v1/providers/{name}/apply \
 
 # 验证备份
 ls -la ~/.claude/  # 应看到 settings.json.bak-*
+
+# === 导入/导出 ===
+
+# 导出（下载 ntd-providers-YYYYMMDD.yaml）
+curl -s -X POST -H 'Content-Type: application/json' -d '{}' \
+  http://localhost:18088/api/v1/providers/export > /tmp/export.yaml
+head -10 /tmp/export.yaml
+# 应看到顶部注释 `# ntd API Key export` + `providers:` 段
+
+# 导入（merge 策略：覆盖现有，新增不存在的）
+curl -s -X POST -H 'Content-Type: application/json' \
+  -d "$(python3 -c "import json; print(json.dumps({'yaml': open('/tmp/export.yaml').read(), 'strategy':'merge'}))")" \
+  http://localhost:18088/api/v1/providers/import
+# 应看到 imported: [...] 列表
+
+# 用例：先创建一个 → 导出 → 删除 → 导入 → 验证恢复
 ```
 
 # 5. 测试数据

@@ -51,7 +51,13 @@
 1. 卡片右上角编辑图标 → 修改各字段并保存
 2. 删除图标 → 确认后删除
 
-**场景 D — 备份恢复**
+**场景 D — 导入/导出 API Key**
+1. 卡片列表顶部点「导出」→ 浏览器下载 `ntd-providers-YYYYMMDD.yaml` 文件（含所有 Provider）
+2. 卡片列表顶部点「导入」→ 弹窗里选 YAML 文件或粘贴文本，选择合并/替换策略，确认后写入
+3. merge 策略：按 provider 名称覆盖已存在的，已不存在的则新增
+4. replace 策略：先清空所有 Provider，再导入（强制要求二次确认）
+
+**场景 E — 备份恢复**
 - 每次写入会自动备份原配置文件为 `{原文件名}.bak-{时间戳}`
 - 超 5 份的自动清理
 
@@ -97,6 +103,8 @@
 - [x] `DELETE /api/v1/providers/{name}` — 删除
 - [x] `POST /api/v1/providers/{name}/preview` — 预览（请求体：`executor_models: {exec: model}`）
 - [x] `POST /api/v1/providers/{name}/apply` — 应用（请求体：同上）
+- [x] `POST /api/v1/providers/export` — 导出所有 Provider 为 YAML 文本（Content-Disposition: attachment）
+- [x] `POST /api/v1/providers/import` — 导入（请求体：`{yaml, strategy}`；strategy = merge/replace）
 
 ## 5.5 后端：执行器配置定义
 
@@ -112,6 +120,8 @@
 - [x] 「刷新」按钮
 - [x] 协议格式下拉框二选一（OpenAI 兼容 / Anthropic 原生）
 - [x] 模型列表编辑：每行有标识 + 显示名 + 1M 上下文开关 + 删除
+- [x] 「导出」按钮 — 调 `POST /api/v1/providers/export`，浏览器下载 `ntd-providers-YYYYMMDD.yaml`
+- [x] 「导入」按钮 + 弹窗 — 文件上传 / 文本框粘贴，单选合并/替换策略，调 `POST /api/v1/providers/import`
 
 ## 5.7 前端：应用弹窗（三步流程）
 
@@ -202,6 +212,36 @@ profiles:
   "applied": ["claudecode (deepseek-v4-flash)", "atomcode (deepseek-v4-flash)"],
   "errors": []
 }
+```
+
+## 导出 YAML 格式
+
+导出文件 `ntd-providers-YYYYMMDD.yaml` 内容：
+
+```yaml
+# ntd API Key export
+# 包含所有 Provider（API Key、Base URL、协议、模型列表）
+# 导入：POST /api/v1/providers/import body={"yaml":"<此处内容>","strategy":"merge"}
+
+providers:
+  <provider_name>:
+    name: <display_name>
+    api_key: sk-xxx
+    base_url: https://...
+    protocol: <openai|anthropic>
+    models:
+      - name: <model_id>
+        display_name: <可选>
+        supports_1m_context: <bool>
+```
+
+## 导入请求/响应
+
+```json
+// POST /api/v1/providers/import
+{ "yaml": "<整个 YAML 文本>", "strategy": "merge" }
+// 响应
+{ "imported": ["a", "b"], "skipped": [], "errors": [] }
 ```
 
 # 9. 验收标准
