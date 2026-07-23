@@ -45,6 +45,8 @@ export function Dashboard() {
   const { message } = App.useApp();
   const { todos, tags, runningTasks } = state;
   const { activeTab, pushUrl } = useViewState();
+  // Dashboard 是全局运营视图，不依赖当前选中的 workspace；
+  // 数据由 /api/v1/stats/dashboard 全库聚合返回。
   const isMobile = useIsMobile();
 
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -73,8 +75,8 @@ export function Dashboard() {
   const loadStats = async (hours?: number) => {
     try {
       setLoading(true);
-      // v1 纯 workspace-scoped：dashboard stats 按 workspace 隔离
-      const data = await db.getDashboardStats(state.selectedWorkspace ?? 0, hours);
+      // Dashboard 为概览，调用全局 stats 接口，不再传入 workspaceId
+      const data = await db.getDashboardStats(hours);
       setStats(data);
     } catch {
       message.error('加载统计数据失败');

@@ -64,10 +64,13 @@ export async function getRecentCompletedTodos(workspaceId: number, hours?: numbe
   return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/todos/recent-completed`, { params: Object.keys(p).length > 0 ? p : undefined }));
 }
 
-/** GET /api/v1/workspaces/{ws}/stats/dashboard — 仪表盘聚合统计，workspace 隔离。 */
-export async function getDashboardStats(workspaceId: number, hours?: number): Promise<import('@/types').DashboardStats> {
+/** GET /api/v1/stats/dashboard — 概览仪表盘聚合统计，不随 workspace 变化。 */
+export async function getDashboardStats(hours?: number): Promise<import('@/types').DashboardStats> {
+  // 仅当调用方显式传入 hours 时才带上查询参数；
+  // undefined 表示使用后端默认时间窗（当前为 7 天），避免传空对象导致 URL 出现多余 `?`。
   const p = hours !== undefined ? { hours } : undefined;
-  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/stats/dashboard`, { params: p }));
+  // Dashboard 为概览，URL 中不再包含 workspaceId，确保切换工作区不会过滤统计。
+  return unwrap(await api.get('/api/v1/stats/dashboard', { params: p }));
 }
 
 export async function stopExecution(workspaceId: number, recordId: number): Promise<void> {

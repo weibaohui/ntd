@@ -63,9 +63,7 @@ enum Commands {
     },
     /// Global statistics
     Stats {
-        /// Workspace ID (project_directories.id). v1 路由把 dashboard 嵌入 workspace URL。
-        #[arg(long = "workspace-id")]
-        workspace_id: i64,
+        // Dashboard 为全局运营视图，不再依赖 workspace_id。
     },
     /// Manage ntd daemon service (install/uninstall/start/stop/restart/status)
     Daemon {
@@ -241,9 +239,9 @@ async fn main() {
             dispatch_subcommand(&cli, cli::Commands::Tag { action: action.clone() }).await;
             return;
         }
-        Some(Commands::Stats { workspace_id }) => {
-            // v1: Stats 现在带 workspace_id（dashboard 嵌入 workspace URL）
-            dispatch_subcommand(&cli, cli::Commands::Stats { workspace_id: *workspace_id }).await;
+        Some(Commands::Stats { }) => {
+            // Dashboard 为全局运营视图，不再带 workspace_id。
+            dispatch_subcommand(&cli, cli::Commands::Stats { }).await;
             return;
         }
         Some(Commands::Daemon { action }) => {

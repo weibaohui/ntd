@@ -89,9 +89,7 @@ pub enum Commands {
     },
     /// Global statistics
     Stats {
-        /// Workspace ID (project_directories.id). v1 路由把 dashboard 嵌入 workspace URL。
-        #[arg(long = "workspace-id")]
-        workspace_id: i64,
+        // Dashboard 为全局运营视图，不再依赖 workspace_id。
     },
     /// Blackboard (knowledge wiki) management
     Blackboard {
@@ -603,7 +601,7 @@ pub async fn run_command(cli: &Cli) -> Result<()> {
         Commands::Todo { action } => handle_todo(&client, action, &cli.output, &cli.fields).await?,
         Commands::Loop { action } => handle_loop(&client, action, &cli.output, &cli.fields).await?,
         Commands::Tag { action } => handle_tag(&client, action, &cli.output, &cli.fields).await?,
-        Commands::Stats { workspace_id } => handle_stats(&client, *workspace_id, &cli.output, &cli.fields).await?,
+        Commands::Stats { } => handle_stats(&client, &cli.output, &cli.fields).await?,
         Commands::Blackboard { action } => handle_blackboard(&client, action, &cli.output, &cli.fields).await?,
         Commands::Workspace { action } => handle_workspace(&client, action, &cli.output, &cli.fields).await?,
     }
@@ -895,13 +893,11 @@ async fn handle_tag(
 
 async fn handle_stats(
     client: &ApiClient,
-    workspace_id: i64,
     output: &OutputFormat,
     fields: &Option<String>,
 ) -> Result<()> {
-    // v1: dashboard 改为 workspace-scoped，GET /workspaces/{ws}/stats/dashboard。
-    let path = format!("{}/stats/dashboard", ws_prefix(workspace_id));
-    let resp: ClientResponse<DashboardStats> = client.get(&path).await?;
+    // Dashboard 为全局运营视图，直接请求全局 stats 端点。
+    let resp: ClientResponse<DashboardStats> = client.get("/api/v1/stats/dashboard").await?;
     print_response(&resp, output, fields)?;
     Ok(())
 }

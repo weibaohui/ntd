@@ -2,7 +2,7 @@
 
 > 版本：v1
 > 日期：2026-07-22
-> 状态：已定稿（2026-07-23 更新：对齐实现中 actions/quick-buttons/backup/events 的最终路由）
+> 状态：已定稿（2026-07-23 更新：对齐实现中 actions/quick-buttons/backup/events 的最终路由；2026-07-23 更新：Dashboard 调整为全局资源，路由改为 `/api/v1/stats/dashboard`）
 
 ---
 
@@ -112,7 +112,6 @@ POST /api/experts/create       # → 与 /experts/{name} 路由冲突
 | settings | `.../workspaces/{ws}/settings` | 工作空间设置（迁移进 v1 + 统一复数） |
 | quick-buttons | `.../workspaces/{ws}/quick-buttons` | 快捷话术 |
 | actions | `.../actions` | 自定义动作（全局：action 通过 todo 推导 workspace，URL 不再嵌套 ws） |
-| stats/dashboard | `.../workspaces/{ws}/stats/dashboard` | 项目维度的统计 |
 
 ### 3.2 全局资源（系统级）
 
@@ -135,6 +134,7 @@ POST /api/experts/create       # → 与 /experts/{name} 路由冲突
 | usage-stats | `.../usage-stats` | 用量统计 |
 | cloud | `.../cloud` | 云端同步 |
 | project-directories | `.../project-directories` | 项目目录 CRUD（workspace 本身） |
+| stats/dashboard | `.../stats/dashboard` | 仪表盘全局运营视图 |
 | webhooks | `.../webhooks` | Webhook 配置与触发 |
 | events | `.../events` | WebSocket 事件流 |
 
@@ -194,7 +194,7 @@ POST /api/experts/create       # → 与 /experts/{name} 路由冲突
 | PUT | `/api/execution-records/{id}/rating`{--} | `PUT /api/v1/workspaces/{ws}/executions/{id}/rating`{++} |
 | GET | `/api/running-board`{--} | `GET /api/v1/workspaces/{ws}/executions/running-board`{++} |
 | GET | `/api/running-todos`{--} | `GET /api/v1/workspaces/{ws}/executions/running-todos`{++} |
-| GET | `/api/dashboard-stats`{--} | `GET /api/v1/workspaces/{ws}/stats/dashboard`{++} |
+| GET | `/api/dashboard-stats`{--} | `GET /api/v1/stats/dashboard`{++} |
 | POST | `/api/actions/execute`{--} | `POST /api/v1/actions/execute`{++}（全局：action 目标 todo 自带 workspace_id，URL 不重复嵌套） |
 | GET | `/api/scheduler/todos`{--} | `GET /api/v1/workspaces/{ws}/scheduler/todos`{++} |
 
