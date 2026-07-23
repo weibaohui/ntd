@@ -3,7 +3,7 @@
 //! 每个 API Key 一张卡片，点击「应用」选择执行器 → 预览内容 → 确认写入。
 
 import { useState, useEffect, useCallback } from 'react';
-import { Button, Card, Checkbox, Empty, Form, Input, message, Modal, Space, Spin, Steps, Tag, Typography, Flex, Alert, Row, Col, Tabs } from 'antd';
+import { Button, Card, Checkbox, Empty, Form, Input, message, Modal, Select, Space, Spin, Steps, Tag, Typography, Flex, Alert, Row, Col, Tabs } from 'antd';
 import { PlusOutlined, SwapOutlined, DeleteOutlined, EditOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -179,15 +179,7 @@ export function ProfilesPanel() {
     setApplyVisible(true);
   }, []);
 
-  // 切换执行器选择时，同步初始化模型选择
-  const toggleExecutor = useCallback((name: string, checked: boolean) => {
-    setSelectedExecutors(prev => checked ? [...prev, name] : prev.filter(e => e !== name));
-    if (checked && applyProvider && !executorModels[name]) {
-      // 默认选第一个模型
-      const firstModel = applyProvider.models[0]?.name;
-      if (firstModel) setExecutorModels(prev => ({ ...prev, [name]: firstModel }));
-    }
-  }, [applyProvider, executorModels]);
+  // 切换执行器选择时，同步初始化模型选择（已通过 onClick 内联处理）
 
   // 下一步：获取预览
   const goToPreview = useCallback(async () => {
