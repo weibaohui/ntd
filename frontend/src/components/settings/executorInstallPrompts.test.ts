@@ -53,22 +53,44 @@ describe('installable executors', () => {
 /**
  * 验证 prompt 内容包含必要的操作系统检测与验证指令。
  * 这些关键字是 AI 正确执行安装的前提。
+ * 遍历所有可安装执行器，确保每个 prompt 都包含。
  */
 describe('prompt content', () => {
-  it('claudecode prompt mentions macOS, Linux and Windows', () => {
-    expect(INSTALL_CLAUCODE_PROMPT).toContain('macOS');
-    expect(INSTALL_CLAUCODE_PROMPT).toContain('Linux');
-    expect(INSTALL_CLAUCODE_PROMPT).toContain('Windows');
+  it('every prompt mentions macOS, Linux and Windows', () => {
+    const names = getInstallableExecutorNames();
+    for (const name of names) {
+      const result = getExecutorInstallPrompt(name);
+      expect(result, `${name}: prompt should not be null`).not.toBeNull();
+      expect(result!.prompt, `${name}: should mention macOS`).toContain('macOS');
+      expect(result!.prompt, `${name}: should mention Linux`).toContain('Linux');
+      expect(result!.prompt, `${name}: should mention Windows`).toContain('Windows');
+    }
   });
 
-  it('claudecode prompt asks to verify version', () => {
-    expect(INSTALL_CLAUCODE_PROMPT).toContain('--version');
+  it('every prompt asks to verify version with --version', () => {
+    const names = getInstallableExecutorNames();
+    for (const name of names) {
+      const result = getExecutorInstallPrompt(name);
+      expect(result, `${name}: prompt should not be null`).not.toBeNull();
+      expect(result!.prompt, `${name}: should contain --version`).toContain('--version');
+    }
+  });
+
+  it('every prompt mentions an install command or script', () => {
+    const names = getInstallableExecutorNames();
+    for (const name of names) {
+      const result = getExecutorInstallPrompt(name);
+      expect(result, `${name}: prompt should not be null`).not.toBeNull();
+      // 每个 prompt 应该至少包含一个 ` 包裹的 shell 命令，说明给了具体的安装指令
+      expect(result!.prompt, `${name}: should contain a shell command`).toMatch(/`[^`]+`/);
+    }
+  });
+
+  it('claudecode prompt asks to verify specifically claude --version', () => {
     expect(INSTALL_CLAUCODE_PROMPT).toContain('claude --version');
   });
 
-  it('claudecode prompt uses the shared action type', () => {
-    // actionType 在 InstallExecutorButton 中使用，prompt 文件只暴露 ACTION_KEY；
-    // 这里确保常量存在且为字符串。
+  it('uses the shared action type', () => {
     expect(typeof INSTALL_EXECUTOR_ACTION_TYPE).toBe('string');
     expect(INSTALL_EXECUTOR_ACTION_TYPE).toBe('install_executor');
   });

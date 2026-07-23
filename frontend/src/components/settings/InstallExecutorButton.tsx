@@ -41,26 +41,29 @@ export function InstallExecutorButton({
   disabled,
 }: InstallExecutorButtonProps) {
   return (
-    <ActionButton
-      actionType={INSTALL_EXECUTOR_ACTION_TYPE}
-      actionKey={executorName}
-      prompt={prompt}
-      // 不需要前端参数：操作系统由执行器在目标机器上自行检测
-      params={{}}
-      // 不传 executor：让用户在 Drawer 里选本机已装的执行器
-      buttonType={buttonType}
-      icon={<DownloadOutlined />}
-      buttonSize={buttonSize}
-      showLabel={showLabel}
-      disabled={disabled}
-      panelTitle={`安装 ${displayName}`}
-      panelDescription={`AI 将检测你的操作系统并自动安装 ${displayName}，全程可在面板看到执行日志`}
-      // 完成态默认渲染「结果原文 + 应用/拒绝」即够用；用户点「应用」触发重探，状态由红转绿
-      onApply={async () => {
-        await onInstalled?.();
-      }}
-    >
-      安装
-    </ActionButton>
+    // data-testid 供 Playwright 测试定位，格式 executor-install-button-{name}
+    <span data-testid={`executor-install-button-${executorName}`}>
+      <ActionButton
+        actionType={INSTALL_EXECUTOR_ACTION_TYPE}
+        actionKey={executorName}
+        prompt={prompt}
+        // 不需要前端参数：操作系统由执行器在目标机器上自行检测
+        params={{}}
+        // 不传 executor：让用户在 Drawer 里选本机已装的执行器
+        buttonType={buttonType}
+        icon={<DownloadOutlined />}
+        buttonSize={buttonSize}
+        showLabel={showLabel}
+        disabled={disabled}
+        panelTitle={`安装 ${displayName}`}
+        panelDescription={`AI 将检测你的操作系统并自动安装 ${displayName}，全程可在面板看到执行日志`}
+        // 完成态默认渲染「结果原文 + 应用/拒绝」即够用；用户点「应用」触发重探，状态由红转绿
+        onApply={async () => {
+          await onInstalled?.();
+        }}
+      >
+        安装
+      </ActionButton>
+    </span>
   );
 }

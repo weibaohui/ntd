@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { InstallExecutorButton } from './InstallExecutorButton';
@@ -10,7 +11,15 @@ import { ExecutionProvider } from '@/hooks/useExecutionContext';
 // 模块级变量：被 mock ActionButton 赋值为 onApply 回调，测试中读取并触发
 let capturedOnApply: ((result: string) => void) | null = null;
 vi.mock('@/components/ActionButton', () => ({
-  ActionButton: (props: any) => {
+  ActionButton: (props: {
+    actionType: string;
+    actionKey: string;
+    prompt: string;
+    params: Record<string, string>;
+    onApply?: (result: string) => void;
+    panelTitle?: string;
+    children?: ReactNode;
+  }) => {
     // 捕获 onApply 回调供测试触发；赋值给外部变量保持引用
     capturedOnApply = props.onApply || null;
     return (
