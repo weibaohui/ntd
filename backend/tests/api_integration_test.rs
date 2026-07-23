@@ -831,8 +831,8 @@ async fn test_cross_workspace_todo_rejected() {
         .body(Body::empty())
         .unwrap();
     let get_resp = app.oneshot(get_req).await.unwrap();
-    // todo_id 真正存在但属于 ws_a → verify_todo_belongs_to_ws 返回 BadRequest
-    assert_eq!(get_resp.status(), StatusCode::BAD_REQUEST);
+    // todo_id 真正存在但属于 ws_a → verify_todo_belongs_to_ws 返回 Forbidden
+    assert_eq!(get_resp.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -871,13 +871,13 @@ async fn test_cross_workspace_todo_other_ws_rejected() {
     scheduler.start().await.unwrap();
     let app = create_app(ctx, scheduler).await;
 
-    // 用 ws_b 访问 ws_a 的 todo → BadRequest
+    // 用 ws_b 访问 ws_a 的 todo → Forbidden
     let get_req = Request::builder()
         .uri(format!("/api/v1/workspaces/{}/todos/{}", ws_b, todo_id))
         .body(Body::empty())
         .unwrap();
     let get_resp = app.oneshot(get_req).await.unwrap();
-    assert_eq!(get_resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(get_resp.status(), StatusCode::FORBIDDEN);
 }
 
 // ====== 旧路由 404 验证 ======

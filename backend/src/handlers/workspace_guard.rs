@@ -13,7 +13,7 @@
 //! 覆盖全部分支（相等 / 跨 ws / None）；`verify_*` 是薄包装：查 db + 调纯函数 +
 //! 把结果映射成 `AppError`。
 //!
-//! 跨 ws 失败统一返回 `BadRequest(400)`，沿用既有「trigger/step 不属于该 loop」
+//! 跨 ws 失败统一返回 `Forbidden(403)`，语义上拒绝访问而非输入错误。
 //! 的惯例（见 `loop_.rs`），不新增 Forbidden 错误类型。
 
 use crate::db::Database;
@@ -27,7 +27,7 @@ fn workspace_id_matches(model_ws: Option<i64>, ws_id: i64) -> bool {
     model_ws == Some(ws_id)
 }
 
-/// 校验 loop 属于指定 workspace：查不到 → `NotFound`，归属不符 → `BadRequest(400)`。
+/// 校验 loop 属于指定 workspace：查不到 → `NotFound`，归属不符 → `Forbidden(403)`。
 ///
 /// `loops` 表自带 `workspace_id` 列，直接 `get_loop` 后比对即可。
 pub async fn verify_loop_belongs_to_ws(
@@ -41,7 +41,7 @@ pub async fn verify_loop_belongs_to_ws(
     if workspace_id_matches(model.workspace_id, ws_id) {
         Ok(())
     } else {
-        Err(AppError::BadRequest(format!(
+        Err(AppError::Forbidden(format!(
             "loop #{} 不属于工作空间 #{}",
             loop_id, ws_id
         )))
@@ -50,7 +50,7 @@ pub async fn verify_loop_belongs_to_ws(
 
 /// 批量校验一组 loop 是否都属于指定 workspace。
 ///
-/// 任一 id 跨 ws → 返回 BadRequest；任一 id 不存在 → 返回 NotFound。
+/// 任一 id 跨 ws → 返回 Forbidden；任一 id 不存在 → 返回 NotFound。
 pub async fn verify_loops_belong_to_ws(
     db: &Database,
     ids: &[i64],
@@ -72,7 +72,7 @@ pub async fn verify_todo_belongs_to_ws(
     if workspace_id_matches(todo.workspace_id, ws_id) {
         Ok(())
     } else {
-        Err(AppError::BadRequest(format!(
+        Err(AppError::Forbidden(format!(
             "todo #{} 不属于工作空间 #{}",
             todo_id, ws_id
         )))
@@ -81,7 +81,7 @@ pub async fn verify_todo_belongs_to_ws(
 
 /// 批量校验一组 todo 是否都属于指定 workspace。
 ///
-/// 任一 id 跨 ws → 返回 BadRequest；任一 id 不存在 → 返回 NotFound。
+/// 任一 id 跨 ws → 返回 Forbidden；任一 id 不存在 → 返回 NotFound。
 /// 当前逐条查询，batch size 通常较小；如后续性能吃紧，可改为单次 IN 查询。
 pub async fn verify_todos_belong_to_ws(
     db: &Database,
@@ -221,10 +221,10 @@ mod tests {
         let ws_a = create_workspace(&db, "/tmp/ws-a").await;
         let ws_b = create_workspace(&db, "/tmp/ws-b").await;
         let loop_id = create_loop(&db, Some(ws_a)).await;
-        // 用 ws_b 访问 ws_a 的 loop → 跨 ws，返回 BadRequest 并带「不属于工作空间」
+        // 用 ws_b 访问 ws_a 的 loop → 跨 ws，返回 Forbidden 并带「不属于工作空间」
         match verify_loop_belongs_to_ws(&db, loop_id, ws_b).await {
-            Err(AppError::BadRequest(msg)) => assert!(msg.contains("不属于工作空间")),
-            other => panic!("跨 ws 应返回 BadRequest，实际: {other:?}"),
+            Err(AppError::Forbidden(msg)) => assert!(msg.contains("不属于工作空间")),
+            other => panic!("跨 ws 应返回 Forbidden，实际: {other:?}"),
         }
     }
 
@@ -255,10 +255,10 @@ mod tests {
         let ws_a = create_workspace(&db, "/tmp/ws-a").await;
         let ws_b = create_workspace(&db, "/tmp/ws-b").await;
         let todo_id = create_todo_in_ws(&db, ws_a).await;
-        // 用 ws_b 访问 ws_a 的 todo → 跨 ws，返回 BadRequest
+        // 用 ws_b 访问 ws_a 的 todo → 跨 ws，返回 Forbidden
         assert!(matches!(
             verify_todo_belongs_to_ws(&db, todo_id, ws_b).await,
-            Err(AppError::BadRequest(_))
+            Err(AppError::Forbidden(_))
         ));
     }
 
@@ -281,10 +281,10 @@ mod tests {
         let ws_b = create_workspace(&db, "/tmp/ws-b").await;
         let todo_id = create_todo_in_ws(&db, ws_a).await;
         let record_id = create_record_for_todo(&db, todo_id).await;
-        // 用 ws_b 访问 ws_a 的 record → 间接跨 ws（record→todo→ws），返回 BadRequest
+        // 用 ws_b 访问 ws_a 的 record → 间接跨 ws（record→todo→ws），返回 Forbidden
         assert!(matches!(
             verify_execution_belongs_to_ws(&db, record_id, ws_b).await,
-            Err(AppError::BadRequest(_))
+            Err(AppError::Forbidden(_))
         ));
     }
 }
