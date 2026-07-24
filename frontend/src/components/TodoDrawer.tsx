@@ -1,8 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback, useReducer } from 'react';
 import { Drawer, Input, Button, App, Divider, Switch } from 'antd';
-import { FolderOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
-import { WorkspaceSwitcher } from './shell/WorkspaceSwitcher';
 
 import type { Todo, ExecutorConfig, ExecutorOption, SkillMeta, ExecutorSkills, TodoTemplate } from '@/types';
 import { EXECUTORS, executorConfigToOption, getExecutorColor } from '@/types';
@@ -209,9 +207,10 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
       return;
     }
 
-    // 创建模式：工作空间为必填项
-    if (!isEditMode && workspaceId == null) {
-      message.error('请选择工作空间');
+    // 创建模式：工作空间由 defaultWorkspaceId 自动传入，不应为 null
+    // 编辑模式：来自 todo.workspace_id
+    if (workspaceId == null) {
+      message.error('无法确定工作空间');
       return;
     }
 
@@ -370,20 +369,6 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
               </div>
             </>
           )}
-
-          <Divider style={{ margin: '8px 0 16px' }} />
-
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14 }}>
-              <FolderOutlined style={{ color: 'var(--color-primary)', marginRight: 6 }} />
-              工作空间 <span style={{ color: '#ff4d4f' }}>*</span>
-            </div>
-            <WorkspaceSwitcher
-              value={workspaceId}
-              showAddOption={false}
-              onChange={(v) => setField('workspaceId', v)}
-            />
-          </div>
 
           <Divider style={{ margin: '8px 0 16px' }} />
 

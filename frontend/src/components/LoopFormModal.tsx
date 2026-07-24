@@ -24,7 +24,6 @@ import type { ReviewTemplateOption } from '@/types/reviewTemplate';
 import type { Todo } from '@/types/todo';
 import { getWorkspaceDisplayName, useProjectDirectories } from '@/utils/workspaceDisplay';
 import { TagCheckCardGroup } from './TagCheckCard';
-import { WorkspaceSwitcher } from './shell/WorkspaceSwitcher';
 
 // ---------- props ----------
 
@@ -196,9 +195,10 @@ export function LoopFormModal({
         ? JSON.stringify(values.abnormal_handler_trigger_on)
         : '["capped_step","capped_token","failed"]';
 
-      // 工作空间必填校验：保存时若未选择 id 直接报错
+      // 工作空间由 defaultWorkspaceId / initialData.workspace_id 自动传入，
+      // 防御性校验确保不为 null
       if (workspaceId == null) {
-        message.error('请选择工作空间');
+        message.error('无法确定工作空间');
         setSaving(false);
         return;
       }
@@ -273,30 +273,12 @@ export function LoopFormModal({
             <Input.TextArea rows={2} maxLength={500} />
           </Form.Item>
 
-          {/* 工作空间 + 评审模板联动区 */}
+          {/* 评审模板（按当前工作空间过滤） */}
           <div style={{ fontWeight: 600, fontSize: 14, marginTop: 16, marginBottom: 8, color: 'var(--color-text-secondary, #64748b)' }}>
-            工作空间与评审模板
+            评审模板
           </div>
           <div style={{ background: 'var(--color-bg-elevated, #f8fafc)', padding: 12, borderRadius: 8 }}>
-            {/* 工作空间：创建模式必填，编辑模式可选；value/onChange 以 id 为唯一键 */}
             <Form.Item
-              label={<>工作空间 {mode === 'create' && <span style={{ color: '#ff4d4f' }}>*</span>}</>}
-              tooltip="此 loop 所属的工作空间，切换后评审模板自动过滤"
-              rules={mode === 'create' ? [{ required: true, message: '请选择工作空间' }] : []}
-            >
-              <WorkspaceSwitcher
-                value={workspaceId}
-                showAddOption={false}
-                onChange={(v) => {
-                  setWorkspaceId(v);
-                  // 切换工作空间时清掉已选模板，避免跨工作空间串模板
-                  form.setFieldsValue({ review_template_id: null });
-                }}
-              />
-            </Form.Item>
-            {/* 评审模板（随 workspace 联动过滤） */}
-            <Form.Item
-              label="评审模板"
               name="review_template_id"
               tooltip="选择用于自动评审的模板（不选则使用默认模板）。切换工作空间后自动过滤。"
               extra={
@@ -317,7 +299,7 @@ export function LoopFormModal({
                 showSearch
                 optionFilterProp="label"
                 options={reviewTemplateOptions.map(t => ({ value: t.id, label: t.name }))}
-                notFoundContent={workspaceId != null ? '暂无模板，可点击"新建模板"' : '请先选择工作空间'}
+                notFoundContent={workspaceId != null ? '暂无模板，可点击"新建模板"' : '暂无模板'}
               />
             </Form.Item>
           </div>

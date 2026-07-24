@@ -36,7 +36,7 @@ interface TodoListProps {
 }
 
 export function TodoList(props: TodoListProps) {
-  const { onOpenCreateModal, onSelectTodo, onSelectLoop, onCreateLoop, refreshKey, forcedListMode, onListModeChange, hideCreateButton, searchKeyword: externalSearchKeyword } = props;
+  const { onOpenCreateModal, onSelectTodo, onSelectLoop, onCreateLoop, refreshKey, loopUpdateCount, forcedListMode, onListModeChange, hideCreateButton, searchKeyword: externalSearchKeyword } = props;
   const { state, dispatch } = useApp();
   const { todos, selectedTodoId, selectedTagId, selectedWorkspace, tags } = state;
   const { message } = AntApp.useApp();
@@ -140,7 +140,7 @@ export function TodoList(props: TodoListProps) {
       .then(setLoopList)
       .catch(() => setLoopList([]))
       .finally(() => setLoopLoading(false));
-  }, [listMode, selectedWorkspace, projectDirectories, directoriesReady]);
+  }, [listMode, selectedWorkspace, projectDirectories, directoriesReady, loopUpdateCount]);
 
   // 切换工作空间后按需拉取该工作空间的 todo 列表。
   useEffect(() => {

@@ -98,7 +98,7 @@ mod prompt_fallback_tests {
         assert_eq!(req.prompt, "This is the prompt");
         assert_eq!(req.executor, Some("kimi".to_string()));
         assert_eq!(req.tag_ids, vec![1, 2, 3]);
-        assert_eq!(req.workspace_id, 1);
+        assert_eq!(req.workspace_id, Some(1));
     }
 
     #[test]
@@ -110,7 +110,7 @@ mod prompt_fallback_tests {
         assert!(req.prompt.is_empty());
         assert!(req.executor.is_none());
         assert!(req.tag_ids.is_empty());
-        assert_eq!(req.workspace_id, 1);
+        assert_eq!(req.workspace_id, Some(1));
     }
 }
 

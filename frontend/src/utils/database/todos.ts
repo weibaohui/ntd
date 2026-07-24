@@ -27,7 +27,7 @@ export async function createTodo(
   expertName?: string,
   model?: string | null,
 ): Promise<Todo> {
-  // workspace_id 从 body 提升到 URL 路径段；body 只保留字段语义
+  // workspace_id 仅从 URL 路径段传入（后端 v1 路由从 Path 提取），body 中不再传递
   const body: Record<string, unknown> = { title, prompt, tag_ids: tagIds };
   if (acceptanceCriteria !== undefined) body.acceptance_criteria = acceptanceCriteria;
   if (autoReviewEnabled !== undefined) body.auto_review_enabled = autoReviewEnabled;
