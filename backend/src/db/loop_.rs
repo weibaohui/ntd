@@ -15,7 +15,7 @@ use sea_orm::{
 };
 
 use crate::db::entity::{
-    loop_executions, loop_step_executions, loop_steps, loop_triggers, loops,
+    loop_executions, loop_phases, loop_step_executions, loop_steps, loop_triggers, loops,
 };
 use crate::db::Database;
 
@@ -644,6 +644,19 @@ impl Database {
             .filter(loop_steps::Column::Enabled.eq(1))
             .order_by_asc(loop_steps::Column::OrderIndex)
             .order_by_asc(loop_steps::Column::Id)
+            .all(&self.conn)
+            .await
+    }
+
+    /// 列出 loop 下所有 phase，按 order_index 排序。
+    pub async fn list_loop_phases_by_loop(
+        &self,
+        loop_id: i64,
+    ) -> Result<Vec<loop_phases::Model>, sea_orm::DbErr> {
+        loop_phases::Entity::find()
+            .filter(loop_phases::Column::LoopId.eq(loop_id))
+            .order_by_asc(loop_phases::Column::OrderIndex)
+            .order_by_asc(loop_phases::Column::Id)
             .all(&self.conn)
             .await
     }

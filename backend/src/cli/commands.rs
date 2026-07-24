@@ -101,6 +101,11 @@ pub enum Commands {
         #[command(subcommand)]
         action: WorkspaceAction,
     },
+    /// Process template management
+    Process {
+        #[command(subcommand)]
+        action: ProcessAction,
+    },
 }
 
 /// Workspace CLI actions: 列出 / 查询单个 / 注册一个项目目录。
@@ -388,6 +393,18 @@ pub enum TagAction {
 
 // ============== Loop Commands ==============
 
+/// 工艺模板 CLI 动作：列出 / 查看单个工艺模板。
+#[derive(Debug, Clone, Subcommand)]
+pub enum ProcessAction {
+    /// 列出所有工艺模板
+    List,
+    /// 查看工艺模板详情
+    Show {
+        /// 工艺模板名称（如 4p12s-delivery）
+        name: String,
+    },
+}
+
 /// Loop CLI actions, mirrors the structure of Todo commands for consistency.
 #[derive(Debug, Clone, Subcommand)]
 pub enum LoopAction {
@@ -604,6 +621,7 @@ pub async fn run_command(cli: &Cli) -> Result<()> {
         Commands::Stats { } => handle_stats(&client, &cli.output, &cli.fields).await?,
         Commands::Blackboard { action } => handle_blackboard(&client, action, &cli.output, &cli.fields).await?,
         Commands::Workspace { action } => handle_workspace(&client, action, &cli.output, &cli.fields).await?,
+        Commands::Process { action } => handle_process(&client, action, &cli.output, &cli.fields).await?,
     }
 
     Ok(())
@@ -949,6 +967,30 @@ async fn handle_workspace(
             create_workspace(client, path, name, output, fields).await
         }
     }
+}
+
+// ============== Process Handlers ==============
+
+async fn handle_process(
+    client: &ApiClient,
+    action: &ProcessAction,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    match action {
+        ProcessAction::List => {
+            let resp: ClientResponse<Vec<serde_json::Value>> =
+                client.get("/bundled/processes").await?;
+            print_response(&resp, output, fields)?;
+        }
+        ProcessAction::Show { name } => {
+            let encoded = percent_encode_slug(name);
+            let path = format!("/bundled/processes/{}", encoded);
+            let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
+            print_response(&resp, output, fields)?;
+        }
+    }
+    Ok(())
 }
 
 /// 调 `GET /api/v1/project-directories` 拉全部已注册工作空间。
