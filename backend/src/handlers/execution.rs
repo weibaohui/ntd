@@ -620,6 +620,7 @@ static DASHBOARD_CACHE: LazyLock<RwLock<HashMap<(i64, u32), DashboardCacheEntry>
 
 pub async fn get_dashboard_stats(
     State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
     Query(params): Query<DashboardStatsParams>,
 ) -> Result<ApiResponse<DashboardStats>, AppError> {
     let hours_key = params.hours.unwrap_or(24 * 7); // default: 7 days

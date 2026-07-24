@@ -893,6 +893,7 @@ async fn handle_tag(
 
 async fn handle_stats(
     client: &ApiClient,
+    workspace_id: i64,
     output: &OutputFormat,
     fields: &Option<String>,
 ) -> Result<()> {
