@@ -29,6 +29,7 @@ mod v67;
 mod v68;
 mod v69;
 mod v70;
+mod v71;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -97,6 +98,9 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // V70 在 V69 之后：workspace_settings 增加 system_prompt 列，
         // 支撑需求 022「工作空间 Prompt」——每个 workspace 一份共享前置 prompt
         Box::new(v70::V70AddWorkspaceSettingsSystemPrompt),
+        // V71 在 V70 之后：工艺管理 M1 数据模型，
+        // 支撑需求 025「工艺管理」——模板、阶段、产物、门禁、返工
+        Box::new(v71::V71ProcessManagement),
     ]
 }
 

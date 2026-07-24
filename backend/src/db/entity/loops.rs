@@ -35,6 +35,10 @@ pub struct Model {
     /// 异常处理触发条件 JSON 数组，如 ["capped_step", "capped_token", "failed"]
     #[sea_orm(default_value = "[\"capped_step\",\"capped_token\",\"failed\"]")]
     pub abnormal_handler_trigger_on: String,
+    /// 来源工艺模板 ID，NULL 表示非工艺实例化 Loop。
+    pub process_template_id: Option<i64>,
+    /// 实例化时的工艺模板版本快照，保证审计链完整。
+    pub process_template_version: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -47,6 +51,8 @@ pub enum Relation {
     LoopSteps,
     #[sea_orm(has_many = "super::loop_executions::Entity")]
     LoopExecutions,
+    #[sea_orm(has_many = "super::loop_phases::Entity")]
+    LoopPhases,
 }
 
 impl Related<super::loop_triggers::Entity> for Entity {
@@ -59,6 +65,10 @@ impl Related<super::loop_steps::Entity> for Entity {
 
 impl Related<super::loop_executions::Entity> for Entity {
     fn to() -> RelationDef { Relation::LoopExecutions.def() }
+}
+
+impl Related<super::loop_phases::Entity> for Entity {
+    fn to() -> RelationDef { Relation::LoopPhases.def() }
 }
 
 impl ActiveModelBehavior for ActiveModel {}

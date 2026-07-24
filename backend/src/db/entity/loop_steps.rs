@@ -39,6 +39,22 @@ pub struct Model {
     /// 评审类型: "ai" = AI 自动评审, "human" = 人工审批（默认 "ai"）
     #[sea_orm(default_value = "ai")]
     pub review_type: String,
+    /// 所属阶段 ID，NULL 表示未分组（兼容旧 Loop）。
+    pub phase_id: Option<i64>,
+    /// 期望产物配置（JSON 数组）。
+    #[sea_orm(default_value = "[]")]
+    pub expected_artifacts: String,
+    /// 门禁配置（JSON 数组）。
+    #[sea_orm(default_value = "[]")]
+    pub gate_config: String,
+    /// 最大返工次数，默认 3。
+    #[sea_orm(default_value = "3")]
+    pub max_rework: i32,
+    /// 本环节使用的 skill 名称列表（JSON 数组）。
+    #[sea_orm(default_value = "[]")]
+    pub skill_names: String,
+    /// 专家/团队名称。
+    pub expert_name: Option<String>,
     #[sea_orm(default_value = "1")]
     pub enabled: i32,
     pub created_at: Option<String>,
@@ -58,6 +74,12 @@ pub enum Relation {
         to = "super::todos::Column::Id"
     )]
     BelongsToTodo,
+    #[sea_orm(
+        belongs_to = "super::loop_phases::Entity",
+        from = "Column::PhaseId",
+        to = "super::loop_phases::Column::Id"
+    )]
+    BelongsToPhase,
 }
 
 impl Related<super::loops::Entity> for Entity {
@@ -66,6 +88,10 @@ impl Related<super::loops::Entity> for Entity {
 
 impl Related<super::todos::Entity> for Entity {
     fn to() -> RelationDef { Relation::BelongsToTodo.def() }
+}
+
+impl Related<super::loop_phases::Entity> for Entity {
+    fn to() -> RelationDef { Relation::BelongsToPhase.def() }
 }
 
 impl ActiveModelBehavior for ActiveModel {}

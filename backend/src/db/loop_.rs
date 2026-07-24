@@ -1279,6 +1279,8 @@ impl Database {
                     s.run_mode, s.skip_on_source_failed, s.min_rating, s.unrated_policy, \
                     s.on_success, s.success_goto_step_id, s.on_rating_fail, s.fail_goto_step_id, \
                     s.review_type, \
+                    s.phase_id, s.expected_artifacts, s.gate_config, s.max_rework, \
+                    s.skill_names, s.expert_name, \
                     s.enabled, s.created_at, \
                     st.title as todo_title, st.executor as todo_executor, \
                     st.archived_at as todo_archived_at \
@@ -1310,6 +1312,12 @@ impl Database {
                 on_rating_fail: row.try_get_by::<String, _>("on_rating_fail")?,
                 fail_goto_step_id: row.try_get_by::<Option<i64>, _>("fail_goto_step_id")?,
                 review_type: row.try_get_by::<String, _>("review_type")?,
+                phase_id: row.try_get_by::<Option<i64>, _>("phase_id")?,
+                expected_artifacts: row.try_get_by::<String, _>("expected_artifacts")?,
+                gate_config: row.try_get_by::<String, _>("gate_config")?,
+                max_rework: row.try_get_by::<i32, _>("max_rework")?,
+                skill_names: row.try_get_by::<String, _>("skill_names")?,
+                expert_name: row.try_get_by::<Option<String>, _>("expert_name")?,
                 enabled: row.try_get_by::<i32, _>("enabled")?,
                 created_at: row.try_get_by::<Option<String>, _>("created_at")?,
             };
@@ -1338,6 +1346,7 @@ impl Database {
                               l.status, l.color, l.icon, l.limits_config, l.review_template_id, \
                               l.webhook_enabled, \
                               l.abnormal_handler_todo_id, l.abnormal_handler_trigger_on, \
+                              l.process_template_id, l.process_template_version, \
                               l.created_at, l.updated_at, \
                               (SELECT COUNT(*) FROM loop_triggers t WHERE t.loop_id = l.id) as trigger_count, \
                               (SELECT COUNT(*) FROM loop_steps s WHERE s.loop_id = l.id) as step_count, \
@@ -1355,6 +1364,7 @@ impl Database {
                           l.status, l.color, l.icon, l.limits_config, l.review_template_id, \
                           l.webhook_enabled, \
                           l.abnormal_handler_todo_id, l.abnormal_handler_trigger_on, \
+                          l.process_template_id, l.process_template_version, \
                           l.created_at, l.updated_at, \
                           (SELECT COUNT(*) FROM loop_triggers t WHERE t.loop_id = l.id) as trigger_count, \
                           (SELECT COUNT(*) FROM loop_steps s WHERE s.loop_id = l.id) as step_count, \
@@ -1396,6 +1406,8 @@ impl Database {
                     limits_config: row.try_get_by::<String, _>("limits_config")?,
                     abnormal_handler_todo_id: row.try_get_by::<Option<i64>, _>("abnormal_handler_todo_id")?,
                     abnormal_handler_trigger_on: row.try_get_by::<String, _>("abnormal_handler_trigger_on")?,
+                    process_template_id: row.try_get_by::<Option<i64>, _>("process_template_id")?,
+                    process_template_version: row.try_get_by::<Option<String>, _>("process_template_version")?,
                     created_at: row.try_get_by::<Option<String>, _>("created_at")?,
                     updated_at: row.try_get_by::<Option<String>, _>("updated_at")?,
                 },
