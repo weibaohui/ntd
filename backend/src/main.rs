@@ -75,6 +75,11 @@ enum Commands {
         #[command(subcommand)]
         action: SkillAction,
     },
+    /// Process template management
+    Process {
+        #[command(subcommand)]
+        action: cli::ProcessAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -262,6 +267,10 @@ async fn main() {
                 eprintln!("{}", payload_str);
                 std::process::exit(1);
             }
+            return;
+        }
+        Some(Commands::Process { action }) => {
+            dispatch_subcommand(&cli, cli::Commands::Process { action: action.clone() }).await;
             return;
         }
         None => {
