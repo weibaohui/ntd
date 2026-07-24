@@ -89,9 +89,7 @@ pub enum Commands {
     },
     /// Global statistics
     Stats {
-        /// Workspace ID (project_directories.id). v1 路由把 dashboard 嵌入 workspace URL。
-        #[arg(long = "workspace-id")]
-        workspace_id: i64,
+        // Dashboard 为全局运营视图，不再依赖 workspace_id。
     },
     /// Blackboard (knowledge wiki) management
     Blackboard {
@@ -603,7 +601,7 @@ pub async fn run_command(cli: &Cli) -> Result<()> {
         Commands::Todo { action } => handle_todo(&client, action, &cli.output, &cli.fields).await?,
         Commands::Loop { action } => handle_loop(&client, action, &cli.output, &cli.fields).await?,
         Commands::Tag { action } => handle_tag(&client, action, &cli.output, &cli.fields).await?,
-        Commands::Stats { workspace_id } => handle_stats(&client, *workspace_id, &cli.output, &cli.fields).await?,
+        Commands::Stats { } => handle_stats(&client, &cli.output, &cli.fields).await?,
         Commands::Blackboard { action } => handle_blackboard(&client, action, &cli.output, &cli.fields).await?,
         Commands::Workspace { action } => handle_workspace(&client, action, &cli.output, &cli.fields).await?,
     }
@@ -899,9 +897,8 @@ async fn handle_stats(
     output: &OutputFormat,
     fields: &Option<String>,
 ) -> Result<()> {
-    // v1: dashboard 改为 workspace-scoped，GET /workspaces/{ws}/stats/dashboard。
-    let path = format!("{}/stats/dashboard", ws_prefix(workspace_id));
-    let resp: ClientResponse<DashboardStats> = client.get(&path).await?;
+    // Dashboard 为全局运营视图，直接请求全局 stats 端点。
+    let resp: ClientResponse<DashboardStats> = client.get("/api/v1/stats/dashboard").await?;
     print_response(&resp, output, fields)?;
     Ok(())
 }
@@ -918,16 +915,16 @@ async fn handle_blackboard(
         BlackboardAction::Wiki { action, workspace_id } => {
             match action {
                 WikiAction::List => {
-                    // v1: wiki 收敛到 blackboard 域，GET /workspaces/{ws}/blackboard/wiki/files
-                    let path = format!("{}/blackboard/wiki/files", ws_prefix(*workspace_id));
+                    // v1: wiki 独立于 blackboard 域，GET /workspaces/{ws}/wiki/files
+                    let path = format!("{}/wiki/files", ws_prefix(*workspace_id));
                     let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
                     print_response(&resp, output, fields)?;
                 }
                 WikiAction::Get { slug } => {
                     // slug 可能包含中文或特殊字符，必须 percent-encode 后才能安全放入 URL 路径
                     let encoded = percent_encode_slug(slug);
-                    // v1: 同样嵌在 blackboard 域下
-                    let path = format!("{}/blackboard/wiki/files/{}", ws_prefix(*workspace_id), encoded);
+                    // v1: wiki 独立域，不与 blackboard 嵌套
+                    let path = format!("{}/wiki/files/{}", ws_prefix(*workspace_id), encoded);
                     let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
                     print_response(&resp, output, fields)?;
                 }

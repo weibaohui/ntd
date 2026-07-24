@@ -245,7 +245,6 @@ pub fn v1_routes() -> Router<AppState> {
         .merge(super::skills::v1_routes())
         .merge(super::session::v1_routes())
         .merge(super::feishu_history::v1_routes())
-        .merge(super::quick_button::v1_routes())
         .merge(super::review_template::v1_routes())
         .merge(super::todo_template::v1_routes())
         .merge(super::usage_stats::v1_routes())
@@ -254,14 +253,16 @@ pub fn v1_routes() -> Router<AppState> {
         .merge(super::project_directory::v1_routes())
         // executor-profiles（API Key 管理）：providers + profiles，路径已为 /api/v1/
         .merge(super::profiles::profile_routes())
+        // ── 全局统计 ─────────────────────────────────────────────
+        // Dashboard 统计为全局运营视图，不随 workspace 变化，独立于 executions 注册到 /stats 域
+        .route("/api/v1/stats/dashboard", get(super::execution::get_dashboard_stats))
         // ── 工作空间作用域资源（嵌套子路由） ───────────────────────
         .nest("/api/v1/workspaces/{ws}/todos", super::todo::v1_routes())
         .nest("/api/v1/workspaces/{ws}/executions", super::execution::v1_routes())
-        // dashboard 统计归 stats 域（独立于 executions），直接注册避免单独建 stats 模块
-        .route("/api/v1/workspaces/{ws}/stats/dashboard", get(super::execution::get_dashboard_stats))
         // 定时 todo 查询按 workspace 隔离（update_scheduler 已在 todo 域 /{id}/scheduler）
         .route("/api/v1/workspaces/{ws}/scheduler/todos", get(super::scheduler::get_scheduler_todos))
         .nest("/api/v1/workspaces/{ws}/loops", super::loop_::v1_routes())
+        .nest("/api/v1/workspaces/{ws}/quick-buttons", super::quick_button::v1_routes())
         .nest("/api/v1/workspaces/{ws}/blackboard", super::blackboard::v1_routes())
         // wiki 独立于 blackboard（设计文档 4.4 + 旧路由 + 前端均为 /workspaces/{ws}/wiki/*，
         // 不能挂在 /blackboard 下，否则前端 /workspaces/{ws}/wiki/files 会 404）

@@ -2,7 +2,7 @@
 
 > 版本：v1
 > 日期：2026-07-22
-> 状态：已定稿
+> 状态：已定稿（2026-07-23 更新：对齐实现中 actions/quick-buttons/backup/events 的最终路由；2026-07-23 更新：Dashboard 调整为全局资源，路由改为 `/api/v1/stats/dashboard`）
 
 ---
 
@@ -111,8 +111,7 @@ POST /api/experts/create       # → 与 /experts/{name} 路由冲突
 | slash-commands | `.../workspaces/{ws}/slash-commands` | 斜杠命令（迁移进 v1 + 统一复数） |
 | settings | `.../workspaces/{ws}/settings` | 工作空间设置（迁移进 v1 + 统一复数） |
 | quick-buttons | `.../workspaces/{ws}/quick-buttons` | 快捷话术 |
-| actions | `.../workspaces/{ws}/actions` | 自定义动作 |
-| stats/dashboard | `.../workspaces/{ws}/stats/dashboard` | 项目维度的统计 |
+| actions | `.../actions` | 自定义动作（全局：action 通过 todo 推导 workspace，URL 不再嵌套 ws） |
 
 ### 3.2 全局资源（系统级）
 
@@ -135,6 +134,7 @@ POST /api/experts/create       # → 与 /experts/{name} 路由冲突
 | usage-stats | `.../usage-stats` | 用量统计 |
 | cloud | `.../cloud` | 云端同步 |
 | project-directories | `.../project-directories` | 项目目录 CRUD（workspace 本身） |
+| stats/dashboard | `.../stats/dashboard` | 仪表盘全局运营视图 |
 | webhooks | `.../webhooks` | Webhook 配置与触发 |
 | events | `.../events` | WebSocket 事件流 |
 
@@ -194,8 +194,8 @@ POST /api/experts/create       # → 与 /experts/{name} 路由冲突
 | PUT | `/api/execution-records/{id}/rating`{--} | `PUT /api/v1/workspaces/{ws}/executions/{id}/rating`{++} |
 | GET | `/api/running-board`{--} | `GET /api/v1/workspaces/{ws}/executions/running-board`{++} |
 | GET | `/api/running-todos`{--} | `GET /api/v1/workspaces/{ws}/executions/running-todos`{++} |
-| GET | `/api/dashboard-stats`{--} | `GET /api/v1/workspaces/{ws}/stats/dashboard`{++} |
-| POST | `/api/actions/execute`{--} | `POST /api/v1/workspaces/{ws}/actions/execute`{++} |
+| GET | `/api/dashboard-stats`{--} | `GET /api/v1/stats/dashboard`{++} |
+| POST | `/api/actions/execute`{--} | `POST /api/v1/actions/execute`{++}（全局：action 目标 todo 自带 workspace_id，URL 不重复嵌套） |
 | GET | `/api/scheduler/todos`{--} | `GET /api/v1/workspaces/{ws}/scheduler/todos`{++} |
 
 > **命名解释**：
@@ -322,7 +322,7 @@ POST /api/experts/create       # → 与 /experts/{name} 路由冲突
 | `POST /api/usage-stats/refresh`{~} | `POST /api/v1/usage-stats/refresh` |
 | `GET /api/usage-stats/settings`{~} | `GET /api/v1/usage-stats/settings` |
 | `PUT /api/usage-stats/settings`{~} | `PUT /api/v1/usage-stats/settings` |
-| `GET /api/events`{~} | `GET /api/v1/events`（WebSocket） |
+| `GET /api/events`{~} | `GET /api/events`（WebSocket，故意不版本化：升级端点需要 WS 连接协商，版本前缀会让旧客户端丢失连接） |
 | `GET /api/project-directories`{~} | `GET /api/v1/project-directories` |
 | `POST /api/project-directories`{~} | `POST /api/v1/project-directories` |
 | `PUT /api/project-directories/{id}`{~} | `PUT /api/v1/project-directories/{id}` |
@@ -473,9 +473,9 @@ POST /api/experts/create       # → 与 /experts/{name} 路由冲突
 | `workspace`（单数） | `workspaces`（复数） | 与 blackboard 现有一致 |
 | ~~`execute/stop`~~ | `executions/{id}/stop` | 归入 executions 资源 |
 | ~~`execute/force-fail`~~ | `executions/{id}/force-fail` | 归入 executions 资源 |
-| ~~`backup/database/file`~~ | `backup/database/files` | 集合名词复数 |
-| ~~`backup/todo/file`~~ | `backup/todo/files` | 同上 |
-| ~~`backup/skills/file`~~ | `backup/skills/files` | 同上 |
+| ~~`backup/database/files`~~ | `backup/database/file` | 保留单数 `file`（与存档资源一致） |
+| ~~`backup/todo/files`~~ | `backup/todo/file` | 同上 |
+| ~~`backup/skills/files`~~ | `backup/skills/file` | 同上 |
 | ~~`webhook/trigger/todo/{id}`~~ | `webhooks/todo/{id}/trigger` | 归入 webhooks + 资源前置 |
 | ~~`running-board`~~ | `executions/running-board` | 归入 executions 域 |
 | ~~`running-todos`~~ | `executions/running-todos` | 归入 executions 域 |

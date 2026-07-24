@@ -464,9 +464,10 @@ pub async fn get_recent_completed_todos(
     ))
 }
 
-/// PUT /api/todos/batch-executor — 批量更新事项执行器
+/// POST /api/v1/workspaces/{ws}/todos/batch/executor — 批量更新事项执行器
 pub async fn batch_update_todos_executor(
     State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
     ApiJson(req): ApiJson<BatchUpdateTodoExecutorRequest>,
 ) -> Result<ApiResponse<BatchUpdateTodoResult>, AppError> {
     if req.ids.is_empty() {
@@ -475,6 +476,8 @@ pub async fn batch_update_todos_executor(
     if req.executor.trim().is_empty() {
         return Err(AppError::BadRequest("executor 不能为空".to_string()));
     }
+    // v1 隔离：批量操作前校验所有目标 todo 属于当前 workspace。
+    workspace_guard::verify_todos_belong_to_ws(&state.db, &req.ids, ws_id).await?;
     let rows_affected = state
         .db
         .batch_update_todos_executor(&req.ids, req.executor.trim())
@@ -485,14 +488,19 @@ pub async fn batch_update_todos_executor(
     }))
 }
 
-/// PUT /api/todos/batch-workspace — 批量移动事项到其他工作空间
+/// POST /api/v1/workspaces/{ws}/todos/batch/workspace — 批量移动事项到其他工作空间
+///
+/// `req.workspace_id` 是目标 workspace；URL 中的 `ws_id` 是源 workspace（待移动 todo 必须属于它）。
 pub async fn batch_move_todos_workspace(
     State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
     ApiJson(req): ApiJson<BatchUpdateTodoWorkspaceRequest>,
 ) -> Result<ApiResponse<BatchWorkspaceResult>, AppError> {
     if req.ids.is_empty() {
         return Err(AppError::BadRequest("ids 不能为空".to_string()));
     }
+    // v1 隔离：源 workspace 下的 todo 才能被移动。
+    workspace_guard::verify_todos_belong_to_ws(&state.db, &req.ids, ws_id).await?;
     // handler 把 id 解析为 path 后下传 DAO；DAO 一次写入 workspace_id + workspace_path。
     let dir = state
         .db
@@ -509,14 +517,19 @@ pub async fn batch_move_todos_workspace(
     }))
 }
 
-/// POST /api/todos/batch-copy-workspace — 批量复制事项到其他工作空间
+/// POST /api/v1/workspaces/{ws}/todos/batch/copy-workspace — 批量复制事项到其他工作空间
+///
+/// `req.workspace_id` 是目标 workspace；URL 中的 `ws_id` 是源 workspace（被复制 todo 必须属于它）。
 pub async fn batch_copy_todos_workspace(
     State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
     ApiJson(req): ApiJson<BatchCopyTodoWorkspaceRequest>,
 ) -> Result<ApiResponse<BatchWorkspaceResult>, AppError> {
     if req.ids.is_empty() {
         return Err(AppError::BadRequest("ids 不能为空".to_string()));
     }
+    // v1 隔离：源 workspace 下的 todo 才能被复制。
+    workspace_guard::verify_todos_belong_to_ws(&state.db, &req.ids, ws_id).await?;
     let dir = state
         .db
         .get_project_directory_by_id(req.workspace_id)
@@ -532,7 +545,7 @@ pub async fn batch_copy_todos_workspace(
     }))
 }
 
-/// PUT /api/todos/batch-scheduler — 批量暂停/恢复事项的周期执行
+/// POST /api/v1/workspaces/{ws}/todos/batch/scheduler — 批量暂停/恢复事项的周期执行
 ///
 /// 修复：原实现仅更新 DB 的 `scheduler_enabled` 字段，未同步内存中的 cron 任务，
 /// 导致批量暂停后 cron 仍会触发、批量恢复后 cron 不触发的状态不一致。
@@ -542,11 +555,14 @@ pub async fn batch_copy_todos_workspace(
 /// - 恢复：先写 DB，再从 DB 读出 config/timezone 重新注册 cron
 pub async fn batch_update_todos_scheduler(
     State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
     ApiJson(req): ApiJson<BatchUpdateTodoSchedulerRequest>,
 ) -> Result<ApiResponse<BatchWorkspaceResult>, AppError> {
     if req.ids.is_empty() {
         return Err(AppError::BadRequest("ids 不能为空".to_string()));
     }
+    // v1 隔离：批量操作前校验所有目标 todo 属于当前 workspace。
+    workspace_guard::verify_todos_belong_to_ws(&state.db, &req.ids, ws_id).await?;
     // 根据目标状态分流到对应辅助函数，保持 handler 单一职责、控制函数长度。
     // 两个分支各自用 `?` 解包 Result，统一得到 rows_affected: u64。
     let rows_affected = if req.scheduler_enabled {
@@ -761,9 +777,10 @@ pub fn v1_routes() -> Router<AppState> {
         .route("/{id}/webhook", put(update_webhook))
         .route("/{id}/summary", get(super::execution::get_execution_summary))
         .route("/{id}", get(get_todo).put(update_todo).delete(delete_todo))
-        // 批量操作（全局，不依赖单个 id）
-        .route("/batch-executor", put(batch_update_todos_executor))
-        .route("/batch-workspace", put(batch_move_todos_workspace))
-        .route("/batch-copy-workspace", post(batch_copy_todos_workspace))
-        .route("/batch-scheduler", put(batch_update_todos_scheduler))
+        // 批量操作（workspace 作用域，不依赖单个 id）
+        // batch/* 必须注册在 /{id} 之前，避免 axum 把 "batch" 当作 todo id 捕获。
+        .route("/batch/executor", post(batch_update_todos_executor))
+        .route("/batch/workspace", post(batch_move_todos_workspace))
+        .route("/batch/copy-workspace", post(batch_copy_todos_workspace))
+        .route("/batch/scheduler", post(batch_update_todos_scheduler))
 }

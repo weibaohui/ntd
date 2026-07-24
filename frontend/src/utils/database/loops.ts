@@ -29,7 +29,7 @@ import type {
 export async function listLoops(workspaceId: number | null): Promise<LoopListItem[]> {
   // null workspace 时仍发请求（后端可能在 URL 用 0 或报错），让调用方处理失败
   const ws = workspaceId ?? 0;
-  return unwrap(await api.get(`/api/workspaces/${ws}/loops`));
+  return unwrap(await api.get(`/api/v1/workspaces/${ws}/loops`));
 }
 
 // ====== Loop 聚合统计(dashboard「自动化」Tab)======
@@ -59,27 +59,27 @@ export interface LoopTriggerTypeCount {
 /** GET /api/v1/workspaces/{ws}/loops/stats:按工作空间聚合 loop 统计。hours 缺省或 0 表示全时段。 */
 export async function getLoopStats(workspaceId: number, hours?: number): Promise<LoopStats> {
   const qs = hours && hours > 0 ? `?hours=${hours}` : '';
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/loops/stats${qs}`));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/loops/stats${qs}`));
 }
 
 /** 单个 loop 详情,含 triggers/steps/hooks/todo_map。 */
 export async function getLoop(workspaceId: number, id: number): Promise<LoopDetail> {
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/loops/${id}`));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/loops/${id}`));
 }
 
 /** 新建 loop,后端强制 status=paused。 */
 export async function createLoop(workspaceId: number, req: CreateLoopRequest): Promise<LoopListItem> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/loops`, req));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/loops`, req));
 }
 
 /** 全量更新 loop 基本字段。 */
 export async function updateLoop(workspaceId: number, id: number, req: UpdateLoopRequest): Promise<LoopListItem> {
-  return unwrap(await api.put(`/api/workspaces/${workspaceId}/loops/${id}`, req));
+  return unwrap(await api.put(`/api/v1/workspaces/${workspaceId}/loops/${id}`, req));
 }
 
 /** 删除 loop,级联清子表。 */
 export async function deleteLoop(workspaceId: number, id: number): Promise<void> {
-  await api.delete(`/api/workspaces/${workspaceId}/loops/${id}`);
+  await api.delete(`/api/v1/workspaces/${workspaceId}/loops/${id}`);
 }
 
 /** 切换 loop 状态(enabled/paused)。 */
@@ -88,17 +88,17 @@ export async function updateLoopStatus(
   id: number,
   req: UpdateLoopStatusRequest,
 ): Promise<LoopListItem> {
-  return unwrap(await api.put(`/api/workspaces/${workspaceId}/loops/${id}/status`, req));
+  return unwrap(await api.put(`/api/v1/workspaces/${workspaceId}/loops/${id}/status`, req));
 }
 
 /** 复制 loop(返回新 loop)。 */
 export async function duplicateLoop(workspaceId: number, id: number): Promise<LoopListItem> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/loops/${id}/duplicate`, {}));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/loops/${id}/duplicate`, {}));
 }
 
 /** 手动触发 loop,返回新创建的 execution_id。 */
 export async function triggerLoop(workspaceId: number, id: number): Promise<LoopTriggerResponse> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/loops/${id}/trigger`, {}));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/loops/${id}/trigger`, {}));
 }
 
 // ====== Triggers ======
@@ -108,7 +108,7 @@ export async function createTrigger(
   loopId: number,
   req: CreateTriggerRequest,
 ): Promise<LoopTriggerDto> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/loops/${loopId}/triggers`, req));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/loops/${loopId}/triggers`, req));
 }
 
 export async function updateTrigger(
@@ -117,11 +117,11 @@ export async function updateTrigger(
   triggerId: number,
   req: UpdateTriggerRequest,
 ): Promise<LoopTriggerDto> {
-  return unwrap(await api.put(`/api/workspaces/${workspaceId}/loops/${loopId}/triggers/${triggerId}`, req));
+  return unwrap(await api.put(`/api/v1/workspaces/${workspaceId}/loops/${loopId}/triggers/${triggerId}`, req));
 }
 
 export async function deleteTrigger(workspaceId: number, loopId: number, triggerId: number): Promise<void> {
-  await api.delete(`/api/workspaces/${workspaceId}/loops/${loopId}/triggers/${triggerId}`);
+  await api.delete(`/api/v1/workspaces/${workspaceId}/loops/${loopId}/triggers/${triggerId}`);
 }
 
 // ====== Steps ======
@@ -131,7 +131,7 @@ export async function createLoopStep(
   loopId: number,
   req: CreateLoopStepRequest,
 ): Promise<LoopStepDto> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/loops/${loopId}/steps`, req));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/loops/${loopId}/steps`, req));
 }
 
 export async function updateLoopStep(
@@ -140,11 +140,11 @@ export async function updateLoopStep(
   stepId: number,
   req: UpdateLoopStepRequest,
 ): Promise<LoopStepDto> {
-  return unwrap(await api.put(`/api/workspaces/${workspaceId}/loops/${loopId}/steps/${stepId}`, req));
+  return unwrap(await api.put(`/api/v1/workspaces/${workspaceId}/loops/${loopId}/steps/${stepId}`, req));
 }
 
 export async function deleteLoopStep(workspaceId: number, loopId: number, stepId: number): Promise<void> {
-  await api.delete(`/api/workspaces/${workspaceId}/loops/${loopId}/steps/${stepId}`);
+  await api.delete(`/api/v1/workspaces/${workspaceId}/loops/${loopId}/steps/${stepId}`);
 }
 
 // ====== Executions ======
@@ -160,7 +160,7 @@ export async function listExecutions(
   if (query.limit) params.limit = String(query.limit);
   if (query.hours) params.hours = String(query.hours);
   const qs = Object.keys(params).length ? `?${new URLSearchParams(params).toString()}` : '';
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/loops/${loopId}/executions${qs}`));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/loops/${loopId}/executions${qs}`));
 }
 
 /** 单次执行详情(含 step_executions)。 */
@@ -169,7 +169,7 @@ export async function getExecution(
   loopId: number,
   executionId: number,
 ): Promise<LoopExecutionDetail> {
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/loops/${loopId}/executions/${executionId}`));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/loops/${loopId}/executions/${executionId}`));
 }
 
 /** 通过执行 ID 直接获取执行详情（无需 loop_id），供消息历史跳转使用。 */
@@ -177,7 +177,7 @@ export async function getExecutionById(
   workspaceId: number,
   executionId: number,
 ): Promise<LoopExecutionDetail> {
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/loop-executions/${executionId}`));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/loop-executions/${executionId}`));
 }
 
 /**
@@ -193,7 +193,7 @@ export async function approveStepExecution(
   comment?: string,
 ): Promise<{ step_execution_id: number; rating: number; status: string }> {
   return unwrap(await api.post(
-    `/api/workspaces/${workspaceId}/loops/${loopId}/executions/${executionId}/steps/${stepExecutionId}/approve`,
+    `/api/v1/workspaces/${workspaceId}/loops/${loopId}/executions/${executionId}/steps/${stepExecutionId}/approve`,
     { rating, comment },
   ));
 }
@@ -217,7 +217,7 @@ export async function batchMoveLoopsWorkspace(
   ids: number[],
   workspace_id: number,
 ): Promise<{ updated_count: number; total: number }> {
-  return unwrap(await api.put(`/api/workspaces/${workspaceId}/loops/batch-workspace`, { ids, workspace_id }));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/loops/batch/workspace`, { ids, workspace_id }));
 }
 
 /** 批量复制环路到其他工作空间。workspaceId 为源空间，workspace_id 为目标空间。 */
@@ -226,7 +226,7 @@ export async function batchCopyLoopsWorkspace(
   ids: number[],
   workspace_id: number,
 ): Promise<{ updated_count: number; total: number }> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/loops/batch-copy-workspace`, { ids, workspace_id }));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/loops/batch/copy-workspace`, { ids, workspace_id }));
 }
 
 

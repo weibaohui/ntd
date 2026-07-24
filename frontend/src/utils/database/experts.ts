@@ -13,7 +13,7 @@ const inflightMap = new Map<string, Promise<ExpertMetadata>>();
  * 从后端内存索引中获取已加载的专家元数据，包括单个专家和专家团队。
  */
 export async function getAllExperts(): Promise<ExpertMetadata[]> {
-  return unwrap(await api.get('/api/experts'));
+  return unwrap(await api.get('/api/v1/experts'));
 }
 
 /**
@@ -22,7 +22,7 @@ export async function getAllExperts(): Promise<ExpertMetadata[]> {
  * 根据专家名称获取完整的元数据信息。
  */
 export async function getExpertByName(name: string): Promise<ExpertMetadata> {
-  return unwrap(await api.get(`/api/experts/${encodeURIComponent(name)}`));
+  return unwrap(await api.get(`/api/v1/experts/${encodeURIComponent(name)}`));
 }
 
 /**
@@ -78,7 +78,7 @@ export function invalidateExpertCache(name?: string): void {
  * 返回完整的 MD 文件内容，用于执行时注入 prompt。
  */
 export async function getExpertAgentMd(name: string): Promise<string> {
-  return unwrap(await api.get(`/api/experts/${encodeURIComponent(name)}/agent-md`));
+  return unwrap(await api.get(`/api/v1/experts/${encodeURIComponent(name)}/agent-md`));
 }
 
 /**
@@ -87,7 +87,7 @@ export async function getExpertAgentMd(name: string): Promise<string> {
  * 返回专家绑定的技能列表，用于前端展示可用技能。
  */
 export async function getExpertSkills(name: string): Promise<SkillMetadata[]> {
-  return unwrap(await api.get(`/api/experts/${encodeURIComponent(name)}/skills`));
+  return unwrap(await api.get(`/api/v1/experts/${encodeURIComponent(name)}/skills`));
 }
 
 /**
@@ -97,7 +97,7 @@ export async function getExpertSkills(name: string): Promise<SkillMetadata[]> {
  * 返回加载结果（成功数量和错误列表）。
  */
 export async function reloadExperts(): Promise<LoadResult> {
-  return unwrap(await api.post('/api/experts/reload'));
+  return unwrap(await api.post('/api/v1/experts/reload'));
 }
 
 /**
@@ -107,7 +107,7 @@ export async function reloadExperts(): Promise<LoadResult> {
  * 也无法被选择使用。此操作不可逆，请谨慎操作。
  */
 export async function deleteExpert(name: string): Promise<void> {
-  await api.delete(`/api/experts/${encodeURIComponent(name)}`);
+  await api.delete(`/api/v1/experts/${encodeURIComponent(name)}`);
 }
 
 /**
@@ -117,7 +117,7 @@ export async function deleteExpert(name: string): Promise<void> {
  * 后端会自动创建目录结构并加载到索引中。
  */
 export async function createExpertFromAi(pluginJson: string, agentMd: string): Promise<void> {
-  await api.post('/api/experts/create', {
+  await api.post('/api/v1/experts/create', {
     plugin_json: pluginJson,
     agent_md: agentMd,
   });
@@ -129,7 +129,7 @@ export async function createExpertFromAi(pluginJson: string, agentMd: string): P
  * 返回 plugin.json 文件的原始文本内容，用于前端编辑。
  */
 export async function getExpertPluginJson(name: string): Promise<string> {
-  return unwrap(await api.get(`/api/experts/${encodeURIComponent(name)}/plugin-json`));
+  return unwrap(await api.get(`/api/v1/experts/${encodeURIComponent(name)}/plugin-json`));
 }
 
 /**
@@ -139,7 +139,7 @@ export async function getExpertPluginJson(name: string): Promise<string> {
  * 专家名称不可修改，如需改名请删除后重新创建。
  */
 export async function updateExpert(name: string, pluginJson: string, agentMd: string): Promise<void> {
-  await api.put(`/api/experts/${encodeURIComponent(name)}`, {
+  await api.put(`/api/v1/experts/${encodeURIComponent(name)}`, {
     plugin_json: pluginJson,
     agent_md: agentMd,
   });
@@ -152,7 +152,7 @@ export async function updateExpert(name: string, pluginJson: string, agentMd: st
  * 返回 Blob 类型的二进制数据，前端通过 a 标签触发下载。
  */
 export async function exportExpert(name: string): Promise<Blob> {
-  const response = await api.get(`/api/experts/${encodeURIComponent(name)}/export`, {
+  const response = await api.get(`/api/v1/experts/${encodeURIComponent(name)}/export`, {
     responseType: 'blob',
   });
   return response.data;
@@ -169,7 +169,7 @@ export async function importExpert(file: File): Promise<{ expert: ExpertMetadata
   formData.append('file', file);
   // 不手动设 Content-Type：交给 axios/浏览器自动生成带 boundary 的 multipart 头，
   // 手动设 multipart/form-data 会缺少 boundary 导致后端无法解析请求体。
-  return unwrap(await api.post('/api/experts/import', formData));
+  return unwrap(await api.post('/api/v1/experts/import', formData));
 }
 
 /**
@@ -179,7 +179,7 @@ export async function importExpert(file: File): Promise<{ expert: ExpertMetadata
  * 用于从 WorkBuddy 插件目录批量导入专家。
  */
 export async function importExpertFromDirectory(path: string): Promise<{ expert: ExpertMetadata | null; errors: string[] }> {
-  return unwrap(await api.post('/api/experts/import-from-directory', { path }));
+  return unwrap(await api.post('/api/v1/experts/import-from-directory', { path }));
 }
 
 /**
@@ -190,7 +190,7 @@ export async function importExpertFromDirectory(path: string): Promise<{ expert:
  * 已存在的专家会被跳过，不会覆盖。
  */
 export async function importFromWorkbuddy(): Promise<WorkbuddyImportResult> {
-  return unwrap(await api.post('/api/experts/import-from-workbuddy'));
+  return unwrap(await api.post('/api/v1/experts/import-from-workbuddy'));
 }
 
 /** 从 WorkBuddy 批量导入的结果 */

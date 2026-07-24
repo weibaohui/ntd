@@ -2721,6 +2721,177 @@ pub async fn approve_step_execution_v1(
     })))
 }
 
+/// GET /stats — 当前 workspace 的 loop 聚合统计。
+pub async fn get_loop_stats_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Query(params): Query<LoopStatsQuery>,
+) -> Result<impl IntoResponse, AppError> {
+    let stats = state.db.get_loop_stats_for_workspace(Some(ws_id), params.hours).await?;
+    Ok(ApiResponse::ok(stats))
+}
+
+/// POST /batch/workspace — 批量移动 loop 到其他 workspace。
+pub async fn batch_move_loops_workspace_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Json(req): Json<BatchUpdateLoopWorkspaceRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    if req.ids.is_empty() {
+        return Err(AppError::BadRequest("ids 不能为空".to_string()));
+    }
+    workspace_guard::verify_loops_belong_to_ws(&state.db, &req.ids, ws_id).await?;
+    let dir = state
+        .db
+        .get_project_directory_by_id(req.workspace_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id)))?;
+    let rows_affected = state
+        .db
+        .batch_update_loops_workspace(&req.ids, req.workspace_id, &dir.path)
+        .await?;
+    Ok(ApiResponse::ok(BatchWorkspaceResult {
+        updated_count: rows_affected as i64,
+        total: req.ids.len() as i64,
+    }))
+}
+
+/// POST /batch/copy-workspace — 批量复制 loop 到其他 workspace。
+pub async fn batch_copy_loops_workspace_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Json(req): Json<BatchCopyLoopWorkspaceRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    if req.ids.is_empty() {
+        return Err(AppError::BadRequest("ids 不能为空".to_string()));
+    }
+    workspace_guard::verify_loops_belong_to_ws(&state.db, &req.ids, ws_id).await?;
+    let dir = state
+        .db
+        .get_project_directory_by_id(req.workspace_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id)))?;
+    let created_ids = state
+        .db
+        .batch_copy_loops_to_workspace(&req.ids, req.workspace_id, &dir.path)
+        .await?;
+    Ok(ApiResponse::ok(BatchWorkspaceResult {
+        updated_count: created_ids.len() as i64,
+        total: req.ids.len() as i64,
+    }))
+}
+
+/// GET /{id}/export — 导出单个 loop（workspace 隔离）。
+pub async fn export_loop_v1(
+    State(state): State<AppState>,
+    Path((ws_id, id)): Path<(i64, i64)>,
+) -> Result<impl IntoResponse, AppError> {
+    workspace_guard::verify_loop_belongs_to_ws(&state.db, id, ws_id).await?;
+    let loops = state.db.list_loops_with_counts(Some(ws_id)).await?;
+    let loop_row = loops.into_iter().find(|l| l.loop_.id == id);
+    let loop_ = loop_row.ok_or(AppError::NotFound)?.loop_;
+    let yaml = build_loop_export_yaml(&state, &[id]).await?;
+    let filename = format!(
+        "{}-{}.loop.yaml",
+        loop_.name.replace(' ', "-"),
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    );
+    let disposition = format!("attachment; filename=\"{}\"", filename);
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/x-yaml; charset=utf-8".to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        yaml,
+    ))
+}
+
+/// POST /export-selected — 批量导出选中的 loop（workspace 隔离）。
+pub async fn export_selected_loops_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Json(req): Json<ExportLoopSelectedRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    if req.loop_ids.is_empty() {
+        return Err(AppError::BadRequest("loop_ids 不能为空".to_string()));
+    }
+    workspace_guard::verify_loops_belong_to_ws(&state.db, &req.loop_ids, ws_id).await?;
+    let yaml = build_loop_export_yaml(&state, &req.loop_ids).await?;
+    let filename = format!(
+        "loops-export-{}.loop.yaml",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    );
+    let disposition = format!("attachment; filename=\"{}\"", filename);
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/x-yaml; charset=utf-8".to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        yaml,
+    ))
+}
+
+/// POST /import-preview (nested) — 预览导入内容，强制 scoping 到 workspace。
+pub async fn import_preview_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    body: Bytes,
+) -> Result<impl IntoResponse, AppError> {
+    // v1 隔离：验证目标 workspace 存在。
+    state.db.get_project_directory_by_id(ws_id).await?
+        .ok_or_else(|| AppError::BadRequest(format!("工作空间 #{} 不存在", ws_id)))?;
+    // 委托原 handler；import_preview 只读不写，不接收 workspace_id 参数。
+    import_preview(State(state), body).await
+}
+
+/// POST /import (nested) — 导入 loop 到指定 workspace，强制 scoping。
+pub async fn import_loops_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Json(mut req): Json<ImportLoopRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    // v1 隔离：路径中的 workspace 覆盖请求体中的 workspace_id 字段，
+    // 确保导入的目标工作空间与 URL 一致，防止跨 workspace 导入。
+    req.workspace_id = Some(ws_id);
+    import_loops(State(state), Json(req)).await
+}
+
+/// POST /merge (nested) — 合并导入 loop 到指定 workspace，强制 scoping。
+pub async fn merge_loops_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Json(mut req): Json<MergeLoopRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    // v1 隔离：同 import，覆盖 workspace_id 确保与路径一致。
+    req.workspace_id = Some(ws_id);
+    merge_loops(State(state), Json(req)).await
+}
+
+/// GET /export — 导出当前 workspace 全部 loop。
+pub async fn export_all_loops_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+) -> Result<impl IntoResponse, AppError> {
+    let loops = state.db.list_loops_with_counts(Some(ws_id)).await?;
+    let ids: Vec<i64> = loops.into_iter().map(|l| l.loop_.id).collect();
+    if ids.is_empty() {
+        return Err(AppError::BadRequest("当前工作空间没有任何环路可导出".to_string()));
+    }
+    let yaml = build_loop_export_yaml(&state, &ids).await?;
+    let filename = format!(
+        "loops-export-{}.loop.yaml",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    );
+    let disposition = format!("attachment; filename=\"{}\"", filename);
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/x-yaml; charset=utf-8".to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        yaml,
+    ))
+}
+
 // ====== V1 路由表 ======
 // 所有路径为相对路径，外层已剥离 /api/v1/workspaces/{ws}/loops 前缀。
 // 外层 nesting 时 axum 会将 {ws} 路径参数传递到本路由器的各 handler。
@@ -2730,15 +2901,22 @@ pub fn v1_routes() -> axum::Router<AppState> {
     use axum::routing::{get, post, put};
     axum::Router::new()
         .route("/", get(list_loops_v1).post(create_loop_v1))
-        // merge 必须注册在 /{id} 之前：axum 字面量路由优先匹配，否则 "merge" 会被当 loop id。
-        // merge_loops / import_loops / import_preview handler 内部已按 workspace 隔离解析。
-        .route("/merge", post(merge_loops))
-        .route("/import-preview", post(import_preview))
-        .route("/import", post(import_loops))
+        // 字面量路由必须注册在 /{id} 之前，避免被当作 loop id 捕获。
+        .route("/stats", get(get_loop_stats_v1))
+        .route("/batch/workspace", post(batch_move_loops_workspace_v1))
+        .route("/batch/copy-workspace", post(batch_copy_loops_workspace_v1))
+        .route("/export", get(export_all_loops_v1))
+        .route("/export-selected", post(export_selected_loops_v1))
+        // merge/import 同样必须在 /{id} 之前。
+        // v1 包装器强制 workspace 隔离：覆盖请求体中的 workspace_id 为路径参数值。
+        .route("/merge", post(merge_loops_v1))
+        .route("/import-preview", post(import_preview_v1))
+        .route("/import", post(import_loops_v1))
         .route("/{id}", get(get_loop_v1).put(update_loop_v1).delete(delete_loop_v1))
         .route("/{id}/status", put(update_loop_status_v1))
         .route("/{id}/tags", put(update_loop_tags_v1))
         .route("/{id}/duplicate", post(duplicate_loop_v1))
+        .route("/{id}/export", get(export_loop_v1))
         .route("/{id}/trigger", post(trigger_loop_v1))
         .route("/{id}/triggers", get(list_triggers_v1).post(create_trigger_v1))
         .route("/{id}/triggers/{tid}", put(update_trigger_v1).delete(delete_trigger_v1))

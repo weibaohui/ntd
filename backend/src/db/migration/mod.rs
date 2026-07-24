@@ -27,6 +27,7 @@ mod v65;
 mod v66;
 mod v67;
 mod v68;
+mod v69;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -90,6 +91,8 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v67::V67AddExecutionRecordsAgentRuns),
         // V68 在 V67 之后：executors 加 default_model、todos 加 model，支撑「执行器/todo 级别指定执行模型」
         Box::new(v68::V68AddModelColumns),
+        // V69 在 V68 之后：quick_buttons 增加 workspace_id，实现 workspace 隔离
+        Box::new(v69::V69AddQuickButtonsWorkspaceId),
     ]
 }
 

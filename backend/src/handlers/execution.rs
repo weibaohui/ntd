@@ -624,8 +624,8 @@ pub async fn get_dashboard_stats(
     Query(params): Query<DashboardStatsParams>,
 ) -> Result<ApiResponse<DashboardStats>, AppError> {
     let hours_key = params.hours.unwrap_or(24 * 7); // default: 7 days
-    // 缓存键带 ws_id：不同 workspace 的看板数据独立缓存，避免互相串数据
-    let cache_key = (ws_id, hours_key);
+    // Dashboard 为全局运营视图，缓存键仅按时间窗口区分
+    let cache_key = (0i64, hours_key);
 
     {
         let cache = DASHBOARD_CACHE.read().await;
@@ -636,9 +636,7 @@ pub async fn get_dashboard_stats(
         }
     }
 
-    // TODO(ws-isolation): db.get_dashboard_stats 当前全库聚合，未按 workspace 过滤。
-    // 真正的 ws 隔离需 db/dashboard.rs 的 fetch_* SQL 下沉 WHERE todo_id IN (本 ws todos)，
-    // 作为独立任务跟进。当前接受统计暂为全库聚合（数字级聚合，非具体资源越权）。
+    // Dashboard 聚合全库数据，作为全局运营视图；不再按 workspace 隔离。
     let stats = state.db.get_dashboard_stats(params.hours).await?;
 
     {
@@ -908,7 +906,9 @@ pub async fn v1_smart_create_handler(
     let todo_id = workspace_settings.default_response_todo_id
         .ok_or_else(|| AppError::BadRequest("尚未配置默认响应 Todo，请先在工作空间设置中配置".to_string()))?;
 
-    // 验证 Todo 存在
+    // 验证 Todo 存在且属于当前 workspace：settings 表本身没有外键约束保证
+    // default_response_todo_id 与 workspace_id 一致，必须显式校验防止跨空间执行。
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, todo_id, ws_id).await?;
     let todo = state
         .db
         .get_todo(todo_id)

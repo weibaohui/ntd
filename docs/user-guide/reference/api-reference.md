@@ -2,6 +2,14 @@
 
 ntd 后端 API 参考手册。所有业务接口前缀为 `/api/v1/`：workspace 作用域资源嵌套在 `/api/v1/workspaces/{ws}/` 下（如 todos、executions、loops），全局资源直接挂在 `/api/v1/` 下（如 tags、config、experts）。WebSocket 事件流 `/api/events` 为升级端点，后端不版本化，保持原路径。
 
+> **迁移说明**：旧版 `/api/*` 路由已全部删除，统一由 v1 版本覆盖。主要变更：
+> - **Workspace ID** 从 query param 改为路径参数，所有 workspace-scoped 资源嵌套在 `/api/v1/workspaces/{ws}/` 下
+> - **批量操作** 从 `PUT /batch-xxx` 改为 `POST /batch/xxx`
+> - **执行记录** 从 `/api/execution-records` 改为 `/api/v1/workspaces/{ws}/executions`
+> - **Dashboard 统计** 从 `/api/dashboard-stats` 改为 `/api/v1/workspaces/{ws}/stats/dashboard`
+> - **智能创建** 从 `/api/smart-create` 改为 `/api/v1/workspaces/{ws}/todos/smart`
+> - **Action 执行** 从 `/api/actions/execute` 改为 `/api/v1/actions/execute`（全局）
+
 ---
 
 ## 接口分类
@@ -1482,27 +1490,6 @@ DELETE /api/v1/workspaces/{ws}/loops/{loop_id}/triggers/{trigger_id}
 
 ---
 
-### 执行 Loop
-```
-POST /api/v1/workspaces/{ws}/loops/{id}/execute
-```
-
-**请求体：**
-```json
-{
-  "message": "立即执行"
-}
-```
-
----
-
-### 停止 Loop 执行
-```
-POST /api/v1/workspaces/{ws}/loops/{id}/stop
-```
-
----
-
 ### 获取 Loop 执行记录
 ```
 GET /api/v1/workspaces/{ws}/loops/{id}/executions
@@ -1512,14 +1499,14 @@ GET /api/v1/workspaces/{ws}/loops/{id}/executions
 
 ### 获取 Loop 执行详情
 ```
-GET /api/v1/workspaces/{ws}/loops/executions/{execution_id}
+GET /api/v1/workspaces/{ws}/loops/{id}/executions/{eid}
 ```
 
 ---
 
-### 获取 Loop 步骤执行记录
+### 获取 Loop 步骤执行审批
 ```
-GET /api/v1/workspaces/{ws}/loops/executions/{execution_id}/steps
+POST /api/v1/workspaces/{ws}/loops/{id}/executions/{eid}/steps/{seid}/approve
 ```
 
 ---

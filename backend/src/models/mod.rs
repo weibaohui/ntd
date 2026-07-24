@@ -1457,6 +1457,7 @@ pub struct ExportLoopSelectedRequest {
 pub mod codes {
     pub const NOT_FOUND: i32 = 40001;
     pub const BAD_REQUEST: i32 = 40002;
+    pub const FORBIDDEN: i32 = 40003;
     pub const INTERNAL: i32 = 50001;
 }
 

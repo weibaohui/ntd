@@ -8,17 +8,17 @@ export async function mergeBackup(
   todos: { title: string; prompt: string; status: string; executor?: string; scheduler_enabled: boolean; scheduler_config?: string; tag_names: string[]; workspace_path?: string; workspace_id?: number | null }[],
   workspace_id?: number | null,
 ): Promise<string> {
-  return unwrap(await api.post('/api/backup/merge', { tags, todos, workspace_id }));
+  return unwrap(await api.post('/api/v1/backup/merge', { tags, todos, workspace_id }));
 }
 
 // Database Backup APIs
 
 export async function triggerLocalBackup(): Promise<string> {
-  return unwrap(await api.post('/api/backup/database/trigger'));
+  return unwrap(await api.post('/api/v1/backup/database/trigger'));
 }
 
 export async function optimizeDatabase(): Promise<string> {
-  return unwrap(await api.post('/api/backup/database/optimize'));
+  return unwrap(await api.post('/api/v1/backup/database/optimize'));
 }
 
 export async function getDatabaseBackupStatus(): Promise<{
@@ -28,7 +28,7 @@ export async function getDatabaseBackupStatus(): Promise<{
   last_backup: string | null;
   files: { name: string; size: number; created_at: string }[];
 }> {
-  return unwrap(await api.get('/api/backup/database/status'));
+  return unwrap(await api.get('/api/v1/backup/database/status'));
 }
 
 export async function updateAutoBackup(enabled: boolean, cron: string, maxFiles?: number): Promise<string> {
@@ -36,11 +36,11 @@ export async function updateAutoBackup(enabled: boolean, cron: string, maxFiles?
   if (maxFiles !== undefined) {
     body.max_files = maxFiles;
   }
-  return unwrap(await api.put('/api/backup/database/auto', body));
+  return unwrap(await api.put('/api/v1/backup/database/auto', body));
 }
 
 export async function deleteBackupFile(filename: string): Promise<string> {
-  return unwrap(await api.delete('/api/backup/database/file', { data: { filename } }));
+  return unwrap(await api.delete('/api/v1/backup/database/file', { data: { filename } }));
 }
 
 // URL builder 返回给 <a href> / window.open，不经 axios 拦截器，手动写 v1 前缀
@@ -53,15 +53,15 @@ export function downloadBackupFileUrl(filename: string): string {
 export async function getLogCleanupStatus(): Promise<{
   cleanup_days: number | null;
 }> {
-  return unwrap(await api.get('/api/backup/log-cleanup/status'));
+  return unwrap(await api.get('/api/v1/backup/log-cleanup/status'));
 }
 
 export async function updateLogCleanup(days: number | null): Promise<string> {
-  return unwrap(await api.put('/api/backup/log-cleanup', { days }));
+  return unwrap(await api.put('/api/v1/backup/log-cleanup', { days }));
 }
 
 export async function triggerLogCleanup(): Promise<string> {
-  return unwrap(await api.post('/api/backup/log-cleanup/trigger'));
+  return unwrap(await api.post('/api/v1/backup/log-cleanup/trigger'));
 }
 
 // Todo Backup APIs
@@ -73,11 +73,11 @@ export async function getTodoBackupStatus(): Promise<{
   last_backup: string | null;
   files: { name: string; size: number; created_at: string }[];
 }> {
-  return unwrap(await api.get('/api/backup/todo/status'));
+  return unwrap(await api.get('/api/v1/backup/todo/status'));
 }
 
 export async function triggerTodoBackup(): Promise<string> {
-  return unwrap(await api.post('/api/backup/todo/trigger'));
+  return unwrap(await api.post('/api/v1/backup/todo/trigger'));
 }
 
 export async function updateTodoAutoBackup(enabled: boolean, cron: string, maxFiles?: number): Promise<string> {
@@ -85,11 +85,11 @@ export async function updateTodoAutoBackup(enabled: boolean, cron: string, maxFi
   if (maxFiles !== undefined) {
     body.max_files = maxFiles;
   }
-  return unwrap(await api.put('/api/backup/todo/auto', body));
+  return unwrap(await api.put('/api/v1/backup/todo/auto', body));
 }
 
 export async function deleteTodoBackupFile(filename: string): Promise<string> {
-  return unwrap(await api.delete('/api/backup/todo/file', { data: { filename } }));
+  return unwrap(await api.delete('/api/v1/backup/todo/file', { data: { filename } }));
 }
 
 export function downloadTodoBackupFileUrl(filename: string): string {
@@ -112,11 +112,11 @@ export async function getSkillBackupStatus(): Promise<{
   files: { name: string; size: number; created_at: string }[];
   executor_skills: ExecutorSkillInfo[];
 }> {
-  return unwrap(await api.get('/api/backup/skills/status'));
+  return unwrap(await api.get('/api/v1/backup/skills/status'));
 }
 
 export async function triggerSkillBackup(): Promise<string> {
-  return unwrap(await api.post('/api/backup/skills/trigger'));
+  return unwrap(await api.post('/api/v1/backup/skills/trigger'));
 }
 
 export async function updateSkillAutoBackup(enabled: boolean, cron: string, maxFiles?: number): Promise<string> {
@@ -124,11 +124,11 @@ export async function updateSkillAutoBackup(enabled: boolean, cron: string, maxF
   if (maxFiles !== undefined) {
     body.max_files = maxFiles;
   }
-  return unwrap(await api.put('/api/backup/skills/auto', body));
+  return unwrap(await api.put('/api/v1/backup/skills/auto', body));
 }
 
 export async function deleteSkillBackupFile(filename: string): Promise<string> {
-  return unwrap(await api.delete('/api/backup/skills/file', { data: { filename } }));
+  return unwrap(await api.delete('/api/v1/backup/skills/file', { data: { filename } }));
 }
 
 export function downloadSkillBackupFileUrl(filename: string): string {
@@ -217,5 +217,5 @@ export async function mergeLoops(
   workspace_overrides?: Record<string, number>,
   skip_names?: string[],
 ): Promise<{ success: boolean; created: LoopImportResult['created']; updated: LoopImportResult['created']; skipped: string[]; warnings: { type: string; message: string }[] }> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/loops/merge`, { yaml, workspace_id, workspace_overrides, skip_names }));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/loops/merge`, { yaml, workspace_id, workspace_overrides, skip_names }));
 }

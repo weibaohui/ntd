@@ -18,22 +18,22 @@ export async function getExecutionRecords(
   if (page !== undefined) params.page = page;
   if (limit !== undefined) params.limit = limit;
   if (status !== undefined) params.status = status;
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/executions`, { params }));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/executions`, { params }));
 }
 
 export async function getExecutionRecord(workspaceId: number, recordId: number): Promise<ExecutionRecord> {
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/executions/${recordId}`));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/executions/${recordId}`));
 }
 
 export async function getExecutionLogs(workspaceId: number, recordId: number, page?: number, perPage?: number): Promise<ExecutionLogsPage> {
   const params: Record<string, unknown> = {};
   if (page !== undefined) params.page = page;
   if (perPage !== undefined) params.per_page = perPage;
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/executions/${recordId}/logs`, { params }));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/executions/${recordId}/logs`, { params }));
 }
 
 export async function getExecutionRecordsBySession(workspaceId: number, sessionId: string): Promise<ExecutionRecord[]> {
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/executions/session/${encodeURIComponent(sessionId)}`));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/executions/session/${encodeURIComponent(sessionId)}`));
 }
 
 /**
@@ -50,40 +50,43 @@ export async function executeTodo(
   const body: Record<string, unknown> = { todo_id: todoId, executor, params };
   // model：undefined=不传（沿用执行器/任务级配置）；null/空串=显式清除本次执行模型
   if (model !== undefined) body.model = model;
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/executions`, body));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/executions`, body));
 }
 
 /** 获取 todo 执行摘要，路径为 /todos/{id}/summary（嵌套在 workspace todos 下）。 */
 export async function getExecutionSummary(workspaceId: number, todoId: number): Promise<ExecutionSummary> {
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/todos/${todoId}/summary`));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/todos/${todoId}/summary`));
 }
 
 export async function getRecentCompletedTodos(workspaceId: number, hours?: number): Promise<import('@/types').RecentCompletedTodo[]> {
   const p: Record<string, number> = {};
   if (hours !== undefined) p.hours = hours;
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/todos/recent-completed`, { params: Object.keys(p).length > 0 ? p : undefined }));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/todos/recent-completed`, { params: Object.keys(p).length > 0 ? p : undefined }));
 }
 
-/** GET /api/v1/workspaces/{ws}/stats/dashboard — 仪表盘聚合统计，workspace 隔离。 */
-export async function getDashboardStats(workspaceId: number, hours?: number): Promise<import('@/types').DashboardStats> {
+/** GET /api/v1/stats/dashboard — 概览仪表盘聚合统计，不随 workspace 变化。 */
+export async function getDashboardStats(hours?: number): Promise<import('@/types').DashboardStats> {
+  // 仅当调用方显式传入 hours 时才带上查询参数；
+  // undefined 表示使用后端默认时间窗（当前为 7 天），避免传空对象导致 URL 出现多余 `?`。
   const p = hours !== undefined ? { hours } : undefined;
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/stats/dashboard`, { params: p }));
+  // Dashboard 为概览，URL 中不再包含 workspaceId，确保切换工作区不会过滤统计。
+  return unwrap(await api.get('/api/v1/stats/dashboard', { params: p }));
 }
 
 export async function stopExecution(workspaceId: number, recordId: number): Promise<void> {
-  await api.post(`/api/workspaces/${workspaceId}/executions/${recordId}/stop`, { record_id: recordId });
+  await api.post(`/api/v1/workspaces/${workspaceId}/executions/${recordId}/stop`, { record_id: recordId });
 }
 
 export async function forceFailExecution(workspaceId: number, recordId: number): Promise<void> {
-  await api.post(`/api/workspaces/${workspaceId}/executions/${recordId}/force-fail`, { record_id: recordId });
+  await api.post(`/api/v1/workspaces/${workspaceId}/executions/${recordId}/force-fail`, { record_id: recordId });
 }
 
 export async function getRunningExecutionRecords(workspaceId: number): Promise<ExecutionRecord[]> {
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/executions/running`));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/executions/running`));
 }
 
 export async function resumeExecutionRecord(workspaceId: number, recordId: number, message?: string): Promise<{ task_id: string; record_id: number }> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/executions/${recordId}/resume`, { message }));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/executions/${recordId}/resume`, { message }));
 }
 
 /**
@@ -95,7 +98,7 @@ export async function rateExecutionRecord(
   recordId: number,
   rating: number | null,
 ): Promise<ExecutionRecord> {
-  return unwrap(await api.put(`/api/workspaces/${workspaceId}/executions/${recordId}/rating`, { rating }));
+  return unwrap(await api.put(`/api/v1/workspaces/${workspaceId}/executions/${recordId}/rating`, { rating }));
 }
 
 // Smart Create API — POST /api/v1/workspaces/{ws}/todos/smart（嵌套在 todos 下）
@@ -108,7 +111,7 @@ export interface SmartCreateResult {
 }
 
 export async function smartCreate(workspaceId: number, content: string): Promise<SmartCreateResult> {
-  return unwrap(await api.post(`/api/workspaces/${workspaceId}/todos/smart`, { content }));
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/todos/smart`, { content }));
 }
 
 export async function getRunningBoardData(
@@ -121,5 +124,5 @@ export async function getRunningBoardData(
   if (page !== undefined) params.page = page;
   if (limit !== undefined) params.limit = limit;
   if (hours !== undefined) params.hours = hours;
-  return unwrap(await api.get(`/api/workspaces/${workspaceId}/executions/running-board`, { params }));
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/executions/running-board`, { params }));
 }
