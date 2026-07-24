@@ -916,6 +916,31 @@ async fn test_old_api_routes_return_404() {
     }
 }
 
+// ====== Dashboard stats 全局路由回归测试 ======
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_dashboard_stats_global_route_returns_ok() {
+    // 全局 /api/v1/stats/dashboard 路由没有 workspace 路径参数，
+    // 若 handler 仍声明 Path(ws_id)，Axum 提取器会失败并返回 500。
+    // 此测试确保带 hours 查询参数的请求能正常返回 200。
+    let (app, _ws_id) = create_test_app().await;
+
+    let req = Request::builder()
+        .uri("/api/v1/stats/dashboard?hours=720")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "/api/v1/stats/dashboard?hours=720 应返回 200"
+    );
+
+    let body: serde_json::Value = read_json_body(resp).await;
+    assert_eq!(body["code"], 0, "Dashboard stats 响应 code 应为 0");
+    assert!(body["data"].is_object(), "Dashboard stats 响应 data 应为对象");
+}
+
 // ====== 修复 test_delete_todo 验证逻辑 ======
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
