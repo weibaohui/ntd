@@ -82,10 +82,10 @@ struct BackupScheduleDefaults {
 
 impl BackupScheduleDefaults {
     /// 通过 cron 字符串构造一组备份计划默认值。
-    /// `enabled` 固定 false(默认不开启),`max_files` 走全局常量。
+    /// `enabled` 固定 true(默认开启,开箱即享自动备份保护),`max_files` 走全局常量。
     fn new(cron: &str) -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             cron: cron.to_string(),
             max_files: DEFAULT_BACKUP_MAX_FILES,
         }
@@ -541,13 +541,13 @@ mod tests {
     #[test]
     fn test_default_auto_backup_and_sync_fields_match_helpers() {
         let cfg = Config::default();
-        // 三组「auto_*_backup_*」字段:enabled=false,cron 与各 helper 一致,max_files=30
+        // 三组「auto_*_backup_*」字段:enabled=true（开箱即享自动备份保护）,cron 与各 helper 一致,max_files=30
         for (enabled, _cron) in [
             (cfg.auto_backup_enabled, &cfg.auto_backup_cron),
             (cfg.auto_todo_backup_enabled, &cfg.auto_todo_backup_cron),
             (cfg.auto_skill_backup_enabled, &cfg.auto_skill_backup_cron),
         ] {
-            assert!(!enabled, "auto_*_backup_enabled 默认应为 false");
+            assert!(enabled, "auto_*_backup_enabled 默认应为 true");
         }
         assert_eq!(cfg.auto_backup_max_files, 30);
         assert_eq!(cfg.auto_todo_backup_max_files, 30);
@@ -568,7 +568,7 @@ mod tests {
     #[test]
     fn test_backup_schedule_defaults_new() {
         let s = BackupScheduleDefaults::new("0 0 3 * * *");
-        assert!(!s.enabled, "默认 enabled 必须为 false");
+        assert!(s.enabled, "默认 enabled 必须为 true（开箱即享自动备份）");
         assert_eq!(s.cron, "0 0 3 * * *");
         assert_eq!(s.max_files, 30);
 
@@ -576,7 +576,7 @@ mod tests {
         let s2 = BackupScheduleDefaults::new("30 0 0 1 1 1");
         assert_eq!(s2.cron, "30 0 0 1 1 1");
         assert_eq!(s2.max_files, 30);
-        assert!(!s2.enabled);
+        assert!(s2.enabled);
     }
 
     /// 验证 `SyncScheduleDefaults::new` 把入参 cron 透传,enabled 固定 false。
