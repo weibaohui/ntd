@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Card, Form, Select, Button, Space, message, Radio, InputNumber, Typography, Input, Alert } from 'antd';
+import { Card, Form, Select, Button, Space, message, Radio, InputNumber, Typography } from 'antd';
 import * as db from '@/utils/database';
 import { listLoops } from '@/utils/database/loops';
 import { EXECUTORS_FOR_PICKER } from '@/utils/executors';
@@ -12,12 +12,12 @@ import { HistoryChatsCard } from '@/components/settings/assistant/HistoryChatsCa
 
 const { Paragraph } = Typography;
 
-interface WorkspaceSettingsPanelProps {
+interface DefaultResponseConfigPanelProps {
   workspaceId: number;
   onChanged?: () => void;
 }
 
-export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSettingsPanelProps) {
+export function DefaultResponseConfigPanel({ workspaceId, onChanged }: DefaultResponseConfigPanelProps) {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [loops, setLoops] = useState<LoopListItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -56,8 +56,6 @@ export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSett
           default_response_todo_id: s.default_response_todo_id,
           default_response_loop_id: s.default_response_loop_id,
           default_response_executor: s.default_response_executor,
-          // 工作空间 prompt：null 视作空串，让 TextArea 显示空
-          system_prompt: s.system_prompt ?? '',
         });
       })
       .catch((err: any) => message.error('加载设置失败: ' + (err?.message || String(err))))
@@ -85,8 +83,6 @@ export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSett
         default_response_todo_id: values.default_response_type === 'todo' ? values.default_response_todo_id : undefined,
         default_response_loop_id: values.default_response_type === 'loop' ? values.default_response_loop_id : 0,
         default_response_executor: values.default_response_type === 'executor' ? values.default_response_executor : undefined,
-        // 工作空间 prompt 始终随默认响应一起保存；空串表示显式清空
-        system_prompt: values.system_prompt ?? '',
       });
       message.success('设置已保存');
       loadSettings();
@@ -226,31 +222,6 @@ export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSett
               />
             </Form.Item>
           )}
-
-          <Form.Item
-            name="system_prompt"
-            label="工作空间 Prompt"
-            tooltip="该工作空间下所有 todo 执行时作为前置 prompt 注入。可填写产物目录约定、认证信息、基本文件路径等共识内容。"
-          >
-            <Input.TextArea
-              rows={8}
-              maxLength={8000}
-              showCount
-              placeholder={
-                '## 工作空间共识\n\n' +
-                '- 产物目录：编译输出放在 ./target/release\n' +
-                '- 认证：访问内部服务用 token xxx\n' +
-                '- 项目根：/path/to/project'
-              }
-            />
-          </Form.Item>
-
-          <Alert
-            type="warning"
-            showIcon
-            style={{ marginBottom: 16 }}
-            message="⚠️ 此处写入的内容将作为执行器前置 prompt 注入到该工作空间下所有 todo 的执行中，请谨慎填写敏感信息。"
-          />
 
           <Form.Item>
             <Space>

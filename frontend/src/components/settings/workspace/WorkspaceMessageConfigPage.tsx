@@ -5,7 +5,7 @@ import { PageCard } from '@/components/common/PageCard';
 import type { AgentBot, ProjectDirectory } from '@/utils/database';
 import { WorkspaceAgentPanel } from './WorkspaceAgentPanel';
 import { WorkspaceSlashCommandsPanel } from './WorkspaceSlashCommandsPanel';
-import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel';
+import { DefaultResponseConfigPanel } from './DefaultResponseConfigPanel';
 
 interface WorkspaceMessageConfigPageProps {
   workspace: ProjectDirectory;
@@ -93,7 +93,7 @@ export function WorkspaceMessageConfigPage({ workspace, onBack }: WorkspaceMessa
           <WorkspaceSlashCommandsPanel workspaceId={workspace.id} />
         </div>
         <div style={{ marginTop: 24 }}>
-          <WorkspaceSettingsPanel workspaceId={workspace.id} />
+          <DefaultResponseConfigPanel workspaceId={workspace.id} />
         </div>
       </div>
     </PageCard>
