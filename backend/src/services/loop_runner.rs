@@ -675,7 +675,7 @@ impl LoopRunner {
             let last_output_text = last_output.as_deref().unwrap_or("");
             let last_conclusion_text = last_conclusion.as_deref().unwrap_or("");
             let last_step_name_text = last_step_name.as_deref().unwrap_or("");
-            let enhanced_prompt = todo.prompt
+            let enhanced_prompt_raw = todo.prompt
                 .replace("{{blackboard}}", &blackboard_text)
                 .replace("{{last_output}}", last_output_text)
                 .replace("{{last_conclusion}}", last_conclusion_text)
@@ -683,6 +683,15 @@ impl LoopRunner {
                 .replace("{{message}}", last_output_text)
                 .replace("{{loop_execution_id}}", &loop_execution_id.to_string())
                 .replace("{{loop_name}}", &loop_.name);
+            // 4d-bis. 注入工作空间级共识 prompt（需求 022）。
+            // Loop 与 todo 走各自路径，此处补齐 Loop 注入使 workspace 共识全路径生效。
+            // loop_.workspace_id = 0/None 时 inject_workspace_prompt 静默回退原 prompt。
+            let enhanced_prompt = crate::executor_service::pre_spawn::inject_workspace_prompt(
+                &self.ctx.db,
+                loop_.workspace_id.filter(|&id| id != 0),
+                &enhanced_prompt_raw,
+            )
+            .await;
 
             // 4e. 创建 step execution 记录
             let step_exec = self
@@ -1499,7 +1508,12 @@ impl LoopRunner {
         context_params.insert("total_tokens_used".to_string(), total_tokens_used.to_string());
 
         // 5. 构建增强 prompt，注入异常上下文
-        let enhanced_prompt = format!(
+        //    workspace 共识 prompt 前置注入（需求 022），与正常 step 路径保持一致。
+        //    format! 拼 enhanced_prompt_raw 的实际顺序是「原 prompt → 异常上下文」，
+        //    inject_workspace_prompt 在最前面追加 workspace 共识，最终顺序：
+        //    workspace 共识 → handler todo 原 prompt → 异常上下文。
+        //    loop_.workspace_id = 0/None 时 inject_workspace_prompt 静默回退原 prompt。
+        let enhanced_prompt_raw = format!(
             "{}\n\n## 异常上下文\n- Loop 名称: {}\n- Loop 执行 ID: {}\n- 异常状态: {}\n- 已执行步数: {}\n- 已消耗 Token: {}",
             handler_todo.prompt,
             loop_.name,
@@ -1508,6 +1522,12 @@ impl LoopRunner {
             total_executed_steps,
             total_tokens_used,
         );
+        let enhanced_prompt = crate::executor_service::pre_spawn::inject_workspace_prompt(
+            &self.ctx.db,
+            loop_.workspace_id.filter(|&id| id != 0),
+            &enhanced_prompt_raw,
+        )
+        .await;
 
         // 6. 创建异常处理步骤记录（step_id=-1 标识异常处理步骤）
         // 注意：使用专用方法绕过 FK 约束，因为 step_id=-1 在 loop_steps 表中不存在

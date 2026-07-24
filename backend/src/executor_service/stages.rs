@@ -22,7 +22,7 @@ use crate::models::Todo;
 
 use super::pre_spawn::{
     create_run_execution_record, enforce_concurrency_limit,
-    inject_expert_context, reject_start_todo_failure,
+    inject_expert_context, inject_workspace_prompt, reject_start_todo_failure,
     select_executor_and_build_command, substitute_message_placeholders,
 };
 use super::spawn_lifecycle::run_spawned_executor_task;
@@ -56,10 +56,19 @@ pub(crate) async fn prepare_execution_state(
     let todo =
         enforce_concurrency_limit(&request, initial_todo, max_concurrent, &task_state.task_id)
             .await?;
+    // 4.5) 注入工作空间级共识 prompt（需求 022）。
+    //      workspace 共识是最外层，专家上下文次之，原任务在最内层。
+    //      读取失败/无 prompt 时静默回退原 message，不阻断执行。
+    let workspace_message = inject_workspace_prompt(
+        &request.db,
+        request.workspace_id,
+        &substituted.message,
+    )
+    .await;
     // 5) 注入专家上下文：如果 todo 关联了 expert_name，把 Agent MD 和技能信息
     //    拼到 message 前面。失败时静默回退到原 message，不阻断执行。
     let expert_message =
-        inject_expert_context(&request, &todo, &substituted.message).await;
+        inject_expert_context(&request, &todo, &workspace_message).await;
     // 6) 选定 executor 并构造 command_args（传入注入后的 message）。
     let selected =
         select_executor_and_build_command(&request, &todo, &expert_message).await?;
