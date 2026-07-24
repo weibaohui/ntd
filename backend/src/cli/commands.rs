@@ -601,7 +601,7 @@ pub async fn run_command(cli: &Cli) -> Result<()> {
         Commands::Todo { action } => handle_todo(&client, action, &cli.output, &cli.fields).await?,
         Commands::Loop { action } => handle_loop(&client, action, &cli.output, &cli.fields).await?,
         Commands::Tag { action } => handle_tag(&client, action, &cli.output, &cli.fields).await?,
-        Commands::Stats { } => handle_stats(&client, 0, &cli.output, &cli.fields).await?,
+        Commands::Stats { } => handle_stats(&client, &cli.output, &cli.fields).await?,
         Commands::Blackboard { action } => handle_blackboard(&client, action, &cli.output, &cli.fields).await?,
         Commands::Workspace { action } => handle_workspace(&client, action, &cli.output, &cli.fields).await?,
     }
@@ -893,7 +893,6 @@ async fn handle_tag(
 
 async fn handle_stats(
     client: &ApiClient,
-    workspace_id: i64,
     output: &OutputFormat,
     fields: &Option<String>,
 ) -> Result<()> {

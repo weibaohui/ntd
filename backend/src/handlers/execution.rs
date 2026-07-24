@@ -620,7 +620,8 @@ static DASHBOARD_CACHE: LazyLock<RwLock<HashMap<(i64, u32), DashboardCacheEntry>
 
 pub async fn get_dashboard_stats(
     State(state): State<AppState>,
-    Path(ws_id): Path<i64>,
+    // Dashboard 为全局运营视图，路由注册在 /api/v1/stats/dashboard（无 workspace 路径参数），
+    // 因此 handler 不能声明 Path(ws_id)，否则 Axum 提取器会因路径参数缺失而直接返回 500。
     Query(params): Query<DashboardStatsParams>,
 ) -> Result<ApiResponse<DashboardStats>, AppError> {
     let hours_key = params.hours.unwrap_or(24 * 7); // default: 7 days
