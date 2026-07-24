@@ -1297,27 +1297,31 @@ pub async fn sync_skill(
     let mut errors = Vec::new();
 
     for target in &req.target_executors {
-        // target 拒绝只读来源
-        if is_readonly_skill_source(target) {
-            errors.push(format!(
-                "Target executor '{}' is read-only; cannot sync into it",
-                target
-            ));
-            continue;
-        }
-        let target_et = match crate::adapters::parse_executor_type(target) {
-            Some(et) => et,
-            None => {
-                errors.push(format!("Unknown target executor: {}", target));
-                continue;
+        // agents 已允许作为同步目标（复制安装到 ~/.agents/skills），
+        // 但 delete/import 等其他写操作仍保持只读保护。
+        let target_dir = if *target == "agents" {
+            // agents 不在 ExecutorType 枚举中，用 executor_skills_dir_str 单独解析
+            match executor_skills_dir_str("agents") {
+                Some(d) => d,
+                None => {
+                    errors.push(format!("No skills directory for {}", target));
+                    continue;
+                }
             }
-        };
-
-        let target_dir = match executor_skills_dir(target_et) {
-            Some(d) => d,
-            None => {
-                errors.push(format!("No skills directory for {}", target));
-                continue;
+        } else {
+            let target_et = match crate::adapters::parse_executor_type(target) {
+                Some(et) => et,
+                None => {
+                    errors.push(format!("Unknown target executor: {}", target));
+                    continue;
+                }
+            };
+            match executor_skills_dir(target_et) {
+                Some(d) => d,
+                None => {
+                    errors.push(format!("No skills directory for {}", target));
+                    continue;
+                }
             }
         };
 
