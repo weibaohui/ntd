@@ -34,6 +34,8 @@ pub enum Subdir {
     Todos,
     /// Skills
     Skills,
+    /// 工艺模板
+    Processes,
 }
 
 impl Subdir {
@@ -43,6 +45,7 @@ impl Subdir {
             Subdir::Experts => "experts",
             Subdir::Todos => "todos",
             Subdir::Skills => "skills",
+            Subdir::Processes => "processes",
         }
     }
 }
@@ -327,6 +330,13 @@ pub(crate) async fn run_bundled_sync(
         warm_up_skills_cache(bundled_config.local_path.clone()).await;
     }
 
+    // processes / all：导入工艺模板与环节原型
+    if subdir == Subdir::Processes || subdir == Subdir::All {
+        if let Err(e) = import_process_templates_from_bundled(state, &bundled_config.local_path).await {
+            tracing::error!("从 bundled 导入工艺模板失败: {}", e);
+        }
+    }
+
     Ok(r)
 }
 
@@ -533,6 +543,240 @@ struct TemplateFile {
 
 fn default_category() -> String {
     "general".to_string()
+}
+
+/// 从 bundled/processes/ 导入工艺模板与环节原型。
+///
+/// 递归扫描 `bundled/processes/**/*.yaml`，根据顶层 key 分发：
+/// - `process:`  → 工艺模板，写入 `process_templates`
+/// - `step_template:` → 环节原型，写入 `process_step_templates`
+///
+/// 导入失败单条记录 warning，不阻断整体同步。
+async fn import_process_templates_from_bundled(
+    state: &AppState,
+    local_path: &str,
+) -> Result<(), String> {
+    let bundled_processes_dir = crate::git_sync::bundled_dir(local_path)
+        .ok_or_else(|| "无法获取 home 目录".to_string())?
+        .join("processes");
+
+    if !bundled_processes_dir.exists() {
+        tracing::info!("bundled/processes 目录不存在，跳过导入");
+        return Ok(());
+    }
+
+    let yaml_files = collect_yaml_files(&bundled_processes_dir)
+        .map_err(|e| format!("读取 bundled/processes 目录失败: {}", e))?;
+
+    let mut process_count = 0;
+    let mut step_template_count = 0;
+
+    for path in yaml_files {
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("读取工艺文件失败 {}: {}", path.display(), e);
+                continue;
+            }
+        };
+
+        let source_path = format!(
+            "bundled://processes/{}",
+            path.strip_prefix(&bundled_processes_dir)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/")
+        );
+
+        // 先尝试解析为工艺模板
+        if let Some(wrapper) = parse_process_file(&content, &path) {
+            if let Err(e) = upsert_process_template(state, &wrapper.process, &source_path, &content).await {
+                tracing::warn!("保存工艺模板 {} 失败: {}", source_path, e);
+                continue;
+            }
+            process_count += 1;
+            continue;
+        }
+
+        // 再尝试解析为环节原型
+        if let Some(wrapper) = parse_step_template_file(&content, &path) {
+            if let Err(e) = upsert_process_step_template(state, &wrapper.step_template, &source_path).await {
+                tracing::warn!("保存环节原型 {} 失败: {}", source_path, e);
+                continue;
+            }
+            step_template_count += 1;
+        }
+    }
+
+    tracing::info!(
+        "从 bundled/processes 导入了 {} 个工艺模板、{} 个环节原型",
+        process_count,
+        step_template_count
+    );
+    Ok(())
+}
+
+/// 递归收集目录下所有 yaml/yml 文件（按路径排序，保证导入顺序稳定）。
+fn collect_yaml_files(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
+    let mut files = Vec::new();
+    collect_yaml_files_recursive(dir, &mut files)?;
+    // 按路径字符串排序，保证跨平台导入顺序稳定。
+    files.sort_by(|a, b| a.as_os_str().cmp(b.as_os_str()));
+    Ok(files)
+}
+
+/// 递归收集目录下 yaml/yml 文件。
+fn collect_yaml_files_recursive(
+    dir: &std::path::Path,
+    out: &mut Vec<std::path::PathBuf>,
+) -> Result<(), std::io::Error> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_yaml_files_recursive(&path, out)?;
+        } else if path.is_file() {
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if ext == "yaml" || ext == "yml" {
+                out.push(path);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// bundled 工艺模板文件顶层包装。
+#[derive(Debug, serde::Deserialize)]
+struct BundledProcessFile {
+    process: BundledProcessDefinition,
+}
+
+/// bundled 工艺模板定义。
+#[derive(Debug, serde::Deserialize)]
+struct BundledProcessDefinition {
+    name: String,
+    #[serde(default)]
+    display_name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default = "default_category")]
+    category: String,
+    #[serde(default = "default_complexity")]
+    complexity: String,
+    #[serde(default = "default_version")]
+    version: String,
+}
+
+fn default_complexity() -> String {
+    "standard".to_string()
+}
+
+fn default_version() -> String {
+    "1.0.0".to_string()
+}
+
+/// 尝试把文件内容解析为工艺模板。
+fn parse_process_file(content: &str, path: &std::path::Path) -> Option<BundledProcessFile> {
+    serde_yaml::from_str::<BundledProcessFile>(content)
+        .inspect_err(|e| {
+            tracing::debug!("{} 不是工艺模板文件: {}", path.display(), e);
+        })
+        .ok()
+}
+
+/// 把解析后的工艺模板写入数据库。
+async fn upsert_process_template(
+    state: &AppState,
+    def: &BundledProcessDefinition,
+    source_path: &str,
+    definition_text: &str,
+) -> Result<(), sea_orm::DbErr> {
+    let display_name = if def.display_name.is_empty() {
+        &def.name
+    } else {
+        &def.display_name
+    };
+    state
+        .db
+        .upsert_system_process_template(
+            &def.name,
+            display_name,
+            &def.description,
+            &def.category,
+            &def.complexity,
+            &def.version,
+            definition_text,
+            source_path,
+        )
+        .await?;
+    Ok(())
+}
+
+/// bundled 环节原型文件顶层包装。
+#[derive(Debug, serde::Deserialize)]
+struct BundledStepTemplateFile {
+    step_template: BundledStepTemplateDefinition,
+}
+
+/// bundled 环节原型定义。
+#[derive(Debug, serde::Deserialize)]
+struct BundledStepTemplateDefinition {
+    name: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    prompt: String,
+    executor: Option<String>,
+    expert_name: Option<String>,
+    #[serde(default)]
+    skills: Vec<String>,
+    model: Option<String>,
+    #[serde(default)]
+    acceptance_criteria: String,
+}
+
+/// 尝试把文件内容解析为环节原型。
+fn parse_step_template_file(
+    content: &str,
+    path: &std::path::Path,
+) -> Option<BundledStepTemplateFile> {
+    serde_yaml::from_str::<BundledStepTemplateFile>(content)
+        .inspect_err(|e| {
+            tracing::debug!("{} 不是环节原型文件: {}", path.display(), e);
+        })
+        .ok()
+}
+
+/// 把解析后的环节原型写入数据库。
+async fn upsert_process_step_template(
+    state: &AppState,
+    def: &BundledStepTemplateDefinition,
+    source_path: &str,
+) -> Result<(), sea_orm::DbErr> {
+    let title = if def.title.is_empty() {
+        &def.name
+    } else {
+        &def.title
+    };
+    let skill_names = serde_json::to_string(&def.skills).unwrap_or_else(|_| "[]".to_string());
+    state
+        .db
+        .upsert_system_process_step_template(
+            &def.name,
+            title,
+            &def.prompt,
+            def.executor.as_deref(),
+            def.expert_name.as_deref(),
+            &skill_names,
+            def.model.as_deref(),
+            &def.acceptance_criteria,
+            source_path,
+        )
+        .await?;
+    Ok(())
 }
 
 /// 重新加载专家
@@ -2677,5 +2921,91 @@ mod tests {
             "期望 BadRequest，实际: {:?}",
             err
         );
+    }
+
+    // ── 工艺模板导入单元测试 ──
+
+    #[test]
+    fn test_collect_yaml_files_recursively() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::create_dir(root.join("software")).unwrap();
+        std::fs::write(root.join("software/a.yaml"), "process:\n  name: a\n").unwrap();
+        std::fs::write(root.join("software/b.yml"), "process:\n  name: b\n").unwrap();
+        std::fs::create_dir(root.join("software/nested")).unwrap();
+        std::fs::write(root.join("software/nested/c.yaml"), "process:\n  name: c\n").unwrap();
+        std::fs::write(root.join("readme.md"), "# readme").unwrap();
+
+        let files = collect_yaml_files(root).unwrap();
+        assert_eq!(files.len(), 3);
+        // 按路径排序后，顺序应稳定
+        let names: Vec<String> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["a.yaml", "b.yml", "c.yaml"]);
+    }
+
+    #[test]
+    fn test_parse_process_file_valid() {
+        let yaml = r#"
+process:
+  name: 4p12s-delivery
+  display_name: 标准需求交付工艺
+  description: 4 阶 12 步裁剪版
+  category: software
+  complexity: standard
+  version: 1.0.0
+"#;
+        let result = parse_process_file(yaml, std::path::Path::new("test.yaml"));
+        assert!(result.is_some());
+        let def = result.unwrap().process;
+        assert_eq!(def.name, "4p12s-delivery");
+        assert_eq!(def.display_name, "标准需求交付工艺");
+        assert_eq!(def.category, "software");
+        assert_eq!(def.complexity, "standard");
+        assert_eq!(def.version, "1.0.0");
+    }
+
+    #[test]
+    fn test_parse_process_file_uses_defaults() {
+        let yaml = "process:\n  name: minimal\n";
+        let result = parse_process_file(yaml, std::path::Path::new("test.yaml"));
+        assert!(result.is_some());
+        let def = result.unwrap().process;
+        assert_eq!(def.name, "minimal");
+        assert_eq!(def.display_name, "");
+        assert_eq!(def.category, "general");
+        assert_eq!(def.complexity, "standard");
+        assert_eq!(def.version, "1.0.0");
+    }
+
+    #[test]
+    fn test_parse_step_template_file_valid() {
+        let yaml = r#"
+step_template:
+  name: write-prd
+  title: 生成 PRD
+  prompt: 请根据输入编写 PRD
+  executor: claudecode
+  expert_name: product-manager
+  skills: [4p12s-prd]
+  model: claude-sonnet-5
+  acceptance_criteria: PRD.md 存在
+"#;
+        let result = parse_step_template_file(yaml, std::path::Path::new("test.yaml"));
+        assert!(result.is_some());
+        let def = result.unwrap().step_template;
+        assert_eq!(def.name, "write-prd");
+        assert_eq!(def.title, "生成 PRD");
+        assert_eq!(def.executor.as_deref(), Some("claudecode"));
+        assert_eq!(def.skills, vec!["4p12s-prd"]);
+    }
+
+    #[test]
+    fn test_parse_process_file_rejects_step_template() {
+        let yaml = "step_template:\n  name: write-prd\n";
+        let result = parse_process_file(yaml, std::path::Path::new("test.yaml"));
+        assert!(result.is_none(), "环节原型文件不应被解析为工艺模板");
     }
 }
