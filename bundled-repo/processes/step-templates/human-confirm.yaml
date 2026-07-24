@@ -1,0 +1,10 @@
+step_template:
+  name: human-confirm
+  title: 人工确认
+  prompt: |
+    请人工确认上一阶段产物是否满足验收标准。
+    确认通过后，流程继续；不通过则回退到上游环节。
+  executor: claudecode
+  expert_name: product-manager
+  acceptance_criteria: |
+    人工审批通过。

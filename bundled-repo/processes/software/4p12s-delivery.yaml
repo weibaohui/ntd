@@ -1,0 +1,148 @@
+process:
+  name: 4p12s-delivery
+  display_name: 标准需求交付工艺（4P12S）
+  description: |
+    4 阶 12 步裁剪版：需求 → 故事 → 设计 → 计划 → Tasking → TDD → 测试 → 提交。
+    适合常规软件需求交付，每个阶段都有产物与门禁。
+  category: software
+  complexity: standard
+  version: 1.0.0
+limits:
+  max_step_executions: 80
+  max_total_tokens: 200000
+abnormal_handler:
+  trigger_on: [capped_step, capped_token, failed]
+phases:
+  - id: requirement
+    name: 需求
+    spec: |
+      先统一输入，再定义如何证明完成。
+      输出 PRD，明确功能清单、验收标准、非目标。
+    acceptance_criteria: |
+      1. PRD.md 存在且包含验收标准章节。
+      2. 所有功能点可测试或可验证。
+    links:
+      - id: req-01
+        name: 生成 PRD
+        step_template: write-prd
+        expected_artifacts:
+          - name: PRD
+            type: file
+            path: docs/requirements/{process_name}-PRD.md
+        gates:
+          - name: PRD 存在
+            type: artifact_present
+            artifact: PRD
+        on_success: next
+        on_gate_fail: goto:req-01
+        max_rework: 3
+      - id: req-02
+        name: 人工确认 PRD
+        step_template: human-confirm
+        review_type: human
+        gates:
+          - name: 产品负责人审批
+            type: human_approval
+        on_success: next
+        on_gate_fail: goto:req-01
+
+  - id: design
+    name: 设计
+    spec: |
+      基于 PRD 做技术设计，输出设计文档。
+    acceptance_criteria: |
+      1. 设计文档覆盖数据模型、API、关键决策。
+      2. 每个功能点都有对应设计章节。
+    links:
+      - id: des-01
+        name: 技术设计
+        step_template: tech-design
+        expected_artifacts:
+          - name: design-doc
+            type: file
+            path: docs/design/{process_name}-design.md
+        gates:
+          - name: 设计文档存在
+            type: artifact_present
+            artifact: design-doc
+        on_success: next
+        on_gate_fail: goto:des-01
+      - id: des-02
+        name: 人工确认设计
+        step_template: human-confirm
+        review_type: human
+        gates:
+          - name: 架构师审批
+            type: human_approval
+        on_success: next
+        on_gate_fail: goto:des-01
+
+  - id: implementation
+    name: 实现
+    spec: |
+      按计划拆任务，TDD 循环开发，最终跑通测试与 lint。
+    acceptance_criteria: |
+      1. 所有计划任务完成。
+      2. 测试与 lint 零错误。
+    links:
+      - id: imp-01
+        name: 制定开发计划
+        step_template: plan-tasks
+        expected_artifacts:
+          - name: plan-doc
+            type: file
+            path: docs/plan/{process_name}-plan.md
+        gates:
+          - name: 计划文档存在
+            type: artifact_present
+            artifact: plan-doc
+        on_success: next
+        on_gate_fail: goto:imp-01
+      - id: imp-02
+        name: TDD 开发循环
+        step_template: tdd-cycle
+        expected_artifacts:
+          - name: delivery-state
+            type: file
+            path: .ntd/delivery-state.md
+        gates:
+          - name: delivery-state 更新
+            type: artifact_present
+            artifact: delivery-state
+        on_success: next
+        on_gate_fail: goto:imp-02
+      - id: imp-03
+        name: 测试与检查
+        step_template: run-tests
+        expected_artifacts:
+          - name: test-report
+            type: file
+            path: .ntd/test-report.md
+        gates:
+          - name: 测试通过
+            type: script_check
+            script: run_tests.sh
+        on_success: next
+        on_gate_fail: goto:imp-02
+
+  - id: delivery
+    name: 交付
+    spec: |
+      整理变更、补充文档、标记交付完成。
+    acceptance_criteria: |
+      1. delivery-state.md 标记完成。
+      2. 变更可审计。
+    links:
+      - id: del-01
+        name: 提交与交付
+        step_template: commit-release
+        expected_artifacts:
+          - name: delivery-state
+            type: file
+            path: .ntd/delivery-state.md
+        gates:
+          - name: 交付状态完成
+            type: artifact_present
+            artifact: delivery-state
+        on_success: end
+        on_gate_fail: goto:del-01

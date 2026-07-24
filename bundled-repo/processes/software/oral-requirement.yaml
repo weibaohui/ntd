@@ -1,0 +1,97 @@
+process:
+  name: oral-requirement
+  display_name: 口头需求工艺
+  description: |
+    适合口头/IM 提出的临时需求：先补 PRD，再进入轻量实现。
+    核心目标是把口头需求快速变成可验证的书面产物。
+  category: software
+  complexity: light
+  version: 1.0.0
+limits:
+  max_step_executions: 40
+  max_total_tokens: 100000
+abnormal_handler:
+  trigger_on: [capped_step, capped_token, failed]
+phases:
+  - id: requirement
+    name: 补需求
+    spec: |
+      把口头需求整理成 PRD，明确范围与验收标准。
+    acceptance_criteria: |
+      PRD.md 存在且包含验收标准。
+    links:
+      - id: req-01
+        name: 补写 PRD
+        step_template: write-prd
+        expected_artifacts:
+          - name: PRD
+            type: file
+            path: docs/requirements/{process_name}-PRD.md
+        gates:
+          - name: PRD 存在
+            type: artifact_present
+            artifact: PRD
+        on_success: next
+        on_gate_fail: goto:req-01
+        max_rework: 2
+
+  - id: implement
+    name: 实现
+    spec: |
+      基于 PRD 直接实现并自测。
+    acceptance_criteria: |
+      1. 实现完成。
+      2. 测试通过。
+    links:
+      - id: imp-01
+        name: 实现任务
+        prompt: |
+          根据 PRD 实现功能，完成后运行测试与 lint。
+        executor: claudecode
+        expert_name: senior-dev
+        skills: [superpowers-code]
+        expected_artifacts:
+          - name: delivery-state
+            type: file
+            path: .ntd/delivery-state.md
+        gates:
+          - name: 实现产物
+            type: artifact_present
+            artifact: delivery-state
+        on_success: next
+        on_gate_fail: goto:imp-01
+        max_rework: 2
+      - id: imp-02
+        name: 运行测试
+        step_template: run-tests
+        expected_artifacts:
+          - name: test-report
+            type: file
+            path: .ntd/test-report.md
+        gates:
+          - name: 测试通过
+            type: script_check
+            script: run_tests.sh
+        on_success: next
+        on_gate_fail: goto:imp-01
+
+  - id: delivery
+    name: 交付
+    spec: |
+      提交变更并标记完成。
+    acceptance_criteria: |
+      变更可审计。
+    links:
+      - id: del-01
+        name: 提交
+        step_template: commit-release
+        expected_artifacts:
+          - name: delivery-state
+            type: file
+            path: .ntd/delivery-state.md
+        gates:
+          - name: 交付完成
+            type: artifact_present
+            artifact: delivery-state
+        on_success: end
+        on_gate_fail: goto:del-01

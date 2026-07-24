@@ -207,3 +207,70 @@ impl From<serde_yaml::Error> for InstallError {
         InstallError::ParseError(e.to_string())
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod process_definition_tests {
+    use super::*;
+
+    #[test]
+    fn parse_bundled_process_templates() {
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("bundled-repo/processes");
+        if !base.exists() {
+            return;
+        }
+
+        let mut parsed = 0;
+        for entry in std::fs::read_dir(&base).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if !path.is_dir() || path.file_name().unwrap() == "step-templates" {
+                continue;
+            }
+            for file in std::fs::read_dir(&path).unwrap() {
+                let file = file.unwrap().path();
+                if file.extension().and_then(|e| e.to_str()) != Some("yaml") {
+                    continue;
+                }
+                let content = std::fs::read_to_string(&file).unwrap();
+                let def: ProcessDefinition = serde_yaml::from_str(&content)
+                    .unwrap_or_else(|e| panic!("解析 {} 失败: {}", file.display(), e));
+                assert!(!def.process.name.is_empty());
+                parsed += 1;
+            }
+        }
+        assert!(parsed >= 3, "应至少解析 3 个内置工艺模板");
+    }
+
+    #[test]
+    fn parse_bundled_step_templates() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("bundled-repo/processes/step-templates");
+        if !dir.exists() {
+            return;
+        }
+
+        let mut parsed = 0;
+        for file in std::fs::read_dir(&dir).unwrap() {
+            let file = file.unwrap().path();
+            if file.extension().and_then(|e| e.to_str()) != Some("yaml") {
+                continue;
+            }
+            let content = std::fs::read_to_string(&file).unwrap();
+            let wrapper: serde_yaml::Value = serde_yaml::from_str(&content)
+                .unwrap_or_else(|e| panic!("解析 {} 失败: {}", file.display(), e));
+            assert!(
+                wrapper.get("step_template").is_some(),
+                "{} 必须包含 step_template 根键",
+                file.display()
+            );
+            parsed += 1;
+        }
+        assert!(parsed >= 1, "应至少解析 1 个环节原型");
+    }
+}

@@ -1,0 +1,12 @@
+step_template:
+  name: run-tests
+  title: 运行测试与静态检查
+  prompt: |
+    运行项目级测试与 lint（如 cargo test / npx tsc --noEmit / npm run build）。
+    修复失败项，直到零错误零告警。
+    将测试报告摘要写入 .ntd/test-report.md。
+  executor: claudecode
+  expert_name: senior-dev
+  skills: [4p12s-test]
+  acceptance_criteria: |
+    测试与 lint 全部通过。

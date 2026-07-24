@@ -1,0 +1,76 @@
+process:
+  name: superpowers-task
+  display_name: 轻量任务工艺（Superpowers）
+  description: |
+    适合小任务、Bug 修复、脚本编写等轻量工作：
+    一句话需求 → 直接实现 → 自测 → 提交。
+    保留最少必要的产物与门禁。
+  category: software
+  complexity: light
+  version: 1.0.0
+limits:
+  max_step_executions: 30
+  max_total_tokens: 50000
+abnormal_handler:
+  trigger_on: [capped_step, capped_token, failed]
+phases:
+  - id: implement
+    name: 实现
+    spec: |
+      理解需求后直接实现，并自测。
+    acceptance_criteria: |
+      1. 代码实现完成。
+      2. 测试/lint 通过。
+    links:
+      - id: imp-01
+        name: 实现任务
+        prompt: |
+          根据需求直接实现功能，完成后运行相关测试与 lint，修复失败项。
+        executor: claudecode
+        expert_name: senior-dev
+        skills: [superpowers-code]
+        expected_artifacts:
+          - name: implementation
+            type: file
+            path: .ntd/delivery-state.md
+        gates:
+          - name: 实现产物
+            type: artifact_present
+            artifact: implementation
+        on_success: next
+        on_gate_fail: goto:imp-01
+        max_rework: 2
+      - id: imp-02
+        name: 运行测试
+        step_template: run-tests
+        expected_artifacts:
+          - name: test-report
+            type: file
+            path: .ntd/test-report.md
+        gates:
+          - name: 测试通过
+            type: script_check
+            script: run_tests.sh
+        on_success: next
+        on_gate_fail: goto:imp-01
+
+  - id: delivery
+    name: 交付
+    spec: |
+      提交变更并标记完成。
+    acceptance_criteria: |
+      变更可审计。
+    links:
+      - id: del-01
+        name: 提交
+        step_template: commit-release
+        expected_artifacts:
+          - name: delivery-state
+            type: file
+            path: .ntd/delivery-state.md
+        gates:
+          - name: 交付完成
+            type: artifact_present
+            artifact: delivery-state
+        on_success: end
+        on_gate_fail: goto:del-01

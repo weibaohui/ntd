@@ -1,0 +1,12 @@
+step_template:
+  name: plan-tasks
+  title: 制定开发计划
+  prompt: |
+    根据技术设计，制定可执行的开发任务清单。
+    每个任务需包含：任务名、预估工时、依赖关系、验收标准。
+    将结果写入 docs/plan/{process_name}-plan.md。
+  executor: claudecode
+  expert_name: tech-lead
+  skills: [4p12s-plan]
+  acceptance_criteria: |
+    docs/plan/{process_name}-plan.md 存在，任务可覆盖设计中的全部模块。

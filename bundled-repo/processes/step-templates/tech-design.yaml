@@ -1,0 +1,12 @@
+step_template:
+  name: tech-design
+  title: 技术设计
+  prompt: |
+    基于 PRD 和用户故事，输出技术设计文档。
+    包含：模块划分、数据模型、API 草图、关键技术决策、风险与回退方案。
+    将结果写入 docs/design/{process_name}-design.md。
+  executor: claudecode
+  expert_name: architect
+  skills: [4p12s-design]
+  acceptance_criteria: |
+    docs/design/{process_name}-design.md 存在，且每个功能点都能映射到设计章节。
