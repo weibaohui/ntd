@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Button, Input, Empty, Spin, Switch, message, Tooltip, Typography, Card, Dropdown } from 'antd';
-import { PlusOutlined, FolderOutlined, RobotOutlined, EditOutlined, DeleteOutlined, MoreOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOutlined, RobotOutlined, EditOutlined, DeleteOutlined, MoreOutlined, FileTextOutlined } from '@ant-design/icons';
+import { WorkspacePromptModal } from '@/components/settings/workspace/WorkspacePromptModal';
 import { PageCard } from '@/components/common/PageCard';
 import * as db from '@/utils/database';
 import type { ProjectDirectory, AgentBot } from '@/utils/database';
@@ -23,6 +24,8 @@ export function ProjectDirectoriesPanel({ onOpenMessages }: ProjectDirectoriesPa
   const [editingDirName, setEditingDirName] = useState('');
   // 智能体列表，用于统计每个工作区的绑定数量
   const [agentBots, setAgentBots] = useState<AgentBot[]>([]);
+  // 基础约定弹窗状态：记录要编辑的工作空间 id 和名称
+  const [promptModalWorkspace, setPromptModalWorkspace] = useState<{ id: number; name: string } | null>(null);
 
   // 每次进入页面都重新拉取一次，确保用户在其他地方新增/删除后能立刻看到
   const loadProjectDirectories = () => {
@@ -323,8 +326,18 @@ export function ProjectDirectoriesPanel({ onOpenMessages }: ProjectDirectoriesPa
                       paddingTop: 12,
                       borderTop: '1px solid var(--color-border-light)',
                       flexWrap: 'wrap',
+                      alignItems: 'center',
                     }}
                   >
+                    <Tooltip title="配置该工作空间下所有 todo 执行时注入的前置 prompt">
+                      <span
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+                        onClick={() => setPromptModalWorkspace({ id: dir.id, name: dir.name || '' })}
+                      >
+                        <FileTextOutlined style={{ fontSize: 13, color: 'var(--color-text-secondary)' }} />
+                        <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>基础约定</span>
+                      </span>
+                    </Tooltip>
                     <Tooltip title="执行事项时自动创建 git worktree，保持工作区干净">
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                         <Switch
@@ -358,6 +371,15 @@ export function ProjectDirectoriesPanel({ onOpenMessages }: ProjectDirectoriesPa
           )}
         </Spin>
       </div>
+
+      {/* 基础约定弹窗：编辑工作空间级共识 prompt */}
+      <WorkspacePromptModal
+        open={!!promptModalWorkspace}
+        workspaceId={promptModalWorkspace?.id ?? 0}
+        workspaceName={promptModalWorkspace?.name ?? ''}
+        onClose={() => setPromptModalWorkspace(null)}
+        onSaved={loadProjectDirectories}
+      />
     </PageCard>
   );
 }
