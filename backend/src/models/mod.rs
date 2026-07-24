@@ -494,7 +494,9 @@ pub struct CreateTodoRequest {
     pub auto_review_enabled: Option<bool>,
     /// 工作空间 ID（project_directories.id），唯一键。
     /// 创建时必填；handler 据此查 path 写入 DB cwd 字段。
-    pub workspace_id: i64,
+    /// 使用 #[serde(default)]：v1 路由从 URL 路径覆盖此值，body 中不传也不影响。
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
     /// Action 类型标记（如 "rewrite_title"、"optimize_prompt"），
     /// 仅供前端 ActionButton 组件做 UI 分类展示，不影响执行逻辑。
     #[serde(default)]
@@ -1818,13 +1820,14 @@ mod tests {
         assert_eq!(req.title, "Test");
         assert_eq!(req.prompt, "Do this");
         assert_eq!(req.tag_ids, vec![1, 2]);
-        assert_eq!(req.workspace_id, 42);
+        assert_eq!(req.workspace_id, Some(42));
     }
 
     #[test]
     fn test_create_todo_request_default_tag_ids() {
-        // workspace_id 必填：缺失则反序列化失败，这是 API 契约的一部分。
-        let json = r#"{"title":"Test","prompt":"Do this","workspace_id":1}"#;
+        // workspace_id 可选（#[serde(default)]）：缺失时默认 None，v1 路由从路径覆盖。
+        // 测试确保 tag_ids 的 #[serde(default)] 仍正常工作。
+        let json = r#"{"title":"Test","prompt":"Do this"}"#;
         let req: CreateTodoRequest = serde_json::from_str(json).unwrap();
         assert!(req.tag_ids.is_empty());
     }

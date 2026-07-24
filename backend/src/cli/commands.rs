@@ -642,7 +642,7 @@ async fn handle_todo(
                         auto_review_enabled: value.get("auto_review_enabled").and_then(|v| v.as_bool()),
                         webhook_enabled: None,
                         // URL 已经带 workspace，body 字段以 CLI 参数为准
-                        workspace_id: ws_id,
+                        workspace_id: Some(ws_id),
                         action_type: None,
                         action_key: None,
                         model: None,
@@ -668,7 +668,7 @@ async fn handle_todo(
                     acceptance_criteria: None,
                     webhook_enabled: None,
                     auto_review_enabled: None,
-                    workspace_id: ws_id,
+                    workspace_id: Some(ws_id),
                     action_type: None,
                     action_key: None,
                     model: None,

@@ -408,7 +408,9 @@ pub struct CreateLoopRequest {
     pub description: String,
     /// 工作空间 ID（project_directories.id），必填、唯一键。
     /// 不再接受路径——避免 path 不唯一带来的歧义。
-    pub workspace_id: i64,
+    /// 使用 #[serde(default)]：v1 路由从 URL 路径覆盖此值，body 中不传也不影响。
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
     #[serde(default)]
     pub webhook_enabled: bool,
     #[serde(default)]

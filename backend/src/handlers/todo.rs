@@ -128,11 +128,15 @@ pub async fn create_todo(
 
     // 工作空间 id 必填且必须存在：handler 按 id 解析出 path 后再下传，
     // DAO 一次写入 workspace_id + workspace_path 两列保证双字段同步。
+    // v1 路由已从 URL 路径覆盖此值，body 不传时仍应有值。
+    let todo_ws_id = req.workspace_id.ok_or_else(|| {
+        AppError::BadRequest("workspace_id 为必填项".to_string())
+    })?;
     let dir = state
         .db
-        .get_project_directory_by_id(req.workspace_id)
+        .get_project_directory_by_id(todo_ws_id)
         .await?
-        .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id)))?;
+        .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", todo_ws_id)))?;
     let id = state.db.create_todo_with_extras(
         title,
         &prompt,
@@ -140,7 +144,7 @@ pub async fn create_todo(
         Some(&executor_name),
         req.acceptance_criteria.as_deref(),
         req.webhook_enabled.unwrap_or(false),
-        req.workspace_id,
+        todo_ws_id,
         &dir.path,
     ).await?;
 
@@ -247,7 +251,7 @@ pub async fn create_todo(
         // cwd 字段保留为 None：handler 已通过 create_todo_with_extras 把 path 同步写入 DB，
         // 这里只对外回传 workspace_id；前端不再消费 workspace_path。
         workspace_path: None,
-        workspace_id: Some(req.workspace_id),
+        workspace_id: Some(todo_ws_id),
         webhook_enabled: req.webhook_enabled.unwrap_or(false),
         acceptance_criteria: req.acceptance_criteria.clone(),
         todo_type: 0,
@@ -653,7 +657,7 @@ pub async fn create_todo_v1(
 ) -> Result<ApiResponse<Todo>, AppError> {
     // v1 路径中工作空间 ID 由路径参数提供，覆盖请求体中的值以保证一致性，
     // 避免用户传入与路径参数不一致的 ID 导致歧义
-    req.workspace_id = ws_id;
+    req.workspace_id = Some(ws_id);
     let state_val = State(state);
     let req_val = ApiJson(req);
     create_todo(state_val, req_val).await

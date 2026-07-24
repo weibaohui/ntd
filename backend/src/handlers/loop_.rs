@@ -99,11 +99,15 @@ pub async fn create_loop(
     }
     // 工作空间必填且必须存在：handler 强制把 id 解析为 path 后再下传 DAO，
     // 避免 DAO 再做路径反查，也保证 workspace_id / workspace_path 双字段同步写入。
+    // v1 路由已从 URL 路径覆盖此值，body 不传时仍应有值。
+    let loop_ws_id = req.workspace_id.ok_or_else(|| {
+        AppError::BadRequest("workspace_id 为必填项".to_string())
+    })?;
     let workspace = state
         .db
-        .get_project_directory_by_id(req.workspace_id)
+        .get_project_directory_by_id(loop_ws_id)
         .await?
-        .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id)))?;
+        .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", loop_ws_id)))?;
     // 创建环路前校验标签约束：环路只能选择一个标签
     if req.tag_ids.len() > 1 {
         return Err(AppError::BadRequest("环路只能选择一个标签".to_string()));
@@ -113,7 +117,7 @@ pub async fn create_loop(
         .create_loop(
             req.name.trim(),
             &req.description,
-            Some(req.workspace_id),
+            Some(loop_ws_id),
             Some(workspace.path.as_str()),
             req.webhook_enabled,
             &req.icon,
@@ -2238,15 +2242,15 @@ pub async fn create_loop_v1(
     Json(mut req): Json<CreateLoopRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // V1: workspace_id 强制从路径取，覆盖请求体中的值，避免路径与 body 不一致
-    req.workspace_id = ws_id;
+    req.workspace_id = Some(ws_id);
     if req.name.trim().is_empty() {
         return Err(AppError::BadRequest("name 不能为空".to_string()));
     }
     let workspace = state
         .db
-        .get_project_directory_by_id(req.workspace_id)
+        .get_project_directory_by_id(ws_id)
         .await?
-        .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id)))?;
+        .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", ws_id)))?;
     if req.tag_ids.len() > 1 {
         return Err(AppError::BadRequest("环路只能选择一个标签".to_string()));
     }
@@ -2255,7 +2259,7 @@ pub async fn create_loop_v1(
         .create_loop(
             req.name.trim(),
             &req.description,
-            Some(req.workspace_id),
+            Some(ws_id),
             Some(workspace.path.as_str()),
             req.webhook_enabled,
             &req.icon,
