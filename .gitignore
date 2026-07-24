@@ -1,3 +1,6 @@
+# Study materials extracted from local archives (not to be committed)
+.process-study/
+
 # Logs
 logs
 *.log
