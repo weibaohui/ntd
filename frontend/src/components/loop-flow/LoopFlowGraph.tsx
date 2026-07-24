@@ -258,6 +258,16 @@ export function LoopFlowGraph({
                 onClick={() => onSelectStep(node.step)}
                 style={{ cursor: 'pointer' }}
               >
+                {/* 阶段色带：有 phase_id 的环节在左侧显示 6px 彩色条，
+                    同阶段使用同一颜色，便于在流程图中快速识别阶段边界。 */}
+                {node.step.phase_id != null && (
+                  <rect
+                    x={node.x} y={node.y + 4}
+                    width={6} height={NODE_HEIGHT - 8}
+                    rx={3} ry={3}
+                    fill={phaseColor(node.step.phase_id)}
+                  />
+                )}
                 <rect
                   x={node.x} y={node.y}
                   width={NODE_WIDTH} height={NODE_HEIGHT}
@@ -265,6 +275,7 @@ export function LoopFlowGraph({
                   fill={isSelected ? '#f0f9ff' : '#ffffff'}
                   stroke={isSelected ? '#0891b2' : '#e2e8f0'}
                   strokeWidth={isSelected ? 2 : 1}
+                  style={{ pointerEvents: 'none' }}
                 />
                 <circle
                   cx={node.x + NODE_WIDTH - 10} cy={node.y + 10} r={4}
@@ -368,4 +379,14 @@ export function LoopFlowGraph({
 // 按字符数粗截断，避免环节名过长溢出卡片。
 function truncateText(text: string, maxLen: number): string {
   return text.length > maxLen ? text.slice(0, maxLen - 1) + '…' : text;
+}
+
+// 阶段色板：按 phase_id 哈希取色，保证同阶段颜色稳定。
+const PHASE_PALETTE = [
+  '#0891b2', '#7c3aed', '#db2777', '#ea580c', '#16a34a',
+  '#2563eb', '#ca8a04', '#9333ea', '#059669', '#dc2626',
+];
+
+function phaseColor(phaseId: number): string {
+  return PHASE_PALETTE[Math.abs(phaseId) % PHASE_PALETTE.length];
 }

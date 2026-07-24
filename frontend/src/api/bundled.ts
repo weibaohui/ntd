@@ -12,7 +12,7 @@ export type SyncStrategy = 'keep_local' | 'overwrite' | 'manual';
 /**
  * 子目录类型
  */
-export type Subdir = 'all' | 'experts' | 'todos' | 'skills';
+export type Subdir = 'all' | 'experts' | 'todos' | 'skills' | 'processes';
 
 export interface BundledStatus {
   remote_url: string;
@@ -198,6 +198,47 @@ export interface InstallSkillResponse {
 }
 
 /**
+ * 工艺模板列表项
+ */
+export interface ProcessTemplate {
+  id: number;
+  name: string;
+  display_name: string;
+  description: string;
+  category: string;
+  complexity: 'light' | 'standard' | 'complex';
+  version: string;
+  source_path: string | null;
+  is_system: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+/**
+ * 工艺模板详情
+ */
+export interface ProcessTemplateDetail extends ProcessTemplate {
+  definition: string;
+}
+
+/**
+ * 安装工艺模板请求
+ */
+export interface InstallProcessRequest {
+  workspace_id: number;
+}
+
+/**
+ * 安装工艺模板响应
+ */
+export interface InstallProcessResponse {
+  loop_id: number;
+  loop_name: string;
+  phase_count: number;
+  step_count: number;
+}
+
+/**
  * 内置资源同步 API
  */
 export const bundledApi = {
@@ -304,6 +345,33 @@ export const bundledApi = {
     return unwrap(await api.post('/api/bundled/skills/install', {
       skill_name: skillName,
       executor,
+    }));
+  },
+
+  // ---------------------------------------------------------------------------
+  // 工艺模板市场 API
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 获取工艺模板列表
+   */
+  async getProcesses(): Promise<ProcessTemplate[]> {
+    return unwrap(await api.get('/api/bundled/processes'));
+  },
+
+  /**
+   * 获取工艺模板详情
+   */
+  async getProcess(name: string): Promise<ProcessTemplateDetail> {
+    return unwrap(await api.get(`/api/bundled/processes/${encodeURIComponent(name)}`));
+  },
+
+  /**
+   * 安装工艺模板到指定工作空间
+   */
+  async installProcess(name: string, workspaceId: number): Promise<InstallProcessResponse> {
+    return unwrap(await api.post(`/api/bundled/processes/${encodeURIComponent(name)}/install`, {
+      workspace_id: workspaceId,
     }));
   },
 };

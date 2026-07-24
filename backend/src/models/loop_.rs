@@ -232,6 +232,9 @@ pub struct LoopStepRawDto {
     pub review_type: String,
     pub enabled: bool,
     pub created_at: Option<String>,
+    /// 所属阶段 ID（process management）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_id: Option<i64>,
 }
 
 impl From<loop_steps::Model> for LoopStepRawDto {
@@ -254,6 +257,7 @@ impl From<loop_steps::Model> for LoopStepRawDto {
             review_type: m.review_type,
             enabled: m.enabled != 0,
             created_at: m.created_at,
+            phase_id: m.phase_id,
         }
     }
 }

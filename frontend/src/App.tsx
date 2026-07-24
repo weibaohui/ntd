@@ -13,6 +13,7 @@ import { ItemsPage } from '@/components/ItemsPage';
 import { TodoPostPage } from './components/todo-post';
 import { LoopPage } from './components/LoopPage';
 import { LoopMobilePage } from './components/mobile/LoopMobilePage';
+import { ProcessPage } from './components/ProcessPage';
 import { Dashboard } from './components/Dashboard';
 import { MemorialBoard } from './components/MemorialBoard';
 import { SettingsPage } from './components/SettingsPage';
@@ -232,6 +233,7 @@ function AppContent() {
     setNavDrawerOpen(false);
     if (key === 'items') { showListSection('item'); return; }
     if (key === 'loops') { showListSection('loop'); return; }
+    if (key === 'processes') { handleShowView('processes'); return; }
     // 消息页：作为独立视图挂载，workspace 由左上角 WorkspaceSwitcher 联动传入。
     if (key === 'messages') { handleShowView('messages'); return; }
     if (key === 'dashboard') { handleShowView('dashboard'); return; }
@@ -414,6 +416,8 @@ function AppContent() {
                 />
               ) : activeView === 'wiki' ? (
                 <WikiViewPage />
+              ) : activeView === 'processes' ? (
+                <ProcessPage workspaceId={state.selectedWorkspace} />
               ) : (
                 <Dashboard />
               )}

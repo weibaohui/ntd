@@ -45,7 +45,8 @@ export type View =
   | 'blackboard'
   | 'wiki'
   | 'messages'
-  | 'bots';
+  | 'bots'
+  | 'processes';
 
 export type Panel = 'list' | 'detail' | 'post';
 
@@ -55,7 +56,7 @@ const ALL_VIEWS: View[] = [
   'items', 'loops',
   'dashboard', 'settings', 'memorial',
   'runtime', 'skills', 'projectDirectories', 'sessions', 'executors', 'experts',
-  'blackboard', 'wiki', 'messages', 'bots',
+  'blackboard', 'wiki', 'messages', 'bots', 'processes',
 ];
 
 const ALL_BOARD_MODES: BoardMode[] = ['memorial', 'kanban', 'running', 'loop_kanban'];
@@ -157,6 +158,7 @@ function buildHashUrl(view: View, opts?: { id?: number | null; tab?: string | nu
 const VIEW_TO_NAV_KEY: Record<View, string> = {
   items: 'items',
   loops: 'loops',
+  processes: 'processes',
   dashboard: 'dashboard',
   memorial: 'memorial',
   blackboard: 'blackboard',
