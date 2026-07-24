@@ -7,6 +7,8 @@ import { CronPresetSelect } from '@/components/CronPresetSelect';
 import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '@/utils/cron';
 import { PageCard } from '@/components/common/PageCard';
 import { ProfilesPanel } from '@/components/settings/ProfilesPanel';
+import { InstallExecutorButton } from '@/components/settings/InstallExecutorButton';
+import { getExecutorInstallPrompt } from '@/components/settings/executorInstallPrompts';
 import * as db from '@/utils/database';
 import type { ExecutorConfig, ExecutionRecord } from '@/types';
 import { useApp } from '@/hooks/useApp';
@@ -580,6 +582,50 @@ export function ExecutorsPanel() {
                         修复
                       </Button>
                     )}
+                    {detectResult && !detectResult.found && (() => {
+                      // 把 getExecutorInstallPrompt 结果存为临时变量，避免条件判断和 prompt prop 重复调用
+                      const installPrompt = getExecutorInstallPrompt(record.name);
+                      return installPrompt && (
+                        <InstallExecutorButton
+                          executorName={record.name}
+                          displayName={record.display_name}
+                          prompt={installPrompt.prompt}
+                          buttonSize="small"
+                          showLabel={true}
+                          // 安装完成后：重新检测 → 若找到则修复路径 + 启用 → 刷新前端状态
+                          // 用 repair.path_resolved || detect.path_resolved || record.path 三选一兜底，
+                          // 因为 repair 后端可能返回更新后的路径，detect 仅返回 which 结果，record.path 是旧值
+                          // force enabled:true 是因为 detect 成功说明 binary 可用，没必要让用户手动去开开关
+                          onInstalled={async () => {
+                            try {
+                              const detect = await db.detectExecutor(record.name);
+                              setDetectResults((prev) => ({
+                                ...prev,
+                                [record.name]: { found: detect.binary_found, resolved: detect.path_resolved },
+                              }));
+                              if (detect.binary_found) {
+                                const repair = await db.repairExecutor(record.name);
+                                // 优先级: repair 更新路径 > detect 检测路径 > 数据库原有路径
+                                const updatedPath = repair.path_resolved || detect.path_resolved || record.path;
+                                const updated = await db.updateExecutor(record.name, {
+                                  path: updatedPath,
+                                  enabled: true,
+                                });
+                                setExecutors((prev) => prev.map((e) => (e.name === record.name ? updated : e)));
+                                message.success(`${record.display_name} 安装/修复完成：${updatedPath}`);
+                              } else {
+                                // 安装后仍检测不到：可能 PATH 未刷新、需要新开终端、或安装脚本失败
+                                message.warning(`${record.display_name} 安装后仍未检测到，请检查安装日志或手动填写路径`);
+                              }
+                            } catch (err) {
+                              // err 已由前端 API 统一包装为 Error 实例（见 client.ts 的 unwrap），可安全读 message
+                              const msg = err instanceof Error ? err.message : String(err);
+                              message.error('刷新执行器状态失败: ' + msg);
+                            }
+                          }}
+                        />
+                      );
+                    })()}
                     <Button
                       size="small"
                       type="primary"
