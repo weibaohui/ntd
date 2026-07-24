@@ -591,7 +591,7 @@ export function ExecutorsPanel() {
                           displayName={record.display_name}
                           prompt={installPrompt.prompt}
                           buttonSize="small"
-                          showLabel={false}
+                          showLabel={true}
                           // 安装完成后：重新检测 → 若找到则修复路径 + 启用 → 刷新前端状态
                           // 用 repair.path_resolved || detect.path_resolved || record.path 三选一兜底，
                           // 因为 repair 后端可能返回更新后的路径，detect 仅返回 which 结果，record.path 是旧值
