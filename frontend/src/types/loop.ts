@@ -135,6 +135,8 @@ export interface LoopStepRawDto {
   created_at: string | null;
   /** 所属阶段 ID（工艺管理） */
   phase_id?: number | null;
+  /** 所属阶段名称（工艺管理） */
+  phase_name?: string | null;
 }
 
 export interface LoopStepDto {
@@ -165,6 +167,8 @@ export interface LoopStepDto {
   todo_archived_at?: string | null;
   /** 所属阶段 ID（工艺管理） */
   phase_id?: number | null;
+  /** 所属阶段名称（工艺管理） */
+  phase_name?: string | null;
 }
 
 export interface CreateLoopStepRequest {

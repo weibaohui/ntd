@@ -320,6 +320,17 @@ export function LoopFlowGraph({
                 >
                   {node.step.todo_executor || '未指派'}
                 </text>
+                {/* 阶段名称：有 phase_name 时显示在节点底部，与左侧色带形成双标识 */}
+                {node.step.phase_name && (
+                  <text
+                    x={node.x + 12} y={node.y + NODE_HEIGHT - 8}
+                    fontSize={9}
+                    fill={phaseColor(node.step.phase_id!)}
+                    style={{ fontFamily: 'system-ui', fontWeight: 500 }}
+                  >
+                    {truncateText(node.step.phase_name, 16)}
+                  </text>
+                )}
                 {/* 该环节引用的 todo 已归档：归档不解除 Loop 引用，
                     但要提醒用户环节指向了已从日常视图隐藏的事项（设计文档风险三）。 */}
                 {node.step.todo_archived_at && (

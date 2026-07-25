@@ -235,6 +235,9 @@ pub struct LoopStepRawDto {
     /// 所属阶段 ID（process management）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase_id: Option<i64>,
+    /// 所属阶段名称，仅当 phase_id 有值时填充（工艺管理）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_name: Option<String>,
 }
 
 impl From<loop_steps::Model> for LoopStepRawDto {
@@ -258,6 +261,7 @@ impl From<loop_steps::Model> for LoopStepRawDto {
             enabled: m.enabled != 0,
             created_at: m.created_at,
             phase_id: m.phase_id,
+            phase_name: None, // 名称由 handler 在查询 phases 后填入
         }
     }
 }

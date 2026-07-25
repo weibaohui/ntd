@@ -395,13 +395,24 @@ pub async fn list_loop_steps(
     Path(loop_id): Path<i64>,
 ) -> Result<impl IntoResponse, AppError> {
     let rows = state.db.list_loop_steps_with_todo_meta(loop_id).await?;
+    // 加载阶段数据，按 phase_id 建立名称映射，注入 step DTO。
+    let phases = state.db.list_loop_phases_by_loop(loop_id).await.unwrap_or_default();
+    let phase_name_map: std::collections::HashMap<i64, String> = phases
+        .into_iter()
+        .map(|p| (p.id, p.name))
+        .collect();
     let dtos: Vec<LoopStepDto> = rows
         .into_iter()
-        .map(|(s, todo_title, todo_executor, todo_archived_at)| LoopStepDto {
-            step: s.into(),
-            todo_title,
-            todo_executor,
-            todo_archived_at,
+        .map(|(s, todo_title, todo_executor, todo_archived_at)| {
+            let phase_name = s.phase_id.and_then(|pid| phase_name_map.get(&pid).cloned());
+            let mut step_dto: crate::models::LoopStepRawDto = s.into();
+            step_dto.phase_name = phase_name;
+            LoopStepDto {
+                step: step_dto,
+                todo_title,
+                todo_executor,
+                todo_archived_at,
+            }
         })
         .collect();
     Ok(ApiResponse::ok(dtos))
