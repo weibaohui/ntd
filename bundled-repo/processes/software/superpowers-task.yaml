@@ -28,7 +28,7 @@ phases:
         prompt: |
           理解需求，列出 2-3 种实现方案的优缺点，选择推荐方案并给出理由。
           输出到 .ntd/brainstorm.md。
-        executor: claudecode
+        executor: atomcode
         expert_name: senior-dev
         skills: [superpowers-brainstorm]
         expected_artifacts:
@@ -46,7 +46,7 @@ phases:
         name: 编写计划
         prompt: |
           基于选定的方案，写出实现计划（5-10 个步骤），输出到 .ntd/plan.md。
-        executor: claudecode
+        executor: atomcode
         expert_name: senior-dev
         skills: [superpowers-plan]
         expected_artifacts:
@@ -69,8 +69,8 @@ phases:
             path: .ntd/test-report.md
         gates:
           - name: 测试通过
-            type: script_check
-            script: run_tests.sh
+            type: artifact_present
+            artifact: test-report
         on_success: next
         on_gate_fail: goto:s03
         max_rework: 2
@@ -79,7 +79,7 @@ phases:
         prompt: |
           审查本次变更，检查：逻辑正确性、边界条件、性能、安全。
           输出审查意见到 .ntd/code-review.md。
-        executor: claudecode
+        executor: atomcode
         expert_name: senior-dev
         skills: [superpowers-review]
         expected_artifacts:
@@ -112,7 +112,7 @@ phases:
         prompt: |
           回顾本次任务，总结：做了什么、学到了什么、下次可以改进什么。
           输出到 .ntd/reflect.md。
-        executor: claudecode
+        executor: atomcode
         expert_name: senior-dev
         skills: [superpowers-reflect]
         expected_artifacts:

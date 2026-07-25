@@ -52,9 +52,12 @@ pub async fn create_task(
         .ok_or_else(|| AppError::BadRequest(format!("模板 {} 不存在", template_name)))?;
     let ws = state.db.get_project_directory_by_id(req.workspace_id).await?
         .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id)))?;
-    // 2. 创建 task。
-    let title = if req.requirement.len() > 60 { format!("{}…", &req.requirement[..60]) } else { req.requirement.clone() };
+    // 2. 创建 task。标题取第一行/第一句，完整文本存 description。
+    let title = req.requirement.lines().next().unwrap_or(&req.requirement).trim();
+    let title = if title.len() > 60 { format!("{}…", &title[..60]) } else { title.to_string() };
     let task = state.db.create_task(&title, req.workspace_id, template.id, None).await?;
+    // 把完整需求写入 description。
+    state.db.update_task_description(task.id, &req.requirement).await?;
     // 3. 复用或创建 Loop。
     let loop_id = if let Some(existing) = state.db.find_task_loop(template.id, req.workspace_id).await? {
         existing
@@ -207,9 +210,34 @@ async fn read_workspace_file(ws: &str, rel: &str) -> String {
     }
 }
 
+/// POST /api/v1/tasks/{id}/executions — 为已有任务创建新执行（复用 task_id + loop）。
+pub async fn create_task_execution(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(req): Json<NewExecutionRequest>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    let task = state.db.get_task(id).await?.ok_or(AppError::NotFound)?;
+    let loop_id = task.loop_id.ok_or_else(|| AppError::BadRequest("任务未关联 Loop".to_string()))?;
+    state.db.update_task_description(id, &req.requirement).await?;
+    let dispatcher = state.loop_trigger_dispatcher.as_ref()
+        .ok_or_else(|| AppError::Internal("dispatcher not ready".to_string()))?;
+    let meta = serde_json::json!({"requirement": req.requirement, "source": "task"});
+    match dispatcher.dispatch_manual_with_meta(loop_id, meta).await {
+        Some(exec_id) => {
+            state.db.update_loop_execution_task_id(exec_id, id).await?;
+            Ok(ApiResponse::ok(serde_json::json!({"execution_id": exec_id})))
+        }
+        None => Err(AppError::BadRequest("无法触发执行".to_string())),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct NewExecutionRequest { pub requirement: String }
+
 pub fn task_routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/tasks", axum::routing::get(list_tasks).post(create_task))
         .route("/api/v1/tasks/{id}", axum::routing::get(get_task_detail))
+        .route("/api/v1/tasks/{id}/executions", axum::routing::post(create_task_execution))
         .route("/api/v1/artifacts/{aid}/content", axum::routing::get(get_artifact_content))
 }

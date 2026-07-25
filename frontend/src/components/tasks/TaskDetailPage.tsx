@@ -30,13 +30,10 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailProps) {
 
   const handleNewExec = async () => {
     if (!newRequirement.trim()) { message.warning('请输入需求'); return; }
-    if (!detail) return;
-    const wsId = detail.task?.workspace_id || detail.loop?.workspace_id || 1;
-    const tmpl = detail.template?.name;
     setTriggering(true);
     try {
-      const r = await bundledApi.createTask(newRequirement, wsId, tmpl);
-      message.success(`执行 #${r.execution_id} 已创建`);
+      await bundledApi.createTaskExecution(taskId, newRequirement);
+      message.success('新执行已创建');
       setReqModalOpen(false); setNewRequirement(''); load();
     } catch { message.error('创建失败'); }
     finally { setTriggering(false); }
@@ -77,7 +74,7 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailProps) {
       }]} />
 
       <Title level={4}>执行历史
-        <Button icon={<ThunderboltOutlined />} onClick={() => { setNewRequirement(task.description || task.title); setReqModalOpen(true); }} size="small" style={{ marginLeft: 8 }}>新建执行</Button>
+        <Button icon={<ThunderboltOutlined />} onClick={() => { setNewRequirement(task.description || task.title); setReqModalOpen(true); }} size="small" style={{ marginLeft: 8 }}>再次执行</Button>
       </Title>
       <List dataSource={executions || []} locale={{ emptyText: '暂无执行' }}
         renderItem={(e: ExecInfo) => (

@@ -41,6 +41,17 @@ impl Database {
         Ok(())
     }
 
+    pub async fn update_task_description(&self, id: i64, desc: &str) -> Result<(), sea_orm::DbErr> {
+        let existing = tasks::Entity::find_by_id(id).one(&self.conn).await?;
+        if let Some(c) = existing {
+            let mut am: tasks::ActiveModel = c.into();
+            am.description = ActiveValue::Set(desc.to_string());
+            am.updated_at = ActiveValue::Set(Some(utc_timestamp()));
+            am.update(&self.conn).await?;
+        }
+        Ok(())
+    }
+
     pub async fn update_task_loop_id(&self, id: i64, loop_id: i64) -> Result<(), sea_orm::DbErr> {
         let existing = tasks::Entity::find_by_id(id).one(&self.conn).await?;
         if let Some(c) = existing {

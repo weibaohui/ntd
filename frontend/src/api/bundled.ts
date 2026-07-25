@@ -476,6 +476,11 @@ export const bundledApi = {
     return unwrap(await api.post('/api/v1/tasks', { requirement, workspace_id: workspaceId, template_name: templateName ?? null }));
   },
 
+  /** 为已有任务创建新执行 */
+  async createTaskExecution(taskId: number, requirement: string): Promise<{ execution_id: number }> {
+    return unwrap(await api.post(`/api/v1/tasks/${taskId}/executions`, { requirement }));
+  },
+
   /** 任务列表 */
   async listTasks(status?: string): Promise<Array<{ id: number; title: string; description: string; status: string; template_name?: string; complexity?: string; loop_id?: number; workspace_id?: number; latest_execution_status?: string; latest_execution_requirement?: string; created_at?: string }>> {
     const params = status ? { status } : {};
