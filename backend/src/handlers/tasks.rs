@@ -159,9 +159,25 @@ pub async fn get_task_detail(
     })))
 }
 
+/// 读取产物内容。file 类型优先返回快照，其它类型直接返回快照。
+pub async fn get_artifact_content(
+    State(state): State<AppState>,
+    Path(aid): Path<i64>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    use axum::response::Response;
+    let artifact = state.db.get_loop_step_artifact(aid).await?.ok_or(AppError::NotFound)?;
+    let content = artifact.content_text
+        .unwrap_or_else(|| format!("({} 类产物，路径: {}，无内容快照)", artifact.artifact_type, artifact.locator));
+    Ok(Response::builder()
+        .header("Content-Type", "text/plain; charset=utf-8")
+        .body(axum::body::Body::from(content))
+        .unwrap())
+}
+
 /// 任务路由。
 pub fn task_routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/tasks", axum::routing::get(list_tasks).post(create_task))
         .route("/api/v1/tasks/{loop_id}", axum::routing::get(get_task_detail))
+        .route("/api/v1/artifacts/{aid}/content", axum::routing::get(get_artifact_content))
 }

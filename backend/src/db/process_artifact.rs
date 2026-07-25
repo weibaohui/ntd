@@ -14,6 +14,14 @@ use crate::models::utc_timestamp;
 impl Database {
     // ── Artifacts ──────────────────────────────────────────────
 
+    /// 按 ID 获取产物记录。
+    pub async fn get_loop_step_artifact(
+        &self,
+        id: i64,
+    ) -> Result<Option<loop_step_artifacts::Model>, sea_orm::DbErr> {
+        loop_step_artifacts::Entity::find_by_id(id).one(&self.conn).await
+    }
+
     /// 创建一条环节产物记录。
     ///
     /// `captured_by` 通常为 execution_record_id 字符串，或 "manual" 表示人工补充。

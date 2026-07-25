@@ -13,6 +13,7 @@ import {
   Typography,
   message,
   Progress,
+  Modal,
 } from 'antd';
 import {
   CheckCircleOutlined,
@@ -37,6 +38,7 @@ interface ProcessExecutionBoardProps {
 export function ProcessExecutionBoard({ workspaceId, loopId, executionId, onBack }: ProcessExecutionBoardProps) {
   const [audit, setAudit] = useState<ProcessAuditDto | null>(null);
   const [loading, setLoading] = useState(false);
+  const [artifactModal, setArtifactModal] = useState<{ title: string; content: string } | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -166,7 +168,18 @@ export function ProcessExecutionBoard({ workspaceId, loopId, executionId, onBack
                       <FileTextOutlined style={{ marginRight: 4 }} />
                       <Text type="secondary">产物：</Text>
                       {step.artifacts.map((a) => (
-                        <Tag key={a.id} color="blue">{a.name} → {a.locator}</Tag>
+                        <Tag
+                          key={a.id} color="blue" style={{ cursor: 'pointer' }}
+                          onClick={async () => {
+                            try {
+                              const resp = await fetch(`/api/v1/artifacts/${a.id}/content`);
+                              const text = await resp.text();
+                              setArtifactModal({ title: `${a.name} (${a.artifact_type})`, content: text });
+                            } catch { message.error('加载产物内容失败'); }
+                          }}
+                        >
+                          {a.name} → {a.locator}
+                        </Tag>
                       ))}
                     </div>
                   )}
@@ -211,6 +224,18 @@ export function ProcessExecutionBoard({ workspaceId, loopId, executionId, onBack
           ),
         }))}
       />
+
+      <Modal
+        title={artifactModal?.title || '产物内容'}
+        open={!!artifactModal}
+        onCancel={() => setArtifactModal(null)}
+        footer={null}
+        width={800}
+      >
+        <pre style={{ maxHeight: 500, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 13 }}>
+          {artifactModal?.content || ''}
+        </pre>
+      </Modal>
     </div>
   );
 }
