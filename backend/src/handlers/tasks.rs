@@ -159,19 +159,53 @@ pub async fn get_task_detail(
     })))
 }
 
-/// 读取产物内容。file 类型优先返回快照，其它类型直接返回快照。
+/// 读取产物内容。
+/// - text/url/json 类型：直接返回 DB 快照。
+/// - file 类型：优先用 DB 快照；若为空则尝试从工作目录读取实际文件。
 pub async fn get_artifact_content(
     State(state): State<AppState>,
     Path(aid): Path<i64>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     use axum::response::Response;
     let artifact = state.db.get_loop_step_artifact(aid).await?.ok_or(AppError::NotFound)?;
-    let content = artifact.content_text
-        .unwrap_or_else(|| format!("({} 类产物，路径: {}，无内容快照)", artifact.artifact_type, artifact.locator));
+    // 链式查 workspace_path：artifact → step_execution → loop_execution → loop
+    let ws_path = resolve_artifact_workspace(&state.db, &artifact).await.unwrap_or_default();
+    let content = if artifact.artifact_type == "file" {
+        // 优先 DB 快照，回退到读磁盘。
+        if let Some(ref txt) = artifact.content_text { txt.clone() }
+        else { read_workspace_file(&ws_path, &artifact.locator).await }
+    } else {
+        artifact.content_text.unwrap_or_else(|| format!("({}: {})", artifact.artifact_type, artifact.locator))
+    };
     Ok(Response::builder()
         .header("Content-Type", "text/plain; charset=utf-8")
         .body(axum::body::Body::from(content))
         .unwrap())
+}
+
+/// 链式解析 artifact 所属的工作空间路径。
+async fn resolve_artifact_workspace(
+    db: &Database,
+    artifact: &crate::db::entity::loop_step_artifacts::Model,
+) -> Result<String, sea_orm::DbErr> {
+    use sea_orm::EntityTrait;
+    let se = crate::db::entity::loop_step_executions::Entity::find_by_id(artifact.loop_step_execution_id)
+        .one(&db.conn).await?.ok_or(sea_orm::DbErr::RecordNotFound("step_exec not found".into()))?;
+    let le = crate::db::entity::loop_executions::Entity::find_by_id(se.loop_execution_id)
+        .one(&db.conn).await?.ok_or(sea_orm::DbErr::RecordNotFound("loop_exec not found".into()))?;
+    let lp = crate::db::entity::loops::Entity::find_by_id(le.loop_id)
+        .one(&db.conn).await?.ok_or(sea_orm::DbErr::RecordNotFound("loop not found".into()))?;
+    Ok(lp.workspace_path.unwrap_or_default())
+}
+
+/// 从工作目录读取文件内容（限 128KB）。
+async fn read_workspace_file(ws_path: &str, rel_path: &str) -> String {
+    let full = std::path::Path::new(ws_path).join(rel_path);
+    match tokio::fs::read_to_string(&full).await {
+        Ok(s) if s.len() <= 128 * 1024 => s,
+        Ok(s) => format!("{}...\n(文件过大，仅显示前 128KB)", &s[..128 * 1024]),
+        Err(e) => format!("无法读取文件: {}\n路径: {}", e, full.display()),
+    }
 }
 
 /// 任务路由。
