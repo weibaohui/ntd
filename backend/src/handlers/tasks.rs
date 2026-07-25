@@ -7,6 +7,20 @@ use crate::handlers::{AppError, AppState};
 use crate::models::ApiResponse;
 use crate::services::process::installer::install_process_template;
 
+/// 把需求文本追加到 Loop 的每个 step todo 的 prompt 末尾。
+async fn inject_requirement_to_steps(db: &crate::db::Database, loop_id: i64, requirement: &str) -> Result<(), AppError> {
+    use sea_orm::ConnectionTrait;
+    let steps = db.list_loop_steps_by_loop(loop_id).await?;
+    for step in &steps {
+        let append = format!("\n\n## 任务需求\n{}", requirement);
+        let sql = "UPDATE todos SET prompt = prompt || ?1 WHERE id = ?2";
+        db.conn.execute(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite, sql, [append.into(), step.todo_id.into()],
+        )).await?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateTaskRequest {
     pub requirement: String,
@@ -45,6 +59,8 @@ pub async fn create_task(
     let title = if title.len() > 60 { format!("{}…", &title[..60]) } else { title.to_string() };
     let task = state.db.create_task(&title, lp.workspace_id.unwrap_or(1), lp.process_template_id.unwrap_or(0), Some(req.loop_id)).await?;
     state.db.update_task_description(task.id, &req.requirement).await?;
+    // 把需求注入到 step todo 的 prompt 末尾，使 LoopRunner 执行时能读到。
+    inject_requirement_to_steps(&state.db, req.loop_id, &req.requirement).await?;
     let _ = state.db.update_loop_status(req.loop_id, "enabled").await;
     let dispatcher = state.loop_trigger_dispatcher.as_ref()
         .ok_or_else(|| AppError::Internal("loop dispatcher not ready".to_string()))?;
@@ -194,6 +210,7 @@ pub async fn create_task_execution(
     let task = state.db.get_task(id).await?.ok_or(AppError::NotFound)?;
     let loop_id = task.loop_id.ok_or_else(|| AppError::BadRequest("任务未关联 Loop".to_string()))?;
     state.db.update_task_description(id, &req.requirement).await?;
+    inject_requirement_to_steps(&state.db, loop_id, &req.requirement).await?;
     let dispatcher = state.loop_trigger_dispatcher.as_ref()
         .ok_or_else(|| AppError::Internal("dispatcher not ready".to_string()))?;
     let meta = serde_json::json!({"requirement": req.requirement, "source": "task"});
