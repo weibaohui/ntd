@@ -466,6 +466,11 @@ export const bundledApi = {
     return unwrap(await api.get('/api/v1/processes/stats'));
   },
 
+  /** 工艺推荐 */
+  async recommendProcesses(description: string): Promise<{ recommendations: Array<{ template_name: string; display_name: string; complexity: string; score: number; reasons: string[] }> }> {
+    return unwrap(await api.post('/api/v1/processes/recommend', { description }));
+  },
+
   /**
    * 人工审批门禁
    */

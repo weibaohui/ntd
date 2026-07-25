@@ -14,8 +14,11 @@ import {
   Select,
   message,
   Descriptions,
+  Input,
+  Alert,
+  Space,
 } from 'antd';
-import { BuildOutlined, ReloadOutlined, EyeOutlined, DownloadOutlined } from '@ant-design/icons';
+import { BuildOutlined, ReloadOutlined, EyeOutlined, DownloadOutlined, SearchOutlined } from '@ant-design/icons';
 import bundledApi, { type ProcessTemplate, type ProcessTemplateDetail } from '@/api/bundled';
 import { useProjectDirectories } from '@/utils/workspaceDisplay';
 
@@ -32,6 +35,8 @@ export function ProcessPage({ workspaceId }: ProcessPageProps) {
   const [detail, setDetail] = useState<ProcessTemplateDetail | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
   const [selectedWs, setSelectedWs] = useState<number | null>(workspaceId);
+  const [searchText, setSearchText] = useState('');
+  const [recommended, setRecommended] = useState<string[]>([]);
 
   // workspaceId 外部变化时同步到本地选择器
   useEffect(() => {
@@ -53,6 +58,17 @@ export function ProcessPage({ workspaceId }: ProcessPageProps) {
   useEffect(() => {
     load();
   }, []);
+
+  const handleSearch = async (value: string) => {
+    setSearchText(value);
+    if (!value.trim()) { setRecommended([]); return; }
+    try {
+      const resp = await bundledApi.recommendProcesses(value);
+      setRecommended(resp.recommendations.map((r: { template_name: string }) => r.template_name));
+    } catch {
+      // 推荐失败不影响正常使用。
+    }
+  };
 
   const handleShowDetail = async (name: string) => {
     try {
@@ -128,6 +144,28 @@ export function ProcessPage({ workspaceId }: ProcessPageProps) {
         </div>
       </div>
 
+      <Input.Search
+        placeholder="搜索或描述任务，系统推荐合适工艺…"
+        allowClear
+        enterButton={<><SearchOutlined /> 推荐</>}
+        size="large"
+        onSearch={handleSearch}
+        onChange={(e) => { if (!e.target.value) setRecommended([]); }}
+        style={{ marginBottom: 16 }}
+      />
+
+      {recommended.length > 0 && (
+        <Alert
+          type="info"
+          showIcon
+          message="系统推荐"
+          description={`推荐使用：${recommended.join('、')}`}
+          style={{ marginBottom: 16 }}
+          closable
+          onClose={() => setRecommended([])}
+        />
+      )}
+
       {loading && processes.length === 0 ? (
         <div style={{ textAlign: 'center', padding: 64 }}>
           <Spin size="large" />
@@ -136,12 +174,19 @@ export function ProcessPage({ workspaceId }: ProcessPageProps) {
         <Empty description="暂无工艺模板，请先执行 bundled 同步" />
       ) : (
         <Row gutter={[16, 16]}>
-          {processes.map((p) => (
+          {processes
+            .filter((p) => !searchText.trim() || p.name.includes(searchText) || p.display_name.includes(searchText) || p.description.includes(searchText))
+            .map((p) => (
             <Col xs={24} sm={12} lg={8} key={p.id}>
               <Card
                 hoverable
                 title={p.display_name || p.name}
-                extra={<Tag color={complexityColor(p.complexity)}>{complexityLabel(p.complexity)}</Tag>}
+                extra={
+                  <Space>
+                    {recommended.includes(p.name) && <Tag color="gold">推荐</Tag>}
+                    <Tag color={complexityColor(p.complexity)}>{complexityLabel(p.complexity)}</Tag>
+                  </Space>
+                }
                 actions={[
                   <Button key="view" type="text" icon={<EyeOutlined />} onClick={() => handleShowDetail(p.name)}>
                     详情
