@@ -160,6 +160,20 @@ impl Database {
         Ok(())
     }
 
+    /// 仅更新 loops.description（用于任务创建时写入需求文本）。
+    pub async fn set_loop_description(&self, id: i64, description: &str) -> Result<(), sea_orm::DbErr> {
+        use sea_orm::ConnectionTrait;
+        let sql = "UPDATE loops SET description = ?1, updated_at = ?2 WHERE id = ?3";
+        let now = crate::models::utc_timestamp();
+        self.conn
+            .execute(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite, sql,
+                [description.into(), now.into(), id.into()],
+            ))
+            .await?;
+        Ok(())
+    }
+
     pub async fn delete_loop(&self, id: i64) -> Result<(), sea_orm::DbErr> {
         loops::Entity::delete_by_id(id).exec(&self.conn).await?;
         Ok(())

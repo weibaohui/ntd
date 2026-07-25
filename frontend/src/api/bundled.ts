@@ -471,6 +471,16 @@ export const bundledApi = {
     return unwrap(await api.post('/api/v1/processes/recommend', { description }));
   },
 
+  /** 创建任务：推荐→安装→注入需求 */
+  async createTask(requirement: string, workspaceId: number, templateName?: string): Promise<{ task_id: number; loop_name: string; template_name: string; phase_count: number; step_count: number }> {
+    return unwrap(await api.post('/api/v1/tasks', { requirement, workspace_id: workspaceId, template_name: templateName ?? null }));
+  },
+
+  /** 任务列表 */
+  async listTasks(): Promise<Array<{ loop_id: number; name: string; description: string; template_name?: string; complexity?: string; status: string; created_at?: string }>> {
+    return unwrap(await api.get('/api/v1/tasks'));
+  },
+
   /**
    * 人工审批门禁
    */

@@ -46,14 +46,15 @@ export type View =
   | 'wiki'
   | 'messages'
   | 'bots'
-  | 'processes';
+  | 'processes'
+  | 'tasks';
 
 export type Panel = 'list' | 'detail' | 'post';
 
 export type BoardMode = 'memorial' | 'kanban' | 'running' | 'loop_kanban';
 
 const ALL_VIEWS: View[] = [
-  'items', 'loops',
+  'items', 'loops', 'tasks',
   'dashboard', 'settings', 'memorial',
   'runtime', 'skills', 'projectDirectories', 'sessions', 'executors', 'experts',
   'blackboard', 'wiki', 'messages', 'bots', 'processes',
@@ -158,6 +159,7 @@ function buildHashUrl(view: View, opts?: { id?: number | null; tab?: string | nu
 const VIEW_TO_NAV_KEY: Record<View, string> = {
   items: 'items',
   loops: 'loops',
+  tasks: 'tasks',
   processes: 'processes',
   dashboard: 'dashboard',
   memorial: 'memorial',

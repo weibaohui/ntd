@@ -682,7 +682,10 @@ impl LoopRunner {
                 .replace("{{last_step_name}}", last_step_name_text)
                 .replace("{{message}}", last_output_text)
                 .replace("{{loop_execution_id}}", &loop_execution_id.to_string())
-                .replace("{{loop_name}}", &loop_.name);
+                .replace("{{loop_name}}", &loop_.name)
+                // 任务需求注入：工艺模板 prompt 中的 {{requirement}} 占位符
+                // 替换为用户创建任务时写入的 loops.description 文本。
+                .replace("{{requirement}}", &loop_.description);
             // 4d-bis. 注入工作空间级共识 prompt（需求 022）。
             // Loop 与 todo 走各自路径，此处补齐 Loop 注入使 workspace 共识全路径生效。
             // loop_.workspace_id = 0/None 时 inject_workspace_prompt 静默回退原 prompt。

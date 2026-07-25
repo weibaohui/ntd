@@ -1,0 +1,121 @@
+//! 任务管理 API。
+//!
+//! 提供任务创建（推荐→安装→注入需求）与任务列表（按模板创建的 Loop）两个接口。
+
+use axum::extract::State;
+use axum::Json;
+use axum::Router;
+use serde::{Deserialize, Serialize};
+
+use crate::db::Database;
+use crate::handlers::{AppError, AppState};
+use crate::models::ApiResponse;
+use crate::services::process::installer::install_process_template;
+
+/// 遍历 Loop 的 steps，把每个 step 关联 todo 的 prompt 追加需求文本。
+async fn inject_requirement_to_steps(db: &Database, loop_id: i64, requirement: &str) -> Result<(), AppError> {
+    use sea_orm::ConnectionTrait;
+    let steps = db.list_loop_steps_by_loop(loop_id).await?;
+    for step in &steps {
+        // 使用参数化 SQL 防止需求中特殊字符导致 SQL 注入。
+        let append = format!("\n\n## 任务需求\n{}", requirement);
+        let sql = "UPDATE todos SET prompt = prompt || ?1 WHERE id = ?2";
+        db.conn
+            .execute(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite, sql,
+                [append.into(), step.todo_id.into()],
+            ))
+            .await?;
+    }
+    Ok(())
+}
+
+/// 创建任务请求体。
+#[derive(Debug, Deserialize)]
+pub struct CreateTaskRequest {
+    pub requirement: String,
+    pub workspace_id: i64,
+    pub template_name: Option<String>,
+}
+
+/// 创建任务：推荐→安装→注入需求。
+pub async fn create_task(
+    State(state): State<AppState>,
+    Json(req): Json<CreateTaskRequest>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    use crate::services::process::recommender::{RecommendRequest, recommend};
+    // 1. 选择模板。
+    let template_name = if let Some(ref name) = req.template_name {
+        name.clone()
+    } else {
+        let templates = state.db.list_process_templates().await?;
+        let rec_req = RecommendRequest { description: req.requirement.clone() };
+        let resp = recommend(&templates, &rec_req);
+        resp.recommendations
+            .first()
+            .map(|r| r.template_name.clone())
+            .ok_or_else(|| AppError::BadRequest("无可推荐的工艺模板，请先同步 bundled 工艺库".into()))?
+    };
+    // 2. 加载模板、校验工作空间。
+    let template = state.db.get_process_template_by_name(&template_name).await?
+        .ok_or_else(|| AppError::BadRequest(format!("工艺模板 {} 不存在", template_name)))?;
+    let workspace = state.db.get_project_directory_by_id(req.workspace_id).await?
+        .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id)))?;
+    // 3. 安装为 Loop。
+    let result = install_process_template(&state.db, &template, req.workspace_id, &workspace.path)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    // 4. 把需求文本写入 loops.description。
+    state.db.set_loop_description(result.loop_id, &req.requirement).await?;
+    // 5. 注入需求到所有 step todo 的 prompt 末尾。
+    inject_requirement_to_steps(&state.db, result.loop_id, &req.requirement).await?;
+    Ok((axum::http::StatusCode::CREATED, ApiResponse::ok(serde_json::json!({
+        "task_id": result.loop_id,
+        "loop_name": result.loop_name,
+        "template_name": template_name,
+        "phase_count": result.phase_count,
+        "step_count": result.step_count,
+    }))))
+}
+
+/// 任务列表响应项。
+#[derive(Debug, Serialize)]
+pub struct TaskListItem {
+    pub loop_id: i64,
+    pub name: String,
+    pub description: String,
+    pub template_name: Option<String>,
+    pub complexity: Option<String>,
+    pub status: String,
+    pub created_at: Option<String>,
+}
+
+/// 列出所有由工艺模板创建的任务。
+pub async fn list_tasks(
+    State(state): State<AppState>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    let sql = "SELECT l.id, l.name, l.description, l.status, l.created_at, \
+               pt.name AS template_name, pt.complexity \
+               FROM loops l \
+               JOIN process_templates pt ON pt.id = l.process_template_id \
+               WHERE l.process_template_id IS NOT NULL \
+               ORDER BY l.updated_at DESC LIMIT 50";
+    let rows = state.db.conn.query_all(Statement::from_string(DbBackend::Sqlite, sql)).await?;
+    let items: Vec<TaskListItem> = rows.iter().map(|r| TaskListItem {
+        loop_id: r.try_get_by("id").unwrap_or(0),
+        name: r.try_get_by("name").unwrap_or_default(),
+        description: r.try_get_by("description").unwrap_or_default(),
+        template_name: r.try_get_by::<Option<String>, _>("template_name").ok().flatten(),
+        complexity: r.try_get_by::<Option<String>, _>("complexity").ok().flatten(),
+        status: r.try_get_by("status").unwrap_or_default(),
+        created_at: r.try_get_by("created_at").ok(),
+    }).collect();
+    Ok(ApiResponse::ok(items))
+}
+
+/// 任务路由。
+pub fn task_routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/v1/tasks", axum::routing::get(list_tasks).post(create_task))
+}
