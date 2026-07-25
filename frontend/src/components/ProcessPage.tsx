@@ -37,7 +37,6 @@ export function ProcessPage(_props: ProcessPageProps) {
   const [searchText, setSearchText] = useState('');
   const [recommended, setRecommended] = useState<string[]>([]);
   const [installModal, setInstallModal] = useState<{ name: string; displayName: string } | null>(null);
-  const [selectedWs, setSelectedWs] = useState<number | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -80,12 +79,12 @@ export function ProcessPage(_props: ProcessPageProps) {
   };
 
   const doInstall = async () => {
-    if (!installModal || !selectedWs) { message.warning('请选择目标工作空间'); return; }
+    if (!installModal || !workspaceId) { message.warning('请先在左上角选择工作空间'); return; }
     setInstalling(installModal.name);
     try {
-      const result = await bundledApi.installProcess(installModal.name, selectedWs);
+      const result = await bundledApi.installProcess(installModal.name, workspaceId);
       message.success(`已安装「${result.loop_name}」`);
-      setInstallModal(null); setSelectedWs(null);
+      setInstallModal(null);
     } catch { message.error('安装失败'); }
     finally { setInstalling(null); }
   };
@@ -266,20 +265,15 @@ export function ProcessPage(_props: ProcessPageProps) {
       </Modal>
 
       <Modal
-        title={`安装「${installModal?.displayName || ''}」到工作空间`}
+        title={`安装工艺模板`}
         open={!!installModal}
-        onCancel={() => { setInstallModal(null); setSelectedWs(null); }}
+        onCancel={() => setInstallModal(null)}
         onOk={doInstall}
         confirmLoading={!!installing}
         okText="安装"
       >
-        <Select
-          placeholder="选择目标工作空间"
-          value={selectedWs}
-          onChange={setSelectedWs}
-          options={workspaces.map((ws) => ({ label: `${ws.name} (${ws.path})`, value: ws.id }))}
-          style={{ width: '100%' }}
-        />
+        将「{installModal?.displayName || ''}」安装到当前工作空间？
+        {!workspaceId && <div style={{ color: 'red', marginTop: 8 }}>请先在页面左上角选择目标工作空间</div>}
       </Modal>
     </div>
   );
