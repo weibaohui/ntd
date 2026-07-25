@@ -37,6 +37,7 @@ pub struct TaskItem {
 /// POST /api/v1/tasks
 pub async fn create_task(
     State(state): State<AppState>,
+    Path(_ws): Path<i64>,
     Json(req): Json<CreateTaskRequest>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let lp = state.db.get_loop(req.loop_id).await?.ok_or(AppError::NotFound)?;
@@ -62,6 +63,7 @@ pub async fn create_task(
 /// GET /api/v1/tasks
 pub async fn list_tasks(
     State(state): State<AppState>,
+    Path(_ws): Path<i64>,
     Query(q): Query<ListTasksQuery>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let tasks = state.db.list_tasks(q.status.as_deref()).await?;
@@ -98,7 +100,7 @@ pub async fn list_tasks(
 /// GET /api/v1/tasks/{id}
 pub async fn get_task_detail(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((_ws, id)): Path<(i64, i64)>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let task = state.db.get_task(id).await?.ok_or(AppError::NotFound)?;
     let template = if let Some(tid) = task.template_id { state.db.get_process_template_by_id(tid).await? } else { None };
@@ -186,7 +188,7 @@ async fn read_workspace_file(ws: &str, rel: &str) -> String {
 /// POST /api/v1/tasks/{id}/executions — 为已有任务创建新执行（复用 task_id + loop）。
 pub async fn create_task_execution(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((_ws, id)): Path<(i64, i64)>,
     Json(req): Json<NewExecutionRequest>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let task = state.db.get_task(id).await?.ok_or(AppError::NotFound)?;
