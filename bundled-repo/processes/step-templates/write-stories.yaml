@@ -5,7 +5,6 @@ step_template:
     阅读 docs/requirements/{process_name}-PRD.md，把功能清单拆分为可交付的用户故事列表。
     每个故事需包含：标题、As a / I want / So that、验收条件（Given/When/Then）。
     将结果追加或更新到 docs/requirements/{process_name}-stories.md。
-  executor: atomcode
   expert_name: product-manager
   skills: [4p12s-stories]
   model: claude-sonnet-5

@@ -5,7 +5,6 @@ step_template:
     按照开发计划，以 TDD 方式实现一个任务：先写失败测试，再写最小实现，再重构。
     每完成一个任务，更新任务状态并提交一次代码（或生成 diff）。
     在 .ntd/delivery-state.md 中记录当前已完成功能。
-  executor: atomcode
   expert_name: senior-dev
   skills: [4p12s-tdd]
   model: claude-sonnet-5
