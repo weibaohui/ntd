@@ -600,6 +600,10 @@ impl LoopRunner {
         let mut completed = prev_completed;
         let mut failed = prev_failed;
         let mut consecutive_retries: HashMap<i64, i32> = HashMap::new();
+        // PhaseDriver 返回的返工计数，需要跨迭代传递到下一轮新创建的 step_execution。
+        // rework_count 在 PhaseDriver 中计算但写入了当前（已结束的）step_execution，
+        // 新创建的 step_execution 默认 0，导致返工计数永远不增长。
+        let mut pending_rework: i32 = 0;
 
         let step_id_to_idx: HashMap<i64, usize> = all_steps
             .iter()
@@ -712,6 +716,11 @@ impl LoopRunner {
                 .await
                 .map_err(|e| e.to_string())?;
 
+            // 上一轮 PhaseDriver 返回的返工计数，写入新 step_execution。
+            if pending_rework > 0 {
+                let _ = self.ctx.db.set_step_execution_rework_count(step_exec.id, pending_rework).await;
+            }
+
             self.ctx
                 .db
                 .mark_step_execution_started(step_exec.id)
@@ -802,6 +811,8 @@ impl LoopRunner {
                 .map_err(|e| format!("phase_driver execute_step failed: {}", e))?;
 
                 let gate_passed = outcome.gate_passed;
+                // 保存返工计数：下一轮创建 step_execution 时写入。
+                pending_rework = outcome.rework_count;
 
                 // 更新计数器（PhaseDriver 已写入 gate/artifact 记录，LoopRunner 维护执行级计数器）。
                 if gate_passed {
