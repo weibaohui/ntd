@@ -114,29 +114,25 @@ async fn capture_one_artifact(
     }
 }
 
-/// 捕获文件类产物。
+/// 捕获文件类产物。只校验路径和存在性，不存内容——内容等用户点击时从磁盘读取。
 async fn capture_file_artifact(
     workspace_path: &str,
     spec: &ArtifactSpec,
 ) -> Result<CapturedArtifact, ArtifactCaptureError> {
     let resolved = resolve_within_workspace(workspace_path, &spec.locator)?;
     let exists = resolved.exists();
-    let content = if exists {
-        // 文件存在时读取文本内容快照（限制大小避免大文件爆内存）。
-        read_limited(&resolved, 64 * 1024).await.ok()
-    } else {
-        None
-    };
 
     Ok(CapturedArtifact {
         name: spec.name.clone(),
         artifact_type: spec.artifact_type.clone(),
         locator: spec.locator.clone(),
-        content_text: content,
+        // file 类产物 DB 只存路径，不存快照。点击查看时从工作目录读实际文件。
+        content_text: if exists { None } else { Some(format!("文件尚未创建: {}", spec.locator)) },
     })
 }
 
-/// 安全读取文件，限制最大字节数。
+/// 安全读取文件，限制最大字节数（当前 file 产物不存快照，保留备用）。
+#[allow(dead_code)]
 async fn read_limited(path: &Path, max_bytes: usize) -> Result<String, ArtifactCaptureError> {
     use tokio::io::AsyncReadExt;
 
@@ -479,7 +475,8 @@ mod tests {
         };
 
         let captured = capture_file_artifact(ws, &spec).await.unwrap();
-        assert_eq!(captured.content_text, Some("# PRD\n".to_string()));
+        // file 类产物不存快照，content_text 为 None（存在时）或错误提示（不存在时）。
+        assert_eq!(captured.content_text, None);
     }
 
     #[tokio::test]
@@ -494,7 +491,7 @@ mod tests {
         };
 
         let captured = capture_file_artifact(ws, &spec).await.unwrap();
-        assert_eq!(captured.content_text, None);
+        assert!(captured.content_text.unwrap().contains("文件尚未创建"));
     }
 
     #[tokio::test]

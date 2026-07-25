@@ -171,16 +171,16 @@ pub async fn get_artifact_content(
     // 链式查 workspace_path：artifact → step_execution → loop_execution → loop
     let ws_path = resolve_artifact_workspace(&state.db, &artifact).await.unwrap_or_default();
     let content = if artifact.artifact_type == "file" {
-        // 优先 DB 快照，回退到读磁盘。
-        if let Some(ref txt) = artifact.content_text { txt.clone() }
-        else { read_workspace_file(&ws_path, &artifact.locator).await }
+        // file 类产物始终从磁盘读，DB 只存路径。
+        read_workspace_file(&ws_path, &artifact.locator).await
     } else {
         artifact.content_text.unwrap_or_else(|| format!("({}: {})", artifact.artifact_type, artifact.locator))
     };
-    Ok(Response::builder()
+    let resp = Response::builder()
         .header("Content-Type", "text/plain; charset=utf-8")
         .body(axum::body::Body::from(content))
-        .unwrap())
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    Ok(resp)
 }
 
 /// 链式解析 artifact 所属的工作空间路径。
