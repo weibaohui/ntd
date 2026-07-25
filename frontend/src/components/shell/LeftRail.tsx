@@ -108,7 +108,7 @@ export function LeftRail({
       items: [
         { key: 'settings_skills', label: '技能', icon: <ThunderboltOutlined />, ariaLabel: '技能' },
         { key: 'settings_experts', label: '专家', icon: <TeamOutlined />, ariaLabel: '专家' },
-        { key: 'processes', label: '工艺模板库', icon: <BuildOutlined />, ariaLabel: '工艺模板库' },
+        { key: 'processes', label: '工艺', icon: <BuildOutlined />, ariaLabel: '工艺' },
       ] satisfies LeftRailItem[],
     },
   ]), []);
