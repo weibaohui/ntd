@@ -472,8 +472,8 @@ export const bundledApi = {
   },
 
   /** 创建任务：推荐→创建task→复用/创建Loop→创建执行 */
-  async createTask(requirement: string, workspaceId: number, templateName?: string): Promise<{ task_id: number; loop_id: number; execution_id: number; template_name: string }> {
-    return unwrap(await api.post('/api/v1/tasks', { requirement, workspace_id: workspaceId, template_name: templateName ?? null }));
+  async createTask(requirement: string, loopId: number): Promise<{ task_id: number; loop_id: number; execution_id: number }> {
+    return unwrap(await api.post('/api/v1/tasks', { requirement, loop_id: loopId }));
   },
 
   /** 为已有任务创建新执行 */

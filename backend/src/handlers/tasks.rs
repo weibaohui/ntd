@@ -10,8 +10,7 @@ use crate::services::process::installer::install_process_template;
 #[derive(Debug, Deserialize)]
 pub struct CreateTaskRequest {
     pub requirement: String,
-    pub workspace_id: i64,
-    pub template_name: Option<String>,
+    pub loop_id: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,49 +39,23 @@ pub async fn create_task(
     State(state): State<AppState>,
     Json(req): Json<CreateTaskRequest>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
-    // 1. 选模板。
-    let template_name = if let Some(ref name) = req.template_name { name.clone() } else {
-        let templates = state.db.list_process_templates().await?;
-        let rec = crate::services::process::recommender::recommend(&templates,
-            &crate::services::process::recommender::RecommendRequest { description: req.requirement.clone() });
-        rec.recommendations.first().map(|r| r.template_name.clone())
-            .ok_or_else(|| AppError::BadRequest("无可推荐的工艺模板".into()))?
-    };
-    let template = state.db.get_process_template_by_name(&template_name).await?
-        .ok_or_else(|| AppError::BadRequest(format!("模板 {} 不存在", template_name)))?;
-    let ws = state.db.get_project_directory_by_id(req.workspace_id).await?
-        .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id)))?;
-    // 2. 创建 task。标题取第一行/第一句，完整文本存 description。
+    let lp = state.db.get_loop(req.loop_id).await?.ok_or(AppError::NotFound)?;
     let title = req.requirement.lines().next().unwrap_or(&req.requirement).trim();
     let title = if title.len() > 60 { format!("{}…", &title[..60]) } else { title.to_string() };
-    let task = state.db.create_task(&title, req.workspace_id, template.id, None).await?;
-    // 把完整需求写入 description。
+    let task = state.db.create_task(&title, lp.workspace_id.unwrap_or(1), lp.process_template_id.unwrap_or(0), Some(req.loop_id)).await?;
     state.db.update_task_description(task.id, &req.requirement).await?;
-    // 3. 复用或创建 Loop。
-    let loop_id = if let Some(existing) = state.db.find_task_loop(template.id, req.workspace_id).await? {
-        existing
-    } else {
-        let result = install_process_template(&state.db, &template, req.workspace_id, &ws.path)
-            .await.map_err(|e| AppError::Internal(e.to_string()))?;
-        result.loop_id
-    };
-    state.db.update_task_loop_id(task.id, loop_id).await?;
-    // 4. 确保 Loop 启用，然后通过 dispatcher 触发执行（dispatcher 创建 execution 并启动 LoopRunner）。
-    if let Err(_) = state.db.update_loop_status(loop_id, "enabled").await {
-        // 已经是 enabled 则忽略错误
-    }
+    let _ = state.db.update_loop_status(req.loop_id, "enabled").await;
     let dispatcher = state.loop_trigger_dispatcher.as_ref()
         .ok_or_else(|| AppError::Internal("loop dispatcher not ready".to_string()))?;
     let meta = serde_json::json!({"requirement": req.requirement, "source": "task"});
-    match dispatcher.dispatch_manual_with_meta(loop_id, meta).await {
+    match dispatcher.dispatch_manual_with_meta(req.loop_id, meta).await {
         Some(exec_id) => {
-            // 回填 task_id 到 dispatcher 创建的 execution。
             state.db.update_loop_execution_task_id(exec_id, task.id).await?;
             Ok((axum::http::StatusCode::CREATED, ApiResponse::ok(serde_json::json!({
-                "task_id": task.id, "loop_id": loop_id, "execution_id": exec_id, "template_name": template_name,
+                "task_id": task.id, "loop_id": req.loop_id, "execution_id": exec_id,
             }))))
         }
-        None => Err(AppError::BadRequest("无法触发 Loop 执行，请检查 Loop 状态".to_string())),
+        None => Err(AppError::BadRequest("无法触发执行".to_string())),
     }
 }
 

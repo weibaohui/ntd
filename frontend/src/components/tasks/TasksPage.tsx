@@ -4,11 +4,13 @@ import { useEffect, useState } from 'react';
 import { Card, Input, Button, Select, List, Tag, Typography, message, Space, Tabs } from 'antd';
 import { PlusOutlined, ThunderboltOutlined, RocketOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
-import { useProjectDirectories } from '@/utils/workspaceDisplay';
+import { listLoops } from '@/utils/database/loops';
 import { TaskDetailPage } from '@/components/tasks/TaskDetailPage';
 
 const { TextArea } = Input;
 const { Title, Text } = Typography;
+
+interface LoopItem { id: number; name: string; }
 
 interface TaskItem {
   id: number; title: string; description: string; status: string;
@@ -19,11 +21,10 @@ interface TaskItem {
 }
 
 export function TasksPage() {
-  const { dirs: workspaces } = useProjectDirectories();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [loops, setLoops] = useState<LoopItem[]>([]);
   const [requirement, setRequirement] = useState('');
-  const [selectedWs, setSelectedWs] = useState<number | null>(null);
-  const [selectedTemplate, setSelectedTemplate] = useState<string | undefined>();
+  const [selectedLoopId, setSelectedLoopId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   const [loading, setLoading] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
@@ -31,19 +32,23 @@ export function TasksPage() {
 
   const load = async () => {
     setLoading(true);
-    try { setTasks(await bundledApi.listTasks(statusFilter)); }
-    catch { message.error('加载任务列表失败'); }
+    try {
+      setTasks(await bundledApi.listTasks(statusFilter));
+      // 加载可用的工艺 Loop（process_template_id IS NOT NULL）
+      const allLoops = await listLoops(null);
+      setLoops(allLoops.filter((l: any) => l.process_template_id != null).map((l: any) => ({ id: l.id, name: l.name })));
+    } catch { message.error('加载失败'); }
     finally { setLoading(false); }
   };
 
   useEffect(() => { load(); }, [statusFilter]);
 
   const handleCreate = async () => {
-    if (!requirement.trim()) { message.warning('请输入需求描述'); return; }
-    if (!selectedWs) { message.warning('请选择工作空间'); return; }
+    if (!requirement.trim()) { message.warning('请输入需求'); return; }
+    if (!selectedLoopId) { message.warning('请选择工艺环路'); return; }
     setCreating(true);
     try {
-      const r = await bundledApi.createTask(requirement, selectedWs, selectedTemplate || undefined);
+      const r = await bundledApi.createTask(requirement, selectedLoopId);
       message.success(`任务已创建，执行 #${r.execution_id}`);
       setRequirement(''); load();
     } catch (e: any) { message.error(e?.message || '创建任务失败'); }
@@ -63,13 +68,9 @@ export function TasksPage() {
       <Card title={<><PlusOutlined /> 新建任务</>} style={{ marginBottom: 24 }}>
         <TextArea placeholder="我想做什么？" value={requirement} onChange={e => setRequirement(e.target.value)} rows={3} style={{ marginBottom: 12 }} />
         <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-          <Space>
-            <Select placeholder="工作空间" value={selectedWs} onChange={setSelectedWs}
-              options={workspaces.map(ws => ({ label: `${ws.name}`, value: ws.id }))} style={{ minWidth: 160 }} />
-            <Select placeholder="模板(可选)" value={selectedTemplate} onChange={setSelectedTemplate} allowClear style={{ minWidth: 160 }}
-              options={[{ label: '轻量(Superpowers)', value: 'superpowers-task' }, { label: '标准(4P12S)', value: '4p12s-delivery' }, { label: '口头需求', value: 'oral-requirement' }, { label: '复杂(GienSpec)', value: 'gienspec-complex' }]} />
-          </Space>
-          <Button type="primary" icon={<ThunderboltOutlined />} loading={creating} onClick={handleCreate} disabled={!requirement.trim()}>创建任务</Button>
+          <Select placeholder="选择工艺环路" value={selectedLoopId} onChange={setSelectedLoopId}
+            options={loops.map(l => ({ label: l.name, value: l.id }))} style={{ minWidth: 300 }} />
+          <Button type="primary" icon={<ThunderboltOutlined />} loading={creating} onClick={handleCreate} disabled={!requirement.trim() || !selectedLoopId}>创建任务</Button>
         </Space>
       </Card>
 
