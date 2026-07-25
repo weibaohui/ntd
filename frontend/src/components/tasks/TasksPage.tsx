@@ -34,20 +34,12 @@ export function TasksPage() {
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
 
   const load = async () => {
+    if (!wsId) return;
     setLoading(true);
     try {
       setTasks(await bundledApi.listTasks(wsId, statusFilter));
-      // 遍历所有 workspace 汇总工艺 Loop
-      const all: LoopItem[] = [];
-      for (const ws of workspaces) {
-        try {
-          const loops = await listLoops(ws.id);
-          for (const l of loops) {
-            if ((l as any).process_template_id != null) all.push({ id: l.id, name: l.name });
-          }
-        } catch {}
-      }
-      setLoops(all);
+      const loops = await listLoops(wsId);
+      setLoops(loops.filter((l: any) => l.process_template_id != null).map((l: any) => ({ id: l.id, name: l.name })));
     } catch { message.error('加载失败'); }
     finally { setLoading(false); }
   };
