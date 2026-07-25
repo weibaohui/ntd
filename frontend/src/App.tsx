@@ -419,7 +419,7 @@ function AppContent() {
               ) : activeView === 'wiki' ? (
                 <WikiViewPage />
               ) : activeView === 'tasks' ? (
-                <TasksPage />
+                <TasksPage workspaceId={state.selectedWorkspace} />
               ) : activeView === 'processes' ? (
                 <ProcessPage workspaceId={state.selectedWorkspace} />
               ) : (

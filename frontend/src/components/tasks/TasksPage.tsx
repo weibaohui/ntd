@@ -6,7 +6,6 @@ import { PlusOutlined, ThunderboltOutlined, RocketOutlined } from '@ant-design/i
 import bundledApi from '@/api/bundled';
 import { listLoops } from '@/utils/database/loops';
 import { TaskDetailPage } from '@/components/tasks/TaskDetailPage';
-import { useProjectDirectories } from '@/utils/workspaceDisplay';
 
 const { TextArea } = Input;
 const { Title, Text } = Typography;
@@ -21,9 +20,10 @@ interface TaskItem {
   created_at?: string;
 }
 
-export function TasksPage() {
-  const { dirs: workspaces } = useProjectDirectories();
-  const wsId = workspaces[0]?.id || 1;
+interface TasksPageProps { workspaceId: number | null; }
+
+export function TasksPage({ workspaceId }: TasksPageProps) {
+  const wsId = workspaceId || 1;
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loops, setLoops] = useState<LoopItem[]>([]);
   const [requirement, setRequirement] = useState('');
