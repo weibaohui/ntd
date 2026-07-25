@@ -261,6 +261,8 @@ export interface LoopListItem {
   last_execution_at: string | null;
   /** 待人工审批的环节执行数 */
   pending_approval_count: number;
+  /** 来源工艺模板 ID */
+  process_template_id?: number | null;
 }
 
 export interface LoopExecutionTokenSummary {

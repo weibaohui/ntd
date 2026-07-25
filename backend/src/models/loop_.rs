@@ -137,6 +137,9 @@ pub struct LoopDto {
     pub abnormal_handler_todo_id: Option<i64>,
     /// 异常处理触发条件 JSON 数组
     pub abnormal_handler_trigger_on: String,
+    /// 来源工艺模板 ID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_template_id: Option<i64>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -156,6 +159,7 @@ impl From<loops::Model> for LoopDto {
             limits_config: m.limits_config,
             abnormal_handler_todo_id: m.abnormal_handler_todo_id,
             abnormal_handler_trigger_on: m.abnormal_handler_trigger_on,
+            process_template_id: m.process_template_id,
             created_at: m.created_at,
             updated_at: m.updated_at,
         }
