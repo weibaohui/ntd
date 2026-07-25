@@ -129,9 +129,8 @@ impl Database {
             am.webhook_enabled = ActiveValue::Set(webhook_enabled);
             am.icon = ActiveValue::Set(icon.to_string());
             am.review_template_id = ActiveValue::Set(review_template_id);
-            if let Some(lc) = limits_config {
-                am.limits_config = ActiveValue::Set(lc.to_string());
-            }
+            // 允许显式清空：前端传 null → 写入 "{}"（无限制），传字符串 → 写入对应值。
+            am.limits_config = ActiveValue::Set(limits_config.unwrap_or("{}").to_string());
             am.abnormal_handler_todo_id = ActiveValue::Set(abnormal_handler_todo_id);
             am.abnormal_handler_trigger_on = ActiveValue::Set(abnormal_handler_trigger_on.to_string());
             am.updated_at = ActiveValue::Set(Some(now));
