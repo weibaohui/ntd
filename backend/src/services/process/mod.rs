@@ -17,6 +17,7 @@ pub mod recommender;
 pub mod repair_log;
 pub mod rework_tracker;
 pub mod transition_resolver;
+pub mod user_dir;
 
 /// 工艺模板完整定义（从 `process_templates.definition` YAML 解析）。
 #[derive(Debug, Clone, Deserialize, Serialize)]

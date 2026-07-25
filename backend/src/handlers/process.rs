@@ -146,7 +146,84 @@ pub async fn install_process(
     ))
 }
 
-/// GET /api/v1/processes/stats — 工艺使用统计。
+/// POST /api/v1/processes/{name}/copy-to-user — 把系统工艺复制到用户层 `~/.ntd/processes/`。
+///
+/// 用户层 YAML 文件路径与系统层相对路径一致。
+/// 复制完成后触发用户层 upsert，把工艺标记为 `is_system=false`。
+/// 若用户层已存在同名工艺则返回 409，避免静默覆盖用户自定义。
+pub async fn copy_process_to_user(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    // 安全校验：name 不得包含路径分隔符或 ..，防止写入目标逃逸出 ~/.ntd/processes/。
+    validate_process_name(&name)?;
+
+    let template = state
+        .db
+        .get_process_template_by_name(&name)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    if !template.is_system {
+        return Err(AppError::BadRequest(format!("工艺 {} 已是用户工艺", name)));
+    }
+
+    // 计算用户层目标路径：~/.ntd/processes/<bundled 中相对路径>
+    let user_dir = crate::services::process::user_dir::user_processes_dir()
+        .ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?;
+
+    let rel_path = template
+        .source_path
+        .as_ref()
+        .and_then(|s| s.strip_prefix("bundled://processes/"))
+        .unwrap_or(&name);
+
+    let target_path = user_dir.join(rel_path);
+
+    // 防御性校验：canonicalize 后必须在 user_dir 内。
+    if let Some(parent) = target_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| AppError::Internal(format!("创建用户工艺目录失败: {}", e)))?;
+    }
+
+    if target_path.exists() {
+        return Err(AppError::BadRequest(format!(
+            "用户层已存在同名工艺 {}，请先手动删除 ~/.ntd/processes/{}",
+            name, rel_path
+        )));
+    }
+
+    std::fs::write(&target_path, &template.definition)
+        .map_err(|e| AppError::Internal(format!("写入用户工艺文件失败: {}", e)))?;
+
+    // 触发用户层 upsert，把刚复制的文件入库为 is_system=false。
+    if let Err(e) =
+        crate::services::process::user_dir::import_user_process_templates(&state).await
+    {
+        tracing::warn!("复制后导入用户层失败: {}", e);
+    }
+
+    Ok(ApiResponse::ok(serde_json::json!({
+        "user_source_path": format!("{}{}", crate::services::process::user_dir::USER_SOURCE_PREFIX, rel_path),
+    })))
+}
+
+/// 校验工艺名称不得包含路径分隔符或 `..`，防止 `copy_process_to_user` 写入目标逃逸。
+fn validate_process_name(name: &str) -> Result<(), AppError> {
+    if name.is_empty() {
+        return Err(AppError::BadRequest("工艺名称不能为空".to_string()));
+    }
+    if name.contains('/') || name.contains('\\') {
+        return Err(AppError::BadRequest(format!(
+            "工艺名称不得包含路径分隔符: {}",
+            name
+        )));
+    }
+    if name == ".." || name.contains("/..") || name.contains("\\..") {
+        return Err(AppError::BadRequest(format!("工艺名称不得包含 ..: {}", name)));
+    }
+    Ok(())
+}
 pub async fn get_process_stats(
     State(state): State<AppState>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
@@ -420,5 +497,9 @@ pub fn v1_process_routes() -> Router<AppState> {
         .route(
             "/api/v1/processes/{name}/versions/{version}/diff",
             axum::routing::get(diff_process_versions),
+        )
+        .route(
+            "/api/v1/processes/{name}/copy-to-user",
+            axum::routing::post(copy_process_to_user),
         )
 }

@@ -5,7 +5,6 @@ use axum::Router;
 use serde::{Deserialize, Serialize};
 use crate::handlers::{AppError, AppState};
 use crate::models::ApiResponse;
-use crate::services::process::installer::install_process_template;
 
 /// 把需求文本追加到 Loop 的每个 step todo 的 prompt 末尾。
 async fn inject_requirement_to_steps(db: &crate::db::Database, loop_id: i64, requirement: &str) -> Result<(), AppError> {

@@ -455,6 +455,14 @@ export const bundledApi = {
   },
 
   /**
+   * 把系统工艺复制到用户层 ~/.ntd/processes/，避免被 bundled 同步覆盖。
+   * 复制完成后工艺标记为 is_system=false。
+   */
+  async copyProcessToUser(name: string): Promise<{ user_source_path: string }> {
+    return unwrap(await api.post(`/api/v1/processes/${encodeURIComponent(name)}/copy-to-user`, {}));
+  },
+
+  /**
    * 获取工艺实例审计数据（阶段 → 环节 → 产物 → 门禁）
    */
   async getProcessAudit(wsId: number, loopId: number, execId: number): Promise<ProcessAuditDto> {
