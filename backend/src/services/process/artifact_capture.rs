@@ -70,65 +70,57 @@ pub async fn capture_step_artifacts(
     let mut models = Vec::with_capacity(specs.len());
 
     for spec in specs {
-        let captured = capture_one_artifact(workspace_path, spec, execution_record).await?;
-        let model = db
-            .create_loop_step_artifact(
-                loop_step_execution_id,
-                &captured.name,
-                &captured.artifact_type,
-                &captured.locator,
-                captured.content_text.as_deref(),
-                captured_by,
-            )
-            .await?;
-        models.push(model);
+        if let Some(captured) = capture_one_artifact(workspace_path, spec, execution_record).await? {
+            let model = db
+                .create_loop_step_artifact(
+                    loop_step_execution_id,
+                    &captured.name, &captured.artifact_type, &captured.locator,
+                    captured.content_text.as_deref(), captured_by,
+                )
+                .await?;
+            models.push(model);
+        }
     }
 
     Ok(models)
 }
 
-/// 捕获单个产物。
+/// 捕获单个产物。file 类型不存在时返回 Ok(None)，由 artifact_present 门禁检测缺失。
 async fn capture_one_artifact(
     workspace_path: &str,
     spec: &ArtifactSpec,
     execution_record: Option<&ExecutionRecord>,
-) -> Result<CapturedArtifact, ArtifactCaptureError> {
+) -> Result<Option<CapturedArtifact>, ArtifactCaptureError> {
     match spec.artifact_type.as_str() {
         "file" => capture_file_artifact(workspace_path, spec).await,
-        "text" => capture_text_artifact(spec, execution_record),
-        "url" => capture_url_artifact(spec, execution_record),
-        "json" => capture_json_artifact(spec, execution_record),
-        "delivery-state" | "repair-log" => {
-            // 标准产物由专用模块维护，此处仅做路径快照。
-            Ok(CapturedArtifact {
-                name: spec.name.clone(),
-                artifact_type: spec.artifact_type.clone(),
-                locator: spec.locator.clone(),
-                content_text: None,
-            })
-        }
-        _ => {
-            // 未知类型按 text 兜底，尝试从 result 中提取 marker。
-            capture_text_artifact(spec, execution_record)
-        }
+        "text" => Ok(Some(capture_text_artifact(spec, execution_record)?)),
+        "url" => Ok(Some(capture_url_artifact(spec, execution_record)?)),
+        "json" => Ok(Some(capture_json_artifact(spec, execution_record)?)),
+        "delivery-state" | "repair-log" => Ok(Some(CapturedArtifact {
+            name: spec.name.clone(), artifact_type: spec.artifact_type.clone(),
+            locator: spec.locator.clone(), content_text: None,
+        })),
+        // 未知类型按 text 兜底。
+        _ => Ok(Some(capture_text_artifact(spec, execution_record)?)),
     }
 }
 
 /// 捕获文件类产物。只校验路径和存在性，不存内容——内容等用户点击时从磁盘读取。
+/// 文件不存在时返回 None（跳过此产物，由 artifact_present 门禁检测缺失）。
 async fn capture_file_artifact(
     workspace_path: &str,
     spec: &ArtifactSpec,
-) -> Result<CapturedArtifact, ArtifactCaptureError> {
+) -> Result<Option<CapturedArtifact>, ArtifactCaptureError> {
     let resolved = resolve_within_workspace(workspace_path, &spec.locator)?;
-    let exists = resolved.exists();
-
-    Ok(CapturedArtifact {
+    if !resolved.exists() {
+        return Ok(None);
+    }
+    Ok(Some(CapturedArtifact {
         name: spec.name.clone(),
         artifact_type: spec.artifact_type.clone(),
         locator: spec.locator.clone(),
-        // file 类产物 DB 只存路径，不存快照。点击查看时从工作目录读实际文件。
-        content_text: if exists { None } else { Some(format!("文件尚未创建: {}", spec.locator)) },
-    })
+        content_text: None,
+    }))
 }
 
 /// 安全读取文件，限制最大字节数（当前 file 产物不存快照，保留备用）。
@@ -475,8 +467,9 @@ mod tests {
         };
 
         let captured = capture_file_artifact(ws, &spec).await.unwrap();
-        // file 类产物不存快照，content_text 为 None（存在时）或错误提示（不存在时）。
-        assert_eq!(captured.content_text, None);
+        // 文件存在时返回 Some，不存在时返回 None。
+        assert!(captured.is_some());
+        assert_eq!(captured.unwrap().content_text, None);
     }
 
     #[tokio::test]
@@ -491,7 +484,7 @@ mod tests {
         };
 
         let captured = capture_file_artifact(ws, &spec).await.unwrap();
-        assert!(captured.content_text.unwrap().contains("文件尚未创建"));
+        assert!(captured.is_none());
     }
 
     #[tokio::test]
