@@ -1014,6 +1014,7 @@ async fn handle_process(
 }
 
 /// ProcessRun：查找工作空间 → 安装工艺模板 → 打印结果。
+#[allow(clippy::print_stdout)]
 async fn run_process_install(
     client: &ApiClient, name: &str, workspace: &str,
     output: &OutputFormat, fields: &Option<String>,
@@ -1038,6 +1039,7 @@ async fn run_process_install(
 }
 
 /// ProcessExecutionStatus：遍历工作空间查找审计数据。
+#[allow(clippy::print_stdout)]
 async fn query_execution_status(
     client: &ApiClient, id: i64,
     output: &OutputFormat, fields: &Option<String>,
