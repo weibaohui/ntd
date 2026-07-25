@@ -1025,14 +1025,33 @@ async fn handle_process(
             print_response(&install_resp, output, fields)?;
         }
         ProcessAction::ExecutionStatus { id } => {
-            // 调用审计 API 的简化路径：从 bundled 基础的 execution 读取接口。
-            // 直接返回 execution 基本信息。
-            let exec_path = format!("/v1/loop-executions/{}", id);
-            match client.get::<ClientResponse<serde_json::Value>>(&exec_path).await {
-                Ok(resp) => print_response(&resp, output, fields)?,
-                Err(_) => {
-                    println!("工艺执行 #{} 未找到。请确认 loop_execution_id 正确。", id);
+            // 1. 列出所有工作空间。
+            let ws_list: ClientResponse<Vec<serde_json::Value>> = client.get("/v1/project-directories").await?;
+            let ws_data = ws_list.data.as_deref().unwrap_or(&[]);
+            // 2. 遍历工作空间查找包含该 execution 的 loop。
+            let mut found = false;
+            for ws in ws_data {
+                let Some(ws_id) = ws.get("id").and_then(|v| v.as_i64()) else { continue };
+                let loops_resp: ClientResponse<Vec<serde_json::Value>> = match client.get(&format!("/v1/workspaces/{}/loops", ws_id)).await {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+                let loop_list = loops_resp.data.as_deref().unwrap_or(&[]);
+                for lp in loop_list {
+                    let Some(lp_id) = lp.get("id").and_then(|v| v.as_i64()) else { continue };
+                    let audit_path = format!("/v1/workspaces/{}/loops/{}/executions/{}/audit", ws_id, lp_id, id);
+                    if let Ok(audit_resp) = client.get::<ClientResponse<serde_json::Value>>(&audit_path).await {
+                        if audit_resp.data.is_some() {
+                            print_response(&audit_resp, output, fields)?;
+                            found = true;
+                            break;
+                        }
+                    }
                 }
+                if found { break; }
+            }
+            if !found {
+                println!("工艺执行 #{} 未找到。请确认 loop_execution_id 正确。", id);
             }
         }
     }

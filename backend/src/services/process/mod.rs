@@ -88,8 +88,15 @@ pub struct PhaseDefinition {
     pub name: String,
     #[serde(default)]
     pub spec: String,
+    /// 引用外部阶段规范文件（如 bundled://processes/conventions/requirement-phase-spec.md）。
+    /// 优先级高于 inline `spec`：若 `spec_ref` 存在且文件可读，覆盖 `spec`。
+    #[serde(default)]
+    pub spec_ref: Option<String>,
     #[serde(default)]
     pub acceptance_criteria: String,
+    /// 引用外部验收标准文件，优先级高于 inline `acceptance_criteria`。
+    #[serde(default)]
+    pub acceptance_criteria_ref: Option<String>,
     #[serde(default)]
     pub links: Vec<LinkDefinition>,
 }

@@ -27,11 +27,14 @@ pub async fn install_process_template(
     workspace_id: i64,
     workspace_path: &str,
 ) -> Result<InstallResult, InstallError> {
-    let definition: ProcessDefinition = serde_yaml::from_str(&template.definition)?;
+    let mut definition: ProcessDefinition = serde_yaml::from_str(&template.definition)?;
 
     // 校验所有 link 引用的 step_template 是否存在。
     // skill 名称是自由文本（executor 在运行时注入），不做强制校验，仅记 warn。
     check_step_template_dependencies(db, &definition.phases).await?;
+
+    // 解析 spec_ref / acceptance_criteria_ref 外部引用，覆盖 inline 文本。
+    resolve_phase_spec_refs(&mut definition.phases);
 
     let loop_name = if definition.process.display_name.is_empty() {
         definition.process.name.clone()
@@ -437,6 +440,53 @@ impl GateDefinition {
         }
         serde_json::Value::Object(map).to_string()
     }
+}
+
+/// 解析 phase 的 spec_ref / acceptance_criteria_ref 外部引用。
+///
+/// `bundled://processes/conventions/xxx.md` → 解析为 `~/.ntd/bundled/processes/conventions/xxx.md`，
+/// 读取其内容覆盖 `spec` / `acceptance_criteria`。文件不存在时仅 warn，保留 inline 文本。
+fn resolve_phase_spec_refs(phases: &mut [PhaseDefinition]) {
+    for phase in phases.iter_mut() {
+        // 解析 spec_ref
+        if let Some(ref spec_ref) = phase.spec_ref {
+            match load_bundled_markdown(spec_ref) {
+                Ok(content) => phase.spec = content,
+                Err(e) => {
+                    tracing::warn!(
+                        "阶段「{}」spec_ref「{}」加载失败: {}，使用 inline spec",
+                        phase.name, spec_ref, e
+                    );
+                }
+            }
+        }
+        // 解析 acceptance_criteria_ref
+        if let Some(ref ac_ref) = phase.acceptance_criteria_ref {
+            match load_bundled_markdown(ac_ref) {
+                Ok(content) => phase.acceptance_criteria = content,
+                Err(e) => {
+                    tracing::warn!(
+                        "阶段「{}」acceptance_criteria_ref「{}」加载失败: {}，使用 inline 验收标准",
+                        phase.name, ac_ref, e
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// 加载 `bundled://` 协议的 markdown 文件。
+///
+/// 将 `bundled://processes/conventions/xxx.md` 转换为 `~/.ntd/bundled/processes/conventions/xxx.md`。
+fn load_bundled_markdown(uri: &str) -> Result<String, String> {
+    let path_str = uri
+        .strip_prefix("bundled://")
+        .ok_or_else(|| format!("不支持的协议: {}", uri))?;
+    let home = dirs::home_dir()
+        .ok_or_else(|| "无法获取 home 目录".to_string())?;
+    let file_path = home.join(".ntd").join("bundled").join(path_str);
+    std::fs::read_to_string(&file_path)
+        .map_err(|e| format!("读取 {} 失败: {}", file_path.display(), e))
 }
 
 /// 校验工艺模板中所有 link 引用的 step_template 是否存在。

@@ -755,9 +755,34 @@ impl LoopRunner {
                 || (!step.expected_artifacts.is_empty() && step.expected_artifacts != "[]");
 
             if has_process_config {
-                let exec_record = self.ctx.db.get_execution_record(record_id).await
+                let mut exec_record = self.ctx.db.get_execution_record(record_id).await
                     .map_err(|e| e.to_string())?
                     .ok_or_else(|| format!("execution record #{} not found", record_id))?;
+
+                // 工艺步骤在执行产物捕获/门禁评价前，若环节配置了评分阈值且尚无评分，
+                // 先触发 auto-review 获取评分（复用 LoopRunner 已有的评审基础设施）。
+                if exec_record.rating.is_none()
+                    && step.min_rating.is_some()
+                    && step_status == "success"
+                {
+                    let min_rating_val = step.min_rating.ok_or("min_rating check failed")?;
+                    let (passed, rating, _msg) = self
+                        .apply_rating_gate(
+                            record_id,
+                            min_rating_val,
+                            &todo.prompt,
+                            todo.acceptance_criteria.as_deref(),
+                            loop_.review_template_id,
+                        )
+                        .await
+                        .unwrap_or((false, None, Some("auto-review failed".to_string())));
+                    // 刷新 execution_record 以获取评审后的评分。
+                    if let Ok(Some(refreshed)) = self.ctx.db.get_execution_record(record_id).await {
+                        exec_record = refreshed;
+                    }
+                    let _ = (passed, rating);
+                }
+
                 let ws_path = loop_.workspace_path.as_deref().unwrap_or("");
 
                 let outcome = crate::services::process::phase_driver::execute_step(
