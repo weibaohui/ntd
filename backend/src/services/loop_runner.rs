@@ -213,6 +213,17 @@ impl LoopRunner {
 
             // 获取 loop_execution 统计数据
             let loop_exec = this2_for_event.ctx.db.get_loop_execution(loop_execution_id).await.ok().flatten();
+            // 更新关联 task 的状态。
+            if let Some(ref le) = loop_exec {
+                if let Some(task_id) = le.task_id {
+                    let tstatus = match le.status.as_str() {
+                        "success" | "partial" => "success",
+                        "failed" | "capped_step" | "capped_token" => "failed",
+                        _ => "running",
+                    };
+                    let _ = this2_for_event.ctx.db.update_task_status(task_id, tstatus).await;
+                }
+            }
             let (final_status, total_steps, completed_steps, failed_steps, duration_secs) = match loop_exec {
                 Some(le) => {
                     // 计算执行时长：仅当起止时间都能解析且 finish >= start 时才计算，否则返回 0
