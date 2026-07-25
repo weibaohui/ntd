@@ -471,29 +471,20 @@ export const bundledApi = {
     return unwrap(await api.post('/api/v1/processes/recommend', { description }));
   },
 
-  /** 创建任务：推荐→安装→注入需求 */
-  async createTask(requirement: string, workspaceId: number, templateName?: string): Promise<{ task_id: number; loop_name: string; template_name: string; phase_count: number; step_count: number }> {
+  /** 创建任务：推荐→创建task→复用/创建Loop→创建执行 */
+  async createTask(requirement: string, workspaceId: number, templateName?: string): Promise<{ task_id: number; loop_id: number; execution_id: number; template_name: string }> {
     return unwrap(await api.post('/api/v1/tasks', { requirement, workspace_id: workspaceId, template_name: templateName ?? null }));
   },
 
   /** 任务列表 */
-  async listTasks(): Promise<Array<{ loop_id: number; name: string; description: string; template_name?: string; complexity?: string; status: string; created_at?: string; workspace_id?: number; latest_execution_id?: number; latest_execution_status?: string }>> {
-    return unwrap(await api.get('/api/v1/tasks'));
+  async listTasks(status?: string): Promise<Array<{ id: number; title: string; description: string; status: string; template_name?: string; complexity?: string; loop_id?: number; workspace_id?: number; latest_execution_status?: string; latest_execution_requirement?: string; created_at?: string }>> {
+    const params = status ? { status } : {};
+    return unwrap(await api.get('/api/v1/tasks', { params }));
   },
 
   /** 任务详情 */
-  async getTaskDetail(loopId: number): Promise<{
-    loop: { id: number; name: string; description: string; status: string; workspace_id: number };
-    template: { name: string; display_name: string; complexity: string; version: string };
-    steps: Array<{ id: number; name: string; order_index: number; skill_names: string[]; expected_artifacts: any[]; gate_config: any[] }>;
-    executions: Array<{ id: number; status: string; started_at?: string; finished_at?: string; total_steps: number; completed_steps: number; failed_steps: number }>;
-  }> {
-    return unwrap(await api.get(`/api/v1/tasks/${loopId}`));
-  },
-
-  /** 触发 Loop 执行 */
-  async triggerLoopExecution(loopId: number): Promise<{ execution_id: number }> {
-    return unwrap(await api.post(`/api/v1/loops/${loopId}/trigger`, { trigger_type: 'manual' }));
+  async getTaskDetail(taskId: number): Promise<any> {
+    return unwrap(await api.get(`/api/v1/tasks/${taskId}`));
   },
 
   /**

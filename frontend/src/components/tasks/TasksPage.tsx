@@ -1,8 +1,8 @@
-// 任务管理页面：创建任务（输入需求 → 推荐模板 → 一键创建 Loop）与任务列表。
+// 任务管理页面：创建任务 + 任务列表（支持状态筛选）。
 
 import { useEffect, useState } from 'react';
-import { Card, Input, Button, Select, List, Tag, Typography, message, Space } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, RocketOutlined, PlayCircleOutlined } from '@ant-design/icons';
+import { Card, Input, Button, Select, List, Tag, Typography, message, Space, Tabs } from 'antd';
+import { PlusOutlined, ThunderboltOutlined, RocketOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
 import { useProjectDirectories } from '@/utils/workspaceDisplay';
 import { TaskDetailPage } from '@/components/tasks/TaskDetailPage';
@@ -11,17 +11,11 @@ const { TextArea } = Input;
 const { Title, Text } = Typography;
 
 interface TaskItem {
-  loop_id: number;
-  name: string;
-  description: string;
-  template_name?: string;
-  complexity?: string;
-  status: string;
+  id: number; title: string; description: string; status: string;
+  template_name?: string; complexity?: string;
+  loop_id?: number; workspace_id?: number;
+  latest_execution_status?: string; latest_execution_requirement?: string;
   created_at?: string;
-  workspace_id?: number;
-  latest_execution_id?: number;
-  latest_execution_status?: string;
-  latest_execution_requirement?: string;
 }
 
 export function TasksPage() {
@@ -33,136 +27,69 @@ export function TasksPage() {
   const [creating, setCreating] = useState(false);
   const [loading, setLoading] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string | undefined>();
 
   const load = async () => {
     setLoading(true);
-    try { setTasks(await bundledApi.listTasks()); }
+    try { setTasks(await bundledApi.listTasks(statusFilter)); }
     catch { message.error('加载任务列表失败'); }
     finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [statusFilter]);
 
   const handleCreate = async () => {
     if (!requirement.trim()) { message.warning('请输入需求描述'); return; }
     if (!selectedWs) { message.warning('请选择工作空间'); return; }
     setCreating(true);
     try {
-      const result = await bundledApi.createTask(requirement, selectedWs, selectedTemplate || undefined);
-      message.success(`任务已创建：${result.loop_name}（${result.phase_count} 阶段 ${result.step_count} 环节）`);
-      setRequirement('');
-      load();
+      const r = await bundledApi.createTask(requirement, selectedWs, selectedTemplate || undefined);
+      message.success(`任务已创建，执行 #${r.execution_id}`);
+      setRequirement(''); load();
     } catch (e: any) { message.error(e?.message || '创建任务失败'); }
     finally { setCreating(false); }
   };
 
-  const complexityColor = (c?: string) => {
-    switch (c) { case 'light': return 'green'; case 'standard': return 'blue'; case 'complex': return 'red'; default: return 'default'; }
-  };
-
-  const statusLabel = (s: string) => {
-    switch (s) { case 'enabled': return '运行中'; case 'paused': return '已暂停'; default: return s; }
-  };
-
-  // 详情模式。
   if (selectedTaskId !== null) {
-    return <TaskDetailPage taskId={selectedTaskId} onBack={() => setSelectedTaskId(null)} />;
+    return <TaskDetailPage taskId={selectedTaskId} onBack={() => { setSelectedTaskId(null); load(); }} />;
   }
+
+  const statusColor = (s: string) => ({ pending: 'default', running: 'blue', success: 'green', failed: 'red' }[s] || 'default');
+  const statusLabel = (s: string) => ({ pending: '待执行', running: '进行中', success: '已完成', failed: '失败' }[s] || s);
 
   return (
     <div style={{ padding: 24, maxWidth: 800, margin: '0 auto' }}>
       <Title level={3}><RocketOutlined style={{ marginRight: 8 }} />任务</Title>
-
       <Card title={<><PlusOutlined /> 新建任务</>} style={{ marginBottom: 24 }}>
-        <TextArea
-          placeholder="我想做什么？例如：用 React + TypeScript 做一个便利贴应用，支持创建、编辑、拖拽排序…"
-          value={requirement}
-          onChange={e => setRequirement(e.target.value)}
-          rows={4}
-          style={{ marginBottom: 12 }}
-        />
+        <TextArea placeholder="我想做什么？" value={requirement} onChange={e => setRequirement(e.target.value)} rows={3} style={{ marginBottom: 12 }} />
         <Space style={{ width: '100%', justifyContent: 'space-between' }}>
           <Space>
-            <Select
-              placeholder="选择工作空间"
-              value={selectedWs}
-              onChange={setSelectedWs}
-              options={workspaces.map(ws => ({ label: `${ws.name} (${ws.path})`, value: ws.id }))}
-              style={{ minWidth: 220 }}
-            />
-            <Select
-              placeholder="工艺模板（可选，不选自动推荐）"
-              value={selectedTemplate}
-              onChange={setSelectedTemplate}
-              allowClear
-              style={{ minWidth: 200 }}
-              options={[
-                { label: '轻量任务 (Superpowers)', value: 'superpowers-task' },
-                { label: '标准交付 (4P12S)', value: '4p12s-delivery' },
-                { label: '口头需求', value: 'oral-requirement' },
-                { label: '复杂重构 (GienSpec)', value: 'gienspec-complex' },
-              ]}
-            />
+            <Select placeholder="工作空间" value={selectedWs} onChange={setSelectedWs}
+              options={workspaces.map(ws => ({ label: `${ws.name}`, value: ws.id }))} style={{ minWidth: 160 }} />
+            <Select placeholder="模板(可选)" value={selectedTemplate} onChange={setSelectedTemplate} allowClear style={{ minWidth: 160 }}
+              options={[{ label: '轻量(Superpowers)', value: 'superpowers-task' }, { label: '标准(4P12S)', value: '4p12s-delivery' }, { label: '口头需求', value: 'oral-requirement' }, { label: '复杂(GienSpec)', value: 'gienspec-complex' }]} />
           </Space>
-          <Button
-            type="primary"
-            icon={<ThunderboltOutlined />}
-            loading={creating}
-            onClick={handleCreate}
-            disabled={!requirement.trim()}
-          >
-            创建任务
-          </Button>
+          <Button type="primary" icon={<ThunderboltOutlined />} loading={creating} onClick={handleCreate} disabled={!requirement.trim()}>创建任务</Button>
         </Space>
       </Card>
 
-      <Title level={4}>已有任务</Title>
-      <List
-        loading={loading}
-        dataSource={tasks}
-        locale={{ emptyText: '暂无任务。在上方输入需求创建第一个任务。' }}
+      <Tabs activeKey={statusFilter || 'all'} onChange={(k) => setStatusFilter(k === 'all' ? undefined : k)}
+        items={[
+          { key: 'all', label: '全部' }, { key: 'running', label: '进行中' }, { key: 'success', label: '已完成' }, { key: 'failed', label: '失败' },
+        ]} />
+
+      <List loading={loading} dataSource={tasks} locale={{ emptyText: '暂无任务' }}
         renderItem={t => (
-          <List.Item
-            actions={[
-              t.latest_execution_id ? (
-                <Button
-                  type="primary" size="small"
-                  icon={<PlayCircleOutlined />}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedTaskId(t.loop_id);
-                  }}
-                >
-                  查看详情
-                </Button>
-              ) : null,
-            ].filter(Boolean)}
-            onClick={() => setSelectedTaskId(t.loop_id)}
-            style={{ cursor: 'pointer' }}
+          <List.Item onClick={() => setSelectedTaskId(t.id)} style={{ cursor: 'pointer' }}
+            actions={[t.latest_execution_status && <Tag color={statusColor(t.latest_execution_status)} key="s">{t.latest_execution_status}</Tag>].filter(Boolean)}
           >
             <List.Item.Meta
-              title={
-                <Space>
-                  <Text strong>{t.template_name || t.name}</Text>
-                  {t.complexity && <Tag color={complexityColor(t.complexity)}>{t.complexity}</Tag>}
-                  <Tag color={t.status === 'enabled' ? 'green' : 'default'}>{statusLabel(t.status)}</Tag>
-                  {t.latest_execution_status && (
-                    <Tag color={t.latest_execution_status === 'running' ? 'blue' : t.latest_execution_status === 'success' ? 'green' : 'red'}>
-                      {t.latest_execution_status}
-                    </Tag>
-                  )}
-                </Space>
-              }
-              description={
-                t.latest_execution_requirement
-                  ? (t.latest_execution_requirement.length > 80 ? t.latest_execution_requirement.slice(0, 80) + '…' : t.latest_execution_requirement)
-                  : (t.description ? (t.description.length > 80 ? t.description.slice(0, 80) + '…' : t.description) : '(无描述)')
-              }
+              title={<Space><Text strong>{t.title}</Text>{t.complexity && <Tag>{t.complexity}</Tag>}<Tag color={statusColor(t.status)}>{statusLabel(t.status)}</Tag></Space>}
+              description={t.latest_execution_requirement ? (t.latest_execution_requirement.length > 80 ? t.latest_execution_requirement.slice(0,80)+'…' : t.latest_execution_requirement) : t.description}
             />
-            <Text type="secondary">{t.created_at?.slice(0, 10)}</Text>
+            <Text type="secondary">{t.created_at?.slice(0,10)}</Text>
           </List.Item>
-        )}
-      />
+        )} />
     </div>
   );
 }

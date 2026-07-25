@@ -14,6 +14,7 @@ use sea_orm::{
 pub mod entity;
 pub mod process_artifact;
 pub mod process_template;
+pub mod task;
 pub mod sync_record;
 pub(super) mod migration;
 pub use entity::prelude::*;

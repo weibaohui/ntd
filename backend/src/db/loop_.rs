@@ -976,6 +976,29 @@ impl Database {
         am.insert(&self.conn).await
     }
 
+    /// 创建带 task_id 的 loop execution（任务管理）。
+    pub async fn create_loop_execution_with_task(
+        &self,
+        loop_id: i64,
+        task_id: i64,
+        trigger_type: &str,
+        trigger_meta: &str,
+        total_steps: i32,
+    ) -> Result<loop_executions::Model, sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let am = loop_executions::ActiveModel {
+            loop_id: ActiveValue::Set(loop_id),
+            task_id: ActiveValue::Set(Some(task_id)),
+            trigger_type: ActiveValue::Set(trigger_type.to_string()),
+            trigger_meta: ActiveValue::Set(trigger_meta.to_string()),
+            started_at: ActiveValue::Set(now),
+            status: ActiveValue::Set("running".to_string()),
+            total_steps: ActiveValue::Set(total_steps),
+            ..Default::default()
+        };
+        am.insert(&self.conn).await
+    }
+
     pub async fn get_loop_execution(
         &self,
         id: i64,

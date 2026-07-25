@@ -19,6 +19,7 @@ pub mod loop_step_executions;
 pub mod loop_steps;
 pub mod loop_tags;
 pub mod loop_triggers;
+pub mod tasks;
 pub mod loops;
 pub mod process_step_templates;
 pub mod process_templates;

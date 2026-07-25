@@ -31,6 +31,8 @@ pub struct Model {
     pub total_executed_steps: i32,
     /// 执行失败时的错误说明（如工作空间不一致）。仅在 status=failed 时有值。
     pub error_message: Option<String>,
+    /// 归属的任务 ID（任务管理）。NULL = 非任务触发的执行。
+    pub task_id: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
