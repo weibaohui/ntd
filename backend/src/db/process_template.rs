@@ -107,6 +107,7 @@ impl Database {
         model: Option<&str>,
         acceptance_criteria: &str,
         source_path: &str,
+        category: &str,
     ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let existing = process_step_templates::Entity::find()
@@ -123,6 +124,7 @@ impl Database {
             am.skill_names = ActiveValue::Set(skill_names.to_string());
             am.model = ActiveValue::Set(model.map(String::from));
             am.acceptance_criteria = ActiveValue::Set(acceptance_criteria.to_string());
+            am.category = ActiveValue::Set(category.to_string());
             am.source_path = ActiveValue::Set(Some(source_path.to_string()));
             am.is_system = ActiveValue::Set(true);
             am.updated_at = ActiveValue::Set(Some(now));
@@ -138,6 +140,7 @@ impl Database {
                 skill_names: ActiveValue::Set(skill_names.to_string()),
                 model: ActiveValue::Set(model.map(String::from)),
                 acceptance_criteria: ActiveValue::Set(acceptance_criteria.to_string()),
+                category: ActiveValue::Set(category.to_string()),
                 workspace_id: ActiveValue::Set(None),
                 is_system: ActiveValue::Set(true),
                 source_path: ActiveValue::Set(Some(source_path.to_string())),

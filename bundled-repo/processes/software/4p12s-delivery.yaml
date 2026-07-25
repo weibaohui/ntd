@@ -36,6 +36,20 @@ phases:
         on_success: next
         on_gate_fail: goto:req-01
         max_rework: 3
+      - id: req-01b
+        name: 拆解用户故事
+        step_template: write-stories
+        expected_artifacts:
+          - name: user-stories
+            type: file
+            path: docs/requirements/{process_name}-stories.md
+        gates:
+          - name: 用户故事存在
+            type: artifact_present
+            artifact: user-stories
+        on_success: next
+        on_gate_fail: goto:req-01b
+        max_rework: 3
       - id: req-02
         name: 人工确认 PRD
         step_template: human-confirm

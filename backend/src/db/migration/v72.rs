@@ -31,6 +31,8 @@ impl Migration for V72ProcessManagementV2 {
 
 async fn migrate(db: &Database) -> Result<(), sea_orm::DbErr> {
     add_previous_version_id(db).await?;
+    // V71 遗漏：process_step_templates 需要 category 列（spec §8.1 数据模型定义）。
+    add_column_if_missing(db, "process_step_templates", "category", "TEXT NOT NULL DEFAULT 'general'").await?;
     create_insight_events_table(db).await?;
     create_governance_rules_table(db).await?;
     create_asset_evolution_table(db).await?;

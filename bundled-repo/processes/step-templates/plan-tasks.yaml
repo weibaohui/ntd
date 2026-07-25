@@ -8,5 +8,6 @@ step_template:
   executor: claudecode
   expert_name: tech-lead
   skills: [4p12s-plan]
+  model: claude-sonnet-5
   acceptance_criteria: |
     docs/plan/{process_name}-plan.md 存在，任务可覆盖设计中的全部模块。

@@ -25,6 +25,9 @@ pub struct Model {
     pub skill_names: String,
     /// 执行模型，如 `claude-sonnet-5`。
     pub model: Option<String>,
+    /// 分类，与工艺模板 category 对应。
+    #[sea_orm(default_value = "general")]
+    pub category: String,
     /// 验收标准文本。
     #[sea_orm(column_type = "Text")]
     pub acceptance_criteria: String,

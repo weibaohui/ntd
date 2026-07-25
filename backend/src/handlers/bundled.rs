@@ -774,6 +774,7 @@ async fn upsert_process_step_template(
             def.model.as_deref(),
             &def.acceptance_criteria,
             source_path,
+            "general",
         )
         .await?;
     Ok(())

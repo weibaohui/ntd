@@ -7,5 +7,6 @@ step_template:
   executor: claudecode
   expert_name: tech-lead
   skills: [4p12s-release]
+  model: claude-sonnet-5
   acceptance_criteria: |
     .ntd/delivery-state.md 存在且状态为完成，变更可审计。

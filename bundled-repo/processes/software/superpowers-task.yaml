@@ -2,9 +2,8 @@ process:
   name: superpowers-task
   display_name: 轻量任务工艺（Superpowers）
   description: |
-    适合小任务、Bug 修复、脚本编写等轻量工作：
-    一句话需求 → 直接实现 → 自测 → 提交。
-    保留最少必要的产物与门禁。
+    6 步轻量工艺：brainstorm → plan → TDD → code-review → verify → reflect。
+    适合小需求、Bug 修复、脚本编写，保留最少必要的产物与门禁。
   category: software
   complexity: light
   version: 1.0.0
@@ -14,35 +13,56 @@ limits:
 abnormal_handler:
   trigger_on: [capped_step, capped_token, failed]
 phases:
-  - id: implement
-    name: 实现
+  - id: execute
+    name: 执行
     spec: |
-      理解需求后直接实现，并自测。
+      从 brainstorm 到 reflect 的六步轻量循环。每步均配产物与门禁，
+      但门禁阈值较宽松（max_rework=2），适合快速迭代。
     acceptance_criteria: |
-      1. 代码实现完成。
-      2. 测试/lint 通过。
+      1. 有实现产出。
+      2. 测试/lint 通过或记录修复日志。
+      3. 完成 reflect 总结。
     links:
-      - id: imp-01
-        name: 实现任务
+      - id: s01
+        name: 头脑风暴
         prompt: |
-          根据需求直接实现功能，完成后运行相关测试与 lint，修复失败项。
+          理解需求，列出 2-3 种实现方案的优缺点，选择推荐方案并给出理由。
+          输出到 .ntd/brainstorm.md。
         executor: claudecode
         expert_name: senior-dev
-        skills: [superpowers-code]
+        skills: [superpowers-brainstorm]
         expected_artifacts:
-          - name: implementation
+          - name: brainstorm
             type: file
-            path: .ntd/delivery-state.md
+            path: .ntd/brainstorm.md
         gates:
-          - name: 实现产物
+          - name: 方案存在
             type: artifact_present
-            artifact: implementation
+            artifact: brainstorm
         on_success: next
-        on_gate_fail: goto:imp-01
+        on_gate_fail: goto:s01
         max_rework: 2
-      - id: imp-02
-        name: 运行测试
-        step_template: run-tests
+      - id: s02
+        name: 编写计划
+        prompt: |
+          基于选定的方案，写出实现计划（5-10 个步骤），输出到 .ntd/plan.md。
+        executor: claudecode
+        expert_name: senior-dev
+        skills: [superpowers-plan]
+        expected_artifacts:
+          - name: plan
+            type: file
+            path: .ntd/plan.md
+        gates:
+          - name: 计划存在
+            type: artifact_present
+            artifact: plan
+        on_success: next
+        on_gate_fail: goto:s02
+        max_rework: 2
+      - id: s03
+        name: TDD 开发
+        step_template: tdd-cycle
         expected_artifacts:
           - name: test-report
             type: file
@@ -52,25 +72,57 @@ phases:
             type: script_check
             script: run_tests.sh
         on_success: next
-        on_gate_fail: goto:imp-01
-
-  - id: delivery
-    name: 交付
-    spec: |
-      提交变更并标记完成。
-    acceptance_criteria: |
-      变更可审计。
-    links:
-      - id: del-01
-        name: 提交
-        step_template: commit-release
+        on_gate_fail: goto:s03
+        max_rework: 2
+      - id: s04
+        name: 代码审查
+        prompt: |
+          审查本次变更，检查：逻辑正确性、边界条件、性能、安全。
+          输出审查意见到 .ntd/code-review.md。
+        executor: claudecode
+        expert_name: senior-dev
+        skills: [superpowers-review]
         expected_artifacts:
-          - name: delivery-state
+          - name: code-review
             type: file
-            path: .ntd/delivery-state.md
+            path: .ntd/code-review.md
         gates:
-          - name: 交付完成
+          - name: 审查报告存在
             type: artifact_present
-            artifact: delivery-state
+            artifact: code-review
+        on_success: next
+        on_gate_fail: goto:s04
+        max_rework: 1
+      - id: s05
+        name: 验证
+        step_template: run-tests
+        expected_artifacts:
+          - name: verify-report
+            type: file
+            path: .ntd/verify-report.md
+        gates:
+          - name: 验证通过
+            type: artifact_present
+            artifact: verify-report
+        on_success: next
+        on_gate_fail: goto:s03
+        max_rework: 2
+      - id: s06
+        name: 回顾总结
+        prompt: |
+          回顾本次任务，总结：做了什么、学到了什么、下次可以改进什么。
+          输出到 .ntd/reflect.md。
+        executor: claudecode
+        expert_name: senior-dev
+        skills: [superpowers-reflect]
+        expected_artifacts:
+          - name: reflect
+            type: file
+            path: .ntd/reflect.md
+        gates:
+          - name: 回顾总结存在
+            type: artifact_present
+            artifact: reflect
         on_success: end
-        on_gate_fail: goto:del-01
+        on_gate_fail: goto:s06
+        max_rework: 1

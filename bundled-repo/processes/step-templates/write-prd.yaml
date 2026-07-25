@@ -8,5 +8,6 @@ step_template:
   executor: claudecode
   expert_name: product-manager
   skills: [4p12s-prd]
+  model: claude-sonnet-5
   acceptance_criteria: |
     docs/requirements/{process_name}-PRD.md 存在且包含「验收标准」章节。

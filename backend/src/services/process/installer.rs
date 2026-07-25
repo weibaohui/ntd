@@ -286,7 +286,15 @@ async fn create_loop_step_for_link(
         unrated_policy: ActiveValue::Set("skip".to_string()),
         on_success: ActiveValue::Set(link.on_success.clone()),
         success_goto_step_id: ActiveValue::Set(None),
-        on_rating_fail: ActiveValue::Set(link.on_rating_fail.clone()),
+        // `on_gate_fail` 是设计上优先的失败策略（spec §F4.5）。
+        // 运行时只有 `on_rating_fail` 一个字段，所以当模板显式设置了 `on_gate_fail`
+        // 时（非默认 "break"），把它写入 `on_rating_fail` 作为有效策略。
+        // 若 `on_gate_fail` 为默认值，则回退到 `on_rating_fail` 自身的值。
+        on_rating_fail: ActiveValue::Set(if link.on_gate_fail != "break" {
+            link.on_gate_fail.clone()
+        } else {
+            link.on_rating_fail.clone()
+        }),
         fail_goto_step_id: ActiveValue::Set(None),
         review_type: ActiveValue::Set(link.review_type.clone()),
         phase_id: ActiveValue::Set(Some(phase_id)),
@@ -578,6 +586,7 @@ phases:
             Some("claude-sonnet-5"),
             "PRD.md 存在",
             "bundled://processes/step-templates/write-prd.yaml",
+            "general",
         )
         .await
         .unwrap();
@@ -645,6 +654,9 @@ phases:
             .find(|s| s.name == "编写 PRD")
             .expect("write step exists");
         assert_eq!(confirm_step.fail_goto_step_id, Some(write_step.id));
+        // 验证 on_gate_fail 策略已正确写入 on_rating_fail（而非默认 "break"）。
+        // spec §F4.5：门禁失败时按 on_gate_fail 策略流转。
+        assert_eq!(confirm_step.on_rating_fail, "goto:write-prd");
     }
 
     #[tokio::test]
