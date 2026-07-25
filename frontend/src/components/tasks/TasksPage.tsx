@@ -88,7 +88,7 @@ export function TasksPage() {
             actions={[t.latest_execution_status && <Tag color={statusColor(t.latest_execution_status)} key="s">{t.latest_execution_status}</Tag>].filter(Boolean)}
           >
             <List.Item.Meta
-              title={<Space><Text strong>{t.title}</Text>{t.complexity && <Tag>{t.complexity}</Tag>}<Tag color={statusColor(t.status)}>{statusLabel(t.status)}</Tag></Space>}
+              title={<Space><Text type="secondary">#{t.id}</Text><Text strong>{t.title}</Text>{t.complexity && <Tag>{t.complexity}</Tag>}<Tag color={statusColor(t.status)}>{statusLabel(t.status)}</Tag></Space>}
               description={t.latest_execution_requirement ? (t.latest_execution_requirement.length > 80 ? t.latest_execution_requirement.slice(0,80)+'…' : t.latest_execution_requirement) : t.description}
             />
             <Text type="secondary">{t.created_at?.slice(0,10)}</Text>

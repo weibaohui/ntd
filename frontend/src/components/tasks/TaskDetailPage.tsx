@@ -51,7 +51,7 @@ export function TaskDetailPage({ taskId, workspaceId, onBack }: TaskDetailProps)
     <div style={{ padding: 24, height: '100%', overflow: 'auto' }}>
       <Button icon={<ArrowLeftOutlined />} onClick={onBack} style={{ marginBottom: 16 }}>返回任务列表</Button>
       <Card style={{ marginBottom: 16 }}>
-        <Descriptions title={<Title level={4} style={{ margin: 0 }}>{task.title}</Title>} size="small" column={2}>
+        <Descriptions title={<Title level={4} style={{ margin: 0 }}><Text type="secondary">#{task.id}</Text> {task.title}</Title>} size="small" column={2}>
           <Descriptions.Item label="模板">{template?.display_name}</Descriptions.Item>
           <Descriptions.Item label="版本">{template?.version}</Descriptions.Item>
           <Descriptions.Item label="复杂度"><Tag color={template?.complexity === 'light' ? 'green' : template?.complexity === 'standard' ? 'blue' : 'red'}>{template?.complexity}</Tag></Descriptions.Item>
