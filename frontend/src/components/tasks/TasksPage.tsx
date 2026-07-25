@@ -6,6 +6,7 @@ import { PlusOutlined, ThunderboltOutlined, RocketOutlined } from '@ant-design/i
 import bundledApi from '@/api/bundled';
 import { listLoops } from '@/utils/database/loops';
 import { TaskDetailPage } from '@/components/tasks/TaskDetailPage';
+import { useProjectDirectories } from '@/utils/workspaceDisplay';
 
 const { TextArea } = Input;
 const { Title, Text } = Typography;
@@ -21,6 +22,7 @@ interface TaskItem {
 }
 
 export function TasksPage() {
+  const { dirs: workspaces } = useProjectDirectories();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loops, setLoops] = useState<LoopItem[]>([]);
   const [requirement, setRequirement] = useState('');
@@ -34,9 +36,17 @@ export function TasksPage() {
     setLoading(true);
     try {
       setTasks(await bundledApi.listTasks(statusFilter));
-      // 加载可用的工艺 Loop（process_template_id IS NOT NULL）
-      const allLoops = await listLoops(null);
-      setLoops(allLoops.filter((l: any) => l.process_template_id != null).map((l: any) => ({ id: l.id, name: l.name })));
+      // 遍历所有 workspace 汇总工艺 Loop
+      const all: LoopItem[] = [];
+      for (const ws of workspaces) {
+        const wsLoops = await listLoops(ws.id);
+        for (const l of wsLoops) {
+          if ((l as any).process_template_id != null) {
+            all.push({ id: l.id, name: l.name });
+          }
+        }
+      }
+      setLoops(all);
     } catch { message.error('加载失败'); }
     finally { setLoading(false); }
   };
