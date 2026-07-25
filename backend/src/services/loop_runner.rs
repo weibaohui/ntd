@@ -540,17 +540,17 @@ impl LoopRunner {
         // 否则 cwd/worktree 无法统一，跨空间数据流会导致不可预期的行为。
         self.check_workspace_consistency(&loop_, &all_steps).await?;
 
-        // 4. 加载 trigger_meta 中的 params（从 CLI/外部传入的变量）
-        let trigger_params: HashMap<String, String> = {
+        // 4. 加载 trigger_meta 中的 params 与 requirement。
+        let (trigger_params, task_requirement) = {
             if let Ok(Some(exec)) = self.ctx.db.get_loop_execution(loop_execution_id).await {
                 if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&exec.trigger_meta) {
-                    if let Some(params) = meta.get("params").and_then(|v| v.as_object()) {
-                        params.iter()
-                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                            .collect()
-                    } else { HashMap::new() }
-                } else { HashMap::new() }
-            } else { HashMap::new() }
+                    let params = meta.get("params").and_then(|v| v.as_object())
+                        .map(|obj| obj.iter().filter_map(|(k,v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
+                        .unwrap_or_default();
+                    let req = meta.get("requirement").and_then(|v| v.as_str().map(|s| s.to_string())).unwrap_or_default();
+                    (params, req)
+                } else { (HashMap::new(), String::new()) }
+            } else { (HashMap::new(), String::new()) }
         };
 
         // 4. 初始化（全新执行）或恢复状态（续跑）
@@ -687,9 +687,9 @@ impl LoopRunner {
                 .replace("{{message}}", last_output_text)
                 .replace("{{loop_execution_id}}", &loop_execution_id.to_string())
                 .replace("{{loop_name}}", &loop_.name)
-                // 任务需求注入：工艺模板 prompt 中的 {{requirement}} 占位符
-                // 替换为用户创建任务时写入的 loops.description 文本。
-                .replace("{{requirement}}", &loop_.description);
+                // 任务需求注入：从执行记录的 trigger_meta.requirement 读取。
+                // 每次执行独立需求，不再从 loops.description 读取。
+                .replace("{{requirement}}", &task_requirement);
             // 4d-bis. 注入工作空间级共识 prompt（需求 022）。
             // Loop 与 todo 走各自路径，此处补齐 Loop 注入使 workspace 共识全路径生效。
             // loop_.workspace_id = 0/None 时 inject_workspace_prompt 静默回退原 prompt。

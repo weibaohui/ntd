@@ -13,24 +13,6 @@ use crate::handlers::{AppError, AppState};
 use crate::models::ApiResponse;
 use crate::services::process::installer::install_process_template;
 
-/// 遍历 Loop 的 steps，把每个 step 关联 todo 的 prompt 追加需求文本。
-async fn inject_requirement_to_steps(db: &Database, loop_id: i64, requirement: &str) -> Result<(), AppError> {
-    use sea_orm::ConnectionTrait;
-    let steps = db.list_loop_steps_by_loop(loop_id).await?;
-    for step in &steps {
-        // 使用参数化 SQL 防止需求中特殊字符导致 SQL 注入。
-        let append = format!("\n\n## 任务需求\n{}", requirement);
-        let sql = "UPDATE todos SET prompt = prompt || ?1 WHERE id = ?2";
-        db.conn
-            .execute(sea_orm::Statement::from_sql_and_values(
-                sea_orm::DbBackend::Sqlite, sql,
-                [append.into(), step.todo_id.into()],
-            ))
-            .await?;
-    }
-    Ok(())
-}
-
 /// 创建任务请求体。
 #[derive(Debug, Deserialize)]
 pub struct CreateTaskRequest {
@@ -62,20 +44,22 @@ pub async fn create_task(
         .ok_or_else(|| AppError::BadRequest(format!("工艺模板 {} 不存在", template_name)))?;
     let workspace = state.db.get_project_directory_by_id(req.workspace_id).await?
         .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id)))?;
-    // 3. 安装为 Loop。
-    let result = install_process_template(&state.db, &template, req.workspace_id, &workspace.path)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    // 4. 把需求文本写入 loops.description。
-    state.db.set_loop_description(result.loop_id, &req.requirement).await?;
-    // 5. 注入需求到所有 step todo 的 prompt 末尾。
-    inject_requirement_to_steps(&state.db, result.loop_id, &req.requirement).await?;
+    // 3. 创建或复用 Loop。
+    let (loop_id, reused) = if let Some(existing_id) = state.db.find_task_loop(template.id, req.workspace_id).await? {
+        (existing_id, true)
+    } else {
+        let result = install_process_template(&state.db, &template, req.workspace_id, &workspace.path)
+            .await.map_err(|e| AppError::Internal(e.to_string()))?;
+        (result.loop_id, false)
+    };
+    // 4. 创建执行，需求写入 trigger_meta。
+    let trigger_meta = serde_json::json!({"requirement": req.requirement}).to_string();
+    let exec = state.db.create_loop_execution(loop_id, None, "manual", &trigger_meta, 0).await?;
     Ok((axum::http::StatusCode::CREATED, ApiResponse::ok(serde_json::json!({
-        "task_id": result.loop_id,
-        "loop_name": result.loop_name,
+        "task_id": loop_id,
+        "execution_id": exec.id,
+        "reused": reused,
         "template_name": template_name,
-        "phase_count": result.phase_count,
-        "step_count": result.step_count,
     }))))
 }
 
@@ -92,6 +76,7 @@ pub struct TaskListItem {
     pub workspace_id: Option<i64>,
     pub latest_execution_id: Option<i64>,
     pub latest_execution_status: Option<String>,
+    pub latest_execution_requirement: Option<String>,
 }
 
 /// 列出所有由工艺模板创建的任务。
@@ -103,7 +88,8 @@ pub async fn list_tasks(
                l.workspace_id, \
                pt.name AS template_name, pt.complexity, \
                (SELECT le.id FROM loop_executions le WHERE le.loop_id=l.id ORDER BY le.started_at DESC LIMIT 1) AS latest_exec_id, \
-               (SELECT le.status FROM loop_executions le WHERE le.loop_id=l.id ORDER BY le.started_at DESC LIMIT 1) AS latest_exec_status \
+               (SELECT le.status FROM loop_executions le WHERE le.loop_id=l.id ORDER BY le.started_at DESC LIMIT 1) AS latest_exec_status, \
+               (SELECT le.trigger_meta FROM loop_executions le WHERE le.loop_id=l.id ORDER BY le.started_at DESC LIMIT 1) AS latest_trigger_meta \
                FROM loops l \
                JOIN process_templates pt ON pt.id = l.process_template_id \
                WHERE l.process_template_id IS NOT NULL \
@@ -120,6 +106,9 @@ pub async fn list_tasks(
         workspace_id: r.try_get_by::<Option<i64>, _>("workspace_id").ok().flatten(),
         latest_execution_id: r.try_get_by::<Option<i64>, _>("latest_exec_id").ok().flatten(),
         latest_execution_status: r.try_get_by::<Option<String>, _>("latest_exec_status").ok().flatten(),
+        latest_execution_requirement: r.try_get_by::<Option<String>, _>("latest_trigger_meta").ok().flatten()
+            .and_then(|meta| serde_json::from_str::<serde_json::Value>(&meta).ok())
+            .and_then(|v| v.get("requirement").and_then(|r| r.as_str().map(|s| s.to_string()))),
     }).collect();
     Ok(ApiResponse::ok(items))
 }

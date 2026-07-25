@@ -21,6 +21,7 @@ interface TaskItem {
   workspace_id?: number;
   latest_execution_id?: number;
   latest_execution_status?: string;
+  latest_execution_requirement?: string;
 }
 
 export function TasksPage() {
@@ -152,7 +153,11 @@ export function TasksPage() {
                   )}
                 </Space>
               }
-              description={t.description ? (t.description.length > 100 ? t.description.slice(0, 100) + '…' : t.description) : '(无描述)'}
+              description={
+                t.latest_execution_requirement
+                  ? (t.latest_execution_requirement.length > 80 ? t.latest_execution_requirement.slice(0, 80) + '…' : t.latest_execution_requirement)
+                  : (t.description ? (t.description.length > 80 ? t.description.slice(0, 80) + '…' : t.description) : '(无描述)')
+              }
             />
             <Text type="secondary">{t.created_at?.slice(0, 10)}</Text>
           </List.Item>

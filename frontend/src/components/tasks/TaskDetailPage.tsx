@@ -1,7 +1,7 @@
 // 任务详情页：工艺要求 + 执行历史。
 
 import { useEffect, useState } from 'react';
-import { Card, List, Tag, Button, Typography, Spin, Collapse, Space, message, Descriptions } from 'antd';
+import { Card, List, Tag, Button, Typography, Spin, Collapse, Space, message, Descriptions, Modal, Input } from 'antd';
 import { ArrowLeftOutlined, ThunderboltOutlined, CaretRightOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
 import { ProcessExecutionBoard } from '@/components/process/ProcessExecutionBoard';
@@ -33,6 +33,8 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailProps) {
   } | null>(null);
   const [activeExec, setActiveExec] = useState<number | null>(null);
   const [triggering, setTriggering] = useState(false);
+  const [reqModalOpen, setReqModalOpen] = useState(false);
+  const [newRequirement, setNewRequirement] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -44,10 +46,15 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailProps) {
   useEffect(() => { load(); }, [taskId]);
 
   const handleTrigger = async () => {
+    if (!newRequirement.trim()) { message.warning('请输入这次的需求'); return; }
+    if (!detail) return;
     setTriggering(true);
     try {
-      await bundledApi.triggerLoopExecution(taskId);
+      // createTask 自动检测复用：同模板+同空间返回已有 Loop，并创建新执行。
+      await bundledApi.createTask(newRequirement, detail.loop.workspace_id || 1, detail.template.name);
       message.success('已创建新执行');
+      setReqModalOpen(false);
+      setNewRequirement('');
       load();
     } catch { message.error('创建执行失败'); }
     finally { setTriggering(false); }
@@ -102,7 +109,7 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailProps) {
         }]}
       />
 
-      <Title level={4}>执行历史 <Button icon={<ThunderboltOutlined />} loading={triggering} onClick={handleTrigger} size="small" style={{ marginLeft: 8 }}>新建执行</Button></Title>
+      <Title level={4}>执行历史 <Button icon={<ThunderboltOutlined />} onClick={() => { setNewRequirement(detail.loop.description || ''); setReqModalOpen(true); }} size="small" style={{ marginLeft: 8 }}>新建执行</Button></Title>
       <List
         dataSource={executions}
         locale={{ emptyText: '暂无执行记录。点击「新建执行」开始。' }}
@@ -140,6 +147,22 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailProps) {
           />
         </div>
       )}
+
+      <Modal
+        title="输入这次的需求"
+        open={reqModalOpen}
+        onCancel={() => setReqModalOpen(false)}
+        onOk={handleTrigger}
+        confirmLoading={triggering}
+        okText="开始执行"
+      >
+        <Input.TextArea
+          value={newRequirement}
+          onChange={e => setNewRequirement(e.target.value)}
+          rows={4}
+          placeholder="描述这次想要完成的事情…"
+        />
+      </Modal>
     </div>
   );
 }

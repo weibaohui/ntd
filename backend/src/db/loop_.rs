@@ -159,6 +159,17 @@ impl Database {
         Ok(())
     }
 
+    /// 查找同模板+同工作空间已存在的任务 Loop（复用检测）。
+    pub async fn find_task_loop(&self, template_id: i64, workspace_id: i64) -> Result<Option<i64>, sea_orm::DbErr> {
+        use sea_orm::EntityTrait;
+        let existing = loops::Entity::find()
+            .filter(loops::Column::ProcessTemplateId.eq(template_id))
+            .filter(loops::Column::WorkspaceId.eq(Some(workspace_id)))
+            .one(&self.conn)
+            .await?;
+        Ok(existing.map(|l| l.id))
+    }
+
     /// 仅更新 loops.description（用于任务创建时写入需求文本）。
     pub async fn set_loop_description(&self, id: i64, description: &str) -> Result<(), sea_orm::DbErr> {
         use sea_orm::ConnectionTrait;
