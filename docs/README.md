@@ -117,6 +117,7 @@ AI 在执行某个功能时（编号 X），必须按以下顺序读取文档：
 | 025 | 工艺管理-需求.md | process-management-requirements.md |
 | 025-M2 | 工艺管理-M2-需求.md | process-management-m2-requirements.md |
 | 025 | 工艺管理-实现总结.md | process-management-summary.md |
+| 025-M2 | 工艺管理-M2-实现总结.md | process-management-m2-summary.md |
 
 ### docs/decisions/（4 份）
 
