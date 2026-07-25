@@ -749,7 +749,89 @@ impl LoopRunner {
                 }
             };
 
-            // 4h. 评分闸门
+            // 4h. 工艺步骤 → 委托 PhaseDriver 处理（含产物捕获、门禁评价、流转解析、返工统计、阶段维护）。
+            // 判断标准：步骤配置了 gate_config 或 expected_artifacts（默认值都是 "[]"）。
+            let has_process_config = (!step.gate_config.is_empty() && step.gate_config != "[]")
+                || (!step.expected_artifacts.is_empty() && step.expected_artifacts != "[]");
+
+            if has_process_config {
+                let exec_record = self.ctx.db.get_execution_record(record_id).await
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("execution record #{} not found", record_id))?;
+                let ws_path = loop_.workspace_path.as_deref().unwrap_or("");
+
+                let outcome = crate::services::process::phase_driver::execute_step(
+                    &self.ctx.db,
+                    Some(&exec_record),
+                    loop_execution_id,
+                    step,
+                    &step_exec,
+                    &all_steps,
+                    idx,
+                    ws_path,
+                )
+                .await
+                .map_err(|e| format!("phase_driver execute_step failed: {}", e))?;
+
+                let gate_passed = outcome.gate_passed;
+
+                // 更新计数器（PhaseDriver 已写入 gate/artifact 记录，LoopRunner 维护执行级计数器）。
+                if gate_passed {
+                    completed += 1;
+                    self.ctx
+                        .db
+                        .increment_loop_execution_counters(loop_execution_id, 1, 0, 1)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    *consecutive_retries.get_mut(&step.id).unwrap_or(&mut 0) = 0;
+                    if let Some(ws_id) = loop_.workspace_id.filter(|&id| id != 0) {
+                        crate::services::blackboard_debouncer::push_pending_record(
+                            ws_id, record_id, &self.ctx.db,
+                        )
+                        .await;
+                    }
+                } else {
+                    failed += 1;
+                    self.ctx
+                        .db
+                        .increment_loop_execution_counters(loop_execution_id, 0, 1, 1)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    *consecutive_retries.entry(step.id).or_insert(0) += 1;
+                }
+
+                // 记录上一环节输出（供下一环节模板变量）。
+                let exec_record2 = self.ctx.db.get_execution_record(record_id).await.ok().flatten();
+                last_output = exec_record2.as_ref().and_then(|r| r.result.clone());
+                last_conclusion = outcome.error_message.clone()
+                    .or_else(|| exec_record2.as_ref().and_then(|r| r.result.clone().map(|s| {
+                        let truncated: String = s.chars().take(300).collect();
+                        truncated
+                    })));
+                last_step_name = Some(step.name.clone());
+                if let Some(ref usage) = exec_record2.as_ref().and_then(|r| r.usage.clone()) {
+                    let step_tokens = (usage.input_tokens + usage.output_tokens) as i64;
+                    total_tokens_used += step_tokens;
+                }
+
+                // 发送状态更新事件。
+                let final_status = if gate_passed { "success" } else { "failed" };
+                let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
+                    record_id,
+                    todo_id: 0,
+                    review_status: final_status.to_string(),
+                });
+
+                // 确定下一步。
+                current_idx = outcome.next_idx;
+
+                if outcome.paused {
+                    return Ok(LoopRunOutcome::Paused);
+                }
+                continue;
+            }
+
+            // 4h. 评分闸门（旧 Loop 兼容路径：无 gate_config/expected_artifacts 的步骤）。
             let (gate_passed, step_rating, error_msg) = if step_status == "success" && step.min_rating.is_some() {
                 // 人工审批类型：暂停等待，不自动评审
                 // 提取结论后写回 pending_approval 状态，然后退出主循环。

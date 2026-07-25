@@ -6,7 +6,15 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod artifact_capture;
+pub mod delivery_state;
+pub mod gate_evaluator;
+pub mod gates;
 pub mod installer;
+pub mod phase_driver;
+pub mod repair_log;
+pub mod rework_tracker;
+pub mod transition_resolver;
 
 /// 工艺模板完整定义（从 `process_templates.definition` YAML 解析）。
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -200,6 +208,27 @@ pub enum InstallError {
     DbError(#[from] sea_orm::DbErr),
     #[error("goto 目标未找到: {0}")]
     GotoTargetNotFound(String),
+}
+
+/// 工艺运行时错误（门禁、捕获、阶段驱动等）。
+#[derive(Debug, thiserror::Error)]
+pub enum ProcessError {
+    #[error("解析错误: {0}")]
+    ParseError(String),
+    #[error("数据库错误: {0}")]
+    Db(Box<sea_orm::DbErr>),
+    #[error("门禁错误: {0}")]
+    GateError(#[from] gates::GateError),
+    #[error("产物捕获错误: {0}")]
+    ArtifactCaptureError(#[from] artifact_capture::ArtifactCaptureError),
+    #[error("运行错误: {0}")]
+    Runtime(String),
+}
+
+impl From<sea_orm::DbErr> for ProcessError {
+    fn from(e: sea_orm::DbErr) -> Self {
+        ProcessError::Db(Box::new(e))
+    }
 }
 
 impl From<serde_yaml::Error> for InstallError {

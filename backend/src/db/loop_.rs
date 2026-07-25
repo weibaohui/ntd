@@ -1235,6 +1235,21 @@ impl Database {
         Ok(())
     }
 
+    /// 设置环节执行的返工计数。
+    pub async fn set_step_execution_rework_count(
+        &self,
+        id: i64,
+        rework_count: i32,
+    ) -> Result<(), sea_orm::DbErr> {
+        let existing = loop_step_executions::Entity::find_by_id(id).one(&self.conn).await?;
+        if let Some(c) = existing {
+            let mut am: loop_step_executions::ActiveModel = c.into();
+            am.rework_count = ActiveValue::Set(rework_count);
+            am.update(&self.conn).await?;
+        }
+        Ok(())
+    }
+
     /// 设置环节执行记录的审批状态（人工审批流程专用）。
     pub async fn set_step_execution_approval_status(
         &self,
