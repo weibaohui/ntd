@@ -13,6 +13,7 @@ pub mod gate_evaluator;
 pub mod gates;
 pub mod installer;
 pub mod phase_driver;
+pub mod recommender;
 pub mod repair_log;
 pub mod rework_tracker;
 pub mod transition_resolver;

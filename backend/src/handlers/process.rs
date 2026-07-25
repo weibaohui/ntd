@@ -146,6 +146,69 @@ pub async fn install_process(
     ))
 }
 
+/// GET /api/v1/processes/stats — 工艺使用统计。
+pub async fn get_process_stats(
+    State(state): State<AppState>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    // 按模板聚合安装次数（loops.process_template_id GROUP BY）
+    let sql = "SELECT pt.name, pt.display_name, pt.complexity, COUNT(l.id) AS loop_count
+        FROM process_templates pt
+        LEFT JOIN loops l ON l.process_template_id = pt.id
+        GROUP BY pt.id ORDER BY loop_count DESC";
+    let rows = state.db.conn.query_all(Statement::from_string(DbBackend::Sqlite, sql)).await?;
+    let mut stats = Vec::new();
+    for row in rows {
+        let name: String = row.try_get_by("name").unwrap_or_default();
+        let display_name: String = row.try_get_by("display_name").unwrap_or_default();
+        let complexity: String = row.try_get_by("complexity").unwrap_or_default();
+        let loop_count: i64 = row.try_get_by("loop_count").unwrap_or(0);
+        stats.push(serde_json::json!({
+            "name": name, "display_name": display_name, "complexity": complexity, "loop_count": loop_count
+        }));
+    }
+    Ok(ApiResponse::ok(serde_json::json!({
+        "template_stats": stats,
+        "total_templates": stats.len()
+    })))
+}
+
+/// POST /api/v1/processes/validate — 校验工艺定义 YAML。
+#[derive(Debug, Deserialize)]
+pub struct ValidateProcessRequest {
+    pub definition: String,
+}
+
+pub async fn validate_process(
+    State(_state): State<AppState>,
+    Json(req): Json<ValidateProcessRequest>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    match serde_yaml::from_str::<crate::services::process::ProcessDefinition>(&req.definition) {
+        Ok(_def) => Ok(ApiResponse::ok(serde_json::json!({
+            "valid": true,
+            "errors": []
+        }))),
+        Err(e) => {
+            // 提取行号信息（serde_yaml 错误消息含 line/column）。
+            let msg = e.to_string();
+            Ok(ApiResponse::ok(serde_json::json!({
+                "valid": false,
+                "errors": [msg]
+            })))
+        }
+    }
+}
+
+/// POST /api/v1/processes/recommend — 工艺推荐。
+pub async fn recommend_process(
+    State(state): State<AppState>,
+    Json(req): Json<crate::services::process::recommender::RecommendRequest>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    let templates = state.db.list_process_templates().await?;
+    let result = crate::services::process::recommender::recommend(&templates, &req);
+    Ok(ApiResponse::ok(result))
+}
+
 /// GET /api/workspaces/{ws}/loops/{id}/executions/{eid}/audit — 工艺实例审计链。
 pub async fn get_loop_execution_audit(
     State(state): State<AppState>,
@@ -248,5 +311,17 @@ pub fn v1_process_routes() -> Router<AppState> {
         .route(
             "/api/v1/workspaces/{ws}/loops/{id}/executions/{eid}/steps/{seid}/artifacts",
             axum::routing::post(add_step_artifact),
+        )
+        .route(
+            "/api/v1/processes/recommend",
+            axum::routing::post(recommend_process),
+        )
+        .route(
+            "/api/v1/processes/stats",
+            axum::routing::get(get_process_stats),
+        )
+        .route(
+            "/api/v1/processes/validate",
+            axum::routing::post(validate_process),
         )
 }

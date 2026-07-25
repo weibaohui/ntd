@@ -30,6 +30,7 @@ mod v68;
 mod v69;
 mod v70;
 mod v71;
+mod v72;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -101,6 +102,9 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // V71 在 V70 之后：工艺管理 M1 数据模型，
         // 支撑需求 025「工艺管理」——模板、阶段、产物、门禁、返工
         Box::new(v71::V71ProcessManagement),
+        // V72 在 V71 之后：工艺管理 M3 ——
+        // 版本管理（previous_version_id）+ 四流闭预留表（洞察/治理/资产流）
+        Box::new(v72::V72ProcessManagementV2),
     ]
 }
 
