@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { Card, Input, Button, Select, List, Tag, Typography, message, Space } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, RocketOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, RocketOutlined, PlayCircleOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
 import { useProjectDirectories } from '@/utils/workspaceDisplay';
+import { ProcessExecutionBoard } from '@/components/process/ProcessExecutionBoard';
 
 const { TextArea } = Input;
 const { Title, Text } = Typography;
@@ -17,6 +18,9 @@ interface TaskItem {
   complexity?: string;
   status: string;
   created_at?: string;
+  workspace_id?: number;
+  latest_execution_id?: number;
+  latest_execution_status?: string;
 }
 
 export function TasksPage() {
@@ -27,6 +31,8 @@ export function TasksPage() {
   const [selectedTemplate, setSelectedTemplate] = useState<string | undefined>();
   const [creating, setCreating] = useState(false);
   const [loading, setLoading] = useState(false);
+  // 当前展开的执行看板：{ loopId, executionId, workspaceId }
+  const [activeBoard, setActiveBoard] = useState<{ lid: number; eid: number; ws: number } | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -114,6 +120,20 @@ export function TasksPage() {
         locale={{ emptyText: '暂无任务。在上方输入需求创建第一个任务。' }}
         renderItem={t => (
           <List.Item
+            actions={[
+              t.latest_execution_id ? (
+                <Button
+                  type="primary" size="small"
+                  icon={<PlayCircleOutlined />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveBoard({ lid: t.loop_id, eid: t.latest_execution_id!, ws: t.workspace_id || 1 });
+                  }}
+                >
+                  查看执行
+                </Button>
+              ) : null,
+            ].filter(Boolean)}
             onClick={() => { window.location.hash = `#/loops?panel=detail&id=${t.loop_id}`; }}
             style={{ cursor: 'pointer' }}
           >
@@ -122,7 +142,12 @@ export function TasksPage() {
                 <Space>
                   <Text strong>{t.template_name || t.name}</Text>
                   {t.complexity && <Tag color={complexityColor(t.complexity)}>{t.complexity}</Tag>}
-                  <Tag>{statusLabel(t.status)}</Tag>
+                  <Tag color={t.status === 'enabled' ? 'green' : 'default'}>{statusLabel(t.status)}</Tag>
+                  {t.latest_execution_status && (
+                    <Tag color={t.latest_execution_status === 'running' ? 'blue' : t.latest_execution_status === 'success' ? 'green' : 'red'}>
+                      {t.latest_execution_status}
+                    </Tag>
+                  )}
                 </Space>
               }
               description={t.description ? (t.description.length > 100 ? t.description.slice(0, 100) + '…' : t.description) : '(无描述)'}
@@ -131,6 +156,19 @@ export function TasksPage() {
           </List.Item>
         )}
       />
+
+      {activeBoard && (
+        <div style={{ marginTop: 24 }}>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => setActiveBoard(null)} style={{ marginBottom: 12 }}>
+            返回任务列表
+          </Button>
+          <ProcessExecutionBoard
+            workspaceId={activeBoard.ws}
+            loopId={activeBoard.lid}
+            executionId={activeBoard.eid}
+          />
+        </div>
+      )}
     </div>
   );
 }

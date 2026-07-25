@@ -88,6 +88,9 @@ pub struct TaskListItem {
     pub complexity: Option<String>,
     pub status: String,
     pub created_at: Option<String>,
+    pub workspace_id: Option<i64>,
+    pub latest_execution_id: Option<i64>,
+    pub latest_execution_status: Option<String>,
 }
 
 /// 列出所有由工艺模板创建的任务。
@@ -96,7 +99,10 @@ pub async fn list_tasks(
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
     let sql = "SELECT l.id, l.name, l.description, l.status, l.created_at, \
-               pt.name AS template_name, pt.complexity \
+               l.workspace_id, \
+               pt.name AS template_name, pt.complexity, \
+               (SELECT le.id FROM loop_executions le WHERE le.loop_id=l.id ORDER BY le.started_at DESC LIMIT 1) AS latest_exec_id, \
+               (SELECT le.status FROM loop_executions le WHERE le.loop_id=l.id ORDER BY le.started_at DESC LIMIT 1) AS latest_exec_status \
                FROM loops l \
                JOIN process_templates pt ON pt.id = l.process_template_id \
                WHERE l.process_template_id IS NOT NULL \
@@ -110,6 +116,9 @@ pub async fn list_tasks(
         complexity: r.try_get_by::<Option<String>, _>("complexity").ok().flatten(),
         status: r.try_get_by("status").unwrap_or_default(),
         created_at: r.try_get_by("created_at").ok(),
+        workspace_id: r.try_get_by::<Option<i64>, _>("workspace_id").ok().flatten(),
+        latest_execution_id: r.try_get_by::<Option<i64>, _>("latest_exec_id").ok().flatten(),
+        latest_execution_status: r.try_get_by::<Option<String>, _>("latest_exec_status").ok().flatten(),
     }).collect();
     Ok(ApiResponse::ok(items))
 }
