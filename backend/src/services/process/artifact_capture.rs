@@ -317,59 +317,56 @@ fn extract_first_url(text: &str) -> Option<String> {
 /// 从文本中提取 ```json ... ``` 代码块，或第一个顶层 JSON 对象/数组。
 fn extract_json_block(text: &str) -> Option<String> {
     // 先尝试 Markdown JSON 代码块。
-    if let Some(start) = text.find("```json") {
-        // "```json" 长度为 7，跳过后再 trim 开头换行。
-        let after = &text[start + 7..].trim_start();
-        if let Some(end) = after.find("```") {
-            let block = after[..end].trim();
-            if !block.is_empty() {
-                return Some(block.to_string());
-            }
+    if let Some(block) = extract_markdown_json_block(text) {
+        return Some(block);
+    }
+    // 回退：找第一个 `{` 或 `[`，做括号匹配后校验为合法 JSON。
+    find_and_validate_json(text)
+}
+
+/// 提取 Markdown ```json``` 代码块内容。
+fn extract_markdown_json_block(text: &str) -> Option<String> {
+    let start = text.find("```json")?;
+    // "```json" 长度为 7，跳过后再 trim 开头换行。
+    let after = &text[start + 7..].trim_start();
+    let end = after.find("```")?;
+    let block = after[..end].trim();
+    if block.is_empty() { None } else { Some(block.to_string()) }
+}
+
+/// 从文本中找到第一个 `{` 或 `[`，做括号匹配，校验为合法 JSON。
+fn find_and_validate_json(text: &str) -> Option<String> {
+    let start = text.find('{').or_else(|| text.find('['))?;
+    let chars: Vec<char> = text[start..].chars().collect();
+    let end = find_json_end_index(&chars)?;
+    let block = text[start..start + end + 1].trim();
+    if serde_json::from_str::<serde_json::Value>(block).is_ok() {
+        Some(block.to_string())
+    } else {
+        None
+    }
+}
+
+/// 括号匹配：返回嵌套 JSON 块结束索引，处理字符串内转义。
+fn find_json_end_index(chars: &[char]) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escape = false;
+
+    for (i, c) in chars.iter().enumerate() {
+        if in_string {
+            if escape { escape = false; }
+            else if *c == '\\' { escape = true; }
+            else if *c == '"' { in_string = false; }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' | '[' => depth += 1,
+            '}' | ']' => { depth -= 1; if depth == 0 { return Some(i); } }
+            _ => {}
         }
     }
-
-    // 回退：找第一个 '{' 或 '['，做简单括号匹配。
-    if let Some(start) = text.find('{').or_else(|| text.find('[')) {
-        let chars: Vec<char> = text[start..].chars().collect();
-        let mut depth = 0i32;
-        let mut in_string = false;
-        let mut escape = false;
-        let mut end = 0usize;
-
-        for (i, c) in chars.iter().enumerate() {
-            if in_string {
-                if escape {
-                    escape = false;
-                } else if *c == '\\' {
-                    escape = true;
-                } else if *c == '"' {
-                    in_string = false;
-                }
-                continue;
-            }
-
-            match c {
-                '"' => in_string = true,
-                '{' | '[' => depth += 1,
-                '}' | ']' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end = i;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if depth == 0 && end > 0 {
-            let block = text[start..start + end + 1].trim();
-            if serde_json::from_str::<serde_json::Value>(block).is_ok() {
-                return Some(block.to_string());
-            }
-        }
-    }
-
     None
 }
 

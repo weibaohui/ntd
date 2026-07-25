@@ -1004,57 +1004,64 @@ async fn handle_process(
             print_response(&resp, output, fields)?;
         }
         ProcessAction::Run { name, workspace } => {
-            // 1. 查找工作空间。
-            let ws_resp: ClientResponse<Vec<serde_json::Value>> = client.get("/v1/project-directories").await?;
-            let ws_list = ws_resp.data.as_deref().unwrap_or(&[]);
-            let ws_id = ws_list.iter().find_map(|ws| {
-                let path = match ws.get("path").and_then(|p| p.as_str()) { Some(p) => p, None => return None };
-                if path == workspace.as_str() { ws.get("id").and_then(|id| id.as_i64()) } else { None }
-            }).ok_or_else(|| anyhow::anyhow!("工作空间 {} 未找到", workspace))?;
-
-            // 2. 安装工艺模板。
-            let install_req = serde_json::json!({ "workspace_id": ws_id });
-            let install_path = format!("/bundled/processes/{}/install", percent_encode_slug(name));
-            let install_resp: ClientResponse<serde_json::Value> = client.post(&install_path, &install_req).await?;
-            println!("工艺模板「{}」已安装到工作空间「{}」", name, workspace);
-            if let Some(ref data) = install_resp.data {
-                if let Some(loop_id) = data.get("loop_id").and_then(|v| v.as_i64()) {
-                    println!("创建 Loop #{}，请在前端或 CLI 启用后触发执行", loop_id);
-                }
-            }
-            print_response(&install_resp, output, fields)?;
+            run_process_install(client, name, workspace, output, fields).await?
         }
         ProcessAction::ExecutionStatus { id } => {
-            // 1. 列出所有工作空间。
-            let ws_list: ClientResponse<Vec<serde_json::Value>> = client.get("/v1/project-directories").await?;
-            let ws_data = ws_list.data.as_deref().unwrap_or(&[]);
-            // 2. 遍历工作空间查找包含该 execution 的 loop。
-            let mut found = false;
-            for ws in ws_data {
-                let Some(ws_id) = ws.get("id").and_then(|v| v.as_i64()) else { continue };
-                let loops_resp: ClientResponse<Vec<serde_json::Value>> = match client.get(&format!("/v1/workspaces/{}/loops", ws_id)).await {
-                    Ok(r) => r,
-                    Err(_) => continue,
-                };
-                let loop_list = loops_resp.data.as_deref().unwrap_or(&[]);
-                for lp in loop_list {
-                    let Some(lp_id) = lp.get("id").and_then(|v| v.as_i64()) else { continue };
-                    let audit_path = format!("/v1/workspaces/{}/loops/{}/executions/{}/audit", ws_id, lp_id, id);
-                    if let Ok(audit_resp) = client.get::<ClientResponse<serde_json::Value>>(&audit_path).await {
-                        if audit_resp.data.is_some() {
-                            print_response(&audit_resp, output, fields)?;
-                            found = true;
-                            break;
-                        }
-                    }
+            query_execution_status(client, *id, output, fields).await?
+        }
+    }
+    Ok(())
+}
+
+/// ProcessRun：查找工作空间 → 安装工艺模板 → 打印结果。
+async fn run_process_install(
+    client: &ApiClient, name: &str, workspace: &str,
+    output: &OutputFormat, fields: &Option<String>,
+) -> Result<()> {
+    let ws_resp: ClientResponse<Vec<serde_json::Value>> = client.get("/v1/project-directories").await?;
+    let ws_list = ws_resp.data.as_deref().unwrap_or(&[]);
+    let ws_id = ws_list.iter().find_map(|ws| {
+        let path = ws.get("path").and_then(|p| p.as_str())?;
+        if path == workspace { ws.get("id").and_then(|id| id.as_i64()) } else { None }
+    }).ok_or_else(|| anyhow::anyhow!("工作空间 {} 未找到", workspace))?;
+    let install_req = serde_json::json!({ "workspace_id": ws_id });
+    let install_path = format!("/bundled/processes/{}/install", percent_encode_slug(name));
+    let install_resp: ClientResponse<serde_json::Value> = client.post(&install_path, &install_req).await?;
+    println!("工艺模板「{}」已安装到工作空间「{}」", name, workspace);
+    if let Some(ref data) = install_resp.data {
+        if let Some(loop_id) = data.get("loop_id").and_then(|v| v.as_i64()) {
+            println!("创建 Loop #{}，请在前端或 CLI 启用后触发执行", loop_id);
+        }
+    }
+    print_response(&install_resp, output, fields)?;
+    Ok(())
+}
+
+/// ProcessExecutionStatus：遍历工作空间查找审计数据。
+async fn query_execution_status(
+    client: &ApiClient, id: i64,
+    output: &OutputFormat, fields: &Option<String>,
+) -> Result<()> {
+    let ws_resp: ClientResponse<Vec<serde_json::Value>> = client.get("/v1/project-directories").await?;
+    let ws_data = ws_resp.data.as_deref().unwrap_or(&[]);
+    for ws in ws_data {
+        let Some(ws_id) = ws.get("id").and_then(|v| v.as_i64()) else { continue };
+        let loops_resp: ClientResponse<Vec<serde_json::Value>> =
+            match client.get(&format!("/v1/workspaces/{}/loops", ws_id)).await {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+        for lp in loops_resp.data.as_deref().unwrap_or(&[]) {
+            let Some(lp_id) = lp.get("id").and_then(|v| v.as_i64()) else { continue };
+            let audit_path = format!("/v1/workspaces/{}/loops/{}/executions/{}/audit", ws_id, lp_id, id);
+            if let Ok(audit_resp) = client.get::<ClientResponse<serde_json::Value>>(&audit_path).await {
+                if audit_resp.data.is_some() {
+                    return print_response(&audit_resp, output, fields);
                 }
-                if found { break; }
-            }
-            if !found {
-                println!("工艺执行 #{} 未找到。请确认 loop_execution_id 正确。", id);
             }
         }
     }
+    println!("工艺执行 #{} 未找到。请确认 loop_execution_id 正确。", id);
     Ok(())
 }
 

@@ -73,90 +73,79 @@ pub fn recommend(
     request: &RecommendRequest,
 ) -> RecommendResponse {
     let desc_lower = request.description.to_lowercase();
-    let mut results = Vec::new();
-
-    for template in templates {
-        let mut reasons = Vec::new();
-        let mut keyword_score = 0.0_f64;
-        let mut complexity_score = 0.0_f64;
-        let mut total_weight = 0.0_f64;
-
-        // 关键词匹配。
-        for (keywords, weight, target_name) in KEYWORD_MAP {
-            if template.name != *target_name {
-                continue;
-            }
-            let hit_count = keywords
-                .iter()
-                .filter(|kw| desc_lower.contains(&kw.to_lowercase()))
-                .count() as f64;
-            if hit_count > 0.0 {
-                keyword_score = hit_count / keywords.len() as f64 * *weight;
-                reasons.push(format!("匹配 {} 个关键词 ({})", hit_count as i32, keywords.iter().filter(|kw| desc_lower.contains(&kw.to_lowercase())).copied().collect::<Vec<_>>().join(", ")));
-            }
-            total_weight += weight;
-        }
-
-        // 复杂度推理。
-        for (kw, complexity) in COMPLEXITY_KEYWORDS {
-            if desc_lower.contains(&kw.to_lowercase()) && *complexity == template.complexity {
-                complexity_score += 0.15;
-                reasons.push(format!("复杂度匹配: {} → {}", kw, complexity));
-                break;
-            }
-        }
-
-        // 历史采纳率简化评分（无 install_count 字段，使用固定权重）。
-        let popularity_score = 0.05;
-
-        let score = keyword_score + complexity_score + popularity_score;
-        if score > 0.0 || reasons.is_empty() {
-            // 如果有匹配或任何模板都展示（但低分排后面）。
-            results.push(RecommendResult {
-                template_name: template.name.clone(),
-                display_name: if template.display_name.is_empty() {
-                    template.name.clone()
-                } else {
-                    template.display_name.clone()
-                },
-                complexity: template.complexity.clone(),
-                score,
-                reasons: if reasons.is_empty() {
-                    vec!["通用推荐".to_string()]
-                } else {
-                    reasons
-                },
-            });
-        }
-    }
+    let mut results: Vec<RecommendResult> = templates
+        .iter()
+        .filter_map(|t| score_template(t, &desc_lower))
+        .collect();
+    // 补足到至少 3 条。
+    fill_recommendations(&mut results, templates);
 
     // 按分数降序排列。
     results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
 
-    // 最少返回 3 条（不足补全）。
-    if results.len() < 3 && !templates.is_empty() {
-        for template in templates {
-            if !results.iter().any(|r| r.template_name == template.name) {
-                results.push(RecommendResult {
-                    template_name: template.name.clone(),
-                    display_name: if template.display_name.is_empty() {
-                        template.name.clone()
-                    } else {
-                        template.display_name.clone()
-                    },
-                    complexity: template.complexity.clone(),
-                    score: 0.05,
-                    reasons: vec!["通用推荐".to_string()],
-                });
-            }
-            if results.len() >= 3 {
-                break;
-            }
-        }
-    }
-
     RecommendResponse {
         recommendations: results,
+    }
+}
+
+/// 计算单个模板的推荐得分和理由。
+fn score_template(template: &process_templates::Model, desc_lower: &str) -> Option<RecommendResult> {
+    let mut reasons = Vec::new();
+    let (keyword_score, _) = score_keywords(desc_lower, &template.name, &mut reasons);
+    let complexity_score = score_complexity(desc_lower, &template.complexity, &mut reasons);
+
+    let score = keyword_score + complexity_score + 0.05; // 0.05 = 基础分
+    if score <= 0.05 && reasons.is_empty() { return None; }
+
+    let display = if template.display_name.is_empty() { &template.name } else { &template.display_name };
+    Some(RecommendResult {
+        template_name: template.name.clone(),
+        display_name: display.clone(),
+        complexity: template.complexity.clone(),
+        score,
+        reasons: if reasons.is_empty() { vec!["通用推荐".into()] } else { reasons },
+    })
+}
+
+/// 关键词匹配打分。
+fn score_keywords(desc: &str, template_name: &str, reasons: &mut Vec<String>) -> (f64, f64) {
+    for (keywords, weight, target_name) in KEYWORD_MAP {
+        if template_name != *target_name { continue; }
+        let hit_count = keywords.iter().filter(|kw| desc.contains(&kw.to_lowercase())).count() as f64;
+        if hit_count > 0.0 {
+            let matched: Vec<_> = keywords.iter().filter(|kw| desc.contains(&kw.to_lowercase())).copied().collect();
+            reasons.push(format!("匹配 {} 个关键词 ({})", hit_count as i32, matched.join(", ")));
+            return (hit_count / keywords.len() as f64 * *weight, *weight);
+        }
+    }
+    (0.0, 0.0)
+}
+
+/// 复杂度关键词推理。
+fn score_complexity(desc: &str, complexity: &str, reasons: &mut Vec<String>) -> f64 {
+    for (kw, comp) in COMPLEXITY_KEYWORDS {
+        if desc.contains(&kw.to_lowercase()) && *comp == complexity {
+            reasons.push(format!("复杂度匹配: {} → {}", kw, complexity));
+            return 0.15;
+        }
+    }
+    0.0
+}
+
+/// 补足推荐列表到至少 3 条。
+fn fill_recommendations(results: &mut Vec<RecommendResult>, templates: &[process_templates::Model]) {
+    if results.len() >= 3 || templates.is_empty() { return; }
+    for t in templates {
+        if !results.iter().any(|r| r.template_name == t.name) {
+            results.push(RecommendResult {
+                template_name: t.name.clone(),
+                display_name: t.display_name.clone(),
+                complexity: t.complexity.clone(),
+                score: 0.05,
+                reasons: vec!["通用推荐".into()],
+            });
+        }
+        if results.len() >= 3 { break; }
     }
 }
 

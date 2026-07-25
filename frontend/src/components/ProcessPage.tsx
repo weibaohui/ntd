@@ -144,15 +144,28 @@ export function ProcessPage({ workspaceId }: ProcessPageProps) {
         </div>
       </div>
 
-      <Input.Search
-        placeholder="搜索或描述任务，系统推荐合适工艺…"
-        allowClear
-        enterButton={<><SearchOutlined /> 推荐</>}
-        size="large"
-        onSearch={handleSearch}
-        onChange={(e) => { if (!e.target.value) setRecommended([]); }}
-        style={{ marginBottom: 16 }}
-      />
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+        <Input.Search
+          placeholder="搜索或描述任务，系统推荐合适工艺…"
+          allowClear
+          enterButton={<><SearchOutlined /> 推荐</>}
+          size="large"
+          onSearch={handleSearch}
+          onChange={(e) => { if (!e.target.value) setRecommended([]); }}
+          style={{ flex: 1 }}
+        />
+        <Select
+          placeholder="复杂度筛选"
+          allowClear
+          style={{ width: 140 }}
+          onChange={(val) => { setSearchText(val ? '' : searchText); }}
+          options={[
+            { label: '轻量', value: 'light' },
+            { label: '标准', value: 'standard' },
+            { label: '复杂', value: 'complex' },
+          ]}
+        />
+      </div>
 
       {recommended.length > 0 && (
         <Alert
