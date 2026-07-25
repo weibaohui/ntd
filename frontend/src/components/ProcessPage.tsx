@@ -34,14 +34,10 @@ export function ProcessPage({ workspaceId }: ProcessPageProps) {
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<ProcessTemplateDetail | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
-  const [selectedWs, setSelectedWs] = useState<number | null>(workspaceId);
   const [searchText, setSearchText] = useState('');
   const [recommended, setRecommended] = useState<string[]>([]);
-
-  // workspaceId 外部变化时同步到本地选择器
-  useEffect(() => {
-    setSelectedWs(workspaceId);
-  }, [workspaceId]);
+  const [installModal, setInstallModal] = useState<{ name: string; displayName: string } | null>(null);
+  const [selectedWs, setSelectedWs] = useState<number | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -79,22 +75,19 @@ export function ProcessPage({ workspaceId }: ProcessPageProps) {
     }
   };
 
-  const handleInstall = async (name: string) => {
-    if (!selectedWs) {
-      message.warning('请先选择工作空间');
-      return;
-    }
-    setInstalling(name);
+  const handleInstall = (name: string, displayName: string) => {
+    setInstallModal({ name, displayName });
+  };
+
+  const doInstall = async () => {
+    if (!installModal || !selectedWs) { message.warning('请选择目标工作空间'); return; }
+    setInstalling(installModal.name);
     try {
-      const result = await bundledApi.installProcess(name, selectedWs);
-      message.success(
-        `已安装「${result.loop_name}」，生成 ${result.phase_count} 个阶段、${result.step_count} 个环节`
-      );
-    } catch (e) {
-      message.error('安装工艺模板失败');
-    } finally {
-      setInstalling(null);
-    }
+      const result = await bundledApi.installProcess(installModal.name, selectedWs);
+      message.success(`已安装「${result.loop_name}」`);
+      setInstallModal(null); setSelectedWs(null);
+    } catch { message.error('安装失败'); }
+    finally { setInstalling(null); }
   };
 
   const complexityColor = (complexity: string) => {
@@ -131,13 +124,6 @@ export function ProcessPage({ workspaceId }: ProcessPageProps) {
           工艺模板库
         </Title>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <Select
-            placeholder="选择安装工作空间"
-            value={selectedWs}
-            onChange={setSelectedWs}
-            options={workspaces.map((ws) => ({ label: `${ws.name} (${ws.path})`, value: ws.id }))}
-            style={{ minWidth: 220 }}
-          />
           <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
             刷新
           </Button>
@@ -209,8 +195,7 @@ export function ProcessPage({ workspaceId }: ProcessPageProps) {
                     type="text"
                     icon={<DownloadOutlined />}
                     loading={installing === p.name}
-                    disabled={!selectedWs}
-                    onClick={() => handleInstall(p.name)}
+                    onClick={() => handleInstall(p.name, p.display_name || p.name)}
                   >
                     安装
                   </Button>,
@@ -245,7 +230,7 @@ export function ProcessPage({ workspaceId }: ProcessPageProps) {
             icon={<DownloadOutlined />}
             loading={installing === detail?.name}
             disabled={!selectedWs}
-            onClick={() => detail && handleInstall(detail.name)}
+            onClick={() => detail && handleInstall(detail.name, detail.display_name || detail.name)}
           >
             安装到当前工作空间
           </Button>,
@@ -278,6 +263,23 @@ export function ProcessPage({ workspaceId }: ProcessPageProps) {
             </pre>
           </>
         )}
+      </Modal>
+
+      <Modal
+        title={`安装「${installModal?.displayName || ''}」到工作空间`}
+        open={!!installModal}
+        onCancel={() => { setInstallModal(null); setSelectedWs(null); }}
+        onOk={doInstall}
+        confirmLoading={!!installing}
+        okText="安装"
+      >
+        <Select
+          placeholder="选择目标工作空间"
+          value={selectedWs}
+          onChange={setSelectedWs}
+          options={workspaces.map((ws) => ({ label: `${ws.name} (${ws.path})`, value: ws.id }))}
+          style={{ width: '100%' }}
+        />
       </Modal>
     </div>
   );
