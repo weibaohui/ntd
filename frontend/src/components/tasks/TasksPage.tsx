@@ -44,7 +44,7 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
     finally { setLoading(false); }
   };
 
-  useEffect(() => { if (workspaces.length > 0) load(); }, [statusFilter, workspaces]);
+  useEffect(() => { if (wsId) load(); }, [statusFilter, wsId]);
 
   const handleCreate = async () => {
     if (!requirement.trim()) { message.warning('请输入需求'); return; }
