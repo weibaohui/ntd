@@ -28,7 +28,7 @@ interface ProcessPageProps {
   workspaceId: number | null;
 }
 
-export function ProcessPage(_props: ProcessPageProps) {
+export function ProcessPage({ workspaceId }: ProcessPageProps) {
   const { dirs: workspaces } = useProjectDirectories();
   const [processes, setProcesses] = useState<ProcessTemplate[]>([]);
   const [loading, setLoading] = useState(false);
