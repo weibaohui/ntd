@@ -8,11 +8,11 @@ import { ProcessExecutionBoard } from '@/components/process/ProcessExecutionBoar
 
 const { Title, Text } = Typography;
 
-interface TaskDetailProps { taskId: number; onBack: () => void; }
+interface TaskDetailProps { taskId: number; workspaceId: number; onBack: () => void; }
 interface StepInfo { id: number; name: string; order_index: number; skill_names: string[]; expected_artifacts: any[]; gate_config: any[]; }
 interface ExecInfo { id: number; status: string; started_at?: string; finished_at?: string; total_steps: number; completed_steps: number; failed_steps: number; requirement?: string; }
 
-export function TaskDetailPage({ taskId, onBack }: TaskDetailProps) {
+export function TaskDetailPage({ taskId, workspaceId, onBack }: TaskDetailProps) {
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<any>(null);
   const [activeExec, setActiveExec] = useState<number | null>(null);
@@ -22,7 +22,7 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailProps) {
 
   const load = async () => {
     setLoading(true);
-    try { setDetail(await bundledApi.getTaskDetail(taskId)); }
+    try { setDetail(await bundledApi.getTaskDetail(workspaceId, taskId)); }
     catch { message.error('加载失败'); }
     finally { setLoading(false); }
   };
@@ -32,7 +32,7 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailProps) {
     if (!newRequirement.trim()) { message.warning('请输入需求'); return; }
     setTriggering(true);
     try {
-      await bundledApi.createTaskExecution(taskId, newRequirement);
+      await bundledApi.createTaskExecution(workspaceId, taskId, newRequirement);
       message.success('新执行已创建');
       setReqModalOpen(false); setNewRequirement(''); load();
     } catch { message.error('创建失败'); }

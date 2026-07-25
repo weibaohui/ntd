@@ -209,8 +209,8 @@ pub struct NewExecutionRequest { pub requirement: String }
 
 pub fn task_routes() -> Router<AppState> {
     Router::new()
-        .route("/api/v1/tasks", axum::routing::get(list_tasks).post(create_task))
-        .route("/api/v1/tasks/{id}", axum::routing::get(get_task_detail))
-        .route("/api/v1/tasks/{id}/executions", axum::routing::post(create_task_execution))
+        .route("/api/v1/workspaces/{ws}/tasks", axum::routing::get(list_tasks).post(create_task))
+        .route("/api/v1/workspaces/{ws}/tasks/{id}", axum::routing::get(get_task_detail))
+        .route("/api/v1/workspaces/{ws}/tasks/{id}/executions", axum::routing::post(create_task_execution))
         .route("/api/v1/artifacts/{aid}/content", axum::routing::get(get_artifact_content))
 }

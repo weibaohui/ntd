@@ -23,6 +23,7 @@ interface TaskItem {
 
 export function TasksPage() {
   const { dirs: workspaces } = useProjectDirectories();
+  const wsId = workspaces[0]?.id || 1;
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loops, setLoops] = useState<LoopItem[]>([]);
   const [requirement, setRequirement] = useState('');
@@ -35,18 +36,9 @@ export function TasksPage() {
   const load = async () => {
     setLoading(true);
     try {
-      setTasks(await bundledApi.listTasks(statusFilter));
-      // 遍历所有 workspace 汇总工艺 Loop
-      const all: LoopItem[] = [];
-      for (const ws of workspaces) {
-        const wsLoops = await listLoops(ws.id);
-        for (const l of wsLoops) {
-          if ((l as any).process_template_id != null) {
-            all.push({ id: l.id, name: l.name });
-          }
-        }
-      }
-      setLoops(all);
+      setTasks(await bundledApi.listTasks(wsId, statusFilter));
+      const wsLoops = await listLoops(wsId);
+      setLoops(wsLoops.filter((l: any) => l.process_template_id != null).map((l: any) => ({ id: l.id, name: l.name })));
     } catch { message.error('加载失败'); }
     finally { setLoading(false); }
   };
@@ -58,7 +50,7 @@ export function TasksPage() {
     if (!selectedLoopId) { message.warning('请选择工艺环路'); return; }
     setCreating(true);
     try {
-      const r = await bundledApi.createTask(requirement, selectedLoopId);
+      const r = await bundledApi.createTask(requirement, selectedLoopId, wsId);
       message.success(`任务已创建，执行 #${r.execution_id}`);
       setRequirement(''); load();
     } catch (e: any) { message.error(e?.message || '创建任务失败'); }
@@ -66,7 +58,7 @@ export function TasksPage() {
   };
 
   if (selectedTaskId !== null) {
-    return <TaskDetailPage taskId={selectedTaskId} onBack={() => { setSelectedTaskId(null); load(); }} />;
+    return <TaskDetailPage taskId={selectedTaskId} workspaceId={wsId} onBack={() => { setSelectedTaskId(null); load(); }} />;
   }
 
   const statusColor = (s: string) => ({ pending: 'default', running: 'blue', success: 'green', failed: 'red' }[s] || 'default');

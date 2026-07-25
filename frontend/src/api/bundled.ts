@@ -472,24 +472,24 @@ export const bundledApi = {
   },
 
   /** 创建任务：推荐→创建task→复用/创建Loop→创建执行 */
-  async createTask(requirement: string, loopId: number): Promise<{ task_id: number; loop_id: number; execution_id: number }> {
-    return unwrap(await api.post('/api/v1/tasks', { requirement, loop_id: loopId }));
+  async createTask(requirement: string, loopId: number, wsId: number): Promise<{ task_id: number; loop_id: number; execution_id: number }> {
+    return unwrap(await api.post(`/api/v1/workspaces/${wsId}/tasks`, { requirement, loop_id: loopId }));
   },
 
   /** 为已有任务创建新执行 */
-  async createTaskExecution(taskId: number, requirement: string): Promise<{ execution_id: number }> {
-    return unwrap(await api.post(`/api/v1/tasks/${taskId}/executions`, { requirement }));
+  async createTaskExecution(wsId: number, taskId: number, requirement: string): Promise<{ execution_id: number }> {
+    return unwrap(await api.post(`/api/v1/workspaces/${wsId}/tasks/${taskId}/executions`, { requirement }));
   },
 
   /** 任务列表 */
-  async listTasks(status?: string): Promise<Array<{ id: number; title: string; description: string; status: string; template_name?: string; complexity?: string; loop_id?: number; workspace_id?: number; latest_execution_status?: string; latest_execution_requirement?: string; created_at?: string }>> {
+  async listTasks(wsId: number, status?: string): Promise<Array<{ id: number; title: string; description: string; status: string; template_name?: string; complexity?: string; loop_id?: number; workspace_id?: number; latest_execution_status?: string; latest_execution_requirement?: string; created_at?: string }>> {
     const params = status ? { status } : {};
-    return unwrap(await api.get('/api/v1/tasks', { params }));
+    return unwrap(await api.get(`/api/v1/workspaces/${wsId}/tasks`, { params }));
   },
 
   /** 任务详情 */
-  async getTaskDetail(taskId: number): Promise<any> {
-    return unwrap(await api.get(`/api/v1/tasks/${taskId}`));
+  async getTaskDetail(wsId: number, taskId: number): Promise<any> {
+    return unwrap(await api.get(`/api/v1/workspaces/${wsId}/tasks/${taskId}`));
   },
 
   /**
