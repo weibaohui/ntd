@@ -461,6 +461,11 @@ export const bundledApi = {
     return unwrap(await api.get(`/api/v1/workspaces/${wsId}/loops/${loopId}/executions/${execId}/audit`));
   },
 
+  /** 工艺仪表盘统计数据 */
+  async getProcessStats(): Promise<{ template_stats: Array<{ name: string; display_name: string; complexity: string; loop_count: number }>; total_templates: number }> {
+    return unwrap(await api.get('/api/v1/processes/stats'));
+  },
+
   /**
    * 人工审批门禁
    */

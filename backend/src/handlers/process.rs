@@ -173,6 +173,91 @@ pub async fn get_process_stats(
     })))
 }
 
+/// GET /api/v1/processes/{name}/versions — 版本历史。
+pub async fn get_process_versions(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    let templates = state.db.list_process_templates().await?;
+    let versions: Vec<_> = templates
+        .iter()
+        .filter(|t| t.name == name)
+        .map(|t| serde_json::json!({
+            "id": t.id,
+            "version": t.version,
+            "updated_at": t.updated_at,
+            "source_path": t.source_path,
+        }))
+        .collect();
+    Ok(ApiResponse::ok(serde_json::json!({ "name": name, "versions": versions })))
+}
+
+/// GET /api/v1/processes/{name}/versions/{v}/diff?base={base_v} — 版本 diff。
+pub async fn diff_process_versions(
+    State(state): State<AppState>,
+    Path((name, _version)): Path<(String, String)>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    let base_version = params.get("base").cloned().unwrap_or_default();
+    let templates = state.db.list_process_templates().await?;
+    let base = templates.iter().find(|t| t.name == name && t.version == base_version);
+    let target = templates.iter().find(|t| t.name == name && t.version == _version);
+
+    match (base, target) {
+        (Some(b), Some(t)) => {
+            let diff_lines = simple_diff(&b.definition, &t.definition);
+            Ok(ApiResponse::ok(serde_json::json!({
+                "name": name,
+                "base_version": base_version,
+                "target_version": _version,
+                "diff": diff_lines,
+            })))
+        }
+        _ => Err(AppError::NotFound),
+    }
+}
+
+/// 简单的逐行 diff，返回 added/removed/unchanged 行。
+fn simple_diff(old: &str, new: &str) -> Vec<serde_json::Value> {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+    let mut result = Vec::new();
+
+    // 使用简单的 LCS-like 逻辑：逐行对比直到同步点。
+    let mut oi = 0;
+    let mut ni = 0;
+    while oi < old_lines.len() && ni < new_lines.len() {
+        if old_lines[oi] == new_lines[ni] {
+            result.push(serde_json::json!({"type": "unchanged", "line": old_lines[oi]}));
+            oi += 1;
+            ni += 1;
+        } else {
+            // 跳过旧版本中不存在的行（removed）。
+            if ni + 1 < new_lines.len() && old_lines[oi] == new_lines[ni + 1] {
+                result.push(serde_json::json!({"type": "added", "line": new_lines[ni]}));
+                ni += 1;
+            } else {
+                result.push(serde_json::json!({"type": "removed", "line": old_lines[oi]}));
+                oi += 1;
+                // 如果新行匹配到了旧行后面，也添加。
+                if oi < old_lines.len() && ni < new_lines.len() && old_lines[oi] == new_lines[ni] {
+                    continue;
+                }
+            }
+        }
+    }
+    // 剩余行。
+    while oi < old_lines.len() {
+        result.push(serde_json::json!({"type": "removed", "line": old_lines[oi]}));
+        oi += 1;
+    }
+    while ni < new_lines.len() {
+        result.push(serde_json::json!({"type": "added", "line": new_lines[ni]}));
+        ni += 1;
+    }
+    result
+}
+
 /// POST /api/v1/processes/validate — 校验工艺定义 YAML。
 #[derive(Debug, Deserialize)]
 pub struct ValidateProcessRequest {
@@ -323,5 +408,13 @@ pub fn v1_process_routes() -> Router<AppState> {
         .route(
             "/api/v1/processes/validate",
             axum::routing::post(validate_process),
+        )
+        .route(
+            "/api/v1/processes/{name}/versions",
+            axum::routing::get(get_process_versions),
+        )
+        .route(
+            "/api/v1/processes/{name}/versions/{version}/diff",
+            axum::routing::get(diff_process_versions),
         )
 }
