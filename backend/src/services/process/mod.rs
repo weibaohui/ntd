@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod artifact_capture;
+pub mod audit;
 pub mod delivery_state;
 pub mod gate_evaluator;
 pub mod gates;

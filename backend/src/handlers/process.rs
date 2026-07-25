@@ -146,6 +146,19 @@ pub async fn install_process(
     ))
 }
 
+/// GET /api/workspaces/{ws}/loops/{id}/executions/{eid}/audit — 工艺实例审计链。
+pub async fn get_loop_execution_audit(
+    State(state): State<AppState>,
+    Path((_ws_id, _loop_id, eid)): Path<(i64, i64, i64)>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    let audit = state
+        .db
+        .get_loop_execution_audit(eid)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(axum::Json(crate::models::ApiResponse::ok(audit)))
+}
+
 /// 工艺模板相关路由（/api/bundled/processes）。
 pub fn process_routes() -> Router<AppState> {
     Router::new()
@@ -165,5 +178,9 @@ pub fn v1_process_routes() -> Router<AppState> {
         .route(
             "/api/v1/bundled/processes/{name}/install",
             axum::routing::post(install_process),
+        )
+        .route(
+            "/api/v1/workspaces/{ws}/loops/{id}/executions/{eid}/audit",
+            axum::routing::get(get_loop_execution_audit),
         )
 }

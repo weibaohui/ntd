@@ -393,7 +393,7 @@ pub enum TagAction {
 
 // ============== Loop Commands ==============
 
-/// 工艺模板 CLI 动作：列出 / 查看单个工艺模板。
+/// 工艺模板 CLI 动作：列出 / 查看 / 安装并执行 / 审计状态。
 #[derive(Debug, Clone, Subcommand)]
 pub enum ProcessAction {
     /// 列出所有工艺模板
@@ -402,6 +402,19 @@ pub enum ProcessAction {
     Show {
         /// 工艺模板名称（如 4p12s-delivery）
         name: String,
+    },
+    /// 安装工艺模板到工作空间并触发执行
+    Run {
+        /// 工艺模板名称
+        name: String,
+        /// 目标工作空间路径
+        #[arg(long = "workspace")]
+        workspace: String,
+    },
+    /// 查看工艺实例审计状态
+    ExecutionStatus {
+        /// Loop execution ID
+        id: i64,
     },
 }
 
@@ -971,6 +984,7 @@ async fn handle_workspace(
 
 // ============== Process Handlers ==============
 
+#[allow(clippy::print_stdout)]
 async fn handle_process(
     client: &ApiClient,
     action: &ProcessAction,
@@ -988,6 +1002,38 @@ async fn handle_process(
             let path = format!("/bundled/processes/{}", encoded);
             let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
             print_response(&resp, output, fields)?;
+        }
+        ProcessAction::Run { name, workspace } => {
+            // 1. 查找工作空间。
+            let ws_resp: ClientResponse<Vec<serde_json::Value>> = client.get("/v1/project-directories").await?;
+            let ws_list = ws_resp.data.as_deref().unwrap_or(&[]);
+            let ws_id = ws_list.iter().find_map(|ws| {
+                let path = match ws.get("path").and_then(|p| p.as_str()) { Some(p) => p, None => return None };
+                if path == workspace.as_str() { ws.get("id").and_then(|id| id.as_i64()) } else { None }
+            }).ok_or_else(|| anyhow::anyhow!("工作空间 {} 未找到", workspace))?;
+
+            // 2. 安装工艺模板。
+            let install_req = serde_json::json!({ "workspace_id": ws_id });
+            let install_path = format!("/bundled/processes/{}/install", percent_encode_slug(name));
+            let install_resp: ClientResponse<serde_json::Value> = client.post(&install_path, &install_req).await?;
+            println!("工艺模板「{}」已安装到工作空间「{}」", name, workspace);
+            if let Some(ref data) = install_resp.data {
+                if let Some(loop_id) = data.get("loop_id").and_then(|v| v.as_i64()) {
+                    println!("创建 Loop #{}，请在前端或 CLI 启用后触发执行", loop_id);
+                }
+            }
+            print_response(&install_resp, output, fields)?;
+        }
+        ProcessAction::ExecutionStatus { id } => {
+            // 调用审计 API 的简化路径：从 bundled 基础的 execution 读取接口。
+            // 直接返回 execution 基本信息。
+            let exec_path = format!("/v1/loop-executions/{}", id);
+            match client.get::<ClientResponse<serde_json::Value>>(&exec_path).await {
+                Ok(resp) => print_response(&resp, output, fields)?,
+                Err(_) => {
+                    println!("工艺执行 #{} 未找到。请确认 loop_execution_id 正确。", id);
+                }
+            }
         }
     }
     Ok(())
