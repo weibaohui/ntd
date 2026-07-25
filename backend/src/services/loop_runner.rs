@@ -829,13 +829,23 @@ impl LoopRunner {
                 }
 
                 // 记录上一环节输出（供下一环节模板变量）。
+                let conclusion = self.extract_conclusion(record_id).await;
                 let exec_record2 = self.ctx.db.get_execution_record(record_id).await.ok().flatten();
                 last_output = exec_record2.as_ref().and_then(|r| r.result.clone());
-                last_conclusion = outcome.error_message.clone()
-                    .or_else(|| exec_record2.as_ref().and_then(|r| r.result.clone().map(|s| {
-                        let truncated: String = s.chars().take(300).collect();
-                        truncated
-                    })));
+                last_conclusion = if conclusion.is_empty() {
+                    // 回退：取 error 或截断 result。
+                    outcome.error_message.clone()
+                        .or_else(|| exec_record2.as_ref().and_then(|r| r.result.clone().map(|s| {
+                            let truncated: String = s.chars().take(300).collect();
+                            truncated
+                        })))
+                } else {
+                    Some(conclusion.clone())
+                };
+                // 把结论写回 step_execution，供黑板展示。
+                if !conclusion.is_empty() {
+                    let _ = self.ctx.db.update_step_execution_conclusion(step_exec.id, &conclusion).await;
+                }
                 last_step_name = Some(step.name.clone());
                 if let Some(ref usage) = exec_record2.as_ref().and_then(|r| r.usage.clone()) {
                     let step_tokens = (usage.input_tokens + usage.output_tokens) as i64;
