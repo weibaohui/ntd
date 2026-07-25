@@ -103,6 +103,7 @@ AI 在执行某个功能时（编号 X），必须按以下顺序读取文档：
 | 022 | 工作空间Prompt-设计.md | workspace-prompt-design.md |
 | 025 | 工艺管理-设计.md | process-management-design.md |
 | 025-M2 | 工艺管理-M2-设计.md | process-management-m2-design.md |
+| 025-M3 | 工艺管理-M3-设计.md | process-management-m3-design.md |
 | 999 | 架构总览-设计.html | architecture.html |
 
 ### docs/requirements/（5 份）
@@ -118,6 +119,7 @@ AI 在执行某个功能时（编号 X），必须按以下顺序读取文档：
 | 025-M2 | 工艺管理-M2-需求.md | process-management-m2-requirements.md |
 | 025 | 工艺管理-实现总结.md | process-management-summary.md |
 | 025-M2 | 工艺管理-M2-实现总结.md | process-management-m2-summary.md |
+| 025-M3 | 工艺管理-M3-需求.md | process-management-m3-requirements.md |
 
 ### docs/decisions/（4 份）
 
