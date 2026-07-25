@@ -87,7 +87,6 @@ export function LeftRail({
         { key: 'items', label: '事项', icon: <UnorderedListOutlined />, ariaLabel: '事项' },
         { key: 'loops', label: '环路', icon: <RetweetOutlined />, ariaLabel: '环路' },
         { key: 'tasks', label: '任务', icon: <RocketOutlined />, ariaLabel: '任务' },
-        { key: 'processes', label: '工艺', icon: <BuildOutlined />, ariaLabel: '工艺' },
         { key: 'messages', label: '消息', icon: <MessageOutlined />, ariaLabel: '消息' },
         { key: 'blackboard', label: '黑板', icon: <TfiBlackboard />, ariaLabel: '黑板' },
         { key: 'memorial', label: '看板', icon: <ReadOutlined />, ariaLabel: '看板' },
@@ -109,6 +108,7 @@ export function LeftRail({
       items: [
         { key: 'settings_skills', label: '技能', icon: <ThunderboltOutlined />, ariaLabel: '技能' },
         { key: 'settings_experts', label: '专家', icon: <TeamOutlined />, ariaLabel: '专家' },
+        { key: 'processes', label: '工艺模板库', icon: <BuildOutlined />, ariaLabel: '工艺模板库' },
       ] satisfies LeftRailItem[],
     },
   ]), []);
