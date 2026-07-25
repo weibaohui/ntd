@@ -5,7 +5,7 @@ step_template:
     根据技术设计，制定可执行的开发任务清单。
     每个任务需包含：任务名、预估工时、依赖关系、验收标准。
     将结果写入 docs/plan/{process_name}-plan.md。
-  executor: claudecode
+  executor: atomcode
   expert_name: tech-lead
   skills: [4p12s-plan]
   model: claude-sonnet-5

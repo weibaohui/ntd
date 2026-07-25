@@ -4,7 +4,7 @@ step_template:
   prompt: |
     整理变更日志、补充文档、准备交付说明。
     提交代码（或生成最终 patch），并在 .ntd/delivery-state.md 中标记交付完成。
-  executor: claudecode
+  executor: atomcode
   expert_name: tech-lead
   skills: [4p12s-release]
   model: claude-sonnet-5

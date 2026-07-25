@@ -5,7 +5,7 @@ step_template:
     基于 PRD 和用户故事，输出技术设计文档。
     包含：模块划分、数据模型、API 草图、关键技术决策、风险与回退方案。
     将结果写入 docs/design/{process_name}-design.md。
-  executor: claudecode
+  executor: atomcode
   expert_name: architect
   skills: [4p12s-design]
   model: claude-sonnet-5

@@ -47,7 +47,7 @@ phases:
         name: 实现任务
         prompt: |
           根据 PRD 实现功能，完成后运行测试与 lint。
-        executor: claudecode
+        executor: atomcode
         expert_name: senior-dev
         skills: [superpowers-code]
         expected_artifacts:
