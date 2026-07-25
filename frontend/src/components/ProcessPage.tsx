@@ -20,7 +20,6 @@ import {
 } from 'antd';
 import { BuildOutlined, ReloadOutlined, EyeOutlined, DownloadOutlined, SearchOutlined } from '@ant-design/icons';
 import bundledApi, { type ProcessTemplate, type ProcessTemplateDetail } from '@/api/bundled';
-import { useProjectDirectories } from '@/utils/workspaceDisplay';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -29,7 +28,6 @@ interface ProcessPageProps {
 }
 
 export function ProcessPage({ workspaceId }: ProcessPageProps) {
-  const { dirs: workspaces } = useProjectDirectories();
   const [processes, setProcesses] = useState<ProcessTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<ProcessTemplateDetail | null>(null);
@@ -228,7 +226,7 @@ export function ProcessPage({ workspaceId }: ProcessPageProps) {
             type="primary"
             icon={<DownloadOutlined />}
             loading={installing === detail?.name}
-            disabled={!selectedWs}
+            disabled={!workspaceId}
             onClick={() => detail && handleInstall(detail.name, detail.display_name || detail.name)}
           >
             安装到当前工作空间
