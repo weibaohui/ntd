@@ -37,13 +37,22 @@ export function TasksPage() {
     setLoading(true);
     try {
       setTasks(await bundledApi.listTasks(wsId, statusFilter));
-      const wsLoops = await listLoops(wsId);
-      setLoops(wsLoops.filter((l: any) => l.process_template_id != null).map((l: any) => ({ id: l.id, name: l.name })));
+      // 遍历所有 workspace 汇总工艺 Loop
+      const all: LoopItem[] = [];
+      for (const ws of workspaces) {
+        try {
+          const loops = await listLoops(ws.id);
+          for (const l of loops) {
+            if ((l as any).process_template_id != null) all.push({ id: l.id, name: l.name });
+          }
+        } catch {}
+      }
+      setLoops(all);
     } catch { message.error('加载失败'); }
     finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); }, [statusFilter]);
+  useEffect(() => { if (workspaces.length > 0) load(); }, [statusFilter, workspaces]);
 
   const handleCreate = async () => {
     if (!requirement.trim()) { message.warning('请输入需求'); return; }
