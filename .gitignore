@@ -86,3 +86,4 @@ frontend/node_modules
 frontend/dist
 test-results/
 frontend/test-results/
+bundled-repo/
