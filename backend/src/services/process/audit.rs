@@ -57,6 +57,7 @@ pub struct StepAudit {
 /// 环节执行状态。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StepExecutionStatus {
+    pub step_execution_id: i64,
     pub sequence_index: i32,
     pub status: String,
     pub rework_count: i32,
@@ -118,6 +119,7 @@ impl Database {
                     order_index: step.order_index,
                     skill_names,
                     execution: step_exec.map(|se| StepExecutionStatus {
+                        step_execution_id: se.id,
                         sequence_index: se.sequence_index,
                         status: se.status.clone(),
                         rework_count: se.rework_count,

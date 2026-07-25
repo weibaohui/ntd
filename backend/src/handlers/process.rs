@@ -159,6 +159,64 @@ pub async fn get_loop_execution_audit(
     Ok(axum::Json(crate::models::ApiResponse::ok(audit)))
 }
 
+/// POST .../gates/{gid}/approve 请求体。
+#[derive(Debug, Deserialize)]
+pub struct ApproveGateRequest {
+    pub approved: bool,
+    #[serde(default)]
+    pub comment: Option<String>,
+}
+
+/// POST .../gates/{gid}/approve 响应体。
+#[derive(Debug, Serialize)]
+pub struct ApproveGateResponse {
+    pub gate_id: i64,
+    pub status: String,
+}
+
+/// 人工审批门禁：通过/拒绝。
+pub async fn approve_gate(
+    State(state): State<AppState>,
+    Path((_ws_id, _loop_id, _eid, _seid, gid)): Path<(i64, i64, i64, i64, i64)>,
+    Json(req): Json<ApproveGateRequest>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    let status = if req.approved { "passed" } else { "failed" };
+    state
+        .db
+        .update_loop_step_execution_gate(gid, status, req.comment.as_deref(), Some("human"))
+        .await?;
+    Ok(ApiResponse::ok(ApproveGateResponse { gate_id: gid, status: status.to_string() }))
+}
+
+/// POST .../artifacts 请求体。
+#[derive(Debug, Deserialize)]
+pub struct AddArtifactRequest {
+    pub name: String,
+    pub artifact_type: String,
+    pub locator: String,
+    pub content_text: Option<String>,
+}
+
+/// 手动补充产物到指定环节执行记录。
+pub async fn add_step_artifact(
+    State(state): State<AppState>,
+    Path((_ws_id, _loop_id, _eid, seid)): Path<(i64, i64, i64, i64)>,
+    Json(req): Json<AddArtifactRequest>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    let model = state
+        .db
+        .create_loop_step_artifact(
+            seid,
+            &req.name,
+            &req.artifact_type,
+            &req.locator,
+            req.content_text.as_deref(),
+            Some("manual"),
+        )
+        .await?;
+    Ok((axum::http::StatusCode::CREATED, ApiResponse::ok(model)))
+}
+
 /// 工艺模板相关路由（/api/bundled/processes）。
 pub fn process_routes() -> Router<AppState> {
     Router::new()
@@ -182,5 +240,13 @@ pub fn v1_process_routes() -> Router<AppState> {
         .route(
             "/api/v1/workspaces/{ws}/loops/{id}/executions/{eid}/audit",
             axum::routing::get(get_loop_execution_audit),
+        )
+        .route(
+            "/api/v1/workspaces/{ws}/loops/{id}/executions/{eid}/steps/{seid}/gates/{gid}/approve",
+            axum::routing::post(approve_gate),
+        )
+        .route(
+            "/api/v1/workspaces/{ws}/loops/{id}/executions/{eid}/steps/{seid}/artifacts",
+            axum::routing::post(add_step_artifact),
         )
 }

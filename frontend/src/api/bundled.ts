@@ -238,6 +238,85 @@ export interface InstallProcessResponse {
   step_count: number;
 }
 
+// ── M2 工艺运行时类型 ──────────────────────────────────
+
+/** 产物快照 */
+export interface ArtifactDto {
+  id: number;
+  name: string;
+  artifact_type: 'file' | 'text' | 'url' | 'json';
+  locator: string;
+  content_text?: string;
+  captured_at: string;
+  captured_by?: string;
+}
+
+/** 门禁评价记录 */
+export interface GateDto {
+  id: number;
+  gate_type: 'artifact_present' | 'ai_criteria_review' | 'human_approval' | 'script_check';
+  gate_name: string;
+  status: 'pending' | 'passed' | 'failed';
+  result?: string;
+  evaluated_at?: string;
+  evaluated_by?: string;
+}
+
+/** 环节执行状态 */
+export interface StepExecutionStatusDto {
+  step_execution_id: number;
+  sequence_index: number;
+  status: string;
+  rework_count: number;
+  rating?: number;
+  error_message?: string;
+  conclusion?: string;
+}
+
+/** 环节审计 */
+export interface StepAuditDto {
+  step_id: number;
+  step_name: string;
+  order_index: number;
+  skill_names: string[];
+  execution?: StepExecutionStatusDto;
+  artifacts: ArtifactDto[];
+  gates: GateDto[];
+}
+
+/** 阶段执行状态 */
+export interface PhaseExecutionStatusDto {
+  status: string;
+  started_at?: string;
+  finished_at?: string;
+}
+
+/** 阶段审计 */
+export interface PhaseAuditDto {
+  phase_id: number;
+  phase_name: string;
+  execution: PhaseExecutionStatusDto;
+  steps: StepAuditDto[];
+}
+
+/** 执行摘要 */
+export interface LoopExecutionSummaryDto {
+  id: number;
+  loop_id: number;
+  status: string;
+  started_at: string;
+  finished_at?: string;
+  total_steps: number;
+  completed_steps: number;
+  failed_steps: number;
+}
+
+/** 工艺审计顶级结构 */
+export interface ProcessAuditDto {
+  loop_execution: LoopExecutionSummaryDto;
+  phases: PhaseAuditDto[];
+}
+
 /**
  * 内置资源同步 API
  */
@@ -372,6 +451,35 @@ export const bundledApi = {
   async installProcess(name: string, workspaceId: number): Promise<InstallProcessResponse> {
     return unwrap(await api.post(`/api/bundled/processes/${encodeURIComponent(name)}/install`, {
       workspace_id: workspaceId,
+    }));
+  },
+
+  /**
+   * 获取工艺实例审计数据（阶段 → 环节 → 产物 → 门禁）
+   */
+  async getProcessAudit(wsId: number, loopId: number, execId: number): Promise<ProcessAuditDto> {
+    return unwrap(await api.get(`/api/v1/workspaces/${wsId}/loops/${loopId}/executions/${execId}/audit`));
+  },
+
+  /**
+   * 人工审批门禁
+   */
+  async approveGate(wsId: number, loopId: number, execId: number, stepExecId: number, gateId: number, approved: boolean, comment?: string): Promise<{ gate_id: number; status: string }> {
+    return unwrap(await api.post(`/api/v1/workspaces/${wsId}/loops/${loopId}/executions/${execId}/steps/${stepExecId}/gates/${gateId}/approve`, {
+      approved,
+      comment,
+    }));
+  },
+
+  /**
+   * 手动补充产物
+   */
+  async addArtifact(wsId: number, loopId: number, execId: number, stepExecId: number, name: string, artifactType: string, locator: string, contentText?: string): Promise<ArtifactDto> {
+    return unwrap(await api.post(`/api/v1/workspaces/${wsId}/loops/${loopId}/executions/${execId}/steps/${stepExecId}/artifacts`, {
+      name,
+      artifact_type: artifactType,
+      locator,
+      content_text: contentText,
     }));
   },
 };

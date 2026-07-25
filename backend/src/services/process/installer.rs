@@ -28,6 +28,11 @@ pub async fn install_process_template(
     workspace_path: &str,
 ) -> Result<InstallResult, InstallError> {
     let definition: ProcessDefinition = serde_yaml::from_str(&template.definition)?;
+
+    // 校验所有 link 引用的 step_template 是否存在。
+    // skill 名称是自由文本（executor 在运行时注入），不做强制校验，仅记 warn。
+    check_step_template_dependencies(db, &definition.phases).await?;
+
     let loop_name = if definition.process.display_name.is_empty() {
         definition.process.name.clone()
     } else {
@@ -432,6 +437,33 @@ impl GateDefinition {
         }
         serde_json::Value::Object(map).to_string()
     }
+}
+
+/// 校验工艺模板中所有 link 引用的 step_template 是否存在。
+/// 期绑定 skill 名称仅记录 warn（skill 是 executor 级别的文件注入，存于 filesystem）。
+async fn check_step_template_dependencies(
+    db: &Database,
+    phases: &[PhaseDefinition],
+) -> Result<(), InstallError> {
+    for phase in phases {
+        for link in &phase.links {
+            if let Some(ref template_name) = link.step_template {
+                if db.get_process_step_template_by_name(template_name).await?.is_none() {
+                    return Err(InstallError::StepTemplateNotFound(template_name.clone()));
+                }
+            }
+            // skill 名称仅 warn，不阻断安装。
+            for skill_name in &link.skills {
+                if db.get_process_step_template_by_name(skill_name).await?.is_none() {
+                    tracing::warn!(
+                        "工艺模板安装：环节「{}」引用的 skill「{}」在当前 bundled 仓库中未找到对应环节原型，将在运行时按名称注入",
+                        link.name, skill_name
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
