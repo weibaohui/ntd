@@ -55,6 +55,9 @@ export function ProcessExecutionBoard({ workspaceId, loopId, executionId, onBack
   }, [executionId]);
 
   const handleApprove = async (gate: GateDto, stepExecId: number) => {
+    // 复用同一 handler 处理「通过」与「拒绝」两个方向的审批操作。
+    // gate.status === 'pending' 时 approved=true（审批通过），
+    // gate.status === 'passed' 时 approved=false（撤销通过→拒绝）。
     const approved = !(gate.status === 'passed');
     try {
       await bundledApi.approveGate(workspaceId, loopId, executionId, stepExecId, gate.id, approved);

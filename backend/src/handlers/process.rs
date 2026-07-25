@@ -218,6 +218,10 @@ pub async fn diff_process_versions(
 }
 
 /// 简单的逐行 diff，返回 added/removed/unchanged 行。
+///
+/// 使用简化的 LCS-like 算法：双指针扫描两条文本，逐行对比。
+/// 当行不匹配时尝试先推进新版本指针（跳过新增行），否则视作移除。
+/// 这样能正确处理插入/删除，但不处理行级修改（修改显示为 remove+add）。
 fn simple_diff(old: &str, new: &str) -> Vec<serde_json::Value> {
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();

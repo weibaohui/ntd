@@ -53,6 +53,7 @@ export function ProcessDashboard() {
     { title: '安装次数', dataIndex: 'loop_count', key: 'count', sorter: (a: TemplateStat, b: TemplateStat) => b.loop_count - a.loop_count },
   ];
 
+  // 取最大值作为进度条基准，fallback=1 防止空数据除零导致进度条崩坏。
   const maxCount = Math.max(...statData.map((s: TemplateStat) => s.loop_count), 1);
 
   return (

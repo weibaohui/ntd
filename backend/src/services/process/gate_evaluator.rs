@@ -245,4 +245,35 @@ mod tests {
         assert!(result.contains("ai_criteria_review"));
         assert!(result.contains("human_approval"));
     }
+
+    /// 模拟完整 evaluate_step_gates 流程：创建 DB 门禁记录并验证。
+    #[tokio::test]
+    async fn test_evaluate_step_gates_creates_records() {
+        use std::sync::Arc;
+        let db = Arc::new(crate::db::Database::new(":memory:").await.unwrap());
+        // 插入 FK 依赖。
+        db.exec("INSERT INTO todos (id,title,prompt,status) VALUES (1,'t','p','pending')").await.unwrap();
+        db.exec("INSERT INTO loops (id,name) VALUES (1,'l')").await.unwrap();
+        db.exec("INSERT INTO loop_steps (id,loop_id,name,todo_id) VALUES (1,1,'s',1)").await.unwrap();
+        db.exec("INSERT INTO loop_executions (id,loop_id,trigger_type,started_at,status) VALUES (1,1,'manual','2024-01-01','running')").await.unwrap();
+        db.exec("INSERT INTO loop_step_executions (id,loop_execution_id,step_id,todo_id,status) VALUES (1,1,1,1,'running')").await.unwrap();
+
+        let gate_config = r#"[{"name":"PRD存在","type":"artifact_present"}]"#;
+        let artifacts: Vec<loop_step_artifacts::Model> = vec![];
+        let skill_names: Vec<String> = vec![];
+
+        let summary = evaluate_step_gates(
+            &db, 1, gate_config, &artifacts, &skill_names,
+            None, None, "/tmp", None,
+        ).await.unwrap();
+
+        // artifact_present 无产物 → 门禁失败。
+        assert!(!summary.all_passed);
+        assert_eq!(summary.gate_records.len(), 1);
+        assert_eq!(summary.gate_records[0].status, "failed");
+
+        // 验证 DB 中确实有记录。
+        let stored = db.list_loop_step_execution_gates(1).await.unwrap();
+        assert_eq!(stored.len(), 1);
+    }
 }

@@ -173,3 +173,37 @@ impl Database {
             .await
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::panic)]
+mod tests {
+    async fn fresh_db() -> crate::db::Database {
+        crate::db::Database::new(":memory:").await.unwrap()
+    }
+
+    /// 验证空审计不报错（返回 None）。
+    #[tokio::test]
+    async fn test_get_loop_execution_audit_empty() {
+        let db = fresh_db().await;
+        let result = db.get_loop_execution_audit(999).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    /// 验证最小审计路径返回阶段/环节数据。
+    #[tokio::test]
+    async fn test_get_loop_execution_audit_minimal() {
+        let db = fresh_db().await;
+        // 插入最少 FK 依赖链。
+        db.exec("INSERT INTO todos (id,title,prompt,status) VALUES (1,'t','p','pending')").await.unwrap();
+        db.exec("INSERT INTO loops (id,name) VALUES (1,'test-loop')").await.unwrap();
+        db.exec("INSERT INTO loop_phases (id,loop_id,name,order_index) VALUES (1,1,'需求',0)").await.unwrap();
+        db.exec("INSERT INTO loop_steps (id,loop_id,name,todo_id,phase_id) VALUES (1,1,'step1',1,1)").await.unwrap();
+        db.exec("INSERT INTO loop_executions (id,loop_id,trigger_type,started_at,status) VALUES (1,1,'manual','2024-01-01','running')").await.unwrap();
+        db.exec("INSERT INTO loop_step_executions (id,loop_execution_id,step_id,todo_id,status) VALUES (1,1,1,1,'success')").await.unwrap();
+
+        let audit = db.get_loop_execution_audit(1).await.unwrap().unwrap();
+        assert_eq!(audit.phases.len(), 1);
+        assert_eq!(audit.phases[0].steps.len(), 1);
+        assert_eq!(audit.phases[0].steps[0].step_name, "step1");
+    }
+}
