@@ -60,7 +60,7 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailProps) {
   const gateTypeLabel = (t: string) => ({ artifact_present: '产物存在', ai_criteria_review: 'AI评审', human_approval: '人工审批', script_check: '脚本校验' }[t] || t);
 
   return (
-    <div style={{ padding: 24, maxWidth: 900, margin: '0 auto' }}>
+    <div style={{ padding: 24, height: '100%', overflow: 'auto' }}>
       <Button icon={<ArrowLeftOutlined />} onClick={onBack} style={{ marginBottom: 16 }}>返回任务列表</Button>
       <Card style={{ marginBottom: 16 }}>
         <Descriptions title={<Title level={4} style={{ margin: 0 }}>{loop.description || template.display_name}</Title>} size="small" column={2}>
