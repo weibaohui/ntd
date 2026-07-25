@@ -477,8 +477,23 @@ export const bundledApi = {
   },
 
   /** 任务列表 */
-  async listTasks(): Promise<Array<{ loop_id: number; name: string; description: string; template_name?: string; complexity?: string; status: string; created_at?: string }>> {
+  async listTasks(): Promise<Array<{ loop_id: number; name: string; description: string; template_name?: string; complexity?: string; status: string; created_at?: string; workspace_id?: number; latest_execution_id?: number; latest_execution_status?: string }>> {
     return unwrap(await api.get('/api/v1/tasks'));
+  },
+
+  /** 任务详情 */
+  async getTaskDetail(loopId: number): Promise<{
+    loop: { id: number; name: string; description: string; status: string; workspace_id: number };
+    template: { name: string; display_name: string; complexity: string; version: string };
+    steps: Array<{ id: number; name: string; order_index: number; skill_names: string[]; expected_artifacts: any[]; gate_config: any[] }>;
+    executions: Array<{ id: number; status: string; started_at?: string; finished_at?: string; total_steps: number; completed_steps: number; failed_steps: number }>;
+  }> {
+    return unwrap(await api.get(`/api/v1/tasks/${loopId}`));
+  },
+
+  /** 触发 Loop 执行 */
+  async triggerLoopExecution(loopId: number): Promise<{ execution_id: number }> {
+    return unwrap(await api.post(`/api/v1/loops/${loopId}/trigger`, { trigger_type: 'manual' }));
   },
 
   /**

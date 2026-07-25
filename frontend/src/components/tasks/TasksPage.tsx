@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { Card, Input, Button, Select, List, Tag, Typography, message, Space } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, RocketOutlined, PlayCircleOutlined, ArrowLeftOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, RocketOutlined, PlayCircleOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
 import { useProjectDirectories } from '@/utils/workspaceDisplay';
-import { ProcessExecutionBoard } from '@/components/process/ProcessExecutionBoard';
+import { TaskDetailPage } from '@/components/tasks/TaskDetailPage';
 
 const { TextArea } = Input;
 const { Title, Text } = Typography;
@@ -31,15 +31,12 @@ export function TasksPage() {
   const [selectedTemplate, setSelectedTemplate] = useState<string | undefined>();
   const [creating, setCreating] = useState(false);
   const [loading, setLoading] = useState(false);
-  // 当前展开的执行看板：{ loopId, executionId, workspaceId }
-  const [activeBoard, setActiveBoard] = useState<{ lid: number; eid: number; ws: number } | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
 
   const load = async () => {
     setLoading(true);
-    try {
-      const list = await bundledApi.listTasks();
-      setTasks(list);
-    } catch { message.error('加载任务列表失败'); }
+    try { setTasks(await bundledApi.listTasks()); }
+    catch { message.error('加载任务列表失败'); }
     finally { setLoading(false); }
   };
 
@@ -65,6 +62,11 @@ export function TasksPage() {
   const statusLabel = (s: string) => {
     switch (s) { case 'enabled': return '运行中'; case 'paused': return '已暂停'; default: return s; }
   };
+
+  // 详情模式。
+  if (selectedTaskId !== null) {
+    return <TaskDetailPage taskId={selectedTaskId} onBack={() => setSelectedTaskId(null)} />;
+  }
 
   return (
     <div style={{ padding: 24, maxWidth: 800, margin: '0 auto' }}>
@@ -127,14 +129,14 @@ export function TasksPage() {
                   icon={<PlayCircleOutlined />}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setActiveBoard({ lid: t.loop_id, eid: t.latest_execution_id!, ws: t.workspace_id || 1 });
+                    setSelectedTaskId(t.loop_id);
                   }}
                 >
-                  查看执行
+                  查看详情
                 </Button>
               ) : null,
             ].filter(Boolean)}
-            onClick={() => { window.location.hash = `#/loops?panel=detail&id=${t.loop_id}`; }}
+            onClick={() => setSelectedTaskId(t.loop_id)}
             style={{ cursor: 'pointer' }}
           >
             <List.Item.Meta
@@ -156,19 +158,6 @@ export function TasksPage() {
           </List.Item>
         )}
       />
-
-      {activeBoard && (
-        <div style={{ marginTop: 24 }}>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => setActiveBoard(null)} style={{ marginBottom: 12 }}>
-            返回任务列表
-          </Button>
-          <ProcessExecutionBoard
-            workspaceId={activeBoard.ws}
-            loopId={activeBoard.lid}
-            executionId={activeBoard.eid}
-          />
-        </div>
-      )}
     </div>
   );
 }

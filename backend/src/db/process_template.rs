@@ -6,6 +6,14 @@ use crate::db::Database;
 use crate::db::entity::{process_step_templates, process_templates};
 
 impl Database {
+    /// 按 ID 查找工艺模板。
+    pub async fn get_process_template_by_id(
+        &self,
+        id: i64,
+    ) -> Result<Option<process_templates::Model>, sea_orm::DbErr> {
+        process_templates::Entity::find_by_id(id).one(&self.conn).await
+    }
+
     /// 按名称查找工艺模板。
     pub async fn get_process_template_by_name(
         &self,

@@ -7,6 +7,7 @@ use axum::Json;
 use axum::Router;
 use serde::{Deserialize, Serialize};
 
+use axum::extract::Path;
 use crate::db::Database;
 use crate::handlers::{AppError, AppState};
 use crate::models::ApiResponse;
@@ -123,8 +124,44 @@ pub async fn list_tasks(
     Ok(ApiResponse::ok(items))
 }
 
+/// 任务详情。
+pub async fn get_task_detail(
+    State(state): State<AppState>,
+    Path(loop_id): Path<i64>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    let loop_ = state.db.get_loop(loop_id).await?.ok_or(AppError::NotFound)?;
+    let template = if let Some(tid) = loop_.process_template_id {
+        state.db.get_process_template_by_id(tid).await?.ok_or(AppError::NotFound)?
+    } else {
+        return Err(AppError::NotFound);
+    };
+    // 步骤配置（含 skill/artifact/gate）。
+    let steps: Vec<_> = state.db.list_loop_steps_by_loop(loop_id).await?
+        .into_iter().map(|s| serde_json::json!({
+            "id": s.id, "name": s.name, "order_index": s.order_index,
+            "skill_names": serde_json::from_str::<serde_json::Value>(&s.skill_names).unwrap_or_default(),
+            "expected_artifacts": serde_json::from_str::<serde_json::Value>(&s.expected_artifacts).unwrap_or_default(),
+            "gate_config": serde_json::from_str::<serde_json::Value>(&s.gate_config).unwrap_or_default(),
+        })).collect();
+    // 执行历史。
+    let execs: Vec<_> = state.db.list_loop_executions(loop_id, 20, 0, None).await?
+        .into_iter().map(|e| serde_json::json!({
+            "id": e.id, "status": e.status,
+            "started_at": e.started_at, "finished_at": e.finished_at,
+            "total_steps": e.total_steps, "completed_steps": e.completed_steps,
+            "failed_steps": e.failed_steps,
+        })).collect();
+    Ok(ApiResponse::ok(serde_json::json!({
+        "loop": { "id": loop_.id, "name": loop_.name, "description": loop_.description, "status": loop_.status, "workspace_id": loop_.workspace_id },
+        "template": { "name": template.name, "display_name": template.display_name, "complexity": template.complexity, "version": template.version },
+        "steps": steps,
+        "executions": execs,
+    })))
+}
+
 /// 任务路由。
 pub fn task_routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/tasks", axum::routing::get(list_tasks).post(create_task))
+        .route("/api/v1/tasks/{loop_id}", axum::routing::get(get_task_detail))
 }
