@@ -49,7 +49,7 @@ phases:
           根据 PRD 实现功能，完成后运行测试与 lint。
         executor: atomcode
         expert_name: senior-dev
-        skills: [superpowers-code]
+        skills: []
         expected_artifacts:
           - name: delivery-state
             type: file

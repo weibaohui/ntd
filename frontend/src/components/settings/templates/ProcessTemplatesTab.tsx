@@ -12,7 +12,9 @@ import {
   Spin,
   Table,
   Tag,
+  Tooltip,
   Typography,
+  Alert,
 } from 'antd';
 import {
   ReloadOutlined,
@@ -155,15 +157,17 @@ export function ProcessTemplatesTab({ refreshTick }: { refreshTick?: number }) {
             查看
           </Button>
           {record.is_system && (
-            <Button
-              type="text"
-              size="small"
-              icon={<CopyOutlined />}
-              loading={copying === record.name}
-              onClick={() => handleCopyToUser(record)}
-            >
-              复制到用户层
-            </Button>
+            <Tooltip title="把系统工艺复制到 ~/.ntd/processes/，之后的修改不会被同步覆盖">
+              <Button
+                type="text"
+                size="small"
+                icon={<CopyOutlined />}
+                loading={copying === record.name}
+                onClick={() => handleCopyToUser(record)}
+              >
+                复制到用户层
+              </Button>
+            </Tooltip>
           )}
         </Space>
       ),
@@ -172,6 +176,15 @@ export function ProcessTemplatesTab({ refreshTick }: { refreshTick?: number }) {
 
   return (
     <div className="process-templates-tab">
+      {/* 系统/用户双图层级说明：系统工艺来自远程仓库同步，会被覆盖；
+          用户工艺存放在 ~/.ntd/processes/，不会被同步覆盖。
+          复制为用户即可安全自定义。 */}
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message={`系统工艺来自远程仓库，每次同步会被覆盖；用户工艺存放在 ~/.ntd/processes/，不会被同步覆盖。如需自定义，请先将系统工艺「复制到用户层」。`}      />
+
       <Space style={{ marginBottom: 16 }}>
         <Button
           icon={<ReloadOutlined />}

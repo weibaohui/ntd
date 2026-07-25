@@ -1,6 +1,6 @@
 process:
-  name: superpowers-task
-  display_name: 轻量任务工艺（Superpowers）
+  name: lightweight-task
+  display_name: 轻量任务工艺
   description: |
     6 步轻量工艺：brainstorm → plan → TDD → code-review → verify → reflect。
     适合小需求、Bug 修复、脚本编写，保留最少必要的产物与门禁。
@@ -30,7 +30,7 @@ phases:
           输出到 .ntd/brainstorm.md。
         executor: atomcode
         expert_name: senior-dev
-        skills: [superpowers-brainstorm]
+        skills: []
         expected_artifacts:
           - name: brainstorm
             type: file
@@ -48,7 +48,7 @@ phases:
           基于选定的方案，写出实现计划（5-10 个步骤），输出到 .ntd/plan.md。
         executor: atomcode
         expert_name: senior-dev
-        skills: [superpowers-plan]
+        skills: []
         expected_artifacts:
           - name: plan
             type: file
@@ -81,7 +81,7 @@ phases:
           输出审查意见到 .ntd/code-review.md。
         executor: atomcode
         expert_name: senior-dev
-        skills: [superpowers-review]
+        skills: []
         expected_artifacts:
           - name: code-review
             type: file
@@ -114,7 +114,7 @@ phases:
           输出到 .ntd/reflect.md。
         executor: atomcode
         expert_name: senior-dev
-        skills: [superpowers-reflect]
+        skills: []
         expected_artifacts:
           - name: reflect
             type: file
