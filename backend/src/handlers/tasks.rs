@@ -64,12 +64,23 @@ pub async fn create_task(
         result.loop_id
     };
     state.db.update_task_loop_id(task.id, loop_id).await?;
-    // 4. 创建执行。
-    let meta = serde_json::json!({"requirement": req.requirement}).to_string();
-    let exec = state.db.create_loop_execution_with_task(loop_id, task.id, "manual", &meta, 0).await?;
-    Ok((axum::http::StatusCode::CREATED, ApiResponse::ok(serde_json::json!({
-        "task_id": task.id, "loop_id": loop_id, "execution_id": exec.id, "template_name": template_name,
-    }))))
+    // 4. 确保 Loop 启用，然后通过 dispatcher 触发执行（dispatcher 创建 execution 并启动 LoopRunner）。
+    if let Err(_) = state.db.update_loop_status(loop_id, "enabled").await {
+        // 已经是 enabled 则忽略错误
+    }
+    let dispatcher = state.loop_trigger_dispatcher.as_ref()
+        .ok_or_else(|| AppError::Internal("loop dispatcher not ready".to_string()))?;
+    let meta = serde_json::json!({"requirement": req.requirement, "source": "task"});
+    match dispatcher.dispatch_manual_with_meta(loop_id, meta).await {
+        Some(exec_id) => {
+            // 回填 task_id 到 dispatcher 创建的 execution。
+            state.db.update_loop_execution_task_id(exec_id, task.id).await?;
+            Ok((axum::http::StatusCode::CREATED, ApiResponse::ok(serde_json::json!({
+                "task_id": task.id, "loop_id": loop_id, "execution_id": exec_id, "template_name": template_name,
+            }))))
+        }
+        None => Err(AppError::BadRequest("无法触发 Loop 执行，请检查 Loop 状态".to_string())),
+    }
 }
 
 /// GET /api/v1/tasks

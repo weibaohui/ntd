@@ -976,6 +976,17 @@ impl Database {
         am.insert(&self.conn).await
     }
 
+    /// 回填 execution 的 task_id（dispatcher 创建后调用）。
+    pub async fn update_loop_execution_task_id(&self, exec_id: i64, task_id: i64) -> Result<(), sea_orm::DbErr> {
+        let existing = loop_executions::Entity::find_by_id(exec_id).one(&self.conn).await?;
+        if let Some(c) = existing {
+            let mut am: loop_executions::ActiveModel = c.into();
+            am.task_id = ActiveValue::Set(Some(task_id));
+            am.update(&self.conn).await?;
+        }
+        Ok(())
+    }
+
     /// 创建带 task_id 的 loop execution（任务管理）。
     pub async fn create_loop_execution_with_task(
         &self,
