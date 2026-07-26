@@ -17,6 +17,7 @@ import {
   DollarOutlined,
   ClockCircleOutlined,
   ToolOutlined,
+  BuildOutlined,
 } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import dayjs from 'dayjs';
@@ -32,9 +33,10 @@ import { ExecutionsTab } from './dashboard/tabs/ExecutionsTab';
 import { CostTab } from './dashboard/tabs/CostTab';
 import { AutomationTab } from './dashboard/tabs/AutomationTab';
 import { ResourcesTab } from './dashboard/tabs/ResourcesTab';
+import { ProcessDashboard } from './process/ProcessDashboard';
 
 // 全部合法 Tab key,顺序即展示顺序;as const 让 key 形成可校验的联合类型。
-const DASHBOARD_TABS = ['overview', 'tasks', 'executions', 'cost', 'automation', 'resources'] as const;
+const DASHBOARD_TABS = ['overview', 'tasks', 'executions', 'cost', 'automation', 'resources', 'process'] as const;
 type DashboardTabKey = (typeof DASHBOARD_TABS)[number];
 
 // Tab 图标类型(ant-design 图标组件)。
@@ -198,6 +200,11 @@ export function Dashboard() {
       key: 'resources',
       label: renderLabel(ToolOutlined, '资源与运维', '资源'),
       children: <ResourcesTab stats={stats} loading={loading} />,
+    },
+    {
+      key: 'process',
+      label: renderLabel(BuildOutlined, '工艺', '工艺'),
+      children: <ProcessDashboard />,
     },
   ];
 
