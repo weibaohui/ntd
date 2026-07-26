@@ -259,7 +259,8 @@ export function ProcessPage({ workspaceId, onOpenLoop, processName }: ProcessPag
       <Modal
         open={detail != null}
         title={detail?.display_name || detail?.name}
-        width={720}
+        width={960}
+        centered
         footer={[
           <Button key="close" onClick={() => setDetail(null)}>
             关闭
