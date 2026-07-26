@@ -202,43 +202,53 @@ export interface GraphNode {
   highlights: string[];
   /** 对应 CONCEPTS 的 id，用于点击弹 Drawer；undefined 表示支线节点不弹 Drawer。 */
   conceptId?: ConceptNode['id'];
+  /** 是否主航线节点：true 时圆圈加大 + 主色填充，突出主链层级。 */
+  isMain?: boolean;
 }
 
 export const GRAPH_NODES: readonly GraphNode[] = [
-  // 主链 4 节点（横向中线）
-  { id: 'process', label: '工艺', x: 120, y: 200, highlights: ['loop', 'process-step-templates'], conceptId: 'process' },
-  { id: 'loop', label: '环路', x: 400, y: 200, highlights: ['process', 'todo', 'loop-triggers', 'loop-phases'], conceptId: 'loop' },
-  { id: 'todo', label: '事项', x: 680, y: 200, highlights: ['loop', 'execution', 'executor', 'expert', 'model'], conceptId: 'todo' },
-  { id: 'execution', label: '执行记录', x: 900, y: 200, highlights: ['todo'] },
-  // 支线节点
-  { id: 'process-step-templates', label: '环节原型库', x: 120, y: 60, highlights: ['process'] },
-  { id: 'loop-phases', label: '阶段实例', x: 400, y: 60, highlights: ['loop'] },
-  { id: 'loop-triggers', label: '触发器（8 种）', x: 400, y: 340, highlights: ['loop'] },
+  // 主链 4 节点（横向中线，isMain=true 圆圈加大突出主航线）
+  { id: 'process', label: '工艺', x: 120, y: 200, highlights: ['loop', 'todo'], conceptId: 'process', isMain: true },
+  { id: 'loop', label: '环路', x: 400, y: 200, highlights: ['process', 'todo', 'task', 'trigger'], conceptId: 'loop', isMain: true },
+  { id: 'todo', label: '事项', x: 680, y: 200, highlights: ['loop', 'execution', 'trigger', 'executor', 'expert', 'model', 'skill'], conceptId: 'todo', isMain: true },
+  { id: 'execution', label: '执行记录', x: 900, y: 200, highlights: ['todo'], isMain: true },
+  // 支线节点：与 6 核心概念 + 触发器 + skill 对齐，isMain 缺省 false 圆圈较小
+  { id: 'task', label: '任务', x: 400, y: 340, highlights: ['loop'], conceptId: 'task' },
+  { id: 'trigger', label: '触发器（8 种）', x: 440, y: 60, highlights: ['loop', 'todo'] },
   { id: 'executor', label: '执行器', x: 680, y: 60, highlights: ['todo', 'expert', 'model'], conceptId: 'executor' },
-  { id: 'expert', label: '专家', x: 680, y: 340, highlights: ['todo', 'executor', 'model'], conceptId: 'expert' },
+  { id: 'expert', label: '专家', x: 760, y: 340, highlights: ['todo', 'executor', 'model'], conceptId: 'expert' },
+  { id: 'skill', label: '技能 Skill', x: 580, y: 340, highlights: ['todo', 'expert'] },
   { id: 'model', label: '模型', x: 860, y: 340, highlights: ['todo', 'executor', 'expert'] },
 ] as const;
 
 /**
  * 关系图连线。
  * from/to 为 GRAPH_NODES 的 id；label 为连线上的动作语义。
+ * isMain=true 表示主航线边：渲染带箭头方向 + 加粗深色，突出主干。
  */
 export interface GraphEdge {
   from: string;
   to: string;
   label: string;
+  /** 是否主航线：true 时带箭头 + 加粗深色，与支线区分。 */
+  isMain?: boolean;
 }
 
 export const GRAPH_EDGES: readonly GraphEdge[] = [
-  { from: 'process', to: 'loop', label: '安装实例化' },
-  { from: 'loop', to: 'todo', label: '编排引用' },
-  { from: 'todo', to: 'execution', label: '触发执行' },
-  // 支线
-  { from: 'process-step-templates', to: 'process', label: 'step_template 引用' },
-  { from: 'loop-phases', to: 'loop', label: '聚合' },
-  { from: 'loop-triggers', to: 'loop', label: '驱动' },
+  // 主航线 3 条边（工艺→环路→事项→执行记录），带箭头 + 加粗
+  { from: 'process', to: 'loop', label: '安装实例化', isMain: true },
+  { from: 'loop', to: 'todo', label: '编排引用', isMain: true },
+  { from: 'todo', to: 'execution', label: '触发执行', isMain: true },
+  // 支线（带箭头方向，细线浅色与主航线区分）
+  // 任务：用户主动意图，选环路跑一次
+  { from: 'task', to: 'loop', label: '选择执行' },
+  // 触发器：同时驱动环路和事项（8 种类型里 todo_completed/todo_state_changed/tag_added 驱动事项）
+  { from: 'trigger', to: 'loop', label: '驱动环路' },
+  { from: 'trigger', to: 'todo', label: '驱动事项' },
+  // 执行器/专家/模型：事项的运行时三要素
   { from: 'executor', to: 'todo', label: '运行时' },
   { from: 'expert', to: 'todo', label: '人格' },
+  { from: 'skill', to: 'todo', label: '能力注入' },
   { from: 'model', to: 'todo', label: 'LLM' },
 ] as const;
 

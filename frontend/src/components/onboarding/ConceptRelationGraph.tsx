@@ -31,43 +31,56 @@ function usePrefersReducedMotion(): boolean {
   return reduce;
 }
 
-/** 取两节点中心点连线坐标（用于 SVG path）。 */
-function edgePath(from: GraphNode, to: GraphNode): string {
-  // 节点半径 40，连线从边缘出发而非中心，视觉更干净。
-  const r = 40;
+/** 取两节点中心点连线坐标（用于 SVG path）。
+ *  fromR/toR 允许两端节点半径不同（主节点大、支节点小），连线从边缘出发而非中心。 */
+function edgePath(from: GraphNode, to: GraphNode, fromR: number, toR: number): string {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
   // 单位向量 × 半径 = 边缘偏移。
   const ux = dx / dist;
   const uy = dy / dist;
-  const x1 = from.x + ux * r;
-  const y1 = from.y + uy * r;
-  const x2 = to.x - ux * r;
-  const y2 = to.y - uy * r;
+  const x1 = from.x + ux * fromR;
+  const y1 = from.y + uy * fromR;
+  const x2 = to.x - ux * toR;
+  const y2 = to.y - uy * toR;
   return `M ${x1} ${y1} L ${x2} ${y2}`;
 }
 
-/** 单条连线，带流动动画或降级静态。 */
+/** 取节点半径：主航线节点 48，支线节点 36。 */
+function nodeRadius(node: GraphNode): number {
+  return node.isMain ? 48 : 36;
+}
+
+/** 单条连线，主航线带箭头 + 加粗深色，支线无箭头 + 细线浅色。 */
 function Edge({
   from,
   to,
   active,
   reduceMotion,
+  isMain,
 }: {
   from: GraphNode;
   to: GraphNode;
   active: boolean;
   reduceMotion: boolean;
+  isMain: boolean;
 }) {
-  // active = hover 命中时连线加粗高亮。
-  // 流动动画用 stroke-dasharray + stroke-dashoffset keyframes，由 CSS class 驱动。
+  // 主航线：深色 #1677ff + 加粗 2.5；支线：浅色 #d9d9d9 + 细 1.5。
+  // active（hover 命中）时支线也升级到主航线色粗，保持高亮反馈一致。
+  const baseStroke = isMain ? '#1677ff' : '#d9d9d9';
+  const baseWidth = isMain ? 2.5 : 1.5;
+  const stroke = active ? '#1677ff' : baseStroke;
+  const strokeWidth = active ? 3 : baseWidth;
+  // 主航线带箭头方向标记（marker-end），支线无。
+  // 箭头颜色需与 stroke 同步，用 CSS currentColor 避免硬编码。
   return (
     <path
-      d={edgePath(from, to)}
-      stroke={active ? '#1677ff' : '#d9d9d9'}
-      strokeWidth={active ? 2.5 : 1.5}
+      d={edgePath(from, to, nodeRadius(from), nodeRadius(to))}
+      stroke={stroke}
+      strokeWidth={strokeWidth}
       fill="none"
+      markerEnd={`url(#${isMain ? 'ntd-onboarding-arrow-main' : 'ntd-onboarding-arrow-side'})`}
       className={reduceMotion ? undefined : 'ntd-onboarding-edge-flow'}
       style={{
         // reduced-motion 时无动画，但仍可加粗高亮。
@@ -77,7 +90,7 @@ function Edge({
   );
 }
 
-/** 单个节点圆形，hover 高亮 + 点击触发 Drawer。 */
+/** 单个节点圆形，主节点加大 + 主色填充，hover 高亮 + 点击触发 Drawer。 */
 function GraphNodeCircle({
   node,
   hovered,
@@ -93,9 +106,12 @@ function GraphNodeCircle({
 }) {
   // 命中条件：当前 hover 是自己，或自己在该节点的 highlights 列表里。
   const isActive = hovered === node.id || (hovered !== null && node.highlights.includes(hovered));
-  const fill = isActive ? '#1677ff' : '#fff';
-  const stroke = isActive ? '#1677ff' : '#d9d9d9';
-  const textColor = isActive ? '#fff' : '#333';
+  // 主航线节点默认主色填充（白底 + 主色边框会与支线混），
+  // 用主色淡背景 #e6f4ff + 主色边框突出主链层级；hover 时升级到实心主色。
+  const fill = isActive ? '#1677ff' : (node.isMain ? '#e6f4ff' : '#fff');
+  const stroke = isActive ? '#1677ff' : (node.isMain ? '#1677ff' : '#d9d9d9');
+  const textColor = isActive ? '#fff' : (node.isMain ? '#1677ff' : '#333');
+  const r = nodeRadius(node);
   return (
     <g
       // SVG <g> 无原生 onClick 事件冒泡问题，直接挂。
@@ -105,24 +121,29 @@ function GraphNodeCircle({
       style={{ cursor: 'pointer' }}
       data-testid={`onboarding-graph-node-${node.id}`}
     >
-      {/* 圆形主体 */}
+      {/* 圆形主体：主节点 r=48，支线 r=36 */}
       <circle
         cx={node.x}
         cy={node.y}
-        r={40}
+        r={r}
         fill={fill}
         stroke={stroke}
-        strokeWidth={2}
+        strokeWidth={node.isMain ? 2.5 : 2}
         style={{ transition: 'fill 0.2s ease, stroke 0.2s ease' }}
       />
-      {/* 标题文本居中 */}
+      {/* 标题文本居中：主节点字号略大 */}
       <text
         x={node.x}
         y={node.y}
         textAnchor="middle"
         dominantBaseline="middle"
         fill={textColor}
-        style={{ fontSize: 13, fontWeight: 500, transition: 'fill 0.2s ease', userSelect: 'none' }}
+        style={{
+          fontSize: node.isMain ? 14 : 13,
+          fontWeight: node.isMain ? 600 : 500,
+          transition: 'fill 0.2s ease',
+          userSelect: 'none',
+        }}
       >
         {node.label}
       </text>
@@ -226,6 +247,33 @@ export function ConceptRelationGraph() {
         viewBox="0 0 1000 400"
         style={{ width: '100%', minWidth: 600, height: 400 }}
       >
+        {/* 慨头定义：主航线 + 支线各一个 marker，颜色区分主支层级。
+            marker 内部 fill 用 currentColor，跟随 path 的 stroke 自动同步，
+            hover 时支线 stroke 升级到 #1677ff，支线箭头也同步升级到主色。 */}
+        <defs>
+          <marker
+            id="ntd-onboarding-arrow-main"
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="8"
+            markerHeight="8"
+            orient="auto-start-reverse"
+          >
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+          </marker>
+          <marker
+            id="ntd-onboarding-arrow-side"
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="7"
+            markerHeight="7"
+            orient="auto-start-reverse"
+          >
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+          </marker>
+        </defs>
         {/* 连线层：先渲染所有 Edge，让节点圆形覆盖在连线上方 */}
         {GRAPH_EDGES.map((edge) => {
           const from = nodeMapRef.current.get(edge.from);
@@ -243,6 +291,7 @@ export function ConceptRelationGraph() {
               to={to}
               active={active}
               reduceMotion={reduceMotion}
+              isMain={!!edge.isMain}
             />
           );
         })}
