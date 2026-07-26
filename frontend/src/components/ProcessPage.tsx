@@ -25,9 +25,16 @@ const { Title, Text, Paragraph } = Typography;
 
 interface ProcessPageProps {
   workspaceId: number | null;
+  /** 安装成功后跳转新环路详情（「工艺 → 环路」实例化关系显性化的关键一跳）。 */
+  onOpenLoop?: (loopId: number) => void;
+  /**
+   * URL 携带的工艺模板唯一名（`/#/processes?name=xxx`）。
+   * 用于「环路详情 → 来源工艺」回跳后自动打开该工艺详情，形成溯源闭环。
+   */
+  processName?: string | null;
 }
 
-export function ProcessPage({ workspaceId }: ProcessPageProps) {
+export function ProcessPage({ workspaceId, onOpenLoop, processName }: ProcessPageProps) {
   const [processes, setProcesses] = useState<ProcessTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<ProcessTemplateDetail | null>(null);
@@ -72,6 +79,17 @@ export function ProcessPage({ workspaceId }: ProcessPageProps) {
     }
   };
 
+  // URL 携带 name 参数时自动打开详情：环路详情「来源工艺」回跳的目标落地。
+  // cancelled 防御快速切换路由造成的竞态：晚返回的请求发现已卸载/切换就丢弃。
+  useEffect(() => {
+    if (!processName) return;
+    let cancelled = false;
+    bundledApi.getProcess(processName)
+      .then((data) => { if (!cancelled) setDetail(data); })
+      .catch(() => { if (!cancelled) message.error('加载工艺模板详情失败'); });
+    return () => { cancelled = true; };
+  }, [processName]);
+
   const handleInstall = (name: string, displayName: string) => {
     setInstallModal({ name, displayName });
   };
@@ -81,8 +99,14 @@ export function ProcessPage({ workspaceId }: ProcessPageProps) {
     setInstalling(installModal.name);
     try {
       const result = await bundledApi.installProcess(installModal.name, workspaceId);
-      message.success(`已安装「${result.loop_name}」`);
+      message.success(`已安装「${result.loop_name}」，正在打开环路详情…`);
       setInstallModal(null);
+      // 安装即实例化：直接跳到新环路详情，让用户立即看到工艺的运行时形态；
+      // 未注入导航回调（如旧调用方）时保持原有停留行为，不破坏兼容性。
+      if (onOpenLoop) {
+        setDetail(null);
+        onOpenLoop(result.loop_id);
+      }
     } catch { message.error('安装失败'); }
     finally { setInstalling(null); }
   };

@@ -6,7 +6,6 @@ import {
   InboxOutlined,
   ThunderboltOutlined,
   ClockCircleOutlined,
-  RetweetOutlined,
   LinkOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
@@ -14,6 +13,7 @@ import * as db from '@/utils/database';
 import { formatRelativeTime } from '@/utils/datetime';
 import { SchedulerSection } from '@/components/todo-drawer/SchedulerSection';
 import { DEFAULT_CRON } from '@/components/todo-drawer/constants';
+import { ReferencingLoops } from '@/components/common/ReferencingLoops';
 import type { TodoCenterItem, ComputedBucket } from '@/types';
 
 /** 各驱动分类的展示标签：中文名 + antd Tag 颜色。集中管理避免散落。 */
@@ -289,7 +289,11 @@ function CardMeta({
       )}
       {/* Loop 驱动卡片展示所属 Loop，点击跳转 Loop 详情 */}
       {item.computed_bucket === 'loop_driven' && (
-        <ReferencingLoops item={item} onSelectLoop={onSelectLoop} />
+        <ReferencingLoops
+          loops={item.referencing_loops ?? []}
+          fallbackCount={item.used_by_loop_step_count}
+          onSelectLoop={onSelectLoop}
+        />
       )}
       {item.last_execution_status && (
         <MetaLine text={`最近执行 ${item.last_execution_status}${item.last_execution_at ? ` · ${formatRelativeTime(item.last_execution_at)}` : ''}`} />
@@ -302,37 +306,7 @@ function CardMeta({
   );
 }
 
-/** 所属 Loop：把 referencing_loops 渲染为可点击的小标签，点击跳 Loop 详情。 */
-function ReferencingLoops({
-  item,
-  onSelectLoop,
-}: {
-  item: TodoCenterItem;
-  onSelectLoop: (loopId: number) => void;
-}) {
-  const loops = item.referencing_loops ?? [];
-  if (loops.length === 0) {
-    return <MetaLine icon={<RetweetOutlined />} text={`被 ${item.used_by_loop_step_count} 个启用环节引用`} />;
-  }
-  return (
-    <div className="todo-center-card-meta-line">
-      <RetweetOutlined />
-      {loops.map((l) => (
-        <Tag
-          key={l.loop_id}
-          color="geekblue"
-          style={{ cursor: 'pointer' }}
-          onClick={(e) => {
-            e.stopPropagation();
-            onSelectLoop(l.loop_id);
-          }}
-        >
-          {l.loop_name}
-        </Tag>
-      ))}
-    </div>
-  );
-}
+/** 所属 Loop 标签组已抽至 `@/components/common/ReferencingLoops`（事项详情页复用同一组件）。 */
 
 /**
  * 单行元信息：可选图标 + 文本。

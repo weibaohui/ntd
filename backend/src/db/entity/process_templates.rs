@@ -31,6 +31,9 @@ pub struct Model {
     /// 是否系统内置模板，用户不可编辑。
     #[sea_orm(default_value = false)]
     pub is_system: bool,
+    /// 上一版本模板 ID（版本链，V72 迁移加列；ORM 层补齐以消除实体/迁移漂移）。
+    /// 当前仅做读取留痕，版本链 UI 属后续迭代。
+    pub previous_version_id: Option<i64>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }

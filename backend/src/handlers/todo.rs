@@ -100,6 +100,19 @@ pub async fn get_todo(
     Ok(ApiResponse::ok(todo))
 }
 
+/// `GET /api/v1/workspaces/{ws}/todos/{id}/referencing-loops`：列出引用该事项的启用环路。
+///
+/// 事项详情页「所属环路」区块用：复用事项中心的批量引用查询（单元素切片），
+/// 避免在主 todos 列表查询上 JOIN 放大。只统计 enabled=1 的环节（与中心口径一致）。
+pub async fn get_todo_referencing_loops(
+    State(state): State<AppState>,
+    Path((ws_id, id)): Path<(i64, i64)>,
+) -> Result<ApiResponse<Vec<crate::models::LoopRefSummary>>, AppError> {
+    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
+    let map = state.db.get_referencing_loops_for_todos(&[id]).await?;
+    Ok(ApiResponse::ok(map.get(&id).cloned().unwrap_or_default()))
+}
+
 pub async fn create_todo(
     State(state): State<AppState>,
     ApiJson(req): ApiJson<CreateTodoRequest>,
@@ -779,6 +792,7 @@ pub fn v1_routes() -> Router<AppState> {
         .route("/{id}/archive", post(archive_todo))
         .route("/{id}/restore", post(restore_todo))
         .route("/{id}/webhook", put(update_webhook))
+        .route("/{id}/referencing-loops", get(get_todo_referencing_loops))
         .route("/{id}/summary", get(super::execution::get_execution_summary))
         .route("/{id}", get(get_todo).put(update_todo).delete(delete_todo))
         // 批量操作（workspace 作用域，不依赖单个 id）

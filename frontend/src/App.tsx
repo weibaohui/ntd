@@ -47,7 +47,7 @@ const { Content } = Layout;
 
 function AppContent() {
   const { state, dispatch, clearSelection } = useApp();
-  const { activeView, selectedId, activePanel, selectedRecordId, showView, pushUrl, replaceUrl, backToList } = useViewState();
+  const { activeView, selectedId, activePanel, selectedRecordId, processName, showView, pushUrl, replaceUrl, backToList } = useViewState();
   const { themeMode, toggleTheme } = useTheme();
   // 底部执行日志面板的显隐开关：来自设置-界面显示，关掉后即使有运行中任务也不渲染面板。
   const { visible: consolePanelVisible, setVisible: setConsolePanelVisible } = useConsolePanel();
@@ -195,6 +195,13 @@ function AppContent() {
     setSelectedLoopId(loopId);
     replaceUrl('loops', { id: loopId, panel: 'detail' });
   }, [clearSelection, replaceUrl]);
+
+  // 跳转来源工艺详情：环路详情「来源工艺」行的目标。
+  // 携带 name 参数，ProcessPage 据此自动打开该工艺的详情 Modal。
+  const handleOpenProcess = useCallback((templateName: string) => {
+    clearSelection();
+    pushUrl('processes', { name: templateName });
+  }, [clearSelection, pushUrl]);
 
   const handleSmartCreateSubmitted = () => {
     const wid = state.selectedWorkspace;
@@ -372,6 +379,7 @@ function AppContent() {
                 onLoopChanged={() => setLoopUpdateCount(c => c + 1)}
                 effectiveMobilePanel={effectiveMobilePanel}
                 workspaceId={state.selectedWorkspace}
+                onOpenProcess={handleOpenProcess}
               />
             )
           )}
@@ -421,7 +429,11 @@ function AppContent() {
               ) : activeView === 'tasks' ? (
                 <TasksPage workspaceId={state.selectedWorkspace} />
               ) : activeView === 'processes' ? (
-                <ProcessPage workspaceId={state.selectedWorkspace} />
+                <ProcessPage
+                  workspaceId={state.selectedWorkspace}
+                  onOpenLoop={handleSelectLoop}
+                  processName={processName}
+                />
               ) : (
                 <Dashboard />
               )}

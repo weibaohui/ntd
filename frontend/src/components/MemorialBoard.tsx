@@ -192,6 +192,13 @@ export function MemorialBoard() {
     dispatch({ type: 'SELECT_TODO', payload: todoId });
   };
 
+  // 环路执行轨迹流程图里点击事项标题：选中该事项并跳到事项详情页。
+  // 看板是只读聚合视图，钻取到具体事项才算完成「环路 → 事项」的链路闭环。
+  const handleOpenTodoFromFlow = (todoId: number) => {
+    dispatch({ type: 'SELECT_TODO', payload: todoId });
+    replaceUrl('items', { id: todoId, panel: 'detail' });
+  };
+
   const filteredItems = useMemo(() => {
     let result = items;
     // 按搜索文本过滤：匹配标题或 prompt
@@ -396,7 +403,7 @@ export function MemorialBoard() {
         ) : boardMode === 'kanban' ? (
           <KanbanBoard searchText={searchText} hours={hours} onSearchChange={setSearchText} onHoursChange={setHours} />
         ) : boardMode === 'loop_kanban' ? (
-          <LoopKanban searchText={searchText} hours={hours} onSearchChange={setSearchText} onHoursChange={setHours} />
+          <LoopKanban searchText={searchText} hours={hours} onSearchChange={setSearchText} onHoursChange={setHours} onOpenTodo={handleOpenTodoFromFlow} />
         ) : loading ? (
           <div className="memorial-grid">
             {Array.from({ length: columnCount }).map((_, colIdx) => (

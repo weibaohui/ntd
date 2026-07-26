@@ -149,6 +149,13 @@ pub async fn get_loop(
     let tag_ids = state.db.get_loop_tag_ids(id).await?;
     let mut detail = LoopDetail::from(view);
     detail.loop_ = detail.loop_.with_tags(tag_ids);
+    // 注入来源工艺模板名称：详情页「来源工艺」面包屑需要显示名，
+    // 仅当环路是工艺实例化产物时才查一次模板表，普通环路零额外查询。
+    let process_meta = match detail.loop_.process_template_id {
+        Some(template_id) => state.db.get_process_template_by_id(template_id).await?,
+        None => None,
+    };
+    detail.loop_ = detail.loop_.with_process_template(process_meta);
     Ok(ApiResponse::ok(detail))
 }
 
@@ -2299,6 +2306,14 @@ pub async fn get_loop_v1(
     let tag_ids = state.db.get_loop_tag_ids(id).await?;
     let mut detail = LoopDetail::from(view);
     detail.loop_ = detail.loop_.with_tags(tag_ids);
+    // 注入来源工艺模板名称：详情页「来源工艺」面包屑需要显示名，
+    // 仅当环路是工艺实例化产物时才查一次模板表，普通环路零额外查询。
+    // 注意：v1 路径走本 handler，非 v1 的 get_loop 也做了同样注入，两处必须同步。
+    let process_meta = match detail.loop_.process_template_id {
+        Some(template_id) => state.db.get_process_template_by_id(template_id).await?,
+        None => None,
+    };
+    detail.loop_ = detail.loop_.with_process_template(process_meta);
     Ok(ApiResponse::ok(detail))
 }
 

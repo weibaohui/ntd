@@ -51,6 +51,59 @@ pub struct InstallProcessResponse {
     pub step_count: usize,
 }
 
+/// 工艺实例环路列表项（「实例环路」Tab 用）。
+#[derive(Debug, Serialize)]
+pub struct ProcessLoopItem {
+    pub id: i64,
+    pub name: String,
+    pub description: String,
+    pub status: String,
+    /// 实例环路所属工作空间 ID（project_directories.id），前端标注用。
+    pub workspace_id: Option<i64>,
+    /// 实例化时的工艺版本快照（loops 表已有列，随列表透出便于审计追溯）。
+    pub process_template_version: Option<String>,
+    pub created_at: Option<String>,
+    /// 执行次数聚合（loop_executions 行数）。
+    pub execution_count: i64,
+}
+
+/// 把环路实体与执行计数聚合成列表项；抽出以保证 list_process_loops 低于 30 行。
+fn build_process_loop_items(
+    loops: Vec<crate::db::entity::loops::Model>,
+    counts: &std::collections::HashMap<i64, i64>,
+) -> Vec<ProcessLoopItem> {
+    loops
+        .into_iter()
+        .map(|l| ProcessLoopItem {
+            id: l.id,
+            name: l.name,
+            description: l.description,
+            status: l.status,
+            workspace_id: l.workspace_id,
+            process_template_version: l.process_template_version,
+            created_at: l.created_at,
+            execution_count: counts.get(&l.id).copied().unwrap_or(0),
+        })
+        .collect()
+}
+
+/// GET /api/v1/processes/{name}/loops — 列出该工艺模板实例化的环路（按创建时间倒序）。
+pub async fn list_process_loops(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    let template = state
+        .db
+        .get_process_template_by_name(&name)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let loops = state.db.list_loops_by_process_template(template.id).await?;
+    // 批量聚合执行次数，避免环路多时的 N+1 查询
+    let ids: Vec<i64> = loops.iter().map(|l| l.id).collect();
+    let counts = state.db.count_loop_executions_by_loop_ids(&ids).await?;
+    Ok(ApiResponse::ok(build_process_loop_items(loops, &counts)))
+}
+
 /// GET /api/bundled/processes — 列出所有工艺模板。
 pub async fn list_process_templates(
     State(state): State<AppState>,
@@ -501,5 +554,9 @@ pub fn v1_process_routes() -> Router<AppState> {
         .route(
             "/api/v1/processes/{name}/copy-to-user",
             axum::routing::post(copy_process_to_user),
+        )
+        .route(
+            "/api/v1/processes/{name}/loops",
+            axum::routing::get(list_process_loops),
         )
 }

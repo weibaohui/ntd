@@ -167,6 +167,8 @@ mod tests {
             source_path: None,
             workspace_id: None,
             is_system: true,
+            // V72 版本链字段：推荐逻辑不关心版本链，测试构造置 None
+            previous_version_id: None,
             created_at: None,
             updated_at: None,
         }

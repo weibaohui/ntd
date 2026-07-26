@@ -23,6 +23,7 @@ import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   ExportOutlined,
+  BuildOutlined,
 } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import type { LoopDetail } from '@/types/loop';
@@ -44,6 +45,10 @@ interface LoopDetailPanelProps {
   onDelete: () => void;
   onToggleStatus: () => void;
   onChanged: () => void;
+  /** 点击「来源工艺」跳转工艺详情（`/#/processes?name=xxx`）；未注入时行不可点击。 */
+  onOpenProcess?: (templateName: string) => void;
+  /** 点击流程图节点上的事项标题跳转事项详情；未注入时标题不可点击。 */
+  onOpenTodo?: (todoId: number) => void;
   hideTitleRow?: boolean;
 }
 
@@ -56,6 +61,8 @@ export function LoopDetailPanel({
   onDelete,
   onToggleStatus,
   onChanged,
+  onOpenProcess,
+  onOpenTodo,
   hideTitleRow = false,
 }: LoopDetailPanelProps) {
   const { message: antMessage } = AntApp.useApp();
@@ -227,6 +234,47 @@ export function LoopDetailPanel({
         </>
       )}
 
+      {detail.process_template_id != null && detail.process_template_name && (
+        /* 来源工艺溯源行：把「环路是工艺的实例」这层关系显性化，
+           点击回跳工艺详情（P2 将换为统一 TraceBreadcrumb 组件）。 */
+        <div
+          data-testid="loop-source-process"
+          onClick={() => {
+            // 外层渲染条件已保证 name 存在，闭包内再判一次避免非空断言
+            if (detail.process_template_name) onOpenProcess?.(detail.process_template_name);
+          }}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            marginBottom: 12, fontSize: 12,
+            color: 'var(--color-text-secondary, #475569)',
+            cursor: onOpenProcess ? 'pointer' : 'default',
+          }}
+        >
+          <BuildOutlined style={{ color: 'var(--color-text-tertiary, #94a3b8)' }} />
+          <span>来源工艺：</span>
+          <span style={{
+            color: '#0891b2', fontWeight: 500,
+            textDecoration: onOpenProcess ? 'underline' : 'none',
+            textUnderlineOffset: 3,
+          }}>
+            {detail.process_template_display_name || detail.process_template_name}
+          </span>
+          <span style={{ color: 'var(--color-text-tertiary, #94a3b8)' }}>
+            ({detail.process_template_name})
+          </span>
+          {detail.process_template_version && (
+            <span style={{
+              padding: '0 6px', borderRadius: 8, fontSize: 11,
+              background: 'var(--color-bg-subtle, #f1f5f9)',
+              color: 'var(--color-text-tertiary, #64748b)',
+            }}>
+              v{detail.process_template_version}
+            </span>
+          )}
+          {onOpenProcess && <span style={{ color: '#0891b2' }}>›</span>}
+        </div>
+      )}
+
       {detail.description && (
         <div style={{ color: 'var(--color-text-secondary, #475569)', fontSize: 13, marginBottom: 16 }}>{detail.description}</div>
       )}
@@ -389,6 +437,7 @@ export function LoopDetailPanel({
           maxStepExecutions={maxStepExecutions}
           maxTotalTokens={maxTotalTokens}
           workspaceId={detail.workspace_id}
+          onOpenTodo={onOpenTodo}
         />
       </DetailSection>
 

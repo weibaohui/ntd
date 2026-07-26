@@ -30,6 +30,8 @@ interface FlowGraphProps {
   selectedStepId: number | null;
   onSelectStep: (step: LoopStepDto) => void;
   onAddStep: () => void;
+  /** 点击节点上的事项标题跳转事项详情（「环路 → 事项」向下钻取）；未注入时标题不可点击。 */
+  onOpenTodo?: (todoId: number) => void;
 }
 
 function useFlowLayout(steps: LoopStepDto[]) {
@@ -188,7 +190,7 @@ function useFlowLayout(steps: LoopStepDto[]) {
 export function LoopFlowGraph({
   steps,
   selectedStepId,
-  onSelectStep, onAddStep,
+  onSelectStep, onAddStep, onOpenTodo,
 }: FlowGraphProps) {
   const {
     nodes, edges, width, height,
@@ -309,7 +311,15 @@ export function LoopFlowGraph({
                 <text
                   x={node.x + 12} y={node.y + 40}
                   fontSize={11}
-                  fill="#64748b"
+                  fill={onOpenTodo ? '#0891b2' : '#64748b'}
+                  data-testid={onOpenTodo ? `flow-todo-link-${node.step.todo_id}` : undefined}
+                  style={onOpenTodo ? { cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '2px' } : undefined}
+                  onClick={onOpenTodo ? (e) => {
+                    // 阻止冒泡到节点体的 onSelectStep（环节编辑弹窗），
+                    // 让标题点击专用于「跳事项」、节点其余部分仍用于「编辑环节」。
+                    e.stopPropagation();
+                    onOpenTodo(node.step.todo_id);
+                  } : undefined}
                 >
                   {truncateText(node.step.todo_title ? `#${node.step.todo_id} ${node.step.todo_title}` : `#${node.step.todo_id}`, 24)}
                 </text>

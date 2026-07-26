@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::db::entity::{
-    loop_executions, loop_step_executions, loop_steps, loop_triggers, loops,
+    loop_executions, loop_step_executions, loop_steps, loop_triggers, loops, process_templates,
 };
 use crate::db::loop_::{LoopFullView, LoopListRow};
 
@@ -140,6 +140,15 @@ pub struct LoopDto {
     /// 来源工艺模板 ID
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process_template_id: Option<i64>,
+    /// 实例化时的工艺版本快照（实体列早已存在，DTO 补齐以消除漂移）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_template_version: Option<String>,
+    /// 来源工艺模板唯一名（面包屑跳转用）；由 handler 注入，From 不查库。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_template_name: Option<String>,
+    /// 来源工艺模板显示名（面包屑展示用）；由 handler 注入，From 不查库。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_template_display_name: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -160,6 +169,11 @@ impl From<loops::Model> for LoopDto {
             abnormal_handler_todo_id: m.abnormal_handler_todo_id,
             abnormal_handler_trigger_on: m.abnormal_handler_trigger_on,
             process_template_id: m.process_template_id,
+            process_template_version: m.process_template_version,
+            // 模板名称属跨表关联数据，不在 ORM 转换时隐式查询；
+            // 由 handler 通过 with_process_template 在事务边界外注入（与 with_tags 同模式）。
+            process_template_name: None,
+            process_template_display_name: None,
             created_at: m.created_at,
             updated_at: m.updated_at,
         }
@@ -172,6 +186,16 @@ impl LoopDto {
     /// 由 handler 使用此方法在查询事务边界外手动注入。
     pub fn with_tags(mut self, tag_ids: Vec<i64>) -> Self {
         self.tag_ids = tag_ids;
+        self
+    }
+
+    /// 注入来源工艺模板的名称信息（环路详情「来源工艺」面包屑用）。
+    /// None 表示该环路非工艺实例化（或模板已被删除），字段保持缺省不序列化。
+    pub fn with_process_template(mut self, meta: Option<process_templates::Model>) -> Self {
+        if let Some(t) = meta {
+            self.process_template_name = Some(t.name);
+            self.process_template_display_name = Some(t.display_name);
+        }
         self
     }
 }
@@ -639,5 +663,77 @@ pub fn trigger_type_icon(t: &str) -> &'static str {
         "todo_state_changed" => "sync",
         "tag_added" => "tag",
         _ => "trigger",
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod loop_dto_tests {
+    use super::*;
+
+    /// 构造一个最小的 loops::Model：with_process_template 只关心 DTO 转换结果，
+    /// 其余字段填零值即可（测试内允许直白构造，生产代码禁止的 unwrap 此处豁免）。
+    fn minimal_loop_model() -> loops::Model {
+        loops::Model {
+            id: 1,
+            name: "L".into(),
+            description: String::new(),
+            workspace_path: None,
+            workspace_id: None,
+            webhook_enabled: false,
+            status: "paused".into(),
+            color: "#722ed1".into(),
+            icon: "loop".into(),
+            review_template_id: None,
+            limits_config: "{}".into(),
+            abnormal_handler_todo_id: None,
+            abnormal_handler_trigger_on: "[]".into(),
+            process_template_id: Some(7),
+            process_template_version: Some("1.2.0".into()),
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    /// 构造一个最小的 process_templates::Model，字段值仅供断言比对。
+    fn minimal_template_model() -> process_templates::Model {
+        process_templates::Model {
+            id: 7,
+            name: "4p12s-delivery".into(),
+            display_name: "标准需求交付工艺".into(),
+            description: String::new(),
+            category: "software".into(),
+            complexity: "standard".into(),
+            version: "1.2.0".into(),
+            definition: String::new(),
+            source_path: None,
+            workspace_id: None,
+            is_system: true,
+            previous_version_id: None,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    /// with_process_template(Some)：注入模板唯一名与显示名，版本快照来自 loops 行本身。
+    #[test]
+    fn test_with_process_template_injects_names() {
+        let dto = LoopDto::from(minimal_loop_model())
+            .with_process_template(Some(minimal_template_model()));
+        assert_eq!(dto.process_template_name.as_deref(), Some("4p12s-delivery"));
+        assert_eq!(
+            dto.process_template_display_name.as_deref(),
+            Some("标准需求交付工艺")
+        );
+        assert_eq!(dto.process_template_version.as_deref(), Some("1.2.0"));
+    }
+
+    /// with_process_template(None)：非工艺实例化环路（或模板已删）字段保持 None，
+    /// 配合 skip_serializing_if 不出现在 JSON 中，前端据此前置隐藏面包屑。
+    #[test]
+    fn test_with_process_template_none_keeps_empty() {
+        let dto = LoopDto::from(minimal_loop_model()).with_process_template(None);
+        assert!(dto.process_template_name.is_none());
+        assert!(dto.process_template_display_name.is_none());
     }
 }

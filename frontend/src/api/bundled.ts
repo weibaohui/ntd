@@ -238,6 +238,21 @@ export interface InstallProcessResponse {
   step_count: number;
 }
 
+/**
+ * 工艺实例环路列表项（工艺详情「实例环路」Tab 用）
+ */
+export interface ProcessLoopItem {
+  id: number;
+  name: string;
+  description: string;
+  status: string;
+  workspace_id: number | null;
+  /** 实例化时的工艺版本快照 */
+  process_template_version: string | null;
+  created_at: string | null;
+  execution_count: number;
+}
+
 // ── M2 工艺运行时类型 ──────────────────────────────────
 
 /** 产物快照 */
@@ -452,6 +467,14 @@ export const bundledApi = {
     return unwrap(await api.post(`/api/bundled/processes/${encodeURIComponent(name)}/install`, {
       workspace_id: workspaceId,
     }));
+  },
+
+  /**
+   * 列出该工艺模板实例化的环路（按创建时间倒序）。
+   * 工艺详情「实例环路」Tab 用，支撑「工艺 → 环路」向下钻取。
+   */
+  async listProcessLoops(name: string): Promise<ProcessLoopItem[]> {
+    return unwrap(await api.get(`/api/v1/processes/${encodeURIComponent(name)}/loops`));
   },
 
   /**
