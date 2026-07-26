@@ -128,7 +128,7 @@ export function adaptProcessDefinition(yamlText: string): AdaptedFlow | null {
       }
       templateEdges.push({
         fromNumericId: link.numericId, toNumericId: successTarget,
-        label: onSuccess === 'next' ? '' : onSuccess.startsWith('goto:') ? `→${onSuccess.slice(5)}` : '',
+        label: onSuccess === 'next' ? '' : onSuccess.startsWith('goto:') ? onSuccess.slice(5) : '',
         kind: 'success',
       });
     }
@@ -143,7 +143,7 @@ export function adaptProcessDefinition(yamlText: string): AdaptedFlow | null {
         }
         templateEdges.push({
           fromNumericId: link.numericId, toNumericId: failTarget,
-          label: `门禁失败 ${onGateFail.startsWith('goto:') ? `→${onGateFail.slice(5)}` : ''}`,
+          label: `门禁失败 ${onGateFail.startsWith('goto:') ? onGateFail.slice(5) : ''}`,
           kind: 'fail-goto',
         });
       }
