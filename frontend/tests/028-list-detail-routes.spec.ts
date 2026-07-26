@@ -27,6 +27,8 @@ test.describe('028 列表详情独立路由', () => {
   });
 
   test('事项列表页：URL /#/todos 直接进入可渲染', async ({ page }) => {
+    // 测试目的：验证直接以 hash 路由 /#/todos 进入时，应用能正确挂载列表页且 URL 不被改写
+    // 数据边界：不依赖任何 todo 数据，仅校验页面标题容器渲染（无数据也应渲染空态）
     // 直接以 hash 路由进入事项列表
     await page.goto(`${BASE}/#/todos`);
     await page.waitForTimeout(ROUTE_SETTLE_MS);
@@ -39,6 +41,8 @@ test.describe('028 列表详情独立路由', () => {
   });
 
   test('事项列表页：视图模式切换 Segmented 存在', async ({ page }) => {
+    // 测试目的：验证 028 新增的「卡片/列表」视图模式切换控件在列表页正确挂载
+    // 数据边界：不依赖 todo 数据，仅校验 testid 元素存在
     await page.goto(`${BASE}/#/todos`);
     await page.waitForTimeout(ROUTE_SETTLE_MS);
 
@@ -48,6 +52,8 @@ test.describe('028 列表详情独立路由', () => {
   });
 
   test('事项列表页：切到列表形态后 table 渲染', async ({ page }) => {
+    // 测试目的：验证切换到「列表」形态后 URL 仍保持 /#/todos（切形态不改变路由）
+    // 数据边界：切形态后 table 容器可见，但不要求有数据行（空表头也算通过）
     await page.goto(`${BASE}/#/todos`);
     await page.waitForTimeout(ROUTE_SETTLE_MS);
 
@@ -65,6 +71,8 @@ test.describe('028 列表详情独立路由', () => {
   });
 
   test('事项详情页：URL /#/todos/:id 刷新保持', async ({ page }) => {
+    // 测试目的：验证详情页刷新后 URL 仍保持为 /#/todos/:id，确保用户刷新不会丢失当前查看的详情
+    // 数据边界：使用不存在的 id=999999，验证应用在无数据时也不篡改 URL（应显示空态引导）
     // 直接构造一个事项详情 URL；即便 id 不存在，URL 也应保持不被改写
     // （应用会显示 Empty 引导但不会跳走）
     await page.goto(`${BASE}/#/todos/999999`);
@@ -81,6 +89,8 @@ test.describe('028 列表详情独立路由', () => {
   });
 
   test('环路列表页：URL /#/loops 直接进入可渲染', async ({ page }) => {
+    // 测试目的：验证 /#/loops 列表页直接进入可正确渲染，URL 不被改写
+    // 数据边界：不依赖 loop 数据，仅校验页面标题容器
     await page.goto(`${BASE}/#/loops`);
     await page.waitForTimeout(ROUTE_SETTLE_MS);
 
@@ -91,6 +101,8 @@ test.describe('028 列表详情独立路由', () => {
   });
 
   test('环路详情页：URL /#/loops/:id 刷新保持', async ({ page }) => {
+    // 测试目的：验证环路详情页刷新后 URL 仍保持 /#/loops/:id
+    // 数据边界：使用不存在的 id=999999，验证无数据情况下应用不崩溃、URL 不被改写
     await page.goto(`${BASE}/#/loops/999999`);
     await page.waitForTimeout(ROUTE_SETTLE_MS);
 
@@ -103,6 +115,9 @@ test.describe('028 列表详情独立路由', () => {
   });
 
   test('旧 URL /#/items 不再做兼容重定向，应用不崩溃', async ({ page }) => {
+    // 测试目的：验证 028 明确放弃旧 /#/items 兼容后，应用不会因访问旧 URL 而崩溃
+    // 数据边界：旧 URL 落到 fallback 视图（/#/todos 或停留 /#/items 均视为失败），
+    //          关键约束是应用容器 .ntd-left-rail-slot 仍可见
     // 028 明确不做旧 URL 兼容；访问旧 URL 时应用应落到 fallback 视图（不跳转、不崩溃）
     await page.goto(`${BASE}/#/items`);
     await page.waitForTimeout(ROUTE_SETTLE_MS);
@@ -118,6 +133,8 @@ test.describe('028 列表详情独立路由', () => {
   });
 
   test('事项列表 → 点击行跳转到 /#/todos/:id（如有数据）', async ({ page }) => {
+    // 测试目的：验证列表形态下点击行能跳转到 /#/todos/:id 详情独立路由
+    // 数据边界：列表无数据时 test.skip 跳过（不视为失败）；有数据时校验 URL 形如 /#/todos/<数字>
     await page.goto(`${BASE}/#/todos`);
     await page.waitForTimeout(ROUTE_SETTLE_MS);
 
@@ -141,6 +158,8 @@ test.describe('028 列表详情独立路由', () => {
   });
 
   test('环路列表 → 点击行跳转到 /#/loops/:id（如有数据）', async ({ page }) => {
+    // 测试目的：验证环路列表点击行能跳转到 /#/loops/:id 详情独立路由
+    // 数据边界：列表无数据时 test.skip 跳过；有数据时校验 URL 形如 /#/loops/<数字>
     await page.goto(`${BASE}/#/loops`);
     await page.waitForTimeout(ROUTE_SETTLE_MS);
 
@@ -156,6 +175,8 @@ test.describe('028 列表详情独立路由', () => {
   });
 
   test('详情页浏览器后退回到列表', async ({ page }) => {
+    // 测试目的：验证从列表进入详情后，浏览器后退能回到 /#/todos 列表（pushUrl 写入历史生效）
+    // 数据边界：列表无数据时 test.skip 跳过；有数据时校验后退后 URL 回到 /#/todos（无 id 段）
     await page.goto(`${BASE}/#/todos`);
     await page.waitForTimeout(ROUTE_SETTLE_MS);
 

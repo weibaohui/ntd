@@ -67,6 +67,8 @@ export type Panel = 'list' | 'detail' | 'post';
 
 export type BoardMode = 'memorial' | 'kanban' | 'running' | 'loop_kanban';
 
+// 所有合法 View 字面量集合：parseViewFromSegments 用它做 includes 校验，
+// 决定是否接受 URL 第一段为有效视图；新增 View 时必须同步追加，否则会被当成 fallback。
 const ALL_VIEWS: View[] = [
   'todos', 'loops', 'tasks',
   'dashboard', 'settings', 'memorial',
@@ -74,6 +76,8 @@ const ALL_VIEWS: View[] = [
   'blackboard', 'wiki', 'messages', 'bots', 'processes', 'onboarding',
 ];
 
+// 看板视图四种模式白名单：getInitialBoardMode/syncFromHash 用它过滤 query 的 mode 值，
+// 非法值（如 ?mode=foo）一律 fallback 到 'memorial'，避免让用户停留在未定义视图。
 const ALL_BOARD_MODES: BoardMode[] = ['memorial', 'kanban', 'running', 'loop_kanban'];
 
 /** 从 hash 中提取 path 部分（去 query）。如 `#/todos/123?tab=x` → `/todos/123`。 */
@@ -114,14 +118,22 @@ function parseViewFromSegments(segments: string[]): View {
   return 'todos';
 }
 
-/** 从 path 段指定位置取数字 id；越界或非数字返回 null。 */
+/**
+ * 从 path 段指定位置取数字 id；越界或非数字返回 null。
+ * 边界条件：
+ *   - 索引越界（segments[index] === undefined）→ 返回 null，避免对 undefined 调 Number() 得 NaN
+ *   - 非数字字符串（如 /#/todos/abc）→ Number('abc')=NaN，Number.isFinite 过滤后返回 null
+ *   - 空字符串（连续斜杠 /#/todos//posts/1）→ Number('')=0，会返回 0；
+ *     0 不是合法业务 id，调用方 getInitialTodoDetailId 等会自然走「无 id」分支
+ */
 function getPathIdAt(segments: string[], index: number): number | null {
   const raw = segments[index];
-  if (!raw) return null;
+  if (!raw) return null; // 边界：索引越界或空串，统一返回 null 避免下游处理 0/NaN
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;
 }
 
+/** 应用首屏从 URL 解析当前 View；hash 缺失或非法时 fallback 到 'todos'。 */
 function getInitialView(): View {
   return parseViewFromSegments(getHashPathSegments());
 }
