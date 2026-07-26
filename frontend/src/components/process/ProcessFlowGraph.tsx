@@ -2,10 +2,10 @@
 // 使用泛化的 useFlowLayout 做 dagre 自动排布，TemplateStepCard 渲染环节节点，
 // 复用 FlowVirtualNodes 的 StartNode/EndNode 虚拟节点。
 //
-// 与 LoopFlowGraph（环路实例运行时流程图）的差异：
-// - 节点无交互（模板不编辑）
-// - 边渲染简单（无回环弧线，只有直连或正交折线）
-// - 节点样式不同（TemplateStepCard vs FlowStepNode）
+// 边渲染学习 FlowEdge 的三要素：
+// 1) S 形贝塞尔曲线（锚点：源右边中点 → 目标左边中点）
+// 2) SVG <marker> 三角箭头
+// 3) goto 反向弧线用正交折线（下 → 左 → 上），参照 FlowEdge 回环模式
 
 import {
   StartNode, EndNode,
@@ -14,29 +14,66 @@ import { TemplateStepCard } from '@/components/process/TemplateStepCard';
 import { useFlowLayout } from '@/components/loop-flow/useFlowLayout';
 import type { FlowNodeInput, FlowEdgeInput } from '@/components/loop-flow/useFlowLayout';
 import { phaseColor } from '@/components/loop-flow/useFlowLayout';
-import { NODE_WIDTH, NODE_HEIGHT, START_NODE_ID, END_NODE_ID } from '@/components/loop-flow/flowConstants';
+import { NODE_WIDTH, NODE_HEIGHT, START_NODE_ID, END_NODE_ID, VIRTUAL_NODE_RADIUS } from '@/components/loop-flow/flowConstants';
 import type { AdaptedLink, TemplateEdge, PhaseGroup } from '@/components/process/processFlowAdapter';
 
-/** 计算反向跳转弧线（源节点底部 → U 形弯 → 目标节点底部）。
- *  只用于 template 工艺流程图：goto 边不参与 dagre 布局，单独绘制弧线。 */
-function buildBackArcPath(
-  fx: number, fy: number, // 源节点底部中点
-  tx: number, ty: number, // 目标节点底部中点
-  bendY: number, // 弧线底部 Y（下探距离）
-): string {
-  return `M ${fx},${fy} C ${fx},${fy + bendY} ${tx},${ty + bendY} ${tx},${ty}`;
+/** 边锚点坐标 */
+interface Anchor {
+  x: number;
+  y: number;
+}
+
+/** 从 positions 取出节点左上角位置，再计算指定侧边的中点锚点。 */
+function getAnchor(
+  nodeId: number,
+  side: 'right' | 'left' | 'bottom',
+  positions: Map<number, { x: number; y: number }>,
+  startX: number, startY: number, endX: number, endY: number,
+): Anchor | null {
+  if (nodeId === START_NODE_ID) {
+    return { x: startX + (side === 'right' ? VIRTUAL_NODE_RADIUS : -VIRTUAL_NODE_RADIUS), y: startY };
+  }
+  if (nodeId === END_NODE_ID) {
+    return { x: endX + (side === 'right' ? VIRTUAL_NODE_RADIUS : -VIRTUAL_NODE_RADIUS), y: endY };
+  }
+  const pos = positions.get(nodeId);
+  if (!pos) return null;
+  if (side === 'bottom') {
+    return { x: pos.x + NODE_WIDTH / 2, y: pos.y + NODE_HEIGHT };
+  }
+  return {
+    x: side === 'right' ? pos.x + NODE_WIDTH : pos.x,
+    y: pos.y + NODE_HEIGHT / 2,
+  };
+}
+
+/** 顺向边 S 形贝塞尔曲线。 */
+function buildSCurve(from: Anchor, to: Anchor): string {
+  const dx = Math.abs(to.x - from.x);
+  const cx1 = from.x + dx * 0.4;
+  const cx2 = to.x - dx * 0.4;
+  return `M ${from.x} ${from.y} C ${cx1} ${from.y}, ${cx2} ${to.y}, ${to.x} ${to.y}`;
+}
+
+/** goto 反向弧线：正交折线（源底边中点↓ → 水平走 → 目标底边中点↑）。 */
+function buildGotoPath(from: Anchor, to: Anchor, offsetY: number): string {
+  return `M ${from.x} ${from.y} V ${from.y + offsetY} H ${to.x} V ${to.y}`;
+}
+
+/** 按字符粗略估算标签宽度（中文约 10px、ASCII 约 6px）。 */
+function labelWidth(text: string): number {
+  let w = 0;
+  for (const ch of text) {
+    w += ch.charCodeAt(0) > 0x7F ? 10 : 6;
+  }
+  return w;
 }
 
 export interface ProcessFlowGraphProps {
-  /** 适配后的链接列表。 */
   links: AdaptedLink[];
-  /** dagre 布局用的节点输入。 */
   nodeInputs: FlowNodeInput[];
-  /** dagre 布局用的边输入。 */
   edgeInputs: FlowEdgeInput[];
-  /** 模板边（含标签，用于边标注）。 */
   templateEdges: TemplateEdge[];
-  /** 阶段分组（供阶段标签绘制）。 */
   phaseGroups: PhaseGroup[];
 }
 
@@ -46,7 +83,6 @@ export function ProcessFlowGraph({
   const { positions, width, height, startX, startY, endX, endY, dagreOffsetY } =
     useFlowLayout(nodeInputs, edgeInputs, false, false);
 
-  // 阶段标签在首个链接上方约 22px，需要额外画布高度避免裁切
   const phaseLabelPad = 30;
   const svgHeight = height + phaseLabelPad;
 
@@ -61,76 +97,91 @@ export function ProcessFlowGraph({
   return (
     <div style={{ overflowX: 'auto', overflowY: 'hidden', padding: '12px 0', minHeight: 120 }}>
       <svg width={width + 40} height={svgHeight} style={{ display: 'block' }}>
+        {/* arrow marker 只需定义一次，按 index 命名复用 */}
+        <defs>
+          {templateEdges.map((te, i) => {
+            const isGoto = (te.kind === 'fail-goto' || te.label.includes('goto'))
+              && (() => {
+                const fi = links.findIndex(l => l.numericId === te.fromNumericId);
+                const ti = links.findIndex(l => l.numericId === te.toNumericId);
+                return ti >= 0 && ti < fi;
+              })();
+            return (
+              <marker
+                key={`am-${i}`}
+                id={`parrow-${i}`}
+                viewBox="0 0 10 10" refX={10} refY={5}
+                markerWidth={6} markerHeight={6} orient="auto"
+              >
+                <path d="M 0 0 L 10 5 L 0 10 z" fill={isGoto ? '#d97706' : '#94a3b8'} />
+              </marker>
+            );
+          })}
+        </defs>
+
         <g transform={`translate(0, ${dagreOffsetY + phaseLabelPad})`}>
           {/* 边 */}
           {templateEdges.map((te, i) => {
-            const fromPos = te.fromNumericId === START_NODE_ID
-              ? { x: startX, y: startY }
-              : positions.get(te.fromNumericId) ?? { x: 0, y: 0 };
-            const toPos = te.toNumericId === END_NODE_ID
-              ? { x: endX, y: endY }
-              : positions.get(te.toNumericId) ?? { x: 0, y: 0 };
+            const fromAnchor = getAnchor(te.fromNumericId, 'right', positions, startX, startY, endX, endY);
+            const toAnchor = getAnchor(te.toNumericId, 'left', positions, startX, startY, endX, endY);
+            if (!fromAnchor || !toAnchor) return null;
 
-            const fromCx = te.fromNumericId === START_NODE_ID
-              ? fromPos.x + 20 : fromPos.x + NODE_WIDTH / 2;
-            const fromCy = te.fromNumericId === START_NODE_ID
-              ? fromPos.y + 20 : fromPos.y + NODE_HEIGHT / 2;
-            const toCx = te.toNumericId === END_NODE_ID
-              ? toPos.x + 20 : toPos.x + NODE_WIDTH / 2;
-            const toCy = te.toNumericId === END_NODE_ID
-              ? toPos.y + 20 : toPos.y + NODE_HEIGHT / 2;
-
-            const midX = (fromCx + toCx) / 2;
-            // goto 反向边判定：目标索引小于源索引（在大平序列中跳回前面的环节）
+            // goto 反向边判定
             const fromIndex = links.findIndex(l => l.numericId === te.fromNumericId);
             const toIndex = links.findIndex(l => l.numericId === te.toNumericId);
             const isGoto = (te.kind === 'fail-goto' || te.label.includes('goto'))
               && toIndex >= 0 && toIndex < fromIndex;
 
             if (isGoto) {
-              // 反向跳转弧线：从源节点底部 U 形下探到目标节点底部
-              const fromBottomX = fromCx;
-              const fromBottomY = fromPos.y + NODE_HEIGHT;
-              const toBottomX = toCx;
-              const toBottomY = toPos.y + NODE_HEIGHT;
-              const distance = Math.abs(fromBottomX - toBottomX);
-              const bendY = Math.max(20, distance * 0.15);
-              const path = buildBackArcPath(fromBottomX, fromBottomY, toBottomX, toBottomY, bendY);
+              // ── goto 反向折线（底边锚点 + 正交下探） ──
+              const fb = getAnchor(te.fromNumericId, 'bottom', positions, startX, startY, endX, endY);
+              const tb = getAnchor(te.toNumericId, 'bottom', positions, startX, startY, endX, endY);
+              if (!fb || !tb) return null;
+              const dist = Math.abs(fb.x - tb.x);
+              const offsetY = Math.max(18, dist * 0.12);
+              const path = buildGotoPath(fb, tb, offsetY);
+              const midX = (fb.x + tb.x) / 2;
+              const lbl = te.label.replace('门禁失败 ', '');
+              const lw = labelWidth(lbl);
+              const labelY = fb.y + offsetY;
               return (
                 <g key={`pe-${i}`}>
                   <path
-                    d={path}
-                    fill="none"
-                    stroke="#f59e0b"
-                    strokeWidth={1.5}
-                    strokeDasharray="6,3"
+                    d={path} fill="none" stroke="#d97706"
+                    strokeWidth={1.5} strokeDasharray="6,3"
+                    markerEnd={`url(#parrow-${i})`}
+                  />
+                  {/* 标签白底圆角矩形 */}
+                  <rect
+                    x={midX - lw / 2 - 6} y={labelY - 10}
+                    width={lw + 12} height={18} rx={4}
+                    fill="#ffffff" stroke="#d97706" strokeWidth={1}
                   />
                   <text
-                    x={midX} y={Math.max(fromBottomY, toBottomY) + bendY + 12}
-                    textAnchor="middle" fontSize={9}
-                    fill="#d97706"
-                    style={{ fontFamily: 'system-ui' }}
+                    x={midX} y={labelY + 2}
+                    textAnchor="middle" fontSize={10} fontWeight={600}
+                    fill="#d97706" style={{ fontFamily: 'system-ui' }}
                   >
-                    门禁失败 ↺ {te.label.replace('门禁失败 ', '')}
+                    {lbl}
                   </text>
                 </g>
               );
             }
 
-            // 普通顺向边（水平直线）
+            // ── 顺向边（S 形贝塞尔 + 箭头） ──
+            const path = buildSCurve(fromAnchor, toAnchor);
+            const midX = (fromAnchor.x + toAnchor.x) / 2;
+            const midY = (fromAnchor.y + toAnchor.y) / 2;
             return (
               <g key={`pe-${i}`}>
-                <line
-                  x1={fromCx} y1={fromCy}
-                  x2={toCx} y2={toCy}
-                  stroke="#94a3b8"
-                  strokeWidth={1}
+                <path
+                  d={path} fill="none" stroke="#94a3b8"
+                  strokeWidth={1.5} markerEnd={`url(#parrow-${i})`}
                 />
                 {te.label && (
                   <text
-                    x={midX} y={(fromCy + toCy) / 2 - 8}
-                    textAnchor="middle"
-                    fontSize={9}
+                    x={midX} y={midY - 8}
+                    textAnchor="middle" fontSize={10}
                     fill="#64748b"
                     style={{ fontFamily: 'system-ui' }}
                   >
@@ -145,7 +196,7 @@ export function ProcessFlowGraph({
           <StartNode x={startX} y={startY} />
           <EndNode x={endX} y={endY} />
 
-          {/* 阶段标签（每阶段的第一个环节上方，彩色胶囊条 + 阶段名） */}
+          {/* 阶段标签 */}
           {phaseGroups.map((pg, pi) => {
             const firstLink = links[pg.startIndex];
             if (!firstLink) return null;
@@ -153,7 +204,6 @@ export function ProcessFlowGraph({
             const color = phaseColor(pg.startIndex * 7 + 3);
             return (
               <g key={`ph-${pg.startIndex}`}>
-                {/* 淡色背景横条 */}
                 <rect
                   x={pos.x - 2} y={pos.y - 22}
                   width={NODE_WIDTH + 4} height={18}
@@ -170,7 +220,6 @@ export function ProcessFlowGraph({
                 >
                   ▸ {pg.phaseName}
                 </text>
-                {/* 阶段间分隔竖线（非首个阶段） */}
                 {pi > 0 && (() => {
                   const prevEnd = phaseGroups[pi - 1];
                   const prevLink = links[Math.min(prevEnd.endIndex - 1, links.length - 1)];
