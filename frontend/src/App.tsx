@@ -179,21 +179,6 @@ function AppContent() {
     }
   }, [activeView, selectedId, state.loading, state.todos, dispatch, clearSelection]);
 
-  // 首次进入引导：localStorage 无「已跳过」标记时，从默认 items 视图跳转到 onboarding。
-  // 只在挂载时检测一次（空依赖），避免用户在 onboarding 内点跳转时被反复跳回来。
-  // 用 replaceUrl 不用 pushUrl：不污染历史栈，用户点返回不会回到 onboarding。
-  useEffect(() => {
-    try {
-      const skipped = localStorage.getItem('ntd_onboarding_completed');
-      if (!skipped && activeView === 'items') {
-        replaceUrl('onboarding', {});
-      }
-    } catch {
-      /* localStorage 不可用时静默降级，不阻塞首屏 */
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const handleSelectTodo = (todoId: string | number | null) => {
     if (todoId != null) {
       setSelectedLoopId(null);

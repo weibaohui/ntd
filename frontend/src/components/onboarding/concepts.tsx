@@ -48,141 +48,147 @@ export const CONCEPTS: readonly ConceptNode[] = [
   {
     id: 'process',
     label: '工艺',
-    oneLiner: '可复用的流程蓝图，定义阶段 + 环节 + 门禁 + 产物',
+    oneLiner: '一套「怎么做」的说明书，规定分几步、每步做什么、做完怎么验收',
     icon: <BuildOutlined />,
     navTarget: 'processes',
     fields: [
-      { name: 'name', desc: '唯一标识，如 4p12s-delivery' },
-      { name: 'display_name', desc: '人类可读名称' },
-      { name: 'complexity', desc: '复杂度：light / standard / complex' },
-      { name: 'version', desc: '语义化版本，如 1.0.0' },
-      { name: 'definition', desc: 'YAML 全量定义（phases/steps/gates/artifacts）' },
-      { name: 'category', desc: '分类，如 software / migration' },
+      { name: '名字', desc: '这套工艺叫什么，方便日后找' },
+      { name: '复杂度', desc: '轻量 / 标准 / 复杂，影响推荐用哪个 AI' },
+      { name: '版本号', desc: '工艺改了就升一下，环路装的是哪个版本能追到' },
+      { name: '阶段', desc: '分几个大步骤，比如「需求 → 设计 → 编码 → 验收」' },
+      { name: '环节', desc: '每个阶段里具体要干的小活，比如「写需求文档」' },
+      { name: '门禁', desc: '每步做完怎么检查：看产物 / AI 评 / 人工批 / 脚本查' },
+      { name: '产物', desc: '每步做完要交出什么文件，比如「需求.md」' },
     ],
-    yamlExample: `name: 4p12s-delivery
-display_name: 4 阶段 12 环节交付
-complexity: standard
-version: 1.0.0
-phases:
-  - name: requirement
-    steps:
-      - step_template: gather-requirement
-        gates:
-          - type: human_approval
-  - name: design
-    steps: [...]`,
+    yamlExample: `# 这就是一套工艺的样子
+名字: 4 阶段 12 环节交付
+复杂度: 标准
+版本: 1.0.0
+# 下面是要分几步、每步干啥、做完怎么验收
+阶段:
+  - 名字: 需求
+    环节:
+      - 干啥: 找用户访谈，写需求文档
+        验收: 人工批（产品经理签字）
+  - 名字: 设计
+    环节: [...]  # 后面阶段同上格式`,
   },
   {
     id: 'loop',
     label: '环路',
-    oneLiner: '工艺安装后的运行实例，可重复 / 循环执行',
+    oneLiner: '把工艺装到电脑里跑起来的流水线，可以反复执行、自动循环',
     icon: <RetweetOutlined />,
     navTarget: 'loops',
     fields: [
-      { name: 'process_template_id', desc: '来源工艺模板 ID（回溯）' },
-      { name: 'process_template_version', desc: '实例化时的版本快照' },
-      { name: 'status', desc: 'enabled / paused' },
-      { name: 'loop_phases', desc: '阶段实例（来自工艺 phases）' },
-      { name: 'loop_steps', desc: '环节实例，每个关联一个 todo' },
-      { name: 'loop_triggers', desc: '触发器列表（8 种类型）' },
-      { name: 'limits_config', desc: '限流：max_step_executions / max_total_tokens' },
+      { name: '来源工艺', desc: '这个环路是从哪套工艺装出来的' },
+      { name: '运行状态', desc: '启用 / 暂停，控制能不能被触发器调起' },
+      { name: '阶段', desc: '工艺里的大步骤在这里变成可执行的具体节点' },
+      { name: '环节', desc: '每个节点要干的事，都挂着一个「事项」当干活指令' },
+      { name: '触发器', desc: '8 种开关：手动 / 定时 / 钩子 / 飞书 / 事项驱动 ...' },
+      { name: '限流', desc: '最多跑几次、最多烧多少 token，防 AI 失控狂跑' },
     ],
-    yamlExample: `id: 12
-name: 4 阶段 12 环节交付实例
-process_template_id: 5
-process_template_version: 1.0.0
-status: enabled
-triggers:
-  - type: manual
-  - type: webhook
-    config: { path: /api/v1/loops/12/trigger }
-limits:
-  max_step_executions: 20`,
+    yamlExample: `# 一个环路长这样
+名字: 4 阶段 12 环节交付实例
+从哪套工艺装的: 4 阶段 12 环节交付 (版本 1.0.0)
+状态: 启用
+# 下面是什么开关能把它跑起来
+触发器:
+  - 类型: 手动          # 你点一下才跑
+  - 类型: 钚子          # 别人 POST 这个 URL 就跑
+  - 类型: 飞书命令      # 在飞书群里发 /ntd run 就跑
+# 防它失控狂跑的保险
+限流:
+  最多跑几次: 20
+  最多烧多少 token: 100000`,
   },
   {
     id: 'todo',
     label: '事项',
-    oneLiner: '每个环节的具体执行载体，含 prompt / 执行器 / 模型 / skill',
+    oneLiner: '环路里每一步要干的活，指定用哪个工具、听谁的指挥、做完算不算合格',
     icon: <UnorderedListOutlined />,
     navTarget: 'items',
     fields: [
-      { name: 'kind', desc: "item 一次性事项 / step 可复用环节" },
-      { name: 'executor', desc: '执行器标识，如 claudecode' },
-      { name: 'expert_name', desc: '专家/团队名，如 product-manager' },
-      { name: 'model', desc: '任务级模型，覆盖执行器默认' },
-      { name: 'prompt', desc: '执行指令文本' },
-      { name: 'skill_names', desc: '绑定的 skill 名列表' },
-      { name: 'acceptance_criteria', desc: '验收标准文本' },
+      { name: '类型', desc: '一次性活 / 可复用环节，决定跑完就扔还是能反复用' },
+      { name: '执行器', desc: '用哪把工具干活：Claude Code / MobileCoder ...' },
+      { name: '专家', desc: '套哪个人设：产品经理 / 架构师 / 评师 ...' },
+      { name: '模型', desc: '具体跑哪个 LLM，不填就用执行器的默认' },
+      { name: '指令', desc: '给 AI 的干活命令文本，比如「访谈用户，写需求文档」' },
+      { name: '技能', desc: '绑定的 skill 列表，给 AI 加的能力包' },
+      { name: '验收标准', desc: '做完怎么算合格，文字描述' },
     ],
-    yamlExample: `id: 42
-title: 收集需求
-kind: step
-executor: claudecode
-expert_name: product-manager
-model: claude-sonnet-5
-prompt: 与用户访谈，输出需求文档
-skill_names: [requirement-gathering]
-acceptance_criteria: 需求文档含用户故事 + 验收条件`,
+    yamlExample: `# 一条事项就是给 AI 的一份干活指令
+编号: 42
+标题: 收集需求
+类型: 可复用环节     # 跑完不扔，能反复用
+用哪把工具: Claude Code
+套哪个人设: 产品经理
+跑哪个模型: claude-sonnet-5    # 不填就用工具的默认
+指令: 找用户访谈，写一份需求文档
+技能: [需求收集, 用户故事]
+验收标准: 需求文档含用户故事 + 验收条件`,
   },
   {
     id: 'task',
     label: '任务',
-    oneLiner: '用户选择环路执行一次的意图，是触发动作',
+    oneLiner: '你想让 AI 干的一件事，挑一个环路去执行一次',
     icon: <RocketOutlined />,
     navTarget: 'tasks',
     fields: [
-      { name: 'title', desc: '任务标题（从需求首行截取）' },
-      { name: 'description', desc: '完整需求描述' },
-      { name: 'loop_id', desc: '关联的环路 ID' },
-      { name: 'status', desc: 'pending / running / success / failed' },
-      { name: 'template_id', desc: '来源工艺模板 ID' },
+      { name: '标题', desc: '任务叫什么，从你写的需求首行截出来' },
+      { name: '需求', desc: '完整描述你想让 AI 干什么' },
+      { name: '环路', desc: '挑哪个环路去执行这一次' },
+      { name: '状态', desc: '待执行 / 进行中 / 已完成 / 失败' },
+      { name: '工艺', desc: '记一下这任务是用哪套工艺跑的，方便事后追' },
     ],
-    yamlExample: `id: 8
-title: 给后端加一个新 API
-description: 需要给后端加一个 /api/v1/tasks 的 POST 接口...
-loop_id: 12
-status: success
-template_id: 5`,
+    yamlExample: `# 一个任务就是你想让 AI 干的一件事
+编号: 8
+标题: 给后端加一个新 API
+需求: 需要给后端加一个 /api/v1/tasks 的 POST 接口...
+挑哪个环路去跑: 4 阶段 12 环节交付实例
+状态: 已完成
+用的是哪套工艺: 4 阶段 12 环节交付`,
   },
   {
     id: 'executor',
     label: '执行器',
-    oneLiner: '运行时 CLI 工具（claudecode / mobilecoder / opencode ...）',
+    oneLiner: '真正干活的那把工具，比如 Claude Code、MobileCoder 这些命令行程序',
     icon: <MacCommandOutlined />,
     navTarget: 'settings',
     fields: [
-      { name: 'name', desc: '唯一标识，如 claudecode' },
-      { name: 'path', desc: 'CLI 可执行文件路径' },
-      { name: 'default_model', desc: '执行器级默认模型' },
-      { name: 'is_default', desc: '是否系统默认执行器' },
-      { name: 'session_dir', desc: '会话目录' },
+      { name: '名字', desc: '这把工具叫什么，比如 claudecode' },
+      { name: '路径', desc: '命令行程序装在电脑哪个位置' },
+      { name: '默认模型', desc: '不特意指定时，这把工具默认跑哪个 LLM' },
+      { name: '是否默认', desc: '是不是系统首选的那把工具' },
     ],
-    yamlExample: `id: 1
-name: claudecode
-display_name: Claude Code
-path: /usr/local/bin/claude
-default_model: claude-sonnet-5
-is_default: true`,
+    yamlExample: `# 一把执行器就是一个命令行工具
+编号: 1
+名字: claudecode
+显示名: Claude Code
+程序装在哪: /usr/local/bin/claude
+默认跑哪个模型: claude-sonnet-5
+是不是系统首选: 是`,
   },
   {
     id: 'expert',
     label: '专家',
-    oneLiner: '人格 + Skills 组合（product-manager / architect / code-reviewer ...）',
+    oneLiner: '给 AI 套上一层「人设」，让它表现得像产品经理、架构师等某一类角色',
     icon: <TeamOutlined />,
     navTarget: 'settings',
     fields: [
-      { name: 'name', desc: '唯一标识，如 product-manager' },
-      { name: 'description', desc: '专家描述' },
-      { name: 'skills', desc: '绑定的 skill 列表' },
-      { name: 'agent_md', desc: 'Agent MD 人格配置' },
+      { name: '名字', desc: '这个人设叫什么，比如 product-manager' },
+      { name: '描述', desc: '一句话说这位专家擅长什么' },
+      { name: '技能', desc: '绑定的 skill 列表，给 AI 加的能力包' },
+      { name: '人设档案', desc: 'Agent MD 写的「你是一位资深产品经理...」指令' },
     ],
-    yamlExample: `name: product-manager
-description: 产品经理专家，擅长需求分析
-skills:
-  - requirement-gathering
-  - user-story-writing
-agent_md: |
-  你是一位资深产品经理...`,
+    yamlExample: `# 一位专家就是给 AI 套的人设 + 能力包
+名字: 产品经理
+描述: 擅长需求分析、写用户故事
+技能:
+  - 需求收集
+  - 用户故事
+人设档案: |
+  你是一位资深产品经理，擅长跟用户访谈、
+  挖掘真实需求，输出清晰的用户故事和验收条件...`,
   },
 ] as const;
 
