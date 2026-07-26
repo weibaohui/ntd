@@ -9,10 +9,12 @@ import { useExecutionEvents } from './hooks/useExecutionEvents';
 import { useViewState, viewToNavKey, type View } from './hooks/useViewState';
 import { ThemeProvider, useTheme } from '@/hooks/useTheme';
 import { ConsolePanelProvider, useConsolePanel } from '@/hooks/useConsolePanel';
-import { ItemsPage } from '@/components/ItemsPage';
+// 028-列表详情独立路由：todos/loops 用 path 段区分列表/详情，旧 ItemsPage/TodoPage/LoopPage 已删除
+import { TodoListPage } from '@/components/todo-list/TodoListPage';
+import { TodoDetailPage } from '@/components/TodoDetailPage';
+import { LoopListPage } from '@/components/loop-list';
+import { LoopDetailPage } from '@/components/LoopDetailPage';
 import { TodoPostPage } from './components/todo-post';
-import { LoopPage } from './components/LoopPage';
-import { LoopMobilePage } from './components/mobile/LoopMobilePage';
 import { ProcessPage } from './components/ProcessPage';
 import { TasksPage } from './components/tasks/TasksPage';
 import { ConceptNavPage } from './components/onboarding/ConceptNavPage';
@@ -48,7 +50,9 @@ const { Content } = Layout;
 
 function AppContent() {
   const { state, dispatch, clearSelection } = useApp();
-  const { activeView, selectedId, activePanel, selectedRecordId, processName, showView, pushUrl, replaceUrl, backToList } = useViewState();
+  // 028：路由统一为 /#/todos + /#/todos/:id + /#/todos/:id/posts/:rid + /#/loops + /#/loops/:id
+  // todoDetailId / loopDetailId / postRecordId 均来自 path 段，刷新可恢复
+  const { activeView, todoDetailId, loopDetailId, postRecordId, activePanel, processName, showView, pushUrl, replaceUrl, backToList } = useViewState();
   const { themeMode, toggleTheme } = useTheme();
   // 底部执行日志面板的显隐开关：来自设置-界面显示，关掉后即使有运行中任务也不渲染面板。
   const { visible: consolePanelVisible, setVisible: setConsolePanelVisible } = useConsolePanel();
@@ -57,6 +61,9 @@ function AppContent() {
   const [consolePanelDismissed, setConsolePanelDismissed] = useState(false);
 
   const [todoModalOpen, setTodoModalOpen] = useState(false);
+  // 028：列表页 onEditTodo 触发时设置 editingTodo，TodoDrawer 切到编辑模式（todo != null）
+  // 新建模式（顶部「新建」按钮）时 editingTodo 保持 null，TodoDrawer 走创建分支
+  const [editingTodo, setEditingTodo] = useState<import('@/types').Todo | null>(null);
   const [smartCreateOpen, setSmartCreateOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [wikiChatMode, setWikiChatMode] = useState<WikiChatMode>(() => {
@@ -79,19 +86,17 @@ function AppContent() {
   });
   const [appConfig, setAppConfig] = useState<Config | null>(null);
   const [loopCreateModalOpen, setLoopCreateModalOpen] = useState(false);
-  const [selectedLoopId, setSelectedLoopId] = useState<number | null>(null);
+  // 028：loopDetailId 已从 URL path 段派生，不再需要 selectedLoopId React state
   const [loopUpdateCount, setLoopUpdateCount] = useState(0);
-  // 刷新回调：触发 loopUpdateCount 递增，各子组件通过 useEffect 监听该值自动重载数据
-  const [forcedListMode, setForcedListMode] = useState<'item' | 'loop' | undefined>(undefined);
+  // 刷新回调：触发 loopUpdateCount 递增，LoopListPage/LoopDetailPage 通过 useEffect 监听该值自动重载
 
   const navKey = useMemo<LeftRailKey>(() => {
     return viewToNavKey(activeView) as LeftRailKey;
   }, [activeView]);
   const isMobile = useIsMobile();
 
-  const effectiveMobilePanel = isMobile && activeView !== 'items' && activeView !== 'loops'
-    ? 'detail'
-    : activePanel === 'post' ? 'list' : activePanel;
+  // 028：移动端 panel 由 useViewState 派生（todoDetailId/loopDetailId != null 时为 'detail'），
+  // 其他视图移动端默认 'detail'。原 effectiveMobilePanel 已合并到 activePanel。
 
   const [panelCollapsed, setPanelCollapsed] = useState(() => {
     try {
@@ -153,49 +158,40 @@ function AppContent() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // URL → React state 恢复：根据 URL 中的 view/id 参数同步选中态。
-  // 合并为单个 useEffect，监听 activeView、selectedId、state.loading 和 state.todos。
-  // items 视图需要校验 todo 是否存在（可能已被删除），loops 和其他视图直接同步。
+  // URL → React state 恢复：todos 视图需要让 selectedTodoId 与 URL 中的 todoDetailId 保持一致。
+  // 028：loopDetailId 已直接由 useViewState 派生，App.tsx 不再维护 selectedLoopId state。
+  // todos 视图校验 todo 是否存在（可能已被删除），不存在时显式清空避免详情页残留。
   useEffect(() => {
     if (state.loading) return;
-    if (activeView === 'items') {
-      // items 视图必须让 selectedTodoId 与 URL 中的 id 保持一致：
+    if (activeView === 'todos') {
       // 找到有效 todo 时选中它；id 缺失或指向已删除的 todo 时显式清空，
-      // 避免 TodoPage/TodoMobilePage 残留上一次选中的详情态。
-      const matched = selectedId != null && state.todos.some(t => t.id === selectedId);
-      // matched 为 true 时 payload 是 selectedId，否则 null（清空旧选中态）
-      dispatch({ type: 'SELECT_TODO', payload: matched ? selectedId : null });
-      // items 视图下清空 loop 选中态，防止跨视图状态混淆
-      setSelectedLoopId(null);
-    } else if (activeView === 'loops' && selectedId != null) {
-      setSelectedLoopId(selectedId);
-      dispatch({ type: 'SELECT_TODO', payload: null });
-      clearSelection();
+      // 避免 TodoDetailPage 残留上一次选中的详情态。
+      const matched = todoDetailId != null && state.todos.some(t => t.id === todoDetailId);
+      dispatch({ type: 'SELECT_TODO', payload: matched ? todoDetailId : null });
     } else {
-      setSelectedLoopId(null);
-      if (activeView !== 'loops') {
-        dispatch({ type: 'SELECT_TODO', payload: null });
-      }
+      // 非 todos 视图清空 todo 选中态，防止跨视图状态混淆
+      dispatch({ type: 'SELECT_TODO', payload: null });
     }
-  }, [activeView, selectedId, state.loading, state.todos, dispatch, clearSelection]);
+  }, [activeView, todoDetailId, state.loading, state.todos, dispatch]);
 
-  const handleSelectTodo = (todoId: string | number | null) => {
-    if (todoId != null) {
-      setSelectedLoopId(null);
-      dispatch({ type: 'SELECT_TODO', payload: Number(todoId) });
-      replaceUrl('items', { id: Number(todoId), panel: 'detail' });
-    }
-  };
+  // 028：选中事项 → 跳转到事项详情独立页 `/#/todos/:id`。
+  // 立即 dispatch 让 TodoDetail 内部响应；URL 同步由 pushUrl 完成，history.back 可回到列表
+  const handleSelectTodo = useCallback((todoId: string | number | null) => {
+    if (todoId == null) return;
+    dispatch({ type: 'SELECT_TODO', payload: Number(todoId) });
+    pushUrl('todos', { id: Number(todoId) });
+  }, [dispatch, pushUrl]);
 
   const handleOpenPost = useCallback((todoId: number, recordId: number) => {
-    pushUrl('items', { id: todoId, panel: 'post', record: recordId });
+    // 028：帖子页用 path 段 /#/todos/:id/posts/:rid，刷新可恢复
+    pushUrl('todos', { id: todoId, recordId });
   }, [pushUrl]);
 
+  // 028：选中环路 → 跳转到环路详情独立页 `/#/loops/:id`
   const handleSelectLoop = useCallback((loopId: number) => {
     clearSelection();
-    setSelectedLoopId(loopId);
-    replaceUrl('loops', { id: loopId, panel: 'detail' });
-  }, [clearSelection, replaceUrl]);
+    pushUrl('loops', { id: loopId });
+  }, [clearSelection, pushUrl]);
 
   // 跳转来源工艺详情：环路详情「来源工艺」行的目标。
   // 携带 name 参数，ProcessPage 据此自动打开该工艺的详情 Modal。
@@ -214,33 +210,30 @@ function AppContent() {
   };
 
   const handleShowView = useCallback((view: View) => {
-    setSelectedLoopId(null);
     clearSelection();
     showView(view);
   }, [clearSelection, showView]);
 
   const showSettings = useCallback((tab: string | null) => {
-    setSelectedLoopId(null);
     clearSelection();
     showView('settings', { tab });
   }, [clearSelection, showView]);
 
   const showStandaloneSettingsPanel = useCallback((view: View) => {
-    setSelectedLoopId(null);
     clearSelection();
     pushUrl(view);
   }, [clearSelection, pushUrl]);
 
+  // 028：左侧导航点击「事项」/「环路」直接 replaceUrl 到对应列表页（path 段无 id）
+  // 不再需要 forcedListMode，因为 todos 和 loops 是独立 View 类型，列表/详情由 path 段区分
   const showListSection = useCallback((mode: 'item' | 'loop') => {
-    setSelectedLoopId(null);
     clearSelection();
-    setForcedListMode(mode);
-    replaceUrl(mode === 'loop' ? 'loops' : 'items', { panel: 'list' });
+    replaceUrl(mode === 'loop' ? 'loops' : 'todos');
   }, [replaceUrl, clearSelection]);
 
   const handleRailSelect = useCallback((key: LeftRailKey) => {
     setNavDrawerOpen(false);
-    if (key === 'items') { showListSection('item'); return; }
+    if (key === 'todos') { showListSection('item'); return; }
     if (key === 'loops') { showListSection('loop'); return; }
     if (key === 'processes') { handleShowView('processes'); return; }
     if (key === 'tasks') { handleShowView('tasks'); return; }
@@ -326,69 +319,69 @@ function AppContent() {
             transition: 'height 0.3s ease, padding-bottom 0.3s ease',
           }}
         >
-          {/* 帖子详情页 */}
-          {activeView === 'items' && activePanel === 'post' && selectedId != null && selectedRecordId != null && (
+          {/* 帖子详情页（URL: /#/todos/:id/posts/:rid） */}
+          {activeView === 'todos' && postRecordId != null && todoDetailId != null && (
             <TodoPostPage
-              todoId={selectedId}
-              recordId={selectedRecordId}
-              onBack={() => replaceUrl('items', { id: selectedId, panel: 'list' })}
+              todoId={todoDetailId}
+              recordId={postRecordId}
+              onBack={() => replaceUrl('todos', { id: todoDetailId })}
             />
           )}
 
-          {/* 事项页面（合并：卡片墙 / 列表，由 ItemsPage 切换；桌面列表=双栏，移动列表=TodoMobilePage） */}
-          {activeView === 'items' && activePanel !== 'post' && (
-            <ItemsPage
-              selectedTodoId={state.selectedTodoId}
-              onOpenCreateModal={() => setTodoModalOpen(true)}
-              onSelectTodo={handleSelectTodo}
-              onSelectLoop={handleSelectLoop}
-              onCreateLoop={() => setLoopCreateModalOpen(true)}
-              forcedListMode={forcedListMode}
-              onListModeChange={() => setForcedListMode(undefined)}
-              effectiveMobilePanel={effectiveMobilePanel}
+          {/* 事项详情独立页（URL: /#/todos/:id） */}
+          {/* 028：详情独立路由，不复用旧双栏；TodoDetail 内部读 state.selectedTodoId，App.tsx 同步即可 */}
+          {activeView === 'todos' && todoDetailId != null && postRecordId == null && (
+            <TodoDetailPage
+              todoId={todoDetailId}
+              onBack={() => backToList()}
               onOpenPost={handleOpenPost}
-              isMobile={isMobile}
             />
           )}
 
-          {/* 环路页面 */}
-          {activeView === 'loops' && (
-            isMobile ? (
-              <LoopMobilePage
-                selectedLoopId={selectedLoopId}
-                tags={state.tags}
-                onOpenCreateModal={() => setTodoModalOpen(true)}
-                onSelectTodo={handleSelectTodo}
-                loopUpdateCount={loopUpdateCount}
-                onSelectLoop={handleSelectLoop}
-                onCreateLoop={() => setLoopCreateModalOpen(true)}
-                forcedListMode={forcedListMode}
-                onListModeChange={() => setForcedListMode(undefined)}
-                onLoopChanged={() => setLoopUpdateCount(c => c + 1)}
-                effectiveMobilePanel={effectiveMobilePanel}
-                workspaceId={state.selectedWorkspace}
-              />
-            ) : (
-              <LoopPage
-                selectedLoopId={selectedLoopId}
-                tags={state.tags}
-                onOpenCreateModal={() => setTodoModalOpen(true)}
-                onSelectTodo={handleSelectTodo}
-                loopUpdateCount={loopUpdateCount}
-                onSelectLoop={handleSelectLoop}
-                onCreateLoop={() => setLoopCreateModalOpen(true)}
-                forcedListMode={forcedListMode}
-                onListModeChange={() => setForcedListMode(undefined)}
-                onLoopChanged={() => setLoopUpdateCount(c => c + 1)}
-                effectiveMobilePanel={effectiveMobilePanel}
-                workspaceId={state.selectedWorkspace}
-                onOpenProcess={handleOpenProcess}
-              />
-            )
+          {/* 事项列表页（URL: /#/todos，卡片/列表形态切换由 TodoListPage 内部管理） */}
+          {activeView === 'todos' && todoDetailId == null && postRecordId == null && (
+            <TodoListPage
+              onSelectTodo={(id) => handleSelectTodo(id)}
+              onSelectLoop={handleSelectLoop}
+              onOpenCreateModal={() => {
+                // 新建模式：editingTodo 保持 null，TodoDrawer 走创建分支
+                setEditingTodo(null);
+                setTodoModalOpen(true);
+              }}
+              onEditTodo={(todo) => {
+                // 编辑模式：设置 editingTodo，TodoDrawer 切到编辑分支
+                // TodoCenterItem extends Todo，可直接当 Todo 用
+                setEditingTodo(todo);
+                setTodoModalOpen(true);
+              }}
+            />
+          )}
+
+          {/* 环路详情独立页（URL: /#/loops/:id） */}
+          {activeView === 'loops' && loopDetailId != null && (
+            <LoopDetailPage
+              loopId={loopDetailId}
+              workspaceId={state.selectedWorkspace}
+              tags={state.tags}
+              onBack={() => backToList()}
+              onOpenProcess={handleOpenProcess}
+              onSelectTodo={(todoId) => handleSelectTodo(todoId)}
+              onLoopChanged={() => setLoopUpdateCount(c => c + 1)}
+            />
+          )}
+
+          {/* 环路列表页（URL: /#/loops） */}
+          {activeView === 'loops' && loopDetailId == null && (
+            <LoopListPage
+              onCreateLoop={() => setLoopCreateModalOpen(true)}
+              onSelectLoop={handleSelectLoop}
+              onLoopChanged={() => setLoopUpdateCount(c => c + 1)}
+              loopUpdateCount={loopUpdateCount}
+            />
           )}
 
           {/* 非事项/环路视图（事项页单独在上块渲染，不能落到 Dashboard 兜底） */}
-          {activeView !== 'items' && activeView !== 'loops' && (
+          {activeView !== 'todos' && activeView !== 'loops' && (
             <div
               style={{
                 flex: 1,
@@ -470,17 +463,22 @@ function AppContent() {
       </Drawer>
 
       {/* Todo Drawer */}
+      {/* 028：todo prop 改为 editingTodo，支持列表页 onEditTodo 触发的编辑模式 */}
       <TodoDrawer
         open={todoModalOpen}
-        todo={null}
+        todo={editingTodo}
         tags={state.tags}
-        onClose={() => setTodoModalOpen(false)}
+        onClose={() => {
+          setTodoModalOpen(false);
+          // 关闭时清空 editingTodo，避免下次打开仍处于编辑模式
+          setEditingTodo(null);
+        }}
         onSaved={() => {
           const wid = state.selectedWorkspace;
           if (wid == null) return;
           db.getAllTodos(wid).then(todos => {
             dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
-            // 通知 ItemsPage 刷新列表（TodoList 用 cache guard，需要主动触发）
+            // 通知 TodoListPage 刷新列表（卡片/列表两种形态都监听此事件）
             window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
           });
         }}
@@ -537,7 +535,8 @@ function AppContent() {
         mode="create"
         tags={state.tags}
         onSaved={(newLoopId) => {
-          if (newLoopId) setSelectedLoopId(newLoopId);
+          // 028：创建成功后跳转到环路详情独立页 /#/loops/:id
+          if (newLoopId) pushUrl('loops', { id: newLoopId });
           setLoopUpdateCount(c => c + 1);
           setLoopCreateModalOpen(false);
         }}

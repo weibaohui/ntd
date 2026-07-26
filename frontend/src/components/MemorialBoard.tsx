@@ -31,7 +31,7 @@ const TIME_OPTIONS: { label: string; value: number }[] = [
 
 export function MemorialBoard() {
   const { state, dispatch } = useApp();
-  const { boardMode, replaceUrl } = useViewState();
+  const { boardMode, replaceUrl, pushUrl } = useViewState();
   const handleBoardModeChange = (mode: BoardMode) => {
     replaceUrl('memorial', { mode });
   };
@@ -194,9 +194,10 @@ export function MemorialBoard() {
 
   // 环路执行轨迹流程图里点击事项标题：选中该事项并跳到事项详情页。
   // 看板是只读聚合视图，钻取到具体事项才算完成「环路 → 事项」的链路闭环。
+  // 028：详情独立路由 /#/todos/:id，用 pushUrl 让 history.back 回到看板
   const handleOpenTodoFromFlow = (todoId: number) => {
     dispatch({ type: 'SELECT_TODO', payload: todoId });
-    replaceUrl('items', { id: todoId, panel: 'detail' });
+    pushUrl('todos', { id: todoId });
   };
 
   const filteredItems = useMemo(() => {

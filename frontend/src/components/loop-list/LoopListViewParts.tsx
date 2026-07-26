@@ -1,0 +1,258 @@
+// LoopListViewParts — LoopListView 的拆分子模块（响应 028 PR review 的函数体 ≤30 行规范）。
+//
+// 拆分原则：把列定义、行操作菜单、状态渲染、批量按钮拆到独立函数/组件，
+// 让 LoopListView 主函数仅负责组合，函数体保持简短。
+//
+// 1. LOOP_STATUS_META：环路状态 → 中文 + 颜色映射
+// 2. renderLoopStatusTag：状态 Tag 渲染
+// 3. renderTagList：标签列表渲染（最多展示 max 个）
+// 4. buildRowActions：单行操作菜单构建
+// 5. buildColumns：列定义构建（useMemo 包装，避免每次渲染重建）
+// 6. BatchButton：批量操作按钮组件
+
+import type { ReactNode } from 'react';
+import { Button, Dropdown, Tag } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
+import {
+  CopyOutlined,
+  DeleteOutlined,
+  MoreOutlined,
+  PlayCircleOutlined,
+  SettingOutlined,
+} from '@ant-design/icons';
+import { formatRelativeTime } from '@/utils/datetime';
+import type { Tag as TagType } from '@/types';
+import type { LoopListItem } from '@/types/loop';
+
+/** 环路状态 → 中文 + 颜色；与 LoopStudioDetailPanel 的状态展示保持一致。 */
+export const LOOP_STATUS_META: Record<string, { label: string; color: string }> = {
+  enabled: { label: '已启用', color: 'success' },
+  paused: { label: '已暂停', color: 'default' },
+  disabled: { label: '已禁用', color: 'error' },
+};
+
+/** 把 status 串映射为 Tag；未知状态原样返回，便于扩展。 */
+export function renderLoopStatusTag(status?: string | null): ReactNode {
+  if (!status) return '-';
+  const meta = LOOP_STATUS_META[status];
+  if (!meta) return status;
+  return <Tag color={meta.color}>{meta.label}</Tag>;
+}
+
+/** 把 tag_ids 解析成 Tag 列表，最多展示 max 个，超出以 +N 显示。 */
+export function renderTagList(tagIds: number[] | undefined, tags: TagType[], max = 3): ReactNode {
+  if (!tagIds || tagIds.length === 0) return '-';
+  const resolved = tagIds
+    .map(id => tags.find(t => t.id === id))
+    .filter((t): t is TagType => !!t);
+  if (resolved.length === 0) return '-';
+  const visible = resolved.slice(0, max);
+  const overflow = resolved.length - visible.length;
+  return (
+    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+      {visible.map(t => (
+        <Tag key={t.id} color={t.color}>{t.name}</Tag>
+      ))}
+      {overflow > 0 && <Tag>+{overflow}</Tag>}
+    </span>
+  );
+}
+
+interface BuildRowActionsArgs {
+  onTrigger: (loop: LoopListItem) => void;
+  onDuplicate: (loop: LoopListItem) => void;
+  onDelete: (loop: LoopListItem) => void;
+  onToggleStatus: (loop: LoopListItem) => void;
+}
+
+/**
+ * 构建单行操作菜单项：触发 / 复制 / 切换状态 / 删除。
+ * 抽成纯函数避免 LoopListView 主函数膨胀。
+ */
+export function buildRowActions(
+  loop: LoopListItem,
+  { onTrigger, onDuplicate, onDelete, onToggleStatus }: BuildRowActionsArgs,
+) {
+  return [
+    {
+      key: 'trigger',
+      label: '触发',
+      icon: <PlayCircleOutlined />,
+      onClick: () => onTrigger(loop),
+    },
+    {
+      key: 'duplicate',
+      label: '复制',
+      icon: <CopyOutlined />,
+      onClick: () => onDuplicate(loop),
+    },
+    {
+      key: 'toggle-status',
+      label: loop.status === 'enabled' ? '暂停' : '启用',
+      icon: <SettingOutlined />,
+      onClick: () => onToggleStatus(loop),
+    },
+    {
+      key: 'delete',
+      label: '删除',
+      icon: <DeleteOutlined />,
+      danger: true,
+      onClick: () => onDelete(loop),
+    },
+  ];
+}
+
+interface BuildColumnsArgs {
+  tags: TagType[];
+  onSelectLoop: (id: number) => void;
+  onTrigger: (loop: LoopListItem) => void;
+  onDuplicate: (loop: LoopListItem) => void;
+  onDelete: (loop: LoopListItem) => void;
+  onToggleStatus: (loop: LoopListItem) => void;
+}
+
+/**
+ * 构建 Table 列定义。
+ * 抽成 useMemo 包装的函数，避免每次渲染重建列对象。
+ */
+export function buildColumns({
+  tags,
+  onSelectLoop,
+  onTrigger,
+  onDuplicate,
+  onDelete,
+  onToggleStatus,
+}: BuildColumnsArgs): ColumnsType<LoopListItem> {
+  return [
+    {
+      title: 'ID',
+      dataIndex: 'id',
+      width: 70,
+      fixed: 'left',
+      render: (id: number) => (
+        <span style={{ fontFamily: 'monospace', color: 'var(--color-text-tertiary)' }}>
+          #{id}
+        </span>
+      ),
+    },
+    {
+      title: '名称',
+      dataIndex: 'name',
+      ellipsis: true,
+      render: (name: string, record) => (
+        <a
+          onClick={(e) => { e.stopPropagation(); onSelectLoop(record.id); }}
+          style={{ color: 'var(--color-text)' }}
+        >
+          {name}
+        </a>
+      ),
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: 100,
+      render: renderLoopStatusTag,
+    },
+    {
+      title: '标签',
+      dataIndex: 'tag_ids',
+      width: 180,
+      render: (tagIds: number[]) => renderTagList(tagIds, tags),
+    },
+    {
+      title: '环节',
+      dataIndex: 'step_count',
+      width: 70,
+      align: 'center' as const,
+    },
+    {
+      title: '触发次数',
+      dataIndex: 'trigger_count',
+      width: 80,
+      align: 'center' as const,
+    },
+    {
+      title: '待审批',
+      dataIndex: 'pending_approval_count',
+      width: 80,
+      align: 'center' as const,
+      render: (n: number) => (n > 0 ? <Tag color="warning">{n}</Tag> : '-'),
+    },
+    {
+      title: '最近执行',
+      dataIndex: 'last_execution_status',
+      width: 100,
+      render: (s?: string | null) => s ? <Tag color={s === 'success' ? 'success' : s === 'failed' ? 'error' : 'processing'}>{s}</Tag> : '-',
+    },
+    {
+      title: '执行时间',
+      dataIndex: 'last_execution_at',
+      width: 130,
+      render: (t?: string | null) => t ? formatRelativeTime(t) : '-',
+    },
+    {
+      title: '更新时间',
+      dataIndex: 'updated_at',
+      width: 130,
+      render: (t: string | null) => t ? formatRelativeTime(t) : '-',
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 80,
+      fixed: 'right' as const,
+      render: (_, record) => (
+        <Dropdown menu={{ items: buildRowActions(record, { onTrigger, onDuplicate, onDelete, onToggleStatus }) }} trigger={['click']}>
+          <Button
+            size="small"
+            type="text"
+            icon={<MoreOutlined />}
+            onClick={(e) => e.stopPropagation()}
+            aria-label="更多操作"
+          />
+        </Dropdown>
+      ),
+    },
+  ];
+}
+
+interface BatchButtonProps {
+  selectedIds: number[];
+  batchActions: { key: string; label: string; icon?: ReactNode; danger?: boolean; onClick: (ids: number[]) => void }[];
+}
+
+/**
+ * 批量按钮：受 selectedIds 控制，空选时禁用。
+ * 抽为子组件让 LoopListView 主函数保持在 30 行内。
+ */
+export function BatchButton({
+  selectedIds,
+  batchActions,
+}: BatchButtonProps) {
+  if (batchActions.length === 0) return null;
+  const disabled = selectedIds.length === 0;
+  const items = batchActions.map(action => ({
+    key: action.key,
+    label: action.label,
+    icon: action.icon,
+    danger: action.danger,
+    onClick: () => action.onClick(selectedIds),
+    disabled,
+  }));
+  return (
+    <Dropdown menu={{ items }} trigger={['click']} disabled={disabled}>
+      <Button size="small" disabled={disabled} data-testid="loop-list-batch-trigger">
+        批量 <MoreOutlined style={{ fontSize: 10 }} />
+      </Button>
+    </Dropdown>
+  );
+}
+
+/** 整行点击跳转详情：抽为独立函数便于测试。 */
+export function buildOnRow(onSelectLoop: (id: number) => void) {
+  return (record: LoopListItem) => ({
+    onClick: () => onSelectLoop(record.id),
+    style: { cursor: 'pointer' },
+  });
+}

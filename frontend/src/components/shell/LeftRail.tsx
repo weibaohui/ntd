@@ -25,8 +25,20 @@ import {
 import { TfiBlackboard } from 'react-icons/tfi';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
+/**
+ * LeftRail 导航项 key 联合类型。
+ *
+ * 导航 key 契约（028 后）：
+ *   - 顶级视图 key（'todos' / 'loops' / 'tasks' / 'processes' / 'messages' /
+ *     'dashboard' / 'memorial' / 'blackboard' / 'onboarding'）必须与
+ *     useViewState.ts 的 View 联合类型一一对应，确保 activeView → navKey 不会失配。
+ *   - settings_* 是「设置」面板下的子标签页 key，对应 SettingsPage 内部分支；
+ *     顶级 'settings' 由 handleRailSelect 走 showSettings(null) 进入默认标签。
+ *   - viewToNavKey 在 useViewState 内提供 View → LeftRailKey 的映射，
+ *     修改本类型时需同步调整该映射，否则 LeftRail 高亮会错位。
+ */
 export type LeftRailKey =
-  | 'items'
+  | 'todos'           // 028：原 'items' 已迁移为 'todos'，与 View 严格对齐
   | 'loops'
   | 'tasks'
   | 'processes'
@@ -97,7 +109,7 @@ export function LeftRail({
       title: '工作',
       items: [
         { key: 'tasks', label: '任务', icon: <RocketOutlined />, ariaLabel: '任务' },
-        { key: 'items', label: '事项', icon: <UnorderedListOutlined />, ariaLabel: '事项' },
+        { key: 'todos', label: '事项', icon: <UnorderedListOutlined />, ariaLabel: '事项' },
         { key: 'loops', label: '环路', icon: <RetweetOutlined />, ariaLabel: '环路' },
         { key: 'processes', label: '工艺', icon: <BuildOutlined />, ariaLabel: '工艺' },
       ] satisfies LeftRailItem[],
