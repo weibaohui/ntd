@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import type { ReactNode } from 'react';
-import { Button, Tooltip, Popover } from 'antd';
+import { Button, Tooltip } from 'antd';
 import type { ButtonProps } from 'antd';
 import {
   UnorderedListOutlined,
@@ -20,7 +20,6 @@ import {
   MessageOutlined,
   RobotOutlined,
   TeamOutlined,
-  AppstoreOutlined,
   BuildOutlined,
 } from '@ant-design/icons';
 import { TfiBlackboard } from 'react-icons/tfi';
@@ -83,22 +82,8 @@ export function LeftRail({
   toggleTheme,
 }: LeftRailProps) {
   const sections = useMemo(() => ([
-    {
-      title: '工作区',
-      items: [
-        { key: 'tasks', label: '任务', icon: <RocketOutlined />, ariaLabel: '任务' },
-        { key: 'processes', label: '工艺', icon: <BuildOutlined />, ariaLabel: '工艺' },
-        { key: 'loops', label: '环路', icon: <RetweetOutlined />, ariaLabel: '环路' },
-        { key: 'items', label: '事项', icon: <UnorderedListOutlined />, ariaLabel: '事项' },
-        { key: 'messages', label: '消息', icon: <MessageOutlined />, ariaLabel: '消息' },
-        { key: 'blackboard', label: '黑板', icon: <TfiBlackboard />, ariaLabel: '黑板' },
-        { key: 'memorial', label: '看板', icon: <ReadOutlined />, ariaLabel: '看板' },
-      ] satisfies LeftRailItem[],
-    },
-    // 「概览」独立于「工作区」：
-    // Dashboard 数据为全库聚合，不随 workspace 切换变化，单独分组可避免用户误以为它受 workspace 过滤。
-    // 「导航」放 Dashboard 之前：概念导航首页是新用户进入系统的第一个入口，
-    // 排在前面更易触达；老用户也可随时回看概念关系。
+    // 「概览」前置：新用户首次进入应先看「导航」理解概念，
+    // Dashboard 数据为全库聚合不随 workspace 切换，与导航同属概览更合理。
     {
       title: '概览',
       items: [
@@ -106,29 +91,42 @@ export function LeftRail({
         { key: 'dashboard', label: '仪表盘', icon: <DashboardOutlined />, ariaLabel: '仪表盘' },
       ] satisfies LeftRailItem[],
     },
-    // 「配置」区：
-    // 技能/专家原本藏在底部弹出菜单里，层级过深，提升为常驻入口更易触达。
+    // 「工作」：核心工作概念，按使用频率排序（任务最常用 → 工艺最少用）。
+    // 任务/事项是日常载体，环路/工艺是配置态，频次递降。
+    {
+      title: '工作',
+      items: [
+        { key: 'tasks', label: '任务', icon: <RocketOutlined />, ariaLabel: '任务' },
+        { key: 'items', label: '事项', icon: <UnorderedListOutlined />, ariaLabel: '事项' },
+        { key: 'loops', label: '环路', icon: <RetweetOutlined />, ariaLabel: '环路' },
+        { key: 'processes', label: '工艺', icon: <BuildOutlined />, ariaLabel: '工艺' },
+      ] satisfies LeftRailItem[],
+    },
+    // 「观察」：辅助观察工具，低频访问，独立分组避免与核心工作概念混层。
+    {
+      title: '观察',
+      items: [
+        { key: 'messages', label: '消息', icon: <MessageOutlined />, ariaLabel: '消息' },
+        { key: 'blackboard', label: '黑板', icon: <TfiBlackboard />, ariaLabel: '黑板' },
+        { key: 'memorial', label: '看板', icon: <ReadOutlined />, ariaLabel: '看板' },
+      ] satisfies LeftRailItem[],
+    },
+    // 「配置」：所有配置项合并一处，避免技能/专家与执行器/智能助手分两处导致用户找不到。
+    // 顺序：能力包（技能/专家）→ 运行时（执行器）→ 入口（智能助手/工作空间）→ 其余（更多设置）。
     {
       title: '配置',
       items: [
         { key: 'settings_skills', label: '技能', icon: <ThunderboltOutlined />, ariaLabel: '技能' },
         { key: 'settings_experts', label: '专家', icon: <TeamOutlined />, ariaLabel: '专家' },
+        { key: 'settings_executors', label: '执行器', icon: <CodeOutlined />, ariaLabel: '执行器' },
+        { key: 'settings_bots', label: '智能助手', icon: <RobotOutlined />, ariaLabel: '智能助手' },
+        { key: 'settings_projectDirectories', label: '工作空间', icon: <FolderOutlined />, ariaLabel: '工作空间' },
+        { key: 'settings', label: '更多设置', icon: <SettingOutlined />, ariaLabel: '更多设置' },
       ] satisfies LeftRailItem[],
     },
   ]), []);
 
-  // 配置项菜单 — 从侧边栏主体收拢到底部弹出菜单，减少主导航的视觉噪音。
-  // 技能/专家已提升为工作空间下方的常驻「配置」区，这里只保留次要配置入口；
-  // 「设置」改名「更多设置」，强调它是技能/专家之外的其余配置入口。
-  const configItems = useMemo(() => ([
-    { key: 'settings_bots', label: '智能助手', icon: <RobotOutlined />, ariaLabel: '智能助手' },
-    { key: 'settings_executors', label: '执行器', icon: <CodeOutlined />, ariaLabel: '执行器' },
-    { key: 'settings_projectDirectories', label: '工作空间', icon: <FolderOutlined />, ariaLabel: '工作空间' },
-    { key: 'settings', label: '更多设置', icon: <SettingOutlined />, ariaLabel: '更多设置' },
-  ] satisfies LeftRailItem[]), []);
-
-  const [openConfigPopover, setOpenConfigPopover] = useState(false);
-
+  // 配置项菜单已合并到上方「配置」区常驻入口，底部弹出菜单已废弃（消除分裂感）。
   const isDrawer = variant === 'drawer';
   const shouldShowLabels = isDrawer || !collapsed;
 
@@ -182,36 +180,6 @@ export function LeftRail({
     );
   };
 
-  /**
-   * 渲染配置弹出菜单的内容面板。
-   * 将原来侧边栏里的配置 section 收拢为一个可点击展开的菜单，保持功能完整的同时减少主导航视觉噪音。
-   */
-  const renderConfigMenu = () => (
-    <div className="ntd-config-menu">
-      <div className="ntd-config-menu-title">配置</div>
-      <div className="ntd-config-menu-body">
-        {configItems.map((item) => {
-          const isActive = item.key === activeKey;
-          return (
-            <button
-              key={item.key}
-              className={`ntd-config-menu-item ${isActive ? 'active' : ''}`}
-              onClick={() => {
-                onSelect(item.key);
-                setOpenConfigPopover(false);
-              }}
-              aria-label={item.ariaLabel}
-              data-testid={`config-menu-${item.key}`}
-            >
-              <span className="ntd-config-menu-item-icon">{item.icon}</span>
-              <span className="ntd-config-menu-item-label">{item.label}</span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-
   const renderWorkspaceArea = () => {
     if (isDrawer || shouldShowLabels) {
       return (
@@ -264,25 +232,7 @@ export function LeftRail({
 
       {isDrawer && (
         <div className="ntd-left-rail-drawer-bottom">
-          {/* 移动端抽屉底部：配置菜单 + 亮/暗色主题切换按钮 */}
-          <Popover
-            content={renderConfigMenu()}
-            open={openConfigPopover}
-            onOpenChange={setOpenConfigPopover}
-            placement="topLeft"
-            trigger="click"
-            overlayClassName="ntd-config-menu-popover"
-          >
-            <Button
-              type="text"
-              block
-              icon={<AppstoreOutlined />}
-              className="ntd-left-rail-drawer-btn"
-              data-testid="left-rail-config-toggle"
-            >
-              <span className="ntd-left-rail-drawer-label">配置</span>
-            </Button>
-          </Popover>
+          {/* 移动端抽屉底部：亮/暗色主题切换按钮（配置菜单已合并到上方「配置」区常驻入口） */}
           <Button
             type="text"
             block
@@ -300,28 +250,6 @@ export function LeftRail({
 
       {!isDrawer && (
         <div className="ntd-left-rail-bottom">
-          {/* 配置按钮 — 点击弹出收拢的配置菜单，替代原来侧边栏里的配置 section */}
-          {/* 桌面端「点了弹不出来」的根因与修复见 App.css 的 .ntd-config-menu-popover 注释
-              （rc-trigger 在 transition 中误测坐标，用 transition:none 修复）。
-              这里两点配合：placement 用 topLeft（左对齐按钮、最自然，与 Drawer 内同款一致）；
-              getPopupContainer 指向 body，避免挂进 AntD <App> 的 height:0 容器。 */}
-          <Popover
-            content={renderConfigMenu()}
-            open={openConfigPopover}
-            onOpenChange={setOpenConfigPopover}
-            placement="topLeft"
-            trigger="click"
-            getPopupContainer={() => document.body}
-            overlayClassName="ntd-config-menu-popover"
-          >
-            <Button
-              type="text"
-              className="ntd-left-rail-config-toggle"
-              icon={<AppstoreOutlined />}
-              aria-label="配置"
-              data-testid="left-rail-config-toggle"
-            />
-          </Popover>
           {/* 亮/暗色主题切换按钮 — 当前为亮色显示太阳，暗色显示月亮，点击切换 */}
           <Tooltip title={themeMode === 'light' ? '切换暗色' : '切换亮色'} placement="right">
             <Button

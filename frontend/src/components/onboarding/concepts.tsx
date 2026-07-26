@@ -158,7 +158,6 @@ export const CONCEPTS: readonly ConceptNode[] = [
       { name: '名字', desc: '这把工具叫什么，比如 claudecode' },
       { name: '路径', desc: '命令行程序装在电脑哪个位置' },
       { name: '默认模型', desc: '不特意指定时，这把工具默认跑哪个 LLM' },
-      { name: '是否默认', desc: '是不是系统首选的那把工具' },
     ],
     yamlExample: `# 一把执行器就是一个命令行工具
 编号: 1
@@ -220,7 +219,7 @@ export const GRAPH_NODES: readonly GraphNode[] = [
   { id: 'execution', label: '执行记录', x: 900, y: 200, highlights: ['todo'], isMain: true },
   // 支线节点：与 6 核心概念 + 触发器 + skill 对齐，isMain 缺省 false 圆圈较小
   { id: 'task', label: '任务', x: 400, y: 340, highlights: ['loop'], conceptId: 'task' },
-  { id: 'trigger', label: '触发器（8 种）', x: 440, y: 60, highlights: ['loop', 'todo'] },
+  { id: 'trigger', label: '触发器', x: 440, y: 60, highlights: ['loop', 'todo'] },
   { id: 'executor', label: '执行器', x: 680, y: 60, highlights: ['todo', 'expert', 'model'], conceptId: 'executor' },
   { id: 'expert', label: '专家', x: 760, y: 340, highlights: ['todo', 'executor', 'model'], conceptId: 'expert' },
   { id: 'skill', label: '技能 Skill', x: 580, y: 340, highlights: ['todo', 'expert'] },

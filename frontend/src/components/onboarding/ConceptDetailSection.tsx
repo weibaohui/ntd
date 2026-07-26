@@ -9,7 +9,7 @@ import {
   type ConceptNode,
 } from '@/components/onboarding/concepts';
 
-const { Text, Title, Paragraph } = Typography;
+const { Text, Title } = Typography;
 
 interface ConceptDetailSectionProps {
   concept: ConceptNode;
@@ -32,10 +32,6 @@ function ExecutorVsExpertTable() {
           { title: '例子', dataIndex: 'example', key: 'example' },
         ]}
       />
-      <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
-        优先级链：事项级 model &gt; 执行器 default_model &gt; 执行器配置文件。
-        同一执行器可加载不同专家（如 claudecode + product-manager）。
-      </Paragraph>
     </div>
   );
 }

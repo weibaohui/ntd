@@ -4076,6 +4076,9 @@ code {
   padding: 10px 8px;
   background: var(--color-bg-elevated);
   border-right: 1px solid var(--color-border-light);
+  /* 不在容器层裁掉溢出：让 sections 区内部滚动处理超出，
+     bottom 始终粘底（flex:1 + min-height:0 + overflow-y:auto 在 top 区）。 */
+  overflow: visible;
 }
 
 .ntd-left-rail.expanded {
@@ -4089,6 +4092,12 @@ code {
   gap: 6px;
   width: 100%;
   align-items: center;
+  /* 多 sections 撑出父容器高度时，bottom 区被推到容器外导致框架撑破（深色背景下明显）。
+     flex:1 + min-height:0 让 top 区可收缩并吃掉剩余空间，bottom 始终粘在容器内底部。
+     overflow-y:auto 让 sections 总高超出时 top 区内部滚动，整容器不出现滚动条。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .ntd-left-rail.expanded .ntd-left-rail-top {
