@@ -200,4 +200,50 @@ test.describe('028 列表详情独立路由', () => {
     // 应回到列表 URL
     await expect(page).toHaveURL(/\/#\/todos$/);
   });
+
+  test('事项卡片墙：点击卡片跳转到 /#/todos/:id（如有数据）', async ({ page }) => {
+    // 测试目的：验证 028 改造后，卡片形态下点击卡片跳转到 /#/todos/:id 而非临时切列表
+    // 数据边界：无卡片数据时 test.skip 跳过；有数据时校验 URL 变为 /#/todos/<数字>
+    await page.goto(`${BASE}/#/todos`);
+    await page.waitForTimeout(ROUTE_SETTLE_MS);
+
+    // 确认在卡片形态（默认），找一张卡片
+    const card = page.locator('[data-testid=todo-center-card]').first();
+    const cardCount = await page.locator('[data-testid=todo-center-card]').count();
+
+    test.skip(cardCount === 0, '卡片墙无数据，跳过卡片点击测试');
+
+    await card.click();
+    await page.waitForTimeout(ROUTE_SETTLE_MS);
+
+    // URL 应变为 /#/todos/<id>（不再停留在列表页）
+    await expect(page).toHaveURL(/\/#\/todos\/\d+$/);
+  });
+
+  test('批量操作：选中行后触发批量按钮可见', async ({ page }) => {
+    // 测试目的：验证列表形态下选中行后批量操作按钮（更换执行器等）能通过 table
+    // 行选择框触发显示
+    // 数据边界：列表无数据时 test.skip 跳过；有数据时校验选中后批量按钮可见
+    await page.goto(`${BASE}/#/todos`);
+    await page.waitForTimeout(ROUTE_SETTLE_MS);
+
+    // 切到列表形态
+    const toggle = page.getByTestId('todo-center-view-toggle');
+    await toggle.locator('button[title="列表"]').click();
+    await page.waitForTimeout(ROUTE_SETTLE_MS);
+
+    const rowCount = await page.locator('.ant-table-tbody tr.ant-table-row').count();
+    test.skip(rowCount === 0, '事项列表无数据，跳过批量操作测试');
+
+    // 勾选第一行复选框
+    const checkbox = page.locator('.ant-table-tbody tr.ant-table-row').first().locator('.ant-checkbox-input');
+    await checkbox.check({ force: true });
+    await page.waitForTimeout(300);
+
+    // 批量操作触发器按钮应可见
+    const batchTrigger = page.getByTestId('todo-list-batch-trigger');
+    await expect(batchTrigger).toBeVisible();
+    // 文字应显示已选数量
+    await expect(page.locator('text=已选 1 项')).toBeVisible();
+  });
 });

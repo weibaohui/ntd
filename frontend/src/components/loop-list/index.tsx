@@ -6,7 +6,7 @@
 // 3. 顶部 header：搜索框 + 刷新 + 新建 + 工作空间配置入口（原 LoopMobilePage 的
 //    WorkspaceLoopConfigPage 入口迁到这里，保持列表页能直接管理评审模板）。
 // 4. 监听 loopUpdateCount 触发重拉，让外部（如 LoopDetailPage 删了一个环路）能联动刷新。
-// 5. 单函数 ≤ 30 行：数据拉取、过滤、回调已拆到 LoopListPageParts。
+// 5. 单函数 ≤ 30 行：数据拉取/过滤/回调已拆到子模块。
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { message } from 'antd';
@@ -22,6 +22,32 @@ import {
   useLoopConfig,
 } from './LoopListPageParts';
 import type { LoopListItem } from '@/types/loop';
+
+/** 环路列表数据加载 hook：响应 workspace/loopUpdateCount 变化。 */
+function useLoopListData(workspaceId: number | null, loopUpdateCount: number) {
+  const [items, setItems] = useState<LoopListItem[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // reload 用 useCallback 保证引用稳定，避免 useEffect 依赖循环
+  const reload = useCallback(async () => {
+    if (workspaceId == null) { setItems([]); return; }
+    setLoading(true);
+    try {
+      const data = await dbLoops.listLoops(workspaceId);
+      setItems(data);
+    } catch (e) {
+      message.error(`加载环路列表失败：${e instanceof Error ? e.message : String(e)}`);
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [workspaceId]);
+
+  // 工作空间变化或外部通知时重拉
+  useEffect(() => { reload(); }, [reload, loopUpdateCount]);
+
+  return { items, loading, reload };
+}
 
 interface LoopListPageProps {
   /** 新建环路入口（顶部「新建」按钮）。 */
@@ -39,7 +65,7 @@ interface LoopListPageProps {
  *
  * 整体处理思路：
  * 1. 挂载时拉取环路列表；工作空间变化 / loopUpdateCount 变化时重拉。
- * 2. 顶部 header 提供搜索 + 刷新 + 新建 + 配置按钮（已拆到 LoopListHeader）。
+ * 2. 顶部 header 提供搜索 + 刷新 + 新建 + 配置按钮（LoopListHeader）。
  * 3. 行操作回调拆到 useLoopRowActions；配置页入口拆到 useLoopConfig。
  * 4. 把过滤后的列表传给 LoopListView 渲染 table。
  */
@@ -51,34 +77,14 @@ export function LoopListPage({
 }: LoopListPageProps) {
   const { state } = useApp();
   const workspaceId = state.selectedWorkspace;
-  const [items, setItems] = useState<LoopListItem[]>([]);
-  const [loading, setLoading] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState('');
 
-  // 拉取环路列表：useCallback 保证引用稳定，避免 useEffect 依赖循环导致无限闪动
-  // 依赖 workspaceId：工作空间切换时重新拉取
-  const reload = useCallback(async () => {
-    if (workspaceId == null) {
-      setItems([]);
-      return;
-    }
-    setLoading(true);
-    try {
-      const data = await dbLoops.listLoops(workspaceId);
-      setItems(data);
-    } catch (e) {
-      message.error(`加载环路列表失败：${e instanceof Error ? e.message : String(e)}`);
-      setItems([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [workspaceId]);
+  // 列表数据加载 hook
+  const { items, loading, reload } = useLoopListData(workspaceId, loopUpdateCount);
 
   // 行操作回调（已拆到 useLoopRowActions）
   const { handleTrigger, handleDuplicate, handleDelete, handleToggleStatus } = useLoopRowActions({
-    workspaceId,
-    onReload: reload,
-    onLoopChanged,
+    workspaceId, onReload: reload, onLoopChanged,
   });
 
   // 配置页入口（已拆到 useLoopConfig）
@@ -86,17 +92,8 @@ export function LoopListPage({
     workspaceId,
   });
 
-  // 拉取环路列表：工作空间变化、loopUpdateCount 变化时触发
-  // reload 已用 useCallback 稳定引用，不会每次渲染都触发
-  useEffect(() => {
-    reload();
-  }, [reload, loopUpdateCount]);
-
-  // 工作空间切换时关闭配置页 + 清空 currentWorkspace，
-  // 避免 WorkspaceLoopConfigPage 继续按旧工作空间渲染
-  useEffect(() => {
-    handleCloseLoopConfig();
-  }, [workspaceId, handleCloseLoopConfig]);
+  // 工作空间切换时关闭配置页
+  useEffect(() => { handleCloseLoopConfig(); }, [workspaceId, handleCloseLoopConfig]);
 
   // 按搜索词过滤：useMemo 避免每次渲染都重新计算
   const filteredItems = useMemo(() => {
@@ -108,19 +105,26 @@ export function LoopListPage({
   // 配置态：渲染 WorkspaceLoopConfigPage 替代列表
   if (loopConfigOpen && currentWorkspace) {
     return (
-      <WorkspaceLoopConfigPage
-        workspace={currentWorkspace}
-        onBack={handleCloseLoopConfig}
-      />
+      <WorkspaceLoopConfigPage workspace={currentWorkspace} onBack={handleCloseLoopConfig} />
     );
   }
 
-  // 列表态：PageCard + LoopListView
+  // 列表态：PageCard + LoopListView；header 内联避免额外函数
   return (
     <PageCard
       icon={<RetweetOutlined />}
       title="环路"
-      extra={renderHeader()}
+      extra={
+        <LoopListHeader
+          searchKeyword={searchKeyword}
+          loading={loading}
+          workspaceId={workspaceId}
+          onSearchChange={setSearchKeyword}
+          onReload={reload}
+          onCreate={onCreateLoop}
+          onOpenConfig={handleOpenLoopConfig}
+        />
+      }
       style={{ flex: 1, height: '100%' }}
       contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 43px)' }}
     >
@@ -137,19 +141,4 @@ export function LoopListPage({
       />
     </PageCard>
   );
-
-  /** 顶部 header：搜索 + 配置 + 刷新 + 新建。 */
-  function renderHeader() {
-    return (
-      <LoopListHeader
-        searchKeyword={searchKeyword}
-        loading={loading}
-        workspaceId={workspaceId}
-        onSearchChange={setSearchKeyword}
-        onReload={reload}
-        onCreate={onCreateLoop}
-        onOpenConfig={handleOpenLoopConfig}
-      />
-    );
-  }
 }

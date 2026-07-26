@@ -700,15 +700,18 @@ impl LoopRunner {
             // 调用纯函数构造 enhanced_prompt：所有替换都在内存中完成，
             // todo.prompt 本身绝不被改写，从而根治历史 inject_requirement_to_steps 的累加污染。
             // task_requirement 来自 trigger_meta，代表本次执行绑定的需求（每次执行独立）。
+            // 使用 PromptInput struct 汇集参数，避免 clippy::too_many_arguments。
             let enhanced_prompt_raw = build_enhanced_prompt_with_requirement(
-                &todo.prompt,
-                &task_requirement,
-                &blackboard_text,
-                last_output_text,
-                last_conclusion_text,
-                last_step_name_text,
-                loop_execution_id,
-                &loop_.name,
+                &PromptInput {
+                    template_prompt: &todo.prompt,
+                    task_requirement: &task_requirement,
+                    blackboard: &blackboard_text,
+                    last_output: last_output_text,
+                    last_conclusion: last_conclusion_text,
+                    last_step_name: last_step_name_text,
+                    loop_execution_id,
+                    loop_name: &loop_.name,
+                },
             );
             // 4d-bis. 注入工作空间级共识 prompt（需求 022）。
             // Loop 与 todo 走各自路径，此处补齐 Loop 注入使 workspace 共识全路径生效。
@@ -1788,25 +1791,32 @@ impl LoopRunner {
 /// 返回：构造好的 enhanced_prompt，传给执行器使用。
 // 参数较多是因为 LoopRunner 的占位符替换链本就有 7 个变量，
 // 拆成 struct 会过度抽象一个内部辅助函数，故允许 8 个参数。
-#[allow(clippy::too_many_arguments)]
-fn build_enhanced_prompt_with_requirement(
-    // template_prompt 是从 todos.prompt 读出的原始模板，本函数只读不改，
-    // 这是根治「需求累加污染」的关键约束。
-    template_prompt: &str,
-    // task_requirement 来自 trigger_meta.requirement，代表本次执行绑定的需求；
-    // 空串表示纯 Loop 触发（无任务），此时不应追加需求段。
-    task_requirement: &str,
-    // blackboard 是跨 step 共享的运行时上下文，替换 {{blackboard}} 占位符。
-    blackboard: &str,
-    // last_output / last_conclusion / last_step_name 描述上一环节的产出，
-    // 首步调用时由上层兜底为空串。
-    last_output: &str,
-    last_conclusion: &str,
-    last_step_name: &str,
-    // loop_execution_id 用于 {{loop_execution_id}} 占位符，便于执行器日志关联。
+/// 构建增强 prompt 所需的上下文参数。
+/// 汇集所有 &str 与标量参数为一个 struct，
+/// 避免 clippy 对函数参数数量的限制（too_many_arguments）。
+struct PromptInput<'a> {
+    /// 从 todos.prompt 读出的原始模板，本函数只读不改，
+    /// 这是根治「需求累加污染」的关键约束。
+    template_prompt: &'a str,
+    /// 来自 trigger_meta.requirement 的任务需求，每次执行独立；
+    /// 空串表示纯 Loop 触发（无任务），此时不应追加需求段。
+    task_requirement: &'a str,
+    /// 跨 step 共享的运行时黑板上下文，替换 {{blackboard}} 占位符。
+    blackboard: &'a str,
+    /// 上一环节的输出，首步调用时由上层兜底为空串。
+    last_output: &'a str,
+    /// 上一环节的结论，首步调用时由上层兜底为空串。
+    last_conclusion: &'a str,
+    /// 上一环节的名称，首步调用时由上层兜底为空串。
+    last_step_name: &'a str,
+    /// 当前 Loop 的执行记录 ID，用于 {{loop_execution_id}} 占位符。
     loop_execution_id: i64,
-    // loop_name 用于 {{loop_name}} 占位符，让 prompt 能引用当前 Loop 的可读名。
-    loop_name: &str,
+    /// 当前 Loop 的可读名称，用于 {{loop_name}} 占位符。
+    loop_name: &'a str,
+}
+
+fn build_enhanced_prompt_with_requirement(
+    input: &PromptInput,
 ) -> String {
     // 先判断模板是否含 {{requirement}} 占位符：
     // - 含：走标准替换链，把占位符替换为当前任务需求；
@@ -1814,35 +1824,35 @@ fn build_enhanced_prompt_with_requirement(
     //   需要在末尾兜底追加需求段，否则执行器拿不到需求文本。
     // 兜底追加是纯内存操作，每次执行都基于原始 template_prompt 重新构造，
     // 不会出现「上次追加的内容残留」的累加污染问题。
-    let has_requirement_placeholder = template_prompt.contains("{{requirement}}");
+    let has_requirement_placeholder = input.template_prompt.contains("{{requirement}}");
     // 替换链顺序无关（各占位符互不重叠），逐项 replace 后得到 replaced 中间结果。
     // {{message}} 与 {{last_output}} 共享同值，是历史 prompt 约定，保持兼容。
-    let replaced = template_prompt
+    let replaced = input.template_prompt
         // 黑板变量：跨 step 共享的运行时上下文
-        .replace("{{blackboard}}", blackboard)
+        .replace("{{blackboard}}", input.blackboard)
         // 上一环节的原始输出文本
-        .replace("{{last_output}}", last_output)
+        .replace("{{last_output}}", input.last_output)
         // 上一环节的结论摘要（由执行器写入）
-        .replace("{{last_conclusion}}", last_conclusion)
+        .replace("{{last_conclusion}}", input.last_conclusion)
         // 上一环节的步骤名，便于 prompt 引用「上一步做了什么」
-        .replace("{{last_step_name}}", last_step_name)
+        .replace("{{last_step_name}}", input.last_step_name)
         // {{message}} 是 {{last_output}} 的别名，保持与老模板的兼容
-        .replace("{{message}}", last_output)
+        .replace("{{message}}", input.last_output)
         // 当前 loop 执行 ID，用于执行器日志关联
-        .replace("{{loop_execution_id}}", &loop_execution_id.to_string())
+        .replace("{{loop_execution_id}}", &input.loop_execution_id.to_string())
         // 当前 Loop 的可读名
-        .replace("{{loop_name}}", loop_name)
+        .replace("{{loop_name}}", input.loop_name)
         // 任务需求占位符：含占位符时被替换为本次需求；不含时这一步是 no-op
-        .replace("{{requirement}}", task_requirement);
+        .replace("{{requirement}}", input.task_requirement);
     // 老模板兜底分支：模板不含 {{requirement}} 占位符 且 本次确实携带需求时，
     // 在末尾追加需求段。追加格式与历史 inject_requirement_to_steps 保持一致，
     // 便于人类阅读 prompt 时识别。注意 replaced 已是 String，format! 不会再写回 template_prompt。
-    if has_requirement_placeholder || task_requirement.is_empty() {
+    if has_requirement_placeholder || input.task_requirement.is_empty() {
         // 含占位符（需求已在替换链中注入）或需求为空（纯 Loop 触发）时，无需追加。
         replaced
     } else {
         // 老模板兜底：追加需求段，格式与历史保持一致。
-        format!("{}\n\n## 任务需求\n{}", replaced, task_requirement)
+        format!("{}\n\n## 任务需求\n{}", replaced, input.task_requirement)
     }
 }
 
@@ -2302,9 +2312,16 @@ mod tests {
         // 构造模板，让占位符夹在「需求是：」与「完成它」之间，便于断言替换位置。
         let template = "你好\n需求是：{{requirement}}\n完成它";
         // 调用被测函数，task_requirement 传「计算9+9」，其余占位符留空以聚焦需求分支。
-        let result = build_enhanced_prompt_with_requirement(
-            template, "计算9+9", "", "", "", "", 100, "测试Loop",
-        );
+        let result = build_enhanced_prompt_with_requirement(&PromptInput {
+            template_prompt: template,
+            task_requirement: "计算9+9",
+            blackboard: "",
+            last_output: "",
+            last_conclusion: "",
+            last_step_name: "",
+            loop_execution_id: 100,
+            loop_name: "测试Loop",
+        });
         // 主断言：占位符应被替换为本次需求，前后文本保持原样。
         assert_eq!(result, "你好\n需求是：计算9+9\n完成它");
         // 附加断言：含占位符时不应走兜底追加分支，避免出现重复的「## 任务需求」段。
@@ -2317,9 +2334,16 @@ mod tests {
         // 构造一个无占位符的模板，模拟历史 process yaml 未升级的情况。
         let template = "你是一个计算器";
         // 调用被测函数，需求非空，触发末尾兜底追加分支。
-        let result = build_enhanced_prompt_with_requirement(
-            template, "计算9+9", "", "", "", "", 100, "测试Loop",
-        );
+        let result = build_enhanced_prompt_with_requirement(&PromptInput {
+            template_prompt: template,
+            task_requirement: "计算9+9",
+            blackboard: "",
+            last_output: "",
+            last_conclusion: "",
+            last_step_name: "",
+            loop_execution_id: 100,
+            loop_name: "测试Loop",
+        });
         // 主断言：兜底格式应为「{模板}\n\n## 任务需求\n{需求}」，与历史行为保持一致。
         assert_eq!(result, "你是一个计算器\n\n## 任务需求\n计算9+9");
     }
@@ -2330,9 +2354,16 @@ mod tests {
         // 构造无占位符模板 + 空需求，验证不会追加空的「## 任务需求」段。
         let template = "你是一个计算器";
         // 调用被测函数，task_requirement 传空串。
-        let result = build_enhanced_prompt_with_requirement(
-            template, "", "", "", "", "", 100, "测试Loop",
-        );
+        let result = build_enhanced_prompt_with_requirement(&PromptInput {
+            template_prompt: template,
+            task_requirement: "",
+            blackboard: "",
+            last_output: "",
+            last_conclusion: "",
+            last_step_name: "",
+            loop_execution_id: 100,
+            loop_name: "测试Loop",
+        });
         // 主断言：需求为空时应原样返回模板，不追加任何需求段。
         assert_eq!(result, "你是一个计算器");
         // 附加断言：确保空需求分支不会误写「## 任务需求」标题。
@@ -2345,17 +2376,38 @@ mod tests {
         // 构造一个无占位符模板，模拟历史模板在多次执行下的行为。
         let template = "你是一个计算器";
         // 第一次执行：需求 A（loop_execution_id=100）
-        let run1 = build_enhanced_prompt_with_requirement(
-            template, "计算9+9", "", "", "", "", 100, "测试Loop",
-        );
+        let run1 = build_enhanced_prompt_with_requirement(&PromptInput {
+            template_prompt: template,
+            task_requirement: "计算9+9",
+            blackboard: "",
+            last_output: "",
+            last_conclusion: "",
+            last_step_name: "",
+            loop_execution_id: 100,
+            loop_name: "测试Loop",
+        });
         // 第二次执行：需求 B（模拟用户为同一任务新建执行，id=101）
-        let run2 = build_enhanced_prompt_with_requirement(
-            template, "计算8*9", "", "", "", "", 101, "测试Loop",
-        );
+        let run2 = build_enhanced_prompt_with_requirement(&PromptInput {
+            template_prompt: template,
+            task_requirement: "计算8*9",
+            blackboard: "",
+            last_output: "",
+            last_conclusion: "",
+            last_step_name: "",
+            loop_execution_id: 101,
+            loop_name: "测试Loop",
+        });
         // 第三次执行：需求 C（id=102），用于验证「不累加历史」
-        let run3 = build_enhanced_prompt_with_requirement(
-            template, "计算7+6", "", "", "", "", 102, "测试Loop",
-        );
+        let run3 = build_enhanced_prompt_with_requirement(&PromptInput {
+            template_prompt: template,
+            task_requirement: "计算7+6",
+            blackboard: "",
+            last_output: "",
+            last_conclusion: "",
+            last_step_name: "",
+            loop_execution_id: 102,
+            loop_name: "测试Loop",
+        });
         // 每次结果都只含本次需求：验证每次都基于原始 template_prompt 重新构造。
         assert_eq!(run1, "你是一个计算器\n\n## 任务需求\n计算9+9");
         assert_eq!(run2, "你是一个计算器\n\n## 任务需求\n计算8*9");
@@ -2377,9 +2429,16 @@ mod tests {
                         上一步: {{last_step_name}} 输出={{last_output}} 结论={{last_conclusion}}\n\
                         消息: {{message}}";
         // 调用被测函数，传入非空 blackboard/last_output 等以验证替换。
-        let result = build_enhanced_prompt_with_requirement(
-            template, "做某事", "bb", "out", "conc", "stepA", 42, "我的Loop",
-        );
+        let result = build_enhanced_prompt_with_requirement(&PromptInput {
+            template_prompt: template,
+            task_requirement: "做某事",
+            blackboard: "bb",
+            last_output: "out",
+            last_conclusion: "conc",
+            last_step_name: "stepA",
+            loop_execution_id: 42,
+            loop_name: "我的Loop",
+        });
         // 断言 loop_name 与 loop_execution_id 占位符被替换
         assert!(result.contains("Loop: 我的Loop (exec=42)"));
         // 断言 {{blackboard}} 占位符被替换

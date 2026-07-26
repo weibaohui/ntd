@@ -5,12 +5,12 @@
 // 2. viewMode='card'（默认）→ 渲染 TodoCenterCardView（五类驱动卡片墙）。
 // 3. viewMode='list' → 渲染 PageCard + TodoListView（Ant Design Table 单栏宽屏）。
 // 4. 点击卡片或 table 行 → 调用 onSelectTodo 由父组件 pushUrl('todos', { id }) 跳转独立详情页。
-// 5. 顶部 header 由本组件构建：搜索框 + 刷新 + Segmented + 新建（桌面/移动端共用）。
-// 6. 单行操作（执行/带参执行/编辑/删除）由 useTodoRowActions hook 提供，避免主函数膨胀。
+// 5. 顶部 header：搜索框 + 刷新 + Segmented + 新建按钮。
+// 6. 单行操作由 useTodoRowActions hook 提供，避免主函数膨胀。
 // 7. 监听 TODO_LIST_REFRESH_EVENT 跨组件刷新（TodoDrawer 保存后触发）。
-// 8. 单函数 ≤ 30 行：header/行操作/Modal 已拆到 TodoListPageParts。
+// 8. 单函数 ≤ 30 行：数据获取/行操作/内容渲染已拆到子模块。
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { message } from 'antd';
 import { UnorderedListOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
@@ -40,12 +40,58 @@ function readInitialView(): 'card' | 'list' {
   }
 }
 
+/** 按搜索词过滤：标题或 prompt 命中关键字（不区分大小写）。 */
+function filterBySearchKeyword(items: TodoCenterItem[], keyword: string): TodoCenterItem[] {
+  const kw = keyword.trim().toLowerCase();
+  if (!kw) return items;
+  return items.filter(todo => {
+    const title = (todo.title || '').toLowerCase();
+    const prompt = (todo.prompt || '').toLowerCase();
+    return title.includes(kw) || prompt.includes(kw);
+  });
+}
+
+/** 列表数据加载 hook：响应 workspace/视图切换 + 跨组件刷新事件。 */
+function useTodoListData(workspaceId: number | null, viewMode: 'card' | 'list') {
+  const [items, setItems] = useState<TodoCenterItem[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // reload 用 useCallback 包裹，使 effect 依赖稳定
+  const reload = useCallback(async () => {
+    if (workspaceId == null) { setItems([]); return; }
+    setLoading(true);
+    try {
+      const data = await db.getTodoCenter(workspaceId);
+      setItems(data);
+    } catch (e) {
+      message.error(`加载事项列表失败：${e instanceof Error ? e.message : String(e)}`);
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [workspaceId]);
+
+  // 列表形态挂载/工作空间变化时拉数据；卡片形态不触发（其内部自管）
+  useEffect(() => {
+    if (viewMode === 'list') reload();
+  }, [workspaceId, viewMode, reload]);
+
+  // 跨组件刷新：TodoDrawer 保存、QuickCapture 创建后通过 custom event 通知
+  useEffect(() => {
+    const handler = () => { if (viewMode === 'list') reload(); };
+    window.addEventListener(TODO_LIST_REFRESH_EVENT, handler);
+    return () => window.removeEventListener(TODO_LIST_REFRESH_EVENT, handler);
+  }, [viewMode, reload]);
+
+  return { items, loading, reload };
+}
+
 interface TodoListPageProps {
-  /** 选中事项：跳转到 /#/todos/:id（由父组件 pushUrl('todos', { id })）。 */
+  /** 选中事项：跳转到 /#/todos/:id。 */
   onSelectTodo: (id: number) => void;
   /** 点击所属 Loop 跳转 Loop 详情（卡片形态用）。 */
   onSelectLoop: (loopId: number) => void;
-  /** 新建事项入口（顶部「新建」按钮，复用全局 TodoDrawer）。 */
+  /** 新建事项入口（复用全局 TodoDrawer）。 */
   onOpenCreateModal: () => void;
   /** 编辑事项入口（单行菜单「编辑」触发，由 App.tsx 打开 TodoDrawer 编辑模式）。 */
   onEditTodo: (todo: TodoCenterItem) => void;
@@ -65,34 +111,77 @@ export function TodoListPage({
   const workspaceId = state.selectedWorkspace;
   const isMobile = useIsMobile();
 
-  // 视图模式：默认卡片（设计文档），用户切到列表后下次仍记住
+  // 视图模式：默认卡片，用户切到列表后下次仍记住
   const [viewMode, setViewMode] = useState<'card' | 'list'>(readInitialView);
-  // 列表形态的数据源（卡片形态由 TodoCenterCardView 内部自管）
-  const [items, setItems] = useState<TodoCenterItem[]>([]);
-  const [loading, setLoading] = useState(false);
   // 统一搜索词：卡片/列表两种形态共用一个搜索框
   const [searchKeyword, setSearchKeyword] = useState('');
   // 刷新信号：每次点击刷新按钮自增，传递给 TodoCenterCardView 触发重新加载
   const [refreshKey, setRefreshKey] = useState(0);
+  // 列表数据：抽到独立 hook 管理加载/刷新/事件监听
+  const { items, loading, reload } = useTodoListData(workspaceId, viewMode);
 
   // 行操作 + 带参执行 Modal（已拆到 TodoListPageParts）
   const rowActions = useTodoRowActions({ workspaceId, onReload: reload });
 
-  // 列表形态挂载/工作空间变化时拉数据；卡片形态不触发（其内部自管）
-  useEffect(() => {
-    if (viewMode === 'list') reload();
-  }, [workspaceId, viewMode]);
+  // 持久化视图模式
+  const handleViewChange = useCallback((m: 'card' | 'list') => {
+    setViewMode(m);
+    try { localStorage.setItem(VIEW_STORAGE_KEY, m); } catch { /* 静默降级 */ }
+  }, []);
 
-  // 跨组件刷新：TodoDrawer 保存、QuickCapture 创建后通过 custom event 通知本组件重拉
-  useEffect(() => {
-    const handler = () => { if (viewMode === 'list') reload(); };
-    window.addEventListener(TODO_LIST_REFRESH_EVENT, handler);
-    return () => window.removeEventListener(TODO_LIST_REFRESH_EVENT, handler);
-  }, [viewMode]);
+  // 顶部刷新按钮：列表形态触发 reload，卡片形态刷新 key 驱动 TodoCenterCardView
+  const handleReload = useCallback(() => {
+    if (viewMode === 'list') reload();
+    setRefreshKey(k => k + 1);
+  }, [viewMode, reload]);
+
+  // 根据 viewMode 渲染卡片/列表内容
+  const listItems = filterBySearchKeyword(items, searchKeyword);
+  const headerExtra = (
+    <TodoListHeader
+      isMobile={isMobile}
+      viewMode={viewMode}
+      searchKeyword={searchKeyword}
+      loading={loading}
+      onSearchChange={setSearchKeyword}
+      onViewChange={handleViewChange}
+      onReload={handleReload}
+      onCreate={onOpenCreateModal}
+    />
+  );
 
   return (
     <>
-      {renderContent()}
+      {viewMode === 'card' ? (
+        <TodoCenterCardView
+          onSelectTodo={onSelectTodo}
+          onSelectLoop={onSelectLoop}
+          isMobile={isMobile}
+          searchKeyword={searchKeyword}
+          extra={headerExtra}
+          refreshKey={refreshKey}
+        />
+      ) : (
+        <PageCard
+          icon={<UnorderedListOutlined />}
+          title="事项"
+          extra={headerExtra}
+          style={{ flex: 1, height: '100%' }}
+          contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 43px)' }}
+        >
+          <TodoListView
+            items={listItems}
+            loading={loading}
+            tags={state.tags}
+            onSelectTodo={onSelectTodo}
+            onEditTodo={onEditTodo}
+            onDeleteTodo={rowActions.handleDeleteTodo}
+            onExecuteTodo={rowActions.handleExecuteTodo}
+            onExecuteWithArgs={rowActions.handleExecuteWithArgs}
+            onRefresh={reload}
+          />
+        </PageCard>
+      )}
       <ExecuteWithArgsModal
         open={rowActions.executeWithArgsModalOpen}
         args={rowActions.executeArgs}
@@ -102,94 +191,4 @@ export function TodoListPage({
       />
     </>
   );
-
-  // ─── 以下为内部函数，拆分以保持主函数体 ≤30 行 ───
-
-  /** 拉取列表数据：仅 list 形态需要（card 形态由 TodoCenterCardView 自管）。 */
-  async function reload() {
-    if (workspaceId == null) { setItems([]); return; }
-    setLoading(true);
-    try {
-      const data = await db.getTodoCenter(workspaceId);
-      setItems(data);
-    } catch (e) {
-      message.error(`加载事项列表失败：${e instanceof Error ? e.message : String(e)}`);
-      setItems([]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  /** 持久化视图模式 + 联动刷新列表数据。 */
-  function handleViewChange(m: 'card' | 'list') {
-    setViewMode(m);
-    try { localStorage.setItem(VIEW_STORAGE_KEY, m); } catch { /* 静默降级 */ }
-  }
-
-  /** 顶部刷新按钮：列表形态触发本组件 reload，卡片形态触发 TodoCenterCardView 内部 reload。 */
-  function handleReload() {
-    if (viewMode === 'list') reload();
-    setRefreshKey(k => k + 1);
-  }
-
-  /** 按搜索词过滤：标题或 prompt 命中关键字（不区分大小写）。 */
-  function filterItems(): TodoCenterItem[] {
-    const kw = searchKeyword.trim().toLowerCase();
-    if (!kw) return items;
-    return items.filter(todo => {
-      const title = (todo.title || '').toLowerCase();
-      const prompt = (todo.prompt || '').toLowerCase();
-      return title.includes(kw) || prompt.includes(kw);
-    });
-  }
-
-  /** 渲染主内容：根据 viewMode 切卡片/列表。 */
-  function renderContent() {
-    const headerExtra = (
-      <TodoListHeader
-        isMobile={isMobile}
-        viewMode={viewMode}
-        searchKeyword={searchKeyword}
-        loading={loading}
-        onSearchChange={setSearchKeyword}
-        onViewChange={handleViewChange}
-        onReload={handleReload}
-        onCreate={onOpenCreateModal}
-      />
-    );
-
-    if (viewMode === 'card') {
-      return (
-        <TodoCenterCardView
-          onSelectTodo={onSelectTodo}
-          onSelectLoop={onSelectLoop}
-          isMobile={isMobile}
-          searchKeyword={searchKeyword}
-          extra={headerExtra}
-          refreshKey={refreshKey}
-        />
-      );
-    }
-    return (
-      <PageCard
-        icon={<UnorderedListOutlined />}
-        title="事项"
-        extra={headerExtra}
-        style={{ flex: 1, height: '100%' }}
-        contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 43px)' }}
-      >
-        <TodoListView
-          items={filterItems()}
-          loading={loading}
-          tags={state.tags}
-          onSelectTodo={onSelectTodo}
-          onEditTodo={onEditTodo}
-          onDeleteTodo={rowActions.handleDeleteTodo}
-          onExecuteTodo={rowActions.handleExecuteTodo}
-          onExecuteWithArgs={rowActions.handleExecuteWithArgs}
-          onRefresh={reload}
-        />
-      </PageCard>
-    );
-  }
 }
