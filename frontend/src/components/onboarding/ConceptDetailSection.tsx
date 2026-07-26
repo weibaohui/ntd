@@ -1,9 +1,7 @@
 // 概念详细说明区：每个概念一段。
-// 字段定义表（Descriptions）+ 特定概念附加对比表 + 底部「去 XX 页」跳转按钮。
+// 字段定义表（Descriptions）+ 特定概念附加对比表。
 
-import { Typography, Descriptions, Button, Tag, Table } from 'antd';
-import { ArrowRightOutlined } from '@ant-design/icons';
-import { useViewState } from '@/hooks/useViewState';
+import { Typography, Descriptions, Tag, Table } from 'antd';
 import {
   EXECUTOR_VS_EXPERT_VS_MODEL,
   TRIGGER_TYPES,
@@ -89,12 +87,6 @@ function GateTypesTable() {
  * 5. 特定概念附加对比表：executor 展示三者对比，loop 展示触发器+门禁类型。
  */
 export function ConceptDetailSection({ concept }: ConceptDetailSectionProps) {
-  const { pushUrl } = useViewState();
-
-  const handleGoto = () => {
-    pushUrl(concept.navTarget, {});
-  };
-
   return (
     <section
       id={`concept-${concept.id}`}
@@ -116,31 +108,17 @@ export function ConceptDetailSection({ concept }: ConceptDetailSectionProps) {
         </div>
       </div>
 
-      {/* 字段定义表 */}
-      <div>
-        <Text strong style={{ display: 'block', marginBottom: 8 }}>关键字段</Text>
-        <Descriptions
-          column={1}
-          size="small"
-          bordered
-          items={concept.fields.map((f) => ({ label: f.name, children: f.desc }))}
-        />
-        {/* 特定概念附加对比表 */}
-        {concept.id === 'executor' && <ExecutorVsExpertTable />}
-        {concept.id === 'loop' && <TriggerTypesTable />}
-        {(concept.id === 'loop' || concept.id === 'todo') && <GateTypesTable />}
-      </div>
-
-      {/* 底部：跳转入口 */}
-      <Button
-        type="primary"
-        icon={<ArrowRightOutlined />}
-        onClick={handleGoto}
-        style={{ marginTop: 16 }}
-        data-testid={`onboarding-detail-goto-${concept.id}`}
-      >
-        去{concept.label}页
-      </Button>
+      {/* 字段定义表（无标题字，直接展示） */}
+      <Descriptions
+        column={1}
+        size="small"
+        bordered
+        items={concept.fields.map((f) => ({ label: f.name, children: f.desc }))}
+      />
+      {/* 特定概念附加对比表 */}
+      {concept.id === 'executor' && <ExecutorVsExpertTable />}
+      {concept.id === 'loop' && <TriggerTypesTable />}
+      {(concept.id === 'loop' || concept.id === 'todo') && <GateTypesTable />}
     </section>
   );
 }

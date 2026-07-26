@@ -3,9 +3,7 @@
 // 尊重 prefers-reduced-motion：动画降级为静态高亮。
 
 import { useState, useEffect, useRef } from 'react';
-import { Drawer, Button, Typography, Descriptions, Empty } from 'antd';
-import { ArrowRightOutlined } from '@ant-design/icons';
-import { useViewState } from '@/hooks/useViewState';
+import { Drawer, Typography, Descriptions, Empty } from 'antd';
 import {
   CONCEPTS,
   GRAPH_EDGES,
@@ -151,17 +149,11 @@ function GraphNodeCircle({
   );
 }
 
-/** Drawer 内容：定义 + 字段表 + 跳转按钮。 */
-function ConceptDrawerContent({
-  concept,
-  onGoto,
-}: {
-  concept: ConceptNode;
-  onGoto: (view: ConceptNode['navTarget']) => void;
-}) {
+/** Drawer 内容：定义 + 字段表（无跳转按钮，点击节点仅展示概念解释）。 */
+function ConceptDrawerContent({ concept }: { concept: ConceptNode }) {
   return (
-    <div style={{ padding: 24 }}>
-      {/* 头部：图标 + 标签 + 一句话定义 */}
+    <>
+      {/* 头部：图标 + 标签 + 一句话定义。不加外层 padding，让 Drawer 自身 body padding 接管避免顶部留白叠加。 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         <span style={{ fontSize: 24, color: '#1677ff' }}>{concept.icon}</span>
         <div>
@@ -176,18 +168,7 @@ function ConceptDrawerContent({
         bordered
         items={concept.fields.map((f) => ({ label: f.name, children: f.desc }))}
       />
-      {/* 跳转按钮：调 pushUrl 路由跳转 */}
-      <Button
-        type="primary"
-        icon={<ArrowRightOutlined />}
-        block
-        style={{ marginTop: 16 }}
-        onClick={() => onGoto(concept.navTarget)}
-        data-testid={`onboarding-graph-drawer-goto-${concept.id}`}
-      >
-        去{concept.label}页
-      </Button>
-    </div>
+    </>
   );
 }
 
@@ -214,7 +195,6 @@ export function ConceptRelationGraph() {
   const [hovered, setHovered] = useState<string | null>(null);
   const [drawerNode, setDrawerNode] = useState<GraphNode | null>(null);
   const reduceMotion = usePrefersReducedMotion();
-  const { pushUrl } = useViewState();
 
   // 节点 id → GraphNode 映射，用于查连线两端。
   // useRef 避免每次 render 重建 Map。
@@ -227,12 +207,6 @@ export function ConceptRelationGraph() {
   const drawerConcept: ConceptNode | null = drawerNode?.conceptId
     ? CONCEPTS.find((c) => c.id === drawerNode.conceptId) ?? null
     : null;
-
-  // 跳转：关 Drawer + pushUrl 路由跳转。
-  const handleGoto = (view: ConceptNode['navTarget']) => {
-    setDrawerNode(null);
-    pushUrl(view, {});
-  };
 
   return (
     <div
@@ -308,16 +282,17 @@ export function ConceptRelationGraph() {
         ))}
       </svg>
 
-      {/* Drawer：点击节点弹出 */}
+      {/* Drawer：点击节点弹出。无 title 避免与 ConceptDrawerContent 内头行重复，
+          body 内子组件也不额外加 padding，让 Drawer 自身 body padding 接管避免顶部留白叠加。 */}
       <Drawer
         open={!!drawerNode}
         onClose={() => setDrawerNode(null)}
         width={480}
-        title={drawerNode?.label}
+        title={null}
         data-testid="onboarding-graph-drawer"
       >
         {drawerNode && drawerConcept ? (
-          <ConceptDrawerContent concept={drawerConcept} onGoto={handleGoto} />
+          <ConceptDrawerContent concept={drawerConcept} />
         ) : drawerNode ? (
           <GraphNodeDrawerFallback node={drawerNode} />
         ) : (
