@@ -686,21 +686,23 @@ impl LoopRunner {
                 .ok_or_else(|| format!("todo #{} (todo_id={}) not found", step.id, step.todo_id))?;
 
             // 4d. 构造增强 Prompt（注入黑板变量 + 上一环节结果）
+            // 设计原则：todo.prompt 是只读模板，此处仅在内存中做字符串替换，
+            // 替换结果 enhanced_prompt 传给执行器，绝不写回 todos 表。
+            // 需求注入与老模板兜底逻辑封装在 build_enhanced_prompt_with_requirement 中，便于单测。
             let blackboard_text = self.build_blackboard_text(loop_execution_id).await;
             let last_output_text = last_output.as_deref().unwrap_or("");
             let last_conclusion_text = last_conclusion.as_deref().unwrap_or("");
             let last_step_name_text = last_step_name.as_deref().unwrap_or("");
-            let enhanced_prompt_raw = todo.prompt
-                .replace("{{blackboard}}", &blackboard_text)
-                .replace("{{last_output}}", last_output_text)
-                .replace("{{last_conclusion}}", last_conclusion_text)
-                .replace("{{last_step_name}}", last_step_name_text)
-                .replace("{{message}}", last_output_text)
-                .replace("{{loop_execution_id}}", &loop_execution_id.to_string())
-                .replace("{{loop_name}}", &loop_.name)
-                // 任务需求注入：从执行记录的 trigger_meta.requirement 读取。
-                // 每次执行独立需求，不再从 loops.description 读取。
-                .replace("{{requirement}}", &task_requirement);
+            let enhanced_prompt_raw = build_enhanced_prompt_with_requirement(
+                &todo.prompt,
+                &task_requirement,
+                &blackboard_text,
+                last_output_text,
+                last_conclusion_text,
+                last_step_name_text,
+                loop_execution_id,
+                &loop_.name,
+            );
             // 4d-bis. 注入工作空间级共识 prompt（需求 022）。
             // Loop 与 todo 走各自路径，此处补齐 Loop 注入使 workspace 共识全路径生效。
             // loop_.workspace_id = 0/None 时 inject_workspace_prompt 静默回退原 prompt。
@@ -1763,6 +1765,58 @@ impl LoopRunner {
     }
 }
 
+/// 在内存中把任务需求注入到 step todo 的 prompt 模板。
+///
+/// 设计原则（修复历史 bug）：
+/// - todo.prompt 是只读模板，本函数仅在内存中构造运行时 prompt，绝不写回数据库；
+/// - 模板含 `{{requirement}}` 占位符时，走标准替换；
+/// - 模板不含占位符时（兼容老 process yaml），在末尾兜底追加 `\n\n## 任务需求\n{requirement}`；
+/// - 每次都基于原始 `template_prompt` 重新构造，不会累加历史注入。
+///
+/// 参数：
+/// - `template_prompt`：从数据库读出的 step todo prompt 模板（含占位符）。
+/// - `task_requirement`：本次执行的任务需求，来自 trigger_meta.requirement。
+/// - 其他占位符替换值（blackboard/last_output 等）。
+///
+/// 返回：构造好的 enhanced_prompt，传给执行器使用。
+// 参数较多是因为 LoopRunner 的占位符替换链本就有 7 个变量，
+// 拆成 struct 会过度抽象一个内部辅助函数，故允许 8 个参数。
+#[allow(clippy::too_many_arguments)]
+fn build_enhanced_prompt_with_requirement(
+    template_prompt: &str,
+    task_requirement: &str,
+    blackboard: &str,
+    last_output: &str,
+    last_conclusion: &str,
+    last_step_name: &str,
+    loop_execution_id: i64,
+    loop_name: &str,
+) -> String {
+    // 先判断模板是否含 {{requirement}} 占位符：
+    // - 含：走标准替换链，把占位符替换为当前任务需求；
+    // - 不含：兼容老模板（process yaml 未追加占位符），替换链对 requirement 是 no-op，
+    //   需要在末尾兜底追加需求段，否则执行器拿不到需求文本。
+    // 兜底追加是纯内存操作，每次执行都基于原始 template_prompt 重新构造，
+    // 不会出现「上次追加的内容残留」的累加污染问题。
+    let has_requirement_placeholder = template_prompt.contains("{{requirement}}");
+    let replaced = template_prompt
+        .replace("{{blackboard}}", blackboard)
+        .replace("{{last_output}}", last_output)
+        .replace("{{last_conclusion}}", last_conclusion)
+        .replace("{{last_step_name}}", last_step_name)
+        .replace("{{message}}", last_output)
+        .replace("{{loop_execution_id}}", &loop_execution_id.to_string())
+        .replace("{{loop_name}}", loop_name)
+        .replace("{{requirement}}", task_requirement);
+    // 老模板兜底：占位符缺失且本次有需求时，在内存中追加需求段。
+    // 追加格式与历史 inject_requirement_to_steps 保持一致，便于人类阅读 prompt 时识别。
+    if has_requirement_placeholder || task_requirement.is_empty() {
+        replaced
+    } else {
+        format!("{}\n\n## 任务需求\n{}", replaced, task_requirement)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 单元测试
 // ---------------------------------------------------------------------------
@@ -2206,5 +2260,89 @@ mod tests {
         ];
         let result = runner.check_workspace_consistency(&loop_model, &steps).await;
         assert!(result.is_ok(), "重复引用同一 todo 应通过：{:?}", result.err());
+    }
+
+    // ── build_enhanced_prompt_with_requirement 测试 ──
+    // 验证「读取模板 → 内存替换 → 不写库」的核心设计原则，
+    // 以及修复历史 inject_requirement_to_steps 的累加污染 bug。
+
+    #[test]
+    fn build_enhanced_prompt_with_placeholder_replaces_requirement() {
+        // 模板含 {{requirement}} 占位符：应走标准替换，不在末尾追加。
+        let template = "你好\n需求是：{{requirement}}\n完成它";
+        let result = build_enhanced_prompt_with_requirement(
+            template, "计算9+9", "", "", "", "", 100, "测试Loop",
+        );
+        assert_eq!(result, "你好\n需求是：计算9+9\n完成它");
+        // 不应出现末尾追加的「## 任务需求」段
+        assert!(!result.contains("## 任务需求"), "含占位符时不应追加需求段");
+    }
+
+    #[test]
+    fn build_enhanced_prompt_without_placeholder_appends_requirement() {
+        // 老模板不含 {{requirement}} 占位符：应在末尾兜底追加需求段。
+        let template = "你是一个计算器";
+        let result = build_enhanced_prompt_with_requirement(
+            template, "计算9+9", "", "", "", "", 100, "测试Loop",
+        );
+        assert_eq!(result, "你是一个计算器\n\n## 任务需求\n计算9+9");
+    }
+
+    #[test]
+    fn build_enhanced_prompt_empty_requirement_no_append() {
+        // 需求为空时（如纯 Loop 触发不带 task）：不应追加空需求段，保持模板原样。
+        let template = "你是一个计算器";
+        let result = build_enhanced_prompt_with_requirement(
+            template, "", "", "", "", "", 100, "测试Loop",
+        );
+        assert_eq!(result, "你是一个计算器");
+        assert!(!result.contains("## 任务需求"), "空需求不应追加需求段");
+    }
+
+    #[test]
+    fn build_enhanced_prompt_no_accumulation_across_runs() {
+        // 关键回归测试：模拟同一模板被多次执行（如创建任务后又新建执行），
+        // 每次都应基于原始模板构造，不应累加历史需求段。
+        let template = "你是一个计算器";
+        // 第一次执行：需求 A
+        let run1 = build_enhanced_prompt_with_requirement(
+            template, "计算9+9", "", "", "", "", 100, "测试Loop",
+        );
+        // 第二次执行：需求 B（模拟用户为同一任务新建执行）
+        let run2 = build_enhanced_prompt_with_requirement(
+            template, "计算8*9", "", "", "", "", 101, "测试Loop",
+        );
+        // 第三次执行：需求 C
+        let run3 = build_enhanced_prompt_with_requirement(
+            template, "计算7+6", "", "", "", "", 102, "测试Loop",
+        );
+        // 每次结果都只含本次需求，不含历史需求
+        assert_eq!(run1, "你是一个计算器\n\n## 任务需求\n计算9+9");
+        assert_eq!(run2, "你是一个计算器\n\n## 任务需求\n计算8*9");
+        assert_eq!(run3, "你是一个计算器\n\n## 任务需求\n计算7+6");
+        // 关键断言：第三次执行结果中不应出现前两次的需求
+        assert!(!run3.contains("计算9+9"), "不应累加历史需求");
+        assert!(!run3.contains("计算8*9"), "不应累加历史需求");
+        // 且只应出现一次「## 任务需求」段
+        assert_eq!(run3.matches("## 任务需求").count(), 1, "需求段只应出现一次");
+    }
+
+    #[test]
+    fn build_enhanced_prompt_replaces_all_placeholders() {
+        // 验证所有占位符都被正确替换，且需求兜底追加仍生效。
+        let template = "Loop: {{loop_name}} (exec={{loop_execution_id}})\n\
+                        黑板: {{blackboard}}\n\
+                        上一步: {{last_step_name}} 输出={{last_output}} 结论={{last_conclusion}}\n\
+                        消息: {{message}}";
+        let result = build_enhanced_prompt_with_requirement(
+            template, "做某事", "bb", "out", "conc", "stepA", 42, "我的Loop",
+        );
+        // {{message}} 与 {{last_output}} 共享同值
+        assert!(result.contains("Loop: 我的Loop (exec=42)"));
+        assert!(result.contains("黑板: bb"));
+        assert!(result.contains("上一步: stepA 输出=out 结论=conc"));
+        assert!(result.contains("消息: out"));
+        // 无 {{requirement}} 占位符，应兜底追加
+        assert!(result.ends_with("\n\n## 任务需求\n做某事"));
     }
 }

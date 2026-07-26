@@ -2,13 +2,13 @@ import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useApp } from '@/hooks/useApp';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useExecutionHistory } from '@/hooks/useExecutionHistory';
-import { Button, Empty, App, Modal, Input } from 'antd';
+import { Button, Empty, App, Modal, Input, Skeleton } from 'antd';
 import { CheckCircleOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { TodoDrawer } from './TodoDrawer';
 import { BREAKPOINTS } from '@/constants';
 import * as db from '@/utils/database';
 import { extractTitle } from '@/utils/titleExtractor';
-import type { ExecutionRecord } from '@/types';
+import type { ExecutionRecord, Todo } from '@/types';
 import { groupBySession } from './todo-detail/helpers';
 import { DetailHeader } from './todo-detail/DetailHeader';
 import { ForumPostList } from './todo-detail/ForumPostList';
@@ -19,12 +19,86 @@ interface TodoDetailProps {
   onOpenPost?: (todoId: number, recordId: number) => void;
 }
 
+/**
+ * 按 id 加载 todo：每次都发请求，不读任何本地列表缓存。
+ * 设计原因：用户明确要求"不要用这个大 todo 列表"，详情页数据应始终从后端拉取，
+ * 保证最新且不依赖列表是否已加载。
+ *
+ * 请求策略：后端路径强制带 ws_id 且做归属校验，URL /#/todos/:id 不带 ws，
+ * 前端只用当前 selectedWorkspace 作为查询条件。若 todo 不属于该 workspace
+ * （403）或不存在（404），返回 null 触发 UI 错误态。
+ * 跨 workspace 直达场景需用户先切换 workspace 再打开 todo。
+ */
+async function loadTodoById(
+  todoId: number,
+  selectedWorkspace: number | null,
+): Promise<Todo | null> {
+  // selectedWorkspace 未设置时无法查询（后端路径需要 ws_id）
+  if (selectedWorkspace == null) return null;
+  try {
+    return await db.getTodo(selectedWorkspace, todoId);
+  } catch {
+    // 归属不匹配（403）或 todo 不存在（404），返回 null 触发 UI 错误态
+    return null;
+  }
+}
+
 export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps) {
   const { state, dispatch } = useApp();
   const { message } = App.useApp();
-  const { todos, selectedTodoId, executionRecords, runningTasks } = state;
+  const { selectedTodoId, executionRecords, runningTasks } = state;
   const isWide = !useIsMobile(BREAKPOINTS.wide);
-  const selectedTodo = todos.find(t => t.id === selectedTodoId);
+
+  // selectedTodo 改为独立请求获取的 local state，不再依赖 todos 列表缓存。
+  // 设计原因：URL /#/todos/:id 直接访问时，selectedWorkspace 可能与目标 todo 不同桶，
+  // 依赖 visibleTodos.find 会落空导致空白页。改为按 selectedTodoId 主动请求，
+  // 详情页数据始终最新，且不依赖列表是否已加载。
+  const [selectedTodo, setSelectedTodo] = useState<Todo | null>(null);
+  // 加载态：首次进入或切换 todo 时显示骨架屏，避免空白页误导用户
+  const [todoLoading, setTodoLoading] = useState(false);
+  // 加载失败态：所有候选 workspace 都查不到时显示错误提示 + 重试按钮
+  const [todoLoadError, setTodoLoadError] = useState(false);
+
+  // 监听 selectedTodoId 变化，主动加载 todo 详情。
+  // 不在依赖里加 selectedWorkspace：避免 workspace 切换触发重新请求
+  //（详情页数据已通过回调主动刷新）。
+  useEffect(() => {
+    if (selectedTodoId == null) {
+      setSelectedTodo(null);
+      setTodoLoadError(false);
+      return;
+    }
+    let cancelled = false;
+    setTodoLoading(true);
+    setTodoLoadError(false);
+    loadTodoById(selectedTodoId, state.selectedWorkspace)
+      .then(todo => {
+        if (cancelled) return;
+        if (todo) {
+          setSelectedTodo(todo);
+        } else {
+          setSelectedTodo(null);
+          setTodoLoadError(true);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSelectedTodo(null);
+        setTodoLoadError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setTodoLoading(false);
+      });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTodoId]);
+
+  // 重新加载当前 todo（供回调成功后调用，确保 local state 与后端一致）
+  const reloadSelectedTodo = useCallback(async () => {
+    if (selectedTodoId == null) return;
+    const fresh = await loadTodoById(selectedTodoId, state.selectedWorkspace);
+    if (fresh) setSelectedTodo(fresh);
+  }, [selectedTodoId, state.selectedWorkspace]);
 
   const [todoDrawerOpen, setTodoDrawerOpen] = useState(false);
 
@@ -171,6 +245,8 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
     try {
       const updated = await db.updateTodo(selectedTodo.workspace_id!, selectedTodo.id, selectedTodo.title, selectedTodo.prompt || '', newStatus);
       dispatch({ type: 'UPDATE_TODO', payload: updated });
+      // 同步更新 local state，避免详情页状态滞后
+      setSelectedTodo(updated);
       message.success('状态已更新');
     } catch {
       // ignore: interceptor already shows error
@@ -199,6 +275,8 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
       selectedTodo.auto_review_enabled,
     );
     dispatch({ type: 'UPDATE_TODO', payload: updated });
+    // 同步更新 local state，避免详情页标题滞后
+    setSelectedTodo(updated);
   }, [selectedTodo, dispatch]);
 
   // 升级/降级已移除：环节与 Todo 合一，无需 promote 流程
@@ -216,6 +294,52 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
   };
 
   if (!selectedTodo) {
+    // 加载中：显示骨架屏，避免空白页误导用户以为数据丢失
+    if (todoLoading) {
+      return (
+        <div className="detail-panel" style={{ padding: 16 }}>
+          <Skeleton active paragraph={{ rows: 6 }} />
+        </div>
+      );
+    }
+    // 加载失败：显示错误提示 + 重试按钮，让用户能主动恢复
+    if (todoLoadError) {
+      return (
+        <div className="detail-panel" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="empty-state">
+            <Empty
+              description={
+                <div style={{ color: 'var(--color-text-tertiary)', fontSize: 14 }}>
+                  任务加载失败或不存在
+                </div>
+              }
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+            >
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={() => {
+                  // 手动触发重新加载：通过 setSelectedTodoId 间接触发 useEffect
+                  if (selectedTodoId != null) {
+                    setTodoLoading(true);
+                    setTodoLoadError(false);
+                    loadTodoById(selectedTodoId, state.selectedWorkspace)
+                      .then(todo => {
+                        if (todo) setSelectedTodo(todo);
+                        else setTodoLoadError(true);
+                      })
+                      .catch(() => setTodoLoadError(true))
+                      .finally(() => setTodoLoading(false));
+                  }
+                }}
+              >
+                重试
+              </Button>
+            </Empty>
+          </div>
+        </div>
+      );
+    }
+    // 未选择 todo（selectedTodoId 为 null）：显示空态引导
     return (
       <div className="detail-panel" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div className="empty-state">
@@ -320,7 +444,10 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
         tags={state.tags}
         onClose={() => setTodoDrawerOpen(false)}
         onSaved={() => {
-          // 只刷新当前 workspace 桶：抽屉保存的 todo 必然属于该 workspace。
+          // 抽屉保存可能修改多个字段（标题/prompt/执行器/调度等），
+          // 直接用 reloadSelectedTodo 拉取最新数据，避免 local state 滞后。
+          reloadSelectedTodo();
+          // 同步刷新当前 workspace 桶，保持列表与详情一致
           const wid = state.selectedWorkspace;
           if (wid != null) {
             db.getAllTodos(wid).then(todos => {
