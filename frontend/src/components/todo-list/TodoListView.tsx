@@ -7,9 +7,9 @@
 // 4. 单行操作（执行 / 编辑 / 删除）走 Dropdown 菜单，不挤占行宽。
 // 5. 单函数 ≤ 30 行：列定义、行操作菜单、主渲染拆为独立函数。
 //
-// 数据由父组件（ItemsPage）注入，本组件不直接拉接口，便于测试与复用。
+// 数据由父组件（TodoListPage）注入，本组件不直接拉接口，便于测试与复用。
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Button, Dropdown, Table, Tag, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -118,6 +118,15 @@ export function TodoListView({
   const workspaceId = state.selectedWorkspace;
   // 行选中态：仅持有 id 列表，由 Table 的 rowSelection 受控
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+
+  // items 变化（搜索过滤 / 删除后刷新）时裁剪选中集合，避免对已消失的行发起批量操作
+  // 也避免「已选 N 项」计数与实际可见勾选不符
+  useEffect(() => {
+    setSelectedIds(prev => {
+      const alive = prev.filter(id => items.some(i => i.id === id));
+      return alive.length === prev.length ? prev : alive;
+    });
+  }, [items]);
 
   // 复用共享 hook：批量 Modal + 菜单项一次到位
   const { batchActions, modals } = useBatchActions({

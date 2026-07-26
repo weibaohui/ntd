@@ -32,6 +32,15 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
+// 028 路由同步：history.pushState/replaceState 不会触发 popstate 事件，
+// 因此当 MemorialBoard/BlackboardPage/ReferencingLoopsSection 等嵌套组件
+// 调用 pushUrl/replaceUrl 时，App 根组件的 useViewState 实例不会更新。
+// 解决方案：用模块级 EventTarget 广播 'nav-change' 事件，
+// 所有 useViewState 实例都监听该事件，从当前 hash 重新同步状态。
+// 这样任何一处发起导航，全站所有实例都会同步更新。
+const navEventTarget = new EventTarget();
+const NAV_CHANGE_EVENT = 'ntd-nav-change';
+
 export type View =
   | 'todos'          // 事项命名空间（列表 /#/todos + 详情 /#/todos/:id + 帖子 /#/todos/:id/posts/:rid）
   | 'loops'          // 环路命名空间（列表 /#/loops + 详情 /#/loops/:id）
@@ -264,50 +273,42 @@ export function useViewState() {
   const [blackboardFile, setBlackboardFile] = useState<string | null>(getInitialBlackboardFile);
   const [processName, setProcessName] = useState<string | null>(getInitialProcessName);
 
+  // setters 集中传入 syncFromHash，避免每个回调都重复一遍
+  const setters = {
+    setActiveView, setTodoDetailId, setLoopDetailId, setPostRecordId,
+    setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessName,
+  };
+
   const pushUrl = useCallback((view: View, opts?: NavOpts) => {
     const hashUrl = buildHashUrl(view, opts);
     window.history.pushState(null, '', hashUrl);
-    syncStateFromOptions(view, opts, {
-      setActiveView, setTodoDetailId, setLoopDetailId, setPostRecordId,
-      setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessName,
-    });
+    // 写入 history 后立即同步本实例 state，避免等事件往返一帧
+    syncStateFromOptions(view, opts, setters);
+    // 广播给其他 useViewState 实例（如 App 根、其他嵌套组件）
+    navEventTarget.dispatchEvent(new Event(NAV_CHANGE_EVENT));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const replaceUrl = useCallback((view: View, opts?: NavOpts) => {
     const hashUrl = buildHashUrl(view, opts);
     window.history.replaceState(null, '', hashUrl);
-    syncStateFromOptions(view, opts, {
-      setActiveView, setTodoDetailId, setLoopDetailId, setPostRecordId,
-      setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessName,
-    });
+    syncStateFromOptions(view, opts, setters);
+    navEventTarget.dispatchEvent(new Event(NAV_CHANGE_EVENT));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    const onPopState = () => {
-      // 后退/前进时从 hash 重新解析所有状态
-      const segments = getHashPathSegments();
-      const view = parseViewFromSegments(segments);
-      const params = getHashSearchParams();
-      const tab = params.get('tab');
-      const mode = params.get('mode') as BoardMode | null;
-      const slug = params.get('slug');
-      const file = params.get('file');
-      const name = params.get('name');
-      const resolvedMode = mode && ALL_BOARD_MODES.includes(mode) ? mode : 'memorial';
-
-      setActiveView(view);
-      // todos/loops 详情 id 仅在对应 view 下提取，避免跨视图串台
-      setTodoDetailId(view === 'todos' ? getPathIdAt(segments, 1) : null);
-      setPostRecordId(view === 'todos' && segments[2] === 'posts' ? getPathIdAt(segments, 3) : null);
-      setLoopDetailId(view === 'loops' ? getPathIdAt(segments, 1) : null);
-      setActiveTab(tab || null);
-      setBoardMode(resolvedMode);
-      setWikiSlug(view === 'wiki' ? (slug || null) : null);
-      setBlackboardFile(view === 'blackboard' ? (file || null) : null);
-      setProcessName(view === 'processes' ? (name || null) : null);
+    // 统一处理 popstate（浏览器后退/前进）与 nav-change（其他实例 pushUrl/replaceUrl）
+    const onNavChange = () => {
+      syncFromHash(setters);
     };
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
+    window.addEventListener('popstate', onNavChange);
+    navEventTarget.addEventListener(NAV_CHANGE_EVENT, onNavChange);
+    return () => {
+      window.removeEventListener('popstate', onNavChange);
+      navEventTarget.removeEventListener(NAV_CHANGE_EVENT, onNavChange);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const showView = useCallback((view: View, opts?: { tab?: string | null }) => {
@@ -324,15 +325,29 @@ export function useViewState() {
     pushUrl('wiki', { workspace: workspaceId, slug });
   }, [pushUrl]);
 
-  /** 返回列表：todos/loops 用 path 段清空 detail；其他视图无 path 段，等同 showView。 */
+  /**
+   * 返回上一级：优先用 history.back() 恢复浏览器历史，保持移动端返回语义；
+   * 无历史可退时（直接刷新进入详情）按层级 fallback：
+   *   - 帖子页 /#/todos/:id/posts/:rid → /#/todos/:id（父事项详情）
+   *   - 事项详情 /#/todos/:id          → /#/todos（列表）
+   *   - 环路详情 /#/loops/:id          → /#/loops（列表）
+   *   - 其他视图                       → 该视图根路径
+   */
   const backToList = useCallback(() => {
+    // 帖子页优先返回父事项详情（保留列表状态恢复策略）
+    if (activeView === 'todos' && todoDetailId != null && postRecordId != null) {
+      pushUrl('todos', { id: todoDetailId });
+      return;
+    }
+    // 事项/环路详情返回列表
     if (activeView === 'todos') { replaceUrl('todos'); return; }
     if (activeView === 'loops') { replaceUrl('loops'); return; }
     pushUrl(activeView);
-  }, [activeView, pushUrl, replaceUrl]);
+  }, [activeView, todoDetailId, postRecordId, pushUrl, replaceUrl]);
 
   // MobileHeader 需要知道当前是否处于「详情态」以决定返回按钮显隐；
   // 由 todoDetailId/loopDetailId 派生，保持兼容旧 activePanel: 'detail' | 'list' 接口。
+  // 帖子页同样视为 detail 态，MobileHeader 返回按钮可触发 backToList 回到父事项详情。
   const activePanel: Panel = (activeView === 'todos' && todoDetailId != null)
     || (activeView === 'loops' && loopDetailId != null)
     ? 'detail'
@@ -393,4 +408,42 @@ function syncStateFromOptions(
   setWikiSlug(view === 'wiki' ? (opts?.slug ?? null) : null);
   setBlackboardFile(view === 'blackboard' ? (opts?.file ?? null) : null);
   setProcessName(view === 'processes' ? (opts?.name ?? null) : null);
+}
+
+/**
+ * 从当前 hash 重新解析所有状态并同步到 setters。
+ * 用于 popstate（浏览器后退/前进）和 nav-change 事件（其他实例 pushUrl/replaceUrl）。
+ * 抽成纯函数避免 useViewState 中 useEffect 重复实现。
+ */
+function syncFromHash(setters: {
+  setActiveView: (v: View) => void;
+  setTodoDetailId: (id: number | null) => void;
+  setLoopDetailId: (id: number | null) => void;
+  setPostRecordId: (id: number | null) => void;
+  setActiveTab: (t: string | null) => void;
+  setBoardMode: (m: BoardMode) => void;
+  setWikiSlug: (s: string | null) => void;
+  setBlackboardFile: (f: string | null) => void;
+  setProcessName: (n: string | null) => void;
+}): void {
+  const segments = getHashPathSegments();
+  const view = parseViewFromSegments(segments);
+  const params = getHashSearchParams();
+  const tab = params.get('tab');
+  const mode = params.get('mode') as BoardMode | null;
+  const slug = params.get('slug');
+  const file = params.get('file');
+  const name = params.get('name');
+  const resolvedMode = mode && ALL_BOARD_MODES.includes(mode) ? mode : 'memorial';
+
+  setters.setActiveView(view);
+  // todos/loops 详情 id 仅在对应 view 下提取，避免跨视图串台
+  setters.setTodoDetailId(view === 'todos' ? getPathIdAt(segments, 1) : null);
+  setters.setPostRecordId(view === 'todos' && segments[2] === 'posts' ? getPathIdAt(segments, 3) : null);
+  setters.setLoopDetailId(view === 'loops' ? getPathIdAt(segments, 1) : null);
+  setters.setActiveTab(tab || null);
+  setters.setBoardMode(resolvedMode);
+  setters.setWikiSlug(view === 'wiki' ? (slug || null) : null);
+  setters.setBlackboardFile(view === 'blackboard' ? (file || null) : null);
+  setters.setProcessName(view === 'processes' ? (name || null) : null);
 }

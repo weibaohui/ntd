@@ -70,8 +70,14 @@ test.describe('028 列表详情独立路由', () => {
     await page.goto(`${BASE}/#/todos/999999`);
     await page.waitForTimeout(ROUTE_SETTLE_MS);
 
+    // 执行浏览器刷新：验证详情 URL 在刷新后仍保持
+    await page.reload();
+    await page.waitForTimeout(ROUTE_SETTLE_MS);
+
     // URL 保持详情路径
     await expect(page).toHaveURL(/\/#\/todos\/999999$/);
+    // 页面应正常挂载（找到 LeftRail 或 PageCard 任一即认为未崩溃）
+    await expect(page.locator('.ntd-left-rail-slot, .ntd-page-card').first()).toBeVisible();
   });
 
   test('环路列表页：URL /#/loops 直接进入可渲染', async ({ page }) => {
@@ -88,7 +94,12 @@ test.describe('028 列表详情独立路由', () => {
     await page.goto(`${BASE}/#/loops/999999`);
     await page.waitForTimeout(ROUTE_SETTLE_MS);
 
+    // 执行浏览器刷新：验证详情 URL 在刷新后仍保持
+    await page.reload();
+    await page.waitForTimeout(ROUTE_SETTLE_MS);
+
     await expect(page).toHaveURL(/\/#\/loops\/999999$/);
+    await expect(page.locator('.ntd-left-rail-slot, .ntd-page-card').first()).toBeVisible();
   });
 
   test('旧 URL /#/items 不再做兼容重定向，应用不崩溃', async ({ page }) => {
@@ -96,10 +107,14 @@ test.describe('028 列表详情独立路由', () => {
     await page.goto(`${BASE}/#/items`);
     await page.waitForTimeout(ROUTE_SETTLE_MS);
 
-    // 应用应仍处于运行态（页面上能找到 LeftRail 或主内容容器）
-    // 不强制断言具体 URL，因为 fallback 策略可能是 /#/todos 也可能是其他默认视图
-    const appAlive = await page.locator('body').count();
-    expect(appAlive).toBeGreaterThan(0);
+    // 应用应正常挂载：LeftRail 容器存在
+    // （body 在 React 挂载失败时也始终存在，不能证明应用未崩溃）
+    await expect(page.locator('.ntd-left-rail-slot').first()).toBeVisible();
+
+    // URL 不应被重定向到旧 /#/items 之外（fallback 到 /#/todos 也算正常）
+    // 关键约束：不会停留在 /#/items 上假装渲染（无对应 View）
+    const url = page.url();
+    expect(url).not.toMatch(/\/#\/items$/);
   });
 
   test('事项列表 → 点击行跳转到 /#/todos/:id（如有数据）', async ({ page }) => {

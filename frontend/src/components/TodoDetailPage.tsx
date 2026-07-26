@@ -53,7 +53,8 @@ export function TodoDetailPage({ todoId, onBack, onOpenPost }: TodoDetailPagePro
       style={{ flex: 1, height: '100%' }}
       contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 43px)' }}
     >
-      <TodoDetail onOpenPost={onOpenPost} />
+      {/* 外层 PageCard 已渲染标题行（标题 + 返回按钮），内层隐藏避免重复头部 */}
+      <TodoDetail hideTitleRow onOpenPost={onOpenPost} />
     </PageCard>
   );
 }

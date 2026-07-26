@@ -137,10 +137,15 @@ export function useBatchActions(opts: UseBatchActionsOptions): UseBatchActionsRe
   const handleConfirmChangeExecutor = useCallback(async (executor: string) => {
     const ids = pendingExecutorChangeIds;
     if (ids.length === 0) return;
+    // 工作空间未选时不发请求，避免向 /workspaces/0/... 发出无效调用
+    if (selectedWorkspace == null) {
+      message.warning('请先选择工作空间');
+      return;
+    }
     setExecutorModalOpen(false);
     setPendingExecutorChangeIds([]);
     try {
-      const result = await db.batchUpdateTodosExecutor(selectedWorkspace ?? 0, ids, executor);
+      const result = await db.batchUpdateTodosExecutor(selectedWorkspace, ids, executor);
       if (result.failed.length === 0) {
         message.success(`已为 ${result.updated.length} 项更换执行器为「${executor}」`);
       } else {
@@ -177,9 +182,14 @@ export function useBatchActions(opts: UseBatchActionsOptions): UseBatchActionsRe
     const ids = pendingWorkspaceBatchIds;
     const target = workspaceBatchTarget;
     if (ids.length === 0 || target == null) return;
+    // 工作空间未选时不发请求，避免 srcWs=0 的无效调用
+    if (selectedWorkspace == null) {
+      message.warning('请先选择工作空间');
+      return;
+    }
     setWorkspaceBatchProcessing(true);
     try {
-      const srcWs = selectedWorkspace ?? 0;
+      const srcWs = selectedWorkspace;
       const isCopy = workspaceBatchMode === 'copy';
       // mode 区分调 db 还是 dbLoops；返回结构相同 {updated_count, total}
       const result = mode === 'item'
@@ -209,12 +219,17 @@ export function useBatchActions(opts: UseBatchActionsOptions): UseBatchActionsRe
   const handleConfirmSchedulerBatch = useCallback(async () => {
     const ids = pendingSchedulerBatchIds;
     if (ids.length === 0) return;
+    // 工作空间未选时不发请求，避免向 /workspaces/0/... 发出无效调用
+    if (selectedWorkspace == null) {
+      message.warning('请先选择工作空间');
+      return;
+    }
     setSchedulerBatchProcessing(true);
     try {
       const isPause = schedulerBatchMode === 'pause';
       const result = isPause
-        ? await db.batchPauseScheduler(selectedWorkspace ?? 0, ids)
-        : await db.batchResumeScheduler(selectedWorkspace ?? 0, ids);
+        ? await db.batchPauseScheduler(selectedWorkspace, ids)
+        : await db.batchResumeScheduler(selectedWorkspace, ids);
       reportBatchResult(result, isPause ? '暂停' : '恢复');
       onRefreshItems?.();
       setSchedulerBatchModalOpen(false);
@@ -254,7 +269,7 @@ export function useBatchActions(opts: UseBatchActionsOptions): UseBatchActionsRe
           open={executorModalOpen}
           onCancel={() => { setExecutorModalOpen(false); setPendingExecutorChangeIds([]); }}
           footer={null}
-          destroyOnClose
+          destroyOnHidden
         >
           <ExecutorPicker
             executor=""
@@ -274,7 +289,7 @@ export function useBatchActions(opts: UseBatchActionsOptions): UseBatchActionsRe
           okText="强停"
           cancelText="取消"
           okButtonProps={{ danger: true }}
-          destroyOnClose
+          destroyOnHidden
         >
           <p>将停止 <strong>{pendingForceStopIds.length}</strong> 个环路关联的所有正在运行的执行。</p>
           <p style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>
@@ -293,7 +308,7 @@ export function useBatchActions(opts: UseBatchActionsOptions): UseBatchActionsRe
         cancelText="取消"
         confirmLoading={workspaceBatchProcessing}
         okButtonProps={{ disabled: workspaceBatchTarget == null }}
-        destroyOnClose
+        destroyOnHidden
       >
         <p>
           {workspaceBatchMode === 'copy' ? '复制' : '移动'} <strong>{pendingWorkspaceBatchIds.length}</strong> 项到目标工作空间：
@@ -322,7 +337,7 @@ export function useBatchActions(opts: UseBatchActionsOptions): UseBatchActionsRe
           okText="确认"
           cancelText="取消"
           confirmLoading={schedulerBatchProcessing}
-          destroyOnClose
+          destroyOnHidden
         >
           <p>
             {schedulerBatchMode === 'pause'
