@@ -1,99 +1,350 @@
-// 任务管理页面：创建任务 + 任务列表（支持状态筛选）。
+// 任务页主壳。
+// 三态视图切换：列表（Table）/ 看板（按状态分泳道）/ 卡片（卡片墙）。
+// 详情独立路由：URL /#/tasks?id=123 进入详情全屏，无 id 时渲染当前视图模式。
+// 列表/看板/卡片态全屏单页，不再用 ListDetailPage 双栏。
 
-import { useEffect, useState } from 'react';
-import { Card, Input, Button, Select, List, Tag, Typography, message, Space, Tabs } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, RocketOutlined } from '@ant-design/icons';
+import { useEffect, useState, useCallback } from 'react';
+import { Input, Button, Segmented, message } from 'antd';
+import {
+  AppstoreOutlined,
+  ArrowLeftOutlined,
+  LayoutOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  RocketOutlined,
+  SearchOutlined,
+  UnorderedListOutlined,
+} from '@ant-design/icons';
+import { PageCard } from '@/components/common/PageCard';
+import { TasksTableView } from '@/components/tasks/TasksTableView';
+import { TasksKanbanView } from '@/components/tasks/TasksKanbanView';
+import { TasksCardView } from '@/components/tasks/TasksCardView';
+import { CreateTaskModal } from '@/components/tasks/CreateTaskModal';
+import { TaskDetailPanel } from '@/components/tasks/TaskDetailPanel';
 import bundledApi from '@/api/bundled';
 import { listLoops } from '@/utils/database/loops';
-import { TaskDetailPage } from '@/components/tasks/TaskDetailPage';
+import { useViewState } from '@/hooks/useViewState';
+import type { LoopLite, TaskItem, TasksViewMode } from '@/components/tasks/constants';
+import { TASKS_VIEW_STORAGE_KEY } from '@/components/tasks/constants';
 
-const { TextArea } = Input;
-const { Title, Text } = Typography;
-
-interface LoopItem { id: number; name: string; }
-
-interface TaskItem {
-  id: number; title: string; description: string; status: string;
-  template_name?: string; complexity?: string;
-  loop_id?: number; workspace_id?: number;
-  latest_execution_status?: string; latest_execution_requirement?: string;
-  created_at?: string;
+interface TasksPageProps {
+  workspaceId: number | null;
 }
 
-interface TasksPageProps { workspaceId: number | null; }
+/** 读取持久化的视图模式，默认 list。 */
+function readInitialView(): TasksViewMode {
+  try {
+    const v = localStorage.getItem(TASKS_VIEW_STORAGE_KEY);
+    if (v === 'list' || v === 'kanban' || v === 'card') return v;
+  } catch {
+    /* localStorage 不可用时静默降级 */
+  }
+  return 'list';
+}
+
+/** 把当前视图模式持久化到 localStorage。 */
+function persistView(mode: TasksViewMode) {
+  try {
+    localStorage.setItem(TASKS_VIEW_STORAGE_KEY, mode);
+  } catch {
+    /* 静默降级 */
+  }
+}
+
+/**
+ * 从 URL hash 搜索参数中读取 id（任务详情 id）。
+ * 返回 null 表示无 id 参数（列表态）。
+ */
+function readSelectedTaskId(): number | null {
+  const hash = window.location.hash || '';
+  const hashWithoutHash = hash.startsWith('#') ? hash.slice(1) : hash;
+  const [, search] = hashWithoutHash.split('?', 2);
+  const params = new URLSearchParams(search || '');
+  const id = params.get('id');
+  if (!id) return null;
+  const n = Number(id);
+  return Number.isFinite(n) ? n : null;
+}
 
 export function TasksPage({ workspaceId }: TasksPageProps) {
-  const wsId = workspaceId || 1;
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
-  const [loops, setLoops] = useState<LoopItem[]>([]);
-  const [requirement, setRequirement] = useState('');
-  const [selectedLoopId, setSelectedLoopId] = useState<number | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
-  const [statusFilter, setStatusFilter] = useState<string | undefined>();
+  // 没有选中工作空间时回退到 1，与原实现一致。
+  // 因为 wsId 在 API 调用路径中是必填项，1 是开发环境默认工作空间。
+  const wsId = workspaceId ?? 1;
 
-  const load = async () => {
-    if (!wsId) return;
+  // 视图路由：useViewState 提供 pushUrl/replaceUrl，用于驱动 URL hash。
+  const { pushUrl, replaceUrl } = useViewState();
+
+  // 视图模式：list/kanban/card，持久化到 localStorage。
+  const [viewMode, setViewMode] = useState<TasksViewMode>(readInitialView);
+
+  // 任务列表数据（三态视图共享）。
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // 顶栏搜索词（三态共享）。
+  const [searchKeyword, setSearchKeyword] = useState('');
+
+  // 环路列表（用于新建任务 Modal 的下拉）。
+  // 只列出 process_template_id 非空的环路（即带工艺模板的环路才能创建任务）。
+  const [loops, setLoops] = useState<LoopLite[]>([]);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+
+  // 从 URL 读取当前选中的任务 id。
+  // null = 列表态，非 null = 详情全屏态。
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(readSelectedTaskId);
+
+  // 监听 popstate：浏览器前进/后退时同步 selectedTaskId。
+  useEffect(() => {
+    const onPopState = () => {
+      setSelectedTaskId(readSelectedTaskId());
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  // 切换视图时同步持久化。
+  const handleViewChange = (mode: TasksViewMode) => {
+    setViewMode(mode);
+    persistView(mode);
+  };
+
+  // 拉取任务列表。
+  // 这里拉全量（不带 status），三态视图各自在前端做筛选；
+  // 后端目前不支持 search 参数，keyword 过滤也在前端做。
+  const reload = useCallback(async () => {
     setLoading(true);
     try {
-      setTasks(await bundledApi.listTasks(wsId, statusFilter));
-      const loops = await listLoops(wsId);
-      setLoops(loops.filter((l: any) => l.process_template_id != null).map((l: any) => ({ id: l.id, name: l.name })));
-    } catch { message.error('加载失败'); }
-    finally { setLoading(false); }
+      const data = await bundledApi.listTasks(wsId);
+      setTasks(data);
+      // 顺便拉环路列表用于新建 Modal。
+      // listLoops 返回的是带 process_template_id 的环路（实现细节，过滤放外面）。
+      const lpList = await listLoops(wsId);
+      setLoops(
+        lpList
+          .filter((l) => l.process_template_id != null)
+          .map((l) => ({ id: l.id, name: l.name })),
+      );
+    } catch (e) {
+      message.error(`加载任务失败：${e instanceof Error ? e.message : String(e)}`);
+      setTasks([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [wsId]);
+
+  // workspace 变化或手动刷新时重拉。
+  // 不依赖 loading/tasks，避免 reload 自身变化触发循环。
+  useEffect(() => {
+    reload();
+  }, [reload, refreshKey]);
+
+  // 点击任务：通过路由跳转到详情页。
+  // pushUrl 会更新 URL hash，但本组件 selectedTaskId 由 popstate 监听同步，
+  // 所以这里手动 setSelectedTaskId 确保 SPA 内点击立即响应。
+  const handleSelectTask = useCallback(
+    (taskId: number | null) => {
+      if (taskId == null) {
+        // 返回列表：replaceUrl 避免详情页占历史栈。
+        replaceUrl('tasks', {});
+        setSelectedTaskId(null);
+      } else {
+        pushUrl('tasks', { id: taskId });
+        setSelectedTaskId(taskId);
+      }
+    },
+    [pushUrl, replaceUrl],
+  );
+
+  // 新建任务 Modal 提交后回调：关闭 Modal + 刷新列表。
+  const handleCreated = () => {
+    setCreateModalOpen(false);
+    setRefreshKey((k) => k + 1);
   };
 
-  useEffect(() => { if (wsId) load(); }, [statusFilter, wsId]);
+  // —— 顶栏 extra ——
+  // 搜索框：所有视图共享（Table/卡片在前端 filter，看板不做 keyword filter）。
+  // 刷新按钮：自增 refreshKey 触发 useEffect 重拉。
+  // Segmented：三态视图切换，与 MemorialBoard 的 Segmented 风格一致。
+  // 新建按钮：打开 CreateTaskModal。
+  const searchInput = (
+    <Input
+      allowClear
+      size="small"
+      placeholder="搜索任务标题或需求"
+      prefix={<SearchOutlined />}
+      value={searchKeyword}
+      onChange={(e) => setSearchKeyword(e.target.value)}
+      style={{ width: 220 }}
+      data-testid="tasks-page-search"
+    />
+  );
 
-  const handleCreate = async () => {
-    if (!requirement.trim()) { message.warning('请输入需求'); return; }
-    if (!selectedLoopId) { message.warning('请选择工艺环路'); return; }
-    setCreating(true);
-    try {
-      const r = await bundledApi.createTask(requirement, selectedLoopId, wsId);
-      message.success(`任务已创建，执行 #${r.execution_id}`);
-      setRequirement(''); load();
-    } catch (e: any) { message.error(e?.message || '创建任务失败'); }
-    finally { setCreating(false); }
-  };
+  const reloadButton = (
+    <Button
+      size="small"
+      icon={<ReloadOutlined />}
+      onClick={() => setRefreshKey((k) => k + 1)}
+      loading={loading}
+    >
+      刷新
+    </Button>
+  );
 
-  if (selectedTaskId !== null) {
-    return <TaskDetailPage taskId={selectedTaskId} workspaceId={wsId} onBack={() => { setSelectedTaskId(null); load(); }} />;
+  const viewSwitch = (
+    <Segmented
+      size="small"
+      value={viewMode}
+      onChange={(v) => handleViewChange(v as TasksViewMode)}
+      options={[
+        { value: 'list', icon: <UnorderedListOutlined />, title: '列表' },
+        { value: 'kanban', icon: <AppstoreOutlined />, title: '看板' },
+        { value: 'card', icon: <LayoutOutlined />, title: '卡片' },
+      ]}
+      data-testid="tasks-view-toggle"
+    />
+  );
+
+  const createButton = (
+    <Button
+      size="small"
+      type="primary"
+      icon={<PlusOutlined />}
+      onClick={() => setCreateModalOpen(true)}
+    >
+      新建
+    </Button>
+  );
+
+  // 详情态顶栏 extra：返回按钮 + 标题「任务详情」。
+  // 列表/看板/卡片态顶栏 extra：搜索 + 刷新 + Segmented + 新建。
+  const isDetail = selectedTaskId != null;
+
+  const detailExtra = (
+    <Button
+      size="small"
+      icon={<ArrowLeftOutlined />}
+      onClick={() => handleSelectTask(null)}
+    >
+      返回列表
+    </Button>
+  );
+
+  const listExtra = (
+    <>
+      {searchInput}
+      {reloadButton}
+      {viewSwitch}
+      {createButton}
+    </>
+  );
+
+  // —— 渲染分发 ——
+  // 详情态：全屏 TaskDetailPanel + 返回按钮。
+  // 列表/看板/卡片态：全屏单页 PageCard，根据 viewMode 渲染对应视图。
+  if (isDetail) {
+    return (
+      <PageCard
+        icon={<RocketOutlined />}
+        title="任务详情"
+        extra={detailExtra}
+        style={{ flex: 1, height: '100%' }}
+        contentStyle={{ height: 'calc(100% - 43px)', overflow: 'auto' }}
+      >
+        <TaskDetailPanel
+          taskId={selectedTaskId!}
+          workspaceId={wsId}
+          onTriggered={() => setRefreshKey((k) => k + 1)}
+        />
+      </PageCard>
+    );
   }
 
-  const statusColor = (s: string) => ({ pending: 'default', running: 'blue', success: 'green', failed: 'red' }[s] || 'default');
-  const statusLabel = (s: string) => ({ pending: '待执行', running: '进行中', success: '已完成', failed: '失败' }[s] || s);
+  // 列表态：PageCard 全屏 + TasksTableView。
+  if (viewMode === 'list') {
+    return (
+      <>
+        <PageCard
+          icon={<RocketOutlined />}
+          title="任务"
+          extra={listExtra}
+          style={{ flex: 1, height: '100%' }}
+          contentStyle={{ height: 'calc(100% - 43px)', overflow: 'hidden' }}
+        >
+          <TasksTableView
+            tasks={tasks}
+            loading={loading}
+            searchKeyword={searchKeyword}
+            workspaceId={wsId}
+            selectedTaskId={selectedTaskId}
+            onSelectTask={handleSelectTask}
+          />
+        </PageCard>
+        <CreateTaskModal
+          open={createModalOpen}
+          workspaceId={wsId}
+          loops={loops}
+          onCreated={handleCreated}
+          onCancel={() => setCreateModalOpen(false)}
+        />
+      </>
+    );
+  }
 
+  // 看板态：PageCard 全屏 + TasksKanbanView。
+  if (viewMode === 'kanban') {
+    return (
+      <>
+        <PageCard
+          icon={<RocketOutlined />}
+          title="任务"
+          extra={listExtra}
+          style={{ flex: 1, height: '100%' }}
+          contentStyle={{ height: 'calc(100% - 43px)', overflow: 'hidden' }}
+        >
+          <TasksKanbanView
+            tasks={tasks}
+            loading={loading}
+            workspaceId={wsId}
+            onSelectTask={handleSelectTask}
+          />
+        </PageCard>
+        <CreateTaskModal
+          open={createModalOpen}
+          workspaceId={wsId}
+          loops={loops}
+          onCreated={handleCreated}
+          onCancel={() => setCreateModalOpen(false)}
+        />
+      </>
+    );
+  }
+
+  // 卡片态：PageCard 全屏 + TasksCardView。
   return (
-    <div style={{ padding: 24, maxWidth: 800, margin: '0 auto' }}>
-      <Title level={3}><RocketOutlined style={{ marginRight: 8 }} />任务</Title>
-      <Card title={<><PlusOutlined /> 新建任务</>} style={{ marginBottom: 24 }}>
-        <TextArea placeholder="我想做什么？" value={requirement} onChange={e => setRequirement(e.target.value)} rows={3} style={{ marginBottom: 12 }} />
-        <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-          <Select placeholder="选择工艺环路" value={selectedLoopId} onChange={setSelectedLoopId}
-            options={loops.map(l => ({ label: l.name, value: l.id }))} style={{ minWidth: 300 }} />
-          <Button type="primary" icon={<ThunderboltOutlined />} loading={creating} onClick={handleCreate} disabled={!requirement.trim() || !selectedLoopId}>创建任务</Button>
-        </Space>
-      </Card>
-
-      <Tabs activeKey={statusFilter || 'all'} onChange={(k) => setStatusFilter(k === 'all' ? undefined : k)}
-        items={[
-          { key: 'all', label: '全部' }, { key: 'running', label: '进行中' }, { key: 'success', label: '已完成' }, { key: 'failed', label: '失败' },
-        ]} />
-
-      <List loading={loading} dataSource={tasks} locale={{ emptyText: '暂无任务' }}
-        renderItem={t => (
-          <List.Item onClick={() => setSelectedTaskId(t.id)} style={{ cursor: 'pointer' }}
-            actions={[t.latest_execution_status && <Tag color={statusColor(t.latest_execution_status)} key="s">{t.latest_execution_status}</Tag>].filter(Boolean)}
-          >
-            <List.Item.Meta
-              title={<Space><Text type="secondary">#{t.id}</Text><Text strong>{t.title}</Text>{t.complexity && <Tag>{t.complexity}</Tag>}<Tag color={statusColor(t.status)}>{statusLabel(t.status)}</Tag></Space>}
-              description={t.latest_execution_requirement ? (t.latest_execution_requirement.length > 80 ? t.latest_execution_requirement.slice(0,80)+'…' : t.latest_execution_requirement) : t.description}
-            />
-            <Text type="secondary">{t.created_at?.slice(0,10)}</Text>
-          </List.Item>
-        )} />
-    </div>
+    <>
+      <PageCard
+        icon={<RocketOutlined />}
+        title="任务"
+        extra={listExtra}
+        style={{ flex: 1, height: '100%' }}
+        contentStyle={{ height: 'calc(100% - 43px)', overflow: 'auto' }}
+      >
+        <TasksCardView
+          tasks={tasks}
+          loading={loading}
+          searchKeyword={searchKeyword}
+          workspaceId={wsId}
+          onSelectTask={handleSelectTask}
+        />
+      </PageCard>
+      <CreateTaskModal
+        open={createModalOpen}
+        workspaceId={wsId}
+        loops={loops}
+        onCreated={handleCreated}
+        onCancel={() => setCreateModalOpen(false)}
+      />
+    </>
   );
 }
