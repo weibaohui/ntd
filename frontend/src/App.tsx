@@ -160,19 +160,19 @@ function AppContent() {
 
   // URL → React state 恢复：todos 视图需要让 selectedTodoId 与 URL 中的 todoDetailId 保持一致。
   // 028：loopDetailId 已直接由 useViewState 派生，App.tsx 不再维护 selectedLoopId state。
-  // todos 视图校验 todo 是否存在（可能已被删除），不存在时显式清空避免详情页残留。
+  // todos 视图不再校验 todo 是否在 state.todos 列表中：TodoDetail 已改为独立请求获取，
+  // 即使目标 todo 不在当前 workspace 桶也能正常加载（跨 workspace 直达场景）。
   useEffect(() => {
     if (state.loading) return;
     if (activeView === 'todos') {
-      // 找到有效 todo 时选中它；id 缺失或指向已删除的 todo 时显式清空，
-      // 避免 TodoDetailPage 残留上一次选中的详情态。
-      const matched = todoDetailId != null && state.todos.some(t => t.id === todoDetailId);
-      dispatch({ type: 'SELECT_TODO', payload: matched ? todoDetailId : null });
+      // 直接用 URL 中的 todoDetailId 同步选中态，TodoDetail 会自己发请求加载数据。
+      // id 缺失时（如 /#/todos 列表页）清空选中，避免详情页残留。
+      dispatch({ type: 'SELECT_TODO', payload: todoDetailId ?? null });
     } else {
       // 非 todos 视图清空 todo 选中态，防止跨视图状态混淆
       dispatch({ type: 'SELECT_TODO', payload: null });
     }
-  }, [activeView, todoDetailId, state.loading, state.todos, dispatch]);
+  }, [activeView, todoDetailId, state.loading, dispatch]);
 
   // 028：选中事项 → 跳转到事项详情独立页 `/#/todos/:id`。
   // 立即 dispatch 让 TodoDetail 内部响应；URL 同步由 pushUrl 完成，history.back 可回到列表

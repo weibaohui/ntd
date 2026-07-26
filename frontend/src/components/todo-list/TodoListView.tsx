@@ -73,100 +73,71 @@ function renderSchedulerColumn(record: TodoCenterItem): ReactNode {
   );
 }
 
-interface TodoListViewProps {
-  /** 已经过滤后的列表数据（搜索/标签筛选由父组件完成）。 */
-  items: TodoCenterItem[];
-  /** 加载态：传入 true 时 table 显示 loading 蒙层。 */
-  loading: boolean;
-  /** 全量标签集（渲染 Tag 列用）。 */
-  tags: TagType[];
-  /** 当前行点击跳转：由父组件 pushUrl('todos', { id })。 */
-  onSelectTodo: (id: number) => void;
-  /** 编辑事项入口（单行菜单「编辑」触发）。 */
-  onEditTodo: (todo: TodoCenterItem) => void;
-  /** 删除事项入口（单行菜单「删除」触发）。 */
-  onDeleteTodo: (todo: TodoCenterItem) => void;
-  /** 执行事项入口（单行菜单「执行」触发）。 */
-  onExecuteTodo: (todo: TodoCenterItem) => void;
-  /** 带参数执行入口（单行菜单「带参执行」触发）。 */
-  onExecuteWithArgs: (todo: TodoCenterItem) => void;
-  /** 操作成功后的刷新回调（批量操作完后触发）。 */
-  onRefresh: () => void;
-}
-
-/**
- * 事项列表 table 视图。
- *
- * 整体处理思路：
- * 1. 接收已过滤的 items，渲染 Ant Design Table。
- * 2. 内部用 useBatchActions hook 管理批量 Modal（更换执行器 / 复制移动 / 暂停恢复）。
- * 3. 选中行通过 selectedIds 受控，触发顶部 ActionToolbar 的批量菜单。
- * 4. 单行操作走 Dropdown 菜单，包含执行 / 编辑 / 删除三个动作。
- */
-export function TodoListView({
-  items,
-  loading,
-  tags,
-  onSelectTodo,
-  onEditTodo,
-  onDeleteTodo,
-  onExecuteTodo,
-  onExecuteWithArgs,
-  onRefresh,
-}: TodoListViewProps) {
-  const { state } = useApp();
-  const workspaceId = state.selectedWorkspace;
-  // 行选中态：仅持有 id 列表，由 Table 的 rowSelection 受控
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
-
-  // items 变化（搜索过滤 / 删除后刷新）时裁剪选中集合，避免对已消失的行发起批量操作
-  // 也避免「已选 N 项」计数与实际可见勾选不符
-  useEffect(() => {
-    setSelectedIds(prev => {
-      const alive = prev.filter(id => items.some(i => i.id === id));
-      return alive.length === prev.length ? prev : alive;
-    });
-  }, [items]);
-
-  // 复用共享 hook：批量 Modal + 菜单项一次到位
-  const { batchActions, modals } = useBatchActions({
-    mode: 'item',
-    selectedWorkspace: workspaceId,
-    onRefreshItems: onRefresh,
-    onClearSelection: () => setSelectedIds([]),
-  });
-
-  // 单行操作菜单项：每个动作 stopPropagation 防止触发行点击
-  const buildRowActions = (todo: TodoCenterItem) => [
+/** 单行操作菜单项：每个动作 stopPropagation 防止触发行点击。 */
+function buildRowActionItems(
+  todo: TodoCenterItem,
+  callbacks: {
+    onExecuteTodo: (t: TodoCenterItem) => void;
+    onExecuteWithArgs: (t: TodoCenterItem) => void;
+    onEditTodo: (t: TodoCenterItem) => void;
+    onDeleteTodo: (t: TodoCenterItem) => void;
+  },
+) {
+  return [
     {
       key: 'execute',
       label: '执行一次',
       icon: <PlayCircleOutlined />,
-      onClick: () => onExecuteTodo(todo),
+      onClick: () => callbacks.onExecuteTodo(todo),
     },
     {
       key: 'execute-with-args',
       label: '带参执行',
       icon: <ThunderboltOutlined />,
-      onClick: () => onExecuteWithArgs(todo),
+      onClick: () => callbacks.onExecuteWithArgs(todo),
     },
     {
       key: 'edit',
       label: '编辑',
       icon: <EditOutlined />,
-      onClick: () => onEditTodo(todo),
+      onClick: () => callbacks.onEditTodo(todo),
     },
     {
       key: 'delete',
       label: '删除',
       icon: <DeleteOutlined />,
       danger: true,
-      onClick: () => onDeleteTodo(todo),
+      onClick: () => callbacks.onDeleteTodo(todo),
     },
   ];
+}
 
-  // 列定义：抽为独立 useMemo，避免每次渲染重建造成性能浪费
-  const columns: ColumnsType<TodoCenterItem> = useMemo(() => [
+/** 行操作列渲染函数：Dropdown 菜单包裹。 */
+function renderActionsColumn(
+  record: TodoCenterItem,
+  callbacks: Parameters<typeof buildRowActionItems>[1],
+): ReactNode {
+  return (
+    <Dropdown menu={{ items: buildRowActionItems(record, callbacks) }} trigger={['click']}>
+      <Button
+        size="small"
+        type="text"
+        icon={<MoreOutlined />}
+        onClick={(e) => e.stopPropagation()}
+        aria-label="更多操作"
+      />
+    </Dropdown>
+  );
+}
+
+// 构建 Table 列定义：抽为独立函数，让组件主体保持在 30 行内。
+function buildTodoColumns(
+  tags: TagType[],
+  callbacks: {
+    onSelectTodo: (id: number) => void;
+  } & Parameters<typeof buildRowActionItems>[1],
+): ColumnsType<TodoCenterItem> {
+  return [
     {
       title: 'ID',
       dataIndex: 'id',
@@ -184,7 +155,7 @@ export function TodoListView({
       ellipsis: true,
       render: (title: string, record) => (
         <a
-          onClick={(e) => { e.stopPropagation(); onSelectTodo(record.id); }}
+          onClick={(e) => { e.stopPropagation(); callbacks.onSelectTodo(record.id); }}
           style={{ color: 'var(--color-text)' }}
         >
           {title}
@@ -233,7 +204,7 @@ export function TodoListView({
       title: '执行时间',
       dataIndex: 'last_execution_at',
       width: 130,
-      render: (t?: string | null) => t ? formatRelativeTime(t) : '-',
+      render: (t?: string | null) => (t ? formatRelativeTime(t) : '-'),
     },
     {
       title: '更新时间',
@@ -246,52 +217,105 @@ export function TodoListView({
       key: 'actions',
       width: 80,
       fixed: 'right',
-      render: (_, record) => (
-        <Dropdown menu={{ items: buildRowActions(record) }} trigger={['click']}>
-          <Button
-            size="small"
-            type="text"
-            icon={<MoreOutlined />}
-            onClick={(e) => e.stopPropagation()}
-            aria-label="更多操作"
-          />
-        </Dropdown>
-      ),
+      render: (_, record) => renderActionsColumn(record, callbacks),
     },
-  ], [tags, onSelectTodo, onEditTodo, onDeleteTodo, onExecuteTodo, onExecuteWithArgs]);
+  ];
+}
 
-  // 整行点击跳转详情；操作列已 stopPropagation 防误触
-  const handleRowClick = (record: TodoCenterItem) => ({
+/** 行点击跳转详情；操作列已 stopPropagation 防误触。 */
+function handleRowClick(onSelectTodo: (id: number) => void, record: TodoCenterItem) {
+  return {
     onClick: () => onSelectTodo(record.id),
-    style: { cursor: 'pointer' },
+    style: { cursor: 'pointer' as const },
+  };
+}
+
+interface TodoListViewProps {
+  /** 已经过滤后的列表数据（搜索/标签筛选由父组件完成）。 */
+  items: TodoCenterItem[];
+  /** 加载态：传入 true 时 table 显示 loading 蒙层。 */
+  loading: boolean;
+  /** 全量标签集（渲染 Tag 列用）。 */
+  tags: TagType[];
+  /** 当前行点击跳转：由父组件 pushUrl('todos', { id })。 */
+  onSelectTodo: (id: number) => void;
+  /** 编辑事项入口（单行菜单「编辑」触发）。 */
+  onEditTodo: (todo: TodoCenterItem) => void;
+  /** 删除事项入口（单行菜单「删除」触发）。 */
+  onDeleteTodo: (todo: TodoCenterItem) => void;
+  /** 执行事项入口（单行菜单「执行」触发）。 */
+  onExecuteTodo: (todo: TodoCenterItem) => void;
+  /** 带参数执行入口（单行菜单「带参执行」触发）。 */
+  onExecuteWithArgs: (todo: TodoCenterItem) => void;
+  /** 操作成功后的刷新回调（批量操作完后触发）。 */
+  onRefresh: () => void;
+}
+
+/** 选中 ID 裁剪 hook：items 变化时移除已消失的行。 */
+function useSelectedIdsClipping(items: TodoCenterItem[]) {
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  useEffect(() => {
+    // items 变化时清理已不存在的选中 id，避免对删除行发起批量操作
+    setSelectedIds(prev => {
+      const alive = prev.filter(id => items.some(i => i.id === id));
+      return alive.length === prev.length ? prev : alive;
+    });
+  }, [items]);
+  return { selectedIds, setSelectedIds };
+}
+
+/**
+ * 事项列表 table 视图。
+ *
+ * 整体处理思路：
+ * 1. 接收已过滤的 items，渲染 Ant Design Table。
+ * 2. 内部用 useBatchActions hook 管理批量 Modal。
+ * 3. 选中行通过 selectedIds 受控，触发顶部 ActionToolbar 的批量菜单。
+ * 4. 单行操作走 Dropdown 菜单。
+ */
+export function TodoListView({
+  items,
+  loading,
+  tags,
+  onSelectTodo,
+  onEditTodo,
+  onDeleteTodo,
+  onExecuteTodo,
+  onExecuteWithArgs,
+  onRefresh,
+}: TodoListViewProps) {
+  const { state } = useApp();
+  const workspaceId = state.selectedWorkspace;
+  // 行选中态裁剪：items 变化时清掉已消失行
+  const { selectedIds, setSelectedIds } = useSelectedIdsClipping(items);
+
+  // 复用共享 hook：批量 Modal + 菜单项
+  const { batchActions, modals } = useBatchActions({
+    mode: 'item',
+    selectedWorkspace: workspaceId,
+    onRefreshItems: onRefresh,
+    onClearSelection: () => setSelectedIds([]),
   });
+
+  // 列定义：useMemo 避免每次渲染重建
+  const callbacks = { onSelectTodo, onExecuteTodo, onExecuteWithArgs, onEditTodo, onDeleteTodo };
+  const columns = useMemo(() => buildTodoColumns(tags, callbacks), [tags, callbacks]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* 顶部工具栏：批量操作按钮（刷新/新建在 PageCard 顶部 header，避免重复） */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '6px 12px',
-          borderBottom: '1px solid var(--color-border-light)',
-          flexShrink: 0,
-        }}
-      >
+      {/* 顶部工具栏 */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '6px 12px', borderBottom: '1px solid var(--color-border-light)', flexShrink: 0,
+      }}>
         <BatchButton selectedIds={selectedIds} batchActions={batchActions} />
         <div style={{ flex: 1 }} />
-        <span
-          style={{
-            fontSize: 12,
-            color: 'var(--color-text-tertiary)',
-          }}
-        >
+        <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
           已选 {selectedIds.length} 项
         </span>
       </div>
 
-      {/* table 主体：scroll.x 让横向滚动避免列挤压；rowSelection 受控 */}
+      {/* table 主体 */}
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         <Table<TodoCenterItem>
           rowKey="id"
@@ -310,11 +334,10 @@ export function TodoListView({
             selectedRowKeys: selectedIds,
             onChange: (keys) => setSelectedIds(keys as number[]),
           }}
-          onRow={handleRowClick}
+          onRow={(record) => handleRowClick(onSelectTodo, record)}
         />
       </div>
 
-      {/* 批量操作 Modal（由 useBatchActions 集中渲染） */}
       {modals}
     </div>
   );
