@@ -17,6 +17,16 @@ import { phaseColor } from '@/components/loop-flow/useFlowLayout';
 import { NODE_WIDTH, NODE_HEIGHT, START_NODE_ID, END_NODE_ID } from '@/components/loop-flow/flowConstants';
 import type { AdaptedLink, TemplateEdge, PhaseGroup } from '@/components/process/processFlowAdapter';
 
+/** 计算反向跳转弧线（源节点底部 → U 形弯 → 目标节点底部）。
+ *  只用于 template 工艺流程图：goto 边不参与 dagre 布局，单独绘制弧线。 */
+function buildBackArcPath(
+  fx: number, fy: number, // 源节点底部中点
+  tx: number, ty: number, // 目标节点底部中点
+  bendY: number, // 弧线底部 Y（下探距离）
+): string {
+  return `M ${fx},${fy} C ${fx},${fy + bendY} ${tx},${ty + bendY} ${tx},${ty}`;
+}
+
 export interface ProcessFlowGraphProps {
   /** 适配后的链接列表。 */
   links: AdaptedLink[];
@@ -61,7 +71,6 @@ export function ProcessFlowGraph({
               ? { x: endX, y: endY }
               : positions.get(te.toNumericId) ?? { x: 0, y: 0 };
 
-            // 计算中心点
             const fromCx = te.fromNumericId === START_NODE_ID
               ? fromPos.x + 20 : fromPos.x + NODE_WIDTH / 2;
             const fromCy = te.fromNumericId === START_NODE_ID
@@ -71,25 +80,58 @@ export function ProcessFlowGraph({
             const toCy = te.toNumericId === END_NODE_ID
               ? toPos.y + 20 : toPos.y + NODE_HEIGHT / 2;
 
-            // 简单水平连线（所有环节 LR 排布）
             const midX = (fromCx + toCx) / 2;
-            const isGoto = te.kind === 'fail-goto' || te.label.includes('goto');
+            // goto 反向边判定：目标索引小于源索引（在大平序列中跳回前面的环节）
+            const fromIndex = links.findIndex(l => l.numericId === te.fromNumericId);
+            const toIndex = links.findIndex(l => l.numericId === te.toNumericId);
+            const isGoto = (te.kind === 'fail-goto' || te.label.includes('goto'))
+              && toIndex >= 0 && toIndex < fromIndex;
 
+            if (isGoto) {
+              // 反向跳转弧线：从源节点底部 U 形下探到目标节点底部
+              const fromBottomX = fromCx;
+              const fromBottomY = fromPos.y + NODE_HEIGHT;
+              const toBottomX = toCx;
+              const toBottomY = toPos.y + NODE_HEIGHT;
+              const distance = Math.abs(fromBottomX - toBottomX);
+              const bendY = Math.max(20, distance * 0.15);
+              const path = buildBackArcPath(fromBottomX, fromBottomY, toBottomX, toBottomY, bendY);
+              return (
+                <g key={`pe-${i}`}>
+                  <path
+                    d={path}
+                    fill="none"
+                    stroke="#f59e0b"
+                    strokeWidth={1.5}
+                    strokeDasharray="6,3"
+                  />
+                  <text
+                    x={midX} y={Math.max(fromBottomY, toBottomY) + bendY + 12}
+                    textAnchor="middle" fontSize={9}
+                    fill="#d97706"
+                    style={{ fontFamily: 'system-ui' }}
+                  >
+                    门禁失败 ↺ {te.label.replace('门禁失败 ', '')}
+                  </text>
+                </g>
+              );
+            }
+
+            // 普通顺向边（水平直线）
             return (
               <g key={`pe-${i}`}>
                 <line
                   x1={fromCx} y1={fromCy}
                   x2={toCx} y2={toCy}
-                  stroke={isGoto ? '#f59e0b' : '#94a3b8'}
-                  strokeWidth={isGoto ? 1.5 : 1}
-                  strokeDasharray={isGoto ? '6,3' : undefined}
+                  stroke="#94a3b8"
+                  strokeWidth={1}
                 />
                 {te.label && (
                   <text
                     x={midX} y={(fromCy + toCy) / 2 - 8}
                     textAnchor="middle"
                     fontSize={9}
-                    fill={isGoto ? '#d97706' : '#64748b'}
+                    fill="#64748b"
                     style={{ fontFamily: 'system-ui' }}
                   >
                     {te.label}

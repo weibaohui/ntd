@@ -121,7 +121,11 @@ export function adaptProcessDefinition(yamlText: string): AdaptedFlow | null {
     // 成功边
     const successTarget = resolveTransitionTarget(onSuccess, i, links, idMap);
     if (successTarget !== null) {
-      edgeInputs.push({ from: link.numericId, to: successTarget, label: '' });
+      const isForward = successTarget === END_NODE_ID || successTarget === i + 1;
+      // 只有顺向边（next / end）才加入 dagre，goto 反向边会导致多行 layout
+      if (isForward) {
+        edgeInputs.push({ from: link.numericId, to: successTarget, label: '' });
+      }
       templateEdges.push({
         fromNumericId: link.numericId, toNumericId: successTarget,
         label: onSuccess === 'next' ? '' : onSuccess.startsWith('goto:') ? `→${onSuccess.slice(5)}` : '',
@@ -133,7 +137,10 @@ export function adaptProcessDefinition(yamlText: string): AdaptedFlow | null {
     if (onGateFail !== onSuccess && onGateFail !== 'break') {
       const failTarget = resolveTransitionTarget(onGateFail, i, links, idMap);
       if (failTarget !== null && failTarget !== successTarget) {
-        edgeInputs.push({ from: link.numericId, to: failTarget, label: '' });
+        const isForward = failTarget === END_NODE_ID || failTarget === i + 1;
+        if (isForward) {
+          edgeInputs.push({ from: link.numericId, to: failTarget, label: '' });
+        }
         templateEdges.push({
           fromNumericId: link.numericId, toNumericId: failTarget,
           label: `门禁失败 ${onGateFail.startsWith('goto:') ? `→${onGateFail.slice(5)}` : ''}`,
