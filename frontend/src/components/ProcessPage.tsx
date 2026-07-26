@@ -17,9 +17,13 @@ import {
   Input,
   Alert,
   Space,
+  Tabs,
+  Table,
 } from 'antd';
-import { BuildOutlined, ReloadOutlined, EyeOutlined, DownloadOutlined, SearchOutlined } from '@ant-design/icons';
-import bundledApi, { type ProcessTemplate, type ProcessTemplateDetail } from '@/api/bundled';
+import { BuildOutlined, ReloadOutlined, EyeOutlined, DownloadOutlined, SearchOutlined, ApartmentOutlined, CodeOutlined } from '@ant-design/icons';
+import bundledApi, { type ProcessTemplate, type ProcessTemplateDetail, type ProcessLoopItem } from '@/api/bundled';
+import { adaptProcessDefinition } from '@/components/process/processFlowAdapter';
+import { ProcessFlowGraph } from '@/components/process/ProcessFlowGraph';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -42,6 +46,8 @@ export function ProcessPage({ workspaceId, onOpenLoop, processName }: ProcessPag
   const [searchText, setSearchText] = useState('');
   const [recommended, setRecommended] = useState<string[]>([]);
   const [installModal, setInstallModal] = useState<{ name: string; displayName: string } | null>(null);
+  const [instanceLoops, setInstanceLoops] = useState<ProcessLoopItem[]>([]);
+  const [instanceLoopsLoading, setInstanceLoopsLoading] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -76,6 +82,19 @@ export function ProcessPage({ workspaceId, onOpenLoop, processName }: ProcessPag
       setDetail(data);
     } catch (e) {
       message.error('加载工艺模板详情失败');
+    }
+  };
+
+  const fetchInstanceLoops = async (templateName: string) => {
+    setInstanceLoopsLoading(true);
+    try {
+      const list = await bundledApi.listProcessLoops(templateName);
+      setInstanceLoops(list);
+    } catch {
+      // 实例环路列表加载失败（如该工艺尚未安装）不弹框，静默空列表。
+      setInstanceLoops([]);
+    } finally {
+      setInstanceLoopsLoading(false);
     }
   };
 
@@ -259,30 +278,94 @@ export function ProcessPage({ workspaceId, onOpenLoop, processName }: ProcessPag
         onCancel={() => setDetail(null)}
       >
         {detail && (
-          <>
-            <Descriptions size="small" column={2} style={{ marginBottom: 16 }}>
-              <Descriptions.Item label="名称">{detail.name}</Descriptions.Item>
-              <Descriptions.Item label="版本">{detail.version}</Descriptions.Item>
-              <Descriptions.Item label="分类">{detail.category}</Descriptions.Item>
-              <Descriptions.Item label="复杂度">
-                <Tag color={complexityColor(detail.complexity)}>{complexityLabel(detail.complexity)}</Tag>
-              </Descriptions.Item>
-            </Descriptions>
-            <Paragraph>{detail.description}</Paragraph>
-            <Title level={5}>原始定义</Title>
-            <pre
-              style={{
-                background: 'rgba(0,0,0,0.04)',
-                padding: 12,
-                borderRadius: 8,
-                maxHeight: 360,
-                overflow: 'auto',
-                fontSize: 12,
-              }}
-            >
-              <code>{detail.definition}</code>
-            </pre>
-          </>
+          <Tabs
+            defaultActiveKey="flow"
+            onChange={(key) => {
+              if (key === 'instances') {
+                fetchInstanceLoops(detail.name);
+              }
+            }}
+            items={[
+              {
+                key: 'flow',
+                label: <span><ApartmentOutlined /> 流程图</span>,
+                children: (() => {
+                  const adapted = adaptProcessDefinition(detail.definition);
+                  if (!adapted) {
+                    return <div style={{ color: '#94a3b8', textAlign: 'center', padding: 60 }}>该工艺定义无法解析，请查看 YAML 源排查语法</div>;
+                  }
+                  return (
+                    <div>
+                      <Descriptions size="small" column={2} style={{ marginBottom: 12 }}>
+                        <Descriptions.Item label="名称">{detail.name}</Descriptions.Item>
+                        <Descriptions.Item label="版本">{detail.version}</Descriptions.Item>
+                        <Descriptions.Item label="分类">{detail.category}</Descriptions.Item>
+                        <Descriptions.Item label="复杂度">
+                          <Tag color={complexityColor(detail.complexity)}>{complexityLabel(detail.complexity)}</Tag>
+                        </Descriptions.Item>
+                      </Descriptions>
+                      <Paragraph type="secondary">{detail.description}</Paragraph>
+                      <ProcessFlowGraph
+                        links={adapted.links}
+                        nodeInputs={adapted.nodeInputs}
+                        edgeInputs={adapted.edgeInputs}
+                        templateEdges={adapted.templateEdges}
+                      />
+                    </div>
+                  );
+                })(),
+              },
+              {
+                key: 'instances',
+                label: '实例环路',
+                children: instanceLoopsLoading ? (
+                  <div style={{ textAlign: 'center', padding: 40 }}><Spin size="small" /></div>
+                ) : instanceLoops.length === 0 ? (
+                  <Empty description="该工艺尚未安装到任何工作空间" />
+                ) : (
+                  <Table<ProcessLoopItem>
+                    dataSource={instanceLoops}
+                    rowKey="id"
+                    size="small"
+                    pagination={false}
+                    columns={[
+                      { title: '名称', dataIndex: 'name', key: 'name' },
+                      { title: '状态', dataIndex: 'status', key: 'status', render: (s: string) => <Tag color={s === 'active' ? 'green' : 'default'}>{s}</Tag> },
+                      { title: '版本', dataIndex: 'process_template_version', key: 'version', render: (v: string | null) => v || '-' },
+                      { title: '执行次数', dataIndex: 'execution_count', key: 'count' },
+                      {
+                        title: '', key: 'action', render: (_: unknown, rec: ProcessLoopItem) => (
+                          <Button type="link" size="small" icon={<EyeOutlined />}
+                            onClick={() => {
+                              setDetail(null);
+                              onOpenLoop?.(rec.id);
+                            }}
+                          >打开</Button>
+                        ),
+                      },
+                    ]}
+                  />
+                ),
+              },
+              {
+                key: 'yaml',
+                label: <span><CodeOutlined /> YAML 源</span>,
+                children: (
+                  <pre style={{
+                    background: 'rgba(0,0,0,0.04)',
+                    padding: 12,
+                    borderRadius: 8,
+                    maxHeight: 400,
+                    overflow: 'auto',
+                    fontSize: 12,
+                    margin: 0,
+                  }}>
+                    <code>{detail.definition}</code>
+                  </pre>
+                ),
+              },
+            ]}
+          />
         )}
       </Modal>
 

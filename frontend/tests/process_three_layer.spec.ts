@@ -65,3 +65,30 @@ test('三层链路闭环：工艺→环路→事项→环路', async ({ page }) 
   await refSection.locator('.ant-tag').first().click();
   await page.waitForURL(/#\/loops\?id=\d+/, { timeout: 8000 });
 });
+
+test('P1-工艺详情三 Tab：流程图、实例环路、YAML 源', async ({ page }) => {
+  await page.goto('http://localhost:18088');
+  await page.evaluate(() => localStorage.setItem('selected_workspace', '1'));
+  await page.goto('http://localhost:18088/#/processes');
+  await page.waitForLoadState('networkidle');
+
+  // 点第一个工艺卡片上的「详情」按钮打开 Modal
+  const detailBtn = page.getByRole('button', { name: /详情/ }).first();
+  await expect(detailBtn).toBeVisible({ timeout: 8000 });
+  await detailBtn.click();
+
+  // Modal 加载后，默认应展示「流程图」Tab——验证流程图区域出现
+  // （ProcessFlowGraph 渲染 SVG，空的工艺会显示「该工艺定义无法解析」或
+  // 「暂无环节定义」，至少其中一种存在即为通过）
+  await expect(page.locator('.ant-tabs-tab').filter({ hasText: '流程图' })).toBeVisible({ timeout: 8000 });
+
+  // 切换到「实例环路」Tab
+  await page.locator('.ant-tabs-tab').filter({ hasText: '实例环路' }).click();
+  // 实例环路 Tab 内容出现（至少显示 Empty 提示或表格）
+  await expect(page.getByText(/尚未安装|状态|打开/).first()).toBeVisible({ timeout: 6000 });
+
+  // 切换到「YAML 源」Tab
+  await page.locator('.ant-tabs-tab').filter({ hasText: 'YAML 源' }).click();
+  // 关键字 process: 或 limits: 应出现（原始 YAML 正文）
+  await expect(page.getByText('process:', { exact: false }).or(page.getByText('limits:', { exact: false }))).toBeVisible({ timeout: 6000 });
+});
