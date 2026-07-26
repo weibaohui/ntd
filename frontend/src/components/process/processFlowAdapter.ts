@@ -5,8 +5,7 @@
 // 设计约束：
 // - 链接的 on_success 字段（next / goto:<id> / end）是唯一边判据。
 // - on_gate_fail 导致的 goto 也作为边（虚线），与成功边区分但共用 dagre 布局。
-// - 所有 phase 内的 link 摊平为一个有序序列；phase 边界在当前实现中不做视觉分隔
-//   （后续可加 group/lane 渲染，当前先验证核心连通性）。
+// - 阶段边界通过 PhaseGroup + ProcessFlowGraph 内的 PhaseHeader 标签呈现（不改 dagre 布局）。
 
 import type { LinkDefinition, ProcessDefinition } from '@/types/process';
 import type { FlowNodeInput, FlowEdgeInput } from '@/components/loop-flow/useFlowLayout';
@@ -29,6 +28,16 @@ export interface AdaptedLink {
   link: LinkDefinition;
 }
 
+/** 阶段分组信息（供 ProcessFlowGraph 绘制阶段标签）。 */
+export interface PhaseGroup {
+  phaseId: string;
+  phaseName: string;
+  /** links 中的起始下标（含） */
+  startIndex: number;
+  /** links 中的结束下标（不含） */
+  endIndex: number;
+}
+
 export interface AdaptedFlow {
   /** 摊平后的链接列表（含数字 id）。 */
   links: AdaptedLink[];
@@ -38,6 +47,8 @@ export interface AdaptedFlow {
   edgeInputs: FlowEdgeInput[];
   /** 布局用边（含标签，供 ProcessFlowGraph 画边时标注 on_success / on_gate_fail）。 */
   templateEdges: TemplateEdge[];
+  /** 阶段分组（供 ProcessFlowGraph 渲染阶段标签）。 */
+  phaseGroups: PhaseGroup[];
   /** 全局限制 */
   limits?: { max_step_executions?: number; max_total_tokens?: number };
 }
@@ -132,11 +143,28 @@ export function adaptProcessDefinition(yamlText: string): AdaptedFlow | null {
     }
   }
 
+  // 构建阶段分组（供 ProcessFlowGraph 绘制阶段标签）
+  const phaseGroups: PhaseGroup[] = [];
+  let groupStart = 0;
+  for (let i = 1; i <= links.length; i++) {
+    // 阶段变更或到达末尾 → 关闭当前分组
+    if (i === links.length || links[i].phaseId !== links[groupStart].phaseId) {
+      phaseGroups.push({
+        phaseId: links[groupStart].phaseId,
+        phaseName: links[groupStart].phaseName,
+        startIndex: groupStart,
+        endIndex: i,
+      });
+      groupStart = i;
+    }
+  }
+
   return {
     links,
     nodeInputs,
     edgeInputs,
     templateEdges,
+    phaseGroups,
     limits: def.limits,
   };
 }

@@ -310,6 +310,7 @@ export function ProcessPage({ workspaceId, onOpenLoop, processName }: ProcessPag
                         nodeInputs={adapted.nodeInputs}
                         edgeInputs={adapted.edgeInputs}
                         templateEdges={adapted.templateEdges}
+                        phaseGroups={adapted.phaseGroups}
                       />
                     </div>
                   );

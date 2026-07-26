@@ -13,8 +13,9 @@ import {
 import { TemplateStepCard } from '@/components/process/TemplateStepCard';
 import { useFlowLayout } from '@/components/loop-flow/useFlowLayout';
 import type { FlowNodeInput, FlowEdgeInput } from '@/components/loop-flow/useFlowLayout';
+import { phaseColor } from '@/components/loop-flow/useFlowLayout';
 import { NODE_WIDTH, NODE_HEIGHT, START_NODE_ID, END_NODE_ID } from '@/components/loop-flow/flowConstants';
-import type { AdaptedLink, TemplateEdge } from '@/components/process/processFlowAdapter';
+import type { AdaptedLink, TemplateEdge, PhaseGroup } from '@/components/process/processFlowAdapter';
 
 export interface ProcessFlowGraphProps {
   /** 适配后的链接列表。 */
@@ -25,13 +26,19 @@ export interface ProcessFlowGraphProps {
   edgeInputs: FlowEdgeInput[];
   /** 模板边（含标签，用于边标注）。 */
   templateEdges: TemplateEdge[];
+  /** 阶段分组（供阶段标签绘制）。 */
+  phaseGroups: PhaseGroup[];
 }
 
 export function ProcessFlowGraph({
-  links, nodeInputs, edgeInputs, templateEdges,
+  links, nodeInputs, edgeInputs, templateEdges, phaseGroups,
 }: ProcessFlowGraphProps) {
   const { positions, width, height, startX, startY, endX, endY, dagreOffsetY } =
     useFlowLayout(nodeInputs, edgeInputs, false, false);
+
+  // 阶段标签在首个链接上方约 22px，需要额外画布高度避免裁切
+  const phaseLabelPad = 30;
+  const svgHeight = height + phaseLabelPad;
 
   if (links.length === 0) {
     return (
@@ -43,8 +50,8 @@ export function ProcessFlowGraph({
 
   return (
     <div style={{ overflowX: 'auto', overflowY: 'hidden', padding: '12px 0', minHeight: 120 }}>
-      <svg width={width} height={height} style={{ display: 'block' }}>
-        <g transform={`translate(0, ${dagreOffsetY})`}>
+      <svg width={width + 40} height={svgHeight} style={{ display: 'block' }}>
+        <g transform={`translate(0, ${dagreOffsetY + phaseLabelPad})`}>
           {/* 边 */}
           {templateEdges.map((te, i) => {
             const fromPos = te.fromNumericId === START_NODE_ID
@@ -95,6 +102,52 @@ export function ProcessFlowGraph({
           {/* 虚拟节点 */}
           <StartNode x={startX} y={startY} />
           <EndNode x={endX} y={endY} />
+
+          {/* 阶段标签（每阶段的第一个环节上方，彩色胶囊条 + 阶段名） */}
+          {phaseGroups.map((pg, pi) => {
+            const firstLink = links[pg.startIndex];
+            if (!firstLink) return null;
+            const pos = positions.get(firstLink.numericId) ?? { x: 0, y: 0 };
+            const color = phaseColor(pg.startIndex * 7 + 3);
+            return (
+              <g key={`ph-${pg.startIndex}`}>
+                {/* 淡色背景横条 */}
+                <rect
+                  x={pos.x - 2} y={pos.y - 22}
+                  width={NODE_WIDTH + 4} height={18}
+                  rx={4} ry={4}
+                  fill={color} fillOpacity={0.1}
+                  stroke={color} strokeWidth={0.5}
+                />
+                <text
+                  x={pos.x + NODE_WIDTH / 2} y={pos.y - 10}
+                  textAnchor="middle"
+                  fontSize={10} fontWeight={600}
+                  fill={color}
+                  style={{ fontFamily: 'system-ui' }}
+                >
+                  ▸ {pg.phaseName}
+                </text>
+                {/* 阶段间分隔竖线（非首个阶段） */}
+                {pi > 0 && (() => {
+                  const prevEnd = phaseGroups[pi - 1];
+                  const prevLink = links[Math.min(prevEnd.endIndex - 1, links.length - 1)];
+                  if (!prevLink) return null;
+                  const pp = positions.get(prevLink.numericId) ?? { x: 0, y: 0 };
+                  const dividerX = pp.x + NODE_WIDTH + 16;
+                  return (
+                    <line
+                      x1={dividerX} y1={pos.y - 30}
+                      x2={dividerX} y2={pos.y + NODE_HEIGHT + 4}
+                      stroke={color} strokeWidth={1}
+                      strokeDasharray="4,4"
+                      opacity={0.3}
+                    />
+                  );
+                })()}
+              </g>
+            );
+          })}
 
           {/* 环节节点卡片 */}
           {links.map((link) => {
