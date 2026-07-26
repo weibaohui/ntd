@@ -7,6 +7,7 @@ import {
   RetweetOutlined,
   RocketOutlined,
   DashboardOutlined,
+  CompassOutlined,
   ReadOutlined,
   SettingOutlined,
   ThunderboltOutlined,
@@ -40,7 +41,8 @@ export type LeftRailKey =
   | 'settings_skills'
   | 'settings_executors'
   | 'settings_experts'
-  | 'settings_bots';
+  | 'settings_bots'
+  | 'onboarding';
 
 interface LeftRailItem {
   key: LeftRailKey;
@@ -95,9 +97,12 @@ export function LeftRail({
     },
     // 「概览」独立于「工作区」：
     // Dashboard 数据为全库聚合，不随 workspace 切换变化，单独分组可避免用户误以为它受 workspace 过滤。
+    // 「导航」放 Dashboard 之前：概念导航首页是新用户进入系统的第一个入口，
+    // 排在前面更易触达；老用户也可随时回看概念关系。
     {
       title: '概览',
       items: [
+        { key: 'onboarding', label: '导航', icon: <CompassOutlined />, ariaLabel: '导航' },
         { key: 'dashboard', label: '仪表盘', icon: <DashboardOutlined />, ariaLabel: '仪表盘' },
       ] satisfies LeftRailItem[],
     },

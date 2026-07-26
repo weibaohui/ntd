@@ -1,0 +1,317 @@
+// 概念导航首页静态数据。
+// 6 个核心概念 + 关系图节点 + 快速开始 5 步。
+// 集中管理避免 ConceptRelationGraph/ConceptCardGrid/ConceptDetailSection/QuickStartFlow 各写一套。
+
+import type { ReactNode } from 'react';
+import {
+  AppstoreOutlined,
+  BuildOutlined,
+  CompassOutlined,
+  ForwardOutlined,
+  MacCommandOutlined,
+  RetweetOutlined,
+  RocketOutlined,
+  TeamOutlined,
+  UnorderedListOutlined,
+} from '@ant-design/icons';
+import type { View } from '@/hooks/useViewState';
+
+/**
+ * 单个概念的定义。
+ * 用于关系图 Drawer、卡片网格、详细说明区三处共享。
+ */
+export interface ConceptNode {
+  /** 唯一标识，与关系图节点 id 对齐。 */
+  id: 'process' | 'loop' | 'todo' | 'task' | 'executor' | 'expert';
+  /** 中文标签，用于卡片标题、Drawer 标题、详细说明区标题。 */
+  label: string;
+  /** 一句话定义，用于卡片副标题、Drawer 头部。 */
+  oneLiner: string;
+  /** 概念图标，用于卡片左侧。 */
+  icon: ReactNode;
+  /** 关键字段表，用于 Drawer + 详细说明区左栏 Descriptions。 */
+  fields: ReadonlyArray<{ name: string; desc: string }>;
+  /** 跳转目标视图，用于 Drawer + 详细说明区底部的「去 XX 页」按钮。 */
+  navTarget: View;
+  /** YAML 片段示例，用于详细说明区右栏数据快照空态时展示。 */
+  yamlExample: string;
+}
+
+/**
+ * 6 个核心概念定义。
+ *
+ * 顺序即卡片网格 + 详细说明区的展示顺序：
+ *   工艺 → 环路 → 事项 → 任务 → 执行器 → 专家
+ * 这个顺序也是概念从抽象到实例的层级链。
+ */
+export const CONCEPTS: readonly ConceptNode[] = [
+  {
+    id: 'process',
+    label: '工艺',
+    oneLiner: '可复用的流程蓝图，定义阶段 + 环节 + 门禁 + 产物',
+    icon: <BuildOutlined />,
+    navTarget: 'processes',
+    fields: [
+      { name: 'name', desc: '唯一标识，如 4p12s-delivery' },
+      { name: 'display_name', desc: '人类可读名称' },
+      { name: 'complexity', desc: '复杂度：light / standard / complex' },
+      { name: 'version', desc: '语义化版本，如 1.0.0' },
+      { name: 'definition', desc: 'YAML 全量定义（phases/steps/gates/artifacts）' },
+      { name: 'category', desc: '分类，如 software / migration' },
+    ],
+    yamlExample: `name: 4p12s-delivery
+display_name: 4 阶段 12 环节交付
+complexity: standard
+version: 1.0.0
+phases:
+  - name: requirement
+    steps:
+      - step_template: gather-requirement
+        gates:
+          - type: human_approval
+  - name: design
+    steps: [...]`,
+  },
+  {
+    id: 'loop',
+    label: '环路',
+    oneLiner: '工艺安装后的运行实例，可重复 / 循环执行',
+    icon: <RetweetOutlined />,
+    navTarget: 'loops',
+    fields: [
+      { name: 'process_template_id', desc: '来源工艺模板 ID（回溯）' },
+      { name: 'process_template_version', desc: '实例化时的版本快照' },
+      { name: 'status', desc: 'enabled / paused' },
+      { name: 'loop_phases', desc: '阶段实例（来自工艺 phases）' },
+      { name: 'loop_steps', desc: '环节实例，每个关联一个 todo' },
+      { name: 'loop_triggers', desc: '触发器列表（8 种类型）' },
+      { name: 'limits_config', desc: '限流：max_step_executions / max_total_tokens' },
+    ],
+    yamlExample: `id: 12
+name: 4 阶段 12 环节交付实例
+process_template_id: 5
+process_template_version: 1.0.0
+status: enabled
+triggers:
+  - type: manual
+  - type: webhook
+    config: { path: /api/v1/loops/12/trigger }
+limits:
+  max_step_executions: 20`,
+  },
+  {
+    id: 'todo',
+    label: '事项',
+    oneLiner: '每个环节的具体执行载体，含 prompt / 执行器 / 模型 / skill',
+    icon: <UnorderedListOutlined />,
+    navTarget: 'items',
+    fields: [
+      { name: 'kind', desc: "item 一次性事项 / step 可复用环节" },
+      { name: 'executor', desc: '执行器标识，如 claudecode' },
+      { name: 'expert_name', desc: '专家/团队名，如 product-manager' },
+      { name: 'model', desc: '任务级模型，覆盖执行器默认' },
+      { name: 'prompt', desc: '执行指令文本' },
+      { name: 'skill_names', desc: '绑定的 skill 名列表' },
+      { name: 'acceptance_criteria', desc: '验收标准文本' },
+    ],
+    yamlExample: `id: 42
+title: 收集需求
+kind: step
+executor: claudecode
+expert_name: product-manager
+model: claude-sonnet-5
+prompt: 与用户访谈，输出需求文档
+skill_names: [requirement-gathering]
+acceptance_criteria: 需求文档含用户故事 + 验收条件`,
+  },
+  {
+    id: 'task',
+    label: '任务',
+    oneLiner: '用户选择环路执行一次的意图，是触发动作',
+    icon: <RocketOutlined />,
+    navTarget: 'tasks',
+    fields: [
+      { name: 'title', desc: '任务标题（从需求首行截取）' },
+      { name: 'description', desc: '完整需求描述' },
+      { name: 'loop_id', desc: '关联的环路 ID' },
+      { name: 'status', desc: 'pending / running / success / failed' },
+      { name: 'template_id', desc: '来源工艺模板 ID' },
+    ],
+    yamlExample: `id: 8
+title: 给后端加一个新 API
+description: 需要给后端加一个 /api/v1/tasks 的 POST 接口...
+loop_id: 12
+status: success
+template_id: 5`,
+  },
+  {
+    id: 'executor',
+    label: '执行器',
+    oneLiner: '运行时 CLI 工具（claudecode / mobilecoder / opencode ...）',
+    icon: <MacCommandOutlined />,
+    navTarget: 'settings',
+    fields: [
+      { name: 'name', desc: '唯一标识，如 claudecode' },
+      { name: 'path', desc: 'CLI 可执行文件路径' },
+      { name: 'default_model', desc: '执行器级默认模型' },
+      { name: 'is_default', desc: '是否系统默认执行器' },
+      { name: 'session_dir', desc: '会话目录' },
+    ],
+    yamlExample: `id: 1
+name: claudecode
+display_name: Claude Code
+path: /usr/local/bin/claude
+default_model: claude-sonnet-5
+is_default: true`,
+  },
+  {
+    id: 'expert',
+    label: '专家',
+    oneLiner: '人格 + Skills 组合（product-manager / architect / code-reviewer ...）',
+    icon: <TeamOutlined />,
+    navTarget: 'settings',
+    fields: [
+      { name: 'name', desc: '唯一标识，如 product-manager' },
+      { name: 'description', desc: '专家描述' },
+      { name: 'skills', desc: '绑定的 skill 列表' },
+      { name: 'agent_md', desc: 'Agent MD 人格配置' },
+    ],
+    yamlExample: `name: product-manager
+description: 产品经理专家，擅长需求分析
+skills:
+  - requirement-gathering
+  - user-story-writing
+agent_md: |
+  你是一位资深产品经理...`,
+  },
+] as const;
+
+/**
+ * 关系图节点（SVG 告标）。
+ *
+ * 呚标系 viewBox 1000x400，手动布局：
+ *   - 主链（工艺→环路→事项→执行记录）走横向中线 y=200
+ *   - 支线（模板库/触发器/执行器专家模型）走上下两侧
+ */
+export interface GraphNode {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  /** hover 时同时高亮的节点 id 列表（关联节点）。 */
+  highlights: string[];
+  /** 对应 CONCEPTS 的 id，用于点击弹 Drawer；undefined 表示支线节点不弹 Drawer。 */
+  conceptId?: ConceptNode['id'];
+}
+
+export const GRAPH_NODES: readonly GraphNode[] = [
+  // 主链 4 节点（横向中线）
+  { id: 'process', label: '工艺', x: 120, y: 200, highlights: ['loop', 'process-step-templates'], conceptId: 'process' },
+  { id: 'loop', label: '环路', x: 400, y: 200, highlights: ['process', 'todo', 'loop-triggers', 'loop-phases'], conceptId: 'loop' },
+  { id: 'todo', label: '事项', x: 680, y: 200, highlights: ['loop', 'execution', 'executor', 'expert', 'model'], conceptId: 'todo' },
+  { id: 'execution', label: '执行记录', x: 900, y: 200, highlights: ['todo'] },
+  // 支线节点
+  { id: 'process-step-templates', label: '环节原型库', x: 120, y: 60, highlights: ['process'] },
+  { id: 'loop-phases', label: '阶段实例', x: 400, y: 60, highlights: ['loop'] },
+  { id: 'loop-triggers', label: '触发器（8 种）', x: 400, y: 340, highlights: ['loop'] },
+  { id: 'executor', label: '执行器', x: 680, y: 60, highlights: ['todo', 'expert', 'model'], conceptId: 'executor' },
+  { id: 'expert', label: '专家', x: 680, y: 340, highlights: ['todo', 'executor', 'model'], conceptId: 'expert' },
+  { id: 'model', label: '模型', x: 860, y: 340, highlights: ['todo', 'executor', 'expert'] },
+] as const;
+
+/**
+ * 关系图连线。
+ * from/to 为 GRAPH_NODES 的 id；label 为连线上的动作语义。
+ */
+export interface GraphEdge {
+  from: string;
+  to: string;
+  label: string;
+}
+
+export const GRAPH_EDGES: readonly GraphEdge[] = [
+  { from: 'process', to: 'loop', label: '安装实例化' },
+  { from: 'loop', to: 'todo', label: '编排引用' },
+  { from: 'todo', to: 'execution', label: '触发执行' },
+  // 支线
+  { from: 'process-step-templates', to: 'process', label: 'step_template 引用' },
+  { from: 'loop-phases', to: 'loop', label: '聚合' },
+  { from: 'loop-triggers', to: 'loop', label: '驱动' },
+  { from: 'executor', to: 'todo', label: '运行时' },
+  { from: 'expert', to: 'todo', label: '人格' },
+  { from: 'model', to: 'todo', label: 'LLM' },
+] as const;
+
+/**
+ * 快速开始 5 步定义。
+ *
+ * checkApi 字段决定步骤完成判断拉哪个 API：
+ *   processes → bundledApi.getProcesses() 非空
+ *   triggers  → dbLoops.listLoops() 后查任一 loop 的非 manual 触发器
+ *   tasks     → bundledApi.listTasks() 非空
+ *   executions → db.getExecutionRecords() 非空
+ *   artifacts → 通过 loop_executions 的产物判断（简化：任一 loop 有产物）
+ */
+export interface QuickStartStep {
+  /** 序号，1-5。 */
+  index: number;
+  /** 步骤标题。 */
+  title: string;
+  /** 跳转目标视图。 */
+  navTarget: View;
+  /** 完成判断数据源。 */
+  checkApi: 'processes' | 'triggers' | 'tasks' | 'executions' | 'artifacts';
+}
+
+export const QUICK_START_STEPS: readonly QuickStartStep[] = [
+  { index: 1, title: '安装工艺', navTarget: 'processes', checkApi: 'processes' },
+  { index: 2, title: '配置触发器', navTarget: 'loops', checkApi: 'triggers' },
+  { index: 3, title: '创建任务', navTarget: 'tasks', checkApi: 'tasks' },
+  { index: 4, title: '监控执行', navTarget: 'memorial', checkApi: 'executions' },
+  { index: 5, title: '验收产物', navTarget: 'loops', checkApi: 'artifacts' },
+] as const;
+
+/** 顶部 sticky Tab 的三个 key，与 ConceptNavPage 的 section id 对齐。 */
+export const ONBOARDING_TABS: Array<{ key: string; label: string; icon: ReactNode }> = [
+  { key: 'relation', label: '关系图', icon: <CompassOutlined /> },
+  { key: 'concepts', label: '概念详解', icon: <AppstoreOutlined /> },
+  { key: 'quickstart', label: '快速开始', icon: <ForwardOutlined /> },
+] as const;
+
+/** Hero 区一句话简介。 */
+export const ONBOARDING_HERO_TITLE = 'NTD 是 AI 驱动的任务引擎';
+export const ONBOARDING_HERO_SUBTITLE = '用「工艺 → 环路 → 事项」三层抽象，把你的工作自动化';
+
+/** 三个易混概念的对比表（执行器 vs 专家 vs 模型），用于详细说明区。 */
+export const EXECUTOR_VS_EXPERT_VS_MODEL: Array<{
+  concept: string;
+  essence: string;
+  example: string;
+}> = [
+  { concept: '执行器', essence: '运行时 CLI 工具', example: 'claudecode / mobilecoder / opencode' },
+  { concept: '专家', essence: '人格 + Skills 组合', example: 'product-manager / architect / code-reviewer' },
+  { concept: '模型', essence: '具体跑哪个 LLM', example: 'glm-5.2 / claude-sonnet-5 / gpt-4o' },
+] as const;
+
+/** 触发器 8 种类型 + 中文标签，用于环路详细说明区。 */
+export const TRIGGER_TYPES: ReadonlyArray<{ type: string; label: string }> = [
+  { type: 'manual', label: '手动触发' },
+  { type: 'cron', label: '定时调度' },
+  { type: 'webhook', label: 'Webhook' },
+  { type: 'feishu_message', label: '飞书消息' },
+  { type: 'feishu_command', label: '飞书命令' },
+  { type: 'todo_completed', label: '事项完成' },
+  { type: 'todo_state_changed', label: '事项状态变化' },
+  { type: 'tag_added', label: '标签添加' },
+] as const;
+
+/** 门禁 4 种类型 + 中文标签，用于环路/事项详细说明区。 */
+export const GATE_TYPES: ReadonlyArray<{ type: string; label: string }> = [
+  { type: 'artifact_present', label: '产物存在' },
+  { type: 'ai_criteria_review', label: 'AI 评审' },
+  { type: 'human_approval', label: '人工审批' },
+  { type: 'script_check', label: '脚本校验' },
+] as const;
+
+/** ThunderboltOutlined 给任务卡用（避免在 ConceptNode 里重复 import）。 */
+export { ThunderboltOutlined } from '@ant-design/icons';

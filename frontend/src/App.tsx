@@ -15,6 +15,7 @@ import { LoopPage } from './components/LoopPage';
 import { LoopMobilePage } from './components/mobile/LoopMobilePage';
 import { ProcessPage } from './components/ProcessPage';
 import { TasksPage } from './components/tasks/TasksPage';
+import { ConceptNavPage } from './components/onboarding/ConceptNavPage';
 import { Dashboard } from './components/Dashboard';
 import { MemorialBoard } from './components/MemorialBoard';
 import { SettingsPage } from './components/SettingsPage';
@@ -178,6 +179,21 @@ function AppContent() {
     }
   }, [activeView, selectedId, state.loading, state.todos, dispatch, clearSelection]);
 
+  // 首次进入引导：localStorage 无「已跳过」标记时，从默认 items 视图跳转到 onboarding。
+  // 只在挂载时检测一次（空依赖），避免用户在 onboarding 内点跳转时被反复跳回来。
+  // 用 replaceUrl 不用 pushUrl：不污染历史栈，用户点返回不会回到 onboarding。
+  useEffect(() => {
+    try {
+      const skipped = localStorage.getItem('ntd_onboarding_completed');
+      if (!skipped && activeView === 'items') {
+        replaceUrl('onboarding', {});
+      }
+    } catch {
+      /* localStorage 不可用时静默降级，不阻塞首屏 */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleSelectTodo = (todoId: string | number | null) => {
     if (todoId != null) {
       setSelectedLoopId(null);
@@ -243,6 +259,8 @@ function AppContent() {
     if (key === 'loops') { showListSection('loop'); return; }
     if (key === 'processes') { handleShowView('processes'); return; }
     if (key === 'tasks') { handleShowView('tasks'); return; }
+    // 概念导航首页：独立视图挂载，workspace 透传给子组件拉数据快照。
+    if (key === 'onboarding') { handleShowView('onboarding'); return; }
     // 消息页：作为独立视图挂载，workspace 由左上角 WorkspaceSwitcher 联动传入。
     if (key === 'messages') { handleShowView('messages'); return; }
     if (key === 'dashboard') { handleShowView('dashboard'); return; }
@@ -428,6 +446,8 @@ function AppContent() {
                 <WikiViewPage />
               ) : activeView === 'tasks' ? (
                 <TasksPage workspaceId={state.selectedWorkspace} />
+              ) : activeView === 'onboarding' ? (
+                <ConceptNavPage workspaceId={state.selectedWorkspace} />
               ) : activeView === 'processes' ? (
                 <ProcessPage
                   workspaceId={state.selectedWorkspace}
