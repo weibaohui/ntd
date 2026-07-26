@@ -84,9 +84,10 @@ export function LeftRail({
     {
       title: '工作区',
       items: [
-        { key: 'items', label: '事项', icon: <UnorderedListOutlined />, ariaLabel: '事项' },
-        { key: 'loops', label: '环路', icon: <RetweetOutlined />, ariaLabel: '环路' },
         { key: 'tasks', label: '任务', icon: <RocketOutlined />, ariaLabel: '任务' },
+        { key: 'processes', label: '工艺', icon: <BuildOutlined />, ariaLabel: '工艺' },
+        { key: 'loops', label: '环路', icon: <RetweetOutlined />, ariaLabel: '环路' },
+        { key: 'items', label: '事项', icon: <UnorderedListOutlined />, ariaLabel: '事项' },
         { key: 'messages', label: '消息', icon: <MessageOutlined />, ariaLabel: '消息' },
         { key: 'blackboard', label: '黑板', icon: <TfiBlackboard />, ariaLabel: '黑板' },
         { key: 'memorial', label: '看板', icon: <ReadOutlined />, ariaLabel: '看板' },
@@ -100,15 +101,13 @@ export function LeftRail({
         { key: 'dashboard', label: '仪表盘', icon: <DashboardOutlined />, ariaLabel: '仪表盘' },
       ] satisfies LeftRailItem[],
     },
-    // 「配置」区放在主「工作区」下方：
+    // 「配置」区：
     // 技能/专家原本藏在底部弹出菜单里，层级过深，提升为常驻入口更易触达。
-    // key 复用 settings_skills / settings_experts，路由与 active 高亮无需额外改动。
     {
       title: '配置',
       items: [
         { key: 'settings_skills', label: '技能', icon: <ThunderboltOutlined />, ariaLabel: '技能' },
         { key: 'settings_experts', label: '专家', icon: <TeamOutlined />, ariaLabel: '专家' },
-        { key: 'processes', label: '工艺', icon: <BuildOutlined />, ariaLabel: '工艺' },
       ] satisfies LeftRailItem[],
     },
   ]), []);
