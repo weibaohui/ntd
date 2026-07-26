@@ -101,6 +101,11 @@ pub enum Commands {
         #[command(subcommand)]
         action: WorkspaceAction,
     },
+    /// Process template management
+    Process {
+        #[command(subcommand)]
+        action: ProcessAction,
+    },
 }
 
 /// Workspace CLI actions: 列出 / 查询单个 / 注册一个项目目录。
@@ -388,6 +393,31 @@ pub enum TagAction {
 
 // ============== Loop Commands ==============
 
+/// 工艺模板 CLI 动作：列出 / 查看 / 安装并执行 / 审计状态。
+#[derive(Debug, Clone, Subcommand)]
+pub enum ProcessAction {
+    /// 列出所有工艺模板
+    List,
+    /// 查看工艺模板详情
+    Show {
+        /// 工艺模板名称（如 4p12s-delivery）
+        name: String,
+    },
+    /// 安装工艺模板到工作空间并触发执行
+    Run {
+        /// 工艺模板名称
+        name: String,
+        /// 目标工作空间路径
+        #[arg(long = "workspace")]
+        workspace: String,
+    },
+    /// 查看工艺实例审计状态
+    ExecutionStatus {
+        /// Loop execution ID
+        id: i64,
+    },
+}
+
 /// Loop CLI actions, mirrors the structure of Todo commands for consistency.
 #[derive(Debug, Clone, Subcommand)]
 pub enum LoopAction {
@@ -604,6 +634,7 @@ pub async fn run_command(cli: &Cli) -> Result<()> {
         Commands::Stats { } => handle_stats(&client, &cli.output, &cli.fields).await?,
         Commands::Blackboard { action } => handle_blackboard(&client, action, &cli.output, &cli.fields).await?,
         Commands::Workspace { action } => handle_workspace(&client, action, &cli.output, &cli.fields).await?,
+        Commands::Process { action } => handle_process(&client, action, &cli.output, &cli.fields).await?,
     }
 
     Ok(())
@@ -949,6 +980,91 @@ async fn handle_workspace(
             create_workspace(client, path, name, output, fields).await
         }
     }
+}
+
+// ============== Process Handlers ==============
+
+#[allow(clippy::print_stdout)]
+async fn handle_process(
+    client: &ApiClient,
+    action: &ProcessAction,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    match action {
+        ProcessAction::List => {
+            let resp: ClientResponse<Vec<serde_json::Value>> =
+                client.get("/bundled/processes").await?;
+            print_response(&resp, output, fields)?;
+        }
+        ProcessAction::Show { name } => {
+            let encoded = percent_encode_slug(name);
+            let path = format!("/bundled/processes/{}", encoded);
+            let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
+            print_response(&resp, output, fields)?;
+        }
+        ProcessAction::Run { name, workspace } => {
+            run_process_install(client, name, workspace, output, fields).await?
+        }
+        ProcessAction::ExecutionStatus { id } => {
+            query_execution_status(client, *id, output, fields).await?
+        }
+    }
+    Ok(())
+}
+
+/// ProcessRun：查找工作空间 → 安装工艺模板 → 打印结果。
+#[allow(clippy::print_stdout)]
+async fn run_process_install(
+    client: &ApiClient, name: &str, workspace: &str,
+    output: &OutputFormat, fields: &Option<String>,
+) -> Result<()> {
+    let ws_resp: ClientResponse<Vec<serde_json::Value>> = client.get("/v1/project-directories").await?;
+    let ws_list = ws_resp.data.as_deref().unwrap_or(&[]);
+    let ws_id = ws_list.iter().find_map(|ws| {
+        let path = ws.get("path").and_then(|p| p.as_str())?;
+        if path == workspace { ws.get("id").and_then(|id| id.as_i64()) } else { None }
+    }).ok_or_else(|| anyhow::anyhow!("工作空间 {} 未找到", workspace))?;
+    let install_req = serde_json::json!({ "workspace_id": ws_id });
+    let install_path = format!("/bundled/processes/{}/install", percent_encode_slug(name));
+    let install_resp: ClientResponse<serde_json::Value> = client.post(&install_path, &install_req).await?;
+    println!("工艺模板「{}」已安装到工作空间「{}」", name, workspace);
+    if let Some(ref data) = install_resp.data {
+        if let Some(loop_id) = data.get("loop_id").and_then(|v| v.as_i64()) {
+            println!("创建 Loop #{}，请在前端或 CLI 启用后触发执行", loop_id);
+        }
+    }
+    print_response(&install_resp, output, fields)?;
+    Ok(())
+}
+
+/// ProcessExecutionStatus：遍历工作空间查找审计数据。
+#[allow(clippy::print_stdout)]
+async fn query_execution_status(
+    client: &ApiClient, id: i64,
+    output: &OutputFormat, fields: &Option<String>,
+) -> Result<()> {
+    let ws_resp: ClientResponse<Vec<serde_json::Value>> = client.get("/v1/project-directories").await?;
+    let ws_data = ws_resp.data.as_deref().unwrap_or(&[]);
+    for ws in ws_data {
+        let Some(ws_id) = ws.get("id").and_then(|v| v.as_i64()) else { continue };
+        let loops_resp: ClientResponse<Vec<serde_json::Value>> =
+            match client.get(&format!("/v1/workspaces/{}/loops", ws_id)).await {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+        for lp in loops_resp.data.as_deref().unwrap_or(&[]) {
+            let Some(lp_id) = lp.get("id").and_then(|v| v.as_i64()) else { continue };
+            let audit_path = format!("/v1/workspaces/{}/loops/{}/executions/{}/audit", ws_id, lp_id, id);
+            if let Ok(audit_resp) = client.get::<ClientResponse<serde_json::Value>>(&audit_path).await {
+                if audit_resp.data.is_some() {
+                    return print_response(&audit_resp, output, fields);
+                }
+            }
+        }
+    }
+    println!("工艺执行 #{} 未找到。请确认 loop_execution_id 正确。", id);
+    Ok(())
 }
 
 /// 调 `GET /api/v1/project-directories` 拉全部已注册工作空间。

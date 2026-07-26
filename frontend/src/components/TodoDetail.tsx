@@ -12,6 +12,7 @@ import type { ExecutionRecord } from '@/types';
 import { groupBySession } from './todo-detail/helpers';
 import { DetailHeader } from './todo-detail/DetailHeader';
 import { ForumPostList } from './todo-detail/ForumPostList';
+import { ReferencingLoopsSection } from './todo-detail/ReferencingLoopsSection';
 
 interface TodoDetailProps {
   hideTitleRow?: boolean;
@@ -271,6 +272,10 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
         onTitleUpdate={handleTitleUpdate}
         hideTitleRow={hideTitleRow}
       />
+
+      {/* 所属环路溯源：事项被哪些启用环路引用（「事项 → 环路」向上回溯），
+          无引用时区块整体不渲染，不占用详情页空间 */}
+      {selectedTodoId != null && <ReferencingLoopsSection todoId={selectedTodoId} />}
 
       {/* Execution History */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>

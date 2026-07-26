@@ -23,6 +23,8 @@ interface LoopPageProps {
   effectiveMobilePanel: 'list' | 'detail';
   // 当前选中的工作空间 id，用于环路配置功能
   workspaceId?: number | null;
+  /** 跳转来源工艺详情（`/#/processes?name=xxx`），透传给详情面板的溯源行。 */
+  onOpenProcess?: (templateName: string) => void;
 }
 
 /**
@@ -43,6 +45,7 @@ export function LoopPage({
   onListModeChange,
   onLoopChanged,
   workspaceId,
+  onOpenProcess,
 }: LoopPageProps) {
   // 状态：是否显示环路配置页面（替代默认的环路详情页）
   const [showLoopConfig, setShowLoopConfig] = useState(false);
@@ -96,6 +99,8 @@ export function LoopPage({
       loopId={selectedLoopId}
       workspaceId={workspaceId ?? null}
       tags={tags}
+      onOpenProcess={onOpenProcess}
+      onOpenTodo={(todoId) => onSelectTodo(todoId)}
       onTrigger={async () => {
         try {
           const res = await dbLoops.triggerLoop(workspaceId ?? 0, selectedLoopId);

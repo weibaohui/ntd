@@ -76,7 +76,7 @@ AI 在执行某个功能时（编号 X），必须按以下顺序读取文档：
 
 ## 已有文档清单
 
-### docs/design/（20 份 + 1 HTML）
+### docs/design/（22 份 + 1 HTML）
 
 | 编号 | 文件 | 原名 |
 |------|------|------|
@@ -100,15 +100,26 @@ AI 在执行某个功能时（编号 X），必须按以下顺序读取文档：
 | 018 | 会话管理-设计.md | session-management-design.md |
 | 019 | Webhook实体分析-设计.md | webhook-per-entity-analysis.md |
 | 020 | 工作空间重构-设计.md | WORKSPACE_REFACTOR_ANALYSIS.md |
+| 022 | 工作空间Prompt-设计.md | workspace-prompt-design.md |
+| 025 | 工艺管理-设计.md | process-management-design.md |
+| 025-M2 | 工艺管理-M2-设计.md | process-management-m2-design.md |
+| 025-M3 | 工艺管理-M3-设计.md | process-management-m3-design.md |
 | 999 | 架构总览-设计.html | architecture.html |
 
-### docs/requirements/（3 份）
+### docs/requirements/（5 份）
 
 | 编号 | 文件 | 原名 |
 |------|------|------|
 | 001 | 项目规格说明-需求.md | SPEC.md |
 | 002 | 功能特性总览-需求.md | FEATURES.md |
 | 003 | 前端功能特性-需求.md | frontend-features.md |
+| 022 | 工作空间Prompt-需求.md | workspace-prompt-requirements.md |
+| 022 | 工作空间Prompt-实现总结.md | workspace-prompt-summary.md |
+| 025 | 工艺管理-需求.md | process-management-requirements.md |
+| 025-M2 | 工艺管理-M2-需求.md | process-management-m2-requirements.md |
+| 025 | 工艺管理-实现总结.md | process-management-summary.md |
+| 025-M2 | 工艺管理-M2-实现总结.md | process-management-m2-summary.md |
+| 025-M3 | 工艺管理-M3-需求.md | process-management-m3-requirements.md |
 
 ### docs/decisions/（4 份）
 

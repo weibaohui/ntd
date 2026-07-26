@@ -1,5 +1,5 @@
 import { api, unwrap } from './client';
-import type { Todo, Tag, TodoTemplate, CustomTemplateStatus, ComputedBucket, TodoCenterItem } from '@/types';
+import type { Todo, Tag, TodoTemplate, CustomTemplateStatus, ComputedBucket, TodoCenterItem, LoopRefSummary } from '@/types';
 
 // Todo APIs — 所有 todo 端点嵌套在 /api/v1/workspaces/{ws}/todos 下（后端 ADR-7 纯 workspace 隔离）。
 // workspaceId 从 query/body 提升到 URL 路径段，调用方必须显式传入。
@@ -283,6 +283,16 @@ export async function getTodoCenter(
 /** 归档事项（仅隐藏，不删数据/不解 Loop 引用）。返回重新计算后的分类项。 */
 export async function archiveTodo(workspaceId: number, id: number): Promise<TodoCenterItem> {
   return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/todos/${id}/archive`));
+}
+
+/**
+ * 查询引用该事项的启用环路摘要（事项详情页「所属环路」区块用）。
+ *
+ * 轻量按需查询：详情页挂载时才请求，避免主 todos 列表为它 JOIN 放大。
+ * 返回空数组表示未被任何启用环路引用（前端据此隐藏区块）。
+ */
+export async function getReferencingLoops(workspaceId: number, id: number): Promise<LoopRefSummary[]> {
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/todos/${id}/referencing-loops`));
 }
 
 /** 恢复事项（清空 archived_at，分类按真实关系重算）。 */

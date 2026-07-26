@@ -12,7 +12,7 @@ export type SyncStrategy = 'keep_local' | 'overwrite' | 'manual';
 /**
  * 子目录类型
  */
-export type Subdir = 'all' | 'experts' | 'todos' | 'skills';
+export type Subdir = 'all' | 'experts' | 'todos' | 'skills' | 'processes';
 
 export interface BundledStatus {
   remote_url: string;
@@ -198,6 +198,141 @@ export interface InstallSkillResponse {
 }
 
 /**
+ * 工艺模板列表项
+ */
+export interface ProcessTemplate {
+  id: number;
+  name: string;
+  display_name: string;
+  description: string;
+  category: string;
+  complexity: 'light' | 'standard' | 'complex';
+  version: string;
+  source_path: string | null;
+  is_system: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+/**
+ * 工艺模板详情
+ */
+export interface ProcessTemplateDetail extends ProcessTemplate {
+  definition: string;
+}
+
+/**
+ * 安装工艺模板请求
+ */
+export interface InstallProcessRequest {
+  workspace_id: number;
+}
+
+/**
+ * 安装工艺模板响应
+ */
+export interface InstallProcessResponse {
+  loop_id: number;
+  loop_name: string;
+  phase_count: number;
+  step_count: number;
+}
+
+/**
+ * 工艺实例环路列表项（工艺详情「实例环路」Tab 用）
+ */
+export interface ProcessLoopItem {
+  id: number;
+  name: string;
+  description: string;
+  status: string;
+  workspace_id: number | null;
+  /** 实例化时的工艺版本快照 */
+  process_template_version: string | null;
+  created_at: string | null;
+  execution_count: number;
+}
+
+// ── M2 工艺运行时类型 ──────────────────────────────────
+
+/** 产物快照 */
+export interface ArtifactDto {
+  id: number;
+  name: string;
+  artifact_type: 'file' | 'text' | 'url' | 'json';
+  locator: string;
+  content_text?: string;
+  captured_at: string;
+  captured_by?: string;
+}
+
+/** 门禁评价记录 */
+export interface GateDto {
+  id: number;
+  gate_type: 'artifact_present' | 'ai_criteria_review' | 'human_approval' | 'script_check';
+  gate_name: string;
+  status: 'pending' | 'passed' | 'failed';
+  result?: string;
+  evaluated_at?: string;
+  evaluated_by?: string;
+}
+
+/** 环节执行状态 */
+export interface StepExecutionStatusDto {
+  step_execution_id: number;
+  sequence_index: number;
+  status: string;
+  rework_count: number;
+  rating?: number;
+  error_message?: string;
+  conclusion?: string;
+}
+
+/** 环节审计 */
+export interface StepAuditDto {
+  step_id: number;
+  step_name: string;
+  order_index: number;
+  skill_names: string[];
+  execution?: StepExecutionStatusDto;
+  artifacts: ArtifactDto[];
+  gates: GateDto[];
+}
+
+/** 阶段执行状态 */
+export interface PhaseExecutionStatusDto {
+  status: string;
+  started_at?: string;
+  finished_at?: string;
+}
+
+/** 阶段审计 */
+export interface PhaseAuditDto {
+  phase_id: number;
+  phase_name: string;
+  execution: PhaseExecutionStatusDto;
+  steps: StepAuditDto[];
+}
+
+/** 执行摘要 */
+export interface LoopExecutionSummaryDto {
+  id: number;
+  loop_id: number;
+  status: string;
+  started_at: string;
+  finished_at?: string;
+  total_steps: number;
+  completed_steps: number;
+  failed_steps: number;
+}
+
+/** 工艺审计顶级结构 */
+export interface ProcessAuditDto {
+  loop_execution: LoopExecutionSummaryDto;
+  phases: PhaseAuditDto[];
+}
+
+/**
  * 内置资源同步 API
  */
 export const bundledApi = {
@@ -304,6 +439,109 @@ export const bundledApi = {
     return unwrap(await api.post('/api/bundled/skills/install', {
       skill_name: skillName,
       executor,
+    }));
+  },
+
+  // ---------------------------------------------------------------------------
+  // 工艺模板市场 API
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 获取工艺模板列表
+   */
+  async getProcesses(): Promise<ProcessTemplate[]> {
+    return unwrap(await api.get('/api/bundled/processes'));
+  },
+
+  /**
+   * 获取工艺模板详情
+   */
+  async getProcess(name: string): Promise<ProcessTemplateDetail> {
+    return unwrap(await api.get(`/api/bundled/processes/${encodeURIComponent(name)}`));
+  },
+
+  /**
+   * 安装工艺模板到指定工作空间
+   */
+  async installProcess(name: string, workspaceId: number): Promise<InstallProcessResponse> {
+    return unwrap(await api.post(`/api/bundled/processes/${encodeURIComponent(name)}/install`, {
+      workspace_id: workspaceId,
+    }));
+  },
+
+  /**
+   * 列出该工艺模板实例化的环路（按创建时间倒序）。
+   * 工艺详情「实例环路」Tab 用，支撑「工艺 → 环路」向下钻取。
+   */
+  async listProcessLoops(name: string): Promise<ProcessLoopItem[]> {
+    return unwrap(await api.get(`/api/v1/processes/${encodeURIComponent(name)}/loops`));
+  },
+
+  /**
+   * 把系统工艺复制到用户层 ~/.ntd/processes/，避免被 bundled 同步覆盖。
+   * 复制完成后工艺标记为 is_system=false。
+   */
+  async copyProcessToUser(name: string): Promise<{ user_source_path: string }> {
+    return unwrap(await api.post(`/api/v1/processes/${encodeURIComponent(name)}/copy-to-user`, {}));
+  },
+
+  /**
+   * 获取工艺实例审计数据（阶段 → 环节 → 产物 → 门禁）
+   */
+  async getProcessAudit(wsId: number, loopId: number, execId: number): Promise<ProcessAuditDto> {
+    return unwrap(await api.get(`/api/v1/workspaces/${wsId}/loops/${loopId}/executions/${execId}/audit`));
+  },
+
+  /** 工艺仪表盘统计数据 */
+  async getProcessStats(): Promise<{ template_stats: Array<{ name: string; display_name: string; complexity: string; loop_count: number }>; total_templates: number }> {
+    return unwrap(await api.get('/api/v1/processes/stats'));
+  },
+
+  /** 工艺推荐 */
+  async recommendProcesses(description: string): Promise<{ recommendations: Array<{ template_name: string; display_name: string; complexity: string; score: number; reasons: string[] }> }> {
+    return unwrap(await api.post('/api/v1/processes/recommend', { description }));
+  },
+
+  /** 创建任务：推荐→创建task→复用/创建Loop→创建执行 */
+  async createTask(requirement: string, loopId: number, wsId: number): Promise<{ task_id: number; loop_id: number; execution_id: number }> {
+    return unwrap(await api.post(`/api/v1/workspaces/${wsId}/tasks`, { requirement, loop_id: loopId }));
+  },
+
+  /** 为已有任务创建新执行 */
+  async createTaskExecution(wsId: number, taskId: number, requirement: string): Promise<{ execution_id: number }> {
+    return unwrap(await api.post(`/api/v1/workspaces/${wsId}/tasks/${taskId}/executions`, { requirement }));
+  },
+
+  /** 任务列表 */
+  async listTasks(wsId: number, status?: string): Promise<Array<{ id: number; title: string; description: string; status: string; template_name?: string; complexity?: string; loop_id?: number; workspace_id?: number; latest_execution_status?: string; latest_execution_requirement?: string; created_at?: string }>> {
+    const params = status ? { status } : {};
+    return unwrap(await api.get(`/api/v1/workspaces/${wsId}/tasks`, { params }));
+  },
+
+  /** 任务详情 */
+  async getTaskDetail(wsId: number, taskId: number): Promise<any> {
+    return unwrap(await api.get(`/api/v1/workspaces/${wsId}/tasks/${taskId}`));
+  },
+
+  /**
+   * 人工审批门禁
+   */
+  async approveGate(wsId: number, loopId: number, execId: number, stepExecId: number, gateId: number, approved: boolean, comment?: string): Promise<{ gate_id: number; status: string }> {
+    return unwrap(await api.post(`/api/v1/workspaces/${wsId}/loops/${loopId}/executions/${execId}/steps/${stepExecId}/gates/${gateId}/approve`, {
+      approved,
+      comment,
+    }));
+  },
+
+  /**
+   * 手动补充产物
+   */
+  async addArtifact(wsId: number, loopId: number, execId: number, stepExecId: number, name: string, artifactType: string, locator: string, contentText?: string): Promise<ArtifactDto> {
+    return unwrap(await api.post(`/api/v1/workspaces/${wsId}/loops/${loopId}/executions/${execId}/steps/${stepExecId}/artifacts`, {
+      name,
+      artifact_type: artifactType,
+      locator,
+      content_text: contentText,
     }));
   },
 };

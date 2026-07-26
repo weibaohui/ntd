@@ -48,6 +48,14 @@ export interface LoopDto {
   abnormal_handler_todo_id: number | null;
   /** 异常处理触发条件 JSON 数组 */
   abnormal_handler_trigger_on: string;
+  /** 来源工艺模板 ID（非工艺实例化环路时缺省不返回） */
+  process_template_id?: number | null;
+  /** 实例化时的工艺版本快照（「来源工艺」面包屑展示用） */
+  process_template_version?: string | null;
+  /** 来源工艺模板唯一名（面包屑跳转工艺详情用） */
+  process_template_name?: string | null;
+  /** 来源工艺模板显示名（面包屑展示用） */
+  process_template_display_name?: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -133,6 +141,10 @@ export interface LoopStepRawDto {
   review_type: string;
   enabled: boolean;
   created_at: string | null;
+  /** 所属阶段 ID（工艺管理） */
+  phase_id?: number | null;
+  /** 所属阶段名称（工艺管理） */
+  phase_name?: string | null;
 }
 
 export interface LoopStepDto {
@@ -161,6 +173,10 @@ export interface LoopStepDto {
   todo_executor: string;
   /** 关联的 todo 归档时间。非空=已归档，Loop 详情图上标记，提醒环节指向已隐藏事项。 */
   todo_archived_at?: string | null;
+  /** 所属阶段 ID（工艺管理） */
+  phase_id?: number | null;
+  /** 所属阶段名称（工艺管理） */
+  phase_name?: string | null;
 }
 
 export interface CreateLoopStepRequest {
@@ -232,6 +248,14 @@ export interface LoopDetail {
   abnormal_handler_todo_id?: number | null;
   /** 异常处理触发条件 JSON 字符串 */
   abnormal_handler_trigger_on?: string;
+  /** 来源工艺模板 ID（后端 LoopDto 经 flatten 合并进详情；非工艺实例化时缺省） */
+  process_template_id?: number | null;
+  /** 实例化时的工艺版本快照（「来源工艺」面包屑展示用） */
+  process_template_version?: string | null;
+  /** 来源工艺模板唯一名（面包屑跳转工艺详情用） */
+  process_template_name?: string | null;
+  /** 来源工艺模板显示名（面包屑展示用） */
+  process_template_display_name?: string | null;
 }
 
 export interface LoopListItem {
@@ -253,6 +277,8 @@ export interface LoopListItem {
   last_execution_at: string | null;
   /** 待人工审批的环节执行数 */
   pending_approval_count: number;
+  /** 来源工艺模板 ID */
+  process_template_id?: number | null;
 }
 
 export interface LoopExecutionTokenSummary {

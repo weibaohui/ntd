@@ -13,6 +13,9 @@ import { ItemsPage } from '@/components/ItemsPage';
 import { TodoPostPage } from './components/todo-post';
 import { LoopPage } from './components/LoopPage';
 import { LoopMobilePage } from './components/mobile/LoopMobilePage';
+import { ProcessPage } from './components/ProcessPage';
+import { TasksPage } from './components/tasks/TasksPage';
+import { ConceptNavPage } from './components/onboarding/ConceptNavPage';
 import { Dashboard } from './components/Dashboard';
 import { MemorialBoard } from './components/MemorialBoard';
 import { SettingsPage } from './components/SettingsPage';
@@ -45,7 +48,7 @@ const { Content } = Layout;
 
 function AppContent() {
   const { state, dispatch, clearSelection } = useApp();
-  const { activeView, selectedId, activePanel, selectedRecordId, showView, pushUrl, replaceUrl, backToList } = useViewState();
+  const { activeView, selectedId, activePanel, selectedRecordId, processName, showView, pushUrl, replaceUrl, backToList } = useViewState();
   const { themeMode, toggleTheme } = useTheme();
   // 底部执行日志面板的显隐开关：来自设置-界面显示，关掉后即使有运行中任务也不渲染面板。
   const { visible: consolePanelVisible, setVisible: setConsolePanelVisible } = useConsolePanel();
@@ -194,6 +197,13 @@ function AppContent() {
     replaceUrl('loops', { id: loopId, panel: 'detail' });
   }, [clearSelection, replaceUrl]);
 
+  // 跳转来源工艺详情：环路详情「来源工艺」行的目标。
+  // 携带 name 参数，ProcessPage 据此自动打开该工艺的详情 Modal。
+  const handleOpenProcess = useCallback((templateName: string) => {
+    clearSelection();
+    pushUrl('processes', { name: templateName });
+  }, [clearSelection, pushUrl]);
+
   const handleSmartCreateSubmitted = () => {
     const wid = state.selectedWorkspace;
     if (wid == null) return;
@@ -232,6 +242,10 @@ function AppContent() {
     setNavDrawerOpen(false);
     if (key === 'items') { showListSection('item'); return; }
     if (key === 'loops') { showListSection('loop'); return; }
+    if (key === 'processes') { handleShowView('processes'); return; }
+    if (key === 'tasks') { handleShowView('tasks'); return; }
+    // 概念导航首页：独立视图挂载，workspace 透传给子组件拉数据快照。
+    if (key === 'onboarding') { handleShowView('onboarding'); return; }
     // 消息页：作为独立视图挂载，workspace 由左上角 WorkspaceSwitcher 联动传入。
     if (key === 'messages') { handleShowView('messages'); return; }
     if (key === 'dashboard') { handleShowView('dashboard'); return; }
@@ -368,6 +382,7 @@ function AppContent() {
                 onLoopChanged={() => setLoopUpdateCount(c => c + 1)}
                 effectiveMobilePanel={effectiveMobilePanel}
                 workspaceId={state.selectedWorkspace}
+                onOpenProcess={handleOpenProcess}
               />
             )
           )}
@@ -414,6 +429,16 @@ function AppContent() {
                 />
               ) : activeView === 'wiki' ? (
                 <WikiViewPage />
+              ) : activeView === 'tasks' ? (
+                <TasksPage workspaceId={state.selectedWorkspace} />
+              ) : activeView === 'onboarding' ? (
+                <ConceptNavPage workspaceId={state.selectedWorkspace} />
+              ) : activeView === 'processes' ? (
+                <ProcessPage
+                  workspaceId={state.selectedWorkspace}
+                  onOpenLoop={handleSelectLoop}
+                  processName={processName}
+                />
               ) : (
                 <Dashboard />
               )}

@@ -34,9 +34,11 @@ interface StepsPanelProps {
   /** Loop 所属工作空间 ID（project_directories.id，唯一键）。
    *  用于过滤「关联环节」候选 todo，并把 id 转成 name 展示给用户。 */
   workspaceId?: number | null;
+  /** 点击流程图节点上的事项标题跳转事项详情；未注入时标题不可点击。 */
+  onOpenTodo?: (todoId: number) => void;
 }
 
-export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, maxTotalTokens, workspaceId }: StepsPanelProps) {
+export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, maxTotalTokens, workspaceId, onOpenTodo }: StepsPanelProps) {
   const { message } = AntApp.useApp();
   // 工作空间目录（低基数集合，一次性拉取，避免每次打开 modal 都重复请求）
   const { dirs: projectDirs } = useProjectDirectories();
@@ -210,6 +212,7 @@ export function LoopStepsPanel({ loopId, steps, onChanged, maxStepExecutions, ma
         selectedStepId={editingStep?.id ?? null}
         onSelectStep={handleSelectStep}
         onAddStep={handleOpenAdd}
+        onOpenTodo={onOpenTodo}
       />
 
       {/* 操作区：仅在选中环节时显示。提供「取消选择」回到未选中态，

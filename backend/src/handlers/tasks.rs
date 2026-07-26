@@ -1,0 +1,239 @@
+//! 任务管理 API。
+use axum::extract::{Path, Query, State};
+use axum::Json;
+use axum::Router;
+use serde::{Deserialize, Serialize};
+use crate::handlers::{AppError, AppState};
+use crate::models::ApiResponse;
+
+/// 把需求文本追加到 Loop 的每个 step todo 的 prompt 末尾。
+async fn inject_requirement_to_steps(db: &crate::db::Database, loop_id: i64, requirement: &str) -> Result<(), AppError> {
+    use sea_orm::ConnectionTrait;
+    let steps = db.list_loop_steps_by_loop(loop_id).await?;
+    for step in &steps {
+        let append = format!("\n\n## 任务需求\n{}", requirement);
+        let sql = "UPDATE todos SET prompt = prompt || ?1 WHERE id = ?2";
+        db.conn.execute(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite, sql, [append.into(), step.todo_id.into()],
+        )).await?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateTaskRequest {
+    pub requirement: String,
+    pub loop_id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListTasksQuery {
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TaskItem {
+    pub id: i64,
+    pub title: String,
+    pub description: String,
+    pub status: String,
+    pub workspace_id: Option<i64>,
+    pub template_id: Option<i64>,
+    pub loop_id: Option<i64>,
+    pub template_name: Option<String>,
+    pub complexity: Option<String>,
+    pub latest_execution_status: Option<String>,
+    pub latest_execution_requirement: Option<String>,
+    pub created_at: Option<String>,
+}
+
+/// POST /api/v1/tasks
+pub async fn create_task(
+    State(state): State<AppState>,
+    Path(_ws): Path<i64>,
+    Json(req): Json<CreateTaskRequest>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    let lp = state.db.get_loop(req.loop_id).await?.ok_or(AppError::NotFound)?;
+    let title = req.requirement.lines().next().unwrap_or(&req.requirement).trim();
+    let title = if title.len() > 60 { format!("{}…", &title[..60]) } else { title.to_string() };
+    let task = state.db.create_task(&title, lp.workspace_id.unwrap_or(1), lp.process_template_id.unwrap_or(0), Some(req.loop_id)).await?;
+    state.db.update_task_description(task.id, &req.requirement).await?;
+    // 把需求注入到 step todo 的 prompt 末尾，使 LoopRunner 执行时能读到。
+    inject_requirement_to_steps(&state.db, req.loop_id, &req.requirement).await?;
+    let _ = state.db.update_loop_status(req.loop_id, "enabled").await;
+    let dispatcher = state.loop_trigger_dispatcher.as_ref()
+        .ok_or_else(|| AppError::Internal("loop dispatcher not ready".to_string()))?;
+    let meta = serde_json::json!({"requirement": req.requirement, "source": "task"});
+    match dispatcher.dispatch_manual_with_meta(req.loop_id, meta).await {
+        Some(exec_id) => {
+            state.db.update_loop_execution_task_id(exec_id, task.id).await?;
+            Ok((axum::http::StatusCode::CREATED, ApiResponse::ok(serde_json::json!({
+                "task_id": task.id, "loop_id": req.loop_id, "execution_id": exec_id,
+            }))))
+        }
+        None => Err(AppError::BadRequest("无法触发执行".to_string())),
+    }
+}
+
+/// GET /api/v1/tasks
+pub async fn list_tasks(
+    State(state): State<AppState>,
+    Path(_ws): Path<i64>,
+    Query(q): Query<ListTasksQuery>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    let tasks = state.db.list_tasks(q.status.as_deref()).await?;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    let items: Vec<TaskItem> = {
+        let mut result = Vec::new();
+        for t in tasks {
+            let pt = if let Some(tid) = t.template_id { state.db.get_process_template_by_id(tid).await? } else { None };
+            let exec_sql = format!(
+                "SELECT le.status, le.trigger_meta FROM loop_executions le WHERE le.task_id={} ORDER BY le.started_at DESC LIMIT 1", t.id);
+            let exec = state.db.conn.query_all(Statement::from_string(DbBackend::Sqlite, exec_sql)).await.ok();
+            let (exec_status, exec_req) = exec.and_then(|rows| rows.first().map(|r| {
+                let s = r.try_get_by::<Option<String>,_>("status").ok().flatten();
+                let m = r.try_get_by::<Option<String>,_>("trigger_meta").ok().flatten()
+                    .and_then(|meta| serde_json::from_str::<serde_json::Value>(&meta).ok())
+                    .and_then(|v| v.get("requirement").and_then(|r| r.as_str().map(|s| s.to_string())));
+                (s, m)
+            })).unwrap_or((None, None));
+            result.push(TaskItem {
+                id: t.id, title: t.title.clone(), description: t.description.clone(), status: t.status.clone(),
+                workspace_id: t.workspace_id, template_id: t.template_id, loop_id: t.loop_id,
+            // 模板展示名：优先用中文 display_name，空时回退英文唯一名 name，
+            // 与 services/process/recommender.rs 的展示名降级策略保持一致。
+            // 前端任务列表/卡片/详情三处均从此字段取展示文本，统一为中文名。
+            template_name: pt.as_ref().map(|p| {
+                if p.display_name.is_empty() { p.name.clone() } else { p.display_name.clone() }
+            }),
+                complexity: pt.as_ref().map(|p| p.complexity.clone()),
+                latest_execution_status: exec_status,
+                latest_execution_requirement: exec_req,
+                created_at: t.created_at.clone(),
+            });
+        }
+        result
+    };
+    Ok(ApiResponse::ok(items))
+}
+
+/// GET /api/v1/tasks/{id}
+pub async fn get_task_detail(
+    State(state): State<AppState>,
+    Path((_ws, id)): Path<(i64, i64)>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    let task = state.db.get_task(id).await?.ok_or(AppError::NotFound)?;
+    let template = if let Some(tid) = task.template_id { state.db.get_process_template_by_id(tid).await? } else { None };
+    let loop_ = if let Some(lid) = task.loop_id { state.db.get_loop(lid).await? } else { None };
+    // steps
+    let steps: Vec<_> = if let Some(ref lp) = loop_ {
+        state.db.list_loop_steps_by_loop(lp.id).await?.into_iter().map(|s| serde_json::json!({
+            "id":s.id,"name":s.name,"order_index":s.order_index,
+            "skill_names": serde_json::from_str::<serde_json::Value>(&s.skill_names).unwrap_or_default(),
+            "expected_artifacts": serde_json::from_str::<serde_json::Value>(&s.expected_artifacts).unwrap_or_default(),
+            "gate_config": serde_json::from_str::<serde_json::Value>(&s.gate_config).unwrap_or_default(),
+        })).collect()
+    } else { vec![] };
+    // executions
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    let exec_rows = state.db.conn.query_all(Statement::from_string(DbBackend::Sqlite,
+        format!("SELECT id, status, started_at, finished_at, total_steps, completed_steps, failed_steps, trigger_meta \
+                 FROM loop_executions WHERE task_id={} ORDER BY started_at DESC LIMIT 20", id)
+    )).await?;
+    let executions: Vec<_> = exec_rows.iter().map(|r| {
+        let meta = r.try_get_by::<Option<String>,_>("trigger_meta").ok().flatten()
+            .and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok());
+        let requirement = meta.as_ref().and_then(|v| v.get("requirement").and_then(|r| r.as_str().map(|s| s.to_string())));
+        serde_json::json!({
+            "id": r.try_get_by::<i64,_>("id").unwrap_or(0),
+            "status": r.try_get_by::<String,_>("status").unwrap_or_default(),
+            "started_at": r.try_get_by::<Option<String>,_>("started_at").ok().flatten(),
+            "finished_at": r.try_get_by::<Option<String>,_>("finished_at").ok().flatten(),
+            "total_steps": r.try_get_by::<i32,_>("total_steps").unwrap_or(0),
+            "completed_steps": r.try_get_by::<i32,_>("completed_steps").unwrap_or(0),
+            "failed_steps": r.try_get_by::<i32,_>("failed_steps").unwrap_or(0),
+            "requirement": requirement,
+        })
+    }).collect();
+    Ok(ApiResponse::ok(serde_json::json!({
+        "task": { "id": task.id, "title": task.title, "status": task.status, "workspace_id": task.workspace_id, "loop_id": task.loop_id },
+        "template": template.map(|t| serde_json::json!({"name":t.name,"display_name":t.display_name,"complexity":t.complexity,"version":t.version})),
+        "loop": loop_.map(|l| serde_json::json!({"id":l.id,"name":l.name,"status":l.status,"workspace_id":l.workspace_id,"workspace_path":l.workspace_path})),
+        "steps": steps,
+        "executions": executions,
+    })))
+}
+
+/// 管理 artifact 内容（略，同之前）
+pub async fn get_artifact_content(
+    State(state): State<AppState>, Path(aid): Path<i64>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    let artifact = state.db.get_loop_step_artifact(aid).await?.ok_or(AppError::NotFound)?;
+    let ws_path = resolve_artifact_workspace(&state.db, &artifact).await.unwrap_or_default();
+    let content = if artifact.artifact_type == "file" {
+        read_workspace_file(&ws_path, &artifact.locator).await
+    } else {
+        artifact.content_text.unwrap_or_else(|| format!("({}: {})", artifact.artifact_type, artifact.locator))
+    };
+    let resp = axum::response::Response::builder()
+        .header("Content-Type", "text/plain; charset=utf-8")
+        .body(axum::body::Body::from(content))
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    Ok(resp)
+}
+
+async fn resolve_artifact_workspace(
+    db: &crate::db::Database,
+    art: &crate::db::entity::loop_step_artifacts::Model,
+) -> Result<String, sea_orm::DbErr> {
+    use sea_orm::EntityTrait;
+    let se = crate::db::entity::loop_step_executions::Entity::find_by_id(art.loop_step_execution_id).one(&db.conn).await?
+        .ok_or(sea_orm::DbErr::RecordNotFound("step_exec not found".into()))?;
+    let le = crate::db::entity::loop_executions::Entity::find_by_id(se.loop_execution_id).one(&db.conn).await?
+        .ok_or(sea_orm::DbErr::RecordNotFound("loop_exec not found".into()))?;
+    let lp = crate::db::entity::loops::Entity::find_by_id(le.loop_id).one(&db.conn).await?
+        .ok_or(sea_orm::DbErr::RecordNotFound("loop not found".into()))?;
+    Ok(lp.workspace_path.unwrap_or_default())
+}
+
+async fn read_workspace_file(ws: &str, rel: &str) -> String {
+    let full = std::path::Path::new(ws).join(rel);
+    match tokio::fs::read_to_string(&full).await {
+        Ok(s) if s.len() <= 128*1024 => s,
+        Ok(s) => format!("{}…(仅显示前128KB)", &s[..128*1024]),
+        Err(e) => format!("无法读取: {} ({})", e, full.display()),
+    }
+}
+
+/// POST /api/v1/tasks/{id}/executions — 为已有任务创建新执行（复用 task_id + loop）。
+pub async fn create_task_execution(
+    State(state): State<AppState>,
+    Path((_ws, id)): Path<(i64, i64)>,
+    Json(req): Json<NewExecutionRequest>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    let task = state.db.get_task(id).await?.ok_or(AppError::NotFound)?;
+    let loop_id = task.loop_id.ok_or_else(|| AppError::BadRequest("任务未关联 Loop".to_string()))?;
+    state.db.update_task_description(id, &req.requirement).await?;
+    inject_requirement_to_steps(&state.db, loop_id, &req.requirement).await?;
+    let dispatcher = state.loop_trigger_dispatcher.as_ref()
+        .ok_or_else(|| AppError::Internal("dispatcher not ready".to_string()))?;
+    let meta = serde_json::json!({"requirement": req.requirement, "source": "task"});
+    match dispatcher.dispatch_manual_with_meta(loop_id, meta).await {
+        Some(exec_id) => {
+            state.db.update_loop_execution_task_id(exec_id, id).await?;
+            Ok(ApiResponse::ok(serde_json::json!({"execution_id": exec_id})))
+        }
+        None => Err(AppError::BadRequest("无法触发执行".to_string())),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct NewExecutionRequest { pub requirement: String }
+
+pub fn task_routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/v1/workspaces/{ws}/tasks", axum::routing::get(list_tasks).post(create_task))
+        .route("/api/v1/workspaces/{ws}/tasks/{id}", axum::routing::get(get_task_detail))
+        .route("/api/v1/workspaces/{ws}/tasks/{id}/executions", axum::routing::post(create_task_execution))
+        .route("/api/v1/artifacts/{aid}/content", axum::routing::get(get_artifact_content))
+}

@@ -12,7 +12,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Skeleton, App as AntApp, Button, Space, Tooltip, Popconfirm, Empty,
-  Collapse, Switch,
+  Collapse, Switch, Spin,
 } from 'antd';
 import {
   ThunderboltOutlined,
@@ -27,11 +27,13 @@ import {
 import * as dbLoops from '@/utils/database/loops';
 import type { LoopDetail } from '@/types/loop';
 import { CopyButton } from '@/components/CopyButton';
+import { TraceBreadcrumb } from '@/components/common/TraceBreadcrumb';
 import { getWorkspaceDisplayName, useProjectDirectories } from '@/utils/workspaceDisplay';
 import { LoopFormModal } from './LoopFormModal';
 import { LoopTriggersPanel, TRIGGER_META } from './loop-studio/triggers';
 import { LoopStepsPanel } from './LoopStudioStepsPanel';
 import { LoopExecutionsPanel } from './loop-studio/executions';
+import { ProcessExecutionBoard } from '@/components/process/ProcessExecutionBoard';
 
 interface LoopDetailPanelProps {
   loopId: number;
@@ -44,6 +46,10 @@ interface LoopDetailPanelProps {
   onDelete: () => void;
   onToggleStatus: () => void;
   onChanged: () => void;
+  /** 点击「来源工艺」跳转工艺详情（`/#/processes?name=xxx`）；未注入时行不可点击。 */
+  onOpenProcess?: (templateName: string) => void;
+  /** 点击流程图节点上的事项标题跳转事项详情；未注入时标题不可点击。 */
+  onOpenTodo?: (todoId: number) => void;
   hideTitleRow?: boolean;
 }
 
@@ -56,6 +62,8 @@ export function LoopDetailPanel({
   onDelete,
   onToggleStatus,
   onChanged,
+  onOpenProcess,
+  onOpenTodo,
   hideTitleRow = false,
 }: LoopDetailPanelProps) {
   const { message: antMessage } = AntApp.useApp();
@@ -227,6 +235,20 @@ export function LoopDetailPanel({
         </>
       )}
 
+      {detail.process_template_id != null && detail.process_template_name && (
+        <div data-testid="loop-source-process">
+          <TraceBreadcrumb
+            title="来源工艺"
+            segments={[{
+              label: detail.process_template_display_name || detail.process_template_name,
+              techName: detail.process_template_name,
+              version: detail.process_template_version || undefined,
+              onClick: onOpenProcess ? () => onOpenProcess(detail.process_template_name!) : undefined,
+            }]}
+          />
+        </div>
+      )}
+
       {detail.description && (
         <div style={{ color: 'var(--color-text-secondary, #475569)', fontSize: 13, marginBottom: 16 }}>{detail.description}</div>
       )}
@@ -389,6 +411,7 @@ export function LoopDetailPanel({
           maxStepExecutions={maxStepExecutions}
           maxTotalTokens={maxTotalTokens}
           workspaceId={detail.workspace_id}
+          onOpenTodo={onOpenTodo}
         />
       </DetailSection>
 
@@ -461,6 +484,14 @@ export function LoopDetailPanel({
                 </div>
               ),
             },
+            // 工艺执行看板：仅当环路是工艺实例且有执行记录时展示，取最新一条执行。
+            ...(detail.process_template_id != null && executionTotal > 0 ? [{
+              key: 'execution-board',
+              label: '执行看板',
+              children: (
+                <LatestExecBoard workspaceId={detail.workspace_id} loopId={loopId} />
+              ),
+            }] : []),
           ]}
         />
       </div>
@@ -518,6 +549,31 @@ function DetailField({ label, value }: { label: string; value: React.ReactNode }
       <div style={{ fontSize: 13, color: 'var(--color-text, #0f172a)' }}>{value}</div>
     </div>
   );
+}
+
+// 执行看板包装组件：自动取最新一条执行记录并渲染 ProcessExecutionBoard。
+// 定义在模块顶层确保 hook 规则合规（嵌套组件内不可用 hook）。
+function LatestExecBoard({ workspaceId, loopId }: { workspaceId: number | null; loopId: number }) {
+  const [execId, setExecId] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    let cancelled = false;
+    dbLoops.listExecutions(workspaceId, loopId, { limit: 1 })
+      .then(res => {
+        if (!cancelled && res.items.length > 0) {
+          setExecId(res.items[0].id);
+        }
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [workspaceId, loopId]);
+
+  if (loading) return <Spin style={{ display: 'block', margin: '20px auto' }} />;
+  if (execId == null || !workspaceId) return <Empty description="暂无执行记录" />;
+
+  return <ProcessExecutionBoard workspaceId={workspaceId} loopId={loopId} executionId={execId} />;
 }
 
 // 空值占位

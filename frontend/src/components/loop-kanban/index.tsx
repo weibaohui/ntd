@@ -26,9 +26,11 @@ interface Props {
   hours?: number;
   onSearchChange?: (v: string) => void;
   onHoursChange?: (h: number) => void;
+  /** 执行轨迹流程图中点击事项标题跳转事项详情；未注入时标题不可点击。 */
+  onOpenTodo?: (todoId: number) => void;
 }
 
-export function LoopKanban({ searchText: externalSearch, hours: externalHours, onSearchChange: _onSearchChange, onHoursChange: _onHoursChange }: Props = {}) {
+export function LoopKanban({ searchText: externalSearch, hours: externalHours, onSearchChange: _onSearchChange, onHoursChange: _onHoursChange, onOpenTodo }: Props = {}) {
   const [internalSearch] = useState('');
   const [internalHours] = useState(24);
   const searchText = externalSearch ?? internalSearch;
@@ -201,6 +203,7 @@ export function LoopKanban({ searchText: externalSearch, hours: externalHours, o
                   selectedStepId={null}
                   onSelectStep={() => {}}
                   onAddStep={() => {}}
+                  onOpenTodo={onOpenTodo}
                 />
               </div>
             </div>

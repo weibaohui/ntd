@@ -45,17 +45,20 @@ export type View =
   | 'blackboard'
   | 'wiki'
   | 'messages'
-  | 'bots';
+  | 'bots'
+  | 'processes'
+  | 'tasks'
+  | 'onboarding';
 
 export type Panel = 'list' | 'detail' | 'post';
 
 export type BoardMode = 'memorial' | 'kanban' | 'running' | 'loop_kanban';
 
 const ALL_VIEWS: View[] = [
-  'items', 'loops',
+  'items', 'loops', 'tasks',
   'dashboard', 'settings', 'memorial',
   'runtime', 'skills', 'projectDirectories', 'sessions', 'executors', 'experts',
-  'blackboard', 'wiki', 'messages', 'bots',
+  'blackboard', 'wiki', 'messages', 'bots', 'processes', 'onboarding',
 ];
 
 const ALL_BOARD_MODES: BoardMode[] = ['memorial', 'kanban', 'running', 'loop_kanban'];
@@ -133,7 +136,12 @@ function getInitialBlackboardFile(): string | null {
   return params.get('file');
 }
 
-function buildHashUrl(view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode; workspace?: number | null; slug?: string | null; file?: string | null }): string {
+function getInitialProcessName(): string | null {
+  const params = getHashSearchParams();
+  return params.get('name');
+}
+
+function buildHashUrl(view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode; workspace?: number | null; slug?: string | null; file?: string | null; name?: string | null }): string {
   const path = `/${view}`;
   const params = new URLSearchParams();
   if (opts?.id != null) params.set('id', String(opts.id));
@@ -150,6 +158,10 @@ function buildHashUrl(view: View, opts?: { id?: number | null; tab?: string | nu
     // blackboard 视图的 file 参数标识当前查看的文件
     params.set('file', opts.file);
   }
+  if (view === 'processes' && opts?.name) {
+    // processes 视图的 name 参数定位工艺模板，用于「环路 → 来源工艺」回跳自动开详情
+    params.set('name', opts.name);
+  }
   const qs = params.toString();
   return qs ? `#${path}?${qs}` : `#${path}`;
 }
@@ -157,6 +169,8 @@ function buildHashUrl(view: View, opts?: { id?: number | null; tab?: string | nu
 const VIEW_TO_NAV_KEY: Record<View, string> = {
   items: 'items',
   loops: 'loops',
+  tasks: 'tasks',
+  processes: 'processes',
   dashboard: 'dashboard',
   memorial: 'memorial',
   blackboard: 'blackboard',
@@ -171,6 +185,7 @@ const VIEW_TO_NAV_KEY: Record<View, string> = {
   wiki: 'blackboard',
   messages: 'messages',
   bots: 'settings_bots',
+  onboarding: 'onboarding',
 };
 
 export function viewToNavKey(view: View): string {
@@ -186,8 +201,9 @@ export function useViewState() {
   const [boardMode, setBoardMode] = useState<BoardMode>(getInitialBoardMode);
   const [wikiSlug, setWikiSlug] = useState<string | null>(getInitialWikiSlug);
   const [blackboardFile, setBlackboardFile] = useState<string | null>(getInitialBlackboardFile);
+  const [processName, setProcessName] = useState<string | null>(getInitialProcessName);
 
-  const pushUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode; workspace?: number | null; slug?: string | null; file?: string | null }) => {
+  const pushUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode; workspace?: number | null; slug?: string | null; file?: string | null; name?: string | null }) => {
     const hashUrl = buildHashUrl(view, opts);
     window.history.pushState(null, '', hashUrl);
     setActiveView(view);
@@ -198,9 +214,10 @@ export function useViewState() {
     setBoardMode(opts?.mode ?? 'memorial');
     setWikiSlug(view === 'wiki' ? (opts?.slug ?? null) : null);
     setBlackboardFile(view === 'blackboard' ? (opts?.file ?? null) : null);
+    setProcessName(view === 'processes' ? (opts?.name ?? null) : null);
   }, []);
 
-  const replaceUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode; workspace?: number | null; slug?: string | null; file?: string | null }) => {
+  const replaceUrl = useCallback((view: View, opts?: { id?: number | null; tab?: string | null; panel?: Panel; record?: number | null; mode?: BoardMode; workspace?: number | null; slug?: string | null; file?: string | null; name?: string | null }) => {
     const hashUrl = buildHashUrl(view, opts);
     window.history.replaceState(null, '', hashUrl);
     setActiveView(view);
@@ -211,6 +228,7 @@ export function useViewState() {
     setBoardMode(opts?.mode ?? 'memorial');
     setWikiSlug(view === 'wiki' ? (opts?.slug ?? null) : null);
     setBlackboardFile(view === 'blackboard' ? (opts?.file ?? null) : null);
+    setProcessName(view === 'processes' ? (opts?.name ?? null) : null);
   }, []);
 
   useEffect(() => {
@@ -224,6 +242,7 @@ export function useViewState() {
       const mode = params.get('mode') as BoardMode | null;
       const slug = params.get('slug');
       const file = params.get('file');
+      const name = params.get('name');
       const resolvedId = idStr ? (Number.isFinite(Number(idStr)) ? Number(idStr) : null) : null;
       const resolvedRecord = recordStr ? (Number.isFinite(Number(recordStr)) ? Number(recordStr) : null) : null;
       const resolvedMode = mode && ALL_BOARD_MODES.includes(mode) ? mode : 'memorial';
@@ -235,6 +254,7 @@ export function useViewState() {
       setBoardMode(resolvedMode);
       setWikiSlug(view === 'wiki' ? (slug || null) : null);
       setBlackboardFile(view === 'blackboard' ? (file || null) : null);
+      setProcessName(view === 'processes' ? (name || null) : null);
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -269,6 +289,7 @@ export function useViewState() {
     boardMode,
     wikiSlug,
     blackboardFile,
+    processName,
     showView,
     selectTodo,
     selectWiki,

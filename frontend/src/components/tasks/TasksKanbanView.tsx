@@ -1,0 +1,312 @@
+// 任务看板视图：按状态横向分泳道。
+// 形态参考 MemorialBoard 的 KanbanBoard：
+//   4 列泳道（pending / running / success / failed），每列卡片墙垂直排列。
+// 交互：
+//   - hover 卡片有阴影增强 + translateY(-1px)（prefers-reduced-motion 关闭）
+//   - cursor: pointer
+//   - 点击卡片 → 调 onSelectTask 选中并切到 list 视图
+// 不做拖拽（后端 PATCH /tasks/:id 未实现 status 更新，YAGNI）。
+
+import { useMemo } from 'react';
+import { Empty, Skeleton, Tag, Typography } from 'antd';
+import { InboxOutlined } from '@ant-design/icons';
+import type { TaskItem } from '@/components/tasks/constants';
+import {
+  TASK_LANES,
+  STATUS_LABEL,
+  complexityColor,
+  complexityLabel,
+  formatDateShort,
+  statusColor,
+} from '@/components/tasks/constants';
+
+const { Text } = Typography;
+
+interface TasksKanbanViewProps {
+  tasks: TaskItem[];
+  loading: boolean;
+  workspaceId: number;
+  onSelectTask: (taskId: number | null) => void;
+}
+
+/**
+ * 把扁平任务列表按状态分组到 4 个泳道。
+ *
+ * 处理思路：
+ *   1. 以 TASK_LANES 为顺序初始化 4 个空数组。
+ *   2. 遍历 tasks，按 status 推入对应泳道。
+ *   3. 未匹配 status 的任务不会显示（防止脏数据塞错列）。
+ */
+function groupByLane(tasks: TaskItem[]): Record<string, TaskItem[]> {
+  // 初始化：每个泳道一个空数组，顺序即 TASK_LANES 顺序。
+  const lanes: Record<string, TaskItem[]> = {};
+  for (const lane of TASK_LANES) {
+    lanes[lane.status] = [];
+  }
+  // 分桶：按 status 推入对应泳道，未匹配 status 丢弃。
+  for (const task of tasks) {
+    const bucket = lanes[task.status];
+    if (bucket) bucket.push(task);
+  }
+  return lanes;
+}
+
+/** 单张任务卡片。 */
+function KanbanTaskCard({
+  task,
+  onSelect,
+}: {
+  task: TaskItem;
+  onSelect: () => void;
+}) {
+  return (
+    <div
+      onClick={onSelect}
+      style={{
+        // 卡片基础样式：白底、圆角、轻阴影。
+        background: 'var(--color-bg-card, #fff)',
+        borderRadius: 'var(--radius-md, 8px)',
+        padding: 12,
+        marginBottom: 8,
+        // 阴影：与 TodoCard 一致的轻阴影。
+        boxShadow: '0 1px 2px rgba(0, 0, 0, 0.06)',
+        // 交互：cursor pointer + hover transition。
+        cursor: 'pointer',
+        transition: 'box-shadow 0.2s ease, transform 0.2s ease',
+        // 防止内容溢出。
+        overflow: 'hidden',
+      }}
+      // 鼠标进入：阴影增强 + 轻微上浮。
+      onMouseEnter={(e) => {
+        e.currentTarget.style.boxShadow = '0 4px 8px rgba(0, 0, 0, 0.1)';
+        e.currentTarget.style.transform = 'translateY(-1px)';
+      }}
+      // 鼠标离开：恢复原状。
+      onMouseLeave={(e) => {
+        e.currentTarget.style.boxShadow = '0 1px 2px rgba(0, 0, 0, 0.06)';
+        e.currentTarget.style.transform = 'translateY(0)';
+      }}
+      data-testid={`tasks-kanban-card-${task.id}`}
+    >
+      {/* 头部行：#id + 复杂度标签 */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          marginBottom: 4,
+        }}
+      >
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          #{task.id}
+        </Text>
+        {task.complexity && (
+          <Tag color={complexityColor(task.complexity)} style={{ fontSize: 11, margin: 0 }}>
+            {complexityLabel(task.complexity)}
+          </Tag>
+        )}
+        <Text type="secondary" style={{ fontSize: 11, marginLeft: 'auto' }}>
+          {formatDateShort(task.created_at)}
+        </Text>
+      </div>
+      {/* 标题：原生 div + -webkit-line-clamp 实现多行省略。
+          不用 antd Text：antd Typography.Text 默认 display:inline，
+          与 -webkit-box 冲突会导致 line-clamp 失效、标题高度为 0。 */}
+      <div
+        style={{
+          fontSize: 14,
+          fontWeight: 600,
+          lineHeight: 1.4,
+          marginBottom: 6,
+          // 多行省略：需要 display:-webkit-box + box-orient:vertical + line-clamp。
+          display: '-webkit-box',
+          WebkitBoxOrient: 'vertical',
+          WebkitLineClamp: 2,
+          overflow: 'hidden',
+          // word-break 防止超长无空格单词撑破容器。
+          wordBreak: 'break-word',
+        }}
+      >
+        {task.title}
+      </div>
+      {/* 最近执行状态 */}
+      {task.latest_execution_status && (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          <Tag color={statusColor(task.latest_execution_status)} style={{ fontSize: 11, margin: 0 }}>
+            {STATUS_LABEL[task.latest_execution_status] ?? task.latest_execution_status}
+          </Tag>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 单个泳道列。 */
+function KanbanLane({
+  label,
+  color,
+  items,
+  onSelectTask,
+}: {
+  status: string;
+  label: string;
+  color: string;
+  items: TaskItem[];
+  onSelectTask: (id: number) => void;
+}) {
+  return (
+    <div
+      style={{
+        // 4 列等宽：flex:1 + minWidth 220 防止卡片文字被压扁。
+        flex: 1,
+        minWidth: 220,
+        // 列内垂直布局：头部 + 卡片列表。
+        display: 'flex',
+        flexDirection: 'column',
+        // 列间分隔：右边框轻灰。
+        borderRight: '1px solid var(--color-border-light, #f0f0f0)',
+        // 最后一列去掉右边框（视觉对称）。
+        // 实际由 :last-child 处理，这里 inline 不便写。
+      }}
+    >
+      {/* 列头：圆点 + 标签 + 计数 */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '12px 16px',
+          borderBottom: '1px solid var(--color-border-light, #f0f0f0)',
+        }}
+      >
+        <span
+          style={{
+            display: 'inline-block',
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            background: color,
+          }}
+        />
+        <Text strong style={{ fontSize: 13 }}>
+          {label}
+        </Text>
+        <Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto' }}>
+          {items.length}
+        </Text>
+      </div>
+      {/* 卡片列表区：可滚动 */}
+      <div
+        style={{
+          flex: 1,
+          padding: 12,
+          overflowY: 'auto',
+          minHeight: 100,
+        }}
+      >
+        {items.length === 0 ? (
+          // 空泳道：灰色 Inbox 图标占位。
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 32,
+              color: 'var(--color-text-quaternary, #bfbfbf)',
+            }}
+          >
+            <InboxOutlined style={{ fontSize: 24, marginBottom: 8 }} />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              暂无{label}任务
+            </Text>
+          </div>
+        ) : (
+          items.map((task) => (
+            <KanbanTaskCard
+              key={task.id}
+              task={task}
+              onSelect={() => onSelectTask(task.id)}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function TasksKanbanView({
+  tasks,
+  loading,
+  onSelectTask,
+}: TasksKanbanViewProps) {
+  // 把扁平任务列表按状态分到 4 个泳道。
+  // useMemo：tasks 不变时不重新分组。
+  const lanes = useMemo(() => groupByLane(tasks), [tasks]);
+
+  // loading 态：4 列骨架屏。
+  if (loading) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          height: '100%',
+          gap: 0,
+        }}
+      >
+        {TASK_LANES.map((lane) => (
+          <div
+            key={lane.status}
+            style={{
+              flex: 1,
+              minWidth: 220,
+              padding: 12,
+              borderRight: '1px solid var(--color-border-light, #f0f0f0)',
+            }}
+          >
+            <Skeleton active paragraph={{ rows: 4 }} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // 全空态：整个看板无任务时显示空态。
+  if (tasks.length === 0) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100%',
+        }}
+      >
+        <Empty description="暂无任务" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        // 整个看板容器：横向 4 列 + 高度撑满父容器。
+        display: 'flex',
+        height: '100%',
+        overflow: 'hidden',
+      }}
+      data-testid="tasks-kanban-board"
+    >
+      {TASK_LANES.map((lane) => (
+        <KanbanLane
+          key={lane.status}
+          status={lane.status}
+          label={lane.label}
+          color={lane.color}
+          items={lanes[lane.status] ?? []}
+          onSelectTask={onSelectTask}
+        />
+      ))}
+    </div>
+  );
+}

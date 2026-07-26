@@ -250,6 +250,7 @@ pub fn v1_routes() -> Router<AppState> {
         .merge(super::usage_stats::v1_routes())
         .merge(super::custom_template::v1_routes())
         .merge(super::bundled::v1_routes())
+        .merge(super::process::v1_process_routes())
         .merge(super::project_directory::v1_routes())
         // executor-profiles（API Key 管理）：providers + profiles，路径已为 /api/v1/
         .merge(super::profiles::profile_routes())

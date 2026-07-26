@@ -580,6 +580,30 @@ impl Database {
         self.exec_update(am).await
     }
 
+    /// 仅更新 todo 的 expert_name 与 model（工艺模板安装时使用）。
+    ///
+    /// `expert_name` / `model` 为 Some(非空)=写入，Some("")=清除，None=不修改。
+    pub async fn update_todo_expert_and_model(
+        &self,
+        id: i64,
+        expert_name: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<(), sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let mut am = todos::ActiveModel {
+            id: ActiveValue::Unchanged(id),
+            updated_at: ActiveValue::Set(Some(now)),
+            ..Default::default()
+        };
+        if let Some(en) = expert_name {
+            am.expert_name = ActiveValue::Set(if en.is_empty() { None } else { Some(en.to_string()) });
+        }
+        if let Some(m) = model {
+            am.model = ActiveValue::Set(if m.is_empty() { None } else { Some(m.to_string()) });
+        }
+        self.exec_update(am).await
+    }
+
     /// 批量更新事项执行器（单条 SQL，原子语义）。
     pub async fn batch_update_todos_executor(
         &self,

@@ -15,7 +15,7 @@ use sea_orm::{
 };
 
 use crate::db::entity::{
-    loop_executions, loop_step_executions, loop_steps, loop_triggers, loops,
+    loop_executions, loop_phases, loop_step_executions, loop_steps, loop_triggers, loops,
 };
 use crate::db::Database;
 
@@ -47,6 +47,27 @@ fn group_loop_refs_by_todo(
     map
 }
 
+/// 把 `SELECT loop_id, COUNT(*) AS cnt` 的聚合行组装成 `loop_id -> count` 映射。
+/// 抽出以让 count_loop_executions_by_loop_ids 低于 30 行；单行解析失败跳过而非整体报错，
+/// 与 group_loop_refs_by_todo 的容错口径一致。
+fn group_count_by_loop_id(
+    rows: Vec<sea_orm::QueryResult>,
+) -> std::collections::HashMap<i64, i64> {
+    let mut map = std::collections::HashMap::new();
+    for row in rows {
+        let loop_id: i64 = match row.try_get_by("loop_id") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let cnt: i64 = match row.try_get_by("cnt") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        map.insert(loop_id, cnt);
+    }
+    map
+}
+
 impl Database {
     pub async fn list_loops(&self) -> Result<Vec<loops::Model>, sea_orm::DbErr> {
         loops::Entity::find()
@@ -57,6 +78,42 @@ impl Database {
 
     pub async fn get_loop(&self, id: i64) -> Result<Option<loops::Model>, sea_orm::DbErr> {
         loops::Entity::find_by_id(id).one(&self.conn).await
+    }
+
+    /// 按来源工艺模板列出实例环路（按创建时间倒序，id 倒序兜底保证稳定）。
+    ///
+    /// 工艺详情「实例环路」Tab 用：让用户从模板下钻到由它实例化的所有 Loop。
+    pub async fn list_loops_by_process_template(
+        &self,
+        template_id: i64,
+    ) -> Result<Vec<loops::Model>, sea_orm::DbErr> {
+        loops::Entity::find()
+            .filter(loops::Column::ProcessTemplateId.eq(template_id))
+            .order_by_desc(loops::Column::CreatedAt)
+            .order_by_desc(loops::Column::Id)
+            .all(&self.conn)
+            .await
+    }
+
+    /// 批量统计每个环路的执行次数（loop_executions 行数），返回 `loop_id -> count`。
+    ///
+    /// 工艺实例列表要避免 N+1：逐个调 count_loop_executions 会在环路多时放大查询，
+    /// 这里用一条 GROUP BY 聚合；未出现的 loop_id 视为 0，由调用方兜底。
+    pub async fn count_loop_executions_by_loop_ids(
+        &self,
+        loop_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, i64>, sea_orm::DbErr> {
+        if loop_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let (placeholders, values) = Database::in_clause(loop_ids);
+        // GROUP BY 一次聚合出全部环路的执行数；ORDER BY 无意义，结果进 HashMap
+        let sql = format!(
+            "SELECT loop_id, COUNT(*) AS cnt FROM loop_executions \
+             WHERE loop_id IN ({placeholders}) GROUP BY loop_id"
+        );
+        let rows = self.query_all_sql(sql, values).await?;
+        Ok(group_count_by_loop_id(rows))
     }
 
     /// 参数数量由 loops 表 schema 决定，无法进一步合并
@@ -129,9 +186,8 @@ impl Database {
             am.webhook_enabled = ActiveValue::Set(webhook_enabled);
             am.icon = ActiveValue::Set(icon.to_string());
             am.review_template_id = ActiveValue::Set(review_template_id);
-            if let Some(lc) = limits_config {
-                am.limits_config = ActiveValue::Set(lc.to_string());
-            }
+            // 允许显式清空：前端传 null → 写入 "{}"（无限制），传字符串 → 写入对应值。
+            am.limits_config = ActiveValue::Set(limits_config.unwrap_or("{}").to_string());
             am.abnormal_handler_todo_id = ActiveValue::Set(abnormal_handler_todo_id);
             am.abnormal_handler_trigger_on = ActiveValue::Set(abnormal_handler_trigger_on.to_string());
             am.updated_at = ActiveValue::Set(Some(now));
@@ -157,6 +213,31 @@ impl Database {
             am.updated_at = ActiveValue::Set(Some(now));
             am.update(&self.conn).await?;
         }
+        Ok(())
+    }
+
+    /// 查找同模板+同工作空间已存在的任务 Loop（复用检测）。
+    pub async fn find_task_loop(&self, template_id: i64, workspace_id: i64) -> Result<Option<i64>, sea_orm::DbErr> {
+        use sea_orm::EntityTrait;
+        let existing = loops::Entity::find()
+            .filter(loops::Column::ProcessTemplateId.eq(template_id))
+            .filter(loops::Column::WorkspaceId.eq(Some(workspace_id)))
+            .one(&self.conn)
+            .await?;
+        Ok(existing.map(|l| l.id))
+    }
+
+    /// 仅更新 loops.description（用于任务创建时写入需求文本）。
+    pub async fn set_loop_description(&self, id: i64, description: &str) -> Result<(), sea_orm::DbErr> {
+        use sea_orm::ConnectionTrait;
+        let sql = "UPDATE loops SET description = ?1, updated_at = ?2 WHERE id = ?3";
+        let now = crate::models::utc_timestamp();
+        self.conn
+            .execute(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite, sql,
+                [description.into(), now.into(), id.into()],
+            ))
+            .await?;
         Ok(())
     }
 
@@ -648,6 +729,19 @@ impl Database {
             .await
     }
 
+    /// 列出 loop 下所有 phase，按 order_index 排序。
+    pub async fn list_loop_phases_by_loop(
+        &self,
+        loop_id: i64,
+    ) -> Result<Vec<loop_phases::Model>, sea_orm::DbErr> {
+        loop_phases::Entity::find()
+            .filter(loop_phases::Column::LoopId.eq(loop_id))
+            .order_by_asc(loop_phases::Column::OrderIndex)
+            .order_by_asc(loop_phases::Column::Id)
+            .all(&self.conn)
+            .await
+    }
+
     pub async fn get_loop_step(
         &self,
         id: i64,
@@ -939,6 +1033,40 @@ impl Database {
         am.insert(&self.conn).await
     }
 
+    /// 回填 execution 的 task_id（dispatcher 创建后调用）。
+    pub async fn update_loop_execution_task_id(&self, exec_id: i64, task_id: i64) -> Result<(), sea_orm::DbErr> {
+        let existing = loop_executions::Entity::find_by_id(exec_id).one(&self.conn).await?;
+        if let Some(c) = existing {
+            let mut am: loop_executions::ActiveModel = c.into();
+            am.task_id = ActiveValue::Set(Some(task_id));
+            am.update(&self.conn).await?;
+        }
+        Ok(())
+    }
+
+    /// 创建带 task_id 的 loop execution（任务管理）。
+    pub async fn create_loop_execution_with_task(
+        &self,
+        loop_id: i64,
+        task_id: i64,
+        trigger_type: &str,
+        trigger_meta: &str,
+        total_steps: i32,
+    ) -> Result<loop_executions::Model, sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let am = loop_executions::ActiveModel {
+            loop_id: ActiveValue::Set(loop_id),
+            task_id: ActiveValue::Set(Some(task_id)),
+            trigger_type: ActiveValue::Set(trigger_type.to_string()),
+            trigger_meta: ActiveValue::Set(trigger_meta.to_string()),
+            started_at: ActiveValue::Set(now),
+            status: ActiveValue::Set("running".to_string()),
+            total_steps: ActiveValue::Set(total_steps),
+            ..Default::default()
+        };
+        am.insert(&self.conn).await
+    }
+
     pub async fn get_loop_execution(
         &self,
         id: i64,
@@ -1222,6 +1350,21 @@ impl Database {
         Ok(())
     }
 
+    /// 设置环节执行的返工计数。
+    pub async fn set_step_execution_rework_count(
+        &self,
+        id: i64,
+        rework_count: i32,
+    ) -> Result<(), sea_orm::DbErr> {
+        let existing = loop_step_executions::Entity::find_by_id(id).one(&self.conn).await?;
+        if let Some(c) = existing {
+            let mut am: loop_step_executions::ActiveModel = c.into();
+            am.rework_count = ActiveValue::Set(rework_count);
+            am.update(&self.conn).await?;
+        }
+        Ok(())
+    }
+
     /// 设置环节执行记录的审批状态（人工审批流程专用）。
     pub async fn set_step_execution_approval_status(
         &self,
@@ -1279,6 +1422,8 @@ impl Database {
                     s.run_mode, s.skip_on_source_failed, s.min_rating, s.unrated_policy, \
                     s.on_success, s.success_goto_step_id, s.on_rating_fail, s.fail_goto_step_id, \
                     s.review_type, \
+                    s.phase_id, s.expected_artifacts, s.gate_config, s.max_rework, \
+                    s.skill_names, s.expert_name, \
                     s.enabled, s.created_at, \
                     st.title as todo_title, st.executor as todo_executor, \
                     st.archived_at as todo_archived_at \
@@ -1310,6 +1455,12 @@ impl Database {
                 on_rating_fail: row.try_get_by::<String, _>("on_rating_fail")?,
                 fail_goto_step_id: row.try_get_by::<Option<i64>, _>("fail_goto_step_id")?,
                 review_type: row.try_get_by::<String, _>("review_type")?,
+                phase_id: row.try_get_by::<Option<i64>, _>("phase_id")?,
+                expected_artifacts: row.try_get_by::<String, _>("expected_artifacts")?,
+                gate_config: row.try_get_by::<String, _>("gate_config")?,
+                max_rework: row.try_get_by::<i32, _>("max_rework")?,
+                skill_names: row.try_get_by::<String, _>("skill_names")?,
+                expert_name: row.try_get_by::<Option<String>, _>("expert_name")?,
                 enabled: row.try_get_by::<i32, _>("enabled")?,
                 created_at: row.try_get_by::<Option<String>, _>("created_at")?,
             };
@@ -1338,6 +1489,7 @@ impl Database {
                               l.status, l.color, l.icon, l.limits_config, l.review_template_id, \
                               l.webhook_enabled, \
                               l.abnormal_handler_todo_id, l.abnormal_handler_trigger_on, \
+                              l.process_template_id, l.process_template_version, \
                               l.created_at, l.updated_at, \
                               (SELECT COUNT(*) FROM loop_triggers t WHERE t.loop_id = l.id) as trigger_count, \
                               (SELECT COUNT(*) FROM loop_steps s WHERE s.loop_id = l.id) as step_count, \
@@ -1355,6 +1507,7 @@ impl Database {
                           l.status, l.color, l.icon, l.limits_config, l.review_template_id, \
                           l.webhook_enabled, \
                           l.abnormal_handler_todo_id, l.abnormal_handler_trigger_on, \
+                          l.process_template_id, l.process_template_version, \
                           l.created_at, l.updated_at, \
                           (SELECT COUNT(*) FROM loop_triggers t WHERE t.loop_id = l.id) as trigger_count, \
                           (SELECT COUNT(*) FROM loop_steps s WHERE s.loop_id = l.id) as step_count, \
@@ -1396,6 +1549,8 @@ impl Database {
                     limits_config: row.try_get_by::<String, _>("limits_config")?,
                     abnormal_handler_todo_id: row.try_get_by::<Option<i64>, _>("abnormal_handler_todo_id")?,
                     abnormal_handler_trigger_on: row.try_get_by::<String, _>("abnormal_handler_trigger_on")?,
+                    process_template_id: row.try_get_by::<Option<i64>, _>("process_template_id")?,
+                    process_template_version: row.try_get_by::<Option<String>, _>("process_template_version")?,
                     created_at: row.try_get_by::<Option<String>, _>("created_at")?,
                     updated_at: row.try_get_by::<Option<String>, _>("updated_at")?,
                 },
@@ -1835,6 +1990,91 @@ mod loop_step_count_tests {
         assert_eq!(refs_a[0].loop_name, "Loop1");
         // B 未引用 → 不在 map 中（调用方按 unwrap_or_default 取空 vec）
         assert!(!map.contains_key(&todo_b));
+    }
+
+    /// 插一条工艺模板，返回 id。
+    ///
+    /// loops.process_template_id 有外键约束（SQLite 外键开启时），
+    /// 测试关联工艺前必须先有真实模板行；必填列仅 name/display_name/definition。
+    async fn seed_process_template(db: &Database, name: &str) -> i64 {
+        db.exec(&format!(
+            "INSERT INTO process_templates (name, display_name, definition) VALUES ('{name}', '{name}', 'yaml')"
+        ))
+        .await
+        .expect("insert process_template");
+        let row = db
+            .conn
+            .query_one(sea_orm::Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                format!("SELECT id FROM process_templates WHERE name = '{name}'"),
+            ))
+            .await
+            .expect("query process_template id")
+            .expect("process_template row exists");
+        row.try_get_by("id").expect("process_template id column")
+    }
+
+    /// list_loops_by_process_template：只返回指定工艺的实例环路，
+    /// 按 id 倒序（created_at 相同的时候兜底稳定），其他工艺/普通环路不出现。
+    #[tokio::test]
+    async fn test_list_loops_by_process_template() {
+        let db = fresh_db().await;
+        let t100 = seed_process_template(&db, "tpl-100").await;
+        let t200 = seed_process_template(&db, "tpl-200").await;
+        let l1 = seed_loop(&db, "PA-1").await;
+        let l2 = seed_loop(&db, "PA-2").await;
+        let l_other = seed_loop(&db, "PB").await;
+        let _plain = seed_loop(&db, "PLAIN").await;
+        // seed_loop 只插 name，工艺归属通过 UPDATE 补齐真实模板 id
+        db.exec(&format!(
+            "UPDATE loops SET process_template_id = {t100} WHERE id IN ({l1}, {l2})"
+        ))
+        .await
+        .expect("mark template 100");
+        db.exec(&format!(
+            "UPDATE loops SET process_template_id = {t200} WHERE id = {l_other}"
+        ))
+        .await
+        .expect("mark template 200");
+
+        let list = db.list_loops_by_process_template(t100).await.unwrap();
+        assert_eq!(list.len(), 2, "模板 100 应有 2 个实例环路");
+        // created_at 同值时按 id DESC：后插入的 l2 排前
+        assert_eq!(list[0].id, l2, "倒序兜底：id 大者在前");
+        assert_eq!(list[1].id, l1);
+        assert!(
+            db.list_loops_by_process_template(t200).await.unwrap().len() == 1,
+            "模板 200 应只有 1 个实例环路"
+        );
+    }
+
+    /// count_loop_executions_by_loop_ids：一次 GROUP BY 聚合计数，
+    /// 无执行的环路不出现在 map 中（调用方按 0 兜底），空输入直接返回空 map。
+    #[tokio::test]
+    async fn test_count_loop_executions_by_loop_ids() {
+        let db = fresh_db().await;
+        let l1 = seed_loop(&db, "C1").await;
+        let l2 = seed_loop(&db, "C2").await;
+        db.exec(&format!(
+            "INSERT INTO loop_executions (loop_id, trigger_type, status, started_at) \
+             VALUES ({l1}, 'manual', 'success', datetime('now'))"
+        ))
+        .await
+        .expect("insert exec 1");
+        db.exec(&format!(
+            "INSERT INTO loop_executions (loop_id, trigger_type, status, started_at) \
+             VALUES ({l1}, 'cron', 'failed', datetime('now'))"
+        ))
+        .await
+        .expect("insert exec 2");
+
+        let map = db.count_loop_executions_by_loop_ids(&[l1, l2]).await.unwrap();
+        assert_eq!(map.get(&l1).copied().unwrap_or(0), 2, "l1 应有 2 次执行");
+        assert!(!map.contains_key(&l2), "l2 无执行记录不应出现");
+        assert!(
+            db.count_loop_executions_by_loop_ids(&[]).await.unwrap().is_empty(),
+            "空输入应返回空 map"
+        );
     }
 }
 

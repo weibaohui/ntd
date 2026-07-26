@@ -213,6 +213,17 @@ impl LoopRunner {
 
             // 获取 loop_execution 统计数据
             let loop_exec = this2_for_event.ctx.db.get_loop_execution(loop_execution_id).await.ok().flatten();
+            // 更新关联 task 的状态。
+            if let Some(ref le) = loop_exec {
+                if let Some(task_id) = le.task_id {
+                    let tstatus = match le.status.as_str() {
+                        "success" | "partial" => "success",
+                        "failed" | "capped_step" | "capped_token" => "failed",
+                        _ => "running",
+                    };
+                    let _ = this2_for_event.ctx.db.update_task_status(task_id, tstatus).await;
+                }
+            }
             let (final_status, total_steps, completed_steps, failed_steps, duration_secs) = match loop_exec {
                 Some(le) => {
                     // 计算执行时长：仅当起止时间都能解析且 finish >= start 时才计算，否则返回 0
@@ -540,17 +551,17 @@ impl LoopRunner {
         // 否则 cwd/worktree 无法统一，跨空间数据流会导致不可预期的行为。
         self.check_workspace_consistency(&loop_, &all_steps).await?;
 
-        // 4. 加载 trigger_meta 中的 params（从 CLI/外部传入的变量）
-        let trigger_params: HashMap<String, String> = {
+        // 4. 加载 trigger_meta 中的 params 与 requirement。
+        let (trigger_params, task_requirement) = {
             if let Ok(Some(exec)) = self.ctx.db.get_loop_execution(loop_execution_id).await {
                 if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&exec.trigger_meta) {
-                    if let Some(params) = meta.get("params").and_then(|v| v.as_object()) {
-                        params.iter()
-                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                            .collect()
-                    } else { HashMap::new() }
-                } else { HashMap::new() }
-            } else { HashMap::new() }
+                    let params = meta.get("params").and_then(|v| v.as_object())
+                        .map(|obj| obj.iter().filter_map(|(k,v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
+                        .unwrap_or_default();
+                    let req = meta.get("requirement").and_then(|v| v.as_str().map(|s| s.to_string())).unwrap_or_default();
+                    (params, req)
+                } else { (HashMap::new(), String::new()) }
+            } else { (HashMap::new(), String::new()) }
         };
 
         // 4. 初始化（全新执行）或恢复状态（续跑）
@@ -600,6 +611,10 @@ impl LoopRunner {
         let mut completed = prev_completed;
         let mut failed = prev_failed;
         let mut consecutive_retries: HashMap<i64, i32> = HashMap::new();
+        // PhaseDriver 返回的返工计数，需要跨迭代传递到下一轮新创建的 step_execution。
+        // rework_count 在 PhaseDriver 中计算但写入了当前（已结束的）step_execution，
+        // 新创建的 step_execution 默认 0，导致返工计数永远不增长。
+        let mut pending_rework: i32 = 0;
 
         let step_id_to_idx: HashMap<i64, usize> = all_steps
             .iter()
@@ -682,7 +697,10 @@ impl LoopRunner {
                 .replace("{{last_step_name}}", last_step_name_text)
                 .replace("{{message}}", last_output_text)
                 .replace("{{loop_execution_id}}", &loop_execution_id.to_string())
-                .replace("{{loop_name}}", &loop_.name);
+                .replace("{{loop_name}}", &loop_.name)
+                // 任务需求注入：从执行记录的 trigger_meta.requirement 读取。
+                // 每次执行独立需求，不再从 loops.description 读取。
+                .replace("{{requirement}}", &task_requirement);
             // 4d-bis. 注入工作空间级共识 prompt（需求 022）。
             // Loop 与 todo 走各自路径，此处补齐 Loop 注入使 workspace 共识全路径生效。
             // loop_.workspace_id = 0/None 时 inject_workspace_prompt 静默回退原 prompt。
@@ -708,6 +726,11 @@ impl LoopRunner {
                 )
                 .await
                 .map_err(|e| e.to_string())?;
+
+            // 上一轮 PhaseDriver 返回的返工计数，写入新 step_execution。
+            if pending_rework > 0 {
+                let _ = self.ctx.db.set_step_execution_rework_count(step_exec.id, pending_rework).await;
+            }
 
             self.ctx
                 .db
@@ -749,7 +772,126 @@ impl LoopRunner {
                 }
             };
 
-            // 4h. 评分闸门
+            // 4h. 工艺步骤 → 委托 PhaseDriver 处理（含产物捕获、门禁评价、流转解析、返工统计、阶段维护）。
+            // 判断标准：步骤配置了 gate_config 或 expected_artifacts（默认值都是 "[]"）。
+            let has_process_config = (!step.gate_config.is_empty() && step.gate_config != "[]")
+                || (!step.expected_artifacts.is_empty() && step.expected_artifacts != "[]");
+
+            if has_process_config {
+                let mut exec_record = self.ctx.db.get_execution_record(record_id).await
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("execution record #{} not found", record_id))?;
+
+                // 工艺步骤在执行产物捕获/门禁评价前，若环节配置了评分阈值且尚无评分，
+                // 先触发 auto-review 获取评分（复用 LoopRunner 已有的评审基础设施）。
+                if exec_record.rating.is_none()
+                    && step.min_rating.is_some()
+                    && step_status == "success"
+                {
+                    let min_rating_val = step.min_rating.ok_or("min_rating check failed")?;
+                    let (passed, rating, _msg) = self
+                        .apply_rating_gate(
+                            record_id,
+                            min_rating_val,
+                            &todo.prompt,
+                            todo.acceptance_criteria.as_deref(),
+                            loop_.review_template_id,
+                        )
+                        .await
+                        .unwrap_or((false, None, Some("auto-review failed".to_string())));
+                    // 刷新 execution_record 以获取评审后的评分。
+                    if let Ok(Some(refreshed)) = self.ctx.db.get_execution_record(record_id).await {
+                        exec_record = refreshed;
+                    }
+                    let _ = (passed, rating);
+                }
+
+                let ws_path = loop_.workspace_path.as_deref().unwrap_or("");
+
+                let outcome = crate::services::process::phase_driver::execute_step(
+                    &self.ctx.db,
+                    Some(&exec_record),
+                    loop_execution_id,
+                    step,
+                    &step_exec,
+                    &all_steps,
+                    idx,
+                    ws_path,
+                )
+                .await
+                .map_err(|e| format!("phase_driver execute_step failed: {}", e))?;
+
+                let gate_passed = outcome.gate_passed;
+                // 保存返工计数：下一轮创建 step_execution 时写入。
+                pending_rework = outcome.rework_count;
+
+                // 更新计数器（PhaseDriver 已写入 gate/artifact 记录，LoopRunner 维护执行级计数器）。
+                if gate_passed {
+                    completed += 1;
+                    self.ctx
+                        .db
+                        .increment_loop_execution_counters(loop_execution_id, 1, 0, 1)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    *consecutive_retries.get_mut(&step.id).unwrap_or(&mut 0) = 0;
+                    if let Some(ws_id) = loop_.workspace_id.filter(|&id| id != 0) {
+                        crate::services::blackboard_debouncer::push_pending_record(
+                            ws_id, record_id, &self.ctx.db,
+                        )
+                        .await;
+                    }
+                } else {
+                    failed += 1;
+                    self.ctx
+                        .db
+                        .increment_loop_execution_counters(loop_execution_id, 0, 1, 1)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    *consecutive_retries.entry(step.id).or_insert(0) += 1;
+                }
+
+                // 记录上一环节输出（供下一环节模板变量）。
+                let conclusion = self.extract_conclusion(record_id).await;
+                let exec_record2 = self.ctx.db.get_execution_record(record_id).await.ok().flatten();
+                last_output = exec_record2.as_ref().and_then(|r| r.result.clone());
+                last_conclusion = if conclusion.is_empty() {
+                    // 回退：取 error 或截断 result。
+                    outcome.error_message.clone()
+                        .or_else(|| exec_record2.as_ref().and_then(|r| r.result.clone().map(|s| {
+                            let truncated: String = s.chars().take(300).collect();
+                            truncated
+                        })))
+                } else {
+                    Some(conclusion.clone())
+                };
+                // 把结论写回 step_execution，供黑板展示。
+                if !conclusion.is_empty() {
+                    let _ = self.ctx.db.update_step_execution_conclusion(step_exec.id, &conclusion).await;
+                }
+                last_step_name = Some(step.name.clone());
+                if let Some(ref usage) = exec_record2.as_ref().and_then(|r| r.usage.clone()) {
+                    let step_tokens = (usage.input_tokens + usage.output_tokens) as i64;
+                    total_tokens_used += step_tokens;
+                }
+
+                // 发送状态更新事件。
+                let final_status = if gate_passed { "success" } else { "failed" };
+                let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
+                    record_id,
+                    todo_id: 0,
+                    review_status: final_status.to_string(),
+                });
+
+                // 确定下一步。
+                current_idx = outcome.next_idx;
+
+                if outcome.paused {
+                    return Ok(LoopRunOutcome::Paused);
+                }
+                continue;
+            }
+
+            // 4h. 评分闸门（旧 Loop 兼容路径：无 gate_config/expected_artifacts 的步骤）。
             let (gate_passed, step_rating, error_msg) = if step_status == "success" && step.min_rating.is_some() {
                 // 人工审批类型：暂停等待，不自动评审
                 // 提取结论后写回 pending_approval 状态，然后退出主循环。
@@ -1655,6 +1797,12 @@ mod tests {
             on_rating_fail: on_rating_fail.to_string(),
             fail_goto_step_id: fail_goto,
             review_type: "ai".to_string(),
+            phase_id: None,
+            expected_artifacts: "[]".to_string(),
+            gate_config: "[]".to_string(),
+            max_rework: 3,
+            skill_names: "[]".to_string(),
+            expert_name: None,
             enabled: 1,
             created_at: None,
         }
@@ -1873,7 +2021,15 @@ mod tests {
                 min_rating: None, unrated_policy: "skip".to_string(),
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
-                review_type: "ai".to_string(), enabled: 1, created_at: None,
+                review_type: "ai".to_string(),
+                phase_id: None,
+                expected_artifacts: "[]".to_string(),
+                gate_config: "[]".to_string(),
+                max_rework: 3,
+                skill_names: "[]".to_string(),
+                expert_name: None,
+                enabled: 1,
+                created_at: None,
             },
             loop_steps::Model {
                 id: 2, loop_id: loop_model.id, name: "步骤B".to_string(),
@@ -1882,7 +2038,15 @@ mod tests {
                 min_rating: None, unrated_policy: "skip".to_string(),
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
-                review_type: "ai".to_string(), enabled: 1, created_at: None,
+                review_type: "ai".to_string(),
+                phase_id: None,
+                expected_artifacts: "[]".to_string(),
+                gate_config: "[]".to_string(),
+                max_rework: 3,
+                skill_names: "[]".to_string(),
+                expert_name: None,
+                enabled: 1,
+                created_at: None,
             },
         ];
         let result = runner.check_workspace_consistency(&loop_model, &steps).await;
@@ -1908,7 +2072,15 @@ mod tests {
                 min_rating: None, unrated_policy: "skip".to_string(),
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
-                review_type: "ai".to_string(), enabled: 1, created_at: None,
+                review_type: "ai".to_string(),
+                phase_id: None,
+                expected_artifacts: "[]".to_string(),
+                gate_config: "[]".to_string(),
+                max_rework: 3,
+                skill_names: "[]".to_string(),
+                expert_name: None,
+                enabled: 1,
+                created_at: None,
             },
             loop_steps::Model {
                 id: 2, loop_id: loop_model.id, name: "步骤B".to_string(),
@@ -1917,7 +2089,15 @@ mod tests {
                 min_rating: None, unrated_policy: "skip".to_string(),
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
-                review_type: "ai".to_string(), enabled: 1, created_at: None,
+                review_type: "ai".to_string(),
+                phase_id: None,
+                expected_artifacts: "[]".to_string(),
+                gate_config: "[]".to_string(),
+                max_rework: 3,
+                skill_names: "[]".to_string(),
+                expert_name: None,
+                enabled: 1,
+                created_at: None,
             },
         ];
         let result = runner.check_workspace_consistency(&loop_model, &steps).await;
@@ -1946,7 +2126,15 @@ mod tests {
                 min_rating: None, unrated_policy: "skip".to_string(),
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
-                review_type: "ai".to_string(), enabled: 1, created_at: None,
+                review_type: "ai".to_string(),
+                phase_id: None,
+                expected_artifacts: "[]".to_string(),
+                gate_config: "[]".to_string(),
+                max_rework: 3,
+                skill_names: "[]".to_string(),
+                expert_name: None,
+                enabled: 1,
+                created_at: None,
             },
             loop_steps::Model {
                 id: 2, loop_id: loop_model.id, name: "步骤B".to_string(),
@@ -1955,7 +2143,15 @@ mod tests {
                 min_rating: None, unrated_policy: "skip".to_string(),
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
-                review_type: "ai".to_string(), enabled: 1, created_at: None,
+                review_type: "ai".to_string(),
+                phase_id: None,
+                expected_artifacts: "[]".to_string(),
+                gate_config: "[]".to_string(),
+                max_rework: 3,
+                skill_names: "[]".to_string(),
+                expert_name: None,
+                enabled: 1,
+                created_at: None,
             },
         ];
         let result = runner.check_workspace_consistency(&loop_model, &steps).await;
@@ -1980,7 +2176,15 @@ mod tests {
                 min_rating: None, unrated_policy: "skip".to_string(),
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
-                review_type: "ai".to_string(), enabled: 1, created_at: None,
+                review_type: "ai".to_string(),
+                phase_id: None,
+                expected_artifacts: "[]".to_string(),
+                gate_config: "[]".to_string(),
+                max_rework: 3,
+                skill_names: "[]".to_string(),
+                expert_name: None,
+                enabled: 1,
+                created_at: None,
             },
             loop_steps::Model {
                 id: 2, loop_id: loop_model.id, name: "步骤A-2".to_string(),
@@ -1989,7 +2193,15 @@ mod tests {
                 min_rating: None, unrated_policy: "skip".to_string(),
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
-                review_type: "ai".to_string(), enabled: 1, created_at: None,
+                review_type: "ai".to_string(),
+                phase_id: None,
+                expected_artifacts: "[]".to_string(),
+                gate_config: "[]".to_string(),
+                max_rework: 3,
+                skill_names: "[]".to_string(),
+                expert_name: None,
+                enabled: 1,
+                created_at: None,
             },
         ];
         let result = runner.check_workspace_consistency(&loop_model, &steps).await;

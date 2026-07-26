@@ -44,6 +44,7 @@ import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '@/utils/cron';
 import { ExpertsTemplatesTab } from './templates/ExpertsTemplatesTab';
 import { TodoTemplatesTab } from './templates/TodoTemplatesTab';
 import { SkillTemplatesTab } from './templates/SkillTemplatesTab';
+import { ProcessTemplatesTab } from './templates/ProcessTemplatesTab';
 import { bundledApi } from '@/api/bundled';
 import { InstallGitButton } from './InstallGitButton';
 
@@ -221,6 +222,21 @@ export function TemplatesPanel() {
             ),
             children: (
               <SkillTemplatesTab refreshTick={skillRefreshTick} />
+            ),
+          },
+          {
+            key: 'processes',
+            label: (
+              <Space>
+                <span>工艺模板</span>
+                <SyncBadge
+                  fileCount={status?.subdir === 'processes' ? status?.subdir_file_count : undefined}
+                  needsUpdate={status?.subdir === 'processes' ? status?.needs_update : undefined}
+                />
+              </Space>
+            ),
+            children: (
+              <ProcessTemplatesTab refreshTick={skillRefreshTick} />
             ),
           },
         ]}

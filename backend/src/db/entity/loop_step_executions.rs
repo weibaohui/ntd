@@ -34,6 +34,9 @@ pub struct Model {
     pub approval_status: Option<String>,
     /// 审批人的备注/意见
     pub approval_comment: Option<String>,
+    /// 返工次数，默认 0。
+    #[sea_orm(default_value = "0")]
+    pub rework_count: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -62,6 +65,10 @@ pub enum Relation {
         to = "super::execution_records::Column::Id"
     )]
     BelongsToExecutionRecord,
+    #[sea_orm(has_many = "super::loop_step_artifacts::Entity")]
+    LoopStepArtifacts,
+    #[sea_orm(has_many = "super::loop_step_execution_gates::Entity")]
+    LoopStepExecutionGates,
 }
 
 impl Related<super::loop_executions::Entity> for Entity {
@@ -78,6 +85,14 @@ impl Related<super::todos::Entity> for Entity {
 
 impl Related<super::execution_records::Entity> for Entity {
     fn to() -> RelationDef { Relation::BelongsToExecutionRecord.def() }
+}
+
+impl Related<super::loop_step_artifacts::Entity> for Entity {
+    fn to() -> RelationDef { Relation::LoopStepArtifacts.def() }
+}
+
+impl Related<super::loop_step_execution_gates::Entity> for Entity {
+    fn to() -> RelationDef { Relation::LoopStepExecutionGates.def() }
 }
 
 impl ActiveModelBehavior for ActiveModel {}
