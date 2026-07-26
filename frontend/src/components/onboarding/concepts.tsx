@@ -106,7 +106,7 @@ export const CONCEPTS: readonly ConceptNode[] = [
     label: '事项',
     oneLiner: '环路里每一步要干的活，指定用哪个工具、听谁的指挥、做完算不算合格',
     icon: <UnorderedListOutlined />,
-    navTarget: 'items',
+    navTarget: 'todos',
     fields: [
       { name: '类型', desc: '一次性活 / 可复用环节，决定跑完就扔还是能反复用' },
       { name: '执行器', desc: '用哪把工具干活：Claude Code / MobileCoder ...' },

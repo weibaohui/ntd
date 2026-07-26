@@ -16,7 +16,8 @@ interface ReferencingLoopsSectionProps {
 
 export function ReferencingLoopsSection({ todoId }: ReferencingLoopsSectionProps) {
   const { state } = useApp();
-  const { replaceUrl } = useViewState();
+  // 028：环路详情独立路由 /#/loops/:id，用 pushUrl 让 history.back 回到事项详情
+  const { pushUrl } = useViewState();
   // null = 尚未加载完成（不渲染，避免闪烁）；空数组 = 无引用（不渲染）
   const [loops, setLoops] = useState<LoopRefSummary[] | null>(null);
 
@@ -47,7 +48,7 @@ export function ReferencingLoopsSection({ todoId }: ReferencingLoopsSectionProps
       <span style={{ flexShrink: 0 }}>所属环路：</span>
       <ReferencingLoops
         loops={loops}
-        onSelectLoop={(loopId) => replaceUrl('loops', { id: loopId, panel: 'detail' })}
+        onSelectLoop={(loopId) => pushUrl('loops', { id: loopId })}
       />
     </div>
   );

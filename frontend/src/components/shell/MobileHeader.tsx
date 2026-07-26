@@ -11,8 +11,9 @@ interface MobileHeaderProps {
 }
 
 export function MobileHeader({ activeView, activePanel, onBackToList, onOpenNav }: MobileHeaderProps) {
-  // items/loops 详情页显示返回按钮，否则空占位保持菜单按钮位置一致
-  const showBackButton = activeView === 'items' || activeView === 'loops';
+  // todos/loops 详情页显示返回按钮，否则空占位保持菜单按钮位置一致
+  // 028：activePanel 由 useViewState 派生（todoDetailId/loopDetailId != null 时为 'detail'）
+  const showBackButton = activeView === 'todos' || activeView === 'loops';
 
   return (
     <div className="mobile-header">

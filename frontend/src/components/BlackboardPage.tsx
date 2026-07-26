@@ -107,7 +107,7 @@ const DEFAULT_WIKI_PROMPT = `你是一个工作空间黑板维护者。你的任
    - ## 矛盾/风险
    - ## 下一步建议
 7. 每条结论标注来源，使用 \`ntd todo execution get <record_id>\` 返回结果中的 \`todo_id\` 和 \`id\` 字段，
-   生成 app 内链接：(来源: [record_{record_id}](/#/items?id={todo_id}&panel=post&record={record_id}))
+   生成 app 内链接：(来源: [record_{record_id}](/#/todos/{todo_id}/posts/{record_id}))
 
 完成后输出简短确认即可，无需输出 YAML/JSON。`;
 
@@ -134,7 +134,7 @@ const WIKI_RELATIVE_PATH_REGEX = /^(?:\.\/)?(?:topics\/)?(.+?)(?:\.md)?$/;
  *   点击时通过 useViewState.selectTodo 导航到事项详情，
  *   阻止浏览器尝试解析 ntd:// 自定义协议导致"找不到应用"提示。
  * - href 匹配 ./slug 或 topics/slug.md 格式（Wiki 相对路径）→ 通过 selectWiki 跳转到 Wiki 视图
- * - href 以 / 开头（app 内相对路径，如 /#/items?id=16&panel=post&record=6513）
+ * - href 以 / 开头（app 内相对路径，如 /#/todos/16/posts/6513）
  *   → 新标签页打开，让用户同时保留 wiki 页面和查看源记录。
  * - 其他 href（http/https/mailto 等）→ 新窗口打开 + rel=noopener 防 tabnabbing。
  */
@@ -153,8 +153,8 @@ function TodoLink(props: MarkdownLinkProps & { workspaceId?: number; selectWiki?
     return (
       <a
         {...restProps}
-        href={`#/items?id=${todoId}`}
-        // preventDefault：阻止浏览器实际跳到 #/items?id=...，完全交给 selectTodo
+        href={`#/todos/${todoId}`}
+        // preventDefault：阻止浏览器实际跳到 #/todos/...，完全交给 selectTodo
         onClick={(e) => {
           e.preventDefault();
           // stopPropagation：避免外层 XMarkdown 的 link 行为再次触发
@@ -194,7 +194,7 @@ function TodoLink(props: MarkdownLinkProps & { workspaceId?: number; selectWiki?
     );
   }
 
-  // 内部相对路径（以 / 但非 // 开头，如 /#/items?id=16&panel=post&record=6513）
+  // 内部相对路径（以 / 但非 // 开头，如 /#/todos/16/posts/6513）
   // → 新标签页打开，让用户同时保留当前 wiki 页面和查看源记录
   // 排除 // 协议相对 URL，避免把外站链接当作 app 内路径
   if (href.startsWith('/') && !href.startsWith('//')) {
@@ -1252,7 +1252,7 @@ function BlackboardContent(props: BlackboardContentProps) {
           />
         )}}
         // DOMPurify 默认会拒绝 ntd:// 等未知协议，会把整条链接剥成纯文本。
-        // 显式允许 ntd 协议 + 以 / 开头的内部相对路径（如 /#/items?id=16&panel=post&record=6513），
+        // 显式允许 ntd 协议 + 以 / 开头的内部相对路径（如 /#/todos/16/posts/6513），
         // 其它未知协议仍被拒绝。
         dompurifyConfig={{
           ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|ntd):|\/|\.\/)/i,

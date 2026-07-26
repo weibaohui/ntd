@@ -26,7 +26,7 @@ import { TfiBlackboard } from 'react-icons/tfi';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
 export type LeftRailKey =
-  | 'items'
+  | 'todos'
   | 'loops'
   | 'tasks'
   | 'processes'
@@ -97,7 +97,7 @@ export function LeftRail({
       title: '工作',
       items: [
         { key: 'tasks', label: '任务', icon: <RocketOutlined />, ariaLabel: '任务' },
-        { key: 'items', label: '事项', icon: <UnorderedListOutlined />, ariaLabel: '事项' },
+        { key: 'todos', label: '事项', icon: <UnorderedListOutlined />, ariaLabel: '事项' },
         { key: 'loops', label: '环路', icon: <RetweetOutlined />, ariaLabel: '环路' },
         { key: 'processes', label: '工艺', icon: <BuildOutlined />, ariaLabel: '工艺' },
       ] satisfies LeftRailItem[],
