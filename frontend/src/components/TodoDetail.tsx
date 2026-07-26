@@ -59,39 +59,67 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
   // 加载失败态：所有候选 workspace 都查不到时显示错误提示 + 重试按钮
   const [todoLoadError, setTodoLoadError] = useState(false);
 
-  // 监听 selectedTodoId 变化，主动加载 todo 详情。
-  // 不在依赖里加 selectedWorkspace：避免 workspace 切换触发重新请求
-  //（详情页数据已通过回调主动刷新）。
+  // 竞态保护：每次发起加载请求时自增 requestId，请求 resolve 时校验是否仍为最新。
+  // 场景：用户点重试后又在请求返回前切换 todo，旧 Promise 若无条件 setSelectedTodo
+  // 会用旧 todo 覆盖刚加载好的新 todo 数据（TOCTOU）。用 ref 比对即可丢弃过期响应。
+  const loadRequestIdRef = useRef(0);
+
+  // 共享加载函数：集中处理 setTodoLoading / setTodoLoadError / loadTodoById 及结果更新，
+  // 供初始 useEffect 和「重试」按钮共同调用，消除重复代码并统一竞态保护。
+  // 拆为 fetchTodo（发起请求 + 竞态比对）与 applyTodoResult（写入 local state）两个
+  // 职责单一的子函数，各自函数体不超过 30 行。
+  const fetchTodo = useCallback(
+    (todoId: number, ws: number | null) => {
+      // 本次请求的唯一标识，resolve 时用它判断结果是否已过期
+      const reqId = ++loadRequestIdRef.current;
+      setTodoLoading(true);
+      setTodoLoadError(false);
+      loadTodoById(todoId, ws)
+        .then(todo => {
+          // 竞态保护：若期间又发起了新请求（reqId 已被覆盖），直接丢弃本次结果
+          if (loadRequestIdRef.current !== reqId) return;
+          applyTodoResult(todo);
+        })
+        .catch(() => {
+          if (loadRequestIdRef.current !== reqId) return;
+          applyTodoResult(null);
+        })
+        .finally(() => {
+          if (loadRequestIdRef.current !== reqId) return;
+          setTodoLoading(false);
+        });
+    },
+    [],
+  );
+
+  // 写入加载结果到 local state：todo 非空则更新详情，否则触发错误态
+  const applyTodoResult = useCallback((todo: Todo | null) => {
+    if (todo) {
+      setSelectedTodo(todo);
+    } else {
+      setSelectedTodo(null);
+      setTodoLoadError(true);
+    }
+  }, []);
+
+  // 监听 selectedTodoId / selectedWorkspace 变化，主动加载 todo 详情。
+  // 加入 selectedWorkspace 依赖：冷启动直达 /#/todos/:id 时 ws 可能尚未解析（null），
+  // 此时 loadTodoById 会提前返回 null 触发误报错误态；待 ws 解析完成后
+  // 该 effect 会因依赖变化再次触发，用真实 ws_id 重新请求。
   useEffect(() => {
     if (selectedTodoId == null) {
       setSelectedTodo(null);
       setTodoLoadError(false);
+      // 切换到无选中态时重置竞态计数，避免上一轮 pending 请求污染新状态
+      loadRequestIdRef.current = 0;
       return;
     }
-    let cancelled = false;
-    setTodoLoading(true);
-    setTodoLoadError(false);
-    loadTodoById(selectedTodoId, state.selectedWorkspace)
-      .then(todo => {
-        if (cancelled) return;
-        if (todo) {
-          setSelectedTodo(todo);
-        } else {
-          setSelectedTodo(null);
-          setTodoLoadError(true);
-        }
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setSelectedTodo(null);
-        setTodoLoadError(true);
-      })
-      .finally(() => {
-        if (!cancelled) setTodoLoading(false);
-      });
-    return () => { cancelled = true; };
+    // ws 尚未解析时不发请求，避免 null workspace 直接命中错误态分支；
+    // 依赖里的 selectedWorkspace 变化会重新触发本 effect，自动重试。
+    if (state.selectedWorkspace == null) return;
+    fetchTodo(selectedTodoId, state.selectedWorkspace);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTodoId]);
+  }, [selectedTodoId, state.selectedWorkspace]);
 
   // 重新加载当前 todo（供回调成功后调用，确保 local state 与后端一致）
   const reloadSelectedTodo = useCallback(async () => {
@@ -318,17 +346,10 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
               <Button
                 icon={<ReloadOutlined />}
                 onClick={() => {
-                  // 手动触发重新加载：通过 setSelectedTodoId 间接触发 useEffect
+                  // 复用共享加载函数，与初始 useEffect 走同一条带竞态保护的路径，
+                  // 避免重试 Promise 在用户切换 todo 后用旧结果覆盖新 todo。
                   if (selectedTodoId != null) {
-                    setTodoLoading(true);
-                    setTodoLoadError(false);
-                    loadTodoById(selectedTodoId, state.selectedWorkspace)
-                      .then(todo => {
-                        if (todo) setSelectedTodo(todo);
-                        else setTodoLoadError(true);
-                      })
-                      .catch(() => setTodoLoadError(true))
-                      .finally(() => setTodoLoading(false));
+                    fetchTodo(selectedTodoId, state.selectedWorkspace);
                   }
                 }}
               >
