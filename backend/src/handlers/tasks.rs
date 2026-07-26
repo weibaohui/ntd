@@ -75,13 +75,15 @@ pub async fn create_task(
     }
 }
 
-/// GET /api/v1/tasks
+/// GET /api/v1/workspaces/{ws}/tasks
+/// 按工作空间列出任务，可选按 status 过滤。
+/// ws 来自 URL path，用于按 workspace_id 过滤（修复之前忽略 ws 导致跨工作空间数据相同的 bug）。
 pub async fn list_tasks(
     State(state): State<AppState>,
-    Path(_ws): Path<i64>,
+    Path(ws): Path<i64>,
     Query(q): Query<ListTasksQuery>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
-    let tasks = state.db.list_tasks(q.status.as_deref()).await?;
+    let tasks = state.db.list_tasks(ws, q.status.as_deref()).await?;
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
     let items: Vec<TaskItem> = {
         let mut result = Vec::new();

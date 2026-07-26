@@ -24,8 +24,12 @@ impl Database {
         tasks::Entity::find_by_id(id).one(&self.conn).await
     }
 
-    pub async fn list_tasks(&self, status: Option<&str>) -> Result<Vec<tasks::Model>, sea_orm::DbErr> {
-        let mut q = tasks::Entity::find();
+    /// 列出任务：按 workspace_id 过滤，可选按 status 过滤。
+    /// workspace_id 是必填项，避免不同工作空间任务串台（修复 list_tasks 忽略 ws 的 bug）。
+    pub async fn list_tasks(
+        &self, workspace_id: i64, status: Option<&str>,
+    ) -> Result<Vec<tasks::Model>, sea_orm::DbErr> {
+        let mut q = tasks::Entity::find().filter(tasks::Column::WorkspaceId.eq(workspace_id));
         if let Some(s) = status { q = q.filter(tasks::Column::Status.eq(s)); }
         q.order_by_desc(tasks::Column::CreatedAt).all(&self.conn).await
     }

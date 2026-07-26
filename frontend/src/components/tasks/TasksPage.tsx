@@ -3,7 +3,7 @@
 // 详情独立路由：URL /#/tasks?id=123 进入详情全屏，无 id 时渲染当前视图模式。
 // 列表/看板/卡片态全屏单页，不再用 ListDetailPage 双栏。
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Input, Button, Segmented, message } from 'antd';
 import {
   AppstoreOutlined,
@@ -216,13 +216,15 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
     </Button>
   );
 
-  // 详情态顶栏 extra：返回按钮 + 标题「任务详情」。
+  // 详情态顶栏 titleSuffix：返回按钮，紧贴标题右侧（与 TodoDetailPage/LoopDetailPage 一致）。
   // 列表/看板/卡片态顶栏 extra：搜索 + 刷新 + Segmented + 新建。
   const isDetail = selectedTaskId != null;
 
-  const detailExtra = (
+  // 返回按钮：放在 titleSuffix，与事项/环路详情页位置一致
+  const detailTitleSuffix = (
     <Button
       size="small"
+      type="text"
       icon={<ArrowLeftOutlined />}
       onClick={() => handleSelectTask(null)}
     >
@@ -239,15 +241,27 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
     </>
   );
 
+  // 工作空间切换时退出详情态：详情 id 属于旧工作空间，继续停留无意义。
+  // 用 ref 记录上次 workspaceId，变化时清空 URL id 并回到列表态。
+  const prevWsRef = useRef(wsId);
+  useEffect(() => {
+    if (prevWsRef.current !== wsId) {
+      prevWsRef.current = wsId;
+      if (selectedTaskId != null) {
+        handleSelectTask(null);
+      }
+    }
+  }, [wsId, selectedTaskId, handleSelectTask]);
+
   // —— 渲染分发 ——
-  // 详情态：全屏 TaskDetailPanel + 返回按钮。
+  // 详情态：全屏 TaskDetailPanel + 返回按钮（titleSuffix）。
   // 列表/看板/卡片态：全屏单页 PageCard，根据 viewMode 渲染对应视图。
   if (isDetail) {
     return (
       <PageCard
         icon={<RocketOutlined />}
         title="任务详情"
-        extra={detailExtra}
+        titleSuffix={detailTitleSuffix}
         style={{ flex: 1, height: '100%' }}
         contentStyle={{ height: 'calc(100% - 43px)', overflow: 'auto' }}
       >

@@ -9,7 +9,7 @@
 
 import { useCallback, useState, type ReactNode } from 'react';
 import { Button, Input, message } from 'antd';
-import { PlusOutlined, RetweetOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import { getProjectDirectories, type ProjectDirectory } from '@/utils/database/todos';
 import type { LoopListItem } from '@/types/loop';
@@ -59,7 +59,7 @@ export function LoopListHeader({
       </Button>
       <Button
         size="small"
-        icon={<RetweetOutlined />}
+        icon={<ReloadOutlined />}
         onClick={onReload}
         loading={loading}
         aria-label="刷新"
