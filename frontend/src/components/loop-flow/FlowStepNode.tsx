@@ -42,7 +42,9 @@ export function FlowStepNode({
           fill={phaseColor(step.phase_id)}
         />
       )}
-      {/* 卡片背景 */}
+      {/* 卡片背景：作为节点主体点击区域，承担 <g onClick> 的命中测试。
+          删 pointerEvents:'none' —— 7a4d459 抽出时误加该属性导致卡片不接点击，
+          而 SVG <g> 无原生形状不接事件，点击节点体落空，环节无法打开编辑窗口。 */}
       <rect
         x={x} y={y}
         width={NODE_WIDTH} height={NODE_HEIGHT}
@@ -50,7 +52,6 @@ export function FlowStepNode({
         fill={selected ? '#f0f9ff' : '#ffffff'}
         stroke={selected ? '#0891b2' : '#e2e8f0'}
         strokeWidth={selected ? 2 : 1}
-        style={{ pointerEvents: 'none' }}
       />
       {/* 状态 dot（右上角） */}
       <circle
