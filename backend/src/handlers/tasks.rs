@@ -100,7 +100,12 @@ pub async fn list_tasks(
             result.push(TaskItem {
                 id: t.id, title: t.title.clone(), description: t.description.clone(), status: t.status.clone(),
                 workspace_id: t.workspace_id, template_id: t.template_id, loop_id: t.loop_id,
-                template_name: pt.as_ref().map(|p| p.name.clone()),
+            // 模板展示名：优先用中文 display_name，空时回退英文唯一名 name，
+            // 与 services/process/recommender.rs 的展示名降级策略保持一致。
+            // 前端任务列表/卡片/详情三处均从此字段取展示文本，统一为中文名。
+            template_name: pt.as_ref().map(|p| {
+                if p.display_name.is_empty() { p.name.clone() } else { p.display_name.clone() }
+            }),
                 complexity: pt.as_ref().map(|p| p.complexity.clone()),
                 latest_execution_status: exec_status,
                 latest_execution_requirement: exec_req,
