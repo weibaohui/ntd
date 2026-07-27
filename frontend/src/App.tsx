@@ -52,7 +52,7 @@ function AppContent() {
   const { state, dispatch, clearSelection } = useApp();
   // 028：路由统一为 /#/todos + /#/todos/:id + /#/todos/:id/posts/:rid + /#/loops + /#/loops/:id
   // todoDetailId / loopDetailId / postRecordId 均来自 path 段，刷新可恢复
-  const { activeView, todoDetailId, loopDetailId, postRecordId, activePanel, processName, showView, pushUrl, replaceUrl, backToList } = useViewState();
+  const { activeView, todoDetailId, loopDetailId, postRecordId, activePanel, processName, processMode, showView, pushUrl, replaceUrl, backToList } = useViewState();
   const { themeMode, toggleTheme } = useTheme();
   // 底部执行日志面板的显隐开关：来自设置-界面显示，关掉后即使有运行中任务也不渲染面板。
   const { visible: consolePanelVisible, setVisible: setConsolePanelVisible } = useConsolePanel();
@@ -431,6 +431,7 @@ function AppContent() {
                   workspaceId={state.selectedWorkspace}
                   onOpenLoop={handleSelectLoop}
                   processName={processName}
+                  processMode={processMode}
                 />
               ) : (
                 <Dashboard />
