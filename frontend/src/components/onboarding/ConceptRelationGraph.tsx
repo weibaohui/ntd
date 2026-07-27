@@ -84,6 +84,9 @@ function Edge({
       fill="none"
       markerEnd={`url(#${isMain ? 'ntd-onboarding-arrow-main' : 'ntd-onboarding-arrow-side'})`}
       className={reduceMotion ? undefined : 'ntd-onboarding-edge-flow'}
+      // testid 供 030 测试断言 hover 后连线 stroke/stroke-width 升级；
+      // 纯测试锚点，不参与任何渲染逻辑，from-to 组合天然唯一
+      data-testid={`onboarding-graph-edge-${from.id}-${to.id}`}
       style={{
         // reduced-motion 时无动画，但仍可加粗高亮。
         transition: 'stroke 0.2s ease, stroke-width 0.2s ease',
@@ -195,10 +198,15 @@ function GraphNodeDrawerFallback({
   return (
     <div style={{ padding: 24 }}>
       <Title level={4} style={{ marginBottom: 8 }}>{node.label}</Title>
+      {/* 文案二选一：drawerDesc 存在用定制说明（黑板/看板），缺省回退通用文案 ——
+          用 ?? 而非 ||：空字符串不会被误判为缺省（虽然当前数据没有空串场景，语义更准） */}
       <Text type="secondary">
         {node.drawerDesc ?? '这是关系图的支线节点，用于辅助说明主概念关系，不对应独立菜单入口。'}
       </Text>
-      {/* 按钮 testid 沿用 026 测试约定的 onboarding-graph-drawer-goto-{id} 命名 */}
+      {/* 跳转按钮仅 navTarget 存在的节点渲染：无独立页面的支线节点（触发器等）保持纯说明形态。
+          点击不在这里直接跳转，而是回调 onNavigate 给主组件 —— 子组件不持有路由控制权，
+          保证「先关 Drawer 再跳转」的时序由主组件统一掌控（遮罩残留风险点）。
+          按钮 testid 沿用 026 测试约定的 onboarding-graph-drawer-goto-{id} 命名。 */}
       {node.navTarget && (
         <div style={{ marginTop: 16 }}>
           <Button
@@ -336,6 +344,8 @@ export function ConceptRelationGraph() {
         {drawerNode && drawerConcept ? (
           <ConceptDrawerContent concept={drawerConcept} />
         ) : drawerNode ? (
+          // fallback 分支：onNavigate 必须逐层透传而非 fallback 内自行实例化 useViewState ——
+          // 跳转前要联动本组件的 drawerNode state（先关 Drawer），跨组件状态只能由父组件协调
           <GraphNodeDrawerFallback node={drawerNode} onNavigate={handleNodeNavigate} />
         ) : (
           <Empty />

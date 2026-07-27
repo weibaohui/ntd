@@ -213,12 +213,15 @@ export interface GraphNode {
   /** 是否主航线节点：true 时圆圈加大 + 主色填充，突出主链层级。 */
   isMain?: boolean;
   // —— 030 新增 3 个可选字段：给「有独立页面」的支线节点（黑板/看板）挂 Drawer 说明 + 跳转按钮。
-  // 全部可选：既有 fallback 节点（触发器/技能/模型/执行记录）不填，行为零回归。
+  // 为什么做成可选字段而非新节点类型：既有 4 个 fallback 节点（触发器/技能/模型/执行记录）不填
+  // 这三字段即保持原行为，GraphNode 结构向后兼容，未来新支线节点加跳转也只改数据不动组件。
   /** Drawer 说明文案（仅无 conceptId 的支线节点生效）；缺省回退到通用 fallback 文案。 */
   drawerDesc?: string;
-  /** Drawer 底部「去 XX 页」按钮的跳转目标视图；缺省则不渲染跳转按钮。 */
+  /** Drawer 底部「去 XX 页」按钮的跳转目标视图；缺省则不渲染跳转按钮。
+      用 View 字面量而非手写 hash 字符串：编译期白名单约束，杜绝拼错路由。 */
   navTarget?: View;
-  /** 跳转时携带的 mode query（看板需要 ?mode=kanban 直落看板视图）；其他视图缺省。 */
+  /** 跳转时携带的 mode query（看板需要 ?mode=kanban 直落看板视图）；其他视图缺省。
+      独立于 navTarget 单设字段：memorial 一个视图对应 4 种 mode，目标与模式是两个正交维度。 */
   navMode?: BoardMode;
 }
 
@@ -243,8 +246,11 @@ export const GRAPH_NODES: readonly GraphNode[] = [
   {
     id: 'blackboard',
     label: '黑板',
+    // 与执行记录同列（x=900）：「执行记录→黑板」成垂直短边，避免再增加跨图长斜线
     x: 900,
+    // 顶行 y=60 与触发器/执行器同行，维持支线节点上下两行的网格节奏
     y: 60,
+    // 高亮单向声明：黑板侧列出三个分析来源，hover 黑板时事项/执行记录/环路同步亮
     highlights: ['todo', 'execution', 'loop'],
     // 三层语义（需求 §5.3）：① 事项+执行记录持续自动分析 ② 环节小黑板记各环节结论 ③ 汇总统一观看。
     drawerDesc:
@@ -254,8 +260,11 @@ export const GRAPH_NODES: readonly GraphNode[] = [
   {
     id: 'kanban',
     label: '看板',
+    // 底行最右端（x=960）：与模型圆心距 100（=专家↔模型既有间距），右缘 996 不出 viewBox
     x: 960,
+    // 底行 y=340 与任务/技能/专家/模型同行
     y: 340,
+    // 看板只有执行记录一个数据来源，故高亮列表只声明它
     highlights: ['execution'],
     drawerDesc: '执行进度进展的展示方式，按状态分列呈现事项从待执行到已完成的全过程进展。',
     // 看板直落 kanban 模式而非默认 memorial 结论视图：用户语义是「进度展示」，kanban 才是进度视角。
