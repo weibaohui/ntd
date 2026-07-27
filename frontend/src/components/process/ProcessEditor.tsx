@@ -458,11 +458,17 @@ const splitViewStyle: CSSProperties = {
 };
 
 // Tabs 容器：填满剩余高度
+// overflow:hidden 让 Tabs 内容区剪裁，nav 不溢出覆盖可视化区
+// Ant Design Tabs 内容区默认无明确高度，需 flex:1 + minHeight 让内部 React Flow 撑开
 const tabsStyle: CSSProperties = {
   flex: 1,
   display: 'flex',
   flexDirection: 'column',
   minHeight: 400,
+  // 关键：让 Tabs 内容区（含 React Flow）正确剪裁，nav 不覆盖画布
+  overflow: 'hidden',
+  // Ant Design Tabs 根容器的 .ant-tabs-content 需在 flex column 下获得剩余高度
+  // Tabs 内部用 .ant-tabs-content-holder { flex: 1 } 撑开，这里让 Tabs 根做 flex 容器
 };
 
 // YAML 编辑器包装：撑满 Tab 内容区
@@ -472,11 +478,13 @@ const yamlEditorWrapperStyle: CSSProperties = {
 };
 
 // 左：可视化区，flex 1（占剩余宽度）
+// height: '100%' 在 Tabs 内容区下需配合父容器 flex 撑开，否则 height:0
 const visualEditorStyle: CSSProperties = {
   flex: 1,
   minWidth: 400,
-  // React Flow 需要明确高度
+  // React Flow 需要明确高度：Tabs 内容区已 flex 撑开，这里 100% 继承
   height: '100%',
+  minHeight: 400,
 };
 
 // 右：属性面板，固定宽度 360px

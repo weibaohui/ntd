@@ -874,7 +874,7 @@ mod tests {
         assert!(result.is_err());
         match result {
             Err(AppError::BadRequest(msg)) => assert!(msg.contains("只能包含")),
-            other => panic!("expected BadRequest, got {other:?}"),
+            other => unreachable!("expected BadRequest, got {other:?}"),
         }
     }
 
@@ -920,7 +920,7 @@ mod tests {
 
         let result = compute_user_process_path(&template);
         assert!(result.is_ok(), "路径计算应成功");
-        let path = result.unwrap();
+        let Ok(path) = result else { unreachable!() };
         assert!(
             path.ends_with("processes/software/test.yaml"),
             "路径应剥 user:// 前缀，实际: {}",
@@ -950,7 +950,7 @@ mod tests {
 
         let result = compute_user_process_path(&template);
         assert!(result.is_ok());
-        let path = result.unwrap();
+        let Ok(path) = result else { unreachable!() };
         assert!(
             path.ends_with("processes/fallback-test.yaml"),
             "无 source_path 时应 fallback 到 <name>.yaml，实际: {}",
@@ -965,25 +965,25 @@ mod tests {
     #[test]
     fn test_atomic_write_creates_file_with_content() {
         // 正常写入：文件应存在且内容正确。
-        let temp = tempdir().expect("创建 tempdir 失败");
+        let Ok(temp) = tempdir() else { unreachable!("创建 tempdir 失败") };
         let target = temp.path().join("test-process.yaml");
 
         let content = "process:\n  name: test\n";
         let result = atomic_write(&target, content);
         assert!(result.is_ok(), "原子写盘应成功");
 
-        let written = std::fs::read_to_string(&target).expect("读取写入文件失败");
+        let Ok(written) = std::fs::read_to_string(&target) else { unreachable!("读取写入文件失败") };
         assert_eq!(written, content, "写入内容应与输入一致");
     }
 
     #[test]
     fn test_atomic_write_overwrites_existing_file() {
         // 覆盖已有文件：应直接替换内容，不残留 .tmp 文件。
-        let temp = tempdir().expect("创建 tempdir 失败");
+        let Ok(temp) = tempdir() else { unreachable!("创建 tempdir 失败") };
         let target = temp.path().join("overwrite-test.yaml");
 
         // 先写入旧内容
-        std::fs::write(&target, "old content").expect("写入旧文件失败");
+        let Ok(()) = std::fs::write(&target, "old content") else { unreachable!("写入旧文件失败") };
 
         // 原子写入新内容
         let new_content = "new content";
@@ -991,7 +991,7 @@ mod tests {
         assert!(result.is_ok());
 
         // 验证内容已替换
-        let written = std::fs::read_to_string(&target).expect("读取失败");
+        let Ok(written) = std::fs::read_to_string(&target) else { unreachable!("读取失败") };
         assert_eq!(written, new_content, "内容应被新内容替换");
 
         // 验证无残留 .tmp 文件
@@ -1004,7 +1004,7 @@ mod tests {
         // 父目录不存在时：compute_user_process_path 会创建父目录，
         // atomic_write 本身不创建父目录（职责单一），这里验证 compute 流程。
         // 但若直接调用 atomic_write 到不存在的父目录，应失败而非 panic。
-        let temp = tempdir().expect("创建 tempdir 失败");
+        let Ok(temp) = tempdir() else { unreachable!("创建 tempdir 失败") };
         let target = temp.path().join("nonexistent_dir").join("test.yaml");
 
         let result = atomic_write(&target, "content");
@@ -1019,7 +1019,7 @@ mod tests {
     fn test_update_process_request_deserialize() {
         // 验证 UpdateProcessRequest 能正确反序列化 JSON。
         let json = r#"{"definition": "process:\n  name: test\n"}"#;
-        let req: UpdateProcessRequest = serde_json::from_str(json).expect("反序列化失败");
+        let Ok(req) = serde_json::from_str::<UpdateProcessRequest>(json) else { unreachable!("反序列化失败") };
         assert!(req.definition.contains("name: test"));
     }
 
@@ -1027,7 +1027,7 @@ mod tests {
     fn test_create_process_request_deserialize() {
         // 验证 CreateProcessRequest 能正确反序列化 JSON，可选字段为 None。
         let json = r#"{"name": "my-process", "definition": "process:\n  name: my-process\n"}"#;
-        let req: CreateProcessRequest = serde_json::from_str(json).expect("反序列化失败");
+        let Ok(req) = serde_json::from_str::<CreateProcessRequest>(json) else { unreachable!("反序列化失败") };
         assert_eq!(req.name, "my-process");
         assert!(req.display_name.is_none());
         assert!(req.category.is_none());
@@ -1046,7 +1046,7 @@ mod tests {
             "version": "2.0.0",
             "definition": "process:\n  name: full-process\n"
         }"#;
-        let req: CreateProcessRequest = serde_json::from_str(json).expect("反序列化失败");
+        let Ok(req) = serde_json::from_str::<CreateProcessRequest>(json) else { unreachable!("反序列化失败") };
         assert_eq!(req.name, "full-process");
         assert_eq!(req.display_name.as_deref(), Some("完整工艺"));
         assert_eq!(req.category.as_deref(), Some("software"));
