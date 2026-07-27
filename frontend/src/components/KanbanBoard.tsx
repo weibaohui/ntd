@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { Input, Segmented, App, Tabs, Select } from 'antd';
+import { Input, App, Tabs, Select } from 'antd';
 import { SearchOutlined, FolderOutlined } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -8,7 +8,8 @@ import { TodoCard } from './TodoCard';
 import * as db from '@/utils/database';
 import { formatRelativeTime } from '@/utils/datetime';
 import type { Todo, ExecutionRecord, ProjectDirectory } from '@/types';
-import { TIME_OPTIONS, COLUMNS } from './kanban/constants';
+import { TimeRangeSegmented } from '@/components/common/TimeRangeSegmented';
+import { COLUMNS } from './kanban/constants';
 import { getColumnForStatus } from './kanban/helpers';
 import type { ColumnDef } from './kanban/constants';
 
@@ -403,14 +404,11 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
               size="small"
               style={{ width: 220 }}
             />
-            <Segmented
-              size="small"
-              options={TIME_OPTIONS.map(o => ({ label: o.label, value: o.label }))}
-              value={TIME_OPTIONS.find(o => o.value === hours)?.label || '24h'}
-              onChange={label => {
-                const opt = TIME_OPTIONS.find(o => o.label === label);
-                if (opt) handleHoursChange(opt.value);
-              }}
+            {/* 时间分段：共享组件，options 全站唯一事实源（需求 031）。
+                无 showAll 形态：看板无「全部」选项，hours 必为 number，默认 24h 行为不变。 */}
+            <TimeRangeSegmented
+              value={hours}
+              onChange={handleHoursChange}
               style={{ marginLeft: 8 }}
             />
             <Select
