@@ -247,4 +247,23 @@ impl Database {
             .await?;
         Ok(result.rows_affected)
     }
+
+    /// 按 name 删除单个工艺模板（用户工艺删除流程专用）。
+    ///
+    /// 与 `delete_all_system_process_templates` 的区别：
+    /// - 按 `name` 精准删除单条，而非批量删除 `is_system=true` 的记录
+    /// - 不区分 `is_system`，调用方需在 handler 层做来源校验
+    ///   （系统工艺拒绝删除，返回 409）
+    /// - 返回受影响行数：0 表示该 name 不存在（调用方应先
+    ///   `get_process_template_by_name` 判 404）
+    pub async fn delete_process_template(
+        &self,
+        name: &str,
+    ) -> Result<u64, sea_orm::DbErr> {
+        let result = process_templates::Entity::delete_many()
+            .filter(process_templates::Column::Name.eq(name.to_string()))
+            .exec(&self.conn)
+            .await?;
+        Ok(result.rows_affected)
+    }
 }

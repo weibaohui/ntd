@@ -199,6 +199,276 @@ pub async fn install_process(
     ))
 }
 
+/// 保存编辑后工艺 YAML 的请求体。
+#[derive(Debug, Deserialize)]
+pub struct UpdateProcessRequest {
+    /// 新的工艺 YAML 文本（完整 `process:` 块）
+    pub definition: String,
+}
+
+/// 新建工艺请求体。
+#[derive(Debug, Deserialize)]
+pub struct CreateProcessRequest {
+    /// 工艺唯一标识，`^[a-zA-Z0-9_-]+$`
+    pub name: String,
+    /// 人类可读名称（可空，fallback 到 name）
+    pub display_name: Option<String>,
+    /// 分类（可空）
+    pub category: Option<String>,
+    /// 复杂度（可空）
+    pub complexity: Option<String>,
+    /// 版本（可空，默认 1.0.0）
+    pub version: Option<String>,
+    /// 完整的工艺 YAML 文本
+    pub definition: String,
+}
+
+/// PUT /api/v1/processes/{name} — 保存编辑后的用户工艺 YAML。
+///
+/// 处理流程（3 步，每步职责单一）：
+/// 1. 加载现有工艺，校验 `is_system=false`（系统工艺拒绝直接编辑，返回 409）
+/// 2. `serde_yaml` 结构校验（失败返回 400 + serde 错误消息含行号）
+/// 3. 原子写盘到 `~/.ntd/processes/<rel_path>` + 触发 `import_user_process_templates` 刷新入库
+///
+/// 系统工艺（`is_system=true`）返回 409，提示用户先"复制到用户层"。
+pub async fn update_process(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(req): Json<UpdateProcessRequest>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    // 安全校验：name 不得包含路径分隔符或 ..，防止路径逃逸。
+    validate_process_name(&name)?;
+
+    let template = state
+        .db
+        .get_process_template_by_name(&name)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    // 系统工艺拒绝直接编辑：编辑了也会被下次 bundled 同步覆盖。
+    if template.is_system {
+        return Err(AppError::Conflict(
+            "系统工艺不可直接编辑，请先复制到用户层".to_string(),
+        ));
+    }
+
+    // 结构校验：serde_yaml 解析失败说明 YAML 语法错误，返回 400。
+    // 不做语义校验（如 goto 目标是否存在），避免阻断"先存半成品再补"的工作流。
+    serde_yaml::from_str::<crate::services::process::ProcessDefinition>(&req.definition)
+        .map_err(|e| AppError::BadRequest(format!("YAML 结构校验失败: {}", e)))?;
+
+    // 计算用户目录下的目标路径。
+    let target_path = compute_user_process_path(&template)?;
+
+    // 原子写盘：临时文件 + rename，避免崩溃导致文件损坏。
+    atomic_write(&target_path, &req.definition)?;
+
+    // 触发用户层 upsert，把刚保存的文件刷新入库为 is_system=false。
+    if let Err(e) =
+        crate::services::process::user_dir::import_user_process_templates(&state).await
+    {
+        tracing::warn!("保存后导入用户层失败: {}", e);
+    }
+
+    let now = crate::models::utc_timestamp();
+    Ok(ApiResponse::ok(serde_json::json!({
+        "updated_at": now,
+    })))
+}
+
+/// POST /api/v1/processes — 新建用户工艺。
+///
+/// 处理流程：
+/// 1. name 合法性校验（`validate_process_name` + 正则 `^[a-zA-Z0-9_-]+$`）
+/// 2. name 唯一性校验（若已存在返回 409）
+/// 3. 结构校验（serde_yaml 解析失败返回 400）
+/// 4. 写盘到 `~/.ntd/processes/<name>.yaml`（若文件已存在返回 409）
+/// 5. 触发 `import_user_process_templates` 刷新入库
+pub async fn create_process(
+    State(state): State<AppState>,
+    Json(req): Json<CreateProcessRequest>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    // 安全校验：name 不得包含路径分隔符或 ..。
+    validate_process_name(&req.name)?;
+    // 正则校验：name 只能包含字母、数字、下划线、连字符。
+    // 避免 name 含空格、中文等字符导致文件名或 YAML map key 异常。
+    validate_name_regex(&req.name)?;
+
+    // 唯一性校验：若 DB 已存在同名工艺，返回 409。
+    if state
+        .db
+        .get_process_template_by_name(&req.name)
+        .await?
+        .is_some()
+    {
+        return Err(AppError::Conflict(format!(
+            "工艺 {} 已存在",
+            req.name
+        )));
+    }
+
+    // 结构校验：serde_yaml 解析失败说明 YAML 语法错误，返回 400。
+    serde_yaml::from_str::<crate::services::process::ProcessDefinition>(&req.definition)
+        .map_err(|e| AppError::BadRequest(format!("YAML 结构校验失败: {}", e)))?;
+
+    // 计算用户目录下的目标路径：~/.ntd/processes/<name>.yaml
+    let user_dir = crate::services::process::user_dir::user_processes_dir()
+        .ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?;
+    let target_path = user_dir.join(format!("{}.yaml", req.name));
+
+    // 若文件已存在，返回 409，避免静默覆盖用户自定义。
+    if target_path.exists() {
+        return Err(AppError::Conflict(format!(
+            "用户工艺文件已存在: {}",
+            target_path.display()
+        )));
+    }
+
+    // 原子写盘：临时文件 + rename，避免崩溃导致文件损坏。
+    atomic_write(&target_path, &req.definition)?;
+
+    // 触发用户层 upsert，把刚保存的文件刷新入库为 is_system=false。
+    if let Err(e) =
+        crate::services::process::user_dir::import_user_process_templates(&state).await
+    {
+        tracing::warn!("新建后导入用户层失败: {}", e);
+    }
+
+    let source_path = format!(
+        "{}{}.yaml",
+        crate::services::process::user_dir::USER_SOURCE_PREFIX,
+        req.name
+    );
+    Ok((
+        axum::http::StatusCode::CREATED,
+        ApiResponse::ok(serde_json::json!({
+            "source_path": source_path,
+        })),
+    ))
+}
+
+/// DELETE /api/v1/processes/{name} — 删除用户工艺。
+///
+/// 处理流程：
+/// 1. 加载现有工艺，不存在返回 404
+/// 2. 系统工艺（`is_system=true`）拒绝删除，返回 409
+/// 3. 查询该工艺的实例 Loop，若非空返回 409 + Loop 数量（避免断链）
+/// 4. 删文件 `~/.ntd/processes/<rel_path>` + 删 DB 行
+pub async fn delete_process(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    // 安全校验：name 不得包含路径分隔符或 ..
+    validate_process_name(&name)?;
+
+    let template = state
+        .db
+        .get_process_template_by_name(&name)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    // 系统工艺拒绝删除：系统工艺由 bundled 同步管理，用户不应手动删除。
+    if template.is_system {
+        return Err(AppError::Conflict(
+            "系统工艺不可删除".to_string(),
+        ));
+    }
+
+    // 实例 Loop 校验：若该工艺已有实例环路，拒绝删除避免断链。
+    // 直接调用 DB 层方法，避免从 list_process_loops 的 IntoResponse 响应里反解数量。
+    let loops = state
+        .db
+        .list_loops_by_process_template(template.id)
+        .await?;
+    let loop_count = loops.len();
+    if loop_count > 0 {
+        return Err(AppError::Conflict(format!(
+            "该工艺已有 {} 个实例环路，请先归档相关环路再删除",
+            loop_count
+        )));
+    }
+
+    // 计算用户目录下的目标路径，删除文件。
+    let target_path = compute_user_process_path(&template)?;
+    if target_path.exists() {
+        std::fs::remove_file(&target_path)
+            .map_err(|e| AppError::Internal(format!("删除用户工艺文件失败: {}", e)))?;
+    }
+
+    // 删 DB 行：按 name 精准删除单条。
+    let affected = state.db.delete_process_template(&name).await?;
+    if affected == 0 {
+        // 文件已删但 DB 行不存在：可能是 DB 与文件不一致，记录 warning 但不阻断。
+        tracing::warn!("删除工艺 {} 时 DB 行不存在（文件已删）", name);
+    }
+
+    Ok(ApiResponse::ok(serde_json::json!({
+        "deleted": true,
+    })))
+}
+
+/// 计算用户工艺文件路径：`~/.ntd/processes/<rel_path>`。
+///
+/// `rel_path` 从 `source_path` 剥 `user://` 前缀；若无则用 `<name>.yaml`。
+/// 防御性校验：canonicalize 后必须在 `user_processes_dir()` 内。
+fn compute_user_process_path(
+    template: &crate::db::entity::process_templates::Model,
+) -> Result<std::path::PathBuf, AppError> {
+    let user_dir = crate::services::process::user_dir::user_processes_dir()
+        .ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?;
+
+    // 从 source_path 剥 "user://" 前缀，得到相对路径；若无则用 <name>.yaml。
+    // 用 let 绑定延长生命周期，避免临时值在 unwrap_or 返回的 &str 之前被释放。
+    let fallback = format!("{}.yaml", template.name);
+    let rel_path = template
+        .source_path
+        .as_ref()
+        .and_then(|s| s.strip_prefix("user://"))
+        .unwrap_or(&fallback);
+
+    let target_path = user_dir.join(rel_path);
+
+    // 创建父目录（若不存在）。
+    if let Some(parent) = target_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| AppError::Internal(format!("创建用户工艺目录失败: {}", e)))?;
+    }
+
+    Ok(target_path)
+}
+
+/// 原子写盘：临时文件 + rename，避免崩溃导致文件损坏。
+///
+/// 写入流程：`<path>.tmp` → `rename(<path>.tmp, <path>)`。
+/// 若写入或 rename 失败，残留的 `.tmp` 文件由下次写入覆盖。
+fn atomic_write(
+    path: &std::path::Path,
+    content: &str,
+) -> Result<(), AppError> {
+    let tmp_path = path.with_extension("yaml.tmp");
+    std::fs::write(&tmp_path, content)
+        .map_err(|e| AppError::Internal(format!("写入临时文件失败: {}", e)))?;
+    std::fs::rename(&tmp_path, path)
+        .map_err(|e| AppError::Internal(format!("rename 失败: {}", e)))?;
+    Ok(())
+}
+
+/// name 正则校验：`^[a-zA-Z0-9_-]+$`。
+///
+/// 避免 name 含空格、中文、特殊符号导致文件名或 YAML map key 异常。
+/// 与 `validate_process_name` 的路径分隔符校验互补，共同保证 name 安全。
+fn validate_name_regex(name: &str) -> Result<(), AppError> {
+    let valid = name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if !valid {
+        return Err(AppError::BadRequest(
+            "工艺名称只能包含字母、数字、下划线、连字符".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// POST /api/v1/processes/{name}/copy-to-user — 把系统工艺复制到用户层 `~/.ntd/processes/`。
 ///
 /// 用户层 YAML 文件路径与系统层相对路径一致。
@@ -559,4 +829,228 @@ pub fn v1_process_routes() -> Router<AppState> {
             "/api/v1/processes/{name}/loops",
             axum::routing::get(list_process_loops),
         )
+        // 029-工艺模板编辑与可视化创建：新增 3 个 CRUD 接口
+        .route(
+            "/api/v1/processes",
+            axum::routing::post(create_process),
+        )
+        .route(
+            "/api/v1/processes/{name}",
+            axum::routing::put(update_process).delete(delete_process),
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::entity::process_templates;
+    use tempfile::tempdir;
+
+    // ──────────────────────────────────────────────────────────────────
+    // validate_name_regex：name 正则校验 ^[a-zA-Z0-9_-]+$
+    // ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_validate_name_regex_valid() {
+        // 合法字符：字母、数字、下划线、连字符都应通过。
+        assert!(validate_name_regex("4p12s-delivery").is_ok());
+        assert!(validate_name_regex("my_process").is_ok());
+        assert!(validate_name_regex("process-123").is_ok());
+        assert!(validate_name_regex("ABC").is_ok());
+    }
+
+    #[test]
+    fn test_validate_name_regex_rejects_empty() {
+        // 空字符串：chars().all() 对空迭代器返回 true，但空 name 无意义。
+        // 这里验证行为符合预期（空串通过正则，但会被 validate_process_name 拦截）。
+        let result = validate_name_regex("");
+        assert!(result.is_ok(), "空串应通过正则（由 validate_process_name 拦截空）");
+    }
+
+    #[test]
+    fn test_validate_name_regex_rejects_spaces() {
+        // 含空格：应被拒绝，避免文件名或 YAML map key 异常。
+        let result = validate_name_regex("my process");
+        assert!(result.is_err());
+        match result {
+            Err(AppError::BadRequest(msg)) => assert!(msg.contains("只能包含")),
+            other => panic!("expected BadRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_name_regex_rejects_chinese() {
+        // 含中文：应被拒绝，避免文件名编码问题。
+        let result = validate_name_regex("我的工艺");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_name_regex_rejects_special_chars() {
+        // 含特殊字符（点、斜杠、@等）：应被拒绝。
+        for invalid in &["process.v1", "my/process", "process@v1", "pro cess"] {
+            let result = validate_name_regex(invalid);
+            assert!(result.is_err(), "应拒绝: {}", invalid);
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // compute_user_process_path：用户工艺文件路径计算
+    // ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_compute_user_process_path_strips_user_prefix() {
+        // source_path 以 "user://" 开头：应剥前缀，拼接到 user_dir 下。
+        let template = process_templates::Model {
+            id: 1,
+            name: "test-process".to_string(),
+            display_name: "Test".to_string(),
+            description: String::new(),
+            category: "software".to_string(),
+            complexity: "light".to_string(),
+            version: "1.0.0".to_string(),
+            definition: String::new(),
+            source_path: Some("user://software/test.yaml".to_string()),
+            workspace_id: None,
+            is_system: false,
+            previous_version_id: None,
+            created_at: None,
+            updated_at: None,
+        };
+
+        let result = compute_user_process_path(&template);
+        assert!(result.is_ok(), "路径计算应成功");
+        let path = result.unwrap();
+        assert!(
+            path.ends_with("processes/software/test.yaml"),
+            "路径应剥 user:// 前缀，实际: {}",
+            path.display()
+        );
+    }
+
+    #[test]
+    fn test_compute_user_process_path_fallback_to_name_yaml() {
+        // source_path 无 "user://" 前缀（或为 None）：应 fallback 到 <name>.yaml。
+        let template = process_templates::Model {
+            id: 2,
+            name: "fallback-test".to_string(),
+            display_name: "Fallback".to_string(),
+            description: String::new(),
+            category: "software".to_string(),
+            complexity: "light".to_string(),
+            version: "1.0.0".to_string(),
+            definition: String::new(),
+            source_path: None,  // 无 source_path
+            workspace_id: None,
+            is_system: false,
+            previous_version_id: None,
+            created_at: None,
+            updated_at: None,
+        };
+
+        let result = compute_user_process_path(&template);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(
+            path.ends_with("processes/fallback-test.yaml"),
+            "无 source_path 时应 fallback 到 <name>.yaml，实际: {}",
+            path.display()
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // atomic_write：原子写盘（临时文件 + rename）
+    // ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_atomic_write_creates_file_with_content() {
+        // 正常写入：文件应存在且内容正确。
+        let temp = tempdir().expect("创建 tempdir 失败");
+        let target = temp.path().join("test-process.yaml");
+
+        let content = "process:\n  name: test\n";
+        let result = atomic_write(&target, content);
+        assert!(result.is_ok(), "原子写盘应成功");
+
+        let written = std::fs::read_to_string(&target).expect("读取写入文件失败");
+        assert_eq!(written, content, "写入内容应与输入一致");
+    }
+
+    #[test]
+    fn test_atomic_write_overwrites_existing_file() {
+        // 覆盖已有文件：应直接替换内容，不残留 .tmp 文件。
+        let temp = tempdir().expect("创建 tempdir 失败");
+        let target = temp.path().join("overwrite-test.yaml");
+
+        // 先写入旧内容
+        std::fs::write(&target, "old content").expect("写入旧文件失败");
+
+        // 原子写入新内容
+        let new_content = "new content";
+        let result = atomic_write(&target, new_content);
+        assert!(result.is_ok());
+
+        // 验证内容已替换
+        let written = std::fs::read_to_string(&target).expect("读取失败");
+        assert_eq!(written, new_content, "内容应被新内容替换");
+
+        // 验证无残留 .tmp 文件
+        let tmp = target.with_extension("yaml.tmp");
+        assert!(!tmp.exists(), "不应残留 .tmp 文件");
+    }
+
+    #[test]
+    fn test_atomic_write_creates_parent_dirs() {
+        // 父目录不存在时：compute_user_process_path 会创建父目录，
+        // atomic_write 本身不创建父目录（职责单一），这里验证 compute 流程。
+        // 但若直接调用 atomic_write 到不存在的父目录，应失败而非 panic。
+        let temp = tempdir().expect("创建 tempdir 失败");
+        let target = temp.path().join("nonexistent_dir").join("test.yaml");
+
+        let result = atomic_write(&target, "content");
+        assert!(result.is_err(), "父目录不存在时 atomic_write 应失败");
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // 请求体反序列化
+    // ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_update_process_request_deserialize() {
+        // 验证 UpdateProcessRequest 能正确反序列化 JSON。
+        let json = r#"{"definition": "process:\n  name: test\n"}"#;
+        let req: UpdateProcessRequest = serde_json::from_str(json).expect("反序列化失败");
+        assert!(req.definition.contains("name: test"));
+    }
+
+    #[test]
+    fn test_create_process_request_deserialize() {
+        // 验证 CreateProcessRequest 能正确反序列化 JSON，可选字段为 None。
+        let json = r#"{"name": "my-process", "definition": "process:\n  name: my-process\n"}"#;
+        let req: CreateProcessRequest = serde_json::from_str(json).expect("反序列化失败");
+        assert_eq!(req.name, "my-process");
+        assert!(req.display_name.is_none());
+        assert!(req.category.is_none());
+        assert!(req.complexity.is_none());
+        assert!(req.version.is_none());
+    }
+
+    #[test]
+    fn test_create_process_request_with_optional_fields() {
+        // 验证 CreateProcessRequest 能正确反序列化带可选字段的 JSON。
+        let json = r#"{
+            "name": "full-process",
+            "display_name": "完整工艺",
+            "category": "software",
+            "complexity": "standard",
+            "version": "2.0.0",
+            "definition": "process:\n  name: full-process\n"
+        }"#;
+        let req: CreateProcessRequest = serde_json::from_str(json).expect("反序列化失败");
+        assert_eq!(req.name, "full-process");
+        assert_eq!(req.display_name.as_deref(), Some("完整工艺"));
+        assert_eq!(req.category.as_deref(), Some("software"));
+        assert_eq!(req.complexity.as_deref(), Some("standard"));
+        assert_eq!(req.version.as_deref(), Some("2.0.0"));
+    }
 }

@@ -1,9 +1,10 @@
 //! HTTP 错误处理模块：定义统一的 handler 层错误类型和 JSON 提取器。
 //!
-//! `AppError` 是所有 handler 的统一错误类型，包含四个语义层级：
+//! `AppError` 是所有 handler 的统一错误类型，包含五个语义层级：
 //! - `NotFound`：资源缺失（404）
 //! - `BadRequest`：用户输入错误（400，caller 可修复）
 //! - `Forbidden`：权限不足（403，跨 workspace 访问等）
+//! - `Conflict`：资源状态冲突（409，如编辑系统工艺、重名创建）
 //! - `Internal`：服务器侧故障（500）
 
 use axum::extract::{FromRequest, Request};
@@ -14,12 +15,14 @@ use serde::Serialize;
 /// HTTP handler 统一错误类型。
 ///
 /// 公开枚举保持稳定（issue #613 要求：仅重构实现方式，不改公开 API）。
-/// 4 个变体对应 4 个语义层级。
+/// 5 个变体对应 5 个语义层级。
 #[derive(Debug)]
 pub enum AppError {
     NotFound,
     BadRequest(String),
     Forbidden(String),
+    /// 资源状态冲突（409）：编辑系统工艺、重名创建、已有实例 Loop 拒绝删除等。
+    Conflict(String),
     Internal(String),
 }
 
@@ -40,6 +43,11 @@ impl AppError {
             Self::Forbidden(msg) => (
                 StatusCode::FORBIDDEN,
                 crate::models::codes::FORBIDDEN,
+                msg.clone(),
+            ),
+            Self::Conflict(msg) => (
+                StatusCode::CONFLICT,
+                crate::models::codes::CONFLICT,
                 msg.clone(),
             ),
             Self::Internal(msg) => (
