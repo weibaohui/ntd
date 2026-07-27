@@ -24,6 +24,8 @@ import { BuildOutlined, ReloadOutlined, EyeOutlined, DownloadOutlined, SearchOut
 import bundledApi, { type ProcessTemplate, type ProcessTemplateDetail, type ProcessLoopItem } from '@/api/bundled';
 import { adaptProcessDefinition } from '@/components/process/processFlowAdapter';
 import { ProcessFlowGraph } from '@/components/process/ProcessFlowGraph';
+// M3：真实编辑器组件，edit 模式下渲染
+import { ProcessEditor } from '@/components/process/ProcessEditor';
 // 029：pushUrl 用于"创建工艺"按钮导航到编辑器路由（/#/processes?processMode=new）。
 import { useViewState } from '@/hooks/useViewState';
 
@@ -52,13 +54,12 @@ export function ProcessPage({ workspaceId, onOpenLoop, processName, processMode 
   // 列表态走现有逻辑（ProcessListView），编辑器态走占位（M3-M6 填实 ProcessEditor）。
   // pushUrl 从 useViewState 取，用于"创建工艺"按钮导航到编辑器路由。
   const { pushUrl } = useViewState();
-  if (processMode === 'new' || processMode === 'edit') {
-    return (
-      <ProcessEditorPlaceholder
-        mode={processMode}
-        name={processMode === 'edit' ? processName ?? null : null}
-      />
-    );
+  // M3：edit 模式接真实 ProcessEditor，new 模式留占位给 M6
+  if (processMode === 'edit' && processName) {
+    return <ProcessEditor processName={processName} />;
+  }
+  if (processMode === 'new') {
+    return <ProcessEditorPlaceholder mode="new" name={null} />;
   }
   return <ProcessListView workspaceId={workspaceId} onOpenLoop={onOpenLoop} processName={processName} pushUrl={pushUrl} />;
 }
