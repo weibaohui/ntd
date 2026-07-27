@@ -1,9 +1,10 @@
 // 概念关系图：纯 SVG 手绘 + 节点点击弹 Drawer + hover 高亮 + 流动动画。
 // 不引入 reactflow 重依赖（节点固定 7 个，手布局即可）。
 // 尊重 prefers-reduced-motion：动画降级为静态高亮。
+// 030：支线节点 Drawer 支持定制说明文案 + 「去 XX 页」跳转按钮（黑板/看板）。
 
 import { useState, useEffect, useRef } from 'react';
-import { Drawer, Typography, Descriptions, Empty } from 'antd';
+import { Button, Drawer, Typography, Descriptions, Empty } from 'antd';
 import {
   CONCEPTS,
   GRAPH_EDGES,
@@ -11,6 +12,9 @@ import {
   type ConceptNode,
   type GraphNode,
 } from '@/components/onboarding/concepts';
+// 030：嵌套组件独立实例化 useViewState 是 028 既定模式（靠 ntd-nav-change 事件全站同步），
+// 跳转按钮必须走 pushUrl，不能用 location.hash 裸跳（不触发事件广播会导致 App 根实例状态脱节）。
+import { useViewState } from '@/hooks/useViewState';
 
 const { Text, Title } = Typography;
 
@@ -80,6 +84,9 @@ function Edge({
       fill="none"
       markerEnd={`url(#${isMain ? 'ntd-onboarding-arrow-main' : 'ntd-onboarding-arrow-side'})`}
       className={reduceMotion ? undefined : 'ntd-onboarding-edge-flow'}
+      // testid 供 030 测试断言 hover 后连线 stroke/stroke-width 升级；
+      // 纯测试锚点，不参与任何渲染逻辑，from-to 组合天然唯一
+      data-testid={`onboarding-graph-edge-${from.id}-${to.id}`}
       style={{
         // reduced-motion 时无动画，但仍可加粗高亮。
         transition: 'stroke 0.2s ease, stroke-width 0.2s ease',
@@ -172,12 +179,45 @@ function ConceptDrawerContent({ concept }: { concept: ConceptNode }) {
   );
 }
 
-/** 空态：支线节点（无 conceptId）点击时展示简单说明。 */
-function GraphNodeDrawerFallback({ node }: { node: GraphNode }) {
+/**
+ * 空态：支线节点（无 conceptId）点击时展示说明。
+ *
+ * 030 增强处理思路：
+ * 1. 文案：节点带 drawerDesc 用定制文案（黑板/看板），缺省回退通用说明，
+ *    保证既有 fallback 节点（触发器/技能/模型/执行记录）逐字不回归。
+ * 2. 跳转：仅 navTarget 存在的节点渲染「去 XX 页」按钮；
+ *    跳转动作不在这里直接做，回调给主组件（要先关 Drawer 再跳，避免遮罩残留）。
+ */
+function GraphNodeDrawerFallback({
+  node,
+  onNavigate,
+}: {
+  node: GraphNode;
+  onNavigate: (node: GraphNode) => void;
+}) {
   return (
     <div style={{ padding: 24 }}>
       <Title level={4} style={{ marginBottom: 8 }}>{node.label}</Title>
-      <Text type="secondary">这是关系图的支线节点，用于辅助说明主概念关系，不对应独立菜单入口。</Text>
+      {/* 文案二选一：drawerDesc 存在用定制说明（黑板/看板），缺省回退通用文案 ——
+          用 ?? 而非 ||：空字符串不会被误判为缺省（虽然当前数据没有空串场景，语义更准） */}
+      <Text type="secondary">
+        {node.drawerDesc ?? '这是关系图的支线节点，用于辅助说明主概念关系，不对应独立菜单入口。'}
+      </Text>
+      {/* 跳转按钮仅 navTarget 存在的节点渲染：无独立页面的支线节点（触发器等）保持纯说明形态。
+          点击不在这里直接跳转，而是回调 onNavigate 给主组件 —— 子组件不持有路由控制权，
+          保证「先关 Drawer 再跳转」的时序由主组件统一掌控（遮罩残留风险点）。
+          按钮 testid 沿用 026 测试约定的 onboarding-graph-drawer-goto-{id} 命名。 */}
+      {node.navTarget && (
+        <div style={{ marginTop: 16 }}>
+          <Button
+            type="primary"
+            onClick={() => onNavigate(node)}
+            data-testid={`onboarding-graph-drawer-goto-${node.id}`}
+          >
+            {`去${node.label}页`}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -195,6 +235,8 @@ export function ConceptRelationGraph() {
   const [hovered, setHovered] = useState<string | null>(null);
   const [drawerNode, setDrawerNode] = useState<GraphNode | null>(null);
   const reduceMotion = usePrefersReducedMotion();
+  // 030：跳转按钮走 pushUrl（自动广播 ntd-nav-change 同步全站视图状态）。
+  const { pushUrl } = useViewState();
 
   // 节点 id → GraphNode 映射，用于查连线两端。
   // useRef 避免每次 render 重建 Map。
@@ -207,6 +249,14 @@ export function ConceptRelationGraph() {
   const drawerConcept: ConceptNode | null = drawerNode?.conceptId
     ? CONCEPTS.find((c) => c.id === drawerNode.conceptId) ?? null
     : null;
+
+  // 「去 XX 页」按钮回调：先关 Drawer 再跳转 —— 跳转后 onboarding 视图卸载，
+  // 不关 Drawer 会残留遮罩盖住新页面；navTarget 为空属防御分支（按钮根本不渲染），直接忽略。
+  const handleNodeNavigate = (node: GraphNode) => {
+    if (!node.navTarget) return;
+    setDrawerNode(null);
+    pushUrl(node.navTarget, { mode: node.navMode });
+  };
 
   return (
     <div
@@ -294,7 +344,9 @@ export function ConceptRelationGraph() {
         {drawerNode && drawerConcept ? (
           <ConceptDrawerContent concept={drawerConcept} />
         ) : drawerNode ? (
-          <GraphNodeDrawerFallback node={drawerNode} />
+          // fallback 分支：onNavigate 必须逐层透传而非 fallback 内自行实例化 useViewState ——
+          // 跳转前要联动本组件的 drawerNode state（先关 Drawer），跨组件状态只能由父组件协调
+          <GraphNodeDrawerFallback node={drawerNode} onNavigate={handleNodeNavigate} />
         ) : (
           <Empty />
         )}

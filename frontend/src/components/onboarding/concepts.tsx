@@ -14,7 +14,8 @@ import {
   TeamOutlined,
   UnorderedListOutlined,
 } from '@ant-design/icons';
-import type { View } from '@/hooks/useViewState';
+// 030：GraphNode 跳转按钮需要 View + BoardMode 两个类型（看板要 ?mode=kanban）。
+import type { BoardMode, View } from '@/hooks/useViewState';
 
 /**
  * 单个概念的定义。
@@ -207,18 +208,31 @@ export interface GraphNode {
   y: number;
   /** hover 时同时高亮的节点 id 列表（关联节点）。 */
   highlights: string[];
-  /** 对应 CONCEPTS 的 id，用于点击弹 Drawer；undefined 表示支线节点不弹 Drawer。 */
+  /** 对应 CONCEPTS 的 id，用于点击弹概念详情 Drawer；undefined 表示支线节点，弹 fallback 说明 Drawer。 */
   conceptId?: ConceptNode['id'];
   /** 是否主航线节点：true 时圆圈加大 + 主色填充，突出主链层级。 */
   isMain?: boolean;
+  // —— 030 新增 3 个可选字段：给「有独立页面」的支线节点（黑板/看板）挂 Drawer 说明 + 跳转按钮。
+  // 为什么做成可选字段而非新节点类型：既有 4 个 fallback 节点（触发器/技能/模型/执行记录）不填
+  // 这三字段即保持原行为，GraphNode 结构向后兼容，未来新支线节点加跳转也只改数据不动组件。
+  /** Drawer 说明文案（仅无 conceptId 的支线节点生效）；缺省回退到通用 fallback 文案。 */
+  drawerDesc?: string;
+  /** Drawer 底部「去 XX 页」按钮的跳转目标视图；缺省则不渲染跳转按钮。
+      用 View 字面量而非手写 hash 字符串：编译期白名单约束，杜绝拼错路由。 */
+  navTarget?: View;
+  /** 跳转时携带的 mode query（看板需要 ?mode=kanban 直落看板视图）；其他视图缺省。
+      独立于 navTarget 单设字段：memorial 一个视图对应 4 种 mode，目标与模式是两个正交维度。 */
+  navMode?: BoardMode;
 }
 
 export const GRAPH_NODES: readonly GraphNode[] = [
   // 主链 4 节点（横向中线，isMain=true 圆圈加大突出主航线）
+  // 030：主链节点的 highlights 追加 blackboard/kanban —— 高亮是单向声明，
+  // 主链侧不声明的话 hover 主链节点时观察层两个新节点不会亮（需求场景 C）。
   { id: 'process', label: '工艺', x: 120, y: 200, highlights: ['loop', 'todo'], conceptId: 'process', isMain: true },
-  { id: 'loop', label: '环路', x: 400, y: 200, highlights: ['process', 'todo', 'task', 'trigger'], conceptId: 'loop', isMain: true },
-  { id: 'todo', label: '事项', x: 680, y: 200, highlights: ['loop', 'execution', 'trigger', 'executor', 'expert', 'model', 'skill'], conceptId: 'todo', isMain: true },
-  { id: 'execution', label: '执行记录', x: 900, y: 200, highlights: ['todo'], isMain: true },
+  { id: 'loop', label: '环路', x: 400, y: 200, highlights: ['process', 'todo', 'task', 'trigger', 'blackboard'], conceptId: 'loop', isMain: true },
+  { id: 'todo', label: '事项', x: 680, y: 200, highlights: ['loop', 'execution', 'trigger', 'executor', 'expert', 'model', 'skill', 'blackboard'], conceptId: 'todo', isMain: true },
+  { id: 'execution', label: '执行记录', x: 900, y: 200, highlights: ['todo', 'blackboard', 'kanban'], isMain: true },
   // 支线节点：与 6 核心概念 + 触发器 + skill 对齐，isMain 缺省 false 圆圈较小
   { id: 'task', label: '任务', x: 400, y: 340, highlights: ['loop'], conceptId: 'task' },
   { id: 'trigger', label: '触发器', x: 440, y: 60, highlights: ['loop', 'todo'] },
@@ -226,6 +240,37 @@ export const GRAPH_NODES: readonly GraphNode[] = [
   { id: 'expert', label: '专家', x: 760, y: 340, highlights: ['todo', 'executor', 'model'], conceptId: 'expert' },
   { id: 'skill', label: '技能 Skill', x: 580, y: 340, highlights: ['todo', 'expert'] },
   { id: 'model', label: '模型', x: 860, y: 340, highlights: ['todo', 'executor', 'expert'] },
+  // 030 观察层 2 节点（支线小圆）：黑板/看板是「定义→执行」之后的观察出口。
+  // 黑板放执行记录正上方同列（x=900），让「执行记录→黑板」成垂直短边；
+  // 看板放底行最右端（x=960），与模型圆心距 100（=专家↔模型既有间距），右缘 996 不出 viewBox。
+  {
+    id: 'blackboard',
+    label: '黑板',
+    // 与执行记录同列（x=900）：「执行记录→黑板」成垂直短边，避免再增加跨图长斜线
+    x: 900,
+    // 顶行 y=60 与触发器/执行器同行，维持支线节点上下两行的网格节奏
+    y: 60,
+    // 高亮单向声明：黑板侧列出三个分析来源，hover 黑板时事项/执行记录/环路同步亮
+    highlights: ['todo', 'execution', 'loop'],
+    // 三层语义（需求 §5.3）：① 事项+执行记录持续自动分析 ② 环节小黑板记各环节结论 ③ 汇总统一观看。
+    drawerDesc:
+      '根据事项与执行记录持续自动分析得出的观察报告。环路里还有环节小黑板，逐个记录各个环节的执行结论，汇总到黑板统一观看。',
+    navTarget: 'blackboard',
+  },
+  {
+    id: 'kanban',
+    label: '看板',
+    // 底行最右端（x=960）：与模型圆心距 100（=专家↔模型既有间距），右缘 996 不出 viewBox
+    x: 960,
+    // 底行 y=340 与任务/技能/专家/模型同行
+    y: 340,
+    // 看板只有执行记录一个数据来源，故高亮列表只声明它
+    highlights: ['execution'],
+    drawerDesc: '执行进度进展的展示方式，按状态分列呈现事项从待执行到已完成的全过程进展。',
+    // 看板直落 kanban 模式而非默认 memorial 结论视图：用户语义是「进度展示」，kanban 才是进度视角。
+    navTarget: 'memorial',
+    navMode: 'kanban',
+  },
 ] as const;
 
 /**
@@ -257,6 +302,13 @@ export const GRAPH_EDGES: readonly GraphEdge[] = [
   { from: 'expert', to: 'todo', label: '人格' },
   { from: 'skill', to: 'todo', label: '能力注入' },
   { from: 'model', to: 'todo', label: 'LLM' },
+  // 030 观察层 4 条边（支线细线，均不带 isMain）：
+  // 黑板 = 事项/执行记录持续自动分析 + 环路各环节结论汇总；看板 = 执行进度进展展示。
+  // 两条「持续分析」label 相同但 from-to key 不同（todo-/execution-blackboard），React key 无冲突。
+  { from: 'todo', to: 'blackboard', label: '持续分析' },
+  { from: 'execution', to: 'blackboard', label: '持续分析' },
+  { from: 'loop', to: 'blackboard', label: '环节结论' },
+  { from: 'execution', to: 'kanban', label: '进度展示' },
 ] as const;
 
 /**
