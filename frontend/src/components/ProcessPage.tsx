@@ -20,10 +20,12 @@ import {
   Tabs,
   Table,
 } from 'antd';
-import { BuildOutlined, ReloadOutlined, EyeOutlined, DownloadOutlined, SearchOutlined, ApartmentOutlined, CodeOutlined } from '@ant-design/icons';
+import { BuildOutlined, ReloadOutlined, EyeOutlined, DownloadOutlined, SearchOutlined, ApartmentOutlined, CodeOutlined, PlusOutlined, EditOutlined } from '@ant-design/icons';
 import bundledApi, { type ProcessTemplate, type ProcessTemplateDetail, type ProcessLoopItem } from '@/api/bundled';
 import { adaptProcessDefinition } from '@/components/process/processFlowAdapter';
 import { ProcessFlowGraph } from '@/components/process/ProcessFlowGraph';
+// 029：pushUrl 用于"创建工艺"按钮导航到编辑器路由（/#/processes?processMode=new）。
+import { useViewState } from '@/hooks/useViewState';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -36,9 +38,62 @@ interface ProcessPageProps {
    * 用于「环路详情 → 来源工艺」回跳后自动打开该工艺详情，形成溯源闭环。
    */
   processName?: string | null;
+  /**
+   * 029：工艺编辑器模式。
+   * - `'list'`（默认）：渲染工艺列表页
+   * - `'new'`：渲染编辑器空白态，先弹元信息 Modal
+   * - `'edit'`：渲染编辑器，加载 `processName` 对应 YAML
+   */
+  processMode?: 'list' | 'new' | 'edit';
 }
 
-export function ProcessPage({ workspaceId, onOpenLoop, processName }: ProcessPageProps) {
+export function ProcessPage({ workspaceId, onOpenLoop, processName, processMode = 'list' }: ProcessPageProps) {
+  // 029：顶层分流，避免在 if return 后写 useState 造成条件 hooks。
+  // 列表态走现有逻辑（ProcessListView），编辑器态走占位（M3-M6 填实 ProcessEditor）。
+  // pushUrl 从 useViewState 取，用于"创建工艺"按钮导航到编辑器路由。
+  const { pushUrl } = useViewState();
+  if (processMode === 'new' || processMode === 'edit') {
+    return (
+      <ProcessEditorPlaceholder
+        mode={processMode}
+        name={processMode === 'edit' ? processName ?? null : null}
+      />
+    );
+  }
+  return <ProcessListView workspaceId={workspaceId} onOpenLoop={onOpenLoop} processName={processName} pushUrl={pushUrl} />;
+}
+
+/**
+ * 029：工艺编辑器占位骨架。
+ *
+ * M3-M6 阶段会被真正的 ProcessEditor 替换：
+ * - M3：Monaco YAML 编辑器
+ * - M4：React Flow 泳道可视化编辑器
+ * - M5：双向联动 + 保存
+ * - M6：新建工艺元信息 Modal + 空工艺渲染
+ *
+ * 当前仅渲染占位 UI，让路由入口可验证。
+ */
+function ProcessEditorPlaceholder({ mode, name }: { mode: 'new' | 'edit'; name: string | null }) {
+  return (
+    <div style={{ padding: 60, textAlign: 'center', color: '#94a3b8' }}>
+      <Title level={4}>
+        {mode === 'new' ? '创建新工艺（编辑器开发中）' : `编辑工艺：${name ?? '未知'}（编辑器开发中）`}
+      </Title>
+      <Text type="secondary">
+        029 工艺编辑器正在开发中（M3-M6 阶段填充 Monaco YAML 编辑器 + React Flow 泳道可视化）。
+      </Text>
+    </div>
+  );
+}
+
+/**
+ * 工艺列表视图（原 ProcessPage 的列表逻辑，029 抽为子组件以配合 mode 分流）。
+ *
+ * 保留原有的工艺模板库列表、查看详情、安装为 Loop 等功能。
+ * 029 新增：接收 pushUrl 用于"创建工艺"按钮导航到编辑器路由。
+ */
+function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit<ProcessPageProps, 'processMode'> & { pushUrl: (view: any, opts?: any) => void }) {
   const [processes, setProcesses] = useState<ProcessTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<ProcessTemplateDetail | null>(null);
@@ -166,6 +221,10 @@ export function ProcessPage({ workspaceId, onOpenLoop, processName }: ProcessPag
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
             刷新
+          </Button>
+          {/* 029：创建工艺入口。跳 /#/processes?processMode=new 进入编辑器空白态。 */}
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => pushUrl('processes', { processMode: 'new' })}>
+            创建工艺
           </Button>
         </div>
       </div>
@@ -353,17 +412,43 @@ export function ProcessPage({ workspaceId, onOpenLoop, processName }: ProcessPag
                 key: 'yaml',
                 label: <span><CodeOutlined /> YAML 源</span>,
                 children: (
-                  <pre style={{
-                    background: 'rgba(0,0,0,0.04)',
-                    padding: 12,
-                    borderRadius: 8,
-                    maxHeight: 400,
-                    overflow: 'auto',
-                    fontSize: 12,
-                    margin: 0,
-                  }}>
-                    <code>{detail.definition}</code>
-                  </pre>
+                  <div>
+                    {/* 029：用户工艺可编辑，跳编辑器路由；系统工艺只读（编辑了会被同步覆盖）。 */}
+                    {detail && !detail.is_system && (
+                      <div style={{ marginBottom: 12 }}>
+                        <Button
+                          type="primary"
+                          icon={<EditOutlined />}
+                          onClick={() => {
+                            setDetail(null);
+                            pushUrl('processes', { processMode: 'edit', name: detail.name });
+                          }}
+                        >
+                          编辑工艺
+                        </Button>
+                      </div>
+                    )}
+                    {detail && detail.is_system && (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message="系统工艺编辑后会被同步覆盖"
+                        description="请先「复制到用户层」后再编辑。"
+                        style={{ marginBottom: 12 }}
+                      />
+                    )}
+                    <pre style={{
+                      background: 'rgba(0,0,0,0.04)',
+                      padding: 12,
+                      borderRadius: 8,
+                      maxHeight: 400,
+                      overflow: 'auto',
+                      fontSize: 12,
+                      margin: 0,
+                    }}>
+                      <code>{detail.definition}</code>
+                    </pre>
+                  </div>
                 ),
               },
             ]}
