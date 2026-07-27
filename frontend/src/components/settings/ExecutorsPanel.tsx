@@ -660,65 +660,71 @@ export function ExecutorsPanel() {
           title={<><PlayCircleOutlined style={{ marginRight: 6 }} />运行配置</>}
           style={{ marginTop: 16 }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>最大并发数</span>
-              <InputNumber
+          <Form form={configForm} layout="inline">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>最大并发数</span>
+                <Form.Item name="max_concurrent_todos">
+                  <InputNumber
+                    size="small"
+                    min={1}
+                    max={20}
+                    style={{ width: 70 }}
+                  />
+                </Form.Item>
+                <Tooltip title="同时运行的最大 Todo 数量，超出将排队等待">
+                  <InfoCircleOutlined style={{ color: 'var(--color-text-quaternary)', fontSize: 12 }} />
+                </Tooltip>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>执行超时</span>
+                <Switch
+                  size="small"
+                  checked={executionTimeoutEnabled}
+                  checkedChildren="开启"
+                  unCheckedChildren="关闭"
+                  onChange={handleExecutionTimeoutToggle}
+                />
+                {/*
+                  手动管理 value/onChange 而非交由 Form.Item 托管：
+                  展示层用分钟（executionTimeoutMinutes），存储层用秒（execution_timeout_secs），
+                  需要在 onChange 中做 v * 60 转换后通过 setFieldsValue 写入表单，
+                  因此不能依赖 Form.Item 的默认值管理路径。
+                */}
+                <Form.Item name="execution_timeout_secs" noStyle>
+                  <InputNumber
+                    size="small"
+                    min={1}
+                    max={MAX_EXECUTION_TIMEOUT_MINUTES}
+                    style={{ width: 80 }}
+                    disabled={!executionTimeoutEnabled}
+                    value={executionTimeoutMinutes}
+                    onChange={(v) => {
+                      if (v) {
+                        const nextSecs = v * 60;
+                        setExecutionTimeoutSecs(nextSecs);
+                        configForm.setFieldsValue({ execution_timeout_secs: nextSecs });
+                        lastEnabledExecutionTimeoutSecsRef.current = nextSecs;
+                      }
+                    }}
+                  />
+                </Form.Item>
+                <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>分钟</span>
+                <Tooltip title={`单个执行任务的最大时长（1 ~ ${MAX_EXECUTION_TIMEOUT_MINUTES} 分钟，上限 7 天）；关闭后不再因超时自动终止`}>
+                  <InfoCircleOutlined style={{ color: 'var(--color-text-quaternary)', fontSize: 12 }} />
+                </Tooltip>
+              </div>
+              <Button
                 size="small"
-                min={1}
-                max={20}
-                value={configForm.getFieldValue('max_concurrent_todos') ?? 1}
-                onChange={(v) => {
-                  if (v) {
-                    configForm.setFieldsValue({ max_concurrent_todos: v });
-                  }
-                }}
-                style={{ width: 70 }}
-              />
-              <Tooltip title="同时运行的最大 Todo 数量，超出将排队等待">
-                <InfoCircleOutlined style={{ color: 'var(--color-text-quaternary)', fontSize: 12 }} />
-              </Tooltip>
+                type="primary"
+                icon={<SaveOutlined />}
+                loading={configSaving}
+                onClick={handleSaveConfig}
+              >
+                保存
+              </Button>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>执行超时</span>
-              <Switch
-                size="small"
-                checked={executionTimeoutEnabled}
-                checkedChildren="开启"
-                unCheckedChildren="关闭"
-                onChange={handleExecutionTimeoutToggle}
-              />
-              <InputNumber
-                size="small"
-                min={1}
-                max={MAX_EXECUTION_TIMEOUT_MINUTES}
-                style={{ width: 80 }}
-                disabled={!executionTimeoutEnabled}
-                value={executionTimeoutMinutes}
-                onChange={(v) => {
-                  if (v) {
-                    const nextSecs = v * 60;
-                    setExecutionTimeoutSecs(nextSecs);
-                    configForm.setFieldsValue({ execution_timeout_secs: nextSecs });
-                    lastEnabledExecutionTimeoutSecsRef.current = nextSecs;
-                  }
-                }}
-              />
-              <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>分钟</span>
-              <Tooltip title={`单个执行任务的最大时长（1 ~ ${MAX_EXECUTION_TIMEOUT_MINUTES} 分钟，上限 7 天）；关闭后不再因超时自动终止`}>
-                <InfoCircleOutlined style={{ color: 'var(--color-text-quaternary)', fontSize: 12 }} />
-              </Tooltip>
-            </div>
-            <Button
-              size="small"
-              type="primary"
-              icon={<SaveOutlined />}
-              loading={configSaving}
-              onClick={handleSaveConfig}
-            >
-              保存
-            </Button>
-          </div>
+          </Form>
         </Card>
 
         <Card
