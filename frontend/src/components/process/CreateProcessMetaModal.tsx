@@ -90,7 +90,16 @@ export function CreateProcessMetaModal({
         version: values.version,
       };
       const yamlText = buildEmptyProcessYaml(meta);
-      await bundledApi.postProcess(yamlText);
+      // postProcess 发 JSON body 对齐后端 Json<CreateProcessRequest> extractor
+      // （元信息分字段传，description 后端无此字段忽略不发，definition 含完整 YAML）
+      await bundledApi.postProcess({
+        name: meta.name,
+        display_name: meta.display_name,
+        category: meta.category,
+        complexity: meta.complexity,
+        version: meta.version,
+        definition: yamlText,
+      });
       message.success('工艺已创建');
       // 成功后重置表单 + 通知父组件跳路由
       form.resetFields();
