@@ -486,6 +486,27 @@ export const bundledApi = {
   },
 
   /**
+   * 保存工艺（M5）：PUT /api/v1/processes/{name}
+   * yamlText 为编辑后的完整 YAML 文本，后端会做 serde_yaml 结构校验。
+   * 系统工艺拒绝保存（409），前端 Toolbar 已禁用按钮，这里是兜底防线。
+   */
+  async putProcess(name: string, yamlText: string): Promise<void> {
+    // content-type 用 text/yaml，后端 handler 直接读 body 为 String
+    await api.put(`/api/v1/processes/${encodeURIComponent(name)}`, yamlText, {
+      headers: { 'Content-Type': 'text/yaml' },
+    });
+  },
+
+  /**
+   * 删除工艺（M5）：DELETE /api/v1/processes/{name}
+   * 系统工艺拒绝删除（409）；有实例 Loop 的工艺拒绝删除（409）。
+   * 前端 Toolbar 仅在 !isSystem 时渲染删除按钮，这里是兜底防线。
+   */
+  async deleteProcess(name: string): Promise<void> {
+    await api.delete(`/api/v1/processes/${encodeURIComponent(name)}`);
+  },
+
+  /**
    * 获取工艺实例审计数据（阶段 → 环节 → 产物 → 门禁）
    */
   async getProcessAudit(wsId: number, loopId: number, execId: number): Promise<ProcessAuditDto> {
