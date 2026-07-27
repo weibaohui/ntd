@@ -119,3 +119,48 @@ phases:
     expect(parsed['phases']).toBeDefined();
   });
 });
+
+// ── M5 新增：yamlDump 测试 ─────────────────────────
+
+import { yamlDump } from './processYamlValidator';
+
+describe('yamlDump', () => {
+  it('yamlDump_null_returnsEmptyString', () => {
+    expect(yamlDump(null)).toBe('');
+  });
+
+  it('yamlDump_undefined_returnsEmptyString', () => {
+    expect(yamlDump(undefined)).toBe('');
+  });
+
+  it('yamlDump_simpleObject_returnsYamlText', () => {
+    // 序列化后应包含 key: value 风格
+    const result = yamlDump({ name: 'test', count: 3 });
+    expect(result).toContain('name: test');
+    expect(result).toContain('count: 3');
+  });
+
+  it('yamlDump_nestedObject_returnsIndentedYaml', () => {
+    // 嵌套对象应缩进
+    const result = yamlDump({ process: { name: 'inner' } });
+    expect(result).toContain('process:');
+    expect(result).toContain('  name: inner');
+  });
+
+  it('yamlDump_array_returnsYamlList', () => {
+    // 数组应输出 YAML 列表风格（- item）
+    const result = yamlDump({ phases: [{ id: 'p1' }, { id: 'p2' }] });
+    expect(result).toContain('phases:');
+    expect(result).toContain('- id: p1');
+    expect(result).toContain('- id: p2');
+  });
+
+  it('yamlDump_roundTripWithParseYaml', () => {
+    // dump 后再 parse 应还原对象结构
+    const original = { process: { name: 'rt', display_name: '往返' }, phases: [{ id: 'p1', name: '阶段1' }] };
+    const dumped = yamlDump(original);
+    const parsed = parseYaml(dumped);
+    expect(parsed.error).toBeNull();
+    expect(parsed.parsed).toEqual(original);
+  });
+});

@@ -7,6 +7,9 @@
 // - Monaco 编辑器组件只消费 parseYaml 的结果，不直接耦合 js-yaml。
 // - 错误行号统一转 1-based，因为 js-yaml 的 mark.line 是 0-based，
 //   而 Monaco 的 Range 是 1-based。这一步转换集中在这里，避免散落。
+//
+// M5 里程碑扩展：新增 yamlDump，把 ProcessDefinition 序列化为 YAML 文本。
+// 与 parseYaml 配套，支撑 YAML ↔ 可视化双向联动。
 // ---------------------------------------------------------------------------
 
 import yaml from 'js-yaml';
@@ -66,4 +69,30 @@ export function parseYaml(yamlText: string): YamlParseResult {
       error: { line: 1, message },
     };
   }
+}
+
+// ── M5 新增：YAML 序列化 ─────────────────────────────
+
+// 把 ProcessDefinition 对象序列化为 YAML 文本。
+//
+// 用于"可视化 → YAML"路径：可视化操作更新 definition 后，
+// 调用 yamlDump 刷新 Monaco 编辑器内容。
+//
+// 配置：
+// - schema: DEFAULT_SCHEMA（与 parseYaml 一致，只用基本类型）
+// - indent: 2（2 空格缩进，与原 bundled YAML 风格一致）
+// - lineWidth: -1（禁用行宽折行，避免长文本被拆行）
+// - noRefs: true（不输出锚点引用，避免结构复杂化）
+//
+// 边界处理：
+// - null 或 undefined → 空串（与 parseYaml 的空串边界对称）
+export function yamlDump(obj: unknown): string {
+  if (obj === null || obj === undefined) return '';
+  // yaml.dump 已是纯函数，这里薄封装统一 schema/风格
+  return yaml.dump(obj, {
+    schema: yaml.DEFAULT_SCHEMA,
+    indent: 2,
+    lineWidth: -1,
+    noRefs: true,
+  });
 }
