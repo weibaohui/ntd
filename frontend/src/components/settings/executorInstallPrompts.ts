@@ -112,13 +112,13 @@ export const INSTALL_ATOMCODE_PROMPT = buildInstallPrompt({
   displayName: 'AtomCode',
   binaryName: 'atomcode',
   verifyArgs: '--version',
-  // 官网：https://atomcode.atomgit.com/
-  // 安装脚本：https://atomcode.atomgit.com/install.sh
-  // cargo: cargo install atomcode（需 Rust 1.80+）
-  // Homebrew cask: brew install --cask atomcode
-  macos: '优先用官方安装脚本：\`curl -fsSL https://atomcode.atomgit.com/install.sh | sh\`（推荐，单文件二进制，无需 Node.js）；或用 cargo 安装：\`cargo install atomcode\`（需 Rust 1.80+）。',
-  linux: '优先用官方安装脚本：\`curl -fsSL https://atomcode.atomgit.com/install.sh | sh\`（推荐，安装到 /usr/local/bin）；或直接下载二进制：\`sudo curl -L -o /usr/local/bin/atomcode https://release.atomgit.com/atomcode/latest/linux-x86_64/atomcode && sudo chmod +x /usr/local/bin/atomcode\`。',
-  windows: '优先用官方 PowerShell 安装：\`irm https://atomcode.atomgit.com/install.ps1 | iex\`；或从官网下载安装包。',
+  // 官方安装脚本托管在 atomgit 仓库 raw 路径，同时支持 macOS / Linux / HarmonyOS 与 Windows：
+  // 通用: https://raw.atomgit.com/atomgit_atomcode/atomcode/raw/main/scripts/install.sh
+  // Win PS: https://raw.atomgit.com/atomgit_atomcode/atomcode/raw/main/scripts/install.ps1
+  // 备选: cargo install atomcode（需 Rust 1.80+）；brew install --cask atomcode
+  macos: '优先用官方安装脚本：\`curl -fsSL https://raw.atomgit.com/atomgit_atomcode/atomcode/raw/main/scripts/install.sh | sh\`（推荐，单文件二进制，无需 Node.js；同时适用于 macOS / Linux / HarmonyOS）。',
+  linux: '优先用官方安装脚本：\`curl -fsSL https://raw.atomgit.com/atomgit_atomcode/atomcode/raw/main/scripts/install.sh | sh\`（推荐，安装到 /usr/local/bin；同时适用于 macOS / Linux / HarmonyOS）。',
+  windows: '优先用官方 PowerShell 安装：\`irm https://raw.atomgit.com/atomgit_atomcode/atomcode/raw/main/scripts/install.ps1 | iex\`；若使用 Git-Bash / MSYS，可改走 \`curl -fsSL https://raw.atomgit.com/atomgit_atomcode/atomcode/raw/main/scripts/install.sh | sh\`。',
 });
 
 export const INSTALL_HERMES_ACTION_KEY = 'hermes';
@@ -217,11 +217,14 @@ export const INSTALL_ZHANLU_PROMPT = buildInstallPrompt({
   displayName: 'Zhanlu',
   binaryName: 'zl',
   verifyArgs: '--version',
-  // 官网: 未找到公开 CLI 安装文档，可能为企业内部项目
-  // 安装: 按官方文档执行
-  macos: '前往 Zhanlu 官网查看最新安装方式；或尝试 \`npm install -g zhanlu\`（如官方提供）。',
-  linux: '优先按 Zhanlu 官网安装脚本执行；或尝试 \`npm install -g zhanlu\`（如官方提供）。',
-  windows: '优先按 Zhanlu 官网安装脚本/PowerShell 执行；或尝试 \`npm install -g zhanlu\`。',
+  // 湛卢（移动云 AI 编程助手）官方安装入口同时提供公网/内网两个地址：
+  // 公网: https://ecloud.10086.cn/api/query/zhanlu-cloud/download/file/cli/install[.ps1]
+  // 内网: http://rdcloud.4c.hq.cmcc/cmdevops-aiplus-agent-gateway/zhanlu-cloud/download/file/cli/install[.ps1]
+  // 安装脚本会自动检测 OS、写入 PATH，无需额外依赖。
+  macos: 'macOS/Linux 共用脚本：公网 \`curl -fsSL "https://ecloud.10086.cn/api/query/zhanlu-cloud/download/file/cli/install" | bash\`；若在内网办公环境（无法访问外网），改用 \`curl -fsSL "http://rdcloud.4c.hq.cmcc/cmdevops-aiplus-agent-gateway/zhanlu-cloud/download/file/cli/install" | bash\`。',
+  linux: 'macOS/Linux 共用脚本：公网 \`curl -fsSL "https://ecloud.10086.cn/api/query/zhanlu-cloud/download/file/cli/install" | bash\`；若在内网办公环境（无法访问外网），改用 \`curl -fsSL "http://rdcloud.4c.hq.cmcc/cmdevops-aiplus-agent-gateway/zhanlu-cloud/download/file/cli/install" | bash\`。',
+  windows: 'PowerShell 执行：公网 \`irm "https://ecloud.10086.cn/api/query/zhanlu-cloud/download/file/cli/install.ps1" | iex\`；若在内网办公环境，改用 \`irm "http://rdcloud.4c.hq.cmcc/cmdevops-aiplus-agent-gateway/zhanlu-cloud/download/file/cli/install.ps1" | iex\`。如使用 Git-Bash/MSYS，可改走 \`curl -fsSL ".../install" | bash\`。',
+  notes: '请先询问用户当前是在公网还是内网环境，再选择对应地址；若脚本返回网络错误，提示用户切换另一条地址重试，不要反复重试同一地址。',
 });
 
 export const INSTALL_KILO_ACTION_KEY = 'kilo';
