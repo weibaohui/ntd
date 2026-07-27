@@ -1460,6 +1460,8 @@ pub mod codes {
     pub const NOT_FOUND: i32 = 40001;
     pub const BAD_REQUEST: i32 = 40002;
     pub const FORBIDDEN: i32 = 40003;
+    /// 资源状态冲突（409）：编辑系统工艺、重名创建、已有实例 Loop 拒绝删除等。
+    pub const CONFLICT: i32 = 40901;
     pub const INTERNAL: i32 = 50001;
 }
 
