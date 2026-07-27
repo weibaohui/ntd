@@ -498,6 +498,18 @@ export const bundledApi = {
   },
 
   /**
+   * 新建工艺（M6）：POST /api/v1/processes
+   * yamlText 为含元信息的空工艺 YAML（process: {...}, phases: []）。
+   * 后端校验 name 唯一性（重名返回 409），前端 Modal 已做实时校验，这里是兜底。
+   */
+  async postProcess(yamlText: string): Promise<void> {
+    // content-type 用 text/yaml，后端 handler 直接读 body 为 String
+    await api.post('/api/v1/processes', yamlText, {
+      headers: { 'Content-Type': 'text/yaml' },
+    });
+  },
+
+  /**
    * 删除工艺（M5）：DELETE /api/v1/processes/{name}
    * 系统工艺拒绝删除（409）；有实例 Loop 的工艺拒绝删除（409）。
    * 前端 Toolbar 仅在 !isSystem 时渲染删除按钮，这里是兜底防线。

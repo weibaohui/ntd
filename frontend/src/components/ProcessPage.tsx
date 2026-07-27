@@ -26,6 +26,8 @@ import { adaptProcessDefinition } from '@/components/process/processFlowAdapter'
 import { ProcessFlowGraph } from '@/components/process/ProcessFlowGraph';
 // M3：真实编辑器组件，edit 模式下渲染
 import { ProcessEditor } from '@/components/process/ProcessEditor';
+// M6：新建工艺元信息 Modal
+import { CreateProcessMetaModal } from '@/components/process/CreateProcessMetaModal';
 // 029：pushUrl 用于"创建工艺"按钮导航到编辑器路由（/#/processes?processMode=new）。
 import { useViewState } from '@/hooks/useViewState';
 
@@ -104,6 +106,8 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
   const [installModal, setInstallModal] = useState<{ name: string; displayName: string } | null>(null);
   const [instanceLoops, setInstanceLoops] = useState<ProcessLoopItem[]>([]);
   const [instanceLoopsLoading, setInstanceLoopsLoading] = useState(false);
+  // M6：新建工艺元信息 Modal 开关
+  const [createModalOpen, setCreateModalOpen] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -223,8 +227,8 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
           <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
             刷新
           </Button>
-          {/* 029：创建工艺入口。跳 /#/processes?processMode=new 进入编辑器空白态。 */}
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => pushUrl('processes', { processMode: 'new' })}>
+          {/* 029：创建工艺入口。M6 改为弹元信息 Modal，确认后跳编辑器。 */}
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalOpen(true)}>
             创建工艺
           </Button>
         </div>
@@ -468,6 +472,17 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
         将「{installModal?.displayName || ''}」安装到当前工作空间？
         {!workspaceId && <div style={{ color: 'red', marginTop: 8 }}>请先在页面左上角选择目标工作空间</div>}
       </Modal>
+
+      {/* M6：新建工艺元信息 Modal，确认后跳编辑器 */}
+      <CreateProcessMetaModal
+        open={createModalOpen}
+        onClose={() => setCreateModalOpen(false)}
+        onCreated={(name) => {
+          setCreateModalOpen(false);
+          // 跳路由进编辑器（edit 模式 + 新工艺 name）
+          pushUrl('processes', { processMode: 'edit', name });
+        }}
+      />
     </div>
   );
 }

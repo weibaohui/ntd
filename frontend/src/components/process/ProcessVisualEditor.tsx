@@ -20,6 +20,8 @@
 // ---------------------------------------------------------------------------
 
 import { useMemo, useCallback, type CSSProperties, type JSX } from 'react';
+import { Empty, Button } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
 import {
   ReactFlow,
   Background,
@@ -37,6 +39,7 @@ import { buildProcessGraph } from './processGraphBuilder';
 import {
   removeLink as _removeLink, // 暂未启用，M5 用于 onNodesDelete
   removePhase,
+  addPhase,
   setLinkGoto,
   resetLinkGoto,
 } from './processDefinitionUpdater';
@@ -113,6 +116,20 @@ export function ProcessVisualEditor({
     },
     [definition, onDefinitionChange],
   );
+
+  // ── M6 新增：空工艺 CTA 回调 ──────────────────────
+  // 点击「新增阶段」按钮时生成第一个 phase，通过 onDefinitionChange 回写父组件。
+  // 第一个 phase 的默认 id/name 用简单生成规则，避免空工艺用户还要想 id。
+  // 第一个 phase 的 links 为空数组（空环节），用户后续在画布上添加环节。
+  const handleAddPhase = useCallback(() => {
+    // 简化默认：id 用 `phase-1`（首个 phase，无重名风险），name 用「阶段 1」
+    const newDef = addPhase(definition, {
+      id: 'phase-1',
+      name: '阶段 1',
+      links: [],
+    });
+    onDefinitionChange(newDef);
+  }, [definition, onDefinitionChange]);
 
   // 选中 phase 回调
   const handleSelectPhase = useCallback(
@@ -304,6 +321,28 @@ export function ProcessVisualEditor({
 
   // ── 渲染 ──────────────────────────────────────────
 
+  // M6 空工艺分支：phases 为空数组或缺失时渲染 Empty + CTA 按钮，
+  // 不渲染 React Flow（避免空画布只有 Controls/MiniMap 的奇怪态）。
+  if (!definition.phases || definition.phases.length === 0) {
+    return (
+      <div style={emptyContainerStyle}>
+        <Empty
+          description="还没有任何阶段"
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+        >
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={handleAddPhase}
+          >
+            新增阶段
+          </Button>
+        </Empty>
+      </div>
+    );
+  }
+
+  // 非空工艺：渲染 React Flow（M4 已实现）
   return (
     <div style={containerStyle}>
       <ReactFlow
@@ -346,6 +385,16 @@ export function ProcessVisualEditor({
 }
 
 // ── 样式 ──────────────────────────────────────────
+
+// M6 空工艺容器：居中显示 Empty + CTA 按钮
+const emptyContainerStyle: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  justifyContent: 'center',
+  alignItems: 'center',
+  height: '100%',
+  width: '100%',
+};
 
 const containerStyle: CSSProperties = {
   width: '100%',
