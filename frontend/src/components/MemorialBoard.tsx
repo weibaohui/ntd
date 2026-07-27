@@ -9,6 +9,7 @@ import {
   ReadOutlined,
 } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
+import { TimeRangeSegmented } from '@/components/common/TimeRangeSegmented';
 import { useApp } from '@/hooks/useApp';
 import { useViewState, type BoardMode } from '@/hooks/useViewState';
 import { KanbanBoard } from './KanbanBoard';
@@ -21,13 +22,8 @@ import * as db from '@/utils/database';
 import { formatRelativeTime } from '@/utils/datetime';
 import type { RecentCompletedTodo, Tag, ExecutionRecord, ProjectDirectory } from '@/types';
 
-const TIME_OPTIONS: { label: string; value: number }[] = [
-  { label: '6h', value: 6 },
-  { label: '12h', value: 12 },
-  { label: '24h', value: 24 },
-  { label: '3d', value: 72 },
-  { label: '7d', value: 168 },
-];
+// 时间分段选项已收敛到共享组件 TimeRangeSegmented（TIME_RANGE_OPTIONS 全站唯一事实源，需求 031），
+// 本文件不再内联 TIME_OPTIONS，避免与 kanban/constants 的历史重复问题重演。
 
 export function MemorialBoard() {
   const { state, dispatch } = useApp();
@@ -379,15 +375,9 @@ export function MemorialBoard() {
             size="small"
             style={{ width: 200 }}
           />
-          <Segmented
-            size="small"
-            options={TIME_OPTIONS.map(o => ({ label: o.label, value: o.label }))}
-            value={TIME_OPTIONS.find(o => o.value === hours)?.label || '24h'}
-            onChange={label => {
-              const opt = TIME_OPTIONS.find(o => o.label === label);
-              if (opt) setHours(opt.value);
-            }}
-          />
+          {/* 时间分段：共享组件（需求 031）。无 showAll 形态，hours 必为 number，
+              默认 24h、四视图共享 hours 的既有行为不变。 */}
+          <TimeRangeSegmented value={hours} onChange={setHours} />
           {/* 项目过滤已移除：工作空间切换由左上角 WorkspaceSwitcher 统一管理 */}
         </div>
 

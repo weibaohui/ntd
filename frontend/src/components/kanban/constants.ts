@@ -1,12 +1,8 @@
 import type { Todo } from '@/types';
 
-export const TIME_OPTIONS: { label: string; value: number }[] = [
-  { label: '6h',  value: 6 },
-  { label: '12h', value: 12 },
-  { label: '24h', value: 24 },
-  { label: '3d',  value: 72 },
-  { label: '7d',  value: 168 },
-];
+// 时间分段选项 TIME_OPTIONS 已迁移至共享组件 common/TimeRangeSegmented.tsx
+// （TIME_RANGE_OPTIONS 全站唯一事实源，需求 031），本文件不再导出，
+// 避免与 MemorialBoard/KanbanBoard 各持一份的历史重复问题重演。
 
 export interface ColumnDef {
   status: Todo['status'];

@@ -3,7 +3,7 @@
 // 详情独立路由：URL /#/tasks?id=123 进入详情全屏，无 id 时渲染当前视图模式。
 // 列表/看板/卡片态全屏单页，不再用 ListDetailPage 双栏。
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { Input, Button, Segmented, message } from 'antd';
 import {
   AppstoreOutlined,
@@ -16,6 +16,7 @@ import {
   UnorderedListOutlined,
 } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
+import { TimeRangeSegmented } from '@/components/common/TimeRangeSegmented';
 import { TasksTableView } from '@/components/tasks/TasksTableView';
 import { TasksKanbanView } from '@/components/tasks/TasksKanbanView';
 import { TasksCardView } from '@/components/tasks/TasksCardView';
@@ -84,6 +85,11 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
 
   // 顶栏搜索词（三态共享）。
   const [searchKeyword, setSearchKeyword] = useState('');
+
+  // 顶栏时间窗（三态共享）：null = 全部不过滤。
+  // 默认 null 而非 24h：任务页是管理视角，默认收窄会让老任务「消失」；
+  // 不持久化，与看板 hours 不持久化的现状一致（需求 031 结论 2C）。
+  const [hours, setHours] = useState<number | null>(null);
 
   // 环路列表（用于新建任务 Modal 的下拉）。
   // 只列出 process_template_id 非空的环路（即带工艺模板的环路才能创建任务）。
@@ -162,6 +168,19 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
     setRefreshKey((k) => k + 1);
   };
 
+  // 时间过滤：hours 为 null（全部）时原样透传；
+  // 否则只保留 created_at 在最近 N 小时内的任务（所有状态统一过滤，需求 031 结论 1A）。
+  // created_at 缺失/非法时视为不在窗口内，与 KanbanBoard 对非法时间 NaN-drop 的处理对齐。
+  // 过滤放在页级而非各视图内：与 searchKeyword 的共享方式一致，三态视图 props 零改动。
+  const timeFilteredTasks = useMemo(() => {
+    if (hours == null) return tasks;
+    const cutoff = Date.now() - hours * 3600 * 1000;
+    return tasks.filter((t) => {
+      const ts = t.created_at ? new Date(t.created_at).getTime() : NaN;
+      return !Number.isNaN(ts) && ts >= cutoff;
+    });
+  }, [tasks, hours]);
+
   // —— 顶栏 extra ——
   // 搜索框：所有视图共享（Table/卡片在前端 filter，看板不做 keyword filter）。
   // 刷新按钮：自增 refreshKey 触发 useEffect 重拉。
@@ -232,9 +251,16 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
     </Button>
   );
 
+  // 时间分段：搜索框之后（与看板页顶栏顺序一致：搜索 → 时间分段）。
+  // showAll 形态提供「全部」选项，value null 表示不过滤。
+  const timeRangeSegment = (
+    <TimeRangeSegmented showAll value={hours} onChange={setHours} />
+  );
+
   const listExtra = (
     <>
       {searchInput}
+      {timeRangeSegment}
       {reloadButton}
       {viewSwitch}
       {createButton}
@@ -286,7 +312,7 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
           contentStyle={{ height: 'calc(100% - 43px)', overflow: 'hidden' }}
         >
           <TasksTableView
-            tasks={tasks}
+            tasks={timeFilteredTasks}
             loading={loading}
             searchKeyword={searchKeyword}
             workspaceId={wsId}
@@ -317,7 +343,7 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
           contentStyle={{ height: 'calc(100% - 43px)', overflow: 'hidden' }}
         >
           <TasksKanbanView
-            tasks={tasks}
+            tasks={timeFilteredTasks}
             loading={loading}
             workspaceId={wsId}
             onSelectTask={handleSelectTask}
@@ -345,7 +371,7 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
         contentStyle={{ height: 'calc(100% - 43px)', overflow: 'auto' }}
       >
         <TasksCardView
-          tasks={tasks}
+          tasks={timeFilteredTasks}
           loading={loading}
           searchKeyword={searchKeyword}
           workspaceId={wsId}
