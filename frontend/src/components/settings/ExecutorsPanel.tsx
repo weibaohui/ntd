@@ -685,6 +685,12 @@ export function ExecutorsPanel() {
                   unCheckedChildren="关闭"
                   onChange={handleExecutionTimeoutToggle}
                 />
+                {/*
+                  手动管理 value/onChange 而非交由 Form.Item 托管：
+                  展示层用分钟（executionTimeoutMinutes），存储层用秒（execution_timeout_secs），
+                  需要在 onChange 中做 v * 60 转换后通过 setFieldsValue 写入表单，
+                  因此不能依赖 Form.Item 的默认值管理路径。
+                */}
                 <Form.Item name="execution_timeout_secs" noStyle>
                   <InputNumber
                     size="small"
