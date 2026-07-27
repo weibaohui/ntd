@@ -489,24 +489,33 @@ export const bundledApi = {
    * 保存工艺（M5）：PUT /api/v1/processes/{name}
    * yamlText 为编辑后的完整 YAML 文本，后端会做 serde_yaml 结构校验。
    * 系统工艺拒绝保存（409），前端 Toolbar 已禁用按钮，这里是兜底防线。
+   *
+   * body 为 JSON `{ definition: yamlText }`，对齐后端 `Json<UpdateProcessRequest>` extractor
+   * （axum Json extractor 强制 Content-Type: application/json，发 text/yaml raw body 会被 415 拒）。
    */
   async putProcess(name: string, yamlText: string): Promise<void> {
-    // content-type 用 text/yaml，后端 handler 直接读 body 为 String
-    await api.put(`/api/v1/processes/${encodeURIComponent(name)}`, yamlText, {
-      headers: { 'Content-Type': 'text/yaml' },
-    });
+    await api.put(`/api/v1/processes/${encodeURIComponent(name)}`, { definition: yamlText });
   },
 
   /**
    * 新建工艺（M6）：POST /api/v1/processes
-   * yamlText 为含元信息的空工艺 YAML（process: {...}, phases: []）。
+   * meta 含 name + 元信息 + definition（完整工艺 YAML 文本）。
    * 后端校验 name 唯一性（重名返回 409），前端 Modal 已做实时校验，这里是兜底。
+   *
+   * body 为 JSON 对齐后端 `Json<CreateProcessRequest>` extractor
+   * （axum Json extractor 强制 Content-Type: application/json，发 text/yaml raw body 会被 415 拒）。
    */
-  async postProcess(yamlText: string): Promise<void> {
-    // content-type 用 text/yaml，后端 handler 直接读 body 为 String
-    await api.post('/api/v1/processes', yamlText, {
-      headers: { 'Content-Type': 'text/yaml' },
-    });
+  async postProcess(meta: {
+    name: string;
+    display_name?: string;
+    description?: string;
+    category?: string;
+    complexity?: string;
+    version?: string;
+    definition: string;
+  }): Promise<void> {
+    // description 后端 CreateProcessRequest 无此字段（设计未要求），忽略不发
+    await api.post('/api/v1/processes', meta);
   },
 
   /**
