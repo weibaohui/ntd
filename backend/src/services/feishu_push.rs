@@ -472,11 +472,16 @@ fn render_log_entry(
         "thinking" => format!("💭 {}", content),
         "tool_call" | "tool_use" | "tool" => {
             let tool_name = entry.tool_name.as_deref().unwrap_or("");
-            // 从 tool_input_json 中提取 command 字段，或者直接用 content
+            // NTD-003：按工具名从 tool_input_json 提取「代表性参数」——
+            // bash→command、edit/read/write→filePath/file_path、grep→pattern 等，
+            // 修复原字节匹配只认 command 导致非 bash 工具退化为裸工具名的缺陷。
+            // 提取失败（无 tool_input_json / 非法 JSON）时兜底 content，
+            // 兼容 atomcode 等只填 content 的旧 adapter 路径。
             let command = entry.tool_input_json.as_deref()
-                .and_then(extract_command_from_json)
+                .and_then(|j| extract_tool_display_param(tool_name, j))
                 .unwrap_or_else(|| content.to_string());
-            // 去掉引号，只保留命令内容
+            // 兜底路径（content）可能带 JSON 外层引号，剥掉保证卡片显示干净；
+            // 经 serde_json 解析出的值已是原始字符，trim 对它是无操作。
             let command = command.trim_matches('"').trim().to_string();
             if command.is_empty() {
                 return None;
@@ -512,26 +517,81 @@ fn render_log_entry(
     Some(result)
 }
 
-/// 从 JSON 字符串中提取 command 字段
+/// 按工具名（小写归一后）返回代表性参数的候选 key 列表，靠前者优先级更高。
 ///
-/// 用于工具调用场景，只显示命令内容而不是完整 JSON 对象
-fn extract_command_from_json(json: &str) -> Option<String> {
-    // 使用字节级别操作，确保索引一致性
-    let bytes = json.as_bytes();
-    let cmd_key = b"\"command\":\"";
-    let cmd_start = bytes.windows(cmd_key.len()).position(|w| w == cmd_key)?;
-    let after_key = &bytes[cmd_start + cmd_key.len()..];
-    let mut i = 0;
-    while i < after_key.len() {
-        if after_key[i] == b'"' {
-            let is_escaped = i > 0 && after_key[i - 1] == b'\\';
-            if !is_escaped {
-                return String::from_utf8(after_key[..i].to_vec()).ok();
-            }
+/// 各执行器入参命名不统一：zhanlu 族用 camelCase（filePath），claudecode 族用
+/// snake_case（file_path），因此同一语义字段需列出多个候选。未识别工具返回通用
+/// 列表——宁可多试几个常见 key，也不让卡片退化为裸工具名（NTD-003 的核心诉求）。
+fn tool_param_keys(tool_name_lower: &str) -> &'static [&'static str] {
+    match tool_name_lower {
+        // bash 族：命令本体就是用户最想看到的信息
+        "bash" | "shell" | "exec_shell" | "command_execution" => &["command"],
+        // 文件族：read/edit/write 的关键信息是目标文件路径
+        "read" | "edit" | "write" | "multi_edit" | "multiedit"
+        | "notebook_edit" | "notebookedit" => {
+            &["filePath", "file_path", "path", "notebookPath", "notebook_path"]
         }
-        i += 1;
+        // 搜索族：pattern 是核心；path 仅作次选（pattern 缺失时至少给个目录线索）
+        "grep" | "glob" => &["pattern", "path"],
+        // web 族：抓取看 url，检索看 query
+        "webfetch" | "web_fetch" => &["url"],
+        "websearch" | "web_search" => &["query"],
+        // 任务族：task/skill 的描述性字段最能说明它在干什么
+        "task" | "skill" => &["description", "prompt", "name", "skill"],
+        // 未识别工具：常见 key 全试一遍，尽量提取出可读信息
+        _ => &[
+            "command", "filePath", "file_path", "path",
+            "pattern", "url", "query", "description", "prompt", "name",
+        ],
     }
-    None
+}
+
+/// 在顶层及一层嵌套（state.input / input / operation）中按候选 key 顺序取第一个非空白字符串。
+///
+/// 多层级探测的原因：主管道（EventPipeline→db_adapter）已把 zhanlu/mimo 的入参下沉为
+/// 平铺结构，但 mimo 旧 adapter 路径会把入参包在 state.input / operation 里
+/// （与 agent_progress.rs 的 operation 下沉口径一致）。跳过空白串：否则 `path:""`
+/// 会命中并阻断后续有效 key，与 agent_progress::pick_str 同口径。
+fn pick_param_from_scopes(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    // scopes 顺序即优先级：平铺最常见（主管道），嵌套仅作兼容
+    let scopes = [
+        Some(value),
+        value.get("state").and_then(|s| s.get("input")),
+        value.get("input"),
+        value.get("operation"),
+    ];
+    scopes.iter().flatten().find_map(|scope| {
+        keys.iter().find_map(|k| {
+            // 只认字符串值：数组/对象（如 todos）拼出来不可读，留给兜底 JSON 展示
+            let s = scope.get(*k)?.as_str()?.trim();
+            (!s.is_empty()).then(|| s.to_string())
+        })
+    })
+}
+
+/// 从工具入参 JSON 提取飞书卡片要展示的「代表性参数」，统一截断 300 字符。
+///
+/// 段落总览：
+/// 1) serde_json 解析 tool_input_json（kimi 会把入参再包一层 JSON 字符串，需二次解析）；
+/// 2) 按工具名取候选 key，在顶层 / state.input / input / operation 依次找第一个非空值；
+/// 3) 全部未命中时退化为截断的紧凑 JSON——比裸工具名信息量大，是 NTD-003 的兜底防线；
+/// 4) JSON 解析失败返回 None，由调用方用 content 兜底（兼容旧 adapter 路径）。
+///
+/// 截断 300 与旧 adapter content 截断长度一致，防止超长参数（如 write 的整段文件
+/// 内容）撑爆飞书卡片。返回的字符串已还原 JSON 转义（ `\"` → `"` ），显示更友好。
+fn extract_tool_display_param(tool_name: &str, input_json: &str) -> Option<String> {
+    // 解析失败（非 JSON）直接返回 None，走调用方的 content 兜底
+    let parsed: serde_json::Value = serde_json::from_str(input_json).ok()?;
+    // kimi 双重编码：Value 本身是字符串说明入参被多包了一层，再解一次；
+    // 解不动就保留原值——顶多字段匹配不中走兜底，不丢信息
+    let value = match parsed.as_str() {
+        Some(inner) => serde_json::from_str(inner).unwrap_or(parsed),
+        None => parsed,
+    };
+    let found = pick_param_from_scopes(&value, tool_param_keys(&tool_name.to_lowercase()));
+    // 命中值或兜底紧凑 JSON 二选一，统一限长
+    let display = found.unwrap_or_else(|| value.to_string());
+    Some(display.chars().take(300).collect())
 }
 
 /// 将文本内容渲染为无标题卡片 JSON 字符串
@@ -890,5 +950,94 @@ mod feishu_push_binding_tests {
         let result = render_log_entry("", &entry, Some(5)).unwrap();
         assert!(result.starts_with("💭 "), "should keep thinking format, got: {}", result);
         assert!(!result.contains("工具 #"), "should not contain tool index for thinking, got: {}", result);
+    }
+
+    // ─── NTD-003：非 bash 工具参数提取 ─────────────────────────────
+
+    /// 构造 tool_call 条目的测试辅助：管道路径下 content 即工具名（db_adapter 行为）
+    fn tool_call_entry(tool_name: &str, input_json: &str) -> crate::models::ParsedLogEntry {
+        crate::models::ParsedLogEntry {
+            timestamp: "2024-01-01T00:00:00Z".to_string(),
+            log_type: "tool_call".to_string(),
+            content: tool_name.to_string(),
+            usage: None,
+            tool_name: Some(tool_name.to_string()),
+            tool_input_json: Some(input_json.to_string()),
+        }
+    }
+
+    /// zhanlu 族 edit：camelCase filePath 应被提取（缺陷核心场景）
+    #[test]
+    fn test_extract_edit_param_zhanlu_camelcase() {
+        let param = extract_tool_display_param("edit", r#"{"filePath":"/src/main.rs","oldString":"a","newString":"b"}"#).unwrap();
+        assert_eq!(param, "/src/main.rs");
+    }
+
+    /// claudecode 族 Edit：snake_case file_path 应被提取（大小写与命名风格双兼容）
+    #[test]
+    fn test_extract_edit_param_claude_snakecase() {
+        let param = extract_tool_display_param("Edit", r#"{"file_path":"/src/lib.rs","old_string":"a","new_string":"b"}"#).unwrap();
+        assert_eq!(param, "/src/lib.rs");
+    }
+
+    /// grep：提取 pattern 而不是 path——pattern 才是用户关心的匹配内容
+    #[test]
+    fn test_extract_grep_param_prefers_pattern() {
+        let param = extract_tool_display_param("grep", r#"{"pattern":"extract_command","path":"/src"}"#).unwrap();
+        assert_eq!(param, "extract_command");
+    }
+
+    /// bash：serde_json 解析后命令中的转义引号应还原为原始字符（附带收益）
+    #[test]
+    fn test_extract_bash_command_unescapes_quotes() {
+        let param = extract_tool_display_param("bash", r#"{"command":"cd \"/media/x\" && ls"}"#).unwrap();
+        assert_eq!(param, r#"cd "/media/x" && ls"#);
+    }
+
+    /// mimo 旧路径嵌套 state.input：应下沉一层取到 command
+    #[test]
+    fn test_extract_param_nested_state_input() {
+        let param = extract_tool_display_param("bash", r#"{"status":"running","input":{"command":"ls -la"}}"#).unwrap();
+        assert_eq!(param, "ls -la");
+    }
+
+    /// kimi 双重编码：入参整体是一段 JSON 字符串，二次解析后取 command
+    #[test]
+    fn test_extract_param_kimi_double_encoded() {
+        let param = extract_tool_display_param("Shell", r#""{\"command\":\"ls /tmp\"}""#).unwrap();
+        assert_eq!(param, "ls /tmp");
+    }
+
+    /// 未识别工具且无候选 key 命中：兜底为紧凑 JSON，不得退化为裸工具名
+    #[test]
+    fn test_extract_unknown_tool_falls_back_to_json() {
+        let param = extract_tool_display_param("todowrite", r#"{"todos":[{"id":1}]}"#).unwrap();
+        assert_eq!(param, r#"{"todos":[{"id":1}]}"#);
+    }
+
+    /// 非法 JSON：返回 None，由 render_log_entry 用 content 兜底
+    #[test]
+    fn test_extract_param_invalid_json_returns_none() {
+        assert!(extract_tool_display_param("bash", "not-json").is_none());
+    }
+
+    /// 超长参数统一截断 300 字符，防止撑爆飞书卡片
+    #[test]
+    fn test_extract_param_truncates_to_300_chars() {
+        let long_cmd = "x".repeat(500);
+        let input = format!(r#"{{"command":"{}"}}"#, long_cmd);
+        let param = extract_tool_display_param("bash", &input).unwrap();
+        assert_eq!(param.chars().count(), 300);
+    }
+
+    /// 端到端（渲染层）：edit 卡片必须显示文件路径而非裸工具名（NTD-003 验收场景）
+    #[test]
+    fn test_render_log_entry_edit_shows_file_path() {
+        let entry = tool_call_entry("edit", r#"{"filePath":"/media/data/feishu_push.rs","oldString":"a","newString":"b"}"#);
+        let result = render_log_entry("", &entry, Some(16)).unwrap();
+        assert!(result.contains("🔧 工具 #16: edit"), "should keep tool index format, got: {}", result);
+        assert!(result.contains("/media/data/feishu_push.rs"), "should show file path, got: {}", result);
+        // 代码块内不应再是裸工具名
+        assert!(!result.contains("```bash\nedit\n```"), "should not degrade to bare tool name, got: {}", result);
     }
 }
