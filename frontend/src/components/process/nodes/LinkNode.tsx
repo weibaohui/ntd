@@ -5,6 +5,8 @@
 // 设计意图（对应 docs/design/029-M4-ReactFlow可视化编辑器-方案.md §3.1.2 + 设计 §5.2.2）：
 // - 环节卡片，显示 link.name + step_template。
 // - 右侧两个 source handle：上方绿色 on_success，下方橙色 on_gate_fail。
+//   每个 handle 旁附文字小标签「成功 ✓」「失败 ✗」，颜色 + 文字双重标识，
+//   避免用户只看两个圆点的颜色无法分辨哪个是成功、哪个是失败出口。
 // - 左侧一个 target handle：连线终点。
 // - 通过 parentNode 挂到 PhaseNode 下，React Flow 自动处理拖动联动。
 //
@@ -44,6 +46,13 @@ const ON_SUCCESS_COLOR = '#10b981';
 // on_gate_fail handle 颜色（橙）
 const ON_GATE_FAIL_COLOR = '#d97706';
 
+// ── 出口 handle 纵向位置常量 ──────────────────────
+
+// 两个出口 handle（及其文字标签）的纵向位置，用百分比相对卡片高度。
+// handle 与标签共用同一百分比：无论卡片因内容多寡高度如何变化，二者始终同高对齐。
+const SUCCESS_HANDLE_TOP = '30%';
+const GATE_FAIL_HANDLE_TOP = '70%';
+
 // ── 组件实现 ──────────────────────────────────────
 
 // LinkNode 组件实现。
@@ -71,11 +80,23 @@ function LinkNodeImpl({ data, selected }: NodeProps): JSX.Element {
         style={targetHandleStyle}
       />
 
-      {/* 卡片内容：link.name + step_template */}
-      <div style={nameStyle}>{link.name}</div>
-      <div style={stepTemplateStyle}>
-        {link.step_template ?? '无原型引用'}
+      {/* 左栏文字：环节名 + 原型引用。
+          minWidth:0 让 flex 子项可收缩，配合子元素的 ellipsis 防止长文本撞到右侧出口标签。 */}
+      <div style={textContentStyle}>
+        <div style={nameStyle}>{link.name}</div>
+        <div style={stepTemplateStyle}>
+          {link.step_template ?? '无原型引用'}
+        </div>
       </div>
+
+      {/* 右侧出口标签：文字 + 颜色双重标识，绝对定位与各自 handle 圆点同高对齐。
+          pointerEvents:none，不拦截鼠标，避免影响 handle 的拖拽连线。 */}
+      <span style={exitLabelStyle(ON_SUCCESS_COLOR, SUCCESS_HANDLE_TOP)}>
+        成功 ✓
+      </span>
+      <span style={exitLabelStyle(ON_GATE_FAIL_COLOR, GATE_FAIL_HANDLE_TOP)}>
+        失败 ✗
+      </span>
 
       {/* 右侧上方绿色 source handle：on_success 连线起点 */}
       <Handle
@@ -98,25 +119,29 @@ function LinkNodeImpl({ data, selected }: NodeProps): JSX.Element {
 
 // ── 样式工厂 ──────────────────────────────────────
 
-// 卡片样式：白色背景 + 边框 + 圆角
-// 宽度由父 phase 容器约束，高度自适应内容
+// 卡片样式：白色背景 + 边框 + 圆角。
+// 宽度由父 phase 容器约束，高度自适应内容。
 function cardStyle(selected: boolean): CSSProperties {
   return {
     // 卡片宽度 240px（与 processLayout.NODE_WIDTH 一致）
     width: 240,
     // 高度自适应内容，但至少 80px（与 NODE_HEIGHT 一致）
     minHeight: 80,
+    // flex 布局：让左栏 textContentStyle(flex:1) 占据左侧空间，
+    // 右侧 padding 专属留给「成功/失败」标签 + handle 圆点
+    display: 'flex',
     // 白色背景
     background: '#fff',
     // 边框：默认灰色，选中时绿色加粗
     border: selected ? '2px solid #10b981' : '1px solid #e2e8f0',
     // 圆角
     borderRadius: 8,
-    // 内边距
-    padding: '12px 16px',
+    // 内边距：右侧加大到 70px，给出口标签 + handle 留出专属空间，
+    // 避免左栏文字与右侧标签重叠
+    padding: '12px 70px 12px 16px',
     // 防止内容溢出
     overflow: 'hidden',
-    // 相对定位，确保 handle 相对于卡片定位
+    // 相对定位，handle / 标签均相对卡片绝对定位
     position: 'relative',
     // 鼠标指针：可点击
     cursor: 'pointer',
@@ -125,18 +150,32 @@ function cardStyle(selected: boolean): CSSProperties {
   };
 }
 
-// link.name 样式：主标题
+// 左栏文字容器：flex:1 占据除右侧 padding 外的空间；
+// minWidth:0 允许收缩，子元素的 text-overflow:ellipsis 才能生效。
+const textContentStyle: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  overflow: 'hidden',
+};
+
+// link.name 样式：主标题，长名称截断省略避免撑破卡片
 const nameStyle: CSSProperties = {
   fontSize: 14,
   fontWeight: 600,
   color: '#1e293b',
   marginBottom: 4,
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
 };
 
-// step_template 样式：副标题（小字灰色）
+// step_template 样式：副标题（小字灰色），同样截断省略
 const stepTemplateStyle: CSSProperties = {
   fontSize: 12,
   color: '#94a3b8',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
 };
 
 // ── Handle 样式 ───────────────────────────────────
@@ -149,26 +188,51 @@ const targetHandleStyle: CSSProperties = {
   border: '2px solid #fff',
 };
 
-// on_success source handle 样式：右侧上方，绿色
-// top: 25% 让 handle 偏上，与 on_gate_fail 错开
+// on_success source handle 样式：右侧上方，绿色。
+// top 用 SUCCESS_HANDLE_TOP，与「成功」标签共用，保证二者同高。
 const successHandleStyle: CSSProperties = {
   background: ON_SUCCESS_COLOR,
   width: 10,
   height: 10,
   border: '2px solid #fff',
-  top: '30%',
+  top: SUCCESS_HANDLE_TOP,
 };
 
-// on_gate_fail source handle 样式：右侧下方，橙色
-// bottom: 30% 让 handle 偏下
+// on_gate_fail source handle 样式：右侧下方，橙色。
+// top 用 GATE_FAIL_HANDLE_TOP，与「失败」标签共用；top:auto 覆盖 React Flow 默认 top。
 const gateFailHandleStyle: CSSProperties = {
   background: ON_GATE_FAIL_COLOR,
   width: 10,
   height: 10,
   border: '2px solid #fff',
-  bottom: '30%',
-  top: 'auto', // 覆盖 successHandleStyle 的 top
+  top: GATE_FAIL_HANDLE_TOP,
 };
+
+// ── 出口标签样式工厂 ──────────────────────────────
+
+// 生成「成功/失败」小标签样式：绝对定位贴卡片右侧、与对应 handle 同高。
+// color 为标签文字 + 底色来源（绿/橙），top 为纵向百分比（与 handle 共用同一常量）。
+function exitLabelStyle(color: string, top: string): CSSProperties {
+  return {
+    position: 'absolute',
+    // 距右边缘 16px：紧贴 handle 圆点（圆点贴 right:0）左侧，留出视觉间距
+    right: 16,
+    top,
+    // 与 React Flow handle 的纵向居中对齐方式一致，让标签中线落在 top 处
+    transform: 'translateY(-50%)',
+    fontSize: 11,
+    fontWeight: 600,
+    lineHeight: 1.4,
+    color,
+    // 8 位 hex：在颜色后追加 '1f'(≈12% alpha) 生成浅色底，文字仍用原色保证可读
+    background: `${color}1f`,
+    borderRadius: 4,
+    padding: '1px 6px',
+    whiteSpace: 'nowrap',
+    // 标签仅作展示，不拦截鼠标，避免影响 handle 的拖拽连线交互
+    pointerEvents: 'none',
+  };
+}
 
 // ── 导出 ──────────────────────────────────────────
 
