@@ -37,15 +37,13 @@ import '@xyflow/react/dist/style.css';
 import type { ProcessDefinition } from '@/types/process';
 import { buildProcessGraph } from './processGraphBuilder';
 import {
-  removeLink as _removeLink, // 暂未启用，M5 用于 onNodesDelete
+  removeLink,
   removePhase,
   addPhase,
   addLink,
   setLinkGoto,
   resetLinkGoto,
 } from './processDefinitionUpdater';
-// 避免未用导入告警：removeLink 暂保留
-void _removeLink;
 import { PhaseNode } from './nodes/PhaseNode';
 import { LinkNode } from './nodes/LinkNode';
 import { ProcessEdge } from './nodes/ProcessEdge';
@@ -169,6 +167,21 @@ export function ProcessVisualEditor({
     [onSelectNode],
   );
 
+  // 删除 link 回调（LinkNode 删除按钮触发）：弹确认窗，调 removeLink 级联重置悬空 goto
+  const handleDeleteLink = useCallback(
+    (linkId: string) => {
+      const link = definition.phases
+        ?.flatMap((p) => p.links ?? [])
+        .find((l) => l.id === linkId);
+      const linkName = link?.name ?? linkId;
+      if (window.confirm(`删除环节「${linkName}」？`)) {
+        const newDef = removeLink(definition, linkId);
+        onDefinitionChange(newDef);
+      }
+    },
+    [definition, onDefinitionChange],
+  );
+
   // 删除边回调（重置对应 link 的 on_success / on_gate_fail）
   // 边 id 格式：edge-${sourceLinkId}-${handleType}-${targetLinkId}
   const handleDeleteEdge = useCallback(
@@ -237,6 +250,7 @@ export function ProcessVisualEditor({
       onDeletePhase: handleDeletePhase,
       onSelectPhase: handleSelectPhase,
       onSelectLink: handleSelectLink,
+      onDeleteLink: handleDeleteLink,
       onDeleteEdge: handleDeleteEdge,
       onAddLink: handleAddLink,
     });
@@ -245,6 +259,7 @@ export function ProcessVisualEditor({
     handleDeletePhase,
     handleSelectPhase,
     handleSelectLink,
+    handleDeleteLink,
     handleDeleteEdge,
   ]);
 

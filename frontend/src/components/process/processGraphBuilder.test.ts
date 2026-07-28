@@ -69,6 +69,7 @@ function makeCallbacks() {
     onDeletePhase: vi.fn(),
     onSelectPhase: vi.fn(),
     onSelectLink: vi.fn(),
+    onDeleteLink: vi.fn(),
     onDeleteEdge: vi.fn(),
     onAddLink: vi.fn(),
   };
@@ -182,9 +183,9 @@ describe('buildProcessGraph edges', () => {
 
     const result = buildProcessGraph(def, callbacks);
 
-    // 应生成 1 条边（link1.on_success: goto:link2）
-    expect(result.edges.length).toBe(1);
-    const edge = result.edges[0];
+    // 应生成 goto 成功边（另有阶段间灰线，故用 sourceHandle 定位）
+    const edge = result.edges.find((e) => e.sourceHandle === 'on_success')!;
+    expect(edge).toBeDefined();
 
     // 边类型为 process（自定义边）
     expect(edge.type).toBe('process');
@@ -226,8 +227,9 @@ describe('buildProcessGraph edges', () => {
 
     const result = buildProcessGraph(def, callbacks);
 
-    expect(result.edges.length).toBe(1);
-    const edge = result.edges[0];
+    // 阶段间灰线也计入 edges，用 sourceHandle 精确定位 goto 边
+    const edge = result.edges.find((e) => e.sourceHandle === 'on_gate_fail')!;
+    expect(edge).toBeDefined();
 
     // sourceHandle = on_gate_fail
     expect(edge.sourceHandle).toBe('on_gate_fail');
@@ -273,5 +275,34 @@ describe('buildProcessGraph edges', () => {
 
     // data.onDelete 应为 callbacks.onDeleteEdge
     expect(edge.data?.onDelete).toBe(callbacks.onDeleteEdge);
+  });
+
+  it('buildProcessGraph_generatesPhaseFlowEdgesBetweenAdjacentPhases', () => {
+    // 3 个 phase（无 goto）→ 应生成 2 条阶段间顺向灰线
+    const def: ProcessDefinition = {
+      process: { name: 'test', display_name: '测试' },
+      phases: [
+        { id: 'phase1', name: '阶段1', links: [makeLink('link1', '环节1')] },
+        { id: 'phase2', name: '阶段2', links: [makeLink('link2', '环节2')] },
+        { id: 'phase3', name: '阶段3', links: [makeLink('link3', '环节3')] },
+      ],
+    };
+    const callbacks = makeCallbacks();
+
+    const result = buildProcessGraph(def, callbacks);
+
+    // 阶段边 id 以 edge-phase- 开头，区别于 goto 边
+    const phaseEdges = result.edges.filter((e) =>
+      e.id.startsWith('edge-phase-'),
+    );
+    expect(phaseEdges.length).toBe(2);
+    expect(phaseEdges[0].source).toBe('phase-0');
+    expect(phaseEdges[0].target).toBe('phase-1');
+    expect(phaseEdges[1].source).toBe('phase-1');
+    expect(phaseEdges[1].target).toBe('phase-2');
+    // 灰色实线，不可删（无 onDelete）
+    expect(phaseEdges[0].data?.color).toBe('#94a3b8');
+    expect(phaseEdges[0].data?.dashed).toBe(false);
+    expect(phaseEdges[0].data?.onDelete).toBeUndefined();
   });
 });

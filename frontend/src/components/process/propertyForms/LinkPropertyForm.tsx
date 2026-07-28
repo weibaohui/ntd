@@ -17,6 +17,7 @@ import { type CSSProperties, type JSX } from 'react';
 import {
   Form,
   Input,
+  InputNumber,
   Select,
   Button,
   Table,
@@ -76,6 +77,61 @@ export function LinkPropertyForm({
 
   // ── gates 嵌套表格 ─────────────────────────────
 
+  // 按门禁类型渲染对应配置字段：
+  // artifact_present→产物名、ai_criteria_review→及格分、script_check→脚本路径、human_approval→无需配置。
+  // 字段对应后端 GateDefinition 的 artifact/min_score/script，criteria_ref 暂不暴露（用验收标准字段替代）。
+  const renderGateConfig = (
+    record: GateDefinition,
+    index: number,
+  ): JSX.Element => {
+    switch (record.type) {
+      case 'artifact_present':
+        return (
+          <Input
+            value={record.artifact ?? ''}
+            onChange={(e) =>
+              handleGateChange(index, 'artifact', e.target.value)
+            }
+            size="small"
+            placeholder="产物名，如 PRD"
+          />
+        );
+      case 'ai_criteria_review':
+        return (
+          <InputNumber
+            value={record.min_score}
+            onChange={(value) =>
+              handleGateChange(
+                index,
+                'min_score',
+                value === null ? undefined : value,
+              )
+            }
+            min={0}
+            max={100}
+            size="small"
+            style={{ width: '100%' }}
+            placeholder="及格分，如 80"
+          />
+        );
+      case 'script_check':
+        return (
+          <Input
+            value={record.script ?? ''}
+            onChange={(e) =>
+              handleGateChange(index, 'script', e.target.value)
+            }
+            size="small"
+            placeholder="脚本路径，如 run_tests.sh"
+          />
+        );
+      case 'human_approval':
+        return <Text type="secondary">无需配置</Text>;
+      default:
+        return <Text type="secondary">选择类型后配置</Text>;
+    }
+  };
+
   // gates 列定义
   const gatesColumns = [
     {
@@ -95,14 +151,21 @@ export function LinkPropertyForm({
       title: '类型',
       dataIndex: 'type',
       render: (_: unknown, record: GateDefinition, index: number) => (
-        <Input
-          value={record.type}
-          onChange={(e) =>
-            handleGateChange(index, 'type', e.target.value)
-          }
+        <Select
+          value={record.type || undefined}
+          onChange={(value) => handleGateChange(index, 'type', value)}
+          options={GATE_TYPE_OPTIONS}
           size="small"
+          style={{ width: '100%' }}
+          placeholder="选择门禁类型"
         />
       ),
+    },
+    {
+      // 配置列：按门禁类型动态显示对应字段（artifact/min_score/script）
+      title: '配置',
+      render: (_: unknown, record: GateDefinition, index: number) =>
+        renderGateConfig(record, index),
     },
     {
       title: '操作',
@@ -477,3 +540,12 @@ const sectionHeaderStyle: CSSProperties = {
 const tableStyle: CSSProperties = {
   marginBottom: 16,
 };
+
+// 门禁类型可选项（对齐后端 services/process/gates 模块支持的 4 种 type）。
+// 用下拉避免用户手填拼错 type 字符串，导致门禁匹配不到执行器而不生效。
+const GATE_TYPE_OPTIONS = [
+  { value: 'artifact_present', label: '产物存在' },
+  { value: 'ai_criteria_review', label: 'AI 评审' },
+  { value: 'human_approval', label: '人工审批' },
+  { value: 'script_check', label: '脚本检查' },
+];

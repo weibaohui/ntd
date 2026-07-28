@@ -12,11 +12,11 @@
 // - link：子节点，parentNode 指向 phase，position 相对于父节点
 //
 // 边类型：
-// - process：自定义边，颜色和虚线由 data.color / data.dashed 决定
+// - process：自定义边，颜色和虚线由 data.color / data.dashed 决定；无 data.onDelete 时不显示删除按钮
 //
 // 边视觉规则（设计 §5.4.1）：
-// - on_success: next / end → 不生成边（顺向边由 React Flow 自动连？不，M4 不画顺向边）
-//   实际上 on_success: next 是"执行下一个"，不是显式 goto，M4 不画这类边。
+// - 阶段间顺向流转 → 灰色 #94a3b8 实线（phase-i → phase-(i+1)，仅可视化指示，不可删）
+// - on_success: next / end → 不生成 goto 边（next 是隐式顺序流转，已由阶段间灰线表达）
 // - on_success: goto:xxx → 绿色 #10b981 smoothstep
 // - on_gate_fail: goto:xxx → 橙色虚线 #d97706 smoothstep
 //
@@ -26,7 +26,7 @@
 // - 边 id：`edge-${sourceLinkId}-${handleType}-${targetLinkId}`
 // ---------------------------------------------------------------------------
 
-import type { Node, Edge } from '@xyflow/react';
+import { MarkerType, type Node, type Edge } from '@xyflow/react';
 import type { ProcessDefinition } from '@/types/process';
 import {
   layoutPhases,
@@ -46,6 +46,8 @@ const GOTO_SUCCESS_COLOR = '#10b981';
 const GOTO_GATE_FAIL_COLOR = '#d97706';
 // goto 门禁失败边是否虚线
 const GOTO_GATE_FAIL_DASHED = true;
+// 阶段流转边颜色（中性灰，区别于 goto 的绿/橙；不传 onDelete 故不可删）
+const PHASE_FLOW_COLOR = '#94a3b8';
 
 // ── 回调接口 ──────────────────────────────────────
 
@@ -57,6 +59,8 @@ export interface GraphCallbacks {
   onSelectPhase: (phaseId: string) => void;
   // 选中 link（右侧属性面板切换）
   onSelectLink: (linkId: string) => void;
+  // 删除 link（由 LinkNode 删除按钮触发）
+  onDeleteLink: (linkId: string) => void;
   // 删除边（重置对应 link 的 on_success / on_gate_fail）
   onDeleteEdge: (edgeId: string) => void;
   // 在指定 phase 内新增环节（M6 新增，由 PhaseNode 头部按钮触发）
@@ -148,6 +152,7 @@ export function buildProcessGraph(
           phaseIndex,
           linkIndex,
           onSelectLink: callbacks.onSelectLink,
+          onDeleteLink: callbacks.onDeleteLink,
         },
       });
     });
@@ -219,6 +224,25 @@ export function buildProcessGraph(
     });
   });
 
+  // 5. 构建阶段间顺序边（phase-i → phase-(i+1)）。
+  // 表示「一个阶段完了继续下一个」的顺向流转；执行层仍靠 link.on_success=next，
+  // 此处仅作可视化指示，故不传 onDelete（不可删，也不可由用户拖拽连线改动）。
+  for (let i = 0; i < phases.length - 1; i++) {
+    edges.push({
+      id: `edge-phase-${i}-to-${i + 1}`,
+      source: `phase-${i}`,
+      target: `phase-${i + 1}`,
+      sourceHandle: 'phase-source',
+      targetHandle: 'phase-target',
+      type: 'process',
+      markerEnd: { type: MarkerType.ArrowClosed, color: PHASE_FLOW_COLOR },
+      data: {
+        color: PHASE_FLOW_COLOR,
+        dashed: false,
+      },
+    });
+  }
+
   return { nodes: [...phaseNodes, ...linkNodes], edges };
 }
 
@@ -261,6 +285,7 @@ function createGotoEdge(
     sourceHandle: handleType, // 'on_success' 或 'on_gate_fail'
     targetHandle: 'target',
     type: 'process', // 自定义边类型
+    markerEnd: { type: MarkerType.ArrowClosed, color }, // 末端箭头，颜色随边
     data: {
       color,
       dashed,
