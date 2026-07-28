@@ -6,8 +6,10 @@
 
 import { getDefaultExecutor } from '@/utils/executors';
 
-/** Default execution timeout in seconds (1 hour). Used as fallback when no config is set. */
-export const DEFAULT_EXECUTION_TIMEOUT_SECS = 3600;
+/** 执行超时「开关打开时」回填的默认时长（秒）：180 分钟 = 10800 秒。
+ * 仅作为启用态的默认值，而非配置开关的默认状态——后端默认 execution_timeout_secs=0（关闭/永不超时）。
+ * 与 backend/src/config.rs::DEFAULT_EXECUTION_TIMEOUT_SECS 保持同步。 */
+export const DEFAULT_EXECUTION_TIMEOUT_SECS = 10800;
 
 /** Maximum execution timeout in minutes (7 days = 10080 min).
  * Derived from backend config::MAX_EXECUTION_TIMEOUT_SECS (604800 seconds).

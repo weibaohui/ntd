@@ -17,8 +17,14 @@ pub const DEFAULT_DEV_PORT: u16 = 18088;
 pub const DEFAULT_HOST: &str = "0.0.0.0";
 /// Default executor paths (binary names).
 pub const DEFAULT_EXECUTOR_PATH: &str = ""; // use binary name directly
-/// 默认执行超时时间（秒）。
-pub const DEFAULT_EXECUTION_TIMEOUT_SECS: u64 = 3600;
+/// 执行超时「开关打开时」使用的默认时长（秒）。
+///
+/// 这是推荐/启用态的默认时长：180 分钟 = 10800 秒。
+/// 注意它**不是** `Config` 的字段默认值——`Config::default` 把 `execution_timeout_secs`
+/// 设为 `0`（关闭超时、永不超时）。当用户在 UI 打开「执行超时」开关时，前端用本常量
+/// 作为回填值，因此只改这里就能把「打开后默认 180 分钟」生效。系统以 `execution_timeout_secs > 0`
+/// 判定超时是否启用，所以 `0` 即永不超时（见 `spawn_lifecycle::configure_timeout_sleep`）。
+pub const DEFAULT_EXECUTION_TIMEOUT_SECS: u64 = 10800;
 /// 执行超时上限（秒）：7 天。YAML 加载和 HTTP update 均受此约束。
 pub const MAX_EXECUTION_TIMEOUT_SECS: u64 = 604800;
 /// WebSocket broadcast channel 默认容量。
@@ -141,7 +147,9 @@ pub struct Config {
     pub history_message_max_age_secs: u64,
     /// 最大并发执行数（默认 3）
     pub max_concurrent_todos: u32,
-    /// 执行超时时间（秒，默认 3600 = 60 分钟）；设置为 0 表示不限制执行时长；上限 604800（7 天）
+    /// 执行超时时间（秒）。默认 0 表示**关闭超时、永不超时**（默认开关状态为关）；
+    /// 大于 0 时本值即为超时时长，前端打开「执行超时」开关后默认回填 10800（180 分钟，
+    /// 见 `DEFAULT_EXECUTION_TIMEOUT_SECS`）；上限 604800（7 天）
     pub execution_timeout_secs: u64,
     /// 日志清理保留天数（None 表示不清理）
     pub auto_cleanup_logs_days: Option<usize>,
@@ -310,7 +318,9 @@ impl Default for Config {
             auto_skill_backup_enabled: skill_backup.enabled, auto_skill_backup_cron: skill_backup.cron, auto_skill_backup_max_files: skill_backup.max_files,
             auto_sync_custom_templates_enabled: sync_templates.enabled, auto_sync_custom_templates_cron: sync_templates.cron,
             history_message_max_age_secs: DEFAULT_HISTORY_MESSAGE_MAX_AGE_SECS,
-            max_concurrent_todos: DEFAULT_MAX_CONCURRENT_TODOS, execution_timeout_secs: DEFAULT_EXECUTION_TIMEOUT_SECS,
+            // 默认关闭执行超时（永不超时）：系统以 `>0` 判定启用，0 即禁用。
+            // 用户打开开关后，前端用 DEFAULT_EXECUTION_TIMEOUT_SECS(10800) 回填，得到 180 分钟。
+            max_concurrent_todos: DEFAULT_MAX_CONCURRENT_TODOS, execution_timeout_secs: 0,
             auto_cleanup_logs_days: DEFAULT_AUTO_CLEANUP_LOGS_DAYS, scheduler_default_timezone: None,
             auto_usage_stats_enabled: usage_stats.enabled, auto_usage_stats_cron: usage_stats.cron,
             broadcast_channel_capacity: DEFAULT_BROADCAST_CHANNEL_CAPACITY,
@@ -617,10 +627,14 @@ mod tests {
     #[test]
     fn test_default_execution_timeout_round_trip() {
         let cfg = Config::default();
-        // 验证序列化/反序列化后默认值仍为 3600，而非恒真断言
+        // 默认关闭超时（永不超时），所以字段默认值为 0；
+        // 验证序列化/反序列化后默认值仍为 0，而非恒真断言。
+        assert_eq!(cfg.execution_timeout_secs, 0);
         let yaml = serde_yaml::to_string(&cfg).unwrap();
         let restored: Config = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(restored.execution_timeout_secs, DEFAULT_EXECUTION_TIMEOUT_SECS);
+        assert_eq!(restored.execution_timeout_secs, 0);
+        // 打开开关后回填的「启用默认时长」应为 180 分钟（10800 秒）。
+        assert_eq!(DEFAULT_EXECUTION_TIMEOUT_SECS, 10800);
     }
 
     #[test]
