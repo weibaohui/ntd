@@ -223,10 +223,34 @@ pub async fn create_task_execution(
 #[derive(Deserialize)]
 pub struct NewExecutionRequest { pub requirement: String }
 
+/// DELETE /api/v1/workspaces/{ws}/tasks/{id} — 删除单个任务。
+pub async fn delete_task(
+    State(state): State<AppState>,
+    Path((_ws, id)): Path<(i64, i64)>,
+) -> Result<ApiResponse<()>, AppError> {
+    state.db.delete_task(id).await.map_err(AppError::from)?;
+    Ok(ApiResponse::ok(()))
+}
+
+/// POST /api/v1/workspaces/{ws}/tasks/batch-delete — 批量删除任务。
+#[derive(Deserialize)]
+pub struct BatchDeleteTasksRequest { pub ids: Vec<i64> }
+pub async fn batch_delete_tasks(
+    State(state): State<AppState>,
+    Path(_ws): Path<i64>,
+    Json(req): Json<BatchDeleteTasksRequest>,
+) -> Result<ApiResponse<serde_json::Value>, AppError> {
+    let deleted = state.db.batch_delete_tasks(&req.ids).await?;
+    Ok(ApiResponse::ok(serde_json::json!({
+        "deleted": deleted, "total": req.ids.len(),
+    })))
+}
+
 pub fn task_routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/workspaces/{ws}/tasks", axum::routing::get(list_tasks).post(create_task))
-        .route("/api/v1/workspaces/{ws}/tasks/{id}", axum::routing::get(get_task_detail))
+        .route("/api/v1/workspaces/{ws}/tasks/{id}", axum::routing::get(get_task_detail).delete(delete_task))
+        .route("/api/v1/workspaces/{ws}/tasks/batch-delete", axum::routing::post(batch_delete_tasks))
         .route("/api/v1/workspaces/{ws}/tasks/{id}/executions", axum::routing::post(create_task_execution))
         .route("/api/v1/artifacts/{aid}/content", axum::routing::get(get_artifact_content))
 }

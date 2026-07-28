@@ -66,4 +66,20 @@ impl Database {
         }
         Ok(())
     }
+
+    /// 硬删除单个任务。
+    pub async fn delete_task(&self, id: i64) -> Result<(), sea_orm::DbErr> {
+        tasks::Entity::delete_by_id(id).exec(&self.conn).await?;
+        Ok(())
+    }
+
+    /// 批量硬删除任务（返回成功删除数）。
+    pub async fn batch_delete_tasks(&self, ids: &[i64]) -> Result<u64, sea_orm::DbErr> {
+        if ids.is_empty() { return Ok(0); }
+        let res = tasks::Entity::delete_many()
+            .filter(tasks::Column::Id.is_in(ids.to_vec()))
+            .exec(&self.conn)
+            .await?;
+        Ok(res.rows_affected)
+    }
 }

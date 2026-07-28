@@ -2,8 +2,9 @@
 // 形态参考 ItemsPage 列表态的双栏联动：
 //   左侧 Table 行可点击选中任务，触发宿主右栏渲染 TaskDetailPanel。
 
-import { useMemo, useState } from 'react';
-import { Table, Tag, Typography, Select, Empty } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
+import { Button, Dropdown, Modal, Table, Tag, Typography, Select, Empty, message } from 'antd';
+import { MoreOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { TaskItem } from '@/components/tasks/constants';
 import {
@@ -13,6 +14,7 @@ import {
   complexityLabel,
   formatDateShort,
 } from '@/components/tasks/constants';
+import bundledApi from '@/api/bundled';
 
 const { Text } = Typography;
 
@@ -111,6 +113,48 @@ function buildColumns(): ColumnsType<TaskItem> {
   ];
 }
 
+/** 选中 ID 裁剪 hook：tasks 变化时移除已消失的行（与 TodoListView 同模式）。 */
+function useSelectedIdsClipping(items: TaskItem[]) {
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  useEffect(() => {
+    setSelectedIds(prev => {
+      const alive = prev.filter(id => items.some(i => i.id === id));
+      return alive.length === prev.length ? prev : alive;
+    });
+  }, [items]);
+  return { selectedIds, setSelectedIds };
+}
+
+/**
+ * 批量按钮：受 selectedIds 控制，空选时禁用。
+ * 与 TodoListView BatchButton 同模式。
+ */
+function BatchButton({
+  selectedIds,
+  onBatchDelete,
+}: {
+  selectedIds: number[];
+  onBatchDelete: (ids: number[]) => void;
+}) {
+  if (selectedIds.length === 0) return null;
+  const items = [
+    {
+      key: 'delete',
+      label: '删除',
+      icon: <DeleteOutlined />,
+      danger: true as const,
+      onClick: () => onBatchDelete(selectedIds),
+    },
+  ];
+  return (
+    <Dropdown menu={{ items }} trigger={['click']}>
+      <Button size="small" data-testid="tasks-table-batch-trigger">
+        批量 <MoreOutlined style={{ fontSize: 10 }} />
+      </Button>
+    </Dropdown>
+  );
+}
+
 /**
  * 任务列表视图（Table）。
  *
@@ -118,18 +162,22 @@ function buildColumns(): ColumnsType<TaskItem> {
  * 1. 自带状态筛选 Select + 关键词搜索（走宿主顶栏 searchKeyword）。
  * 2. 行 onClick：选中任务，触发宿主右栏渲染详情。
  * 3. 选中行高亮：rowClassName 控制。
- * 4. 空态：根据是否有筛选条件显示不同文案。
+ * 4. 批量操作：行多选 + BatchButton（删除），与 TodoListView 操作模式一致。
+ * 5. 空态：根据是否有筛选条件显示不同文案。
  */
 export function TasksTableView({
   tasks,
   loading,
   searchKeyword,
+  workspaceId,
   selectedTaskId,
   onSelectTask,
 }: TasksTableViewProps) {
   // 自带筛选态：状态。
   // 复杂度筛选在这里不加，避免 toolbar 过于拥挤；用户可切到 card 视图做复杂度筛选。
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  // 行选中态（批量删除用）
+  const { selectedIds, setSelectedIds } = useSelectedIdsClipping(tasks);
 
   // 过滤逻辑：状态 + 关键词（标题 OR 需求）。
   const visibleTasks = useMemo(() => {
@@ -146,7 +194,27 @@ export function TasksTableView({
   // 列定义：useMemo 避免每次 render 重建造成 Table 性能抖动。
   const columns = useMemo(() => buildColumns(), []);
 
-  // 筛选 toolbar：状态 Select + 计数。
+  // 批量删除确认
+  const handleBatchDelete = (ids: number[]) => {
+    Modal.confirm({
+      title: `确认删除 ${ids.length} 个任务？`,
+      content: '删除后不可恢复。',
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const result = await bundledApi.batchDeleteTasks(workspaceId, ids);
+          message.success(`已删除 ${result.deleted} 个任务`);
+          setSelectedIds([]);
+        } catch {
+          message.error('删除失败');
+        }
+      },
+    });
+  };
+
+  // 筛选 toolbar：状态 Select + 批量按钮 + 计数。
   const toolbar = (
     <div
       style={{
@@ -165,8 +233,9 @@ export function TasksTableView({
         style={{ width: 120 }}
         data-testid="tasks-table-status-filter"
       />
+      <BatchButton selectedIds={selectedIds} onBatchDelete={handleBatchDelete} />
       <Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto' }}>
-        共 {visibleTasks.length} 个任务
+        已选 {selectedIds.length} 项 / 共 {visibleTasks.length} 个任务
       </Text>
     </div>
   );
@@ -186,6 +255,10 @@ export function TasksTableView({
           size="small"
           pagination={false}
           scroll={{ y: 'calc(100vh - 240px)' }}
+          rowSelection={{
+            selectedRowKeys: selectedIds,
+            onChange: (keys) => setSelectedIds(keys as number[]),
+          }}
           rowClassName={(record) =>
             record.id === selectedTaskId ? 'ntd-tasks-row-selected' : ''
           }

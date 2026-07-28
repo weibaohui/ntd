@@ -573,6 +573,13 @@ export const bundledApi = {
   },
 
   /**
+   * 批量删除任务。
+   */
+  async batchDeleteTasks(wsId: number, ids: number[]): Promise<{ deleted: number; total: number }> {
+    return unwrap(await api.post(`/api/v1/workspaces/${wsId}/tasks/batch-delete`, { ids }));
+  },
+
+  /**
    * 人工审批门禁
    */
   async approveGate(wsId: number, loopId: number, execId: number, stepExecId: number, gateId: number, approved: boolean, comment?: string): Promise<{ gate_id: number; status: string }> {

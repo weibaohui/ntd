@@ -983,6 +983,20 @@ impl Database {
         self.exec_update(am).await
     }
 
+    /// 批量软删除事项（返回成功删除数）。
+    /// 注意：调用方应在 handler 层校验每个 todo 的可删除性（引用校验等）。
+    pub async fn batch_delete_todos(&self, ids: &[i64]) -> Result<u64, sea_orm::DbErr> {
+        if ids.is_empty() { return Ok(0); }
+        let now = crate::models::utc_timestamp();
+        let res = todos::Entity::update_many()
+            .col_expr(todos::Column::DeletedAt, Some(now).into())
+            .filter(todos::Column::Id.is_in(ids.to_vec()))
+            .filter(todos::Column::DeletedAt.is_null())
+            .exec(&self.conn)
+            .await?;
+        Ok(res.rows_affected)
+    }
+
     pub async fn get_todo(&self, id: i64) -> Result<Option<Todo>, sea_orm::DbErr> {
         let model = match todos::Entity::find_by_id(id)
             .filter(todos::Column::DeletedAt.is_null())

@@ -117,6 +117,14 @@ export async function batchMoveTodosWorkspace(
   return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/todos/batch/workspace`, { ids, workspace_id }));
 }
 
+/** 批量删除事项（软删）。 */
+export async function batchDeleteTodos(
+  workspaceId: number,
+  ids: number[],
+): Promise<{ deleted: number; errors: Array<[number, string]>; total: number }> {
+  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/todos/batch/delete`, { ids }));
+}
+
 /** 批量复制事项到其他工作空间。workspaceId 为源空间（URL 路径段），workspace_id 为目标空间（body）。 */
 export async function batchCopyTodosWorkspace(
   workspaceId: number,

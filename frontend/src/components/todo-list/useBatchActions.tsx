@@ -17,6 +17,7 @@ import {
   StopOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import * as dbLoops from '@/utils/database/loops';
@@ -126,6 +127,27 @@ function SchedulerBatchModal({
   );
 }
 
+/** 批量删除确认 Modal（事项/环路共用）。 */
+function BatchDeleteConfirmModal({
+  open, ids, processing, mode, onConfirm, onCancel,
+}: {
+  open: boolean; ids: number[]; processing: boolean; mode: string;
+  onConfirm: () => void; onCancel: () => void;
+}) {
+  return (
+    <Modal
+      title={mode === 'loop' ? '确认删除环路' : '确认删除事项'}
+      open={open} onOk={onConfirm} onCancel={onCancel}
+      okText="删除" cancelText="取消" okButtonProps={{ danger: true, loading: processing }} destroyOnHidden
+    >
+      <p>确定删除选中的 <strong>{ids.length}</strong> 个{mode === 'loop' ? '环路' : '事项'}吗？</p>
+      <p style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>
+        {mode === 'loop' ? '删除后将级联删除 triggers、steps 及关联数据。' : '事项将被标记为已删除。'}
+      </p>
+    </Modal>
+  );
+}
+
 /** 把 {updated_count, total} 渲染为成功/警告消息。 */
 function reportBatchResult(result: { updated_count: number; total: number }, actionLabel: string, message: ReturnType<typeof AntApp.useApp>['message']) {
   if (result.updated_count === result.total) {
@@ -161,6 +183,10 @@ export function useBatchActions(opts: UseBatchActionsOptions): UseBatchActionsRe
   const [schedulerBatchMode, setSchedulerBatchMode] = useState<'pause' | 'resume'>('pause');
   const [pendingSchedulerBatchIds, setPendingSchedulerBatchIds] = useState<number[]>([]);
   const [schedulerBatchProcessing, setSchedulerBatchProcessing] = useState(false);
+  // 批量删除 Modal 状态
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<number[]>([]);
+  const [deleteProcessing, setDeleteProcessing] = useState(false);
 
   // ─── 触发函数：仅 state 赋值 ─────────────────────────────────
   const openChangeExecutor = useCallback((ids: number[]) => { setPendingExecutorChangeIds(ids); setExecutorModalOpen(true); }, []);
@@ -169,6 +195,8 @@ export function useBatchActions(opts: UseBatchActionsOptions): UseBatchActionsRe
   const openMoveWorkspace = useCallback((ids: number[]) => { setWorkspaceBatchMode('move'); setPendingWorkspaceBatchIds(ids); setWorkspaceBatchTarget(null); setWorkspaceBatchModalOpen(true); }, []);
   const openPauseScheduler = useCallback((ids: number[]) => { setSchedulerBatchMode('pause'); setPendingSchedulerBatchIds(ids); setSchedulerBatchModalOpen(true); }, []);
   const openResumeScheduler = useCallback((ids: number[]) => { setSchedulerBatchMode('resume'); setPendingSchedulerBatchIds(ids); setSchedulerBatchModalOpen(true); }, []);
+  // 批量删除：打开确认 Modal
+  const openBatchDelete = useCallback((ids: number[]) => { setPendingDeleteIds(ids); setDeleteModalOpen(true); }, []);
 
   // ─── 确认回调 ────────────────────────────────────────────────
 
@@ -240,6 +268,42 @@ export function useBatchActions(opts: UseBatchActionsOptions): UseBatchActionsRe
     } finally { setSchedulerBatchProcessing(false); }
   }, [pendingSchedulerBatchIds, schedulerBatchMode, selectedWorkspace, message, onRefreshItems, onClearSelection]);
 
+  // 批量删除确认回调
+  const handleConfirmBatchDelete = useCallback(async () => {
+    if (pendingDeleteIds.length === 0) return;
+    if (selectedWorkspace == null && mode === 'item') { message.warning('请先选择工作空间'); return; }
+    setDeleteProcessing(true);
+    try {
+      if (mode === 'item') {
+        const result = await db.batchDeleteTodos(selectedWorkspace!, pendingDeleteIds);
+        if (result.errors.length === 0) {
+          message.success(`已删除 ${result.deleted} 项`);
+        } else {
+          message.warning(`删除成功 ${result.deleted} 条，失败 ${result.errors.length} 条`);
+        }
+        onRefreshItems?.();
+      } else {
+        // loop 模式：逐个删除（须传 workspaceId）
+        let deleted = 0;
+        for (const id of pendingDeleteIds) {
+          try {
+            await dbLoops.deleteLoop(selectedWorkspace ?? 0, id);
+            deleted++;
+          } catch { /* 单个失败继续下一个 */ }
+        }
+        message.success(`已删除 ${deleted} 个环路`);
+        onRefreshLoops?.();
+      }
+      setDeleteModalOpen(false);
+      onClearSelection?.();
+    } catch (err) {
+      message.error(`删除失败: ${err instanceof Error ? err.message : '未知错误'}`);
+    } finally {
+      setDeleteProcessing(false);
+      setPendingDeleteIds([]);
+    }
+  }, [pendingDeleteIds, mode, selectedWorkspace, message, onRefreshItems, onRefreshLoops, onClearSelection]);
+
   // ─── 顶部 ActionToolbar 菜单项 ──────────────────────────────
   const batchActions = useMemo<BatchActionItem<number>[]>(() => {
     if (mode === 'item') {
@@ -249,14 +313,16 @@ export function useBatchActions(opts: UseBatchActionsOptions): UseBatchActionsRe
         { key: 'move-workspace', label: '移动到', icon: <DragOutlined />, onClick: openMoveWorkspace },
         { key: 'pause-scheduler', label: '暂停周期执行', icon: <PauseCircleOutlined />, onClick: openPauseScheduler },
         { key: 'resume-scheduler', label: '恢复周期执行', icon: <PlayCircleOutlined />, onClick: openResumeScheduler },
+        { key: 'delete', label: '删除', icon: <DeleteOutlined />, danger: true, onClick: openBatchDelete },
       ];
     }
     return [
       { key: 'copy-workspace', label: '复制到', icon: <CopyOutlined />, onClick: openCopyWorkspace },
       { key: 'move-workspace', label: '移动到', icon: <DragOutlined />, onClick: openMoveWorkspace },
       { key: 'force-stop', label: '强停', icon: <StopOutlined />, danger: true, onClick: openForceStop },
+      { key: 'delete', label: '删除', icon: <DeleteOutlined />, danger: true, onClick: openBatchDelete },
     ];
-  }, [mode, openChangeExecutor, openCopyWorkspace, openMoveWorkspace, openPauseScheduler, openResumeScheduler, openForceStop]);
+  }, [mode, openChangeExecutor, openCopyWorkspace, openMoveWorkspace, openPauseScheduler, openResumeScheduler, openForceStop, openBatchDelete]);
 
   // ─── Modal JSX ──────────────────────────────────────────────
   const modals = (
@@ -291,6 +357,12 @@ export function useBatchActions(opts: UseBatchActionsOptions): UseBatchActionsRe
           onCancel={() => { setSchedulerBatchModalOpen(false); setPendingSchedulerBatchIds([]); }}
         />
       )}
+      <BatchDeleteConfirmModal
+        open={deleteModalOpen} ids={pendingDeleteIds}
+        processing={deleteProcessing} mode={mode}
+        onConfirm={handleConfirmBatchDelete}
+        onCancel={() => { setDeleteModalOpen(false); setPendingDeleteIds([]); }}
+      />
     </>
   );
 
