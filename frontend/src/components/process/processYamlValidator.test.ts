@@ -109,7 +109,7 @@ phases:
     links:
       - id: link1
         name: 环节1
-        step_template: default
+        step_template: []
         on_success: next
 `;
     const result = parseYaml(yamlText);

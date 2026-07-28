@@ -29,9 +29,9 @@ pub async fn install_process_template(
 ) -> Result<InstallResult, InstallError> {
     let mut definition: ProcessDefinition = serde_yaml::from_str(&template.definition)?;
 
-    // 校验所有 link 引用的 step_template 是否存在。
     // skill 名称是自由文本（executor 在运行时注入），不做强制校验，仅记 warn。
-    check_step_template_dependencies(db, &definition.phases).await?;
+    // step_template 已转为 spec 引用，不再做原型存在性校验。
+    check_skill_warnings(db, &definition.phases).await?;
 
     // 解析 spec_ref / acceptance_criteria_ref 外部引用，覆盖 inline 文本。
     resolve_phase_spec_refs(&mut definition.phases);
@@ -193,7 +193,7 @@ async fn create_todo_for_link(
     workspace_path: &str,
 ) -> Result<i64, InstallError> {
     let (title, prompt, executor, expert_name, acceptance_criteria, model) =
-        resolve_step_template_fields(db, link).await?;
+        resolve_link_fields(link);
 
     let todo_id = db
         .create_todo_with_extras(
@@ -217,46 +217,33 @@ async fn create_todo_for_link(
     Ok(todo_id)
 }
 
-/// 解析 link 的环节原型引用或内联字段。
-async fn resolve_step_template_fields(
-    db: &Database,
+/// 解析 link 的内联执行字段。
+/// step_template 已转为 spec 引用（不再查原型表），执行配置完全以内联字段为准：
+/// title←name、prompt、executor、expert、验收标准（非空）、model。
+fn resolve_link_fields(
     link: &LinkDefinition,
-) -> Result<(
+) -> (
     String,
     String,
     Option<String>,
     Option<String>,
     Option<String>,
     Option<String>,
-), InstallError> {
-    if let Some(ref template_name) = link.step_template {
-        let template = db
-            .get_process_step_template_by_name(template_name)
-            .await?
-            .ok_or_else(|| InstallError::StepTemplateNotFound(template_name.clone()))?;
-        let title = if template.title.is_empty() {
-            template.name.clone()
-        } else {
-            template.title.clone()
-        };
-        return Ok((
-            title,
-            template.prompt,
-            template.executor,
-            template.expert_name,
-            Some(template.acceptance_criteria).filter(|s| !s.is_empty()),
-            template.model,
-        ));
-    }
-
-    Ok((
+) {
+    // 验收标准为空时不传入，保持与旧版「无验收标准」语义一致。
+    let acceptance_criteria = if link.acceptance_criteria.is_empty() {
+        None
+    } else {
+        Some(link.acceptance_criteria.clone())
+    };
+    (
         link.name.clone(),
         link.prompt.clone(),
         link.executor.clone(),
         link.expert.clone(),
-        None,
+        acceptance_criteria,
         link.model.clone(),
-    ))
+    )
 }
 
 /// 创建 Loop Step。
@@ -497,19 +484,15 @@ fn load_bundled_markdown(uri: &str) -> Result<String, String> {
         .map_err(|e| format!("读取 {} 失败: {}", file_path.display(), e))
 }
 
-/// 校验工艺模板中所有 link 引用的 step_template 是否存在。
-/// 期绑定 skill 名称仅记录 warn（skill 是 executor 级别的文件注入，存于 filesystem）。
-async fn check_step_template_dependencies(
+/// 校验环节引用的 skill 名称。
+/// step_template 已转为 spec 引用（不再是原型名），不再做存在性校验；
+/// skill 是 executor 级别的文件注入，仅记 warn，不阻断安装。
+async fn check_skill_warnings(
     db: &Database,
     phases: &[PhaseDefinition],
 ) -> Result<(), InstallError> {
     for phase in phases {
         for link in &phase.links {
-            if let Some(ref template_name) = link.step_template {
-                if db.get_process_step_template_by_name(template_name).await?.is_none() {
-                    return Err(InstallError::StepTemplateNotFound(template_name.clone()));
-                }
-            }
             // skill 名称仅 warn，不阻断安装。
             for skill_name in &link.skills {
                 if db.get_process_step_template_by_name(skill_name).await?.is_none() {
@@ -561,7 +544,8 @@ phases:
     links:
       - id: write-prd
         name: 编写 PRD
-        step_template: write-prd
+        step_template: []
+        prompt: 请编写 PRD
         on_success: next
         on_gate_fail: goto:write-prd
         max_rework: 2
@@ -660,19 +644,21 @@ phases:
     }
 
     #[tokio::test]
-    async fn test_install_missing_step_template_returns_error() {
+    async fn test_install_inlined_link_without_step_template_lookup() {
+        // step_template 已转为 spec 引用，install 不再查原型表；
+        // link 内联 prompt 时即使原型表无对应记录也能安装成功。
         let db = fresh_db().await;
         let ws_id = seed_workspace(&db).await;
 
         let template = process_templates::ActiveModel {
-            name: ActiveValue::Set("missing-step".to_string()),
-            display_name: ActiveValue::Set("缺失环节原型".to_string()),
+            name: ActiveValue::Set("inlined-link".to_string()),
+            display_name: ActiveValue::Set("内联环节".to_string()),
             description: ActiveValue::Set("".to_string()),
             category: ActiveValue::Set("test".to_string()),
             complexity: ActiveValue::Set("light".to_string()),
             version: ActiveValue::Set("1.0.0".to_string()),
             definition: ActiveValue::Set(
-                "process:\n  name: missing-step\nphases:\n  - id: p1\n    name: p1\n    links:\n      - id: l1\n        name: l1\n        step_template: nonexistent\n"
+                "process:\n  name: inlined-link\nphases:\n  - id: p1\n    name: p1\n    links:\n      - id: l1\n        name: l1\n        step_template: []\n        prompt: 请实现 l1\n        on_success: end\n        on_gate_fail: break\n"
                     .to_string(),
             ),
             is_system: ActiveValue::Set(true),
@@ -682,13 +668,10 @@ phases:
         .await
         .unwrap();
 
-        let err = install_process_template(&db, &template, ws_id, "/tmp/test-ws",
+        let result = install_process_template(&db, &template, ws_id, "/tmp/test-ws",
         )
         .await
-        .expect_err("should fail for missing step template");
-        assert!(
-            err.to_string().contains("nonexistent"),
-            "错误信息应包含缺失的环节原型名"
-        );
+        .expect("内联配置不应依赖原型表，install 应成功");
+        assert_eq!(result.step_count, 1);
     }
 }

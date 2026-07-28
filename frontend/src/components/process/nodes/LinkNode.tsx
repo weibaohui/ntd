@@ -80,12 +80,13 @@ function LinkNodeImpl({ data, selected }: NodeProps): JSX.Element {
         style={targetHandleStyle}
       />
 
-      {/* 左栏文字：环节名 + 原型引用。
+      {/* 左栏文字：环节名 + spec 模板引用。
           minWidth:0 让 flex 子项可收缩，配合子元素的 ellipsis 防止长文本撞到右侧出口标签。 */}
       <div style={textContentStyle}>
         <div style={nameStyle}>{link.name}</div>
         <div style={stepTemplateStyle}>
-          {link.step_template ?? '无原型引用'}
+          {(link.step_template ?? []).map((s) => s.name).join('、') ||
+            '无 spec 模板'}
         </div>
       </div>
 

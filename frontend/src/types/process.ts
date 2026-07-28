@@ -10,6 +10,12 @@ export interface ExpectedArtifact {
   locator?: string;
 }
 
+/** spec 模板文件引用（name + path），执行时注入 AI 上下文供其重点阅读 */
+export interface StepTemplateRef {
+  name: string;
+  path: string;
+}
+
 /** 门禁 */
 export interface GateDefinition {
   name: string;
@@ -24,7 +30,9 @@ export interface GateDefinition {
 export interface LinkDefinition {
   id: string;
   name: string;
-  step_template?: string;
+  step_template?: StepTemplateRef[];
+  /** 环节级验收标准（内联，原由原型表提供，现随 step_template 解耦） */
+  acceptance_criteria?: string;
   prompt?: string;
   executor?: string;
   expert?: string;
