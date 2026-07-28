@@ -32,7 +32,7 @@ import {
   type CSSProperties,
   type JSX,
 } from 'react';
-import { Alert, Button, Empty, Spin, Tabs, Modal, message } from 'antd';
+import { Alert, Button, Empty, Spin, Modal, message } from 'antd';
 import { CopyOutlined } from '@ant-design/icons';
 import {
   bundledApi,
@@ -362,65 +362,67 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
         />
       )}
 
-      {/* M5：Tabs 切换可视化/YAML，支撑双向联动 */}
-      <Tabs
-        activeKey={activeTab}
-        onChange={(key) => setActiveTab(key as 'visual' | 'yaml')}
-        style={tabsStyle}
-        items={[
-          {
-            key: 'visual',
-            label: '可视化',
-            children: (
-              /* 双栏布局：左可视化 + 右属性面板 */
-              <div style={splitViewStyle}>
-                {/* 左：React Flow 可视化区 */}
-                <div style={visualEditorStyle}>
-                  {definition ? (
-                    <ProcessVisualEditor
-                      definition={definition}
-                      onDefinitionChange={handleDefinitionChange}
-                      selectedNodeId={selectedNodeId}
-                      onSelectNode={setSelectedNodeId}
-                      theme={themeMode}
-                    />
-                  ) : (
-                    <Empty description="YAML 解析失败，无法显示可视化区" />
-                  )}
-                </div>
+      {/* M5：Tab 切换可视化/YAML，支撑双向联动 */}
+      {/* 不用 Ant Design Tabs items API：其内部 .ant-tabs-tabpane 用 position:absolute + display:none 切换， */}
+      {/* 导致 React Flow v12 的 ResizeObserver 拿到 0 尺寸，可视化区塌为 h:0 一片空白 */}
+      {/* 改用手写两按钮 + display 切换：React Flow 始终挂载不卸载，父代明确 flex 链撑开 */}
+      <div style={tabsStyle}>
+        <div style={tabBarStyle}>
+          <button
+            type="button"
+            style={activeTab === 'visual' ? tabButtonActiveStyle : tabButtonStyle}
+            onClick={() => setActiveTab('visual')}
+          >
+            可视化
+          </button>
+          <button
+            type="button"
+            style={activeTab === 'yaml' ? tabButtonActiveStyle : tabButtonStyle}
+            onClick={() => setActiveTab('yaml')}
+          >
+            YAML
+          </button>
+        </div>
 
-                {/* 右：属性面板 */}
-                <div style={propertyPanelStyle}>
-                  {definition ? (
-                    <ProcessPropertyPanel
-                      definition={definition}
-                      selectedNodeId={selectedNodeId}
-                      onDefinitionChange={handleDefinitionChange}
-                    />
-                  ) : (
-                    <Empty description="YAML 解析失败，无法显示属性面板" />
-                  )}
-                </div>
-              </div>
-            ),
-          },
-          {
-            key: 'yaml',
-            label: 'YAML',
-            children: (
-              /* M5：Monaco YAML 编辑器，接入双向联动 */
-              <div style={yamlEditorWrapperStyle}>
-                <ProcessYamlEditor
-                  value={yamlText}
-                  onChange={handleYamlChange}
-                  readOnly={isSystem}
-                  theme={themeMode}
-                />
-              </div>
-            ),
-          },
-        ]}
-      />
+        {/* 可视化 Tab：双栏布局（左可视化 + 右属性面板） */}
+        {/* display 切换不卸载组件，React Flow 始终挂载；flex:1 撑满剩余高度 */}
+        <div style={{ ...splitViewStyle, display: activeTab === 'visual' ? 'flex' : 'none' }}>
+          <div style={visualEditorStyle}>
+            {definition ? (
+              <ProcessVisualEditor
+                definition={definition}
+                onDefinitionChange={handleDefinitionChange}
+                selectedNodeId={selectedNodeId}
+                onSelectNode={setSelectedNodeId}
+                theme={themeMode}
+              />
+            ) : (
+              <Empty description="YAML 解析失败，无法显示可视化区" />
+            )}
+          </div>
+          <div style={propertyPanelStyle}>
+            {definition ? (
+              <ProcessPropertyPanel
+                definition={definition}
+                selectedNodeId={selectedNodeId}
+                onDefinitionChange={handleDefinitionChange}
+              />
+            ) : (
+              <Empty description="YAML 解析失败，无法显示属性面板" />
+            )}
+          </div>
+        </div>
+
+        {/* YAML Tab：Monaco 编辑器，接入双向联动 */}
+        <div style={{ ...yamlEditorWrapperStyle, display: activeTab === 'yaml' ? 'block' : 'none' }}>
+          <ProcessYamlEditor
+            value={yamlText}
+            onChange={handleYamlChange}
+            readOnly={isSystem}
+            theme={themeMode}
+          />
+        </div>
+      </div>
     </div>
   );
 }
@@ -450,16 +452,45 @@ const alertStyle: CSSProperties = {
 };
 
 // 双栏布局：横向 flex
+// position:absolute + inset:0 绕过 Ant Design Tabs 内部 .ant-tabs-tabpane 的 position:absolute 链
+// （tabpane 默认 absolute + 无明确高度，子代 height:100%/flex:1 全失效，React Flow 塌为 h:0）
+// 撑满 Tabs 根（tabsStyle 有 position:relative + 明确高度）
 const splitViewStyle: CSSProperties = {
-  display: 'flex',
   flexDirection: 'row',
   flex: 1,
   minHeight: 400,
 };
 
+// Tab 按钮栏：横向 flex，底部边框分隔（仿 Ant Design Tabs 视觉）
+const tabBarStyle: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'row',
+  borderBottom: '1px solid #e2e8f0',
+  padding: '0 4px',
+};
+
+// Tab 按钮：未激活态，浅色文字 + 透明背景
+const tabButtonStyle: CSSProperties = {
+  padding: '8px 16px',
+  border: 'none',
+  background: 'transparent',
+  cursor: 'pointer',
+  color: '#64748b',
+  fontSize: 14,
+};
+
+// Tab 按钮：激活态，深色文字 + 底部蓝色高亮条（仿 Ant Design Tabs 激活态）
+const tabButtonActiveStyle: CSSProperties = {
+  ...tabButtonStyle,
+  color: '#1677ff',
+  fontWeight: 500,
+  boxShadow: 'inset 0 -2px 0 #1677ff',
+};
+
 // Tabs 容器：填满剩余高度
 // overflow:hidden 让 Tabs 内容区剪裁，nav 不溢出覆盖可视化区
 // Ant Design Tabs 内容区默认无明确高度，需 flex:1 + minHeight 让内部 React Flow 撑开
+// 父代 splitViewStyle 已 flex:1 撑开，这里 flex:1 + height:100% 雾路接通
 const tabsStyle: CSSProperties = {
   flex: 1,
   display: 'flex',
@@ -467,24 +498,21 @@ const tabsStyle: CSSProperties = {
   minHeight: 400,
   // 关键：让 Tabs 内容区（含 React Flow）正确剪裁，nav 不覆盖画布
   overflow: 'hidden',
-  // Ant Design Tabs 根容器的 .ant-tabs-content 需在 flex column 下获得剩余高度
-  // Tabs 内部用 .ant-tabs-content-holder { flex: 1 } 撑开，这里让 Tabs 根做 flex 容器
 };
 
 // YAML 编辑器包装：撑满 Tab 内容区
+// 同 splitViewStyle，用 absolute+inset:0 绕过 tabpane 链
 const yamlEditorWrapperStyle: CSSProperties = {
-  height: '100%',
+  flex: 1,
   minHeight: 400,
 };
 
 // 左：可视化区，flex 1（占剩余宽度）
-// height: '100%' 在 Tabs 内容区下需配合父容器 flex 撑开，否则 height:0
+// 父代 splitViewStyle 已 absolute+inset:0 撑开，这里 flex:1 + height:100% 链路接通
 const visualEditorStyle: CSSProperties = {
   flex: 1,
   minWidth: 400,
-  // React Flow 需要明确高度：Tabs 内容区已 flex 撑开，这里 100% 继承
   height: '100%',
-  minHeight: 400,
 };
 
 // 右：属性面板，固定宽度 360px
