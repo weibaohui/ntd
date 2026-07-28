@@ -40,6 +40,7 @@ import {
   removeLink as _removeLink, // 暂未启用，M5 用于 onNodesDelete
   removePhase,
   addPhase,
+  addLink,
   setLinkGoto,
   resetLinkGoto,
 } from './processDefinitionUpdater';
@@ -117,19 +118,36 @@ export function ProcessVisualEditor({
     [definition, onDefinitionChange],
   );
 
-  // ── M6 新增：空工艺 CTA 回调 ──────────────────────
-  // 点击「新增阶段」按钮时生成第一个 phase，通过 onDefinitionChange 回写父组件。
-  // 第一个 phase 的默认 id/name 用简单生成规则，避免空工艺用户还要想 id。
-  // 第一个 phase 的 links 为空数组（空环节），用户后续在画布上添加环节。
+  // ── M6 新增：新建阶段回调 ──────────────────────
+  // 点击「+ 新增阶段」按钮时生成新 phase，通过 onDefinitionChange 回写父组件。
+  // id 用动态 `phase-${n+1}`（n=现有 phase 数），避重复新建时 id 冲突失效。
+  // name 用「阶段 ${n+1}」与 id 对齐，首个 phase 也走此规则（空工艺 n=0 → phase-1）。
   const handleAddPhase = useCallback(() => {
-    // 简化默认：id 用 `phase-1`（首个 phase，无重名风险），name 用「阶段 1」
+    const n = definition.phases?.length ?? 0;
     const newDef = addPhase(definition, {
-      id: 'phase-1',
-      name: '阶段 1',
+      id: `phase-${n + 1}`,
+      name: `阶段 ${n + 1}`,
       links: [],
     });
     onDefinitionChange(newDef);
   }, [definition, onDefinitionChange]);
+
+  // ── M6 新增：新建环节回调 ──────────────────────
+  // 在指定 phase 内追加 link，id 用 `link-${phaseId}-${n+1}`（n=该 phase 现有 link 数）。
+  // name 用「环节 ${n+1}」与 id 对齐，避重复新建时 id 冲突。
+  const handleAddLink = useCallback(
+    (phaseId: string) => {
+      const phase = definition.phases?.find((p) => p.id === phaseId);
+      if (!phase) return;
+      const n = phase.links?.length ?? 0;
+      const newDef = addLink(definition, phaseId, {
+        id: `link-${phaseId}-${n + 1}`,
+        name: `环节 ${n + 1}`,
+      });
+      onDefinitionChange(newDef);
+    },
+    [definition, onDefinitionChange],
+  );
 
   // 选中 phase 回调
   const handleSelectPhase = useCallback(
@@ -349,9 +367,19 @@ export function ProcessVisualEditor({
     );
   }
 
-  // 非空工艺：渲染 React Flow（M4 已实现）
+  // 非空工艺：渲染 React Flow（M4 已实现）+ 顶部「+ 新增阶段」浮动按钮
   return (
     <div style={containerStyle}>
+      {/* 顶部浮动「+ 新增阶段」按钮：絕对定位贴画布左上，z-index 高于 React Flow 节点 */}
+      <Button
+        type="primary"
+        size="small"
+        icon={<PlusOutlined />}
+        onClick={handleAddPhase}
+        style={addPhaseButtonStyle}
+      >
+        新增阶段
+      </Button>
       <ReactFlow
         nodes={nodes}
         edges={edges}
