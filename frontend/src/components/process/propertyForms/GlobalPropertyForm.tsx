@@ -205,22 +205,7 @@ export function GlobalPropertyForm({
         />
       </Form.Item>
 
-      {/* step_templates Collapse 折叠面板 */}
-      <Text strong style={sectionTitleStyle}>环节原型</Text>
-      <Collapse
-        style={collapseStyle}
-        items={[
-          {
-            key: 'templates',
-            label: '环节原型列表',
-            children: (
-              <Text type="secondary">
-                step_templates 编辑将在 M5 完善（当前展示元信息）
-              </Text>
-            ),
-          },
-        ]}
-      />
+
     </Form>
   );
 }

@@ -344,8 +344,8 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
         onBack={handleBack}
       />
 
-      {/* 顶部 Alert：系统工艺黄色 + 复制链接，用户工艺绿色 */}
-      {isSystem ? (
+      {/* 顶部 Alert：系统工艺黄色 + 复制链接 */}
+      {isSystem && (
         <Alert
           type="warning"
           showIcon
@@ -359,13 +359,6 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
               复制到用户层后编辑
             </Button>
           }
-          style={alertStyle}
-        />
-      ) : (
-        <Alert
-          type="success"
-          showIcon
-          message="编辑保存后写入 ~/.ntd/processes/（M5 将启用保存按钮）"
           style={alertStyle}
         />
       )}
