@@ -46,6 +46,7 @@ function ProcessEdgeImpl({
   sourcePosition,
   targetPosition,
   data,
+  markerEnd,
 }: EdgeProps): JSX.Element {
   // 从 data 提取视觉属性和回调
   // data 类型是 Record<string, unknown>，我们用 as 断言提取
@@ -94,6 +95,7 @@ function ProcessEdgeImpl({
       <BaseEdge
         id={id}
         path={path}
+        markerEnd={markerEnd}
         style={{
           stroke: color,
           // 虚线样式：dashed=true 时用 6,3 间距

@@ -35,6 +35,8 @@ export interface LinkNodeData {
   linkIndex: number;
   // 选中 link 回调（右侧属性面板切换）
   onSelectLink: (linkId: string) => void;
+  // 删除 link 回调（卡片删除按钮触发）
+  onDeleteLink: (linkId: string) => void;
   // React Flow 要求 data 是 Record<string, unknown> 兼容类型
   [key: string]: unknown;
 }
@@ -61,13 +63,19 @@ const GATE_FAIL_HANDLE_TOP = '70%';
 // React Flow 在拖拽时会频繁更新节点 props，memo 避免未变节点重渲染。
 function LinkNodeImpl({ data, selected }: NodeProps): JSX.Element {
   const linkData = data as unknown as LinkNodeData;
-  const { link, onSelectLink } = linkData;
+  const { link, onSelectLink, onDeleteLink } = linkData;
 
   // 卡片点击：选中 link
   // stopPropagation 防止点击卡片时同时触发父 phase 的选中
   const handleClick = (e: MouseEvent) => {
     e.stopPropagation();
     onSelectLink(link.id);
+  };
+
+  // 删除按钮：阻止冒泡（避免同时触发选中），调删除回调
+  const handleDeleteClick = (e: MouseEvent) => {
+    e.stopPropagation();
+    onDeleteLink(link.id);
   };
 
   return (
@@ -79,6 +87,17 @@ function LinkNodeImpl({ data, selected }: NodeProps): JSX.Element {
         id="target"
         style={targetHandleStyle}
       />
+
+      {/* 删除按钮：右上角红色 ×，删除该环节 */}
+      <button
+        type="button"
+        aria-label="删除环节"
+        title="删除环节"
+        style={deleteButtonStyle}
+        onClick={handleDeleteClick}
+      >
+        ×
+      </button>
 
       {/* 左栏文字：环节名 + spec 模板引用。
           minWidth:0 让 flex 子项可收缩，配合子元素的 ellipsis 防止长文本撞到右侧出口标签。 */}
@@ -187,6 +206,21 @@ const targetHandleStyle: CSSProperties = {
   width: 8,
   height: 8,
   border: '2px solid #fff',
+};
+
+// 删除按钮样式：绝对定位卡片右上角，红色 ×；z-index 确保浮在出口标签之上
+const deleteButtonStyle: CSSProperties = {
+  position: 'absolute',
+  top: 2,
+  right: 4,
+  background: 'transparent',
+  border: 'none',
+  color: '#ef4444',
+  fontSize: 14,
+  cursor: 'pointer',
+  padding: '0 4px',
+  lineHeight: 1,
+  zIndex: 2,
 };
 
 // on_success source handle 样式：右侧上方，绿色。

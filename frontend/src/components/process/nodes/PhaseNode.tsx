@@ -22,7 +22,7 @@
 // ---------------------------------------------------------------------------
 
 import { memo, type CSSProperties, type MouseEvent, type JSX } from 'react';
-import { type NodeProps } from '@xyflow/react';
+import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { PhaseDefinition } from '@/types/process';
 import { PHASE_HEADER } from '../processLayout';
 
@@ -50,6 +50,18 @@ export interface PhaseNodeData {
 const PHASE_BG = 'rgba(148, 163, 184, 0.05)';
 // phase 容器边框色（虚线灰）
 const PHASE_BORDER = '#94a3b8';
+
+// 阶段流转 handle 样式：视觉隐藏，仅作 React Flow edge 连接点。
+// 阶段顺序边由 builder 自动生成，不可由用户拖拽连线改动，故 pointerEvents:none。
+const phaseHandleStyle: CSSProperties = {
+  opacity: 0,
+  pointerEvents: 'none',
+  // 留 1px 尺寸，保证 React Flow 仍把它识别为有效连接点。
+  width: 1,
+  height: 1,
+  // 纵向固定在头部第一行（phase 名称所在行），让阶段间箭头在顶部对齐
+  top: PHASE_HEADER / 2,
+};
 
 // ── 组件实现 ──────────────────────────────────────
 
@@ -81,6 +93,10 @@ function PhaseNodeImpl({ data, selected }: NodeProps): JSX.Element {
 
   return (
     <div style={containerStyle(selected)}>
+      {/* 阶段流转连接点：左 target 流入 / 右 source 流出。
+          仅作 edge 端点，视觉隐藏、不可交互（阶段顺序边由 builder 自动生成）。 */}
+      <Handle type="target" id="phase-target" position={Position.Left} style={phaseHandleStyle} />
+      <Handle type="source" id="phase-source" position={Position.Right} style={phaseHandleStyle} />
       {/* 头部：phase.name + 操作按钮 */}
       <div
         style={headerStyle}
