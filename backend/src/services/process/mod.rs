@@ -103,13 +103,21 @@ pub struct PhaseDefinition {
     pub links: Vec<LinkDefinition>,
 }
 
+/// spec 模板文件引用（name + path），执行时注入 AI 上下文供其重点阅读。
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct StepTemplateRef {
+    pub name: String,
+    pub path: String,
+}
+
 /// 环节（Link）定义。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LinkDefinition {
     pub id: String,
     pub name: String,
-    /// 引用的环节原型名称（优先于内联字段）
-    pub step_template: Option<String>,
+    /// 引用的 spec 模板文件列表（执行时注入 AI 上下文供其重点阅读）。
+    /// 设计上仅作 spec 引用；执行配置一律以内联字段（prompt/executor/expert/model/acceptance_criteria）为准。
+    pub step_template: Option<Vec<StepTemplateRef>>,
     #[serde(default)]
     pub prompt: String,
     pub executor: Option<String>,
@@ -133,6 +141,9 @@ pub struct LinkDefinition {
     pub on_rating_fail: String,
     #[serde(default = "default_max_rework")]
     pub max_rework: i32,
+    /// 环节级验收标准（内联；早期由原型表提供，现已随 step_template 解耦迁入 link）。
+    #[serde(default)]
+    pub acceptance_criteria: String,
 }
 
 fn default_review_type() -> String {
@@ -210,8 +221,6 @@ pub enum InstallError {
     TemplateNotFound(String),
     #[error("工作空间未找到: {0}")]
     WorkspaceNotFound(i64),
-    #[error("环节原型未找到: {0}")]
-    StepTemplateNotFound(String),
     #[error("YAML 解析失败: {0}")]
     ParseError(String),
     #[error("数据库错误: {0}")]

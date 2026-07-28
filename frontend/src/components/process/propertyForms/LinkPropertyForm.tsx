@@ -29,6 +29,7 @@ import type {
   LinkDefinition,
   GateDefinition,
   ExpectedArtifact,
+  StepTemplateRef,
 } from '@/types/process';
 import { updateLinkField } from '../processDefinitionUpdater';
 
@@ -208,6 +209,77 @@ export function LinkPropertyForm({
     handleFieldChange('expected_artifacts', newArtifacts);
   };
 
+  // ── step_template 嵌套表格（spec 模板引用）─────────
+
+  // step_template 列定义：名称 / 地址 / 操作（删除），与 gates/artifacts 同构。
+  const stepTemplateColumns = [
+    {
+      title: '名称',
+      dataIndex: 'name',
+      render: (_: unknown, record: StepTemplateRef, index: number) => (
+        <Input
+          value={record.name}
+          onChange={(e) =>
+            handleStepTemplateChange(index, 'name', e.target.value)
+          }
+          size="small"
+        />
+      ),
+    },
+    {
+      title: '地址',
+      dataIndex: 'path',
+      render: (_: unknown, record: StepTemplateRef, index: number) => (
+        <Input
+          value={record.path}
+          onChange={(e) =>
+            handleStepTemplateChange(index, 'path', e.target.value)
+          }
+          size="small"
+        />
+      ),
+    },
+    {
+      title: '操作',
+      render: (_: unknown, __: StepTemplateRef, index: number) => (
+        <Button
+          type="text"
+          size="small"
+          icon={<DeleteOutlined />}
+          onClick={() => handleRemoveStepTemplate(index)}
+        />
+      ),
+    },
+  ];
+
+  // 修改指定 step_template 的字段
+  const handleStepTemplateChange = (
+    idx: number,
+    field: keyof StepTemplateRef,
+    value: string,
+  ): void => {
+    const newList = [...(link.step_template ?? [])];
+    (newList[idx] as unknown as Record<string, unknown>)[field] = value;
+    handleFieldChange('step_template', newList);
+  };
+
+  // 新增 step_template（空行，用户填 name/path）
+  const handleAddStepTemplate = (): void => {
+    const newItem: StepTemplateRef = { name: '', path: '' };
+    handleFieldChange('step_template', [
+      ...(link.step_template ?? []),
+      newItem,
+    ]);
+  };
+
+  // 删除 step_template
+  const handleRemoveStepTemplate = (idx: number): void => {
+    handleFieldChange(
+      'step_template',
+      (link.step_template ?? []).filter((_, i) => i !== idx),
+    );
+  };
+
   return (
     <Form layout="vertical" style={formStyle}>
       <Text strong style={sectionTitleStyle}>环节属性</Text>
@@ -223,14 +295,6 @@ export function LinkPropertyForm({
         <Input
           value={link.name}
           onChange={(e) => handleFieldChange('name', e.target.value)}
-        />
-      </Form.Item>
-
-      <Form.Item label="环节原型">
-        <Input
-          value={link.step_template ?? ''}
-          onChange={(e) => handleFieldChange('step_template', e.target.value)}
-          placeholder="原型引用，可空"
         />
       </Form.Item>
 
@@ -285,6 +349,17 @@ export function LinkPropertyForm({
         />
       </Form.Item>
 
+      <Form.Item label="验收标准">
+        <Input.TextArea
+          value={link.acceptance_criteria ?? ''}
+          onChange={(e) =>
+            handleFieldChange('acceptance_criteria', e.target.value)
+          }
+          rows={2}
+          placeholder="环节产物验收标准，可空"
+        />
+      </Form.Item>
+
       {/* gates 嵌套表格 */}
       <Space style={sectionHeaderStyle}>
         <Text strong>门禁</Text>
@@ -319,6 +394,26 @@ export function LinkPropertyForm({
       <Table
         dataSource={link.expected_artifacts ?? []}
         columns={artifactsColumns}
+        rowKey={(_, index) => String(index)}
+        pagination={false}
+        size="small"
+        style={tableStyle}
+      />
+
+      {/* step_template 嵌套表格（spec 模板引用） */}
+      <Space style={sectionHeaderStyle}>
+        <Text strong>环节 spec 模板</Text>
+        <Button
+          size="small"
+          icon={<PlusOutlined />}
+          onClick={handleAddStepTemplate}
+        >
+          新增模板
+        </Button>
+      </Space>
+      <Table
+        dataSource={link.step_template ?? []}
+        columns={stepTemplateColumns}
         rowKey={(_, index) => String(index)}
         pagination={false}
         size="small"
