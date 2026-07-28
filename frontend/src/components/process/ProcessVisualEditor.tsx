@@ -283,21 +283,28 @@ export function ProcessVisualEditor({
     [definition, onDefinitionChange],
   );
 
-  // 节点点击：选中节点
+  // 节点点击：选中节点（兜底路径）
+  // PhaseNode 头部 onClick / LinkNode 容器 onClick 已触发 onSelectPhase/onSelectLink，
+  // 但若用户点击命中在节点非头部区域（如 phase 容器整体），头部 onClick 未触发，
+  // 这里兜底：从 node.id 反解 YAML id 调 onSelectNode，确保属性面板始终切换。
+  // node.id 格式：phase-${i} | link-${i}-${j}，反解时直接传 node.id 给上层，
+  // 上层 selectedNodeId 存 YAML id（phase.id / step.id），需做 id 映射。
+  // 但 buildProcessGraph 用 phaseIndex 生成 node.id，YAML id 在 node.data 里，
+  // 这里取 node.data.phase.id / node.data.step.id 兜底。
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_, node) => {
-      // node.id 是 phase-${i} 或 link-${i}-${j}
-      // 我们需要转成 YAML id 传给上层
-      // 但 PhaseNode / LinkNode 内部已经调用 onSelectPhase / onSelectLink
-      // 那里传的是 YAML id，所以这里直接传 node.id 即可
-      // 实际上 PhaseNode 的 onSelectPhase(phase.id) 已经触发
-      // 这里不需要再触发，避免重复
-      // 但 React Flow 的 onNodeClick 会在节点点击时触发
-      // 而 PhaseNode 内部 onClick={handleHeaderClick} 也会触发
-      // 为避免冲突，这里不做处理
-      void node;
+      // 兜底：若 PhaseNode/LinkNode 内部 onClick 已触发，这里重复调无害（同 id 设置）
+      // 从 node.data 取 YAML id，避免 node.id 与 YAML id 的索引偏移
+      const data = node.data as Record<string, unknown>;
+      if (node.type === 'phase' && data.phase) {
+        const phase = data.phase as { id?: string };
+        if (phase.id) onSelectNode(phase.id);
+      } else if (node.type === 'link' && data.step) {
+        const step = data.step as { id?: string };
+        if (step.id) onSelectNode(step.id);
+      }
     },
-    [],
+    [onSelectNode],
   );
 
   // 画布点击：取消选中
