@@ -40,6 +40,9 @@ export interface PhaseNodeData {
   onSelectPhase: (phaseId: string) => void;
   // 新增环节回调（在 phase 内追加 link）
   onAddLink: (phaseId: string) => void;
+  // 选中态：由 buildProcessGraph 根据上层 selectedNodeId 注入。
+  // 受控画布下 React Flow 内置 selected 不生效，必须以此为准。
+  selected: boolean;
   // React Flow 要求 data 是 Record<string, unknown> 兼容类型
   [key: string]: unknown;
 }
@@ -69,9 +72,12 @@ const phaseHandleStyle: CSSProperties = {
 //
 // 使用 React.memo 包裹避免不必要重渲染：
 // React Flow 在拖拽时会频繁更新节点 props，memo 避免未变节点重渲染。
-function PhaseNodeImpl({ data, selected }: NodeProps): JSX.Element {
+function PhaseNodeImpl({ data, selected: rfSelected }: NodeProps): JSX.Element {
   const phaseData = data as unknown as PhaseNodeData;
   const { phase, onDeletePhase, onSelectPhase, onAddLink } = phaseData;
+  // 优先用 data.selected（上层 selectedNodeId 驱动）；
+  // React Flow 内置 selected 仅作兜底（非受控场景如 Storybook 仍有效）
+  const selected = phaseData.selected ?? rfSelected;
 
   // 删除按钮点击：阻止事件冒泡（避免触发选中），调用删除回调
   const handleDeleteClick = (e: MouseEvent) => {
@@ -86,8 +92,11 @@ function PhaseNodeImpl({ data, selected }: NodeProps): JSX.Element {
     onAddLink(phase.id);
   };
 
-  // 头部点击：选中 phase
-  const handleHeaderClick = () => {
+  // 头部点击：选中 phase（再次点击已选中项时由上层 toggle 为取消选中）
+  const handleHeaderClick = (e: MouseEvent) => {
+    // stopPropagation 防止冒泡到 React Flow 节点包装层再次触发 onNodeClick，
+    // 否则「点中→再点取消」会被兜底回调重新选中，toggle 失效
+    e.stopPropagation();
     onSelectPhase(phase.id);
   };
 
@@ -97,12 +106,12 @@ function PhaseNodeImpl({ data, selected }: NodeProps): JSX.Element {
           仅作 edge 端点，视觉隐藏、不可交互（阶段顺序边由 builder 自动生成）。 */}
       <Handle type="target" id="phase-target" position={Position.Left} style={phaseHandleStyle} />
       <Handle type="source" id="phase-source" position={Position.Right} style={phaseHandleStyle} />
-      {/* 头部：phase.name + 操作按钮 */}
+      {/* 头部：phase.name + 操作按钮。选中时头部文字变绿，与容器高亮呼应 */}
       <div
         style={headerStyle}
         onClick={handleHeaderClick}
       >
-        <span style={headerTextStyle}>
+        <span style={headerTextStyle(selected)}>
           ▸ {phase.name}
         </span>
         <span style={headerActionsStyle}>
@@ -136,10 +145,13 @@ function containerStyle(selected: boolean): CSSProperties {
   return {
     // position: relative 确保内部子节点（React Flow 渲染）正确定位
     position: 'relative',
-    // 虚线边框，选中时加粗
-    border: selected ? '2px dashed #10b981' : `1px dashed ${PHASE_BORDER}`,
-    // 半透明背景
-    background: PHASE_BG,
+    // 选中对比：未选中=灰色细虚线（弱存在感），选中=绿色实线加粗+浅绿底，
+    // 线型（虚→实）+ 颜色（灰→绿）+ 底色三重差异，一眼可辨
+    border: selected ? '2px solid #10b981' : `1px dashed ${PHASE_BORDER}`,
+    // 选中时底色由中性灰换成浅绿，与边框同色系，强化「被点中」感知
+    background: selected ? 'rgba(16, 185, 129, 0.08)' : PHASE_BG,
+    // 状态切换加过渡，避免边框/底色瞬变造成的生硬感
+    transition: 'border-color 0.15s ease, background 0.15s ease',
     // 圆角
     borderRadius: 8,
     // 头部高度 + 内部 link 区域（由 React Flow 子节点填充）
@@ -163,12 +175,15 @@ const headerStyle: CSSProperties = {
   cursor: 'pointer',
 };
 
-// 头部文字样式
-const headerTextStyle: CSSProperties = {
-  fontSize: 14,
-  fontWeight: 600,
-  color: '#475569',
-};
+// 头部文字样式：选中时文字变绿，让用户在头部点击区也能直接看到选中反馈
+function headerTextStyle(selected: boolean): CSSProperties {
+  return {
+    fontSize: 14,
+    fontWeight: 600,
+    color: selected ? '#059669' : '#475569',
+    transition: 'color 0.15s ease',
+  };
+}
 
 // 头部右侧操作按钮容器：横向排列，右对齐
 const headerActionsStyle: CSSProperties = {

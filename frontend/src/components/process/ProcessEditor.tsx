@@ -33,7 +33,7 @@ import {
   type JSX,
 } from 'react';
 import { Alert, Button, Empty, Spin, Modal, message } from 'antd';
-import { CopyOutlined } from '@ant-design/icons';
+import { CopyOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
 import {
   bundledApi,
   type ProcessTemplateDetail,
@@ -93,6 +93,8 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 当前激活的 Tab：'visual'（可视化双栏）| 'yaml'（Monaco YAML）
   const [activeTab, setActiveTab] = useState<'visual' | 'yaml'>('visual');
+  // 属性面板收缩状态：true = 收起为窄条（看大图时用），false = 正常 360px 面板
+  const [propertyPanelCollapsed, setPropertyPanelCollapsed] = useState(false);
 
   // ── 加载工艺详情副作用 ──────────────────────────
   // 依赖 [processName]：工艺名变化时重新加载
@@ -401,15 +403,44 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
               <Empty description="YAML 解析失败，无法显示可视化区" />
             )}
           </div>
-          <div style={propertyPanelStyle}>
-            {definition ? (
-              <ProcessPropertyPanel
-                definition={definition}
-                selectedNodeId={selectedNodeId}
-                onDefinitionChange={handleDefinitionChange}
-              />
+          <div style={propertyPanelStyle(propertyPanelCollapsed)}>
+            {propertyPanelCollapsed ? (
+              // 收起态：整条窄条都是一个展开按钮（向左箭头），点击区域大、不易点空
+              <button
+                type="button"
+                aria-label="展开属性面板"
+                title="展开属性面板"
+                style={expandStripButtonStyle}
+                onClick={() => setPropertyPanelCollapsed(false)}
+              >
+                <LeftOutlined />
+              </button>
             ) : (
-              <Empty description="YAML 解析失败，无法显示属性面板" />
+              // 展开态：顶部工具条（向右箭头收起）+ 面板内容
+              <>
+                <div style={panelToolbarStyle}>
+                  <button
+                    type="button"
+                    aria-label="收起属性面板"
+                    title="收起属性面板"
+                    style={collapseButtonStyle}
+                    onClick={() => setPropertyPanelCollapsed(true)}
+                  >
+                    <RightOutlined />
+                  </button>
+                </div>
+                <div style={panelBodyStyle}>
+                  {definition ? (
+                    <ProcessPropertyPanel
+                      definition={definition}
+                      selectedNodeId={selectedNodeId}
+                      onDefinitionChange={handleDefinitionChange}
+                    />
+                  ) : (
+                    <Empty description="YAML 解析失败，无法显示属性面板" />
+                  )}
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -516,13 +547,63 @@ const visualEditorStyle: CSSProperties = {
   height: '100%',
 };
 
-// 右：属性面板，固定宽度 360px
-const propertyPanelStyle: CSSProperties = {
-  width: 360,
-  height: '100%',
+// 右：属性面板。展开固定 360px；收起为 32px 窄条（只留展开箭头），
+// 宽度过渡动画让收缩/展开不生硬
+function propertyPanelStyle(collapsed: boolean): CSSProperties {
+  return {
+    width: collapsed ? 32 : 360,
+    height: '100%',
+    // 纵向 flex：展开时工具条在上、内容区撑满剩余
+    display: 'flex',
+    flexDirection: 'column',
+    // 浅灰背景，与可视化区区分
+    background: '#f8fafc',
+    // 左边框分隔
+    borderLeft: '1px solid #e2e8f0',
+    // 收起态内容（窄条按钮）不允许溢出
+    overflow: 'hidden',
+    transition: 'width 0.2s ease',
+  };
+}
+
+// 面板顶部工具条：右侧对齐放收起按钮，底部分隔线与面板内容区分
+const panelToolbarStyle: CSSProperties = {
+  display: 'flex',
+  justifyContent: 'flex-end',
+  padding: '4px 8px',
+  borderBottom: '1px solid #e2e8f0',
+  // 工具条不参与收缩，固定高度由内容决定
+  flexShrink: 0,
+};
+
+// 面板内容区：撑满工具条之外的剩余高度，滚动只发生在内容区
+const panelBodyStyle: CSSProperties = {
+  flex: 1,
   overflow: 'auto',
-  // 浅灰背景，与可视化区区分
-  background: '#f8fafc',
-  // 左边框分隔
-  borderLeft: '1px solid #e2e8f0',
+};
+
+// 收起按钮：小号透明按钮， hover 变色由浏览器默认即可（保持极简）
+const collapseButtonStyle: CSSProperties = {
+  background: 'transparent',
+  border: 'none',
+  color: '#64748b',
+  fontSize: 12,
+  cursor: 'pointer',
+  padding: '2px 6px',
+  lineHeight: 1.4,
+};
+
+// 收起态的整条展开按钮：铺满 32px 窄条全高，箭头垂直居中，
+// 整条可点是为了让用户不用瞄准一个小图标
+const expandStripButtonStyle: CSSProperties = {
+  width: '100%',
+  height: '100%',
+  background: 'transparent',
+  border: 'none',
+  color: '#64748b',
+  fontSize: 12,
+  cursor: 'pointer',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
 };

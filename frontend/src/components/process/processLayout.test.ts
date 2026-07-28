@@ -18,8 +18,10 @@ import type { PhaseDefinition, LinkDefinition } from '@/types/process';
 import {
   layoutPhases,
   layoutLinksInPhase,
+  calcPhaseHeight,
   PHASE_PADDING,
   PHASE_HEADER,
+  HEADER_LINK_GAP,
   NODE_HEIGHT,
   LINK_GAP,
 } from './processLayout';
@@ -150,8 +152,8 @@ describe('layoutLinksInPhase', () => {
     expect(result[0].id).toBe('link-0-0');
     // x = PHASE_PADDING / 2
     expect(result[0].position.x).toBe(PHASE_PADDING / 2);
-    // y = PHASE_HEADER（第一个 link）
-    expect(result[0].position.y).toBe(PHASE_HEADER);
+    // y = PHASE_HEADER + HEADER_LINK_GAP（第一个 link 与阶段标题之间留间距）
+    expect(result[0].position.y).toBe(PHASE_HEADER + HEADER_LINK_GAP);
   });
 
   it('layoutLinksInPhase_multipleLinks_topToBottom', () => {
@@ -172,8 +174,8 @@ describe('layoutLinksInPhase', () => {
     expect(result[0].position.y).toBeLessThan(result[1].position.y);
     expect(result[1].position.y).toBeLessThan(result[2].position.y);
 
-    // 验证间距：y[i] = PHASE_HEADER + i * (NODE_HEIGHT + LINK_GAP)
-    const expectedY1 = PHASE_HEADER + NODE_HEIGHT + LINK_GAP;
+    // 验证间距：y[i] = PHASE_HEADER + HEADER_LINK_GAP + i * (NODE_HEIGHT + LINK_GAP)
+    const expectedY1 = PHASE_HEADER + HEADER_LINK_GAP + NODE_HEIGHT + LINK_GAP;
     expect(result[1].position.y).toBe(expectedY1);
   });
 
@@ -188,5 +190,23 @@ describe('layoutLinksInPhase', () => {
     const result = layoutLinksInPhase(phase, 1);
 
     expect(result[0].id).toBe('link-1-0');
+  });
+});
+
+// ── calcPhaseHeight 测试 ─────────────────────────
+
+// phase 容器高度公式单一数据源：头部 + 头部与首卡片间距 + link 行高。
+// 空 phase 按 1 个占位行高计算，保证容器不会塌成只剩头部。
+describe('calcPhaseHeight', () => {
+  it('calcPhaseHeight_emptyPhase_reservesOnePlaceholderRow', () => {
+    expect(calcPhaseHeight(0)).toBe(
+      PHASE_HEADER + HEADER_LINK_GAP + (NODE_HEIGHT + LINK_GAP),
+    );
+  });
+
+  it('calcPhaseHeight_multipleLinks_scalesWithLinkCount', () => {
+    expect(calcPhaseHeight(3)).toBe(
+      PHASE_HEADER + HEADER_LINK_GAP + 3 * (NODE_HEIGHT + LINK_GAP),
+    );
   });
 });

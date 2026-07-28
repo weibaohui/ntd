@@ -63,7 +63,7 @@ function makeDefinitionWithGoto(): ProcessDefinition {
   };
 }
 
-// 构造 mock 回调
+// 构造 mock 回调；selectedNodeId 默认 null（无选中），选中态用例用展开覆盖
 function makeCallbacks() {
   return {
     onDeletePhase: vi.fn(),
@@ -72,6 +72,7 @@ function makeCallbacks() {
     onDeleteLink: vi.fn(),
     onDeleteEdge: vi.fn(),
     onAddLink: vi.fn(),
+    selectedNodeId: null as string | null,
   };
 }
 
@@ -304,5 +305,58 @@ describe('buildProcessGraph edges', () => {
     expect(phaseEdges[0].data?.color).toBe('#94a3b8');
     expect(phaseEdges[0].data?.dashed).toBe(false);
     expect(phaseEdges[0].data?.onDelete).toBeUndefined();
+  });
+});
+
+// ── 选中态注入测试 ────────────────────────────────
+
+// 目的：修复「点击阶段/环节无选中样式」问题——画布是受控模式，
+// React Flow 内置 selected 不会生效，必须由 buildProcessGraph 把
+// selectedNodeId 注入节点 data.selected 驱动高亮。
+describe('buildProcessGraph selected 注入', () => {
+  it('buildProcessGraph_selectedPhase_marksPhaseDataSelected', () => {
+    const def = makeDefinitionWithGoto();
+    const callbacks = { ...makeCallbacks(), selectedNodeId: 'phase2' };
+
+    const result = buildProcessGraph(def, callbacks);
+
+    // 命中的 phase data.selected=true，未命中的=false
+    const phase0 = result.nodes.find((n) => n.id === 'phase-0');
+    const phase1 = result.nodes.find((n) => n.id === 'phase-1');
+    expect(phase0!.data.selected).toBe(false);
+    expect(phase1!.data.selected).toBe(true);
+    // link 节点不应被 phase 选中误伤
+    const linkNodes = result.nodes.filter((n) => n.type === 'link');
+    for (const ln of linkNodes) {
+      expect(ln.data.selected).toBe(false);
+    }
+  });
+
+  it('buildProcessGraph_selectedLink_marksLinkDataSelected', () => {
+    const def = makeDefinitionWithGoto();
+    const callbacks = { ...makeCallbacks(), selectedNodeId: 'link2' };
+
+    const result = buildProcessGraph(def, callbacks);
+
+    const link1 = result.nodes.find((n) => n.id === 'link-0-0');
+    const link2 = result.nodes.find((n) => n.id === 'link-1-0');
+    expect(link1!.data.selected).toBe(false);
+    expect(link2!.data.selected).toBe(true);
+    // phase 节点不应被 link 选中误伤
+    const phaseNodes = result.nodes.filter((n) => n.type === 'phase');
+    for (const pn of phaseNodes) {
+      expect(pn.data.selected).toBe(false);
+    }
+  });
+
+  it('buildProcessGraph_noSelection_allNodesUnselected', () => {
+    const def = makeDefinitionWithGoto();
+    const callbacks = { ...makeCallbacks(), selectedNodeId: null };
+
+    const result = buildProcessGraph(def, callbacks);
+
+    for (const node of result.nodes) {
+      expect(node.data.selected).toBe(false);
+    }
   });
 });

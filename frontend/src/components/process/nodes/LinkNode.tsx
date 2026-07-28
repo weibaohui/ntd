@@ -37,6 +37,9 @@ export interface LinkNodeData {
   onSelectLink: (linkId: string) => void;
   // 删除 link 回调（卡片删除按钮触发）
   onDeleteLink: (linkId: string) => void;
+  // 选中态：由 buildProcessGraph 根据上层 selectedNodeId 注入。
+  // 受控画布下 React Flow 内置 selected 不生效，必须以此为准。
+  selected: boolean;
   // React Flow 要求 data 是 Record<string, unknown> 兼容类型
   [key: string]: unknown;
 }
@@ -61,9 +64,12 @@ const GATE_FAIL_HANDLE_TOP = '70%';
 //
 // 使用 React.memo 包裹避免不必要重渲染：
 // React Flow 在拖拽时会频繁更新节点 props，memo 避免未变节点重渲染。
-function LinkNodeImpl({ data, selected }: NodeProps): JSX.Element {
+function LinkNodeImpl({ data, selected: rfSelected }: NodeProps): JSX.Element {
   const linkData = data as unknown as LinkNodeData;
   const { link, onSelectLink, onDeleteLink } = linkData;
+  // 优先用 data.selected（上层 selectedNodeId 驱动）；
+  // React Flow 内置 selected 仅作兜底（非受控场景如 Storybook 仍有效）
+  const selected = linkData.selected ?? rfSelected;
 
   // 卡片点击：选中 link
   // stopPropagation 防止点击卡片时同时触发父 phase 的选中
@@ -150,8 +156,9 @@ function cardStyle(selected: boolean): CSSProperties {
     // flex 布局：让左栏 textContentStyle(flex:1) 占据左侧空间，
     // 右侧 padding 专属留给「成功/失败」标签 + handle 圆点
     display: 'flex',
-    // 白色背景
-    background: '#fff',
+    // 选中对比：未选中=白底+灰细边（弱存在感），
+    // 选中=浅绿底+绿粗边+绿色投影，三重差异一眼可辨
+    background: selected ? 'rgba(16, 185, 129, 0.06)' : '#fff',
     // 边框：默认灰色，选中时绿色加粗
     border: selected ? '2px solid #10b981' : '1px solid #e2e8f0',
     // 圆角
@@ -165,8 +172,13 @@ function cardStyle(selected: boolean): CSSProperties {
     position: 'relative',
     // 鼠标指针：可点击
     cursor: 'pointer',
-    // 阴影：轻微提升层次感
-    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)',
+    // 阴影：未选中仅轻微层次；选中时换同色系绿色光晕，替代默认黑影，
+    // 让「点中」在边缘一圈发光，远距离也能识别
+    boxShadow: selected
+      ? '0 0 0 3px rgba(16, 185, 129, 0.18), 0 1px 3px rgba(0, 0, 0, 0.08)'
+      : '0 1px 3px rgba(0, 0, 0, 0.08)',
+    // 状态切换加过渡，避免边框/底色/阴影瞬变造成的生硬感
+    transition: 'border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease',
   };
 }
 

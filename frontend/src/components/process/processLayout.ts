@@ -33,10 +33,24 @@ export const NODE_HEIGHT = 80;
 export const PHASE_PADDING = 40;
 // PhaseNode 头部高度（显示 phase.name + 删除按钮）
 export const PHASE_HEADER = 60;
+// 头部与首个 LinkNode 之间的纵向间距：
+// 首个卡片紧贴阶段标题会显得拥挤，留出与卡片间距一致的呼吸感
+export const HEADER_LINK_GAP = 16;
 // LinkNode 之间纵向间距
 export const LINK_GAP = 16;
 // phase 之间横向间距（dagre ranksep）
 export const PHASE_RANKSEP = 80;
+
+// ── phase 高度公式（单一数据源）────────────────────
+
+// 计算 phase 容器总高度：头部 + 头部与首卡片间距 + link 行高（空 phase 按 1 行占位）。
+// layoutPhases（dagre 节点尺寸）与 processGraphBuilder（React Flow 节点 style）
+// 必须共用此公式，否则容器高度与内部卡片布局错位。
+export function calcPhaseHeight(linkCount: number): number {
+  return (
+    PHASE_HEADER + HEADER_LINK_GAP + Math.max(1, linkCount) * (NODE_HEIGHT + LINK_GAP)
+  );
+}
 
 // ── 横向布局（dagre LR）──────────────────────────────────
 
@@ -69,10 +83,9 @@ export function layoutPhases(
 
   // 为每个 phase 创建 dagre 节点
   phases.forEach((phase, i) => {
-    // phase 高度 = 头部 + 内部 link 总高度
+    // phase 高度 = 头部 + 头部间距 + 内部 link 总高度（公式与 builder 共用 calcPhaseHeight）
     const linkCount = phase.links?.length ?? 0;
-    const innerHeight = Math.max(1, linkCount) * (NODE_HEIGHT + LINK_GAP);
-    const height = innerHeight + PHASE_HEADER;
+    const height = calcPhaseHeight(linkCount);
     // phase 宽度 = link 宽度 + 内边距
     const width = NODE_WIDTH + PHASE_PADDING;
 
@@ -110,7 +123,7 @@ export function layoutPhases(
 //
 // 相对坐标：相对于父 PhaseNode 的左上角。
 // x = PHASE_PADDING / 2 = 20（link 左边距）
-// y = PHASE_HEADER + linkIndex * (NODE_HEIGHT + LINK_GAP)
+// y = PHASE_HEADER + HEADER_LINK_GAP + linkIndex * (NODE_HEIGHT + LINK_GAP)
 //
 // React Flow 的 parentNode 语义：子节点 position 是相对于父节点的。
 export function layoutLinksInPhase(
@@ -123,8 +136,9 @@ export function layoutLinksInPhase(
 
   // 为每个 link 计算相对坐标
   return links.map((_link, linkIndex) => {
-    // y = 头部高度 + linkIndex * (节点高度 + 间距)
-    const y = PHASE_HEADER + linkIndex * (NODE_HEIGHT + LINK_GAP);
+    // y = 头部高度 + 头部与首卡片间距 + linkIndex * (节点高度 + 间距)
+    const y =
+      PHASE_HEADER + HEADER_LINK_GAP + linkIndex * (NODE_HEIGHT + LINK_GAP);
     return {
       // 节点 id 用 link-${phaseIndex}-${linkIndex}
       id: `link-${phaseIndex}-${linkIndex}`,

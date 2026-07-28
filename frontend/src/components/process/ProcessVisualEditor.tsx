@@ -26,8 +26,6 @@ import {
   ReactFlow,
   Background,
   Controls,
-  MiniMap,
-  type Node,
   type Connection,
   type NodeMouseHandler,
   BackgroundVariant,
@@ -86,9 +84,8 @@ export function ProcessVisualEditor({
   onSelectNode,
   theme,
 }: ProcessVisualEditorProps): JSX.Element {
-  // selectedNodeId 当前未用于 React Flow 高亮（PhaseNode/LinkNode 用自身 data.selected），
-  // 保留 prop 以便 M5 实现选中态联动，此处占位避免未用告警。
-  void selectedNodeId;
+  // selectedNodeId 是选中态唯一数据源：既驱动右侧属性面板，也经 buildProcessGraph
+  // 注入节点 data.selected 驱动画布高亮，保证「面板显示谁」与「图上谁高亮」一致。
   // ── 回调集合 ────────────────────────────────────
 
   // 删除 phase 回调（弹 Modal.confirm，级联重置悬空 goto）
@@ -154,17 +151,19 @@ export function ProcessVisualEditor({
       // 这里 phaseId 是 YAML 里的 phase.id，需要转成节点 id
       // buildProcessGraph 用 phaseIndex 生成节点 id
       // 为了简化，我们直接传 phase.id 给上层，上层在 selectedNodeId 里用 phase.id
-      onSelectNode(phaseId);
+      // 再点一次已选中的 phase → 传 null 取消选中（与点击空白画布行为一致）
+      onSelectNode(selectedNodeId === phaseId ? null : phaseId);
     },
-    [onSelectNode],
+    [onSelectNode, selectedNodeId],
   );
 
   // 选中 link 回调
   const handleSelectLink = useCallback(
     (linkId: string) => {
-      onSelectNode(linkId);
+      // 再点一次已选中的 link → 传 null 取消选中
+      onSelectNode(selectedNodeId === linkId ? null : linkId);
     },
-    [onSelectNode],
+    [onSelectNode, selectedNodeId],
   );
 
   // 删除 link 回调（LinkNode 删除按钮触发）：弹确认窗，调 removeLink 级联重置悬空 goto
@@ -253,6 +252,7 @@ export function ProcessVisualEditor({
       onDeleteLink: handleDeleteLink,
       onDeleteEdge: handleDeleteEdge,
       onAddLink: handleAddLink,
+      selectedNodeId,
     });
   }, [
     definition,
@@ -261,6 +261,8 @@ export function ProcessVisualEditor({
     handleSelectLink,
     handleDeleteLink,
     handleDeleteEdge,
+    // selectedNodeId 变化需重建节点以刷新 data.selected 高亮
+    selectedNodeId,
   ]);
 
   // ── React Flow 事件处理 ─────────────────────────
@@ -327,18 +329,19 @@ export function ProcessVisualEditor({
   // 这里取 node.data.phase.id / node.data.step.id 兜底。
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_, node) => {
-      // 兜底：若 PhaseNode/LinkNode 内部 onClick 已触发，这里重复调无害（同 id 设置）
-      // 从 node.data 取 YAML id，避免 node.id 与 YAML id 的索引偏移
+      // 兜底：内部 onClick 已 stopPropagation，只有点击节点空白区才走到这里。
+      // 从 node.data 取 YAML id，避免 node.id 与 YAML id 的索引偏移。
+      // 与内部选中回调同样做 toggle：再点一次已选中节点 → 取消选中。
       const data = node.data as Record<string, unknown>;
-      if (node.type === 'phase' && data.phase) {
-        const phase = data.phase as { id?: string };
-        if (phase.id) onSelectNode(phase.id);
-      } else if (node.type === 'link' && data.step) {
-        const step = data.step as { id?: string };
-        if (step.id) onSelectNode(step.id);
-      }
+      // 注意：link 节点的 YAML 定义挂在 data.link（builder 注入），
+      // 历史上误写成 data.step 导致该兜底分支从未命中，此处一并修正
+      const yamlId =
+        node.type === 'phase'
+          ? (data.phase as { id?: string } | undefined)?.id
+          : (data.link as { id?: string } | undefined)?.id;
+      if (yamlId) onSelectNode(selectedNodeId === yamlId ? null : yamlId);
     },
-    [onSelectNode],
+    [onSelectNode, selectedNodeId],
   );
 
   // 画布点击：取消选中
@@ -350,15 +353,6 @@ export function ProcessVisualEditor({
 
   // React Flow 默认选中样式是 box-shadow，我们用 border 高亮
   // 这部分在 PhaseNode / LinkNode 的 selected prop 中处理
-
-  // ── MiniMap 配色 ─────────────────────────────────
-
-  // MiniMap 节点颜色：phase 灰色，link 白色
-  const miniMapNodeColor = useCallback((node: Node) => {
-    if (node.type === 'phase') return '#94a3b8';
-    if (node.type === 'link') return '#fff';
-    return '#94a3b8';
-  }, []);
 
   // ── 渲染 ──────────────────────────────────────────
 
@@ -421,15 +415,7 @@ export function ProcessVisualEditor({
         />
         {/* 画布缩放控制 */}
         <Controls />
-        {/* 小地图 */}
-        <MiniMap
-          nodeColor={miniMapNodeColor}
-          nodeStrokeWidth={2}
-          // MiniMap 背景色跟随主题
-          style={{
-            background: theme === 'dark' ? '#1e293b' : '#fff',
-          }}
-        />
+        {/* 小地图已按需求移除：泳道式布局横向狭长，MiniMap 辨识度低、占用角落空间 */}
       </ReactFlow>
     </div>
   );

@@ -31,11 +31,9 @@ import type { ProcessDefinition } from '@/types/process';
 import {
   layoutPhases,
   layoutLinksInPhase,
+  calcPhaseHeight,
   NODE_WIDTH,
-  NODE_HEIGHT,
   PHASE_PADDING,
-  PHASE_HEADER,
-  LINK_GAP,
 } from './processLayout';
 
 // ── 边颜色常量 ──────────────────────────────────────
@@ -65,6 +63,10 @@ export interface GraphCallbacks {
   onDeleteEdge: (edgeId: string) => void;
   // 在指定 phase 内新增环节（M6 新增，由 PhaseNode 头部按钮触发）
   onAddLink: (phaseId: string) => void;
+  // 当前选中的 YAML id（phase.id / link.id），注入节点 data.selected 驱动高亮。
+  // 画布是受控模式（无 onNodesChange），React Flow 内置 selected 不会生效，
+  // 必须由这里显式下发选中态。
+  selectedNodeId: string | null;
 }
 
 // ── 构建结果 ──────────────────────────────────────
@@ -109,10 +111,9 @@ export function buildProcessGraph(
   // 2. 构建 phase 节点
   const phaseNodes: Node[] = phases.map((phase, phaseIndex) => {
     const pos = phasePositions.get(`phase-${phaseIndex}`) ?? { x: 0, y: 0 };
-    // 计算 phase 高度：max(1, links.length) * (NODE_HEIGHT + LINK_GAP) + PHASE_HEADER
+    // phase 高度公式与 layoutPhases 共用 calcPhaseHeight，避免两处公式漂移导致错位
     const linkCount = phase.links?.length ?? 0;
-    const innerHeight = Math.max(1, linkCount) * (NODE_HEIGHT + LINK_GAP);
-    const height = innerHeight + PHASE_HEADER;
+    const height = calcPhaseHeight(linkCount);
     const width = NODE_WIDTH + PHASE_PADDING;
 
     return {
@@ -124,6 +125,9 @@ export function buildProcessGraph(
       data: {
         phase,
         phaseIndex,
+        // 选中态由上层 selectedNodeId（YAML id）决定，与属性面板共用同一数据源，
+        // 保证「面板显示谁的属性」与「图上谁高亮」始终一致
+        selected: callbacks.selectedNodeId === phase.id,
         onDeletePhase: callbacks.onDeletePhase,
         onSelectPhase: callbacks.onSelectPhase,
         onAddLink: callbacks.onAddLink,
@@ -151,6 +155,8 @@ export function buildProcessGraph(
           phaseId: phase.id,
           phaseIndex,
           linkIndex,
+          // 同 phase 节点：用 YAML id 匹配上层 selectedNodeId，驱动卡片高亮
+          selected: callbacks.selectedNodeId === link.id,
           onSelectLink: callbacks.onSelectLink,
           onDeleteLink: callbacks.onDeleteLink,
         },
