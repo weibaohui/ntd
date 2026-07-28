@@ -82,6 +82,11 @@ export async function deleteLoop(workspaceId: number, id: number): Promise<void>
   await api.delete(`/api/v1/workspaces/${workspaceId}/loops/${id}`);
 }
 
+/** 批量删除环路。使用 V0 通用路径（无 workspace 隔离）。 */
+export async function batchDeleteLoops(ids: number[]): Promise<{ deleted: number; total: number }> {
+  return unwrap(await api.post('/api/loops/batch-delete', { ids }));
+}
+
 /** 切换 loop 状态(enabled/paused)。 */
 export async function updateLoopStatus(
   workspaceId: number,

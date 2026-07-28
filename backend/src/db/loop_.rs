@@ -246,6 +246,16 @@ impl Database {
         Ok(())
     }
 
+    /// 批量删除环路（CASCADE 删 triggers/steps/phase_executions）。
+    pub async fn batch_delete_loops(&self, ids: &[i64]) -> Result<u64, sea_orm::DbErr> {
+        if ids.is_empty() { return Ok(0); }
+        let res = loops::Entity::delete_many()
+            .filter(loops::Column::Id.is_in(ids.to_vec()))
+            .exec(&self.conn)
+            .await?;
+        Ok(res.rows_affected)
+    }
+
     /// 批量更新环路工作空间（移动到其他工作空间）。
     /// 连带移动步骤关联的所有 todo 到同一目标工作空间。
     ///

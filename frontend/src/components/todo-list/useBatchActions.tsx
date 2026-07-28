@@ -283,15 +283,9 @@ export function useBatchActions(opts: UseBatchActionsOptions): UseBatchActionsRe
         }
         onRefreshItems?.();
       } else {
-        // loop 模式：逐个删除（须传 workspaceId）
-        let deleted = 0;
-        for (const id of pendingDeleteIds) {
-          try {
-            await dbLoops.deleteLoop(selectedWorkspace ?? 0, id);
-            deleted++;
-          } catch { /* 单个失败继续下一个 */ }
-        }
-        message.success(`已删除 ${deleted} 个环路`);
+        // loop 模式：批量删除
+        const result = await dbLoops.batchDeleteLoops(pendingDeleteIds);
+        message.success(`已删除 ${result.deleted} 个环路`);
         onRefreshLoops?.();
       }
       setDeleteModalOpen(false);

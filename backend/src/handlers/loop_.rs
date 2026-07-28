@@ -234,6 +234,19 @@ pub async fn delete_loop(
     Ok(ApiResponse::ok(()))
 }
 
+/// POST /api/loops/batch-delete — 批量删除环路。
+#[derive(serde::Deserialize)]
+pub struct BatchDeleteLoopsRequest { pub ids: Vec<i64> }
+pub async fn batch_delete_loops(
+    State(state): State<AppState>,
+    axum::Json(req): axum::Json<BatchDeleteLoopsRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let deleted = state.db.batch_delete_loops(&req.ids).await?;
+    Ok(ApiResponse::ok(serde_json::json!({
+        "deleted": deleted, "total": req.ids.len(),
+    })))
+}
+
 /// PUT /api/loops/{id}/status — 切换 enabled/paused
 pub async fn update_loop_status(
     State(state): State<AppState>,
@@ -2193,6 +2206,7 @@ pub fn loop_routes() -> axum::Router<AppState> {
     use axum::routing::{get, post, put};
     axum::Router::new()
         .route("/api/loops", get(list_loops).post(create_loop))
+        .route("/api/loops/batch-delete", post(batch_delete_loops))
         .route("/api/loops/batch-workspace", put(batch_move_loops_workspace))
         .route("/api/loops/batch-copy-workspace", post(batch_copy_loops_workspace))
         .route("/api/loops/export-selected", post(export_selected_loops))
