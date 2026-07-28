@@ -790,34 +790,9 @@ impl LoopRunner {
                 || (!step.expected_artifacts.is_empty() && step.expected_artifacts != "[]");
 
             if has_process_config {
-                let mut exec_record = self.ctx.db.get_execution_record(record_id).await
+                let exec_record = self.ctx.db.get_execution_record(record_id).await
                     .map_err(|e| e.to_string())?
                     .ok_or_else(|| format!("execution record #{} not found", record_id))?;
-
-                // 工艺步骤在执行产物捕获/门禁评价前，若环节配置了评分阈值且尚无评分，
-                // 先触发 auto-review 获取评分（复用 LoopRunner 已有的评审基础设施）。
-                if exec_record.rating.is_none()
-                    && step.min_rating.is_some()
-                    && step_status == "success"
-                {
-                    let min_rating_val = step.min_rating.ok_or("min_rating check failed")?;
-                    let (passed, rating, _msg) = self
-                        .apply_rating_gate(
-                            record_id,
-                            min_rating_val,
-                            &todo.prompt,
-                            todo.acceptance_criteria.as_deref(),
-                            step.review_prompt.as_deref(),
-                            loop_.review_template_id,
-                        )
-                        .await
-                        .unwrap_or((false, None, Some("auto-review failed".to_string())));
-                    // 刷新 execution_record 以获取评审后的评分。
-                    if let Ok(Some(refreshed)) = self.ctx.db.get_execution_record(record_id).await {
-                        exec_record = refreshed;
-                    }
-                    let _ = (passed, rating);
-                }
 
                 let ws_path = loop_.workspace_path.as_deref().unwrap_or("");
 
@@ -1414,15 +1389,20 @@ impl LoopRunner {
             info!("rating gate: record #{} triggering auto-review", record_id);
 
             // 1) 选取评审模板正文与归属：环节内联优先（跳过查表），否则环路级 → 全局默认。
-            //    返回 (模板正文, 归属 template_id, 归属 name, workspace_id)。
-            let (template_prompt, owning_id, owning_name, owning_ws) =
-                match self.resolve_review_template(inline_prompt, review_template_id).await {
+            //    设计 034：评审已由统一路径在 finalize_normal_completion 中完成，
+            //    此分支仅作为兜底（避免统一路径因异常未能写出评分时阻塞门禁判定）。
+            let (template_prompt, owning_id, owning_name) =
+                match crate::executor_service::auto_review::resolve_review_template(
+                    &self.ctx.db, inline_prompt, review_template_id,
+                ).await {
                     Ok(t) => t,
                     Err(e) => {
                         warn!("rating gate: failed to get review template: {}", e);
                         return Ok((false, None, Some(format!("获取评审模板失败: {}", e))));
                     }
                 };
+            // 兜底路径无 workspace 上下文，用 0 默认值（评审实例复用不受影响）。
+            let owning_ws = 0i64;
 
             // 2) 获取执行记录的 result + executor
             // executor 从已跑过的 record 继承 (review_template 不带 executor)。
@@ -1580,52 +1560,6 @@ impl LoopRunner {
             record_id
         );
         Ok((false, None, Some("环节未设置验收标准或评审模板，无法触发自动评审".to_string())))
-    }
-
-    /// 选取评审模板正文与归属，实现「环节内联 → 环路级 → 全局默认」三级回退（需求 033）。
-    /// - 环节内联（step.review_prompt）非空：直接作为模板正文，用哨兵 id 归属评审实例 todo；
-    /// - 否则查表：环路级 review_template_id → 全局默认。
-    ///
-    /// 返回 (模板正文, 归属 template_id, 归属 name, workspace_id)。
-    async fn resolve_review_template(
-        &self,
-        inline_prompt: Option<&str>,
-        review_template_id: Option<i64>,
-    ) -> Result<(String, i64, String, i64), String> {
-        // 环节内联评审模板：无对应 review_templates 行，用哨兵 id 0 归属评审实例 todo。
-        // id 0 不与真实模板冲突（真实模板 id 从 1 起），review_template_id 为逻辑引用非 FK。
-        if let Some(rp) = inline_prompt {
-            return Ok((rp.to_string(), 0, "环节内联评审".to_string(), 0));
-        }
-        // 回退到环路级/默认评审模板
-        let t = self.ensure_review_template(review_template_id).await?;
-        Ok((t.prompt, t.id, t.name, t.workspace_id.unwrap_or(0)))
-    }
-
-    /// 获取评审模板：优先使用 loop 配置的 id，否则用默认模板。
-    /// V15 之后模板是独立表 (review_templates) 里的行, 不带 executor 字段。
-    async fn ensure_review_template(&self, template_id: Option<i64>) -> Result<crate::models::ReviewTemplate, String> {
-        // 如果 loop 指定了模板 id，先尝试加载 (loops.review_template_id 指向 review_templates.id)。
-        if let Some(tid) = template_id {
-            if let Some(t) = self.ctx.db.get_review_template(tid).await.map_err(|e| format!("load template: {}", e))? {
-                return Ok(t);
-            }
-            // 指定 id 不存在 (例如被删了) -> 静默回退默认, 避免阻塞 loop 评分
-            tracing::warn!("review template #{} not found, falling back to default", tid);
-        }
-        // 回退到默认模板
-        let default_id = self
-            .ctx
-            .db
-            .ensure_default_review_template()
-            .await
-            .map_err(|e| format!("ensure review template: {}", e))?;
-        self.ctx
-            .db
-            .get_review_template(default_id)
-            .await
-            .map_err(|e| format!("load default template: {}", e))?
-            .ok_or_else(|| "default reviewer template vanished".to_string())
     }
 
     /// 触发异常处理 Todo 并写入 loop_step_execution 记录。
@@ -2131,30 +2065,32 @@ mod tests {
         .unwrap()
     }
 
-    /// resolve_review_template：环节内联 review_prompt 优先于环路级/默认（需求 033）。
+    /// resolve_review_template（设计 034 移入 auto_review.rs）：环节内联优先于默认。
     #[tokio::test]
     async fn test_resolve_review_template_inline_wins() {
         let (runner, _db) = make_test_runner().await;
         // 内联模板非空 → 直接作为正文，跳过查表，用哨兵 id 0 归属评审实例 todo
         let inline = "我的评审模板 {original_output} {acceptance_criteria}";
-        let (prompt, owning_id, name, _ws) = runner
-            .resolve_review_template(Some(inline), None)
-            .await
-            .expect("内联分支不应查表");
+        let (prompt, owning_id, name) = crate::executor_service::auto_review::resolve_review_template(
+            &runner.ctx.db, Some(inline), None,
+        )
+        .await
+        .expect("内联分支不应查表");
         assert_eq!(prompt, inline, "内联模板应原样作为正文");
         assert_eq!(owning_id, 0, "内联模板用哨兵 id 0 归属");
         assert_eq!(name, "环节内联评审");
     }
 
-    /// resolve_review_template：无内联时回退到默认评审模板（需求 033）。
+    /// resolve_review_template（设计 034 移入 auto_review.rs）：无内联时回退到默认。
     #[tokio::test]
     async fn test_resolve_review_template_fallback_default() {
         let (runner, _db) = make_test_runner().await;
         // 无内联、无环路级模板 → ensure_default_review_template 创建并返回默认模板
-        let (prompt, owning_id, _name, _ws) = runner
-            .resolve_review_template(None, None)
-            .await
-            .expect("应回退到默认模板");
+        let (prompt, owning_id, _name) = crate::executor_service::auto_review::resolve_review_template(
+            &runner.ctx.db, None, None,
+        )
+        .await
+        .expect("应回退到默认模板");
         assert!(!prompt.is_empty(), "默认模板应有正文");
         assert!(owning_id > 0, "默认模板 id 应为正数");
     }

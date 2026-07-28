@@ -1,12 +1,15 @@
 //! 自动评审（auto-review）—— 同步派生一个评审 todo，给刚完成的那条执行记录打分。
 //!
-//! 调用点: `finalize_normal_completion` 在 `update_execution_record`（写终态）之后。
-//! 仅当:
-//!   - 源 todo 是 normal 类型 (todo_type=0)
-//!   - `auto_review_enabled=true`
-//!   - 源 record 进入了 success 或 failed 终态
-//!   - `source_execution_record_id` 尚未被设置（避免重复评审同一条记录）
-//!     才启动评审。
+//! ## 统一评审路径（设计 034）
+//!
+//! 自设计 034 起，所有自动评审统一通过此模块执行。评审 prompt 三级回退：
+//!
+//! 1. **环节内联**（`loop_steps.review_prompt`）非空 → 用其作为模板正文
+//! 2. **环路级**（`loops.review_template_id`）有值 → 查 `review_templates` 表
+//! 3. **全局默认** → `ensure_default_review_template()` 行
+//!
+//! `maybe_run_auto_review` 是唯一入口，对 `loop_stage` 触发查出 step/loop 上下文
+//! 传入 `run_auto_review_inner`，非环路 todo 只用默认模板。
 //!
 //! V15 之后评审模板是独立表（`review_templates`），不带 executor 字段。
 //! 评审时新建一个 todo_type=2 的"评审实例" todo, prompt 用 caller 合成好的
@@ -24,6 +27,10 @@ use crate::executor_service::ExecEvent;
 use crate::task_manager::TaskManager;
 
 use super::RunTodoExecutionRequest;
+
+/// 哨兵 template_id，用于环节内联评审模板（无对应 review_templates 行）。
+/// 不与真实模板冲突（真实模板 id 从 1 起），review_template_id 为逻辑引用非 FK。
+const INLINE_REVIEW_TEMPLATE_ID: i64 = 0;
 
 /// 独立 runtime. 用于 run_auto_review 在原 todo 的 spawned task 内部同步运行
 /// 自动评审逻辑, 避免与外层 spawned task 产生 Send / 嵌套 spawn 问题.
@@ -45,11 +52,14 @@ fn review_runtime() -> Option<&'static tokio::runtime::Runtime> {
 
 /// 同步运行自动评审。在原 todo 执行完成、update_execution_record 写入 success/failed 后调用。
 ///
-/// 参数: (db, todo, record_id, executor_registry, tx, task_manager, config).
+/// 参数:
+///   - `step_review_prompt`: 环节内联评审模板正文（空 = 未设，回退环路/默认）
+///   - `loop_review_template_id`: 环路级评审模板 ID（本参数优先于全局默认）
+///
 /// 任何错误都只记 warn 日志，不影响原 todo 的完成响应。
 ///
 /// 实现: 由于 `run_auto_review_inner` 内部需要 await `run_todo_execution`（后者会
-/// 进一步 spawn）—— 整个 future 不是 Send —— 必须在独立 runtime 上 block_on.
+/// 进一步 spawn）—— 整个 future 不是 Send —— 必须在独立 runtime 上 block_on。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_auto_review(
     db: Arc<Database>,
@@ -59,6 +69,8 @@ pub(crate) async fn run_auto_review(
     config: Arc<std::sync::RwLock<crate::config::Config>>,
     todo_id: i64,
     record_id: i64,
+    step_review_prompt: Option<String>,
+    loop_review_template_id: Option<i64>,
 ) {
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
     let db_c = db.clone();
@@ -76,7 +88,9 @@ pub(crate) async fn run_auto_review(
     };
     std::thread::spawn(move || {
         let result = runtime.block_on(run_auto_review_inner(
-            db_c, er_c, tx_c, tm_c, cfg_c, todo_id, record_id,
+            db_c, er_c, tx_c, tm_c, cfg_c,
+            todo_id, record_id,
+            step_review_prompt, loop_review_template_id,
         ));
         let _ = reply_tx.send(result);
     });
@@ -145,6 +159,9 @@ async fn run_auto_review_inner(
     config: Arc<std::sync::RwLock<crate::config::Config>>,
     todo_id: i64,
     record_id: i64,
+    // 设计 034：环节内联评审模板正文（空 = 未设，回退环路/默认）
+    step_review_prompt: Option<String>,
+    loop_review_template_id: Option<i64>,
 ) -> Result<(), String> {
     // 1) 加载原 todo + 校验是否需要跳过 review。
     let original = load_original_todo(&db, todo_id).await?;
@@ -156,12 +173,18 @@ async fn run_auto_review_inner(
     // 2) 加载 source record + 校验 record 状态。
     let record = load_and_validate_record(&db, &tx, todo_id, record_id).await?;
 
-    // 3) 准备评审模板（review_templates 表行，不带 executor 字段）。
-    let template = ensure_review_template(&db.clone()).await?;
+    // 3) 解析评审模板（三级回退：环节内联 → 环路级 → 全局默认）。
+    let resolved = resolve_review_template(
+        &db,
+        step_review_prompt.as_deref(),
+        loop_review_template_id,
+    )
+    .await?;
+    let (template_prompt, owning_template_id, owning_template_name) = resolved;
 
     // 4) 合并 prompt（截断原 output + 替换模板占位符）。
     let composed_prompt =
-        compose_review_prompt(&original, &template, record.result.as_deref());
+        compose_review_prompt(&original, &template_prompt, record.result.as_deref());
 
     // 5) 标记 pending。
     mark_review_pending(&db, &tx, record_id, todo_id).await;
@@ -174,7 +197,8 @@ async fn run_auto_review_inner(
         &task_manager,
         &config,
         &original,
-        &template,
+        owning_template_id,
+        &owning_template_name,
         composed_prompt,
     )
     .await
@@ -232,23 +256,51 @@ async fn load_and_validate_record(
     Ok(record)
 }
 
-/// 准备评审模板：从 review_templates 表拿默认模板（确保存在 + reload 拿到最新内容）。
-/// V15 之后模板是独立表, 没有 executor 字段；executor 由 caller 从源 todo 继承。
-async fn ensure_review_template(db: &Arc<Database>) -> Result<crate::models::ReviewTemplate, String> {
-    let template_id = db
+/// 获取评审模板：优先使用指定 template_id，否则用默认模板。
+/// V15 之后模板是独立表 (review_templates) 里的行, 不带 executor 字段。
+async fn ensure_review_template_by_id(db: &Database, template_id: Option<i64>) -> Result<crate::models::ReviewTemplate, String> {
+    // 如果指定了模板 id，先尝试加载。
+    if let Some(tid) = template_id {
+        if let Some(t) = db.get_review_template(tid).await.map_err(|e| format!("load template: {}", e))? {
+            return Ok(t);
+        }
+        tracing::warn!("review template #{} not found, falling back to default", tid);
+    }
+    // 回退到默认模板
+    let default_id = db
         .ensure_default_review_template()
         .await
         .map_err(|e| format!("ensure default review template: {}", e))?;
-    db.get_review_template(template_id)
+    db.get_review_template(default_id)
         .await
         .map_err(|e| format!("reload template: {}", e))?
-        .ok_or_else(|| "reviewer template vanished".to_string())
+        .ok_or_else(|| "default reviewer template vanished".to_string())
+}
+
+/// 三级回退解析评审模板正文（设计 034）。
+/// 顺序：step_review_prompt → loop 级 review_template_id → 全局默认。
+///
+/// 返回 (模板正文, 归属 template_id, 归属名称)。
+/// 环节内联模板用哨兵 id `INLINE_REVIEW_TEMPLATE_ID`（0）归属评审实例 todo。
+pub async fn resolve_review_template(
+    db: &Database,
+    step_review_prompt: Option<&str>,
+    loop_review_template_id: Option<i64>,
+) -> Result<(String /*prompt*/, i64 /*owning_id*/, String /*owning_name*/), String> {
+    // 1) 环节内联评审模板：非空时直接作为正文，用哨兵 id 0 归属。
+    if let Some(prompt) = step_review_prompt.filter(|s| !s.trim().is_empty()) {
+        return Ok((prompt.to_string(), INLINE_REVIEW_TEMPLATE_ID, "环节内联评审".to_string()));
+    }
+    // 2) 回退到环路级/默认评审模板
+    let t = ensure_review_template_by_id(db, loop_review_template_id).await?;
+    Ok((t.prompt, t.id, t.name))
 }
 
 /// Step 4: 合并评审 prompt（截断原 output + 替换模板占位符）。
+/// `template_prompt` 是解析后的模板正文（可以是默认模板 prompt 或环节内联 review_prompt）。
 fn compose_review_prompt(
     original: &crate::models::Todo,
-    template: &crate::models::ReviewTemplate,
+    template_prompt: &str,
     original_output: Option<&str>,
 ) -> String {
     use crate::services::auto_review::MAX_OUTPUT_CHARS;
@@ -265,7 +317,7 @@ fn compose_review_prompt(
         .as_deref()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("(无验收标准 —— 由评审师自行判断输出质量)");
-    template.prompt
+    template_prompt
         .replace("{{original_prompt}}", &original.prompt)
         .replace("{{max_output_chars}}", &MAX_OUTPUT_CHARS.to_string())
         .replace("{{original_output}}", &truncated)
@@ -293,6 +345,9 @@ async fn mark_review_pending(
 ///
 /// V15 之后评审模板独立成表 (不带 executor), 评审实例的 executor
 /// 继承自源 todo (review_instance.executor = original.executor)。
+///
+/// 参数 `owning_template_id`：环节内联模板用 `INLINE_REVIEW_TEMPLATE_ID`（0），
+/// 查表模板用 `review_templates.id`。`owning_template_name` 供创建时写标题。
 #[allow(clippy::too_many_arguments)]
 async fn execute_review_instance(
     db: &Arc<Database>,
@@ -301,22 +356,21 @@ async fn execute_review_instance(
     task_manager: &Arc<TaskManager>,
     config: &Arc<std::sync::RwLock<crate::config::Config>>,
     original: &crate::models::Todo,
-    template: &crate::models::ReviewTemplate,
+    owning_template_id: i64,
+    owning_template_name: &str,
     composed_prompt: String,
 ) -> Result<i64, String> {
-    // 复用策略:同一 review_template 全局共享一条评审实例 todo,
+    // 复用策略：同一 review_template 全局共享一条评审实例 todo,
     // 避免「每次评审都新建 todo」把 todos 表刷成同一评审 N 份。
-    // - 已有 → 重置 prompt/executor/status(保留 id 和 execution_records 关联)
+    // - 已有 → 重置 prompt/executor/status（保留 id 和 execution_records 关联）
     // - 没有 → 新建
+    let ws = original.workspace_id.unwrap_or(0);
     let review_todo_id = match db
-        .find_review_instance_by_template(template.id)
+        .find_review_instance_by_template(owning_template_id)
         .await
         .map_err(|e| format!("find review instance: {}", e))?
     {
         Some(existing) => {
-            let ws = template.workspace_id
-                .or(original.workspace_id)
-                .unwrap_or(0);
             db.reset_review_instance_for_reuse(
                 existing.id,
                 &composed_prompt,
@@ -328,13 +382,10 @@ async fn execute_review_instance(
             existing.id
         }
         None => {
-            let ws = template.workspace_id
-                .or(original.workspace_id)
-                .unwrap_or(0);
             db.create_review_instance_todo(
                 original.id,
-                template.id,
-                &template.name,
+                owning_template_id,
+                owning_template_name,
                 composed_prompt.clone(),
                 original.executor.clone(),
                 ws,

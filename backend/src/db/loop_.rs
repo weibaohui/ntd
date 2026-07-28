@@ -780,6 +780,39 @@ impl Database {
             .await
     }
 
+    /// 按 todo_id 查 loop_step + 所属 loop 的 review_template_id（设计 034）。
+    /// 用于统一评审路径中实现 prompt 三级回退：查出 step 内联 review_prompt
+    /// 和其所属 loop 的 review_template_id，走「环节内联 → 环路模板 → 默认」。
+    ///
+    /// 返回 (step.review_prompt, loop.review_template_id)。
+    /// step 未找到或不启用时返回 Ok(None)。
+    pub async fn find_loop_step_with_loop_review_template(
+        &self,
+        todo_id: i64,
+    ) -> Result<Option<(Option<String>, Option<i64>)>, sea_orm::DbErr> {
+        use sea_orm::{ConnectionTrait, Statement, DbBackend, Value};
+        let sql = "SELECT s.review_prompt, l.review_template_id \
+                   FROM loop_steps s \
+                   INNER JOIN loops l ON l.id = s.loop_id \
+                   WHERE s.todo_id = ? AND s.enabled = 1 \
+                   LIMIT 1";
+        let rows = self
+            .conn
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                sql,
+                [Value::BigInt(Some(todo_id))],
+            ))
+            .await?;
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        let row = &rows[0];
+        let review_prompt: Option<String> = row.try_get_by("review_prompt").ok().flatten();
+        let review_template_id: Option<i64> = row.try_get_by("review_template_id").ok().flatten();
+        Ok(Some((review_prompt, review_template_id)))
+    }
+
     /// 批量统计每个 todo 被启用中的 loop_steps 引用次数（用于事项中心 Loop 驱动分桶）。
     ///
     /// 只统计 `enabled=1` 的步骤：禁用步骤不参与 Loop 执行，不计入 Loop 驱动
