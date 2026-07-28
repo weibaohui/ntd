@@ -21,9 +21,12 @@ pub const DEFAULT_EXECUTOR_PATH: &str = ""; // use binary name directly
 ///
 /// 这是推荐/启用态的默认时长：180 分钟 = 10800 秒。
 /// 注意它**不是** `Config` 的字段默认值——`Config::default` 把 `execution_timeout_secs`
-/// 设为 `0`（关闭超时、永不超时）。当用户在 UI 打开「执行超时」开关时，前端用本常量
-/// 作为回填值，因此只改这里就能把「打开后默认 180 分钟」生效。系统以 `execution_timeout_secs > 0`
-/// 判定超时是否启用，所以 `0` 即永不超时（见 `spawn_lifecycle::configure_timeout_sleep`）。
+/// 设为 `0`（关闭超时、永不超时）。系统以 `execution_timeout_secs > 0` 判定是否启用超时，
+/// 所以 `0` 即永不超时（见 `spawn_lifecycle::configure_timeout_sleep`）。
+///
+/// 前端在 `frontend/src/constants.ts` 中维护了一份**独立副本** `DEFAULT_EXECUTION_TIMEOUT_SECS`，
+/// 作为 UI 打开「执行超时」开关后的回填默认值。两端数值必须手动保持同步（当前均为 10800），
+/// 改动任一端时务必同步另一端，否则会出现「后端默认 0 / 前端回填 10800」之外的前后不一致。
 pub const DEFAULT_EXECUTION_TIMEOUT_SECS: u64 = 10800;
 /// 执行超时上限（秒）：7 天。YAML 加载和 HTTP update 均受此约束。
 pub const MAX_EXECUTION_TIMEOUT_SECS: u64 = 604800;
@@ -633,8 +636,40 @@ mod tests {
         let yaml = serde_yaml::to_string(&cfg).unwrap();
         let restored: Config = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(restored.execution_timeout_secs, 0);
+        // 健壮性验证：配置 YAML 完全缺失 execution_timeout_secs 键时，
+        // 反序列化应回退到 Config::default() 的 0（关闭/永不超时），而非报错或误用其他值。
+        let mut doc: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+        if let Some(map) = doc.as_mapping_mut() {
+            map.shift_remove(serde_yaml::Value::from("execution_timeout_secs"));
+        }
+        let yaml_without_key = serde_yaml::to_string(&doc).unwrap();
+        let restored_without: Config = serde_yaml::from_str(&yaml_without_key).unwrap();
+        assert_eq!(restored_without.execution_timeout_secs, 0);
         // 打开开关后回填的「启用默认时长」应为 180 分钟（10800 秒）。
         assert_eq!(DEFAULT_EXECUTION_TIMEOUT_SECS, 10800);
+    }
+
+    #[test]
+    fn test_execution_timeout_constants_synced_with_frontend() {
+        // 前端 `frontend/src/constants.ts` 维护了一份独立副本 `DEFAULT_EXECUTION_TIMEOUT_SECS`，
+        // 必须与后端该常量保持一致（当前均为 10800）。任一侧被改动而另一侧未同步时，此测试会失败，
+        // 作为「前后端默认值必须同步」的护栏。
+        // 若前端源文件不在预期位置（某些不含前端代码的构建环境），则跳过，避免误报阻断 CI。
+        let backend_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let fe_constants = backend_dir
+            .parent()
+            .map(|repo| repo.join("frontend").join("src").join("constants.ts"))
+            .filter(|p| p.exists());
+        let Some(path) = fe_constants else {
+            return;
+        };
+        let content = std::fs::read_to_string(&path).expect("读取前端 constants.ts 失败");
+        let expected = format!("DEFAULT_EXECUTION_TIMEOUT_SECS = {}", DEFAULT_EXECUTION_TIMEOUT_SECS);
+        assert!(
+            content.contains(&expected),
+            "前端 frontend/src/constants.ts 的 DEFAULT_EXECUTION_TIMEOUT_SECS 未与后端同步（应为 {}）",
+            DEFAULT_EXECUTION_TIMEOUT_SECS
+        );
     }
 
     #[test]
