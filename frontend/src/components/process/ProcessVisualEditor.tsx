@@ -238,6 +238,7 @@ export function ProcessVisualEditor({
       onSelectPhase: handleSelectPhase,
       onSelectLink: handleSelectLink,
       onDeleteEdge: handleDeleteEdge,
+      onAddLink: handleAddLink,
     });
   }, [
     definition,
@@ -436,4 +437,12 @@ const containerStyle: CSSProperties = {
   height: '100%',
   // 相对定位，确保 ReactFlow 内部绝对定位元素正确
   position: 'relative',
+};
+
+// 顶部浮动「+ 新增阶段」按钮样式：絕对定位贴画布左上角
+const addPhaseButtonStyle: CSSProperties = {
+  position: 'absolute',
+  top: 8,
+  left: 8,
+  zIndex: 10,
 };

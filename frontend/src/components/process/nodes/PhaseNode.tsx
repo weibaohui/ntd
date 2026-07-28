@@ -38,6 +38,8 @@ export interface PhaseNodeData {
   onDeletePhase: (phaseId: string) => void;
   // 选中 phase 回调（右侧属性面板切换）
   onSelectPhase: (phaseId: string) => void;
+  // 新增环节回调（在 phase 内追加 link）
+  onAddLink: (phaseId: string) => void;
   // React Flow 要求 data 是 Record<string, unknown> 兼容类型
   [key: string]: unknown;
 }
@@ -57,13 +59,19 @@ const PHASE_BORDER = '#94a3b8';
 // React Flow 在拖拽时会频繁更新节点 props，memo 避免未变节点重渲染。
 function PhaseNodeImpl({ data, selected }: NodeProps): JSX.Element {
   const phaseData = data as unknown as PhaseNodeData;
-  const { phase, onDeletePhase, onSelectPhase } = phaseData;
+  const { phase, onDeletePhase, onSelectPhase, onAddLink } = phaseData;
 
   // 删除按钮点击：阻止事件冒泡（避免触发选中），调用删除回调
   const handleDeleteClick = (e: MouseEvent) => {
     // stopPropagation 防止点击删除按钮时同时触发头部选中
     e.stopPropagation();
     onDeletePhase(phase.id);
+  };
+
+  // 新增环节按钮点击：阻止事件冒泡，调用新增回调
+  const handleAddLinkClick = (e: MouseEvent) => {
+    e.stopPropagation();
+    onAddLink(phase.id);
   };
 
   // 头部点击：选中 phase
@@ -73,7 +81,7 @@ function PhaseNodeImpl({ data, selected }: NodeProps): JSX.Element {
 
   return (
     <div style={containerStyle(selected)}>
-      {/* 头部：phase.name + 删除按钮 */}
+      {/* 头部：phase.name + 操作按钮 */}
       <div
         style={headerStyle}
         onClick={handleHeaderClick}
@@ -81,18 +89,26 @@ function PhaseNodeImpl({ data, selected }: NodeProps): JSX.Element {
         <span style={headerTextStyle}>
           ▸ {phase.name}
         </span>
-        <button
-          style={deleteButtonStyle}
-          onClick={handleDeleteClick}
-          // type="button" 避免触发表单提交
-          type="button"
-          aria-label="删除阶段"
-        >
-          ×
-        </button>
+        <span style={headerActionsStyle}>
+          <button
+            style={addLinkButtonStyle}
+            onClick={handleAddLinkClick}
+            type="button"
+            aria-label="新增环节"
+            title="新增环节"
+          >
+            + 环节
+          </button>
+          <button
+            style={deleteButtonStyle}
+            onClick={handleDeleteClick}
+            type="button"
+            aria-label="删除阶段"
+          >
+            ×
+          </button>
+        </span>
       </div>
-      {/* phase 容器不需要 target handle，因为 phase 不接收连线 */}
-      {/* phase 容器需要 source handle 吗？不需要，连线从 link 出发 */}
     </div>
   );
 }
@@ -136,6 +152,25 @@ const headerTextStyle: CSSProperties = {
   fontSize: 14,
   fontWeight: 600,
   color: '#475569',
+};
+
+// 头部右侧操作按钮容器：横向排列，右对齐
+const headerActionsStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+};
+
+// 新增环节按钮样式：小号、浅蓝文字
+const addLinkButtonStyle: CSSProperties = {
+  background: 'transparent',
+  border: '1px solid #93c5fd',
+  borderRadius: 4,
+  color: '#3b82f6',
+  fontSize: 12,
+  cursor: 'pointer',
+  padding: '2px 6px',
+  lineHeight: 1.4,
 };
 
 // 删除按钮样式
