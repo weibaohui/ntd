@@ -9,10 +9,11 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import type { MenuProps } from 'antd';
+import { renderToStaticMarkup } from 'react-dom/server';
 // antd Menu 项 onClick 的事件参数类型（含 domEvent），从公开 API 推导避免深层依赖 rc-menu
 type MenuInfo = Parameters<NonNullable<MenuProps['onClick']>>[0];
-import { buildRowActionItems } from './TodoListView';
-import type { TodoCenterItem } from '@/types';
+import { buildRowActionItems, renderLoopColumn, renderProcessColumn } from './TodoListView';
+import type { LoopRefSummary, TodoCenterItem } from '@/types';
 
 // 最小事项夹具：buildRowActionItems 不读字段，仅透传 record 给回调
 const todo = { id: 1, title: '测试事项' } as unknown as TodoCenterItem;
@@ -48,5 +49,47 @@ describe('buildRowActionItems 冒泡防护', () => {
       expect(stopPropagation).toHaveBeenCalledTimes(1);
       expect(expectedCallbacks[i]).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+// ── 环路列 / 工艺列 渲染测试 ───────────────────────
+
+// 把 ReactNode 渲染成字符串，便于断言 #ID 名称 格式是否落地
+function renderText(node: unknown): string {
+  return renderToStaticMarkup(node as React.ReactElement);
+}
+
+describe('renderLoopColumn / renderProcessColumn', () => {
+  const refs: LoopRefSummary[] = [
+    { loop_id: 17, loop_name: '门禁测试', process_template_id: 101, process_template_name: '标准工艺' },
+    { loop_id: 18, loop_name: '环路2', process_template_id: 101, process_template_name: '标准工艺' },
+    { loop_id: 19, loop_name: '裸环路' },
+  ];
+
+  it('renderLoopColumn_usesHashIdNameFormat', () => {
+    const html = renderText(renderLoopColumn(refs));
+    // 三条环路都应是 #ID 名称
+    expect(html).toContain('#17 门禁测试');
+    expect(html).toContain('#18 环路2');
+    expect(html).toContain('#19 裸环路');
+  });
+
+  it('renderLoopColumn_emptyReturnsDash', () => {
+    expect(renderText(renderLoopColumn(undefined))).toBe('-');
+    expect(renderText(renderLoopColumn([]))).toBe('-');
+  });
+
+  it('renderProcessColumn_dedupesByTemplateIdAndUsesHashIdName', () => {
+    const html = renderText(renderProcessColumn(refs));
+    // 模板 101 被两个环路引用，应只出现一次
+    expect(html).toContain('#101 标准工艺');
+    expect((html.match(/#101 标准工艺/g) || []).length).toBe(1);
+    // 裸环路无模板，不应出现其 loop 信息
+    expect(html).not.toContain('裸环路');
+  });
+
+  it('renderProcessColumn_noTemplateReturnsDash', () => {
+    // 所有环路都没绑模板 → 工艺列显示 -
+    expect(renderText(renderProcessColumn([{ loop_id: 1, loop_name: 'L' }]))).toBe('-');
   });
 });

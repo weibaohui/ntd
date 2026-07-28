@@ -259,11 +259,18 @@ pub struct TodoCenterItem {
     pub bound_slash_command: Option<String>,
 }
 
-/// Loop 引用摘要：事项中心 Loop 驱动卡片展示「所属 Loop」用。
+/// Loop 引用摘要：事项中心展示「所属环路」与「工艺」两列共用。
+/// - loop_id/loop_name：引用该事项的环路实例。
+/// - process_template_*：该环路所基于的工艺模板（loops.process_template_id → process_templates），
+///   供「工艺」列按 #模板ID 模板名 展示；环路无模板时为 None。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoopRefSummary {
     pub loop_id: i64,
     pub loop_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_template_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_template_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

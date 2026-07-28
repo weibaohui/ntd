@@ -38,9 +38,15 @@ fn group_loop_refs_by_todo(
             Err(_) => continue,
         };
         if let Ok(loop_name) = row.try_get_by::<String, _>("loop_name") {
+            // 工艺模板字段可为 NULL（环路未绑定模板），try_get_by 失败时回落 None
+            let process_template_id: Option<i64> = row.try_get_by("process_template_id").ok();
+            let process_template_name: Option<String> =
+                row.try_get_by::<String, _>("process_template_name").ok();
             map.entry(todo_id).or_default().push(crate::models::LoopRefSummary {
                 loop_id,
                 loop_name,
+                process_template_id,
+                process_template_name,
             });
         }
     }
@@ -841,10 +847,15 @@ impl Database {
             return Ok(std::collections::HashMap::new());
         }
         let (placeholders, values) = Database::in_clause(todo_ids);
-        // JOIN loops 取 name；ORDER BY todo_id, loop_id 保证输出稳定可测
+        // JOIN loops 取 name；LEFT JOIN process_templates 取工艺模板（供「工艺」列展示）。
+        // 用 LEFT JOIN：环路可能未绑定工艺模板（process_template_id 为空），此时模板字段为 NULL。
+        // ORDER BY todo_id, loop_id 保证输出稳定可测
         let sql = format!(
-            "SELECT ls.todo_id, l.id as loop_id, l.name as loop_name FROM loop_steps ls \
+            "SELECT ls.todo_id, l.id as loop_id, l.name as loop_name, \
+                    pt.id as process_template_id, pt.display_name as process_template_name \
+             FROM loop_steps ls \
              INNER JOIN loops l ON l.id = ls.loop_id \
+             LEFT JOIN process_templates pt ON pt.id = l.process_template_id \
              WHERE ls.enabled = 1 AND ls.todo_id IN ({placeholders}) \
              ORDER BY ls.todo_id ASC, l.id ASC"
         );
@@ -2066,6 +2077,39 @@ mod loop_step_count_tests {
         assert_eq!(refs_a[0].loop_name, "Loop1");
         // B 未引用 → 不在 map 中（调用方按 unwrap_or_default 取空 vec）
         assert!(!map.contains_key(&todo_b));
+    }
+
+    /// 「工艺」列依赖 LoopRefSummary 带 process_template 信息：
+    /// 环路绑定了模板时要回填 template id/name；未绑定时为 None。
+    #[tokio::test]
+    async fn test_get_referencing_loops_includes_process_template() {
+        let db = fresh_db().await;
+        let todo = seed_todo(&db, "T").await;
+        let tpl = seed_process_template(&db, "工艺A").await;
+        let loop_with_tpl = seed_loop(&db, "环路1").await;
+        let loop_no_tpl = seed_loop(&db, "环路2").await;
+        // 把环路1 关联到工艺模板
+        db.exec(&format!(
+            "UPDATE loops SET process_template_id = {tpl} WHERE id = {loop_with_tpl}"
+        ))
+        .await
+        .expect("bind template");
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) \
+             VALUES ({loop_with_tpl}, 's1', {todo}, 1), ({loop_no_tpl}, 's2', {todo}, 1)"
+        ))
+        .await
+        .expect("insert steps");
+
+        let map = db.get_referencing_loops_for_todos(&[todo]).await.unwrap();
+        let refs = map.get(&todo).expect("T 应有引用");
+        // 按 loop_id 升序：绑模板的环路1 在前
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].process_template_id, Some(tpl));
+        assert_eq!(refs[0].process_template_name.as_deref(), Some("工艺A"));
+        // 未绑模板的环路2 → None
+        assert_eq!(refs[1].process_template_id, None);
+        assert_eq!(refs[1].process_template_name, None);
     }
 
     /// 插一条工艺模板，返回 id。

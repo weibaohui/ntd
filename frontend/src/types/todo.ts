@@ -48,6 +48,10 @@ export type ComputedBucket = 'manual' | 'time_driven' | 'event_driven' | 'loop_d
 export interface LoopRefSummary {
   loop_id: number;
   loop_name: string;
+  /** 该环路所基于的工艺模板 ID（后端 LEFT JOIN process_templates，未绑定时缺省） */
+  process_template_id?: number;
+  /** 该环路所基于的工艺模板名称（取 process_templates.display_name） */
+  process_template_name?: string;
 }
 
 /** 事项中心列表项：在 Todo 之上附加运行时推导/聚合字段（后端批量补算）。 */

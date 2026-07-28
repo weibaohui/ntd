@@ -65,13 +65,38 @@ function renderTagList(tagIds: number[] | undefined, tags: TagType[], max = 3): 
   );
 }
 
-/** 工艺列：展示引用该事项的 Loop（工艺模板实例）。多个空格分隔。 */
-function renderProcessColumn(refs: LoopRefSummary[] | undefined): ReactNode {
+/** 工艺列：展示引用该事项的环路所基于的工艺模板，格式 #模板ID 模板名，按模板去重。 */
+export function renderProcessColumn(refs: LoopRefSummary[] | undefined): ReactNode {
+  if (!refs || refs.length === 0) return '-';
+  // 多个环路可能基于同一模板，按 template_id 去重避免重复展示
+  const seen = new Set<number>();
+  const templates: { id: number; name: string }[] = [];
+  for (const r of refs) {
+    if (r.process_template_id == null) continue;
+    if (seen.has(r.process_template_id)) continue;
+    seen.add(r.process_template_id);
+    templates.push({
+      id: r.process_template_id,
+      name: r.process_template_name ?? `#${r.process_template_id}`,
+    });
+  }
+  if (templates.length === 0) return '-';
+  return (
+    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+      {templates.map(t => (
+        <Tag key={t.id}>{`#${t.id} ${t.name}`}</Tag>
+      ))}
+    </span>
+  );
+}
+
+/** 环路列：展示引用该事项的环路实例，格式 #环路ID 环路名。 */
+export function renderLoopColumn(refs: LoopRefSummary[] | undefined): ReactNode {
   if (!refs || refs.length === 0) return '-';
   return (
     <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
       {refs.map(r => (
-        <Tag key={r.loop_id}>{r.loop_name}</Tag>
+        <Tag key={r.loop_id}>{`#${r.loop_id} ${r.loop_name}`}</Tag>
       ))}
     </span>
   );
@@ -236,9 +261,16 @@ function buildTodoColumns(
       render: (_, record) => renderSchedulerColumn(record),
     },
     {
+      title: '环路',
+      key: 'loop',
+      width: 160,
+      ellipsis: true,
+      render: (_, record) => renderLoopColumn(record.referencing_loops),
+    },
+    {
       title: '工艺',
       key: 'process',
-      width: 140,
+      width: 160,
       ellipsis: true,
       render: (_, record) => renderProcessColumn(record.referencing_loops),
     },
@@ -371,9 +403,9 @@ export function TodoListView({
           dataSource={items}
           loading={loading}
           size="small"
-          // scroll.x 必须 ≥ 所有固定宽列之和（含标题列 220）：合计 1530，
-          // 取 1550 留余量；否则窗口变窄时标题列会被压成 0 宽
-          scroll={{ x: 1550 }}
+          // scroll.x 必须 ≥ 所有固定宽列之和（新增环路列 160）：合计 1690，
+          // 取 1720 留余量；否则窗口变窄时弹性列会被压成 0 宽
+          scroll={{ x: 1720 }}
           pagination={{
             pageSize: 20,
             showSizeChanger: true,
