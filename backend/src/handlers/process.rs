@@ -254,14 +254,29 @@ pub async fn update_process(
 
     // 结构校验：serde_yaml 解析失败说明 YAML 语法错误，返回 400。
     // 不做语义校验（如 goto 目标是否存在），避免阻断"先存半成品再补"的工作流。
-    serde_yaml::from_str::<crate::services::process::ProcessDefinition>(&req.definition)
-        .map_err(|e| AppError::BadRequest(format!("YAML 结构校验失败: {}", e)))?;
+    let mut definition: crate::services::process::ProcessDefinition =
+        serde_yaml::from_str(&req.definition)
+            .map_err(|e| AppError::BadRequest(format!("YAML 结构校验失败: {}", e)))?;
+
+    // 每次更新自动递增次版本号（X.Y.Z → X.Y+1.0），让用户能区分已安装 Loop 与最新工艺。
+    // 若 YAML 中的版本与 DB 一致则递增，不一致说明用户已手动改过，尊重用户版本。
+    let yaml_version = definition.process.version.clone();
+    if yaml_version == template.version {
+        let bumped = bump_semver_minor(&yaml_version);
+        definition.process.version = bumped.clone();
+        tracing::info!(
+            "process {}: version auto-bumped from {} to {}",
+            name, yaml_version, bumped
+        );
+    }
+    let new_yaml = serde_yaml::to_string(&definition)
+        .map_err(|e| AppError::Internal(format!("YAML 序列化失败: {}", e)))?;
 
     // 计算用户目录下的目标路径。
     let target_path = compute_user_process_path(&template)?;
 
-    // 原子写盘：临时文件 + rename，避免崩溃导致文件损坏。
-    atomic_write(&target_path, &req.definition)?;
+    // 原子写盘（已含自动递增后的版本号），避免崩溃导致文件损坏。
+    atomic_write(&target_path, &new_yaml)?;
 
     // 触发用户层 upsert，把刚保存的文件刷新入库为 is_system=false。
     if let Err(e) =
@@ -529,6 +544,19 @@ pub async fn copy_process_to_user(
     Ok(ApiResponse::ok(serde_json::json!({
         "user_source_path": format!("{}{}", crate::services::process::user_dir::USER_SOURCE_PREFIX, rel_path),
     })))
+}
+
+/// 递增语义化版本号的次版本号（X.Y.Z → X.Y+1.0）。
+/// 如 "1.0.0" → "1.1.0"，"2.3.4" → "2.4.0"。
+/// 非标准格式（不足 2 段）时追加 ".1" 作为 fallback。
+fn bump_semver_minor(version: &str) -> String {
+    let parts: Vec<&str> = version.split('.').collect();
+    if parts.len() >= 2 {
+        let minor = parts[1].parse::<u32>().unwrap_or(0);
+        format!("{}.{}.0", parts[0], minor + 1)
+    } else {
+        format!("{}.1", version)
+    }
 }
 
 /// 校验工艺名称不得包含路径分隔符或 `..`，防止 `copy_process_to_user` 写入目标逃逸。
