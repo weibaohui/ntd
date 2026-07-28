@@ -303,6 +303,18 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
                   >
                     安装
                   </Button>,
+                  /* 029：用户工艺直接编辑，跳路由进编辑器；系统工艺只读（编辑会被同步覆盖）。
+                     系统工艺编辑入口保留在详情 Modal 里（含复制到用户层提示）。 */
+                  !p.is_system && (
+                    <Button
+                      key="edit"
+                      type="text"
+                      icon={<EditOutlined />}
+                      onClick={() => pushUrl('processes', { processMode: 'edit', name: p.name })}
+                    >
+                      编辑
+                    </Button>
+                  ),
                 ]}
               >
                 <Paragraph ellipsis={{ rows: 2 }} type="secondary">
