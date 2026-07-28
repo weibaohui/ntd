@@ -17,6 +17,7 @@ import { LoopDetailPage } from '@/components/LoopDetailPage';
 import { TodoPostPage } from './components/todo-post';
 import { ProcessPage } from './components/ProcessPage';
 import { TasksPage } from './components/tasks/TasksPage';
+import { TaskDetailPage } from './components/tasks/TaskDetailPage';
 import { ConceptNavPage } from './components/onboarding/ConceptNavPage';
 import { Dashboard } from './components/Dashboard';
 import { MemorialBoard } from './components/MemorialBoard';
@@ -52,7 +53,7 @@ function AppContent() {
   const { state, dispatch, clearSelection } = useApp();
   // 028：路由统一为 /#/todos + /#/todos/:id + /#/todos/:id/posts/:rid + /#/loops + /#/loops/:id
   // todoDetailId / loopDetailId / postRecordId 均来自 path 段，刷新可恢复
-  const { activeView, todoDetailId, loopDetailId, postRecordId, activePanel, processName, processMode, showView, pushUrl, replaceUrl, backToList } = useViewState();
+  const { activeView, todoDetailId, loopDetailId, taskDetailId, postRecordId, activePanel, processName, processMode, showView, pushUrl, replaceUrl, backToList } = useViewState();
   const { themeMode, toggleTheme } = useTheme();
   // 底部执行日志面板的显隐开关：来自设置-界面显示，关掉后即使有运行中任务也不渲染面板。
   const { visible: consolePanelVisible, setVisible: setConsolePanelVisible } = useConsolePanel();
@@ -423,7 +424,11 @@ function AppContent() {
               ) : activeView === 'wiki' ? (
                 <WikiViewPage />
               ) : activeView === 'tasks' ? (
-                <TasksPage workspaceId={state.selectedWorkspace} />
+                taskDetailId != null ? (
+                  <TaskDetailPage taskId={taskDetailId} onBack={() => backToList()} />
+                ) : (
+                  <TasksPage workspaceId={state.selectedWorkspace} />
+                )
               ) : activeView === 'onboarding' ? (
                 <ConceptNavPage workspaceId={state.selectedWorkspace} />
               ) : activeView === 'processes' ? (

@@ -7,6 +7,7 @@
  *   /#/todos/:id/posts/:rid   事项某次执行记录的帖子页
  *   /#/loops                  环路列表（table 形态）
  *   /#/loops/:id              环路详情 #id（独立页）
+ *   /#/tasks/:id              任务详情 #id（独立页）
  *   /#/dashboard              仪表盘
  *   /#/settings?tab=system    设置-系统标签
  *   /#/memorial?mode=kanban   看板-看板视图
@@ -152,6 +153,13 @@ function getInitialLoopDetailId(): number | null {
   return getPathIdAt(segs, 1);
 }
 
+/** 任务详情 id：来自 path 段 `tasks/:id` 中的 :id。 */
+function getInitialTaskDetailId(): number | null {
+  const segs = getHashPathSegments();
+  if (segs[0] !== 'tasks') return null;
+  return getPathIdAt(segs, 1);
+}
+
 /** 帖子记录 id：来自 path 段 `todos/:id/posts/:rid` 中的 :rid。 */
 function getInitialPostRecordId(): number | null {
   const segs = getHashPathSegments();
@@ -249,6 +257,13 @@ function buildHashUrl(view: View, opts?: NavOpts): string {
     }
     return `#/loops`;
   }
+  // 任务命名空间：path 段驱动，与 todos/loops 一致
+  if (view === 'tasks') {
+    if (opts?.id != null) {
+      return `#/tasks/${opts.id}`;
+    }
+    return `#/tasks`;
+  }
   // 其他视图保持 query 参数风格
   const path = `/${view}`;
   const params = new URLSearchParams();
@@ -304,9 +319,10 @@ export function viewToNavKey(view: View): string {
 
 export function useViewState() {
   const [activeView, setActiveView] = useState<View>(getInitialView);
-  // 028：todoDetailId / loopDetailId / postRecordId 来自 path 段，刷新可恢复
+  // 028：todoDetailId / loopDetailId / taskDetailId / postRecordId 来自 path 段，刷新可恢复
   const [todoDetailId, setTodoDetailId] = useState<number | null>(getInitialTodoDetailId);
   const [loopDetailId, setLoopDetailId] = useState<number | null>(getInitialLoopDetailId);
+  const [taskDetailId, setTaskDetailId] = useState<number | null>(getInitialTaskDetailId);
   const [postRecordId, setPostRecordId] = useState<number | null>(getInitialPostRecordId);
   const [activeTab, setActiveTab] = useState<string | null>(getInitialTab);
   const [boardMode, setBoardMode] = useState<BoardMode>(getInitialBoardMode);
@@ -319,7 +335,7 @@ export function useViewState() {
 
   // setters 集中传入 syncFromHash，避免每个回调都重复一遍
   const setters = {
-    setActiveView, setTodoDetailId, setLoopDetailId, setPostRecordId,
+    setActiveView, setTodoDetailId, setLoopDetailId, setTaskDetailId, setPostRecordId,
     setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessName, setProcessMode,
   };
 
@@ -383,17 +399,19 @@ export function useViewState() {
       pushUrl('todos', { id: todoDetailId });
       return;
     }
-    // 事项/环路详情返回列表
+    // 事项/环路/任务详情返回列表
     if (activeView === 'todos') { replaceUrl('todos'); return; }
     if (activeView === 'loops') { replaceUrl('loops'); return; }
+    if (activeView === 'tasks') { replaceUrl('tasks'); return; }
     pushUrl(activeView);
   }, [activeView, todoDetailId, postRecordId, pushUrl, replaceUrl]);
 
   // MobileHeader 需要知道当前是否处于「详情态」以决定返回按钮显隐；
-  // 由 todoDetailId/loopDetailId 派生，保持兼容旧 activePanel: 'detail' | 'list' 接口。
+  // 由 todoDetailId/loopDetailId/taskDetailId 派生，保持兼容旧 activePanel: 'detail' | 'list' 接口。
   // 帖子页同样视为 detail 态，MobileHeader 返回按钮可触发 backToList 回到父事项详情。
   const activePanel: Panel = (activeView === 'todos' && todoDetailId != null)
     || (activeView === 'loops' && loopDetailId != null)
+    || (activeView === 'tasks' && taskDetailId != null)
     ? 'detail'
     : 'list';
 
@@ -402,6 +420,7 @@ export function useViewState() {
     // 028：详情 id（path 段驱动）
     todoDetailId,
     loopDetailId,
+    taskDetailId,
     postRecordId,
     // 派生：仅用于 MobileHeader 返回按钮显隐
     activePanel,
@@ -433,6 +452,7 @@ function syncStateFromOptions(
     setActiveView: (v: View) => void;
     setTodoDetailId: (id: number | null) => void;
     setLoopDetailId: (id: number | null) => void;
+    setTaskDetailId: (id: number | null) => void;
     setPostRecordId: (id: number | null) => void;
     setActiveTab: (t: string | null) => void;
     setBoardMode: (m: BoardMode) => void;
@@ -443,7 +463,7 @@ function syncStateFromOptions(
   },
 ): void {
   const {
-    setActiveView, setTodoDetailId, setLoopDetailId, setPostRecordId,
+    setActiveView, setTodoDetailId, setLoopDetailId, setTaskDetailId, setPostRecordId,
     setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessName, setProcessMode,
   } = setters;
   setActiveView(view);
@@ -451,6 +471,7 @@ function syncStateFromOptions(
   setTodoDetailId(view === 'todos' ? (opts?.id ?? null) : null);
   setPostRecordId(view === 'todos' ? (opts?.recordId ?? null) : null);
   setLoopDetailId(view === 'loops' ? (opts?.id ?? null) : null);
+  setTaskDetailId(view === 'tasks' ? (opts?.id ?? null) : null);
   setActiveTab(opts?.tab ?? null);
   setBoardMode(opts?.mode ?? 'memorial');
   setWikiSlug(view === 'wiki' ? (opts?.slug ?? null) : null);
@@ -470,6 +491,7 @@ function syncFromHash(setters: {
   setActiveView: (v: View) => void;
   setTodoDetailId: (id: number | null) => void;
   setLoopDetailId: (id: number | null) => void;
+  setTaskDetailId: (id: number | null) => void;
   setPostRecordId: (id: number | null) => void;
   setActiveTab: (t: string | null) => void;
   setBoardMode: (m: BoardMode) => void;
@@ -493,10 +515,11 @@ function syncFromHash(setters: {
   const resolvedMode = mode && ALL_BOARD_MODES.includes(mode) ? mode : 'memorial';
 
   setters.setActiveView(view);
-  // todos/loops 详情 id 仅在对应 view 下提取，避免跨视图串台
+  // todos/loops/tasks 详情 id 仅在对应 view 下提取，避免跨视图串台
   setters.setTodoDetailId(view === 'todos' ? getPathIdAt(segments, 1) : null);
   setters.setPostRecordId(view === 'todos' && segments[2] === 'posts' ? getPathIdAt(segments, 3) : null);
   setters.setLoopDetailId(view === 'loops' ? getPathIdAt(segments, 1) : null);
+  setters.setTaskDetailId(view === 'tasks' ? getPathIdAt(segments, 1) : null);
   setters.setActiveTab(tab || null);
   setters.setBoardMode(resolvedMode);
   setters.setWikiSlug(view === 'wiki' ? (slug || null) : null);
