@@ -30,7 +30,9 @@ use super::RunTodoExecutionRequest;
 
 /// 哨兵 template_id，用于环节内联评审模板（无对应 review_templates 行）。
 /// 不与真实模板冲突（真实模板 id 从 1 起），review_template_id 为逻辑引用非 FK。
-const INLINE_REVIEW_TEMPLATE_ID: i64 = 0;
+///
+/// `pub(crate)` 让端到端穿透测试可断言「环节内联用哨兵 id 0 归属评审实例」。
+pub(crate) const INLINE_REVIEW_TEMPLATE_ID: i64 = 0;
 
 /// 独立 runtime. 用于 run_auto_review 在原 todo 的 spawned task 内部同步运行
 /// 自动评审逻辑, 避免与外层 spawned task 产生 Send / 嵌套 spawn 问题.
@@ -298,7 +300,10 @@ pub async fn resolve_review_template(
 
 /// Step 4: 合并评审 prompt（截断原 output + 替换模板占位符）。
 /// `template_prompt` 是解析后的模板正文（可以是默认模板 prompt 或环节内联 review_prompt）。
-fn compose_review_prompt(
+///
+/// `pub(crate)` 让端到端穿透测试（installer_tests）可直接调用，
+/// 复用同一段占位符替换逻辑，避免在测试里复制实现导致语义漂移。
+pub(crate) fn compose_review_prompt(
     original: &crate::models::Todo,
     template_prompt: &str,
     original_output: Option<&str>,

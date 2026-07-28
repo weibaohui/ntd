@@ -921,4 +921,159 @@ phases:
             "review_type=human 的环节 todo 不应开启 auto_review_enabled"
         );
     }
+
+    /// 端到端穿透测试（需求 033，验收标准 1+2）。
+    ///
+    /// 完整链路：工艺 YAML 定义环节 `review_prompt`（含 PENETRATION_MARKER_033）
+    /// → `install_process_template` 安装 → `loop_steps.review_prompt` 落库含 marker
+    /// → `resolve_review_template` 三级回退选取环节内联正文（哨兵 id=0）
+    /// → `compose_review_prompt` 占位符替换合成最终评审 prompt
+    /// → 断言合成后的评审 prompt 仍含 marker，且 `{{original_output}}` 等占位符已被替换。
+    ///
+    /// 确定性设计：不依赖真实 LLM、不启动 LoopRunner；
+    /// 评审 prompt 在调 LLM 前就已合成落库，本测试只验证「穿透」这一段。
+    /// 之前的测试只覆盖 `resolve_review_template` 单元层面（直接调函数），
+    /// 没有把「工艺定义 → installer 落库 → 模板选取 → prompt 合成」串成一条端到端链路，
+    /// 缺口正是这条「是否穿透」的自动红/绿证据。
+    #[tokio::test]
+    async fn test_review_prompt_penetrates_to_synthesized_review_prompt() {
+        use crate::executor_service::auto_review::{
+            compose_review_prompt, resolve_review_template, INLINE_REVIEW_TEMPLATE_ID,
+        };
+
+        const PENETRATION_MARKER: &str = "PENETRATION_MARKER_033";
+        let db = fresh_db().await;
+        let ws_id = seed_workspace(&db).await;
+
+        // 工艺定义：单环节，带独特 review_prompt（含 PENETRATION_MARKER）+ 验收标准触发评审。
+        // 占位符用 {{double_braces}} 约定，与 compose_review_prompt 的 .replace 目标一致。
+        // 用普通 raw string 而非 format!，避免 YAML 里的 {{original_output}} 等占位符
+        // 被 format! 当成命名参数；marker 直接硬编码进 YAML，常量留给断言用。
+        let yaml = r#"process:
+  name: penetration-test
+  display_name: 穿透测试工艺
+  description: 验证环节 review_prompt 穿透到评审实例 todo 的 prompt
+  category: test
+  complexity: light
+  version: 0.1.0
+phases:
+  - id: build
+    name: 构建
+    spec: 构建阶段
+    links:
+      - id: deliver
+        name: 交付
+        step_template: []
+        prompt: 请交付产物
+        on_success: end
+        on_gate_fail: break
+        review_type: ai
+        acceptance_criteria: 产物完整
+        review_prompt: |
+          你是评审师。PENETRATION_MARKER_033
+          请按以下标准评审 {{original_output}}：
+          {{acceptance_criteria}}
+          输出 RATING: <0-100>
+"#;
+
+        let template = process_templates::ActiveModel {
+            name: ActiveValue::Set("penetration-test".to_string()),
+            display_name: ActiveValue::Set("穿透测试工艺".to_string()),
+            description: ActiveValue::Set(String::new()),
+            category: ActiveValue::Set("test".to_string()),
+            complexity: ActiveValue::Set("light".to_string()),
+            version: ActiveValue::Set("0.1.0".to_string()),
+            definition: ActiveValue::Set(yaml.to_string()),
+            source_path: ActiveValue::Set(Some("bundled://penetration-test.yaml".to_string())),
+            is_system: ActiveValue::Set(true),
+            ..Default::default()
+        }
+        .insert(&db.conn)
+        .await
+        .unwrap();
+
+        let result = install_process_template(&db, &template, ws_id, "/tmp/test-ws")
+            .await
+            .expect("install should succeed");
+
+        // 1) 断言环节级 review_prompt 已落库到 loop_steps.review_prompt 且含 marker。
+        let steps = db.list_loop_steps_by_loop(result.loop_id).await.unwrap();
+        assert_eq!(steps.len(), 1, "穿透工艺应只有 1 个环节");
+        let step = &steps[0];
+        let persisted_review_prompt = step
+            .review_prompt
+            .as_ref()
+            .expect("环节 review_prompt 必须落库到 loop_steps.review_prompt");
+        assert!(
+            persisted_review_prompt.contains(PENETRATION_MARKER),
+            "loop_steps.review_prompt 必须含 PENETRATION_MARKER，实际: {persisted_review_prompt}"
+        );
+
+        // 2) resolve_review_template 三级回退：环节内联非空 → 选取环节正文，哨兵 id=0。
+        let (template_prompt, owning_id, owning_name) =
+            resolve_review_template(&db, step.review_prompt.as_deref(), None)
+                .await
+                .expect("resolve should succeed");
+        assert_eq!(owning_id, INLINE_REVIEW_TEMPLATE_ID);
+        assert_eq!(owning_name, "环节内联评审");
+        assert!(
+            template_prompt.contains(PENETRATION_MARKER),
+            "选取的评审模板正文必须含 marker"
+        );
+
+        // 3) compose_review_prompt 占位符替换合成最终评审 prompt。
+        //    手动构造最小 original todo（Todo 无 Default impl，需列出全部字段），
+        //    只填 compose_review_prompt 实际读取的 prompt + acceptance_criteria，其余给零值。
+        let original = crate::models::Todo {
+            id: 0,
+            title: String::new(),
+            prompt: "请交付产物".to_string(),
+            status: crate::models::TodoStatus::Pending,
+            created_at: String::new(),
+            updated_at: String::new(),
+            tag_ids: vec![],
+            executor: None,
+            scheduler_enabled: false,
+            scheduler_config: None,
+            scheduler_timezone: None,
+            scheduler_next_run_at: None,
+            task_id: None,
+            workspace_path: None,
+            workspace_id: None,
+            webhook_enabled: false,
+            acceptance_criteria: Some("产物完整".to_string()),
+            todo_type: 0,
+            parent_todo_id: None,
+            review_template_id: None,
+            auto_review_enabled: true,
+            action_type: None,
+            action_key: None,
+            archived_at: None,
+            expert_name: None,
+            model: None,
+        };
+        let final_review_prompt = compose_review_prompt(
+            &original,
+            &template_prompt,
+            Some("DELIVERED_OUTPUT_BODY"),
+        );
+
+        // 4) 穿透断言：marker 一路穿到最终评审 prompt，占位符已被替换。
+        assert!(
+            final_review_prompt.contains(PENETRATION_MARKER),
+            "PENETRATION_MARKER 必须穿透到最终评审 prompt，实际: {final_review_prompt}"
+        );
+        assert!(
+            final_review_prompt.contains("DELIVERED_OUTPUT_BODY"),
+            "占位符 {{{{original_output}}}} 必须被替换，实际: {final_review_prompt}"
+        );
+        assert!(
+            final_review_prompt.contains("产物完整"),
+            "占位符 {{{{acceptance_criteria}}}} 必须被替换，实际: {final_review_prompt}"
+        );
+        assert!(
+            !final_review_prompt.contains("{{original_output}}"),
+            "替换后不应残留原始占位符 {{{{original_output}}}}"
+        );
+    }
 }
