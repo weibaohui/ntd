@@ -7,6 +7,7 @@ import {
   Space, Tabs, Table,
 } from 'antd';
 import { BuildOutlined, ReloadOutlined, EyeOutlined, DownloadOutlined, SearchOutlined, ApartmentOutlined, CodeOutlined, PlusOutlined, EditOutlined } from '@ant-design/icons';
+import { PageCard } from '@/components/common/PageCard';
 import bundledApi, { type ProcessTemplate, type ProcessTemplateDetail, type ProcessLoopItem } from '@/api/bundled';
 import { adaptProcessDefinition } from '@/components/process/processFlowAdapter';
 import { ProcessFlowGraph } from '@/components/process/ProcessFlowGraph';
@@ -220,22 +221,21 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
   };
 
   return (
-    <div style={{ flex: 1, minWidth: 0, height: '100%', overflow: 'auto', padding: 24 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
-        <Title level={3} style={{ margin: 0 }}>
-          <BuildOutlined style={{ marginRight: 8 }} />
-          工艺模板库
-        </Title>
+    <PageCard
+      icon={<BuildOutlined />}
+      title="工艺模板库"
+      extra={
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
             刷新
           </Button>
-          {/* 029：创建工艺入口。M6 改为弹元信息 Modal，确认后跳编辑器。 */}
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalOpen(true)}>
             创建工艺
           </Button>
         </div>
-      </div>
+      }
+      style={{ flex: 1, height: '100%' }}
+    >
 
       <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
         <Input.Search
@@ -505,6 +505,6 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
           pushUrl('processes', { processMode: 'edit', name });
         }}
       />
-    </div>
+    </PageCard>
   );
 }
