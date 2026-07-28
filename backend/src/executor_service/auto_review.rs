@@ -265,12 +265,11 @@ fn compose_review_prompt(
         .as_deref()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("(无验收标准 —— 由评审师自行判断输出质量)");
-    template
-        .prompt
-        .replace("{original_prompt}", &original.prompt)
-        .replace("{max_output_chars}", &MAX_OUTPUT_CHARS.to_string())
-        .replace("{original_output}", &truncated)
-        .replace("{acceptance_criteria}", acceptance_criteria)
+    template.prompt
+        .replace("{{original_prompt}}", &original.prompt)
+        .replace("{{max_output_chars}}", &MAX_OUTPUT_CHARS.to_string())
+        .replace("{{original_output}}", &truncated)
+        .replace("{{acceptance_criteria}}", acceptance_criteria)
 }
 
 /// Step 5: 标记 review pending + emit event。

@@ -1438,12 +1438,12 @@ impl LoopRunner {
             } else {
                 original_output.to_string()
             };
-            // 占位符替换：环节内联模板若未含 {acceptance_criteria} 占位符，验收标准自然不注入（完整替代语义）
+            // 占位符替换：环节内联模板支持 {{双括号}} 变量，评审 prompt 中引用即可自动替换。
             let review_prompt = template_prompt
-                .replace("{original_prompt}", step_prompt)
-                .replace("{max_output_chars}", &MAX_OUTPUT_CHARS.to_string())
-                .replace("{original_output}", &truncated)
-                .replace("{acceptance_criteria}", criteria.unwrap_or(""));
+                .replace("{{original_prompt}}", step_prompt)
+                .replace("{{max_output_chars}}", &MAX_OUTPUT_CHARS.to_string())
+                .replace("{{original_output}}", &truncated)
+                .replace("{{acceptance_criteria}}", criteria.unwrap_or(""));
 
             // 4) 标记评审状态为 pending
             let _ = self.ctx.db.set_record_last_review_status(record_id, "pending").await;

@@ -35,15 +35,16 @@ import type {
 } from '@/types/process';
 import { updateLinkField } from '../processDefinitionUpdater';
 // 评审 prompt 运行时替换的模板参数，用于 AI 评审时的 prompt 合成。
-// {original_prompt} → 当前环节的提示词
-// {original_output} → 执行记录的输出结果
-// {acceptance_criteria} → 验收标准
-// {max_output_chars} → 截断上限（常量）
+// {{original_prompt}} → 当前环节的提示词
+// {{original_output}} → 执行记录的输出结果
+// {{acceptance_criteria}} → 验收标准
+// {{max_output_chars}} → 截断上限（常量）
+// 后端已同时支持 {{双括号}} 和 {单括号} 两种写法，推荐双括号（社区惯例）。
 const REVIEW_PROMPT_PARAMS = [
-  { key: '{original_prompt}', label: 'original_prompt', desc: '当前环节的提示词（prompt 字段）' },
-  { key: '{original_output}', label: 'original_output', desc: '执行记录的输出结果' },
-  { key: '{acceptance_criteria}', label: 'acceptance_criteria', desc: '验收标准，用于评分评价' },
-  { key: '{max_output_chars}', label: 'max_output_chars', desc: '结果截断上限（常量）' },
+  { key: '{{original_prompt}}', label: 'original_prompt', desc: '当前环节的提示词（prompt 字段）' },
+  { key: '{{original_output}}', label: 'original_output', desc: '执行记录的输出结果' },
+  { key: '{{acceptance_criteria}}', label: 'acceptance_criteria', desc: '验收标准，用于评分评价' },
+  { key: '{{max_output_chars}}', label: 'max_output_chars', desc: '结果截断上限（常量）' },
 ];
 
 const { Text } = Typography;

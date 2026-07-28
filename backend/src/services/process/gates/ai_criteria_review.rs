@@ -97,9 +97,9 @@ pub fn build_review_prompt(
 
     let mut prompt = crate::services::auto_review::DEFAULT_REVIEWER_PROMPT
         .to_string()
-        .replace("{original_prompt}", step_prompt)
-        .replace("{original_output}", &truncated)
-        .replace("{acceptance_criteria}", acceptance_criteria);
+        .replace("{{original_prompt}}", step_prompt)
+        .replace("{{original_output}}", &truncated)
+        .replace("{{acceptance_criteria}}", acceptance_criteria);
     // 注入 skill 自检清单。
     if let Some(checklist) = skill_self_check_list.filter(|s| !s.trim().is_empty()) {
         prompt = prompt.replace(
