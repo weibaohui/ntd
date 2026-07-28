@@ -36,6 +36,7 @@ mod tests {
                 criteria_ref: None,
                 min_score: None,
                 script: None,
+                timeout_secs: None,
             },
             skill_names: &[],
             artifacts: &[],

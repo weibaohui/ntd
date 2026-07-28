@@ -193,6 +193,7 @@ pub fn infer_gates_from_fallback(
             criteria_ref: None,
             min_score: None,
             script: None,
+            timeout_secs: None,
         });
     }
 
@@ -204,6 +205,7 @@ pub fn infer_gates_from_fallback(
             criteria_ref: None,
             min_score: Some(rating),
             script: None,
+            timeout_secs: None,
         });
     }
 

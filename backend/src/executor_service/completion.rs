@@ -854,6 +854,17 @@ async fn maybe_run_auto_review(
     if trigger_type == "auto_review" || todo_id == 0 {
         return;
     }
+    // 环路环节执行（trigger_type 形如 "loop_stage:..."）：若该 step 设了 min_rating，
+    // 评审由 loop_runner.apply_rating_gate 同步接管（其分支依赖 min_rating.is_some()），
+    // 这里跳过避免同一 record 被派生评审两次，浪费 token 并引发时序竞争。
+    // 工艺安装的环节 min_rating 恒为 None（installer 硬编码），不命中此分支，仍走 todo 级 auto_review。
+    if trigger_type.starts_with("loop_stage") {
+        if let Ok(Some(step)) = db.find_loop_step_by_todo_id(todo_id).await {
+            if step.min_rating.is_some() {
+                return;
+            }
+        }
+    }
     run_auto_review(
         db.clone(),
         executor_registry.clone(),

@@ -1329,6 +1329,7 @@ impl LoopRunner {
         template_name: &str,
         review_prompt: &str,
         review_executor: Option<&str>,
+        workspace_id: i64,
     ) -> Result<i64, sea_orm::DbErr> {
         match self
             .ctx
@@ -1339,7 +1340,7 @@ impl LoopRunner {
             Some(existing) => {
                 self.ctx
                     .db
-                    .reset_review_instance_for_reuse(existing.id, review_prompt, review_executor)
+                    .reset_review_instance_for_reuse(existing.id, review_prompt, review_executor, workspace_id)
                     .await?;
                 Ok(existing.id)
             }
@@ -1352,6 +1353,7 @@ impl LoopRunner {
                         template_name,
                         review_prompt.to_string(),
                         review_executor.map(|s| s.to_string()),
+                        workspace_id,
                     )
                     .await
             }
@@ -1444,11 +1446,13 @@ impl LoopRunner {
             //    executor 继承自被评审的 record。
             //    - 已有 → reset prompt/executor/status,保留 id 和 execution_records 关联
             //    - 没有 → 新建
+            let review_ws = template.workspace_id.unwrap_or(0);
             let review_todo_id = match self.reuse_or_create_review_instance(
                 template.id,
                 &template.name,
                 &review_prompt,
                 review_executor.as_deref(),
+                review_ws,
             ).await {
                 Ok(id) => id,
                 Err(e) => {

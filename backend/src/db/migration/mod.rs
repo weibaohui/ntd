@@ -32,6 +32,7 @@ mod v70;
 mod v71;
 mod v72;
 mod v73;
+mod v74;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -107,6 +108,9 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // 版本管理（previous_version_id）+ 四流闭预留表（洞察/治理/资产流）
         Box::new(v72::V72ProcessManagementV2),
         Box::new(v73::V73TaskManagement),
+        // V74 在 V73 之后：回填历史环节 todo 的 auto_review_enabled，
+        // 配合 installer 穿透修复「工艺选 AI 评审却从不打分」的存量数据
+        Box::new(v74::V74BackfillAutoReview),
     ]
 }
 

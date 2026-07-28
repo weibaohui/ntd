@@ -214,6 +214,14 @@ async fn create_todo_for_link(
             .await;
     }
 
+    // 工艺环节 review_type="ai" 等价于「执行完成后自动派生评审 todo 打分」，
+    // 翻译到 todo.auto_review_enabled；human 则保持 false，由环路闸门暂停等待人工审批。
+    // 不穿透这层，todo 会永远停在 create_todo_with_extras 硬编码的 false，
+    // 导致工艺里选了 AI 评审却从不触发打分（id=8 即此问题）。
+    let _ = db
+        .update_todo_auto_review_enabled(todo_id, link.review_type == "ai")
+        .await;
+
     Ok(todo_id)
 }
 
@@ -673,5 +681,59 @@ phases:
         .await
         .expect("内联配置不应依赖原型表，install 应成功");
         assert_eq!(result.step_count, 1);
+    }
+
+    /// installer 应把 link.review_type 翻译到 todo.auto_review_enabled：
+    /// 默认 ai -> true，human -> false。
+    /// 修复「工艺选了 AI 评审却从不触发打分」--此前 create_todo_with_extras 硬编码 false。
+    #[tokio::test]
+    async fn test_install_link_review_type_enables_auto_review() {
+        let db = fresh_db().await;
+        seed_step_template(&db).await;
+        let ws_id = seed_workspace(&db).await;
+
+        let template = process_templates::ActiveModel {
+            name: ActiveValue::Set("review-passthrough".to_string()),
+            display_name: ActiveValue::Set("评审穿透".to_string()),
+            description: ActiveValue::Set("".to_string()),
+            category: ActiveValue::Set("test".to_string()),
+            complexity: ActiveValue::Set("light".to_string()),
+            version: ActiveValue::Set("0.1.0".to_string()),
+            definition: ActiveValue::Set(sample_process_definition_yaml()),
+            source_path: ActiveValue::Set(Some("bundled://processes/test.yaml".to_string())),
+            is_system: ActiveValue::Set(true),
+            ..Default::default()
+        }
+        .insert(&db.conn)
+        .await
+        .unwrap();
+
+        let result = install_process_template(&db, &template, ws_id, "/tmp/test-ws")
+            .await
+            .expect("install should succeed");
+
+        let steps = db.list_loop_steps_by_loop(result.loop_id).await.unwrap();
+        // write-prd: review_type 默认 ai -> todo.auto_review_enabled=true
+        let write_step = steps
+            .iter()
+            .find(|s| s.name == "编写 PRD")
+            .expect("write-prd exists");
+        let write_todo = db.get_todo(write_step.todo_id).await.unwrap().unwrap();
+        assert_eq!(write_step.review_type, "ai");
+        assert!(
+            write_todo.auto_review_enabled,
+            "review_type=ai 的环节 todo 必须自动开启 auto_review_enabled"
+        );
+        // confirm-prd: review_type=human -> auto_review_enabled=false
+        let confirm_step = steps
+            .iter()
+            .find(|s| s.name == "确认 PRD")
+            .expect("confirm-prd exists");
+        let confirm_todo = db.get_todo(confirm_step.todo_id).await.unwrap().unwrap();
+        assert_eq!(confirm_step.review_type, "human");
+        assert!(
+            !confirm_todo.auto_review_enabled,
+            "review_type=human 的环节 todo 不应开启 auto_review_enabled"
+        );
     }
 }

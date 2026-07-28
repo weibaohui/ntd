@@ -186,6 +186,11 @@ pub struct GateDefinition {
     pub criteria_ref: Option<String>,
     pub min_score: Option<i32>,
     pub script: Option<String>,
+    /// AI 评审门禁等待评分的超时秒数。
+    /// null / 0 = 一直等待，直到 auto_review 出分再判定；
+    /// 正数 = 最多等 N 秒，超时后视为门禁不通过触发流转（如返工）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<i32>,
 }
 
 /// 内联环节原型定义。

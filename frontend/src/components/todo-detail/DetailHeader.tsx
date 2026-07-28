@@ -1,5 +1,5 @@
-import { Button, Tag, Badge, Popconfirm, App, Tooltip } from 'antd';
-import { PlayCircleOutlined, ThunderboltOutlined, EditOutlined, DeleteOutlined, RocketOutlined } from '@ant-design/icons';
+import { Button, Tag, Badge, App } from 'antd';
+import { PlayCircleOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { StatusPicker } from '@/components/StatusPicker';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 // 引入 ExpertBadge：在执行器徽章后展示关联的专家/团队信息。
@@ -9,7 +9,8 @@ import { InlineTokenStats } from './InlineTokenStats';
 import { ProgressWidget } from './ProgressWidget';
 import { formatLocalDateTime } from '@/utils/datetime';
 import { CopyButton } from '@/components/CopyButton';
-import { ActionButton } from '@/components/ActionButton';
+// 按钮组（优化标题/编辑/删除）抽到 TodoDetailActions，与 TodoDetailPage 的 titleSuffix 共用。
+import { TodoDetailActions } from './TodoDetailActions';
 import type { ExecutionSummary, ExecutionRecord } from '@/types';
 import type { Todo } from '@/types';
 
@@ -43,45 +44,12 @@ export function DetailHeader({
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
             <StatusPicker value={selectedTodo.status} onChange={onStatusChange} disabled={isExecuting} />
             <h2 className="card-title" style={{ margin: 0, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedTodo.title}</h2>
-            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-              {onTitleUpdate && (
-                <Tooltip title="自动优化标题">
-                  <ActionButton
-                    actionType="title_optimize"
-                    actionKey="default"
-                    prompt={`你是一个标题优化专家。请根据以下信息生成更优的标题。
-
-当前标题：{{title}}
-当前 Prompt：{{prompt}}
-
-要求：
-1. 保持原意
-2. 更简洁有力
-3. 适合 AI 驱动的任务引擎的场景
-
-输出格式：用 RESULT 标记包裹最终标题，不要加任何其他内容。
-
-RESULT
-优化后的标题文本
-RESULT`}
-                    params={{
-                      title: selectedTodo.title,
-                      prompt: selectedTodo.prompt || '',
-                    }}
-                    workspaceId={selectedTodo.workspace_id || undefined}
-                    onApply={onTitleUpdate}
-                    buttonType="text"
-                    icon={<RocketOutlined />}
-                    panelTitle="自动优化标题"
-                    panelDescription="AI 将根据当前标题和 Prompt 生成更优的版本"
-                  />
-                </Tooltip>
-              )}
-              <Button type="text" icon={<EditOutlined />} onClick={onTodoDrawerOpen} className="icon-btn" aria-label="编辑任务" />
-              <Popconfirm title="删除任务" description="确定要删除吗？" onConfirm={onDelete}>
-                <Button type="text" icon={<DeleteOutlined />} className="icon-btn" aria-label="删除任务" />
-              </Popconfirm>
-            </div>
+            <TodoDetailActions
+              todo={selectedTodo}
+              onDelete={onDelete}
+              onEdit={onTodoDrawerOpen}
+              onTitleUpdate={onTitleUpdate}
+            />
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>

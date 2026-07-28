@@ -13,10 +13,15 @@ import { groupBySession } from './todo-detail/helpers';
 import { DetailHeader } from './todo-detail/DetailHeader';
 import { ForumPostList } from './todo-detail/ForumPostList';
 import { ReferencingLoopsSection } from './todo-detail/ReferencingLoopsSection';
+import type { TodoDetailActionsProps } from './todo-detail/TodoDetailActions';
 
 interface TodoDetailProps {
   hideTitleRow?: boolean;
   onOpenPost?: (todoId: number, recordId: number) => void;
+  /** 独立路由场景：把操作按钮上下文上报给外层 PageCard 的 titleSuffix。
+   *  hideTitleRow=true 时内层标题行（含按钮）整体隐藏，外层通过此回调拿到按钮上下文
+   *  在 PageCard 标题行渲染优化标题/编辑/删除，避免按钮连带消失。 */
+  onActionsReady?: (ctx: TodoDetailActionsProps | null) => void;
 }
 
 /**
@@ -43,7 +48,7 @@ async function loadTodoById(
   }
 }
 
-export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps) {
+export function TodoDetail({ hideTitleRow = false, onOpenPost, onActionsReady }: TodoDetailProps) {
   const { state, dispatch } = useApp();
   const { message } = App.useApp();
   const { selectedTodoId, executionRecords, runningTasks } = state;
@@ -309,7 +314,8 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
 
   // 升级/降级已移除：环节与 Todo 合一，无需 promote 流程
 
-  const handleDelete = async () => {
+  // useCallback 包裹：onActionsReady 上报的 ctx 引用 handleDelete，稳定化避免每次渲染都重报。
+  const handleDelete = useCallback(async () => {
     if (!selectedTodo) return;
     try {
       await db.deleteTodo(selectedTodo.workspace_id!, selectedTodo.id);
@@ -319,7 +325,24 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost }: TodoDetailProps
     } catch {
       // ignore: interceptor already shows error
     }
-  };
+  }, [selectedTodo, dispatch, message]);
+
+  // 独立路由场景：把操作按钮上下文上报给外层 PageCard 的 titleSuffix。
+  // selectedTodo 为空时上报 null（加载中/错误态），外层相应不渲染按钮。
+  // 依赖 handleDelete/handleTitleUpdate（均 useCallback 稳定），避免每次渲染重报。
+  useEffect(() => {
+    if (!onActionsReady) return;
+    if (!selectedTodo) {
+      onActionsReady(null);
+      return;
+    }
+    onActionsReady({
+      todo: selectedTodo,
+      onDelete: handleDelete,
+      onEdit: () => setTodoDrawerOpen(true),
+      onTitleUpdate: handleTitleUpdate,
+    });
+  }, [selectedTodo, handleDelete, handleTitleUpdate, onActionsReady]);
 
   if (!selectedTodo) {
     // 加载中：显示骨架屏，避免空白页误导用户以为数据丢失

@@ -17,6 +17,7 @@ use crate::services::process::artifact_capture::{self, ArtifactSpec};
 use crate::services::process::gate_evaluator::{self, GateSummary};
 use crate::services::process::rework_tracker;
 use crate::services::process::transition_resolver;
+use crate::services::process::GateDefinition;
 
 /// 步骤执行结果，供 LoopRunner 直接消费。
 #[derive(Debug)]
@@ -99,6 +100,31 @@ pub async fn execute_step(
         .and_then(|r| r.result.as_deref());
 
     let execution_rating = execution_record.and_then(|r| r.rating);
+
+    // 如果当前无评分，检查 ai_criteria_review 门禁是否配置了等待超时。
+    // 不填/0 = 一直等到出分；正数 = 最多等 N 秒。
+    let execution_rating = if execution_rating.is_none() {
+        let timeout = serde_json::from_str::<Vec<GateDefinition>>(&effective_gate_config)
+            .ok()
+            .and_then(|gates| {
+                gates.into_iter()
+                    .find(|g| g.gate_type == "ai_criteria_review")
+                    .and_then(|g| g.timeout_secs)
+            })
+            .filter(|&t| t > 0);
+        if let Some(timeout_secs) = timeout {
+            // 有限超时：最多等 N 秒
+            let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs as u64);
+            poll_rating(db, execution_record.as_ref().map(|r| r.id), deadline).await
+        } else {
+            // 不设超时：一直等到出分（无限等待，实际由 loop_execution 生命周期兜底）
+            let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(86400);
+            poll_rating(db, execution_record.as_ref().map(|r| r.id), deadline).await
+        }
+    } else {
+        execution_rating
+    };
+
     let gate_summary = gate_evaluator::evaluate_step_gates(
         db,
         step_exec.id,
@@ -226,6 +252,25 @@ fn parse_rating_from_detail(summary: &GateSummary) -> Option<i32> {
             if let Some(ref detail) = gate.result {
                 // 复用 auto_review 的评分解析函数（它解析 RATING: N 格式）。
                 return crate::services::auto_review::parse_rating_from_result(Some(detail));
+            }
+        }
+    }
+    None
+}
+
+/// 轮询等待执行记录的评分出现。
+/// 每 500ms 查一次 DB，直到 deadline 或出分。
+async fn poll_rating(
+    db: &Arc<Database>,
+    record_id: Option<i64>,
+    deadline: tokio::time::Instant,
+) -> Option<i32> {
+    let record_id = record_id?;
+    while tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        if let Ok(Some(rec)) = db.get_execution_record(record_id).await {
+            if let Some(rating) = rec.rating {
+                return Some(rating);
             }
         }
     }

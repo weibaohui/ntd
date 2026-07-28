@@ -889,6 +889,7 @@ impl Database {
         review_template_name: &str,
         composed_prompt: String,
         executor: Option<String>,
+        workspace_id: i64,
     ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let title = format!("[评审] {}", review_template_name);
@@ -904,6 +905,8 @@ impl Database {
             parent_todo_id: ActiveValue::Set(Some(parent_todo_id)),
             review_template_id: ActiveValue::Set(Some(review_template_id)),
             auto_review_enabled: ActiveValue::Set(Some(false)),
+            // 继承原 todo 的 workspace，使评审实例在原工作空间中可见
+            workspace_id: ActiveValue::Set(Some(workspace_id)),
             ..Default::default()
         };
         let inserted = am.insert(&self.conn).await?;
@@ -939,6 +942,7 @@ impl Database {
         id: i64,
         new_prompt: &str,
         new_executor: Option<&str>,
+        workspace_id: i64,
     ) -> Result<(), sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let am = todos::ActiveModel {
@@ -947,6 +951,8 @@ impl Database {
             executor: ActiveValue::Set(new_executor.map(|s| s.to_string())),
             status: ActiveValue::Set(Some(TodoStatus::Pending.to_string())),
             updated_at: ActiveValue::Set(Some(now)),
+            // 复用场景下 source todo 可能在不同 workspace；同步更新使评审实例跟随当前 source
+            workspace_id: ActiveValue::Set(Some(workspace_id)),
             ..Default::default()
         };
         self.exec_update(am).await
@@ -1625,11 +1631,11 @@ mod review_instance_reuse_tests {
         let db = fresh_db().await;
         let template_id = seed_template(&db, "默认评审").await;
         let first_id = db
-            .create_review_instance_todo(0, template_id, "默认评审", "p1".into(), None)
+            .create_review_instance_todo(0, template_id, "默认评审", "p1".into(), None, 0)
             .await
             .expect("create first");
         let second_id = db
-            .create_review_instance_todo(0, template_id, "默认评审", "p2".into(), None)
+            .create_review_instance_todo(0, template_id, "默认评审", "p2".into(), None, 0)
             .await
             .expect("create second");
         // 多条匹配 → 返回最新 (id 大的那条)
@@ -1661,7 +1667,7 @@ mod review_instance_reuse_tests {
         let db = fresh_db().await;
         let template_id = seed_template(&db, "X").await;
         let id = db
-            .create_review_instance_todo(0, template_id, "X", "p".into(), None)
+            .create_review_instance_todo(0, template_id, "X", "p".into(), None, 0)
             .await
             .expect("create");
         // 软删除
@@ -1685,8 +1691,8 @@ mod review_instance_reuse_tests {
         let db = fresh_db().await;
         let t1 = seed_template(&db, "T1").await;
         let t2 = seed_template(&db, "T2").await;
-        db.create_review_instance_todo(0, t1, "T1", "p".into(), None).await.expect("c1");
-        db.create_review_instance_todo(0, t2, "T2", "p".into(), None).await.expect("c2");
+        db.create_review_instance_todo(0, t1, "T1", "p".into(), None, 0).await.expect("c1");
+        db.create_review_instance_todo(0, t2, "T2", "p".into(), None, 0).await.expect("c2");
         let f1 = db.find_review_instance_by_template(t1).await.expect("f1");
         let f2 = db.find_review_instance_by_template(t2).await.expect("f2");
         assert_eq!(f1.unwrap().review_template_id, Some(t1));
@@ -1700,10 +1706,10 @@ mod review_instance_reuse_tests {
         let db = fresh_db().await;
         let template_id = seed_template(&db, "R").await;
         let id = db
-            .create_review_instance_todo(0, template_id, "R", "old-prompt".into(), Some("claude".to_string()))
+            .create_review_instance_todo(0, template_id, "R", "old-prompt".into(), Some("claude".to_string()), 0)
             .await
             .expect("create");
-        db.reset_review_instance_for_reuse(id, "new-prompt", Some("pi"))
+        db.reset_review_instance_for_reuse(id, "new-prompt", Some("pi"), 0)
             .await
             .expect("reset");
         let found = db
@@ -1724,10 +1730,10 @@ mod review_instance_reuse_tests {
         let db = fresh_db().await;
         let template_id = seed_template(&db, "N").await;
         let id = db
-            .create_review_instance_todo(0, template_id, "N", "p".into(), Some("claude".to_string()))
+            .create_review_instance_todo(0, template_id, "N", "p".into(), Some("claude".to_string()), 0)
             .await
             .expect("create");
-        db.reset_review_instance_for_reuse(id, "p2", None)
+        db.reset_review_instance_for_reuse(id, "p2", None, 0)
             .await
             .expect("reset");
         let found = db.find_review_instance_by_template(template_id).await.expect("find").unwrap();

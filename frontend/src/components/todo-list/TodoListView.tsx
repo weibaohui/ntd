@@ -150,6 +150,18 @@ function buildTodoColumns(
       ),
     },
     {
+      title: '类型',
+      key: 'type',
+      width: 100,
+      render: (_: unknown, record: TodoCenterItem) => {
+        const td = record.todo_type ?? 0;
+        const at = record.action_type;
+        if (td === 2) return <Tag color="purple">评审</Tag>;
+        if (at) return <Tag color="orange">快捷</Tag>;
+        return <Tag color="blue">事项</Tag>;
+      },
+    },
+    {
       title: '标题',
       dataIndex: 'title',
       ellipsis: true,

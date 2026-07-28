@@ -1,19 +1,25 @@
-// LoopDetailPage — 028-列表详情独立路由：环路详情独立页。
+// LoopDetailPage - 028-列表详情独立路由：环路详情独立页。
 //
 // 设计要点（028-列表详情独立路由-设计 §4.6）：
 // 1. URL `/#/loops/:id`，作为环路命名空间的详情态独立挂载。
 // 2. 复用 `LoopDetailPanel`（已接收 loopId prop，与 state 解耦）。
-// 3. 顶部 PageCard 提供「返回列表」按钮，用 history.back() 保留列表状态。
+// 3. 顶部 PageCard 提供「返回列表」按钮（紧贴标题），用 history.back() 保留列表状态。
 // 4. 触发/复制/删除/启停等操作由 useLoopDetailActions hook 提供，
 //    完成后通过 onLoopChanged 通知父组件刷新 LoopListPage（loopUpdateCount 递增触发其重拉）。
-// 5. 单函数 ≤ 30 行：操作回调已拆到 useLoopDetailActions。
+// 5. 操作按钮（触发/复制/导出/编辑/删除）上提到 PageCard extra（右上角）--
+//    内层 hideTitleRow=true 隐藏标题行时按钮不会连带消失。LoopDetailPanel 通过 onActionsReady
+//    上报按钮所需上下文（detail + onExport/onEdit 内部 handler），本组件存 state 后渲染到 extra。
+// 6. 单函数 ≤ 30 行：操作回调已拆到 useLoopDetailActions。
 
+import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { Button } from 'antd';
+import { Button, Space } from 'antd';
 import { ArrowLeftOutlined, RetweetOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { LoopDetailPanel } from './LoopStudioDetailPanel';
 import { useLoopDetailActions } from './LoopDetailPageParts';
+import { LoopDetailActions } from './LoopDetailActions';
+import type { LoopDetailActionsProps } from './LoopDetailActions';
 
 interface LoopDetailPageProps {
   /** 当前环路 id（来自 URL path 段 /#/loops/:id）。 */
@@ -36,10 +42,12 @@ interface LoopDetailPageProps {
  * 环路详情独立页：URL `/#/loops/:id`。
  *
  * 整体处理思路：
- * 1. PageCard 包裹 LoopDetailPanel，顶部标题 + 返回按钮。
+ * 1. PageCard 包裹 LoopDetailPanel，顶部标题 + 返回按钮（titleSuffix）+ 操作按钮（extra 右上角）。
  * 2. LoopDetailPanel 内部按 loopId 自己拉详情数据，本组件只负责容器与回调注入。
  * 3. 触发 / 复制 / 删除 / 启停等操作由 useLoopDetailActions hook 提供（已拆出），
  *    避免与 LoopListPage 形成循环依赖。
+ * 4. 操作按钮上下文由 LoopDetailPanel 通过 onActionsReady 上报（含 detail + 导出/编辑内部
+ *    handler），存 local state 后渲染到 extra，避免 hideTitleRow=true 时按钮连带消失。
  */
 export function LoopDetailPage({
   loopId,
@@ -63,7 +71,24 @@ export function LoopDetailPage({
     onBack();
   };
 
-  // 标题 + 返回按钮
+  // LoopDetailPanel 上报的按钮上下文；detail 加载完成前为 null，extra 不渲染操作按钮。
+  const [actionsCtx, setActionsCtx] = useState<LoopDetailActionsProps | null>(null);
+
+  // 右上角：操作按钮组（触发/复制/导出/编辑/删除），仅 detail 加载后可见
+  const extra: ReactNode = actionsCtx ? (
+    <Space size={4}>
+      <LoopDetailActions
+        detail={actionsCtx.detail}
+        onTrigger={handleTrigger}
+        onDuplicate={handleDuplicate}
+        onExport={actionsCtx.onExport}
+        onEdit={actionsCtx.onEdit}
+        onDelete={handleDeleteWithBack}
+      />
+    </Space>
+  ) : undefined;
+
+  // 标题右侧：返回列表按钮
   const titleSuffix: ReactNode = (
     <Button
       size="small"
@@ -80,6 +105,7 @@ export function LoopDetailPage({
       icon={<RetweetOutlined />}
       title={`环路 #${loopId}`}
       titleSuffix={titleSuffix}
+      extra={extra}
       style={{ flex: 1, height: '100%' }}
       contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 43px)' }}
     >
@@ -87,7 +113,7 @@ export function LoopDetailPage({
         loopId={loopId}
         workspaceId={workspaceId ?? null}
         tags={tags}
-        // 外层 PageCard 已渲染标题行（标题 + 返回按钮），内层隐藏避免重复头部
+        // 外层 PageCard 已渲染标题行（标题 + 返回按钮 + 操作按钮），内层隐藏避免重复头部
         hideTitleRow
         onTrigger={handleTrigger}
         onDuplicate={handleDuplicate}
@@ -96,6 +122,7 @@ export function LoopDetailPage({
         onChanged={onLoopChanged}
         onOpenProcess={onOpenProcess}
         onOpenTodo={onSelectTodo}
+        onActionsReady={setActionsCtx}
       />
     </PageCard>
   );

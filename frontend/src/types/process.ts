@@ -24,6 +24,8 @@ export interface GateDefinition {
   criteria_ref?: string;
   min_score?: number;
   script?: string;
+  /** AI 评审等待评分的超时秒数。null/0=不等待直接判定失败；正数=最多等 N 秒出分后判定。 */
+  timeout_secs?: number;
 }
 
 /** 环节（Link）定义 */

@@ -749,6 +749,21 @@ impl Database {
         loop_steps::Entity::find_by_id(id).one(&self.conn).await
     }
 
+    /// 按 todo_id 反查关联的 loop_step。
+    /// 用于 todo 级 auto_review 判定是否由环路闸门接管评审：
+    /// 若该 step 设了 min_rating，loop_runner.apply_rating_gate 会同步打分（其分支
+    /// 依赖 min_rating.is_some()），todo 级 auto_review 应跳过以避免同一 record 被评审两次。
+    /// 一个 todo 至多被一个启用中的 step 引用，取 one 即可。
+    pub async fn find_loop_step_by_todo_id(
+        &self,
+        todo_id: i64,
+    ) -> Result<Option<loop_steps::Model>, sea_orm::DbErr> {
+        loop_steps::Entity::find()
+            .filter(loop_steps::Column::TodoId.eq(todo_id))
+            .one(&self.conn)
+            .await
+    }
+
     /// 批量统计每个 todo 被启用中的 loop_steps 引用次数（用于事项中心 Loop 驱动分桶）。
     ///
     /// 只统计 `enabled=1` 的步骤：禁用步骤不参与 Loop 执行，不计入 Loop 驱动
@@ -1958,6 +1973,37 @@ mod loop_step_count_tests {
             0,
             "分桶口径不计禁用环节"
         );
+    }
+
+    /// find_loop_step_by_todo_id：按 todo_id 反查 step；存在/不存在两条路径。
+    /// 用于 todo 级 auto_review 判定是否由环路闸门接管（step.min_rating.is_some()）。
+    #[tokio::test]
+    async fn test_find_loop_step_by_todo_id_found_and_missing() {
+        let db = fresh_db().await;
+        let todo_id = seed_todo(&db, "环节todo").await;
+        let free_todo = seed_todo(&db, "自由todo").await;
+        let loop_id = seed_loop(&db, "L").await;
+        // 插一条带 min_rating 的 ai 评审环节，模拟「环路闸门会接管」的场景
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled, min_rating, review_type) \
+             VALUES ({loop_id}, 's', {todo_id}, 1, 80, 'ai')"
+        ))
+        .await
+        .expect("insert step");
+
+        // 命中：返回该 step，min_rating=80（环路闸门依赖此字段决定是否接管评审）
+        let found = db
+            .find_loop_step_by_todo_id(todo_id)
+            .await
+            .unwrap()
+            .expect("step should exist");
+        assert_eq!(found.todo_id, todo_id);
+        assert_eq!(found.min_rating, Some(80));
+        assert_eq!(found.review_type, "ai");
+
+        // 未命中：未被环节引用的 todo 返回 None
+        let missing = db.find_loop_step_by_todo_id(free_todo).await.unwrap();
+        assert!(missing.is_none(), "未被环节引用的 todo 应返回 None");
     }
 
     /// get_referencing_loops_for_todos：按 todo_id 返回引用 Loop 摘要（loop_id + name），

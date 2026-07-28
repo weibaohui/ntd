@@ -315,25 +315,34 @@ async fn execute_review_instance(
         .map_err(|e| format!("find review instance: {}", e))?
     {
         Some(existing) => {
+            let ws = template.workspace_id
+                .or(original.workspace_id)
+                .unwrap_or(0);
             db.reset_review_instance_for_reuse(
                 existing.id,
                 &composed_prompt,
                 original.executor.as_deref(),
+                ws,
             )
             .await
             .map_err(|e| format!("reset review instance: {}", e))?;
             existing.id
         }
-        None => db
-            .create_review_instance_todo(
+        None => {
+            let ws = template.workspace_id
+                .or(original.workspace_id)
+                .unwrap_or(0);
+            db.create_review_instance_todo(
                 original.id,
                 template.id,
                 &template.name,
                 composed_prompt.clone(),
                 original.executor.clone(),
+                ws,
             )
             .await
-            .map_err(|e| format!("create review instance todo: {}", e))?,
+            .map_err(|e| format!("create review instance todo: {}", e))?
+        }
     };
 
     let request = RunTodoExecutionRequest {
