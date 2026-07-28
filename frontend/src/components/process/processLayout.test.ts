@@ -92,6 +92,38 @@ describe('layoutPhases', () => {
     expect(result.get('phase-0')).toBeDefined();
     expect(result.get('phase-1')).toBeDefined();
   });
+
+  it('layoutPhases_phasesWithDifferentHeights_alignTopYEqual', () => {
+    // 三个阶段环节数 1/3/2，容器高度依次不同。
+    // dagre 默认在 rank 内垂直居中 → 矮阶段被推到中间，三者 y 不等；
+    // 设置 align:'UL' 后所有阶段顶部齐平，左上角 y 坐标应相等。
+    const phases: PhaseDefinition[] = [
+      { id: 'p1', name: '阶段1', links: [makeLink('l1', '环节1')] },
+      {
+        id: 'p2',
+        name: '阶段2',
+        links: [
+          makeLink('l2a', '环节2a'),
+          makeLink('l2b', '环节2b'),
+          makeLink('l2c', '环节2c'),
+        ],
+      },
+      {
+        id: 'p3',
+        name: '阶段3',
+        links: [makeLink('l3a', '环节3a'), makeLink('l3b', '环节3b')],
+      },
+    ];
+
+    const result = layoutPhases(phases);
+    const y1 = result.get('phase-0')!.y;
+    const y2 = result.get('phase-1')!.y;
+    const y3 = result.get('phase-2')!.y;
+
+    // 顶部对齐：三个阶段左上角 y 坐标应完全相等
+    expect(y1).toBe(y2);
+    expect(y2).toBe(y3);
+  });
 });
 
 // ── layoutLinksInPhase 测试 ───────────────────────

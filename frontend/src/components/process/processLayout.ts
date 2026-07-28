@@ -60,7 +60,9 @@ export function layoutPhases(
 
   // 创建 dagre 图实例
   const g = new dagre.graphlib.Graph();
-  // rankdir='LR' 从左到右布局，ranksep 控制节点间距
+  // rankdir='LR' 从左到右布局，ranksep 控制节点间距。
+  // 注意：只用 dagre 算横向 x（按 rank 分列），纵向 y 不采用 dagre 的居中结果
+  // ——见下方 result.set 处统一置 0，强制阶段顶部对齐。
   g.setGraph({ rankdir: 'LR', ranksep: PHASE_RANKSEP });
   // 默认边标签（dagre 要求）
   g.setDefaultEdgeLabel(() => ({}));
@@ -90,10 +92,12 @@ export function layoutPhases(
   const result = new Map<string, { x: number; y: number }>();
   phases.forEach((_, i) => {
     const node = g.node(`phase-${i}`);
-    // dagre 返回中心坐标，转左上角需减去宽高的一半
+    // dagre 返回中心坐标，x 转左上角需减去宽度的一半。
+    // y 统一置 0：dagre 默认按节点中心纵向居中排布，环节数不同（容器高度不同）
+    // 时阶段会上下错落；强制所有阶段从同一顶部 y 开始，实现"阶段上对齐"。
     result.set(`phase-${i}`, {
       x: node.x - node.width / 2,
-      y: node.y - node.height / 2,
+      y: 0,
     });
   });
 
