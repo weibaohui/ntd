@@ -22,6 +22,7 @@ import {
   Button,
   Table,
   Space,
+  Tooltip,
   Typography,
 } from 'antd';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
@@ -33,6 +34,8 @@ import type {
   StepTemplateRef,
 } from '@/types/process';
 import { updateLinkField } from '../processDefinitionUpdater';
+// 评审 prompt 的可替换模板参数，复用 todo 的常量（{{content}}、{{message}}、{{raw_message}}、{{slash_command}}）
+import { PROMPT_PARAMS } from '@/components/todo-drawer/constants';
 
 const { Text } = Typography;
 
@@ -396,6 +399,47 @@ export function LinkPropertyForm({
           rows={4}
           placeholder="环节专属评审模板，可空。非空时整体替代默认评审模板；可用 {original_output}、{acceptance_criteria} 等占位符"
         />
+        {/* 快速插入参数条：点击模板将 {{key}} 追加到评审 prompt 尾部。
+            与 todo 编辑区的 prompt 参数快速输入条样式一致。 */}
+        <div style={{
+          marginTop: 8,
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 6,
+          alignItems: 'center',
+        }}>
+          <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginRight: 2 }}>可用参数:</span>
+          {PROMPT_PARAMS.map(p => (
+            <Tooltip key={p.key} title={p.desc}>
+              <code
+                onClick={() => handleFieldChange(
+                  'review_prompt',
+                  (link.review_prompt ?? '') + (link.review_prompt?.endsWith(' ') || !link.review_prompt ? '' : ' ') + p.key + ' ',
+                )}
+                style={{
+                  fontSize: 11,
+                  padding: '1px 6px',
+                  borderRadius: 4,
+                  background: 'var(--color-fill-quaternary)',
+                  border: '1px solid var(--color-border-secondary)',
+                  cursor: 'pointer',
+                  color: 'var(--color-text-secondary)',
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-primary)';
+                  (e.currentTarget as HTMLElement).style.color = 'var(--color-primary)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-border-secondary)';
+                  (e.currentTarget as HTMLElement).style.color = 'var(--color-text-secondary)';
+                }}
+              >
+                {p.key}
+              </code>
+            </Tooltip>
+          ))}
+        </div>
       </Form.Item>
 
       <Form.Item label="成功后跳转">
