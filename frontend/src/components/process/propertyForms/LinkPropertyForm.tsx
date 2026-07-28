@@ -34,8 +34,17 @@ import type {
   StepTemplateRef,
 } from '@/types/process';
 import { updateLinkField } from '../processDefinitionUpdater';
-// 评审 prompt 的可替换模板参数，复用 todo 的常量（{{content}}、{{message}}、{{raw_message}}、{{slash_command}}）
-import { PROMPT_PARAMS } from '@/components/todo-drawer/constants';
+// 评审 prompt 运行时替换的模板参数，用于 AI 评审时的 prompt 合成。
+// {original_prompt} → 当前环节的提示词
+// {original_output} → 执行记录的输出结果
+// {acceptance_criteria} → 验收标准
+// {max_output_chars} → 截断上限（常量）
+const REVIEW_PROMPT_PARAMS = [
+  { key: '{original_prompt}', label: 'original_prompt', desc: '当前环节的提示词（prompt 字段）' },
+  { key: '{original_output}', label: 'original_output', desc: '执行记录的输出结果' },
+  { key: '{acceptance_criteria}', label: 'acceptance_criteria', desc: '验收标准，用于评分评价' },
+  { key: '{max_output_chars}', label: 'max_output_chars', desc: '结果截断上限（常量）' },
+];
 
 const { Text } = Typography;
 
@@ -409,7 +418,7 @@ export function LinkPropertyForm({
           alignItems: 'center',
         }}>
           <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginRight: 2 }}>可用参数:</span>
-          {PROMPT_PARAMS.map(p => (
+          {REVIEW_PROMPT_PARAMS.map(p => (
             <Tooltip key={p.key} title={p.desc}>
               <code
                 onClick={() => handleFieldChange(
