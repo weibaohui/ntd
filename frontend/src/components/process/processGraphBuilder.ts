@@ -59,6 +59,8 @@ export interface GraphCallbacks {
   onSelectLink: (linkId: string) => void;
   // 删除边（重置对应 link 的 on_success / on_gate_fail）
   onDeleteEdge: (edgeId: string) => void;
+  // 在指定 phase 内新增环节（M6 新增，由 PhaseNode 头部按钮触发）
+  onAddLink: (phaseId: string) => void;
 }
 
 // ── 构建结果 ──────────────────────────────────────
@@ -120,6 +122,7 @@ export function buildProcessGraph(
         phaseIndex,
         onDeletePhase: callbacks.onDeletePhase,
         onSelectPhase: callbacks.onSelectPhase,
+        onAddLink: callbacks.onAddLink,
       },
     };
   });

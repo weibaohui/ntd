@@ -70,6 +70,7 @@ function makeCallbacks() {
     onSelectPhase: vi.fn(),
     onSelectLink: vi.fn(),
     onDeleteEdge: vi.fn(),
+    onAddLink: vi.fn(),
   };
 }
 
