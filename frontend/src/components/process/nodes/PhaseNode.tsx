@@ -115,8 +115,8 @@ function containerStyle(selected: boolean): CSSProperties {
     // 宽度由 style.width 设定（buildProcessGraph 注入）
     width: '100%',
     height: '100%',
-    // 防止内容溢出
-    overflow: 'hidden',
+    // 不设 overflow:hidden：group 容器需让子节点（LinkNode）溢出部分可见，
+    // React Flow 用 absolute 定位挂子节点，overflow:hidden 会剪裁掉 link 节点
   };
 }
 
