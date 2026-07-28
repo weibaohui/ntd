@@ -1,0 +1,149 @@
+/* 任务详情面板：顶部条 + Tabs 两区布局的局部样式。
+   主题色全部引用 App.css 的 CSS 变量，明暗模式自动适配，不硬编码颜色。 */
+
+/* 面板根容器：纵向 flex，占满宿主给的高度，内部两区各自滚动。 */
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* 顶部条：标题/元信息 在左，主操作在右；窄屏自动换行。 */
+.headerBar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+
+/* 顶部条左侧主区，min-width:0 让内部文字省略号生效。 */
+.headerMain {
+  min-width: 0;
+}
+
+/* 标题行：#id + 标题 + 状态/复杂度 Tag 基线对齐。 */
+.titleRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 任务标题：用 h2 保证语义与字号，颜色随主题。 */
+.taskTitle {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+/* 元信息行：模板/版本等次要信息，次级文字色。 */
+.metaRow {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+/* 元信息之间的分隔点。 */
+.metaDivider {
+  color: var(--color-text-tertiary);
+}
+
+/* Tabs 区：占满剩余高度，内部内容区独立滚动。 */
+.tabsWrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 让 antd Tabs 撑满高度并纵向排列，内容区可滚动。 */
+.tabsWrap :global(.ant-tabs) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 内容容器成为滚动区：flex:1 + min-height:0 才能在 flex 子项中正确滚动。 */
+.tabsWrap :global(.ant-tabs-content-holder) {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* 每个 Tab 内容统一内边距。 */
+.paneBody {
+  padding: 16px 24px 24px;
+}
+
+/* 工艺步骤列表容器。 */
+.steps {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 单个步骤：序号徽标 + 内容，行底细分隔线。 */
+.stepItem {
+  display: flex;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+/* 最后一步不画分隔线，避免尾部多余线条。 */
+.stepItem:last-child {
+  border-bottom: none;
+}
+
+/* 圆形序号徽标：主题浅色底 + 主题主色字。 */
+.stepIndex {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+/* 步骤内容区：占满剩余宽度，min-width:0 防溢出。 */
+.stepBody {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 步骤名。 */
+.stepName {
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 6px;
+}
+
+/* 技能/产物/门禁 一行：标签 + 标签组，可换行。 */
+.stepMetaRow {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+/* 行内分组标签（技能/产物/门禁）前的说明文字。 */
+.stepLabel {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  margin-right: 2px;
+}

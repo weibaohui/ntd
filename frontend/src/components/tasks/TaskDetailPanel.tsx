@@ -1,20 +1,35 @@
-// 嵌入式任务详情面板。
-// 与 TasksPage 列表态的 ListDetailPage 双栏右栏配套使用。
-// 不含返回按钮（由宿主组件控制），由宿主在选中任务时挂载、取消选中时卸载。
+// 嵌入式任务详情面板（Tabs 布局重构版）。
+// 与 TasksPage 详情态配套使用：顶部标题栏由宿主 PageCard 提供（含返回按钮），
+// 本组件自身提供「顶部条（标题+元信息+再次执行）」+「Tabs（概览/工艺要求/执行历史）」。
 
-import { useEffect, useState } from 'react';
-import { Card, List, Tag, Button, Typography, Spin, Collapse, Space, message, Descriptions, Modal, Input, Empty } from 'antd';
+import { useEffect, useState, type ReactNode } from 'react';
+import {
+  Tabs,
+  Tag,
+  Button,
+  Typography,
+  Spin,
+  List,
+  Progress,
+  Space,
+  message,
+  Descriptions,
+  Modal,
+  Input,
+  Empty,
+} from 'antd';
 import { ThunderboltOutlined, CaretRightOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
 import { ProcessExecutionBoard } from '@/components/process/ProcessExecutionBoard';
-import { complexityColor, complexityLabel, statusColor, formatDateShort } from './constants';
+import { complexityColor, complexityLabel, statusColor } from './constants';
+import styles from './TaskDetailPanel.module.css';
 
-const { Title, Text } = Typography;
+const { Text, Paragraph } = Typography;
 
 interface TaskDetailPanelProps {
   taskId: number;
   workspaceId: number;
-  /** 任何变更（再次执行）后回调，让宿主重拉列表保持口径一致。 */
+  /** 再次执行成功后回调，让宿主重拉列表保持口径一致。 */
   onTriggered?: () => void;
 }
 
@@ -46,7 +61,7 @@ interface TaskDetailData {
   loop?: { id: number; workspace_id?: number };
 }
 
-/** 门禁类型 → 中文标签。 */
+/** 门禁类型 → 中文标签，未匹配回退原值。 */
 function gateLabel(type: string): string {
   const map: Record<string, string> = {
     artifact_present: '产物存在',
@@ -57,177 +72,188 @@ function gateLabel(type: string): string {
   return map[type] ?? type;
 }
 
-/** 单条工艺步骤卡片，逐项展示技能/产物/门禁。 */
-function StepCard({ step }: { step: StepInfo }) {
+/** 执行状态 → Progress 状态语义（success/exception/active/normal）。 */
+function progressStatus(status: string): 'success' | 'exception' | 'active' | 'normal' {
+  if (status === 'success') return 'success';
+  if (status === 'failed') return 'exception';
+  if (status === 'running') return 'active';
+  return 'normal';
+}
+
+/** 顶部条：标题 + 状态/复杂度 + 元信息 + 再次执行主按钮。 */
+function DetailHeader({
+  task,
+  template,
+  onExecute,
+}: {
+  task: TaskDetailData['task'];
+  template?: TaskDetailData['template'];
+  onExecute: () => void;
+}) {
   return (
-    <Card key={step.id} size="small" style={{ marginBottom: 8 }}>
-      <Space direction="vertical" size={4} style={{ width: '100%' }}>
-        {/* 标题行：序号 + 步骤名 */}
-        <Space>
-          <Text type="secondary">{step.order_index + 1}.</Text>
-          <Text strong>{step.name}</Text>
-        </Space>
-        {/* 技能标签行：仅在 step.skill_names 非空时渲染 */}
+    <div className={styles.headerBar}>
+      {/* 左侧：#id + 标题 + 状态/复杂度 Tag + 模板/版本元信息 */}
+      <div className={styles.headerMain}>
+        <div className={styles.titleRow}>
+          <Text type="secondary">#{task.id}</Text>
+          <h2 className={styles.taskTitle}>{task.title}</h2>
+          <Tag color={statusColor(task.status)}>{task.status}</Tag>
+          {template?.complexity && (
+            <Tag color={complexityColor(template.complexity)}>{complexityLabel(template.complexity)}</Tag>
+          )}
+        </div>
+        <div className={styles.metaRow}>
+          <span>模板：{template?.display_name ?? '—'}</span>
+          <span className={styles.metaDivider}>·</span>
+          <span>版本：{template?.version ?? '—'}</span>
+        </div>
+      </div>
+      {/* 右侧：再次执行主操作，跨 Tab 始终可见 */}
+      <Button icon={<ThunderboltOutlined />} type="primary" onClick={onExecute}>
+        再次执行
+      </Button>
+    </div>
+  );
+}
+
+/** 步骤内的一行标签组（技能/产物/门禁）。复用避免每个分支重复结构。 */
+function StepMetaRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className={styles.stepMetaRow}>
+      <span className={styles.stepLabel}>{label}</span>
+      {children}
+    </div>
+  );
+}
+
+/** 单条工艺步骤：圆形序号徽标 + 名称 + 技能/产物/门禁分组。 */
+function StepItem({ step }: { step: StepInfo }) {
+  return (
+    <div className={styles.stepItem}>
+      <div className={styles.stepIndex}>{step.order_index + 1}</div>
+      <div className={styles.stepBody}>
+        <div className={styles.stepName}>{step.name}</div>
         {step.skill_names.length > 0 && (
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            <Text type="secondary" style={{ fontSize: 12 }}>技能：</Text>
+          <StepMetaRow label="技能">
             {step.skill_names.map((sk) => (
               <Tag key={sk} color="purple" style={{ fontSize: 12 }}>{sk}</Tag>
             ))}
-          </div>
+          </StepMetaRow>
         )}
-        {/* 产物标签行：未列出时跳过 */}
         {step.expected_artifacts.length > 0 && (
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            <Text type="secondary" style={{ fontSize: 12 }}>产物：</Text>
+          <StepMetaRow label="产物">
             {step.expected_artifacts.map((a, i) => (
               <Tag key={i} color="blue" style={{ fontSize: 12 }}>
                 {a.name} → {a.path ?? a.locator} ({a.type})
               </Tag>
             ))}
-          </div>
+          </StepMetaRow>
         )}
-        {/* 门禁标签行：未列出时跳过 */}
         {step.gate_config.length > 0 && (
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            <Text type="secondary" style={{ fontSize: 12 }}>门禁：</Text>
+          <StepMetaRow label="门禁">
             {step.gate_config.map((g, i) => (
               <Tag key={i} style={{ fontSize: 12 }}>{g.name} ({gateLabel(g.type)})</Tag>
             ))}
-          </div>
+          </StepMetaRow>
         )}
-      </Space>
-    </Card>
+      </div>
+    </div>
   );
 }
 
-/**
- * 任务详情面板。
- *
- * 整体处理思路：
- * 1. 通过 bundledApi.getTaskDetail 一次性拉取任务/模板/步骤/执行历史。
- * 2. 头部用 Descriptions 展示模板/版本/复杂度/状态概览。
- * 3. 工艺要求用 Collapse 默认展开，每步用 StepCard 渲染。
- * 4. 执行历史用 List + 「查看详情」展开 ProcessExecutionBoard。
- * 5. 「再次执行」按钮打开 Modal，调 createTaskExecution 创建新执行。
- */
-export function TaskDetailPanel({ taskId, workspaceId, onTriggered }: TaskDetailPanelProps) {
-  const [loading, setLoading] = useState(false);
-  const [detail, setDetail] = useState<TaskDetailData | null>(null);
-  const [activeExec, setActiveExec] = useState<number | null>(null);
-  const [triggering, setTriggering] = useState(false);
-  const [reqModalOpen, setReqModalOpen] = useState(false);
-  const [newRequirement, setNewRequirement] = useState('');
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      // 直接拿 any 然后类型断言：与现有 TaskDetailPage 一致，
-      // bundledApi.getTaskDetail 返回 any，避免引入复杂类型。
-      const raw = (await bundledApi.getTaskDetail(workspaceId, taskId)) as TaskDetailData;
-      setDetail(raw);
-    } catch {
-      message.error('加载失败');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // taskId/workspaceId 变化时重拉；卸载时若仍在 loading 不影响已设置状态。
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId, workspaceId]);
-
-  const handleNewExec = async () => {
-    if (!newRequirement.trim()) {
-      message.warning('请输入需求');
-      return;
-    }
-    setTriggering(true);
-    try {
-      await bundledApi.createTaskExecution(workspaceId, taskId, newRequirement);
-      message.success('新执行已创建');
-      setReqModalOpen(false);
-      setNewRequirement('');
-      load();
-      onTriggered?.();
-    } catch {
-      message.error('创建失败');
-    } finally {
-      setTriggering(false);
-    }
-  };
-
-  if (loading) return <Spin style={{ display: 'block', margin: '40px auto' }} />;
-  if (!detail) return <Empty description="暂无任务详情" style={{ marginTop: 48 }} />;
-
-  const { task, template, steps, executions } = detail;
-  const wsId = task.workspace_id ?? detail.loop?.workspace_id ?? 1;
-  const lpId = task.loop_id ?? detail.loop?.id ?? 0;
-
+/** 概览 Tab：基本信息 + 需求描述 + 最近一次执行进度。 */
+function OverviewTab({
+  task,
+  template,
+  executions,
+}: {
+  task: TaskDetailData['task'];
+  template?: TaskDetailData['template'];
+  executions: ExecInfo[];
+}) {
+  const latest = executions[0];
+  const percent = latest && latest.total_steps > 0
+    ? Math.round((latest.completed_steps / latest.total_steps) * 100)
+    : 0;
   return (
-    <div style={{ padding: 24, height: '100%', overflow: 'auto' }}>
-      {/* 概览卡：模板 / 版本 / 复杂度 / 状态 */}
-      <Card style={{ marginBottom: 16 }}>
-        <Descriptions
-          title={
-            <Title level={4} style={{ margin: 0 }}>
-              <Text type="secondary">#{task.id}</Text> {task.title}
-            </Title>
-          }
-          size="small"
-          column={2}
-          items={[
-            { label: '模板', children: template?.display_name ?? '—' },
-            { label: '版本', children: template?.version ?? '—' },
-            {
-              label: '复杂度',
-              children: template?.complexity
-                ? <Tag color={complexityColor(template.complexity)}>{complexityLabel(template.complexity)}</Tag>
-                : '—',
-            },
-            {
-              label: '状态',
-              children: <Tag color={statusColor(task.status)}>{task.status}</Tag>,
-            },
-          ]}
-        />
-      </Card>
+    <div className={styles.paneBody}>
+      <Descriptions column={1} size="small" title="基本信息">
+        <Descriptions.Item label="模板">{template?.display_name ?? '—'}</Descriptions.Item>
+        <Descriptions.Item label="版本">{template?.version ?? '—'}</Descriptions.Item>
+        <Descriptions.Item label="复杂度">
+          {template?.complexity
+            ? <Tag color={complexityColor(template.complexity)}>{complexityLabel(template.complexity)}</Tag>
+            : '—'}
+        </Descriptions.Item>
+        <Descriptions.Item label="状态">
+          <Tag color={statusColor(task.status)}>{task.status}</Tag>
+        </Descriptions.Item>
+      </Descriptions>
 
-      {/* 工艺要求：Collapse 默认展开，每步用 StepCard 渲染 */}
-      <Collapse
-        defaultActiveKey={['req']}
-        style={{ marginBottom: 16 }}
-        items={[{
-          key: 'req',
-          label: <Text strong>工艺要求（{steps?.length ?? 0} 步）</Text>,
-          children: (steps ?? []).map((s) => <StepCard key={s.id} step={s} />),
-        }]}
-      />
-
-      {/* 执行历史：标题 + 再次执行按钮 + List */}
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12, marginTop: 16 }}>
-        <Title level={4} style={{ margin: 0, marginRight: 8 }}>执行历史</Title>
-        <Button
-          icon={<ThunderboltOutlined />}
-          onClick={() => { setNewRequirement(task.description ?? task.title); setReqModalOpen(true); }}
-          size="small"
-        >
-          再次执行
-        </Button>
+      <div style={{ marginTop: 16 }}>
+        <Text strong>需求描述</Text>
+        <Paragraph style={{ marginTop: 4 }} type={task.description ? undefined : 'secondary'}>
+          {task.description || '暂无描述'}
+        </Paragraph>
       </div>
+
+      {latest && (
+        <div style={{ marginTop: 16 }}>
+          <Text strong>最近一次执行 #{latest.id}</Text>
+          <Progress percent={percent} status={progressStatus(latest.status)} style={{ marginTop: 8 }} />
+          <Text type="secondary">
+            完成 {latest.completed_steps}/{latest.total_steps}
+            {latest.failed_steps > 0 && ` · 失败 ${latest.failed_steps}`}
+          </Text>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 工艺要求 Tab：步骤轻量列表，无「卡片套卡片」。 */
+function ProcessTab({ steps }: { steps: StepInfo[] }) {
+  if (!steps || steps.length === 0) {
+    return <Empty description="暂无工艺步骤" style={{ marginTop: 48 }} />;
+  }
+  return (
+    <div className={styles.paneBody}>
+      <div className={styles.steps}>
+        {steps.map((s) => <StepItem key={s.id} step={s} />)}
+      </div>
+    </div>
+  );
+}
+
+/** 执行历史 Tab：执行列表 + 选中后全宽展开 ProcessExecutionBoard。 */
+function ExecTab({
+  executions,
+  workspaceId,
+  loopId,
+  activeExec,
+  onToggle,
+}: {
+  executions: ExecInfo[];
+  workspaceId: number;
+  loopId: number;
+  activeExec: number | null;
+  onToggle: (id: number) => void;
+}) {
+  if (!executions || executions.length === 0) {
+    return <Empty description="暂无执行" image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ marginTop: 48 }} />;
+  }
+  return (
+    <div className={styles.paneBody}>
       <List
-        dataSource={executions ?? []}
-        locale={{ emptyText: <Empty description="暂无执行" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
+        dataSource={executions}
         renderItem={(e) => (
           <List.Item
             actions={[
               <Button
+                key="v"
                 type="link"
                 icon={<CaretRightOutlined />}
-                onClick={() => setActiveExec(activeExec === e.id ? null : e.id)}
-                key="v"
+                onClick={() => onToggle(e.id)}
               >
                 {activeExec === e.id ? '收起' : '查看详情'}
               </Button>,
@@ -241,24 +267,128 @@ export function TaskDetailPanel({ taskId, workspaceId, onTriggered }: TaskDetail
                   {e.failed_steps > 0 && <Tag color="orange">失败 {e.failed_steps}</Tag>}
                 </Space>
               }
-              description={e.requirement || <Text type="secondary">{formatDateShort(e.started_at)}</Text>}
+              description={e.requirement || <Text type="secondary">{e.started_at ?? ''}</Text>}
             />
           </List.Item>
         )}
       />
-
-      {/* 当前选中执行：嵌入 ProcessExecutionBoard */}
-      {activeExec && (
+      {/* 选中执行的看板：在 Tab 全宽内容区展开，不再被窄栏挤压 */}
+      {activeExec != null && (
         <div style={{ marginTop: 16 }}>
-          <ProcessExecutionBoard
-            workspaceId={wsId}
-            loopId={lpId}
-            executionId={activeExec}
-          />
+          <ProcessExecutionBoard workspaceId={workspaceId} loopId={loopId} executionId={activeExec} />
         </div>
       )}
+    </div>
+  );
+}
 
-      {/* 再次执行 Modal */}
+/**
+ * 任务详情面板（Tabs 版）。
+ * 1. 通过 bundledApi.getTaskDetail 一次性拉取任务/模板/步骤/执行历史。
+ * 2. 顶部条展示标题/状态/复杂度/模板版本 + 始终可见的「再次执行」。
+ * 3. 三个 Tab：概览（信息+最近执行进度）/工艺要求（轻量步骤列表）/执行历史（列表+全宽看板）。
+ * 4. 「再次执行」打开 Modal 调 createTaskExecution 创建新执行。
+ */
+export function TaskDetailPanel({ taskId, workspaceId, onTriggered }: TaskDetailPanelProps) {
+  const [loading, setLoading] = useState(false);
+  const [detail, setDetail] = useState<TaskDetailData | null>(null);
+  const [activeExec, setActiveExec] = useState<number | null>(null);
+  const [triggering, setTriggering] = useState(false);
+  const [reqModalOpen, setReqModalOpen] = useState(false);
+  const [newRequirement, setNewRequirement] = useState('');
+
+  // taskId/workspaceId 变化时重拉；卸载时若仍在 loading 不影响已设置状态。
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    // 直接拿 any 然后类型断言：bundledApi.getTaskDetail 返回 any，避免引入复杂类型。
+    bundledApi
+      .getTaskDetail(workspaceId, taskId)
+      .then((raw) => {
+        if (alive) setDetail(raw as TaskDetailData);
+      })
+      .catch(() => {
+        if (alive) message.error('加载失败');
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId, workspaceId]);
+
+  const openReqModal = () => {
+    // 默认把任务描述/标题填入需求框，减少用户重复输入。
+    const detail0 = detail;
+    if (detail0) setNewRequirement(detail0.task.description ?? detail0.task.title);
+    setReqModalOpen(true);
+  };
+
+  const handleNewExec = async () => {
+    if (!newRequirement.trim()) {
+      message.warning('请输入需求');
+      return;
+    }
+    setTriggering(true);
+    try {
+      await bundledApi.createTaskExecution(workspaceId, taskId, newRequirement);
+      message.success('新执行已创建');
+      setReqModalOpen(false);
+      setNewRequirement('');
+      // 重新拉取详情，拿到新执行；并通知宿主刷新列表。
+      const raw = (await bundledApi.getTaskDetail(workspaceId, taskId)) as TaskDetailData;
+      setDetail(raw);
+      onTriggered?.();
+    } catch {
+      message.error('创建失败');
+    } finally {
+      setTriggering(false);
+    }
+  };
+
+  if (loading) return <Spin style={{ display: 'block', margin: '40px auto' }} />;
+  if (!detail) return <Empty description="暂无任务详情" style={{ marginTop: 48 }} />;
+
+  const { task, template, steps, executions } = detail;
+  // workspace/loop id 的回退链：任务自身 → 关联 loop → 默认值。
+  const wsId = task.workspace_id ?? detail.loop?.workspace_id ?? 1;
+  const lpId = task.loop_id ?? detail.loop?.id ?? 0;
+
+  const tabItems = [
+    {
+      key: 'overview',
+      label: '概览',
+      children: <OverviewTab task={task} template={template} executions={executions ?? []} />,
+    },
+    {
+      key: 'process',
+      label: `工艺要求 (${steps?.length ?? 0})`,
+      children: <ProcessTab steps={steps ?? []} />,
+    },
+    {
+      key: 'exec',
+      label: `执行历史 (${executions?.length ?? 0})`,
+      children: (
+        <ExecTab
+          executions={executions ?? []}
+          workspaceId={wsId}
+          loopId={lpId}
+          activeExec={activeExec}
+          onToggle={(id) => setActiveExec(activeExec === id ? null : id)}
+        />
+      ),
+    },
+  ];
+
+  return (
+    <div className={styles.panel}>
+      <DetailHeader task={task} template={template} onExecute={openReqModal} />
+      <div className={styles.tabsWrap}>
+        <Tabs items={tabItems} style={{ height: '100%' }} />
+      </div>
+
       <Modal
         title="输入这次的需求"
         open={reqModalOpen}
@@ -267,7 +397,11 @@ export function TaskDetailPanel({ taskId, workspaceId, onTriggered }: TaskDetail
         confirmLoading={triggering}
         okText="开始执行"
       >
-        <Input.TextArea value={newRequirement} onChange={(e) => setNewRequirement(e.target.value)} rows={4} />
+        <Input.TextArea
+          value={newRequirement}
+          onChange={(e) => setNewRequirement(e.target.value)}
+          rows={4}
+        />
       </Modal>
     </div>
   );
