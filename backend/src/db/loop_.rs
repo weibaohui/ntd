@@ -1390,6 +1390,25 @@ impl Database {
         Ok(())
     }
 
+    /// 回写 step execution 的评审阈值（min_rating）。
+    ///
+    /// gate_config 风格步骤的阈值在门禁 JSON（ai_criteria_review.min_score）里，
+    /// 创建 step execution 时 step.min_rating 为 NULL，需由 PhaseDriver 评价门禁后回写，
+    /// 前端环节卡片据此显示「阈值 N」并判定评分是否达标。
+    pub async fn set_step_execution_min_rating(
+        &self,
+        id: i64,
+        min_rating: i32,
+    ) -> Result<(), sea_orm::DbErr> {
+        let existing = loop_step_executions::Entity::find_by_id(id).one(&self.conn).await?;
+        if let Some(c) = existing {
+            let mut am: loop_step_executions::ActiveModel = c.into();
+            am.min_rating = ActiveValue::Set(Some(min_rating));
+            am.update(&self.conn).await?;
+        }
+        Ok(())
+    }
+
     /// 设置环节执行记录的审批状态（人工审批流程专用）。
     pub async fn set_step_execution_approval_status(
         &self,
@@ -2226,6 +2245,40 @@ mod loop_stats_tests {
         ))
         .await
         .expect("insert step_execution");
+    }
+
+    /// set_step_execution_min_rating：阈值回写后能被读出；
+    /// gate_config 风格步骤（step.min_rating 为 NULL）依赖这条路径让前端显示「阈值 N」。
+    #[tokio::test]
+    async fn test_set_step_execution_min_rating_updates_column() {
+        let db = fresh_db().await;
+        let todo = seed_todo(&db, "T").await;
+        let lp = seed_loop_status(&db, "L", "enabled").await;
+        let step = seed_loop_step(&db, lp, todo, "s1").await;
+        let le = seed_loop_execution(&db, lp, "manual", "running", "datetime('now')").await;
+        // 直接插入无阈值的 step execution（模拟 gate_config 风格步骤创建时的状态）
+        db.exec(&format!(
+            "INSERT INTO loop_step_executions (loop_execution_id, step_id, todo_id, status) \
+             VALUES ({le}, {step}, {todo}, 'running')"
+        ))
+        .await
+        .expect("insert step_execution");
+        let se = max_id(&db, "loop_step_executions").await;
+
+        db.set_step_execution_min_rating(se, 60)
+            .await
+            .expect("set min_rating");
+
+        let row = db
+            .conn
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                format!("SELECT min_rating AS m FROM loop_step_executions WHERE id={se}"),
+            ))
+            .await
+            .expect("query min_rating")
+            .expect("row exists");
+        assert_eq!(row.try_get_by::<Option<i32>, _>("m").unwrap_or(None), Some(60));
     }
 
     /// 全时段聚合:loop 规模、执行成功/失败、触发器分布、Token 都应正确汇总。

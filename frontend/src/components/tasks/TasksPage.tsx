@@ -302,6 +302,8 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
   }
 
   // 列表态：PageCard 全屏 + TasksTableView。
+  // contentStyle 与事项/环路列表页对齐：padding:0 消除表格与卡片边缘的默认
+  // 16px/20px 间距（PageCard 内容区默认 padding），flex 列布局撑满高度。
   if (viewMode === 'list') {
     return (
       <>
@@ -310,7 +312,13 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
           title="任务"
           extra={listExtra}
           style={{ flex: 1, height: '100%' }}
-          contentStyle={{ height: 'calc(100% - 43px)', overflow: 'hidden' }}
+          contentStyle={{
+            padding: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            height: 'calc(100% - 43px)',
+            overflow: 'hidden',
+          }}
         >
           <TasksTableView
             tasks={timeFilteredTasks}

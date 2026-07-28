@@ -215,14 +215,16 @@ export function TasksTableView({
   };
 
   // 筛选 toolbar：状态 Select + 批量按钮 + 计数。
+  // padding 与事项/环路列表 toolbar 一致（6px 12px），避免三页工具栏高度不一
   const toolbar = (
     <div
       style={{
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        padding: '8px 12px',
+        padding: '6px 12px',
         borderBottom: '1px solid var(--color-border-light, #f0f0f0)',
+        flexShrink: 0,
       }}
     >
       <Select
@@ -246,15 +248,22 @@ export function TasksTableView({
       data-testid="tasks-table-view"
     >
       {toolbar}
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      {/* table 主体：与事项/环路列表同款配置——横向 scroll.x + 分页，
+          不再用 scroll.y 固定表头（三页滚动/分页行为保持一致） */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         <Table<TaskItem>
           rowKey="id"
           columns={columns}
           dataSource={visibleTasks}
           loading={loading}
           size="small"
-          pagination={false}
-          scroll={{ y: 'calc(100vh - 240px)' }}
+          scroll={{ x: 1200 }}
+          pagination={{
+            pageSize: 20,
+            showSizeChanger: true,
+            pageSizeOptions: ['20', '50', '100'],
+            showTotal: (total) => `共 ${total} 个任务`,
+          }}
           rowSelection={{
             selectedRowKeys: selectedIds,
             onChange: (keys) => setSelectedIds(keys as number[]),

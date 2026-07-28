@@ -13,6 +13,9 @@
 import type { ReactNode } from 'react';
 import { Button, Dropdown, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import type { MenuProps } from 'antd';
+// antd Menu 项 onClick 的事件参数类型（含 domEvent），从公开 API 推导避免深层依赖 rc-menu
+type MenuInfo = Parameters<NonNullable<MenuProps['onClick']>>[0];
 import {
   CopyOutlined,
   DeleteOutlined,
@@ -68,36 +71,46 @@ interface BuildRowActionsArgs {
 /**
  * 构建单行操作菜单项：触发 / 复制 / 切换状态 / 删除。
  * 抽成纯函数避免 LoopListView 主函数膨胀。
+ *
+ * 注意（冒泡陷阱）：Dropdown 菜单经 React Portal 渲染，合成事件会沿
+ * React 组件树冒泡回表格行（即便菜单 DOM 挂在 body），只在触发按钮上
+ * stopPropagation 挡不住「点菜单项 → 行 onClick → 误跳详情」。
+ * 因此每个菜单项的 onClick 必须先 domEvent.stopPropagation()。
  */
 export function buildRowActions(
   loop: LoopListItem,
   { onTrigger, onDuplicate, onDelete, onToggleStatus }: BuildRowActionsArgs,
 ) {
+  // 包装回调：统一先挡冒泡再执行业务动作，避免每个菜单项重复书写
+  const guard = (action: (l: LoopListItem) => void) => (info: MenuInfo) => {
+    info.domEvent.stopPropagation();
+    action(loop);
+  };
   return [
     {
       key: 'trigger',
       label: '触发',
       icon: <PlayCircleOutlined />,
-      onClick: () => onTrigger(loop),
+      onClick: guard(onTrigger),
     },
     {
       key: 'duplicate',
       label: '复制',
       icon: <CopyOutlined />,
-      onClick: () => onDuplicate(loop),
+      onClick: guard(onDuplicate),
     },
     {
       key: 'toggle-status',
       label: loop.status === 'enabled' ? '暂停' : '启用',
       icon: <SettingOutlined />,
-      onClick: () => onToggleStatus(loop),
+      onClick: guard(onToggleStatus),
     },
     {
       key: 'delete',
       label: '删除',
       icon: <DeleteOutlined />,
       danger: true,
-      onClick: () => onDelete(loop),
+      onClick: guard(onDelete),
     },
   ];
 }

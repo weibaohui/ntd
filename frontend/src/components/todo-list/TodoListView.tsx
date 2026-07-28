@@ -12,6 +12,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Button, Dropdown, Table, Tag, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import type { MenuProps } from 'antd';
+// antd Menu 项 onClick 的事件参数类型（含 domEvent），从公开 API 推导避免深层依赖 rc-menu
+type MenuInfo = Parameters<NonNullable<MenuProps['onClick']>>[0];
 import {
   ClockCircleOutlined,
   DeleteOutlined,
@@ -85,8 +88,14 @@ function renderSchedulerColumn(record: TodoCenterItem): ReactNode {
   );
 }
 
-/** 单行操作菜单项：每个动作 stopPropagation 防止触发行点击。 */
-function buildRowActionItems(
+/** 单行操作菜单项：每个动作 stopPropagation 防止触发行点击。
+ *
+ * 注意（冒泡陷阱）：Dropdown 菜单经 React Portal 渲染，合成事件会沿
+ * React 组件树冒泡回表格行（即便菜单 DOM 挂在 body），只在触发按钮上
+ * stopPropagation 挡不住「点菜单项 → 行 onClick → 误跳详情」。
+ * 因此每个菜单项的 onClick 必须先 domEvent.stopPropagation()。
+ * 导出供单元测试直接验证该防护不回归。 */
+export function buildRowActionItems(
   todo: TodoCenterItem,
   callbacks: {
     onExecuteTodo: (t: TodoCenterItem) => void;
@@ -95,31 +104,36 @@ function buildRowActionItems(
     onDeleteTodo: (t: TodoCenterItem) => void;
   },
 ) {
+  // 包装回调：统一先挡冒泡再执行业务动作，避免每个菜单项重复书写
+  const guard = (action: (t: TodoCenterItem) => void) => (info: MenuInfo) => {
+    info.domEvent.stopPropagation();
+    action(todo);
+  };
   return [
     {
       key: 'execute',
       label: '执行一次',
       icon: <PlayCircleOutlined />,
-      onClick: () => callbacks.onExecuteTodo(todo),
+      onClick: guard(callbacks.onExecuteTodo),
     },
     {
       key: 'execute-with-args',
       label: '带参执行',
       icon: <ThunderboltOutlined />,
-      onClick: () => callbacks.onExecuteWithArgs(todo),
+      onClick: guard(callbacks.onExecuteWithArgs),
     },
     {
       key: 'edit',
       label: '编辑',
       icon: <EditOutlined />,
-      onClick: () => callbacks.onEditTodo(todo),
+      onClick: guard(callbacks.onEditTodo),
     },
     {
       key: 'delete',
       label: '删除',
       icon: <DeleteOutlined />,
       danger: true,
-      onClick: () => callbacks.onDeleteTodo(todo),
+      onClick: guard(callbacks.onDeleteTodo),
     },
   ];
 }
@@ -176,6 +190,9 @@ function buildTodoColumns(
     {
       title: '标题',
       dataIndex: 'title',
+      // 必须给显式宽度：本表固定宽列合计已超 scroll.x，弹性列在窗口窄于
+      // scroll.x 时会被压成 0 宽（整列「消失」，用户曾因此报标题列丢失）
+      width: 220,
       ellipsis: true,
       render: (title: string, record) => (
         <a
@@ -354,7 +371,9 @@ export function TodoListView({
           dataSource={items}
           loading={loading}
           size="small"
-          scroll={{ x: 1300 }}
+          // scroll.x 必须 ≥ 所有固定宽列之和（含标题列 220）：合计 1530，
+          // 取 1550 留余量；否则窗口变窄时标题列会被压成 0 宽
+          scroll={{ x: 1550 }}
           pagination={{
             pageSize: 20,
             showSizeChanger: true,

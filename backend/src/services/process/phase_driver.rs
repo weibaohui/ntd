@@ -198,20 +198,25 @@ pub async fn execute_step(
         "failed"
     };
 
-    let rating = gate_summary
-        .gate_records
-        .iter()
-        .find(|g| g.gate_type == "ai_criteria_review" && g.status == "passed")
-        .and_then(|_| {
-            // 从 gate result detail 中尝试解析评分。
-            parse_rating_from_detail(&gate_summary)
-        });
+    // 评分：不再只看「passed 的门禁」——低于阈值（failed）时分数同样要展示（前端红色「不通过」）。
+    // 门禁详情文本解析失败时回退 execution_record.rating（评审分数的权威落库处）。
+    let rating = resolve_step_rating(&gate_summary, execution_rating);
+
+    // 阈值：gate_config 风格步骤的 min_rating 在门禁配置里（ai_criteria_review.min_score），
+    // step.min_rating 为 NULL；持久化到 step_execution，前端才能显示「阈值 N」。
+    let review_threshold =
+        extract_review_threshold(&effective_gate_config).or(step.min_rating);
+    if let Some(min) = review_threshold {
+        db.set_step_execution_min_rating(step_exec.id, min).await?;
+    }
 
     // 6. 更新 step_execution（复用已有的 finish 方法，但 rework_count 已单独更新）。
+    // execution_record_id 必须带上本次的 record：旧代码只透传 step_exec 原值（创建时未写入），
+    // 导致工艺路径下环节卡片永远缺 record 链接（无 token、无点击详情、评分无法回退）。
     db.finish_step_execution(
         step_exec.id,
         final_status,
-        step_exec.execution_record_id,
+        execution_record.map(|r| r.id).or(step_exec.execution_record_id),
         error_message.as_deref(),
         rating,
         None, // conclusion 由 LoopRunner 提取
@@ -256,6 +261,31 @@ fn parse_rating_from_detail(summary: &GateSummary) -> Option<i32> {
         }
     }
     None
+}
+
+/// 汇总某环节的评审得分：有 ai 评审门禁时才给分。
+///
+/// 优先级：门禁详情文本解析（RATING: N 格式）→ execution_record.rating 回退。
+/// 回退是必要的——gate_evaluator 写的详情是「AI 评审通过（评分 85，阈值 10）」，
+/// 没有冒号分隔，auto_review 的解析器读不出，但分数已权威地落在 record 上。
+/// 无 ai 评审门禁时返回 None：避免把 todo 级无关评审分误当环节门禁分展示。
+fn resolve_step_rating(summary: &GateSummary, execution_rating: Option<i32>) -> Option<i32> {
+    // 先用门禁存在性做闸门：没有 ai 评审门禁的环节不展示评分
+    summary
+        .gate_records
+        .iter()
+        .find(|g| g.gate_type == "ai_criteria_review")?;
+    parse_rating_from_detail(summary).or(execution_rating)
+}
+
+/// 从生效门禁配置中提取 ai 评审门禁的阈值（min_score）。
+/// gate_config 风格的步骤阈值在门禁 JSON 里而非 step.min_rating 字段。
+fn extract_review_threshold(effective_gate_config: &str) -> Option<i32> {
+    serde_json::from_str::<Vec<GateDefinition>>(effective_gate_config)
+        .ok()?
+        .into_iter()
+        .find(|g| g.gate_type == "ai_criteria_review")
+        .and_then(|g| g.min_score)
 }
 
 /// 轮询等待执行记录的评分出现。
@@ -349,3 +379,71 @@ async fn update_phase_status(
 }
 
 
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::db::entity::loop_step_execution_gates;
+
+    // 构造一条门禁评价记录（只关心 gate_type / status / result 三个字段）
+    fn gate_record(gate_type: &str, status: &str, result: Option<&str>) -> loop_step_execution_gates::Model {
+        loop_step_execution_gates::Model {
+            id: 1,
+            loop_step_execution_id: 1,
+            gate_type: gate_type.to_string(),
+            gate_name: "门禁".to_string(),
+            config: "{}".to_string(),
+            status: status.to_string(),
+            result: result.map(|s| s.to_string()),
+            evaluated_at: None,
+            evaluated_by: None,
+        }
+    }
+
+    fn summary_of(records: Vec<loop_step_execution_gates::Model>) -> GateSummary {
+        GateSummary { all_passed: true, has_pending_human: false, gate_records: records }
+    }
+
+    #[test]
+    fn resolve_step_rating_detail_unparseable_falls_back_to_record_rating() {
+        // 门禁详情文本是「AI 评审通过（评分 85，阈值 10）」——无冒号分隔，
+        // auto_review 的 RATING: N 解析器读不出，必须回退 execution_record.rating
+        let s = summary_of(vec![gate_record(
+            "ai_criteria_review",
+            "passed",
+            Some("AI 评审通过（评分 85，阈值 10）"),
+        )]);
+        assert_eq!(resolve_step_rating(&s, Some(85)), Some(85));
+    }
+
+    #[test]
+    fn resolve_step_rating_failed_gate_still_returns_score() {
+        // 低于阈值（failed）也要回分数，前端靠它渲染红色「不通过」
+        let s = summary_of(vec![gate_record(
+            "ai_criteria_review",
+            "failed",
+            Some("AI 评审未通过（评分 25，阈值 60）"),
+        )]);
+        assert_eq!(resolve_step_rating(&s, Some(25)), Some(25));
+    }
+
+    #[test]
+    fn resolve_step_rating_without_review_gate_returns_none() {
+        // 无 ai 评审门禁时，即便 record 上有分数也不展示（避免把无关评审分当成环节门禁分）
+        let s = summary_of(vec![gate_record("artifact_present", "passed", None)]);
+        assert_eq!(resolve_step_rating(&s, Some(85)), None);
+    }
+
+    #[test]
+    fn extract_review_threshold_reads_ai_gate_min_score() {
+        let config = r#"[{"name":"AI 评分达标","type":"ai_criteria_review","min_score":10}]"#;
+        assert_eq!(extract_review_threshold(config), Some(10));
+    }
+
+    #[test]
+    fn extract_review_threshold_without_ai_gate_returns_none() {
+        let config = r#"[{"name":"产物存在","type":"artifact_present","artifact":"x"}]"#;
+        assert_eq!(extract_review_threshold(config), None);
+    }
+}
