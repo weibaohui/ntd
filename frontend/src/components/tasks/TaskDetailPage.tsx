@@ -6,6 +6,7 @@
 // 3. 顶部 PageCard 提供「返回列表」按钮，使用 history.back() 让浏览器原生后退保留列表状态。
 // 4. workspaceId 从当前选中的 workspace 获取，与任务列表页一致。
 
+import { useState } from 'react';
 import { Button } from 'antd';
 import { ArrowLeftOutlined, OrderedListOutlined } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
@@ -30,11 +31,13 @@ interface TaskDetailPageProps {
 export function TaskDetailPage({ taskId, onBack }: TaskDetailPageProps) {
   const { state } = useApp();
   const wsId = state.selectedWorkspace ?? 0;
+  // 详情标题：数据加载后显示实际任务标题；未加载时显示 "任务 #X"。
+  const [detailTitle, setDetailTitle] = useState<string>(`任务 #${taskId}`);
 
   return (
     <PageCard
       icon={<OrderedListOutlined />}
-      title={`任务 #${taskId}`}
+      title={detailTitle}
       titleSuffix={
         <Button
           size="small"
@@ -51,6 +54,7 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailPageProps) {
       <TaskDetailPanel
         taskId={taskId}
         workspaceId={wsId}
+        onTitleReady={(title) => setDetailTitle(`任务 #${taskId}: ${title}`)}
       />
     </PageCard>
   );

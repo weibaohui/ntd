@@ -199,6 +199,75 @@ pub async fn install_process(
     ))
 }
 
+/// 升级工艺实例环路到模板最新版本。
+///
+/// POST /api/v1/processes/{name}/loops/{loop_id}/upgrade
+///
+/// 将指定 Loop 的步骤/阶段升级到工艺模板的最新定义：
+/// 1. 清理旧步骤和阶段及其关联数据
+/// 2. 根据最新 YAML 重新创建
+/// 3. 更新 process_template_version
+pub async fn upgrade_process_loop(
+    State(state): State<AppState>,
+    Path((name, loop_id)): Path<(String, i64)>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    let template = state
+        .db
+        .get_process_template_by_name(&name)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    // 获取 Loop，确认其属于该工艺模板
+    let loop_model = state
+        .db
+        .get_loop(loop_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    // 校验 Loop 确实来源于该模板（process_template_id 匹配）
+    if loop_model.process_template_id != Some(template.id) {
+        return Err(AppError::BadRequest(format!(
+            "环路 {} 不属于工艺模板「{}」",
+            loop_id, name
+        )));
+    }
+
+    // 获取工作空间信息（create_phases_and_steps 需要 workspace_path）
+    let ws_id = loop_model.workspace_id.ok_or_else(|| {
+        AppError::BadRequest(format!("环路 {} 没有关联工作空间", loop_id))
+    })?;
+    let workspace = state
+        .db
+        .get_project_directory_by_id(ws_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::BadRequest(format!("工作空间 {} 不存在", ws_id))
+        })?;
+
+    let result = crate::services::process::installer::upgrade_process_template_loop(
+        &state.db,
+        &template,
+        loop_id,
+        ws_id,
+        &workspace.path,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("升级环路 {} 失败: {}", loop_id, e);
+        AppError::Internal(e.to_string())
+    })?;
+
+    Ok((
+        axum::http::StatusCode::OK,
+        ApiResponse::ok(InstallProcessResponse {
+            loop_id: result.loop_id,
+            loop_name: result.loop_name,
+            phase_count: result.phase_count,
+            step_count: result.step_count,
+        }),
+    ))
+}
+
 /// 保存编辑后工艺 YAML 的请求体。
 #[derive(Debug, Deserialize)]
 pub struct UpdateProcessRequest {
@@ -856,6 +925,10 @@ pub fn v1_process_routes() -> Router<AppState> {
         .route(
             "/api/v1/processes/{name}/loops",
             axum::routing::get(list_process_loops),
+        )
+        .route(
+            "/api/v1/processes/{name}/loops/{loop_id}/upgrade",
+            axum::routing::post(upgrade_process_loop),
         )
         // 029-工艺模板编辑与可视化创建：新增 3 个 CRUD 接口
         .route(

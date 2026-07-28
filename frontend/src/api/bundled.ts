@@ -478,6 +478,13 @@ export const bundledApi = {
   },
 
   /**
+   * 升级工艺实例环路到模板最新版本（重新安装步骤/阶段）。
+   */
+  async upgradeProcessLoop(name: string, loopId: number): Promise<InstallProcessResponse> {
+    return unwrap(await api.post(`/api/v1/processes/${encodeURIComponent(name)}/loops/${loopId}/upgrade`, {}));
+  },
+
+  /**
    * 把系统工艺复制到用户层 ~/.ntd/processes/，避免被 bundled 同步覆盖。
    * 复制完成后工艺标记为 is_system=false。
    */

@@ -41,7 +41,13 @@ interface TodoDetailPageProps {
  */
 export function TodoDetailPage({ todoId, onBack, onOpenPost }: TodoDetailPageProps) {
   // TodoDetail 上报的按钮上下文；selectedTodo 加载完成前为 null，extra 不渲染操作按钮。
+  // 同时从 actionsCtx.todo.title 获取实际标题，动态更新 PageCard 标题（详情标题功能）。
   const [actionsCtx, setActionsCtx] = useState<TodoDetailActionsProps | null>(null);
+
+  // 详情标题：数据加载后显示实际事项标题；未加载时显示 "事项 #X"。
+  const detailTitle = actionsCtx?.todo.title
+    ? `事项 #${todoId}: ${actionsCtx.todo.title}`
+    : `事项 #${todoId}`;
 
   // 右上角：操作按钮组（优化标题/编辑/删除），仅 selectedTodo 加载后可见
   const extra: ReactNode = actionsCtx ? (
@@ -70,7 +76,7 @@ export function TodoDetailPage({ todoId, onBack, onOpenPost }: TodoDetailPagePro
   return (
     <PageCard
       icon={<UnorderedListOutlined />}
-      title={`事项 #${todoId}`}
+      title={detailTitle}
       titleSuffix={titleSuffix}
       extra={extra}
       style={{ flex: 1, height: '100%' }}

@@ -2,23 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import {
-  Card,
-  Col,
-  Row,
-  Typography,
-  Tag,
-  Button,
-  Empty,
-  Spin,
-  Modal,
-  Select,
-  message,
-  Descriptions,
-  Input,
-  Alert,
-  Space,
-  Tabs,
-  Table,
+  Card, Col, Row, Typography, Tag, Button, Empty, Spin,
+  Modal, Select, message, Descriptions, Input, Alert,
+  Space, Tabs, Table,
 } from 'antd';
 import { BuildOutlined, ReloadOutlined, EyeOutlined, DownloadOutlined, SearchOutlined, ApartmentOutlined, CodeOutlined, PlusOutlined, EditOutlined } from '@ant-design/icons';
 import bundledApi, { type ProcessTemplate, type ProcessTemplateDetail, type ProcessLoopItem } from '@/api/bundled';
@@ -106,6 +92,8 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
   const [installModal, setInstallModal] = useState<{ name: string; displayName: string } | null>(null);
   const [instanceLoops, setInstanceLoops] = useState<ProcessLoopItem[]>([]);
   const [instanceLoopsLoading, setInstanceLoopsLoading] = useState(false);
+  // 正在升级的环路 id（控制按钮 loading 态）
+  const [upgradingLoopId, setUpgradingLoopId] = useState<number | null>(null);
   // M6：新建工艺元信息 Modal 开关
   const [createModalOpen, setCreateModalOpen] = useState(false);
 
@@ -168,6 +156,21 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
       .catch(() => { if (!cancelled) message.error('加载工艺模板详情失败'); });
     return () => { cancelled = true; };
   }, [processName]);
+
+  // 升级实例环路到最新版本：调 API 后刷新实例列表
+  const handleUpgradeLoop = async (templateName: string, loopId: number) => {
+    setUpgradingLoopId(loopId);
+    try {
+      const result = await bundledApi.upgradeProcessLoop(templateName, loopId);
+      message.success(`已升级到 ${result.loop_name}（${result.phase_count} 阶段 / ${result.step_count} 步骤）`);
+      // 刷新实例环路列表
+      await fetchInstanceLoops(templateName);
+    } catch {
+      message.error('升级失败');
+    } finally {
+      setUpgradingLoopId(null);
+    }
+  };
 
   const handleInstall = (name: string, displayName: string) => {
     setInstallModal({ name, displayName });
@@ -413,12 +416,19 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
                       { title: '执行次数', dataIndex: 'execution_count', key: 'count' },
                       {
                         title: '', key: 'action', render: (_: unknown, rec: ProcessLoopItem) => (
-                          <Button type="link" size="small" icon={<EyeOutlined />}
-                            onClick={() => {
-                              setDetail(null);
-                              onOpenLoop?.(rec.id);
-                            }}
-                          >打开</Button>
+                          <Space size={4}>
+                            <Button type="link" size="small" icon={<EyeOutlined />}
+                              onClick={() => {
+                                setDetail(null);
+                                onOpenLoop?.(rec.id);
+                              }}
+                            >打开</Button>
+                            <Button
+                              type="link" size="small"
+                              loading={upgradingLoopId === rec.id}
+                              onClick={() => handleUpgradeLoop(detail!.name, rec.id)}
+                            >更新</Button>
+                          </Space>
                         ),
                       },
                     ]}

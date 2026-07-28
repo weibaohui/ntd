@@ -25,7 +25,7 @@ import { useBatchActions } from './useBatchActions'; // .tsx 含 JSX（批量 Mo
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { ExpertBadge } from '@/components/ExpertBadge';
 import { formatRelativeTime } from '@/utils/datetime';
-import type { Tag as TagType, TodoCenterItem } from '@/types';
+import type { LoopRefSummary, Tag as TagType, TodoCenterItem } from '@/types';
 
 /** 状态 → 中文 + 颜色映射；与事项中心卡片 StatusTag 保持一致口径。 */
 const STATUS_META: Record<string, { label: string; color: string }> = {
@@ -58,6 +58,18 @@ function renderTagList(tagIds: number[] | undefined, tags: TagType[], max = 3): 
         <Tag key={t.id} color={t.color}>{t.name}</Tag>
       ))}
       {overflow > 0 && <Tag>+{overflow}</Tag>}
+    </span>
+  );
+}
+
+/** 工艺列：展示引用该事项的 Loop（工艺模板实例）。多个空格分隔。 */
+function renderProcessColumn(refs: LoopRefSummary[] | undefined): ReactNode {
+  if (!refs || refs.length === 0) return '-';
+  return (
+    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+      {refs.map(r => (
+        <Tag key={r.loop_id}>{r.loop_name}</Tag>
+      ))}
     </span>
   );
 }
@@ -205,6 +217,13 @@ function buildTodoColumns(
       width: 70,
       align: 'center',
       render: (_, record) => renderSchedulerColumn(record),
+    },
+    {
+      title: '工艺',
+      key: 'process',
+      width: 140,
+      ellipsis: true,
+      render: (_, record) => renderProcessColumn(record.referencing_loops),
     },
     {
       title: '最近执行',

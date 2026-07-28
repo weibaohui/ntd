@@ -30,6 +30,8 @@ interface TaskDetailPanelProps {
   workspaceId: number;
   /** 再次执行成功后回调，让宿主重拉列表保持口径一致。 */
   onTriggered?: () => void;
+  /** 任务标题加载完成后回调，供外层 PageCard 动态更新标题（详情标题功能）。 */
+  onTitleReady?: (title: string) => void;
 }
 
 interface StepInfo {
@@ -177,7 +179,7 @@ function OverviewTab({
   return (
     <div className={styles.paneBody}>
       <Descriptions column={1} size="small" title="基本信息">
-        <Descriptions.Item label="模板">{template?.display_name ?? '—'}</Descriptions.Item>
+        <Descriptions.Item label="工艺模板">{template?.display_name ?? '—'}</Descriptions.Item>
         <Descriptions.Item label="版本">{template?.version ?? '—'}</Descriptions.Item>
         <Descriptions.Item label="复杂度">
           {template?.complexity
@@ -307,7 +309,7 @@ function ExecTab({
  * 3. 三个 Tab：概览（信息+最近执行进度）/工艺要求（轻量步骤列表）/执行历史（列表+全宽看板）。
  * 4. 「再次执行」打开 Modal 调 createTaskExecution 创建新执行。
  */
-export function TaskDetailPanel({ taskId, workspaceId, onTriggered }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ taskId, workspaceId, onTriggered, onTitleReady }: TaskDetailPanelProps) {
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<TaskDetailData | null>(null);
   const [activeExec, setActiveExec] = useState<number | null>(null);
@@ -324,6 +326,10 @@ export function TaskDetailPanel({ taskId, workspaceId, onTriggered }: TaskDetail
       .getTaskDetail(workspaceId, taskId)
       .then((raw) => {
         if (alive) setDetail(raw as TaskDetailData);
+        // 详情标题：数据加载后通知外层 PageCard 更新标题。
+        if (alive && onTitleReady && (raw as TaskDetailData).task?.title) {
+          onTitleReady((raw as TaskDetailData).task.title);
+        }
       })
       .catch(() => {
         if (alive) message.error('加载失败');

@@ -81,10 +81,10 @@ function buildColumns(): ColumnsType<TaskItem> {
         ),
     },
     {
-      title: '模板',
+      title: '工艺模板',
       dataIndex: 'template_name',
       key: 'template_name',
-      width: 120,
+      width: 130,
       ellipsis: true,
       render: (name?: string) =>
         name ? <Tag>{name}</Tag> : <Text type="secondary">—</Text>,

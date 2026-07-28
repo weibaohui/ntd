@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use sea_orm::{ActiveModelTrait, ActiveValue};
+use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter};
 
 use crate::db::entity::{loop_phases, loop_steps, loops, process_templates};
 use crate::db::Database;
@@ -490,6 +490,116 @@ fn load_bundled_markdown(uri: &str) -> Result<String, String> {
     let file_path = home.join(".ntd").join("bundled").join(path_str);
     std::fs::read_to_string(&file_path)
         .map_err(|e| format!("读取 {} 失败: {}", file_path.display(), e))
+}
+
+/// 升级工艺实例环路到模板最新版本。
+///
+/// 流程：
+/// 1. 解析模板最新定义 YAML
+/// 2. 收集当前 Loop 的所有步骤和 todo_id
+/// 3. 删除旧步骤和阶段（loop_phases 上 FK CASCADE 自动清理 phase_executions）
+///    loop_steps 无 FK 约束到 step_executions，故直接删除，
+///    step_executions 记录引用旧 step_id 不会报错（无 FK），保留历史
+/// 4. 软删除旧步骤关联的 todo
+/// 5. 重新安装阶段/步骤/todo
+/// 6. 更新 Loop 的 process_template_version
+///
+/// 注意：这是一个不可逆的操作——旧步骤的 todo 会被软删除，
+/// 但 loop_executions / loop_step_executions 等历史执行数据保留在库中。
+pub async fn upgrade_process_template_loop(
+    db: &Database,
+    template: &process_templates::Model,
+    loop_id: i64,
+    workspace_id: i64,
+    workspace_path: &str,
+) -> Result<InstallResult, InstallError> {
+    let mut definition: ProcessDefinition = serde_yaml::from_str(&template.definition)?;
+
+    check_skill_warnings(db, &definition.phases).await?;
+    resolve_phase_spec_refs(&mut definition.phases);
+
+    // 1. 收集旧步骤信息
+    let old_steps = db.list_loop_steps_by_loop(loop_id).await?;
+    let old_todo_ids: Vec<i64> = old_steps.iter().map(|s| s.todo_id).collect();
+    let conn = db._conn_raw();
+
+    // 删除旧步骤和阶段（无 FK 约束问题，直接删除）
+    // loop_phases 的 ON DELETE CASCADE 会自动清理 loop_phase_executions
+    loop_steps::Entity::delete_many()
+        .filter(loop_steps::Column::LoopId.eq(loop_id))
+        .exec(conn)
+        .await?;
+    loop_phases::Entity::delete_many()
+        .filter(loop_phases::Column::LoopId.eq(loop_id))
+        .exec(conn)
+        .await?;
+
+    // 软删除旧步骤关联的 todo（通过设置 deleted_at）
+    for todo_id in &old_todo_ids {
+        db.delete_todo(*todo_id).await?;
+    }
+
+    // 2. 获取 Loop 现有配置
+    let loop_model = db.get_loop(loop_id).await?
+        .ok_or_else(|| InstallError::DbError(sea_orm::DbErr::Custom(format!("Loop {loop_id} not found"))))?;
+
+    let limits_config = build_limits_config(&definition.limits);
+    let abnormal_handler_trigger_on = definition
+        .abnormal_handler
+        .as_ref()
+        .map(|h| serde_json::to_string(&h.trigger_on).unwrap_or_else(|_| "[]".to_string()))
+        .unwrap_or_else(|| loop_model.abnormal_handler_trigger_on.clone());
+
+    // 使用模板最新定义的 display_name
+    let loop_name = if definition.process.display_name.is_empty() {
+        definition.process.name.clone()
+    } else {
+        definition.process.display_name.clone()
+    };
+
+    // 更新 Loop：名称、描述、限制配置（保留原有 icon/review_template 等配置）
+    db.update_loop(
+        loop_id,
+        &loop_name,
+        &definition.process.description,
+        Some(workspace_id),
+        None, /* workspace_path 保留旧路径，不覆盖 */
+        loop_model.webhook_enabled,
+        &loop_model.icon,
+        loop_model.review_template_id,
+        Some(&limits_config),
+        loop_model.abnormal_handler_todo_id,
+        &abnormal_handler_trigger_on,
+    ).await?;
+
+    // 单独更新 process_template_version（update_loop 不覆盖该字段）
+    let now = utc_timestamp();
+    let existing = loops::Entity::find_by_id(loop_id).one(conn).await?;
+    if let Some(c) = existing {
+        let mut am: loops::ActiveModel = c.into();
+        am.process_template_version = ActiveValue::Set(Some(template.version.clone()));
+        am.updated_at = ActiveValue::Set(Some(now));
+        am.update(conn).await?;
+    }
+
+    // 3. 重新创建阶段和步骤（复用现有逻辑）
+    let (template_link_to_step, phase_count, step_count) = create_phases_and_steps(
+        db,
+        loop_id,
+        workspace_id,
+        workspace_path,
+        &definition.phases,
+    ).await?;
+
+    // 4. 解析 goto 目标
+    resolve_goto_targets(db, loop_id, &definition.phases, &template_link_to_step).await?;
+
+    Ok(InstallResult {
+        loop_id,
+        loop_name,
+        phase_count,
+        step_count,
+    })
 }
 
 /// 校验环节引用的 skill 名称。
