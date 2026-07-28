@@ -78,7 +78,7 @@ export function LinkPropertyForm({
   // gates 列定义
   const gatesColumns = [
     {
-      title: 'name',
+      title: '名称',
       dataIndex: 'name',
       render: (_: unknown, record: GateDefinition, index: number) => (
         <Input
@@ -91,7 +91,7 @@ export function LinkPropertyForm({
       ),
     },
     {
-      title: 'type',
+      title: '类型',
       dataIndex: 'type',
       render: (_: unknown, record: GateDefinition, index: number) => (
         <Input
@@ -144,7 +144,7 @@ export function LinkPropertyForm({
 
   const artifactsColumns = [
     {
-      title: 'name',
+      title: '名称',
       dataIndex: 'name',
       render: (_: unknown, record: ExpectedArtifact, index: number) => (
         <Input
@@ -157,7 +157,7 @@ export function LinkPropertyForm({
       ),
     },
     {
-      title: 'type',
+      title: '类型',
       dataIndex: 'type',
       render: (_: unknown, record: ExpectedArtifact, index: number) => (
         <Input
@@ -212,21 +212,21 @@ export function LinkPropertyForm({
     <Form layout="vertical" style={formStyle}>
       <Text strong style={sectionTitleStyle}>环节属性</Text>
 
-      <Form.Item label="id">
+      <Form.Item label="标识">
         <Input
           value={link.id}
           onChange={(e) => handleFieldChange('id', e.target.value)}
         />
       </Form.Item>
 
-      <Form.Item label="name">
+      <Form.Item label="名称">
         <Input
           value={link.name}
           onChange={(e) => handleFieldChange('name', e.target.value)}
         />
       </Form.Item>
 
-      <Form.Item label="step_template">
+      <Form.Item label="环节原型">
         <Input
           value={link.step_template ?? ''}
           onChange={(e) => handleFieldChange('step_template', e.target.value)}
@@ -234,7 +234,7 @@ export function LinkPropertyForm({
         />
       </Form.Item>
 
-      <Form.Item label="prompt">
+      <Form.Item label="提示词">
         <Input.TextArea
           value={link.prompt ?? ''}
           onChange={(e) => handleFieldChange('prompt', e.target.value)}
@@ -243,7 +243,7 @@ export function LinkPropertyForm({
         />
       </Form.Item>
 
-      <Form.Item label="executor">
+      <Form.Item label="执行器">
         <Input
           value={link.executor ?? ''}
           onChange={(e) => handleFieldChange('executor', e.target.value)}
@@ -251,35 +251,35 @@ export function LinkPropertyForm({
         />
       </Form.Item>
 
-      <Form.Item label="review_type">
+      <Form.Item label="审核类型">
         <Select
           value={link.review_type ?? 'ai'}
           onChange={(value) => handleFieldChange('review_type', value)}
           options={[
-            { value: 'ai', label: 'ai' },
-            { value: 'human', label: 'human' },
+            { value: 'ai', label: 'AI 审核' },
+            { value: 'human', label: '人工审核' },
           ]}
         />
       </Form.Item>
 
-      <Form.Item label="on_success">
+      <Form.Item label="成功后跳转">
         <Select
           value={link.on_success ?? 'next'}
           onChange={(value) => handleFieldChange('on_success', value)}
           options={[
-            { value: 'next', label: 'next' },
-            { value: 'end', label: 'end' },
+            { value: 'next', label: '下一环节' },
+            { value: 'end', label: '结束' },
             ...gotoOptions,
           ]}
         />
       </Form.Item>
 
-      <Form.Item label="on_gate_fail">
+      <Form.Item label="门禁失败后">
         <Select
           value={link.on_gate_fail ?? 'break'}
           onChange={(value) => handleFieldChange('on_gate_fail', value)}
           options={[
-            { value: 'break', label: 'break' },
+            { value: 'break', label: '中断' },
             ...gotoOptions,
           ]}
         />
@@ -287,7 +287,7 @@ export function LinkPropertyForm({
 
       {/* gates 嵌套表格 */}
       <Space style={sectionHeaderStyle}>
-        <Text strong>gates（门禁）</Text>
+        <Text strong>门禁</Text>
         <Button
           size="small"
           icon={<PlusOutlined />}
@@ -307,7 +307,7 @@ export function LinkPropertyForm({
 
       {/* expected_artifacts 嵌套表格 */}
       <Space style={sectionHeaderStyle}>
-        <Text strong>expected_artifacts（期望产物）</Text>
+        <Text strong>期望产物</Text>
         <Button
           size="small"
           icon={<PlusOutlined />}

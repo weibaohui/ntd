@@ -61,21 +61,21 @@ export function PhasePropertyForm({
     <Form layout="vertical" style={formStyle}>
       <Text strong style={sectionTitleStyle}>阶段属性</Text>
 
-      <Form.Item label="id">
+      <Form.Item label="标识">
         <Input
           value={phase.id}
           onChange={(e) => handleFieldChange('id', e.target.value)}
         />
       </Form.Item>
 
-      <Form.Item label="name">
+      <Form.Item label="名称">
         <Input
           value={phase.name}
           onChange={(e) => handleFieldChange('name', e.target.value)}
         />
       </Form.Item>
 
-      <Form.Item label="spec">
+      <Form.Item label="规范说明">
         <Input.TextArea
           value={phase.spec ?? ''}
           onChange={(e) => handleFieldChange('spec', e.target.value)}
@@ -84,7 +84,7 @@ export function PhasePropertyForm({
         />
       </Form.Item>
 
-      <Form.Item label="acceptance_criteria">
+      <Form.Item label="验收标准">
         <Input.TextArea
           value={(phase as PhaseDefinitionWithRef).acceptance_criteria ?? ''}
           onChange={(e) =>
@@ -95,7 +95,7 @@ export function PhasePropertyForm({
         />
       </Form.Item>
 
-      <Form.Item label="acceptance_criteria_ref">
+      <Form.Item label="验收标准引用">
         <Input
           value={(phase as PhaseDefinitionWithRef).acceptance_criteria_ref ?? ''}
           onChange={(e) =>

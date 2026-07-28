@@ -104,13 +104,13 @@ export function GlobalPropertyForm({
             label: '工艺元信息',
             children: (
               <>
-                <Form.Item label="name">
+                <Form.Item label="名称">
                   <Input
                     value={meta.name}
                     onChange={(e) => handleMetaChange('name', e.target.value)}
                   />
                 </Form.Item>
-                <Form.Item label="display_name">
+                <Form.Item label="显示名称">
                   <Input
                     value={meta.display_name ?? ''}
                     onChange={(e) =>
@@ -118,7 +118,7 @@ export function GlobalPropertyForm({
                     }
                   />
                 </Form.Item>
-                <Form.Item label="category">
+                <Form.Item label="分类">
                   <Input
                     value={meta.category ?? ''}
                     onChange={(e) =>
@@ -126,20 +126,20 @@ export function GlobalPropertyForm({
                     }
                   />
                 </Form.Item>
-                <Form.Item label="complexity">
+                <Form.Item label="复杂度">
                   <Select
                     value={meta.complexity ?? 'light'}
                     onChange={(value) =>
                       handleMetaChange('complexity', value)
                     }
                     options={[
-                      { value: 'light', label: 'light' },
-                      { value: 'standard', label: 'standard' },
-                      { value: 'complex', label: 'complex' },
+                      { value: 'light', label: '轻量' },
+                      { value: 'standard', label: '标准' },
+                      { value: 'complex', label: '复杂' },
                     ]}
                   />
                 </Form.Item>
-                <Form.Item label="version">
+                <Form.Item label="版本">
                   <Input
                     value={meta.version ?? '1.0.0'}
                     onChange={(e) =>
@@ -147,7 +147,7 @@ export function GlobalPropertyForm({
                     }
                   />
                 </Form.Item>
-                <Form.Item label="description">
+                <Form.Item label="描述">
                   <Input.TextArea
                     value={meta.description ?? ''}
                     onChange={(e) =>
@@ -163,8 +163,8 @@ export function GlobalPropertyForm({
       />
 
       {/* limits 小表单 */}
-      <Text strong style={sectionTitleStyle}>limits（全局限制）</Text>
-      <Form.Item label="max_step_executions">
+      <Text strong style={sectionTitleStyle}>全局限制</Text>
+      <Form.Item label="单环节最大执行数">
         <InputNumber
           value={limits.max_step_executions}
           onChange={(value) =>
@@ -177,7 +177,7 @@ export function GlobalPropertyForm({
           style={inputNumberStyle}
         />
       </Form.Item>
-      <Form.Item label="max_total_tokens">
+      <Form.Item label="全局最大 Token 数">
         <InputNumber
           value={limits.max_total_tokens}
           onChange={(value) =>
@@ -192,21 +192,21 @@ export function GlobalPropertyForm({
       </Form.Item>
 
       {/* abnormal_handler 静态表单 */}
-      <Text strong style={sectionTitleStyle}>abnormal_handler（异常处理）</Text>
-      <Form.Item label="trigger_on">
+      <Text strong style={sectionTitleStyle}>异常处理</Text>
+      <Form.Item label="触发条件">
         <Checkbox.Group
           value={triggerOn}
           onChange={(values) => handleTriggerOnChange(values as string[])}
           options={[
-            { value: 'capped_step', label: 'capped_step' },
-            { value: 'capped_token', label: 'capped_token' },
-            { value: 'failed', label: 'failed' },
+            { value: 'capped_step', label: '步数超限' },
+            { value: 'capped_token', label: 'Token 超限' },
+            { value: 'failed', label: '失败' },
           ]}
         />
       </Form.Item>
 
       {/* step_templates Collapse 折叠面板 */}
-      <Text strong style={sectionTitleStyle}>step_templates（环节原型）</Text>
+      <Text strong style={sectionTitleStyle}>环节原型</Text>
       <Collapse
         style={collapseStyle}
         items={[

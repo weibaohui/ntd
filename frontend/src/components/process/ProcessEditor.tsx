@@ -248,6 +248,13 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
     });
   }, [processName]);
 
+  // ── 返回工艺列表页 ─────────────────────────────────
+  // 仅设置 location.hash 触发 hashchange；若 isDirty，离开拦截的 hashchange
+  // 监听会弹「未保存修改」确认框，确认后才真正跳转，避免误丢改动。
+  const handleBack = useCallback(() => {
+    window.location.hash = '#/processes';
+  }, []);
+
   // ── M5：离开拦截（需求 §3.6）──────────────────────
   // 两层拦截，共享 isDirty 状态（用户改了任何字段就置 true，保存成功后置回 false）。
   //
@@ -334,6 +341,7 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
         isDeleting={isDeleting}
         onSave={handleSave}
         onDelete={handleDelete}
+        onBack={handleBack}
       />
 
       {/* 顶部 Alert：系统工艺黄色 + 复制链接，用户工艺绿色 */}

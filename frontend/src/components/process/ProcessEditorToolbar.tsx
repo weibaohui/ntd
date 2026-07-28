@@ -15,7 +15,12 @@
 
 import { type CSSProperties, type JSX } from 'react';
 import { Button, Space, Typography } from 'antd';
-import { SaveOutlined, DeleteOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import {
+  SaveOutlined,
+  DeleteOutlined,
+  ExclamationCircleOutlined,
+  ArrowLeftOutlined,
+} from '@ant-design/icons';
 
 const { Text } = Typography;
 
@@ -36,6 +41,8 @@ export interface ProcessEditorToolbarProps {
   onSave: () => void;
   // 删除回调（父组件弹 Modal.confirm 后调 bundledApi.deleteProcess）
   onDelete: () => void;
+  // 返回回调（父组件跳路由回工艺列表页；沿用了离开拦截的 hashchange 监听）
+  onBack: () => void;
 }
 
 // Toolbar 组件实现。
@@ -51,6 +58,7 @@ export function ProcessEditorToolbar({
   isDeleting,
   onSave,
   onDelete,
+  onBack,
 }: ProcessEditorToolbarProps): JSX.Element {
   return (
     <div style={toolbarStyle}>
@@ -96,6 +104,13 @@ export function ProcessEditorToolbar({
             删除
           </Button>
         )}
+
+        {/* 返回按钮：右上角，点击跳回工艺列表页（#/processes）。
+            经由父组件设置 location.hash，复用 hashchange 离开拦截，
+            有未保存修改时会自动弹确认框，避免误丢改动。 */}
+        <Button icon={<ArrowLeftOutlined />} onClick={onBack}>
+          返回
+        </Button>
       </Space>
     </div>
   );
