@@ -144,6 +144,11 @@ pub struct LinkDefinition {
     /// 环节级验收标准（内联；早期由原型表提供，现已随 step_template 解耦迁入 link）。
     #[serde(default)]
     pub acceptance_criteria: String,
+    /// 环节级评审模板正文（完整替代默认评审模板，需求 033）。
+    /// 非空时作为评审 prompt 模板，仍支持 {original_output}/{acceptance_criteria} 等占位符替换；
+    /// 空串 = 未设置，评审时回退到环路级 `review_template_id` → 全局默认模板。
+    #[serde(default)]
+    pub review_prompt: String,
 }
 
 fn default_review_type() -> String {

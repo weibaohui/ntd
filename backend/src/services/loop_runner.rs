@@ -807,6 +807,7 @@ impl LoopRunner {
                             min_rating_val,
                             &todo.prompt,
                             todo.acceptance_criteria.as_deref(),
+                            step.review_prompt.as_deref(),
                             loop_.review_template_id,
                         )
                         .await
@@ -940,6 +941,7 @@ impl LoopRunner {
                         min_rating_val,
                         &todo.prompt,
                         todo.acceptance_criteria.as_deref(),
+                        step.review_prompt.as_deref(),
                         loop_.review_template_id,
                     )
                     .await?
@@ -1370,11 +1372,17 @@ impl LoopRunner {
         min_rating: i32,
         step_prompt: &str,
         step_acceptance_criteria: Option<&str>,
+        // 环节内联评审模板（需求 033）：非空时整体替代环路级/默认评审模板
+        step_review_prompt: Option<&str>,
         review_template_id: Option<i64>,
     ) -> Result<(bool, Option<i32>, Option<String>), String> {
         info!(
-            "apply_rating_gate: record #{} min_rating={} step_acceptance_criteria={:?} review_template_id={:?}",
-            record_id, min_rating, step_acceptance_criteria, review_template_id
+            "apply_rating_gate: record #{} min_rating={} step_acceptance_criteria={:?} has_step_review_prompt={} review_template_id={:?}",
+            record_id,
+            min_rating,
+            step_acceptance_criteria,
+            step_review_prompt.map(|s| !s.is_empty()).unwrap_or(false),
+            review_template_id
         );
         // 先检查是否已有评分
         let rec = self
@@ -1392,23 +1400,29 @@ impl LoopRunner {
             return Ok((passed, Some(rating), None));
         }
 
-        // 无评分但有验收标准：发起自动评审
-        if let Some(criteria) = step_acceptance_criteria.filter(|s| !s.trim().is_empty()) {
+        // 触发条件：环节有验收标准 或 有环节内联评审模板（review_prompt），二选一即发起自动评审。
+        // 两者皆空则跳过评审（末尾视为 0 分不通过）。min_rating 仍由外层作为评分阈值前置。
+        let criteria = step_acceptance_criteria.filter(|s| !s.trim().is_empty());
+        let inline_prompt = step_review_prompt.filter(|s| !s.trim().is_empty());
+        if criteria.is_some() || inline_prompt.is_some() {
             info!(
-                "apply_rating_gate: record #{} HAS acceptance_criteria (len={}), entering auto-review",
+                "apply_rating_gate: record #{} entering auto-review (has_criteria={} has_review_prompt={})",
                 record_id,
-                criteria.len()
+                criteria.is_some(),
+                inline_prompt.is_some()
             );
             info!("rating gate: record #{} triggering auto-review", record_id);
 
-            // 1) 获取评审模板
-            let template = match self.ensure_review_template(review_template_id).await {
-                Ok(t) => t,
-                Err(e) => {
-                    warn!("rating gate: failed to get review template: {}", e);
-                    return Ok((false, None, Some(format!("获取评审模板失败: {}", e))));
-                }
-            };
+            // 1) 选取评审模板正文与归属：环节内联优先（跳过查表），否则环路级 → 全局默认。
+            //    返回 (模板正文, 归属 template_id, 归属 name, workspace_id)。
+            let (template_prompt, owning_id, owning_name, owning_ws) =
+                match self.resolve_review_template(inline_prompt, review_template_id).await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        warn!("rating gate: failed to get review template: {}", e);
+                        return Ok((false, None, Some(format!("获取评审模板失败: {}", e))));
+                    }
+                };
 
             // 2) 获取执行记录的 result + executor
             // executor 从已跑过的 record 继承 (review_template 不带 executor)。
@@ -1424,12 +1438,12 @@ impl LoopRunner {
             } else {
                 original_output.to_string()
             };
-            let review_prompt = template
-                .prompt
+            // 占位符替换：环节内联模板若未含 {acceptance_criteria} 占位符，验收标准自然不注入（完整替代语义）
+            let review_prompt = template_prompt
                 .replace("{original_prompt}", step_prompt)
                 .replace("{max_output_chars}", &MAX_OUTPUT_CHARS.to_string())
                 .replace("{original_output}", &truncated)
-                .replace("{acceptance_criteria}", criteria);
+                .replace("{acceptance_criteria}", criteria.unwrap_or(""));
 
             // 4) 标记评审状态为 pending
             let _ = self.ctx.db.set_record_last_review_status(record_id, "pending").await;
@@ -1446,13 +1460,12 @@ impl LoopRunner {
             //    executor 继承自被评审的 record。
             //    - 已有 → reset prompt/executor/status,保留 id 和 execution_records 关联
             //    - 没有 → 新建
-            let review_ws = template.workspace_id.unwrap_or(0);
             let review_todo_id = match self.reuse_or_create_review_instance(
-                template.id,
-                &template.name,
+                owning_id,
+                &owning_name,
                 &review_prompt,
                 review_executor.as_deref(),
-                review_ws,
+                owning_ws,
             ).await {
                 Ok(id) => id,
                 Err(e) => {
@@ -1561,12 +1574,32 @@ impl LoopRunner {
             return Ok((false, None, Some("自动评审已完成但未能提取有效评分，请检查评审模板输出格式".to_string())));
         }
 
-        // 无评分且无验收标准 = 视为 0 分，不通过
+        // 无评分且（无验收标准 且 无 review_prompt）= 视为 0 分，不通过
         info!(
-            "apply_rating_gate: record #{} no rating and no acceptance_criteria, treating as FAIL",
+            "apply_rating_gate: record #{} no rating and no acceptance_criteria/review_prompt, treating as FAIL",
             record_id
         );
-        Ok((false, None, Some("环节未设置验收标准，无法触发自动评审".to_string())))
+        Ok((false, None, Some("环节未设置验收标准或评审模板，无法触发自动评审".to_string())))
+    }
+
+    /// 选取评审模板正文与归属，实现「环节内联 → 环路级 → 全局默认」三级回退（需求 033）。
+    /// - 环节内联（step.review_prompt）非空：直接作为模板正文，用哨兵 id 归属评审实例 todo；
+    /// - 否则查表：环路级 review_template_id → 全局默认。
+    ///
+    /// 返回 (模板正文, 归属 template_id, 归属 name, workspace_id)。
+    async fn resolve_review_template(
+        &self,
+        inline_prompt: Option<&str>,
+        review_template_id: Option<i64>,
+    ) -> Result<(String, i64, String, i64), String> {
+        // 环节内联评审模板：无对应 review_templates 行，用哨兵 id 0 归属评审实例 todo。
+        // id 0 不与真实模板冲突（真实模板 id 从 1 起），review_template_id 为逻辑引用非 FK。
+        if let Some(rp) = inline_prompt {
+            return Ok((rp.to_string(), 0, "环节内联评审".to_string(), 0));
+        }
+        // 回退到环路级/默认评审模板
+        let t = self.ensure_review_template(review_template_id).await?;
+        Ok((t.prompt, t.id, t.name, t.workspace_id.unwrap_or(0)))
     }
 
     /// 获取评审模板：优先使用 loop 配置的 id，否则用默认模板。
@@ -1900,6 +1933,7 @@ mod tests {
             max_rework: 3,
             skill_names: "[]".to_string(),
             expert_name: None,
+            review_prompt: None,
             enabled: 1,
             created_at: None,
         }
@@ -2097,6 +2131,34 @@ mod tests {
         .unwrap()
     }
 
+    /// resolve_review_template：环节内联 review_prompt 优先于环路级/默认（需求 033）。
+    #[tokio::test]
+    async fn test_resolve_review_template_inline_wins() {
+        let (runner, _db) = make_test_runner().await;
+        // 内联模板非空 → 直接作为正文，跳过查表，用哨兵 id 0 归属评审实例 todo
+        let inline = "我的评审模板 {original_output} {acceptance_criteria}";
+        let (prompt, owning_id, name, _ws) = runner
+            .resolve_review_template(Some(inline), None)
+            .await
+            .expect("内联分支不应查表");
+        assert_eq!(prompt, inline, "内联模板应原样作为正文");
+        assert_eq!(owning_id, 0, "内联模板用哨兵 id 0 归属");
+        assert_eq!(name, "环节内联评审");
+    }
+
+    /// resolve_review_template：无内联时回退到默认评审模板（需求 033）。
+    #[tokio::test]
+    async fn test_resolve_review_template_fallback_default() {
+        let (runner, _db) = make_test_runner().await;
+        // 无内联、无环路级模板 → ensure_default_review_template 创建并返回默认模板
+        let (prompt, owning_id, _name, _ws) = runner
+            .resolve_review_template(None, None)
+            .await
+            .expect("应回退到默认模板");
+        assert!(!prompt.is_empty(), "默认模板应有正文");
+        assert!(owning_id > 0, "默认模板 id 应为正数");
+    }
+
     /// 校验：所有 step 的 todo 与 loop 在同一工作空间 → 通过。
     #[tokio::test]
     async fn test_check_workspace_consistency_all_match() {
@@ -2125,6 +2187,7 @@ mod tests {
                 max_rework: 3,
                 skill_names: "[]".to_string(),
                 expert_name: None,
+                review_prompt: None,
                 enabled: 1,
                 created_at: None,
             },
@@ -2142,6 +2205,7 @@ mod tests {
                 max_rework: 3,
                 skill_names: "[]".to_string(),
                 expert_name: None,
+                review_prompt: None,
                 enabled: 1,
                 created_at: None,
             },
@@ -2176,6 +2240,7 @@ mod tests {
                 max_rework: 3,
                 skill_names: "[]".to_string(),
                 expert_name: None,
+                review_prompt: None,
                 enabled: 1,
                 created_at: None,
             },
@@ -2193,6 +2258,7 @@ mod tests {
                 max_rework: 3,
                 skill_names: "[]".to_string(),
                 expert_name: None,
+                review_prompt: None,
                 enabled: 1,
                 created_at: None,
             },
@@ -2230,6 +2296,7 @@ mod tests {
                 max_rework: 3,
                 skill_names: "[]".to_string(),
                 expert_name: None,
+                review_prompt: None,
                 enabled: 1,
                 created_at: None,
             },
@@ -2247,6 +2314,7 @@ mod tests {
                 max_rework: 3,
                 skill_names: "[]".to_string(),
                 expert_name: None,
+                review_prompt: None,
                 enabled: 1,
                 created_at: None,
             },
@@ -2280,6 +2348,7 @@ mod tests {
                 max_rework: 3,
                 skill_names: "[]".to_string(),
                 expert_name: None,
+                review_prompt: None,
                 enabled: 1,
                 created_at: None,
             },
@@ -2297,6 +2366,7 @@ mod tests {
                 max_rework: 3,
                 skill_names: "[]".to_string(),
                 expert_name: None,
+                review_prompt: None,
                 enabled: 1,
                 created_at: None,
             },

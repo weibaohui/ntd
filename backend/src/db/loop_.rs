@@ -1448,7 +1448,7 @@ impl Database {
                     s.on_success, s.success_goto_step_id, s.on_rating_fail, s.fail_goto_step_id, \
                     s.review_type, \
                     s.phase_id, s.expected_artifacts, s.gate_config, s.max_rework, \
-                    s.skill_names, s.expert_name, \
+                    s.skill_names, s.expert_name, s.review_prompt, \
                     s.enabled, s.created_at, \
                     st.title as todo_title, st.executor as todo_executor, \
                     st.archived_at as todo_archived_at \
@@ -1486,6 +1486,7 @@ impl Database {
                 max_rework: row.try_get_by::<i32, _>("max_rework")?,
                 skill_names: row.try_get_by::<String, _>("skill_names")?,
                 expert_name: row.try_get_by::<Option<String>, _>("expert_name")?,
+                review_prompt: row.try_get_by::<Option<String>, _>("review_prompt")?,
                 enabled: row.try_get_by::<i32, _>("enabled")?,
                 created_at: row.try_get_by::<Option<String>, _>("created_at")?,
             };

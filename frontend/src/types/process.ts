@@ -41,6 +41,8 @@ export interface LinkDefinition {
   skills?: string[];
   model?: string;
   review_type?: string;
+  /** 环节级评审模板正文（完整模板，含占位符）；空 = 未设置，回退环路级/默认 */
+  review_prompt?: string;
   expected_artifacts?: ExpectedArtifact[];
   gates?: GateDefinition[];
   on_success?: string;

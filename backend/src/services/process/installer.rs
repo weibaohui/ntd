@@ -292,6 +292,12 @@ async fn create_loop_step_for_link(
         }),
         fail_goto_step_id: ActiveValue::Set(None),
         review_type: ActiveValue::Set(link.review_type.clone()),
+        // 环节级评审模板正文（需求 033）：空串视为未设置（NULL），评审时回退环路级/默认
+        review_prompt: ActiveValue::Set(if link.review_prompt.trim().is_empty() {
+            None
+        } else {
+            Some(link.review_prompt.clone())
+        }),
         phase_id: ActiveValue::Set(Some(phase_id)),
         expected_artifacts: ActiveValue::Set(expected_artifacts),
         gate_config: ActiveValue::Set(gate_config),
@@ -698,6 +704,75 @@ phases:
         db.create_project_directory("/tmp/test-ws", Some("测试空间"), false, false)
             .await
             .unwrap()
+    }
+
+    /// 校验：环节级 review_prompt 写入 loop_steps（需求 033）。
+    /// 有 review_prompt 的环节写入正文（含占位符），无的为 NULL。
+    #[tokio::test]
+    async fn test_install_writes_review_prompt() {
+        let db = fresh_db().await;
+        let ws_id = seed_workspace(&db).await;
+        // 构造含环节级 review_prompt 的工艺 yaml：一个环节有、一个没有
+        let yaml = r#"
+process:
+  name: review-prompt-test
+  display_name: 评审模板测试
+  version: 0.1.0
+phases:
+  - id: p1
+    name: 阶段一
+    links:
+      - id: with-rp
+        name: 有评审模板
+        prompt: 执行
+        review_prompt: |
+          你是严格评审。输出：{original_output}
+          最后输出 RATING: 0-100
+      - id: without-rp
+        name: 无评审模板
+        prompt: 执行
+"#;
+        let template = process_templates::ActiveModel {
+            name: ActiveValue::Set("review-prompt-test".to_string()),
+            display_name: ActiveValue::Set("评审模板测试".to_string()),
+            description: ActiveValue::Set(String::new()),
+            category: ActiveValue::Set("test".to_string()),
+            complexity: ActiveValue::Set("light".to_string()),
+            version: ActiveValue::Set("0.1.0".to_string()),
+            definition: ActiveValue::Set(yaml.to_string()),
+            source_path: ActiveValue::Set(Some("bundled://review-prompt-test.yaml".to_string())),
+            is_system: ActiveValue::Set(true),
+            ..Default::default()
+        }
+        .insert(&db.conn)
+        .await
+        .unwrap();
+
+        let result = install_process_template(&db, &template, ws_id, "/tmp/test-ws")
+            .await
+            .expect("install should succeed");
+
+        let steps = db.list_loop_steps_by_loop(result.loop_id).await.unwrap();
+        // 有 review_prompt 的环节：正文写入，占位符原样保留
+        let with_rp = steps
+            .iter()
+            .find(|s| s.name == "有评审模板")
+            .expect("应有「有评审模板」环节");
+        let rp = with_rp
+            .review_prompt
+            .as_ref()
+            .expect("review_prompt 应已写入");
+        assert!(rp.contains("你是严格评审"), "review_prompt 正文应保留");
+        assert!(rp.contains("{original_output}"), "占位符应原样保留");
+        // 无 review_prompt 的环节：NULL（评审时回退环路级/默认）
+        let without_rp = steps
+            .iter()
+            .find(|s| s.name == "无评审模板")
+            .expect("应有「无评审模板」环节");
+        assert!(
+            without_rp.review_prompt.is_none(),
+            "未设置 review_prompt 应为 NULL"
+        );
     }
 
     #[tokio::test]

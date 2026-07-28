@@ -389,6 +389,15 @@ export function LinkPropertyForm({
         />
       </Form.Item>
 
+      <Form.Item label="评审 Prompt">
+        <Input.TextArea
+          value={link.review_prompt ?? ''}
+          onChange={(e) => handleFieldChange('review_prompt', e.target.value)}
+          rows={4}
+          placeholder="环节专属评审模板，可空。非空时整体替代默认评审模板；可用 {original_output}、{acceptance_criteria} 等占位符"
+        />
+      </Form.Item>
+
       <Form.Item label="成功后跳转">
         <Select
           value={link.on_success ?? 'next'}

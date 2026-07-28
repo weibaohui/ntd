@@ -33,6 +33,7 @@ mod v71;
 mod v72;
 mod v73;
 mod v74;
+mod v75;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -111,6 +112,9 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // V74 在 V73 之后：回填历史环节 todo 的 auto_review_enabled，
         // 配合 installer 穿透修复「工艺选 AI 评审却从不打分」的存量数据
         Box::new(v74::V74BackfillAutoReview),
+        // V75 在 V74 之后：loop_steps 新增 review_prompt 列，
+        // 支撑需求 033「环节评审模板」——环节内联完整评审模板，按环节定制评审
+        Box::new(v75::V75AddLoopStepReviewPrompt),
     ]
 }
 

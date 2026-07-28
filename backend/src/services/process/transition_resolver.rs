@@ -130,6 +130,7 @@ mod tests {
             max_rework: 3,
             skill_names: "[]".to_string(),
             expert_name: None,
+            review_prompt: None,
             enabled: 1,
             created_at: None,
         }
