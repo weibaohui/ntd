@@ -454,7 +454,7 @@ export function LoopDetailPanel({
       }}>
         <Collapse
           ghost
-          expandIconPosition="end"
+          expandIconPlacement="end"
           defaultActiveKey={[]}
           items={[
             {
@@ -492,7 +492,7 @@ export function LoopDetailPanel({
       }}>
         <Collapse
           ghost
-          expandIconPosition="end"
+          expandIconPlacement="end"
           defaultActiveKey={['executions']}
           items={[
             {

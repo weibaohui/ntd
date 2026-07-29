@@ -253,7 +253,7 @@ export function LoopFormModal({
         title={mode === 'create' ? '新建环路' : '编辑 loop'}
         open={open}
         onClose={onClose}
-        width={600}
+        size={600}
         destroyOnHidden
         footer={
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
@@ -281,17 +281,6 @@ export function LoopFormModal({
             <Form.Item
               name="review_template_id"
               tooltip="选择用于自动评审的模板（不选则使用默认模板）。切换工作空间后自动过滤。"
-              extra={
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<PlusOutlined />}
-                  style={{ padding: 0, marginTop: 4 }}
-                  onClick={() => setCreatingTemplate(true)}
-                >
-                  新建模板
-                </Button>
-              }
             >
               <Select
                 allowClear
@@ -299,9 +288,18 @@ export function LoopFormModal({
                 showSearch
                 optionFilterProp="label"
                 options={reviewTemplateOptions.map(t => ({ value: t.id, label: t.name }))}
-                notFoundContent={workspaceId != null ? '暂无模板，可点击"新建模板"' : '暂无模板'}
+                notFoundContent={workspaceId != null ? '暂无模板，可点击下方"新建模板"' : '暂无模板'}
               />
             </Form.Item>
+            <Button
+              type="link"
+              size="small"
+              icon={<PlusOutlined />}
+              style={{ padding: 0, marginTop: -4 }}
+              onClick={() => setCreatingTemplate(true)}
+            >
+              新建模板
+            </Button>
           </div>
 
           <Form.Item label="Webhook" name="webhook_enabled" valuePropName="checked" tooltip="启用后可通过固定 URL 触发该 Loop 执行">
