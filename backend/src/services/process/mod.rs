@@ -16,10 +16,11 @@ pub mod phase_driver;
 pub mod recommender;
 pub mod repair_log;
 pub mod rework_tracker;
+pub mod source;
 pub mod transition_resolver;
 pub mod user_dir;
 
-/// 工艺模板完整定义（从 `process_templates.definition` YAML 解析）。
+/// 工艺模板完整定义（从 `source_path` 指向的磁盘 YAML 文件解析，DB 不再存正文）。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProcessDefinition {
     /// 工艺元信息

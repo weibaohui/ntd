@@ -16,7 +16,7 @@ use super::{
 /// 安装工艺模板到指定工作空间，返回生成的 Loop ID。
 ///
 /// 流程：
-/// 1. 解析 `process_templates.definition` YAML
+/// 1. 解析传入的工艺定义 `definition`（YAML，由调用方按 source_path 从磁盘读取）
 /// 2. 创建 Loop（status=paused，记录来源模板与版本快照）
 /// 3. 创建 Phase
 /// 4. 第一遍：为每个 link 创建 todo + loop_step（goto 暂空）
@@ -24,10 +24,12 @@ use super::{
 pub async fn install_process_template(
     db: &Database,
     template: &process_templates::Model,
+    definition: &str,
     workspace_id: i64,
     workspace_path: &str,
 ) -> Result<InstallResult, InstallError> {
-    let mut definition: ProcessDefinition = serde_yaml::from_str(&template.definition)?;
+    // 工艺正文由调用方从磁盘文件读取后传入；此处只负责解析，不再触碰 DB 的 definition。
+    let mut definition: ProcessDefinition = serde_yaml::from_str(definition)?;
 
     // skill 名称是自由文本（executor 在运行时注入），不做强制校验，仅记 warn。
     // step_template 已转为 spec 引用，不再做原型存在性校验。
@@ -581,11 +583,13 @@ fn load_bundled_markdown(uri: &str) -> Result<String, String> {
 pub async fn upgrade_process_template_loop(
     db: &Database,
     template: &process_templates::Model,
+    definition: &str,
     loop_id: i64,
     workspace_id: i64,
     workspace_path: &str,
 ) -> Result<InstallResult, InstallError> {
-    let mut definition: ProcessDefinition = serde_yaml::from_str(&template.definition)?;
+    // 工艺正文由调用方按 source_path 从磁盘读取后传入，这里只负责解析，不再读 DB 的 definition。
+    let mut definition: ProcessDefinition = serde_yaml::from_str(definition)?;
 
     check_skill_warnings(db, &definition.phases).await?;
     resolve_phase_spec_refs(&mut definition.phases);
@@ -816,7 +820,6 @@ phases:
             category: ActiveValue::Set("test".to_string()),
             complexity: ActiveValue::Set("light".to_string()),
             version: ActiveValue::Set("0.1.0".to_string()),
-            definition: ActiveValue::Set(yaml.to_string()),
             source_path: ActiveValue::Set(Some("bundled://review-prompt-test.yaml".to_string())),
             is_system: ActiveValue::Set(true),
             ..Default::default()
@@ -825,7 +828,8 @@ phases:
         .await
         .unwrap();
 
-        let result = install_process_template(&db, &template, ws_id, "/tmp/test-ws")
+        // 正文由调用方按 source_path 从磁盘读取后传入；测试里直接用示例 YAML 字符串。
+        let result = install_process_template(&db, &template, yaml, ws_id, "/tmp/test-ws")
             .await
             .expect("install should succeed");
 
@@ -865,7 +869,6 @@ phases:
             category: ActiveValue::Set("test".to_string()),
             complexity: ActiveValue::Set("light".to_string()),
             version: ActiveValue::Set("0.1.0".to_string()),
-            definition: ActiveValue::Set(sample_process_definition_yaml()),
             source_path: ActiveValue::Set(Some("bundled://processes/test-delivery.yaml".to_string())),
             is_system: ActiveValue::Set(true),
             ..Default::default()
@@ -874,7 +877,8 @@ phases:
         .await
         .unwrap();
 
-        let result = install_process_template(&db, &template, ws_id, "/tmp/test-ws",
+        // 正文由调用方按 source_path 从磁盘读取后传入；测试里直接用示例 YAML 字符串。
+        let result = install_process_template(&db, &template, &sample_process_definition_yaml(), ws_id, "/tmp/test-ws",
         )
         .await
         .expect("install should succeed");
@@ -920,6 +924,9 @@ phases:
         let db = fresh_db().await;
         let ws_id = seed_workspace(&db).await;
 
+        // 缺失环节原型的工艺定义（正文不再存 DB，测试里直接作为入参传入）。
+        // step_template 在 feat/recipe-editor 已改为序列类型，空序列 + 内联 prompt 即表示「不查原型表」。
+        let missing_step_def = "process:\n  name: missing-step\nphases:\n  - id: p1\n    name: p1\n    links:\n      - id: l1\n        name: l1\n        step_template: []\n        prompt: 请实现 l1\n        on_success: end\n        on_gate_fail: break\n".to_string();
         let template = process_templates::ActiveModel {
             name: ActiveValue::Set("inlined-link".to_string()),
             display_name: ActiveValue::Set("内联环节".to_string()),
@@ -927,10 +934,7 @@ phases:
             category: ActiveValue::Set("test".to_string()),
             complexity: ActiveValue::Set("light".to_string()),
             version: ActiveValue::Set("1.0.0".to_string()),
-            definition: ActiveValue::Set(
-                "process:\n  name: inlined-link\nphases:\n  - id: p1\n    name: p1\n    links:\n      - id: l1\n        name: l1\n        step_template: []\n        prompt: 请实现 l1\n        on_success: end\n        on_gate_fail: break\n"
-                    .to_string(),
-            ),
+            source_path: ActiveValue::Set(Some("bundled://processes/missing-step.yaml".to_string())),
             is_system: ActiveValue::Set(true),
             ..Default::default()
         }
@@ -938,7 +942,7 @@ phases:
         .await
         .unwrap();
 
-        let result = install_process_template(&db, &template, ws_id, "/tmp/test-ws",
+        let result = install_process_template(&db, &template, &missing_step_def, ws_id, "/tmp/test-ws",
         )
         .await
         .expect("内联配置不应依赖原型表，install 应成功");
@@ -961,7 +965,6 @@ phases:
             category: ActiveValue::Set("test".to_string()),
             complexity: ActiveValue::Set("light".to_string()),
             version: ActiveValue::Set("0.1.0".to_string()),
-            definition: ActiveValue::Set(sample_process_definition_yaml()),
             source_path: ActiveValue::Set(Some("bundled://processes/test.yaml".to_string())),
             is_system: ActiveValue::Set(true),
             ..Default::default()
@@ -970,7 +973,7 @@ phases:
         .await
         .unwrap();
 
-        let result = install_process_template(&db, &template, ws_id, "/tmp/test-ws")
+        let result = install_process_template(&db, &template, &sample_process_definition_yaml(), ws_id, "/tmp/test-ws")
             .await
             .expect("install should succeed");
 
@@ -1060,7 +1063,6 @@ phases:
             category: ActiveValue::Set("test".to_string()),
             complexity: ActiveValue::Set("light".to_string()),
             version: ActiveValue::Set("0.1.0".to_string()),
-            definition: ActiveValue::Set(yaml.to_string()),
             source_path: ActiveValue::Set(Some("bundled://penetration-test.yaml".to_string())),
             is_system: ActiveValue::Set(true),
             ..Default::default()
@@ -1069,7 +1071,7 @@ phases:
         .await
         .unwrap();
 
-        let result = install_process_template(&db, &template, ws_id, "/tmp/test-ws")
+        let result = install_process_template(&db, &template, yaml, ws_id, "/tmp/test-ws")
             .await
             .expect("install should succeed");
 
@@ -1186,7 +1188,6 @@ phases:
             category: ActiveValue::Set("test".to_string()),
             complexity: ActiveValue::Set("light".to_string()),
             version: ActiveValue::Set("0.1.0".to_string()),
-            definition: ActiveValue::Set(yaml.to_string()),
             source_path: ActiveValue::Set(Some("bundled://abnormal-test.yaml".to_string())),
             is_system: ActiveValue::Set(true),
             ..Default::default()
@@ -1195,7 +1196,7 @@ phases:
         .await
         .unwrap();
 
-        let result = install_process_template(&db, &template, ws_id, "/tmp/test-ws")
+        let result = install_process_template(&db, &template, yaml, ws_id, "/tmp/test-ws")
             .await
             .expect("install should succeed");
 
@@ -1243,14 +1244,13 @@ phases:
             category: ActiveValue::Set("test".to_string()),
             complexity: ActiveValue::Set("light".to_string()),
             version: ActiveValue::Set("0.1.0".to_string()),
-            definition: ActiveValue::Set(yaml.to_string()),
             is_system: ActiveValue::Set(true),
             ..Default::default()
         }
         .insert(&db.conn)
         .await
         .unwrap();
-        let result = install_process_template(&db, &template, ws_id, "/tmp/test-ws")
+        let result = install_process_template(&db, &template, yaml, ws_id, "/tmp/test-ws")
             .await
             .unwrap();
         let loop_model = db.get_loop(result.loop_id).await.unwrap().unwrap();

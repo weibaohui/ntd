@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::handlers::{AppError, AppState};
 use crate::models::ApiResponse;
 use crate::services::process::installer::install_process_template;
+use crate::services::process::source::read_definition;
 
 /// 工艺模板列表项。
 #[derive(Debug, Serialize)]
@@ -138,6 +139,12 @@ pub async fn get_process_template(
         .get_process_template_by_name(&name)
         .await?
         .ok_or(AppError::NotFound)?;
+    // 工艺正文不在 DB，按 source_path 从磁盘文件实时读取，保证磁盘是唯一真源。
+    let local_path = state.config_snapshot(|c| c.bundled_source.local_path.clone());
+    let definition = read_definition(
+        template.source_path.as_deref().unwrap_or_default(),
+        &local_path,
+    )?;
     Ok(ApiResponse::ok(ProcessTemplateDetail {
         item: ProcessTemplateListItem {
             id: template.id,
@@ -152,7 +159,7 @@ pub async fn get_process_template(
             created_at: template.created_at,
             updated_at: template.updated_at,
         },
-        definition: template.definition,
+        definition,
     }))
 }
 
@@ -176,9 +183,17 @@ pub async fn install_process(
             AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id))
         })?;
 
+    // 工艺正文按 source_path 从磁盘读取后再交给 installer；installer 不再从 DB 取正文。
+    let local_path = state.config_snapshot(|c| c.bundled_source.local_path.clone());
+    let definition = read_definition(
+        template.source_path.as_deref().unwrap_or_default(),
+        &local_path,
+    )?;
+
     let result = install_process_template(
         &state.db,
         &template,
+        &definition,
         req.workspace_id,
         &workspace.path,
     )
@@ -217,6 +232,10 @@ pub async fn upgrade_process_loop(
         .await?
         .ok_or(AppError::NotFound)?;
 
+    // 工艺正文是唯一真源（磁盘文件），按 source_path 读取后传给 installer。
+    let local_path = state.config_snapshot(|c| c.bundled_source.local_path.clone());
+    let definition = read_definition(template.source_path.as_deref().unwrap_or_default(), &local_path)?;
+
     // 获取 Loop，确认其属于该工艺模板
     let loop_model = state
         .db
@@ -247,6 +266,7 @@ pub async fn upgrade_process_loop(
     let result = crate::services::process::installer::upgrade_process_template_loop(
         &state.db,
         &template,
+        &definition,
         loop_id,
         ws_id,
         &workspace.path,
@@ -600,7 +620,14 @@ pub async fn copy_process_to_user(
         )));
     }
 
-    std::fs::write(&target_path, &template.definition)
+    // 系统工艺正文按 source_path 从磁盘文件读取，再写入用户层；DB 不存正文，避免二次冗余。
+    let local_path = state.config_snapshot(|c| c.bundled_source.local_path.clone());
+    let definition = read_definition(
+        template.source_path.as_deref().unwrap_or_default(),
+        &local_path,
+    )?;
+
+    std::fs::write(&target_path, &definition)
         .map_err(|e| AppError::Internal(format!("写入用户工艺文件失败: {}", e)))?;
 
     // 触发用户层 upsert，把刚复制的文件入库为 is_system=false。
@@ -702,7 +729,11 @@ pub async fn diff_process_versions(
 
     match (base, target) {
         (Some(b), Some(t)) => {
-            let diff_lines = simple_diff(&b.definition, &t.definition);
+            // 工艺正文不在 DB，按各自的 source_path 从磁盘文件读取后再做 diff。
+            let local_path = state.config_snapshot(|c| c.bundled_source.local_path.clone());
+            let base_def = read_definition(b.source_path.as_deref().unwrap_or_default(), &local_path)?;
+            let target_def = read_definition(t.source_path.as_deref().unwrap_or_default(), &local_path)?;
+            let diff_lines = simple_diff(&base_def, &target_def);
             Ok(ApiResponse::ok(serde_json::json!({
                 "name": name,
                 "base_version": base_version,
@@ -1010,7 +1041,6 @@ mod tests {
             category: "software".to_string(),
             complexity: "light".to_string(),
             version: "1.0.0".to_string(),
-            definition: String::new(),
             source_path: Some("user://software/test.yaml".to_string()),
             workspace_id: None,
             is_system: false,
@@ -1040,7 +1070,6 @@ mod tests {
             category: "software".to_string(),
             complexity: "light".to_string(),
             version: "1.0.0".to_string(),
-            definition: String::new(),
             source_path: None,  // 无 source_path
             workspace_id: None,
             is_system: false,

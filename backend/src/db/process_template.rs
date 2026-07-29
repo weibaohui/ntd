@@ -38,7 +38,7 @@ impl Database {
     /// Upsert 系统工艺模板（从 bundled 同步）。
     ///
     /// 以 `name` 为唯一键：存在则更新，不存在则插入。
-    /// `definition` 保存完整 YAML/JSON 文本，保证模板内容可追溯。
+    /// 工艺正文（YAML）不再落库，仅存 `source_path` 引用；内容按路径从磁盘文件读取。
     #[allow(clippy::too_many_arguments)]
     pub async fn upsert_system_process_template(
         &self,
@@ -48,7 +48,6 @@ impl Database {
         category: &str,
         complexity: &str,
         version: &str,
-        definition: &str,
         source_path: &str,
     ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
@@ -64,7 +63,6 @@ impl Database {
             am.category = ActiveValue::Set(category.to_string());
             am.complexity = ActiveValue::Set(complexity.to_string());
             am.version = ActiveValue::Set(version.to_string());
-            am.definition = ActiveValue::Set(definition.to_string());
             am.source_path = ActiveValue::Set(Some(source_path.to_string()));
             am.is_system = ActiveValue::Set(true);
             am.updated_at = ActiveValue::Set(Some(now));
@@ -78,7 +76,6 @@ impl Database {
                 category: ActiveValue::Set(category.to_string()),
                 complexity: ActiveValue::Set(complexity.to_string()),
                 version: ActiveValue::Set(version.to_string()),
-                definition: ActiveValue::Set(definition.to_string()),
                 source_path: ActiveValue::Set(Some(source_path.to_string())),
                 workspace_id: ActiveValue::Set(None),
                 is_system: ActiveValue::Set(true),
@@ -167,6 +164,8 @@ impl Database {
     /// - `is_system=false`，标记为用户自定义工艺
     /// - `workspace_id=NULL`，本需求先支持全局用户工艺
     /// - 同名工艺覆盖系统层（`name` 为唯一键，第二次 upsert 改写 `is_system` 从 true 变 false）
+    ///
+    /// 工艺正文只存于磁盘（~/.ntd/processes/），DB 仅存 `source_path` 引用。
     #[allow(clippy::too_many_arguments)]
     pub async fn upsert_user_process_template(
         &self,
@@ -176,7 +175,6 @@ impl Database {
         category: &str,
         complexity: &str,
         version: &str,
-        definition: &str,
         source_path: &str,
     ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
@@ -193,7 +191,6 @@ impl Database {
             am.category = ActiveValue::Set(category.to_string());
             am.complexity = ActiveValue::Set(complexity.to_string());
             am.version = ActiveValue::Set(version.to_string());
-            am.definition = ActiveValue::Set(definition.to_string());
             am.source_path = ActiveValue::Set(Some(source_path.to_string()));
             am.workspace_id = ActiveValue::Set(None);
             am.is_system = ActiveValue::Set(false);
@@ -208,7 +205,6 @@ impl Database {
                 category: ActiveValue::Set(category.to_string()),
                 complexity: ActiveValue::Set(complexity.to_string()),
                 version: ActiveValue::Set(version.to_string()),
-                definition: ActiveValue::Set(definition.to_string()),
                 source_path: ActiveValue::Set(Some(source_path.to_string())),
                 workspace_id: ActiveValue::Set(None),
                 is_system: ActiveValue::Set(false),

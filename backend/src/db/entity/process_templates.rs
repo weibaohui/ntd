@@ -21,10 +21,8 @@ pub struct Model {
     pub complexity: String,
     /// 语义化版本，如 `1.0.0`。
     pub version: String,
-    /// 工艺完整定义（YAML/JSON），包含 phases、links、limits 等。
-    #[sea_orm(column_type = "Text")]
-    pub definition: String,
     /// 来源路径，如 `bundled://processes/software/4p12s-delivery.yaml`。
+    /// 工艺完整定义（YAML）不再落库，始终按此路径从磁盘文件实时读取，磁盘是唯一真源。
     pub source_path: Option<String>,
     /// 所属工作空间 ID；NULL 表示系统内置。
     pub workspace_id: Option<i64>,

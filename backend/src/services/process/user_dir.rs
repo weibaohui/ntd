@@ -93,6 +93,7 @@ async fn upsert_user_process_yaml(
         &wrapper.process.display_name
     };
 
+    // 工艺正文只存于磁盘（~/.ntd/processes/），DB 仅保存 source_path 引用，不再落库 definition。
     state
         .db
         .upsert_user_process_template(
@@ -102,7 +103,6 @@ async fn upsert_user_process_yaml(
             &wrapper.process.category,
             &wrapper.process.complexity,
             &wrapper.process.version,
-            content,
             source_path,
         )
         .await

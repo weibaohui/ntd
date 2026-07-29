@@ -635,7 +635,7 @@ async fn scan_and_upsert_system_processes(
         // 先尝试解析为工艺模板
         if let Some(wrapper) = parse_process_file(&content, &path) {
             if let Err(e) =
-                upsert_process_template(state, &wrapper.process, &source_path, &content).await
+                upsert_process_template(state, &wrapper.process, &source_path).await
             {
                 tracing::warn!("保存工艺模板 {} 失败: {}", source_path, e);
                 continue;
@@ -748,13 +748,13 @@ async fn upsert_process_template(
     state: &AppState,
     def: &BundledProcessDefinition,
     source_path: &str,
-    definition_text: &str,
 ) -> Result<(), sea_orm::DbErr> {
     let display_name = if def.display_name.is_empty() {
         &def.name
     } else {
         &def.display_name
     };
+    // 工艺正文（YAML）只存于磁盘文件，DB 仅保存 source_path 引用，不再落库 definition。
     state
         .db
         .upsert_system_process_template(
@@ -764,7 +764,6 @@ async fn upsert_process_template(
             &def.category,
             &def.complexity,
             &def.version,
-            definition_text,
             source_path,
         )
         .await?;

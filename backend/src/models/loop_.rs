@@ -700,7 +700,6 @@ mod loop_dto_tests {
             category: "software".into(),
             complexity: "standard".into(),
             version: "1.2.0".into(),
-            definition: String::new(),
             source_path: None,
             workspace_id: None,
             is_system: true,

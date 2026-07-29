@@ -163,7 +163,6 @@ mod tests {
             category: "software".to_string(),
             complexity: complexity.to_string(),
             version: "1.0.0".to_string(),
-            definition: String::new(),
             source_path: None,
             workspace_id: None,
             is_system: true,
