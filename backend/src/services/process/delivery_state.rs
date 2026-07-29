@@ -3,9 +3,8 @@
 //! 工艺实例全局状态文件，记录当前阶段、产物清单、门禁结果。
 //! 仅维护文件内容，不参与运行时逻辑。
 
+use std::io::Write;
 use std::path::Path;
-
-use tokio::io::AsyncWriteExt;
 
 /// delivery-state 文件写入错误。
 #[derive(Debug, thiserror::Error)]
@@ -39,8 +38,11 @@ pub async fn write_delivery_state(
     gates: &[GateEntry],
 ) -> Result<(), DeliveryStateError> {
     // 确保 `.ntd/` 目录存在。
+    // 用 std::fs 同步写入：tokio::fs::File::write_all 在 #[tokio::test] (current_thread)
+    // runtime 下偶发数据丢失（返回 Ok 但数据未落盘，后续 read 读到空/残缺内容）。
+    // 状态文件体量小、不在性能关键路径，同步写入既稳定又简单。
     let dir = Path::new(workspace_path).join(".ntd");
-    tokio::fs::create_dir_all(&dir).await?;
+    std::fs::create_dir_all(&dir)?;
 
     let mut content = String::new();
     content.push_str("# Delivery State\n\n");
@@ -86,8 +88,8 @@ pub async fn write_delivery_state(
     }
 
     let filepath = dir.join("delivery-state.md");
-    let mut file = tokio::fs::File::create(&filepath).await?;
-    file.write_all(content.as_bytes()).await?;
+    let mut file = std::fs::File::create(&filepath)?;
+    file.write_all(content.as_bytes())?;
 
     Ok(())
 }
@@ -154,8 +156,8 @@ mod tests {
         assert!(filepath.exists(), "delivery-state.md should exist");
 
         let content = std::fs::read_to_string(&filepath).unwrap();
-        assert!(content.contains("标准交付"), "should contain process name");
-        assert!(content.contains("✅ 已捕获"), "should contain artifact status");
-        assert!(content.contains("passed"), "should contain gate status");
+        assert!(content.contains("标准交付"), "应包含工艺名, 实际: {content}");
+        assert!(content.contains("✅ 已捕获"), "应包含产物状态, 实际: {content}");
+        assert!(content.contains("passed"), "应包含门禁状态, 实际: {content}");
     }
 }

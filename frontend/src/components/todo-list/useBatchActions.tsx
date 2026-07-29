@@ -283,8 +283,9 @@ export function useBatchActions(opts: UseBatchActionsOptions): UseBatchActionsRe
         }
         onRefreshItems?.();
       } else {
-        // loop 模式：批量删除
-        const result = await dbLoops.batchDeleteLoops(pendingDeleteIds);
+        // loop 模式：批量删除（需 workspace 隔离，与单删一致走 v1 路径）
+        if (selectedWorkspace == null) { message.warning('请先选择工作空间'); return; }
+        const result = await dbLoops.batchDeleteLoops(selectedWorkspace, pendingDeleteIds);
         message.success(`已删除 ${result.deleted} 个环路`);
         onRefreshLoops?.();
       }

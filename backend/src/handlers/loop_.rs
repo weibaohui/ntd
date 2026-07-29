@@ -2825,6 +2825,35 @@ pub async fn batch_copy_loops_workspace_v1(
     }))
 }
 
+/// POST /batch-delete (nested) - 批量删除环路（workspace 隔离）。
+///
+/// 与单删一致：先校验所有 loop 归属路径 workspace，再逐个移除调度器中的 cron 触发器，
+/// 最后级联删除。v0 的 batch_delete_loops 未清理 cron，v1 在此补齐，避免已删 loop 仍被定时触发。
+pub async fn batch_delete_loops_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Json(req): Json<BatchDeleteLoopsRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    if req.ids.is_empty() {
+        return Err(AppError::BadRequest("ids 不能为空".to_string()));
+    }
+    // V1 隔离：校验所有 loop 属于路径 workspace（verify 已含存在性校验）。
+    workspace_guard::verify_loops_belong_to_ws(&state.db, &req.ids, ws_id).await?;
+    // 删除前移除调度器中的 cron 触发器，避免已删除 loop 仍被定时触发。
+    for id in &req.ids {
+        let triggers = state.db.list_triggers_by_loop(*id).await?;
+        for t in triggers.iter().filter(|t| t.trigger_type == "cron") {
+            if let Some(sched) = state.loop_scheduler.as_ref() {
+                sched.remove_cron_trigger(t.id).await;
+            }
+        }
+    }
+    let deleted = state.db.batch_delete_loops(&req.ids).await?;
+    Ok(ApiResponse::ok(serde_json::json!({
+        "deleted": deleted, "total": req.ids.len(),
+    })))
+}
+
 /// GET /{id}/export — 导出单个 loop（workspace 隔离）。
 pub async fn export_loop_v1(
     State(state): State<AppState>,
@@ -2949,6 +2978,7 @@ pub fn v1_routes() -> axum::Router<AppState> {
         .route("/stats", get(get_loop_stats_v1))
         .route("/batch/workspace", post(batch_move_loops_workspace_v1))
         .route("/batch/copy-workspace", post(batch_copy_loops_workspace_v1))
+        .route("/batch-delete", post(batch_delete_loops_v1))
         .route("/export", get(export_all_loops_v1))
         .route("/export-selected", post(export_selected_loops_v1))
         // merge/import 同样必须在 /{id} 之前。
