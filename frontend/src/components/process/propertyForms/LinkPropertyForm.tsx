@@ -38,14 +38,12 @@ import { updateLinkField } from '../processDefinitionUpdater';
 // {{original_prompt}} → 当前环节的提示词
 // {{original_output}} → 执行记录的输出结果
 // {{acceptance_criteria}} → 验收标准
-// {{max_output_chars}} → 截断上限（常量）
 // 占位符统一用 {{双花括号}}：后端 compose_review_prompt / apply_rating_gate 只替换双花括号，
 // 单花括号不会被替换。历史上曾混用 {单括号} 导致占位符原样发给 AI，已统一为双花括号。
 const REVIEW_PROMPT_PARAMS = [
   { key: '{{original_prompt}}', label: 'original_prompt', desc: '当前环节的提示词（prompt 字段）' },
   { key: '{{original_output}}', label: 'original_output', desc: '执行记录的输出结果' },
   { key: '{{acceptance_criteria}}', label: 'acceptance_criteria', desc: '验收标准，用于评分评价' },
-  { key: '{{max_output_chars}}', label: 'max_output_chars', desc: '结果截断上限（常量）' },
 ];
 
 const { Text } = Typography;
@@ -359,8 +357,6 @@ export function LinkPropertyForm({
 
   return (
     <Form layout="vertical" style={formStyle}>
-      <Text strong style={sectionTitleStyle}>环节属性</Text>
-
       <Form.Item label="标识">
         <Input
           value={link.id}
@@ -587,11 +583,6 @@ function buildGotoOptions(
 
 const formStyle: CSSProperties = {
   padding: 16,
-};
-
-const sectionTitleStyle: CSSProperties = {
-  display: 'block',
-  marginBottom: 16,
 };
 
 const sectionHeaderStyle: CSSProperties = {

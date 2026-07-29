@@ -59,8 +59,6 @@ export function PhasePropertyForm({
 
   return (
     <Form layout="vertical" style={formStyle}>
-      <Text strong style={sectionTitleStyle}>阶段属性</Text>
-
       <Form.Item label="标识">
         <Input
           value={phase.id}
@@ -119,7 +117,3 @@ const formStyle: CSSProperties = {
   padding: 16,
 };
 
-const sectionTitleStyle: CSSProperties = {
-  display: 'block',
-  marginBottom: 16,
-};
