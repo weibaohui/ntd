@@ -1,33 +1,17 @@
 //! Git 同步模块
 //!
 //! 提供从远程 Git 仓库同步内置资源（专家、模板、Skills）的能力。
-//! 支持首次 clone 和后续 pull + merge 更新，冲突策略可选。
+//! 支持首次 clone 和后续 fetch + reset --hard 更新，固定以远程仓库为准（远程覆盖本地）。
 
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-/// 同步策略
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SyncStrategy {
-    /// 保留本地修改（冲突时本地获胜）
-    KeepLocal,
-    /// 覆盖本地修改（冲突时远程获胜）
-    Overwrite,
-    /// 手动处理冲突（保留冲突状态）
-    Manual,
-}
-
-impl From<&str> for SyncStrategy {
-    fn from(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "overwrite" => SyncStrategy::Overwrite,
-            "manual" => SyncStrategy::Manual,
-            _ => SyncStrategy::KeepLocal,
-        }
-    }
-}
-
 /// 同步结果
+///
+/// 同步策略已固定为「以远程仓库为准」（远程覆盖本地）：`sync_repo` 始终
+/// `git reset --hard` 到远程分支，保证工作区与远程完全一致，不再提供
+/// keep_local / manual 等本地优先策略（keep_local 在本地 commit 已等于远程时会
+/// 提前返回、跳过 reset --hard，导致被误删/被改的本地文件无法还原）。
 #[derive(Debug, Clone)]
 pub struct SyncResult {
     /// 是否成功
@@ -237,7 +221,6 @@ pub async fn sync_repo(
     repo_path: &Path,
     remote: &str,
     branch: &str,
-    strategy: SyncStrategy,
 ) -> Result<SyncResult, GitSyncError> {
     if !repo_path.exists() {
         return Err(GitSyncError::DirectoryNotFound(format!(
@@ -248,76 +231,30 @@ pub async fn sync_repo(
 
     let local_commit = get_current_commit(repo_path).await?;
 
+    // 先拉取远程最新提交，保证 origin/<branch> 指向远程最新
     run_git_command(&["fetch", remote, branch], Some(repo_path)).await?;
 
     let remote_commit = get_remote_commit(repo_path, remote, branch).await?;
 
-    if local_commit == remote_commit {
-        return Ok(SyncResult {
-            success: true,
-            message: "已是最新版本".to_string(),
-            is_first_clone: false,
-            has_updates: false,
-            changed_files: 0,
-        });
-    }
+    // 以远程为准：无论本地 commit 是否与远程相等，都把工作区重置到远程分支。
+    // 这样即使本地文件被误删/被改（此时 local_commit == remote_commit 仍成立），
+    // 也能通过 reset --hard 还原成远程版本，避免「已是最新版本」提前返回导致文件丢失。
+    run_git_command(&["reset", "--hard", &format!("{}/{}", remote, branch)], Some(repo_path)).await?;
 
-    match strategy {
-        SyncStrategy::KeepLocal | SyncStrategy::Overwrite => {
-            run_git_command(&["reset", "--hard", &format!("{}/{}", remote, branch)], Some(repo_path)).await?;
-            Ok(SyncResult {
-                success: true,
-                message: "同步成功，远程覆盖本地".to_string(),
-                is_first_clone: false,
-                has_updates: true,
-                changed_files: 0,
-            })
-        }
-        SyncStrategy::Manual => {
-            match run_git_command(&["merge", &format!("{}/{}", remote, branch)], Some(repo_path)).await {
-                Ok((stdout, _)) => {
-                    let changed_files = count_changed_files(&stdout);
-                    Ok(SyncResult {
-                        success: true,
-                        message: format!("同步成功，更新了 {} 个文件", changed_files),
-                        is_first_clone: false,
-                        has_updates: true,
-                        changed_files,
-                    })
-                }
-                Err(e) => {
-                    if let GitSyncError::CommandFailed(ref msg) = e {
-                        if msg.contains("Automatic merge failed") {
-                            return Ok(SyncResult {
-                                success: true,
-                                message: "存在冲突，请手动处理".to_string(),
-                                is_first_clone: false,
-                                has_updates: true,
-                                changed_files: 0,
-                            });
-                        }
-                    }
-                    Err(e)
-                }
-            }
-        }
-    }
-}
-
-/// 从 merge 输出中统计变更文件数
-fn count_changed_files(output: &str) -> usize {
-    let has_update = output.lines().any(|line| {
-        let trimmed = line.trim_start();
-        trimmed.starts_with("Updating ") || trimmed.starts_with("Fast-forward")
-    });
-    let mode_lines = output
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim_start();
-            trimmed.starts_with("create mode") || trimmed.starts_with("delete mode")
-        })
-        .count();
-    has_update as usize + mode_lines
+    // has_updates 仅反映 commit 是否前进；工作区被还原（如补回缺失文件）也算一次有效同步。
+    let has_updates = local_commit != remote_commit;
+    let message = if has_updates {
+        "同步成功，远程覆盖本地".to_string()
+    } else {
+        "已是最新版本（如本地文件缺失已自动还原）".to_string()
+    };
+    Ok(SyncResult {
+        success: true,
+        message,
+        is_first_clone: false,
+        has_updates,
+        changed_files: 0,
+    })
 }
 
 /// 获取本地存储目录的绝对路径
@@ -357,12 +294,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_strategy_from_str() {
-        assert_eq!(SyncStrategy::from("keep_local"), SyncStrategy::KeepLocal);
-        assert_eq!(SyncStrategy::from("Keep_Local"), SyncStrategy::KeepLocal);
-        assert_eq!(SyncStrategy::from("overwrite"), SyncStrategy::Overwrite);
-        assert_eq!(SyncStrategy::from("manual"), SyncStrategy::Manual);
-        assert_eq!(SyncStrategy::from("unknown"), SyncStrategy::KeepLocal);
+    fn test_sync_repo_restores_deleted_file() {
+        // 回归测试：本地 commit 已等于远程、但工作区文件被删时，sync_repo 必须仍执行
+        // reset --hard 把文件还原，不能提前返回「已是最新版本」导致文件丢失。
+        // 这正是 keep_local 策略被移除前存在的同步缺陷。
+        use std::process::Command;
+
+        let remote = tempfile::tempdir().expect("创建临时远程仓库失败");
+        let local = tempfile::tempdir().expect("创建临时本地仓库失败");
+
+        // git 命令快捷执行器：失败即 panic，输出错误信息便于排查
+        let git = |dir: &std::path::Path, args: &[&str]| {
+            let out = Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .expect("执行 git 失败");
+            assert!(
+                out.status.success(),
+                "git {:?} 失败: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+
+        // 1) 远程裸仓库（默认分支 main）
+        git(remote.path(), &["init", "--bare", "-b", "main"]);
+
+        // 2) 本地 clone 远程，落一个含 a.txt 的提交并推回远程
+        git(local.path(), &["clone", remote.path().to_str().unwrap(), "."]);
+        git(local.path(), &["config", "user.email", "t@t"]);
+        git(local.path(), &["config", "user.name", "t"]);
+        std::fs::write(local.path().join("a.txt"), "hello").expect("写 a.txt 失败");
+        git(local.path(), &["add", "a.txt"]);
+        git(local.path(), &["commit", "-m", "init"]);
+        git(local.path(), &["push", "origin", "main"]);
+
+        // 3) 模拟误删：删除工作区文件，但本地 commit 仍 == 远程（命中旧提前返回分支）
+        std::fs::remove_file(local.path().join("a.txt")).expect("删除 a.txt 失败");
+        assert!(!local.path().join("a.txt").exists(), "前置：a.txt 应已被删除");
+
+        // 4) 执行同步，预期文件被 reset --hard 还原
+        let rt = tokio::runtime::Runtime::new().expect("创建 tokio runtime 失败");
+        let result = rt.block_on(sync_repo(local.path(), "origin", "main"));
+        assert!(result.is_ok(), "sync_repo 应成功: {:?}", result.err());
+        assert!(
+            local.path().join("a.txt").exists(),
+            "被删文件应被 reset --hard 还原"
+        );
     }
 
     #[test]
@@ -371,12 +350,6 @@ mod tests {
             assert!(dir.to_string_lossy().contains(".ntd"));
             assert!(dir.to_string_lossy().contains("bundled"));
         }
-    }
-
-    #[test]
-    fn test_count_changed_files() {
-        let output = "Updating abc123..def456\nFast-forward\n create mode 100644 experts/test.md\n delete mode 100644 experts/old.md";
-        assert_eq!(count_changed_files(output), 3);
     }
 
     #[test]

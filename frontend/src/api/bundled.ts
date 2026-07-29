@@ -5,11 +5,6 @@
 import { api, unwrap } from '@/utils/database/client';
 
 /**
- * 同步策略
- */
-export type SyncStrategy = 'keep_local' | 'overwrite' | 'manual';
-
-/**
  * 子目录类型
  */
 export type Subdir = 'all' | 'experts' | 'todos' | 'skills' | 'processes';
@@ -18,7 +13,6 @@ export interface BundledStatus {
   remote_url: string;
   branch: string;
   local_path: string;
-  sync_strategy: string;
   auto_sync_enabled: boolean;
   local_exists: boolean;
   local_commit: string | null;
@@ -339,12 +333,12 @@ export const bundledApi = {
   /**
    * 手动触发同步
    */
-  async sync(params: { subdir?: Subdir; strategy?: SyncStrategy } = {}): Promise<SyncResult> {
+  async sync(params: { subdir?: Subdir } = {}): Promise<SyncResult> {
     // 后端返回 {code, data, message} 包裹，必须用 unwrap 取出 data，
     // 否则调用方拿到的会是整个 axios response，字段访问全部失效。
+    // 同步策略已固定为「以远程为准」，不再由前端传参。
     return unwrap(await api.post('/api/bundled/sync', {
       subdir: params.subdir || 'all',
-      strategy: params.strategy || 'keep_local',
     }));
   },
 

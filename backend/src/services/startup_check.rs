@@ -9,7 +9,6 @@
 
 use std::time::Duration;
 
-use crate::git_sync::SyncStrategy;
 use crate::handlers::bundled::{run_bundled_sync, Subdir};
 use crate::handlers::AppState;
 
@@ -52,8 +51,8 @@ async fn sync_resources(state: &AppState) {
     }
 
     tracing::info!("[startup-check] 开始同步内置资源（专家 + 事项模板）");
-    // Overwrite：bundled 是系统资源，远程为准；用户自定义在独立目录，不受影响。
-    match run_bundled_sync(state, Subdir::All, SyncStrategy::Overwrite).await {
+    // bundled 是系统资源，远程为准（sync_repo 固定 reset --hard 到远程分支）；用户自定义在独立目录，不受影响。
+    match run_bundled_sync(state, Subdir::All).await {
         Ok(r) => tracing::info!(
             "[startup-check] 资源同步完成：{}（更新 {} 个文件）",
             r.message,

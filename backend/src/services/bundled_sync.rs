@@ -80,7 +80,7 @@ async fn perform_sync(url: &str, branch: &str, local_path: &str) {
         git_sync::clone_repo(url, &repo_path, branch).await
     } else {
         tracing::info!("[bundled-sync] 执行同步更新");
-        git_sync::sync_repo(&repo_path, "origin", branch, git_sync::SyncStrategy::Overwrite).await
+        git_sync::sync_repo(&repo_path, "origin", branch).await
     };
 
     match result {
