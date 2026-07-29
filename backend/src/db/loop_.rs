@@ -1194,6 +1194,12 @@ impl Database {
     }
 
     /// 批量查询指定 loop_execution 列表的待审批数，返回 execution_id → count 映射。
+    ///
+    /// 「待审批」覆盖两条暂停路径（NTD-004）：
+    /// - 旧评分路径：暂停时写 `approval_status='pending'`；
+    /// - 工艺（phase_driver）路径：暂停时只写 `status='pending_approval'`，不写 approval_status。
+    ///
+    /// 两种写法互斥（不同路径产生），OR 条件不会重复计数。
     pub async fn count_pending_approvals_by_execution_ids(
         &self,
         execution_ids: &[i64],
@@ -1211,7 +1217,8 @@ impl Database {
         let sql = format!(
             "SELECT lse.loop_execution_id, COUNT(*) AS n \
              FROM loop_step_executions lse \
-             WHERE lse.loop_execution_id IN ({}) AND lse.approval_status = 'pending' \
+             WHERE lse.loop_execution_id IN ({}) \
+               AND (lse.approval_status = 'pending' OR lse.status = 'pending_approval') \
              GROUP BY lse.loop_execution_id",
             ids_str
         );
@@ -2502,5 +2509,151 @@ mod loop_stats_tests {
         assert_eq!(stats.total_executions, 0);
         assert!(stats.trigger_type_distribution.is_empty());
         assert_eq!(stats.total_input_tokens, 0);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod loop_approval_tests {
+    use crate::db::Database;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    async fn fresh_db() -> Database {
+        Database::new(":memory:").await.expect("memory db must open")
+    }
+
+    /// 取某表当前最大 id（等价于刚插入行的 id；用 MAX 因连接池不保证同一连接）。
+    async fn max_id(db: &Database, table: &str) -> i64 {
+        let sql = format!("SELECT MAX(id) AS m FROM {table}");
+        let row = db
+            .conn
+            .query_one(Statement::from_string(DbBackend::Sqlite, sql))
+            .await
+            .expect("query max id")
+            .expect("max id row exists");
+        row.try_get_by::<i64, _>("m").unwrap_or(0)
+    }
+
+    /// 造一条 pending_approval 的环节执行记录（含 todo/loop/step/execution 四级外键），
+    /// 返回 (loop_execution_id, step_execution_id)。
+    async fn seed_pending_step_execution(db: &Database) -> (i64, i64) {
+        db.exec("INSERT INTO todos (title, prompt, status) VALUES ('t', 'p', 'pending')")
+            .await
+            .expect("insert todo");
+        let todo_id = max_id(db, "todos").await;
+        db.exec("INSERT INTO loops (name) VALUES ('L')")
+            .await
+            .expect("insert loop");
+        let loop_id = max_id(db, "loops").await;
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) VALUES ({loop_id}, 's', {todo_id}, 1)"
+        ))
+        .await
+        .expect("insert step");
+        let step_id = max_id(db, "loop_steps").await;
+        db.exec(&format!(
+            "INSERT INTO loop_executions (loop_id, trigger_type, status, started_at) \
+             VALUES ({loop_id}, 'manual', 'running', datetime('now'))"
+        ))
+        .await
+        .expect("insert loop_execution");
+        let exec_id = max_id(db, "loop_executions").await;
+        db.exec(&format!(
+            "INSERT INTO loop_step_executions (loop_execution_id, step_id, todo_id, status, sequence_index) \
+             VALUES ({exec_id}, {step_id}, {todo_id}, 'pending_approval', 1)"
+        ))
+        .await
+        .expect("insert step_execution");
+        let se_id = max_id(db, "loop_step_executions").await;
+        (exec_id, se_id)
+    }
+
+    /// 审批通过落库：status/rating/approval_status/comment 全部写入。
+    /// approval_status='approved' 是 resume_loop_execution 定位待恢复环节的查找条件（NTD-004）。
+    #[tokio::test]
+    async fn test_approve_step_execution_approved_writes_terminal_state() {
+        let db = fresh_db().await;
+        let (exec_id, se_id) = seed_pending_step_execution(&db).await;
+
+        db.approve_step_execution(se_id, 100, "success", Some("同意上线"))
+            .await
+            .expect("approve");
+
+        let list = db.list_loop_step_executions(exec_id).await.expect("list");
+        let se = list.iter().find(|s| s.id == se_id).expect("target row");
+        assert_eq!(se.status, "success");
+        assert_eq!(se.rating, Some(100));
+        assert_eq!(se.approval_status.as_deref(), Some("approved"));
+        assert_eq!(se.approval_comment.as_deref(), Some("同意上线"));
+    }
+
+    /// 审批拒绝落库：status=failed、rating=0，resume 据此走 on_rating_fail 分支。
+    #[tokio::test]
+    async fn test_approve_step_execution_rejected_writes_failed() {
+        let db = fresh_db().await;
+        let (exec_id, se_id) = seed_pending_step_execution(&db).await;
+
+        db.approve_step_execution(se_id, 0, "failed", None)
+            .await
+            .expect("approve");
+
+        let list = db.list_loop_step_executions(exec_id).await.expect("list");
+        let se = list.iter().find(|s| s.id == se_id).expect("target row");
+        assert_eq!(se.status, "failed");
+        assert_eq!(se.rating, Some(0));
+        assert_eq!(se.approval_status.as_deref(), Some("approved"));
+        assert!(se.approval_comment.is_none());
+    }
+
+    /// 待审批计数覆盖工艺路径：phase_driver 暂停时只写 status='pending_approval'，
+    /// 不写 approval_status；计数必须能统计到，否则前端「N 待审批」角标恒为 0（NTD-004）。
+    #[tokio::test]
+    async fn test_count_pending_approvals_covers_process_path() {
+        let db = fresh_db().await;
+        let (exec_id, _se_id) = seed_pending_step_execution(&db).await;
+
+        let counts = db
+            .count_pending_approvals_by_execution_ids(&[exec_id])
+            .await
+            .expect("count");
+        assert_eq!(counts.get(&exec_id).copied().unwrap_or(0), 1);
+    }
+
+    /// 待审批计数兼容旧评分路径：暂停时写 approval_status='pending'（status 也是 pending_approval）。
+    /// 两个条件同时命中时 OR 不重复计数。
+    #[tokio::test]
+    async fn test_count_pending_approvals_legacy_path_not_double_counted() {
+        let db = fresh_db().await;
+        let (exec_id, se_id) = seed_pending_step_execution(&db).await;
+        // 旧路径会额外写 approval_status='pending'（loop_runner.rs 暂停分支）。
+        db.set_step_execution_approval_status(se_id, "pending")
+            .await
+            .expect("set approval_status");
+
+        let counts = db
+            .count_pending_approvals_by_execution_ids(&[exec_id])
+            .await
+            .expect("count");
+        assert_eq!(
+            counts.get(&exec_id).copied().unwrap_or(0),
+            1,
+            "status 与 approval_status 同时命中应按一行计一次"
+        );
+    }
+
+    /// 审批完成后不再计入待审批。
+    #[tokio::test]
+    async fn test_count_pending_approvals_excludes_approved() {
+        let db = fresh_db().await;
+        let (exec_id, se_id) = seed_pending_step_execution(&db).await;
+        db.approve_step_execution(se_id, 100, "success", None)
+            .await
+            .expect("approve");
+
+        let counts = db
+            .count_pending_approvals_by_execution_ids(&[exec_id])
+            .await
+            .expect("count");
+        assert_eq!(counts.get(&exec_id).copied().unwrap_or(0), 0);
     }
 }

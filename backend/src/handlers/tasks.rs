@@ -133,12 +133,16 @@ pub async fn get_task_detail(
         format!("SELECT id, status, started_at, finished_at, total_steps, completed_steps, failed_steps, trigger_meta \
                  FROM loop_executions WHERE task_id={} ORDER BY started_at DESC LIMIT 20", id)
     )).await?;
+    // 统计每次执行的待审批环节数，前端据此在执行历史行上显示「待审批」引导标记（NTD-004）。
+    let exec_ids: Vec<i64> = exec_rows.iter().map(|r| r.try_get_by::<i64,_>("id").unwrap_or(0)).collect();
+    let pending_counts = state.db.count_pending_approvals_by_execution_ids(&exec_ids).await?;
     let executions: Vec<_> = exec_rows.iter().map(|r| {
         let meta = r.try_get_by::<Option<String>,_>("trigger_meta").ok().flatten()
             .and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok());
         let requirement = meta.as_ref().and_then(|v| v.get("requirement").and_then(|r| r.as_str().map(|s| s.to_string())));
+        let exec_id = r.try_get_by::<i64,_>("id").unwrap_or(0);
         serde_json::json!({
-            "id": r.try_get_by::<i64,_>("id").unwrap_or(0),
+            "id": exec_id,
             "status": r.try_get_by::<String,_>("status").unwrap_or_default(),
             "started_at": r.try_get_by::<Option<String>,_>("started_at").ok().flatten(),
             "finished_at": r.try_get_by::<Option<String>,_>("finished_at").ok().flatten(),
@@ -146,6 +150,7 @@ pub async fn get_task_detail(
             "completed_steps": r.try_get_by::<i32,_>("completed_steps").unwrap_or(0),
             "failed_steps": r.try_get_by::<i32,_>("failed_steps").unwrap_or(0),
             "requirement": requirement,
+            "pending_approval_count": pending_counts.get(&exec_id).copied().unwrap_or(0),
         })
     }).collect();
     Ok(ApiResponse::ok(serde_json::json!({

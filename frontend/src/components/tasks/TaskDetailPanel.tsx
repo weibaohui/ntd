@@ -52,6 +52,8 @@ interface ExecInfo {
   completed_steps: number;
   failed_steps: number;
   requirement?: string;
+  /** 待人工审批的环节数：>0 时在执行历史行上显示引导标记（NTD-004）。 */
+  pending_approval_count?: number;
 }
 
 interface TaskDetailData {
@@ -275,6 +277,11 @@ function ExecTab({
                   <Tag color={statusColor(e.status)}>{e.status}</Tag>
                   <Text>#{e.id} {e.completed_steps}/{e.total_steps} 完成</Text>
                   {e.failed_steps > 0 && <Tag color="orange">失败 {e.failed_steps}</Tag>}
+                  {/* 待审批引导：审批按钮在展开后的工艺看板里，
+                      此处用醒目 Tag 告诉用户"需要展开处理"，否则 loop 会永久停在该环节。 */}
+                  {(e.pending_approval_count ?? 0) > 0 && (
+                    <Tag color="warning">⏳ {e.pending_approval_count} 条待审批，展开处理</Tag>
+                  )}
                 </Space>
                 <div className={styles.execRowDesc}>
                   {e.requirement || <Text type="secondary">{e.started_at ?? ''}</Text>}

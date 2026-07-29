@@ -62,6 +62,13 @@ pub struct LoopRunner {
     tx: broadcast::Sender<crate::executor_service::ExecEvent>,
 }
 
+/// 人工审批恢复时按环节终态判定是否通过。
+/// 审批 handler（评分制 / 布尔制）已各自算出终态，统一信任 status，
+/// 避免用评分二次推导在 rating=0、min_rating=0 时把"拒绝"误判为通过（NTD-004）。
+fn approved_step_passed(status: &str) -> bool {
+    status == "success"
+}
+
 /// Loop 执行结果：区分「真正完成」和「暂停等待」，
 /// 用于避免人工审批等暂停状态误发 LoopFinished 事件。
 #[derive(Debug, PartialEq)]
@@ -448,11 +455,12 @@ impl LoopRunner {
             }
         };
 
-        // 5. 根据审批评分和阈值决定下一步
+        // 5. 根据审批后的环节终态决定下一步。
+        // 审批 handler（评分制旧接口 / 布尔制 gate 接口）已各自算出终态，此处直接采用；
+        // 不再用 rating>=min_rating 二次推导——布尔审批拒绝时 rating=0，
+        // 若 min_rating=0 会被误判为通过而走错 on_success 分支（NTD-004）。
         let step = &all_steps[step_idx];
-        let rating = approved.rating.unwrap_or(0);
-        let min_rating = approved.min_rating.unwrap_or(0);
-        let gate_passed = rating >= min_rating;
+        let gate_passed = approved_step_passed(&approved.status);
 
         // 6. 更新计数器（从已有 step_executions 推算）
         let completed = step_execs.iter().filter(|se| se.status == "success").count() as i32;
@@ -472,8 +480,8 @@ impl LoopRunner {
         let next_idx = self.resolve_next(step, next_policy, &step_id_to_idx, step_idx);
 
         info!(
-            "resume: loop_execution #{} step #{} rating={} min={} gate_passed={} next_idx={:?}",
-            loop_execution_id, approved.step_id, rating, min_rating, gate_passed, next_idx
+            "resume: loop_execution #{} step #{} status={} gate_passed={} next_idx={:?}",
+            loop_execution_id, approved.step_id, approved.status, gate_passed, next_idx
         );
 
         // 8. 从下一步继续执行
@@ -1879,6 +1887,30 @@ fn build_enhanced_prompt_with_requirement(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
+
+    // ── approved_step_passed：审批恢复按环节终态判定（NTD-004）──
+
+    #[test]
+    fn test_approved_step_passed_success_is_passed() {
+        // 审批通过 → 环节终态 success → 走 on_success 分支。
+        assert!(approved_step_passed("success"));
+    }
+
+    #[test]
+    fn test_approved_step_passed_failed_is_not_passed() {
+        // 审批拒绝 → 环节终态 failed → 走 on_rating_fail 分支；
+        // 关键回归点：布尔审批拒绝时 rating=0，若按 rating>=min_rating 推导
+        // 在 min_rating=0 下会误判为通过，按 status 判定则不会。
+        assert!(!approved_step_passed("failed"));
+    }
+
+    #[test]
+    fn test_approved_step_passed_other_statuses_are_not_passed() {
+        // 非终态/异常状态一律视为不通过，防止意外走进 on_success。
+        for status in ["pending_approval", "running", "pending", "skipped", ""] {
+            assert!(!approved_step_passed(status), "status={status} 不应视为通过");
+        }
+    }
 
     // ── compose_abnormal_handler_prompt 占位符替换（需求 035）──
 

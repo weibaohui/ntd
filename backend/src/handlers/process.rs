@@ -855,17 +855,116 @@ pub struct ApproveGateResponse {
 }
 
 /// 人工审批门禁：通过/拒绝。
+///
+/// 完整链路：校验 → 更新 gate → 写环节终态 → 广播刷新事件 → 恢复 loop 执行。
+/// 此前只更新 gate 记录即返回，环节永远停在 pending_approval、loop 不再前进（NTD-004）。
 pub async fn approve_gate(
     State(state): State<AppState>,
-    Path((_ws_id, _loop_id, _eid, _seid, gid)): Path<(i64, i64, i64, i64, i64)>,
+    Path((_ws_id, loop_id, eid, seid, gid)): Path<(i64, i64, i64, i64, i64)>,
     Json(req): Json<ApproveGateRequest>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
-    let status = if req.approved { "passed" } else { "failed" };
+    // 先确认 runner 可用再写库：避免"审批已落库但 resume 失败返回 500"的半完成状态。
+    let runner = state
+        .loop_runner
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("loop runner not ready".to_string()))?;
+    let step_exec = load_pending_step_execution(&state, loop_id, eid, seid).await?;
+    validate_pending_human_gate(&state, seid, gid).await?;
+
+    // 布尔审批映射为环节终态与展示评分：通过→success/100，拒绝→failed/0。
+    // 评分 0 配合 resume 的 status 判定（不再用 rating>=min_rating），拒绝不会误判为通过。
+    let (gate_status, final_status, rating) = if req.approved {
+        ("passed", "success", 100)
+    } else {
+        ("failed", "failed", 0)
+    };
     state
         .db
-        .update_loop_step_execution_gate(gid, status, req.comment.as_deref(), Some("human"))
+        .update_loop_step_execution_gate(gid, gate_status, req.comment.as_deref(), Some("human"))
         .await?;
-    Ok(ApiResponse::ok(ApproveGateResponse { gate_id: gid, status: status.to_string() }))
+    // 复用旧接口的落库方法：写环节终态 + approval_status='approved'，
+    // 后者正是 resume_loop_execution 定位待恢复环节的查找条件。
+    state
+        .db
+        .approve_step_execution(seid, rating, final_status, req.comment.as_deref())
+        .await?;
+
+    // 广播状态变更触发前端刷新，让看板/任务界面立刻离开"待审批"视图。
+    let _ = state.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
+        record_id: step_exec.execution_record_id.unwrap_or(0),
+        todo_id: step_exec.todo_id,
+        review_status: final_status.to_string(),
+    });
+
+    // 从被审批环节的下一环节继续主循环。
+    runner.resume_loop_execution(eid).await;
+
+    Ok(ApiResponse::ok(ApproveGateResponse { gate_id: gid, status: gate_status.to_string() }))
+}
+
+/// 加载待审批的环节执行记录，并校验 execution 归属指定 loop（防路径参数伪造）。
+async fn load_pending_step_execution(
+    state: &AppState,
+    loop_id: i64,
+    eid: i64,
+    seid: i64,
+) -> Result<crate::db::entity::loop_step_executions::Model, AppError> {
+    // 与旧 approve_step_execution 相同的归属校验：execution 必须属于路径中的 loop。
+    let loop_exec = state
+        .db
+        .get_loop_execution(eid)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if loop_exec.loop_id != loop_id {
+        return Err(AppError::BadRequest(
+            "该 execution 不属于指定的 loop".to_string(),
+        ));
+    }
+    let step_execs = state.db.list_loop_step_executions(eid).await?;
+    let step_exec = step_execs
+        .into_iter()
+        .find(|se| se.id == seid)
+        .ok_or(AppError::NotFound)?;
+    ensure_step_approvable(&step_exec.status)?;
+    Ok(step_exec)
+}
+
+/// 校验目标 gate 属于该环节、是 human_approval 类型且仍在等待评价。
+async fn validate_pending_human_gate(
+    state: &AppState,
+    seid: i64,
+    gid: i64,
+) -> Result<(), AppError> {
+    let gates = state.db.list_loop_step_execution_gates(seid).await?;
+    let gate = gates.iter().find(|g| g.id == gid).ok_or(AppError::NotFound)?;
+    ensure_gate_approvable(&gate.gate_type, &gate.status)
+}
+
+/// 校验环节执行状态允许审批（纯函数，便于单测）。
+/// 幂等保护：重复审批或审批已完成的环节直接拒绝，避免覆盖终态。
+fn ensure_step_approvable(status: &str) -> Result<(), AppError> {
+    if status != "pending_approval" {
+        return Err(AppError::BadRequest(
+            "该环节当前不需要审批".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// 校验门禁可经人工审批（纯函数，便于单测）。
+/// 只允许 human_approval 类型走本接口，防止借道篡改 AI 评审/脚本校验的结果。
+fn ensure_gate_approvable(gate_type: &str, gate_status: &str) -> Result<(), AppError> {
+    if gate_type != "human_approval" {
+        return Err(AppError::BadRequest(
+            "该门禁不是人工审批类型".to_string(),
+        ));
+    }
+    if gate_status != "pending" {
+        return Err(AppError::BadRequest(
+            "该门禁已被评价".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// POST .../artifacts 请求体。
@@ -1182,5 +1281,48 @@ mod tests {
         assert_eq!(req.category.as_deref(), Some("software"));
         assert_eq!(req.complexity.as_deref(), Some("standard"));
         assert_eq!(req.version.as_deref(), Some("2.0.0"));
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // ensure_step_approvable / ensure_gate_approvable：人工审批前置校验（NTD-004）
+    // ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_ensure_step_approvable_accepts_pending_approval() {
+        // 只有 pending_approval 状态的环节允许审批。
+        assert!(ensure_step_approvable("pending_approval").is_ok());
+    }
+
+    #[test]
+    fn test_ensure_step_approvable_rejects_terminal_status() {
+        // 已终态（success/failed）的环节重复审批必须拒绝，防止覆盖终态。
+        for status in ["success", "failed", "running", "pending", "skipped"] {
+            let result = ensure_step_approvable(status);
+            assert!(result.is_err(), "status={status} 应拒绝审批");
+        }
+    }
+
+    #[test]
+    fn test_ensure_gate_approvable_accepts_pending_human_approval() {
+        // 人工审批门禁 + 等待评价 → 放行。
+        assert!(ensure_gate_approvable("human_approval", "pending").is_ok());
+    }
+
+    #[test]
+    fn test_ensure_gate_approvable_rejects_non_human_type() {
+        // 非人工审批门禁不允许借道本接口，防止篡改 AI 评审/脚本校验结果。
+        for gate_type in ["ai_criteria_review", "artifact_present", "script_check"] {
+            let result = ensure_gate_approvable(gate_type, "pending");
+            assert!(result.is_err(), "gate_type={gate_type} 应拒绝");
+        }
+    }
+
+    #[test]
+    fn test_ensure_gate_approvable_rejects_already_evaluated() {
+        // 已评价（passed/failed）的门禁不允许重复审批，保证幂等。
+        for status in ["passed", "failed"] {
+            let result = ensure_gate_approvable("human_approval", status);
+            assert!(result.is_err(), "status={status} 应拒绝");
+        }
     }
 }

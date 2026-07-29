@@ -56,11 +56,9 @@ export function ProcessExecutionBoard({ workspaceId, loopId, executionId, onBack
     load();
   }, [executionId]);
 
-  const handleApprove = async (gate: GateDto, stepExecId: number) => {
-    // 复用同一 handler 处理「通过」与「拒绝」两个方向的审批操作。
-    // gate.status === 'pending' 时 approved=true（审批通过），
-    // gate.status === 'passed' 时 approved=false（撤销通过→拒绝）。
-    const approved = !(gate.status === 'passed');
+  // approved 由调用方（通过/拒绝按钮）显式传入，不再从 gate.status 反推——
+  // 按钮只在 pending 时渲染，反推会得到恒 true，导致「拒绝」实际发出"通过"（NTD-004）。
+  const handleApprove = async (gate: GateDto, stepExecId: number, approved: boolean) => {
     try {
       await bundledApi.approveGate(workspaceId, loopId, executionId, stepExecId, gate.id, approved);
       message.success(approved ? '已通过' : '已拒绝');
@@ -197,7 +195,7 @@ export function ProcessExecutionBoard({ workspaceId, loopId, executionId, onBack
                               <Button
                                 size="small"
                                 type="primary"
-                                onClick={() => handleApprove(g, step.execution!.step_execution_id)}
+                                onClick={() => handleApprove(g, step.execution!.step_execution_id, true)}
                               >
                                 通过
                               </Button>
@@ -205,7 +203,7 @@ export function ProcessExecutionBoard({ workspaceId, loopId, executionId, onBack
                                 size="small"
                                 danger
                                 style={{ marginLeft: 4 }}
-                                onClick={() => handleApprove(g, step.execution!.step_execution_id)}
+                                onClick={() => handleApprove(g, step.execution!.step_execution_id, false)}
                               >
                                 拒绝
                               </Button>
