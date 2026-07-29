@@ -69,6 +69,32 @@ fn approved_step_passed(status: &str) -> bool {
     status == "success"
 }
 
+/// loop 执行终态 → 关联任务（tasks.status）状态映射（纯函数）。
+/// success/partial 都算任务成功；failed 与两类上限终止都算失败；
+/// 其余（running 等非终态）归为 running，与任务列表的展示语义一致。
+fn task_status_for_loop_status(status: &str) -> &'static str {
+    match status {
+        "success" | "partial" => "success",
+        "failed" | "capped_step" | "capped_token" => "failed",
+        _ => "running",
+    }
+}
+
+/// 计算执行时长（秒，纯函数）：起止时间均可解析且 finish >= start 时返回差值，否则 0。
+/// 时间格式为 RFC3339；解析失败不报错是因为历史数据格式不保证严格一致。
+fn execution_duration_secs(started_at: &str, finished_at: Option<&str>) -> i64 {
+    let Some(finish) = finished_at else { return 0 };
+    let start_dt = chrono::DateTime::parse_from_rfc3339(started_at);
+    let finish_dt = chrono::DateTime::parse_from_rfc3339(finish);
+    match (start_dt, finish_dt) {
+        (Ok(s), Ok(f)) => {
+            let secs = f.timestamp() - s.timestamp();
+            if secs >= 0 { secs } else { 0 }
+        }
+        _ => 0,
+    }
+}
+
 /// Loop 执行结果：区分「真正完成」和「暂停等待」，
 /// 用于避免人工审批等暂停状态误发 LoopFinished 事件。
 #[derive(Debug, PartialEq)]
@@ -220,17 +246,9 @@ impl LoopRunner {
 
             // 获取 loop_execution 统计数据
             let loop_exec = this2_for_event.ctx.db.get_loop_execution(loop_execution_id).await.ok().flatten();
-            // 更新关联 task 的状态。
-            if let Some(ref le) = loop_exec {
-                if let Some(task_id) = le.task_id {
-                    let tstatus = match le.status.as_str() {
-                        "success" | "partial" => "success",
-                        "failed" | "capped_step" | "capped_token" => "failed",
-                        _ => "running",
-                    };
-                    let _ = this2_for_event.ctx.db.update_task_status(task_id, tstatus).await;
-                }
-            }
+            // 更新关联 task 的状态（与 resume 路径共用同一实现，NTD-005）。
+            // 注意：Err 分支在终态化 loop_execution 后会再同步一次，此处读到 running 无妨。
+            this2_for_event.sync_task_status(loop_execution_id).await;
             let (final_status, total_steps, completed_steps, failed_steps, duration_secs) = match loop_exec {
                 Some(le) => {
                     // 计算执行时长：仅当起止时间都能解析且 finish >= start 时才计算，否则返回 0
@@ -319,6 +337,9 @@ impl LoopRunner {
                             Some(&e),
                         )
                         .await;
+                    // 终态化后再次同步任务状态：上面的同步发生在终态化之前（读到 running），
+                    // 这里确保 run 失败时任务落到 failed（NTD-005 连带缺陷 C）。
+                    this2_for_err.sync_task_status(loop_execution_id).await;
                     // 触发异常处理 Todo（传入 0 作为步数/Token 统计；error_detail 带上 run 失败的原始错误）
                     let err_msg = e.to_string();
                     let _ = this2_for_err
@@ -386,6 +407,90 @@ impl LoopRunner {
             }
         }
         total
+    }
+
+    /// 按 loop 执行终态同步关联任务（tasks.status）状态；无关联 task 时无操作。
+    /// 启动路径与 resume 路径共用（NTD-005：此前只有启动路径做这一步）。
+    async fn sync_task_status(&self, loop_execution_id: i64) {
+        // 读不到执行记录时静默返回：同步是尽力而为的收尾，不应中断主流程。
+        let Ok(Some(le)) = self.ctx.db.get_loop_execution(loop_execution_id).await else { return };
+        let Some(task_id) = le.task_id else { return };
+        let _ = self
+            .ctx
+            .db
+            .update_task_status(task_id, task_status_for_loop_status(&le.status))
+            .await;
+    }
+
+    /// 收集执行统计并广播 LoopFinished 事件（FeishuPushService 按 workspace 配置推送）。
+    /// 启动路径的飞书"回复原对话"分支不走这里；resume 路径统一走广播（NTD-005 已知限制）。
+    async fn broadcast_loop_finished(&self, loop_id: i64, loop_execution_id: i64) {
+        let loop_info = self.ctx.db.get_loop(loop_id).await.ok().flatten();
+        let loop_title = loop_info
+            .as_ref()
+            .map(|l| l.name.clone())
+            .unwrap_or_else(|| format!("Loop #{}", loop_id));
+        let loop_workspace_id = loop_info.as_ref().and_then(|l| l.workspace_id);
+        // 执行记录在读不到时不广播：没有统计数据的事件对订阅方无意义。
+        let Ok(Some(le)) = self.ctx.db.get_loop_execution(loop_execution_id).await else { return };
+        let duration_secs = execution_duration_secs(&le.started_at, le.finished_at.as_deref());
+        let total_tokens = self.get_loop_total_tokens(loop_execution_id).await;
+        let _ = self.tx.send(crate::executor_service::ExecEvent::LoopFinished {
+            loop_execution_id,
+            loop_id,
+            loop_title,
+            status: le.status,
+            total_steps: le.total_steps,
+            completed_steps: le.completed_steps,
+            failed_steps: le.failed_steps,
+            duration_secs,
+            total_tokens,
+            workspace_id: loop_workspace_id,
+        });
+    }
+
+    /// run 结束后的统一收尾（resume 路径使用，NTD-005）。
+    /// Finished → 同步任务状态 + 广播 LoopFinished；
+    /// Paused → 仅同步任务状态（多审批环节的 loop 可能再次暂停，与启动路径一致）；
+    /// Err → 终态化 + 异常处理 + WS 刷新 + 同步任务状态 + 广播（此前只打日志）。
+    async fn complete_run(
+        &self,
+        loop_id: i64,
+        loop_execution_id: i64,
+        result: Result<LoopRunOutcome, String>,
+    ) {
+        match result {
+            Ok(LoopRunOutcome::Finished) => {
+                self.sync_task_status(loop_execution_id).await;
+                self.broadcast_loop_finished(loop_id, loop_execution_id).await;
+            }
+            Ok(LoopRunOutcome::Paused) => {
+                self.sync_task_status(loop_execution_id).await;
+                info!(
+                    "[loop-runner] loop {} execution {} paused again (waiting for human approval)",
+                    loop_id, loop_execution_id
+                );
+            }
+            Err(e) => {
+                error!("loop_runner: resumed run failed: {}", e);
+                let _ = self
+                    .ctx
+                    .db
+                    .finish_loop_execution(loop_execution_id, "failed", 0, 0, Some(&e))
+                    .await;
+                let _ = self
+                    .trigger_abnormal_handler(loop_id, loop_execution_id, "failed", 0, 0, &e)
+                    .await;
+                // 终态化之后再同步：此时读到的是 failed，任务状态才能落对。
+                self.sync_task_status(loop_execution_id).await;
+                let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
+                    record_id: 0,
+                    todo_id: 0,
+                    review_status: "failed".to_string(),
+                });
+                self.broadcast_loop_finished(loop_id, loop_execution_id).await;
+            }
+        }
     }
 
     /// 恢复被人工审批暂停的 loop 执行。
@@ -487,15 +592,15 @@ impl LoopRunner {
         // 8. 从下一步继续执行
         if let Some(idx) = next_idx {
             let self_clone = self.clone();
+            let loop_id = loop_exec.loop_id;
+            let trigger_type = loop_exec.trigger_type.clone();
             tokio::spawn(async move {
-                if let Err(e) = self_clone.run_inner_from(
-                    loop_exec.loop_id,
-                    loop_execution_id,
-                    loop_exec.trigger_type.clone(),
-                    Some(idx),
-                ).await {
-                    error!("resume: loop #{} continue failed: {}", loop_exec.loop_id, e);
-                }
+                // 续跑结束后走与启动路径一致的收尾：同步任务状态、广播 LoopFinished、
+                // 错误时终态化 + 异常处理（NTD-005，此前这里只打日志，任务永远"进行中"）。
+                let result = self_clone
+                    .run_inner_from(loop_id, loop_execution_id, trigger_type, Some(idx))
+                    .await;
+                self_clone.complete_run(loop_id, loop_execution_id, result).await;
             });
         } else {
             // 没有下一步（end/break），结束 loop execution
@@ -504,6 +609,9 @@ impl LoopRunner {
                 loop_execution_id, final_status, completed, failed, None,
             ).await;
             info!("resume: loop_execution #{} ended with status {}", loop_execution_id, final_status);
+            // 就地终态化同样要完成收尾：同步任务状态 + 广播 LoopFinished（NTD-005）。
+            self.sync_task_status(loop_execution_id).await;
+            self.broadcast_loop_finished(loop_exec.loop_id, loop_execution_id).await;
         }
     }
 
@@ -1887,6 +1995,62 @@ fn build_enhanced_prompt_with_requirement(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
+
+    // ── task_status_for_loop_status：loop 终态 → 任务状态映射（NTD-005）──
+
+    #[test]
+    fn test_task_status_for_loop_status_success_family() {
+        // success 与 partial（部分完成）都算任务成功。
+        assert_eq!(task_status_for_loop_status("success"), "success");
+        assert_eq!(task_status_for_loop_status("partial"), "success");
+    }
+
+    #[test]
+    fn test_task_status_for_loop_status_failure_family() {
+        // failed 与两类上限终止（步数/Token）都算任务失败。
+        for s in ["failed", "capped_step", "capped_token"] {
+            assert_eq!(task_status_for_loop_status(s), "failed", "status={s}");
+        }
+    }
+
+    #[test]
+    fn test_task_status_for_loop_status_non_terminal_is_running() {
+        // 非终态（含未知的未来状态）归 running，任务列表展示"进行中"。
+        for s in ["running", "pending", "paused", ""] {
+            assert_eq!(task_status_for_loop_status(s), "running", "status={s}");
+        }
+    }
+
+    // ── execution_duration_secs：执行时长计算（NTD-005 抽取）──
+
+    #[test]
+    fn test_execution_duration_secs_normal() {
+        // 起止时间均可解析且 finish >= start → 返回差值。
+        let secs = execution_duration_secs(
+            "2026-07-29T10:00:00+00:00",
+            Some("2026-07-29T10:01:30+00:00"),
+        );
+        assert_eq!(secs, 90);
+    }
+
+    #[test]
+    fn test_execution_duration_secs_missing_or_inverted() {
+        // 无结束时间（进行中）→ 0；结束早于开始（异常数据）→ 0。
+        assert_eq!(execution_duration_secs("2026-07-29T10:00:00+00:00", None), 0);
+        assert_eq!(
+            execution_duration_secs(
+                "2026-07-29T10:01:00+00:00",
+                Some("2026-07-29T10:00:00+00:00"),
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn test_execution_duration_secs_unparseable() {
+        // 历史数据格式不保证 RFC3339，解析失败回退 0 而不是 panic。
+        assert_eq!(execution_duration_secs("not-a-time", Some("2026-07-29 10:00:00")), 0);
+    }
 
     // ── approved_step_passed：审批恢复按环节终态判定（NTD-004）──
 

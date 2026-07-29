@@ -69,12 +69,15 @@ async function openExecBoard(page: import('@playwright/test').Page, taskId: numb
   return { approveBtn, rejectBtn };
 }
 
-/** 轮询任务详情接口，直到指定执行的字段满足断言（WS 事件在 headless 下不保证即时到达）。 */
+/** 轮询任务详情接口，直到任务与指定执行的字段满足断言（WS 事件在 headless 下不保证即时到达）。 */
 async function expectExecState(
   page: import('@playwright/test').Page,
   taskId: number,
   execId: number,
-  assert: (exec: { status: string; pending_approval_count?: number }) => void,
+  assert: (
+    task: { status: string },
+    exec: { status: string; pending_approval_count?: number },
+  ) => void,
 ) {
   await expect(async () => {
     const resp = await page.request.get(`${BASE}/api/v1/workspaces/${WORKSPACE_ID}/tasks/${taskId}`);
@@ -82,7 +85,7 @@ async function expectExecState(
     const exec = (body.data.executions as Array<{ id: number; status: string; pending_approval_count?: number }>)
       .find((e) => e.id === execId);
     expect(exec).toBeTruthy();
-    assert(exec as { status: string; pending_approval_count?: number });
+    assert(body.data.task, exec as { status: string; pending_approval_count?: number });
   }).toPass({ timeout: 15000, intervals: [500, 1000, 2000] });
 }
 
@@ -102,9 +105,11 @@ test('NTD004 审批通过：环节 success + loop 成功结束', async ({ page }
   await expect(page.getByRole('button', { name: /通\s*过/ })).toHaveCount(0);
 
   // resume_loop_execution 生效：单环节工艺（on_success=end）审批通过后 loop 应直接成功结束。
-  await expectExecState(page, taskId, execId, (exec) => {
+  // NTD-005 回归：tasks.status（列表「状态」列）必须与 loop 终态（「最近执行」列）收敛一致。
+  await expectExecState(page, taskId, execId, (task, exec) => {
     expect(exec.status).toBe('success');
     expect(exec.pending_approval_count ?? 1).toBe(0);
+    expect(task.status).toBe('success');
   });
 });
 
@@ -122,8 +127,10 @@ test('NTD004 审批拒绝：请求 approved=false + 环节 failed', async ({ pag
   await expect(page.getByText(/人工审批 → failed/)).toBeVisible({ timeout: 10000 });
 
   // 拒绝后 loop 以失败终态结束（resume 按环节 status 判定，不再被 rating=0/min=0 误判）。
-  await expectExecState(page, taskId, execId, (exec) => {
+  // NTD-005 回归：任务状态同步为 failed（此前 resume 路径不回写，任务永远"进行中"）。
+  await expectExecState(page, taskId, execId, (task, exec) => {
     expect(exec.status).toBe('failed');
+    expect(task.status).toBe('failed');
   });
 });
 
