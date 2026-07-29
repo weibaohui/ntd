@@ -309,7 +309,7 @@ impl Database {
 pub mod blackboard;
 
 mod todo;
-pub use todo::{SchedulerUpdate, TodoUpdate};
+pub use todo::{SchedulerUpdate, TODO_TYPE_ABNORMAL_HANDLER, TodoUpdate};
 pub mod execution;
 pub(super) mod dashboard;
 mod tag;

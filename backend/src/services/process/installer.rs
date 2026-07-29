@@ -9,8 +9,8 @@ use crate::db::Database;
 use crate::models::utc_timestamp;
 
 use super::{
-    ExpectedArtifact, GateDefinition, InstallError, InstallResult, LinkDefinition, PhaseDefinition,
-    ProcessDefinition,
+    AbnormalHandlerConfig, ExpectedArtifact, GateDefinition, InstallError, InstallResult,
+    LinkDefinition, PhaseDefinition, ProcessDefinition,
 };
 
 /// 安装工艺模板到指定工作空间，返回生成的 Loop ID。
@@ -43,11 +43,11 @@ pub async fn install_process_template(
     };
 
     let limits_config = build_limits_config(&definition.limits);
-    let abnormal_handler_trigger_on = definition
-        .abnormal_handler
-        .as_ref()
-        .map(|h| serde_json::to_string(&h.trigger_on).unwrap_or_else(|_| "[]".to_string()))
-        .unwrap_or_else(|| "[\"capped_step\",\"capped_token\",\"failed\"]".to_string());
+    let abnormal_handler_trigger_on = build_abnormal_trigger_on(&definition.abnormal_handler);
+    // 异常处理载体 Todo：prompt 非空时创建，写入 loop 的 todo_id + prompt 快照列
+    let (abnormal_handler_todo_id, abnormal_handler_prompt) =
+        ensure_abnormal_handler_todo(db, &definition.abnormal_handler, workspace_id, &loop_name)
+            .await?;
 
     let loop_model = create_loop_from_template(
         db,
@@ -57,6 +57,8 @@ pub async fn install_process_template(
         workspace_path,
         &limits_config,
         &abnormal_handler_trigger_on,
+        abnormal_handler_todo_id,
+        abnormal_handler_prompt.as_deref(),
         template.id,
         &template.version,
     )
@@ -97,6 +99,8 @@ async fn create_loop_from_template(
     workspace_path: &str,
     limits_config: &str,
     abnormal_handler_trigger_on: &str,
+    abnormal_handler_todo_id: Option<i64>,
+    abnormal_handler_prompt: Option<&str>,
     process_template_id: i64,
     process_template_version: &str,
 ) -> Result<loops::Model, sea_orm::DbErr> {
@@ -111,6 +115,9 @@ async fn create_loop_from_template(
         status: ActiveValue::Set("paused".to_string()),
         limits_config: ActiveValue::Set(limits_config.to_string()),
         abnormal_handler_trigger_on: ActiveValue::Set(abnormal_handler_trigger_on.to_string()),
+        // 异常处理：todo_id 指向安装时创建的载体 Todo，prompt 为工艺定义的只读快照
+        abnormal_handler_todo_id: ActiveValue::Set(abnormal_handler_todo_id),
+        abnormal_handler_prompt: ActiveValue::Set(abnormal_handler_prompt.map(|s| s.to_string())),
         process_template_id: ActiveValue::Set(Some(process_template_id)),
         process_template_version: ActiveValue::Set(Some(process_template_version.to_string())),
         created_at: ActiveValue::Set(Some(now.clone())),
@@ -397,6 +404,80 @@ fn resolve_goto(
     }
 }
 
+/// 序列化异常处理触发条件；工艺未声明 abnormal_handler 时回退默认三态全选。
+fn build_abnormal_trigger_on(config: &Option<AbnormalHandlerConfig>) -> String {
+    config
+        .as_ref()
+        .map(|h| serde_json::to_string(&h.trigger_on).unwrap_or_else(|_| "[]".to_string()))
+        .unwrap_or_else(|| "[\"capped_step\",\"capped_token\",\"failed\"]".to_string())
+}
+
+/// 工艺安装时按 abnormal_handler.prompt 创建异常处理载体 Todo。
+/// prompt 为空（或未配置）时返回 (None, None)，不创建载体 Todo。
+async fn ensure_abnormal_handler_todo(
+    db: &Database,
+    config: &Option<AbnormalHandlerConfig>,
+    workspace_id: i64,
+    loop_display_name: &str,
+) -> Result<(Option<i64>, Option<String>), InstallError> {
+    let prompt = config
+        .as_ref()
+        .and_then(|c| c.prompt.as_ref())
+        .filter(|p| !p.trim().is_empty())
+        .cloned();
+    let Some(prompt) = prompt else {
+        return Ok((None, None));
+    };
+    let title = format!("[异常处理] {}", loop_display_name);
+    let todo_id = db
+        .create_abnormal_handler_todo(title, prompt.clone(), workspace_id)
+        .await
+        .map_err(InstallError::DbError)?;
+    Ok((Some(todo_id), Some(prompt)))
+}
+
+/// 工艺升级时同步异常处理载体 Todo：
+/// - prompt 非空：旧载体 Todo 仍存在则原地更新 prompt（保持 todo_id 稳定，历史执行记录引用不破），否则新建
+/// - prompt 空：不删旧载体 Todo，loop 列置空（返回 None），该 loop 不再触发异常处理
+async fn handle_upgrade_abnormal_handler(
+    db: &Database,
+    config: &Option<AbnormalHandlerConfig>,
+    existing_todo_id: Option<i64>,
+    workspace_id: i64,
+    loop_display_name: &str,
+) -> Result<(Option<i64>, Option<String>), InstallError> {
+    let prompt = config
+        .as_ref()
+        .and_then(|c| c.prompt.as_ref())
+        .filter(|p| !p.trim().is_empty())
+        .cloned();
+    let Some(prompt) = prompt else {
+        // 新版无异常处理 prompt：保留旧载体 Todo 不删，仅 loop 列置空
+        return Ok((None, None));
+    };
+    // 旧载体 Todo 仍存在 → 原地更新 prompt
+    if let Some(old_id) = existing_todo_id {
+        if db
+            .get_todo(old_id)
+            .await
+            .map_err(InstallError::DbError)?
+            .is_some()
+        {
+            db.update_todo_prompt(old_id, &prompt)
+                .await
+                .map_err(InstallError::DbError)?;
+            return Ok((Some(old_id), Some(prompt)));
+        }
+    }
+    // 旧载体 Todo 不存在或从未创建 → 新建
+    let title = format!("[异常处理] {}", loop_display_name);
+    let todo_id = db
+        .create_abnormal_handler_todo(title, prompt.clone(), workspace_id)
+        .await
+        .map_err(InstallError::DbError)?;
+    Ok((Some(todo_id), Some(prompt)))
+}
+
 /// 构建 limits_config JSON。
 fn build_limits_config(limits: &super::ProcessLimits) -> String {
     let mut map = serde_json::Map::new();
@@ -550,11 +631,11 @@ pub async fn upgrade_process_template_loop(
         .ok_or_else(|| InstallError::DbError(sea_orm::DbErr::Custom(format!("Loop {loop_id} not found"))))?;
 
     let limits_config = build_limits_config(&definition.limits);
-    let abnormal_handler_trigger_on = definition
-        .abnormal_handler
-        .as_ref()
-        .map(|h| serde_json::to_string(&h.trigger_on).unwrap_or_else(|_| "[]".to_string()))
-        .unwrap_or_else(|| loop_model.abnormal_handler_trigger_on.clone());
+    // 工艺显式声明 abnormal_handler 时取其 trigger_on；未声明则保留 loop 原有值
+    let abnormal_handler_trigger_on = match &definition.abnormal_handler {
+        Some(h) => serde_json::to_string(&h.trigger_on).unwrap_or_else(|_| "[]".to_string()),
+        None => loop_model.abnormal_handler_trigger_on.clone(),
+    };
 
     // 使用模板最新定义的 display_name
     let loop_name = if definition.process.display_name.is_empty() {
@@ -562,6 +643,17 @@ pub async fn upgrade_process_template_loop(
     } else {
         definition.process.display_name.clone()
     };
+
+    // 同步异常处理载体 Todo：prompt 变化时更新/新建，prompt 清空则 loop 列置空（不删旧 Todo）
+    // 放在 loop_name 之后：载体 Todo 标题需引用 loop_name
+    let (abnormal_handler_todo_id, abnormal_handler_prompt) = handle_upgrade_abnormal_handler(
+        db,
+        &definition.abnormal_handler,
+        loop_model.abnormal_handler_todo_id,
+        workspace_id,
+        &loop_name,
+    )
+    .await?;
 
     // 更新 Loop：名称、描述、限制配置（保留原有 icon/review_template 等配置）
     db.update_loop(
@@ -574,16 +666,17 @@ pub async fn upgrade_process_template_loop(
         &loop_model.icon,
         loop_model.review_template_id,
         Some(&limits_config),
-        loop_model.abnormal_handler_todo_id,
+        abnormal_handler_todo_id,
         &abnormal_handler_trigger_on,
     ).await?;
 
-    // 单独更新 process_template_version（update_loop 不覆盖该字段）
+    // 单独更新 process_template_version + abnormal_handler_prompt（update_loop 不覆盖这两列）
     let now = utc_timestamp();
     let existing = loops::Entity::find_by_id(loop_id).one(conn).await?;
     if let Some(c) = existing {
         let mut am: loops::ActiveModel = c.into();
         am.process_template_version = ActiveValue::Set(Some(template.version.clone()));
+        am.abnormal_handler_prompt = ActiveValue::Set(abnormal_handler_prompt.clone());
         am.updated_at = ActiveValue::Set(Some(now));
         am.update(conn).await?;
     }
@@ -1075,5 +1168,129 @@ phases:
             !final_review_prompt.contains("{{original_output}}"),
             "替换后不应残留原始占位符 {{{{original_output}}}}"
         );
+    }
+
+    /// 校验：工艺 abnormal_handler.prompt 安装为 todo_type=3 载体 Todo + loop 三列（需求 035）。
+    #[tokio::test]
+    async fn test_install_writes_abnormal_handler() {
+        let db = fresh_db().await;
+        let ws_id = seed_workspace(&db).await;
+        let yaml = r#"
+process:
+  name: abnormal-test
+  display_name: 异常处理测试工艺
+  version: 0.1.0
+abnormal_handler:
+  prompt: |
+    发生异常时执行此提示词。状态：{{abnormal_status}}
+  trigger_on: ["capped_token", "failed"]
+phases:
+  - id: p1
+    name: 阶段一
+    links:
+      - id: l1
+        name: l1
+        step_template: []
+        prompt: 请执行 l1
+        on_success: end
+        on_gate_fail: break
+"#;
+        let template = process_templates::ActiveModel {
+            name: ActiveValue::Set("abnormal-test".to_string()),
+            display_name: ActiveValue::Set("异常处理测试工艺".to_string()),
+            description: ActiveValue::Set(String::new()),
+            category: ActiveValue::Set("test".to_string()),
+            complexity: ActiveValue::Set("light".to_string()),
+            version: ActiveValue::Set("0.1.0".to_string()),
+            definition: ActiveValue::Set(yaml.to_string()),
+            source_path: ActiveValue::Set(Some("bundled://abnormal-test.yaml".to_string())),
+            is_system: ActiveValue::Set(true),
+            ..Default::default()
+        }
+        .insert(&db.conn)
+        .await
+        .unwrap();
+
+        let result = install_process_template(&db, &template, ws_id, "/tmp/test-ws")
+            .await
+            .expect("install should succeed");
+
+        let loop_model = db.get_loop(result.loop_id).await.unwrap().unwrap();
+        // prompt 快照写入 loop.abnormal_handler_prompt
+        let prompt = loop_model
+            .abnormal_handler_prompt
+            .as_ref()
+            .expect("loop.abnormal_handler_prompt 应已写入");
+        assert!(
+            prompt.contains("发生异常时执行此提示词"),
+            "prompt 正文应保留: {prompt}"
+        );
+        // 载体 Todo 创建为 todo_type=3，并写入 loop.abnormal_handler_todo_id
+        let todo_id = loop_model.abnormal_handler_todo_id.expect("应有载体 todo id");
+        let todo = db.get_todo(todo_id).await.unwrap().expect("载体 todo 应存在");
+        assert_eq!(
+            todo.todo_type,
+            crate::db::TODO_TYPE_ABNORMAL_HANDLER,
+            "载体 todo 应为 type=3"
+        );
+        assert!(
+            todo.title.contains("[异常处理]"),
+            "载体 todo 标题应含 [异常处理]: {}",
+            todo.title
+        );
+        // trigger_on 序列化写入
+        let trigger_on: Vec<String> =
+            serde_json::from_str(&loop_model.abnormal_handler_trigger_on).unwrap();
+        assert!(trigger_on.contains(&"capped_token".to_string()));
+        assert!(trigger_on.contains(&"failed".to_string()));
+    }
+
+    /// 校验：工艺未配 abnormal_handler.prompt 时不创建载体 Todo，三列为空（需求 035）。
+    #[tokio::test]
+    async fn test_install_no_abnormal_handler_when_prompt_empty() {
+        let db = fresh_db().await;
+        let ws_id = seed_workspace(&db).await;
+        // 无 abnormal_handler 段
+        let yaml = "process:\n  name: no-abn\n  version: 0.1.0\nphases:\n  - id: p1\n    name: p1\n    links:\n      - id: l1\n        name: l1\n        step_template: []\n        prompt: x\n        on_success: end\n        on_gate_fail: break\n";
+        let template = process_templates::ActiveModel {
+            name: ActiveValue::Set("no-abn".to_string()),
+            display_name: ActiveValue::Set("无异常处理".to_string()),
+            description: ActiveValue::Set(String::new()),
+            category: ActiveValue::Set("test".to_string()),
+            complexity: ActiveValue::Set("light".to_string()),
+            version: ActiveValue::Set("0.1.0".to_string()),
+            definition: ActiveValue::Set(yaml.to_string()),
+            is_system: ActiveValue::Set(true),
+            ..Default::default()
+        }
+        .insert(&db.conn)
+        .await
+        .unwrap();
+        let result = install_process_template(&db, &template, ws_id, "/tmp/test-ws")
+            .await
+            .unwrap();
+        let loop_model = db.get_loop(result.loop_id).await.unwrap().unwrap();
+        assert!(
+            loop_model.abnormal_handler_prompt.is_none(),
+            "无 prompt 时 prompt 列应为 NULL"
+        );
+        assert!(
+            loop_model.abnormal_handler_todo_id.is_none(),
+            "无 prompt 时不应创建载体 todo"
+        );
+    }
+
+    /// 校验：旧工艺 YAML 含已废弃 todo_template 字段时 serde 忽略、不报错（需求 035）。
+    #[test]
+    fn test_abnormal_handler_config_ignores_legacy_todo_template() {
+        let yaml = r#"
+prompt: 新版提示词
+trigger_on: ["failed"]
+todo_template: 旧字段应被忽略
+"#;
+        let cfg: AbnormalHandlerConfig =
+            serde_yaml::from_str(yaml).expect("含旧 todo_template 不应报错");
+        assert_eq!(cfg.prompt.as_deref(), Some("新版提示词"));
+        assert!(cfg.trigger_on.contains(&"failed".to_string()));
     }
 }

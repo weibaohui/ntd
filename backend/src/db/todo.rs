@@ -9,6 +9,10 @@ use crate::db::entity::{todo_tags, todos};
 use crate::db::Database;
 use crate::models::{ComputedBucket, Todo, TodoBackup, TodoCenterItem, TodoStatus, compute_bucket};
 
+/// todo_type 取值：异常处理载体 Todo（工艺安装时按 abnormal_handler.prompt 创建）。
+/// 模式与 todo_type=2 评审实例对称；事项列表以「异常处理」标签区分。需求 035。
+pub const TODO_TYPE_ABNORMAL_HANDLER: i32 = 3;
+
 pub struct TodoUpdate<'a> {
     pub id: i64,
     pub title: &'a str,
@@ -911,6 +915,60 @@ impl Database {
         };
         let inserted = am.insert(&self.conn).await?;
         Ok(inserted.id)
+    }
+
+    /// 创建一个「异常处理」载体 todo（todo_type=3，需求 035）。
+    ///
+    /// 工艺安装时为 `abnormal_handler.prompt` 自动创建，作为运行时执行异常处理的容器，
+    /// 让异常处理不再依赖工艺外的「手选 Todo」。模式与 todo_type=2 评审实例对称：
+    /// - `prompt` = 工艺 abnormal_handler.prompt（运行时再注入异常上下文 + 占位符替换）
+    /// - `todo_type` = 3
+    /// - `auto_review_enabled` = false（异常处理本身不评审，防止无限嵌套）
+    /// - `parent_todo_id` = 0（异常处理无单一源 todo，与评审实例 loop 触发一致）
+    /// - `executor` = None（运行时落默认执行器）
+    pub async fn create_abnormal_handler_todo(
+        &self,
+        title: String,
+        prompt: String,
+        workspace_id: i64,
+    ) -> Result<i64, sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let am = todos::ActiveModel {
+            title: ActiveValue::Set(title),
+            // todos.prompt 列是 Option<String>；载体 todo 一定有 prompt（= 工艺 prompt）
+            prompt: ActiveValue::Set(Some(prompt)),
+            status: ActiveValue::Set(Some(TodoStatus::Pending.to_string())),
+            created_at: ActiveValue::Set(Some(now.clone())),
+            updated_at: ActiveValue::Set(Some(now)),
+            todo_type: ActiveValue::Set(Some(TODO_TYPE_ABNORMAL_HANDLER)),
+            parent_todo_id: ActiveValue::Set(Some(0)),
+            auto_review_enabled: ActiveValue::Set(Some(false)),
+            // 继承工作空间，使异常处理载体 todo 在对应工作空间可见
+            workspace_id: ActiveValue::Set(Some(workspace_id)),
+            ..Default::default()
+        };
+        let inserted = am.insert(&self.conn).await?;
+        Ok(inserted.id)
+    }
+
+    /// 更新指定 todo 的 prompt（需求 035：工艺升级时刷新异常处理载体 todo 的 prompt）。
+    ///
+    /// 仅当 todo 存在时更新；不存在返回 Err，由调用方决定是否新建。
+    pub async fn update_todo_prompt(
+        &self,
+        id: i64,
+        prompt: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let existing = todos::Entity::find_by_id(id).one(&self.conn).await?;
+        let Some(m) = existing else {
+            return Err(sea_orm::DbErr::Custom(format!("todo {id} not found")));
+        };
+        let mut am: todos::ActiveModel = m.into();
+        am.prompt = ActiveValue::Set(Some(prompt.to_string()));
+        am.updated_at = ActiveValue::Set(Some(now));
+        am.update(&self.conn).await?;
+        Ok(())
     }
 
     /// 根据 review_template_id 查找一条未删除的评审实例 todo (todo_type=2)。

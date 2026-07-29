@@ -123,7 +123,7 @@ pub async fn create_loop(
             &req.icon,
             req.review_template_id,
             req.limits_config.as_deref(),
-            req.abnormal_handler_todo_id,
+            None, /* 异常处理载体 Todo 只由工艺安装写入，手工/克隆/更新均不设（需求 035） */
             &req.abnormal_handler_trigger_on,
         )
         .await?;
@@ -200,7 +200,7 @@ pub async fn update_loop(
             &req.icon,
             req.review_template_id,
             req.limits_config.as_deref(),
-            req.abnormal_handler_todo_id,
+            None, /* 异常处理载体 Todo 只由工艺安装写入，手工/克隆/更新均不设（需求 035） */
             &req.abnormal_handler_trigger_on,
         )
         .await?;
@@ -2297,7 +2297,7 @@ pub async fn create_loop_v1(
             &req.icon,
             req.review_template_id,
             req.limits_config.as_deref(),
-            req.abnormal_handler_todo_id,
+            None, /* 异常处理载体 Todo 只由工艺安装写入，手工/克隆/更新均不设（需求 035） */
             &req.abnormal_handler_trigger_on,
         )
         .await?;
@@ -2355,7 +2355,7 @@ pub async fn update_loop_v1(
         id, req.name.trim(), &req.description,
         req.workspace_id, workspace_path.as_deref(),
         req.webhook_enabled, &req.icon, req.review_template_id,
-        req.limits_config.as_deref(), req.abnormal_handler_todo_id,
+        req.limits_config.as_deref(), None, /* 异常处理只由工艺安装写入（需求 035） */
         &req.abnormal_handler_trigger_on,
     ).await?;
     if let Some(ref tag_ids) = req.tag_ids {

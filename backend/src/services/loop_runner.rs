@@ -312,9 +312,10 @@ impl LoopRunner {
                             Some(&e),
                         )
                         .await;
-                    // 触发异常处理 Todo（传入 0 作为步数/Token 统计）
+                    // 触发异常处理 Todo（传入 0 作为步数/Token 统计；error_detail 带上 run 失败的原始错误）
+                    let err_msg = e.to_string();
                     let _ = this2_for_err
-                        .trigger_abnormal_handler(loop_id, loop_execution_id, "failed", 0, 0)
+                        .trigger_abnormal_handler(loop_id, loop_execution_id, "failed", 0, 0, &err_msg)
                         .await;
                     // 发送 WebSocket 事件，触发前端刷新执行历史列表。
                     // 没有这步的话，前端 LoopExecutionsPanel 收不到事件通知，
@@ -644,7 +645,7 @@ impl LoopRunner {
                     .map_err(|e| e.to_string())?;
                 // 触发异常处理 Todo
                 let _ = self
-                    .trigger_abnormal_handler(loop_id, loop_execution_id, "capped_step", total_executed, total_tokens_used)
+                    .trigger_abnormal_handler(loop_id, loop_execution_id, "capped_step", total_executed, total_tokens_used, "已达最大执行步数上限")
                     .await;
                 return Ok(LoopRunOutcome::Finished);
             }
@@ -660,7 +661,7 @@ impl LoopRunner {
                     .map_err(|e| e.to_string())?;
                 // 触发异常处理 Todo
                 let _ = self
-                    .trigger_abnormal_handler(loop_id, loop_execution_id, "capped_token", total_executed, total_tokens_used)
+                    .trigger_abnormal_handler(loop_id, loop_execution_id, "capped_token", total_executed, total_tokens_used, "已达最大 Token 上限")
                     .await;
                 return Ok(LoopRunOutcome::Finished);
             }
@@ -1007,10 +1008,10 @@ impl LoopRunner {
             .await
             .map_err(|e| e.to_string())?;
 
-        // 对异常状态触发异常处理 Todo
+        // 对异常状态触发异常处理 Todo（主循环结束态无具体错误信息，error_detail 传空串）
         if final_status == "failed" || final_status == "partial" {
             let _ = self
-                .trigger_abnormal_handler(loop_id, loop_execution_id, final_status, total_executed, total_tokens_used)
+                .trigger_abnormal_handler(loop_id, loop_execution_id, final_status, total_executed, total_tokens_used, "")
                 .await;
         }
 
@@ -1581,6 +1582,7 @@ impl LoopRunner {
         abnormal_status: &str,
         total_executed_steps: i32,
         total_tokens_used: i64,
+        error_detail: &str,
     ) -> Result<(), String> {
         // 1. 加载 loop 配置
         let loop_ = self
@@ -1623,7 +1625,7 @@ impl LoopRunner {
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("abnormal handler todo #{} not found, may have been deleted", handler_todo_id))?;
 
-        // 4. 构造上下文信息，注入到 prompt
+        // 4. 构造上下文信息，注入到 prompt（同时作为执行器 params）
         let mut context_params = HashMap::new();
         context_params.insert("loop_id".to_string(), loop_id.to_string());
         context_params.insert("loop_execution_id".to_string(), loop_execution_id.to_string());
@@ -1631,22 +1633,24 @@ impl LoopRunner {
         context_params.insert("abnormal_status".to_string(), abnormal_status.to_string());
         context_params.insert("total_executed_steps".to_string(), total_executed_steps.to_string());
         context_params.insert("total_tokens_used".to_string(), total_tokens_used.to_string());
+        context_params.insert("error_detail".to_string(), error_detail.to_string());
 
-        // 5. 构建增强 prompt，注入异常上下文
-        //    workspace 共识 prompt 前置注入（需求 022），与正常 step 路径保持一致。
-        //    format! 拼 enhanced_prompt_raw 的实际顺序是「原 prompt → 异常上下文」，
-        //    inject_workspace_prompt 在最前面追加 workspace 共识，最终顺序：
-        //    workspace 共识 → handler todo 原 prompt → 异常上下文。
+        // 5. 合成增强 prompt：占位符替换 + 末尾兜底异常上下文段落。
+        //    占位符统一 {{双花括号}}（与评审 prompt 一致），用户在 prompt 中写的
+        //    {{loop_name}} {{abnormal_status}} {{error_detail}} 等会被替换为运行时值；
+        //    即使用户不写占位符，兜底段落也保证 AI 看到完整异常上下文。
+        //    workspace 共识 prompt 前置注入（需求 022），最终顺序：
+        //    workspace 共识 → 替换后的 prompt → 异常上下文兜底段落。
         //    loop_.workspace_id = 0/None 时 inject_workspace_prompt 静默回退原 prompt。
-        let enhanced_prompt_raw = format!(
-            "{}\n\n## 异常上下文\n- Loop 名称: {}\n- Loop 执行 ID: {}\n- 异常状态: {}\n- 已执行步数: {}\n- 已消耗 Token: {}",
-            handler_todo.prompt,
-            loop_.name,
+        let ctx = AbnormalHandlerContext {
+            loop_name: &loop_.name,
             loop_execution_id,
             abnormal_status,
             total_executed_steps,
             total_tokens_used,
-        );
+            error_detail,
+        };
+        let enhanced_prompt_raw = compose_abnormal_handler_prompt(&handler_todo.prompt, &ctx);
         let enhanced_prompt = crate::executor_service::pre_spawn::inject_workspace_prompt(
             &self.ctx.db,
             loop_.workspace_id.filter(|&id| id != 0),
@@ -1746,6 +1750,47 @@ impl LoopRunner {
     }
 }
 
+/// 异常处理 prompt 合成的上下文变量（需求 035）。
+struct AbnormalHandlerContext<'a> {
+    loop_name: &'a str,
+    loop_execution_id: i64,
+    abnormal_status: &'a str,
+    total_executed_steps: i32,
+    total_tokens_used: i64,
+    /// 失败原因；空串表示无具体错误信息（如主循环 failed/partial 无明确错误）。
+    error_detail: &'a str,
+}
+
+/// 合成异常处理执行 prompt：占位符替换 + 末尾兜底异常上下文段落。
+///
+/// 占位符统一 {{双花括号}}（与评审 prompt 的 compose_review_prompt 一致）：
+/// 用户在工艺 abnormal_handler.prompt 中写 {{loop_name}} {{abnormal_status}}
+/// {{error_detail}} 等会被替换为运行时实际值。兜底段落保证即使用户不写占位符，
+/// AI 也能看到完整异常上下文。模式与正常 step 的 inject_requirement（替换+兜底）一致。
+fn compose_abnormal_handler_prompt(template: &str, ctx: &AbnormalHandlerContext) -> String {
+    let replaced = template
+        .replace("{{loop_name}}", ctx.loop_name)
+        .replace("{{loop_execution_id}}", &ctx.loop_execution_id.to_string())
+        .replace("{{abnormal_status}}", ctx.abnormal_status)
+        .replace("{{total_executed_steps}}", &ctx.total_executed_steps.to_string())
+        .replace("{{total_tokens_used}}", &ctx.total_tokens_used.to_string())
+        .replace("{{error_detail}}", ctx.error_detail);
+    // 兜底段落：失败原因为空时省略该行，避免出现空「失败原因」
+    let error_line = if ctx.error_detail.is_empty() {
+        String::new()
+    } else {
+        format!("\n- 失败原因: {}", ctx.error_detail)
+    };
+    format!(
+        "{replaced}\n\n## 异常上下文\n- Loop 名称: {}\n- Loop 执行 ID: {}\n- 异常状态: {}\n- 已执行步数: {}\n- 已消耗 Token: {}{error_line}",
+        ctx.loop_name,
+        ctx.loop_execution_id,
+        ctx.abnormal_status,
+        ctx.total_executed_steps,
+        ctx.total_tokens_used,
+    )
+}
+
 /// 在内存中把任务需求注入到 step todo 的 prompt 模板。
 ///
 /// 设计原则（修复历史 bug）：
@@ -1834,6 +1879,47 @@ fn build_enhanced_prompt_with_requirement(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
+
+    // ── compose_abnormal_handler_prompt 占位符替换（需求 035）──
+
+    fn abnormal_ctx(error_detail: &str) -> AbnormalHandlerContext<'_> {
+        AbnormalHandlerContext {
+            loop_name: "测试环路",
+            loop_execution_id: 42,
+            abnormal_status: "capped_token",
+            total_executed_steps: 7,
+            total_tokens_used: 9999,
+            error_detail,
+        }
+    }
+
+    #[test]
+    fn test_compose_abnormal_handler_prompt_replaces_placeholders() {
+        // 用户在 prompt 中主动引用占位符 → 替换为运行时实际值（双花括号，与评审 prompt 一致）
+        let tpl = "状态: {{abnormal_status}}，Token: {{total_tokens_used}}，原因: {{error_detail}}";
+        let out = compose_abnormal_handler_prompt(tpl, &abnormal_ctx("已达上限"));
+        assert!(out.contains("状态: capped_token"), "abnormal_status 应被替换: {out}");
+        assert!(out.contains("Token: 9999"), "total_tokens_used 应被替换: {out}");
+        assert!(out.contains("原因: 已达上限"), "error_detail 应被替换: {out}");
+        assert!(!out.contains("{{abnormal_status}}"), "替换后不应残留占位符");
+    }
+
+    #[test]
+    fn test_compose_abnormal_handler_prompt_appends_fallback_section() {
+        // 即使用户不写占位符，兜底「## 异常上下文」段落也保证 AI 看到完整上下文
+        let out = compose_abnormal_handler_prompt("请处理异常", &abnormal_ctx("执行失败"));
+        assert!(out.contains("请处理异常"), "原 prompt 正文应保留");
+        assert!(out.contains("## 异常上下文"), "应追加兜底异常上下文段落");
+        assert!(out.contains("失败原因: 执行失败"), "error_detail 非空时应出现在兜底段落");
+    }
+
+    #[test]
+    fn test_compose_abnormal_handler_prompt_omits_empty_error_line() {
+        // error_detail 为空时兜底段落省略「失败原因」行，避免出现空值
+        let out = compose_abnormal_handler_prompt("请处理", &abnormal_ctx(""));
+        assert!(!out.contains("失败原因"), "error_detail 为空时不应出现失败原因行");
+        assert!(out.contains("## 异常上下文"), "上下文段落仍应存在");
+    }
 
     // ── resolve_next 逻辑测试 ──
     // 使用独立函数测试算法，避免依赖 ServiceContext 构造

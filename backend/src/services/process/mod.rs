@@ -76,9 +76,15 @@ pub struct ProcessLimits {
 }
 
 /// 异常处理配置。
+///
+/// 工艺即权威：异常处理提示词由工艺 YAML 定义（`prompt`），安装时写入环路，
+/// 运行时注入异常上下文后执行。废弃旧的 `todo_template`（历史上未解析、不生效）。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct AbnormalHandlerConfig {
-    pub todo_template: Option<String>,
+    /// 异常处理提示词，可含 {{loop_name}} {{abnormal_status}} {{error_detail}} 等占位符。
+    /// 空/缺省 = 未配置异常处理。
+    #[serde(default)]
+    pub prompt: Option<String>,
     #[serde(default)]
     pub trigger_on: Vec<String>,
 }

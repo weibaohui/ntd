@@ -114,7 +114,7 @@ export function LoopDetailPanel({
     webhook_enabled: boolean;
     icon: string; review_template_id: number | null;
     tag_ids: number[]; limits_config: string | null;
-    abnormal_handler_todo_id: number | null;
+    abnormal_handler_prompt: string | null;
     abnormal_handler_trigger_on: string;
   } | null>(null);
 
@@ -175,7 +175,7 @@ export function LoopDetailPanel({
       review_template_id: detail.review_template_id ?? null,
       tag_ids: detail.tag_ids ?? [],
       limits_config: detail.limits_config,
-      abnormal_handler_todo_id: detail.abnormal_handler_todo_id ?? null,
+      abnormal_handler_prompt: detail.abnormal_handler_prompt ?? null,
       abnormal_handler_trigger_on: detail.abnormal_handler_trigger_on ?? '["capped_step","capped_token","failed"]',
     });
     setEditing(true);
@@ -398,7 +398,8 @@ export function LoopDetailPanel({
           } />
           <DetailField label="超限异常处理" value={
             (() => {
-              const hasHandler = detail.abnormal_handler_todo_id != null;
+              // 异常处理启用判定：以工艺定义的 prompt 是否存在为准（需求 035）
+              const hasHandler = detail.abnormal_handler_prompt != null && detail.abnormal_handler_prompt !== '';
               const triggerOn = detail.abnormal_handler_trigger_on ? JSON.parse(detail.abnormal_handler_trigger_on) : [];
               const hasCappedTrigger = Array.isArray(triggerOn) && (triggerOn.includes('capped_step') || triggerOn.includes('capped_token'));
               const enabled = hasHandler && hasCappedTrigger;

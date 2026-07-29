@@ -25,8 +25,8 @@ export interface Todo {
   acceptance_criteria?: string | null;
   /** 已废弃：UI 层面不再展示该开关，事项执行后不再触发自动评审。保留字段用于 API 向下兼容。 */
   auto_review_enabled?: boolean;
-  /** 0 = normal todo, 1 = 已废弃 (评审模板已迁出至 review_templates 表), 2 = review instance child. */
-  todo_type?: 0 | 1 | 2;
+  /** 0 = normal todo, 1 = 已废弃 (评审模板已迁出至 review_templates 表), 2 = review instance child, 3 = 异常处理载体 todo（需求 035）. */
+  todo_type?: 0 | 1 | 2 | 3;
   /** For review instances: the original todo that was reviewed. */
   parent_todo_id?: number | null;
   /** For review instances: the review_template used to generate this instance. */

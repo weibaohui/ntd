@@ -18,10 +18,8 @@ import { App as AntApp, Drawer, Form, Input, InputNumber, Select, Button, Checkb
 import { PlusOutlined } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import * as dbReviewTemplates from '@/utils/database/reviewTemplates';
-import * as dbTodos from '@/utils/database/todos';
 import type { UpdateLoopRequest } from '@/types/loop';
 import type { ReviewTemplateOption } from '@/types/reviewTemplate';
-import type { Todo } from '@/types/todo';
 import { getWorkspaceDisplayName, useProjectDirectories } from '@/utils/workspaceDisplay';
 import { TagCheckCardGroup } from './TagCheckCard';
 
@@ -49,7 +47,7 @@ interface LoopFormModalProps {
     review_template_id: number | null;
     tag_ids: number[];
     limits_config: string | null;
-    abnormal_handler_todo_id?: number | null;
+    abnormal_handler_prompt?: string | null;
     abnormal_handler_trigger_on?: string;
   };
   /** 可用标签列表 */
@@ -66,7 +64,6 @@ interface LoopFormModalProps {
 type FormValues = UpdateLoopRequest & {
   max_step_executions?: number;
   max_total_tokens?: number;
-  abnormal_handler_todo_id?: number | null;
   abnormal_handler_trigger_on?: string[];
 };
 
@@ -87,8 +84,6 @@ export function LoopFormModal({
   const [creatingTemplate, setCreatingTemplate] = useState(false);
   const [creatingTemplateSaving, setCreatingTemplateSaving] = useState(false);
   const [newTemplateForm] = Form.useForm<{ name: string; description?: string; prompt: string }>();
-  // 异常处理 Todo
-  const [abnormalHandlerTodoOptions, setAbnormalHandlerTodoOptions] = useState<Todo[]>([]);
   // 工作空间目录（id 是唯一键，byId Map 用来 O(1) 反查 path/name）
   const { dirs: projectDirs } = useProjectDirectories();
 
@@ -98,17 +93,6 @@ export function LoopFormModal({
     if (!open) return;
     dbReviewTemplates.listReviewTemplateOptions(workspaceId ?? undefined)
       .then(setReviewTemplateOptions)
-      .catch(() => { /* 静默 */ });
-  }, [open, workspaceId]);
-
-  // 打开时加载异常处理 Todo 选项
-  // 必须按当前 loop 的 workspace_id 过滤——异常处理 handler 跨工作空间串进来会触发错乱执行。
-  useEffect(() => {
-    if (!open) return;
-    // workspaceId 必须有值才能查 todos（v1 纯 workspace-scoped）
-    if (workspaceId == null) return;
-    dbTodos.getAllTodos(workspaceId)
-      .then(setAbnormalHandlerTodoOptions)
       .catch(() => { /* 静默 */ });
   }, [open, workspaceId]);
 
@@ -122,7 +106,6 @@ export function LoopFormModal({
         icon: initialData.icon,
         webhook_enabled: initialData.webhook_enabled ?? false,
         review_template_id: initialData.review_template_id ?? null,
-        abnormal_handler_todo_id: initialData.abnormal_handler_todo_id ?? null,
       });
       setWorkspaceId(initialData.workspace_id ?? null);
       // 解析 limits_config
@@ -211,7 +194,6 @@ export function LoopFormModal({
         icon: values.icon ?? 'loop',
         review_template_id: values.review_template_id ?? null,
         limits_config: Object.keys(limitsConfig).length > 0 ? JSON.stringify(limitsConfig) : null,
-        abnormal_handler_todo_id: values.abnormal_handler_todo_id ?? null,
         abnormal_handler_trigger_on: abnormalHandlerTriggerOn,
         tag_ids: editingTag != null ? [editingTag] : [],
       };
@@ -226,7 +208,6 @@ export function LoopFormModal({
           icon: basePayload.icon,
           review_template_id: basePayload.review_template_id,
           limits_config: basePayload.limits_config,
-          abnormal_handler_todo_id: basePayload.abnormal_handler_todo_id,
           abnormal_handler_trigger_on: basePayload.abnormal_handler_trigger_on,
         });
         message.success('环路已创建');
@@ -332,38 +313,37 @@ export function LoopFormModal({
               </Form.Item>
             </div>
           </div>
-          {/* 异常处理 Todo */}
+          {/* 异常处理（只读：异常处理由工艺定义，环路层不可修改，需求 035） */}
           <div style={{ fontWeight: 600, fontSize: 14, marginTop: 16, marginBottom: 8, color: 'var(--color-text-secondary, #64748b)' }}>
             异常处理
           </div>
           <div style={{ background: 'var(--color-bg-elevated, #f8fafc)', padding: 12, borderRadius: 8 }}>
             <Form.Item
-              label="异常处理 Todo"
-              name="abnormal_handler_todo_id"
-              tooltip="当 Loop 以异常状态结束时，自动执行此 Todo 作为清理/补救措施"
-            >
-              <Select
-                allowClear
-                placeholder="不设置异常处理"
-                showSearch
-                optionFilterProp="label"
-                options={abnormalHandlerTodoOptions.map(t => ({ value: t.id, label: t.title }))}
-                style={{ width: '100%' }}
-              />
-            </Form.Item>
-            <Form.Item
               label="触发条件"
               name="abnormal_handler_trigger_on"
-              tooltip="哪些异常状态时触发异常处理 Todo"
+              tooltip="异常处理由工艺定义，环路层只读展示（不可修改）"
               initialValue={['capped_step', 'capped_token', 'failed']}
-              style={{ marginBottom: 0 }}
+              style={{ marginBottom: 12 }}
             >
               <Checkbox.Group
+                disabled
                 options={[
                   { label: '超步数', value: 'capped_step' },
                   { label: '超 Token', value: 'capped_token' },
                   { label: '执行失败', value: 'failed' },
                 ]}
+              />
+            </Form.Item>
+            <Form.Item
+              label="异常处理 Prompt"
+              tooltip="异常处理提示词（来自工艺定义），环路层只读"
+              style={{ marginBottom: 0 }}
+            >
+              <Input.TextArea
+                value={initialData?.abnormal_handler_prompt ?? ''}
+                disabled
+                rows={3}
+                placeholder={mode === 'create' ? '手工环路无异常处理（由工艺定义）' : '未配置异常处理'}
               />
             </Form.Item>
           </div>

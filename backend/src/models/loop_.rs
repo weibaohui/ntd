@@ -133,8 +133,8 @@ pub struct LoopDto {
     pub icon: String,
     pub review_template_id: Option<i64>,
     pub limits_config: String,
-    /// 异常处理 Todo ID
-    pub abnormal_handler_todo_id: Option<i64>,
+    /// 异常处理提示词快照（工艺定义）；NULL=未配置异常处理。需求 035。
+    pub abnormal_handler_prompt: Option<String>,
     /// 异常处理触发条件 JSON 数组
     pub abnormal_handler_trigger_on: String,
     /// 来源工艺模板 ID
@@ -166,7 +166,7 @@ impl From<loops::Model> for LoopDto {
             icon: m.icon,
             review_template_id: m.review_template_id,
             limits_config: m.limits_config,
-            abnormal_handler_todo_id: m.abnormal_handler_todo_id,
+            abnormal_handler_prompt: m.abnormal_handler_prompt,
             abnormal_handler_trigger_on: m.abnormal_handler_trigger_on,
             process_template_id: m.process_template_id,
             process_template_version: m.process_template_version,
@@ -456,10 +456,7 @@ pub struct CreateLoopRequest {
     pub review_template_id: Option<i64>,
     #[serde(default)]
     pub limits_config: Option<String>,
-    /// 异常处理 Todo ID
-    #[serde(default)]
-    pub abnormal_handler_todo_id: Option<i64>,
-    /// 异常处理触发条件 JSON 数组
+    /// 异常处理触发条件 JSON 数组（手工 loop 无异常处理 prompt，此值仅记录不生效）
     #[serde(default = "default_abnormal_trigger_on")]
     pub abnormal_handler_trigger_on: String,
 }
@@ -482,10 +479,7 @@ pub struct UpdateLoopRequest {
     pub review_template_id: Option<i64>,
     #[serde(default)]
     pub limits_config: Option<String>,
-    /// 异常处理 Todo ID
-    #[serde(default)]
-    pub abnormal_handler_todo_id: Option<i64>,
-    /// 异常处理触发条件 JSON 数组
+    /// 异常处理触发条件 JSON 数组（手工 loop 无异常处理 prompt，此值仅记录不生效）
     #[serde(default = "default_abnormal_trigger_on")]
     pub abnormal_handler_trigger_on: String,
     /// 可选更新的标签 ID（单选）；传空数组或无字段表示不更新标签
@@ -688,6 +682,7 @@ mod loop_dto_tests {
             limits_config: "{}".into(),
             abnormal_handler_todo_id: None,
             abnormal_handler_trigger_on: "[]".into(),
+            abnormal_handler_prompt: None,
             process_template_id: Some(7),
             process_template_version: Some("1.2.0".into()),
             created_at: None,

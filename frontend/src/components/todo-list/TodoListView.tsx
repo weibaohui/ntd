@@ -208,6 +208,7 @@ function buildTodoColumns(
         const td = record.todo_type ?? 0;
         const at = record.action_type;
         if (td === 2) return <Tag color="purple">评审</Tag>;
+        if (td === 3) return <Tag color="magenta">异常处理</Tag>;
         if (at) return <Tag color="orange">快捷</Tag>;
         return <Tag color="blue">事项</Tag>;
       },

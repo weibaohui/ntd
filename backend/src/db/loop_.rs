@@ -1638,6 +1638,8 @@ impl Database {
                     limits_config: row.try_get_by::<String, _>("limits_config")?,
                     abnormal_handler_todo_id: row.try_get_by::<Option<i64>, _>("abnormal_handler_todo_id")?,
                     abnormal_handler_trigger_on: row.try_get_by::<String, _>("abnormal_handler_trigger_on")?,
+                    // 列表查询不返回异常处理 prompt，给 None（详情接口才需展示）
+                    abnormal_handler_prompt: None,
                     process_template_id: row.try_get_by::<Option<i64>, _>("process_template_id")?,
                     process_template_version: row.try_get_by::<Option<String>, _>("process_template_version")?,
                     created_at: row.try_get_by::<Option<String>, _>("created_at")?,

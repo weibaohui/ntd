@@ -21,11 +21,23 @@ import {
   InputNumber,
   Checkbox,
   Collapse,
+  Tooltip,
   Typography,
 } from 'antd';
 import type { ProcessDefinition } from '@/types/process';
 
 const { Text } = Typography;
+
+// 异常处理 prompt 运行时替换的模板参数（需求 035）。
+// 双花括号占位符，与评审 prompt 一致；后端 compose_abnormal_handler_prompt 只替换双花括号。
+const ABNORMAL_HANDLER_PROMPT_PARAMS = [
+  { key: '{{loop_name}}', desc: 'Loop 名称' },
+  { key: '{{loop_execution_id}}', desc: '本次 Loop 执行 ID' },
+  { key: '{{abnormal_status}}', desc: '异常状态（capped_step/capped_token/failed/partial）' },
+  { key: '{{total_executed_steps}}', desc: '已执行步数' },
+  { key: '{{total_tokens_used}}', desc: '已消耗 Token 数' },
+  { key: '{{error_detail}}', desc: '失败原因 / 错误信息' },
+];
 
 export interface GlobalPropertyFormProps {
   // 工艺定义（source of truth）
@@ -48,13 +60,9 @@ export function GlobalPropertyForm({
   };
 
   // 异常处理（definition.abnormal_handler）
-  // abnormal_handler 是 unknown 类型，我们用宽松处理
-  const abnormalHandler = (definition.abnormal_handler ?? {}) as Record<
-    string,
-    unknown
-  >;
+  const abnormalHandler = definition.abnormal_handler ?? {};
   const triggerOn = Array.isArray(abnormalHandler.trigger_on)
-    ? (abnormalHandler.trigger_on as string[])
+    ? abnormalHandler.trigger_on
     : [];
 
   // ── 字段变更处理 ─────────────────────────────────
@@ -88,6 +96,15 @@ export function GlobalPropertyForm({
     const newDef: ProcessDefinition = {
       ...definition,
       abnormal_handler: { ...abnormalHandler, trigger_on: values },
+    };
+    onDefinitionChange(newDef);
+  };
+
+  // 修改 abnormal_handler.prompt（异常处理提示词）
+  const handleAbnormalPromptChange = (value: string): void => {
+    const newDef: ProcessDefinition = {
+      ...definition,
+      abnormal_handler: { ...abnormalHandler, prompt: value },
     };
     onDefinitionChange(newDef);
   };
@@ -203,6 +220,56 @@ export function GlobalPropertyForm({
             { value: 'failed', label: '失败' },
           ]}
         />
+      </Form.Item>
+      <Form.Item
+        label="异常处理 Prompt"
+        tooltip="环路异常终止（超步数/超Token/失败）时执行此提示词。可用下方参数占位符"
+      >
+        <Input.TextArea
+          value={abnormalHandler.prompt ?? ''}
+          onChange={(e) => handleAbnormalPromptChange(e.target.value)}
+          rows={4}
+          placeholder="异常发生时执行的补救/清理提示词，可空。可用 {{abnormal_status}}、{{error_detail}} 等占位符"
+        />
+        {/* 快速插入参数条：点击把 {{key}} 追加到异常处理 prompt 尾部，与评审 prompt 参数条样式一致 */}
+        <div style={{
+          marginTop: 8,
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 6,
+          alignItems: 'center',
+        }}>
+          <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginRight: 2 }}>可用参数:</span>
+          {ABNORMAL_HANDLER_PROMPT_PARAMS.map((p) => (
+            <Tooltip key={p.key} title={p.desc}>
+              <code
+                onClick={() => handleAbnormalPromptChange(
+                  (abnormalHandler.prompt ?? '') + (abnormalHandler.prompt?.endsWith(' ') || !abnormalHandler.prompt ? '' : ' ') + p.key + ' ',
+                )}
+                style={{
+                  fontSize: 11,
+                  padding: '1px 6px',
+                  borderRadius: 4,
+                  background: 'var(--color-fill-quaternary)',
+                  border: '1px solid var(--color-border-secondary)',
+                  cursor: 'pointer',
+                  color: 'var(--color-text-secondary)',
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-primary)';
+                  (e.currentTarget as HTMLElement).style.color = 'var(--color-primary)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-border-secondary)';
+                  (e.currentTarget as HTMLElement).style.color = 'var(--color-text-secondary)';
+                }}
+              >
+                {p.key}
+              </code>
+            </Tooltip>
+          ))}
+        </div>
       </Form.Item>
 
 
