@@ -35,6 +35,7 @@ mod v73;
 mod v74;
 mod v75;
 mod v76;
+mod v77;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -119,6 +120,9 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // V76 在 V75 之后：loops 新增 abnormal_handler_prompt 列，
         // 支撑需求 035「工艺驱动异常处理」——异常处理提示词改为工艺 YAML 定义
         Box::new(v76::V76AddLoopAbnormalHandlerPrompt),
+        // V77 在 V76 之后：删除 loop_phases.acceptance_criteria 死列，
+        // 支撑需求 036「验收标准归环节」——阶段级验收标准移除，只归环节
+        Box::new(v77::V77DropLoopPhaseAcceptanceCriteria),
     ]
 }
 

@@ -33,7 +33,7 @@ pub async fn install_process_template(
     // step_template 已转为 spec 引用，不再做原型存在性校验。
     check_skill_warnings(db, &definition.phases).await?;
 
-    // 解析 spec_ref / acceptance_criteria_ref 外部引用，覆盖 inline 文本。
+    // 解析 spec_ref 外部引用，覆盖 inline spec 文本。（阶段级 acceptance_criteria_ref 已随需求 036 移除。）
     resolve_phase_spec_refs(&mut definition.phases);
 
     let loop_name = if definition.process.display_name.is_empty() {
@@ -144,7 +144,6 @@ async fn create_phases_and_steps(
             loop_id,
             &phase.name,
             &phase.spec,
-            &phase.acceptance_criteria,
             phase_idx as i32,
         )
         .await?;
@@ -169,12 +168,13 @@ async fn create_phases_and_steps(
 }
 
 /// 创建 Loop Phase。
+///
+/// 阶段级验收标准已随需求 036 移除——验收标准只归环节，故此处不再写入 acceptance_criteria。
 async fn create_loop_phase(
     db: &Database,
     loop_id: i64,
     name: &str,
     spec: &str,
-    acceptance_criteria: &str,
     order_index: i32,
 ) -> Result<loop_phases::Model, sea_orm::DbErr> {
     let now = utc_timestamp();
@@ -184,7 +184,6 @@ async fn create_loop_phase(
         description: ActiveValue::Set(String::new()),
         order_index: ActiveValue::Set(order_index),
         spec: ActiveValue::Set(spec.to_string()),
-        acceptance_criteria: ActiveValue::Set(acceptance_criteria.to_string()),
         enabled: ActiveValue::Set(1),
         created_at: ActiveValue::Set(Some(now)),
         ..Default::default()
@@ -379,12 +378,14 @@ fn resolve_goto(
     _step_id_by_order: &HashMap<i64, usize>,
     _current_step_id: i64,
 ) -> Result<Option<i64>, InstallError> {
+    // 流转策略规则（需求 037：已清除 goto: 前缀）：
+    // - 保留字 next/end/break/skip → 无跳转目标（Ok(None)）；
+    // - 其他非空值 = 跳转目标环节 id（裸），查模板 link→step 映射解析成数字 step id。
     match policy {
-        "next" => Ok(None),
-        "break" | "end" => Ok(None),
-        "skip" => Ok(None),
-        _ if policy.starts_with("goto:") => {
-            let target_link_id = policy.trim_start_matches("goto:");
+        "next" | "end" | "break" | "skip" => Ok(None),
+        target_link_id => {
+            // 非保留字即跳转目标环节 id。找不到说明 yaml 引用了不存在的环节，
+            // 按错误中断安装（不再容错为 next——裸 id 语义已明确，引用错误应暴露）。
             let target_step_id = template_link_to_step
                 .get(target_link_id)
                 .copied()
@@ -395,11 +396,6 @@ fn resolve_goto(
                     ))
                 })?;
             Ok(Some(target_step_id))
-        }
-        _ => {
-            // 未知策略按 next 处理，不写入具体目标
-            tracing::warn!("未知流转策略 '{}', 按 next 处理", policy);
-            Ok(None)
         }
     }
 }
@@ -532,10 +528,11 @@ impl GateDefinition {
     }
 }
 
-/// 解析 phase 的 spec_ref / acceptance_criteria_ref 外部引用。
+/// 解析 phase 的 spec_ref 外部引用。
 ///
 /// `bundled://processes/conventions/xxx.md` → 解析为 `~/.ntd/bundled/processes/conventions/xxx.md`，
-/// 读取其内容覆盖 `spec` / `acceptance_criteria`。文件不存在时仅 warn，保留 inline 文本。
+/// 读取其内容覆盖 `spec`。文件不存在时仅 warn，保留 inline 文本。
+/// （阶段级 acceptance_criteria_ref 已随需求 036 移除，验收标准只归环节，不再在此解析。）
 fn resolve_phase_spec_refs(phases: &mut [PhaseDefinition]) {
     for phase in phases.iter_mut() {
         // 解析 spec_ref
@@ -546,18 +543,6 @@ fn resolve_phase_spec_refs(phases: &mut [PhaseDefinition]) {
                     tracing::warn!(
                         "阶段「{}」spec_ref「{}」加载失败: {}，使用 inline spec",
                         phase.name, spec_ref, e
-                    );
-                }
-            }
-        }
-        // 解析 acceptance_criteria_ref
-        if let Some(ref ac_ref) = phase.acceptance_criteria_ref {
-            match load_bundled_markdown(ac_ref) {
-                Ok(content) => phase.acceptance_criteria = content,
-                Err(e) => {
-                    tracing::warn!(
-                        "阶段「{}」acceptance_criteria_ref「{}」加载失败: {}，使用 inline 验收标准",
-                        phase.name, ac_ref, e
                     );
                 }
             }
@@ -757,21 +742,20 @@ phases:
   - id: req
     name: 需求
     spec: 需求阶段
-    acceptance_criteria: PRD 存在
     links:
       - id: write-prd
         name: 编写 PRD
         step_template: []
         prompt: 请编写 PRD
         on_success: next
-        on_gate_fail: goto:write-prd
+        on_gate_fail: write-prd
         max_rework: 2
       - id: confirm-prd
         name: 确认 PRD
         prompt: 请确认 PRD
         review_type: human
         on_success: next
-        on_gate_fail: goto:write-prd
+        on_gate_fail: write-prd
 "#
         .to_string()
     }
@@ -926,7 +910,7 @@ phases:
         assert_eq!(confirm_step.fail_goto_step_id, Some(write_step.id));
         // 验证 on_gate_fail 策略已正确写入 on_rating_fail（而非默认 "break"）。
         // spec §F4.5：门禁失败时按 on_gate_fail 策略流转。
-        assert_eq!(confirm_step.on_rating_fail, "goto:write-prd");
+        assert_eq!(confirm_step.on_rating_fail, "write-prd");
     }
 
     #[tokio::test]

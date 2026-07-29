@@ -3,7 +3,7 @@
 // M4 里程碑：阶段属性面板（PhasePropertyForm）。
 //
 // 设计意图（对应 docs/design/029-M4-ReactFlow可视化编辑器-方案.md §3.1.10 + 设计 §7.2）：
-// - 暴露 6 个字段：id/name/spec/acceptance_criteria/acceptance_criteria_ref
+// - 暴露 3 个字段：id/name/spec（验收标准已归环节，见 LinkPropertyForm）
 // - 每个字段 onChange → updatePhaseField → onDefinitionChange
 //
 // 数据流（M4 单向）：
@@ -18,11 +18,6 @@ import type {
   PhaseDefinition,
 } from '@/types/process';
 import { updatePhaseField } from '../processDefinitionUpdater';
-
-// PhaseDefinition 缺 acceptance_criteria_ref 字段，用类型扩展补充
-type PhaseDefinitionWithRef = PhaseDefinition & {
-  acceptance_criteria_ref?: string;
-};
 
 const { Text } = Typography;
 
@@ -82,31 +77,6 @@ export function PhasePropertyForm({
         />
       </Form.Item>
 
-      <Form.Item label="验收标准">
-        <Input.TextArea
-          value={(phase as PhaseDefinitionWithRef).acceptance_criteria ?? ''}
-          onChange={(e) =>
-            handleFieldChange('acceptance_criteria', e.target.value)
-          }
-          rows={3}
-          placeholder="验收标准，可空"
-        />
-      </Form.Item>
-
-      <Form.Item label="验收标准引用">
-        <Input
-          value={(phase as PhaseDefinitionWithRef).acceptance_criteria_ref ?? ''}
-          onChange={(e) =>
-            (
-              handleFieldChange as unknown as (
-                field: 'acceptance_criteria_ref',
-                value: string,
-              ) => void
-            )('acceptance_criteria_ref', e.target.value)
-          }
-          placeholder="外部验收标准文件引用，可空"
-        />
-      </Form.Item>
     </Form>
   );
 }

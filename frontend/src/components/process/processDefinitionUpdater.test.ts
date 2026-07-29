@@ -46,7 +46,7 @@ function makeEmptyDefinition(): ProcessDefinition {
 
 // 构造一个含两个 phase、各一个 link 的 definition
 // phase1 → link1，phase2 → link2
-// link1.on_success: goto:link2
+// link1.on_success: link2
 function makeDefinitionWithGoto(): ProcessDefinition {
   return {
     process: { name: 'test', display_name: '测试' },
@@ -58,7 +58,7 @@ function makeDefinitionWithGoto(): ProcessDefinition {
           {
             id: 'link1',
             name: '环节1',
-            on_success: 'goto:link2',
+            on_success: 'link2',
             on_gate_fail: 'break',
           },
         ],
@@ -113,7 +113,7 @@ describe('addPhase', () => {
 
 describe('removePhase', () => {
   it('removePhase_removesPhaseAndResetsGoto', () => {
-    // link1.on_success: goto:link2，删除 phase2（含 link2）
+    // link1.on_success: link2，删除 phase2（含 link2）
     // link1.on_success 应重置为 next
     const def = makeDefinitionWithGoto();
 
@@ -122,7 +122,7 @@ describe('removePhase', () => {
     // phase2 被删除
     expect(result.phases!.length).toBe(1);
     expect(result.phases![0].id).toBe('phase1');
-    // link1 的 on_success 从 goto:link2 重置为 next
+    // link1 的 on_success 从 link2 重置为 next
     expect(result.phases![0].links![0].on_success).toBe('next');
   });
 
@@ -131,8 +131,8 @@ describe('removePhase', () => {
 
     removePhase(def, 'phase2');
 
-    // 原 def 的 link1.on_success 仍是 goto:link2
-    expect(def.phases![0].links![0].on_success).toBe('goto:link2');
+    // 原 def 的 link1.on_success 仍是 link2
+    expect(def.phases![0].links![0].on_success).toBe('link2');
   });
 });
 
@@ -166,7 +166,7 @@ describe('addLink', () => {
 
 describe('removeLink', () => {
   it('removeLink_removesLinkAndResetsGoto', () => {
-    // link1.on_success: goto:link2，删除 link2
+    // link1.on_success: link2，删除 link2
     // link1.on_success 应重置为 next
     const def = makeDefinitionWithGoto();
 
@@ -174,7 +174,7 @@ describe('removeLink', () => {
 
     // phase2 下的 link2 被删除
     expect(result.phases![1].links!.length).toBe(0);
-    // link1 的 on_success 从 goto:link2 重置为 next
+    // link1 的 on_success 从 link2 重置为 next
     expect(result.phases![0].links![0].on_success).toBe('next');
   });
 
@@ -228,19 +228,19 @@ describe('setLinkGoto', () => {
   it('setLinkGoto_setsOnSuccessGoto', () => {
     const def = makeDefinitionWithGoto();
 
-    // 把 link1 的 on_success 设为 goto:link2（已是该值，验证函数正常工作）
+    // 把 link1 的 on_success 设为 link2（已是该值，验证函数正常工作）
     const result = setLinkGoto(def, 'phase1', 'link1', 'on_success', 'link2');
 
-    expect(result.phases![0].links![0].on_success).toBe('goto:link2');
+    expect(result.phases![0].links![0].on_success).toBe('link2');
   });
 
   it('setLinkGoto_setsOnGateFailGoto', () => {
     const def = makeDefinitionWithGoto();
 
-    // 把 link1 的 on_gate_fail 设为 goto:link2
+    // 把 link1 的 on_gate_fail 设为 link2
     const result = setLinkGoto(def, 'phase1', 'link1', 'on_gate_fail', 'link2');
 
-    expect(result.phases![0].links![0].on_gate_fail).toBe('goto:link2');
+    expect(result.phases![0].links![0].on_gate_fail).toBe('link2');
   });
 });
 
@@ -249,7 +249,7 @@ describe('setLinkGoto', () => {
 describe('resetLinkGoto', () => {
   it('resetLinkGoto_resetsOnSuccessToNext', () => {
     const def = makeDefinitionWithGoto();
-    // link1.on_success 当前是 goto:link2
+    // link1.on_success 当前是 link2
 
     const result = resetLinkGoto(def, 'phase1', 'link1', 'on_success');
 
@@ -259,7 +259,7 @@ describe('resetLinkGoto', () => {
 
   it('resetLinkGoto_resetsOnGateFailToBreak', () => {
     const def = makeDefinitionWithGoto();
-    // 先把 link1.on_gate_fail 设为 goto:link2
+    // 先把 link1.on_gate_fail 设为 link2
     const withGoto = setLinkGoto(def, 'phase1', 'link1', 'on_gate_fail', 'link2');
 
     const result = resetLinkGoto(withGoto, 'phase1', 'link1', 'on_gate_fail');
@@ -274,7 +274,7 @@ describe('resetLinkGoto', () => {
 describe('findGotoReferrers', () => {
   it('findGotoReferrers_findsAllReferrers', () => {
     const def = makeDefinitionWithGoto();
-    // link1.on_success: goto:link2，所以 link2 的引用者是 link1
+    // link1.on_success: link2，所以 link2 的引用者是 link1
 
     const referrers = findGotoReferrers(def, 'link2');
 
@@ -298,7 +298,7 @@ describe('findGotoReferrers', () => {
 describe('findGotoReferrersForPhase', () => {
   it('findGotoReferrersForPhase_findsReferrersForPhaseLinks', () => {
     const def = makeDefinitionWithGoto();
-    // phase2 含 link2，link1.on_success: goto:link2
+    // phase2 含 link2，link1.on_success: link2
     // 所以 phase2 的引用者是 link1
 
     const referrers = findGotoReferrersForPhase(def, 'phase2');

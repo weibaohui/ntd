@@ -100,11 +100,8 @@ pub struct PhaseDefinition {
     /// 优先级高于 inline `spec`：若 `spec_ref` 存在且文件可读，覆盖 `spec`。
     #[serde(default)]
     pub spec_ref: Option<String>,
-    #[serde(default)]
-    pub acceptance_criteria: String,
-    /// 引用外部验收标准文件，优先级高于 inline `acceptance_criteria`。
-    #[serde(default)]
-    pub acceptance_criteria_ref: Option<String>,
+    // 阶段级验收标准已随需求 036 移除：评审逐环节进行，验收标准只归环节
+    // （LinkDefinition.acceptance_criteria），阶段挂验收标准颗粒度过粗且运行时不消费。
     #[serde(default)]
     pub links: Vec<LinkDefinition>,
 }

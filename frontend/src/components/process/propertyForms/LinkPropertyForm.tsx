@@ -25,7 +25,7 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
+import { DeleteOutlined, PlusOutlined, CloseOutlined } from '@ant-design/icons';
 import type {
   ProcessDefinition,
   LinkDefinition,
@@ -34,6 +34,9 @@ import type {
   StepTemplateRef,
 } from '@/types/process';
 import { updateLinkField } from '../processDefinitionUpdater';
+// 专家/技能复用 todo 侧组件：ExpertPicker 受控选择；LinkSkillPicker 封装技能加载 + toggle
+import { ExpertPicker } from '@/components/todo-drawer/ExpertPicker';
+import { LinkSkillPicker } from './LinkSkillPicker';
 // 评审 prompt 运行时替换的模板参数，用于 AI 评审时的 prompt 合成。
 // {{original_prompt}} → 当前环节的提示词
 // {{original_output}} → 执行记录的输出结果
@@ -85,6 +88,15 @@ export function LinkPropertyForm({
   ): void => {
     const newDef = updateLinkField(definition, phaseId, linkId, field, value);
     onDefinitionChange(newDef);
+  };
+
+  // 技能 toggle：点击技能卡片加入/移出 link.skills[]（环节级技能，运行时用）
+  const handleToggleSkill = (skillName: string): void => {
+    const current = link.skills ?? [];
+    const next = current.includes(skillName)
+      ? current.filter((s) => s !== skillName)
+      : [...current, skillName];
+    handleFieldChange('skills', next);
   };
 
   // ── gates 嵌套表格 ─────────────────────────────
@@ -380,18 +392,39 @@ export function LinkPropertyForm({
         />
       </Form.Item>
 
-      <Form.Item label="执行器">
-        <Input
-          value={link.executor ?? ''}
-          onChange={(e) => handleFieldChange('executor', e.target.value)}
-          placeholder="执行器，可空"
+      {/* 验收标准：环节产物验收标准，评审打分依据（需求 037 移到提示词后） */}
+      <Form.Item label="验收标准">
+        <Input.TextArea
+          value={link.acceptance_criteria ?? ''}
+          onChange={(e) =>
+            handleFieldChange('acceptance_criteria', e.target.value)
+          }
+          rows={2}
+          placeholder="环节产物验收标准，可空"
         />
       </Form.Item>
 
+      {/* 专家：复用 todo 的 ExpertPicker，存 link.expert（组件自带清除按钮） */}
+      <Form.Item label="专家">
+        <ExpertPicker
+          value={link.expert}
+          onChange={(v) => handleFieldChange('expert', v ?? undefined)}
+        />
+      </Form.Item>
+
+      {/* 技能：按环节 executor 加载，复用 SkillSelector 卡片，点击 toggle 存 link.skills[] */}
+      <LinkSkillPicker
+        executor={link.executor}
+        selectedSkills={link.skills}
+        onToggleSkill={handleToggleSkill}
+      />
+
       <Form.Item label="审核类型">
         <Select
-          value={link.review_type ?? 'ai'}
-          onChange={(value) => handleFieldChange('review_type', value)}
+          value={link.review_type}
+          onChange={(value) => handleFieldChange('review_type', value ?? undefined)}
+          allowClear
+          placeholder="默认 AI 审核"
           options={[
             { value: 'ai', label: 'AI 审核' },
             { value: 'human', label: '人工审核' },
@@ -451,8 +484,10 @@ export function LinkPropertyForm({
 
       <Form.Item label="成功后跳转">
         <Select
-          value={link.on_success ?? 'next'}
-          onChange={(value) => handleFieldChange('on_success', value)}
+          value={link.on_success}
+          onChange={(value) => handleFieldChange('on_success', value ?? undefined)}
+          allowClear
+          placeholder="默认：下一环节"
           options={[
             { value: 'next', label: '下一环节' },
             { value: 'end', label: '结束' },
@@ -463,23 +498,14 @@ export function LinkPropertyForm({
 
       <Form.Item label="门禁失败后">
         <Select
-          value={link.on_gate_fail ?? 'break'}
-          onChange={(value) => handleFieldChange('on_gate_fail', value)}
+          value={link.on_gate_fail}
+          onChange={(value) => handleFieldChange('on_gate_fail', value ?? undefined)}
+          allowClear
+          placeholder="默认：中断"
           options={[
             { value: 'break', label: '中断' },
             ...gotoOptions,
           ]}
-        />
-      </Form.Item>
-
-      <Form.Item label="验收标准">
-        <Input.TextArea
-          value={link.acceptance_criteria ?? ''}
-          onChange={(e) =>
-            handleFieldChange('acceptance_criteria', e.target.value)
-          }
-          rows={2}
-          placeholder="环节产物验收标准，可空"
         />
       </Form.Item>
 
@@ -542,6 +568,23 @@ export function LinkPropertyForm({
         size="small"
         style={tableStyle}
       />
+
+      {/* 执行器：需求 037 移到面板最后；suffix 清除按钮满足"可清空" */}
+      <Form.Item label="执行器">
+        <Input
+          value={link.executor ?? ''}
+          onChange={(e) => handleFieldChange('executor', e.target.value)}
+          placeholder="执行器，可空"
+          suffix={
+            link.executor ? (
+              <CloseOutlined
+                onClick={() => handleFieldChange('executor', undefined)}
+                style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer' }}
+              />
+            ) : null
+          }
+        />
+      </Form.Item>
     </Form>
   );
 }
@@ -566,7 +609,7 @@ function buildGotoOptions(
       // 排除当前 link 自身
       if (link.id === currentLinkId) continue;
       options.push({
-        value: `goto:${link.id}`,
+        value: link.id,
         label: `${link.name} (${link.id})`,
       });
     }

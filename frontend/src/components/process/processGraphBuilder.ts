@@ -46,6 +46,9 @@ const GOTO_GATE_FAIL_COLOR = '#d97706';
 const GOTO_GATE_FAIL_DASHED = true;
 // 阶段流转边颜色（中性灰，区别于 goto 的绿/橙；不传 onDelete 故不可删）
 const PHASE_FLOW_COLOR = '#94a3b8';
+// 流转保留字（非跳转目标）：next/end/break/skip。
+// 需求 037：跳转值用裸环节 id（已清除 goto: 前缀），非保留字即跳转目标。
+const TRANSITION_RESERVED = new Set(['next', 'end', 'break', 'skip']);
 
 // ── 回调接口 ──────────────────────────────────────
 
@@ -189,9 +192,9 @@ export function buildProcessGraph(
     links.forEach((link, linkIndex) => {
       const sourceNodeId = `link-${phaseIndex}-${linkIndex}`;
 
-      // 检查 on_success
-      if (link.on_success && link.on_success.startsWith('goto:')) {
-        const targetLinkId = link.on_success.slice('goto:'.length);
+      // 检查 on_success：非保留字（next/end）即跳转目标环节 id（裸，需求 037）
+      if (link.on_success && !TRANSITION_RESERVED.has(link.on_success)) {
+        const targetLinkId = link.on_success;
         const targetNodeId = linkIdToNodeId.get(targetLinkId);
         if (targetNodeId) {
           // 目标存在，创建绿色边
@@ -209,9 +212,9 @@ export function buildProcessGraph(
         // 目标不存在（悬空引用）→ 跳过，不画边
       }
 
-      // 检查 on_gate_fail
-      if (link.on_gate_fail && link.on_gate_fail.startsWith('goto:')) {
-        const targetLinkId = link.on_gate_fail.slice('goto:'.length);
+      // 检查 on_gate_fail：非保留字（break）即跳转目标环节 id
+      if (link.on_gate_fail && !TRANSITION_RESERVED.has(link.on_gate_fail)) {
+        const targetLinkId = link.on_gate_fail;
         const targetNodeId = linkIdToNodeId.get(targetLinkId);
         if (targetNodeId) {
           // 目标存在，创建橙色虚线边

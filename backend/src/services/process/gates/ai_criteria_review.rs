@@ -6,8 +6,10 @@
 //!
 //! 配置格式：
 //! ```json
-//! {"criteria_ref": "phase.acceptance_criteria", "min_score": 80}
+//! {"min_score": 80}
 //! ```
+//! > 验收标准由评审统一路径经 todo 注入（源自环节 `acceptance_criteria`），
+//! > 本门禁只比对已有评分与阈值；`GateDefinition.criteria_ref` 字段当前未被 evaluate 使用。
 
 use super::{GateContext, GateResult};
 

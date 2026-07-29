@@ -8,8 +8,8 @@
 // - 纯函数无副作用，便于 vitest 测试。
 //
 // 核心规则：
-// - 删除 link → 遍历所有 link，把 `on_success: goto:<被删link.id>` 重置为 `next`，
-//   把 `on_gate_fail: goto:<被删link.id>` 重置为 `break`。
+// - 删除 link → 遍历所有 link，把 on_success/on_gate_fail 指向被删 link id 的重置为默认值
+//   （需求 037：跳转值是裸环节 id，已清除 goto: 前缀）。
 // - 删除 phase → 遍历其下所有 link，对每一个执行上述级联重置。
 //
 // ID 约定（M4 用数组索引，M5 可改用 phase.id/link.id）：
@@ -38,12 +38,10 @@ const DEFAULT_ON_SUCCESS = 'next';
 const DEFAULT_ON_GATE_FAIL = 'break';
 
 // 判断 on_success / on_gate_fail 是否指向指定 link id。
-// on_success: goto:xxx → true
-// on_success: next / end → false
+// 需求 037：跳转值用裸环节 id（已清除 goto: 前缀），直接比较即可。
+// 保留字 next/end/break/skip 不会等于真实 link id，无需额外排除。
 function isGotoTarget(value: string | undefined, targetLinkId: string): boolean {
-  if (!value) return false;
-  // goto:link-id 格式，精确匹配 targetLinkId
-  return value === `goto:${targetLinkId}`;
+  return !!value && value === targetLinkId;
 }
 
 // ── 查询函数 ──────────────────────────────────────────
@@ -231,7 +229,7 @@ export function updatePhaseField(
   return cloned;
 }
 
-// 拖连线后更新 on_success / on_gate_fail 为 goto:<targetLinkId>。
+// 拖连线后更新 on_success / on_gate_fail 为跳转目标（裸环节 id，需求 037）。
 // handleType 区分是 on_success 还是 on_gate_fail。
 export function setLinkGoto(
   definition: ProcessDefinition,
@@ -240,13 +238,13 @@ export function setLinkGoto(
   handleType: 'on_success' | 'on_gate_fail',
   targetLinkId: string,
 ): ProcessDefinition {
-  // 复用 updateLinkField，把字段值设为 `goto:<targetLinkId>`
+  // 复用 updateLinkField，把字段值设为目标环节 id（裸，无 goto: 前缀）
   return updateLinkField(
     definition,
     sourcePhaseId,
     sourceLinkId,
     handleType,
-    `goto:${targetLinkId}`,
+    targetLinkId,
   );
 }
 
@@ -284,19 +282,13 @@ function resetGotoForTargets(
   // 遍历所有 phase 下的所有 link
   for (const phase of definition.phases ?? []) {
     for (const link of phase.links ?? []) {
-      // 检查 on_success 是否指向被删 link
-      if (link.on_success && link.on_success.startsWith('goto:')) {
-        const targetId = link.on_success.slice('goto:'.length);
-        if (targetSet.has(targetId)) {
-          link.on_success = DEFAULT_ON_SUCCESS;
-        }
+      // 检查 on_success 是否指向被删 link（裸环节 id，需求 037）
+      if (link.on_success && targetSet.has(link.on_success)) {
+        link.on_success = DEFAULT_ON_SUCCESS;
       }
       // 检查 on_gate_fail 是否指向被删 link
-      if (link.on_gate_fail && link.on_gate_fail.startsWith('goto:')) {
-        const targetId = link.on_gate_fail.slice('goto:'.length);
-        if (targetSet.has(targetId)) {
-          link.on_gate_fail = DEFAULT_ON_GATE_FAIL;
-        }
+      if (link.on_gate_fail && targetSet.has(link.on_gate_fail)) {
+        link.on_gate_fail = DEFAULT_ON_GATE_FAIL;
       }
     }
   }

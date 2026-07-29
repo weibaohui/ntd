@@ -1,9 +1,9 @@
 import { Input, Tag, Spin, Empty } from 'antd';
-import { RightOutlined, ThunderboltOutlined, SearchOutlined } from '@ant-design/icons';
+import { RightOutlined, ThunderboltOutlined, SearchOutlined, CheckOutlined } from '@ant-design/icons';
 import { memo, useDeferredValue } from 'react';
 import type { SkillMeta } from '@/types';
 
-export const SkillSelector = memo(function SkillSelector({ skills, loading, executorColor, searchText, onSearchChange, expanded, onToggle, onSkillClick }: {
+export const SkillSelector = memo(function SkillSelector({ skills, loading, executorColor, searchText, onSearchChange, expanded, onToggle, onSkillClick, selectedSkills }: {
   skills: SkillMeta[];
   loading: boolean;
   executorColor: string;
@@ -12,6 +12,9 @@ export const SkillSelector = memo(function SkillSelector({ skills, loading, exec
   expanded: boolean;
   onToggle: () => void;
   onSkillClick: (skill: SkillMeta) => void;
+  // 已选中的技能名（可选）。传入时卡片显示选中态（toggle 多选场景，如环节 skills）。
+  // todo 场景不传，保持原"点击插入 prompt"无选中态行为，向后兼容。
+  selectedSkills?: string[];
 }) {
   const deferredSearch = useDeferredValue(searchText);
   const filtered = deferredSearch.trim()
@@ -83,7 +86,10 @@ export const SkillSelector = memo(function SkillSelector({ skills, loading, exec
       )}
       {expanded && filtered.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
-          {filtered.map(skill => (
+          {filtered.map(skill => {
+            // 选中态：selectedSkills 传入时（环节 toggle 场景），命中的技能高亮
+            const selected = selectedSkills?.includes(skill.name) ?? false;
+            return (
             <div
               key={skill.name}
               onClick={() => onSkillClick(skill)}
@@ -98,23 +104,28 @@ export const SkillSelector = memo(function SkillSelector({ skills, loading, exec
               style={{
                 padding: '10px 12px',
                 borderRadius: 8,
-                border: '1px solid var(--color-border-secondary)',
-                background: 'var(--color-bg-elevated)',
+                // 选中：executorColor 边框+背景；未选中：默认边框
+                border: `1px solid ${selected ? executorColor : 'var(--color-border-secondary)'}`,
+                background: selected ? `${executorColor}14` : 'var(--color-bg-elevated)',
                 cursor: 'pointer',
                 transition: 'all 0.2s ease',
                 overflow: 'hidden',
               }}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLDivElement).style.borderColor = executorColor;
-                (e.currentTarget as HTMLDivElement).style.background = `${executorColor}08`;
+                if (!selected) {
+                  (e.currentTarget as HTMLDivElement).style.borderColor = executorColor;
+                  (e.currentTarget as HTMLDivElement).style.background = `${executorColor}08`;
+                }
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--color-border-secondary)';
-                (e.currentTarget as HTMLDivElement).style.background = 'var(--color-bg-elevated)';
+                // 恢复时保留选中态高亮，未选中回默认
+                (e.currentTarget as HTMLDivElement).style.borderColor = selected ? executorColor : 'var(--color-border-secondary)';
+                (e.currentTarget as HTMLDivElement).style.background = selected ? `${executorColor}14` : 'var(--color-bg-elevated)';
               }}
             >
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {skill.name}
+              <div style={{ fontSize: 13, fontWeight: 600, color: selected ? executorColor : 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{skill.name}</span>
+                {selected && <CheckOutlined style={{ fontSize: 11, color: executorColor, flexShrink: 0 }} />}
               </div>
               {skill.description && (
                 <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -135,7 +146,8 @@ export const SkillSelector = memo(function SkillSelector({ skills, loading, exec
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
       {expanded && filtered.length === 0 && deferredSearch && (

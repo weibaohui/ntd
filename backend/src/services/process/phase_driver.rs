@@ -86,8 +86,9 @@ pub async fn execute_step(
     // 2. 门禁评价。
     let skill_names: Vec<String> =
         serde_json::from_str(&step.skill_names).unwrap_or_default();
-    // acceptance_criteria 在 todos 表中，PhaseDriver 不做两层解析；
-    // ai_criteria_review 门禁使用 gate_config 中配置的 criteria_ref 引用阶段或 todo 的验收标准。
+    // 验收标准只归环节：评审时由 compose_review_prompt 直接读 todo.acceptance_criteria
+    // （源自环节定义），PhaseDriver 的 gate context 不再单独传入阶段级验收标准（恒 None）。
+    // ai_criteria_review 门禁只比对已有 rating 与 min_score，不依赖此字段。
     let acceptance_criteria: Option<&str> = None;
 
     // 兼容旧字段 min_rating / review_type。

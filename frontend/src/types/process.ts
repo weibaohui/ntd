@@ -50,12 +50,12 @@ export interface LinkDefinition {
   max_rework?: number;
 }
 
-/** 阶段定义 */
+/** 阶段定义
+ * 验收标准只归环节（见 LinkDefinition.acceptance_criteria）；阶段不再挂验收标准（需求 036）。 */
 export interface PhaseDefinition {
   id: string;
   name: string;
   spec?: string;
-  acceptance_criteria?: string;
   links?: LinkDefinition[];
 }
 

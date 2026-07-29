@@ -37,7 +37,7 @@ function makeSimpleDefinition(): ProcessDefinition {
   };
 }
 
-// 两个 phase、各一个 link，link1.on_success: goto:link2
+// 两个 phase、各一个 link，link1.on_success: link2
 function makeDefinitionWithGoto(): ProcessDefinition {
   return {
     process: { name: 'test', display_name: '测试' },
@@ -49,7 +49,7 @@ function makeDefinitionWithGoto(): ProcessDefinition {
           {
             id: 'link1',
             name: '环节1',
-            on_success: 'goto:link2',
+            on_success: 'link2',
             on_gate_fail: 'break',
           },
         ],
@@ -201,7 +201,7 @@ describe('buildProcessGraph edges', () => {
   });
 
   it('buildProcessGraph_gotoOnGateFail_generatesOrangeDashedEdge', () => {
-    // 构造 link1.on_gate_fail: goto:link2
+    // 构造 link1.on_gate_fail: link2
     const def: ProcessDefinition = {
       process: { name: 'test', display_name: '测试' },
       phases: [
@@ -213,7 +213,7 @@ describe('buildProcessGraph edges', () => {
               id: 'link1',
               name: '环节1',
               on_success: 'next',
-              on_gate_fail: 'goto:link2',
+              on_gate_fail: 'link2',
             },
           ],
         },
@@ -241,7 +241,7 @@ describe('buildProcessGraph edges', () => {
   });
 
   it('buildProcessGraph_danglingGoto_doesNotGenerateEdge', () => {
-    // link1.on_success: goto:nonexistent（目标不存在）
+    // link1.on_success: nonexistent（目标不存在）
     const def: ProcessDefinition = {
       process: { name: 'test', display_name: '测试' },
       phases: [
@@ -252,7 +252,7 @@ describe('buildProcessGraph edges', () => {
             {
               id: 'link1',
               name: '环节1',
-              on_success: 'goto:nonexistent',
+              on_success: 'nonexistent',
               on_gate_fail: 'break',
             },
           ],
