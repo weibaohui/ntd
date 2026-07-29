@@ -39,7 +39,8 @@ import { updateLinkField } from '../processDefinitionUpdater';
 // {{original_output}} → 执行记录的输出结果
 // {{acceptance_criteria}} → 验收标准
 // {{max_output_chars}} → 截断上限（常量）
-// 后端已同时支持 {{双括号}} 和 {单括号} 两种写法，推荐双括号（社区惯例）。
+// 占位符统一用 {{双花括号}}：后端 compose_review_prompt / apply_rating_gate 只替换双花括号，
+// 单花括号不会被替换。历史上曾混用 {单括号} 导致占位符原样发给 AI，已统一为双花括号。
 const REVIEW_PROMPT_PARAMS = [
   { key: '{{original_prompt}}', label: 'original_prompt', desc: '当前环节的提示词（prompt 字段）' },
   { key: '{{original_output}}', label: 'original_output', desc: '执行记录的输出结果' },
@@ -407,7 +408,7 @@ export function LinkPropertyForm({
           value={link.review_prompt ?? ''}
           onChange={(e) => handleFieldChange('review_prompt', e.target.value)}
           rows={4}
-          placeholder="环节专属评审模板，可空。非空时整体替代默认评审模板；可用 {original_output}、{acceptance_criteria} 等占位符"
+          placeholder="环节专属评审模板，可空。非空时整体替代默认评审模板；可用 {{original_output}}、{{acceptance_criteria}} 等占位符"
         />
         {/* 快速插入参数条：点击模板将 {{key}} 追加到评审 prompt 尾部。
             与 todo 编辑区的 prompt 参数快速输入条样式一致。 */}
