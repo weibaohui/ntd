@@ -185,16 +185,9 @@ pub fn register_skills_cache(cache: Arc<SkillsMarketCache>) {
 /// 同步请求参数
 #[derive(Debug, Deserialize)]
 pub struct SyncRequest {
-    /// 同步策略：keep_local（保留本地）、overwrite（覆盖）、manual（手动处理冲突）
-    #[serde(default = "default_sync_strategy")]
-    pub strategy: String,
     /// 同步的子目录：all/experts/todos/skills，默认 all
     #[serde(default)]
     pub subdir: Subdir,
-}
-
-fn default_sync_strategy() -> String {
-    "keep_local".to_string()
 }
 
 /// 同步响应
@@ -231,8 +224,6 @@ pub struct StatusResponse {
     pub branch: String,
     /// 本地路径
     pub local_path: String,
-    /// 当前同步策略
-    pub sync_strategy: String,
     /// 自动同步是否启用
     pub auto_sync_enabled: bool,
     /// 本地是否存在
@@ -260,11 +251,11 @@ pub struct StatusResponse {
 /// 执行一次完整的内置资源同步：git clone/pull +（按 subdir）导入事项模板 + 重载专家 + 写 last_sync_at。
 ///
 /// 抽自 sync_bundled handler，供 HTTP 接口与启动检查任务共用，避免逻辑分叉。
+/// 固定以远程仓库为准（git fetch + reset --hard origin/<branch>），不再接收同步策略。
 /// 返回 git 层 SyncResult，调用方据此组装 HTTP 响应或日志。
 pub(crate) async fn run_bundled_sync(
     state: &AppState,
     subdir: Subdir,
-    strategy: git_sync::SyncStrategy,
 ) -> Result<git_sync::SyncResult, String> {
     // 先快照出 owned bundled 配置并立即释放读锁卫，后续 .await 不持锁、future 保持 Send
     let bundled_config = state.config_snapshot(|c| c.bundled_source.clone());
@@ -286,7 +277,7 @@ pub(crate) async fn run_bundled_sync(
         git_sync::clone_repo(&bundled_config.url, &repo_path, &bundled_config.branch).await
     } else {
         tracing::info!("本地仓库已存在，执行同步更新");
-        git_sync::sync_repo(&repo_path, "origin", &bundled_config.branch, strategy).await
+        git_sync::sync_repo(&repo_path, "origin", &bundled_config.branch).await
     };
 
     let r = result.map_err(|e| e.to_string())?;
@@ -348,10 +339,9 @@ pub async fn sync_bundled(
     Json(req): Json<SyncRequest>,
 ) -> Result<ApiResponse<SyncResponse>, AppError> {
     let subdir = req.subdir;
-    let strategy = git_sync::SyncStrategy::from(req.strategy.as_str());
 
     // 实际同步逻辑抽到 run_bundled_sync，handler 只负责参数解析与响应组装
-    match run_bundled_sync(&state, subdir, strategy).await {
+    match run_bundled_sync(&state, subdir).await {
         Ok(r) => Ok(ApiResponse::ok(SyncResponse {
             success: r.success,
             message: r.message,
@@ -419,7 +409,6 @@ pub async fn get_bundled_status(
         remote_url: bundled_config.url.clone(),
         branch: bundled_config.branch.clone(),
         local_path: repo_path.to_string_lossy().to_string(),
-        sync_strategy: "overwrite".to_string(),
         auto_sync_enabled: bundled_config.auto_sync_enabled,
         local_exists,
         local_commit,

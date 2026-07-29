@@ -111,7 +111,7 @@ export function TemplatesPanel() {
     setSyncing(true);
     const hide = antMessage.loading('正在同步全部资源...', 0);
     try {
-      const res = await bundledApi.sync({ subdir: 'all', strategy: 'overwrite' });
+      const res = await bundledApi.sync({ subdir: 'all' });
       if (res?.success) {
         message.success(`同步成功: ${res.message}`);
         await loadStatus();
@@ -441,7 +441,6 @@ function StatusModal({
           <Descriptions.Item label="远程仓库">{status.remote_url}</Descriptions.Item>
           <Descriptions.Item label="分支">{status.branch}</Descriptions.Item>
           <Descriptions.Item label="本地路径">{status.local_path}</Descriptions.Item>
-          <Descriptions.Item label="同步策略">{status.sync_strategy}</Descriptions.Item>
           <Descriptions.Item label="自动同步">
             {status.auto_sync_enabled ? '已启用' : '未启用'}
           </Descriptions.Item>
