@@ -45,6 +45,14 @@
   --color-bg-card: #f8fafc;
   --color-bg-tertiary: #f1f5f9;
 
+  /* Ant Design fill 色阶（亮色）：取值对齐 antd 默认算法的 colorFill*，
+     供行内样式引用（如属性表单的参数 chip、YAML <pre> 底）。
+     历史上只在 [data-theme="dark"] 里定义，亮色下 var() 解析失败导致底色丢失。*/
+  --color-fill-quaternary: rgba(0, 0, 0, 0.02);
+  --color-fill-tertiary: rgba(0, 0, 0, 0.04);
+  --color-fill-secondary: rgba(0, 0, 0, 0.06);
+  --color-fill-primary: rgba(0, 0, 0, 0.15);
+
   --color-text: #0f172a;
   --color-text-secondary: #475569;
   --color-text-tertiary: #94a3b8;

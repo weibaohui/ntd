@@ -55,7 +55,8 @@ function ProcessEdgeImpl({
     dashed?: boolean;
     onDelete?: (edgeId: string) => void;
   };
-  const color = edgeData.color ?? '#94a3b8'; // 默认灰色
+  // 默认主题三级文字灰（写死 slate-400 在暗色画布上偏亮，且与主题板不一致）
+  const color = edgeData.color ?? 'var(--color-text-tertiary)';
   const dashed = edgeData.dashed ?? false;
   const onDelete = edgeData.onDelete;
 
@@ -119,21 +120,21 @@ function ProcessEdgeImpl({
           {/* hover 时显示删除按钮 */}
           {hovered && onDelete && (
             <>
-              {/* 白色背景圆，遮挡边路径 */}
+              {/* 主题容器底色圆，遮挡边路径（写死白色在暗色画布上是刺眼亮点） */}
               <circle
                 cx={midX}
                 cy={midY}
                 r={10}
-                fill="#fff"
-                stroke="#ef4444"
+                fill="var(--color-bg-elevated)"
+                stroke="var(--color-error)"
                 strokeWidth={1.5}
               />
-              {/* 红色 × 删除按钮 */}
+              {/* 主题错误色 × 删除按钮 */}
               <text
                 x={midX}
                 y={midY + 4}
                 textAnchor="middle"
-                fill="#ef4444"
+                fill="var(--color-error)"
                 style={{
                   cursor: 'pointer',
                   fontSize: 14,

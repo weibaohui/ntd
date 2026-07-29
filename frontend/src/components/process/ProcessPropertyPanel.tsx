@@ -125,8 +125,8 @@ export function ProcessPropertyPanel({
 const containerStyle: CSSProperties = {
   height: '100%',
   overflow: 'auto',
-  // 浅灰背景，与可视化区区分
-  background: '#f8fafc',
-  // 左边框分隔
-  borderLeft: '1px solid #e2e8f0',
+  // 面板背景，与可视化区区分（主题变量：亮色浅灰 / 暗色 surface0）
+  background: 'var(--color-bg-card)',
+  // 左边框分隔（主题变量，暗色下随主题切换）
+  borderLeft: '1px solid var(--color-border)',
 };

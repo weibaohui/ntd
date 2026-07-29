@@ -240,7 +240,8 @@ export function ProcessTemplatesTab({ refreshTick }: { refreshTick?: number }) {
             <Text type="secondary">YAML 定义：</Text>
             <pre
               style={{
-                background: '#f5f5f5',
+                // YAML 预览底色用主题填充色：亮色浅灰，暗色切到 surface 灰
+                background: 'var(--color-fill-tertiary)',
                 padding: 12,
                 borderRadius: 4,
                 maxHeight: 400,

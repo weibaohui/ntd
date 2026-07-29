@@ -50,9 +50,10 @@ export interface PhaseNodeData {
 // ── 样式常量 ──────────────────────────────────────
 
 // phase 容器背景色（半透明灰，避免遮挡子节点）
+// slate 低透明度在亮/暗底下都只是轻微提亮，两种主题都成立，无需随主题切换
 const PHASE_BG = 'rgba(148, 163, 184, 0.05)';
-// phase 容器边框色（虚线灰）
-const PHASE_BORDER = '#94a3b8';
+// phase 容器边框色（主题三级文字灰，暗色下自动变深灰，不再是写死 slate-400）
+const PHASE_BORDER = 'var(--color-text-tertiary)';
 
 // 阶段流转 handle 样式：视觉隐藏，仅作 React Flow edge 连接点。
 // 阶段顺序边由 builder 自动生成，不可由用户拖拽连线改动，故 pointerEvents:none。
@@ -175,12 +176,12 @@ const headerStyle: CSSProperties = {
   cursor: 'pointer',
 };
 
-// 头部文字样式：选中时文字变绿，让用户在头部点击区也能直接看到选中反馈
+// 头部文字样式：选中时文字变主题成功绿，让用户在头部点击区也能直接看到选中反馈
 function headerTextStyle(selected: boolean): CSSProperties {
   return {
     fontSize: 14,
     fontWeight: 600,
-    color: selected ? '#059669' : '#475569',
+    color: selected ? 'var(--color-success)' : 'var(--color-text-secondary)',
     transition: 'color 0.15s ease',
   };
 }
@@ -192,23 +193,23 @@ const headerActionsStyle: CSSProperties = {
   gap: 8,
 };
 
-// 新增环节按钮样式：小号、浅蓝文字
+// 新增环节按钮样式：小号、主题主色文字与描边（暗色下随主题保持可见）
 const addLinkButtonStyle: CSSProperties = {
   background: 'transparent',
-  border: '1px solid #93c5fd',
+  border: '1px solid var(--color-primary)',
   borderRadius: 4,
-  color: '#3b82f6',
+  color: 'var(--color-primary)',
   fontSize: 12,
   cursor: 'pointer',
   padding: '2px 6px',
   lineHeight: 1.4,
 };
 
-// 删除按钮样式
+// 删除按钮样式（主题错误色，暗色下自动调柔）
 const deleteButtonStyle: CSSProperties = {
   background: 'transparent',
   border: 'none',
-  color: '#ef4444',
+  color: 'var(--color-error)',
   fontSize: 18,
   cursor: 'pointer',
   padding: '0 4px',

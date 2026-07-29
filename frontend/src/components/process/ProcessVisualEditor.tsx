@@ -398,6 +398,9 @@ export function ProcessVisualEditor({
         onConnect={handleConnect}
         onNodeClick={handleNodeClick}
         onPaneClick={handlePaneClick}
+        // v12 colorMode：让画布底色、Controls、选中框等内置样式跟随应用主题，
+        // 否则暗色主题下画布仍是一块写死的白底
+        colorMode={theme}
         // fitView 初始视口
         fitView
         // fitViewOptions 可控制 padding

@@ -118,13 +118,15 @@ export function ProcessEditorToolbar({
 
 // ── 样式 ──────────────────────────────────────────
 
+// 工具栏底色与边框用主题变量：亮色白底 slate 边，暗色随 data-theme 切到 Mocha 底色，
+// 避免暗色主题下工具栏仍是一块写死的白底
 const toolbarStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
   padding: '8px 16px',
-  borderBottom: '1px solid #e2e8f0',
-  background: '#fff',
+  borderBottom: '1px solid var(--color-border)',
+  background: 'var(--color-bg-elevated)',
 };
 
 const titleStyle: CSSProperties = {

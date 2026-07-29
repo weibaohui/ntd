@@ -301,8 +301,9 @@ describe('buildProcessGraph edges', () => {
     expect(phaseEdges[0].target).toBe('phase-1');
     expect(phaseEdges[1].source).toBe('phase-1');
     expect(phaseEdges[1].target).toBe('phase-2');
-    // 灰色实线，不可删（无 onDelete）
-    expect(phaseEdges[0].data?.color).toBe('#94a3b8');
+    // 灰色实线，不可删（无 onDelete）。
+    // 颜色是主题 CSS 变量字符串（亮/暗主题由浏览器解析），不是写死 hex
+    expect(phaseEdges[0].data?.color).toBe('var(--color-text-tertiary)');
     expect(phaseEdges[0].data?.dashed).toBe(false);
     expect(phaseEdges[0].data?.onDelete).toBeUndefined();
   });

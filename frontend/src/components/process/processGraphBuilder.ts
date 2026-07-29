@@ -44,8 +44,10 @@ const GOTO_SUCCESS_COLOR = '#10b981';
 const GOTO_GATE_FAIL_COLOR = '#d97706';
 // goto 门禁失败边是否虚线
 const GOTO_GATE_FAIL_DASHED = true;
-// 阶段流转边颜色（中性灰，区别于 goto 的绿/橙；不传 onDelete 故不可删）
-const PHASE_FLOW_COLOR = '#94a3b8';
+// 阶段流转边颜色（中性灰，区别于 goto 的绿/橙；不传 onDelete 故不可删）。
+// 用主题 CSS 变量而非写死 slate-400：值作为 stroke/marker fill 写进 SVG，
+// 浏览器在渲染时按 data-theme 解析变量，暗色主题下自动变为暗灰。
+const PHASE_FLOW_COLOR = 'var(--color-text-tertiary)';
 // 流转保留字（非跳转目标）：next/end/break/skip。
 // 需求 037：跳转值用裸环节 id（已清除 goto: 前缀），非保留字即跳转目标。
 const TRANSITION_RESERVED = new Set(['next', 'end', 'break', 'skip']);

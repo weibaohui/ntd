@@ -510,29 +510,30 @@ const splitViewStyle: CSSProperties = {
 };
 
 // Tab 按钮栏：横向 flex，底部边框分隔（仿 Ant Design Tabs 视觉）
+// 边框用主题变量，暗色下随 data-theme 切换，不再是亮色 slate 写死值
 const tabBarStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'row',
-  borderBottom: '1px solid #e2e8f0',
+  borderBottom: '1px solid var(--color-border)',
   padding: '0 4px',
 };
 
-// Tab 按钮：未激活态，浅色文字 + 透明背景
+// Tab 按钮：未激活态，次级文字 + 透明背景（主题变量，暗色下保持可读）
 const tabButtonStyle: CSSProperties = {
   padding: '8px 16px',
   border: 'none',
   background: 'transparent',
   cursor: 'pointer',
-  color: '#64748b',
+  color: 'var(--color-text-secondary)',
   fontSize: 14,
 };
 
-// Tab 按钮：激活态，深色文字 + 底部蓝色高亮条（仿 Ant Design Tabs 激活态）
+// Tab 按钮：激活态，主色文字 + 底部主色高亮条（仿 Ant Design Tabs 激活态）
 const tabButtonActiveStyle: CSSProperties = {
   ...tabButtonStyle,
-  color: '#1677ff',
+  color: 'var(--color-primary)',
   fontWeight: 500,
-  boxShadow: 'inset 0 -2px 0 #1677ff',
+  boxShadow: 'inset 0 -2px 0 var(--color-primary)',
 };
 
 // Tabs 容器：填满剩余高度
@@ -574,10 +575,10 @@ function propertyPanelStyle(collapsed: boolean): CSSProperties {
     // 纵向 flex：展开时工具条在上、内容区撑满剩余
     display: 'flex',
     flexDirection: 'column',
-    // 浅灰背景，与可视化区区分
-    background: '#f8fafc',
-    // 左边框分隔
-    borderLeft: '1px solid #e2e8f0',
+    // 面板背景，与可视化区区分（主题变量：亮色浅灰 / 暗色 surface0）
+    background: 'var(--color-bg-card)',
+    // 左边框分隔（主题变量）
+    borderLeft: '1px solid var(--color-border)',
     // 收起态内容（窄条按钮）不允许溢出
     overflow: 'hidden',
   };
@@ -590,16 +591,17 @@ const panelToolbarStyle: CSSProperties = {
   justifyContent: 'space-between',
   alignItems: 'center',
   padding: '8px 12px',
-  borderBottom: '1px solid #e2e8f0',
+  borderBottom: '1px solid var(--color-border)',
   // 工具条不参与收缩，固定高度由内容决定
   flexShrink: 0,
 };
 
 // 工具条标题：与表单内原有大标题同级字号、加粗，但不再占表单垂直空间。
+// 颜色用主题主文字变量，暗色下不再是写死的 slate-700
 const panelToolbarTitleStyle: CSSProperties = {
   fontSize: 16,
   fontWeight: 600,
-  color: '#334155',
+  color: 'var(--color-text)',
   lineHeight: 1.4,
 };
 
@@ -615,7 +617,7 @@ const collapseButtonStyle: CSSProperties = {
   background: 'transparent',
   border: 'none',
   boxShadow: 'none',
-  color: '#64748b',
+  color: 'var(--color-text-secondary)',
   fontSize: 12,
   cursor: 'pointer',
   height: 'auto',
@@ -633,7 +635,7 @@ const expandStripButtonStyle: CSSProperties = {
   background: 'transparent',
   border: 'none',
   boxShadow: 'none',
-  color: '#64748b',
+  color: 'var(--color-text-secondary)',
   fontSize: 12,
   cursor: 'pointer',
   display: 'flex',
@@ -655,20 +657,21 @@ const expandStripInnerStyle: CSSProperties = {
   padding: '10px 0',
 };
 
-// 收缩栏箭头：小号、低调颜色，hover 由按钮整体承接交互。
+// 收缩栏箭头：小号、低调颜色（主题次级文字），hover 由按钮整体承接交互。
 const expandArrowStyle: CSSProperties = {
   fontSize: 12,
-  color: '#64748b',
+  color: 'var(--color-text-secondary)',
 };
 
 // 收缩栏标题：竖排（writing-mode vertical-rl）以便在中文字符下自然竖读，
 // 贴左边缘、不换行。窄条宽度有限，竖排是唯一可读的呈现方式。
+// 颜色用主题主文字变量，暗色下保持可读。
 const expandTitleStyle: CSSProperties = {
   writingMode: 'vertical-rl',
   textOrientation: 'upright',
   letterSpacing: 2,
   fontSize: 13,
-  color: '#334155',
+  color: 'var(--color-text)',
   whiteSpace: 'nowrap',
 };
 

@@ -88,7 +88,8 @@ export function ProcessFlowGraph({
 
   if (links.length === 0) {
     return (
-      <div style={{ color: '#94a3b8', textAlign: 'center', padding: 60, fontSize: 13 }}>
+      // 主题三级文字色，暗色下不再用写死的 slate-400
+      <div style={{ color: 'var(--color-text-tertiary)', textAlign: 'center', padding: 60, fontSize: 13 }}>
         该工艺模板暂无环节定义
       </div>
     );
@@ -113,7 +114,8 @@ export function ProcessFlowGraph({
                 viewBox="0 0 10 10" refX={10} refY={5}
                 markerWidth={6} markerHeight={6} orient="auto"
               >
-                <path d="M 0 0 L 10 5 L 0 10 z" fill={isGoto ? '#d97706' : '#94a3b8'} />
+                {/* goto 橙是语义色两种主题通用；顺向灰用主题变量随主题切换 */}
+                <path d="M 0 0 L 10 5 L 0 10 z" fill={isGoto ? '#d97706' : 'var(--color-text-tertiary)'} />
               </marker>
             );
           })}
@@ -151,11 +153,11 @@ export function ProcessFlowGraph({
                     strokeWidth={1.5} strokeDasharray="6,3"
                     markerEnd={`url(#parrow-${i})`}
                   />
-                  {/* 标签白底圆角矩形 */}
+                  {/* 标签圆角矩形：底色用主题容器色而非写死白色，暗色下不刺眼 */}
                   <rect
                     x={midX - lw / 2 - 6} y={labelY - 10}
                     width={lw + 12} height={18} rx={4}
-                    fill="#ffffff" stroke="#d97706" strokeWidth={1}
+                    fill="var(--color-bg-elevated)" stroke="#d97706" strokeWidth={1}
                   />
                   <text
                     x={midX} y={labelY + 2}
@@ -175,14 +177,14 @@ export function ProcessFlowGraph({
             return (
               <g key={`pe-${i}`}>
                 <path
-                  d={path} fill="none" stroke="#94a3b8"
+                  d={path} fill="none" stroke="var(--color-text-tertiary)"
                   strokeWidth={1.5} markerEnd={`url(#parrow-${i})`}
                 />
                 {te.label && (
                   <text
                     x={midX} y={midY - 8}
                     textAnchor="middle" fontSize={10}
-                    fill="#64748b"
+                    fill="var(--color-text-secondary)"
                     style={{ fontFamily: 'system-ui' }}
                   >
                     {te.label}

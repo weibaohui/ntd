@@ -156,11 +156,11 @@ function cardStyle(selected: boolean): CSSProperties {
     // flex 布局：让左栏 textContentStyle(flex:1) 占据左侧空间，
     // 右侧 padding 专属留给「成功/失败」标签 + handle 圆点
     display: 'flex',
-    // 选中对比：未选中=白底+灰细边（弱存在感），
+    // 选中对比：未选中=主题容器底色+主题细边（弱存在感），
     // 选中=浅绿底+绿粗边+绿色投影，三重差异一眼可辨
-    background: selected ? 'rgba(16, 185, 129, 0.06)' : '#fff',
-    // 边框：默认灰色，选中时绿色加粗
-    border: selected ? '2px solid #10b981' : '1px solid #e2e8f0',
+    background: selected ? 'rgba(16, 185, 129, 0.06)' : 'var(--color-bg-elevated)',
+    // 边框：默认主题边框色，选中时绿色加粗
+    border: selected ? '2px solid #10b981' : '1px solid var(--color-border)',
     // 圆角
     borderRadius: 8,
     // 内边距：右侧加大到 70px，给出口标签 + handle 留出专属空间，
@@ -172,11 +172,11 @@ function cardStyle(selected: boolean): CSSProperties {
     position: 'relative',
     // 鼠标指针：可点击
     cursor: 'pointer',
-    // 阴影：未选中仅轻微层次；选中时换同色系绿色光晕，替代默认黑影，
-    // 让「点中」在边缘一圈发光，远距离也能识别
+    // 阴影：未选中用主题 shadow-sm（暗色下阴影更深）；选中时换同色系绿色光晕，
+    // 替代默认黑影，让「点中」在边缘一圈发光，远距离也能识别
     boxShadow: selected
-      ? '0 0 0 3px rgba(16, 185, 129, 0.18), 0 1px 3px rgba(0, 0, 0, 0.08)'
-      : '0 1px 3px rgba(0, 0, 0, 0.08)',
+      ? '0 0 0 3px rgba(16, 185, 129, 0.18), var(--shadow-sm)'
+      : 'var(--shadow-sm)',
     // 状态切换加过渡，避免边框/底色/阴影瞬变造成的生硬感
     transition: 'border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease',
   };
@@ -190,21 +190,21 @@ const textContentStyle: CSSProperties = {
   overflow: 'hidden',
 };
 
-// link.name 样式：主标题，长名称截断省略避免撑破卡片
+// link.name 样式：主标题（主题主文字色），长名称截断省略避免撑破卡片
 const nameStyle: CSSProperties = {
   fontSize: 14,
   fontWeight: 600,
-  color: '#1e293b',
+  color: 'var(--color-text)',
   marginBottom: 4,
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
 };
 
-// step_template 样式：副标题（小字灰色），同样截断省略
+// step_template 样式：副标题（主题三级文字小字），同样截断省略
 const stepTemplateStyle: CSSProperties = {
   fontSize: 12,
-  color: '#94a3b8',
+  color: 'var(--color-text-tertiary)',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -212,22 +212,23 @@ const stepTemplateStyle: CSSProperties = {
 
 // ── Handle 样式 ───────────────────────────────────
 
-// target handle 样式：左侧，灰色小圆点
+// target handle 样式：左侧，主题三级文字色小圆点；
+// 描边用卡片底色而非写死白色，暗色下不会出现白圈
 const targetHandleStyle: CSSProperties = {
-  background: '#64748b',
+  background: 'var(--color-text-tertiary)',
   width: 8,
   height: 8,
-  border: '2px solid #fff',
+  border: '2px solid var(--color-bg-elevated)',
 };
 
-// 删除按钮样式：绝对定位卡片右上角，红色 ×；z-index 确保浮在出口标签之上
+// 删除按钮样式：绝对定位卡片右上角，主题错误色 ×；z-index 确保浮在出口标签之上
 const deleteButtonStyle: CSSProperties = {
   position: 'absolute',
   top: 2,
   right: 4,
   background: 'transparent',
   border: 'none',
-  color: '#ef4444',
+  color: 'var(--color-error)',
   fontSize: 14,
   cursor: 'pointer',
   padding: '0 4px',
@@ -237,11 +238,12 @@ const deleteButtonStyle: CSSProperties = {
 
 // on_success source handle 样式：右侧上方，绿色。
 // top 用 SUCCESS_HANDLE_TOP，与「成功」标签共用，保证二者同高。
+// 描边用卡片底色而非写死白色，暗色下与卡片融为一体
 const successHandleStyle: CSSProperties = {
   background: ON_SUCCESS_COLOR,
   width: 10,
   height: 10,
-  border: '2px solid #fff',
+  border: '2px solid var(--color-bg-elevated)',
   top: SUCCESS_HANDLE_TOP,
 };
 
@@ -251,7 +253,7 @@ const gateFailHandleStyle: CSSProperties = {
   background: ON_GATE_FAIL_COLOR,
   width: 10,
   height: 10,
-  border: '2px solid #fff',
+  border: '2px solid var(--color-bg-elevated)',
   top: GATE_FAIL_HANDLE_TOP,
 };
 

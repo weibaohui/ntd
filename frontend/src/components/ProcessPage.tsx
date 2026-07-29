@@ -66,7 +66,7 @@ export function ProcessPage({ workspaceId, onOpenLoop, processName, processMode 
  */
 function ProcessEditorPlaceholder({ mode, name }: { mode: 'new' | 'edit'; name: string | null }) {
   return (
-    <div style={{ padding: 60, textAlign: 'center', color: '#94a3b8' }}>
+    <div style={{ padding: 60, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
       <Title level={4}>
         {mode === 'new' ? '创建新工艺（编辑器开发中）' : `编辑工艺：${name ?? '未知'}（编辑器开发中）`}
       </Title>
@@ -372,7 +372,7 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
                 children: (() => {
                   const adapted = adaptProcessDefinition(detail.definition);
                   if (!adapted) {
-                    return <div style={{ color: '#94a3b8', textAlign: 'center', padding: 60 }}>该工艺定义无法解析，请查看 YAML 源排查语法</div>;
+                    return <div style={{ color: 'var(--color-text-tertiary)', textAlign: 'center', padding: 60 }}>该工艺定义无法解析，请查看 YAML 源排查语法</div>;
                   }
                   return (
                     <div>
@@ -465,7 +465,8 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
                       />
                     )}
                     <pre style={{
-                      background: 'rgba(0,0,0,0.04)',
+                      // YAML 源码块底色用主题填充色：亮色 4% 黑，暗色切到 surface 灰
+                      background: 'var(--color-fill-tertiary)',
                       padding: 12,
                       borderRadius: 8,
                       maxHeight: 400,
