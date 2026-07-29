@@ -2080,6 +2080,67 @@ mod loop_step_count_tests {
         assert!(missing.is_none(), "未被环节引用的 todo 应返回 None");
     }
 
+    /// find_loop_step_with_loop_review_template：按 todo_id 反查「环节内联 review_prompt +
+    /// 所属 loop 的 review_template_id」，供评审 prompt 三级回退（completion.rs 调用）。
+    /// 覆盖命中（两个值都读到）与未命中（无环节 → None）两条路径。
+    #[tokio::test]
+    async fn test_find_loop_step_with_loop_review_template_found_and_missing() {
+        let db = fresh_db().await;
+        let todo_id = seed_todo(&db, "环节todo").await;
+        let free_todo = seed_todo(&db, "自由todo").await;
+        let loop_id = seed_loop(&db, "L").await;
+        // loop 绑定环路级评审模板 id（普通 INTEGER 列、非 FK，可直接赋任意值用于断言）
+        db.exec(&format!(
+            "UPDATE loops SET review_template_id = 7 WHERE id = {loop_id}"
+        ))
+        .await
+        .expect("set review_template_id");
+        // 启用环节，带内联 review_prompt（v75 新增列）
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled, review_prompt) \
+             VALUES ({loop_id}, 's', {todo_id}, 1, '请严格评审')"
+        ))
+        .await
+        .expect("insert step");
+
+        // 命中：同时返回环节内联 prompt 与 loop 级 template_id
+        let found = db
+            .find_loop_step_with_loop_review_template(todo_id)
+            .await
+            .unwrap()
+            .expect("step should exist");
+        assert_eq!(found, (Some("请严格评审".to_string()), Some(7i64)));
+
+        // 未命中：未被任何环节引用的 todo 返回 None
+        let missing = db
+            .find_loop_step_with_loop_review_template(free_todo)
+            .await
+            .unwrap();
+        assert!(missing.is_none(), "未被环节引用的 todo 应返回 None");
+    }
+
+    /// enabled=0 的环节不应被选中：WHERE s.enabled = 1 是评审只取启用环节的关键过滤，
+    /// 禁用环节不参与 loop 执行，其 review_prompt/template_id 不应泄漏进评审回退。
+    #[tokio::test]
+    async fn test_find_loop_step_with_loop_review_template_excludes_disabled() {
+        let db = fresh_db().await;
+        let todo_id = seed_todo(&db, "环节todo").await;
+        let loop_id = seed_loop(&db, "L").await;
+        // 环节存在但被禁用 → 必须被过滤掉
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled, review_prompt) \
+             VALUES ({loop_id}, 's', {todo_id}, 0, '请严格评审')"
+        ))
+        .await
+        .expect("insert disabled step");
+
+        let res = db
+            .find_loop_step_with_loop_review_template(todo_id)
+            .await
+            .unwrap();
+        assert!(res.is_none(), "禁用环节不应被选中");
+    }
+
     /// get_referencing_loops_for_todos：按 todo_id 返回引用 Loop 摘要（loop_id + name），
     /// 只含启用环节，禁用环节的 Loop 不出现。事项中心 Loop 驱动卡片「所属 Loop」用。
     #[tokio::test]
