@@ -423,7 +423,13 @@ function AppContent() {
                 <WikiViewPage />
               ) : activeView === 'tasks' ? (
                 taskDetailId != null ? (
-                  <TaskDetailPage taskId={taskDetailId} onBack={() => backToList()} />
+                  <TaskDetailPage
+                    taskId={taskDetailId}
+                    onBack={() => backToList()}
+                    onOpenProcess={handleOpenProcess}
+                    onSelectTodo={(todoId) => handleSelectTodo(todoId)}
+                    onLoopChanged={() => setLoopUpdateCount(c => c + 1)}
+                  />
                 ) : (
                   <TasksPage workspaceId={state.selectedWorkspace} />
                 )

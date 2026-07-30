@@ -1,51 +1,47 @@
-// 嵌入式任务详情面板（Tabs 布局重构版）。
-// 与 TasksPage 详情态配套使用：顶部标题栏由宿主 PageCard 提供（含返回按钮），
-// 本组件自身提供「顶部条（标题+元信息+再次执行）」+「Tabs（概览/工艺要求/执行历史）」。
+// 嵌入式任务详情面板（合并环路详情版）。
+// 任务与环路是 1:1 关系（task.loop_id → loop.id），本面板合并两个详情页：
+// - Tab 1 概览：任务描述 + 环路基本信息（工作空间/待审批）+ 全局限制 + 最新执行进度
+// - Tab 2 执行环节：来源工艺面包屑 + SVG DAG 流程图（复用 LoopFlowGraph）
+// - Tab 3 执行历史：分页执行列表 + TokenSummaryBar + StepExecList + BlackboardDrawer
+// - Tab 4 执行看板：ProcessExecutionBoard（条件渲染）
+//
+// 子组件（Tab 内容）拆分至 TaskDetailTabs.tsx 以控制文件大小。
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
-  Tabs,
-  Tag,
-  Button,
-  Typography,
-  Spin,
-  Progress,
-  Space,
-  message,
-  Descriptions,
-  Modal,
-  Input,
-  Empty,
+  Tabs, Tag, Button, Typography, Spin, Space,
+  message, Modal, Input, Empty, Popconfirm,
 } from 'antd';
-import { ThunderboltOutlined, CaretRightOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import {
+  ThunderboltOutlined, DeleteOutlined,
+} from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
-// 执行历史行的时间文本组装逻辑抽在同目录 helpers.ts，保持本文件 JSX 声明式。
-import { formatExecTimeInfo } from './helpers';
-import { ProcessExecutionBoard } from '@/components/process/ProcessExecutionBoard';
-import type { GateDefinition } from '@/types/process';
+import * as dbLoops from '@/utils/database/loops';
+import { useProjectDirectories } from '@/utils/workspaceDisplay';
+import type { LoopDetail } from '@/types/loop';
 import { complexityColor, complexityLabel, statusColor } from './constants';
+import {
+  OverviewTab, DAGTab, ExecHistoryTab, ExecBoardTab,
+} from './TaskDetailTabs';
 import styles from './TaskDetailPanel.module.css';
 
-const { Text, Paragraph } = Typography;
+const { Text } = Typography;
+
+// ====== 类型定义 ======
 
 interface TaskDetailPanelProps {
   taskId: number;
   workspaceId: number;
-  /** 再次执行成功后回调，让宿主重拉列表保持口径一致。 */
+  /** 再次执行成功后回调，让宿主重拉列表。 */
   onTriggered?: () => void;
-  /** 任务标题加载完成后回调，供外层 PageCard 动态更新标题（详情标题功能）。 */
+  /** 任务标题加载完成后回调，供外层 PageCard 动态更新标题。 */
   onTitleReady?: (title: string) => void;
-}
-
-interface StepInfo {
-  id: number;
-  name: string;
-  order_index: number;
-  skill_names: string[];
-  expected_artifacts: Array<{ name: string; path?: string; locator?: string; type: string }>;
-  // 后端 get_task_detail 返回的是完整 gate_config JSON；这里复用工艺类型，
-  // 让 AI 评审门禁的 min_score 等判定条件能在工艺要求 tab 展示出来。
-  gate_config: GateDefinition[];
+  /** 点击「来源工艺」面包屑跳转工艺详情。 */
+  onOpenProcess?: (templateName: string) => void;
+  /** 点击 DAG 节点上的事项标题跳转事项详情。 */
+  onOpenTodo?: (todoId: number) => void;
+  /** 环路状态变更（启停/删除）后通知宿主刷新列表。 */
+  onLoopChanged?: () => void;
 }
 
 interface ExecInfo {
@@ -57,67 +53,30 @@ interface ExecInfo {
   completed_steps: number;
   failed_steps: number;
   requirement?: string;
-  /** 待人工审批的环节数：>0 时在执行历史行上显示引导标记（NTD-004）。 */
   pending_approval_count?: number;
 }
 
 interface TaskDetailData {
   task: { id: number; title: string; status: string; description?: string; workspace_id?: number; loop_id?: number };
   template?: { display_name?: string; version?: string; complexity?: string };
-  steps: StepInfo[];
   executions: ExecInfo[];
   loop?: { id: number; workspace_id?: number };
 }
 
-/** 门禁类型 → 中文标签，未匹配回退原值。 */
-function gateLabel(type: string): string {
-  const map: Record<string, string> = {
-    artifact_present: '产物存在',
-    ai_criteria_review: 'AI 评审',
-    human_approval: '人工审批',
-    script_check: '脚本校验',
-  };
-  return map[type] ?? type;
-}
+// ====== 子组件 ======
 
-/** 把单条门禁的关键判定条件拼成短文本；无额外参数时返回空串，保持 Tag 简洁。 */
-function gateDetailText(gate: GateDefinition): string {
-  const parts: string[] = [];
-  // AI 评审门禁必须暴露通过阈值，否则用户无法理解「评分达标」到底要求多少分。
-  if (gate.type === 'ai_criteria_review' && typeof gate.min_score === 'number') {
-    parts.push(`阈值 ≥ ${gate.min_score} 分`);
-  }
-  // timeout_secs 仅正数有意义：表示最多等待 AI 出分的秒数，0/null 不展示。
-  if (gate.type === 'ai_criteria_review' && typeof gate.timeout_secs === 'number' && gate.timeout_secs > 0) {
-    parts.push(`等待 ≤ ${gate.timeout_secs}s`);
-  }
-  // 产物存在门禁的补充信息是产物名；script_check 的补充信息是脚本路径。
-  if (gate.type === 'artifact_present' && gate.artifact) parts.push(`产物 ${gate.artifact}`);
-  if (gate.type === 'script_check' && gate.script) parts.push(`脚本 ${gate.script}`);
-  return parts.join('；');
-}
-
-/** 执行状态 → Progress 状态语义（success/exception/active/normal）。 */
-function progressStatus(status: string): 'success' | 'exception' | 'active' | 'normal' {
-  if (status === 'success') return 'success';
-  if (status === 'failed') return 'exception';
-  if (status === 'running') return 'active';
-  return 'normal';
-}
-
-/** 顶部条：标题 + 状态/复杂度 + 元信息 + 再次执行主按钮。 */
+/** 顶部条：标题 + 状态/复杂度 + 元信息 + 删除 + 再次执行。 */
 function DetailHeader({
-  task,
-  template,
-  onExecute,
+  task, template, loopDetail, onExecute, onDelete,
 }: {
   task: TaskDetailData['task'];
   template?: TaskDetailData['template'];
+  loopDetail: LoopDetail | null;
   onExecute: () => void;
+  onDelete: () => void;
 }) {
   return (
     <div className={styles.headerBar}>
-      {/* 左侧：#id + 标题 + 状态/复杂度 Tag + 模板/版本元信息 */}
       <div className={styles.headerMain}>
         <div className={styles.titleRow}>
           <Text type="secondary">#{task.id}</Text>
@@ -133,327 +92,157 @@ function DetailHeader({
           <span>版本：{template?.version ?? '—'}</span>
         </div>
       </div>
-      {/* 右侧：再次执行主操作，跨 Tab 始终可见 */}
-      <Button icon={<ThunderboltOutlined />} type="primary" onClick={onExecute}>
-        再次执行
-      </Button>
-    </div>
-  );
-}
-
-/** 步骤内的一行标签组（技能/产物/门禁）。复用避免每个分支重复结构。 */
-function StepMetaRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className={styles.stepMetaRow}>
-      <span className={styles.stepLabel}>{label}</span>
-      {children}
-    </div>
-  );
-}
-
-/** 单条工艺步骤：圆形序号徽标 + 名称 + 技能/产物/门禁分组。 */
-function StepItem({ step }: { step: StepInfo }) {
-  return (
-    <div className={styles.stepItem}>
-      <div className={styles.stepIndex}>{step.order_index + 1}</div>
-      <div className={styles.stepBody}>
-        <div className={styles.stepName}>{step.name}</div>
-        {step.skill_names.length > 0 && (
-          <StepMetaRow label="技能">
-            {step.skill_names.map((sk) => (
-              <Tag key={sk} color="purple" style={{ fontSize: 12 }}>{sk}</Tag>
-            ))}
-          </StepMetaRow>
+      <Space>
+        {loopDetail && (
+          <Popconfirm title="确定删除此环路？" onConfirm={onDelete} okText="删除" cancelText="取消">
+            <Button icon={<DeleteOutlined />} danger size="small">删除</Button>
+          </Popconfirm>
         )}
-        {step.expected_artifacts.length > 0 && (
-          <StepMetaRow label="产物">
-            {step.expected_artifacts.map((a, i) => (
-              <Tag key={i} color="blue" style={{ fontSize: 12 }}>
-                {a.name} → {a.path ?? a.locator} ({a.type})
-              </Tag>
-            ))}
-          </StepMetaRow>
-        )}
-        {step.gate_config.length > 0 && (
-          <StepMetaRow label="门禁">
-            {step.gate_config.map((g, i) => {
-              // 有判定参数时追加到类型标签后面，例如 AI 评审会显示「阈值 ≥ 80 分」。
-              const detail = gateDetailText(g);
-              const suffix = detail ? `${gateLabel(g.type)} · ${detail}` : gateLabel(g.type);
-              return <Tag key={i} style={{ fontSize: 12 }}>{g.name} ({suffix})</Tag>;
-            })}
-          </StepMetaRow>
-        )}
-      </div>
+        <Button icon={<ThunderboltOutlined />} type="primary" onClick={onExecute}>再次执行</Button>
+      </Space>
     </div>
   );
 }
 
-/** 概览 Tab：基本信息 + 需求描述 + 最近一次执行进度。 */
-function OverviewTab({
-  task,
-  template,
-  executions,
-}: {
-  task: TaskDetailData['task'];
-  template?: TaskDetailData['template'];
-  executions: ExecInfo[];
-}) {
-  const latest = executions[0];
-  const percent = latest && latest.total_steps > 0
-    ? Math.round((latest.completed_steps / latest.total_steps) * 100)
-    : 0;
-  return (
-    <div className={styles.paneBody}>
-      <Descriptions column={1} size="small" title="基本信息">
-        <Descriptions.Item label="工艺模板">{template?.display_name ?? '—'}</Descriptions.Item>
-        <Descriptions.Item label="版本">{template?.version ?? '—'}</Descriptions.Item>
-        <Descriptions.Item label="复杂度">
-          {template?.complexity
-            ? <Tag color={complexityColor(template.complexity)}>{complexityLabel(template.complexity)}</Tag>
-            : '—'}
-        </Descriptions.Item>
-        <Descriptions.Item label="状态">
-          <Tag color={statusColor(task.status)}>{task.status}</Tag>
-        </Descriptions.Item>
-      </Descriptions>
-
-      <div style={{ marginTop: 16 }}>
-        <Text strong>需求描述</Text>
-        <Paragraph style={{ marginTop: 4 }} type={task.description ? undefined : 'secondary'}>
-          {task.description || '暂无描述'}
-        </Paragraph>
-      </div>
-
-      {latest && (
-        <div style={{ marginTop: 16 }}>
-          <Text strong>最近一次执行 #{latest.id}</Text>
-          <Progress percent={percent} status={progressStatus(latest.status)} style={{ marginTop: 8 }} />
-          <Text type="secondary">
-            完成 {latest.completed_steps}/{latest.total_steps}
-            {latest.failed_steps > 0 && ` · 失败 ${latest.failed_steps}`}
-          </Text>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** 工艺要求 Tab：步骤轻量列表，无「卡片套卡片」。 */
-function ProcessTab({ steps }: { steps: StepInfo[] }) {
-  if (!steps || steps.length === 0) {
-    return <Empty description="暂无工艺步骤" style={{ marginTop: 48 }} />;
-  }
-  return (
-    <div className={styles.paneBody}>
-      <div className={styles.steps}>
-        {steps.map((s) => <StepItem key={s.id} step={s} />)}
-      </div>
-    </div>
-  );
-}
-
-/** 执行历史 Tab：每项可内联展开，看板在表头正下方、同框成整体。 */
-function ExecTab({
-  executions,
-  workspaceId,
-  loopId,
-  activeExec,
-  onToggle,
-}: {
-  executions: ExecInfo[];
-  workspaceId: number;
-  loopId: number;
-  activeExec: number | null;
-  onToggle: (id: number) => void;
-}) {
-  if (!executions || executions.length === 0) {
-    return <Empty description="暂无执行" image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ marginTop: 48 }} />;
-  }
-  return (
-    // execList：纵向排列的折叠项；每项是一个带边框的卡片（整体框）。
-    <div className={`${styles.paneBody} ${styles.execList}`}>
-      {executions.map((e) => {
-        // 该执行是否处于展开态：决定箭头旋转与详情框显隐。
-        const expanded = activeExec === e.id;
-        // 时间信息只算一次：进行中返回「开始时间」，已结束追加「耗时」；
-        // 无 started_at（schema 上不会发生，纯防御）返回空串，下方判空跳过渲染。
-        const timeText = formatExecTimeInfo(e.started_at, e.finished_at);
-        return (
-          <div
-            key={e.id}
-            className={expanded ? `${styles.execItem} ${styles.execItemExpanded}` : styles.execItem}
-          >
-            {/* 整行可点：表头 + 右侧展开指示。role=button 保证键盘可达。 */}
-            <div
-              className={styles.execRow}
-              role="button"
-              tabIndex={0}
-              aria-expanded={expanded}
-              aria-label={`执行 #${e.id} ${expanded ? '收起详情' : '查看详情'}`}
-              onClick={() => onToggle(e.id)}
-              onKeyDown={(ev) => {
-                // 回车/空格触发展开，与鼠标点击等价（可访问性）。
-                if (ev.key === 'Enter' || ev.key === ' ') {
-                  ev.preventDefault();
-                  onToggle(e.id);
-                }
-              }}
-            >
-              <div className={styles.execRowMain}>
-                <Space>
-                  <Tag color={statusColor(e.status)}>{e.status}</Tag>
-                  <Text>#{e.id} {e.completed_steps}/{e.total_steps} 完成</Text>
-                  {e.failed_steps > 0 && <Tag color="orange">失败 {e.failed_steps}</Tag>}
-                  {/* 待审批引导：审批按钮在展开后的工艺看板里，
-                      此处用醒目 Tag 告诉用户"需要展开处理"，否则 loop 会永久停在该环节。 */}
-                  {(e.pending_approval_count ?? 0) > 0 && (
-                    <Tag color="warning">⏳ {e.pending_approval_count} 条待审批，展开处理</Tag>
-                  )}
-                  {/* 时间信息区：开始时间（本地、分钟精度）+ 已结束时的耗时。
-                      用时钟图标做视觉锚点，与前面的状态/进度 Tag 区分层次。 */}
-                  {timeText && (
-                    <Text type="secondary">
-                      <ClockCircleOutlined /> {timeText}
-                    </Text>
-                  )}
-                </Space>
-                {/* 需求描述行：仅在本次执行带了需求文本时渲染。
-                    历史回退逻辑（无需求时显示原始 started_at ISO 串）已移除——
-                    时间信息已由上方专用时间区展示，未格式化的 UTC ISO 串没有可读性。 */}
-                {e.requirement && <div className={styles.execRowDesc}>{e.requirement}</div>}
-              </div>
-              {/* 右侧：旋转的箭头 + 文案，明确当前是展开还是收起。 */}
-              <div className={styles.execRowAction}>
-                <span className={styles.execChevron} data-expanded={expanded}>
-                  <CaretRightOutlined />
-                </span>
-                <Text type="secondary">{expanded ? '收起' : '查看详情'}</Text>
-              </div>
-            </div>
-            {/* 内联展开区：与表头同框（外层卡片 border + overflow:hidden），
-                顶部一条分隔线 + 略深底色，视觉上属于同一整体单元。 */}
-            {expanded && (
-              <div className={styles.execDetail}>
-                <ProcessExecutionBoard workspaceId={workspaceId} loopId={loopId} executionId={e.id} />
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+// ====== 主组件 ======
 
 /**
- * 任务详情面板（Tabs 版）。
- * 1. 通过 bundledApi.getTaskDetail 一次性拉取任务/模板/步骤/执行历史。
- * 2. 顶部条展示标题/状态/复杂度/模板版本 + 始终可见的「再次执行」。
- * 3. 三个 Tab：概览（信息+最近执行进度）/工艺要求（轻量步骤列表）/执行历史（列表+全宽看板）。
- * 4. 「再次执行」打开 Modal 调 createTaskExecution 创建新执行。
+ * 任务详情面板（合并环路详情版）。
+ * 数据获取：先拉任务详情 → 有 loop_id 则并行拉完整 LoopDetail。
+ * Tab 结构：概览 / 执行环节(DAG) / 执行历史 / 执行看板。
  */
-export function TaskDetailPanel({ taskId, workspaceId, onTriggered, onTitleReady }: TaskDetailPanelProps) {
+export function TaskDetailPanel({
+  taskId, workspaceId, onTriggered, onTitleReady,
+  onOpenProcess, onOpenTodo, onLoopChanged,
+}: TaskDetailPanelProps) {
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<TaskDetailData | null>(null);
-  const [activeExec, setActiveExec] = useState<number | null>(null);
+  const [loopDetail, setLoopDetail] = useState<LoopDetail | null>(null);
+  const [loopLoading, setLoopLoading] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [reqModalOpen, setReqModalOpen] = useState(false);
   const [newRequirement, setNewRequirement] = useState('');
+  const { dirs: projectDirs } = useProjectDirectories();
 
-  // taskId/workspaceId 变化时重拉；卸载时若仍在 loading 不影响已设置状态。
+  // 拉取任务详情（含基本 loop 信息）。
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    // 直接拿 any 然后类型断言：bundledApi.getTaskDetail 返回 any，避免引入复杂类型。
-    bundledApi
-      .getTaskDetail(workspaceId, taskId)
+    bundledApi.getTaskDetail(workspaceId, taskId)
       .then((raw) => {
-        if (alive) setDetail(raw as TaskDetailData);
-        // 详情标题：数据加载后通知外层 PageCard 更新标题。
-        if (alive && onTitleReady && (raw as TaskDetailData).task?.title) {
-          onTitleReady((raw as TaskDetailData).task.title);
-        }
+        if (!alive) return;
+        const d = raw as TaskDetailData;
+        setDetail(d);
+        if (onTitleReady && d.task?.title) onTitleReady(d.task.title);
       })
-      .catch(() => {
-        if (alive) message.error('加载失败');
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
-    return () => {
-      alive = false;
-    };
+      .catch(() => { if (alive) message.error('加载任务详情失败'); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId, workspaceId]);
 
+  // 任务详情加载后，若有 loop_id 则并行拉取完整 LoopDetail。
+  useEffect(() => {
+    if (!detail) return;
+    const lpId = detail.task.loop_id ?? detail.loop?.id;
+    if (!lpId) return;
+    let alive = true;
+    setLoopLoading(true);
+    const wsId = detail.task.workspace_id ?? detail.loop?.workspace_id ?? workspaceId;
+    dbLoops.getLoop(wsId, lpId)
+      .then((ld) => { if (alive) setLoopDetail(ld); })
+      .catch(() => { /* 环路加载失败不影响任务展示 */ })
+      .finally(() => { if (alive) setLoopLoading(false); });
+    return () => { alive = false; };
+  }, [detail, workspaceId]);
+
+  // 删除环路。
+  const handleDelete = useCallback(async () => {
+    if (!loopDetail) return;
+    const wsId = loopDetail.workspace_id ?? workspaceId;
+    try {
+      await dbLoops.deleteLoop(wsId, loopDetail.id);
+      message.success('已删除');
+      onLoopChanged?.();
+    } catch {
+      message.error('删除失败，环路可能正在被引用');
+    }
+  }, [loopDetail, workspaceId, onLoopChanged]);
+
+  // 打开再次执行 Modal。
   const openReqModal = () => {
-    // 默认把任务描述/标题填入需求框，减少用户重复输入。
-    const detail0 = detail;
-    if (detail0) setNewRequirement(detail0.task.description ?? detail0.task.title);
+    if (detail) setNewRequirement(detail.task.description ?? detail.task.title);
     setReqModalOpen(true);
   };
 
+  // 提交新执行。
   const handleNewExec = async () => {
-    if (!newRequirement.trim()) {
-      message.warning('请输入需求');
-      return;
-    }
+    if (!newRequirement.trim()) { message.warning('请输入需求'); return; }
     setTriggering(true);
     try {
       await bundledApi.createTaskExecution(workspaceId, taskId, newRequirement);
       message.success('新执行已创建');
       setReqModalOpen(false);
       setNewRequirement('');
-      // 重新拉取详情，拿到新执行；并通知宿主刷新列表。
-      const raw = (await bundledApi.getTaskDetail(workspaceId, taskId)) as TaskDetailData;
+      const raw = await bundledApi.getTaskDetail(workspaceId, taskId) as TaskDetailData;
       setDetail(raw);
       onTriggered?.();
-    } catch {
-      message.error('创建失败');
-    } finally {
-      setTriggering(false);
-    }
+    } catch { message.error('创建失败'); }
+    finally { setTriggering(false); }
   };
 
+  // 加载态。
   if (loading) return <Spin style={{ display: 'block', margin: '40px auto' }} />;
   if (!detail) return <Empty description="暂无任务详情" style={{ marginTop: 48 }} />;
 
-  const { task, template, steps, executions } = detail;
-  // workspace/loop id 的回退链：任务自身 → 关联 loop → 默认值。
-  const wsId = task.workspace_id ?? detail.loop?.workspace_id ?? 1;
+  const { task, template, executions } = detail;
   const lpId = task.loop_id ?? detail.loop?.id ?? 0;
+  const lpWsId = task.workspace_id ?? detail.loop?.workspace_id ?? null;
+  const hasBoard = loopDetail?.process_template_id != null && (executions?.length ?? 0) > 0;
 
   const tabItems = [
     {
       key: 'overview',
       label: '概览',
-      children: <OverviewTab task={task} template={template} executions={executions ?? []} />,
-    },
-    {
-      key: 'process',
-      label: `工艺要求 (${steps?.length ?? 0})`,
-      children: <ProcessTab steps={steps ?? []} />,
-    },
-    {
-      key: 'exec',
-      label: `执行历史 (${executions?.length ?? 0})`,
       children: (
-        <ExecTab
-          executions={executions ?? []}
-          workspaceId={wsId}
-          loopId={lpId}
-          activeExec={activeExec}
-          onToggle={(id) => setActiveExec(activeExec === id ? null : id)}
+        <OverviewTab
+          task={task} template={template} executions={executions ?? []}
+          loopDetail={loopDetail} projectDirs={projectDirs}
         />
       ),
     },
+    {
+      key: 'dag',
+      label: `执行环节 (${loopDetail?.steps?.length ?? 0})`,
+      children: <DAGTab loopDetail={loopDetail} onOpenProcess={onOpenProcess} onOpenTodo={onOpenTodo} />,
+    },
+    {
+      key: 'exec',
+      label: '执行历史',
+      children: (
+        <ExecHistoryTab loopId={lpId} workspaceId={lpWsId} loopName={loopDetail?.name ?? task.title} />
+      ),
+    },
+    // 执行看板：仅当环路是工艺实例且有执行记录时展示。
+    ...(hasBoard ? [{
+      key: 'board',
+      label: '执行看板',
+      children: <ExecBoardTab workspaceId={lpWsId} loopId={lpId} />,
+    }] : []),
   ];
 
   return (
     <div className={styles.panel}>
-      <DetailHeader task={task} template={template} onExecute={openReqModal} />
+      <DetailHeader
+        task={task} template={template} loopDetail={loopDetail}
+        onExecute={openReqModal} onDelete={handleDelete}
+      />
       <div className={styles.tabsWrap}>
-        <Tabs items={tabItems} style={{ height: '100%' }} />
+        <Tabs
+          items={tabItems}
+          style={{ height: '100%' }}
+          tabBarExtraContent={loopLoading ? <Spin size="small" style={{ marginRight: 16 }} /> : undefined}
+        />
       </div>
 
       <Modal
@@ -464,11 +253,7 @@ export function TaskDetailPanel({ taskId, workspaceId, onTriggered, onTitleReady
         confirmLoading={triggering}
         okText="开始执行"
       >
-        <Input.TextArea
-          value={newRequirement}
-          onChange={(e) => setNewRequirement(e.target.value)}
-          rows={4}
-        />
+        <Input.TextArea value={newRequirement} onChange={(e) => setNewRequirement(e.target.value)} rows={4} />
       </Modal>
     </div>
   );
