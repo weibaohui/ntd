@@ -17,8 +17,10 @@ import {
   Input,
   Empty,
 } from 'antd';
-import { ThunderboltOutlined, CaretRightOutlined } from '@ant-design/icons';
+import { ThunderboltOutlined, CaretRightOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
+// 执行历史行的时间文本组装逻辑抽在同目录 helpers.ts，保持本文件 JSX 声明式。
+import { formatExecTimeInfo } from './helpers';
 import { ProcessExecutionBoard } from '@/components/process/ProcessExecutionBoard';
 import type { GateDefinition } from '@/types/process';
 import { complexityColor, complexityLabel, statusColor } from './constants';
@@ -274,6 +276,9 @@ function ExecTab({
       {executions.map((e) => {
         // 该执行是否处于展开态：决定箭头旋转与详情框显隐。
         const expanded = activeExec === e.id;
+        // 时间信息只算一次：进行中返回「开始时间」，已结束追加「耗时」；
+        // 无 started_at（schema 上不会发生，纯防御）返回空串，下方判空跳过渲染。
+        const timeText = formatExecTimeInfo(e.started_at, e.finished_at);
         return (
           <div
             key={e.id}
@@ -305,10 +310,18 @@ function ExecTab({
                   {(e.pending_approval_count ?? 0) > 0 && (
                     <Tag color="warning">⏳ {e.pending_approval_count} 条待审批，展开处理</Tag>
                   )}
+                  {/* 时间信息区：开始时间（本地、分钟精度）+ 已结束时的耗时。
+                      用时钟图标做视觉锚点，与前面的状态/进度 Tag 区分层次。 */}
+                  {timeText && (
+                    <Text type="secondary">
+                      <ClockCircleOutlined /> {timeText}
+                    </Text>
+                  )}
                 </Space>
-                <div className={styles.execRowDesc}>
-                  {e.requirement || <Text type="secondary">{e.started_at ?? ''}</Text>}
-                </div>
+                {/* 需求描述行：仅在本次执行带了需求文本时渲染。
+                    历史回退逻辑（无需求时显示原始 started_at ISO 串）已移除——
+                    时间信息已由上方专用时间区展示，未格式化的 UTC ISO 串没有可读性。 */}
+                {e.requirement && <div className={styles.execRowDesc}>{e.requirement}</div>}
               </div>
               {/* 右侧：旋转的箭头 + 文案，明确当前是展开还是收起。 */}
               <div className={styles.execRowAction}>
